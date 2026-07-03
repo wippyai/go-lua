@@ -10,19 +10,43 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 )
 
+type resultCorrelationTargets struct {
+	triggerPath        path.Path
+	triggerResultIndex int
+	targetPath         path.Path
+	targetResultIndex  int
+	hasTargetPath      bool
+	killPaths          []path.Path
+}
+
 func typeIsEstablishPoint(input *factflow.FactsInput, graph cfg.Graph, callPoint cfg.Point, targets typeIsTargets) (cfg.Point, bool) {
-	errAssign, ok := callResultAssignmentPoint(input, graph, callPoint, targets.errPath, 1)
+	return resultCorrelationEstablishPoint(input, graph, callPoint, typeIsResultCorrelationTargets(targets))
+}
+
+func typeIsResultCorrelationTargets(targets typeIsTargets) resultCorrelationTargets {
+	return resultCorrelationTargets{
+		triggerPath:        targets.errPath,
+		triggerResultIndex: 1,
+		targetPath:         targets.valuePath,
+		targetResultIndex:  0,
+		hasTargetPath:      targets.hasValuePath,
+		killPaths:          []path.Path{targets.argPath},
+	}
+}
+
+func resultCorrelationEstablishPoint(input *factflow.FactsInput, graph cfg.Graph, callPoint cfg.Point, targets resultCorrelationTargets) (cfg.Point, bool) {
+	triggerAssign, ok := callResultAssignmentPoint(input, graph, callPoint, targets.triggerPath, targets.triggerResultIndex)
 	if !ok {
 		return 0, false
 	}
-	if !targets.hasValuePath {
-		return errAssign, true
+	if !targets.hasTargetPath {
+		return triggerAssign, true
 	}
-	valueAssign, ok := callResultAssignmentPoint(input, graph, callPoint, targets.valuePath, 0)
+	targetAssign, ok := callResultAssignmentPoint(input, graph, callPoint, targets.targetPath, targets.targetResultIndex)
 	if !ok {
-		return errAssign, true
+		return triggerAssign, true
 	}
-	return laterPoint(graph, valueAssign, errAssign), true
+	return laterPoint(graph, targetAssign, triggerAssign), true
 }
 
 func callResultAssignmentPoint(input *factflow.FactsInput, graph cfg.Graph, callPoint cfg.Point, target path.Path, resultIndex int) (cfg.Point, bool) {
@@ -44,6 +68,10 @@ func valueSourceConsumesCallResult(source factflow.ValueSource, callPoint cfg.Po
 }
 
 func typeIsActiveIn(input *factflow.FactsInput, graph cfg.Graph, establish cfg.Point, targets typeIsTargets) map[cfg.Point]bool {
+	return resultCorrelationActiveIn(input, graph, establish, typeIsResultCorrelationTargets(targets))
+}
+
+func resultCorrelationActiveIn(input *factflow.FactsInput, graph cfg.Graph, establish cfg.Point, targets resultCorrelationTargets) map[cfg.Point]bool {
 	rpo := graph.RPO()
 	activeIn := make(map[cfg.Point]bool, len(rpo))
 	activeOut := make(map[cfg.Point]bool, len(rpo))
@@ -55,7 +83,7 @@ func typeIsActiveIn(input *factflow.FactsInput, graph cfg.Graph, establish cfg.P
 			switch {
 			case point == establish:
 				out = true
-			case in && typeIsRelationKilledAt(input, point, targets):
+			case in && resultCorrelationKilledAt(input, point, targets):
 				out = false
 			}
 			if activeIn[point] != in {
@@ -72,20 +100,36 @@ func typeIsActiveIn(input *factflow.FactsInput, graph cfg.Graph, establish cfg.P
 }
 
 func typeIsRelationKilledAt(input *factflow.FactsInput, point cfg.Point, targets typeIsTargets) bool {
-	if assignment, ok := input.RootAssignments[point]; ok && typeIsKillsPath(assignment.TargetPath(), targets) {
+	return resultCorrelationKilledAt(input, point, typeIsResultCorrelationTargets(targets))
+}
+
+func resultCorrelationKilledAt(input *factflow.FactsInput, point cfg.Point, targets resultCorrelationTargets) bool {
+	if assignment, ok := input.RootAssignments[point]; ok && resultCorrelationKillsPath(assignment.TargetPath(), targets) {
 		return true
 	}
-	if pathAssign, ok := input.PathAssignments[point]; ok && typeIsKillsPath(pathAssign.TargetPath(), targets) {
+	if pathAssign, ok := input.PathAssignments[point]; ok && resultCorrelationKillsPath(pathAssign.TargetPath(), targets) {
 		return true
 	}
 	return false
 }
 
 func typeIsKillsPath(candidate path.Path, targets typeIsTargets) bool {
-	if candidate.Equal(targets.argPath) || candidate.Equal(targets.errPath) {
+	return resultCorrelationKillsPath(candidate, typeIsResultCorrelationTargets(targets))
+}
+
+func resultCorrelationKillsPath(candidate path.Path, targets resultCorrelationTargets) bool {
+	if candidate.Equal(targets.triggerPath) {
 		return true
 	}
-	return targets.hasValuePath && candidate.Equal(targets.valuePath)
+	if targets.hasTargetPath && candidate.Equal(targets.targetPath) {
+		return true
+	}
+	for _, kill := range targets.killPaths {
+		if candidate.Equal(kill) {
+			return true
+		}
+	}
+	return false
 }
 
 func absentPresenceEdges(input *factflow.FactsInput, branch cfg.Point, target path.Path) []bool {
@@ -142,7 +186,7 @@ func isAbsentRefinement(fact factflow.BranchRefinement, cond bool) bool {
 }
 
 func allPredecessorsActive(graph cfg.Graph, point cfg.Point, activeOut map[cfg.Point]bool) bool {
-	preds := graph.Predecessors(point)
+	preds := cfg.PredecessorsReadOnly(graph, point)
 	if len(preds) == 0 {
 		return false
 	}

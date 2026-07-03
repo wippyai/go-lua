@@ -77,6 +77,22 @@ func TestMaterializeUnionDedupesOrdersAndCachesHash(t *testing.T) {
 	}
 }
 
+func TestMaterializeUnionOpenRecursiveCacheTracksPlaceholderMember(t *testing.T) {
+	rec := NewRecursivePlaceholder("Node")
+	u := MaterializeUnion([]Type{rec, String}).(*Union)
+	if !u.containsOpenRecursive {
+		t.Fatalf("open recursive placeholder member was not cached")
+	}
+	if !knownContainsOpenRecursive(u) {
+		t.Fatalf("open recursive placeholder member was not visible")
+	}
+
+	rec.SetBody(Number)
+	if knownContainsOpenRecursive(u) {
+		t.Fatalf("union open-recursive scan did not observe closed placeholder body")
+	}
+}
+
 func TestMaterializeUnionDoesNotFlattenNestedUnion(t *testing.T) {
 	inner := MaterializeUnion([]Type{Number, String})
 

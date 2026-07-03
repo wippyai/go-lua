@@ -9,10 +9,6 @@ import (
 )
 
 func (b *builder) appendValueListCalls(state flowState, stmt ast.Stmt, exprs []ast.Expr) flowState {
-	calls, ok := b.valueListCalls(exprs)
-	if !ok || len(calls) == 0 {
-		return state
-	}
 	for _, expr := range exprs {
 		state = b.appendValueExprCalls(state, stmt, expr)
 	}
@@ -20,26 +16,34 @@ func (b *builder) appendValueListCalls(state flowState, stmt ast.Stmt, exprs []a
 }
 
 func (b *builder) appendExprCalls(state flowState, stmt ast.Stmt, expr ast.Expr) flowState {
-	calls, ok := b.exprCalls(expr)
-	if !ok || len(calls) == 0 {
-		return state
-	}
 	return b.appendValueExprCalls(state, stmt, expr)
 }
 
 func (b *builder) appendConditionCall(state flowState, stmt ast.Stmt, expr ast.Expr) (flowState, cfg.Point, bool) {
-	calls, ok := b.conditionExprCalls(expr)
-	if !ok {
-		return state, 0, false
+	before := b.graph.RPO()
+	state = b.appendValueExprCalls(state, stmt, expr)
+	first := firstNewCallPoint(b.graph, before)
+	return state, first, state.live && first != 0
+}
+
+func firstNewCallPoint(graph cfg.Graph, before []cfg.Point) cfg.Point {
+	if graph == nil {
+		return 0
 	}
-	first := cfg.Point(0)
-	for range calls {
-		state = b.appendCall(state, stmt)
-		if first == 0 {
-			first = state.current
+	seen := make(map[cfg.Point]struct{}, len(before))
+	for _, point := range before {
+		seen[point] = struct{}{}
+	}
+	for _, point := range graph.RPO() {
+		if _, ok := seen[point]; ok {
+			continue
+		}
+		node := graph.Node(point)
+		if node != nil && node.Kind == cfg.NodeCall {
+			return point
 		}
 	}
-	return state, first, state.live && first != 0
+	return 0
 }
 
 func (b *builder) valueListCalls(exprs []ast.Expr) ([]callorder.Occurrence, bool) {
@@ -151,7 +155,7 @@ func (b *builder) appendShortCircuitValueCalls(state flowState, stmt ast.Stmt, e
 		return state
 	}
 	rhsCalls, ok := callorder.Expr(expr.Rhs, b.callOrderOptions())
-	if !ok || len(rhsCalls) == 0 {
+	if !ok {
 		return state
 	}
 	rhsCond := shortCircuitRHSCond(expr.Operator)
@@ -159,6 +163,14 @@ func (b *builder) appendShortCircuitValueCalls(state flowState, stmt ast.Stmt, e
 	b.connect(state, branch)
 	b.meta.SetShortCircuitGuard(branch, cfgfacts.ShortCircuitGuardFact{Stmt: stmt, Condition: expr.Lhs})
 	join := b.graph.AddNode(cfg.NodeJoin)
+	if len(rhsCalls) == 0 {
+		eval := b.graph.AddNode(cfg.NodeNoop)
+		b.graph.AddEdge(branch, eval, rhsCond)
+		b.meta.SetExpressionEvaluation(eval, cfgfacts.ExpressionEvaluationFact{Stmt: stmt, Expr: expr.Rhs})
+		b.graph.AddEdge(eval, join, false)
+		b.graph.AddEdge(branch, join, !rhsCond)
+		return flowState{current: join, live: len(b.graph.Predecessors(join)) > 0}
+	}
 	b.graph.AddEdge(branch, join, !rhsCond)
 	rhsState := b.appendValueExprCalls(branchPath(branch, rhsCond), stmt, expr.Rhs)
 	b.connect(rhsState, join)

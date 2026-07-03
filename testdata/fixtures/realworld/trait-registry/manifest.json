@@ -15,7 +15,7 @@
         "evidence_contains": [
           "spec.tools[1].id can be string or nil here",
           "first_tool_id is declared as string",
-          "no guard on this path proves spec.tools[1].id is non-nil"
+          "spec.tools[1].id is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
         ],
         "evidence": [
           {
@@ -42,7 +42,7 @@
             "kind": "missing proof",
             "trust": "unknown",
             "contains": [
-              "no guard on this path proves spec.tools[1].id is non-nil"
+              "spec.tools[1].id is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
             ]
           }
         ],
@@ -50,7 +50,7 @@
           "error[type.assignment]: cannot assign spec.tools[1].id because it may be nil",
           "local first_tool_id: string = spec.tools[1].id",
           "because:",
-          "Guard `spec.tools[1].id` with a nil check"
+          "spec.tools[1].id is an indexed read that can miss or read nil"
         ],
         "render_ordered_contains": [
           "error[type.assignment]: cannot assign spec.tools[1].id because it may be nil",
@@ -59,7 +59,7 @@
           "because:",
           "1. proven: spec.tools[1].id can be string or nil here",
           "2. claimed: first_tool_id is declared as string",
-          "3. missing proof: no guard on this path proves spec.tools[1].id is non-nil",
+          "3. missing proof: spec.tools[1].id is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
           "help: Guard `spec.tools[1].id` with a nil check"
         ],
         "render_not_contains": [

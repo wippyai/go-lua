@@ -52,7 +52,6 @@ func BuildForward(config BuildConfig) *Table {
 	out := make(map[cfg.Point]map[symbol.ID]ssa.Version, len(rpo))
 	initializedOut := make(map[cfg.Point]struct{}, len(rpo))
 	phis := make(map[lookup]ssa.Version)
-	table := &Table{}
 
 	changed := true
 	for changed {
@@ -73,12 +72,24 @@ func BuildForward(config BuildConfig) *Table {
 		}
 	}
 
+	table := newTableWithCapacity(visibleVersionCount(rpo, out) + visibleVersionCount(rpo, in))
 	for _, point := range rpo {
+		for sym, version := range in[point] {
+			table.setInput(point, sym, version)
+		}
 		for sym, version := range out[point] {
 			table.set(point, sym, version)
 		}
 	}
 	return table
+}
+
+func visibleVersionCount(points []cfg.Point, visible map[cfg.Point]map[symbol.ID]ssa.Version) int {
+	total := 0
+	for _, point := range points {
+		total += len(visible[point])
+	}
+	return total
 }
 
 func normalizeDefinitions(definitions []Definition, rpoIndex map[cfg.Point]int) []Definition {
@@ -114,7 +125,7 @@ func mergePredecessors(
 	phis map[lookup]ssa.Version,
 	next map[symbol.ID]int,
 ) map[symbol.ID]ssa.Version {
-	preds := graph.Predecessors(point)
+	preds := cfg.PredecessorsReadOnly(graph, point)
 	if len(preds) == 0 {
 		return nil
 	}

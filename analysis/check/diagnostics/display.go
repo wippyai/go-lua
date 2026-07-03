@@ -230,30 +230,6 @@ func frozenTableCallHelp() string {
 	return display.FrozenTableCallHelp()
 }
 
-func resourceUnreleasedMessage(resourceName, protocol, current, final string) string {
-	return display.ResourceUnreleasedMessage(resourceName, protocol, current, final)
-}
-
-func resourceAcquireEvidence(resourceName, protocol, current, final string) string {
-	return display.ResourceAcquireEvidence(resourceName, protocol, current, final)
-}
-
-func resourceTransitionEvidence(resourceName, protocol, from, to string) string {
-	return display.ResourceTransitionEvidence(resourceName, protocol, from, to)
-}
-
-func resourceEscapeEvidence(resourceName, protocol string) string {
-	return display.ResourceEscapeEvidence(resourceName, protocol)
-}
-
-func resourceExitObligationEvidence(resourceName, protocol, current, final string) string {
-	return display.ResourceExitObligationEvidence(resourceName, protocol, current, final)
-}
-
-func resourceUnreleasedHelp(resourceName, final string) string {
-	return display.ResourceUnreleasedHelp(resourceName, final)
-}
-
 func deadAssignmentMessage(name string, hasExit bool) string {
 	return display.DeadAssignmentMessage(name, hasExit)
 }
@@ -313,6 +289,10 @@ func argumentTypeMismatchMessageDisplay(subject string, arg ast.Expr, got typ.Ty
 	return display.ArgumentTypeMismatchMessageDisplay(subject, arg, got, gotDisplay, want, wantDisplay)
 }
 
+func argumentBoundaryProofMessage(subject string, arg ast.Expr, want typ.Type) string {
+	return display.ArgumentBoundaryProofMessage(subject, arg, want)
+}
+
 func argumentTypeMismatchHelp(argName string, got typ.Type) string {
 	return display.ArgumentTypeMismatchHelp("", argName, got)
 }
@@ -325,6 +305,10 @@ func argumentTypeMismatchHelpForEvidence(subject string, argName string, got typ
 }
 
 func argumentEvidenceNeedsValidationProof(got typ.Type, evidence []diagnostic.Evidence) bool {
+	return evidenceNeedsValidationProof(got, evidence)
+}
+
+func evidenceNeedsValidationProof(got typ.Type, evidence []diagnostic.Evidence) bool {
 	if topLikeType(got) {
 		return true
 	}

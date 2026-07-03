@@ -45,64 +45,68 @@ var valueDomainCache registrycache.Cache[lattice.Lattice[Value]]
 var mapDomainCache registrycache.Cache[lattice.Lattice[map[Key]Value]]
 
 func Domain(reg *axis.Registry) lattice.Lattice[Value] {
-	return valueDomainCache.Get(reg, func() lattice.Lattice[Value] {
-		valueDomain := product.Domain(reg)
-		return lattice.Lattice[Value]{
-			Bottom: func() Value { return Bottom(reg) },
-			Top:    Top,
-			Equal: func(a, b Value) bool {
-				if a.Change == ChangeBottom || b.Change == ChangeBottom {
-					return a.Change == ChangeBottom && b.Change == ChangeBottom
-				}
-				return valueDomain.Equal(a.Before, b.Before) &&
-					valueDomain.Equal(a.After, b.After) &&
-					a.Change == b.Change
-			},
-			LessOrEq: func(a, b Value) bool {
-				if a.Change == ChangeBottom {
-					return true
-				}
-				if b.Change == ChangeBottom {
-					return false
-				}
-				return valueDomain.LessOrEq(a.Before, b.Before) &&
-					valueDomain.LessOrEq(a.After, b.After) &&
-					changeLessOrEq(a.Change, b.Change)
-			},
-			Join: func(a, b Value) Value {
-				if a.Change == ChangeBottom {
-					return b
-				}
-				if b.Change == ChangeBottom {
-					return a
-				}
-				return Value{
-					Before: valueDomain.Join(a.Before, b.Before),
-					After:  valueDomain.Join(a.After, b.After),
-					Change: changeJoin(a.Change, b.Change),
-				}
-			},
-			Widen: func(prev, next Value) Value {
-				if prev.Change == ChangeBottom {
-					return next
-				}
-				if next.Change == ChangeBottom {
-					return prev
-				}
-				return Value{
-					Before: valueDomain.Widen(prev.Before, next.Before),
-					After:  valueDomain.Widen(prev.After, next.After),
-					Change: changeJoin(prev.Change, next.Change),
-				}
-			},
-		}
-	})
+	return valueDomainCache.GetFor(reg, valueDomainForRegistry)
+}
+
+func valueDomainForRegistry(reg *axis.Registry) lattice.Lattice[Value] {
+	valueDomain := product.Domain(reg)
+	return lattice.Lattice[Value]{
+		Bottom: func() Value { return Bottom(reg) },
+		Top:    Top,
+		Equal: func(a, b Value) bool {
+			if a.Change == ChangeBottom || b.Change == ChangeBottom {
+				return a.Change == ChangeBottom && b.Change == ChangeBottom
+			}
+			return valueDomain.Equal(a.Before, b.Before) &&
+				valueDomain.Equal(a.After, b.After) &&
+				a.Change == b.Change
+		},
+		LessOrEq: func(a, b Value) bool {
+			if a.Change == ChangeBottom {
+				return true
+			}
+			if b.Change == ChangeBottom {
+				return false
+			}
+			return valueDomain.LessOrEq(a.Before, b.Before) &&
+				valueDomain.LessOrEq(a.After, b.After) &&
+				changeLessOrEq(a.Change, b.Change)
+		},
+		Join: func(a, b Value) Value {
+			if a.Change == ChangeBottom {
+				return b
+			}
+			if b.Change == ChangeBottom {
+				return a
+			}
+			return Value{
+				Before: valueDomain.Join(a.Before, b.Before),
+				After:  valueDomain.Join(a.After, b.After),
+				Change: changeJoin(a.Change, b.Change),
+			}
+		},
+		Widen: func(prev, next Value) Value {
+			if prev.Change == ChangeBottom {
+				return next
+			}
+			if next.Change == ChangeBottom {
+				return prev
+			}
+			return Value{
+				Before: valueDomain.Widen(prev.Before, next.Before),
+				After:  valueDomain.Widen(prev.After, next.After),
+				Change: changeJoin(prev.Change, next.Change),
+			}
+		},
+	}
 }
 
 func MapDomain(reg *axis.Registry) lattice.Lattice[map[Key]Value] {
-	return mapDomainCache.Get(reg, func() lattice.Lattice[map[Key]Value] {
-		return lift.Map[Key, Value](Domain(reg))
-	})
+	return mapDomainCache.GetFor(reg, mapDomainForRegistry)
+}
+
+func mapDomainForRegistry(reg *axis.Registry) lattice.Lattice[map[Key]Value] {
+	return lift.Map[Key, Value](Domain(reg))
 }
 
 func Bottom(reg *axis.Registry) Value {

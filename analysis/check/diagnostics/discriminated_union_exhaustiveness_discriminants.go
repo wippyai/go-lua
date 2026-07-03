@@ -4,7 +4,6 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
@@ -76,7 +75,7 @@ func discriminantRootType(result *body.Result, resolver typeannotation.Resolver,
 	if !ok {
 		return nil, false
 	}
-	return readmodel.New(result).FullVariantOriginType(value)
+	return newDiagnosticQuery(result).FullVariantOriginType(value)
 }
 
 func discriminantCasesFor(target pathdom.Path, suffix []segment.Segment, cases []variant.OriginCase) []discriminantCase {
@@ -327,11 +326,11 @@ func staticStringExprValueAt(result *body.Result, point cfg.Point, expr ast.Expr
 	if result == nil || expr == nil {
 		return "", false
 	}
-	value, ok := result.ExpressionValueAtBoundary(point, expr)
+	value, ok := newDiagnosticQuery(result).ExpressionValueAtBoundary(point, expr)
 	if !ok {
 		return "", false
 	}
-	t, ok := readmodel.New(result).ValueTypeWithPresence(value)
+	t, ok := newDiagnosticQuery(result).ValueTypeWithPresence(value)
 	if !ok {
 		return "", false
 	}

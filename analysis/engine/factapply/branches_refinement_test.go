@@ -4,15 +4,21 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
+	"github.com/wippyai/go-lua/analysis/engine/typenarrow"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -53,6 +59,268 @@ func TestFactsEdgeTransferAppliesNilRefinementsOnRootValue(t *testing.T) {
 
 	assertValue(t, reg, got[thenPoint], key.SymbolValue(target), absentValue(reg))
 	assertValue(t, reg, got[elsePoint], key.SymbolValue(target), presentValue(reg))
+}
+
+func TestFactsEdgeTransferContradictoryBranchRefinementKillsEdge(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	target := symbol.ID(312)
+	initial := state.State{}.WriteValue(reg, key.SymbolValue(target), typevalue.Nil(reg))
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						branchWithPresence(pathdom.NewPath(target, "x"), presence.Present(), true, presence.Bottom(), false),
+					),
+				},
+				BranchPathEvidence: map[cfg.Point]factflow.BranchPathEvidenceSet{
+					branch: factflow.NewBranchPathEvidenceSet(
+						factflow.NewBranchPathTruthyEvidenceOnEdge(pathdom.NewPath(target, "x"), true),
+					),
+				},
+			}),
+		}),
+	})
+
+	domain := state.Domain(reg)
+	if !domain.Equal(got[thenPoint], domain.Bottom()) {
+		t.Fatalf("then edge state = %#v, want unreachable bottom", got[thenPoint])
+	}
+	assertValue(t, reg, got[elsePoint], key.SymbolValue(target), typevalue.Nil(reg))
+}
+
+func TestFactsEdgeTransferTruthyGuardOnRequiredFunctionMemberKillsFalseEdge(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	target := symbol.ID(313)
+	rootPath := pathdom.NewPath(target, "handlers")
+	initPath := rootPath.Field("__init")
+	visibilityBuilder := visibility.NewBuilder()
+	version := visibilityBuilder.Define(branch, target, "handlers")
+	visibilityBuilder.SetVisible(thenPoint, target, version)
+	visibilityBuilder.SetVisible(elsePoint, target, version)
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	handlersType := typetable.NewRecord().
+		Field("__init", typ.Func().Build()).
+		Build()
+	initial := state.State{}.
+		WriteValue(reg, key.SymbolValue(target), typeValue(reg, handlersType))
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchPathEvidence: map[cfg.Point]factflow.BranchPathEvidenceSet{
+					branch: factflow.NewBranchPathEvidenceSet(
+						factflow.NewBranchPathTruthyEvidenceOnEdge(initPath, true),
+					),
+				},
+			}),
+			Visibility:  resolver,
+			ProjectPath: testLuaPathTypeProjector,
+		}),
+	})
+
+	domain := state.Domain(reg)
+	if domain.Equal(got[thenPoint], domain.Bottom()) {
+		t.Fatal("true edge was killed, want reachable")
+	}
+	if !domain.Equal(got[elsePoint], domain.Bottom()) {
+		t.Fatalf("false edge state = %#v, want unreachable bottom", got[elsePoint])
+	}
+}
+
+func TestFactsEdgeTransferKillsUnreachableBranchEdge(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: state.State{},
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchEdgeReachability: map[cfg.Point]factflow.BranchEdgeReachability{
+					branch: factflow.NewBranchEdgeReachability(false, true),
+				},
+			}),
+		}),
+	})
+
+	domain := state.Domain(reg)
+	if domain.Equal(got[thenPoint], domain.Bottom()) {
+		t.Fatal("true edge was killed, want reachable")
+	}
+	if !domain.Equal(got[elsePoint], domain.Bottom()) {
+		t.Fatalf("false edge state = %#v, want unreachable bottom", got[elsePoint])
+	}
+}
+
+func TestFactsEdgeTransferKillsDynamicallyFalseConditionEdge(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	source := factflow.NewNilValueSource(0)
+	trueValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.True), typ.True)
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: state.State{},
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchConditionSources: map[cfg.Point]factflow.ValueSource{
+					branch: source,
+				},
+			}),
+			Sources: &recordingSourceValues{values: map[factflow.ValueSource]product.Value{
+				source: trueValue,
+			}},
+		}),
+	})
+
+	domain := state.Domain(reg)
+	if domain.Equal(got[thenPoint], domain.Bottom()) {
+		t.Fatal("true edge was killed, want reachable")
+	}
+	if !domain.Equal(got[elsePoint], domain.Bottom()) {
+		t.Fatalf("false edge state = %#v, want unreachable bottom", got[elsePoint])
+	}
+}
+
+func TestFactsEdgeTransferFalsyAbsentDoesNotKillBooleanFalseEdge(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	target := symbol.ID(315)
+	targetPath := pathdom.NewPath(target, "ok")
+	boolType := typeexpr.Union(typ.True, typ.False)
+	boolValue := typevalue.WithWitness(reg, typevalue.FromType(reg, boolType), boolType)
+	absent := product.NewWithPresence(reg, product.ShapeTop, presence.Absent())
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: state.State{}.WriteValue(reg, key.SymbolValue(target), boolValue),
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						factflow.NewBranchRefinement(
+							targetPath,
+							factflow.NewValueConstraint(product.NewWithPresence(reg, product.ShapeTop, presence.Present())),
+							true,
+							factflow.NewFalsyAbsentConstraint(absent),
+							true,
+						),
+					),
+				},
+			}),
+		}),
+	})
+
+	if state.Domain(reg).Equal(got[elsePoint], state.Domain(reg).Bottom()) {
+		t.Fatal("false edge was killed, but boolean false is a valid falsy value")
+	}
+	assertValue(t, reg, got[elsePoint], key.SymbolValue(target), boolValue)
+}
+
+func TestFactsEdgeTransferFalsyAbsentKeepsOptionalNonBooleanElseReachable(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	target := symbol.ID(316)
+	targetPath := pathdom.NewPath(target, "err")
+	errValue := product.WithPresence(
+		reg,
+		typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String),
+		presence.Maybe(),
+	)
+	absent := product.NewWithPresence(reg, product.ShapeTop, presence.Absent())
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: state.State{}.WriteValue(reg, key.SymbolValue(target), errValue),
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						factflow.NewBranchRefinement(
+							targetPath,
+							factflow.NewValueConstraint(product.NewWithPresence(reg, product.ShapeTop, presence.Present())),
+							true,
+							factflow.NewFalsyAbsentConstraint(absent),
+							true,
+						),
+					),
+				},
+			}),
+		}),
+	})
+
+	if state.Domain(reg).Equal(got[elsePoint], state.Domain(reg).Bottom()) {
+		t.Fatal("false edge was killed, but optional string nil arm is reachable")
+	}
+	refined := got[elsePoint].ReadValue(reg, key.SymbolValue(target))
+	if gotPresence := product.PresenceOf(refined); !presence.Equal(gotPresence, presence.Absent()) {
+		t.Fatalf("false-edge presence = %s (%s), want absent", gotPresence, formatValue(reg, refined))
+	}
 }
 
 func TestFactsEdgeTransferAppliesMultipleRefinementsOnSameBranchEdge(t *testing.T) {
@@ -189,7 +457,7 @@ func TestFactsEdgeTransferAppliesFrozenTableEvidenceOnlyOnSelectedEdge(t *testin
 	}
 }
 
-func TestFactsEdgeTransferRootRefinementInvalidatesDescendantPathFacts(t *testing.T) {
+func TestFactsEdgeTransferBareTableRootRefinementPreservesDescendantPathFacts(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
 	branch := graph.AddNode(cfg.NodeBranch)
@@ -225,13 +493,73 @@ func TestFactsEdgeTransferRootRefinementInvalidatesDescendantPathFacts(t *testin
 					),
 				},
 			}),
-			Visibility: resolver,
+			Visibility:  resolver,
+			ProjectPath: testLuaPathTypeProjector,
 		}),
 	})
 
 	assertRuntimeKind(t, reg, got[thenPoint].ReadValue(reg, key.SymbolValue(target)), runtimekind.Singleton(runtimekind.Table))
-	assertPathValue(t, reg, ks, got[thenPoint], childKey, product.Bottom(reg))
+	assertPathValue(t, reg, ks, got[thenPoint], childKey, staleChild)
 	assertPathValue(t, reg, ks, got[elsePoint], childKey, staleChild)
+}
+
+func TestFactsEdgeTransferRuntimeKindRootRefinementNarrowsUnionWitness(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	target := symbol.ID(330)
+	rootPath := pathdom.NewPath(target, "x")
+	visibilityBuilder := visibility.NewBuilder()
+	version := visibilityBuilder.Define(branch, target, "x")
+	visibilityBuilder.SetVisible(thenPoint, target, version)
+	visibilityBuilder.SetVisible(elsePoint, target, version)
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	mapType := typetable.NewMap(typ.String, typ.String)
+	typeValues := typevalue.NewCache()
+	valueType := typeexpr.Union(typ.String, mapType)
+	initialValue := typeValues.FromTypeWithWitness(reg, valueType)
+	initialValue = product.Set(reg, initialValue, identity.Key, identity.Singleton(identity.LuaTableLiteral(1, 1)))
+	initial := state.State{}.WriteValue(reg, key.SymbolValue(target), initialValue)
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						branchWithRuntimeKind(rootPath, runtimekind.Singleton(runtimekind.Table), true, runtimekind.Top().Without(runtimekind.Table), true),
+					),
+				},
+			}),
+			Visibility:  resolver,
+			ProjectPath: testLuaPathTypeProjector,
+			TypeValues:  typeValues,
+		}),
+	})
+
+	if state.Domain(reg).Equal(got[thenPoint], state.Domain(reg).Bottom()) {
+		t.Fatal("runtime-kind table branch collapsed compatible union witness to unreachable")
+	}
+	thenValue := got[thenPoint].ReadValue(reg, key.SymbolValue(target))
+	thenType, ok := typevalue.TypeOf(reg, thenValue)
+	if !ok || !typ.TypeEquals(thenType, mapType) {
+		t.Fatalf("then type = %v/%v, want %v", thenType, ok, mapType)
+	}
+	elseValue := got[elsePoint].ReadValue(reg, key.SymbolValue(target))
+	elseType, ok := typevalue.TypeOf(reg, elseValue)
+	if !ok || !typ.TypeEquals(elseType, typ.String) {
+		t.Fatalf("else type = %v/%v, want string", elseType, ok)
+	}
 }
 
 func TestFactsEdgeTransferAppliesBranchDiffConstraintRelationGraphKeys(t *testing.T) {
@@ -343,6 +671,244 @@ func TestFactsEdgeTransferRootRefinementAllowsLaterChildRepublish(t *testing.T) 
 	assertPathValue(t, reg, ks, got[elsePoint], childKey, staleChild)
 }
 
+func TestFactsEdgeTransferMetadataRootRefinementKeepsIndependentChildGuard(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	target := symbol.ID(331)
+	rootPath := pathdom.NewPath(target, "raw")
+	idPath := rootPath.Field("id")
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(branch, target, "raw")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	idKey := resolver.KeyAt(branch, idPath)
+	childGuard := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	rootMetadata := product.Set(reg, product.Top(), variantorigin.Key, variantorigin.Of(99, []int{1}))
+
+	got := transfer.Run(transfer.Config{
+		Graph:    graph,
+		Registry: reg,
+		EntryState: state.State{}.
+			WriteValue(reg, key.SymbolValue(target), product.Top()).
+			WritePathKey(reg, ks, idKey, childGuard),
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						factflow.NewBranchRefinement(rootPath, factflow.NewValueConstraint(rootMetadata), true, factflow.ValueRefinement{}, false),
+					),
+				},
+			}),
+			Visibility: resolver,
+		}),
+	})
+
+	assertRuntimeKind(t, reg, got[thenPoint].ReadPathKey(reg, ks, idKey), runtimekind.Singleton(runtimekind.String))
+	assertPathValue(t, reg, ks, got[elsePoint], idKey, childGuard)
+}
+
+func TestFactsEdgeTransferMetadataRootRefinementDropsExplicitAnyChildFact(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	target := symbol.ID(332)
+	rootPath := pathdom.NewPath(target, "raw")
+	idPath := rootPath.Field("id")
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(branch, target, "raw")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	idKey := resolver.KeyAt(branch, idPath)
+	taintedChild := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	taintedChild = product.Set(reg, taintedChild, evidence.Key, evidence.ExplicitTop())
+	rootMetadata := product.Set(reg, product.Top(), variantorigin.Key, variantorigin.Of(99, []int{1}))
+
+	got := transfer.Run(transfer.Config{
+		Graph:    graph,
+		Registry: reg,
+		EntryState: state.State{}.
+			WriteValue(reg, key.SymbolValue(target), product.Top()).
+			WritePathKey(reg, ks, idKey, taintedChild),
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						factflow.NewBranchRefinement(rootPath, factflow.NewValueConstraint(rootMetadata), true, factflow.ValueRefinement{}, false),
+					),
+				},
+			}),
+			Visibility: resolver,
+		}),
+	})
+
+	assertPathValue(t, reg, ks, got[thenPoint], idKey, product.Bottom(reg))
+	assertPathValue(t, reg, ks, got[elsePoint], idKey, taintedChild)
+}
+
+func TestFactsEdgeTransferScalarChildRuntimeGuardClearsExplicitAnyEvidence(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	root := symbol.ID(333)
+	kindPath := pathdom.NewPath(root, "raw").Field("kind")
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(branch, root, "raw")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	kindKey := resolver.KeyAt(branch, kindPath)
+	taintedChild := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	taintedChild = product.Set(reg, taintedChild, evidence.Key, evidence.ExplicitTop())
+
+	got := transfer.Run(transfer.Config{
+		Graph:    graph,
+		Registry: reg,
+		EntryState: state.State{}.
+			WriteValue(reg, key.SymbolValue(root), product.Set(reg, product.Top(), evidence.Key, evidence.ExplicitTop())).
+			WritePathKey(reg, ks, kindKey, taintedChild),
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						factflow.NewBranchRefinement(kindPath, typenarrow.MatchRefinement(reg, runtimekind.String), true, factflow.ValueRefinement{}, false),
+					),
+				},
+			}),
+			Visibility: resolver,
+		}),
+	})
+
+	gotChild := got[thenPoint].ReadPathKey(reg, ks, kindKey)
+	assertRuntimeKind(t, reg, gotChild, runtimekind.Singleton(runtimekind.String))
+	if gotEvidence := product.Get(reg, gotChild, evidence.Key); !evidence.Equal(gotEvidence, evidence.Top()) {
+		t.Fatalf("then child evidence = %s in %s, want trusted top from scalar runtime guard", gotEvidence, formatValue(reg, gotChild))
+	}
+	assertPathValue(t, reg, ks, got[elsePoint], kindKey, taintedChild)
+}
+
+func TestFactsEdgeTransferTableChildRuntimeGuardInheritsExplicitAnyRootEvidence(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	root := symbol.ID(334)
+	itemsPath := pathdom.NewPath(root, "block").Field("items")
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(branch, root, "block")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	itemsKey := resolver.KeyAt(branch, itemsPath)
+	child := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
+
+	got := transfer.Run(transfer.Config{
+		Graph:    graph,
+		Registry: reg,
+		EntryState: state.State{}.
+			WriteValue(reg, key.SymbolValue(root), product.Set(reg, product.Top(), evidence.Key, evidence.ExplicitTop())).
+			WritePathKey(reg, ks, itemsKey, child),
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						factflow.NewBranchRefinement(itemsPath, typenarrow.MatchRefinement(reg, runtimekind.Table), true, factflow.ValueRefinement{}, false),
+					),
+				},
+			}),
+			Visibility: resolver,
+		}),
+	})
+
+	gotChild := got[thenPoint].ReadPathKey(reg, ks, itemsKey)
+	assertRuntimeKind(t, reg, gotChild, runtimekind.Singleton(runtimekind.Table))
+	if gotEvidence := product.Get(reg, gotChild, evidence.Key); !evidence.Equal(gotEvidence, evidence.ExplicitTop()) {
+		t.Fatalf("then child evidence = %s in %s, want explicit top inherited from root", gotEvidence, formatValue(reg, gotChild))
+	}
+	assertPathValue(t, reg, ks, got[elsePoint], itemsKey, child)
+}
+
+func TestFactsEdgeTransferDescendantTableRefinementWritesStaticWitness(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	target := symbol.ID(331)
+	rootPath := pathdom.NewPath(target, "bindings")
+	childPath := rootPath.Field("checkpoint")
+	visibilityBuilder := visibility.NewBuilder()
+	version := visibilityBuilder.Define(branch, target, "bindings")
+	visibilityBuilder.SetVisible(thenPoint, target, version)
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	childKey := resolver.KeyForVersion(target, version.ID, childPath.Segments)
+	tableValue := typeValue(reg, typetable.BuiltinTopMarker())
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: state.State{}.WriteValue(reg, key.SymbolValue(target), product.Top()),
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						factflow.NewBranchRefinement(
+							childPath,
+							factflow.NewValueConstraint(tableValue),
+							true,
+							factflow.ValueRefinement{},
+							false,
+						),
+					),
+				},
+			}),
+			Visibility: resolver,
+		}),
+	})
+
+	gotValue := got[thenPoint].ReadPathKey(reg, ks, childKey)
+	gotType, ok := typevalue.TypeOf(reg, gotValue)
+	if !ok || !typ.TypeEquals(gotType, typetable.BuiltinTopMarker()) {
+		t.Fatalf("descendant table refinement type = %v/%v in %s, want builtin table marker", gotType, ok, formatValue(reg, gotValue))
+	}
+}
+
 func TestFactsEdgeTransferDescendantTruthyNarrowsRootOriginFromFlowType(t *testing.T) {
 	reg := standard.Registry()
 	profile := typetable.NewRecord().
@@ -414,10 +980,243 @@ func TestFactsEdgeTransferDescendantTruthyNarrowsRootOriginFromFlowType(t *testi
 
 			thenState := got[thenPoint]
 			assertVariantOriginType(t, reg, thenState, target, resultType, valueCase)
+			resolved, ok := resolvePathValueAt(reg, resolver, thenPoint, thenState, valuePath, testLuaPathTypeProjector)
+			if !ok {
+				t.Fatal("result.value did not resolve after result.ok guard")
+			}
+			gotType, ok := typevalue.TypeOf(reg, resolved.value)
+			if !ok || !typ.TypeEquals(gotType, profile) {
+				t.Fatalf("result.value type = %v/%v, want %v", gotType, ok, profile)
+			}
 			assertPathValue(t, reg, ks, thenState, valueKey, product.Bottom(reg))
 			assertPathPresence(t, reg, ks, thenState, okKey, presence.Present())
 			assertPathValue(t, reg, ks, got[elsePoint], valueKey, staleValue)
 		})
+	}
+}
+
+func TestFactsEdgeTransferDescendantTruthyNarrowsOptionalUnionRootByPresentField(t *testing.T) {
+	reg := standard.Registry()
+	typeValues := typevalue.NewCache()
+	template := typetable.NewRecord().
+		Field("kind", typ.LiteralString("template")).
+		Field("id", typ.String).
+		Field("data_func", typeexpr.Optional(typ.String)).
+		Field("template_set", typ.String).
+		Build()
+	component := typetable.NewRecord().
+		Field("kind", typ.LiteralString("component")).
+		Field("id", typ.String).
+		Field("url", typ.String).
+		Build()
+	pageType := typeexpr.Optional(typeexpr.Union(template, component))
+
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	target := symbol.ID(334)
+	rootPath := pathdom.NewPath(target, "page")
+	dataFuncPath := rootPath.Field("data_func")
+	visibilityBuilder := visibility.NewBuilder()
+	version := visibilityBuilder.Define(branch, target, "page")
+	visibilityBuilder.SetVisible(thenPoint, target, version)
+	visibilityBuilder.SetVisible(elsePoint, target, version)
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	dataFuncKey := resolver.KeyForVersion(target, version.ID, dataFuncPath.Segments)
+	staleDataFunc := typeValues.FromType(reg, typeexpr.Optional(typ.String))
+	facts := factflow.NewFacts(factflow.FactsInput{
+		BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+			branch: factflow.NewBranchRefinementSet(
+				branchWithPresence(rootPath, presence.Present(), true, presence.Absent(), true),
+				branchWithPresence(dataFuncPath, presence.Present(), true, presence.Absent(), true),
+			),
+		},
+	})
+	initial := state.State{}.
+		WriteValue(reg, key.SymbolValue(target), typeValues.FromTypeWithWitness(reg, pageType)).
+		WritePathKey(reg, ks, dataFuncKey, staleDataFunc)
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts:       facts,
+			Visibility:  resolver,
+			ProjectPath: testLuaPathTypeProjector,
+			TypeValues:  typeValues,
+		}),
+	})
+
+	thenState := got[thenPoint]
+	assertVariantOriginType(t, reg, thenState, target, pageType, template)
+	resolved, ok := resolvePathValueAt(reg, resolver, thenPoint, thenState, dataFuncPath, testLuaPathTypeProjector)
+	if !ok {
+		t.Fatal("page.data_func did not resolve after page.data_func guard")
+	}
+	gotType, ok := typevalue.TypeOf(reg, resolved.value)
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("page.data_func type = %v/%v in %s, want string", gotType, ok, formatValue(reg, resolved.value))
+	}
+	assertPathPresence(t, reg, ks, thenState, dataFuncKey, presence.Present())
+}
+
+func TestFactsEdgeTransferTypedRootRefinementPreservesCompatibleDescendantPresence(t *testing.T) {
+	reg := standard.Registry()
+	typeValues := typevalue.NewCache()
+	template := typetable.NewRecord().
+		Field("kind", typ.LiteralString("template")).
+		Field("id", typ.String).
+		Field("data_func", typeexpr.Optional(typ.String)).
+		Field("template_set", typ.String).
+		Build()
+	component := typetable.NewRecord().
+		Field("kind", typ.LiteralString("component")).
+		Field("id", typ.String).
+		Field("url", typ.String).
+		Build()
+	pageType := typeexpr.Optional(typeexpr.Union(template, component))
+
+	graph := cfg.New()
+	presentBranch := graph.AddNode(cfg.NodeBranch)
+	rootNarrowBranch := graph.AddNode(cfg.NodeBranch)
+	after := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), presentBranch, false)
+	graph.AddEdge(presentBranch, graph.Exit(), true)
+	graph.AddEdge(presentBranch, rootNarrowBranch, false)
+	graph.AddEdge(rootNarrowBranch, graph.Exit(), true)
+	graph.AddEdge(rootNarrowBranch, after, false)
+	graph.AddEdge(after, graph.Exit(), false)
+
+	target := symbol.ID(335)
+	rootPath := pathdom.NewPath(target, "page")
+	dataFuncPath := rootPath.Field("data_func")
+	visibilityBuilder := visibility.NewBuilder()
+	version := visibilityBuilder.Define(presentBranch, target, "page")
+	visibilityBuilder.SetVisible(rootNarrowBranch, target, version)
+	visibilityBuilder.SetVisible(after, target, version)
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	dataFuncKey := resolver.KeyForVersion(target, version.ID, dataFuncPath.Segments)
+	initial := state.State{}.
+		WriteValue(reg, key.SymbolValue(target), typeValues.FromTypeWithWitness(reg, pageType)).
+		WritePathKey(reg, ks, dataFuncKey, typeValues.FromType(reg, typeexpr.Optional(typ.String)))
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					presentBranch: factflow.NewBranchRefinementSet(
+						branchWithPresence(dataFuncPath, presence.Bottom(), false, presence.Present(), true),
+					),
+					rootNarrowBranch: factflow.NewBranchRefinementSet(
+						factflow.NewBranchRefinement(
+							rootPath,
+							factflow.ValueRefinement{}, false,
+							factflow.NewValueConstraint(typeValues.FromTypeWithWitness(reg, template)), true,
+						),
+					),
+				},
+			}),
+			Visibility:  resolver,
+			ProjectPath: testLuaPathTypeProjector,
+			TypeValues:  typeValues,
+		}),
+	})
+
+	assertPathPresence(t, reg, ks, got[after], dataFuncKey, presence.Present())
+	resolved, ok := resolvePathValueAt(reg, resolver, after, got[after], dataFuncPath, testLuaPathTypeProjector)
+	if !ok {
+		t.Fatal("page.data_func did not resolve after compatible root narrowing")
+	}
+	gotType, ok := typevalue.TypeOf(reg, resolved.value)
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("page.data_func type = %v/%v in %s, want string", gotType, ok, formatValue(reg, resolved.value))
+	}
+}
+
+func TestFactsEdgeTransferDescendantLiteralRootNarrowingPreservesCompatibleDescendantPresence(t *testing.T) {
+	reg := standard.Registry()
+	typeValues := typevalue.NewCache()
+	template := typetable.NewRecord().
+		Field("kind", typ.LiteralString("template")).
+		Field("id", typ.String).
+		Field("data_func", typeexpr.Optional(typ.String)).
+		Field("template_set", typ.String).
+		Build()
+	component := typetable.NewRecord().
+		Field("kind", typ.LiteralString("component")).
+		Field("id", typ.String).
+		Field("url", typ.String).
+		Build()
+	pageType := typeexpr.Optional(typeexpr.Union(template, component))
+
+	graph := cfg.New()
+	presentBranch := graph.AddNode(cfg.NodeBranch)
+	literalBranch := graph.AddNode(cfg.NodeBranch)
+	after := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), presentBranch, false)
+	graph.AddEdge(presentBranch, graph.Exit(), true)
+	graph.AddEdge(presentBranch, literalBranch, false)
+	graph.AddEdge(literalBranch, graph.Exit(), true)
+	graph.AddEdge(literalBranch, after, false)
+	graph.AddEdge(after, graph.Exit(), false)
+
+	target := symbol.ID(336)
+	rootPath := pathdom.NewPath(target, "page")
+	dataFuncPath := rootPath.Field("data_func")
+	visibilityBuilder := visibility.NewBuilder()
+	version := visibilityBuilder.Define(presentBranch, target, "page")
+	visibilityBuilder.SetVisible(literalBranch, target, version)
+	visibilityBuilder.SetVisible(after, target, version)
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	dataFuncKey := resolver.KeyForVersion(target, version.ID, dataFuncPath.Segments)
+	initial := state.State{}.
+		WriteValue(reg, key.SymbolValue(target), typeValues.FromTypeWithWitness(reg, pageType)).
+		WritePathKey(reg, ks, dataFuncKey, typeValues.FromType(reg, typeexpr.Optional(typ.String)))
+	notEmpty := factflow.NewNegatedLiteralConstraint(typeValues.FromTypeWithWitness(reg, typ.LiteralString("")))
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					presentBranch: factflow.NewBranchRefinementSet(
+						branchWithPresence(dataFuncPath, presence.Bottom(), false, presence.Present(), true),
+					),
+					literalBranch: factflow.NewBranchRefinementSet(
+						factflow.NewBranchRefinement(dataFuncPath, factflow.ValueRefinement{}, false, notEmpty, true),
+					),
+				},
+			}),
+			Visibility:  resolver,
+			ProjectPath: testLuaPathTypeProjector,
+			TypeValues:  typeValues,
+		}),
+	})
+
+	assertPathPresence(t, reg, ks, got[after], dataFuncKey, presence.Present())
+	resolved, ok := resolvePathValueAt(reg, resolver, after, got[after], dataFuncPath, testLuaPathTypeProjector)
+	if !ok {
+		t.Fatal("page.data_func did not resolve after descendant literal root narrowing")
+	}
+	gotType, ok := typevalue.TypeOf(reg, resolved.value)
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("page.data_func type = %v/%v in %s, want string", gotType, ok, formatValue(reg, resolved.value))
 	}
 }
 
@@ -714,6 +1513,183 @@ func TestFactsEdgeTransferDescendantLiteralNarrowsRootOriginFromFlowType(t *test
 
 	assertVariantOriginType(t, reg, got[thenPoint], target, rootType, box)
 	assertPathValue(t, reg, ks, got[thenPoint], resolver.KeyForVersion(target, version.ID, rootPath.Field("node").Field("left").Segments), product.Bottom(reg))
+}
+
+func TestFactsEdgeTransferDescendantLiteralDoesNotCloseUntrustedTopRoot(t *testing.T) {
+	reg := standard.Registry()
+	image := typetable.NewRecord().
+		Field("type", typ.LiteralString("image")).
+		Build()
+	call := typetable.NewRecord().
+		Field("type", typ.LiteralString("function_call")).
+		Field("arguments", typ.String).
+		Build()
+	rootType := typeexpr.Union(image, call)
+
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+
+	target := symbol.ID(336)
+	rootPath := pathdom.NewPath(target, "payload")
+	typePath := rootPath.Field("type")
+	visibilityBuilder := visibility.NewBuilder()
+	version := visibilityBuilder.Define(branch, target, "payload")
+	visibilityBuilder.SetVisible(thenPoint, target, version)
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	lit := typ.LiteralString("image")
+	refinement := factflow.NewValueConstraint(typeValue(reg, lit))
+	rootValue := typeValue(reg, rootType)
+	rootValue = product.Set(reg, rootValue, evidence.Key, evidence.ExplicitTop())
+	initial := state.State{}.WriteValue(reg, key.SymbolValue(target), rootValue)
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						factflow.NewBranchRefinement(typePath, refinement, true, factflow.ValueRefinement{}, false),
+					),
+				},
+			}),
+			Visibility: resolver,
+		}),
+	})
+
+	root := got[thenPoint].ReadValue(reg, key.SymbolValue(target))
+	if gotEvidence := product.Get(reg, root, evidence.Key); !evidence.Equal(gotEvidence, evidence.ExplicitTop()) {
+		t.Fatalf("root evidence = %s in %s, want explicit top", gotEvidence, formatValue(reg, root))
+	}
+	gotType, ok := typevalue.TypeOf(reg, root)
+	if !ok || !typ.TypeEquals(gotType, rootType) {
+		t.Fatalf("root type = %v/%v in %s, want broad union %s", gotType, ok, formatValue(reg, root), rootType)
+	}
+}
+
+func TestFactsEdgeTransferDescendantTruthyPreservesHeapRootIdentity(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+
+	batch := symbol.ID(1337)
+	rootPath := pathdom.NewPath(batch, "batch")
+	itemPath := rootPath.Field("items").IndexStr("route-1")
+	batchID := identity.ID{Kind: "lua.table", Site: "branch-refinement", Index: 1}
+	itemsID := identity.ID{Kind: "lua.table", Site: "branch-refinement", Index: 2}
+	batchType := typetable.NewRecord().
+		Field("items", typetable.NewMap(typ.String, typ.String)).
+		Build()
+	batchValue := product.Set(reg, typeValue(reg, batchType), identity.Key, identity.Singleton(batchID))
+	itemsValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(itemsID))
+	visibilityBuilder := visibility.NewBuilder()
+	version := visibilityBuilder.Define(branch, batch, "batch")
+	visibilityBuilder.SetVisible(thenPoint, batch, version)
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	itemsMemberKey, ok := heapidentity.StaticMemberSuffixKey(ks, fieldSuffix("items").Segments)
+	if !ok {
+		t.Fatal("missing items suffix key")
+	}
+	initial := state.State{}.
+		WriteValue(reg, key.SymbolValue(batch), batchValue).
+		WritePlacement(batchID, placement.Stack).
+		WritePlacement(itemsID, placement.Stack).
+		WriteHeapTableObject(reg, batchID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root:          batchValue,
+			StaticMembers: map[keyspace.Key]product.Value{itemsMemberKey: itemsValue},
+		})).
+		WriteHeapTableObject(reg, itemsID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: itemsValue}))
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						factflow.NewBranchRefinement(itemPath, factflow.NewValueConstraint(product.NewWithPresence(reg, product.ShapeTop, presence.Present())), true, factflow.ValueRefinement{}, false),
+					),
+				},
+			}),
+			Visibility: resolver,
+		}),
+	})
+
+	root := got[thenPoint].ReadValue(reg, key.SymbolValue(batch))
+	if gotID, ok := product.Get(reg, root, identity.Key).ID(); !ok || gotID != batchID {
+		t.Fatalf("root identity = %v/%v, want %v in %s", gotID, ok, batchID, formatValue(reg, root))
+	}
+	if gotPlacement := got[thenPoint].ReadPlacement(batchID); gotPlacement != placement.Stack {
+		t.Fatalf("batch placement = %s, want stack", gotPlacement)
+	}
+	if gotPlacement := got[thenPoint].ReadPlacement(itemsID); gotPlacement != placement.Stack {
+		t.Fatalf("items placement = %s, want stack", gotPlacement)
+	}
+}
+
+func TestFactsEdgeTransferDescendantLiteralContradictsSpecializedRecord(t *testing.T) {
+	reg := standard.Registry()
+	typeValues := typevalue.NewCache()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	cell := symbol.ID(337)
+	cellPath := pathdom.NewPath(cell, "cell")
+	kindPath := cellPath.Field("kind")
+	textCell := typetable.NewRecord().
+		Field("kind", typ.LiteralString("string")).
+		Field("raw", typ.String).
+		Build()
+	visibilityBuilder := visibility.NewBuilder()
+	version := visibilityBuilder.Define(branch, cell, "cell")
+	visibilityBuilder.SetVisible(thenPoint, cell, version)
+	visibilityBuilder.SetVisible(elsePoint, cell, version)
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	initial := state.State{}.
+		WriteValue(reg, key.SymbolValue(cell), typeValues.FromTypeWithWitness(reg, textCell))
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						factflow.NewBranchRefinement(kindPath, factflow.NewValueConstraint(typeValues.FromTypeWithWitness(reg, typ.LiteralString("boolean"))), true, factflow.ValueRefinement{}, false),
+					),
+				},
+			}),
+			Visibility:  resolver,
+			ProjectPath: testLuaPathTypeProjector,
+			TypeValues:  typeValues,
+		}),
+	})
+
+	if !stateIsBottom(reg, got[thenPoint]) {
+		t.Fatalf("then state = %v, want unreachable because specialized cell.kind is string", got[thenPoint])
+	}
+	if stateIsBottom(reg, got[elsePoint]) {
+		t.Fatal("else state unexpectedly bottom")
+	}
 }
 
 func TestFactsEdgeTransferRuntimeKindContradictionGoesBottom(t *testing.T) {

@@ -1,6 +1,7 @@
 package summary
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
@@ -64,4 +65,39 @@ func widenHeapTableObjects(reg *axis.Registry, prev, next map[identity.ID]heapid
 		normalizeHeapTableObjects(reg, prev),
 		normalizeHeapTableObjects(reg, next),
 	))
+}
+
+func heapKeySpaceForPair(a, b Summary) *keyspace.KeySpace {
+	if a.HeapKeySpace != nil {
+		return a.HeapKeySpace
+	}
+	return b.HeapKeySpace
+}
+
+func heapTableObjectsInKeySpace(s Summary, target *keyspace.KeySpace) map[identity.ID]heapidentity.TableObject {
+	if len(s.HeapTableObjects) == 0 {
+		return nil
+	}
+	if target == nil || s.HeapKeySpace == nil || s.HeapKeySpace == target {
+		return s.HeapTableObjects
+	}
+	return s.RekeyHeapTableObjects(target).HeapTableObjects
+}
+
+func joinSummaryHeapTableObjects(reg *axis.Registry, a, b Summary) (map[identity.ID]heapidentity.TableObject, *keyspace.KeySpace) {
+	ks := heapKeySpaceForPair(a, b)
+	return joinHeapTableObjects(
+		reg,
+		heapTableObjectsInKeySpace(a, ks),
+		heapTableObjectsInKeySpace(b, ks),
+	), ks
+}
+
+func widenSummaryHeapTableObjects(reg *axis.Registry, prev, next Summary) (map[identity.ID]heapidentity.TableObject, *keyspace.KeySpace) {
+	ks := heapKeySpaceForPair(prev, next)
+	return widenHeapTableObjects(
+		reg,
+		heapTableObjectsInKeySpace(prev, ks),
+		heapTableObjectsInKeySpace(next, ks),
+	), ks
 }

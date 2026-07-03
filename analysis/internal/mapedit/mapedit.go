@@ -37,3 +37,33 @@ func Without[K comparable, V any](in map[K]V, key K) (map[K]V, bool) {
 	delete(out, key)
 	return out, true
 }
+
+// DeleteMatching returns a copy of in with every matching entry removed.
+// Missing matches are a no-op and return the original map unchanged.
+// remove must be pure; it may be called more than once for matching entries.
+func DeleteMatching[K comparable, V any](in map[K]V, remove func(K, V) bool) (map[K]V, bool) {
+	if len(in) == 0 {
+		return nil, false
+	}
+	changed := false
+	for key, value := range in {
+		if remove(key, value) {
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		return in, false
+	}
+	out := make(map[K]V, len(in))
+	for key, value := range in {
+		if remove(key, value) {
+			continue
+		}
+		out[key] = value
+	}
+	if len(out) == 0 {
+		return nil, true
+	}
+	return out, true
+}

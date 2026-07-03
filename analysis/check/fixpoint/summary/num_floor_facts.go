@@ -18,6 +18,14 @@ type numFloorFactLane struct{}
 var numFloorLane numFloorFactLane
 
 func (numFloorFactLane) Normalize(in []callboundary.NumFloorFact) []callboundary.NumFloorFact {
+	return normalizeNumFloorFacts(in, true)
+}
+
+func (numFloorFactLane) NormalizeOwned(in []callboundary.NumFloorFact) []callboundary.NumFloorFact {
+	return normalizeNumFloorFacts(in, false)
+}
+
+func normalizeNumFloorFacts(in []callboundary.NumFloorFact, clone bool) []callboundary.NumFloorFact {
 	if len(in) == 0 {
 		return nil
 	}
@@ -26,7 +34,9 @@ func (numFloorFactLane) Normalize(in []callboundary.NumFloorFact) []callboundary
 		if !fact.Path.IsPlaceholder() {
 			continue
 		}
-		fact.Path = fact.Path.Clone()
+		if clone {
+			fact.Path = fact.Path.Clone()
+		}
 		key := numFloorKeyOf(fact)
 		if kept, ok := byPath[key]; ok && kept.Floor >= fact.Floor {
 			continue
@@ -64,6 +74,18 @@ func (numFloorFactLane) Clone(in []callboundary.NumFloorFact) []callboundary.Num
 }
 
 func (lane numFloorFactLane) Equal(a, b []callboundary.NumFloorFact) bool {
+	if len(a) == len(b) {
+		same := true
+		for i := range a {
+			if numFloorKeyOf(a[i]) != numFloorKeyOf(b[i]) || a[i].Floor != b[i].Floor {
+				same = false
+				break
+			}
+		}
+		if same {
+			return true
+		}
+	}
 	a = lane.Normalize(a)
 	b = lane.Normalize(b)
 	if len(a) != len(b) {

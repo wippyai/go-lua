@@ -26,7 +26,7 @@ func (r *Result) extractLocalAssign(stmt *ast.LocalAssignStmt, bindings *bind.Re
 		if topLevelValueListCall(stmt.Exprs, call) {
 			context, exprs, callTargets = CallContextAssignmentSource, stmt.Exprs, targets
 		}
-		r.calls[points[i]] = buildCallFact(stmt, nil, context, exprs, call.index, call.call, bindings, callTargets, resolver)
+		r.setCall(points[i], buildCallFact(stmt, nil, context, exprs, call.index, call.call, bindings, callTargets, resolver))
 	}
 	assignPoints := points[len(calls):]
 	sources := assignmentValueSources(stmt.Exprs, len(stmt.Names), resolver)
@@ -38,7 +38,7 @@ func (r *Result) extractLocalAssign(stmt *ast.LocalAssignStmt, bindings *bind.Re
 		if bindings != nil {
 			id, hasSymbol = bindings.LocalSymbolAt(stmt, i)
 		}
-		r.localDeclarationFacts[assignPoints[i]] = LocalAssignmentFact{
+		r.setLocalAssignment(assignPoints[i], LocalAssignmentFact{
 			Stmt:      stmt,
 			Index:     i,
 			Name:      name,
@@ -49,7 +49,7 @@ func (r *Result) extractLocalAssign(stmt *ast.LocalAssignStmt, bindings *bind.Re
 			HasSymbol: hasSymbol && id != 0,
 			Exprs:     exprs,
 			Types:     types,
-		}
+		})
 	}
 	return nil
 }
@@ -72,7 +72,7 @@ func (r *Result) extractAssign(stmt *ast.AssignStmt, bindings *bind.Result, poin
 		if topLevelValueListCall(stmt.Rhs, call) {
 			context, exprs, callTargets = CallContextAssignmentSource, stmt.Rhs, targets
 		}
-		r.calls[points[i]] = buildCallFact(stmt, nil, context, exprs, call.index, call.call, bindings, callTargets, resolver)
+		r.setCall(points[i], buildCallFact(stmt, nil, context, exprs, call.index, call.call, bindings, callTargets, resolver))
 	}
 	assignPoints := points[len(calls):]
 	sources := assignmentValueSources(stmt.Rhs, len(stmt.Lhs), resolver)
@@ -86,7 +86,7 @@ func (r *Result) extractAssign(stmt *ast.AssignStmt, bindings *bind.Result, poin
 		}
 		targetPath, hasPath := pathexpr.Resolve(target, bindings)
 		containerPath, hasContainerPath := pathexpr.ResolveMutationContainer(target, bindings)
-		r.assignmentFacts[assignPoints[i]] = OrdinaryAssignmentFact{
+		r.setOrdinaryAssignment(assignPoints[i], OrdinaryAssignmentFact{
 			Stmt:             stmt,
 			Index:            i,
 			Target:           target,
@@ -100,7 +100,7 @@ func (r *Result) extractAssign(stmt *ast.AssignStmt, bindings *bind.Result, poin
 			HasContainerPath: hasContainerPath,
 			Lhs:              lhs,
 			Rhs:              rhs,
-		}
+		})
 	}
 	return nil
 }

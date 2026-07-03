@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -21,6 +22,198 @@ type sourceValueFunc func(cfg.Point, factflow.ValueSource, state.State, func(cfg
 
 func (f sourceValueFunc) ValueOfSource(point cfg.Point, source factflow.ValueSource, in state.State, read func(cfg.Point) state.State) (product.Value, bool) {
 	return f(point, source, in, read)
+}
+
+func TestSourceValueAtBoundaryCachesSolvedReadModelProjection(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(7)
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(12), HasExpr: true}
+	want := typevalue.FromType(reg, typ.String)
+	calls := 0
+	result := &Result{
+		registry: reg,
+		flow: transfer.Result{
+			point: state.State{}.WriteValue(reg, statekey.SymbolValue(symbol.ID(9001)), typevalue.FromType(reg, typ.Boolean)),
+		},
+		sources: sourceValueFunc(func(gotPoint cfg.Point, gotSource factflow.ValueSource, _ state.State, _ func(cfg.Point) state.State) (product.Value, bool) {
+			calls++
+			if gotPoint != point {
+				t.Fatalf("point = %d, want %d", gotPoint, point)
+			}
+			if gotSource != source {
+				t.Fatalf("source = %#v, want %#v", gotSource, source)
+			}
+			return want, true
+		}),
+	}
+
+	first, ok := result.SourceValueAtBoundary(point, source)
+	if !ok {
+		t.Fatal("first SourceValueAtBoundary returned !ok")
+	}
+	second, ok := result.SourceValueAtBoundary(point, source)
+	if !ok {
+		t.Fatal("second SourceValueAtBoundary returned !ok")
+	}
+	if !product.Equal(reg, first, second) || !product.Equal(reg, first, want) {
+		t.Fatalf("cached values = %v then %v, want %v", first, second, want)
+	}
+	if calls != 1 {
+		t.Fatalf("source resolver calls = %d, want 1", calls)
+	}
+}
+
+func TestSourceValueBeforeBoundarySkipsUnreachablePoint(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(17)
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(170), HasExpr: true}
+	calls := 0
+	result := &Result{
+		registry: reg,
+		flow: transfer.Result{
+			point: state.Domain(reg).Bottom(),
+		},
+		sources: sourceValueFunc(func(cfg.Point, factflow.ValueSource, state.State, func(cfg.Point) state.State) (product.Value, bool) {
+			calls++
+			return typevalue.FromType(reg, typ.String), true
+		}),
+	}
+
+	if got, ok := result.SourceValueBeforeBoundary(point, source); ok {
+		t.Fatalf("SourceValueBeforeBoundary = %v, want !ok for unreachable point", got)
+	}
+	if calls != 0 {
+		t.Fatalf("source resolver calls = %d, want 0 for unreachable point", calls)
+	}
+}
+
+func TestPathValueAtBoundaryCachesSolvedReadModelProjection(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(8)
+	sym := symbol.ID(24)
+	p := pathdom.NewPath(sym, "record")
+	want := typevalue.FromType(reg, typ.String)
+	st := state.State{}.WriteValue(reg, statekey.SymbolValue(sym), want)
+	builder := visibility.NewBuilder()
+	builder.Define(point, sym, "record")
+	result := &Result{
+		registry:   reg,
+		visibility: visibility.NewResolver(builder.Build()),
+		flow: transfer.Result{
+			point: st,
+		},
+	}
+
+	first, ok := result.PathValueAtBoundary(point, p)
+	if !ok {
+		t.Fatal("first PathValueAtBoundary returned !ok")
+	}
+	if got := result.queries.pathValueCount(); got != 1 {
+		t.Fatalf("path cache size after first read = %d, want 1", got)
+	}
+	result.queries.forEachPathValueKey(func(key pathValueCacheKey) bool {
+		if key.path.Legacy != "" {
+			t.Fatalf("path cache used legacy string key %q with resolver-backed keyspace", key.path.Legacy)
+		}
+		if got := result.visibility.KeySpace().Format(key.path.Key); got != p.Key() {
+			t.Fatalf("path cache structural key = %q, want %q", got, p.Key())
+		}
+		return true
+	})
+	second, ok := result.PathValueAtBoundary(point, p)
+	if !ok {
+		t.Fatal("second PathValueAtBoundary returned !ok")
+	}
+	if got := result.queries.pathValueCount(); got != 1 {
+		t.Fatalf("path cache size after second read = %d, want 1", got)
+	}
+	if !product.Equal(reg, first, second) || !product.Equal(reg, first, want) {
+		t.Fatalf("cached path values = %v then %v, want %v", first, second, want)
+	}
+}
+
+func TestPathProjectionContextsAreScopedByReadMode(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(9)
+	sym := symbol.ID(25)
+	p := pathdom.NewPath(sym, "record")
+	before := typevalue.FromType(reg, typ.Integer)
+	boundary := typevalue.FromType(reg, typ.String)
+
+	builder := visibility.NewBuilder()
+	builder.Define(point, sym, "record")
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(21), HasExpr: true}
+	result := &Result{
+		registry:   reg,
+		visibility: visibility.NewResolver(builder.Build()),
+		facts: factflow.NewFacts(factflow.FactsInput{
+			RootAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, sym, p, source),
+			},
+		}),
+		flow: transfer.Result{
+			point: state.State{}.WriteValue(reg, statekey.SymbolValue(sym), before),
+		},
+		boundary: map[cfg.Point]state.State{
+			point: state.State{}.WriteValue(reg, statekey.SymbolValue(sym), boundary),
+		},
+	}
+
+	gotBoundary, ok := result.PathValueAtBoundary(point, p)
+	if !ok {
+		t.Fatal("PathValueAtBoundary returned !ok")
+	}
+	if !product.Equal(reg, gotBoundary, boundary) {
+		t.Fatalf("PathValueAtBoundary = %v, want boundary value %v", gotBoundary, boundary)
+	}
+	gotBefore, ok := result.PathValueBeforeBoundary(point, p)
+	if !ok {
+		t.Fatal("PathValueBeforeBoundary returned !ok")
+	}
+	if !product.Equal(reg, gotBefore, before) {
+		t.Fatalf("PathValueBeforeBoundary = %v, want before-boundary value %v", gotBefore, before)
+	}
+}
+
+func TestEdgeCanCompleteNormallyCachesSolvedTransferProjection(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	from := graph.AddNode(cfg.NodeAssign)
+	to := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(from, to, false)
+
+	sym := symbol.ID(41)
+	st := state.State{}.WriteValue(reg, statekey.SymbolValue(sym), typevalue.FromType(reg, typ.String))
+	var boundaryCalls int
+	var edgeCalls int
+	result := &Result{
+		registry: reg,
+		cfg:      &cfgbuild.Result{Graph: graph},
+		flow: transfer.Result{
+			from: st,
+		},
+		boundaryXfer: func(_ transfer.NodeContext, in state.State) state.State {
+			boundaryCalls++
+			return in
+		},
+		edgeXfer: func(_ transfer.EdgeContext, in state.State) state.State {
+			edgeCalls++
+			return in
+		},
+	}
+
+	if !result.EdgeCanCompleteNormally(from, to) {
+		t.Fatal("first EdgeCanCompleteNormally returned false")
+	}
+	if !result.EdgeCanCompleteNormally(from, to) {
+		t.Fatal("second EdgeCanCompleteNormally returned false")
+	}
+	if boundaryCalls != 1 {
+		t.Fatalf("boundary transfer calls = %d, want 1", boundaryCalls)
+	}
+	if edgeCalls != 1 {
+		t.Fatalf("edge transfer calls = %d, want 1", edgeCalls)
+	}
 }
 
 func TestSourceValueAtBoundaryDoesNotUseExplanationRecovery(t *testing.T) {
@@ -100,6 +293,13 @@ func TestBoundaryStateKeyIsCanonicalTypedPathVocabulary(t *testing.T) {
 	stateKey, ok := result.StateKeyAtBoundary(point, p)
 	if !ok {
 		t.Fatal("StateKeyAtBoundary returned !ok")
+	}
+	wantStateKey, ok := visibility.AddressAt(resolver, point, p).VisibleStateKey()
+	if !ok {
+		t.Fatal("visibility.Address rejected boundary path")
+	}
+	if stateKey != wantStateKey {
+		t.Fatalf("StateKeyAtBoundary = %q, want visibility.Address visible key %q", stateKey, wantStateKey)
 	}
 
 	pathKey, ok := result.PathKeyAtBoundary(point, p)

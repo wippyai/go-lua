@@ -1,13 +1,17 @@
 package diagnostics
 
 import (
+	"strings"
+
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekindof"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
+	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/lua/typeoperator"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
@@ -116,7 +120,7 @@ func (p expressionTyper) annotatedPathType(expr ast.Expr) (typ.Type, bool) {
 		}
 		t = transparentComparableType(p.result, lowered)
 	} else if p.flow {
-		lowered, loweredOK := p.flowOriginType(accessPath)
+		lowered, loweredOK := p.flowPathType(accessPath)
 		if !loweredOK {
 			return nil, false
 		}
@@ -127,14 +131,40 @@ func (p expressionTyper) annotatedPathType(expr ast.Expr) (typ.Type, bool) {
 	if p.flow {
 		t = p.flowRootType(t, accessPath)
 	}
+	current := accessPath.RootOnly()
 	for _, seg := range accessPath.Segments {
 		next, ok := expressionSegmentType(t, seg)
 		if !ok {
 			return nil, false
 		}
 		t = next
+		current = current.Append(seg)
+		if p.flow {
+			if narrowed, ok := applyRuntimeTypeNarrowing(t, current, p.env, p.resolver); ok {
+				t = narrowed
+			}
+			if narrowed, ok := applyLiteralNarrowing(t, current, p.env); ok {
+				t = narrowed
+			}
+		}
+	}
+	if p.flow {
+		if narrowed, ok := p.literalNarrowedBroadType(expr, accessPath, t); ok {
+			t = narrowed
+		}
 	}
 	return p.refineFlowExpressionType(expr, t), true
+}
+
+func (p expressionTyper) literalNarrowedBroadType(expr ast.Expr, accessPath pathdom.Path, current typ.Type) (typ.Type, bool) {
+	if current == nil || accessPath.IsEmpty() || (len(p.env.constraints) == 0 && len(p.env.truthy) == 0 && len(p.env.falsy) == 0) {
+		return nil, false
+	}
+	broad, ok := p.broadType(expr)
+	if !ok || broad == nil || !newDiagnosticQuery(p.result).IsEquivalent(current, broad) {
+		return nil, false
+	}
+	return applyLiteralNarrowing(broad, accessPath, p.env)
 }
 
 // broadType returns the un-narrowed declared shape of a path expression: the
@@ -159,7 +189,7 @@ func (p expressionTyper) broadType(expr ast.Expr) (typ.Type, bool) {
 		if !ok {
 			return nil, false
 		}
-		full, ok := readmodel.New(p.result).FullVariantOriginType(value)
+		full, ok := newDiagnosticQuery(p.result).FullVariantOriginType(value)
 		if !ok {
 			return nil, false
 		}
@@ -175,7 +205,7 @@ func (p expressionTyper) broadType(expr ast.Expr) (typ.Type, bool) {
 	return t, t != nil
 }
 
-func (p expressionTyper) flowOriginType(accessPath pathdom.Path) (typ.Type, bool) {
+func (p expressionTyper) flowPathType(accessPath pathdom.Path) (typ.Type, bool) {
 	if p.result == nil || accessPath.Symbol == 0 {
 		return nil, false
 	}
@@ -183,50 +213,50 @@ func (p expressionTyper) flowOriginType(accessPath pathdom.Path) (typ.Type, bool
 	if !ok {
 		return nil, false
 	}
-	return readmodel.New(p.result).VariantOriginType(value)
+	query := newDiagnosticQuery(p.result)
+	if query.ValueHasUntrustedTopOrigin(value) {
+		return nil, false
+	}
+	if t, ok := query.VariantOriginType(value); ok {
+		return t, true
+	}
+	return query.ValueTypeWithPresence(value)
 }
 
 // freshRecordAbsentFieldType types a dot-field read whose name is provably
-// absent from a freshly constructed table value. A non-discriminated table
-// local (e.g. an empty literal) carries no variant origin, so the usual flow
-// projection cannot reach it; its concrete witness type is complete because the
-// value has an exact local identity, so a never-written field reads as nil under
-// Lua table semantics. Imported or opaque values lack this identity and are left
+// absent from a local-exclusive exact table value. A non-discriminated table
+// local (or a tracked indexed parent such as dogs[1]) can carry a complete
+// concrete witness without variant origin; when that exact parent is still local
+// and has no field, Lua reads nil. Imported, escaped, or opaque values are left
 // to the other producers, where the modeled type may omit reachable members.
 func (p expressionTyper) freshRecordAbsentFieldType(expr ast.Expr) (typ.Type, bool) {
 	if p.result == nil {
 		return nil, false
 	}
-	accessPath, ok := p.result.ExpressionPath(expr)
-	if !ok || accessPath.Symbol == 0 || len(accessPath.Segments) == 0 {
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok || attr.KeySyntax != ast.AttrKeyDot {
 		return nil, false
 	}
-	last := accessPath.Segments[len(accessPath.Segments)-1]
-	if last.Kind != segment.SegmentField {
+	name := ast.KeyName(attr.Key)
+	if name == "" {
 		return nil, false
 	}
-	value, ok := p.result.SymbolValueAtBoundary(p.point, accessPath.Symbol)
+	query := newDiagnosticQuery(p.result)
+	value, ok := query.ExpressionValueAtBoundary(p.point, attr.Object)
 	if !ok {
 		return nil, false
 	}
-	reader := readmodel.New(p.result)
-	if !reader.ValueHasExactIdentity(value) {
+	if !query.ValueHasLocalExclusiveExactIdentity(p.point, value) {
 		return nil, false
 	}
-	t, ok := reader.ValueType(value)
+	t, ok := query.ValueType(value)
 	if !ok || t == nil {
 		return nil, false
 	}
-	for _, seg := range accessPath.Segments[:len(accessPath.Segments)-1] {
-		t, ok = expressionSegmentType(t, seg)
-		if !ok {
-			return nil, false
-		}
-	}
-	if _, ok := access.Field(t, last.Name); ok {
+	if _, ok := access.Field(t, name); ok {
 		return nil, false
 	}
-	if !recordProvablyMissesField(t, last.Name) {
+	if !recordProvablyMissesField(t, name) {
 		return nil, false
 	}
 	return typ.Nil, true
@@ -255,19 +285,73 @@ func (p expressionTyper) flowRootType(t typ.Type, accessPath pathdom.Path) typ.T
 	}
 	if p.witnessRefine {
 		if value, ok := p.result.SymbolValueAtBoundary(p.point, root.Symbol); ok {
-			if refined, ok := readmodel.New(p.result).RefineDeclaredType(t, value); ok {
-				t = refined
+			if refined, ok := newDiagnosticQuery(p.result).RefineDeclaredType(t, value); ok {
+				if !(projectionHasNil(refined) && !projectionHasNil(t)) {
+					t = refined
+				}
 			}
 		}
 	} else if value, ok := p.result.SymbolValueAtBoundary(p.point, root.Symbol); ok {
-		if refined, ok := readmodel.New(p.result).NarrowDeclaredByOrigin(t, value); ok {
+		if refined, ok := newDiagnosticQuery(p.result).NarrowDeclaredByOrigin(t, value); ok {
 			t = refined
 		}
 	}
 	if narrowed, ok := applyLiteralNarrowing(t, root, p.env); ok {
 		t = narrowed
 	}
+	if narrowed, ok := applyRuntimeTypeNarrowing(t, root, p.env, p.resolver); ok {
+		t = narrowed
+	}
 	return t
+}
+
+func applyRuntimeTypeNarrowing(t typ.Type, target pathdom.Path, env guardEnv, resolver typeannotation.Resolver) (typ.Type, bool) {
+	if t == nil || target.IsEmpty() {
+		return nil, false
+	}
+	t = resolveRuntimeNarrowingRef(t, resolver)
+	for _, check := range env.typeChecks {
+		if !samePathIgnoringVersion(check.target, target) {
+			continue
+		}
+		tag, ok := runtimekind.ParseTag(check.name)
+		if !ok {
+			continue
+		}
+		narrowed, changed := runtimekindof.RestrictTypeToRuntimeKind(t, runtimekind.Singleton(tag))
+		if changed && narrowed != typ.Never {
+			return narrowed, true
+		}
+	}
+	return nil, false
+}
+
+func resolveRuntimeNarrowingRef(t typ.Type, resolver typeannotation.Resolver) typ.Type {
+	ref, ok := t.(*typ.Ref)
+	if !ok || resolver == nil || ref.Name == "" {
+		return t
+	}
+	path := []string{ref.Name}
+	if ref.Module != "" {
+		path = append(strings.Split(ref.Module, "."), ref.Name)
+	}
+	resolved, ok := resolver.ResolveTypeRef(path)
+	if !ok || resolved == nil {
+		return t
+	}
+	return resolved
+}
+
+func samePathIgnoringVersion(left, right pathdom.Path) bool {
+	if !samePathRootIgnoringVersion(left, right) || len(left.Segments) != len(right.Segments) {
+		return false
+	}
+	for i := range left.Segments {
+		if left.Segments[i] != right.Segments[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func rootPath(p pathdom.Path) pathdom.Path {
@@ -307,7 +391,122 @@ func (p expressionTyper) callResultType(call *ast.FuncCallExpr) (typ.Type, bool)
 	if !ok {
 		return nil, false
 	}
-	return readmodel.New(p.result).ValueTypeWithPresence(value)
+	t, ok := newDiagnosticQuery(p.result).ValueTypeWithPresence(value)
+	if !ok {
+		return nil, false
+	}
+	if topLikeType(t) {
+		if declared, ok := p.declaredCallResultType(call, 0, 0); ok {
+			return declared, true
+		}
+	}
+	if projectionHasNil(t) {
+		if declared, ok := p.declaredCallResultType(call, 0, 0); ok && !projectionHasNil(declared) {
+			return declared, true
+		}
+	}
+	return t, true
+}
+
+func (p expressionTyper) declaredCallResultType(call *ast.FuncCallExpr, index int, depth int) (typ.Type, bool) {
+	if call == nil || depth > typ.DefaultRecursionDepth {
+		return nil, false
+	}
+	if call.Receiver != nil && call.Method != "" {
+		receiverType, ok := p.typeOfDepth(call.Receiver, depth+1)
+		if !ok || receiverType == nil || typ.IsAny(receiverType) || typ.IsUnknown(receiverType) || typ.IsNever(receiverType) {
+			return nil, false
+		}
+		if receiverPath, ok := p.result.ExpressionPath(call.Receiver); ok && (p.env.hasPresent(receiverPath) || p.env.hasTruthy(receiverPath)) {
+			if withoutNil := projectionWithoutNil(receiverType); withoutNil != nil && !typ.IsNever(withoutNil) {
+				receiverType = withoutNil
+			}
+		}
+		memberType, status := memberCallType(receiverType, segment.Segment{Kind: segment.SegmentField, Name: call.Method})
+		if status != typecall.MemberCallOK || memberType == nil {
+			return nil, false
+		}
+		return declaredCallableResultType(memberType, index)
+	}
+	if call.Func != nil {
+		if callPoint, ok := p.result.CallExprPoint(call); ok {
+			if fn, ok := p.result.FunctionValueTypeAtBoundary(callPoint, call.Func); ok && fn != nil {
+				declared, ok := lowerDirectFunctionType(fn).declaredReturnType(index)
+				if usableDeclaredCallResultType(declared, ok) {
+					return declared, true
+				}
+			}
+			if fn, ok := p.directFunctionDefinitionAt(callPoint, call.Func); ok && fn != nil {
+				if contract, ok := lowerDirectFunctionContractInResultScope(p.result, fn, p.resolver); ok {
+					declared, ok := contract.declaredReturnType(index)
+					if usableDeclaredCallResultType(declared, ok) {
+						return declared, true
+					}
+				}
+			}
+		}
+		if fn, ok := p.result.FunctionValueTypeAtBoundary(p.point, call.Func); ok && fn != nil {
+			declared, ok := lowerDirectFunctionType(fn).declaredReturnType(index)
+			if usableDeclaredCallResultType(declared, ok) {
+				return declared, true
+			}
+		}
+		if fn, ok := p.result.ExpressionSignatureTypeAt(p.point, call.Func); ok {
+			declared, ok := lowerDirectFunctionType(fn).declaredReturnType(index)
+			if usableDeclaredCallResultType(declared, ok) {
+				return declared, true
+			}
+		}
+		if calleeType, ok := p.typeOfDepth(call.Func, depth+1); ok {
+			return declaredCallableResultType(calleeType, index)
+		}
+	}
+	site, _, ok := p.result.CallOutcomeForExpr(call)
+	if !ok {
+		return nil, false
+	}
+	fn, ok := p.result.CallSignatureType(site)
+	if !ok {
+		return nil, false
+	}
+	declared, ok := lowerDirectFunctionType(fn).declaredReturnType(index)
+	if !usableDeclaredCallResultType(declared, ok) {
+		return nil, false
+	}
+	return declared, true
+}
+
+func (p expressionTyper) directFunctionDefinitionAt(point cfg.Point, expr ast.Expr) (*ast.FunctionExpr, bool) {
+	if p.result == nil || expr == nil || point == 0 {
+		return nil, false
+	}
+	accessPath, ok := p.result.ExpressionPath(expr)
+	if !ok || accessPath.Symbol == 0 || len(accessPath.Segments) != 0 {
+		return nil, false
+	}
+	if newDiagnosticFlowCache(p.result).directFunctionReassignedAfterDefinition(point, accessPath.Symbol) {
+		return nil, false
+	}
+	return p.result.FunctionBySymbol(accessPath.Symbol)
+}
+
+func declaredCallableResultType(callee typ.Type, index int) (typ.Type, bool) {
+	callable, ok := typecall.Callable(callee)
+	if !ok || callable == nil {
+		return nil, false
+	}
+	declared, ok := lowerDirectFunctionType(callable).declaredReturnType(index)
+	if !usableDeclaredCallResultType(declared, ok) {
+		return nil, false
+	}
+	return declared, true
+}
+
+func usableDeclaredCallResultType(declared typ.Type, ok bool) bool {
+	if !ok || declared == nil || typ.IsAny(declared) || typ.IsUnknown(declared) || typ.IsNever(declared) {
+		return false
+	}
+	return true
 }
 
 func (p expressionTyper) attrType(expr *ast.AttrGetExpr, depth int) (typ.Type, bool) {
@@ -327,6 +526,13 @@ func (p expressionTyper) attrType(expr *ast.AttrGetExpr, depth int) (typ.Type, b
 		if !ok {
 			return nil, false
 		}
+		if p.flow {
+			if accessPath, ok := p.result.ExpressionPath(expr); ok {
+				if narrowed, ok := p.literalNarrowedBroadType(expr, accessPath, t); ok {
+					t = narrowed
+				}
+			}
+		}
 		return p.refineFlowExpressionType(expr, t), true
 	}
 	key, ok := p.typeOfDepth(expr.Key, depth+1)
@@ -337,6 +543,13 @@ func (p expressionTyper) attrType(expr *ast.AttrGetExpr, depth int) (typ.Type, b
 	if !ok {
 		return nil, false
 	}
+	if p.flow {
+		if accessPath, ok := p.result.ExpressionPath(expr); ok {
+			if narrowed, ok := p.literalNarrowedBroadType(expr, accessPath, t); ok {
+				t = narrowed
+			}
+		}
+	}
 	return p.refineFlowExpressionType(expr, t), true
 }
 
@@ -344,8 +557,18 @@ func (p expressionTyper) refineFlowExpressionType(expr ast.Expr, t typ.Type) typ
 	if !p.flow || !p.witnessRefine || p.result == nil || expr == nil || t == nil {
 		return t
 	}
-	if value, ok := p.result.ExpressionValueAtBoundary(p.point, expr); ok {
-		if refined, ok := readmodel.New(p.result).RefineDeclaredType(t, value); ok {
+	query := newDiagnosticQuery(p.result)
+	if value, ok := query.ExpressionValueAtBoundary(p.point, expr); ok {
+		if refined, ok := query.RefineDeclaredType(t, value); ok {
+			if projectionHasNil(refined) && !projectionHasNil(t) {
+				return t
+			}
+			if accessPath, ok := p.result.ExpressionPath(expr); ok &&
+				p.hasLiteralNarrowingAtOrBelow(accessPath) &&
+				!topLikeType(t) &&
+				!query.IsSubtype(refined, t) {
+				return t
+			}
 			t = refined
 		}
 	}
@@ -355,6 +578,21 @@ func (p expressionTyper) refineFlowExpressionType(expr ast.Expr, t typ.Type) typ
 		}
 	}
 	return t
+}
+
+func (p expressionTyper) hasLiteralNarrowingAtOrBelow(target pathdom.Path) bool {
+	if target.IsEmpty() {
+		return false
+	}
+	for _, constraint := range p.env.constraints {
+		if constraint.negated {
+			continue
+		}
+		if constraint.target.Equal(target) || constraint.target.HasStrictPrefix(target) {
+			return true
+		}
+	}
+	return false
 }
 
 func (p expressionTyper) unaryType(op string, expr ast.Expr, depth int) (typ.Type, bool) {

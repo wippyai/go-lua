@@ -11,7 +11,18 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/type/normalize"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
+)
+
+var gsubReplacement = typeexpr.Union(
+	typ.String,
+	typetable.NewMap(typ.Any, typ.Any),
+	typ.Func().
+		Param("capture", typ.String).
+		Returns(typeexpr.Union(typ.String, typ.Number, typ.False, typ.Nil)).
+		Build(),
 )
 
 var methods = map[string]*typ.Function{
@@ -50,7 +61,7 @@ var methods = map[string]*typ.Function{
 	"gsub": typ.Func().
 		Param("s", typ.String).
 		Param("pattern", typ.String).
-		Param("repl", typ.Any).
+		Param("repl", gsubReplacement).
 		OptParam("n", typ.Integer).
 		Returns(typ.String, typ.Integer).
 		Build(),

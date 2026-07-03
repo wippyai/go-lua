@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	typenormalize "github.com/wippyai/go-lua/analysis/type/normalize"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -24,6 +25,10 @@ func runtimeKindType(reg *axis.Registry, value product.Value) (typ.Type, bool) {
 			members = append(members, typ.Number)
 		case runtimekind.String:
 			members = append(members, typ.String)
+		case runtimekind.Table:
+			members = append(members, typetable.BuiltinTopMarker())
+		case runtimekind.Function:
+			members = append(members, typ.Func().Variadic(typ.Any).Returns(typ.Any).Build())
 		default:
 			return nil, false
 		}

@@ -146,6 +146,20 @@ func TestMap_JoinBottomNormalizesCanonicalMapWithoutCopy(t *testing.T) {
 	}
 }
 
+func TestPointwiseMapOutputCapCountsUnionKeys(t *testing.T) {
+	a := map[string]sign{"x": sNeg, "y": sPos}
+	b := map[string]sign{"y": sZero, "z": sTop}
+	if got := pointwiseMapOutputCap(a, b); got != 3 {
+		t.Fatalf("pointwiseMapOutputCap(overlap) = %d, want union size 3", got)
+	}
+	if got := pointwiseMapOutputCap(map[string]sign{"x": sNeg}, map[string]sign{"y": sPos}); got != 2 {
+		t.Fatalf("pointwiseMapOutputCap(disjoint) = %d, want 2", got)
+	}
+	if got := pointwiseMapOutputCap(map[string]sign(nil), b); got != len(b) {
+		t.Fatalf("pointwiseMapOutputCap(nil,b) = %d, want len(b)", got)
+	}
+}
+
 func TestMap_JoinSubsumedMapWithoutCopy(t *testing.T) {
 	d := Map[string, sign](signLattice())
 	superset := map[string]sign{"x": sTop, "y": sPos}
@@ -165,6 +179,33 @@ func TestMap_JoinSubsumedMapWithoutCopy(t *testing.T) {
 	}
 	if reflect.ValueOf(got).Pointer() != reflect.ValueOf(superset).Pointer() {
 		t.Fatalf("Join(subset, superset) copied an already-canonical upper bound")
+	}
+}
+
+func TestMap_JoinSameFiniteMapDoesNotTouchElements(t *testing.T) {
+	var lessCalls int
+	var joinCalls int
+	elem := signLattice()
+	elem.LessOrEq = func(a, b sign) bool {
+		lessCalls++
+		return signLattice().LessOrEq(a, b)
+	}
+	elem.Join = func(a, b sign) sign {
+		joinCalls++
+		return signLattice().Join(a, b)
+	}
+	d := Map[string, sign](elem)
+	finite := map[string]sign{"x": sNeg, "y": sPos}
+
+	got := d.Join(finite, finite)
+	if !d.Equal(got, finite) {
+		t.Fatalf("Join(finite, finite) = %s, want %s", formatMap(got), formatMap(finite))
+	}
+	if reflect.ValueOf(got).Pointer() != reflect.ValueOf(finite).Pointer() {
+		t.Fatalf("Join(finite, finite) copied an immutable finite map")
+	}
+	if lessCalls != 0 || joinCalls != 0 {
+		t.Fatalf("Join(finite, finite) touched element lattice: LessOrEq=%d Join=%d", lessCalls, joinCalls)
 	}
 }
 

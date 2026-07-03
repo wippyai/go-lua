@@ -101,11 +101,10 @@
           "time.Time",
           "not integer"
         ],
-        "min_evidence": 3,
+        "min_evidence": 2,
         "evidence_contains": [
           "cached_render.seen_at has type time.Time",
-          "seen_seconds is declared as integer",
-          "no proof on this path shows cached_render.seen_at satisfies the declared type"
+          "seen_seconds is declared as integer"
         ],
         "evidence": [
           {
@@ -127,17 +126,6 @@
             "contains": [
               "seen_seconds is declared as integer"
             ]
-          },
-          {
-            "file": "main.lua",
-            "line": 78,
-            "column": 35,
-            "kind": "missing proof",
-            "trust": "unknown",
-            "reason": "boundary validation missing",
-            "contains": [
-              "no proof on this path shows cached_render.seen_at satisfies the declared type"
-            ]
           }
         ],
         "render_contains": [
@@ -153,7 +141,6 @@
           "because:",
           "proven: cached_render.seen_at has type time.Time",
           "claimed: seen_seconds is declared as integer",
-          "missing proof: no proof on this path shows cached_render.seen_at satisfies the declared type",
           "help: Use a value compatible with the expected type"
         ],
         "render_not_contains": [
@@ -202,7 +189,7 @@
         "evidence_contains": [
           "store.state.flags[\"did_index\"] can be boolean or nil here",
           "cached_flag is declared as boolean",
-          "no guard on this path proves store.state.flags[\"did_index\"] is non-nil"
+          "store.state.flags[\"did_index\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
         ],
         "evidence": [
           {
@@ -231,9 +218,9 @@
             "column": 34,
             "kind": "missing proof",
             "trust": "unknown",
-            "reason": "boundary validation missing",
+            "reason": "index read validation missing",
             "contains": [
-              "no guard on this path proves store.state.flags[\"did_index\"] is non-nil"
+              "store.state.flags[\"did_index\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
             ]
           }
         ],
@@ -249,7 +236,7 @@
           "because:",
           "proven: store.state.flags[\"did_index\"] can be boolean or nil here",
           "claimed: cached_flag is declared as boolean",
-          "missing proof: no guard on this path proves store.state.flags[\"did_index\"] is non-nil",
+          "missing proof: store.state.flags[\"did_index\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
           "help: Guard `store.state.flags[\"did_index\"]` with a nil check"
         ],
         "render_not_contains": [
@@ -298,7 +285,7 @@
         "evidence_contains": [
           "store.state.plugin_counts[\"fallback\"] can be integer or nil here",
           "fallback_total is declared as integer",
-          "no guard on this path proves store.state.plugin_counts[\"fallback\"] is non-nil"
+          "store.state.plugin_counts[\"fallback\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
         ],
         "evidence": [
           {
@@ -327,9 +314,9 @@
             "column": 33,
             "kind": "missing proof",
             "trust": "unknown",
-            "reason": "boundary validation missing",
+            "reason": "index read validation missing",
             "contains": [
-              "no guard on this path proves store.state.plugin_counts[\"fallback\"] is non-nil"
+              "store.state.plugin_counts[\"fallback\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
             ]
           }
         ],
@@ -345,7 +332,7 @@
           "because:",
           "proven: store.state.plugin_counts[\"fallback\"] can be integer or nil here",
           "claimed: fallback_total is declared as integer",
-          "missing proof: no guard on this path proves store.state.plugin_counts[\"fallback\"] is non-nil",
+          "missing proof: store.state.plugin_counts[\"fallback\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
           "help: Guard `store.state.plugin_counts[\"fallback\"]` with a nil check"
         ],
         "render_not_contains": [
@@ -394,7 +381,7 @@
         "evidence_contains": [
           "store.state.audit_tags[\"last\"] can be string or nil here",
           "last_audit is declared as string",
-          "no guard on this path proves store.state.audit_tags[\"last\"] is non-nil"
+          "store.state.audit_tags[\"last\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
         ],
         "evidence": [
           {
@@ -423,9 +410,9 @@
             "column": 28,
             "kind": "missing proof",
             "trust": "unknown",
-            "reason": "boundary validation missing",
+            "reason": "index read validation missing",
             "contains": [
-              "no guard on this path proves store.state.audit_tags[\"last\"] is non-nil"
+              "store.state.audit_tags[\"last\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
             ]
           }
         ],
@@ -441,7 +428,7 @@
           "because:",
           "proven: store.state.audit_tags[\"last\"] can be string or nil here",
           "claimed: last_audit is declared as string",
-          "missing proof: no guard on this path proves store.state.audit_tags[\"last\"] is non-nil",
+          "missing proof: store.state.audit_tags[\"last\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
           "help: Guard `store.state.audit_tags[\"last\"]` with a nil check"
         ],
         "render_not_contains": [
@@ -495,7 +482,6 @@
         ],
         "evidence": [
           {
-            "file": "main.lua",
             "line": 83,
             "column": 25,
             "kind": "abstract fact",
@@ -512,12 +498,10 @@
             ]
           },
           {
-            "file": "main.lua",
             "line": 83,
             "column": 25,
             "kind": "missing proof",
-            "trust": "unknown",
-            "reason": "boundary validation missing",
+            "trust": "refuted",
             "contains": [
               "no guard on this path proves store.state.last_tick is non-nil"
             ]
@@ -550,7 +534,6 @@
         ],
         "labels": [
           {
-            "file": "main.lua",
             "line": 83,
             "column": 25,
             "contains": [

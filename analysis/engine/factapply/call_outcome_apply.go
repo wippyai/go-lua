@@ -3,10 +3,13 @@ package factapply
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
@@ -27,14 +30,26 @@ func applyCallOutcomeFacts(
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
 	widen CovariantWiden,
+	typeValues *typevalue.Cache,
 	out state.State,
 	site factflow.CallSiteView,
 	outcome callpayload.CallOutcome,
 ) state.State {
 	bindings := callPlaceholderBindings(facts, site)
 	paramBindings := callArgumentPlaceholderBindings(facts, site)
-	out = applyCallParamExposures(ctx, resolver, widen, out, paramBindings, outcome.ParamExposures)
+	returnBindings := callReturnSlotBindings(site)
+	boundaryPaths := callboundary.NewPathBindings(bindings, returnBindings)
 	normalReturnFacts := outcome.NormalReturnFacts
+	normalApply := normalReturnApplyContext{
+		node:                            ctx,
+		typeValues:                      typeValues,
+		resolver:                        resolver,
+		projectPath:                     projectPath,
+		point:                           ctx.Point,
+		boundaryPaths:                   boundaryPaths,
+		normalFacts:                     normalReturnFacts,
+		freshDynamicIndexMutationTables: freshDynamicIndexMutationTablesAtCallEntry(ctx, resolver, boundaryPaths, out, normalReturnFacts.DynamicIndexFacts),
+	}
 	lengthFloors := resolveCallParamLengthFloors(resolver, ctx.Point, out, paramBindings, outcome.ParamLengthFloors)
 	for id, object := range outcome.HeapTableObjects {
 		out = out.WriteHeapTableObject(ctx.Registry, id, object)
@@ -42,12 +57,21 @@ func applyCallOutcomeFacts(
 	for id, value := range outcome.Placements {
 		out = writeJoinedPlacement(out, id, value)
 	}
-	for _, fact := range normalReturnFacts.PathRefinements {
-		targetPath, ok := fact.Path.Substitute(bindings)
+	out = applyNormalReturnFactPhase(normalApply, normalReturnApplyBeforeParamFacts, out)
+	for _, fact := range outcome.ParamPathInvalidations {
+		targetPath, ok := fact.Path.Substitute(paramBindings)
 		if !ok {
 			continue
 		}
-		out = applyValueRefinementAt(ctx.Registry, resolver, projectPath, ctx.Point, out, targetPath, factflow.NewValueConstraint(fact.Value))
+		out = writePathInvalidationMarker(resolver, ctx.Point, out, targetPath, fact.PreserveStructuralWitness)
+		out = applyPathDescendantInvalidation(ctx, resolver, factflow.Facts{}, nil, nil, out, out, factflow.NewPathDescendantInvalidation(targetPath), !fact.PreserveStructuralWitness)
+	}
+	for _, fact := range outcome.ParamPathWrites {
+		targetPath, ok := fact.Path.Substitute(paramBindings)
+		if !ok {
+			continue
+		}
+		out = applyValueWriteAt(ctx.Registry, resolver, ctx.Point, out, targetPath, fact.Value)
 	}
 	for _, fact := range outcome.ParamPathRefinements {
 		targetPath, ok := fact.Path.Substitute(paramBindings)
@@ -56,23 +80,7 @@ func applyCallOutcomeFacts(
 		}
 		out = applyValueRefinementAt(ctx.Registry, resolver, projectPath, ctx.Point, out, targetPath, factflow.NewValueConstraint(fact.Value))
 	}
-	for _, fact := range outcome.ParamPathInvalidations {
-		targetPath, ok := fact.Path.Substitute(paramBindings)
-		if !ok {
-			continue
-		}
-		out = writePathInvalidationMarker(resolver, ctx.Point, out, targetPath)
-		out = applyPathDescendantInvalidation(ctx, resolver, out, factflow.NewPathDescendantInvalidation(targetPath), true)
-	}
-	for _, fact := range normalReturnFacts.PathInvalidations {
-		targetPath, ok := fact.Path.Substitute(bindings)
-		if !ok {
-			continue
-		}
-		out = writePathInvalidationMarker(resolver, ctx.Point, out, targetPath)
-		out = applyPathDescendantInvalidation(ctx, resolver, out, factflow.NewPathDescendantInvalidation(targetPath), true)
-		out = invalidateMutatedFieldSlot(ctx, resolver, out, targetPath)
-	}
+	out = applyNormalReturnFactPhase(normalApply, normalReturnApplyAfterParamFacts, out)
 	for _, fact := range lengthFloors {
 		out = applyCallParamLengthFloor(resolver, ctx.Point, out, fact.Path, fact.Floor)
 	}
@@ -82,134 +90,115 @@ func applyCallOutcomeFacts(
 	for _, relation := range outcome.ParamPathRelations {
 		out = applyCallParamPathRelation(ctx, resolver, projectPath, out, paramBindings, relation)
 	}
-	for _, fact := range normalReturnFacts.PathStaticMembers {
-		targetPathKey, ok := callOutcomePathKeyAt(resolver, ctx.Point, bindings, fact.Path)
-		if !ok {
-			continue
-		}
-		out = out.WritePathStaticMember(resolver.KeySpace(), targetPathKey, fact.Value)
+	out = applyNormalReturnFactPhase(normalApply, normalReturnApplyAfterParamRelations, out)
+	// Apply covariant call-boundary exposures after ordinary post-call facts.
+	// Context-specialized summaries may carry precise parameter-member facts such
+	// as `$0.x = number`; once the callee has exposed `$0` through a wider mutable
+	// view, those facts are stale for the caller and must be invalidated by the
+	// shared exposure model.
+	out = applyCallParamExposures(ctx, resolver, widen, out, paramBindings, outcome.ParamExposures)
+	return out
+}
+
+func callOutcomeConcreteRootInvalidation(target pathdom.Path) bool {
+	return !target.IsPlaceholder() && target.Symbol != 0 && len(target.Segments) == 0
+}
+
+func normalReturnDynamicIndexMutationTables(facts []callboundary.DynamicIndexFact) []pathdom.Path {
+	if len(facts) == 0 {
+		return nil
 	}
-	for _, fact := range normalReturnFacts.DynamicIndexFacts {
-		tableKey, ok := callOutcomeKeyspaceKeyAt(resolver, ctx.Point, bindings, fact.Table)
-		if !ok {
+	out := make([]pathdom.Path, 0, len(facts))
+	for _, fact := range facts {
+		if fact.Table.IsEmpty() {
 			continue
 		}
-		tablePath, ok := fact.Table.Substitute(bindings)
-		if !ok {
-			continue
-		}
-		key := dynamicindex.Key{
-			Table: tableKey,
-			Site:  fact.Site,
-		}
-		out = out.WriteDynamicIndexFact(ctx.Registry, key, fact.Value)
-		out = writeHeapTableDynamicIndexFact(ctx, resolver, out, tablePath, key, fact.Value)
-	}
-	for _, proof := range normalReturnFacts.BranchProofs {
-		stateProof, ok := callBranchProofAt(resolver, ctx.Point, bindings, proof)
-		if !ok {
-			continue
-		}
-		out = out.AddBranchProof(stateProof)
-	}
-	for _, fact := range normalReturnFacts.NumFloors {
-		out = applyNormalReturnNumFloor(resolver, ctx.Point, bindings, out, fact)
-	}
-	for _, fact := range normalReturnFacts.RelConstraints {
-		out = applyNormalReturnRelConstraint(resolver, ctx.Point, bindings, out, fact)
-	}
-	for _, event := range normalReturnFacts.ChannelSelects {
-		fact, ok := callChannelSelectFactAt(resolver, ctx.Point, bindings, event)
-		if !ok {
-			continue
-		}
-		out = out.AddChannelSelectFact(fact)
-	}
-	for _, fact := range normalReturnFacts.FrozenTables {
-		targetPath, ok := fact.Target.Substitute(bindings)
-		if !ok {
-			continue
-		}
-		if targetKey, ok := factKeyspaceKeyAt(resolver, ctx.Point, targetPath); ok {
-			out = out.WriteEffectDelta(effectdelta.Key{
-				Target: targetKey,
-				Site:   callboundary.FrozenTableEffectSite(),
-				Kind:   effectdelta.Freeze,
-			}, effectdelta.Top())
-		}
-		out = applyFrozenTableFact(ctx.Registry, resolver, projectPath, ctx.Point, out, targetPath)
-	}
-	for _, delta := range normalReturnFacts.EffectDeltas {
-		targetKey, ok := callOutcomeKeyspaceKeyAt(resolver, ctx.Point, bindings, delta.Target)
-		if !ok {
-			continue
-		}
-		out = out.WriteEffectDelta(effectdelta.Key{
-			Target: targetKey,
-			Site:   delta.Site,
-			Kind:   delta.Kind,
-		}, delta.Value)
-	}
-	for _, relation := range normalReturnFacts.StoreRelations {
-		sourceStateKey, ok := callOutcomeStateKeyAt(resolver, ctx.Point, bindings, relation.Source)
-		if !ok {
-			continue
-		}
-		intoStateKey, ok := callOutcomeStateKeyAt(resolver, ctx.Point, bindings, relation.Into)
-		if !ok {
-			continue
-		}
-		out = out.AddStoreRelation(state.StoreRelation{
-			Source: sourceStateKey,
-			Into:   intoStateKey,
-		})
-	}
-	for _, fact := range normalReturnFacts.LifecycleFacts {
-		targetStateKey, ok := callOutcomeStateKeyAt(resolver, ctx.Point, bindings, fact.Target)
-		if !ok || fact.Protocol == "" {
-			continue
-		}
-		resource := out.CanonicalTypestateResource(resolver.KeySpace(), targetStateKey, fact.Protocol)
-		switch fact.Kind {
-		case callboundary.LifecycleAcquire:
-			out = out.AcquireTypestate(resource, fact.To, fact.Obligation)
-		case callboundary.LifecycleTransition:
-			out = out.TransitionTypestate(resource, fact.From, fact.To)
-		case callboundary.LifecycleEscape:
-			out = out.EscapeTypestate(resource)
-		}
-	}
-	for _, event := range normalReturnFacts.EscapeEvents {
-		targetPath, ok := event.Target.Substitute(bindings)
-		if !ok {
-			continue
-		}
-		targetStateKey, ok := factStateKeyAt(resolver, ctx.Point, targetPath)
-		if !ok {
-			continue
-		}
-		out = out.AddEscapeEvent(state.EscapeEvent{
-			Target:    targetStateKey,
-			Kind:      event.Kind,
-			Recursive: event.Recursive,
-		})
-		out = applyEscapeEventPlacement(ctx.Registry, resolver, projectPath, ctx.Point, out, targetPath, event)
+		out = append(out, fact.Table)
 	}
 	return out
+}
+
+func freshDynamicIndexMutationTablesAtCallEntry(
+	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
+	boundaryPaths callboundary.PathBindings,
+	in state.State,
+	facts []callboundary.DynamicIndexFact,
+) map[keyspace.Key]struct{} {
+	if resolver == nil || len(facts) == 0 {
+		return nil
+	}
+	counts := make(map[keyspace.Key]int, len(facts))
+	paths := make(map[keyspace.Key]pathdom.Path, len(facts))
+	for _, fact := range facts {
+		tableKey, ok := callOutcomeKeyspaceKeyAt(resolver, ctx.Point, boundaryPaths, fact.Table)
+		if !ok {
+			continue
+		}
+		tablePath, ok := boundaryPaths.Substitute(fact.Table)
+		if !ok {
+			continue
+		}
+		counts[tableKey]++
+		paths[tableKey] = tablePath
+	}
+	out := make(map[keyspace.Key]struct{})
+	for tableKey, count := range counts {
+		if count != 1 {
+			continue
+		}
+		if rootPathHasFreshEmptyTable(ctx.Registry, in, paths[tableKey]) {
+			out[tableKey] = struct{}{}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func addDynamicIndexValueKeyMembershipsFromPath(
+	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
+	out state.State,
+	sourcePath pathdom.Path,
+	container keyspace.Key,
+	site dynamicindex.Site,
+) state.State {
+	if resolver == nil || sourcePath.IsEmpty() || sourcePath.Symbol == 0 {
+		return out
+	}
+	sourceKey, ok := visibility.AddressAt(resolver, ctx.Point, sourcePath).VisibleStateKey()
+	if !ok {
+		return out
+	}
+	for _, table := range out.PathKeyMembershipTables(sourceKey) {
+		out = out.AddDynamicIndexValueKeyMembership(container, site, table)
+	}
+	return out
+}
+
+func callOutcomePathMatchesAny(target pathdom.Path, candidates []pathdom.Path) bool {
+	for _, candidate := range candidates {
+		if target.Equal(candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 func applyNormalReturnNumFloor(
 	resolver *visibility.Resolver,
 	point cfg.Point,
-	bindings []pathdom.Path,
+	boundaryPaths callboundary.PathBindings,
 	out state.State,
 	fact callboundary.NumFloorFact,
 ) state.State {
-	targetPath, ok := fact.Path.Substitute(bindings)
+	targetPath, ok := boundaryPaths.Substitute(fact.Path)
 	if !ok || targetPath.Symbol == 0 {
 		return out
 	}
-	pathKey, ok := visibility.RootOrVisibleStateKeyAt(resolver, point, targetPath)
+	pathKey, ok := visibility.AddressAt(resolver, point, targetPath).RootOrVisibleStateKey()
 	if !ok {
 		return out
 	}
@@ -219,22 +208,22 @@ func applyNormalReturnNumFloor(
 func applyNormalReturnRelConstraint(
 	resolver *visibility.Resolver,
 	point cfg.Point,
-	bindings []pathdom.Path,
+	boundaryPaths callboundary.PathBindings,
 	out state.State,
 	fact callboundary.RelConstraintFact,
 ) state.State {
-	aKey, ok := callRelationGraphKeyAt(resolver, point, bindings, fact.A)
+	aKey, ok := callRelationGraphKeyAt(resolver, point, boundaryPaths, fact.A)
 	if !ok {
 		return out
 	}
-	cKey, ok := callRelationGraphKeyAt(resolver, point, bindings, fact.C)
+	cKey, ok := callRelationGraphKeyAt(resolver, point, boundaryPaths, fact.C)
 	if !ok {
 		return out
 	}
 	var bKey state.RelOperand
 	coB := fact.CoB
 	if coB != 0 && !fact.B.Path.IsEmpty() {
-		bKey, ok = callRelationGraphKeyAt(resolver, point, bindings, fact.B)
+		bKey, ok = callRelationGraphKeyAt(resolver, point, boundaryPaths, fact.B)
 		if !ok {
 			return out
 		}
@@ -247,10 +236,10 @@ func applyNormalReturnRelConstraint(
 func callRelationGraphKeyAt(
 	resolver *visibility.Resolver,
 	point cfg.Point,
-	bindings []pathdom.Path,
+	boundaryPaths callboundary.PathBindings,
 	operand callboundary.RelOperand,
 ) (state.RelOperand, bool) {
-	targetPath, ok := operand.Path.Substitute(bindings)
+	targetPath, ok := boundaryPaths.Substitute(operand.Path)
 	if !ok || targetPath.Symbol == 0 {
 		return state.RelOperand{}, false
 	}
@@ -332,7 +321,7 @@ func readCallParamLengthFloor(
 	if resolver == nil || targetPath.Symbol == 0 {
 		return 0, false
 	}
-	pathKey, ok := resolver.StateKeyAt(point, targetPath)
+	pathKey, ok := visibility.AddressAt(resolver, point, targetPath).VisibleStateKey()
 	if !ok {
 		return 0, false
 	}
@@ -349,7 +338,7 @@ func applyCallParamLengthFloor(
 	if resolver == nil || targetPath.Symbol == 0 || floor <= 0 {
 		return out
 	}
-	pathKey, ok := resolver.StateKeyAt(point, targetPath)
+	pathKey, ok := visibility.AddressAt(resolver, point, targetPath).VisibleStateKey()
 	if !ok {
 		return out
 	}
@@ -408,11 +397,16 @@ func writePathInvalidationMarker(
 	point cfg.Point,
 	out state.State,
 	targetPath pathdom.Path,
+	preserveStructuralWitness bool,
 ) state.State {
 	if targetKey, ok := factKeyspaceKeyAt(resolver, point, targetPath); ok {
+		site := callboundary.PathInvalidationEffectSite()
+		if preserveStructuralWitness {
+			site = callboundary.PathStructuralPreservingInvalidationEffectSite()
+		}
 		return out.WriteEffectDelta(effectdelta.Key{
 			Target: targetKey,
-			Site:   callboundary.PathInvalidationEffectSite(),
+			Site:   site,
 			Kind:   effectdelta.Mutation,
 		}, effectdelta.Top())
 	}
@@ -434,16 +428,85 @@ func applyEscapeEventPlacement(
 	}
 	target, ok := resolvePlacementTargetValueAt(reg, resolver, point, out, targetPath, projectPath)
 	if !ok {
-		return out
+		return markEscapePathCandidatePlacements(reg, resolver, point, out, targetPath, value, event.Recursive, map[identity.ID]struct{}{})
 	}
 	id, ok := product.Get(reg, target.value, identity.Key).ID()
 	if !ok {
-		return out
+		return markEscapePathCandidatePlacements(reg, resolver, point, out, targetPath, value, event.Recursive, map[identity.ID]struct{}{})
 	}
 	if !event.Recursive {
 		return writeJoinedPlacement(out, id, value)
 	}
 	return markReachableHeapPlacement(reg, out, id, value, map[identity.ID]struct{}{})
+}
+
+func markEscapePathCandidatePlacements(
+	reg *axis.Registry,
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	out state.State,
+	targetPath pathdom.Path,
+	value placement.Value,
+	recursive bool,
+	seen map[identity.ID]struct{},
+) state.State {
+	if resolver == nil || len(targetPath.Segments) == 0 {
+		return out
+	}
+	parent := targetPath.ParentView()
+	if parent.IsEmpty() {
+		return out
+	}
+	last := targetPath.Segments[len(targetPath.Segments)-1]
+	if tableKey, ok := factKeyspaceKeyAt(resolver, point, parent); ok {
+		snapshot := out.DynamicIndexFactsSnapshot()
+		if !snapshot.Top {
+			for key, fact := range snapshot.Facts {
+				if key.Table != tableKey ||
+					fact.Admission == dynamicindex.AdmissionRejected ||
+					!dynamicIndexFactCanEscapeThroughStaticSegment(reg, fact, last) {
+					continue
+				}
+				out = markEscapeValuePlacement(reg, out, fact.Value, value, recursive, seen)
+			}
+		}
+	}
+	parentID, ok := dynamicIndexParentHeapID(reg, resolver, point, out, parent)
+	if !ok {
+		return out
+	}
+	object := out.ReadHeapTableObject(reg, parentID)
+	for _, fact := range object.DynamicIndexFacts() {
+		if fact.Admission == dynamicindex.AdmissionRejected ||
+			!dynamicIndexFactCanEscapeThroughStaticSegment(reg, fact, last) {
+			continue
+		}
+		out = markEscapeValuePlacement(reg, out, fact.Value, value, recursive, seen)
+	}
+	return out
+}
+
+func dynamicIndexFactCanEscapeThroughStaticSegment(reg *axis.Registry, fact dynamicindex.Fact, seg segment.Segment) bool {
+	return dynamicIndexFactDefinitelyMatchesSegment(reg, fact, seg) ||
+		dynamicIndexFactMayMatchSegment(reg, fact, seg)
+}
+
+func markEscapeValuePlacement(
+	reg *axis.Registry,
+	out state.State,
+	target product.Value,
+	value placement.Value,
+	recursive bool,
+	seen map[identity.ID]struct{},
+) state.State {
+	id, ok := product.Get(reg, target, identity.Key).ID()
+	if !ok {
+		return out
+	}
+	if !recursive {
+		return writeJoinedPlacement(out, id, value)
+	}
+	return markReachableHeapPlacement(reg, out, id, value, seen)
 }
 
 func resolvePlacementTargetValueAt(
@@ -473,7 +536,7 @@ func resolvePlacementTargetValueAt(
 			return recovered, true
 		}
 	}
-	if projected, projectedOK := projectPathOriginValue(reg, out, targetPath); projectedOK {
+	if projected, projectedOK := projectPathOriginValue(nil, reg, out, targetPath, projectPath); projectedOK {
 		if recovered, recoveredOK := mergePlacementIdentityProjection(reg, target, ok, projected); recoveredOK {
 			return recovered, true
 		}
@@ -565,10 +628,10 @@ func writeJoinedPlacement(out state.State, id identity.ID, value placement.Value
 func callOutcomePathKeyAt(
 	resolver *visibility.Resolver,
 	point cfg.Point,
-	bindings []pathdom.Path,
+	boundaryPaths callboundary.PathBindings,
 	path pathdom.Path,
 ) (pathdom.PathKey, bool) {
-	targetPath, ok := path.Substitute(bindings)
+	targetPath, ok := boundaryPaths.Substitute(path)
 	if !ok {
 		return "", false
 	}
@@ -601,7 +664,7 @@ func applyCallParamCondition(
 	}
 	selectedFacts := expressionCondition.FactsForValue(condition.Value)
 	for _, refinement := range selectedFacts.Refinements() {
-		out = applyValueRefinementAt(ctx.Registry, resolver, projectPath, ctx.Point, out, refinement.TargetPath(), refinement.Value())
+		out = applyValueRefinementAt(ctx.Registry, resolver, projectPath, ctx.Point, out, refinement.TargetPathRef(), refinement.Value())
 	}
 	for _, relation := range selectedFacts.PathRelations() {
 		out = applyPostconditionPathRelation(ctx, resolver, projectPath, out, relation)
@@ -644,7 +707,7 @@ func callPlaceholderBindings(facts factflow.Facts, site factflow.CallSiteView) [
 		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
 			return true
 		}
-		sourcePath, ok := facts.ExpressionPath(source.ExprRef)
+		sourcePath, ok := facts.ExpressionPathRef(source.ExprRef)
 		if !ok || sourcePath.IsEmpty() {
 			return true
 		}
@@ -660,11 +723,23 @@ func callArgumentPlaceholderBindings(facts factflow.Facts, site factflow.CallSit
 		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
 			return true
 		}
-		sourcePath, ok := facts.ExpressionPath(source.ExprRef)
+		sourcePath, ok := facts.ExpressionPathRef(source.ExprRef)
 		if !ok || sourcePath.IsEmpty() {
 			return true
 		}
 		bindings = bindPlaceholderPath(bindings, i, sourcePath)
+		return true
+	})
+	return bindings
+}
+
+func callReturnSlotBindings(site factflow.CallSiteView) []pathdom.Path {
+	var bindings []pathdom.Path
+	site.ForEachResultTarget(func(target factflow.CallResultTargetView) bool {
+		if target.ResultIndex() < 0 || target.TargetPathEmpty() {
+			return true
+		}
+		bindings = bindPlaceholderPath(bindings, target.ResultIndex(), target.TargetPathRef())
 		return true
 	})
 	return bindings
@@ -684,10 +759,10 @@ func bindPlaceholderPath(bindings []pathdom.Path, index int, p pathdom.Path) []p
 func callBranchProofAt(
 	resolver *visibility.Resolver,
 	point cfg.Point,
-	bindings []pathdom.Path,
+	boundaryPaths callboundary.PathBindings,
 	proof callboundary.BranchProof,
 ) (pathevidence.BranchProof, bool) {
-	path, ok := callOutcomeKeyspaceKeyAt(resolver, point, bindings, proof.Path)
+	path, ok := callOutcomeKeyspaceKeyAt(resolver, point, boundaryPaths, proof.Path)
 	if !ok {
 		return pathevidence.BranchProof{}, false
 	}
@@ -699,7 +774,7 @@ func callBranchProofAt(
 			Presence: proof.Presence,
 		}, true
 	case pathevidence.BranchProofPathEqual, pathevidence.BranchProofPathNotEqual, pathevidence.BranchProofIndexInRange:
-		other, ok := callOutcomeKeyspaceKeyAt(resolver, point, bindings, proof.Other)
+		other, ok := callOutcomeKeyspaceKeyAt(resolver, point, boundaryPaths, proof.Other)
 		if !ok {
 			return pathevidence.BranchProof{}, false
 		}
@@ -716,7 +791,7 @@ func callBranchProofAt(
 func callChannelSelectFactAt(
 	resolver *visibility.Resolver,
 	point cfg.Point,
-	bindings []pathdom.Path,
+	boundaryPaths callboundary.PathBindings,
 	event callboundary.ChannelSelectFact,
 ) (channelselectfact.Fact, bool) {
 	switch event.Kind {
@@ -731,14 +806,14 @@ func callChannelSelectFactAt(
 		HasDefault: event.HasDefault,
 	}
 	if !event.Result.IsEmpty() {
-		resultStateKey, ok := callOutcomeStateKeyAt(resolver, point, bindings, event.Result)
+		resultStateKey, ok := callOutcomeStateKeyAt(resolver, point, boundaryPaths, event.Result)
 		if !ok {
 			return channelselectfact.Fact{}, false
 		}
 		fact.Result = resultStateKey
 	}
 	if !event.Case.IsEmpty() {
-		caseStateKey, ok := callOutcomeStateKeyAt(resolver, point, bindings, event.Case)
+		caseStateKey, ok := callOutcomeStateKeyAt(resolver, point, boundaryPaths, event.Case)
 		if !ok {
 			return channelselectfact.Fact{}, false
 		}
@@ -750,12 +825,15 @@ func callChannelSelectFactAt(
 func callOutcomeStateKeyAt(
 	resolver *visibility.Resolver,
 	point cfg.Point,
-	bindings []pathdom.Path,
+	boundaryPaths callboundary.PathBindings,
 	path pathdom.Path,
 ) (pathaddr.StateKey, bool) {
-	targetPath, ok := path.Substitute(bindings)
+	targetPath, ok := boundaryPaths.Substitute(path)
 	if !ok {
 		return "", false
+	}
+	if callboundary.IsConcreteSymbolPath(path) {
+		return visibility.AddressAt(resolver, point, targetPath).RootOrVisibleStateKey()
 	}
 	return factStateKeyAt(resolver, point, targetPath)
 }

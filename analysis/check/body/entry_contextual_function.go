@@ -2,9 +2,9 @@ package body
 
 import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -31,7 +31,7 @@ func expectedFunctionSignature(bindings *bind.Result, resolver *typeresolve.Reso
 	if !ok || t == nil {
 		return nil, false
 	}
-	fnType, ok := unwrap.Alias(t).(*typ.Function)
+	fnType, ok := typecall.ContextualCallable(t)
 	if !ok || fnType == nil {
 		return nil, false
 	}
@@ -59,6 +59,22 @@ func returnPositionIndex(stmts []ast.Stmt, fn *ast.FunctionExpr) (int, bool) {
 				return idx, true
 			}
 		case *ast.DoBlockStmt:
+			if idx, ok := returnPositionIndex(s.Stmts, fn); ok {
+				return idx, true
+			}
+		case *ast.WhileStmt:
+			if idx, ok := returnPositionIndex(s.Stmts, fn); ok {
+				return idx, true
+			}
+		case *ast.RepeatStmt:
+			if idx, ok := returnPositionIndex(s.Stmts, fn); ok {
+				return idx, true
+			}
+		case *ast.NumberForStmt:
+			if idx, ok := returnPositionIndex(s.Stmts, fn); ok {
+				return idx, true
+			}
+		case *ast.GenericForStmt:
 			if idx, ok := returnPositionIndex(s.Stmts, fn); ok {
 				return idx, true
 			}

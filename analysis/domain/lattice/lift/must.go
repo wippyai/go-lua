@@ -1,6 +1,8 @@
 package lift
 
 import (
+	"reflect"
+
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
@@ -10,7 +12,9 @@ import (
 // Bottom is explicit. Top is the reachable empty map. The order is
 // information-must order: more required keys is lower, so joins and widens keep
 // only keys present in both operands and combine their values with the element
-// lattice operation.
+// lattice operation. Values maps are persistent by convention once published to
+// the lattice; operations may return an input carrier for identity/equality
+// cases.
 type MustMapLane[K comparable, V any] struct {
 	bottom bool
 	values map[K]V
@@ -46,6 +50,9 @@ func (l MustMapLane[K, V]) Clone() MustMapLane[K, V] {
 
 // MustMap lifts an element lattice into a finite must-map lattice.
 func MustMap[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[MustMapLane[K, V]] {
+	sameMapValue := func(a, b map[K]V) bool {
+		return reflect.ValueOf(a).Pointer() == reflect.ValueOf(b).Pointer()
+	}
 	return lattice.Lattice[MustMapLane[K, V]]{
 		Bottom: func() MustMapLane[K, V] {
 			return MustMapBottom[K, V]()
@@ -57,9 +64,15 @@ func MustMap[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[MustM
 			if a.bottom || b.bottom {
 				return a.bottom && b.bottom
 			}
+			if sameMapValue(a.values, b.values) {
+				return true
+			}
 			return finiteMapEqual(a.values, b.values, elem.Equal)
 		},
 		LessOrEq: func(a, b MustMapLane[K, V]) bool {
+			if a.bottom == b.bottom && sameMapValue(a.values, b.values) {
+				return true
+			}
 			switch {
 			case a.bottom:
 				return true
@@ -71,19 +84,25 @@ func MustMap[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[MustM
 		},
 		Join: func(a, b MustMapLane[K, V]) MustMapLane[K, V] {
 			if a.bottom {
-				return b.Clone()
+				return b
 			}
 			if b.bottom {
-				return a.Clone()
+				return a
+			}
+			if sameMapValue(a.values, b.values) {
+				return a
 			}
 			return MustMapLane[K, V]{values: finiteMustMapJoin(a.values, b.values, elem.Join)}
 		},
 		Widen: func(prev, next MustMapLane[K, V]) MustMapLane[K, V] {
 			if prev.bottom {
-				return next.Clone()
+				return next
 			}
 			if next.bottom {
-				return prev.Clone()
+				return prev
+			}
+			if sameMapValue(prev.values, next.values) {
+				return prev
 			}
 			return MustMapLane[K, V]{values: finiteMustMapJoin(prev.values, next.values, elem.Widen)}
 		},
@@ -94,7 +113,9 @@ func MustMap[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[MustM
 //
 // Bottom is explicit. Top is the reachable empty set. The order is
 // information-must order: more required facts is lower, so joins and widens are
-// finite set intersection.
+// finite set intersection. Values sets are persistent by convention once
+// published to the lattice; operations may return an input carrier for
+// identity/equality cases.
 type MustSetLane[T comparable] struct {
 	bottom bool
 	values map[T]struct{}
@@ -130,6 +151,9 @@ func (l MustSetLane[T]) Clone() MustSetLane[T] {
 
 // MustSet builds a finite must-set lattice.
 func MustSet[T comparable]() lattice.Lattice[MustSetLane[T]] {
+	sameSetValue := func(a, b map[T]struct{}) bool {
+		return reflect.ValueOf(a).Pointer() == reflect.ValueOf(b).Pointer()
+	}
 	return lattice.Lattice[MustSetLane[T]]{
 		Bottom: func() MustSetLane[T] {
 			return MustSetBottom[T]()
@@ -141,9 +165,15 @@ func MustSet[T comparable]() lattice.Lattice[MustSetLane[T]] {
 			if a.bottom || b.bottom {
 				return a.bottom && b.bottom
 			}
+			if sameSetValue(a.values, b.values) {
+				return true
+			}
 			return finiteSetEqual(a.values, b.values)
 		},
 		LessOrEq: func(a, b MustSetLane[T]) bool {
+			if a.bottom == b.bottom && sameSetValue(a.values, b.values) {
+				return true
+			}
 			switch {
 			case a.bottom:
 				return true
@@ -155,19 +185,25 @@ func MustSet[T comparable]() lattice.Lattice[MustSetLane[T]] {
 		},
 		Join: func(a, b MustSetLane[T]) MustSetLane[T] {
 			if a.bottom {
-				return b.Clone()
+				return b
 			}
 			if b.bottom {
-				return a.Clone()
+				return a
+			}
+			if sameSetValue(a.values, b.values) {
+				return a
 			}
 			return MustSetLane[T]{values: finiteSetIntersection(a.values, b.values)}
 		},
 		Widen: func(prev, next MustSetLane[T]) MustSetLane[T] {
 			if prev.bottom {
-				return next.Clone()
+				return next
 			}
 			if next.bottom {
-				return prev.Clone()
+				return prev
+			}
+			if sameSetValue(prev.values, next.values) {
+				return prev
 			}
 			return MustSetLane[T]{values: finiteSetIntersection(prev.values, next.values)}
 		},
@@ -217,9 +253,21 @@ func finiteMustMapJoin[K comparable, V any](
 	if len(a) == 0 || len(b) == 0 {
 		return nil
 	}
-	out := make(map[K]V)
-	for k, av := range a {
-		if bv, ok := b[k]; ok {
+	if len(a) <= len(b) {
+		out := make(map[K]V, len(a))
+		for k, av := range a {
+			if bv, ok := b[k]; ok {
+				out[k] = join(av, bv)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+	out := make(map[K]V, len(b))
+	for k, bv := range b {
+		if av, ok := a[k]; ok {
 			out[k] = join(av, bv)
 		}
 	}
@@ -265,7 +313,10 @@ func finiteSetIntersection[T comparable](a, b map[T]struct{}) map[T]struct{} {
 	if len(a) == 0 || len(b) == 0 {
 		return nil
 	}
-	out := make(map[T]struct{})
+	if len(b) < len(a) {
+		a, b = b, a
+	}
+	out := make(map[T]struct{}, len(a))
 	for v := range a {
 		if _, ok := b[v]; ok {
 			out[v] = struct{}{}

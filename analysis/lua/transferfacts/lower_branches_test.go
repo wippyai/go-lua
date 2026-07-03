@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -20,6 +21,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/parse"
 )
 
 func TestLowerIdentifierNilTruthyFalsyBranches(t *testing.T) {
@@ -57,6 +59,135 @@ func TestLowerIdentifierNilTruthyFalsyBranches(t *testing.T) {
 	assertLoweredBranchPresenceProof(t, facts, falsyPoint, xPath, presence.Present(), false, true)
 }
 
+func parseChunk(t *testing.T, src string) []ast.Stmt {
+	t.Helper()
+	stmts, err := parse.ParseString(src, "transferfacts_branch_test.lua")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	return stmts
+}
+
+func TestLowerBooleanRootTruthyFalsyBranchesPublishLiteralRefinements(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(b: boolean)
+	if b then local x = 1 end
+	if not b then local y = 1 end
+end
+`)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	truthyStmt := fn.Stmts[0].(*ast.IfStmt)
+	falsyStmt := fn.Stmts[1].(*ast.IfStmt)
+	bPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "b")
+	truthyPoint := requireStmtPoints(t, built, truthyStmt, 1)[0]
+	falsyPoint := requireStmtPoints(t, built, falsyStmt, 1)[0]
+
+	assertBranchLiteralType(t, facts, truthyPoint, bPath, true, typ.True)
+	assertBranchLiteralType(t, facts, truthyPoint, bPath, false, typ.False)
+	assertBranchLiteralType(t, facts, falsyPoint, bPath, true, typ.False)
+	assertBranchLiteralType(t, facts, falsyPoint, bPath, false, typ.True)
+}
+
+func TestLowerConditionalAssignmentPublishesValuePresenceImplicationAtMerge(t *testing.T) {
+	_, bindings, built, result := parseSemanticFunction(t, `
+function f(
+    use_template: boolean,
+    make_executor: () -> { with_context: (self: any, context: table) -> any }
+)
+    local executor: { with_context: (self: any, context: table) -> any }? = nil
+    if not use_template then
+        executor = make_executor()
+    end
+
+    if use_template then
+        return
+    else
+        executor = executor:with_context({})
+    end
+end
+`)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	var found bool
+	for _, point := range built.Graph.RPO() {
+		for _, implication := range facts.PathValuePresenceImplications(point) {
+			trigger := implication.TriggerPath()
+			target := implication.TargetPath()
+			if bindings.Name(trigger.Symbol) != "use_template" || bindings.Name(target.Symbol) != "executor" {
+				continue
+			}
+			gotType, ok := typevalue.TypeOf(standard.Registry(), implication.TriggerValue())
+			if !ok || !typ.TypeEquals(gotType, typ.False) {
+				t.Fatalf("trigger value = %v/%v, want false literal", gotType, ok)
+			}
+			if !presence.Equal(implication.TargetPresence(), presence.Present()) {
+				t.Fatalf("target presence = %s, want present", implication.TargetPresence())
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing use_template=false => executor present implication")
+	}
+}
+
+func TestLowerStaticTruthinessMarksImpossibleBranchEdges(t *testing.T) {
+	tests := []struct {
+		name             string
+		stmt             ast.Stmt
+		wantTrueBlocked  bool
+		wantFalseBlocked bool
+	}{
+		{
+			name:             "while true",
+			stmt:             &ast.WhileStmt{Condition: &ast.TrueExpr{}},
+			wantFalseBlocked: true,
+		},
+		{
+			name:            "if false",
+			stmt:            &ast.IfStmt{Condition: &ast.FalseExpr{}},
+			wantTrueBlocked: true,
+		},
+		{
+			name: "repeat until nil",
+			stmt: &ast.RepeatStmt{
+				Condition: &ast.NilExpr{},
+				Stmts:     []ast.Stmt{localAssign([]string{"x"}, number("1"))},
+			},
+			wantTrueBlocked: true,
+		},
+		{
+			name: "logical constant",
+			stmt: &ast.IfStmt{Condition: &ast.LogicalOpExpr{
+				Operator: "or",
+				Lhs:      &ast.TrueExpr{},
+				Rhs:      ident("dynamic"),
+			}},
+			wantFalseBlocked: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			stmts := []ast.Stmt{tc.stmt}
+			bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"dynamic"}})
+			built := cfgbuild.BuildChunk(stmts, bindings)
+			result, err := semantics.ExtractChunk(stmts, bindings, built)
+			if err != nil {
+				t.Fatalf("ExtractChunk: %v", err)
+			}
+
+			facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+			point := requireStmtPoints(t, built, tc.stmt, 1)[0]
+			if got := facts.BranchEdgeUnreachable(point, true); got != tc.wantTrueBlocked {
+				t.Fatalf("true-edge unreachable = %v, want %v", got, tc.wantTrueBlocked)
+			}
+			if got := facts.BranchEdgeUnreachable(point, false); got != tc.wantFalseBlocked {
+				t.Fatalf("false-edge unreachable = %v, want %v", got, tc.wantFalseBlocked)
+			}
+		})
+	}
+}
+
 func TestLowerMemberPathBranchRefinement(t *testing.T) {
 	decl := localAssign([]string{"t"}, &ast.TableExpr{})
 	rootRead := ident("t")
@@ -72,6 +203,26 @@ func TestLowerMemberPathBranchRefinement(t *testing.T) {
 	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
 	wantPath := path.NewPath(mustIdentSymbol(t, bindings, rootRead), "t").Field("child")
 	assertLoweredBranchValuePresence(t, facts, requireStmtPoints(t, built, memberStmt, 1)[0], wantPath, presence.Present(), true, presence.Absent(), true)
+}
+
+func TestLowerMemberPathTruthyBranchEvidence(t *testing.T) {
+	decl := localAssign([]string{"t"}, &ast.TableExpr{})
+	rootRead := ident("t")
+	memberStmt := &ast.IfStmt{Condition: dot(rootRead, "child")}
+	stmts := []ast.Stmt{decl, memberStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	wantPath := path.NewPath(mustIdentSymbol(t, bindings, rootRead), "t").Field("child")
+	point := requireStmtPoints(t, built, memberStmt, 1)[0]
+	assertLoweredBranchValuePresence(t, facts, point, wantPath, presence.Present(), true, presence.Absent(), true)
+	assertLoweredBranchPresenceProof(t, facts, point, wantPath, presence.Present(), true, false)
+	assertLoweredBranchTruthyProof(t, facts, point, wantPath, true, false)
 }
 
 func TestLowerTypeGuardBranchPathEvidence(t *testing.T) {
@@ -146,6 +297,42 @@ end
 	assertRootRefinementsBeforeDescendants(t, facts.BranchRefinements(point))
 }
 
+func TestLowerProtectedCallSuccessGuardRefinesPayloadToCallbackReturn(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local function run_tests(): number
+	return 1
+end
+
+local ok, result = pcall(run_tests)
+if not ok then
+	return
+end
+`, "pcall")
+
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	assign := mustLocalStmt(t, stmts, 1)
+	payloadPath := path.NewPath(mustLocalAt(t, bindings, assign, 1), "result")
+	ifStmt := mustIfStmt(t, stmts, 2)
+	point := requireStmtPoints(t, built, ifStmt, 1)[0]
+	refinement, ok := branchRefinementAt(facts.BranchRefinements(point), payloadPath)
+	if !ok {
+		t.Fatalf("missing pcall payload refinement at point %d; got %#v", point, facts.BranchRefinements(point))
+	}
+	value, ok := refinement.FalseValue()
+	if !ok {
+		t.Fatalf("missing false-edge pcall payload refinement: %#v", refinement)
+	}
+	constraint, ok := value.Constraint()
+	if !ok {
+		t.Fatalf("pcall payload refinement has no constraint: %#v", value)
+	}
+	got, ok := typevalue.TypeOf(reg, constraint)
+	if !ok || !typ.TypeEquals(got, typ.Number) {
+		t.Fatalf("pcall payload refinement type = %v/%v, want number; value=%#v", got, ok, constraint)
+	}
+}
+
 func TestLowerNegatedConjunctionIndexGuardPublishesFalseEdgeProofs(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(xs: {number}, i: number)
@@ -188,6 +375,27 @@ end
 	if !foundRange {
 		t.Fatalf("missing false-edge i <= #xs evidence; got %#v", facts.BranchPathEvidence(point))
 	}
+}
+
+func TestLowerLengthNotEqualGuardPublishesFalseEdgeFloor(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(parts: {string})
+	if #parts ~= 2 then
+	end
+end
+`)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	parts := bindings.ParamSlots(fn)[0].Symbol
+	partsPath := path.NewPath(parts, "parts")
+	ifStmt := fn.Stmts[0].(*ast.IfStmt)
+	point := requireStmtPoints(t, built, ifStmt, 1)[0]
+
+	for _, floor := range facts.BranchLenRefinements(point) {
+		if floor.ArrayPath().Equal(partsPath) && floor.Floor() == 2 && !floor.Cond() {
+			return
+		}
+	}
+	t.Fatalf("missing false-edge #parts ~= 2 length floor; got %#v", facts.BranchLenRefinements(point))
 }
 
 func TestLowerNegatedConjunctionNilChecksPublishFalseEdgeRefinements(t *testing.T) {
@@ -248,6 +456,52 @@ end
 		if !found {
 			t.Fatalf("missing false-value expression refinement for %s; got %#v", want, falseRefinements)
 		}
+	}
+}
+
+func TestLowerBooleanLocalAliasPublishesConditionRefinements(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(target: { transform: string? })
+	local has_transform = target.transform ~= nil
+	if has_transform then
+	end
+end
+`)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	targetPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "target").Field("transform")
+	ifStmt := fn.Stmts[1].(*ast.IfStmt)
+	point := requireStmtPoints(t, built, ifStmt, 1)[0]
+
+	refinement, ok := branchRefinementAt(facts.BranchRefinements(point), targetPath)
+	if !ok {
+		t.Fatalf("missing branch refinement for %s; got %#v", targetPath, facts.BranchRefinements(point))
+	}
+	trueValue, ok := refinement.TrueValue()
+	if !ok || !trueValue.HasPresence(presence.Present()) {
+		t.Fatalf("true-edge alias refinement = %#v/%v, want present", trueValue, ok)
+	}
+}
+
+func TestLowerNegatedBooleanLocalAliasInvertsConditionRefinements(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(target: { transform: string? })
+	local has_transform = target.transform ~= nil
+	if not has_transform then
+	end
+end
+`)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	targetPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "target").Field("transform")
+	ifStmt := fn.Stmts[1].(*ast.IfStmt)
+	point := requireStmtPoints(t, built, ifStmt, 1)[0]
+
+	refinement, ok := branchRefinementAt(facts.BranchRefinements(point), targetPath)
+	if !ok {
+		t.Fatalf("missing branch refinement for %s; got %#v", targetPath, facts.BranchRefinements(point))
+	}
+	falseValue, ok := refinement.FalseValue()
+	if !ok || !falseValue.HasPresence(presence.Present()) {
+		t.Fatalf("false-edge alias refinement = %#v/%v, want present", falseValue, ok)
 	}
 }
 
@@ -508,6 +762,39 @@ func TestLowerLiteralDiscriminantBranchRefinesRootOnBothEdges(t *testing.T) {
 	assertVariantOriginRefinementType(t, "false edge", falseValue, right)
 }
 
+func TestLowerOpenScalarDescendantLiteralBranchKeepsPathProof(t *testing.T) {
+	root := symbol.ID(804)
+	rootPath := path.NewPath(root, "cell")
+	l := lowerer{
+		registry:    standard.Registry(),
+		symbolTypes: map[symbol.ID]typ.Type{root: typetable.NewRecord().Field("kind", typ.String).Build()},
+		typeValues:  typevalue.NewCache(),
+	}
+
+	refinements := l.branchRefinementsForCheck(branchcond.Check{
+		Kind:          branchcond.CheckLiteralEqual,
+		Path:          rootPath.Field("kind"),
+		Literal:       typ.LiteralString("boolean"),
+		LiteralString: "boolean",
+	})
+	refinement, ok := branchRefinementAt(refinements, rootPath.Field("kind"))
+	if !ok {
+		t.Fatalf("missing descendant literal refinement; got %#v", refinements)
+	}
+	trueValue, ok := refinement.TrueValue()
+	if !ok {
+		t.Fatal("missing true-edge literal refinement")
+	}
+	constraint, ok := trueValue.Constraint()
+	if !ok {
+		t.Fatal("true-edge constraint missing")
+	}
+	gotType, ok := typevalue.TypeOf(standard.Registry(), constraint)
+	if !ok || !typ.TypeEquals(gotType, typ.LiteralString("boolean")) {
+		t.Fatalf("true-edge type = %v/%v, want literal boolean type name", gotType, ok)
+	}
+}
+
 func TestLowerTruthyInstantiatedResultBranchRefinesRootOnBothEdges(t *testing.T) {
 	resultType, valueCase, errorCase := instantiatedResultTypeParamFixture()
 	root := symbol.ID(802)
@@ -592,6 +879,31 @@ func TestLowerPathEqualityBranchRelation(t *testing.T) {
 		true,
 		false,
 	)
+}
+
+func TestLowerSequentialPathEqualityBranchRelation(t *testing.T) {
+	stmts := parseChunk(t, `
+local result, events_ch, timeout = {}, {}, {}
+if result.channel == timeout then
+	return
+end
+if result.channel == events_ch then
+	local event = result.value
+end
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	secondIf := stmts[2].(*ast.IfStmt)
+	point := requireStmtPoints(t, built, secondIf, 1)[0]
+	relations := facts.BranchPathRelations(point)
+	if len(relations) == 0 {
+		t.Fatalf("second branch path relations at point %d = 0", point)
+	}
 }
 
 func branchRefinementIndex(refinements []factflow.BranchRefinement, wantPath path.Path) int {

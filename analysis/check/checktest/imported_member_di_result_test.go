@@ -99,6 +99,232 @@ func TestRequireCheckInjectedConstructorReturnNamesMemberResultEvidence(t *testi
 	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target n requires number")
 }
 
+func TestRequireCheckImportedBuilderFactoryReturnKeepsReceiverMethods(t *testing.T) {
+	storeMod := CheckAndExport(`
+		type Store = {
+			state: {flags: {[string]: boolean}},
+			lookup_projection: (self: Store, id: string) -> string?,
+		}
+		local Store = {}
+		Store.__index = Store
+		local M = {}
+		M.Store = Store
+		function M.new(): Store
+			local self: Store = {
+				state = {flags = {}},
+				lookup_projection = Store.lookup_projection,
+			}
+			setmetatable(self, Store)
+			return self
+		end
+		function Store:lookup_projection(id: string): string?
+			return nil
+		end
+		return M
+	`, "store")
+	if len(storeMod.Errors) != 0 {
+		t.Fatalf("store module errors = %#v, want none", storeMod.Errors)
+	}
+
+	busMod := CheckAndExport(`
+		local store = require("store")
+		type Bus = {
+			register: (self: Bus, topic: string) -> Bus,
+			new_store: (self: Bus) -> store.Store,
+			replay: (self: Bus, target: store.Store) -> (),
+		}
+		local Bus = {}
+		Bus.__index = Bus
+		local M = {}
+		M.Bus = Bus
+		function M.new(): Bus
+			local self: Bus = {
+				register = Bus.register,
+				new_store = Bus.new_store,
+				replay = Bus.replay,
+			}
+			setmetatable(self, Bus)
+			return self
+		end
+		function Bus:register(topic: string): Bus
+			return self
+		end
+		function Bus:new_store(): store.Store
+			return store.new()
+		end
+		function Bus:replay(target: store.Store)
+			target.state.flags["replayed"] = true
+		end
+		return M
+	`, "bus", WithStdlib(), WithModule("store", storeMod))
+	if len(busMod.Errors) != 0 {
+		t.Fatalf("bus module errors = %#v, want none", busMod.Errors)
+	}
+
+	result := Check(`
+		local bus = require("bus")
+		local app = bus.new():register("tasks")
+		local store = app:new_store()
+		app:replay(store)
+		local projection = store:lookup_projection("job-1")
+	`, WithStdlib(), WithModule("store", storeMod), WithModule("bus", busMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want imported builder factory receiver methods retained", result.Diagnostics)
+	}
+}
+
+func TestRequireCheckImportedFluentBuilderKeepsPresentReceiverAcrossChain(t *testing.T) {
+	builderMod := CheckAndExport(`
+		type Builder = {
+			with_name: (self: Builder, name: string) -> Builder,
+			with_context: (self: Builder, context: {any}) -> Builder,
+			call: (self: Builder, input: string) -> (string?, string?),
+		}
+		local M = {}
+		M.Builder = Builder
+		function M.new(): Builder
+			local builder: Builder
+			builder = {
+				with_name = function(self: Builder, name: string): Builder
+					return self
+				end,
+				with_context = function(self: Builder, context: {any}): Builder
+					return self
+				end,
+				call = function(self: Builder, input: string): (string?, string?)
+					return input, nil
+				end,
+			}
+			return builder
+		end
+		return M
+	`, "builder")
+	if len(builderMod.Errors) != 0 {
+		t.Fatalf("builder module errors = %#v, want none", builderMod.Errors)
+	}
+
+	result := Check(`
+		local builder = require("builder")
+		local out, err = builder.new()
+			:with_name("jobs")
+			:with_context({})
+			:call("run")
+	`, WithStdlib(), WithModule("builder", builderMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want imported fluent builder receivers to stay present across chain", result.Diagnostics)
+	}
+}
+
+func TestRequireCheckImportedFluentBuilderWithImportedParameterTypesKeepsReceiverPresent(t *testing.T) {
+	securityMod := CheckAndExport(`
+		type ActorMeta = {
+			security_groups: {string},
+		}
+		type Actor = {
+			id: (self: Actor) -> string,
+			meta: (self: Actor) -> ActorMeta,
+		}
+		type Scope = {
+			name: string,
+		}
+		local M = {}
+		M.ActorMeta = ActorMeta
+		M.Actor = Actor
+		M.Scope = Scope
+		function M.new_actor(id: string, meta: ActorMeta?): Actor
+			local actor_meta = meta or {security_groups = {}}
+			local actor: Actor = {
+				id = function(self: Actor): string
+					return id
+				end,
+				meta = function(self: Actor): ActorMeta
+					return actor_meta
+				end,
+			}
+			return actor
+		end
+		function M.named_scope(name: string): Scope
+			return { name = name }
+		end
+		return M
+	`, "security")
+	if len(securityMod.Errors) != 0 {
+		t.Fatalf("security module errors = %#v, want none", securityMod.Errors)
+	}
+
+	builderMod := CheckAndExport(`
+		local security = require("security")
+		type Builder = {
+			actor: security.Actor?,
+			scope: security.Scope?,
+			context: {any}?,
+			with_actor: (self: Builder, actor: security.Actor) -> Builder,
+			with_scope: (self: Builder, scope: security.Scope) -> Builder,
+			with_context: (self: Builder, context: {any}) -> Builder,
+			call: (self: Builder, input: string) -> (string?, string?),
+		}
+		local M = {}
+		M.Builder = Builder
+		function M.new(): Builder
+			local builder: Builder
+			builder = {
+				actor = nil,
+				scope = nil,
+				context = nil,
+				with_actor = function(self: Builder, actor: security.Actor): Builder
+					self.actor = actor
+					return self
+				end,
+				with_scope = function(self: Builder, scope: security.Scope): Builder
+					self.scope = scope
+					return self
+				end,
+				with_context = function(self: Builder, context: {any}): Builder
+					self.context = context
+					return self
+				end,
+				call = function(self: Builder, input: string): (string?, string?)
+					return input, nil
+				end,
+			}
+			return builder
+		end
+		return M
+	`, "builder", WithStdlib(), WithModule("security", securityMod))
+	if len(builderMod.Errors) != 0 {
+		t.Fatalf("builder module errors = %#v, want none", builderMod.Errors)
+	}
+
+	result := Check(`
+		local builder = require("builder")
+		local security = require("security")
+		local out, err = builder.new()
+			:with_actor(security.new_actor("u-1", {security_groups = {"jobs"}}))
+			:with_scope(security.named_scope("jobs"))
+			:with_context({})
+			:call("run")
+	`, WithStdlib(), WithModule("builder", builderMod), WithModule("security", securityMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want imported fluent builder with imported parameter types to keep receiver present", result.Diagnostics)
+	}
+
+	result = Check(`
+		local builder = require("builder")
+		local security = require("security")
+		local function dispatch(input: string): (string?, string?)
+			return builder.new()
+				:with_actor(security.new_actor("u-1", {security_groups = {"jobs"}}))
+				:with_scope(security.named_scope("jobs"))
+				:with_context({})
+				:call(input)
+		end
+		local out, err = dispatch("run")
+	`, WithStdlib(), WithModule("builder", builderMod), WithModule("security", securityMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want imported fluent builder return chain to keep receiver present", result.Diagnostics)
+	}
+}
+
 func TestRequireCheckInjectedContainerMemberReassignmentDropsStaleImportedResultEvidence(t *testing.T) {
 	mod := CheckAndExport(`
 		local provider = {}
@@ -122,7 +348,24 @@ func TestRequireCheckInjectedContainerMemberReassignmentDropsStaleImportedResult
 		local n: number = container.client.meta()
 	`, WithStdlib(), WithModule("provider", mod))
 	if len(result.Diagnostics) != 0 {
-		t.Fatalf("diagnostics = %d, want no stale provider.meta evidence after member reassignment: %#v", len(result.Diagnostics), result.Diagnostics)
+		debug := "<no checked result>"
+		if result.checked != nil && result.checked.RootResult() != nil {
+			debug = callOutcomeDebug(result.checked.RootResult())
+		}
+		t.Fatalf("diagnostics = %d, want no stale provider.meta evidence after member reassignment: %#v\ncalls: %s", len(result.Diagnostics), result.Diagnostics, debug)
+	}
+}
+
+func TestRequireCheckLocalDottedMethodDeclarationKeepsResultEvidence(t *testing.T) {
+	result := Check(`
+		local replacement = {}
+		function replacement.meta(): number
+			return 1
+		end
+		local n: number = replacement.meta()
+	`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want local dotted method declaration to prove number result", result.Diagnostics)
 	}
 }
 

@@ -37,14 +37,17 @@ func (d *Detector) requiredTags(t typ.Type) requiredTagSet {
 			return cached
 		}
 	}
-	if d.active != nil && d.active[t] {
-		return requiredTagSet{}
+	needsCycleGuard := typ.ContainsRecursive(t)
+	if needsCycleGuard {
+		if d.active != nil && d.active[t] {
+			return requiredTagSet{}
+		}
+		if d.active == nil {
+			d.active = make(map[typ.Type]bool)
+		}
+		d.active[t] = true
+		defer delete(d.active, t)
 	}
-	if d.active == nil {
-		d.active = make(map[typ.Type]bool)
-	}
-	d.active[t] = true
-	defer delete(d.active, t)
 
 	tags := d.collectRequiredTags(t)
 	if tags.len() == 0 {

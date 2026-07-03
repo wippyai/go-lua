@@ -92,16 +92,6 @@
             "contains": [
               "stale_seconds is declared as number"
             ]
-          },
-          {
-            "kind": "missing proof",
-            "trust": "unknown",
-            "reason": "boundary validation missing",
-            "line": 27,
-            "column": 35,
-            "contains": [
-              "no proof on this path shows before satisfies the declared type"
-            ]
           }
         ],
         "evidence_contains": [
@@ -120,7 +110,6 @@
           "because:",
           "1. proven: before has literal value \"/tmp/active\"",
           "2. claimed: stale_seconds is declared as number",
-          "3. missing proof: no proof on this path shows before satisfies the declared type",
           "help: Use a value compatible with the expected type, or change the target type if `before` is valid."
         ],
         "render_not_contains": [

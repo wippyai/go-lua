@@ -515,6 +515,18 @@ end
 	}
 }
 
+func TestSolvedUnreachableBranchSuppressesAssignmentDiagnostic(t *testing.T) {
+	diags := Produce(runDiagnosticsResult(t, `
+local x: string? = nil
+if x ~= nil then
+	local s: string = x
+end
+`))
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none for assignment in solved-unreachable branch", diags)
+	}
+}
+
 func TestUnreachableBranchBodySuppressesUnusedLocalLint(t *testing.T) {
 	diags := ProduceWithConfig(runDiagnosticsResult(t, `
 local item = { kind = "ready" }
@@ -548,14 +560,11 @@ f("ok")
 `), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
 		CodeRedundantCondition: diagnostic.Enable(),
 	}}})
-	if len(diags) != 2 {
-		t.Fatalf("diagnostics = %#v, want impossible-branch and not-callable diagnostics", diags)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want only the explicitly enabled impossible-branch diagnostic", diags)
 	}
 	if d := diags[0]; d.Code != CodeRedundantCondition || !strings.Contains(d.Message, "always false") {
 		t.Fatalf("first diagnostic = %#v, want redundant-condition warning", d)
-	}
-	if d := diags[1]; d.Code != CodeDirectCallNotCallable || !strings.Contains(d.Message, "not callable") {
-		t.Fatalf("second diagnostic = %#v, want direct not-callable diagnostic", d)
 	}
 }
 
@@ -848,6 +857,21 @@ if box.value then
 	box:mutate()
 	if box.value then
 		return box
+	end
+end
+`,
+		},
+		{
+			name: "method call with captured receiver reassignment invalidates receiver root guard",
+			src: `
+local value = {}
+function value:clear()
+	value = false
+end
+if value then
+	value:clear()
+	if value then
+		return value
 	end
 end
 `,

@@ -78,6 +78,47 @@ func TestResultValueTypeIgnoresExplicitDefaultSentinelCase(t *testing.T) {
 	}
 }
 
+func TestResultCaseTypeIncludesRuntimeStatusFields(t *testing.T) {
+	caseType := ResultCaseType("select-status", 0, typ.String)
+	record, ok := unwrap.Alias(unwrap.Annotations(caseType)).(*typ.Record)
+	if !ok {
+		t.Fatalf("case type = %T, want record", caseType)
+	}
+	okField := record.GetField("ok")
+	if okField == nil || !typ.TypeEquals(okField.Type, typ.Boolean) {
+		t.Fatalf("ok field = %v, want boolean", okField)
+	}
+	defaultField := record.GetField("default")
+	if defaultField == nil || !typ.TypeEquals(defaultField.Type, typ.Nil) {
+		t.Fatalf("non-default default field = %v, want nil", defaultField)
+	}
+}
+
+func TestResultValueTypeWithDefaultIncludesRuntimeDefaultFields(t *testing.T) {
+	result, ok := ResultValueTypeWithDefault("select-default-status", []ResultCase{
+		{Index: 0, Payload: typ.String},
+	}, true)
+	if !ok {
+		t.Fatal("ResultValueTypeWithDefault returned no type")
+	}
+	caseType, ok := ResultCaseTypeFromValue(result, "select-default-status", DefaultCaseIndex)
+	if !ok {
+		t.Fatalf("result type missing default member: %v", result)
+	}
+	record, ok := unwrap.Alias(unwrap.Annotations(caseType)).(*typ.Record)
+	if !ok {
+		t.Fatalf("default case type = %T, want record", caseType)
+	}
+	okField := record.GetField("ok")
+	if okField == nil || !typ.TypeEquals(okField.Type, typ.Boolean) {
+		t.Fatalf("default ok field = %v, want boolean", okField)
+	}
+	defaultField := record.GetField("default")
+	if defaultField == nil || !typ.TypeEquals(defaultField.Type, typ.True) {
+		t.Fatalf("default field = %v, want true", defaultField)
+	}
+}
+
 func TestResultCaseTypeFromValueMatchesUnionMembers(t *testing.T) {
 	caseType := ResultCaseType("select-2", 7, typetable.NewRecord().Field("ok", typ.Boolean).Build())
 	union := typeexpr.Union(caseType, typ.String)

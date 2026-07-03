@@ -26,8 +26,37 @@ import (
 )
 
 type pathValue struct {
-	value product.Value
-	write func(state.State, product.Value) state.State
+	value  product.Value
+	target pathValueTarget
+}
+
+type pathValueTargetKind uint8
+
+const (
+	pathValueTargetNone pathValueTargetKind = iota
+	pathValueTargetSlot
+	pathValueTargetPathKey
+)
+
+type pathValueTarget struct {
+	kind    pathValueTargetKind
+	slot    key.Value
+	ks      *keyspace.KeySpace
+	pathKey pathdom.PathKey
+}
+
+func (v pathValue) write(reg *axis.Registry, out state.State, value product.Value) (state.State, bool) {
+	switch v.target.kind {
+	case pathValueTargetSlot:
+		return out.WriteValue(reg, v.target.slot, value), true
+	case pathValueTargetPathKey:
+		if v.target.ks == nil || v.target.pathKey == "" {
+			return out, false
+		}
+		return out.WritePathKey(reg, v.target.ks, v.target.pathKey, value), true
+	default:
+		return out, false
+	}
 }
 
 func applyBranchPathRelation(
@@ -123,6 +152,14 @@ func applyPathEqualityAtCached(
 	leftPath pathdom.Path,
 	rightPath pathdom.Path,
 ) state.State {
+	out = applyPathOriginRelation(typeValues, reg, resolver, projectPath, point, out, leftPath, rightPath, true)
+	if stateIsBottom(reg, out) {
+		return out
+	}
+	out = applyPathOriginRelation(typeValues, reg, resolver, projectPath, point, out, rightPath, leftPath, true)
+	if stateIsBottom(reg, out) {
+		return out
+	}
 	left, ok := resolvePathValueAtCached(typeValues, reg, resolver, point, out, leftPath, projectPath)
 	if !ok {
 		return out
@@ -132,10 +169,15 @@ func applyPathEqualityAtCached(
 		return out
 	}
 	meet := product.Meet(reg, left.value, right.value)
-	out = left.write(out, meet)
-	out = right.write(out, meet)
-	out = applyPathOriginRelation(reg, resolver, projectPath, point, out, leftPath, rightPath, true)
-	out = applyPathOriginRelation(reg, resolver, projectPath, point, out, rightPath, leftPath, true)
+	if product.Equal(reg, meet, product.Bottom(reg)) {
+		return unreachableState(reg)
+	}
+	if written, ok := left.write(reg, out, meet); ok {
+		out = written
+	}
+	if written, ok := right.write(reg, out, meet); ok {
+		out = written
+	}
 	return out
 }
 
@@ -151,8 +193,8 @@ func applyBranchPathInequality(
 	if selected, ok := applyChannelSelectCaseInequality(typeValues, ctx.Registry, resolver, projectPath, ctx.Edge.From, out, leftPath, rightPath); ok {
 		return selected
 	}
-	out = applyPathOriginRelation(ctx.Registry, resolver, projectPath, ctx.Edge.From, out, leftPath, rightPath, false)
-	out = applyPathOriginRelation(ctx.Registry, resolver, projectPath, ctx.Edge.From, out, rightPath, leftPath, false)
+	out = applyPathOriginRelation(typeValues, ctx.Registry, resolver, projectPath, ctx.Edge.From, out, leftPath, rightPath, false)
+	out = applyPathOriginRelation(typeValues, ctx.Registry, resolver, projectPath, ctx.Edge.From, out, rightPath, leftPath, false)
 	return out
 }
 
@@ -183,8 +225,9 @@ func resolvePathValueAtCached(
 		slot := key.SymbolValue(targetPath.Symbol)
 		return pathValue{
 			value: out.ReadValue(reg, slot),
-			write: func(s state.State, value product.Value) state.State {
-				return s.WriteValue(reg, slot, value)
+			target: pathValueTarget{
+				kind: pathValueTargetSlot,
+				slot: slot,
 			},
 		}, true
 	}
@@ -198,14 +241,8 @@ func resolvePathValueAtCached(
 	ks := resolver.KeySpace()
 	value := out.ReadPathKey(reg, ks, pathKey)
 	if product.Equal(reg, value, product.Bottom(reg)) {
-		projected, ok := projectPathDynamicIndexValue(reg, resolver, point, out, targetPath)
+		projected, ok := projectPathFallbackValue(typeValues, reg, resolver, point, out, targetPath, projectPath)
 		if ok {
-			value = projected
-		} else if projected, ok := projectPathHeapStaticMemberValue(reg, resolver, point, out, targetPath); ok {
-			value = projected
-		} else if projected, ok := projectPathOriginValue(reg, out, targetPath); ok {
-			value = projected
-		} else if projected, ok := projectPathStructuralValueCached(typeValues, reg, out, targetPath, projectPath); ok {
 			value = projected
 		} else {
 			return pathValue{}, false
@@ -213,10 +250,36 @@ func resolvePathValueAtCached(
 	}
 	return pathValue{
 		value: value,
-		write: func(s state.State, value product.Value) state.State {
-			return s.WritePathKey(reg, ks, pathKey, value)
+		target: pathValueTarget{
+			kind:    pathValueTargetPathKey,
+			ks:      ks,
+			pathKey: pathKey,
 		},
 	}, true
+}
+
+func projectPathFallbackValue(
+	typeValues *typevalue.Cache,
+	reg *axis.Registry,
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	out state.State,
+	targetPath pathdom.Path,
+	projectPath PathTypeProjector,
+) (product.Value, bool) {
+	if projected, ok := projectPathDynamicIndexValue(reg, resolver, point, out, targetPath); ok {
+		return projected, true
+	}
+	if projected, ok := projectPathHeapStaticMemberValue(reg, resolver, point, out, targetPath); ok {
+		return projected, true
+	}
+	if projected, ok := projectPathStructuralValueCached(typeValues, reg, out, targetPath, projectPath); ok {
+		return projected, true
+	}
+	if projected, ok := projectPathOriginValue(typeValues, reg, out, targetPath, projectPath); ok {
+		return projected, true
+	}
+	return product.Value{}, false
 }
 
 func projectPathHeapStaticMemberValue(
@@ -239,7 +302,7 @@ func projectPathHeapStaticMemberValue(
 		}
 	}
 
-	parent := targetPath.Parent()
+	parent := targetPath.ParentView()
 	parentValue, _ := resolvePathValueAtCached(nil, reg, resolver, point, out, parent, nil)
 	if projected, ok := sourcevalue.HeapMemberFromValue(reg, resolver.KeySpace(), out, parentValue.value, targetPath.Segments[len(targetPath.Segments)-1:]); ok {
 		if hasRootProjected {
@@ -265,7 +328,7 @@ func projectPathDynamicIndexValue(
 	if resolver == nil || len(targetPath.Segments) == 0 {
 		return product.Value{}, false
 	}
-	parent := targetPath.Parent()
+	parent := targetPath.ParentView()
 	if parent.IsEmpty() {
 		return product.Value{}, false
 	}
@@ -281,6 +344,16 @@ func projectPathDynamicIndexValue(
 		return projectPathHeapDynamicIndexValue(reg, resolver, point, out, parent, last, mayMatchAllowed)
 	}
 	if joined, ok := joinMatchingDynamicIndexValues(reg, snapshot.Facts, tableKey, last, mayMatchAllowed); ok {
+		heapMayMatchAllowed := mayMatchAllowed || presence.Equal(product.PresenceOf(joined), presence.Present())
+		if _, hasID := product.Get(reg, joined, identity.Key).ID(); !hasID {
+			if heapProjected, heapOK := projectPathHeapDynamicIndexValue(reg, resolver, point, out, parent, last, heapMayMatchAllowed); heapOK {
+				if _, heapHasID := product.Get(reg, heapProjected, identity.Key).ID(); heapHasID {
+					if merged := product.Meet(reg, joined, heapProjected); !product.Equal(reg, merged, product.Bottom(reg)) {
+						return merged, true
+					}
+				}
+			}
+		}
 		return joined, true
 	}
 	return projectPathHeapDynamicIndexValue(reg, resolver, point, out, parent, last, mayMatchAllowed)
@@ -295,31 +368,42 @@ func projectPathHeapDynamicIndexValue(
 	last segment.Segment,
 	mayMatchAllowed bool,
 ) (product.Value, bool) {
-	parentValue, ok := resolvePathValueAtCached(nil, reg, resolver, point, out, parent, nil)
+	id, ok := dynamicIndexParentHeapID(reg, resolver, point, out, parent)
 	if !ok {
 		return product.Value{}, false
 	}
-	id, ok := product.Get(reg, parentValue.value, identity.Key).ID()
-	if !ok {
-		projected, projectedOK := projectPathHeapStaticMemberValue(reg, resolver, point, out, parent)
-		if !projectedOK {
-			projected, projectedOK = projectPathOriginValue(reg, out, parent)
-		}
-		if !projectedOK {
-			return product.Value{}, false
-		}
-		if merged := product.Meet(reg, parentValue.value, projected); !product.Equal(reg, merged, product.Bottom(reg)) {
-			parentValue.value = merged
-		} else {
-			parentValue.value = projected
-		}
-		id, ok = product.Get(reg, parentValue.value, identity.Key).ID()
-		if !ok {
-			return product.Value{}, false
-		}
-	}
 	object := out.ReadHeapTableObject(reg, id)
 	return joinMatchingHeapDynamicIndexValues(reg, object.DynamicIndexFacts(), last, mayMatchAllowed)
+}
+
+func dynamicIndexParentHeapID(
+	reg *axis.Registry,
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	out state.State,
+	parent pathdom.Path,
+) (identity.ID, bool) {
+	parentValue, ok := resolvePathValueAtCached(nil, reg, resolver, point, out, parent, nil)
+	if !ok {
+		return identity.ID{}, false
+	}
+	id, ok := product.Get(reg, parentValue.value, identity.Key).ID()
+	if ok {
+		return id, true
+	}
+	projected, projectedOK := projectPathHeapStaticMemberValue(reg, resolver, point, out, parent)
+	if !projectedOK {
+		projected, projectedOK = projectPathOriginValue(nil, reg, out, parent, nil)
+	}
+	if !projectedOK {
+		return identity.ID{}, false
+	}
+	if merged := product.Meet(reg, parentValue.value, projected); !product.Equal(reg, merged, product.Bottom(reg)) {
+		parentValue.value = merged
+	} else {
+		parentValue.value = projected
+	}
+	return product.Get(reg, parentValue.value, identity.Key).ID()
 }
 
 func joinMatchingDynamicIndexValues(
@@ -391,11 +475,20 @@ func pathKeyHasPresentProof(reg *axis.Registry, ks *keyspace.KeySpace, out state
 	if pathKey == "" {
 		return false
 	}
-	value := out.ReadPathKey(reg, ks, pathKey)
-	if product.Equal(reg, value, product.Bottom(reg)) {
-		return false
+	localKey, ok := ks.FromPathKey(pathKey)
+	if !ok {
+		value := out.ReadPathKey(reg, ks, pathKey)
+		return !product.Equal(reg, value, product.Bottom(reg)) &&
+			presence.Equal(product.PresenceOf(value), presence.Present())
 	}
-	return presence.Equal(product.PresenceOf(value), presence.Present())
+	for _, key := range appendLocalPathKeyWithStaticStringAlias(nil, ks, localKey) {
+		value := out.ReadLocalPathKey(reg, key)
+		if !product.Equal(reg, value, product.Bottom(reg)) &&
+			presence.Equal(product.PresenceOf(value), presence.Present()) {
+			return true
+		}
+	}
+	return false
 }
 
 func dynamicIndexFactMayMatchSegment(reg *axis.Registry, fact dynamicindex.Fact, seg segment.Segment) bool {
@@ -548,10 +641,10 @@ func projectPathStructuralValueCached(typeValues *typevalue.Cache, reg *axis.Reg
 	if !ok {
 		return product.Value{}, false
 	}
-	return typeValues.FromTypeWithWitness(reg, projected), true
+	return projectedPathValue(reg, typeValues, projected), true
 }
 
-func projectPathOriginValue(reg *axis.Registry, out state.State, targetPath pathdom.Path) (product.Value, bool) {
+func projectPathOriginValue(typeValues *typevalue.Cache, reg *axis.Registry, out state.State, targetPath pathdom.Path, projectPath PathTypeProjector) (product.Value, bool) {
 	if targetPath.Symbol == 0 || len(targetPath.Segments) == 0 {
 		return product.Value{}, false
 	}
@@ -563,6 +656,17 @@ func projectPathOriginValue(reg *axis.Registry, out state.State, targetPath path
 	if origin.IsBottom() || origin.IsTop() {
 		return product.Value{}, false
 	}
+	if projectPath != nil {
+		if rootType, ok := typeValues.TypeFromVariantOrigin(origin.Family(), origin.CasesRef()); ok {
+			if projected, ok := projectPath(rootType, targetPath); ok {
+				value := projectedPathValue(reg, typeValues, projected)
+				if family, cases, ok := variant.ProjectOrigin(origin.Family(), origin.CasesRef(), targetPath.Segments); ok {
+					value = product.Set(reg, value, variantorigin.Key, variantorigin.Of(family, cases))
+				}
+				return value, true
+			}
+		}
+	}
 	family, cases, ok := variant.ProjectOrigin(origin.Family(), origin.CasesRef(), targetPath.Segments)
 	if !ok {
 		return product.Value{}, false
@@ -570,7 +674,16 @@ func projectPathOriginValue(reg *axis.Registry, out state.State, targetPath path
 	return product.Set(reg, product.Top(), variantorigin.Key, variantorigin.Of(family, cases)), true
 }
 
+func projectedPathValue(reg *axis.Registry, typeValues *typevalue.Cache, t typ.Type) product.Value {
+	value := typeValues.FromTypeWithWitness(reg, t)
+	if t != nil && !typevalue.ProjectionHasNil(t) {
+		value = product.WithPresence(reg, value, presence.Present())
+	}
+	return value
+}
+
 func applyPathOriginRelation(
+	typeValues *typevalue.Cache,
 	reg *axis.Registry,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
@@ -587,39 +700,56 @@ func applyPathOriginRelation(
 	if !ok {
 		return out
 	}
-	constraintOrigin := product.Get(reg, constraint.value, variantorigin.Key)
-	if constraintOrigin.IsBottom() || constraintOrigin.IsTop() {
-		return out
-	}
 	slot := key.SymbolValue(parentPath.Symbol)
 	root := out.ReadValue(reg, slot)
 	if product.Equal(reg, root, product.Bottom(reg)) {
 		return out
 	}
-	rootOrigin := product.Get(reg, root, variantorigin.Key)
-	if rootOrigin.IsBottom() || rootOrigin.IsTop() {
-		return out
-	}
-	cases, ok := variant.NarrowOriginByPath(
-		rootOrigin.Family(),
-		rootOrigin.CasesRef(),
-		parentPath.Segments,
-		constraintOrigin.Family(),
-		constraintOrigin.CasesRef(),
-		equal,
-	)
+	rootOrigin, ok := typevalue.VariantOriginOfValue(reg, typeValues, root)
 	if !ok {
 		return out
 	}
-	narrowed := rootOrigin
-	if len(cases) == 0 {
-		narrowed = variantorigin.Bottom()
-	} else {
-		narrowed = variantorigin.Of(rootOrigin.Family(), cases)
+	cases, ok := narrowOriginCasesByPathConstraint(typeValues, reg, rootOrigin, parentPath.Segments, constraint.value, equal)
+	if !ok {
+		return out
 	}
+	if len(cases) == 0 {
+		return unreachableState(reg)
+	}
+	narrowed := variantorigin.Of(rootOrigin.Family(), cases)
 	rootPath := parentPath.RootOnly()
 	out = invalidateRootDescendantsAt(resolver, point, out, rootPath)
 	return out.WriteValue(reg, slot, product.Set(reg, root, variantorigin.Key, narrowed))
+}
+
+func narrowOriginCasesByPathConstraint(
+	typeValues *typevalue.Cache,
+	reg *axis.Registry,
+	rootOrigin variantorigin.Value,
+	suffix []segment.Segment,
+	constraint product.Value,
+	equal bool,
+) ([]int, bool) {
+	if constraintOrigin, ok := typevalue.VariantOriginOfValue(reg, typeValues, constraint); ok {
+		return variant.NarrowOriginByPath(
+			rootOrigin.Family(),
+			rootOrigin.CasesRef(),
+			suffix,
+			constraintOrigin.Family(),
+			constraintOrigin.CasesRef(),
+			equal,
+		)
+	}
+	if constraintType, ok := typevalue.TypeOf(reg, constraint); ok {
+		return variant.NarrowOriginByPathType(
+			rootOrigin.Family(),
+			rootOrigin.CasesRef(),
+			suffix,
+			constraintType,
+			equal,
+		)
+	}
+	return nil, false
 }
 
 func invalidateRootDescendantsAt(

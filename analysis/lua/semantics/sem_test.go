@@ -188,6 +188,27 @@ func TestExtractChunkAssignmentsUseStmtPointsAndPreserveIdentity(t *testing.T) {
 	if again.Exprs[0] != local.Exprs[0] {
 		t.Fatalf("LocalAssignment exposed mutable expr slice")
 	}
+	localView, ok := result.LocalAssignmentView(localPoints[1])
+	if !ok {
+		t.Fatalf("missing local assignment view")
+	}
+	borrowedLocal, ok := localView.Borrowed()
+	if !ok || borrowedLocal.Expr != local.Exprs[1] || borrowedLocal.Exprs[0] != local.Exprs[0] {
+		t.Fatalf("borrowed local assignment = %#v, ok=%v", borrowedLocal, ok)
+	}
+	localAllocs := testing.AllocsPerRun(1000, func() {
+		view, ok := result.LocalAssignmentView(localPoints[1])
+		if !ok {
+			t.Fatalf("missing local assignment view")
+		}
+		borrowed, ok := view.Borrowed()
+		if !ok || borrowed.Expr == nil {
+			t.Fatalf("borrowed local assignment = %#v, ok=%v", borrowed, ok)
+		}
+	})
+	if localAllocs != 0 {
+		t.Fatalf("LocalAssignmentView allocations/run = %.1f, want zero", localAllocs)
+	}
 
 	writePoints := requireStmtPoints(t, built, write, 2)
 	firstWrite, ok := result.OrdinaryAssignment(writePoints[0])
@@ -206,6 +227,27 @@ func TestExtractChunkAssignmentsUseStmtPointsAndPreserveIdentity(t *testing.T) {
 	secondWrite, ok := result.OrdinaryAssignment(writePoints[1])
 	if !ok || secondWrite.Target != bWrite {
 		t.Fatalf("second ordinary assignment = %#v, ok=%v", secondWrite, ok)
+	}
+	ordinaryView, ok := result.OrdinaryAssignmentView(writePoints[1])
+	if !ok {
+		t.Fatalf("missing ordinary assignment view")
+	}
+	borrowedOrdinary, ok := ordinaryView.Borrowed()
+	if !ok || borrowedOrdinary.Target != bWrite || borrowedOrdinary.Rhs[0] != write.Rhs[0] {
+		t.Fatalf("borrowed ordinary assignment = %#v, ok=%v", borrowedOrdinary, ok)
+	}
+	ordinaryAllocs := testing.AllocsPerRun(1000, func() {
+		view, ok := result.OrdinaryAssignmentView(writePoints[1])
+		if !ok {
+			t.Fatalf("missing ordinary assignment view")
+		}
+		borrowed, ok := view.Borrowed()
+		if !ok || borrowed.Value == nil {
+			t.Fatalf("borrowed ordinary assignment = %#v, ok=%v", borrowed, ok)
+		}
+	})
+	if ordinaryAllocs != 0 {
+		t.Fatalf("OrdinaryAssignmentView allocations/run = %.1f, want zero", ordinaryAllocs)
 	}
 }
 
@@ -353,6 +395,31 @@ func TestExtractChunkEmptyObjectLiteralPublishesSidecar(t *testing.T) {
 	}
 	if len(fact.Entries) != 0 {
 		t.Fatalf("empty literal entries = %#v, want none", fact.Entries)
+	}
+}
+
+func TestExtractChunkObjectLiteralThroughLogicalOperand(t *testing.T) {
+	table := &ast.TableExpr{}
+	local := localAssign([]string{"t"}, &ast.LogicalOpExpr{
+		Operator: "or",
+		Lhs:      &ast.NilExpr{},
+		Rhs:      table,
+	})
+	stmts := []ast.Stmt{local}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	fact, ok := result.ObjectLiteral(table)
+	if !ok {
+		t.Fatalf("missing object literal sidecar for logical operand")
+	}
+	if fact.Expr != table || fact.Table != table {
+		t.Fatalf("object literal identity = %#v", fact)
 	}
 }
 
@@ -535,6 +602,9 @@ func TestExtractChunkObjectLiteralCallArgumentEntriesAndSources(t *testing.T) {
 	if len(okFact.ArgumentSources) != 1 || okFact.ArgumentSources[0].Kind != sourceprovenance.SourceExpression || okFact.ArgumentSources[0].Expr != arg {
 		t.Fatalf("ok call argument sources = %#v, want table argument expression", okFact.ArgumentSources)
 	}
+	if len(okFact.ArgumentSpans) != 1 || len(okFact.ArgumentLabels) != 1 {
+		t.Fatalf("ok call argument metadata spans=%#v labels=%#v, want one per argument", okFact.ArgumentSpans, okFact.ArgumentLabels)
+	}
 
 	fact, ok := result.ObjectLiteral(arg)
 	if !ok {
@@ -555,6 +625,9 @@ func TestExtractChunkObjectLiteralCallArgumentEntriesAndSources(t *testing.T) {
 	}
 	if generated.Source.Kind != sourceprovenance.SourceCall || generated.Source.Expr != makeCall || generated.Source.CallPoint != points[0] || !generated.Source.HasCallPoint {
 		t.Fatalf("generated source = %#v, want make_event call point %d", generated.Source, points[0])
+	}
+	if generated.ValueLabel != "" {
+		t.Fatalf("generated value label = %q, want empty for call expression", generated.ValueLabel)
 	}
 
 	nestedFact, ok := result.ObjectLiteral(profile)
@@ -677,8 +750,18 @@ func TestExtractChunkFunctionDefinitionFactPreservesIdentity(t *testing.T) {
 	if !fact.HasTargetPath || !fact.TargetPath.Equal(wantPath) {
 		t.Fatalf("function definition target path = %v/%v, want %v", fact.TargetPath, fact.HasTargetPath, wantPath)
 	}
-	if _, ok := result.OrdinaryAssignment(points[0]); ok {
-		t.Fatalf("function definition point produced ordinary assignment fact")
+	assign, ok := result.OrdinaryAssignment(points[0])
+	if !ok {
+		t.Fatalf("missing function definition ordinary assignment fact")
+	}
+	if assign.Value != fn || assign.Source.Kind != sourceprovenance.SourceExpression || assign.Source.Expr != fn {
+		t.Fatalf("function definition assignment source = %#v value %p, want function expression %p", assign.Source, assign.Value, fn)
+	}
+	if !assign.HasSymbol || assign.Symbol != mustIdentSymbol(t, bindings, target) {
+		t.Fatalf("function definition assignment symbol = %d/%v, want target symbol", assign.Symbol, assign.HasSymbol)
+	}
+	if !assign.HasPath || !assign.Path.Equal(wantPath) {
+		t.Fatalf("function definition assignment path = %v/%v, want %v", assign.Path, assign.HasPath, wantPath)
 	}
 }
 
@@ -893,6 +976,27 @@ func TestExtractChunkCallReturnBranchAndTypeFacts(t *testing.T) {
 	if callAgain.Args[0] != xArg {
 		t.Fatalf("Call exposed mutable args slice")
 	}
+	view, ok := result.CallView(callPoints[0])
+	if !ok {
+		t.Fatalf("missing call view")
+	}
+	borrowed, ok := view.Borrowed()
+	if !ok || borrowed.Args[0] != xArg || borrowed.Call != callExpr {
+		t.Fatalf("borrowed call fact = %#v, ok=%v", borrowed, ok)
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		view, ok := result.CallView(callPoints[0])
+		if !ok {
+			t.Fatalf("missing call view")
+		}
+		borrowed, ok := view.Borrowed()
+		if !ok || borrowed.Call == nil {
+			t.Fatalf("borrowed call fact = %#v, ok=%v", borrowed, ok)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("CallView allocations/run = %.1f, want zero", allocs)
+	}
 
 	for _, tt := range []struct {
 		stmt ast.Stmt
@@ -937,6 +1041,27 @@ func TestExtractChunkCallReturnBranchAndTypeFacts(t *testing.T) {
 	if returnAgain.Exprs[0] != retExpr {
 		t.Fatalf("Return exposed mutable expr slice")
 	}
+	returnView, ok := result.ReturnView(returnPoint)
+	if !ok {
+		t.Fatalf("missing return view")
+	}
+	borrowedReturn, ok := returnView.Borrowed()
+	if !ok || borrowedReturn.Exprs[0] != retExpr {
+		t.Fatalf("borrowed return fact = %#v, ok=%v", borrowedReturn, ok)
+	}
+	returnAllocs := testing.AllocsPerRun(1000, func() {
+		view, ok := result.ReturnView(returnPoint)
+		if !ok {
+			t.Fatalf("missing return view")
+		}
+		borrowed, ok := view.Borrowed()
+		if !ok || len(borrowed.Exprs) == 0 {
+			t.Fatalf("borrowed return fact = %#v, ok=%v", borrowed, ok)
+		}
+	})
+	if returnAllocs != 0 {
+		t.Fatalf("ReturnView allocations/run = %.1f, want zero", returnAllocs)
+	}
 }
 
 func TestExtractParsedFunctionChannelReceiveCallFact(t *testing.T) {
@@ -973,6 +1098,13 @@ end
 		}
 		if len(fact.ResultTargets) != 2 {
 			t.Fatalf("receive result targets = %#v, want value and ok", fact.ResultTargets)
+		}
+		if fact.CallSpan.StartLine == 0 || fact.CalleeSpan.StartLine == 0 {
+			t.Fatalf("receive spans call=%#v callee=%#v, want syntax-free call and callee spans", fact.CallSpan, fact.CalleeSpan)
+		}
+		if fact.CallSpan.StartLine > fact.CalleeSpan.StartLine ||
+			(fact.CallSpan.StartLine == fact.CalleeSpan.StartLine && fact.CallSpan.StartCol > fact.CalleeSpan.StartCol) {
+			t.Fatalf("receive spans call=%#v callee=%#v, want call span to cover callee", fact.CallSpan, fact.CalleeSpan)
 		}
 	}
 	if !found {
@@ -1172,6 +1304,39 @@ func TestExtractChunkNestedStatementArgumentCallSourcesPointAtInnerCall(t *testi
 	}
 }
 
+func TestExtractChunkMemberReadCallReceiverIsExpressionProducer(t *testing.T) {
+	lookupCall := &ast.FuncCallExpr{Func: dot(ident("store"), "lookup")}
+	memberRead := dot(lookupCall, "status")
+	local := localAssign([]string{"status"}, memberRead)
+	stmts := []ast.Stmt{local}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"store"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	if built == nil || built.Graph == nil {
+		t.Fatalf("BuildChunk returned nil")
+	}
+
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	points := requireStmtPoints(t, built, local, 2)
+	callFact, ok := result.Call(points[0])
+	if !ok {
+		t.Fatalf("missing member receiver call fact at point %d", points[0])
+	}
+	if callFact.Call != lookupCall || callFact.Context != CallContextExpressionProducer {
+		t.Fatalf("call fact = %#v, want lookup expression producer", callFact)
+	}
+	if len(callFact.ResultTargets) != 1 || callFact.ResultTargets[0].Kind != CallResultTargetExpression || callFact.ResultTargets[0].ResultIndex != 0 {
+		t.Fatalf("lookup result targets = %#v, want expression slot 0", callFact.ResultTargets)
+	}
+	assign, ok := result.LocalAssignment(points[1])
+	if !ok || assign.Expr != memberRead {
+		t.Fatalf("assignment = %#v, ok=%v", assign, ok)
+	}
+}
+
 func TestExtractChunkObjectLiteralEntryCallSourcePointsAtNestedCall(t *testing.T) {
 	makeCall := &ast.FuncCallExpr{Func: ident("make")}
 	table := &ast.TableExpr{Fields: []*ast.Field{{
@@ -1232,6 +1397,9 @@ func TestExtractChunkConditionAndIteratorCallFactsUseDeferredContexts(t *testing
 	}
 	if conditionCall.Context != CallContextCondition || conditionCall.SourceStmt != ifStmt || conditionCall.ExprIndex != 0 {
 		t.Fatalf("condition call context = %#v", conditionCall)
+	}
+	if conditionCall.ConditionNegated {
+		t.Fatalf("condition call unexpectedly negated: %#v", conditionCall)
 	}
 	if !conditionCall.Final || conditionCall.Expanded || !conditionCall.Adjusted || conditionCall.OpenTail {
 		t.Fatalf("condition call flags = %#v", conditionCall)
@@ -1322,6 +1490,31 @@ func TestExtractChunkConditionAndIteratorCallFactsUseDeferredContexts(t *testing
 	genericAgain, _ := result.GenericFor(loopPoints[2])
 	if genericAgain.Sources[0].Kind != sourceprovenance.SourceCall {
 		t.Fatalf("GenericFor exposed mutable sources slice")
+	}
+}
+
+func TestExtractChunkNegatedConditionPredicateCallCarriesPolarity(t *testing.T) {
+	readyCall := call("ready")
+	ifStmt := &ast.IfStmt{Condition: &ast.UnaryNotOpExpr{Expr: readyCall}}
+	stmts := []ast.Stmt{ifStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"ready"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	points := requireStmtPoints(t, built, ifStmt, 2)
+	conditionFact, ok := result.Call(points[0])
+	if !ok {
+		t.Fatalf("missing condition call fact")
+	}
+	if conditionFact.Context != CallContextCondition || conditionFact.Call != readyCall {
+		t.Fatalf("condition call fact = %#v", conditionFact)
+	}
+	if !conditionFact.ConditionNegated {
+		t.Fatalf("condition call missing unary-not polarity: %#v", conditionFact)
 	}
 }
 
@@ -1571,14 +1764,24 @@ func TestExtractChunkCallFactResolvesMethodPaths(t *testing.T) {
 	if !fact.HasCalleePath || !fact.CalleePath.Equal(methodPath) {
 		t.Fatalf("callee path = %#v, want %#v", fact.CalleePath, methodPath)
 	}
+	if !fact.CalleeMemberAccess {
+		t.Fatalf("method call did not carry member-access evidence")
+	}
+	if !fact.HasReceiverSource || fact.ReceiverSource.Kind != sourceprovenance.SourceExpression || fact.ReceiverSource.Expr != obj {
+		t.Fatalf("receiver source = %#v, want expression source for receiver", fact.ReceiverSource)
+	}
 	if len(fact.ArgumentSources) != 1 || fact.ArgumentSources[0].Kind != sourceprovenance.SourceExpression || fact.ArgumentSources[0].Expr != arg || fact.ArgumentSources[0].ExprIndex != 0 || fact.ArgumentSources[0].TargetIndex != 0 || fact.ArgumentSources[0].ResultIndex != 0 || !fact.ArgumentSources[0].Final {
 		t.Fatalf("method argument sources = %#v", fact.ArgumentSources)
 	}
 	fact.ArgumentSources[0].Kind = sourceprovenance.SourceNil
+	fact.ReceiverSource.Kind = sourceprovenance.SourceNil
 	fact.MethodPath.Segments[0].Name = "mutated"
 	again, _ := result.Call(point)
 	if !again.MethodPath.Equal(methodPath) {
 		t.Fatalf("Call exposed mutable method path: %#v", again.MethodPath)
+	}
+	if !again.HasReceiverSource || again.ReceiverSource.Kind != sourceprovenance.SourceExpression {
+		t.Fatalf("Call exposed mutable receiver source: %#v", again.ReceiverSource)
 	}
 	if again.ArgumentSources[0].Kind != sourceprovenance.SourceExpression {
 		t.Fatalf("Call exposed mutable argument sources: %#v", again.ArgumentSources)
@@ -1622,8 +1825,8 @@ end
 	callFact := buildCallFact(local, nil, CallContextAssignmentSource, local.Exprs, 0, selectCall, bindings, targets, nil)
 	secondFact := callFact
 	secondFact.ChannelSelect.ResultTarget.Path = path.NewPath(symbol.ID(9999), "second")
-	result.calls[2] = secondFact
-	result.calls[1] = callFact
+	result.setCall(2, secondFact)
+	result.setCall(1, callFact)
 	if !callFact.HasChannelSelect {
 		t.Fatalf("call fact missing channel select annotation: %#v", callFact)
 	}

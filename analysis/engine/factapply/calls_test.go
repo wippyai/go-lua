@@ -6,8 +6,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -16,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestFactsNodeTransferAppliesReturnSlotsThroughSourceValues(t *testing.T) {
@@ -90,7 +93,57 @@ func TestFactsNodeTransferReturnPathSourcePreservesStateIdentity(t *testing.T) {
 	assertValue(t, reg, got[graph.Exit()], key.ReturnSlot(0), batchValue)
 }
 
-func TestFactsNodeTransferUnresolvedReturnSourceLeavesSlotUnchanged(t *testing.T) {
+func TestFactsNodeTransferReturnPathSourceUsesExpressionDeclaredContract(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	ret := graph.AddNode(cfg.NodeReturn)
+	graph.AddEdge(graph.Entry(), ret, false)
+	graph.AddEdge(ret, graph.Exit(), false)
+
+	inner := factflow.ExprRef(31)
+	outer := factflow.ExprRef(32)
+	value := symbol.ID(710)
+	declared := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	declared = product.Set(reg, declared, assertion.Key, assertion.Of(assertion.TypeClaim, assertion.RuntimeClaim))
+	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[factflow.ExprRef]product.Value{
+			inner: product.Top(),
+		},
+	})
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: state.State{}.WriteValue(reg, key.SymbolValue(value), product.Top()),
+		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				Returns: map[cfg.Point]factflow.Return{
+					ret: factflow.NewReturn([]factflow.ValueSource{
+						{Kind: factflow.ValueSourceExpression, ExprRef: outer, HasExpr: true},
+					}),
+				},
+				ExpressionPaths: map[factflow.ExprRef]path.Path{
+					outer: {Symbol: value},
+				},
+				ExpressionRefinements: map[factflow.ExprRef]factflow.ExpressionRefinement{
+					outer: factflow.NewExpressionDeclaredContract(
+						factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: inner, HasExpr: true},
+						declared,
+					),
+				},
+			}),
+			Sources: sources,
+		}),
+	})
+
+	slot := got[graph.Exit()].ReadReturnSlot(reg, 0)
+	if gotType, ok := typevalue.TypeOf(reg, slot); !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("return slot type = %v/%v, want string", gotType, ok)
+	}
+}
+
+func TestFactsNodeTransferUnresolvedReturnSourceWritesTopInsteadOfStaleSlot(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(21)
 	slotValue := presentValue(reg)
@@ -111,7 +164,7 @@ func TestFactsNodeTransferUnresolvedReturnSourceLeavesSlotUnchanged(t *testing.T
 		Point:    point,
 	}, in)
 
-	assertValue(t, reg, got, key.ReturnSlot(0), slotValue)
+	assertValue(t, reg, got, key.ReturnSlot(0), product.Top())
 }
 
 func TestFactsNodeTransferReturnCallSourceReadsReturnSlotThroughRead(t *testing.T) {
@@ -318,6 +371,46 @@ func TestFactsNodeTransferSamePointCallSourceReadsMaterializedOut(t *testing.T) 
 	assertValue(t, reg, got, key.SymbolValue(target), callValue)
 }
 
+func TestFactsNodeTransferSamePointCallSourceReadsFixedResultFact(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	point := graph.AddNode(cfg.NodeCall)
+	target := symbol.ID(1121)
+	callValue := typevalue.FromType(reg, typ.String)
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextAssignmentSource,
+				ResultTargets: []factflow.CallResultTarget{
+					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, target, path.NewPath(target, "samePoint")),
+				},
+			}),
+		},
+		CallResultValues: map[cfg.Point]factflow.CallResultValueSet{
+			point: factflow.NewCallResultValueSet(factflow.NewCallResultValue(0, callValue)),
+		},
+		RootAssignments: map[cfg.Point]factflow.RootAssignment{
+			point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "samePoint"), factflow.ValueSource{
+				Kind:         factflow.ValueSourceCall,
+				CallPoint:    point,
+				HasCallPoint: true,
+				ResultIndex:  0,
+			}),
+		},
+	})
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts:   facts,
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg}),
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{}
+		},
+	})(transfer.NodeContext{Graph: graph, Registry: reg, Point: point, Node: graph.Node(point)}, state.State{})
+
+	assertValue(t, reg, got, key.ReturnSlot(0), callValue)
+	assertValue(t, reg, got, key.SymbolValue(target), callValue)
+}
+
 func TestFactsNodeTransferAssignmentCallSourceConsumesProviderReturnSlotThroughRead(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
@@ -353,6 +446,61 @@ func TestFactsNodeTransferAssignmentCallSourceConsumesProviderReturnSlotThroughR
 			Sources: sources,
 			CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
 				return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: callValue}}}
+			},
+		}),
+		EdgeTransfer: func(ctx transfer.EdgeContext, out state.State) state.State {
+			if ctx.Edge.From == call && ctx.Edge.To == assign {
+				return out.WriteReturnSlot(reg, 0, product.Bottom(reg))
+			}
+			return out
+		},
+	})
+
+	assertValue(t, reg, got[assign], key.ReturnSlot(0), product.Bottom(reg))
+	assertValue(t, reg, got[graph.Exit()], key.SymbolValue(target), callValue)
+}
+
+func TestFactsNodeTransferAssignmentCallSourceConsumesFixedResultFactThroughRead(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+
+	target := symbol.ID(1122)
+	callValue := typevalue.FromType(reg, typ.String)
+	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg})
+
+	got := transfer.Run(transfer.Config{
+		Graph:    graph,
+		Registry: reg,
+		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				CallSites: map[cfg.Point]factflow.CallSite{
+					call: factflow.NewCallSite(factflow.CallSiteConfig{
+						Context: factflow.CallSiteContextAssignmentSource,
+						ResultTargets: []factflow.CallResultTarget{
+							factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, target, path.NewPath(target, "local")),
+						},
+					}),
+				},
+				CallResultValues: map[cfg.Point]factflow.CallResultValueSet{
+					call: factflow.NewCallResultValueSet(factflow.NewCallResultValue(0, callValue)),
+				},
+				RootAssignments: map[cfg.Point]factflow.RootAssignment{
+					assign: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "local"), factflow.ValueSource{
+						Kind:         factflow.ValueSourceCall,
+						CallPoint:    call,
+						HasCallPoint: true,
+						ResultIndex:  0,
+					}),
+				},
+			}),
+			Sources: sources,
+			CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+				return callpayload.CallOutcome{}
 			},
 		}),
 		EdgeTransfer: func(ctx transfer.EdgeContext, out state.State) state.State {
@@ -518,5 +666,25 @@ func TestFactsNodeTransferMissingCallOutcomeProviderOrNoResultsLeavesStateUnchan
 
 			assertStateEqual(t, reg, got, in)
 		})
+	}
+}
+
+func BenchmarkFactsNodeTransferNoMaterializationFacts(b *testing.B) {
+	reg := standard.Registry()
+	point := cfg.Point(27)
+	target := symbol.ID(127)
+	value := presentValue(reg)
+	in := state.State{}.WriteValue(reg, key.SymbolValue(target), value)
+	ctx := transfer.NodeContext{Registry: reg, Point: point}
+	nodeTransfer := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{}),
+	})
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		got := nodeTransfer(ctx, in)
+		if !product.Equal(reg, got.ReadValue(reg, key.SymbolValue(target)), value) {
+			b.Fatalf("value changed on iteration %d", i)
+		}
 	}
 }

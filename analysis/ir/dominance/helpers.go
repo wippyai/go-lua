@@ -6,37 +6,16 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
-type predecessorsReader interface {
-	PredecessorsReadOnly(cfg.Point) []cfg.Point
-}
-
-type successorsReader interface {
-	SuccessorsReadOnly(cfg.Point) []cfg.Point
-}
-
-type rpoReader interface {
-	RPOReadOnly() []cfg.Point
-}
-
 func predecessorsOf(g cfg.Graph, point cfg.Point) []cfg.Point {
-	if direct, ok := g.(predecessorsReader); ok {
-		return direct.PredecessorsReadOnly(point)
-	}
-	return g.Predecessors(point)
+	return cfg.PredecessorsReadOnly(g, point)
 }
 
 func successorsOf(g cfg.Graph, point cfg.Point) []cfg.Point {
-	if direct, ok := g.(successorsReader); ok {
-		return direct.SuccessorsReadOnly(point)
-	}
-	return g.Successors(point)
+	return cfg.SuccessorsReadOnly(g, point)
 }
 
 func rpoOf(g cfg.Graph) []cfg.Point {
-	if direct, ok := g.(rpoReader); ok {
-		return direct.RPOReadOnly()
-	}
-	return g.RPO()
+	return cfg.RPOReadOnly(g)
 }
 
 func validPoint(point cfg.Point, graphSize int) bool {

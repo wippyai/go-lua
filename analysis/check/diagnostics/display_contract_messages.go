@@ -47,7 +47,17 @@ func (d diagnosticDisplay) ArgumentTypeMismatchMessageDisplay(subject string, ar
 	if argName != "" && nilSafetyMismatch(got, want) {
 		return fmt.Sprintf("cannot pass %s as %s because it may be nil", argName, subject)
 	}
-	return fmt.Sprintf("%s is %s, not %s", diagnosticSubjectWithExpr(subject, arg), typeDisplayOr(gotDisplay, d.Type(got)), typeDisplayOr(wantDisplay, d.Type(want)))
+	gotText := typeDisplayOr(gotDisplay, d.Type(got))
+	wantText := typeDisplayOr(wantDisplay, d.Type(want))
+	subjectText := diagnosticSubjectWithExpr(subject, arg)
+	if gotText == wantText {
+		return fmt.Sprintf("cannot prove %s satisfies parameter type %s", subjectText, wantText)
+	}
+	return fmt.Sprintf("%s is %s, not %s", subjectText, gotText, wantText)
+}
+
+func (d diagnosticDisplay) ArgumentBoundaryProofMessage(subject string, arg ast.Expr, want typ.Type) string {
+	return fmt.Sprintf("%s comes from any/unknown; no proof shows it is %s", diagnosticSubjectWithExpr(subject, arg), d.Type(want))
 }
 
 func diagnosticSubjectWithExpr(subject string, expr ast.Expr) string {
@@ -93,7 +103,16 @@ func (d diagnosticDisplay) ReturnContractMessage(label string, expr ast.Expr, go
 	if exprName != "" {
 		subject = fmt.Sprintf("%s (%s)", label, exprName)
 	}
-	return fmt.Sprintf("%s is %s, not %s", subject, d.Type(got), d.Type(want))
+	gotText := d.Type(got)
+	wantText := d.Type(want)
+	if gotText == wantText {
+		return fmt.Sprintf("cannot prove %s satisfies declared return type %s", subject, wantText)
+	}
+	return fmt.Sprintf("%s is %s, not %s", subject, gotText, wantText)
+}
+
+func (d diagnosticDisplay) ReturnBoundaryProofMessage(label string, expr ast.Expr, want typ.Type) string {
+	return fmt.Sprintf("%s comes from any/unknown; no proof shows it satisfies declared return type %s", diagnosticSubjectWithExpr(label, expr), d.Type(want))
 }
 
 func (diagnosticDisplay) ReturnContractHelp(exprName string, got typ.Type) string {
@@ -154,6 +173,12 @@ func (diagnosticDisplay) MissingMemberHelp(member string) string {
 }
 
 func (d diagnosticDisplay) MemberNotCallableMessage(memberPath string, receiver, memberType typ.Type, member string) string {
+	if topLikeType(memberType) {
+		if memberPath != "" && memberPath != "receiver" {
+			return fmt.Sprintf("%s comes from any/unknown; no proof shows it is callable", memberPath)
+		}
+		return fmt.Sprintf("%s comes from any/unknown; no proof shows it is callable", memberPathName(d.Type(receiver), member))
+	}
 	if memberPath != "" && memberPath != "receiver" {
 		return fmt.Sprintf("%s is %s, not callable", memberPath, d.Type(memberType))
 	}
@@ -172,6 +197,9 @@ func (diagnosticDisplay) MemberNotCallableHelp(memberPath string) string {
 }
 
 func (d diagnosticDisplay) DirectNotCallableMessage(name string, calleeType typ.Type) string {
+	if topLikeType(calleeType) {
+		return fmt.Sprintf("%s comes from any/unknown; no proof shows it is callable", name)
+	}
 	return fmt.Sprintf("%s is %s, not callable", name, d.Type(calleeType))
 }
 

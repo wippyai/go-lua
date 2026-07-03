@@ -22,9 +22,9 @@ func TestObjectLiteralViewEvaluatorMarksConstructedValueFresh(t *testing.T) {
 		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("id"), source),
 	}).WithIdentity(litID)
 
-	got, ok := objectLiteralViewEvaluator(reg, nil)(lit.View(), func(factflow.ValueSource) (product.Value, bool) {
+	got, ok := objectLiteralViewEvaluator(reg, nil)(lit.View(), factflow.ValueSourceResolverFunc(func(factflow.ValueSource) (product.Value, bool) {
 		return typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String), true
-	})
+	}))
 	if !ok {
 		t.Fatal("objectLiteralViewEvaluator returned false")
 	}
@@ -41,9 +41,9 @@ func TestObjectLiteralViewEvaluatorMarksEmptyConstructedValueFresh(t *testing.T)
 	litID := identity.LuaTableLiteral(7001, 1002)
 	lit := factflow.NewObjectLiteral(nil).WithIdentity(litID)
 
-	got, ok := objectLiteralViewEvaluator(reg, nil)(lit.View(), func(factflow.ValueSource) (product.Value, bool) {
+	got, ok := objectLiteralViewEvaluator(reg, nil)(lit.View(), factflow.ValueSourceResolverFunc(func(factflow.ValueSource) (product.Value, bool) {
 		return product.Value{}, false
-	})
+	}))
 	if !ok {
 		t.Fatal("objectLiteralViewEvaluator returned false")
 	}
@@ -63,9 +63,9 @@ func TestObjectLiteralViewEvaluatorUsesExpectedTypeForEmptyConstructor(t *testin
 		WithIdentity(litID).
 		WithExpected(typevalue.WithWitness(reg, typevalue.FromType(reg, want), want))
 
-	got, ok := objectLiteralViewEvaluator(reg, nil)(lit.View(), func(factflow.ValueSource) (product.Value, bool) {
+	got, ok := objectLiteralViewEvaluator(reg, nil)(lit.View(), factflow.ValueSourceResolverFunc(func(factflow.ValueSource) (product.Value, bool) {
 		return product.Value{}, false
-	})
+	}))
 	if !ok {
 		t.Fatal("objectLiteralViewEvaluator returned false")
 	}

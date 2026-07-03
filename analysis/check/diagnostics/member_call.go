@@ -2,19 +2,23 @@ package diagnostics
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/subst"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -32,7 +36,7 @@ func (p memberCall) Produce(result *body.Result) []diagnostic.Diagnostic {
 	if graph == nil {
 		return nil
 	}
-	envs := cachedGuardEnvironments(result)
+	envs := producerContext(p).guardEnvironments(result)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {
 		if !guardEnvReachableAt(envs, point) {
@@ -42,25 +46,45 @@ func (p memberCall) Produce(result *body.Result) []diagnostic.Diagnostic {
 		if !ok {
 			continue
 		}
-		if site, ok := result.CallSite(point); ok {
-			if hasTypedCallSignature(result, site) {
-				continue
-			}
+		site, ok := result.CallSite(point)
+		if !ok {
+			continue
 		}
-		if d, ok := p.call(result, point, fact, envs[point]); ok {
+		if _, ok := result.CallSignatureType(site); ok {
+			continue
+		}
+		if d, ok := p.call(result, point, fact, site, envs[point]); ok {
 			out = append(out, d)
 		}
 	}
 	return out
 }
 
-func (p memberCall) call(result *body.Result, point cfg.Point, fact semantics.CallFact, env guardEnv) (diagnostic.Diagnostic, bool) {
-	memberAccess, ok := callMemberAccessInfo(fact)
+func (p memberCall) call(result *body.Result, point cfg.Point, fact semantics.CallFact, site factflow.CallSite, env guardEnv) (diagnostic.Diagnostic, bool) {
+	memberAccess, ok := callMemberAccessInfoForSite(site, fact)
 	if !ok || memberAccess.receiver.Symbol == 0 {
 		return p.expressionReceiverCall(result, point, fact, env)
 	}
-	baseType, ok := p.receiverType(result, point, fact, memberAccess.receiver, env)
+	return p.callForAccess(result, point, fact, memberAccess, env)
+}
+
+func (p memberCall) callForAccess(
+	result *body.Result,
+	point cfg.Point,
+	fact semantics.CallFact,
+	memberAccess callMemberAccessData,
+	env guardEnv,
+) (diagnostic.Diagnostic, bool) {
+	if memberAccess.receiver.Symbol == 0 {
+		return p.expressionReceiverCall(result, point, fact, env)
+	}
+	baseType, ok := p.receiverType(result, point, fact, memberAccess.receiver, memberAccess.member, env)
 	if !ok {
+		if currentMember, currentOK := currentMemberCallTypeWithGuard(result, point, memberAccess, env); currentOK &&
+			currentMemberUsableForMemberOverride(currentMember) &&
+			exactMemberAllCallable(currentMember) {
+			return p.callableMemberContract(result, point, fact, memberAccess, typ.Unknown, currentMember, memberSegmentDisplay(memberAccess.member), env)
+		}
 		return diagnostic.Diagnostic{}, false
 	}
 	narrowed, narrowedByDiscriminant := applyMemberLiteralNarrowing(result, point, baseType, memberAccess.receiver, env)
@@ -68,7 +92,7 @@ func (p memberCall) call(result *body.Result, point cfg.Point, fact semantics.Ca
 	reportMemberShape := narrowedByDiscriminant
 	if !narrowedByDiscriminant {
 		receiverType = baseType
-		reportMemberShape = unionReceiver(baseType) || projectionHasNil(receiverType) || memberAccess.member.Kind == segment.SegmentIndexInt
+		reportMemberShape = unionReceiver(baseType) || projectionHasNil(receiverType) || memberAccess.member.Kind == segment.SegmentIndexInt || closedConcreteRecordReceiver(result, p.resolver, point, memberAccess.receiver, receiverType)
 	}
 	if typ.IsNever(receiverType) || typ.IsAny(receiverType) || typ.IsUnknown(receiverType) {
 		return diagnostic.Diagnostic{}, false
@@ -83,39 +107,52 @@ func (p memberCall) call(result *body.Result, point cfg.Point, fact semantics.Ca
 	receiverType = receiverTypeWithBoundaryPresence(result, point, memberAccess.receiver, receiverType)
 	if projectionHasNil(receiverType) {
 		if fact.Receiver != nil && fact.Method != "" {
-			return optionalMethodCallDiagnostic(memberAccess.call, displayPath(result, memberAccess.receiver), memberCallDisplayName(result, fact, memberSegmentDisplay(memberAccess.member))), true
+			return optionalMethodCallDiagnostic(memberAccess.call, displayPath(result, memberAccess.receiver), memberAccessDisplayName(result, memberAccess)), true
 		}
-		return memberDiagnostic(result, fact, memberAccess.call, receiverType, memberSegmentDisplay(memberAccess.member), point), true
+		return memberDiagnostic(result, memberAccess, receiverType, memberSegmentDisplay(memberAccess.member), point), true
 	}
 
-	memberType, status, ok := resolvedMemberCallType(result, p.flow, point, receiverType, memberAccess)
+	memberType, status, ok := resolvedMemberCallType(result, p.flow, point, receiverType, memberAccess, env, narrowedByDiscriminant)
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
 	switch status {
 	case typecall.MemberCallOK:
-		return p.callableMemberContract(result, point, fact, receiverType, memberType, memberSegmentDisplay(memberAccess.member))
+		return p.callableMemberContract(result, point, fact, memberAccess, receiverType, memberType, memberSegmentDisplay(memberAccess.member), env)
 	case typecall.MemberCallMissing:
 		if !reportMemberShape {
 			return diagnostic.Diagnostic{}, false
 		}
-		return memberDiagnostic(result, fact, memberAccess.call, receiverType, memberSegmentDisplay(memberAccess.member), point), true
+		return memberDiagnostic(result, memberAccess, receiverType, memberSegmentDisplay(memberAccess.member), point), true
 	case typecall.MemberCallNotCallable:
 		if !reportMemberShape && !projectionHasNil(memberType) {
 			return diagnostic.Diagnostic{}, false
 		}
-		return notCallableDiagnostic(result, fact, memberAccess.call, receiverType, memberType, memberSegmentDisplay(memberAccess.member), point), true
+		return notCallableDiagnostic(result, memberAccess, receiverType, memberType, memberSegmentDisplay(memberAccess.member), point), true
 	default:
 		return diagnostic.Diagnostic{}, false
 	}
 }
 
-func (p memberCall) typedSignatureStructuralDiagnostic(result *body.Result, point cfg.Point, fact semantics.CallFact, env guardEnv) (diagnostic.Diagnostic, bool) {
-	memberAccess, ok := callMemberAccessInfo(fact)
+func (p memberCall) typedSignatureStructuralDiagnostic(result *body.Result, point cfg.Point, fact semantics.CallFact, site factflow.CallSite, env guardEnv) (diagnostic.Diagnostic, bool) {
+	memberAccess, ok := callMemberAccessInfoForSite(site, fact)
 	if !ok || memberAccess.receiver.Symbol == 0 {
 		return p.expressionReceiverCall(result, point, fact, env)
 	}
-	baseType, ok := p.receiverType(result, point, fact, memberAccess.receiver, env)
+	return p.typedSignatureStructuralDiagnosticForAccess(result, point, fact, memberAccess, env)
+}
+
+func (p memberCall) typedSignatureStructuralDiagnosticForAccess(
+	result *body.Result,
+	point cfg.Point,
+	fact semantics.CallFact,
+	memberAccess callMemberAccessData,
+	env guardEnv,
+) (diagnostic.Diagnostic, bool) {
+	if memberAccess.receiver.Symbol == 0 {
+		return p.expressionReceiverCall(result, point, fact, env)
+	}
+	baseType, ok := p.receiverType(result, point, fact, memberAccess.receiver, memberAccess.member, env)
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -137,22 +174,19 @@ func (p memberCall) typedSignatureStructuralDiagnostic(result *body.Result, poin
 	receiverType = receiverTypeWithBoundaryPresence(result, point, memberAccess.receiver, receiverType)
 	if projectionHasNil(receiverType) {
 		if fact.Receiver != nil && fact.Method != "" {
-			return optionalMethodCallDiagnostic(fact.Call, displayPath(result, memberAccess.receiver), memberCallDisplayName(result, fact, memberSegmentDisplay(memberAccess.member))), true
+			return optionalMethodCallDiagnostic(fact.Call, displayPath(result, memberAccess.receiver), memberAccessDisplayName(result, memberAccess)), true
 		}
-		return memberDiagnostic(result, fact, memberAccess.call, receiverType, memberSegmentDisplay(memberAccess.member), point), true
+		return memberDiagnostic(result, memberAccess, receiverType, memberSegmentDisplay(memberAccess.member), point), true
 	}
-	memberType, status, ok := resolvedMemberCallType(result, p.flow, point, receiverType, memberAccess)
-	if !ok {
-		return diagnostic.Diagnostic{}, false
-	}
+	memberType, status := memberCallType(receiverType, memberAccess.member)
 	switch status {
 	case typecall.MemberCallMissing:
-		return memberDiagnostic(result, fact, memberAccess.call, receiverType, memberSegmentDisplay(memberAccess.member), point), true
+		return memberDiagnostic(result, memberAccess, receiverType, memberSegmentDisplay(memberAccess.member), point), true
 	case typecall.MemberCallNotCallable:
 		if memberType == nil {
 			memberType = typ.Unknown
 		}
-		return notCallableDiagnostic(result, fact, memberAccess.call, receiverType, memberType, memberSegmentDisplay(memberAccess.member), point), true
+		return notCallableDiagnostic(result, memberAccess, receiverType, memberType, memberSegmentDisplay(memberAccess.member), point), true
 	}
 	return diagnostic.Diagnostic{}, false
 }
@@ -162,14 +196,36 @@ func currentMemberCallType(result *body.Result, point cfg.Point, memberAccess ca
 		return nil, false
 	}
 	memberPath := memberAccess.receiver.Append(memberAccess.member)
-	value, ok := result.PathValueAtBoundary(point, memberPath)
+	query := newDiagnosticQuery(result)
+	value, ok := query.PathValueBeforeBoundary(point, memberPath)
+	if !ok {
+		value, ok = query.PathValueAtBoundary(point, memberPath)
+	}
 	if !ok {
 		return nil, false
 	}
-	return readmodel.New(result).ValueTypeWithPresence(value)
+	return query.ValueTypeWithPresence(value)
 }
 
-func resolvedMemberCallType(result *body.Result, flow *diagnosticFlowCache, point cfg.Point, receiverType typ.Type, memberAccess callMemberAccessData) (typ.Type, typecall.MemberCallStatus, bool) {
+func currentMemberCallTypeWithGuard(result *body.Result, point cfg.Point, memberAccess callMemberAccessData, env guardEnv) (typ.Type, bool) {
+	memberType, ok := currentMemberCallType(result, point, memberAccess)
+	if !ok {
+		return nil, false
+	}
+	if memberCallGuardedPresent(memberAccess, env) {
+		if withoutNil := projectionWithoutNil(memberType); withoutNil != nil && !typ.IsNever(withoutNil) {
+			memberType = withoutNil
+		}
+	}
+	return memberType, true
+}
+
+func memberCallGuardedPresent(memberAccess callMemberAccessData, env guardEnv) bool {
+	memberPath := memberAccess.receiver.Append(memberAccess.member)
+	return env.hasPresent(memberPath) || env.hasTruthy(memberPath)
+}
+
+func resolvedMemberCallType(result *body.Result, flow *diagnosticFlowCache, point cfg.Point, receiverType typ.Type, memberAccess callMemberAccessData, env guardEnv, structuralNarrowed bool) (typ.Type, typecall.MemberCallStatus, bool) {
 	if memberAccess.receiver.IsEmpty() {
 		return nil, typecall.MemberCallMissing, false
 	}
@@ -177,7 +233,7 @@ func resolvedMemberCallType(result *body.Result, flow *diagnosticFlowCache, poin
 	case memberCallInvalidationStale:
 		return nil, typecall.MemberCallMissing, false
 	case memberCallInvalidationResolved:
-		currentMember, ok := currentMemberCallType(result, point, memberAccess)
+		currentMember, ok := currentMemberCallTypeWithGuard(result, point, memberAccess, env)
 		if !ok || currentMember == nil || typ.IsAny(currentMember) || typ.IsUnknown(currentMember) || typ.IsNever(currentMember) {
 			return nil, typecall.MemberCallMissing, false
 		}
@@ -188,13 +244,40 @@ func resolvedMemberCallType(result *body.Result, flow *diagnosticFlowCache, poin
 		return currentMember, status, true
 	}
 	memberType, status := memberCallType(receiverType, memberAccess.member)
-	if currentMember, ok := currentMemberCallType(result, point, memberAccess); ok && status == typecall.MemberCallOK {
+	if structuralNarrowed && status != typecall.MemberCallOK {
+		return memberType, status, true
+	}
+	if currentMember, ok := currentMemberCallTypeWithGuard(result, point, memberAccess, env); ok &&
+		currentMemberUsableForMemberOverride(currentMember) &&
+		currentMemberCanOverrideStructuralMember(currentMember, memberType) {
+		if status == typecall.MemberCallMissing && projectionHasNil(currentMember) {
+			return memberType, status, true
+		}
 		memberType = currentMember
-		if exactMemberCallUnsafe(currentMember) {
+		if exactMemberCallUnsafe(currentMember) || projectionHasNil(currentMember) {
 			status = typecall.MemberCallNotCallable
+		} else {
+			status = typecall.MemberCallOK
 		}
 	}
 	return memberType, status, true
+}
+
+func currentMemberUsableForMemberOverride(t typ.Type) bool {
+	if t == nil || typ.IsNever(t) || typ.Nil.Equals(t) || topLikeType(t) {
+		return false
+	}
+	if present := projectionWithoutNil(t); present != nil && !typ.IsNever(present) && topLikeType(present) {
+		return false
+	}
+	return true
+}
+
+func currentMemberCanOverrideStructuralMember(current, structural typ.Type) bool {
+	if structural == nil || typ.IsNever(structural) || topLikeType(structural) {
+		return true
+	}
+	return !(subtype.IsSubtype(structural, current) && !subtype.IsSubtype(current, structural))
 }
 
 func exactMemberAllCallable(t typ.Type) bool {
@@ -285,21 +368,23 @@ func optionalMethodCallDiagnostic(call *ast.FuncCallExpr, receiverName, callName
 	})
 }
 
-func (p memberCall) callableMemberContract(result *body.Result, point cfg.Point, fact semantics.CallFact, receiverType, memberType typ.Type, member string) (diagnostic.Diagnostic, bool) {
-	contract, ok := p.memberFunctionContract(result, point, fact, receiverType, memberType)
+func (p memberCall) callableMemberContract(result *body.Result, point cfg.Point, fact semantics.CallFact, memberAccess callMemberAccessData, receiverType, memberType typ.Type, member string, env guardEnv) (diagnostic.Diagnostic, bool) {
+	site, ok := result.CallSite(point)
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
-	contract.name = memberCallContractName(result, fact, member)
-	contract.declSpan = ast.SpanOf(fact.Call)
-	if fact.Receiver != nil && fact.Method != "" {
-		contract = colonMemberCallContract(receiverType, contract)
+	contract, ok := p.memberFunctionContract(result, point, fact, site, receiverType, memberType)
+	if !ok {
+		return diagnostic.Diagnostic{}, false
 	}
-	return directCallContract(p).directFunctionCall(result, point, fact, contract, nil, guardEnv{})
+	contract.name = memberCallContractName(result, memberAccess)
+	contract.declSpan = ast.SpanOf(fact.Call)
+	return directFunctionCallContractDiagnostic(producerContext(p), result, point, fact, site, contract, nil, env)
 }
 
-func (p memberCall) memberFunctionContract(result *body.Result, point cfg.Point, fact semantics.CallFact, receiverType, memberType typ.Type) (directFunctionContract, bool) {
-	if access, ok := callMemberAccessInfo(fact); ok {
+func (p memberCall) memberFunctionContract(result *body.Result, point cfg.Point, fact semantics.CallFact, site factflow.CallSite, receiverType, memberType typ.Type) (directFunctionContract, bool) {
+	bindReceiverSelf := fact.Receiver != nil && fact.Method != ""
+	if access, ok := callMemberAccessInfoForSite(site, fact); ok {
 		switch memberCallInvalidationByPriorCall(result, p.flow, point, access.receiver, access.member) {
 		case memberCallInvalidationStale:
 			return directFunctionContract{}, false
@@ -308,21 +393,21 @@ func (p memberCall) memberFunctionContract(result *body.Result, point cfg.Point,
 			if !ok {
 				return directFunctionContract{}, false
 			}
-			return memberFunctionTypeContract(receiverType, currentMember)
+			return memberFunctionTypeContract(receiverType, currentMember, bindReceiverSelf)
 		}
 		memberPath := access.receiver.Append(access.member)
 		fn, defPoint, hasDefinition := dominatingFunctionDefinitionForPathWithPoint(result, point, memberPath)
 		if hasDefinition && !memberPathReassignedAfterDefinition(result, p.flow, defPoint, point, memberPath) {
 			return p.memberFunctionDefinitionContract(result, fn)
 		}
-		if currentMember, ok := currentMemberCallType(result, point, access); ok {
-			return memberFunctionTypeContract(receiverType, currentMember)
+		if currentMember, ok := currentMemberCallType(result, point, access); ok && currentMemberUsableForMemberOverride(currentMember) {
+			return memberFunctionTypeContract(receiverType, currentMember, bindReceiverSelf)
 		}
 		if hasDefinition {
 			return p.memberFunctionDefinitionContract(result, fn)
 		}
 	}
-	return memberFunctionTypeContract(receiverType, memberType)
+	return memberFunctionTypeContract(receiverType, memberType, bindReceiverSelf)
 }
 
 func (p memberCall) memberFunctionDefinitionContract(result *body.Result, fn *ast.FunctionExpr) (directFunctionContract, bool) {
@@ -364,9 +449,16 @@ func memberPathReassignedAfterDefinition(result *body.Result, flow *diagnosticFl
 
 func ordinaryAssignmentInvalidatesMemberPath(fact semantics.OrdinaryAssignmentFact, target path.Path) bool {
 	if fact.HasPath {
-		return target.HasPrefix(fact.Path)
+		return pathHasPrefixStaticEquiv(target, fact.Path)
 	}
 	return fact.HasSymbol && target.Symbol != 0 && fact.Symbol == target.Symbol
+}
+
+func pathHasPrefixStaticEquiv(candidate, prefix path.Path) bool {
+	if !samePathRootIgnoringVersion(candidate, prefix) {
+		return false
+	}
+	return pathaddr.SegmentsHasPrefix(candidate.Segments, prefix.Segments)
 }
 
 type memberCallInvalidation uint8
@@ -424,7 +516,7 @@ func callOutcomeInvalidatesMemberPath(result *body.Result, point cfg.Point, targ
 		return false
 	}
 	for _, invalidated := range targets {
-		if invalidationPathReachesPath(result, point, invalidated, target).invalidated() {
+		if invalidationPathReachesPath(result, point, invalidated.path, target).invalidated() {
 			return true
 		}
 	}
@@ -450,7 +542,7 @@ func callOutcomeInvalidatesMemberAccess(result *body.Result, point cfg.Point, re
 	out := memberCallInvalidationNone
 	for _, invalidated := range targets {
 		for _, memberPath := range memberAccessPaths(receiver, member) {
-			switch invalidationPathReachesPath(result, point, invalidated, memberPath) {
+			switch invalidationPathReachesPath(result, point, invalidated.path, memberPath) {
 			case memberCallInvalidationStale:
 				return memberCallInvalidationStale
 			case memberCallInvalidationResolved:
@@ -495,7 +587,7 @@ func pathRootReadable(result *body.Result, point cfg.Point, root path.Path) bool
 	if result == nil || root.IsEmpty() {
 		return false
 	}
-	_, ok := result.PathValueAtBoundary(point, root)
+	_, ok := newDiagnosticQuery(result).PathValueAtBoundary(point, root)
 	return ok
 }
 
@@ -528,13 +620,15 @@ func memberAccessPaths(receiver path.Path, member segment.Segment) []path.Path {
 	}
 }
 
-func memberFunctionTypeContract(receiverType, memberType typ.Type) (directFunctionContract, bool) {
+func memberFunctionTypeContract(receiverType, memberType typ.Type, bindReceiverSelf bool) (directFunctionContract, bool) {
 	callable, ok := typecall.Callable(memberType)
 	if !ok {
 		return directFunctionContract{}, false
 	}
-	if substituted, ok := subst.Self(callable, receiverType).(*typ.Function); ok {
-		callable = substituted
+	if bindReceiverSelf {
+		if substituted, ok := subst.Self(callable, receiverType).(*typ.Function); ok {
+			callable = substituted
+		}
 	}
 	return lowerDirectFunctionType(callable), true
 }
@@ -561,7 +655,7 @@ func implicitSelfEntryType(result *body.Result, fn *ast.FunctionExpr) (typ.Type,
 		if product.Equal(reg, value, product.Bottom(reg)) {
 			return nil, false
 		}
-		t, ok := readmodel.New(child).ValueTypeWithPresence(value)
+		t, ok := newDiagnosticQuery(child).ValueTypeWithPresence(value)
 		if !ok || t == nil || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) {
 			return nil, false
 		}
@@ -624,57 +718,107 @@ func memberContractWithoutReceiver(contract directFunctionContract) directFuncti
 	return shifted
 }
 
-func memberCallContractName(result *body.Result, fact semantics.CallFact, member string) string {
-	if name := memberCallDisplayName(result, fact, member); name != "" {
+func memberCallContractName(result *body.Result, access callMemberAccessData) string {
+	if name := memberAccessDisplayName(result, access); name != "" {
 		return name
 	}
 	return "receiver"
 }
 
-func memberCallDisplayName(result *body.Result, fact semantics.CallFact, member string) string {
-	if result != nil {
-		if fact.HasCalleePath && !fact.CalleePath.IsEmpty() {
-			if name := displayPath(result, fact.CalleePath); name != "" {
-				return name
-			}
-		}
-		if fact.HasReceiverPath && !fact.ReceiverPath.IsEmpty() {
-			if receiver := displayPath(result, fact.ReceiverPath); receiver != "" {
-				return memberPathName(receiver, member)
-			}
-		}
+func memberAccessDisplayName(result *body.Result, access callMemberAccessData) string {
+	member := memberSegmentDisplay(access.member)
+	if member == "" {
+		return ""
 	}
-	if result != nil {
-		name := result.SymbolName(callRootSymbol(fact))
-		if name != "" {
-			return memberPathName(name, member)
-		}
+	if result == nil || access.receiver.IsEmpty() {
+		return memberPathName("receiver", member)
 	}
-	return ""
+	if receiver := displayPath(result, access.receiver); receiver != "" {
+		return memberPathName(receiver, member)
+	}
+	return memberPathName("receiver", member)
 }
 
-func (p memberCall) receiverType(result *body.Result, point cfg.Point, fact semantics.CallFact, receiver path.Path, env guardEnv) (typ.Type, bool) {
-	if fact.Receiver != nil {
-		flowType, flowOK := newFlowExpressionTyper(result, p.resolver, point, env).typeOf(fact.Receiver)
-		structuralType, structuralOK := newStructuralFlowExpressionTyper(result, p.resolver, point, env).typeOf(fact.Receiver)
+func (p memberCall) receiverType(result *body.Result, point cfg.Point, fact semantics.CallFact, receiver path.Path, member segment.Segment, env guardEnv) (typ.Type, bool) {
+	if receiverExpr := memberReceiverExpr(fact); receiverExpr != nil {
+		flowType, flowOK := newFlowExpressionTyper(result, p.resolver, point, env).typeOf(receiverExpr)
+		structuralType, structuralOK := newStructuralFlowExpressionTyper(result, p.resolver, point, env).typeOf(receiverExpr)
+		callResultType, callResultOK := p.callResultReceiverType(result, point, receiver)
 		if flowOK && structuralOK && preferStructuralReceiverType(flowType, structuralType) {
+			if callResultOK && preferCallResultReceiverType(structuralType, callResultType, member) {
+				return callResultType, true
+			}
 			return structuralType, true
 		}
 		if flowOK {
+			if callResultOK && preferCallResultReceiverType(flowType, callResultType, member) {
+				return callResultType, true
+			}
 			return flowType, true
 		}
 		if structuralOK {
+			if callResultOK && preferCallResultReceiverType(structuralType, callResultType, member) {
+				return callResultType, true
+			}
 			return structuralType, true
+		}
+		if callResultOK {
+			return callResultType, true
 		}
 	}
 	if baseExpr, ok := result.SymbolTypeAnnotation(receiver.Symbol); ok {
 		return lowerType(baseExpr, p.resolver)
 	}
-	value, ok := result.PathValueAtBoundary(point, receiver)
+	if callResultType, ok := p.callResultReceiverType(result, point, receiver); ok {
+		return callResultType, true
+	}
+	value, ok := newDiagnosticQuery(result).PathValueAtBoundary(point, receiver)
 	if !ok {
 		return nil, false
 	}
 	return receiverTypeFromBoundary(result, value)
+}
+
+func memberReceiverExpr(fact semantics.CallFact) ast.Expr {
+	if fact.Receiver != nil {
+		return fact.Receiver
+	}
+	if fact.Call == nil || fact.Call.Func == nil {
+		return nil
+	}
+	if attr, ok := fact.Call.Func.(*ast.AttrGetExpr); ok {
+		return attr.Object
+	}
+	return nil
+}
+
+func (p memberCall) callResultReceiverType(result *body.Result, point cfg.Point, receiver path.Path) (typ.Type, bool) {
+	if result == nil || receiver.Symbol == 0 {
+		return nil, false
+	}
+	root, ok := dominatingCallResultRootType(result, producerContext(p), point, receiver.Symbol, nil)
+	if !ok || root == nil || typ.IsAny(root) || typ.IsUnknown(root) {
+		return nil, false
+	}
+	if len(receiver.Segments) == 0 {
+		return root, true
+	}
+	return expectedTypeAtSegments(root, receiver.Segments)
+}
+
+func preferCallResultReceiverType(current, callResult typ.Type, member segment.Segment) bool {
+	if current == nil || callResult == nil || typ.SameNodeOrAcyclicEqual(current, callResult) {
+		return false
+	}
+	callResultMember, callResultStatus := memberCallType(callResult, member)
+	if callResultStatus != typecall.MemberCallOK || callResultMember == nil || exactMemberCallUnsafe(callResultMember) {
+		return false
+	}
+	currentMember, currentStatus := memberCallType(current, member)
+	if currentStatus != typecall.MemberCallOK {
+		return true
+	}
+	return currentMember != nil && (exactMemberCallUnsafe(currentMember) || projectionHasNil(currentMember))
 }
 
 func preferStructuralReceiverType(flowType, structuralType typ.Type) bool {
@@ -708,18 +852,25 @@ func receiverRecordLikeDepth(t typ.Type, depth int) bool {
 }
 
 func receiverTypeFromBoundary(result *body.Result, value product.Value) (typ.Type, bool) {
-	return readmodel.New(result).ValueTypeWithPresence(value)
+	return newDiagnosticQuery(result).ValueTypeWithPresence(value)
 }
 
 func receiverTypeWithBoundaryPresence(result *body.Result, point cfg.Point, receiver path.Path, t typ.Type) typ.Type {
-	if result == nil || receiver.IsEmpty() || len(receiver.Segments) == 0 || t == nil || !projectionHasNil(t) {
+	if result == nil || receiver.IsEmpty() || t == nil || !projectionHasNil(t) {
 		return t
 	}
-	value, ok := result.PathValueAtBoundary(point, receiver)
+	query := newDiagnosticQuery(result)
+	value, ok := query.PathValueAtBoundary(point, receiver)
 	if !ok {
 		return t
 	}
-	boundaryType, ok := readmodel.New(result).ValueTypeWithPresence(value)
+	if presence.Equal(product.PresenceOf(value), presence.Present()) {
+		withoutNil := projectionWithoutNil(t)
+		if withoutNil != nil && !typ.IsNever(withoutNil) {
+			return withoutNil
+		}
+	}
+	boundaryType, ok := query.ValueTypeWithPresence(value)
 	if !ok || boundaryType == nil || typ.IsAny(boundaryType) || typ.IsUnknown(boundaryType) || projectionHasNil(boundaryType) {
 		return t
 	}
@@ -734,45 +885,6 @@ type callMemberAccessData struct {
 	receiver path.Path
 	member   segment.Segment
 	call     *ast.FuncCallExpr
-}
-
-func callMemberAccessInfo(fact semantics.CallFact) (callMemberAccessData, bool) {
-	if fact.Call == nil {
-		return callMemberAccessData{}, false
-	}
-	if fact.HasReceiverPath && fact.Method != "" {
-		return callMemberAccessData{
-			receiver: fact.ReceiverPath,
-			member:   segment.Segment{Kind: segment.SegmentField, Name: fact.Method},
-			call:     fact.Call,
-		}, true
-	}
-	if !fact.HasCalleePath || len(fact.CalleePath.Segments) == 0 {
-		return callMemberAccessData{}, false
-	}
-	last := fact.CalleePath.Segments[len(fact.CalleePath.Segments)-1]
-	switch last.Kind {
-	case segment.SegmentField, segment.SegmentIndexString, segment.SegmentIndexInt:
-		receiver := fact.CalleePath.Parent()
-		if receiver.IsEmpty() {
-			return callMemberAccessData{}, false
-		}
-		return callMemberAccessData{
-			receiver: receiver,
-			member:   last,
-			call:     fact.Call,
-		}, memberSegmentDisplay(last) != ""
-	default:
-		return callMemberAccessData{}, false
-	}
-}
-
-func callMemberAccess(fact semantics.CallFact) (path.Path, string, *ast.FuncCallExpr, bool) {
-	access, ok := callMemberAccessInfo(fact)
-	if !ok {
-		return path.Path{}, "", nil, false
-	}
-	return access.receiver, memberSegmentDisplay(access.member), access.call, true
 }
 
 func memberSegmentDisplay(member segment.Segment) string {
@@ -810,7 +922,7 @@ func memberCallType(receiverType typ.Type, member segment.Segment) (typ.Type, ty
 }
 
 func applyLiteralNarrowing(base typ.Type, receiver path.Path, env guardEnv) (typ.Type, bool) {
-	if base == nil || len(env.constraints) == 0 {
+	if base == nil || (len(env.constraints) == 0 && len(env.truthy) == 0 && len(env.falsy) == 0) {
 		return base, false
 	}
 	out := base
@@ -830,6 +942,26 @@ func applyLiteralNarrowing(base typ.Type, receiver path.Path, env guardEnv) (typ
 				out = narrowed
 				changed = true
 			}
+		}
+	}
+	for _, target := range env.truthy {
+		suffix, ok := suffixFromReceiver(receiver, target)
+		if !ok {
+			continue
+		}
+		if narrowed, ok := variant.NarrowByPathTruthy(out, suffix); ok {
+			out = narrowed
+			changed = true
+		}
+	}
+	for _, target := range env.falsy {
+		suffix, ok := suffixFromReceiver(receiver, target)
+		if !ok {
+			continue
+		}
+		if narrowed, ok := variant.NarrowByPathFalsy(out, suffix); ok {
+			out = narrowed
+			changed = true
 		}
 	}
 	return out, changed
@@ -888,8 +1020,9 @@ func pathsShareExactIdentity(result *body.Result, point cfg.Point, left, right p
 	if result.PathsEquivalentAtBoundary(point, left, right) {
 		return true
 	}
-	leftValue, leftOK := result.PathValueAtBoundary(point, left)
-	rightValue, rightOK := result.PathValueAtBoundary(point, right)
+	query := newDiagnosticQuery(result)
+	leftValue, leftOK := query.PathValueAtBoundary(point, left)
+	rightValue, rightOK := query.PathValueAtBoundary(point, right)
 	if !leftOK || !rightOK {
 		return false
 	}
@@ -913,6 +1046,35 @@ func unionReceiver(t typ.Type) bool {
 	}
 }
 
+func closedConcreteRecordReceiver(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, receiver path.Path, t typ.Type) bool {
+	if !closedMemberReceiverRoot(result, resolver, receiver) {
+		return false
+	}
+	if result != nil && !receiver.IsEmpty() {
+		query := newDiagnosticQuery(result)
+		if value, ok := query.PathValueAtBoundary(point, receiver); ok && query.ValueHasExactIdentity(value) {
+			return false
+		}
+	}
+	rec, ok := transparentExpectedType(t).(*typ.Record)
+	if !ok || rec == nil || rec.Open || rec.HasMapComponent() {
+		return false
+	}
+	return len(rec.Fields) != 0 || len(rec.StaticMembers) != 0
+}
+
+func closedMemberReceiverRoot(result *body.Result, resolver typeannotation.Resolver, receiver path.Path) bool {
+	if result == nil || receiver.Symbol == 0 {
+		return false
+	}
+	if expr, ok := result.SymbolTypeAnnotation(receiver.Symbol); ok {
+		t, ok := lowerType(expr, resolver)
+		return !ok || !topLikeType(t)
+	}
+	kind, ok := result.SymbolKind(receiver.Symbol)
+	return ok && (kind == symbol.Param || kind == symbol.Global)
+}
+
 func suffixFromReceiver(receiver, target path.Path) ([]segment.Segment, bool) {
 	if receiver.Symbol != target.Symbol || receiver.Root != target.Root || len(target.Segments) <= len(receiver.Segments) {
 		return nil, false
@@ -925,9 +1087,9 @@ func suffixFromReceiver(receiver, target path.Path) ([]segment.Segment, bool) {
 	return append([]segment.Segment(nil), target.Segments[len(receiver.Segments):]...), true
 }
 
-func memberDiagnostic(result *body.Result, fact semantics.CallFact, call *ast.FuncCallExpr, receiver typ.Type, member string, point cfg.Point) diagnostic.Diagnostic {
-	span := ast.SpanOf(call)
-	memberPath := memberCallDisplayName(result, fact, member)
+func memberDiagnostic(result *body.Result, access callMemberAccessData, receiver typ.Type, member string, point cfg.Point) diagnostic.Diagnostic {
+	span := ast.SpanOf(access.call)
+	memberPath := memberAccessDisplayName(result, access)
 	if memberPath == "" {
 		memberPath = "receiver"
 	}
@@ -949,9 +1111,9 @@ func memberDiagnostic(result *body.Result, fact semantics.CallFact, call *ast.Fu
 	})
 }
 
-func notCallableDiagnostic(result *body.Result, fact semantics.CallFact, call *ast.FuncCallExpr, receiver, memberType typ.Type, member string, point cfg.Point) diagnostic.Diagnostic {
-	span := ast.SpanOf(call)
-	memberPath := memberCallDisplayName(result, fact, member)
+func notCallableDiagnostic(result *body.Result, access callMemberAccessData, receiver, memberType typ.Type, member string, point cfg.Point) diagnostic.Diagnostic {
+	span := ast.SpanOf(access.call)
+	memberPath := memberAccessDisplayName(result, access)
 	if memberPath == "" {
 		memberPath = "receiver"
 	}
@@ -971,11 +1133,4 @@ func notCallableDiagnostic(result *body.Result, fact semantics.CallFact, call *a
 		),
 		Help: memberNotCallableHelp(memberPath),
 	})
-}
-
-func callRootSymbol(fact semantics.CallFact) symbol.ID {
-	if fact.HasReceiverPath {
-		return fact.ReceiverPath.Symbol
-	}
-	return fact.CalleePath.Symbol
 }

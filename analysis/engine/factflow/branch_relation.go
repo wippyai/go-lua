@@ -45,11 +45,19 @@ func NewBranchPresenceRelationSet(relations ...BranchPresenceRelation) BranchPre
 // TriggerPath returns the branch-refined path that activates the implication.
 func (r BranchPresenceRelation) TriggerPath() path.Path { return r.triggerPath.Clone() }
 
+// TriggerPathRef returns the trigger path for immediate read-only use.
+// Callers must not mutate or retain the returned path.
+func (r BranchPresenceRelation) TriggerPathRef() path.Path { return r.triggerPath }
+
 // TriggerPresence returns the triggering presence state.
 func (r BranchPresenceRelation) TriggerPresence() presence.Value { return r.triggerPresence }
 
 // TargetPath returns the path refined when the implication activates.
 func (r BranchPresenceRelation) TargetPath() path.Path { return r.targetPath.Clone() }
+
+// TargetPathRef returns the target path for immediate read-only use.
+// Callers must not mutate or retain the returned path.
+func (r BranchPresenceRelation) TargetPathRef() path.Path { return r.targetPath }
 
 // TargetPresence returns the target presence state.
 func (r BranchPresenceRelation) TargetPresence() presence.Value { return r.targetPresence }

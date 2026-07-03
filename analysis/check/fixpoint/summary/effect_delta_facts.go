@@ -33,6 +33,10 @@ func normalizeEffectDeltas(reg *axis.Registry, in []callboundary.EffectDelta) []
 	return effectDeltaMap(reg).Normalize(in)
 }
 
+func normalizeEffectDeltasOwned(reg *axis.Registry, in []callboundary.EffectDelta) []callboundary.EffectDelta {
+	return effectDeltaMap(reg).NormalizeOwned(in)
+}
+
 func cloneEffectDeltas(in []callboundary.EffectDelta) []callboundary.EffectDelta {
 	if len(in) == 0 {
 		return nil

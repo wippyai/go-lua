@@ -81,6 +81,15 @@ type DataRecord = {
 
 type DataMap = {[string]: DataRecord}
 
+type DataOptions = {
+    content_type: string?,
+    data_id: string?,
+    key: string?,
+    discriminator: string?,
+    node_id: string?,
+    metadata: unknown?,
+}
+
 type FetchOptions = {
     replace_references: boolean?,
 }
@@ -299,7 +308,7 @@ local function resolve_dataflow_references(self: NodeInstance, value: unknown): 
         return value
     end
 
-    if value._dataflow_ref then
+    if type(value._dataflow_ref) == "string" then
         local reader = self._deps.data_reader.with_dataflow(self.dataflow_id)
             :with_data(value._dataflow_ref)
             :fetch_options({ replace_references = true })
@@ -521,7 +530,7 @@ function methods:with_child_nodes(definitions)
     return child_ids, nil
 end
 
-function methods:data(data_type, content, options)
+function methods:data(data_type, content, options: DataOptions?)
     if not data_type or data_type == "" then
         return nil, "Node [" .. self.node_id .. "] data type is required"
     end

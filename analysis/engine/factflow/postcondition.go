@@ -71,6 +71,10 @@ func NewPostconditionPathRelationSet(relations ...PostconditionPathRelation) Pos
 // TargetPath returns the refined path.
 func (r PostconditionRefinement) TargetPath() path.Path { return r.targetPath.Clone() }
 
+// TargetPathRef returns the refined path for immediate read-only use.
+// Callers must not mutate or retain the returned path.
+func (r PostconditionRefinement) TargetPathRef() path.Path { return r.targetPath }
+
 // Value returns the postcondition value refinement.
 func (r PostconditionRefinement) Value() ValueRefinement { return r.value }
 

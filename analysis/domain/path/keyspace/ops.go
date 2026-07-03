@@ -76,6 +76,27 @@ func (ks *KeySpace) HasStrictPrefix(k, prefix Key) bool {
 	return ok && len(remainder) > 0
 }
 
+// ExactRemainderAfterPrefix returns the suffix segments of k below prefix using
+// exact segment equality, rather than local field/string-index equivalence. Use
+// this for callers whose old PathKey flow compared decoded segment structs.
+func (ks *KeySpace) ExactRemainderAfterPrefix(k, prefix Key) ([]segment.Segment, bool) {
+	if ks == nil || !ks.validKey(k) || !ks.validKey(prefix) || !k.isStructural() || !prefix.isStructural() {
+		return nil, false
+	}
+	if k.isLocal() || prefix.isLocal() {
+		if !k.isLocal() || !prefix.isLocal() ||
+			k.Sym != prefix.Sym || k.Ver != prefix.Ver ||
+			!ks.segmentsHasPrefixExact(k.Segs, prefix.Segs) {
+			return nil, false
+		}
+		return ks.segmentsTail(k.Segs, ks.segLen(prefix.Segs)), true
+	}
+	if !k.sameStableRoot(prefix) || !ks.segmentsHasPrefixExact(k.Segs, prefix.Segs) {
+		return nil, false
+	}
+	return ks.segmentsTail(k.Segs, ks.segLen(prefix.Segs)), true
+}
+
 // remainderAfterPrefix returns the suffix segments of k below prefix, mirroring
 // StructuralKey.RemainderAfterPrefix.
 func (ks *KeySpace) remainderAfterPrefix(k, prefix Key) ([]segment.Segment, bool) {
@@ -171,6 +192,34 @@ func (ks *KeySpace) appendSegments(k Key, suffix []segment.Segment) (Key, bool) 
 	return out, true
 }
 
+// AppendSegment returns the key reached by appending one segment, preserving
+// the root/address space. It is the keyspace-owned fast path for callers that
+// already have a canonical key and should not rebuild a syntax Path only to ask
+// for a child key.
+func (ks *KeySpace) AppendSegment(k Key, seg segment.Segment) (Key, bool) {
+	if ks == nil || !ks.validKey(k) || !k.isStructural() {
+		return Key{}, false
+	}
+	segs := ks.segments(k.Segs)
+	var next SegmentsID
+	switch len(segs) {
+	case 0:
+		next = ks.internSegments([]segment.Segment{seg})
+	case 1:
+		next = ks.internSegments([]segment.Segment{segs[0], seg})
+	case 2:
+		next = ks.internSegments([]segment.Segment{segs[0], segs[1], seg})
+	default:
+		combined := make([]segment.Segment, len(segs)+1)
+		copy(combined, segs)
+		combined[len(segs)] = seg
+		next = ks.internSegments(combined)
+	}
+	out := k
+	out.Segs = next
+	return out, true
+}
+
 // Rebase rewrites k from structural prefix from to prefix to, in the same
 // address space, mirroring address.RebasePathKey. It returns false when from is
 // not a prefix of k, when from and to are different kinds, or when the result
@@ -243,8 +292,19 @@ func fieldCanonicalSegments(segments []segment.Segment) ([]segment.Segment, bool
 // key, mirroring address.RelativeStaticMemberSuffixSegments. Only rootless keys
 // with non-empty segments have a suffix; all others return false.
 func (ks *KeySpace) SuffixSegments(k Key) ([]segment.Segment, bool) {
-	if k.Kind != KindRootlessSuffix || k.Segs == 0 {
+	segments, ok := ks.SuffixSegmentsView(k)
+	if !ok {
 		return nil, false
 	}
-	return append([]segment.Segment(nil), ks.segments(k.Segs)...), true
+	return append([]segment.Segment(nil), segments...), true
+}
+
+// SuffixSegmentsView returns a rootless static-member suffix as a read-only
+// borrowed segment view. The returned slice is owned by the KeySpace and must
+// not be mutated. Use SuffixSegments when the caller needs an owned slice.
+func (ks *KeySpace) SuffixSegmentsView(k Key) ([]segment.Segment, bool) {
+	if ks == nil || k.Kind != KindRootlessSuffix || k.Segs == 0 || !ks.validSegmentsID(k.Segs) {
+		return nil, false
+	}
+	return ks.segments(k.Segs), true
 }

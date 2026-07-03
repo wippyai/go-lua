@@ -37,13 +37,15 @@ func storeOriginFamily(f originFamily) bool {
 	if f.id == 0 || f.kind == 0 || len(f.cases) == 0 {
 		return false
 	}
-	f = cloneOriginFamily(f)
 	originCatalogMu.Lock()
 	defer originCatalogMu.Unlock()
 	if _, poisoned := originCatalogPoisoned[f.id]; poisoned {
 		return false
 	}
 	if existing, ok := originCatalog[f.id]; ok {
+		if originFamilyCovers(existing, f) {
+			return true
+		}
 		if !originFamiliesCompatible(existing, f) {
 			delete(originCatalog, f.id)
 			originCatalogPoisoned[f.id] = struct{}{}
@@ -51,6 +53,8 @@ func storeOriginFamily(f originFamily) bool {
 			return false
 		}
 		f.cases = mergeOriginCases(existing.cases, f.cases)
+	} else {
+		f = cloneOriginFamily(f)
 	}
 	if existing, ok := originCatalog[f.id]; ok && originFamiliesEqual(existing, f) {
 		return true
@@ -113,41 +117,77 @@ func originFamiliesCompatible(existing, next originFamily) bool {
 	}
 }
 
+func originFamilyCovers(existing, next originFamily) bool {
+	return existing.id == next.id &&
+		existing.kind == next.kind &&
+		existing.signature == next.signature &&
+		originCasesCover(existing.cases, next.cases)
+}
+
 func originCasesOverlapCompatible(a, b []originCase) bool {
-	byIndex := make(map[int]typ.Type, len(a))
-	for _, c := range a {
-		if existing, ok := byIndex[c.index]; ok && !typ.TypeEquals(existing, c.typ) {
-			return false
+	for i, left := range a {
+		for j := i + 1; j < len(a); j++ {
+			right := a[j]
+			if left.index == right.index && !typ.TypeEquals(left.typ, right.typ) {
+				return false
+			}
 		}
-		byIndex[c.index] = c.typ
+		for _, right := range b {
+			if left.index == right.index && !typ.TypeEquals(left.typ, right.typ) {
+				return false
+			}
+		}
 	}
-	for _, c := range b {
-		if existing, ok := byIndex[c.index]; ok && !typ.TypeEquals(existing, c.typ) {
+	for i, left := range b {
+		for j := i + 1; j < len(b); j++ {
+			right := b[j]
+			if left.index == right.index && !typ.TypeEquals(left.typ, right.typ) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func originCasesCover(haystack, needles []originCase) bool {
+	if len(needles) == 0 {
+		return true
+	}
+	if len(haystack) < len(needles) {
+		return false
+	}
+	for _, needle := range needles {
+		found := false
+		for _, existing := range haystack {
+			if existing.index == needle.index && typ.TypeEquals(existing.typ, needle.typ) {
+				found = true
+				break
+			}
+		}
+		if !found {
 			return false
 		}
-		byIndex[c.index] = c.typ
 	}
 	return true
 }
 
 func mergeOriginCases(a, b []originCase) []originCase {
-	byIndex := make(map[int]originCase, len(a)+len(b))
-	for _, c := range a {
-		byIndex[c.index] = c
+	out := make([]originCase, 0, len(a)+len(b))
+	out = append(out, a...)
+	out = append(out, b...)
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].index < out[j].index
+	})
+	n := 0
+	for _, c := range out {
+		if n > 0 && out[n-1].index == c.index {
+			out[n-1] = c
+			continue
+		}
+		out[n] = c
+		n++
 	}
-	for _, c := range b {
-		byIndex[c.index] = c
-	}
-	indices := make([]int, 0, len(byIndex))
-	for index := range byIndex {
-		indices = append(indices, index)
-	}
-	sort.Ints(indices)
-	out := make([]originCase, 0, len(indices))
-	for _, index := range indices {
-		out = append(out, byIndex[index])
-	}
-	return out
+	return out[:n]
 }
 
 func originFamiliesEqual(a, b originFamily) bool {
@@ -161,15 +201,5 @@ func originCasesEqual(a, b []originCase) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	byIndex := make(map[int]typ.Type, len(a))
-	for _, c := range a {
-		byIndex[c.index] = c.typ
-	}
-	for _, c := range b {
-		existing, ok := byIndex[c.index]
-		if !ok || !typ.TypeEquals(existing, c.typ) {
-			return false
-		}
-	}
-	return true
+	return originCasesCover(a, b) && originCasesCover(b, a)
 }

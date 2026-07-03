@@ -16,7 +16,7 @@
           "fun()",
           "not fun() -> {answer: string}"
         ],
-        "min_evidence": 3,
+        "min_evidence": 2,
         "evidence": [
           {
             "kind": "abstract fact",
@@ -35,22 +35,11 @@
             "contains": [
               "f is declared as fun() -> Res"
             ]
-          },
-          {
-            "kind": "missing proof",
-            "trust": "unknown",
-            "reason": "boundary validation missing",
-            "line": 19,
-            "column": 23,
-            "contains": [
-              "no proof on this path shows M.run satisfies the declared type"
-            ]
           }
         ],
         "evidence_contains": [
           "M.run has type fun()",
-          "f is declared as fun() -> Res",
-          "no proof on this path shows M.run satisfies the declared type"
+          "f is declared as fun() -> Res"
         ],
         "render_contains": [
           "local f: fun(): Res = M.run",
@@ -63,7 +52,6 @@
           "because:",
           "1. proven: M.run has type fun()",
           "2. claimed: f is declared as fun() -> Res",
-          "3. missing proof: no proof on this path shows M.run satisfies the declared type",
           "help: Use a value compatible with the expected type, or change the target type if `M.run` is valid."
         ],
         "render_not_contains": [

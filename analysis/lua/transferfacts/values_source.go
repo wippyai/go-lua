@@ -35,10 +35,11 @@ func (l *lowerer) expandTypeIsOpenTailReturnSource(source sourceprovenance.ASTSo
 		!source.HasCallPoint || result == nil {
 		return []sourceprovenance.ASTSource{source}
 	}
-	fact, ok := result.Call(source.CallPoint)
+	view, ok := result.CallView(source.CallPoint)
 	if !ok {
 		return []sourceprovenance.ASTSource{source}
 	}
+	fact, _ := view.Borrowed()
 	if _, _, ok := l.typeIsCall(fact); !ok {
 		return []sourceprovenance.ASTSource{source}
 	}

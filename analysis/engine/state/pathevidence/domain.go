@@ -13,56 +13,58 @@ var domainCache registrycache.Cache[lattice.Lattice[Lane]]
 
 // Domain builds the lattice for the coupled path-evidence lane.
 func Domain(reg *axis.Registry) lattice.Lattice[Lane] {
-	return domainCache.Get(reg, func() lattice.Lattice[Lane] {
-		valueDomain := product.Domain(reg)
-		ops := domainOps{
-			refinements:              lift.MustMap[keyspace.Key, product.Value](valueDomain),
-			staticMembers:            lift.MustMap[keyspace.Key, product.Value](valueDomain),
-			proofs:                   lift.MustSet[BranchProof](),
-			pathPresenceImplications: lift.MustSet[PathPresenceImplication](),
-		}
-		return lattice.Lattice[Lane]{
-			Bottom: func() Lane {
-				return Lane{
-					refinementsBottom:              true,
-					staticMembersBottom:            true,
-					proofsBottom:                   true,
-					pathPresenceImplicationsBottom: true,
-				}
-			},
-			Top: func() Lane {
-				return Lane{}
-			},
-			Equal: func(a, b Lane) bool {
-				return ops.refinements.Equal(ops.refinementLane(a), ops.refinementLane(b)) &&
-					ops.staticMembers.Equal(ops.staticMemberLane(a), ops.staticMemberLane(b)) &&
-					ops.proofs.Equal(ops.proofLane(a), ops.proofLane(b)) &&
-					ops.pathPresenceImplications.Equal(ops.pathPresenceImplicationLane(a), ops.pathPresenceImplicationLane(b))
-			},
-			LessOrEq: func(a, b Lane) bool {
-				return ops.refinements.LessOrEq(ops.refinementLane(a), ops.refinementLane(b)) &&
-					ops.staticMembers.LessOrEq(ops.staticMemberLane(a), ops.staticMemberLane(b)) &&
-					ops.proofs.LessOrEq(ops.proofLane(a), ops.proofLane(b)) &&
-					ops.pathPresenceImplications.LessOrEq(ops.pathPresenceImplicationLane(a), ops.pathPresenceImplicationLane(b))
-			},
-			Join: func(a, b Lane) Lane {
-				return ops.fromLanes(
-					ops.refinements.Join(ops.refinementLane(a), ops.refinementLane(b)),
-					ops.staticMembers.Join(ops.staticMemberLane(a), ops.staticMemberLane(b)),
-					ops.proofs.Join(ops.proofLane(a), ops.proofLane(b)),
-					ops.pathPresenceImplications.Join(ops.pathPresenceImplicationLane(a), ops.pathPresenceImplicationLane(b)),
-				)
-			},
-			Widen: func(prev, next Lane) Lane {
-				return ops.fromLanes(
-					ops.refinements.Widen(ops.refinementLane(prev), ops.refinementLane(next)),
-					ops.staticMembers.Widen(ops.staticMemberLane(prev), ops.staticMemberLane(next)),
-					ops.proofs.Widen(ops.proofLane(prev), ops.proofLane(next)),
-					ops.pathPresenceImplications.Widen(ops.pathPresenceImplicationLane(prev), ops.pathPresenceImplicationLane(next)),
-				)
-			},
-		}
-	})
+	return domainCache.GetFor(reg, domainForRegistry)
+}
+
+func domainForRegistry(reg *axis.Registry) lattice.Lattice[Lane] {
+	valueDomain := product.Domain(reg)
+	ops := domainOps{
+		refinements:              lift.MustMap[keyspace.Key, product.Value](valueDomain),
+		staticMembers:            lift.MustMap[keyspace.Key, product.Value](valueDomain),
+		proofs:                   lift.MustSet[BranchProof](),
+		pathPresenceImplications: lift.MustSet[PathPresenceImplication](),
+	}
+	return lattice.Lattice[Lane]{
+		Bottom: func() Lane {
+			return Lane{
+				refinementsBottom:              true,
+				staticMembersBottom:            true,
+				proofsBottom:                   true,
+				pathPresenceImplicationsBottom: true,
+			}
+		},
+		Top: func() Lane {
+			return Lane{}
+		},
+		Equal: func(a, b Lane) bool {
+			return ops.refinements.Equal(ops.refinementLane(a), ops.refinementLane(b)) &&
+				ops.staticMembers.Equal(ops.staticMemberLane(a), ops.staticMemberLane(b)) &&
+				ops.proofs.Equal(ops.proofLane(a), ops.proofLane(b)) &&
+				ops.pathPresenceImplications.Equal(ops.pathPresenceImplicationLane(a), ops.pathPresenceImplicationLane(b))
+		},
+		LessOrEq: func(a, b Lane) bool {
+			return ops.refinements.LessOrEq(ops.refinementLane(a), ops.refinementLane(b)) &&
+				ops.staticMembers.LessOrEq(ops.staticMemberLane(a), ops.staticMemberLane(b)) &&
+				ops.proofs.LessOrEq(ops.proofLane(a), ops.proofLane(b)) &&
+				ops.pathPresenceImplications.LessOrEq(ops.pathPresenceImplicationLane(a), ops.pathPresenceImplicationLane(b))
+		},
+		Join: func(a, b Lane) Lane {
+			return ops.fromLanes(
+				ops.refinements.Join(ops.refinementLane(a), ops.refinementLane(b)),
+				ops.staticMembers.Join(ops.staticMemberLane(a), ops.staticMemberLane(b)),
+				ops.proofs.Join(ops.proofLane(a), ops.proofLane(b)),
+				ops.pathPresenceImplications.Join(ops.pathPresenceImplicationLane(a), ops.pathPresenceImplicationLane(b)),
+			)
+		},
+		Widen: func(prev, next Lane) Lane {
+			return ops.fromLanes(
+				ops.refinements.Widen(ops.refinementLane(prev), ops.refinementLane(next)),
+				ops.staticMembers.Widen(ops.staticMemberLane(prev), ops.staticMemberLane(next)),
+				ops.proofs.Widen(ops.proofLane(prev), ops.proofLane(next)),
+				ops.pathPresenceImplications.Widen(ops.pathPresenceImplicationLane(prev), ops.pathPresenceImplicationLane(next)),
+			)
+		},
+	}
 }
 
 type domainOps struct {

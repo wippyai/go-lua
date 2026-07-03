@@ -13,16 +13,10 @@ import (
 // The Inner field holds the non-nil type. An Optional never contains
 // another Optional (they are flattened during construction).
 type Optional struct {
-	Inner                 Type
-	hash                  uint64
-	containsAny           bool
-	containsNever         bool
-	containsTypeParam     bool
-	containsInstantiated  bool
-	containsGeneric       bool
-	containsRecursive     bool
-	containsOpenRecursive bool
-	strCache              stringCache
+	Inner Type
+	hash  uint64
+	typeProperties
+	strCache stringCache
 }
 
 // MaterializeOptional builds the hash-stable optional node for an already-selected inner type.
@@ -49,15 +43,9 @@ func newRawOptionalNode(inner Type) Type {
 	h := hash.MixHash(uint64(kind.Optional), inner.Hash())
 
 	return &Optional{
-		Inner:                 inner,
-		hash:                  h,
-		containsAny:           knownContainsAny(inner),
-		containsNever:         knownContainsNever(inner),
-		containsTypeParam:     knownContainsTypeParam(inner),
-		containsInstantiated:  knownContainsInstantiated(inner),
-		containsGeneric:       knownContainsGeneric(inner),
-		containsRecursive:     knownContainsRecursive(inner),
-		containsOpenRecursive: knownContainsOpenRecursive(inner),
+		Inner:          inner,
+		hash:           h,
+		typeProperties: typePropertiesOf(inner),
 	}
 }
 

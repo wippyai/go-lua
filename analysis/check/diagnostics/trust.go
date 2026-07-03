@@ -2,7 +2,6 @@ package diagnostics
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
@@ -10,26 +9,29 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/castsem"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 type boundaryValueReader func(*body.Result, cfg.Point) (product.Value, bool)
 
 func boundaryTypeMismatch(result *body.Result, point cfg.Point, got, want typ.Type, read boundaryValueReader) bool {
-	if want == nil || typ.IsAny(want) || typ.IsUnknown(want) {
+	if topLikeTarget(want) {
 		return false
 	}
 	if read != nil {
 		if value, ok := read(result, point); ok {
-			reader := readmodel.New(result)
-			if reader.ValueAdmissible(value, want) || freshValueAdmissible(result, value, want) {
+			query := newDiagnosticQuery(result)
+			if query.ValueAdmissible(value, want) || freshValueAdmissible(result, value, want) {
 				return false
 			}
 		}
@@ -60,12 +62,18 @@ func freshValueAdmissible(result *body.Result, value product.Value, want typ.Typ
 }
 
 func boundaryProofTypeMismatch(result *body.Result, point cfg.Point, got, want typ.Type, read boundaryValueReader) bool {
-	if want == nil || typ.IsAny(want) || typ.IsUnknown(want) {
+	if topLikeTarget(want) {
 		return false
 	}
 	if read != nil {
-		if value, ok := read(result, point); ok && readmodel.New(result).ValueProofAdmissible(value, want) {
-			return false
+		if value, ok := read(result, point); ok {
+			query := newDiagnosticQuery(result)
+			if query.ValueProofAdmissible(value, want) {
+				return false
+			}
+			if query.ValueHasUntrustedTopOrigin(value) {
+				return true
+			}
 		}
 	}
 	if !topLikeType(got) {
@@ -74,90 +82,120 @@ func boundaryProofTypeMismatch(result *body.Result, point cfg.Point, got, want t
 	return true
 }
 
+func topLikeTarget(want typ.Type) bool {
+	if want == nil {
+		return true
+	}
+	want = unwrap.Alias(want)
+	if typ.IsAny(want) || typ.IsUnknown(want) {
+		return true
+	}
+	opt, ok := want.(*typ.Optional)
+	if !ok || opt == nil {
+		return false
+	}
+	inner := unwrap.Alias(opt.Inner)
+	return typ.IsAny(inner) || typ.IsUnknown(inner)
+}
+
+func boundaryValueHasUntrustedTopOrigin(result *body.Result, point cfg.Point, read boundaryValueReader) bool {
+	if result == nil || read == nil {
+		return false
+	}
+	value, ok := read(result, point)
+	if !ok {
+		return false
+	}
+	return newDiagnosticQuery(result).ValueHasUntrustedTopOrigin(value)
+}
+
+func boundaryValueNeedsValidationProof(result *body.Result, point cfg.Point, read boundaryValueReader, want typ.Type) bool {
+	if result == nil || result.Registry() == nil || read == nil || want == nil {
+		return false
+	}
+	value, ok := read(result, point)
+	if !ok {
+		return false
+	}
+	query := newDiagnosticQuery(result)
+	if query.ValueProofAdmissible(value, want) {
+		return false
+	}
+	if query.ValueHasUntrustedTopOrigin(value) {
+		return true
+	}
+	claims := product.Get(result.Registry(), value, assertion.Key)
+	return claims.Has(assertion.AnyClaim)
+}
+
+func expressionValueHasUntrustedTopOrigin(result *body.Result, point cfg.Point, expr ast.Expr) bool {
+	if result == nil || expr == nil {
+		return false
+	}
+	query := newDiagnosticQuery(result)
+	value, ok := query.ExpressionValueAtBoundary(point, expr)
+	if !ok {
+		return false
+	}
+	return query.ValueHasUntrustedTopOrigin(value)
+}
+
 func staticExpressionType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
 	if t, ok := valueexpr.LiteralType(expr); ok {
+		return t, true
+	}
+	if t, ok := immutableLocalLiteralType(result, expr); ok {
 		return t, true
 	}
 	return newExpressionTyper(result, resolver).typeOf(expr)
 }
 
-// concreteCastObligationType reports the flow-narrowed type to check against an
-// imposed obligation when the operand is a direct cast to a concrete type. A cast
-// adopts its target type for inference and direct dereference, but it does not
-// prove a separate obligation: the wrapped value must satisfy the contract on its
-// own. So the obligation sees the underlying expression's flow-narrowed type, not
-// the asserted target, and the caller routes the comparison through the proof
-// boundary. A cast that wraps a value already proven to satisfy the contract (for
-// example a guarded `string?` narrowed to `string`) therefore still passes.
+func immutableLocalLiteralType(result *body.Result, expr ast.Expr) (typ.Type, bool) {
+	ident, ok := expr.(*ast.IdentExpr)
+	if !ok || result == nil || ident == nil {
+		return nil, false
+	}
+	p, ok := result.ExpressionPath(ident)
+	if !ok || p.Symbol == 0 || len(p.Segments) != 0 {
+		return nil, false
+	}
+	kind, ok := result.SymbolKind(p.Symbol)
+	if !ok || kind != symbol.Local {
+		return nil, false
+	}
+	if result.SymbolHasWrite(p.Symbol) {
+		return nil, false
+	}
+	origin, ok := result.LocalOrigin(p.Symbol)
+	if !ok || origin.Stmt == nil || origin.Index < 0 || origin.Index >= len(origin.Stmt.Exprs) {
+		return nil, false
+	}
+	return valueexpr.LiteralType(origin.Stmt.Exprs[origin.Index])
+}
+
+// concreteCastObligationType reports the type to check against an imposed
+// obligation when the operand is a direct cast to a concrete type. Concrete
+// non-top casts are executable runtime validations in this dialect, so their
+// target type is the checked result on the normal path.
 func concreteCastObligationType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, env guardEnv, expr ast.Expr) (typ.Type, bool) {
-	inner, ok := concreteCastInner(expr)
-	if !ok {
-		return nil, false
-	}
-	if t, ok := projectedStructuralFlowSourceType(result, resolver, point, env, inner); ok {
-		return t, true
-	}
-	if t, ok := newStructuralFlowExpressionTyper(result, resolver, point, env).typeOf(inner); ok {
-		return t, true
-	}
-	if t, ok := staticExpressionType(result, resolver, inner); ok {
-		return t, true
-	}
-	return typ.Any, true
+	return concreteRuntimeCastTarget(resolver, expr)
 }
 
-// concreteCastInner peels leading cast and non-nil-assert wrappers when the
-// outer wrapper is a cast to a concrete (non-top-like) type and the wrapped
-// expression reads an existing value (an identifier, member/index access, or
-// call result). It returns that expression so its underlying value must
-// independently satisfy the obligation. A cast over a fresh literal (table,
-// function, or scalar) is left alone: the literal is structurally checkable on
-// its own, so casting it is a sound annotation, not a launder.
-func concreteCastInner(expr ast.Expr) (ast.Expr, bool) {
+func concreteRuntimeCastTarget(resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
 	cast, ok := expr.(*ast.CastExpr)
-	if !ok || cast == nil || cast.Type == nil || cast.Expr == nil {
+	if !ok || cast == nil || cast.Type == nil || topLikeCastTargetExpr(cast) {
 		return nil, false
 	}
-	if topLikeCastTargetExpr(cast) {
+	target, ok := lowerType(cast.Type, resolver)
+	if !ok || target == nil {
 		return nil, false
 	}
-	inner := cast.Expr
-	for {
-		switch e := inner.(type) {
-		case *ast.CastExpr:
-			if e == nil || e.Expr == nil {
-				return nil, false
-			}
-			inner = e.Expr
-		case *ast.NonNilAssertExpr:
-			if e == nil || e.Expr == nil {
-				return nil, false
-			}
-			inner = e.Expr
-		default:
-			if launderedValueExpr(inner) {
-				return inner, true
-			}
-			return nil, false
-		}
-	}
-}
-
-// launderedValueExpr reports whether expr reads an existing runtime value whose
-// type a cast must not be allowed to overstate. Literals are excluded because
-// they are checked structurally.
-func launderedValueExpr(expr ast.Expr) bool {
-	switch expr.(type) {
-	case *ast.IdentExpr, *ast.AttrGetExpr, *ast.FuncCallExpr:
-		return true
-	default:
-		return false
-	}
+	return target, true
 }
 
 func topLikeCastTargetExpr(cast *ast.CastExpr) bool {
 	primitive, ok := cast.Type.(*ast.PrimitiveTypeExpr)
-	return ok && primitive != nil && (primitive.Name == "any" || primitive.Name == "unknown")
+	return ok && primitive != nil && castsem.IsTopLikeTarget(primitive.Name)
 }
 
 func explicitTopLikeExpressionType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
@@ -172,6 +210,14 @@ func explicitTopLikeCastType(resolver typeannotation.Resolver, expr ast.Expr) (t
 	cast, ok := expr.(*ast.CastExpr)
 	if !ok || cast == nil || cast.Type == nil {
 		return nil, false
+	}
+	if primitive, ok := cast.Type.(*ast.PrimitiveTypeExpr); ok && primitive != nil {
+		switch {
+		case castsem.IsAnyTarget(primitive.Name):
+			return typ.Any, true
+		case castsem.IsUnknownTarget(primitive.Name):
+			return typ.Unknown, true
+		}
 	}
 	t, ok := lowerType(cast.Type, resolver)
 	if !ok || !topLikeType(t) {
@@ -252,8 +298,22 @@ func untrustedTopLikeExpressionTypeAt(result *body.Result, resolver typeannotati
 	if result == nil || expr == nil {
 		return nil, false
 	}
-	if value, ok := result.ExpressionValueAtBoundary(point, expr); ok && readmodel.New(result).ValueHasUntrustedTopOrigin(value) {
-		return typ.Any, true
+	query := newDiagnosticQuery(result)
+	if value, ok := query.ExpressionValueAtBoundary(point, expr); ok {
+		if query.ValueHasUntrustedTopOrigin(value) {
+			if got, typeOK := query.ValueType(value); typeOK && !topLikeType(got) && query.ValueProofAdmissible(value, got) {
+				return nil, false
+			}
+			return typ.Any, true
+		}
+		if got, typeOK := query.ValueType(value); typeOK && !topLikeType(got) {
+			return nil, false
+		}
+	}
+	if call, ok := expr.(*ast.FuncCallExpr); ok {
+		if value, ok := query.CallExprResultValue(call, 0); ok && query.ValueHasUntrustedTopOrigin(value) {
+			return typ.Any, true
+		}
 	}
 	return untrustedTopLikeExpressionType(result, resolver, expr)
 }
@@ -284,13 +344,14 @@ func explicitTopLikeCallFactSourceType(result *body.Result, resolver typeannotat
 	if !ok {
 		return nil, false
 	}
+	site, _ := result.CallSite(source.CallPoint)
 	if fact.Receiver != nil {
 		if t, ok := explicitTopLikeExpressionType(result, resolver, fact.Receiver); ok {
 			return t, true
 		}
 	}
-	if fact.HasReceiverPath {
-		if t, ok := explicitTopLikePathRootType(result, resolver, fact.ReceiverPath.Symbol); ok {
+	if receiver, ok := site.ReceiverPath(); ok {
+		if t, ok := explicitTopLikePathRootType(result, resolver, receiver.Symbol); ok {
 			return t, true
 		}
 	}
@@ -299,8 +360,8 @@ func explicitTopLikeCallFactSourceType(result *body.Result, resolver typeannotat
 			return t, true
 		}
 	}
-	if fact.HasCalleePath {
-		if t, ok := explicitTopLikePathRootType(result, resolver, fact.CalleePath.Symbol); ok {
+	if callee := site.CalleePathRef(); !callee.IsEmpty() {
+		if t, ok := explicitTopLikePathRootType(result, resolver, callee.Symbol); ok {
 			return t, true
 		}
 	}
@@ -332,13 +393,22 @@ func boundaryValueFromExpr(expr ast.Expr) boundaryValueReader {
 		if result == nil || expr == nil {
 			return product.Value{}, false
 		}
-		return result.ExpressionValueAtBoundary(point, expr)
+		return newDiagnosticQuery(result).ExpressionValueAtBoundary(point, expr)
 	}
 }
 
 func boundaryValueFromASTSource(source sourceprovenance.ASTSource) boundaryValueReader {
 	return func(result *body.Result, point cfg.Point) (product.Value, bool) {
-		return readmodel.New(result).SourceValue(point, source)
+		return newDiagnosticQuery(result).SourceValue(point, source)
+	}
+}
+
+func boundaryValueFromValueSource(source factflow.ValueSource) boundaryValueReader {
+	return func(result *body.Result, point cfg.Point) (product.Value, bool) {
+		if result == nil {
+			return product.Value{}, false
+		}
+		return newDiagnosticQuery(result).ValueSourceForExplanationAtBoundary(point, source)
 	}
 }
 

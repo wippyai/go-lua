@@ -11,16 +11,10 @@ import (
 //
 // The Element type describes what each element contains.
 type Array struct {
-	Element               Type
-	hash                  uint64
-	containsAny           bool
-	containsNever         bool
-	containsTypeParam     bool
-	containsInstantiated  bool
-	containsGeneric       bool
-	containsRecursive     bool
-	containsOpenRecursive bool
-	strCache              stringCache
+	Element Type
+	hash    uint64
+	typeProperties
+	strCache stringCache
 }
 
 // NewArray creates an array type.
@@ -30,15 +24,9 @@ func NewArray(elem Type) *Array {
 	}
 	h := hash.MixHash(uint64(kind.Array), elem.Hash())
 	return &Array{
-		Element:               elem,
-		hash:                  h,
-		containsAny:           knownContainsAny(elem),
-		containsNever:         knownContainsNever(elem),
-		containsTypeParam:     knownContainsTypeParam(elem),
-		containsInstantiated:  knownContainsInstantiated(elem),
-		containsGeneric:       knownContainsGeneric(elem),
-		containsRecursive:     knownContainsRecursive(elem),
-		containsOpenRecursive: knownContainsOpenRecursive(elem),
+		Element:        elem,
+		hash:           h,
+		typeProperties: typePropertiesOf(elem),
 	}
 }
 
@@ -61,17 +49,11 @@ func (a *Array) Equals(o Type) bool {
 // Maps have uniform types for all entries rather than named fields with
 // potentially different types.
 type Map struct {
-	Key                   Type
-	Value                 Type
-	hash                  uint64
-	containsAny           bool
-	containsNever         bool
-	containsTypeParam     bool
-	containsInstantiated  bool
-	containsGeneric       bool
-	containsRecursive     bool
-	containsOpenRecursive bool
-	strCache              stringCache
+	Key   Type
+	Value Type
+	hash  uint64
+	typeProperties
+	strCache stringCache
 }
 
 // NewMap creates a map type.
@@ -81,26 +63,13 @@ func NewMap(key, value Type) *Map {
 
 // RebuildMap rebuilds a hash-stable map node from already-computed key/value types.
 func RebuildMap(key, value Type) *Map {
-	if key == nil {
-		key = Unknown
-	}
-	if value == nil {
-		value = Unknown
-	}
-	h := hash.MixHash(uint64(kind.Map), key.Hash())
-	h = hash.MixHash(h, value.Hash())
+	key, value, h, props := canonicalMapParts(kind.Map, key, value)
 
 	return &Map{
-		Key:                   key,
-		Value:                 value,
-		hash:                  h,
-		containsAny:           knownAny(key, value),
-		containsNever:         knownNever(key, value),
-		containsTypeParam:     knownTypeParam(key, value),
-		containsInstantiated:  knownInstantiated(key, value),
-		containsGeneric:       knownGeneric(key, value),
-		containsRecursive:     knownRecursive(key, value),
-		containsOpenRecursive: knownOpenRecursive(key, value),
+		Key:            key,
+		Value:          value,
+		hash:           h,
+		typeProperties: props,
 	}
 }
 
@@ -135,17 +104,11 @@ func (m *Map) Equals(o Type) bool {
 // the value. Mutable Map remains invariant; ReadonlyMap is covariant in both key
 // and value because it exposes reads only.
 type ReadonlyMap struct {
-	Key                   Type
-	Value                 Type
-	hash                  uint64
-	containsAny           bool
-	containsNever         bool
-	containsTypeParam     bool
-	containsInstantiated  bool
-	containsGeneric       bool
-	containsRecursive     bool
-	containsOpenRecursive bool
-	strCache              stringCache
+	Key   Type
+	Value Type
+	hash  uint64
+	typeProperties
+	strCache stringCache
 }
 
 // NewReadonlyMap creates a read-only key/value view type.
@@ -155,27 +118,26 @@ func NewReadonlyMap(key, value Type) *ReadonlyMap {
 
 // RebuildReadonlyMap rebuilds a hash-stable read-only map node from already-computed key/value types.
 func RebuildReadonlyMap(key, value Type) *ReadonlyMap {
+	key, value, h, props := canonicalMapParts(kind.ReadonlyMap, key, value)
+
+	return &ReadonlyMap{
+		Key:            key,
+		Value:          value,
+		hash:           h,
+		typeProperties: props,
+	}
+}
+
+func canonicalMapParts(k kind.Kind, key, value Type) (Type, Type, uint64, typeProperties) {
 	if key == nil {
 		key = Unknown
 	}
 	if value == nil {
 		value = Unknown
 	}
-	h := hash.MixHash(uint64(kind.ReadonlyMap), key.Hash())
+	h := hash.MixHash(uint64(k), key.Hash())
 	h = hash.MixHash(h, value.Hash())
-
-	return &ReadonlyMap{
-		Key:                   key,
-		Value:                 value,
-		hash:                  h,
-		containsAny:           knownAny(key, value),
-		containsNever:         knownNever(key, value),
-		containsTypeParam:     knownTypeParam(key, value),
-		containsInstantiated:  knownInstantiated(key, value),
-		containsGeneric:       knownGeneric(key, value),
-		containsRecursive:     knownRecursive(key, value),
-		containsOpenRecursive: knownOpenRecursive(key, value),
-	}
+	return key, value, h, typePropertiesOf(key, value)
 }
 
 func (m *ReadonlyMap) Kind() kind.Kind { return kind.ReadonlyMap }
@@ -193,68 +155,30 @@ func (m *ReadonlyMap) Equals(o Type) bool {
 // Unlike Arrays, each position can have a different type and the length
 // is fixed at compile time.
 type Tuple struct {
-	Elements              []Type
-	hash                  uint64
-	containsAny           bool
-	containsNever         bool
-	containsTypeParam     bool
-	containsInstantiated  bool
-	containsGeneric       bool
-	containsRecursive     bool
-	containsOpenRecursive bool
-	strCache              stringCache
+	Elements []Type
+	hash     uint64
+	typeProperties
+	strCache stringCache
 }
 
 // NewTuple creates a tuple type.
 func NewTuple(elems ...Type) *Tuple {
 	h := uint64(kind.Tuple)
 	cleaned := make([]Type, len(elems))
-	containsAny := false
-	containsNever := false
-	containsTypeParam := false
-	containsInstantiated := false
-	containsGeneric := false
-	containsRecursive := false
-	containsOpenRecursive := false
+	var props typeProperties
 	for i, e := range elems {
 		if e == nil {
 			e = Unknown
 		}
 		cleaned[i] = e
 		h = hash.MixHash(h, e.Hash())
-		if !containsAny && knownContainsAny(e) {
-			containsAny = true
-		}
-		if !containsNever && knownContainsNever(e) {
-			containsNever = true
-		}
-		if !containsTypeParam && knownContainsTypeParam(e) {
-			containsTypeParam = true
-		}
-		if !containsInstantiated && knownContainsInstantiated(e) {
-			containsInstantiated = true
-		}
-		if !containsGeneric && knownContainsGeneric(e) {
-			containsGeneric = true
-		}
-		if !containsRecursive && knownContainsRecursive(e) {
-			containsRecursive = true
-		}
-		if !containsOpenRecursive && knownContainsOpenRecursive(e) {
-			containsOpenRecursive = true
-		}
+		props.include(e)
 	}
 
 	return &Tuple{
-		Elements:              cleaned,
-		hash:                  h,
-		containsAny:           containsAny,
-		containsNever:         containsNever,
-		containsTypeParam:     containsTypeParam,
-		containsInstantiated:  containsInstantiated,
-		containsGeneric:       containsGeneric,
-		containsRecursive:     containsRecursive,
-		containsOpenRecursive: containsOpenRecursive,
+		Elements:       cleaned,
+		hash:           h,
+		typeProperties: props,
 	}
 }
 

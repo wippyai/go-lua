@@ -38,14 +38,14 @@ func channelSelectFactAt(
 		HasDefault: event.HasDefault(),
 	}
 	if resultPath, ok := event.ResultPath(); ok {
-		resultKey, ok := resolver.StateKeyAt(point, resultPath)
+		resultKey, ok := visibility.AddressAt(resolver, point, resultPath).VisibleStateKey()
 		if !ok {
 			return channelselectfact.Fact{}, false
 		}
 		fact.Result = resultKey
 	}
 	if casePath, ok := event.CasePath(); ok {
-		caseKey, ok := resolver.StateKeyAt(point, casePath)
+		caseKey, ok := visibility.AddressAt(resolver, point, casePath).VisibleStateKey()
 		if !ok {
 			return channelselectfact.Fact{}, false
 		}

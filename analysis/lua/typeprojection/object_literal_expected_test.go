@@ -30,6 +30,29 @@ func TestExpectedObjectLiteralRecordSelectsUniqueDiscriminatedUnionArm(t *testin
 	}
 }
 
+func TestReachesRecordAcceptsInstantiatedRecord(t *testing.T) {
+	param := typ.NewTypeParam("T", nil)
+	box := typ.NewGeneric("Box", []*typ.TypeParam{param},
+		typetable.NewRecord().Field("value", param).Build())
+
+	if !ReachesRecord(typ.Instantiate(box, typ.String)) {
+		t.Fatal("ReachesRecord(instantiated record) = false, want true")
+	}
+}
+
+func TestReachesTableContractAcceptsOptionalRecordAndUnion(t *testing.T) {
+	rec := typetable.NewRecord().Field("id", typ.String).Build()
+	if !ReachesTableContract(typeexpr.Optional(rec)) {
+		t.Fatal("ReachesTableContract(optional record) = false, want true")
+	}
+	if !ReachesTableContract(typeexpr.Union(typ.String, rec)) {
+		t.Fatal("ReachesTableContract(union with record) = false, want true")
+	}
+	if ReachesTableContract(typeexpr.Union(typ.String, typ.Number)) {
+		t.Fatal("ReachesTableContract(scalar union) = true, want false")
+	}
+}
+
 func TestExpectedObjectLiteralRecordRejectsAmbiguousDiscriminatedUnionArm(t *testing.T) {
 	left := typetable.NewRecord().
 		Field("kind", typ.LiteralString("same")).
@@ -102,6 +125,54 @@ func TestExpectedRecordSegmentDistinguishesDotFieldAndStaticStringMember(t *test
 	got, ok = ExpectedRecordSegment(rec, segment.Segment{Kind: segment.SegmentIndexString, Name: "kind"})
 	if !ok || !typ.TypeEquals(got, typ.LiteralString("index")) {
 		t.Fatalf("string-index segment = %v/%v, want index literal", got, ok)
+	}
+}
+
+func TestExpectedTypeAtSegmentsTraversesOptionalStaticAndUnionMembers(t *testing.T) {
+	inner := typetable.NewRecord().
+		OptField("name", typ.String).
+		StaticIntIndex(2, typ.Integer).
+		Build()
+	left := typetable.NewRecord().
+		Field("payload", inner).
+		Build()
+	right := typetable.NewRecord().
+		Field("payload", inner).
+		Build()
+
+	got, ok := ExpectedTypeAtSegments(typeexpr.Union(left, right), []segment.Segment{
+		{Kind: segment.SegmentField, Name: "payload"},
+		{Kind: segment.SegmentField, Name: "name"},
+	})
+	if !ok || !typ.TypeEquals(got, typeexpr.Optional(typ.String)) {
+		t.Fatalf("nested optional field = %v/%v, want string?", got, ok)
+	}
+	got, ok = ExpectedTypeAtSegments(left, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "payload"},
+		{Kind: segment.SegmentIndexInt, Index: 2},
+	})
+	if !ok || !typ.TypeEquals(got, typ.Integer) {
+		t.Fatalf("nested static int = %v/%v, want integer", got, ok)
+	}
+}
+
+func TestMissingRequiredRecordFieldUsesContextualRecordContract(t *testing.T) {
+	rec := typetable.NewRecord().
+		Field("id", typ.String).
+		OptField("nickname", typ.String).
+		Build()
+
+	got, ok := MissingRequiredRecordField(rec, func(name string) bool {
+		return name == "nickname"
+	})
+	if !ok || got != "id" {
+		t.Fatalf("missing field = %q/%v, want id", got, ok)
+	}
+	got, ok = MissingRequiredRecordField(rec, func(name string) bool {
+		return name == "id"
+	})
+	if ok || got != "" {
+		t.Fatalf("missing field with id present = %q/%v, want none", got, ok)
 	}
 }
 

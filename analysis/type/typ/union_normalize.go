@@ -53,51 +53,17 @@ func newCanonicalUnion(members []Type, memberHashes []uint64) Type {
 	hashesCopy := make([]uint64, len(memberHashes))
 	copy(hashesCopy, memberHashes)
 
-	// Compute hash and cached structural flags.
 	h := uint64(kind.Union)
-	containsAny := false
-	containsNever := false
-	containsTypeParam := false
-	containsInstantiated := false
-	containsGeneric := false
-	containsRecursive := false
-	containsOpenRecursive := false
-	for i, m := range membersCopy {
+	for i := range membersCopy {
 		h = hash.MixHash(h, hashesCopy[i])
-		if !containsAny && knownContainsAny(m) {
-			containsAny = true
-		}
-		if !containsNever && knownContainsNever(m) {
-			containsNever = true
-		}
-		if !containsTypeParam && knownContainsTypeParam(m) {
-			containsTypeParam = true
-		}
-		if !containsInstantiated && knownContainsInstantiated(m) {
-			containsInstantiated = true
-		}
-		if !containsGeneric && knownContainsGeneric(m) {
-			containsGeneric = true
-		}
-		if !containsRecursive && knownContainsRecursive(m) {
-			containsRecursive = true
-		}
-		if !containsOpenRecursive && unionMemberContainsOpenRecursive(m) {
-			containsOpenRecursive = true
-		}
 	}
+	props := typePropertiesOfUnionMembers(membersCopy)
 
 	return &Union{
-		Members:               membersCopy,
-		memberHashes:          hashesCopy,
-		hash:                  h,
-		containsAny:           containsAny,
-		containsNever:         containsNever,
-		containsTypeParam:     containsTypeParam,
-		containsInstantiated:  containsInstantiated,
-		containsGeneric:       containsGeneric,
-		containsRecursive:     containsRecursive,
-		containsOpenRecursive: containsOpenRecursive,
+		Members:        membersCopy,
+		memberHashes:   hashesCopy,
+		hash:           h,
+		typeProperties: props,
 	}
 }
 

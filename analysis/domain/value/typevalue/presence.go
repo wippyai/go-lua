@@ -41,6 +41,25 @@ func presenceFromTypeDepth(t typ.Type, depth int) (presence.Value, bool) {
 			return presence.Maybe(), true
 		}
 		return presence.Present(), true
+	case *typ.Intersection:
+		out := presence.Bottom()
+		seen := false
+		for _, member := range tt.Members {
+			memberPresence, ok := presenceFromTypeDepth(member, depth+1)
+			if !ok || presence.Equal(memberPresence, presence.Bottom()) {
+				continue
+			}
+			if !seen {
+				out = memberPresence
+				seen = true
+				continue
+			}
+			out = presence.Meet(out, memberPresence)
+			if presence.Equal(out, presence.Bottom()) {
+				return presence.Bottom(), false
+			}
+		}
+		return out, seen
 	case *typ.Instantiated:
 		expanded := subst.ExpandInstantiated(tt)
 		if expanded == nil || expanded == t {

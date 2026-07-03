@@ -10,13 +10,12 @@
         "code": "type.assignment",
         "message_contains": [
           "cannot assign box.value",
-          "may be nil"
+          "it is nil"
         ],
         "min_evidence": 2,
         "evidence_contains": [
-          "box.value can be string or nil here",
-          "after is declared as string",
-          "no guard on this path proves box.value is non-nil"
+          "box.value has type nil",
+          "after is declared as string"
         ],
         "evidence": [
           {
@@ -26,7 +25,7 @@
             "kind": "abstract fact",
             "trust": "proven",
             "contains": [
-              "box.value can be string or nil here"
+              "box.value has type nil"
             ]
           },
           {
@@ -38,31 +37,19 @@
             "contains": [
               "after is declared as string"
             ]
-          },
-          {
-            "file": "main.lua",
-            "line": 11,
-            "column": 27,
-            "kind": "missing proof",
-            "trust": "unknown",
-            "contains": [
-              "no guard on this path proves box.value is non-nil"
-            ]
           }
         ],
         "render_contains": [
-          "error[type.assignment]: cannot assign box.value because it may be nil",
-          "local after: string = box.value -- expect-error",
-          "missing proof: no guard on this path proves box.value is non-nil"
+          "error[type.assignment]: cannot assign box.value because it is nil, not string",
+          "local after: string = box.value -- expect-error"
         ],
         "render_ordered_contains": [
-          "error[type.assignment]: cannot assign box.value because it may be nil",
+          "error[type.assignment]: cannot assign box.value because it is nil, not string",
           "--> main.lua:11:27",
           "local after: string = box.value -- expect-error",
           "because:",
-          "1. proven: box.value can be string or nil here",
+          "1. proven: box.value has type nil",
           "2. claimed: after is declared as string",
-          "3. missing proof: no guard on this path proves box.value is non-nil",
           "help:"
         ],
         "render_not_contains": [
@@ -70,9 +57,8 @@
           "want string"
         ],
         "help_contains": [
-          "Guard `box.value` with a nil check",
-          "provide a default value",
-          "accept nil"
+          "Use a value compatible with the expected type",
+          "change the target type"
         ],
         "min_labels": 2,
         "label_contains": [

@@ -1,6 +1,7 @@
 package checktest
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
@@ -89,6 +90,7 @@ func TestRequireCheckAndExportedGenericMemberSignatureInstantiatesReturn(t *test
 	resultMod := CheckAndExport(`
 		type Result<T> = { ok: true, value: T } | { ok: false, error: string }
 		local M = {}
+		M.Result = Result
 		function M.ok<T>(value: T): Result<T>
 			return { ok = true, value = value }
 		end
@@ -130,8 +132,10 @@ func TestRequireCheckAndExportedGenericMemberSignatureInstantiatesReturn(t *test
 func TestRequireCheckAndExportedGenericMemberSignatureInstantiatesImportedCallbackReturn(t *testing.T) {
 	protocolMod := CheckAndExport(`
 		type User = { id: string, retries: number }
+		type Audit = { user_id: string, event: string }
 		local M = {}
 		M.User = User
+		M.Audit = Audit
 		return M
 	`, "protocol")
 	if len(protocolMod.Errors) != 0 {
@@ -213,7 +217,7 @@ func TestRequireCheckAndExportedGenericMemberSignatureSeedsUnannotatedCallbackPa
 		Column:          29,
 		Span:            diagnostic.Span{StartLine: 11, StartCol: 29, EndLine: 11, EndCol: 40},
 		MessageContains: []string{"mapped.value", `"u1"`, "not number"},
-		EvidenceMin:     3,
+		EvidenceMin:     2,
 		EvidenceChain: []diagnosticEvidenceExpectation{
 			{
 				Kind:            diagnostic.EvidenceAbstractFact,
@@ -224,11 +228,6 @@ func TestRequireCheckAndExportedGenericMemberSignatureSeedsUnannotatedCallbackPa
 				Kind:            diagnostic.EvidenceUserAssertion,
 				Trust:           diagnostic.TrustClaimed,
 				MessageContains: []string{"wrong_id", "number"},
-			},
-			{
-				Kind:            diagnostic.EvidenceMissingProof,
-				Trust:           diagnostic.TrustUnknown,
-				MessageContains: []string{"no proof", "mapped.value", "declared type"},
 			},
 		},
 		LabelMin:      2,
@@ -244,12 +243,12 @@ func TestRequireCheckAndExportedGenericMemberSignatureSeedsUnannotatedCallbackPa
 			"because:",
 			"proven: mapped.value has literal value \"u1\"",
 			"claimed: wrong_id is declared as number",
-			"missing proof: no proof on this path shows mapped.value satisfies the declared type",
 			"help: Use a value compatible with the expected type",
 		},
 		RenderNotContains: []string{
 			"want number",
 			"^~",
+			"missing proof:",
 		},
 	})
 }
@@ -298,10 +297,136 @@ func TestRequireCheckAndExportedGenericMemberSignatureInstantiatesNestedCallback
 		end
 	`, WithStdlib(), WithModule("protocol", protocolMod), WithModule("result", resultMod))
 	if len(checked.Diagnostics) != 1 {
-		t.Fatalf("diagnostics = %#v, want one wrong_event diagnostic", checked.Diagnostics)
+		debug := "<no checked result>"
+		if checked.checked != nil {
+			root := checked.checked.RootResult()
+			debug = callOutcomeDebug(root)
+			for _, fn := range root.FunctionResults() {
+				debug += "\nchild: " + callOutcomeDebug(fn)
+			}
+		}
+		t.Fatalf("diagnostics = %#v, want one wrong_event diagnostic\ncalls: %s", checked.Diagnostics, debug)
 	}
 	if checked.Diagnostics[0].Code != diagnostics.CodeAssignmentType {
 		t.Fatalf("diagnostic code = %s, want %s", checked.Diagnostics[0].Code, diagnostics.CodeAssignmentType)
+	}
+}
+
+func TestRequireCheckAndExportedGenericMemberSignatureKeepsErrorArmOutOfResultInput(t *testing.T) {
+	protocolMod := CheckAndExport(`
+		type User = { id: string, retries: number }
+		local M = {}
+		M.User = User
+		return M
+	`, "protocol")
+	if len(protocolMod.Errors) != 0 {
+		t.Fatalf("protocol module errors = %#v, want none", protocolMod.Errors)
+	}
+	resultMod := CheckAndExport(`
+		type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+		local M = {}
+		function M.ok<T>(value: T): Result<T>
+			return { ok = true, value = value }
+		end
+		function M.err<T>(message: string): Result<T>
+			return { ok = false, error = message }
+		end
+		function M.and_then<T, U>(result: Result<T>, fn: (T) -> Result<U>): Result<U>
+			if result.ok then
+				return fn(result.value)
+			end
+			return M.err(result.error)
+		end
+		function M.map<T, U>(result: Result<T>, fn: (T) -> U): Result<U>
+			if result.ok then
+				return M.ok(fn(result.value))
+			end
+			return M.err(result.error)
+		end
+		function M.dispatch<T, U>(value: T, handler: (T) -> Result<U>): Result<U>
+			return handler(value)
+		end
+		return M
+	`, "result")
+	if len(resultMod.Errors) != 0 {
+		t.Fatalf("result module errors = %#v, want none", resultMod.Errors)
+	}
+	validatorMod := CheckAndExport(`
+		local protocol = require("protocol")
+		local result = require("result")
+		type UserResult = { ok: true, value: protocol.User } | { ok: false, error: string }
+		local M = {}
+		function M.decode_user(raw: any): UserResult
+			if type(raw) ~= "table" then
+				return result.err("root")
+			end
+			if type(raw.id) ~= "string" then
+				return result.err("id")
+			end
+			if type(raw.retries) ~= "number" then
+				return result.err("retries")
+			end
+			return result.ok({ id = raw.id, retries = raw.retries })
+		end
+		return M
+	`, "validator", WithStdlib(), WithModule("protocol", protocolMod), WithModule("result", resultMod))
+	if len(validatorMod.Errors) != 0 {
+		t.Fatalf("validator module errors = %#v, want none", validatorMod.Errors)
+	}
+
+	checked := Check(`
+		local protocol = require("protocol")
+		local result = require("result")
+		local validator = require("validator")
+
+		type NumberResult = { ok: true, value: number } | { ok: false, error: string }
+		type AuditResult = { ok: true, value: protocol.Audit } | { ok: false, error: string }
+		type UserAuditHandler = (protocol.User) -> AuditResult
+
+		local raw: any = { id = "u1", retries = 2 }
+		local trusted: protocol.User = raw
+
+		local decoded = validator.decode_user(raw)
+		local label = result.map(decoded, function(user: protocol.User)
+			return user.id .. ":" .. tostring(user.retries + 1)
+		end)
+		if label.ok then
+			local text: string = label.value
+			print(text)
+		end
+
+		local audit = result.and_then(decoded, function(user: protocol.User)
+			return result.ok({ user_id = user.id, event = "created" })
+		end)
+		if audit.ok then
+			local event: string = audit.value.event
+			print(audit.value.user_id .. ":" .. event)
+		end
+
+		local wrong_result: NumberResult = result.map(decoded, function(user: protocol.User)
+			return user.id
+		end)
+		local wrong_handler: UserAuditHandler = function(audit: protocol.Audit): AuditResult
+			return result.ok(audit)
+		end
+		local dispatched = result.dispatch({ id = "u2", retries = 1 }, function(user: protocol.User)
+			return result.ok(user.id .. ":direct")
+		end)
+		if dispatched.ok then
+			print(dispatched.value)
+		end
+
+		local failed = result.and_then(validator.decode_user({ id = 9, retries = "bad" }), function(user: protocol.User)
+			return result.ok({ user_id = user.id, event = "never" })
+		end)
+		if not failed.ok then
+			local err: string = failed.error
+		end
+	`, WithStdlib(), WithModule("protocol", protocolMod), WithModule("result", resultMod), WithModule("validator", validatorMod))
+	for _, diag := range checked.Diagnostics {
+		if diag.Code == diagnostics.CodeDirectCallArgType && strings.Contains(diag.Message, "string |") {
+			t.Fatalf("diagnostics = %#v, want error arm not to pollute Result<T> input", checked.Diagnostics)
+		}
 	}
 }
 

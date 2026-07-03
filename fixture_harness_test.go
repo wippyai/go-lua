@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	testutil "github.com/wippyai/go-lua/analysis/check/checktest"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/check/placementplan"
 	diag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
@@ -295,8 +296,13 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 		for _, nm := range moduleOrder {
 			modOpts = append(modOpts, testutil.WithModule(nm.name, nm.mod))
 		}
+		stats := fixtureStats()
+		if stats != nil {
+			modOpts = append(modOpts, testutil.WithStats(stats))
+		}
 		name := strings.TrimSuffix(f, ".lua")
-		mod := testutil.CheckAndExport(sources[f], name, modOpts...)
+		mod := testutil.CheckFileAndExport(sources[f], name, f, modOpts...)
+		logFixtureStats(t, s.Name, f, stats)
 		moduleOrder = append(moduleOrder, namedModule{name, mod})
 		allDiagnostics = append(allDiagnostics, mod.Errors...)
 		placementPlans = append(placementPlans, mod.Placement)
@@ -307,8 +313,13 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 	for _, nm := range moduleOrder {
 		entryOpts = append(entryOpts, testutil.WithModule(nm.name, nm.mod))
 	}
+	stats := fixtureStats()
+	if stats != nil {
+		entryOpts = append(entryOpts, testutil.WithStats(stats))
+	}
 	entryFile := files[len(files)-1]
-	result := testutil.Check(sources[entryFile], entryOpts...)
+	result := testutil.CheckFile(sources[entryFile], entryFile, entryOpts...)
+	logFixtureStats(t, s.Name, entryFile, stats)
 	allDiagnostics = append(allDiagnostics, result.Diagnostics...)
 	placementPlans = append(placementPlans, result.PlacementPlan())
 	renderOptions := fixtureDiagnosticRenderOptions(sources, entryFile)
@@ -332,6 +343,36 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 	if s.Suite.Check != nil && s.Suite.Check.Placement != nil {
 		verifyPlacementExpectations(t, *s.Suite.Check.Placement, placementplan.Merge(placementPlans...))
 	}
+}
+
+func fixtureStats() *program.Stats {
+	if os.Getenv("FIXTURE_STATS") == "" {
+		return nil
+	}
+	return &program.Stats{}
+}
+
+func logFixtureStats(t testing.TB, suite, file string, stats *program.Stats) {
+	t.Helper()
+	if stats == nil {
+		return
+	}
+	t.Logf("fixture stats %s/%s: solves prepass=%d summary=%d materialize=%d max_funcs=%d max_contexts=%d max_context_refs=%d materialized_context_solves=%d materialized_context_new=%d query_bodies=%d query_transfers=%d body_solves=%d body_transfers=%d",
+		suite,
+		file,
+		stats.PrepassBodySolves,
+		stats.SummaryBodySolves,
+		stats.MaterializeBodySolves,
+		stats.MaxFunctionCount,
+		stats.MaxContextCount,
+		stats.MaxCallContextRefCount,
+		stats.MaterializedContextSolves,
+		stats.MaterializedContextNewContexts,
+		stats.Query.BodyInvocations,
+		stats.Query.Solver.TransferCalls,
+		stats.Body.BodySolves,
+		stats.Body.Transfer.Solver.TransferCalls,
+	)
 }
 
 func verifyPlacementExpectations(t testing.TB, expect fixturePlacement, plan placementplan.Plan) {

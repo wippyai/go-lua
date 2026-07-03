@@ -3,6 +3,7 @@ package calloutcome
 import (
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -12,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	typerefinement "github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -20,77 +22,191 @@ import (
 // post-return authority for the call. Pre-call diagnostic obligations are
 // accumulated.
 func WithSupplemental(primary, supplemental callpayload.CallOutcomeProvider) callpayload.CallOutcomeProvider {
-	if primary == nil {
-		return supplemental
-	}
-	if supplemental == nil {
-		return primary
+	return ComposeSupplemental(primary, supplemental)
+}
+
+// ComposeSupplemental returns one canonical provider that evaluates every
+// non-nil provider in order and merges their outcomes with the same authority
+// law as WithSupplemental. It is the preferred assembly point for production
+// call-boundary providers because it avoids nested wrapper chains.
+func ComposeSupplemental(providers ...callpayload.CallOutcomeProvider) callpayload.CallOutcomeProvider {
+	providers = compactProviders(providers)
+	switch len(providers) {
+	case 0:
+		return nil
+	case 1:
+		return providers[0]
 	}
 	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
-		out := primary(ctx, site, in, read)
-		second := supplemental(ctx, site, in, read)
-		out = withSupplementalResultSlots(ctx.Registry, out, second.Results)
-		return withSupplementalFacts(ctx.Registry, out, second)
+		out := providers[0](ctx, site, in, read)
+		for _, provider := range providers[1:] {
+			out = MergeSupplemental(ctx.Registry, out, provider(ctx, site, in, read))
+		}
+		return out
 	}
+}
+
+func compactProviders(providers []callpayload.CallOutcomeProvider) []callpayload.CallOutcomeProvider {
+	out := providers[:0]
+	for _, provider := range providers {
+		if provider != nil {
+			out = append(out, provider)
+		}
+	}
+	return out
+}
+
+// MergeSupplemental merges one already-computed supplemental outcome into an
+// already-computed primary outcome using the same authority semantics as
+// WithSupplemental. It is for providers that derive a local supplemental payload
+// while adapting another source of call evidence.
+func MergeSupplemental(reg *axis.Registry, primary, supplemental callpayload.CallOutcome) callpayload.CallOutcome {
+	out := withSupplementalResultSlots(reg, primary, supplemental.Results)
+	return withSupplementalFacts(reg, out, supplemental)
 }
 
 func withSupplementalResultSlots(reg *axis.Registry, out callpayload.CallOutcome, results []callpayload.CallResult) callpayload.CallOutcome {
 	if len(results) == 0 {
 		return out
 	}
-	if out.PostReturnAuthority {
-		return out
-	}
 	if len(out.Results) == 0 {
+		if out.PostReturnAuthority {
+			return out
+		}
 		out.Results = append(out.Results, results...)
 		return out
 	}
-	position := make(map[int]int, len(out.Results))
-	for i, result := range out.Results {
-		position[result.Index] = i
+	var position map[int]int
+	if len(out.Results) > 4 && len(results) > 1 {
+		position = make(map[int]int, len(out.Results))
+		for i, result := range out.Results {
+			position[result.Index] = i
+		}
 	}
 	for _, result := range results {
-		pos, ok := position[result.Index]
+		pos, ok := supplementalResultSlotPosition(out.Results, position, result.Index)
 		if !ok {
-			position[result.Index] = len(out.Results)
+			if out.PostReturnAuthority {
+				continue
+			}
+			if position != nil {
+				position[result.Index] = len(out.Results)
+			}
 			out.Results = append(out.Results, result)
 			continue
 		}
-		if resultSlotLacksSpecificTypeEvidence(reg, out.Results[pos].Value) && !resultSlotLacksSpecificTypeEvidence(reg, result.Value) {
-			out.Results[pos].Value = product.Meet(reg, out.Results[pos].Value, result.Value)
+		if refined, ok := refinedResultSlotValue(reg, out.Results[pos].Value, result.Value); ok {
+			out.Results[pos].Value = refined
 		}
 	}
 	return out
 }
 
+func supplementalResultSlotPosition(results []callpayload.CallResult, position map[int]int, index int) (int, bool) {
+	if position != nil {
+		pos, ok := position[index]
+		return pos, ok
+	}
+	for i, result := range results {
+		if result.Index == index {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func refinedResultSlotValue(reg *axis.Registry, current, supplemental product.Value) (product.Value, bool) {
+	if reg == nil ||
+		product.Equal(reg, current, supplemental) ||
+		resultSlotLacksSpecificTypeEvidence(reg, supplemental) ||
+		resultSlotCarriesUntrustedTopEvidence(reg, supplemental) {
+		return product.Value{}, false
+	}
+	if resultSlotLacksSpecificTypeEvidence(reg, current) {
+		return supplemental, true
+	}
+	if resultSlotCarriesUntrustedTopEvidence(reg, current) {
+		return supplemental, true
+	}
+	if product.LessOrEq(reg, supplemental, current) {
+		merged := product.Meet(reg, current, supplemental)
+		if product.Equal(reg, merged, product.Bottom(reg)) {
+			return supplemental, true
+		}
+		return product.WithPresence(reg, merged, product.PresenceOf(supplemental)), true
+	}
+	return product.Value{}, false
+}
+
+func resultSlotCarriesUntrustedTopEvidence(reg *axis.Registry, value product.Value) bool {
+	ev := product.Get(reg, value, evidence.Key)
+	return ev.IsExplicitTop() || ev.IsGradualTop()
+}
+
 func withSupplementalFacts(reg *axis.Registry, out, second callpayload.CallOutcome) callpayload.CallOutcome {
 	out.ParamObligations = append(out.ParamObligations, second.ParamObligations...)
+	out.PathObligations = append(out.PathObligations, second.PathObligations...)
 	out.ParamExposures = append(out.ParamExposures, second.ParamExposures...)
 	if out.PostReturnAuthority {
+		out.HeapTableObjects = withAuthoritativeResultHeapTableObjects(reg, out.HeapTableObjects, second.HeapTableObjects, out.Results)
 		return out
 	}
 	out.NormalReturnFacts = out.NormalReturnFacts.Append(second.NormalReturnFacts)
 	out.HeapTableObjects = withSupplementalHeapTableObjects(reg, out.HeapTableObjects, second.HeapTableObjects)
 	out.Placements = withSupplementalPlacements(out.Placements, second.Placements)
 	out.ParamPathRefinements = append(out.ParamPathRefinements, second.ParamPathRefinements...)
+	out.ParamPathWrites = append(out.ParamPathWrites, second.ParamPathWrites...)
 	out.ParamLengthFloors = append(out.ParamLengthFloors, second.ParamLengthFloors...)
 	out.ParamPathInvalidations = append(out.ParamPathInvalidations, second.ParamPathInvalidations...)
 	out.ParamConditions = append(out.ParamConditions, second.ParamConditions...)
 	out.ParamPathRelations = append(out.ParamPathRelations, second.ParamPathRelations...)
 	out.ReturnConditionRefinements = append(out.ReturnConditionRefinements, second.ReturnConditionRefinements...)
+	out.ReturnConditionSlots = append(out.ReturnConditionSlots, second.ReturnConditionSlots...)
 	out.ReturnPresenceRelations = append(out.ReturnPresenceRelations, second.ReturnPresenceRelations...)
 	out.PostReturnAuthority = second.PostReturnAuthority
 	return out
+}
+
+func withAuthoritativeResultHeapTableObjects(
+	reg *axis.Registry,
+	left, right map[identity.ID]heapidentity.TableObject,
+	results []callpayload.CallResult,
+) map[identity.ID]heapidentity.TableObject {
+	if len(right) == 0 || len(results) == 0 {
+		return left
+	}
+	if reg == nil {
+		return left
+	}
+	allowed := make(map[identity.ID]struct{}, len(results))
+	for _, result := range results {
+		if id, ok := product.Get(reg, result.Value, identity.Key).ID(); ok {
+			allowed[id] = struct{}{}
+		}
+	}
+	if len(allowed) == 0 {
+		return left
+	}
+	filtered := make(map[identity.ID]heapidentity.TableObject)
+	for id, object := range right {
+		if _, ok := allowed[id]; ok {
+			filtered[id] = object
+		}
+	}
+	if len(filtered) == 0 {
+		return left
+	}
+	return withSupplementalHeapTableObjects(reg, left, filtered)
 }
 
 func withSupplementalPlacements(
 	left, right map[identity.ID]placement.Value,
 ) map[identity.ID]placement.Value {
 	if len(right) == 0 {
-		return clonePlacements(left)
+		return left
 	}
 	if len(left) == 0 {
-		return clonePlacements(right)
+		return right
 	}
 	out := clonePlacements(left)
 	for id, value := range right {
@@ -119,10 +235,10 @@ func withSupplementalHeapTableObjects(
 	left, right map[identity.ID]heapidentity.TableObject,
 ) map[identity.ID]heapidentity.TableObject {
 	if len(right) == 0 {
-		return heapidentity.CloneMap(left)
+		return left
 	}
 	if len(left) == 0 {
-		return heapidentity.CloneMap(right)
+		return right
 	}
 	if reg == nil {
 		out := heapidentity.CloneMap(left)
@@ -145,5 +261,5 @@ func resultSlotLacksSpecificTypeEvidence(reg *axis.Registry, value product.Value
 	if !ok {
 		return true
 	}
-	return typ.IsAny(t) || typ.IsUnknown(t)
+	return typ.IsAny(t) || typ.IsUnknown(t) || typerefinement.ContainsFreeTypeParam(t)
 }

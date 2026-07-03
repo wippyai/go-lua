@@ -56,11 +56,11 @@ func (p channelSelectExhaustiveness) Produce(result *body.Result) []diagnostic.D
 	if graph == nil {
 		return nil
 	}
-	selects := collectSelectInfos(result)
+	selects := p.collectSelectInfos(result)
 	if len(selects) == 0 {
 		return nil
 	}
-	branches := channelSelectBranchConditions(result, graph)
+	branches := p.channelSelectBranchConditions(result, graph)
 	if len(branches) == 0 {
 		return nil
 	}
@@ -90,12 +90,12 @@ func (p channelSelectExhaustiveness) Produce(result *body.Result) []diagnostic.D
 	return out
 }
 
-func collectSelectInfos(result *body.Result) []selectInfo {
+func (p channelSelectExhaustiveness) collectSelectInfos(result *body.Result) []selectInfo {
 	graph := result.Graph()
 	if graph == nil {
 		return nil
 	}
-	envs := cachedGuardEnvironments(result)
+	envs := producerContext(p).guardEnvironments(result)
 	var out []selectInfo
 	for _, point := range graph.RPO() {
 		if !guardEnvReachableAt(envs, point) {
@@ -130,8 +130,8 @@ func collectSelectInfos(result *body.Result) []selectInfo {
 	return out
 }
 
-func channelSelectBranchConditions(result *body.Result, graph cfg.Graph) []channelSelectBranch {
-	envs := cachedGuardEnvironments(result)
+func (p channelSelectExhaustiveness) channelSelectBranchConditions(result *body.Result, graph cfg.Graph) []channelSelectBranch {
+	envs := producerContext(p).guardEnvironments(result)
 	var out []channelSelectBranch
 	for _, point := range graph.RPO() {
 		if !guardEnvReachableAt(envs, point) {

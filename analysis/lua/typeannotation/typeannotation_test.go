@@ -57,6 +57,16 @@ func TestTypePrimitivesAndRefs(t *testing.T) {
 	}
 }
 
+func TestTypeBuiltinTableTopMarker(t *testing.T) {
+	got, ok := Type(&ast.PrimitiveTypeExpr{Name: "table"}, nil)
+	if !ok {
+		t.Fatal("Type returned ok=false")
+	}
+	if !luatable.IsBuiltinTopMarker(got) {
+		t.Fatalf("Type(table) = %s, want builtin table top marker", got)
+	}
+}
+
 func TestTypeResolver(t *testing.T) {
 	named := luatable.RebuildRecord(typ.RecordParts{Fields: []typ.Field{{Name: "id", Type: typ.String}}})
 	got, ok := Type(&ast.TypeRefExpr{Path: []string{"models", "User"}}, resolver{"models.User": named})
@@ -112,6 +122,20 @@ func TestTypeComposites(t *testing.T) {
 	}
 	if tuple.Elements[5].Kind() != kind.ReadonlyMap {
 		t.Fatalf("element 5 kind = %s, want readonly map", tuple.Elements[5].Kind())
+	}
+}
+
+func TestTypeOptionalAnyPreservesNilableAnnotation(t *testing.T) {
+	got, ok := Type(&ast.OptionalTypeExpr{Inner: &ast.PrimitiveTypeExpr{Name: "any"}}, nil)
+	if !ok {
+		t.Fatal("Type returned ok=false")
+	}
+	if got.Kind() != kind.Optional {
+		t.Fatalf("any? lowered to %T/%s, want raw optional any", got, got.Kind())
+	}
+	opt := got.(*typ.Optional)
+	if opt.Inner != typ.Any {
+		t.Fatalf("optional inner = %v, want any", opt.Inner)
 	}
 }
 

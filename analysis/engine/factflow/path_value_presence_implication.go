@@ -1,0 +1,93 @@
+package factflow
+
+import (
+	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+)
+
+// PathValuePresenceImplication publishes a persistent implication at a CFG
+// point: when triggerPath is proven to satisfy triggerValue, targetPath has
+// targetPresence.
+type PathValuePresenceImplication struct {
+	triggerPath    path.Path
+	triggerValue   product.Value
+	targetPath     path.Path
+	targetPresence presence.Value
+}
+
+// PathValuePresenceImplicationSet groups point-local implication publishes.
+type PathValuePresenceImplicationSet struct {
+	implications []PathValuePresenceImplication
+}
+
+func NewPathValuePresenceImplication(
+	triggerPath path.Path,
+	triggerValue product.Value,
+	targetPath path.Path,
+	targetPresence presence.Value,
+) PathValuePresenceImplication {
+	return PathValuePresenceImplication{
+		triggerPath:    triggerPath.Clone(),
+		triggerValue:   triggerValue,
+		targetPath:     targetPath.Clone(),
+		targetPresence: targetPresence,
+	}
+}
+
+func NewPathValuePresenceImplicationSet(implications ...PathValuePresenceImplication) PathValuePresenceImplicationSet {
+	return PathValuePresenceImplicationSet{implications: copyPathValuePresenceImplicationSlice(implications)}
+}
+
+func (i PathValuePresenceImplication) TriggerPath() path.Path { return i.triggerPath.Clone() }
+
+// TriggerPathRef returns the trigger path for immediate read-only use.
+// Callers must not mutate or retain the returned path.
+func (i PathValuePresenceImplication) TriggerPathRef() path.Path { return i.triggerPath }
+
+func (i PathValuePresenceImplication) TriggerValue() product.Value { return i.triggerValue }
+
+func (i PathValuePresenceImplication) TargetPath() path.Path { return i.targetPath.Clone() }
+
+// TargetPathRef returns the target path for immediate read-only use.
+// Callers must not mutate or retain the returned path.
+func (i PathValuePresenceImplication) TargetPathRef() path.Path { return i.targetPath }
+
+func (i PathValuePresenceImplication) TargetPresence() presence.Value { return i.targetPresence }
+
+func (i PathValuePresenceImplication) copy() PathValuePresenceImplication {
+	i.triggerPath = i.triggerPath.Clone()
+	i.targetPath = i.targetPath.Clone()
+	return i
+}
+
+func (s PathValuePresenceImplicationSet) Implications() []PathValuePresenceImplication {
+	return copyPathValuePresenceImplicationSlice(s.implications)
+}
+
+func (s PathValuePresenceImplicationSet) copy() PathValuePresenceImplicationSet {
+	return PathValuePresenceImplicationSet{implications: copyPathValuePresenceImplicationSlice(s.implications)}
+}
+
+func copyPathValuePresenceImplicationMap(in map[cfg.Point]PathValuePresenceImplicationSet) map[cfg.Point]PathValuePresenceImplicationSet {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[cfg.Point]PathValuePresenceImplicationSet, len(in))
+	for point, set := range in {
+		out[point] = set.copy()
+	}
+	return out
+}
+
+func copyPathValuePresenceImplicationSlice(in []PathValuePresenceImplication) []PathValuePresenceImplication {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]PathValuePresenceImplication, len(in))
+	for i, fact := range in {
+		out[i] = fact.copy()
+	}
+	return out
+}

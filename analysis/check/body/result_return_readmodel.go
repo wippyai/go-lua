@@ -2,11 +2,16 @@ package body
 
 import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 func (r *Result) ReturnPoints() []cfg.Point {
+	if r == nil {
+		return nil
+	}
+	if r.returnPointsOK {
+		return r.returnPoints
+	}
 	graph := r.Graph()
 	if graph == nil {
 		return nil
@@ -18,7 +23,9 @@ func (r *Result) ReturnPoints() []cfg.Point {
 			out = append(out, point)
 		}
 	}
-	return out
+	r.returnPoints = out
+	r.returnPointsOK = true
+	return r.returnPoints
 }
 
 func (r *Result) ReturnValueSources(point cfg.Point) ([]factflow.ValueSource, bool) {
@@ -56,25 +63,10 @@ func (r *Result) openTailReturnPresenceRelations(point cfg.Point) []factflow.Ret
 	if !ok {
 		return nil
 	}
-	site, ok := r.facts.CallSite(callPoint)
+	outcome, ok := r.CallOutcomeAt(callPoint)
 	if !ok {
 		return nil
 	}
-	in, ok := r.StateAt(callPoint)
-	if !ok {
-		return nil
-	}
-	graph := r.Graph()
-	ctx := transfer.NodeContext{
-		Graph:    graph,
-		Point:    callPoint,
-		Registry: r.registry,
-		Read:     r.boundaryRead,
-	}
-	if graph != nil {
-		ctx.Node = graph.Node(callPoint)
-	}
-	outcome := r.callOutcome(ctx, site.View(), in, r.boundaryRead)
 	if len(outcome.ReturnPresenceRelations) == 0 {
 		return nil
 	}

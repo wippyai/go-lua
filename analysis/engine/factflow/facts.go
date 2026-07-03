@@ -9,93 +9,102 @@ import (
 
 // FactsInput carries point-keyed facts used to construct an immutable Facts snapshot.
 type FactsInput struct {
-	RootAssignments             map[cfg.Point]RootAssignment
-	PathAssignments             map[cfg.Point]PathAssignment
-	PathStaticMemberWrites      map[cfg.Point]PathStaticMemberWrite
-	DynamicIndexWrites          map[cfg.Point]DynamicIndexWrite
-	PathDescendantInvalidations map[cfg.Point]PathDescendantInvalidation
-	CovariantExposures          map[cfg.Point][]CovariantExposure
-	NoNormalReturns             map[cfg.Point]struct{}
-	BranchRefinements           map[cfg.Point]BranchRefinementSet
-	BranchPresenceRelations     map[cfg.Point]BranchPresenceRelationSet
-	BranchPathRelations         map[cfg.Point]BranchPathRelationSet
-	BranchPathEvidence          map[cfg.Point]BranchPathEvidenceSet
-	ChannelSelects              map[cfg.Point]ChannelSelectSet
-	PostconditionRefinements    map[cfg.Point]PostconditionRefinementSet
-	PostconditionPathRelations  map[cfg.Point]PostconditionPathRelationSet
-	CallResultValues            map[cfg.Point]CallResultValueSet
-	ReturnPresenceRelations     map[cfg.Point]ReturnPresenceRelationSet
-	Returns                     map[cfg.Point]Return
-	CallSites                   map[cfg.Point]CallSite
-	ObjectLiterals              map[ExprRef]ObjectLiteral
-	ExpressionValues            map[ExprRef]product.Value
-	ExpressionOperations        map[ExprRef]ExpressionOperation
-	ExpressionFunctions         map[ExprRef]symbol.ID
-	ExpressionRefinements       map[ExprRef]ExpressionRefinement
-	ExpressionPaths             map[ExprRef]pathdom.Path
-	DynamicIndexExpressions     map[ExprRef]DynamicIndexExpression
-	ExpressionConditions        map[ExprRef]ExpressionCondition
+	RootAssignments               map[cfg.Point]RootAssignment
+	PathAssignments               map[cfg.Point]PathAssignment
+	PathStaticMemberWrites        map[cfg.Point]PathStaticMemberWrite
+	DynamicIndexWrites            map[cfg.Point]DynamicIndexWrite
+	PathDescendantInvalidations   map[cfg.Point]PathDescendantInvalidation
+	CovariantExposures            map[cfg.Point][]CovariantExposure
+	NoNormalReturns               map[cfg.Point]struct{}
+	BranchEdgeReachability        map[cfg.Point]BranchEdgeReachability
+	BranchConditionSources        map[cfg.Point]ValueSource
+	BranchRefinements             map[cfg.Point]BranchRefinementSet
+	BranchPresenceRelations       map[cfg.Point]BranchPresenceRelationSet
+	BranchPathRelations           map[cfg.Point]BranchPathRelationSet
+	BranchPathEvidence            map[cfg.Point]BranchPathEvidenceSet
+	PathValuePresenceImplications map[cfg.Point]PathValuePresenceImplicationSet
+	ChannelSelects                map[cfg.Point]ChannelSelectSet
+	PostconditionRefinements      map[cfg.Point]PostconditionRefinementSet
+	PostconditionPathRelations    map[cfg.Point]PostconditionPathRelationSet
+	CallResultValues              map[cfg.Point]CallResultValueSet
+	ReturnPresenceRelations       map[cfg.Point]ReturnPresenceRelationSet
+	Returns                       map[cfg.Point]Return
+	CallSites                     map[cfg.Point]CallSite
+	ObjectLiterals                map[ExprRef]ObjectLiteral
+	ExpressionValues              map[ExprRef]product.Value
+	ExpressionOperations          map[ExprRef]ExpressionOperation
+	ExpressionFunctions           map[ExprRef]symbol.ID
+	ExpressionRefinements         map[ExprRef]ExpressionRefinement
+	ExpressionPaths               map[ExprRef]pathdom.Path
+	DynamicIndexExpressions       map[ExprRef]DynamicIndexExpression
+	ExpressionConditions          map[ExprRef]ExpressionCondition
 }
 
 // Facts is an immutable point-keyed transfer facts snapshot.
 type Facts struct {
-	rootAssignments             map[cfg.Point]RootAssignment
-	pathAssignments             map[cfg.Point]PathAssignment
-	pathStaticMemberWrites      map[cfg.Point]PathStaticMemberWrite
-	dynamicIndexWrites          map[cfg.Point]DynamicIndexWrite
-	pathDescendantInvalidations map[cfg.Point]PathDescendantInvalidation
-	covariantExposures          map[cfg.Point][]CovariantExposure
-	noNormalReturns             map[cfg.Point]struct{}
-	branchRefinements           map[cfg.Point]BranchRefinementSet
-	branchPresenceRelations     map[cfg.Point]BranchPresenceRelationSet
-	branchPathRelations         map[cfg.Point]BranchPathRelationSet
-	branchPathEvidence          map[cfg.Point]BranchPathEvidenceSet
-	channelSelects              map[cfg.Point]ChannelSelectSet
-	postconditionRefinements    map[cfg.Point]PostconditionRefinementSet
-	postconditionPathRelations  map[cfg.Point]PostconditionPathRelationSet
-	callResultValues            map[cfg.Point]CallResultValueSet
-	returnPresenceRelations     map[cfg.Point]ReturnPresenceRelationSet
-	returns                     map[cfg.Point]Return
-	callSites                   map[cfg.Point]CallSite
-	objectLiterals              map[ExprRef]ObjectLiteral
-	expressionValues            map[ExprRef]product.Value
-	expressionOperations        map[ExprRef]ExpressionOperation
-	expressionFunctions         map[ExprRef]symbol.ID
-	expressionRefinements       map[ExprRef]ExpressionRefinement
-	expressionPaths             map[ExprRef]pathdom.Path
-	dynamicIndexExpressions     map[ExprRef]DynamicIndexExpression
-	expressionConditions        map[ExprRef]ExpressionCondition
+	rootAssignments               map[cfg.Point]RootAssignment
+	pathAssignments               map[cfg.Point]PathAssignment
+	pathStaticMemberWrites        map[cfg.Point]PathStaticMemberWrite
+	dynamicIndexWrites            map[cfg.Point]DynamicIndexWrite
+	pathDescendantInvalidations   map[cfg.Point]PathDescendantInvalidation
+	covariantExposures            map[cfg.Point][]CovariantExposure
+	noNormalReturns               map[cfg.Point]struct{}
+	branchEdgeReachability        map[cfg.Point]BranchEdgeReachability
+	branchConditionSources        map[cfg.Point]ValueSource
+	branchRefinements             map[cfg.Point]BranchRefinementSet
+	branchPresenceRelations       map[cfg.Point]BranchPresenceRelationSet
+	branchPathRelations           map[cfg.Point]BranchPathRelationSet
+	branchPathEvidence            map[cfg.Point]BranchPathEvidenceSet
+	pathValuePresenceImplications map[cfg.Point]PathValuePresenceImplicationSet
+	channelSelects                map[cfg.Point]ChannelSelectSet
+	postconditionRefinements      map[cfg.Point]PostconditionRefinementSet
+	postconditionPathRelations    map[cfg.Point]PostconditionPathRelationSet
+	callResultValues              map[cfg.Point]CallResultValueSet
+	returnPresenceRelations       map[cfg.Point]ReturnPresenceRelationSet
+	returns                       map[cfg.Point]Return
+	callSites                     map[cfg.Point]CallSite
+	objectLiterals                map[ExprRef]ObjectLiteral
+	expressionValues              map[ExprRef]product.Value
+	expressionOperations          map[ExprRef]ExpressionOperation
+	expressionFunctions           map[ExprRef]symbol.ID
+	expressionRefinements         map[ExprRef]ExpressionRefinement
+	expressionPaths               map[ExprRef]pathdom.Path
+	dynamicIndexExpressions       map[ExprRef]DynamicIndexExpression
+	expressionConditions          map[ExprRef]ExpressionCondition
 }
 
 // NewFacts copies the supplied point-keyed facts into an immutable snapshot.
 func NewFacts(input FactsInput) Facts {
 	return Facts{
-		rootAssignments:             copyRootAssignmentMap(input.RootAssignments),
-		pathAssignments:             copyPathAssignmentMap(input.PathAssignments),
-		pathStaticMemberWrites:      copyPathStaticMemberWriteMap(input.PathStaticMemberWrites),
-		dynamicIndexWrites:          copyDynamicIndexWriteMap(input.DynamicIndexWrites),
-		pathDescendantInvalidations: copyPathDescendantInvalidationMap(input.PathDescendantInvalidations),
-		covariantExposures:          copyCovariantExposureMap(input.CovariantExposures),
-		noNormalReturns:             copyNoNormalReturnMap(input.NoNormalReturns),
-		branchRefinements:           copyBranchRefinementSetMap(input.BranchRefinements),
-		branchPresenceRelations:     copyBranchPresenceRelationMap(input.BranchPresenceRelations),
-		branchPathRelations:         copyBranchPathRelationMap(input.BranchPathRelations),
-		branchPathEvidence:          copyBranchPathEvidenceMap(input.BranchPathEvidence),
-		channelSelects:              copyChannelSelectMap(input.ChannelSelects),
-		postconditionRefinements:    copyPostconditionRefinementMap(input.PostconditionRefinements),
-		postconditionPathRelations:  copyPostconditionPathRelationMap(input.PostconditionPathRelations),
-		callResultValues:            copyCallResultValueMap(input.CallResultValues),
-		returnPresenceRelations:     copyReturnPresenceRelationMap(input.ReturnPresenceRelations),
-		returns:                     copyReturnMap(input.Returns),
-		callSites:                   copyCallSiteMap(input.CallSites),
-		objectLiterals:              copyObjectLiteralMap(input.ObjectLiterals),
-		expressionValues:            copyExpressionValueMap(input.ExpressionValues),
-		expressionOperations:        copyExpressionOperationMap(input.ExpressionOperations),
-		expressionFunctions:         copyExpressionFunctionMap(input.ExpressionFunctions),
-		expressionRefinements:       copyExpressionRefinementMap(input.ExpressionRefinements),
-		expressionPaths:             copyExpressionPathMap(input.ExpressionPaths),
-		dynamicIndexExpressions:     copyDynamicIndexExpressionMap(input.DynamicIndexExpressions),
-		expressionConditions:        copyExpressionConditionMap(input.ExpressionConditions),
+		rootAssignments:               copyRootAssignmentMap(input.RootAssignments),
+		pathAssignments:               copyPathAssignmentMap(input.PathAssignments),
+		pathStaticMemberWrites:        copyPathStaticMemberWriteMap(input.PathStaticMemberWrites),
+		dynamicIndexWrites:            copyDynamicIndexWriteMap(input.DynamicIndexWrites),
+		pathDescendantInvalidations:   copyPathDescendantInvalidationMap(input.PathDescendantInvalidations),
+		covariantExposures:            copyCovariantExposureMap(input.CovariantExposures),
+		noNormalReturns:               copyNoNormalReturnMap(input.NoNormalReturns),
+		branchEdgeReachability:        copyBranchEdgeReachabilityMap(input.BranchEdgeReachability),
+		branchConditionSources:        copyBranchConditionSourceMap(input.BranchConditionSources),
+		branchRefinements:             copyBranchRefinementSetMap(input.BranchRefinements),
+		branchPresenceRelations:       copyBranchPresenceRelationMap(input.BranchPresenceRelations),
+		branchPathRelations:           copyBranchPathRelationMap(input.BranchPathRelations),
+		branchPathEvidence:            copyBranchPathEvidenceMap(input.BranchPathEvidence),
+		pathValuePresenceImplications: copyPathValuePresenceImplicationMap(input.PathValuePresenceImplications),
+		channelSelects:                copyChannelSelectMap(input.ChannelSelects),
+		postconditionRefinements:      copyPostconditionRefinementMap(input.PostconditionRefinements),
+		postconditionPathRelations:    copyPostconditionPathRelationMap(input.PostconditionPathRelations),
+		callResultValues:              copyCallResultValueMap(input.CallResultValues),
+		returnPresenceRelations:       copyReturnPresenceRelationMap(input.ReturnPresenceRelations),
+		returns:                       copyReturnMap(input.Returns),
+		callSites:                     copyCallSiteMap(input.CallSites),
+		objectLiterals:                copyObjectLiteralMap(input.ObjectLiterals),
+		expressionValues:              copyExpressionValueMap(input.ExpressionValues),
+		expressionOperations:          copyExpressionOperationMap(input.ExpressionOperations),
+		expressionFunctions:           copyExpressionFunctionMap(input.ExpressionFunctions),
+		expressionRefinements:         copyExpressionRefinementMap(input.ExpressionRefinements),
+		expressionPaths:               copyExpressionPathMap(input.ExpressionPaths),
+		dynamicIndexExpressions:       copyDynamicIndexExpressionMap(input.DynamicIndexExpressions),
+		expressionConditions:          copyExpressionConditionMap(input.ExpressionConditions),
 	}
 }
 
@@ -244,6 +253,21 @@ func (f Facts) NoNormalReturn(point cfg.Point) bool {
 	return ok
 }
 
+// BranchEdgeUnreachable reports whether the selected branch edge is impossible.
+func (f Facts) BranchEdgeUnreachable(point cfg.Point, cond bool) bool {
+	if reachability, ok := f.branchEdgeReachability[point]; ok {
+		return reachability.EdgeUnreachable(cond)
+	}
+	return false
+}
+
+// BranchConditionSource returns the lowered value source for the condition at a
+// branch point.
+func (f Facts) BranchConditionSource(point cfg.Point) (ValueSource, bool) {
+	source, ok := f.branchConditionSources[point]
+	return source, ok
+}
+
 // BranchRefinements returns all branch-edge value refinements at point.
 func (f Facts) BranchRefinements(point cfg.Point) []BranchRefinement {
 	if set, ok := f.branchRefinements[point]; ok {
@@ -300,12 +324,39 @@ func (f Facts) BranchPathEvidence(point cfg.Point) []BranchPathEvidence {
 	return nil
 }
 
+// ForEachBranchPathEvidence visits branch/postcondition path evidence at point
+// without copying the evidence slice. The visited values expose read-only ref
+// accessors for hot internal paths.
+func (f Facts) ForEachBranchPathEvidence(point cfg.Point, fn func(BranchPathEvidence) bool) {
+	if fn == nil {
+		return
+	}
+	if set, ok := f.branchPathEvidence[point]; ok {
+		set.ForEachEvidence(fn)
+	}
+}
+
+// PathValuePresenceImplications returns point-local implication publishes.
+func (f Facts) PathValuePresenceImplications(point cfg.Point) []PathValuePresenceImplication {
+	if set, ok := f.pathValuePresenceImplications[point]; ok {
+		return set.Implications()
+	}
+	return nil
+}
+
 // ChannelSelects returns channel-select evidence events at point.
 func (f Facts) ChannelSelects(point cfg.Point) []ChannelSelect {
 	if set, ok := f.channelSelects[point]; ok {
 		return set.Events()
 	}
 	return nil
+}
+
+// HasChannelSelects reports whether channel-select evidence exists at point
+// without copying the event slice.
+func (f Facts) HasChannelSelects(point cfg.Point) bool {
+	_, ok := f.channelSelects[point]
+	return ok
 }
 
 // PostconditionRefinements returns node-local refinements that hold after point
@@ -372,6 +423,17 @@ func (f Facts) CallSite(point cfg.Point) (CallSite, bool) {
 // call-site evidence.
 func (f Facts) HasCallSites() bool {
 	return len(f.callSites) != 0
+}
+
+// CallSiteCount returns the number of statically extracted call-site facts.
+func (f Facts) CallSiteCount() int {
+	return len(f.callSites)
+}
+
+// HasDynamicIndexWrites reports whether this immutable facts snapshot contains
+// any dynamic table write evidence.
+func (f Facts) HasDynamicIndexWrites() bool {
+	return len(f.dynamicIndexWrites) != 0
 }
 
 // CallSiteView returns a read-only call-site view at point. The view never
@@ -461,6 +523,16 @@ func (f Facts) ExpressionPath(expr ExprRef) (pathdom.Path, bool) {
 		return pathdom.Path{}, false
 	}
 	return p.Clone(), true
+}
+
+// ExpressionPathRef returns the static expression access path for immediate
+// read-only use. Callers must not mutate or retain the returned path.
+func (f Facts) ExpressionPathRef(expr ExprRef) (pathdom.Path, bool) {
+	p, ok := f.expressionPaths[expr]
+	if !ok {
+		return pathdom.Path{}, false
+	}
+	return p, true
 }
 
 // ExpressionPaths returns the static expression access paths keyed by expression.

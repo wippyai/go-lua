@@ -262,6 +262,58 @@ func TestProductTopIdentityFastPathsStillValidateOperands(t *testing.T) {
 	})
 }
 
+func TestProductOrderCasesStillUseAxisOperations(t *testing.T) {
+	var joinCalls, meetCalls, widenCalls int
+	spec := syntheticSpec()
+	spec.Join = func(a, b synthetic) synthetic {
+		joinCalls++
+		return syntheticSpec().Join(a, b)
+	}
+	spec.Meet = func(a, b synthetic) synthetic {
+		meetCalls++
+		return syntheticSpec().Meet(a, b)
+	}
+	spec.Widen = func(prev, next synthetic) synthetic {
+		widenCalls++
+		return syntheticSpec().Widen(prev, next)
+	}
+	reg := mustRegistry(t, spec.Erase())
+
+	low := Set(reg, Top(), syntheticKey, syntheticLow)
+	high := Set(reg, Top(), syntheticKey, syntheticHigh)
+
+	if got := Join(reg, low, high); got.n != high.n {
+		t.Fatalf("Join(low, high) = %s, want high operand %s", formatValue(got), formatValue(high))
+	}
+	if got := Meet(reg, low, high); got.n != low.n {
+		t.Fatalf("Meet(low, high) = %s, want low operand %s", formatValue(got), formatValue(low))
+	}
+	if got := Widen(reg, high, low); got.n != high.n {
+		t.Fatalf("Widen(high, low) = %s, want high operand %s", formatValue(got), formatValue(high))
+	}
+
+	if joinCalls == 0 || meetCalls == 0 || widenCalls == 0 {
+		t.Fatalf("order cases bypassed axis ops: join=%d meet=%d widen=%d", joinCalls, meetCalls, widenCalls)
+	}
+}
+
+func TestProductOrderCasesStillValidateOperands(t *testing.T) {
+	regA := mustRegistry(t, syntheticSpec().Erase())
+	regB := mustRegistry(t, syntheticSpec().Erase())
+	lowA := Set(regA, Top(), syntheticKey, syntheticLow)
+	highA := Set(regA, Top(), syntheticKey, syntheticHigh)
+
+	mustPanic(t, func() {
+		_ = Join(regB, lowA, highA)
+	})
+	mustPanic(t, func() {
+		_ = Meet(regB, lowA, highA)
+	})
+	mustPanic(t, func() {
+		_ = Widen(regB, highA, lowA)
+	})
+}
+
 func TestFreshRegistryValuesStayIsolatedByPointerIdentity(t *testing.T) {
 	regA := mustRegistry(t, syntheticSpec().Erase())
 	regB := mustRegistry(t, syntheticSpec().Erase())
@@ -454,6 +506,31 @@ func TestPresenceIsCoreLane(t *testing.T) {
 	}
 }
 
+func TestWithCompatiblePresenceFrom(t *testing.T) {
+	reg := mustRegistry(t)
+	base := Top()
+	presentSource := WithPresence(reg, Top(), presence.Present())
+
+	got, ok := WithCompatiblePresenceFrom(reg, base, presentSource)
+	if !ok || !presence.Equal(PresenceOf(got), presence.Present()) {
+		t.Fatalf("WithCompatiblePresenceFrom(top, present) = %s/%v, want present/true", PresenceOf(got), ok)
+	}
+	matching, ok := WithCompatiblePresenceFrom(reg, got, presentSource)
+	if !ok || !Equal(reg, matching, got) {
+		t.Fatalf("WithCompatiblePresenceFrom(present, present) = %s/%v, want unchanged/true", formatValue(matching), ok)
+	}
+	absentSource := WithPresence(reg, Top(), presence.Absent())
+	if got, ok := WithCompatiblePresenceFrom(reg, matching, absentSource); ok {
+		t.Fatalf("WithCompatiblePresenceFrom(present, absent) = %s/true, want conflict false", formatValue(got))
+	}
+	if got, ok := WithCompatiblePresenceFrom(reg, base, Top()); ok {
+		t.Fatalf("WithCompatiblePresenceFrom(top, unknown) = %s/true, want false", formatValue(got))
+	}
+	if got, ok := WithCompatiblePresenceFrom(reg, base, WithPresence(reg, Top(), presence.Bottom())); ok {
+		t.Fatalf("WithCompatiblePresenceFrom(top, bottom) = %s/true, want false", formatValue(got))
+	}
+}
+
 func TestProductMeetCorePresenceRefinement(t *testing.T) {
 	reg := mustRegistry(t, syntheticSpec().Erase())
 	top := Top()
@@ -570,6 +647,20 @@ func TestSparseAxisReducerStillRunsWithRegistryScopedValues(t *testing.T) {
 	}
 	if got := Get(reg, v, secondSyntheticKey); got != syntheticHigh {
 		t.Fatalf("reducer mirror axis = %v, want %v", got, syntheticHigh)
+	}
+}
+
+func TestReducerMutatesOwnedWorkSlotsOnly(t *testing.T) {
+	reg := mustRegistry(t, syntheticMirrorReducerSpec().Erase(), secondSyntheticSpec().Erase())
+
+	base := Set(reg, Top(), secondSyntheticKey, syntheticLow)
+	next := Set(reg, base, syntheticKey, syntheticLow)
+
+	if got := Get(reg, base, secondSyntheticKey); got != syntheticLow {
+		t.Fatalf("source slot was mutated by reducer: second axis = %v, want %v", got, syntheticLow)
+	}
+	if got := Get(reg, next, secondSyntheticKey); got != syntheticHigh {
+		t.Fatalf("reduced value second axis = %v, want %v", got, syntheticHigh)
 	}
 }
 

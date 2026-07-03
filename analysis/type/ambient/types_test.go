@@ -3,6 +3,7 @@ package ambient
 import (
 	"testing"
 
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -23,6 +24,16 @@ func TestLookupChannelGeneric(t *testing.T) {
 	}
 }
 
+func TestLookupTableTopMarker(t *testing.T) {
+	got, ok := Lookup(Table)
+	if !ok {
+		t.Fatal("Lookup(Table) returned ok=false")
+	}
+	if !typetable.IsBuiltinTopMarker(got) {
+		t.Fatalf("Lookup(Table) = %s, want builtin table top marker", got)
+	}
+}
+
 func TestChannelPayloadType(t *testing.T) {
 	payload := typ.String
 	channel := typ.Instantiate(ChannelGeneric(), payload)
@@ -34,5 +45,21 @@ func TestChannelPayloadType(t *testing.T) {
 
 	if got, ok := ChannelPayloadType(typ.Number); ok || got != nil {
 		t.Fatalf("ChannelPayloadType(number) = %v/%v, want nil/false", got, ok)
+	}
+}
+
+func TestChannelPayloadTypeAcceptsRuntimeModuleChannel(t *testing.T) {
+	payload := typ.String
+	param := typ.NewTypeParam("T", nil)
+	runtimeChannel := typ.NewGeneric("channel.Channel", []*typ.TypeParam{param}, typ.NewInterface("channel.Channel", nil))
+
+	got, ok := ChannelPayloadType(typ.Instantiate(runtimeChannel, payload))
+	if !ok || !typ.TypeEquals(got, payload) {
+		t.Fatalf("ChannelPayloadType(channel.Channel<string>) = %v/%v, want %v", got, ok, payload)
+	}
+
+	otherChannel := typ.NewGeneric("other.Channel", []*typ.TypeParam{param}, typ.NewInterface("other.Channel", nil))
+	if got, ok := ChannelPayloadType(typ.Instantiate(otherChannel, payload)); ok || got != nil {
+		t.Fatalf("ChannelPayloadType(other.Channel<string>) = %v/%v, want nil/false", got, ok)
 	}
 }

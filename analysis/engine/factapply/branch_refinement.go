@@ -2,10 +2,14 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	valuerefine "github.com/wippyai/go-lua/analysis/domain/value/refinement"
@@ -16,6 +20,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/symbol"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -39,7 +45,35 @@ func applyBranchRefinementCached(
 	targetPath pathdom.Path,
 	refinement factflow.ValueRefinement,
 ) state.State {
+	if branchRefinementContradictsCurrentValue(typeValues, ctx.Registry, resolver, projectPath, ctx.Edge.From, out, targetPath, refinement) {
+		return unreachableState(ctx.Registry)
+	}
 	return applyValueRefinementAtCached(typeValues, ctx.Registry, resolver, projectPath, ctx.Edge.From, out, targetPath, refinement)
+}
+
+func branchRefinementContradictsCurrentValue(
+	typeValues *typevalue.Cache,
+	reg *axis.Registry,
+	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
+	point cfg.Point,
+	out state.State,
+	targetPath pathdom.Path,
+	refinement factflow.ValueRefinement,
+) bool {
+	if refinement.FalsyAbsent() && falsyAbsentRefinementUnproven(reg, resolver, projectPath, point, out, targetPath) {
+		return false
+	}
+	constraint, ok := refinement.Constraint()
+	if !ok {
+		return false
+	}
+	current, ok := resolvePathValueAtCached(typeValues, reg, resolver, point, out, targetPath, projectPath)
+	if !ok || product.Equal(reg, current.value, product.Bottom(reg)) {
+		return false
+	}
+	refined := valuerefine.MeetConstraint(reg, current.value, constraint)
+	return product.Equal(reg, refined, product.Bottom(reg)) || presence.Equal(product.PresenceOf(refined), presence.Bottom())
 }
 
 // applyBranchLenRefinement records the proven length floor for an array path on
@@ -54,11 +88,11 @@ func applyBranchLenRefinement(
 	if resolver == nil {
 		return out
 	}
-	arrayPath := fact.ArrayPath()
+	arrayPath := fact.ArrayPathRef()
 	if arrayPath.Symbol == 0 {
 		return out
 	}
-	pathKey, ok := resolver.StateKeyAt(ctx.Edge.From, arrayPath)
+	pathKey, ok := visibility.AddressAt(resolver, ctx.Edge.From, arrayPath).VisibleStateKey()
 	if !ok {
 		return out
 	}
@@ -76,11 +110,11 @@ func applyBranchNumFloorRefinement(
 	if resolver == nil {
 		return out
 	}
-	targetPath := fact.TargetPath()
+	targetPath := fact.TargetPathRef()
 	if targetPath.Symbol == 0 {
 		return out
 	}
-	pathKey, ok := visibility.RootOrVisibleStateKeyAt(resolver, ctx.Edge.From, targetPath)
+	pathKey, ok := visibility.AddressAt(resolver, ctx.Edge.From, targetPath).RootOrVisibleStateKey()
 	if !ok {
 		return out
 	}
@@ -132,6 +166,31 @@ func applyValueRefinementAt(
 	return applyValueRefinementAtCached(nil, reg, resolver, projectPath, point, out, targetPath, refinement)
 }
 
+func applyValueWriteAt(
+	reg *axis.Registry,
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	out state.State,
+	targetPath pathdom.Path,
+	value product.Value,
+) state.State {
+	if targetPath.Symbol == 0 {
+		return out
+	}
+	if len(targetPath.Segments) == 0 {
+		out = out.WriteValue(reg, key.SymbolValue(targetPath.Symbol), value)
+		return activatePathPresenceImplicationsForPath(reg, resolver, point, out, targetPath)
+	}
+	if resolver == nil {
+		return out
+	}
+	written, ok := writePathAt(reg, out, resolver, point, targetPath, value)
+	if !ok {
+		return out
+	}
+	return activatePathPresenceImplicationsForPath(reg, resolver, point, written, targetPath)
+}
+
 func applyValueRefinementAtCached(
 	typeValues *typevalue.Cache,
 	reg *axis.Registry,
@@ -163,21 +222,34 @@ func applyValueRefinementAtWithoutImplicationsCached(
 		return out
 	}
 	if len(targetPath.Segments) == 0 {
-		if _, ok := refinement.Constraint(); ok && rootRefinementInvalidatesDescendants(reg, refinement) {
+		var preserve narrowedRootDescendantFacts
+		if constraint, ok := refinement.Constraint(); ok && rootRefinementInvalidatesDescendants(reg, refinement) {
+			var narrowedRoot typ.Type
+			if rootRefinementCanKeepDescendants(reg, typeValues, constraint) && typeValues != nil {
+				narrowedRoot, _ = typeValues.TypeOf(reg, constraint)
+			}
+			if rootRefinementCanKeepDescendants(reg, typeValues, constraint) {
+				preserve = descendantFactsCompatibleWithNarrowedRoot(reg, typeValues, resolver, projectPath, point, out, targetPath, narrowedRoot)
+			}
 			out = invalidateRootDescendantsAt(resolver, point, out, targetPath)
 		}
-		return out.UpdateValue(reg, key.SymbolValue(targetPath.Symbol), func(value product.Value) product.Value {
+		out = out.UpdateValue(reg, key.SymbolValue(targetPath.Symbol), func(value product.Value) product.Value {
 			return refineProductValue(reg, value, refinement)
 		})
+		return preserve.Restore(out)
 	}
 	if constraint, ok := refinement.Constraint(); ok {
-		if lit, ok := valuerefine.LiteralType(reg, constraint); ok {
+		if lit, ok := literalConstraintType(reg, constraint); ok {
 			if narrowed, applied := applyDescendantLiteralRootOriginRefinement(typeValues, reg, resolver, projectPath, point, out, targetPath, lit, refinement.NegatedLiteral()); applied {
 				return narrowed
+			}
+			if refinement.NegatedLiteral() {
+				return out
 			}
 		}
 	}
 	out = applyDescendantTruthyRootOriginRefinement(typeValues, reg, resolver, point, out, targetPath, refinement)
+	refinement = inheritUntrustedRootEvidenceForDescendantRefinement(typeValues, reg, resolver, projectPath, point, out, targetPath, refinement)
 	if resolver == nil {
 		return out
 	}
@@ -193,7 +265,11 @@ func applyValueRefinementAtWithoutImplicationsCached(
 		}
 		return written
 	}
-	return current.write(out, refineProductValue(reg, current.value, refinement))
+	written, ok := current.write(reg, out, refineProductValue(reg, current.value, refinement))
+	if !ok {
+		return out
+	}
+	return written
 }
 
 func rootRefinementInvalidatesDescendants(reg *axis.Registry, refinement factflow.ValueRefinement) bool {
@@ -203,6 +279,51 @@ func rootRefinementInvalidatesDescendants(reg *axis.Registry, refinement factflo
 	}
 	if reg != nil && product.Equal(reg, constraint, product.NewWithPresence(reg, product.ShapeTop, presence.Present())) {
 		return false
+	}
+	if broadTableRuntimeRefinementKeepsDescendants(reg, constraint) {
+		return false
+	}
+	return true
+}
+
+func broadTableRuntimeRefinementKeepsDescendants(reg *axis.Registry, constraint product.Value) bool {
+	if reg == nil {
+		return false
+	}
+	if _, ok := reg.LookupErased(typewitness.Key.ID()); !ok {
+		return false
+	}
+	witness := product.Get(reg, constraint, typewitness.Key)
+	if t, ok := witness.Type(); ok && typetable.IsBuiltinTopMarker(t) {
+		return true
+	}
+	kind := product.Get(reg, constraint, runtimekind.Key)
+	if !runtimekind.Equal(kind, runtimekind.Singleton(runtimekind.Table)) {
+		return false
+	}
+	return witness.IsTop() || witness.IsBottom()
+}
+
+func rootRefinementCanKeepDescendants(reg *axis.Registry, typeValues *typevalue.Cache, constraint product.Value) bool {
+	if reg == nil || product.Equal(reg, constraint, product.Bottom(reg)) {
+		return false
+	}
+	if presence.Equal(product.PresenceOf(constraint), presence.Absent()) {
+		return false
+	}
+	hasTypeWitness := false
+	if typeValues != nil {
+		_, hasTypeWitness = typeValues.TypeOf(reg, constraint)
+	}
+	if _, ok := reg.LookupErased(runtimekind.Key.ID()); ok {
+		if kindValue := product.Get(reg, constraint, runtimekind.Key); !kindValue.IsTop() {
+			if kindValue.IsBottom() || !kindValue.Contains(runtimekind.Table) {
+				return false
+			}
+			if !hasTypeWitness {
+				return false
+			}
+		}
 	}
 	return true
 }
@@ -231,7 +352,142 @@ func refineProductValue(reg *axis.Registry, value product.Value, refinement fact
 	if !ok {
 		return value
 	}
-	return valuerefine.MeetConstraint(reg, value, constraint)
+	refined := valuerefine.MeetConstraint(reg, value, constraint)
+	if constraintProvesScalarValue(reg, constraint) {
+		refined = product.Set(reg, refined, evidence.Key, evidence.Top())
+	}
+	return refined
+}
+
+func constraintProvesScalarValue(reg *axis.Registry, constraint product.Value) bool {
+	return runtimeKindConstraintProvesScalarValue(reg, constraint) || literalConstraintProvesScalarValue(reg, constraint)
+}
+
+func runtimeKindConstraintProvesScalarValue(reg *axis.Registry, constraint product.Value) bool {
+	if reg == nil {
+		return false
+	}
+	if _, ok := reg.LookupErased(runtimekind.Key.ID()); !ok {
+		return false
+	}
+	kinds := product.Get(reg, constraint, runtimekind.Key)
+	if kinds.IsTop() || kinds.IsBottom() {
+		return false
+	}
+	for _, tag := range kinds.Tags() {
+		switch tag {
+		case runtimekind.Nil, runtimekind.Boolean, runtimekind.Number, runtimekind.String:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func literalConstraintProvesScalarValue(reg *axis.Registry, constraint product.Value) bool {
+	lit, ok := literalConstraintType(reg, constraint)
+	if !ok {
+		return false
+	}
+	switch v := lit.(type) {
+	case *typ.Literal:
+		switch v.Value.(type) {
+		case nil, bool, int64, float64, string:
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
+}
+
+func literalConstraintType(reg *axis.Registry, constraint product.Value) (typ.Type, bool) {
+	if reg == nil {
+		return nil, false
+	}
+	if _, ok := reg.LookupErased(typewitness.Key.ID()); !ok {
+		return nil, false
+	}
+	t, ok := typevalue.WitnessOf(reg, constraint)
+	if !ok {
+		return nil, false
+	}
+	if _, ok := t.(*typ.Literal); !ok {
+		return nil, false
+	}
+	return t, true
+}
+
+func inheritUntrustedRootEvidenceForDescendantRefinement(
+	typeValues *typevalue.Cache,
+	reg *axis.Registry,
+	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
+	point cfg.Point,
+	out state.State,
+	targetPath pathdom.Path,
+	refinement factflow.ValueRefinement,
+) factflow.ValueRefinement {
+	constraint, ok := refinement.Constraint()
+	if !ok || targetPath.Symbol == 0 || len(targetPath.Segments) == 0 {
+		return refinement
+	}
+	if constraintProvesScalarValue(reg, constraint) {
+		return refinement
+	}
+	if current, ok := resolvePathValueAtCached(typeValues, reg, resolver, point, out, targetPath, projectPath); ok {
+		if valueProvesScalarValue(reg, current.value) {
+			return refinement
+		}
+		if valueHasUntrustedTopEvidence(reg, current.value) {
+			return refinement
+		}
+	}
+	rootEvidence, ok := untrustedRootEvidence(reg, out, targetPath.Symbol)
+	if !ok {
+		return refinement
+	}
+	return refinement.WithConstraint(reg, product.Set(reg, product.Top(), evidence.Key, rootEvidence))
+}
+
+func untrustedRootEvidence(reg *axis.Registry, out state.State, root symbol.ID) (evidence.Value, bool) {
+	if reg == nil || root == 0 {
+		return evidence.Top(), false
+	}
+	if _, ok := reg.LookupErased(evidence.Key.ID()); !ok {
+		return evidence.Top(), false
+	}
+	rootValue := out.ReadValue(reg, key.SymbolValue(root))
+	if product.Equal(reg, rootValue, product.Bottom(reg)) {
+		return evidence.Top(), false
+	}
+	got := product.Get(reg, rootValue, evidence.Key)
+	if got.IsGradualTop() || got.IsExplicitTop() {
+		return got, true
+	}
+	return evidence.Top(), false
+}
+
+func valueProvesScalarValue(reg *axis.Registry, value product.Value) bool {
+	if runtimeKindConstraintProvesScalarValue(reg, value) {
+		return true
+	}
+	lit, ok := literalConstraintType(reg, value)
+	if !ok {
+		return false
+	}
+	switch v := lit.(type) {
+	case *typ.Literal:
+		switch v.Value.(type) {
+		case nil, bool, int64, float64, string:
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
 }
 
 func applyDescendantTruthyRootOriginRefinement(
@@ -254,11 +510,13 @@ func applyDescendantTruthyRootOriginRefinement(
 	if product.Equal(reg, rootValue, product.Bottom(reg)) {
 		return out
 	}
-	rootType, ok := typevalue.StructuralTypeOf(reg, typeValues, rootValue, typevalue.StructuralTypeOptions{})
+	rootType, ok := typevalue.StructuralTypeOf(reg, typeValues, rootValue, typevalue.StructuralTypeOptions{
+		ApplyPresence: true,
+	})
 	if !ok {
 		return out
 	}
-	narrowed, ok := narrowRootByPathLiteral(typeValues, reg, resolver, point, out, targetPath, rootValue, rootType, typ.LiteralBool(true))
+	narrowed, ok := narrowRootByPathLiteral(typeValues, reg, resolver, nil, point, out, targetPath, rootValue, rootType, typ.LiteralBool(true))
 	if !ok {
 		return out
 	}
@@ -284,15 +542,17 @@ func applyDescendantLiteralRootOriginRefinement(
 	if product.Equal(reg, rootValue, product.Bottom(reg)) {
 		return out, false
 	}
-	rootType, ok := typevalue.StructuralTypeOf(reg, typeValues, rootValue, typevalue.StructuralTypeOptions{})
+	rootType, ok := typevalue.StructuralTypeOf(reg, typeValues, rootValue, typevalue.StructuralTypeOptions{
+		ApplyPresence: true,
+	})
 	if !ok {
 		return out, false
 	}
 	if negated {
-		if narrowed, applied := narrowRootByPathLiteralNot(typeValues, reg, resolver, point, out, targetPath, rootValue, rootType, lit); applied {
+		if narrowed, applied := narrowRootByPathLiteralNot(typeValues, reg, resolver, projectPath, point, out, targetPath, rootValue, rootType, lit); applied {
 			return narrowed, true
 		}
-	} else if narrowed, applied := narrowRootByPathLiteral(typeValues, reg, resolver, point, out, targetPath, rootValue, rootType, lit); applied {
+	} else if narrowed, applied := narrowRootByPathLiteral(typeValues, reg, resolver, projectPath, point, out, targetPath, rootValue, rootType, lit); applied {
 		return narrowed, true
 	}
 	return narrowNestedUnionDescendant(typeValues, reg, resolver, projectPath, point, out, targetPath, rootType, lit, negated)
@@ -344,7 +604,7 @@ func narrowNestedUnionDescendant(
 		}
 		anchorPath := targetPath
 		anchorPath.Segments = append([]segment.Segment(nil), prefix...)
-		constraint := typeValues.FromType(reg, narrowedType)
+		constraint := typeValues.FromTypeWithWitness(reg, narrowedType)
 		constraint = product.Set(reg, constraint, variantorigin.Key, variantorigin.Of(family, cases))
 		anchor, ok := resolvePathValueAtCached(typeValues, reg, resolver, point, out, anchorPath, projectPath)
 		if !ok {
@@ -354,7 +614,7 @@ func narrowNestedUnionDescendant(
 			}
 			return out.WritePathKey(reg, resolver.KeySpace(), pathKey, constraint), true
 		}
-		return anchor.write(out, product.Meet(reg, anchor.value, constraint)), true
+		return anchor.write(reg, out, product.Meet(reg, anchor.value, constraint))
 	}
 	return out, false
 }
@@ -379,7 +639,7 @@ func applyDescendantTruthyOppositeRootOriginRefinement(
 	if !ok {
 		return out
 	}
-	narrowed, ok := narrowRootByPathLiteralNot(typeValues, reg, resolver, point, out, targetPath, rootValue, rootType, typ.LiteralBool(true))
+	narrowed, ok := narrowRootByPathLiteralNot(typeValues, reg, resolver, nil, point, out, targetPath, rootValue, rootType, typ.LiteralBool(true))
 	if !ok {
 		return out
 	}
@@ -390,6 +650,7 @@ func narrowRootByPathLiteral(
 	typeValues *typevalue.Cache,
 	reg *axis.Registry,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	point cfg.Point,
 	out state.State,
 	targetPath pathdom.Path,
@@ -397,13 +658,14 @@ func narrowRootByPathLiteral(
 	rootType typ.Type,
 	lit typ.Type,
 ) (state.State, bool) {
-	return narrowRootByPathLiteralMatch(typeValues, reg, resolver, point, out, targetPath, rootValue, rootType, lit, false)
+	return narrowRootByPathLiteralMatch(typeValues, reg, resolver, projectPath, point, out, targetPath, rootValue, rootType, lit, false)
 }
 
 func narrowRootByPathLiteralNot(
 	typeValues *typevalue.Cache,
 	reg *axis.Registry,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	point cfg.Point,
 	out state.State,
 	targetPath pathdom.Path,
@@ -411,13 +673,14 @@ func narrowRootByPathLiteralNot(
 	rootType typ.Type,
 	lit typ.Type,
 ) (state.State, bool) {
-	return narrowRootByPathLiteralMatch(typeValues, reg, resolver, point, out, targetPath, rootValue, rootType, lit, true)
+	return narrowRootByPathLiteralMatch(typeValues, reg, resolver, projectPath, point, out, targetPath, rootValue, rootType, lit, true)
 }
 
 func narrowRootByPathLiteralMatch(
 	typeValues *typevalue.Cache,
 	reg *axis.Registry,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	point cfg.Point,
 	out state.State,
 	targetPath pathdom.Path,
@@ -426,6 +689,9 @@ func narrowRootByPathLiteralMatch(
 	lit typ.Type,
 	negate bool,
 ) (state.State, bool) {
+	if valueHasUntrustedTopEvidence(reg, rootValue) {
+		return out, false
+	}
 	var family uint64
 	var cases []int
 	var ok bool
@@ -441,11 +707,134 @@ func narrowRootByPathLiteralMatch(
 	if !ok {
 		return out, false
 	}
-	constraint := typeValues.FromType(reg, narrowedType)
+	constraint := typeValues.FromTypeWithWitness(reg, narrowedType)
 	constraint = product.Set(reg, constraint, variantorigin.Key, variantorigin.Of(family, cases))
 	rootPath := targetPath.RootOnly()
+	preserve := descendantFactsCompatibleWithNarrowedRoot(reg, typeValues, resolver, projectPath, point, out, rootPath, narrowedType)
 	out = invalidateRootDescendantsAt(resolver, point, out, rootPath)
-	return out.WriteValue(reg, key.SymbolValue(targetPath.Symbol), refineProductValue(reg, rootValue, factflow.NewValueConstraint(constraint))), true
+	out = out.WriteValue(reg, key.SymbolValue(targetPath.Symbol), refineProductValue(reg, rootValue, factflow.NewValueConstraint(constraint)))
+	return preserve.Restore(out), true
+}
+
+type narrowedRootDescendantFacts struct {
+	reg           *axis.Registry
+	pathFacts     []narrowedRootDescendantFact
+	staticMembers []narrowedRootDescendantFact
+}
+
+type narrowedRootDescendantFact struct {
+	key   keyspace.Key
+	value product.Value
+}
+
+func descendantFactsCompatibleWithNarrowedRoot(
+	reg *axis.Registry,
+	typeValues *typevalue.Cache,
+	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
+	point cfg.Point,
+	out state.State,
+	rootPath pathdom.Path,
+	narrowedRoot typ.Type,
+) narrowedRootDescendantFacts {
+	preserve := narrowedRootDescendantFacts{reg: reg}
+	if reg == nil || resolver == nil || rootPath.Symbol == 0 || len(rootPath.Segments) != 0 {
+		return preserve
+	}
+	rootKey, ok := factKeyspaceKeyAt(resolver, point, rootPath)
+	if !ok {
+		return preserve
+	}
+	ks := resolver.KeySpace()
+	out.ForEachPathRefinement(func(pathKey keyspace.Key, value product.Value) bool {
+		if preserved, ok := compatibleNarrowedRootDescendant(reg, typeValues, ks, projectPath, rootKey, pathKey, value, narrowedRoot); ok {
+			preserve.pathFacts = append(preserve.pathFacts, narrowedRootDescendantFact{key: pathKey, value: preserved})
+		}
+		return true
+	})
+	out.ForEachPathStaticMember(func(pathKey keyspace.Key, value product.Value) bool {
+		if preserved, ok := compatibleNarrowedRootDescendant(reg, typeValues, ks, projectPath, rootKey, pathKey, value, narrowedRoot); ok {
+			preserve.staticMembers = append(preserve.staticMembers, narrowedRootDescendantFact{key: pathKey, value: preserved})
+		}
+		return true
+	})
+	return preserve
+}
+
+func compatibleNarrowedRootDescendant(
+	reg *axis.Registry,
+	typeValues *typevalue.Cache,
+	ks *keyspace.KeySpace,
+	projectPath PathTypeProjector,
+	rootKey keyspace.Key,
+	pathKey keyspace.Key,
+	value product.Value,
+	narrowedRoot typ.Type,
+) (product.Value, bool) {
+	if ks == nil || !ks.HasStrictPrefix(pathKey, rootKey) || product.Equal(reg, value, product.Bottom(reg)) {
+		return product.Value{}, false
+	}
+	path, ok := ks.StatePath(pathKey)
+	if !ok {
+		return product.Value{}, false
+	}
+	if typeValues != nil && projectPath != nil && narrowedRoot != nil {
+		if projected, ok := projectPath(narrowedRoot, path); ok {
+			projectedValue := projectedPathValue(reg, typeValues, projected)
+			merged := product.Meet(reg, value, projectedValue)
+			if product.Equal(reg, merged, product.Bottom(reg)) {
+				return product.Value{}, false
+			}
+			return merged, true
+		}
+	}
+	if narrowedRoot != nil {
+		return product.Value{}, false
+	}
+	if descendantFactDependsOnInvalidatedRoot(reg, value) {
+		return product.Value{}, false
+	}
+	return value, true
+}
+
+func descendantFactDependsOnInvalidatedRoot(reg *axis.Registry, value product.Value) bool {
+	if reg == nil {
+		return false
+	}
+	if valueHasUntrustedTopEvidence(reg, value) {
+		return true
+	}
+	if _, ok := reg.LookupErased(runtimekind.Key.ID()); ok {
+		if kindValue := product.Get(reg, value, runtimekind.Key); !kindValue.IsTop() && !kindValue.IsBottom() {
+			return false
+		}
+	}
+	if _, ok := reg.LookupErased(variantorigin.Key.ID()); !ok {
+		return false
+	}
+	origin := product.Get(reg, value, variantorigin.Key)
+	return !origin.IsTop() && !origin.IsBottom()
+}
+
+func (f narrowedRootDescendantFacts) Restore(out state.State) state.State {
+	for _, fact := range f.pathFacts {
+		out = out.WriteLocalPathKey(f.reg, fact.key, fact.value)
+	}
+	for _, fact := range f.staticMembers {
+		out = out.WriteLocalPathStaticMember(fact.key, fact.value)
+	}
+	return out
+}
+
+func valueHasUntrustedTopEvidence(reg *axis.Registry, value product.Value) bool {
+	if reg == nil {
+		return false
+	}
+	if _, ok := reg.LookupErased(evidence.Key.ID()); !ok {
+		return false
+	}
+	got := product.Get(reg, value, evidence.Key)
+	return got.IsGradualTop() || got.IsExplicitTop()
 }
 
 func refinementHasPresentConstraint(refinement factflow.ValueRefinement) bool {

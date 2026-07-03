@@ -13,59 +13,28 @@ import (
 // type is created with Generic=Array and TypeArgs=[number]. The body can
 // be expanded by substituting type parameters with arguments.
 type Instantiated struct {
-	Generic               *Generic // The generic being instantiated
-	TypeArgs              []Type   // Concrete types for each type parameter
-	hash                  uint64
-	containsAny           bool
-	containsNever         bool
-	containsTypeParam     bool
-	containsInstantiated  bool
-	containsRecursive     bool
-	containsOpenRecursive bool
-	strCache              stringCache
+	Generic  *Generic // The generic being instantiated
+	TypeArgs []Type   // Concrete types for each type parameter
+	hash     uint64
+	typeProperties
+	strCache stringCache
 }
 
 // Instantiate creates an instantiated generic type with the given arguments.
 func Instantiate(g *Generic, args ...Type) *Instantiated {
 	h := hash.MixHash(uint64(kind.Instantiated), g.Hash())
-	containsAny := knownContainsAny(g)
-	containsNever := knownContainsNever(g)
-	containsTypeParam := knownContainsTypeParam(g)
-	containsInstantiated := true
-	containsRecursive := knownContainsRecursive(g)
-	containsOpenRecursive := knownContainsOpenRecursive(g)
+	props := typePropertiesOf(g)
+	props.containsInstantiated = true
 	for _, a := range args {
 		h = hash.MixHash(h, a.Hash())
-		if !containsAny && knownContainsAny(a) {
-			containsAny = true
-		}
-		if !containsNever && knownContainsNever(a) {
-			containsNever = true
-		}
-		if !containsTypeParam && knownContainsTypeParam(a) {
-			containsTypeParam = true
-		}
-		if !containsInstantiated && knownContainsInstantiated(a) {
-			containsInstantiated = true
-		}
-		if !containsRecursive && knownContainsRecursive(a) {
-			containsRecursive = true
-		}
-		if !containsOpenRecursive && knownContainsOpenRecursive(a) {
-			containsOpenRecursive = true
-		}
+		props.include(a)
 	}
 
 	return &Instantiated{
-		Generic:               g,
-		TypeArgs:              args,
-		hash:                  h,
-		containsAny:           containsAny,
-		containsNever:         containsNever,
-		containsTypeParam:     containsTypeParam,
-		containsInstantiated:  containsInstantiated,
-		containsRecursive:     containsRecursive,
-		containsOpenRecursive: containsOpenRecursive,
+		Generic:        g,
+		TypeArgs:       args,
+		hash:           h,
+		typeProperties: props,
 	}
 }
 

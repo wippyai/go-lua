@@ -3,6 +3,7 @@ package body
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
@@ -36,6 +37,45 @@ func TestCallSignatureUsesImportedModuleRootIdentity(t *testing.T) {
 	}
 	if !typ.TypeEquals(sig.Type, wantType) {
 		t.Fatalf("signature type = %v, want %v", sig.Type, wantType)
+	}
+}
+
+func TestCallSignatureTypeCachesReadOnlyFunctionType(t *testing.T) {
+	wantType := typ.Func().Param("src", typ.String).Returns(typ.Number).Build()
+	m := manifest.New("json")
+	m.DefineFunctionSignature("json.decode", signature.Function{Type: wantType})
+
+	result, err := CheckChunk(parseChunk(t, `
+		local json = require("json")
+		local value = json.decode("{}")
+	`), Config{
+		Registry: standard.Registry(),
+		Globals:  []string{"require"},
+		Signatures: signaturelookup.Source{
+			Manifests: []*manifest.Manifest{m},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	site, ok := onlyCallSite(t, result)
+	if !ok {
+		t.Fatalf("missing imported json.decode call site")
+	}
+	first, ok := result.CallSignatureType(site)
+	if !ok {
+		t.Fatalf("missing imported json.decode signature type")
+	}
+	second, ok := result.CallSignatureType(site)
+	if !ok {
+		t.Fatalf("missing cached imported json.decode signature type")
+	}
+	if first != second {
+		t.Fatalf("CallSignatureType returned different type pointers across reads")
+	}
+	if !typ.TypeEquals(first, wantType) {
+		t.Fatalf("signature type = %v, want %v", first, wantType)
 	}
 }
 
@@ -375,28 +415,61 @@ func TestCallSignatureUsesCapturedLocalImportedFunctionAlias(t *testing.T) {
 	}
 }
 
+func TestIteratorIdentityAllowsImplicitBuiltinPairs(t *testing.T) {
+	result, err := CheckChunk(parseChunk(t, `
+local t = {}
+for _, value in pairs(t) do
+end
+`), Config{Registry: standard.Registry()})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	var names []string
+	for _, point := range result.Graph().RPO() {
+		site, ok := result.facts.CallSiteView(point)
+		if !ok {
+			continue
+		}
+		name, ok := result.signatureID.nameForIndexedIteratorCallSiteView(site)
+		if ok {
+			names = append(names, name)
+		}
+	}
+	if len(names) != 1 || names[0] != "pairs" {
+		t.Fatalf("iterator names = %v, want [pairs]", names)
+	}
+}
+
 func onlyCallSignature(t *testing.T, result *Result) (signature.Function, bool) {
+	t.Helper()
+	site, ok := onlyCallSite(t, result)
+	if !ok {
+		return signature.Function{}, false
+	}
+	return result.CallSignature(site)
+}
+
+func onlyCallSite(t *testing.T, result *Result) (factflow.CallSite, bool) {
 	t.Helper()
 	graph := result.Graph()
 	if graph == nil {
 		t.Fatalf("missing graph")
 	}
-	var out signature.Function
+	var out factflow.CallSite
 	count := 0
 	for _, point := range graph.RPO() {
 		site, ok := result.CallSite(point)
 		if !ok {
 			continue
 		}
-		sig, ok := result.CallSignature(site)
-		if !ok {
+		if _, ok := result.CallSignature(site); !ok {
 			continue
 		}
-		out = sig
+		out = site
 		count++
 	}
 	if count > 1 {
-		t.Fatalf("call signatures = %d, want at most one", count)
+		t.Fatalf("call sites = %d, want at most one", count)
 	}
 	return out, count == 1
 }

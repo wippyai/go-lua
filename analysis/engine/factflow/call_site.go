@@ -2,6 +2,7 @@ package factflow
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -23,8 +24,9 @@ const (
 type CallSiteConfig struct {
 	Context CallSiteContext
 
-	CalleeSymbol symbol.ID
-	CalleePath   path.Path
+	CalleeSymbol       symbol.ID
+	CalleePath         path.Path
+	CalleeMemberAccess bool
 
 	ReceiverPath    path.Path
 	HasReceiverPath bool
@@ -39,8 +41,15 @@ type CallSiteConfig struct {
 	HasExpr bool
 
 	ExprIndex int
+	// ConditionNegated is true when a condition call is the operand of unary
+	// `not`, so the CFG true edge corresponds to the call's falsy result.
+	ConditionNegated bool
 
 	ArgumentSources []ValueSource
+	CallSpan        SourceSpan
+	CalleeSpan      SourceSpan
+	ArgumentSpans   []SourceSpan
+	ArgumentLabels  []string
 	TypeArgs        []TypeRef
 	ResultTargets   []CallResultTarget
 
@@ -86,8 +95,10 @@ func CalleePathKeyFromPathKey(key path.PathKey) (CalleePathKey, bool) {
 type CallSite struct {
 	context CallSiteContext
 
-	calleeSymbol symbol.ID
-	calleePath   path.Path
+	calleeSymbol       symbol.ID
+	calleePath         path.Path
+	calleeKey          CalleePathKey
+	calleeMemberAccess bool
 
 	receiverPath    path.Path
 	hasReceiverPath bool
@@ -101,9 +112,14 @@ type CallSite struct {
 	exprRef ExprRef
 	hasExpr bool
 
-	exprIndex int
+	exprIndex        int
+	conditionNegated bool
 
 	argumentSources []ValueSource
+	callSpan        SourceSpan
+	calleeSpan      SourceSpan
+	argumentSpans   []SourceSpan
+	argumentLabels  []string
 	typeArgs        []TypeRef
 	resultTargets   []CallResultTarget
 
@@ -127,27 +143,36 @@ func (c CallSite) View() CallSiteView { return CallSiteView{site: c} }
 
 // NewCallSite creates a call-site evidence fact.
 func NewCallSite(config CallSiteConfig) CallSite {
+	calleePath := config.CalleePath.Clone()
+	calleeKey, _ := CalleePathKeyFromPath(calleePath)
 	return CallSite{
-		context:           config.Context,
-		calleeSymbol:      config.CalleeSymbol,
-		calleePath:        config.CalleePath.Clone(),
-		receiverPath:      config.ReceiverPath.Clone(),
-		hasReceiverPath:   config.HasReceiverPath,
-		methodPath:        config.MethodPath.Clone(),
-		hasMethodPath:     config.HasMethodPath,
-		methodName:        config.MethodName,
-		receiverSource:    config.ReceiverSource,
-		hasReceiverSource: config.HasReceiverSource,
-		exprRef:           config.ExprRef,
-		hasExpr:           config.HasExpr,
-		exprIndex:         config.ExprIndex,
-		argumentSources:   copyValueSources(config.ArgumentSources),
-		typeArgs:          append([]TypeRef(nil), config.TypeArgs...),
-		resultTargets:     copyCallResultTargets(config.ResultTargets),
-		final:             config.Final,
-		expanded:          config.Expanded,
-		adjusted:          config.Adjusted,
-		openTail:          config.OpenTail,
+		context:            config.Context,
+		calleeSymbol:       config.CalleeSymbol,
+		calleePath:         calleePath,
+		calleeKey:          calleeKey,
+		calleeMemberAccess: config.CalleeMemberAccess,
+		receiverPath:       config.ReceiverPath.Clone(),
+		hasReceiverPath:    config.HasReceiverPath,
+		methodPath:         config.MethodPath.Clone(),
+		hasMethodPath:      config.HasMethodPath,
+		methodName:         config.MethodName,
+		receiverSource:     config.ReceiverSource,
+		hasReceiverSource:  config.HasReceiverSource,
+		exprRef:            config.ExprRef,
+		hasExpr:            config.HasExpr,
+		exprIndex:          config.ExprIndex,
+		conditionNegated:   config.ConditionNegated,
+		argumentSources:    copyValueSources(config.ArgumentSources),
+		callSpan:           config.CallSpan,
+		calleeSpan:         config.CalleeSpan,
+		argumentSpans:      copySourceSpans(config.ArgumentSpans),
+		argumentLabels:     append([]string(nil), config.ArgumentLabels...),
+		typeArgs:           append([]TypeRef(nil), config.TypeArgs...),
+		resultTargets:      copyCallResultTargets(config.ResultTargets),
+		final:              config.Final,
+		expanded:           config.Expanded,
+		adjusted:           config.Adjusted,
+		openTail:           config.OpenTail,
 	}
 }
 
@@ -164,6 +189,18 @@ func (c CallSite) CalleePath() path.Path { return c.calleePath.Clone() }
 // use or for handing to a constructor that clones on store. The returned path
 // shares the fact's segment storage and must never be mutated in place.
 func (c CallSite) CalleePathRef() path.Path { return c.calleePath }
+
+// CalleeMemberAccess reports whether this call's callee was written through
+// member-access syntax or resolved to a member path. The lowering phase owns
+// this syntax-derived evidence so post-solve consumers do not re-read the AST.
+func (c CallSite) CalleeMemberAccess() bool { return c.calleeMemberAccess }
+
+// CalleeMemberAccessPath returns the receiver path and member segment for a
+// member-access callee. This is the canonical structural query for post-solve
+// consumers that need the path shape; they should not re-parse CalleePathRef.
+func (c CallSite) CalleeMemberAccessPath() (path.Path, segment.Segment, bool) {
+	return callSiteMemberAccessPath(c)
+}
 
 // ReceiverPath returns the receiver path identity, if one was resolved.
 func (c CallSite) ReceiverPath() (path.Path, bool) {
@@ -190,10 +227,19 @@ func (c CallSite) Expr() (ExprRef, bool) { return c.exprRef, c.hasExpr }
 // ExprIndex returns the expression's index in its containing value list.
 func (c CallSite) ExprIndex() int { return c.exprIndex }
 
+// ConditionNegated reports whether this condition call is wrapped by unary not.
+func (c CallSite) ConditionNegated() bool { return c.conditionNegated }
+
 // ArgumentSources returns the ordered argument value sources.
 func (c CallSite) ArgumentSources() []ValueSource {
 	return copyValueSources(c.argumentSources)
 }
+
+// CallSpan returns the source range for the whole call expression.
+func (c CallSite) CallSpan() SourceSpan { return c.callSpan }
+
+// CalleeSpan returns the source range for the call target expression.
+func (c CallSite) CalleeSpan() SourceSpan { return c.calleeSpan }
 
 // ArgumentSourceCount returns the number of ordered argument value sources.
 func (c CallSite) ArgumentSourceCount() int { return len(c.argumentSources) }
@@ -204,6 +250,20 @@ func (c CallSite) ArgumentSourceAt(index int) (ValueSource, bool) {
 		return ValueSource{}, false
 	}
 	return c.argumentSources[index], true
+}
+
+func (c CallSite) ArgumentSpanAt(index int) (SourceSpan, bool) {
+	if index < 0 || index >= len(c.argumentSpans) {
+		return SourceSpan{}, false
+	}
+	return c.argumentSpans[index], true
+}
+
+func (c CallSite) ArgumentLabelAt(index int) (string, bool) {
+	if index < 0 || index >= len(c.argumentLabels) {
+		return "", false
+	}
+	return c.argumentLabels[index], c.argumentLabels[index] != ""
 }
 
 // ForEachArgumentSource visits argument value sources without allocating a
@@ -258,12 +318,21 @@ func (v CallSiteView) CalleePathRef() path.Path { return v.site.calleePath }
 
 // CalleePathKey returns the callee path's typed structural key.
 func (v CallSiteView) CalleePathKey() CalleePathKey {
-	key, _ := CalleePathKeyFromPath(v.site.calleePath)
-	return key
+	return v.site.calleeKey
 }
 
 // CalleePathEqual reports whether p matches the callee path.
 func (v CallSiteView) CalleePathEqual(p path.Path) bool { return v.site.calleePath.Equal(p) }
+
+// CalleeMemberAccess reports whether this call's callee was written through
+// member-access syntax or resolved to a member path.
+func (v CallSiteView) CalleeMemberAccess() bool { return v.site.calleeMemberAccess }
+
+// CalleeMemberAccessPath returns the receiver path and member segment for a
+// member-access callee.
+func (v CallSiteView) CalleeMemberAccessPath() (path.Path, segment.Segment, bool) {
+	return callSiteMemberAccessPath(v.site)
+}
 
 // ReceiverPath returns the receiver path identity, if one was resolved.
 func (v CallSiteView) ReceiverPath() (path.Path, bool) {
@@ -290,10 +359,19 @@ func (v CallSiteView) Expr() (ExprRef, bool) { return v.site.exprRef, v.site.has
 // ExprIndex returns the expression's index in its containing value list.
 func (v CallSiteView) ExprIndex() int { return v.site.exprIndex }
 
+// ConditionNegated reports whether this condition call is wrapped by unary not.
+func (v CallSiteView) ConditionNegated() bool { return v.site.conditionNegated }
+
 // ArgumentSources returns the ordered argument value sources.
 func (v CallSiteView) ArgumentSources() []ValueSource {
 	return copyValueSources(v.site.argumentSources)
 }
+
+// CallSpan returns the source range for the whole call expression.
+func (v CallSiteView) CallSpan() SourceSpan { return v.site.callSpan }
+
+// CalleeSpan returns the source range for the call target expression.
+func (v CallSiteView) CalleeSpan() SourceSpan { return v.site.calleeSpan }
 
 // ArgumentSourceCount returns the number of ordered argument value sources.
 func (v CallSiteView) ArgumentSourceCount() int { return len(v.site.argumentSources) }
@@ -304,6 +382,20 @@ func (v CallSiteView) ArgumentSourceAt(index int) (ValueSource, bool) {
 		return ValueSource{}, false
 	}
 	return v.site.argumentSources[index], true
+}
+
+func (v CallSiteView) ArgumentSpanAt(index int) (SourceSpan, bool) {
+	if index < 0 || index >= len(v.site.argumentSpans) {
+		return SourceSpan{}, false
+	}
+	return v.site.argumentSpans[index], true
+}
+
+func (v CallSiteView) ArgumentLabelAt(index int) (string, bool) {
+	if index < 0 || index >= len(v.site.argumentLabels) {
+		return "", false
+	}
+	return v.site.argumentLabels[index], v.site.argumentLabels[index] != ""
 }
 
 // ForEachArgumentSource visits argument value sources without allocating a
@@ -355,9 +447,34 @@ func (c CallSite) copy() CallSite {
 	c.receiverPath = c.receiverPath.Clone()
 	c.methodPath = c.methodPath.Clone()
 	c.argumentSources = copyValueSources(c.argumentSources)
+	c.argumentSpans = copySourceSpans(c.argumentSpans)
+	c.argumentLabels = append([]string(nil), c.argumentLabels...)
 	c.typeArgs = append([]TypeRef(nil), c.typeArgs...)
 	c.resultTargets = copyCallResultTargets(c.resultTargets)
 	return c
+}
+
+func callSiteMemberAccessPath(c CallSite) (path.Path, segment.Segment, bool) {
+	if !c.calleeMemberAccess {
+		return path.Path{}, segment.Segment{}, false
+	}
+	if c.hasReceiverPath && c.methodName != "" {
+		return c.receiverPath.Clone(), segment.Segment{Kind: segment.SegmentField, Name: c.methodName}, true
+	}
+	if c.calleePath.IsEmpty() || len(c.calleePath.Segments) == 0 {
+		return path.Path{}, segment.Segment{}, false
+	}
+	last := c.calleePath.Segments[len(c.calleePath.Segments)-1]
+	switch last.Kind {
+	case segment.SegmentField, segment.SegmentIndexString, segment.SegmentIndexInt:
+		receiver := c.calleePath.Parent()
+		if receiver.IsEmpty() {
+			return path.Path{}, segment.Segment{}, false
+		}
+		return receiver, last, true
+	default:
+		return path.Path{}, segment.Segment{}, false
+	}
 }
 
 func copyCallSiteMap(in map[cfg.Point]CallSite) map[cfg.Point]CallSite {

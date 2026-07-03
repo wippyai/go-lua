@@ -14,6 +14,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
@@ -66,6 +68,83 @@ func TestOutcomeProviderReadsSummaryReturnsByCalleeIdentity(t *testing.T) {
 	assertCallOutcomeResults(t, reg, got.Results, []product.Value{first, second})
 }
 
+func TestOutcomeProviderCachesPreparedExactSummary(t *testing.T) {
+	reg := standard.Registry()
+	callee := symbol.ID(19)
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 20})
+	reader := &countingSummaryReader{
+		entries: map[summary.SummaryKey]summary.Summary{
+			key: {Returns: []product.Value{providerValueForType(reg, typ.String)}},
+		},
+	}
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: reader,
+		KeyFor:    ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
+	})
+	site := factflow.NewCallSite(factflow.CallSiteConfig{CalleeSymbol: callee}).View()
+
+	first := provider(transfer.NodeContext{Registry: reg}, site, state.State{}, nil)
+	second := provider(transfer.NodeContext{Registry: reg}, site, state.State{}, nil)
+
+	assertCallOutcomeResultType(t, reg, first.Results, typ.String)
+	assertCallOutcomeResultType(t, reg, second.Results, typ.String)
+	if reader.reads != 1 {
+		t.Fatalf("summary reads = %d, want one prepared-summary read", reader.reads)
+	}
+}
+
+type countingSummaryReader struct {
+	entries map[summary.SummaryKey]summary.Summary
+	reads   int
+}
+
+func (r *countingSummaryReader) Read(key summary.SummaryKey) (summary.Summary, bool) {
+	r.reads++
+	got, ok := r.entries[key]
+	if !ok {
+		return summary.Summary{}, false
+	}
+	return got.Clone(), true
+}
+
+func TestSummaryIndexOwnsInputMaps(t *testing.T) {
+	reg := standard.Registry()
+	calleePath := path.NewPath(symbol.ID(21), "module").Field("run")
+	calleeKey := mustCalleePathKey(t, calleePath)
+	numberKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 22})
+	stringKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 23})
+	pathKeys := map[factflow.CalleePathKey]summary.SummaryKey{calleeKey: numberKey}
+	functionTypes := map[summary.SummaryKey]*typ.Function{
+		numberKey: typ.Func().Returns(typ.Number).Build(),
+	}
+	index := NewSummaryIndex(SummaryIndexConfig{
+		PathKeys:      pathKeys,
+		FunctionTypes: functionTypes,
+	})
+	pathKeys[calleeKey] = stringKey
+	functionTypes[numberKey] = typ.Func().Returns(typ.String).Build()
+
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg,
+			summary.EntrySummary{
+				Key:     numberKey,
+				Summary: summary.Summary{Returns: []product.Value{providerValueForType(reg, typ.Number)}},
+			},
+			summary.EntrySummary{
+				Key:     stringKey,
+				Summary: summary.Summary{Returns: []product.Value{providerValueForType(reg, typ.String)}},
+			},
+		),
+		Index: index,
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleePath: calleePath,
+	}).View(), state.State{}, nil)
+
+	assertCallOutcomeResultType(t, reg, got.Results, typ.Number)
+}
+
 func TestJoinInstantiatedReturnValuePreservesComputedIdentity(t *testing.T) {
 	reg := standard.Registry()
 	retID := identity.ID{Kind: "test.return", Site: "provider", Index: 1}
@@ -78,6 +157,98 @@ func TestJoinInstantiatedReturnValuePreservesComputedIdentity(t *testing.T) {
 	id, ok := product.Get(reg, got, identity.Key).ID()
 	if !ok || id != retID {
 		t.Fatalf("return identity = %v/%v, want %s", id, ok, retID)
+	}
+}
+
+func TestJoinInstantiatedReturnValueDoesNotWidenComputedVariantOrigin(t *testing.T) {
+	reg := standard.Registry()
+	msg := typetable.NewRecord().
+		Field("kind", typ.LiteralString("msg")).
+		Field("value", typ.String).
+		Build()
+	timer := typetable.NewRecord().
+		Field("kind", typ.LiteralString("timer")).
+		Field("value", typ.Number).
+		Build()
+	declaredType := typeexpr.Union(msg, timer)
+	value := typevalue.FromType(reg, msg)
+	declared := typevalue.WithWitness(reg, typevalue.FromType(reg, declaredType), declaredType)
+
+	got := joinInstantiatedReturnValue(reg, value, declared, declaredType)
+
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, msg) {
+		t.Fatalf("return type = %v/%v, want computed variant %v (not declared %v)", gotType, ok, msg, declaredType)
+	}
+}
+
+func TestJoinInstantiatedReturnValueUsesDeclaredPresenceAtCallBoundary(t *testing.T) {
+	reg := standard.Registry()
+	value := typevalue.FromType(reg, typeexpr.Optional(typ.String))
+	declared := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+
+	got := joinInstantiatedReturnValue(reg, value, declared, typ.String)
+
+	if gotPresence := product.PresenceOf(got); !presence.Equal(gotPresence, presence.Present()) {
+		t.Fatalf("return presence = %s, want declared present contract", gotPresence)
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("return type = %v/%v, want declared string", gotType, ok)
+	}
+}
+
+func TestOutcomeProviderClampsDeclaredAnyReturnMembersAtCallBoundary(t *testing.T) {
+	reg := standard.Registry()
+	callee := symbol.ID(21)
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 22})
+	ks := keyspace.New()
+	memberKey, ok := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "last_activity"}})
+	if !ok {
+		t.Fatal("member suffix key failed")
+	}
+	rootID := identity.ID{Kind: "table", Site: "declared-any-boundary", Index: 1}
+	implType := typetable.NewRecord().Field("last_activity", typ.String).Build()
+	declaredType := typetable.NewRecord().Field("last_activity", typ.Any).Build()
+	rootValue := product.Set(reg, providerValueForType(reg, implType), identity.Key, identity.Singleton(rootID))
+	memberValue := providerValueForType(reg, typ.String)
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{
+			Key: key,
+			Summary: summary.Summary{
+				Returns:      []product.Value{rootValue},
+				HeapKeySpace: ks,
+				HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+					rootID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+						Root:          rootValue,
+						StaticMembers: map[keyspace.Key]product.Value{memberKey: memberValue},
+					}),
+				},
+			},
+		}),
+		KeyFor:        ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
+		FunctionTypes: map[summary.SummaryKey]*typ.Function{key: typ.Func().Returns(declaredType).Build()},
+		KeySpace:      ks,
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: callee,
+	}).View(), state.State{}, nil)
+
+	assertCallOutcomeResultType(t, reg, got.Results, declaredType)
+	object, ok := got.HeapTableObjects[rootID]
+	if !ok {
+		t.Fatalf("heap objects = %#v, want returned table object", got.HeapTableObjects)
+	}
+	member, ok := object.StaticMember(memberKey)
+	if !ok {
+		t.Fatalf("static members = %#v, want last_activity", object.StaticMembers())
+	}
+	if gotType, ok := typevalue.TypeOf(reg, member); ok && typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("returned heap member type = %v, want declared any boundary to erase implementation string", gotType)
+	}
+	if gotEvidence := product.Get(reg, member, evidence.Key); !evidence.Equal(gotEvidence, evidence.ExplicitTop()) {
+		t.Fatalf("returned heap member evidence = %s, want explicit-top any boundary", gotEvidence)
 	}
 }
 
@@ -595,6 +766,51 @@ func TestOutcomeProviderMaterializesReturnParamPathAliases(t *testing.T) {
 	}
 }
 
+func TestOutcomeProviderUsesOwnedSummaryReadWithoutMutatingStoredSummary(t *testing.T) {
+	reg := standard.Registry()
+	callee := symbol.ID(125)
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 126})
+	memberFact := callboundary.PathStaticMemberFact{
+		Path:  path.NewPlaceholder(0).Field("name"),
+		Value: providerValueForType(reg, typ.String),
+	}
+	reader := &countingOwnedSummaryReader{
+		snapshot: summary.NewSnapshotOwnedNormalized(reg, summary.EntrySummary{
+			Key: key,
+			Summary: summary.NormalizeOwned(reg, summary.Summary{
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					PathStaticMembers: []callboundary.PathStaticMemberFact{memberFact},
+				},
+			}),
+		}),
+	}
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: reader,
+		KeyFor:    ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: callee,
+	}).View(), state.State{}, nil)
+
+	wantType := typetable.NewRecord().Field("name", typ.String).Build()
+	assertCallOutcomeResultType(t, reg, got.Results, wantType)
+	if reader.ownedReads == 0 || reader.publicReads != 0 {
+		t.Fatalf("summary reads = owned:%d public:%d, want owned-only", reader.ownedReads, reader.publicReads)
+	}
+	stored, ok := reader.snapshot.ReadOwnedNormalized(key)
+	if !ok {
+		t.Fatal("stored summary missing after provider call")
+	}
+	if len(stored.Returns) != 0 {
+		t.Fatalf("provider mutated owned summary returns = %#v, want none", stored.Returns)
+	}
+	if len(stored.NormalReturnFacts.PathStaticMembers) != 1 ||
+		!stored.NormalReturnFacts.PathStaticMembers[0].Path.Equal(memberFact.Path) {
+		t.Fatalf("stored normal-return facts = %#v, want original member fact", stored.NormalReturnFacts)
+	}
+}
+
 func TestOutcomeProviderJoinMaterializesTableEntryShapeFromNilableFactRecord(t *testing.T) {
 	reg := standard.Registry()
 	calleePath := path.NewPath(symbol.ID(127), "module").Field("make")
@@ -679,6 +895,24 @@ func TestOutcomeProviderJoinDropsDescendantEscapeEventsBelowMaybeAbsentReturn(t 
 		Source: path.NewPlaceholder(0).Field("child"),
 		Into:   path.NewPlaceholder(1),
 	}
+	rootFloor := callboundary.NumFloorFact{
+		Path:  path.NewPlaceholder(0),
+		Floor: 1,
+	}
+	childFloor := callboundary.NumFloorFact{
+		Path:  path.NewPlaceholder(0).Field("child"),
+		Floor: 1,
+	}
+	rootConstraint := callboundary.RelConstraintFact{
+		CoA: 1,
+		A:   callboundary.RelOperand{Path: path.NewPlaceholder(0)},
+		C:   callboundary.RelOperand{Path: path.NewPlaceholder(1)},
+	}
+	childConstraint := callboundary.RelConstraintFact{
+		CoA: 1,
+		A:   callboundary.RelOperand{Path: path.NewPlaceholder(0).Field("child")},
+		C:   callboundary.RelOperand{Path: path.NewPlaceholder(1)},
+	}
 	provider := OutcomeProvider(ProviderConfig{
 		Summaries: summary.NewSnapshot(reg,
 			summary.EntrySummary{
@@ -688,6 +922,8 @@ func TestOutcomeProviderJoinDropsDescendantEscapeEventsBelowMaybeAbsentReturn(t 
 					NormalReturnFacts: callboundary.NormalReturnFacts{
 						EscapeEvents:   []callboundary.EscapeEventFact{rootEvent, childEvent},
 						StoreRelations: []callboundary.StoreRelationFact{rootRelation, childRelation},
+						NumFloors:      []callboundary.NumFloorFact{rootFloor, childFloor},
+						RelConstraints: []callboundary.RelConstraintFact{rootConstraint, childConstraint},
 					},
 				},
 			},
@@ -697,6 +933,8 @@ func TestOutcomeProviderJoinDropsDescendantEscapeEventsBelowMaybeAbsentReturn(t 
 					Returns: []product.Value{product.Absent(reg)},
 					NormalReturnFacts: callboundary.NormalReturnFacts{
 						StoreRelations: []callboundary.StoreRelationFact{rootRelation, childRelation},
+						NumFloors:      []callboundary.NumFloorFact{rootFloor, childFloor},
+						RelConstraints: []callboundary.RelConstraintFact{rootConstraint, childConstraint},
 					},
 				},
 			},
@@ -725,6 +963,16 @@ func TestOutcomeProviderJoinDropsDescendantEscapeEventsBelowMaybeAbsentReturn(t 
 		!got.NormalReturnFacts.StoreRelations[0].Source.Equal(rootRelation.Source) ||
 		!got.NormalReturnFacts.StoreRelations[0].Into.Equal(rootRelation.Into) {
 		t.Fatalf("store relations = %#v, want only root relation", got.NormalReturnFacts.StoreRelations)
+	}
+	if len(got.NormalReturnFacts.NumFloors) != 1 ||
+		!got.NormalReturnFacts.NumFloors[0].Path.Equal(rootFloor.Path) ||
+		got.NormalReturnFacts.NumFloors[0].Floor != rootFloor.Floor {
+		t.Fatalf("numeric floors = %#v, want only root floor", got.NormalReturnFacts.NumFloors)
+	}
+	if len(got.NormalReturnFacts.RelConstraints) != 1 ||
+		!got.NormalReturnFacts.RelConstraints[0].A.Path.Equal(rootConstraint.A.Path) ||
+		!got.NormalReturnFacts.RelConstraints[0].C.Path.Equal(rootConstraint.C.Path) {
+		t.Fatalf("rel constraints = %#v, want only root constraint", got.NormalReturnFacts.RelConstraints)
 	}
 }
 
@@ -764,6 +1012,14 @@ func TestOutcomeProviderMapsNormalReturnFacts(t *testing.T) {
 						TriggerPresence: presence.Present(),
 						TargetIndex:     0,
 						TargetPresence:  presence.Absent(),
+					},
+				},
+				ReturnConditionSlotRefinements: []summary.ReturnConditionSlotRefinement{
+					{
+						ReturnIndex: 0,
+						ReturnValue: false,
+						TargetIndex: 1,
+						Value:       present,
 					},
 				},
 			},
@@ -807,6 +1063,13 @@ func TestOutcomeProviderMapsNormalReturnFacts(t *testing.T) {
 		!presence.Equal(got.ReturnPresenceRelations[0].TargetPresence, presence.Absent()) {
 		t.Fatalf("return presence relations = %#v, want mapped relation", got.ReturnPresenceRelations)
 	}
+	if len(got.ReturnConditionSlots) != 1 ||
+		got.ReturnConditionSlots[0].ReturnIndex != 0 ||
+		got.ReturnConditionSlots[0].ReturnValue ||
+		got.ReturnConditionSlots[0].TargetIndex != 1 ||
+		!product.Equal(reg, got.ReturnConditionSlots[0].Value, present) {
+		t.Fatalf("return condition slots = %#v, want mapped slot refinement", got.ReturnConditionSlots)
+	}
 }
 
 func TestOutcomeProviderMapsParamObligationsDistinctFromNormalReturnRefinements(t *testing.T) {
@@ -837,6 +1100,30 @@ func TestOutcomeProviderMapsParamObligationsDistinctFromNormalReturnRefinements(
 	}
 	if len(got.ParamPathRefinements) != 0 {
 		t.Fatalf("param path refinements = %#v, want none for pre-call obligation", got.ParamPathRefinements)
+	}
+}
+
+func TestOutcomeFromSummaryNormalReturnAnyPresenceDoesNotTaintCallerType(t *testing.T) {
+	reg := standard.Registry()
+	anyPresent := product.WithPresence(reg, typevalue.FromType(reg, typ.Any), presence.Present())
+	anyPresent = product.Set(reg, anyPresent, assertion.Key, assertion.Any())
+
+	got := outcomeFromSummary(reg, summary.Summary{
+		NormalReturnParams: []product.Value{anyPresent},
+	}, 0, nil, func(int) bool { return true })
+
+	if len(got.ParamPathRefinements) != 1 {
+		t.Fatalf("param path refinements = %#v, want one presence refinement", got.ParamPathRefinements)
+	}
+	value := got.ParamPathRefinements[0].Value
+	if !presence.Equal(product.PresenceOf(value), presence.Present()) {
+		t.Fatalf("presence = %s, want present", product.PresenceOf(value))
+	}
+	if claim := product.Get(reg, value, assertion.Key); !claim.IsTop() {
+		t.Fatalf("assertion claim = %s, want top/no any claim", claim)
+	}
+	if tpe, ok := typevalue.TypeOf(reg, value); ok && typ.IsAny(tpe) {
+		t.Fatalf("refinement type = %s, want presence-only without any type", tpe)
 	}
 }
 
@@ -928,6 +1215,51 @@ func TestOutcomeProviderSpecializesGenericReturnFromArgument(t *testing.T) {
 		!got.NormalReturnFacts.PathRefinements[0].Path.Equal(path.NewPlaceholder(0).Field("ok")) ||
 		!product.Equal(reg, got.NormalReturnFacts.PathRefinements[0].Value, present) {
 		t.Fatalf("path refinements = %#v, want preserved summary fact", got.NormalReturnFacts.PathRefinements)
+	}
+}
+
+func TestOutcomeProviderPreparedSummaryCacheKeepsGenericCallsContextual(t *testing.T) {
+	reg := standard.Registry()
+	callee := symbol.ID(219)
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 220})
+	fnParam := typ.NewTypeParam("T", nil)
+	fn := typ.Func().
+		TypeParamRef(fnParam).
+		Param("value", fnParam).
+		Returns(fnParam).
+		Build()
+	reader := &countingSummaryReader{
+		entries: map[summary.SummaryKey]summary.Summary{
+			key: {Returns: []product.Value{providerValueForType(reg, fnParam)}},
+		},
+	}
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries:     reader,
+		KeyFor:        ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
+		FunctionTypes: map[summary.SummaryKey]*typ.Function{key: fn},
+		Sources: providerSourceValues(reg, map[factflow.ExprRef]product.Value{
+			1: providerValueForType(reg, typ.Number),
+			2: providerValueForType(reg, typ.String),
+		}),
+	})
+
+	numberCall := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: callee,
+		ArgumentSources: []factflow.ValueSource{
+			providerExpressionSource(t, 1, 0),
+		},
+	}).View(), state.State{}, nil)
+	stringCall := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: callee,
+		ArgumentSources: []factflow.ValueSource{
+			providerExpressionSource(t, 2, 0),
+		},
+	}).View(), state.State{}, nil)
+
+	assertCallOutcomeResultType(t, reg, numberCall.Results, typ.Number)
+	assertCallOutcomeResultType(t, reg, stringCall.Results, typ.String)
+	if reader.reads != 1 {
+		t.Fatalf("summary reads = %d, want one cached base summary read", reader.reads)
 	}
 }
 
@@ -1162,8 +1494,67 @@ func TestOutcomeProviderMissingSummaryYieldsZeroOutcomeAndEmptySummaryHasAuthori
 		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{Key: key, Summary: summary.Summary{Returns: nil}}),
 		KeyFor:    ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
 	})
-	if got := emptySummaryProvider(ctx, site.View(), state.State{}, nil); !got.PostReturnAuthority || len(got.Results) != 0 || got.HasPostReturnEvidence() {
-		t.Fatalf("empty matched summary outcome = %#v, want only post-return authority", got)
+	if got := emptySummaryProvider(ctx, site.View(), state.State{}, nil); got.PostReturnAuthority || len(got.Results) != 0 || got.HasPostReturnEvidence() {
+		t.Fatalf("empty matched summary outcome = %#v, want no authority or evidence", got)
+	}
+}
+
+func TestOutcomeProviderWeakMatchedSummaryIsNotPostReturnAuthority(t *testing.T) {
+	reg := standard.Registry()
+	callee := symbol.ID(754)
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 754})
+	weak := product.Set(reg, product.Top(), evidence.Key, evidence.GradualTop())
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{
+			Key:     key,
+			Summary: summary.Summary{Returns: []product.Value{weak}},
+		}),
+		KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: callee,
+	}).View(), state.State{}, nil)
+
+	if got.PostReturnAuthority {
+		t.Fatalf("weak matched summary PostReturnAuthority = true, want false")
+	}
+	assertCallOutcomeResults(t, reg, got.Results, []product.Value{weak})
+}
+
+func TestOutcomeProviderRefinesMatchedSummaryResultFromCurrentCallableType(t *testing.T) {
+	reg := standard.Registry()
+	callee := symbol.ID(755)
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 755})
+	optionalNumber := product.WithPresence(reg, typevalue.WithWitness(reg, typevalue.FromType(reg, typ.Number), typ.Number), presence.Maybe())
+	callableType := typ.Func().Returns(typ.Number).Build()
+	callableValue := typevalue.WithWitness(reg, typevalue.FromType(reg, callableType), callableType)
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{
+			Key: key,
+			Summary: summary.Summary{
+				Returns: []product.Value{optionalNumber},
+				ReturnConditionSlotRefinements: []summary.ReturnConditionSlotRefinement{
+					{ReturnIndex: 0, ReturnValue: true, TargetIndex: 0, Value: optionalNumber},
+				},
+			},
+		}),
+		KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
+		CalleeValue: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) (product.Value, bool) {
+			return callableValue, true
+		},
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: callee,
+	}).View(), state.State{}, nil)
+
+	gotType, ok := typevalue.TypeOf(reg, got.Results[0].Value)
+	if len(got.Results) != 1 || !ok || !typ.TypeEquals(gotType, typ.Number) {
+		t.Fatalf("matched summary result = %#v type %v/%v, want exact number", got.Results, gotType, ok)
+	}
+	if !got.PostReturnAuthority {
+		t.Fatalf("PostReturnAuthority = false, want summary return-condition authority preserved")
 	}
 }
 
@@ -1273,6 +1664,120 @@ func TestOutcomeProviderUsesCurrentCalleeValueIdentityForPathSummary(t *testing.
 	if len(got.Results) != 0 {
 		t.Fatalf("missing path identity results = %#v, want none", got.Results)
 	}
+}
+
+func TestOutcomeProviderFallsBackToCurrentIdentityWhenContextKeyMissing(t *testing.T) {
+	reg := standard.Registry()
+	missingContextKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 41})
+	identityKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 42})
+	fnID := identity.LuaFunction(43)
+	ret := product.Absent(reg)
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{
+			Key:     identityKey,
+			Summary: summary.Summary{Returns: []product.Value{ret}},
+		}),
+		ContextKeyFor: func(transfer.NodeContext, factflow.CallSiteView) (summary.SummaryKey, bool) {
+			return missingContextKey, true
+		},
+		FunctionIDs: map[identity.ID]summary.SummaryKey{fnID: identityKey},
+		CalleeValue: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) (product.Value, bool) {
+			value := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+			value = product.Set(reg, value, identity.Key, identity.Singleton(fnID))
+			value = product.Set(reg, value, runtimekind.Key, runtimekind.Singleton(runtimekind.Function))
+			return value, true
+		},
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		ExprRef:      1,
+		HasExpr:      true,
+		CalleeSymbol: symbol.ID(44),
+	}).View(), state.State{}, nil)
+
+	assertCallOutcomeResults(t, reg, got.Results, []product.Value{ret})
+}
+
+func TestOutcomeProviderContextSummaryInheritsSameIdentityNormalReturnFacts(t *testing.T) {
+	reg := standard.Registry()
+	identityKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 46})
+	contextKey := identityKey
+	contextKey.Entry.Facts = 1
+	fnID := identity.LuaFunction(47)
+	captured := path.NewPath(symbol.ID(48), "captured")
+	write := providerValueForType(reg, typ.Func().Build())
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg,
+			summary.EntrySummary{Key: contextKey, Summary: summary.Summary{}},
+			summary.EntrySummary{
+				Key: identityKey,
+				Summary: summary.Summary{
+					NormalReturnFacts: callboundary.NormalReturnFacts{
+						PersistentPathWrites: []callboundary.PathValueFact{{Path: captured, Value: write}},
+					},
+				},
+			},
+		),
+		ContextKeyFor: func(transfer.NodeContext, factflow.CallSiteView) (summary.SummaryKey, bool) {
+			return contextKey, true
+		},
+		FunctionIDs: map[identity.ID]summary.SummaryKey{fnID: identityKey},
+		CalleeValue: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) (product.Value, bool) {
+			value := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+			value = product.Set(reg, value, identity.Key, identity.Singleton(fnID))
+			value = product.Set(reg, value, runtimekind.Key, runtimekind.Singleton(runtimekind.Function))
+			return value, true
+		},
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		ExprRef: 1,
+		HasExpr: true,
+	}).View(), state.State{}, nil)
+
+	if len(got.NormalReturnFacts.PersistentPathWrites) != 1 ||
+		!got.NormalReturnFacts.PersistentPathWrites[0].Path.Equal(captured) ||
+		!product.Equal(reg, got.NormalReturnFacts.PersistentPathWrites[0].Value, write) {
+		t.Fatalf("persistent writes = %#v, want inherited same-identity write", got.NormalReturnFacts.PersistentPathWrites)
+	}
+}
+
+func TestOutcomeProviderCurrentIdentityRejectsStaleContextKey(t *testing.T) {
+	reg := standard.Registry()
+	contextKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 14501})
+	identityKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 14502})
+	fnID := identity.LuaFunction(14503)
+	contextRet := providerValueForType(reg, typ.String)
+	identityRet := providerValueForType(reg, typ.Integer)
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg,
+			summary.EntrySummary{
+				Key:     contextKey,
+				Summary: summary.Summary{Returns: []product.Value{contextRet}},
+			},
+			summary.EntrySummary{
+				Key:     identityKey,
+				Summary: summary.Summary{Returns: []product.Value{identityRet}},
+			},
+		),
+		ContextKeyFor: func(transfer.NodeContext, factflow.CallSiteView) (summary.SummaryKey, bool) {
+			return contextKey, true
+		},
+		FunctionIDs: map[identity.ID]summary.SummaryKey{fnID: identityKey},
+		CalleeValue: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) (product.Value, bool) {
+			value := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+			value = product.Set(reg, value, identity.Key, identity.Singleton(fnID))
+			value = product.Set(reg, value, runtimekind.Key, runtimekind.Singleton(runtimekind.Function))
+			return value, true
+		},
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		ExprRef: 1,
+		HasExpr: true,
+	}).View(), state.State{}, nil)
+
+	assertCallOutcomeResultType(t, reg, got.Results, typ.Integer)
 }
 
 func TestOutcomeProviderRejectsStalePathSummaryForCurrentNonFunctionCallee(t *testing.T) {
@@ -1385,6 +1890,8 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness":                true,
 		"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin":              true,
 		"github.com/wippyai/go-lua/analysis/domain/value/product":                         true,
+		"github.com/wippyai/go-lua/analysis/domain/value/proof":                           true,
+		"github.com/wippyai/go-lua/analysis/domain/value/refinement":                      true,
 		"github.com/wippyai/go-lua/analysis/domain/value/typevalue":                       true,
 		"github.com/wippyai/go-lua/analysis/domain/value/variant":                         true,
 		"github.com/wippyai/go-lua/analysis/engine/callboundary":                          true,
@@ -1458,6 +1965,22 @@ func providerNestedTableType() typ.Type {
 
 func providerValueForType(reg *axis.Registry, t typ.Type) product.Value {
 	return typevalue.WithWitness(reg, typevalue.FromType(reg, t), t)
+}
+
+type countingOwnedSummaryReader struct {
+	snapshot    summary.Snapshot
+	publicReads int
+	ownedReads  int
+}
+
+func (r *countingOwnedSummaryReader) Read(key summary.SummaryKey) (summary.Summary, bool) {
+	r.publicReads++
+	return r.snapshot.Read(key)
+}
+
+func (r *countingOwnedSummaryReader) ReadOwnedNormalized(key summary.SummaryKey) (summary.Summary, bool) {
+	r.ownedReads++
+	return r.snapshot.ReadOwnedNormalized(key)
 }
 
 func providerSourceValues(reg *axis.Registry, values map[factflow.ExprRef]product.Value) sourcevalue.SourceValues {

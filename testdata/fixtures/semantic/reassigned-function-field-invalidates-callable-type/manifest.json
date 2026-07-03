@@ -31,16 +31,6 @@
             "contains": [
               "g is declared as fun() -> string"
             ]
-          },
-          {
-            "kind": "missing proof",
-            "trust": "unknown",
-            "reason": "boundary validation missing",
-            "line": 8,
-            "column": 25,
-            "contains": [
-              "no proof on this path shows M.f satisfies the declared type"
-            ]
           }
         ],
         "evidence_contains": [
@@ -49,8 +39,7 @@
         ],
         "render_contains": [
           "error[type.assignment]: cannot assign M.f because it is 42, not fun() -> string",
-          "local g: () -> string = M.f -- expect-error",
-          "missing proof: no proof on this path shows M.f satisfies the declared type"
+          "local g: () -> string = M.f -- expect-error"
         ],
         "render_ordered_contains": [
           "error[type.assignment]: cannot assign M.f because it is 42, not fun() -> string",
@@ -59,7 +48,6 @@
           "because:",
           "1. proven: M.f has literal value 42",
           "2. claimed: g is declared as fun() -> string",
-          "3. missing proof: no proof on this path shows M.f satisfies the declared type",
           "help: Use a value compatible with the expected type, or change the target type if `M.f` is valid."
         ],
         "render_not_contains": [

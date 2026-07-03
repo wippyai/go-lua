@@ -125,6 +125,112 @@ func TestApplySegmentsMixedTraversal(t *testing.T) {
 	assertProjectionType(t, got, typeexpr.Optional(typ.String))
 }
 
+func TestApplyWriteSegmentsUsesWritableIndexAtLeaf(t *testing.T) {
+	source := typetable.NewRecord().
+		Field("items", typ.NewArray(
+			typetable.NewRecord().
+				Field("name", typ.String).
+				Build(),
+		)).
+		Field("optional_items", typ.NewArray(typeexpr.Optional(typ.Number))).
+		Build()
+
+	got, ok := ApplyWriteSegments(source, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "items"},
+		{Kind: segment.SegmentIndexInt, Index: 2},
+		{Kind: segment.SegmentField, Name: "name"},
+	})
+	if !ok {
+		t.Fatal("ApplyWriteSegments mixed traversal failed")
+	}
+	assertProjectionType(t, got, typ.String)
+
+	got, ok = ApplyWriteSegments(source, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "optional_items"},
+		{Kind: segment.SegmentIndexInt, Index: 1},
+	})
+	if !ok {
+		t.Fatal("ApplyWriteSegments optional element failed")
+	}
+	assertProjectionType(t, got, typeexpr.Optional(typ.Number))
+}
+
+func TestApplyConstructorSegmentsTreatsNonLeafPrefixesAsPresent(t *testing.T) {
+	source := typetable.NewRecord().
+		Field("error", typeexpr.Optional(typetable.NewRecord().
+			Field("type", typ.String).
+			Field("code", typeexpr.Optional(typ.Any)).
+			Build())).
+		Build()
+
+	got, ok := ApplyConstructorSegments(source, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "error"},
+		{Kind: segment.SegmentField, Name: "type"},
+	})
+	if !ok {
+		t.Fatal("ApplyConstructorSegments nested field failed")
+	}
+	assertProjectionType(t, got, typ.String)
+
+	got, ok = ApplyConstructorSegments(source, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "error"},
+		{Kind: segment.SegmentField, Name: "code"},
+	})
+	if !ok {
+		t.Fatal("ApplyConstructorSegments optional leaf failed")
+	}
+	assertProjectionType(t, got, typeexpr.Optional(typ.Any))
+}
+
+func TestExpectedConstructorEntryTypeTreatsArrayLeafAsPresent(t *testing.T) {
+	source := typ.NewArray(typ.String)
+
+	got, ok := ApplyConstructorSegments(source, []segment.Segment{
+		{Kind: segment.SegmentIndexInt, Index: 1},
+	})
+	if !ok {
+		t.Fatal("ApplyConstructorSegments array entry failed")
+	}
+	assertProjectionType(t, got, typeexpr.Optional(typ.String))
+
+	got, ok = ExpectedConstructorEntryType(source, []segment.Segment{
+		{Kind: segment.SegmentIndexInt, Index: 1},
+	})
+	if !ok {
+		t.Fatal("ExpectedConstructorEntryType array entry failed")
+	}
+	assertProjectionType(t, got, typ.String)
+}
+
+func TestExpectedConstructorEntryTypePreservesDeclaredNilableFieldPayload(t *testing.T) {
+	source := typetable.NewRecord().
+		Field("nest", typeexpr.Optional(typ.String)).
+		OptField("label", typ.String).
+		Build()
+
+	got, ok := ExpectedConstructorEntryType(source, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "nest"},
+	})
+	if !ok {
+		t.Fatal("ExpectedConstructorEntryType nilable field failed")
+	}
+	assertProjectionType(t, got, typeexpr.Optional(typ.String))
+
+	got, ok = ExpectedConstructorEntryType(source, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "label"},
+	})
+	if !ok {
+		t.Fatal("ExpectedConstructorEntryType optional field failed")
+	}
+	assertProjectionType(t, got, typeexpr.Optional(typ.String))
+}
+
+func TestPresentConstructorRootUnwrapsOptionalTableContract(t *testing.T) {
+	record := typetable.NewRecord().Field("id", typ.String).Build()
+	got := PresentConstructorRoot(typeexpr.Optional(record))
+	assertProjectionType(t, got, record)
+}
+
 func TestApplySegmentsRejectsUnsupportedKind(t *testing.T) {
 	if got, ok := ApplySegments(typ.String, []segment.Segment{{Kind: segment.SegmentKind(99)}}); ok || got != nil {
 		t.Fatal("ApplySegments unsupported kind succeeded")

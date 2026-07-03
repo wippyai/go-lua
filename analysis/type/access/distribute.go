@@ -10,12 +10,18 @@ import (
 // member that is merely missing-reads-nil contributes nil, and the surviving
 // field types union together. It is the canonical union access-distribution.
 func distributeUnion(members []typ.Type, depth int, query func(member typ.Type, depth int) fieldResult) fieldResult {
+	return distributeUnionResults(members, depth, query, func(member typ.Type, depth int) bool {
+		return missingFieldReadsNilDepth(member, depth)
+	})
+}
+
+func distributeUnionResults(members []typ.Type, depth int, query func(member typ.Type, depth int) fieldResult, missingReadsNil func(member typ.Type, depth int) bool) fieldResult {
 	out := make([]typ.Type, 0, len(members))
 	nilable := false
 	for _, member := range members {
 		res := query(member, depth+1)
 		if !res.ok {
-			if missingFieldReadsNilDepth(member, depth+1) {
+			if missingReadsNil != nil && missingReadsNil(member, depth+1) {
 				nilable = true
 				continue
 			}

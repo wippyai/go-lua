@@ -24,6 +24,7 @@ func TestDescriptorsClassifyAuditedVocabularyExactlyOnce(t *testing.T) {
 		capability.ReturnsReturnCallbackReturn:        capability.StatusOperational,
 		capability.ReturnsReturnArrayOfCallbackReturn: capability.StatusOperational,
 		capability.ReturnsReturnTypeProjection:        capability.StatusOperational,
+		capability.ReturnsReturnConditionalType:       capability.StatusOperational,
 		capability.ReturnsErrorReturn:                 capability.StatusOperational,
 		capability.ReturnsReturnLength:                capability.StatusReserved,
 		capability.ReturnsReturnDeepElementOf:         capability.StatusReserved,
@@ -52,7 +53,7 @@ func TestDescriptorsClassifyAuditedVocabularyExactlyOnce(t *testing.T) {
 
 		capability.MutationMutate:       capability.StatusPartial,
 		capability.MutationLengthChange: capability.StatusPartial,
-		capability.MutationTableMutator: capability.StatusPartial,
+		capability.MutationTableMutator: capability.StatusOperational,
 
 		capability.LifecycleAcquire:    capability.StatusOperational,
 		capability.LifecycleTransition: capability.StatusOperational,
@@ -133,6 +134,7 @@ func TestAuditedConcreteSymbolsHaveOneDescriptor(t *testing.T) {
 		{returns.CallbackReturn{}, capability.ReturnsReturnCallbackReturn},
 		{returns.ArrayOfCallbackReturn{}, capability.ReturnsReturnArrayOfCallbackReturn},
 		{returns.TypeProjection{}, capability.ReturnsReturnTypeProjection},
+		{returns.ConditionalType{}, capability.ReturnsReturnConditionalType},
 		{returns.ErrorReturn{}, capability.ReturnsErrorReturn},
 		{returns.ReturnLength{}, capability.ReturnsReturnLength},
 		{returns.DeepElementOf{}, capability.ReturnsReturnDeepElementOf},
@@ -350,14 +352,6 @@ func TestPartialMutationDescriptorsDocumentTargetOnlyLowering(t *testing.T) {
 				"negative Delta remains metadata",
 			},
 		},
-		{
-			id: capability.MutationTableMutator,
-			want: []string{
-				"consumes only Target",
-				"path-invalidation authority",
-				"Value is metadata",
-			},
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
@@ -374,5 +368,20 @@ func TestPartialMutationDescriptorsDocumentTargetOnlyLowering(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestTableMutatorDescriptorDocumentsElementEvidenceLowering(t *testing.T) {
+	desc, ok := capability.Lookup(capability.MutationTableMutator)
+	if !ok {
+		t.Fatal("missing TableMutator descriptor")
+	}
+	if desc.Status != capability.StatusOperational {
+		t.Fatalf("TableMutator status = %q, want %q", desc.Status, capability.StatusOperational)
+	}
+	for _, want := range []string{"invalidates the target", "indexed element evidence", "Value end-to-end"} {
+		if !strings.Contains(desc.Rationale, want) {
+			t.Fatalf("TableMutator rationale %q missing %q", desc.Rationale, want)
+		}
 	}
 }

@@ -77,22 +77,7 @@ func keyOfDepthProject(t typ.Type, depth int) (typ.Type, bool) {
 		}
 		return nil, false
 	case *typ.Union:
-		members := make([]typ.Type, 0, len(tt.Members))
-		for _, member := range tt.Members {
-			member = unwrap.NormalizeNil(member)
-			if member == nil || member.Kind() == kind.Nil {
-				continue
-			}
-			k, ok := keyOfDepth(member, depth+1)
-			if !ok {
-				return nil, false
-			}
-			members = append(members, k)
-		}
-		if len(members) == 0 {
-			return nil, false
-		}
-		return normalize.UnionForEvidence(members...), true
+		return projectContainerUnion(tt.Members, depth, keyOfDepth)
 	default:
 		return nil, false
 	}
@@ -119,6 +104,11 @@ func elementOfDepthProject(t typ.Type, depth int) (typ.Type, bool) {
 			return nil, false
 		}
 		return tt.Value, true
+	case *typ.Record:
+		if tt.HasMapComponent() && unwrap.NormalizeNil(tt.MapValue) != nil {
+			return tt.MapValue, true
+		}
+		return nil, false
 	case *typ.Tuple:
 		if len(tt.Elements) == 0 {
 			return nil, false
@@ -131,26 +121,27 @@ func elementOfDepthProject(t typ.Type, depth int) (typ.Type, bool) {
 		}
 		return normalize.UnionForEvidence(tt.Elements...), true
 	case *typ.Union:
-		members := make([]typ.Type, 0, len(tt.Members))
-		for _, member := range tt.Members {
-			member = unwrap.NormalizeNil(member)
-			if member == nil {
-				continue
-			}
-			if member.Kind() == kind.Nil {
-				continue
-			}
-			elem, ok := elementOfDepth(member, depth+1)
-			if !ok {
-				return nil, false
-			}
-			members = append(members, elem)
-		}
-		if len(members) == 0 {
-			return nil, false
-		}
-		return normalize.UnionForEvidence(members...), true
+		return projectContainerUnion(tt.Members, depth, elementOfDepth)
 	default:
 		return nil, false
 	}
+}
+
+func projectContainerUnion(members []typ.Type, depth int, project func(typ.Type, int) (typ.Type, bool)) (typ.Type, bool) {
+	projected := make([]typ.Type, 0, len(members))
+	for _, member := range members {
+		member = unwrap.NormalizeNil(member)
+		if member == nil || member.Kind() == kind.Nil {
+			continue
+		}
+		out, ok := project(member, depth+1)
+		if !ok {
+			return nil, false
+		}
+		projected = append(projected, out)
+	}
+	if len(projected) == 0 {
+		return nil, false
+	}
+	return normalize.UnionForEvidence(projected...), true
 }

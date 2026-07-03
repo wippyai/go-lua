@@ -63,6 +63,39 @@ func TestClarifyTypeMismatchEvidenceUsesOptionalReasonForNilGuard(t *testing.T) 
 	})
 }
 
+func TestClarifyTypeMismatchEvidencePreservesAssignedValueBoundarySubject(t *testing.T) {
+	items := []diagnostic.Evidence{
+		{
+			Kind:    diagnostic.EvidencePrecisionBoundary,
+			Trust:   diagnostic.TrustUnknown,
+			Reason:  diagnostic.EvidenceReasonExplicitBoundaryValidation,
+			Message: "assigned value comes from any/unknown",
+		},
+		{
+			Kind:    diagnostic.EvidenceMissingProof,
+			Trust:   diagnostic.TrustUnknown,
+			Reason:  diagnostic.EvidenceReasonBoundaryValidationMissing,
+			Message: "no proof on this path shows assigned value is number",
+		},
+	}
+
+	got := clarifyTypeMismatchEvidence(items, "payload", typ.Any, diagnostic.Span{}, "parameter type")
+	requireDiagnosticEvidence(t, got, []diagnosticEvidenceWant{
+		{
+			kind:    diagnostic.EvidencePrecisionBoundary,
+			trust:   diagnostic.TrustUnknown,
+			reason:  diagnostic.EvidenceReasonExplicitBoundaryValidation,
+			message: "assigned value comes from any/unknown",
+		},
+		{
+			kind:    diagnostic.EvidenceMissingProof,
+			trust:   diagnostic.TrustUnknown,
+			reason:  diagnostic.EvidenceReasonBoundaryValidationMissing,
+			message: "no proof on this path shows assigned value is number",
+		},
+	})
+}
+
 func TestClarifyEvidenceDoesNotRewriteByEnglishPrefix(t *testing.T) {
 	items := []diagnostic.Evidence{{
 		Kind:    diagnostic.EvidenceMissingProof,

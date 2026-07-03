@@ -474,9 +474,22 @@ end
 
 invoke(p, mutate, "ok")
 `)
-	if len(result.Diagnostics) != 0 {
-		t.Fatalf("diagnostics = %#v, want none after callback overwrites captured provider.send with string handler", result.Diagnostics)
+	for _, diag := range result.Diagnostics {
+		if diag.Code == diagnostics.CodeDirectCallArgType {
+			t.Fatalf("unexpected stale provider member obligation after callback mutation: %#v", result.Diagnostics)
+		}
 	}
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeAssignmentType,
+		DiagnosticCount: 1,
+		Line:            12,
+		Column:          14,
+		MessageContains: []string{
+			"cannot assign",
+			"string",
+			"fun(number)",
+		},
+	})
 }
 
 func TestMemberCallObligationIgnoresNestedProviderMemberOverwrittenByCapturedCallback(t *testing.T) {
@@ -498,9 +511,22 @@ end
 
 invoke(p, mutate, "ok")
 `)
-	if len(result.Diagnostics) != 0 {
-		t.Fatalf("diagnostics = %#v, want none after callback overwrites captured provider.client.send with string handler", result.Diagnostics)
+	for _, diag := range result.Diagnostics {
+		if diag.Code == diagnostics.CodeDirectCallArgType {
+			t.Fatalf("unexpected stale nested provider member obligation after callback mutation: %#v", result.Diagnostics)
+		}
 	}
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeAssignmentType,
+		DiagnosticCount: 1,
+		Line:            14,
+		Column:          21,
+		MessageContains: []string{
+			"cannot assign",
+			"string",
+			"fun(number)",
+		},
+	})
 }
 
 func TestMemberCallObligationKeepsProviderEvidenceWhenCapturedCallbackMutatesDifferentMember(t *testing.T) {
@@ -675,6 +701,11 @@ invoke(p, "bad")
 				Span:            diagnostic.Span{StartLine: 9, StartCol: 11, EndLine: 9, EndCol: 15},
 				MessageContains: []string{"inside invoke", "argument 1.send parameter 1", "requires number"},
 			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"no proof", "argument 2 is number"},
+			},
 		},
 		LabelContains: []string{"argument value"},
 		HelpContains:  []string{"Pass a value for argument 2", "change the callee signature"},
@@ -685,6 +716,7 @@ invoke(p, "bad")
 			`  |           ↑ argument value`,
 			`1. proven: argument 2 has literal value "bad"`,
 			`2. proven: inside invoke, argument 2 is passed to argument 1.send parameter 1, which requires number`,
+			`3. missing proof: no proof on this path shows argument 2 is number`,
 			`help: Pass a value for argument 2 that satisfies the parameter type, or change the callee signature if that argument is valid.`,
 		},
 		RenderNotContains: []string{
@@ -706,6 +738,7 @@ invoke(p, "bad")
 because:
   1. proven: argument 2 has literal value "bad"
   2. proven: inside invoke, argument 2 is passed to argument 1.send parameter 1, which requires number
+  3. missing proof: no proof on this path shows argument 2 is number
 
 help: Pass a value for argument 2 that satisfies the parameter type, or change the callee signature if that argument is valid.`
 	assertRenderedEqual(t, rendered, want)
@@ -753,7 +786,7 @@ local p: { [1]: (number) -> () } = {
 invoke(p, "bad")
 `)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallArgType)
-	requireEvidenceMessage(t, diag, "argument")
+	requireEvidenceMessage(t, diag, `argument 2 has literal value "bad"`)
 	requireEvidenceMessage(t, diag, "inside invoke, argument 2 is passed to argument 1[1] parameter 1, which requires number")
 }
 
@@ -769,7 +802,7 @@ p[1] = function(v: number): () end
 invoke(p, "bad")
 `)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallArgType)
-	requireEvidenceMessage(t, diag, "argument")
+	requireEvidenceMessage(t, diag, `argument 2 has literal value "bad"`)
 	requireEvidenceMessage(t, diag, "inside invoke, argument 2 is passed to argument 1[1] parameter 1, which requires number")
 }
 
@@ -785,7 +818,7 @@ p["send"] = function(v: number): () end
 invoke(p, "bad")
 `)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallArgType)
-	requireEvidenceMessage(t, diag, "argument")
+	requireEvidenceMessage(t, diag, `argument 2 has literal value "bad"`)
 	requireEvidenceMessage(t, diag, "inside invoke, argument 2 is passed to argument 1.send parameter 1, which requires number")
 }
 
@@ -802,7 +835,7 @@ p[1] = function(v: string): () end
 invoke(p, 42)
 `)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallArgType)
-	requireEvidenceMessage(t, diag, "argument")
+	requireEvidenceMessage(t, diag, "argument 2 has literal value 42")
 	requireEvidenceMessage(t, diag, "inside invoke, argument 2 is passed to argument 1[1] parameter 1, which requires string")
 }
 

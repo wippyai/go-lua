@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/type/projection"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 type Return struct {
@@ -67,6 +68,23 @@ func (p TypeProjection) String() string {
 		return fmt.Sprintf("project_type(%s)", p.Source)
 	}
 	return fmt.Sprintf("project_type(%s.%s)", p.Source, path)
+}
+
+type ConditionalType struct {
+	Source     effect.ParamRef
+	Projection projection.Projection
+	When       typ.Type
+	Then       typ.Type
+}
+
+func (ConditionalType) returnType() {}
+func (c ConditionalType) String() string {
+	path := c.Projection.String()
+	source := c.Source.String()
+	if path != "" {
+		source += "." + path
+	}
+	return fmt.Sprintf("if_type(%s <: %s -> %s)", source, c.When, c.Then)
 }
 
 type ElementOf struct {
@@ -149,6 +167,14 @@ func returnTypeEquals(a, b ReturnType) bool {
 		aa, aok := AsTypeProjection(a)
 		bb, bok := AsTypeProjection(b)
 		return aok && bok && aa.Source.Index == bb.Source.Index && projection.Equal(aa.Projection, bb.Projection)
+	case ReturnTypeConditionalType:
+		aa, aok := AsConditionalType(a)
+		bb, bok := AsConditionalType(b)
+		return aok && bok &&
+			aa.Source.Index == bb.Source.Index &&
+			projection.Equal(aa.Projection, bb.Projection) &&
+			typ.TypeEquals(aa.When, bb.When) &&
+			typ.TypeEquals(aa.Then, bb.Then)
 	case ReturnTypeDeepElementOf:
 		aa, aok := AsDeepElementOf(a)
 		bb, bok := AsDeepElementOf(b)
@@ -253,4 +279,18 @@ func AsTypeProjection(r ReturnType) (TypeProjection, bool) {
 		}
 	}
 	return TypeProjection{}, false
+}
+
+// AsConditionalType returns the concrete ConditionalType transform for value
+// and non-nil pointer spellings. Typed nil pointers are treated as absent.
+func AsConditionalType(r ReturnType) (ConditionalType, bool) {
+	switch rr := r.(type) {
+	case ConditionalType:
+		return rr, true
+	case *ConditionalType:
+		if rr != nil {
+			return *rr, true
+		}
+	}
+	return ConditionalType{}, false
 }

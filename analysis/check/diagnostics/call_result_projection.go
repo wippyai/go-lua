@@ -2,7 +2,6 @@ package diagnostics
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
@@ -19,7 +18,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func dominatingCallResultPathType(result *body.Result, resolver typeannotation.Resolver, flow *diagnosticFlowCache, point cfg.Point, expr ast.Expr, defs map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
+func dominatingCallResultPathType(result *body.Result, context producerContext, point cfg.Point, expr ast.Expr, defs map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
 	if result == nil || expr == nil {
 		return nil, false
 	}
@@ -30,7 +29,10 @@ func dominatingCallResultPathType(result *body.Result, resolver typeannotation.R
 	if !allFieldSegments(accessPath.Segments) {
 		return nil, false
 	}
-	root, ok := dominatingCallResultRootType(result, resolver, flow, point, accessPath.Symbol, defs)
+	if callResultPathInvalidatedBeforeUse(result, context.flow, point, accessPath) {
+		return nil, false
+	}
+	root, ok := dominatingCallResultRootType(result, context, point, accessPath.Symbol, defs)
 	if !ok {
 		return nil, false
 	}
@@ -41,7 +43,7 @@ func dominatingCallResultPathType(result *body.Result, resolver typeannotation.R
 	return got, true
 }
 
-func dominatingCallResultFieldSourceType(result *body.Result, flow *diagnosticFlowCache, point cfg.Point, expr ast.Expr, source sourceprovenance.ASTSource) (typ.Type, bool) {
+func dominatingCallResultFieldSourceType(result *body.Result, context producerContext, point cfg.Point, expr ast.Expr, source sourceprovenance.ASTSource) (typ.Type, bool) {
 	if result == nil || expr == nil || source.Kind != sourceprovenance.SourceExpression {
 		return nil, false
 	}
@@ -49,10 +51,18 @@ func dominatingCallResultFieldSourceType(result *body.Result, flow *diagnosticFl
 	if !ok || accessPath.Symbol == 0 || len(accessPath.Segments) == 0 || !allFieldSegments(accessPath.Segments) {
 		return nil, false
 	}
-	if !rootInitializedByDominatingCall(result, flow, point, accessPath.Symbol) {
+	if !rootInitializedByDominatingCall(result, context.flow, point, accessPath.Symbol) {
 		return nil, false
 	}
-	got, ok := readmodel.New(result).SourceType(point, source)
+	if callResultPathInvalidatedBeforeUse(result, context.flow, point, accessPath) {
+		return nil, false
+	}
+	if source, ok := dominatingCallSourceForRoot(result, context.flow, point, accessPath.Symbol); ok &&
+		((directCallReturnIsWrapperCall(result, source, nil) && !wrapperProviderReplacementDominatesCall(result, context, source)) ||
+			callCalleeParentHasNonDominatingAssignment(result, source)) {
+		return nil, false
+	}
+	got, ok := newDiagnosticQuery(result).SourceType(point, source)
 	if !ok || got == nil || typ.IsAny(got) || typ.IsUnknown(got) || projectionHasNil(got) {
 		return nil, false
 	}
@@ -184,7 +194,7 @@ func reassignedCallResultFieldEvidence(result *body.Result, resolver typeannotat
 	return nil
 }
 
-func callResultFieldOptionalImprecision(result *body.Result, flow *diagnosticFlowCache, point cfg.Point, expr ast.Expr, got, want typ.Type) bool {
+func callResultFieldOptionalImprecision(result *body.Result, context producerContext, point cfg.Point, expr ast.Expr, got, want typ.Type) bool {
 	if result == nil || expr == nil || got == nil || want == nil {
 		return false
 	}
@@ -192,18 +202,18 @@ func callResultFieldOptionalImprecision(result *body.Result, flow *diagnosticFlo
 	if !ok || accessPath.Symbol == 0 || len(accessPath.Segments) == 0 || !allFieldSegments(accessPath.Segments) {
 		return false
 	}
-	if !rootInitializedByDominatingCall(result, flow, point, accessPath.Symbol) {
+	if !rootInitializedByDominatingCall(result, context.flow, point, accessPath.Symbol) {
 		return false
 	}
-	source, ok := dominatingCallSourceForRoot(result, flow, point, accessPath.Symbol)
-	if !ok || !wrapperProviderReplacementDominatesCall(result, source) {
+	source, ok := dominatingCallSourceForRoot(result, context.flow, point, accessPath.Symbol)
+	if !ok || !wrapperProviderReplacementDominatesCall(result, context, source) {
 		return false
 	}
 	inner := projectionWithoutNil(got)
 	return inner != nil && !typ.IsNever(inner) && subtype.IsSubtype(transparentComparableType(result, inner), transparentComparableType(result, want))
 }
 
-func directFunctionCurrentReturnPathType(result *body.Result, resolver typeannotation.Resolver, source sourceprovenance.ASTSource, defs map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
+func directFunctionCurrentReturnPathType(result *body.Result, context producerContext, source sourceprovenance.ASTSource, defs map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
 	if result == nil || source.Kind != sourceprovenance.SourceCall || !source.HasCallPoint || source.ResultIndex < 0 {
 		return nil, false
 	}
@@ -230,20 +240,99 @@ func directFunctionCurrentReturnPathType(result *body.Result, resolver typeannot
 	if !ok || retPath.IsEmpty() {
 		return nil, false
 	}
-	value, ok := result.PathValueAtBoundary(source.CallPoint, retPath)
+	query := newDiagnosticQuery(result)
+	value, ok := query.PathValueAtBoundary(source.CallPoint, retPath)
 	if ok {
-		if got, ok := readmodel.New(result).ValueTypeWithPresence(value); ok && got != nil && !typ.IsAny(got) && !typ.IsUnknown(got) {
+		if got, ok := query.ValueTypeWithPresence(value); ok && got != nil && !typ.IsAny(got) && !typ.IsUnknown(got) {
 			if refinement.ContainsFreeTypeParam(got) {
 				return nil, false
 			}
 			return got, true
 		}
 	}
-	got, ok := newFlowExpressionTyper(result, resolver, source.CallPoint, cachedGuardEnvironments(result)[source.CallPoint]).typeOf(expr)
+	got, ok := newFlowExpressionTyper(result, context.resolver, source.CallPoint, context.guardEnv(result, source.CallPoint)).typeOf(expr)
 	if !ok || refinement.ContainsFreeTypeParam(got) {
 		return nil, false
 	}
 	return got, true
+}
+
+func currentFunctionDefinitionValueType(result *body.Result, context producerContext, point cfg.Point, expr ast.Expr) (*typ.Function, bool) {
+	if result == nil || expr == nil {
+		return nil, false
+	}
+	target, ok := result.ExpressionPath(expr)
+	if !ok || target.IsEmpty() {
+		return nil, false
+	}
+	fn, defPoint, ok := dominatingFunctionDefinitionForPathWithPoint(result, point, target)
+	if !ok || memberPathReassignedAfterDefinition(result, context.flow, defPoint, point, target) {
+		return nil, false
+	}
+	base, ok := lowerFunctionExprType(fn, context.resolver)
+	if !ok || base == nil {
+		return nil, false
+	}
+	returns, ok := currentFunctionDefinitionReturnTypes(result, context, point, fn)
+	if !ok || len(returns) == 0 {
+		return base, true
+	}
+	return typ.RebuildFunction(typ.FunctionParts{
+		TypeParams: base.TypeParams,
+		Params:     base.Params,
+		Variadic:   base.Variadic,
+		Returns:    returns,
+	}), true
+}
+
+func currentFunctionDefinitionReturnTypes(result *body.Result, context producerContext, point cfg.Point, fn *ast.FunctionExpr) ([]typ.Type, bool) {
+	if result == nil || fn == nil || len(fn.ReturnTypes) != 0 || len(fn.Stmts) != 1 {
+		return nil, false
+	}
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok || len(ret.Exprs) == 0 {
+		return nil, false
+	}
+	out := make([]typ.Type, 0, len(ret.Exprs))
+	query := newDiagnosticQuery(result)
+	typer := newFlowExpressionTyper(result, context.resolver, point, context.guardEnv(result, point))
+	for _, expr := range ret.Exprs {
+		if expr == nil {
+			return nil, false
+		}
+		if call, ok := expr.(*ast.FuncCallExpr); ok && call.Func != nil {
+			if fn, ok := result.FunctionValueTypeAtBoundary(point, call.Func); ok && usableFunctionReturns(fn.Returns) {
+				out = append(out, fn.Returns...)
+				continue
+			}
+		}
+		if retPath, ok := result.ExpressionPath(expr); ok && !retPath.IsEmpty() {
+			if value, ok := query.PathValueAtBoundary(point, retPath); ok {
+				if got, ok := query.ValueTypeWithPresence(value); ok && got != nil && !typ.IsAny(got) && !typ.IsUnknown(got) && !refinement.ContainsFreeTypeParam(got) {
+					out = append(out, got)
+					continue
+				}
+			}
+		}
+		got, ok := typer.typeOf(expr)
+		if !ok || got == nil || typ.IsAny(got) || typ.IsUnknown(got) || refinement.ContainsFreeTypeParam(got) {
+			return nil, false
+		}
+		out = append(out, got)
+	}
+	return out, true
+}
+
+func usableFunctionReturns(returns []typ.Type) bool {
+	if len(returns) == 0 {
+		return false
+	}
+	for _, ret := range returns {
+		if ret == nil || typ.IsAny(ret) || typ.IsUnknown(ret) || refinement.ContainsFreeTypeParam(ret) {
+			return false
+		}
+	}
+	return true
 }
 
 func singleReturnExpr(fn *ast.FunctionExpr, index int) (ast.Expr, bool) {
@@ -344,7 +433,7 @@ func ordinaryAssignmentInvalidatesRootCallResult(fact semantics.OrdinaryAssignme
 	return !fact.HasPath || fact.Path.Symbol == fact.Symbol
 }
 
-func wrapperProviderReplacementDominatesCall(result *body.Result, source sourceprovenance.ASTSource) bool {
+func wrapperProviderReplacementDominatesCall(result *body.Result, context producerContext, source sourceprovenance.ASTSource) bool {
 	if result == nil || source.Kind != sourceprovenance.SourceCall || !source.HasCallPoint {
 		return false
 	}
@@ -356,7 +445,7 @@ func wrapperProviderReplacementDominatesCall(result *body.Result, source sourcep
 	if !ok || site.CalleeSymbol() == 0 {
 		return false
 	}
-	defs := directCallDefinitions(result, nil)
+	defs := directCallDefinitions(result, context, nil)
 	fn := defs[site.CalleeSymbol()]
 	if fn == nil {
 		fn = dominatingFunctionDefinitionForPath(result, source.CallPoint, site.CalleePathRef())
@@ -432,10 +521,78 @@ func pathAssignmentDominates(result *body.Result, point cfg.Point, target pathdo
 	return false
 }
 
-func dominatingCallResultRootType(result *body.Result, resolver typeannotation.Resolver, flow *diagnosticFlowCache, point cfg.Point, target symbol.ID, defs map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
-	source, ok := dominatingCallSourceForRoot(result, flow, point, target)
+func dominatingCallResultRootType(result *body.Result, context producerContext, point cfg.Point, target symbol.ID, defs map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
+	source, ok := dominatingCallSourceForRoot(result, context.flow, point, target)
 	if !ok {
 		return nil, false
 	}
-	return directCallReturnSourceType(result, resolver, source, defs)
+	if directCallReturnIsWrapperCall(result, source, defs) && !wrapperProviderReplacementDominatesCall(result, context, source) {
+		return nil, false
+	}
+	if callCalleeParentHasNonDominatingAssignment(result, source) {
+		return nil, false
+	}
+	return directCallReturnSourceType(result, context.resolver, source, defs)
+}
+
+func callResultPathInvalidatedBeforeUse(result *body.Result, flow *diagnosticFlowCache, point cfg.Point, accessPath pathdom.Path) bool {
+	if result == nil || accessPath.Symbol == 0 {
+		return false
+	}
+	_, assignPoint, ok := dominatingCallSourceForRootUnchecked(result, flow, point, accessPath.Symbol)
+	if !ok {
+		return false
+	}
+	return pathInvalidatedBetween(result, flow, assignPoint, point, accessPath)
+}
+
+func directCallReturnIsWrapperCall(result *body.Result, source sourceprovenance.ASTSource, defs map[symbol.ID]*ast.FunctionExpr) bool {
+	if result == nil || source.Kind != sourceprovenance.SourceCall || !source.HasCallPoint {
+		return false
+	}
+	site, ok := result.CallSite(source.CallPoint)
+	if !ok || site.CalleeSymbol() == 0 {
+		return false
+	}
+	fn := defs[site.CalleeSymbol()]
+	if fn == nil {
+		fn = dominatingFunctionDefinitionForPath(result, source.CallPoint, site.CalleePathRef())
+	}
+	retExpr, ok := singleReturnExpr(fn, source.ResultIndex)
+	if !ok {
+		return false
+	}
+	_, ok = retExpr.(*ast.FuncCallExpr)
+	return ok
+}
+
+func callCalleeParentHasNonDominatingAssignment(result *body.Result, source sourceprovenance.ASTSource) bool {
+	if result == nil || source.Kind != sourceprovenance.SourceCall || !source.HasCallPoint {
+		return false
+	}
+	site, ok := result.CallSite(source.CallPoint)
+	if !ok {
+		return false
+	}
+	calleePath := site.CalleePathRef()
+	if len(calleePath.Segments) == 0 {
+		return false
+	}
+	parent := calleePath.Parent()
+	graph := result.Graph()
+	if graph == nil {
+		return false
+	}
+	dom := dominance.ComputeImmediateDominatorInfo(graph)
+	for _, candidate := range graph.RPO() {
+		if !diagnosticCanReach(nil, graph, candidate, source.CallPoint) || dom.StrictlyDominates(candidate, source.CallPoint) {
+			continue
+		}
+		fact, ok := result.OrdinaryAssignment(candidate)
+		if !ok || !fact.HasPath || !fact.Path.Equal(parent) {
+			continue
+		}
+		return true
+	}
+	return false
 }

@@ -169,7 +169,7 @@ func TestDirectCallRejectsObjectLiteralExplicitAnyMember(t *testing.T) {
 	src := "type Point = {id: string}\nfunction take(p: Point)\nend\nlocal raw: any = nil\ntake({id = raw})\n"
 	requireDiagnosticShape(t, src, runDiagnostics(t, src), diagnosticShapeWant{
 		code:    CodeDirectCallArgType,
-		message: "argument 1.id is any, not string",
+		message: "argument 1.id (raw) comes from any/unknown; no proof shows it is string",
 		span:    diagnostic.Span{StartLine: 5, StartCol: 12, EndLine: 5, EndCol: 14},
 		labels: []diagnosticLabelWant{
 			{message: labelArgumentValue, span: diagnostic.Span{StartLine: 5, StartCol: 12, EndLine: 5, EndCol: 14}},
@@ -178,11 +178,11 @@ func TestDirectCallRejectsObjectLiteralExplicitAnyMember(t *testing.T) {
 			{kind: diagnostic.EvidenceAbstractFact, trust: diagnostic.TrustProven, message: "argument 1.id (raw) has type any", span: diagnostic.Span{StartLine: 5, StartCol: 12, EndLine: 5, EndCol: 14}},
 			{kind: diagnostic.EvidenceUserAssertion, trust: diagnostic.TrustClaimed, message: "take parameter 1.id expects string", span: diagnostic.Span{StartLine: 2, StartCol: 18, EndLine: 2, EndCol: 22}},
 			{kind: diagnostic.EvidencePrecisionBoundary, trust: diagnostic.TrustUnknown, reason: diagnostic.EvidenceReasonExplicitBoundaryValidation, message: "raw comes from any/unknown", span: diagnostic.Span{StartLine: 5, StartCol: 12, EndLine: 5, EndCol: 14}},
-			{kind: diagnostic.EvidenceMissingProof, trust: diagnostic.TrustUnknown, reason: diagnostic.EvidenceReasonBoundaryValidationMissing, message: "no proof on this path shows raw satisfies the parameter type", span: diagnostic.Span{StartLine: 5, StartCol: 12, EndLine: 5, EndCol: 14}},
+			{kind: diagnostic.EvidenceMissingProof, trust: diagnostic.TrustRefuted, reason: diagnostic.EvidenceReasonBoundaryValidationMissing, message: "no proof on this path shows raw satisfies the parameter type", span: diagnostic.Span{StartLine: 5, StartCol: 12, EndLine: 5, EndCol: 14}},
 		},
 		help: "Validate or narrow `raw` before passing it; any/unknown values do not prove parameter contracts.",
 		renderContains: []string{
-			"error[type.call.direct.argument_type]: argument 1.id is any, not string",
+			"error[type.call.direct.argument_type]: argument 1.id (raw) comes from any/unknown; no proof shows it is string",
 			" --> main.lua:5:12",
 			"  |            ↑ argument value",
 			"5 | take({id = raw})",
@@ -198,35 +198,57 @@ func TestDirectCallRejectsObjectLiteralExplicitAnyMember(t *testing.T) {
 	})
 }
 
+func TestJudgmentDirectCallLabelsObjectLiteralExplicitAnyMember(t *testing.T) {
+	src := "type Point = {id: string}\nfunction take(p: Point)\nend\nlocal raw: any = nil\ntake({id = raw})\n"
+	result := runDiagnosticsResult(t, src)
+	diags := ProduceWithConfig(result, Config{})
+	d := requireDirectCallDiagnostic(t, diags, CodeDirectCallArgType)
+	if !strings.Contains(d.Message, "argument 1.id (raw)") {
+		t.Fatalf("message = %q, want refined member source label", d.Message)
+	}
+	if !diagnosticEvidenceContains(d.Explanation.Evidence(), "argument 1.id (raw)") {
+		t.Fatalf("evidence = %#v, want refined member source label", d.Explanation.Evidence())
+	}
+	wantSpan := diagnostic.Span{StartLine: 2, StartCol: 18, EndLine: 2, EndCol: 22}
+	for _, evidence := range d.Explanation.Evidence() {
+		if evidence.Kind == diagnostic.EvidenceUserAssertion &&
+			evidence.Message == "take parameter 1.id expects string" &&
+			evidence.Span == wantSpan {
+			return
+		}
+	}
+	t.Fatalf("evidence = %#v, want expected-type assertion at %v", d.Explanation.Evidence(), wantSpan)
+}
+
 func TestReturnContractRejectsObjectLiteralExplicitAnyMember(t *testing.T) {
 	src := "type Point = {id: string}\nfunction make(raw: any): Point\n\treturn {id = raw}\nend\n"
 	requireDiagnosticShape(t, src, runDiagnostics(t, src), diagnosticShapeWant{
 		code:    CodeReturnContractType,
-		message: "returned value 1 (raw) is any, not string",
+		message: "returned value 1.id (raw) comes from any/unknown; no proof shows it satisfies declared return type string",
 		span:    diagnostic.Span{StartLine: 3, StartCol: 15, EndLine: 3, EndCol: 17},
 		labels: []diagnosticLabelWant{
 			{message: labelReturnedValue, span: diagnostic.Span{StartLine: 3, StartCol: 15, EndLine: 3, EndCol: 17}},
 			{message: labelDeclaredReturn, span: diagnostic.Span{StartLine: 2, StartCol: 26, EndLine: 2, EndCol: 30}},
 		},
 		evidence: []diagnosticEvidenceWant{
-			{kind: diagnostic.EvidenceAbstractFact, trust: diagnostic.TrustProven, message: "returned value 1 (raw) has type any", span: diagnostic.Span{StartLine: 3, StartCol: 15, EndLine: 3, EndCol: 17}},
-			{kind: diagnostic.EvidenceUserAssertion, trust: diagnostic.TrustClaimed, message: "returned value 1 must satisfy declared return type string", span: diagnostic.Span{StartLine: 2, StartCol: 26, EndLine: 2, EndCol: 30}},
-			{kind: diagnostic.EvidencePrecisionBoundary, trust: diagnostic.TrustUnknown, reason: diagnostic.EvidenceReasonExplicitBoundaryValidation, message: "returned value 1 (raw) comes from any/unknown", span: diagnostic.Span{StartLine: 3, StartCol: 15, EndLine: 3, EndCol: 17}},
-			{kind: diagnostic.EvidenceMissingProof, trust: diagnostic.TrustUnknown, reason: diagnostic.EvidenceReasonBoundaryValidationMissing, message: "no proof on this path shows returned value 1 (raw) satisfies the declared return type", span: diagnostic.Span{StartLine: 3, StartCol: 15, EndLine: 3, EndCol: 17}},
+			{kind: diagnostic.EvidenceAbstractFact, trust: diagnostic.TrustProven, message: "returned value 1.id (raw) has type any", span: diagnostic.Span{StartLine: 3, StartCol: 15, EndLine: 3, EndCol: 17}},
+			{kind: diagnostic.EvidenceUserAssertion, trust: diagnostic.TrustClaimed, message: "returned value 1.id must satisfy declared return type string", span: diagnostic.Span{StartLine: 2, StartCol: 26, EndLine: 2, EndCol: 30}},
+			{kind: diagnostic.EvidencePrecisionBoundary, trust: diagnostic.TrustUnknown, reason: diagnostic.EvidenceReasonExplicitBoundaryValidation, message: "returned value 1.id (raw) comes from any/unknown", span: diagnostic.Span{StartLine: 3, StartCol: 15, EndLine: 3, EndCol: 17}},
+			{kind: diagnostic.EvidenceMissingProof, trust: diagnostic.TrustUnknown, reason: diagnostic.EvidenceReasonBoundaryValidationMissing, message: "no proof on this path shows returned value 1.id (raw) satisfies the declared return type", span: diagnostic.Span{StartLine: 3, StartCol: 15, EndLine: 3, EndCol: 17}},
 		},
 		help: "Return a value compatible with the declared return type, or change the return annotation if the returned value is valid.",
 		renderContains: []string{
-			"error[type.return.contract]: returned value 1 (raw) is any, not string",
+			"error[type.return.contract]: returned value 1.id (raw) comes from any/unknown; no proof shows it satisfies declared return type string",
 			" --> main.lua:3:15",
 			"  |                  ↑ returned value",
 			"3 |     return {id = raw}",
-			"1. proven: returned value 1 (raw) has type any",
-			"2. claimed: returned value 1 must satisfy declared return type string",
+			"1. proven: returned value 1.id (raw) has type any",
+			"2. claimed: returned value 1.id must satisfy declared return type string",
 			" --> main.lua:2:26",
 			"  |                          ↓ declared return type",
 			"2 | function make(raw: any): Point",
-			"3. unvalidated value: returned value 1 (raw) comes from any/unknown",
-			"4. missing proof: no proof on this path shows returned value 1 (raw) satisfies the declared return type",
+			"3. unvalidated value: returned value 1.id (raw) comes from any/unknown",
+			"4. missing proof: no proof on this path shows returned value 1.id (raw) satisfies the declared return type",
 			"help: Return a value compatible with the declared return type, or change the return annotation if the returned value is valid.",
 		},
 	})
@@ -304,7 +326,7 @@ func TestCallParamObligationRejectsObjectLiteralExplicitAnyMember(t *testing.T) 
 	`)
 	for _, d := range diags {
 		if d.Code == CodeDirectCallArgType &&
-			strings.Contains(d.Message, "argument 2 (raw) is any, not string") {
+			strings.Contains(d.Message, "argument 2.id (raw) comes from any/unknown") {
 			if got := d.Explanation.String(); !strings.Contains(got, "raw comes from any/unknown") ||
 				!strings.Contains(got, "no proof on this path shows raw satisfies the parameter type") {
 				t.Fatalf("explanation = %q, want any/unknown boundary and missing-proof evidence", got)
@@ -336,7 +358,7 @@ func TestCallParamObligationRejectsExplicitAnyStructuralWitness(t *testing.T) {
 		if d.Code == CodeDirectCallArgType &&
 			strings.Contains(d.Message, "argument 2") &&
 			strings.Contains(d.Message, "id") {
-			if got := d.Explanation.String(); !strings.Contains(got, "user asserted any") ||
+			if got := d.Explanation.String(); !strings.Contains(got, "raw comes from any/unknown") ||
 				!strings.Contains(got, "no proof on this path shows raw satisfies the parameter type") {
 				t.Fatalf("explanation = %q, want explicit-any claim and missing-proof evidence", got)
 			}
@@ -360,11 +382,11 @@ func TestCallParamObligationRejectsAsAnyCastEscape(t *testing.T) {
 			continue
 		}
 		got := d.Explanation.String()
-		if !strings.Contains(got, "user asserted any") {
+		if !strings.Contains(got, "argument 2 comes from any/unknown") {
 			continue
 		}
-		if !strings.Contains(got, "assigned value comes from any/unknown") ||
-			!strings.Contains(got, "no proof on this path shows assigned value is number") {
+		if !strings.Contains(got, "argument 2 comes from any/unknown") ||
+			!strings.Contains(got, "no proof on this path shows argument 2 satisfies the parameter type") {
 			t.Fatalf("explanation = %q, want explicit-any claim and missing-proof evidence", got)
 		}
 		if !strings.Contains(d.Help, "Validate or narrow") ||

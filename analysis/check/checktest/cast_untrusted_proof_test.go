@@ -1,398 +1,180 @@
 package checktest
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 )
 
-// A cast adopts its target type for inference, but it must not prove a separate
-// obligation that the uncast value could not. These probes guard that an any or
-// disjoint value cannot launder past a parameter, assignment, or return contract
-// through a cast, while a cast used purely for local inference stays clean.
+// A concrete non-top cast is runtime validation in this dialect: `x :: T` (or
+// `x as T`) proves T at that expression on the normal path. Top-like casts
+// (`any` and `unknown`) remain precision boundaries, not validation.
 
-func TestCastDoesNotLaunderAnyIntoParameter(t *testing.T) {
-	src := strings.TrimLeft(`
+func TestStructuralCastRuntimeValidationSatisfiesParameter(t *testing.T) {
+	result := Check(`
 local function need(x: {name: string}): number return 1 end
 local function f(y: any): number return need(y as {name: string}) end return f
-`, "\n")
-	result := Check(src)
-	diag := requireDiagnostic(t, result, diagnosticExpectation{
-		Code:            diagnostics.CodeDirectCallArgType,
-		Severity:        diagnostic.SeverityError,
-		DiagnosticCount: 1,
-		Line:            2,
-		Column:          46,
-		MessageContains: []string{
-			"argument 1 (y)",
-			"any",
-			"not {name: string}",
-		},
-		EvidenceChain: []diagnosticEvidenceExpectation{
-			{
-				Kind:            diagnostic.EvidenceAbstractFact,
-				Trust:           diagnostic.TrustProven,
-				MessageContains: []string{"argument 1 (y)", "has type any"},
-			},
-			{
-				Kind:            diagnostic.EvidenceUserAssertion,
-				Trust:           diagnostic.TrustClaimed,
-				MessageContains: []string{"need parameter 1 expects {name: string}"},
-			},
-			{
-				Kind:            diagnostic.EvidencePrecisionBoundary,
-				Trust:           diagnostic.TrustUnknown,
-				MessageContains: []string{"argument 1 (y) comes from any/unknown"},
-			},
-			{
-				Kind:            diagnostic.EvidenceMissingProof,
-				Trust:           diagnostic.TrustUnknown,
-				MessageContains: []string{"no proof on this path", "y", "parameter type"},
-			},
-		},
-		LabelContains: []string{"argument value"},
-		HelpContains:  []string{"Validate or narrow `y`", "any/unknown values do not prove parameter contracts"},
-		Sources:       diagnostic.SourceMap{"test.lua": src},
-		RenderOrderedContains: []string{
-			`error[type.call.direct.argument_type]: argument 1 (y) is any, not {name: string}`,
-			`2 | local function f(y: any): number return need(y as {name: string}) end return f`,
-			`  |                                              ↑ argument value`,
-			`1. proven: argument 1 (y) has type any`,
-			`2. claimed: need parameter 1 expects {name: string}`,
-			`1 | local function need(x: {name: string}): number return 1 end`,
-			`3. unvalidated value: argument 1 (y) comes from any/unknown`,
-			`4. missing proof: no proof on this path shows y satisfies the parameter type`,
-			"help: Validate or narrow `y` before passing it; any/unknown values do not prove parameter contracts.",
-		},
-	})
-	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
-		Sources:             diagnostic.SourceMap{"test.lua": src},
-		ShowSourceLabelRows: true,
-	})
-	want := `error[type.call.direct.argument_type]: argument 1 (y) is any, not {name: string}
- --> test.lua:2:46
-  |
-2 | local function f(y: any): number return need(y as {name: string}) end return f
-  |                                              ↑ argument value
-
-because:
-  1. proven: argument 1 (y) has type any
-  2. claimed: need parameter 1 expects {name: string}
- --> test.lua:1:24
-  |
-1 | local function need(x: {name: string}): number return 1 end
-  |                        ^
-  3. unvalidated value: argument 1 (y) comes from any/unknown
-  4. missing proof: no proof on this path shows y satisfies the parameter type
-
-help: Validate or narrow ` + "`y`" + ` before passing it; any/unknown values do not prove parameter contracts.`
-	assertRenderedEqual(t, rendered, want)
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want structural cast runtime validation to satisfy parameter", result.Diagnostics)
+	}
 }
 
-func TestCastDoesNotLaunderDisjointValueIntoParameter(t *testing.T) {
-	src := strings.TrimLeft(`
+func TestStructuralCastRuntimeValidationSatisfiesDisjointParameter(t *testing.T) {
+	result := Check(`
 local function need(x: {name: string}): number return 1 end
 local function f(y: number): number return need(y as {name: string}) end return f
-`, "\n")
-	result := Check(src)
-	diag := requireDiagnostic(t, result, diagnosticExpectation{
-		Code:            diagnostics.CodeDirectCallArgType,
-		Severity:        diagnostic.SeverityError,
-		DiagnosticCount: 1,
-		Line:            2,
-		Column:          49,
-		MessageContains: []string{
-			"argument 1 (y)",
-			"number",
-			"not {name: string}",
-		},
-		EvidenceChain: []diagnosticEvidenceExpectation{
-			{
-				Kind:            diagnostic.EvidenceAbstractFact,
-				Trust:           diagnostic.TrustProven,
-				MessageContains: []string{"argument 1 (y)", "has type number"},
-			},
-			{
-				Kind:            diagnostic.EvidenceUserAssertion,
-				Trust:           diagnostic.TrustClaimed,
-				MessageContains: []string{"need parameter 1 expects {name: string}"},
-			},
-			{
-				Kind:            diagnostic.EvidenceMissingProof,
-				Trust:           diagnostic.TrustUnknown,
-				Reason:          diagnostic.EvidenceReasonBoundaryValidationMissing,
-				MessageContains: []string{"no proof on this path", "y", "parameter type"},
-			},
-		},
-		LabelContains: []string{"argument value"},
-		HelpContains:  []string{"Pass `y`", "compatible with the parameter type", "change the callee signature"},
-		Sources:       diagnostic.SourceMap{"test.lua": src},
-		RenderOrderedContains: []string{
-			`error[type.call.direct.argument_type]: argument 1 (y) is number, not {name: string}`,
-			`2 | local function f(y: number): number return need(y as {name: string}) end return f`,
-			`  |                                                 ↑ argument value`,
-			`1. proven: argument 1 (y) has type number`,
-			`2. claimed: need parameter 1 expects {name: string}`,
-			`1 | local function need(x: {name: string}): number return 1 end`,
-			`3. missing proof: no proof on this path shows y satisfies the parameter type`,
-			"help: Pass `y` as a value compatible with the parameter type, or change the callee signature if that argument is valid.",
-		},
-	})
-	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
-		Sources:             diagnostic.SourceMap{"test.lua": src},
-		ShowSourceLabelRows: true,
-	})
-	want := `error[type.call.direct.argument_type]: argument 1 (y) is number, not {name: string}
- --> test.lua:2:49
-  |
-2 | local function f(y: number): number return need(y as {name: string}) end return f
-  |                                                 ↑ argument value
-
-because:
-  1. proven: argument 1 (y) has type number
-  2. claimed: need parameter 1 expects {name: string}
- --> test.lua:1:24
-  |
-1 | local function need(x: {name: string}): number return 1 end
-  |                        ^
-  3. missing proof: no proof on this path shows y satisfies the parameter type
-
-help: Pass ` + "`y`" + ` as a value compatible with the parameter type, or change the callee signature if that argument is valid.`
-	assertRenderedEqual(t, rendered, want)
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want structural cast runtime validation to satisfy parameter even from disjoint input", result.Diagnostics)
+	}
 }
 
-func TestCastDoesNotLaunderAnyIntoAnnotatedAssignment(t *testing.T) {
-	src := strings.TrimLeft(`
+func TestStructuralCastRuntimeValidationSatisfiesAnnotatedAssignment(t *testing.T) {
+	result := Check(`
 local function f(y: any): number
 	local x: {name: string} = y as {name: string}
 	return 1
 end
 return f
-`, "\n")
-	result := Check(src)
-	diag := requireDiagnostic(t, result, diagnosticExpectation{
-		Code:            diagnostics.CodeAssignmentType,
-		Severity:        diagnostic.SeverityError,
-		DiagnosticCount: 1,
-		Line:            2,
-		Column:          28,
-		MessageContains: []string{
-			"cannot assign y",
-			"any",
-			"not {name: string}",
-		},
-		EvidenceChain: []diagnosticEvidenceExpectation{
-			{
-				Kind:            diagnostic.EvidenceAbstractFact,
-				Trust:           diagnostic.TrustProven,
-				MessageContains: []string{"y has type any"},
-			},
-			{
-				Kind:            diagnostic.EvidenceUserAssertion,
-				Trust:           diagnostic.TrustClaimed,
-				MessageContains: []string{"x is declared as {name: string}"},
-			},
-			{
-				Kind:            diagnostic.EvidencePrecisionBoundary,
-				Trust:           diagnostic.TrustUnknown,
-				MessageContains: []string{"y comes from any/unknown"},
-			},
-			{
-				Kind:            diagnostic.EvidenceMissingProof,
-				Trust:           diagnostic.TrustUnknown,
-				MessageContains: []string{"no proof on this path", "y", "declared type"},
-			},
-		},
-		LabelContains: []string{"declared type", "assigned value"},
-		HelpContains:  []string{"Use a value compatible", "change the target type", "`y` is valid"},
-		Sources:       diagnostic.SourceMap{"test.lua": src},
-		RenderOrderedContains: []string{
-			`error[type.assignment]: cannot assign y because it is any, not {name: string}`,
-			`  |              ↓ declared type`,
-			`2 |     local x: {name: string} = y as {name: string}`,
-			`  |                               ↑ assigned value`,
-			`1. proven: y has type any`,
-			`2. claimed: x is declared as {name: string}`,
-			`3. unvalidated value: y comes from any/unknown`,
-			`4. missing proof: no proof on this path shows y satisfies the declared type`,
-			"help: Use a value compatible with the expected type, or change the target type if `y` is valid.",
-		},
-	})
-	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
-		Sources:             diagnostic.SourceMap{"test.lua": src},
-		ShowSourceLabelRows: true,
-	})
-	want := `error[type.assignment]: cannot assign y because it is any, not {name: string}
- --> test.lua:2:28
-  |
-  |              ↓ declared type
-2 |     local x: {name: string} = y as {name: string}
-  |                               ↑ assigned value
-
-because:
-  1. proven: y has type any
-  2. claimed: x is declared as {name: string}
-  3. unvalidated value: y comes from any/unknown
-  4. missing proof: no proof on this path shows y satisfies the declared type
-
-help: Use a value compatible with the expected type, or change the target type if ` + "`y`" + ` is valid.`
-	assertRenderedEqual(t, rendered, want)
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want structural cast runtime validation to satisfy assignment", result.Diagnostics)
+	}
 }
 
-func TestCastDoesNotLaunderAnyIntoReturnContract(t *testing.T) {
-	src := strings.TrimLeft(`
+func TestStructuralCastRuntimeValidationSatisfiesReturnContract(t *testing.T) {
+	result := Check(`
 local function f(y: any): {name: string} return y as {name: string} end return f
-`, "\n")
-	result := Check(src)
-	diag := requireDiagnostic(t, result, diagnosticExpectation{
-		Code:            diagnostics.CodeReturnContractType,
-		Severity:        diagnostic.SeverityError,
-		DiagnosticCount: 1,
-		Line:            1,
-		Column:          49,
-		MessageContains: []string{
-			"returned value 1 (y)",
-			"any",
-			"not {name: string}",
-		},
-		EvidenceChain: []diagnosticEvidenceExpectation{
-			{
-				Kind:            diagnostic.EvidenceAbstractFact,
-				Trust:           diagnostic.TrustProven,
-				MessageContains: []string{"returned value 1 (y)", "has type any"},
-			},
-			{
-				Kind:            diagnostic.EvidenceUserAssertion,
-				Trust:           diagnostic.TrustClaimed,
-				MessageContains: []string{"returned value 1 must satisfy declared return type {name: string}"},
-			},
-			{
-				Kind:            diagnostic.EvidencePrecisionBoundary,
-				Trust:           diagnostic.TrustUnknown,
-				MessageContains: []string{"returned value 1 (y) comes from any/unknown"},
-			},
-			{
-				Kind:            diagnostic.EvidenceMissingProof,
-				Trust:           diagnostic.TrustUnknown,
-				MessageContains: []string{"no proof on this path", "returned value 1 (y)", "declared return type"},
-			},
-		},
-		LabelContains: []string{"declared return type", "returned value"},
-		HelpContains:  []string{"Return a value compatible", "change the return annotation", "returned value is valid"},
-		Sources:       diagnostic.SourceMap{"test.lua": src},
-		RenderOrderedContains: []string{
-			`error[type.return.contract]: returned value 1 (y) is any, not {name: string}`,
-			`  |                           ↓ declared return type`,
-			`1 | local function f(y: any): {name: string} return y as {name: string} end return f`,
-			`  |                                                 ↑ returned value`,
-			`1. proven: returned value 1 (y) has type any`,
-			`2. claimed: returned value 1 must satisfy declared return type {name: string}`,
-			`3. unvalidated value: returned value 1 (y) comes from any/unknown`,
-			`4. missing proof: no proof on this path shows returned value 1 (y) satisfies the declared return type`,
-			`help: Return a value compatible with the declared return type, or change the return annotation if the returned value is valid.`,
-		},
-	})
-	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
-		Sources:             diagnostic.SourceMap{"test.lua": src},
-		ShowSourceLabelRows: true,
-	})
-	want := `error[type.return.contract]: returned value 1 (y) is any, not {name: string}
- --> test.lua:1:49
-  |
-  |                           ↓ declared return type
-1 | local function f(y: any): {name: string} return y as {name: string} end return f
-  |                                                 ↑ returned value
-
-because:
-  1. proven: returned value 1 (y) has type any
-  2. claimed: returned value 1 must satisfy declared return type {name: string}
-  3. unvalidated value: returned value 1 (y) comes from any/unknown
-  4. missing proof: no proof on this path shows returned value 1 (y) satisfies the declared return type
-
-help: Return a value compatible with the declared return type, or change the return annotation if the returned value is valid.`
-	assertRenderedEqual(t, rendered, want)
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want structural cast runtime validation to satisfy return contract", result.Diagnostics)
+	}
 }
 
-func TestCastDoesNotLaunderAnyIntoFieldAssignment(t *testing.T) {
-	src := strings.TrimLeft(`
+func TestScalarCastRuntimeValidationSatisfiesFieldAssignment(t *testing.T) {
+	result := Check(`
 local function f(y: any, o: {name: string}): number
 	o.name = y as string
 	return 1
 end
 return f
-`, "\n")
-	result := Check(src)
-	diag := requireDiagnostic(t, result, diagnosticExpectation{
-		Code:            diagnostics.CodeAssignmentType,
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want scalar cast runtime validation to satisfy string field assignment", result.Diagnostics)
+	}
+}
+
+func TestScalarCastRuntimeValidationSatisfiesParameter(t *testing.T) {
+	result := Check(`
+local function need(s: string): number return 1 end
+local function f(y: any): number
+	return need(y as string)
+end
+return f
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want scalar cast runtime validation to satisfy string parameter", result.Diagnostics)
+	}
+}
+
+func TestScalarCastRuntimeValidationSatisfiesReturnContract(t *testing.T) {
+	result := Check(`
+local function f(y: any): string
+	return y as string
+end
+return f
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want scalar cast runtime validation to satisfy string return contract", result.Diagnostics)
+	}
+}
+
+func TestOptionalScalarCastWithFallbackSatisfiesString(t *testing.T) {
+	result := Check(`
+local function need(s: string): number return 1 end
+local function f(params: any): number
+	local body = (params.body as string?) or ""
+	return need(body)
+end
+return f
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want optional scalar cast plus string fallback to satisfy string parameter", result.Diagnostics)
+	}
+}
+
+func TestAnyFieldFallbackDoesNotValidateString(t *testing.T) {
+	result := Check(`
+local function need(s: string): number return 1 end
+local function f(params: any): number
+	local body = params.body or ""
+	return need(body)
+end
+return f
+`)
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDirectCallArgType,
 		Severity:        diagnostic.SeverityError,
 		DiagnosticCount: 1,
-		Line:            2,
-		Column:          11,
+		Line:            5,
 		MessageContains: []string{
-			"cannot assign y",
+			"argument 1 (body)",
+			"comes from any/unknown",
+			"no proof shows it is string",
+		},
+	})
+}
+
+func TestTableEncodeOrAnyFallbackDoesNotValidateString(t *testing.T) {
+	result := Check(`
+local prompt = {}
+function prompt.text(content: string): () end
+
+local json = {}
+function json.encode(value: any): string return "" end
+
+local function clean(value: any): any
+	return value
+end
+
+local function f(raw: any): ()
+	local cleaned = clean(raw)
+	prompt.text(type(cleaned) == "table" and json.encode(cleaned) or cleaned)
+end
+`, WithStdlib())
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDirectCallArgType,
+		Severity:        diagnostic.SeverityError,
+		DiagnosticCount: 1,
+		Line:            14,
+		MessageContains: []string{
+			"argument 1",
+			"unknown",
+			"not string",
+		},
+	})
+}
+
+func TestUnknownCastDoesNotValidateString(t *testing.T) {
+	result := Check(`
+local function need(s: string): number return 1 end
+local function f(value: any): number
+	return need(value :: unknown)
+end
+return f
+`)
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDirectCallArgType,
+		Severity:        diagnostic.SeverityError,
+		DiagnosticCount: 1,
+		MessageContains: []string{
+			"argument 1",
 			"any",
 			"not string",
 		},
-		EvidenceChain: []diagnosticEvidenceExpectation{
-			{
-				Kind:            diagnostic.EvidenceAbstractFact,
-				Trust:           diagnostic.TrustProven,
-				MessageContains: []string{"y has type any"},
-			},
-			{
-				Kind:            diagnostic.EvidenceAbstractFact,
-				Trust:           diagnostic.TrustProven,
-				MessageContains: []string{"assignment target o.name requires string"},
-			},
-			{
-				Kind:            diagnostic.EvidencePrecisionBoundary,
-				Trust:           diagnostic.TrustUnknown,
-				Reason:          diagnostic.EvidenceReasonExplicitBoundaryValidation,
-				MessageContains: []string{"y comes from any/unknown"},
-			},
-			{
-				Kind:            diagnostic.EvidenceMissingProof,
-				Trust:           diagnostic.TrustUnknown,
-				Reason:          diagnostic.EvidenceReasonBoundaryValidationMissing,
-				MessageContains: []string{"no proof on this path", "y", "declared type"},
-			},
-		},
-		LabelContains: []string{"assignment target", "assigned value"},
-		HelpContains:  []string{"Use a value compatible", "change the target type", "`y` is valid"},
-		Sources:       diagnostic.SourceMap{"test.lua": src},
-		RenderOrderedContains: []string{
-			`error[type.assignment]: cannot assign y because it is any, not string`,
-			`  |     ↓ assignment target`,
-			`2 |     o.name = y as string`,
-			`  |              ↑ assigned value`,
-			`1. proven: y has type any`,
-			`2. proven: assignment target o.name requires string`,
-			`3. unvalidated value: y comes from any/unknown`,
-			`4. missing proof: no proof on this path shows y satisfies the declared type`,
-			"help: Use a value compatible with the expected type, or change the target type if `y` is valid.",
-		},
 	})
-	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
-		Sources:             diagnostic.SourceMap{"test.lua": src},
-		ShowSourceLabelRows: true,
-	})
-	want := `error[type.assignment]: cannot assign y because it is any, not string
- --> test.lua:2:11
-  |
-  |     ↓ assignment target
-2 |     o.name = y as string
-  |              ↑ assigned value
-
-because:
-  1. proven: y has type any
-  2. proven: assignment target o.name requires string
-  3. unvalidated value: y comes from any/unknown
-  4. missing proof: no proof on this path shows y satisfies the declared type
-
-help: Use a value compatible with the expected type, or change the target type if ` + "`y`" + ` is valid.`
-	assertRenderedEqual(t, rendered, want)
 }
 
 func TestCastAdoptsTypeForLocalInference(t *testing.T) {

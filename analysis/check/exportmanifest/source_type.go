@@ -2,16 +2,18 @@ package exportmanifest
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/check/internal/sourcebridge"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -43,7 +45,7 @@ func sourceType(result *body.Result, point cfg.Point, source sourceprovenance.AS
 		if !ok {
 			return nil, false
 		}
-		return typevalue.TypeOf(result.Registry(), value)
+		return exportValueType(result, value)
 	}
 	valueSource, ok := sourcebridge.ValueSourceFromASTSource(source)
 	if !ok {
@@ -53,7 +55,7 @@ func sourceType(result *body.Result, point cfg.Point, source sourceprovenance.AS
 	if !ok {
 		return nil, false
 	}
-	return typevalue.TypeOf(result.Registry(), value)
+	return exportValueType(result, value)
 }
 
 func exprType(result *body.Result, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
@@ -66,54 +68,132 @@ func exprType(result *body.Result, point cfg.Point, expr ast.Expr) (typ.Type, bo
 	if t, ok := valueexpr.LiteralType(expr); ok {
 		return t, true
 	}
+	if t, ok := typeValueExprType(result, expr); ok {
+		return t, true
+	}
 	if fn, ok := expr.(*ast.FunctionExpr); ok {
 		if t, ok := functionExpressionType(result, fn); ok {
 			return t, true
 		}
 	}
 	if value, ok := result.ExpressionValueAtBoundary(point, expr); ok {
-		if t, ok := typevalue.TypeOf(result.Registry(), value); ok {
+		if t, ok := exportValueType(result, value); ok {
 			return t, true
 		}
 	}
 	if kinds, ok := valueexpr.RuntimeKind(expr); ok {
 		value := product.NewWithPresence(result.Registry(), product.ShapeTop, presence.Present())
 		value = product.Set(result.Registry(), value, runtimekind.Key, kinds)
-		return typevalue.TypeOf(result.Registry(), value)
+		return exportValueType(result, value)
 	}
 	return nil, false
+}
+
+func exportValueType(result *body.Result, value product.Value) (typ.Type, bool) {
+	return readmodel.New(result).ValueType(value)
+}
+
+func typeValueExprType(result *body.Result, expr ast.Expr) (typ.Type, bool) {
+	ident, ok := expr.(*ast.IdentExpr)
+	if !ok || result == nil {
+		return nil, false
+	}
+	decl, ok := result.TypeValueRef(ident)
+	if !ok {
+		return nil, false
+	}
+	t, ok := typeresolve.NewWithExternal(result, result.ModuleTypes()).Decl(decl)
+	if !ok || t == nil {
+		return nil, false
+	}
+	return typ.NewMeta(t), true
 }
 
 func functionExpressionType(result *body.Result, fn *ast.FunctionExpr) (typ.Type, bool) {
 	if result == nil || fn == nil {
 		return nil, false
 	}
-	expr := &ast.FunctionTypeExpr{
-		TypeParams: fn.TypeParams,
-		Returns:    fn.ReturnTypes,
-	}
-	if fn.ParList != nil {
-		expr.Params = make([]ast.FunctionParamExpr, 0, len(fn.ParList.Names))
-		for i, name := range fn.ParList.Names {
-			paramType := typeExprAt(fn.ParList.Types, i)
-			if paramType == nil {
-				return nil, false
-			}
-			expr.Params = append(expr.Params, ast.FunctionParamExpr{Name: name, Type: paramType})
+	resolver := typeresolve.NewWithExternal(result, result.ModuleTypes())
+	builder := typ.Func()
+	for _, decl := range result.FunctionTypeParams(fn) {
+		t, ok := resolver.Decl(decl)
+		param, paramOK := t.(*typ.TypeParam)
+		if !ok || !paramOK || param == nil {
+			return nil, false
 		}
-		if fn.ParList.HasVargs {
-			if fn.ParList.VarargType == nil {
-				return nil, false
+		builder.TypeParamRef(param)
+	}
+	slots := result.FunctionParamSlots(fn)
+	if functionHasUntypedRegularParam(slots) {
+		builder.Variadic(typ.Any)
+	} else {
+		builder.ReserveParams(len(slots))
+		for _, slot := range slots {
+			t := typ.Type(nil)
+			if slot.Type != nil {
+				resolved, ok := resolver.Type(slot.Type)
+				if !ok {
+					return nil, false
+				}
+				t = resolved
+			} else if slot.ImplicitSelf {
+				t = exportImplicitSelfType(result, resolver, fn)
+			} else {
+				t = typ.Any
 			}
-			expr.Variadic = fn.ParList.VarargType
+			if slot.Vararg {
+				builder.Variadic(t)
+				continue
+			}
+			builder.Param(slot.Name, t)
 		}
 	}
-	return typeresolve.NewWithExternal(result, result.ModuleTypes()).Type(expr)
+	returns := make([]typ.Type, 0, len(fn.ReturnTypes))
+	for _, ret := range exportFunctionReturnTypeExprs(fn.ReturnTypes) {
+		t, ok := resolver.Type(ret)
+		if !ok {
+			return nil, false
+		}
+		returns = append(returns, t)
+	}
+	if len(returns) != 0 {
+		builder.Returns(returns...)
+	}
+	return builder.Build(), true
 }
 
-func typeExprAt(types []ast.TypeExpr, index int) ast.TypeExpr {
-	if index < 0 || index >= len(types) {
-		return nil
+func functionHasUntypedRegularParam(slots []bind.ParamSlot) bool {
+	for _, slot := range slots {
+		if slot.Type == nil && !slot.ImplicitSelf {
+			return true
+		}
 	}
-	return types[index]
+	return false
+}
+
+func exportImplicitSelfType(result *body.Result, resolver *typeresolve.Resolver, fn *ast.FunctionExpr) typ.Type {
+	if result == nil || resolver == nil {
+		return typ.Any
+	}
+	decl, ok := result.MethodReceiverTypeDecl(fn)
+	if !ok {
+		return typ.Any
+	}
+	t, ok := resolver.Decl(decl)
+	if !ok || t == nil || typ.IsNever(t) {
+		return typ.Any
+	}
+	if optional := unwrap.Optional(t); optional != nil {
+		return optional
+	}
+	return t
+}
+
+func exportFunctionReturnTypeExprs(types []ast.TypeExpr) []ast.TypeExpr {
+	if len(types) == 1 {
+		if tuple, ok := types[0].(*ast.TupleTypeExpr); ok {
+			return append([]ast.TypeExpr(nil), tuple.Elements...)
+		}
+	}
+	return append([]ast.TypeExpr(nil), types...)
 }

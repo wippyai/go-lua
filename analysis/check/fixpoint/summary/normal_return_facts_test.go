@@ -16,9 +16,29 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
+func TestNormalReturnSummaryLaneRegistryCoversStorageLanes(t *testing.T) {
+	registered := make(map[callboundary.NormalReturnFactLaneID]struct{})
+	for _, lane := range normalReturnSummaryLanes {
+		if lane.id == "" {
+			t.Fatal("summary normal-return lane with empty ID")
+		}
+		if _, ok := registered[lane.id]; ok {
+			t.Fatalf("summary normal-return lane ID %q registered more than once", lane.id)
+		}
+		registered[lane.id] = struct{}{}
+	}
+	for _, storageLane := range callboundary.NormalReturnFactLanes() {
+		_, ok := registered[storageLane.ID()]
+		if !ok {
+			t.Fatalf("storage lane %q/%s has no summary lane owner", storageLane.ID(), storageLane.FieldName())
+		}
+	}
+}
+
 func TestNormalReturnFactsNormalizeKeepsConcreteCapturedPathBoundaryFacts(t *testing.T) {
 	reg := mustRegistry(t)
 	placeholder := pathdom.NewPlaceholder(0).Field("field")
+	returnSlot := pathdom.Path{Root: "ret[0]"}.Field("field")
 	concrete := pathdom.NewPath(symbol.ID(10), "arg").Field("field")
 	value := presentProduct(reg)
 
@@ -27,9 +47,14 @@ func TestNormalReturnFactsNormalizeKeepsConcreteCapturedPathBoundaryFacts(t *tes
 			{Path: concrete, Value: value},
 			{Path: placeholder, Value: value},
 		},
+		PersistentPathWrites: []callboundary.PathValueFact{
+			{Path: concrete, Value: value},
+			{Path: placeholder, Value: value},
+		},
 		PathStaticMembers: []callboundary.PathStaticMemberFact{
 			{Path: concrete, Value: value},
 			{Path: placeholder, Value: value},
+			{Path: returnSlot, Value: value},
 		},
 		PathInvalidations: []callboundary.PathInvalidationFact{
 			{Path: concrete},
@@ -92,16 +117,32 @@ func TestNormalReturnFactsNormalizeKeepsConcreteCapturedPathBoundaryFacts(t *tes
 	if len(facts.PathRefinements) != 1 || !facts.PathRefinements[0].Path.Equal(placeholder) {
 		t.Fatalf("PathRefinements = %#v, want only placeholder fact", facts.PathRefinements)
 	}
-	if len(facts.PathStaticMembers) != 1 || !facts.PathStaticMembers[0].Path.Equal(placeholder) {
-		t.Fatalf("PathStaticMembers = %#v, want only placeholder fact", facts.PathStaticMembers)
+	if len(facts.PersistentPathWrites) != 1 || !facts.PersistentPathWrites[0].Path.Equal(concrete) {
+		t.Fatalf("PersistentPathWrites = %#v, want only concrete captured-path write", facts.PersistentPathWrites)
+	}
+	if len(facts.PathStaticMembers) != 3 ||
+		findPathStaticMember(facts.PathStaticMembers, concrete) == nil ||
+		findPathStaticMember(facts.PathStaticMembers, placeholder) == nil ||
+		findPathStaticMember(facts.PathStaticMembers, returnSlot) == nil {
+		t.Fatalf("PathStaticMembers = %#v, want concrete captured, placeholder, and return-slot facts", facts.PathStaticMembers)
 	}
 	if len(facts.PathInvalidations) != 2 ||
 		findPathInvalidation(facts.PathInvalidations, concrete) == nil ||
 		findPathInvalidation(facts.PathInvalidations, placeholder) == nil {
 		t.Fatalf("PathInvalidations = %#v, want placeholder and concrete captured-path facts", facts.PathInvalidations)
 	}
-	if len(facts.DynamicIndexFacts) != 1 || facts.DynamicIndexFacts[0].Site != "caller.dynamic.1" {
-		t.Fatalf("DynamicIndexFacts = %#v, want stable caller site placeholder fact", facts.DynamicIndexFacts)
+	var sawPlaceholderDynamic bool
+	var sawConcreteDynamic bool
+	for _, fact := range facts.DynamicIndexFacts {
+		if fact.Table.Equal(placeholder) && fact.Site == "caller.dynamic.1" {
+			sawPlaceholderDynamic = true
+		}
+		if fact.Table.Equal(concrete) && fact.Site == "caller.dynamic.ignored" {
+			sawConcreteDynamic = true
+		}
+	}
+	if !sawPlaceholderDynamic || !sawConcreteDynamic {
+		t.Fatalf("DynamicIndexFacts = %#v, want placeholder and concrete captured-path facts", facts.DynamicIndexFacts)
 	}
 	if len(facts.BranchProofs) != 2 {
 		t.Fatalf("BranchProofs = %#v, want placeholder presence and equality proofs", facts.BranchProofs)
@@ -214,10 +255,57 @@ func TestNormalReturnFactsNormalizeDropsBottomDynamicAndEffectFacts(t *testing.T
 	}
 }
 
+func TestNormalReturnFactsSparseNormalizeAndCloneKeepsOnlyActiveLanes(t *testing.T) {
+	reg := mustRegistry(t)
+	input := callboundary.NormalReturnFacts{
+		NumFloors: []callboundary.NumFloorFact{{
+			Path:  pathdom.NewPlaceholder(0).Field("index"),
+			Floor: 1,
+		}},
+	}
+
+	got := CloneNormalReturnFacts(normalizeNormalReturnFacts(reg, input))
+
+	for _, lane := range callboundary.NormalReturnFactLanes() {
+		gotLen := lane.Len(got)
+		if lane.ID() == callboundary.LaneNumFloors {
+			if gotLen != 1 {
+				t.Fatalf("%s length = %d, want 1", lane.FieldName(), gotLen)
+			}
+			continue
+		}
+		if gotLen != 0 {
+			t.Fatalf("%s length = %d, want empty sparse lane", lane.FieldName(), gotLen)
+		}
+	}
+	if got.NumFloors[0].Floor != 1 || !got.NumFloors[0].Path.Equal(pathdom.NewPlaceholder(0).Field("index")) {
+		t.Fatalf("NumFloors = %#v, want original floor evidence", got.NumFloors)
+	}
+}
+
+func BenchmarkSparseNormalReturnFactsNormalizeClone(b *testing.B) {
+	reg := axis.NewRegistry()
+	input := callboundary.NormalReturnFacts{
+		NumFloors: []callboundary.NumFloorFact{{
+			Path:  pathdom.NewPlaceholder(0).Field("index"),
+			Floor: 1,
+		}},
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		got := CloneNormalReturnFacts(normalizeNormalReturnFacts(reg, input))
+		if len(got.NumFloors) != 1 {
+			b.Fatalf("NumFloors length = %d, want 1", len(got.NumFloors))
+		}
+	}
+}
+
 func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 	reg := mustRegistry(t)
 	original := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
-		PathRefinements: []callboundary.PathValueFact{{Path: pathdom.NewPlaceholder(0).Field("value"), Value: presentProduct(reg)}},
+		PathRefinements:      []callboundary.PathValueFact{{Path: pathdom.NewPlaceholder(0).Field("value"), Value: presentProduct(reg)}},
+		PersistentPathWrites: []callboundary.PathValueFact{{Path: pathdom.NewPath(symbol.ID(91003), "captured"), Value: presentProduct(reg)}},
 		PathStaticMembers: []callboundary.PathStaticMemberFact{{
 			Path:  pathdom.NewPlaceholder(0).Field("member"),
 			Value: presentProduct(reg),
@@ -290,6 +378,7 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 
 	cloned := original.Clone()
 	cloned.NormalReturnFacts.PathRefinements[0].Path = pathdom.NewPlaceholder(1)
+	cloned.NormalReturnFacts.PersistentPathWrites[0].Path = pathdom.NewPath(symbol.ID(91004), "changed")
 	cloned.NormalReturnFacts.PathStaticMembers[0].Path = pathdom.NewPlaceholder(1)
 	cloned.NormalReturnFacts.PathInvalidations[0].Path = pathdom.NewPlaceholder(1)
 	cloned.NormalReturnFacts.DynamicIndexFacts[0].Site = "caller.dynamic.changed"
@@ -305,6 +394,9 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 
 	if !original.NormalReturnFacts.PathRefinements[0].Path.Equal(pathdom.NewPlaceholder(0).Field("value")) {
 		t.Fatalf("mutating cloned path refinement changed original")
+	}
+	if !original.NormalReturnFacts.PersistentPathWrites[0].Path.Equal(pathdom.NewPath(symbol.ID(91003), "captured")) {
+		t.Fatalf("mutating cloned persistent path write changed original")
 	}
 	if !original.NormalReturnFacts.PathStaticMembers[0].Path.Equal(pathdom.NewPlaceholder(0).Field("member")) {
 		t.Fatalf("mutating cloned path static member changed original")
@@ -349,6 +441,8 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 	p0 := pathdom.NewPlaceholder(0)
 	leftOnly := p0.Field("left")
 	commonPath := p0.Field("common")
+	commonPersistentPath := pathdom.NewPath(symbol.ID(91001), "captured")
+	leftPersistentPath := pathdom.NewPath(symbol.ID(91002), "left_captured")
 	storeInto := p0.Field("container")
 	leftValue := presentProduct(reg)
 	rightValue := absentProduct(reg)
@@ -357,6 +451,10 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 		PathRefinements: []callboundary.PathValueFact{
 			{Path: commonPath, Value: leftValue},
 			{Path: leftOnly, Value: leftValue},
+		},
+		PersistentPathWrites: []callboundary.PathValueFact{
+			{Path: commonPersistentPath, Value: leftValue},
+			{Path: leftPersistentPath, Value: leftValue},
 		},
 		PathStaticMembers: []callboundary.PathStaticMemberFact{
 			{Path: commonPath, Value: leftValue},
@@ -414,8 +512,9 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 		},
 	}}
 	right := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
-		PathRefinements:   []callboundary.PathValueFact{{Path: commonPath, Value: rightValue}},
-		PathStaticMembers: []callboundary.PathStaticMemberFact{{Path: commonPath, Value: rightValue}},
+		PathRefinements:      []callboundary.PathValueFact{{Path: commonPath, Value: rightValue}},
+		PersistentPathWrites: []callboundary.PathValueFact{{Path: commonPersistentPath, Value: rightValue}},
+		PathStaticMembers:    []callboundary.PathStaticMemberFact{{Path: commonPath, Value: rightValue}},
 		DynamicIndexFacts: []callboundary.DynamicIndexFact{{
 			Table: p0,
 			Site:  "caller.dynamic.common",
@@ -483,6 +582,10 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 	if common := findPathRefinement(got.PathRefinements, commonPath); common == nil ||
 		!presence.Equal(product.PresenceOf(common.Value), presence.Maybe()) {
 		t.Fatalf("common path refinement did not join to maybe: %#v", common)
+	}
+	if len(got.PersistentPathWrites) != 1 || !got.PersistentPathWrites[0].Path.Equal(commonPersistentPath) ||
+		!presence.Equal(product.PresenceOf(got.PersistentPathWrites[0].Value), presence.Maybe()) {
+		t.Fatalf("PersistentPathWrites = %#v, want only common joined must write", got.PersistentPathWrites)
 	}
 	if len(got.PathStaticMembers) != 1 || !got.PathStaticMembers[0].Path.Equal(commonPath) ||
 		!presence.Equal(product.PresenceOf(got.PathStaticMembers[0].Value), presence.Maybe()) {
@@ -823,6 +926,15 @@ func TestNormalReturnFactsPathInvalidationsCompressParentEvidence(t *testing.T) 
 }
 
 func findPathRefinement(facts []callboundary.PathValueFact, path pathdom.Path) *callboundary.PathValueFact {
+	for i := range facts {
+		if facts[i].Path.Equal(path) {
+			return &facts[i]
+		}
+	}
+	return nil
+}
+
+func findPathStaticMember(facts []callboundary.PathStaticMemberFact, path pathdom.Path) *callboundary.PathStaticMemberFact {
 	for i := range facts {
 		if facts[i].Path.Equal(path) {
 			return &facts[i]

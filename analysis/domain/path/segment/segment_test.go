@@ -1,6 +1,9 @@
 package segment
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestFormatSegments(t *testing.T) {
 	segs := []Segment{
@@ -23,6 +26,42 @@ func TestFormatSegmentsEscapesStringIndex(t *testing.T) {
 	expected := `["a\"b\\c"]`
 	if got := FormatSegments(segs); got != expected {
 		t.Fatalf("FormatSegments escaped index: expected %q, got %q", expected, got)
+	}
+}
+
+func TestFormattedLenAndWriterMatchFormatSegments(t *testing.T) {
+	segs := []Segment{
+		{Kind: SegmentField, Name: "meta"},
+		{Kind: SegmentIndexString, Name: `a"b\c`},
+		{Kind: SegmentIndexInt, Index: -123},
+	}
+	want := FormatSegments(segs)
+	if got := FormattedLen(segs); got != len(want) {
+		t.Fatalf("FormattedLen = %d, want %d for %q", got, len(want), want)
+	}
+	var b strings.Builder
+	b.Grow(FormattedLen(segs))
+	WriteFormattedSegments(&b, segs)
+	if got := b.String(); got != want {
+		t.Fatalf("WriteFormattedSegments = %q, want %q", got, want)
+	}
+}
+
+func TestFormatSegmentsAllocatesOnlyResultString(t *testing.T) {
+	segs := []Segment{
+		{Kind: SegmentField, Name: "meta"},
+		{Kind: SegmentIndexString, Name: `a"b\c`},
+		{Kind: SegmentIndexInt, Index: -123},
+	}
+	var got string
+	allocs := testing.AllocsPerRun(1000, func() {
+		got = FormatSegments(segs)
+	})
+	if got != `.meta["a\"b\\c"][-123]` {
+		t.Fatalf("FormatSegments = %q", got)
+	}
+	if allocs > 1 {
+		t.Fatalf("FormatSegments allocations/run = %.1f, want only result string", allocs)
 	}
 }
 

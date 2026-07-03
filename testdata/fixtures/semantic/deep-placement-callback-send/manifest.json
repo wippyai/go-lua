@@ -21,7 +21,7 @@
           "string",
           "not number"
         ],
-        "min_evidence": 3,
+        "min_evidence": 2,
         "evidence": [
           {
             "kind": "abstract fact",
@@ -40,22 +40,11 @@
             "contains": [
               "bad_route is declared as number"
             ]
-          },
-          {
-            "kind": "missing proof",
-            "trust": "unknown",
-            "reason": "boundary validation missing",
-            "line": 15,
-            "column": 31,
-            "contains": [
-              "no proof on this path shows batch.items[\"route-1\"].child.meta.route satisfies the declared type"
-            ]
           }
         ],
         "evidence_contains": [
           "batch.items[\"route-1\"].child.meta.route has type string",
-          "bad_route is declared as number",
-          "no proof on this path shows batch.items[\"route-1\"].child.meta.route satisfies the declared type"
+          "bad_route is declared as number"
         ],
         "render_contains": [
           "local bad_route: number = batch.items[\"route-1\"].child.meta.route",
@@ -68,7 +57,6 @@
           "because:",
           "1. proven: batch.items[\"route-1\"].child.meta.route has type string",
           "2. claimed: bad_route is declared as number",
-          "3. missing proof: no proof on this path shows batch.items[\"route-1\"].child.meta.route satisfies the declared type",
           "help: Use a value compatible with the expected type, or change the target type if `batch.items[\"route-1\"].child.meta.route` is valid."
         ],
         "render_not_contains": [

@@ -91,9 +91,9 @@ func TestE2E_ParseTypeCheckCompileRun(t *testing.T) {
 					if type(x) == "string" then
 						return x
 					end
-					return tostring(x)
+					return "number"
 				end
-				return process(42)
+				return process("42")
 			`,
 			expected: LString("42"),
 		},

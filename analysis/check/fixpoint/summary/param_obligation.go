@@ -54,3 +54,14 @@ type ParamSinkExposure struct {
 	Source   pathaddr.RootPlaceholderKey
 	Contract product.Value
 }
+
+// CapturedPathObligation records a pre-call obligation imposed on a stable
+// symbol path captured from the caller. It lets a zero-argument closure publish
+// "the captured path I read must satisfy this contract" without pretending the
+// closure has a formal parameter. Call-boundary adaptation rehydrates Path into
+// the caller's path vocabulary, and the caller may project it back through its
+// own stable locals to parameter obligations.
+type CapturedPathObligation struct {
+	Path  pathaddr.StableKey
+	Value product.Value
+}

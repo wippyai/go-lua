@@ -27,22 +27,16 @@ type Field struct {
 //
 // Fields are sorted by name for deterministic hashing and comparison.
 type Record struct {
-	Fields                []Field
-	StaticMembers         []StaticMember
-	Metatable             Type // Metatable type for metamethod lookup
-	MapKey                Type // Map component key type (nil if no map component)
-	MapValue              Type // Map component value type (nil if no map component)
-	Open                  bool // Allow access to undefined fields
-	sorted                bool
-	hash                  uint64
-	containsAny           bool
-	containsNever         bool
-	containsTypeParam     bool
-	containsInstantiated  bool
-	containsGeneric       bool
-	containsRecursive     bool
-	containsOpenRecursive bool
-	strCache              stringCache
+	Fields        []Field
+	StaticMembers []StaticMember
+	Metatable     Type // Metatable type for metamethod lookup
+	MapKey        Type // Map component key type (nil if no map component)
+	MapValue      Type // Map component value type (nil if no map component)
+	Open          bool // Allow access to undefined fields
+	sorted        bool
+	hash          uint64
+	typeProperties
+	strCache stringCache
 }
 
 func (r *Record) Kind() kind.Kind { return kind.Record }

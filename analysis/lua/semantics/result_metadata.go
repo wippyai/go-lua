@@ -46,3 +46,10 @@ func (r *Result) Goto(point cfg.Point) (cfgfacts.GotoFact, bool) {
 	}
 	return r.meta.Goto(point)
 }
+
+func (r *Result) ExpressionEvaluation(point cfg.Point) (cfgfacts.ExpressionEvaluationFact, bool) {
+	if r == nil {
+		return cfgfacts.ExpressionEvaluationFact{}, false
+	}
+	return r.meta.ExpressionEvaluation(point)
+}

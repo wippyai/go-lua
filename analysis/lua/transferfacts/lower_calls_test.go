@@ -5,15 +5,16 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
+	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -36,7 +37,7 @@ func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *test
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
 
 	localPoints := requireStmtPoints(t, built, local, 2)
 	localSite, ok := facts.CallSite(localPoints[0])
@@ -80,6 +81,9 @@ func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *test
 	if conditionSite.Context() != factflow.CallSiteContextCondition || conditionSite.ExprIndex() != 0 || !conditionSite.Final() || !conditionSite.Adjusted() {
 		t.Fatalf("condition call site = context %v expr index %d final=%v adjusted=%v", conditionSite.Context(), conditionSite.ExprIndex(), conditionSite.Final(), conditionSite.Adjusted())
 	}
+	if conditionSite.ConditionNegated() {
+		t.Fatalf("condition call site unexpectedly negated")
+	}
 	if _, ok := callproducer.FromFacts(facts, branchPoints[0]); ok {
 		t.Fatalf("condition call point %d lowered as call producer", branchPoints[0])
 	}
@@ -113,6 +117,63 @@ func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *test
 	}
 }
 
+func TestLowerMemberCallLocalAssignmentUsesCallResultSource(t *testing.T) {
+	makeCall := &ast.FuncCallExpr{
+		Func: dot(ident("builder"), "build"),
+	}
+	local := localAssign([]string{"batch"}, makeCall)
+	stmts := []ast.Stmt{local}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"builder"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	points := requireStmtPoints(t, built, local, 2)
+	site, ok := facts.CallSite(points[0])
+	if !ok {
+		t.Fatalf("missing member assignment call site")
+	}
+	if site.Context() != factflow.CallSiteContextAssignmentSource {
+		t.Fatalf("member call context = %v, want assignment source", site.Context())
+	}
+	if _, ok := callproducer.FromFacts(facts, points[0]); !ok {
+		t.Fatalf("member assignment call point %d missing producer", points[0])
+	}
+	assign, ok := facts.RootAssignment(points[1])
+	if !ok {
+		t.Fatalf("missing local assignment at point %d", points[1])
+	}
+	source := assign.Source()
+	if source.Kind != factflow.ValueSourceCall || source.CallPoint != points[0] || !source.HasCallPoint || source.ResultIndex != 0 {
+		t.Fatalf("member assignment source = %#v, want call result 0 from point %d", source, points[0])
+	}
+}
+
+func TestLowerNegatedConditionCallSiteCarriesPolarity(t *testing.T) {
+	readyCall := &ast.FuncCallExpr{Func: ident("ready")}
+	ifStmt := &ast.IfStmt{Condition: &ast.UnaryNotOpExpr{Expr: readyCall}}
+	stmts := []ast.Stmt{ifStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"ready"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	points := requireStmtPoints(t, built, ifStmt, 2)
+	site, ok := facts.CallSite(points[0])
+	if !ok {
+		t.Fatalf("missing condition call site")
+	}
+	if site.Context() != factflow.CallSiteContextCondition || !site.ConditionNegated() {
+		t.Fatalf("condition call site = context %v negated=%v, want negated condition", site.Context(), site.ConditionNegated())
+	}
+}
+
 func TestLowerCallSitePreservesPortableCallShapeAndArgumentOverlays(t *testing.T) {
 	obj := ident("obj")
 	arg := ident("arg")
@@ -137,7 +198,7 @@ func TestLowerCallSitePreservesPortableCallShapeAndArgumentOverlays(t *testing.T
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	point := requireStmtPoints(t, built, stmt, 1)[0]
@@ -159,6 +220,10 @@ func TestLowerCallSitePreservesPortableCallShapeAndArgumentOverlays(t *testing.T
 	if got := site.CalleePath(); !got.Equal(methodPath) {
 		t.Fatalf("callee path = %#v, want %#v", got, methodPath)
 	}
+	receiverSource, ok := site.ReceiverSource()
+	if !ok || receiverSource.Kind != factflow.ValueSourceExpression || !receiverSource.HasExpr || receiverSource.ExprRef == 0 {
+		t.Fatalf("receiver source = %#v/%v, want lowered expression source", receiverSource, ok)
+	}
 
 	args := site.ArgumentSources()
 	if len(args) != 2 {
@@ -170,7 +235,7 @@ func TestLowerCallSitePreservesPortableCallShapeAndArgumentOverlays(t *testing.T
 	if args[1].Kind != factflow.ValueSourceExpression || !args[1].HasExpr || args[1].ExprRef == 0 || args[1].ExprIndex != 1 || args[1].TargetIndex != 1 || !args[1].Final {
 		t.Fatalf("second arg source = %#v", args[1])
 	}
-	assertLoweredAssertion(t, facts, args[0], assertion.Type(), factflow.ValueSourceExpression)
+	assertLoweredAssertion(t, facts, args[0], concreteCastAssertionForType(typ.Number), factflow.ValueSourceExpression)
 
 	typeArgs := site.TypeArgs()
 	if len(typeArgs) != 2 || typeArgs[0] == 0 || typeArgs[1] == 0 || typeArgs[0] == typeArgs[1] {
@@ -214,6 +279,10 @@ func TestLowerCallSiteUsesSemanticArgumentSources(t *testing.T) {
 		Call:            outer,
 		Args:            []ast.Expr{ident("not_semantic_source")},
 		ArgumentSources: []sourceprovenance.ASTSource{semanticSource},
+		ArgumentSpans: []semantics.SourceSpan{
+			{StartLine: 7, StartCol: 2, EndLine: 7, EndCol: 18},
+		},
+		ArgumentLabels: []string{"wrapped_call"},
 	})
 	args := site.ArgumentSources()
 	if len(args) != 1 {
@@ -222,6 +291,74 @@ func TestLowerCallSiteUsesSemanticArgumentSources(t *testing.T) {
 	arg := args[0]
 	if arg.Kind != factflow.ValueSourceCall || !arg.HasCallPoint || arg.CallPoint != innerPoint {
 		t.Fatalf("nested call arg source = %#v, want call point %d", arg, innerPoint)
+	}
+	if span, ok := site.ArgumentSpanAt(0); !ok || span.StartLine != 7 || span.EndCol != 18 {
+		t.Fatalf("argument span = %#v/%v, want lowered semantic span", span, ok)
+	}
+	if label, ok := site.ArgumentLabelAt(0); !ok || label != "wrapped_call" {
+		t.Fatalf("argument label = %q/%v, want wrapped_call/true", label, ok)
+	}
+}
+
+func TestLowerCallSitePreservesMemberAccessEvidence(t *testing.T) {
+	l := lowerer{exprs: make(map[any]factflow.ExprRef)}
+	site := l.callSite(semantics.CallFact{
+		Context:            semantics.CallContextStatement,
+		Call:               &ast.FuncCallExpr{Func: ident("make")},
+		CalleePath:         path.Path{Root: "api"}.Field("make"),
+		HasCalleePath:      true,
+		CalleeMemberAccess: true,
+	})
+	if !site.CalleeMemberAccess() {
+		t.Fatalf("lowered call site dropped member-access evidence")
+	}
+}
+
+func TestLowerIteratorCallSitePreservesArgumentPath(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local state = {
+    active_sessions = {},
+}
+
+for id, session_info in pairs(state.active_sessions) do
+end
+`, "pairs")
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+
+	genericFor, ok := stmts[1].(*ast.GenericForStmt)
+	if !ok {
+		t.Fatalf("statement 1 = %T, want *ast.GenericForStmt", stmts[1])
+	}
+	points := built.StmtPoints.PointsFor(genericFor)
+	if len(points) == 0 {
+		t.Fatalf("generic-for points = %v, want iterator call point", points)
+	}
+	site, ok := facts.CallSite(points[0])
+	if !ok {
+		t.Fatalf("missing iterator call site at point %d", points[0])
+	}
+	arg, ok := site.ArgumentSourceAt(0)
+	if !ok {
+		t.Fatalf("missing iterator call argument source")
+	}
+	if arg.Kind != factflow.ValueSourceExpression || !arg.HasExpr {
+		t.Fatalf("iterator argument source = %#v, want expression source", arg)
+	}
+	stateSym := mustLocalAt(t, bindings, stmts[0].(*ast.LocalAssignStmt), 0)
+	want := path.NewPath(stateSym, "state").Field("active_sessions")
+	semanticFact, ok := result.Call(points[0])
+	if !ok || len(semanticFact.ArgumentSources) != 1 {
+		t.Fatalf("semantic iterator call fact = %#v/%v", semanticFact, ok)
+	}
+	if got, ok := pathexpr.Resolve(semanticFact.ArgumentSources[0].Expr, bindings); !ok || !got.Equal(want) {
+		t.Fatalf("semantic iterator argument path = %v/%v, want %v", got, ok, want)
+	}
+	got, ok := facts.ExpressionPath(arg.ExprRef)
+	if !ok {
+		t.Fatalf("missing expression path for iterator argument ref %d", arg.ExprRef)
+	}
+	if !got.Equal(want) {
+		t.Fatalf("iterator argument path = %v, want %v", got, want)
 	}
 }
 

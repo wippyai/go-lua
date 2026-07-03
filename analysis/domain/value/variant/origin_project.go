@@ -2,6 +2,7 @@ package variant
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -77,7 +78,9 @@ func originByPathLiteralWithCache(cache *Cache, t typ.Type, suffix []segment.Seg
 			// symmetric the way literal admission is, so each edge consults its
 			// own predicate rather than negating the other.
 			keep = armAdmitsTruthiness(c.typ, suffix, !negate, 0)
-		} else if pathAdmitsLiteral(c.typ, suffix, lit, 0) != negate {
+		} else if negate {
+			keep = !pathForcesLiteral(c.typ, suffix, lit, 0)
+		} else if pathAdmitsLiteral(c.typ, suffix, lit, 0) {
 			keep = true
 		}
 		if keep {
@@ -136,4 +139,52 @@ func NarrowOriginByPath(parentFamily uint64, parentCases []int, suffix []segment
 		return nil, false
 	}
 	return out, true
+}
+
+// NarrowOriginByPathType keeps parent cases whose path projection is compatible
+// with a concrete constraint type. It covers equality tests where one side is a
+// projected union field and the other side is a concrete local value rather than
+// another variant-origin path.
+func NarrowOriginByPathType(parentFamily uint64, parentCases []int, suffix []segment.Segment, constraint typ.Type, equal bool) ([]int, bool) {
+	if parentFamily == 0 || len(parentCases) == 0 || len(suffix) == 0 || constraint == nil {
+		return nil, false
+	}
+	family, ok := loadOriginFamily(parentFamily)
+	if !ok {
+		return nil, false
+	}
+	selected := intSet(parentCases)
+	out := make([]int, 0, len(parentCases))
+	for _, c := range family.cases {
+		if !selected[c.index] {
+			continue
+		}
+		delete(selected, c.index)
+		field, ok := fieldAtPath(c.typ, suffix, 0)
+		if !ok {
+			if !equal {
+				out = append(out, c.index)
+			}
+			continue
+		}
+		compatible := typesOverlap(field, constraint)
+		if compatible == equal {
+			out = append(out, c.index)
+		}
+	}
+	if len(selected) != 0 {
+		return nil, false
+	}
+	out = compactInts(out)
+	if sameIntSet(parentCases, out) {
+		return nil, false
+	}
+	return out, true
+}
+
+func typesOverlap(left, right typ.Type) bool {
+	if left == nil || right == nil {
+		return false
+	}
+	return subtype.IsSubtype(left, right) || subtype.IsSubtype(right, left)
 }

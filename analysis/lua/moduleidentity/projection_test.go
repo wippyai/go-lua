@@ -136,6 +136,18 @@ func TestProjectionResolvesExplicitGlobalSignatureAlias(t *testing.T) {
 	}
 }
 
+func TestProjectionResolvesLocalAliasOfExplicitGlobalModuleRoot(t *testing.T) {
+	projection, graph, sem := buildProjectionWithGlobals(t, `
+		local assert = assert2
+		assert.has_error(nil, {})
+	`, []string{"require", "assert2"})
+
+	got := onlySignatureName(t, projection, graph, sem)
+	if got != "assert2.has_error" {
+		t.Fatalf("SignatureName(local alias of explicit global module root) = %q, want assert2.has_error", got)
+	}
+}
+
 func TestProjectionDoesNotResolveImplicitGlobalSignatureAlias(t *testing.T) {
 	projection, graph, sem := buildProjection(t, `
 		local store = ownership.store

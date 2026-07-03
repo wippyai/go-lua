@@ -1,3 +1,6 @@
 local x: any = "hello"
-local s = string(x)
+if type(x) ~= "string" then
+    error("expected string")
+end
+local s: string = x
 local upper = string.upper(s)

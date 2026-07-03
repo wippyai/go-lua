@@ -66,6 +66,42 @@ func TestProofInnerStopsAtAnyCast(t *testing.T) {
 	}
 }
 
+func TestProofInnerStopsAtUnknownCast(t *testing.T) {
+	expr := &ast.IdentExpr{Value: "x"}
+	wrapped := &ast.CastExpr{
+		Expr: expr,
+		Type: &ast.PrimitiveTypeExpr{Name: "unknown"},
+	}
+
+	if got, ok := ProofInner(wrapped); ok || got != wrapped {
+		t.Fatalf("ProofInner(unknown cast) = %T/%v, want cast/false", got, ok)
+	}
+}
+
+func TestProofInnerIsFunctionLooksThroughProofWrappers(t *testing.T) {
+	fn := &ast.FunctionExpr{}
+	wrapped := &ast.NonNilAssertExpr{
+		Expr: &ast.CastExpr{
+			Expr: fn,
+			Type: &ast.PrimitiveTypeExpr{Name: "fun"},
+		},
+	}
+	if !ProofInnerIsFunction(wrapped) {
+		t.Fatal("ProofInnerIsFunction did not look through proof-transparent wrappers")
+	}
+}
+
+func TestProofInnerIsFunctionStopsAtProofBoundary(t *testing.T) {
+	fn := &ast.FunctionExpr{}
+	wrapped := &ast.CastExpr{
+		Expr: fn,
+		Type: &ast.PrimitiveTypeExpr{Name: "any"},
+	}
+	if ProofInnerIsFunction(wrapped) {
+		t.Fatal("ProofInnerIsFunction crossed an any proof boundary")
+	}
+}
+
 func TestTypedNilProducersAreAbsent(t *testing.T) {
 	var call *ast.FuncCallExpr
 	var callExpr ast.Expr = call

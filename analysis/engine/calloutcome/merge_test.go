@@ -4,9 +4,11 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -18,8 +20,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestWithSupplementalKeepsPrimarySlotsFillsMissingSlotsAndMergesSideFactsWithoutAuthority(t *testing.T) {
@@ -62,6 +67,9 @@ func TestWithSupplementalKeepsPrimarySlotsFillsMissingSlotsAndMergesSideFactsWit
 			ReturnPresenceRelations: []callpayload.CallReturnPresenceRelation{
 				{TriggerIndex: 1, TriggerPresence: presence.Present(), TargetIndex: 0, TargetPresence: presence.Absent()},
 			},
+			ReturnConditionSlots: []callpayload.CallReturnConditionSlotRefinement{
+				{ReturnIndex: 0, ReturnValue: false, TargetIndex: 1, Value: primaryValue},
+			},
 		}
 	}
 
@@ -97,6 +105,131 @@ func TestWithSupplementalKeepsPrimarySlotsFillsMissingSlotsAndMergesSideFactsWit
 		got.ReturnPresenceRelations[0].TargetIndex != 0 ||
 		!presence.Equal(got.ReturnPresenceRelations[0].TargetPresence, presence.Absent()) {
 		t.Fatalf("return presence relations = %#v, want supplemental relation", got.ReturnPresenceRelations)
+	}
+	if len(got.ReturnConditionSlots) != 1 ||
+		got.ReturnConditionSlots[0].ReturnIndex != 0 ||
+		got.ReturnConditionSlots[0].ReturnValue ||
+		got.ReturnConditionSlots[0].TargetIndex != 1 {
+		t.Fatalf("return condition slots = %#v, want supplemental relation", got.ReturnConditionSlots)
+	}
+}
+
+func TestComposeSupplementalCompactsNilProvidersAndPreservesMergeOrder(t *testing.T) {
+	reg := standard.Registry()
+	firstValue := product.Absent(reg)
+	secondValue := product.Top()
+	var calls []string
+	first := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		calls = append(calls, "first")
+		return callpayload.CallOutcome{
+			PostReturnAuthority: true,
+			Results:             []callpayload.CallResult{{Index: 0, Value: firstValue}},
+			ParamObligations: []callpayload.CallParamObligation{
+				{ParamIndex: 0, Value: firstValue},
+			},
+		}
+	}
+	second := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		calls = append(calls, "second")
+		return callpayload.CallOutcome{
+			Results: []callpayload.CallResult{{Index: 1, Value: secondValue}},
+			ParamObligations: []callpayload.CallParamObligation{
+				{ParamIndex: 1, Value: secondValue},
+			},
+			ParamConditions: []callpayload.CallParamCondition{
+				{ParamIndex: 1, Value: true},
+			},
+		}
+	}
+
+	provider := ComposeSupplemental(nil, first, nil, second)
+	if provider == nil {
+		t.Fatal("ComposeSupplemental returned nil for non-nil providers")
+	}
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+
+	if len(calls) != 2 || calls[0] != "first" || calls[1] != "second" {
+		t.Fatalf("provider calls = %v, want first then second", calls)
+	}
+	if len(got.Results) != 1 || got.Results[0].Index != 0 {
+		t.Fatalf("results = %#v, want authoritative first result only", got.Results)
+	}
+	if len(got.ParamObligations) != 2 {
+		t.Fatalf("param obligations = %#v, want diagnostics from both providers", got.ParamObligations)
+	}
+	if len(got.ParamConditions) != 0 {
+		t.Fatalf("param conditions = %#v, want post-return facts blocked by authority", got.ParamConditions)
+	}
+}
+
+func TestMergeSupplementalRefinesFreeTypeParamResultWithConcreteCallableReturn(t *testing.T) {
+	reg := standard.Registry()
+	param := typ.NewTypeParam("T", nil)
+	genericResult := typetable.NewRecord().
+		Field("ok", typ.LiteralBool(true)).
+		Field("value", param).
+		Build()
+	concreteResult := typetable.NewRecord().
+		Field("ok", typ.LiteralBool(true)).
+		Field("value", typ.String).
+		Build()
+	genericValue := typevalue.FromType(reg, genericResult)
+	concreteValue := typevalue.FromType(reg, concreteResult)
+
+	got := MergeSupplemental(reg,
+		callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: genericValue}}},
+		callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: concreteValue}}},
+	)
+
+	if len(got.Results) != 1 {
+		t.Fatalf("results = %#v, want one refined slot", got.Results)
+	}
+	if !product.Equal(reg, got.Results[0].Value, concreteValue) {
+		t.Fatalf("result slot = %#v, want concrete callable return", got.Results[0].Value)
+	}
+}
+
+func TestMergeSupplementalDoesNotWeakenProvenResultWithExplicitAny(t *testing.T) {
+	reg := standard.Registry()
+	optionalString := typeexpr.Optional(typ.String)
+	proven := typevalue.FromType(reg, optionalString)
+	untrusted := typevalue.WithWitness(reg,
+		product.Set(reg, proven, evidence.Key, evidence.ExplicitTop()),
+		optionalString,
+	)
+
+	got := MergeSupplemental(reg,
+		callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: proven}}},
+		callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: untrusted}}},
+	)
+
+	if len(got.Results) != 1 {
+		t.Fatalf("results = %#v, want one result", got.Results)
+	}
+	if !product.Equal(reg, got.Results[0].Value, proven) {
+		t.Fatalf("result value was weakened by explicit-any supplemental: got %v want %v", got.Results[0].Value, proven)
+	}
+}
+
+func TestMergeSupplementalTrustedReturnReplacesUntrustedTopWithTypeWitness(t *testing.T) {
+	reg := standard.Registry()
+	optionalString := typeexpr.Optional(typ.String)
+	proven := typevalue.FromType(reg, optionalString)
+	untrusted := typevalue.WithWitness(reg,
+		product.Set(reg, proven, evidence.Key, evidence.ExplicitTop()),
+		optionalString,
+	)
+
+	got := MergeSupplemental(reg,
+		callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: untrusted}}},
+		callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: proven}}},
+	)
+
+	if len(got.Results) != 1 {
+		t.Fatalf("results = %#v, want one result", got.Results)
+	}
+	if !product.Equal(reg, got.Results[0].Value, proven) {
+		t.Fatalf("result value kept explicit-any evidence: got %v want %v", got.Results[0].Value, proven)
 	}
 }
 
@@ -139,6 +272,9 @@ func TestWithSupplementalAuthorityBlocksSupplementalPostReturnFacts(t *testing.T
 			ReturnPresenceRelations: []callpayload.CallReturnPresenceRelation{
 				{TriggerIndex: 1, TriggerPresence: presence.Present(), TargetIndex: 0, TargetPresence: presence.Absent()},
 			},
+			ReturnConditionSlots: []callpayload.CallReturnConditionSlotRefinement{
+				{ReturnIndex: 0, ReturnValue: false, TargetIndex: 1, Value: primaryValue},
+			},
 		}
 	}
 
@@ -169,6 +305,81 @@ func TestWithSupplementalAuthorityBlocksSupplementalPostReturnFacts(t *testing.T
 	}
 	if len(got.ReturnPresenceRelations) != 0 {
 		t.Fatalf("return presence relations = %#v, want supplemental post-return relation blocked", got.ReturnPresenceRelations)
+	}
+	if len(got.ReturnConditionSlots) != 0 {
+		t.Fatalf("return condition slots = %#v, want supplemental post-return relation blocked", got.ReturnConditionSlots)
+	}
+}
+
+func TestWithSupplementalAuthorityAllowsSpecificRefinementOfExistingWeakResultSlot(t *testing.T) {
+	reg := standard.Registry()
+	primaryValue := product.Set(reg, product.Top(), evidence.Key, evidence.GradualTop())
+	supplementalValue := typeValue(reg, typ.Number)
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
+			PostReturnAuthority: true,
+			Results:             []callpayload.CallResult{{Index: 0, Value: primaryValue}},
+			ReturnConditionRefinements: []callpayload.CallReturnConditionRefinement{
+				{ReturnIndex: 0, ReturnValue: true, Target: pathdom.NewPlaceholder(0), Value: supplementalValue},
+			},
+		}
+	}
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
+			Results: []callpayload.CallResult{
+				{Index: 0, Value: supplementalValue},
+				{Index: 1, Value: supplementalValue},
+			},
+			ReturnPresenceRelations: []callpayload.CallReturnPresenceRelation{
+				{TriggerIndex: 0, TriggerPresence: presence.Present(), TargetIndex: 1, TargetPresence: presence.Present()},
+			},
+		}
+	}
+
+	got := WithSupplemental(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+
+	if !got.PostReturnAuthority {
+		t.Fatal("PostReturnAuthority = false, want authoritative primary preserved")
+	}
+	if len(got.Results) != 1 {
+		t.Fatalf("results = %#v, want only existing authoritative slot refined", got.Results)
+	}
+	gotType, ok := typevalue.TypeOf(reg, got.Results[0].Value)
+	if got.Results[0].Index != 0 || !ok || !typ.TypeEquals(gotType, typ.Number) {
+		t.Fatalf("result slot = %#v type %v/%v, want exact number refinement of slot 0", got.Results[0], gotType, ok)
+	}
+	if gotEvidence := product.Get(reg, got.Results[0].Value, evidence.Key); gotEvidence.IsGradualTop() || gotEvidence.IsExplicitTop() {
+		t.Fatalf("result slot kept weak fallback evidence %s, want supplemental proof evidence", gotEvidence)
+	}
+	if len(got.ReturnPresenceRelations) != 0 {
+		t.Fatalf("return presence relations = %#v, want supplemental post-return facts blocked", got.ReturnPresenceRelations)
+	}
+}
+
+func TestWithSupplementalAuthorityAllowsNarrowerExistingResultSlotRefinement(t *testing.T) {
+	reg := standard.Registry()
+	primaryValue := product.WithPresence(reg, typeValue(reg, typ.Number), presence.Maybe())
+	supplementalValue := typeValue(reg, typ.Number)
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
+			PostReturnAuthority: true,
+			Results:             []callpayload.CallResult{{Index: 0, Value: primaryValue}},
+			ReturnConditionRefinements: []callpayload.CallReturnConditionRefinement{
+				{ReturnIndex: 0, ReturnValue: true, Target: pathdom.NewPlaceholder(0), Value: supplementalValue},
+			},
+		}
+	}
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
+			Results: []callpayload.CallResult{{Index: 0, Value: supplementalValue}},
+		}
+	}
+
+	got := WithSupplemental(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+
+	gotType, ok := typevalue.TypeOf(reg, got.Results[0].Value)
+	if len(got.Results) != 1 || !ok || !typ.TypeEquals(gotType, typ.Number) {
+		t.Fatalf("result slot = %#v type %v/%v, want exact number", got.Results, gotType, ok)
 	}
 }
 
@@ -356,6 +567,40 @@ func TestWithSupplementalAuthorityBlocksSupplementalHeapTableObjects(t *testing.
 	}
 	if _, ok := got.HeapTableObjects[supplementalID]; ok {
 		t.Fatalf("HeapTableObjects = %#v, want supplemental identity blocked", got.HeapTableObjects)
+	}
+}
+
+func TestWithSupplementalAuthorityKeepsHeapFactsForAuthoritativeResultIdentity(t *testing.T) {
+	reg := standard.Registry()
+	resultID := identity.ID{Kind: "table", Site: "compose-result", Index: 1}
+	resultValue := product.Set(reg, product.Top(), identity.Key, identity.Singleton(resultID))
+	memberKey := keyspace.New().FromPath(pathdom.NewPath(symbol.ID(1), "root").Field("run"))
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
+			PostReturnAuthority: true,
+			Results:             []callpayload.CallResult{{Index: 0, Value: resultValue}},
+		}
+	}
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
+			HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+				resultID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+					Root: resultValue,
+					StaticMembers: map[keyspace.Key]product.Value{
+						memberKey: typevalue.FromType(reg, typ.String),
+					},
+				}),
+			},
+		}
+	}
+
+	got := WithSupplemental(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	object, ok := got.HeapTableObjects[resultID]
+	if !ok {
+		t.Fatalf("HeapTableObjects = %#v, want supplemental facts for authoritative result identity", got.HeapTableObjects)
+	}
+	if value, ok := object.StaticMember(memberKey); !ok {
+		t.Fatalf("static member = %v/%v, want propagated member for authoritative result object", value, ok)
 	}
 }
 

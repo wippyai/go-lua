@@ -221,7 +221,7 @@
         "evidence_contains": [
           "store.state.cached_decisions[\"missing\"] can be nil here",
           "missing_decision is declared as protocol.Decision",
-          "no proof on this path shows store.state.cached_decisions[\"missing\"] satisfies the declared type"
+          "store.state.cached_decisions[\"missing\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
         ],
         "evidence": [
           {
@@ -250,9 +250,9 @@
             "column": 45,
             "kind": "missing proof",
             "trust": "unknown",
-            "reason": "boundary validation missing",
+            "reason": "index read validation missing",
             "contains": [
-              "no proof on this path shows store.state.cached_decisions[\"missing\"] satisfies the declared type"
+              "store.state.cached_decisions[\"missing\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
             ]
           }
         ],
@@ -268,7 +268,7 @@
           "because:",
           "proven: store.state.cached_decisions[\"missing\"] can be nil here",
           "claimed: missing_decision is declared as protocol.Decision",
-          "missing proof: no proof on this path shows store.state.cached_decisions[\"missing\"] satisfies the declared type",
+          "missing proof: store.state.cached_decisions[\"missing\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
           "help: Guard `store.state.cached_decisions[\"missing\"]` with a nil check"
         ],
         "render_not_contains": [
@@ -317,7 +317,7 @@
         "evidence_contains": [
           "app.evaluators[\"auth\"] can be nil here",
           "evaluator is declared as protocol.PolicyEvaluator",
-          "no guard on this path proves app.evaluators[\"auth\"] is non-nil"
+          "app.evaluators[\"auth\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
         ],
         "evidence": [
           {
@@ -346,9 +346,9 @@
             "column": 45,
             "kind": "missing proof",
             "trust": "unknown",
-            "reason": "boundary validation missing",
+            "reason": "index read validation missing",
             "contains": [
-              "no guard on this path proves app.evaluators[\"auth\"] is non-nil"
+              "app.evaluators[\"auth\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
             ]
           }
         ],
@@ -364,7 +364,7 @@
           "because:",
           "proven: app.evaluators[\"auth\"] can be nil here",
           "claimed: evaluator is declared as protocol.PolicyEvaluator",
-          "missing proof: no guard on this path proves app.evaluators[\"auth\"] is non-nil",
+          "missing proof: app.evaluators[\"auth\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
           "help: Guard `app.evaluators[\"auth\"]` with a nil check"
         ],
         "render_not_contains": [
@@ -439,8 +439,7 @@
             "line": 58,
             "column": 25,
             "kind": "missing proof",
-            "trust": "unknown",
-            "reason": "boundary validation missing",
+            "trust": "refuted",
             "contains": [
               "no guard on this path proves store.state.last_eval_at is non-nil"
             ]

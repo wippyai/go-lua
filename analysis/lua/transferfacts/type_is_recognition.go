@@ -2,6 +2,8 @@ package transferfacts
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -19,11 +21,11 @@ func (l *lowerer) typeIsCall(fact semantics.CallFact) (typ.Type, path.Path, bool
 }
 
 func (l *lowerer) typeIsCallExpr(call *ast.FuncCallExpr) (typ.Type, path.Path, bool) {
-	call, ok := branchcond.TypeIsCall(call)
+	call, receiver, ok := typeIsCallReceiver(call)
 	if !ok {
 		return nil, path.Path{}, false
 	}
-	t, ok := l.typeValueExpr(call.Receiver)
+	t, ok := l.typeValueExpr(receiver)
 	if !ok {
 		return nil, path.Path{}, false
 	}
@@ -34,21 +36,40 @@ func (l *lowerer) typeIsCallExpr(call *ast.FuncCallExpr) (typ.Type, path.Path, b
 	return t, argPath, true
 }
 
+func typeIsCallReceiver(expr ast.Expr) (*ast.FuncCallExpr, ast.Expr, bool) {
+	call, ok := branchcond.TypeIsCall(expr)
+	if !ok {
+		return nil, nil, false
+	}
+	if call.Receiver != nil && call.Method == "is" {
+		return call, call.Receiver, true
+	}
+	if call.Receiver == nil && call.Method == "" {
+		attr, ok := call.Func.(*ast.AttrGetExpr)
+		if ok && attr.KeySyntax == ast.AttrKeyDot && ast.KeyName(attr.Key) == "is" {
+			return call, attr.Object, true
+		}
+	}
+	return nil, nil, false
+}
+
 func (l *lowerer) addTypeIsBranchRefinements(input *factflow.FactsInput, graph cfg.Graph, result *semantics.Result) {
 	if input == nil || graph == nil || result == nil {
 		return
 	}
 	for _, callPoint := range graph.RPO() {
-		fact, ok := result.Call(callPoint)
+		view, ok := result.CallView(callPoint)
 		if !ok {
 			continue
 		}
+		fact, _ := view.Borrowed()
 		t, argPath, ok := l.typeIsCall(fact)
 		if !ok {
 			continue
 		}
-		value := l.typeWitnessValue(t)
-		l.addTypeIsConditionBranchRefinements(input, graph, result, fact, argPath, value)
+		argValue := l.untrustedTypeWitnessValue(t)
+		resultValue := l.typeIsProofValue(t)
+		l.addTypeIsConditionBranchRefinements(input, graph, result, fact, argPath, argValue)
 		errPath, ok := callResultTargetPath(fact, 1)
 		if !ok {
 			continue
@@ -73,11 +94,11 @@ func (l *lowerer) addTypeIsBranchRefinements(input *factflow.FactsInput, graph c
 			}
 			for _, cond := range edges {
 				appendBranchRefinement(input.BranchRefinements, branch,
-					branchRefinementOnEdge(argPath, factflow.NewValueConstraint(value), cond),
+					branchRefinementOnEdge(argPath, factflow.NewValueConstraint(argValue), cond),
 				)
 				if hasValuePath {
 					appendBranchRefinement(input.BranchRefinements, branch,
-						branchRefinementOnEdge(valuePath, factflow.NewValueConstraint(value), cond),
+						branchRefinementOnEdge(valuePath, factflow.NewValueConstraint(resultValue), cond),
 					)
 				}
 			}
@@ -140,7 +161,7 @@ func (l *lowerer) typeIsExpressionConditionRefinement(expr ast.Expr) (factflow.P
 	}
 	return factflow.NewPostconditionRefinement(
 		argPath,
-		factflow.NewValueConstraint(l.typeWitnessValue(t)),
+		factflow.NewValueConstraint(l.untrustedTypeWitnessValue(t)),
 	), !negated, true
 }
 
@@ -149,7 +170,7 @@ func (l *lowerer) typeIsCallResultValues(fact semantics.CallFact) []factflow.Cal
 	if !ok {
 		return nil
 	}
-	value := product.WithPresence(l.registry, l.typeWitnessValue(t), presence.Maybe())
+	value := product.WithPresence(l.registry, l.typeIsProofValue(t), presence.Maybe())
 	return []factflow.CallResultValue{
 		factflow.NewCallResultValue(0, value),
 		factflow.NewCallResultValue(1, product.Top()),
@@ -165,10 +186,11 @@ func (l *lowerer) typeIsReturnPresenceRelations(sources []sourceprovenance.ASTSo
 		if source.Kind != sourceprovenance.SourceCall || !source.OpenTail || !source.Expanded || !source.HasCallPoint {
 			continue
 		}
-		fact, ok := result.Call(source.CallPoint)
+		view, ok := result.CallView(source.CallPoint)
 		if !ok {
 			continue
 		}
+		fact, _ := view.Borrowed()
 		if _, _, ok := l.typeIsCall(fact); !ok {
 			continue
 		}
@@ -184,6 +206,16 @@ func (l *lowerer) typeIsReturnPresenceRelations(sources []sourceprovenance.ASTSo
 
 func (l *lowerer) typeWitnessValue(t typ.Type) product.Value {
 	return l.valueFromTypeWithWitness(t)
+}
+
+func (l *lowerer) typeIsProofValue(t typ.Type) product.Value {
+	value := l.typeWitnessValue(t)
+	return product.Set(l.registry, value, assertion.Key, assertion.Runtime())
+}
+
+func (l *lowerer) untrustedTypeWitnessValue(t typ.Type) product.Value {
+	value := l.typeWitnessValue(t)
+	return product.Set(l.registry, value, evidence.Key, evidence.ExplicitTop())
 }
 
 type typeIsTargets struct {

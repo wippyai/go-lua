@@ -28,11 +28,27 @@ func rekeyValueMap(from, to *keyspace.KeySpace, in map[keyspace.Key]product.Valu
 	}
 	out := make(map[keyspace.Key]product.Value, len(in))
 	for key, value := range in {
-		rekeyed, ok := to.FromPathKey(from.Format(key))
+		rekeyed, ok := rekeyValueLaneKey(from, to, key)
 		if !ok {
 			continue
 		}
 		out[rekeyed] = value
 	}
 	return out
+}
+
+func rekeyValueLaneKey(from, to *keyspace.KeySpace, key keyspace.Key) (keyspace.Key, bool) {
+	if from == nil || to == nil {
+		return keyspace.Key{}, false
+	}
+	switch key.Kind {
+	case keyspace.KindStableSym:
+		segments, ok := from.SegmentsView(key)
+		if !ok {
+			return keyspace.Key{}, false
+		}
+		return to.FromStableSymbol(key.Sym, segments)
+	default:
+		return to.FromPathKey(from.Format(key))
+	}
 }

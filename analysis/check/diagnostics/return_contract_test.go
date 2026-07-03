@@ -48,6 +48,80 @@ func TestReturnContractReportsLiteralMismatch(t *testing.T) {
 	}
 }
 
+func TestReturnContractReportsCalledLocalFunctionLiteralMismatch(t *testing.T) {
+	diags := runDiagnostics(t, `
+local function parse_count(raw: string): number
+    return "bad"
+end
+
+return parse_count("10")
+`)
+	var found bool
+	for _, d := range diags {
+		if d.Code != CodeReturnContractType {
+			continue
+		}
+		found = true
+		if !strings.Contains(d.Message, `returned value 1`) ||
+			!strings.Contains(d.Message, `"bad"`) ||
+			!strings.Contains(d.Message, "number") {
+			t.Fatalf("return contract diagnostic = %#v, want literal string-to-number mismatch", d)
+		}
+		if got := d.Explanation.String(); !strings.Contains(got, `returned value 1 has literal value "bad"`) ||
+			!strings.Contains(got, "returned value 1 must satisfy declared return type number") {
+			t.Fatalf("return contract explanation = %q, want literal and declared-return evidence", got)
+		}
+	}
+	if !found {
+		t.Fatalf("diagnostics = %#v, want return contract for called local function body", diags)
+	}
+}
+
+func TestReturnContractDeduplicatesRepeatedCalledLocalFunctionMismatch(t *testing.T) {
+	diags := runDiagnostics(t, `
+local function parse_count(raw: string): number
+    return "bad"
+end
+
+local first = parse_count("10")
+local second = parse_count("20")
+`)
+	var count int
+	for _, d := range diags {
+		if d.Code == CodeReturnContractType {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("diagnostics = %#v, want one deduplicated return contract", diags)
+	}
+}
+
+func TestReturnContractAcceptsCalledGenericResultConstructor(t *testing.T) {
+	diags := runDiagnostics(t, `
+type Validation<T> = {ok: true, value: T} | {ok: false, error: string}
+
+local function ok<T>(value: T): Validation<T>
+    return {ok = true, value = value}
+end
+
+local function read_labels(value): Validation<{string}>
+    if value == nil then
+        return ok({} :: {string})
+    end
+    local labels: {string} = {"known"}
+    return ok(labels)
+end
+
+return read_labels(nil)
+`)
+	for _, d := range diags {
+		if d.Code == CodeReturnContractType {
+			t.Fatalf("diagnostics = %#v, want generic result constructor accepted by enclosing return contract", diags)
+		}
+	}
+}
+
 func TestReturnContractReportsProjectedIndexOptional(t *testing.T) {
 	src := strings.TrimLeft(`
 local function pick(xs: {number}, i: integer): number
@@ -89,6 +163,27 @@ because:
 help: Guard ` + "`xs[i]`" + ` with a nil check, return a default value, or change the return type to accept nil.`
 	if rendered != want {
 		t.Fatalf("rendered diagnostic mismatch (-want +got):\n%s", renderLineDiff(want, rendered))
+	}
+}
+
+func TestReturnContractReportsLocalFromOptionalIndexRead(t *testing.T) {
+	diags := runDiagnostics(t, `
+local function pick(xs: {number}, i: integer): number
+    local value = xs[i]
+    return value
+end
+`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	if d := diags[0]; d.Code != CodeReturnContractType ||
+		!strings.Contains(d.Message, "cannot return value as returned value 1") ||
+		!strings.Contains(d.Message, "may be nil") {
+		t.Fatalf("diagnostic = %#v, want return contract optional-local error", d)
+	}
+	if got := diags[0].Explanation.String(); !strings.Contains(got, "returned value 1 (value) can be number or nil here") ||
+		!strings.Contains(got, "returned value 1 must satisfy declared return type number") {
+		t.Fatalf("explanation = %q, want optional local evidence and declared return evidence", got)
 	}
 }
 

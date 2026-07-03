@@ -2,18 +2,29 @@ local client = require("client")
 local json = require("json")
 local tests = require("tests")
 
+type HttpResponse = {
+    status_code: number,
+    body: string?,
+    headers: {[string]: string}?,
+}
+
+local function ok_response(url: string, options: any?): (HttpResponse?, string?)
+    return {
+        status_code = 200,
+        body = json.encode({
+            data = "test",
+            modelVersion = "gemini-2.5-pro-001",
+            responseId = "resp-123",
+            createTime = "2024-01-15T10:30:00Z",
+        })
+    }
+end
+
 client._http_client = {
-    get = function(url, options)
-        return {
-            status_code = 200,
-            body = json.encode({
-                data = "test",
-                modelVersion = "gemini-2.5-pro-001",
-                responseId = "resp-123",
-                createTime = "2024-01-15T10:30:00Z",
-            })
-        }
-    end
+    get = ok_response,
+    post = ok_response,
+    put = ok_response,
+    patch = ok_response,
 }
 
 local response, err = client.request("GET", "https://test.googleapis.com/v1/test", {

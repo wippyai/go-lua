@@ -190,6 +190,63 @@ func TestRequiredTagsDoesNotCacheEmptySummaries(t *testing.T) {
 	}
 }
 
+func TestRequiredTagsAcyclicTypesDoNotAllocateCycleGuard(t *testing.T) {
+	plain := typetable.NewRecord().
+		Field("value", typ.String).
+		Build()
+	tagged := typetable.NewRecord().
+		Field("kind", typ.LiteralString("event")).
+		Field("payload", typetable.NewRecord().Field("id", typ.String).Build()).
+		Build()
+
+	d := NewDetector()
+	if tags := d.RequiredTags(plain); tags != nil {
+		t.Fatalf("plain record tags = %v, want nil", tags)
+	}
+	if tags := d.RequiredTags(tagged); tags["kind"] != typ.EqualityHash(typ.LiteralString("event")) {
+		t.Fatalf("tagged record tags = %v, want kind tag", tags)
+	}
+	if d.active != nil {
+		t.Fatalf("acyclic required-tag extraction allocated cycle guard: %#v", d.active)
+	}
+}
+
+func TestRequiredTagsRecursiveTypesStillUseCycleGuard(t *testing.T) {
+	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typetable.NewRecord().
+			Field("kind", typ.LiteralString("node")).
+			Field("next", self).
+			Build()
+	})
+
+	d := NewDetector()
+	tags := d.RequiredTags(node)
+	if tags["kind"] != typ.EqualityHash(typ.LiteralString("node")) {
+		t.Fatalf("recursive tags = %v, want top-level kind", tags)
+	}
+	if d.active == nil {
+		t.Fatal("recursive required-tag extraction did not allocate cycle guard")
+	}
+	if len(d.active) != 0 {
+		t.Fatalf("recursive cycle guard retained active entries: %#v", d.active)
+	}
+}
+
+func BenchmarkRequiredTagsAcyclicTagless(b *testing.B) {
+	plain := typetable.NewRecord().
+		Field("value", typ.String).
+		Field("nested", typetable.NewRecord().Field("id", typ.String).Build()).
+		Build()
+	d := NewDetector()
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if tags := d.RequiredTags(plain); tags != nil {
+			b.Fatalf("plain record tags = %v, want nil", tags)
+		}
+	}
+}
+
 func TestStaticMemberTagPathAndConflict(t *testing.T) {
 	a := typetable.NewRecord().
 		StaticStringIndex("kind", typ.LiteralString("a")).

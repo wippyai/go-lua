@@ -7,32 +7,37 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
-	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/inspect"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 type operationalEffectContext struct {
 	effects               *signature.OperationalEffects
+	signatureType         *typ.Function
 	argSources            signatureArgumentReader
 	sources               sourcevalue.SourceValues
-	expressionRefinements map[factflow.ExprRef]factflow.ExpressionRefinement
+	expressionRefinements sourcevalue.ExpressionRefinements
 	in                    state.State
 	read                  func(cfg.Point) state.State
 	keySpace              *keyspace.KeySpace
+	typeValues            *typevalue.Cache
 }
 
 func applyOperationalEffects(ctx transfer.NodeContext, out callpayload.CallOutcome, op operationalEffectContext) callpayload.CallOutcome {
@@ -42,15 +47,20 @@ func applyOperationalEffects(ctx transfer.NodeContext, out callpayload.CallOutco
 	}
 	out.ReturnPresenceRelations = operationalReturnPresenceRelations(*effects)
 	out.NormalReturnFacts.PathRefinements = operationalPathPresenceRefinements(ctx, *effects)
-	out.NormalReturnFacts.PathStaticMembers = operationalPathStaticMembers(ctx, *effects)
+	out.NormalReturnFacts.PathRefinements = append(out.NormalReturnFacts.PathRefinements, operationalPathTypeRefinements(ctx, op.typeValues, *effects)...)
+	out.NormalReturnFacts.PathStaticMembers = operationalPathStaticMembers(ctx, op.typeValues, *effects)
+	out.NormalReturnFacts.PathPresenceImplications = operationalPathPresenceImplications(ctx, op.typeValues, *effects)
 	out.NormalReturnFacts.PathInvalidations = operationalPathInvalidations(*effects)
+	out.NormalReturnFacts.BranchProofs = operationalBranchProofs(*effects)
 	out.NormalReturnFacts.DynamicIndexFacts = operationalDynamicIndexFacts(ctx, op)
+	out.NormalReturnFacts.KeyMemberships = operationalKeyMemberships(*effects)
+	out.NormalReturnFacts.DynamicValueKeys = operationalDynamicValueKeys(*effects)
 	out.NormalReturnFacts.FrozenTables = operationalFrozenTables(*effects)
 	out.NormalReturnFacts.EscapeEvents = operationalEscapeEvents(*effects)
 	out.NormalReturnFacts.StoreRelations = operationalStoreRelations(*effects)
 	out.NormalReturnFacts.LifecycleFacts = operationalLifecycleFacts(*effects)
-	out.HeapTableObjects = operationalHeapTableObjects(ctx, op.keySpace, *effects)
-	out.Placements = operationalAllocationPlacements(*effects)
+	out.HeapTableObjects = operationalHeapTableObjects(ctx, op.typeValues, op.keySpace, op.signatureType, *effects)
+	out.Placements = operationalAllocationPlacements(ctx.Point, *effects)
 	return out
 }
 
@@ -88,7 +98,32 @@ func operationalPathPresenceRefinements(ctx transfer.NodeContext, e signature.Op
 	return out
 }
 
-func operationalPathStaticMembers(ctx transfer.NodeContext, e signature.OperationalEffects) []callboundary.PathStaticMemberFact {
+func operationalPathTypeRefinements(ctx transfer.NodeContext, typeValues *typevalue.Cache, e signature.OperationalEffects) []callboundary.PathValueFact {
+	if ctx.Registry == nil || len(e.NormalReturnTypeRefinements) == 0 {
+		return nil
+	}
+	out := make([]callboundary.PathValueFact, 0, len(e.NormalReturnTypeRefinements))
+	for _, refinement := range e.NormalReturnTypeRefinements {
+		if refinement.Type == nil {
+			continue
+		}
+		value := returnValueFromTypeCached(ctx.Registry, typeValues, refinement.Type)
+		claim := refinement.Assertion
+		if claim.IsBottom() {
+			claim = assertion.Top()
+		}
+		if !claim.IsTop() {
+			value = product.Set(ctx.Registry, value, assertion.Key, claim)
+		}
+		out = append(out, callboundary.PathValueFact{
+			Path:  refinement.Path,
+			Value: value,
+		})
+	}
+	return out
+}
+
+func operationalPathStaticMembers(ctx transfer.NodeContext, typeValues *typevalue.Cache, e signature.OperationalEffects) []callboundary.PathStaticMemberFact {
 	if ctx.Registry == nil || len(e.PathStaticMembers) == 0 {
 		return nil
 	}
@@ -97,13 +132,72 @@ func operationalPathStaticMembers(ctx transfer.NodeContext, e signature.Operatio
 		if fact.Type == nil {
 			continue
 		}
-		value := typevalue.WithWitness(ctx.Registry, typevalue.FromType(ctx.Registry, fact.Type), fact.Type)
+		value := returnValueFromTypeCached(ctx.Registry, typeValues, fact.Type)
 		out = append(out, callboundary.PathStaticMemberFact{
 			Path:  fact.Path,
 			Value: value,
 		})
 	}
 	return out
+}
+
+func operationalPathPresenceImplications(ctx transfer.NodeContext, typeValues *typevalue.Cache, e signature.OperationalEffects) []callboundary.PathPresenceImplicationFact {
+	if ctx.Registry == nil || len(e.PathPresenceImplications) == 0 {
+		return nil
+	}
+	out := make([]callboundary.PathPresenceImplicationFact, 0, len(e.PathPresenceImplications))
+	for _, fact := range e.PathPresenceImplications {
+		implication := callboundary.PathPresenceImplicationFact{
+			Trigger:         fact.Trigger,
+			TriggerPresence: fact.TriggerPresence,
+			HasTriggerValue: fact.HasTriggerType,
+			Target:          fact.Target,
+			TargetPresence:  fact.TargetPresence,
+		}
+		if fact.HasTriggerType {
+			if fact.TriggerType == nil {
+				continue
+			}
+			implication.TriggerValue = returnValueFromTypeCached(ctx.Registry, typeValues, fact.TriggerType)
+		}
+		out = append(out, implication)
+	}
+	return out
+}
+
+func operationalBranchProofs(e signature.OperationalEffects) []callboundary.BranchProof {
+	if len(e.BranchProofs) == 0 {
+		return nil
+	}
+	out := make([]callboundary.BranchProof, 0, len(e.BranchProofs))
+	for _, proof := range e.BranchProofs {
+		kind, ok := callBoundaryBranchProofKind(proof.Kind)
+		if !ok {
+			continue
+		}
+		out = append(out, callboundary.BranchProof{
+			Kind:     kind,
+			Path:     proof.Path,
+			Presence: proof.Presence,
+			Other:    proof.Other,
+		})
+	}
+	return out
+}
+
+func callBoundaryBranchProofKind(kind signature.BranchProofKind) (pathevidence.BranchProofKind, bool) {
+	switch kind {
+	case signature.BranchProofPathPresence:
+		return pathevidence.BranchProofPathPresence, true
+	case signature.BranchProofPathEqual:
+		return pathevidence.BranchProofPathEqual, true
+	case signature.BranchProofPathNotEqual:
+		return pathevidence.BranchProofPathNotEqual, true
+	case signature.BranchProofIndexInRange:
+		return pathevidence.BranchProofIndexInRange, true
+	default:
+		return 0, false
+	}
 }
 
 func operationalPresenceValue(ctx transfer.NodeContext, p presence.Value) (product.Value, bool) {
@@ -176,7 +270,7 @@ func operationalDynamicIndexOperandValue(
 		}
 	}
 	if operand.Type != nil {
-		return typevalue.WithWitness(ctx.Registry, typevalue.FromType(ctx.Registry, operand.Type), operand.Type), true
+		return returnValueFromTypeCached(ctx.Registry, op.typeValues, operand.Type), true
 	}
 	return product.Value{}, false
 }
@@ -194,7 +288,7 @@ func operationalPlaceholderOperandValue(
 	if !ok {
 		return product.Value{}, false
 	}
-	resolver := sourcevalue.WithExpressionRefinements(ctx.Registry, op.sources, op.expressionRefinements)
+	resolver := op.expressionRefinements.Bind(ctx.Registry, op.sources)
 	return resolver.ValueOfSource(ctx.Point, source, op.in, op.read)
 }
 
@@ -212,6 +306,22 @@ func operationalDynamicIndexAdmission(admission signature.DynamicIndexAdmission)
 func operationalFrozenTables(e signature.OperationalEffects) []callboundary.FrozenTableFact {
 	return projectOperationalFacts(e.FrozenTables, func(f signature.FrozenTable) callboundary.FrozenTableFact {
 		return callboundary.FrozenTableFact{Target: f.Target}
+	})
+}
+
+func operationalKeyMemberships(e signature.OperationalEffects) []callboundary.KeyMembershipFact {
+	return projectOperationalFacts(e.KeyMemberships, func(f signature.KeyMembership) callboundary.KeyMembershipFact {
+		return callboundary.KeyMembershipFact{Key: f.Key, Table: f.Table}
+	})
+}
+
+func operationalDynamicValueKeys(e signature.OperationalEffects) []callboundary.DynamicValueKeyMembershipFact {
+	return projectOperationalFacts(e.DynamicValueKeys, func(f signature.DynamicValueKeyMembership) callboundary.DynamicValueKeyMembershipFact {
+		return callboundary.DynamicValueKeyMembershipFact{
+			Container: f.Container,
+			Site:      dynamicindex.Site(f.Site),
+			Table:     f.Table,
+		}
 	})
 }
 
@@ -315,7 +425,7 @@ func operationalLifecycleKind(kind signature.LifecycleKind) (callboundary.Lifecy
 	}
 }
 
-func operationalReturnAllocationValue(reg *axis.Registry, effects *signature.OperationalEffects, returnIndex int, value product.Value) product.Value {
+func operationalReturnAllocationValue(reg *axis.Registry, typeValues *typevalue.Cache, effects *signature.OperationalEffects, signatureType *typ.Function, point cfg.Point, returnIndex int, value product.Value) product.Value {
 	if reg == nil || effects == nil || len(effects.ReturnAllocationTemplates) == 0 {
 		return value
 	}
@@ -323,24 +433,63 @@ func operationalReturnAllocationValue(reg *axis.Registry, effects *signature.Ope
 		if template.ReturnIndex != returnIndex || template.Root == "" {
 			continue
 		}
-		return product.Set(reg, value, identity.Key, identity.Singleton(allocationTemplateIdentity(template.Root)))
+		if rootValue, ok := returnAllocationTemplateRootValue(reg, typeValues, template, signatureType, point, value); ok {
+			value = refineReturnAllocationValue(reg, value, rootValue)
+		}
+		return product.Set(reg, value, identity.Key, identity.Singleton(allocationTemplateIdentityAt(point, template.Root)))
 	}
 	return value
 }
 
-func operationalHeapTableObjects(ctx transfer.NodeContext, ks *keyspace.KeySpace, e signature.OperationalEffects) map[identity.ID]heapidentity.TableObject {
+func refineReturnAllocationValue(reg *axis.Registry, current, allocated product.Value) product.Value {
+	currentType, currentOK := typevalue.TypeOf(reg, current)
+	allocatedType, allocatedOK := typevalue.TypeOf(reg, allocated)
+	if currentOK && allocatedOK {
+		switch {
+		case subtype.IsSubtype(currentType, allocatedType):
+			return current
+		case subtype.IsSubtype(allocatedType, currentType):
+			return allocated
+		}
+	}
+	return refinement.MeetConstraint(reg, current, allocated)
+}
+
+func returnAllocationTemplateRootValue(
+	reg *axis.Registry,
+	typeValues *typevalue.Cache,
+	template signature.ReturnAllocationTemplate,
+	signatureType *typ.Function,
+	point cfg.Point,
+	current product.Value,
+) (product.Value, bool) {
+	for _, object := range template.Objects {
+		if object.ID != template.Root {
+			continue
+		}
+		rootType := closeUninferredSignatureTypeParams(signatureType, object.Type)
+		if rootType == nil {
+			return product.Value{}, false
+		}
+		value := returnValueFromTypeCached(reg, typeValues, rootType)
+		return product.WithPresence(reg, value, product.PresenceOf(current)), true
+	}
+	return product.Value{}, false
+}
+
+func operationalHeapTableObjects(ctx transfer.NodeContext, typeValues *typevalue.Cache, ks *keyspace.KeySpace, signatureType *typ.Function, e signature.OperationalEffects) map[identity.ID]heapidentity.TableObject {
 	if ctx.Registry == nil || ks == nil || len(e.ReturnAllocationTemplates) == 0 {
 		return nil
 	}
 	out := make(map[identity.ID]heapidentity.TableObject)
 	for _, template := range e.ReturnAllocationTemplates {
-		objectTypes := allocationObjectTypes(template.Objects)
+		objectTypes := allocationObjectTypes(template.Objects, signatureType)
 		for _, object := range template.Objects {
 			if object.ID == "" {
 				continue
 			}
-			id := allocationTemplateIdentity(object.ID)
-			root := allocationTemplateValue(ctx.Registry, object.ID, object.Type)
+			id := allocationTemplateIdentityAt(ctx.Point, object.ID)
+			root := allocationTemplateValue(ctx.Registry, typeValues, ctx.Point, object.ID, object.Type, signatureType)
 			staticMembers := make(map[keyspace.Key]product.Value, len(object.StaticMembers))
 			for _, member := range object.StaticMembers {
 				if member.Value == "" {
@@ -350,7 +499,7 @@ func operationalHeapTableObjects(ctx transfer.NodeContext, ks *keyspace.KeySpace
 				if !ok {
 					continue
 				}
-				staticMembers[key] = allocationTemplateValue(ctx.Registry, member.Value, objectTypes[member.Value])
+				staticMembers[key] = allocationTemplateValue(ctx.Registry, typeValues, ctx.Point, member.Value, objectTypes[member.Value], nil)
 			}
 			tableKey, tableKeyOK := ks.FromStateKey(pathdom.PathKey(object.ID))
 			dynamicEntries := make(map[dynamicindex.Key]dynamicindex.Fact, len(object.DynamicEntries))
@@ -366,8 +515,8 @@ func operationalHeapTableObjects(ctx transfer.NodeContext, ks *keyspace.KeySpace
 					Site:  dynamicindex.Site(fmt.Sprintf("manifest:%d", i)),
 				}] = dynamicindex.Fact{
 					KeyPresence: presence.Present(),
-					KeyValue:    allocationTemplateKeyValue(ctx.Registry, entry),
-					Value:       allocationTemplateValue(ctx.Registry, entry.Value, objectTypes[entry.Value]),
+					KeyValue:    allocationTemplateKeyValue(ctx.Registry, typeValues, ctx.Point, entry, signatureType),
+					Value:       allocationTemplateValue(ctx.Registry, typeValues, ctx.Point, entry.Value, objectTypes[entry.Value], nil),
 					Admission:   dynamicindex.AdmissionAdmitted,
 				}
 			}
@@ -384,20 +533,21 @@ func operationalHeapTableObjects(ctx transfer.NodeContext, ks *keyspace.KeySpace
 	return out
 }
 
-func allocationObjectTypes(objects []signature.AllocationObjectTemplate) map[signature.AllocationTemplateID]typ.Type {
+func allocationObjectTypes(objects []signature.AllocationObjectTemplate, signatureType *typ.Function) map[signature.AllocationTemplateID]typ.Type {
 	if len(objects) == 0 {
 		return nil
 	}
 	out := make(map[signature.AllocationTemplateID]typ.Type, len(objects))
 	for _, object := range objects {
-		if object.ID != "" && object.Type != nil && !inspect.ContainsTypeParam(object.Type) {
-			out[object.ID] = object.Type
+		t := closeUninferredSignatureTypeParams(signatureType, object.Type)
+		if object.ID != "" && t != nil && !inspect.ContainsTypeParam(t) {
+			out[object.ID] = t
 		}
 	}
 	return out
 }
 
-func operationalAllocationPlacements(e signature.OperationalEffects) map[identity.ID]placement.Value {
+func operationalAllocationPlacements(point cfg.Point, e signature.OperationalEffects) map[identity.ID]placement.Value {
 	if len(e.ReturnAllocationTemplates) == 0 {
 		return nil
 	}
@@ -407,35 +557,39 @@ func operationalAllocationPlacements(e signature.OperationalEffects) map[identit
 			if object.ID == "" {
 				continue
 			}
-			id := allocationTemplateIdentity(object.ID)
+			id := allocationTemplateIdentityAt(point, object.ID)
 			out[id] = placement.Join(out[id], placement.Stack)
 		}
 	}
 	return out
 }
 
-func allocationTemplateKeyValue(reg *axis.Registry, entry signature.AllocationDynamicEntryTemplate) product.Value {
+func allocationTemplateKeyValue(reg *axis.Registry, typeValues *typevalue.Cache, point cfg.Point, entry signature.AllocationDynamicEntryTemplate, signatureType *typ.Function) product.Value {
 	value := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
-	if entry.KeyType != nil {
-		value = typevalue.WithWitness(reg, typevalue.FromType(reg, entry.KeyType), entry.KeyType)
+	if keyType := closeUninferredSignatureTypeParams(signatureType, entry.KeyType); keyType != nil {
+		value = returnValueFromTypeCached(reg, typeValues, keyType)
 	}
 	if entry.Key != "" {
-		value = product.Set(reg, value, identity.Key, identity.Singleton(allocationTemplateIdentity(entry.Key)))
+		value = product.Set(reg, value, identity.Key, identity.Singleton(allocationTemplateIdentityAt(point, entry.Key)))
 	}
 	return value
 }
 
-func allocationTemplateValue(reg *axis.Registry, id signature.AllocationTemplateID, t typ.Type) product.Value {
+func allocationTemplateValue(reg *axis.Registry, typeValues *typevalue.Cache, point cfg.Point, id signature.AllocationTemplateID, t typ.Type, signatureType *typ.Function) product.Value {
 	value := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
-	if t != nil {
-		value = typevalue.WithWitness(reg, typevalue.FromType(reg, t), t)
+	if t = closeUninferredSignatureTypeParams(signatureType, t); t != nil {
+		value = returnValueFromTypeCached(reg, typeValues, t)
 	}
 	if id == "" {
 		return value
 	}
-	return product.Set(reg, value, identity.Key, identity.Singleton(allocationTemplateIdentity(id)))
+	return product.Set(reg, value, identity.Key, identity.Singleton(allocationTemplateIdentityAt(point, id)))
 }
 
 func allocationTemplateIdentity(id signature.AllocationTemplateID) identity.ID {
-	return identity.ID{Kind: "manifest.allocation", Site: string(id)}
+	return allocationTemplateIdentityAt(0, id)
+}
+
+func allocationTemplateIdentityAt(point cfg.Point, id signature.AllocationTemplateID) identity.ID {
+	return identity.ID{Kind: "manifest.allocation", Site: string(id), Index: uint64(point)}
 }

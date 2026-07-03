@@ -2,9 +2,11 @@ package lift
 
 import (
 	"fmt"
+	"reflect"
 	"sort"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	latticelaws "github.com/wippyai/go-lua/analysis/test/laws/lattice"
 )
 
@@ -80,6 +82,31 @@ func TestMustMap_CommonKeysCombineValues(t *testing.T) {
 	}
 }
 
+func TestMustMap_WidenPreservesOperandOrderWhenIteratingSmallerSide(t *testing.T) {
+	d := MustMap[string, int](lattice.Lattice[int]{
+		Bottom:   func() int { return 0 },
+		Top:      func() int { return 999 },
+		Equal:    func(a, b int) bool { return a == b },
+		LessOrEq: func(a, b int) bool { return a <= b },
+		Join: func(a, b int) int {
+			if a > b {
+				return a
+			}
+			return b
+		},
+		Widen: func(prev, next int) int {
+			return prev*10 + next
+		},
+	})
+	prev := MustMapValues(map[string]int{"common": 2, "prevOnly": 8})
+	next := MustMapValues(map[string]int{"common": 3})
+
+	got := d.Widen(prev, next)
+	if got.Values()["common"] != 23 {
+		t.Fatalf("Widen common = %d, want directional prev,next result 23", got.Values()["common"])
+	}
+}
+
 func TestMustMap_BottomTopOrderEquality(t *testing.T) {
 	d := MustMap[string, sign](signLattice())
 	bottom := d.Bottom()
@@ -110,12 +137,35 @@ func TestMustMap_CloneIsolation(t *testing.T) {
 	if original.Values()["x"] != sNeg {
 		t.Fatalf("Clone shared map with original")
 	}
+}
 
+func TestMustMap_IdentityCasesReusePersistentValue(t *testing.T) {
 	d := MustMap[string, sign](signLattice())
-	bottomJoin := d.Join(d.Bottom(), original)
-	bottomJoin.Values()["x"] = sPos
-	if original.Values()["x"] != sNeg {
-		t.Fatalf("Join(Bottom, finite) shared map with input")
+	original := MustMapValues(map[string]sign{"x": sNeg})
+
+	joined := d.Join(original, original)
+	if reflect.ValueOf(joined.Values()).Pointer() != reflect.ValueOf(original.Values()).Pointer() {
+		t.Fatalf("Join(finite, same finite) cloned persistent map")
+	}
+	widened := d.Widen(original, original)
+	if reflect.ValueOf(widened.Values()).Pointer() != reflect.ValueOf(original.Values()).Pointer() {
+		t.Fatalf("Widen(finite, same finite) cloned persistent map")
+	}
+	bottomJoined := d.Join(d.Bottom(), original)
+	if reflect.ValueOf(bottomJoined.Values()).Pointer() != reflect.ValueOf(original.Values()).Pointer() {
+		t.Fatalf("Join(bottom, finite) cloned persistent map")
+	}
+	bottomWidened := d.Widen(d.Bottom(), original)
+	if reflect.ValueOf(bottomWidened.Values()).Pointer() != reflect.ValueOf(original.Values()).Pointer() {
+		t.Fatalf("Widen(bottom, finite) cloned persistent map")
+	}
+	if allocs := testing.AllocsPerRun(100, func() {
+		_ = d.Join(d.Bottom(), original)
+		_ = d.Join(original, d.Bottom())
+		_ = d.Widen(d.Bottom(), original)
+		_ = d.Widen(original, d.Bottom())
+	}); allocs != 0 {
+		t.Fatalf("must-map bottom identity allocated %.1f times, want operand reuse", allocs)
 	}
 }
 
@@ -204,11 +254,34 @@ func TestMustSet_CloneIsolation(t *testing.T) {
 	if _, ok := original.Values()["y"]; ok {
 		t.Fatalf("Clone shared set with original")
 	}
+}
 
+func TestMustSet_IdentityCasesReusePersistentValue(t *testing.T) {
 	d := MustSet[string]()
-	bottomJoin := d.Join(d.Bottom(), original)
-	bottomJoin.Values()["y"] = struct{}{}
-	if _, ok := original.Values()["y"]; ok {
-		t.Fatalf("Join(Bottom, finite) shared set with input")
+	original := MustSetValues(map[string]struct{}{"x": {}})
+
+	joined := d.Join(original, original)
+	if reflect.ValueOf(joined.Values()).Pointer() != reflect.ValueOf(original.Values()).Pointer() {
+		t.Fatalf("Join(finite, same finite) cloned persistent set")
+	}
+	widened := d.Widen(original, original)
+	if reflect.ValueOf(widened.Values()).Pointer() != reflect.ValueOf(original.Values()).Pointer() {
+		t.Fatalf("Widen(finite, same finite) cloned persistent set")
+	}
+	bottomJoined := d.Join(d.Bottom(), original)
+	if reflect.ValueOf(bottomJoined.Values()).Pointer() != reflect.ValueOf(original.Values()).Pointer() {
+		t.Fatalf("Join(bottom, finite) cloned persistent set")
+	}
+	bottomWidened := d.Widen(d.Bottom(), original)
+	if reflect.ValueOf(bottomWidened.Values()).Pointer() != reflect.ValueOf(original.Values()).Pointer() {
+		t.Fatalf("Widen(bottom, finite) cloned persistent set")
+	}
+	if allocs := testing.AllocsPerRun(100, func() {
+		_ = d.Join(d.Bottom(), original)
+		_ = d.Join(original, d.Bottom())
+		_ = d.Widen(d.Bottom(), original)
+		_ = d.Widen(original, d.Bottom())
+	}); allocs != 0 {
+		t.Fatalf("must-set bottom identity allocated %.1f times, want operand reuse", allocs)
 	}
 }

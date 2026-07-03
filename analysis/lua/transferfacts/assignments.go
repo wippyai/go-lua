@@ -1,7 +1,10 @@
 package transferfacts
 
 import (
+	"strconv"
+
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -12,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -28,6 +32,12 @@ func (l *lowerer) localAssignment(fact semantics.LocalAssignmentFact) (factflow.
 		if declared, ok := l.declaredValue(fact.Type); ok {
 			return factflow.NewRootAssignmentWithDeclaredContractValue(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source, declared), true
 		}
+	}
+	if declared, ok := l.declaredReturnLocalContract(fact); ok {
+		return factflow.NewRootAssignmentWithDeclaredContractValue(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source, l.valueFromTypeWithWitness(declared)), true
+	}
+	if declared, ok := l.localCastContract(fact.Expr); ok {
+		return factflow.NewRootAssignmentWithDeclaredOverlayValue(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source, declared), true
 	}
 	return factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source), true
 }
@@ -193,16 +203,7 @@ func exposureContractElement(sourceType, contract typ.Type) typ.Type {
 // source carries the symbol's structural field type projected through the
 // segments, so the exposure can repair the ancestor symbol's witness.
 func (l *lowerer) aliasSource(expr ast.Expr) (path.Path, typ.Type, bool) {
-	inner, ok := sourceprovenance.ProofInner(expr)
-	if !ok {
-		return path.Path{}, nil, false
-	}
-	switch inner.(type) {
-	case *ast.IdentExpr, *ast.AttrGetExpr:
-	default:
-		return path.Path{}, nil, false
-	}
-	sourcePath, ok := pathexpr.Resolve(inner, l.bindings)
+	sourcePath, ok := pathexpr.ResolveAlias(expr, l.bindings)
 	if !ok || sourcePath.Symbol == 0 {
 		return path.Path{}, nil, false
 	}
@@ -228,14 +229,17 @@ func (l *lowerer) declaredValueApplies(fact semantics.LocalAssignmentFact) bool 
 	if fact.Type == nil || fact.Source.Kind != sourceprovenance.SourceExpression {
 		return false
 	}
-	if _, ok := valueexpr.LiteralType(fact.Expr); ok {
-		return true
-	}
 	t, ok := l.resolveType(fact.Type)
 	if !ok {
 		return false
 	}
 	if typ.IsAny(t) || typ.IsUnknown(t) {
+		return true
+	}
+	if literal, ok := valueexpr.LiteralType(fact.Expr); ok {
+		if typ.TypeEquals(literal, typ.Nil) {
+			return false
+		}
 		return true
 	}
 	if !tableConstructorExpr(fact.Expr) {
@@ -249,23 +253,11 @@ func (l *lowerer) declaredValueApplies(fact semantics.LocalAssignmentFact) bool 
 	if recordWithCallableField(t) {
 		return true
 	}
-	// A non-empty table constructor declared as an array carries the declared
-	// array contract value. A homogeneous array literal infers positionally as a
-	// fixed-arity tuple with per-element-precise types; the declared annotation
-	// is the authoritative array contract for the local. The literal is still
-	// verified element-wise against the annotation at the assignment site. An
-	// empty literal is left to its inferred value so later table.insert flow
-	// tracks populated indexes precisely.
-	return reachesArray(t) && nonEmptyTableConstructor(fact.Expr)
-}
-
-func nonEmptyTableConstructor(expr ast.Expr) bool {
-	inner, ok := sourceprovenance.ProofInner(expr)
-	if !ok {
-		return false
-	}
-	table, ok := inner.(*ast.TableExpr)
-	return ok && len(table.Fields) > 0
+	// A table constructor declared as an array carries the declared array
+	// contract value. The literal is still verified element-wise against the
+	// annotation at the assignment site, while dynamic-index facts keep precise
+	// evidence for later writes such as table.insert.
+	return reachesArray(t)
 }
 
 func reachesArray(t typ.Type) bool {
@@ -300,6 +292,37 @@ func tableConstructorExpr(expr ast.Expr) bool {
 	return ok
 }
 
+func emptyTableConstructorExpr(expr ast.Expr) bool {
+	inner, ok := sourceprovenance.ProofInner(expr)
+	if !ok {
+		return false
+	}
+	table, ok := inner.(*ast.TableExpr)
+	return ok && len(table.Fields) == 0
+}
+
+func (l *lowerer) declaredReturnLocalContract(fact semantics.LocalAssignmentFact) (typ.Type, bool) {
+	if !returnLocalInitializerCandidate(fact) {
+		return nil, false
+	}
+	t, ok := l.declaredReturnLocalTypes[fact.Symbol]
+	if !ok || !declaredReturnLocalContractType(t) {
+		return nil, false
+	}
+	return t, true
+}
+
+func (l *lowerer) returnLocalObjectLiteralContract(fact semantics.LocalAssignmentFact) (typ.Type, bool) {
+	if !returnLocalInitializerCandidate(fact) {
+		return nil, false
+	}
+	t, ok := l.returnLocalObjectLiteralTypes[fact.Symbol]
+	if !ok || !declaredReturnLocalContractType(t) {
+		return nil, false
+	}
+	return t, true
+}
+
 func recordWithCallableField(t typ.Type) bool {
 	return recordWithCallableFieldDepth(t, 0)
 }
@@ -330,6 +353,9 @@ func recordWithCallableFieldDepth(t typ.Type, depth int) bool {
 
 func (l *lowerer) ordinaryAssignment(fact semantics.OrdinaryAssignmentFact) (factflow.RootAssignment, bool) {
 	if !fact.HasSymbol || fact.Symbol == 0 {
+		if targetSymbol, targetPath, ok := l.globalTableFieldRootTarget(fact); ok {
+			return factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, targetSymbol, targetPath, l.valueSource(fact.Source)), true
+		}
 		return factflow.RootAssignment{}, false
 	}
 	target := fact.Path
@@ -339,7 +365,46 @@ func (l *lowerer) ordinaryAssignment(fact semantics.OrdinaryAssignmentFact) (fac
 	if len(target.Segments) != 0 {
 		return factflow.RootAssignment{}, false
 	}
+	if declared, ok := l.ordinaryRootDeclaredOverlayContract(fact); ok {
+		return factflow.NewRootAssignmentWithDeclaredOverlayValue(factflow.RootAssignmentOrdinaryRootWrite, fact.Symbol, target, l.valueSource(fact.Source), l.valueFromTypeWithWitness(declared)), true
+	}
 	return factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, fact.Symbol, target, l.valueSource(fact.Source)), true
+}
+
+func (l *lowerer) globalTableFieldRootTarget(fact semantics.OrdinaryAssignmentFact) (symbol.ID, path.Path, bool) {
+	if l.bindings == nil || !fact.HasPath || fact.Path.Symbol == 0 {
+		return 0, path.Path{}, false
+	}
+	if l.bindings.Name(fact.Path.Symbol) != "_G" {
+		return 0, path.Path{}, false
+	}
+	kind, ok := l.bindings.Kind(fact.Path.Symbol)
+	if !ok || kind != symbol.Global {
+		return 0, path.Path{}, false
+	}
+	name, ok := fact.Path.DirectFieldName()
+	if !ok {
+		return 0, path.Path{}, false
+	}
+	target, ok := l.bindings.GlobalSymbol(name)
+	if !ok || target == 0 {
+		return 0, path.Path{}, false
+	}
+	return target, path.NewPath(target, name), true
+}
+
+func (l *lowerer) ordinaryRootDeclaredOverlayContract(fact semantics.OrdinaryAssignmentFact) (typ.Type, bool) {
+	if !fact.HasSymbol || fact.Symbol == 0 || (fact.HasPath && len(fact.Path.Segments) != 0) {
+		return nil, false
+	}
+	if !tableConstructorExpr(fact.Value) {
+		return nil, false
+	}
+	t, ok := l.symbolTypes[fact.Symbol]
+	if !ok || !declaredReturnLocalContractType(t) {
+		return nil, false
+	}
+	return luatypeprojection.PresentConstructorRoot(t), true
 }
 
 // addReassignExposure records a covariant exposure for an ordinary root
@@ -440,6 +505,9 @@ func (l *lowerer) dynamicIndexWrite(fact semantics.OrdinaryAssignmentFact) (fact
 	if keyPath, ok := l.dynamicIndexKeyPath(fact.Target); ok {
 		write = write.WithKeyPath(keyPath)
 	}
+	if valuePath, ok := l.dynamicIndexValuePath(fact.Source); ok {
+		write = write.WithValuePath(valuePath)
+	}
 	return write, true
 }
 
@@ -459,7 +527,78 @@ func (l *lowerer) pathDescendantInvalidation(fact semantics.OrdinaryAssignmentFa
 	if fact.HasPath || !fact.HasContainerPath || fact.ContainerPath.Symbol == 0 {
 		return factflow.PathDescendantInvalidation{}, false
 	}
-	return factflow.NewPathDescendantInvalidation(fact.ContainerPath), true
+	out := factflow.NewPathDescendantInvalidation(fact.ContainerPath)
+	if tablePath, keySource, suffix, ok := l.dynamicInvalidationTarget(fact.Target); ok {
+		out = out.WithDynamicTarget(tablePath, keySource, suffix)
+	}
+	return out, true
+}
+
+func (l *lowerer) dynamicInvalidationTarget(target ast.Expr) (path.Path, factflow.ValueSource, []segment.Segment, bool) {
+	var suffix []segment.Segment
+	for {
+		attr, ok := target.(*ast.AttrGetExpr)
+		if !ok {
+			return path.Path{}, factflow.ValueSource{}, nil, false
+		}
+		if attr.KeySyntax == ast.AttrKeyIndex {
+			switch attr.Key.(type) {
+			case *ast.StringExpr, *ast.NumberExpr:
+			default:
+				tablePath, ok := pathexpr.Resolve(attr.Object, l.bindings)
+				if !ok || tablePath.Symbol == 0 {
+					return path.Path{}, factflow.ValueSource{}, nil, false
+				}
+				keySource, ok := l.dynamicIndexKeySource(attr)
+				if !ok {
+					return path.Path{}, factflow.ValueSource{}, nil, false
+				}
+				return tablePath, keySource, suffix, true
+			}
+		}
+		seg, ok := staticAttrSegment(attr)
+		if !ok {
+			return path.Path{}, factflow.ValueSource{}, nil, false
+		}
+		suffix = append([]segment.Segment{seg}, suffix...)
+		target = attr.Object
+	}
+}
+
+func staticAttrSegment(attr *ast.AttrGetExpr) (segment.Segment, bool) {
+	if attr == nil || attr.Key == nil {
+		return segment.Segment{}, false
+	}
+	switch key := attr.Key.(type) {
+	case *ast.StringExpr:
+		switch attr.KeySyntax {
+		case ast.AttrKeyDot:
+			if key.Value == "" {
+				return segment.Segment{}, false
+			}
+			return segment.Segment{Kind: segment.SegmentField, Name: key.Value}, true
+		case ast.AttrKeyIndex:
+			return segment.Segment{Kind: segment.SegmentIndexString, Name: key.Value}, true
+		default:
+			return segment.Segment{Kind: segment.SegmentField, Name: key.Value}, key.Value != ""
+		}
+	case *ast.NumberExpr:
+		index, ok := parseStaticIndex(key.Value)
+		if !ok {
+			return segment.Segment{}, false
+		}
+		return segment.Segment{Kind: segment.SegmentIndexInt, Index: index}, true
+	default:
+		return segment.Segment{}, false
+	}
+}
+
+func parseStaticIndex(raw string) (int, bool) {
+	if raw == "" {
+		return 0, false
+	}
+	index, err := strconv.Atoi(raw)
+	return index, err == nil && index >= 0
 }
 
 func (l *lowerer) dynamicIndexKeySource(target ast.Expr) (factflow.ValueSource, bool) {
@@ -489,11 +628,14 @@ func (l *lowerer) dynamicIndexKeyPath(target ast.Expr) (path.Path, bool) {
 	if !ok || attr.Key == nil {
 		return path.Path{}, false
 	}
-	key := attr.Key
-	if inner, ok := sourceprovenance.ProofInner(key); ok {
-		key = inner
+	return pathexpr.ResolveAlias(attr.Key, l.bindings)
+}
+
+func (l *lowerer) dynamicIndexValuePath(source sourceprovenance.ASTSource) (path.Path, bool) {
+	if source.Kind != sourceprovenance.SourceExpression || source.Expr == nil {
+		return path.Path{}, false
 	}
-	return pathexpr.Resolve(key, l.bindings)
+	return pathexpr.ResolveAlias(source.Expr, l.bindings)
 }
 
 func dynamicIndexReadbackIntent(readKey bool, readValue bool) factflow.DynamicIndexReadbackIntent {
@@ -515,6 +657,18 @@ func (l *lowerer) declaredValue(expr ast.TypeExpr) (product.Value, bool) {
 	}
 	t, ok := l.resolveType(expr)
 	if !ok {
+		return product.Value{}, false
+	}
+	return l.valueFromTypeWithWitness(t), true
+}
+
+func (l *lowerer) localCastContract(expr ast.Expr) (product.Value, bool) {
+	cast, ok := expr.(*ast.CastExpr)
+	if !ok || cast.Type == nil {
+		return product.Value{}, false
+	}
+	t, ok := l.resolveType(cast.Type)
+	if !ok || t == nil || typ.IsAny(t) || typ.IsUnknown(t) {
 		return product.Value{}, false
 	}
 	return l.valueFromTypeWithWitness(t), true

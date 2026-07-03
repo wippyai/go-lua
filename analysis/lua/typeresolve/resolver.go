@@ -23,6 +23,7 @@ type Resolver struct {
 	params    map[bind.TypeDeclID]*typ.TypeParam
 	active    map[bind.TypeDeclID]bool
 	activeRec map[bind.TypeDeclID]*typ.Recursive
+	activeGen map[bind.TypeDeclID]*typ.Generic
 	current   []ast.TypeExpr
 }
 
@@ -41,6 +42,7 @@ func NewWithExternal(bindings Bindings, external typeannotation.Resolver) *Resol
 		params:    make(map[bind.TypeDeclID]*typ.TypeParam),
 		active:    make(map[bind.TypeDeclID]bool),
 		activeRec: make(map[bind.TypeDeclID]*typ.Recursive),
+		activeGen: make(map[bind.TypeDeclID]*typ.Generic),
 	}
 }
 
@@ -110,7 +112,13 @@ func (r *Resolver) resolveDecl(decl bind.TypeDecl) (typ.Type, bool) {
 }
 
 func (r *Resolver) activeAliasRef(decl bind.TypeDecl) (typ.Type, bool) {
-	if decl.Type == nil || r.bindings == nil || len(r.bindings.TypeDefParams(decl.Type)) != 0 {
+	if decl.Type != nil && r.bindings != nil && len(r.bindings.TypeDefParams(decl.Type)) != 0 {
+		if gen := r.activeGen[decl.ID]; gen != nil {
+			return gen, true
+		}
+		return typ.NewRef("", decl.Name), true
+	}
+	if decl.Type == nil || r.bindings == nil {
 		return typ.NewRef("", decl.Name), true
 	}
 	if rec := r.activeRec[decl.ID]; rec != nil {
@@ -160,10 +168,13 @@ func (r *Resolver) resolveAlias(decl bind.TypeDecl, stmt *ast.TypeDefStmt) (typ.
 			}
 			typeParams = append(typeParams, tp)
 		}
+		gen := typ.NewGeneric(decl.Name, typeParams, nil)
+		r.activeGen[decl.ID] = gen
 		var body typ.Type
 		body, ok = r.Type(stmt.Type)
 		if ok {
-			t = typ.NewGeneric(decl.Name, typeParams, body)
+			gen.SetBody(body)
+			t = gen
 		}
 	} else {
 		t, ok = r.Type(stmt.Type)
@@ -171,6 +182,7 @@ func (r *Resolver) resolveAlias(decl bind.TypeDecl, stmt *ast.TypeDefStmt) (typ.
 	rec := r.activeRec[decl.ID]
 	delete(r.active, decl.ID)
 	delete(r.activeRec, decl.ID)
+	delete(r.activeGen, decl.ID)
 	if !ok {
 		return nil, false
 	}

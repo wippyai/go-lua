@@ -1,10 +1,11 @@
 package summary
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	typenormalize "github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -33,6 +34,7 @@ func NormalizeOwned(reg *axis.Registry, out Summary) Summary {
 	out.ParamMemberReturnSlots = paramMemberReturnSlotLane.Normalize(out.ParamMemberReturnSlots)
 	out.ReturnParamPathAliases = returnParamPathAliasLane.Normalize(out.ReturnParamPathAliases)
 	out.ParamSinkExposures = normalizeParamSinkExposures(reg, out.ParamSinkExposures)
+	out.CapturedPathObligations = normalizeCapturedPathObligations(reg, out.CapturedPathObligations)
 	for len(out.NormalReturnParams) > 0 &&
 		product.Equal(reg, out.NormalReturnParams[len(out.NormalReturnParams)-1], bottom) {
 		out.NormalReturnParams = out.NormalReturnParams[:len(out.NormalReturnParams)-1]
@@ -42,11 +44,15 @@ func NormalizeOwned(reg *axis.Registry, out Summary) Summary {
 		out.NormalReturnParamConditions = out.NormalReturnParamConditions[:len(out.NormalReturnParamConditions)-1]
 	}
 	out.NormalReturnParamEqualities = normalizeParamEqualities(out.NormalReturnParamEqualities)
-	out.NormalReturnFacts = normalizeNormalReturnFacts(reg, out.NormalReturnFacts)
+	out.NormalReturnFacts = normalizeOwnedNormalReturnFacts(reg, out.NormalReturnFacts)
 	out.HeapTableObjects = normalizeOwnedHeapTableObjects(reg, out.HeapTableObjects)
 	out.ReturnConditionParamRefinements = normalizeReturnConditionParamRefinements(
 		reg,
 		out.ReturnConditionParamRefinements,
+	)
+	out.ReturnConditionSlotRefinements = normalizeReturnConditionSlotRefinements(
+		reg,
+		out.ReturnConditionSlotRefinements,
 	)
 	out.ReturnPresenceRelations = returnPresenceRelationLane.Normalize(out.ReturnPresenceRelations)
 	if len(out.Returns) == 0 &&
@@ -55,22 +61,58 @@ func NormalizeOwned(reg *axis.Registry, out Summary) Summary {
 		len(out.ParamMemberReturnSlots) == 0 &&
 		len(out.ReturnParamPathAliases) == 0 &&
 		len(out.ParamSinkExposures) == 0 &&
+		len(out.CapturedPathObligations) == 0 &&
 		len(out.NormalReturnParams) == 0 &&
 		len(out.NormalReturnParamConditions) == 0 &&
 		len(out.NormalReturnParamEqualities) == 0 &&
 		out.NormalReturnFacts.Empty() &&
 		len(out.HeapTableObjects) == 0 &&
 		len(out.ReturnConditionParamRefinements) == 0 &&
+		len(out.ReturnConditionSlotRefinements) == 0 &&
 		len(out.ReturnPresenceRelations) == 0 {
 		return Summary{}
 	}
 	return out
 }
 
+// NormalizedDomain returns the summary lattice for callers that own normalized
+// summaries at every storage boundary. Initial values and transfer outputs must
+// pass through Normalize/NormalizeOwned before entering this domain. The payoff
+// is that convergence checks can compare already-canonical fact lanes without
+// defensively normalizing them again.
+func NormalizedDomain(reg *axis.Registry) lattice.Lattice[Summary] {
+	return lattice.Lattice[Summary]{
+		Bottom: func() Summary { return Summary{} },
+		Equal: func(a, b Summary) bool {
+			return EqualNormalized(reg, a, b)
+		},
+		LessOrEq: func(a, b Summary) bool {
+			return LessOrEq(reg, a, b)
+		},
+		Join: func(a, b Summary) Summary {
+			return Join(reg, a, b)
+		},
+		Widen: func(prev, next Summary) Summary {
+			return Widen(reg, prev, next)
+		},
+	}
+}
+
 // Equal reports whether a and b have equal summary lanes. Missing return and
 // value-constraint slots are bottom. Missing condition slots within the known
 // normal-return parameter arity are top/no-constraint.
 func Equal(reg *axis.Registry, a, b Summary) bool {
+	return equal(reg, a, b, false)
+}
+
+// EqualNormalized reports whether a and b are equal when both summaries are
+// already normalized. It is intended for solver-owned storage domains; use Equal
+// at public boundaries or with arbitrary caller-provided summaries.
+func EqualNormalized(reg *axis.Registry, a, b Summary) bool {
+	return equal(reg, a, b, true)
+}
+
+func equal(reg *axis.Registry, a, b Summary, normalized bool) bool {
 	n := max(len(a.Returns), len(b.Returns))
 	for i := range n {
 		if !product.Equal(reg, returnAt(reg, a, i), returnAt(reg, b, i)) {
@@ -100,10 +142,19 @@ func Equal(reg *axis.Registry, a, b Summary) bool {
 		paramMemberReturnSlotLane.Equal(a.ParamMemberReturnSlots, b.ParamMemberReturnSlots) &&
 		returnParamPathAliasLane.Equal(a.ReturnParamPathAliases, b.ReturnParamPathAliases) &&
 		paramSinkExposuresEqual(reg, a.ParamSinkExposures, b.ParamSinkExposures) &&
-		normalReturnFactsEqual(reg, a.NormalReturnFacts, b.NormalReturnFacts) &&
+		capturedPathObligationsEqual(reg, a.CapturedPathObligations, b.CapturedPathObligations) &&
+		normalReturnFactsEqualFor(reg, a.NormalReturnFacts, b.NormalReturnFacts, normalized) &&
 		heapTableObjectsEqual(reg, a.HeapTableObjects, b.HeapTableObjects) &&
 		returnConditionParamRefinementsEqual(reg, a.ReturnConditionParamRefinements, b.ReturnConditionParamRefinements) &&
+		returnConditionSlotRefinementsEqual(reg, a.ReturnConditionSlotRefinements, b.ReturnConditionSlotRefinements) &&
 		returnPresenceRelationLane.Equal(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
+}
+
+func normalReturnFactsEqualFor(reg *axis.Registry, a, b callboundary.NormalReturnFacts, normalized bool) bool {
+	if normalized {
+		return normalReturnFactsEqualNormalized(reg, a, b)
+	}
+	return normalReturnFactsEqual(reg, a, b)
 }
 
 // LessOrEq reports whether a is less than or equal to b componentwise. Missing
@@ -145,9 +196,11 @@ func LessOrEq(reg *axis.Registry, a, b Summary) bool {
 		paramMemberReturnSlotLane.LessOrEq(a.ParamMemberReturnSlots, b.ParamMemberReturnSlots) &&
 		returnParamPathAliasLane.LessOrEq(a.ReturnParamPathAliases, b.ReturnParamPathAliases) &&
 		paramSinkExposuresLessOrEq(reg, a.ParamSinkExposures, b.ParamSinkExposures) &&
+		capturedPathObligationsLessOrEq(reg, a.CapturedPathObligations, b.CapturedPathObligations) &&
 		normalReturnFactsLessOrEq(reg, a.NormalReturnFacts, b.NormalReturnFacts) &&
 		heapTableObjectsLessOrEq(reg, a.HeapTableObjects, b.HeapTableObjects) &&
 		returnConditionParamRefinementsLessOrEq(reg, a.ReturnConditionParamRefinements, b.ReturnConditionParamRefinements) &&
+		returnConditionSlotRefinementsLessOrEq(reg, a.ReturnConditionSlotRefinements, b.ReturnConditionSlotRefinements) &&
 		returnPresenceRelationLane.LessOrEq(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
 }
 
@@ -209,14 +262,19 @@ func Join(reg *axis.Registry, a, b Summary) Summary {
 		b.ReturnParamPathAliases,
 	)
 	out.ParamSinkExposures = joinParamSinkExposures(reg, a.ParamSinkExposures, b.ParamSinkExposures)
+	out.CapturedPathObligations = joinCapturedPathObligations(reg, a.CapturedPathObligations, b.CapturedPathObligations)
 	out.NormalReturnParamEqualities = joinParamEqualities(reg, a, b)
 	out.NormalReturnFacts = joinNormalReturnFacts(reg, a.NormalReturnFacts, b.NormalReturnFacts)
-	out.HeapTableObjects = joinHeapTableObjects(reg, a.HeapTableObjects, b.HeapTableObjects)
-	out.HeapKeySpace = preferHeapKeySpace(a, b)
+	out.HeapTableObjects, out.HeapKeySpace = joinSummaryHeapTableObjects(reg, a, b)
 	out.ReturnConditionParamRefinements = joinReturnConditionParamRefinements(
 		reg,
 		a.ReturnConditionParamRefinements,
 		b.ReturnConditionParamRefinements,
+	)
+	out.ReturnConditionSlotRefinements = joinReturnConditionSlotRefinements(
+		reg,
+		a.ReturnConditionSlotRefinements,
+		b.ReturnConditionSlotRefinements,
 	)
 	out.ReturnPresenceRelations = returnPresenceRelationLane.Join(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
 	return NormalizeOwned(reg, out)
@@ -321,28 +379,22 @@ func Widen(reg *axis.Registry, prev, next Summary) Summary {
 		next.ReturnParamPathAliases,
 	)
 	out.ParamSinkExposures = joinParamSinkExposures(reg, prev.ParamSinkExposures, next.ParamSinkExposures)
+	out.CapturedPathObligations = widenCapturedPathObligations(reg, prev.CapturedPathObligations, next.CapturedPathObligations)
 	out.NormalReturnParamEqualities = joinParamEqualities(reg, prev, next)
 	out.NormalReturnFacts = widenNormalReturnFacts(reg, prev.NormalReturnFacts, next.NormalReturnFacts)
-	out.HeapTableObjects = widenHeapTableObjects(reg, prev.HeapTableObjects, next.HeapTableObjects)
-	out.HeapKeySpace = preferHeapKeySpace(prev, next)
+	out.HeapTableObjects, out.HeapKeySpace = widenSummaryHeapTableObjects(reg, prev, next)
 	out.ReturnConditionParamRefinements = joinReturnConditionParamRefinements(
 		reg,
 		prev.ReturnConditionParamRefinements,
 		next.ReturnConditionParamRefinements,
 	)
+	out.ReturnConditionSlotRefinements = joinReturnConditionSlotRefinements(
+		reg,
+		prev.ReturnConditionSlotRefinements,
+		next.ReturnConditionSlotRefinements,
+	)
 	out.ReturnPresenceRelations = returnPresenceRelationLane.Join(prev.ReturnPresenceRelations, next.ReturnPresenceRelations)
 	return NormalizeOwned(reg, out)
-}
-
-// preferHeapKeySpace selects the keyspace carried by whichever summary
-// contributes heap objects. Within a single function's fixpoint both operands
-// share one keyspace, so the choice is unambiguous; it is nil only when neither
-// operand carries heap objects.
-func preferHeapKeySpace(a, b Summary) *keyspace.KeySpace {
-	if a.HeapKeySpace != nil {
-		return a.HeapKeySpace
-	}
-	return b.HeapKeySpace
 }
 
 func summaryBottom(s Summary) bool {
@@ -352,12 +404,14 @@ func summaryBottom(s Summary) bool {
 		len(s.ParamMemberReturnSlots) == 0 &&
 		len(s.ReturnParamPathAliases) == 0 &&
 		len(s.ParamSinkExposures) == 0 &&
+		len(s.CapturedPathObligations) == 0 &&
 		len(s.NormalReturnParams) == 0 &&
 		len(s.NormalReturnParamConditions) == 0 &&
 		len(s.NormalReturnParamEqualities) == 0 &&
 		s.NormalReturnFacts.Empty() &&
 		len(s.HeapTableObjects) == 0 &&
 		len(s.ReturnConditionParamRefinements) == 0 &&
+		len(s.ReturnConditionSlotRefinements) == 0 &&
 		len(s.ReturnPresenceRelations) == 0
 }
 
@@ -366,9 +420,11 @@ func summaryPairNonSlotLanesEmpty(a, b Summary) bool {
 		len(a.ParamMemberReturnSlots) == 0 && len(b.ParamMemberReturnSlots) == 0 &&
 		len(a.ReturnParamPathAliases) == 0 && len(b.ReturnParamPathAliases) == 0 &&
 		len(a.ParamSinkExposures) == 0 && len(b.ParamSinkExposures) == 0 &&
+		len(a.CapturedPathObligations) == 0 && len(b.CapturedPathObligations) == 0 &&
 		len(a.NormalReturnParamEqualities) == 0 && len(b.NormalReturnParamEqualities) == 0 &&
 		a.NormalReturnFacts.Empty() && b.NormalReturnFacts.Empty() &&
 		len(a.HeapTableObjects) == 0 && len(b.HeapTableObjects) == 0 &&
 		len(a.ReturnConditionParamRefinements) == 0 && len(b.ReturnConditionParamRefinements) == 0 &&
+		len(a.ReturnConditionSlotRefinements) == 0 && len(b.ReturnConditionSlotRefinements) == 0 &&
 		len(a.ReturnPresenceRelations) == 0 && len(b.ReturnPresenceRelations) == 0
 }

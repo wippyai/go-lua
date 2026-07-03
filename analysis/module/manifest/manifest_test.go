@@ -18,6 +18,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/annotation"
@@ -96,6 +97,44 @@ func TestManifestRoundTrip(t *testing.T) {
 	}
 	if !typ.TypeEquals(got.Export, m.Export) {
 		t.Fatalf("export = %v, want %v", got.Export, m.Export)
+	}
+}
+
+func TestManifestRoundTripCallbackPhaseProtocol(t *testing.T) {
+	m := New("example/callbacks")
+	m.DefineCallbackPhaseRegistration("before_each", 0, "setup")
+	m.DefineCallbackPhaseRegistration("before_each", 0, "setup")
+	m.DefineCallbackPhaseRegistration("after_each", 0, "teardown")
+	m.DefineCallbackPhaseInvocation("it", 1, []string{"setup", "setup"}, []string{"teardown"})
+	m.DefineCallbackPhaseInvocation("it", 1, []string{"setup"}, []string{"teardown"})
+	m.DefineCallbackPhaseInvocation("case", 1, []string{"z_outer", "a_inner", "z_outer"}, []string{"z_cleanup", "a_final"})
+
+	data, err := Encode(m)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	got, err := Decode(data)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+
+	if len(got.CallbackPhaseRegistrations) != 2 {
+		t.Fatalf("registrations = %#v, want before_each/setup and after_each/teardown", got.CallbackPhaseRegistrations)
+	}
+	if len(got.CallbackPhaseInvocations) != 2 {
+		t.Fatalf("invocations = %#v, want normalized it and case invocations", got.CallbackPhaseInvocations)
+	}
+	invocation := got.CallbackPhaseInvocations[1]
+	if invocation.Function != "it" || invocation.CallbackParam != 1 ||
+		len(invocation.Before) != 1 || invocation.Before[0] != "setup" ||
+		len(invocation.After) != 1 || invocation.After[0] != "teardown" {
+		t.Fatalf("invocation = %#v, want normalized setup -> teardown protocol", invocation)
+	}
+	ordered := got.CallbackPhaseInvocations[0]
+	if ordered.Function != "case" || ordered.CallbackParam != 1 ||
+		len(ordered.Before) != 2 || ordered.Before[0] != "z_outer" || ordered.Before[1] != "a_inner" ||
+		len(ordered.After) != 2 || ordered.After[0] != "z_cleanup" || ordered.After[1] != "a_final" {
+		t.Fatalf("ordered invocation = %#v, want declared phase order with duplicates removed", ordered)
 	}
 }
 
@@ -207,12 +246,43 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 			Path:     pathdom.NewPlaceholder(0).Field("ready"),
 			Presence: presence.Present(),
 		}},
+		NormalReturnTypeRefinements: []signature.PathTypeRefinement{{
+			Path:      pathdom.NewPlaceholder(0),
+			Type:      typ.String,
+			Assertion: assertion.Runtime(),
+		}},
 		PathStaticMembers: []signature.PathStaticMemberFact{{
 			Path: pathdom.NewPlaceholder(1).Field("kind"),
 			Type: typ.String,
 		}},
 		PathInvalidations: []signature.PathInvalidation{{
 			Path: pathdom.NewPlaceholder(1).Field("items"),
+		}},
+		BranchProofs: []signature.BranchProof{{
+			Kind:  signature.BranchProofPathNotEqual,
+			Path:  pathdom.NewPlaceholder(0).Field("channel"),
+			Other: pathdom.NewPlaceholder(1),
+		}},
+		DynamicIndexFacts: []signature.DynamicIndexFact{{
+			Table:       pathdom.Path{Root: "ret[0]"},
+			Site:        "example.returned.array",
+			KeyPresence: presence.Present(),
+			Key: signature.DynamicIndexOperand{
+				Type: typ.Integer,
+			},
+			Value: signature.DynamicIndexOperand{
+				Type: typ.String,
+			},
+			Admission: signature.DynamicIndexAdmissionAdmitted,
+		}},
+		KeyMemberships: []signature.KeyMembership{{
+			Key:   pathdom.NewPlaceholder(0).Field("key"),
+			Table: pathdom.NewPlaceholder(1),
+		}},
+		DynamicValueKeys: []signature.DynamicValueKeyMembership{{
+			Container: pathdom.Path{Root: "ret[0]"},
+			Site:      "example.returned.keys",
+			Table:     pathdom.NewPlaceholder(1),
 		}},
 		FrozenTables: []signature.FrozenTable{{
 			Target: pathdom.NewPlaceholder(0).Field("sealed"),
@@ -277,7 +347,11 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 		!strings.Contains(string(data), `"effect"`) ||
 		!strings.Contains(string(data), `"operationalEffects"`) ||
 		!strings.Contains(string(data), `"typestateProtocols"`) ||
+		!strings.Contains(string(data), `"normalReturnTypeRefinements"`) ||
 		!strings.Contains(string(data), `"pathStaticMembers"`) ||
+		!strings.Contains(string(data), `"dynamicIndexFacts"`) ||
+		!strings.Contains(string(data), `"keyMemberships"`) ||
+		!strings.Contains(string(data), `"dynamicValueKeys"`) ||
 		!strings.Contains(string(data), `"lifecycleEffects"`) ||
 		!strings.Contains(string(data), `"returnAllocationTemplates"`) ||
 		!strings.Contains(string(data), `"suffix": ".payload"`) {
@@ -1051,6 +1125,10 @@ func operationalEffectsOrderA() *signature.OperationalEffects {
 			{Path: pathdom.NewPlaceholder(1).Field("ready"), Presence: presence.Present()},
 			{Path: pathdom.NewPlaceholder(0).Field("missing"), Presence: presence.Absent()},
 		},
+		NormalReturnTypeRefinements: []signature.PathTypeRefinement{
+			{Path: pathdom.NewPlaceholder(1), Type: typ.String},
+			{Path: pathdom.NewPlaceholder(0), Type: typeexpr.Optional(typ.Number)},
+		},
 		PathStaticMembers: []signature.PathStaticMemberFact{
 			{Path: pathdom.NewPlaceholder(1).Field("kind"), Type: typ.String},
 			{Path: pathdom.NewPlaceholder(0).Field("kind"), Type: typeexpr.Optional(typ.Number)},
@@ -1058,6 +1136,32 @@ func operationalEffectsOrderA() *signature.OperationalEffects {
 		PathInvalidations: []signature.PathInvalidation{
 			{Path: pathdom.NewPlaceholder(1).Field("items")},
 			{Path: pathdom.NewPlaceholder(0).Field("items")},
+		},
+		DynamicIndexFacts: []signature.DynamicIndexFact{
+			{
+				Table:       pathdom.Path{Root: "ret[1]"},
+				Site:        "z.dynamic",
+				KeyPresence: presence.Present(),
+				Key:         signature.DynamicIndexOperand{Type: typ.Integer},
+				Value:       signature.DynamicIndexOperand{Type: typ.String},
+				Admission:   signature.DynamicIndexAdmissionAdmitted,
+			},
+			{
+				Table:       pathdom.NewPlaceholder(0).Field("items"),
+				Site:        "a.dynamic",
+				KeyPresence: presence.Present(),
+				Key:         signature.DynamicIndexOperand{Type: typ.String},
+				Value:       signature.DynamicIndexOperand{Type: typ.Number},
+				Admission:   signature.DynamicIndexAdmissionUnknown,
+			},
+		},
+		KeyMemberships: []signature.KeyMembership{
+			{Key: pathdom.NewPlaceholder(1).Field("key"), Table: pathdom.NewPlaceholder(0).Field("table")},
+			{Key: pathdom.Path{Root: "ret[1]"}, Table: pathdom.NewPlaceholder(1).Field("table")},
+		},
+		DynamicValueKeys: []signature.DynamicValueKeyMembership{
+			{Container: pathdom.Path{Root: "ret[1]"}, Site: "z.site", Table: pathdom.NewPlaceholder(1).Field("table")},
+			{Container: pathdom.Path{Root: "ret[0]"}, Site: "a.site", Table: pathdom.NewPlaceholder(0).Field("table")},
 		},
 		FrozenTables: []signature.FrozenTable{
 			{Target: pathdom.NewPlaceholder(1).Field("sealed")},
@@ -1102,6 +1206,10 @@ func operationalEffectsOrderB() *signature.OperationalEffects {
 			{Path: pathdom.NewPlaceholder(0).Field("missing"), Presence: presence.Absent()},
 			{Path: pathdom.NewPlaceholder(1).Field("ready"), Presence: presence.Present()},
 		},
+		NormalReturnTypeRefinements: []signature.PathTypeRefinement{
+			{Path: pathdom.NewPlaceholder(0), Type: typeexpr.Optional(typ.Number)},
+			{Path: pathdom.NewPlaceholder(1), Type: typ.String},
+		},
 		PathStaticMembers: []signature.PathStaticMemberFact{
 			{Path: pathdom.NewPlaceholder(0).Field("kind"), Type: typeexpr.Optional(typ.Number)},
 			{Path: pathdom.NewPlaceholder(1).Field("kind"), Type: typ.String},
@@ -1109,6 +1217,32 @@ func operationalEffectsOrderB() *signature.OperationalEffects {
 		PathInvalidations: []signature.PathInvalidation{
 			{Path: pathdom.NewPlaceholder(0).Field("items")},
 			{Path: pathdom.NewPlaceholder(1).Field("items")},
+		},
+		DynamicIndexFacts: []signature.DynamicIndexFact{
+			{
+				Table:       pathdom.NewPlaceholder(0).Field("items"),
+				Site:        "a.dynamic",
+				KeyPresence: presence.Present(),
+				Key:         signature.DynamicIndexOperand{Type: typ.String},
+				Value:       signature.DynamicIndexOperand{Type: typ.Number},
+				Admission:   signature.DynamicIndexAdmissionUnknown,
+			},
+			{
+				Table:       pathdom.Path{Root: "ret[1]"},
+				Site:        "z.dynamic",
+				KeyPresence: presence.Present(),
+				Key:         signature.DynamicIndexOperand{Type: typ.Integer},
+				Value:       signature.DynamicIndexOperand{Type: typ.String},
+				Admission:   signature.DynamicIndexAdmissionAdmitted,
+			},
+		},
+		KeyMemberships: []signature.KeyMembership{
+			{Key: pathdom.Path{Root: "ret[1]"}, Table: pathdom.NewPlaceholder(1).Field("table")},
+			{Key: pathdom.NewPlaceholder(1).Field("key"), Table: pathdom.NewPlaceholder(0).Field("table")},
+		},
+		DynamicValueKeys: []signature.DynamicValueKeyMembership{
+			{Container: pathdom.Path{Root: "ret[0]"}, Site: "a.site", Table: pathdom.NewPlaceholder(0).Field("table")},
+			{Container: pathdom.Path{Root: "ret[1]"}, Site: "z.site", Table: pathdom.NewPlaceholder(1).Field("table")},
 		},
 		FrozenTables: []signature.FrozenTable{
 			{Target: pathdom.NewPlaceholder(0).Field("sealed")},
@@ -1202,6 +1336,14 @@ func TestManifestEffectLabelRoundTripCoversActiveReturnMatrix(t *testing.T) {
 				projection.Field("payload"),
 				projection.CallableReturn(),
 			}},
+		}}},
+		{"actively lowered conditional type", "actively lowered by effectlowering", returns.Return{ReturnIndex: 0, Transform: returns.ConditionalType{
+			Source: p1,
+			Projection: projection.Projection{Steps: []projection.Step{
+				projection.Field("message"),
+			}},
+			When: typ.LiteralBool(true),
+			Then: typ.String,
 		}}},
 		{"error return", "actively lowered by effectlowering", returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1}},
 		{"lifecycle acquire", "actively lowered by effectlowering", lifecycle.Acquire{

@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -44,7 +43,7 @@ func produceReturnContract(result *body.Result, context producerContext, inherit
 	if !ok || len(returns) == 0 {
 		return nil
 	}
-	envs := cachedGuardEnvironments(result)
+	envs := context.guardEnvironments(result)
 	var out []diagnostic.Diagnostic
 	for _, point := range result.ReturnPoints() {
 		if !guardEnvReachableAt(envs, point) {
@@ -64,19 +63,37 @@ func produceReturnContract(result *body.Result, context producerContext, inherit
 			if annotation == nil {
 				continue
 			}
+			if contextIndependentReturnCallCoveredByRootCallSites(result, context, source, inherited) {
+				continue
+			}
 			if mismatch, ok := objectLiteralMemberMismatch(result, producer.resolver, point, expr, want, envs[point]); ok {
-				extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(mismatch.expr), exprEvidenceName(mismatch.expr), mismatch.want, boundaryValueFromExpr(mismatch.expr))
+				if returnLocalAssignmentMismatchAlreadyReported(result, producer, envs, mismatch.expr, inherited) {
+					continue
+				}
+				readBoundary := mismatch.readBoundary
+				if readBoundary == nil {
+					readBoundary = boundaryValueFromExpr(mismatch.expr)
+				}
+				extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(mismatch.expr), exprEvidenceName(mismatch.expr), mismatch.want, readBoundary)
 				extra = append(extra, mismatch.missingMemberEvidence()...)
 				extra = append(extra, mismatch.unionArmEvidence...)
-				out = append(out, returnContractDiagnostic(mismatch.expr, annotation, mismatch.got, mismatch.want, i, extra...))
+				out = append(out, returnMemberContractDiagnostic(mismatch, annotation, i, extra...))
+				continue
+			}
+			if mismatch, ok := localObjectLiteralReturnMemberMismatch(result, producer.resolver, envs, point, expr, want); ok {
+				readBoundary := mismatch.readBoundary
+				if readBoundary == nil {
+					readBoundary = boundaryValueFromExpr(mismatch.expr)
+				}
+				extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(mismatch.expr), exprEvidenceName(mismatch.expr), mismatch.want, readBoundary)
+				extra = append(extra, mismatch.missingMemberEvidence()...)
+				extra = append(extra, mismatch.unionArmEvidence...)
+				out = append(out, returnMemberContractDiagnostic(mismatch, annotation, i, extra...))
 				continue
 			}
 			if castGot, castOK := concreteCastObligationType(result, producer.resolver, point, envs[point], expr); castOK {
 				readBoundary := boundaryValueFromASTSource(source)
-				if inner, innerOK := concreteCastInner(expr); innerOK {
-					readBoundary = boundaryValueFromExpr(inner)
-				}
-				if !boundaryProofTypeMismatch(result, point, castGot, want, readBoundary) {
+				if !boundaryTypeMismatch(result, point, castGot, want, readBoundary) {
 					continue
 				}
 				extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(expr), returnContractSubject(i, expr), want, readBoundary)
@@ -91,9 +108,17 @@ func produceReturnContract(result *body.Result, context producerContext, inherit
 			if !boundaryTypeMismatch(result, point, got, want, readBoundary) {
 				continue
 			}
+			if returnLocalAssignmentMismatchAlreadyReported(result, producer, envs, expr, inherited) {
+				continue
+			}
 			extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(expr), returnContractSubject(i, expr), want, readBoundary)
-			if optionalIndexReadLacksProof(result, producer.resolver, point, expr) && !hasMissingBoundaryProofEvidence(extra) {
-				extra = append(extra, missingIndexReadProofEvidence(ast.SpanOf(expr), want))
+			if optionalIndexReadLacksProof(result, producer.resolver, point, expr) {
+				extra = withoutBoundaryMissingProofEvidence(extra)
+				if !hasMissingBoundaryProofEvidence(extra) {
+					extra = append(extra, missingIndexReadProofEvidence(ast.SpanOf(expr), want))
+				}
+			} else if !returnContractHasExplicitBoundaryEvidence(extra) {
+				extra = withoutBoundaryMissingProofEvidence(extra)
 			}
 			if len(extra) == 0 {
 				extra = explicitTopLikeCastEvidence(ast.SpanOf(expr), want, expr)
@@ -102,6 +127,162 @@ func produceReturnContract(result *body.Result, context producerContext, inherit
 		}
 	}
 	return out
+}
+
+func returnLocalAssignmentMismatchAlreadyReported(
+	result *body.Result,
+	producer returnContract,
+	envs map[cfg.Point]guardEnv,
+	expr ast.Expr,
+	directDefs map[symbol.ID]*ast.FunctionExpr,
+) bool {
+	inner, ok := sourceprovenance.ProofInner(expr)
+	if !ok {
+		return false
+	}
+	ident, ok := inner.(*ast.IdentExpr)
+	if !ok {
+		return false
+	}
+	id, ok := result.SymbolOfIdent(ident)
+	if !ok || id == 0 {
+		return false
+	}
+	graph := result.Graph()
+	if graph == nil {
+		return false
+	}
+	assignability := annotationAssignability(producerContext(producer))
+	for _, point := range graph.RPO() {
+		fact, ok := result.LocalAssignment(point)
+		if !ok || !fact.HasSymbol || fact.Symbol != id {
+			continue
+		}
+		if !guardEnvReachableAt(envs, point) {
+			continue
+		}
+		_, reported := assignability.localAssignment(result, point, fact, envs[point], directDefs)
+		return reported
+	}
+	return false
+}
+
+func localObjectLiteralReturnMemberMismatch(
+	result *body.Result,
+	resolver typeannotation.Resolver,
+	envs map[cfg.Point]guardEnv,
+	returnPoint cfg.Point,
+	expr ast.Expr,
+	want typ.Type,
+) (objectLiteralTypeMismatch, bool) {
+	ident, castBoundary, ok := returnObjectLiteralIdent(result, expr)
+	if !ok {
+		return objectLiteralTypeMismatch{}, false
+	}
+	id, ok := result.SymbolOfIdent(ident)
+	if !ok || id == 0 {
+		return objectLiteralTypeMismatch{}, false
+	}
+	graph := result.Graph()
+	if graph == nil {
+		return objectLiteralTypeMismatch{}, false
+	}
+
+	var literalExpr ast.Expr
+	var literalPoint cfg.Point
+	var literalSidecar factflow.ObjectLiteral
+	var hasLiteralSidecar bool
+	for _, point := range graph.RPO() {
+		fact, ok := result.LocalAssignment(point)
+		if !ok || !fact.HasSymbol || fact.Symbol != id {
+			continue
+		}
+		if literalExpr != nil {
+			return objectLiteralTypeMismatch{}, false
+		}
+		objectFact, ok := result.ObjectLiteral(fact.Expr)
+		if !ok || len(objectFact.Entries) == 0 {
+			return objectLiteralTypeMismatch{}, false
+		}
+		literalExpr = fact.Expr
+		literalPoint = point
+		if lowered, ok := result.LoweredLocalAssignment(point); ok {
+			source := lowered.Source()
+			if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
+				literalSidecar, hasLiteralSidecar = result.ObjectLiteralExpr(source.ExprRef)
+			}
+		}
+	}
+	if literalExpr == nil {
+		return objectLiteralTypeMismatch{}, false
+	}
+	if !guardEnvReachableAt(envs, returnPoint) || !guardEnvReachableAt(envs, literalPoint) {
+		return objectLiteralTypeMismatch{}, false
+	}
+	if hasLiteralSidecar {
+		if mismatch, ok := objectLiteralMemberMismatchWithValueSources(result, resolver, literalPoint, literalExpr, want, envs[literalPoint], literalSidecar); ok {
+			if castBoundary && objectLiteralMismatchIsMissingMember(mismatch) {
+				return objectLiteralTypeMismatch{}, false
+			}
+			return mismatch, true
+		}
+	}
+	mismatch, ok := objectLiteralMemberMismatch(result, resolver, literalPoint, literalExpr, want, envs[literalPoint])
+	if castBoundary && objectLiteralMismatchIsMissingMember(mismatch) {
+		return objectLiteralTypeMismatch{}, false
+	}
+	return mismatch, ok
+}
+
+func objectLiteralMismatchIsMissingMember(mismatch objectLiteralTypeMismatch) bool {
+	return mismatch.missingField != "" || mismatch.missingMethod.Name != ""
+}
+
+func returnObjectLiteralIdent(result *body.Result, expr ast.Expr) (*ast.IdentExpr, bool, bool) {
+	inner, castBoundary, ok := returnObjectLiteralIdentityInner(expr)
+	if !ok {
+		return nil, false, false
+	}
+	if ident, ok := inner.(*ast.IdentExpr); ok {
+		return ident, castBoundary, true
+	}
+	call, ok := inner.(*ast.FuncCallExpr)
+	if !ok || call == nil || call.Receiver != nil || call.Method != "" || len(call.Args) == 0 {
+		return nil, false, false
+	}
+	callee, ok := call.Func.(*ast.IdentExpr)
+	if !ok || !result.IdentResolvesToGlobal(callee, "setmetatable") {
+		return nil, false, false
+	}
+	arg, argCastBoundary, ok := returnObjectLiteralIdentityInner(call.Args[0])
+	if !ok {
+		return nil, false, false
+	}
+	ident, ok := arg.(*ast.IdentExpr)
+	return ident, castBoundary || argCastBoundary, ok
+}
+
+func returnObjectLiteralIdentityInner(expr ast.Expr) (ast.Expr, bool, bool) {
+	castBoundary := false
+	for {
+		switch wrapped := expr.(type) {
+		case nil:
+			return nil, castBoundary, false
+		case *ast.NonNilAssertExpr:
+			if wrapped == nil {
+				return nil, castBoundary, false
+			}
+			expr = wrapped.Expr
+		case *ast.CastExpr:
+			if wrapped == nil {
+				return nil, castBoundary, false
+			}
+			castBoundary = true
+			expr = wrapped.Expr
+		default:
+			return expr, castBoundary, true
+		}
+	}
 }
 
 func returnValueType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr, source sourceprovenance.ASTSource, inherited map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
@@ -132,6 +313,18 @@ func returnValueType(result *body.Result, resolver typeannotation.Resolver, poin
 			},
 		},
 		diagnosticTypeResolutionAttempt{
+			Source: "solved-return-source",
+			Resolve: func() (typ.Type, bool) {
+				return solvedReturnSourceType(result, point, source)
+			},
+		},
+		diagnosticTypeResolutionAttempt{
+			Source: "local-optional-return-source",
+			Resolve: func() (typ.Type, bool) {
+				return localOptionalReturnSourceType(result, resolver, point, expr, source)
+			},
+		},
+		diagnosticTypeResolutionAttempt{
 			Source: "projected-optional-index",
 			Resolve: func() (typ.Type, bool) {
 				return projectedOptionalIndexType(result, resolver, point, expr)
@@ -155,24 +348,107 @@ func returnValueType(result *body.Result, resolver typeannotation.Resolver, poin
 				return declaredReturnExprType(result, resolver, expr)
 			},
 		},
-		diagnosticTypeResolutionAttempt{
-			Source: "solved-return-source",
-			Resolve: func() (typ.Type, bool) {
-				return solvedReturnSourceType(result, point, source)
-			},
-		},
 	)
 	return resolution.Type, resolution.OK
 }
 
+func contextIndependentReturnCallCoveredByRootCallSites(result *body.Result, context producerContext, source sourceprovenance.ASTSource, inherited map[symbol.ID]*ast.FunctionExpr) bool {
+	if result == nil ||
+		context.root == nil ||
+		context.root == result ||
+		context.callContextResult ||
+		source.Kind != sourceprovenance.SourceCall ||
+		!source.HasCallPoint {
+		return false
+	}
+	fact, ok := result.Call(source.CallPoint)
+	if !ok || fact.Call == nil {
+		return false
+	}
+	site, ok := result.CallSite(source.CallPoint)
+	if !ok || site.CalleeSymbol() == 0 {
+		return false
+	}
+	calleeSymbol := site.CalleeSymbol()
+	if len(inherited) == 0 || inherited[calleeSymbol] == nil {
+		return false
+	}
+	if localDefs := directCallDefinitions(result, context, nil); localDefs != nil && localDefs[calleeSymbol] != nil {
+		return false
+	}
+	wrapperSymbol, ok := currentFunctionTargetSymbol(result)
+	if !ok {
+		return false
+	}
+	rootGraph := context.root.Graph()
+	if rootGraph == nil {
+		return false
+	}
+	rootFlow := context.rootFlow
+	if rootFlow == nil {
+		rootFlow = newDiagnosticFlowCache(context.root)
+	}
+	seenCall := false
+	for _, point := range rootGraph.RPO() {
+		rootFact, ok := context.root.Call(point)
+		if !ok || rootFact.Call == nil {
+			continue
+		}
+		rootSite, ok := context.root.CallSite(point)
+		if !ok || rootSite.CalleeSymbol() != wrapperSymbol {
+			continue
+		}
+		seenCall = true
+		if !rootFlow.directFunctionReassignedAfterDefinition(point, calleeSymbol) {
+			return false
+		}
+	}
+	return seenCall
+}
+
+func currentFunctionTargetSymbol(result *body.Result) (symbol.ID, bool) {
+	if result == nil || result.Function() == nil {
+		return 0, false
+	}
+	origin, ok := result.FunctionOrigin(result.Function())
+	if !ok || !origin.HasTargetSymbol || origin.TargetSymbol == 0 {
+		return 0, false
+	}
+	return origin.TargetSymbol, true
+}
+
 func solvedReturnSourceType(result *body.Result, point cfg.Point, source sourceprovenance.ASTSource) (typ.Type, bool) {
-	got, ok := readmodel.New(result).SourceType(point, source)
+	got, ok := newDiagnosticQuery(result).SourceType(point, source)
 	if !ok ||
 		got == nil ||
 		typ.IsAny(got) ||
 		typ.IsUnknown(got) ||
 		typ.IsNever(got) ||
 		projectionHasNil(got) ||
+		refinement.ContainsFreeTypeParam(got) {
+		return nil, false
+	}
+	return got, true
+}
+
+func localOptionalReturnSourceType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr, source sourceprovenance.ASTSource) (typ.Type, bool) {
+	if result == nil {
+		return nil, false
+	}
+	p, ok := result.ExpressionPath(expr)
+	if !ok || p.Symbol == 0 || len(p.Segments) != 0 {
+		return nil, false
+	}
+	if declared, ok := declaredPathType(result, resolver, expr); ok && declared != nil && !projectionHasNil(declared) {
+		return nil, false
+	}
+	got, ok := newDiagnosticQuery(result).SourceType(point, source)
+	if !ok ||
+		got == nil ||
+		typ.IsAny(got) ||
+		typ.IsUnknown(got) ||
+		typ.IsNever(got) ||
+		!projectionHasNil(got) ||
 		refinement.ContainsFreeTypeParam(got) {
 		return nil, false
 	}
@@ -304,12 +580,31 @@ func returnTypeAt(returns []directCallResult, index int) (typ.Type, bool) {
 }
 
 func returnContractDiagnostic(expr ast.Expr, annotation ast.TypeExpr, got, want typ.Type, index int, extraEvidence ...diagnostic.Evidence) diagnostic.Diagnostic {
+	return returnContractDiagnosticWithLabel(expr, annotation, got, want, index, "", extraEvidence...)
+}
+
+func returnMemberContractDiagnostic(mismatch objectLiteralTypeMismatch, annotation ast.TypeExpr, index int, extraEvidence ...diagnostic.Evidence) diagnostic.Diagnostic {
+	label := ""
+	if mismatch.suffix != "" {
+		if index >= 0 {
+			label = fmt.Sprintf("returned value %d%s", index+1, mismatch.suffix)
+		} else {
+			label = "returned value" + mismatch.suffix
+		}
+	}
+	return returnContractDiagnosticWithLabel(mismatch.expr, annotation, mismatch.got, mismatch.want, index, label, extraEvidence...)
+}
+
+func returnContractDiagnosticWithLabel(expr ast.Expr, annotation ast.TypeExpr, got, want typ.Type, index int, labelOverride string, extraEvidence ...diagnostic.Evidence) diagnostic.Diagnostic {
 	exprName := exprEvidenceNameOK(expr)
 	exprSpan := spanWithEvidenceName(ast.SpanOf(expr), exprName)
 	typeSpan := ast.SpanOf(annotation)
 	label := "returned value"
 	if index >= 0 {
 		label = fmt.Sprintf("returned value %d", index+1)
+	}
+	if labelOverride != "" {
+		label = labelOverride
 	}
 	subject := label
 	if exprName != "" {
@@ -331,11 +626,15 @@ func returnContractDiagnostic(expr ast.Expr, annotation ast.TypeExpr, got, want 
 		},
 	}
 	evidence = append(evidence, extraEvidence...)
+	message := returnContractMessage(label, expr, got, want)
+	if returnContractHasExplicitBoundaryEvidence(extraEvidence) && !nilSafetyMismatch(got, want) {
+		message = display.ReturnBoundaryProofMessage(label, expr, want)
+	}
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		Span:        exprSpan,
 		Code:        CodeReturnContractType,
 		Severity:    diagnostic.SeverityError,
-		Message:     returnContractMessage(label, expr, got, want),
+		Message:     message,
 		Help:        returnContractHelp(exprName, got),
 		Explanation: diagnostic.NewExplanation(evidence...),
 		Labels: []diagnostic.Label{
@@ -343,6 +642,26 @@ func returnContractDiagnostic(expr ast.Expr, annotation ast.TypeExpr, got, want 
 			sourceLabel(typeSpan, labelDeclaredReturn),
 		},
 	})
+}
+
+func returnContractHasExplicitBoundaryEvidence(items []diagnostic.Evidence) bool {
+	for _, item := range items {
+		if item.Reason == diagnostic.EvidenceReasonExplicitBoundaryValidation {
+			return true
+		}
+	}
+	return false
+}
+
+func withoutBoundaryMissingProofEvidence(items []diagnostic.Evidence) []diagnostic.Evidence {
+	out := items[:0]
+	for _, item := range items {
+		if item.Kind == diagnostic.EvidenceMissingProof && item.Reason == diagnostic.EvidenceReasonBoundaryValidationMissing {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func returnContractSubject(index int, expr ast.Expr) string {
@@ -393,9 +712,9 @@ func produceDirectCallResultAssignment(result *body.Result, context producerCont
 	if graph == nil {
 		return nil
 	}
-	defs := directCallDefinitions(result, inherited)
+	defs := directCallDefinitions(result, context, inherited)
 	producer := directCallResultAssignment(context)
-	envs := cachedGuardEnvironments(result)
+	envs := context.guardEnvironments(result)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {
 		if !guardEnvReachableAt(envs, point) {
@@ -426,6 +745,9 @@ func produceDirectCallResultAssignment(result *body.Result, context producerCont
 				continue
 			}
 			resultIndex := target.ResultIndex
+			if callResultBoundarySatisfiesTarget(result, point, resultIndex, want) {
+				continue
+			}
 			ret, ok := contract.returnResult(resultIndex)
 			if !ok {
 				continue
@@ -458,6 +780,22 @@ func produceDirectCallResultAssignment(result *body.Result, context producerCont
 	return out
 }
 
+func callResultBoundarySatisfiesTarget(result *body.Result, point cfg.Point, resultIndex int, want typ.Type) bool {
+	if result == nil || want == nil || typ.IsAny(want) || typ.IsUnknown(want) {
+		return false
+	}
+	reader := solvedBoundaryCallResultReader(point, resultIndex)
+	value, ok := reader(result, point)
+	if !ok {
+		return false
+	}
+	got, ok := newDiagnosticQuery(result).ValueTypeWithPresence(value)
+	if !ok || got == nil || typ.IsAny(got) || typ.IsUnknown(got) || refinement.ContainsFreeTypeParam(got) {
+		return false
+	}
+	return !boundaryTypeMismatch(result, point, got, want, reader)
+}
+
 func boundaryCallResultReader(callPoint cfg.Point, resultIndex int) boundaryValueReader {
 	return func(result *body.Result, point cfg.Point) (product.Value, bool) {
 		if resultIndex < 0 {
@@ -467,13 +805,26 @@ func boundaryCallResultReader(callPoint cfg.Point, resultIndex int) boundaryValu
 		if !ok {
 			return product.Value{}, false
 		}
-		return result.SourceValueForExplanationAtBoundary(point, source)
+		return newDiagnosticQuery(result).ValueSourceForExplanationAtBoundary(point, source)
+	}
+}
+
+func solvedBoundaryCallResultReader(callPoint cfg.Point, resultIndex int) boundaryValueReader {
+	return func(result *body.Result, point cfg.Point) (product.Value, bool) {
+		if result == nil || resultIndex < 0 {
+			return product.Value{}, false
+		}
+		source, ok := factflow.NewCallValueSource(0, factflow.NoValueSourceIndex, factflow.NoValueSourceIndex, resultIndex, callPoint, factflow.ValueSourceShape{})
+		if !ok {
+			return product.Value{}, false
+		}
+		return newDiagnosticQuery(result).SourceValueAtBoundary(point, source)
 	}
 }
 
 func directCallResultContract(result *body.Result, context producerContext, point cfg.Point, fact semantics.CallFact, site factflow.CallSite, def *ast.FunctionExpr, defs map[symbol.ID]*ast.FunctionExpr) (directFunctionContract, string, bool) {
 	name := directCallDisplayName(result, site)
-	if contract, ok := currentDirectFunctionContract(result, context, point, fact, name, def); ok {
+	if contract, ok := currentDirectFunctionContract(result, context, point, fact, site, name, def); ok {
 		var violations []typecall.ArgumentConstraintViolation
 		contract, violations = instantiateDirectFunctionContract(result, point, fact, contract, context, defs)
 		if len(violations) > 0 {
@@ -501,8 +852,8 @@ func directCallResultContract(result *body.Result, context producerContext, poin
 		}
 		return contract, name, true
 	}
-	if sig, ok := result.CallSignature(site); ok && sig.Type != nil {
-		contract := lowerDirectFunctionType(sig.Type)
+	if fn, ok := result.CallSignatureType(site); ok {
+		contract := lowerDirectFunctionType(fn)
 		contract.name = name
 		contract.declSpan = ast.SpanOf(fact.Call)
 		var violations []typecall.ArgumentConstraintViolation
@@ -516,7 +867,7 @@ func directCallResultContract(result *body.Result, context producerContext, poin
 		return contract, name, true
 	}
 	if fact.Call != nil && fact.Call.Func != nil {
-		if calleeType, ok := directCallCalleeType(result, context.resolver, point, fact.Call.Func); ok {
+		if calleeType, ok := directCallCalleeType(result, context, point, fact.Call.Func); ok {
 			if callable, ok := typecall.Callable(calleeType); ok && callable != nil {
 				contract := lowerDirectFunctionType(callable)
 				if callPath := site.CalleePathRef(); !callPath.IsEmpty() {
@@ -562,20 +913,23 @@ func directCallResultContract(result *body.Result, context producerContext, poin
 	return contract, name, true
 }
 
-func directCallCalleeType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
-	if got, ok := explicitAnnotatedCalleeType(result, resolver, expr); ok {
+func directCallCalleeType(result *body.Result, context producerContext, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
+	if got, ok := explicitAnnotatedCalleeType(result, context.resolver, expr); ok {
 		return got, true
 	}
-	env := cachedGuardEnvironments(result)[point]
-	if got, ok := newFlowExpressionTyper(result, resolver, point, env).typeOf(expr); ok {
+	if got, ok := declaredPathType(result, context.resolver, expr); ok && got != nil && !typ.IsAny(got) && !typ.IsUnknown(got) {
 		return got, true
 	}
-	if value, ok := result.ExpressionValueAtBoundary(point, expr); ok {
+	env := context.guardEnv(result, point)
+	if got, ok := newFlowExpressionTyper(result, context.resolver, point, env).typeOf(expr); ok {
+		return got, true
+	}
+	if value, ok := newDiagnosticQuery(result).ExpressionValueAtBoundary(point, expr); ok {
 		if got, ok := typevalue.TypeOf(result.Registry(), value); ok {
 			return got, true
 		}
 	}
-	return staticExpressionType(result, resolver, expr)
+	return staticExpressionType(result, context.resolver, expr)
 }
 
 func explicitAnnotatedCalleeType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
@@ -604,7 +958,7 @@ func directCallArgsCompatible(result *body.Result, point cfg.Point, fact semanti
 	if fact.Call == nil {
 		return false
 	}
-	env := cachedGuardEnvironments(result)[point]
+	env := context.guardEnv(result, point)
 	args := fact.Call.Args
 	required := contract.requiredArity()
 	if len(args) < required {
@@ -680,16 +1034,30 @@ func resolveDirectCallCompatibleArgumentType(
 			},
 		},
 		diagnosticTypeResolutionAttempt{
+			Source: "projected-structural-flow-source",
+			Resolve: func() (typ.Type, bool) {
+				got, ok := projectedStructuralFlowSourceType(result, context.resolver, point, guardEnv{}, arg)
+				if !ok || got == nil || topLikeType(got) || refinement.ContainsFreeTypeParam(got) {
+					return nil, false
+				}
+				return got, true
+			},
+		},
+		diagnosticTypeResolutionAttempt{
+			Source: "flow-expression",
+			Resolve: func() (typ.Type, bool) {
+				got, ok := newFlowExpressionTyper(result, context.resolver, point, guardEnv{}).typeOf(arg)
+				if !ok || got == nil || topLikeType(got) || refinement.ContainsFreeTypeParam(got) {
+					return nil, false
+				}
+				return got, true
+			},
+		},
+		diagnosticTypeResolutionAttempt{
 			Source:           "untrusted-top-like-expression",
 			UntrustedTopLike: true,
 			Resolve: func() (typ.Type, bool) {
 				return untrustedTopLikeExpressionTypeAt(result, context.resolver, point, arg)
-			},
-		},
-		diagnosticTypeResolutionAttempt{
-			Source: "projected-structural-flow-source",
-			Resolve: func() (typ.Type, bool) {
-				return projectedStructuralFlowSourceType(result, context.resolver, point, guardEnv{}, arg)
 			},
 		},
 		diagnosticTypeResolutionAttempt{
@@ -745,7 +1113,7 @@ func directCallArgumentTypes(result *body.Result, context producerContext, point
 	for i, arg := range fact.Call.Args {
 		got, ok := directObjectLiteralArgumentType(result, context.resolver, point, arg, defs)
 		if !ok {
-			got, ok = projectedFlowSourceType(result, context.resolver, point, guardEnv{}, arg)
+			got, ok = directCallArgumentFlowExpressionType(result, context.resolver, point, guardEnv{}, arg)
 		}
 		if !ok {
 			got, ok = declaredArgumentExprType(result, context.resolver, arg)
@@ -777,11 +1145,12 @@ func boundaryCallArgumentValueSourceType(result *body.Result, point cfg.Point, s
 	if !ok {
 		return nil, false
 	}
-	value, ok := result.SourceValueForExplanationAtBoundary(point, source)
+	query := newDiagnosticQuery(result)
+	value, ok := query.ValueSourceForExplanationAtBoundary(point, source)
 	if !ok {
 		return nil, false
 	}
-	return readmodel.New(result).ValueType(value)
+	return query.ValueType(value)
 }
 
 func directObjectLiteralArgumentType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr, defs map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
@@ -833,10 +1202,10 @@ func directObjectLiteralFieldKey(field *ast.Field) (string, ast.AttrKeySyntax, b
 }
 
 func directObjectLiteralFieldType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr, defs map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
-	if t, ok := staticExpressionType(result, resolver, expr); ok {
+	if t, ok := directFunctionValueType(result, resolver, point, expr, defs); ok {
 		return t, true
 	}
-	if t, ok := directFunctionValueType(result, resolver, expr, defs); ok {
+	if t, ok := staticExpressionType(result, resolver, expr); ok {
 		return t, true
 	}
 	if t, ok := directObjectLiteralArgumentType(result, resolver, point, expr, defs); ok {
@@ -845,7 +1214,12 @@ func directObjectLiteralFieldType(result *body.Result, resolver typeannotation.R
 	return nil, false
 }
 
-func directFunctionValueType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr, defs map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
+func directFunctionValueType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr, defs map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
+	if result != nil {
+		if fn, ok := result.FunctionValueTypeAtBoundary(point, expr); ok && fn != nil {
+			return fn, true
+		}
+	}
 	if fn, ok := expr.(*ast.FunctionExpr); ok {
 		return lowerFunctionExprType(fn, resolver)
 	}

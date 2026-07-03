@@ -153,6 +153,25 @@ func TestFromStateReportsIncompleteTopLanes(t *testing.T) {
 	}
 }
 
+func TestFromStateSkipsIdentityOnlyChildrenWithoutPlacementFacts(t *testing.T) {
+	reg := standard.Registry()
+	parent := testID(51)
+	childFn := identity.LuaFunction(52)
+
+	st := state.State{}.
+		WriteHeapTableObject(reg, parent, testObjectWithStaticChildren(reg, childFn)).
+		WritePlacement(parent, placement.Stack)
+
+	plan := FromState(st)
+	if _, ok := entryByID(plan, childFn); ok {
+		t.Fatalf("plan included identity-only child %s without placement fact: %#v", childFn, plan.Entries)
+	}
+	assertEntry(t, plan, parent, TargetStack, true, false, ReasonLocalMaterialized, "", "")
+
+	plan = FromState(st.WritePlacement(childFn, placement.Stack))
+	assertEntry(t, plan, childFn, TargetStack, false, false, ReasonLocalMaterialized, "", "")
+}
+
 func TestFromResultProjectsStackObjectLiteralAllocations(t *testing.T) {
 	reg := standard.Registry()
 	stmts, err := parse.ParseString(`local obj = {child = {}}`, "placement-plan.lua")

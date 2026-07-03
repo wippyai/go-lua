@@ -114,30 +114,20 @@ func newCanonicalRecord(fields []Field, staticMembers []StaticMember, metatable,
 		h = hash.MixHash(h, recordMapValueHash)
 		h = hash.MixHash(h, mapValue.Hash())
 	}
-	containsAny := knownAnyFields(sorted) || knownAnyStaticMembers(members) || knownAny(metatable, mapKey, mapValue)
-	containsNever := knownNeverFields(sorted) || knownNeverStaticMembers(members) || knownNever(metatable, mapKey, mapValue)
-	containsTypeParam := knownTypeParamFields(sorted) || knownTypeParamStaticMembers(members) || knownTypeParam(metatable, mapKey, mapValue)
-	containsInstantiated := knownInstantiatedFields(sorted) || knownInstantiatedStaticMembers(members) || knownInstantiated(metatable, mapKey, mapValue)
-	containsGeneric := knownGenericFields(sorted) || knownGenericStaticMembers(members) || knownGeneric(metatable, mapKey, mapValue)
-	containsRecursive := knownRecursiveFields(sorted) || knownRecursiveStaticMembers(members) || knownRecursive(metatable, mapKey, mapValue)
-	containsOpenRecursive := knownOpenRecursiveFields(sorted) || knownOpenRecursiveStaticMembers(members) || knownOpenRecursive(metatable, mapKey, mapValue)
+	props := typePropertiesOfFields(sorted)
+	props.includeStaticMembers(members)
+	props.includeTypes(metatable, mapKey, mapValue)
 
 	return &Record{
-		Fields:                sorted,
-		StaticMembers:         members,
-		Metatable:             metatable,
-		MapKey:                mapKey,
-		MapValue:              mapValue,
-		Open:                  open,
-		sorted:                true,
-		hash:                  h,
-		containsAny:           containsAny,
-		containsNever:         containsNever,
-		containsTypeParam:     containsTypeParam,
-		containsInstantiated:  containsInstantiated,
-		containsGeneric:       containsGeneric,
-		containsRecursive:     containsRecursive,
-		containsOpenRecursive: containsOpenRecursive,
+		Fields:         sorted,
+		StaticMembers:  members,
+		Metatable:      metatable,
+		MapKey:         mapKey,
+		MapValue:       mapValue,
+		Open:           open,
+		sorted:         true,
+		hash:           h,
+		typeProperties: props,
 	}
 }
 

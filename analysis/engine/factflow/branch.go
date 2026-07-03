@@ -154,6 +154,10 @@ func NewBranchNumFloorRefinementOnEdge(targetPath path.Path, lo int64, cond bool
 // ArrayPath returns the array path whose length floor this fact raises.
 func (r BranchLenRefinement) ArrayPath() path.Path { return r.arrayPath.Clone() }
 
+// ArrayPathRef returns the array path for immediate read-only use.
+// Callers must not mutate or retain the returned path.
+func (r BranchLenRefinement) ArrayPathRef() path.Path { return r.arrayPath }
+
 // Floor returns the proven lower bound on the array length.
 func (r BranchLenRefinement) Floor() int64 { return r.lo }
 
@@ -167,6 +171,10 @@ func (r BranchLenRefinement) copy() BranchLenRefinement {
 
 // TargetPath returns the numeric path whose floor this fact raises.
 func (r BranchNumFloorRefinement) TargetPath() path.Path { return r.targetPath.Clone() }
+
+// TargetPathRef returns the numeric path for immediate read-only use.
+// Callers must not mutate or retain the returned path.
+func (r BranchNumFloorRefinement) TargetPathRef() path.Path { return r.targetPath }
 
 // Floor returns the proven lower bound on the numeric path.
 func (r BranchNumFloorRefinement) Floor() int64 { return r.lo }
@@ -343,6 +351,10 @@ func (s BranchRefinementSet) NumFloorRefinements() []BranchNumFloorRefinement {
 
 // TargetPath returns the refined path.
 func (r BranchRefinement) TargetPath() path.Path { return r.targetPath.Clone() }
+
+// TargetPathRef returns the refined path for immediate read-only use.
+// Callers must not mutate or retain the returned path.
+func (r BranchRefinement) TargetPathRef() path.Path { return r.targetPath }
 
 // TrueValue returns the true-edge value refinement, if present.
 func (r BranchRefinement) TrueValue() (ValueRefinement, bool) {

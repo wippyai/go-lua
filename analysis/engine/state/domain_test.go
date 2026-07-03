@@ -72,6 +72,46 @@ func TestDomainWithLaneSetSelectsIndependentAxes(t *testing.T) {
 	}
 }
 
+func TestDomainJoinReusesSubsumingValueLane(t *testing.T) {
+	reg := standard.Registry()
+	domain := DomainWithLanes(reg, []LaneID{LaneValues})
+	slot := key.SymbolValue(symbol.ID(19))
+	value := presentValue(reg)
+	right := State{}.WriteValue(reg, slot, value)
+
+	joined := domain.Join(domain.Bottom(), right)
+	if !domain.Equal(joined, right) {
+		t.Fatalf("join(bottom, right) did not preserve right value lane")
+	}
+	if len(joined.values.symbols) == 0 || len(right.values.symbols) == 0 {
+		t.Fatalf("test setup missing finite value lane: joined=%#v right=%#v", joined.values.symbols, right.values.symbols)
+	}
+	joined.values.symbols[slot] = product.Bottom(reg)
+	if got := right.ReadValue(reg, slot); !product.Domain(reg).Equal(got, product.Bottom(reg)) {
+		t.Fatalf("join cloned subsuming value lane; right value survived internal mutation as %s", formatValue(reg, got))
+	}
+}
+
+func TestDomainWidenReusesPreviousWhenNextSubsumed(t *testing.T) {
+	reg := standard.Registry()
+	domain := DomainWithLanes(reg, []LaneID{LaneValues})
+	slot := key.SymbolValue(symbol.ID(20))
+	value := presentValue(reg)
+	prev := State{}.WriteValue(reg, slot, value)
+
+	widened := domain.Widen(prev, domain.Bottom())
+	if !domain.Equal(widened, prev) {
+		t.Fatalf("widen(prev, bottom) did not preserve previous value lane")
+	}
+	if len(widened.values.symbols) == 0 || len(prev.values.symbols) == 0 {
+		t.Fatalf("test setup missing finite value lane: widened=%#v prev=%#v", widened.values.symbols, prev.values.symbols)
+	}
+	widened.values.symbols[slot] = product.Bottom(reg)
+	if got := prev.ReadValue(reg, slot); !product.Domain(reg).Equal(got, product.Bottom(reg)) {
+		t.Fatalf("widen cloned previous value lane; previous value survived internal mutation as %s", formatValue(reg, got))
+	}
+}
+
 func TestNormalizeForDomainDropsDisabledLanes(t *testing.T) {
 	reg := standard.Registry()
 	slot := key.SymbolValue(symbol.ID(13))
@@ -198,6 +238,7 @@ func TestDefaultLanesExposeEveryStateAxis(t *testing.T) {
 		LaneEscapeEvents,
 		LaneChannelSelect,
 		LaneStoreRelations,
+		LaneKeyMemberships,
 		LaneTypestates,
 		LanePlacement,
 		LaneLenFloors,
@@ -259,6 +300,9 @@ func TestReachableTransitionCoversRegisteredMustFactLanes(t *testing.T) {
 	}
 	if state.StoreRelationsSnapshot().Bottom {
 		t.Fatal("reachable state kept store-relation lane at bottom")
+	}
+	if state.KeyMembershipsSnapshot().Bottom {
+		t.Fatal("reachable state kept key-membership lane at bottom")
 	}
 	if state.lenFloors.lane.Bottom() {
 		t.Fatal("reachable state kept length-floor lane at bottom")

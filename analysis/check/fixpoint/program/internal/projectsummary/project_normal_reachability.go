@@ -60,7 +60,7 @@ func (r normalReturnReachability) canCompleteNormally(point cfg.Point) bool {
 	}
 	r.visiting[point] = struct{}{}
 	canComplete := false
-	for _, succ := range r.graph.Successors(point) {
+	for _, succ := range cfg.SuccessorsReadOnly(r.graph, point) {
 		if r.canCompleteNormally(succ) {
 			canComplete = true
 			break

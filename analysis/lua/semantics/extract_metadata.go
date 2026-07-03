@@ -63,20 +63,22 @@ func (r *Result) extractFunctionDefinition(stmt *ast.FuncDefStmt, bindings *bind
 		TargetPath:      targetPath,
 		HasTargetPath:   hasTargetPath,
 	})
-	if hasTargetPath && len(targetPath.Segments) != 0 && stmt.Func != nil {
+	if hasTargetPath && stmt.Func != nil {
 		container := targetPath.Parent()
-		r.assignmentFacts[points[0]] = OrdinaryAssignmentFact{
+		r.setOrdinaryAssignment(points[0], OrdinaryAssignmentFact{
 			Stmt:             nil,
 			Index:            0,
 			Target:           functionDefinitionTargetExpr(stmt),
 			Value:            stmt.Func,
 			Source:           assignmentValueSource([]ast.Expr{stmt.Func}, 0, nil),
+			Symbol:           id,
+			HasSymbol:        hasSymbol && id != 0,
 			Path:             targetPath,
 			HasPath:          true,
 			ContainerPath:    container,
 			HasContainerPath: !container.IsEmpty(),
 			Rhs:              []ast.Expr{stmt.Func},
-		}
+		})
 	}
 	return nil
 }
@@ -101,7 +103,7 @@ func (r *Result) extractNumberFor(stmt *ast.NumberForStmt, bindings *bind.Result
 	}
 	resolver := callPointResolver(calls, points)
 	for i, call := range calls {
-		r.calls[points[i]] = buildCallFact(stmt, nil, CallContextExpressionProducer, nil, call.index, call.call, bindings, nil, resolver)
+		r.setCall(points[i], buildCallFact(stmt, nil, CallContextExpressionProducer, nil, call.index, call.call, bindings, nil, resolver))
 	}
 	id, hasSymbol := symbol.ID(0), false
 	if bindings != nil {
@@ -154,7 +156,7 @@ func (r *Result) extractGenericFor(stmt *ast.GenericForStmt, bindings *bind.Resu
 		if topLevelValueListCall(stmt.Exprs, call) {
 			context, exprs = CallContextIteratorSource, stmt.Exprs
 		}
-		r.calls[points[i]] = buildCallFact(stmt, nil, context, exprs, call.index, call.call, bindings, nil, resolver)
+		r.setCall(points[i], buildCallFact(stmt, nil, context, exprs, call.index, call.call, bindings, nil, resolver))
 	}
 	var symbols []symbol.ID
 	if bindings != nil {

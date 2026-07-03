@@ -6,10 +6,12 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -89,6 +91,32 @@ func TestLowerAnnotatedLiteralLocalCarriesDeclaredValue(t *testing.T) {
 	}
 }
 
+func TestLowerAnnotatedEmptyArrayLocalCarriesDeclaredValue(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `local xs: any[] = {}`)
+
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	points := requireStmtPoints(t, built, mustLocalStmt(t, stmts, 0), 1)
+	fact, ok := facts.RootAssignment(points[0])
+	if !ok {
+		t.Fatalf("missing root assignment at point %d", points[0])
+	}
+	if got := fact.Kind(); got != factflow.RootAssignmentLocalDeclaration {
+		t.Fatalf("root assignment kind = %v, want local declaration", got)
+	}
+	if !fact.DeclaredValueContracts() {
+		t.Fatalf("declared empty array should carry an explicit contract")
+	}
+	declared, ok := fact.DeclaredValue()
+	if !ok {
+		t.Fatalf("missing declared value")
+	}
+	gotType, ok := typevalue.TypeOf(reg, declared)
+	if !ok || !typ.TypeEquals(gotType, typ.NewArray(typ.Any)) {
+		t.Fatalf("declared type = %v/%v, want any[]", gotType, ok)
+	}
+}
+
 func TestLowerAnnotatedIdentifierLocalDoesNotCarryDeclaredValue(t *testing.T) {
 	reg := standard.Registry()
 	stmts, bindings, built, result := parseSemanticChunk(t, `local x: string? = value`, "value")
@@ -150,7 +178,9 @@ func TestLowerDoesNotLowerDeclarationOrControlSidecars(t *testing.T) {
 		if _, ok := result.FunctionDefinition(point); !ok {
 			t.Fatalf("missing function definition sidecar at point %d", point)
 		}
-		assertNoPointFact(t, facts, point)
+		if fact, ok := facts.RootAssignment(point); !ok || fact.Kind() != factflow.RootAssignmentOrdinaryRootWrite {
+			t.Fatalf("missing function definition root assignment at point %d: %#v/%v", point, fact, ok)
+		}
 	}
 	for _, point := range requireStmtPoints(t, built, numericFor, 2) {
 		if _, ok := result.NumericFor(point); !ok {
@@ -354,6 +384,86 @@ local d = t[k]
 	assertExprPath(keySource, path.NewPath(kSym, "k"))
 }
 
+func TestLowerDynamicIndexExpressionPreservesStaticMemberTablePath(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local term = {}
+term.spinner_frames = {"a", "b", "c"}
+local i = 1
+local frame = term.spinner_frames[i]
+`)
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	termSym := mustLocalAt(t, bindings, stmts[0].(*ast.LocalAssignStmt), 0)
+	iSym := mustLocalAt(t, bindings, stmts[2].(*ast.LocalAssignStmt), 0)
+	frameSource := mustLocalSource(t, facts, requireStmtPoints(t, built, stmts[3], 1)[0])
+	if _, ok := facts.ExpressionPath(frameSource.ExprRef); ok {
+		t.Fatalf("dynamic member index source ref %d unexpectedly has a static expression path", frameSource.ExprRef)
+	}
+	dynamicExpr, ok := facts.DynamicIndexExpression(frameSource.ExprRef)
+	if !ok {
+		t.Fatalf("missing dynamic member index expression for ref %d", frameSource.ExprRef)
+	}
+	wantTable := path.NewPath(termSym, "term").Field("spinner_frames")
+	if !dynamicExpr.TablePath().Equal(wantTable) {
+		t.Fatalf("dynamic member index table path = %v, want %v", dynamicExpr.TablePath(), wantTable)
+	}
+	keySource := dynamicExpr.KeySource()
+	if keySource.Kind != factflow.ValueSourceExpression || !keySource.HasExpr {
+		t.Fatalf("dynamic member index key source = %#v, want expression", keySource)
+	}
+	gotKey, ok := facts.ExpressionPath(keySource.ExprRef)
+	if !ok {
+		t.Fatalf("missing dynamic member index key path for ref %d", keySource.ExprRef)
+	}
+	if wantKey := path.NewPath(iSym, "i"); !gotKey.Equal(wantKey) {
+		t.Fatalf("dynamic member index key path = %v, want %v", gotKey, wantKey)
+	}
+}
+
+func TestLowerDynamicIndexExpressionCarriesUnnameableTableSource(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local function make()
+    return {["root"] = {id = "root"}}
+end
+local root = make()["root"]
+`)
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	var rootSource factflow.ValueSource
+	for _, point := range built.StmtPoints.PointsFor(stmts[1]) {
+		fact, ok := facts.LocalAssignment(point)
+		if !ok {
+			continue
+		}
+		source := fact.Source()
+		if _, ok := facts.DynamicIndexExpression(source.ExprRef); ok {
+			rootSource = source
+			break
+		}
+	}
+	if rootSource.ExprRef == 0 {
+		t.Fatalf("missing dynamic-index local source for call-result assignment")
+	}
+	if _, ok := facts.ExpressionPath(rootSource.ExprRef); ok {
+		t.Fatalf("dynamic call-result index source ref %d unexpectedly has a static expression path", rootSource.ExprRef)
+	}
+	dynamicExpr, ok := facts.DynamicIndexExpression(rootSource.ExprRef)
+	if !ok {
+		t.Fatalf("missing dynamic call-result index expression for ref %d", rootSource.ExprRef)
+	}
+	if !dynamicExpr.TablePath().IsEmpty() {
+		t.Fatalf("dynamic call-result table path = %v, want empty", dynamicExpr.TablePath())
+	}
+	tableSource, ok := dynamicExpr.TableSource()
+	if !ok || tableSource.Kind != factflow.ValueSourceCall || tableSource.CallPoint == 0 || !tableSource.HasCallPoint {
+		t.Fatalf("dynamic call-result table source = %#v, want call source", tableSource)
+	}
+	keySource := dynamicExpr.KeySource()
+	if keySource.Kind != factflow.ValueSourceExpression || !keySource.HasExpr {
+		t.Fatalf("dynamic call-result key source = %#v, want expression", keySource)
+	}
+}
+
 func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
 	local := localAssign([]string{"t", "k", "x"}, number("0"), stringLit("key"), number("0"))
 	dotWrite := assign([]ast.Expr{dot(ident("t"), "x")}, number("1"))
@@ -474,6 +584,19 @@ func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
 	if !nestedInvalidation.ContainerPath().Equal(path.NewPath(tSym, "t")) {
 		t.Fatalf("nested dynamic index invalidation container = %v", nestedInvalidation.ContainerPath())
 	}
+	tablePath, keySource, suffix, ok := nestedInvalidation.DynamicTarget()
+	if !ok {
+		t.Fatalf("nested dynamic index invalidation missing dynamic target")
+	}
+	if !tablePath.Equal(path.NewPath(tSym, "t")) {
+		t.Fatalf("nested dynamic target table = %v, want t", tablePath)
+	}
+	if keySource.Kind != factflow.ValueSourceExpression || !keySource.HasExpr {
+		t.Fatalf("nested dynamic target key source = %#v, want expression source", keySource)
+	}
+	if len(suffix) != 1 || suffix[0].Kind != segment.SegmentField || suffix[0].Name != "value" {
+		t.Fatalf("nested dynamic target suffix = %#v, want .value", suffix)
+	}
 	if _, ok := facts.DynamicIndexWrite(nestedDynamicPoint); ok {
 		t.Fatalf("nested dynamic index published direct dynamic-index write")
 	}
@@ -494,6 +617,122 @@ func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
 	}
 	if _, ok := facts.PathDescendantInvalidation(rootPoint); ok {
 		t.Fatalf("root ordinary assignment also lowered as descendant invalidation")
+	}
+}
+
+func TestLowerDynamicIndexReadbackUsesAliasPathOwner(t *testing.T) {
+	local := localAssign([]string{"t", "k", "v"}, number("0"), stringLit("key"), stringLit("value"))
+	concreteCastWrite := assign(
+		[]ast.Expr{dynamicIndex(ident("t"), &ast.CastExpr{Expr: ident("k"), Type: primitiveType("string")})},
+		&ast.CastExpr{Expr: ident("v"), Type: primitiveType("string")},
+	)
+	anyCastWrite := assign(
+		[]ast.Expr{dynamicIndex(ident("t"), &ast.CastExpr{Expr: ident("k"), Type: primitiveType("any")})},
+		&ast.CastExpr{Expr: ident("v"), Type: primitiveType("any")},
+	)
+	stmts := []ast.Stmt{local, concreteCastWrite, anyCastWrite}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	kSym := mustLocalAt(t, bindings, local, 1)
+	vSym := mustLocalAt(t, bindings, local, 2)
+
+	concretePoint := requireStmtPoints(t, built, concreteCastWrite, 1)[0]
+	concreteFact, ok := facts.DynamicIndexWrite(concretePoint)
+	if !ok {
+		t.Fatalf("missing concrete-cast dynamic index write")
+	}
+	if got, ok := concreteFact.KeyPath(); !ok || !got.Equal(path.NewPath(kSym, "k")) {
+		t.Fatalf("concrete-cast dynamic key path = %v/%v, want k", got, ok)
+	}
+	if got, ok := concreteFact.ValuePath(); !ok || !got.Equal(path.NewPath(vSym, "v")) {
+		t.Fatalf("concrete-cast dynamic value path = %v/%v, want v", got, ok)
+	}
+
+	anyPoint := requireStmtPoints(t, built, anyCastWrite, 1)[0]
+	anyFact, ok := facts.DynamicIndexWrite(anyPoint)
+	if !ok {
+		t.Fatalf("missing any-cast dynamic index write")
+	}
+	if got, ok := anyFact.KeyPath(); ok {
+		t.Fatalf("any-cast dynamic key path = %v/%v, want proof boundary", got, ok)
+	}
+	if got, ok := anyFact.ValuePath(); ok {
+		t.Fatalf("any-cast dynamic value path = %v/%v, want proof boundary", got, ok)
+	}
+}
+
+func TestLowerGlobalTableFieldAssignmentAlsoWritesCanonicalGlobalRoot(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		source string
+	}{
+		{
+			name: "dot",
+			source: `
+_G.coroutine = {}
+coroutine.spawn(function() end)
+`,
+		},
+		{
+			name: "static string index",
+			source: `
+_G["coroutine"] = {}
+coroutine.spawn(function() end)
+`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stmts, bindings, built, result := parseSemanticChunk(t, tc.source, "_G", "coroutine")
+			facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+
+			point := requireStmtPoints(t, built, stmts[0], 1)[0]
+			rootFact, ok := facts.OrdinaryAssignment(point)
+			if !ok {
+				t.Fatalf("missing canonical global root assignment")
+			}
+			coroutineSym, ok := bindings.GlobalSymbol("coroutine")
+			if !ok {
+				t.Fatalf("missing coroutine global symbol")
+			}
+			if rootFact.TargetSymbol() != coroutineSym {
+				t.Fatalf("root target = %d, want coroutine symbol %d", rootFact.TargetSymbol(), coroutineSym)
+			}
+			if !rootFact.TargetPath().Equal(path.NewPath(coroutineSym, "coroutine")) {
+				t.Fatalf("root target path = %v", rootFact.TargetPath())
+			}
+
+			gSym, ok := bindings.GlobalSymbol("_G")
+			if !ok {
+				t.Fatalf("missing _G global symbol")
+			}
+			pathFact, ok := facts.PathAssignment(point)
+			if !ok {
+				t.Fatalf("missing _G member path assignment")
+			}
+			if !pathFact.TargetPath().Equal(path.NewPath(gSym, "_G").Field("coroutine")) &&
+				!pathFact.TargetPath().Equal(path.NewPath(gSym, "_G").IndexStr("coroutine")) {
+				t.Fatalf("path assignment target = %v", pathFact.TargetPath())
+			}
+		})
+	}
+}
+
+func TestLowerLocalGlobalTableShadowDoesNotWriteCanonicalGlobalRoot(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local _G = {}
+_G.coroutine = {}
+`, "coroutine")
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+
+	point := requireStmtPoints(t, built, stmts[1], 1)[0]
+	if _, ok := facts.OrdinaryAssignment(point); ok {
+		t.Fatalf("local _G member write lowered as canonical global root assignment")
 	}
 }
 

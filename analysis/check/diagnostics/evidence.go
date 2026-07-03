@@ -2,7 +2,6 @@ package diagnostics
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	valueevidence "github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
@@ -31,7 +30,7 @@ func boundaryDiagnosticEvidenceForSubject(result *body.Result, point cfg.Point, 
 			Message: explicitBoundaryProofMessageForSubject(subject, want),
 		})
 	}
-	if !readmodel.New(result).ValueProofAdmissible(value, want) {
+	if !newDiagnosticQuery(result).ValueProofAdmissible(value, want) {
 		out = append(out, missingBoundaryProofEvidenceForSubject(span, subject, want))
 	}
 	return out

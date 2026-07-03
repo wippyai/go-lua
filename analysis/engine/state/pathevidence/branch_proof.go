@@ -6,6 +6,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
 
 type BranchProofKind uint8
@@ -85,6 +86,49 @@ func (l Lane) EquivalentPathKeys(ks *keyspace.KeySpace, pathKey pathdom.PathKey)
 	return out
 }
 
+// EquivalentRootKeys returns root-symbol keys proven equal to pathKey by exact
+// equality endpoints. It is intentionally narrower than EquivalentPathKeys:
+// root-value refinement only consumes root aliases, so following descendant
+// rebases and formatting every intermediate path creates large allocation
+// spikes while producing values the caller immediately discards.
+func (l Lane) EquivalentRootKeys(ks *keyspace.KeySpace, pathKey pathdom.PathKey) []keyspace.Key {
+	if pathKey == "" || l.proofsBottom || len(l.proofs) == 0 {
+		return nil
+	}
+	start, ok := ks.FromStateKey(pathKey)
+	if !ok {
+		return nil
+	}
+	seen := map[keyspace.Key]struct{}{start: {}}
+	queue := []keyspace.Key{start}
+	var out []keyspace.Key
+	for len(queue) != 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for proof := range l.proofs {
+			if proof.Kind != BranchProofPathEqual {
+				continue
+			}
+			next, ok := exactEquivalentEndpoint(ks, current, proof)
+			if !ok {
+				continue
+			}
+			if _, ok := seen[next]; ok {
+				continue
+			}
+			seen[next] = struct{}{}
+			if next.Segs == 0 {
+				out = append(out, next)
+			}
+			queue = append(queue, next)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return ks.Format(out[i]) < ks.Format(out[j])
+	})
+	return out
+}
+
 func equivalentPathKeysForProof(ks *keyspace.KeySpace, pathKey keyspace.Key, proof BranchProof) []keyspace.Key {
 	var out []keyspace.Key
 	if rebased, ok := rebaseEquivalentPathKey(ks, pathKey, proof.Path, proof.Other); ok {
@@ -94,6 +138,20 @@ func equivalentPathKeysForProof(ks *keyspace.KeySpace, pathKey keyspace.Key, pro
 		out = append(out, rebased)
 	}
 	return out
+}
+
+func exactEquivalentEndpoint(ks *keyspace.KeySpace, current keyspace.Key, proof BranchProof) (keyspace.Key, bool) {
+	if structuralKeysEquivalent(ks, current, proof.Path) {
+		return proof.Other, true
+	}
+	if structuralKeysEquivalent(ks, current, proof.Other) {
+		return proof.Path, true
+	}
+	return keyspace.Key{}, false
+}
+
+func structuralKeysEquivalent(ks *keyspace.KeySpace, a, b keyspace.Key) bool {
+	return ks.HasPrefix(a, b) && ks.HasPrefix(b, a)
 }
 
 func rebaseEquivalentPathKey(ks *keyspace.KeySpace, pathKey, from, to keyspace.Key) (keyspace.Key, bool) {
@@ -126,25 +184,9 @@ func deleteBranchProofsWhere(
 	in map[BranchProof]struct{},
 	matches func(BranchProof) bool,
 ) (map[BranchProof]struct{}, bool) {
-	if len(in) == 0 {
-		return in, false
-	}
-	out := make(map[BranchProof]struct{}, len(in))
-	changed := false
-	for proof := range in {
-		if matches(proof) {
-			changed = true
-			continue
-		}
-		out[proof] = struct{}{}
-	}
-	if !changed {
-		return in, false
-	}
-	if len(out) == 0 {
-		return nil, true
-	}
-	return out, true
+	return mapedit.DeleteMatching(in, func(proof BranchProof, _ struct{}) bool {
+		return matches(proof)
+	})
 }
 
 func branchProofMatchesPath(proof BranchProof, matches func(keyspace.Key) bool) bool {

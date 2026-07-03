@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/parse"
 )
 
 func ident(name string) *ast.IdentExpr {
@@ -248,9 +249,16 @@ func TestReadIdentsExcludeWrites(t *testing.T) {
 	write := ident("x")
 	read := ident("x")
 	rewrite := ident("x")
+	object := ident("obj")
+	fieldWrite := &ast.AttrGetExpr{
+		Object:    object,
+		Key:       &ast.StringExpr{Value: "field"},
+		KeySyntax: ast.AttrKeyDot,
+	}
 	stmts := []ast.Stmt{
 		localAssign([]string{"x"}, number("1")),
 		&ast.AssignStmt{Lhs: []ast.Expr{write}, Rhs: []ast.Expr{number("2")}},
+		&ast.AssignStmt{Lhs: []ast.Expr{fieldWrite}, Rhs: []ast.Expr{number("4")}},
 		ret(read),
 		&ast.AssignStmt{Lhs: []ast.Expr{rewrite}, Rhs: []ast.Expr{number("3")}},
 	}
@@ -269,6 +277,20 @@ func TestReadIdentsExcludeWrites(t *testing.T) {
 	}
 	if got := mustSymbol(t, r, rewrite); got != id {
 		t.Fatalf("rewrite symbol = %d, want %d", got, id)
+	}
+	writes := r.WriteIdents(id)
+	if len(writes) != 2 || writes[0] != write || writes[1] != rewrite {
+		t.Fatalf("WriteIdents(%d) = %#v, want ordinary writes %p and %p", id, writes, write, rewrite)
+	}
+	if !r.HasWrite(id) {
+		t.Fatalf("HasWrite(%d) = false, want true", id)
+	}
+	objID := mustSymbol(t, r, object)
+	if r.HasWrite(objID) {
+		t.Fatalf("field assignment marked object symbol %d as written", objID)
+	}
+	if !r.HasRead(objID) {
+		t.Fatalf("field assignment object symbol %d was not recorded as read", objID)
 	}
 }
 
@@ -796,6 +818,23 @@ func TestParamSlotsMethodSelf(t *testing.T) {
 		t.Fatalf("implicit method arg slot = %#v, want explicit arg", slots[1])
 	}
 
+	noArgImplicitFn := function(nil)
+	r = BindChunk([]ast.Stmt{
+		&ast.FuncDefStmt{
+			Name: &ast.FuncName{Receiver: ident("obj"), Method: "method"},
+			Func: noArgImplicitFn,
+		},
+	}, Options{Globals: []string{"obj"}})
+
+	params = r.ParamSymbols(noArgImplicitFn)
+	slots = r.ParamSlots(noArgImplicitFn)
+	if len(params) != 1 || len(slots) != 1 {
+		t.Fatalf("no-arg implicit method params/slots = %v/%#v, want implicit self only", params, slots)
+	}
+	if slots[0].Symbol != params[0] || slots[0].Name != "self" || slots[0].SourceIndex != -1 || !slots[0].ImplicitSelf || slots[0].Vararg {
+		t.Fatalf("no-arg implicit self slot = %#v, want implicit self", slots[0])
+	}
+
 	selfType := typeRef("Self")
 	explicitFn := &ast.FunctionExpr{
 		ParList: &ast.ParList{
@@ -1208,6 +1247,81 @@ func TestFunctionTypeParamsBindTypeRefs(t *testing.T) {
 	params := r.FunctionTypeParams(fn)
 	if len(params) != 1 || params[0].ID != paramDecl.ID {
 		t.Fatalf("FunctionTypeParams = %#v, want %#v", params, paramDecl)
+	}
+}
+
+func TestParsedMemberFunctionTypeParamsBindTypeRefs(t *testing.T) {
+	stmts, err := parse.ParseString(`
+local M = {}
+function M.new<T>(): T
+    return nil :: T
+end
+`, "bind_test.lua")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	if len(stmts) != 2 {
+		t.Fatalf("stmts = %d, want 2", len(stmts))
+	}
+	stmt, ok := stmts[1].(*ast.FuncDefStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want FuncDefStmt", stmts[1])
+	}
+	fn := stmt.Func
+	r := BindChunk(stmts, Options{})
+	params := r.FunctionTypeParams(fn)
+	if len(params) != 1 || params[0].Name != "T" {
+		t.Fatalf("FunctionTypeParams = %#v, want T", params)
+	}
+	if len(fn.ReturnTypes) != 1 {
+		t.Fatalf("return types = %d, want 1", len(fn.ReturnTypes))
+	}
+	returnType, ok := fn.ReturnTypes[0].(*ast.PrimitiveTypeExpr)
+	if !ok {
+		t.Fatalf("return type = %T, want PrimitiveTypeExpr", fn.ReturnTypes[0])
+	}
+	returnDecl := mustPrimitiveTypeRef(t, r, returnType)
+	if returnDecl.ID != params[0].ID {
+		t.Fatalf("return type param = %#v, want %#v", returnDecl, params[0])
+	}
+}
+
+func TestParsedMemberFunctionGenericAliasReturnBindsBaseAndArg(t *testing.T) {
+	stmts, err := parse.ParseString(`
+type Collection<T> = { value: T }
+local M = {}
+function M.new<T>(): Collection<T>
+    return nil :: Collection<T>
+end
+`, "bind_test.lua")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	typeDef, ok := stmts[0].(*ast.TypeDefStmt)
+	if !ok {
+		t.Fatalf("stmt 0 = %T, want TypeDefStmt", stmts[0])
+	}
+	funcDef, ok := stmts[2].(*ast.FuncDefStmt)
+	if !ok {
+		t.Fatalf("stmt 2 = %T, want FuncDefStmt", stmts[2])
+	}
+	ret, ok := funcDef.Func.ReturnTypes[0].(*ast.GenericTypeExpr)
+	if !ok {
+		t.Fatalf("return type = %T, want GenericTypeExpr", funcDef.Func.ReturnTypes[0])
+	}
+	r := BindChunk(stmts, Options{})
+	baseDecl := mustTypeRef(t, r, ret.Base)
+	if baseDecl.Type != typeDef {
+		t.Fatalf("generic base decl = %#v, want Collection alias", baseDecl)
+	}
+	arg, ok := ret.Args[0].(*ast.PrimitiveTypeExpr)
+	if !ok {
+		t.Fatalf("generic arg = %T, want PrimitiveTypeExpr", ret.Args[0])
+	}
+	argDecl := mustPrimitiveTypeRef(t, r, arg)
+	params := r.FunctionTypeParams(funcDef.Func)
+	if len(params) != 1 || argDecl.ID != params[0].ID {
+		t.Fatalf("generic arg decl = %#v params=%#v, want function T", argDecl, params)
 	}
 }
 

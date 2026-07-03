@@ -104,6 +104,29 @@ func TestRequireCheckAndExportedGenericMemberSignatureFeedsChannelReceive(t *tes
 	}
 }
 
+func TestRequireCheckNestedGenericChannelHelperKeepsOuterParameterShape(t *testing.T) {
+	runtimeMod := CheckAndExport(`
+		type Event = { id: string }
+		local function map_receive<T>(ch: Channel<T>, fn: (T) -> string): string
+			local value, ok = ch:receive()
+			if ok then
+				return fn(value)
+			end
+			return "closed"
+		end
+		local M = {}
+		function M.read_event(ch: Channel<Event>): string
+			return map_receive(ch, function(event: Event): string
+				return event.id
+			end)
+		end
+		return M
+	`, "runtime")
+	if len(runtimeMod.Errors) != 0 {
+		t.Fatalf("runtime module errors = %#v, want none", runtimeMod.Errors)
+	}
+}
+
 func TestRequireCheckAndExportedReceiveMapKeepsCallbackContextAfterPriorReceive(t *testing.T) {
 	processMod := CheckAndExport(`
 		type ListenOptions<T> = {

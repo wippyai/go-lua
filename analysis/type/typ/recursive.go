@@ -35,6 +35,7 @@ type Recursive struct {
 	containsFlagsComputing  bool
 	containsClosedComputing bool
 	hashDeps                []recursiveHashDep
+	containsClosedDeps      []recursiveHashDep
 }
 
 // RecursiveBuilder is used during construction to provide a self-reference.
@@ -73,6 +74,7 @@ func (r *Recursive) SetBody(body Type) {
 	r.hash = 0
 	r.rev++
 	r.hashDeps = nil
+	r.containsClosedDeps = nil
 	r.containsFlagsDirty = true
 	r.containsClosedDirty = true
 }

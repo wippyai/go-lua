@@ -219,6 +219,27 @@ func TestSelf(t *testing.T) {
 		}
 	})
 
+	t.Run("rewrites function-valued record fields", func(t *testing.T) {
+		method := typ.Func().Param("self", typ.Self).Returns(typ.Self).Build()
+		rec := typetable.NewRecord().Field("method", method).Build()
+		result := Self(rec, typ.String)
+		resultRec, ok := result.(*typ.Record)
+		if !ok {
+			t.Fatalf("expected record, got %T", result)
+		}
+		field := resultRec.GetField("method")
+		if field == nil {
+			t.Fatal("missing method field")
+		}
+		gotFn, ok := field.Type.(*typ.Function)
+		if !ok {
+			t.Fatalf("method field = %T, want function", field.Type)
+		}
+		if gotFn.Params[0].Type != typ.String || gotFn.Returns[0] != typ.String {
+			t.Fatalf("method type = %v, want self rewritten to string", gotFn)
+		}
+	})
+
 	t.Run("replace self unioned with recursive payload", func(t *testing.T) {
 		rec := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
 			return typetable.NewRecord().Field("next", self).Build()
@@ -245,6 +266,74 @@ func TestSelf(t *testing.T) {
 			t.Fatalf("recursive payload without Self should be returned unchanged, got %v", got)
 		}
 	})
+
+	t.Run("skip self inside recursive payload body", func(t *testing.T) {
+		rec := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+			return typetable.NewRecord().
+				Field("next", self).
+				Field("owner", typ.Self).
+				Build()
+		})
+		wrapper := typetable.NewRecord().Field("payload", rec).Build()
+		if got := Self(wrapper, typ.String); got != wrapper {
+			t.Fatalf("recursive payload body Self should not be surfaced, got %v", got)
+		}
+	})
+}
+
+func BenchmarkSelfAcyclicNoSelf(b *testing.B) {
+	fn := typ.Func().
+		Param("payload", typetable.NewRecord().
+			Field("id", typ.String).
+			Field("count", typ.Number).
+			Build()).
+		Returns(typ.Boolean).
+		Build()
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if Self(fn, typ.String) != fn {
+			b.Fatal("acyclic type without Self should be returned unchanged")
+		}
+	}
+}
+
+func BenchmarkSelfAcyclicWithSelf(b *testing.B) {
+	fn := typ.Func().
+		Param("self", typ.Self).
+		Param("payload", typetable.NewRecord().
+			Field("id", typ.String).
+			Field("count", typ.Number).
+			Build()).
+		Returns(typ.Self).
+		Build()
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if Self(fn, typ.String) == fn {
+			b.Fatal("acyclic type with Self should be rewritten")
+		}
+	}
+}
+
+func BenchmarkSelfRecursivePayloadNoSurfaceSelf(b *testing.B) {
+	rec := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typetable.NewRecord().
+			Field("next", self).
+			Field("owner", typ.Self).
+			Build()
+	})
+	wrapper := typetable.NewRecord().
+		Field("payload", rec).
+		Field("fn", typ.Func().Param("node", rec).Returns(rec).Build()).
+		Build()
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if Self(wrapper, typ.String) != wrapper {
+			b.Fatal("recursive payload without surface Self should be unchanged")
+		}
+	}
 }
 
 func TestSelfRef(t *testing.T) {
@@ -351,6 +440,27 @@ func TestExpandInstantiated(t *testing.T) {
 		}
 		if arr.Element != typ.Number {
 			t.Error("element should be Number")
+		}
+	})
+
+	t.Run("looks through nested annotations", func(t *testing.T) {
+		tp := typ.NewTypeParam("T", nil)
+		generic := typ.NewGeneric("Box", []*typ.TypeParam{tp},
+			typetable.NewRecord().Field("value", tp).Build())
+		inst := typ.Instantiate(generic, typ.String)
+		annotated := typ.NewAnnotated(
+			typ.NewAnnotated(inst, nil),
+			nil,
+		)
+
+		result := ExpandInstantiated(annotated)
+		rec, ok := result.(*typ.Record)
+		if !ok {
+			t.Fatalf("expected expanded record, got %T", result)
+		}
+		field := rec.GetField("value")
+		if field == nil || field.Type != typ.String {
+			t.Fatalf("expanded field = %#v, want string", field)
 		}
 	})
 

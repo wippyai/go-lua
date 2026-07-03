@@ -46,6 +46,18 @@ func dynamicIndex(obj ast.Expr, key ast.Expr) *ast.AttrGetExpr {
 	}
 }
 
+func primitiveType(name string) *ast.PrimitiveTypeExpr {
+	return &ast.PrimitiveTypeExpr{Name: name}
+}
+
+func cast(expr ast.Expr, typ ast.TypeExpr) *ast.CastExpr {
+	return &ast.CastExpr{Expr: expr, Type: typ, Syntax: ast.CastSyntaxColonColon}
+}
+
+func nonNil(expr ast.Expr) *ast.NonNilAssertExpr {
+	return &ast.NonNilAssertExpr{Expr: expr}
+}
+
 func bindReturn(expr ast.Expr) *bind.Result {
 	return bind.BindChunk([]ast.Stmt{&ast.ReturnStmt{Exprs: []ast.Expr{expr}}}, bind.Options{})
 }
@@ -70,11 +82,30 @@ func assertResolved(t *testing.T, expr ast.Expr, bindings *bind.Result, want pat
 	}
 }
 
+func assertAliasResolved(t *testing.T, expr ast.Expr, bindings *bind.Result, want path.Path) {
+	t.Helper()
+	got, ok := ResolveAlias(expr, bindings)
+	if !ok {
+		t.Fatalf("ResolveAlias(%T) rejected aliased path", expr)
+	}
+	if got.Root != want.Root || got.Symbol != want.Symbol || !reflect.DeepEqual(got.Segments, want.Segments) {
+		t.Fatalf("ResolveAlias() = %#v, want %#v", got, want)
+	}
+}
+
 func assertRejected(t *testing.T, expr ast.Expr, bindings *bind.Result) {
 	t.Helper()
 	got, ok := Resolve(expr, bindings)
 	if ok || !got.IsEmpty() {
 		t.Fatalf("Resolve() = %#v/%v, want empty/false", got, ok)
+	}
+}
+
+func assertAliasRejected(t *testing.T, expr ast.Expr, bindings *bind.Result) {
+	t.Helper()
+	got, ok := ResolveAlias(expr, bindings)
+	if ok || !got.IsEmpty() {
+		t.Fatalf("ResolveAlias() = %#v/%v, want empty/false", got, ok)
 	}
 }
 
@@ -132,6 +163,57 @@ func TestResolveMixedPath(t *testing.T) {
 
 	want := path.NewPath(sym, "obj").Field("a").IndexStr("b").IndexInt(3).Field("c")
 	assertResolved(t, expr, bindings, want)
+}
+
+func TestResolveAliasNonNilAssertPreservesOperandPath(t *testing.T) {
+	root := ident("obj")
+	expr := nonNil(dot(root, "child"))
+	bindings := bindReturn(expr)
+	sym := mustResolvedRoot(t, bindings, root)
+
+	assertRejected(t, expr, bindings)
+	assertAliasResolved(t, expr, bindings, path.NewPath(sym, "obj").Field("child"))
+}
+
+func TestResolveAliasNonAnyCastPreservesOperandPath(t *testing.T) {
+	root := ident("obj")
+	expr := cast(dot(root, "child"), primitiveType("number"))
+	bindings := bindReturn(expr)
+	sym := mustResolvedRoot(t, bindings, root)
+
+	assertRejected(t, expr, bindings)
+	assertAliasResolved(t, expr, bindings, path.NewPath(sym, "obj").Field("child"))
+}
+
+func TestResolveAliasMapSupertypeCastWithAnyValuePreservesOperandPath(t *testing.T) {
+	root := ident("suites")
+	expr := cast(root, &ast.MapTypeExpr{
+		Key:   primitiveType("string"),
+		Value: primitiveType("any"),
+	})
+	bindings := bindReturn(expr)
+	sym := mustResolvedRoot(t, bindings, root)
+
+	assertRejected(t, expr, bindings)
+	assertAliasResolved(t, expr, bindings, path.NewPath(sym, "suites"))
+}
+
+func TestResolveAliasPrimitiveAnyCastRejectsProofPath(t *testing.T) {
+	root := ident("obj")
+	expr := cast(dot(root, "child"), primitiveType("any"))
+	bindings := bindReturn(expr)
+
+	assertRejected(t, expr, bindings)
+	assertAliasRejected(t, expr, bindings)
+}
+
+func TestResolveAliasPrimitiveUnknownCastRejectsProofPath(t *testing.T) {
+	root := ident("obj")
+	expr := cast(dot(root, "child"), primitiveType("unknown"))
+	bindings := bindReturn(expr)
+
+	assertRejected(t, expr, bindings)
+	assertAliasRejected(t, expr, bindings)
 }
 
 func TestResolveUnresolvedIdent(t *testing.T) {

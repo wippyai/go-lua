@@ -16,8 +16,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/stringlib"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -25,6 +25,7 @@ const (
 	Assert      = "assert"
 	Error       = "error"
 	Require     = "require"
+	String      = "string"
 	ToString    = "tostring"
 	Type        = "type"
 	Pairs       = "pairs"
@@ -59,6 +60,13 @@ var registry = map[string]signature.Function{
 			Returns(typ.Any).
 			Build(),
 		dispatch.ModuleLoad{},
+	),
+	String: sig(
+		typ.Func().
+			Param("v", typ.Any).
+			Returns(typ.String).
+			Build(),
+		ownership.BorrowAll{},
 	),
 	ToString: sig(
 		typ.Func().
@@ -195,10 +203,8 @@ var registry = map[string]signature.Function{
 				Param("metatable", normalize.Optional(typ.Any)).
 				Returns(tp).
 				Build(),
-			ownership.Store{
-				Param: effect.ParamRef{Index: 1},
-				Into:  effect.ParamRef{Index: 0},
-			},
+			ownership.Retain{Param: effect.ParamRef{Index: 1}},
+			returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: effect.ParamRef{Index: 0}}},
 		)
 	}(),
 	"getmetatable": sig(
@@ -214,15 +220,19 @@ var registry = map[string]signature.Function{
 			Returns(typ.Any).
 			Build(),
 	),
-	"unpack": sig(
-		typ.Func().
-			Param("list", typ.Any).
-			OptParam("i", typ.Integer).
-			OptParam("j", typ.Integer).
-			Returns(typ.Any).
-			Build(),
-		ownership.BorrowAll{},
-	),
+	"unpack": func() signature.Function {
+		elem := typ.NewTypeParam("T", nil)
+		return sig(
+			typ.Func().
+				TypeParamRef(elem).
+				Param("list", typ.NewArray(elem)).
+				OptParam("i", typ.Integer).
+				OptParam("j", typ.Integer).
+				Returns(normalize.Optional(elem)).
+				Build(),
+			ownership.BorrowAll{},
+		)
+	}(),
 
 	// table library.
 	TableInsert: sig(
@@ -283,15 +293,19 @@ var registry = map[string]signature.Function{
 			Transform: mutation.Unchanged{},
 		},
 	),
-	"table.unpack": sig(
-		typ.Func().
-			Param("list", typ.Any).
-			OptParam("i", typ.Integer).
-			OptParam("j", typ.Integer).
-			Returns(typ.Any).
-			Build(),
-		ownership.BorrowAll{},
-	),
+	"table.unpack": func() signature.Function {
+		elem := typ.NewTypeParam("T", nil)
+		return sig(
+			typ.Func().
+				TypeParamRef(elem).
+				Param("list", typ.NewArray(elem)).
+				OptParam("i", typ.Integer).
+				OptParam("j", typ.Integer).
+				Returns(normalize.Optional(elem)).
+				Build(),
+			ownership.BorrowAll{},
+		)
+	}(),
 	"table.pack": sig(
 		typ.Func().
 			Variadic(typ.Any).
@@ -308,13 +322,52 @@ var registry = map[string]signature.Function{
 			Returns(typ.Any).
 			Build(),
 	),
-	"table.create": sig(
+	"table.create": func() signature.Function {
+		tableType := typetable.NewRecord().Build()
+		return signature.Function{
+			Type: typ.Func().
+				Param("narray", typ.Integer).
+				OptParam("nhash", typ.Integer).
+				Returns(tableType).
+				Build(),
+			OperationalEffects: &signature.OperationalEffects{
+				ReturnAllocationTemplates: []signature.ReturnAllocationTemplate{{
+					ReturnIndex: 0,
+					Root:        "stdlib.table.create:return:0",
+					Objects: []signature.AllocationObjectTemplate{{
+						ID:   "stdlib.table.create:return:0",
+						Type: tableType,
+					}},
+				}},
+			},
+		}
+	}(),
+
+	// json module.
+	"json.encode": sig(
 		typ.Func().
-			Param("narray", typ.Integer).
-			OptParam("nhash", typ.Integer).
-			Returns(typetable.NewRecord().Build()).
+			Param("value", typ.Any).
+			Returns(typ.String).
 			Build(),
+		ownership.BorrowAll{},
 	),
+	"json.decode": sig(
+		typ.Func().
+			Param("source", typ.String).
+			Returns(typ.Any, normalize.Optional(typ.String)).
+			Build(),
+		ownership.BorrowAll{},
+	),
+
+	// env module.
+	"env.get": sig(
+		typ.Func().
+			Param("name", typ.String).
+			Returns(normalize.Optional(typ.String), normalize.Optional(typ.String)).
+			Build(),
+		ownership.BorrowAll{},
+	),
+
 	"table.freeze": func() signature.Function {
 		tp := typ.NewTypeParam("T", nil)
 		return sig(
@@ -334,7 +387,7 @@ var registry = map[string]signature.Function{
 		ownership.BorrowAll{},
 	),
 
-		// string library: see init() below, populated from type/stringlib (single source).
+	// string library: see init() below, populated from type/stringlib (single source).
 
 	// math library.
 	"math.abs":   sig(typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()),
@@ -473,11 +526,72 @@ func Lookup(name string) (signature.Function, bool) {
 	return sig.Clone(), true
 }
 
+// bareGlobals names every Lua standard global that is always present in the
+// environment: the base functions, the global table and version constants, and
+// the standard library tables. They are recognized by name unconditionally;
+// typed signatures for those that are functions are layered on top when the
+// stdlib is loaded. This is the principled source for "this name is a known
+// global", replacing per-call-site name switches in the diagnostics layer.
+var bareGlobals = []string{
+	"_G",
+	"_GOPHER_LUA_VERSION",
+	"_VERSION",
+	"assert",
+	"collectgarbage",
+	"coroutine",
+	"debug",
+	"dofile",
+	"error",
+	"getmetatable",
+	"io",
+	"ipairs",
+	"load",
+	"loadfile",
+	"math",
+	"next",
+	"os",
+	"package",
+	"pairs",
+	"pcall",
+	"print",
+	"rawequal",
+	"rawget",
+	"rawlen",
+	"rawset",
+	"require",
+	"select",
+	"setmetatable",
+	"string",
+	"table",
+	"tonumber",
+	"tostring",
+	"type",
+	"unpack",
+	"utf8",
+	"xpcall",
+}
+
+// BareGlobals returns the always-present Lua global names recognized by name.
+func BareGlobals() []string {
+	return append([]string(nil), bareGlobals...)
+}
+
 // Signatures returns cloned registry entries keyed by stable stdlib names.
 func Signatures() map[string]signature.Function {
 	out := make(map[string]signature.Function, len(registry))
 	for name, sig := range registry {
 		out[name] = sig.Clone()
+	}
+	return out
+}
+
+// SignatureNames returns the stable stdlib signature names without cloning the
+// signature registry. Callers that only need roots/names must use this instead
+// of materializing Signatures.
+func SignatureNames() []string {
+	out := make([]string, 0, len(registry))
+	for name := range registry {
+		out = append(out, name)
 	}
 	return out
 }

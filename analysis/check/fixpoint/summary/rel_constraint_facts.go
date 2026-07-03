@@ -24,12 +24,20 @@ type relConstraintFactLane struct{}
 var relConstraintLane relConstraintFactLane
 
 func (relConstraintFactLane) Normalize(in []callboundary.RelConstraintFact) []callboundary.RelConstraintFact {
+	return normalizeRelConstraintFacts(in, true)
+}
+
+func (relConstraintFactLane) NormalizeOwned(in []callboundary.RelConstraintFact) []callboundary.RelConstraintFact {
+	return normalizeRelConstraintFacts(in, false)
+}
+
+func normalizeRelConstraintFacts(in []callboundary.RelConstraintFact, clone bool) []callboundary.RelConstraintFact {
 	if len(in) == 0 {
 		return nil
 	}
 	byKey := make(map[relConstraintFactKey]callboundary.RelConstraintFact, len(in))
 	for _, fact := range in {
-		fact, ok := normalizeRelConstraintFact(fact)
+		fact, ok := normalizeRelConstraintFact(fact, clone)
 		if !ok {
 			continue
 		}
@@ -61,6 +69,18 @@ func (lane relConstraintFactLane) Clone(in []callboundary.RelConstraintFact) []c
 }
 
 func (lane relConstraintFactLane) Equal(a, b []callboundary.RelConstraintFact) bool {
+	if len(a) == len(b) {
+		same := true
+		for i := range a {
+			if relConstraintKeyOf(a[i]) != relConstraintKeyOf(b[i]) {
+				same = false
+				break
+			}
+		}
+		if same {
+			return true
+		}
+	}
 	a = lane.Normalize(a)
 	b = lane.Normalize(b)
 	if len(a) != len(b) {
@@ -115,12 +135,14 @@ func (lane relConstraintFactLane) Widen(prev, next []callboundary.RelConstraintF
 	return lane.Join(prev, next)
 }
 
-func normalizeRelConstraintFact(fact callboundary.RelConstraintFact) (callboundary.RelConstraintFact, bool) {
+func normalizeRelConstraintFact(fact callboundary.RelConstraintFact, clone bool) (callboundary.RelConstraintFact, bool) {
 	if fact.A.Path.IsEmpty() || fact.C.Path.IsEmpty() || !fact.A.Path.IsPlaceholder() || !fact.C.Path.IsPlaceholder() {
 		return callboundary.RelConstraintFact{}, false
 	}
-	fact.A.Path = fact.A.Path.Clone()
-	fact.C.Path = fact.C.Path.Clone()
+	if clone {
+		fact.A.Path = fact.A.Path.Clone()
+		fact.C.Path = fact.C.Path.Clone()
+	}
 	if fact.B.Path.IsEmpty() || fact.CoB == 0 {
 		fact.CoB = 0
 		fact.B = callboundary.RelOperand{}
@@ -129,7 +151,9 @@ func normalizeRelConstraintFact(fact callboundary.RelConstraintFact) (callbounda
 	if !fact.B.Path.IsPlaceholder() {
 		return callboundary.RelConstraintFact{}, false
 	}
-	fact.B.Path = fact.B.Path.Clone()
+	if clone {
+		fact.B.Path = fact.B.Path.Clone()
+	}
 	if relOperandKeyLess(fact.B, fact.CoB, fact.A, fact.CoA) {
 		fact.A, fact.B = fact.B, fact.A
 		fact.CoA, fact.CoB = fact.CoB, fact.CoA

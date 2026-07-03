@@ -19,6 +19,15 @@ func (s State) PathRefinementsSnapshot(ks *keyspace.KeySpace) pathevidence.PathR
 	return s.pathEvidence.PathRefinementsSnapshot(ks)
 }
 
+// ForEachPathRefinement visits finite path-refinement facts without
+// materializing a PathKey snapshot. Bottom and disabled lanes visit nothing.
+func (s State) ForEachPathRefinement(fn func(keyspace.Key, product.Value) bool) {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return
+	}
+	s.pathEvidence.ForEachPathRefinement(fn)
+}
+
 // PathStaticMembersSnapshot returns finite must-static-member facts. Bottom is
 // explicit; Top means the reachable must lane contains no finite facts.
 func (s State) PathStaticMembersSnapshot(ks *keyspace.KeySpace) pathevidence.PathStaticMembersSnapshot {
@@ -26,6 +35,15 @@ func (s State) PathStaticMembersSnapshot(ks *keyspace.KeySpace) pathevidence.Pat
 		return pathevidence.PathStaticMembersSnapshot{Bottom: true}
 	}
 	return s.pathEvidence.PathStaticMembersSnapshot(ks)
+}
+
+// ForEachPathStaticMember visits finite must-static-member facts without
+// materializing a PathKey snapshot. Bottom and disabled lanes visit nothing.
+func (s State) ForEachPathStaticMember(fn func(keyspace.Key, product.Value) bool) {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return
+	}
+	s.pathEvidence.ForEachPathStaticMember(fn)
 }
 
 // BranchProofsSnapshot returns finite must branch proofs in stable order.
@@ -97,6 +115,91 @@ func (s State) WriteLocalPathKey(reg *axis.Registry, pathKey keyspace.Key, value
 	return out
 }
 
+// PathEvidenceEdit batches point-local path refinement and static-member writes
+// against one State snapshot. It is equivalent to repeated WritePathKey and
+// WritePathStaticMember calls, but clones each path-evidence value map at most
+// once.
+type PathEvidenceEdit struct {
+	state   State
+	enabled bool
+	edit    pathevidence.Edit
+}
+
+// EditPathEvidence opens a path-evidence edit transaction. Call Done or DoneOn
+// to publish the staged evidence.
+func (s State) EditPathEvidence(reg *axis.Registry) PathEvidenceEdit {
+	return PathEvidenceEdit{
+		state:   s,
+		enabled: s.laneEnabled(lanePathEvidenceBit),
+		edit:    pathevidence.EditLane(reg, s.pathEvidence),
+	}
+}
+
+// WritePathKey stages a path-refinement write after resolving the external
+// path-key spelling through ks.
+func (e *PathEvidenceEdit) WritePathKey(ks *keyspace.KeySpace, pathKey pathdom.PathKey, value product.Value) bool {
+	if e == nil || !e.enabled || ks == nil {
+		return false
+	}
+	localKey, ok := ks.FromPathKey(pathKey)
+	if !ok {
+		return false
+	}
+	return e.WriteLocalPathKey(localKey, value)
+}
+
+// WriteLocalPathKey stages an already-interned path-refinement write.
+func (e *PathEvidenceEdit) WriteLocalPathKey(pathKey keyspace.Key, value product.Value) bool {
+	if e == nil || !e.enabled {
+		return false
+	}
+	return e.edit.WritePathKey(pathKey, value)
+}
+
+// WritePathStaticMember stages a static-member write after resolving the
+// external path-key spelling through ks.
+func (e *PathEvidenceEdit) WritePathStaticMember(ks *keyspace.KeySpace, pathKey pathdom.PathKey, value product.Value) bool {
+	if e == nil || !e.enabled || ks == nil {
+		return false
+	}
+	localKey, ok := ks.FromPathKey(pathKey)
+	if !ok {
+		return false
+	}
+	return e.WriteLocalPathStaticMember(localKey, value)
+}
+
+// WriteLocalPathStaticMember stages an already-interned static-member write.
+func (e *PathEvidenceEdit) WriteLocalPathStaticMember(pathKey keyspace.Key, value product.Value) bool {
+	if e == nil || !e.enabled {
+		return false
+	}
+	return e.edit.WritePathStaticMember(pathKey, value)
+}
+
+// Done publishes staged path evidence onto the original edit state.
+func (e *PathEvidenceEdit) Done() State {
+	if e == nil {
+		return State{}
+	}
+	return e.DoneOn(e.state)
+}
+
+// DoneOn publishes staged path evidence onto base. Callers must ensure no
+// independent path-evidence writes were made to base while the edit was open.
+func (e *PathEvidenceEdit) DoneOn(base State) State {
+	if e == nil || !e.enabled {
+		return base
+	}
+	pathEvidence, changed := e.edit.Done()
+	if !changed {
+		return base
+	}
+	out := base.reachable()
+	out.pathEvidence = pathEvidence
+	return out
+}
+
 // UpdatePathKey reads pathKey, applies fn, and writes the transformed value.
 // Transforming a finite entry to product.Bottom(reg) removes it.
 func (s State) UpdatePathKey(reg *axis.Registry, ks *keyspace.KeySpace, pathKey pathdom.PathKey, fn func(product.Value) product.Value) State {
@@ -129,14 +232,28 @@ func (s State) UpdateLocalPathKey(reg *axis.Registry, pathKey keyspace.Key, fn f
 // descendant key. It returns false when pathKey is not a recognized structural
 // path-key spelling.
 func (s State) InvalidatePathKeySubtree(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (State, bool) {
-	pathEvidence, ok := s.pathEvidence.InvalidatePathKeySubtree(ks, pathKey)
+	return s.invalidatePathKeySubtree(ks, pathKey, true)
+}
+
+func (s State) InvalidatePathKeySubtreePreservingDynamicValueKeyMemberships(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (State, bool) {
+	return s.invalidatePathKeySubtree(ks, pathKey, false)
+}
+
+func (s State) invalidatePathKeySubtree(ks *keyspace.KeySpace, pathKey pathdom.PathKey, clearDynamicValueMemberships bool) (State, bool) {
+	prefixes, ok := s.pathEvidence.PathKeySubtreeInvalidationPrefixes(ks, pathKey)
 	if !ok {
 		return s, false
 	}
-	prefixes, _ := s.pathEvidence.PathKeySubtreeInvalidationPrefixes(ks, pathKey)
+	pathEvidence := s.pathEvidence.InvalidatePathKeySubtreePrefixes(ks, prefixes)
 	lenFloors, lenFloorChanged := s.lenFloors.clearPathKeySubtrees(ks, prefixes)
 	out := s
 	out.pathEvidence = pathEvidence
+	out = out.ClearDynamicIndexFactsForPathKeySubtree(ks, pathKey)
+	if clearDynamicValueMemberships {
+		out = out.ClearKeyMembershipsForPathKeySubtree(ks, pathKey)
+	} else {
+		out = out.ClearPathKeyMembershipsForPathKeySubtree(ks, pathKey)
+	}
 	if lenFloorChanged {
 		out.lenFloors = lenFloors
 	}
@@ -147,18 +264,23 @@ func (s State) InvalidatePathKeySubtree(ks *keyspace.KeySpace, pathKey pathdom.P
 // while preserving the exact pathKey refinement. It returns false when pathKey
 // is not a recognized structural path-key spelling.
 func (s State) InvalidatePathKeyDescendants(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (State, bool) {
-	pathEvidence, ok := s.pathEvidence.InvalidatePathKeyDescendants(ks, pathKey)
+	prefixes, ok := s.pathEvidence.PathKeyDescendantInvalidationPrefixes(ks, pathKey)
 	if !ok {
 		return s, false
 	}
-	prefixes, _ := s.pathEvidence.PathKeyDescendantInvalidationPrefixes(ks, pathKey)
+	pathEvidence := s.pathEvidence.InvalidatePathKeyDescendantPrefixes(ks, prefixes)
 	lenFloors, lenFloorChanged := s.lenFloors.clearPathKeyDescendantMutation(ks, prefixes)
 	out := s
 	out.pathEvidence = pathEvidence
+	out = out.ClearDynamicIndexFactsForPathKeyDescendants(ks, pathKey)
 	if lenFloorChanged {
 		out.lenFloors = lenFloors
 	}
 	return out, true
+}
+
+func (s State) InvalidatePathKeyDescendantsPreservingDynamicValueKeyMemberships(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (State, bool) {
+	return s.InvalidatePathKeyDescendants(ks, pathKey)
 }
 
 func (s State) PathKeyDescendantInvalidationPrefixes(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (pathevidence.PathKeyDescendantInvalidationPrefixes, bool) {
@@ -305,6 +427,16 @@ func (s State) EquivalentPathKeys(ks *keyspace.KeySpace, pathKey pathdom.PathKey
 		return nil
 	}
 	return s.pathEvidence.EquivalentPathKeys(ks, pathKey)
+}
+
+// EquivalentRootKeys returns root-symbol aliases proven equal to stateKey
+// without expanding descendant rebases. Use this for root-value refinement;
+// callers that need descendant path aliases should use EquivalentPathKeys.
+func (s State) EquivalentRootKeys(ks *keyspace.KeySpace, stateKey pathaddr.StateKey) []keyspace.Key {
+	if !s.laneEnabled(lanePathEvidenceBit) || stateKey == "" {
+		return nil
+	}
+	return s.pathEvidence.EquivalentRootKeys(ks, stateKey.PathKey())
 }
 
 // EquivalentStateKeys returns validated state-key aliases proven equivalent to

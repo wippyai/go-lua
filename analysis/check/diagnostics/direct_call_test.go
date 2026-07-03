@@ -4,7 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -34,6 +36,52 @@ func TestDirectCallReportsNonCallableTarget(t *testing.T) {
 	}
 }
 
+func TestContainsTypeParamSyntaxTerminatesOnRecursiveSelfMethodRecord(t *testing.T) {
+	store := typ.NewRecursive("Store", func(self typ.Type) typ.Type {
+		return typ.RebuildRecord(typ.RecordParts{
+			Fields: []typ.Field{
+				{Name: "cache", Type: typ.NewMap(typ.String, typ.String)},
+				{
+					Name: "get",
+					Type: typ.Func().
+						Param("self", self).
+						Param("key", typ.String).
+						Returns(typ.MaterializeOptional(typ.String)).
+						Build(),
+				},
+				{
+					Name: "put",
+					Type: typ.Func().
+						Param("self", self).
+						Param("key", typ.String).
+						Param("value", typ.String).
+						Returns(self).
+						Build(),
+				},
+			},
+		})
+	})
+	if containsTypeParamSyntax(store) {
+		t.Fatalf("recursive self-method record should not contain generic syntax")
+	}
+
+	param := typ.NewTypeParam("T", nil)
+	genericStore := typ.NewRecursive("GenericStore", func(self typ.Type) typ.Type {
+		return typ.RebuildRecord(typ.RecordParts{
+			Fields: []typ.Field{{
+				Name: "get",
+				Type: typ.Func().
+					Param("self", self).
+					Returns(param).
+					Build(),
+			}},
+		})
+	})
+	if !containsTypeParamSyntax(genericStore) {
+		t.Fatalf("recursive self-method record should still report nested generic syntax")
+	}
+}
+
 func TestDirectCallReportsPossiblyNilTargetWithDirectCallCode(t *testing.T) {
 	diags := runDiagnostics(t, `
 		local maybe: (() -> string)? = nil
@@ -51,7 +99,7 @@ func TestDirectCallReportsPossiblyNilTargetWithDirectCallCode(t *testing.T) {
 	}
 	if !diagnosticEvidenceContains(d.Explanation.Evidence(), "maybe has a callable type, but may also be nil") ||
 		!diagnosticEvidenceContains(d.Explanation.Evidence(), "no guard on this path proves maybe is non-nil before this call") {
-		t.Fatalf("explanation evidence = %#v, want optional callable and missing guard proof", d.Explanation.Evidence())
+		t.Fatalf("explanation evidence = %#v, want nil-call and missing guard proof", d.Explanation.Evidence())
 	}
 	if !diagnosticHasLabel(d, labelCallTarget) {
 		t.Fatalf("labels = %#v, want call-target focus label", d.Labels)
@@ -82,7 +130,8 @@ maybe()
 
 because:
   1. proven: maybe has a callable type, but may also be nil
-  2. missing proof: no guard on this path proves maybe is non-nil before this call
+  2. claimed: maybe must be non-nil before it is called
+  3. missing proof: no guard on this path proves maybe is non-nil before this call
 
 help: Guard ` + "`maybe`" + ` with a nil check before calling it.`
 	if rendered != want {
@@ -227,6 +276,206 @@ func TestDirectCallUsesGenericResultFalseEdgeBoundaryProof(t *testing.T) {
 	}
 }
 
+func TestJudgmentDirectCallUsesGenericResultFalseEdgeBoundaryProof(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+		type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+
+		local function err<T>(message: string): Result<T>
+			return { ok = false, error = message }
+		end
+
+		local function map_result<T, U>(result: Result<T>, fn: (T) -> U): Result<U>
+			if result.ok then
+				return { ok = true, value = fn(result.value) }
+			end
+			return err(result.error)
+		end
+
+		local r = map_result({ ok = true, value = "x" }, function(value: string): number
+			return #value
+		end)
+	`)
+	diags := ProduceWithConfig(result, Config{})
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want judgment direct-call to accept false-edge result.error proof", diags)
+	}
+}
+
+func TestJudgmentDirectCallAcceptsContextualFunctionExpressionArgument(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+		local function map_value<T, U>(value: T, fn: (T) -> U): U
+			return fn(value)
+		end
+
+		local label = map_value({ id = "n1" }, function(decoded)
+			return decoded.id
+		end)
+	`)
+	diags := ProduceWithConfig(result, Config{})
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want judgment direct-call to accept contextually typed function expression", diags)
+	}
+}
+
+func TestJudgmentDirectCallAcceptsNilObjectLiteralEntryInGenericCall(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+		local mt = {}
+		local graph = setmetatable({
+			input_data = nil,
+		}, mt)
+	`)
+	diags := ProduceWithConfig(result, Config{})
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want judgment direct-call to accept nil object-literal entry", diags)
+	}
+}
+
+func TestJudgmentDirectCallAcceptsLengthExpressionArgument(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+		local items = { "a", "b" }
+		local out = table.create(#items, 0)
+	`)
+	diags := ProduceWithConfig(result, Config{})
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want judgment direct-call to accept length expression as integer", diags)
+	}
+}
+
+func TestDirectCallUsesGenericModuleResultFalseEdgeBoundaryProof(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+
+		local M = {}
+
+		function M.err<T>(message: string): Result<T>
+			return { ok = false, error = message }
+		end
+
+		function M.map<T, U>(result: Result<T>, fn: (T) -> U): Result<U>
+			if result.ok then
+				return { ok = true, value = fn(result.value) }
+			end
+			return M.err(result.error)
+		end
+
+		return M
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want module generic false-edge result.error accepted", diags)
+	}
+}
+
+func TestModuleResultFalseEdgeFlowTypesArgumentAsString(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+		type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+
+		local M = {}
+
+		function M.err<T>(message: string): Result<T>
+			return { ok = false, error = message }
+		end
+
+		function M.map<T, U>(result: Result<T>, fn: (T) -> U): Result<U>
+			if result.ok then
+				return { ok = true, value = fn(result.value) }
+			end
+			return M.err(result.error)
+		end
+
+		return M
+	`)
+	rootResolver := newResultResolver(result, nil)
+	guards := newDiagnosticGuardCache()
+	for _, child := range result.FunctionResults() {
+		if child == nil || child.Graph() == nil {
+			continue
+		}
+		resolver := newResultResolver(child, rootResolver)
+		envs := guards.environments(child)
+		for _, point := range child.Graph().RPO() {
+			fact, ok := child.Call(point)
+			if !ok || fact.Call == nil || len(fact.Call.Args) != 1 {
+				continue
+			}
+			argPath, ok := child.ExpressionPath(fact.Call.Args[0])
+			if !ok || argPath.String() != "result.error" {
+				continue
+			}
+			got, ok := newFlowExpressionTyper(child, resolver, point, envs[point]).typeOf(fact.Call.Args[0])
+			if !ok || !typ.TypeEquals(got, typ.String) {
+				t.Fatalf("flow type for result.error = %v/%v, want string", got, ok)
+			}
+			return
+		}
+	}
+	t.Fatal("M.err(result.error) call not found")
+}
+
+func TestDirectCallFlowTypesNestedValidatedOptionalStringHelperReturn(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+local function string_or_nil(value: any): string?
+    if type(value) == "string" and value ~= "" then
+        return value
+    end
+    return nil
+end
+
+local function configure(binding: string?): ()
+end
+
+local function run(config: { run_context_binding: any }): ()
+    configure(string_or_nil(config.run_context_binding))
+end
+`)
+	resolver := newResultResolver(result, nil)
+	guards := newDiagnosticGuardCache()
+	for _, child := range result.FunctionResults() {
+		if child == nil || child.Graph() == nil {
+			continue
+		}
+		childResolver := newResultResolver(child, resolver)
+		envs := guards.environments(child)
+		for _, point := range child.Graph().RPO() {
+			fact, ok := child.Call(point)
+			if !ok || fact.Call == nil || len(fact.Call.Args) != 1 {
+				continue
+			}
+			call, ok := fact.Call.Args[0].(*ast.FuncCallExpr)
+			if !ok {
+				continue
+			}
+			got, ok := newFlowExpressionTyper(child, childResolver, point, envs[point]).typeOf(call)
+			if !ok || !typ.TypeEquals(got, typ.MaterializeOptional(typ.String)) {
+				t.Fatalf("flow type for string_or_nil(...) = %v/%v, want string?", got, ok)
+			}
+			return
+		}
+	}
+	t.Fatal("configure(string_or_nil(...)) call not found")
+}
+
+func TestDirectCallDefinitionCacheBuildsOncePerResult(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+		local function helper(): string
+			return "ok"
+		end
+		return helper()
+	`)
+	cache := newDirectCallDefinitionCache()
+	context := producerContext{
+		guards:            newDiagnosticGuardCache(),
+		directDefinitions: cache,
+	}
+	first := directCallDefinitions(result, context, nil)
+	second := directCallDefinitions(result, context, nil)
+	if len(first) == 0 || len(second) == 0 {
+		t.Fatalf("definition cache returned empty maps: first=%d second=%d", len(first), len(second))
+	}
+	if cache.builds != 1 {
+		t.Fatalf("cache builds = %d, want 1", cache.builds)
+	}
+}
+
 func TestDirectCallUsesLoopLocalMethodReturnBoundaryProof(t *testing.T) {
 	diags := runDiagnostics(t, `
 		type Message = {
@@ -308,12 +557,93 @@ func TestDirectCallSkipsGenericIdentityArgumentClaims(t *testing.T) {
 func TestDirectCallAcceptsTypedOptionalParam(t *testing.T) {
 	diags := runDiagnostics(t, `
 		local function log(msg: string, level: string?)
+			local lvl = level or "INFO"
+			print(lvl .. ": " .. msg)
 		end
 		log("hello")
+		log("hello", "DEBUG")
 	`)
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v, want none for typed optional param", diags)
 	}
+}
+
+func TestDirectCallAcceptsNamedOptionalParamOmission(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type LogLevel = "debug" | "info" | "warn" | "error"
+
+		local function init(level: LogLevel?)
+			local effective = level or "info"
+			return effective
+		end
+
+		init()
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none for named optional param omission", diags)
+	}
+}
+
+func TestTypedOptionalParamDefaultLocalHasStringFlowType(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+		local function log(msg: string, level: string?)
+			local lvl = level or "INFO"
+			print(lvl .. ": " .. msg)
+		end
+		return log
+	`)
+	for _, child := range result.FunctionResults() {
+		if child == nil || child.Graph() == nil {
+			continue
+		}
+		for _, point := range child.Graph().RPO() {
+			fact, ok := child.LocalAssignment(point)
+			if !ok || fact.Name != "lvl" || !fact.HasSymbol {
+				continue
+			}
+			value, ok := child.SymbolValueAtBoundary(point, fact.Symbol)
+			if !ok {
+				t.Fatalf("lvl boundary value missing")
+			}
+			got, ok := readmodel.New(child).ValueTypeWithPresence(value)
+			if !ok || !typ.TypeEquals(got, typ.String) {
+				t.Fatalf("lvl boundary type = %v/%v, want string", got, ok)
+			}
+			return
+		}
+	}
+	t.Fatal("lvl assignment not found")
+}
+
+func TestTypedOptionalParamConcatArgumentHasStringFlowType(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+		local function log(msg: string, level: string?)
+			local lvl = level or "INFO"
+			print(lvl .. ": " .. msg)
+		end
+		return log
+	`)
+	rootResolver := newResultResolver(result, nil)
+	guards := newDiagnosticGuardCache()
+	for _, child := range result.FunctionResults() {
+		if child == nil || child.Graph() == nil {
+			continue
+		}
+		resolver := newResultResolver(child, rootResolver)
+		envs := guards.environments(child)
+		for _, point := range child.Graph().RPO() {
+			fact, ok := child.Call(point)
+			if !ok || fact.Call == nil || len(fact.Call.Args) != 1 {
+				continue
+			}
+			got, ok := newFlowExpressionTyper(child, resolver, point, envs[point]).typeOf(fact.Call.Args[0])
+			if !ok || !typ.TypeEquals(got, typ.String) {
+				t.Fatalf("print argument flow type = %v/%v, want string", got, ok)
+			}
+			return
+		}
+	}
+	t.Fatal("print call not found")
 }
 
 func TestDirectCallAcceptsUntypedDefaultOptional(t *testing.T) {
@@ -485,6 +815,20 @@ local x: string = api.make(42)
 	}
 }
 
+func TestJudgmentDirectCallMemberArgumentProofFailureTakesPrecedenceOverResultAssignment(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+type API = { make: (name: string) -> number }
+local api: API = {
+	make = function(name: string): number
+		return 1
+	end,
+}
+local x: string = api.make(42)
+`)
+	diags := ProduceWithConfig(result, Config{})
+	requireOnlyDirectCallArgumentDiagnostic(t, diags)
+}
+
 func TestDirectCallArgumentProofFailureTakesPrecedenceOverResultAssignment(t *testing.T) {
 	diags := runDiagnostics(t, `
 local function f(x: { id: string }): number
@@ -502,7 +846,7 @@ local y: string = f(raw)
 		t.Fatalf("diagnostic = %#v, want direct-call argument diagnostic", d)
 	}
 	if got := d.Explanation.String(); !strings.Contains(got, "f parameter 1 expects") ||
-		!strings.Contains(got, "user asserted any") ||
+		!strings.Contains(got, "raw comes from any/unknown") ||
 		!strings.Contains(got, "no proof on this path shows raw satisfies the parameter type") {
 		t.Fatalf("explanation = %q, want parameter declaration and explicit-any missing-proof evidence", got)
 	}
@@ -513,9 +857,32 @@ local y: string = f(raw)
 	}
 }
 
+func TestJudgmentDirectCallArgumentProofFailureTakesPrecedenceOverResultAssignment(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+local function f(x: { id: string }): number
+	return 1
+end
+
+local raw = ({ id = "ok" } :: any)
+local y: string = f(raw)
+`)
+	diags := ProduceWithConfig(result, Config{})
+	requireOnlyDirectCallArgumentDiagnostic(t, diags)
+}
+
+func requireOnlyDirectCallArgumentDiagnostic(t *testing.T, diags []diagnostic.Diagnostic) {
+	t.Helper()
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want one direct-call argument diagnostic: %#v", len(diags), diags)
+	}
+	if diags[0].Code != CodeDirectCallArgType {
+		t.Fatalf("diagnostic = %#v, want direct-call argument diagnostic", diags[0])
+	}
+}
+
 func TestDirectCallResultAssignmentSkipsGenericReturnContracts(t *testing.T) {
 	diags := runDiagnostics(t, `
-		local function id<T>(x: T): T
+local function id<T>(x: T): T
 			return x
 		end
 		local s: string = id("hello")

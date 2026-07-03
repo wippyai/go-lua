@@ -132,19 +132,11 @@ func (l lenFloorLane) clearMatching(match func(keyspace.Key) bool) (lenFloorLane
 	if l.lane.Bottom() || len(l.lane.Values()) == 0 {
 		return l, false
 	}
-	floors := mapedit.Clone(l.lane.Values())
-	changed := false
-	for key := range floors {
-		if match(key) {
-			delete(floors, key)
-			changed = true
-		}
-	}
+	floors, changed := mapedit.DeleteMatching(l.lane.Values(), func(key keyspace.Key, _ lenbound.Floor) bool {
+		return match(key)
+	})
 	if !changed {
 		return l, false
-	}
-	if len(floors) == 0 {
-		floors = nil
 	}
 	l.lane = lift.MustMapValues(floors)
 	return l, true

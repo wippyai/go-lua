@@ -6,7 +6,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/stringlib"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
@@ -79,7 +81,17 @@ func ParamConsumesReceiver(name string, param typ.Type, receiver typ.Type) bool 
 	if name == "self" {
 		return true
 	}
+	param = unwrap.Annotated(param)
+	if typ.TypeEquals(param, typ.Self) {
+		return true
+	}
+	if ref, ok := param.(*typ.Ref); ok && ref.Module == "" && ref.Name == "self" {
+		return true
+	}
 	if param == nil || receiver == nil || typ.IsAny(param) || typ.IsUnknown(param) {
+		return false
+	}
+	if typetable.IsBuiltinTopMarker(param) {
 		return false
 	}
 	return subtype.IsSubtype(receiver, param)
@@ -167,6 +179,9 @@ func memberCallSingle(t typ.Type, name string, depth int) memberCallResult {
 	if method, ok := stringMethod(name, t); ok {
 		return memberCallResult{t: method, status: MemberCallOK}
 	}
+	if method, ok := metaMethod(name, t); ok {
+		return memberCallResult{t: method, status: MemberCallOK}
+	}
 	memberType, ok := access.Field(t, name)
 	return memberCallableResult(memberType, ok, depth+1)
 }
@@ -242,6 +257,21 @@ func stringMethod(name string, receiver typ.Type) (typ.Type, bool) {
 	return fn, true
 }
 
+func metaMethod(name string, receiver typ.Type) (typ.Type, bool) {
+	if name != "is" {
+		return nil, false
+	}
+	meta, ok := unwrap.Alias(receiver).(*typ.Meta)
+	if !ok || meta == nil || meta.Of == nil {
+		return nil, false
+	}
+	return typ.Func().
+		Param("self", receiver).
+		Param("value", typ.Any).
+		Returns(typeexpr.Optional(meta.Of), typ.Unknown).
+		Build(), true
+}
+
 func ambientChannelMethod(receiver typ.Type, name string, depth int) (typ.Type, bool) {
 	channel, payload, ok := channelPayloadType(receiver, depth+1)
 	if !ok {
@@ -279,8 +309,8 @@ func channelPayloadType(t typ.Type, depth int) (typ.Type, typ.Type, bool) {
 	case *typ.Alias:
 		return channelPayloadType(v.UnaliasedTarget(), depth+1)
 	case *typ.Instantiated:
-		if v.Generic != nil && v.Generic.Name == ambient.Channel && len(v.TypeArgs) == 1 && v.TypeArgs[0] != nil {
-			return v, v.TypeArgs[0], true
+		if payload, ok := ambient.ChannelPayloadType(v); ok {
+			return v, payload, true
 		}
 		expanded := subst.ExpandInstantiated(v)
 		if expanded == nil || expanded == t {

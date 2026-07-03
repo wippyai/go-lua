@@ -31,6 +31,76 @@ func TestNarrowByPathLiteralKeepsMatchingVariant(t *testing.T) {
 	}
 }
 
+func TestNarrowByPathTruthyDoesNotTreatStringLiteralAsBooleanTrue(t *testing.T) {
+	dog := typetable.NewRecord().
+		Field("kind", typ.LiteralString("dog")).
+		Field("bark", typ.Func().Returns().Build()).
+		Build()
+	cat := typetable.NewRecord().
+		Field("kind", typ.LiteralString("cat")).
+		Field("meow", typ.Func().Returns().Build()).
+		Build()
+	animal := typeexpr.Union(dog, cat)
+
+	got, ok := NarrowByPathTruthy(animal, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "kind"},
+	})
+	if ok {
+		t.Fatalf("truthy narrowing = %s, want no strict narrowing for non-empty string discriminants", got)
+	}
+	if got != nil && !typ.TypeEquals(got, animal) {
+		t.Fatalf("truthy narrowing returned %s, want original animal union", got)
+	}
+}
+
+func TestNarrowByPathTruthyKeepsOnlyTruthyBooleanMember(t *testing.T) {
+	on := typetable.NewRecord().
+		Field("enabled", typ.True).
+		Field("run", typ.Func().Returns().Build()).
+		Build()
+	off := typetable.NewRecord().
+		Field("enabled", typ.False).
+		Field("skip", typ.Func().Returns().Build()).
+		Build()
+
+	got, ok := NarrowByPathTruthy(typeexpr.Union(on, off), []segment.Segment{
+		{Kind: segment.SegmentField, Name: "enabled"},
+	})
+	if !ok {
+		t.Fatal("expected truthy guard to narrow boolean discriminant")
+	}
+	if !typ.TypeEquals(got, on) {
+		t.Fatalf("narrowed type = %s, want on variant %s", got, on)
+	}
+}
+
+func TestNarrowByPathFalsyInstantiatedGenericResultWithFreeParam(t *testing.T) {
+	tp := typ.NewTypeParam("T", nil)
+	result := typ.NewGeneric("Result", []*typ.TypeParam{tp}, typeexpr.Union(
+		typetable.NewRecord().
+			Field("ok", typ.LiteralBool(true)).
+			Field("value", tp).
+			Build(),
+		typetable.NewRecord().
+			Field("ok", typ.LiteralBool(false)).
+			Field("error", typ.String).
+			Build(),
+	))
+	got, ok := NarrowByPathFalsy(typ.Instantiate(result, tp), []segment.Segment{
+		{Kind: segment.SegmentField, Name: "ok"},
+	})
+	if !ok {
+		t.Fatal("NarrowByPathFalsy returned no change for generic Result<T>")
+	}
+	want := typetable.NewRecord().
+		Field("ok", typ.LiteralBool(false)).
+		Field("error", typ.String).
+		Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("narrowed type = %s, want error arm %s", got, want)
+	}
+}
+
 func TestCacheDoesNotRetainNegativeOriginFamilyEntries(t *testing.T) {
 	c := NewCache()
 	if _, _, ok := c.OriginOfType(typ.String); ok {
@@ -278,6 +348,69 @@ func TestOriginCatalogPoisonsTaggedSignatureCollision(t *testing.T) {
 	}
 	if got, ok := TypeFromOrigin(familyID, []int{caseIndex}); ok {
 		t.Fatalf("signature-poisoned tagged origin reconstructed %s, want fail-closed", got)
+	}
+}
+
+func TestOriginCatalogKeepsDuplicateTaggedWritesIdempotent(t *testing.T) {
+	const familyID uint64 = 0x1ded51deca5e
+	resetOriginFamilyForTest(t, familyID)
+	left := typetable.NewRecord().
+		Field("kind", typ.LiteralString("same")).
+		Field("value", typ.Number).
+		Build()
+	right := typetable.NewRecord().
+		Field("kind", typ.LiteralString("same")).
+		Field("value", typ.String).
+		Build()
+	leftFamily := originFamily{
+		id:        familyID,
+		kind:      originFamilyKindTaggedRecord,
+		signature: "tagged-record:4:kind;",
+		cases:     []originCase{{index: 3101, typ: left}},
+	}
+
+	if !storeOriginFamily(leftFamily) {
+		t.Fatal("initial tagged family store failed")
+	}
+	rev1, ok := originFamilyRevision(familyID)
+	if !ok {
+		t.Fatal("initial family revision missing")
+	}
+	if !storeOriginFamily(leftFamily) {
+		t.Fatal("duplicate tagged family store failed")
+	}
+	rev2, ok := originFamilyRevision(familyID)
+	if !ok {
+		t.Fatal("duplicate family revision missing")
+	}
+	if rev2 != rev1 {
+		t.Fatalf("duplicate tagged write changed revision: got %d want %d", rev2, rev1)
+	}
+
+	if !storeOriginFamily(originFamily{
+		id:        familyID,
+		kind:      originFamilyKindTaggedRecord,
+		signature: "tagged-record:4:kind;",
+		cases:     []originCase{{index: 3102, typ: right}},
+	}) {
+		t.Fatal("new tagged case store failed")
+	}
+	rev3, ok := originFamilyRevision(familyID)
+	if !ok {
+		t.Fatal("extended family revision missing")
+	}
+	if rev3 == rev2 {
+		t.Fatalf("new tagged case did not change revision: got %d", rev3)
+	}
+	if !storeOriginFamily(leftFamily) {
+		t.Fatal("covered tagged case rewrite failed")
+	}
+	rev4, ok := originFamilyRevision(familyID)
+	if !ok {
+		t.Fatal("covered family revision missing")
+	}
+	if rev4 != rev3 {
+		t.Fatalf("covered tagged write changed revision: got %d want %d", rev4, rev3)
 	}
 }
 
@@ -646,6 +779,27 @@ func TestNarrowByPathLiteralNotKeepsNonMatchingVariant(t *testing.T) {
 	}
 }
 
+func TestNarrowByPathLiteralNotKeepsBroadStringFieldVariant(t *testing.T) {
+	template := typetable.NewRecord().
+		Field("kind", typ.LiteralString("template")).
+		Field("data_func", typ.String).
+		Build()
+	component := typetable.NewRecord().
+		Field("kind", typ.LiteralString("component")).
+		Build()
+	page := typeexpr.Union(template, component)
+
+	got, ok := NarrowByPathLiteralNot(page, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "data_func"},
+	}, typ.LiteralString(""))
+	if ok {
+		t.Fatalf("negative broad string-field narrowing = %s, want no strict narrowing", got)
+	}
+	if got != nil && !typ.TypeEquals(got, page) {
+		t.Fatalf("negative broad string-field narrowing returned %s, want original page union %s", got, page)
+	}
+}
+
 func TestNarrowByPathLiteralNotReturnsNeverForMatchingSingleVariant(t *testing.T) {
 	dog := typetable.NewRecord().
 		Field("kind", typ.LiteralString("dog")).
@@ -718,6 +872,24 @@ func TestOriginByPathLiteralExpandsInstantiatedResult(t *testing.T) {
 	got, ok = NarrowByOrigin(resultProfile, family, cases)
 	if !ok || !typ.TypeEquals(got, errorCase) {
 		t.Fatalf("ok = false origin narrowed type = %s/%v, want error variant", got, ok)
+	}
+}
+
+func TestOriginByPathLiteralNotDoesNotEliminateBroadStringFieldVariant(t *testing.T) {
+	template := typetable.NewRecord().
+		Field("kind", typ.LiteralString("template")).
+		Field("data_func", typ.String).
+		Build()
+	component := typetable.NewRecord().
+		Field("kind", typ.LiteralString("component")).
+		Build()
+	page := typeexpr.Union(template, component)
+
+	family, cases, ok := OriginByPathLiteralNot(page, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "data_func"},
+	}, typ.LiteralString(""))
+	if ok {
+		t.Fatalf("negative broad string-field origin = %d/%v, want no strict origin", family, cases)
 	}
 }
 
@@ -898,6 +1070,80 @@ func TestNarrowOriginByPathTreatsMissingFieldAsNil(t *testing.T) {
 	got, ok = NarrowByOrigin(union, rootFamily, notEqualCases)
 	if !ok || !typ.TypeEquals(got, withoutChannel) {
 		t.Fatalf("negative narrowed type = %s/%v, want without-channel case", got, ok)
+	}
+}
+
+func TestNarrowOriginByPathTypeKeepsFieldCompatibleCases(t *testing.T) {
+	chanInt := typ.NewAlias("__test_TypeChanInt", typetable.NewRecord().
+		Field("__tag", typ.LiteralString("int")).
+		Build())
+	chanStr := typ.NewAlias("__test_TypeChanStr", typetable.NewRecord().
+		Field("__tag", typ.LiteralString("str")).
+		Build())
+	intCase := typetable.NewRecord().
+		Field("channel", chanInt).
+		Field("value", typ.Number).
+		Build()
+	strCase := typetable.NewRecord().
+		Field("channel", chanStr).
+		Field("value", typ.String).
+		Build()
+	union := typeexpr.Union(intCase, strCase)
+	rootFamily, rootCases, ok := OriginOfType(union)
+	if !ok {
+		t.Fatal("closed record union origin missing")
+	}
+	channelPath := []segment.Segment{{Kind: segment.SegmentField, Name: "channel"}}
+
+	equalCases, ok := NarrowOriginByPathType(rootFamily, rootCases, channelPath, chanInt, true)
+	if !ok {
+		t.Fatal("positive type narrowing did not keep channel-compatible case")
+	}
+	got, ok := NarrowByOrigin(union, rootFamily, equalCases)
+	if !ok || !typ.TypeEquals(got, intCase) {
+		t.Fatalf("positive narrowed type = %s/%v, want int case", got, ok)
+	}
+
+	notEqualCases, ok := NarrowOriginByPathType(rootFamily, rootCases, channelPath, chanInt, false)
+	if !ok {
+		t.Fatal("negative type narrowing did not keep incompatible case")
+	}
+	got, ok = NarrowByOrigin(union, rootFamily, notEqualCases)
+	if !ok || !typ.TypeEquals(got, strCase) {
+		t.Fatalf("negative narrowed type = %s/%v, want str case", got, ok)
+	}
+}
+
+func TestNarrowOriginByPathTypeTreatsAliasAndExpandedTargetAsCompatible(t *testing.T) {
+	chanIntTarget := typetable.NewRecord().
+		Field("__tag", typ.LiteralString("int")).
+		Build()
+	chanInt := typ.NewAlias("__test_TypeExpandedChanInt", chanIntTarget)
+	chanStr := typ.NewAlias("__test_TypeExpandedChanStr", typetable.NewRecord().
+		Field("__tag", typ.LiteralString("str")).
+		Build())
+	intCase := typetable.NewRecord().
+		Field("channel", chanInt).
+		Field("value", typ.Number).
+		Build()
+	strCase := typetable.NewRecord().
+		Field("channel", chanStr).
+		Field("value", typ.String).
+		Build()
+	union := typeexpr.Union(intCase, strCase)
+	rootFamily, rootCases, ok := OriginOfType(union)
+	if !ok {
+		t.Fatal("closed record union origin missing")
+	}
+	channelPath := []segment.Segment{{Kind: segment.SegmentField, Name: "channel"}}
+
+	equalCases, ok := NarrowOriginByPathType(rootFamily, rootCases, channelPath, chanIntTarget, true)
+	if !ok {
+		t.Fatal("positive type narrowing treated alias and expanded target as incompatible")
+	}
+	got, ok := NarrowByOrigin(union, rootFamily, equalCases)
+	if !ok || !typ.TypeEquals(got, intCase) {
+		t.Fatalf("positive narrowed type = %s/%v, want int case", got, ok)
 	}
 }
 

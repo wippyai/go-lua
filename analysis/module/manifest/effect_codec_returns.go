@@ -41,6 +41,22 @@ func encodeEffectReturn(ret returns.ReturnType) (*effectReturnWire, error) {
 		return &effectReturnWire{Kind: "returns.typeProjection", Source: encodeParamRef(r.Source), Projection: steps}, nil
 	case *returns.TypeProjection:
 		return encodeEffectReturn(*r)
+	case returns.ConditionalType:
+		steps, err := encodeProjectionSteps(r.Projection.Steps)
+		if err != nil {
+			return nil, err
+		}
+		when, err := encodeType(r.When)
+		if err != nil {
+			return nil, err
+		}
+		then, err := encodeType(r.Then)
+		if err != nil {
+			return nil, err
+		}
+		return &effectReturnWire{Kind: "returns.conditionalType", Source: encodeParamRef(r.Source), Projection: steps, When: when, Then: then}, nil
+	case *returns.ConditionalType:
+		return encodeEffectReturn(*r)
 	default:
 		return nil, fmt.Errorf("manifest: unsupported return effect transform %T", ret)
 	}
@@ -99,6 +115,24 @@ func decodeEffectReturn(w *effectReturnWire) (returns.ReturnType, error) {
 			return nil, err
 		}
 		return returns.TypeProjection{Source: source, Projection: projection.Projection{Steps: steps}}, nil
+	case "returns.conditionalType":
+		steps, err := decodeProjectionSteps(w.Projection)
+		if err != nil {
+			return nil, err
+		}
+		source, err := decodeRequiredParamRef(w.Source, "returns.conditionalType source missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		when, err := decodeType(w.When)
+		if err != nil {
+			return nil, fmt.Errorf("returns.conditionalType when: %w", err)
+		}
+		then, err := decodeType(w.Then)
+		if err != nil {
+			return nil, fmt.Errorf("returns.conditionalType then: %w", err)
+		}
+		return returns.ConditionalType{Source: source, Projection: projection.Projection{Steps: steps}, When: when, Then: then}, nil
 	default:
 		return nil, fmt.Errorf("manifest: unknown return effect transform kind %q", w.Kind)
 	}

@@ -10,6 +10,7 @@ type indexMode uint8
 const (
 	indexStatic indexMode = iota
 	indexRuntime
+	indexWrite
 )
 
 // Index resolves a bracket-index projection against a type using static type
@@ -22,6 +23,14 @@ func Index(container typ.Type, key typ.Type) (typ.Type, bool) {
 // missing table slots can produce nil, but non-table indexing still fails.
 func RuntimeIndex(container typ.Type, key typ.Type) (typ.Type, bool) {
 	return indexDepth(container, key, 0, indexRuntime).materialize()
+}
+
+// WritableIndex resolves the value contract for a bracket-index assignment
+// target. It uses index admissibility, but does not add nil just because a read
+// from the same slot could miss. Declared optional element/member types still
+// carry their own nilability.
+func WritableIndex(container typ.Type, key typ.Type) (typ.Type, bool) {
+	return indexDepth(container, key, 0, indexWrite).materialize()
 }
 
 func indexDepth(container typ.Type, key typ.Type, depth int, mode indexMode) fieldResult {

@@ -104,6 +104,44 @@ func TestResolverDeclBuildsGenericAliasWithBinderBindings(t *testing.T) {
 	}
 }
 
+func TestResolverTypeInstantiatesGenericAliasWithFunctionTypeParamArg(t *testing.T) {
+	stmts, err := parse.ParseString(`
+type Collection<T> = { value: T }
+local M = {}
+function M.new<T>(): Collection<T>
+    return nil :: Collection<T>
+end
+`, "test")
+	if err != nil {
+		t.Fatalf("ParseString error: %v", err)
+	}
+	funcDef, ok := stmts[2].(*ast.FuncDefStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want FuncDefStmt", stmts[2])
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	params := bindings.FunctionTypeParams(funcDef.Func)
+	if len(params) != 1 {
+		t.Fatalf("FunctionTypeParams = %#v, want T", params)
+	}
+	resolver := New(bindings)
+	paramType, ok := resolver.Decl(params[0])
+	if !ok {
+		t.Fatalf("function type param did not resolve")
+	}
+	got, ok := resolver.Type(funcDef.Func.ReturnTypes[0])
+	if !ok {
+		t.Fatal("Type(Collection<T>) returned ok=false")
+	}
+	inst, ok := unwrap.Annotations(got).(*typ.Instantiated)
+	if !ok {
+		t.Fatalf("Type(Collection<T>) = %T/%v, want instantiated generic", got, got)
+	}
+	if len(inst.TypeArgs) != 1 || inst.TypeArgs[0] != paramType {
+		t.Fatalf("instantiated args = %#v, want function T %v", inst.TypeArgs, paramType)
+	}
+}
+
 func TestResolverDeclResolvesPrimitiveAliasWithBinderBindings(t *testing.T) {
 	stmts, err := parse.Parse(strings.NewReader(`
 type Alias = string

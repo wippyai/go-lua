@@ -43,6 +43,7 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 		t.Fatalf("local kind = %v, want local declaration", got)
 	}
 	assertPathEqual(t, local.TargetPath(), localPath)
+	assertPathEqual(t, local.TargetPathRef(), localPath)
 	if got := local.Source(); got != source {
 		t.Fatalf("local source = %#v, want %#v", got, source)
 	}
@@ -53,6 +54,7 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 		t.Fatalf("ordinary kind = %v, want ordinary root write", got)
 	}
 	assertPathEqual(t, ordinary.TargetPath(), ordinaryPath)
+	assertPathEqual(t, ordinary.TargetPathRef(), ordinaryPath)
 	if got := ordinary.Source(); got != source {
 		t.Fatalf("ordinary source = %#v, want %#v", got, source)
 	}
@@ -60,6 +62,7 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	pathTarget := path.NewPath(symbol.ID(14), "table").Field("field")
 	pathAssignment := NewPathAssignment(pathTarget, source)
 	assertPathEqual(t, pathAssignment.TargetPath(), pathTarget)
+	assertPathEqual(t, pathAssignment.TargetPathRef(), pathTarget)
 	if got := pathAssignment.Source(); got != source {
 		t.Fatalf("path assignment source = %#v, want %#v", got, source)
 	}
@@ -72,6 +75,7 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	invalidationTarget := path.NewPath(symbol.ID(23), "item").Field("child")
 	invalidation := NewPathDescendantInvalidation(invalidationTarget)
 	assertPathEqual(t, invalidation.ContainerPath(), invalidationTarget)
+	assertPathEqual(t, invalidation.ContainerPathRef(), invalidationTarget)
 	invalidationTarget.Segments[0].Name = "changed"
 	assertDirectField(t, invalidation.ContainerPath(), "child")
 	gotInvalidationTarget := invalidation.ContainerPath()
@@ -83,6 +87,7 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	falseRefinement := valueRefinementWithPresenceRuntime(presence.Absent(), runtimekind.Singleton(runtimekind.Nil))
 	branchRefinement := NewBranchRefinement(branchTarget, trueRefinement, true, falseRefinement, true)
 	assertPathEqual(t, branchRefinement.TargetPath(), branchTarget)
+	assertPathEqual(t, branchRefinement.TargetPathRef(), branchTarget)
 	if got, ok := branchRefinement.TrueValue(); !ok || got.IsEmpty() {
 		t.Fatalf("true value refinement = %#v/%v, want non-empty/true", got, ok)
 	}
@@ -113,7 +118,9 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	relationTarget := path.NewPath(symbol.ID(20), "value")
 	relation := NewBranchPresenceRelation(relationTrigger, presence.Present(), relationTarget, presence.Absent())
 	assertPathEqual(t, relation.TriggerPath(), relationTrigger)
+	assertPathEqual(t, relation.TriggerPathRef(), relationTrigger)
 	assertPathEqual(t, relation.TargetPath(), relationTarget)
+	assertPathEqual(t, relation.TargetPathRef(), relationTarget)
 	if !presence.Equal(relation.TriggerPresence(), presence.Present()) || !presence.Equal(relation.TargetPresence(), presence.Absent()) {
 		t.Fatalf("relation presence = %s/%s, want present/absent", relation.TriggerPresence(), relation.TargetPresence())
 	}
@@ -128,6 +135,19 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	}
 	relationSetRelations[0] = NewBranchPresenceRelation(path.NewPath(symbol.ID(21), "other"), presence.Absent(), path.NewPath(symbol.ID(22), "changed"), presence.Present())
 	assertPathEqual(t, relationSet.Relations()[0].TriggerPath(), path.NewPath(symbol.ID(19), "err"))
+
+	implicationTrigger := path.NewPath(symbol.ID(201), "flag").Field("ok")
+	implicationTarget := path.NewPath(symbol.ID(202), "payload")
+	implication := NewPathValuePresenceImplication(implicationTrigger, presenceConstraint(presence.Present()), implicationTarget, presence.Present())
+	assertPathEqual(t, implication.TriggerPath(), implicationTrigger)
+	assertPathEqual(t, implication.TriggerPathRef(), implicationTrigger)
+	assertPathEqual(t, implication.TargetPath(), implicationTarget)
+	assertPathEqual(t, implication.TargetPathRef(), implicationTarget)
+	if !presence.Equal(implication.TargetPresence(), presence.Present()) {
+		t.Fatalf("implication target presence = %s, want present", implication.TargetPresence())
+	}
+	implicationTrigger.Segments[0].Name = "changed"
+	assertPathEqual(t, implication.TriggerPath(), path.NewPath(symbol.ID(201), "flag").Field("ok"))
 
 	pathRelationLeft := path.NewPath(symbol.ID(24), "left").Field("value")
 	pathRelationRight := path.NewPath(symbol.ID(25), "right").Field("value")
@@ -155,6 +175,7 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	postconditionTarget := path.NewPath(symbol.ID(28), "post").Field("value")
 	postcondition := NewPostconditionRefinement(postconditionTarget, trueRefinement)
 	assertPathEqual(t, postcondition.TargetPath(), postconditionTarget)
+	assertPathEqual(t, postcondition.TargetPathRef(), postconditionTarget)
 	if got := postcondition.Value(); got.IsEmpty() {
 		t.Fatalf("postcondition value = %#v, want non-empty", got)
 	}
@@ -172,7 +193,8 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	assertPathEqual(t, postconditionSet.Refinements()[0].TargetPath(), path.NewPath(symbol.ID(28), "post").Field("value"))
 
 	entrySuffix := path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}}
-	entry := NewObjectEntry(entrySuffix, source)
+	entrySpan := SourceSpan{StartLine: 20, StartCol: 4, EndLine: 20, EndCol: 9}
+	entry := NewObjectEntryWithMetadata(entrySuffix, source, entrySpan, "payload.id")
 	entrySuffix.Segments[0].Name = "changed"
 	if got := entry.Suffix(); len(got.Segments) != 1 || got.Segments[0].Name != "field" {
 		t.Fatalf("object entry suffix = %#v, want copied field suffix", got)
@@ -184,6 +206,12 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	}
 	if got := entry.Source(); got != source {
 		t.Fatalf("object entry source = %#v, want %#v", got, source)
+	}
+	if got := entry.ValueSpan(); got != entrySpan {
+		t.Fatalf("object entry value span = %#v, want %#v", got, entrySpan)
+	}
+	if got := entry.ValueLabel(); got != "payload.id" {
+		t.Fatalf("object entry value label = %q, want payload.id", got)
 	}
 
 	entries := []ObjectEntry{entry}
@@ -260,6 +288,13 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	siteMethodPath := siteReceiverPath.Field("run")
 	siteTargetPath := path.NewPath(symbol.ID(17), "t").Field("x")
 	siteArgs := []ValueSource{source, callSource}
+	siteCallSpan := SourceSpan{StartLine: 9, StartCol: 1, EndLine: 11, EndCol: 13}
+	siteCalleeSpan := SourceSpan{StartLine: 9, StartCol: 1, EndLine: 9, EndCol: 8}
+	siteSpans := []SourceSpan{
+		{StartLine: 10, StartCol: 3, EndLine: 10, EndCol: 8},
+		{StartLine: 11, StartCol: 5, EndLine: 11, EndCol: 12},
+	}
+	siteLabels := []string{"first", "second"}
 	siteTypeArgs := []TypeRef{TypeRef(1), TypeRef(2)}
 	siteTargets := []CallResultTarget{
 		NewCallResultTarget(CallResultTargetOrdinaryAssignment, 0, 0, symbol.ID(17), siteTargetPath),
@@ -279,6 +314,10 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 		HasExpr:           true,
 		ExprIndex:         0,
 		ArgumentSources:   siteArgs,
+		CallSpan:          siteCallSpan,
+		CalleeSpan:        siteCalleeSpan,
+		ArgumentSpans:     siteSpans,
+		ArgumentLabels:    siteLabels,
 		TypeArgs:          siteTypeArgs,
 		ResultTargets:     siteTargets,
 		Final:             true,
@@ -288,6 +327,8 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	siteReceiverPath.Root = "changed"
 	siteMethodPath.Segments[0].Name = "changed"
 	siteArgs[0].Kind = ValueSourceNil
+	siteSpans[0].StartLine = 99
+	siteLabels[0] = "changed"
 	siteTypeArgs[0] = TypeRef(99)
 	siteTargets[0] = NewCallResultTarget(CallResultTargetReturn, 0, 0, 0, path.Path{})
 	assertDirectField(t, site.CalleePath(), "run")
@@ -324,6 +365,12 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	if !site.Final() || site.Expanded() || !site.Adjusted() || site.OpenTail() {
 		t.Fatalf("call site flags were not preserved")
 	}
+	if got := site.CallSpan(); got != siteCallSpan {
+		t.Fatalf("call site call span = %#v, want %#v", got, siteCallSpan)
+	}
+	if got := site.CalleeSpan(); got != siteCalleeSpan {
+		t.Fatalf("call site callee span = %#v, want %#v", got, siteCalleeSpan)
+	}
 	gotSiteArgs := site.ArgumentSources()
 	if len(gotSiteArgs) != 2 || gotSiteArgs[0].Kind != ValueSourceExpression || gotSiteArgs[1].Kind != ValueSourceCall {
 		t.Fatalf("call site args = %#v, want copied argument sources", gotSiteArgs)
@@ -334,8 +381,20 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	if got, ok := site.ArgumentSourceAt(1); !ok || got.Kind != ValueSourceCall {
 		t.Fatalf("call site argument source at 1 = %#v/%v, want call source", got, ok)
 	}
+	if got, ok := site.ArgumentSpanAt(0); !ok || got.StartLine != 10 || got.StartCol != 3 {
+		t.Fatalf("call site argument span at 0 = %#v/%v, want copied span", got, ok)
+	}
+	if got, ok := site.ArgumentLabelAt(0); !ok || got != "first" {
+		t.Fatalf("call site argument label at 0 = %q/%v, want first/true", got, ok)
+	}
 	if got, ok := site.ArgumentSourceAt(2); ok || got != (ValueSource{}) {
 		t.Fatalf("call site out-of-range argument source = %#v/%v, want zero/false", got, ok)
+	}
+	if got, ok := site.ArgumentSpanAt(2); ok || got != (SourceSpan{}) {
+		t.Fatalf("call site out-of-range argument span = %#v/%v, want zero/false", got, ok)
+	}
+	if got, ok := site.ArgumentLabelAt(2); ok || got != "" {
+		t.Fatalf("call site out-of-range argument label = %q/%v, want empty/false", got, ok)
 	}
 	visitedSiteArgs := 0
 	site.ForEachArgumentSource(func(index int, source ValueSource) bool {
@@ -418,6 +477,8 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	missing := cfg.Point(22)
 	source := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(1), HasExpr: true}
 	callSource := ValueSource{Kind: ValueSourceCall, ExprRef: ExprRef(2), HasExpr: true}
+	callSiteCallSpan := SourceSpan{StartLine: 14, StartCol: 2, EndLine: 14, EndCol: 22}
+	callSiteCalleeSpan := SourceSpan{StartLine: 14, StartCol: 2, EndLine: 14, EndCol: 13}
 
 	input := FactsInput{
 		RootAssignments: map[cfg.Point]RootAssignment{
@@ -464,6 +525,14 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 				),
 			),
 		},
+		BranchPathEvidence: map[cfg.Point]BranchPathEvidenceSet{
+			point: NewBranchPathEvidenceSet(
+				NewBranchPathEqualityEvidence(
+					path.NewPath(symbol.ID(66), "proof").Field("left"),
+					path.NewPath(symbol.ID(67), "proof").Field("right"),
+				),
+			),
+		},
 		PostconditionRefinements: map[cfg.Point]PostconditionRefinementSet{
 			point: NewPostconditionRefinementSet(
 				NewPostconditionRefinement(
@@ -491,6 +560,8 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 				HasExpr:           true,
 				ExprIndex:         1,
 				ArgumentSources:   []ValueSource{source, callSource},
+				CallSpan:          callSiteCallSpan,
+				CalleeSpan:        callSiteCalleeSpan,
 				TypeArgs:          []TypeRef{TypeRef(7), TypeRef(8)},
 				ResultTargets: []CallResultTarget{
 					NewCallResultTarget(CallResultTargetLocalAssignment, 0, 0, symbol.ID(33), path.NewPath(symbol.ID(33), "table")),
@@ -551,6 +622,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 			true,
 		),
 	)
+	input.BranchPathEvidence[point] = NewBranchPathEvidenceSet(
+		NewBranchPathEqualityEvidence(path.NewPath(symbol.ID(68), "changed"), path.NewPath(symbol.ID(69), "changed")),
+	)
 	input.PostconditionRefinements[point] = NewPostconditionRefinementSet(
 		NewPostconditionRefinement(
 			path.NewPath(symbol.ID(64), "changed"),
@@ -596,6 +670,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	}
 	if _, ok := facts.CallSite(missing); ok {
 		t.Fatal("missing call site returned ok")
+	}
+	if got := facts.CallSiteCount(); got != 1 {
+		t.Fatalf("call site count = %d, want 1", got)
 	}
 	if _, ok := facts.ObjectLiteral(ExprRef(99)); ok {
 		t.Fatal("missing object literal returned ok")
@@ -716,6 +793,46 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	pathRelationsAgain := facts.BranchPathRelations(point)
 	assertPathEqual(t, pathRelationsAgain[0].LeftPath(), path.NewPath(symbol.ID(57), "left").Field("value"))
 
+	evidence := facts.BranchPathEvidence(point)
+	if len(evidence) != 1 {
+		t.Fatalf("branch path evidence len = %d, want 1", len(evidence))
+	}
+	assertPathEqual(t, evidence[0].Path(), path.NewPath(symbol.ID(66), "proof").Field("left"))
+	otherPath, ok := evidence[0].OtherPath()
+	if !ok {
+		t.Fatal("branch path evidence other path missing")
+	}
+	assertPathEqual(t, otherPath, path.NewPath(symbol.ID(67), "proof").Field("right"))
+	evidence[0] = NewBranchPathEqualityEvidence(path.NewPath(symbol.ID(70), "mutated"), path.NewPath(symbol.ID(71), "mutated"))
+	evidenceAgain := facts.BranchPathEvidence(point)
+	assertPathEqual(t, evidenceAgain[0].Path(), path.NewPath(symbol.ID(66), "proof").Field("left"))
+	visitedEvidence := 0
+	facts.ForEachBranchPathEvidence(point, func(proof BranchPathEvidence) bool {
+		visitedEvidence++
+		assertPathEqual(t, proof.PathRef(), path.NewPath(symbol.ID(66), "proof").Field("left"))
+		other, ok := proof.OtherPathRef()
+		if !ok {
+			t.Fatal("branch path evidence ref other path missing")
+		}
+		assertPathEqual(t, other, path.NewPath(symbol.ID(67), "proof").Field("right"))
+		return true
+	})
+	if visitedEvidence != 1 {
+		t.Fatalf("branch path evidence visited %d, want 1", visitedEvidence)
+	}
+	wantProofPath := path.NewPath(symbol.ID(66), "proof").Field("left")
+	branchEvidenceAllocs := testing.AllocsPerRun(1000, func() {
+		facts.ForEachBranchPathEvidence(point, func(proof BranchPathEvidence) bool {
+			if !proof.PathRef().Equal(wantProofPath) {
+				t.Fatalf("branch proof path ref = %#v, want proof.left", proof.PathRef())
+			}
+			return true
+		})
+	})
+	if branchEvidenceAllocs != 0 {
+		t.Fatalf("ForEachBranchPathEvidence allocations/run = %.1f, want zero", branchEvidenceAllocs)
+	}
+
 	postconditions := facts.PostconditionRefinements(point)
 	if len(postconditions) != 1 {
 		t.Fatalf("postcondition refinements len = %d, want 1", len(postconditions))
@@ -823,6 +940,12 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	if expr, ok := callSiteView.Expr(); !ok || expr != ExprRef(5) {
 		t.Fatalf("call site view expr = %v/%v, want %v/true", expr, ok, ExprRef(5))
 	}
+	if got := callSiteView.CallSpan(); got != callSiteCallSpan {
+		t.Fatalf("call site view call span = %#v, want %#v", got, callSiteCallSpan)
+	}
+	if got := callSiteView.CalleeSpan(); got != callSiteCalleeSpan {
+		t.Fatalf("call site view callee span = %#v, want %#v", got, callSiteCalleeSpan)
+	}
 	if !callSiteView.Final() || !callSiteView.Expanded() || callSiteView.Adjusted() || callSiteView.OpenTail() {
 		t.Fatalf("call site view flags were not preserved")
 	}
@@ -903,9 +1026,14 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 			t.Fatalf("object literal view source = %#v, want %#v", entry.Source(), source)
 		}
 		ks := keyspace.New()
-		key, ok := ks.FromRootlessSuffix(entry.SuffixSegments())
+		key, ok := ks.FromRootlessSuffix(entry.SuffixSegmentsView())
 		if !ok || ks.Format(key) != ".field" {
 			t.Fatalf("object literal view suffix key = %q/%v, want .field/true", ks.Format(key), ok)
+		}
+		ownedSegments := entry.SuffixSegments()
+		ownedSegments[0].Name = "mutated"
+		if got := entry.SuffixSegmentsView()[0].Name; got != "field" {
+			t.Fatalf("mutating SuffixSegments copy changed view segment = %q, want field", got)
 		}
 		if got := entry.SuffixSegmentCount(); got != 1 {
 			t.Fatalf("object literal view suffix segment count = %d, want 1", got)
@@ -973,6 +1101,20 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	exprPath.Segments[0].Name = "mutated"
 	exprPathAgain, _ := facts.ExpressionPath(ExprRef(6))
 	assertDirectField(t, exprPathAgain, "leaf")
+	exprPathRef, ok := facts.ExpressionPathRef(ExprRef(6))
+	if !ok {
+		t.Fatal("expression path ref missing")
+	}
+	assertDirectField(t, exprPathRef, "leaf")
+	wantExprPath := path.NewPath(symbol.ID(54), "read").Field("leaf")
+	allocs := testing.AllocsPerRun(1000, func() {
+		if got, ok := facts.ExpressionPathRef(ExprRef(6)); !ok || !got.Equal(wantExprPath) {
+			t.Fatalf("expression path ref = %#v/%v, want read.leaf", got, ok)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("ExpressionPathRef allocations/run = %.1f, want zero", allocs)
+	}
 	allExpressionPaths := facts.ExpressionPaths()
 	allExpressionPaths[ExprRef(6)] = path.NewPath(symbol.ID(56), "mutated").Field("other")
 	allExpressionPathsAgain := facts.ExpressionPaths()
@@ -1035,6 +1177,22 @@ func assertDirectField(t *testing.T, p path.Path, want string) {
 	got, ok := p.DirectFieldName()
 	if !ok || got != want {
 		t.Fatalf("path %q direct field = %q/%v, want %q/true", p.String(), got, ok, want)
+	}
+}
+
+func TestFactsCopiesBranchEdgeReachability(t *testing.T) {
+	point := cfg.Point(41)
+	input := map[cfg.Point]BranchEdgeReachability{
+		point: NewBranchEdgeReachability(false, true),
+	}
+	facts := NewFacts(FactsInput{BranchEdgeReachability: input})
+	input[point] = NewBranchEdgeReachability(true, false)
+
+	if facts.BranchEdgeUnreachable(point, true) {
+		t.Fatal("true edge unexpectedly unreachable")
+	}
+	if !facts.BranchEdgeUnreachable(point, false) {
+		t.Fatal("false edge should be unreachable")
 	}
 }
 

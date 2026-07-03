@@ -1,6 +1,7 @@
 package subtype
 
 import (
+	"github.com/wippyai/go-lua/analysis/type/kind"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -162,4 +163,11 @@ func checkTableTop(sub, super typ.Type) (bool, bool) {
 		return false, false
 	}
 	return typetable.IsLike(sub), true
+}
+
+func emptyRecordAdoptsContainerShape(sub *typ.Record, super typ.Type) bool {
+	if sub == nil || super == nil || len(sub.Fields) != 0 || len(sub.StaticMembers) != 0 {
+		return false
+	}
+	return super.Kind() == kind.Array || super.Kind() == kind.Map || super.Kind() == kind.ReadonlyMap
 }

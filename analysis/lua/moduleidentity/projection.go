@@ -62,7 +62,8 @@ func New(bindings *bind.Result, graph cfg.Graph, sem *semantics.Result) Projecti
 		out.pointOrders = make(map[cfg.Point]int, len(points))
 		for i, point := range points {
 			out.pointOrders[point] = i
-			if fact, ok := sem.LocalAssignment(point); ok {
+			if view, ok := sem.LocalAssignmentView(point); ok {
+				fact, _ := view.Borrowed()
 				if modulePath, ok := ExactRequireCall(bindings, fact.Expr); ok {
 					out.addAliasName(fact.Name, modulePath)
 					if fact.HasSymbol && fact.Symbol != 0 {
@@ -70,7 +71,8 @@ func New(bindings *bind.Result, graph cfg.Graph, sem *semantics.Result) Projecti
 					}
 				}
 			}
-			if fact, ok := sem.OrdinaryAssignment(point); ok {
+			if view, ok := sem.OrdinaryAssignmentView(point); ok {
+				fact, _ := view.Borrowed()
 				if fact.HasSymbol && fact.Symbol != 0 && (!fact.HasPath || len(fact.Path.Segments) == 0) {
 					if out.reassigned == nil {
 						out.reassigned = make(map[symbol.ID][]cfg.Point)
@@ -86,12 +88,19 @@ func New(bindings *bind.Result, graph cfg.Graph, sem *semantics.Result) Projecti
 		}
 		out.addCapturedImportRoots(sem.Function())
 		for _, point := range points {
-			if fact, ok := sem.LocalAssignment(point); ok && fact.HasSymbol && fact.Symbol != 0 {
-				out.addRootAlias(fact.Symbol, fact.Name, fact.Expr, point, false)
-				out.addSignatureAlias(path.NewPath(fact.Symbol, fact.Name), fact.Expr, point, false)
-				out.addObjectLiteralAliases(path.NewPath(fact.Symbol, fact.Name), fact.Expr, point, false)
+			if view, ok := sem.LocalAssignmentView(point); ok {
+				fact, _ := view.Borrowed()
+				if fact.HasSymbol && fact.Symbol != 0 {
+					out.addRootAlias(fact.Symbol, fact.Name, fact.Expr, point, false)
+					out.addSignatureAlias(path.NewPath(fact.Symbol, fact.Name), fact.Expr, point, false)
+					out.addObjectLiteralAliases(path.NewPath(fact.Symbol, fact.Name), fact.Expr, point, false)
+				}
 			}
-			if fact, ok := sem.OrdinaryAssignment(point); ok && fact.HasPath && len(fact.Path.Segments) != 0 {
+			if view, ok := sem.OrdinaryAssignmentView(point); ok {
+				fact, _ := view.Borrowed()
+				if !fact.HasPath || len(fact.Path.Segments) == 0 {
+					continue
+				}
 				out.addSignatureAlias(fact.Path, fact.Value, point, false)
 				out.addAssignmentAlias(fact.Path, fact.Value, point, false)
 			}
@@ -549,7 +558,7 @@ func (p Projection) moduleIdentityForPath(resolved path.Path) (string, bool) {
 	if len(resolved.Segments) == 0 {
 		root, ok := p.rootIdentity(resolved.Symbol)
 		if !ok {
-			return "", false
+			return p.explicitGlobalModuleRoot(resolved.Symbol)
 		}
 		return root.modulePath, true
 	}
@@ -560,6 +569,18 @@ func (p Projection) moduleIdentityForPath(resolved path.Path) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func (p Projection) explicitGlobalModuleRoot(id symbol.ID) (string, bool) {
+	if p.bindings == nil || id == 0 {
+		return "", false
+	}
+	kind, ok := p.bindings.Kind(id)
+	if !ok || kind != symbol.Global || p.bindings.IsImplicitGlobalSymbol(id) {
+		return "", false
+	}
+	name := p.bindings.Name(id)
+	return name, name != ""
 }
 
 func exprAt(exprs []ast.Expr, index int) ast.Expr {

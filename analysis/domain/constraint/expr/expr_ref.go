@@ -1,36 +1,23 @@
 package expr
 
-import (
-	"fmt"
-	"strconv"
-)
-
 // Var represents a symbolic variable (e.g., "i", "len_arr").
 type Var struct {
 	Name string
 }
 
 func (Var) exprNode()        {}
-func (v Var) String() string { return v.Name }
+func (v Var) String() string { return varBindingRef(v.Name).String() }
 
 func (v Var) Substitute(subst map[string]Expr) Expr {
-	if e, ok := subst[v.Name]; ok {
-		return e
-	}
-
-	return v
+	return varBindingRef(v.Name).Substitute(subst, v)
 }
 
 func (v Var) Variables() []string {
-	return []string{v.Name}
+	return varBindingRef(v.Name).Variables()
 }
 
 func (v Var) Eval(env map[string]int64) (int64, bool) {
-	if val, ok := env[v.Name]; ok {
-		return val, true
-	}
-
-	return 0, false
+	return varBindingRef(v.Name).Eval(env)
 }
 
 // Len represents the length of a symbolic array/tuple.
@@ -39,27 +26,18 @@ type Len struct {
 }
 
 func (Len) exprNode()        {}
-func (l Len) String() string { return fmt.Sprintf("len(%s)", l.Of) }
+func (l Len) String() string { return lenBindingRef(l.Of).String() }
 
 func (l Len) Substitute(subst map[string]Expr) Expr {
-	// Check if we have a substitution for this length (stored as "name.len")
-	if e, ok := subst[l.Of+".len"]; ok {
-		return e
-	}
-
-	return l
+	return lenBindingRef(l.Of).Substitute(subst, l)
 }
 
 func (l Len) Variables() []string {
-	return []string{l.Of + ".len"}
+	return lenBindingRef(l.Of).Variables()
 }
 
 func (l Len) Eval(env map[string]int64) (int64, bool) {
-	if val, ok := env[l.Of+".len"]; ok {
-		return val, true
-	}
-
-	return 0, false
+	return lenBindingRef(l.Of).Eval(env)
 }
 
 // Param represents a reference to a function parameter by index.
@@ -69,28 +47,18 @@ type Param struct {
 }
 
 func (Param) exprNode()        {}
-func (p Param) String() string { return paramExprKey(p.Index) }
+func (p Param) String() string { return paramBindingRef(p.Index).String() }
 
 func (p Param) Substitute(subst map[string]Expr) Expr {
-	key := paramExprKey(p.Index)
-	if e, ok := subst[key]; ok {
-		return e
-	}
-
-	return p
+	return paramBindingRef(p.Index).Substitute(subst, p)
 }
 
 func (p Param) Variables() []string {
-	return []string{paramExprKey(p.Index)}
+	return paramBindingRef(p.Index).Variables()
 }
 
 func (p Param) Eval(env map[string]int64) (int64, bool) {
-	key := paramExprKey(p.Index)
-	if val, ok := env[key]; ok {
-		return val, true
-	}
-
-	return 0, false
+	return paramBindingRef(p.Index).Eval(env)
 }
 
 // Ret represents a reference to a function return value by index.
@@ -100,28 +68,18 @@ type Ret struct {
 }
 
 func (Ret) exprNode()        {}
-func (r Ret) String() string { return retExprKey(r.Index) }
+func (r Ret) String() string { return retBindingRef(r.Index).String() }
 
 func (r Ret) Substitute(subst map[string]Expr) Expr {
-	key := retExprKey(r.Index)
-	if e, ok := subst[key]; ok {
-		return e
-	}
-
-	return r
+	return retBindingRef(r.Index).Substitute(subst, r)
 }
 
 func (r Ret) Variables() []string {
-	return []string{retExprKey(r.Index)}
+	return retBindingRef(r.Index).Variables()
 }
 
 func (r Ret) Eval(env map[string]int64) (int64, bool) {
-	key := retExprKey(r.Index)
-	if val, ok := env[key]; ok {
-		return val, true
-	}
-
-	return 0, false
+	return retBindingRef(r.Index).Eval(env)
 }
 
 // ParamLen represents the length of a function parameter.
@@ -131,28 +89,18 @@ type ParamLen struct {
 }
 
 func (ParamLen) exprNode()        {}
-func (p ParamLen) String() string { return "len(" + paramExprKey(p.Index) + ")" }
+func (p ParamLen) String() string { return paramLenBindingRef(p.Index).String() }
 
 func (p ParamLen) Substitute(subst map[string]Expr) Expr {
-	key := paramLenExprKey(p.Index)
-	if e, ok := subst[key]; ok {
-		return e
-	}
-
-	return p
+	return paramLenBindingRef(p.Index).Substitute(subst, p)
 }
 
 func (p ParamLen) Variables() []string {
-	return []string{paramLenExprKey(p.Index)}
+	return paramLenBindingRef(p.Index).Variables()
 }
 
 func (p ParamLen) Eval(env map[string]int64) (int64, bool) {
-	key := paramLenExprKey(p.Index)
-	if val, ok := env[key]; ok {
-		return val, true
-	}
-
-	return 0, false
+	return paramLenBindingRef(p.Index).Eval(env)
 }
 
 // RetLen represents the length of a function return value.
@@ -162,42 +110,16 @@ type RetLen struct {
 }
 
 func (RetLen) exprNode()        {}
-func (r RetLen) String() string { return "len(" + retExprKey(r.Index) + ")" }
+func (r RetLen) String() string { return retLenBindingRef(r.Index).String() }
 
 func (r RetLen) Substitute(subst map[string]Expr) Expr {
-	key := retLenExprKey(r.Index)
-	if e, ok := subst[key]; ok {
-		return e
-	}
-
-	return r
+	return retLenBindingRef(r.Index).Substitute(subst, r)
 }
 
 func (r RetLen) Variables() []string {
-	return []string{retLenExprKey(r.Index)}
+	return retLenBindingRef(r.Index).Variables()
 }
 
 func (r RetLen) Eval(env map[string]int64) (int64, bool) {
-	key := retLenExprKey(r.Index)
-	if val, ok := env[key]; ok {
-		return val, true
-	}
-
-	return 0, false
-}
-
-func paramExprKey(index int) string {
-	return "param[" + strconv.Itoa(index) + "]"
-}
-
-func retExprKey(index int) string {
-	return "ret[" + strconv.Itoa(index) + "]"
-}
-
-func paramLenExprKey(index int) string {
-	return paramExprKey(index) + ".len"
-}
-
-func retLenExprKey(index int) string {
-	return retExprKey(index) + ".len"
+	return retLenBindingRef(r.Index).Eval(env)
 }

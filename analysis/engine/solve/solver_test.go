@@ -324,6 +324,42 @@ func TestSolve_WidenDoesNotCollapseInitialFanIn(t *testing.T) {
 	}
 }
 
+func TestSolve_WidenBookkeepingIsLazy(t *testing.T) {
+	cl := capLattice{top: 10}
+	noWiden := EquationSystem[string, int]{
+		Lattice: cl.joinOnly(),
+		Cells:   []string{"x"},
+		Transfer: func(cell string, read func(string) int, emit func(string, int)) {
+			emit("x", 1)
+		},
+	}
+	noWidenState := newState(noWiden)
+	if noWidenState.visits != nil || noWidenState.widenChanges != nil {
+		t.Fatalf("newState allocated widening maps before any widening cell: visits=%v changes=%v", noWidenState.visits, noWidenState.widenChanges)
+	}
+	noWidenState.run()
+	if noWidenState.visits != nil || noWidenState.widenChanges != nil {
+		t.Fatalf("non-widening solve allocated widening maps: visits=%v changes=%v", noWidenState.visits, noWidenState.widenChanges)
+	}
+
+	withWiden := EquationSystem[string, int]{
+		Lattice: cl.lattice(),
+		Cells:   []string{"x"},
+		Transfer: func(cell string, read func(string) int, emit func(string, int)) {
+			emit("x", read("x")+1)
+		},
+		WidenAt: func(c string) bool { return c == "x" },
+	}
+	withWidenState := newState(withWiden)
+	withWidenState.run()
+	if withWidenState.visits == nil {
+		t.Fatalf("widening solve did not allocate visits bookkeeping")
+	}
+	if withWidenState.visits["x"] == 0 {
+		t.Fatalf("widening solve did not record visits for widening cell")
+	}
+}
+
 // TestSolve_DelayedWideningKeepsInitialJoinsExact checks the precision policy:
 // a WidenAt cell may receive a few exact post-visit Join updates before Widen
 // is allowed to accelerate the chain. This is not an iteration cap; after the
@@ -470,6 +506,52 @@ func TestSolve_EmitToCellOutsideCells(t *testing.T) {
 	}
 	if got["a"] != 5 {
 		t.Fatalf("a did not observe emitted ghost value: got %d, want 5", got["a"])
+	}
+}
+
+func TestSolve_InitialSparseMaterializesUntouchedDeclaredCellsAsBottom(t *testing.T) {
+	cl := capLattice{top: 100}
+	sys := EquationSystem[string, int]{
+		Lattice: cl.joinOnly(),
+		Cells:   []string{"a", "b"},
+		Initial: func(string) int {
+			t.Fatal("dense Initial should not run when InitialSparse is set")
+			return 0
+		},
+		InitialSparse: func(cell string) (int, bool) {
+			if cell == "a" {
+				return 7, true
+			}
+			return 0, false
+		},
+		Transfer: func(string, func(string) int, func(string, int)) {},
+	}
+
+	got := Solve(sys)
+	want := map[string]int{"a": 7, "b": 0}
+	assertMapEqual(t, cl.joinOnly(), got, want)
+}
+
+func TestSolve_InitialSparseDoesNotLeakEmittedOnlyCellWhenKeyCountsMatch(t *testing.T) {
+	cl := capLattice{top: 100}
+	sys := EquationSystem[string, int]{
+		Lattice: cl.joinOnly(),
+		Cells:   []string{"a", "b"},
+		InitialSparse: func(cell string) (int, bool) {
+			return 3, cell == "a"
+		},
+		Transfer: func(cell string, _ func(string) int, emit func(string, int)) {
+			if cell == "a" {
+				emit("ghost", 9)
+			}
+		},
+	}
+
+	got := Solve(sys)
+	want := map[string]int{"a": 3, "b": 0}
+	assertMapEqual(t, cl.joinOnly(), got, want)
+	if _, present := got["ghost"]; present {
+		t.Fatalf("ghost cell appeared in sparse result map")
 	}
 }
 

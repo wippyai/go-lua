@@ -76,6 +76,16 @@ func TestFieldOptionalAliasInstantiatedRecord(t *testing.T) {
 		assertType(t, got, typeexpr.Optional(typ.String))
 	})
 
+	t.Run("optional literal", func(t *testing.T) {
+		rec := typetable.NewRecord().Field("value", typ.LiteralString("ok")).Build()
+
+		got, ok := Field(typeexpr.Optional(rec), "value")
+		if !ok {
+			t.Fatal("Field(optional literal record, value) failed")
+		}
+		assertType(t, got, typeexpr.Optional(typ.LiteralString("ok")))
+	})
+
 	t.Run("alias", func(t *testing.T) {
 		rec := typetable.NewRecord().Field("value", typ.Boolean).Build()
 
@@ -96,6 +106,25 @@ func TestFieldOptionalAliasInstantiatedRecord(t *testing.T) {
 			t.Fatal("Field(Box<number>, value) failed")
 		}
 		assertType(t, got, typ.Number)
+	})
+
+	t.Run("constrained type parameter", func(t *testing.T) {
+		constraint := typetable.NewRecord().Field("value", typ.String).Build()
+		param := typ.NewTypeParam("T", constraint)
+
+		got, ok := Field(param, "value")
+		if !ok {
+			t.Fatal("Field(constrained T, value) failed")
+		}
+		assertType(t, got, typ.String)
+	})
+
+	t.Run("unconstrained type parameter", func(t *testing.T) {
+		param := typ.NewTypeParam("T", nil)
+
+		if got, ok := Field(param, "value"); ok {
+			t.Fatalf("Field(unconstrained T, value) = %v/true, want missing", got)
+		}
 	})
 }
 
@@ -201,6 +230,50 @@ func TestFieldRecordMapComponentUsesStrictFieldAdmission(t *testing.T) {
 	}
 }
 
+func TestRecordStringFieldAndIndexSharePrecedence(t *testing.T) {
+	rec := typetable.NewRecord().
+		Field("field", typ.String).
+		StaticStringIndex("static", typ.Number).
+		MapComponent(typ.String, typ.Boolean).
+		Build()
+
+	for _, tc := range []struct {
+		name string
+		key  string
+		want typ.Type
+	}{
+		{name: "declared field", key: "field", want: typ.String},
+		{name: "static string member", key: "static", want: typ.Number},
+		{name: "map component", key: "dynamic", want: typeexpr.Optional(typ.Boolean)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fieldGot, fieldOK := Field(rec, tc.key)
+			if !fieldOK {
+				t.Fatalf("Field(record, %s) failed", tc.key)
+			}
+			assertType(t, fieldGot, tc.want)
+
+			indexGot, indexOK := Index(rec, typ.LiteralString(tc.key))
+			if !indexOK {
+				t.Fatalf("Index(record, %s) failed", tc.key)
+			}
+			assertType(t, indexGot, tc.want)
+		})
+	}
+
+	open := typetable.NewRecord().SetOpen(true).Build()
+	fieldGot, fieldOK := Field(open, "missing")
+	if !fieldOK {
+		t.Fatal("Field(open record, missing) failed")
+	}
+	assertType(t, fieldGot, typ.Unknown)
+	indexGot, indexOK := Index(open, typ.LiteralString("missing"))
+	if !indexOK {
+		t.Fatal("Index(open record, missing) failed")
+	}
+	assertType(t, indexGot, typ.Unknown)
+}
+
 func TestFieldCommonUnionField(t *testing.T) {
 	left := typetable.NewRecord().
 		Field("id", typ.String).
@@ -216,6 +289,17 @@ func TestFieldCommonUnionField(t *testing.T) {
 		t.Fatal("Field(union, id) failed")
 	}
 	assertType(t, got, typ.String)
+}
+
+func TestFieldUnionMissingMemberContributesNil(t *testing.T) {
+	event := typetable.NewRecord().Field("kind", typ.String).Build()
+	timer := typetable.NewRecord().Field("elapsed", typ.Number).Build()
+
+	got, ok := Field(typeexpr.Union(event, timer), "kind")
+	if !ok {
+		t.Fatal("Field(union missing member, kind) failed")
+	}
+	assertType(t, got, typeexpr.Optional(typ.String))
 }
 
 func TestFieldIntersectionFieldMeetPolicy(t *testing.T) {
@@ -257,6 +341,30 @@ func TestFieldIntersectionFieldMeetPolicy(t *testing.T) {
 			assertType(t, got, tt.want)
 		})
 	}
+}
+
+func TestFieldIntersectionAllowsDisjointRecordAndInterfaceMembers(t *testing.T) {
+	fields := typetable.NewRecord().
+		Field("platform", typ.String).
+		Build()
+	methods := typ.NewInterface("os", []typ.Method{
+		{
+			Name: "time",
+			Type: typ.Func().Returns(typ.Number).Build(),
+		},
+	})
+
+	got, ok := Field(typeexpr.Intersection(fields, methods), "time")
+	if !ok {
+		t.Fatal("Field(record & interface, time) failed")
+	}
+	assertType(t, got, typ.Func().Returns(typ.Number).Build())
+
+	got, ok = Field(typeexpr.Intersection(fields, methods), "platform")
+	if !ok {
+		t.Fatal("Field(record & interface, platform) failed")
+	}
+	assertType(t, got, typ.String)
 }
 
 func assertType(t *testing.T, got typ.Type, want typ.Type) {

@@ -98,6 +98,18 @@ type Graph interface {
 	IsBranch(p Point) bool                // True if p has multiple successors
 }
 
+type readOnlySuccessorGraph interface {
+	SuccessorsReadOnly(Point) []Point
+}
+
+type readOnlyPredecessorGraph interface {
+	PredecessorsReadOnly(Point) []Point
+}
+
+type readOnlyRPOGraph interface {
+	RPOReadOnly() []Point
+}
+
 // CFG represents the control flow graph for a function.
 //
 // A CFG is built during AST analysis and consumed by flow-sensitive analysis.
@@ -111,14 +123,15 @@ type Graph interface {
 // The CFG is built incrementally via AddNode/AddEdge, then traversed via
 // RPO for forward dataflow analysis.
 type CFG struct {
-	id    uint64
-	entry Point
-	exit  Point
-	nodes []Node
-	edges []Edge
-	preds [][]Point
-	succs [][]Point
-	rpo   []Point
+	id        uint64
+	entry     Point
+	exit      Point
+	nodes     []Node
+	edges     []Edge
+	preds     [][]Point
+	succs     [][]Point
+	succConds [][]bool
+	rpo       []Point
 }
 
 var cfgCounter uint64
@@ -142,11 +155,12 @@ func NewWithCapacity(nodeCap, edgeCap int) *CFG {
 	}
 
 	c := &CFG{
-		id:    nextCFGID(),
-		nodes: make([]Node, 0, nodeCap),
-		edges: make([]Edge, 0, edgeCap),
-		preds: make([][]Point, 0, nodeCap),
-		succs: make([][]Point, 0, nodeCap),
+		id:        nextCFGID(),
+		nodes:     make([]Node, 0, nodeCap),
+		edges:     make([]Edge, 0, edgeCap),
+		preds:     make([][]Point, 0, nodeCap),
+		succs:     make([][]Point, 0, nodeCap),
+		succConds: make([][]bool, 0, nodeCap),
 	}
 	c.entry = c.AddNode(NodeEntry)
 	c.exit = c.AddNode(NodeExit)
@@ -208,6 +222,13 @@ func (c *CFG) AddEdge(from, to Point, cond bool) {
 	}
 	succs = append(succs, to)
 	c.succs[fromIdx] = succs
+
+	conds := c.succConds[fromIdx]
+	if conds == nil {
+		conds = make([]bool, 0, 2)
+	}
+	conds = append(conds, cond)
+	c.succConds[fromIdx] = conds
 
 	preds := c.preds[toIdx]
 	if preds == nil {
@@ -281,6 +302,43 @@ func (c *CFG) SuccessorsReadOnly(p Point) []Point {
 	return edgesReadOnly(c.succs, p)
 }
 
+// SuccessorsReadOnly returns graph's successor slice without copying when the
+// implementation exposes an immutable adjacency view. Generic Graph
+// implementations fall back to the copy-preserving Successors contract.
+func SuccessorsReadOnly(graph Graph, p Point) []Point {
+	if graph == nil {
+		return nil
+	}
+	if ro, ok := graph.(readOnlySuccessorGraph); ok {
+		return ro.SuccessorsReadOnly(p)
+	}
+	return graph.Successors(p)
+}
+
+// PredecessorsReadOnly returns graph's predecessor slice without copying when
+// available, preserving Graph's copy semantics as the fallback.
+func PredecessorsReadOnly(graph Graph, p Point) []Point {
+	if graph == nil {
+		return nil
+	}
+	if ro, ok := graph.(readOnlyPredecessorGraph); ok {
+		return ro.PredecessorsReadOnly(p)
+	}
+	return graph.Predecessors(p)
+}
+
+// RPOReadOnly returns graph's reverse post-order without copying when
+// available, preserving Graph's copy semantics as the fallback.
+func RPOReadOnly(graph Graph) []Point {
+	if graph == nil {
+		return nil
+	}
+	if ro, ok := graph.(readOnlyRPOGraph); ok {
+		return ro.RPOReadOnly()
+	}
+	return graph.RPO()
+}
+
 // PointCanReach reports whether control can flow from point from to point to by
 // following successor edges of graph. A point reaches itself. The entry point is
 // a valid CFG point even though it is normally numbered 0.
@@ -292,7 +350,7 @@ func PointCanReach(graph Graph, from, to Point) bool {
 		return true
 	}
 	seen := map[Point]struct{}{from: {}}
-	stack := append([]Point(nil), graph.Successors(from)...)
+	stack := append([]Point(nil), SuccessorsReadOnly(graph, from)...)
 	for len(stack) != 0 {
 		point := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
@@ -303,7 +361,7 @@ func PointCanReach(graph Graph, from, to Point) bool {
 			continue
 		}
 		seen[point] = struct{}{}
-		stack = append(stack, graph.Successors(point)...)
+		stack = append(stack, SuccessorsReadOnly(graph, point)...)
 	}
 	return false
 }
@@ -338,10 +396,20 @@ func (c *CFG) Size() int {
 // EdgeCond returns the branch taken flag for edge from->to.
 // Returns (true, ok) for then-branch, (false, ok) for else-branch.
 func (c *CFG) EdgeCond(from, to Point) (bool, bool) {
-	for _, e := range c.edges {
-		if e.From == from && e.To == to {
-			return e.Cond, true
+	idx := int(from)
+	if idx < 0 || idx >= len(c.succs) {
+		return false, false
+	}
+	succs := c.succs[idx]
+	conds := c.succConds[idx]
+	for i, succ := range succs {
+		if succ != to {
+			continue
 		}
+		if i >= len(conds) {
+			return false, false
+		}
+		return conds[i], true
 	}
 	return false, false
 }
@@ -422,4 +490,5 @@ func (c *CFG) ensureAdjacencyLen(n int) {
 	grow := n - len(c.preds)
 	c.preds = append(c.preds, make([][]Point, grow)...)
 	c.succs = append(c.succs, make([][]Point, grow)...)
+	c.succConds = append(c.succConds, make([][]bool, grow)...)
 }

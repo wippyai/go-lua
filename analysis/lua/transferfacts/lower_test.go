@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	valueref "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -27,6 +28,7 @@ import (
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -59,6 +61,43 @@ func TestLowerLiteralExpressionValues(t *testing.T) {
 	assertExpressionValue(t, facts, nilSource.ExprRef, presence.Absent(), runtimekind.Singleton(runtimekind.Nil))
 	assertExpressionValue(t, facts, numberSource.ExprRef, presence.Present(), runtimekind.Singleton(runtimekind.Number))
 	assertExpressionValue(t, facts, tableSource.ExprRef, presence.Present(), runtimekind.Singleton(runtimekind.Table))
+}
+
+func TestLowerLogicalDefaultExpressionValueKeepsComputedWitness(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+type Level = "debug" | "info"
+local level: Level? = nil
+local selected = level or "info"
+`)
+	reg := standard.Registry()
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	selected, ok := stmts[2].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want selected local assignment", stmts[2])
+	}
+	var source factflow.ValueSource
+	for _, point := range built.StmtPoints.PointsFor(selected) {
+		if fact, ok := facts.LocalAssignment(point); ok {
+			source = fact.Source()
+			break
+		}
+	}
+	if !source.HasExpr {
+		t.Fatal("missing selected expression source")
+	}
+	value, ok := facts.ExpressionValue(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing expression value for ref %d", source.ExprRef)
+	}
+	witness := product.Get(reg, value, typewitness.Key)
+	got, ok := witness.Type()
+	if !ok {
+		t.Fatalf("logical default witness = %#v, want computed literal union", witness)
+	}
+	want := typeexpr.Union(typ.LiteralString("debug"), typ.LiteralString("info"))
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("logical default witness = %v, want %v", got, want)
+	}
 }
 
 func TestLowerReturnExpressionOperationUsesNestedCallSource(t *testing.T) {
@@ -102,6 +141,50 @@ end`, "tostring")
 	}
 }
 
+func TestLowerReturnLengthComparisonUsesNestedUnarySource(t *testing.T) {
+	reg := standard.Registry()
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(bindings)
+	return #bindings > 0
+end`)
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
+	}
+
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	returnPoints := requireStmtPoints(t, built, ret, 1)
+	returnFact, ok := facts.Return(returnPoints[0])
+	if !ok {
+		t.Fatalf("missing return fact at point %d", returnPoints[0])
+	}
+	sources := returnFact.Sources()
+	if len(sources) != 1 || !sources[0].HasExpr {
+		t.Fatalf("return sources = %#v, want one expression source", sources)
+	}
+	op, ok := facts.ExpressionOperation(sources[0].ExprRef)
+	if !ok {
+		t.Fatalf("missing expression operation for return expr ref %d", sources[0].ExprRef)
+	}
+	if op.Kind() != factflow.ExpressionOperationBinary || op.Op() != ">" {
+		t.Fatalf("operation = %v %q, want binary comparison", op.Kind(), op.Op())
+	}
+	left := op.Left()
+	if left.Kind != factflow.ValueSourceExpression || !left.HasExpr {
+		t.Fatalf("operation left source = %#v, want nested length expression", left)
+	}
+	nested, ok := facts.ExpressionOperation(left.ExprRef)
+	if !ok {
+		t.Fatalf("missing nested length operation for expr ref %d", left.ExprRef)
+	}
+	if nested.Kind() != factflow.ExpressionOperationUnary || nested.Op() != "#" {
+		t.Fatalf("nested operation = %v %q, want unary length", nested.Kind(), nested.Op())
+	}
+	if nested.Left().Kind != factflow.ValueSourceExpression || !nested.Left().HasExpr {
+		t.Fatalf("nested operand source = %#v, want path-backed expression", nested.Left())
+	}
+}
+
 func TestLowerAnnotatedFunctionExpressionValueWitness(t *testing.T) {
 	stmts, bindings, built, result := parseSemanticChunk(t, `
 local cb = function(item: string): number
@@ -136,6 +219,44 @@ end
 	gotID, ok := product.Get(reg, value, identity.Key).ID()
 	if !ok || gotID != identity.LuaFunction(uint64(fnSymbol)) {
 		t.Fatalf("function expression identity = %v/%v, want %v", gotID, ok, identity.LuaFunction(uint64(fnSymbol)))
+	}
+}
+
+func TestLowerReturnedFunctionExpressionUsesUniqueCallableReturnArm(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function make(): ((value: string) -> string) | false
+    return function(value)
+        return value
+    end
+end
+`)
+	reg := standard.Registry()
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
+	}
+	point := requireStmtPoints(t, built, ret, 1)[0]
+	returnFact, ok := facts.Return(point)
+	if !ok {
+		t.Fatalf("missing return fact at point %d", point)
+	}
+	sources := returnFact.Sources()
+	if len(sources) != 1 || !sources[0].HasExpr {
+		t.Fatalf("return sources = %#v, want one function expression source", sources)
+	}
+	value, ok := facts.ExpressionValue(sources[0].ExprRef)
+	if !ok {
+		t.Fatalf("missing expression value for ref %d", sources[0].ExprRef)
+	}
+	witness := product.Get(reg, value, typewitness.Key)
+	got, ok := witness.Type()
+	if !ok {
+		t.Fatalf("function expression witness = %#v, want contextual return callable", witness)
+	}
+	want := typ.Func().Param("value", typ.String).Returns(typ.String).Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("function expression witness = %v, want %v", got, want)
 	}
 }
 
@@ -287,6 +408,51 @@ end
 	}
 }
 
+func TestLowerRootFunctionDefinitionPublishesFunctionValue(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+function run()
+    return 1
+end
+`)
+	def, ok := stmts[0].(*ast.FuncDefStmt)
+	if !ok || def.Func == nil {
+		t.Fatalf("statement = %T, want function definition", stmts[0])
+	}
+	reg := standard.Registry()
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+
+	point := requireStmtPoints(t, built, def, 1)[0]
+	rootFact, ok := facts.RootAssignment(point)
+	if !ok {
+		t.Fatalf("missing root assignment at point %d", point)
+	}
+	if rootFact.TargetSymbol() == 0 {
+		t.Fatalf("root function definition target symbol missing")
+	}
+	source := rootFact.Source()
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr || source.ExprRef == 0 {
+		t.Fatalf("root assignment source = %#v, want function expression source", source)
+	}
+	fnSymbol, ok := bindings.FunctionSymbol(def.Func)
+	if !ok || fnSymbol == 0 {
+		t.Fatalf("function symbol = %d/%v, want non-zero", fnSymbol, ok)
+	}
+	if got, ok := facts.ExpressionFunction(source.ExprRef); !ok || got != fnSymbol {
+		t.Fatalf("expression function = %d/%v, want %d", got, ok, fnSymbol)
+	}
+	value, ok := facts.ExpressionValue(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing expression value for ref %d", source.ExprRef)
+	}
+	if kind := product.Get(reg, value, runtimekind.Key); !kind.Contains(runtimekind.Function) {
+		t.Fatalf("function definition value runtime kind = %v, want function", kind)
+	}
+	gotID, ok := product.Get(reg, value, identity.Key).ID()
+	if !ok || gotID != identity.LuaFunction(uint64(fnSymbol)) {
+		t.Fatalf("function definition identity = %v/%v, want %v", gotID, ok, identity.LuaFunction(uint64(fnSymbol)))
+	}
+}
+
 func mustLocalSource(t *testing.T, facts factflow.Facts, point cfg.Point) factflow.ValueSource {
 	t.Helper()
 	fact, ok := facts.LocalAssignment(point)
@@ -327,9 +493,58 @@ func assertLoweredAssertion(t *testing.T, facts factflow.Facts, source factflow.
 	}
 }
 
+func assertLoweredConcreteCastAssertion(t *testing.T, facts factflow.Facts, source factflow.ValueSource, want typ.Type, wantInnerKind factflow.ValueSourceKind) {
+	t.Helper()
+	claim, ok := facts.ExpressionRefinement(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing assertion for source ref %d", source.ExprRef)
+	}
+	assertConcreteCastRefinementProduct(t, claim.Refinement(), want)
+	inner := claim.Source()
+	if inner.ExprRef == 0 || inner.ExprRef == source.ExprRef || inner.Kind != wantInnerKind {
+		t.Fatalf("assertion inner source = %#v, outer %#v", inner, source)
+	}
+}
+
 func refinementAssertion(t *testing.T, refinement factflow.ExpressionRefinement) assertion.Value {
 	t.Helper()
 	return product.Get(standard.Registry(), refinement.Refinement(), assertion.Key)
+}
+
+func assertConcreteCastRefinementProduct(t *testing.T, value product.Value, want typ.Type) {
+	t.Helper()
+	reg := standard.Registry()
+	wantAssertion := concreteCastAssertionForType(want)
+	if got := product.Get(reg, value, assertion.Key); !assertion.Equal(got, wantAssertion) {
+		t.Fatalf("assertion value = %s, want %s", got, wantAssertion)
+	}
+	witness := product.Get(reg, value, typewitness.Key)
+	gotType, ok := witness.Type()
+	if !ok || !typ.TypeEquals(gotType, want) {
+		t.Fatalf("type witness = %v/%v, want %s", witness, ok, want)
+	}
+	if got := product.Get(reg, value, evidence.Key); !evidence.Equal(got, evidence.Top()) {
+		t.Fatalf("cast refinement evidence = %s, want top", got)
+	}
+}
+
+func concreteCastRefinementValue(reg *axis.Registry, t typ.Type) product.Value {
+	return product.Set(reg, typevalue.WithWitness(reg, typevalue.FromType(reg, t), t), assertion.Key, concreteCastAssertionForType(t))
+}
+
+func concreteCastAssertionForType(t typ.Type) assertion.Value {
+	t = unwrap.Alias(t)
+	if t == nil || typ.IsAny(t) || typ.IsUnknown(t) {
+		return assertion.Type()
+	}
+	return assertion.Of(assertion.TypeClaim, assertion.RuntimeClaim)
+}
+
+func applyConcreteCastRefinement(reg *axis.Registry, value product.Value, t typ.Type) product.Value {
+	declared := concreteCastRefinementValue(reg, t)
+	merged := valueref.MergeDeclaredContract(reg, value, declared)
+	currentClaim := product.Get(reg, merged, assertion.Key)
+	return product.Set(reg, merged, assertion.Key, assertion.Combine(currentClaim, concreteCastAssertionForType(t)))
 }
 
 func assertClaimRefinementProduct(t *testing.T, value product.Value, want assertion.Value) {
@@ -343,6 +558,12 @@ func assertClaimRefinementProduct(t *testing.T, value product.Value, want assert
 	if want.Has(assertion.AnyClaim) {
 		wantEvidence = evidence.ExplicitTop()
 		wantProduct = product.Set(reg, wantProduct, evidence.Key, wantEvidence)
+	}
+	if want.Has(assertion.TypeClaim) {
+		if got := product.Get(reg, value, evidence.Key); !evidence.Equal(got, wantEvidence) {
+			t.Fatalf("assertion refinement evidence = %s, want %s", got, wantEvidence)
+		}
+		return
 	}
 	if got := product.ShapeOf(value); got != product.ShapeTop {
 		t.Fatalf("assertion refinement shape = %s, want top", got)
@@ -410,6 +631,33 @@ func assertLoweredBranchPresenceProof(
 		return
 	}
 	t.Fatalf("missing branch presence proof at point %d for %s presence %s", point, wantPath, wantPresence)
+}
+
+func assertLoweredBranchTruthyProof(
+	t *testing.T,
+	facts factflow.Facts,
+	point cfg.Point,
+	wantPath path.Path,
+	wantTrue bool,
+	wantFalse bool,
+) {
+	t.Helper()
+	for _, proof := range facts.BranchPathEvidence(point) {
+		if proof.Kind() != factflow.BranchPathEvidenceTruthy || !proof.Path().Equal(wantPath) {
+			continue
+		}
+		if proof.ActiveOnEdge(true) != wantTrue || proof.ActiveOnEdge(false) != wantFalse {
+			t.Fatalf(
+				"branch truthy proof active true/false = %v/%v, want %v/%v",
+				proof.ActiveOnEdge(true),
+				proof.ActiveOnEdge(false),
+				wantTrue,
+				wantFalse,
+			)
+		}
+		return
+	}
+	t.Fatalf("missing branch truthy proof at point %d for %s", point, wantPath)
 }
 
 func assertOptionalValuePresence(
@@ -481,6 +729,28 @@ func assertLoweredBranchValueRefinement(
 	}
 	assertValueRefinement(t, "true edge", trueValue, wantTrue)
 	assertValueRefinement(t, "false edge", falseValue, wantFalse)
+}
+
+func assertBranchLiteralType(t *testing.T, facts factflow.Facts, point cfg.Point, wantPath path.Path, edge bool, want typ.Type) {
+	t.Helper()
+	for _, refinement := range facts.BranchRefinements(point) {
+		if !refinement.TargetPath().Equal(wantPath) {
+			continue
+		}
+		value, ok := refinement.ValueForEdge(edge)
+		if !ok {
+			continue
+		}
+		constraint, ok := value.Constraint()
+		if !ok {
+			continue
+		}
+		got, ok := typevalue.TypeOf(standard.Registry(), constraint)
+		if ok && typ.TypeEquals(got, want) {
+			return
+		}
+	}
+	t.Fatalf("missing branch literal type %s on edge %v at point %d for %s", want, edge, point, wantPath.String())
 }
 
 func assertLoweredBranchPathEquality(

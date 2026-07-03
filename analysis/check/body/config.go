@@ -5,16 +5,26 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func copyConfig(config Config) Config {
 	config.Globals = append([]string(nil), config.Globals...)
+	if len(config.GlobalTypes) != 0 {
+		globalTypes := make(map[string]typ.Type, len(config.GlobalTypes))
+		for name, t := range config.GlobalTypes {
+			globalTypes[name] = t
+		}
+		config.GlobalTypes = globalTypes
+	}
 	config.StateLanes = state.CloneLanes(config.StateLanes)
+	config.ClosedDynamicAllValues = append([]factapply.ClosedDynamicAllValueInvariant(nil), config.ClosedDynamicAllValues...)
 	config.Signatures.Manifests = append([]*manifest.Manifest(nil), config.Signatures.Manifests...)
 	config.ModuleExports.Manifests = append([]*manifest.Manifest(nil), config.ModuleExports.Manifests...)
 	config.ModuleTypes.Manifests = append([]*manifest.Manifest(nil), config.ModuleTypes.Manifests...)
@@ -28,11 +38,14 @@ func copyConfig(config Config) Config {
 	return config
 }
 
-func solveConfigFromConfig(config Config) SolveConfig {
+// SolveConfig returns the per-solve view of config. This is the single owner for
+// moving full-check configuration axes into a prepared-body solve.
+func (config Config) SolveConfig() SolveConfig {
 	return SolveConfig{
 		EntryState:                   config.EntryState,
 		Initial:                      config.Initial,
 		TypeValues:                   config.TypeValues,
+		ClosedDynamicAllValues:       append([]factapply.ClosedDynamicAllValueInvariant(nil), config.ClosedDynamicAllValues...),
 		StateLanes:                   state.CloneLanes(config.StateLanes),
 		CallOutcome:                  config.CallOutcome,
 		CallOutcomeFactory:           config.CallOutcomeFactory,
@@ -84,8 +97,14 @@ func addDynamicIndexExprRefs(set map[factflow.ExprRef]struct{}, dynamic map[fact
 
 func configGlobals(config Config) []string {
 	globals := append([]string(nil), config.Globals...)
+	for name := range config.GlobalTypes {
+		globals = append(globals, name)
+	}
+	// The Lua base globals are always present in the environment, independent of
+	// whether typed stdlib signatures are loaded for this check.
+	globals = append(globals, signaturelookup.StdlibBareGlobals()...)
 	if config.Signatures.IncludeStdlib {
-		for name := range signaturelookup.StdlibSignatures() {
+		for _, name := range signaturelookup.StdlibSignatureNames() {
 			root := name
 			if dot := strings.IndexByte(root, '.'); dot >= 0 {
 				root = root[:dot]

@@ -14,6 +14,7 @@ type Options struct {
 type Result struct {
 	identSymbols          map[*ast.IdentExpr]symbol.ID
 	readIdents            map[symbol.ID][]*ast.IdentExpr
+	writeIdents           map[symbol.ID][]*ast.IdentExpr
 	implicitGlobalUses    map[*ast.IdentExpr]struct{}
 	implicitGlobalSymbols map[symbol.ID]struct{}
 	typeValueRefs         map[*ast.IdentExpr]TypeDecl
@@ -53,6 +54,7 @@ func newResult(opts Options) *Result {
 	r := &Result{
 		identSymbols:          make(map[*ast.IdentExpr]symbol.ID),
 		readIdents:            make(map[symbol.ID][]*ast.IdentExpr),
+		writeIdents:           make(map[symbol.ID][]*ast.IdentExpr),
 		implicitGlobalUses:    make(map[*ast.IdentExpr]struct{}),
 		implicitGlobalSymbols: make(map[symbol.ID]struct{}),
 		typeValueRefs:         make(map[*ast.IdentExpr]TypeDecl),

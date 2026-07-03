@@ -37,7 +37,7 @@ func Type(expr ast.TypeExpr, resolver Resolver) (typ.Type, bool) {
 		if !ok {
 			return nil, false
 		}
-		return typeexpr.Optional(inner), true
+		return typ.MaterializeOptional(inner), true
 	case *ast.UnionTypeExpr:
 		members, ok := typeList(e.Types, resolver)
 		if !ok {

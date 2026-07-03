@@ -11,6 +11,8 @@ import (
 type ObjectEntry struct {
 	suffix      path.Path
 	source      ValueSource
+	valueSpan   SourceSpan
+	valueLabel  string
 	expected    product.Value
 	hasExpected bool
 }
@@ -29,17 +31,35 @@ func NewObjectEntry(suffix path.Path, source ValueSource) ObjectEntry {
 	}
 }
 
+// NewObjectEntryWithMetadata creates a static object-entry descriptor with
+// optional display metadata. The metadata remains syntax-free so downstream
+// obligation readers do not need AST access for member-level diagnostics.
+func NewObjectEntryWithMetadata(suffix path.Path, source ValueSource, valueSpan SourceSpan, valueLabel string) ObjectEntry {
+	entry := NewObjectEntry(suffix, source)
+	entry.valueSpan = valueSpan
+	entry.valueLabel = valueLabel
+	return entry
+}
+
 // Suffix returns the relative static suffix under the constructed object.
 func (e ObjectEntry) Suffix() path.Path { return e.suffix.Clone() }
 
 // Source returns the value assigned to the entry.
 func (e ObjectEntry) Source() ValueSource { return e.source }
 
+func (e ObjectEntry) ValueSpan() SourceSpan { return e.valueSpan }
+
+func (e ObjectEntry) ValueLabel() string { return e.valueLabel }
+
 // Expected returns the contextual value contract for this static entry when the
 // object literal is checked against a declared table shape.
 func (e ObjectEntry) Expected() (product.Value, bool) { return e.expected, e.hasExpected }
 
 func (v ObjectEntryView) Source() ValueSource { return v.entry.source }
+
+func (v ObjectEntryView) ValueSpan() SourceSpan { return v.entry.valueSpan }
+
+func (v ObjectEntryView) ValueLabel() string { return v.entry.valueLabel }
 
 func (v ObjectEntryView) Expected() (product.Value, bool) {
 	return v.entry.expected, v.entry.hasExpected
@@ -75,6 +95,13 @@ func (v ObjectEntryView) SuffixSegments() []segment.Segment {
 		return nil
 	}
 	return append([]segment.Segment(nil), v.entry.suffix.Segments...)
+}
+
+// SuffixSegmentsView returns the relative static suffix as a read-only borrowed
+// view. The returned slice is owned by the object literal sidecar and must not
+// be mutated. Use SuffixSegments when the caller needs an owned slice.
+func (v ObjectEntryView) SuffixSegmentsView() []segment.Segment {
+	return v.entry.suffix.Segments
 }
 
 // WithExpected returns a copy carrying the contextual value contract for this

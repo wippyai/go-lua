@@ -13,17 +13,20 @@ func TestCallOutcomeEmptyAndPostReturnEvidenceCoverEveryLane(t *testing.T) {
 		"HeapTableObjects":           {},
 		"Placements":                 {},
 		"ParamPathRefinements":       {},
+		"ParamPathWrites":            {},
 		"ParamLengthFloors":          {},
 		"ParamPathInvalidations":     {},
 		"ParamConditions":            {},
 		"ParamPathRelations":         {},
 		"ReturnConditionRefinements": {},
+		"ReturnConditionSlots":       {},
 		"ReturnPresenceRelations":    {},
 	}
 	nonPostReturnFields := map[string]struct{}{
 		"Results":             {},
 		"PostReturnAuthority": {},
 		"ParamObligations":    {},
+		"PathObligations":     {},
 		"ParamExposures":      {},
 	}
 

@@ -12,9 +12,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
+	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/lua/typeoperator"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -24,7 +27,7 @@ func (l *lowerer) addExpressionPath(ref factflow.ExprRef, expr ast.Expr) {
 	if ref == 0 || expr == nil || l.bindings == nil {
 		return
 	}
-	p, ok := pathexpr.Resolve(expr, l.bindings)
+	p, ok := pathexpr.ViewOf(expr, l.bindings).AliasPath()
 	if !ok || p.IsEmpty() {
 		l.addDynamicIndexExpression(ref, expr)
 		return
@@ -58,15 +61,26 @@ func (l *lowerer) dynamicIndexExpression(expr ast.Expr) (factflow.DynamicIndexEx
 	if !ok || attr.Key == nil || attr.KeySyntax != ast.AttrKeyIndex {
 		return factflow.DynamicIndexExpression{}, false
 	}
-	tablePath, ok := pathexpr.Resolve(attr.Object, l.bindings)
-	if !ok || tablePath.IsEmpty() {
-		return factflow.DynamicIndexExpression{}, false
-	}
 	keySource, ok := l.dynamicIndexKeySource(attr)
 	if !ok {
 		return factflow.DynamicIndexExpression{}, false
 	}
-	return factflow.NewDynamicIndexExpression(tablePath, keySource)
+	tableSource, hasTableSource := l.expressionOperandSource(attr.Object)
+	tablePath, hasTablePath := pathexpr.Resolve(attr.Object, l.bindings)
+	if hasTablePath && !tablePath.IsEmpty() {
+		expr, ok := factflow.NewDynamicIndexExpression(tablePath, keySource)
+		if !ok {
+			return factflow.DynamicIndexExpression{}, false
+		}
+		if hasTableSource {
+			expr = expr.WithTableSource(tableSource)
+		}
+		return expr, true
+	}
+	if hasTableSource {
+		return factflow.NewDynamicIndexExpressionFromSource(tableSource, keySource)
+	}
+	return factflow.DynamicIndexExpression{}, false
 }
 
 func (l *lowerer) addExpressionCondition(ref factflow.ExprRef, expr ast.Expr) {
@@ -124,6 +138,9 @@ func (l *lowerer) addExpressionValue(ref factflow.ExprRef, expr ast.Expr) {
 		return
 	}
 	l.addExpressionOperation(ref, expr)
+	if l.expressionValues == nil {
+		l.expressionValues = make(map[factflow.ExprRef]product.Value)
+	}
 	l.expressionValues[ref] = value
 }
 
@@ -159,6 +176,9 @@ func (l *lowerer) addExpressionOperation(ref factflow.ExprRef, expr ast.Expr) {
 	}
 	if !ok {
 		return
+	}
+	if l.expressionOperations == nil {
+		l.expressionOperations = make(map[factflow.ExprRef]factflow.ExpressionOperation)
 	}
 	l.expressionOperations[ref] = op
 }
@@ -200,6 +220,9 @@ func (l *lowerer) addExpressionFunction(ref factflow.ExprRef, expr ast.Expr) {
 	if !ok || id == 0 {
 		return
 	}
+	if l.expressionFunctions == nil {
+		l.expressionFunctions = make(map[factflow.ExprRef]symbol.ID)
+	}
 	l.expressionFunctions[ref] = id
 }
 
@@ -236,9 +259,31 @@ func (l *lowerer) expressionValue(expr ast.Expr) (product.Value, bool) {
 		return l.valueFromTypeWithWitness(t), true
 	}
 	if t, ok := l.scalarOperationType(expr); ok {
-		return l.valueFromType(t), true
+		value := l.valueFromTypeWithWitness(t)
+		if logical, ok := expr.(*ast.LogicalOpExpr); ok {
+			value = l.refineLogicalOperationValue(logical, value)
+		}
+		return value, true
 	}
 	return product.Value{}, false
+}
+
+func (l *lowerer) refineLogicalOperationValue(expr *ast.LogicalOpExpr, value product.Value) product.Value {
+	if expr == nil {
+		return value
+	}
+	op, ok := l.binaryExpressionOperation(expr.Operator, expr.Lhs, expr.Rhs)
+	if !ok {
+		return value
+	}
+	leftType, leftOK := l.expressionOperandType(expr.Lhs)
+	rightType, rightOK := l.expressionOperandType(expr.Rhs)
+	if !leftOK || !rightOK {
+		return value
+	}
+	left := l.valueFromTypeWithWitness(leftType)
+	right := l.valueFromTypeWithWitness(rightType)
+	return luasourcevalue.RefineLogicalOperationValue(l.registry, op, value, left, right)
 }
 
 func (l *lowerer) functionIdentity(fn *ast.FunctionExpr) (identity.ID, bool) {
@@ -253,30 +298,78 @@ func (l *lowerer) functionIdentity(fn *ast.FunctionExpr) (identity.ID, bool) {
 }
 
 func (l *lowerer) functionExpressionType(fn *ast.FunctionExpr) (typ.Type, bool) {
-	if fn == nil {
+	if fn == nil || l == nil || l.bindings == nil {
 		return nil, false
 	}
-	expr := &ast.FunctionTypeExpr{
-		TypeParams: fn.TypeParams,
-		Returns:    fn.ReturnTypes,
+	if t, ok := l.contextualReturnFunctionExpressionType(fn); ok {
+		return t, true
 	}
-	if fn.ParList != nil {
-		expr.Params = make([]ast.FunctionParamExpr, 0, len(fn.ParList.Names))
-		for i, name := range fn.ParList.Names {
-			paramType := typeExprAt(fn.ParList.Types, i)
-			if paramType == nil {
-				return nil, false
+	return functionExpressionTypeFromBindings(fn, l.bindings, l.resolveType, l.resolveDecl)
+}
+
+func (l *lowerer) contextualReturnFunctionExpressionType(fn *ast.FunctionExpr) (typ.Type, bool) {
+	parent, ok := l.bindings.ParentFunction(fn)
+	if !ok || parent == nil {
+		return nil, false
+	}
+	idx, ok := returnFunctionExpressionIndex(parent.Stmts, fn)
+	if !ok {
+		return nil, false
+	}
+	declared := transferFunctionReturnTypeExprs(parent.ReturnTypes)
+	if idx >= len(declared) || declared[idx] == nil {
+		return nil, false
+	}
+	t, ok := l.resolveType(declared[idx])
+	if !ok || t == nil {
+		return nil, false
+	}
+	fnType, ok := typecall.ContextualCallable(t)
+	if !ok || fnType == nil {
+		return nil, false
+	}
+	return fnType, true
+}
+
+func returnFunctionExpressionIndex(stmts []ast.Stmt, fn *ast.FunctionExpr) (int, bool) {
+	for _, stmt := range stmts {
+		switch s := stmt.(type) {
+		case *ast.ReturnStmt:
+			for i, expr := range s.Exprs {
+				if expr == ast.Expr(fn) {
+					return i, true
+				}
 			}
-			expr.Params = append(expr.Params, ast.FunctionParamExpr{Name: name, Type: paramType})
-		}
-		if fn.ParList.HasVargs {
-			if fn.ParList.VarargType == nil {
-				return nil, false
+		case *ast.IfStmt:
+			if idx, ok := returnFunctionExpressionIndex(s.Then, fn); ok {
+				return idx, true
 			}
-			expr.Variadic = fn.ParList.VarargType
+			if idx, ok := returnFunctionExpressionIndex(s.Else, fn); ok {
+				return idx, true
+			}
+		case *ast.DoBlockStmt:
+			if idx, ok := returnFunctionExpressionIndex(s.Stmts, fn); ok {
+				return idx, true
+			}
+		case *ast.WhileStmt:
+			if idx, ok := returnFunctionExpressionIndex(s.Stmts, fn); ok {
+				return idx, true
+			}
+		case *ast.RepeatStmt:
+			if idx, ok := returnFunctionExpressionIndex(s.Stmts, fn); ok {
+				return idx, true
+			}
+		case *ast.NumberForStmt:
+			if idx, ok := returnFunctionExpressionIndex(s.Stmts, fn); ok {
+				return idx, true
+			}
+		case *ast.GenericForStmt:
+			if idx, ok := returnFunctionExpressionIndex(s.Stmts, fn); ok {
+				return idx, true
+			}
 		}
 	}
-	return l.resolveType(expr)
+	return 0, false
 }
 
 func typeExprAt(types []ast.TypeExpr, index int) ast.TypeExpr {
@@ -305,7 +398,7 @@ func (l *lowerer) scalarOperationType(expr ast.Expr) (typ.Type, bool) {
 	case *ast.UnaryBNotOpExpr:
 		return l.unaryOperationType("~", expr.Expr)
 	case *ast.CastExpr:
-		return l.scalarOperationType(expr.Expr)
+		return l.resolveType(expr.Type)
 	case *ast.NonNilAssertExpr:
 		return l.scalarOperationType(expr.Expr)
 	default:

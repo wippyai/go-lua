@@ -65,6 +65,15 @@ func appendBranchPresenceRelations(out map[cfg.Point]factflow.BranchPresenceRela
 	out[point] = factflow.NewBranchPresenceRelationSet(existing...)
 }
 
+func appendPathValuePresenceImplications(out map[cfg.Point]factflow.PathValuePresenceImplicationSet, point cfg.Point, implications ...factflow.PathValuePresenceImplication) {
+	if len(implications) == 0 {
+		return
+	}
+	existing := out[point].Implications()
+	existing = append(existing, implications...)
+	out[point] = factflow.NewPathValuePresenceImplicationSet(existing...)
+}
+
 func appendCallResultValues(out map[cfg.Point]factflow.CallResultValueSet, point cfg.Point, values ...factflow.CallResultValue) {
 	if len(values) == 0 {
 		return

@@ -212,10 +212,8 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 		return ok
 	}
 
-	if r, ok := sub.(*typ.Record); ok && len(r.Fields) == 0 && len(r.StaticMembers) == 0 {
-		if super.Kind() == kind.Array || super.Kind() == kind.Map || super.Kind() == kind.ReadonlyMap {
-			return true
-		}
+	if r, ok := sub.(*typ.Record); ok && emptyRecordAdoptsContainerShape(r, super) {
+		return true
 	}
 
 	if r, ok := sub.(*typ.Record); ok {

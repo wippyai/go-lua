@@ -2,10 +2,11 @@ package diagnostics
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/access"
+	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -24,9 +25,8 @@ func (p memberRead) Produce(result *body.Result) []diagnostic.Diagnostic {
 	if graph == nil {
 		return nil
 	}
-	envs := cachedGuardEnvironments(result)
-	var out []diagnostic.Diagnostic
-	seen := make(map[*ast.AttrGetExpr]struct{})
+	envs := producerContext(p).guardEnvironments(result)
+	collector := newMemberReadCollector()
 	for _, point := range graph.RPO() {
 		if !guardEnvReachableAt(envs, point) {
 			continue
@@ -36,9 +36,10 @@ func (p memberRead) Produce(result *body.Result) []diagnostic.Diagnostic {
 			base:     newStructuralFlowExpressionTyper(result, p.resolver, point, guardEnv{}),
 			result:   result,
 			point:    point,
+			flow:     producerContext(p).flow,
 		}
 		emit := func(expr ast.Expr) {
-			p.walk(expr, typers, seen, &out)
+			p.walk(expr, typers, collector)
 		}
 		if fact, ok := result.LocalAssignment(point); ok {
 			emit(fact.Expr)
@@ -58,42 +59,102 @@ func (p memberRead) Produce(result *body.Result) []diagnostic.Diagnostic {
 		if fact, ok := result.BranchCondition(point); ok {
 			emit(fact.Condition)
 		}
+		if fact, ok := result.ExpressionEvaluation(point); ok {
+			emit(fact.Expr)
+		}
+	}
+	return collector.Diagnostics()
+}
+
+type memberReadCollector struct {
+	pending    []memberReadPending
+	byExpr     map[*ast.AttrGetExpr]int
+	suppressed map[*ast.AttrGetExpr]struct{}
+}
+
+type memberReadPending struct {
+	expr *ast.AttrGetExpr
+	diag diagnostic.Diagnostic
+}
+
+func newMemberReadCollector() *memberReadCollector {
+	return &memberReadCollector{
+		byExpr:     make(map[*ast.AttrGetExpr]int),
+		suppressed: make(map[*ast.AttrGetExpr]struct{}),
+	}
+}
+
+func (c *memberReadCollector) Suppress(expr *ast.AttrGetExpr) {
+	if c == nil || expr == nil {
+		return
+	}
+	c.suppressed[expr] = struct{}{}
+}
+
+func (c *memberReadCollector) Add(expr *ast.AttrGetExpr, diag diagnostic.Diagnostic) {
+	if c == nil || expr == nil {
+		return
+	}
+	if _, suppressed := c.suppressed[expr]; suppressed {
+		return
+	}
+	if _, exists := c.byExpr[expr]; exists {
+		return
+	}
+	c.byExpr[expr] = len(c.pending)
+	c.pending = append(c.pending, memberReadPending{expr: expr, diag: diag})
+}
+
+func (c *memberReadCollector) Diagnostics() []diagnostic.Diagnostic {
+	if c == nil || len(c.pending) == 0 {
+		return nil
+	}
+	out := make([]diagnostic.Diagnostic, 0, len(c.pending))
+	for _, pending := range c.pending {
+		if _, suppressed := c.suppressed[pending.expr]; suppressed {
+			continue
+		}
+		out = append(out, pending.diag)
 	}
 	return out
 }
 
-func (p memberRead) walk(expr ast.Expr, typers memberReadTypers, seen map[*ast.AttrGetExpr]struct{}, out *[]diagnostic.Diagnostic) {
-	p.walkDepth(expr, typers, seen, out, 0)
+func (p memberRead) walk(expr ast.Expr, typers memberReadTypers, collector *memberReadCollector) {
+	p.walkDepth(expr, typers, collector, 0, false)
 }
 
-func (p memberRead) walkDepth(expr ast.Expr, typers memberReadTypers, seen map[*ast.AttrGetExpr]struct{}, out *[]diagnostic.Diagnostic, depth int) {
+func (p memberRead) walkDepth(
+	expr ast.Expr,
+	typers memberReadTypers,
+	collector *memberReadCollector,
+	depth int,
+	allowExactNilRead bool,
+) {
 	if expr == nil || depth > typ.DefaultRecursionDepth {
 		return
 	}
 	switch e := expr.(type) {
 	case *ast.AttrGetExpr:
-		p.walkDepth(e.Object, typers, seen, out, depth+1)
+		p.walkDepth(e.Object, typers, collector, depth+1, false)
 		if e.KeySyntax == ast.AttrKeyIndex {
-			p.walkDepth(e.Key, typers, seen, out, depth+1)
+			p.walkDepth(e.Key, typers, collector, depth+1, false)
 		}
-		if _, done := seen[e]; done {
-			return
-		}
-		seen[e] = struct{}{}
-		if d, ok := p.read(e, typers); ok {
-			*out = append(*out, d)
+		if d, ok, suppressed := p.read(e, typers, allowExactNilRead); suppressed {
+			collector.Suppress(e)
+		} else if ok {
+			collector.Add(e, d)
 		}
 	case *ast.FuncCallExpr:
 		// The callee's own field access is a member call validated by memberCall;
 		// descend into its object but do not report the called member as a read.
 		if callee, ok := e.Func.(*ast.AttrGetExpr); ok && callee.KeySyntax == ast.AttrKeyDot {
-			p.walkDepth(callee.Object, typers, seen, out, depth+1)
+			p.walkDepth(callee.Object, typers, collector, depth+1, false)
 		} else {
-			p.walkDepth(e.Func, typers, seen, out, depth+1)
+			p.walkDepth(e.Func, typers, collector, depth+1, false)
 		}
-		p.walkDepth(e.Receiver, typers, seen, out, depth+1)
+		p.walkDepth(e.Receiver, typers, collector, depth+1, false)
 		for _, arg := range e.Args {
-			p.walkDepth(arg, typers, seen, out, depth+1)
+			p.walkDepth(arg, typers, collector, depth+1, false)
 		}
 	case *ast.TableExpr:
 		for _, field := range e.Fields {
@@ -101,34 +162,47 @@ func (p memberRead) walkDepth(expr ast.Expr, typers memberReadTypers, seen map[*
 				continue
 			}
 			if field.KeySyntax == ast.AttrKeyIndex {
-				p.walkDepth(field.Key, typers, seen, out, depth+1)
+				p.walkDepth(field.Key, typers, collector, depth+1, false)
 			}
-			p.walkDepth(field.Value, typers, seen, out, depth+1)
+			p.walkDepth(field.Value, typers, collector, depth+1, false)
 		}
 	case *ast.LogicalOpExpr:
-		p.walkDepth(e.Lhs, typers, seen, out, depth+1)
-		p.walkDepth(e.Rhs, typers, seen, out, depth+1)
+		p.walkDepth(e.Lhs, typers, collector, depth+1, e.Operator == "or")
+		switch e.Operator {
+		case "and":
+			next, reachable := typers.withExpressionEdgeFacts(e.Lhs, true)
+			if reachable {
+				p.walkDepth(e.Rhs, next, collector, depth+1, false)
+			}
+		case "or":
+			next, reachable := typers.withExpressionEdgeFacts(e.Lhs, false)
+			if reachable {
+				p.walkDepth(e.Rhs, next, collector, depth+1, false)
+			}
+		default:
+			p.walkDepth(e.Rhs, typers, collector, depth+1, false)
+		}
 	case *ast.RelationalOpExpr:
-		p.walkDepth(e.Lhs, typers, seen, out, depth+1)
-		p.walkDepth(e.Rhs, typers, seen, out, depth+1)
+		p.walkDepth(e.Lhs, typers, collector, depth+1, false)
+		p.walkDepth(e.Rhs, typers, collector, depth+1, false)
 	case *ast.StringConcatOpExpr:
-		p.walkDepth(e.Lhs, typers, seen, out, depth+1)
-		p.walkDepth(e.Rhs, typers, seen, out, depth+1)
+		p.walkDepth(e.Lhs, typers, collector, depth+1, false)
+		p.walkDepth(e.Rhs, typers, collector, depth+1, false)
 	case *ast.ArithmeticOpExpr:
-		p.walkDepth(e.Lhs, typers, seen, out, depth+1)
-		p.walkDepth(e.Rhs, typers, seen, out, depth+1)
+		p.walkDepth(e.Lhs, typers, collector, depth+1, false)
+		p.walkDepth(e.Rhs, typers, collector, depth+1, false)
 	case *ast.UnaryMinusOpExpr:
-		p.walkDepth(e.Expr, typers, seen, out, depth+1)
+		p.walkDepth(e.Expr, typers, collector, depth+1, false)
 	case *ast.UnaryNotOpExpr:
-		p.walkDepth(e.Expr, typers, seen, out, depth+1)
+		p.walkDepth(e.Expr, typers, collector, depth+1, false)
 	case *ast.UnaryLenOpExpr:
-		p.walkDepth(e.Expr, typers, seen, out, depth+1)
+		p.walkDepth(e.Expr, typers, collector, depth+1, false)
 	case *ast.UnaryBNotOpExpr:
-		p.walkDepth(e.Expr, typers, seen, out, depth+1)
+		p.walkDepth(e.Expr, typers, collector, depth+1, false)
 	case *ast.CastExpr:
-		p.walkDepth(e.Expr, typers, seen, out, depth+1)
+		p.walkDepth(e.Expr, typers, collector, depth+1, false)
 	case *ast.NonNilAssertExpr:
-		p.walkDepth(e.Expr, typers, seen, out, depth+1)
+		p.walkDepth(e.Expr, typers, collector, depth+1, false)
 	}
 }
 
@@ -143,6 +217,19 @@ type memberReadTypers struct {
 	base     expressionTyper
 	result   *body.Result
 	point    cfg.Point
+	flow     *diagnosticFlowCache
+}
+
+func (t memberReadTypers) withExpressionEdgeFacts(expr ast.Expr, cond bool) (memberReadTypers, bool) {
+	if t.result == nil || expr == nil {
+		return t, true
+	}
+	env, reachable := applyExpressionEdgeGuards(t.result, t.point, expr, cond, t.narrowed.env)
+	if !reachable {
+		return t, false
+	}
+	t.narrowed.env = env
+	return t, true
 }
 
 // receiverType resolves the dot-read receiver type, preferring the flow-narrowed
@@ -152,9 +239,15 @@ type memberReadTypers struct {
 // union, so the union-arm field-read check still applies.
 func (t memberReadTypers) receiverType(obj ast.Expr) (typ.Type, bool) {
 	if rt, ok := t.boundaryType(obj); ok {
+		if narrowed, ok := t.stableLiteralNarrowedBroadType(obj, rt); ok {
+			return narrowed, true
+		}
 		return rt, true
 	}
 	if rt, ok := t.narrowed.typeOf(obj); ok && rt != nil {
+		if narrowed, ok := t.stableLiteralNarrowedBroadType(obj, rt); ok {
+			return narrowed, true
+		}
 		return rt, true
 	}
 	return nil, false
@@ -164,11 +257,11 @@ func (t memberReadTypers) boundaryType(obj ast.Expr) (typ.Type, bool) {
 	if t.result == nil {
 		return nil, false
 	}
-	value, ok := t.result.ExpressionValueAtBoundary(t.point, obj)
+	value, ok := newDiagnosticQuery(t.result).ExpressionValueAtBoundary(t.point, obj)
 	if !ok {
 		return nil, false
 	}
-	return readmodel.New(t.result).ValueTypeWithPresence(value)
+	return newDiagnosticQuery(t.result).ValueTypeWithPresence(value)
 }
 
 // fullyNarrowedType returns the receiver type with every sound flow narrowing
@@ -179,6 +272,9 @@ func (t memberReadTypers) boundaryType(obj ast.Expr) (typ.Type, bool) {
 // built from a local table literal it cannot, so the solved boundary value is
 // refined against its own structural witness, which already reflects guards.
 func (t memberReadTypers) fullyNarrowedType(obj ast.Expr) (typ.Type, bool) {
+	if rt, ok := t.narrowed.typeOf(obj); ok && rt != nil {
+		return rt, true
+	}
 	witnessTyper := t.narrowed
 	witnessTyper.witnessRefine = true
 	if rt, ok := witnessTyper.typeOf(obj); ok && rt != nil {
@@ -190,50 +286,195 @@ func (t memberReadTypers) fullyNarrowedType(obj ast.Expr) (typ.Type, bool) {
 	if t.result == nil {
 		return nil, false
 	}
-	value, ok := t.result.ExpressionValueAtBoundary(t.point, obj)
+	value, ok := newDiagnosticQuery(t.result).ExpressionValueAtBoundary(t.point, obj)
 	if !ok {
 		return nil, false
 	}
-	declared, ok := readmodel.New(t.result).ValueTypeWithPresence(value)
+	query := newDiagnosticQuery(t.result)
+	declared, ok := query.ValueTypeWithPresence(value)
 	if !ok || declared == nil {
 		return nil, false
 	}
-	if refined, ok := readmodel.New(t.result).RefineDeclaredType(declared, value); ok && refined != nil {
+	if refined, ok := query.RefineDeclaredType(declared, value); ok && refined != nil {
 		return refined, true
 	}
 	return declared, true
 }
 
-func (p memberRead) read(expr *ast.AttrGetExpr, typers memberReadTypers) (diagnostic.Diagnostic, bool) {
+func (p memberRead) read(expr *ast.AttrGetExpr, typers memberReadTypers, allowExactNilRead bool) (diagnostic.Diagnostic, bool, bool) {
 	name, ok := staticMemberReadName(expr)
 	if !ok {
-		return diagnostic.Diagnostic{}, false
+		return diagnostic.Diagnostic{}, false, false
+	}
+	if allowExactNilRead && typers.exactLocalMissingFieldReadsNil(expr, name) {
+		return diagnostic.Diagnostic{}, false, true
+	}
+	if typers.receiverHasUntrustedTopOrigin(expr.Object) {
+		return diagnostic.Diagnostic{}, false, false
 	}
 	if fully, ok := typers.fullyNarrowedType(expr.Object); ok && unionArmRejectsFieldRead(fully, name) {
-		return missingMemberReadDiagnostic(expr, fully, name), true
+		return missingMemberReadDiagnostic(expr, fully, name), true, false
 	}
 	receiver, ok := typers.receiverType(expr.Object)
 	if !ok || receiver == nil {
-		return diagnostic.Diagnostic{}, false
+		return diagnostic.Diagnostic{}, false, false
 	}
 	broad, ok := typers.base.broadType(expr.Object)
 	if !ok || broad == nil {
-		return diagnostic.Diagnostic{}, false
+		return diagnostic.Diagnostic{}, false, false
 	}
-	if !isMultiArmUnion(broad) {
-		return diagnostic.Diagnostic{}, false
+	if !inspect.IsMultiArmUnion(broad) {
+		return diagnostic.Diagnostic{}, false, false
 	}
 	fieldBroad := broad
 	if withoutNil := projectionWithoutNil(broad); withoutNil != nil && !typ.IsNever(withoutNil) {
 		fieldBroad = withoutNil
 	}
 	if _, ok := access.Field(fieldBroad, name); !ok {
-		return diagnostic.Diagnostic{}, false
+		return diagnostic.Diagnostic{}, false, false
 	}
 	if !fieldProvablyAbsent(receiver, name) {
-		return diagnostic.Diagnostic{}, false
+		return diagnostic.Diagnostic{}, false, false
 	}
-	return missingMemberReadDiagnostic(expr, receiver, name), true
+	return missingMemberReadDiagnostic(expr, receiver, name), true, false
+}
+
+func (t memberReadTypers) receiverHasUntrustedTopOrigin(obj ast.Expr) bool {
+	if t.result == nil || obj == nil {
+		return false
+	}
+	value, ok := newDiagnosticQuery(t.result).ExpressionValueAtBoundary(t.point, obj)
+	if !ok {
+		return false
+	}
+	return newDiagnosticQuery(t.result).ValueHasUntrustedTopOrigin(value)
+}
+
+func (t memberReadTypers) stableLiteralNarrowedBroadType(obj ast.Expr, current typ.Type) (typ.Type, bool) {
+	if t.result == nil || obj == nil || current == nil || typ.IsNever(current) {
+		return nil, false
+	}
+	receiverPath, ok := t.result.ExpressionPath(obj)
+	if !ok || receiverPath.IsEmpty() {
+		return nil, false
+	}
+	broad, ok := t.base.broadType(obj)
+	if !ok || broad == nil || typ.IsNever(broad) {
+		return nil, false
+	}
+	query := newDiagnosticQuery(t.result)
+	if query.IsEquivalent(current, broad) {
+		return nil, false
+	}
+	stable := guardEnv{}
+	for _, constraint := range t.narrowed.env.constraints {
+		if constraint.target.IsEmpty() || constraint.value == nil {
+			continue
+		}
+		if _, ok := suffixFromReceiver(receiverPath, constraint.target); !ok {
+			continue
+		}
+		if t.guardInvalidatedBeforeRead(receiverPath, constraint) {
+			continue
+		}
+		stable.constraints = append(stable.constraints, constraint)
+	}
+	if len(stable.constraints) == 0 {
+		return nil, false
+	}
+	narrowed, changed := applyLiteralNarrowing(broad, receiverPath, stable)
+	if !changed || narrowed == nil || typ.IsNever(narrowed) || query.IsEquivalent(narrowed, broad) {
+		return nil, false
+	}
+	return narrowed, true
+}
+
+func (t memberReadTypers) guardInvalidatedBeforeRead(receiver pathdom.Path, constraint literalConstraint) bool {
+	if guardPoint, ok := t.guardPointForSpan(constraint.span); ok {
+		return pathInvalidatedBetween(t.result, t.flow, guardPoint, t.point, receiver) ||
+			pathInvalidatedBetween(t.result, t.flow, guardPoint, t.point, constraint.target)
+	}
+	return pathInvalidatedBefore(t.result, t.flow, t.point, receiver) ||
+		pathInvalidatedBefore(t.result, t.flow, t.point, constraint.target)
+}
+
+func (t memberReadTypers) guardPointForSpan(span diagnostic.Span) (cfg.Point, bool) {
+	if !span.Valid() || t.result == nil {
+		return 0, false
+	}
+	graph := t.result.Graph()
+	if graph == nil {
+		return 0, false
+	}
+	for _, point := range graph.RPO() {
+		if !diagnosticCanReach(t.flow, graph, point, t.point) {
+			continue
+		}
+		fact, ok := t.result.BranchCondition(point)
+		if !ok {
+			continue
+		}
+		condSpan := ast.SpanOf(fact.Condition)
+		if !condSpan.Valid() {
+			condSpan = ast.SpanOf(fact.Stmt)
+		}
+		if spansEqual(condSpan, span) {
+			return point, true
+		}
+	}
+	return 0, false
+}
+
+func spansEqual(left, right diagnostic.Span) bool {
+	return left.Valid() && right.Valid() &&
+		left.StartLine == right.StartLine &&
+		left.StartCol == right.StartCol &&
+		left.EndLine == right.EndLine &&
+		left.EndCol == right.EndCol
+}
+
+func pathInvalidatedBefore(result *body.Result, flow *diagnosticFlowCache, to cfg.Point, target pathdom.Path) bool {
+	if result == nil || target.IsEmpty() {
+		return false
+	}
+	graph := result.Graph()
+	if graph == nil {
+		return false
+	}
+	for _, candidate := range graph.RPO() {
+		if candidate == to || !diagnosticCanReach(flow, graph, candidate, to) {
+			continue
+		}
+		if invalidation, ok := result.PathDescendantInvalidation(candidate); ok && target.HasStrictPrefix(invalidation.ContainerPath()) {
+			return true
+		}
+		if fact, ok := result.OrdinaryAssignment(candidate); ok && ordinaryAssignmentInvalidatesMemberPath(fact, target) {
+			return true
+		}
+		if callMayInvalidateTrackedPath(result, candidate, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func (t memberReadTypers) exactLocalMissingFieldReadsNil(expr *ast.AttrGetExpr, name string) bool {
+	if t.result == nil || expr == nil || name == "" {
+		return false
+	}
+	value, ok := newDiagnosticQuery(t.result).ExpressionValueBeforeBoundary(t.point, expr.Object)
+	if !ok {
+		return false
+	}
+	query := newDiagnosticQuery(t.result)
+	if !query.ValueHasLocalExclusiveExactIdentity(t.point, value) {
+		return false
+	}
+	receiver, ok := query.ValueType(value)
+	if !ok || receiver == nil {
+		return false
+	}
+	return recordProvablyMissesField(receiver, name)
 }
 
 func staticMemberReadName(expr *ast.AttrGetExpr) (string, bool) {
@@ -285,31 +526,6 @@ func unionArmRejectsFieldRead(t typ.Type, name string) bool {
 		rejectingArm = true
 	}
 	return carriesField && rejectingArm
-}
-
-// isMultiArmUnion reports whether t resolves to a union of two or more members,
-// i.e. a receiver that discriminant narrowing can soundly collapse.
-func isMultiArmUnion(t typ.Type) bool {
-	return multiArmUnionDepth(t, 0)
-}
-
-func multiArmUnionDepth(t typ.Type, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth {
-		return false
-	}
-	switch v := unwrap.Annotated(t).(type) {
-	case *typ.Union:
-		return len(v.Members) >= 2
-	case *typ.Alias:
-		return multiArmUnionDepth(v.UnaliasedTarget(), depth+1)
-	case *typ.Recursive:
-		if v.Body == nil || v.Body == t {
-			return false
-		}
-		return multiArmUnionDepth(v.Body, depth+1)
-	default:
-		return false
-	}
 }
 
 // fieldProvablyAbsent reports whether a dot-field read of name on t is a sound

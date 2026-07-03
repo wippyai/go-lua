@@ -25,6 +25,19 @@ func (l Lane) PathRefinementsSnapshot(ks *keyspace.KeySpace) PathRefinementsSnap
 	}
 }
 
+// ForEachPathRefinement visits finite path-refinement facts in their native
+// keyspace form, avoiding the snapshot PathKey materialization path.
+func (l Lane) ForEachPathRefinement(fn func(keyspace.Key, product.Value) bool) {
+	if l.refinementsBottom || len(l.refinements) == 0 || fn == nil {
+		return
+	}
+	for key, value := range l.refinements {
+		if !fn(key, value) {
+			return
+		}
+	}
+}
+
 type PathStaticMembersSnapshot struct {
 	Bottom  bool
 	Top     bool
@@ -40,6 +53,19 @@ func (l Lane) PathStaticMembersSnapshot(ks *keyspace.KeySpace) PathStaticMembers
 	return PathStaticMembersSnapshot{
 		Top:     len(members) == 0,
 		Members: members,
+	}
+}
+
+// ForEachPathStaticMember visits finite must-static-member facts in their
+// native keyspace form, avoiding the snapshot PathKey materialization path.
+func (l Lane) ForEachPathStaticMember(fn func(keyspace.Key, product.Value) bool) {
+	if l.staticMembersBottom || len(l.staticMembers) == 0 || fn == nil {
+		return
+	}
+	for key, value := range l.staticMembers {
+		if !fn(key, value) {
+			return
+		}
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 type ResultReader interface {
@@ -44,12 +45,24 @@ type noNormalReturnReader interface {
 	NoNormalReturn(cfg.Point) bool
 }
 
+type normalEdgeReachabilityReader interface {
+	EdgeCanCompleteNormally(from, to cfg.Point) bool
+}
+
 type returnTypeValueReader interface {
 	ReturnTypeValues() []product.Value
 }
 
 type returnValueSourceReader interface {
 	ReturnValueSources(cfg.Point) ([]factflow.ValueSource, bool)
+}
+
+type expressionValueReader interface {
+	ExpressionValueAtBoundary(cfg.Point, ast.Expr) (product.Value, bool)
+}
+
+type expressionValueBeforeReader interface {
+	ExpressionValueBeforeBoundary(cfg.Point, ast.Expr) (product.Value, bool)
 }
 
 type returnPresenceRelationReader interface {
@@ -91,13 +104,15 @@ func FromResult(result ResultReader) summary.Summary {
 	if len(heapTableObjects) != 0 {
 		heapKeySpace = result.KeySpace()
 	}
+	paramCache := newParamObligationProjectorCache(graph)
 
 	out := summary.Summary{
-		ParamObligations:                projectParamObligations(reg, result),
-		ParamMemberCallObligations:      projectParamMemberCallObligations(reg, result),
-		ParamMemberReturnSlots:          projectParamMemberReturnSlots(reg, result),
+		ParamObligations:                projectParamObligations(reg, result, paramCache),
+		ParamMemberCallObligations:      projectParamMemberCallObligations(reg, result, paramCache),
+		ParamMemberReturnSlots:          projectParamMemberReturnSlots(reg, result, paramCache),
 		ReturnParamPathAliases:          projectReturnParamPathAliases(result),
 		ParamSinkExposures:              projectParamSinkExposures(reg, result, exit),
+		CapturedPathObligations:         projectCapturedPathObligations(reg, result, paramCache),
 		NormalReturnParams:              projectNormalReturnParams(reg, result, exit),
 		NormalReturnParamConditions:     projectNormalReturnParamConditions(reg, result),
 		NormalReturnParamEqualities:     projectNormalReturnParamEqualities(reg, result),
@@ -105,6 +120,7 @@ func FromResult(result ResultReader) summary.Summary {
 		HeapTableObjects:                heapTableObjects,
 		HeapKeySpace:                    heapKeySpace,
 		ReturnConditionParamRefinements: projectReturnConditionParamRefinements(result),
+		ReturnConditionSlotRefinements:  projectReturnConditionSlotRefinements(reg, result),
 		ReturnPresenceRelations:         projectReturnPresenceRelations(reg, result),
 	}
 
@@ -131,10 +147,12 @@ func FromResult(result ResultReader) summary.Summary {
 // exit-independent param obligations and the declared return signature still hold
 // and are the contract callers rely on.
 func noNormalExitSummary(reg *axis.Registry, result ResultReader) summary.Summary {
+	paramCache := newParamObligationProjectorCache(result.Graph())
 	out := summary.Summary{
-		ParamObligations:                projectParamObligations(reg, result),
-		ParamMemberCallObligations:      projectParamMemberCallObligations(reg, result),
-		ParamMemberReturnSlots:          projectParamMemberReturnSlots(reg, result),
+		ParamObligations:                projectParamObligations(reg, result, paramCache),
+		ParamMemberCallObligations:      projectParamMemberCallObligations(reg, result, paramCache),
+		ParamMemberReturnSlots:          projectParamMemberReturnSlots(reg, result, paramCache),
+		CapturedPathObligations:         projectCapturedPathObligations(reg, result, paramCache),
 		ReturnParamPathAliases:          projectReturnParamPathAliases(result),
 		NormalReturnParamConditions:     projectNormalReturnParamConditions(reg, result),
 		NormalReturnParamEqualities:     projectNormalReturnParamEqualities(reg, result),

@@ -98,6 +98,8 @@ func IDForReturnTransform(transform returns.ReturnType) (string, bool) {
 		return capability.ReturnsReturnArrayOfCallbackReturn, true
 	case returns.ReturnTypeTypeProjection:
 		return capability.ReturnsReturnTypeProjection, true
+	case returns.ReturnTypeConditionalType:
+		return capability.ReturnsReturnConditionalType, true
 	case returns.ReturnTypeDeepElementOf:
 		return capability.ReturnsReturnDeepElementOf, true
 	case returns.ReturnTypeStringUnpackValue:

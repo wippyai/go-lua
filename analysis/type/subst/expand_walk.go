@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/internal/recursion"
 	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 func expandInstantiatedGuardMode(t typ.Type, guard recursion.Guard, memo map[expandMemoKey]typ.Type, mode expandMode) typ.Type {
@@ -25,13 +26,7 @@ func expandInstantiatedGuardMode(t typ.Type, guard recursion.Guard, memo map[exp
 	}
 
 	orig := t
-	for {
-		ann, ok := t.(*typ.Annotated)
-		if !ok || ann.Inner == nil || ann.Inner == t {
-			break
-		}
-		t = ann.Inner
-	}
+	t = unwrap.Annotations(t)
 
 	key = expandMemoKey{t: orig, mode: mode}
 	memo[key] = orig

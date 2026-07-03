@@ -5,11 +5,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
+	"github.com/wippyai/go-lua/analysis/lua/typeoperator"
 	"github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
+	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/access"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -42,21 +46,35 @@ func lowerSymbolTypes(bindings *bind.Result, graph cfg.Graph, result *semantics.
 		if !ok || !fact.HasTargetSymbol || fact.TargetSymbol == 0 || fact.Func == nil {
 			continue
 		}
-		if t, ok := functionExpressionType(fact.Func, resolver); ok {
+		if t, ok := functionExpressionType(fact.Func, bindings, resolver); ok {
 			out[fact.TargetSymbol] = t
 		}
 	}
+	for _, origin := range bindings.FunctionOrigins() {
+		if !origin.HasTargetSymbol || origin.TargetSymbol == 0 || origin.Func == nil {
+			continue
+		}
+		if _, present := out[origin.TargetSymbol]; present {
+			continue
+		}
+		if t, ok := functionExpressionType(origin.Func, bindings, resolver); ok {
+			out[origin.TargetSymbol] = t
+		}
+	}
 	for _, point := range graph.RPO() {
-		fact, ok := result.LocalAssignment(point)
+		view, ok := result.LocalAssignmentView(point)
+		if !ok {
+			continue
+		}
+		fact, ok := view.Borrowed()
 		if !ok || !fact.HasSymbol {
 			continue
 		}
 		add(fact.Symbol, fact.Type)
 	}
-	// A numeric-for control variable is always a number in Lua. It has no type
-	// annotation, so record its static type here; without it a `container[i]`
-	// index inside the loop body cannot resolve the key type and the whole index
-	// expression fails to produce a value.
+	// A numeric-for control variable has no annotation, so record the strongest
+	// type proven by the control operands. Lua uses an integer loop when init,
+	// limit, and step are all integers; otherwise the variable is numeric.
 	for _, point := range graph.RPO() {
 		fact, ok := result.NumericFor(point)
 		if !ok || !fact.HasSymbol || fact.Symbol == 0 {
@@ -65,14 +83,18 @@ func lowerSymbolTypes(bindings *bind.Result, graph cfg.Graph, result *semantics.
 		if _, present := out[fact.Symbol]; present {
 			continue
 		}
-		out[fact.Symbol] = typ.Number
+		out[fact.Symbol] = numericForSymbolType(out, bindings, fact.Init, fact.Limit, fact.Step)
 	}
 	// Resolve un-annotated `local x = <access-chain>` locals whose initializer is
 	// a static field/index chain rooted at an already-typed symbol. The chain's
 	// element type is the local's checked type, used as the contextual record for
 	// object literals later assigned to that local.
 	for _, point := range graph.RPO() {
-		fact, ok := result.LocalAssignment(point)
+		view, ok := result.LocalAssignmentView(point)
+		if !ok {
+			continue
+		}
+		fact, ok := view.Borrowed()
 		if !ok || !fact.HasSymbol || fact.Symbol == 0 || fact.Type != nil || fact.Expr == nil {
 			continue
 		}
@@ -80,7 +102,7 @@ func lowerSymbolTypes(bindings *bind.Result, graph cfg.Graph, result *semantics.
 			continue
 		}
 		if fn, ok := fact.Expr.(*ast.FunctionExpr); ok {
-			if t, ok := functionExpressionType(fn, resolver); ok {
+			if t, ok := functionExpressionType(fn, bindings, resolver); ok {
 				out[fact.Symbol] = t
 				continue
 			}
@@ -99,31 +121,157 @@ func lowerSymbolTypes(bindings *bind.Result, graph cfg.Graph, result *semantics.
 	return out
 }
 
-func functionExpressionType(fn *ast.FunctionExpr, resolver *typeresolve.Resolver) (typ.Type, bool) {
-	if fn == nil || resolver == nil {
+func numericForSymbolType(symbolTypes map[symbol.ID]typ.Type, bindings *bind.Result, init, limit, step ast.Expr) typ.Type {
+	if numericForControlExprIsInteger(symbolTypes, bindings, init) &&
+		numericForControlExprIsInteger(symbolTypes, bindings, limit) &&
+		numericForControlExprIsInteger(symbolTypes, bindings, step) {
+		return typ.Integer
+	}
+	return typ.Number
+}
+
+func numericForControlExprIsInteger(symbolTypes map[symbol.ID]typ.Type, bindings *bind.Result, expr ast.Expr) bool {
+	if expr == nil {
+		return true
+	}
+	t, ok := numericForControlExprType(symbolTypes, bindings, expr)
+	return ok && t != nil && !typ.IsAny(t) && !typ.IsUnknown(t) && subtype.IsSubtype(t, typ.Integer)
+}
+
+func numericForControlExprType(symbolTypes map[symbol.ID]typ.Type, bindings *bind.Result, expr ast.Expr) (typ.Type, bool) {
+	inner, ok := sourceprovenance.ProofInner(expr)
+	if !ok {
 		return nil, false
 	}
-	expr := &ast.FunctionTypeExpr{
-		TypeParams: fn.TypeParams,
-		Returns:    fn.ReturnTypes,
-	}
-	if fn.ParList != nil {
-		expr.Params = make([]ast.FunctionParamExpr, 0, len(fn.ParList.Names))
-		for i, name := range fn.ParList.Names {
-			paramType := typeExprAt(fn.ParList.Types, i)
-			if paramType == nil {
-				return nil, false
-			}
-			expr.Params = append(expr.Params, ast.FunctionParamExpr{Name: name, Type: paramType})
+	switch e := inner.(type) {
+	case *ast.NumberExpr, *ast.StringExpr, *ast.TrueExpr, *ast.FalseExpr, *ast.NilExpr:
+		return valueexpr.LiteralType(e)
+	case *ast.UnaryMinusOpExpr:
+		operand, ok := numericForControlExprType(symbolTypes, bindings, e.Expr)
+		if !ok {
+			return nil, false
 		}
-		if fn.ParList.HasVargs {
-			if fn.ParList.VarargType == nil {
-				return nil, false
+		return typeoperator.UnaryOp("-", operand)
+	case *ast.UnaryLenOpExpr:
+		operand, ok := numericForControlExprType(symbolTypes, bindings, e.Expr)
+		if !ok {
+			return typ.Integer, true
+		}
+		return typeoperator.UnaryOp("#", operand)
+	case *ast.ArithmeticOpExpr:
+		left, ok := numericForControlExprType(symbolTypes, bindings, e.Lhs)
+		if !ok {
+			return nil, false
+		}
+		right, ok := numericForControlExprType(symbolTypes, bindings, e.Rhs)
+		if !ok {
+			return nil, false
+		}
+		return typeoperator.BinaryOp(left, e.Operator, right)
+	case *ast.IdentExpr, *ast.AttrGetExpr:
+		return expressionTypeFromSymbols(symbolTypes, bindings, e)
+	case *ast.FuncCallExpr:
+		return callFirstReturnType(symbolTypes, bindings, e)
+	default:
+		return nil, false
+	}
+}
+
+func functionExpressionType(fn *ast.FunctionExpr, bindings *bind.Result, resolver *typeresolve.Resolver) (typ.Type, bool) {
+	if fn == nil || bindings == nil || resolver == nil {
+		return nil, false
+	}
+	return functionExpressionTypeFromBindings(fn, bindings, resolver.Type, resolver.Decl)
+}
+
+func functionExpressionTypeFromBindings(
+	fn *ast.FunctionExpr,
+	bindings *bind.Result,
+	resolveType func(ast.TypeExpr) (typ.Type, bool),
+	resolveDecl func(bind.TypeDecl) (typ.Type, bool),
+) (typ.Type, bool) {
+	if fn == nil || bindings == nil || resolveType == nil || resolveDecl == nil {
+		return nil, false
+	}
+	builder := typ.Func()
+	for _, decl := range bindings.FunctionTypeParams(fn) {
+		t, ok := resolveDecl(decl)
+		param, paramOK := t.(*typ.TypeParam)
+		if !ok || !paramOK || param == nil {
+			return nil, false
+		}
+		builder.TypeParamRef(param)
+	}
+	slots := bindings.ParamSlots(fn)
+	if functionHasUntypedRegularParam(slots) {
+		builder.Variadic(typ.Any)
+	} else {
+		builder.ReserveParams(len(slots))
+		for _, slot := range slots {
+			t := typ.Type(nil)
+			if slot.Type != nil {
+				resolved, ok := resolveType(slot.Type)
+				if !ok {
+					return nil, false
+				}
+				t = resolved
+			} else if slot.ImplicitSelf {
+				t = implicitSelfFunctionType(fn, bindings, resolveDecl)
+			} else {
+				t = typ.Any
 			}
-			expr.Variadic = fn.ParList.VarargType
+			if slot.Vararg {
+				builder.Variadic(t)
+				continue
+			}
+			builder.Param(slot.Name, t)
 		}
 	}
-	return resolver.Type(expr)
+	returns := make([]typ.Type, 0, len(fn.ReturnTypes))
+	for _, ret := range transferFunctionReturnTypeExprs(fn.ReturnTypes) {
+		t, ok := resolveType(ret)
+		if !ok {
+			return nil, false
+		}
+		returns = append(returns, t)
+	}
+	if len(returns) != 0 {
+		builder.Returns(returns...)
+	}
+	return builder.Build(), true
+}
+
+func functionHasUntypedRegularParam(slots []bind.ParamSlot) bool {
+	for _, slot := range slots {
+		if slot.Type == nil && !slot.ImplicitSelf {
+			return true
+		}
+	}
+	return false
+}
+
+func implicitSelfFunctionType(fn *ast.FunctionExpr, bindings *bind.Result, resolveDecl func(bind.TypeDecl) (typ.Type, bool)) typ.Type {
+	if bindings == nil || resolveDecl == nil {
+		return typ.Any
+	}
+	decl, ok := bindings.MethodReceiverType(fn)
+	if !ok {
+		return typ.Any
+	}
+	t, ok := resolveDecl(decl)
+	if !ok || t == nil || typ.IsNever(t) {
+		return typ.Any
+	}
+	return t
+}
+
+func transferFunctionReturnTypeExprs(types []ast.TypeExpr) []ast.TypeExpr {
+	if len(types) == 1 {
+		if tuple, ok := types[0].(*ast.TupleTypeExpr); ok {
+			return append([]ast.TypeExpr(nil), tuple.Elements...)
+		}
+	}
+	return append([]ast.TypeExpr(nil), types...)
 }
 
 func callFirstReturnType(symbolTypes map[symbol.ID]typ.Type, bindings *bind.Result, expr ast.Expr) (typ.Type, bool) {

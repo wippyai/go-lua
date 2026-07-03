@@ -299,6 +299,28 @@ func TestPathKeyUsesFormatSegments(t *testing.T) {
 	}
 }
 
+func TestPathKeyFormatsSuffixInSingleResultAllocation(t *testing.T) {
+	p := Path{
+		Symbol:  symbol.ID(42),
+		Version: 17,
+		Segments: []segment.Segment{
+			{Kind: segment.SegmentField, Name: "foo"},
+			{Kind: segment.SegmentIndexString, Name: `a"b\c`},
+			{Kind: segment.SegmentIndexInt, Index: -123},
+		},
+	}
+	var got PathKey
+	allocs := testing.AllocsPerRun(1000, func() {
+		got = p.Key()
+	})
+	if got != `sym42@17.foo["a\"b\\c"][-123]` {
+		t.Fatalf("Path.Key() = %q", got)
+	}
+	if allocs > 1 {
+		t.Fatalf("Path.Key allocations/run = %.1f, want only result string", allocs)
+	}
+}
+
 func TestPathKeyPlaceholderUsesCanonicalSegments(t *testing.T) {
 	pStr := Path{
 		Root: "$0",
@@ -639,5 +661,19 @@ func TestPathParentSliceAliasing(t *testing.T) {
 	}
 	if parent.Segments[0].Name != "a" {
 		t.Errorf("Parent segment should be 'a', got %q", parent.Segments[0].Name)
+	}
+}
+
+func TestPathParentViewBorrowsSegments(t *testing.T) {
+	original := NewPath(1, "x").Field("a").Field("b")
+
+	parent := original.ParentView()
+	if got, want := parent.String(), "x.a"; got != want {
+		t.Fatalf("ParentView() = %q, want %q", got, want)
+	}
+
+	parent.Segments[0].Name = "mutated"
+	if got, want := original.String(), "x.mutated.b"; got != want {
+		t.Fatalf("borrowed parent view did not share segment storage: got %q, want %q", got, want)
 	}
 }

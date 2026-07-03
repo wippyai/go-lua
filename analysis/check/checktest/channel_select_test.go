@@ -55,6 +55,37 @@ end
 	}
 }
 
+func TestChannelSelectResultRuntimeStatusFieldsAreReadable(t *testing.T) {
+	result := Check(`
+local function receive_once(ch: Channel<string>): ()
+	local selected = channel.select {
+		ch:case_receive(),
+	}
+	local ok: boolean = selected.ok
+	local defaulted: nil = selected.default
+end
+`, WithStdlib(), WithManifest("channel", ChannelManifest()), WithGlobals("channel"))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want select receive result to expose ok and nil default fields", result.Diagnostics)
+	}
+}
+
+func TestChannelSelectDefaultResultRuntimeStatusFieldsAreReadable(t *testing.T) {
+	result := Check(`
+local function receive_or_default(ch: Channel<string>): ()
+	local selected = channel.select {
+		ch:case_receive(),
+		default = true,
+	}
+	local ok: boolean = selected.ok
+	local defaulted: boolean? = selected.default
+end
+`, WithStdlib(), WithManifest("channel", ChannelManifest()), WithGlobals("channel"))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want default-capable select result to expose ok and default fields", result.Diagnostics)
+	}
+}
+
 func TestGenericChannelListenRejectsConflictingObjectEvidence(t *testing.T) {
 	protocol := CheckAndExport(`
 type Event = { kind: "event", id: string }
@@ -107,10 +138,9 @@ end
    |               ↑ argument value
 
 because:
-  1. proven: argument 2.channel (source.primary) has type Channel<{id: string, kind: "event"}>
-  2. claimed: listen parameter 2 requires one consistent T across this argument
-  3. proven: listen inferred T includes {id: string, kind: "event"} from argument 2.channel
-  4. proven: listen inferred T includes {elapsed: number, kind: "timer"} from argument 2.decode return 1
+  1. claimed: listen parameter 2 requires one consistent T across this argument
+  2. proven: listen inferred T includes {id: string, kind: "event"} from argument 2.channel
+  3. proven: listen inferred T includes {elapsed: number, kind: "timer"} from argument 2.decode return 1
  --> test.lua:20:11
    |
 20 |     decode = decode_timer,
@@ -118,6 +148,34 @@ because:
 
 help: Make each use of ` + "`T`" + ` in this argument agree on the same type, or split the callee signature into separate type parameters if those values are intentionally different.`
 	assertRenderedEqual(t, rendered, want)
+}
+
+func TestUntypedSpawnInlineCallbackPreservesCapturedChannelPayload(t *testing.T) {
+	result := Check(`
+type Event = { kind: "event", id: string, attempt: number }
+type Source = {
+	primary: Channel<Event>,
+}
+
+local function consume(source: Source)
+	coroutine.spawn(function()
+		local event, ok = source.primary:receive()
+		if ok then
+			local id: string = event.id
+			local wrong: number = event.id
+			print(id, wrong)
+		end
+	end)
+end
+`, WithStdlib(), WithManifest("channel", ChannelManifest()), WithGlobals("channel", "coroutine"))
+
+	messages := make([]string, 0, len(result.Diagnostics))
+	for _, diagnostic := range result.Diagnostics {
+		messages = append(messages, diagnostic.Message)
+	}
+	if len(messages) != 1 || !hasDiagnosticMessage(messages, "cannot assign event.id because it is string, not number") {
+		t.Fatalf("diagnostics = %#v, want only captured channel payload string mismatch", messages)
+	}
 }
 
 func TestChannelSelectDiscriminantUnlocksReceiverMethods(t *testing.T) {
@@ -163,6 +221,109 @@ end
 
 	if len(result.Diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+}
+
+func TestChannelSelectEarlyReturnDeadlineNarrowsRemainingPayload(t *testing.T) {
+	result := Check(`
+type Message = { topic: (self: Message) -> string }
+type Deadline = { elapsed: number }
+
+local function wait_for_topic(inbox: Channel<Message>, deadline: Channel<Deadline>): (Message?, string?)
+    local result = channel.select {
+        inbox:case_receive(),
+        deadline:case_receive(),
+    }
+    if result.channel == deadline then
+        return nil, "timeout waiting for message"
+    end
+    local msg = result.value
+    if msg:topic() == "ack" then
+        return msg, nil
+    end
+    return nil, "wrong topic"
+end
+
+local function main(inbox: Channel<Message>, deadline: Channel<Deadline>): string
+    local msg, err = wait_for_topic(inbox, deadline)
+    if err then
+        return err
+    end
+    if msg == nil then
+        error("missing message")
+    end
+    return msg:topic()
+end
+`, WithStdlib(), WithManifest("channel", ChannelManifest()), WithGlobals("channel"))
+
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want early-return deadline branch to narrow remaining select payload to Message", result.Diagnostics)
+	}
+}
+
+func TestChannelSelectEarlyReturnUntypedDeadlineKeepsKnownPayload(t *testing.T) {
+	result := Check(`
+type Message = { topic: (self: Message) -> string }
+
+local function wait_for_topic(inbox: Channel<Message>, deadline: unknown): (Message?, string?)
+    local result = channel.select {
+        inbox:case_receive(),
+        deadline:case_receive(),
+    }
+    if result.channel == deadline then
+        return nil, "timeout waiting for message"
+    end
+    local msg = result.value
+    if msg:topic() == "ack" then
+        return msg, nil
+    end
+    return nil, "wrong topic"
+end
+`, WithStdlib(), WithManifest("channel", ChannelManifest()), WithGlobals("channel"))
+
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want known channel payload to survive an untyped deadline case", result.Diagnostics)
+	}
+}
+
+func TestChannelSelectUnannotatedHelperReturnKeepsKnownPayload(t *testing.T) {
+	result := Check(`
+type Message = { topic: (self: Message) -> string }
+
+local function payload_data(msg: Message): string
+    return msg:topic()
+end
+
+local function wait_for_topic(inbox: Channel<Message>, deadline: unknown)
+    while true do
+        local result = channel.select {
+            inbox:case_receive(),
+            deadline:case_receive(),
+        }
+        if result.channel == deadline then
+            return nil, "timeout waiting for message"
+        end
+        local msg = result.value as Message
+        if msg:topic() == "ack" then
+            return msg, nil
+        end
+    end
+end
+
+local function main(inbox: Channel<Message>, deadline: unknown): string
+    local msg, err = wait_for_topic(inbox, deadline)
+    if err then
+        return err
+    end
+    if msg == nil then
+        error("missing message")
+    end
+    return payload_data(msg as Message)
+end
+`, WithStdlib(), WithManifest("channel", ChannelManifest()), WithGlobals("channel"))
+
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want unannotated select helper to infer Message return", result.Diagnostics)
 	}
 }
 

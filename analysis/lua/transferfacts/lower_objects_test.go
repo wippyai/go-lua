@@ -4,18 +4,48 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/proof"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
+
+func TestLowerObjectLiteralEntryCarriesSyntaxFreeMetadata(t *testing.T) {
+	entrySource := sourceprovenance.ASTSource{Kind: sourceprovenance.SourceNil}
+	span := semantics.SourceSpan{StartLine: 3, StartCol: 4, EndLine: 3, EndCol: 9}
+	l := lowerer{}
+	lowered := l.objectLiteral(semantics.ObjectLiteralFact{
+		Entries: []semantics.ObjectEntryFact{
+			{
+				Suffix:     fieldSuffix("id"),
+				Source:     entrySource,
+				ValueSpan:  span,
+				ValueLabel: "payload.id",
+			},
+		},
+	})
+	entries := lowered.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("entries = %#v, want one", entries)
+	}
+	if got := entries[0].ValueSpan(); got.StartLine != 3 || got.EndCol != 9 {
+		t.Fatalf("entry span = %#v, want lowered span", got)
+	}
+	if got := entries[0].ValueLabel(); got != "payload.id" {
+		t.Fatalf("entry label = %q, want payload.id", got)
+	}
+}
 
 func TestLowerObjectLiteralSidecarUsesAssignmentExprRef(t *testing.T) {
 	leafValue := number("1")
@@ -97,6 +127,81 @@ func TestLowerEmptyObjectLiteralStillPublishesIdentitySidecar(t *testing.T) {
 	}
 }
 
+func TestLowerDeclaredReturnAccumulatorCarriesExpectedContract(t *testing.T) {
+	reg := standard.Registry()
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function make(raw: any): {any}
+    local out = {}
+    if raw == nil then
+        return out
+    end
+    return out
+end
+`)
+
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	localStmt, ok := fn.Stmts[0].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want local assignment", fn.Stmts[0])
+	}
+	point := requireStmtPoints(t, built, localStmt, 1)[0]
+	localFact, ok := facts.LocalAssignment(point)
+	if !ok {
+		t.Fatalf("missing accumulator local assignment at point %d", point)
+	}
+	if !localFact.DeclaredValueContracts() {
+		t.Fatalf("accumulator should carry declared return contract")
+	}
+	declared, ok := localFact.DeclaredValue()
+	if !ok {
+		t.Fatalf("missing accumulator declared value")
+	}
+	gotType, ok := typevalue.TypeOf(reg, declared)
+	if !ok || !typ.TypeEquals(gotType, typ.NewArray(typ.Any)) {
+		t.Fatalf("accumulator declared type = %v/%v, want {any}", gotType, ok)
+	}
+	literal, ok := facts.ObjectLiteral(localFact.Source().ExprRef)
+	if !ok {
+		t.Fatalf("missing object literal sidecar for accumulator")
+	}
+	expected, ok := literal.Expected()
+	if !ok {
+		t.Fatalf("accumulator object literal should carry expected return type")
+	}
+	expectedType, ok := typevalue.TypeOf(reg, expected)
+	if !ok || !typ.TypeEquals(expectedType, typ.NewArray(typ.Any)) {
+		t.Fatalf("accumulator expected literal type = %v/%v, want {any}", expectedType, ok)
+	}
+}
+
+func TestLowerDeclaredReturnAccumulatorRejectsMixedReturnSymbols(t *testing.T) {
+	reg := standard.Registry()
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function make(flag: boolean): {any}
+    local out = {}
+    local other = {}
+    if flag then
+        return out
+    end
+    return other
+end
+`)
+
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	localStmt, ok := fn.Stmts[0].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want local assignment", fn.Stmts[0])
+	}
+	point := requireStmtPoints(t, built, localStmt, 1)[0]
+	localFact, ok := facts.LocalAssignment(point)
+	if !ok {
+		t.Fatalf("missing root assignment at point %d", point)
+	}
+	if declared, ok := localFact.DeclaredValue(); ok {
+		t.Fatalf("mixed return symbols should not infer accumulator contract: %v", declared)
+	}
+}
+
 func TestLowerAnnotatedEmptyMapObjectLiteralCarriesExpectedContract(t *testing.T) {
 	stmts, _, built, result := parseSemanticChunk(t, `local t: {[string]: string} = {}`)
 	reg := standard.Registry()
@@ -119,6 +224,118 @@ func TestLowerAnnotatedEmptyMapObjectLiteralCarriesExpectedContract(t *testing.T
 	if !ok || !typ.TypeEquals(got, want) {
 		t.Fatalf("expected type = %v/%v, want %v", got, ok, want)
 	}
+}
+
+func TestLowerOrdinaryOptionalObjectLiteralExpectedRootIsPresent(t *testing.T) {
+	reg := standard.Registry()
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function setup(): ()
+    local runtime: { apply: (string) -> string }?
+    runtime = {
+        apply = function(phase: string): string
+            return phase
+        end,
+    }
+end
+`)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+
+	assignStmt, ok := fn.Stmts[1].(*ast.AssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want assignment", fn.Stmts[1])
+	}
+	assignPoint := requireStmtPoints(t, built, assignStmt, 1)[0]
+	assignFact, ok := facts.OrdinaryAssignment(assignPoint)
+	if !ok {
+		t.Fatalf("missing ordinary assignment fact")
+	}
+	literal, ok := facts.ObjectLiteral(assignFact.Source().ExprRef)
+	if !ok {
+		t.Fatalf("missing object literal sidecar for assignment source %#v", assignFact.Source())
+	}
+	expected, ok := literal.Expected()
+	if !ok {
+		t.Fatalf("missing expected contract on assigned object literal")
+	}
+	got, ok := typevalue.TypeOf(reg, expected)
+	want := typetable.NewRecord().
+		Field("apply", typ.Func().Param("phase", typ.String).Returns(typ.String).Build()).
+		Build()
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("literal expected root = %v/%v, want present %v", got, ok, want)
+	}
+	if typ.TypeEquals(got, typeexpr.Optional(want)) {
+		t.Fatalf("literal expected root stayed optional: %v", got)
+	}
+}
+
+func TestLowerLogicalOperandObjectLiteralPublishesSidecar(t *testing.T) {
+	_, _, built, result := parseSemanticChunk(t, `local value = true and {}`)
+	reg := standard.Registry()
+	facts := lowerFacts(t, result, built.Graph, reg)
+
+	for _, literal := range facts.ObjectLiterals() {
+		if _, ok := literal.Identity(); ok {
+			return
+		}
+	}
+	t.Fatalf("object literals = %#v, want sidecar for table constructor nested under logical expression", facts.ObjectLiterals())
+}
+
+func TestLowerDynamicIndexLogicalDefaultObjectLiteralCarriesSlotContract(t *testing.T) {
+	_, bindings, built, result := parseSemanticChunk(t, `
+local suites: {[string]: any[]} = {}
+local suite = "alpha"
+suites[suite] = suites[suite] or {}
+`)
+	reg := standard.Registry()
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	want := typ.NewArray(typ.Any)
+
+	for _, literal := range facts.ObjectLiterals() {
+		expected, ok := literal.Expected()
+		if !ok {
+			continue
+		}
+		got, ok := typevalue.TypeOf(reg, expected)
+		if ok && typ.TypeEquals(got, want) {
+			return
+		}
+	}
+	t.Fatalf("object literals = %#v, want logical default constructor to carry dynamic slot contract %v", facts.ObjectLiterals(), want)
+}
+
+func TestLowerAnnotatedLogicalFallbackObjectLiteralCarriesDeclaredContract(t *testing.T) {
+	_, bindings, built, result := parseSemanticChunk(t, `
+type Payload = {
+    tool_calls: {string},
+}
+local payload: Payload?
+local current: Payload = payload or {
+    tool_calls = {},
+}
+`)
+	reg := standard.Registry()
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	want := typ.NewArray(typ.String)
+
+	for _, literal := range facts.ObjectLiterals() {
+		for _, entry := range literal.Entries() {
+			if !reflect.DeepEqual(entry.Suffix(), fieldSuffix("tool_calls")) {
+				continue
+			}
+			expected, ok := entry.Expected()
+			if !ok {
+				t.Fatalf("tool_calls entry missing expected contract")
+			}
+			got, ok := typevalue.TypeOf(reg, expected)
+			if !ok || !typ.TypeEquals(got, want) {
+				t.Fatalf("tool_calls expected = %v/%v, want %v", got, ok, want)
+			}
+			return
+		}
+	}
+	t.Fatalf("object literals = %#v, want logical fallback tool_calls entry contract %v", facts.ObjectLiterals(), want)
 }
 
 func TestLowerReturnedObjectLiteralCarriesExpectedEntryContracts(t *testing.T) {
@@ -181,6 +398,69 @@ end`)
 	}
 }
 
+func TestLowerReturnedNestedObjectLiteralCarriesExpectedEntryContracts(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function output_error(err_type: string, message: string, code: any?): { type: string, error: { type: string, message: string, code: any? }? }
+	return {
+		type = "error",
+		error = {
+			type = err_type or "server_error",
+			message = message or "Unknown error",
+			code = code,
+		},
+	}
+end`)
+	reg := standard.Registry()
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
+	}
+	var returnFact factflow.Return
+	for _, point := range requireStmtPoints(t, built, ret, 1) {
+		if fact, ok := facts.Return(point); ok {
+			returnFact = fact
+			break
+		}
+	}
+	sources := returnFact.Sources()
+	if len(sources) != 1 || !sources[0].HasExpr {
+		t.Fatalf("return sources = %#v, want one expression source", sources)
+	}
+	literal, ok := facts.ObjectLiteral(sources[0].ExprRef)
+	if !ok {
+		t.Fatalf("missing returned object literal sidecar for ref %d", sources[0].ExprRef)
+	}
+	want := map[string]struct {
+		path path.Path
+		typ  typ.Type
+	}{
+		"error.type":    {path: fieldChainSuffix("error", "type"), typ: typ.String},
+		"error.message": {path: fieldChainSuffix("error", "message"), typ: typ.String},
+		"error.code":    {path: fieldChainSuffix("error", "code"), typ: typeexpr.Optional(typ.Any)},
+	}
+	for _, entry := range literal.Entries() {
+		suffix := entry.Suffix()
+		for name, expected := range want {
+			if !reflect.DeepEqual(suffix, expected.path) {
+				continue
+			}
+			entryExpected, ok := entry.Expected()
+			if !ok {
+				t.Fatalf("%s entry missing expected contract", name)
+			}
+			got, ok := proof.New(reg, typevalue.NewCache()).ValueType(entryExpected)
+			if !ok || !typ.TypeEquals(got, expected.typ) {
+				t.Fatalf("%s expected = %v/%v, want %v", name, got, ok, expected.typ)
+			}
+			delete(want, name)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing expected entries: %#v", want)
+	}
+}
+
 func TestLowerExplicitAnyObjectLiteralDeclarationUsesDeclaredContract(t *testing.T) {
 	stmts, _, built, result := parseSemanticChunk(t, `local raw: any = { id = "cfg" }`)
 	facts := lowerFacts(t, result, built.Graph, standard.Registry())
@@ -194,16 +474,6 @@ func TestLowerExplicitAnyObjectLiteralDeclarationUsesDeclaredContract(t *testing
 	}
 	if _, ok := fact.DeclaredValue(); !ok {
 		t.Fatalf("root assignment = %#v, want declared value", fact)
-	}
-}
-
-func TestReachesRecordAcceptsInstantiatedRecord(t *testing.T) {
-	param := typ.NewTypeParam("T", nil)
-	box := typ.NewGeneric("Box", []*typ.TypeParam{param},
-		typetable.NewRecord().Field("value", param).Build())
-
-	if !reachesRecord(typ.Instantiate(box, typ.String)) {
-		t.Fatal("reachesRecord(instantiated record) = false, want true")
 	}
 }
 
@@ -274,6 +544,44 @@ func TestLowerAnyCastObjectLiteralPublishesClaimNotEntries(t *testing.T) {
 	assertLoweredAssertion(t, facts, source, assertion.Any(), factflow.ValueSourceExpression)
 	if literal, ok := facts.ObjectLiteral(source.ExprRef); ok {
 		t.Fatalf("any-cast object literal sidecar = %#v, want none", literal)
+	}
+}
+
+func TestLowerTypedCastObjectLiteralCarriesExpectedType(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local state = {
+    active_sessions = {} :: {[string]: string},
+}
+`)
+	reg := standard.Registry()
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+
+	point := requireStmtPoints(t, built, stmts[0], 1)[0]
+	localFact, ok := facts.LocalAssignment(point)
+	if !ok {
+		t.Fatalf("missing local assignment fact")
+	}
+	root, ok := facts.ObjectLiteral(localFact.Source().ExprRef)
+	if !ok {
+		t.Fatalf("missing root object literal sidecar")
+	}
+	entries := root.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("root literal entries = %#v, want one", entries)
+	}
+	castSource := entries[0].Source()
+	castLiteral, ok := facts.ObjectLiteral(castSource.ExprRef)
+	if !ok {
+		t.Fatalf("missing casted field object literal sidecar for ref %d", castSource.ExprRef)
+	}
+	expected, ok := castLiteral.Expected()
+	if !ok {
+		t.Fatalf("casted field literal has no expected type")
+	}
+	got, ok := typevalue.TypeOf(reg, expected)
+	want := typetable.NewMap(typ.String, typ.String)
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("casted field expected type = %v/%v, want %v", got, ok, want)
 	}
 }
 

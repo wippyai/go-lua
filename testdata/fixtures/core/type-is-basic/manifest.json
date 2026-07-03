@@ -1,0 +1,5 @@
+{
+  "description": "Point:is(data) may return a validated value, but it does not launder the original data:any variable into Point.",
+  "files": ["main.lua"],
+  "check": {"errors": 1}
+}

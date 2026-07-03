@@ -3,14 +3,20 @@ package typewitness
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/type/ambient"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
-func TestOfRejectsOpenTypeParameter(t *testing.T) {
-	if got := Of(typ.NewTypeParam("T", nil)); !got.IsTop() {
-		t.Fatalf("type parameter witness = %v, want top", got)
+func TestOfPreservesOpenTypeParameter(t *testing.T) {
+	param := typ.NewTypeParam("T", nil)
+	got := Of(param)
+	if got.IsTop() || got.IsBottom() {
+		t.Fatalf("type parameter witness = %v, want concrete placeholder", got)
+	}
+	if gotType, ok := got.Type(); !ok || gotType != param {
+		t.Fatalf("witness type = %v/%v, want original type parameter", gotType, ok)
 	}
 }
 
@@ -39,7 +45,20 @@ func TestOfAcceptsClosedGenericInstantiation(t *testing.T) {
 		t.Fatalf("witness type = %v/%v, want Box<string>", gotType, ok)
 	}
 	if got := Of(typ.Instantiate(box, param)); !got.IsTop() {
-		t.Fatalf("open generic witness = %v, want top", got)
+		t.Fatalf("open structural generic witness = %v, want top", got)
+	}
+}
+
+func TestOfPreservesOpenOpaqueInstantiation(t *testing.T) {
+	param := typ.NewTypeParam("T", nil)
+	open := typ.Instantiate(ambient.ChannelGeneric(), param)
+
+	got := Of(open)
+	if got.IsTop() || got.IsBottom() {
+		t.Fatalf("open opaque witness = %v, want symbolic instantiated witness", got)
+	}
+	if gotType, ok := got.Type(); !ok || !typ.TypeEquals(gotType, open) {
+		t.Fatalf("open opaque witness type = %v/%v, want %v", gotType, ok, open)
 	}
 }
 
@@ -125,5 +144,135 @@ func TestJoinPreservesDistinctLiteralAlternatives(t *testing.T) {
 				t.Fatalf("Join(%v,%v) = %v/%v, want %v", tt.left, tt.right, gotType, ok, tt.want)
 			}
 		})
+	}
+}
+
+func TestMeetRejectsDistinctStringLiteralWitnesses(t *testing.T) {
+	got := Meet(Of(typ.LiteralString("string")), Of(typ.LiteralString("boolean")))
+	if !got.IsBottom() {
+		gotType, gotOK := got.Type()
+		t.Fatalf("Meet(distinct string literals) = %v/%v, want bottom", gotType, gotOK)
+	}
+}
+
+func TestWidenCollapsesScalarLiteralGrowthToPrimitiveFamily(t *testing.T) {
+	tests := []struct {
+		name string
+		prev typ.Type
+		next typ.Type
+		want typ.Type
+	}{
+		{name: "integer literal to integer", prev: typ.LiteralInt(0), next: typ.Integer, want: typ.Integer},
+		{name: "integer literal union to integer", prev: typ.MaterializeUnion([]typ.Type{typ.LiteralInt(0), typ.LiteralInt(1)}), next: typ.Integer, want: typ.Integer},
+		{name: "integer to number", prev: typ.Integer, next: typ.Number, want: typ.Number},
+		{name: "string literals to string", prev: typ.LiteralString("a"), next: typ.MaterializeUnion([]typ.Type{typ.LiteralString("a"), typ.LiteralString("b")}), want: typ.String},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Widen(Of(tt.prev), Of(tt.next))
+			gotType, ok := got.Type()
+			if !ok || !typ.TypeEquals(gotType, tt.want) {
+				t.Fatalf("Widen(%v,%v) = %v/%v, want %v", tt.prev, tt.next, gotType, ok, tt.want)
+			}
+		})
+	}
+}
+
+func TestWidenPreservesStableRecordShape(t *testing.T) {
+	prev := typetable.NewRecord().Field("id", typ.LiteralString("a")).Build()
+	next := typetable.NewRecord().Field("id", typ.LiteralString("b")).Build()
+
+	got := Widen(Of(prev), Of(next))
+	gotType, ok := got.Type()
+	want := typetable.NewRecord().Field("id", typ.String).Build()
+	if !ok || !typ.TypeEquals(gotType, want) {
+		t.Fatalf("Widen(record literals) = %v/%v, want %v", gotType, ok, want)
+	}
+}
+
+func TestWidenStableRecordShapeKeepsUnchangedFields(t *testing.T) {
+	prev := typetable.NewRecord().
+		Field("node_order", typ.NewArray(typ.String)).
+		Field("last_node_id", typ.Nil).
+		Build()
+	next := typetable.NewRecord().
+		Field("node_order", typ.NewArray(typ.String)).
+		Field("last_node_id", typ.String).
+		Build()
+
+	got := Widen(Of(prev), Of(next))
+	gotType, ok := got.Type()
+	want := typetable.NewRecord().
+		Field("node_order", typ.NewArray(typ.String)).
+		Field("last_node_id", typeexpr.Optional(typ.String)).
+		Build()
+	if !ok || !typ.TypeEquals(gotType, want) {
+		t.Fatalf("Widen(record field update) = %v/%v, want %v", gotType, ok, want)
+	}
+}
+
+func TestWidenStableRecordShapeWithMethodSurface(t *testing.T) {
+	prev := typetable.NewRecord().
+		Field("node_order", typ.NewArray(typ.String)).
+		Field("last_node_id", typ.Nil).
+		Build()
+	next := typetable.NewRecord().
+		Field("node_order", typ.NewArray(typ.String)).
+		Field("last_node_id", typ.String).
+		Build()
+	prev = typetable.NewRecord().
+		Field("node_order", typ.NewArray(typ.String)).
+		Field("last_node_id", typ.Nil).
+		StaticStringIndex("create_node", typ.Func().Param("self", prev).Returns(typ.String, typ.Nil).Build()).
+		Build()
+	next = typetable.NewRecord().
+		Field("node_order", typ.NewArray(typ.String)).
+		Field("last_node_id", typ.String).
+		StaticStringIndex("create_node", typ.Func().Param("self", next).Returns(typ.String, typ.Nil).Build()).
+		Build()
+
+	got := Widen(Of(prev), Of(next))
+	gotType, ok := got.Type()
+	if !ok {
+		t.Fatalf("Widen(record method surface) = top, want preserved record")
+	}
+	rec, ok := gotType.(*typ.Record)
+	if !ok || rec.GetField("node_order") == nil || rec.GetStaticStringIndex("create_node") == nil {
+		t.Fatalf("Widen(record method surface) = %v, want fields and method surface preserved", gotType)
+	}
+}
+
+func TestWidenStableRecordShapeWithMethodSurfaceAcrossMultipleIterations(t *testing.T) {
+	recordWithState := func(last typ.Type) typ.Type {
+		base := typetable.NewRecord().
+			Field("node_order", typ.NewArray(typ.String)).
+			Field("last_node_id", last).
+			Build()
+		return typetable.NewRecord().
+			Field("node_order", typ.NewArray(typ.String)).
+			Field("last_node_id", last).
+			StaticStringIndex("create_node", typ.Func().Param("self", base).Returns(typ.String, typ.Nil).Build()).
+			Build()
+	}
+
+	got := Widen(Of(recordWithState(typ.Nil)), Of(recordWithState(typ.String)))
+	got = Widen(got, Of(recordWithState(typ.LiteralString("next"))))
+
+	gotType, ok := got.Type()
+	if !ok {
+		t.Fatalf("repeated Widen(record method surface) = top, want preserved record")
+	}
+	rec, ok := gotType.(*typ.Record)
+	if !ok || rec.GetField("node_order") == nil || rec.GetStaticStringIndex("create_node") == nil {
+		t.Fatalf("repeated Widen(record method surface) = %v, want fields and method surface preserved", gotType)
+	}
+}
+
+func TestWidenFallsBackToTopForIncompatibleRecordShape(t *testing.T) {
+	prev := typetable.NewRecord().Field("id", typ.String).Build()
+	next := typetable.NewRecord().Field("name", typ.String).Build()
+
+	if got := Widen(Of(prev), Of(next)); !got.IsTop() {
+		t.Fatalf("Widen(incompatible records) = %v, want top", got)
 	}
 }

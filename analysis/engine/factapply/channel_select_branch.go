@@ -61,8 +61,8 @@ func applyChannelSelectCasePathEquality(
 	if !ok || resolver == nil {
 		return out, false
 	}
-	resultKey, resultKeyOK := resolver.StateKeyAt(point, resultPath)
-	caseKey, caseKeyOK := resolver.StateKeyAt(point, casePath)
+	resultKey, resultKeyOK := visibility.AddressAt(resolver, point, resultPath).VisibleStateKey()
+	caseKey, caseKeyOK := visibility.AddressAt(resolver, point, casePath).VisibleStateKey()
 	if !resultKeyOK || !caseKeyOK {
 		return out, false
 	}
@@ -107,7 +107,8 @@ func applyChannelSelectCasePathEquality(
 	}
 	value := typeValues.FromTypeWithWitness(reg, typeexpr.Union(caseTypes...))
 	out = invalidateChannelSelectResultDescendants(resolver, point, out, resultPath)
-	return result.write(out, value), true
+	written, ok := result.write(reg, out, value)
+	return written, ok
 }
 
 func channelSelectPayloadCaseType(reg *axis.Registry, fact channelselectfact.Fact) typ.Type {
@@ -183,8 +184,8 @@ func applyChannelSelectCasePathInequality(
 	if !ok || resolver == nil {
 		return out, false
 	}
-	resultKey, resultKeyOK := resolver.StateKeyAt(point, resultPath)
-	caseKey, caseKeyOK := resolver.StateKeyAt(point, casePath)
+	resultKey, resultKeyOK := visibility.AddressAt(resolver, point, resultPath).VisibleStateKey()
+	caseKey, caseKeyOK := visibility.AddressAt(resolver, point, casePath).VisibleStateKey()
 	if !resultKeyOK || !caseKeyOK {
 		return out, false
 	}
@@ -206,6 +207,7 @@ func applyChannelSelectCasePathInequality(
 			if !ok {
 				continue
 			}
+			next = channelSelectTightenRemainingTypeFromFacts(reg, out, next, selectFact.Select)
 			narrowed = next
 			removed = true
 		}
@@ -220,7 +222,54 @@ func applyChannelSelectCasePathInequality(
 	}
 	value := typeValues.FromTypeWithWitness(reg, narrowed)
 	out = invalidateChannelSelectResultDescendants(resolver, point, out, resultPath)
-	return result.write(out, value), true
+	written, ok := result.write(reg, out, value)
+	return written, ok
+}
+
+func channelSelectTightenRemainingTypeFromFacts(reg *axis.Registry, out state.State, resultType typ.Type, selectID channelselectfact.ID) typ.Type {
+	if !channelselect.ResultHasSelectID(resultType, string(selectID)) {
+		return resultType
+	}
+	snapshot := out.ChannelSelectFactsSnapshot()
+	if snapshot.Bottom {
+		return resultType
+	}
+	cases := make([]channelselect.ResultCase, 0)
+	hasDefault := false
+	for _, fact := range snapshot.Facts {
+		if fact.Kind == channelselectfact.FactSelect && fact.Select == selectID && fact.HasDefault {
+			if _, ok := channelselect.ResultCaseTypeFromValue(resultType, string(selectID), channelselect.DefaultCaseIndex); ok {
+				hasDefault = true
+			}
+			continue
+		}
+		if fact.Kind != channelselectfact.FactReceive || fact.Select != selectID {
+			continue
+		}
+		caseType, ok := channelselect.ResultCaseTypeFromValue(resultType, string(selectID), fact.Index)
+		if !ok {
+			continue
+		}
+		payload := typ.Unknown
+		if currentPayload, ok := channelselect.ResultCasePayloadType(caseType); ok {
+			payload = currentPayload
+		}
+		if exactPayload, ok := channelSelectExactPayloadType(reg, fact); ok {
+			payload = exactPayload
+		}
+		cases = append(cases, channelselect.ResultCase{
+			Index:   fact.Index,
+			Payload: payload,
+		})
+	}
+	if len(cases) == 0 && !hasDefault {
+		return resultType
+	}
+	tightened, ok := channelselect.ResultValueTypeWithDefault(string(selectID), cases, hasDefault)
+	if !ok {
+		return resultType
+	}
+	return tightened
 }
 
 func channelSelectReceiveFacts(

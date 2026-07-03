@@ -10,72 +10,80 @@
         "file": "main.lua",
         "line": 12,
         "column": 24,
-        "code": "type.call.direct.argument_type",
         "severity": "error",
+        "code": "type.call.direct.argument_type",
         "message_contains": [
-          "argument 2 (model_id) is unknown, not string"
+          "argument 2 (model_id) comes from any/unknown; no proof shows it is string"
         ],
-        "min_evidence": 3,
+        "min_evidence": 4,
         "evidence_contains": [
-          "argument 2 (model_id) has type unknown",
-          "inside helper, argument 2 (model_id) is passed to argument 1.invoke parameter 1, which requires string",
+          "argument 2 (model_id) has type any",
+          "parameter 2 expects string",
+          "model_id comes from any/unknown",
           "no proof on this path shows model_id satisfies the parameter type"
         ],
         "evidence": [
           {
-            "file": "main.lua",
-            "line": 12,
-            "column": 24,
-            "kind": "abstract fact",
             "trust": "proven",
             "contains": [
-              "argument 2 (model_id) has type unknown"
-            ]
-          },
-          {
-            "file": "main.lua",
-            "line": 12,
-            "column": 24,
+              "argument 2 (model_id) has type any"
+            ],
             "kind": "abstract fact",
-            "trust": "proven",
-            "contains": [
-              "inside helper, argument 2 (model_id) is passed to argument 1.invoke parameter 1, which requires string"
-            ]
-          },
-          {
             "file": "main.lua",
             "line": 12,
-            "column": 24,
-            "kind": "missing proof",
+            "column": 24
+          },
+          {
+            "trust": "claimed",
+            "contains": [
+              "parameter 2 expects string"
+            ],
+            "kind": "user assertion"
+          },
+          {
+            "trust": "unknown",
+            "contains": [
+              "model_id comes from any/unknown"
+            ],
+            "reason": "explicit boundary validation",
+            "file": "main.lua",
+            "line": 12,
+            "column": 24
+          },
+          {
             "trust": "unknown",
             "contains": [
               "no proof on this path shows model_id satisfies the parameter type"
-            ]
+            ],
+            "kind": "missing proof",
+            "reason": "boundary validation missing",
+            "file": "main.lua",
+            "line": 12,
+            "column": 24
           }
         ],
         "render_contains": [
-          "error[type.call.direct.argument_type]: argument 2 (model_id) is unknown, not string",
-          "helper(bedrock_client, model_id) -- expect-error: not string",
-          "because:",
-          "Validate or narrow `model_id` before passing it"
+          "argument 2 (model_id) comes from any/unknown; no proof shows it is string",
+          "helper(bedrock_client, model_id) -- expect-error: no proof shows it is string",
+          "because:"
         ],
         "render_ordered_contains": [
-          "error[type.call.direct.argument_type]: argument 2 (model_id) is unknown, not string",
+          "error[type.call.direct.argument_type]: argument 2 (model_id) comes from any/unknown; no proof shows it is string",
           "--> main.lua:12:24",
-          "helper(bedrock_client, model_id) -- expect-error: not string",
+          "helper(bedrock_client, model_id) -- expect-error: no proof shows it is string",
           "because:",
-          "1. proven: argument 2 (model_id) has type unknown",
-          "2. proven: inside helper, argument 2 (model_id) is passed to argument 1.invoke parameter 1, which requires string",
-          "3. missing proof: no proof on this path shows model_id satisfies the parameter type",
-          "help: Validate or narrow `model_id` before passing it"
+          "1. proven: argument 2 (model_id) has type any",
+          "2. claimed: parameter 2 expects string",
+          "3. unvalidated value: model_id comes from any/unknown",
+          "4. missing proof: no proof on this path shows model_id satisfies the parameter type",
+          "help: Validate or narrow `model_id` before passing it; any/unknown values do not prove parameter contracts."
         ],
         "render_not_contains": [
           "^~",
-          "want string"
+          "where:"
         ],
         "help_contains": [
-          "Validate or narrow `model_id` before passing it",
-          "any/unknown values do not prove parameter contracts"
+          "Validate or narrow `model_id` before passing it; any/unknown values do not prove parameter contracts."
         ],
         "min_labels": 1,
         "label_contains": [
@@ -83,12 +91,12 @@
         ],
         "labels": [
           {
-            "file": "main.lua",
-            "line": 12,
-            "column": 24,
             "contains": [
               "argument value"
-            ]
+            ],
+            "file": "main.lua",
+            "line": 12,
+            "column": 24
           }
         ]
       }

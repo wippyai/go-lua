@@ -1,6 +1,9 @@
 package factapply
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
@@ -11,43 +14,107 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func callResultReader(
-	ctx transfer.NodeContext,
-	facts factflow.Facts,
-	sources sourcevalue.SourceValues,
-	outcomeProvider callpayload.CallOutcomeProvider,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	widen CovariantWiden,
-	typeValues *typevalue.Cache,
-) (func(cfg.Point) state.State, func(cfg.Point, state.State) state.State) {
-	rawRead := ctx.Read
+type callResultMaterializer struct {
+	owner   *lazyCallResultReader
+	rawRead func(cfg.Point) state.State
+	read    func(cfg.Point) state.State
+
+	cache  callResultPointStateCache
+	active callResultPointStateCache
+}
+
+func newCallResultMaterializer(owner *lazyCallResultReader) *callResultMaterializer {
+	rawRead := owner.ctx.Read
 	if rawRead == nil {
 		rawRead = emptyStateRead
 	}
+	m := &callResultMaterializer{
+		owner:   owner,
+		rawRead: rawRead,
+	}
+	m.read = m.readPoint
+	return m
+}
 
-	var cache callResultPointStateCache
-	var active callResultPointStateCache
-	var read func(cfg.Point) state.State
-	materialize := func(point cfg.Point, base state.State) state.State {
-		if out, ok := cache.lookup(point); ok {
-			return out
-		}
-		if activeBase, ok := active.lookup(point); ok {
-			return activeBase
-		}
-		active.store(point, base)
-		out := materializeCallOutcome(callContextAt(ctx, point, read), facts, sources, outcomeProvider, resolver, projectPath, widen, typeValues, read, base, base)
-		active.remove(point)
-		cache.store(point, out)
+func (m *callResultMaterializer) readPoint(point cfg.Point) state.State {
+	return m.materialize(point, m.rawRead(point))
+}
+
+func (m *callResultMaterializer) materialize(point cfg.Point, base state.State) state.State {
+	if out, ok := m.cache.lookup(point); ok {
 		return out
 	}
-	read = func(point cfg.Point) state.State {
-		return materialize(point, rawRead(point))
+	if activeBase, ok := m.active.lookup(point); ok {
+		return activeBase
 	}
-	return read, materialize
+	m.active.store(point, base)
+	owner := m.owner
+	out := materializeCallOutcome(callContextAt(owner.ctx, point, m.read), owner.facts, owner.sources, owner.outcomeProvider, owner.resolver, owner.projectPath, owner.widen, owner.typeValues, m.read, base, base)
+	m.active.remove(point)
+	m.cache.store(point, out)
+	return out
+}
+
+type lazyCallResultReader struct {
+	initialized bool
+
+	ctx             transfer.NodeContext
+	facts           factflow.Facts
+	sources         sourcevalue.SourceValues
+	outcomeProvider callpayload.CallOutcomeProvider
+	resolver        *visibility.Resolver
+	projectPath     PathTypeProjector
+	widen           CovariantWiden
+	typeValues      *typevalue.Cache
+
+	read         func(cfg.Point) state.State
+	materialize  func(cfg.Point, state.State) state.State
+	lazyRead     func(cfg.Point) state.State
+	materializer *callResultMaterializer
+}
+
+func (r *lazyCallResultReader) ensure() {
+	if r.initialized {
+		return
+	}
+	r.materializer = newCallResultMaterializer(r)
+	r.read = r.materializer.read
+	r.materialize = r.materializer.materialize
+	r.initialized = true
+}
+
+func (r *lazyCallResultReader) Read() func(cfg.Point) state.State {
+	r.ensure()
+	return r.read
+}
+
+// ReadLazy returns a read function that initializes call-result materialization
+// only if the caller actually reads through it. Most non-call value sources never
+// read another point, so they should not allocate the materialization cache just
+// to carry a same-point read handle through transfer helpers.
+func (r *lazyCallResultReader) ReadLazy() func(cfg.Point) state.State {
+	if r.lazyRead == nil {
+		r.lazyRead = func(point cfg.Point) state.State {
+			r.ensure()
+			return r.read(point)
+		}
+	}
+	return r.lazyRead
+}
+
+func (r *lazyCallResultReader) Materialize(point cfg.Point, base state.State) state.State {
+	r.ensure()
+	return r.materialize(point, base)
+}
+
+func nodeHasCallMaterializationFacts(facts factflow.Facts, point cfg.Point) bool {
+	if _, ok := facts.CallSiteView(point); ok {
+		return true
+	}
+	return facts.HasChannelSelects(point)
 }
 
 type callResultPointStateCache struct {
@@ -128,56 +195,93 @@ func materializeCallOutcome(
 		return applyChannelSelectResult(ctx, typeValues, resolver, projectPath, out, facts.ChannelSelects(ctx.Point))
 	}
 	siteView.ForEachArgumentSource(func(_ int, source factflow.ValueSource) bool {
-		out = materializeObjectLiteralHeap(ctx, resolver, facts, sources, read, in, out, source)
+		out = materializeObjectLiteralHeap(ctx, resolver, facts, sources, read, in, out, source, typeValues)
 		return true
 	})
 	hasProducer := callproducer.Has(facts, ctx.Point)
-	if hasProducer {
-		out = clearCallProducerReturnSlots(ctx, siteView, out)
-	}
+	var outcome callpayload.CallOutcome
+	hasOutcome := false
 	if outcomeProvider != nil {
-		outcome := outcomeProvider(ctx, siteView, in, read)
-		if hasProducer {
-			for _, result := range outcome.Results {
-				if result.Index < 0 {
-					continue
-				}
-				out = out.WriteReturnSlot(ctx.Registry, result.Index, result.Value)
-			}
-		}
-		out = applyCallOutcomeFacts(ctx, facts, resolver, projectPath, widen, out, siteView, outcome)
+		outcome = outcomeProvider(ctx, siteView, in, read)
+		hasOutcome = true
+	}
+	if hasProducer {
+		out = applyCallProducerReturnSlots(ctx, siteView, out, outcome, hasOutcome)
+	}
+	if hasOutcome {
+		out = applyCallOutcomeFacts(ctx, facts, resolver, projectPath, widen, typeValues, out, siteView, outcome)
 	}
 	out = applyChannelSelectResult(ctx, typeValues, resolver, projectPath, out, facts.ChannelSelects(ctx.Point))
-	if hasProducer {
-		facts.ForEachCallResultValue(ctx.Point, func(result factflow.CallResultValue) bool {
-			out = constrainReturnSlot(ctx, out, result)
-			return true
-		})
+	edit := out.EditValues(ctx.Registry)
+	appliedFixedResult := false
+	facts.ForEachCallResultValue(ctx.Point, func(result factflow.CallResultValue) bool {
+		constrainReturnSlotEdit(ctx, &edit, result)
+		appliedFixedResult = true
+		return true
+	})
+	if appliedFixedResult {
+		out = edit.Done()
 	}
 	return out
 }
 
-func clearCallProducerReturnSlots(ctx transfer.NodeContext, site factflow.CallSiteView, out state.State) state.State {
+func applyCallProducerReturnSlots(ctx transfer.NodeContext, site factflow.CallSiteView, out state.State, outcome callpayload.CallOutcome, hasOutcome bool) state.State {
+	edit := out.EditValues(ctx.Registry)
 	site.ForEachResultTarget(func(target factflow.CallResultTargetView) bool {
 		if target.ResultIndex() < 0 {
 			return true
 		}
-		out = out.WriteReturnSlot(ctx.Registry, target.ResultIndex(), product.Bottom(ctx.Registry))
+		edit.WriteReturnSlot(target.ResultIndex(), product.Bottom(ctx.Registry))
 		return true
 	})
-	return out
+	if hasOutcome {
+		for _, result := range outcome.Results {
+			if result.Index < 0 {
+				continue
+			}
+			edit.WriteReturnSlot(result.Index, result.Value)
+		}
+	}
+	return edit.Done()
 }
 
-func constrainReturnSlot(ctx transfer.NodeContext, out state.State, fact factflow.CallResultValue) state.State {
+func constrainReturnSlotEdit(ctx transfer.NodeContext, edit *state.ValueEdit, fact factflow.CallResultValue) {
 	if fact.Index() < 0 {
-		return out
+		return
 	}
 	value := fact.Value()
-	current := out.ReadReturnSlot(ctx.Registry, fact.Index())
+	current := edit.Read(key.ReturnSlot(fact.Index()))
 	if product.Equal(ctx.Registry, current, product.Bottom(ctx.Registry)) {
-		return out.WriteReturnSlot(ctx.Registry, fact.Index(), value)
+		edit.WriteReturnSlot(fact.Index(), value)
+		return
 	}
-	return out.WriteReturnSlot(ctx.Registry, fact.Index(), product.Meet(ctx.Registry, current, value))
+	if returnSlotLacksReadableType(ctx.Registry, current) && returnSlotHasReadableType(ctx.Registry, value) {
+		edit.WriteReturnSlot(fact.Index(), value)
+		return
+	}
+	if returnSlotHasTrustedEvidence(ctx.Registry, current) && returnSlotHasUntrustedTopEvidence(ctx.Registry, value) {
+		return
+	}
+	edit.WriteReturnSlot(fact.Index(), product.Meet(ctx.Registry, current, value))
+}
+
+func returnSlotHasReadableType(reg *axis.Registry, value product.Value) bool {
+	t, ok := typevalue.TypeOf(reg, value)
+	return ok && t != nil && !typ.IsAny(t) && !typ.IsUnknown(t) && !typ.IsNever(t)
+}
+
+func returnSlotLacksReadableType(reg *axis.Registry, value product.Value) bool {
+	return !returnSlotHasReadableType(reg, value)
+}
+
+func returnSlotHasTrustedEvidence(reg *axis.Registry, value product.Value) bool {
+	ev := product.Get(reg, value, evidence.Key)
+	return !ev.IsExplicitTop() && !ev.IsGradualTop()
+}
+
+func returnSlotHasUntrustedTopEvidence(reg *axis.Registry, value product.Value) bool {
+	ev := product.Get(reg, value, evidence.Key)
+	return ev.IsExplicitTop() || ev.IsGradualTop()
 }
 
 func applyReturn(
@@ -192,15 +296,30 @@ func applyReturn(
 	projectPath PathTypeProjector,
 	typeValues *typevalue.Cache,
 ) state.State {
+	var edit state.ValueEdit
+	editing := false
 	for i, source := range fact.Sources() {
+		targetIndex := source.TargetIndex
+		if targetIndex < 0 {
+			targetIndex = i
+		}
 		value, ok := returnSourceValue(ctx, facts, sources, read, in, out, source, resolver, projectPath, typeValues)
 		if !ok {
-			continue
+			value = product.Top()
 		}
-		out = out.WriteReturnSlot(ctx.Registry, i, value)
-		out = materializeObjectLiteralHeap(ctx, resolver, facts, sources, read, in, out, source)
+		if !editing {
+			edit = out.EditValues(ctx.Registry)
+			editing = true
+		}
+		edit.WriteReturnSlot(targetIndex, value)
+		if ok {
+			out, _ = materializeObjectLiteralHeapCachedWithKnownSourceValue(ctx, resolver, facts, sources, read, in, out, source, value, true, typeValues)
+		}
 	}
-	return out
+	if !editing {
+		return out
+	}
+	return edit.DoneOn(out)
 }
 
 func returnSourceValue(
@@ -216,13 +335,18 @@ func returnSourceValue(
 	typeValues *typevalue.Cache,
 ) (product.Value, bool) {
 	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
-		if sourcePath, ok := facts.ExpressionPath(source.ExprRef); ok {
+		if _, ok := facts.ExpressionRefinement(source.ExprRef); ok {
+			if value, ok := sources.ValueOfSource(ctx.Point, source, out, readWithCurrentPointState(ctx.Point, read, out)); ok {
+				return value, true
+			}
+		}
+		if sourcePath, ok := facts.ExpressionPathRef(source.ExprRef); ok {
 			if pathValue, ok := resolvePathValueAtCached(typeValues, ctx.Registry, resolver, ctx.Point, out, sourcePath, projectPath); ok {
 				return pathValue.value, true
 			}
 		}
 	}
-	return sources.ValueOfSource(ctx.Point, source, in, readWithSamePointCallSource(ctx.Point, source, read, out))
+	return sources.ValueOfSource(ctx.Point, source, out, readWithCurrentPointState(ctx.Point, read, out))
 }
 
 func emptyStateRead(cfg.Point) state.State {

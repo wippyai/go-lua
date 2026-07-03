@@ -20,20 +20,24 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
+	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/calloutcome"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -67,6 +71,41 @@ func staticName(name string) SignatureNameFunc {
 	name = strings.TrimSpace(name)
 	return func(transfer.NodeContext, factflow.CallProducer) (string, bool) {
 		return name, name != ""
+	}
+}
+
+type countingSourceValues struct {
+	values map[factflow.ExprRef]product.Value
+	calls  map[factflow.ExprRef]int
+}
+
+func (s *countingSourceValues) ValueOfSource(_ cfg.Point, source factflow.ValueSource, _ state.State, _ func(cfg.Point) state.State) (product.Value, bool) {
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		return product.Value{}, false
+	}
+	s.calls[source.ExprRef]++
+	value, ok := s.values[source.ExprRef]
+	return value, ok
+}
+
+func TestTableMutatorRecordTypeTreatsFreshEmptyTableAsArray(t *testing.T) {
+	target := typetable.NewRecord().Build()
+	got, ok := tableMutatorRecordType(target, typ.String)
+	want := typ.NewArray(typ.String)
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("table mutator target type = %v/%v, want %v", got, ok, want)
+	}
+}
+
+func TestTableMutatorRecordTypePreservesMixedRecordShape(t *testing.T) {
+	target := typetable.NewRecord().Field("name", typ.String).Build()
+	got, ok := tableMutatorRecordType(target, typ.String)
+	want := typetable.NewRecord().
+		Field("name", typ.String).
+		MapComponent(typ.Integer, typ.String).
+		Build()
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("table mutator target type = %v/%v, want %v", got, ok, want)
 	}
 }
 
@@ -237,9 +276,14 @@ func testReturnTypeOps() ReturnTypeOps {
 		CallableReturn: testCallableReturn,
 		ElementOf:      testElementOf,
 		TypeProjection: testTypeProjection,
-		InstantiateGenericCall: func(fn *typ.Function, args []typ.Type) (*typ.Function, bool) {
-			instantiated, violations := typecall.InstantiateGenericCall(fn, args)
-			return instantiated, instantiated != nil && len(violations) == 0
+		InstantiateGenericCall: func(fn *typ.Function, args []typ.Type) (GenericCallInstantiation, bool) {
+			instantiated, violations, bindings := typecall.InstantiateGenericCallWithBindings(fn, args)
+			out := GenericCallInstantiation{Type: instantiated}
+			for _, binding := range bindings {
+				out.TypeParams = append(out.TypeParams, binding.Param)
+				out.TypeArgs = append(out.TypeArgs, binding.Type)
+			}
+			return out, instantiated != nil && len(violations) == 0
 		},
 	}
 }
@@ -383,6 +427,133 @@ func TestSignatureOutcomeProviderMaterializesInterfaceDeclaredReturnAsPresent(t 
 	assertTypeWitness(t, reg, got[0].Value, iface)
 }
 
+func TestSignatureOutcomeProviderResolvesInterfaceMethodFromReceiverCallSource(t *testing.T) {
+	reg := standard.Registry()
+	callPoint := cfg.Point(23)
+	receiverPoint := cfg.Point(22)
+	receiverSource, ok := factflow.NewCallValueSource(0, factflow.NoValueSourceIndex, factflow.NoValueSourceIndex, 0, receiverPoint, factflow.ValueSourceShape{})
+	if !ok {
+		t.Fatal("invalid receiver call source")
+	}
+	contractType := typ.NewInterface("contract.Contract", []typ.Method{
+		{
+			Name: "open",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Param("id", typ.String).
+				Returns(typ.Any, typeexpr.Optional(typ.String)).
+				Build(),
+		},
+	})
+	prior := state.State{}.WriteReturnSlot(reg, 0, typevalue.WithWitness(reg, typevalue.FromType(reg, contractType), contractType))
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"contract.Contract.open": {Type: contractType.Methods[0].Type},
+		},
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg}),
+	})
+
+	got := provider(
+		transfer.NodeContext{Registry: reg, Point: callPoint},
+		factflow.NewCallSite(factflow.CallSiteConfig{
+			MethodName:        "open",
+			ReceiverSource:    receiverSource,
+			HasReceiverSource: true,
+		}).View(),
+		state.State{},
+		func(point cfg.Point) state.State {
+			if point == receiverPoint {
+				return prior
+			}
+			return state.State{}
+		},
+	)
+
+	if len(got.Results) != 2 {
+		t.Fatalf("got %d results, want receiver-source method signature returns: %#v", len(got.Results), got.Results)
+	}
+	if got.Results[0].Index != 0 || got.Results[1].Index != 1 {
+		t.Fatalf("result indexes = %#v, want slots 0 and 1", got.Results)
+	}
+	assertPresence(t, reg, got.Results[1].Value, presence.Maybe())
+	assertTypeWitness(t, reg, got.Results[1].Value, typeexpr.Optional(typ.String))
+}
+
+func TestSignatureOutcomeProviderBindsSelfReturnForFluentReceiverSource(t *testing.T) {
+	reg := standard.Registry()
+	receiverSymbol := symbol.ID(311)
+	withScopePoint := cfg.Point(24)
+	openPoint := cfg.Point(25)
+	contractType := typ.NewInterface("contract.Contract", nil)
+	withScopeType := typ.Func().
+		Param("self", typ.Self).
+		Param("scope", typ.Any).
+		Returns(typ.Self).
+		Build()
+	openType := typ.Func().
+		Param("self", typ.Self).
+		Param("id", typ.String).
+		Returns(typ.Any, typeexpr.Optional(typ.String)).
+		Build()
+	contractType.Methods = []typ.Method{
+		{Name: "with_scope", Type: withScopeType},
+		{Name: "open", Type: openType},
+	}
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"contract.Contract.with_scope": {Type: withScopeType},
+			"contract.Contract.open":       {Type: openType},
+		},
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg}),
+	})
+	receiverValue := typevalue.WithWitness(reg, typevalue.FromType(reg, contractType), contractType)
+	withScope := provider(
+		transfer.NodeContext{Registry: reg, Point: withScopePoint},
+		factflow.NewCallSite(factflow.CallSiteConfig{
+			MethodName:        "with_scope",
+			ReceiverPath:      path.NewPath(receiverSymbol, "def"),
+			HasReceiverPath:   true,
+			ArgumentSources:   []factflow.ValueSource{{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(311), HasExpr: true}},
+			HasReceiverSource: false,
+		}).View(),
+		state.State{}.WriteValue(reg, key.SymbolValue(receiverSymbol), receiverValue),
+		nil,
+	)
+	if len(withScope.Results) != 1 {
+		t.Fatalf("with_scope results = %#v, want one Self-bound contract result", withScope.Results)
+	}
+	assertTypeWitness(t, reg, withScope.Results[0].Value, contractType)
+	withScopeState := state.State{}.WriteReturnSlot(reg, 0, withScope.Results[0].Value)
+	openReceiver, ok := factflow.NewCallValueSource(0, factflow.NoValueSourceIndex, factflow.NoValueSourceIndex, 0, withScopePoint, factflow.ValueSourceShape{})
+	if !ok {
+		t.Fatal("invalid open receiver source")
+	}
+
+	open := provider(
+		transfer.NodeContext{Registry: reg, Point: openPoint},
+		factflow.NewCallSite(factflow.CallSiteConfig{
+			MethodName:        "open",
+			ReceiverSource:    openReceiver,
+			HasReceiverSource: true,
+		}).View(),
+		state.State{},
+		func(point cfg.Point) state.State {
+			if point == withScopePoint {
+				return withScopeState
+			}
+			return state.State{}
+		},
+	)
+
+	if len(open.Results) != 2 {
+		t.Fatalf("open results = %#v, want receiver-source method signature after Self return", open.Results)
+	}
+	if open.Results[0].Index != 0 || open.Results[1].Index != 1 {
+		t.Fatalf("open result indexes = %#v, want slots 0 and 1", open.Results)
+	}
+	assertPresence(t, reg, open.Results[1].Value, presence.Maybe())
+}
+
 func TestSignatureOutcomeProviderLowersErrorReturnToReturnPresenceRelations(t *testing.T) {
 	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
 		Signatures: signatureMap{
@@ -396,11 +567,12 @@ func TestSignatureOutcomeProviderLowersErrorReturnToReturnPresenceRelations(t *t
 	if !got.PostReturnAuthority {
 		t.Fatalf("PostReturnAuthority = false, want true for matched signature")
 	}
-	if len(got.ReturnPresenceRelations) != 2 {
-		t.Fatalf("return presence relations = %d, want 2: %#v", len(got.ReturnPresenceRelations), got.ReturnPresenceRelations)
+	if len(got.ReturnPresenceRelations) != 3 {
+		t.Fatalf("return presence relations = %d, want 3: %#v", len(got.ReturnPresenceRelations), got.ReturnPresenceRelations)
 	}
 	assertCallReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Present(), 0, presence.Absent())
 	assertCallReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Absent(), 0, presence.Present())
+	assertCallReturnPresenceRelation(t, got.ReturnPresenceRelations, 0, presence.Absent(), 1, presence.Present())
 }
 
 func TestActiveReturnLabelsUsesCentralLabelNormalization(t *testing.T) {
@@ -737,9 +909,15 @@ func TestSignatureOutcomeProviderLowersTableMutatorToParamPathInvalidationAndApp
 	if !got.ParamPathInvalidations[0].Path.Equal(path.NewPlaceholder(0)) {
 		t.Fatalf("invalidation path = %s, want $0", got.ParamPathInvalidations[0].Path.String())
 	}
+	if !got.ParamPathInvalidations[0].PreserveStructuralWitness {
+		t.Fatalf("table-mutator invalidation should preserve the target structural witness: %#v", got.ParamPathInvalidations[0])
+	}
 	if len(got.NormalReturnFacts.PathInvalidations) != 1 ||
 		!got.NormalReturnFacts.PathInvalidations[0].Path.Equal(path.NewPlaceholder(0)) {
 		t.Fatalf("normal-return invalidations = %#v, want $0", got.NormalReturnFacts.PathInvalidations)
+	}
+	if !got.NormalReturnFacts.PathInvalidations[0].PreserveStructuralWitness {
+		t.Fatalf("table-mutator normal-return invalidation should preserve the target structural witness: %#v", got.NormalReturnFacts.PathInvalidations[0])
 	}
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(call, argSymbol, "items")
@@ -761,6 +939,808 @@ func TestSignatureOutcomeProviderLowersTableMutatorToParamPathInvalidationAndApp
 	assertPathValue(t, reg, ks, flow[graph.Exit()], containerKey, present)
 	assertPathValue(t, reg, ks, flow[graph.Exit()], childKey, product.Bottom(reg))
 	assertPathValue(t, reg, ks, flow[graph.Exit()], unrelatedKey, present)
+}
+
+func TestSignatureOutcomeProviderLowersTableMutatorValueToElementRefinement(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	listExpr := factflow.ExprRef(911)
+	valueExpr := factflow.ExprRef(912)
+	listSymbol := symbol.ID(913)
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: listExpr, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: valueExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]path.Path{
+			listExpr: path.NewPath(listSymbol, "items"),
+		},
+	})
+	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[factflow.ExprRef]product.Value{
+			listExpr:  returnValueFromType(reg, typetable.NewRecord().Build()),
+			valueExpr: returnValueFromType(reg, typ.String),
+		},
+	})
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"table.insert": {
+				Effect: effect.Empty.With(
+					mutation.TableMutator{Target: effect.ParamRef{Index: 0}, Value: effect.ParamRef{Index: -1}},
+				),
+			},
+		},
+		NameFor: staticName("table.insert"),
+		Facts:   facts,
+		Sources: sources,
+	})
+	site, ok := facts.CallSite(call)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+
+	if len(got.ParamPathWrites) != 1 ||
+		!got.ParamPathWrites[0].Path.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("param path writes = %#v, want one $0 write", got.ParamPathWrites)
+	}
+	refinedType, ok := typevalue.TypeOf(reg, got.ParamPathWrites[0].Value)
+	want := typ.NewArray(typ.String)
+	if !ok || !typ.TypeEquals(refinedType, want) {
+		t.Fatalf("refined list type = %v/%v, want %v", refinedType, ok, want)
+	}
+	if len(got.NormalReturnFacts.DynamicIndexFacts) != 1 {
+		t.Fatalf("dynamic index facts = %#v, want one table-mutator element fact", got.NormalReturnFacts.DynamicIndexFacts)
+	}
+	dynamic := got.NormalReturnFacts.DynamicIndexFacts[0]
+	if !dynamic.Table.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("dynamic table = %s, want $0", dynamic.Table)
+	}
+	if keyType, ok := typevalue.TypeOf(reg, dynamic.Value.KeyValue); !ok || !typ.TypeEquals(keyType, typ.Integer) {
+		t.Fatalf("dynamic key type = %v/%v, want integer", keyType, ok)
+	}
+	if valueType, ok := typevalue.TypeOf(reg, dynamic.Value.Value); !ok || !typ.TypeEquals(valueType, typ.String) {
+		t.Fatalf("dynamic value type = %v/%v, want string", valueType, ok)
+	}
+	if dynamic.Value.Admission != dynamicindex.AdmissionAdmitted {
+		t.Fatalf("dynamic admission = %v, want admitted", dynamic.Value.Admission)
+	}
+}
+
+func TestSignatureOutcomeProviderReadsTableMutatorEvidenceOncePerLabel(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	listExpr := factflow.ExprRef(9071)
+	valueExpr := factflow.ExprRef(9072)
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: listExpr, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: valueExpr, HasExpr: true},
+				},
+			}),
+		},
+	})
+	sources := &countingSourceValues{
+		values: map[factflow.ExprRef]product.Value{
+			listExpr:  returnValueFromType(reg, typ.NewArray(typ.String)),
+			valueExpr: returnValueFromType(reg, typ.String),
+		},
+		calls: map[factflow.ExprRef]int{},
+	}
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"table.insert": {
+				Effect: effect.Empty.With(
+					mutation.TableMutator{Target: effect.ParamRef{Index: 0}, Value: effect.ParamRef{Index: -1}},
+				),
+			},
+		},
+		NameFor: staticName("table.insert"),
+		Facts:   facts,
+		Sources: sources,
+	})
+	site, ok := facts.CallSite(call)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+
+	if len(got.ParamPathWrites) != 1 {
+		t.Fatalf("param path writes = %#v, want one", got.ParamPathWrites)
+	}
+	if len(got.ParamObligations) != 1 {
+		t.Fatalf("param obligations = %#v, want one", got.ParamObligations)
+	}
+	if len(got.NormalReturnFacts.DynamicIndexFacts) != 1 {
+		t.Fatalf("dynamic-index facts = %#v, want one", got.NormalReturnFacts.DynamicIndexFacts)
+	}
+	if sources.calls[listExpr] != 1 || sources.calls[valueExpr] != 1 {
+		t.Fatalf("source reads = list:%d value:%d, want one read each", sources.calls[listExpr], sources.calls[valueExpr])
+	}
+}
+
+func TestSignatureOutcomeProviderLowersTableMutatorElementTypeToValueObligation(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	listExpr := factflow.ExprRef(931)
+	valueExpr := factflow.ExprRef(932)
+	listSymbol := symbol.ID(933)
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: listExpr, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: valueExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]path.Path{
+			listExpr: path.NewPath(listSymbol, "items"),
+		},
+	})
+	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[factflow.ExprRef]product.Value{
+			listExpr:  returnValueFromType(reg, typ.NewArray(typ.String)),
+			valueExpr: returnValueFromType(reg, typ.String),
+		},
+	})
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"table.insert": {
+				Effect: effect.Empty.With(
+					mutation.TableMutator{Target: effect.ParamRef{Index: 0}, Value: effect.ParamRef{Index: -1}},
+				),
+			},
+		},
+		NameFor: staticName("table.insert"),
+		Facts:   facts,
+		Sources: sources,
+	})
+	site, ok := facts.CallSite(call)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+
+	if len(got.ParamObligations) != 1 || got.ParamObligations[0].ParamIndex != 1 {
+		t.Fatalf("param obligations = %#v, want one obligation for inserted value argument", got.ParamObligations)
+	}
+	obligationType, ok := typevalue.TypeOf(reg, got.ParamObligations[0].Value)
+	if !ok || !typ.TypeEquals(obligationType, typ.String) {
+		t.Fatalf("obligation type = %v/%v, want string", obligationType, ok)
+	}
+}
+
+func TestSignatureOutcomeProviderKeepsAnyArrayMutatorWhenInsertedValueIsAny(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	listExpr := factflow.ExprRef(914)
+	valueExpr := factflow.ExprRef(915)
+	listSymbol := symbol.ID(916)
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: listExpr, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: valueExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]path.Path{
+			listExpr: path.NewPath(listSymbol, "items"),
+		},
+	})
+	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[factflow.ExprRef]product.Value{
+			listExpr:  returnValueFromType(reg, typ.NewArray(typ.Any)),
+			valueExpr: returnValueFromType(reg, typ.Any),
+		},
+	})
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"table.insert": {
+				Effect: effect.Empty.With(
+					mutation.TableMutator{Target: effect.ParamRef{Index: 0}, Value: effect.ParamRef{Index: -1}},
+				),
+			},
+		},
+		NameFor: staticName("table.insert"),
+		Facts:   facts,
+		Sources: sources,
+	})
+	site, ok := facts.CallSite(call)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+
+	if len(got.ParamPathWrites) != 1 ||
+		!got.ParamPathWrites[0].Path.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("param path writes = %#v, want one $0 write", got.ParamPathWrites)
+	}
+	refinedType, ok := typevalue.TypeOf(reg, got.ParamPathWrites[0].Value)
+	want := typ.NewArray(typ.Any)
+	if !ok || !typ.TypeEquals(refinedType, want) {
+		t.Fatalf("refined list type = %v/%v, want %v", refinedType, ok, want)
+	}
+	if len(got.NormalReturnFacts.DynamicIndexFacts) != 1 {
+		t.Fatalf("dynamic index facts = %#v, want one table-mutator element fact", got.NormalReturnFacts.DynamicIndexFacts)
+	}
+	if want := returnValueFromType(reg, typ.Any); !product.Equal(reg, got.NormalReturnFacts.DynamicIndexFacts[0].Value.Value, want) {
+		t.Fatalf("dynamic value = %#v, want explicit any product", got.NormalReturnFacts.DynamicIndexFacts[0].Value.Value)
+	}
+}
+
+func TestSignatureOutcomeProviderKeepsAnyArrayMutatorWhenInsertedValueIsUnknown(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	listExpr := factflow.ExprRef(9161)
+	valueExpr := factflow.ExprRef(9162)
+	listSymbol := symbol.ID(9163)
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: listExpr, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: valueExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]path.Path{
+			listExpr: path.NewPath(listSymbol, "items"),
+		},
+	})
+	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[factflow.ExprRef]product.Value{
+			listExpr:  returnValueFromType(reg, typ.NewArray(typ.Any)),
+			valueExpr: returnValueFromType(reg, typ.Unknown),
+		},
+	})
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"table.insert": {
+				Effect: effect.Empty.With(
+					mutation.TableMutator{Target: effect.ParamRef{Index: 0}, Value: effect.ParamRef{Index: -1}},
+				),
+			},
+		},
+		NameFor: staticName("table.insert"),
+		Facts:   facts,
+		Sources: sources,
+	})
+	site, ok := facts.CallSite(call)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+
+	if len(got.ParamPathWrites) != 1 ||
+		!got.ParamPathWrites[0].Path.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("param path writes = %#v, want one $0 write", got.ParamPathWrites)
+	}
+	refinedType, ok := typevalue.TypeOf(reg, got.ParamPathWrites[0].Value)
+	want := typ.NewArray(typ.Any)
+	if !ok || !typ.TypeEquals(refinedType, want) {
+		t.Fatalf("refined list type = %v/%v, want %v", refinedType, ok, want)
+	}
+	if len(got.NormalReturnFacts.DynamicIndexFacts) != 1 {
+		t.Fatalf("dynamic index facts = %#v, want one table-mutator element fact", got.NormalReturnFacts.DynamicIndexFacts)
+	}
+	if want := returnValueFromType(reg, typ.Any); !product.Equal(reg, got.NormalReturnFacts.DynamicIndexFacts[0].Value.Value, want) {
+		t.Fatalf("dynamic value = %#v, want explicit any product", got.NormalReturnFacts.DynamicIndexFacts[0].Value.Value)
+	}
+}
+
+func TestSignatureOutcomeProviderKeepsAnyArrayMutatorWhenInsertedValueIsConcreteRecord(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	listExpr := factflow.ExprRef(91621)
+	valueExpr := factflow.ExprRef(91622)
+	listSymbol := symbol.ID(91623)
+	entryType := typetable.NewRecord().
+		Field("id", typ.String).
+		Field("meta", typ.NewMap(typ.String, typ.Any)).
+		Build()
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: listExpr, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: valueExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]path.Path{
+			listExpr: path.NewPath(listSymbol, "items"),
+		},
+	})
+	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[factflow.ExprRef]product.Value{
+			listExpr:  returnValueFromType(reg, typ.NewArray(typ.Any)),
+			valueExpr: returnValueFromType(reg, entryType),
+		},
+	})
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"table.insert": {
+				Effect: effect.Empty.With(
+					mutation.TableMutator{Target: effect.ParamRef{Index: 0}, Value: effect.ParamRef{Index: -1}},
+				),
+			},
+		},
+		NameFor: staticName("table.insert"),
+		Facts:   facts,
+		Sources: sources,
+	})
+	site, ok := facts.CallSite(call)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+
+	if len(got.ParamPathWrites) != 1 ||
+		!got.ParamPathWrites[0].Path.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("param path writes = %#v, want one $0 write", got.ParamPathWrites)
+	}
+	refinedType, ok := typevalue.TypeOf(reg, got.ParamPathWrites[0].Value)
+	want := typ.NewArray(typ.Any)
+	if !ok || !typ.TypeEquals(refinedType, want) {
+		t.Fatalf("refined list type = %v/%v, want %v", refinedType, ok, want)
+	}
+	if len(got.NormalReturnFacts.DynamicIndexFacts) != 1 {
+		t.Fatalf("dynamic index facts = %#v, want one table-mutator element fact", got.NormalReturnFacts.DynamicIndexFacts)
+	}
+	if want := returnValueFromType(reg, entryType); !product.Equal(reg, got.NormalReturnFacts.DynamicIndexFacts[0].Value.Value, want) {
+		t.Fatalf("dynamic value = %#v, want inserted record product", got.NormalReturnFacts.DynamicIndexFacts[0].Value.Value)
+	}
+}
+
+func TestSignatureOutcomeProviderSkipsAccumulatorObligationForExactInferredTable(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	listExpr := factflow.ExprRef(91631)
+	valueExpr := factflow.ExprRef(91632)
+	listSymbol := symbol.ID(91633)
+	accumulatorID := identity.ID{Kind: "test.table", Site: "accumulator", Index: 1}
+	targetType := typ.NewArray(typ.LiteralString("system"))
+	insertedType := typetable.NewRecord().
+		Field("role", typ.LiteralString("cache_marker")).
+		Field("marker_id", typ.String).
+		Build()
+	targetValue := product.Set(reg, returnValueFromType(reg, targetType), identity.Key, identity.Singleton(accumulatorID))
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: listExpr, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: valueExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]path.Path{
+			listExpr: path.NewPath(listSymbol, "items"),
+		},
+	})
+	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[factflow.ExprRef]product.Value{
+			listExpr:  targetValue,
+			valueExpr: returnValueFromType(reg, insertedType),
+		},
+	})
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"table.insert": {
+				Effect: effect.Empty.With(
+					mutation.TableMutator{Target: effect.ParamRef{Index: 0}, Value: effect.ParamRef{Index: -1}},
+				),
+			},
+		},
+		NameFor: staticName("table.insert"),
+		Facts:   facts,
+		Sources: sources,
+	})
+	site, ok := facts.CallSite(call)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+
+	if len(got.ParamObligations) != 0 {
+		t.Fatalf("param obligations = %#v, want no inserted-value obligation for inferred exact accumulator", got.ParamObligations)
+	}
+	if len(got.ParamPathWrites) != 1 ||
+		!got.ParamPathWrites[0].Path.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("param path writes = %#v, want one widening write for accumulator", got.ParamPathWrites)
+	}
+	refinedType, ok := typevalue.TypeOf(reg, got.ParamPathWrites[0].Value)
+	if !ok || !strings.Contains(refinedType.String(), "system") || !strings.Contains(refinedType.String(), "cache_marker") {
+		t.Fatalf("refined accumulator type = %v/%v, want widened element union containing system and cache_marker", refinedType, ok)
+	}
+}
+
+func TestSignatureOutcomeProviderTableMutatorUsesSignatureArgumentTypeForInsertedValue(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	listExpr := factflow.ExprRef(91634)
+	valueExpr := factflow.ExprRef(91635)
+	listSymbol := symbol.ID(91636)
+	insertedType := typetable.NewRecord().
+		Field("run", typ.Boolean).
+		Build()
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: listExpr, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: valueExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]path.Path{
+			listExpr: path.NewPath(listSymbol, "items"),
+		},
+	})
+	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[factflow.ExprRef]product.Value{
+			listExpr: returnValueFromType(reg, typetable.NewRecord().Build()),
+		},
+	})
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"table.insert": {
+				Effect: effect.Empty.With(
+					mutation.TableMutator{Target: effect.ParamRef{Index: 0}, Value: effect.ParamRef{Index: -1}},
+				),
+			},
+		},
+		NameFor: staticName("table.insert"),
+		Facts:   facts,
+		Sources: sources,
+		ArgumentType: func(_ transfer.NodeContext, source factflow.ValueSource, _ state.State, _ func(cfg.Point) state.State) (typ.Type, bool) {
+			if source.Kind == factflow.ValueSourceExpression && source.HasExpr && source.ExprRef == valueExpr {
+				return insertedType, true
+			}
+			return nil, false
+		},
+	})
+	site, ok := facts.CallSite(call)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+
+	if len(got.ParamPathWrites) != 1 ||
+		!got.ParamPathWrites[0].Path.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("param path writes = %#v, want one $0 write", got.ParamPathWrites)
+	}
+	refinedType, ok := typevalue.TypeOf(reg, got.ParamPathWrites[0].Value)
+	want := typ.NewArray(insertedType)
+	if !ok || !typ.TypeEquals(refinedType, want) {
+		t.Fatalf("refined list type = %v/%v, want %v", refinedType, ok, want)
+	}
+	if len(got.NormalReturnFacts.DynamicIndexFacts) != 1 {
+		t.Fatalf("dynamic index facts = %#v, want one table-mutator element fact", got.NormalReturnFacts.DynamicIndexFacts)
+	}
+	dynamicValueType, ok := typevalue.TypeOf(reg, got.NormalReturnFacts.DynamicIndexFacts[0].Value.Value)
+	if !ok || !typ.TypeEquals(dynamicValueType, insertedType) {
+		t.Fatalf("dynamic value type = %v/%v, want %v", dynamicValueType, ok, insertedType)
+	}
+}
+
+func TestTableMutatorWritePreservesInferredAccumulatorIdentity(t *testing.T) {
+	reg := standard.Registry()
+	accumulatorID := identity.ID{Kind: "test.table", Site: "write-accumulator", Index: 1}
+	targetType := typ.NewArray(typ.LiteralString("system"))
+	insertedType := typetable.NewRecord().
+		Field("role", typ.LiteralString("cache_marker")).
+		Field("marker_id", typ.String).
+		Build()
+	targetValue := product.Set(reg, returnValueFromType(reg, targetType), identity.Key, identity.Singleton(accumulatorID))
+
+	write, ok := tableMutatorParamWrite(transfer.NodeContext{Registry: reg}, nil, tableMutatorEvidence{
+		targetIndex: 0,
+		valueIndex:  1,
+		target:      targetValue,
+		value:       returnValueFromType(reg, insertedType),
+		targetType:  targetType,
+		valueType:   insertedType,
+	})
+	if !ok {
+		t.Fatalf("table mutator write missing for inferred accumulator")
+	}
+	if gotID, ok := identityvalue.ExactID(reg, write.Value); !ok || gotID != accumulatorID {
+		t.Fatalf("write value identity = %v/%v, want preserved accumulator identity %v", gotID, ok, accumulatorID)
+	}
+	refinedType, ok := typevalue.TypeOf(reg, write.Value)
+	if !ok {
+		t.Fatalf("write value has no type witness")
+	}
+	obligation, ok := tableMutatorParamObligation(transfer.NodeContext{Registry: reg}, nil, tableMutatorEvidence{
+		targetIndex: 0,
+		valueIndex:  1,
+		target:      write.Value,
+		value:       returnValueFromType(reg, insertedType),
+		targetType:  refinedType,
+		valueType:   insertedType,
+	})
+	if ok {
+		t.Fatalf("second inferred accumulator obligation = %#v, want none after identity-preserving write", obligation)
+	}
+}
+
+func TestTableMutatorWritePreservesDeclaredAccumulatorClaim(t *testing.T) {
+	reg := standard.Registry()
+	accumulatorID := identity.ID{Kind: "test.table", Site: "write-declared-accumulator", Index: 1}
+	targetType := typ.NewArray(typ.LiteralString("system"))
+	insertedType := typetable.NewRecord().
+		Field("role", typ.LiteralString("cache_marker")).
+		Build()
+	targetValue := product.Set(reg, returnValueFromType(reg, targetType), identity.Key, identity.Singleton(accumulatorID))
+	targetValue = product.Set(reg, targetValue, assertion.Key, assertion.Type())
+
+	write, ok := tableMutatorParamWrite(transfer.NodeContext{Registry: reg}, nil, tableMutatorEvidence{
+		targetIndex: 0,
+		valueIndex:  1,
+		target:      targetValue,
+		value:       returnValueFromType(reg, insertedType),
+		targetType:  targetType,
+		valueType:   insertedType,
+	})
+	if !ok {
+		t.Fatalf("table mutator write missing for declared accumulator")
+	}
+	if gotID, ok := identityvalue.ExactID(reg, write.Value); !ok || gotID != accumulatorID {
+		t.Fatalf("write value identity = %v/%v, want preserved declared accumulator identity %v", gotID, ok, accumulatorID)
+	}
+	if got := product.Get(reg, write.Value, assertion.Key); !got.Has(assertion.TypeClaim) {
+		t.Fatalf("write value assertion = %s, want preserved declared type claim", got.String())
+	}
+}
+
+func TestSignatureOutcomeProviderKeepsDeclaredExactAccumulatorObligation(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	listExpr := factflow.ExprRef(91641)
+	valueExpr := factflow.ExprRef(91642)
+	listSymbol := symbol.ID(91643)
+	accumulatorID := identity.ID{Kind: "test.table", Site: "declared-accumulator", Index: 1}
+	targetType := typ.NewArray(typ.LiteralString("system"))
+	targetValue := product.Set(reg, returnValueFromType(reg, targetType), identity.Key, identity.Singleton(accumulatorID))
+	targetValue = product.Set(reg, targetValue, assertion.Key, assertion.Type())
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: listExpr, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: valueExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]path.Path{
+			listExpr: path.NewPath(listSymbol, "items"),
+		},
+	})
+	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[factflow.ExprRef]product.Value{
+			listExpr:  targetValue,
+			valueExpr: returnValueFromType(reg, typetable.NewRecord().Field("role", typ.LiteralString("cache_marker")).Build()),
+		},
+	})
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"table.insert": {
+				Effect: effect.Empty.With(
+					mutation.TableMutator{Target: effect.ParamRef{Index: 0}, Value: effect.ParamRef{Index: -1}},
+				),
+			},
+		},
+		NameFor: staticName("table.insert"),
+		Facts:   facts,
+		Sources: sources,
+	})
+	site, ok := facts.CallSite(call)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+
+	if len(got.ParamObligations) != 1 || got.ParamObligations[0].ParamIndex != 1 {
+		t.Fatalf("param obligations = %#v, want declared accumulator to enforce inserted value", got.ParamObligations)
+	}
+	obligationType, ok := typevalue.TypeOf(reg, got.ParamObligations[0].Value)
+	if !ok || !typ.TypeEquals(obligationType, typ.String) {
+		t.Fatalf("obligation type = %v/%v, want string family base for declared literal element", obligationType, ok)
+	}
+}
+
+func TestSignatureOutcomeProviderKeepsAnyArrayMutatorWhenInsertedValueIsUnresolved(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	listExpr := factflow.ExprRef(9164)
+	valueExpr := factflow.ExprRef(9165)
+	listSymbol := symbol.ID(9166)
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: listExpr, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: valueExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]path.Path{
+			listExpr: path.NewPath(listSymbol, "items"),
+		},
+	})
+	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[factflow.ExprRef]product.Value{
+			listExpr: returnValueFromType(reg, typ.NewArray(typ.Any)),
+		},
+	})
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"table.insert": {
+				Effect: effect.Empty.With(
+					mutation.TableMutator{Target: effect.ParamRef{Index: 0}, Value: effect.ParamRef{Index: -1}},
+				),
+			},
+		},
+		NameFor: staticName("table.insert"),
+		Facts:   facts,
+		Sources: sources,
+	})
+	site, ok := facts.CallSite(call)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+
+	if len(got.ParamPathWrites) != 1 ||
+		!got.ParamPathWrites[0].Path.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("param path writes = %#v, want one $0 write", got.ParamPathWrites)
+	}
+	refinedType, ok := typevalue.TypeOf(reg, got.ParamPathWrites[0].Value)
+	want := typ.NewArray(typ.Any)
+	if !ok || !typ.TypeEquals(refinedType, want) {
+		t.Fatalf("refined list type = %v/%v, want %v", refinedType, ok, want)
+	}
+	if len(got.NormalReturnFacts.DynamicIndexFacts) != 1 {
+		t.Fatalf("dynamic index facts = %#v, want one table-mutator element fact", got.NormalReturnFacts.DynamicIndexFacts)
+	}
+	if want := returnValueFromType(reg, typ.Any); !product.Equal(reg, got.NormalReturnFacts.DynamicIndexFacts[0].Value.Value, want) {
+		t.Fatalf("dynamic value = %#v, want explicit any product", got.NormalReturnFacts.DynamicIndexFacts[0].Value.Value)
+	}
+}
+
+func TestSignatureOutcomeProviderKeepsConcreteArrayMutatorProvenanceWhenInsertedValueIsUnresolved(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	listExpr := factflow.ExprRef(9170)
+	valueExpr := factflow.ExprRef(9171)
+	listSymbol := symbol.ID(9172)
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: listExpr, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: valueExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]path.Path{
+			listExpr: path.NewPath(listSymbol, "items"),
+		},
+	})
+	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[factflow.ExprRef]product.Value{
+			listExpr: returnValueFromType(reg, typ.NewArray(typ.String)),
+		},
+	})
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"table.insert": {
+				Effect: effect.Empty.With(
+					mutation.TableMutator{Target: effect.ParamRef{Index: 0}, Value: effect.ParamRef{Index: -1}},
+				),
+			},
+		},
+		NameFor: staticName("table.insert"),
+		Facts:   facts,
+		Sources: sources,
+	})
+	site, ok := facts.CallSite(call)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+
+	if len(got.ParamPathWrites) != 0 {
+		t.Fatalf("param path writes = %#v, want none without inserted value type proof", got.ParamPathWrites)
+	}
+	if len(got.NormalReturnFacts.DynamicIndexFacts) != 1 {
+		t.Fatalf("dynamic index facts = %#v, want one provenance-preserving table-mutator fact", got.NormalReturnFacts.DynamicIndexFacts)
+	}
+	dynamic := got.NormalReturnFacts.DynamicIndexFacts[0]
+	if !dynamic.ValuePath.Equal(path.NewPlaceholder(1)) {
+		t.Fatalf("dynamic value path = %s, want $1", dynamic.ValuePath)
+	}
+	if keyType, ok := typevalue.TypeOf(reg, dynamic.Value.KeyValue); !ok || !typ.TypeEquals(keyType, typ.Integer) {
+		t.Fatalf("dynamic key type = %v/%v, want integer", keyType, ok)
+	}
+	if !product.Domain(reg).Equal(dynamic.Value.Value, product.Bottom(reg)) {
+		t.Fatalf("dynamic value = %#v, want bottom/no invented value type", dynamic.Value.Value)
+	}
+	if dynamic.Value.Admission != dynamicindex.AdmissionAdmitted {
+		t.Fatalf("dynamic admission = %v, want admitted", dynamic.Value.Admission)
+	}
 }
 
 func TestSignatureOutcomeProviderLowersMutateToParamPathInvalidationAndApplies(t *testing.T) {
@@ -812,9 +1792,15 @@ func TestSignatureOutcomeProviderLowersMutateToParamPathInvalidationAndApplies(t
 		!got.ParamPathInvalidations[0].Path.Equal(path.NewPlaceholder(0)) {
 		t.Fatalf("param path invalidations = %#v, want target $0", got.ParamPathInvalidations)
 	}
+	if !got.ParamPathInvalidations[0].PreserveStructuralWitness {
+		t.Fatalf("table.sort invalidation should preserve the root structural witness: %#v", got.ParamPathInvalidations[0])
+	}
 	if len(got.NormalReturnFacts.PathInvalidations) != 1 ||
 		!got.NormalReturnFacts.PathInvalidations[0].Path.Equal(path.NewPlaceholder(0)) {
 		t.Fatalf("normal-return invalidations = %#v, want target $0", got.NormalReturnFacts.PathInvalidations)
+	}
+	if !got.NormalReturnFacts.PathInvalidations[0].PreserveStructuralWitness {
+		t.Fatalf("table.sort normal-return invalidation should preserve the root structural witness: %#v", got.NormalReturnFacts.PathInvalidations[0])
 	}
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(call, argSymbol, "items")
@@ -887,6 +1873,9 @@ func TestSignatureParamPathInvalidationProjectsEachDistinctMutatedArgument(t *te
 	}
 	if !got[0].Path.Equal(path.NewPlaceholder(0)) || !got[1].Path.Equal(path.NewPlaceholder(1)) {
 		t.Fatalf("param path invalidations = %#v, want targets $0 and $1 in signature order", got)
+	}
+	if !got[1].PreserveStructuralWitness {
+		t.Fatalf("target $1 has only structural-preserving table-mutator/unchanged evidence, so the merged invalidation must preserve structural witness: %#v", got[1])
 	}
 }
 
@@ -967,9 +1956,15 @@ func TestSignatureOutcomeProviderLowersStoreIntoContainerArgument(t *testing.T) 
 	if len(got.ParamPathInvalidations) != 1 || !got.ParamPathInvalidations[0].Path.Equal(path.NewPlaceholder(0)) {
 		t.Fatalf("param path invalidations = %#v, want container argument $0", got.ParamPathInvalidations)
 	}
+	if !got.ParamPathInvalidations[0].PreserveStructuralWitness {
+		t.Fatalf("store invalidation should preserve the destination structural witness: %#v", got.ParamPathInvalidations[0])
+	}
 	if len(got.NormalReturnFacts.PathInvalidations) != 1 ||
 		!got.NormalReturnFacts.PathInvalidations[0].Path.Equal(path.NewPlaceholder(0)) {
 		t.Fatalf("normal-return invalidations = %#v, want container argument $0", got.NormalReturnFacts.PathInvalidations)
+	}
+	if !got.NormalReturnFacts.PathInvalidations[0].PreserveStructuralWitness {
+		t.Fatalf("store normal-return invalidation should preserve the destination structural witness: %#v", got.NormalReturnFacts.PathInvalidations[0])
 	}
 	if len(got.NormalReturnFacts.StoreRelations) != 1 ||
 		!got.NormalReturnFacts.StoreRelations[0].Source.Equal(path.NewPlaceholder(1)) ||
@@ -1165,12 +2160,21 @@ func TestSignatureOutcomeProviderLowersOperationalEffectsNormalReturnFacts(t *te
 			Path:     path.NewPlaceholder(0).Field("ready"),
 			Presence: presence.Present(),
 		}},
+		NormalReturnTypeRefinements: []signature.PathTypeRefinement{{
+			Path: path.NewPlaceholder(0),
+			Type: typ.String,
+		}},
 		PathStaticMembers: []signature.PathStaticMemberFact{{
 			Path: path.NewPlaceholder(1).Field("kind"),
 			Type: typ.String,
 		}},
 		PathInvalidations: []signature.PathInvalidation{{
 			Path: path.NewPlaceholder(1).Field("items"),
+		}},
+		BranchProofs: []signature.BranchProof{{
+			Kind:  signature.BranchProofPathNotEqual,
+			Path:  path.NewPlaceholder(0).Field("channel"),
+			Other: path.NewPlaceholder(1),
 		}},
 		FrozenTables: []signature.FrozenTable{{
 			Target: path.NewPlaceholder(0).Field("sealed"),
@@ -1198,11 +2202,15 @@ func TestSignatureOutcomeProviderLowersOperationalEffectsNormalReturnFacts(t *te
 		t.Fatalf("PostReturnAuthority = false, want true for operational effects")
 	}
 	assertCallReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Present(), 0, presence.Absent())
-	if len(got.NormalReturnFacts.PathRefinements) != 1 ||
+	if len(got.NormalReturnFacts.PathRefinements) != 2 ||
 		!got.NormalReturnFacts.PathRefinements[0].Path.Equal(path.NewPlaceholder(0).Field("ready")) {
 		t.Fatalf("path refinements = %#v", got.NormalReturnFacts.PathRefinements)
 	}
 	assertPresence(t, reg, got.NormalReturnFacts.PathRefinements[0].Value, presence.Present())
+	if !got.NormalReturnFacts.PathRefinements[1].Path.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("type refinement path = %s, want $0", got.NormalReturnFacts.PathRefinements[1].Path.String())
+	}
+	assertTypeWitness(t, reg, got.NormalReturnFacts.PathRefinements[1].Value, typ.String)
 	if len(got.NormalReturnFacts.PathStaticMembers) != 1 ||
 		!got.NormalReturnFacts.PathStaticMembers[0].Path.Equal(path.NewPlaceholder(1).Field("kind")) {
 		t.Fatalf("path static members = %#v", got.NormalReturnFacts.PathStaticMembers)
@@ -1211,6 +2219,12 @@ func TestSignatureOutcomeProviderLowersOperationalEffectsNormalReturnFacts(t *te
 	if len(got.NormalReturnFacts.PathInvalidations) != 1 ||
 		!got.NormalReturnFacts.PathInvalidations[0].Path.Equal(path.NewPlaceholder(1).Field("items")) {
 		t.Fatalf("path invalidations = %#v", got.NormalReturnFacts.PathInvalidations)
+	}
+	if len(got.NormalReturnFacts.BranchProofs) != 1 ||
+		got.NormalReturnFacts.BranchProofs[0].Kind != pathevidence.BranchProofPathNotEqual ||
+		!got.NormalReturnFacts.BranchProofs[0].Path.Equal(path.NewPlaceholder(0).Field("channel")) ||
+		!got.NormalReturnFacts.BranchProofs[0].Other.Equal(path.NewPlaceholder(1)) {
+		t.Fatalf("branch proofs = %#v", got.NormalReturnFacts.BranchProofs)
 	}
 	if len(got.NormalReturnFacts.FrozenTables) != 1 ||
 		!got.NormalReturnFacts.FrozenTables[0].Target.Equal(path.NewPlaceholder(0).Field("sealed")) {
@@ -1320,6 +2334,363 @@ func TestSignatureOutcomeProviderLowersOperationalAllocationTemplates(t *testing
 	}
 }
 
+func TestSignatureOutcomeProviderSpecializesAllocationTemplateIdentityByCallPoint(t *testing.T) {
+	reg := standard.Registry()
+	rootType := typetable.NewRecord().Build()
+	rootTemplate := signature.AllocationTemplateID("stdlib.table.create:return:0")
+	operational := &signature.OperationalEffects{
+		ReturnAllocationTemplates: []signature.ReturnAllocationTemplate{{
+			ReturnIndex: 0,
+			Root:        rootTemplate,
+			Objects: []signature.AllocationObjectTemplate{{
+				ID:   rootTemplate,
+				Type: rootType,
+			}},
+		}},
+	}
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"table.create": {
+				Type:               typ.Func().Param("narray", typ.Integer).OptParam("nhash", typ.Integer).Returns(rootType).Build(),
+				OperationalEffects: operational,
+			},
+		},
+		NameFor:  staticName("table.create"),
+		KeySpace: keyspace.New(),
+	})
+
+	left := provider(transfer.NodeContext{Registry: reg, Point: cfg.Point(4101)}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	right := provider(transfer.NodeContext{Registry: reg, Point: cfg.Point(4102)}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	leftID := callResultIdentityAt(reg, left.Results, 0)
+	rightID := callResultIdentityAt(reg, right.Results, 0)
+	if leftID == (identity.ID{}) || rightID == (identity.ID{}) {
+		t.Fatalf("return identities = %v/%v, want concrete identities", leftID, rightID)
+	}
+	if leftID == rightID {
+		t.Fatalf("allocation identities collapsed across call sites: %v", leftID)
+	}
+	if leftID != allocationTemplateIdentityAt(cfg.Point(4101), rootTemplate) {
+		t.Fatalf("left identity = %v, want call-site-specialized template identity", leftID)
+	}
+	if rightID != allocationTemplateIdentityAt(cfg.Point(4102), rootTemplate) {
+		t.Fatalf("right identity = %v, want call-site-specialized template identity", rightID)
+	}
+}
+
+func TestSignatureOutcomeProviderClosesUninferredGenericDeclaredReturn(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(28)
+	boxParam := typ.NewTypeParam("T", nil)
+	box := typ.NewGeneric("Box", []*typ.TypeParam{boxParam},
+		typetable.NewRecord().Field("value", boxParam).Build())
+	fnParam := typ.NewTypeParam("T", nil)
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"make": {
+				Type: typ.Func().
+					TypeParamRef(fnParam).
+					Returns(typ.Instantiate(box, fnParam)).
+					Build(),
+			},
+		},
+		NameFor: staticName("make"),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
+
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got), got)
+	}
+	want := typ.Instantiate(box, typ.Unknown)
+	if gotType, ok := typevalue.TypeOf(reg, got[0].Value); !ok || !typ.TypeEquals(gotType, want) {
+		t.Fatalf("result type = %v/%v, want %v", gotType, ok, want)
+	}
+}
+
+func TestSignatureOutcomeProviderClosesUninferredGenericAllocationTemplateType(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(29)
+	boxParam := typ.NewTypeParam("T", nil)
+	box := typ.NewGeneric("Box", []*typ.TypeParam{boxParam},
+		typetable.NewRecord().Field("value", boxParam).Build())
+	fnParam := typ.NewTypeParam("T", nil)
+	openReturn := typ.Instantiate(box, fnParam)
+	closedReturn := typ.Instantiate(box, typ.Unknown)
+	rootTemplate := signature.AllocationTemplateID("box.make:return:0:root")
+	operational := &signature.OperationalEffects{
+		ReturnAllocationTemplates: []signature.ReturnAllocationTemplate{{
+			ReturnIndex: 0,
+			Root:        rootTemplate,
+			Objects: []signature.AllocationObjectTemplate{{
+				ID:   rootTemplate,
+				Type: openReturn,
+			}},
+		}},
+	}
+	ks := keyspace.New()
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"box.make": {
+				Type: typ.Func().
+					TypeParamRef(fnParam).
+					Returns(openReturn).
+					Build(),
+				OperationalEffects: operational,
+			},
+		},
+		NameFor:  staticName("box.make"),
+		KeySpace: ks,
+	})
+
+	outcome := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+
+	if len(outcome.Results) != 1 {
+		t.Fatalf("results = %#v, want one return", outcome.Results)
+	}
+	rootID := allocationTemplateIdentityAt(point, rootTemplate)
+	if id, ok := product.Get(reg, outcome.Results[0].Value, identity.Key).ID(); !ok || id != rootID {
+		t.Fatalf("return identity = %v/%v, want %v", id, ok, rootID)
+	}
+	if gotType, ok := typevalue.TypeOf(reg, outcome.Results[0].Value); !ok || !typ.TypeEquals(gotType, closedReturn) {
+		t.Fatalf("return type = %v/%v, want %v", gotType, ok, closedReturn)
+	}
+	object, ok := outcome.HeapTableObjects[rootID]
+	if !ok {
+		t.Fatalf("heap objects missing %v: %#v", rootID, outcome.HeapTableObjects)
+	}
+	if gotType, ok := typevalue.TypeOf(reg, object.Root()); !ok || !typ.TypeEquals(gotType, closedReturn) {
+		t.Fatalf("heap root type = %v/%v, want %v", gotType, ok, closedReturn)
+	}
+}
+
+func TestSignatureOutcomeProviderAllocationTemplateRootTypeRefinesClosedGenericReturn(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(30)
+	resultParam := typ.NewTypeParam("T", nil)
+	errType := typetable.NewRecord().
+		Field("ok", typ.LiteralBool(false)).
+		Field("error", typ.String).
+		Build()
+	result := typ.NewGeneric("Result", []*typ.TypeParam{resultParam}, typeexpr.Union(
+		typetable.NewRecord().
+			Field("ok", typ.LiteralBool(true)).
+			Field("value", resultParam).
+			Build(),
+		errType,
+	))
+	fnParam := typ.NewTypeParam("T", nil)
+	openReturn := typ.Instantiate(result, fnParam)
+	rootTemplate := signature.AllocationTemplateID("result.err:return:0:root")
+	operational := &signature.OperationalEffects{
+		ReturnAllocationTemplates: []signature.ReturnAllocationTemplate{{
+			ReturnIndex: 0,
+			Root:        rootTemplate,
+			Objects: []signature.AllocationObjectTemplate{{
+				ID:   rootTemplate,
+				Type: errType,
+			}},
+		}},
+	}
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"result.err": {
+				Type: typ.Func().
+					TypeParamRef(fnParam).
+					Param("error", typ.String).
+					Returns(openReturn).
+					Build(),
+				OperationalEffects: operational,
+			},
+		},
+		NameFor:  staticName("result.err"),
+		KeySpace: keyspace.New(),
+	})
+
+	outcome := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+
+	if len(outcome.Results) != 1 {
+		t.Fatalf("results = %#v, want one return", outcome.Results)
+	}
+	if gotType, ok := typevalue.TypeOf(reg, outcome.Results[0].Value); !ok || !typ.TypeEquals(gotType, errType) {
+		t.Fatalf("return type = %v/%v, want exact error variant %v", gotType, ok, errType)
+	}
+	rootID := allocationTemplateIdentityAt(point, rootTemplate)
+	if id, ok := product.Get(reg, outcome.Results[0].Value, identity.Key).ID(); !ok || id != rootID {
+		t.Fatalf("return identity = %v/%v, want %v", id, ok, rootID)
+	}
+}
+
+func TestSignatureOutcomeProviderAllocationTemplatePreservesPreciseSignatureReturn(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(30)
+	returnType := typetable.NewRecord().
+		Field("data_func", typeexpr.Optional(typ.String)).
+		Build()
+	rootTemplate := signature.AllocationTemplateID("page:return:0:root")
+	operational := &signature.OperationalEffects{
+		ReturnAllocationTemplates: []signature.ReturnAllocationTemplate{{
+			ReturnIndex: 0,
+			Root:        rootTemplate,
+			Objects: []signature.AllocationObjectTemplate{{
+				ID:   rootTemplate,
+				Type: typetable.NewRecord().Build(),
+			}},
+		}},
+	}
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"page.build": {
+				Type: typ.Func().
+					Returns(returnType).
+					Build(),
+				OperationalEffects: operational,
+			},
+		},
+		NameFor:  staticName("page.build"),
+		KeySpace: keyspace.New(),
+	})
+
+	outcome := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+
+	if len(outcome.Results) != 1 {
+		t.Fatalf("results = %#v, want one return", outcome.Results)
+	}
+	if gotType, ok := typevalue.TypeOf(reg, outcome.Results[0].Value); !ok || !typ.TypeEquals(gotType, returnType) {
+		t.Fatalf("return type = %v/%v, want precise signature return %v", gotType, ok, returnType)
+	}
+	rootID := allocationTemplateIdentityAt(point, rootTemplate)
+	if id, ok := product.Get(reg, outcome.Results[0].Value, identity.Key).ID(); !ok || id != rootID {
+		t.Fatalf("return identity = %v/%v, want %v", id, ok, rootID)
+	}
+}
+
+func TestSignatureOutcomeProviderSubstitutesGenericOperationalAllocationTemplate(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(31)
+	resultParam := typ.NewTypeParam("T", nil)
+	result := typ.NewGeneric("Result", []*typ.TypeParam{resultParam}, typetable.NewRecord().
+		Field("ok", typ.LiteralBool(true)).
+		Field("value", resultParam).
+		Build())
+	fnParam := typ.NewTypeParam("T", nil)
+	userType := typetable.NewRecord().
+		Field("id", typ.String).
+		Field("retries", typ.Number).
+		Build()
+	openReturn := typ.Instantiate(result, fnParam)
+	wantReturn := typetable.NewRecord().
+		Field("ok", typ.LiteralBool(true)).
+		Field("value", userType).
+		Build()
+	rootTemplate := signature.AllocationTemplateID("result.ok:return:0:root")
+	operational := &signature.OperationalEffects{
+		ReturnAllocationTemplates: []signature.ReturnAllocationTemplate{{
+			ReturnIndex: 0,
+			Root:        rootTemplate,
+			Objects: []signature.AllocationObjectTemplate{{
+				ID: rootTemplate,
+				Type: typetable.NewRecord().
+					Field("ok", typ.LiteralBool(true)).
+					Field("value", fnParam).
+					Build(),
+			}},
+		}},
+	}
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"result.ok": {
+				Type: typ.Func().
+					TypeParamRef(fnParam).
+					Param("value", fnParam).
+					Returns(openReturn).
+					Build(),
+				OperationalEffects: operational,
+			},
+		},
+		NameFor:       staticName("result.ok"),
+		ReturnTypeOps: testReturnTypeOps(),
+		ArgumentType: func(transfer.NodeContext, factflow.ValueSource, state.State, func(cfg.Point) state.State) (typ.Type, bool) {
+			return userType, true
+		},
+		KeySpace: keyspace.New(),
+	})
+
+	outcome := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{
+		ArgumentSources: []factflow.ValueSource{{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(31), HasExpr: true}},
+	}).View(), state.State{}, nil)
+
+	if len(outcome.Results) != 1 {
+		t.Fatalf("results = %#v, want one return", outcome.Results)
+	}
+	if gotType, ok := typevalue.TypeOf(reg, outcome.Results[0].Value); !ok || !typ.TypeEquals(gotType, wantReturn) {
+		t.Fatalf("return type = %v/%v, want %v", gotType, ok, wantReturn)
+	}
+	rootID := allocationTemplateIdentityAt(point, rootTemplate)
+	object, ok := outcome.HeapTableObjects[rootID]
+	if !ok {
+		t.Fatalf("heap objects missing %v: %#v", rootID, outcome.HeapTableObjects)
+	}
+	if gotType, ok := typevalue.TypeOf(reg, object.Root()); !ok || !typ.TypeEquals(gotType, wantReturn) {
+		t.Fatalf("heap root type = %v/%v, want %v", gotType, ok, wantReturn)
+	}
+}
+
+func TestCallableValueOutcomeProviderPreservesFreeOuterTypeParamReturn(t *testing.T) {
+	reg := standard.Registry()
+	resultParam := typ.NewTypeParam("T", nil)
+	result := typ.NewGeneric("Result", []*typ.TypeParam{resultParam}, typetable.NewRecord().
+		Field("ok", typ.LiteralBool(true)).
+		Field("value", resultParam).
+		Build())
+	outerParam := typ.NewTypeParam("U", nil)
+	returnType := typ.Instantiate(result, outerParam)
+	wantReturn := typetable.NewRecord().
+		Field("ok", typ.LiteralBool(true)).
+		Field("value", outerParam).
+		Build()
+	calleeType := typ.Func().
+		Param("value", typ.String).
+		Returns(returnType).
+		Build()
+	calleeValue := typevalue.WithWitness(reg, typevalue.FromType(reg, calleeType), calleeType)
+	provider := CallableValueOutcomeProvider(CallableValueOutcomeProviderConfig{
+		CalleeValue: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) (product.Value, bool) {
+			return calleeValue, true
+		},
+		Callable: typecall.Callable,
+	})
+
+	outcome := provider(transfer.NodeContext{Registry: reg}, factflow.CallSiteView{}, state.State{}, nil)
+	if len(outcome.Results) != 1 {
+		t.Fatalf("results = %#v, want free-outer-param return preserved", outcome.Results)
+	}
+	if gotType, ok := typevalue.TypeOf(reg, outcome.Results[0].Value); !ok || !typ.TypeEquals(gotType, wantReturn) {
+		t.Fatalf("return type = %v/%v, want %v", gotType, ok, wantReturn)
+	}
+}
+
+func TestCallableValueOutcomeProviderDoesNotAllocateWeakReturnPayload(t *testing.T) {
+	reg := standard.Registry()
+	calleeType := typ.Func().
+		Returns(typ.Any, typ.Unknown, typ.Never).
+		Build()
+	calleeValue := typevalue.WithWitness(reg, typevalue.FromType(reg, calleeType), calleeType)
+	provider := CallableValueOutcomeProvider(CallableValueOutcomeProviderConfig{
+		CalleeValue: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) (product.Value, bool) {
+			return calleeValue, true
+		},
+		Callable: typecall.Callable,
+	})
+
+	outcome := provider(transfer.NodeContext{Registry: reg}, factflow.CallSiteView{}, state.State{}, nil)
+	if outcome.Results != nil {
+		t.Fatalf("results = %#v, want nil result payload for weak returns", outcome.Results)
+	}
+	if outcome.PostReturnAuthority {
+		t.Fatal("PostReturnAuthority = true, want false without concrete return payload")
+	}
+}
+
 func TestSignatureOutcomeProviderOperationalEffectsSuppressRowOperationalFallback(t *testing.T) {
 	point := cfg.Point(9018)
 	facts := factflow.NewFacts(factflow.FactsInput{
@@ -1383,8 +2754,8 @@ func TestSignatureOutcomeProviderOperationalEffectsSuppressRowOperationalFallbac
 
 	got := provider(transfer.NodeContext{Point: point}, site.View(), state.State{}, nil)
 
-	if len(got.ParamPathInvalidations) != 0 || len(got.ParamPathRefinements) != 0 {
-		t.Fatalf("row-derived param facts leaked: refinements=%#v invalidations=%#v", got.ParamPathRefinements, got.ParamPathInvalidations)
+	if len(got.ParamPathInvalidations) != 0 || len(got.ParamPathRefinements) != 0 || len(got.ParamPathWrites) != 0 {
+		t.Fatalf("row-derived param facts leaked: refinements=%#v writes=%#v invalidations=%#v", got.ParamPathRefinements, got.ParamPathWrites, got.ParamPathInvalidations)
 	}
 	if len(got.NormalReturnFacts.FrozenTables) != 1 ||
 		!got.NormalReturnFacts.FrozenTables[0].Target.Equal(path.NewPlaceholder(0).Field("child")) {
@@ -2330,9 +3701,105 @@ func TestSignatureOutcomeProviderTypeProjectionGenericArgReturnsArgRuntimeKind(t
 	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.String))
 }
 
-func TestSignatureOutcomeProviderInstantiatesGenericDeclaredReturnFromArgumentWitnesses(t *testing.T) {
+func TestSignatureOutcomeProviderConditionalTypeUsesSpecializedReturnWhenProjectedArgumentProvesCase(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(21)
+	optionsRef := factflow.ExprRef(2101)
+	optionsType := typetable.NewRecord().
+		Field("message", typ.LiteralBool(true)).
+		Build()
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"listen": {
+				Type: typ.Func().
+					Param("topic", typ.String).
+					Param("options", typ.Any).
+					Returns(typ.Number).
+					Build(),
+				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.ConditionalType{
+					Source: effect.ParamRef{Index: 1},
+					Projection: projection.Projection{Steps: []projection.Step{
+						projection.Field("message"),
+					}},
+					When: typ.LiteralBool(true),
+					Then: typ.String,
+				}}),
+			},
+		},
+		NameFor:       staticName("listen"),
+		ReturnTypeOps: testReturnTypeOps(),
+		Facts: signatureOutcomeProviderFacts(point, []factflow.ValueSource{
+			{Kind: factflow.ValueSourceExpression},
+			{Kind: factflow.ValueSourceExpression, ExprRef: optionsRef, HasExpr: true},
+		}),
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+			Registry: reg,
+			ExpressionValues: map[factflow.ExprRef]product.Value{
+				optionsRef: typevalue.WithWitness(reg, typevalue.FromType(reg, optionsType), optionsType),
+			},
+		}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
+
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got), got)
+	}
+	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.String))
+	assertTypeWitness(t, reg, got[0].Value, typ.String)
+}
+
+func TestSignatureOutcomeProviderConditionalTypeUsesDeclaredReturnWhenCaseIsNotProven(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(22)
+	optionsRef := factflow.ExprRef(2201)
+	optionsType := typetable.NewRecord().
+		Field("message", typ.Boolean).
+		Build()
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"listen": {
+				Type: typ.Func().
+					Param("topic", typ.String).
+					Param("options", typ.Any).
+					Returns(typ.Number).
+					Build(),
+				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.ConditionalType{
+					Source: effect.ParamRef{Index: 1},
+					Projection: projection.Projection{Steps: []projection.Step{
+						projection.Field("message"),
+					}},
+					When: typ.LiteralBool(true),
+					Then: typ.String,
+				}}),
+			},
+		},
+		NameFor:       staticName("listen"),
+		ReturnTypeOps: testReturnTypeOps(),
+		Facts: signatureOutcomeProviderFacts(point, []factflow.ValueSource{
+			{Kind: factflow.ValueSourceExpression},
+			{Kind: factflow.ValueSourceExpression, ExprRef: optionsRef, HasExpr: true},
+		}),
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+			Registry: reg,
+			ExpressionValues: map[factflow.ExprRef]product.Value{
+				optionsRef: typevalue.WithWitness(reg, typevalue.FromType(reg, optionsType), optionsType),
+			},
+		}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
+
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got), got)
+	}
+	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.Number))
+	assertTypeWitness(t, reg, got[0].Value, typ.Number)
+}
+
+func TestSignatureOutcomeProviderInstantiatesGenericDeclaredReturnFromArgumentWitnesses(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(23)
 	resultParam := typ.NewTypeParam("T", nil)
 	resultGeneric := typ.NewGeneric("Result", []*typ.TypeParam{resultParam},
 		typetable.NewRecord().Field("value", resultParam).Build())
@@ -2385,7 +3852,7 @@ func TestSignatureOutcomeProviderInstantiatesGenericDeclaredReturnFromArgumentWi
 
 func TestSignatureOutcomeProviderTypeProjectionUsesDeclaredReturnTypeWhenProjectionFails(t *testing.T) {
 	reg := standard.Registry()
-	point := cfg.Point(24)
+	point := cfg.Point(25)
 	record := typetable.NewRecord().
 		Field("name", typ.String).
 		Build()
@@ -2448,6 +3915,17 @@ func TestActiveReturnTransformClassificationMatrix(t *testing.T) {
 					projection.Field("payload"),
 					projection.CallableReturn(),
 				}},
+			}},
+		},
+		{
+			name: "conditional type",
+			label: returns.Return{ReturnIndex: 0, Transform: returns.ConditionalType{
+				Source: effect.ParamRef{Index: 0},
+				Projection: projection.Projection{Steps: []projection.Step{
+					projection.Field("message"),
+				}},
+				When: typ.LiteralBool(true),
+				Then: typ.String,
 			}},
 		},
 		{
@@ -2522,6 +4000,17 @@ func TestActiveReturnTransformPointerTransformsFollowCapabilityStatus(t *testing
 			transform: &returns.TypeProjection{
 				Source:     effect.ParamRef{Index: 0},
 				Projection: projection.Projection{Steps: []projection.Step{projection.CallableReturn()}},
+			},
+		},
+		{
+			name: "conditional type pointer",
+			transform: &returns.ConditionalType{
+				Source: effect.ParamRef{Index: 0},
+				Projection: projection.Projection{Steps: []projection.Step{
+					projection.Field("message"),
+				}},
+				When: typ.LiteralBool(true),
+				Then: typ.String,
 			},
 		},
 		{
@@ -2852,6 +4341,17 @@ func assertTypeWitness(t *testing.T, reg *axis.Registry, got product.Value, want
 	if !ok || !typ.TypeEquals(gotType, want) {
 		t.Fatalf("type witness = %v/%v, want %v", gotType, ok, want)
 	}
+}
+
+func callResultIdentityAt(reg *axis.Registry, results []callpayload.CallResult, index int) identity.ID {
+	for _, result := range results {
+		if result.Index != index {
+			continue
+		}
+		id, _ := product.Get(reg, result.Value, identity.Key).ID()
+		return id
+	}
+	return identity.ID{}
 }
 
 func assertCallReturnPresenceRelation(

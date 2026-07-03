@@ -314,6 +314,10 @@ func TestTypeIsCallShapeRecognition(t *testing.T) {
 	if got, ok := TypeIsCall(wrapped); !ok || got != plain {
 		t.Fatalf("TypeIsCall(wrapped) = %p, %v; want %p, true", got, ok, plain)
 	}
+	memberCallee := &ast.FuncCallExpr{Func: dot(root, "is"), Args: []ast.Expr{arg}}
+	if got, ok := TypeIsCall(memberCallee); !ok || got != memberCallee {
+		t.Fatalf("TypeIsCall(member callee) = %p, %v; want %p, true", got, ok, memberCallee)
+	}
 	if _, ok := TypeIsCall(typeCall(arg)); ok {
 		t.Fatalf("TypeIsCall accepted direct function call shape")
 	}
@@ -657,6 +661,13 @@ func TestNormalizeLengthFloorGuards(t *testing.T) {
 			},
 			wantFloor: 3,
 		},
+		{
+			name: "equal two",
+			build: func(arr *ast.IdentExpr) ast.Expr {
+				return &ast.RelationalOpExpr{Operator: "==", Lhs: lenOf(arr), Rhs: number("2")}
+			},
+			wantFloor: 2,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -678,14 +689,17 @@ func TestNormalizeLengthFloorGuards(t *testing.T) {
 	}
 }
 
-func TestNormalizeLengthFloorRejectsNonGuards(t *testing.T) {
-	// `len == c` establishes no length floor on either edge.
-	for _, op := range []string{"=="} {
+func TestNormalizeLengthFloorNotEqualZeroHasNoFalseEdgeFloor(t *testing.T) {
+	// `len ~= 0` proves non-empty on its true edge, but its false edge does not
+	// establish a positive length floor.
+	for _, op := range []string{"~="} {
 		arr := ident("xs")
-		expr := &ast.RelationalOpExpr{Operator: op, Lhs: lenOf(arr), Rhs: number("5")}
+		expr := &ast.RelationalOpExpr{Operator: op, Lhs: lenOf(arr), Rhs: number("0")}
 		bindings := bindReturn(expr)
 		if check := Normalize(expr, bindings); check.Kind == CheckLenGe {
-			t.Fatalf("operator %q must not produce a length floor", op)
+			if check.Negated {
+				t.Fatalf("operator %q must not produce a negated length floor for zero", op)
+			}
 		}
 	}
 }
@@ -706,5 +720,27 @@ func TestNormalizeLengthFloorNegatedFalseEdge(t *testing.T) {
 			t.Fatalf("operator %q: got kind=%v negated=%v floor=%d, want CheckLenGe negated floor=%d",
 				tc.op, check.Kind, check.Negated, check.LenFloor, tc.floor)
 		}
+	}
+}
+
+func TestNormalizeLengthFloorEqualZeroFalseEdge(t *testing.T) {
+	arr := ident("xs")
+	expr := &ast.RelationalOpExpr{Operator: "==", Lhs: lenOf(arr), Rhs: number("0")}
+	bindings := bindReturn(expr)
+	check := Normalize(expr, bindings)
+	if check.Kind != CheckLenGe || !check.Negated || check.LenFloor != 1 {
+		t.Fatalf("got kind=%v negated=%v floor=%d, want CheckLenGe negated floor=1",
+			check.Kind, check.Negated, check.LenFloor)
+	}
+}
+
+func TestNormalizeLengthFloorNotEqualPositiveFalseEdge(t *testing.T) {
+	arr := ident("xs")
+	expr := &ast.RelationalOpExpr{Operator: "~=", Lhs: lenOf(arr), Rhs: number("2")}
+	bindings := bindReturn(expr)
+	check := Normalize(expr, bindings)
+	if check.Kind != CheckLenGe || !check.Negated || check.LenFloor != 2 {
+		t.Fatalf("got kind=%v negated=%v floor=%d, want CheckLenGe negated floor=2",
+			check.Kind, check.Negated, check.LenFloor)
 	}
 }

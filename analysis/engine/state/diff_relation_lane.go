@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
 
 // RelConstraint records relational evidence proven on all paths reaching this
@@ -114,17 +115,14 @@ func (l diffRelationLane) clearMatching(match func(pathaddr.StateKey) bool) (dif
 	if l.bottom || len(l.values) == 0 {
 		return l, false
 	}
-	kept := make(map[RelConstraint]struct{}, len(l.values))
-	changed := false
-	for c := range l.values {
+	kept, changed := mapedit.DeleteMatching(l.values, func(c RelConstraint, _ struct{}) bool {
 		if relOperandMatches(c.A, match) ||
 			(c.B.valid() && relOperandMatches(c.B, match)) ||
 			relOperandMatches(c.C, match) {
-			changed = true
-			continue
+			return true
 		}
-		kept[c] = struct{}{}
-	}
+		return false
+	})
 	if !changed {
 		return l, false
 	}

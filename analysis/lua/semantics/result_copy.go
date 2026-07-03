@@ -72,12 +72,23 @@ func copyCallFact(fact CallFact) CallFact {
 	fact.Args = copyExprs(fact.Args)
 	fact.TypeArgs = copyTypeExprs(fact.TypeArgs)
 	fact.ArgumentSources = copyValueSources(fact.ArgumentSources)
+	fact.ArgumentSpans = copySourceSpans(fact.ArgumentSpans)
+	fact.ArgumentLabels = copyStrings(fact.ArgumentLabels)
 	fact.CalleePath = fact.CalleePath.Clone()
 	fact.ReceiverPath = fact.ReceiverPath.Clone()
 	fact.MethodPath = fact.MethodPath.Clone()
 	fact.ResultTargets = copyResultTargets(fact.ResultTargets)
 	fact.ChannelSelect = copyChannelSelectFact(fact.ChannelSelect)
 	return fact
+}
+
+func copySourceSpans(in []SourceSpan) []SourceSpan {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]SourceSpan, len(in))
+	copy(out, in)
+	return out
 }
 
 func copyReturnFact(fact ReturnFact) ReturnFact {

@@ -17,7 +17,7 @@ func metamethodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 	if stopDepth(t, depth) {
 		return nil, false
 	}
-	if top, ok := access.SpecialAccessType(t); ok {
+	if top, ok := metamethodSpecialAccessType(t); ok {
 		return top, true
 	}
 
@@ -41,6 +41,14 @@ func metamethodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 	default:
 		return nil, false
 	}
+}
+
+func metamethodSpecialAccessType(t typ.Type) (typ.Type, bool) {
+	top, ok := access.SpecialAccessType(t)
+	if !ok || typetable.IsBuiltinTopMarker(t) {
+		return nil, false
+	}
+	return top, true
 }
 
 func metamethodInRecord(r *typ.Record, name string, depth int) (typ.Type, bool) {

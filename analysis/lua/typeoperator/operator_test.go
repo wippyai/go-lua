@@ -81,7 +81,7 @@ func TestUnaryOpPrimitives(t *testing.T) {
 		{name: "string length", op: "#", operand: typ.String, want: typ.Integer},
 		{name: "array length", op: "#", operand: typ.NewArray(typ.String), want: typ.Integer},
 		{name: "record length", op: "#", operand: typetable.NewRecord().Field("x", typ.Number).Build(), want: typ.Integer},
-		{name: "builtin table marker length", op: "#", operand: typ.NewInterface("table", nil), want: typ.Any},
+		{name: "builtin table marker length", op: "#", operand: typetable.BuiltinTopMarker(), want: typ.Integer},
 	}
 
 	for _, tt := range tests {
@@ -190,7 +190,8 @@ func TestBinaryOpLogicalTruthiness(t *testing.T) {
 		{name: "truthy string or returns left", left: typ.String, op: "or", right: typ.Number, want: typ.String},
 		{name: "boolean and splits false or right", left: typ.Boolean, op: "and", right: typ.String, want: typeexpr.Union(typ.False, typ.String)},
 		{name: "boolean or splits true or right", left: typ.Boolean, op: "or", right: typ.String, want: typeexpr.Union(typ.True, typ.String)},
-		{name: "any and stays dynamic", left: typ.Any, op: "and", right: typ.String, want: typ.Any},
+		{name: "any and returns falsy condition or right", left: typ.Any, op: "and", right: typ.String, want: typeexpr.Union(typ.Nil, typ.False, typ.String)},
+		{name: "unknown and returns falsy condition or right literal", left: typ.Unknown, op: "and", right: typ.LiteralInt(1), want: typeexpr.Union(typ.Nil, typ.False, typ.LiteralInt(1))},
 		{name: "unknown or is unknown", left: typ.Unknown, op: "or", right: typ.String, want: typ.Unknown},
 		{name: "truthy left or unknown stays left", left: typ.True, op: "or", right: typ.Unknown, want: typ.True},
 		{name: "falsey left and unknown stays left", left: typ.Nil, op: "and", right: typ.Unknown, want: typ.Nil},
@@ -225,6 +226,21 @@ func TestBinaryOpLogicalUnionDistribution(t *testing.T) {
 		t.Fatal("BinaryOp(unknown | nil, or, number) failed")
 	}
 	assertType(t, got, typ.Unknown)
+
+	got, ok = BinaryOp(BinaryOpMust(t, typ.Unknown, "and", typ.LiteralInt(1)), "or", typ.LiteralInt(0))
+	if !ok {
+		t.Fatal("BinaryOp((unknown and 1), or, 0) failed")
+	}
+	assertType(t, got, typeexpr.Union(typ.LiteralInt(1), typ.LiteralInt(0)))
+}
+
+func BinaryOpMust(t *testing.T, left typ.Type, op string, right typ.Type) typ.Type {
+	t.Helper()
+	got, ok := BinaryOp(left, op, right)
+	if !ok {
+		t.Fatalf("BinaryOp(%v, %q, %v) failed", left, op, right)
+	}
+	return got
 }
 
 func TestOperatorAnyUnknownNeverPolicy(t *testing.T) {

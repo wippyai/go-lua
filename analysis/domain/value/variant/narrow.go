@@ -103,7 +103,7 @@ func narrowByPathLiteralNot(t typ.Type, suffix []segment.Segment, lit typ.Type, 
 	case *typ.Union:
 		out := make([]typ.Type, 0, len(v.Members))
 		for _, member := range v.Members {
-			if !pathAdmitsLiteral(member, suffix, lit, depth+1) {
+			if !pathForcesLiteral(member, suffix, lit, depth+1) {
 				out = append(out, member)
 			}
 		}
@@ -115,7 +115,7 @@ func narrowByPathLiteralNot(t typ.Type, suffix []segment.Segment, lit typ.Type, 
 		}
 		return normalize.UnionForEvidence(out...), true
 	default:
-		if pathAdmitsLiteral(t, suffix, lit, depth+1) {
+		if pathForcesLiteral(t, suffix, lit, depth+1) {
 			return typ.Never, true
 		}
 		return t, false
@@ -125,6 +125,11 @@ func narrowByPathLiteralNot(t typ.Type, suffix []segment.Segment, lit typ.Type, 
 func pathAdmitsLiteral(t typ.Type, suffix []segment.Segment, lit typ.Type, depth int) bool {
 	field, ok := fieldAtPath(t, suffix, depth+1)
 	return ok && subtype.IsSubtype(lit, field)
+}
+
+func pathForcesLiteral(t typ.Type, suffix []segment.Segment, lit typ.Type, depth int) bool {
+	field, ok := fieldAtPath(t, suffix, depth+1)
+	return ok && subtype.IsSubtype(field, lit)
 }
 
 // NarrowByLiteralNot keeps the members of a union t that lit does not inhabit:

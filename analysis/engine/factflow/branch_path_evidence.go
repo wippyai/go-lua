@@ -178,6 +178,10 @@ func (p BranchPathEvidence) Kind() BranchPathEvidenceKind { return p.kind }
 // Path returns the evidence primary path.
 func (p BranchPathEvidence) Path() path.Path { return p.path.Clone() }
 
+// PathRef returns the evidence primary path for immediate read-only use.
+// Callers must not mutate or retain the returned path.
+func (p BranchPathEvidence) PathRef() path.Path { return p.path }
+
 // ActiveOnEdge reports whether this evidence is established on a branch edge.
 func (p BranchPathEvidence) ActiveOnEdge(cond bool) bool {
 	if cond {
@@ -199,6 +203,15 @@ func (p BranchPathEvidence) OtherPath() (path.Path, bool) {
 	return p.otherPath.Clone(), true
 }
 
+// OtherPathRef returns the secondary path for immediate read-only use.
+// Callers must not mutate or retain the returned path.
+func (p BranchPathEvidence) OtherPathRef() (path.Path, bool) {
+	if !p.hasOtherPath {
+		return path.Path{}, false
+	}
+	return p.otherPath, true
+}
+
 func (p BranchPathEvidence) copy() BranchPathEvidence {
 	p.path = p.path.Clone()
 	p.otherPath = p.otherPath.Clone()
@@ -208,6 +221,18 @@ func (p BranchPathEvidence) copy() BranchPathEvidence {
 // Evidence returns the branch path evidence in deterministic order.
 func (s BranchPathEvidenceSet) Evidence() []BranchPathEvidence {
 	return copyBranchPathEvidenceSlice(s.evidence)
+}
+
+// ForEachEvidence visits evidence without copying the backing slice.
+func (s BranchPathEvidenceSet) ForEachEvidence(fn func(BranchPathEvidence) bool) {
+	if fn == nil {
+		return
+	}
+	for _, proof := range s.evidence {
+		if !fn(proof) {
+			return
+		}
+	}
 }
 
 func (s BranchPathEvidenceSet) copy() BranchPathEvidenceSet {

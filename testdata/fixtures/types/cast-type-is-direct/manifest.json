@@ -1,0 +1,5 @@
+{
+  "description": "A type predicate result does not launder the original data:any variable into a trusted record.",
+  "files": ["main.lua"],
+  "check": {"errors": 1}
+}

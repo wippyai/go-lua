@@ -7,11 +7,13 @@ package typenarrow
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -35,12 +37,13 @@ func RuntimeKindTagForType(t typ.Type) (runtimekind.Tag, bool) {
 // edge of a type() comparison (for example the true edge of type(x) == "number").
 func MatchRefinement(reg *axis.Registry, tag runtimekind.Tag) factflow.ValueRefinement {
 	value := factflow.NewValueConstraint(product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(tag)))
+	value = value.WithConstraint(reg, product.Set(reg, product.Top(), assertion.Key, assertion.Runtime()))
 	if tag == runtimekind.Nil {
 		return value.WithConstraint(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Absent()))
 	}
 	value = value.WithConstraint(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()))
-	if scalar, ok := ScalarTypeForTag(tag); ok {
-		value = value.WithConstraint(reg, typevalue.WithWitness(reg, product.Top(), scalar))
+	if staticType, ok := StaticTypeForTag(tag); ok {
+		value = value.WithConstraint(reg, typevalue.WithWitness(reg, product.Top(), staticType))
 	}
 	return value
 }
@@ -55,9 +58,9 @@ func UnmatchRefinement(reg *axis.Registry, tag runtimekind.Tag) factflow.ValueRe
 	return value
 }
 
-// ScalarTypeForTag returns the scalar type witness for a runtime kind tag, for
-// the tags whose runtime kind pins a single scalar type.
-func ScalarTypeForTag(tag runtimekind.Tag) (typ.Type, bool) {
+// StaticTypeForTag returns the source-level type witness implied by a runtime
+// kind tag when the checker has a sound top type for that runtime family.
+func StaticTypeForTag(tag runtimekind.Tag) (typ.Type, bool) {
 	switch tag {
 	case runtimekind.String:
 		return typ.String, true
@@ -65,6 +68,8 @@ func ScalarTypeForTag(tag runtimekind.Tag) (typ.Type, bool) {
 		return typ.Number, true
 	case runtimekind.Boolean:
 		return typ.Boolean, true
+	case runtimekind.Table:
+		return typetable.BuiltinTopMarker(), true
 	default:
 		return nil, false
 	}

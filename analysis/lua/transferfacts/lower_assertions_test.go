@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
@@ -21,6 +22,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -47,7 +50,7 @@ func TestLowerClaimsToSidecarsWithoutProofRefinements(t *testing.T) {
 	anySource := mustLocalSource(t, facts, points[1])
 	nonNilSource := mustLocalSource(t, facts, points[2])
 
-	assertLoweredAssertion(t, facts, typeSource, assertion.Type(), factflow.ValueSourceExpression)
+	assertLoweredConcreteCastAssertion(t, facts, typeSource, typ.Number, factflow.ValueSourceExpression)
 	assertLoweredAssertion(t, facts, anySource, assertion.Any(), factflow.ValueSourceExpression)
 	assertLoweredAssertion(t, facts, nonNilSource, assertion.NonNil(), factflow.ValueSourceExpression)
 	if len(facts.BranchRefinements(points[2])) != 0 {
@@ -80,9 +83,10 @@ func TestLowerClaimsPreserveCastSyntaxVariantsWithoutProofRefinements(t *testing
 		name  string
 		point cfg.Point
 		want  assertion.Value
+		typ   typ.Type
 	}{
-		{name: "as type", point: points[0], want: assertion.Type()},
-		{name: "colon type", point: points[1], want: assertion.Type()},
+		{name: "as type", point: points[0], want: assertion.Of(assertion.TypeClaim, assertion.RuntimeClaim), typ: typ.Number},
+		{name: "colon type", point: points[1], want: assertion.Of(assertion.TypeClaim, assertion.RuntimeClaim), typ: typ.Number},
 		{name: "as any", point: points[2], want: assertion.Any()},
 		{name: "colon any", point: points[3], want: assertion.Any()},
 	}
@@ -90,7 +94,11 @@ func TestLowerClaimsPreserveCastSyntaxVariantsWithoutProofRefinements(t *testing
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			source := mustLocalSource(t, facts, tc.point)
-			assertLoweredAssertion(t, facts, source, tc.want, factflow.ValueSourceExpression)
+			if tc.typ != nil {
+				assertLoweredConcreteCastAssertion(t, facts, source, tc.typ, factflow.ValueSourceExpression)
+			} else {
+				assertLoweredAssertion(t, facts, source, tc.want, factflow.ValueSourceExpression)
+			}
 		})
 	}
 }
@@ -110,9 +118,10 @@ local a, b, c, d = x as number, x :: number, x as any, x :: any
 		name  string
 		point cfg.Point
 		want  assertion.Value
+		typ   typ.Type
 	}{
-		{name: "as number", point: points[0], want: assertion.Type()},
-		{name: "colon number", point: points[1], want: assertion.Type()},
+		{name: "as number", point: points[0], want: assertion.Of(assertion.TypeClaim, assertion.RuntimeClaim), typ: typ.Number},
+		{name: "colon number", point: points[1], want: assertion.Of(assertion.TypeClaim, assertion.RuntimeClaim), typ: typ.Number},
 		{name: "as any", point: points[2], want: assertion.Any()},
 		{name: "colon any", point: points[3], want: assertion.Any()},
 	}
@@ -120,13 +129,44 @@ local a, b, c, d = x as number, x :: number, x as any, x :: any
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			source := mustLocalSource(t, facts, tc.point)
-			assertLoweredAssertion(t, facts, source, tc.want, factflow.ValueSourceExpression)
+			if tc.typ != nil {
+				assertLoweredConcreteCastAssertion(t, facts, source, tc.typ, factflow.ValueSourceExpression)
+			} else {
+				assertLoweredAssertion(t, facts, source, tc.want, factflow.ValueSourceExpression)
+			}
 		})
 	}
 	for _, point := range built.Graph.RPO() {
 		if len(facts.BranchRefinements(point)) != 0 {
 			t.Fatalf("parsed source cast emitted branch refinement at point %d", point)
 		}
+	}
+}
+
+func TestLowerStructuralCastClaimIsRuntimeValidation(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+type Payload = { id: string }
+local raw = {}
+local payload = raw :: Payload
+`)
+
+	reg := standard.Registry()
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	local := mustLocalStmt(t, stmts, 2)
+	source := mustLocalSource(t, facts, requireStmtPoints(t, built, local, 1)[0])
+	claim, ok := facts.ExpressionRefinement(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing structural cast assertion for source ref %d", source.ExprRef)
+	}
+	got := product.Get(reg, claim.Refinement(), assertion.Key)
+	want := assertion.Of(assertion.TypeClaim, assertion.RuntimeClaim)
+	if !assertion.Equal(got, want) {
+		t.Fatalf("structural cast assertion = %s, want %s", got, want)
+	}
+	witness := product.Get(reg, claim.Refinement(), typewitness.Key)
+	gotType, ok := witness.Type()
+	if !ok || gotType.Kind() != kind.Record {
+		t.Fatalf("structural cast witness = %v/%v, want record", witness, ok)
 	}
 }
 
@@ -172,7 +212,7 @@ if x :: number then end
 			branchLowerer.addAssertionRefinementsForSource(&branchInput, branch.Source)
 			branchFacts := factflow.NewFacts(branchInput)
 			branchSource := branchLowerer.valueSource(branch.Source)
-			assertLoweredAssertion(t, branchFacts, branchSource, assertion.Type(), factflow.ValueSourceExpression)
+			assertLoweredAssertion(t, branchFacts, branchSource, concreteCastAssertionForType(typ.Number), factflow.ValueSourceExpression)
 		})
 	}
 }
@@ -180,13 +220,13 @@ if x :: number then end
 func TestLowerParsedAnyClaimCastsMarkUntrustedTop(t *testing.T) {
 	stmts, _, built, result := parseSemanticChunk(t, `
 local x = 0
-local a, b = x as any, x :: any
+local a, b, c, d = x as any, x :: any, x as unknown, x :: unknown
 `)
 
 	reg := standard.Registry()
 	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	local := mustLocalStmt(t, stmts, 1)
-	points := requireStmtPoints(t, built, local, 2)
+	points := requireStmtPoints(t, built, local, 4)
 	base := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
 	inputValues := make(map[factflow.ExprRef]product.Value)
 	for _, point := range points {
@@ -291,8 +331,8 @@ func TestLowerNestedClaimsPreserveOuterIdentityAndInnerFlow(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing outer assertion for source %#v", source)
 	}
-	if got := refinementAssertion(t, outer); !assertion.Equal(got, assertion.Type()) {
-		t.Fatalf("outer assertion = %s, want type", got)
+	if want := concreteCastAssertionForType(typ.Number); !assertion.Equal(refinementAssertion(t, outer), want) {
+		t.Fatalf("outer assertion = %s, want %s", refinementAssertion(t, outer), want)
 	}
 	innerSource := outer.Source()
 	if innerSource.ExprRef == source.ExprRef || innerSource.ExprRef == 0 {
@@ -348,7 +388,7 @@ func TestLowerClaimRefinementsApplyIndicatorsWithoutMutatingBaseValues(t *testin
 			name:         "type",
 			point:        points[0],
 			base:         product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), testLowerSparseAxisKey, testLowerSparseAxisLow),
-			wantClaim:    assertion.Type(),
+			wantClaim:    concreteCastAssertionForType(typ.Number),
 			wantPresence: presence.Present(),
 		},
 		{
@@ -366,9 +406,9 @@ func TestLowerClaimRefinementsApplyIndicatorsWithoutMutatingBaseValues(t *testin
 		{
 			name:         "non-nil",
 			point:        points[2],
-			base:         product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Absent()), testLowerSparseAxisKey, testLowerSparseAxisLow),
+			base:         product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Maybe()), testLowerSparseAxisKey, testLowerSparseAxisLow),
 			wantClaim:    assertion.NonNil(),
-			wantPresence: presence.Absent(),
+			wantPresence: presence.Present(),
 		},
 	}
 	for i := range cases {
@@ -511,7 +551,7 @@ local a, b = (x as any) as number, (x :: any) :: number
 		if !ok {
 			t.Fatalf("missing outer assertion refinement for source ref %d", source.ExprRef)
 		}
-		assertClaimRefinementProduct(t, outer.Refinement(), assertion.Type())
+		assertClaimRefinementProduct(t, outer.Refinement(), concreteCastAssertionForType(typ.Number))
 		inner := outer.Source()
 		innerRefinement, ok := facts.ExpressionRefinement(inner.ExprRef)
 		if !ok {
@@ -540,10 +580,15 @@ local a, b = (x as any) as number, (x :: any) :: number
 			t.Fatalf("missing local assignment at point %d", point)
 		}
 		assigned := out.ReadValue(reg, key.SymbolValue(fact.TargetSymbol()))
-		want := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), assertion.Key, assertion.Of(assertion.TypeClaim, assertion.AnyClaim))
+		base := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), assertion.Key, assertion.Any())
+		base = product.Set(reg, base, evidence.Key, evidence.ExplicitTop())
+		want := applyConcreteCastRefinement(reg, base, typ.Number)
+		want = product.Set(reg, want, assertion.Key, assertion.Of(assertion.TypeClaim, assertion.RuntimeClaim, assertion.AnyClaim))
 		want = product.Set(reg, want, evidence.Key, evidence.ExplicitTop())
 		if !product.Equal(reg, assigned, want) {
-			t.Fatalf("assigned value = %v, want nested type+any claim with explicit-top evidence", assigned)
+			t.Fatalf("assigned claim/evidence = %s/%s, want %s/%s",
+				product.Get(reg, assigned, assertion.Key), product.Get(reg, assigned, evidence.Key),
+				product.Get(reg, want, assertion.Key), product.Get(reg, want, evidence.Key))
 		}
 		if got := product.Get(reg, assigned, evidence.Key); !evidence.Equal(got, evidence.ExplicitTop()) {
 			t.Fatalf("assigned evidence = %v, want explicit-top", got)
@@ -591,8 +636,8 @@ func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing assertion sidecar for outer ref %d", localSource.ExprRef)
 	}
-	if got := refinementAssertion(t, claim); !assertion.Equal(got, assertion.Type()) {
-		t.Fatalf("outer assertion = %s, want type", got)
+	if want := concreteCastAssertionForType(typ.Number); !assertion.Equal(refinementAssertion(t, claim), want) {
+		t.Fatalf("outer assertion = %s, want %s", refinementAssertion(t, claim), want)
 	}
 	innerSource := claim.Source()
 	if innerSource.Kind != factflow.ValueSourceCall || innerSource.ExprRef != innerRef || innerSource.CallPoint != localPoints[0] || !innerSource.HasCallPoint {
@@ -608,7 +653,7 @@ func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 	if len(returnSources) != 1 || returnSources[0].Kind != factflow.ValueSourceCall || returnSources[0].CallPoint != returnPoints[0] || !returnSources[0].HasCallPoint {
 		t.Fatalf("wrapped return source = %#v", returnSources)
 	}
-	assertLoweredAssertion(t, facts, returnSources[0], assertion.Type(), factflow.ValueSourceCall)
+	assertLoweredAssertion(t, facts, returnSources[0], concreteCastAssertionForType(typ.Number), factflow.ValueSourceCall)
 
 	ifPoints := requireStmtPoints(t, built, ifStmt, 2)
 	branch, ok := result.BranchCondition(ifPoints[1])
@@ -623,7 +668,7 @@ func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 	if branchSource.Kind != factflow.ValueSourceCall || branchSource.CallPoint != ifPoints[0] || !branchSource.HasCallPoint {
 		t.Fatalf("wrapped condition source = %#v", branchSource)
 	}
-	assertLoweredAssertion(t, branchFacts, branchSource, assertion.Type(), factflow.ValueSourceCall)
+	assertLoweredAssertion(t, branchFacts, branchSource, concreteCastAssertionForType(typ.Number), factflow.ValueSourceCall)
 }
 
 func TestLowerExpandedClaimWrappedCallKeepsPerResultSlotRefinements(t *testing.T) {
@@ -637,7 +682,7 @@ func TestLowerExpandedClaimWrappedCallKeepsPerResultSlotRefinements(t *testing.T
 			wrap: func(call *ast.FuncCallExpr) ast.Expr {
 				return &ast.CastExpr{Expr: call, Type: primitiveType("number"), Syntax: ast.CastSyntaxAs}
 			},
-			want: assertion.Type(),
+			want: concreteCastAssertionForType(typ.Number),
 		},
 		{
 			name: "non-nil",
@@ -725,11 +770,21 @@ func TestLowerExpandedClaimWrappedCallKeepsPerResultSlotRefinements(t *testing.T
 			}
 			firstAssigned := out.ReadValue(reg, key.SymbolValue(firstFact.TargetSymbol()))
 			secondAssigned := out.ReadValue(reg, key.SymbolValue(secondFact.TargetSymbol()))
-			if want := product.Set(reg, firstValue, assertion.Key, tc.want); !product.Equal(reg, firstAssigned, want) {
-				t.Fatalf("first assigned value = %v, want first call result with claim", firstAssigned)
+			wantFirst := product.Set(reg, firstValue, assertion.Key, tc.want)
+			wantSecond := product.Set(reg, secondValue, assertion.Key, tc.want)
+			if tc.want.Has(assertion.TypeClaim) {
+				wantFirst = applyConcreteCastRefinement(reg, firstValue, typ.Number)
+				wantSecond = applyConcreteCastRefinement(reg, secondValue, typ.Number)
 			}
-			if want := product.Set(reg, secondValue, assertion.Key, tc.want); !product.Equal(reg, secondAssigned, want) {
-				t.Fatalf("second assigned value = %v, want second call result with claim", secondAssigned)
+			if !product.Equal(reg, firstAssigned, wantFirst) {
+				t.Fatalf("first assigned claim/witness/runtime = %s/%v/%s, want %s/%v/%s",
+					product.Get(reg, firstAssigned, assertion.Key), product.Get(reg, firstAssigned, typewitness.Key), product.Get(reg, firstAssigned, runtimekind.Key),
+					product.Get(reg, wantFirst, assertion.Key), product.Get(reg, wantFirst, typewitness.Key), product.Get(reg, wantFirst, runtimekind.Key))
+			}
+			if !product.Equal(reg, secondAssigned, wantSecond) {
+				t.Fatalf("second assigned claim/witness/runtime = %s/%v/%s, want %s/%v/%s",
+					product.Get(reg, secondAssigned, assertion.Key), product.Get(reg, secondAssigned, typewitness.Key), product.Get(reg, secondAssigned, runtimekind.Key),
+					product.Get(reg, wantSecond, assertion.Key), product.Get(reg, wantSecond, typewitness.Key), product.Get(reg, wantSecond, runtimekind.Key))
 			}
 		})
 	}

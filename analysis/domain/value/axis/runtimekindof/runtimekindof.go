@@ -25,6 +25,9 @@ func RuntimeKindFromType(t typ.Type) (runtimekind.Value, bool) {
 	if t == nil || typ.IsAny(t) || typ.IsUnknown(t) {
 		return runtimekind.Value{}, false
 	}
+	if typ.IsBuiltinTableTopMarker(unwrap.Alias(t)) {
+		return runtimekind.Singleton(runtimekind.Table), true
+	}
 	switch tt := t.(type) {
 	case *typ.Literal:
 		switch tt.Base {
@@ -110,7 +113,7 @@ func RuntimeKindFromType(t typ.Type) (runtimekind.Value, bool) {
 // unsound under-approximation. The second return reports whether a strict
 // narrowing occurred; an empty result is typ.Never (the value is unreachable).
 func RestrictTypeToRuntimeKind(t typ.Type, allowed runtimekind.Value) (typ.Type, bool) {
-	union, ok := canonical(t).(*typ.Union)
+	union, ok := unwrap.Alias(canonical(t)).(*typ.Union)
 	if !ok {
 		return t, false
 	}

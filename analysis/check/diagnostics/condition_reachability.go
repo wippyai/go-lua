@@ -21,12 +21,12 @@ type redundantConditionProof struct {
 	proofSpan diagnostic.Span
 }
 
-func (redundantConditions) Produce(result *body.Result) []diagnostic.Diagnostic {
+func (p redundantConditions) Produce(result *body.Result) []diagnostic.Diagnostic {
 	graph := result.Graph()
 	if graph == nil {
 		return nil
 	}
-	envs := cachedGuardEnvironments(result)
+	envs := producerContext(p).guardEnvironments(result)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {
 		fact, ok := result.BranchCondition(point)

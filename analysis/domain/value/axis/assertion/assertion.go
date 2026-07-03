@@ -38,11 +38,12 @@ const (
 	TypeClaim Flag = 1 << iota
 	AnyClaim
 	NonNilClaim
+	RuntimeClaim
 )
 
-const knownFlags = TypeClaim | AnyClaim | NonNilClaim
+const knownFlags = TypeClaim | AnyClaim | NonNilClaim | RuntimeClaim
 
-var flagOrder = []Flag{TypeClaim, AnyClaim, NonNilClaim}
+var flagOrder = []Flag{TypeClaim, AnyClaim, NonNilClaim, RuntimeClaim}
 
 // Value carries finite must-evidence for user-written claims.
 //
@@ -80,6 +81,10 @@ func Any() Value { return Of(AnyClaim) }
 
 // NonNil returns the non-nil claim indicator.
 func NonNil() Value { return Of(NonNilClaim) }
+
+// Runtime returns the runtime-check proof indicator produced by guards such as
+// type(x) == "string".
+func Runtime() Value { return Of(RuntimeClaim) }
 
 // IsBottom reports whether the claim state is unreachable.
 func (v Value) IsBottom() bool { return v.state == bottom }
@@ -182,6 +187,8 @@ func (f Flag) String() string {
 		return "any"
 	case NonNilClaim:
 		return "non-nil"
+	case RuntimeClaim:
+		return "runtime"
 	default:
 		return "assertion-flag(invalid)"
 	}

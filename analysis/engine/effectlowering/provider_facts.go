@@ -18,22 +18,54 @@ import (
 )
 
 type signatureArgumentReader struct {
-	site factflow.CallSiteView
+	site              factflow.CallSiteView
+	receiverSource    factflow.ValueSource
+	hasReceiverSource bool
 }
 
 func signatureArgumentsFromView(site factflow.CallSiteView) signatureArgumentReader {
 	return signatureArgumentReader{site: site}
 }
 
+func signatureArgumentsFromMethodView(site factflow.CallSiteView) signatureArgumentReader {
+	receiver, ok := site.ReceiverSource()
+	if !ok {
+		return signatureArgumentsFromView(site)
+	}
+	return signatureArgumentReader{
+		site:              site,
+		receiverSource:    receiver,
+		hasReceiverSource: true,
+	}
+}
+
 func (r signatureArgumentReader) ArgumentSourceCount() int {
+	if r.hasReceiverSource {
+		return r.site.ArgumentSourceCount() + 1
+	}
 	return r.site.ArgumentSourceCount()
 }
 
 func (r signatureArgumentReader) ArgumentSourceAt(index int) (factflow.ValueSource, bool) {
+	if r.hasReceiverSource {
+		if index == 0 {
+			return r.receiverSource, true
+		}
+		return r.site.ArgumentSourceAt(index - 1)
+	}
 	return r.site.ArgumentSourceAt(index)
 }
 
 func (r signatureArgumentReader) ForEachArgumentSource(fn func(index int, source factflow.ValueSource) bool) {
+	if r.hasReceiverSource {
+		if !fn(0, r.receiverSource) {
+			return
+		}
+		r.site.ForEachArgumentSource(func(index int, source factflow.ValueSource) bool {
+			return fn(index+1, source)
+		})
+		return
+	}
 	r.site.ForEachArgumentSource(fn)
 }
 
@@ -45,17 +77,25 @@ func signatureParamPathInvalidationsForReader(sig signature.Function, args signa
 	var out []callpayload.CallParamPathInvalidation
 	seen := make(map[int]struct{}, len(targets))
 	for _, target := range targets {
-		argIndex, ok := effect.ResolveParamIndex(target, args.ArgumentSourceCount())
+		argIndex, ok := effect.ResolveParamIndex(target.Ref, args.ArgumentSourceCount())
 		source, sourceOK := args.ArgumentSourceAt(argIndex)
 		if !ok || !sourceOK || !callArgumentSourceCanBindPath(source) {
 			continue
 		}
 		if _, ok := seen[argIndex]; ok {
+			if !target.PreserveStructuralWitness {
+				for i := range out {
+					if out[i].Path.PlaceholderIndex() == argIndex {
+						out[i].PreserveStructuralWitness = false
+					}
+				}
+			}
 			continue
 		}
 		seen[argIndex] = struct{}{}
 		out = append(out, callpayload.CallParamPathInvalidation{
-			Path: pathdom.NewPlaceholder(argIndex),
+			Path:                      pathdom.NewPlaceholder(argIndex),
+			PreserveStructuralWitness: target.PreserveStructuralWitness,
 		})
 	}
 	return out
@@ -67,7 +107,10 @@ func signatureNormalReturnPathInvalidations(in []callpayload.CallParamPathInvali
 	}
 	out := make([]callboundary.PathInvalidationFact, 0, len(in))
 	for _, fact := range in {
-		out = append(out, callboundary.PathInvalidationFact{Path: fact.Path})
+		out = append(out, callboundary.PathInvalidationFact{
+			Path:                      fact.Path,
+			PreserveStructuralWitness: fact.PreserveStructuralWitness,
+		})
 	}
 	return out
 }
@@ -95,24 +138,54 @@ func signatureParamLengthFloorsForReader(sig signature.Function, args signatureA
 	return out
 }
 
-func activePathInvalidationTargets(sig signature.Function) []effect.ParamRef {
+type pathInvalidationTarget struct {
+	Ref                       effect.ParamRef
+	PreserveStructuralWitness bool
+}
+
+func activePathInvalidationTargets(sig signature.Function) []pathInvalidationTarget {
 	if len(sig.Effect.Labels) == 0 {
 		return nil
 	}
-	out := make([]effect.ParamRef, 0, len(sig.Effect.Labels))
+	out := make([]pathInvalidationTarget, 0, len(sig.Effect.Labels))
 	for _, label := range sig.Effect.Labels {
-		if target, ok := mutation.PathInvalidationTarget(label); ok {
+		if target, ok := pathInvalidationTargetForLabel(label); ok {
 			out = append(out, target)
 			continue
 		}
 		switch normalized := effect.NormalizeLabel(label).(type) {
 		case ownership.Store:
 			if normalized.Into.Index >= 0 {
-				out = append(out, normalized.Into)
+				out = append(out, pathInvalidationTarget{Ref: normalized.Into, PreserveStructuralWitness: true})
 			}
 		}
 	}
 	return out
+}
+
+func pathInvalidationTargetForLabel(label effect.Label) (pathInvalidationTarget, bool) {
+	switch normalized := effect.NormalizeLabel(label).(type) {
+	case mutation.Mutate:
+		return pathInvalidationTarget{
+			Ref:                       normalized.Target,
+			PreserveStructuralWitness: mutationTransformPreservesStructuralWitness(normalized.Transform),
+		}, true
+	case mutation.TableMutator:
+		return pathInvalidationTarget{Ref: normalized.Target, PreserveStructuralWitness: true}, true
+	case mutation.LengthChange:
+		return pathInvalidationTarget{Ref: normalized.Target, PreserveStructuralWitness: true}, true
+	default:
+		return pathInvalidationTarget{}, false
+	}
+}
+
+func mutationTransformPreservesStructuralWitness(transform mutation.TypeTransform) bool {
+	switch transform.(type) {
+	case mutation.Unchanged, *mutation.Unchanged:
+		return true
+	default:
+		return false
+	}
 }
 
 func signatureEscapeEventsForReader(sig signature.Function, args signatureArgumentReader) []callboundary.EscapeEventFact {
@@ -338,11 +411,18 @@ func signaturePostconditionValue(ctx transfer.NodeContext, refinement postcondit
 }
 
 func signatureReturnPresenceRelations(sig signature.Function) []callpayload.CallReturnPresenceRelation {
-	labels := activeErrorReturnLabels(sig)
+	return errorReturnPresenceRelations(activeErrorReturnLabels(sig))
+}
+
+// errorReturnPresenceRelations expands each value/error correlation into the
+// anticorrelated presence relations the narrowing engine consumes. A proven
+// error state determines the value state; additionally, for canonical
+// error-return contracts, proving the value absent proves the error present.
+func errorReturnPresenceRelations(labels []returns.ErrorReturn) []callpayload.CallReturnPresenceRelation {
 	if len(labels) == 0 {
 		return nil
 	}
-	out := make([]callpayload.CallReturnPresenceRelation, 0, len(labels)*2)
+	out := make([]callpayload.CallReturnPresenceRelation, 0, len(labels)*3)
 	for _, label := range labels {
 		if label.ValueIndex < 0 || label.ErrorIndex < 0 {
 			continue
@@ -358,6 +438,12 @@ func signatureReturnPresenceRelations(sig signature.Function) []callpayload.Call
 				TriggerIndex:    label.ErrorIndex,
 				TriggerPresence: presence.Absent(),
 				TargetIndex:     label.ValueIndex,
+				TargetPresence:  presence.Present(),
+			},
+			callpayload.CallReturnPresenceRelation{
+				TriggerIndex:    label.ValueIndex,
+				TriggerPresence: presence.Absent(),
+				TargetIndex:     label.ErrorIndex,
 				TargetPresence:  presence.Present(),
 			},
 		)

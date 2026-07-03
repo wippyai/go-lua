@@ -4,6 +4,7 @@ package pathexpr
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -12,6 +13,41 @@ import (
 // Supported forms are identifiers, dot fields, string indexes, integer indexes,
 // and nested combinations of those forms. Dynamic indexes are rejected.
 func Resolve(expr ast.Expr, bindings *bind.Result) (path.Path, bool) {
+	return ViewOf(expr, bindings).SyntaxPath()
+}
+
+// View carries the path identities available for a source expression. Different
+// consumers need different identities: branch and assignment logic asks what
+// syntax was written, while call-boundary evidence asks which runtime location
+// the expression aliases after proof-preserving wrappers.
+type View struct {
+	expr     ast.Expr
+	bindings *bind.Result
+}
+
+func ViewOf(expr ast.Expr, bindings *bind.Result) View {
+	return View{expr: expr, bindings: bindings}
+}
+
+// SyntaxPath extracts the path explicitly written in source syntax. It does not
+// cross assertion or cast wrappers, so guards like `(x :: T) ~= nil` do not
+// silently become proofs about x.
+func (v View) SyntaxPath() (path.Path, bool) {
+	return resolveSyntaxPath(v.expr, v.bindings)
+}
+
+// AliasPath extracts the runtime location aliased by this expression. It
+// unwraps non-nil assertions and non-any casts because those wrappers do not
+// allocate a new value; a direct any cast remains a proof boundary.
+func (v View) AliasPath() (path.Path, bool) {
+	inner, ok := sourceprovenance.ProofInner(v.expr)
+	if !ok {
+		return path.Path{}, false
+	}
+	return resolveSyntaxPath(inner, v.bindings)
+}
+
+func resolveSyntaxPath(expr ast.Expr, bindings *bind.Result) (path.Path, bool) {
 	switch expr := expr.(type) {
 	case *ast.IdentExpr:
 		return resolveIdent(expr, bindings)
@@ -20,6 +56,14 @@ func Resolve(expr ast.Expr, bindings *bind.Result) (path.Path, bool) {
 	default:
 		return path.Path{}, false
 	}
+}
+
+// ResolveAlias extracts the access path aliased by expr's runtime value. Unlike
+// Resolve, it unwraps non-nil assertions and non-any casts, so call-boundary
+// evidence can bind `f(x :: Wider)` to x. A direct cast to any is a deliberate
+// proof boundary and is rejected by sourceprovenance.ProofInner.
+func ResolveAlias(expr ast.Expr, bindings *bind.Result) (path.Path, bool) {
+	return ViewOf(expr, bindings).AliasPath()
 }
 
 // ResolveContainer extracts the receiver/container path for an attribute/index

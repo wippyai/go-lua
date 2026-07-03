@@ -160,7 +160,7 @@ func covariantExposureSuppressesPathProof(facts factflow.Facts, point cfg.Point,
 	if !source.HasExpr {
 		return false
 	}
-	sourcePath, ok := facts.ExpressionPath(source.ExprRef)
+	sourcePath, ok := facts.ExpressionPathRef(source.ExprRef)
 	if !ok || sourcePath.Symbol == 0 || len(sourcePath.Segments) != 0 {
 		return false
 	}

@@ -6,9 +6,10 @@ import (
 )
 
 // contextualParameterArgumentOwnedByCallSite reports whether arg is a path rooted
-// at an unannotated parameter in a caller-specialized function result. Those
-// diagnostics are emitted at the outer call site with the projected obligation
-// chain; annotated parameters remain body-owned implementation contracts.
+// at a caller-specialized parameter. Those diagnostics are emitted at the outer
+// call site with the projected obligation chain. Concrete annotated parameters
+// remain body-owned implementation contracts; generic annotations whose shape
+// still contains free type parameters are caller-context contracts.
 func contextualParameterArgumentOwnedByCallSite(result *body.Result, context producerContext, arg ast.Expr) bool {
 	if !context.callContextResult || result == nil || arg == nil {
 		return false
@@ -21,8 +22,12 @@ func contextualParameterArgumentOwnedByCallSite(result *body.Result, context pro
 		if slot.Symbol != argPath.Symbol {
 			continue
 		}
-		_, annotated := result.SymbolTypeAnnotation(slot.Symbol)
-		return !annotated
+		expr, annotated := result.SymbolTypeAnnotation(slot.Symbol)
+		if !annotated {
+			return true
+		}
+		t, ok := lowerType(expr, context.resolver)
+		return ok && containsTypeParamSyntax(t)
 	}
 	return false
 }

@@ -2,7 +2,6 @@ package diagnostics
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
@@ -14,8 +13,11 @@ import (
 )
 
 func assignmentTargetType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, fact semantics.OrdinaryAssignmentFact) (typ.Type, bool) {
+	if attr, ok := dynamicAssignmentTargetAttr(fact.Target); ok {
+		return dynamicIndexAssignmentTargetType(result, resolver, point, attr)
+	}
 	if fact.HasPath && fact.Path.Symbol != 0 && len(fact.Path.Segments) > 0 {
-		return newExpressionTyper(result, resolver).typeOf(fact.Target)
+		return staticPathAssignmentTargetType(result, resolver, point, fact)
 	}
 	if !fact.HasContainerPath || fact.ContainerPath.Symbol == 0 {
 		return nil, false
@@ -27,15 +29,50 @@ func assignmentTargetType(result *body.Result, resolver typeannotation.Resolver,
 	return dynamicIndexAssignmentTargetType(result, resolver, point, attr)
 }
 
+func dynamicAssignmentTargetAttr(target ast.Expr) (*ast.AttrGetExpr, bool) {
+	attr, ok := assignmentTargetAttr(target)
+	if !ok || attr == nil || attr.KeySyntax != ast.AttrKeyIndex || attr.Key == nil {
+		return nil, false
+	}
+	return attr, ast.KeyName(attr.Key) == ""
+}
+
+func staticPathAssignmentTargetType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, fact semantics.OrdinaryAssignmentFact) (typ.Type, bool) {
+	attr, ok := assignmentTargetAttr(fact.Target)
+	if !ok || attr == nil || attr.Object == nil || attr.Key == nil {
+		return declaredPathType(result, resolver, fact.Target)
+	}
+	name := ast.KeyName(attr.Key)
+	if name == "" {
+		return declaredPathType(result, resolver, fact.Target)
+	}
+	container, ok := declaredPathType(result, resolver, attr.Object)
+	if !ok {
+		return nil, false
+	}
+	want, ok := staticIndexWriteValueType(container, typ.LiteralString(name), 0)
+	if ok && impossibleLiteralWriteMeet(want) {
+		if declared, declaredOK := declaredPathType(result, resolver, fact.Target); declaredOK && finiteLiteralDomainType(declared) {
+			return declared, true
+		}
+	}
+	return want, ok
+}
+
 func dynamicIndexAssignmentTargetType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, attr *ast.AttrGetExpr) (typ.Type, bool) {
 	if attr == nil || attr.Key == nil {
 		return nil, false
+	}
+	key, _ := newExpressionTyper(result, resolver).typeOf(attr.Key)
+	if declared, ok := declaredPathType(result, resolver, attr.Object); ok {
+		if want, ok := dynamicIndexWriteValueType(declared, key, 0); ok {
+			return want, true
+		}
 	}
 	container, ok := containerFlowType(result, resolver, point, attr.Object)
 	if !ok {
 		return nil, false
 	}
-	key, _ := newExpressionTyper(result, resolver).typeOf(attr.Key)
 	return dynamicIndexWriteValueType(container, key, 0)
 }
 
@@ -44,8 +81,9 @@ func dynamicIndexAssignmentTargetType(result *body.Result, resolver typeannotati
 // shape is only known through flow, so the boundary value is consulted before
 // falling back to the static type.
 func containerFlowType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, object ast.Expr) (typ.Type, bool) {
-	if value, ok := result.ExpressionValueAtBoundary(point, object); ok {
-		if t, ok := readmodel.New(result).ValueType(value); ok {
+	query := newDiagnosticQuery(result)
+	if value, ok := query.ExpressionValueBeforeBoundary(point, object); ok {
+		if t, ok := query.ValueType(value); ok {
 			return t, true
 		}
 	}
@@ -108,6 +146,83 @@ func dynamicIndexWriteMeet(members []typ.Type) (typ.Type, bool) {
 		return members[0], members[0] != nil
 	}
 	return normalize.IntersectionForMeet(members...), true
+}
+
+func impossibleLiteralWriteMeet(t typ.Type) bool {
+	intersection, ok := transparentExpectedType(t).(*typ.Intersection)
+	if !ok || len(intersection.Members) < 2 {
+		return false
+	}
+	var base kind.Kind
+	var value any
+	haveLiteral := false
+	for _, member := range intersection.Members {
+		lit, ok := transparentExpectedType(member).(*typ.Literal)
+		if !ok {
+			return false
+		}
+		if !haveLiteral {
+			base = lit.Base
+			value = lit.Value
+			haveLiteral = true
+			continue
+		}
+		if lit.Base == base && lit.Value != value {
+			return true
+		}
+	}
+	return false
+}
+
+func finiteLiteralDomainType(t typ.Type) bool {
+	switch tt := transparentExpectedType(t).(type) {
+	case *typ.Literal:
+		return true
+	case *typ.Union:
+		if len(tt.Members) == 0 {
+			return false
+		}
+		for _, member := range tt.Members {
+			if _, ok := transparentExpectedType(member).(*typ.Literal); !ok {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func staticIndexWriteValueType(t typ.Type, key typ.Type, depth int) (typ.Type, bool) {
+	if t == nil || depth > typ.DefaultRecursionDepth {
+		return nil, false
+	}
+	switch tt := transparentExpectedType(t).(type) {
+	case *typ.Optional:
+		return staticIndexWriteValueType(tt.Inner, key, depth+1)
+	case *typ.Union:
+		var members []typ.Type
+		for _, member := range tt.Members {
+			value, ok := staticIndexWriteValueType(member, key, depth+1)
+			if !ok {
+				continue
+			}
+			members = append(members, value)
+		}
+		return dynamicIndexWriteMeet(members)
+	case *typ.Intersection:
+		var members []typ.Type
+		for _, member := range tt.Members {
+			value, ok := staticIndexWriteValueType(member, key, depth+1)
+			if !ok {
+				continue
+			}
+			members = append(members, value)
+		}
+		return dynamicIndexWriteMeet(members)
+	default:
+		return dynamicIndexWriteValueType(tt, key, depth)
+	}
 }
 
 // closedRecordDynamicWriteValueType resolves the admissible value type for a

@@ -74,45 +74,82 @@ func buildCallFact(sourceStmt ast.Stmt, callStmt *ast.FuncCallStmt, context Call
 	final, allowExpansion, openTail := callListFlags(context, exprs, exprIndex)
 	expanded, adjusted, shapedOpenTail := sourceprovenance.ValueShape(call, final, allowExpansion, openTail)
 	calleePath, hasCalleePath, receiverPath, hasReceiverPath, methodPath, hasMethodPath := resolveCallPaths(call, bindings)
-	receiverSource, hasReceiverSource := methodReceiverSource(call, hasReceiverPath, resolver)
+	receiverSource, hasReceiverSource := methodReceiverSource(call, resolver)
 	calleeSymbol, hasCalleeSymbol := symbol.ID(0), false
 	if hasCalleePath && calleePath.Symbol != 0 {
 		calleeSymbol = calleePath.Symbol
 		hasCalleeSymbol = true
 	}
 	fact := CallFact{
-		Stmt:              callStmt,
-		SourceStmt:        sourceStmt,
-		Context:           context,
-		Call:              call,
-		ExprIndex:         exprIndex,
-		Final:             final,
-		Expanded:          expanded,
-		Adjusted:          adjusted,
-		OpenTail:          shapedOpenTail,
-		Func:              call.Func,
-		Receiver:          call.Receiver,
-		Method:            call.Method,
-		Args:              copyExprs(call.Args),
-		TypeArgs:          copyTypeExprs(call.TypeArgs),
-		ArgumentSources:   argumentValueSources(call.Args, resolver),
-		CalleePath:        calleePath,
-		HasCalleePath:     hasCalleePath,
-		ReceiverPath:      receiverPath,
-		HasReceiverPath:   hasReceiverPath,
-		MethodPath:        methodPath,
-		HasMethodPath:     hasMethodPath,
-		ReceiverSource:    receiverSource,
-		HasReceiverSource: hasReceiverSource,
-		ResultTargets:     callResultTargets(context, sourceStmt, exprIndex, adjusted, expanded, shapedOpenTail, assignmentTargets),
-		CalleeSymbol:      calleeSymbol,
-		HasCalleeSymbol:   hasCalleeSymbol,
+		Stmt:               callStmt,
+		SourceStmt:         sourceStmt,
+		Context:            context,
+		Call:               call,
+		ExprIndex:          exprIndex,
+		Final:              final,
+		Expanded:           expanded,
+		Adjusted:           adjusted,
+		OpenTail:           shapedOpenTail,
+		Func:               call.Func,
+		Receiver:           call.Receiver,
+		Method:             call.Method,
+		Args:               copyExprs(call.Args),
+		TypeArgs:           copyTypeExprs(call.TypeArgs),
+		ArgumentSources:    argumentValueSources(call.Args, resolver),
+		CallSpan:           sourceSpanOf(call),
+		CalleeSpan:         callCalleeSpan(call),
+		ArgumentSpans:      expressionSpans(call.Args),
+		ArgumentLabels:     expressionLabels(call.Args),
+		CalleePath:         calleePath,
+		HasCalleePath:      hasCalleePath,
+		CalleeMemberAccess: callUsesMemberAccess(call, calleePath, hasCalleePath),
+		ReceiverPath:       receiverPath,
+		HasReceiverPath:    hasReceiverPath,
+		MethodPath:         methodPath,
+		HasMethodPath:      hasMethodPath,
+		ReceiverSource:     receiverSource,
+		HasReceiverSource:  hasReceiverSource,
+		ResultTargets:      callResultTargets(context, sourceStmt, exprIndex, adjusted, expanded, shapedOpenTail, assignmentTargets),
+		CalleeSymbol:       calleeSymbol,
+		HasCalleeSymbol:    hasCalleeSymbol,
 	}
 	if selectFact, ok := channelSelectFact(fact, bindings); ok {
 		fact.ChannelSelect = selectFact
 		fact.HasChannelSelect = true
 	}
 	return fact
+}
+
+func callCalleeSpan(call *ast.FuncCallExpr) SourceSpan {
+	if call == nil {
+		return SourceSpan{}
+	}
+	if span := sourceSpanOf(call.Func); span.StartLine != 0 {
+		return span
+	}
+	return sourceSpanOf(call.Receiver)
+}
+
+func expressionSpans(exprs []ast.Expr) []SourceSpan {
+	if len(exprs) == 0 {
+		return nil
+	}
+	out := make([]SourceSpan, len(exprs))
+	for i, expr := range exprs {
+		out[i] = sourceSpanOf(expr)
+	}
+	return out
+}
+
+func expressionLabels(exprs []ast.Expr) []string {
+	if len(exprs) == 0 {
+		return nil
+	}
+	out := make([]string, len(exprs))
+	for i, expr := range exprs {
+		out[i] = expressionLabel(expr)
+	}
+	return out
 }
 
 func callListFlags(context CallContextKind, exprs []ast.Expr, exprIndex int) (final, allowExpansion, openTail bool) {
@@ -149,14 +186,26 @@ func resolveCallPaths(call *ast.FuncCallExpr, bindings *bind.Result) (path.Path,
 	return calleePath, hasCalleePath, path.Path{}, false, path.Path{}, false
 }
 
+func callUsesMemberAccess(call *ast.FuncCallExpr, calleePath path.Path, hasCalleePath bool) bool {
+	if call == nil {
+		return false
+	}
+	if call.Receiver != nil && call.Method != "" {
+		return true
+	}
+	if hasCalleePath && len(calleePath.Segments) > 0 {
+		return true
+	}
+	_, ok := call.Func.(*ast.AttrGetExpr)
+	return ok
+}
+
 // methodReceiverSource materializes a value source for a colon-method call's
-// receiver expression when the receiver is not a resolvable symbol path (an
-// anonymous prior call result or other expression). The receiver path already
-// covers symbol receivers, so this only supplements the call-result receiver
-// case, letting the callee value provider read the receiver's value to resolve
-// the method member.
-func methodReceiverSource(call *ast.FuncCallExpr, hasReceiverPath bool, resolver sourceprovenance.CallPointResolver) (sourceprovenance.ASTSource, bool) {
-	if call == nil || call.Receiver == nil || call.Method == "" || hasReceiverPath {
+// receiver expression. The receiver path identifies the method lookup target,
+// while the source lets post-solve readers recover the receiver value without
+// reaching back into syntax.
+func methodReceiverSource(call *ast.FuncCallExpr, resolver sourceprovenance.CallPointResolver) (sourceprovenance.ASTSource, bool) {
+	if call == nil || call.Receiver == nil || call.Method == "" {
 		return sourceprovenance.ASTSource{}, false
 	}
 	source := sourceprovenance.SourceForExpr(call.Receiver, 0, 0, 0, true, false, resolver)

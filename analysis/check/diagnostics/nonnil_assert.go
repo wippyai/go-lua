@@ -2,7 +2,6 @@ package diagnostics
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -25,7 +24,7 @@ func (p nonNilAssertions) Produce(result *body.Result) []diagnostic.Diagnostic {
 	if graph == nil {
 		return nil
 	}
-	envs := cachedGuardEnvironments(result)
+	envs := producerContext(p).guardEnvironments(result)
 	var out []diagnostic.Diagnostic
 	seen := make(map[nonNilAssertSeenKey]struct{})
 	for _, point := range graph.RPO() {
@@ -34,6 +33,7 @@ func (p nonNilAssertions) Produce(result *body.Result) []diagnostic.Diagnostic {
 		}
 		check := nonNilAssertCheck{
 			result: result,
+			query:  producerContext(p).query(result),
 			typer:  newFlowExpressionTyper(result, p.resolver, point, envs[point]),
 			point:  point,
 		}
@@ -88,6 +88,7 @@ func (p nonNilAssertions) walk(expr ast.Expr, check nonNilAssertCheck, seen map[
 
 type nonNilAssertCheck struct {
 	result *body.Result
+	query  diagnosticQuery
 	typer  expressionTyper
 	point  cfg.Point
 }
@@ -115,8 +116,8 @@ func (c nonNilAssertCheck) diagnostic(assert *ast.NonNilAssertExpr) (diagnostic.
 // declared/flow typer covers operands without a boundary value slot.
 func (c nonNilAssertCheck) operandType(operand ast.Expr) (typ.Type, bool) {
 	if c.result != nil {
-		if value, ok := c.result.ExpressionValueAtBoundary(c.point, operand); ok {
-			if t, ok := readmodel.New(c.result).ValueTypeWithPresence(value); ok && t != nil {
+		if value, ok := c.query.ExpressionValueAtBoundary(c.point, operand); ok {
+			if t, ok := c.query.ValueTypeWithPresence(value); ok && t != nil {
 				return t, true
 			}
 		}

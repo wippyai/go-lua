@@ -150,12 +150,7 @@ func placeholderIndex(root string) (int, bool) {
 }
 
 func retSlotIndex(root string) (int, bool) {
-	const prefix = "ret["
-	if len(root) < len(prefix)+2 || root[:len(prefix)] != prefix || root[len(root)-1] != ']' {
-		return 0, false
-	}
-	body := root[len(prefix) : len(root)-1]
-	idx := pathdom.PlaceholderIndexFromString("$" + body)
+	idx := pathdom.ReturnSlotIndexFromString(root)
 	if idx < 0 {
 		return 0, false
 	}

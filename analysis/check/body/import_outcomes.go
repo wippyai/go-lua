@@ -3,19 +3,24 @@ package body
 import (
 	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/factquery"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
+	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -25,17 +30,24 @@ func calleeValueProvider(
 	resolver *visibility.Resolver,
 	sources sourcevalue.SourceValues,
 	typeValues *typevalue.Cache,
+	bindings *bind.Result,
+	typeResolver *typeresolve.Resolver,
 ) CalleeValueFunc {
 	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) (product.Value, bool) {
+		if site.MethodName() != "" {
+			if value, ok := pathMethodCalleeValue(reg, typeValues, facts, resolver, ctx, site, in); ok {
+				return value, true
+			}
+			if value, ok := declaredReceiverMethodCalleeValue(reg, typeValues, facts, bindings, typeResolver, ctx, site); ok {
+				return value, true
+			}
+		}
 		p := site.CalleePathRef()
 		if p.IsEmpty() {
 			return methodCalleeValue(reg, typeValues, sources, ctx, site, in, read)
 		}
-		if value, ok := pathMethodCalleeValue(reg, typeValues, facts, resolver, ctx, site, in); ok {
-			return value, true
-		}
 		config := readexpr.Config{Registry: reg, Facts: facts, Visibility: resolver, TypeValues: typeValues}
-		if value, ok := readexpr.Project(config, ctx.Point, p, in); ok && hasTypeWitness(reg, value) {
+		if value, ok := readexpr.Project(config, ctx.Point, p, in); ok && hasCalleeEvidence(reg, value) {
 			return value, true
 		}
 		if value, ok, authoritative := readablePrefixCalleeValue(reg, typeValues, config, ctx.Point, p, in); authoritative {
@@ -49,7 +61,7 @@ func calleeValueProvider(
 		if !ok {
 			return product.Value{}, false
 		}
-		rootType, ok := witnessedType(reg, rootValue)
+		rootType, ok := typevalue.WitnessOf(reg, rootValue)
 		if !ok {
 			return product.Value{}, false
 		}
@@ -59,6 +71,71 @@ func calleeValueProvider(
 		}
 		return typeValues.FromTypeWithWitness(reg, projected), true
 	}
+}
+
+func declaredReceiverMethodCalleeValue(
+	reg *axis.Registry,
+	typeValues *typevalue.Cache,
+	facts factflow.Facts,
+	bindings *bind.Result,
+	resolver *typeresolve.Resolver,
+	ctx transfer.NodeContext,
+	site factflow.CallSiteView,
+) (product.Value, bool) {
+	fn, ok := declaredReceiverMethodFunction(facts, bindings, resolver, ctx, site)
+	if !ok {
+		return product.Value{}, false
+	}
+	return typeValues.FromTypeWithWitness(reg, fn), true
+}
+
+func declaredReceiverCallableProvider(
+	facts factflow.Facts,
+	bindings *bind.Result,
+	resolver *typeresolve.Resolver,
+) ReceiverCallableFunc {
+	return func(ctx transfer.NodeContext, site factflow.CallSiteView) (*typ.Function, bool) {
+		return declaredReceiverMethodFunction(facts, bindings, resolver, ctx, site)
+	}
+}
+
+func declaredReceiverMethodFunction(
+	facts factflow.Facts,
+	bindings *bind.Result,
+	resolver *typeresolve.Resolver,
+	ctx transfer.NodeContext,
+	site factflow.CallSiteView,
+) (*typ.Function, bool) {
+	if bindings == nil {
+		return nil, false
+	}
+	method := site.MethodName()
+	if method == "" {
+		return nil, false
+	}
+	receiverPath, ok := site.ReceiverPath()
+	if !ok || receiverPath.Symbol == 0 || len(receiverPath.Segments) != 0 {
+		return nil, false
+	}
+	if _, replaced := factquery.DominatingOrdinaryRootWrite(ctx.Point, receiverPath.Symbol, facts, ctx.Graph); replaced {
+		return nil, false
+	}
+	typeExpr, ok := bindings.SymbolTypeAnnotation(receiverPath.Symbol)
+	if !ok || typeExpr == nil {
+		return nil, false
+	}
+	if resolver == nil {
+		resolver = typeresolve.New(bindings)
+	}
+	receiverType, ok := resolver.Type(typeExpr)
+	if !ok || receiverType == nil || typ.IsAny(receiverType) || typ.IsUnknown(receiverType) || typ.IsNever(receiverType) {
+		return nil, false
+	}
+	fn, status, ok := typecall.MemberCallable(receiverType, method)
+	if status != typecall.MemberCallOK || !ok || fn == nil {
+		return nil, false
+	}
+	return fn, true
 }
 
 func readablePrefixCalleeValue(
@@ -77,7 +154,7 @@ func readablePrefixCalleeValue(
 		if !ok {
 			continue
 		}
-		prefixType, ok := witnessedType(reg, value)
+		prefixType, ok := typevalue.WitnessOf(reg, value)
 		if !ok || prefixType == nil || typ.IsAny(prefixType) || typ.IsUnknown(prefixType) || typ.IsNever(prefixType) {
 			return product.Value{}, false, true
 		}
@@ -109,11 +186,27 @@ func pathMethodCalleeValue(
 		return product.Value{}, false
 	}
 	config := readexpr.Config{Registry: reg, Facts: facts, Visibility: resolver, TypeValues: typeValues}
+	if receiverValue, ok := readexpr.ProjectWithoutRootStaticMemberOverlay(config, ctx.Point, receiverPath, in); ok {
+		if value, ok := methodValueFromReceiverValue(reg, typeValues, receiverValue, method); ok {
+			return value, true
+		}
+	}
+	methodSegment := segment.Segment{Kind: segment.SegmentField, Name: method}
+	if methodValue, ok := readexpr.ProjectStaticMember(config, ctx.Point, receiverPath, methodSegment, in); ok && hasCalleeEvidence(reg, methodValue) {
+		return methodValue, true
+	}
+	if methodValue, ok := readexpr.ProjectWithoutRootStaticMemberOverlay(config, ctx.Point, receiverPath.AppendSegments([]segment.Segment{methodSegment}), in); ok && hasCalleeEvidence(reg, methodValue) {
+		return methodValue, true
+	}
 	receiverValue, ok := readexpr.Project(config, ctx.Point, receiverPath, in)
 	if !ok {
 		return product.Value{}, false
 	}
-	receiverType, ok := witnessedType(reg, receiverValue)
+	return methodValueFromReceiverValue(reg, typeValues, receiverValue, method)
+}
+
+func methodValueFromReceiverValue(reg *axis.Registry, typeValues *typevalue.Cache, receiverValue product.Value, method string) (product.Value, bool) {
+	receiverType, ok := typevalue.WitnessOf(reg, receiverValue)
 	if !ok || typ.IsAny(receiverType) || typ.IsUnknown(receiverType) || typ.IsNever(receiverType) {
 		return product.Value{}, false
 	}
@@ -148,7 +241,7 @@ func methodCalleeValue(
 	if !ok {
 		return product.Value{}, false
 	}
-	receiverType, ok := witnessedType(reg, receiverValue)
+	receiverType, ok := typevalue.WitnessOf(reg, receiverValue)
 	if !ok || typ.IsAny(receiverType) || typ.IsUnknown(receiverType) || typ.IsNever(receiverType) {
 		return product.Value{}, false
 	}
@@ -177,7 +270,7 @@ func channelMethodReceiverTypeProvider(
 			if !ok {
 				return nil, false
 			}
-			return witnessedType(reg, value)
+			return typevalue.WitnessOf(reg, value)
 		}
 		if sources == nil {
 			return nil, false
@@ -190,19 +283,16 @@ func channelMethodReceiverTypeProvider(
 		if !ok {
 			return nil, false
 		}
-		return witnessedType(reg, value)
+		return typevalue.WitnessOf(reg, value)
 	}
 }
 
-func hasTypeWitness(reg *axis.Registry, value product.Value) bool {
-	_, ok := witnessedType(reg, value)
-	return ok
-}
-
-func witnessedType(reg *axis.Registry, value product.Value) (typ.Type, bool) {
-	if reg == nil {
-		return nil, false
+func hasCalleeEvidence(reg *axis.Registry, value product.Value) bool {
+	if typevalue.HasWitness(reg, value) {
+		return true
 	}
-	witness := product.Get(reg, value, typewitness.Key)
-	return witness.Type()
+	if _, ok := product.Get(reg, value, identity.Key).ID(); ok {
+		return true
+	}
+	return product.Get(reg, value, runtimekind.Key).Contains(runtimekind.Function)
 }

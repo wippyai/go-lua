@@ -11,7 +11,7 @@ local http = {
 
 local function main(args)
 	local url = (args and args.url) or "http://localhost:8085/hello"
-	return http.get(url, { timeout = "2s" }) -- expect-error: not string
+	return http.get(url, { timeout = "2s" }) -- expect-error: comes from any/unknown; no proof shows it is string
 end
 
 return main

@@ -4,6 +4,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -14,9 +15,14 @@ import (
 type OperationalEffects struct {
 	ReturnPresenceRelations         []ReturnPresenceRelation
 	NormalReturnPresenceRefinements []PathPresenceRefinement
+	NormalReturnTypeRefinements     []PathTypeRefinement
+	PathPresenceImplications        []PathPresenceImplication
 	PathStaticMembers               []PathStaticMemberFact
 	PathInvalidations               []PathInvalidation
+	BranchProofs                    []BranchProof
 	DynamicIndexFacts               []DynamicIndexFact
+	KeyMemberships                  []KeyMembership
+	DynamicValueKeys                []DynamicValueKeyMembership
 	FrozenTables                    []FrozenTable
 	EscapeEvents                    []EscapeEvent
 	StoreRelations                  []StoreRelation
@@ -36,6 +42,21 @@ type PathPresenceRefinement struct {
 	Presence presence.Value
 }
 
+type PathTypeRefinement struct {
+	Path      pathdom.Path
+	Type      typ.Type
+	Assertion assertion.Value
+}
+
+type PathPresenceImplication struct {
+	Trigger         pathdom.Path
+	TriggerPresence presence.Value
+	TriggerType     typ.Type
+	HasTriggerType  bool
+	Target          pathdom.Path
+	TargetPresence  presence.Value
+}
+
 type PathStaticMemberFact struct {
 	Path pathdom.Path
 	Type typ.Type
@@ -43,6 +64,22 @@ type PathStaticMemberFact struct {
 
 type PathInvalidation struct {
 	Path pathdom.Path
+}
+
+type BranchProofKind uint8
+
+const (
+	BranchProofPathPresence BranchProofKind = iota + 1
+	BranchProofPathEqual
+	BranchProofPathNotEqual
+	BranchProofIndexInRange
+)
+
+type BranchProof struct {
+	Kind     BranchProofKind
+	Path     pathdom.Path
+	Presence presence.Value
+	Other    pathdom.Path
 }
 
 type DynamicIndexAdmission string
@@ -65,6 +102,17 @@ type DynamicIndexFact struct {
 	Key         DynamicIndexOperand
 	Value       DynamicIndexOperand
 	Admission   DynamicIndexAdmission
+}
+
+type KeyMembership struct {
+	Key   pathdom.Path
+	Table pathdom.Path
+}
+
+type DynamicValueKeyMembership struct {
+	Container pathdom.Path
+	Site      string
+	Table     pathdom.Path
 }
 
 type FrozenTable struct {
@@ -141,9 +189,14 @@ type AllocationDynamicEntryTemplate struct {
 func (e OperationalEffects) IsEmpty() bool {
 	return len(e.ReturnPresenceRelations) == 0 &&
 		len(e.NormalReturnPresenceRefinements) == 0 &&
+		len(e.NormalReturnTypeRefinements) == 0 &&
+		len(e.PathPresenceImplications) == 0 &&
 		len(e.PathStaticMembers) == 0 &&
 		len(e.PathInvalidations) == 0 &&
+		len(e.BranchProofs) == 0 &&
 		len(e.DynamicIndexFacts) == 0 &&
+		len(e.KeyMemberships) == 0 &&
+		len(e.DynamicValueKeys) == 0 &&
 		len(e.FrozenTables) == 0 &&
 		len(e.EscapeEvents) == 0 &&
 		len(e.StoreRelations) == 0 &&
@@ -155,9 +208,14 @@ func (e OperationalEffects) Clone() OperationalEffects {
 	return OperationalEffects{
 		ReturnPresenceRelations:         cloneReturnPresenceRelations(e.ReturnPresenceRelations),
 		NormalReturnPresenceRefinements: clonePathPresenceRefinements(e.NormalReturnPresenceRefinements),
+		NormalReturnTypeRefinements:     clonePathTypeRefinements(e.NormalReturnTypeRefinements),
+		PathPresenceImplications:        clonePathPresenceImplications(e.PathPresenceImplications),
 		PathStaticMembers:               clonePathStaticMemberFacts(e.PathStaticMembers),
 		PathInvalidations:               clonePathInvalidations(e.PathInvalidations),
+		BranchProofs:                    cloneBranchProofs(e.BranchProofs),
 		DynamicIndexFacts:               cloneDynamicIndexFacts(e.DynamicIndexFacts),
+		KeyMemberships:                  cloneKeyMemberships(e.KeyMemberships),
+		DynamicValueKeys:                cloneDynamicValueKeyMemberships(e.DynamicValueKeys),
 		FrozenTables:                    cloneFrozenTables(e.FrozenTables),
 		EscapeEvents:                    cloneEscapeEvents(e.EscapeEvents),
 		StoreRelations:                  cloneStoreRelations(e.StoreRelations),
@@ -169,9 +227,14 @@ func (e OperationalEffects) Clone() OperationalEffects {
 func (e OperationalEffects) Equals(other OperationalEffects) bool {
 	return equalReturnPresenceRelations(e.ReturnPresenceRelations, other.ReturnPresenceRelations) &&
 		equalPathPresenceRefinements(e.NormalReturnPresenceRefinements, other.NormalReturnPresenceRefinements) &&
+		equalPathTypeRefinements(e.NormalReturnTypeRefinements, other.NormalReturnTypeRefinements) &&
+		equalPathPresenceImplications(e.PathPresenceImplications, other.PathPresenceImplications) &&
 		equalPathStaticMemberFacts(e.PathStaticMembers, other.PathStaticMembers) &&
 		equalPathInvalidations(e.PathInvalidations, other.PathInvalidations) &&
+		equalBranchProofs(e.BranchProofs, other.BranchProofs) &&
 		equalDynamicIndexFacts(e.DynamicIndexFacts, other.DynamicIndexFacts) &&
+		equalKeyMemberships(e.KeyMemberships, other.KeyMemberships) &&
+		equalDynamicValueKeyMemberships(e.DynamicValueKeys, other.DynamicValueKeys) &&
 		equalFrozenTables(e.FrozenTables, other.FrozenTables) &&
 		equalEscapeEvents(e.EscapeEvents, other.EscapeEvents) &&
 		equalStoreRelations(e.StoreRelations, other.StoreRelations) &&
@@ -193,6 +256,35 @@ func clonePathPresenceRefinements(in []PathPresenceRefinement) []PathPresenceRef
 	out := make([]PathPresenceRefinement, len(in))
 	for i, fact := range in {
 		out[i] = PathPresenceRefinement{Path: fact.Path.Clone(), Presence: fact.Presence}
+	}
+	return out
+}
+
+func clonePathTypeRefinements(in []PathTypeRefinement) []PathTypeRefinement {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]PathTypeRefinement, len(in))
+	for i, fact := range in {
+		out[i] = PathTypeRefinement{Path: fact.Path.Clone(), Type: fact.Type, Assertion: normalizePathTypeAssertion(fact.Assertion)}
+	}
+	return out
+}
+
+func clonePathPresenceImplications(in []PathPresenceImplication) []PathPresenceImplication {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]PathPresenceImplication, len(in))
+	for i, fact := range in {
+		out[i] = PathPresenceImplication{
+			Trigger:         fact.Trigger.Clone(),
+			TriggerPresence: fact.TriggerPresence,
+			TriggerType:     fact.TriggerType,
+			HasTriggerType:  fact.HasTriggerType,
+			Target:          fact.Target.Clone(),
+			TargetPresence:  fact.TargetPresence,
+		}
 	}
 	return out
 }
@@ -219,6 +311,22 @@ func clonePathInvalidations(in []PathInvalidation) []PathInvalidation {
 	return out
 }
 
+func cloneBranchProofs(in []BranchProof) []BranchProof {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]BranchProof, len(in))
+	for i, proof := range in {
+		out[i] = BranchProof{
+			Kind:     proof.Kind,
+			Path:     proof.Path.Clone(),
+			Presence: proof.Presence,
+			Other:    proof.Other.Clone(),
+		}
+	}
+	return out
+}
+
 func cloneDynamicIndexFacts(in []DynamicIndexFact) []DynamicIndexFact {
 	if len(in) == 0 {
 		return nil
@@ -239,6 +347,32 @@ func cloneDynamicIndexFacts(in []DynamicIndexFact) []DynamicIndexFact {
 
 func cloneDynamicIndexOperand(in DynamicIndexOperand) DynamicIndexOperand {
 	return DynamicIndexOperand{Path: in.Path.Clone(), Type: in.Type}
+}
+
+func cloneKeyMemberships(in []KeyMembership) []KeyMembership {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]KeyMembership, len(in))
+	for i, fact := range in {
+		out[i] = KeyMembership{Key: fact.Key.Clone(), Table: fact.Table.Clone()}
+	}
+	return out
+}
+
+func cloneDynamicValueKeyMemberships(in []DynamicValueKeyMembership) []DynamicValueKeyMembership {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]DynamicValueKeyMembership, len(in))
+	for i, fact := range in {
+		out[i] = DynamicValueKeyMembership{
+			Container: fact.Container.Clone(),
+			Site:      fact.Site,
+			Table:     fact.Table.Clone(),
+		}
+	}
+	return out
 }
 
 func cloneFrozenTables(in []FrozenTable) []FrozenTable {
@@ -352,6 +486,30 @@ func equalPathPresenceRefinements(a, b []PathPresenceRefinement) bool {
 	})
 }
 
+func equalPathTypeRefinements(a, b []PathTypeRefinement) bool {
+	return equalFactSlices(a, b, func(x, y PathTypeRefinement) bool {
+		return x.Path.Equal(y.Path) && typ.TypeEquals(x.Type, y.Type) && assertion.Equal(normalizePathTypeAssertion(x.Assertion), normalizePathTypeAssertion(y.Assertion))
+	})
+}
+
+func equalPathPresenceImplications(a, b []PathPresenceImplication) bool {
+	return equalFactSlices(a, b, func(x, y PathPresenceImplication) bool {
+		return x.Trigger.Equal(y.Trigger) &&
+			presence.Equal(x.TriggerPresence, y.TriggerPresence) &&
+			typ.TypeEquals(x.TriggerType, y.TriggerType) &&
+			x.HasTriggerType == y.HasTriggerType &&
+			x.Target.Equal(y.Target) &&
+			presence.Equal(x.TargetPresence, y.TargetPresence)
+	})
+}
+
+func normalizePathTypeAssertion(v assertion.Value) assertion.Value {
+	if v.IsBottom() {
+		return assertion.Top()
+	}
+	return v
+}
+
 func equalPathStaticMemberFacts(a, b []PathStaticMemberFact) bool {
 	return equalFactSlices(a, b, func(x, y PathStaticMemberFact) bool {
 		return x.Path.Equal(y.Path) && typ.TypeEquals(x.Type, y.Type)
@@ -361,6 +519,15 @@ func equalPathStaticMemberFacts(a, b []PathStaticMemberFact) bool {
 func equalPathInvalidations(a, b []PathInvalidation) bool {
 	return equalFactSlices(a, b, func(x, y PathInvalidation) bool {
 		return x.Path.Equal(y.Path)
+	})
+}
+
+func equalBranchProofs(a, b []BranchProof) bool {
+	return equalFactSlices(a, b, func(x, y BranchProof) bool {
+		return x.Kind == y.Kind &&
+			x.Path.Equal(y.Path) &&
+			presence.Equal(x.Presence, y.Presence) &&
+			x.Other.Equal(y.Other)
 	})
 }
 
@@ -377,6 +544,18 @@ func equalDynamicIndexFacts(a, b []DynamicIndexFact) bool {
 
 func equalDynamicIndexOperand(a, b DynamicIndexOperand) bool {
 	return a.Path.Equal(b.Path) && typ.TypeEquals(a.Type, b.Type)
+}
+
+func equalKeyMemberships(a, b []KeyMembership) bool {
+	return equalFactSlices(a, b, func(x, y KeyMembership) bool {
+		return x.Key.Equal(y.Key) && x.Table.Equal(y.Table)
+	})
+}
+
+func equalDynamicValueKeyMemberships(a, b []DynamicValueKeyMembership) bool {
+	return equalFactSlices(a, b, func(x, y DynamicValueKeyMembership) bool {
+		return x.Container.Equal(y.Container) && x.Site == y.Site && x.Table.Equal(y.Table)
+	})
 }
 
 func equalFrozenTables(a, b []FrozenTable) bool {

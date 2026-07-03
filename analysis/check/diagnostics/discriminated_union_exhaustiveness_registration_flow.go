@@ -23,12 +23,19 @@ func (p discriminatedUnionExhaustiveness) registrationInvalidatedBeforeDispatch(
 	return false
 }
 
-func (p discriminatedUnionExhaustiveness) openRegistrationCanReach(result *body.Result, graph cfg.Graph, open []openRegistrationMutation, dispatch dispatchCall) bool {
+func (p discriminatedUnionExhaustiveness) openRegistrationCanCoverCase(result *body.Result, graph cfg.Graph, open []openRegistrationMutation, dispatch dispatchCall, c discriminantCase) bool {
 	for _, mutation := range open {
+		if !mutation.mayRegister {
+			continue
+		}
 		if mutation.point == dispatch.point || !diagnosticCanReach(p.flow, graph, mutation.point, dispatch.point) {
 			continue
 		}
 		if mutation.hasKey {
+			if registrationRegistryMatchesAt(result, mutation.point, mutation.registry, dispatch.registry) &&
+				mutation.key == c.key {
+				return true
+			}
 			continue
 		}
 		if mutation.opensAll {
@@ -43,11 +50,6 @@ func (p discriminatedUnionExhaustiveness) openRegistrationCanReach(result *body.
 		if dispatch.registry.HasPrefix(mutation.path) {
 			return true
 		}
-		if mutation.hasKey &&
-			registrationRegistryMatchesAt(result, mutation.point, mutation.registry, dispatch.registry) &&
-			registrationMutationKeyMatchesCase(mutation.key, dispatch.cases) {
-			return true
-		}
 	}
 	return false
 }
@@ -57,13 +59,4 @@ func registrationRegistryMatchesAt(result *body.Result, point cfg.Point, left, r
 		return true
 	}
 	return result != nil && result.PathsEquivalentAtBoundary(point, left, right)
-}
-
-func registrationMutationKeyMatchesCase(key string, cases []discriminantCase) bool {
-	for _, c := range cases {
-		if c.key == key {
-			return true
-		}
-	}
-	return false
 }

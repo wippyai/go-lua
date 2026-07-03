@@ -40,7 +40,7 @@ func containsDynamicFlag(
 	if _, ok := t.(*Recursive); ok {
 		return false
 	}
-	if !knownContainsOpenRecursive(t) {
+	if !knownContainsRecursive(t) {
 		return false
 	}
 	if seen == nil {

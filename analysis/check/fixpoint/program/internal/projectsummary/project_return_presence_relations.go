@@ -11,14 +11,38 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
-type returnSourceValueReader interface {
-	SourceValueAtBoundary(cfg.Point, factflow.ValueSource) (product.Value, bool)
-}
-
 func projectReturnPresenceRelations(reg *axis.Registry, result ResultReader) []summary.ReturnPresenceRelation {
 	out := projectExistingReturnPresenceRelations(result)
-	out = append(out, projectSolvedReturnPresenceRelations(reg, result)...)
+	out = append(out, filterConflictingSolvedReturnPresenceRelations(out, projectSolvedReturnPresenceRelations(reg, result))...)
 	return out
+}
+
+func filterConflictingSolvedReturnPresenceRelations(existing, solved []summary.ReturnPresenceRelation) []summary.ReturnPresenceRelation {
+	if len(existing) == 0 || len(solved) == 0 {
+		return solved
+	}
+	out := solved[:0]
+	for _, relation := range solved {
+		if returnPresenceRelationConflicts(existing, relation) {
+			continue
+		}
+		out = append(out, relation)
+	}
+	return out
+}
+
+func returnPresenceRelationConflicts(existing []summary.ReturnPresenceRelation, candidate summary.ReturnPresenceRelation) bool {
+	for _, relation := range existing {
+		if relation.TriggerIndex != candidate.TriggerIndex ||
+			!presence.Equal(relation.TriggerPresence, candidate.TriggerPresence) ||
+			relation.TargetIndex != candidate.TargetIndex {
+			continue
+		}
+		if !presence.Equal(relation.TargetPresence, candidate.TargetPresence) {
+			return true
+		}
+	}
+	return false
 }
 
 func projectExistingReturnPresenceRelations(result ResultReader) []summary.ReturnPresenceRelation {
@@ -40,32 +64,24 @@ func projectExistingReturnPresenceRelations(result ResultReader) []summary.Retur
 }
 
 func projectSolvedReturnPresenceRelations(reg *axis.Registry, result ResultReader) []summary.ReturnPresenceRelation {
-	sourceReader, hasSources := result.(returnValueSourceReader)
-	valueReader, hasValues := result.(returnSourceValueReader)
-	if reg == nil || !hasSources || !hasValues {
+	slots := newReturnSlotProjection(reg, result)
+	if !slots.OK() || slots.arity < 2 {
 		return nil
 	}
-	arity := projectedReturnPresenceArity(result)
-	if arity < 2 {
-		return nil
-	}
-	points := make([]returnpresence.Point, 0, len(result.ReturnPoints()))
-	for _, point := range result.ReturnPoints() {
-		if projectedReturnPointUnreachable(reg, result, point) {
-			continue
-		}
-		sources, ok := sourceReader.ReturnValueSources(point)
+	points := make([]returnpresence.Point, 0, len(slots.reachable))
+	for _, point := range slots.reachable {
+		sources, ok := slots.Sources(point)
 		if !ok {
 			continue
 		}
-		points = append(points, projectedReturnPresencePointFor(reg, valueReader, point, sources, arity))
+		points = append(points, projectedReturnPresencePointFor(slots, point, sources))
 	}
 	if len(points) == 0 {
 		return nil
 	}
 	var out []summary.ReturnPresenceRelation
-	for trigger := 0; trigger < arity; trigger++ {
-		for target := 0; target < arity; target++ {
+	for trigger := 0; trigger < slots.arity; trigger++ {
+		for target := 0; target < slots.arity; target++ {
 			if target == trigger {
 				continue
 			}
@@ -103,23 +119,21 @@ func projectedReturnPresenceArity(result ResultReader) int {
 }
 
 func projectedReturnPresencePointFor(
-	reg *axis.Registry,
-	reader returnSourceValueReader,
+	slots returnSlotProjection,
 	point cfg.Point,
 	sources []factflow.ValueSource,
-	arity int,
 ) returnpresence.Point {
 	out := returnpresence.Point{
-		Presence: make([]presence.Value, arity),
-		Known:    make([]bool, arity),
+		Presence: make([]presence.Value, slots.arity),
+		Known:    make([]bool, slots.arity),
 	}
-	for i := 0; i < arity; i++ {
+	for i := 0; i < slots.arity; i++ {
 		out.Presence[i] = presence.Absent()
 		out.Known[i] = true
 	}
-	for i := 0; i < len(sources) && i < arity; i++ {
-		value, ok := reader.SourceValueAtBoundary(point, sources[i])
-		if !ok || product.Equal(reg, value, product.Bottom(reg)) {
+	for i := 0; i < len(sources) && i < slots.arity; i++ {
+		value, ok := slots.Value(point, sources, i)
+		if !ok {
 			out.Presence[i] = presence.Bottom()
 			out.Known[i] = false
 			continue

@@ -3,6 +3,7 @@ package typevalue
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -13,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -44,6 +46,144 @@ func TestFromTypeMaterializesConcreteRuntimeKinds(t *testing.T) {
 	}
 }
 
+func TestHasConcreteTypeRejectsTopLikeTypes(t *testing.T) {
+	reg := standard.Registry()
+
+	tests := []struct {
+		name string
+		typ  typ.Type
+		want bool
+	}{
+		{name: "number", typ: typ.Number, want: true},
+		{name: "any", typ: typ.Any, want: false},
+		{name: "unknown", typ: typ.Unknown, want: false},
+		{name: "never", typ: typ.Never, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value := WithWitness(reg, FromType(reg, tt.typ), tt.typ)
+			if got := HasConcreteType(reg, value); got != tt.want {
+				t.Fatalf("HasConcreteType(%s) = %v, want %v", tt.typ, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTypeValuePredicatesUseSubtypeWitnesses(t *testing.T) {
+	reg := standard.Registry()
+	integerLiteral := WithWitness(reg, FromType(reg, typ.LiteralInt(4)), typ.LiteralInt(4))
+	number := WithWitness(reg, FromType(reg, typ.Number), typ.Number)
+	nilValue := Nil(reg)
+	optionalString := WithWitness(reg, FromType(reg, typeexpr.Optional(typ.String)), typeexpr.Optional(typ.String))
+
+	if !HasIntegerType(reg, integerLiteral) {
+		t.Fatal("integer literal should satisfy integer predicate")
+	}
+	if HasIntegerType(reg, number) {
+		t.Fatal("number should not satisfy integer predicate")
+	}
+	if !HasOnlyNilType(reg, nilValue) {
+		t.Fatal("nil should satisfy nil-only predicate")
+	}
+	if HasOnlyNilType(reg, optionalString) {
+		t.Fatal("optional string should not satisfy nil-only predicate")
+	}
+}
+
+func TestDefinitelyNonEmptyIndexContainer(t *testing.T) {
+	nonEmpty := typ.NewTuple(typ.String)
+	aliased := typ.NewAlias("NonEmptyTuple", nonEmpty)
+
+	tests := []struct {
+		name string
+		typ  typ.Type
+		want bool
+	}{
+		{name: "tuple with element", typ: nonEmpty, want: true},
+		{name: "alias to tuple with element", typ: aliased, want: true},
+		{name: "empty tuple", typ: typ.NewTuple(), want: false},
+		{name: "all union arms non-empty", typ: typeexpr.Union(typ.NewTuple(typ.String), typ.NewTuple(typ.Number)), want: true},
+		{name: "one union arm empty", typ: typeexpr.Union(typ.NewTuple(typ.String), typ.NewTuple()), want: false},
+		{name: "array has unknown length", typ: typ.NewArray(typ.String), want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := DefinitelyNonEmptyIndexContainer(tt.typ); got != tt.want {
+				t.Fatalf("DefinitelyNonEmptyIndexContainer(%s) = %v, want %v", tt.typ, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTypeOfMaterializedTaggedAliasReturnsCompatibleType(t *testing.T) {
+	reg := standard.Registry()
+	target := typetable.NewRecord().
+		Field("__tag", typ.LiteralString("int")).
+		Build()
+	alias := typ.NewAlias("__test_MaterializedTaggedAlias", target)
+
+	got, ok := TypeOf(reg, FromType(reg, alias))
+	if !ok {
+		t.Fatal("TypeOf(materialized alias) returned !ok")
+	}
+	if !typ.TypeEquals(got, target) && !typ.TypeEquals(got, alias) {
+		t.Fatalf("TypeOf(materialized alias) = %s, want alias-compatible %s", got, alias)
+	}
+	if !subtype.IsSubtype(alias, got) && !subtype.IsSubtype(got, alias) {
+		t.Fatalf("TypeOf(materialized alias) = %s, not overlap-compatible with %s", got, alias)
+	}
+}
+
+func TestCacheReusesEquivalentWitnessValuesByShape(t *testing.T) {
+	reg := standard.Registry()
+	cache := NewCache()
+	first := typetable.NewRecord().
+		Field("kind", typ.LiteralString("job")).
+		Field("id", typ.String).
+		Build()
+	second := typetable.NewRecord().
+		Field("kind", typ.LiteralString("job")).
+		Field("id", typ.String).
+		Build()
+
+	firstValue := cache.FromTypeWithWitness(reg, first)
+	secondValue := cache.FromTypeWithWitness(reg, second)
+	if !product.Equal(reg, firstValue, secondValue) {
+		t.Fatalf("cached equivalent witness values differ: %v vs %v", firstValue, secondValue)
+	}
+	if product.Hash(reg, firstValue) != product.Hash(reg, secondValue) {
+		t.Fatalf("cached equivalent witness hashes differ: %d vs %d", product.Hash(reg, firstValue), product.Hash(reg, secondValue))
+	}
+	if len(cache.witnessesByShape) != 1 {
+		t.Fatalf("witness shape cache entries = %d, want 1", len(cache.witnessesByShape))
+	}
+}
+
+func TestTypeOfRuntimeKindFunctionReturnsConservativeCallable(t *testing.T) {
+	reg := standard.Registry()
+	value := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	value = product.Set(reg, value, runtimekind.Key, runtimekind.Singleton(runtimekind.Function))
+
+	got, ok := TypeOf(reg, value)
+	want := typ.Func().Variadic(typ.Any).Returns(typ.Any).Build()
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("TypeOf(runtime function) = %v/%v, want %v", got, ok, want)
+	}
+}
+
+func TestTypeOfRuntimeKindTableReturnsBuiltinTable(t *testing.T) {
+	reg := standard.Registry()
+	value := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	value = product.Set(reg, value, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
+
+	got, ok := TypeOf(reg, value)
+	want := typetable.BuiltinTopMarker()
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("TypeOf(runtime table) = %v/%v, want %v", got, ok, want)
+	}
+}
+
 func TestFromTypeMaterializesOptionalAndUnionPresence(t *testing.T) {
 	reg := standard.Registry()
 
@@ -51,6 +191,11 @@ func TestFromTypeMaterializesOptionalAndUnionPresence(t *testing.T) {
 	gotOptional := FromType(reg, optionalString)
 	assertPresence(t, gotOptional, presence.Maybe())
 	assertRuntimeKind(t, reg, gotOptional, runtimekind.Singleton(runtimekind.String))
+
+	optionalLiteral := typeexpr.Optional(typ.LiteralString("ok"))
+	gotOptionalLiteral := FromType(reg, optionalLiteral)
+	assertPresence(t, gotOptionalLiteral, presence.Maybe())
+	assertRuntimeKind(t, reg, gotOptionalLiteral, runtimekind.Singleton(runtimekind.String))
 
 	stringOrNumber := typeexpr.Union(typ.String, typ.Number)
 	gotUnion := FromType(reg, stringOrNumber)
@@ -159,6 +304,53 @@ func TestFromTypeMarksUnknownAndAnyAsExplicitTop(t *testing.T) {
 	}
 }
 
+func TestMergeDeclaredTypeFactsMergesPresenceKindAndSharedTopOrigin(t *testing.T) {
+	reg := standard.Registry()
+	gradual := product.Set(reg, FromType(reg, typ.String), evidence.Key, evidence.GradualTop())
+	declaredGradual := product.Set(reg, FromType(reg, typ.Number), evidence.Key, evidence.GradualTop())
+	declaredExplicit := product.Set(reg, FromType(reg, typ.Number), evidence.Key, evidence.ExplicitTop())
+
+	got := MergeDeclaredTypeFacts(reg, gradual, FromType(reg, typ.Number))
+	if gotEvidence := product.Get(reg, got, evidence.Key); !evidence.Equal(gotEvidence, evidence.GradualTop()) {
+		t.Fatalf("declared type facts without declared evidence = %s, want existing gradual-top", gotEvidence)
+	}
+	assertPresence(t, got, presence.Present())
+	assertRuntimeKind(t, reg, got, runtimekind.Join(runtimekind.Singleton(runtimekind.String), runtimekind.Singleton(runtimekind.Number)))
+
+	got = MergeDeclaredTypeFacts(reg, gradual, declaredGradual)
+	if gotEvidence := product.Get(reg, got, evidence.Key); !evidence.Equal(gotEvidence, evidence.GradualTop()) {
+		t.Fatalf("shared declared evidence = %s, want gradual-top", gotEvidence)
+	}
+	got = MergeDeclaredTypeFacts(reg, gradual, declaredExplicit)
+	if gotEvidence := product.Get(reg, got, evidence.Key); !evidence.Equal(gotEvidence, evidence.Top()) {
+		t.Fatalf("conflicting declared evidence = %s, want top", gotEvidence)
+	}
+}
+
+func TestDeclaredTypeFactsPresenceOnly(t *testing.T) {
+	reg := standard.Registry()
+	nodeType := typetable.NewRecord().Field("id", typ.String).Build()
+	value := WithWitness(reg, FromType(reg, nodeType), nodeType)
+	declared := WithWitness(reg, FromType(reg, typeexpr.Optional(nodeType)), typeexpr.Optional(nodeType))
+
+	got, ok := DeclaredTypeFactsPresenceOnly(reg, value, declared)
+	if !ok || !presence.Equal(got, presence.Top()) {
+		t.Fatalf("DeclaredTypeFactsPresenceOnly = %s/%v, want top presence", got, ok)
+	}
+}
+
+func TestDeclaredTypeFactsPresenceOnlyRejectsWiderType(t *testing.T) {
+	reg := standard.Registry()
+	valueType := typetable.NewRecord().Field("id", typ.String).Build()
+	declaredType := typetable.NewRecord().Field("id", typ.String).Field("name", typ.String).Build()
+	value := WithWitness(reg, FromType(reg, valueType), valueType)
+	declared := WithWitness(reg, FromType(reg, declaredType), declaredType)
+
+	if got, ok := DeclaredTypeFactsPresenceOnly(reg, value, declared); ok {
+		t.Fatalf("DeclaredTypeFactsPresenceOnly = %s/true for wider declared type", got)
+	}
+}
+
 func TestFromTypeMaterializesVariantOrigin(t *testing.T) {
 	reg := standard.Registry()
 	left := typetable.NewRecord().
@@ -214,6 +406,110 @@ func TestTypeOfPrefersWitnessOverVariantOrigin(t *testing.T) {
 	}
 }
 
+func TestTypeOfNarrowsDeclaredWitnessByVariantOrigin(t *testing.T) {
+	reg := standard.Registry()
+	left := typetable.NewRecord().
+		Field("kind", typ.LiteralString("left")).
+		Field("value", typ.Number).
+		Build()
+	right := typetable.NewRecord().
+		Field("kind", typ.LiteralString("right")).
+		Field("value", typ.String).
+		Build()
+	union := typeexpr.Union(left, right)
+	family, cases, ok := variant.OriginByPathLiteral(union, []segment.Segment{{Kind: segment.SegmentField, Name: "kind"}}, typ.LiteralString("left"))
+	if !ok {
+		t.Fatal("left origin missing")
+	}
+	value := WithWitness(reg, FromType(reg, union), union)
+	value = product.Set(reg, value, variantorigin.Key, variantorigin.Of(family, cases))
+
+	got, ok := TypeOf(reg, value)
+	if !ok || !typ.TypeEquals(got, left) {
+		t.Fatalf("TypeOf(declared witness + narrowed origin) = %v/%v, want %v", got, ok, left)
+	}
+}
+
+func TestCacheTypeOfNarrowsDeclaredWitnessByVariantOrigin(t *testing.T) {
+	reg := standard.Registry()
+	cache := NewCache()
+	left := typetable.NewRecord().
+		Field("kind", typ.LiteralString("left")).
+		Field("value", typ.Number).
+		Build()
+	right := typetable.NewRecord().
+		Field("kind", typ.LiteralString("right")).
+		Field("value", typ.String).
+		Build()
+	union := typeexpr.Union(left, right)
+	family, cases, ok := cache.OriginByPathLiteral(union, []segment.Segment{{Kind: segment.SegmentField, Name: "kind"}}, typ.LiteralString("left"))
+	if !ok {
+		t.Fatal("left origin missing")
+	}
+	value := WithWitness(reg, cache.FromType(reg, union), union)
+	value = product.Set(reg, value, variantorigin.Key, variantorigin.Of(family, cases))
+
+	got, ok := cache.TypeOf(reg, value)
+	if !ok || !typ.TypeEquals(got, left) {
+		t.Fatalf("cached TypeOf(declared witness + narrowed origin) = %v/%v, want %v", got, ok, left)
+	}
+}
+
+func TestTypeOfUsesSubtypeOriginWhenWitnessFamilyDiffers(t *testing.T) {
+	reg := standard.Registry()
+	msg := typetable.NewRecord().
+		Field("kind", typ.LiteralString("msg")).
+		Field("value", typ.String).
+		Build()
+	timer := typetable.NewRecord().
+		Field("kind", typ.LiteralString("timer")).
+		Field("value", typ.Number).
+		Build()
+	declared := typeexpr.Union(msg, timer)
+	msgFamily, msgCases, ok := variant.OriginOfType(msg)
+	if !ok {
+		t.Fatal("msg origin missing")
+	}
+	value := WithWitness(reg, FromType(reg, declared), declared)
+	value = product.Set(reg, value, variantorigin.Key, variantorigin.Of(msgFamily, msgCases))
+
+	got, ok := TypeOf(reg, value)
+	if !ok || !typ.TypeEquals(got, msg) {
+		t.Fatalf("TypeOf(declared witness + subtype origin) = %v/%v, want %v", got, ok, msg)
+	}
+}
+
+func TestStructuralTypeOfPrefersCompatibleWitnessOverOpenVariantOrigin(t *testing.T) {
+	reg := standard.Registry()
+	tp := typ.NewTypeParam("T", nil)
+	result := typ.NewGeneric("Result", []*typ.TypeParam{tp}, typeexpr.Union(
+		typetable.NewRecord().
+			Field("ok", typ.LiteralBool(true)).
+			Field("value", tp).
+			Build(),
+		typetable.NewRecord().
+			Field("ok", typ.LiteralBool(false)).
+			Field("error", typ.String).
+			Build(),
+	))
+	okPath := []segment.Segment{{Kind: segment.SegmentField, Name: "ok"}}
+	family, cases, ok := variant.OriginByPathLiteral(typ.Instantiate(result, tp), okPath, typ.LiteralBool(true))
+	if !ok {
+		t.Fatal("open Result<T> origin missing")
+	}
+	concrete := typetable.NewRecord().
+		Field("ok", typ.LiteralBool(true)).
+		Field("value", typ.LiteralInt(41)).
+		Build()
+	value := WithWitness(reg, FromType(reg, concrete), concrete)
+	value = product.Set(reg, value, variantorigin.Key, variantorigin.Of(family, cases))
+
+	got, ok := StructuralTypeOf(reg, NewCache(), value, StructuralTypeOptions{})
+	if !ok || !typ.TypeEquals(got, concrete) {
+		t.Fatalf("StructuralTypeOf = %v/%v, want concrete witness", got, ok)
+	}
+}
+
 func TestTypeOfFallsBackWhenVariantOriginCannotReconstruct(t *testing.T) {
 	reg := standard.Registry()
 	value := product.Set(reg, FromType(reg, typ.Number), variantorigin.Key, variantorigin.Singleton(0x5afe0c1d, 1))
@@ -228,6 +524,7 @@ func TestCacheRefreshesStaleConcreteVariantOriginProduct(t *testing.T) {
 	reg := standard.Registry()
 	cache := NewCache()
 	key := typeValueCacheKey{reg: reg, typ: typ.Number}
+	shapeKey := typeValueShapeKey{reg: reg, hash: typ.EqualityHash(typ.Number)}
 	stale := product.Set(reg, FromType(reg, typ.Number), variantorigin.Key, variantorigin.Singleton(0xdeadbeef, 1))
 
 	cache.values = map[typeValueCacheKey]product.Value{key: stale}
@@ -243,6 +540,88 @@ func TestCacheRefreshesStaleConcreteVariantOriginProduct(t *testing.T) {
 	}
 	if got, ok := TypeOf(reg, witnessed); !ok || !typ.TypeEquals(got, typ.Number) {
 		t.Fatalf("refreshed cached witness TypeOf = %v/%v, want number", got, ok)
+	}
+
+	cache = NewCache()
+	cache.valuesByShape = map[typeValueShapeKey][]cachedTypeValue{
+		shapeKey: {{typ: typ.Number, value: stale}},
+	}
+	value = cache.FromType(reg, typ.Number)
+	if origin := product.Get(reg, value, variantorigin.Key); !origin.IsTop() {
+		t.Fatalf("refreshed shape-cached value kept stale origin %v", origin)
+	}
+
+	cache = NewCache()
+	cache.witnessesByShape = map[typeValueShapeKey][]cachedTypeValue{
+		shapeKey: {{typ: typ.Number, value: stale}},
+	}
+	witnessed = cache.FromTypeWithWitness(reg, typ.Number)
+	if origin := product.Get(reg, witnessed, variantorigin.Key); !origin.IsTop() {
+		t.Fatalf("refreshed shape-cached witness kept stale origin %v", origin)
+	}
+}
+
+func TestCacheReusesAcyclicStructuralTypeValues(t *testing.T) {
+	reg := standard.Registry()
+	cache := NewCache()
+	left := typetable.NewRecord().
+		Field("id", typ.String).
+		Field("count", typ.Integer).
+		Build()
+	right := typetable.NewRecord().
+		Field("count", typ.Integer).
+		Field("id", typ.String).
+		Build()
+	if left == right {
+		t.Fatal("test requires independently rebuilt record nodes")
+	}
+
+	leftValue := cache.FromType(reg, left)
+	rightValue := cache.FromType(reg, right)
+	if !product.Equal(reg, leftValue, rightValue) {
+		t.Fatalf("structural cache value mismatch: %v vs %v", leftValue, rightValue)
+	}
+	if got := len(cache.valuesByShape); got != 1 {
+		t.Fatalf("value shape bucket count = %d, want 1", got)
+	}
+	for _, entries := range cache.valuesByShape {
+		if got := len(entries); got != 1 {
+			t.Fatalf("value shape bucket entries = %d, want 1", got)
+		}
+	}
+
+	leftWitness := cache.FromTypeWithWitness(reg, left)
+	rightWitness := cache.FromTypeWithWitness(reg, right)
+	if !product.Equal(reg, leftWitness, rightWitness) {
+		t.Fatalf("structural cache witness mismatch: %v vs %v", leftWitness, rightWitness)
+	}
+	if got := len(cache.witnessesByShape); got != 1 {
+		t.Fatalf("witness shape bucket count = %d, want 1", got)
+	}
+	for _, entries := range cache.witnessesByShape {
+		if got := len(entries); got != 1 {
+			t.Fatalf("witness shape bucket entries = %d, want 1", got)
+		}
+	}
+}
+
+func TestWithWitnessPreservesExistingStructuralWitness(t *testing.T) {
+	reg := standard.Registry()
+	left := typetable.NewRecord().
+		Field("id", typ.String).
+		Build()
+	right := typetable.NewRecord().
+		Field("id", typ.String).
+		Build()
+	if left == right {
+		t.Fatal("test requires independently rebuilt record nodes")
+	}
+	value := WithWitness(reg, FromType(reg, left), left)
+
+	got := WithWitness(reg, value, right)
+
+	if got != value {
+		t.Fatalf("WithWitness rebuilt value for equivalent witness: got %v want original %v", got, value)
 	}
 }
 
@@ -296,6 +675,39 @@ func TestStructuralTypeOfAppliesPresenceOptions(t *testing.T) {
 	}
 }
 
+func TestFromTypeIntersectionPresenceUsesMeetOfKnownMembers(t *testing.T) {
+	reg := standard.Registry()
+	record := typetable.NewRecord().
+		Field("platform", typ.String).
+		Build()
+	iface := typ.NewInterface("os", []typ.Method{
+		{Name: "time", Type: typ.Func().Returns(typ.Number).Build()},
+	})
+	module := typeexpr.Intersection(record, iface)
+
+	value := FromType(reg, module)
+	assertPresence(t, value, presence.Present())
+
+	witnessed := WithWitness(reg, value, module)
+	got, ok := StructuralTypeOf(reg, nil, witnessed, StructuralTypeOptions{
+		ApplyPresence:     true,
+		OptionalWhenMaybe: true,
+	})
+	if !ok || !typ.TypeEquals(got, module) {
+		t.Fatalf("StructuralTypeOf(record & interface) = %v/%v, want %v/true", got, ok, module)
+	}
+}
+
+func TestFromTypeIntersectionPresenceNarrowsOptionalMembers(t *testing.T) {
+	reg := standard.Registry()
+
+	value := FromType(reg, typeexpr.Intersection(typeexpr.Optional(typ.String), typ.String))
+	assertPresence(t, value, presence.Present())
+
+	nilValue := FromType(reg, typeexpr.Intersection(typeexpr.Optional(typ.String), typ.Nil))
+	assertPresence(t, nilValue, presence.Absent())
+}
+
 func TestProjectionHasNilHandlesAliasesAndInstantiations(t *testing.T) {
 	param := typ.NewTypeParam("T", nil)
 	maybeBox := typ.NewGeneric("MaybeBox", []*typ.TypeParam{param}, typeexpr.Optional(param))
@@ -309,12 +721,19 @@ func TestProjectionHasNilHandlesAliasesAndInstantiations(t *testing.T) {
 		{name: "nil input is not projected nil", typ: nil, want: false},
 		{name: "plain nil", typ: typ.Nil, want: true},
 		{name: "optional", typ: typeexpr.Optional(typ.String), want: true},
+		{name: "optional literal", typ: typeexpr.Optional(typ.LiteralString("ok")), want: true},
 		{name: "union with nil", typ: typeexpr.Union(typ.String, typ.Nil), want: true},
 		{name: "alias to optional", typ: typ.NewAlias("MaybeName", typeexpr.Optional(typ.String)), want: true},
 		{name: "alias to nil", typ: typ.NewAlias("NilAlias", typ.Nil), want: true},
 		{name: "alias to non nil", typ: typ.NewAlias("Name", typ.String), want: false},
 		{name: "instantiated optional body", typ: instantiatedMaybe, want: true},
 		{name: "alias to instantiated optional body", typ: typ.NewAlias("MaybeStringBox", instantiatedMaybe), want: true},
+		{name: "intersection optional and string excludes nil", typ: typeexpr.Intersection(typeexpr.Optional(typ.String), typ.String), want: false},
+		{name: "intersection optional and nil includes nil", typ: typeexpr.Intersection(typeexpr.Optional(typ.String), typ.Nil), want: true},
+		{name: "intersection record and interface excludes nil", typ: typeexpr.Intersection(
+			typetable.NewRecord().Field("platform", typ.String).Build(),
+			typ.NewInterface("os", []typ.Method{{Name: "time", Type: typ.Func().Returns(typ.Number).Build()}}),
+		), want: false},
 		{name: "any is not concrete nil evidence", typ: typ.Any, want: false},
 		{name: "unknown is not concrete nil evidence", typ: typ.Unknown, want: false},
 		{name: "never is not nil evidence", typ: typ.Never, want: false},
@@ -411,6 +830,7 @@ func TestRuntimeKindFromType(t *testing.T) {
 		{name: "number", typ: typ.Number, want: runtimekind.Singleton(runtimekind.Number), ok: true},
 		{name: "boolean", typ: typ.Boolean, want: runtimekind.Singleton(runtimekind.Boolean), ok: true},
 		{name: "table", typ: typetable.NewRecord().Build(), want: runtimekind.Singleton(runtimekind.Table), ok: true},
+		{name: "builtin table marker", typ: typetable.BuiltinTopMarker(), want: runtimekind.Singleton(runtimekind.Table), ok: true},
 		{name: "function", typ: typ.Func().Build(), want: runtimekind.Singleton(runtimekind.Function), ok: true},
 		{name: "nil", typ: typ.Nil, want: runtimekind.Singleton(runtimekind.Nil), ok: true},
 		{name: "optional string ignores nil", typ: typeexpr.Optional(typ.String), want: runtimekind.Singleton(runtimekind.String), ok: true},
@@ -433,6 +853,43 @@ func TestRuntimeKindFromType(t *testing.T) {
 				t.Fatalf("runtimekind = %s, want %s", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCacheRefineWitnessByRuntimeKindNarrowsUnion(t *testing.T) {
+	reg := standard.Registry()
+	cache := NewCache()
+	tableType := typ.NewMap(typ.String, typ.String)
+	value := cache.FromTypeWithWitness(reg, typeexpr.Union(typ.String, tableType))
+
+	got, ok := cache.RefineWitnessByRuntimeKind(reg, value, runtimekind.Singleton(runtimekind.Table))
+	if !ok {
+		t.Fatal("RefineWitnessByRuntimeKind returned !ok")
+	}
+	gotType, ok := cache.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, tableType) {
+		t.Fatalf("refined type = %v/%v, want %v", gotType, ok, tableType)
+	}
+
+	if got, ok := cache.RefineWitnessByRuntimeKind(reg, value, runtimekind.Singleton(runtimekind.Thread)); ok || !product.Equal(reg, got, product.Value{}) {
+		t.Fatalf("impossible runtime-kind refinement = %v/%v, want none", got, ok)
+	}
+}
+
+func TestRecoverRuntimeKindWitnessMeetNarrowsWitness(t *testing.T) {
+	reg := standard.Registry()
+	cache := NewCache()
+	tableType := typ.NewMap(typ.String, typ.String)
+	value := cache.FromTypeWithWitness(reg, typeexpr.Union(typ.String, tableType))
+	constraint := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
+
+	got, ok := RecoverRuntimeKindWitnessMeet(reg, value, constraint)
+	if !ok {
+		t.Fatal("RecoverRuntimeKindWitnessMeet returned !ok")
+	}
+	gotType, ok := WitnessOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, tableType) {
+		t.Fatalf("recovered witness = %v/%v, want %v", gotType, ok, tableType)
 	}
 }
 

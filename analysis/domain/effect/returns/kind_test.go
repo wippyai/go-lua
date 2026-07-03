@@ -9,6 +9,7 @@ func TestKindOfReturnTypeClassifiesValuePointerAndTypedNil(t *testing.T) {
 	var nilCallback *CallbackReturn
 	var nilArrayCallback *ArrayOfCallbackReturn
 	var nilProjection *TypeProjection
+	var nilConditional *ConditionalType
 	var nilDeepElement *DeepElementOf
 	var nilStringUnpack *StringUnpackValue
 	var nilSelectCase *SelectCaseOfParam
@@ -27,6 +28,7 @@ func TestKindOfReturnTypeClassifiesValuePointerAndTypedNil(t *testing.T) {
 		{"callback", CallbackReturn{}, &CallbackReturn{}, nilCallback, ReturnTypeCallbackReturn},
 		{"array callback", ArrayOfCallbackReturn{}, &ArrayOfCallbackReturn{}, nilArrayCallback, ReturnTypeArrayOfCallbackReturn},
 		{"type projection", TypeProjection{}, &TypeProjection{}, nilProjection, ReturnTypeTypeProjection},
+		{"conditional type", ConditionalType{}, &ConditionalType{}, nilConditional, ReturnTypeConditionalType},
 		{"deep element", DeepElementOf{}, &DeepElementOf{}, nilDeepElement, ReturnTypeDeepElementOf},
 		{"string unpack", StringUnpackValue{}, &StringUnpackValue{}, nilStringUnpack, ReturnTypeStringUnpackValue},
 		{"select case", SelectCaseOfParam{}, &SelectCaseOfParam{}, nilSelectCase, ReturnTypeSelectCaseOfParam},

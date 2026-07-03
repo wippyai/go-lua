@@ -2,12 +2,31 @@ package state
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/placement"
+	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 )
+
+type ValuesSnapshot struct {
+	Top    bool
+	Values map[key.Value]product.Value
+}
+
+// ValuesSnapshot returns finite value slots unless the value lane is top. When
+// Top is true, Values is empty.
+func (s State) ValuesSnapshot() ValuesSnapshot {
+	if !s.laneEnabled(laneValuesBit) {
+		return ValuesSnapshot{}
+	}
+	if s.values.top {
+		return ValuesSnapshot{Top: true}
+	}
+	return ValuesSnapshot{Values: s.values.cloneValues()}
+}
 
 type DynamicIndexFactsSnapshot struct {
 	Top   bool

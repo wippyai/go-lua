@@ -29,11 +29,10 @@ end
 		Column:          23,
 		Span:            diagnostic.Span{StartLine: 3, StartCol: 23, EndLine: 3, EndCol: 24},
 		MessageContains: []string{"cannot assign w", "string", "not number"},
-		EvidenceMin:     3,
+		EvidenceMin:     2,
 		EvidenceOrdered: []string{
 			"w has type string",
 			"n is declared as number",
-			"no proof on this path shows w satisfies the declared type",
 		},
 		LabelMin: 2,
 		LabelContains: []string{
@@ -51,13 +50,13 @@ end
 			"because:",
 			"proven: w has type string",
 			"claimed: n is declared as number",
-			"missing proof: no proof on this path shows w satisfies the declared type",
 			"help:",
 			"Use a value compatible with the expected type",
 		},
 		RenderNotContains: []string{
 			"want number",
 			"^~",
+			"missing proof:",
 		},
 	})
 }

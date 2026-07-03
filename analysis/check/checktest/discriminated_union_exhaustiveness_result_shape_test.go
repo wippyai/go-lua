@@ -479,6 +479,76 @@ end
 	}
 }
 
+func TestResultValueAliasPreservesShapeThroughObjectReturnAndCallback(t *testing.T) {
+	result := Check(`
+type Response = { status: integer, body: string, headers: {[string]: string} }
+type ResponseResult = { ok: true, value: Response } | { ok: false, error: string }
+type Decorator = (string) -> string
+
+local function build(handler: () -> ResponseResult, decorator: Decorator?): () -> ResponseResult
+    return function(): ResponseResult
+        local response_result = handler()
+        if not response_result.ok then
+            return response_result
+        end
+        if decorator then
+            local response = response_result.value
+            return {
+                ok = true,
+                value = {
+                    status = response.status,
+                    body = decorator(response.body),
+                    headers = response.headers,
+                },
+            }
+        end
+        return response_result
+    end
+end
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want result.value alias shape preserved through returned object", result.Diagnostics)
+	}
+}
+
+func TestResultValueAliasPreservesShapeThroughCapturedRecordFieldCallbacks(t *testing.T) {
+	result := Check(`
+type Response = { status: integer, body: string, headers: {[string]: string} }
+type ResponseResult = { ok: true, value: Response } | { ok: false, error: string }
+type Decorator = (string) -> string
+type Builder = {
+    handler: () -> ResponseResult,
+    decorator: Decorator?,
+}
+
+local function build(self: Builder): () -> ResponseResult
+    local handler = self.handler
+    local decorator = self.decorator
+    return function(): ResponseResult
+        local response_result = handler()
+        if not response_result.ok then
+            return response_result
+        end
+        if decorator then
+            local response = response_result.value
+            return {
+                ok = true,
+                value = {
+                    status = response.status,
+                    body = decorator(response.body),
+                    headers = response.headers,
+                },
+            }
+        end
+        return response_result
+    end
+end
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want captured record-field callbacks to preserve result.value shape", result.Diagnostics)
+	}
+}
+
 func TestDiscriminatedUnionExhaustivenessReportsResultGuardInvalidatedBeforeRead(t *testing.T) {
 	src := strings.TrimLeft(`
 type Result<T> = { ok: true, value: T } | { ok: false, error: string }

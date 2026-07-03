@@ -19,13 +19,17 @@ func (r *Result) extractBranch(stmt ast.Stmt, kind BranchKind, condition ast.Exp
 		return ErrPointMismatch
 	}
 	resolver := callPointResolver(calls, points)
-	conditionCall, _, hasConditionCall := branchcond.PredicateCall(condition)
+	conditionCall, conditionNegated, hasConditionCall := branchcond.PredicateCall(condition)
 	for i, call := range calls {
 		context, exprs, exprIndex := CallContextExpressionProducer, []ast.Expr(nil), call.index
+		callConditionNegated := false
 		if hasConditionCall && call.call == conditionCall {
 			context, exprs, exprIndex = CallContextCondition, []ast.Expr{condition}, 0
+			callConditionNegated = conditionNegated
 		}
-		r.calls[points[i]] = buildCallFact(stmt, nil, context, exprs, exprIndex, call.call, bindings, nil, resolver)
+		fact := buildCallFact(stmt, nil, context, exprs, exprIndex, call.call, bindings, nil, resolver)
+		fact.ConditionNegated = callConditionNegated
+		r.setCall(points[i], fact)
 	}
 	branchPoint := points[len(calls)]
 	fact := BranchConditionFact{

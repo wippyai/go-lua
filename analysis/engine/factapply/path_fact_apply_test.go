@@ -125,6 +125,48 @@ func TestFactsNodeTransferKeepsSamePointStaticMemberWriteWithPathAssignment(t *t
 	}
 }
 
+func TestFactsNodeTransferStaticMemberWriteUpdatesHeapTableIdentity(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(4012)
+	target := symbol.ID(4012)
+	targetPath := pathdom.NewPath(target, "table").Field("result")
+	tableID := identity.ID{Kind: "test.table", Site: "static-member-write", Index: 1}
+	tableValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(tableID))
+	valueSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(4012), HasExpr: true}
+	value := presentValue(reg)
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{valueSource: value},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "table")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			PathStaticMemberWrites: map[cfg.Point]factflow.PathStaticMemberWrite{
+				point: factflow.NewPathStaticMemberWrite(targetPath, valueSource),
+			},
+		}),
+		Sources:    sources,
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.
+		WriteValue(reg, key.SymbolValue(target), tableValue).
+		WriteHeapTableObject(reg, tableID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: tableValue})))
+
+	memberKey, ok := heapidentity.StaticMemberSuffixKey(ks, fieldSuffix("result").Segments)
+	if !ok {
+		t.Fatal("missing result suffix key")
+	}
+	member, ok := got.ReadHeapTableObject(reg, tableID).StaticMember(memberKey)
+	if !ok || !product.Equal(reg, member, value) {
+		t.Fatalf("heap static member = %s/%v, want %s/true", formatValue(reg, member), ok, formatValue(reg, value))
+	}
+}
+
 func TestFactsNodeTransferAppliesDynamicIndexWriteKeyValueAdmission(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(402)
@@ -173,6 +215,780 @@ func TestFactsNodeTransferAppliesDynamicIndexWriteKeyValueAdmission(t *testing.T
 	}
 	if len(sources.calls) != 2 || sources.calls[0].source != keySource || sources.calls[1].source != valueSource {
 		t.Fatalf("dynamic-index source calls = %#v, want key then value", sources.calls)
+	}
+}
+
+func TestFactsNodeTransferDynamicIndexWriteProvesKeyMembership(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(40201)
+	table := symbol.ID(40201)
+	keySymbol := symbol.ID(40202)
+	tablePath := pathdom.NewPath(table, "suites")
+	keyPath := pathdom.NewPath(keySymbol, "suite")
+	keySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(40201), HasExpr: true}
+	valueSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(40202), HasExpr: true}
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{
+			keySource:   typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String),
+			valueSource: presentValue(reg),
+		},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, table, "suites")
+	visibilityBuilder.Define(point, keySymbol, "suite")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	tableStateKey, tableOK := visibility.RootOrVisibleStateKeyAt(resolver, point, tablePath)
+	keyStateKey, keyOK := resolver.StateKeyAt(point, keyPath)
+	if !tableOK || !keyOK {
+		t.Fatal("missing state keys")
+	}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			DynamicIndexWrites: map[cfg.Point]factflow.DynamicIndexWrite{
+				point: factflow.NewDynamicIndexWrite(
+					tablePath,
+					keySource,
+					valueSource,
+					dynamicindex.AdmissionAdmitted,
+					factflow.DynamicIndexReadbackKeyAndValue,
+				),
+			},
+			ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+				keySource.ExprRef: keyPath,
+			},
+		}),
+		Sources:    sources,
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	if !got.HasPathKeyMembership(keyStateKey, tableStateKey) {
+		t.Fatalf("key memberships = %#v, want %s known as key of %s", got.KeyMembershipsSnapshot(), keyStateKey, tableStateKey)
+	}
+}
+
+func TestFactsNodeTransferNilDynamicIndexWriteDoesNotProveKeyMembership(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(402011)
+	table := symbol.ID(402011)
+	keySymbol := symbol.ID(402012)
+	tablePath := pathdom.NewPath(table, "registered")
+	keyPath := pathdom.NewPath(keySymbol, "id")
+	keySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(402011), HasExpr: true}
+	nilSource := factflow.NewNilValueSource(0)
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, table, "registered")
+	visibilityBuilder.Define(point, keySymbol, "id")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	tableStateKey, tableOK := resolver.StateKeyAt(point, tablePath)
+	keyStateKey, keyOK := resolver.StateKeyAt(point, keyPath)
+	if !tableOK || !keyOK {
+		t.Fatal("missing state keys")
+	}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			DynamicIndexWrites: map[cfg.Point]factflow.DynamicIndexWrite{
+				point: factflow.NewDynamicIndexWrite(
+					tablePath,
+					keySource,
+					nilSource,
+					dynamicindex.AdmissionAdmitted,
+					factflow.DynamicIndexReadbackKeyAndValue,
+				),
+			},
+			ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+				keySource.ExprRef: keyPath,
+			},
+		}),
+		Sources: &recordingSourceValues{
+			values: map[factflow.ValueSource]product.Value{
+				keySource: typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String),
+				nilSource: typevalue.Nil(reg),
+			},
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	if got.HasPathKeyMembership(keyStateKey, tableStateKey) {
+		t.Fatalf("key memberships = %#v, want nil write not to prove %s present in %s", got.KeyMembershipsSnapshot(), keyStateKey, tableStateKey)
+	}
+}
+
+func TestFactsNodeTransferDynamicIndexReadCarriesAllValueKeyMembership(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(40202)
+	target := symbol.ID(41202)
+	ids := symbol.ID(41203)
+	registered := symbol.ID(41204)
+	keySym := symbol.ID(41205)
+	targetPath := pathdom.NewPath(target, "id")
+	idsPath := pathdom.NewPath(ids, "ids")
+	registeredPath := pathdom.NewPath(registered, "registered")
+	sourceExpr := factflow.ExprRef(41202)
+	keyExpr := factflow.ExprRef(41205)
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: sourceExpr, HasExpr: true}
+	keySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: keyExpr, HasExpr: true}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "id")
+	visibilityBuilder.Define(point, ids, "ids")
+	visibilityBuilder.Define(point, registered, "registered")
+	visibilityBuilder.Define(point, keySym, "key")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	idsStateKey, ok := resolver.StateKeyAt(point, idsPath)
+	if !ok {
+		t.Fatal("missing ids state key")
+	}
+	registeredStateKey, ok := resolver.StateKeyAt(point, registeredPath)
+	if !ok {
+		t.Fatal("missing registered state key")
+	}
+	targetStateKey, ok := resolver.StateKeyAt(point, targetPath)
+	if !ok {
+		t.Fatal("missing target state key")
+	}
+	idsKey, ok := resolver.KeySpace().InternStateKey(idsStateKey)
+	if !ok {
+		t.Fatal("missing ids key")
+	}
+	dyn, ok := factflow.NewDynamicIndexExpression(idsPath, keySource)
+	if !ok {
+		t.Fatal("NewDynamicIndexExpression returned false")
+	}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			RootAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, targetPath, source),
+			},
+			DynamicIndexExpressions: map[factflow.ExprRef]factflow.DynamicIndexExpression{
+				sourceExpr: dyn,
+			},
+		}),
+		Sources: &recordingSourceValues{
+			values: map[factflow.ValueSource]product.Value{source: presentValue(reg)},
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.AddDynamicIndexAllValuesKeyMembership(idsKey, registeredStateKey))
+
+	if !got.HasPathKeyMembership(targetStateKey, registeredStateKey) {
+		t.Fatalf("key memberships = %#v, want all-value invariant to prove %s key of %s", got.KeyMembershipsSnapshot(), targetStateKey, registeredStateKey)
+	}
+}
+
+func TestFactsNodeTransferDynamicIndexReadCarriesValueKeyMembership(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(40203)
+	target := symbol.ID(40203)
+	channelToID := symbol.ID(40204)
+	registered := symbol.ID(40205)
+	resultChannel := symbol.ID(40206)
+	targetPath := pathdom.NewPath(target, "channel_id")
+	channelToIDPath := pathdom.NewPath(channelToID, "channel_to_id")
+	registeredPath := pathdom.NewPath(registered, "registered_channels")
+	sourceExpr := factflow.ExprRef(40203)
+	keyExpr := factflow.ExprRef(40206)
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: sourceExpr, HasExpr: true}
+	keySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: keyExpr, HasExpr: true}
+	value := presentValue(reg)
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{
+			source: value,
+		},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "channel_id")
+	visibilityBuilder.Define(point, channelToID, "channel_to_id")
+	visibilityBuilder.Define(point, registered, "registered_channels")
+	visibilityBuilder.Define(point, resultChannel, "result_channel")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	channelToIDStateKey, ok := resolver.StateKeyAt(point, channelToIDPath)
+	if !ok {
+		t.Fatalf("missing channel_to_id state key")
+	}
+	registeredStateKey, ok := resolver.StateKeyAt(point, registeredPath)
+	if !ok {
+		t.Fatalf("missing registered_channels state key")
+	}
+	targetStateKey, ok := resolver.StateKeyAt(point, targetPath)
+	if !ok {
+		t.Fatalf("missing target state key")
+	}
+	channelToIDKey, ok := resolver.KeySpace().InternStateKey(channelToIDStateKey)
+	if !ok {
+		t.Fatalf("missing channel_to_id key")
+	}
+	site := dynamicindex.Site("actor.register_channel")
+	in := state.State{}.
+		WriteDynamicIndexFact(reg, dynamicindex.Key{Table: channelToIDKey, Site: site}, dynamicindex.NewFact(reg, dynamicindex.FactConfig{
+			Value:     value,
+			HasValue:  true,
+			Admission: dynamicindex.AdmissionAdmitted,
+		})).
+		AddDynamicIndexValueKeyMembership(channelToIDKey, site, registeredStateKey)
+	dyn, ok := factflow.NewDynamicIndexExpression(channelToIDPath, keySource)
+	if !ok {
+		t.Fatal("NewDynamicIndexExpression returned false")
+	}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			RootAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, targetPath, source),
+			},
+			DynamicIndexExpressions: map[factflow.ExprRef]factflow.DynamicIndexExpression{
+				sourceExpr: dyn,
+			},
+		}),
+		Sources:    sources,
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, in)
+
+	if !got.HasPathKeyMembership(targetStateKey, registeredStateKey) {
+		t.Fatalf("key memberships = %#v, want %s from channel_to_id read known as key of %s", got.KeyMembershipsSnapshot(), targetStateKey, registeredStateKey)
+	}
+}
+
+func TestFactsNodeTransferDynamicIndexReadRequiresCommonValueKeyMembership(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(40204)
+	target := symbol.ID(40207)
+	ids := symbol.ID(40208)
+	registered := symbol.ID(40209)
+	keySym := symbol.ID(40210)
+	targetPath := pathdom.NewPath(target, "id")
+	idsPath := pathdom.NewPath(ids, "ids")
+	registeredPath := pathdom.NewPath(registered, "registered")
+	sourceExpr := factflow.ExprRef(40207)
+	keyExpr := factflow.ExprRef(40210)
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: sourceExpr, HasExpr: true}
+	keySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: keyExpr, HasExpr: true}
+	value := presentValue(reg)
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "id")
+	visibilityBuilder.Define(point, ids, "ids")
+	visibilityBuilder.Define(point, registered, "registered")
+	visibilityBuilder.Define(point, keySym, "key")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	idsStateKey, ok := resolver.StateKeyAt(point, idsPath)
+	if !ok {
+		t.Fatalf("missing ids state key")
+	}
+	registeredStateKey, ok := resolver.StateKeyAt(point, registeredPath)
+	if !ok {
+		t.Fatalf("missing registered state key")
+	}
+	targetStateKey, ok := resolver.StateKeyAt(point, targetPath)
+	if !ok {
+		t.Fatalf("missing target state key")
+	}
+	idsKey, ok := resolver.KeySpace().InternStateKey(idsStateKey)
+	if !ok {
+		t.Fatalf("missing ids key")
+	}
+	pairedSite := dynamicindex.Site("paired")
+	unpairedSite := dynamicindex.Site("unpaired")
+	in := state.State{}.
+		WriteDynamicIndexFact(reg, dynamicindex.Key{Table: idsKey, Site: pairedSite}, dynamicindex.NewFact(reg, dynamicindex.FactConfig{
+			Value:     value,
+			HasValue:  true,
+			Admission: dynamicindex.AdmissionAdmitted,
+		})).
+		AddDynamicIndexValueKeyMembership(idsKey, pairedSite, registeredStateKey).
+		WriteDynamicIndexFact(reg, dynamicindex.Key{Table: idsKey, Site: unpairedSite}, dynamicindex.NewFact(reg, dynamicindex.FactConfig{
+			Value:     value,
+			HasValue:  true,
+			Admission: dynamicindex.AdmissionAdmitted,
+		}))
+	dyn, ok := factflow.NewDynamicIndexExpression(idsPath, keySource)
+	if !ok {
+		t.Fatal("NewDynamicIndexExpression returned false")
+	}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			RootAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, targetPath, source),
+			},
+			DynamicIndexExpressions: map[factflow.ExprRef]factflow.DynamicIndexExpression{
+				sourceExpr: dyn,
+			},
+		}),
+		Sources: &recordingSourceValues{
+			values: map[factflow.ValueSource]product.Value{source: value},
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, in)
+
+	if got.HasPathKeyMembership(targetStateKey, registeredStateKey) {
+		t.Fatalf("key memberships = %#v, want no proof when another value-producing site lacks membership", got.KeyMembershipsSnapshot())
+	}
+}
+
+func TestFactsNodeTransferDynamicIndexWritePreservesAllValueMembershipOnlyForSafeWrites(t *testing.T) {
+	reg := standard.Registry()
+	table := symbol.ID(42201)
+	valueSym := symbol.ID(42202)
+	registered := symbol.ID(42203)
+	tablePath := pathdom.NewPath(table, "ids")
+	valuePath := pathdom.NewPath(valueSym, "id")
+	registeredPath := pathdom.NewPath(registered, "registered")
+	keySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(42201), HasExpr: true}
+	valueSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(42202), HasExpr: true}
+	nilSource := factflow.NewNilValueSource(0)
+
+	for _, tc := range []struct {
+		name             string
+		point            cfg.Point
+		source           factflow.ValueSource
+		values           map[factflow.ValueSource]product.Value
+		sourcePath       bool
+		sourceMembership bool
+		wantInvariant    bool
+	}{
+		{
+			name:             "proven value preserves",
+			point:            cfg.Point(42201),
+			source:           valueSource,
+			values:           map[factflow.ValueSource]product.Value{keySource: presentValue(reg), valueSource: presentValue(reg)},
+			sourcePath:       true,
+			sourceMembership: true,
+			wantInvariant:    true,
+		},
+		{
+			name:          "unknown present value clears",
+			point:         cfg.Point(42202),
+			source:        valueSource,
+			values:        map[factflow.ValueSource]product.Value{keySource: presentValue(reg), valueSource: presentValue(reg)},
+			sourcePath:    true,
+			wantInvariant: false,
+		},
+		{
+			name:          "nil delete preserves",
+			point:         cfg.Point(42203),
+			source:        nilSource,
+			values:        map[factflow.ValueSource]product.Value{keySource: presentValue(reg), nilSource: typevalue.Nil(reg)},
+			wantInvariant: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			visibilityBuilder := visibility.NewBuilder()
+			visibilityBuilder.Define(tc.point, table, "ids")
+			visibilityBuilder.Define(tc.point, valueSym, "id")
+			visibilityBuilder.Define(tc.point, registered, "registered")
+			resolver := visibility.NewResolver(visibilityBuilder.Build())
+			tableStateKey, ok := visibility.RootOrVisibleStateKeyAt(resolver, tc.point, tablePath)
+			if !ok {
+				t.Fatal("missing table state key")
+			}
+			valueStateKey, ok := resolver.StateKeyAt(tc.point, valuePath)
+			if !ok {
+				t.Fatal("missing value state key")
+			}
+			registeredStateKey, ok := resolver.StateKeyAt(tc.point, registeredPath)
+			if !ok {
+				t.Fatal("missing registered state key")
+			}
+			tableKey, ok := resolver.KeySpace().InternStateKey(tableStateKey)
+			if !ok {
+				t.Fatal("missing table key")
+			}
+			input := factflow.FactsInput{
+				DynamicIndexWrites: map[cfg.Point]factflow.DynamicIndexWrite{
+					tc.point: factflow.NewDynamicIndexWrite(
+						tablePath,
+						keySource,
+						tc.source,
+						dynamicindex.AdmissionAdmitted,
+						factflow.DynamicIndexReadbackKeyAndValue,
+					),
+				},
+			}
+			if tc.sourcePath {
+				input.ExpressionPaths = map[factflow.ExprRef]pathdom.Path{
+					valueSource.ExprRef: valuePath,
+				}
+			}
+			in := state.State{}.AddDynamicIndexAllValuesKeyMembership(tableKey, registeredStateKey)
+			if tc.sourceMembership {
+				in = in.AddPathKeyMembership(valueStateKey, registeredStateKey)
+			}
+
+			got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+				Facts:      factflow.NewFacts(input),
+				Sources:    &recordingSourceValues{values: tc.values},
+				Visibility: resolver,
+			})(transfer.NodeContext{
+				Registry: reg,
+				Point:    tc.point,
+			}, in)
+
+			tables := got.DynamicIndexAllValuesKeyMembershipTables(tableKey)
+			gotInvariant := len(tables) == 1 && tables[0] == registeredStateKey
+			if gotInvariant != tc.wantInvariant {
+				t.Fatalf("all-value invariant = %#v, want present=%v", tables, tc.wantInvariant)
+			}
+		})
+	}
+}
+
+func TestFactsNodeTransferPrimaryDeleteClearsDynamicAllValueMembershipsToTable(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(42204)
+	ids := symbol.ID(42204)
+	registered := symbol.ID(42205)
+	keySym := symbol.ID(42206)
+	idsPath := pathdom.NewPath(ids, "ids")
+	registeredPath := pathdom.NewPath(registered, "registered")
+	keyPath := pathdom.NewPath(keySym, "id")
+	keySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(42204), HasExpr: true}
+	nilSource := factflow.NewNilValueSource(0)
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, ids, "ids")
+	visibilityBuilder.Define(point, registered, "registered")
+	visibilityBuilder.Define(point, keySym, "id")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	idsStateKey, ok := resolver.StateKeyAt(point, idsPath)
+	if !ok {
+		t.Fatal("missing ids state key")
+	}
+	registeredStateKey, ok := resolver.StateKeyAt(point, registeredPath)
+	if !ok {
+		t.Fatal("missing registered state key")
+	}
+	idsKey, ok := resolver.KeySpace().InternStateKey(idsStateKey)
+	if !ok {
+		t.Fatal("missing ids key")
+	}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			DynamicIndexWrites: map[cfg.Point]factflow.DynamicIndexWrite{
+				point: factflow.NewDynamicIndexWrite(
+					registeredPath,
+					keySource,
+					nilSource,
+					dynamicindex.AdmissionAdmitted,
+					factflow.DynamicIndexReadbackKeyAndValue,
+				),
+			},
+			ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+				keySource.ExprRef: keyPath,
+			},
+		}),
+		Sources: &recordingSourceValues{
+			values: map[factflow.ValueSource]product.Value{
+				keySource: typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String),
+				nilSource: typevalue.Nil(reg),
+			},
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.AddDynamicIndexAllValuesKeyMembership(idsKey, registeredStateKey))
+
+	if tables := got.DynamicIndexAllValuesKeyMembershipTables(idsKey); len(tables) != 0 {
+		t.Fatalf("all-value memberships = %#v, want primary delete to clear reverse-map proof", tables)
+	}
+}
+
+func TestFactsNodeTransferExpressionNilDynamicIndexWriteClearsReverseProof(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(42216)
+	ids := symbol.ID(42216)
+	registered := symbol.ID(42217)
+	keySym := symbol.ID(42218)
+	idsPath := pathdom.NewPath(ids, "ids")
+	registeredPath := pathdom.NewPath(registered, "registered")
+	keyPath := pathdom.NewPath(keySym, "id")
+	keySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(42216), HasExpr: true}
+	nilSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(42217), HasExpr: true}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, ids, "ids")
+	visibilityBuilder.Define(point, registered, "registered")
+	visibilityBuilder.Define(point, keySym, "id")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	idsStateKey, ok := resolver.StateKeyAt(point, idsPath)
+	if !ok {
+		t.Fatal("missing ids state key")
+	}
+	registeredStateKey, ok := resolver.StateKeyAt(point, registeredPath)
+	if !ok {
+		t.Fatal("missing registered state key")
+	}
+	registeredRootStateKey, ok := visibility.RootOrVisibleStateKeyAt(resolver, point, registeredPath)
+	if !ok {
+		t.Fatal("missing registered root state key")
+	}
+	registeredRootKey, ok := resolver.KeySpace().InternStateKey(registeredRootStateKey)
+	if !ok {
+		t.Fatal("missing registered root key")
+	}
+	keyStateKey, ok := resolver.StateKeyAt(point, keyPath)
+	if !ok {
+		t.Fatal("missing key state key")
+	}
+	idsKey, ok := resolver.KeySpace().InternStateKey(idsStateKey)
+	if !ok {
+		t.Fatal("missing ids key")
+	}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			DynamicIndexWrites: map[cfg.Point]factflow.DynamicIndexWrite{
+				point: factflow.NewDynamicIndexWrite(
+					registeredPath,
+					keySource,
+					nilSource,
+					dynamicindex.AdmissionAdmitted,
+					factflow.DynamicIndexReadbackKeyAndValue,
+				),
+			},
+			ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+				keySource.ExprRef: keyPath,
+				nilSource.ExprRef: keyPath,
+			},
+		}),
+		Sources: &recordingSourceValues{
+			values: map[factflow.ValueSource]product.Value{
+				keySource: typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String),
+				nilSource: typevalue.Nil(reg),
+			},
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.
+		AddDynamicIndexAllValuesKeyMembership(idsKey, registeredStateKey).
+		AddPathKeyMembership(keyStateKey, registeredStateKey))
+
+	if tables := got.DynamicIndexAllValuesKeyMembershipTables(idsKey); len(tables) != 0 {
+		t.Fatalf("all-value memberships = %#v, want expression-nil primary delete to clear reverse-map proof", tables)
+	}
+	site := dynamicindex.SiteForPoint(int(point))
+	if tables := got.DynamicIndexValueKeyMembershipTables(registeredRootKey, site); len(tables) != 0 {
+		t.Fatalf("dynamic value memberships = %#v, want expression-nil write not to prove stored value is a key", tables)
+	}
+}
+
+func TestFactsNodeTransferSamePointPrimaryDeleteBlocksReverseReadProof(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(42207)
+	target := symbol.ID(42207)
+	ids := symbol.ID(42208)
+	registered := symbol.ID(42209)
+	keySym := symbol.ID(42210)
+	targetPath := pathdom.NewPath(target, "stale_id")
+	idsPath := pathdom.NewPath(ids, "ids")
+	registeredPath := pathdom.NewPath(registered, "registered")
+	keyPath := pathdom.NewPath(keySym, "id")
+	readExpr := factflow.ExprRef(42207)
+	keyExpr := factflow.ExprRef(42208)
+	deleteKeyExpr := factflow.ExprRef(42209)
+	readSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: readExpr, HasExpr: true}
+	readKeySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: keyExpr, HasExpr: true}
+	deleteKeySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: deleteKeyExpr, HasExpr: true}
+	nilSource := factflow.NewNilValueSource(0)
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "stale_id")
+	visibilityBuilder.Define(point, ids, "ids")
+	visibilityBuilder.Define(point, registered, "registered")
+	visibilityBuilder.Define(point, keySym, "id")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	idsStateKey, ok := resolver.StateKeyAt(point, idsPath)
+	if !ok {
+		t.Fatal("missing ids state key")
+	}
+	registeredStateKey, ok := resolver.StateKeyAt(point, registeredPath)
+	if !ok {
+		t.Fatal("missing registered state key")
+	}
+	targetStateKey, ok := resolver.StateKeyAt(point, targetPath)
+	if !ok {
+		t.Fatal("missing target state key")
+	}
+	idsKey, ok := resolver.KeySpace().InternStateKey(idsStateKey)
+	if !ok {
+		t.Fatal("missing ids key")
+	}
+	dyn, ok := factflow.NewDynamicIndexExpression(idsPath, readKeySource)
+	if !ok {
+		t.Fatal("NewDynamicIndexExpression returned false")
+	}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			DynamicIndexWrites: map[cfg.Point]factflow.DynamicIndexWrite{
+				point: factflow.NewDynamicIndexWrite(
+					registeredPath,
+					deleteKeySource,
+					nilSource,
+					dynamicindex.AdmissionAdmitted,
+					factflow.DynamicIndexReadbackKeyAndValue,
+				),
+			},
+			RootAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, targetPath, readSource),
+			},
+			DynamicIndexExpressions: map[factflow.ExprRef]factflow.DynamicIndexExpression{
+				readExpr: dyn,
+			},
+			ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+				deleteKeyExpr: keyPath,
+			},
+		}),
+		Sources: &recordingSourceValues{
+			values: map[factflow.ValueSource]product.Value{
+				readSource:      presentValue(reg),
+				deleteKeySource: typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String),
+				nilSource:       typevalue.Nil(reg),
+			},
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.AddDynamicIndexAllValuesKeyMembership(idsKey, registeredStateKey))
+
+	if got.HasPathKeyMembership(targetStateKey, registeredStateKey) {
+		t.Fatalf("key memberships = %#v, want primary delete to block same-point reverse read proof", got.KeyMembershipsSnapshot())
+	}
+}
+
+func TestFactsNodeTransferReverseDeleteRestoresClosedAllValueInvariant(t *testing.T) {
+	reg := standard.Registry()
+	readPoint := cfg.Point(42220)
+	primaryDeletePoint := cfg.Point(42221)
+	reverseDeletePoint := cfg.Point(42222)
+	target := symbol.ID(42220)
+	ids := symbol.ID(42221)
+	registered := symbol.ID(42222)
+	chanSym := symbol.ID(42223)
+	targetPath := pathdom.NewPath(target, "channel_id")
+	idsPath := pathdom.NewPath(ids, "channel_to_id")
+	registeredPath := pathdom.NewPath(registered, "registered_channels")
+	chanPath := pathdom.NewPath(chanSym, "chan")
+	readExpr := factflow.ExprRef(42220)
+	chanExpr := factflow.ExprRef(42221)
+	targetExpr := factflow.ExprRef(42222)
+	readSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: readExpr, HasExpr: true}
+	chanSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: chanExpr, HasExpr: true}
+	targetSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: targetExpr, HasExpr: true}
+	nilSource := factflow.NewNilValueSource(0)
+	visibilityBuilder := visibility.NewBuilder()
+	targetVersion := visibilityBuilder.Define(readPoint, target, "channel_id")
+	idsVersion := visibilityBuilder.Define(readPoint, ids, "channel_to_id")
+	registeredVersion := visibilityBuilder.Define(readPoint, registered, "registered_channels")
+	chanVersion := visibilityBuilder.Define(readPoint, chanSym, "chan")
+	for _, point := range []cfg.Point{readPoint, primaryDeletePoint, reverseDeletePoint} {
+		visibilityBuilder.SetVisible(point, target, targetVersion)
+		visibilityBuilder.SetVisible(point, ids, idsVersion)
+		visibilityBuilder.SetVisible(point, registered, registeredVersion)
+		visibilityBuilder.SetVisible(point, chanSym, chanVersion)
+	}
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	idsStateKey, ok := visibility.RootOrVisibleStateKeyAt(resolver, readPoint, idsPath)
+	if !ok {
+		t.Fatal("missing ids state key")
+	}
+	idsKey, ok := resolver.KeySpace().InternStateKey(idsStateKey)
+	if !ok {
+		t.Fatal("missing ids key")
+	}
+	registeredStateKey, ok := resolver.StateKeyAt(readPoint, registeredPath)
+	if !ok {
+		t.Fatal("missing registered state key")
+	}
+	targetStateKey, ok := resolver.StateKeyAt(readPoint, targetPath)
+	if !ok {
+		t.Fatal("missing target state key")
+	}
+	chanStateKey, ok := resolver.StateKeyAt(readPoint, chanPath)
+	if !ok {
+		t.Fatal("missing chan state key")
+	}
+	dyn, ok := factflow.NewDynamicIndexExpression(idsPath, chanSource)
+	if !ok {
+		t.Fatal("NewDynamicIndexExpression returned false")
+	}
+	facts := factflow.NewFacts(factflow.FactsInput{
+		DynamicIndexExpressions: map[factflow.ExprRef]factflow.DynamicIndexExpression{
+			readExpr: dyn,
+		},
+		RootAssignments: map[cfg.Point]factflow.RootAssignment{
+			readPoint: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, targetPath, readSource),
+		},
+		DynamicIndexWrites: map[cfg.Point]factflow.DynamicIndexWrite{
+			primaryDeletePoint: factflow.NewDynamicIndexWrite(
+				registeredPath,
+				targetSource,
+				nilSource,
+				dynamicindex.AdmissionAdmitted,
+				factflow.DynamicIndexReadbackKeyAndValue,
+			),
+			reverseDeletePoint: factflow.NewDynamicIndexWrite(
+				idsPath,
+				chanSource,
+				nilSource,
+				dynamicindex.AdmissionAdmitted,
+				factflow.DynamicIndexReadbackKeyAndValue,
+			),
+		},
+		ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+			chanExpr:   chanPath,
+			targetExpr: targetPath,
+		},
+	})
+	sources := &recordingSourceValues{values: map[factflow.ValueSource]product.Value{
+		readSource:   presentValue(reg),
+		chanSource:   presentValue(reg),
+		targetSource: typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String),
+		nilSource:    nilSourceValue(reg),
+	}}
+	transferFn := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts:      facts,
+		Sources:    sources,
+		Visibility: resolver,
+	})
+	st := state.State{}.AddDynamicIndexAllValuesKeyMembership(idsKey, registeredStateKey)
+	st = transferFn(transfer.NodeContext{Registry: reg, Point: readPoint}, st)
+	if !st.HasPathKeyMembership(targetStateKey, registeredStateKey) {
+		t.Fatalf("key memberships = %#v, want read value known as registered key", st.KeyMembershipsSnapshot())
+	}
+
+	st = transferFn(transfer.NodeContext{Registry: reg, Point: primaryDeletePoint}, st)
+	if tables := st.DynamicIndexAllValuesKeyMembershipTables(idsKey); len(tables) != 0 {
+		t.Fatalf("all-value memberships = %#v, want primary delete to suspend invariant", tables)
+	}
+	restores := st.PendingDynamicAllValueRestores(idsKey, chanStateKey)
+	if len(restores) != 1 || restores[0].Table != registeredStateKey {
+		t.Fatalf("pending restores = %#v, want one restore for registered", restores)
+	}
+
+	st = transferFn(transfer.NodeContext{Registry: reg, Point: reverseDeletePoint}, st)
+	tables := st.DynamicIndexAllValuesKeyMembershipTables(idsKey)
+	if len(tables) != 1 || tables[0] != registeredStateKey {
+		t.Fatalf("all-value memberships = %#v, want matching reverse delete to restore invariant", tables)
+	}
+	if restores := st.PendingDynamicAllValueRestores(idsKey, chanStateKey); len(restores) != 0 {
+		t.Fatalf("pending restores = %#v, want restore consumed", restores)
 	}
 }
 
@@ -300,7 +1116,6 @@ func TestFactsNodeTransferDynamicIndexWritePublishesFirstHeapDynamicFact(t *test
 	point := cfg.Point(403)
 	table := symbol.ID(403)
 	tablePath := pathdom.NewPath(table, "table")
-	tableKey := pathdom.PathKey("sym403@1")
 	tableID := identity.ID{Kind: "test.table", Site: "dynamic", Index: 1}
 	tableValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(tableID))
 	keySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(405), HasExpr: true}
@@ -338,7 +1153,7 @@ func TestFactsNodeTransferDynamicIndexWritePublishesFirstHeapDynamicFact(t *test
 		WriteValue(reg, key.SymbolValue(table), tableValue).
 		WriteHeapTableObject(reg, tableID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: tableValue})))
 
-	dynamicKey := dynamicindex.Key{Table: mustStateKey(t, resolver.KeySpace(), tableKey), Site: dynamicindex.SiteForPoint(int(point))}
+	dynamicKey := dynamicindex.Key{Table: mustStateKey(t, resolver.KeySpace(), pathdom.PathKey("sym403")), Site: dynamicindex.SiteForPoint(int(point))}
 	object := got.ReadHeapTableObject(reg, tableID)
 	heapFact, ok := object.DynamicIndexFact(dynamicKey)
 	if !ok {
@@ -403,6 +1218,56 @@ func TestResolvePathValueReadsHeapDynamicFactAcrossPathKeyContexts(t *testing.T)
 	}
 	if !product.Equal(reg, got.value, itemValue) {
 		t.Fatalf("resolved value = %s, want item identity", formatValue(reg, got.value))
+	}
+}
+
+func TestResolvePathValuePrefersReassignedParentStaticMemberOverStaleRootProjection(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(4041)
+	container := symbol.ID(4041)
+	containerPath := pathdom.NewPath(container, "container")
+	clientPath := containerPath.Field("client")
+	metaPath := clientPath.Field("meta")
+	containerID := identity.ID{Kind: "test.table", Site: "container", Index: 1}
+	replacementID := identity.ID{Kind: "test.table", Site: "replacement", Index: 1}
+	containerValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(containerID))
+	replacementValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(replacementID))
+	stale := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	fresh := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.Number), typ.Number)
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, container, "container")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	staleKey, ok := heapidentity.StaticMemberSuffixKey(ks, fieldSuffix("client.meta").Segments)
+	if !ok {
+		t.Fatal("missing client.meta suffix key")
+	}
+	freshKey, ok := heapidentity.StaticMemberSuffixKey(ks, fieldSuffix("meta").Segments)
+	if !ok {
+		t.Fatal("missing meta suffix key")
+	}
+	clientKey, ok := visibility.AddressAt(resolver, point, clientPath).VisibleLocalKeyspaceKey()
+	if !ok {
+		t.Fatal("missing container.client path key")
+	}
+	st := state.State{}.
+		WriteValue(reg, key.SymbolValue(container), containerValue).
+		WriteLocalPathKey(reg, clientKey, replacementValue).
+		WriteHeapTableObject(reg, containerID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root:          containerValue,
+			StaticMembers: map[keyspace.Key]product.Value{staleKey: stale},
+		})).
+		WriteHeapTableObject(reg, replacementID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root:          replacementValue,
+			StaticMembers: map[keyspace.Key]product.Value{freshKey: fresh},
+		}))
+
+	got, ok := resolvePathValueAt(reg, resolver, point, st, metaPath, nil)
+	if !ok {
+		t.Fatalf("resolvePathValueAt(%s) returned false", metaPath)
+	}
+	if !product.Equal(reg, got.value, fresh) {
+		t.Fatalf("resolved value = %s, want reassigned parent static member %s", formatValue(reg, got.value), formatValue(reg, fresh))
 	}
 }
 

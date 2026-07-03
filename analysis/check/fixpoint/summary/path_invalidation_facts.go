@@ -14,7 +14,8 @@ type pathInvalidationFactKey pathdom.PathKey
 var pathInvalidationLane = factset.Set[pathInvalidationFactKey, callboundary.PathInvalidationFact]{
 	Key: pathInvalidationKeyOf,
 	EqualFact: func(a, b callboundary.PathInvalidationFact) bool {
-		return pathInvalidationKeyOf(a) == pathInvalidationKeyOf(b)
+		return pathInvalidationKeyOf(a) == pathInvalidationKeyOf(b) &&
+			a.PreserveStructuralWitness == b.PreserveStructuralWitness
 	},
 	Less:  func(a, b callboundary.PathInvalidationFact) bool { return a.Path.Less(b.Path) },
 	Valid: func(f callboundary.PathInvalidationFact) bool { return !f.Path.IsEmpty() },
@@ -22,8 +23,13 @@ var pathInvalidationLane = factset.Set[pathInvalidationFactKey, callboundary.Pat
 		f.Path = f.Path.Clone()
 		return f
 	},
-	Prefer:    func(kept, incoming callboundary.PathInvalidationFact) bool { return true },
-	Dominates: func(super, sub callboundary.PathInvalidationFact) bool { return sub.Path.HasPrefix(super.Path) },
+	Prefer: func(kept, incoming callboundary.PathInvalidationFact) bool {
+		return kept.PreserveStructuralWitness && !incoming.PreserveStructuralWitness
+	},
+	Dominates: func(super, sub callboundary.PathInvalidationFact) bool {
+		return sub.Path.HasPrefix(super.Path) &&
+			(!super.PreserveStructuralWitness || sub.PreserveStructuralWitness)
+	},
 }
 
 func pathInvalidationKeyOf(f callboundary.PathInvalidationFact) pathInvalidationFactKey {

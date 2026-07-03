@@ -27,3 +27,26 @@ func TestSourceResolveTypeRefUnqualifiedCollisionFailsClosed(t *testing.T) {
 		t.Fatalf("ResolveTypeRef(Result) = %v, want unresolved collision", got)
 	}
 }
+
+func TestSourceResolveTypeRefWithModulePrefix(t *testing.T) {
+	root := manifest.New("app.store")
+	root.DefineType("Record", typ.String)
+	nested := manifest.New("app.store.schema")
+	nested.DefineType("Record", typ.Number)
+	source := Source{Manifests: []*manifest.Manifest{root, nested}}
+
+	got, ok := source.ResolveTypeRefWithModulePrefix("app.store", []string{"Record"})
+	if !ok || got != typ.String {
+		t.Fatalf("ResolveTypeRefWithModulePrefix(app.store, Record) = %v/%v, want string", got, ok)
+	}
+	got, ok = source.ResolveTypeRefWithModulePrefix("app.store", []string{"schema", "Record"})
+	if !ok || got != typ.Number {
+		t.Fatalf("ResolveTypeRefWithModulePrefix(app.store, schema.Record) = %v/%v, want number", got, ok)
+	}
+	if got, ok := source.ResolveTypeRefWithModulePrefix("", []string{"Record"}); ok || got != nil {
+		t.Fatalf("ResolveTypeRefWithModulePrefix(empty prefix) = %v/%v, want unresolved", got, ok)
+	}
+	if got, ok := source.ResolveTypeRefWithModulePrefix("app.store", nil); ok || got != nil {
+		t.Fatalf("ResolveTypeRefWithModulePrefix(empty suffix) = %v/%v, want unresolved", got, ok)
+	}
+}

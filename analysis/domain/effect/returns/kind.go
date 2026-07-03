@@ -13,6 +13,7 @@ const (
 	ReturnTypeCallbackReturn
 	ReturnTypeArrayOfCallbackReturn
 	ReturnTypeTypeProjection
+	ReturnTypeConditionalType
 	ReturnTypeDeepElementOf
 	ReturnTypeStringUnpackValue
 	ReturnTypeSelectCaseOfParam
@@ -34,6 +35,8 @@ func KindOfReturnType(transform ReturnType) ReturnTypeKind {
 		return ReturnTypeArrayOfCallbackReturn
 	case TypeProjection, *TypeProjection:
 		return ReturnTypeTypeProjection
+	case ConditionalType, *ConditionalType:
+		return ReturnTypeConditionalType
 	case DeepElementOf, *DeepElementOf:
 		return ReturnTypeDeepElementOf
 	case StringUnpackValue, *StringUnpackValue:

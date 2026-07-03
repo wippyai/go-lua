@@ -55,6 +55,39 @@ func TestNormalizeDropsBottomAndMergesByKey(t *testing.T) {
 	}
 }
 
+func TestNormalizeOwnedMayReuseFactPayloads(t *testing.T) {
+	type taggedFact struct {
+		Key int
+		Val int
+		Tag []int
+	}
+	m := Map[int, taggedFact, int]{
+		Key:       func(f taggedFact) int { return f.Key },
+		Value:     func(f taggedFact) int { return f.Val },
+		WithValue: func(f taggedFact, v int) taggedFact { f.Val = v; return f },
+		Less:      func(a, b taggedFact) bool { return a.Key < b.Key },
+		CloneFact: func(f taggedFact) taggedFact {
+			f.Tag = append([]int(nil), f.Tag...)
+			return f
+		},
+		Domain: testMap().Domain,
+	}
+
+	defensiveInput := []taggedFact{{Key: 1, Val: 2, Tag: []int{7}}}
+	defensive := m.Normalize(defensiveInput)
+	defensiveInput[0].Tag[0] = 8
+	if defensive[0].Tag[0] != 7 {
+		t.Fatalf("Normalize reused caller payload: got tag %d, want 7", defensive[0].Tag[0])
+	}
+
+	ownedInput := []taggedFact{{Key: 1, Val: 2, Tag: []int{7}}}
+	owned := m.NormalizeOwned(ownedInput)
+	ownedInput[0].Tag[0] = 8
+	if owned[0].Tag[0] != 8 {
+		t.Fatalf("NormalizeOwned cloned caller-owned payload: got tag %d, want 8", owned[0].Tag[0])
+	}
+}
+
 func TestPointwiseJoinLaws(t *testing.T) {
 	m := testMap()
 	a := mapFacts(1, 2, 2, 4)
@@ -110,5 +143,21 @@ func TestPointwiseLessOrEqUsesValueBottomDefault(t *testing.T) {
 	// {1:5} ⋢ {1:2} since 5 ⋢ 2 at key 1.
 	if m.LessOrEq(mapFacts(1, 5), mapFacts(1, 2)) {
 		t.Fatalf("a greater value must not be below a smaller one")
+	}
+}
+
+func TestEqualElementwiseSameSkipsNormalize(t *testing.T) {
+	m := testMap()
+	validCalls := 0
+	m.Valid = func(tf) bool {
+		validCalls++
+		return false
+	}
+	facts := mapFacts(1, 2)
+	if !m.Equal(facts, facts) {
+		t.Fatalf("Equal should accept identical carriers")
+	}
+	if validCalls != 0 {
+		t.Fatalf("Equal normalized identical carriers: validCalls=%d", validCalls)
 	}
 }

@@ -23,7 +23,7 @@ func indexInArray(a *typ.Array, key typ.Type, depth int, mode indexMode) fieldRe
 		if elem == nil {
 			elem = typ.Unknown
 		}
-		return fieldResult{t: elem, ok: true, nilable: true}
+		return fieldResult{t: elem, ok: true, nilable: mode != indexWrite}
 	})
 }
 

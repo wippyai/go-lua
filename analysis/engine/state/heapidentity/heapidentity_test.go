@@ -44,6 +44,43 @@ func TestObjectDomainBottomTopLaws(t *testing.T) {
 	}
 }
 
+func TestObjectDomainBottomIdentityIsStackLocal(t *testing.T) {
+	reg := standard.Registry()
+	domain := ObjectDomain(reg)
+	bottom := BottomObject(reg)
+	ks := keyspace.New()
+	staticKey := fieldSuffixKey(t, ks, "name")
+	dynKey := dynamicindex.Key{Table: stateKey(t, ks, "sym90@1.table"), Site: "dyn"}
+	present := presentValue(reg)
+	object := NewTableObject(TableObjectConfig{
+		Root:          present,
+		StaticMembers: map[keyspace.Key]product.Value{staticKey: present},
+		DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
+			dynKey: {
+				KeyPresence: presence.Present(),
+				KeyValue:    present,
+				Value:       present,
+				Admission:   dynamicindex.AdmissionAdmitted,
+			},
+		},
+	})
+
+	if got := domain.Join(bottom, object); !domain.Equal(got, object) {
+		t.Fatalf("join(bottom, object) = %#v, want object", got)
+	}
+	if got := domain.Widen(bottom, object); !domain.Equal(got, object) {
+		t.Fatalf("widen(bottom, object) = %#v, want object", got)
+	}
+	if allocs := testing.AllocsPerRun(100, func() {
+		_ = domain.Join(bottom, object)
+		_ = domain.Join(object, bottom)
+		_ = domain.Widen(bottom, object)
+		_ = domain.Widen(object, bottom)
+	}); allocs != 0 {
+		t.Fatalf("bottom identity object operations allocated %.1f times, want immutable operand reuse", allocs)
+	}
+}
+
 func TestObjectJoinWidenRootStaticAndDynamic(t *testing.T) {
 	reg := standard.Registry()
 	valueDomain := product.Domain(reg)
@@ -123,6 +160,69 @@ func TestObjectJoinWidenRootStaticAndDynamic(t *testing.T) {
 	}
 	if !objectDomain.LessOrEq(left, joined) || objectDomain.LessOrEq(joined, left) {
 		t.Fatalf("joined object should be an upper bound")
+	}
+}
+
+func TestTableObjectInvalidatesDynamicIndexFactsBySuffix(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	present := presentValue(reg)
+	keptKey := dynamicindex.Key{Table: stateKey(t, ks, "sym90@1.other"), Site: "kept"}
+	exactKey := dynamicindex.Key{Table: stateKey(t, ks, "sym90@1.active"), Site: "exact"}
+	childKey := dynamicindex.Key{Table: stateKey(t, ks, "sym90@1.active.value"), Site: "child"}
+	fact := dynamicindex.Fact{
+		KeyPresence: presence.Present(),
+		KeyValue:    present,
+		Value:       present,
+		Admission:   dynamicindex.AdmissionAdmitted,
+	}
+	object := NewTableObject(TableObjectConfig{
+		Root: present,
+		DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
+			keptKey:  fact,
+			exactKey: fact,
+			childKey: fact,
+		},
+	})
+
+	activeSuffix := []segment.Segment{{Kind: segment.SegmentField, Name: "active"}}
+	desc, changed := object.WithoutDynamicIndexFactDescendants(ks, activeSuffix)
+	if !changed {
+		t.Fatalf("WithoutDynamicIndexFactDescendants reported unchanged")
+	}
+	if _, ok := desc.DynamicIndexFact(childKey); ok {
+		t.Fatalf("child dynamic-index fact survived descendant invalidation")
+	}
+	if _, ok := desc.DynamicIndexFact(exactKey); !ok {
+		t.Fatalf("exact dynamic-index fact was removed by descendant invalidation")
+	}
+	if _, ok := desc.DynamicIndexFact(keptKey); !ok {
+		t.Fatalf("sibling dynamic-index fact was removed by descendant invalidation")
+	}
+
+	subtree, changed := object.WithoutDynamicIndexFactSubtree(ks, activeSuffix)
+	if !changed {
+		t.Fatalf("WithoutDynamicIndexFactSubtree reported unchanged")
+	}
+	if _, ok := subtree.DynamicIndexFact(exactKey); ok {
+		t.Fatalf("exact dynamic-index fact survived subtree invalidation")
+	}
+	if _, ok := subtree.DynamicIndexFact(childKey); ok {
+		t.Fatalf("child dynamic-index fact survived subtree invalidation")
+	}
+	if _, ok := subtree.DynamicIndexFact(keptKey); !ok {
+		t.Fatalf("sibling dynamic-index fact was removed by subtree invalidation")
+	}
+
+	suffix, changed := object.WithoutDynamicIndexFactSubtree(ks, []segment.Segment{{Kind: segment.SegmentField, Name: "value"}})
+	if !changed {
+		t.Fatalf("WithoutDynamicIndexFactSubtree by suffix reported unchanged")
+	}
+	if _, ok := suffix.DynamicIndexFact(childKey); ok {
+		t.Fatalf("child dynamic-index fact survived suffix subtree invalidation")
+	}
+	if _, ok := suffix.DynamicIndexFact(exactKey); !ok {
+		t.Fatalf("exact dynamic-index fact was removed by suffix subtree invalidation")
 	}
 }
 

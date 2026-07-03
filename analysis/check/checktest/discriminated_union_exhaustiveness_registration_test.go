@@ -864,6 +864,25 @@ end)
 	}
 }
 
+func TestTypedCallbackSignatureRejectsExplicitWrongCallbackParameter(t *testing.T) {
+	result := Check(`
+local function visit(cb: fun(value: string): string): string
+	return cb("evt-1")
+end
+
+local out = visit(function(value: number)
+	return tostring(value)
+end)
+`)
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code: diagnostic.Code("type.call.direct.argument_type"),
+		MessageContains: []string{
+			"argument 1",
+			"string",
+		},
+	})
+}
+
 func TestDiscriminatedUnionExhaustivenessBroadTypedRegistrationDoesNotNarrowCallbackCase(t *testing.T) {
 	result := Check(`
 type Begin = { kind: "begin", id: string }

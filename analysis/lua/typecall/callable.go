@@ -12,6 +12,15 @@ func Callable(t typ.Type) (*typ.Function, bool) {
 	return callableDepth(t, 0)
 }
 
+// ContextualCallable returns the unique callable arm that can contextually type
+// a function expression passed to a broader formal type. Unlike Callable, a
+// union may contain non-callable alternatives: a syntactic function argument
+// can only satisfy the callable arm, so that arm is the useful context. Multiple
+// distinct callable arms are ambiguous and are rejected.
+func ContextualCallable(t typ.Type) (*typ.Function, bool) {
+	return contextualCallableDepth(t, 0)
+}
+
 func callableDepth(t typ.Type, depth int) (*typ.Function, bool) {
 	if stopDepth(t, depth) {
 		return nil, false
@@ -63,6 +72,43 @@ func callableIntersection(in *typ.Intersection, depth int) (*typ.Function, bool)
 		}
 	}
 	return nil, false
+}
+
+func contextualCallableDepth(t typ.Type, depth int) (*typ.Function, bool) {
+	if stopDepth(t, depth) {
+		return nil, false
+	}
+
+	switch v := unwrap.Annotated(t).(type) {
+	case *typ.Union:
+		return contextualCallableUnion(v, depth+1)
+	default:
+		return callableDepth(t, depth+1)
+	}
+}
+
+func contextualCallableUnion(u *typ.Union, depth int) (*typ.Function, bool) {
+	if u == nil || len(u.Members) == 0 {
+		return nil, false
+	}
+	var witness *typ.Function
+	for _, member := range u.Members {
+		if isNilType(member) {
+			continue
+		}
+		fn, ok := contextualCallableDepth(member, depth+1)
+		if !ok {
+			continue
+		}
+		if witness == nil {
+			witness = fn
+			continue
+		}
+		if !typ.TypeEquals(witness, fn) {
+			return nil, false
+		}
+	}
+	return witness, witness != nil
 }
 
 func functionWitnessDepth(t typ.Type, depth int) (*typ.Function, bool) {

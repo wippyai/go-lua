@@ -28,6 +28,20 @@ func (s Source) ResolveTypeRef(path []string) (typ.Type, bool) {
 	return s.Lookup(modulePath, path[len(path)-1])
 }
 
+// ResolveTypeRefWithModulePrefix resolves suffix under an already canonical
+// module path prefix. It lets import-alias resolvers delegate qualified lookup
+// without rebuilding a synthetic full path only for Source to split it again.
+func (s Source) ResolveTypeRefWithModulePrefix(modulePrefix string, suffix []string) (typ.Type, bool) {
+	if modulePrefix == "" || len(suffix) == 0 {
+		return nil, false
+	}
+	if len(suffix) == 1 {
+		return s.Lookup(modulePrefix, suffix[0])
+	}
+	modulePath := modulePrefixWithSuffix(modulePrefix, suffix[:len(suffix)-1])
+	return s.Lookup(modulePath, suffix[len(suffix)-1])
+}
+
 // Lookup returns the named type exported by an exact module path. Later
 // manifests override earlier ones, matching signature and export lookup order.
 func (s Source) Lookup(modulePath, name string) (typ.Type, bool) {
@@ -70,4 +84,18 @@ func (s Source) lookupUnqualified(name string) (typ.Type, bool) {
 		found = true
 	}
 	return out, found
+}
+
+func modulePrefixWithSuffix(prefix string, suffix []string) string {
+	if len(suffix) == 0 {
+		return prefix
+	}
+	var b strings.Builder
+	b.Grow(len(prefix) + 1 + len(suffix)*8)
+	b.WriteString(prefix)
+	for _, part := range suffix {
+		b.WriteByte('.')
+		b.WriteString(part)
+	}
+	return b.String()
 }

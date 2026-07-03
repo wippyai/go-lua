@@ -12,6 +12,26 @@ func guardLiteral(value string) typ.Type {
 	return typ.LiteralString(value)
 }
 
+func TestDiagnosticGuardCacheBuildsOncePerResult(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+		local function f(x: string?)
+			if x ~= nil then
+				print(x)
+			end
+		end
+		return f
+	`)
+	cache := newDiagnosticGuardCache()
+	first := cache.environments(result)
+	second := cache.environments(result)
+	if first == nil || second == nil {
+		t.Fatal("guard environments were not built")
+	}
+	if cache.builds != 1 {
+		t.Fatalf("cache builds = %d, want 1", cache.builds)
+	}
+}
+
 func TestGuardEnvWithoutDescendantFactsPreservesRootOnlyFacts(t *testing.T) {
 	root := path.NewPath(1, "x")
 	descendant := path.NewPath(2, "box").Field("value")
@@ -187,6 +207,60 @@ func TestGuardEnvInvalidatingMissingPathIsNoop(t *testing.T) {
 	got := env.withoutFactsForPath(path.NewPath(2, "other").Field("value"))
 	if !guardEnvEqual(got, env) {
 		t.Fatalf("guard env changed after unrelated invalidation: got=%#v want=%#v", got, env)
+	}
+}
+
+func TestCanonicalGuardEnvEqualRequiresSortedLanes(t *testing.T) {
+	first := path.NewPath(1, "first")
+	second := path.NewPath(2, "second")
+	left := guardEnv{present: []path.Path{second, first}}
+	right := guardEnv{present: []path.Path{first, second}}
+
+	if canonicalGuardEnvEqual(left, right) {
+		t.Fatalf("canonical equality accepted unsorted lanes")
+	}
+	if !left.present[0].Equal(second) {
+		t.Fatalf("canonical equality sorted its input")
+	}
+	if !guardEnvEqual(left, right) {
+		t.Fatalf("defensive equality should normalize ad hoc guard environments")
+	}
+}
+
+func TestGuardEnvOnlyFactsForExactPathDropsMembersAndUnrelatedRoots(t *testing.T) {
+	root := path.NewPath(1, "err")
+	child := root.Field("kind")
+	other := path.NewPath(2, "other")
+	env := guardEnv{
+		constraints: []literalConstraint{
+			{target: root, value: guardLiteral("ready")},
+			{target: child, value: guardLiteral("drop-child")},
+			{target: other, value: guardLiteral("drop-other")},
+		},
+		typeChecks: []runtimeTypeConstraint{
+			{target: root, name: "table"},
+			{target: child, name: "string"},
+			{target: other, name: "string"},
+		},
+		present:  []path.Path{root, child, other},
+		truthy:   []path.Path{root, child, other},
+		falsy:    []path.Path{child, other},
+		nilPaths: []path.Path{child, other},
+	}
+
+	got := env.onlyFactsForExactPath(root)
+	if len(got.constraints) != 1 || !got.constraints[0].target.Equal(root) {
+		t.Fatalf("constraints = %#v, want only exact root", got.constraints)
+	}
+	if len(got.typeChecks) != 1 || !got.typeChecks[0].target.Equal(root) {
+		t.Fatalf("type checks = %#v, want only exact root", got.typeChecks)
+	}
+	if !got.hasPresent(root) || !got.hasTruthy(root) {
+		t.Fatalf("root facts lost: present=%#v truthy=%#v", got.present, got.truthy)
+	}
+	if got.hasPresent(child) || got.hasTruthy(child) || got.hasPresent(other) || got.hasTruthy(other) ||
+		got.hasFalsy(child) || got.hasNil(child) {
+		t.Fatalf("non-exact facts leaked: present=%#v truthy=%#v falsy=%#v nil=%#v", got.present, got.truthy, got.falsy, got.nilPaths)
 	}
 }
 

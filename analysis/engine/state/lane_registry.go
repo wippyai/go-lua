@@ -10,6 +10,7 @@ var defaultLaneCatalog = newLaneCatalog([]laneSpec{
 	escapeEventsLaneSpec,
 	channelSelectLaneSpec,
 	storeRelationsLaneSpec,
+	keyMembershipsLaneSpec,
 	typestatesLaneSpec,
 	placementLaneSpec,
 	lenFloorsLaneSpec,
@@ -27,6 +28,7 @@ var (
 	laneEscapeEventsBit      = defaultLaneCatalog.mustLaneBit(LaneEscapeEvents)
 	laneChannelSelectBit     = defaultLaneCatalog.mustLaneBit(LaneChannelSelect)
 	laneStoreRelationsBit    = defaultLaneCatalog.mustLaneBit(LaneStoreRelations)
+	laneKeyMembershipBit     = defaultLaneCatalog.mustLaneBit(LaneKeyMemberships)
 	laneTypestatesBit        = defaultLaneCatalog.mustLaneBit(LaneTypestates)
 	lanePlacementBit         = defaultLaneCatalog.mustLaneBit(LanePlacement)
 	laneLenFloorsBit         = defaultLaneCatalog.mustLaneBit(LaneLenFloors)

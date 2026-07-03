@@ -36,6 +36,51 @@ func TestContainsFreeTypeParamKeepsFunctionOwnedParamsScoped(t *testing.T) {
 	}
 }
 
+func TestContainsFreeTypeParamTerminatesOnRecursiveGraph(t *testing.T) {
+	tp := typ.NewTypeParam("T", nil)
+	closedNode := typ.NewRecursive("ClosedNode", func(self typ.Type) typ.Type {
+		return typetable.NewRecord().
+			Field("next", typeexpr.Optional(self)).
+			Field("value", typ.String).
+			Build()
+	})
+	openNode := typ.NewRecursive("OpenNode", func(self typ.Type) typ.Type {
+		return typetable.NewRecord().
+			Field("next", typeexpr.Optional(self)).
+			Field("value", tp).
+			Build()
+	})
+
+	if ContainsFreeTypeParam(closedNode) {
+		t.Fatal("closed recursive node reported a free type parameter")
+	}
+	if !ContainsFreeTypeParam(openNode) {
+		t.Fatal("recursive node with free field type parameter was missed")
+	}
+}
+
+func TestContainsFreeTypeParamWideRecursiveShapeStaysStackLocal(t *testing.T) {
+	nodes := make([]typ.Type, 12)
+	for i := range nodes {
+		nodes[i] = typ.NewRecursive("ClosedNode", func(self typ.Type) typ.Type {
+			return typetable.NewRecord().
+				Field("next", typeexpr.Optional(self)).
+				Field("value", typ.String).
+				Build()
+		})
+	}
+	root := typ.NewTuple(nodes...)
+
+	if ContainsFreeTypeParam(root) {
+		t.Fatal("closed recursive tuple reported a free type parameter")
+	}
+	if allocs := testing.AllocsPerRun(100, func() {
+		_ = ContainsFreeTypeParam(root)
+	}); allocs != 0 {
+		t.Fatalf("ContainsFreeTypeParam wide recursive shape allocated %.1f times, want stack-local seen set", allocs)
+	}
+}
+
 func BenchmarkContainsFreeTypeParamAcyclicRepeatedShape(b *testing.B) {
 	tp := typ.NewTypeParam("T", nil)
 	box := typ.NewGeneric("Box", []*typ.TypeParam{tp}, typetable.NewRecord().Field("value", tp).Build())

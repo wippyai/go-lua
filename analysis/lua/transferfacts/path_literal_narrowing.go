@@ -72,8 +72,20 @@ func (l *lowerer) literalBranchRefinement(target path.Path, kind branchcond.Chec
 	}
 	matched, hasMatched := variant.NarrowByPathLiteral(anchorType, rest, lit)
 	unmatched, hasUnmatched := variant.NarrowByPathLiteralNot(anchorType, rest, lit)
+	if hasMatched && typ.SameNodeOrAcyclicEqual(anchorType, matched) {
+		hasMatched = false
+	}
+	if hasUnmatched && typ.SameNodeOrAcyclicEqual(anchorType, unmatched) {
+		hasUnmatched = false
+	}
+	if kind == branchcond.CheckLiteralEqual && !hasMatched {
+		return l.descendantLiteralRefinement(target, kind, lit)
+	}
+	if kind == branchcond.CheckLiteralNot && !hasUnmatched {
+		return l.descendantLiteralRefinement(target, kind, lit)
+	}
 	if !hasMatched && !hasUnmatched {
-		return factflow.BranchRefinement{}, false
+		return l.descendantLiteralRefinement(target, kind, lit)
 	}
 	var trueValue factflow.ValueRefinement
 	var hasTrue bool

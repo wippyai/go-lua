@@ -1,6 +1,9 @@
 package diagnostic
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSortOrdersDiagnosticsBySourcePosition(t *testing.T) {
 	diags := []Diagnostic{
@@ -79,5 +82,108 @@ func TestSortUsesDeterministicTieBreakersForPositionlessDiagnostics(t *testing.T
 		if got[i] != want[i] {
 			t.Fatalf("positionless sorted[%d] = %q, want %q; full order = %#v", i, got[i], want[i], got)
 		}
+	}
+}
+
+func TestDeduplicateRemovesExactDiagnosticsOnly(t *testing.T) {
+	span := Span{StartLine: 4, StartCol: 2, EndLine: 4, EndCol: 5}
+	base := New(DiagnosticSpec{
+		File:     "main.lua",
+		Span:     span,
+		Code:     Code("type.assignment"),
+		Message:  "cannot assign",
+		Severity: SeverityError,
+		Explanation: NewExplanation(Evidence{
+			Kind:    EvidenceAbstractFact,
+			Trust:   TrustProven,
+			Span:    span,
+			Message: "value is number",
+		}),
+		Help:   "use a string",
+		Labels: []Label{{Span: span, Message: "assigned value", Placement: LabelPlacementBelow}},
+	})
+	distinctEvidence := base
+	distinctEvidence.Explanation = NewExplanation(Evidence{
+		Kind:    EvidenceAbstractFact,
+		Trust:   TrustProven,
+		Span:    span,
+		Message: "value is integer",
+	})
+
+	got := Deduplicate([]Diagnostic{base, base, distinctEvidence})
+	if len(got) != 2 {
+		t.Fatalf("deduplicated diagnostics = %#v, want exact duplicate removed but distinct evidence kept", got)
+	}
+	if got[0].Explanation.String() == got[1].Explanation.String() {
+		t.Fatalf("distinct evidence diagnostics collapsed: %#v", got)
+	}
+}
+
+func TestCoalesceSamePrimaryRemovesRepeatedUserVisibleDiagnostics(t *testing.T) {
+	span := Span{StartLine: 4, StartCol: 2, EndLine: 4, EndCol: 5}
+	base := New(DiagnosticSpec{
+		File:     "main.lua",
+		Span:     span,
+		Code:     Code("type.call.direct.argument_type"),
+		Message:  "argument 1 comes from any/unknown; no proof shows it is string",
+		Severity: SeverityError,
+		Explanation: NewExplanation(Evidence{
+			Kind:    EvidenceUserAssertion,
+			Trust:   TrustClaimed,
+			Span:    span,
+			Message: "argument 1 is claimed as string",
+		}),
+		Help: "validate first",
+	})
+	alternateEvidence := base
+	alternateEvidence.Explanation = NewExplanation(Evidence{
+		Kind:    EvidenceMissingProof,
+		Trust:   TrustUnknown,
+		Span:    span,
+		Message: "no proof on this path shows argument 1 is string",
+	})
+	differentMessage := base
+	differentMessage.Message = "argument 1 is number, not string"
+
+	got := CoalesceSamePrimary([]Diagnostic{base, alternateEvidence, differentMessage})
+	if len(got) != 2 {
+		t.Fatalf("coalesced diagnostics = %#v, want repeated primary collapsed and distinct message kept", got)
+	}
+	if got[0].Message != base.Message || got[1].Message != differentMessage.Message {
+		t.Fatalf("coalesced order/messages = %#v", got)
+	}
+}
+
+func TestCoalesceSamePrimaryPrefersMoreSpecificEvidence(t *testing.T) {
+	span := Span{StartLine: 4, StartCol: 2, EndLine: 4, EndCol: 5}
+	broad := New(DiagnosticSpec{
+		File:     "main.lua",
+		Span:     span,
+		Code:     Code("type.operator.concat_operand"),
+		Message:  "right operand of `..` may be nil",
+		Severity: SeverityWarning,
+		Explanation: NewExplanation(Evidence{
+			Kind:    EvidenceAbstractFact,
+			Trust:   TrustProven,
+			Reason:  EvidenceReasonUnionType,
+			Span:    span,
+			Message: "right operand `maybe` can be string or nil here",
+		}),
+	})
+	exact := broad
+	exact.Explanation = NewExplanation(Evidence{
+		Kind:    EvidenceAbstractFact,
+		Trust:   TrustProven,
+		Reason:  EvidenceReasonExactType,
+		Span:    span,
+		Message: "right operand `maybe` has type nil",
+	})
+
+	got := CoalesceSamePrimary([]Diagnostic{broad, exact})
+	if len(got) != 1 {
+		t.Fatalf("coalesced diagnostics = %#v, want one", got)
+	}
+	if evidence := got[0].Explanation.String(); !strings.Contains(evidence, "has type nil") {
+		t.Fatalf("coalesced evidence = %q, want exact evidence", evidence)
 	}
 }

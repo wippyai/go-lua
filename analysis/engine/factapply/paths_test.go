@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -276,6 +277,92 @@ func TestFactsNodeTransferPathAssignmentInvalidatesEquivalentOriginsAndHeapMembe
 	}
 	if gotMember, ok := slotsObject.StaticMember(siblingSlotsMember); !ok || !product.Equal(reg, gotMember, present) {
 		t.Fatalf("slots sibling heap member = %s/%v, want present/true", formatValue(reg, gotMember), ok)
+	}
+}
+
+func TestFactsNodeTransferPathAssignmentKeepsSiblingPathStaticMembers(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(211)
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(211), HasExpr: true}
+	self := symbol.ID(211)
+	targetPath := path.NewPath(self, "self").Field("stopping")
+	targetKey := path.PathKey("sym211@1.stopping")
+	methodKey := path.PathKey("sym211@1.stop")
+	present := presentValue(reg)
+	assigned := absentValue(reg)
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{source: assigned},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, self, "self")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	in := state.State{}.
+		WritePathStaticMember(ks, methodKey, present)
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			PathAssignments: map[cfg.Point]factflow.PathAssignment{
+				point: factflow.NewPathAssignment(targetPath, source),
+			},
+		}),
+		Sources:    sources,
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, in)
+
+	assertPathValue(t, reg, ks, got, targetKey, assigned)
+	if gotMember, ok := got.ReadPathStaticMember(ks, methodKey); !ok || !product.Equal(reg, gotMember, present) {
+		t.Fatalf("sibling path static member = %s/%v, want present/true", formatValue(reg, gotMember), ok)
+	}
+}
+
+func TestFactsNodeTransferPathAssignmentCopiesSourceStaticMemberDescendants(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(2111)
+	sourceRef := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(2111), HasExpr: true}
+	container := symbol.ID(2111)
+	replacement := symbol.ID(2112)
+	targetPath := path.NewPath(container, "container").Field("client")
+	sourcePath := path.NewPath(replacement, "replacement")
+	replacementID := identity.ID{Kind: "test.table", Site: "replacement", Index: 1}
+	replacementValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(replacementID))
+	methodType := typ.Func().Returns(typ.Number).Build()
+	methodValue := typevalue.WithWitness(reg, typevalue.FromType(reg, methodType), methodType)
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, container, "container")
+	visibilityBuilder.Define(point, replacement, "replacement")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	sourceMemberKey := resolver.KeyAt(point, sourcePath.Field("meta"))
+	targetMemberKey := resolver.KeyAt(point, targetPath.Field("meta"))
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{sourceRef: replacementValue},
+	}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			PathAssignments: map[cfg.Point]factflow.PathAssignment{
+				point: factflow.NewPathAssignment(targetPath, sourceRef),
+			},
+			ExpressionPaths: map[factflow.ExprRef]path.Path{
+				sourceRef.ExprRef: sourcePath,
+			},
+		}),
+		Sources:    sources,
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.
+		WriteValue(reg, key.SymbolValue(replacement), replacementValue).
+		WritePathStaticMember(ks, sourceMemberKey, methodValue))
+
+	gotMember, ok := got.ReadPathStaticMember(ks, targetMemberKey)
+	if !ok || !product.Equal(reg, gotMember, methodValue) {
+		t.Fatalf("target static member = %s/%v, want copied source member %s", formatValue(reg, gotMember), ok, formatValue(reg, methodValue))
 	}
 }
 

@@ -11,7 +11,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-type deadAssignments struct{}
+type deadAssignments producerContext
 
 type deadAssignmentWrite struct {
 	point  cfg.Point
@@ -35,12 +35,12 @@ type deadAssignmentView struct {
 	exitsByPoint  map[cfg.Point]deadAssignmentExit
 }
 
-func (deadAssignments) Produce(result *body.Result) []diagnostic.Diagnostic {
+func (p deadAssignments) Produce(result *body.Result) []diagnostic.Diagnostic {
 	graph := result.Graph()
 	if graph == nil {
 		return nil
 	}
-	view := newDeadAssignmentView(result, graph)
+	view := newDeadAssignmentView(result, graph, producerContext(p).guardEnvironments(result))
 	if len(view.writes) == 0 {
 		return nil
 	}
@@ -64,8 +64,8 @@ func (deadAssignments) Produce(result *body.Result) []diagnostic.Diagnostic {
 	return out
 }
 
-func newDeadAssignmentView(result *body.Result, graph cfg.Graph) deadAssignmentView {
-	reachable := collectDiagnosticReachability(result, graph)
+func newDeadAssignmentView(result *body.Result, graph cfg.Graph, envs map[cfg.Point]guardEnv) deadAssignmentView {
+	reachable := collectDiagnosticReachability(result, graph, envs)
 	writes := collectDeadAssignmentWrites(result, graph, reachable)
 	view := deadAssignmentView{
 		graph:         graph,
@@ -83,7 +83,7 @@ func newDeadAssignmentView(result *body.Result, graph cfg.Graph) deadAssignmentV
 
 func collectDeadAssignmentWrites(result *body.Result, graph cfg.Graph, reachable map[cfg.Point]bool) []deadAssignmentWrite {
 	var writes []deadAssignmentWrite
-	for _, point := range graph.RPO() {
+	for _, point := range cfg.RPOReadOnly(graph) {
 		if !diagnosticPointReachable(reachable, point) {
 			continue
 		}
@@ -169,7 +169,7 @@ func collectDeadAssignmentExits(result *body.Result, graph cfg.Graph, reachable 
 		if point == exit {
 			continue
 		}
-		successors := graph.Successors(point)
+		successors := cfg.SuccessorsReadOnly(graph, point)
 		if len(successors) == 0 {
 			continue
 		}
@@ -228,7 +228,7 @@ func (v deadAssignmentView) firstOverwritesBeforeRead(previous deadAssignmentWri
 	if v.graph == nil {
 		return nil, nil, false
 	}
-	successors := v.graph.Successors(previous.point)
+	successors := cfg.SuccessorsReadOnly(v.graph, previous.point)
 	if len(successors) == 0 {
 		return nil, nil, false
 	}
@@ -270,7 +270,7 @@ func (v deadAssignmentView) firstOverwritesBeforeRead(previous deadAssignmentWri
 			return deadAssignmentProof{}
 		}
 		visiting[point] = true
-		successors := v.graph.Successors(point)
+		successors := cfg.SuccessorsReadOnly(v.graph, point)
 		proof := deadAssignmentProof{
 			ok:         len(successors) > 0,
 			frontier:   make(map[cfg.Point]deadAssignmentWrite),

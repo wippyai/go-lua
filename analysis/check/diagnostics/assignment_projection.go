@@ -2,7 +2,6 @@ package diagnostics
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -12,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
+	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/access"
@@ -33,13 +33,19 @@ func assignmentValueType(result *body.Result, resolver typeannotation.Resolver, 
 	if got, ok := untrustedTopLikeExpressionTypeAt(result, resolver, point, expr); ok {
 		return got, true
 	}
+	if got, ok := localScalarOperatorSourceType(result, resolver, expr); ok {
+		return got, true
+	}
 	if got, ok := projectedFlowSourceType(result, resolver, point, guardEnv{}, expr); ok {
 		return got, true
 	}
 	if got, ok := sourceExpressionTypeWithPresence(result, point, source); ok {
 		return got, true
 	}
-	if got, ok := readmodel.New(result).SourceType(point, source); ok {
+	if got, ok := boundaryExpressionConcreteType(result, point, expr); ok {
+		return got, true
+	}
+	if got, ok := newDiagnosticQuery(result).SourceType(point, source); ok {
 		return got, true
 	}
 	if got, ok := explicitTopLikeCallSourceType(result, resolver, expr); ok {
@@ -51,16 +57,48 @@ func assignmentValueType(result *body.Result, resolver typeannotation.Resolver, 
 	return staticExpressionType(result, resolver, expr)
 }
 
+func boundaryExpressionTypeWithPresence(result *body.Result, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
+	if result == nil || expr == nil || !presenceAwareReadExpression(expr) {
+		return nil, false
+	}
+	query := newDiagnosticQuery(result)
+	value, ok := query.ExpressionValueBeforeBoundary(point, expr)
+	if !ok {
+		return nil, false
+	}
+	got, ok := query.ValueTypeWithPresence(value)
+	if !ok || !mixedOptionalType(got) {
+		return nil, false
+	}
+	return got, true
+}
+
+func boundaryExpressionConcreteType(result *body.Result, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
+	if result == nil || expr == nil || !presenceAwareReadExpression(expr) {
+		return nil, false
+	}
+	query := newDiagnosticQuery(result)
+	value, ok := query.ExpressionValueBeforeBoundary(point, expr)
+	if !ok {
+		return nil, false
+	}
+	got, ok := query.ValueTypeWithPresence(value)
+	if !ok || got == nil || typ.IsAny(got) || typ.IsUnknown(got) || typ.IsNever(got) {
+		return nil, false
+	}
+	return got, true
+}
+
 func sourceExpressionTypeWithPresence(result *body.Result, point cfg.Point, source sourceprovenance.ASTSource) (typ.Type, bool) {
 	if source.Kind != sourceprovenance.SourceExpression || !presenceAwareReadExpression(source.Expr) {
 		return nil, false
 	}
-	reader := readmodel.New(result)
-	value, ok := reader.SourceValue(point, source)
+	query := newDiagnosticQuery(result)
+	value, ok := query.ExpressionValueBeforeBoundary(point, source.Expr)
 	if !ok {
 		return nil, false
 	}
-	return reader.ValueTypeWithPresence(value)
+	return query.ValueTypeWithPresence(value)
 }
 
 func presenceAwareReadExpression(expr ast.Expr) bool {
@@ -119,9 +157,9 @@ func dominatingCallInvalidationCause(result *body.Result, point cfg.Point, exprP
 			return dominatingCallInvalidation{callSpan: callInvalidationSpan(result, candidate), callName: callInvalidationName(result, candidate)}, true
 		}
 		for _, target := range invalidated {
-			if exprPath.HasPrefix(target) {
+			if exprPath.HasPrefix(target.path) {
 				return dominatingCallInvalidation{
-					target:   target,
+					target:   target.path,
 					callSpan: callInvalidationSpan(result, candidate),
 					callName: callInvalidationName(result, candidate),
 				}, true
@@ -216,11 +254,12 @@ func isScalarOperatorExpression(expr ast.Expr) bool {
 }
 
 func projectedOptionalIndexType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
-	if !shouldProjectOptionalIndex(result, expr) && !literalIndexReadProvenInRange(result, resolver, point, expr) {
+	optionalRead := shouldProjectOptionalIndex(result, expr)
+	if !optionalRead && !literalIndexReadProvenInRange(result, resolver, point, expr) {
 		return nil, false
 	}
 	got, ok := staticIndexProjectionType(result, resolver, point, expr)
-	if !ok || !projectionHasNil(got) {
+	if !ok {
 		return nil, false
 	}
 	if indexReadProvenInRange(result, resolver, point, expr) {
@@ -229,16 +268,110 @@ func projectedOptionalIndexType(result *body.Result, resolver typeannotation.Res
 			return withoutNil, true
 		}
 	}
+	if optionalRead && !projectionHasNil(got) {
+		if staticMember, ok := literalStaticIndexMemberProjectionType(result, resolver, point, expr); ok {
+			return staticMember, true
+		}
+		return normalize.Optional(got), true
+	}
+	if !projectionHasNil(got) {
+		return nil, false
+	}
 	return got, true
 }
 
 func optionalIndexReadLacksProof(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr) bool {
+	if !optionalIndexReadRequiresProof(result, resolver, point, expr) {
+		return false
+	}
+	got, ok := staticIndexProjectionType(result, resolver, point, expr)
+	return ok && projectionHasNil(got)
+}
+
+func optionalIndexReadRequiresProof(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr) bool {
 	attr, ok := expr.(*ast.AttrGetExpr)
 	if !ok || attr.KeySyntax != ast.AttrKeyIndex {
 		return false
 	}
-	got, ok := staticIndexProjectionType(result, resolver, point, expr)
-	return ok && projectionHasNil(got) && !indexReadProvenInRange(result, resolver, point, expr)
+	return !indexReadProvenInRange(result, resolver, point, expr) &&
+		!literalStaticIndexReadProvenPresent(result, resolver, point, expr)
+}
+
+type literalStaticIndexKey struct {
+	kind  typ.StaticMemberKind
+	name  string
+	index int64
+}
+
+func literalStaticIndexMemberProjectionType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok || attr.KeySyntax != ast.AttrKeyIndex {
+		return nil, false
+	}
+	key, ok := literalStaticIndexKeyOf(attr.Key)
+	if !ok {
+		return nil, false
+	}
+	if container, ok := indexContainerType(result, resolver, point, attr.Object); ok {
+		if member, ok := staticRecordMemberType(container, key); ok {
+			return member, true
+		}
+	}
+	if container, ok := newExpressionTyper(result, resolver).typeOf(attr.Object); ok {
+		if member, ok := staticRecordMemberType(container, key); ok {
+			return member, true
+		}
+	}
+	flowTyper := newFlowExpressionTyper(result, resolver, point, guardEnv{})
+	if container, ok := flowTyper.broadType(attr.Object); ok {
+		if member, ok := staticRecordMemberType(container, key); ok {
+			return member, true
+		}
+	}
+	if container, ok := flowTyper.typeOf(attr.Object); ok {
+		return staticRecordMemberType(container, key)
+	}
+	return nil, false
+}
+
+func literalStaticIndexReadProvenPresent(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr) bool {
+	_, ok := literalStaticIndexMemberProjectionType(result, resolver, point, expr)
+	return ok
+}
+
+func literalStaticIndexKeyOf(expr ast.Expr) (literalStaticIndexKey, bool) {
+	switch key := expr.(type) {
+	case *ast.StringExpr:
+		return literalStaticIndexKey{kind: typ.StaticMemberStringIndex, name: key.Value}, true
+	case *ast.NumberExpr:
+		index, ok := numparse.ParseIntegerLiteral(key.Value)
+		if !ok {
+			return literalStaticIndexKey{}, false
+		}
+		return literalStaticIndexKey{kind: typ.StaticMemberIntIndex, index: index}, true
+	default:
+		return literalStaticIndexKey{}, false
+	}
+}
+
+func staticRecordMemberType(container typ.Type, key literalStaticIndexKey) (typ.Type, bool) {
+	rec, ok := unwrap.Alias(container).(*typ.Record)
+	if !ok || rec == nil {
+		return nil, false
+	}
+	var member *typ.StaticMember
+	switch key.kind {
+	case typ.StaticMemberStringIndex:
+		member = rec.GetStaticStringIndex(key.name)
+	case typ.StaticMemberIntIndex:
+		member = rec.GetStaticIntIndex(key.index)
+	default:
+		return nil, false
+	}
+	if member == nil || member.Optional || member.Type == nil || projectionHasNil(member.Type) {
+		return nil, false
+	}
+	return member.Type, true
 }
 
 func staticIndexProjectionType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
@@ -252,18 +385,18 @@ func staticIndexProjectionType(result *body.Result, resolver typeannotation.Reso
 	if got, ok := declaredIndexProjectionType(result, resolver, point, attr); ok {
 		return got, true
 	}
+	container, ok := newExpressionTyper(result, resolver).typeOf(attr.Object)
+	if ok {
+		if key, keyOK := indexProjectionKeyType(result, resolver, point, attr.Key); keyOK {
+			if got, gotOK := access.RuntimeIndex(container, key); gotOK {
+				return got, true
+			}
+		}
+	}
 	if got, ok := newExpressionTyper(result, resolver).typeOf(expr); ok {
 		return got, true
 	}
-	container, ok := newExpressionTyper(result, resolver).typeOf(attr.Object)
-	if !ok {
-		return nil, false
-	}
-	key, ok := indexProjectionKeyType(result, resolver, point, attr.Key)
-	if !ok {
-		return nil, false
-	}
-	return access.RuntimeIndex(container, key)
+	return nil, false
 }
 
 func declaredIndexProjectionType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, attr *ast.AttrGetExpr) (typ.Type, bool) {
@@ -297,11 +430,12 @@ func indexContainerType(result *body.Result, resolver typeannotation.Resolver, p
 	if !ok {
 		return declared, true
 	}
-	value, ok := result.ExpressionValueAtBoundary(point, object)
+	query := newDiagnosticQuery(result)
+	value, ok := query.ExpressionValueAtBoundary(point, object)
 	if !ok {
 		return declared, true
 	}
-	flow, ok := readmodel.New(result).ValueType(value)
+	flow, ok := query.ValueType(value)
 	if !ok || flow == nil || topLikeType(flow) {
 		return declared, true
 	}
@@ -424,6 +558,9 @@ func literalIndexReadProvenInRange(result *body.Result, resolver typeannotation.
 	if !ok || containerPath.IsEmpty() {
 		return false
 	}
+	if _, declaredOK := declaredPathType(result, resolver, attr.Object); !declaredOK && literalIndexReadHasPresentBoundaryValue(result, point, attr) {
+		return true
+	}
 	if !expressionDefinitelyDenseArray(result, resolver, attr.Object) &&
 		!rootOptionalArrayReadHasPresentElementProof(result, resolver, point, attr, containerPath) {
 		return false
@@ -467,7 +604,7 @@ func expressionDefinitelyDenseArray(result *body.Result, resolver typeannotation
 }
 
 func literalIndexReadHasPresentBoundaryValue(result *body.Result, point cfg.Point, expr ast.Expr) bool {
-	value, ok := result.ExpressionValueAtBoundary(point, expr)
+	value, ok := newDiagnosticQuery(result).ExpressionValueAtBoundary(point, expr)
 	if !ok || !presence.Equal(product.PresenceOf(value), presence.Present()) {
 		return false
 	}
@@ -580,31 +717,199 @@ func shouldProjectOptionalIndex(result *body.Result, expr ast.Expr) bool {
 	return ok && attr.KeySyntax == ast.AttrKeyIndex
 }
 
-// optionalMemberReadType types a dot-field read whose object is a call result
-// (store:lookup_record(id).field) when no symbol-path or index projection owns it.
-// The call result carries its own boundary presence, so reading a field off an
-// optional result yields an optional projection that an annotated assignment must
-// not silently accept. It returns the type only when it is provably optional, so
-// a non-optional projection never produces a spurious source type here.
-func optionalMemberReadType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, env guardEnv, expr ast.Expr) (typ.Type, bool) {
+// optionalMemberReadType types a dot-field read whose receiver path may be nil.
+// The boundary snapshot can be more specific (for example, a stale guard may have
+// been invalidated to nil), but diagnostics should report the stable contract:
+// the read is a mixed non-nil/nil value unless a guard proves the path present.
+// It returns only mixed optional types, so pure nil snapshots and non-optional
+// projections continue through the regular resolution chain.
+func optionalMemberReadType(result *body.Result, resolver typeannotation.Resolver, flow *diagnosticFlowCache, point cfg.Point, env guardEnv, expr ast.Expr) (typ.Type, bool) {
 	attr, ok := expr.(*ast.AttrGetExpr)
 	if !ok || attr.KeySyntax != ast.AttrKeyDot {
 		return nil, false
 	}
-	if _, ok := attr.Object.(*ast.FuncCallExpr); !ok {
+	if boundary, ok := boundaryExpressionTypeWithPresence(result, point, expr); ok && typ.Nil.Equals(boundary) {
+		return nil, false
+	}
+	if projected, ok := projectedFlowSourceType(result, resolver, point, env, expr); ok && typ.Nil.Equals(projected) {
 		return nil, false
 	}
 	got, ok := newFlowExpressionTyper(result, resolver, point, env).typeOf(expr)
 	if !ok || got == nil {
+		if memberReadRootProvenPresent(result, env, expr) {
+			return nil, false
+		}
+		if precise, ok := optionalDominatingDeclarationMemberReadType(result, resolver, flow, point, expr, normalize.Optional(typ.Unknown)); ok {
+			return precise, true
+		}
+		if invalidated, ok := optionalInvalidatedDeclarationMemberReadType(result, flow, point, expr); ok {
+			return invalidated, true
+		}
+		return optionalDeclaredConcreteMemberReadType(result, resolver, expr)
+	}
+	if mixedOptionalType(got) {
+		if nonOptionalDeclaredMemberRead(result, resolver, expr) {
+			return nil, false
+		}
+		if precise, ok := optionalDominatingDeclarationMemberReadType(result, resolver, flow, point, expr, got); ok {
+			return precise, true
+		}
+		if !memberReadReceiverMayBeNil(result, resolver, point, env, attr) {
+			return nil, false
+		}
+		return got, true
+	}
+	if receiver, ok := attr.Object.(ast.Expr); ok {
+		if receiverType, receiverOK := newFlowExpressionTyper(result, resolver, point, env).typeOf(receiver); receiverOK &&
+			projectionHasNil(receiverType) &&
+			!memberReadRootProvenPresent(result, env, receiver) &&
+			!projectionHasNil(got) {
+			return normalize.Optional(got), true
+		}
+	}
+	if typ.IsNever(got) {
+		if invalidated, ok := optionalInvalidatedDeclarationMemberReadType(result, flow, point, expr); ok {
+			return invalidated, true
+		}
+		return optionalDeclaredConcreteMemberReadType(result, resolver, expr)
+	}
+	if typ.Nil.Equals(got) {
+		if declared, ok := declaredReadProjectionType(result, resolver, expr); ok && mixedOptionalType(declared) {
+			return declared, true
+		}
+		if broad, ok := newExpressionTyper(result, resolver).typeOf(expr); ok && mixedOptionalType(broad) {
+			return broad, true
+		}
+	}
+	return nil, false
+}
+
+func memberReadRootProvenPresent(result *body.Result, env guardEnv, expr ast.Expr) bool {
+	if result == nil || expr == nil {
+		return false
+	}
+	accessPath, ok := result.ExpressionPath(expr)
+	if !ok || accessPath.Symbol == 0 {
+		return false
+	}
+	root := accessPath.RootOnly()
+	return env.hasPresent(root) || env.hasTruthy(root)
+}
+
+func memberReadReceiverMayBeNil(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, env guardEnv, attr *ast.AttrGetExpr) bool {
+	if result == nil || attr == nil || attr.Object == nil {
+		return false
+	}
+	receiverType, ok := newFlowExpressionTyper(result, resolver, point, env).typeOf(attr.Object)
+	if !ok || receiverType == nil || !projectionHasNil(receiverType) {
+		return false
+	}
+	if receiverPath, ok := result.ExpressionPath(attr.Object); ok && !receiverPath.IsEmpty() {
+		if env.hasPresent(receiverPath) || env.hasTruthy(receiverPath) {
+			return false
+		}
+	}
+	return true
+}
+
+func optionalDominatingDeclarationMemberReadType(result *body.Result, resolver typeannotation.Resolver, flow *diagnosticFlowCache, point cfg.Point, expr ast.Expr, got typ.Type) (typ.Type, bool) {
+	inner := projectionWithoutNil(got)
+	if inner == nil || (!typ.IsUnknown(inner) && !typ.IsAny(inner)) {
 		return nil, false
 	}
-	if typ.IsAny(got) || typ.IsUnknown(got) || typ.IsNever(got) {
+	declared, ok := dominatingDeclarationProjectionType(result, resolver, flow, point, expr)
+	if !ok || declared == nil || typ.IsNever(declared) || typ.IsAny(declared) || typ.IsUnknown(declared) {
 		return nil, false
 	}
-	if !projectionHasNil(got) {
+	if projectionHasNil(declared) {
+		declaredInner := projectionWithoutNil(declared)
+		if declaredInner == nil || typ.IsNever(declaredInner) || typ.IsAny(declaredInner) || typ.IsUnknown(declaredInner) {
+			return nil, false
+		}
+		return declared, true
+	}
+	return normalize.Optional(declared), true
+}
+
+func optionalInvalidatedDeclarationMemberReadType(result *body.Result, flow *diagnosticFlowCache, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
+	if result == nil || expr == nil {
+		return nil, false
+	}
+	accessPath, ok := result.ExpressionPath(expr)
+	if !ok || accessPath.Symbol == 0 || len(accessPath.Segments) == 0 {
+		return nil, false
+	}
+	_, declarationPoint, ok := dominatingRootLocalAssignment(result, flow, point, accessPath.Symbol)
+	if !ok || !pathInvalidatedBetween(result, flow, declarationPoint, point, accessPath) {
+		return nil, false
+	}
+	return normalize.Optional(typ.Unknown), true
+}
+
+func nonOptionalDeclaredMemberRead(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr) bool {
+	if result == nil || expr == nil {
+		return false
+	}
+	accessPath, ok := result.ExpressionPath(expr)
+	if !ok || accessPath.Symbol == 0 {
+		return false
+	}
+	annotation, ok := result.SymbolTypeAnnotation(accessPath.Symbol)
+	if !ok {
+		return false
+	}
+	root, ok := lowerType(annotation, resolver)
+	if !ok || projectionHasNil(root) {
+		return false
+	}
+	declared, ok := declaredReadProjectionType(result, resolver, expr)
+	return ok && declared != nil && !typ.IsNever(declared) && !projectionHasNil(declared)
+}
+
+func optionalDeclaredMemberReadType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr) typ.Type {
+	if declared, ok := declaredReadProjectionType(result, resolver, expr); ok && declared != nil && !typ.IsNever(declared) {
+		return normalize.Optional(declared)
+	}
+	if broad, ok := newExpressionTyper(result, resolver).typeOf(expr); ok && broad != nil && !typ.IsNever(broad) {
+		return normalize.Optional(broad)
+	}
+	return normalize.Optional(typ.Unknown)
+}
+
+func optionalDeclaredConcreteMemberReadType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
+	got := optionalDeclaredMemberReadType(result, resolver, expr)
+	inner := projectionWithoutNil(got)
+	if inner == nil || typ.IsNever(inner) || typ.IsAny(inner) || typ.IsUnknown(inner) {
 		return nil, false
 	}
 	return got, true
+}
+
+func declaredReadProjectionType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
+	if result == nil || expr == nil {
+		return nil, false
+	}
+	accessPath, ok := result.ExpressionPath(expr)
+	if !ok || accessPath.Symbol == 0 || len(accessPath.Segments) == 0 {
+		return nil, false
+	}
+	annotation, ok := result.SymbolTypeAnnotation(accessPath.Symbol)
+	if !ok {
+		return nil, false
+	}
+	root, ok := lowerType(annotation, resolver)
+	if !ok {
+		return nil, false
+	}
+	return luatypeprojection.ApplySegments(transparentComparableType(result, root), accessPath.Segments)
+}
+
+func mixedOptionalType(t typ.Type) bool {
+	if t == nil || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) || !projectionHasNil(t) {
+		return false
+	}
+	withoutNil := projectionWithoutNil(t)
+	return withoutNil != nil && !typ.IsNever(withoutNil)
 }
 
 func projectedFlowSourceType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, env guardEnv, expr ast.Expr) (typ.Type, bool) {
@@ -631,12 +936,31 @@ func projectedSourceTypeWith(
 	newTyper func(*body.Result, typeannotation.Resolver, cfg.Point, guardEnv) expressionTyper,
 ) (typ.Type, bool) {
 	switch e := expr.(type) {
+	case *ast.FuncCallExpr:
+		got, ok := newTyper(result, resolver, point, env).typeOf(expr)
+		if !ok || got == nil || typ.IsNever(got) {
+			return nil, false
+		}
+		raw, rawOK := newExpressionTyper(result, resolver).typeOf(expr)
+		if !rawOK || !typ.SameNodeOrAcyclicEqual(got, raw) {
+			return got, true
+		}
+		return nil, false
 	case *ast.AttrGetExpr:
 		if e.KeySyntax == ast.AttrKeyIndex && !shouldProjectOptionalIndex(result, e) {
 			return nil, false
 		}
 		got, ok := newTyper(result, resolver, point, env).typeOf(expr)
 		if !ok {
+			return nil, false
+		}
+		if typ.IsNever(got) {
+			if e.KeySyntax == ast.AttrKeyIndex {
+				if raw, rawOK := newExpressionTyper(result, resolver).typeOf(expr); rawOK && raw != nil && !typ.IsNever(raw) {
+					return normalize.Optional(raw), true
+				}
+				return normalize.Optional(typ.Unknown), true
+			}
 			return nil, false
 		}
 		raw, rawOK := newExpressionTyper(result, resolver).typeOf(expr)
@@ -646,7 +970,7 @@ func projectedSourceTypeWith(
 		return nil, false
 	case *ast.IdentExpr:
 		got, ok := newTyper(result, resolver, point, env).typeOf(expr)
-		if !ok {
+		if !ok || typ.IsNever(got) {
 			return nil, false
 		}
 		raw, rawOK := newExpressionTyper(result, resolver).typeOf(expr)
@@ -659,7 +983,7 @@ func projectedSourceTypeWith(
 	}
 }
 
-func dominatingDeclarationProjectionType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
+func dominatingDeclarationProjectionType(result *body.Result, resolver typeannotation.Resolver, flow *diagnosticFlowCache, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
 	if result == nil || expr == nil {
 		return nil, false
 	}
@@ -667,25 +991,83 @@ func dominatingDeclarationProjectionType(result *body.Result, resolver typeannot
 	if !ok || accessPath.Symbol == 0 || len(accessPath.Segments) == 0 {
 		return nil, false
 	}
-	if _, annotated := result.SymbolTypeAnnotation(accessPath.Symbol); annotated {
+	fact, declarationPoint, ok := dominatingRootLocalAssignment(result, flow, point, accessPath.Symbol)
+	if !ok {
 		return nil, false
 	}
-	root, ok := dominatingRootDeclarationType(result, resolver, nil, point, accessPath.Symbol)
+	if !localDeclarationSourceCanProject(fact) {
+		return nil, false
+	}
+	root, ok := localDeclarationType(result, resolver, declarationPoint, fact)
 	if !ok {
+		return nil, false
+	}
+	if pathInvalidatedBetween(result, flow, declarationPoint, point, accessPath) {
 		return nil, false
 	}
 	got, ok := expectedTypeAtSegments(root, accessPath.Segments)
 	if !ok {
 		return nil, false
 	}
-	if value, ok := result.ExpressionValueAtBoundary(point, expr); !ok || !boundaryValueHasReadableType(result, value) {
+	if projectionHasNil(root) && !projectionHasNil(got) {
+		got = normalize.Optional(got)
+	}
+	if value, ok := newDiagnosticQuery(result).ExpressionValueAtBoundary(point, expr); !ok || !boundaryValueHasReadableType(result, value) {
 		got = normalize.Optional(got)
 	}
 	return got, true
 }
 
+func localDeclarationSourceCanProject(fact semantics.LocalAssignmentFact) bool {
+	if fact.Type == nil {
+		return localDeclarationSourceIsPath(fact.Expr)
+	}
+	return localDeclarationSourceIsPath(fact.Expr)
+}
+
+func localDeclarationSourceIsPath(expr ast.Expr) bool {
+	switch e := expr.(type) {
+	case *ast.IdentExpr, *ast.AttrGetExpr:
+		return true
+	case *ast.CastExpr:
+		return localDeclarationSourceIsPath(e.Expr)
+	case *ast.NonNilAssertExpr:
+		return localDeclarationSourceIsPath(e.Expr)
+	default:
+		return false
+	}
+}
+
+func pathInvalidatedBetween(result *body.Result, flow *diagnosticFlowCache, from, to cfg.Point, target pathdom.Path) bool {
+	if result == nil || target.IsEmpty() || from == to {
+		return false
+	}
+	graph := result.Graph()
+	if graph == nil {
+		return false
+	}
+	for _, candidate := range graph.RPO() {
+		if candidate == from || candidate == to {
+			continue
+		}
+		if !diagnosticCanReach(flow, graph, from, candidate) || !diagnosticCanReach(flow, graph, candidate, to) {
+			continue
+		}
+		if invalidation, ok := result.PathDescendantInvalidation(candidate); ok && target.HasStrictPrefix(invalidation.ContainerPath()) {
+			return true
+		}
+		if fact, ok := result.OrdinaryAssignment(candidate); ok && ordinaryAssignmentInvalidatesMemberPath(fact, target) {
+			return true
+		}
+		if callMayInvalidateTrackedPath(result, candidate, target) {
+			return true
+		}
+	}
+	return false
+}
+
 func boundaryValueHasReadableType(result *body.Result, value product.Value) bool {
-	_, ok := readmodel.New(result).ValueType(value)
+	_, ok := newDiagnosticQuery(result).ValueType(value)
 	return ok
 }
 
@@ -711,7 +1093,7 @@ func localDeclarationType(result *body.Result, resolver typeannotation.Resolver,
 			return got, true
 		}
 	}
-	return readmodel.New(result).SourceType(point, fact.Source)
+	return newDiagnosticQuery(result).SourceType(point, fact.Source)
 }
 
 func annotatedIdentifierType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
@@ -738,7 +1120,7 @@ func annotatedIdentifierType(result *body.Result, resolver typeannotation.Resolv
 	if !ok {
 		return nil, false
 	}
-	return readmodel.New(result).RefineDeclaredType(declared, value)
+	return newDiagnosticQuery(result).RefineDeclaredType(declared, value)
 }
 
 func untrustedAnnotatedIdentifierType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
@@ -774,11 +1156,12 @@ func refineAssignmentSourceType(result *body.Result, point cfg.Point, expr ast.E
 	if _, ok := result.ExpressionPath(expr); !ok {
 		return got
 	}
-	value, ok := result.ExpressionValueAtBoundary(point, expr)
+	query := newDiagnosticQuery(result)
+	value, ok := query.ExpressionValueAtBoundary(point, expr)
 	if !ok {
 		return got
 	}
-	refined, ok := readmodel.New(result).RefineDeclaredType(got, value)
+	refined, ok := query.RefineDeclaredType(got, value)
 	if !ok {
 		return got
 	}

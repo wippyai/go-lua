@@ -66,13 +66,5 @@ func cloneOperationalEffects(e *OperationalEffects) *OperationalEffects {
 }
 
 func cloneFunctionType(fn *typ.Function) *typ.Function {
-	if fn == nil {
-		return nil
-	}
-	return typ.RebuildFunction(typ.FunctionParts{
-		TypeParams: append([]*typ.TypeParam(nil), fn.TypeParams...),
-		Params:     append([]typ.Param(nil), fn.Params...),
-		Variadic:   fn.Variadic,
-		Returns:    append([]typ.Type(nil), fn.Returns...),
-	})
+	return typ.CloneFunction(fn)
 }

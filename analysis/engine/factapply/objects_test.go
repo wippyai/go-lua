@@ -79,7 +79,7 @@ func TestFactsNodeTransferObjectLiteralRootAssignmentsWriteStaticEntries(t *test
 			input.ObjectLiterals = map[factflow.ExprRef]factflow.ObjectLiteral{
 				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
 					factflow.NewObjectEntry(fieldSuffix("leaf"), entrySource),
-				}),
+				}).WithIdentity(testTableLiteralID(objectSource.ExprRef)),
 			}
 			visibilityBuilder := visibility.NewBuilder()
 			visibilityBuilder.Define(point, target, "obj")
@@ -99,14 +99,61 @@ func TestFactsNodeTransferObjectLiteralRootAssignmentsWriteStaticEntries(t *test
 			assertPathValue(t, reg, ks, got, path.PathKey("sym121@1.leaf"), entryValue)
 			assertHeapStaticMember(t, reg, ks, got, objectSource.ExprRef, ".leaf", entryValue)
 			assertPlacement(t, got, testTableLiteralID(objectSource.ExprRef), placement.Stack)
-			if len(sources.calls) != 4 {
-				t.Fatalf("resolver calls = %d, want assignment root plus heap/path entry reads", len(sources.calls))
+			if len(sources.calls) != 2 {
+				t.Fatalf("resolver calls = %d, want assignment root plus one cached entry read", len(sources.calls))
 			}
-			if sources.calls[0].source != objectSource || sources.calls[1].source != objectSource ||
-				sources.calls[2].source != entrySource || sources.calls[3].source != entrySource {
-				t.Fatalf("resolver calls = %#v, want root, root, entry, entry", sources.calls)
+			if sources.calls[0].source != objectSource || sources.calls[1].source != entrySource {
+				t.Fatalf("resolver calls = %#v, want root, entry", sources.calls)
 			}
 		})
+	}
+}
+
+func TestFactsNodeTransferObjectLiteralHeapRootUsesResolvedTypedSourceValue(t *testing.T) {
+	reg := standard.Registry()
+	typeValues := typevalue.NewCache()
+	point := cfg.Point(65)
+	target := symbol.ID(125)
+	objectSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(65), HasExpr: true}
+	entrySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(66), HasExpr: true}
+	rootType := typetable.NewRecord().Field("leaf", typ.String).Build()
+	rootValue := typeValues.FromTypeWithWitness(reg, rootType)
+	rootValue = product.Set(reg, rootValue, identity.Key, identity.Singleton(testTableLiteralID(objectSource.ExprRef)))
+	rootValue = product.Set(reg, rootValue, evidence.Key, evidence.ExplicitTop())
+	entryValue := typeValues.FromTypeWithWitness(reg, typ.String)
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{
+			objectSource: rootValue,
+			entrySource:  entryValue,
+		},
+	}
+	input := factflow.FactsInput{
+		RootAssignments: map[cfg.Point]factflow.RootAssignment{
+			point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "obj"), objectSource),
+		},
+		ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
+			objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
+				factflow.NewObjectEntry(fieldSuffix("leaf"), entrySource),
+			}).WithIdentity(testTableLiteralID(objectSource.ExprRef)),
+		},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "obj")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts:      factflow.NewFacts(input),
+		Sources:    sources,
+		Visibility: resolver,
+		TypeValues: typeValues,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	object := got.ReadHeapTableObject(reg, testTableLiteralID(objectSource.ExprRef))
+	if gotRoot := object.Root(); !product.Equal(reg, gotRoot, rootValue) {
+		t.Fatalf("heap object root = %s, want resolved source value %s", formatValue(reg, gotRoot), formatValue(reg, rootValue))
 	}
 }
 
@@ -184,7 +231,7 @@ func TestFactsNodeTransferObjectLiteralMissingVisibilitySkipsEntriesKeepsRoot(t 
 			ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
 				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
 					factflow.NewObjectEntry(fieldSuffix("leaf"), entrySource),
-				}),
+				}).WithIdentity(testTableLiteralID(objectSource.ExprRef)),
 			},
 		}),
 		Sources:    sources,
@@ -197,11 +244,11 @@ func TestFactsNodeTransferObjectLiteralMissingVisibilitySkipsEntriesKeepsRoot(t 
 	assertValue(t, reg, got, key.SymbolValue(target), rootValue)
 	assertPathValue(t, reg, ks, got, path.PathKey("sym123@1.leaf"), product.Bottom(reg))
 	assertHeapStaticMember(t, reg, ks, got, objectSource.ExprRef, ".leaf", entryValue)
-	if len(sources.calls) != 3 {
-		t.Fatalf("resolver calls = %d, want assignment root plus heap reads", len(sources.calls))
+	if len(sources.calls) != 2 {
+		t.Fatalf("resolver calls = %d, want assignment root plus one heap entry read", len(sources.calls))
 	}
-	if sources.calls[0].source != objectSource || sources.calls[1].source != objectSource || sources.calls[2].source != entrySource {
-		t.Fatalf("resolver calls = %#v, want root, root, entry", sources.calls)
+	if sources.calls[0].source != objectSource || sources.calls[1].source != entrySource {
+		t.Fatalf("resolver calls = %#v, want root, entry", sources.calls)
 	}
 }
 
@@ -233,7 +280,7 @@ func TestFactsNodeTransferObjectLiteralPathAssignmentWritesStaticEntries(t *test
 			ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
 				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
 					factflow.NewObjectEntry(fieldSuffix("leaf"), entrySource),
-				}),
+				}).WithIdentity(testTableLiteralID(objectSource.ExprRef)),
 			},
 		}),
 		Sources:    sources,
@@ -246,12 +293,11 @@ func TestFactsNodeTransferObjectLiteralPathAssignmentWritesStaticEntries(t *test
 	assertPathValue(t, reg, ks, got, path.PathKey("sym124@1.child"), rootValue)
 	assertPathValue(t, reg, ks, got, path.PathKey("sym124@1.child.leaf"), entryValue)
 	assertHeapStaticMember(t, reg, ks, got, objectSource.ExprRef, ".leaf", entryValue)
-	if len(sources.calls) != 4 {
-		t.Fatalf("resolver calls = %d, want assignment root plus heap/path entry reads", len(sources.calls))
+	if len(sources.calls) != 2 {
+		t.Fatalf("resolver calls = %d, want assignment root plus one cached entry read", len(sources.calls))
 	}
-	if sources.calls[0].source != objectSource || sources.calls[1].source != objectSource ||
-		sources.calls[2].source != entrySource || sources.calls[3].source != entrySource {
-		t.Fatalf("resolver calls = %#v, want root, root, entry, entry", sources.calls)
+	if sources.calls[0].source != objectSource || sources.calls[1].source != entrySource {
+		t.Fatalf("resolver calls = %#v, want root, entry", sources.calls)
 	}
 }
 
@@ -504,6 +550,12 @@ func TestFactsNodeTransferReturnObjectLiteralWritesHeapObject(t *testing.T) {
 
 	assertValue(t, reg, got, key.ReturnSlot(0), rootValue)
 	assertHeapStaticMember(t, reg, ks, got, objectSource.ExprRef, ".leaf", entryValue)
+	if len(sources.calls) != 2 {
+		t.Fatalf("resolver calls = %d, want return root plus one cached entry read", len(sources.calls))
+	}
+	if sources.calls[0].source != objectSource || sources.calls[1].source != entrySource {
+		t.Fatalf("resolver calls = %#v, want root, entry", sources.calls)
+	}
 }
 
 func TestFactsNodeTransferCallArgumentObjectLiteralWritesHeapObject(t *testing.T) {

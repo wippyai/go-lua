@@ -39,7 +39,7 @@ function M.describe(id: string, now: number): (string?, Err?)
     if err then
         return nil, err
     end
-    return session.user.name .. ":" .. tostring(session.expires_at), nil -- expect-warning: may be nil
+    return session.user.name .. ":" .. tostring(session.expires_at), nil
 end
 
 return M

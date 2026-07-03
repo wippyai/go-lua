@@ -1,4 +1,5 @@
 {
-  "description": "A type-cast/assertion call T(arg) (a type used as a callable) narrows its argument to the cast type on the continuation (a failed cast raises), for a bare symbol, under assignment, and forwarded through a wrapper that returns the cast.",
-  "files": ["main.lua"]
+  "description": "A type-cast/assertion call T(arg) returns a trusted cast result, but strict any-boundary policy does not launder the original argument variable into the cast type.",
+  "files": ["main.lua"],
+  "check": {"errors": 3}
 }

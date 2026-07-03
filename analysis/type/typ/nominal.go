@@ -22,69 +22,29 @@ type Method struct {
 // Named interfaces (Name != "") use nominal identity for marker interfaces
 // (interfaces with no methods, like Channel<T>).
 type Interface struct {
-	Name                  string   // Interface name (empty for anonymous)
-	Methods               []Method // Required methods
-	hash                  uint64
-	containsAny           bool
-	containsNever         bool
-	containsTypeParam     bool
-	containsInstantiated  bool
-	containsGeneric       bool
-	containsRecursive     bool
-	containsOpenRecursive bool
-	strCache              stringCache
+	Name    string   // Interface name (empty for anonymous)
+	Methods []Method // Required methods
+	hash    uint64
+	typeProperties
+	strCache stringCache
 }
 
 // NewInterface creates an interface type.
 func NewInterface(name string, methods []Method) *Interface {
 	h := hash.MixHash(uint64(kind.Interface), hash.FnvString(name))
-	containsAny := false
-	containsNever := false
-	containsTypeParam := false
-	containsInstantiated := false
-	containsGeneric := false
-	containsRecursive := false
-	containsOpenRecursive := false
+	copied := make([]Method, len(methods))
+	copy(copied, methods)
 	for _, m := range methods {
 		h = hash.MixHash(h, hash.FnvString(m.Name))
 		h = hash.MixHash(h, m.Type.Hash())
-		if !containsAny && knownContainsAny(m.Type) {
-			containsAny = true
-		}
-		if !containsNever && knownContainsNever(m.Type) {
-			containsNever = true
-		}
-		if !containsTypeParam && knownContainsTypeParam(m.Type) {
-			containsTypeParam = true
-		}
-		if !containsInstantiated && knownContainsInstantiated(m.Type) {
-			containsInstantiated = true
-		}
-		if !containsGeneric && knownContainsGeneric(m.Type) {
-			containsGeneric = true
-		}
-		if !containsRecursive && knownContainsRecursive(m.Type) {
-			containsRecursive = true
-		}
-		if !containsOpenRecursive && knownContainsOpenRecursive(m.Type) {
-			containsOpenRecursive = true
-		}
 	}
-	// Defensive copy to prevent external mutation
-	copied := make([]Method, len(methods))
-	copy(copied, methods)
+	props := typePropertiesOfMethods(copied)
 
 	return &Interface{
-		Name:                  name,
-		Methods:               copied,
-		hash:                  h,
-		containsAny:           containsAny,
-		containsNever:         containsNever,
-		containsTypeParam:     containsTypeParam,
-		containsInstantiated:  containsInstantiated,
-		containsGeneric:       containsGeneric,
-		containsRecursive:     containsRecursive,
-		containsOpenRecursive: containsOpenRecursive,
+		Name:           name,
+		Methods:        copied,
+		hash:           h,
+		typeProperties: props,
 	}
 }
 

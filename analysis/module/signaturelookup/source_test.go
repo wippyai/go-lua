@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup/internal/stdlib"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestLookupStdlib(t *testing.T) {
@@ -43,6 +44,62 @@ func TestLookupManifest(t *testing.T) {
 	}
 	if !want.Equals(got) {
 		t.Fatalf("Lookup(custom) = %v, want %v", got, want)
+	}
+}
+
+func TestLookupManifestLocalMemberByQualifiedModulePath(t *testing.T) {
+	want := testSignature("get", returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})
+	other := testSignature("other", returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: effect.ParamRef{Index: 0}}})
+	sql := manifest.New("sql")
+	sql.DefineFunctionSignature("get", want)
+	json := manifest.New("json")
+	json.DefineFunctionSignature("get", other)
+	src := Source{Manifests: []*manifest.Manifest{json, sql}}
+
+	got, ok := src.Lookup("sql.get")
+	if !ok {
+		t.Fatal("Lookup(sql.get) missing")
+	}
+	if !want.Equals(got) {
+		t.Fatalf("Lookup(sql.get) = %v, want sql-local get %v", got, want)
+	}
+}
+
+func TestLookupManifestLocalStaticIntMemberByQualifiedModulePath(t *testing.T) {
+	want := testSignature("[1]", returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})
+	m := manifest.New("pkg")
+	m.DefineFunctionSignature("[1]", want)
+	src := Source{Manifests: []*manifest.Manifest{m}}
+
+	got, ok := src.Lookup("pkg[1]")
+	if !ok {
+		t.Fatal("Lookup(pkg[1]) missing")
+	}
+	if !want.Equals(got) {
+		t.Fatalf("Lookup(pkg[1]) = %v, want pkg-local [1] %v", got, want)
+	}
+}
+
+func TestLookupDerivesManifestInterfaceMethodTypeWithoutErrorType(t *testing.T) {
+	instanceType := typ.NewInterface("contract.Instance", nil)
+	openType := typ.Func().
+		Param("self", typ.Self).
+		Returns(instanceType, typeexpr.Optional(typ.String)).
+		Build()
+	contractType := typ.NewInterface("contract.Contract", []typ.Method{{Name: "open", Type: openType}})
+	m := manifest.New("contract")
+	m.DefineType("Contract", contractType)
+	src := Source{Manifests: []*manifest.Manifest{m}}
+
+	got, ok := src.Lookup("contract.Contract.open")
+	if !ok {
+		t.Fatal("Lookup(contract.Contract.open) missing")
+	}
+	if got.Type == nil || !typ.TypeEquals(got.Type, openType) {
+		t.Fatalf("Lookup(contract.Contract.open).Type = %v, want %v", got.Type, openType)
+	}
+	if len(got.Effect.Labels) != 0 {
+		t.Fatalf("Lookup(contract.Contract.open).Effect = %v, want no derived labels without ErrorType", got.Effect)
 	}
 }
 
@@ -184,6 +241,30 @@ func TestSignaturesReturnsClonesAndRespectsPrecedence(t *testing.T) {
 	}
 	if len(again["shared"].Effect.Labels) == 0 {
 		t.Fatal("Signatures returned aliased effect labels")
+	}
+}
+
+func TestStdlibSignatureNamesExposeNamesWithoutSignatureMaterialization(t *testing.T) {
+	names := StdlibSignatureNames()
+	if len(names) == 0 {
+		t.Fatal("StdlibSignatureNames returned no names")
+	}
+	seen := map[string]bool{}
+	for _, name := range names {
+		seen[name] = true
+	}
+	for _, name := range []string{stdlib.Require, stdlib.Type, stdlib.TableInsert} {
+		if !seen[name] {
+			t.Fatalf("StdlibSignatureNames missing %q", name)
+		}
+	}
+
+	names[0] = "mutated"
+	again := StdlibSignatureNames()
+	for _, name := range again {
+		if name == "mutated" {
+			t.Fatal("StdlibSignatureNames returned aliased storage")
+		}
 	}
 }
 

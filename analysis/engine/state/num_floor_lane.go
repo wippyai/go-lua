@@ -81,13 +81,9 @@ func (l numFloorLane) clear(key keyspace.Key) (numFloorLane, bool) {
 	if key.Kind == keyspace.KindInvalid || l.lane.Bottom() {
 		return l, false
 	}
-	floors := mapedit.Clone(l.lane.Values())
-	if _, ok := floors[key]; !ok {
+	floors, changed := mapedit.Without(l.lane.Values(), key)
+	if !changed {
 		return l, false
-	}
-	delete(floors, key)
-	if len(floors) == 0 {
-		floors = nil
 	}
 	l.lane = lift.MustMapValues(floors)
 	return l, true

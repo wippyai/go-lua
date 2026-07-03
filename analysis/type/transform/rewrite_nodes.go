@@ -7,30 +7,7 @@ import (
 )
 
 func rewriteFunction(v *typ.Function, orig typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursion.Guard, depth int, memo map[rewriteKey]typ.Type) typ.Type {
-	changed := false
-
-	var typeParams []*typ.TypeParam
-	var typeParamReplacements map[*typ.TypeParam]*typ.TypeParam
-	for i, p := range v.TypeParams {
-		newParamType := rewriteDepth(p, fn, guard, depth, memo)
-		newParam, ok := newParamType.(*typ.TypeParam)
-		if !ok || newParam == p {
-			if typeParams != nil {
-				typeParams[i] = p
-			}
-			continue
-		}
-		if typeParams == nil {
-			typeParams = make([]*typ.TypeParam, len(v.TypeParams))
-			copy(typeParams, v.TypeParams)
-		}
-		changed = true
-		typeParams[i] = newParam
-		if typeParamReplacements == nil {
-			typeParamReplacements = make(map[*typ.TypeParam]*typ.TypeParam)
-		}
-		typeParamReplacements[p] = newParam
-	}
+	typeParams, typeParamReplacements, changed := rewriteTypeParamList(v.TypeParams, fn, guard, depth, memo)
 	rewriteChild := rewriteFnWithTypeParamReplacements(fn, typeParamReplacements)
 
 	var params []typ.Param
@@ -112,30 +89,7 @@ func rewriteTypeParam(v *typ.TypeParam, orig typ.Type, fn func(typ.Type) (typ.Ty
 }
 
 func rewriteGeneric(v *typ.Generic, orig typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursion.Guard, depth int, memo map[rewriteKey]typ.Type) typ.Type {
-	changed := false
-
-	var typeParams []*typ.TypeParam
-	var typeParamReplacements map[*typ.TypeParam]*typ.TypeParam
-	for i, p := range v.TypeParams {
-		newParamType := rewriteDepth(p, fn, guard, depth, memo)
-		newParam, ok := newParamType.(*typ.TypeParam)
-		if !ok || newParam == p {
-			if typeParams != nil {
-				typeParams[i] = p
-			}
-			continue
-		}
-		if typeParams == nil {
-			typeParams = make([]*typ.TypeParam, len(v.TypeParams))
-			copy(typeParams, v.TypeParams)
-		}
-		changed = true
-		typeParams[i] = newParam
-		if typeParamReplacements == nil {
-			typeParamReplacements = make(map[*typ.TypeParam]*typ.TypeParam)
-		}
-		typeParamReplacements[p] = newParam
-	}
+	typeParams, typeParamReplacements, changed := rewriteTypeParamList(v.TypeParams, fn, guard, depth, memo)
 
 	body := rewriteDepth(v.Body, rewriteFnWithTypeParamReplacements(fn, typeParamReplacements), guard, depth, memo)
 	if body != v.Body {
@@ -149,6 +103,33 @@ func rewriteGeneric(v *typ.Generic, orig typ.Type, fn func(typ.Type) (typ.Type, 
 		typeParamSrc = typeParams
 	}
 	return typ.NewGeneric(v.Name, typeParamSrc, body)
+}
+
+func rewriteTypeParamList(params []*typ.TypeParam, fn func(typ.Type) (typ.Type, bool), guard recursion.Guard, depth int, memo map[rewriteKey]typ.Type) ([]*typ.TypeParam, map[*typ.TypeParam]*typ.TypeParam, bool) {
+	var out []*typ.TypeParam
+	var replacements map[*typ.TypeParam]*typ.TypeParam
+	changed := false
+	for i, p := range params {
+		newParamType := rewriteDepth(p, fn, guard, depth, memo)
+		newParam, ok := newParamType.(*typ.TypeParam)
+		if !ok || newParam == p {
+			if out != nil {
+				out[i] = p
+			}
+			continue
+		}
+		if out == nil {
+			out = make([]*typ.TypeParam, len(params))
+			copy(out, params)
+		}
+		changed = true
+		out[i] = newParam
+		if replacements == nil {
+			replacements = make(map[*typ.TypeParam]*typ.TypeParam)
+		}
+		replacements[p] = newParam
+	}
+	return out, replacements, changed
 }
 
 func rewriteFnWithTypeParamReplacements(fn func(typ.Type) (typ.Type, bool), replacements map[*typ.TypeParam]*typ.TypeParam) func(typ.Type) (typ.Type, bool) {
@@ -194,33 +175,13 @@ func rewriteRecursive(v *typ.Recursive, orig typ.Type, fn func(typ.Type) (typ.Ty
 func rewriteRecord(v *typ.Record, orig typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursion.Guard, depth int, memo map[rewriteKey]typ.Type) typ.Type {
 	changed := false
 
-	var fields []typ.Field
-	for i, f := range v.Fields {
-		newType := rewriteDepth(f.Type, fn, guard, depth, memo)
-		if newType != f.Type {
-			if fields == nil {
-				fields = make([]typ.Field, len(v.Fields))
-				copy(fields, v.Fields)
-			}
-			changed = true
-			fields[i] = typ.Field{Name: f.Name, Type: newType, Optional: f.Optional, Readonly: f.Readonly}
-		} else if fields != nil {
-			fields[i] = f
-		}
+	fields, fieldsChanged := rewriteRecordFields(v.Fields, fn, guard, depth, memo)
+	if fieldsChanged {
+		changed = true
 	}
-	var staticMembers []typ.StaticMember
-	for i, m := range v.StaticMembers {
-		newType := rewriteDepth(m.Type, fn, guard, depth, memo)
-		if newType != m.Type {
-			if staticMembers == nil {
-				staticMembers = make([]typ.StaticMember, len(v.StaticMembers))
-				copy(staticMembers, v.StaticMembers)
-			}
-			changed = true
-			staticMembers[i].Type = newType
-		} else if staticMembers != nil {
-			staticMembers[i] = m
-		}
+	staticMembers, staticMembersChanged := rewriteRecordStaticMembers(v.StaticMembers, fn, guard, depth, memo)
+	if staticMembersChanged {
+		changed = true
 	}
 
 	var metatable typ.Type
@@ -265,4 +226,42 @@ func rewriteRecord(v *typ.Record, orig typ.Type, fn func(typ.Type) (typ.Type, bo
 		Open:          v.Open,
 		AssumeSorted:  true,
 	})
+}
+
+func rewriteRecordFields(fields []typ.Field, fn func(typ.Type) (typ.Type, bool), guard recursion.Guard, depth int, memo map[rewriteKey]typ.Type) ([]typ.Field, bool) {
+	var out []typ.Field
+	for i, f := range fields {
+		newType := rewriteDepth(f.Type, fn, guard, depth, memo)
+		if newType == f.Type {
+			if out != nil {
+				out[i] = f
+			}
+			continue
+		}
+		if out == nil {
+			out = make([]typ.Field, len(fields))
+			copy(out, fields)
+		}
+		out[i] = typ.Field{Name: f.Name, Type: newType, Optional: f.Optional, Readonly: f.Readonly}
+	}
+	return out, out != nil
+}
+
+func rewriteRecordStaticMembers(members []typ.StaticMember, fn func(typ.Type) (typ.Type, bool), guard recursion.Guard, depth int, memo map[rewriteKey]typ.Type) ([]typ.StaticMember, bool) {
+	var out []typ.StaticMember
+	for i, m := range members {
+		newType := rewriteDepth(m.Type, fn, guard, depth, memo)
+		if newType == m.Type {
+			if out != nil {
+				out[i] = m
+			}
+			continue
+		}
+		if out == nil {
+			out = make([]typ.StaticMember, len(members))
+			copy(out, members)
+		}
+		out[i].Type = newType
+	}
+	return out, out != nil
 }

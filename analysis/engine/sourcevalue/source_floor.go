@@ -40,8 +40,8 @@ func numFloorForSource(
 			return floor, true
 		}
 	}
-	if p, ok := facts.ExpressionPath(source.ExprRef); ok {
-		pathKey, keyOK := visibility.RootOrVisibleStateKeyAt(resolver, point, p)
+	if p, ok := facts.ExpressionPathRef(source.ExprRef); ok {
+		pathKey, keyOK := visibility.AddressAt(resolver, point, p).RootOrVisibleStateKey()
 		if keyOK {
 			if floor, ok := in.ReadNumFloor(resolver.KeySpace(), pathKey); ok {
 				return floor, true

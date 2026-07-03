@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/type/access"
+	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -72,6 +73,21 @@ func TestMemberCallAcceptsMatchingDiscriminantMethod(t *testing.T) {
 	}
 }
 
+func TestMemberReadUsesShortCircuitRHSGuardEnvironment(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type AgentRef = string | { id: string, name: string? }
+
+		local function target_id(agent_identifier: AgentRef): string?
+			return type(agent_identifier) == "table"
+				and (agent_identifier.id or agent_identifier.name)
+				or agent_identifier
+		end
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want RHS member reads narrowed by LHS type guard", diags)
+	}
+}
+
 func TestMemberReadReportsStaticBracketMissingFieldAfterDiscriminantNarrowing(t *testing.T) {
 	diags := runDiagnostics(t, `
 		type Dog = {kind: "dog", bark: string}
@@ -105,6 +121,53 @@ func TestMemberReadReportsStaticBracketMissingFieldAfterDiscriminantNarrowing(t 
 	}
 	if !strings.Contains(d.Help, "Narrow the receiver before reading `meow`") {
 		t.Fatalf("help = %q, want actionable missing-member help", d.Help)
+	}
+}
+
+func TestMemberReadNarrowsUnannotatedHelperReturnedUnionInLoop(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+local function convert_image_content(content_part)
+    if content_part.type == "image" and content_part.source then
+        return {type = "image", source = content_part.source}
+    end
+    return content_part
+end
+
+local function process_content_array(content)
+    local processed = {}
+    for _, part in ipairs(content) do
+        table.insert(processed, convert_image_content(part))
+    end
+    return processed
+end
+
+local function map_content(content): table
+    local regular_content = process_content_array(content)
+    for _, part in ipairs(regular_content) do
+        if part.type == "function_call" then
+            local arguments = part.arguments
+        elseif part.type == "text" and part.text ~= "" then
+            local text = part.text
+        end
+    end
+    return {}
+end
+`)
+	if diags := Produce(result); len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want helper-returned union element narrowed by part.type branches", diags)
+	}
+}
+
+func TestMemberReadAllowsOwnedMissingFieldDefaultToNil(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local function build()
+			local suite = {name = "alpha"}
+			suite.tests = suite.tests or {}
+			return suite
+		end
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want owned missing field default to read nil", diags)
 	}
 }
 
@@ -212,7 +275,7 @@ func assertStalePathMissingMemberEvidence(t *testing.T, result *body.Result) {
 		t.Fatalf("receiver type = %s, want path provably absent", formatType(receiver))
 	}
 	broad, broadOK := typers.base.broadType(read.Object)
-	if !broadOK || !isMultiArmUnion(broad) {
+	if !broadOK || !inspect.IsMultiArmUnion(broad) {
 		t.Fatalf("broad receiver type = %s/%v, want original union", formatType(broad), ok)
 	}
 	fieldBroad := broad
@@ -222,9 +285,9 @@ func assertStalePathMissingMemberEvidence(t *testing.T, result *body.Result) {
 	if field, ok := access.Field(fieldBroad, "path"); !ok {
 		t.Fatalf("broad receiver type = %s, does not admit path after nil stripping; field=%s/%v", formatType(broad), formatType(field), ok)
 	}
-	produced, ok := memberRead(context).read(read, typers)
-	if !ok || produced.Code != CodeMissingMember {
-		t.Fatalf("memberRead.read = %#v/%v, want missing-member diagnostic", produced, ok)
+	produced, ok, suppressed := memberRead(context).read(read, typers, false)
+	if suppressed || !ok || produced.Code != CodeMissingMember {
+		t.Fatalf("memberRead.read = %#v/%v suppressed=%v, want missing-member diagnostic", produced, ok, suppressed)
 	}
 
 	diags := Produce(result)
@@ -362,6 +425,35 @@ func TestMemberCallAcceptsUnionReceiverWhenAllAlternativesCallable(t *testing.T)
 	`)
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diags)
+	}
+}
+
+func TestMemberCallUsesTypedCallResultReceiverContract(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Store = {
+			state: {flags: {[string]: boolean}},
+			lookup_projection: (self: Store, id: string) -> string?,
+		}
+		type App = {
+			new_store: (self: App, id: string) -> Store,
+		}
+
+		local app: App = {
+			new_store = function(self: App, id: string): Store
+				return {
+					state = {flags = {}},
+					lookup_projection = function(self: Store, id: string): string?
+						return nil
+					end,
+				}
+			end,
+		}
+
+		local store = app:new_store("bus-1")
+		local projection = store:lookup_projection("job-1")
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want typed call-result receiver contract accepted", diags)
 	}
 }
 

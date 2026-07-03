@@ -3,6 +3,7 @@ package state
 import (
 	"fmt"
 	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
@@ -25,6 +27,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 	latticelaws "github.com/wippyai/go-lua/analysis/test/laws/lattice"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestBottomReadsProductBottom(t *testing.T) {
@@ -61,6 +64,37 @@ func TestWriteReadValueSlots(t *testing.T) {
 	}
 	if got := s.ReadValue(reg, retSlot); !valueDomain.Equal(got, retValue) {
 		t.Fatalf("return slot = %s, want %s", formatValue(reg, got), formatValue(reg, retValue))
+	}
+}
+
+func TestValuesSnapshotReturnsFiniteSlots(t *testing.T) {
+	reg := standard.Registry()
+	symSlot := key.SymbolValue(symbol.ID(10))
+	retSlot := key.ReturnSlot(1)
+	symValue := presentValue(reg)
+	retValue := absentValue(reg)
+
+	s := State{}.
+		WriteValue(reg, symSlot, symValue).
+		WriteValue(reg, retSlot, retValue)
+
+	snapshot := s.ValuesSnapshot()
+	if snapshot.Top {
+		t.Fatal("ValuesSnapshot unexpectedly top")
+	}
+	if len(snapshot.Values) != 2 {
+		t.Fatalf("ValuesSnapshot entries = %d, want 2: %#v", len(snapshot.Values), snapshot.Values)
+	}
+	if got := snapshot.Values[symSlot]; !product.Equal(reg, got, symValue) {
+		t.Fatalf("symbol slot snapshot = %s, want %s", formatValue(reg, got), formatValue(reg, symValue))
+	}
+	if got := snapshot.Values[retSlot]; !product.Equal(reg, got, retValue) {
+		t.Fatalf("return slot snapshot = %s, want %s", formatValue(reg, got), formatValue(reg, retValue))
+	}
+
+	snapshot.Values[symSlot] = retValue
+	if got := s.ReadValue(reg, symSlot); !product.Equal(reg, got, symValue) {
+		t.Fatalf("mutating snapshot changed state slot to %s, want %s", formatValue(reg, got), formatValue(reg, symValue))
 	}
 }
 
@@ -394,6 +428,43 @@ func TestLocalPathKeyAccessorsUseInternedKeyDirectly(t *testing.T) {
 	}
 }
 
+func TestPathEvidenceEditMatchesRepeatedWritesAndPreservesBaseLanes(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	stateDomain := Domain(reg)
+	valueDomain := product.Domain(reg)
+	pathKey := pathdom.PathKey("sym35@1.field")
+	staticKey := pathdom.PathKey("sym35@1.method")
+	slot := key.SymbolValue(symbol.ID(35))
+	present := presentValue(reg)
+	absent := absentValue(reg)
+	bottom := valueDomain.Bottom()
+
+	base := State{}.
+		WritePathKey(reg, ks, pathKey, present).
+		WritePathStaticMember(ks, staticKey, present)
+	edit := base.EditPathEvidence(reg)
+	edit.WritePathKey(ks, pathKey, absent)
+	edit.WritePathKey(ks, pathdom.PathKey("sym35@1.gone"), bottom)
+	edit.WritePathStaticMember(ks, staticKey, absent)
+
+	withValue := base.WriteValue(reg, slot, present)
+	got := edit.DoneOn(withValue)
+	want := withValue.
+		WritePathKey(reg, ks, pathKey, absent).
+		WritePathKey(reg, ks, pathdom.PathKey("sym35@1.gone"), bottom).
+		WritePathStaticMember(ks, staticKey, absent)
+	if !stateDomain.Equal(got, want) {
+		t.Fatalf("PathEvidenceEdit result = %s, want %s", formatState(reg, ks, got), formatState(reg, ks, want))
+	}
+	if value := got.ReadValue(reg, slot); !valueDomain.Equal(value, present) {
+		t.Fatalf("DoneOn lost value lane = %s, want present", formatValue(reg, value))
+	}
+	if original := base.ReadPathKey(reg, ks, pathKey); !valueDomain.Equal(original, present) {
+		t.Fatalf("PathEvidenceEdit mutated original path key to %s", formatValue(reg, original))
+	}
+}
+
 func TestUpdateHelpersReadCurrentAndCanonicalizeBottom(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()
@@ -456,6 +527,124 @@ func TestUpdateHelpersReadCurrentAndCanonicalizeBottom(t *testing.T) {
 	}
 	if !stateDomain.Equal(State{}.WriteReturnSlot(reg, retSlot, absent), State{}.WriteValue(reg, key.ReturnSlot(retSlot), absent)) {
 		t.Fatalf("return-slot helper does not use key.ReturnSlot spelling")
+	}
+}
+
+func TestValueEditMatchesRepeatedWritesAndReadsStagedValues(t *testing.T) {
+	reg := standard.Registry()
+	valueDomain := product.Domain(reg)
+	stateDomain := Domain(reg)
+	slotA := key.SymbolValue(symbol.ID(31))
+	slotB := key.SymbolValue(symbol.ID(32))
+	retSlot := 0
+	present := presentValue(reg)
+	absent := absentValue(reg)
+	bottom := valueDomain.Bottom()
+
+	base := State{}.
+		WriteValue(reg, slotA, present).
+		WriteValue(reg, slotB, absent)
+
+	edit := base.EditValues(reg)
+	if got := edit.Read(slotA); !valueDomain.Equal(got, present) {
+		t.Fatalf("initial staged slotA = %s, want present", formatValue(reg, got))
+	}
+	edit.Write(slotA, absent)
+	edit.WriteReturnSlot(retSlot, present)
+	edit.Update(slotB, func(got product.Value) product.Value {
+		if !valueDomain.Equal(got, absent) {
+			t.Fatalf("Update read slotB = %s, want absent", formatValue(reg, got))
+		}
+		return bottom
+	})
+	if got := edit.Read(slotA); !valueDomain.Equal(got, absent) {
+		t.Fatalf("staged slotA = %s, want absent", formatValue(reg, got))
+	}
+	if got := edit.Read(key.ReturnSlot(retSlot)); !valueDomain.Equal(got, present) {
+		t.Fatalf("staged return slot = %s, want present", formatValue(reg, got))
+	}
+
+	got := edit.Done()
+	want := base.
+		WriteValue(reg, slotA, absent).
+		WriteReturnSlot(reg, retSlot, present).
+		WriteValue(reg, slotB, bottom)
+	if !stateDomain.Equal(got, want) {
+		t.Fatalf("ValueEdit result = %s, want repeated writes %s", formatState(reg, keyspace.New(), got), formatState(reg, keyspace.New(), want))
+	}
+	if got.values.hasFinite(slotB) {
+		t.Fatalf("ValueEdit kept explicit bottom entry for slotB")
+	}
+	if original := base.ReadValue(reg, slotA); !valueDomain.Equal(original, present) {
+		t.Fatalf("ValueEdit mutated original slotA to %s", formatValue(reg, original))
+	}
+}
+
+func TestValueEditNoopKeepsStateEquivalent(t *testing.T) {
+	reg := standard.Registry()
+	stateDomain := Domain(reg)
+	slot := key.SymbolValue(symbol.ID(33))
+	present := presentValue(reg)
+	base := State{}.WriteValue(reg, slot, present)
+
+	edit := base.EditValues(reg)
+	edit.Write(slot, present)
+	got := edit.Done()
+	if !stateDomain.Equal(got, base) {
+		t.Fatalf("noop ValueEdit changed state: got %s want %s", formatState(reg, keyspace.New(), got), formatState(reg, keyspace.New(), base))
+	}
+}
+
+func TestValueEditDoneOnPreservesBaseNonValueLanes(t *testing.T) {
+	reg := standard.Registry()
+	stateDomain := Domain(reg)
+	slot := key.SymbolValue(symbol.ID(34))
+	tableID := identity.ID{Kind: "table", Site: "value-edit-base", Index: 1}
+	absent := absentValue(reg)
+
+	base := State{}
+	edit := base.EditValues(reg)
+	edit.Write(slot, absent)
+
+	withPlacement := base.WritePlacement(tableID, placement.Stack)
+	got := edit.DoneOn(withPlacement)
+	want := withPlacement.WriteValue(reg, slot, absent)
+	if !stateDomain.Equal(got, want) {
+		t.Fatalf("DoneOn result = %s, want %s", formatState(reg, keyspace.New(), got), formatState(reg, keyspace.New(), want))
+	}
+	if got := got.ReadPlacement(tableID); !placement.Equal(got, placement.Stack) {
+		t.Fatalf("DoneOn lost placement = %s, want stack", got)
+	}
+}
+
+func TestValueEditReturnSlotWriteDoesNotCloneSymbolStore(t *testing.T) {
+	reg := standard.Registry()
+	valueDomain := product.Domain(reg)
+	symSlot := key.SymbolValue(symbol.ID(35))
+	retSlot := 0
+	symbolValue := presentValue(reg)
+	returnValue := absentValue(reg)
+	base := State{}.WriteValue(reg, symSlot, symbolValue)
+	if len(base.values.symbols) == 0 {
+		t.Fatal("test setup missing finite symbol value store")
+	}
+	symbolStore := reflect.ValueOf(base.values.symbols).Pointer()
+
+	edit := base.EditValues(reg)
+	edit.WriteReturnSlot(retSlot, returnValue)
+	got := edit.Done()
+
+	if gotStore := reflect.ValueOf(got.values.symbols).Pointer(); gotStore != symbolStore {
+		t.Fatalf("return-slot edit cloned symbol value store: got %#x want %#x", gotStore, symbolStore)
+	}
+	if gotValue := got.ReadValue(reg, symSlot); !valueDomain.Equal(gotValue, symbolValue) {
+		t.Fatalf("symbol slot = %s, want preserved %s", formatValue(reg, gotValue), formatValue(reg, symbolValue))
+	}
+	if gotValue := got.ReadReturnSlot(reg, retSlot); !valueDomain.Equal(gotValue, returnValue) {
+		t.Fatalf("return slot = %s, want %s", formatValue(reg, gotValue), formatValue(reg, returnValue))
+	}
+	if base.values.hasFinite(key.ReturnSlot(retSlot)) {
+		t.Fatalf("return-slot edit mutated original state")
 	}
 }
 
@@ -789,6 +978,158 @@ func TestStateBottomWritesRemoveExplicitBottomEntries(t *testing.T) {
 	}
 }
 
+func TestStatePathSubtreeInvalidationClearsDynamicIndexFacts(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	root := pathdom.NewPath(symbol.ID(19701), "root")
+	child := root.Field("child")
+	other := pathdom.NewPath(symbol.ID(19702), "other")
+	rootKey := ks.FromPath(root)
+	childKey := ks.FromPath(child)
+	otherKey := ks.FromPath(other)
+	rootFactKey := dynamicindex.Key{Table: rootKey, Site: "root-write"}
+	childFactKey := dynamicindex.Key{Table: childKey, Site: "child-write"}
+	otherFactKey := dynamicindex.Key{Table: otherKey, Site: "other-write"}
+	fact := dynamicindex.NewFact(reg, dynamicindex.FactConfig{
+		Value:     presentValue(reg),
+		HasValue:  true,
+		Admission: dynamicindex.AdmissionAdmitted,
+	})
+
+	got, ok := State{}.
+		WriteDynamicIndexFact(reg, rootFactKey, fact).
+		WriteDynamicIndexFact(reg, childFactKey, fact).
+		WriteDynamicIndexFact(reg, otherFactKey, fact).
+		InvalidatePathKeySubtree(ks, ks.Format(rootKey))
+	if !ok {
+		t.Fatalf("InvalidatePathKeySubtree(%s) failed", ks.Format(rootKey))
+	}
+	snapshot := got.DynamicIndexFactsSnapshot()
+	if _, ok := snapshot.Facts[rootFactKey]; ok {
+		t.Fatalf("dynamic index facts = %#v, want root table fact cleared", snapshot.Facts)
+	}
+	if _, ok := snapshot.Facts[childFactKey]; ok {
+		t.Fatalf("dynamic index facts = %#v, want descendant table fact cleared", snapshot.Facts)
+	}
+	if _, ok := snapshot.Facts[otherFactKey]; !ok {
+		t.Fatalf("dynamic index facts = %#v, want unrelated table fact preserved", snapshot.Facts)
+	}
+}
+
+func TestDynamicIndexAllValuesKeyMembershipIsMustFact(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	container := ks.FromPath(pathdom.NewPath(symbol.ID(9101), "ids"))
+	table, ok := pathaddr.StateKeyFromPathKey(pathdom.NewPath(symbol.ID(9102), "registered").Key())
+	if !ok {
+		t.Fatal("StateKeyFromPathKey failed")
+	}
+	withInvariant := State{}.AddDynamicIndexAllValuesKeyMembership(container, table)
+	withoutInvariant := State{}
+	domain := Domain(reg)
+
+	joined := domain.Join(withInvariant, withoutInvariant)
+	if tables := joined.DynamicIndexAllValuesKeyMembershipTables(container); len(tables) != 0 {
+		t.Fatalf("joined all-value tables = %#v, want invariant dropped when one predecessor lacks it", tables)
+	}
+
+	joined = domain.Join(withInvariant, withInvariant)
+	tables := joined.DynamicIndexAllValuesKeyMembershipTables(container)
+	if len(tables) != 1 || tables[0] != table {
+		t.Fatalf("joined all-value tables = %#v, want %s", tables, table)
+	}
+}
+
+func TestDynamicIndexValueOriginDerivesPathMembershipAfterJoin(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	container := ks.FromPath(pathdom.NewPath(symbol.ID(9121), "ids"))
+	site := dynamicindex.Site("signature.table_mutator:0:-1")
+	value := testStateKey(t, pathdom.PathKey("sym9122@1"))
+	table := testStateKey(t, pathdom.PathKey("sym9123@1"))
+	domain := Domain(reg)
+
+	dynamicOnly := State{}.AddDynamicIndexValueKeyMembership(container, site, table)
+	withOrigin := dynamicOnly.AddDynamicIndexValueOrigin(value, container, site)
+	joined := domain.Join(dynamicOnly, withOrigin)
+
+	if !joined.HasPathKeyMembership(value, table) {
+		t.Fatalf("joined state lost derived key membership for %s in %s", value, table)
+	}
+}
+
+func TestClearDynamicIndexValueKeyMembershipsForContainerClearsAllValuesInvariant(t *testing.T) {
+	ks := keyspace.New()
+	container := ks.FromPath(pathdom.NewPath(symbol.ID(9111), "ids"))
+	other := ks.FromPath(pathdom.NewPath(symbol.ID(9112), "other"))
+	table, ok := pathaddr.StateKeyFromPathKey(pathdom.NewPath(symbol.ID(9113), "registered").Key())
+	if !ok {
+		t.Fatal("StateKeyFromPathKey failed")
+	}
+	st := State{}.
+		AddDynamicIndexAllValuesKeyMembership(container, table).
+		AddDynamicIndexAllValuesKeyMembership(other, table)
+
+	got := st.ClearDynamicIndexValueKeyMembershipsForContainer(container)
+	if tables := got.DynamicIndexAllValuesKeyMembershipTables(container); len(tables) != 0 {
+		t.Fatalf("cleared container tables = %#v, want none", tables)
+	}
+	tables := got.DynamicIndexAllValuesKeyMembershipTables(other)
+	if len(tables) != 1 || tables[0] != table {
+		t.Fatalf("other container tables = %#v, want %s", tables, table)
+	}
+}
+
+func TestPendingDynamicAllValueRestoreSurvivesContainerClear(t *testing.T) {
+	ks := keyspace.New()
+	container := ks.FromPath(pathdom.NewPath(symbol.ID(9114), "ids"))
+	table := testStateKey(t, pathdom.PathKey("sym9115@1"))
+	key := testStateKey(t, pathdom.PathKey("sym9116@1"))
+	st := State{}.
+		AddDynamicIndexAllValuesKeyMembership(container, table).
+		AddPendingDynamicAllValueRestore(container, table, key)
+
+	cleared := st.ClearDynamicIndexValueKeyMembershipsForContainer(container)
+	if tables := cleared.DynamicIndexAllValuesKeyMembershipTables(container); len(tables) != 0 {
+		t.Fatalf("all-value tables = %#v, want cleared", tables)
+	}
+	restores := cleared.PendingDynamicAllValueRestores(container, key)
+	if len(restores) != 1 || restores[0].Table != table {
+		t.Fatalf("pending restores = %#v, want restore for %s", restores, table)
+	}
+
+	invalidated := cleared.ClearKeyMembershipsForPath(key)
+	if restores := invalidated.PendingDynamicAllValueRestores(container, key); len(restores) != 0 {
+		t.Fatalf("pending restores = %#v, want key invalidation to clear restore", restores)
+	}
+}
+
+func TestClearKeyMembershipsForTableSymbolClearsAllKeyForms(t *testing.T) {
+	ks := keyspace.New()
+	container := ks.FromPath(pathdom.NewPath(symbol.ID(9121), "ids"))
+	tableSym := symbol.ID(9122)
+	versioned, ok := pathaddr.StateKeyFromPathKey(pathdom.PathKey("sym9122@3"))
+	if !ok {
+		t.Fatal("versioned StateKeyFromPathKey failed")
+	}
+	unversioned, ok := pathaddr.StateKeyFromPathKey(pathdom.Path{Symbol: tableSym}.Key())
+	if !ok {
+		t.Fatal("unversioned StateKeyFromPathKey failed")
+	}
+	key, ok := pathaddr.StateKeyFromPathKey(pathdom.PathKey("sym9123@1"))
+	if !ok {
+		t.Fatal("key StateKeyFromPathKey failed")
+	}
+	st := State{}.
+		AddPathKeyMembership(key, versioned).
+		AddDynamicIndexAllValuesKeyMembership(container, unversioned)
+
+	got := st.ClearKeyMembershipsForTableSymbol(ks, tableSym)
+	if snapshot := got.KeyMembershipsSnapshot(); !snapshot.Top || len(snapshot.Memberships) != 0 {
+		t.Fatalf("key memberships = %#v, want all table-symbol memberships cleared", snapshot)
+	}
+}
+
 func TestExplicitBottomEntriesCanonicalizeToAbsence(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()
@@ -796,9 +1137,9 @@ func TestExplicitBottomEntriesCanonicalizeToAbsence(t *testing.T) {
 	stateDomain := Domain(reg)
 	bottom := valueDomain.Bottom()
 	explicit := State{
-		values: valueLane{mapLane[key.Value, product.Value]{values: map[key.Value]product.Value{
+		values: valueLane{returns: map[key.Value]product.Value{
 			key.ReturnSlot(0): bottom,
-		}}},
+		}},
 	}
 
 	if !stateDomain.Equal(explicit, State{}) {
@@ -816,6 +1157,52 @@ func TestExplicitBottomEntriesCanonicalizeToAbsence(t *testing.T) {
 	withoutValue := withValue.WriteValue(reg, key.ReturnSlot(0), bottom)
 	if !stateDomain.Equal(withoutValue, State{}) {
 		t.Fatalf("writing bottom should delete the value entry, got %s", formatState(reg, ks, withoutValue))
+	}
+}
+
+func TestSeedValuesWritesOnlyBottomSlotsAndCanonicalizesBottom(t *testing.T) {
+	reg := standard.Registry()
+	stateDomain := Domain(reg)
+	valueDomain := product.Domain(reg)
+	existingSlot := key.SymbolValue(symbol.ID(9911))
+	missingSlot := key.SymbolValue(symbol.ID(9912))
+	explicitBottomSlot := key.SymbolValue(symbol.ID(9913))
+	bottomSeedSlot := key.SymbolValue(symbol.ID(9914))
+	existing := presentValue(reg)
+	seeded := typevalue.FromType(reg, typ.String)
+	bottom := valueDomain.Bottom()
+
+	in := State{
+		values: valueLane{symbols: map[key.Value]product.Value{
+			existingSlot:       existing,
+			explicitBottomSlot: bottom,
+		}},
+	}
+	got := in.SeedValues(reg, []ValueSeed{
+		{Slot: existingSlot, Value: seeded},
+		{Slot: missingSlot, Value: seeded},
+		{Slot: explicitBottomSlot, Value: seeded},
+		{Slot: bottomSeedSlot, Value: bottom},
+	})
+
+	if read := got.ReadValue(reg, existingSlot); !valueDomain.Equal(read, existing) {
+		t.Fatalf("existing slot = %s, want preserved %s", formatValue(reg, read), formatValue(reg, existing))
+	}
+	if read := got.ReadValue(reg, missingSlot); !valueDomain.Equal(read, seeded) {
+		t.Fatalf("missing slot = %s, want seeded %s", formatValue(reg, read), formatValue(reg, seeded))
+	}
+	if read := got.ReadValue(reg, explicitBottomSlot); !valueDomain.Equal(read, seeded) {
+		t.Fatalf("explicit-bottom slot = %s, want seeded %s", formatValue(reg, read), formatValue(reg, seeded))
+	}
+	if got.values.hasFinite(bottomSeedSlot) {
+		t.Fatalf("SeedValues kept explicit bottom seed")
+	}
+	want := State{}.
+		WriteValue(reg, existingSlot, existing).
+		WriteValue(reg, missingSlot, seeded).
+		WriteValue(reg, explicitBottomSlot, seeded)
+	if !stateDomain.Equal(got, want) {
+		t.Fatalf("SeedValues state = %s, want %s", formatState(reg, keyspace.New(), got), formatState(reg, keyspace.New(), want))
 	}
 }
 
@@ -1068,6 +1455,172 @@ func TestDynamicIndexKeysPointwiseFacts(t *testing.T) {
 	}
 }
 
+func TestDynamicIndexEditMatchesRepeatedWritesAndPublishesOntoBase(t *testing.T) {
+	reg := standard.Registry()
+	domain := dynamicindex.Domain(reg)
+	ks := keyspace.New()
+	tableKey := mustStateKey(t, ks, pathdom.PathKey("sym83@1.table"))
+	otherTableKey := mustStateKey(t, ks, pathdom.PathKey("sym84@1.table"))
+	first := dynamicindex.Key{Table: tableKey, Site: "first"}
+	second := dynamicindex.Key{Table: tableKey, Site: "second"}
+	other := dynamicindex.Key{Table: otherTableKey, Site: "other"}
+	presentFact := dynamicindex.Fact{
+		KeyPresence: presence.Present(),
+		KeyValue:    presentValue(reg),
+		Value:       presentValue(reg),
+		Admission:   dynamicindex.AdmissionAdmitted,
+	}
+	absentFact := dynamicindex.Fact{
+		KeyPresence: presence.Absent(),
+		KeyValue:    absentValue(reg),
+		Value:       absentValue(reg),
+		Admission:   dynamicindex.AdmissionRejected,
+	}
+
+	base := State{}.
+		WriteDynamicIndexFact(reg, first, presentFact).
+		WriteDynamicIndexFact(reg, second, presentFact)
+	edit := base.EditDynamicIndex(reg)
+	if !edit.Write(first, absentFact) {
+		t.Fatalf("first staged write reported unchanged")
+	}
+	if got := edit.Read(first); !domain.Equal(got, absentFact) {
+		t.Fatalf("staged read = %#v, want absent fact", got)
+	}
+	if !edit.Write(second, dynamicindex.Bottom(reg)) {
+		t.Fatalf("bottom delete reported unchanged")
+	}
+	if !domain.Equal(edit.Read(second), dynamicindex.Bottom(reg)) {
+		t.Fatalf("staged delete did not read back as bottom")
+	}
+	if !edit.Write(other, presentFact) {
+		t.Fatalf("other staged write reported unchanged")
+	}
+
+	frozenID := identity.ID{Kind: "table", Site: "dynamic-index-edit", Index: 101}
+	laterBase := base.FreezeTable(frozenID)
+	got := edit.DoneOn(laterBase)
+	want := laterBase.
+		WriteDynamicIndexFact(reg, first, absentFact).
+		WriteDynamicIndexFact(reg, second, dynamicindex.Bottom(reg)).
+		WriteDynamicIndexFact(reg, other, presentFact)
+	if !Domain(reg).Equal(got, want) {
+		t.Fatalf("dynamic index edit result = %s, want %s", formatState(reg, ks, got), formatState(reg, ks, want))
+	}
+	if got := base.ReadDynamicIndexFact(reg, first); !domain.Equal(got, presentFact) {
+		t.Fatalf("dynamic index edit mutated original first fact: %#v", got)
+	}
+	if !got.IsTableFrozen(frozenID) {
+		t.Fatalf("DoneOn dropped independent base lane update")
+	}
+}
+
+func TestStateEditComposesLaneTransactionsAndPublishesOntoBase(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	stateDomain := Domain(reg)
+	valueDomain := product.Domain(reg)
+	slot := key.SymbolValue(symbol.ID(85))
+	pathKey := pathdom.PathKey("sym85@1.field")
+	staticKey := pathdom.PathKey("sym85@1.method")
+	tableKey := mustStateKey(t, ks, pathdom.PathKey("sym85@1.table"))
+	dynamicKey := dynamicindex.Key{Table: tableKey, Site: "state-edit"}
+	frozenID := identity.ID{Kind: "table", Site: "state-edit", Index: 1}
+	present := presentValue(reg)
+	absent := absentValue(reg)
+	dynamicFact := dynamicindex.Fact{
+		KeyPresence: presence.Present(),
+		KeyValue:    present,
+		Value:       present,
+		Admission:   dynamicindex.AdmissionAdmitted,
+	}
+
+	base := State{}.
+		WriteValue(reg, slot, present).
+		WritePathKey(reg, ks, pathKey, present)
+	edit := base.Edit(reg)
+	edit.WriteValue(slot, absent)
+	edit.WritePathKey(ks, pathKey, absent)
+	edit.WritePathStaticMember(ks, staticKey, present)
+	edit.WriteDynamicIndexFact(dynamicKey, dynamicFact)
+	if got := edit.ReadValue(slot); !valueDomain.Equal(got, absent) {
+		t.Fatalf("staged value = %s, want absent", formatValue(reg, got))
+	}
+	if got := edit.ReadPathKey(ks, pathKey); !valueDomain.Equal(got, absent) {
+		t.Fatalf("staged path = %s, want absent", formatValue(reg, got))
+	}
+	if got := edit.ReadDynamicIndexFact(dynamicKey); !dynamicindex.Domain(reg).Equal(got, dynamicFact) {
+		t.Fatalf("staged dynamic fact = %#v, want %#v", got, dynamicFact)
+	}
+
+	laterBase := base.FreezeTable(frozenID)
+	got := edit.DoneOn(laterBase)
+	want := laterBase.
+		WriteValue(reg, slot, absent).
+		WritePathKey(reg, ks, pathKey, absent).
+		WritePathStaticMember(ks, staticKey, present).
+		WriteDynamicIndexFact(reg, dynamicKey, dynamicFact)
+	if !stateDomain.Equal(got, want) {
+		t.Fatalf("StateEdit result = %s, want %s", formatState(reg, ks, got), formatState(reg, ks, want))
+	}
+	if !got.IsTableFrozen(frozenID) {
+		t.Fatalf("StateEdit DoneOn dropped independent base lane")
+	}
+	if original := base.ReadValue(reg, slot); !valueDomain.Equal(original, present) {
+		t.Fatalf("StateEdit mutated original value = %s", formatValue(reg, original))
+	}
+}
+
+func TestForEachDynamicIndexFactVisitsFiniteFactsWithoutSnapshotClone(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	tableKey := mustStateKey(t, ks, pathdom.PathKey("sym81@1.table"))
+	otherTableKey := mustStateKey(t, ks, pathdom.PathKey("sym82@1.table"))
+	fact := dynamicindex.Fact{
+		KeyPresence: presence.Present(),
+		KeyValue:    presentValue(reg),
+		Value:       presentValue(reg),
+		Admission:   dynamicindex.AdmissionAdmitted,
+	}
+
+	st := State{}
+	const factCount = 256
+	for i := 0; i < factCount; i++ {
+		table := tableKey
+		if i%2 == 1 {
+			table = otherTableKey
+		}
+		st = st.WriteDynamicIndexFact(reg, dynamicindex.Key{
+			Table: table,
+			Site:  dynamicindex.Site(fmt.Sprintf("site-%03d", i)),
+		}, fact)
+	}
+
+	seen := 0
+	top := st.ForEachDynamicIndexFact(func(key dynamicindex.Key, got dynamicindex.Fact) bool {
+		if got.Admission != dynamicindex.AdmissionAdmitted {
+			t.Fatalf("visited fact %v has admission %v", key, got.Admission)
+		}
+		seen++
+		return true
+	})
+	if top {
+		t.Fatalf("finite dynamic-index lane reported top")
+	}
+	if seen != factCount {
+		t.Fatalf("visited %d dynamic-index facts, want %d", seen, factCount)
+	}
+
+	allocs := testing.AllocsPerRun(20, func() {
+		_ = st.ForEachDynamicIndexFact(func(key dynamicindex.Key, got dynamicindex.Fact) bool {
+			return true
+		})
+	})
+	if allocs > 1 {
+		t.Fatalf("ForEachDynamicIndexFact allocations/run = %.1f, want no full-map clone", allocs)
+	}
+}
+
 func TestHeapTableIdentityFacadeReadWriteAndCopy(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()
@@ -1116,6 +1669,43 @@ func TestHeapTableIdentityFacadeReadWriteAndCopy(t *testing.T) {
 	}
 	if got, ok := again.DynamicIndexFact(dynCommon); !ok || got.Admission != dynamicindex.AdmissionAdmitted {
 		t.Fatalf("heap object read exposed mutable dynamic facts")
+	}
+}
+
+func TestHeapTableIdentityReadDoesNotCloneImmutableObjectMaps(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	id := identity.ID{Kind: "table", Site: "read", Index: 1}
+	staticKey := heapStaticKey(t, ks, "sym91@1.table.name")
+	dynKey := dynamicindex.Key{Table: mustStateKey(t, ks, pathdom.PathKey("sym91@1.table")), Site: "dyn"}
+	present := presentValue(reg)
+	object := heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+		Root: present,
+		StaticMembers: map[keyspace.Key]product.Value{
+			staticKey: present,
+		},
+		DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
+			dynKey: {
+				KeyPresence: presence.Present(),
+				KeyValue:    present,
+				Value:       present,
+				Admission:   dynamicindex.AdmissionAdmitted,
+			},
+		},
+	})
+	written := State{}.WriteHeapTableObject(reg, id, object)
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		got := written.ReadHeapTableObject(reg, id)
+		if _, ok := got.StaticMember(staticKey); !ok {
+			t.Fatal("missing static member")
+		}
+		if _, ok := got.DynamicIndexFact(dynKey); !ok {
+			t.Fatal("missing dynamic index fact")
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("ReadHeapTableObject allocations/run = %.1f, want zero immutable-map clones", allocs)
 	}
 }
 
@@ -1463,11 +2053,24 @@ func TestPlacementCanBeReadThroughValueIdentity(t *testing.T) {
 	value := product.Set(reg, product.Top(), identity.Key, identity.Singleton(id))
 	state := State{}.WritePlacement(id, placement.OwnedHeap)
 
-	if got := placementOfValue(reg, state, value); got != placement.OwnedHeap {
+	if got := state.PlacementOfValue(reg, value); got != placement.OwnedHeap {
 		t.Fatalf("placement through identity = %v, want owned heap", got)
 	}
-	if got := placementOfValue(reg, state, product.Top()); got != placement.Bottom {
+	if !state.ValueHasLocalExclusiveExactIdentity(reg, value) {
+		t.Fatalf("owned heap identity should be local-exclusive")
+	}
+	if state.ValueHasStackLocalExactIdentity(reg, value) {
+		t.Fatalf("owned heap identity should not be stack-local")
+	}
+	stackState := state.WritePlacement(id, placement.Stack)
+	if !stackState.ValueHasStackLocalExactIdentity(reg, value) {
+		t.Fatalf("stack identity should be stack-local")
+	}
+	if got := state.PlacementOfValue(reg, product.Top()); got != placement.Bottom {
 		t.Fatalf("placement without identity = %v, want bottom", got)
+	}
+	if state.ValueHasLocalExclusiveExactIdentity(reg, product.Top()) {
+		t.Fatalf("value without exact identity should not be local-exclusive")
 	}
 }
 
@@ -1574,15 +2177,6 @@ func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 	if !Domain(reg).Equal(out, beforePlaceholderInvalidation) {
 		t.Fatalf("placeholder invalidation changed point-local path evidence")
 	}
-}
-
-func placementOfValue(reg *axis.Registry, state State, value product.Value) placement.Value {
-	idValue := product.Get(reg, value, identity.Key)
-	id, ok := idValue.ID()
-	if !ok {
-		return placement.Bottom
-	}
-	return state.ReadPlacement(id)
 }
 
 func TestInvalidatePathKeySubtreeRemovesBranchProofsWithOtherUnderSubtree(t *testing.T) {

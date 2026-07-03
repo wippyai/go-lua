@@ -125,7 +125,7 @@
         "evidence_contains": [
           "store.state.records[\"missing\"] can be nil here",
           "record is declared as protocol.DeliveryRecord",
-          "no guard on this path proves store.state.records[\"missing\"] is non-nil"
+          "store.state.records[\"missing\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
         ],
         "evidence": [
           {
@@ -154,9 +154,9 @@
             "column": 41,
             "kind": "missing proof",
             "trust": "unknown",
-            "reason": "boundary validation missing",
+            "reason": "index read validation missing",
             "contains": [
-              "no guard on this path proves store.state.records[\"missing\"] is non-nil"
+              "store.state.records[\"missing\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
             ]
           }
         ],
@@ -172,7 +172,7 @@
           "because:",
           "proven: store.state.records[\"missing\"] can be nil here",
           "claimed: record is declared as protocol.DeliveryRecord",
-          "missing proof: no guard on this path proves store.state.records[\"missing\"] is non-nil",
+          "missing proof: store.state.records[\"missing\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
           "help: Guard `store.state.records[\"missing\"]` with a nil check"
         ],
         "render_not_contains": [
@@ -221,7 +221,7 @@
         "evidence_contains": [
           "store.state.cached_receipts[\"missing\"] can be nil here",
           "receipt is declared as protocol.DeliveryReceipt",
-          "no guard on this path proves store.state.cached_receipts[\"missing\"] is non-nil"
+          "store.state.cached_receipts[\"missing\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
         ],
         "evidence": [
           {
@@ -250,9 +250,9 @@
             "column": 43,
             "kind": "missing proof",
             "trust": "unknown",
-            "reason": "boundary validation missing",
+            "reason": "index read validation missing",
             "contains": [
-              "no guard on this path proves store.state.cached_receipts[\"missing\"] is non-nil"
+              "store.state.cached_receipts[\"missing\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
             ]
           }
         ],
@@ -268,7 +268,7 @@
           "because:",
           "proven: store.state.cached_receipts[\"missing\"] can be nil here",
           "claimed: receipt is declared as protocol.DeliveryReceipt",
-          "missing proof: no guard on this path proves store.state.cached_receipts[\"missing\"] is non-nil",
+          "missing proof: store.state.cached_receipts[\"missing\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
           "help: Guard `store.state.cached_receipts[\"missing\"]` with a nil check"
         ],
         "render_not_contains": [
@@ -317,7 +317,7 @@
         "evidence_contains": [
           "app.transports[\"email\"] can be nil here",
           "handler is declared as protocol.TransportHandler",
-          "no guard on this path proves app.transports[\"email\"] is non-nil"
+          "app.transports[\"email\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
         ],
         "evidence": [
           {
@@ -346,9 +346,9 @@
             "column": 44,
             "kind": "missing proof",
             "trust": "unknown",
-            "reason": "boundary validation missing",
+            "reason": "index read validation missing",
             "contains": [
-              "no guard on this path proves app.transports[\"email\"] is non-nil"
+              "app.transports[\"email\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
             ]
           }
         ],
@@ -364,7 +364,7 @@
           "because:",
           "proven: app.transports[\"email\"] can be nil here",
           "claimed: handler is declared as protocol.TransportHandler",
-          "missing proof: no guard on this path proves app.transports[\"email\"] is non-nil",
+          "missing proof: app.transports[\"email\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
           "help: Guard `app.transports[\"email\"]` with a nil check"
         ],
         "render_not_contains": [
@@ -439,8 +439,7 @@
             "line": 50,
             "column": 25,
             "kind": "missing proof",
-            "trust": "unknown",
-            "reason": "boundary validation missing",
+            "trust": "refuted",
             "contains": [
               "no guard on this path proves store.state.last_delivery_at is non-nil"
             ]
@@ -499,7 +498,7 @@
         "evidence_contains": [
           "email_one.meta.tags[\"source\"] can be string or nil here",
           "source is declared as string",
-          "no guard on this path proves email_one.meta.tags[\"source\"] is non-nil"
+          "email_one.meta.tags[\"source\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
         ],
         "evidence": [
           {
@@ -526,21 +525,11 @@
             "file": "main.lua",
             "line": 51,
             "column": 24,
-            "kind": "abstract fact",
-            "trust": "proven",
-            "contains": [
-              "email_one.meta.tags may be nil before indexing [\"source\"]"
-            ]
-          },
-          {
-            "file": "main.lua",
-            "line": 51,
-            "column": 24,
             "kind": "missing proof",
             "trust": "unknown",
-            "reason": "boundary validation missing",
+            "reason": "index read validation missing",
             "contains": [
-              "no guard on this path proves email_one.meta.tags[\"source\"] is non-nil"
+              "email_one.meta.tags[\"source\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
             ]
           }
         ],
@@ -556,8 +545,7 @@
           "because:",
           "proven: email_one.meta.tags[\"source\"] can be string or nil here",
           "claimed: source is declared as string",
-          "proven: email_one.meta.tags may be nil before indexing [\"source\"]",
-          "missing proof: no guard on this path proves email_one.meta.tags[\"source\"] is non-nil",
+          "missing proof: email_one.meta.tags[\"source\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
           "help: Guard `email_one.meta.tags[\"source\"]` with a nil check"
         ],
         "render_not_contains": [

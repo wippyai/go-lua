@@ -6,11 +6,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -44,6 +46,17 @@ func WithFunctionValueTypes(result *Result, types FunctionValueTypes) *Result {
 	return result
 }
 
+// WithOwnedFunctionValueTypes returns result after installing types directly.
+// Callers must own types and treat every map/slice inside it as immutable after
+// this call. Use WithFunctionValueTypes at public or untrusted boundaries.
+func WithOwnedFunctionValueTypes(result *Result, types FunctionValueTypes) *Result {
+	if result == nil {
+		return nil
+	}
+	result.funcTypes = types
+	return result
+}
+
 // FunctionValueTypeAtBoundary resolves expr's current callable value type at
 // point. Runtime identity wins over syntactic path so reassigned function fields
 // use the currently visible value rather than an older path definition.
@@ -60,7 +73,9 @@ func (r *Result) FunctionValueTypeAtBoundary(point cfg.Point, expr ast.Expr) (*t
 		if fn, ok := r.functionTypeForValue(current, hasCurrent, value); ok {
 			return fn, true
 		}
-		return nil, false
+		if !valueHasCallableType(r.registry, r.typeValues, value) {
+			return nil, false
+		}
 	}
 	if pathKey, ok := factflow.CalleePathKeyFromPath(p); ok {
 		if fn, ok := r.funcTypes.ByPath[pathKey]; ok && fn != nil {
@@ -68,6 +83,76 @@ func (r *Result) FunctionValueTypeAtBoundary(point cfg.Point, expr ast.Expr) (*t
 		}
 	}
 	return nil, false
+}
+
+// FunctionValueTypeForValue resolves a callable value's converged function type
+// from its identity, independent of a program point. Context-sensitive entries
+// still require FunctionValueTypeAtBoundary; this read model is for structural
+// export/materialization paths that already hold the function value itself.
+func (r *Result) FunctionValueTypeForValue(value product.Value) (*typ.Function, bool) {
+	if r == nil {
+		return nil, false
+	}
+	return r.functionTypeForValue(state.State{}, false, value)
+}
+
+// FunctionValueTypeForValueAtBoundary resolves a callable value's converged
+// function type at a program point, including context-sensitive summaries whose
+// entry facts still hold in the current state. It is the syntax-free companion
+// to FunctionValueTypeAtBoundary for consumers that already hold the solved
+// value, such as readmodel call arguments.
+func (r *Result) FunctionValueTypeForValueAtBoundary(point cfg.Point, value product.Value) (*typ.Function, bool) {
+	if r == nil {
+		return nil, false
+	}
+	current, hasCurrent := r.StateAt(point)
+	return r.functionTypeForValue(current, hasCurrent, value)
+}
+
+// FunctionValueTypeForCalleePath resolves a converged local function-value type
+// by the callee path key carried in call-site evidence. It is intentionally
+// syntax-free so post-solve consumers do not re-lower AST parameter slots.
+func (r *Result) FunctionValueTypeForCalleePath(key factflow.CalleePathKey) (*typ.Function, bool) {
+	if r == nil || !key.Valid() {
+		return nil, false
+	}
+	fn, ok := r.funcTypes.ByPath[key]
+	return fn, ok && fn != nil
+}
+
+// FunctionValueTypeForCallSiteAtBoundary resolves a call site's current
+// callable value type without re-reading syntax. The point-visible value wins
+// over the callee path summary so a reassigned callee cannot reuse a stale
+// definition-path contract.
+func (r *Result) FunctionValueTypeForCallSiteAtBoundary(point cfg.Point, site factflow.CallSite) (*typ.Function, bool) {
+	if r == nil {
+		return nil, false
+	}
+	p := site.CalleePathRef()
+	if p.IsEmpty() {
+		return nil, false
+	}
+	if value, ok := r.PathValueAtBoundary(point, p); ok {
+		if fn, ok := r.FunctionValueTypeForValueAtBoundary(point, value); ok {
+			return fn, true
+		}
+		if !valueHasCallableType(r.registry, r.typeValues, value) {
+			return nil, false
+		}
+	}
+	return r.FunctionValueTypeForCalleePath(site.View().CalleePathKey())
+}
+
+func valueHasCallableType(reg *axis.Registry, typeValues *typevalue.Cache, value product.Value) bool {
+	if reg == nil {
+		return false
+	}
+	t, ok := typeValues.TypeOf(reg, value)
+	if !ok || t == nil {
+		return false
+	}
+	_, ok = typecall.Callable(t)
+	return ok
 }
 
 func (r *Result) functionTypeForValue(current state.State, hasCurrent bool, value product.Value) (*typ.Function, bool) {
@@ -92,6 +177,16 @@ func (r *Result) functionTypeForValue(current state.State, hasCurrent bool, valu
 func functionContextEntryHolds(reg *axis.Registry, entryKeys, currentKeys *keyspace.KeySpace, entry, current state.State, sourceID identity.ID) bool {
 	if reg == nil {
 		return false
+	}
+	values := entry.ValuesSnapshot()
+	if values.Top {
+		return false
+	}
+	for slot, want := range values.Values {
+		got := current.ReadValue(reg, slot)
+		if !contextValueSatisfies(reg, got, want) {
+			return false
+		}
 	}
 	refs := entry.PathRefinementsSnapshot(entryKeys)
 	if refs.Bottom {

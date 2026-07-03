@@ -12,6 +12,8 @@ import (
 const (
 	ResultChannelField = "channel"
 	ResultValueField   = "value"
+	ResultOKField      = "ok"
+	ResultDefaultField = "default"
 	DefaultCaseIndex   = -1
 	selectIDField      = "__channel_select_id"
 	caseIndexField     = "__channel_select_case_index"
@@ -23,17 +25,25 @@ type ResultCase struct {
 	Payload typ.Type
 }
 
-// ResultCaseType builds one member of the internal select result union:
-// { channel = marker, value = payload }.
+// ResultCaseType builds one member of the internal select result union. The
+// channel field carries an internal marker for path-sensitive case narrowing;
+// the public runtime fields mirror channel.select's result table shape.
 func ResultCaseType(selectID string, index int, payload typ.Type) typ.Type {
 	return typetable.NewRecord().
 		Field(ResultChannelField, caseMarkerType(selectID, index)).
 		Field(ResultValueField, payload).
+		Field(ResultOKField, typ.Boolean).
+		Field(ResultDefaultField, typ.Nil).
 		Build()
 }
 
 func resultDefaultType(selectID string) typ.Type {
-	return ResultCaseType(selectID, DefaultCaseIndex, typ.Nil)
+	return typetable.NewRecord().
+		Field(ResultChannelField, caseMarkerType(selectID, DefaultCaseIndex)).
+		Field(ResultValueField, typ.Nil).
+		Field(ResultOKField, typ.Boolean).
+		Field(ResultDefaultField, typ.True).
+		Build()
 }
 
 // ResultValueTypeWithDefault builds the internal select result union from case
@@ -157,6 +167,20 @@ func ResultCaseTypeFromValue(resultType typ.Type, selectID string, index int) (t
 		return resultType, true
 	}
 	return nil, false
+}
+
+// ResultCasePayloadType returns the public payload field type from a select
+// result union member.
+func ResultCasePayloadType(caseType typ.Type) (typ.Type, bool) {
+	record, ok := unwrap.Alias(unwrap.Annotations(caseType)).(*typ.Record)
+	if !ok {
+		return nil, false
+	}
+	field := record.GetField(ResultValueField)
+	if field == nil {
+		return nil, false
+	}
+	return field.Type, true
 }
 
 func caseMarker(t typ.Type) (string, int, bool) {

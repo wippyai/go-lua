@@ -19,7 +19,7 @@ func TestCovariantArrayAliasOpaqueWriteThroughReportsAtRead(t *testing.T) {
     return s
 end return f`)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeAssignmentType)
-	if !strings.Contains(diag.Message, "number") || !strings.Contains(diag.Message, "string") {
+	if !strings.Contains(diag.Message, "42") || !strings.Contains(diag.Message, "string") {
 		t.Fatalf("message = %q, want element-type mismatch on the widened read", diag.Message)
 	}
 	if diag.Position.Line != 4 {

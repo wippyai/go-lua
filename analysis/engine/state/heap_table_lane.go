@@ -38,7 +38,7 @@ func (l heapTableIdentityLane) read(reg *axis.Registry, id identity.ID) heapiden
 		return heapidentity.TopObject()
 	}
 	if object, ok := l.values[id]; ok {
-		return heapidentity.CloneObject(object)
+		return object
 	}
 	return heapidentity.BottomObject(reg)
 }

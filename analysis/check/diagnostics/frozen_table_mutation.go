@@ -23,7 +23,7 @@ func (p frozenTableMutations) Produce(result *body.Result) []diagnostic.Diagnost
 	if graph == nil {
 		return nil
 	}
-	envs := cachedGuardEnvironments(result)
+	envs := producerContext(p).guardEnvironments(result)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {
 		if !guardEnvReachableAt(envs, point) {
@@ -105,6 +105,9 @@ func frozenCallInvalidationTargets(result *body.Result, site factflow.CallSite, 
 	for _, invalidation := range outcome.ParamPathInvalidations {
 		appendSubstituted(argBindings, invalidation.Path)
 	}
+	for _, write := range outcome.ParamPathWrites {
+		appendSubstituted(argBindings, write.Path)
+	}
 	for _, invalidation := range outcome.NormalReturnFacts.PathInvalidations {
 		appendSubstituted(callBindings, invalidation.Path)
 	}
@@ -116,7 +119,7 @@ func frozenMutationContainerIdentity(result *body.Result, point cfg.Point, conta
 	if reg == nil {
 		return identity.ID{}, false
 	}
-	value, ok := result.PathValueAtBoundary(point, container)
+	value, ok := newDiagnosticQuery(result).PathValueBeforeBoundary(point, container)
 	if !ok {
 		return identity.ID{}, false
 	}

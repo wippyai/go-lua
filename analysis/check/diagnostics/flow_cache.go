@@ -17,11 +17,11 @@ type diagnosticFlowCache struct {
 	graph  cfg.Graph
 	rpo    []cfg.Point
 
-	reachableFrom map[cfg.Point]map[cfg.Point]struct{}
-	idom          map[cfg.Point]cfg.Point
-	functionDefs  map[symbol.ID][]cfg.Point
-	rootAssigns   map[symbol.ID][]cfg.Point
-	indexed       bool
+	reach        *cfg.Reachability
+	idom         map[cfg.Point]cfg.Point
+	functionDefs map[symbol.ID][]cfg.Point
+	rootAssigns  map[symbol.ID][]cfg.Point
+	indexed      bool
 }
 
 func newDiagnosticFlowCache(result *body.Result) *diagnosticFlowCache {
@@ -33,42 +33,18 @@ func newDiagnosticFlowCache(result *body.Result) *diagnosticFlowCache {
 		return &diagnosticFlowCache{result: result}
 	}
 	return &diagnosticFlowCache{
-		result:        result,
-		graph:         graph,
-		rpo:           append([]cfg.Point(nil), graph.RPO()...),
-		reachableFrom: make(map[cfg.Point]map[cfg.Point]struct{}),
+		result: result,
+		graph:  graph,
+		rpo:    cfg.RPOReadOnly(graph),
+		reach:  cfg.NewReachability(graph),
 	}
 }
 
 func (c *diagnosticFlowCache) canReach(from, to cfg.Point) bool {
-	if c == nil || c.graph == nil {
+	if c == nil || c.reach == nil {
 		return false
 	}
-	if from == to {
-		return true
-	}
-	reachable := c.reachableSet(from)
-	_, ok := reachable[to]
-	return ok
-}
-
-func (c *diagnosticFlowCache) reachableSet(from cfg.Point) map[cfg.Point]struct{} {
-	if reachable, ok := c.reachableFrom[from]; ok {
-		return reachable
-	}
-	reachable := map[cfg.Point]struct{}{from: {}}
-	stack := append([]cfg.Point(nil), c.graph.Successors(from)...)
-	for len(stack) != 0 {
-		point := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		if _, ok := reachable[point]; ok {
-			continue
-		}
-		reachable[point] = struct{}{}
-		stack = append(stack, c.graph.Successors(point)...)
-	}
-	c.reachableFrom[from] = reachable
-	return reachable
+	return c.reach.CanReach(from, to)
 }
 
 func (c *diagnosticFlowCache) immediateDominators() map[cfg.Point]cfg.Point {

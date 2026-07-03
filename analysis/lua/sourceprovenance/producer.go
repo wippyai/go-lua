@@ -1,6 +1,9 @@
 package sourceprovenance
 
-import "github.com/wippyai/go-lua/compiler/ast"
+import (
+	"github.com/wippyai/go-lua/analysis/lua/castsem"
+	"github.com/wippyai/go-lua/compiler/ast"
+)
 
 type ProducerKind uint8
 
@@ -102,7 +105,7 @@ func ProofInner(expr ast.Expr) (ast.Expr, bool) {
 			if wrapped == nil {
 				return nil, true
 			}
-			if castTargetIsAny(wrapped.Type) {
+			if castTargetIsProofBoundary(wrapped.Type) {
 				return expr, false
 			}
 			expr = wrapped.Expr
@@ -117,9 +120,18 @@ func ProofInner(expr ast.Expr) (ast.Expr, bool) {
 	}
 }
 
-func castTargetIsAny(t ast.TypeExpr) bool {
+func ProofInnerIsFunction(expr ast.Expr) bool {
+	inner, ok := ProofInner(expr)
+	if !ok || exprNil(inner) {
+		return false
+	}
+	_, ok = inner.(*ast.FunctionExpr)
+	return ok
+}
+
+func castTargetIsProofBoundary(t ast.TypeExpr) bool {
 	primitive, ok := t.(*ast.PrimitiveTypeExpr)
-	return ok && primitive.Name == "any"
+	return ok && castsem.IsTopLikeTarget(primitive.Name)
 }
 
 func assertionWrapper(expr ast.Expr) bool {

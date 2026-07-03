@@ -161,3 +161,37 @@ func TestCloneIsolatesStoredFacts(t *testing.T) {
 		t.Fatalf("clone did not isolate stored fact from caller mutation")
 	}
 }
+
+func TestNormalizeOwnedMayReuseFactPayloads(t *testing.T) {
+	s := testSet()
+
+	defensiveInput := []tf{{Key: 1, Rank: 1, Tag: []int{7}}}
+	defensive := s.Normalize(defensiveInput)
+	defensiveInput[0].Tag[0] = 8
+	if defensive[0].Tag[0] != 7 {
+		t.Fatalf("Normalize reused caller payload: got tag %d, want 7", defensive[0].Tag[0])
+	}
+
+	ownedInput := []tf{{Key: 1, Rank: 1, Tag: []int{7}}}
+	owned := s.NormalizeOwned(ownedInput)
+	ownedInput[0].Tag[0] = 8
+	if owned[0].Tag[0] != 8 {
+		t.Fatalf("NormalizeOwned cloned caller-owned payload: got tag %d, want 8", owned[0].Tag[0])
+	}
+}
+
+func TestEqualElementwiseSameSkipsNormalize(t *testing.T) {
+	s := testSet()
+	validCalls := 0
+	s.Valid = func(tf) bool {
+		validCalls++
+		return false
+	}
+	in := facts(1, 1)
+	if !s.Equal(in, in) {
+		t.Fatalf("Equal should accept identical carriers")
+	}
+	if validCalls != 0 {
+		t.Fatalf("Equal normalized identical carriers: validCalls=%d", validCalls)
+	}
+}

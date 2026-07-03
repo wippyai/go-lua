@@ -386,7 +386,7 @@ func optionalCallInvalidatesPath(result *body.Result, flow *diagnosticFlowCache,
 		return true
 	}
 	for _, candidate := range invalidated {
-		if optionalAssignedPathInvalidatesTarget(result, flow, proofPoint, candidate, target) {
+		if optionalAssignedPathInvalidatesTarget(result, flow, proofPoint, candidate.path, target) {
 			return true
 		}
 	}

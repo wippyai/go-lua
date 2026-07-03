@@ -18,16 +18,15 @@ func Self(t typ.Type, selfType typ.Type) typ.Type {
 	if !containsSubstitutableSelf(t) {
 		return t
 	}
-	return transform.Rewrite(t, func(n typ.Type) (typ.Type, bool) {
-		if n.Kind() == kind.Self {
-			return selfType, true
-		}
-		if _, ok := n.(*typ.Interface); ok {
-			return n, true
-		}
-		return nil, false
-	})
+	return rewriteSelf(t, selfType, selfRewriteMethodType)
 }
+
+type selfRewriteMode uint8
+
+const (
+	selfRewriteMethodType selfRewriteMode = iota
+	selfRewriteRuntimeValue
+)
 
 type selfScanMode uint8
 
@@ -37,12 +36,15 @@ const (
 )
 
 func containsSubstitutableSelf(t typ.Type) bool {
-	scan := newSelfContainsScan()
+	if typ.ContainsRecursive(t) && !containsSurfaceSelf(t) {
+		return false
+	}
+	scan := newSelfContainsScan(t)
 	return scan.contains(t, selfScanSubstitutable)
 }
 
 func containsSurfaceSelf(t typ.Type) bool {
-	scan := newSelfContainsScan()
+	var scan selfContainsScan
 	return scan.contains(t, selfScanSurface)
 }
 
@@ -50,8 +52,11 @@ type selfContainsScan struct {
 	scanner *inspect.Scanner
 }
 
-func newSelfContainsScan() *selfContainsScan {
-	return &selfContainsScan{
+func newSelfContainsScan(t typ.Type) selfContainsScan {
+	if !typ.ContainsRecursive(t) {
+		return selfContainsScan{}
+	}
+	return selfContainsScan{
 		scanner: inspect.NewScanner(inspect.ScanOptions{
 			Seen:      inspect.NewIdentitySeen(nil),
 			MaxEnters: selfSubstitutionNodeBudget,
@@ -76,10 +81,10 @@ func (s *selfContainsScan) contains(t typ.Type, mode selfScanMode) bool {
 	if _, ok := t.(*typ.Recursive); ok {
 		return false
 	}
-	if mode == selfScanSubstitutable && inspect.ContainsRecursive(t) && !containsSurfaceSelf(t) {
+	if mode == selfScanSubstitutable && typ.ContainsRecursive(t) && !containsSurfaceSelf(t) {
 		return false
 	}
-	if !s.scanner.Enter(t) {
+	if s.scanner != nil && !s.scanner.Enter(t) {
 		return false
 	}
 	switch v := t.(type) {
@@ -164,13 +169,21 @@ func SelfValue(t typ.Type, selfType typ.Type) typ.Type {
 	if t == nil || selfType == nil {
 		return t
 	}
+	return rewriteSelf(t, selfType, selfRewriteRuntimeValue)
+}
+
+func rewriteSelf(t typ.Type, selfType typ.Type, mode selfRewriteMode) typ.Type {
 	return transform.Rewrite(t, func(n typ.Type) (typ.Type, bool) {
 		if n.Kind() == kind.Self {
 			return selfType, true
 		}
-		switch n.(type) {
-		case *typ.Function, *typ.Interface:
+		if _, ok := n.(*typ.Interface); ok {
 			return n, true
+		}
+		if mode == selfRewriteRuntimeValue {
+			if _, ok := n.(*typ.Function); ok {
+				return n, true
+			}
 		}
 		return nil, false
 	})

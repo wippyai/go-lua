@@ -26,6 +26,17 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
+func wantUnpackFunctionType() *typ.Function {
+	elem := typ.NewTypeParam("T", nil)
+	return typ.Func().
+		TypeParamRef(elem).
+		Param("list", typ.NewArray(elem)).
+		OptParam("i", typ.Integer).
+		OptParam("j", typ.Integer).
+		Returns(normalize.Optional(elem)).
+		Build()
+}
+
 func TestLookupSeededFunctionTypes(t *testing.T) {
 	tests := []struct {
 		name string
@@ -93,12 +104,20 @@ func TestLookupSeededFunctionTypes(t *testing.T) {
 				Build(),
 		},
 		{
+			name: "unpack",
+			want: wantUnpackFunctionType(),
+		},
+		{
 			name: TableInsert,
 			want: typ.Func().
 				Param("list", typ.Any).
 				Param("pos_or_value", typ.Any).
 				OptParam("value", typ.Any).
 				Build(),
+		},
+		{
+			name: "table.unpack",
+			want: wantUnpackFunctionType(),
 		},
 		{
 			name: "table.create",
@@ -120,6 +139,30 @@ func TestLookupSeededFunctionTypes(t *testing.T) {
 				t.Fatalf("type = %v, want %v", got.Type, tt.want)
 			}
 		})
+	}
+}
+
+func TestLookupTableCreateCarriesFreshReturnAllocation(t *testing.T) {
+	got, ok := Lookup("table.create")
+	if !ok {
+		t.Fatal("Lookup(table.create) missing")
+	}
+	if got.OperationalEffects == nil {
+		t.Fatalf("table.create operational effects = nil, want return allocation template")
+	}
+	templates := got.OperationalEffects.ReturnAllocationTemplates
+	if len(templates) != 1 {
+		t.Fatalf("return allocation templates = %#v, want one", templates)
+	}
+	template := templates[0]
+	if template.ReturnIndex != 0 || template.Root != "stdlib.table.create:return:0" {
+		t.Fatalf("allocation template = %#v, want return 0 root stdlib.table.create:return:0", template)
+	}
+	if len(template.Objects) != 1 || template.Objects[0].ID != "stdlib.table.create:return:0" {
+		t.Fatalf("allocation objects = %#v, want one root object", template.Objects)
+	}
+	if !typ.TypeEquals(template.Objects[0].Type, typetable.NewRecord().Build()) {
+		t.Fatalf("allocation object type = %v, want empty record", template.Objects[0].Type)
 	}
 }
 
@@ -285,6 +328,27 @@ func TestTypeDeclaresBorrowWithoutReservedPredicate(t *testing.T) {
 	}
 }
 
+func TestSetmetatableRetainsMetatableWithoutOrdinaryStore(t *testing.T) {
+	got, ok := Lookup("setmetatable")
+	if !ok {
+		t.Fatal("Lookup(\"setmetatable\") missing")
+	}
+	if len(got.Type.Params) != 2 || len(got.Type.Returns) != 1 {
+		t.Fatalf("setmetatable shape params/returns = %d/%d, want 2/1", len(got.Type.Params), len(got.Type.Returns))
+	}
+	for _, label := range got.Effect.Labels {
+		if store, ok := effect.NormalizeLabel(label).(ownership.Store); ok {
+			t.Fatalf("setmetatable must not declare ordinary table-content store: %v", store)
+		}
+	}
+	if !hasLabel(got.Effect, ownership.Retain{Param: effect.ParamRef{Index: 1}}) {
+		t.Fatalf("setmetatable effect = %v, want metatable retain", got.Effect)
+	}
+	if !hasLabel(got.Effect, returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: effect.ParamRef{Index: 0}}}) {
+		t.Fatalf("setmetatable effect = %v, want same-as first argument return", got.Effect)
+	}
+}
+
 func TestSelectDeclaresConservativeAnyWithoutReservedVariadicTransform(t *testing.T) {
 	got, ok := Lookup("select")
 	if !ok {
@@ -391,11 +455,13 @@ func TestSignaturesSeededNames(t *testing.T) {
 	sort.Strings(got)
 
 	want := []string{
-		Assert, Error, Require, ToString, Type, Pairs, IPairs, PCall, XPCall,
+		Assert, Error, Require, String, ToString, Type, Pairs, IPairs, PCall, XPCall,
 		"print", "tonumber", "next", "select", "rawget", "rawset", "rawequal",
 		"rawlen", "setmetatable", "getmetatable", "collectgarbage", "unpack",
 		TableInsert, "table.remove", "table.concat", "table.sort", "table.unpack",
 		"table.pack", "table.move", "table.create", "table.freeze", "table.isfrozen",
+		"json.encode", "json.decode",
+		"env.get",
 		"string.byte", "string.char", "string.dump", "string.find", "string.format",
 		"string.gmatch", "string.gsub", "string.len", "string.lower", "string.match",
 		"string.pack", "string.packsize", "string.rep", "string.reverse", "string.sub",

@@ -11,26 +11,26 @@ import (
 
 func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 	for _, sf := range super.Fields {
-		subField := sub.GetField(sf.Name)
-		if subField == nil {
+		subMember, ok := recordReadableField(sub, sf.Name)
+		if !ok {
 			if !sf.Optional && !unwrap.IsOptionalLike(sf.Type) {
 				return false
 			}
 			continue
 		}
-		if !c.checkRecordMember(subField.Type, subField.Optional, subField.Readonly, sf.Type, sf.Optional, sf.Readonly, depth+1) {
+		if !c.checkRecordMember(subMember, recordMemberShape{typ: sf.Type, optional: sf.Optional, readonly: sf.Readonly}, depth+1) {
 			return false
 		}
 	}
 	for _, sm := range super.StaticMembers {
-		subMember := sub.GetStaticMember(sm.Kind, sm.Name, sm.Index)
-		if subMember == nil {
+		subMember, ok := recordReadableStaticMember(sub, sm)
+		if !ok {
 			if !sm.Optional && !unwrap.IsOptionalLike(sm.Type) {
 				return false
 			}
 			continue
 		}
-		if !c.checkRecordMember(subMember.Type, subMember.Optional, subMember.Readonly, sm.Type, sm.Optional, sm.Readonly, depth+1) {
+		if !c.checkRecordMember(subMember, recordMemberShape{typ: sm.Type, optional: sm.Optional, readonly: sm.Readonly}, depth+1) {
 			return false
 		}
 	}
@@ -49,30 +49,78 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 	return c.metaSubtype(sub.Metatable, super.Metatable, depth+1)
 }
 
-func (c *checker) checkRecordMember(subType typ.Type, subOptional, subReadonly bool, superType typ.Type, superOptional, superReadonly bool, depth int) bool {
-	if superOptional && subType != nil && subType.Kind() == kind.Nil {
+type recordMemberShape struct {
+	typ      typ.Type
+	optional bool
+	readonly bool
+}
+
+func recordReadableField(rec *typ.Record, name string) (recordMemberShape, bool) {
+	if rec == nil || name == "" {
+		return recordMemberShape{}, false
+	}
+	if field := rec.GetField(name); field != nil {
+		return fieldShape(field), true
+	}
+	if member := rec.GetStaticStringIndex(name); member != nil {
+		return staticMemberShape(member), true
+	}
+	return recordMemberShape{}, false
+}
+
+func recordReadableStaticMember(rec *typ.Record, member typ.StaticMember) (recordMemberShape, bool) {
+	if rec == nil {
+		return recordMemberShape{}, false
+	}
+	if found := rec.GetStaticMember(member.Kind, member.Name, member.Index); found != nil {
+		return staticMemberShape(found), true
+	}
+	if member.Kind == typ.StaticMemberStringIndex && member.Name != "" {
+		if field := rec.GetField(member.Name); field != nil {
+			return fieldShape(field), true
+		}
+	}
+	return recordMemberShape{}, false
+}
+
+func fieldShape(field *typ.Field) recordMemberShape {
+	if field == nil {
+		return recordMemberShape{}
+	}
+	return recordMemberShape{typ: field.Type, optional: field.Optional, readonly: field.Readonly}
+}
+
+func staticMemberShape(member *typ.StaticMember) recordMemberShape {
+	if member == nil {
+		return recordMemberShape{}
+	}
+	return recordMemberShape{typ: member.Type, optional: member.Optional, readonly: member.Readonly}
+}
+
+func (c *checker) checkRecordMember(sub, super recordMemberShape, depth int) bool {
+	if super.optional && sub.typ != nil && sub.typ.Kind() == kind.Nil {
 		return true
 	}
-	effectiveSuper := superType
-	if superOptional {
-		effectiveSuper = typeexpr.Optional(superType)
+	effectiveSuper := super.typ
+	if super.optional {
+		effectiveSuper = typeexpr.Optional(super.typ)
 	}
-	if superReadonly {
-		if !c.check(subType, effectiveSuper, depth+1) {
+	if super.readonly {
+		if !c.check(sub.typ, effectiveSuper, depth+1) {
 			return false
 		}
 	} else {
-		if subReadonly {
+		if sub.readonly {
 			return false
 		}
-		if !c.check(subType, effectiveSuper, depth+1) {
+		if !c.check(sub.typ, effectiveSuper, depth+1) {
 			return false
 		}
-		if !c.check(effectiveSuper, subType, depth+1) && !c.canWidenTo(subType, effectiveSuper, depth+1) {
+		if !c.check(effectiveSuper, sub.typ, depth+1) && !c.canWidenTo(sub.typ, effectiveSuper, depth+1) {
 			return false
 		}
 	}
-	if !superOptional && !unwrap.IsOptionalLike(superType) && subOptional {
+	if !super.optional && !unwrap.IsOptionalLike(super.typ) && sub.optional {
 		return false
 	}
 	return true

@@ -1,6 +1,9 @@
 package body
 
 import (
+	"strconv"
+	"strings"
+
 	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
 	"github.com/wippyai/go-lua/analysis/domain/constraint/decision"
 	"github.com/wippyai/go-lua/analysis/domain/constraint/numeric"
@@ -16,12 +19,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/factquery"
+	enginesourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -33,6 +38,12 @@ import (
 // projection of solved state only; read models that explain diagnostics may
 // opt into SourceValueForExplanationAtBoundary.
 func (r *Result) SourceValueAtBoundary(point cfg.Point, source factflow.ValueSource) (product.Value, bool) {
+	return r.cachedSourceValue(sourceValueReadBoundary, point, source, func() (product.Value, bool) {
+		return r.computeSourceValueAtBoundary(point, source)
+	})
+}
+
+func (r *Result) computeSourceValueAtBoundary(point cfg.Point, source factflow.ValueSource) (product.Value, bool) {
 	if r == nil || r.registry == nil {
 		return product.Value{}, false
 	}
@@ -40,7 +51,10 @@ func (r *Result) SourceValueAtBoundary(point cfg.Point, source factflow.ValueSou
 	if !ok {
 		return product.Value{}, false
 	}
-	sources := r.boundarySources()
+	if state.IsBottom(r.registry, in) {
+		return product.Value{}, false
+	}
+	sources := r.boundarySources(sourceValueReadBoundary)
 	if sources == nil {
 		return product.Value{}, false
 	}
@@ -51,11 +65,11 @@ func (r *Result) SourceValueAtBoundary(point cfg.Point, source factflow.ValueSou
 	return value, true
 }
 
-func readableConcreteType(reg *axis.Registry, value product.Value) bool {
+func readableConcreteType(reg *axis.Registry, typeValues *typevalue.Cache, value product.Value) bool {
 	if reg == nil {
 		return false
 	}
-	t, ok := typevalue.TypeOf(reg, value)
+	t, ok := typeValues.TypeOf(reg, value)
 	if !ok || t == nil || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) || refinement.ContainsFreeTypeParam(t) {
 		return false
 	}
@@ -96,12 +110,21 @@ func (r *Result) localAssignmentBoundaryValue(
 // may recover a stronger value from a dominating root declaration. Final
 // solved-state projections should call SourceValueAtBoundary instead.
 func (r *Result) SourceValueForExplanationAtBoundary(point cfg.Point, source factflow.ValueSource) (product.Value, bool) {
+	return r.cachedSourceValue(sourceValueReadExplanationBoundary, point, source, func() (product.Value, bool) {
+		return r.computeSourceValueForExplanationAtBoundary(point, source)
+	})
+}
+
+func (r *Result) computeSourceValueForExplanationAtBoundary(point cfg.Point, source factflow.ValueSource) (product.Value, bool) {
 	if r == nil || r.registry == nil {
 		return product.Value{}, false
 	}
 	in, hasState := r.boundaryStateAt(point)
+	if hasState && state.IsBottom(r.registry, in) {
+		return product.Value{}, false
+	}
 	value, ok := r.SourceValueAtBoundary(point, source)
-	if ok && readableConcreteType(r.registry, value) {
+	if ok && readableConcreteType(r.registry, r.typeValues, value) {
 		return value, true
 	}
 	if hasState {
@@ -127,28 +150,242 @@ func (r *Result) LocalAssignmentSourceValueForExplanationAtBoundary(point cfg.Po
 // diagnostic read boundary for point.
 func (r *Result) ExpressionValueAtBoundary(point cfg.Point, expr ast.Expr) (product.Value, bool) {
 	p, ok := r.ExpressionPath(expr)
+	if ok {
+		if value, ok := r.PathValueAtBoundary(point, p); ok {
+			return value, true
+		}
+	}
+	if value, ok := r.attributeExpressionValueBeforeBoundary(point, expr); ok {
+		return value, true
+	}
+	if value, ok := r.returnExpressionValueAtBoundary(point, expr); ok {
+		return value, true
+	}
+	return r.expressionAssignmentSourceValueAtBoundary(point, expr, r.SourceValueAtBoundary)
+}
+
+// ExpressionValueBeforeBoundary projects a Lua expression's product value at
+// the solved input to point, before same-node assignment/call materialization.
+// Assignment diagnostics use this for RHS reads so the target write cannot make
+// its own source look stronger than it was.
+func (r *Result) ExpressionValueBeforeBoundary(point cfg.Point, expr ast.Expr) (product.Value, bool) {
+	p, ok := r.ExpressionPath(expr)
+	if ok {
+		if value, ok := r.PathValueBeforeBoundary(point, p); ok {
+			return value, true
+		}
+	}
+	if value, ok := r.attributeExpressionValueBeforeBoundary(point, expr); ok {
+		return value, true
+	}
+	return r.expressionAssignmentSourceValueAtBoundary(point, expr, r.SourceValueBeforeBoundary)
+}
+
+func (r *Result) attributeExpressionValueBeforeBoundary(point cfg.Point, expr ast.Expr) (product.Value, bool) {
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok || attr.Object == nil || attr.Key == nil {
+		return product.Value{}, false
+	}
+	object, ok := r.attributeObjectValueBeforeBoundary(point, attr.Object)
 	if !ok {
 		return product.Value{}, false
 	}
-	return r.PathValueAtBoundary(point, p)
+	objectType, ok := r.typeValues.TypeOf(r.registry, object)
+	if !ok || objectType == nil {
+		return product.Value{}, false
+	}
+	var projected typ.Type
+	switch attr.KeySyntax {
+	case ast.AttrKeyDot:
+		name := ast.KeyName(attr.Key)
+		if name == "" {
+			return product.Value{}, false
+		}
+		var fieldOK bool
+		projected, fieldOK = access.Field(objectType, name)
+		if !fieldOK {
+			if !typ.TypeEquals(objectType, typ.Nil) {
+				return product.Value{}, false
+			}
+			projected = typ.Nil
+		}
+	default:
+		keyType, keyOK := attrKeyLiteralType(attr.Key)
+		if !keyOK || keyType == nil {
+			return product.Value{}, false
+		}
+		var indexOK bool
+		projected, indexOK = access.RuntimeIndex(objectType, keyType)
+		if !indexOK {
+			if !typ.TypeEquals(objectType, typ.Nil) {
+				return product.Value{}, false
+			}
+			projected = typ.Nil
+		}
+	}
+	value := typevalue.WithWitness(r.registry, r.typeValues.FromType(r.registry, projected), projected)
+	value = enginesourcevalue.InheritTopOriginEvidence(r.registry, value, object)
+	return value, true
+}
+
+func (r *Result) attributeObjectValueBeforeBoundary(point cfg.Point, expr ast.Expr) (product.Value, bool) {
+	switch object := expr.(type) {
+	case *ast.FuncCallExpr:
+		return r.CallExprResultValue(object, 0)
+	case *ast.AttrGetExpr:
+		return r.attributeExpressionValueBeforeBoundary(point, object)
+	default:
+		return r.ExpressionValueBeforeBoundary(point, expr)
+	}
+}
+
+func attrKeyLiteralType(expr ast.Expr) (typ.Type, bool) {
+	switch key := expr.(type) {
+	case *ast.StringExpr:
+		return typ.LiteralString(key.Value), true
+	case *ast.NumberExpr:
+		if strings.ContainsAny(key.Value, ".eE") {
+			v, err := strconv.ParseFloat(key.Value, 64)
+			if err != nil {
+				return nil, false
+			}
+			return typ.LiteralNumber(v), true
+		}
+		v, err := strconv.ParseInt(key.Value, 10, 64)
+		if err != nil {
+			return nil, false
+		}
+		return typ.LiteralInt(v), true
+	default:
+		return nil, false
+	}
+}
+
+func (r *Result) returnExpressionValueAtBoundary(point cfg.Point, expr ast.Expr) (product.Value, bool) {
+	if r == nil || r.registry == nil || expr == nil {
+		return product.Value{}, false
+	}
+	fact, ok := r.ReturnFact(point)
+	if !ok {
+		return product.Value{}, false
+	}
+	for i, returned := range fact.Exprs {
+		if returned != expr {
+			continue
+		}
+		in, ok := r.boundaryStateAt(point)
+		if !ok {
+			return product.Value{}, false
+		}
+		value := in.ReadReturnSlot(r.registry, i)
+		if product.Equal(r.registry, value, product.Bottom(r.registry)) {
+			return product.Value{}, false
+		}
+		return value, true
+	}
+	return product.Value{}, false
+}
+
+func (r *Result) expressionAssignmentSourceValueAtBoundary(
+	point cfg.Point,
+	expr ast.Expr,
+	resolve func(cfg.Point, factflow.ValueSource) (product.Value, bool),
+) (product.Value, bool) {
+	if r == nil || expr == nil || resolve == nil {
+		return product.Value{}, false
+	}
+	if fact, ok := r.LocalAssignment(point); ok && fact.Expr == expr {
+		if lowered, ok := r.facts.LocalAssignment(point); ok {
+			return resolve(point, lowered.Source())
+		}
+	}
+	if fact, ok := r.OrdinaryAssignment(point); ok && fact.Value == expr {
+		if lowered, ok := r.facts.OrdinaryAssignment(point); ok {
+			return resolve(point, lowered.Source())
+		}
+		if lowered, ok := r.facts.PathAssignment(point); ok {
+			return resolve(point, lowered.Source())
+		}
+	}
+	return product.Value{}, false
+}
+
+// SourceValueBeforeBoundary resolves a lowered value source from the solved
+// input to point, without same-node boundary effects.
+func (r *Result) SourceValueBeforeBoundary(point cfg.Point, source factflow.ValueSource) (product.Value, bool) {
+	return r.cachedSourceValue(sourceValueReadBeforeBoundary, point, source, func() (product.Value, bool) {
+		return r.computeSourceValueBeforeBoundary(point, source)
+	})
+}
+
+func (r *Result) computeSourceValueBeforeBoundary(point cfg.Point, source factflow.ValueSource) (product.Value, bool) {
+	if r == nil || r.registry == nil {
+		return product.Value{}, false
+	}
+	in, ok := r.solvedStateAt(point)
+	if !ok {
+		return product.Value{}, false
+	}
+	if state.IsBottom(r.registry, in) {
+		return product.Value{}, false
+	}
+	value, ok := r.sourceValueAtPoint(sourceValueReadBeforeBoundary, point, source, in, r.beforeBoundarySourceRead(point))
+	if !ok || product.Equal(r.registry, value, product.Bottom(r.registry)) {
+		return product.Value{}, false
+	}
+	return value, true
+}
+
+func (r *Result) beforeBoundarySourceRead(point cfg.Point) func(cfg.Point) state.State {
+	return func(sourcePoint cfg.Point) state.State {
+		if sourcePoint == point {
+			return r.stateRead(sourcePoint)
+		}
+		return r.boundaryRead(sourcePoint)
+	}
 }
 
 // PathValueAtBoundary projects a path's product value at the diagnostic read
 // boundary for point.
 func (r *Result) PathValueAtBoundary(point cfg.Point, p pathdom.Path) (product.Value, bool) {
+	return r.cachedPathValue(sourceValueReadBoundary, point, p, func() (product.Value, bool) {
+		return r.computePathValueAtBoundary(point, p)
+	})
+}
+
+func (r *Result) computePathValueAtBoundary(point cfg.Point, p pathdom.Path) (product.Value, bool) {
+	return r.computePathValue(sourceValueReadBoundary, point, p, r.boundaryStateAt)
+}
+
+// PathValueBeforeBoundary projects a path from the solved point input, without
+// applying same-node boundary transfer effects.
+func (r *Result) PathValueBeforeBoundary(point cfg.Point, p pathdom.Path) (product.Value, bool) {
+	return r.cachedPathValue(sourceValueReadBeforeBoundary, point, p, func() (product.Value, bool) {
+		return r.computePathValueBeforeBoundary(point, p)
+	})
+}
+
+func (r *Result) computePathValueBeforeBoundary(point cfg.Point, p pathdom.Path) (product.Value, bool) {
+	return r.computePathValue(sourceValueReadBeforeBoundary, point, p, r.solvedStateAt)
+}
+
+func (r *Result) computePathValue(
+	mode sourceValueReadMode,
+	point cfg.Point,
+	p pathdom.Path,
+	stateAt func(cfg.Point) (state.State, bool),
+) (product.Value, bool) {
 	if r == nil || r.registry == nil || p.IsEmpty() {
 		return product.Value{}, false
 	}
-	in, ok := r.boundaryStateAt(point)
+	in, ok := stateAt(point)
 	if !ok {
 		return product.Value{}, false
 	}
-	value, ok := readexpr.Project(readexpr.Config{
-		Registry:   r.registry,
-		Facts:      r.facts,
-		Visibility: r.visibility,
-		TypeValues: r.typeValues,
-	}, point, p, in)
+	if state.IsBottom(r.registry, in) {
+		return product.Value{}, false
+	}
+	value, ok := readexpr.Project(r.readExprConfig(mode), point, p, in)
 	if !ok || product.Equal(r.registry, value, product.Bottom(r.registry)) {
 		return product.Value{}, false
 	}
@@ -160,10 +397,11 @@ func (r *Result) PathValueAtBoundary(point cfg.Point, p pathdom.Path) (product.V
 // source paths; PathKeyAtBoundary exists only for compatibility with lanes that
 // still expose a path-key string carrier.
 func (r *Result) StateKeyAtBoundary(point cfg.Point, p pathdom.Path) (pathaddr.StateKey, bool) {
-	if r == nil || r.visibility == nil || p.IsEmpty() {
+	address, ok := r.boundaryAddress(point, p)
+	if !ok {
 		return "", false
 	}
-	return r.visibility.StateKeyAt(point, p)
+	return address.VisibleStateKey()
 }
 
 // PathKeyAtBoundary returns the canonical path key used by fact application at
@@ -178,10 +416,18 @@ func (r *Result) PathKeyAtBoundary(point cfg.Point, p pathdom.Path) (pathdom.Pat
 }
 
 func (r *Result) rootOrVisibleStateKeyAtBoundary(point cfg.Point, p pathdom.Path) (pathaddr.StateKey, bool) {
-	if r == nil || r.visibility == nil || p.IsEmpty() {
+	address, ok := r.boundaryAddress(point, p)
+	if !ok {
 		return "", false
 	}
-	return visibility.RootOrVisibleStateKeyAt(r.visibility, point, p)
+	return address.RootOrVisibleStateKey()
+}
+
+func (r *Result) boundaryAddress(point cfg.Point, p pathdom.Path) (visibility.Address, bool) {
+	if r == nil || r.visibility == nil || p.IsEmpty() {
+		return visibility.Address{}, false
+	}
+	return visibility.AddressAt(r.visibility, point, p), true
 }
 
 func (r *Result) relationGraphKeyAtBoundary(point cfg.Point, p pathdom.Path, length bool) (state.RelOperand, bool) {
@@ -385,7 +631,10 @@ func (r *Result) CallOutcomeAt(point cfg.Point) (callpayload.CallOutcome, bool) 
 	if r == nil || r.registry == nil || r.callOutcome == nil {
 		return callpayload.CallOutcome{}, false
 	}
-	site, ok := r.facts.CallSite(point)
+	if outcome, ok := r.queries.callOutcome(point); ok {
+		return outcome, true
+	}
+	site, ok := r.facts.CallSiteView(point)
 	if !ok {
 		return callpayload.CallOutcome{}, false
 	}
@@ -403,7 +652,9 @@ func (r *Result) CallOutcomeAt(point cfg.Point) (callpayload.CallOutcome, bool) 
 	if graph != nil {
 		ctx.Node = graph.Node(point)
 	}
-	return r.callOutcome(ctx, site.View(), in, r.boundaryRead), true
+	outcome := r.callOutcome(ctx, site, in, r.boundaryRead)
+	r.queries.rememberCallOutcome(point, outcome)
+	return outcome, true
 }
 
 // CallExprResultValue resolves the product value of result slot resultIndex
@@ -418,11 +669,43 @@ func (r *Result) CallExprResultValue(call *ast.FuncCallExpr, resultIndex int) (p
 	if !ok {
 		return product.Value{}, false
 	}
+	if outcome, ok := r.CallOutcomeAt(point); ok {
+		for _, result := range outcome.Results {
+			if result.Index == resultIndex && !product.Equal(r.registry, result.Value, product.Bottom(r.registry)) {
+				return result.Value, true
+			}
+		}
+	}
+	if value, ok := r.callExprSignatureResultValue(point, resultIndex); ok {
+		return value, true
+	}
 	source, ok := factflow.NewCallValueSource(0, factflow.NoValueSourceIndex, factflow.NoValueSourceIndex, resultIndex, point, factflow.ValueSourceShape{})
 	if !ok {
 		return product.Value{}, false
 	}
 	return r.SourceValueAtBoundary(point, source)
+}
+
+func (r *Result) callExprSignatureResultValue(point cfg.Point, resultIndex int) (product.Value, bool) {
+	site, ok := r.CallSite(point)
+	if !ok {
+		return product.Value{}, false
+	}
+	if fn, ok := r.CallSignatureType(site); ok {
+		return r.functionReturnValue(fn, resultIndex)
+	}
+	if fn, ok := r.FunctionValueTypeForCallSiteAtBoundary(point, site); ok {
+		return r.functionReturnValue(fn, resultIndex)
+	}
+	return product.Value{}, false
+}
+
+func (r *Result) functionReturnValue(fn *typ.Function, resultIndex int) (product.Value, bool) {
+	if fn == nil || resultIndex < 0 || resultIndex >= len(fn.Returns) || fn.Returns[resultIndex] == nil {
+		return product.Value{}, false
+	}
+	t := fn.Returns[resultIndex]
+	return typevalue.WithWitness(r.registry, r.typeValues.FromType(r.registry, t), t), true
 }
 
 // CallOutcomeForExpr returns the lowered call site and computed call outcome for
@@ -445,6 +728,11 @@ func (r *Result) CallOutcomeForExpr(call *ast.FuncCallExpr) (factflow.CallSite, 
 		return factflow.CallSite{}, callpayload.CallOutcome{}, false
 	}
 	return site, outcome, true
+}
+
+// CallExprPoint returns the CFG point for a syntactic call expression.
+func (r *Result) CallExprPoint(call *ast.FuncCallExpr) (cfg.Point, bool) {
+	return r.callExprPoint(call)
 }
 
 func (r *Result) callExprPoint(call *ast.FuncCallExpr) (cfg.Point, bool) {
@@ -476,14 +764,14 @@ func (r *Result) rootDeclarationValue(declaration factquery.RootDeclarationSourc
 		declState = fallbackState
 	}
 	v := declState.ReadValue(r.registry, key.SymbolValue(declaration.Symbol))
-	if readableConcreteType(r.registry, v) {
+	if readableConcreteType(r.registry, r.typeValues, v) {
 		return v, true
 	}
 	if declaration.Source.Kind == 0 {
 		return product.Value{}, false
 	}
-	if recoveredValue, ok := r.sourceValueAtPoint(declaration.Point, declaration.Source, declState, r.boundaryRead); ok {
-		if readableConcreteType(r.registry, recoveredValue) {
+	if recoveredValue, ok := r.sourceValueAtPoint(sourceValueReadExplanationBoundary, declaration.Point, declaration.Source, declState, r.boundaryRead); ok {
+		if readableConcreteType(r.registry, r.typeValues, recoveredValue) {
 			return recoveredValue, true
 		}
 	}

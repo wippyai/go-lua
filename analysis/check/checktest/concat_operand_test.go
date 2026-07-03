@@ -197,10 +197,10 @@ local function concat(parts: {string})
 end
 `)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeAssignmentType)
-	if !strings.Contains(diag.Message, "string | 0") || !strings.Contains(diag.Message, "number") {
+	if !strings.Contains(diag.Message, "number | string") || !strings.Contains(diag.Message, "not number") {
 		t.Fatalf("message = %q, want number|string to number assignment", diag.Message)
 	}
-	requireEvidenceMessage(t, diag, "acc has type string | 0")
+	requireEvidenceMessage(t, diag, "acc has type number | string")
 	requireEvidenceMessage(t, diag, "n is declared as number")
 }
 
@@ -516,6 +516,101 @@ end
 `)
 	if len(result.Diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want none for logical-and guarded concat operands", result.Diagnostics)
+	}
+}
+
+func TestCheckConcatAcceptsOperandGuardedInsideLogicalAndExpression(t *testing.T) {
+	result := Check(`
+local function cache_key(prefix: string, tool_id: string, tool_name: string?): string
+	return prefix .. tool_id .. (tool_name and (":" .. tool_name) or "")
+end
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none for concat operand guarded inside logical-and expression", result.Diagnostics)
+	}
+}
+
+func TestCheckConcatAcceptsDeepExpressionLocalGuards(t *testing.T) {
+	cases := map[string]string{
+		"nested-and-chain": `
+local function label(a: string?, b: string?): string
+	return a and b and ("pair:" .. a .. ":" .. b) or ""
+end
+`,
+		"explicit-not-nil-and": `
+local function label(value: string?): string
+	return value ~= nil and ("value:" .. value) or ""
+end
+`,
+		"nil-check-or-fallback": `
+local function label(value: string?)
+	return value == nil or ("value:" .. value)
+end
+`,
+		"negated-nil-check-and": `
+local function label(value: string?): string
+	return not (value == nil) and ("value:" .. value) or ""
+end
+`,
+		"nested-or-with-type-guarded-and": `
+local function label(success: boolean, value: any): string
+	return success and "ok" or (type(value) == "string" and ("value:" .. value) or "failed")
+end
+`,
+		"nil-initialized-local-assigned-any-field-then-type-guarded": `
+local STATUS = { OK = "ok", ERR = "failed: " }
+local function label(result: any): string
+	local success = true
+	local final_error = nil
+	if type(result) == "table" then
+		success = result.success ~= false
+		final_error = result.error
+	end
+	return success and STATUS.OK or (type(final_error) == "string" and (STATUS.ERR .. final_error) or "failed")
+end
+`,
+	}
+	for name, src := range cases {
+		if diagnostics := Check(src).Diagnostics; len(diagnostics) != 0 {
+			t.Fatalf("%s: diagnostics = %#v, want expression-local guard to prove concat operand present", name, diagnostics)
+		}
+	}
+}
+
+func TestCheckConcatAcceptsIfGuardedValueAssignedInLoop(t *testing.T) {
+	result := Check(`
+type Part = {
+    kind: "text" | "refusal",
+    text: string?,
+    refusal: string?,
+}
+
+local function refusal_message(parts: {Part}): string?
+    local refusal = nil
+    for _, part in ipairs(parts) do
+        if part.kind == "refusal" and part.refusal then
+            refusal = part.refusal
+        end
+    end
+    if refusal then
+        return "Request was refused: " .. refusal
+    end
+    return nil
+end
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want if-guarded loop-assigned value to be present for concat", result.Diagnostics)
+	}
+}
+
+func TestCheckConcatStillReportsOptionalOnUnprovenExpressionFallback(t *testing.T) {
+	result := Check(`
+local function label(value: string?): string
+	return value or ("value:" .. value)
+end
+`)
+	if len(result.Diagnostics) == 0 {
+		t.Fatalf("diagnostics = nil, want concat warning because `value or ...` proves value absent in fallback")
 	}
 }
 

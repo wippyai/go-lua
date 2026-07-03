@@ -10,28 +10,30 @@ import (
 var domainCache registrycache.Cache[lattice.Lattice[Value]]
 
 func Domain(reg *axis.Registry) lattice.Lattice[Value] {
+	return domainCache.GetFor(mustRuntime(reg).reg, productDomainForRegistry)
+}
+
+func productDomainForRegistry(reg *axis.Registry) lattice.Lattice[Value] {
 	rt := mustRuntime(reg)
-	return domainCache.Get(rt.reg, func() lattice.Lattice[Value] {
-		return lattice.Lattice[Value]{
-			Bottom: rt.bottomValue,
-			Top:    Top,
-			Equal: func(a, b Value) bool {
-				return equalRuntime(rt, a, b)
-			},
-			LessOrEq: func(a, b Value) bool {
-				return lessOrEqRuntime(rt, a, b)
-			},
-			Join: func(a, b Value) Value {
-				return joinRuntime(rt, a, b)
-			},
-			Meet: func(a, b Value) Value {
-				return meetRuntime(rt, a, b)
-			},
-			Widen: func(prev, next Value) Value {
-				return widenRuntime(rt, prev, next)
-			},
-		}
-	})
+	return lattice.Lattice[Value]{
+		Bottom: rt.bottomValue,
+		Top:    Top,
+		Equal: func(a, b Value) bool {
+			return equalRuntime(rt, a, b)
+		},
+		LessOrEq: func(a, b Value) bool {
+			return lessOrEqRuntime(rt, a, b)
+		},
+		Join: func(a, b Value) Value {
+			return joinRuntime(rt, a, b)
+		},
+		Meet: func(a, b Value) Value {
+			return meetRuntime(rt, a, b)
+		},
+		Widen: func(prev, next Value) Value {
+			return widenRuntime(rt, prev, next)
+		},
+	}
 }
 
 func Equal(reg *axis.Registry, a, b Value) bool {
@@ -118,7 +120,8 @@ func mergeRuntime(
 	if a.n == nil || b.n == nil {
 		return Top()
 	}
-	slots := make([]slot, 0, len(rt.canonicalAxes))
+	var small [8]slot
+	slots := small[:0]
 	for i := range rt.canonicalAxes {
 		spec := rt.canonicalAxes[i]
 		value := axisMerge(spec, rt.axisValue(spec, a), rt.axisValue(spec, b))
@@ -149,7 +152,8 @@ func meetRuntime(rt *registryRuntime, a, b Value) Value {
 	if b.n == nil {
 		return a
 	}
-	slots := make([]slot, 0, len(rt.canonicalAxes))
+	var small [8]slot
+	slots := small[:0]
 	for i := range rt.canonicalAxes {
 		spec := rt.canonicalAxes[i]
 		value := spec.spec.MeetAny(rt.axisValue(spec, a), rt.axisValue(spec, b))

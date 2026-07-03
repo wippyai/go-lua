@@ -1,8 +1,6 @@
 package body
 
 import (
-	"strings"
-
 	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
 	"github.com/wippyai/go-lua/analysis/module/typelookup"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -26,8 +24,7 @@ func newRequireAliasTypeResolver(projection moduleidentity.Projection, external 
 func (r requireAliasTypeResolver) ResolveTypeRef(parts []string) (typ.Type, bool) {
 	if len(parts) > 1 {
 		if modulePath := r.aliases[parts[0]]; modulePath != "" {
-			rewritten := append(strings.Split(modulePath, "."), parts[1:]...)
-			if t, ok := r.external.ResolveTypeRef(rewritten); ok {
+			if t, ok := r.external.ResolveTypeRefWithModulePrefix(modulePath, parts[1:]); ok {
 				return t, true
 			}
 		}

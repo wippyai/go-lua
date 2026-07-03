@@ -85,6 +85,19 @@ func TestBuiltinPrimitiveRejectsNonBuiltinNames(t *testing.T) {
 	}
 }
 
+func TestBuiltinTableTopMarker(t *testing.T) {
+	got := BuiltinTableTopMarker()
+	if !IsBuiltinTableTopMarker(got) {
+		t.Fatalf("IsBuiltinTableTopMarker(BuiltinTableTopMarker()) = false, want true")
+	}
+	if IsBuiltinTableTopMarker(NewInterface(BuiltinTableTopName, []Method{{Name: "open", Type: Func().Build()}})) {
+		t.Fatalf("non-empty %q interface reported as builtin table top marker", BuiltinTableTopName)
+	}
+	if IsBuiltinTableTopMarker(NewInterface("not-table", nil)) {
+		t.Fatal("unrelated empty interface reported as builtin table top marker")
+	}
+}
+
 func TestPrimitiveEquality(t *testing.T) {
 	if !Nil.Equals(Nil) {
 		t.Error("Nil should equal Nil")

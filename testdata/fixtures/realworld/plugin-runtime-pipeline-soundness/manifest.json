@@ -217,8 +217,7 @@
             "line": 35,
             "column": 25,
             "kind": "missing proof",
-            "trust": "unknown",
-            "reason": "boundary validation missing",
+            "trust": "refuted",
             "contains": [
               "no guard on this path proves store.state.last_seen is non-nil"
             ]
@@ -276,7 +275,7 @@
         "evidence_contains": [
           "tags[\"source\"] can be string or nil here",
           "bad_source is declared as string",
-          "no guard on this path proves tags[\"source\"] is non-nil"
+          "tags[\"source\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
         ],
         "evidence": [
           {
@@ -305,16 +304,17 @@
             "column": 28,
             "kind": "missing proof",
             "trust": "unknown",
-            "reason": "boundary validation missing",
+            "reason": "index read validation missing",
             "contains": [
-              "no guard on this path proves tags[\"source\"] is non-nil"
+              "tags[\"source\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
             ]
           }
         ],
         "render_contains": [
           "local bad_source: string = tags[\"source\"]",
           "because:",
-          "tags[\"source\"]"
+          "tags[\"source\"]",
+          "tags[\"source\"] is an indexed read that can miss or read nil"
         ],
         "render_ordered_contains": [
           "error[type.assignment]: cannot assign tags[\"source\"] because it may be nil",
@@ -323,7 +323,7 @@
           "because:",
           "proven: tags[\"source\"] can be string or nil here",
           "claimed: bad_source is declared as string",
-          "missing proof: no guard on this path proves tags[\"source\"] is non-nil",
+          "missing proof: tags[\"source\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
           "help: Guard `tags[\"source\"]` with a nil check"
         ],
         "render_not_contains": [

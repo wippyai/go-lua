@@ -87,6 +87,63 @@ func knownContainsInstantiated(t Type) bool {
 	return containsInstantiated
 }
 
+// ContainsAny reports whether t is, or transitively contains, the gradual any
+// type. A cached positive is definitive. A cached negative is definitive only
+// for non-recursive products; recursive placeholders can receive a later body,
+// so recursive graphs fall back to a live scan.
+func ContainsAny(t Type) bool {
+	if knownContainsAny(t) {
+		return true
+	}
+	if !knownContainsRecursive(t) {
+		return false
+	}
+	return containsAnyDynamic(t, nil, 0)
+}
+
+// ContainsNever reports whether t is, or transitively contains, never.
+func ContainsNever(t Type) bool {
+	if knownContainsNever(t) {
+		return true
+	}
+	if !knownContainsRecursive(t) {
+		return false
+	}
+	return containsNeverDynamic(t, nil)
+}
+
+// ContainsTypeParam reports whether t is, or transitively contains, a type
+// parameter node.
+func ContainsTypeParam(t Type) bool {
+	if knownContainsTypeParam(t) {
+		return true
+	}
+	if !knownContainsRecursive(t) {
+		return false
+	}
+	return containsTypeParamDynamic(t, nil, 0)
+}
+
+// ContainsInstantiated reports whether t is, or transitively contains, a
+// generic instantiation. A cached positive is definitive. A cached negative is
+// definitive only for non-recursive products; recursive placeholders can receive
+// a later body, so recursive graphs fall back to a live scan.
+func ContainsInstantiated(t Type) bool {
+	if knownContainsInstantiated(t) {
+		return true
+	}
+	if !knownContainsRecursive(t) {
+		return false
+	}
+	return containsInstantiatedDynamic(t, nil, 0)
+}
+
+// ContainsGeneric reports whether t is, or transitively contains, a generic
+// declaration or instantiation node.
+func ContainsGeneric(t Type) bool {
+	return knownContainsGeneric(t)
+}
+
 // knownContainsGeneric reports whether t transitively contains a *Generic node,
 // mirroring the transitive predicate computed by containsGenericNode. A *Generic
 // node trivially satisfies it, and an *Instantiated node always wraps a *Generic

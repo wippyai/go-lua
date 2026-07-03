@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	testutil "github.com/wippyai/go-lua/analysis/check/checktest"
 	diag "github.com/wippyai/go-lua/analysis/diagnostic"
@@ -26,10 +27,39 @@ type oracleVerdict struct {
 	unexpected []string
 }
 
+func oracleFixtureVerdictWithDeadline(t *testing.T, s namedSuite) oracleVerdict {
+	t.Helper()
+	deadline := fixtureDeadlineForSuite(s)
+	done := make(chan oracleVerdict, 1)
+	go func() {
+		var v oracleVerdict
+		defer func() {
+			if r := recover(); r != nil {
+				v = oracleVerdict{name: s.Name, passed: false, unexpected: []string{fmt.Sprintf("panic: %v", r)}}
+			}
+			done <- v
+		}()
+		diags, entry := fixtureDiagnostics(s)
+		v = judgeAgainstCuratedExpectations(s, diags, entry)
+	}()
+
+	select {
+	case v := <-done:
+		return v
+	case <-time.After(deadline):
+		failFixtureDeadline(t, fmt.Sprintf("oracle fixture deadline exceeded: %s did not complete within %s (rerun that fixture directly with FIXTURE_DEADLINE_SECONDS=%d and FIXTURE_TIMEOUT_EXIT=0 if investigating precision/performance)", s.Name, deadline, int(deadline.Seconds())*4))
+		return oracleVerdict{name: s.Name, passed: false}
+	}
+}
+
 // fixtureDiagnostics runs one fixture's full check phase (all dependency modules
 // then the entry) and returns the collected diagnostics with the entry file name.
 // It mirrors runCheckPhase's module orchestration exactly.
 func fixtureDiagnostics(s namedSuite) (diags []diag.Diagnostic, entryFile string) {
+	return fixtureDiagnosticsWithOptions(s)
+}
+
+func fixtureDiagnosticsWithOptions(s namedSuite, extraOpts ...testutil.Option) (diags []diag.Diagnostic, entryFile string) {
 	files := resolveFiles(s)
 	stdlib := resolveStdlib(s)
 
@@ -50,6 +80,7 @@ func fixtureDiagnostics(s namedSuite) (diags []diag.Diagnostic, entryFile string
 		panic(fmt.Sprintf("diagnostic_rules: %v", err))
 	}
 	baseOpts = append(baseOpts, ruleOpts...)
+	baseOpts = append(baseOpts, extraOpts...)
 
 	sources := make(map[string]string)
 	for _, f := range files {
@@ -68,7 +99,7 @@ func fixtureDiagnostics(s namedSuite) (diags []diag.Diagnostic, entryFile string
 			modOpts = append(modOpts, testutil.WithModule(nm.name, nm.mod))
 		}
 		name := strings.TrimSuffix(f, ".lua")
-		mod := testutil.CheckAndExport(sources[f], name, modOpts...)
+		mod := testutil.CheckFileAndExport(sources[f], name, f, modOpts...)
 		moduleOrder = append(moduleOrder, namedModule{name, mod})
 		allDiagnostics = append(allDiagnostics, mod.Errors...)
 	}
@@ -78,7 +109,7 @@ func fixtureDiagnostics(s namedSuite) (diags []diag.Diagnostic, entryFile string
 		entryOpts = append(entryOpts, testutil.WithModule(nm.name, nm.mod))
 	}
 	entryFile = files[len(files)-1]
-	result := testutil.Check(sources[entryFile], entryOpts...)
+	result := testutil.CheckFile(sources[entryFile], entryFile, entryOpts...)
 	allDiagnostics = append(allDiagnostics, result.Diagnostics...)
 
 	return allDiagnostics, entryFile
@@ -214,6 +245,7 @@ func TestCuratedOracle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discovering fixtures: %v", err)
 	}
+	startFixtureMemoryGuard(t)
 
 	var verdicts []oracleVerdict
 	pass, fail, skipped, deadlockPass, deadlockFail := 0, 0, 0, 0, 0
@@ -224,16 +256,7 @@ func TestCuratedOracle(t *testing.T) {
 			skipped++
 			continue
 		}
-		var v oracleVerdict
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					v = oracleVerdict{name: s.Name, passed: false, unexpected: []string{fmt.Sprintf("panic: %v", r)}}
-				}
-			}()
-			diags, entry := fixtureDiagnostics(s)
-			v = judgeAgainstCuratedExpectations(s, diags, entry)
-		}()
+		v := oracleFixtureVerdictWithDeadline(t, s)
 		verdicts = append(verdicts, v)
 		if v.passed {
 			pass++

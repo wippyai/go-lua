@@ -12,50 +12,47 @@
         "severity": "error",
         "code": "type.call.direct.argument_type",
         "message_contains": [
-          "argument 1 (x)",
-          "number",
-          "string"
+          "argument 1 (x) is number, not string"
         ],
         "min_evidence": 3,
         "evidence_contains": [
           "argument 1 (x) has type number",
-          "takes_string parameter 1 expects string"
+          "takes_string parameter 1 expects string",
+          "no proof on this path shows x satisfies the parameter type"
         ],
         "evidence": [
           {
-            "file": "main.lua",
-            "line": 3,
-            "column": 21,
-            "kind": "abstract fact",
             "trust": "proven",
             "contains": [
               "argument 1 (x) has type number"
-            ]
+            ],
+            "kind": "abstract fact",
+            "file": "main.lua",
+            "line": 3,
+            "column": 21
           },
           {
-            "kind": "user assertion",
             "trust": "claimed",
             "contains": [
               "takes_string parameter 1 expects string"
-            ]
+            ],
+            "kind": "user assertion"
           },
           {
-            "file": "main.lua",
-            "line": 3,
-            "column": 21,
-            "kind": "missing proof",
-            "trust": "unknown",
-            "reason": "boundary validation missing",
+            "trust": "refuted",
             "contains": [
               "no proof on this path shows x satisfies the parameter type"
-            ]
+            ],
+            "kind": "missing proof",
+            "file": "main.lua",
+            "line": 3,
+            "column": 21
           }
         ],
         "render_contains": [
-          "error[type.call.direct.argument_type]: argument 1 (x) is number, not string",
+          "argument 1 (x) is number, not string",
           "return takes_string(x)",
-          "because:",
-          "Pass `x` as a value compatible with the parameter type"
+          "because:"
         ],
         "render_ordered_contains": [
           "error[type.call.direct.argument_type]: argument 1 (x) is number, not string",
@@ -72,8 +69,7 @@
           "where:"
         ],
         "help_contains": [
-          "Pass `x` as a value compatible with the parameter type",
-          "change the callee signature"
+          "Pass `x` as a value compatible with the parameter type, or change the callee signature if that argument is valid."
         ],
         "min_labels": 1,
         "label_contains": [
@@ -81,12 +77,12 @@
         ],
         "labels": [
           {
-            "file": "main.lua",
-            "line": 3,
-            "column": 21,
             "contains": [
               "argument value"
-            ]
+            ],
+            "file": "main.lua",
+            "line": 3,
+            "column": 21
           }
         ]
       }

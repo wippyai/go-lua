@@ -136,6 +136,14 @@ func TestMapKeyPreservesNilableKey(t *testing.T) {
 	}
 }
 
+func TestReadonlyMapKeyPreservesNilableKey(t *testing.T) {
+	key := MaterializeOptional(String)
+	m := NewReadonlyMap(key, Number)
+	if m.Key != key {
+		t.Fatalf("readonly map key = %v, want original key", m.Key)
+	}
+}
+
 func TestMapEquality(t *testing.T) {
 	m1 := NewMap(String, Number)
 	m2 := NewMap(String, Number)

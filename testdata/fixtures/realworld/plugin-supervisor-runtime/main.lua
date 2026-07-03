@@ -94,7 +94,7 @@ app:on_step(function(step: protocol.RuntimeStep, state: protocol.StoreState)
     elseif step.kind == "fallback" then
         table.insert(observed_fallbacks, step.note)
         local retry_seconds: integer = step.retry_at:unix()
-    else
+    elseif step.kind == "audit" then
         table.insert(observed_audits, step.note)
         local at_seconds: integer = step.at:unix()
     end

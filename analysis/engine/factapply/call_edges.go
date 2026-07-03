@@ -2,6 +2,9 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	valuerefine "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -95,7 +98,7 @@ func (c *callOutcomeTraversalCache) graphPredecessors(graph cfg.Graph, point cfg
 	} else {
 		c.predecessors = make(map[cfg.Point][]cfg.Point)
 	}
-	preds := graph.Predecessors(point)
+	preds := cfg.PredecessorsReadOnly(graph, point)
 	c.predecessors[point] = preds
 	return preds
 }
@@ -147,6 +150,9 @@ func applyCallOutcomeEdgeFacts(
 		if !ok {
 			continue
 		}
+		if !callOutcomeEdgeMayUseOutcome(ctx, branchRefinements, callPoint, siteView) {
+			continue
+		}
 		outcome := outcomeProvider(transfer.NodeContext{
 			Graph:    ctx.Graph,
 			Registry: ctx.Registry,
@@ -157,11 +163,46 @@ func applyCallOutcomeEdgeFacts(
 		if len(outcome.ReturnConditionRefinements) != 0 {
 			out = applyCallReturnConditionRefinements(ctx, facts, resolver, projectPath, callPoint, siteView, outcome, out)
 		}
+		if len(outcome.ReturnConditionSlots) != 0 {
+			out = applyCallReturnConditionSlotRefinements(ctx, facts, cache, resolver, projectPath, branchRefinements, callPoint, siteView, outcome, out)
+		}
 		if len(outcome.ReturnPresenceRelations) != 0 {
 			out = applyCallReturnPresenceRelations(ctx, facts, cache, resolver, projectPath, branchRefinements, callPoint, siteView, outcome, out)
 		}
 	}
 	return out
+}
+
+func callOutcomeEdgeMayUseOutcome(
+	ctx transfer.EdgeContext,
+	branchRefinements []factflow.BranchRefinement,
+	callPoint cfg.Point,
+	site factflow.CallSiteView,
+) bool {
+	if site.Context() == factflow.CallSiteContextCondition {
+		branch, ok := callOutcomeConditionBranchPoint(ctx.Graph, callPoint)
+		if ok && branch == ctx.Edge.From {
+			return true
+		}
+	}
+	if !ctx.Graph.IsBranch(ctx.Edge.From) || len(branchRefinements) == 0 {
+		return false
+	}
+	matches := false
+	site.ForEachResultTarget(func(target factflow.CallResultTargetView) bool {
+		if !callOutcomeRelatableTarget(target) {
+			return true
+		}
+		targetPath := target.TargetPathRef()
+		for _, branchRefinement := range branchRefinements {
+			if pathsMatchForBranchRelation(branchRefinement.TargetPathRef(), targetPath) {
+				matches = true
+				return false
+			}
+		}
+		return true
+	})
+	return matches
 }
 
 func applyCallReturnConditionRefinements(
@@ -182,8 +223,12 @@ func applyCallReturnConditionRefinements(
 		return out
 	}
 	bindings := callArgumentPlaceholderBindings(facts, site)
+	callReturnValue := ctx.Edge.Cond
+	if site.ConditionNegated() {
+		callReturnValue = !callReturnValue
+	}
 	for _, refinement := range outcome.ReturnConditionRefinements {
-		if refinement.ReturnIndex != 0 || refinement.ReturnValue != ctx.Edge.Cond {
+		if refinement.ReturnIndex != 0 || refinement.ReturnValue != callReturnValue {
 			continue
 		}
 		targetPath, ok := refinement.Target.Substitute(bindings)
@@ -201,6 +246,109 @@ func applyCallReturnConditionRefinements(
 		)
 	}
 	return out
+}
+
+func applyCallReturnConditionSlotRefinements(
+	ctx transfer.EdgeContext,
+	facts factflow.Facts,
+	cache *callOutcomeTraversalCache,
+	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
+	branchRefinements []factflow.BranchRefinement,
+	callPoint cfg.Point,
+	site factflow.CallSiteView,
+	outcome callpayload.CallOutcome,
+	out state.State,
+) state.State {
+	if !ctx.Graph.IsBranch(ctx.Edge.From) {
+		return out
+	}
+	for _, refinement := range outcome.ReturnConditionSlots {
+		out = applyCallReturnConditionSlotRefinement(ctx, facts, cache, resolver, projectPath, branchRefinements, callPoint, site, refinement, out)
+	}
+	return out
+}
+
+func applyCallReturnConditionSlotRefinement(
+	ctx transfer.EdgeContext,
+	facts factflow.Facts,
+	cache *callOutcomeTraversalCache,
+	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
+	branchRefinements []factflow.BranchRefinement,
+	callPoint cfg.Point,
+	site factflow.CallSiteView,
+	refinement callpayload.CallReturnConditionSlotRefinement,
+	out state.State,
+) state.State {
+	triggerTarget, ok := callOutcomeTargetForResult(site, refinement.ReturnIndex)
+	if !ok || !callOutcomeRelatableTarget(triggerTarget) {
+		return out
+	}
+	target, ok := callOutcomeTargetForResult(site, refinement.TargetIndex)
+	if !ok || !callOutcomeRelatableTarget(target) {
+		return out
+	}
+	triggerAssign, ok := callOutcomeResultAssignmentPoint(cache, ctx.Graph, facts, callPoint, triggerTarget, refinement.ReturnIndex)
+	if !ok {
+		return out
+	}
+	targetAssign, ok := callOutcomeResultAssignmentPoint(cache, ctx.Graph, facts, callPoint, target, refinement.TargetIndex)
+	if !ok {
+		return out
+	}
+	relationTargets := callOutcomePresenceTargets{
+		callPoint:     callPoint,
+		triggerTarget: triggerTarget,
+		target:        target,
+		triggerAssign: triggerAssign,
+		targetAssign:  targetAssign,
+		establish:     callOutcomeLaterPoint(cache, ctx.Graph, targetAssign, triggerAssign),
+	}
+	activeIn := callOutcomeRelationActiveIn(cache, ctx.Graph, facts, relationTargets)
+	if !activeIn[ctx.Edge.From] || !callOutcomeBranchRefinesTruthiness(ctx, branchRefinements, triggerTarget, refinement.ReturnValue) {
+		return out
+	}
+	return applyBranchRefinement(ctx, resolver, projectPath, out, target.TargetPathRef(), factflow.NewValueConstraint(refinement.Value))
+}
+
+func callOutcomeBranchRefinesTruthiness(
+	ctx transfer.EdgeContext,
+	branchRefinements []factflow.BranchRefinement,
+	triggerTarget factflow.CallResultTargetView,
+	want bool,
+) bool {
+	triggerPath := triggerTarget.TargetPathRef()
+	for _, branchRefinement := range branchRefinements {
+		if !pathsMatchForBranchRelation(branchRefinement.TargetPathRef(), triggerPath) {
+			continue
+		}
+		refinement, ok := branchRefinement.ValueForEdge(ctx.Edge.Cond)
+		if !ok {
+			continue
+		}
+		if valueRefinementPinsLuaTruthiness(ctx, refinement, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func valueRefinementPinsLuaTruthiness(
+	ctx transfer.EdgeContext,
+	refinement factflow.ValueRefinement,
+	want bool,
+) bool {
+	constraint, ok := refinement.Constraint()
+	if !ok || product.Equal(ctx.Registry, constraint, product.Bottom(ctx.Registry)) {
+		return false
+	}
+	if presence.Equal(product.PresenceOf(constraint), presence.Absent()) {
+		return !want
+	}
+	canTruthy := valuerefine.CanBeTruthy(ctx.Registry, constraint)
+	canFalsy := valuerefine.CanBeFalsy(ctx.Registry, constraint)
+	return canTruthy != canFalsy && canTruthy == want
 }
 
 func applyCallReturnPresenceRelations(
@@ -265,16 +413,16 @@ func applyCallReturnPresenceRelation(
 		return out
 	}
 	branchRelation := factflow.NewBranchPresenceRelation(
-		triggerTarget.TargetPath(),
+		triggerTarget.TargetPathRef(),
 		relation.TriggerPresence,
-		target.TargetPath(),
+		target.TargetPathRef(),
 		relation.TargetPresence,
 	)
 	refinement, ok := branchPresenceRelationRefinement(nil, ctx, resolver, projectPath, out, branchRefinements, branchRelation)
 	if !ok {
 		return out
 	}
-	return applyBranchRefinement(ctx, resolver, projectPath, out, branchRelation.TargetPath(), refinement)
+	return applyBranchRefinement(ctx, resolver, projectPath, out, branchRelation.TargetPathRef(), refinement)
 }
 
 func callOutcomeConditionBranchPoint(graph cfg.Graph, point cfg.Point) (cfg.Point, bool) {
@@ -284,7 +432,7 @@ func callOutcomeConditionBranchPoint(graph cfg.Graph, point cfg.Point) (cfg.Poin
 	if graph.IsBranch(point) {
 		return point, true
 	}
-	successors := graph.Successors(point)
+	successors := cfg.SuccessorsReadOnly(graph, point)
 	if len(successors) != 1 {
 		return 0, false
 	}
@@ -321,7 +469,7 @@ func callOutcomeResultAssignmentPoint(
 	}
 	for _, point := range cache.graphRPO(graph) {
 		if assignment, ok := facts.RootAssignment(point); ok &&
-			target.TargetPathEqual(assignment.TargetPath()) &&
+			target.TargetPathEqual(assignment.TargetPathRef()) &&
 			callOutcomeValueSourceConsumesResult(assignment.Source(), callPoint, target, resultIndex) {
 			cache.assignmentPoints[key] = point
 			return point, true
@@ -415,7 +563,7 @@ func callOutcomeAllPredecessorsActive(cache *callOutcomeTraversalCache, graph cf
 	if cache != nil {
 		preds = cache.graphPredecessors(graph, point)
 	} else if graph != nil {
-		preds = graph.Predecessors(point)
+		preds = cfg.PredecessorsReadOnly(graph, point)
 	}
 	if len(preds) == 0 {
 		return false
@@ -436,10 +584,10 @@ func callOutcomeRelationKilledAt(
 	if point == targets.targetAssign || point == targets.triggerAssign {
 		return false
 	}
-	if assignment, ok := facts.RootAssignment(point); ok && callOutcomeRelationTargetPath(assignment.TargetPath(), targets) {
+	if assignment, ok := facts.RootAssignment(point); ok && callOutcomeRelationTargetPath(assignment.TargetPathRef(), targets) {
 		return true
 	}
-	if pathAssignment, ok := facts.PathAssignment(point); ok && callOutcomeRelationTargetPath(pathAssignment.TargetPath(), targets) {
+	if pathAssignment, ok := facts.PathAssignment(point); ok && callOutcomeRelationTargetPath(pathAssignment.TargetPathRef(), targets) {
 		return true
 	}
 	return false
@@ -454,7 +602,7 @@ func callOutcomeBranchRefinesPath(
 	target factflow.CallResultTargetView,
 ) bool {
 	for _, refinement := range branchRefinements {
-		if pathsMatchForBranchRelation(refinement.TargetPath(), target.TargetPath()) {
+		if pathsMatchForBranchRelation(refinement.TargetPathRef(), target.TargetPathRef()) {
 			return true
 		}
 	}

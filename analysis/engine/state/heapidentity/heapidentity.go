@@ -59,6 +59,14 @@ func NewOwnedStaticTableObject(root product.Value, staticMembers map[keyspace.Ke
 // Root returns the object's root product value.
 func (o TableObject) Root() product.Value { return o.root }
 
+// WithRoot returns object with its root value replaced, preserving finite
+// member lanes.
+func (o TableObject) WithRoot(root product.Value) TableObject {
+	out := o
+	out.root = root
+	return out
+}
+
 // StaticMember reads a proven static member fact.
 func (o TableObject) StaticMember(key keyspace.Key) (product.Value, bool) {
 	value, ok := o.staticMembers[key]
@@ -68,6 +76,28 @@ func (o TableObject) StaticMember(key keyspace.Key) (product.Value, bool) {
 // StaticMembers returns a defensive copy of finite static member facts.
 func (o TableObject) StaticMembers() map[keyspace.Key]product.Value {
 	return clonePathMap(o.staticMembers)
+}
+
+// WithStaticMember returns an object with a proven static member written at the
+// rootless suffix. Static string indexes are mirrored to field spelling so
+// `t["id"]` and `t.id` stay equivalent inside the heap identity lane.
+func (o TableObject) WithStaticMember(ks *keyspace.KeySpace, suffix []segment.Segment, value product.Value) (TableObject, bool) {
+	if o.bottom {
+		return o, false
+	}
+	key, ok := StaticMemberSuffixKey(ks, suffix)
+	if !ok {
+		return o, false
+	}
+	out := CloneObject(o)
+	if out.staticMembers == nil {
+		out.staticMembers = make(map[keyspace.Key]product.Value, 1)
+	}
+	out.staticMembers[key] = value
+	if canonical, ok := FieldCanonicalStaticMemberSuffixKey(ks, suffix); ok {
+		out.staticMembers[canonical] = value
+	}
+	return out, true
 }
 
 // WithoutStaticMemberSubtree returns an object with any static-member fact at
@@ -80,6 +110,18 @@ func (o TableObject) WithoutStaticMemberSubtree(ks *keyspace.KeySpace, prefix []
 // strictly below prefix removed while preserving a fact exactly at prefix.
 func (o TableObject) WithoutStaticMemberDescendants(ks *keyspace.KeySpace, prefix []segment.Segment) (TableObject, bool) {
 	return o.withoutStaticMembersMatching(ks, prefix, true)
+}
+
+// WithoutDynamicIndexFactSubtree returns an object with dynamic-index facts for
+// tables at prefix or below removed.
+func (o TableObject) WithoutDynamicIndexFactSubtree(ks *keyspace.KeySpace, prefix []segment.Segment) (TableObject, bool) {
+	return o.withoutDynamicIndexFactsMatching(ks, prefix, false)
+}
+
+// WithoutDynamicIndexFactDescendants returns an object with dynamic-index facts
+// strictly below prefix removed while preserving facts for the exact table.
+func (o TableObject) WithoutDynamicIndexFactDescendants(ks *keyspace.KeySpace, prefix []segment.Segment) (TableObject, bool) {
+	return o.withoutDynamicIndexFactsMatching(ks, prefix, true)
 }
 
 // DynamicIndexFact reads a finite dynamic-index fact.
@@ -118,13 +160,13 @@ func (o TableObject) withoutStaticMembersMatching(ks *keyspace.KeySpace, prefix 
 	out := CloneObject(o)
 	changed := false
 	for key := range out.staticMembers {
-		segments, ok := ks.SuffixSegments(key)
+		segments, ok := ks.SuffixSegmentsView(key)
 		if !ok {
 			continue
 		}
-		matches := address.SegmentsHasPrefix(segments, prefix)
+		matches := dynamicFactSegmentsMatchInvalidation(segments, prefix, false)
 		if descendantsOnly {
-			matches = address.SegmentsHasStrictPrefix(segments, prefix)
+			matches = dynamicFactSegmentsMatchInvalidation(segments, prefix, true)
 		}
 		if matches {
 			delete(out.staticMembers, key)
@@ -138,6 +180,58 @@ func (o TableObject) withoutStaticMembersMatching(ks *keyspace.KeySpace, prefix 
 		out.staticMembers = nil
 	}
 	return out, true
+}
+
+func (o TableObject) withoutDynamicIndexFactsMatching(ks *keyspace.KeySpace, prefix []segment.Segment, descendantsOnly bool) (TableObject, bool) {
+	if o.bottom || len(o.dynamicIndexFacts) == 0 || o.dynamicIndexFactsTop {
+		return o, false
+	}
+	out := CloneObject(o)
+	changed := false
+	for key := range out.dynamicIndexFacts {
+		if key.Table.Kind == keyspace.KindInvalid {
+			continue
+		}
+		segments := ks.Segments(key.Table)
+		matches := dynamicFactSegmentsMatchInvalidation(segments, prefix, false)
+		if descendantsOnly {
+			matches = dynamicFactSegmentsMatchInvalidation(segments, prefix, true)
+		}
+		if matches {
+			delete(out.dynamicIndexFacts, key)
+			changed = true
+		}
+	}
+	if !changed {
+		return o, false
+	}
+	if len(out.dynamicIndexFacts) == 0 {
+		out.dynamicIndexFacts = nil
+	}
+	return out, true
+}
+
+func dynamicFactSegmentsMatchInvalidation(segments, prefix []segment.Segment, strict bool) bool {
+	if strict {
+		if address.SegmentsHasStrictPrefix(segments, prefix) {
+			return true
+		}
+	} else if address.SegmentsHasPrefix(segments, prefix) {
+		return true
+	}
+	for start := 1; start < len(segments); start++ {
+		suffix := segments[start:]
+		if strict {
+			if address.SegmentsHasStrictPrefix(suffix, prefix) {
+				return true
+			}
+			continue
+		}
+		if address.SegmentsHasPrefix(suffix, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // Rekey re-interns the rootless static-member keys and dynamic-index table keys
@@ -155,7 +249,7 @@ func (o TableObject) Rekey(from, to *keyspace.KeySpace) TableObject {
 	if len(o.staticMembers) != 0 {
 		rekeyed := make(map[keyspace.Key]product.Value, len(o.staticMembers))
 		for key, value := range o.staticMembers {
-			segments, ok := from.SuffixSegments(key)
+			segments, ok := from.SuffixSegmentsView(key)
 			if !ok {
 				continue
 			}
@@ -174,73 +268,77 @@ func (o TableObject) Rekey(from, to *keyspace.KeySpace) TableObject {
 }
 
 func ObjectDomain(reg *axis.Registry) lattice.Lattice[TableObject] {
-	return objectDomainCache.Get(reg, func() lattice.Lattice[TableObject] {
-		valueDomain := product.Domain(reg)
-		staticDomain := lift.MustMap[keyspace.Key, product.Value](valueDomain)
-		dynamicDomain := dynamicindex.MapDomain(reg)
-		return lattice.Lattice[TableObject]{
-			Bottom: func() TableObject { return BottomObject(reg) },
-			Top:    TopObject,
-			Equal: func(a, b TableObject) bool {
-				if a.bottom || b.bottom {
-					return a.bottom && b.bottom
-				}
-				return valueDomain.Equal(a.root, b.root) &&
-					staticDomain.Equal(staticLane(a), staticLane(b)) &&
-					dynamicDomain.Equal(dynamicLane(a, dynamicDomain), dynamicLane(b, dynamicDomain))
-			},
-			LessOrEq: func(a, b TableObject) bool {
-				switch {
-				case a.bottom:
-					return true
-				case b.bottom:
-					return false
-				default:
-					return valueDomain.LessOrEq(a.root, b.root) &&
-						staticDomain.LessOrEq(staticLane(a), staticLane(b)) &&
-						dynamicDomain.LessOrEq(dynamicLane(a, dynamicDomain), dynamicLane(b, dynamicDomain))
-				}
-			},
-			Join: func(a, b TableObject) TableObject {
-				if a.bottom {
-					return CloneObject(b)
-				}
-				if b.bottom {
-					return CloneObject(a)
-				}
-				static := staticDomain.Join(staticLane(a), staticLane(b))
-				dynamic := dynamicDomain.Join(dynamicLane(a, dynamicDomain), dynamicLane(b, dynamicDomain))
-				return objectFromLanes(
-					valueDomain.Join(a.root, b.root),
-					static,
-					dynamic,
-					dynamicDomain,
-				)
-			},
-			Widen: func(prev, next TableObject) TableObject {
-				if prev.bottom {
-					return CloneObject(next)
-				}
-				if next.bottom {
-					return CloneObject(prev)
-				}
-				static := staticDomain.Widen(staticLane(prev), staticLane(next))
-				dynamic := dynamicDomain.Widen(dynamicLane(prev, dynamicDomain), dynamicLane(next, dynamicDomain))
-				return objectFromLanes(
-					valueDomain.Widen(prev.root, next.root),
-					static,
-					dynamic,
-					dynamicDomain,
-				)
-			},
-		}
-	})
+	return objectDomainCache.GetFor(reg, objectDomainForRegistry)
+}
+
+func objectDomainForRegistry(reg *axis.Registry) lattice.Lattice[TableObject] {
+	valueDomain := product.Domain(reg)
+	staticDomain := lift.MustMap[keyspace.Key, product.Value](valueDomain)
+	dynamicDomain := dynamicindex.MapDomain(reg)
+	return lattice.Lattice[TableObject]{
+		Bottom: func() TableObject { return BottomObject(reg) },
+		Top:    TopObject,
+		Equal: func(a, b TableObject) bool {
+			if a.bottom || b.bottom {
+				return a.bottom && b.bottom
+			}
+			return valueDomain.Equal(a.root, b.root) &&
+				staticDomain.Equal(staticLane(a), staticLane(b)) &&
+				dynamicDomain.Equal(dynamicLane(a, dynamicDomain), dynamicLane(b, dynamicDomain))
+		},
+		LessOrEq: func(a, b TableObject) bool {
+			switch {
+			case a.bottom:
+				return true
+			case b.bottom:
+				return false
+			default:
+				return valueDomain.LessOrEq(a.root, b.root) &&
+					staticDomain.LessOrEq(staticLane(a), staticLane(b)) &&
+					dynamicDomain.LessOrEq(dynamicLane(a, dynamicDomain), dynamicLane(b, dynamicDomain))
+			}
+		},
+		Join: func(a, b TableObject) TableObject {
+			if a.bottom {
+				return b
+			}
+			if b.bottom {
+				return a
+			}
+			static := staticDomain.Join(staticLane(a), staticLane(b))
+			dynamic := dynamicDomain.Join(dynamicLane(a, dynamicDomain), dynamicLane(b, dynamicDomain))
+			return objectFromLanes(
+				valueDomain.Join(a.root, b.root),
+				static,
+				dynamic,
+				dynamicDomain,
+			)
+		},
+		Widen: func(prev, next TableObject) TableObject {
+			if prev.bottom {
+				return next
+			}
+			if next.bottom {
+				return prev
+			}
+			static := staticDomain.Widen(staticLane(prev), staticLane(next))
+			dynamic := dynamicDomain.Widen(dynamicLane(prev, dynamicDomain), dynamicLane(next, dynamicDomain))
+			return objectFromLanes(
+				valueDomain.Widen(prev.root, next.root),
+				static,
+				dynamic,
+				dynamicDomain,
+			)
+		},
+	}
 }
 
 func MapDomain(reg *axis.Registry) lattice.Lattice[map[identity.ID]TableObject] {
-	return mapDomainCache.Get(reg, func() lattice.Lattice[map[identity.ID]TableObject] {
-		return lift.Map[identity.ID, TableObject](ObjectDomain(reg))
-	})
+	return mapDomainCache.GetFor(reg, mapDomainForRegistry)
+}
+
+func mapDomainForRegistry(reg *axis.Registry) lattice.Lattice[map[identity.ID]TableObject] {
+	return lift.Map[identity.ID, TableObject](ObjectDomain(reg))
 }
 
 func BottomObject(reg *axis.Registry) TableObject {

@@ -68,6 +68,8 @@ const (
 	EvidenceReasonUserTypeAssertion
 	EvidenceReasonUserAssertedAny
 	EvidenceReasonUserAssertedNonNil
+	EvidenceReasonExactType
+	EvidenceReasonUnionType
 )
 
 func (r EvidenceReason) String() string {
@@ -86,6 +88,10 @@ func (r EvidenceReason) String() string {
 		return "user asserted any"
 	case EvidenceReasonUserAssertedNonNil:
 		return "user asserted non-nil"
+	case EvidenceReasonExactType:
+		return "exact type"
+	case EvidenceReasonUnionType:
+		return "union type"
 	default:
 		return "reason(unknown)"
 	}

@@ -86,6 +86,7 @@ func (c *checker) prepareBoundFunction(fn *ast.FunctionExpr, bindings *bind.Resu
 
 func (c *checker) prepare(bindings *bind.Result, built *cfgbuild.Result, sem *semantics.Result) *Static {
 	config := c.config
+	globals := configGlobals(config)
 	modules := moduleidentity.New(bindings, built.Graph, sem)
 	moduleTypes := newRequireAliasTypeResolver(modules, config.ModuleTypes)
 	typeResolver := typeresolve.NewWithExternal(bindings, moduleTypes)
@@ -108,7 +109,7 @@ func (c *checker) prepare(bindings *bind.Result, built *cfgbuild.Result, sem *se
 	}
 	resolver := config.Visibility
 	if resolver == nil {
-		resolver = defaultVisibilityResolver(bindings, built, facts)
+		resolver = defaultVisibilityResolver(bindings, built, sem, facts)
 	}
 	userExpressionValue := config.ExpressionValue
 	expressionValue := userExpressionValue
@@ -116,7 +117,7 @@ func (c *checker) prepare(bindings *bind.Result, built *cfgbuild.Result, sem *se
 		expressionValue = readexpr.Provider(readexpr.Config{
 			Registry:   config.Registry,
 			Facts:      facts,
-			Visibility: resolver,
+			Visibility: resolver.Before(),
 			TypeValues: config.TypeValues,
 		})
 	}
@@ -129,18 +130,22 @@ func (c *checker) prepare(bindings *bind.Result, built *cfgbuild.Result, sem *se
 	}
 	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
 		Registry:              config.Registry,
+		TypeValues:            config.TypeValues,
 		ExpressionValues:      expressionValues,
 		ExpressionPaths:       expressionPaths,
 		ObjectLiteralView:     facts.ObjectLiteralView,
 		ObjectLiteralFromView: objectLiteralViewEvaluator(config.Registry, config.TypeValues),
 		ExpressionOps:         facts.ExpressionOperations(),
+		DynamicIndexExprs:     facts.DynamicIndexExpressions(),
 		ExpressionOp:          expressionOperationEvaluator(config.Registry, config.TypeValues),
 		ExpressionValue:       expressionValue,
 		VarargValue:           config.VarargValue,
 	})
-	calleeValue := calleeValueProvider(config.Registry, facts, resolver, sources, config.TypeValues)
+	calleeValue := calleeValueProvider(config.Registry, facts, resolver, sources, config.TypeValues, bindings, typeResolver)
+	receiverFn := declaredReceiverCallableProvider(facts, bindings, typeResolver)
 	signatureID.indexCallSites(facts)
 	callOutcomeSupplement := preparedCallOutcomeSupplement(config.Registry, config.ModuleExports, signatureID, facts, resolver, sources, config.TypeValues, calleeValue)
+	entrySeeds := entrySeedPlan(config.Registry, config.TypeValues, bindings, sem.Function(), globals, config.GlobalTypes, config.ModuleExports, typeResolver)
 	return &Static{
 		registry:              config.Registry,
 		bindings:              bindings,
@@ -149,14 +154,19 @@ func (c *checker) prepare(bindings *bind.Result, built *cfgbuild.Result, sem *se
 		signatures:            config.Signatures,
 		moduleTypes:           config.ModuleTypes,
 		moduleLoads:           config.ModuleExports,
+		globals:               globals,
+		globalTypes:           config.GlobalTypes,
 		modules:               modules,
 		signatureID:           signatureID,
 		facts:                 facts,
 		visibility:            resolver,
 		sources:               sources,
 		calleeValue:           calleeValue,
+		receiverFn:            receiverFn,
 		typeNS:                typeResolver,
 		typeValues:            config.TypeValues,
+		entrySeeds:            entrySeeds,
+		entrySeedsPrepared:    true,
 		callOutcomeSupplement: callOutcomeSupplement,
 		signatureReturnOps:    signatureReturnTypeOps(),
 	}
@@ -169,35 +179,29 @@ func (s *Static) Solve(config SolveConfig) *Result {
 	if config.Stats != nil {
 		config.Stats.BodySolves++
 	}
-	typeValues := config.TypeValues
-	if typeValues == nil {
-		typeValues = s.typeValues
-	}
-	if typeValues == nil {
-		typeValues = typevalue.NewCache()
-	}
-	callOutcome := s.callOutcomeProvider(config)
-	entryState, initial := parameterEntryState(
-		s.registry,
-		typeValues,
-		s.cfg.Graph,
-		s.bindings,
-		s.semantics.Function(),
-		s.moduleLoads,
-		s.typeNS,
-		config.EntryState,
-		config.Initial,
-	)
+	typeValues := s.solveTypeValues(config)
+	signatureArgumentType := s.signatureArgumentTypeProvider(config, typeValues)
+	callOutcome := s.callOutcomeProvider(config, typeValues, signatureArgumentType)
+	entryState, initial := s.solveEntryState(typeValues, config.EntryState, config.Initial)
 	nodeTransfer := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
-		Facts:          s.facts,
-		Sources:        s.sources,
-		CallOutcome:    callOutcome,
-		Visibility:     s.visibility,
-		ProjectPath:    luaPathTypeProjector,
-		CovariantWiden: luaCovariantWiden,
-		TypeValues:     typeValues,
+		Facts:                  s.facts,
+		Sources:                s.sources,
+		CallOutcome:            callOutcome,
+		Visibility:             s.visibility,
+		ProjectPath:            luaPathTypeProjector,
+		CovariantWiden:         luaCovariantWiden,
+		TypeValues:             typeValues,
+		ClosedDynamicAllValues: config.ClosedDynamicAllValues,
 	})
-	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.semantics, s.facts, s.sources, s.signatures, s.signatureID, s.typeNS, typeValues, callOutcome, s.visibility.KeySpace())
+	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.semantics, s.facts, s.sources, s.signatures, s.signatureID, s.typeNS, typeValues, callOutcome, s.visibility.KeySpace(), s.visibility)
+	edgeTransfer := factapply.NewFactsEdgeTransfer(factapply.FactsEdgeTransferConfig{
+		Facts:       s.facts,
+		Sources:     s.sources,
+		CallOutcome: callOutcome,
+		Visibility:  s.visibility,
+		ProjectPath: luaPathTypeProjector,
+		TypeValues:  typeValues,
+	})
 	flow := transfer.Run(transfer.Config{
 		Graph:        s.cfg.Graph,
 		Registry:     s.registry,
@@ -205,16 +209,10 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		EntryState:   entryState,
 		Initial:      initial,
 		NodeTransfer: nodeTransfer,
-		EdgeTransfer: factapply.NewFactsEdgeTransfer(factapply.FactsEdgeTransferConfig{
-			Facts:       s.facts,
-			CallOutcome: callOutcome,
-			Visibility:  s.visibility,
-			ProjectPath: luaPathTypeProjector,
-			TypeValues:  typeValues,
-		}),
-		WidenAt:    config.WidenAt,
-		WidenDelay: config.WidenDelay,
-		Stats:      transferStats(config.Stats),
+		EdgeTransfer: edgeTransfer,
+		WidenAt:      config.WidenAt,
+		WidenDelay:   config.WidenDelay,
+		Stats:        transferStats(config.Stats),
 	})
 	return &Result{
 		registry:        s.registry,
@@ -226,14 +224,38 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		modules:         s.modules,
 		signatureID:     s.signatureID,
 		facts:           s.facts,
-		exprRefinements: s.facts.ExpressionRefinements(),
+		exprRefinements: sourcevalue.NewExpressionRefinements(s.facts.ExpressionRefinements()),
+		typeNS:          s.typeNS,
 		flow:            flow,
 		boundaryXfer:    nodeTransfer,
+		edgeXfer:        edgeTransfer,
 		visibility:      s.visibility,
 		sources:         s.sources,
 		callOutcome:     callOutcome,
+		signatureArg:    signatureArgumentType,
 		typeValues:      typeValues,
+		stateLanes:      append([]state.LaneID(nil), config.StateLanes...),
+		queries:         newResultQueryCache(s.facts),
 	}
+}
+
+func (s *Static) solveEntryState(typeValues *typevalue.Cache, entry state.State, initial transfer.InitialState) (state.State, transfer.InitialState) {
+	if s.entrySeedsPrepared {
+		return applyEntrySeedPlan(s.registry, s.cfg.Graph, s.entrySeeds, entry, initial)
+	}
+	return parameterEntryState(
+		s.registry,
+		typeValues,
+		s.cfg.Graph,
+		s.bindings,
+		s.semantics.Function(),
+		s.globals,
+		s.globalTypes,
+		s.moduleLoads,
+		s.typeNS,
+		entry,
+		initial,
+	)
 }
 
 func transferStats(stats *Stats) *transfer.Stats {
@@ -243,10 +265,20 @@ func transferStats(stats *Stats) *transfer.Stats {
 	return &stats.Transfer
 }
 
-func (s *Static) callOutcomeProvider(config SolveConfig) callpayload.CallOutcomeProvider {
+func (s *Static) solveTypeValues(config SolveConfig) *typevalue.Cache {
+	if s != nil && s.typeValues != nil {
+		return s.typeValues
+	}
+	if config.TypeValues != nil {
+		return config.TypeValues
+	}
+	return typevalue.NewCache()
+}
+
+func (s *Static) signatureArgumentTypeProvider(config SolveConfig, typeValues *typevalue.Cache) SignatureArgumentTypeFunc {
 	signatureArgumentType := config.SignatureArgumentType
 	if config.SignatureArgumentTypeFactory != nil {
-		factoryArgumentType := config.SignatureArgumentTypeFactory(s.callOutcomeContext())
+		factoryArgumentType := config.SignatureArgumentTypeFactory(s.callOutcomeContext(typeValues))
 		if factoryArgumentType != nil {
 			baseArgumentType := signatureArgumentType
 			signatureArgumentType = func(ctx transfer.NodeContext, source factflow.ValueSource, in state.State, read func(cfg.Point) state.State) (typ.Type, bool) {
@@ -260,43 +292,48 @@ func (s *Static) callOutcomeProvider(config SolveConfig) callpayload.CallOutcome
 			}
 		}
 	}
-	callOutcome := config.CallOutcome
+	return signatureArgumentType
+}
+
+func (s *Static) callOutcomeProvider(config SolveConfig, typeValues *typevalue.Cache, signatureArgumentType SignatureArgumentTypeFunc) callpayload.CallOutcomeProvider {
+	var providers []callpayload.CallOutcomeProvider
 	if config.CallOutcomeFactory != nil {
-		callOutcome = calloutcome.WithSupplemental(
-			config.CallOutcomeFactory(s.callOutcomeContext()),
-			callOutcome,
-		)
+		providers = append(providers, config.CallOutcomeFactory(s.callOutcomeContext(typeValues)))
 	}
-	callOutcome = calloutcome.WithSupplemental(callOutcome, s.callOutcomeSupplement)
+	providers = append(providers, config.CallOutcome, s.callOutcomeSupplement)
 	if hasSignatures(s.signatures) {
-		// A declared signature is the authoritative result for the names it
-		// covers, so it leads the merge: its concrete return slots and
-		// postconditions take precedence over the generic callable-value and
-		// base-outcome fallbacks, which then supplement uncovered slots.
-		callOutcome = calloutcome.WithSupplemental(effectlowering.SignatureOutcomeProvider(effectlowering.SignatureOutcomeProviderConfig{
+		signatureProvider := effectlowering.SignatureOutcomeProvider(effectlowering.SignatureOutcomeProviderConfig{
 			Signatures:    s.signatures,
 			NameFor:       s.signatureID.nameForCall,
 			NameForSite:   s.signatureID.nameForCallSiteView,
 			ReturnTypeOps: s.signatureReturnOps,
+			TypeValues:    typeValues,
 			Facts:         s.facts,
 			Sources:       s.sources,
 			ArgumentType:  effectlowering.SignatureArgumentTypeFunc(signatureArgumentType),
+			ReturnValue:   stdlibSignatureReturnValue(s.registry, typeValues, s.sources, sourcevalue.NewExpressionRefinements(s.facts.ExpressionRefinements()), s.visibility),
 			KeySpace:      s.visibility.KeySpace(),
-		}), callOutcome)
+		})
+		providers = append([]callpayload.CallOutcomeProvider{signatureProvider}, providers...)
 	}
-	return callOutcome
+	return calloutcome.ComposeSupplemental(providers...)
 }
 
-func (s *Static) callOutcomeContext() CallOutcomeContext {
+func (s *Static) callOutcomeContext(typeValues *typevalue.Cache) CallOutcomeContext {
 	if s == nil {
 		return CallOutcomeContext{}
+	}
+	if typeValues == nil {
+		typeValues = s.typeValues
 	}
 	return CallOutcomeContext{
 		Facts:                       s.facts,
 		Sources:                     s.sources,
 		CalleeValue:                 s.calleeValue,
+		ReceiverCallable:            s.receiverFn,
 		ReturnPresenceRelationsPath: s.returnPresenceRelationsForPath,
 		KeySpace:                    s.visibility.KeySpace(),
+		TypeValues:                  typeValues,
 	}
 }
 
@@ -341,24 +378,27 @@ func preparedCallOutcomeSupplement(
 	typeValues *typevalue.Cache,
 	calleeValue CalleeValueFunc,
 ) callpayload.CallOutcomeProvider {
-	var out callpayload.CallOutcomeProvider
+	var providers []callpayload.CallOutcomeProvider
 	expressionRefinements := facts.ExpressionRefinements()
 	if hasModuleExports(moduleLoads) {
-		out = calloutcome.WithSupplemental(out, effectlowering.ModuleLoadOutcomeProvider(effectlowering.ModuleLoadOutcomeProviderConfig{
+		providers = append(providers, effectlowering.ModuleLoadOutcomeProvider(effectlowering.ModuleLoadOutcomeProviderConfig{
 			Exports:               moduleLoads,
 			NameFor:               signatureID.nameForCall,
 			NameForSite:           signatureID.nameForCallSiteView,
 			Sources:               sources,
 			ExpressionRefinements: expressionRefinements,
+			TypeValues:            typeValues,
 		}))
 	}
-	out = calloutcome.WithSupplemental(out, effectlowering.AmbientChannelSendOutcomeProvider(effectlowering.AmbientChannelSendOutcomeProviderConfig{
+	providers = append(providers, effectlowering.AmbientChannelSendOutcomeProvider(effectlowering.AmbientChannelSendOutcomeProviderConfig{
 		ReceiverType: channelMethodReceiverTypeProvider(reg, facts, resolver, sources, typeValues),
 	}))
-	return calloutcome.WithSupplemental(out, effectlowering.CallableValueOutcomeProvider(effectlowering.CallableValueOutcomeProviderConfig{
+	providers = append(providers, effectlowering.CallableValueOutcomeProvider(effectlowering.CallableValueOutcomeProviderConfig{
 		CalleeValue: effectlowering.CalleeValueFunc(calleeValue),
 		Callable:    typecall.Callable,
+		TypeValues:  typeValues,
 	}))
+	return calloutcome.ComposeSupplemental(providers...)
 }
 
 func luaPathTypeProjector(root typ.Type, p pathdom.Path) (typ.Type, bool) {

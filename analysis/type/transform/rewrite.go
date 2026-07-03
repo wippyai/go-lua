@@ -174,20 +174,10 @@ func rewriteDepth(t typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursio
 		}
 		out = typ.NewAlias(tt.Name, target)
 	case *typ.Instantiated:
-		var args []typ.Type
-		for idx, a := range tt.TypeArgs {
-			newArg := rewriteDepth(a, fn, next, childDepth, memo)
-			if newArg != a {
-				if args == nil {
-					args = make([]typ.Type, len(tt.TypeArgs))
-					copy(args, tt.TypeArgs)
-				}
-				args[idx] = newArg
-			} else if args != nil {
-				args[idx] = a
-			}
-		}
-		if args == nil {
+		args, changed := typ.MapMembers(tt.TypeArgs, func(a typ.Type) typ.Type {
+			return rewriteDepth(a, fn, next, childDepth, memo)
+		})
+		if !changed {
 			out = t
 			break
 		}
@@ -251,4 +241,3 @@ func rewriteCanDescend(t typ.Type) bool {
 		return false
 	}
 }
-

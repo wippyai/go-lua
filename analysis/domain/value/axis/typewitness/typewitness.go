@@ -90,10 +90,10 @@ func Of(t typ.Type) Value {
 		return Top()
 	}
 	switch t.(type) {
-	case *typ.TypeParam, *typ.Ref, *typ.Generic:
+	case *typ.Ref, *typ.Generic:
 		return Top()
 	case *typ.Instantiated:
-		if refinement.ContainsFreeTypeParam(t) {
+		if refinement.ContainsFreeTypeParam(t) && !openInstantiatedWitnessAllowed(t) {
 			return Top()
 		}
 	}
@@ -112,6 +112,15 @@ func Of(t typ.Type) Value {
 		t = canonical
 	}
 	return Value{state: concrete, t: t}
+}
+
+func openInstantiatedWitnessAllowed(t typ.Type) bool {
+	inst, ok := t.(*typ.Instantiated)
+	if !ok || inst.Generic == nil || inst.Generic.Body == nil {
+		return false
+	}
+	_, ok = unwrap.Alias(inst.Generic.Body).(*typ.Interface)
+	return ok
 }
 
 func (v Value) IsBottom() bool { return v.state == bottom }
@@ -157,9 +166,11 @@ func LessOrEq(a, b Value) bool {
 }
 
 // Widen is a true widening: once a concrete witness strictly grows it jumps to
-// Top, so ascending chains under repeated Widen are eventually stationary. Join
-// synthesizes unions, so Widen cannot remain Join without risking unbounded
-// witness growth at loop heads.
+// a stable primitive family when possible, otherwise Top, so ascending chains
+// under repeated Widen are eventually stationary. Join synthesizes unions, so
+// Widen cannot remain Join without risking unbounded witness growth at loop
+// heads; but literal scalar growth such as 0, 1, 2 should widen to integer, not
+// erase the proof entirely.
 func Widen(prev, next Value) Value {
 	if prev.state == bottom {
 		return next
@@ -173,7 +184,112 @@ func Widen(prev, next Value) Value {
 	if LessOrEq(next, prev) {
 		return prev
 	}
+	if family, ok := widenedPrimitiveFamily(prev.t, next.t); ok {
+		return Of(family)
+	}
+	if widened, ok := widenedStableRecord(prev.t, next.t); ok {
+		return Of(widened)
+	}
 	return Top()
+}
+
+func widenedPrimitiveFamily(a, b typ.Type) (typ.Type, bool) {
+	aBase, aOK := typelit.FamilyBase(a)
+	bBase, bOK := typelit.FamilyBase(b)
+	if !aOK || !bOK {
+		return nil, false
+	}
+	return typelit.MergeFamilyBases(aBase, bBase)
+}
+
+func widenedStableRecord(a, b typ.Type) (typ.Type, bool) {
+	ar, aOK := unwrap.Annotated(a).(*typ.Record)
+	br, bOK := unwrap.Annotated(b).(*typ.Record)
+	if !aOK || !bOK {
+		return nil, false
+	}
+	if ar.Open != br.Open ||
+		!sameWitnessType(ar.Metatable, br.Metatable) ||
+		!sameWitnessType(ar.MapKey, br.MapKey) ||
+		len(ar.Fields) != len(br.Fields) ||
+		len(ar.StaticMembers) != len(br.StaticMembers) {
+		return nil, false
+	}
+	var mapValue typ.Type
+	switch {
+	case ar.MapValue == nil && br.MapValue == nil:
+	case ar.MapValue == nil || br.MapValue == nil:
+		return nil, false
+	default:
+		widened, ok := widenRecordMemberType(ar.MapValue, br.MapValue)
+		if !ok {
+			return nil, false
+		}
+		mapValue = widened
+	}
+	fields := make([]typ.Field, len(ar.Fields))
+	for i := range ar.Fields {
+		af, bf := ar.Fields[i], br.Fields[i]
+		if af.Name != bf.Name || af.Optional != bf.Optional || af.Readonly != bf.Readonly {
+			return nil, false
+		}
+		widened, ok := widenRecordMemberType(af.Type, bf.Type)
+		if !ok {
+			return nil, false
+		}
+		fields[i] = af
+		fields[i].Type = widened
+	}
+	members := make([]typ.StaticMember, len(ar.StaticMembers))
+	for i := range ar.StaticMembers {
+		am, bm := ar.StaticMembers[i], br.StaticMembers[i]
+		if typ.CompareStaticMembers(am, bm) != 0 ||
+			am.Optional != bm.Optional ||
+			am.Readonly != bm.Readonly {
+			return nil, false
+		}
+		widened, ok := widenRecordMemberType(am.Type, bm.Type)
+		if !ok {
+			return nil, false
+		}
+		members[i] = am
+		members[i].Type = widened
+	}
+	return typ.RebuildRecord(typ.RecordParts{
+		Fields:        fields,
+		StaticMembers: members,
+		Metatable:     ar.Metatable,
+		MapKey:        ar.MapKey,
+		MapValue:      mapValue,
+		Open:          ar.Open,
+		AssumeSorted:  true,
+	}), true
+}
+
+func widenRecordMemberType(prev, next typ.Type) (typ.Type, bool) {
+	if sameWitnessType(prev, next) {
+		return prev, true
+	}
+	if family, ok := widenedPrimitiveFamily(prev, next); ok {
+		return family, true
+	}
+	if widened, ok := widenedStableRecord(prev, next); ok {
+		return widened, true
+	}
+	return normalizeWitnessUnion(prev, next), true
+}
+
+func sameWitnessType(a, b typ.Type) bool {
+	if a == b {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	if a.Hash() != b.Hash() {
+		return false
+	}
+	return typ.SameNodeOrAcyclicEqual(a, b)
 }
 
 func Meet(a, b Value) Value {

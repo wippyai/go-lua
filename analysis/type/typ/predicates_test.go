@@ -1,6 +1,10 @@
 package typ
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/wippyai/go-lua/analysis/type/annotation"
+)
 
 func TestIsUnknown(t *testing.T) {
 	tests := []struct {
@@ -81,6 +85,36 @@ func TestAbsentOrUnknown(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := AbsentOrUnknown(tt.in); got != tt.want {
 				t.Fatalf("AbsentOrUnknown(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsIntegerIndexType(t *testing.T) {
+	ann := []annotation.Annotation{{Name: "min"}}
+	tests := []struct {
+		name string
+		in   Type
+		want bool
+	}{
+		{name: "integer", in: Integer, want: true},
+		{name: "integer literal", in: LiteralInt(2), want: true},
+		{name: "number", in: Number, want: false},
+		{name: "number literal", in: LiteralNumber(2), want: false},
+		{name: "string literal", in: LiteralString("2"), want: false},
+		{name: "alias to integer", in: NewAlias("Index", Integer), want: true},
+		{name: "annotated integer", in: NewAnnotated(Integer, ann), want: true},
+		{name: "optional integer", in: MaterializeOptional(Integer), want: false},
+		{name: "integer literal union", in: MaterializeUnion([]Type{LiteralInt(1), LiteralInt(2)}), want: true},
+		{name: "mixed union", in: MaterializeUnion([]Type{LiteralInt(1), String}), want: false},
+		{name: "intersection with integer", in: MaterializeIntersection([]Type{String, Integer}), want: true},
+		{name: "intersection without integer", in: MaterializeIntersection([]Type{String, Boolean}), want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsIntegerIndexType(tt.in); got != tt.want {
+				t.Fatalf("IsIntegerIndexType(%v) = %v, want %v", tt.in, got, tt.want)
 			}
 		})
 	}

@@ -44,6 +44,89 @@ func segmentLists() [][]segment.Segment {
 	}
 }
 
+func TestInternSegmentsUsesStructuralShortKeys(t *testing.T) {
+	ks := New()
+
+	oneA := ks.internSegments([]segment.Segment{field("a.b")})
+	oneB := ks.internSegments([]segment.Segment{field("a.b")})
+	if oneA != oneB {
+		t.Fatalf("single segment was not interned structurally: %d != %d", oneA, oneB)
+	}
+
+	twoA := ks.internSegments([]segment.Segment{field("a"), field("b")})
+	twoB := ks.internSegments([]segment.Segment{field("a"), field("b")})
+	if twoA != twoB {
+		t.Fatalf("two-segment suffix was not interned structurally: %d != %d", twoA, twoB)
+	}
+	if oneA == twoA {
+		t.Fatalf("ambiguous formatted suffixes collided: single id %d matched pair id %d", oneA, twoA)
+	}
+	if len(ks.segByKey) != 0 {
+		t.Fatalf("short segment interning used string structural cache; got %d entries", len(ks.segByKey))
+	}
+
+	threeA := ks.internSegments([]segment.Segment{field("a"), field("b"), field("c")})
+	threeB := ks.internSegments([]segment.Segment{field("a"), field("b"), field("c")})
+	if threeA != threeB {
+		t.Fatalf("three-segment suffix was not interned structurally: %d != %d", threeA, threeB)
+	}
+	if len(ks.segByKey) != 0 {
+		t.Fatalf("short segment interning used string structural cache; got %d entries", len(ks.segByKey))
+	}
+
+	deepA := ks.internSegments([]segment.Segment{field("a"), field("b"), field("c"), field("d")})
+	deepB := ks.internSegments([]segment.Segment{field("a"), field("b"), field("c"), field("d")})
+	if deepA != deepB {
+		t.Fatalf("deep segment suffix was not interned: %d != %d", deepA, deepB)
+	}
+	if len(ks.segByKey) != 1 {
+		t.Fatalf("four-plus segment interning should use one structural string key, got %d", len(ks.segByKey))
+	}
+}
+
+func TestFormatCachesByStructuralKey(t *testing.T) {
+	ks := New()
+	key := ks.FromPath(pathdom.NewPath(symbol.ID(42), "value").Field("field"))
+	if got := ks.Format(key); got != "sym42.field" {
+		t.Fatalf("Format(key) = %q, want sym42.field", got)
+	}
+	if got := len(ks.formatByKey); got != 1 {
+		t.Fatalf("format cache entries after first format = %d, want 1", got)
+	}
+	if got := ks.Format(key); got != "sym42.field" {
+		t.Fatalf("cached Format(key) = %q, want sym42.field", got)
+	}
+	if got := len(ks.formatByKey); got != 1 {
+		t.Fatalf("format cache entries after repeated format = %d, want 1", got)
+	}
+
+	foreign := key
+	foreign.Segs = SegmentsID(999)
+	if got := ks.Format(foreign); got != "" {
+		t.Fatalf("Format(foreign key) = %q, want empty fail-closed spelling", got)
+	}
+	if got := len(ks.formatByKey); got != 1 {
+		t.Fatalf("invalid key should not populate format cache; got %d entries", got)
+	}
+}
+
+func TestFormatCacheSeparatesCanonicalNamedSpellings(t *testing.T) {
+	ks := New()
+	p := pathdom.Path{Root: "sym42", Segments: []segment.Segment{field("x")}}
+	syntax := ks.FromPath(p)
+	canonical := syntax
+	canonical.Canon = canonical.isStableNamed()
+	if got, want := ks.Format(syntax), p.Key(); got != want {
+		t.Fatalf("syntax Format = %q, want %q", got, want)
+	}
+	if got, want := ks.Format(canonical), pathdom.PathKey("n5:sym42.x"); got != want {
+		t.Fatalf("canonical Format = %q, want %q", got, want)
+	}
+	if got := len(ks.formatByKey); got != 2 {
+		t.Fatalf("format cache entries = %d, want separate syntax/canonical entries", got)
+	}
+}
+
 // corpus builds every root flavor crossed with every segment list. Each entry is
 // produced through the SAME public KeySpace constructor that later stages use, so
 // the test exercises the real build path, then asserts Format equivalence against
@@ -209,6 +292,49 @@ func TestFormatMatchesOldSpelling(t *testing.T) {
 	t.Logf("Format equivalence verified over %d corpus keys", len(corpus))
 }
 
+func TestStatePathDecodesStateAddressKeys(t *testing.T) {
+	ks := New()
+	symPath := pathdom.Path{Symbol: 42, Version: 3}.Field("child").IndexInt(2)
+	unversionedPath := pathdom.Path{Symbol: 43}.Field("root")
+	placeholderPath := pathdom.NewPlaceholder(1).Field("arg")
+	returnPath := pathdom.Path{Root: retSlotRoot(2)}.Field("value")
+	namedPath := pathdom.Path{Root: "global"}.Field("member")
+
+	for _, want := range []pathdom.Path{
+		symPath,
+		unversionedPath,
+		placeholderPath,
+		returnPath,
+		namedPath,
+	} {
+		got, ok := ks.StatePath(ks.FromPath(want))
+		if !ok {
+			t.Fatalf("StatePath(%q) failed", want.Key())
+		}
+		if !got.Equal(want) {
+			t.Fatalf("StatePath(%q) = %q, want %q", want.Key(), got.Key(), want.Key())
+		}
+	}
+}
+
+func TestStatePathRejectsNonStateAddressKeys(t *testing.T) {
+	ks := New()
+	stable, ok := ks.FromStableSymbol(42, []segment.Segment{field("member")})
+	if !ok {
+		t.Fatal("FromStableSymbol failed")
+	}
+	rootless, ok := ks.FromRootlessSuffix([]segment.Segment{field("member")})
+	if !ok {
+		t.Fatal("FromRootlessSuffix failed")
+	}
+
+	for _, key := range []Key{stable, rootless, {}} {
+		if got, ok := ks.StatePath(key); ok {
+			t.Fatalf("StatePath(%+v) = %q, want rejected", key, got.Key())
+		}
+	}
+}
+
 func TestCanonicalNamedRootsMatchAddressEncoding(t *testing.T) {
 	ks := New()
 	roots := []string{
@@ -308,6 +434,33 @@ func TestHasPrefixMatchesAddress(t *testing.T) {
 	}
 }
 
+func TestExactRemainderAfterPrefixDoesNotUseLocalFieldIndexEquivalence(t *testing.T) {
+	ks := New()
+	prefix := ks.FromPath(pathdom.Path{Symbol: 42, Version: 3}.Field("x"))
+	fieldChild := ks.FromPath(pathdom.Path{Symbol: 42, Version: 3}.Field("x").Field("y"))
+	indexChild := ks.FromPath(pathdom.Path{Symbol: 42, Version: 3}.IndexStr("x").Field("y"))
+
+	fieldSuffix, ok := ks.ExactRemainderAfterPrefix(fieldChild, prefix)
+	if !ok || len(fieldSuffix) != 1 || fieldSuffix[0] != field("y") {
+		t.Fatalf("ExactRemainderAfterPrefix(field child) = %#v/%v, want .y", fieldSuffix, ok)
+	}
+	if suffix, ok := ks.ExactRemainderAfterPrefix(indexChild, prefix); ok || suffix != nil {
+		t.Fatalf("ExactRemainderAfterPrefix(index-string child) = %#v/%v, want rejected", suffix, ok)
+	}
+}
+
+func TestExactRemainderAfterPrefixRejectsForeignKeys(t *testing.T) {
+	owner := New()
+	foreign := New()
+	prefix := owner.FromPath(pathdom.Path{Symbol: 42, Version: 3}.Field("x"))
+	_ = foreign.FromPath(pathdom.Path{Symbol: 99, Version: 1}.Field("other"))
+	foreignChild := foreign.FromPath(pathdom.Path{Symbol: 42, Version: 3}.Field("x").Field("y"))
+
+	if suffix, ok := owner.ExactRemainderAfterPrefix(foreignChild, prefix); ok || suffix != nil {
+		t.Fatalf("ExactRemainderAfterPrefix(foreign child) = %#v/%v, want rejected", suffix, ok)
+	}
+}
+
 func TestRebaseMatchesAddress(t *testing.T) {
 	ks := New()
 	corpus := buildCorpus(t, ks)
@@ -352,6 +505,51 @@ func TestFieldCanonicalMatchesAddress(t *testing.T) {
 	}
 }
 
+func TestAppendSegmentMatchesConstructedKey(t *testing.T) {
+	ks := New()
+	corpus := buildCorpus(t, ks)
+	members := []segment.Segment{field("next"), indexStr("next"), indexInt(4)}
+	for _, k := range corpus {
+		if !k.key.isStructural() {
+			if got, ok := ks.AppendSegment(k.key, field("x")); ok || got != (Key{}) {
+				t.Fatalf("AppendSegment(non-structural %q) = %#v/%v, want invalid/false", k.oracle, got, ok)
+			}
+			continue
+		}
+		for _, member := range members {
+			got, ok := ks.AppendSegment(k.key, member)
+			if !ok {
+				t.Fatalf("AppendSegment(%q, %v) failed", k.oracle, member)
+			}
+			wantSegments := append(append([]segment.Segment(nil), ks.Segments(k.key)...), member)
+			want := k.key
+			want.Segs = ks.internSegments(wantSegments)
+			if got != want || ks.Format(got) != ks.Format(want) {
+				t.Fatalf("AppendSegment(%q, %v) = %#v/%q, want %#v/%q",
+					k.oracle, member, got, ks.Format(got), want, ks.Format(want))
+			}
+		}
+	}
+}
+
+func TestSegmentsViewBorrowsAndSegmentsCopies(t *testing.T) {
+	ks := New()
+	key := ks.FromPath(pathdom.Path{Symbol: 7, Version: 1}.Field("a").Field("b"))
+	view, ok := ks.SegmentsView(key)
+	if !ok || !segmentsEqual(view, []segment.Segment{field("a"), field("b")}) {
+		t.Fatalf("SegmentsView = %v/%v, want borrowed .a.b segments", view, ok)
+	}
+	owned := ks.Segments(key)
+	owned[0] = field("mutated")
+	again, ok := ks.SegmentsView(key)
+	if !ok || !segmentsEqual(again, view) {
+		t.Fatalf("mutating Segments copy changed borrowed view: got %v/%v want %v", again, ok, view)
+	}
+	if ks.Format(key) != pathdom.PathKey("sym7@1.a.b") {
+		t.Fatalf("mutating Segments copy changed key format: %q", ks.Format(key))
+	}
+}
+
 func TestSuffixSegmentsMatchesAddress(t *testing.T) {
 	ks := New()
 	corpus := buildCorpus(t, ks)
@@ -366,6 +564,49 @@ func TestSuffixSegmentsMatchesAddress(t *testing.T) {
 		if wantOK && !segmentsEqual(gotSegs, wantSegs) {
 			t.Fatalf("SuffixSegments(%q) = %v, want %v", k.oracle, gotSegs, wantSegs)
 		}
+	}
+}
+
+func TestSuffixSegmentsViewBorrowsAndSuffixSegmentsCopies(t *testing.T) {
+	ks := New()
+	key, ok := ks.FromRootlessSuffix([]segment.Segment{field("a"), indexStr("b")})
+	if !ok {
+		t.Fatal("FromRootlessSuffix failed")
+	}
+	view, ok := ks.SuffixSegmentsView(key)
+	if !ok || !segmentsEqual(view, []segment.Segment{field("a"), indexStr("b")}) {
+		t.Fatalf("SuffixSegmentsView = %v/%v, want borrowed suffix", view, ok)
+	}
+	owned, ok := ks.SuffixSegments(key)
+	if !ok {
+		t.Fatal("SuffixSegments failed")
+	}
+	owned[0] = field("mutated")
+	again, ok := ks.SuffixSegmentsView(key)
+	if !ok || !segmentsEqual(again, view) {
+		t.Fatalf("mutating SuffixSegments copy changed borrowed view: got %v/%v want %v", again, ok, view)
+	}
+	if ks.Format(key) != pathdom.PathKey(".a[\"b\"]") {
+		t.Fatalf("mutating SuffixSegments copy changed key format: %q", ks.Format(key))
+	}
+}
+
+func TestForeignRootlessSuffixKeyFailsClosed(t *testing.T) {
+	owner := New()
+	foreign := New()
+	key, ok := foreign.FromRootlessSuffix([]segment.Segment{field("member")})
+	if !ok {
+		t.Fatal("foreign FromRootlessSuffix failed")
+	}
+
+	if got, ok := owner.SuffixSegments(key); ok || got != nil {
+		t.Fatalf("SuffixSegments(foreign key) = %v/%v, want nil/false", got, ok)
+	}
+	if got, ok := owner.SuffixSegmentsView(key); ok || got != nil {
+		t.Fatalf("SuffixSegmentsView(foreign key) = %v/%v, want nil/false", got, ok)
+	}
+	if got := owner.Format(key); got != "" {
+		t.Fatalf("Format(foreign key) = %q, want empty fail-closed spelling", got)
 	}
 }
 

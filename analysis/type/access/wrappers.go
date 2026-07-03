@@ -22,6 +22,12 @@ func descendAccessWrappers[T any](
 		return optionalize(descendAccessWrappers(v.Inner, depth+1, descend, optionalize))
 	case *typ.Alias:
 		return descendAccessWrappers(v.UnaliasedTarget(), depth+1, descend, optionalize)
+	case *typ.TypeParam:
+		if v.Constraint == nil {
+			var zero T
+			return zero
+		}
+		return descendAccessWrappers(v.Constraint, depth+1, descend, optionalize)
 	case *typ.Recursive:
 		if v.Body == nil || v.Body == t {
 			var zero T

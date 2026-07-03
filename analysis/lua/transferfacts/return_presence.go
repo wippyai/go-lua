@@ -29,7 +29,7 @@ func (l *lowerer) addReturnPresenceRelations(input *factflow.FactsInput, graph c
 func returnFactPoints(graph cfg.Graph, result *semantics.Result) []cfg.Point {
 	var points []cfg.Point
 	for _, point := range graph.RPO() {
-		if _, ok := result.Return(point); ok {
+		if _, ok := result.ReturnView(point); ok {
 			points = append(points, point)
 		}
 	}

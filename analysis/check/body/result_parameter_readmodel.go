@@ -9,6 +9,9 @@ func (r *Result) ParameterValueSlots() []statekey.Value {
 	if r == nil || r.bindings == nil {
 		return nil
 	}
+	if r.paramSlotsOK {
+		return r.paramValueSlots
+	}
 	slots := r.bindings.ParamSlots(r.Function())
 	out := make([]statekey.Value, 0, len(slots))
 	for _, slot := range slots {
@@ -18,23 +21,30 @@ func (r *Result) ParameterValueSlots() []statekey.Value {
 		}
 		out = append(out, valueSlot)
 	}
-	return out
+	r.paramValueSlots = out
+	r.paramSlotsOK = true
+	return r.paramValueSlots
 }
 
 func (r *Result) ReassignedParameterValueSlots() map[statekey.Value]struct{} {
 	if r == nil || r.bindings == nil {
 		return nil
 	}
+	if r.reassignedOK {
+		return r.reassignedParams
+	}
 	params := make(map[statekey.Value]struct{})
 	for _, slot := range r.ParameterValueSlots() {
 		params[slot] = struct{}{}
 	}
 	if len(params) == 0 {
+		r.reassignedOK = true
 		return nil
 	}
 	out := make(map[statekey.Value]struct{})
 	graph := r.Graph()
 	if graph == nil {
+		r.reassignedOK = true
 		return nil
 	}
 	for _, point := range graph.RPO() {
@@ -48,7 +58,10 @@ func (r *Result) ReassignedParameterValueSlots() map[statekey.Value]struct{} {
 		}
 	}
 	if len(out) == 0 {
+		r.reassignedOK = true
 		return nil
 	}
-	return out
+	r.reassignedParams = out
+	r.reassignedOK = true
+	return r.reassignedParams
 }

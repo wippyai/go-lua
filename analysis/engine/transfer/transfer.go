@@ -42,6 +42,7 @@ type EdgeContext struct {
 	Registry *axis.Registry
 	Edge     cfg.Edge
 	HasCond  bool
+	Read     func(cfg.Point) state.State
 }
 
 // Config describes one forward dataflow run.
@@ -125,20 +126,24 @@ func TryRun(config Config) (Result, error) {
 			return out
 		}
 	}
+	widenAt := config.WidenAt
+	if widenAt == nil {
+		widenAt = defaultWidenAtForRPO(graph, cells)
+	}
 
 	sys := solve.EquationSystem[cfg.Point, state.State]{
 		Lattice: domain,
 		Cells:   cells,
-		Initial: func(point cfg.Point) state.State {
+		InitialSparse: func(point cfg.Point) (state.State, bool) {
 			if config.Initial != nil {
 				if initial, ok := config.Initial(point); ok {
-					return normalize(initial)
+					return normalize(initial), true
 				}
 			}
 			if point == entry {
-				return normalize(config.EntryState)
+				return normalize(config.EntryState), true
 			}
-			return domain.Bottom()
+			return state.State{}, false
 		},
 		Transfer: func(point cfg.Point, read func(cfg.Point) state.State, emit func(cfg.Point, state.State)) {
 			in := normalize(read(point))
@@ -150,7 +155,7 @@ func TryRun(config Config) (Result, error) {
 				Read:     read,
 			}, in))
 
-			for _, succ := range graph.Successors(point) {
+			for _, succ := range cfg.SuccessorsReadOnly(graph, point) {
 				cond, hasCond := graph.EdgeCond(point, succ)
 				hasCond = hasCond && graph.IsBranch(point)
 				edgeOut := normalize(edgeTransfer(EdgeContext{
@@ -158,11 +163,12 @@ func TryRun(config Config) (Result, error) {
 					Registry: registry,
 					Edge:     cfg.Edge{From: point, To: succ, Cond: cond},
 					HasCond:  hasCond,
+					Read:     read,
 				}, out))
 				emit(succ, edgeOut)
 			}
 		},
-		WidenAt:    config.WidenAt,
+		WidenAt:    widenAt,
 		WidenDelay: config.WidenDelay,
 		Stats:      solverStats(config.Stats),
 	}

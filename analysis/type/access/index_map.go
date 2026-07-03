@@ -13,6 +13,6 @@ func indexInMap(keyDomain typ.Type, value typ.Type, key typ.Type, depth int, mod
 		if value == nil {
 			value = typ.Nil
 		}
-		return fieldResult{t: value, ok: true, nilable: true}
+		return fieldResult{t: value, ok: true, nilable: mode != indexWrite}
 	})
 }

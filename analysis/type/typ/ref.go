@@ -58,17 +58,12 @@ func (r *Ref) Equals(other Type) bool {
 //
 // Example: type UserId = number creates Alias{Name: "UserId", Target: number}
 type Alias struct {
-	Name                  string // Alias name
-	Target                Type   // Underlying type
-	unaliased             Type
-	hash                  uint64
-	containsAny           bool
-	containsNever         bool
-	containsTypeParam     bool
-	containsInstantiated  bool
-	containsGeneric       bool
-	containsRecursive     bool
-	containsOpenRecursive bool
+	Name string // Alias name
+	// Underlying type.
+	Target    Type
+	unaliased Type
+	hash      uint64
+	typeProperties
 }
 
 // NewAlias creates a type alias.
@@ -76,17 +71,11 @@ func NewAlias(name string, target Type) *Alias {
 	h := EqualityHash(target)
 
 	return &Alias{
-		Name:                  name,
-		Target:                target,
-		unaliased:             flattenAliasTarget(target),
-		hash:                  h,
-		containsAny:           knownContainsAny(target),
-		containsNever:         knownContainsNever(target),
-		containsTypeParam:     knownContainsTypeParam(target),
-		containsInstantiated:  knownContainsInstantiated(target),
-		containsGeneric:       knownContainsGeneric(target),
-		containsRecursive:     knownContainsRecursive(target),
-		containsOpenRecursive: knownContainsOpenRecursive(target),
+		Name:           name,
+		Target:         target,
+		unaliased:      flattenAliasTarget(target),
+		hash:           h,
+		typeProperties: typePropertiesOf(target),
 	}
 }
 
@@ -138,31 +127,20 @@ func flattenAliasTarget(target Type) Type {
 //
 // Example: typeof(Point) has type Meta{Of: Point}
 type Meta struct {
-	Of                    Type // The type being wrapped
-	hash                  uint64
-	containsAny           bool
-	containsNever         bool
-	containsTypeParam     bool
-	containsInstantiated  bool
-	containsGeneric       bool
-	containsRecursive     bool
-	containsOpenRecursive bool
-	strCache              stringCache
+	// The type being wrapped.
+	Of   Type
+	hash uint64
+	typeProperties
+	strCache stringCache
 }
 
 // NewMeta creates a metatype.
 func NewMeta(of Type) *Meta {
 	h := hash.MixHash(uint64(kind.Meta), of.Hash())
 	return &Meta{
-		Of:                    of,
-		hash:                  h,
-		containsAny:           knownContainsAny(of),
-		containsNever:         knownContainsNever(of),
-		containsTypeParam:     knownContainsTypeParam(of),
-		containsInstantiated:  knownContainsInstantiated(of),
-		containsGeneric:       knownContainsGeneric(of),
-		containsRecursive:     knownContainsRecursive(of),
-		containsOpenRecursive: knownContainsOpenRecursive(of),
+		Of:             of,
+		hash:           h,
+		typeProperties: typePropertiesOf(of),
 	}
 }
 

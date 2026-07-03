@@ -4,27 +4,33 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 type operationalEffectsWire struct {
-	ReturnPresenceRelations         []returnPresenceRelationWire   `json:"returnPresenceRelations,omitempty"`
-	NormalReturnPresenceRefinements []pathPresenceRefinementWire   `json:"normalReturnPresenceRefinements,omitempty"`
-	PathStaticMembers               []pathStaticMemberWire         `json:"pathStaticMembers,omitempty"`
-	PathInvalidations               []pathInvalidationWire         `json:"pathInvalidations,omitempty"`
-	DynamicIndexFacts               []dynamicIndexFactWire         `json:"dynamicIndexFacts,omitempty"`
-	FrozenTables                    []frozenTableWire              `json:"frozenTables,omitempty"`
-	EscapeEvents                    []escapeEventWire              `json:"escapeEvents,omitempty"`
-	StoreRelations                  []storeRelationWire            `json:"storeRelations,omitempty"`
-	LifecycleEffects                []lifecycleEffectWire          `json:"lifecycleEffects,omitempty"`
-	ReturnAllocationTemplates       []returnAllocationTemplateWire `json:"returnAllocationTemplates,omitempty"`
+	ReturnPresenceRelations         []returnPresenceRelationWire    `json:"returnPresenceRelations,omitempty"`
+	NormalReturnPresenceRefinements []pathPresenceRefinementWire    `json:"normalReturnPresenceRefinements,omitempty"`
+	NormalReturnTypeRefinements     []pathTypeRefinementWire        `json:"normalReturnTypeRefinements,omitempty"`
+	PathStaticMembers               []pathStaticMemberWire          `json:"pathStaticMembers,omitempty"`
+	PathInvalidations               []pathInvalidationWire          `json:"pathInvalidations,omitempty"`
+	BranchProofs                    []branchProofWire               `json:"branchProofs,omitempty"`
+	DynamicIndexFacts               []dynamicIndexFactWire          `json:"dynamicIndexFacts,omitempty"`
+	KeyMemberships                  []keyMembershipWire             `json:"keyMemberships,omitempty"`
+	DynamicValueKeys                []dynamicValueKeyMembershipWire `json:"dynamicValueKeys,omitempty"`
+	FrozenTables                    []frozenTableWire               `json:"frozenTables,omitempty"`
+	EscapeEvents                    []escapeEventWire               `json:"escapeEvents,omitempty"`
+	StoreRelations                  []storeRelationWire             `json:"storeRelations,omitempty"`
+	LifecycleEffects                []lifecycleEffectWire           `json:"lifecycleEffects,omitempty"`
+	ReturnAllocationTemplates       []returnAllocationTemplateWire  `json:"returnAllocationTemplates,omitempty"`
 }
 
 type returnPresenceRelationWire struct {
@@ -39,6 +45,12 @@ type pathPresenceRefinementWire struct {
 	Presence string               `json:"presence"`
 }
 
+type pathTypeRefinementWire struct {
+	Path       *placeholderPathWire `json:"path,omitempty"`
+	Type       *typeWire            `json:"type,omitempty"`
+	Assertions []string             `json:"assertions,omitempty"`
+}
+
 type pathStaticMemberWire struct {
 	Path *placeholderPathWire `json:"path,omitempty"`
 	Type *typeWire            `json:"type,omitempty"`
@@ -48,8 +60,15 @@ type pathInvalidationWire struct {
 	Path *placeholderPathWire `json:"path,omitempty"`
 }
 
+type branchProofWire struct {
+	Kind     string            `json:"kind"`
+	Path     *boundaryPathWire `json:"path,omitempty"`
+	Presence string            `json:"presence,omitempty"`
+	Other    *boundaryPathWire `json:"other,omitempty"`
+}
+
 type dynamicIndexFactWire struct {
-	Table       *placeholderPathWire    `json:"table,omitempty"`
+	Table       *boundaryPathWire       `json:"table,omitempty"`
 	Site        string                  `json:"site"`
 	KeyPresence string                  `json:"keyPresence"`
 	Key         dynamicIndexOperandWire `json:"key"`
@@ -60,6 +79,17 @@ type dynamicIndexFactWire struct {
 type dynamicIndexOperandWire struct {
 	Path *placeholderPathWire `json:"path,omitempty"`
 	Type *typeWire            `json:"type,omitempty"`
+}
+
+type keyMembershipWire struct {
+	Key   *boundaryPathWire `json:"key,omitempty"`
+	Table *boundaryPathWire `json:"table,omitempty"`
+}
+
+type dynamicValueKeyMembershipWire struct {
+	Container *boundaryPathWire `json:"container,omitempty"`
+	Site      string            `json:"site"`
+	Table     *boundaryPathWire `json:"table,omitempty"`
 }
 
 type frozenTableWire struct {
@@ -116,6 +146,12 @@ type placeholderPathWire struct {
 	Suffix string `json:"suffix,omitempty"`
 }
 
+type boundaryPathWire struct {
+	Param  *int   `json:"param,omitempty"`
+	Return *int   `json:"return,omitempty"`
+	Suffix string `json:"suffix,omitempty"`
+}
+
 func encodeOperationalEffects(e *signature.OperationalEffects) (*operationalEffectsWire, error) {
 	if e == nil || e.IsEmpty() {
 		return nil, nil
@@ -151,6 +187,24 @@ func encodeOperationalEffects(e *signature.OperationalEffects) (*operationalEffe
 			Presence: pr,
 		})
 	}
+	for _, refinement := range e.NormalReturnTypeRefinements {
+		p, err := encodePlaceholderPath(refinement.Path)
+		if err != nil {
+			return nil, fmt.Errorf("normal return type refinement path: %w", err)
+		}
+		if refinement.Type == nil {
+			return nil, fmt.Errorf("normal return type refinement type: missing")
+		}
+		t, err := encodeType(refinement.Type)
+		if err != nil {
+			return nil, fmt.Errorf("normal return type refinement type: %w", err)
+		}
+		out.NormalReturnTypeRefinements = append(out.NormalReturnTypeRefinements, pathTypeRefinementWire{
+			Path:       p,
+			Type:       t,
+			Assertions: encodeAssertion(refinement.Assertion),
+		})
+	}
 	for _, member := range e.PathStaticMembers {
 		p, err := encodePlaceholderPath(member.Path)
 		if err != nil {
@@ -175,12 +229,33 @@ func encodeOperationalEffects(e *signature.OperationalEffects) (*operationalEffe
 		}
 		out.PathInvalidations = append(out.PathInvalidations, pathInvalidationWire{Path: p})
 	}
+	for _, proof := range e.BranchProofs {
+		encoded, err := encodeBranchProof(proof)
+		if err != nil {
+			return nil, fmt.Errorf("branch proof: %w", err)
+		}
+		out.BranchProofs = append(out.BranchProofs, encoded)
+	}
 	for _, fact := range e.DynamicIndexFacts {
 		encoded, err := encodeDynamicIndexFact(fact)
 		if err != nil {
 			return nil, fmt.Errorf("dynamic index fact: %w", err)
 		}
 		out.DynamicIndexFacts = append(out.DynamicIndexFacts, encoded)
+	}
+	for _, fact := range e.KeyMemberships {
+		encoded, err := encodeKeyMembership(fact)
+		if err != nil {
+			return nil, fmt.Errorf("key membership: %w", err)
+		}
+		out.KeyMemberships = append(out.KeyMemberships, encoded)
+	}
+	for _, fact := range e.DynamicValueKeys {
+		encoded, err := encodeDynamicValueKeyMembership(fact)
+		if err != nil {
+			return nil, fmt.Errorf("dynamic value key membership: %w", err)
+		}
+		out.DynamicValueKeys = append(out.DynamicValueKeys, encoded)
 	}
 	for _, frozen := range e.FrozenTables {
 		p, err := encodePlaceholderPath(frozen.Target)
@@ -276,6 +351,28 @@ func decodeOperationalEffects(w *operationalEffectsWire) (signature.OperationalE
 			Presence: pr,
 		})
 	}
+	for _, refinement := range w.NormalReturnTypeRefinements {
+		p, err := decodePlaceholderPath(refinement.Path)
+		if err != nil {
+			return signature.OperationalEffects{}, fmt.Errorf("normal return type refinement path: %w", err)
+		}
+		t, err := decodeType(refinement.Type)
+		if err != nil {
+			return signature.OperationalEffects{}, fmt.Errorf("normal return type refinement type: %w", err)
+		}
+		if t == nil {
+			return signature.OperationalEffects{}, fmt.Errorf("normal return type refinement type: missing")
+		}
+		assertionClaim, err := decodeAssertion(refinement.Assertions)
+		if err != nil {
+			return signature.OperationalEffects{}, fmt.Errorf("normal return type refinement assertions: %w", err)
+		}
+		out.NormalReturnTypeRefinements = append(out.NormalReturnTypeRefinements, signature.PathTypeRefinement{
+			Path:      p,
+			Type:      t,
+			Assertion: assertionClaim,
+		})
+	}
 	for _, member := range w.PathStaticMembers {
 		p, err := decodePlaceholderPath(member.Path)
 		if err != nil {
@@ -300,12 +397,33 @@ func decodeOperationalEffects(w *operationalEffectsWire) (signature.OperationalE
 		}
 		out.PathInvalidations = append(out.PathInvalidations, signature.PathInvalidation{Path: p})
 	}
+	for _, proof := range w.BranchProofs {
+		decoded, err := decodeBranchProof(proof)
+		if err != nil {
+			return signature.OperationalEffects{}, fmt.Errorf("branch proof: %w", err)
+		}
+		out.BranchProofs = append(out.BranchProofs, decoded)
+	}
 	for _, fact := range w.DynamicIndexFacts {
 		decoded, err := decodeDynamicIndexFact(fact)
 		if err != nil {
 			return signature.OperationalEffects{}, fmt.Errorf("dynamic index fact: %w", err)
 		}
 		out.DynamicIndexFacts = append(out.DynamicIndexFacts, decoded)
+	}
+	for _, fact := range w.KeyMemberships {
+		decoded, err := decodeKeyMembership(fact)
+		if err != nil {
+			return signature.OperationalEffects{}, fmt.Errorf("key membership: %w", err)
+		}
+		out.KeyMemberships = append(out.KeyMemberships, decoded)
+	}
+	for _, fact := range w.DynamicValueKeys {
+		decoded, err := decodeDynamicValueKeyMembership(fact)
+		if err != nil {
+			return signature.OperationalEffects{}, fmt.Errorf("dynamic value key membership: %w", err)
+		}
+		out.DynamicValueKeys = append(out.DynamicValueKeys, decoded)
 	}
 	for _, frozen := range w.FrozenTables {
 		p, err := decodePlaceholderPath(frozen.Target)
@@ -381,6 +499,16 @@ func canonicalizeOperationalEffectsWire(w *operationalEffectsWire) {
 		}
 		return left.Presence < right.Presence
 	})
+	sort.Slice(w.NormalReturnTypeRefinements, func(i, j int) bool {
+		left, right := w.NormalReturnTypeRefinements[i], w.NormalReturnTypeRefinements[j]
+		if c := comparePlaceholderPathWire(left.Path, right.Path); c != 0 {
+			return c < 0
+		}
+		if leftKey, rightKey := typeWireKey(left.Type), typeWireKey(right.Type); leftKey != rightKey {
+			return leftKey < rightKey
+		}
+		return strings.Join(left.Assertions, ",") < strings.Join(right.Assertions, ",")
+	})
 	sort.Slice(w.PathStaticMembers, func(i, j int) bool {
 		left, right := w.PathStaticMembers[i], w.PathStaticMembers[j]
 		if c := comparePlaceholderPathWire(left.Path, right.Path); c != 0 {
@@ -391,9 +519,12 @@ func canonicalizeOperationalEffectsWire(w *operationalEffectsWire) {
 	sort.Slice(w.PathInvalidations, func(i, j int) bool {
 		return comparePlaceholderPathWire(w.PathInvalidations[i].Path, w.PathInvalidations[j].Path) < 0
 	})
+	sort.Slice(w.BranchProofs, func(i, j int) bool {
+		return compareBranchProofWire(w.BranchProofs[i], w.BranchProofs[j]) < 0
+	})
 	sort.Slice(w.DynamicIndexFacts, func(i, j int) bool {
 		left, right := w.DynamicIndexFacts[i], w.DynamicIndexFacts[j]
-		if c := comparePlaceholderPathWire(left.Table, right.Table); c != 0 {
+		if c := compareBoundaryPathWire(left.Table, right.Table); c != 0 {
 			return c < 0
 		}
 		if left.Site != right.Site {
@@ -409,6 +540,23 @@ func canonicalizeOperationalEffectsWire(w *operationalEffectsWire) {
 			return c < 0
 		}
 		return left.Admission < right.Admission
+	})
+	sort.Slice(w.KeyMemberships, func(i, j int) bool {
+		left, right := w.KeyMemberships[i], w.KeyMemberships[j]
+		if c := compareBoundaryPathWire(left.Key, right.Key); c != 0 {
+			return c < 0
+		}
+		return compareBoundaryPathWire(left.Table, right.Table) < 0
+	})
+	sort.Slice(w.DynamicValueKeys, func(i, j int) bool {
+		left, right := w.DynamicValueKeys[i], w.DynamicValueKeys[j]
+		if c := compareBoundaryPathWire(left.Container, right.Container); c != 0 {
+			return c < 0
+		}
+		if left.Site != right.Site {
+			return left.Site < right.Site
+		}
+		return compareBoundaryPathWire(left.Table, right.Table) < 0
 	})
 	sort.Slice(w.FrozenTables, func(i, j int) bool {
 		return comparePlaceholderPathWire(w.FrozenTables[i].Target, w.FrozenTables[j].Target) < 0
@@ -445,11 +593,82 @@ func canonicalizeOperationalEffectsWire(w *operationalEffectsWire) {
 	})
 }
 
+func encodeBranchProof(proof signature.BranchProof) (branchProofWire, error) {
+	kind, err := encodeBranchProofKind(proof.Kind)
+	if err != nil {
+		return branchProofWire{}, err
+	}
+	p, err := encodeBoundaryPath(proof.Path)
+	if err != nil {
+		return branchProofWire{}, fmt.Errorf("path: %w", err)
+	}
+	out := branchProofWire{Kind: kind, Path: p}
+	switch proof.Kind {
+	case signature.BranchProofPathPresence:
+		pres, err := encodePresence(proof.Presence)
+		if err != nil {
+			return branchProofWire{}, fmt.Errorf("presence: %w", err)
+		}
+		out.Presence = pres
+	case signature.BranchProofPathEqual, signature.BranchProofPathNotEqual, signature.BranchProofIndexInRange:
+		other, err := encodeBoundaryPath(proof.Other)
+		if err != nil {
+			return branchProofWire{}, fmt.Errorf("other: %w", err)
+		}
+		out.Other = other
+	default:
+		return branchProofWire{}, fmt.Errorf("unsupported branch proof kind %d", proof.Kind)
+	}
+	return out, nil
+}
+
+func decodeBranchProof(w branchProofWire) (signature.BranchProof, error) {
+	kind, err := decodeBranchProofKind(w.Kind)
+	if err != nil {
+		return signature.BranchProof{}, err
+	}
+	p, err := decodeBoundaryPath(w.Path)
+	if err != nil {
+		return signature.BranchProof{}, fmt.Errorf("path: %w", err)
+	}
+	out := signature.BranchProof{Kind: kind, Path: p}
+	switch kind {
+	case signature.BranchProofPathPresence:
+		pres, err := decodePresence(w.Presence)
+		if err != nil {
+			return signature.BranchProof{}, fmt.Errorf("presence: %w", err)
+		}
+		out.Presence = pres
+	case signature.BranchProofPathEqual, signature.BranchProofPathNotEqual, signature.BranchProofIndexInRange:
+		other, err := decodeBoundaryPath(w.Other)
+		if err != nil {
+			return signature.BranchProof{}, fmt.Errorf("other: %w", err)
+		}
+		out.Other = other
+	default:
+		return signature.BranchProof{}, fmt.Errorf("unsupported branch proof kind %d", kind)
+	}
+	return out, nil
+}
+
+func compareBranchProofWire(a, b branchProofWire) int {
+	if a.Kind != b.Kind {
+		return strings.Compare(a.Kind, b.Kind)
+	}
+	if c := compareBoundaryPathWire(a.Path, b.Path); c != 0 {
+		return c
+	}
+	if c := compareBoundaryPathWire(a.Other, b.Other); c != 0 {
+		return c
+	}
+	return strings.Compare(a.Presence, b.Presence)
+}
+
 func encodeDynamicIndexFact(fact signature.DynamicIndexFact) (dynamicIndexFactWire, error) {
 	if fact.Site == "" {
 		return dynamicIndexFactWire{}, fmt.Errorf("missing site")
 	}
-	table, err := encodePlaceholderPath(fact.Table)
+	table, err := encodeBoundaryPath(fact.Table)
 	if err != nil {
 		return dynamicIndexFactWire{}, fmt.Errorf("table: %w", err)
 	}
@@ -505,7 +724,7 @@ func decodeDynamicIndexFact(w dynamicIndexFactWire) (signature.DynamicIndexFact,
 	if w.Site == "" {
 		return signature.DynamicIndexFact{}, fmt.Errorf("missing site")
 	}
-	table, err := decodePlaceholderPath(w.Table)
+	table, err := decodeBoundaryPath(w.Table)
 	if err != nil {
 		return signature.DynamicIndexFact{}, fmt.Errorf("table: %w", err)
 	}
@@ -570,6 +789,68 @@ func compareDynamicIndexOperandWire(a, b dynamicIndexOperandWire) int {
 	default:
 		return 0
 	}
+}
+
+func encodeKeyMembership(fact signature.KeyMembership) (keyMembershipWire, error) {
+	key, err := encodeBoundaryPath(fact.Key)
+	if err != nil {
+		return keyMembershipWire{}, fmt.Errorf("key: %w", err)
+	}
+	table, err := encodeBoundaryPath(fact.Table)
+	if err != nil {
+		return keyMembershipWire{}, fmt.Errorf("table: %w", err)
+	}
+	return keyMembershipWire{Key: key, Table: table}, nil
+}
+
+func decodeKeyMembership(w keyMembershipWire) (signature.KeyMembership, error) {
+	key, err := decodeBoundaryPath(w.Key)
+	if err != nil {
+		return signature.KeyMembership{}, fmt.Errorf("key: %w", err)
+	}
+	table, err := decodeBoundaryPath(w.Table)
+	if err != nil {
+		return signature.KeyMembership{}, fmt.Errorf("table: %w", err)
+	}
+	return signature.KeyMembership{Key: key, Table: table}, nil
+}
+
+func encodeDynamicValueKeyMembership(fact signature.DynamicValueKeyMembership) (dynamicValueKeyMembershipWire, error) {
+	if fact.Site == "" {
+		return dynamicValueKeyMembershipWire{}, fmt.Errorf("missing site")
+	}
+	container, err := encodeBoundaryPath(fact.Container)
+	if err != nil {
+		return dynamicValueKeyMembershipWire{}, fmt.Errorf("container: %w", err)
+	}
+	table, err := encodeBoundaryPath(fact.Table)
+	if err != nil {
+		return dynamicValueKeyMembershipWire{}, fmt.Errorf("table: %w", err)
+	}
+	return dynamicValueKeyMembershipWire{
+		Container: container,
+		Site:      fact.Site,
+		Table:     table,
+	}, nil
+}
+
+func decodeDynamicValueKeyMembership(w dynamicValueKeyMembershipWire) (signature.DynamicValueKeyMembership, error) {
+	if w.Site == "" {
+		return signature.DynamicValueKeyMembership{}, fmt.Errorf("missing site")
+	}
+	container, err := decodeBoundaryPath(w.Container)
+	if err != nil {
+		return signature.DynamicValueKeyMembership{}, fmt.Errorf("container: %w", err)
+	}
+	table, err := decodeBoundaryPath(w.Table)
+	if err != nil {
+		return signature.DynamicValueKeyMembership{}, fmt.Errorf("table: %w", err)
+	}
+	return signature.DynamicValueKeyMembership{
+		Container: container,
+		Site:      w.Site,
+		Table:     table,
+	}, nil
 }
 
 func encodeLifecycleEffect(effect signature.LifecycleEffect) (lifecycleEffectWire, error) {
@@ -946,6 +1227,53 @@ func comparePlaceholderPathWire(a, b *placeholderPathWire) int {
 	}
 }
 
+func compareBoundaryPathWire(a, b *boundaryPathWire) int {
+	switch {
+	case a == nil && b == nil:
+		return 0
+	case a == nil:
+		return -1
+	case b == nil:
+		return 1
+	}
+	if c := compareBoundaryPathRoot(a, b); c != 0 {
+		return c
+	}
+	switch {
+	case a.Suffix < b.Suffix:
+		return -1
+	case a.Suffix > b.Suffix:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func compareBoundaryPathRoot(a, b *boundaryPathWire) int {
+	if c := boundaryPathRootKind(a) - boundaryPathRootKind(b); c != 0 {
+		return c
+	}
+	switch boundaryPathRootKind(a) {
+	case 0:
+		return compareOptionalInt(a.Param, b.Param)
+	case 1:
+		return compareOptionalInt(a.Return, b.Return)
+	default:
+		return 0
+	}
+}
+
+func boundaryPathRootKind(w *boundaryPathWire) int {
+	switch {
+	case w != nil && w.Param != nil:
+		return 0
+	case w != nil && w.Return != nil:
+		return 1
+	default:
+		return 2
+	}
+}
+
 func encodePlaceholderPath(p pathdom.Path) (*placeholderPathWire, error) {
 	if !p.IsPlaceholder() {
 		return nil, fmt.Errorf("path %q is not a placeholder path", p.String())
@@ -976,6 +1304,73 @@ func decodePlaceholderPath(w *placeholderPathWire) (pathdom.Path, error) {
 	return p, nil
 }
 
+func encodeBoundaryPath(p pathdom.Path) (*boundaryPathWire, error) {
+	switch {
+	case p.IsPlaceholder():
+		return &boundaryPathWire{
+			Param:  encodeInt(p.PlaceholderIndex()),
+			Suffix: segment.FormatSegments(p.Segments),
+		}, nil
+	default:
+		if index, ok := returnSlotPathIndex(p); ok {
+			return &boundaryPathWire{
+				Return: encodeInt(index),
+				Suffix: segment.FormatSegments(p.Segments),
+			}, nil
+		}
+		return nil, fmt.Errorf("path %q is not a boundary path", p.String())
+	}
+}
+
+func decodeBoundaryPath(w *boundaryPathWire) (pathdom.Path, error) {
+	if w == nil {
+		return pathdom.Path{}, fmt.Errorf("missing boundary path")
+	}
+	if (w.Param == nil) == (w.Return == nil) {
+		return pathdom.Path{}, fmt.Errorf("boundary path must set exactly one of param or return")
+	}
+	segs, ok := segment.ParseFormattedSegments(w.Suffix)
+	if !ok {
+		return pathdom.Path{}, fmt.Errorf("invalid boundary path suffix %q", w.Suffix)
+	}
+	if w.Param != nil {
+		param, err := decodeRequiredInt(w.Param, "boundary path param missing")
+		if err != nil {
+			return pathdom.Path{}, err
+		}
+		if param < 0 {
+			return pathdom.Path{}, fmt.Errorf("negative placeholder index %d", param)
+		}
+		p := pathdom.NewPlaceholder(param)
+		p.Segments = segs
+		return p, nil
+	}
+	index, err := decodeRequiredInt(w.Return, "boundary path return missing")
+	if err != nil {
+		return pathdom.Path{}, err
+	}
+	if index < 0 {
+		return pathdom.Path{}, fmt.Errorf("negative return index %d", index)
+	}
+	return pathdom.Path{Root: returnSlotRoot(index), Segments: segs}, nil
+}
+
+func returnSlotPathIndex(p pathdom.Path) (int, bool) {
+	if p.Symbol != 0 || !strings.HasPrefix(p.Root, "ret[") || !strings.HasSuffix(p.Root, "]") {
+		return 0, false
+	}
+	body := strings.TrimSuffix(strings.TrimPrefix(p.Root, "ret["), "]")
+	index, err := strconv.Atoi(body)
+	if err != nil || index < 0 || p.Root != returnSlotRoot(index) {
+		return 0, false
+	}
+	return index, true
+}
+
+func returnSlotRoot(index int) string {
+	return "ret[" + strconv.Itoa(index) + "]"
+}
+
 func encodePresence(p presence.Value) (string, error) {
 	switch {
 	case presence.Equal(p, presence.Present()):
@@ -1002,6 +1397,48 @@ func decodePresence(s string) (presence.Value, error) {
 	}
 }
 
+func encodeAssertion(value assertion.Value) []string {
+	flags := value.Flags()
+	if len(flags) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(flags))
+	for _, flag := range flags {
+		out = append(out, flag.String())
+	}
+	return out
+}
+
+func decodeAssertion(items []string) (assertion.Value, error) {
+	if len(items) == 0 {
+		return assertion.Top(), nil
+	}
+	flags := make([]assertion.Flag, 0, len(items))
+	for _, item := range items {
+		flag, ok := decodeAssertionFlag(item)
+		if !ok {
+			return assertion.Bottom(), fmt.Errorf("unknown assertion flag %q", item)
+		}
+		flags = append(flags, flag)
+	}
+	return assertion.Of(flags...), nil
+}
+
+func decodeAssertionFlag(s string) (assertion.Flag, bool) {
+	switch s {
+	case "type":
+		return assertion.TypeClaim, true
+	case "any":
+		return assertion.AnyClaim, true
+	case "non-nil":
+		return assertion.NonNilClaim, true
+	case "runtime":
+		return assertion.RuntimeClaim, true
+	default:
+		return 0, false
+	}
+}
+
 func encodeDynamicIndexAdmission(admission signature.DynamicIndexAdmission) (string, error) {
 	switch admission {
 	case signature.DynamicIndexAdmissionAdmitted:
@@ -1025,6 +1462,36 @@ func decodeDynamicIndexAdmission(s string) (signature.DynamicIndexAdmission, err
 		return signature.DynamicIndexAdmissionUnknown, nil
 	default:
 		return "", fmt.Errorf("unknown dynamic-index admission %q", s)
+	}
+}
+
+func encodeBranchProofKind(kind signature.BranchProofKind) (string, error) {
+	switch kind {
+	case signature.BranchProofPathPresence:
+		return "presence", nil
+	case signature.BranchProofPathEqual:
+		return "equal", nil
+	case signature.BranchProofPathNotEqual:
+		return "not_equal", nil
+	case signature.BranchProofIndexInRange:
+		return "index_in_range", nil
+	default:
+		return "", fmt.Errorf("unsupported branch proof kind %d", kind)
+	}
+}
+
+func decodeBranchProofKind(s string) (signature.BranchProofKind, error) {
+	switch s {
+	case "presence":
+		return signature.BranchProofPathPresence, nil
+	case "equal":
+		return signature.BranchProofPathEqual, nil
+	case "not_equal":
+		return signature.BranchProofPathNotEqual, nil
+	case "index_in_range":
+		return signature.BranchProofIndexInRange, nil
+	default:
+		return 0, fmt.Errorf("unknown branch proof kind %q", s)
 	}
 }
 

@@ -35,7 +35,7 @@ type resultShapeRead struct {
 }
 
 func (p discriminatedUnionExhaustiveness) resultShapeConsumptionDiagnostics(result *body.Result, graph cfg.Graph) []diagnostic.Diagnostic {
-	envs := cachedGuardEnvironments(result)
+	envs := producerContext(p).guardEnvironments(result)
 	var out []diagnostic.Diagnostic
 	seen := make(map[*ast.AttrGetExpr]struct{})
 	for _, point := range graph.RPO() {

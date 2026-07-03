@@ -5,7 +5,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -34,7 +33,7 @@ func (r *signatureIdentityResolver) indexCallSites(facts factflow.Facts) {
 		return
 	}
 	for _, point := range r.graph.RPO() {
-		site, ok := facts.CallSite(point)
+		site, ok := facts.CallSiteView(point)
 		if !ok {
 			continue
 		}
@@ -68,7 +67,11 @@ func (r *signatureIdentityResolver) nameForCallee(ctx transfer.NodeContext, call
 }
 
 func (r *signatureIdentityResolver) nameForSite(site factflow.CallSite) (string, bool) {
-	point, ok := r.pointForSite(site)
+	return r.nameForIndexedCallSiteView(site.View())
+}
+
+func (r *signatureIdentityResolver) nameForIndexedCallSiteView(site factflow.CallSiteView) (string, bool) {
+	point, ok := r.pointForSiteView(site)
 	if !ok {
 		return "", false
 	}
@@ -79,10 +82,32 @@ func (r *signatureIdentityResolver) nameForSite(site factflow.CallSite) (string,
 	if r.graph != nil {
 		ctx.Node = r.graph.Node(point)
 	}
-	return r.nameForCall(ctx, callproducer.FromSite(site))
+	return r.nameForCallSiteView(ctx, site)
+}
+
+func (r *signatureIdentityResolver) nameForIndexedIteratorCallSiteView(site factflow.CallSiteView) (string, bool) {
+	point, ok := r.pointForSiteView(site)
+	if !ok {
+		return "", false
+	}
+	ctx := transfer.NodeContext{
+		Graph: r.graph,
+		Point: point,
+	}
+	if r.graph != nil {
+		ctx.Node = r.graph.Node(point)
+	}
+	if name, ok := r.nameForCallSiteView(ctx, site); ok {
+		return name, true
+	}
+	return r.implicitBuiltinIteratorName(site.CalleeSymbol(), site.CalleePathRef())
 }
 
 func (r *signatureIdentityResolver) pointForSite(site factflow.CallSite) (cfg.Point, bool) {
+	return r.pointForSiteView(site.View())
+}
+
+func (r *signatureIdentityResolver) pointForSiteView(site factflow.CallSiteView) (cfg.Point, bool) {
 	if r == nil || len(r.callPoints) == 0 {
 		return 0, false
 	}
@@ -136,4 +161,24 @@ func (r *signatureIdentityResolver) stableCalleeName(callee symbol.ID, calleePat
 		}
 	}
 	return b.String(), true
+}
+
+func (r *signatureIdentityResolver) implicitBuiltinIteratorName(callee symbol.ID, calleePath path.Path) (string, bool) {
+	if r == nil || r.bindings == nil || len(calleePath.Segments) != 0 {
+		return "", false
+	}
+	root := callee
+	if calleePath.Symbol != 0 {
+		root = calleePath.Symbol
+	}
+	if root == 0 || !r.bindings.IsImplicitGlobalSymbol(root) {
+		return "", false
+	}
+	name := r.bindings.Name(root)
+	switch name {
+	case "pairs", "ipairs":
+		return name, true
+	default:
+		return "", false
+	}
 }

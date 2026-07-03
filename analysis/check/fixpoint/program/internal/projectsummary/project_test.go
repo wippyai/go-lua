@@ -15,12 +15,17 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/normalize"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -138,6 +143,33 @@ end`)
 	}
 }
 
+func TestFromResultPreservesAnnotatedArrayReturnAfterDynamicIPairsInsert(t *testing.T) {
+	reg := standard.Registry()
+	fn := projectParseFunction(t, `
+function group_by_suite(entries)
+	local suites: {[string]: any[]} = {}
+	local no_suite: any[] = {}
+	for _, entry in ipairs(entries) do
+		table.insert(no_suite, entry)
+	end
+	return suites, no_suite
+end`)
+
+	result := projectCheckFunction(t, fn, body.Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	got := summaryprojection.FromResult(result)
+
+	if len(got.Returns) != 2 {
+		t.Fatalf("returns = %d, want 2", len(got.Returns))
+	}
+	gotType, ok := typevalue.TypeOf(reg, got.Returns[1])
+	if !ok || !typ.TypeEquals(gotType, typ.NewArray(typ.Any)) {
+		t.Fatalf("return slot 2 type = %v/%v, want any[]", gotType, ok)
+	}
+}
+
 func TestFromResultDeclaredReturnDoesNotEraseComputedIdentity(t *testing.T) {
 	reg := standard.Registry()
 	retID := identity.ID{Kind: "test.return", Site: "declared", Index: 1}
@@ -193,6 +225,42 @@ end`)
 	origin := product.Get(reg, got.Returns[0], variantorigin.Key)
 	if origin.IsBottom() || origin.IsTop() {
 		t.Fatalf("return variant origin = %v, want declared record-union origin", origin)
+	}
+}
+
+func TestFromResultDeclaredReturnDoesNotWidenComputedVariantOrigin(t *testing.T) {
+	reg := standard.Registry()
+	msg := typetable.NewRecord().
+		Field("kind", typ.LiteralString("msg")).
+		Field("value", typ.String).
+		Build()
+	timer := typetable.NewRecord().
+		Field("kind", typ.LiteralString("timer")).
+		Field("value", typ.Number).
+		Build()
+	bodyValue := typevalue.WithWitness(reg, typevalue.FromType(reg, msg), msg)
+	fn := projectParseFunction(t, `
+function f(): {kind: "msg", value: string} | {kind: "timer", value: number}
+	return 1
+end`)
+
+	result := projectCheckFunction(t, fn, body.Config{
+		Registry: reg,
+		ExpressionValue: func(_ cfg.Point, _ factflow.ExprRef, source factflow.ValueSource, _ state.State) (product.Value, bool) {
+			if source.TargetIndex != 0 {
+				return product.Value{}, false
+			}
+			return bodyValue, true
+		},
+	})
+	got := summaryprojection.FromResult(result)
+
+	if len(got.Returns) != 1 {
+		t.Fatalf("FromResult returned %d slots, want 1", len(got.Returns))
+	}
+	gotType, ok := typevalue.TypeOf(reg, got.Returns[0])
+	if !ok || !typ.TypeEquals(gotType, msg) {
+		t.Fatalf("return type = %v/%v, want computed variant %v (not declared %v)", gotType, ok, msg, typeexpr.Union(msg, timer))
 	}
 }
 
@@ -276,6 +344,30 @@ end`), body.Config{
 	}
 }
 
+func TestFromResultProjectsRuntimeTypeGuardParamConstraintAfterErrorGuard(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function f(value)
+	if type(value) ~= "string" then
+		error("expected string")
+	end
+end`), body.Config{
+		Registry: reg,
+		Signatures: signaturelookup.Source{
+			IncludeStdlib: true,
+		},
+	})
+
+	got := summaryprojection.FromResult(result)
+
+	if len(got.NormalReturnParams) != 1 {
+		t.Fatalf("normal return params = %d, want 1: %#v", len(got.NormalReturnParams), got)
+	}
+	if gotKind := product.Get(reg, got.NormalReturnParams[0], runtimekind.Key); !runtimekind.Equal(gotKind, runtimekind.Singleton(runtimekind.String)) {
+		t.Fatalf("normal return param runtime kind = %s, want string", gotKind)
+	}
+}
+
 func TestFromResultDoesNotProjectUnchangedParamEntryAssumption(t *testing.T) {
 	reg := standard.Registry()
 	result := projectCheckFunction(t, projectParseFunction(t, `
@@ -289,6 +381,28 @@ end`), body.Config{Registry: reg})
 	}
 	if !product.Equal(reg, got.NormalReturnParams[0], product.Top()) {
 		t.Fatalf("normal return param = %#v, want top/no constraint", got.NormalReturnParams[0])
+	}
+}
+
+func TestFromResultPreservesStructuralWitnessFlagForUnchangedMutation(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function sort_tests(tests: any[])
+	table.sort(tests, function(a, b)
+		return true
+	end)
+end`), body.Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+
+	got := summaryprojection.FromResult(result)
+	if len(got.NormalReturnFacts.PathInvalidations) != 1 {
+		t.Fatalf("path invalidations = %#v, want one $0 invalidation", got.NormalReturnFacts.PathInvalidations)
+	}
+	fact := got.NormalReturnFacts.PathInvalidations[0]
+	if !fact.Path.Equal(pathdom.NewPlaceholder(0)) || !fact.PreserveStructuralWitness {
+		t.Fatalf("path invalidation = %#v, want structural-preserving $0 invalidation", fact)
 	}
 }
 
@@ -342,6 +456,20 @@ end`), body.Config{Registry: reg})
 	if len(got.NormalReturnParams) > 1 && !product.Equal(reg, got.NormalReturnParams[1], product.Top()) {
 		t.Fatalf("normal return param 1 = %#v, want no post-return refinement", got.NormalReturnParams[1])
 	}
+}
+
+func TestFromResultProjectsParamObligationThroughStableLocalConcat(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function f(http: {get: (url: string, options: table) -> ()}, endpoint_path)
+	local full_url = "https://api.example.test" .. endpoint_path
+	return http.get(full_url, {})
+end`), body.Config{Registry: reg})
+
+	got := summaryprojection.FromResult(result)
+
+	want := runtimekind.Join(runtimekind.Singleton(runtimekind.String), runtimekind.Singleton(runtimekind.Number))
+	projectAssertParamObligationKind(t, reg, got, 1, want)
 }
 
 func TestFromResultProjectsNestedReturnParamPathAliases(t *testing.T) {
@@ -425,6 +553,30 @@ end`), body.Config{Registry: reg})
 	projectAssertParamObligationKind(t, reg, got, 0, runtimekind.Singleton(runtimekind.Number))
 }
 
+func TestFromResultProjectsParamMemberObligationFromLengthOperand(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function f(template)
+	return #template.operations
+end`), body.Config{Registry: reg})
+
+	got := summaryprojection.FromResult(result)
+
+	if len(got.ParamObligations) == 0 {
+		t.Fatalf("param obligations = %#v, want obligation for template.operations", got.ParamObligations)
+	}
+	gotType, ok := typevalue.TypeOf(reg, got.ParamObligations[0])
+	if !ok {
+		t.Fatalf("param obligation type missing: %#v", got.ParamObligations[0])
+	}
+	want := typetable.NewRecord().
+		Field("operations", normalize.UnionForEvidence(typ.String, typetable.BuiltinTopMarker())).
+		Build()
+	if !typ.TypeEquals(gotType, want) {
+		t.Fatalf("param obligation type = %v, want %v", gotType, want)
+	}
+}
+
 func TestFromResultDoesNotProjectGuardedParamObligation(t *testing.T) {
 	reg := standard.Registry()
 	result := projectCheckFunction(t, projectParseFunction(t, `
@@ -441,6 +593,26 @@ end`), body.Config{
 
 	if len(got.ParamObligations) != 0 {
 		t.Fatalf("param obligations = %#v, want none for guarded use", got.ParamObligations)
+	}
+}
+
+func TestFromResultDoesNotProjectGuardedAliasParamObligation(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function f(x)
+	local y = x
+	if type(y) == "string" then
+		sink(y)
+	end
+end`), body.Config{
+		Registry: reg,
+		Globals:  []string{"type", "sink"},
+	})
+
+	got := summaryprojection.FromResult(result)
+
+	if len(got.ParamObligations) != 0 {
+		t.Fatalf("param obligations = %#v, want none for guarded alias use", got.ParamObligations)
 	}
 }
 
@@ -519,6 +691,117 @@ end`), body.Config{Registry: reg})
 	}
 }
 
+func TestFromResultInfersErrorReturnPresenceRelationsForTableValue(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function raw_get(dsn: string): ({release: any}?, string?)
+	if dsn == "" then
+		return nil, "missing dsn"
+	end
+	return {}, nil
+end`), body.Config{Registry: reg})
+
+	got := summaryprojection.FromResult(result)
+
+	projectAssertReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Present(), 0, presence.Absent())
+	projectAssertReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Absent(), 0, presence.Present())
+}
+
+func TestFromResultInfersFalseReturnConditionSlotRefinement(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function wait_for_database(ready: boolean): (boolean, string?)
+	if ready then
+		return true, nil
+	end
+	return false, "database unavailable"
+end`), body.Config{Registry: reg})
+
+	got := summaryprojection.FromResult(result)
+
+	var found summary.ReturnConditionSlotRefinement
+	ok := false
+	for _, candidate := range got.ReturnConditionSlotRefinements {
+		if candidate.ReturnIndex == 0 && !candidate.ReturnValue && candidate.TargetIndex == 1 {
+			found = candidate
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		t.Fatalf("false return condition slot refinement missing: %#v", got.ReturnConditionSlotRefinements)
+	}
+	if gotType, typeOK := typevalue.TypeOf(reg, found.Value); !typeOK || !subtype.IsSubtype(gotType, typ.String) {
+		t.Fatalf("false return condition target type = %v/%v, want subtype of string", gotType, typeOK)
+	}
+}
+
+func TestFromResultReturnConditionSlotUsesDeclaredTargetContract(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function raw_get(dsn: string): ({ release: any }?, string?)
+	if dsn == "" then
+		return nil, "missing dsn"
+	end
+	return {}, nil
+end`), body.Config{Registry: reg})
+
+	got := summaryprojection.FromResult(result)
+
+	var found summary.ReturnConditionSlotRefinement
+	ok := false
+	for _, candidate := range got.ReturnConditionSlotRefinements {
+		if candidate.ReturnIndex == 1 && !candidate.ReturnValue && candidate.TargetIndex == 0 {
+			found = candidate
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		t.Fatalf("err-false return condition slot refinement missing: %#v", got.ReturnConditionSlotRefinements)
+	}
+	if gotPresence := product.PresenceOf(found.Value); !presence.Equal(gotPresence, presence.Present()) {
+		t.Fatalf("err-false target presence = %s, want present", gotPresence)
+	}
+	gotType, typeOK := typevalue.TypeOf(reg, found.Value)
+	want := typetable.NewRecord().Field("release", typ.Any).Build()
+	if !typeOK || !subtype.IsSubtype(gotType, want) {
+		t.Fatalf("err-false target type = %v/%v, want declared DB contract with release member", gotType, typeOK)
+	}
+}
+
+func TestFromResultFalseReturnConditionSlotRefinementKeepsMissingArm(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function wait_for_database(ready: boolean, missing: boolean): (boolean, string?)
+	if ready then
+		return true, nil
+	end
+	if missing then
+		return false, nil
+	end
+	return false, "database unavailable"
+end`), body.Config{Registry: reg})
+
+	got := summaryprojection.FromResult(result)
+
+	var found summary.ReturnConditionSlotRefinement
+	ok := false
+	for _, candidate := range got.ReturnConditionSlotRefinements {
+		if candidate.ReturnIndex == 0 && !candidate.ReturnValue && candidate.TargetIndex == 1 {
+			found = candidate
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		t.Fatalf("false return condition slot refinement missing: %#v", got.ReturnConditionSlotRefinements)
+	}
+	if gotPresence := product.PresenceOf(found.Value); !presence.Equal(gotPresence, presence.Maybe()) {
+		t.Fatalf("false return condition target presence = %s, want maybe", gotPresence)
+	}
+}
+
 func TestFromResultDoesNotInferReturnPresenceRelationThroughUnknownSlot(t *testing.T) {
 	reg := standard.Registry()
 	result := projectCheckFunction(t, projectParseFunction(t, `
@@ -552,6 +835,36 @@ end`), body.Config{
 	}
 }
 
+func TestFromResultDeclaredNonOptionalReturnForcesPresentPresence(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function fetch(): number
+	return value
+end`), body.Config{
+		Registry: reg,
+		Globals:  []string{"value"},
+		ExpressionValue: func(_ cfg.Point, _ factflow.ExprRef, source factflow.ValueSource, _ state.State) (product.Value, bool) {
+			if source.TargetIndex == 0 {
+				return product.Top(), true
+			}
+			return product.Value{}, false
+		},
+	})
+
+	got := summaryprojection.FromResult(result)
+
+	if len(got.Returns) != 1 {
+		t.Fatalf("returns = %d, want declared arity 1", len(got.Returns))
+	}
+	if gotPresence := product.PresenceOf(got.Returns[0]); !presence.Equal(gotPresence, presence.Present()) {
+		t.Fatalf("return 0 presence = %s, want present from declared number", gotPresence)
+	}
+	gotType, ok := typevalue.TypeOf(reg, got.Returns[0])
+	if !ok || !typ.TypeEquals(gotType, typ.Number) {
+		t.Fatalf("return 0 type = %v/%v, want number", gotType, ok)
+	}
+}
+
 func TestFromResultTreatsOmittedEstablishedReturnSlotsAsAbsent(t *testing.T) {
 	reg := standard.Registry()
 	result := projectCheckFunction(t, projectParseFunction(t, `
@@ -568,6 +881,28 @@ end`), body.Config{Registry: reg})
 	projectAssertReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Absent(), 0, presence.Present())
 	if len(got.Returns) != 2 {
 		t.Fatalf("returns = %d, want 2", len(got.Returns))
+	}
+	if gotPresence := product.PresenceOf(got.Returns[1]); !presence.Equal(gotPresence, presence.Maybe()) {
+		t.Fatalf("return 1 presence = %s, want maybe from explicit error or omitted nil", gotPresence)
+	}
+}
+
+func TestFromResultTreatsUnannotatedOmittedReturnSlotsAsAbsent(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function fetch(ok: boolean)
+	if not ok then
+		return nil, "failed"
+	end
+	return 1
+end`), body.Config{Registry: reg})
+
+	got := summaryprojection.FromResult(result)
+
+	projectAssertReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Present(), 0, presence.Absent())
+	projectAssertReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Absent(), 0, presence.Present())
+	if len(got.Returns) != 2 {
+		t.Fatalf("returns = %d, want max observed arity 2", len(got.Returns))
 	}
 	if gotPresence := product.PresenceOf(got.Returns[1]); !presence.Equal(gotPresence, presence.Maybe()) {
 		t.Fatalf("return 1 presence = %s, want maybe from explicit error or omitted nil", gotPresence)
@@ -645,6 +980,43 @@ end
 	gotType, ok := witness.Type()
 	if !ok || typ.IsAny(gotType) || typ.IsUnknown(gotType) || typ.IsNever(gotType) {
 		t.Fatalf("return witness = %v/%v, want concrete Channel", gotType, ok)
+	}
+}
+
+func TestFromResultProjectsReturnedKeyedArrayProvenanceFromRealBody(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function sorted_keys(t)
+	local keys: string[] = {}
+	for k in pairs(t) do
+		table.insert(keys, k)
+	end
+	table.sort(keys)
+	return keys
+end`), body.Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+
+	got := summaryprojection.FromResult(result)
+
+	if len(got.NormalReturnFacts.DynamicIndexFacts) == 0 {
+		t.Fatalf("dynamic-index facts missing from summary: %#v", got.NormalReturnFacts)
+	}
+	var dynamicFactFound bool
+	for _, fact := range got.NormalReturnFacts.DynamicIndexFacts {
+		if fact.Table.Equal(pathdom.Path{Root: "ret[0]"}) && fact.Site != "" && fact.Value.Admission == dynamicindex.AdmissionAdmitted {
+			dynamicFactFound = true
+			break
+		}
+	}
+	if !dynamicFactFound {
+		t.Fatalf("dynamic-index facts = %#v, want admitted ret[0] array write", got.NormalReturnFacts.DynamicIndexFacts)
+	}
+	if len(got.NormalReturnFacts.DynamicValueKeys) != 1 ||
+		!got.NormalReturnFacts.DynamicValueKeys[0].Container.Equal(pathdom.Path{Root: "ret[0]"}) ||
+		!got.NormalReturnFacts.DynamicValueKeys[0].Table.Equal(pathdom.NewPlaceholder(0)) {
+		t.Fatalf("dynamic value key facts = %#v, want ret[0] values proven as keys of $0", got.NormalReturnFacts.DynamicValueKeys)
 	}
 }
 

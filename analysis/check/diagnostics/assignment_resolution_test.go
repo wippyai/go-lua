@@ -57,7 +57,7 @@ func TestLocalAssignmentSourceTypeResolutionMismatchBoundary(t *testing.T) {
 }
 
 func TestPathAssignmentSourceTypeResolutionLiteral(t *testing.T) {
-	resolution := resolvePathAssignmentSourceType(nil, nil, 0, semantics.OrdinaryAssignmentFact{
+	resolution := resolvePathAssignmentSourceType(nil, producerContext{}, nil, nil, 0, semantics.OrdinaryAssignmentFact{
 		Value: &ast.StringExpr{Value: "ready"},
 	}, guardEnv{})
 	if !resolution.OK || !subtype.IsSubtype(resolution.Type, typ.String) {
@@ -71,9 +71,9 @@ func TestPathAssignmentSourceTypeResolutionLiteral(t *testing.T) {
 	}
 }
 
-func TestPathAssignmentSourceTypeResolutionConcreteCastUsesProofSource(t *testing.T) {
+func TestPathAssignmentSourceTypeResolutionScalarCastUsesRuntimeValidation(t *testing.T) {
 	inner := &ast.IdentExpr{Value: "payload"}
-	resolution := resolvePathAssignmentSourceType(nil, nil, 0, semantics.OrdinaryAssignmentFact{
+	resolution := resolvePathAssignmentSourceType(nil, producerContext{}, nil, nil, 0, semantics.OrdinaryAssignmentFact{
 		Value: &ast.CastExpr{
 			Expr: inner,
 			Type: &ast.PrimitiveTypeExpr{Name: "string"},
@@ -82,13 +82,13 @@ func TestPathAssignmentSourceTypeResolutionConcreteCastUsesProofSource(t *testin
 	if !resolution.OK {
 		t.Fatalf("resolution = %#v, want concrete cast source", resolution)
 	}
-	if !resolution.UntrustedTopLike {
-		t.Fatalf("resolution = %#v, want proof mismatch path for concrete cast", resolution)
+	if resolution.UntrustedTopLike {
+		t.Fatalf("resolution = %#v, want scalar cast runtime validation", resolution)
 	}
-	if resolution.CastInnerExpr != inner {
-		t.Fatalf("cast inner = %#v, want payload identifier", resolution.CastInnerExpr)
+	if resolution.CastInnerExpr != nil {
+		t.Fatalf("cast inner = %#v, want no inner proof boundary for scalar runtime cast", resolution.CastInnerExpr)
 	}
-	if !resolution.TypeMismatch(nil, 0, typ.String, nil) {
-		t.Fatalf("cast obligation should still require proof against string")
+	if resolution.TypeMismatch(nil, 0, typ.String, nil) {
+		t.Fatalf("scalar runtime cast assigned to string should not mismatch")
 	}
 }

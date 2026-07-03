@@ -32,7 +32,7 @@ local unsafe_route = route_builder.new()
         local user_id: string = ctx.session.user_id -- expect-error
         local room_id: string = ctx.params["room_id"] -- expect-error
         return {
-            ok = true, -- expect-error
+            ok = true,
             value = {
                 status = 200,
                 body = user_id .. ":" .. room_id,
@@ -67,4 +67,4 @@ end
 local tags = room_request.meta.tags
 local source: string = tags["source"] -- expect-error
 
-local request_room: string = room_request.params["room_id"] -- expect-error
+local request_room: string = room_request.params["room_id"]

@@ -16,7 +16,8 @@ import (
 // FromProgramResult publishes the manifest evidence currently represented by
 // the solved program result. It intentionally publishes only stable manifest
 // sections with public read models: module export type, module-local type
-// definitions, and directly recovered function signatures.
+// definitions, directly recovered function signatures, ambient globals, and
+// framework callback protocols.
 func FromProgramResult(path string, result program.Result) *manifest.Manifest {
 	m := manifest.New(path)
 	if export, ok := exportType(result); ok {
@@ -26,6 +27,8 @@ func FromProgramResult(path string, result program.Result) *manifest.Manifest {
 	}
 	publishTypeDefinitions(m, result.RootResult())
 	publishFunctionSignatures(m, path, result)
+	publishProvidedGlobals(m, result)
+	publishCallbackProtocols(m, path, result)
 	return m
 }
 

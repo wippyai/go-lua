@@ -906,8 +906,18 @@ func TestBuildChunkNestedLogicalConditionCallPrecedesIfBranch(t *testing.T) {
 	requirePointKind(t, graph, branch, cfg.NodeBranch)
 
 	thenAssign := nodeWithTarget(t, graph, result.Meta, mustLocalAt(t, bindings, thenStmt, 0), 0)
-	requireEdge(t, graph, graph.Entry(), callPoint, false)
-	requireEdge(t, graph, callPoint, branch, false)
+	branches := pointsOfKind(graph, cfg.NodeBranch)
+	if len(branches) != 3 {
+		t.Fatalf("branch nodes = %v, want two short-circuit branches plus if branch", branches)
+	}
+	joins := pointsOfKind(graph, cfg.NodeJoin)
+	if len(joins) != 3 {
+		t.Fatalf("join nodes = %v, want two short-circuit joins plus if join", joins)
+	}
+	requireEdge(t, graph, graph.Entry(), branches[0], false)
+	requireEdge(t, graph, branches[1], callPoint, false)
+	requireEdge(t, graph, callPoint, joins[1], false)
+	requireEdge(t, graph, joins[0], branch, false)
 	requireEdge(t, graph, branch, thenAssign, true)
 }
 
@@ -981,6 +991,98 @@ func TestBuildChunkValueShortCircuitAndRHSCallUsesConditionalPath(t *testing.T) 
 	requireEdge(t, graph, branch, join, false)
 	requireEdge(t, graph, callPoint, join, false)
 	requireEdge(t, graph, join, assignPoint, false)
+}
+
+func TestBuildChunkValueShortCircuitPureRHSGetsEvaluationPoint(t *testing.T) {
+	rhs := dot(ident("value"), "id")
+	stmt := localAssign([]string{"y"}, &ast.LogicalOpExpr{
+		Operator: "and",
+		Lhs:      ident("guard"),
+		Rhs:      rhs,
+	})
+	stmts := []ast.Stmt{stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"guard", "value"}})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil")
+	}
+	graph := result.Graph
+
+	assignPoint := requireStmtPoints(t, result, stmt, 1)[0]
+	requirePointKind(t, graph, assignPoint, cfg.NodeAssign)
+	branches := pointsOfKind(graph, cfg.NodeBranch)
+	if len(branches) != 1 {
+		t.Fatalf("branch nodes = %v, want one short-circuit branch", branches)
+	}
+	joins := pointsOfKind(graph, cfg.NodeJoin)
+	if len(joins) != 1 {
+		t.Fatalf("join nodes = %v, want one short-circuit join", joins)
+	}
+	branch, join := branches[0], joins[0]
+
+	var eval cfg.Point
+	for _, point := range graph.RPO() {
+		fact, ok := result.Meta.ExpressionEvaluation(point)
+		if !ok {
+			continue
+		}
+		if fact.Expr != rhs {
+			t.Fatalf("expression evaluation expr = %T, want RHS attr", fact.Expr)
+		}
+		eval = point
+	}
+	if eval == 0 {
+		t.Fatalf("missing expression evaluation point")
+	}
+	requirePointKind(t, graph, eval, cfg.NodeNoop)
+	requireEdge(t, graph, graph.Entry(), branch, false)
+	requireEdge(t, graph, branch, eval, true)
+	requireEdge(t, graph, eval, join, false)
+	requireEdge(t, graph, branch, join, false)
+	requireEdge(t, graph, join, assignPoint, false)
+}
+
+func TestBuildChunkConditionShortCircuitOrRHSCallUsesConditionalPath(t *testing.T) {
+	findCall := &ast.FuncCallExpr{Func: ident("find"), Args: []ast.Expr{ident("str")}}
+	stmt := &ast.IfStmt{
+		Condition: &ast.LogicalOpExpr{
+			Operator: "or",
+			Lhs: &ast.RelationalOpExpr{
+				Operator: "~=",
+				Lhs:      typeCall(ident("str")),
+				Rhs:      stringLit("string"),
+			},
+			Rhs: &ast.UnaryNotOpExpr{Expr: findCall},
+		},
+	}
+	stmts := []ast.Stmt{stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type", "find", "str"}})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil")
+	}
+	graph := result.Graph
+
+	points := requireStmtPoints(t, result, stmt, 2)
+	callPoint, ifBranch := points[0], points[1]
+	requirePointKind(t, graph, callPoint, cfg.NodeCall)
+	requirePointKind(t, graph, ifBranch, cfg.NodeBranch)
+	branches := pointsOfKind(graph, cfg.NodeBranch)
+	if len(branches) != 2 {
+		t.Fatalf("branch nodes = %v, want short-circuit branch plus if branch", branches)
+	}
+	joins := pointsOfKind(graph, cfg.NodeJoin)
+	if len(joins) != 2 {
+		t.Fatalf("join nodes = %v, want short-circuit join plus if join", joins)
+	}
+	shortCircuitBranch := branches[0]
+	shortCircuitJoin := joins[0]
+
+	requireEdge(t, graph, graph.Entry(), shortCircuitBranch, false)
+	requireEdge(t, graph, shortCircuitBranch, shortCircuitJoin, true)
+	requireEdge(t, graph, shortCircuitBranch, callPoint, false)
+	requireEdge(t, graph, callPoint, shortCircuitJoin, false)
+	requireEdge(t, graph, shortCircuitJoin, ifBranch, false)
 }
 
 func TestBuildChunkWhileConditionCallBackedgeReevaluatesCall(t *testing.T) {

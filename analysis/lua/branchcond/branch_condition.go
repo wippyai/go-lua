@@ -370,10 +370,16 @@ func typeCallShape(expr ast.Expr, method string, hasReceiver bool) (*ast.FuncCal
 		return nil, false
 	}
 	if hasReceiver {
-		if call.Receiver == nil || call.Method != method {
-			return nil, false
+		if call.Receiver != nil && call.Method == method {
+			return call, true
 		}
-		return call, true
+		if call.Receiver == nil && call.Method == "" {
+			attr, ok := call.Func.(*ast.AttrGetExpr)
+			if ok && attr.KeySyntax == ast.AttrKeyDot && ast.KeyName(attr.Key) == method {
+				return call, true
+			}
+		}
+		return nil, false
 	}
 	if call.Receiver != nil || call.Method != "" {
 		return nil, false
@@ -549,20 +555,26 @@ func lengthFloorOperands(lenExpr ast.Expr, op string, constExpr ast.Expr, bindin
 }
 
 // lengthFloorForRelop computes the proven length lower bound from `len <op> c`
-// and the edge it holds on. `>`/`>=`/`~=0` prove the floor on the true edge;
-// `<`/`<=` prove it on the false edge for the `if #xs < lo then error end` form.
+// and the edge it holds on. `>`/`>=`/`==positive`/`~=0` prove the floor on the
+// true edge; `<`/`<=`, `==0`, and `~=positive` prove it on the false edge for
+// guard-return forms such as `if #xs == 0 then return end`.
 func lengthFloorForRelop(op string, c int64) (int64, bool, bool) {
 	switch op {
 	case ">":
 		return c + 1, false, true
 	case ">=":
 		return c, false, true
+	case "==":
+		if c == 0 {
+			return 1, true, true
+		}
+		return c, false, true
 	case "~=":
 		// len ~= 0 proves len >= 1 since length is non-negative.
 		if c == 0 {
 			return 1, false, true
 		}
-		return 0, false, false
+		return c, true, true
 	case "<":
 		return c, true, true
 	case "<=":

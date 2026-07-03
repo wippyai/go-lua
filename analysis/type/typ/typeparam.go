@@ -13,16 +13,10 @@ import (
 //
 // Example: In Array<T>, T is a TypeParam with Name="T" and Constraint=nil.
 type TypeParam struct {
-	Name                  string
-	Constraint            Type // Upper bound (nil means any type)
-	hash                  uint64
-	containsAny           bool
-	containsNever         bool
-	containsTypeParam     bool
-	containsInstantiated  bool
-	containsGeneric       bool
-	containsRecursive     bool
-	containsOpenRecursive bool
+	Name       string
+	Constraint Type // Upper bound (nil means any type)
+	hash       uint64
+	typeProperties
 }
 
 // NewTypeParam creates a type parameter.
@@ -31,18 +25,14 @@ func NewTypeParam(name string, constraint Type) *TypeParam {
 	if constraint != nil {
 		h = hash.MixHash(h, constraint.Hash())
 	}
+	props := typePropertiesOf(constraint)
+	props.containsTypeParam = true
 
 	return &TypeParam{
-		Name:                  name,
-		Constraint:            constraint,
-		hash:                  h,
-		containsAny:           knownContainsAny(constraint),
-		containsNever:         knownContainsNever(constraint),
-		containsTypeParam:     true,
-		containsInstantiated:  knownContainsInstantiated(constraint),
-		containsGeneric:       knownContainsGeneric(constraint),
-		containsRecursive:     knownContainsRecursive(constraint),
-		containsOpenRecursive: knownContainsOpenRecursive(constraint),
+		Name:           name,
+		Constraint:     constraint,
+		hash:           h,
+		typeProperties: props,
 	}
 }
 

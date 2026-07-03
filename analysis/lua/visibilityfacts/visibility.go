@@ -87,7 +87,7 @@ func shouldSeedAtEntry(bindings *bind.Result, sym symbol.ID) bool {
 	if !ok {
 		return true
 	}
-	return kind == symbol.Global || kind == symbol.Upvalue
+	return kind == symbol.Param || kind == symbol.Global || kind == symbol.Upvalue
 }
 
 func pathSymbols(graph cfg.Graph, facts factflow.Facts) map[symbol.ID]struct{} {
@@ -108,10 +108,10 @@ func pathSymbols(graph cfg.Graph, facts factflow.Facts) map[symbol.ID]struct{} {
 	}
 	for _, point := range graph.RPO() {
 		if fact, ok := facts.PathAssignment(point); ok {
-			addPath(fact.TargetPath())
+			addPath(fact.TargetPathRef())
 		}
 		if fact, ok := facts.PathDescendantInvalidation(point); ok {
-			addPath(fact.ContainerPath())
+			addPath(fact.ContainerPathRef())
 		}
 		if site, ok := facts.CallSite(point); ok {
 			addPath(site.CalleePathRef())
@@ -125,37 +125,38 @@ func pathSymbols(graph cfg.Graph, facts factflow.Facts) map[symbol.ID]struct{} {
 				if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
 					return true
 				}
-				if p, ok := facts.ExpressionPath(source.ExprRef); ok {
+				if p, ok := facts.ExpressionPathRef(source.ExprRef); ok {
 					addProofPath(p)
 				}
 				return true
 			})
 		}
 		for _, fact := range facts.BranchRefinements(point) {
-			addPath(fact.TargetPath())
+			addPath(fact.TargetPathRef())
 		}
 		for _, fact := range facts.BranchLenRefinements(point) {
-			addProofPath(fact.ArrayPath())
+			addProofPath(fact.ArrayPathRef())
 		}
 		for _, fact := range facts.BranchNumFloorRefinements(point) {
-			addProofPath(fact.TargetPath())
+			addProofPath(fact.TargetPathRef())
 		}
 		for _, fact := range facts.BranchPresenceRelations(point) {
-			addPath(fact.TriggerPath())
-			addPath(fact.TargetPath())
+			addPath(fact.TriggerPathRef())
+			addPath(fact.TargetPathRef())
 		}
 		for _, fact := range facts.BranchPathRelations(point) {
 			addPath(fact.LeftPath())
 			addPath(fact.RightPath())
 		}
-		for _, fact := range facts.BranchPathEvidence(point) {
-			addProofPath(fact.Path())
-			if other, ok := fact.OtherPath(); ok {
+		facts.ForEachBranchPathEvidence(point, func(fact factflow.BranchPathEvidence) bool {
+			addProofPath(fact.PathRef())
+			if other, ok := fact.OtherPathRef(); ok {
 				addProofPath(other)
 			}
-		}
+			return true
+		})
 		for _, fact := range facts.PostconditionRefinements(point) {
-			addPath(fact.TargetPath())
+			addPath(fact.TargetPathRef())
 		}
 		for _, fact := range facts.PostconditionPathRelations(point) {
 			addPath(fact.LeftPath())

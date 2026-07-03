@@ -3,9 +3,14 @@ package diagnostics
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -27,11 +32,15 @@ func (p discriminatedUnionExhaustiveness) registrationCalls(result *body.Result,
 			}
 			continue
 		}
-		if reg, ok := registrationCallFromFact(result, call, point); ok {
+		site, ok := result.CallSite(point)
+		if !ok {
+			continue
+		}
+		if reg, ok := registrationCallFromFact(result, site, call, point); ok {
 			registrations = append(registrations, reg)
 			continue
 		}
-		if mutation, ok := openRegistrationMutationFromFact(result, point, call); ok {
+		if mutation, ok := openRegistrationMutationFromFact(result, site, point, call); ok {
 			mutation.point = point
 			open = append(open, mutation)
 		}
@@ -60,10 +69,15 @@ func openRegistrationAssignment(result *body.Result, point cfg.Point, fact seman
 			key:            key,
 			hasKey:         true,
 			aliasSensitive: true,
+			mayRegister:    registrationValueMayRegister(result, point, fact.Value),
 		}, true
 	}
 	if fact.HasPath && fact.Path.Symbol != 0 {
-		mutation := openRegistrationMutation{path: fact.Path, aliasSensitive: true}
+		mutation := openRegistrationMutation{
+			path:           fact.Path,
+			aliasSensitive: true,
+			mayRegister:    registrationValueMayRegister(result, point, fact.Value),
+		}
 		if key, ok := fact.Path.DirectFieldName(); ok {
 			mutation.registry = pathdom.Path{Root: fact.Path.Root, Symbol: fact.Path.Symbol, Version: fact.Path.Version}
 			mutation.key = key
@@ -82,10 +96,10 @@ func openRegistrationAssignment(result *body.Result, point cfg.Point, fact seman
 		return mutation, true
 	}
 	if fact.HasContainerPath && fact.ContainerPath.Symbol != 0 {
-		return openRegistrationMutation{path: fact.ContainerPath, opensAll: true, aliasSensitive: true}, true
+		return openRegistrationMutation{path: fact.ContainerPath, opensAll: true, aliasSensitive: true, mayRegister: true}, true
 	}
 	if fact.HasSymbol && fact.Symbol != 0 {
-		return openRegistrationMutation{path: pathdom.Path{Symbol: fact.Symbol}, opensAll: true}, true
+		return openRegistrationMutation{path: pathdom.Path{Symbol: fact.Symbol}, opensAll: true, mayRegister: true}, true
 	}
 	return openRegistrationMutation{}, false
 }
@@ -110,8 +124,8 @@ func registrationAssignmentTarget(result *body.Result, point cfg.Point, fact sem
 	return registry, key, ok
 }
 
-func registrationCallFromFact(result *body.Result, fact semantics.CallFact, point cfg.Point) (registrationCall, bool) {
-	registry, keyIndex, ok := registrationRegistryAndKeyIndex(result, fact)
+func registrationCallFromFact(result *body.Result, site factflow.CallSite, fact semantics.CallFact, point cfg.Point) (registrationCall, bool) {
+	registry, keyIndex, ok := registrationRegistryAndKeyIndex(result, site, fact)
 	if !ok || keyIndex < 0 || keyIndex >= len(fact.Args)-1 {
 		return registrationCall{}, false
 	}
@@ -128,12 +142,12 @@ func registrationCallFromFact(result *body.Result, fact semantics.CallFact, poin
 	}, true
 }
 
-func registrationRegistryAndKeyIndex(result *body.Result, fact semantics.CallFact) (pathdom.Path, int, bool) {
+func registrationRegistryAndKeyIndex(result *body.Result, site factflow.CallSite, fact semantics.CallFact) (pathdom.Path, int, bool) {
 	if fact.Call == nil {
 		return pathdom.Path{}, 0, false
 	}
-	if fact.HasReceiverPath && fact.Method != "" && len(fact.Args) >= 2 {
-		return fact.ReceiverPath, 0, true
+	if registry, ok := callSiteMemberReceiverPath(site); ok && len(fact.Args) >= 2 {
+		return registry, 0, true
 	}
 	if len(fact.Args) >= 3 {
 		if registry, ok := result.ExpressionPath(fact.Args[0]); ok && registry.Symbol != 0 {
@@ -143,26 +157,46 @@ func registrationRegistryAndKeyIndex(result *body.Result, fact semantics.CallFac
 	return pathdom.Path{}, 0, false
 }
 
-func openRegistrationMutationFromFact(result *body.Result, point cfg.Point, fact semantics.CallFact) (openRegistrationMutation, bool) {
-	registry, keyIndex, ok := registrationRegistryAndKeyIndex(result, fact)
+func openRegistrationMutationFromFact(result *body.Result, site factflow.CallSite, point cfg.Point, fact semantics.CallFact) (openRegistrationMutation, bool) {
+	registry, keyIndex, ok := registrationRegistryAndKeyIndex(result, site, fact)
 	if ok && keyIndex >= 0 && keyIndex < len(fact.Args)-1 {
 		if _, ok := staticStringExprValueAt(result, point, fact.Args[keyIndex]); ok && registrationCallbackExpr(result, point, fact.Args[keyIndex+1]) {
 			return openRegistrationMutation{}, false
 		}
 		if registrationCallbackExpr(result, point, fact.Args[keyIndex+1]) {
-			return openRegistrationMutation{path: registry, opensAll: true, aliasSensitive: true}, true
+			return openRegistrationMutation{path: registry, opensAll: true, aliasSensitive: true, mayRegister: true}, true
 		}
 	}
-	if fact.HasReceiverPath && callMayInvalidateTrackedPath(result, point, fact.ReceiverPath) {
-		return openRegistrationMutation{path: fact.ReceiverPath, opensAll: true, aliasSensitive: true}, true
+	if receiver, ok := callSiteMemberReceiverPath(site); ok && callMayInvalidateTrackedPath(result, point, receiver) {
+		return openRegistrationMutation{path: receiver, opensAll: true, aliasSensitive: true, mayRegister: true}, true
 	}
 	for _, arg := range fact.Args {
 		argPath, ok := result.ExpressionPath(arg)
 		if ok && callMayInvalidateTrackedPath(result, point, argPath) {
-			return openRegistrationMutation{path: argPath, opensAll: true, aliasSensitive: true}, true
+			return openRegistrationMutation{path: argPath, opensAll: true, aliasSensitive: true, mayRegister: true}, true
 		}
 	}
 	return openRegistrationMutation{}, false
+}
+
+func registrationValueMayRegister(result *body.Result, point cfg.Point, expr ast.Expr) bool {
+	if registrationCallbackExpr(result, point, expr) {
+		return true
+	}
+	if result == nil || result.Registry() == nil {
+		return true
+	}
+	value, ok := newDiagnosticQuery(result).ExpressionValueBeforeBoundary(point, expr)
+	if !ok {
+		return true
+	}
+	if product.Get(result.Registry(), value, runtimekind.Key).Contains(runtimekind.Function) {
+		return true
+	}
+	if valueType, ok := typevalue.TypeOf(result.Registry(), value); ok {
+		return typ.IsAny(valueType) || typ.IsUnknown(valueType)
+	}
+	return false
 }
 
 func registrationCallbackExpr(result *body.Result, point cfg.Point, expr ast.Expr) bool {
@@ -247,10 +281,14 @@ func (p discriminatedUnionExhaustiveness) dispatchCalls(result *body.Result, gra
 	var out []dispatchCall
 	for _, point := range graph.RPO() {
 		fact, ok := result.Call(point)
-		if !ok || fact.Call == nil || isRegistrationLikeCall(result, fact) {
+		if !ok || fact.Call == nil {
 			continue
 		}
-		registry, args, ok := dispatchRegistryAndArgs(result, fact)
+		site, ok := result.CallSite(point)
+		if !ok || isRegistrationLikeCall(result, site, point, fact) {
+			continue
+		}
+		registry, args, ok := dispatchRegistryAndArgs(result, site, fact)
 		if !ok {
 			continue
 		}
@@ -277,19 +315,20 @@ func (p discriminatedUnionExhaustiveness) dispatchCalls(result *body.Result, gra
 	return out
 }
 
-func isRegistrationLikeCall(result *body.Result, fact semantics.CallFact) bool {
-	if _, ok := registrationCallFromFact(result, fact, 0); ok {
+func isRegistrationLikeCall(result *body.Result, site factflow.CallSite, point cfg.Point, fact semantics.CallFact) bool {
+	if _, ok := registrationCallFromFact(result, site, fact, point); ok {
 		return true
 	}
-	if _, ok := openRegistrationMutationFromFact(result, 0, fact); ok {
-		return true
+	_, keyIndex, ok := registrationRegistryAndKeyIndex(result, site, fact)
+	if !ok || keyIndex < 0 || keyIndex >= len(fact.Args)-1 {
+		return false
 	}
-	return false
+	return registrationCallbackExpr(result, point, fact.Args[keyIndex+1])
 }
 
-func dispatchRegistryAndArgs(result *body.Result, fact semantics.CallFact) (pathdom.Path, []ast.Expr, bool) {
-	if fact.HasReceiverPath && fact.Method != "" && len(fact.Args) > 0 {
-		return fact.ReceiverPath, fact.Args, true
+func dispatchRegistryAndArgs(result *body.Result, site factflow.CallSite, fact semantics.CallFact) (pathdom.Path, []ast.Expr, bool) {
+	if registry, ok := callSiteMemberReceiverPath(site); ok && len(fact.Args) > 0 {
+		return registry, fact.Args, true
 	}
 	if len(fact.Args) >= 2 {
 		registry, ok := result.ExpressionPath(fact.Args[0])
@@ -298,4 +337,12 @@ func dispatchRegistryAndArgs(result *body.Result, fact semantics.CallFact) (path
 		}
 	}
 	return pathdom.Path{}, nil, false
+}
+
+func callSiteMemberReceiverPath(site factflow.CallSite) (pathdom.Path, bool) {
+	receiver, _, ok := site.CalleeMemberAccessPath()
+	if !ok || receiver.IsEmpty() {
+		return pathdom.Path{}, false
+	}
+	return receiver, true
 }

@@ -4,6 +4,7 @@ package signaturelookup
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
@@ -45,8 +46,7 @@ func (s Source) Lookup(name string) (signature.Function, bool) {
 		if m == nil {
 			continue
 		}
-		sig, ok := m.FunctionSignatures[name]
-		if ok {
+		if sig, ok := lookupManifestSignature(m, name); ok {
 			return sig.Clone(), true
 		}
 	}
@@ -54,6 +54,37 @@ func (s Source) Lookup(name string) (signature.Function, bool) {
 		return stdlib.Lookup(name)
 	}
 	return signature.Function{}, false
+}
+
+func lookupManifestSignature(m *manifest.Manifest, name string) (signature.Function, bool) {
+	if m == nil {
+		return signature.Function{}, false
+	}
+	if sig, ok := m.FunctionSignatures[name]; ok {
+		return sig, true
+	}
+	if local, ok := manifestLocalSignatureName(m.Path, name); ok {
+		if sig, ok := m.FunctionSignatures[local]; ok {
+			return sig, true
+		}
+	}
+	// No explicit signature: recover one from the module's declared types.
+	return deriveManifestSignature(m, name)
+}
+
+func manifestLocalSignatureName(modulePath, name string) (string, bool) {
+	if modulePath == "" || name == modulePath {
+		return "", false
+	}
+	if strings.HasPrefix(name, modulePath+".") {
+		local := strings.TrimPrefix(name, modulePath+".")
+		return local, local != ""
+	}
+	if strings.HasPrefix(name, modulePath+"[") {
+		local := strings.TrimPrefix(name, modulePath)
+		return local, local != ""
+	}
+	return "", false
 }
 
 // Signatures returns a cloned merged map, with manifest entries overriding
@@ -79,4 +110,17 @@ func (s Source) Signatures() map[string]signature.Function {
 // StdlibSignatures returns cloned standard-library signatures.
 func StdlibSignatures() map[string]signature.Function {
 	return stdlib.Signatures()
+}
+
+// StdlibSignatureNames returns the standard-library function names without
+// materializing cloned signatures.
+func StdlibSignatureNames() []string {
+	return stdlib.SignatureNames()
+}
+
+// StdlibBareGlobals returns the standard global names that are recognized by
+// name but not modeled with a signature (the global table, version constants,
+// and standard library tables without per-member declarations).
+func StdlibBareGlobals() []string {
+	return stdlib.BareGlobals()
 }

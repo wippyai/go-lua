@@ -12,8 +12,12 @@ func (r *Result) ReturnTypeValues() []product.Value {
 	if r == nil || r.registry == nil || r.bindings == nil || r.Function() == nil {
 		return nil
 	}
+	if r.returnTypesOK {
+		return r.returnTypeValues
+	}
 	returnTypes := declaredReturnTypeExprs(r.Function().ReturnTypes)
 	if len(returnTypes) == 0 {
+		r.returnTypesOK = true
 		return nil
 	}
 	resolver := typeresolve.NewWithExternal(r.bindings, r.moduleTypes)
@@ -26,7 +30,9 @@ func (r *Result) ReturnTypeValues() []product.Value {
 		}
 		out = append(out, r.typeValues.FromTypeWithWitness(r.registry, t))
 	}
-	return out
+	r.returnTypeValues = out
+	r.returnTypesOK = true
+	return r.returnTypeValues
 }
 
 func declaredReturnTypeExprs(types []ast.TypeExpr) []ast.TypeExpr {

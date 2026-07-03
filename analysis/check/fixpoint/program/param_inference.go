@@ -167,28 +167,38 @@ func (p *paramInference) paramSeeds(bindings *bind.Result, fn *ast.FunctionExpr,
 	return out
 }
 
-// applyParamSeeds writes inferred parameter seeds onto a clone of base. An
-// existing non-Bottom slot value is preserved so a caller-supplied entry state
-// is never overwritten by inference. When a written seed carries a singleton
-// table identity, reachable heap table objects are copied from source into the
-// callee entry state's heap sidecar without changing any summary or context key.
+// applyParamSeeds writes inferred parameter seeds onto a clone of base. Concrete
+// slot values are preserved so a caller-supplied entry state is never
+// overwritten by inference; bottom and top-like default parameter seeds may be
+// refined by the inferred contract. When a written seed carries a singleton table
+// identity, reachable heap table objects are copied from source into the callee
+// entry state's heap sidecar without changing any summary or context key.
 func applyParamSeeds(reg *axis.Registry, base, source state.State, seeds []paramSeed) state.State {
 	if reg == nil || len(seeds) == 0 {
 		return base
 	}
 	bottom := product.Bottom(reg)
 	out := base.Snapshot()
+	edit := out.EditValues(reg)
 	for _, seed := range seeds {
 		if seed.slot == 0 {
 			continue
 		}
-		if !product.Equal(reg, out.ReadValue(reg, seed.slot), bottom) {
+		if !paramSeedMayWrite(reg, edit.Read(seed.slot), bottom) {
 			continue
 		}
-		out = out.WriteValue(reg, seed.slot, seed.value)
+		edit.Write(seed.slot, seed.value)
 		out = seedReachableHeapFromValue(reg, out, source, seed.value, map[identity.ID]struct{}{})
 	}
-	return out
+	return edit.DoneOn(out)
+}
+
+func paramSeedMayWrite(reg *axis.Registry, current, bottom product.Value) bool {
+	if product.Equal(reg, current, bottom) || product.Equal(reg, current, product.Top()) {
+		return true
+	}
+	ev := product.Get(reg, current, evidence.Key)
+	return ev.IsGradualTop() || ev.IsExplicitTop()
 }
 
 func seedReachableHeapFromValue(

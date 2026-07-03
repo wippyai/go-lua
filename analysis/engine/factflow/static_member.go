@@ -24,6 +24,10 @@ func NewPathStaticMemberWrite(targetPath path.Path, source ValueSource) PathStat
 // TargetPath returns the static member path written by this event.
 func (w PathStaticMemberWrite) TargetPath() path.Path { return w.targetPath.Clone() }
 
+// TargetPathRef returns the static member path for immediate read-only use.
+// Callers must not mutate or retain the returned path.
+func (w PathStaticMemberWrite) TargetPathRef() path.Path { return w.targetPath }
+
 // Source returns the value evidence to write for TargetPath.
 func (w PathStaticMemberWrite) Source() ValueSource { return w.source }
 

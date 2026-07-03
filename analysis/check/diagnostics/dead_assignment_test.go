@@ -142,6 +142,25 @@ return value
 	}
 }
 
+func TestDeadAssignmentWarningKeepsIndependentSameStatementSlots(t *testing.T) {
+	diags := ProduceWithConfig(runDiagnosticsResult(t, `
+local a, b = 1, 2
+a = 3
+return a, b
+`), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeDeadAssignment: diagnostic.Enable(),
+	}}})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one dead assignment for only the overwritten slot", diags)
+	}
+	if diags[0].Code != CodeDeadAssignment || !strings.Contains(diags[0].Message, `"a"`) {
+		t.Fatalf("diagnostic = %#v, want dead assignment for a", diags[0])
+	}
+	if strings.Contains(diags[0].Message, `"b"`) {
+		t.Fatalf("diagnostic = %#v, did not expect live same-statement slot b to be reported", diags[0])
+	}
+}
+
 func TestDeadAssignmentWarningReportsOverwriteOrExitBeforeRead(t *testing.T) {
 	diags := ProduceWithConfig(runDiagnosticsResult(t, `
 local value = 1

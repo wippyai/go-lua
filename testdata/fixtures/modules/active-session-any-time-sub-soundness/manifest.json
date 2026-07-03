@@ -13,14 +13,14 @@
         "code": "type.call.direct.argument_type",
         "message_contains": [
           "argument 1 (last_activity)",
-          "any",
-          "not time.Time"
+          "comes from any/unknown",
+          "no proof shows it is time.Time"
         ],
         "min_evidence": 4,
         "evidence_contains": [
           "argument 1 (last_activity) has type any",
           "now.sub parameter 1 expects time.Time",
-          "argument 1 (last_activity) comes from any/unknown",
+          "last_activity comes from any/unknown",
           "no proof on this path shows last_activity satisfies the parameter type"
         ],
         "evidence": [
@@ -49,7 +49,7 @@
             "trust": "unknown",
             "reason": "explicit boundary validation",
             "contains": [
-              "argument 1 (last_activity) comes from any/unknown"
+              "last_activity comes from any/unknown"
             ]
           },
           {
@@ -71,7 +71,7 @@
           "because:",
           "proven: argument 1 (last_activity) has type any",
           "claimed: now.sub parameter 1 expects time.Time",
-          "unvalidated value: argument 1 (last_activity) comes from any/unknown",
+          "unvalidated value: last_activity comes from any/unknown",
           "missing proof: no proof on this path shows last_activity satisfies the parameter type",
           "help: Validate or narrow `last_activity`"
         ],
@@ -82,7 +82,7 @@
           "because:",
           "proven: argument 1 (last_activity) has type any",
           "claimed: now.sub parameter 1 expects time.Time",
-          "unvalidated value: argument 1 (last_activity) comes from any/unknown",
+          "unvalidated value: last_activity comes from any/unknown",
           "missing proof: no proof on this path shows last_activity satisfies the parameter type",
           "help: Validate or narrow `last_activity`"
         ],

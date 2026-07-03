@@ -249,3 +249,28 @@ local out = router:dispatch(action)
 		t.Fatalf("diagnostics = %#v, want no exhaustive-union warning when callback alias is no longer known callable", result.Diagnostics)
 	}
 }
+
+func TestDiscriminatedUnionExhaustivenessSuppressesMissingCaseAfterDynamicKeyMutation(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local function scenario(dynamic_cancel: any): ()
+    local router: any = {}
+    router:on("begin", function(action: Action): string return action.kind end)
+    router:on("commit", function(action: Action): string return action.kind end)
+    router["cancel"] = dynamic_cancel
+
+    local action: Action = { kind = "begin", id = "evt-1" }
+    local out = router:dispatch(action)
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no exhaustive-union warning after key-specific dynamic registration mutation", result.Diagnostics)
+	}
+}

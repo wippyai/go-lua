@@ -173,13 +173,12 @@ func returnAliasLocalObjectSources(result ResultReader, objectReader objectLiter
 }
 
 func returnAliasReassignedLocalSymbols(result ResultReader, graph cfg.Graph) map[symbol.ID]struct{} {
-	ordinaryReader, ok := result.(ordinaryAssignmentReader)
-	if !ok || graph == nil {
+	if graph == nil || !hasOrdinaryAssignmentFactReader(result) {
 		return nil
 	}
 	var out map[symbol.ID]struct{}
 	for _, point := range graph.RPO() {
-		fact, ok := ordinaryReader.OrdinaryAssignment(point)
+		fact, ok := ordinaryAssignmentFactAt(result, point)
 		if !ok {
 			continue
 		}

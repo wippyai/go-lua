@@ -18,6 +18,7 @@ func TestElementOfContainerShapes(t *testing.T) {
 		{name: "array", in: typ.NewArray(typ.String), want: typ.String},
 		{name: "map", in: typetable.NewMap(typ.String, typ.Number), want: typ.Number},
 		{name: "readonly map", in: typetable.NewReadonlyMap(typ.String, typ.Boolean), want: typ.Boolean},
+		{name: "record map component", in: typetable.NewRecord().MapComponent(typ.Integer, typ.String).Build(), want: typ.String},
 		{name: "single tuple", in: typ.NewTuple(typ.Integer), want: typ.Integer},
 		{name: "multi tuple", in: typ.NewTuple(typ.String, typ.Number), want: typ.MaterializeUnion([]typ.Type{typ.String, typ.Number})},
 	}
@@ -114,6 +115,7 @@ func TestKeyOfContainerShapes(t *testing.T) {
 		{name: "array", in: typ.NewArray(typ.String), want: typ.Integer},
 		{name: "map", in: typetable.NewMap(typ.String, typ.Number), want: typ.String},
 		{name: "readonly map", in: typetable.NewReadonlyMap(typ.Integer, typ.Boolean), want: typ.Integer},
+		{name: "record map component", in: typetable.NewRecord().MapComponent(typ.String, typ.Boolean).Build(), want: typ.String},
 		{name: "tuple", in: typ.NewTuple(typ.String, typ.Number), want: typ.Integer},
 	}
 	for _, tc := range cases {
@@ -144,6 +146,26 @@ func TestKeyOfRecursiveAndInstantiatedContainers(t *testing.T) {
 		t.Fatal("KeyOf instantiated map failed")
 	}
 	assertProjectionType(t, got, typ.Integer)
+}
+
+func TestKeyOfUnionProjectsMembersAndSkipsNil(t *testing.T) {
+	source := typeexpr.Union(
+		typ.NewArray(typ.String),
+		typetable.NewReadonlyMap(typ.String, typ.Number),
+		typ.Nil,
+	)
+
+	got, ok := KeyOf(source)
+	if !ok {
+		t.Fatal("KeyOf failed")
+	}
+	assertProjectionType(t, got, typ.MaterializeUnion([]typ.Type{typ.Integer, typ.String}))
+}
+
+func TestKeyOfRejectsNonContainerUnionMember(t *testing.T) {
+	if got, ok := KeyOf(typeexpr.Union(typ.NewArray(typ.String), typ.Boolean)); ok || got != nil {
+		t.Fatalf("KeyOf succeeded: %v", got)
+	}
 }
 
 func assertProjectionType(t *testing.T, got typ.Type, want typ.Type) {

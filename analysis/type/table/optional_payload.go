@@ -33,12 +33,8 @@ func withOptionalPayloadsSplit[T any](items []T, split func(T) T, sameShape func
 // fieldWithOptionalPayloadSplit returns field with nilable optional payloads
 // split into absent-vs-present table shape.
 func fieldWithOptionalPayloadSplit(field typ.Field) typ.Field {
-	if !field.Optional {
-		return field
-	}
-	if inner, optional := splitNilableFieldType(field.Type); optional {
+	if inner, ok := splitOptionalEntryPayload(field.Type, field.Optional); ok {
 		field.Type = inner
-		field.Optional = true
 	}
 	return field
 }
@@ -52,14 +48,17 @@ func staticMembersWithOptionalPayloadsSplit(members []typ.StaticMember) []typ.St
 // staticMemberWithOptionalPayloadSplit returns member with nilable optional
 // payloads split into absent-vs-present table shape.
 func staticMemberWithOptionalPayloadSplit(member typ.StaticMember) typ.StaticMember {
-	if !member.Optional {
-		return member
-	}
-	if inner, optional := splitNilableFieldType(member.Type); optional {
+	if inner, ok := splitOptionalEntryPayload(member.Type, member.Optional); ok {
 		member.Type = inner
-		member.Optional = true
 	}
 	return member
+}
+
+func splitOptionalEntryPayload(t typ.Type, optional bool) (typ.Type, bool) {
+	if !optional {
+		return t, false
+	}
+	return splitNilableFieldType(t)
 }
 
 func sameFieldShape(a, b typ.Field) bool {

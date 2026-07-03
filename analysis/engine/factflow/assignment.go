@@ -2,6 +2,7 @@ package factflow
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -26,6 +27,7 @@ type RootAssignment struct {
 	declaredValue          product.Value
 	hasDeclaredValue       bool
 	declaredValueContracts bool
+	declaredValueOverlays  bool
 }
 
 // NewRootAssignment creates a root-symbol assignment fact.
@@ -55,6 +57,15 @@ func NewRootAssignmentWithDeclaredContractValue(kind RootAssignmentKind, targetS
 	return fact
 }
 
+// NewRootAssignmentWithDeclaredOverlayValue creates a root assignment fact whose
+// source value remains precise but is overlaid with the target's declared
+// contract before writing.
+func NewRootAssignmentWithDeclaredOverlayValue(kind RootAssignmentKind, targetSymbol symbol.ID, targetPath path.Path, source ValueSource, declaredValue product.Value) RootAssignment {
+	fact := NewRootAssignmentWithDeclaredValue(kind, targetSymbol, targetPath, source, declaredValue)
+	fact.declaredValueOverlays = true
+	return fact
+}
+
 // Kind returns the source origin for this root assignment.
 func (a RootAssignment) Kind() RootAssignmentKind { return a.kind }
 
@@ -63,6 +74,10 @@ func (a RootAssignment) TargetSymbol() symbol.ID { return a.targetSymbol }
 
 // TargetPath returns the assignment target's path identity.
 func (a RootAssignment) TargetPath() path.Path { return a.targetPath.Clone() }
+
+// TargetPathRef returns the assignment target path for immediate read-only use.
+// Callers must not mutate or retain the returned path.
+func (a RootAssignment) TargetPathRef() path.Path { return a.targetPath }
 
 // Source returns the value assigned to the target.
 func (a RootAssignment) Source() ValueSource { return a.source }
@@ -77,6 +92,12 @@ func (a RootAssignment) DeclaredValue() (product.Value, bool) {
 // explicit contract that should take precedence over source precision.
 func (a RootAssignment) DeclaredValueContracts() bool {
 	return a.hasDeclaredValue && a.declaredValueContracts
+}
+
+// DeclaredValueOverlays reports whether declared value evidence should be
+// merged into source precision before writing the target.
+func (a RootAssignment) DeclaredValueOverlays() bool {
+	return a.hasDeclaredValue && a.declaredValueOverlays
 }
 
 func (a RootAssignment) copy() RootAssignment {
@@ -101,6 +122,10 @@ func NewPathAssignment(targetPath path.Path, source ValueSource) PathAssignment 
 // TargetPath returns the assignment target's path identity.
 func (a PathAssignment) TargetPath() path.Path { return a.targetPath.Clone() }
 
+// TargetPathRef returns the assignment target path for immediate read-only use.
+// Callers must not mutate or retain the returned path.
+func (a PathAssignment) TargetPathRef() path.Path { return a.targetPath }
+
 // Source returns the value assigned to the target path.
 func (a PathAssignment) Source() ValueSource { return a.source }
 
@@ -113,6 +138,7 @@ func (a PathAssignment) copy() PathAssignment {
 // of a statically known container path.
 type PathDescendantInvalidation struct {
 	containerPath path.Path
+	dynamicTarget dynamicInvalidationTarget
 }
 
 // NewPathDescendantInvalidation creates a descendant-only invalidation fact for
@@ -121,13 +147,59 @@ func NewPathDescendantInvalidation(containerPath path.Path) PathDescendantInvali
 	return PathDescendantInvalidation{containerPath: containerPath.Clone()}
 }
 
+type dynamicInvalidationTarget struct {
+	tablePath path.Path
+	keySource ValueSource
+	suffix    []segment.Segment
+	ok        bool
+}
+
+// WithDynamicTarget returns i with the unresolved dynamic-index target that
+// caused the broad invalidation. When the key source later proves a literal
+// member, fact application can additionally invalidate the concrete path.
+func (i PathDescendantInvalidation) WithDynamicTarget(tablePath path.Path, keySource ValueSource, suffix []segment.Segment) PathDescendantInvalidation {
+	i.dynamicTarget = dynamicInvalidationTarget{
+		tablePath: tablePath.Clone(),
+		keySource: keySource,
+		suffix:    append([]segment.Segment(nil), suffix...),
+		ok:        true,
+	}
+	return i
+}
+
 // ContainerPath returns the invalidated container's path identity.
 func (i PathDescendantInvalidation) ContainerPath() path.Path {
 	return i.containerPath.Clone()
 }
 
+// ContainerPathRef returns the invalidated container path for immediate
+// read-only use. Callers must not mutate or retain the returned path.
+func (i PathDescendantInvalidation) ContainerPathRef() path.Path {
+	return i.containerPath
+}
+
+// DynamicTarget returns the dynamic-index table, key source, and post-index
+// suffix when this broad invalidation came from a target such as t[k].field.
+func (i PathDescendantInvalidation) DynamicTarget() (path.Path, ValueSource, []segment.Segment, bool) {
+	if !i.dynamicTarget.ok {
+		return path.Path{}, ValueSource{}, nil, false
+	}
+	return i.dynamicTarget.tablePath.Clone(), i.dynamicTarget.keySource, append([]segment.Segment(nil), i.dynamicTarget.suffix...), true
+}
+
+// DynamicTargetRef returns the dynamic target for immediate read-only use.
+// Callers must not mutate or retain the returned suffix.
+func (i PathDescendantInvalidation) DynamicTargetRef() (path.Path, ValueSource, []segment.Segment, bool) {
+	if !i.dynamicTarget.ok {
+		return path.Path{}, ValueSource{}, nil, false
+	}
+	return i.dynamicTarget.tablePath, i.dynamicTarget.keySource, i.dynamicTarget.suffix, true
+}
+
 func (i PathDescendantInvalidation) copy() PathDescendantInvalidation {
 	i.containerPath = i.containerPath.Clone()
+	i.dynamicTarget.tablePath = i.dynamicTarget.tablePath.Clone()
+	i.dynamicTarget.suffix = append([]segment.Segment(nil), i.dynamicTarget.suffix...)
 	return i
 }
 

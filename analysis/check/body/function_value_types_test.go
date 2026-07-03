@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -14,6 +15,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
+	"github.com/wippyai/go-lua/analysis/engine/transfer"
+	"github.com/wippyai/go-lua/analysis/engine/visibility"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -243,6 +248,147 @@ func TestCloneFunctionValueTypesDecouplesMutableIndexes(t *testing.T) {
 	}
 	if got := clone.ContextsByIdentity[id]; len(got) != 1 || got[0].Type != originalFn {
 		t.Fatalf("clone contexts = %#v, want one original context", got)
+	}
+}
+
+func TestWithOwnedFunctionValueTypesReusesCallerOwnedProjection(t *testing.T) {
+	id := identity.LuaFunction(711)
+	originalFn := typ.Func().Returns(typ.String).Build()
+	mutatedFn := typ.Func().Returns(typ.Number).Build()
+	types := FunctionValueTypes{
+		ByIdentity: map[identity.ID]*typ.Function{
+			id: originalFn,
+		},
+		ContextsByIdentity: map[identity.ID][]FunctionValueContext{
+			id: {{EntryKeys: keyspace.New(), Type: originalFn}},
+		},
+	}
+
+	var defensive Result
+	WithFunctionValueTypes(&defensive, types)
+	types.ByIdentity[id] = mutatedFn
+	types.ContextsByIdentity[id][0].Type = mutatedFn
+	if defensive.funcTypes.ByIdentity[id] != originalFn {
+		t.Fatalf("WithFunctionValueTypes reused caller map")
+	}
+	if defensive.funcTypes.ContextsByIdentity[id][0].Type != originalFn {
+		t.Fatalf("WithFunctionValueTypes reused caller context slice")
+	}
+
+	types.ByIdentity[id] = originalFn
+	types.ContextsByIdentity[id][0].Type = originalFn
+	var owned Result
+	WithOwnedFunctionValueTypes(&owned, types)
+	types.ByIdentity[id] = mutatedFn
+	types.ContextsByIdentity[id][0].Type = mutatedFn
+	if owned.funcTypes.ByIdentity[id] != mutatedFn {
+		t.Fatalf("WithOwnedFunctionValueTypes cloned caller-owned map")
+	}
+	if owned.funcTypes.ContextsByIdentity[id][0].Type != mutatedFn {
+		t.Fatalf("WithOwnedFunctionValueTypes cloned caller-owned context slice")
+	}
+}
+
+func TestFunctionValueTypeForCallSiteAtBoundaryUsesCurrentPathValue(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(810)
+	calleeSym := symbol.ID(8100)
+	currentID := identity.LuaFunction(8101)
+	staleID := identity.LuaFunction(8102)
+	currentFn := typ.Func().Returns(typ.String).Build()
+	staleFn := typ.Func().Returns(typ.Number).Build()
+	calleePath := path.NewPath(calleeSym, "handler")
+	calleeKey, ok := factflow.CalleePathKeyFromPath(calleePath)
+	if !ok {
+		t.Fatal("CalleePathKeyFromPath failed")
+	}
+
+	result := functionValueCallSiteResult(reg, point, calleeSym, identityValue(reg, currentID))
+	WithOwnedFunctionValueTypes(result, FunctionValueTypes{
+		ByIdentity: map[identity.ID]*typ.Function{
+			currentID: currentFn,
+			staleID:   staleFn,
+		},
+		ByPath: map[factflow.CalleePathKey]*typ.Function{
+			calleeKey: staleFn,
+		},
+	})
+
+	got, ok := result.FunctionValueTypeForCallSiteAtBoundary(point, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: calleeSym,
+		CalleePath:   calleePath,
+	}))
+	if !ok || got != currentFn {
+		t.Fatalf("FunctionValueTypeForCallSiteAtBoundary = %v/%v, want current identity function", got, ok)
+	}
+}
+
+func TestFunctionValueTypeForCallSiteAtBoundaryRejectsStalePathWhenCurrentValueIsNotCallable(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(811)
+	calleeSym := symbol.ID(8110)
+	staleFn := typ.Func().Returns(typ.Number).Build()
+	calleePath := path.NewPath(calleeSym, "handler")
+	calleeKey, ok := factflow.CalleePathKeyFromPath(calleePath)
+	if !ok {
+		t.Fatal("CalleePathKeyFromPath failed")
+	}
+
+	result := functionValueCallSiteResult(reg, point, calleeSym, runtimeValue(reg, presence.Present(), runtimekind.String))
+	WithOwnedFunctionValueTypes(result, FunctionValueTypes{
+		ByPath: map[factflow.CalleePathKey]*typ.Function{
+			calleeKey: staleFn,
+		},
+	})
+
+	if got, ok := result.FunctionValueTypeForCallSiteAtBoundary(point, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: calleeSym,
+		CalleePath:   calleePath,
+	})); ok || got != nil {
+		t.Fatalf("FunctionValueTypeForCallSiteAtBoundary = %v/%v, want stale path summary rejected", got, ok)
+	}
+}
+
+func TestFunctionValueTypeForCallSiteAtBoundaryFallsBackToCalleePathSummaryWhenCurrentValueMissing(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(812)
+	calleeSym := symbol.ID(8120)
+	fn := typ.Func().Returns(typ.Boolean).Build()
+	calleePath := path.NewPath(calleeSym, "handler")
+	calleeKey, ok := factflow.CalleePathKeyFromPath(calleePath)
+	if !ok {
+		t.Fatal("CalleePathKeyFromPath failed")
+	}
+
+	result := functionValueCallSiteResult(reg, point, calleeSym, product.Bottom(reg))
+	WithOwnedFunctionValueTypes(result, FunctionValueTypes{
+		ByPath: map[factflow.CalleePathKey]*typ.Function{
+			calleeKey: fn,
+		},
+	})
+
+	got, ok := result.FunctionValueTypeForCallSiteAtBoundary(point, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: calleeSym,
+		CalleePath:   calleePath,
+	}))
+	if !ok || got != fn {
+		t.Fatalf("FunctionValueTypeForCallSiteAtBoundary = %v/%v, want callee path summary", got, ok)
+	}
+}
+
+func functionValueCallSiteResult(reg *axis.Registry, point cfg.Point, calleeSym symbol.ID, value product.Value) *Result {
+	builder := visibility.NewBuilder()
+	builder.Define(point, calleeSym, "handler")
+	st := state.State{}
+	if !product.Equal(reg, value, product.Bottom(reg)) {
+		st = st.WriteValue(reg, statekey.SymbolValue(calleeSym), value)
+	}
+	return &Result{
+		registry:   reg,
+		visibility: visibility.NewResolver(builder.Build()),
+		flow: transfer.Result{
+			point: st,
+		},
 	}
 }
 

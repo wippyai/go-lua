@@ -35,6 +35,15 @@ type ShortCircuitGuardFact struct {
 	Condition ast.Expr
 }
 
+// ExpressionEvaluationFact records a value expression evaluated at a CFG point
+// that exists only to carry path-sensitive facts. The node is intentionally a
+// structural no-op: it changes no runtime state, but consumers can inspect the
+// expression under the CFG edge environment active at that point.
+type ExpressionEvaluationFact struct {
+	Stmt ast.Stmt
+	Expr ast.Expr
+}
+
 // FunctionDefinitionFact describes a function declaration associated with a CFG point.
 type FunctionDefinitionFact struct {
 	Stmt *ast.FuncDefStmt

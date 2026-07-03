@@ -1,7 +1,6 @@
 local function need(s: string): string return s end
 local function f(v: any): string
-    -- A cast adopts its target type for inference, but it does not prove a
-    -- parameter contract: the any value cannot satisfy the string parameter.
-    return need(v :: string) -- expect-error: is any, not string
+    -- Scalar casts are runtime validations; if this expression returns, v is string.
+    return need(v :: string)
 end
 return f("x")

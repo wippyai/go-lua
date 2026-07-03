@@ -2,9 +2,11 @@ package diagnostics
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
@@ -28,7 +30,7 @@ func (p concatOperands) Produce(result *body.Result) []diagnostic.Diagnostic {
 	if graph == nil {
 		return nil
 	}
-	envs := cachedGuardEnvironments(result)
+	envs := producerContext(p).guardEnvironments(result)
 	truthyBranches := newTruthyDominatingBranchProofs(result)
 	var out []diagnostic.Diagnostic
 	seen := make(map[concatSeenKey]struct{})
@@ -38,6 +40,7 @@ func (p concatOperands) Produce(result *body.Result) []diagnostic.Diagnostic {
 		}
 		check := concatOperandCheck{
 			result: result,
+			query:  producerContext(p).query(result),
 			flow:   p.flow,
 			typer:  newStructuralFlowExpressionTyper(result, p.resolver, point, envs[point]),
 			envs:   envs,
@@ -76,6 +79,24 @@ func (p concatOperands) walk(expr ast.Expr, check concatOperandCheck, seen map[c
 	walkChild := func(child ast.Expr) {
 		p.walk(child, check, seen, out, depth+1)
 	}
+	if e, ok := expr.(*ast.LogicalOpExpr); ok {
+		p.walk(e.Lhs, check, seen, out, depth+1)
+		switch e.Operator {
+		case "and":
+			next, reachable := check.withExpressionEdgeFacts(e.Lhs, true)
+			if reachable {
+				p.walk(e.Rhs, next, seen, out, depth+1)
+			}
+		case "or":
+			next, reachable := check.withExpressionEdgeFacts(e.Lhs, false)
+			if reachable {
+				p.walk(e.Rhs, next, seen, out, depth+1)
+			}
+		default:
+			p.walk(e.Rhs, check, seen, out, depth+1)
+		}
+		return
+	}
 	if e, ok := expr.(*ast.StringConcatOpExpr); ok {
 		walkExprChildren(expr, walkChild)
 		key := concatSeenKey{expr: e, point: check.point}
@@ -97,6 +118,7 @@ func (p concatOperands) walk(expr ast.Expr, check concatOperandCheck, seen map[c
 
 type concatOperandCheck struct {
 	result *body.Result
+	query  diagnosticQuery
 	flow   *diagnosticFlowCache
 	typer  expressionTyper
 	envs   map[cfg.Point]guardEnv
@@ -110,6 +132,9 @@ type concatSeenKey struct {
 }
 
 func (c concatOperandCheck) diagnostic(expr *ast.StringConcatOpExpr, operand ast.Expr, side string) (diagnostic.Diagnostic, bool) {
+	if c.operandProvenPresent(operand) {
+		return diagnostic.Diagnostic{}, false
+	}
 	t, ok := c.operandType(operand)
 	if !ok || t == nil || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) {
 		return diagnostic.Diagnostic{}, false
@@ -125,7 +150,75 @@ func (c concatOperandCheck) diagnostic(expr *ast.StringConcatOpExpr, operand ast
 	return concatOperandDiagnostic(operand, side, t), true
 }
 
+func (c concatOperandCheck) operandProvenPresent(operand ast.Expr) bool {
+	if value, ok := c.query.ExpressionValueBeforeBoundary(c.point, operand); ok {
+		switch p := product.PresenceOf(value); {
+		case presence.Equal(p, presence.Present()):
+			return true
+		case presence.Equal(p, presence.Absent()):
+			return false
+		}
+		if t, ok := c.query.ValueTypeWithPresence(value); ok && typ.Nil.Equals(t) {
+			return false
+		}
+	}
+	accessPath, ok := c.expressionPath(operand)
+	if !ok {
+		return false
+	}
+	if c.typer.env.hasNil(accessPath) || c.typer.env.hasFalsy(accessPath) {
+		return false
+	}
+	if c.typer.env.hasPresent(accessPath) || c.typer.env.hasTruthy(accessPath) {
+		return true
+	}
+	return c.truthy.provesPresentWithoutInvalidation(c.result, c.flow, c.point, accessPath)
+}
+
+// operandType resolves the operand's type for the nil-risk check. The structural
+// pass approximates the type from declarations and guard proofs; the flow-solved
+// value state is authoritative for presence, so when the structural type still
+// carries nil but the flow proves the operand present at this point (an inferred
+// optional narrowed by a guard the structural pass cannot key on), the present
+// type wins. This keeps the runtime-nil-risk surfaced unless flow evidence
+// proves presence, for inferred optionals as well as declared ones.
 func (c concatOperandCheck) operandType(operand ast.Expr) (typ.Type, bool) {
+	t, ok := c.structuralOperandType(operand)
+	if !ok {
+		return nil, false
+	}
+	if projectionHasNil(t) {
+		if present, ok := c.flowPresentOperandType(operand); ok {
+			return present, true
+		}
+	}
+	return t, true
+}
+
+// flowPresentOperandType returns the operand's flow-solved type when the solved
+// value state proves it present (carries no nil) at this point. It reads the
+// value before same-node materialization, the same boundary the assignment
+// nil-check uses, so a guard that narrowed the operand is reflected regardless
+// of whether the operand was a declared or an inferred optional.
+func (c concatOperandCheck) flowPresentOperandType(operand ast.Expr) (typ.Type, bool) {
+	if c.result == nil {
+		return nil, false
+	}
+	if accessPath, ok := c.expressionPath(operand); ok && (c.typer.env.hasFalsy(accessPath) || c.typer.env.hasNil(accessPath)) {
+		return nil, false
+	}
+	value, ok := c.query.ExpressionValueBeforeBoundary(c.point, operand)
+	if !ok {
+		return nil, false
+	}
+	t, ok := c.query.ValueTypeWithPresence(value)
+	if !ok || t == nil || projectionHasNil(t) {
+		return nil, false
+	}
+	return t, true
+}
+
+func (c concatOperandCheck) structuralOperandType(operand ast.Expr) (typ.Type, bool) {
 	if t, ok := projectedOptionalIndexType(c.result, c.typer.resolver, c.point, operand); ok {
 		if present, ok := c.presentGuardOperandType(operand, t); ok {
 			return present, true
@@ -160,18 +253,41 @@ func (c concatOperandCheck) operandType(operand ast.Expr) (typ.Type, bool) {
 	if c.result == nil {
 		return nil, false
 	}
-	value, ok := c.result.ExpressionValueAtBoundary(c.point, operand)
+	value, ok := c.query.ExpressionValueAtBoundary(c.point, operand)
 	if !ok {
 		return nil, false
 	}
-	return readmodel.New(c.result).ValueTypeWithPresence(value)
+	return c.query.ValueTypeWithPresence(value)
+}
+
+func (c concatOperandCheck) withExpressionEdgeFacts(expr ast.Expr, cond bool) (concatOperandCheck, bool) {
+	if c.result == nil || expr == nil {
+		return c, true
+	}
+	env, reachable := applyExpressionEdgeGuards(c.result, c.point, expr, cond, c.typer.env)
+	if !reachable {
+		return c, false
+	}
+	c.typer.env = env
+	return c, true
+}
+
+func (c concatOperandCheck) expressionPath(expr ast.Expr) (pathdom.Path, bool) {
+	if c.result == nil || expr == nil {
+		return pathdom.Path{}, false
+	}
+	p, ok := c.query.ExpressionPath(expr)
+	if !ok || p.IsEmpty() {
+		return pathdom.Path{}, false
+	}
+	return p, true
 }
 
 func (c concatOperandCheck) truthyDominatingBranchOperandType(operand ast.Expr, t typ.Type) (typ.Type, bool) {
 	if c.result == nil || operand == nil || t == nil {
 		return nil, false
 	}
-	accessPath, ok := c.result.ExpressionPath(operand)
+	accessPath, ok := c.query.ExpressionPath(operand)
 	if !ok || accessPath.IsEmpty() {
 		return nil, false
 	}
@@ -206,14 +322,20 @@ func newTruthyDominatingBranchProofs(result *body.Result) truthyDominatingBranch
 	proofs := truthyDominatingBranchProofs{
 		dom: dominance.ComputeImmediateDominatorInfo(graph),
 	}
-	for _, branch := range graph.RPO() {
+	for _, branch := range cfg.RPOReadOnly(graph) {
 		fact, ok := result.BranchCondition(branch)
 		if !ok || fact.Check.Kind != branchcond.CheckTruthy || fact.Check.Path.IsEmpty() {
 			continue
 		}
-		for _, succ := range graph.Successors(branch) {
+		for _, succ := range cfg.SuccessorsReadOnly(graph, branch) {
 			cond, ok := graph.EdgeCond(branch, succ)
 			if ok && cond {
+				// A successor reached by both the true edge and another edge is a
+				// join, not evidence that the true branch executed. The successor
+				// may dominate a later point even when the condition was false.
+				if len(cfg.PredecessorsReadOnly(graph, succ)) != 1 {
+					continue
+				}
 				proofs.branches = append(proofs.branches, truthyDominatingBranch{
 					path:          fact.Check.Path.Clone(),
 					trueSuccessor: succ,
@@ -236,6 +358,85 @@ func (p truthyDominatingBranchProofs) provesPresent(point cfg.Point, accessPath 
 	return false
 }
 
+func (p truthyDominatingBranchProofs) provesPresentWithoutInvalidation(result *body.Result, flow *diagnosticFlowCache, point cfg.Point, accessPath pathdom.Path) bool {
+	if p.dom == nil || result == nil || point == 0 || accessPath.IsEmpty() {
+		return false
+	}
+	for _, branch := range p.branches {
+		if !branch.path.Equal(accessPath) || !p.dom.Dominates(branch.trueSuccessor, point) {
+			continue
+		}
+		if !pathReassignedBetween(result, flow, branch.trueSuccessor, point, accessPath) {
+			return true
+		}
+	}
+	return false
+}
+
+func pathReassignedBetween(result *body.Result, flow *diagnosticFlowCache, from, to cfg.Point, target pathdom.Path) bool {
+	if result == nil || target.IsEmpty() || from == 0 || to == 0 {
+		return false
+	}
+	graph := result.Graph()
+	if graph == nil {
+		return false
+	}
+	for _, candidate := range graph.RPO() {
+		if candidate == from {
+			continue
+		}
+		if !diagnosticCanReach(flow, graph, from, candidate) || !diagnosticCanReach(flow, graph, candidate, to) {
+			continue
+		}
+		fact, ok := result.OrdinaryAssignment(candidate)
+		if !ok {
+			continue
+		}
+		if fact.HasSymbol && fact.Symbol != 0 && fact.Symbol == target.Symbol {
+			return true
+		}
+		if fact.Target != nil {
+			if targetPath, ok := result.ExpressionPath(fact.Target); ok && pathsOverlapIgnoringVersion(targetPath, target) {
+				return true
+			}
+		}
+		if !fact.HasPath {
+			continue
+		}
+		if pathsOverlapIgnoringVersion(fact.Path, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func pathsOverlapIgnoringVersion(left, right pathdom.Path) bool {
+	if !samePathRootIgnoringVersion(left, right) {
+		return false
+	}
+	return segmentsHavePrefixForConcat(left.Segments, right.Segments) ||
+		segmentsHavePrefixForConcat(right.Segments, left.Segments)
+}
+
+func samePathRootIgnoringVersion(left, right pathdom.Path) bool {
+	if left.Symbol != 0 || right.Symbol != 0 {
+		return left.Symbol != 0 && left.Symbol == right.Symbol
+	}
+	return left.Root != "" && left.Root == right.Root
+}
+
+func segmentsHavePrefixForConcat(candidate, prefix []segment.Segment) bool {
+	if len(prefix) > len(candidate) {
+		return false
+	}
+	for i, seg := range prefix {
+		if candidate[i] != seg {
+			return false
+		}
+	}
+	return true
+}
+
 func (c concatOperandCheck) rootIdentifierBoundaryType(operand ast.Expr) (typ.Type, bool) {
 	if c.result == nil {
 		return nil, false
@@ -243,22 +444,22 @@ func (c concatOperandCheck) rootIdentifierBoundaryType(operand ast.Expr) (typ.Ty
 	if _, ok := operand.(*ast.IdentExpr); !ok {
 		return nil, false
 	}
-	accessPath, ok := c.result.ExpressionPath(operand)
+	accessPath, ok := c.query.ExpressionPath(operand)
 	if !ok || accessPath.Symbol == 0 || len(accessPath.Segments) != 0 {
 		return nil, false
 	}
-	value, ok := c.result.ExpressionValueAtBoundary(c.point, operand)
+	value, ok := c.query.ExpressionValueAtBoundary(c.point, operand)
 	if !ok {
 		return nil, false
 	}
-	return readmodel.New(c.result).ValueTypeWithPresence(value)
+	return c.query.ValueTypeWithPresence(value)
 }
 
 func (c concatOperandCheck) presentGuardOperandType(operand ast.Expr, t typ.Type) (typ.Type, bool) {
 	if c.result == nil || operand == nil || t == nil {
 		return nil, false
 	}
-	accessPath, ok := c.result.ExpressionPath(operand)
+	accessPath, ok := c.query.ExpressionPath(operand)
 	if !ok || accessPath.IsEmpty() || !c.typer.env.hasPresent(accessPath) {
 		return nil, false
 	}
@@ -273,7 +474,7 @@ func (c concatOperandCheck) dominatingLocalDeclarationType(operand ast.Expr) (ty
 	if c.result == nil || operand == nil {
 		return nil, false
 	}
-	accessPath, ok := c.result.ExpressionPath(operand)
+	accessPath, ok := c.query.ExpressionPath(operand)
 	if !ok || accessPath.Symbol == 0 || len(accessPath.Segments) != 0 {
 		return nil, false
 	}
@@ -311,7 +512,7 @@ func (c concatOperandCheck) localDeclarationType(point cfg.Point, fact semantics
 			return got, true
 		}
 	}
-	return readmodel.New(c.result).SourceType(point, fact.Source)
+	return c.query.SourceType(point, fact.Source)
 }
 
 func (c concatOperandCheck) logicalOrPresentFallbackType(expr ast.Expr) (typ.Type, bool) {
@@ -348,10 +549,21 @@ func concatOperandDiagnostic(operand ast.Expr, side string, got typ.Type) diagno
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnostic.TrustProven,
+				Reason:  concatOperandEvidenceReason(got),
 				Span:    operandSpan,
 				Message: concatOperandTypeEvidence(side, operandName, got),
 			},
 		),
 		Help: concatOperandHelp(operandName),
 	})
+}
+
+func concatOperandEvidenceReason(got typ.Type) diagnostic.EvidenceReason {
+	if got != nil && typ.Nil.Equals(got) {
+		return diagnostic.EvidenceReasonExactType
+	}
+	if projectionHasNil(got) {
+		return diagnostic.EvidenceReasonUnionType
+	}
+	return diagnostic.EvidenceReasonUnspecified
 }

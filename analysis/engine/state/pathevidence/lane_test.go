@@ -10,6 +10,41 @@ import (
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
+func TestEditLaneMatchesRepeatedPathEvidenceWrites(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	valueDomain := product.Domain(reg)
+	pathKey := mustStructKey(t, ks, pathdom.PathKey("sym9@1.field"))
+	staticKey := mustStructKey(t, ks, pathdom.PathKey("sym9@1.method"))
+	present := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	absent := product.Absent(reg)
+
+	base, _ := (Lane{}).WritePathKey(reg, pathKey, present)
+	base, _ = base.WritePathStaticMember(staticKey, present)
+	edit := EditLane(reg, base)
+	edit.WritePathKey(pathKey, absent)
+	edit.WritePathStaticMember(staticKey, absent)
+	got, changed := edit.Done()
+	if !changed {
+		t.Fatalf("EditLane reported unchanged")
+	}
+
+	want, _ := base.WritePathKey(reg, pathKey, absent)
+	want, _ = want.WritePathStaticMember(staticKey, absent)
+	if value := got.ReadPathKey(reg, pathKey); !valueDomain.Equal(value, absent) {
+		t.Fatalf("edited path key = %#v, want absent", value)
+	}
+	if value := base.ReadPathKey(reg, pathKey); !valueDomain.Equal(value, present) {
+		t.Fatalf("EditLane mutated original path key = %#v", value)
+	}
+	if gotMember, ok := got.ReadPathStaticMember(staticKey); !ok || gotMember != absent {
+		t.Fatalf("edited static member = %#v/%v, want absent", gotMember, ok)
+	}
+	if wantMember, ok := want.ReadPathStaticMember(staticKey); !ok || wantMember != absent {
+		t.Fatalf("repeated static member = %#v/%v, want absent", wantMember, ok)
+	}
+}
+
 func TestInvalidateSubtreeOwnsCoupledEvidence(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()
@@ -48,6 +83,110 @@ func TestInvalidateSubtreeOwnsCoupledEvidence(t *testing.T) {
 	}
 	if out.HasBranchProof(proof) {
 		t.Fatalf("branch proof with invalidated path survived")
+	}
+}
+
+func TestInvalidateSubtreePrefixesMatchesComputedInvalidation(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	root := pathdom.PathKey("sym1@1.table")
+	child := pathdom.PathKey("sym1@1.table.field")
+	alias := pathdom.PathKey("sym2@1.alias.field")
+	present := product.Top()
+	proof := BranchProof{
+		Kind:  BranchProofPathEqual,
+		Path:  mustStateKey(t, ks, child),
+		Other: mustStateKey(t, ks, alias),
+	}
+
+	l, _ := (Lane{}).WritePathKey(reg, mustStructKey(t, ks, root), present)
+	l, _ = l.WritePathKey(reg, mustStructKey(t, ks, child), present)
+	l, _ = l.WritePathKey(reg, mustStructKey(t, ks, alias), present)
+	l, _ = l.AddBranchProof(proof)
+
+	prefixes, ok := l.PathKeySubtreeInvalidationPrefixes(ks, root)
+	if !ok {
+		t.Fatal("PathKeySubtreeInvalidationPrefixes rejected root")
+	}
+	fromPlan := l.InvalidatePathKeySubtreePrefixes(ks, prefixes)
+	fromRoot, ok := l.InvalidatePathKeySubtree(ks, root)
+	if !ok {
+		t.Fatal("InvalidatePathKeySubtree rejected root")
+	}
+	if !Domain(reg).Equal(fromPlan, fromRoot) {
+		t.Fatalf("plan invalidation diverged from root invalidation")
+	}
+}
+
+func TestInvalidateSubtreeRemovesStableStaticMemberCounterpart(t *testing.T) {
+	ks := keyspace.New()
+	present := product.Top()
+	local := mustStructKey(t, ks, "sym1@3.process")
+	stable, ok := ks.FromStableSymbol(1, ks.Segments(local))
+	if !ok {
+		t.Fatal("stable key failed")
+	}
+	l, _ := (Lane{}).WritePathStaticMember(stable, present)
+
+	out, ok := l.InvalidatePathKeySubtree(ks, "sym1@3.process")
+	if !ok {
+		t.Fatal("InvalidatePathKeySubtree rejected local path")
+	}
+	if got, ok := out.ReadPathStaticMember(stable); ok {
+		t.Fatalf("stable static member survived invalidation: %#v", got)
+	}
+}
+
+func TestInvalidateDescendantPrefixesMatchesComputedInvalidation(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	root := pathdom.PathKey("sym3@1.table")
+	child := pathdom.PathKey("sym3@1.table.field")
+	aliasChild := pathdom.PathKey("sym4@1.alias.field")
+	present := product.Top()
+	proof := BranchProof{
+		Kind:  BranchProofPathEqual,
+		Path:  mustStateKey(t, ks, child),
+		Other: mustStateKey(t, ks, aliasChild),
+	}
+
+	l, _ := (Lane{}).WritePathKey(reg, mustStructKey(t, ks, root), present)
+	l, _ = l.WritePathKey(reg, mustStructKey(t, ks, child), present)
+	l, _ = l.WritePathKey(reg, mustStructKey(t, ks, aliasChild), present)
+	l, _ = l.AddBranchProof(proof)
+
+	prefixes, ok := l.PathKeyDescendantInvalidationPrefixes(ks, root)
+	if !ok {
+		t.Fatal("PathKeyDescendantInvalidationPrefixes rejected root")
+	}
+	fromPlan := l.InvalidatePathKeyDescendantPrefixes(ks, prefixes)
+	fromRoot, ok := l.InvalidatePathKeyDescendants(ks, root)
+	if !ok {
+		t.Fatal("InvalidatePathKeyDescendants rejected root")
+	}
+	if !Domain(reg).Equal(fromPlan, fromRoot) {
+		t.Fatalf("descendant plan invalidation diverged from root invalidation")
+	}
+}
+
+func TestRekeyValueLanesKeepsStableSymbolStaticMembers(t *testing.T) {
+	from := keyspace.New()
+	to := keyspace.New()
+	present := product.Top()
+	local := mustStructKey(t, from, "sym7@1.run")
+	stable, ok := from.FromStableSymbol(7, from.Segments(local))
+	if !ok {
+		t.Fatal("stable key failed")
+	}
+	l, _ := (Lane{}).WritePathStaticMember(stable, present)
+
+	out := l.RekeyValueLanes(from, to)
+	toStable, ok := to.FromStableSymbol(7, to.Segments(mustStructKey(t, to, "sym7@1.run")))
+	if !ok {
+		t.Fatal("target stable key failed")
+	}
+	if got, ok := out.ReadPathStaticMember(toStable); !ok || got != present {
+		t.Fatalf("rekeyed stable member = %#v ok=%v, want present", got, ok)
 	}
 }
 
@@ -121,6 +260,55 @@ func TestEquivalentPathKeysStopsCyclicDescendantAliasExpansion(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("EquivalentPathKeys[%d] = %s, want %s", i, got[i], want[i])
 		}
+	}
+}
+
+func TestEquivalentRootKeysFollowExactEndpointChainOnly(t *testing.T) {
+	ks := keyspace.New()
+	l, _ := (Lane{}).AddBranchProof(BranchProof{
+		Kind:  BranchProofPathEqual,
+		Path:  mustStateKey(t, ks, "sym10@1"),
+		Other: mustStateKey(t, ks, "sym20@1.child"),
+	})
+	l, _ = l.AddBranchProof(BranchProof{
+		Kind:  BranchProofPathEqual,
+		Path:  mustStateKey(t, ks, "sym20@1.child"),
+		Other: mustStateKey(t, ks, "sym30@1"),
+	})
+	l, _ = l.AddBranchProof(BranchProof{
+		Kind:  BranchProofPathEqual,
+		Path:  mustStateKey(t, ks, "sym20@1"),
+		Other: mustStateKey(t, ks, "sym40@1.deep"),
+	})
+
+	got := l.EquivalentRootKeys(ks, pathdom.PathKey("sym10@1"))
+	want := []pathdom.PathKey{pathdom.PathKey("sym30@1")}
+	if len(got) != len(want) {
+		t.Fatalf("EquivalentRootKeys len = %d (%#v), want %d", len(got), got, len(want))
+	}
+	for i := range want {
+		if formatted := ks.Format(got[i]); formatted != want[i] {
+			t.Fatalf("EquivalentRootKeys[%d] = %s, want %s", i, formatted, want[i])
+		}
+	}
+}
+
+func TestEquivalentRootKeysDoesNotExpandDescendantAliases(t *testing.T) {
+	ks := keyspace.New()
+	l, _ := (Lane{}).AddBranchProof(BranchProof{
+		Kind:  BranchProofPathEqual,
+		Path:  mustStateKey(t, ks, "sym10@1"),
+		Other: mustStateKey(t, ks, "sym20@1"),
+	})
+	l, _ = l.AddBranchProof(BranchProof{
+		Kind:  BranchProofPathEqual,
+		Path:  mustStateKey(t, ks, "sym20@1.child"),
+		Other: mustStateKey(t, ks, "sym30@1.leaf"),
+	})
+
+	got := l.EquivalentRootKeys(ks, pathdom.PathKey("sym10@1.child.name"))
+	if len(got) != 0 {
+		t.Fatalf("EquivalentRootKeys expanded descendant aliases: %#v", got)
 	}
 }
 

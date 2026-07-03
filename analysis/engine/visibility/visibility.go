@@ -17,6 +17,7 @@ type lookup struct {
 // Table stores the SSA version visible for each CFG point and symbol.
 type Table struct {
 	visible map[lookup]ssa.Version
+	input   map[lookup]ssa.Version
 }
 
 // NewTable returns a visibility table cloned from a point/symbol map.
@@ -24,13 +25,28 @@ type Table struct {
 // The map key's symbol is authoritative. Version.Root is preserved only as
 // display text, and Version.Symbol is normalized to the map key when stored.
 func NewTable(visible map[cfg.Point]map[symbol.ID]ssa.Version) *Table {
-	t := &Table{}
+	t := newTableWithCapacity(visibleEntryCount(visible))
 	for point, bySymbol := range visible {
 		for sym, version := range bySymbol {
 			t.set(point, sym, version)
 		}
 	}
 	return t
+}
+
+func newTableWithCapacity(capacity int) *Table {
+	if capacity <= 0 {
+		return &Table{}
+	}
+	return &Table{visible: make(map[lookup]ssa.Version, capacity)}
+}
+
+func visibleEntryCount(visible map[cfg.Point]map[symbol.ID]ssa.Version) int {
+	total := 0
+	for _, bySymbol := range visible {
+		total += len(bySymbol)
+	}
+	return total
 }
 
 // VisibleVersion returns the precomputed version visible at point for sym.
@@ -42,6 +58,19 @@ func (t *Table) VisibleVersion(point cfg.Point, sym symbol.ID) ssa.Version {
 	return t.visible[lookup{point: point, symbol: sym}]
 }
 
+// VisibleVersionBefore returns the version visible at point before point-local
+// definitions are applied. Tables without input snapshots fall back to
+// VisibleVersion, matching explicit test builders and compatibility tables.
+func (t *Table) VisibleVersionBefore(point cfg.Point, sym symbol.ID) ssa.Version {
+	if t == nil || sym == 0 {
+		return ssa.Version{}
+	}
+	if t.input != nil {
+		return t.input[lookup{point: point, symbol: sym}]
+	}
+	return t.VisibleVersion(point, sym)
+}
+
 func (t *Table) set(point cfg.Point, sym symbol.ID, version ssa.Version) {
 	if sym == 0 || version.ID <= 0 {
 		return
@@ -51,6 +80,17 @@ func (t *Table) set(point cfg.Point, sym symbol.ID, version ssa.Version) {
 	}
 	version.Symbol = sym
 	t.visible[lookup{point: point, symbol: sym}] = version
+}
+
+func (t *Table) setInput(point cfg.Point, sym symbol.ID, version ssa.Version) {
+	if sym == 0 || version.ID <= 0 {
+		return
+	}
+	if t.input == nil {
+		t.input = make(map[lookup]ssa.Version)
+	}
+	version.Symbol = sym
+	t.input[lookup{point: point, symbol: sym}] = version
 }
 
 // Builder creates explicit visibility tables without computing CFG flow.

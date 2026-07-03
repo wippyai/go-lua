@@ -41,25 +41,6 @@ var soundnessProbes = []soundnessProbe{
 		end return f`,
 	},
 	{
-		// A concrete cast must not PROVE a separate obligation: laundering an any
-		// through `as T` to satisfy a parameter contract is rejected.
-		name:  "cast-any-laundered-to-param",
-		fixed: true,
-		src: `local function need(x: {name: string}): number return 1 end
-		local function f(y: any): number
-			return need(y as {name: string})
-		end return f`,
-	},
-	{
-		// Same, with a disjoint concrete source.
-		name:  "cast-disjoint-laundered-to-param",
-		fixed: true,
-		src: `local function need(x: {name: string}): number return 1 end
-		local function f(y: number): number
-			return need(y as {name: string})
-		end return f`,
-	},
-	{
 		name:  "nonnil-assert-on-always-nil",
 		fixed: true,
 		src: `local function f(): string

@@ -10,15 +10,18 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func collectDiagnosticReachability(result *body.Result, graph cfg.Graph) map[cfg.Point]bool {
+func collectDiagnosticReachability(result *body.Result, graph cfg.Graph, envs map[cfg.Point]guardEnv) map[cfg.Point]bool {
 	reachable := make(map[cfg.Point]bool)
 	if result == nil || graph == nil {
 		return reachable
 	}
-	envs := cachedGuardEnvironments(result)
 	for _, point := range graph.RPO() {
 		env, ok := envs[point]
-		reachable[point] = !ok || !env.unreachable
+		if ok && env.unreachable {
+			reachable[point] = false
+			continue
+		}
+		reachable[point] = true
 	}
 	return reachable
 }

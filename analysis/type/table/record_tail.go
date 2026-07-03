@@ -22,7 +22,7 @@ func MapComponentKeyMayContainStaticMember(key typ.Type, member typ.StaticMember
 // may include the string key.
 func MapComponentKeyMayContainString(key typ.Type, name string) bool {
 	return mapComponentKeyMayContainAny(key, func(k typ.Type) bool {
-		if typ.IsAny(k) || typ.IsUnknown(k) {
+		if keyDomainIsTop(k) {
 			return true
 		}
 		if k, ok := k.(*typ.Literal); ok {
@@ -36,7 +36,7 @@ func MapComponentKeyMayContainString(key typ.Type, name string) bool {
 // include the integer key.
 func MapComponentKeyMayContainInt(key typ.Type, index int64) bool {
 	return mapComponentKeyMayContainAny(key, func(k typ.Type) bool {
-		if typ.IsAny(k) || typ.IsUnknown(k) {
+		if keyDomainIsTop(k) {
 			return true
 		}
 		if k, ok := k.(*typ.Literal); ok {

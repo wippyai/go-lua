@@ -477,12 +477,20 @@ func TestArgumentTypeMismatchMessageUsesNilabilityCause(t *testing.T) {
 	if !strings.Contains(got, "cannot pass last_seen as argument 1") || !strings.Contains(got, "may be nil") {
 		t.Fatalf("argumentTypeMismatchMessage = %q", got)
 	}
+	got = argumentTypeMismatchMessage("argument 1", &ast.IdentExpr{Value: "candidate"}, typ.String, typ.String)
+	if got != "cannot prove argument 1 (candidate) satisfies parameter type string" {
+		t.Fatalf("argumentTypeMismatchMessage same display = %q", got)
+	}
 }
 
 func TestReturnContractMessageUsesNilabilityCause(t *testing.T) {
 	got := returnContractMessage("returned value 1", &ast.IdentExpr{Value: "cached"}, typ.MaterializeOptional(typ.String), typ.String)
 	if !strings.Contains(got, "cannot return cached as returned value 1") || !strings.Contains(got, "may be nil") {
 		t.Fatalf("returnContractMessage = %q", got)
+	}
+	got = returnContractMessage("returned value 1.session", &ast.IdentExpr{Value: "created_session"}, typ.String, typ.String)
+	if got != "cannot prove returned value 1.session (created_session) satisfies declared return type string" {
+		t.Fatalf("returnContractMessage same display = %q", got)
 	}
 	if got := returnContractHelp("cached", typ.MaterializeOptional(typ.String)); got != "Guard `cached` with a nil check, return a default value, or change the return type to accept nil." {
 		t.Fatalf("returnContractHelp optional = %q", got)
@@ -518,6 +526,9 @@ func TestMemberDisplayMessagesUsePathWhenAvailable(t *testing.T) {
 	if got := memberNotCallableMessage("client.send", typ.String, typ.Number, "send"); got != "client.send is number, not callable" {
 		t.Fatalf("memberNotCallableMessage = %q", got)
 	}
+	if got := memberNotCallableMessage("client.send", typ.String, typ.Any, "send"); got != "client.send comes from any/unknown; no proof shows it is callable" {
+		t.Fatalf("memberNotCallableMessage any = %q", got)
+	}
 	if got := memberReadReceiverEvidence(`client["send"]`, "send", typ.String); got != `client["send"] reads member "send" from receiver type string` {
 		t.Fatalf("memberReadReceiverEvidence = %q", got)
 	}
@@ -541,6 +552,9 @@ func TestMemberDisplayMessagesUsePathWhenAvailable(t *testing.T) {
 func TestDirectCallDisplayMessagesUseCentralTypeDisplay(t *testing.T) {
 	if got := directNotCallableMessage("target", typ.Number); got != "target is number, not callable" {
 		t.Fatalf("directNotCallableMessage = %q", got)
+	}
+	if got := directNotCallableMessage("target", typ.Any); got != "target comes from any/unknown; no proof shows it is callable" {
+		t.Fatalf("directNotCallableMessage any = %q", got)
 	}
 	if got := directNotCallableHelp("target"); got != "Call a function value, or replace `target` with a callable expression before this call." {
 		t.Fatalf("directNotCallableHelp = %q", got)
@@ -593,6 +607,15 @@ func TestDirectCallDisplayMessagesUseCentralTypeDisplay(t *testing.T) {
 }
 
 func TestNilabilityProofMessagesUseCentralDisplay(t *testing.T) {
+	if got := formatType(typ.MaterializeOptional(typ.Unknown)); got != "unknown" {
+		t.Fatalf("formatType optional unknown = %q", got)
+	}
+	if got := formatType(typ.MaterializeOptional(typ.Any)); got != "any" {
+		t.Fatalf("formatType optional any = %q", got)
+	}
+	if got := formatType(typ.MaterializeOptional(typ.String)); got != "string?" {
+		t.Fatalf("formatType optional string = %q", got)
+	}
 	if got := assignmentMessage("cache.value", typ.MaterializeOptional(typ.String), typ.String); got != "cannot assign cache.value because it may be nil" {
 		t.Fatalf("assignmentMessage optional = %q", got)
 	}

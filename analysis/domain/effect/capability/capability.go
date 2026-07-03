@@ -32,6 +32,7 @@ const (
 	ReturnsReturnCallbackReturn        = "returns.Return.CallbackReturn"
 	ReturnsReturnArrayOfCallbackReturn = "returns.Return.ArrayOfCallbackReturn"
 	ReturnsReturnTypeProjection        = "returns.Return.TypeProjection"
+	ReturnsReturnConditionalType       = "returns.Return.ConditionalType"
 	ReturnsErrorReturn                 = "returns.ErrorReturn"
 	ReturnsReturnLength                = "returns.ReturnLength"
 	ReturnsReturnDeepElementOf         = "returns.Return.DeepElementOf"
@@ -77,6 +78,7 @@ var descriptors = map[string]Descriptor{
 	ReturnsReturnCallbackReturn:        descriptor(ReturnsReturnCallbackReturn, "returns", "Return.CallbackReturn", StatusOperational, "Return transform is actively lowered end-to-end."),
 	ReturnsReturnArrayOfCallbackReturn: descriptor(ReturnsReturnArrayOfCallbackReturn, "returns", "Return.ArrayOfCallbackReturn", StatusOperational, "Return transform is actively lowered end-to-end."),
 	ReturnsReturnTypeProjection:        descriptor(ReturnsReturnTypeProjection, "returns", "Return.TypeProjection", StatusOperational, "Return transform is actively lowered end-to-end."),
+	ReturnsReturnConditionalType:       descriptor(ReturnsReturnConditionalType, "returns", "Return.ConditionalType", StatusOperational, "Return transform is actively lowered end-to-end."),
 	ReturnsErrorReturn:                 descriptor(ReturnsErrorReturn, "returns", "ErrorReturn", StatusOperational, "Error return effect is actively lowered end-to-end."),
 	ReturnsReturnLength:                descriptor(ReturnsReturnLength, "returns", "ReturnLength", StatusReserved, "Data/codec vocabulary; not actively lowered into return semantics."),
 	ReturnsReturnDeepElementOf:         descriptor(ReturnsReturnDeepElementOf, "returns", "Return.DeepElementOf", StatusReserved, "Reserved transform; lowering falls back to declared returns."),
@@ -105,7 +107,7 @@ var descriptors = map[string]Descriptor{
 
 	MutationMutate:       descriptor(MutationMutate, "mutation", "Mutate", StatusPartial, "Operational lowering consumes only Target as a path-invalidation authority; Transform and LengthDelta are metadata until shape/length mutation semantics are implemented."),
 	MutationLengthChange: descriptor(MutationLengthChange, "mutation", "LengthChange", StatusPartial, "Operational lowering consumes Target as a path-invalidation authority and positive Delta as a length-floor proof; negative Delta remains metadata until precise shrink semantics are implemented."),
-	MutationTableMutator: descriptor(MutationTableMutator, "mutation", "TableMutator", StatusPartial, "Operational lowering consumes only Target as a path-invalidation authority; Value is metadata until element write semantics are implemented."),
+	MutationTableMutator: descriptor(MutationTableMutator, "mutation", "TableMutator", StatusOperational, "Operational lowering invalidates the target and publishes indexed element evidence from Value end-to-end."),
 
 	LifecycleAcquire:    descriptor(LifecycleAcquire, "lifecycle", "Acquire", StatusOperational, "Lifecycle acquire is lowered into canonical typestate facts."),
 	LifecycleTransition: descriptor(LifecycleTransition, "lifecycle", "Transition", StatusOperational, "Lifecycle transition is lowered into canonical typestate facts."),

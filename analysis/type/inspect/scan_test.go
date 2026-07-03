@@ -65,6 +65,28 @@ func TestContainsRecursive_DoesNotCallHashOrEquals(t *testing.T) {
 	}
 }
 
+func TestIsMultiArmUnion(t *testing.T) {
+	union := typeexpr.Union(typ.String, typ.Number)
+	if !IsMultiArmUnion(union) {
+		t.Fatal("IsMultiArmUnion missed direct two-arm union")
+	}
+	if !IsMultiArmUnion(typ.NewAlias("Choice", union)) {
+		t.Fatal("IsMultiArmUnion missed alias to two-arm union")
+	}
+	recursive := typ.NewRecursive("Choice", func(typ.Type) typ.Type {
+		return union
+	})
+	if !IsMultiArmUnion(recursive) {
+		t.Fatal("IsMultiArmUnion missed recursive wrapper around two-arm union")
+	}
+	if IsMultiArmUnion(typeexpr.Union(typ.String)) {
+		t.Fatal("IsMultiArmUnion reported single-arm union")
+	}
+	if IsMultiArmUnion(typ.String) {
+		t.Fatal("IsMultiArmUnion reported non-union")
+	}
+}
+
 func TestContainsAny_RecursiveTypeFindsNestedAny(t *testing.T) {
 	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
 		return typetable.NewRecord().
@@ -88,6 +110,18 @@ func TestContainsAny_NestedFunctionType(t *testing.T) {
 
 	if !testContainsAny(fn) {
 		t.Fatal("testContainsAny() missed any inside nested function return")
+	}
+}
+
+func TestContainsUnknown_NestedRecord(t *testing.T) {
+	record := typetable.NewRecord().
+		Field("value", typ.Unknown).
+		Build()
+	if !ContainsUnknown(record) {
+		t.Fatal("ContainsUnknown() missed unknown inside record field")
+	}
+	if ContainsUnknown(typetable.NewRecord().Field("value", typ.String).Build()) {
+		t.Fatal("ContainsUnknown() reported unknown in concrete record")
 	}
 }
 

@@ -70,18 +70,81 @@ func (p Path) Key() PathKey {
 		return ""
 	}
 	var b strings.Builder
+	b.Grow(p.keyLen())
 	if p.Symbol != 0 {
 		b.WriteString("sym")
-		b.WriteString(strconv.FormatUint(uint64(p.Symbol), 10))
+		writeUint(&b, uint64(p.Symbol))
 		if p.Version != 0 {
 			b.WriteByte('@')
-			b.WriteString(strconv.Itoa(p.Version))
+			writeInt(&b, p.Version)
 		}
 	} else {
 		b.WriteString(p.Root)
 	}
-	b.WriteString(segment.FormatSegments(p.Segments))
+	segment.WriteFormattedSegments(&b, p.Segments)
 	return PathKey(b.String())
+}
+
+func (p Path) keyLen() int {
+	n := segment.FormattedLen(p.Segments)
+	if p.Symbol == 0 {
+		return n + len(p.Root)
+	}
+	n += 3 + unsignedDecimalLen(uint64(p.Symbol))
+	if p.Version != 0 {
+		n += 1 + signedDecimalLen(p.Version)
+	}
+	return n
+}
+
+func writeUint(b *strings.Builder, n uint64) {
+	var buf [20]byte
+	out := buf[:0]
+	out = appendUint(out, n)
+	b.Write(out)
+}
+
+func writeInt(b *strings.Builder, n int) {
+	if n < 0 {
+		b.WriteByte('-')
+		writeUint(b, uint64(-(n+1))+1)
+		return
+	}
+	writeUint(b, uint64(n))
+}
+
+func signedDecimalLen(n int) int {
+	if n < 0 {
+		return 1 + unsignedDecimalLen(uint64(-(n+1))+1)
+	}
+	return unsignedDecimalLen(uint64(n))
+}
+
+func unsignedDecimalLen(n uint64) int {
+	digits := 1
+	for n >= 10 {
+		n /= 10
+		digits++
+	}
+	return digits
+}
+
+func appendUint(out []byte, n uint64) []byte {
+	var rev [20]byte
+	i := 0
+	for {
+		rev[i] = byte('0' + n%10)
+		i++
+		n /= 10
+		if n == 0 {
+			break
+		}
+	}
+	for i > 0 {
+		i--
+		out = append(out, rev[i])
+	}
+	return out
 }
 
 // Hash returns a 64-bit hash of the path for use in hash-based collections.

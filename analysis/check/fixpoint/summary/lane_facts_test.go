@@ -139,6 +139,46 @@ func TestNumFloorFactsUseMustFloorSemantics(t *testing.T) {
 	}
 }
 
+func TestNumFloorFactsNormalizeOwnedMayReusePathPayload(t *testing.T) {
+	path := pathdom.NewPlaceholder(0).Field("index")
+
+	defensiveInput := []callboundary.NumFloorFact{{Path: path, Floor: 1}}
+	defensive := numFloorLane.Normalize(defensiveInput)
+	defensiveInput[0].Path.Segments[0].Name = "changed"
+	if defensive[0].Path.Segments[0].Name != "index" {
+		t.Fatalf("Normalize reused caller path payload: got %q, want index", defensive[0].Path.Segments[0].Name)
+	}
+
+	ownedInput := []callboundary.NumFloorFact{{Path: path, Floor: 1}}
+	owned := numFloorLane.NormalizeOwned(ownedInput)
+	ownedInput[0].Path.Segments[0].Name = "changed"
+	if owned[0].Path.Segments[0].Name != "changed" {
+		t.Fatalf("NormalizeOwned cloned caller-owned path payload: got %q, want changed", owned[0].Path.Segments[0].Name)
+	}
+}
+
+func TestRelConstraintFactsNormalizeOwnedMayReusePathPayload(t *testing.T) {
+	fact := callboundary.RelConstraintFact{
+		CoA: 1,
+		A:   callboundary.RelOperand{Path: pathdom.NewPlaceholder(0).Field("i")},
+		C:   callboundary.RelOperand{Path: pathdom.NewPlaceholder(1).Field("n")},
+	}
+
+	defensiveInput := []callboundary.RelConstraintFact{fact}
+	defensive := relConstraintLane.Normalize(defensiveInput)
+	defensiveInput[0].A.Path.Segments[0].Name = "changed"
+	if defensive[0].A.Path.Segments[0].Name != "i" {
+		t.Fatalf("Normalize reused caller path payload: got %q, want i", defensive[0].A.Path.Segments[0].Name)
+	}
+
+	ownedInput := []callboundary.RelConstraintFact{fact}
+	owned := relConstraintLane.NormalizeOwned(ownedInput)
+	ownedInput[0].A.Path.Segments[0].Name = "changed"
+	if owned[0].A.Path.Segments[0].Name != "changed" {
+		t.Fatalf("NormalizeOwned cloned caller-owned path payload: got %q, want changed", owned[0].A.Path.Segments[0].Name)
+	}
+}
+
 func TestPathInvalidationLaneAncestorSubsumesDescendant(t *testing.T) {
 	pa := pathdom.NewPlaceholder(0).Field("a")
 	pab := pa.Field("b")
@@ -165,6 +205,13 @@ func TestPathInvalidationLaneAncestorSubsumesDescendant(t *testing.T) {
 	}
 	if !hasPathInvalidation(normalized, captured) {
 		t.Fatalf("normalize invalidations = %+v, want captured concrete path", normalized)
+	}
+	conflict := pathInvalidationLane.Normalize([]callboundary.PathInvalidationFact{
+		{Path: pa, PreserveStructuralWitness: true},
+		{Path: pa},
+	})
+	if len(conflict) != 1 || !conflict[0].Path.Equal(pa) || conflict[0].PreserveStructuralWitness {
+		t.Fatalf("normalize same-path invalidations = %+v, want stronger structural-clearing fact", conflict)
 	}
 }
 

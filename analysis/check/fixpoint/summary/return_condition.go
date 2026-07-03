@@ -5,6 +5,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/internal/registrycache"
 )
 
 // ReturnConditionParamRefinement records a parameter-relative value refinement
@@ -22,12 +23,20 @@ type returnConditionParamRefinementKey struct {
 	target      pathdom.PathKey
 }
 
+type returnConditionFactMap = factmap.Map[returnConditionParamRefinementKey, ReturnConditionParamRefinement, product.Value]
+
+var returnConditionMaps registrycache.Cache[returnConditionFactMap]
+
 // returnConditionMap is the canonical must (intersection) map lattice for
 // return-condition refinements: refinements selected by the same return slot
 // and target are narrowed by meet within a path and survive a join only when
 // guaranteed on every path.
-func returnConditionMap(reg *axis.Registry) factmap.Map[returnConditionParamRefinementKey, ReturnConditionParamRefinement, product.Value] {
-	return factmap.Map[returnConditionParamRefinementKey, ReturnConditionParamRefinement, product.Value]{
+func returnConditionMap(reg *axis.Registry) returnConditionFactMap {
+	return returnConditionMaps.GetFor(reg, newReturnConditionMap)
+}
+
+func newReturnConditionMap(reg *axis.Registry) returnConditionFactMap {
+	return returnConditionFactMap{
 		Key:   returnConditionKey,
 		Value: func(r ReturnConditionParamRefinement) product.Value { return r.Value },
 		WithValue: func(r ReturnConditionParamRefinement, v product.Value) ReturnConditionParamRefinement {

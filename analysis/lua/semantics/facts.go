@@ -85,10 +85,13 @@ type CallFact struct {
 
 	Call      *ast.FuncCallExpr
 	ExprIndex int
-	Final     bool
-	Expanded  bool
-	Adjusted  bool
-	OpenTail  bool
+	// ConditionNegated is true when this condition call selects the branch
+	// through `not call(...)` rather than `call(...)`.
+	ConditionNegated bool
+	Final            bool
+	Expanded         bool
+	Adjusted         bool
+	OpenTail         bool
 
 	Func     ast.Expr
 	Receiver ast.Expr
@@ -97,13 +100,18 @@ type CallFact struct {
 	TypeArgs []ast.TypeExpr
 
 	ArgumentSources []sourceprovenance.ASTSource
+	CallSpan        SourceSpan
+	CalleeSpan      SourceSpan
+	ArgumentSpans   []SourceSpan
+	ArgumentLabels  []string
 
-	CalleePath      path.Path
-	HasCalleePath   bool
-	ReceiverPath    path.Path
-	HasReceiverPath bool
-	MethodPath      path.Path
-	HasMethodPath   bool
+	CalleePath         path.Path
+	HasCalleePath      bool
+	CalleeMemberAccess bool
+	ReceiverPath       path.Path
+	HasReceiverPath    bool
+	MethodPath         path.Path
+	HasMethodPath      bool
 
 	ReceiverSource    sourceprovenance.ASTSource
 	HasReceiverSource bool
@@ -130,12 +138,23 @@ type ObjectLiteralFact struct {
 }
 
 type ObjectEntryFact struct {
-	Field  *ast.Field
-	Index  int
-	Key    ast.Expr
-	Value  ast.Expr
-	Suffix path.Path
-	Source sourceprovenance.ASTSource
+	Field      *ast.Field
+	Index      int
+	Key        ast.Expr
+	Value      ast.Expr
+	ValueSpan  SourceSpan
+	ValueLabel string
+	Suffix     path.Path
+	Source     sourceprovenance.ASTSource
+}
+
+// SourceSpan is a syntax-free source range carried by semantic facts for
+// downstream consumers that must not inspect AST nodes.
+type SourceSpan struct {
+	StartLine int
+	StartCol  int
+	EndLine   int
+	EndCol    int
 }
 
 type ChannelSelectFact struct {

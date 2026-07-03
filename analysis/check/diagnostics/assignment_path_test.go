@@ -55,6 +55,181 @@ func TestAssignmentReportsNestedDynamicVariantWriteInvalidatedGuardWithEvidence(
 	}
 }
 
+func TestAssignmentReportsMissingStaticMapSlotAgainstUnionAliasAsMayNil(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type AllowDecision = { kind: "allow", reason: string }
+		type DenyDecision = { kind: "deny", reason: string }
+		type Decision = AllowDecision | DenyDecision
+		type Store = {
+			cached: {[string]: Decision},
+		}
+
+		local store: Store = { cached = {} }
+		local missing: Decision = store.cached["missing"]
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want one missing indexed-read assignment: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic = %#v, want assignment error", d)
+	}
+	if !strings.Contains(d.Message, `cannot assign store.cached["missing"]`) || !strings.Contains(d.Message, "may be nil") {
+		t.Fatalf("message = %q, want missing-slot nil assignment", d.Message)
+	}
+	if strings.Contains(d.Message, "not {") {
+		t.Fatalf("message = %q, should not render same-type mismatch", d.Message)
+	}
+	assertAssignmentPathEvidence(t, d,
+		`store.cached["missing"] can be`,
+		"missing is declared as Decision",
+		`store.cached["missing"] is an indexed read that can miss or read nil`,
+		"Guard `store.cached[\"missing\"]` with a nil check",
+	)
+}
+
+func TestAssignmentReportsUnwrittenStaticMapSlotAgainstUnionAliasAsMayNil(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type AllowDecision = { kind: "allow", reason: string }
+		type DenyDecision = { kind: "deny", reason: string }
+		type Decision = AllowDecision | DenyDecision
+		type Store = {
+			cached: {[string]: Decision},
+		}
+
+		local store: Store = { cached = {} }
+		store.cached["present"] = { kind = "allow", reason = "ok" }
+		local missing: Decision = store.cached["missing"]
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want one missing indexed-read assignment: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic = %#v, want assignment error", d)
+	}
+	if !strings.Contains(d.Message, `cannot assign store.cached["missing"]`) || !strings.Contains(d.Message, "may be nil") {
+		t.Fatalf("message = %q, want missing-slot nil assignment", d.Message)
+	}
+	if strings.Contains(d.Message, "not {") {
+		t.Fatalf("message = %q, should not render same-type mismatch", d.Message)
+	}
+	assertAssignmentPathEvidence(t, d,
+		`store.cached["missing"] can be`,
+		"missing is declared as Decision",
+		`store.cached["missing"] is an indexed read that can miss or read nil`,
+		"Guard `store.cached[\"missing\"]` with a nil check",
+	)
+}
+
+func TestAssignmentReportsFunctionMutatedMissingMapSlotAsMayNil(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type AllowDecision = { kind: "allow", reason: string }
+		type DenyDecision = { kind: "deny", reason: string }
+		type Decision = AllowDecision | DenyDecision
+		type Store = {
+			cached: {[string]: Decision},
+		}
+
+		local store: Store = { cached = {} }
+		local function cache_decision(s: Store, key: string, decision: Decision): ()
+			s.cached[key] = decision
+		end
+		cache_decision(store, "present", { kind = "allow", reason = "ok" })
+		local missing: Decision = store.cached["missing"]
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want one missing indexed-read assignment: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic = %#v, want assignment error", d)
+	}
+	if !strings.Contains(d.Message, `cannot assign store.cached["missing"]`) || !strings.Contains(d.Message, "may be nil") {
+		t.Fatalf("message = %q, want missing-slot nil assignment", d.Message)
+	}
+	if strings.Contains(d.Message, "not {") {
+		t.Fatalf("message = %q, should not render same-type mismatch", d.Message)
+	}
+	assertAssignmentPathEvidence(t, d,
+		`store.cached["missing"] can be`,
+		"missing is declared as Decision",
+		`store.cached["missing"] is an indexed read that can miss or read nil`,
+		"Guard `store.cached[\"missing\"]` with a nil check",
+	)
+}
+
+func TestAssignmentKeepsExactNilMemberAfterIndexedAliasWrite(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Animal = { name: string }
+		type Dog = { name: string, breed: string }
+		local dogs: {Dog} = { { name = "rex", breed = "lab" } }
+		local animals: {Animal} = dogs
+		animals[1] = { name = "cat" }
+		local b: string = dogs[1].breed
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want one exact nil assignment: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic = %#v, want assignment error", d)
+	}
+	if !strings.Contains(d.Message, `cannot assign dogs[1].breed`) || !strings.Contains(d.Message, "nil, not string") {
+		t.Fatalf("message = %q, want exact nil member assignment", d.Message)
+	}
+	if strings.Contains(d.Message, "may be nil") {
+		t.Fatalf("message = %q, should preserve exact nil member evidence", d.Message)
+	}
+	assertAssignmentPathEvidence(t, d,
+		`dogs[1].breed has type nil`,
+		"b is declared as string",
+		"",
+		"Use a value compatible with the expected type",
+	)
+}
+
+func TestAssignmentAcceptsNestedUnionFieldAfterDiscriminantGuard(t *testing.T) {
+	src := `
+		type RenderOutput = {
+			kind: "rendered",
+			body: string,
+			label: string?,
+		}
+		type IndexOutput = {
+			kind: "indexed",
+			count: integer,
+		}
+		type AuditOutput = {
+			kind: "audited",
+			note: string,
+		}
+		type Output = RenderOutput | IndexOutput | AuditOutput
+		type Receipt = {
+			plugin: string,
+			output: Output,
+		}
+
+		local receipt: Receipt = {
+			plugin = "render",
+			output = {
+				kind = "rendered",
+				body = "ok",
+				label = nil,
+			},
+		}
+
+		if receipt.output.kind == "rendered" then
+			local rendered: RenderOutput = receipt.output
+			local body: string = rendered.body
+		end
+	`
+	diags := runDiagnostics(t, src)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want guarded nested discriminant assignment accepted", diags)
+	}
+}
+
 func TestAssignmentReportsNestedDynamicVariantWriteInvalidatedAliasWithEvidence(t *testing.T) {
 	result := runDiagnosticsResult(t, `
 		type FileSlot = {
@@ -85,17 +260,7 @@ func TestAssignmentReportsNestedDynamicVariantWriteInvalidatedAliasWithEvidence(
 	`)
 	diags := Produce(result)
 	if len(diags) != 1 {
-		point, expr := requireLocalAssignmentExprByName(t, result, "stale_path")
-		rootType := "<unavailable>"
-		if path, ok := result.ExpressionPath(expr); ok {
-			if root, ok := dominatingRootDeclarationType(result, newResultResolver(result, nil), nil, point, path.Symbol); ok {
-				rootType = formatType(root)
-			}
-		}
-		if got, ok := dominatingDeclarationProjectionType(result, newResultResolver(result, nil), point, expr); ok {
-			t.Fatalf("diagnostics = %d, want stale aliased dynamic path assignment error; declaration root = %s; declaration projection = %s; diags = %#v", len(diags), rootType, formatType(got), diags)
-		}
-		t.Fatalf("diagnostics = %d, want stale aliased dynamic path assignment error; declaration root = %s; declaration projection unavailable; diags = %#v", len(diags), rootType, diags)
+		t.Fatalf("diagnostics = %d, want stale aliased dynamic path assignment error; diags = %#v", len(diags), diags)
 	}
 	d := diags[0]
 	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
@@ -137,14 +302,14 @@ func TestAssignmentReportsDynamicIndexWriteInvalidatedGuardWithEvidence(t *testi
 	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
 		t.Fatalf("diagnostic = %#v, want assignment error", d)
 	}
-	if !strings.Contains(d.Message, "cannot assign box.value") || !strings.Contains(d.Message, "may be nil") {
+	if !strings.Contains(d.Message, "cannot assign box.value") || !strings.Contains(d.Message, "is nil") {
 		t.Fatalf("message = %q, want string assignment mismatch", d.Message)
 	}
 	assertAssignmentPathEvidence(t, d,
-		"box.value can be string or nil here",
+		"box.value has type nil",
 		"after is declared as string",
-		"no guard on this path proves box.value is non-nil",
-		"Guard `box.value` with a nil check",
+		"no proof on this path shows box.value satisfies the declared type",
+		"Use a value compatible with the expected type",
 	)
 	if len(d.Labels) < 2 || d.Labels[0].Message != "assigned value" || d.Labels[1].Message != "declared type" {
 		t.Fatalf("labels = %#v, want assigned value and declared type", d.Labels)
@@ -242,6 +407,40 @@ func TestAssignmentMeetsDynamicIndexWriteContractsAcrossPossibleFields(t *testin
 	}
 }
 
+func TestAssignmentMeetsStaticBracketWriteContractsAcrossUnionRecordArms(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Box = {value: number} | {value: string}
+
+		local function f(box: Box): ()
+			box["value"] = "bad"
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one static bracket write mismatch", diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || !strings.Contains(d.Message, "cannot assign") || !strings.Contains(d.Message, "number") {
+		t.Fatalf("diagnostic = %#v, want string rejected because box may require value:number", d)
+	}
+}
+
+func TestAssignmentMeetsStaticDotWriteContractsAcrossUnionRecordArms(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Box = {value: number} | {value: string}
+
+		local function f(box: Box): ()
+			box.value = "bad"
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one static dot write mismatch", diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || !strings.Contains(d.Message, "cannot assign") || !strings.Contains(d.Message, "number") {
+		t.Fatalf("diagnostic = %#v, want string rejected because box may require value:number", d)
+	}
+}
+
 func TestAssignmentAllowsNilThroughDynamicIndexWhenOnlyOptionalSlotCanMatch(t *testing.T) {
 	diags := runDiagnostics(t, `
 		type Key = "value" | "missing"
@@ -306,16 +505,16 @@ func TestAssignmentReportsSummaryPathInvalidatedGuardWithEvidence(t *testing.T) 
 	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
 		t.Fatalf("diagnostic = %#v, want assignment error", d)
 	}
-	if !strings.Contains(d.Message, "cannot assign box.value") || !strings.Contains(d.Message, "may be nil") {
+	if !strings.Contains(d.Message, "cannot assign box.value") || !strings.Contains(d.Message, "is nil") {
 		t.Fatalf("message = %q, want path-specific optional assignment mismatch", d.Message)
 	}
 	evidence := d.Explanation.Evidence()
 	if len(evidence) < 2 {
 		t.Fatalf("explanation evidence = %#v, want source and annotation evidence", evidence)
 	}
-	if !strings.Contains(evidence[0].Message, "box.value can be string or nil here") ||
+	if !strings.Contains(evidence[0].Message, "box.value has type nil") ||
 		!strings.Contains(evidence[1].Message, "after is declared as string") ||
-		!strings.Contains(d.Explanation.String(), "no guard on this path proves box.value is non-nil") {
+		!strings.Contains(d.Explanation.String(), "no proof on this path shows box.value satisfies the declared type") {
 		t.Fatalf("evidence = %#v, want path-specific source, declaration, and guard evidence", evidence)
 	}
 	if len(d.Labels) < 2 || d.Labels[0].Message != "assigned value" || d.Labels[1].Message != "declared type" {
@@ -410,6 +609,59 @@ func TestAssignmentAcceptsGuardedOptionalDynamicIndexTarget(t *testing.T) {
 	`)
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v, want none after nil check", diags)
+	}
+}
+
+func TestAssignmentAcceptsDeclaredMapSlotMemberWrite(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type FileSlot = {kind: "file", path: string}
+		type TimerSlot = {kind: "timer", seconds: number}
+		type Slot = {value: FileSlot | TimerSlot}
+		type Slots = {[string]: Slot}
+
+		local slots: Slots = {
+			active = {
+				value = {kind = "file", path = "/tmp/active"},
+			},
+		}
+		local key = "active"
+		slots[key].value = {kind = "timer", seconds = 20}
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want no optional-target error for declared non-optional map base", diags)
+	}
+}
+
+func TestAssignmentReportsOptionalMapBaseBeforeSlotMemberWrite(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Slot = {value: string}
+		type Slots = {[string]: Slot}
+		function f(slots: Slots?)
+			slots["active"].value = "ready"
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want optional map-base assignment target error: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeOptionalAssignmentTarget || !strings.Contains(d.Message, "cannot assign through optional slots") {
+		t.Fatalf("diagnostic = %#v, want optional slots container error", d)
+	}
+	if !diagnosticEvidenceContains(d.Explanation.Evidence(), "writing slots[\"active\"].value requires its container to be non-nil") {
+		t.Fatalf("evidence = %#v, want write requirement for full target", d.Explanation.Evidence())
+	}
+}
+
+func TestAssignmentAcceptsDeclaredNestedMapWrite(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type State = {plugin_counts: {[string]: integer}}
+		function f(state: State, key: string)
+			local current = state.plugin_counts[key] or 0
+			state.plugin_counts[key] = current + 1
+		end
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want declared non-optional nested map write accepted", diags)
 	}
 }
 

@@ -2,6 +2,8 @@ package subtype
 
 import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/subst"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -13,8 +15,26 @@ func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
 	wide = unwrap.Alias(wide)
 	narrow = unwrap.Alias(narrow)
 
+	if inst, ok := narrow.(*typ.Instantiated); ok {
+		expanded := subst.ExpandInstantiated(inst)
+		if expanded != nil && expanded != narrow {
+			return c.check(expanded, subst.Self(wide, inst), depth+1) ||
+				c.canWidenTo(expanded, subst.Self(wide, inst), depth+1)
+		}
+	}
+	if inst, ok := wide.(*typ.Instantiated); ok {
+		expanded := subst.ExpandInstantiated(inst)
+		if expanded != nil && expanded != wide {
+			return c.check(subst.Self(narrow, inst), expanded, depth+1) ||
+				c.canWidenTo(subst.Self(narrow, inst), expanded, depth+1)
+		}
+	}
+
 	if typ.IsAny(wide) {
 		return true
+	}
+	if typetable.IsBuiltinTopMarker(wide) {
+		return typetable.IsLike(narrow)
 	}
 	if narrow.Kind() == kind.Nil {
 		if _, ok := wide.(*typ.Optional); ok {
@@ -80,6 +100,9 @@ func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
 		}
 	}
 	if subRec, ok := narrow.(*typ.Record); ok {
+		if emptyRecordAdoptsContainerShape(subRec, wide) {
+			return true
+		}
 		if supRec, ok := wide.(*typ.Record); ok {
 			return c.canWidenRecordTo(subRec, supRec, depth+1)
 		}
@@ -220,6 +243,9 @@ func (c *checker) canWidenRecordTo(narrow, wide *typ.Record, depth int) bool {
 	for _, wf := range wide.Fields {
 		nf := narrow.GetField(wf.Name)
 		if nf == nil {
+			if !wf.Optional && !unwrap.IsOptionalLike(wf.Type) {
+				return false
+			}
 			continue
 		}
 		if !c.check(nf.Type, wf.Type, depth+1) && !c.canWidenTo(nf.Type, wf.Type, depth+1) {
@@ -229,6 +255,9 @@ func (c *checker) canWidenRecordTo(narrow, wide *typ.Record, depth int) bool {
 	for _, wm := range wide.StaticMembers {
 		nm := narrow.GetStaticMember(wm.Kind, wm.Name, wm.Index)
 		if nm == nil {
+			if !wm.Optional && !unwrap.IsOptionalLike(wm.Type) {
+				return false
+			}
 			continue
 		}
 		if !c.check(nm.Type, wm.Type, depth+1) && !c.canWidenTo(nm.Type, wm.Type, depth+1) {

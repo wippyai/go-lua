@@ -5,12 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
-	"github.com/wippyai/go-lua/analysis/engine/callboundary"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/ir/dominance"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 type lifecycleObligations producerContext
@@ -31,79 +26,21 @@ func (p lifecycleObligations) Produce(result *body.Result) []diagnostic.Diagnost
 	if len(obligations) == 0 {
 		return nil
 	}
-	envs := cachedGuardEnvironments(result)
-	sites := lifecycleFactSites(result, graph, envs)
+	envs := producerContext(p).guardEnvironments(result)
+	trace := newLifecycleFactTrace(result, graph, envs, p.flow)
 	var out []diagnostic.Diagnostic
 	for _, obligation := range obligations {
 		if obligation.Resource.ID == "" || obligation.Resource.Protocol == "" || obligation.Obligation.Empty() {
 			continue
 		}
-		out = append(out, newLifecycleObligationDiagnostic(obligation, sites, graph, p.flow))
+		out = append(out, newLifecycleObligationDiagnostic(obligation, trace))
 	}
 	return out
 }
 
-type lifecycleFactSite struct {
-	point    cfg.Point
-	kind     callboundary.LifecycleKind
-	target   pathdom.Path
-	resource typestate.Resource
-	from     typestate.State
-	to       typestate.State
-	span     diagnostic.Span
-}
-
-func lifecycleFactSites(result *body.Result, graph cfg.Graph, envs map[cfg.Point]guardEnv) []lifecycleFactSite {
-	if result == nil || graph == nil {
-		return nil
-	}
-	var out []lifecycleFactSite
-	for _, point := range graph.RPO() {
-		if !guardEnvReachableAt(envs, point) {
-			continue
-		}
-		outcome, ok := result.CallOutcomeAt(point)
-		if !ok || len(outcome.NormalReturnFacts.LifecycleFacts) == 0 {
-			continue
-		}
-		site, ok := result.CallSite(point)
-		if !ok {
-			continue
-		}
-		bindings := callGuardCallBindings(result, site)
-		span := diagnostic.Span{}
-		if call, ok := result.Call(point); ok && call.Call != nil {
-			span = ast.SpanOf(call.Call)
-		}
-		for _, fact := range outcome.NormalReturnFacts.LifecycleFacts {
-			if fact.Kind == callboundary.LifecycleNone || fact.Protocol == "" {
-				continue
-			}
-			target, ok := fact.Target.Substitute(bindings)
-			if !ok || target.IsEmpty() {
-				continue
-			}
-			resource, ok := result.TypestateResourceAtBoundary(point, target, fact.Protocol)
-			if !ok {
-				continue
-			}
-			out = append(out, lifecycleFactSite{
-				point:    point,
-				kind:     fact.Kind,
-				target:   target,
-				resource: resource,
-				from:     fact.From,
-				to:       fact.To,
-				span:     span,
-			})
-		}
-	}
-	return out
-}
-
-func newLifecycleObligationDiagnostic(obligation typestate.OpenObligation, sites []lifecycleFactSite, graph cfg.Graph, flow *diagnosticFlowCache) diagnostic.Diagnostic {
+func newLifecycleObligationDiagnostic(obligation typestate.OpenObligation, trace lifecycleFactTrace) diagnostic.Diagnostic {
 	resource := obligation.Resource
-	acquires := lifecycleAcquireSites(resource, sites, graph, flow)
+	acquires := trace.Acquires(resource)
 	resourceName := resource.ID.String()
 	if len(acquires) != 0 && !acquires[0].target.IsEmpty() {
 		resourceName = acquires[0].target.String()
@@ -111,6 +48,7 @@ func newLifecycleObligationDiagnostic(obligation typestate.OpenObligation, sites
 	protocol := string(resource.Protocol)
 	current := string(obligation.Current)
 	final := lifecycleObligationFinalName(obligation.Obligation)
+	report := newLifecycleResourceReport(resourceName, protocol, current, final)
 	span := diagnostic.Span{}
 	for _, acquire := range acquires {
 		if acquire.span.Valid() {
@@ -118,8 +56,8 @@ func newLifecycleObligationDiagnostic(obligation typestate.OpenObligation, sites
 			break
 		}
 	}
-	transitions := lifecycleTransitionSites(resource, sites, graph, flow)
-	escapes := lifecycleEscapeSites(resource, sites, graph, flow)
+	transitions := trace.Transitions(resource)
+	escapes := trace.Escapes(resource)
 	evidence := make([]diagnostic.Evidence, 0, len(acquires)+len(transitions)+len(escapes)+1)
 	labels := make([]diagnostic.Label, 0, len(acquires)+len(transitions)+len(escapes))
 	for _, acquire := range acquires {
@@ -130,7 +68,7 @@ func newLifecycleObligationDiagnostic(obligation typestate.OpenObligation, sites
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnostic.TrustProven,
 			Span:    acquire.span,
-			Message: resourceAcquireEvidence(lifecycleSiteResourceName(resourceName, acquire), protocol, string(acquire.to), final),
+			Message: report.AcquireEvidence(lifecycleSiteResourceName(resourceName, acquire), string(acquire.to)),
 		})
 		labels = append(labels, sourceLabel(acquire.span, labelLifecycleAcquire))
 	}
@@ -142,7 +80,7 @@ func newLifecycleObligationDiagnostic(obligation typestate.OpenObligation, sites
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnostic.TrustProven,
 			Span:    transition.span,
-			Message: resourceTransitionEvidence(lifecycleSiteResourceName(resourceName, transition), protocol, string(transition.from), string(transition.to)),
+			Message: report.TransitionEvidence(lifecycleSiteResourceName(resourceName, transition), string(transition.from), string(transition.to)),
 		})
 		labels = append(labels, sourceLabel(transition.span, labelLifecycleTransition))
 	}
@@ -154,22 +92,22 @@ func newLifecycleObligationDiagnostic(obligation typestate.OpenObligation, sites
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnostic.TrustProven,
 			Span:    escape.span,
-			Message: resourceEscapeEvidence(lifecycleSiteResourceName(resourceName, escape), protocol),
+			Message: report.EscapeEvidence(lifecycleSiteResourceName(resourceName, escape)),
 		})
 		labels = append(labels, sourceLabel(escape.span, labelLifecycleEscape))
 	}
 	evidence = append(evidence, diagnostic.Evidence{
 		Kind:    diagnostic.EvidenceMissingProof,
 		Trust:   diagnostic.TrustRefuted,
-		Message: resourceExitObligationEvidence(resourceName, protocol, current, final),
+		Message: report.ExitObligationEvidence(),
 	})
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		Span:        span,
 		Code:        CodeResourceUnreleased,
-		Message:     resourceUnreleasedMessage(resourceName, protocol, current, final),
+		Message:     report.Message(),
 		Severity:    diagnostic.SeverityWarning,
 		Explanation: diagnostic.NewExplanation(evidence...),
-		Help:        resourceUnreleasedHelp(resourceName, final),
+		Help:        report.Help(),
 		Labels:      labels,
 	})
 }
@@ -179,39 +117,6 @@ func lifecycleSiteResourceName(fallback string, site lifecycleFactSite) string {
 		return site.target.String()
 	}
 	return fallback
-}
-
-func lifecycleAcquireSites(resource typestate.Resource, sites []lifecycleFactSite, graph cfg.Graph, flow *diagnosticFlowCache) []lifecycleFactSite {
-	var out []lifecycleFactSite
-	for _, site := range sites {
-		if site.kind != callboundary.LifecycleAcquire || site.resource != resource {
-			continue
-		}
-		out = append(out, site)
-	}
-	return lifecycleLatestSites(out, graph, flow)
-}
-
-func lifecycleEscapeSites(resource typestate.Resource, sites []lifecycleFactSite, graph cfg.Graph, flow *diagnosticFlowCache) []lifecycleFactSite {
-	var out []lifecycleFactSite
-	for _, site := range sites {
-		if site.kind != callboundary.LifecycleEscape || site.resource != resource {
-			continue
-		}
-		out = append(out, site)
-	}
-	return lifecycleLatestSites(out, graph, flow)
-}
-
-func lifecycleTransitionSites(resource typestate.Resource, sites []lifecycleFactSite, graph cfg.Graph, flow *diagnosticFlowCache) []lifecycleFactSite {
-	var out []lifecycleFactSite
-	for _, site := range sites {
-		if site.kind != callboundary.LifecycleTransition || site.resource != resource {
-			continue
-		}
-		out = append(out, site)
-	}
-	return lifecycleLatestSites(out, graph, flow)
 }
 
 func lifecycleObligationFinalName(obligation typestate.Obligation) string {
@@ -224,37 +129,4 @@ func lifecycleObligationFinalName(obligation typestate.Obligation) string {
 		names = append(names, codeName(state.String()))
 	}
 	return strings.Join(names, " or ")
-}
-
-func lifecycleLatestSites(sites []lifecycleFactSite, graph cfg.Graph, flow *diagnosticFlowCache) []lifecycleFactSite {
-	if len(sites) <= 1 || graph == nil {
-		return sites
-	}
-	var idom map[cfg.Point]cfg.Point
-	if flow != nil && flow.graph == graph {
-		idom = flow.immediateDominators()
-	} else {
-		idom = dominance.ComputeImmediateDominatorInfo(graph).Map()
-	}
-	exit := graph.Exit()
-	out := make([]lifecycleFactSite, 0, len(sites))
-	for i, site := range sites {
-		stale := false
-		for j, other := range sites {
-			if i == j || site.point == other.point {
-				continue
-			}
-			if dominance.Dominates(idom, other.point, exit) && diagnosticCanReach(flow, graph, site.point, other.point) {
-				stale = true
-				break
-			}
-		}
-		if !stale {
-			out = append(out, site)
-		}
-	}
-	if len(out) == 0 {
-		return sites
-	}
-	return out
 }

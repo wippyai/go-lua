@@ -20,10 +20,11 @@ func (l *lowerer) channelSelects(point cfg.Point, result *semantics.Result) []fa
 	if fact, ok := result.ChannelSelect(point); ok && fact.ResultTarget.HasPath && !fact.ResultTarget.Path.IsEmpty() {
 		return l.channelSelectEvents(point, fact)
 	}
-	call, ok := result.Call(point)
+	view, ok := result.CallView(point)
 	if !ok {
 		return nil
 	}
+	call, _ := view.Borrowed()
 	fact, ok := l.channelSelectFactFromCall(call)
 	if !ok {
 		return nil

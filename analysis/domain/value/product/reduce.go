@@ -59,7 +59,7 @@ func reduce(rt *registryRuntime, shape Shape, p presence.Value, slots []slot) (S
 	for pass := 0; pass < maxReducerPasses; pass++ {
 		changed := false
 		for _, reducer := range rt.reducers {
-			reducerChanged := reducer.apply(editor)
+			reducerChanged := reducer.apply(&editor)
 			editorChanged := editor.consumeChanged()
 			if reducerChanged || editorChanged {
 				changed = true
@@ -109,13 +109,14 @@ type reduceEditor struct {
 	changed   bool
 }
 
-func newReduceEditor(rt *registryRuntime, p presence.Value, slots []slot) *reduceEditor {
+func newReduceEditor(rt *registryRuntime, p presence.Value, slots []slot) reduceEditor {
 	// Slots are few (one per non-top axis) and arrive canonically ordered, so a
-	// linear-scanned slice avoids the per-reduction map allocation. In-place
-	// updates keep the order; only adding a new axis needs a re-sort.
-	values := make([]slot, len(slots))
-	copy(values, slots)
-	return &reduceEditor{rt: rt, presence: p, values: values}
+	// linear-scanned slice avoids the per-reduction map allocation. internRuntime
+	// passes reducer-owned work slices here: exported product writes copy before
+	// mutation, merge/meet build fresh stack slices, and bottom returns before a
+	// reducer can touch rt.bottomSlots. The interner still stores its own immutable
+	// copy after reduction.
+	return reduceEditor{rt: rt, presence: p, values: slots}
 }
 
 func (e *reduceEditor) GetAny(key string) (any, bool) {

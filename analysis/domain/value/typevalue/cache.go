@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -15,9 +16,12 @@ import (
 // callers own its lifetime, pass it through a check run, and discard it when
 // analysis inputs change. It deliberately avoids package-global memoization.
 type Cache struct {
-	variants  *variant.Cache
-	values    map[typeValueCacheKey]product.Value
-	witnesses map[typeValueCacheKey]product.Value
+	variants         *variant.Cache
+	subtypes         *subtype.Cache
+	values           map[typeValueCacheKey]product.Value
+	witnesses        map[typeValueCacheKey]product.Value
+	valuesByShape    map[typeValueShapeKey][]cachedTypeValue
+	witnessesByShape map[typeValueShapeKey][]cachedTypeValue
 }
 
 type typeValueCacheKey struct {
@@ -25,8 +29,42 @@ type typeValueCacheKey struct {
 	typ typ.Type
 }
 
+type typeValueShapeKey struct {
+	reg  *axis.Registry
+	hash uint64
+}
+
+type cachedTypeValue struct {
+	typ   typ.Type
+	value product.Value
+}
+
 func NewCache() *Cache {
 	return &Cache{variants: variant.NewCache()}
+}
+
+func (c *Cache) subtypeCache() *subtype.Cache {
+	if c == nil {
+		return nil
+	}
+	if c.subtypes == nil {
+		c.subtypes = subtype.NewCache()
+	}
+	return c.subtypes
+}
+
+func (c *Cache) IsSubtype(sub, super typ.Type) bool {
+	if c == nil {
+		return subtype.IsSubtype(sub, super)
+	}
+	return c.subtypeCache().IsSubtype(sub, super)
+}
+
+func (c *Cache) IsFreshAssignable(sub, super typ.Type) bool {
+	if c == nil {
+		return subtype.IsFreshAssignable(sub, super)
+	}
+	return c.subtypeCache().IsFreshAssignable(sub, super)
 }
 
 func (c *Cache) FromType(reg *axis.Registry, t typ.Type) product.Value {
@@ -42,11 +80,12 @@ func (c *Cache) FromType(reg *axis.Registry, t typ.Type) product.Value {
 			delete(c.values, key)
 		}
 	}
-	value := fromType(reg, t, c)
-	if c.values == nil {
-		c.values = make(map[typeValueCacheKey]product.Value)
+	if cached, ok := c.cachedByShape(reg, t, c.valuesByShape); ok {
+		c.rememberExactValue(&c.values, key, cached)
+		return cached
 	}
-	c.values[key] = value
+	value := fromType(reg, t, c)
+	c.rememberTypeValue(reg, t, value, &c.values, &c.valuesByShape)
 	return value
 }
 
@@ -63,12 +102,65 @@ func (c *Cache) FromTypeWithWitness(reg *axis.Registry, t typ.Type) product.Valu
 			delete(c.witnesses, key)
 		}
 	}
-	value := WithWitness(reg, c.FromType(reg, t), t)
-	if c.witnesses == nil {
-		c.witnesses = make(map[typeValueCacheKey]product.Value)
+	if cached, ok := c.cachedByShape(reg, t, c.witnessesByShape); ok {
+		c.rememberExactValue(&c.witnesses, key, cached)
+		return cached
 	}
-	c.witnesses[key] = value
+	value := WithWitness(reg, c.FromType(reg, t), t)
+	c.rememberTypeValue(reg, t, value, &c.witnesses, &c.witnessesByShape)
 	return value
+}
+
+func (c *Cache) cachedByShape(reg *axis.Registry, t typ.Type, cache map[typeValueShapeKey][]cachedTypeValue) (product.Value, bool) {
+	if len(cache) == 0 || t == nil {
+		return product.Value{}, false
+	}
+	key := typeValueShapeKey{reg: reg, hash: typ.EqualityHash(t)}
+	entries := cache[key]
+	for i := range entries {
+		if !typ.SameNodeOrAcyclicEqual(entries[i].typ, t) {
+			continue
+		}
+		if !c.cachedProductActive(reg, entries[i].value) {
+			continue
+		}
+		return entries[i].value, true
+	}
+	return product.Value{}, false
+}
+
+func (c *Cache) rememberTypeValue(
+	reg *axis.Registry,
+	t typ.Type,
+	value product.Value,
+	exact *map[typeValueCacheKey]product.Value,
+	shape *map[typeValueShapeKey][]cachedTypeValue,
+) {
+	c.rememberExactValue(exact, typeValueCacheKey{reg: reg, typ: t}, value)
+	if t == nil {
+		return
+	}
+	key := typeValueShapeKey{reg: reg, hash: typ.EqualityHash(t)}
+	if *shape == nil {
+		*shape = make(map[typeValueShapeKey][]cachedTypeValue)
+	}
+	entries := (*shape)[key]
+	for i := range entries {
+		if typ.SameNodeOrAcyclicEqual(entries[i].typ, t) {
+			entries[i].typ = t
+			entries[i].value = value
+			(*shape)[key] = entries
+			return
+		}
+	}
+	(*shape)[key] = append(entries, cachedTypeValue{typ: t, value: value})
+}
+
+func (c *Cache) rememberExactValue(cache *map[typeValueCacheKey]product.Value, key typeValueCacheKey, value product.Value) {
+	if *cache == nil {
+		*cache = make(map[typeValueCacheKey]product.Value)
+	}
+	(*cache)[key] = value
 }
 
 func (c *Cache) originOfType(t typ.Type) (uint64, []int, bool) {
@@ -79,6 +171,12 @@ func (c *Cache) originOfType(t typ.Type) (uint64, []int, bool) {
 		c.variants = variant.NewCache()
 	}
 	return c.variants.OriginOfType(t)
+}
+
+// OriginOfType returns finite variant-origin evidence for t, using the cache's
+// variant catalog when present.
+func (c *Cache) OriginOfType(t typ.Type) (uint64, []int, bool) {
+	return c.originOfType(t)
 }
 
 func (c *Cache) NarrowVariantByOrigin(t typ.Type, family uint64, cases []int) (typ.Type, bool) {

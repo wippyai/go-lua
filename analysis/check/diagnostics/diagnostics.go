@@ -5,8 +5,12 @@ package diagnostics
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -41,8 +45,29 @@ const (
 type producerContext struct {
 	resolver          typeannotation.Resolver
 	flow              *diagnosticFlowCache
+	guards            *diagnosticGuardCache
+	directDefinitions *directCallDefinitionCache
+	root              *body.Result
+	parent            *body.Result
+	rootFlow          *diagnosticFlowCache
 	dispatchTables    map[pathdom.PathKey]dispatchTableSummary
 	callContextResult bool
+
+	judgmentPolicy     judgment.Policy
+	judgmentStrictness judgment.StrictnessMode
+
+	useAssignmentJudgments bool
+}
+
+func (c producerContext) guardEnvironments(result *body.Result) map[cfg.Point]guardEnv {
+	return c.guards.environments(result)
+}
+
+func (c producerContext) guardEnv(result *body.Result, point cfg.Point) guardEnv {
+	if envs := c.guardEnvironments(result); envs != nil {
+		return envs[point]
+	}
+	return guardEnv{}
 }
 
 type diagnosticProducer struct {
@@ -83,6 +108,9 @@ func diagnosticProducers() []diagnosticProducer {
 			codes:          []diagnostic.Code{CodeAssignmentType, CodeOptionalAssignmentTarget},
 			defaultEnabled: true,
 			produce: func(result *body.Result, context producerContext, defs map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+				if context.useAssignmentJudgments {
+					return produceAssignmentJudgmentDiagnosticsWithPolicy(result, "", context.judgmentPolicy, context.judgmentStrictness)
+				}
 				return annotationAssignability(context).Produce(result, defs)
 			},
 		},
@@ -98,13 +126,6 @@ func diagnosticProducers() []diagnosticProducer {
 			defaultEnabled: true,
 			produce: func(result *body.Result, context producerContext, defs map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 				return produceDirectCallContract(result, context, defs)
-			},
-		},
-		{
-			codes:          []diagnostic.Code{CodeDirectCallArgType},
-			defaultEnabled: true,
-			produce: func(result *body.Result, context producerContext, defs map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
-				return produceCallParamObligations(result, context, defs)
 			},
 		},
 		{
@@ -159,15 +180,15 @@ func diagnosticProducers() []diagnosticProducer {
 		{
 			codes:          []diagnostic.Code{CodeUnusedLocal},
 			defaultEnabled: false,
-			produce: func(result *body.Result, _ producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
-				return unusedLocals{}.Produce(result)
+			produce: func(result *body.Result, context producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+				return unusedLocals(context).Produce(result)
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeDeadAssignment},
 			defaultEnabled: false,
-			produce: func(result *body.Result, _ producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
-				return deadAssignments{}.Produce(result)
+			produce: func(result *body.Result, context producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+				return deadAssignments(context).Produce(result)
 			},
 		},
 		{
@@ -204,6 +225,20 @@ func diagnosticProducers() []diagnosticProducer {
 // Config controls post-solve diagnostic production.
 type Config struct {
 	Policy diagnostic.Policy
+
+	// UseAssignmentJudgments routes annotated local assignment diagnostics
+	// through post-solve judgments. The assignment producer is flipped to
+	// judgments by default; this field is retained only for migration callers
+	// that already pass it explicitly.
+	UseAssignmentJudgments bool
+
+	// JudgmentPolicy maps post-solve semantic judgment verdicts to diagnostic
+	// levels. The zero value uses judgment.DefaultPolicy.
+	JudgmentPolicy judgment.Policy
+
+	// JudgmentStrictness selects the judgment-policy mode for unknown
+	// obligations. The zero value is judgment.StrictnessDefault.
+	JudgmentStrictness judgment.StrictnessMode
 }
 
 func Produce(result *body.Result) []diagnostic.Diagnostic {
@@ -211,8 +246,14 @@ func Produce(result *body.Result) []diagnostic.Diagnostic {
 }
 
 func ProduceWithConfig(result *body.Result, config Config) []diagnostic.Diagnostic {
-	out := config.Policy.Apply(produceWithResolver(result, nil, nil, nil, config))
+	rootFlow := newDiagnosticFlowCache(result)
+	guards := newDiagnosticGuardCache()
+	directDefinitions := newDirectCallDefinitionCache()
+	out := config.Policy.Apply(produceWithResolver(result, nil, nil, nil, config, result, nil, rootFlow, guards, directDefinitions))
+	out = diagnostic.Deduplicate(out)
 	diagnostic.Sort(out)
+	out = applyDiagnosticPrecedence(out, defaultDiagnosticPrecedenceRules())
+	out = diagnostic.CoalesceSamePrimary(out)
 	return out
 }
 
@@ -222,18 +263,43 @@ func produceWithResolver(
 	inheritedDefs map[symbol.ID]*ast.FunctionExpr,
 	inheritedDispatchTables map[pathdom.PathKey]dispatchTableSummary,
 	config Config,
+	root *body.Result,
+	parentResult *body.Result,
+	rootFlow *diagnosticFlowCache,
+	guards *diagnosticGuardCache,
+	directDefinitions *directCallDefinitionCache,
 ) []diagnostic.Diagnostic {
 	resolver := newResultResolver(result, parent)
-	defer releaseGuardEnvironments(result)
 	flow := newDiagnosticFlowCache(result)
+	if guards == nil {
+		guards = newDiagnosticGuardCache()
+	}
+	if directDefinitions == nil {
+		directDefinitions = newDirectCallDefinitionCache()
+	}
+	if root == nil {
+		root = result
+	}
+	if rootFlow == nil {
+		rootFlow = newDiagnosticFlowCache(root)
+	}
 	childDispatchTables := collectDispatchTableSummaries(result, inheritedDispatchTables)
 	context := producerContext{
-		resolver:          resolver,
-		flow:              flow,
-		dispatchTables:    cloneDispatchTableSummaries(inheritedDispatchTables),
-		callContextResult: result.IsCallContextResult(),
+		resolver:           resolver,
+		flow:               flow,
+		guards:             guards,
+		directDefinitions:  directDefinitions,
+		root:               root,
+		parent:             parentResult,
+		rootFlow:           rootFlow,
+		dispatchTables:     cloneDispatchTableSummaries(inheritedDispatchTables),
+		callContextResult:  result.IsCallContextResult(),
+		judgmentPolicy:     normalizedJudgmentPolicy(config.JudgmentPolicy),
+		judgmentStrictness: config.JudgmentStrictness,
+
+		useAssignmentJudgments: true,
 	}
-	defs := directCallDefinitions(result, inheritedDefs)
+	defs := directCallDefinitions(result, context, inheritedDefs)
 	var out []diagnostic.Diagnostic
 	for _, producer := range diagnosticProducers() {
 		if !producer.shouldRun(config.Policy) {
@@ -241,8 +307,115 @@ func produceWithResolver(
 		}
 		out = append(out, producer.produce(result, context, defs)...)
 	}
-	for _, fn := range result.FunctionResults() {
-		out = append(out, produceWithResolver(fn, resolver, defs, childDispatchTables, config)...)
+	for _, fn := range diagnosticFunctionResults(result) {
+		out = append(out, produceWithResolver(fn, resolver, defs, childDispatchTables, config, root, result, rootFlow, guards, directDefinitions)...)
 	}
 	return out
+}
+
+func diagnosticFunctionResults(result *body.Result) []*body.Result {
+	functions := result.FunctionResults()
+	if len(functions) == 0 {
+		return nil
+	}
+	hasContext := make(map[*ast.FunctionExpr]struct{})
+	for _, fn := range functions {
+		if fn == nil || !fn.IsCallContextResult() {
+			continue
+		}
+		if expr := fn.Function(); expr != nil {
+			hasContext[expr] = struct{}{}
+		}
+	}
+	if len(hasContext) == 0 {
+		return functions
+	}
+	out := make([]*body.Result, 0, len(functions))
+	for _, fn := range functions {
+		if fn == nil {
+			continue
+		}
+		if !fn.IsCallContextResult() {
+			if expr := fn.Function(); expr != nil {
+				if _, ok := hasContext[expr]; ok && !hasImplicitSelfEntrySurface(fn) && !hasExplicitValidationResultSurface(fn) {
+					continue
+				}
+			}
+		}
+		out = append(out, fn)
+	}
+	return out
+}
+
+func hasExplicitValidationResultSurface(result *body.Result) bool {
+	if result == nil {
+		return false
+	}
+	fn := result.Function()
+	if fn == nil {
+		return false
+	}
+	if len(fn.TypeParams) != 0 {
+		return false
+	}
+	if len(fn.ReturnTypes) != 0 {
+		return true
+	}
+	for _, slot := range result.FunctionParamSlots(fn) {
+		if !slot.ImplicitSelf && slot.Type != nil {
+			return true
+		}
+	}
+	if fn.ParList == nil {
+		return false
+	}
+	for _, expr := range fn.ParList.Types {
+		if expr != nil {
+			return true
+		}
+	}
+	return fn.ParList.VarargType != nil
+}
+
+func hasImplicitSelfEntrySurface(result *body.Result) bool {
+	if result == nil {
+		return false
+	}
+	fn := result.Function()
+	if fn == nil {
+		return false
+	}
+	self := symbol.ID(0)
+	for _, slot := range result.FunctionParamSlots(fn) {
+		if slot.ImplicitSelf && slot.Symbol != 0 {
+			self = slot.Symbol
+			break
+		}
+	}
+	if self == 0 {
+		return false
+	}
+	entry, ok := result.EntryState()
+	if !ok {
+		return false
+	}
+	ks := result.KeySpace()
+	if ks == nil {
+		return false
+	}
+	found := false
+	entry.ForEachPathStaticMember(func(memberKey keyspace.Key, _ product.Value) bool {
+		if memberKey.Sym != self {
+			return true
+		}
+		switch memberKey.Kind {
+		case keyspace.KindResolverSym, keyspace.KindStableSym:
+			if len(ks.Segments(memberKey)) != 0 {
+				found = true
+				return false
+			}
+		}
+		return true
+	})
+	return found
 }

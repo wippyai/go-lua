@@ -43,12 +43,15 @@ type CallOutcome struct {
 	HeapTableObjects           map[identity.ID]heapidentity.TableObject
 	Placements                 map[identity.ID]placement.Value
 	ParamObligations           []CallParamObligation
+	PathObligations            []CallPathObligation
 	ParamPathRefinements       []CallParamPathRefinement
+	ParamPathWrites            []CallParamPathWrite
 	ParamLengthFloors          []CallParamLengthFloor
 	ParamPathInvalidations     []CallParamPathInvalidation
 	ParamConditions            []CallParamCondition
 	ParamPathRelations         []CallParamPathRelation
 	ReturnConditionRefinements []CallReturnConditionRefinement
+	ReturnConditionSlots       []CallReturnConditionSlotRefinement
 	ReturnPresenceRelations    []CallReturnPresenceRelation
 	ParamExposures             []CallParamExposure
 }
@@ -60,6 +63,7 @@ func (o CallOutcome) Empty() bool {
 		!o.PostReturnAuthority &&
 		!o.HasPostReturnEvidence() &&
 		len(o.ParamObligations) == 0 &&
+		len(o.PathObligations) == 0 &&
 		len(o.ParamExposures) == 0
 }
 
@@ -71,11 +75,13 @@ func (o CallOutcome) HasPostReturnEvidence() bool {
 		len(o.HeapTableObjects) != 0 ||
 		len(o.Placements) != 0 ||
 		len(o.ParamPathRefinements) != 0 ||
+		len(o.ParamPathWrites) != 0 ||
 		len(o.ParamLengthFloors) != 0 ||
 		len(o.ParamPathInvalidations) != 0 ||
 		len(o.ParamConditions) != 0 ||
 		len(o.ParamPathRelations) != 0 ||
 		len(o.ReturnConditionRefinements) != 0 ||
+		len(o.ReturnConditionSlots) != 0 ||
 		len(o.ReturnPresenceRelations) != 0
 }
 
@@ -110,6 +116,15 @@ type CallParamObligation struct {
 	Origin     CallParamObligationOrigin
 }
 
+// CallPathObligation records a pre-call value constraint for a caller-visible
+// local/captured path. It is diagnostic evidence only: callers may project it
+// back to their own parameters when the path is a stable local derived from a
+// parameter, but fact application never writes it as a post-call refinement.
+type CallPathObligation struct {
+	Path  pathdom.Path
+	Value product.Value
+}
+
 // CallParamObligationOrigin records why a diagnostic-only parameter
 // obligation exists. Plain function-signature obligations leave HasOrigin
 // false; member-call obligations use this to render the provider/member path
@@ -131,6 +146,15 @@ type CallParamPathRefinement struct {
 	Value product.Value
 }
 
+// CallParamPathWrite records a normal-return path update for a mutable
+// parameter. Unlike a refinement, this replaces the caller's current path value:
+// it models an effect such as table.insert changing a target table's container
+// shape rather than a guard proving the old value was narrower.
+type CallParamPathWrite struct {
+	Path  pathdom.Path
+	Value product.Value
+}
+
 // CallParamLengthFloor records a normal-return lower bound on len(param path).
 type CallParamLengthFloor struct {
 	Path  pathdom.Path
@@ -140,7 +164,8 @@ type CallParamLengthFloor struct {
 // CallParamPathInvalidation records that descendants below a parameter
 // placeholder path were invalidated by a normal-returning call.
 type CallParamPathInvalidation struct {
-	Path pathdom.Path
+	Path                      pathdom.Path
+	PreserveStructuralWitness bool
 }
 
 // CallParamCondition records that a normal return selects the truthiness facts
@@ -173,6 +198,15 @@ type CallReturnConditionRefinement struct {
 	ReturnIndex int
 	ReturnValue bool
 	Target      pathdom.Path
+	Value       product.Value
+}
+
+// CallReturnConditionSlotRefinement records a sibling return-slot value
+// refinement selected by the Lua truthiness of another call return slot.
+type CallReturnConditionSlotRefinement struct {
+	ReturnIndex int
+	ReturnValue bool
+	TargetIndex int
 	Value       product.Value
 }
 

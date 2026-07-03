@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
+	typelit "github.com/wippyai/go-lua/analysis/type/literal"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -68,8 +69,70 @@ func genericObjectLiteralInferenceConflictDiagnostic(result *body.Result, call *
 	}), true
 }
 
+func genericObjectLiteralInferenceTraceConflictDiagnostic(result *body.Result, call *ast.FuncCallExpr, name string, index int, arg ast.Expr, declSpan ast.Span, trace typecall.GenericCallTrace) (diagnostic.Diagnostic, bool) {
+	if result == nil || arg == nil {
+		return diagnostic.Diagnostic{}, false
+	}
+	fact, ok := result.ObjectLiteral(arg)
+	if !ok {
+		return diagnostic.Diagnostic{}, false
+	}
+	conflict, ok := genericInferenceConflictForArgument(index, trace)
+	if !ok {
+		return diagnostic.Diagnostic{}, false
+	}
+	first, _, ok := firstDistinctGenericInferencePair(conflict.Contributions)
+	if !ok {
+		return diagnostic.Diagnostic{}, false
+	}
+	callSpan := ast.SpanOf(call)
+	primarySpan := inferenceContributionSpan(fact, first, arg)
+	if !primarySpan.Valid() {
+		primarySpan = directCallArgumentSpan(call, arg, index, exprEvidenceName(arg))
+	}
+	if !primarySpan.Valid() {
+		primarySpan = callSpan
+	}
+	evidence := []diagnostic.Evidence{{
+		Kind:    diagnostic.EvidenceUserAssertion,
+		Trust:   diagnostic.TrustClaimed,
+		Span:    directCallDeclarationEvidenceSpan(call, declSpan),
+		Message: genericInferenceConflictExpectationEvidence(name, index, conflict.paramName()),
+	}}
+	evidence = append(evidence, genericInferenceConflictContributionEvidence(result, name, arg, conflict)...)
+	return diagnostic.New(diagnostic.DiagnosticSpec{
+		Span:        primarySpan,
+		Code:        CodeDirectCallArgType,
+		Severity:    diagnostic.SeverityError,
+		Message:     genericInferenceConflictMessage(name, index, conflict),
+		Explanation: diagnostic.NewExplanation(evidence...),
+		Help:        genericInferenceConflictHelp(conflict.paramName()),
+		Labels:      []diagnostic.Label{sourceLabel(primarySpan, labelArgumentValue)},
+	}), true
+}
+
 func genericInferenceConflictForObjectLiteralMismatch(index int, segments []segment.Segment, trace typecall.GenericCallTrace) (genericInferenceConflict, bool) {
 	params := genericInferenceMismatchParams(index, segments, trace)
+	for _, param := range params {
+		contributions := genericInferenceContributionsForParam(index, param, trace)
+		if genericInferenceHasDistinctTypes(contributions) {
+			return genericInferenceConflict{Param: param, Contributions: contributions}, true
+		}
+	}
+	return genericInferenceConflict{}, false
+}
+
+func genericInferenceConflictForArgument(index int, trace typecall.GenericCallTrace) (genericInferenceConflict, bool) {
+	var params []*typ.TypeParam
+	for _, contribution := range trace.Contributions {
+		if contribution.Index != index || contribution.Param == nil {
+			continue
+		}
+		if genericInferenceParamSetContains(params, contribution.Param) {
+			continue
+		}
+		params = append(params, contribution.Param)
+	}
 	for _, param := range params {
 		contributions := genericInferenceContributionsForParam(index, param, trace)
 		if genericInferenceHasDistinctTypes(contributions) {
@@ -112,11 +175,32 @@ func genericInferenceHasDistinctTypes(contributions []typecall.InferenceContribu
 	}
 	first := contributions[0].Type
 	for _, contribution := range contributions[1:] {
-		if !typ.SameNodeOrAcyclicEqual(first, contribution.Type) {
+		if genericInferenceTypesConflict(first, contribution.Type) {
 			return true
 		}
 	}
 	return false
+}
+
+func genericInferenceTypesConflict(left, right typ.Type) bool {
+	if left == nil || right == nil || typ.SameNodeOrAcyclicEqual(left, right) {
+		return false
+	}
+	if genericInferenceLiteralFamiliesCompatible(left, right) {
+		return false
+	}
+	return !typecall.InstantiatedArgumentAssignable(left, right) &&
+		!typecall.InstantiatedArgumentAssignable(right, left)
+}
+
+func genericInferenceLiteralFamiliesCompatible(left, right typ.Type) bool {
+	leftBase, leftOK := typelit.FamilyBase(left)
+	rightBase, rightOK := typelit.FamilyBase(right)
+	if !leftOK || !rightOK {
+		return false
+	}
+	_, ok := typelit.MergeFamilyBases(leftBase, rightBase)
+	return ok
 }
 
 func (c genericInferenceConflict) paramName() string {
@@ -145,7 +229,7 @@ func genericInferenceConflictMessage(name string, index int, conflict genericInf
 func firstDistinctGenericInferencePair(contributions []typecall.InferenceContribution) (typecall.InferenceContribution, typecall.InferenceContribution, bool) {
 	for i, first := range contributions {
 		for _, second := range contributions[i+1:] {
-			if !typ.SameNodeOrAcyclicEqual(first.Type, second.Type) {
+			if genericInferenceTypesConflict(first.Type, second.Type) {
 				return first, second, true
 			}
 		}

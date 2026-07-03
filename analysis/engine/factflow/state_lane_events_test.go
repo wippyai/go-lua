@@ -18,6 +18,7 @@ func TestStateLaneEventConstructorsAndAccessorsCopyPaths(t *testing.T) {
 	staticWrite := NewPathStaticMemberWrite(staticTarget, source)
 	staticTarget.Segments[0].Name = "changed"
 	assertDirectField(t, staticWrite.TargetPath(), "member")
+	assertDirectField(t, staticWrite.TargetPathRef(), "member")
 	gotStaticTarget := staticWrite.TargetPath()
 	gotStaticTarget.Segments[0].Name = "changed-again"
 	assertDirectField(t, staticWrite.TargetPath(), "member")
@@ -35,6 +36,7 @@ func TestStateLaneEventConstructorsAndAccessorsCopyPaths(t *testing.T) {
 	)
 	dynamicTable.Segments[0].Name = "changed"
 	assertDirectField(t, dynamicWrite.TablePath(), "dynamic")
+	assertDirectField(t, dynamicWrite.TablePathRef(), "dynamic")
 	gotDynamicTable := dynamicWrite.TablePath()
 	gotDynamicTable.Segments[0].Name = "changed-again"
 	assertDirectField(t, dynamicWrite.TablePath(), "dynamic")
@@ -43,6 +45,17 @@ func TestStateLaneEventConstructorsAndAccessorsCopyPaths(t *testing.T) {
 	}
 	if dynamicWrite.Admission() != dynamicindex.AdmissionAdmitted || dynamicWrite.ReadbackIntent() != DynamicIndexReadbackKeyAndValue {
 		t.Fatalf("dynamic intent = %v/%v", dynamicWrite.Admission(), dynamicWrite.ReadbackIntent())
+	}
+	keyPath := path.NewPath(symbol.ID(202), "key").Field("name")
+	valuePath := path.NewPath(symbol.ID(203), "value").Field("payload")
+	dynamicWrite = dynamicWrite.WithKeyPath(keyPath).WithValuePath(valuePath)
+	keyPath.Segments[0].Name = "changed"
+	valuePath.Segments[0].Name = "changed"
+	if got, ok := dynamicWrite.KeyPathRef(); !ok || !got.Equal(path.NewPath(symbol.ID(202), "key").Field("name")) {
+		t.Fatalf("dynamic key path ref = %v/%v", got, ok)
+	}
+	if got, ok := dynamicWrite.ValuePathRef(); !ok || !got.Equal(path.NewPath(symbol.ID(203), "value").Field("payload")) {
+		t.Fatalf("dynamic value path ref = %v/%v", got, ok)
 	}
 
 	evidencePath := path.NewPath(symbol.ID(103), "err")
@@ -205,6 +218,12 @@ func TestFactsStateLaneEventSnapshotsAreImmutable(t *testing.T) {
 	}
 	if got := facts.ChannelSelects(missing); len(got) != 0 {
 		t.Fatalf("missing channel selects = %#v, want empty", got)
+	}
+	if facts.HasChannelSelects(missing) {
+		t.Fatal("missing channel selects reported present")
+	}
+	if !facts.HasChannelSelects(point) {
+		t.Fatal("point channel selects reported absent")
 	}
 
 	staticWrite, ok := facts.PathStaticMemberWrite(point)

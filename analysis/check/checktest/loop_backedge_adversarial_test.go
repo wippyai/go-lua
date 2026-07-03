@@ -49,21 +49,21 @@ end
 			EndLine:   6,
 			EndCol:    25,
 		},
-		MessageContains: []string{"cannot assign acc", "string | 0", "not number"},
+		MessageContains: []string{"cannot assign acc", "number | string", "not number"},
 		EvidenceMin:     2,
 		EvidenceContains: []string{
-			"acc has type string | 0",
+			"acc has type number | string",
 			"n is declared as number",
 		},
 		EvidenceOrdered: []string{
-			"acc has type string | 0",
+			"acc has type number | string",
 			"n is declared as number",
 		},
 		EvidenceChain: []diagnosticEvidenceExpectation{
 			{
 				Kind:            diagnostic.EvidenceAbstractFact,
 				Trust:           diagnostic.TrustProven,
-				MessageContains: []string{"acc", "string | 0"},
+				MessageContains: []string{"acc", "number | string"},
 			},
 			{
 				Kind:            diagnostic.EvidenceUserAssertion,
@@ -78,13 +78,13 @@ end
 		},
 		Sources: diagnostic.SourceMap{"test.lua": src},
 		RenderOrderedContains: []string{
-			"error[type.assignment]: cannot assign acc because it is string | 0, not number",
+			"error[type.assignment]: cannot assign acc because it is number | string, not number",
 			"test.lua:6:23",
 			"declared type",
 			"6 |     local n: number = acc",
 			"assigned value",
 			"because:",
-			"proven: acc has type string | 0",
+			"proven: acc has type number | string",
 			"claimed: n is declared as number",
 		},
 		RenderNotContains: []string{

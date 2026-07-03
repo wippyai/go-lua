@@ -17,12 +17,14 @@ type Summary struct {
 	ParamMemberReturnSlots          []ParamMemberReturnSlot
 	ReturnParamPathAliases          []ReturnParamPathAlias
 	ParamSinkExposures              []ParamSinkExposure
+	CapturedPathObligations         []CapturedPathObligation
 	NormalReturnParams              []product.Value
 	NormalReturnParamConditions     []ParamCondition
 	NormalReturnParamEqualities     []ParamEquality
 	NormalReturnFacts               callboundary.NormalReturnFacts
 	HeapTableObjects                map[identity.ID]heapidentity.TableObject
 	ReturnConditionParamRefinements []ReturnConditionParamRefinement
+	ReturnConditionSlotRefinements  []ReturnConditionSlotRefinement
 	ReturnPresenceRelations         []ReturnPresenceRelation
 
 	// HeapKeySpace is the keyspace under which HeapTableObjects' rootless
@@ -82,6 +84,10 @@ func (s Summary) Clone() Summary {
 		out.ParamSinkExposures = make([]ParamSinkExposure, len(s.ParamSinkExposures))
 		copy(out.ParamSinkExposures, s.ParamSinkExposures)
 	}
+	if len(s.CapturedPathObligations) > 0 {
+		out.CapturedPathObligations = make([]CapturedPathObligation, len(s.CapturedPathObligations))
+		copy(out.CapturedPathObligations, s.CapturedPathObligations)
+	}
 	if len(s.NormalReturnParams) > 0 {
 		out.NormalReturnParams = make([]product.Value, len(s.NormalReturnParams))
 		copy(out.NormalReturnParams, s.NormalReturnParams)
@@ -98,6 +104,7 @@ func (s Summary) Clone() Summary {
 	out.HeapTableObjects = cloneHeapTableObjects(s.HeapTableObjects)
 	out.HeapKeySpace = s.HeapKeySpace
 	out.ReturnConditionParamRefinements = cloneReturnConditionParamRefinements(s.ReturnConditionParamRefinements)
+	out.ReturnConditionSlotRefinements = cloneReturnConditionSlotRefinements(s.ReturnConditionSlotRefinements)
 	out.ReturnPresenceRelations = returnPresenceRelationLane.Clone(s.ReturnPresenceRelations)
 	return out
 }

@@ -37,6 +37,7 @@ type openRegistrationMutation struct {
 	hasKey         bool
 	opensAll       bool
 	aliasSensitive bool
+	mayRegister    bool
 }
 
 type dispatchCall struct {
@@ -55,9 +56,6 @@ func (p discriminatedUnionExhaustiveness) registrationDiagnostics(result *body.R
 	}
 	var out []diagnostic.Diagnostic
 	for _, dispatch := range p.dispatchCalls(result, graph) {
-		if p.openRegistrationCanReach(result, graph, openRegistries, dispatch) {
-			continue
-		}
 		seen := make(map[string]registrationCall)
 		for _, reg := range registrations {
 			if !registrationRegistryMatchesAt(result, reg.point, reg.registry, dispatch.registry) ||
@@ -75,14 +73,14 @@ func (p discriminatedUnionExhaustiveness) registrationDiagnostics(result *body.R
 		if len(seen) == 0 {
 			continue
 		}
-		if diag, ok := registrationExhaustivenessDiagnosticFor(dispatch, seen); ok {
+		if diag, ok := p.registrationExhaustivenessDiagnosticFor(result, graph, openRegistries, dispatch, seen); ok {
 			out = append(out, diag)
 		}
 	}
 	return out
 }
 
-func registrationExhaustivenessDiagnosticFor(dispatch dispatchCall, registrations map[string]registrationCall) (diagnostic.Diagnostic, bool) {
+func (p discriminatedUnionExhaustiveness) registrationExhaustivenessDiagnosticFor(result *body.Result, graph cfg.Graph, open []openRegistrationMutation, dispatch dispatchCall, registrations map[string]registrationCall) (diagnostic.Diagnostic, bool) {
 	var possible []string
 	var registered []string
 	var missing []string
@@ -93,6 +91,9 @@ func registrationExhaustivenessDiagnosticFor(dispatch dispatchCall, registration
 		if _, ok := registrations[c.key]; ok {
 			matched = true
 			registered = append(registered, registrationCaseName(dispatch.registry.String(), c.key))
+			continue
+		}
+		if p.openRegistrationCanCoverCase(result, graph, open, dispatch, c) {
 			continue
 		}
 		missing = append(missing, registrationCaseName(dispatch.registry.String(), c.key))

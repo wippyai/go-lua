@@ -19,7 +19,7 @@ func (p discriminatedUnionExhaustiveness) Produce(result *body.Result) []diagnos
 	if graph == nil {
 		return nil
 	}
-	branches := discriminantBranchConditions(result, graph)
+	branches := p.discriminantBranchConditions(result, graph)
 	ifs := make([]*ast.IfStmt, 0, len(branches))
 	byIf := make(map[*ast.IfStmt]discriminantBranch, len(branches))
 	for _, branch := range branches {
@@ -48,8 +48,8 @@ func (p discriminatedUnionExhaustiveness) Produce(result *body.Result) []diagnos
 	return out
 }
 
-func discriminantBranchConditions(result *body.Result, graph cfg.Graph) []discriminantBranch {
-	envs := cachedGuardEnvironments(result)
+func (p discriminatedUnionExhaustiveness) discriminantBranchConditions(result *body.Result, graph cfg.Graph) []discriminantBranch {
+	envs := producerContext(p).guardEnvironments(result)
 	var out []discriminantBranch
 	for _, point := range graph.RPO() {
 		if !guardEnvReachableAt(envs, point) {

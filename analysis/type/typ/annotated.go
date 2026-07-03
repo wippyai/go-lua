@@ -15,17 +15,11 @@ const annotatedHashSalt = 0x9e3779b97f4a7c15
 // The underlying type determines structural typing while annotations
 // add runtime constraints like @min(0), @max(100), @pattern("^.+$").
 type Annotated struct {
-	Inner                 Type
-	Annotations           []annotation.Annotation
-	hash                  uint64
-	containsAny           bool
-	containsNever         bool
-	containsTypeParam     bool
-	containsInstantiated  bool
-	containsGeneric       bool
-	containsRecursive     bool
-	containsOpenRecursive bool
-	strCache              stringCache
+	Inner       Type
+	Annotations []annotation.Annotation
+	hash        uint64
+	typeProperties
+	strCache stringCache
 }
 
 // NewAnnotated creates an annotated type wrapper.
@@ -42,16 +36,10 @@ func NewAnnotated(inner Type, annotations []annotation.Annotation) Type {
 		h = hash.MixHash(h, ann.Hash())
 	}
 	return &Annotated{
-		Inner:                 inner,
-		Annotations:           annotations,
-		hash:                  h,
-		containsAny:           knownContainsAny(inner),
-		containsNever:         knownContainsNever(inner),
-		containsTypeParam:     knownContainsTypeParam(inner),
-		containsInstantiated:  knownContainsInstantiated(inner),
-		containsGeneric:       knownContainsGeneric(inner),
-		containsRecursive:     knownContainsRecursive(inner),
-		containsOpenRecursive: knownContainsOpenRecursive(inner),
+		Inner:          inner,
+		Annotations:    annotations,
+		hash:           h,
+		typeProperties: typePropertiesOf(inner),
 	}
 }
 

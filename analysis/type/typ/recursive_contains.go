@@ -8,7 +8,10 @@ func (r *Recursive) ensureContainsFlags() {
 }
 
 func (r *Recursive) ensureContainsClosedFlag() {
-	if r == nil || !r.containsClosedDirty || r.containsClosedComputing {
+	if r == nil || r.containsClosedComputing {
+		return
+	}
+	if !r.containsClosedDirty && recursiveHashDepsValid(r.containsClosedDeps) {
 		return
 	}
 	r.refreshContainsClosedFlag()
@@ -58,5 +61,7 @@ func (r *Recursive) refreshContainsClosedFlag() {
 		r.containsClosedComputing = false
 		r.containsClosedDirty = false
 	}()
-	r.containsFlagsClosed = recursiveContainsGraphClosed(r.Body, map[*Recursive]bool{r: true})
+	closed, deps := recursiveGraphClosureForRecursive(r)
+	r.containsFlagsClosed = closed
+	r.containsClosedDeps = deps
 }

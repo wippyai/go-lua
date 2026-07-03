@@ -21,13 +21,17 @@ func projectNormalReturnParamConditions(reg *axis.Registry, result ResultReader)
 	if len(params) == 0 {
 		return nil
 	}
+	reachability, ok := newNormalReturnReachability(reg, result, graph)
+	if !ok {
+		return nil
+	}
 	var out []summary.ParamCondition
 	for _, point := range graph.RPO() {
 		fact, ok := branchReader.BranchCondition(point)
 		if !ok {
 			continue
 		}
-		normalCond, ok := normalReturnBranchCondition(reg, result, graph, point)
+		normalCond, ok := normalReturnBranchConditionWithReachability(graph, reachability, point)
 		if !ok {
 			continue
 		}
@@ -59,9 +63,20 @@ func normalReturnBranchCondition(
 	if !ok {
 		return false, false
 	}
+	return normalReturnBranchConditionWithReachability(graph, reachability, point)
+}
+
+func normalReturnBranchConditionWithReachability(
+	graph cfg.Graph,
+	reachability normalReturnReachability,
+	point cfg.Point,
+) (bool, bool) {
+	if graph == nil || !graph.IsBranch(point) {
+		return false, false
+	}
 	var sawTrue, sawFalse bool
 	var trueCanComplete, falseCanComplete bool
-	for _, succ := range graph.Successors(point) {
+	for _, succ := range cfg.SuccessorsReadOnly(graph, point) {
 		cond, ok := graph.EdgeCond(point, succ)
 		if !ok {
 			continue

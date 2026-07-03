@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -65,6 +66,54 @@ func TestIteratorVariableValueUsesAssertedSourceType(t *testing.T) {
 	assertIteratorValueType(t, reg, elemValue, typ.Boolean)
 }
 
+func TestIteratorVariableValueProjectsIndexedDynamicSource(t *testing.T) {
+	reg := standard.Registry()
+	iter := iteration.Iterator{Source: effect.ParamRef{Index: 0}, Kind: iteration.IterateIndexed}
+	source := product.Set(reg, product.Top(), evidence.Key, evidence.GradualTop())
+
+	keyValue, ok := IteratorVariableValue(reg, nil, iter, 0, source, nil, false)
+	if !ok {
+		t.Fatal("IteratorVariableValue key returned false")
+	}
+	assertIteratorValueType(t, reg, keyValue, typ.Integer)
+
+	elemValue, ok := IteratorVariableValue(reg, nil, iter, 1, source, nil, false)
+	if !ok {
+		t.Fatal("IteratorVariableValue element returned false")
+	}
+	if got := product.Get(reg, elemValue, evidence.Key); !evidence.Equal(got, evidence.GradualTop()) {
+		t.Fatalf("element evidence = %s, want gradual top", got)
+	}
+}
+
+func TestIteratorVariableValueProjectsIndexedBroadTableWithTopOrigin(t *testing.T) {
+	reg := standard.Registry()
+	iter := iteration.Iterator{Source: effect.ParamRef{Index: 0}, Kind: iteration.IterateIndexed}
+	tableMarker := typetable.BuiltinTopMarker()
+	source := typevalue.WithWitness(reg, typevalue.FromType(reg, tableMarker), tableMarker)
+	source = product.Set(reg, source, evidence.Key, evidence.ExplicitTop())
+	source = product.Set(reg, source, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
+
+	elemValue, ok := IteratorVariableValue(reg, nil, iter, 1, source, nil, false)
+	if !ok {
+		t.Fatal("IteratorVariableValue element returned false")
+	}
+	if got := product.Get(reg, elemValue, evidence.Key); !evidence.Equal(got, evidence.ExplicitTop()) {
+		t.Fatalf("element evidence = %s, want explicit top", got)
+	}
+}
+
+func TestIteratorVariableValueRejectsIndexedDynamicNonTableSource(t *testing.T) {
+	reg := standard.Registry()
+	iter := iteration.Iterator{Source: effect.ParamRef{Index: 0}, Kind: iteration.IterateIndexed}
+	source := product.Set(reg, product.Top(), evidence.Key, evidence.GradualTop())
+	source = product.Set(reg, source, runtimekind.Key, runtimekind.Top().Without(runtimekind.Table))
+
+	if got, ok := IteratorVariableValue(reg, nil, iter, 1, source, nil, false); ok {
+		t.Fatalf("IteratorVariableValue element = %v, want false for non-table source", got)
+	}
+}
+
 func TestIteratorVariableValueNarrowsUnionSourceByRuntimeKind(t *testing.T) {
 	reg := standard.Registry()
 	iter := iteration.Iterator{Source: effect.ParamRef{Index: 0}, Kind: iteration.IterateKeyed}
@@ -84,6 +133,29 @@ func TestIteratorVariableValueNarrowsUnionSourceByRuntimeKind(t *testing.T) {
 		t.Fatal("IteratorVariableValue element returned false")
 	}
 	assertIteratorValueType(t, reg, elemValue, typ.Number)
+}
+
+func TestIteratorVariableValueSkipsEmptyRecordUnionMember(t *testing.T) {
+	reg := standard.Registry()
+	iter := iteration.Iterator{Source: effect.ParamRef{Index: 0}, Kind: iteration.IterateKeyed}
+	sourceType := typeexpr.Union(
+		typetable.NewRecord().Build(),
+		typetable.NewRecord().MapComponent(typ.Integer, typ.String).Build(),
+	)
+	source := typevalue.WithWitness(reg, typevalue.FromType(reg, sourceType), sourceType)
+	source = product.Set(reg, source, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
+
+	keyValue, ok := IteratorVariableValue(reg, nil, iter, 0, source, nil, false)
+	if !ok {
+		t.Fatal("IteratorVariableValue key returned false")
+	}
+	assertIteratorValueType(t, reg, keyValue, typ.Integer)
+
+	elemValue, ok := IteratorVariableValue(reg, nil, iter, 1, source, nil, false)
+	if !ok {
+		t.Fatal("IteratorVariableValue element returned false")
+	}
+	assertIteratorValueType(t, reg, elemValue, typ.String)
 }
 
 func TestIteratorVariableValueRejectsUnionSourceWithNonTableRuntimeKind(t *testing.T) {

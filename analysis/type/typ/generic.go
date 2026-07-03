@@ -22,17 +22,12 @@ import (
 // identity stable across the export/import round-trip without depending on an
 // ephemeral per-compilation counter.
 type Generic struct {
-	Name                  string       // Type name (empty for anonymous generics)
-	TypeParams            []*TypeParam // Type parameters to be substituted
-	Body                  Type         // Template type with TypeParam references
-	hash                  uint64
-	containsAny           bool
-	containsNever         bool
-	containsTypeParam     bool
-	containsInstantiated  bool
-	containsRecursive     bool
-	containsOpenRecursive bool
-	strCache              stringCache
+	Name       string       // Type name (empty for anonymous generics)
+	TypeParams []*TypeParam // Type parameters to be substituted
+	Body       Type         // Template type with TypeParam references
+	hash       uint64
+	typeProperties
+	strCache stringCache
 }
 
 // NewGeneric creates a generic type definition identified by name + type params
@@ -55,18 +50,15 @@ func NewGeneric(name string, params []*TypeParam, body Type) *Generic {
 
 	copied := make([]*TypeParam, len(params))
 	copy(copied, params)
+	props := typePropertiesOfTypeParams(copied)
+	props.include(body)
 
 	return &Generic{
-		Name:                  name,
-		TypeParams:            copied,
-		Body:                  body,
-		hash:                  h,
-		containsAny:           knownAnyTypeParams(copied) || knownContainsAny(body),
-		containsNever:         knownNeverTypeParams(copied) || knownContainsNever(body),
-		containsTypeParam:     knownTypeParamTypeParams(copied) || knownContainsTypeParam(body),
-		containsInstantiated:  knownInstantiatedTypeParams(copied) || knownContainsInstantiated(body),
-		containsRecursive:     knownRecursiveTypeParams(copied) || knownContainsRecursive(body),
-		containsOpenRecursive: knownOpenRecursiveTypeParams(copied) || knownContainsOpenRecursive(body),
+		Name:           name,
+		TypeParams:     copied,
+		Body:           body,
+		hash:           h,
+		typeProperties: props,
 	}
 }
 
@@ -89,12 +81,7 @@ func (g *Generic) SetBody(body Type) {
 	h = hash.MixHash(h, body.Hash())
 	g.hash = h
 
-	g.containsAny = g.containsAny || knownContainsAny(body)
-	g.containsNever = g.containsNever || knownContainsNever(body)
-	g.containsTypeParam = g.containsTypeParam || knownContainsTypeParam(body)
-	g.containsInstantiated = g.containsInstantiated || knownContainsInstantiated(body)
-	g.containsRecursive = g.containsRecursive || knownContainsRecursive(body)
-	g.containsOpenRecursive = g.containsOpenRecursive || knownContainsOpenRecursive(body)
+	g.typeProperties.include(body)
 	g.strCache = stringCache{}
 }
 

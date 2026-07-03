@@ -17,7 +17,7 @@ func (l *lowerer) typeCastPostconditionRefinement(fact semantics.CallFact) (fact
 	if !ok {
 		return factflow.PostconditionRefinement{}, false
 	}
-	return factflow.NewPostconditionRefinement(argPath, factflow.NewValueConstraint(l.typeWitnessValue(t))), true
+	return factflow.NewPostconditionRefinement(argPath, factflow.NewValueConstraint(l.untrustedTypeWitnessValue(t))), true
 }
 
 // addCastExposure records a covariant exposure for a cast (narrow as W) whose
@@ -80,7 +80,7 @@ func (l *lowerer) typeCastCallResultValue(fact semantics.CallFact) (factflow.Cal
 	if !ok {
 		return factflow.CallResultValue{}, false
 	}
-	return factflow.NewCallResultValue(0, l.typeWitnessValue(t)), true
+	return factflow.NewCallResultValue(0, l.typeIsProofValue(t)), true
 }
 
 func (l *lowerer) directTypeCastCall(fact semantics.CallFact) (typ.Type, path.Path, bool) {
@@ -100,13 +100,58 @@ func (l *lowerer) directTypeCastCall(fact semantics.CallFact) (typ.Type, path.Pa
 }
 
 func (l *lowerer) typeValueExpr(expr ast.Expr) (typ.Type, bool) {
-	ident, ok := expr.(*ast.IdentExpr)
-	if !ok || l.bindings == nil {
+	if ident, ok := expr.(*ast.IdentExpr); ok && l.bindings != nil {
+		decl, ok := l.bindings.TypeValueRef(ident)
+		if ok {
+			return l.resolveDecl(decl)
+		}
+		if t, ok := primitiveRuntimeCastType(ident.Value); ok && l.bindings.ResolvesToGlobal(ident, ident.Value) {
+			return t, true
+		}
+	}
+	parts, ok := valueTypeRefParts(expr)
+	if !ok || l.typeResolver == nil {
 		return nil, false
 	}
-	decl, ok := l.bindings.TypeValueRef(ident)
-	if !ok {
+	return l.typeResolver.ResolveTypeRef(parts)
+}
+
+func primitiveRuntimeCastType(name string) (typ.Type, bool) {
+	switch name {
+	case "boolean":
+		return typ.Boolean, true
+	case "number":
+		return typ.Number, true
+	case "integer":
+		return typ.Integer, true
+	case "string":
+		return typ.String, true
+	default:
 		return nil, false
 	}
-	return l.resolveDecl(decl)
+}
+
+func valueTypeRefParts(expr ast.Expr) ([]string, bool) {
+	switch e := expr.(type) {
+	case *ast.IdentExpr:
+		if e.Value == "" {
+			return nil, false
+		}
+		return []string{e.Value}, true
+	case *ast.AttrGetExpr:
+		if e.KeySyntax != ast.AttrKeyDot {
+			return nil, false
+		}
+		name := ast.KeyName(e.Key)
+		if name == "" {
+			return nil, false
+		}
+		parts, ok := valueTypeRefParts(e.Object)
+		if !ok {
+			return nil, false
+		}
+		return append(parts, name), true
+	default:
+		return nil, false
+	}
 }

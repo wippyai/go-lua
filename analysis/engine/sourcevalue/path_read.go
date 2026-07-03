@@ -7,9 +7,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
@@ -52,17 +52,13 @@ func refineRootValueThroughEquivalentPaths(
 	if resolver == nil || p.Symbol == 0 {
 		return value
 	}
-	stateKey, ok := resolver.StateKeyAt(point, p)
+	stateKey, ok := visibility.AddressAt(resolver, point, p).VisibleStateKey()
 	if !ok {
 		return value
 	}
 	ks := resolver.KeySpace()
 	domain := product.Domain(reg)
-	for _, equivalent := range in.EquivalentPathKeys(ks, stateKey.PathKey()) {
-		equivalentKey, ok := ks.FromStateKey(equivalent)
-		if !ok || equivalentKey.Segs != 0 {
-			continue
-		}
+	for _, equivalentKey := range in.EquivalentRootKeys(ks, stateKey) {
 		if equivalentValue, ok := equivalentRootSymbolValue(reg, resolver, point, equivalentKey, in); ok {
 			if meet := domain.Meet(value, equivalentValue); !domain.Equal(meet, domain.Bottom()) {
 				value = meet
@@ -82,8 +78,8 @@ func equivalentRootSymbolValue(
 	if root.Kind != keyspace.KindResolverSym || root.Sym == 0 || root.Segs != 0 {
 		return product.Value{}, false
 	}
-	currentKey, ok := resolver.StateKeyAt(point, pathdom.Path{Symbol: root.Sym})
-	if !ok || currentKey.PathKey() != resolver.KeySpace().Format(root) {
+	currentKey, ok := resolver.VisibleLocalKeyspaceKeyAt(point, pathdom.Path{Symbol: root.Sym})
+	if !ok || currentKey != root {
 		return product.Value{}, false
 	}
 	value := in.ReadValue(reg, key.SymbolValue(root.Sym))
@@ -104,8 +100,8 @@ func ExactPathValue(
 	if resolver == nil {
 		return product.Value{}, false
 	}
-	pathKey := resolver.StructKeyAt(point, p)
-	if pathKey.Kind == keyspace.KindInvalid {
+	pathKey, ok := visibility.AddressAt(resolver, point, p).VisibleLocalKeyspaceKey()
+	if !ok || pathKey.Kind == keyspace.KindInvalid {
 		return product.Value{}, false
 	}
 	ks := resolver.KeySpace()
@@ -120,7 +116,7 @@ func ExactPathValue(
 // value.
 func HeapMemberFromValue(reg *axis.Registry, ks *keyspace.KeySpace, in state.State, value product.Value, suffix []segment.Segment) (product.Value, bool) {
 	ownerPresence := product.PresenceOf(value)
-	id, ok := product.Get(reg, value, identity.Key).ID()
+	id, ok := identityvalue.ExactID(reg, value)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -130,7 +126,7 @@ func HeapMemberFromValue(reg *axis.Registry, ks *keyspace.KeySpace, in state.Sta
 	}
 	object := in.ReadHeapTableObject(reg, id)
 	root := object.Root()
-	rootID, ok := product.Get(reg, root, identity.Key).ID()
+	rootID, ok := identityvalue.ExactID(reg, root)
 	if !ok || rootID != id {
 		return product.Value{}, false
 	}
@@ -199,14 +195,6 @@ func WithoutNilRuntimeKind(reg *axis.Registry, value product.Value) product.Valu
 }
 
 // HasExactIdentity reports whether value carries an exact identity lane.
-func HasExactIdentity(reg *axis.Registry, value product.Value) bool {
-	if reg == nil {
-		return false
-	}
-	_, ok := product.Get(reg, value, identity.Key).ID()
-	return ok
-}
-
 // InheritTopOriginEvidence copies explicit or gradual top evidence from parent.
 func InheritTopOriginEvidence(reg *axis.Registry, value, parent product.Value) product.Value {
 	parentEvidence := product.Get(reg, parent, evidence.Key)

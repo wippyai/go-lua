@@ -13,8 +13,15 @@ func indexInTuple(tup *typ.Tuple, key typ.Type, depth int, mode indexMode) field
 	return indexByKeyVariants(key, depth, mode, true, func(key typ.Type) fieldResult {
 		index, ok := literalIntKey(key)
 		if !ok {
-			if !subtype.IsSubtype(key, typ.Integer) {
-				return fieldResult{}
+			switch mode {
+			case indexRuntime:
+				if !arrayRuntimeKeyMayBeInteger(key, depth+1) {
+					return fieldResult{}
+				}
+			default:
+				if !subtype.IsSubtype(key, typ.Integer) {
+					return fieldResult{}
+				}
 			}
 			out := make([]typ.Type, 0, len(tup.Elements))
 			for _, elem := range tup.Elements {
@@ -26,7 +33,7 @@ func indexInTuple(tup *typ.Tuple, key typ.Type, depth int, mode indexMode) field
 			if len(out) == 0 {
 				return fieldResult{}
 			}
-			return fieldResult{t: normalize.UnionForEvidence(out...), ok: true, nilable: true}
+			return fieldResult{t: normalize.UnionForEvidence(out...), ok: true, nilable: mode != indexWrite}
 		}
 		if index < 1 || index > int64(len(tup.Elements)) {
 			return fieldResult{}

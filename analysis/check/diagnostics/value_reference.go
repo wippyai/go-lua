@@ -36,8 +36,10 @@ func (p unresolvedValueReferences) Produce(result *body.Result) []diagnostic.Dia
 			if !result.IsImplicitGlobalUse(ident) {
 				return
 			}
-			if isAmbientLuaGlobal(ident.Value) {
-				return
+			if sym, ok := result.SymbolOfIdent(ident); ok {
+				if result.IsFunctionDefinitionTarget(sym) {
+					return
+				}
 			}
 			if resolvesTypeName(ident.Value, resolver) {
 				return
@@ -51,7 +53,7 @@ func (p unresolvedValueReferences) Produce(result *body.Result) []diagnostic.Dia
 		}
 	}
 
-	envs := cachedGuardEnvironments(result)
+	envs := producerContext(p).guardEnvironments(result)
 	for _, point := range graph.RPO() {
 		if !guardEnvReachableAt(envs, point) {
 			continue
@@ -184,20 +186,6 @@ func resolvesTypeName(name string, resolver typeannotation.Resolver) bool {
 	}
 	_, ok := resolver.ResolveTypeRef([]string{name})
 	return ok
-}
-
-func isAmbientLuaGlobal(name string) bool {
-	switch name {
-	case "_G", "_GOPHER_LUA_VERSION", "_VERSION",
-		"assert", "coroutine", "debug", "error", "errors",
-		"getmetatable", "ipairs", "math", "next", "package",
-		"pairs", "pcall", "print", "rawequal", "rawget", "rawset",
-		"select", "setmetatable", "string", "table", "tonumber",
-		"tostring", "type", "unpack", "utf8", "xpcall":
-		return true
-	default:
-		return false
-	}
 }
 
 func unresolvedValueDiagnostic(ident *ast.IdentExpr) diagnostic.Diagnostic {

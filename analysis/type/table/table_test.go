@@ -40,6 +40,39 @@ func TestNormalizeKeyPreservesAliasToOptionalPayload(t *testing.T) {
 	}
 }
 
+func TestNormalizeKeyPreservesAliasToOptionalPayloadInsideUnion(t *testing.T) {
+	maybeKey := typ.NewAlias("MaybeKey", typeexpr.Optional(typ.String))
+	got := NormalizeKey(typeexpr.Union(maybeKey, typ.Boolean))
+	union, ok := got.(*typ.Union)
+	if !ok {
+		t.Fatalf("NormalizeKey(alias optional | boolean) = %T, want union", got)
+	}
+	if len(union.Members) != 2 {
+		t.Fatalf("normalized key member count = %d, want 2", len(union.Members))
+	}
+
+	var sawAlias, sawBoolean bool
+	for _, member := range union.Members {
+		switch v := member.(type) {
+		case *typ.Alias:
+			if v.Name != "MaybeKey" || !typ.TypeEquals(v.Target, typ.String) {
+				t.Fatalf("alias member = %v, want MaybeKey -> string", v)
+			}
+			sawAlias = true
+		default:
+			if member == typ.Boolean {
+				sawBoolean = true
+			}
+			if member.Kind() == kind.Nil || member.Kind() == kind.Optional {
+				t.Fatalf("normalized key member kind = %s, want non-nil key payload", member.Kind())
+			}
+		}
+	}
+	if !sawAlias || !sawBoolean {
+		t.Fatalf("normalized key members saw alias=%v boolean=%v, want both", sawAlias, sawBoolean)
+	}
+}
+
 func TestNormalizeKeyPolicyOutputShape(t *testing.T) {
 	got := NormalizeKey(typeexpr.Union(typ.String, typ.Boolean, typ.Nil))
 	union, ok := got.(*typ.Union)
@@ -110,6 +143,183 @@ func TestRebuildRecordNormalizesMapKey(t *testing.T) {
 	})
 	if !typ.TypeEquals(rec.MapKey, typ.String) {
 		t.Fatalf("record map key = %v, want string", rec.MapKey)
+	}
+}
+
+func TestOverlayRecordMembersPreservesDeclaredSiblings(t *testing.T) {
+	existing := NewRecord().
+		Field("processed", NewRecord().MapComponent(typ.String, typ.Boolean).Build()).
+		Field("counters", NewRecord().MapComponent(typ.String, typ.Integer).Build()).
+		OptField("last_id", typ.String).
+		Build()
+	overlay := NewRecord().Field("last_id", typ.String).Build()
+
+	got, ok := OverlayRecordMembers(existing, overlay)
+	if !ok {
+		t.Fatal("OverlayRecordMembers did not accept records")
+	}
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("overlay result = %T, want record", got)
+	}
+	if rec.GetField("processed") == nil {
+		t.Fatal("overlay dropped processed sibling")
+	}
+	if rec.GetField("counters") == nil {
+		t.Fatal("overlay dropped counters sibling")
+	}
+	lastID := rec.GetField("last_id")
+	if lastID == nil || lastID.Optional || !typ.TypeEquals(lastID.Type, typ.String) {
+		t.Fatalf("last_id = %#v, want required string", lastID)
+	}
+}
+
+func TestOverlayRecordMembersRecursesIntoNestedFieldsAndStaticMembers(t *testing.T) {
+	existing := NewRecord().
+		Field("state", NewRecord().
+			Field("metadata", NewRecord().Field("created_at", typ.Integer).Build()).
+			StaticStringIndex("raw", NewRecord().Field("old", typ.Boolean).Build()).
+			Build()).
+		Build()
+	overlay := NewRecord().
+		Field("state", NewRecord().
+			Field("metadata", NewRecord().Field("updated_at", typ.Integer).Build()).
+			StaticStringIndex("raw", NewRecord().Field("fresh", typ.String).Build()).
+			Build()).
+		Build()
+
+	got, ok := OverlayRecordMembers(existing, overlay)
+	if !ok {
+		t.Fatal("OverlayRecordMembers did not accept records")
+	}
+	rec := got.(*typ.Record)
+	state := rec.GetField("state")
+	if state == nil {
+		t.Fatal("state field missing")
+	}
+	stateRec, ok := state.Type.(*typ.Record)
+	if !ok {
+		t.Fatalf("state type = %T, want record", state.Type)
+	}
+	metadata := stateRec.GetField("metadata")
+	if metadata == nil {
+		t.Fatal("metadata field missing")
+	}
+	metadataRec, ok := metadata.Type.(*typ.Record)
+	if !ok {
+		t.Fatalf("metadata type = %T, want record", metadata.Type)
+	}
+	if metadataRec.GetField("created_at") == nil || metadataRec.GetField("updated_at") == nil {
+		t.Fatalf("metadata overlay = %v, want both created_at and updated_at", metadataRec)
+	}
+	raw := stateRec.GetStaticStringIndex("raw")
+	if raw == nil {
+		t.Fatal("raw static member missing")
+	}
+	rawRec, ok := raw.Type.(*typ.Record)
+	if !ok {
+		t.Fatalf("raw static member type = %T, want record", raw.Type)
+	}
+	if rawRec.GetField("old") == nil || rawRec.GetField("fresh") == nil {
+		t.Fatalf("raw overlay = %v, want both old and fresh", rawRec)
+	}
+}
+
+func TestOverlayRecordMembersKeepsDeclaredContainerForEmptyTableWitness(t *testing.T) {
+	existing := NewRecord().
+		Field("items", &typ.Array{Element: typ.Unknown}).
+		Build()
+	overlay := NewRecord().
+		Field("items", NewRecord().Build()).
+		Build()
+
+	got, ok := OverlayRecordMembers(existing, overlay)
+	if !ok {
+		t.Fatal("OverlayRecordMembers did not accept records")
+	}
+	rec := got.(*typ.Record)
+	items := rec.GetField("items")
+	if items == nil {
+		t.Fatal("items field missing")
+	}
+	if _, ok := items.Type.(*typ.Array); !ok {
+		t.Fatalf("items type = %v (%T), want declared array preserved", items.Type, items.Type)
+	}
+}
+
+func TestOverlayRecordMembersHonorsRecursionDepthBoundary(t *testing.T) {
+	existingChild := NewRecord().
+		Field("preserved_when_depth_allows", typ.Number).
+		Build()
+	overlayChild := NewRecord().
+		Field("replacement", typ.String).
+		Build()
+	existing := NewRecord().
+		Field("id", typ.String).
+		Field("state", existingChild).
+		Build()
+	overlay := NewRecord().
+		Field("state", overlayChild).
+		Field("extra", typ.Boolean).
+		Build()
+
+	merged := overlayRecordMembers(existing, overlay, typ.DefaultRecursionDepth)
+	mergedRecord, ok := merged.(*typ.Record)
+	if !ok {
+		t.Fatalf("overlay at recursion depth boundary = %T, want record", merged)
+	}
+	if mergedRecord.GetField("id") == nil {
+		t.Fatalf("overlay at boundary lost current-level existing sibling: %v", mergedRecord)
+	}
+	if mergedRecord.GetField("extra") == nil {
+		t.Fatalf("overlay at boundary lost current-level overlay sibling: %v", mergedRecord)
+	}
+	state := mergedRecord.GetField("state")
+	if state == nil {
+		t.Fatalf("overlay at boundary lost overlapping state field: %v", mergedRecord)
+	}
+	stateRecord, ok := state.Type.(*typ.Record)
+	if !ok {
+		t.Fatalf("state type at boundary = %T, want record", state.Type)
+	}
+	if stateRecord.GetField("replacement") == nil {
+		t.Fatalf("overlay at boundary did not keep replacement child: %v", stateRecord)
+	}
+	if stateRecord.GetField("preserved_when_depth_allows") != nil {
+		t.Fatalf("overlay at boundary recursed past depth guard and kept child sibling: %v", stateRecord)
+	}
+}
+
+func TestOverlayRecordMembersLetsStaticStringMemberUpdateNamedField(t *testing.T) {
+	existing := NewRecord().
+		Field("tests", NewRecord().Build()).
+		Build()
+	overlay := NewRecord().
+		StaticStringIndex("tests", typ.NewArray(typ.String)).
+		Build()
+
+	got, ok := OverlayRecordMembers(existing, overlay)
+	if !ok {
+		t.Fatal("OverlayRecordMembers did not accept records")
+	}
+	want := NewRecord().
+		Field("tests", typ.NewArray(typ.String)).
+		Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("overlay result = %v, want %v", got, want)
+	}
+}
+
+func TestOverlayRecordMembersNoOpPreservesExistingNode(t *testing.T) {
+	existing := NewRecord().Field("id", typ.String).Build()
+	overlay := NewRecord().Field("id", typ.String).Build()
+
+	got, ok := OverlayRecordMembers(existing, overlay)
+	if !ok {
+		t.Fatal("OverlayRecordMembers did not accept records")
+	}
+	if got != existing {
+		t.Fatalf("OverlayRecordMembers no-op returned %p, want existing node %p", got, existing)
 	}
 }
 
@@ -308,6 +518,38 @@ func TestRecordNormalizationNoOpPreservesShape(t *testing.T) {
 	}
 	if got.MapKey != typ.String || got.MapValue != typ.Boolean {
 		t.Fatalf("no-op map component = [%v]: %v, want original string:boolean", got.MapKey, got.MapValue)
+	}
+}
+
+func TestRecordNormalizationDoesNotSplitRequiredNilablePayloads(t *testing.T) {
+	fieldType := typeexpr.Optional(typ.String)
+	memberType := typeexpr.Optional(typ.Number)
+	rec := RebuildRecord(typ.RecordParts{
+		Fields: []typ.Field{{
+			Name: "present_field",
+			Type: fieldType,
+		}},
+		StaticMembers: []typ.StaticMember{{
+			Kind: typ.StaticMemberStringIndex,
+			Name: "present_static",
+			Type: memberType,
+		}},
+	})
+
+	field := rec.GetField("present_field")
+	if field == nil || field.Optional {
+		t.Fatalf("field = %#v, want required field", field)
+	}
+	if !typ.TypeEquals(field.Type, fieldType) {
+		t.Fatalf("field type = %v, want original %v", field.Type, fieldType)
+	}
+
+	member := rec.GetStaticStringIndex("present_static")
+	if member == nil || member.Optional {
+		t.Fatalf("static member = %#v, want required member", member)
+	}
+	if !typ.TypeEquals(member.Type, memberType) {
+		t.Fatalf("static member type = %v, want original %v", member.Type, memberType)
 	}
 }
 

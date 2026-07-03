@@ -4,15 +4,16 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -32,10 +33,10 @@ func (p annotationAssignability) Produce(result *body.Result, defs map[symbol.ID
 	if graph == nil {
 		return nil
 	}
-	envs := cachedGuardEnvironments(result)
+	envs := producerContext(p).guardEnvironments(result)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {
-		if !guardEnvReachableAt(envs, point) {
+		if !result.PointReachable(point) || !guardEnvReachableAt(envs, point) {
 			continue
 		}
 		if fact, ok := result.LocalAssignment(point); ok {
@@ -71,7 +72,7 @@ func (p annotationAssignability) underSuppliedTargetAssignment(result *body.Resu
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
-	got, ok := readmodel.New(result).ValueTypeWithPresence(value)
+	got, ok := newDiagnosticQuery(result).ValueTypeWithPresence(value)
 	if !ok || got == nil {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -96,20 +97,35 @@ func (p annotationAssignability) localAssignment(result *body.Result, point cfg.
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
-	if directCallResultAssignmentWouldReport(result, producerContext(p), fact.Source, want, directDefs) {
-		return p.objectLiteralAssignment(result, point, fact.Name, want, fact.Expr, fact.Type, env)
+	if got, ok := explicitTopLikeCastType(p.resolver, fact.Expr); ok {
+		extra := explicitTopLikeCastEvidence(ast.SpanOf(fact.Expr), want, fact.Expr)
+		return assignmentDiagnostic(fact.Name, want, got, fact.Expr, fact.Type, extra...), true
 	}
-	if directCallContractWouldReport(result, producerContext(p), fact.Source, directDefs, env) {
+	if diag, ok := p.objectLiteralAssignment(result, point, fact.Name, want, fact.Expr, fact.Type, env); ok {
+		return diag, true
+	}
+	if got, ok := currentFunctionDefinitionValueType(result, producerContext(p), point, fact.Expr); ok {
+		if boundaryTypeMismatch(result, point, got, want, nil) {
+			return assignmentDiagnostic(fact.Name, want, got, fact.Expr, fact.Type), true
+		}
 		return diagnostic.Diagnostic{}, false
 	}
+	if got, ok := reassignedCallResultFieldBoundaryType(result, p.resolver, p.flow, point, fact.Expr, directDefs); ok {
+		if boundaryTypeMismatch(result, point, got, want, nil) {
+			extra := reassignedCallResultFieldEvidence(result, p.resolver, p.flow, point, fact.Expr)
+			return assignmentDiagnostic(fact.Name, want, got, fact.Expr, fact.Type, extra...), true
+		}
+		return diagnostic.Diagnostic{}, false
+	}
+	if got, ok := callResultWitnessProvenMismatchType(result, point, fact.Source, want); ok &&
+		(!unstableCallResultRootFieldPath(result, producerContext(p), point, fact.Expr) || callResultRootProvenPresent(result, env, fact.Expr)) {
+		return assignmentDiagnostic(fact.Name, want, got, fact.Expr, fact.Type), true
+	}
 	if directCallResultOwner(result, fact.Source) {
-		if got, ok := directFunctionCurrentReturnPathType(result, p.resolver, fact.Source, directDefs); ok {
+		if got, ok := directFunctionCurrentReturnPathType(result, producerContext(p), fact.Source, directDefs); ok {
 			if boundaryTypeMismatch(result, fact.Source.CallPoint, got, want, nil) {
 				return assignmentDiagnostic(fact.Name, want, got, fact.Expr, fact.Type), true
 			}
-		}
-		if got, ok := callResultWitnessProvenMismatchType(result, point, fact.Source, want); ok {
-			return assignmentDiagnostic(fact.Name, want, got, fact.Expr, fact.Type), true
 		}
 	}
 	if directCallResultOwner(result, fact.Source) && !directCallSourceHasTypedSignature(result, fact.Source) {
@@ -117,7 +133,10 @@ func (p annotationAssignability) localAssignment(result *body.Result, point cfg.
 			return p.objectLiteralAssignment(result, point, fact.Name, want, fact.Expr, fact.Type, env)
 		}
 	}
-	sourceResolution := resolveLocalAssignmentSourceType(result, p.resolver, p.flow, point, fact, env, directDefs)
+	if _, topLikeCast := explicitTopLikeCastType(p.resolver, fact.Expr); !topLikeCast && env.provesRuntimeType(result, point, fact.Expr, want) {
+		return p.objectLiteralAssignment(result, point, fact.Name, want, fact.Expr, fact.Type, env)
+	}
+	sourceResolution := resolveLocalAssignmentSourceType(result, producerContext(p), p.resolver, p.flow, point, fact, env, directDefs)
 	if !sourceResolution.OK {
 		return p.objectLiteralAssignment(result, point, fact.Name, want, fact.Expr, fact.Type, env)
 	}
@@ -134,12 +153,29 @@ func (p annotationAssignability) localAssignment(result *body.Result, point cfg.
 	if sourceResolution.UntrustedTopLike {
 		mismatch = boundaryProofTypeMismatch(result, point, got, want, mismatchBoundary)
 	}
+	if !mismatch && boundaryValueNeedsValidationProof(result, point, mismatchBoundary, want) {
+		mismatch = true
+		sourceResolution.UntrustedTopLike = true
+		if !clearMismatch(result, got, want) {
+			got = typ.Any
+		}
+	}
 	if mismatch {
-		if callResultFieldOptionalImprecision(result, p.flow, point, fact.Expr, got, want) {
+		if sourceResolution.OptionalMemberProjection && optionalUnknownType(got) && !optionalUnknownMemberHasInvalidation(result, p.flow, point, fact.Expr) {
 			return p.objectLiteralAssignment(result, point, fact.Name, want, fact.Expr, fact.Type, env)
 		}
-		if expressionHasMissingMemberRead(result, p.resolver, point, env, fact.Expr) {
-			return diagnostic.Diagnostic{}, false
+		if !sourceResolution.OptionalMemberProjection && callResultFieldOptionalImprecision(result, producerContext(p), point, fact.Expr, got, want) {
+			return p.objectLiteralAssignment(result, point, fact.Name, want, fact.Expr, fact.Type, env)
+		}
+		if !sourceResolution.OptionalIndexProjection && expressionHasMissingMemberRead(result, p.resolver, point, env, fact.Expr) {
+			if !sourceResolution.OptionalMemberProjection || len(optionalReceiverCauseEvidence(result, p.resolver, point, env, fact.Expr)) == 0 {
+				return diagnostic.Diagnostic{}, false
+			}
+		}
+		if !sourceResolution.UntrustedTopLike {
+			if diag, ok := p.objectLiteralAssignment(result, point, fact.Name, want, fact.Expr, fact.Type, env); ok {
+				return diag, true
+			}
 		}
 		var extra []diagnostic.Evidence
 		if sourceResolution.ReassignedCallResultProjection {
@@ -148,6 +184,9 @@ func (p annotationAssignability) localAssignment(result *body.Result, point cfg.
 		extra = append(extra, optionalReceiverCauseEvidence(result, p.resolver, point, env, fact.Expr)...)
 		extra = append(extra, callInvalidatedPathEvidence(result, point, fact.Expr)...)
 		extra = append(extra, boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(fact.Expr), exprEvidenceName(fact.Expr), want, readBoundary)...)
+		if sourceResolution.UntrustedTopLike {
+			extra = append(extra, explicitTopLikeCastEvidence(ast.SpanOf(fact.Expr), want, fact.Expr)...)
+		}
 		if sourceResolution.OptionalIndexProjection && !hasMissingBoundaryProofEvidence(extra) {
 			extra = append(extra, missingIndexReadProofEvidence(ast.SpanOf(fact.Expr), want))
 		}
@@ -156,12 +195,48 @@ func (p annotationAssignability) localAssignment(result *body.Result, point cfg.
 	return p.objectLiteralAssignment(result, point, fact.Name, want, fact.Expr, fact.Type, env)
 }
 
+func optionalUnknownType(t typ.Type) bool {
+	if t == nil || !projectionHasNil(t) {
+		return false
+	}
+	inner := projectionWithoutNil(t)
+	return inner == nil || typ.IsNever(inner) || typ.IsAny(inner) || typ.IsUnknown(inner)
+}
+
+func guardedPresentExpressionType(result *body.Result, env guardEnv, expr ast.Expr, got typ.Type) (typ.Type, bool) {
+	if result == nil || expr == nil || got == nil || !projectionHasNil(got) {
+		return nil, false
+	}
+	accessPath, ok := result.ExpressionPath(expr)
+	if !ok || accessPath.IsEmpty() || (!env.hasPresent(accessPath) && !env.hasTruthy(accessPath)) {
+		return nil, false
+	}
+	withoutNil := projectionWithoutNil(got)
+	if withoutNil == nil || typ.IsNever(withoutNil) {
+		return nil, false
+	}
+	return withoutNil, true
+}
+
+func optionalUnknownMemberHasInvalidation(result *body.Result, flow *diagnosticFlowCache, point cfg.Point, expr ast.Expr) bool {
+	if result == nil || expr == nil {
+		return false
+	}
+	accessPath, ok := result.ExpressionPath(expr)
+	if !ok || accessPath.Symbol == 0 || len(accessPath.Segments) == 0 {
+		return false
+	}
+	_, declarationPoint, ok := dominatingRootLocalAssignment(result, flow, point, accessPath.Symbol)
+	return ok && pathInvalidatedBetween(result, flow, declarationPoint, point, accessPath)
+}
+
 type localAssignmentSourceTypeResolution struct {
 	Type                           typ.Type
 	CastInnerExpr                  ast.Expr
 	OK                             bool
 	OptionalIndexProjection        bool
 	PresenceAwareSourceProjection  bool
+	OptionalMemberProjection       bool
 	UntrustedTopLike               bool
 	DeclarationProjection          bool
 	ReassignedCallResultProjection bool
@@ -182,7 +257,7 @@ func (r localAssignmentSourceTypeResolution) AllowsFlowRefinement(t typ.Type) bo
 }
 
 func (r localAssignmentSourceTypeResolution) MismatchBoundary(readBoundary boundaryValueReader) boundaryValueReader {
-	if r.DeclarationProjection || r.OptionalIndexProjection {
+	if r.DeclarationProjection || r.OptionalIndexProjection || r.PresenceAwareSourceProjection {
 		return nil
 	}
 	return readBoundary
@@ -190,6 +265,7 @@ func (r localAssignmentSourceTypeResolution) MismatchBoundary(readBoundary bound
 
 func resolveLocalAssignmentSourceType(
 	result *body.Result,
+	context producerContext,
 	resolver typeannotation.Resolver,
 	flow *diagnosticFlowCache,
 	point cfg.Point,
@@ -197,38 +273,31 @@ func resolveLocalAssignmentSourceType(
 	env guardEnv,
 	directDefs map[symbol.ID]*ast.FunctionExpr,
 ) localAssignmentSourceTypeResolution {
+	if got, ok := explicitTopLikeCastType(resolver, fact.Expr); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true, UntrustedTopLike: true}
+	}
 	if got, ok := valueexpr.LiteralType(fact.Expr); ok {
 		return localAssignmentSourceTypeResolution{Type: got, OK: true}
 	}
 	if got, ok := projectedOptionalIndexType(result, resolver, point, fact.Expr); ok {
+		if narrowed, narrowedOK := guardedPresentExpressionType(result, env, fact.Expr, got); narrowedOK {
+			return localAssignmentSourceTypeResolution{Type: narrowed, OK: true, PresenceAwareSourceProjection: true}
+		}
 		return localAssignmentSourceTypeResolution{Type: got, OK: true, OptionalIndexProjection: true}
 	}
 	if got, ok := concreteCastObligationType(result, resolver, point, env, fact.Expr); ok {
-		out := localAssignmentSourceTypeResolution{Type: got, OK: true, UntrustedTopLike: true}
-		if inner, innerOK := concreteCastInner(fact.Expr); innerOK {
-			out.CastInnerExpr = inner
-		}
-		return out
+		return localAssignmentSourceTypeResolution{Type: got, OK: true}
 	}
-	if got, ok := untrustedTopLikeExpressionTypeAt(result, resolver, point, fact.Expr); ok {
-		return localAssignmentSourceTypeResolution{Type: got, OK: true, UntrustedTopLike: true}
+	if got, ok := exactNilBoundaryExpressionType(result, point, fact.Expr); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true, PresenceAwareSourceProjection: true}
 	}
-	if got, ok := untrustedAnnotatedIdentifierType(result, resolver, fact.Expr); ok {
-		return localAssignmentSourceTypeResolution{Type: got, OK: true, UntrustedTopLike: true}
+	if got, ok := localScalarOperatorSourceType(result, resolver, fact.Expr); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true}
+	}
+	if got, ok := currentFunctionDefinitionValueType(result, context, point, fact.Expr); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true, PresenceAwareSourceProjection: true}
 	}
 	if got, ok := result.FunctionValueTypeAtBoundary(point, fact.Expr); ok {
-		return localAssignmentSourceTypeResolution{Type: got, OK: true}
-	}
-	if got, ok := projectedFlowSourceType(result, resolver, point, env, fact.Expr); ok {
-		return localAssignmentSourceTypeResolution{Type: got, OK: true}
-	}
-	if got, ok := freshRecordAbsentFieldSourceType(result, resolver, point, env, fact.Expr); ok {
-		return localAssignmentSourceTypeResolution{Type: got, OK: true}
-	}
-	if got, ok := dominatingCallResultPathType(result, resolver, flow, point, fact.Expr, directDefs); ok {
-		return localAssignmentSourceTypeResolution{Type: got, OK: true}
-	}
-	if got, ok := dominatingCallResultFieldSourceType(result, flow, point, fact.Expr, fact.Source); ok {
 		return localAssignmentSourceTypeResolution{Type: got, OK: true}
 	}
 	if got, ok := reassignedCallResultFieldBoundaryType(result, resolver, flow, point, fact.Expr, directDefs); ok {
@@ -239,16 +308,89 @@ func resolveLocalAssignmentSourceType(
 			ReassignedCallResultProjection: true,
 		}
 	}
-	if got, ok := sourceExpressionTypeWithPresence(result, point, fact.Source); ok {
-		return localAssignmentSourceTypeResolution{Type: got, OK: true, PresenceAwareSourceProjection: true}
+	if got, ok := optionalCallResultRootFieldReadType(result, resolver, flow, point, env, fact.Expr); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true, PresenceAwareSourceProjection: true, OptionalMemberProjection: true}
 	}
-	if got, ok := readmodel.New(result).SourceType(point, fact.Source); ok {
+	if got, ok := dominatingCallResultPathType(result, context, point, fact.Expr, directDefs); ok {
 		return localAssignmentSourceTypeResolution{Type: got, OK: true}
 	}
-	if got, ok := dominatingDeclarationProjectionType(result, resolver, point, fact.Expr); ok {
+	if got, ok := dominatingCallResultFieldSourceType(result, context, point, fact.Expr, fact.Source); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true}
+	}
+	if got, ok := optionalCallResultMemberReadType(result, resolver, flow, point, env, fact.Expr, directDefs); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true, PresenceAwareSourceProjection: true, OptionalMemberProjection: true}
+	}
+	if got, ok := optionalMemberReadType(result, resolver, flow, point, env, fact.Expr); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true, PresenceAwareSourceProjection: true, OptionalMemberProjection: true}
+	}
+	callResultRoot := callResultRootFieldPath(result, flow, point, fact.Expr)
+	callResultRootPresent := callResultRootProvenPresent(result, env, fact.Expr)
+	unstableCallResult := unstableCallResultRootFieldPath(result, context, point, fact.Expr) && !callResultRootPresent
+	if got, ok := projectedFlowSourceType(result, resolver, point, env, fact.Expr); ok && !unstableCallResult && (!callResultRoot || callResultRootPresent) {
+		if optionalIndexReadRequiresProof(result, resolver, point, fact.Expr) && !topLikeType(got) {
+			if !projectionHasNil(got) {
+				if narrowed, narrowedOK := guardedPresentExpressionType(result, env, fact.Expr, normalize.Optional(got)); narrowedOK {
+					return localAssignmentSourceTypeResolution{Type: narrowed, OK: true, PresenceAwareSourceProjection: true}
+				}
+				got = normalize.Optional(got)
+			}
+			return localAssignmentSourceTypeResolution{Type: got, OK: true, OptionalIndexProjection: true}
+		}
+		if projectionHasNil(got) {
+			if declared, declaredOK := dominatingDeclarationProjectionType(result, resolver, flow, point, fact.Expr); declaredOK && !projectionHasNil(declared) {
+				return localAssignmentSourceTypeResolution{Type: declared, OK: true, DeclarationProjection: true}
+			}
+		}
+		return localAssignmentSourceTypeResolution{Type: got, OK: true}
+	}
+	if got, ok := dominatingDeclarationProjectionType(result, resolver, flow, point, fact.Expr); ok {
 		return localAssignmentSourceTypeResolution{Type: got, OK: true, DeclarationProjection: true}
 	}
-	if got, ok := localScalarOperatorSourceType(result, resolver, fact.Expr); ok {
+	if got, ok := boundaryExpressionTypeWithPresence(result, point, fact.Expr); ok {
+		resolution := localAssignmentSourceTypeResolution{Type: got, OK: true, PresenceAwareSourceProjection: true}
+		if optionalIndexReadRequiresProof(result, resolver, point, fact.Expr) && !topLikeType(got) {
+			resolution.OptionalIndexProjection = true
+		}
+		return resolution
+	}
+	if got, ok := boundaryExpressionConcreteType(result, point, fact.Expr); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true, PresenceAwareSourceProjection: true}
+	}
+	if got, ok := freshRecordAbsentFieldSourceType(result, resolver, point, env, fact.Expr); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true}
+	}
+	if unstableCallResult || (callResultRoot && !callResultRootPresent) {
+		return localAssignmentSourceTypeResolution{Type: normalize.Optional(typ.Unknown), OK: true, PresenceAwareSourceProjection: true, OptionalMemberProjection: true}
+	}
+	if got, ok := untrustedAnnotatedIdentifierType(result, resolver, fact.Expr); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true, UntrustedTopLike: true}
+	}
+	if got, ok := sourceExpressionTypeWithPresence(result, point, fact.Source); ok {
+		resolution := localAssignmentSourceTypeResolution{Type: got, OK: true, PresenceAwareSourceProjection: true}
+		if optionalIndexReadRequiresProof(result, resolver, point, fact.Expr) && !topLikeType(got) {
+			resolution.OptionalIndexProjection = true
+		}
+		return resolution
+	}
+	query := newDiagnosticQuery(result)
+	if value, ok := result.LocalAssignmentSourceValueAtBoundary(point, fact.Source); ok {
+		if got, gotOK := query.ValueTypeWithPresence(value); gotOK {
+			if optionalIndexReadRequiresProof(result, resolver, point, fact.Expr) && !topLikeType(got) {
+				if !projectionHasNil(got) {
+					got = normalize.Optional(got)
+				}
+				return localAssignmentSourceTypeResolution{Type: got, OK: true, OptionalIndexProjection: true}
+			}
+			return localAssignmentSourceTypeResolution{Type: got, OK: true}
+		}
+	}
+	if got, ok := query.SourceType(point, fact.Source); ok {
+		if optionalIndexReadRequiresProof(result, resolver, point, fact.Expr) && !topLikeType(got) {
+			if !projectionHasNil(got) {
+				got = normalize.Optional(got)
+			}
+			return localAssignmentSourceTypeResolution{Type: got, OK: true, OptionalIndexProjection: true}
+		}
 		return localAssignmentSourceTypeResolution{Type: got, OK: true}
 	}
 	if got, ok := annotatedIdentifierType(result, resolver, point, fact.Expr); ok {
@@ -260,13 +402,122 @@ func resolveLocalAssignmentSourceType(
 	if got, ok := explicitTopLikeCallFactSourceType(result, resolver, fact.Source); ok {
 		return localAssignmentSourceTypeResolution{Type: got, OK: true}
 	}
-	if got, ok := optionalMemberReadType(result, resolver, point, env, fact.Expr); ok {
-		return localAssignmentSourceTypeResolution{Type: got, OK: true}
-	}
 	if got, ok := callInvalidatedBoundaryExprType(result, resolver, point, fact.Expr); ok {
 		return localAssignmentSourceTypeResolution{Type: got, OK: true}
 	}
 	return localAssignmentSourceTypeResolution{}
+}
+
+func callResultRootFieldPath(result *body.Result, flow *diagnosticFlowCache, point cfg.Point, expr ast.Expr) bool {
+	if result == nil || expr == nil {
+		return false
+	}
+	accessPath, ok := result.ExpressionPath(expr)
+	return ok &&
+		accessPath.Symbol != 0 &&
+		len(accessPath.Segments) != 0 &&
+		allFieldSegments(accessPath.Segments) &&
+		rootInitializedByDominatingCall(result, flow, point, accessPath.Symbol)
+}
+
+func unstableCallResultRootFieldPath(result *body.Result, context producerContext, point cfg.Point, expr ast.Expr) bool {
+	if !callResultRootFieldPath(result, context.flow, point, expr) {
+		return false
+	}
+	accessPath, _ := result.ExpressionPath(expr)
+	source, ok := dominatingCallSourceForRoot(result, context.flow, point, accessPath.Symbol)
+	if !ok {
+		return false
+	}
+	if directCallReturnIsWrapperCall(result, source, nil) && !wrapperProviderReplacementDominatesCall(result, context, source) {
+		return true
+	}
+	return callCalleeParentHasNonDominatingAssignment(result, source)
+}
+
+func callResultRootProvenPresent(result *body.Result, env guardEnv, expr ast.Expr) bool {
+	if result == nil || expr == nil {
+		return false
+	}
+	accessPath, ok := result.ExpressionPath(expr)
+	if !ok || accessPath.Symbol == 0 {
+		return false
+	}
+	root := accessPath.RootOnly()
+	return env.hasPresent(root) || env.hasTruthy(root)
+}
+
+func optionalCallResultMemberReadType(
+	result *body.Result,
+	resolver typeannotation.Resolver,
+	flow *diagnosticFlowCache,
+	point cfg.Point,
+	env guardEnv,
+	expr ast.Expr,
+	directDefs map[symbol.ID]*ast.FunctionExpr,
+) (typ.Type, bool) {
+	accessPath, ok := result.ExpressionPath(expr)
+	if !ok || accessPath.Symbol == 0 || len(accessPath.Segments) == 0 || callResultRootProvenPresent(result, env, expr) {
+		return nil, false
+	}
+	fact, _, ok := dominatingRootLocalAssignment(result, flow, point, accessPath.Symbol)
+	if !ok || fact.Source.Kind != sourceprovenance.SourceCall {
+		return nil, false
+	}
+	root, ok := directCallReturnSourceType(result, resolver, fact.Source, directDefs)
+	if !ok || !projectionHasNil(root) {
+		return nil, false
+	}
+	present := projectionWithoutNil(root)
+	if present == nil || typ.IsNever(present) {
+		return normalize.Optional(typ.Unknown), true
+	}
+	got, ok := expectedTypeAtSegments(present, accessPath.Segments)
+	if !ok || got == nil || typ.IsNever(got) {
+		return normalize.Optional(typ.Unknown), true
+	}
+	return normalize.Optional(got), true
+}
+
+func optionalCallResultRootFieldReadType(
+	result *body.Result,
+	resolver typeannotation.Resolver,
+	flow *diagnosticFlowCache,
+	point cfg.Point,
+	env guardEnv,
+	expr ast.Expr,
+) (typ.Type, bool) {
+	if !callResultRootFieldPath(result, flow, point, expr) || callResultRootProvenPresent(result, env, expr) {
+		return nil, false
+	}
+	got, ok := projectedFlowSourceType(result, resolver, point, env, expr)
+	if !ok || got == nil || typ.IsAny(got) || typ.IsUnknown(got) || !projectionHasNil(got) {
+		return nil, false
+	}
+	inner := projectionWithoutNil(got)
+	if inner == nil || typ.IsNever(inner) || typ.IsAny(inner) || typ.IsUnknown(inner) {
+		return nil, false
+	}
+	return got, true
+}
+
+func exactNilBoundaryExpressionType(result *body.Result, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
+	got, ok := boundaryExpressionTypeWithPresence(result, point, expr)
+	if ok && typ.Nil.Equals(got) {
+		return got, true
+	}
+	if result == nil || expr == nil {
+		return nil, false
+	}
+	if _, ok := expr.(*ast.IdentExpr); !ok {
+		return nil, false
+	}
+	value, ok := newDiagnosticQuery(result).ExpressionValueBeforeBoundary(point, expr)
+	if !ok {
+		return nil, false
+	}
+	got, ok = newDiagnosticQuery(result).ValueTypeWithPresence(value)
+	return got, ok && typ.Nil.Equals(got)
 }
 
 func (p annotationAssignability) pathAssignment(result *body.Result, point cfg.Point, fact semantics.OrdinaryAssignmentFact, env guardEnv) (diagnostic.Diagnostic, bool) {
@@ -286,7 +537,7 @@ func (p annotationAssignability) pathAssignment(result *body.Result, point cfg.P
 		extra = append(extra, mismatch.unionArmEvidence...)
 		return pathAssignmentDiagnostic(fact.Target, mismatch.expr, mismatch.got, mismatch.want, extra...), true
 	}
-	sourceResolution := resolvePathAssignmentSourceType(result, p.resolver, point, fact, env)
+	sourceResolution := resolvePathAssignmentSourceType(result, producerContext(p), p.resolver, p.flow, point, fact, env)
 	if !sourceResolution.OK {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -327,17 +578,18 @@ func (r pathAssignmentSourceTypeResolution) TypeMismatch(result *body.Result, po
 
 func resolvePathAssignmentSourceType(
 	result *body.Result,
+	context producerContext,
 	resolver typeannotation.Resolver,
+	flow *diagnosticFlowCache,
 	point cfg.Point,
 	fact semantics.OrdinaryAssignmentFact,
 	env guardEnv,
 ) pathAssignmentSourceTypeResolution {
 	if got, ok := concreteCastObligationType(result, resolver, point, env, fact.Value); ok {
-		out := pathAssignmentSourceTypeResolution{Type: got, OK: true, UntrustedTopLike: true}
-		if inner, innerOK := concreteCastInner(fact.Value); innerOK {
-			out.CastInnerExpr = inner
-		}
-		return out
+		return pathAssignmentSourceTypeResolution{Type: got, OK: true}
+	}
+	if got, ok := dominatingCallInitializerType(result, context, resolver, flow, point, fact.Value); ok {
+		return pathAssignmentSourceTypeResolution{Type: got, OK: true}
 	}
 	got, ok := assignmentValueType(result, resolver, point, fact.Value, fact.Source)
 	if !ok {
@@ -350,19 +602,77 @@ func resolvePathAssignmentSourceType(
 	return pathAssignmentSourceTypeResolution{Type: got, OK: true, UntrustedTopLike: untrustedTopLike}
 }
 
+func dominatingCallInitializerType(
+	result *body.Result,
+	context producerContext,
+	resolver typeannotation.Resolver,
+	flow *diagnosticFlowCache,
+	point cfg.Point,
+	expr ast.Expr,
+) (typ.Type, bool) {
+	if result == nil || expr == nil {
+		return nil, false
+	}
+	accessPath, ok := result.ExpressionPath(expr)
+	if !ok || accessPath.Symbol == 0 || len(accessPath.Segments) != 0 {
+		return nil, false
+	}
+	fact, declarationPoint, ok := dominatingRootLocalAssignment(result, flow, point, accessPath.Symbol)
+	if !ok || fact.Expr == nil {
+		return nil, false
+	}
+	if fact.Source.Kind != sourceprovenance.SourceCall || !fact.Source.HasCallPoint {
+		return nil, false
+	}
+	if pathInvalidatedBetween(result, flow, declarationPoint, point, accessPath.RootOnly()) {
+		return nil, false
+	}
+	env := context.guardEnv(result, fact.Source.CallPoint)
+	got, ok := newFlowExpressionTyper(result, resolver, fact.Source.CallPoint, env).typeOf(fact.Expr)
+	if !ok || got == nil || typ.IsNever(got) || topLikeType(got) {
+		return nil, false
+	}
+	return got, true
+}
+
 func (p annotationAssignability) optionalAssignmentTarget(result *body.Result, point cfg.Point, target ast.Expr, env guardEnv) (diagnostic.Diagnostic, bool) {
 	attr, ok := assignmentTargetAttr(target)
 	if !ok || attr.Object == nil {
 		return diagnostic.Diagnostic{}, false
 	}
-	receiverType, ok := newFlowExpressionTyper(result, p.resolver, point, env).typeOf(attr.Object)
+	container, receiverType, ok := optionalAssignmentTargetContainer(result, p.resolver, point, attr.Object, env)
 	if !ok || receiverType == nil || typ.IsAny(receiverType) || typ.IsUnknown(receiverType) || typ.IsNever(receiverType) {
 		return diagnostic.Diagnostic{}, false
 	}
 	if !projectionHasNil(receiverType) {
 		return diagnostic.Diagnostic{}, false
 	}
-	return optionalAssignmentTargetDiagnostic(attr.Object, target, receiverType), true
+	return optionalAssignmentTargetDiagnostic(container, target, receiverType), true
+}
+
+func optionalAssignmentTargetContainer(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, object ast.Expr, env guardEnv) (ast.Expr, typ.Type, bool) {
+	if result == nil || object == nil {
+		return nil, nil, false
+	}
+	if attr, ok := object.(*ast.AttrGetExpr); ok && attr.KeySyntax == ast.AttrKeyIndex {
+		return optionalAssignmentTargetContainer(result, resolver, point, attr.Object, env)
+	}
+	receiverType, ok := declaredPathType(result, resolver, object)
+	if !ok || receiverType == nil {
+		return nil, nil, false
+	}
+	if flow, flowOK := newFlowExpressionTyper(result, resolver, point, env).typeOf(object); flowOK &&
+		flow != nil &&
+		!typ.IsNever(flow) &&
+		!topLikeType(flow) {
+		receiverType = flow
+	}
+	if objectPath, ok := result.ExpressionPath(object); ok && env.hasPresent(objectPath) {
+		if present := projectionWithoutNil(receiverType); present != nil && !typ.IsNever(present) {
+			receiverType = present
+		}
+	}
+	return object, receiverType, true
 }
 
 func assignmentTargetAttr(target ast.Expr) (*ast.AttrGetExpr, bool) {
@@ -394,9 +704,9 @@ func expressionHasMissingMemberRead(
 		result:   result,
 		point:    point,
 	}
-	var out []diagnostic.Diagnostic
-	memberRead(producerContext{resolver: resolver}).walk(expr, typers, make(map[*ast.AttrGetExpr]struct{}), &out)
-	return len(out) != 0
+	collector := newMemberReadCollector()
+	memberRead(producerContext{resolver: resolver}).walk(expr, typers, collector)
+	return len(collector.Diagnostics()) != 0
 }
 
 func optionalReceiverCauseEvidence(
@@ -461,69 +771,6 @@ func spanKey(span diagnostic.Span) string {
 	return fmt.Sprintf("%d:%d:%d:%d", span.StartLine, span.StartCol, span.EndLine, span.EndCol)
 }
 
-func directCallResultAssignmentWouldReport(result *body.Result, context producerContext, source sourceprovenance.ASTSource, want typ.Type, defs map[symbol.ID]*ast.FunctionExpr) bool {
-	if result == nil || source.Kind != sourceprovenance.SourceCall || !source.HasCallPoint ||
-		want == nil || typ.IsAny(want) || typ.IsUnknown(want) || refinement.ContainsFreeTypeParam(want) {
-		return false
-	}
-	fact, ok := result.Call(source.CallPoint)
-	if !ok || fact.Call == nil {
-		return false
-	}
-	site, ok := result.CallSite(source.CallPoint)
-	if !ok {
-		return false
-	}
-	var def *ast.FunctionExpr
-	if site.CalleeSymbol() != 0 {
-		def = defs[site.CalleeSymbol()]
-	}
-	contract, _, ok := directCallResultContract(result, context, source.CallPoint, fact, site, def, defs)
-	if !ok {
-		return false
-	}
-	got, ok := contract.returnType(source.ResultIndex)
-	if !ok {
-		got, ok = contract.declaredReturnType(source.ResultIndex)
-	}
-	if !ok || refinement.ContainsFreeTypeParam(got) {
-		return false
-	}
-	return boundaryTypeMismatch(result, source.CallPoint, got, want, boundaryCallResultReader(source.CallPoint, source.ResultIndex))
-}
-
-func directCallContractWouldReport(result *body.Result, context producerContext, source sourceprovenance.ASTSource, defs map[symbol.ID]*ast.FunctionExpr, env guardEnv) bool {
-	if result == nil || source.Kind != sourceprovenance.SourceCall || !source.HasCallPoint {
-		return false
-	}
-	fact, ok := result.Call(source.CallPoint)
-	if !ok || fact.Call == nil {
-		return false
-	}
-	site, ok := result.CallSite(source.CallPoint)
-	if !ok || site.CalleeSymbol() == 0 {
-		return false
-	}
-	producer := directCallContract(context)
-	if directCallSiteUsesMemberAccess(site, fact) {
-		if !hasTypedCallSignature(result, site) {
-			if _, ok := memberCall(context).call(result, source.CallPoint, fact, env); ok {
-				return true
-			}
-			if contract, ok := currentDirectFunctionContract(result, context, source.CallPoint, fact, directCallDisplayName(result, site), defs[site.CalleeSymbol()]); ok {
-				_, ok := producer.directFunctionCall(result, source.CallPoint, fact, contract, defs, env)
-				return ok
-			}
-			return false
-		}
-		if _, ok := memberCall(context).typedSignatureStructuralDiagnostic(result, source.CallPoint, fact, env); ok {
-			return true
-		}
-	}
-	_, ok = producer.call(result, source.CallPoint, fact, site, defs[site.CalleeSymbol()], defs, env)
-	return ok
-}
-
 // callResultWitnessProvenMismatch reports whether the converged result value of
 // a call source carries a concrete type witness that provably contradicts want.
 // A call to a body-defined function without an explicit return annotation has no
@@ -539,16 +786,7 @@ func callResultWitnessProvenMismatchType(result *body.Result, point cfg.Point, s
 	if result == nil || want == nil {
 		return nil, false
 	}
-	reader := readmodel.New(result)
-	value, ok := reader.SourceValue(point, source)
-	if !ok {
-		return nil, false
-	}
-	if !reader.ValueWitnessProvenMismatch(value, want) {
-		return nil, false
-	}
-	got, ok := reader.ValueType(value)
-	return got, ok
+	return newDiagnosticQuery(result).SourceWitnessProvenMismatchType(point, source, want)
 }
 
 func directCallSourceHasTypedSignature(result *body.Result, source sourceprovenance.ASTSource) bool {
@@ -559,7 +797,8 @@ func directCallSourceHasTypedSignature(result *body.Result, source sourceprovena
 	if !ok {
 		return false
 	}
-	return hasTypedCallSignature(result, site)
+	_, ok = result.CallSignatureType(site)
+	return ok
 }
 
 func (p annotationAssignability) objectLiteralAssignment(result *body.Result, point cfg.Point, name string, want typ.Type, expr ast.Expr, annotation ast.TypeExpr, env guardEnv) (diagnostic.Diagnostic, bool) {
@@ -579,12 +818,21 @@ func (p annotationAssignability) objectLiteralAssignment(result *body.Result, po
 		if !ok {
 			continue
 		}
-		got, ok := objectLiteralEntryMismatchType(result, p.resolver, point, entry, expected, env)
+		got, readBoundary, ok := objectLiteralEntryMismatchTypeWithSource(result, p.resolver, point, entry, expected, env, factflow.ValueSource{}, false)
 		if !ok {
 			continue
 		}
 		memberName := name + segment.FormatSegments(entry.Suffix.Segments)
-		extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(entry.Value), exprEvidenceName(entry.Value), expected, boundaryValueFromExpr(entry.Value))
+		if readBoundary == nil {
+			readBoundary = boundaryValueFromExpr(entry.Value)
+		}
+		if topLikeType(got) {
+			if declared, declaredOK := dominatingAliasDeclarationType(result, p.resolver, p.flow, point, entry.Value); declaredOK &&
+				boundaryProofTypeMismatch(result, point, declared, expected, readBoundary) {
+				got = declared
+			}
+		}
+		extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(entry.Value), exprEvidenceName(entry.Value), expected, readBoundary)
 		return objectMemberAssignmentDiagnostic(memberName, expected, got, entry.Value, annotation, extra...), true
 	}
 	if field, ok := missingRequiredRecordField(want, fact); ok {
@@ -594,4 +842,19 @@ func (p annotationAssignability) objectLiteralAssignment(result *body.Result, po
 		return missingMethodAssignmentDiagnostic(name, want, objectLiteralType(want, fact), method, expr, annotation), true
 	}
 	return diagnostic.Diagnostic{}, false
+}
+
+func dominatingAliasDeclarationType(result *body.Result, resolver typeannotation.Resolver, flow *diagnosticFlowCache, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
+	if result == nil || expr == nil {
+		return nil, false
+	}
+	accessPath, ok := result.ExpressionPath(expr)
+	if !ok || accessPath.Symbol == 0 || len(accessPath.Segments) != 0 {
+		return nil, false
+	}
+	got, ok := dominatingRootDeclarationType(result, resolver, flow, point, accessPath.Symbol)
+	if !ok || got == nil || topLikeType(got) || refinement.ContainsFreeTypeParam(got) {
+		return nil, false
+	}
+	return got, true
 }

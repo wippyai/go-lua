@@ -53,8 +53,14 @@ func logicalVariantResult(left typ.Type, op string, right typ.Type) (typ.Type, b
 	case typ.IsNever(left):
 		return typ.Never, true
 	case typ.IsAny(left):
+		if op == "and" {
+			return normalizeOperatorResults(typ.Nil, typ.False, right), true
+		}
 		return typ.Any, true
 	case typ.IsUnknown(left):
+		if op == "and" {
+			return normalizeOperatorResults(typ.Nil, typ.False, right), true
+		}
 		return typ.Unknown, true
 	}
 

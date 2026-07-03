@@ -39,6 +39,25 @@ func TestIndexRecordStaticIntMember(t *testing.T) {
 	assertType(t, got, typ.Boolean)
 }
 
+func TestRuntimeIndexRecordDynamicIntegerUnionsStaticIntMembers(t *testing.T) {
+	rec := typetable.NewRecord().
+		StaticIntIndex(1, typ.String).
+		StaticIntIndex(2, typ.Number).
+		Build()
+
+	got, ok := RuntimeIndex(rec, typ.Integer)
+	if !ok {
+		t.Fatal("RuntimeIndex(record static int members, integer key) failed")
+	}
+	assertType(t, got, typeexpr.Optional(typeexpr.Union(typ.String, typ.Number)))
+
+	got, ok = RuntimeIndex(rec, typ.Number)
+	if !ok {
+		t.Fatal("RuntimeIndex(record static int members, number key) failed")
+	}
+	assertType(t, got, typeexpr.Optional(typeexpr.Union(typ.String, typ.Number)))
+}
+
 func TestIndexRecordMapComponentAndOpenRecord(t *testing.T) {
 	rec := typetable.NewRecord().
 		MapComponent(typ.String, typ.Boolean).
@@ -112,6 +131,29 @@ func TestIndexMapReadonlyMapCompatibleKeys(t *testing.T) {
 	assertType(t, got, typeexpr.Optional(typ.Boolean))
 }
 
+func TestWritableIndexDropsReadMissOptionality(t *testing.T) {
+	m := typetable.NewMap(typ.String, typ.Number)
+	got, ok := WritableIndex(m, typ.String)
+	if !ok {
+		t.Fatal("WritableIndex(map, string key) failed")
+	}
+	assertType(t, got, typ.Number)
+
+	optionalValue := typetable.NewMap(typ.String, typ.MaterializeOptional(typ.Number))
+	got, ok = WritableIndex(optionalValue, typ.String)
+	if !ok {
+		t.Fatal("WritableIndex(map, optional value) failed")
+	}
+	assertType(t, got, typeexpr.Optional(typ.Number))
+
+	arr := typ.NewArray(typ.String)
+	got, ok = WritableIndex(arr, typ.Integer)
+	if !ok {
+		t.Fatal("WritableIndex(array, integer key) failed")
+	}
+	assertType(t, got, typ.String)
+}
+
 func TestIndexRecordMapComponentIntegerAdmission(t *testing.T) {
 	rec := typetable.NewRecord().
 		MapComponent(typ.Integer, typ.Boolean).
@@ -128,6 +170,49 @@ func TestIndexRecordMapComponentIntegerAdmission(t *testing.T) {
 		t.Fatal("Index(record integer map component, integer key) failed")
 	}
 	assertType(t, got, typeexpr.Optional(typ.Boolean))
+}
+
+func TestRuntimeIndexRecordIntegerMapComponentMayOverlapNumericRuntimeKeys(t *testing.T) {
+	rec := typetable.NewRecord().
+		MapComponent(typ.Integer, typ.Boolean).
+		Build()
+
+	got, ok := RuntimeIndex(rec, typ.Number)
+	if !ok {
+		t.Fatal("RuntimeIndex(record integer map component, broad number key) failed")
+	}
+	assertType(t, got, typeexpr.Optional(typ.Boolean))
+
+	got, ok = RuntimeIndex(rec, typ.LiteralNumber(2))
+	if !ok {
+		t.Fatal("RuntimeIndex(record integer map component, integer-valued number literal key) failed")
+	}
+	assertType(t, got, typeexpr.Optional(typ.Boolean))
+
+	got, ok = RuntimeIndex(rec, typ.LiteralNumber(1.5))
+	if !ok {
+		t.Fatal("RuntimeIndex(record integer map component, fractional number literal key) failed")
+	}
+	assertType(t, got, typ.Nil)
+}
+
+func TestRuntimeIndexRecordDynamicIntegerUnionsStaticIntMembersAndMapComponent(t *testing.T) {
+	rec := typetable.NewRecord().
+		StaticIntIndex(1, typ.String).
+		MapComponent(typ.Integer, typ.Boolean).
+		Build()
+
+	got, ok := RuntimeIndex(rec, typ.Integer)
+	if !ok {
+		t.Fatal("RuntimeIndex(record static int members plus map component, integer key) failed")
+	}
+	assertType(t, got, typeexpr.Optional(typeexpr.Union(typ.String, typ.Boolean)))
+
+	got, ok = RuntimeIndex(rec, typ.Number)
+	if !ok {
+		t.Fatal("RuntimeIndex(record static int members plus map component, broad number key) failed")
+	}
+	assertType(t, got, typeexpr.Optional(typeexpr.Union(typ.String, typ.Boolean)))
 }
 
 func TestIndexArrayAndTupleIntegerReads(t *testing.T) {
@@ -174,9 +259,21 @@ func TestIndexArrayAndTupleIntegerReads(t *testing.T) {
 	}
 	assertType(t, got, typ.Nil)
 
+	got, ok = RuntimeIndex(tup, typeexpr.Union(typ.LiteralInt(1), typ.LiteralInt(3)))
+	if !ok {
+		t.Fatal("RuntimeIndex(tuple, union in-range-or-missing key) failed")
+	}
+	assertType(t, got, typeexpr.Optional(typ.Number))
+
 	got, ok = RuntimeIndex(tup, typ.Integer)
 	if !ok {
 		t.Fatal("RuntimeIndex(tuple, dynamic integer key) failed")
+	}
+	assertType(t, got, typeexpr.Optional(typeexpr.Union(typ.Number, typ.Boolean)))
+
+	got, ok = RuntimeIndex(tup, typ.Number)
+	if !ok {
+		t.Fatal("RuntimeIndex(tuple, broad number key) failed")
 	}
 	assertType(t, got, typeexpr.Optional(typeexpr.Union(typ.Number, typ.Boolean)))
 }
@@ -279,6 +376,25 @@ func TestIndexOptionalAliasInstantiatedContainer(t *testing.T) {
 			t.Fatal("Index(Box<number>, value) failed")
 		}
 		assertType(t, got, typ.Number)
+	})
+
+	t.Run("constrained type parameter", func(t *testing.T) {
+		constraint := typetable.NewRecord().Field("value", typ.String).Build()
+		param := typ.NewTypeParam("T", constraint)
+
+		got, ok := Index(param, typ.LiteralString("value"))
+		if !ok {
+			t.Fatal("Index(constrained T, value) failed")
+		}
+		assertType(t, got, typ.String)
+	})
+
+	t.Run("unconstrained type parameter", func(t *testing.T) {
+		param := typ.NewTypeParam("T", nil)
+
+		if got, ok := Index(param, typ.LiteralString("value")); ok {
+			t.Fatalf("Index(unconstrained T, value) = %v/true, want missing", got)
+		}
 	})
 }
 

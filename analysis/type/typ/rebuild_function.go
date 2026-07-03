@@ -63,48 +63,18 @@ func newCanonicalFunction(
 		h = hash.MixHash(h, r.Hash())
 	}
 
-	containsAny := knownAnyTypeParams(typeParamsCopy) ||
-		knownAnyParams(paramsCopy) ||
-		knownContainsAny(variadic) ||
-		knownAny(returnsCopy...)
-	containsNever := knownNeverTypeParams(typeParamsCopy) ||
-		knownNeverParams(paramsCopy) ||
-		knownContainsNever(variadic) ||
-		knownNever(returnsCopy...)
-	containsTypeParam := knownTypeParamTypeParams(typeParamsCopy) ||
-		knownTypeParamParams(paramsCopy) ||
-		knownContainsTypeParam(variadic) ||
-		knownTypeParam(returnsCopy...)
-	containsInstantiated := knownInstantiatedTypeParams(typeParamsCopy) ||
-		knownInstantiatedParams(paramsCopy) ||
-		knownContainsInstantiated(variadic) ||
-		knownInstantiated(returnsCopy...)
-	containsGeneric := knownGenericTypeParams(typeParamsCopy) ||
-		knownGenericParams(paramsCopy) ||
-		knownContainsGeneric(variadic) ||
-		knownGeneric(returnsCopy...)
-	containsRecursive := knownRecursiveTypeParams(typeParamsCopy) ||
-		knownRecursiveParams(paramsCopy) ||
-		knownContainsRecursive(variadic) ||
-		knownRecursive(returnsCopy...)
-	containsOpenRecursive := knownOpenRecursiveTypeParams(typeParamsCopy) ||
-		knownOpenRecursiveParams(paramsCopy) ||
-		knownContainsOpenRecursive(variadic) ||
-		knownOpenRecursive(returnsCopy...)
+	props := typePropertiesOfTypeParams(typeParamsCopy)
+	props.includeParams(paramsCopy)
+	props.include(variadic)
+	props.includeTypes(returnsCopy...)
 
 	return &Function{
-		TypeParams:            typeParamsCopy,
-		Params:                paramsCopy,
-		Variadic:              variadic,
-		Returns:               returnsCopy,
-		hash:                  h,
-		containsAny:           containsAny,
-		containsNever:         containsNever,
-		containsTypeParam:     containsTypeParam,
-		containsInstantiated:  containsInstantiated,
-		containsGeneric:       containsGeneric,
-		containsRecursive:     containsRecursive,
-		containsOpenRecursive: containsOpenRecursive,
+		TypeParams:     typeParamsCopy,
+		Params:         paramsCopy,
+		Variadic:       variadic,
+		Returns:        returnsCopy,
+		hash:           h,
+		typeProperties: props,
 	}
 }
 

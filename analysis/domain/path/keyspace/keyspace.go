@@ -93,22 +93,42 @@ type rootEntry struct {
 	name string
 }
 
+type segmentPairKey struct {
+	first  segment.Segment
+	second segment.Segment
+}
+
+type segmentTripleKey struct {
+	first  segment.Segment
+	second segment.Segment
+	third  segment.Segment
+}
+
 // KeySpace interns segment lists and named roots per analysis. It is the oracle
 // and structural engine for Key values. It is not safe for concurrent use.
 type KeySpace struct {
 	segEntries []segmentsEntry
 	segByKey   map[string]SegmentsID
+	segByOne   map[segment.Segment]SegmentsID
+	segByTwo   map[segmentPairKey]SegmentsID
+	segByThree map[segmentTripleKey]SegmentsID
 
 	rootEntries []rootEntry
 	rootByName  map[string]rootID
+
+	formatByKey map[Key]string
 }
 
 // New returns an empty KeySpace. Index 0 of each intern table is reserved as the
 // empty/none sentinel.
 func New() *KeySpace {
 	ks := &KeySpace{
-		segByKey:   make(map[string]SegmentsID),
-		rootByName: make(map[string]rootID),
+		segByKey:    make(map[string]SegmentsID),
+		segByOne:    make(map[segment.Segment]SegmentsID),
+		segByTwo:    make(map[segmentPairKey]SegmentsID),
+		segByThree:  make(map[segmentTripleKey]SegmentsID),
+		rootByName:  make(map[string]rootID),
+		formatByKey: make(map[Key]string),
 	}
 	ks.segEntries = append(ks.segEntries, segmentsEntry{})
 	ks.rootEntries = append(ks.rootEntries, rootEntry{})
@@ -124,15 +144,46 @@ func (ks *KeySpace) internSegments(segments []segment.Segment) SegmentsID {
 	if len(segments) == 0 {
 		return 0
 	}
+	switch len(segments) {
+	case 1:
+		key := segments[0]
+		if id, ok := ks.segByOne[key]; ok {
+			return id
+		}
+		id := ks.addSegmentsEntry(segments)
+		ks.segByOne[key] = id
+		return id
+	case 2:
+		key := segmentPairKey{first: segments[0], second: segments[1]}
+		if id, ok := ks.segByTwo[key]; ok {
+			return id
+		}
+		id := ks.addSegmentsEntry(segments)
+		ks.segByTwo[key] = id
+		return id
+	case 3:
+		key := segmentTripleKey{first: segments[0], second: segments[1], third: segments[2]}
+		if id, ok := ks.segByThree[key]; ok {
+			return id
+		}
+		id := ks.addSegmentsEntry(segments)
+		ks.segByThree[key] = id
+		return id
+	}
 	internKey := structuralSegmentsKey(segments)
 	if id, ok := ks.segByKey[internKey]; ok {
 		return id
 	}
+	id := ks.addSegmentsEntry(segments)
+	ks.segByKey[internKey] = id
+	return id
+}
+
+func (ks *KeySpace) addSegmentsEntry(segments []segment.Segment) SegmentsID {
 	id := SegmentsID(len(ks.segEntries))
 	stored := append([]segment.Segment(nil), segments...)
 	suffix := segment.FormatSegments(segments)
 	ks.segEntries = append(ks.segEntries, segmentsEntry{segments: stored, suffix: suffix})
-	ks.segByKey[internKey] = id
 	return id
 }
 
@@ -174,11 +225,35 @@ func (ks *KeySpace) internRoot(name string) rootID {
 }
 
 func (ks *KeySpace) seg(id SegmentsID) segmentsEntry {
+	if id == 0 || int(id) >= len(ks.segEntries) {
+		return segmentsEntry{}
+	}
 	return ks.segEntries[id]
 }
 
 func (ks *KeySpace) rootName(id rootID) string {
+	if id == 0 || int(id) >= len(ks.rootEntries) {
+		return ""
+	}
 	return ks.rootEntries[id].name
+}
+
+func (ks *KeySpace) validSegmentsID(id SegmentsID) bool {
+	return id == 0 || int(id) < len(ks.segEntries)
+}
+
+func (ks *KeySpace) validRootID(id rootID) bool {
+	return id == 0 || int(id) < len(ks.rootEntries)
+}
+
+func (ks *KeySpace) validKey(k Key) bool {
+	if !ks.validSegmentsID(k.Segs) {
+		return false
+	}
+	if k.Kind == KindNamed && !ks.validRootID(rootID(k.Root)) {
+		return false
+	}
+	return true
 }
 
 // segments returns the interned, immutable segment list for a key. The slice
@@ -201,6 +276,16 @@ func (ks *KeySpace) Segments(k Key) []segment.Segment {
 	out := make([]segment.Segment, len(interned))
 	copy(out, interned)
 	return out
+}
+
+// SegmentsView returns the key's interned segment list as a read-only borrowed
+// view. The returned slice is owned by the KeySpace and must not be mutated.
+// Use Segments when the caller needs an owned slice.
+func (ks *KeySpace) SegmentsView(k Key) ([]segment.Segment, bool) {
+	if ks == nil || !ks.validKey(k) {
+		return nil, false
+	}
+	return ks.segments(k.Segs), true
 }
 
 // suffix returns the canonical FormatSegments spelling for a segment id.

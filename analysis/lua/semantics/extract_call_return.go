@@ -29,7 +29,7 @@ func (r *Result) extractCall(stmt *ast.FuncCallStmt, bindings *bind.Result, poin
 			context, exprs, exprIndex = CallContextStatement, []ast.Expr{call}, 0
 			callStmt = stmt
 		}
-		r.calls[points[i]] = buildCallFact(stmt, callStmt, context, exprs, exprIndex, occurrence.call, bindings, nil, resolver)
+		r.setCall(points[i], buildCallFact(stmt, callStmt, context, exprs, exprIndex, occurrence.call, bindings, nil, resolver))
 	}
 	r.extractObjectLiteral(stmt.Expr, resolver)
 	return nil
@@ -52,14 +52,14 @@ func (r *Result) extractReturn(stmt *ast.ReturnStmt, bindings *bind.Result, poin
 		if topLevelValueListCall(stmt.Exprs, call) {
 			context, exprs = CallContextReturnSource, stmt.Exprs
 		}
-		r.calls[points[i]] = buildCallFact(stmt, nil, context, exprs, call.index, call.call, bindings, nil, resolver)
+		r.setCall(points[i], buildCallFact(stmt, nil, context, exprs, call.index, call.call, bindings, nil, resolver))
 	}
 	returnPoint := points[len(calls)]
-	r.returns[returnPoint] = ReturnFact{
+	r.setReturn(returnPoint, ReturnFact{
 		Stmt:    stmt,
 		Exprs:   copyExprs(stmt.Exprs),
 		Sources: returnValueSources(stmt.Exprs, resolver),
-	}
+	})
 	r.extractObjectLiterals(stmt.Exprs, resolver)
 	return nil
 }

@@ -26,7 +26,7 @@ func ContainsFreeTypeParam(t typ.Type) bool {
 }
 
 type freeTypeParamSeen struct {
-	small              [8]freeTypeParamSeenEntry
+	small              [64]freeTypeParamSeenEntry
 	smallLen           int
 	entries            map[uint64][]typ.Type
 	recursiveSeen      freeTypeParamRecursiveSeen
@@ -87,6 +87,12 @@ func (s *freeTypeParamSeen) enter(t typ.Type) bool {
 
 func (s *freeTypeParamSeen) containsRecursive(t typ.Type) bool {
 	if t == nil {
+		return false
+	}
+	if typ.ContainsRecursive(t) {
+		return true
+	}
+	if !typ.ContainsGeneric(t) {
 		return false
 	}
 	if result, ok := s.recursiveMemoLookup(t); ok {
@@ -230,7 +236,7 @@ func containsFreeTypeParam(t typ.Type, seen *freeTypeParamSeen, owned map[*typ.T
 		return true
 	}
 
-	if freeTypeParamUseSeen(owned) {
+	if freeTypeParamUseSeen(t, owned) {
 		if !seen.enter(t) {
 			return false
 		}
@@ -280,6 +286,6 @@ func containsFreeTypeParam(t typ.Type, seen *freeTypeParamSeen, owned map[*typ.T
 	})
 }
 
-func freeTypeParamUseSeen(owned map[*typ.TypeParam]int) bool {
-	return len(owned) == 0
+func freeTypeParamUseSeen(t typ.Type, owned map[*typ.TypeParam]int) bool {
+	return len(owned) == 0 && typ.ContainsRecursive(t)
 }

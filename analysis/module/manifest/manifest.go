@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
+	"strings"
 
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/module/signature"
@@ -23,6 +25,105 @@ type Manifest struct {
 	Types              map[string]typ.Type
 	TypestateProtocols map[typestate.Protocol]typestate.Definition
 	FunctionSignatures map[string]signature.Function
+
+	// ErrorType is this module's canonical error type (for Wippy, the LuaError
+	// interface). When set, the signature lookup derives the value/error
+	// correlation for any member whose final return is Optional(this type), so
+	// the error-return idiom narrows without per-function effect tagging.
+	ErrorType typ.Type
+
+	// Globals are the names of ambient globals this module installs into the
+	// shared environment by assigning to the global table (_G.<name> = value). An
+	// entry that requires this module runs with these names in scope; recording
+	// them here lets the consuming analysis recognize a bare reference instead of
+	// reporting an unknown value.
+	Globals []string
+
+	// CallbackPhaseRegistrations describe functions that register a callback for
+	// a named execution phase. CallbackPhaseInvocations describe functions whose
+	// callback parameter executes with previously registered phases before or
+	// after it. This is module-boundary behavior for DSL/framework providers
+	// such as test runners; the checker consumes it generically and does not
+	// hardcode provider names.
+	CallbackPhaseRegistrations []CallbackPhaseRegistration
+	CallbackPhaseInvocations   []CallbackPhaseInvocation
+}
+
+type CallbackPhaseRegistration struct {
+	Function      string
+	CallbackParam int
+	Phase         string
+}
+
+type CallbackPhaseInvocation struct {
+	Function      string
+	CallbackParam int
+	Before        []string
+	After         []string
+}
+
+// DefineGlobal records that this module installs an ambient global of the given
+// name. Names are de-duplicated.
+func (m *Manifest) DefineGlobal(name string) {
+	if m == nil || name == "" {
+		return
+	}
+	if slices.Contains(m.Globals, name) {
+		return
+	}
+	m.Globals = append(m.Globals, name)
+}
+
+func (m *Manifest) DefineCallbackPhaseRegistration(function string, callbackParam int, phase string) {
+	if m == nil || function == "" || callbackParam < 0 || phase == "" {
+		return
+	}
+	next := CallbackPhaseRegistration{Function: function, CallbackParam: callbackParam, Phase: phase}
+	for _, existing := range m.CallbackPhaseRegistrations {
+		if existing == next {
+			return
+		}
+	}
+	m.CallbackPhaseRegistrations = append(m.CallbackPhaseRegistrations, next)
+}
+
+func (m *Manifest) DefineCallbackPhaseInvocation(function string, callbackParam int, before []string, after []string) {
+	if m == nil || function == "" || callbackParam < 0 || (len(before) == 0 && len(after) == 0) {
+		return
+	}
+	next := CallbackPhaseInvocation{
+		Function:      function,
+		CallbackParam: callbackParam,
+		Before:        callbackPhases(before),
+		After:         callbackPhases(after),
+	}
+	for _, existing := range m.CallbackPhaseInvocations {
+		if callbackPhaseInvocationEqual(existing, next) {
+			return
+		}
+	}
+	m.CallbackPhaseInvocations = append(m.CallbackPhaseInvocations, next)
+}
+
+func callbackPhases(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	for _, phase := range in {
+		if phase == "" || slices.Contains(out, phase) {
+			continue
+		}
+		out = append(out, phase)
+	}
+	return out
+}
+
+func callbackPhaseInvocationEqual(left, right CallbackPhaseInvocation) bool {
+	return left.Function == right.Function &&
+		left.CallbackParam == right.CallbackParam &&
+		slices.Equal(left.Before, right.Before) &&
+		slices.Equal(left.After, right.After)
 }
 
 // New creates an empty module manifest for path.
@@ -116,8 +217,11 @@ func Encode(m *Manifest) ([]byte, error) {
 	}
 
 	wm := manifestWire{
-		Path:    m.Path,
-		Version: m.Version,
+		Path:                       m.Path,
+		Version:                    m.Version,
+		Globals:                    append([]string(nil), m.Globals...),
+		CallbackPhaseRegistrations: encodeCallbackPhaseRegistrations(m.CallbackPhaseRegistrations),
+		CallbackPhaseInvocations:   encodeCallbackPhaseInvocations(m.CallbackPhaseInvocations),
 	}
 	if m.Export != nil {
 		export, err := encodeType(m.Export)
@@ -200,6 +304,13 @@ func Decode(data []byte) (*Manifest, error) {
 
 	m := New(wm.Path)
 	m.Version = wm.Version
+	m.Globals = append([]string(nil), wm.Globals...)
+	for _, registration := range wm.CallbackPhaseRegistrations {
+		m.DefineCallbackPhaseRegistration(registration.Function, registration.CallbackParam, registration.Phase)
+	}
+	for _, invocation := range wm.CallbackPhaseInvocations {
+		m.DefineCallbackPhaseInvocation(invocation.Function, invocation.CallbackParam, invocation.Before, invocation.After)
+	}
 	if wm.Export != nil {
 		export, err := decodeType(wm.Export)
 		if err != nil {
@@ -242,12 +353,15 @@ func Decode(data []byte) (*Manifest, error) {
 }
 
 type manifestWire struct {
-	Path               string                  `json:"path"`
-	Version            string                  `json:"version,omitempty"`
-	Export             *typeWire               `json:"export,omitempty"`
-	Types              []namedTypeWire         `json:"types,omitempty"`
-	TypestateProtocols []typestateProtocolWire `json:"typestateProtocols,omitempty"`
-	FunctionSignatures []functionSignatureWire `json:"functionSignatures,omitempty"`
+	Path                       string                          `json:"path"`
+	Version                    string                          `json:"version,omitempty"`
+	Export                     *typeWire                       `json:"export,omitempty"`
+	Types                      []namedTypeWire                 `json:"types,omitempty"`
+	TypestateProtocols         []typestateProtocolWire         `json:"typestateProtocols,omitempty"`
+	FunctionSignatures         []functionSignatureWire         `json:"functionSignatures,omitempty"`
+	Globals                    []string                        `json:"globals,omitempty"`
+	CallbackPhaseRegistrations []callbackPhaseRegistrationWire `json:"callbackPhaseRegistrations,omitempty"`
+	CallbackPhaseInvocations   []callbackPhaseInvocationWire   `json:"callbackPhaseInvocations,omitempty"`
 }
 
 type namedTypeWire struct {
@@ -255,11 +369,82 @@ type namedTypeWire struct {
 	Type *typeWire `json:"type,omitempty"`
 }
 
+type callbackPhaseRegistrationWire struct {
+	Function      string `json:"function"`
+	CallbackParam int    `json:"callbackParam"`
+	Phase         string `json:"phase"`
+}
+
+type callbackPhaseInvocationWire struct {
+	Function      string   `json:"function"`
+	CallbackParam int      `json:"callbackParam"`
+	Before        []string `json:"before,omitempty"`
+	After         []string `json:"after,omitempty"`
+}
+
 type functionSignatureWire struct {
 	Name               string                  `json:"name"`
 	Type               *typeWire               `json:"type,omitempty"`
 	Effect             *effectRowWire          `json:"effect,omitempty"`
 	OperationalEffects *operationalEffectsWire `json:"operationalEffects,omitempty"`
+}
+
+func encodeCallbackPhaseRegistrations(in []CallbackPhaseRegistration) []callbackPhaseRegistrationWire {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]callbackPhaseRegistrationWire, 0, len(in))
+	for _, registration := range in {
+		if registration.Function == "" || registration.CallbackParam < 0 || registration.Phase == "" {
+			continue
+		}
+		out = append(out, callbackPhaseRegistrationWire{
+			Function:      registration.Function,
+			CallbackParam: registration.CallbackParam,
+			Phase:         registration.Phase,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Function != out[j].Function {
+			return out[i].Function < out[j].Function
+		}
+		if out[i].CallbackParam != out[j].CallbackParam {
+			return out[i].CallbackParam < out[j].CallbackParam
+		}
+		return out[i].Phase < out[j].Phase
+	})
+	return out
+}
+
+func encodeCallbackPhaseInvocations(in []CallbackPhaseInvocation) []callbackPhaseInvocationWire {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]callbackPhaseInvocationWire, 0, len(in))
+	for _, invocation := range in {
+		if invocation.Function == "" || invocation.CallbackParam < 0 || (len(invocation.Before) == 0 && len(invocation.After) == 0) {
+			continue
+		}
+		out = append(out, callbackPhaseInvocationWire{
+			Function:      invocation.Function,
+			CallbackParam: invocation.CallbackParam,
+			Before:        callbackPhases(invocation.Before),
+			After:         callbackPhases(invocation.After),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Function != out[j].Function {
+			return out[i].Function < out[j].Function
+		}
+		if out[i].CallbackParam != out[j].CallbackParam {
+			return out[i].CallbackParam < out[j].CallbackParam
+		}
+		if joined := strings.Compare(strings.Join(out[i].Before, "\x00"), strings.Join(out[j].Before, "\x00")); joined != 0 {
+			return joined < 0
+		}
+		return strings.Join(out[i].After, "\x00") < strings.Join(out[j].After, "\x00")
+	})
+	return out
 }
 
 func encodeFunctionSignature(sig signature.Function) (functionSignatureWire, error) {

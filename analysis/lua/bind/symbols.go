@@ -41,6 +41,24 @@ func (r *Result) HasRead(id symbol.ID) bool {
 	return len(r.readIdents[id]) > 0
 }
 
+// WriteIdents returns ordinary assignment target occurrences bound to id.
+// Local declaration initializers are not writes; this records only mutations
+// through assignment syntax after a symbol has been declared or discovered.
+func (r *Result) WriteIdents(id symbol.ID) []*ast.IdentExpr {
+	if r == nil || id == 0 {
+		return nil
+	}
+	return cloneIdentExprs(r.writeIdents[id])
+}
+
+// HasWrite reports whether id is assigned through ordinary assignment syntax.
+func (r *Result) HasWrite(id symbol.ID) bool {
+	if r == nil || id == 0 {
+		return false
+	}
+	return len(r.writeIdents[id]) > 0
+}
+
 // FuncDefTargetSymbol returns the simple assignment target for a function
 // definition of the form "function f(...) ... end".
 func (r *Result) FuncDefTargetSymbol(stmt *ast.FuncDefStmt) (symbol.ID, bool) {
@@ -342,5 +360,6 @@ func (b *binder) bindWriteIdent(ident *ast.IdentExpr) {
 		id = b.result.global(ident.Value, false)
 	}
 	b.result.identSymbols[ident] = id
+	b.result.writeIdents[id] = append(b.result.writeIdents[id], ident)
 	b.recordDirectCapture(id)
 }

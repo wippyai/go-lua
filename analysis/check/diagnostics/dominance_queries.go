@@ -26,22 +26,34 @@ func dominatingRootLocalAssignment(result *body.Result, flow *diagnosticFlowCach
 	} else {
 		idom = dominance.ComputeImmediateDominatorInfo(graph).Map()
 	}
-	visited := make(map[cfg.Point]struct{}, graph.Size())
-	for cursor := point; ; {
-		if _, ok := visited[cursor]; ok {
-			return semantics.LocalAssignmentFact{}, 0, false
+	var best semantics.LocalAssignmentFact
+	var bestPoint cfg.Point
+	found := false
+	for _, candidate := range graph.RPO() {
+		fact, ok := result.LocalAssignment(candidate)
+		if !ok || !fact.HasSymbol || fact.Symbol != target || !dominance.Dominates(idom, candidate, point) {
+			continue
 		}
-		visited[cursor] = struct{}{}
-		if fact, ok := result.OrdinaryAssignment(cursor); ok && fact.HasSymbol && fact.Symbol == target && (!fact.HasPath || len(fact.Path.Segments) == 0) {
-			return semantics.LocalAssignmentFact{}, 0, false
+		if !found || dominance.Dominates(idom, bestPoint, candidate) {
+			best = fact
+			bestPoint = candidate
+			found = true
 		}
-		if fact, ok := result.LocalAssignment(cursor); ok && fact.HasSymbol && fact.Symbol == target {
-			return fact, cursor, true
-		}
-		parent, ok := idom[cursor]
-		if !ok || parent == cursor {
-			return semantics.LocalAssignmentFact{}, 0, false
-		}
-		cursor = parent
 	}
+	if !found {
+		return semantics.LocalAssignmentFact{}, 0, false
+	}
+	for _, candidate := range graph.RPO() {
+		fact, ok := result.OrdinaryAssignment(candidate)
+		if !ok || !fact.HasSymbol || fact.Symbol != target || (fact.HasPath && len(fact.Path.Segments) != 0) {
+			continue
+		}
+		if candidate == bestPoint {
+			continue
+		}
+		if diagnosticCanReach(flow, graph, bestPoint, candidate) && dominance.Dominates(idom, candidate, point) {
+			return semantics.LocalAssignmentFact{}, 0, false
+		}
+	}
+	return best, bestPoint, true
 }

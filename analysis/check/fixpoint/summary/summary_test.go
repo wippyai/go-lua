@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typenormalize "github.com/wippyai/go-lua/analysis/type/normalize"
@@ -120,6 +121,86 @@ func TestSnapshotReadsNormalizedSummaries(t *testing.T) {
 	}
 	if !product.Equal(reg, got.Returns[0], product.Top()) {
 		t.Fatalf("Read(key) first return = %#v, want top", got.Returns[0])
+	}
+}
+
+func TestNormalizedDomainEqualMatchesDefensiveEqualForNormalizedSummaries(t *testing.T) {
+	reg := mustRegistry(t)
+	p0 := path.NewPlaceholder(0).Field("ready")
+	value := presentProduct(reg)
+	raw := Summary{
+		Returns: []product.Value{value, product.Bottom(reg)},
+		NormalReturnFacts: callboundary.NormalReturnFacts{
+			PathRefinements: []callboundary.PathValueFact{
+				{Path: p0, Value: value},
+				{Path: p0.Clone(), Value: product.Bottom(reg)},
+			},
+			NumFloors: []callboundary.NumFloorFact{
+				{Path: p0.Clone(), Floor: 1},
+				{Path: p0.Clone(), Floor: 3},
+			},
+		},
+	}
+	normalized := Normalize(reg, raw)
+	cloned := normalized.Clone()
+
+	if !Equal(reg, normalized, cloned) {
+		t.Fatalf("defensive Equal rejected cloned normalized summary")
+	}
+	if !NormalizedDomain(reg).Equal(normalized, cloned) {
+		t.Fatalf("NormalizedDomain Equal rejected cloned normalized summary")
+	}
+}
+
+func TestNewSnapshotOwnedNormalizedKeepsCallerNormalizedEntry(t *testing.T) {
+	reg := mustRegistry(t)
+	key := DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 13})
+	normalized := Normalize(reg, Summary{Returns: []product.Value{
+		product.Top(),
+		product.Bottom(reg),
+	}})
+	snap := NewSnapshotOwnedNormalized(reg, EntrySummary{Key: key, Summary: normalized})
+
+	got, ok := snap.Read(key)
+	if !ok {
+		t.Fatalf("Read(key) missing")
+	}
+	if len(got.Returns) != 1 {
+		t.Fatalf("Read(key) returned %d returns, want owned normalized 1", len(got.Returns))
+	}
+	got.Returns[0] = product.Bottom(reg)
+	again, ok := snap.Read(key)
+	if !ok {
+		t.Fatalf("second Read(key) missing")
+	}
+	if len(again.Returns) != 1 || !product.Equal(reg, again.Returns[0], product.Top()) {
+		t.Fatalf("snapshot read did not clone stored summary")
+	}
+}
+
+func TestSnapshotOwnedNormalizedReadsShareStoredSummary(t *testing.T) {
+	reg := mustRegistry(t)
+	key := DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 14})
+	normalized := Normalize(reg, Summary{Returns: []product.Value{
+		product.Top(),
+		product.Bottom(reg),
+	}})
+	snap := NewSnapshotOwnedNormalized(reg, EntrySummary{Key: key, Summary: normalized})
+
+	got, ok := snap.ReadOwnedNormalized(key)
+	if !ok {
+		t.Fatalf("ReadOwnedNormalized(key) missing")
+	}
+	if len(got.Returns) != 1 || &got.Returns[0] != &normalized.Returns[0] {
+		t.Fatalf("ReadOwnedNormalized did not return stored normalized summary")
+	}
+
+	entries := snap.EntriesOwnedNormalized()
+	if len(entries) != 1 {
+		t.Fatalf("EntriesOwnedNormalized length = %d, want 1", len(entries))
+	}
+	if len(entries[0].Summary.Returns) != 1 || &entries[0].Summary.Returns[0] != &normalized.Returns[0] {
+		t.Fatalf("EntriesOwnedNormalized did not return stored normalized summary")
 	}
 }
 
@@ -275,6 +356,72 @@ func TestSummaryHeapTableObjectsNormalizeAndJoinByIdentity(t *testing.T) {
 	}
 }
 
+func TestSummaryJoinRekeysHeapTableObjectsAcrossKeySpaces(t *testing.T) {
+	reg := mustRegistry(t)
+	id := identity.ID{Kind: "table", Site: "summary-join-keyspace", Index: 1}
+	leftKS := keyspace.New()
+	rightKS := keyspace.New()
+	// Force different dense segment ids for the same structural member spelling
+	// in the two keyspaces. The join must use structural rekeying, not raw ids.
+	if _, ok := rightKS.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "padding"}}); !ok {
+		t.Fatal("right padding suffix failed")
+	}
+	leftMember, ok := leftKS.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "name"}})
+	if !ok {
+		t.Fatal("left member suffix failed")
+	}
+	rightMember, ok := rightKS.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "name"}})
+	if !ok {
+		t.Fatal("right member suffix failed")
+	}
+	if leftMember.Segs == rightMember.Segs {
+		t.Fatalf("test setup did not produce distinct segment ids: %v", leftMember.Segs)
+	}
+
+	left := Summary{
+		HeapKeySpace: leftKS,
+		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+			id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+				Root:          product.Top(),
+				StaticMembers: map[keyspace.Key]product.Value{leftMember: product.Top()},
+			}),
+		},
+	}
+	right := Summary{
+		HeapKeySpace: rightKS,
+		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+			id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+				Root:          product.Top(),
+				StaticMembers: map[keyspace.Key]product.Value{rightMember: product.Top()},
+			}),
+		},
+	}
+
+	joined := Join(reg, left, right)
+	if joined.HeapKeySpace != leftKS {
+		t.Fatalf("joined HeapKeySpace = %p, want left keyspace %p", joined.HeapKeySpace, leftKS)
+	}
+	object, ok := joined.HeapTableObjects[id]
+	if !ok {
+		t.Fatalf("Join dropped heap object %v", id)
+	}
+	for key := range object.StaticMembers() {
+		if got := joined.HeapKeySpace.Format(key); got != ".name" {
+			t.Fatalf("joined static member key = %q, want .name", got)
+		}
+	}
+
+	target := keyspace.New()
+	rekeyed := joined.RekeyHeapTableObjects(target)
+	object, ok = rekeyed.HeapTableObjects[id]
+	if !ok {
+		t.Fatalf("RekeyHeapTableObjects dropped heap object %v", id)
+	}
+	if _, ok := object.StaticMember(mustRootlessSuffix(t, target, "name")); !ok {
+		t.Fatalf("rekeyed heap object members = %#v, want .name in target keyspace", object.StaticMembers())
+	}
+}
+
 func TestNormalizeDefensivelyCopiesHeapTableObjects(t *testing.T) {
 	reg := mustRegistry(t)
 	id := identity.ID{Kind: "table", Site: "summary-normalize-copy", Index: 1}
@@ -309,6 +456,15 @@ func TestNormalizeOwnedConsumesHeapTableObjectMap(t *testing.T) {
 	if len(input.HeapTableObjects) != 0 {
 		t.Fatalf("NormalizeOwned did not consume caller-owned heap map: %#v", input.HeapTableObjects)
 	}
+}
+
+func mustRootlessSuffix(t *testing.T, ks *keyspace.KeySpace, name string) keyspace.Key {
+	t.Helper()
+	key, ok := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: name}})
+	if !ok {
+		t.Fatalf("FromRootlessSuffix(%q) failed", name)
+	}
+	return key
 }
 
 func TestParamMemberReturnSlotsAreMustFacts(t *testing.T) {

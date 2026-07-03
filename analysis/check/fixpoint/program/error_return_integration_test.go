@@ -1,6 +1,7 @@
 package program_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
@@ -68,6 +69,41 @@ func TestErrorReturnSignatureRefinesValuePresenceAcrossErrorBranch(t *testing.T)
 	}
 }
 
+func TestErrorReturnSignatureRefinesErrorPresenceAcrossValueAbsentBranch(t *testing.T) {
+	reg := standard.Registry()
+	errType := typ.NewInterface("Error", []typ.Method{
+		{Name: "kind", Type: typ.Func().Param("self", typ.Self).Returns(typ.String).Build()},
+	})
+	userType := typ.NewInterface("User", []typ.Method{
+		{Name: "id", Type: typ.Func().Param("self", typ.Self).Returns(typ.String).Build()},
+	})
+	m := manifest.New("test")
+	m.DefineFunctionSignature("f", signature.Function{
+		Type: typ.Func().
+			Returns(typeexpr.Optional(userType), typeexpr.Optional(errType)).
+			Build(),
+		Effect: effect.Empty.With(returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1}),
+	})
+
+	stmts := parseChunk(t, `
+		local user, err = f()
+		if user == nil then
+			local kind: string = err:kind()
+		end
+	`)
+	result := runChunk(t, stmts, body.Config{
+		Registry: reg,
+		Globals:  []string{"f"},
+		Signatures: signaturelookup.Source{
+			Manifests: []*manifest.Manifest{m},
+		},
+	})
+
+	if diags := diagnostics.Produce(result); len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want value-absent branch to prove error present", diags)
+	}
+}
+
 func TestErrorReturnLocalFunctionSummaryRefinesValuePresenceAcrossGuard(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
@@ -129,6 +165,32 @@ func TestErrorReturnLocalFunctionWithoutGuardKeepsReceiverOptional(t *testing.T)
 		}
 	}
 	t.Fatalf("diagnostics = %#v, want optional receiver diagnostic for release", diags)
+}
+
+func TestErrorReturnLocalFunctionWithoutGuardKeepsFieldReadOptional(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+		type Config = {host: string, port: number}
+		local function parse_config(ok: boolean): (Config?, string?)
+			if not ok then
+				return nil, "failed"
+			end
+			return {host = "localhost", port = 8080}, nil
+		end
+		local function use(ok: boolean)
+			local cfg, err = parse_config(ok)
+			local host: string = cfg.host
+		end
+	`)
+	result := runChunk(t, stmts, body.Config{Registry: reg})
+
+	diags := diagnostics.Produce(result)
+	for _, d := range diags {
+		if d.Code == diagnostics.CodeAssignmentType && strings.Contains(d.Message, "cfg.host") && strings.Contains(d.Message, "may be nil") {
+			return
+		}
+	}
+	t.Fatalf("diagnostics = %#v, want cfg.host optional assignment diagnostic without err guard", diags)
 }
 
 func TestErrorReturnDelegatedTailCallRefinesReceiverAcrossGuard(t *testing.T) {
@@ -240,8 +302,9 @@ func TestErrorReturnGuardRefinesCallbackArgument(t *testing.T) {
 		type Err = {kind: string, message: string}
 		type User = {id: string, name: string, roles: {string}}
 		type Session = {id: string, user: User}
+		local admin_roles: {string} = {"admin"}
 		local users: {[string]: User} = {
-			u1 = {id = "u1", name = "Ada", roles = {"admin"}},
+			u1 = {id = "u1", name = "Ada", roles = admin_roles},
 		}
 		local M = {}
 		function M.find_user(id: string): (User?, Err?)

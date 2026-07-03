@@ -54,6 +54,8 @@ type effectReturnWire struct {
 	CallbackParam *paramRefWire        `json:"callbackParam,omitempty"`
 	Format        *paramRefWire        `json:"format,omitempty"`
 	Projection    []projectionStepWire `json:"projection,omitempty"`
+	When          *typeWire            `json:"when,omitempty"`
+	Then          *typeWire            `json:"then,omitempty"`
 }
 
 type paramRefWire struct {

@@ -9,15 +9,16 @@ import (
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -39,7 +40,59 @@ func pathExportRecordType(result *body.Result, point cfg.Point, root pathdom.Pat
 	addOrdinaryAssignmentMembers(result, point, dom, root, members)
 	addFunctionDefinitionMembers(result, point, dom, root, members)
 	addStateStaticMembers(result, point, root, members)
-	return recordFromMemberMaps(members)
+	recovered, recoveredOK := recordFromMemberMaps(members)
+	contract, contractOK := pathRecordContractType(result, point, root)
+	if recoveredOK && contractOK {
+		return mergeRecordMembers(recovered, contract)
+	}
+	if recoveredOK {
+		return recovered, true
+	}
+	if contractOK {
+		return contract, true
+	}
+	return nil, false
+}
+
+func pathRecordContractType(result *body.Result, point cfg.Point, root pathdom.Path) (typ.Type, bool) {
+	if t, ok := pathSymbolRecordContractType(result, root); ok {
+		return t, true
+	}
+	value, ok := result.PathValueAtBoundary(point, root)
+	if !ok {
+		return nil, false
+	}
+	t, ok := exportValueType(result, value)
+	if !ok || typ.IsAny(t) || typ.IsUnknown(t) {
+		return nil, false
+	}
+	return tableShapeRecordContract(t)
+}
+
+func pathSymbolRecordContractType(result *body.Result, root pathdom.Path) (typ.Type, bool) {
+	if result == nil || root.Symbol == 0 {
+		return nil, false
+	}
+	annotation, ok := result.SymbolTypeAnnotation(root.Symbol)
+	if !ok || annotation == nil {
+		return nil, false
+	}
+	t, ok := typeresolve.NewWithExternal(result, result.ModuleTypes()).Type(annotation)
+	if !ok || t == nil || typ.IsAny(t) || typ.IsUnknown(t) {
+		return nil, false
+	}
+	return tableShapeRecordContract(t)
+}
+
+func tableShapeRecordContract(t typ.Type) (typ.Type, bool) {
+	switch resolved := unwrap.Alias(t).(type) {
+	case *typ.Record:
+		return resolved, true
+	case *typ.Map:
+		return typetable.NewRecord().MapComponent(resolved.Key, resolved.Value).Build(), true
+	default:
+		return nil, false
+	}
 }
 
 // addOrdinaryAssignmentMembers publishes members written through direct
@@ -98,11 +151,16 @@ func ordinaryAssignmentRHSMemberType(result *body.Result, point cfg.Point, root 
 		if sig, ok := result.ExpressionSignatureAt(point, expr); ok && sig.Type != nil {
 			return sig.Type, true, true
 		}
+		if fn, ok := expr.(*ast.FunctionExpr); ok {
+			if t, ok := functionExpressionType(result, fn); ok {
+				return t, true, true
+			}
+		}
 	}
 	resolved := false
 	if value, ok := ordinaryAssignmentRHSValue(result, point, fact); ok {
 		resolved = true
-		if t, ok := typevalue.TypeOf(result.Registry(), value); ok {
+		if t, ok := exportValueType(result, value); ok {
 			return t, true, true
 		}
 	}
@@ -154,7 +212,7 @@ func ordinaryAssignmentDestinationMemberType(result *body.Result, point cfg.Poin
 	if !ok {
 		return nil, false
 	}
-	t, ok := typevalue.TypeOf(result.Registry(), value)
+	t, ok := exportValueType(result, value)
 	if !ok || typ.IsAny(t) || typ.IsUnknown(t) {
 		return nil, false
 	}
@@ -242,7 +300,7 @@ func addStateStaticMembers(
 		if members.has(member) {
 			continue
 		}
-		t, ok := typevalue.TypeOf(result.Registry(), value)
+		t, ok := exportValueType(result, value)
 		if !ok {
 			t = typ.Unknown
 		}
@@ -472,7 +530,7 @@ func reachesPoint(graph cfg.Graph, from, to cfg.Point) bool {
 			continue
 		}
 		seen[point] = struct{}{}
-		for _, succ := range graph.Successors(point) {
+		for _, succ := range cfg.SuccessorsReadOnly(graph, point) {
 			if succ == to {
 				return true
 			}

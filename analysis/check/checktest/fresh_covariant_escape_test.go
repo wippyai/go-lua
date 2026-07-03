@@ -78,3 +78,61 @@ end return f`, WithStdlib())
 		t.Fatalf("diagnostics = %#v, want none for a fresh record used purely locally", result.Diagnostics)
 	}
 }
+
+// TestInterprocReturnMemberCovariantAliasReportsAtRead pins the return-member
+// exposure route: a callee may store a parameter into a wider returned member.
+// The caller then mutates through the returned view, so the original argument's
+// field must read back at the wider type.
+func TestInterprocReturnMemberCovariantAliasReportsAtRead(t *testing.T) {
+	result := Check(`local function ibox(o: { x: number | string }): { ref: { x: number | string } } return { ref = o } end
+local function f(): number
+    local narrow: { x: number } = { x = 1 }
+    local h = ibox(narrow)
+    h.ref.x = "boom"
+    local n: number = narrow.x
+    return n
+end return f`, WithStdlib())
+	requireAssignmentDiagnosticAtLineContaining(t, result, 6, "narrow.x")
+}
+
+// TestInterprocParamStoreCovariantAliasReportsAtRead pins the param-to-param
+// store route: the callee stores a source parameter into a wider member slot of
+// another parameter, exposing the source object at that wider member type.
+func TestInterprocParamStoreCovariantAliasReportsAtRead(t *testing.T) {
+	result := Check(`local function ilink(dst: { ref: { x: number | string } }, o: { x: number | string }) dst.ref = o end
+local function f(): number
+    local narrow: { x: number } = { x = 1 }
+    local holder: { ref: { x: number | string } } = { ref = { x = 0 } }
+    ilink(holder, narrow)
+    holder.ref.x = "boom"
+    local n: number = narrow.x
+    return n
+end return f`, WithStdlib())
+	requireAssignmentDiagnosticAtLineContaining(t, result, 7, "narrow.x")
+}
+
+// TestInterprocCapturedSinkCovariantAliasReportsAtRead pins the captured-sink
+// route: the callee stores a parameter into a persistent wider sink the caller
+// cannot locally rewrite into a same-frame alias.
+func TestInterprocCapturedSinkCovariantAliasReportsAtRead(t *testing.T) {
+	result := Check(`local isink: { ref: { x: number | string } } = { ref = { x = 0 } }
+local function istash(o: { x: number | string }) isink.ref = o end
+local function f(): number
+    local narrow: { x: number } = { x = 1 }
+    istash(narrow)
+    isink.ref.x = "boom"
+    local n: number = narrow.x
+    return n
+end return f`, WithStdlib())
+	requireAssignmentDiagnosticAtLineContaining(t, result, 7, "narrow.x")
+}
+
+func requireAssignmentDiagnosticAtLineContaining(t *testing.T, result Result, line int, want string) {
+	t.Helper()
+	for _, diag := range result.Diagnostics {
+		if diag.Code == diagnostics.CodeAssignmentType && diag.Position.Line == line && strings.Contains(diag.Message, want) {
+			return
+		}
+	}
+	t.Fatalf("diagnostics = %#v, want assignment diagnostic on line %d containing %q", result.Diagnostics, line, want)
+}

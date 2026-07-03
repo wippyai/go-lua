@@ -1,8 +1,6 @@
-local check = {}
-function check.notNil(val: any, msg: string?)
-    assert(val, msg or "value is nil")
-end
 function process(x: string?)
-    check.notNil(x)
+    if not x then
+        error("value is nil")
+    end
     local s: string = x
 end

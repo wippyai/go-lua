@@ -5,6 +5,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func (l *lowerer) branchRefinement(fact semantics.BranchConditionFact) (factflow.BranchRefinement, bool) {
@@ -51,6 +52,9 @@ func (l *lowerer) branchRefinement(fact semantics.BranchConditionFact) (factflow
 		return l.literalBranchRefinement(target, fact.Check.Kind, lit)
 	case branchcond.CheckTypeEqual, branchcond.CheckTypeNot:
 		return l.typeBranchRefinement(target, fact.Check.Kind, fact.Check.TypeName)
+	case branchcond.CheckNumGe:
+		value := factflow.NewValueConstraint(l.typeWitnessValue(typ.Number))
+		return factflow.NewBranchRefinement(target, value, true, value, true), true
 	default:
 		return factflow.BranchRefinement{}, false
 	}

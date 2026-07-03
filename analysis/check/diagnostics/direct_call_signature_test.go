@@ -51,6 +51,25 @@ func TestDirectCallReportsManifestSignatureWrongArgumentType(t *testing.T) {
 	}
 }
 
+func TestJudgmentDirectCallReportsManifestSignatureWrongArgumentTypeEvidence(t *testing.T) {
+	src := `imported(42, 1)`
+	result := runDiagnosticsResultFull(t, src, []string{"test", "type", "value", "imported"}, directCallSignatureSource())
+	diags := ProduceWithConfig(result, Config{})
+	d := requireDirectCallDiagnostic(t, diags, CodeDirectCallArgType)
+	if !diagnosticEvidenceContains(d.Explanation.Evidence(), "argument 1 has literal value 42") ||
+		!diagnosticEvidenceContains(d.Explanation.Evidence(), "imported parameter 1 expects string") {
+		t.Fatalf("evidence = %#v, want argument value and imported signature declaration", d.Explanation.Evidence())
+	}
+	rendered := diagnostic.Render(d, diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"main.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	requireRenderedContains(t, rendered,
+		"1. proven: argument 1 has literal value 42",
+		"2. claimed: imported parameter 1 expects string",
+	)
+}
+
 func TestDirectCallReportsManifestSignatureTooFewArgs(t *testing.T) {
 	src := `imported("ok")`
 	diags := runDiagnosticsWithImportedSignature(t, src)
@@ -96,12 +115,14 @@ func TestDirectCallReportsManifestSignatureTooManyArgs(t *testing.T) {
 		t.Fatalf("extra argument span = %#v, want exact span for true", got)
 	}
 	evidence := d.Explanation.Evidence()
-	if len(evidence) != 2 ||
+	if len(evidence) != 3 ||
 		evidence[0].Kind != diagnostic.EvidenceAbstractFact ||
 		evidence[0].Trust != diagnostic.TrustProven ||
 		evidence[1].Kind != diagnostic.EvidenceUserAssertion ||
-		evidence[1].Trust != diagnostic.TrustClaimed {
-		t.Fatalf("evidence = %#v, want proven call count and claimed signature count", evidence)
+		evidence[1].Trust != diagnostic.TrustClaimed ||
+		evidence[2].Kind != diagnostic.EvidenceMissingProof ||
+		evidence[2].Trust != diagnostic.TrustRefuted {
+		t.Fatalf("evidence = %#v, want proven count, claimed signature, and missing-proof count evidence", evidence)
 	}
 	if !diagnosticEvidenceContains(evidence, "call to imported passes 3 arguments") ||
 		!diagnosticEvidenceContains(evidence, "imported declares 2 parameters") {
@@ -120,6 +141,7 @@ func TestDirectCallReportsManifestSignatureTooManyArgs(t *testing.T) {
 		"  |                    ↑ extra argument",
 		"1. proven: call to imported passes 3 arguments",
 		"2. claimed: imported declares 2 parameters",
+		"3. missing proof: 1 extra argument cannot be accepted",
 		"help: Remove the extra argument",
 	)
 	if strings.Contains(rendered, "  | ^") {

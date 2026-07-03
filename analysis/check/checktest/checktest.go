@@ -12,6 +12,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
 	"github.com/wippyai/go-lua/analysis/check/exportmanifest"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
+	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
+	obligationpass "github.com/wippyai/go-lua/analysis/check/obligation/pass"
 	"github.com/wippyai/go-lua/analysis/check/placementplan"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
@@ -30,12 +32,14 @@ import (
 type Option func(*config)
 
 type config struct {
-	stdlib           bool
-	globals          []string
-	manifests        map[string]*manifest.Manifest
-	modules          map[string]*ModuleResult
-	diagnosticPolicy diagnostic.Policy
-	stateLanes       []state.LaneID
+	stdlib            bool
+	globals           []string
+	manifests         map[string]*manifest.Manifest
+	modules           map[string]*ModuleResult
+	diagnosticPolicy  diagnostic.Policy
+	diagnosticsConfig diagnostics.Config
+	stateLanes        []state.LaneID
+	stats             *program.Stats
 }
 
 type Result struct {
@@ -48,6 +52,7 @@ type ModuleResult struct {
 	Errors    []diagnostic.Diagnostic
 	Manifest  *manifest.Manifest
 	Placement placementplan.Plan
+	bodies    []*body.Result
 }
 
 func WithStdlib() Option {
@@ -94,6 +99,12 @@ func WithDiagnosticPolicy(policy diagnostic.Policy) Option {
 	}
 }
 
+func WithDiagnosticsConfig(selected diagnostics.Config) Option {
+	return func(c *config) {
+		c.diagnosticsConfig = selected
+	}
+}
+
 func WithDiagnosticRule(code diagnostic.Code, rule diagnostic.Rule) Option {
 	return func(c *config) {
 		if c.diagnosticPolicy.Rules == nil {
@@ -110,12 +121,37 @@ func WithStateLanes(lanes ...state.LaneID) Option {
 	}
 }
 
+func WithStats(stats *program.Stats) Option {
+	return func(c *config) {
+		c.stats = stats
+	}
+}
+
 func Check(src string, opts ...Option) Result {
 	return checkSource(src, "test.lua", opts...)
 }
 
+func CheckFile(src, filename string, opts ...Option) Result {
+	if filename == "" {
+		filename = "test.lua"
+	}
+	return checkSource(src, filename, opts...)
+}
+
 func CheckAndExport(src, name string, opts ...Option) *ModuleResult {
 	result := checkSource(src, name, opts...)
+	return moduleResultFromCheck(name, result)
+}
+
+func CheckFileAndExport(src, name, filename string, opts ...Option) *ModuleResult {
+	if filename == "" {
+		filename = name
+	}
+	result := checkSource(src, filename, opts...)
+	return moduleResultFromCheck(name, result)
+}
+
+func moduleResultFromCheck(name string, result Result) *ModuleResult {
 	var m *manifest.Manifest
 	if result.checked != nil {
 		m = exportmanifest.FromProgramResult(name, *result.checked)
@@ -123,11 +159,59 @@ func CheckAndExport(src, name string, opts ...Option) *ModuleResult {
 		m = manifest.New(name)
 		m.SetExport(typ.Unknown)
 	}
-	return &ModuleResult{Errors: result.Diagnostics, Manifest: m, Placement: result.PlacementPlan()}
+	return &ModuleResult{
+		Errors:    result.Diagnostics,
+		Manifest:  m,
+		Placement: result.PlacementPlan(),
+		bodies:    result.BodyResults(),
+	}
 }
 
 func (r Result) PlacementPlan() placementplan.Plan {
 	return r.placement
+}
+
+// RootResult returns the solved entry body, when checking reached analysis.
+func (r Result) RootResult() *body.Result {
+	if r.checked == nil {
+		return nil
+	}
+	return r.checked.RootResult()
+}
+
+// BodyResults returns the solved entry body and all materialized nested
+// function bodies. It is a harness/migration view; semantic consumers should
+// use readmodel.Reader over each returned body.
+func (r Result) BodyResults() []*body.Result {
+	return collectBodyResults(r.RootResult())
+}
+
+// BodyResults returns the solved module body and all materialized nested
+// function bodies captured when the module was exported.
+func (m *ModuleResult) BodyResults() []*body.Result {
+	if m == nil || len(m.bodies) == 0 {
+		return nil
+	}
+	return append([]*body.Result(nil), m.bodies...)
+}
+
+func ObligationContextForBody(functionKey, sourceFile string, result *body.Result) obligationpass.Context {
+	return obligationpass.Context{
+		FunctionKey: functionKey,
+		SourceFile:  sourceFile,
+		Reader:      readmodel.New(result),
+	}
+}
+
+func collectBodyResults(root *body.Result) []*body.Result {
+	if root == nil {
+		return nil
+	}
+	out := []*body.Result{root}
+	for _, child := range root.FunctionResults() {
+		out = append(out, collectBodyResults(child)...)
+	}
+	return out
 }
 
 func ChannelManifest() *manifest.Manifest {
@@ -176,15 +260,22 @@ func checkSource(src, filename string, opts ...Option) Result {
 	moduleExports := cfg.moduleExportSource()
 	moduleTypes := cfg.moduleTypeSource()
 	structural := precheck.Precheck(stmts)
+	globals := cfg.globals
+	for _, m := range cfg.orderedManifests() {
+		if m != nil {
+			globals = append(globals, m.Globals...)
+		}
+	}
 	checked, err := program.RunChunk(stmts, program.Config{
 		Check: body.Config{
 			Registry:      reg,
-			Globals:       cfg.globals,
+			Globals:       globals,
 			StateLanes:    cfg.stateLanes,
 			Signatures:    signatures,
 			ModuleExports: moduleExports,
 			ModuleTypes:   moduleTypes,
 		},
+		Stats: cfg.stats,
 	})
 	if err != nil {
 		if errors.Is(err, body.ErrUnsupportedCFG) {
@@ -205,9 +296,9 @@ func checkSource(src, filename string, opts ...Option) Result {
 		return Result{Diagnostics: diags}
 	}
 	structural = cfg.diagnosticPolicy.Apply(structural)
-	diags := append(structural, diagnostics.ProduceWithConfig(checked.RootResult(), diagnostics.Config{
-		Policy: cfg.diagnosticPolicy,
-	})...)
+	diagnosticConfig := cfg.diagnosticsConfig
+	diagnosticConfig.Policy = cfg.diagnosticPolicy
+	diags := append(structural, diagnostics.ProduceWithConfig(checked.RootResult(), diagnosticConfig)...)
 	setDefaultFile(diags, filename)
 	diagnostic.Sort(diags)
 	return Result{Diagnostics: diags, checked: &checked, placement: placementplan.FromProgramResult(checked)}

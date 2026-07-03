@@ -18,54 +18,64 @@ import (
 // normal return and can cross function boundaries through placeholder paths.
 // State-lane behavior stays owned by state, summary, and fact application.
 type NormalReturnFacts struct {
-	PathRefinements   []PathValueFact
-	PathStaticMembers []PathStaticMemberFact
-	PathInvalidations []PathInvalidationFact
-	DynamicIndexFacts []DynamicIndexFact
-	BranchProofs      []BranchProof
-	ChannelSelects    []ChannelSelectFact
-	FrozenTables      []FrozenTableFact
-	EffectDeltas      []EffectDelta
-	EscapeEvents      []EscapeEventFact
-	StoreRelations    []StoreRelationFact
-	LifecycleFacts    []LifecycleFact
-	NumFloors         []NumFloorFact
-	RelConstraints    []RelConstraintFact
+	PathRefinements          []PathValueFact
+	PersistentPathWrites     []PathValueFact
+	PathStaticMembers        []PathStaticMemberFact
+	PathInvalidations        []PathInvalidationFact
+	DynamicIndexFacts        []DynamicIndexFact
+	KeyMemberships           []KeyMembershipFact
+	DynamicValueKeys         []DynamicValueKeyMembershipFact
+	DynamicAllValues         []DynamicAllValueKeyMembershipFact
+	BranchProofs             []BranchProof
+	PathPresenceImplications []PathPresenceImplicationFact
+	ChannelSelects           []ChannelSelectFact
+	FrozenTables             []FrozenTableFact
+	EffectDeltas             []EffectDelta
+	EscapeEvents             []EscapeEventFact
+	StoreRelations           []StoreRelationFact
+	LifecycleFacts           []LifecycleFact
+	NumFloors                []NumFloorFact
+	RelConstraints           []RelConstraintFact
 }
 
 // Empty reports whether no normal-return fact lane carries evidence.
 func (f NormalReturnFacts) Empty() bool {
-	return len(f.PathRefinements) == 0 &&
-		len(f.PathStaticMembers) == 0 &&
-		len(f.PathInvalidations) == 0 &&
-		len(f.DynamicIndexFacts) == 0 &&
-		len(f.BranchProofs) == 0 &&
-		len(f.ChannelSelects) == 0 &&
-		len(f.FrozenTables) == 0 &&
-		len(f.EffectDeltas) == 0 &&
-		len(f.EscapeEvents) == 0 &&
-		len(f.StoreRelations) == 0 &&
-		len(f.LifecycleFacts) == 0 &&
-		len(f.NumFloors) == 0 &&
-		len(f.RelConstraints) == 0
+	for _, lane := range normalReturnFactLanes {
+		if lane.Len(f) != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // Append returns f with every normal-return fact lane from other appended.
 func (f NormalReturnFacts) Append(other NormalReturnFacts) NormalReturnFacts {
-	f.PathRefinements = append(f.PathRefinements, other.PathRefinements...)
-	f.PathStaticMembers = append(f.PathStaticMembers, other.PathStaticMembers...)
-	f.PathInvalidations = append(f.PathInvalidations, other.PathInvalidations...)
-	f.DynamicIndexFacts = append(f.DynamicIndexFacts, other.DynamicIndexFacts...)
-	f.BranchProofs = append(f.BranchProofs, other.BranchProofs...)
-	f.ChannelSelects = append(f.ChannelSelects, other.ChannelSelects...)
-	f.FrozenTables = append(f.FrozenTables, other.FrozenTables...)
-	f.EffectDeltas = append(f.EffectDeltas, other.EffectDeltas...)
-	f.EscapeEvents = append(f.EscapeEvents, other.EscapeEvents...)
-	f.StoreRelations = append(f.StoreRelations, other.StoreRelations...)
-	f.LifecycleFacts = append(f.LifecycleFacts, other.LifecycleFacts...)
-	f.NumFloors = append(f.NumFloors, other.NumFloors...)
-	f.RelConstraints = append(f.RelConstraints, other.RelConstraints...)
+	if other.Empty() {
+		return f
+	}
+	if f.Empty() {
+		return other
+	}
+	return appendNonEmptyNormalReturnFacts(f, other)
+}
+
+func appendNonEmptyNormalReturnFacts(f, other NormalReturnFacts) NormalReturnFacts {
+	for _, lane := range normalReturnFactLanes {
+		f = lane.Append(f, other)
+	}
 	return f
+}
+
+func appendNormalReturnSlice[T any](left, right []T) []T {
+	if len(right) == 0 {
+		return left
+	}
+	if len(left) == 0 {
+		return right
+	}
+	out := make([]T, len(left), len(left)+len(right))
+	copy(out, left)
+	return append(out, right...)
 }
 
 // PathValueFact records a pointwise placeholder-path value refinement.
@@ -80,21 +90,45 @@ type PathStaticMemberFact struct {
 	Value product.Value
 }
 
+// PathPresenceImplicationFact records a must implication between two boundary
+// paths on normal return: when Trigger satisfies TriggerPresence or TriggerValue,
+// Target has TargetPresence. This carries local value/presence correlations such
+// as result.status == "error" => result.error present across call boundaries.
+type PathPresenceImplicationFact struct {
+	Trigger         pathdom.Path
+	TriggerPresence presence.Value
+	TriggerValue    product.Value
+	HasTriggerValue bool
+	Target          pathdom.Path
+	TargetPresence  presence.Value
+}
+
 // PathInvalidationFact records that descendants below a placeholder argument
 // path, or an internal concrete captured path, were invalidated by a
 // normal-returning call.
 type PathInvalidationFact struct {
-	Path pathdom.Path
+	Path                      pathdom.Path
+	PreserveStructuralWitness bool
+	ClearTarget               bool
 }
 
 const pathInvalidationEffectSite = effectdelta.Site("path-descendant-invalidation")
+const pathStructuralPreservingInvalidationEffectSite = effectdelta.Site("path-descendant-invalidation:preserve-structural")
 
 func PathInvalidationEffectSite() effectdelta.Site {
 	return pathInvalidationEffectSite
 }
 
+func PathStructuralPreservingInvalidationEffectSite() effectdelta.Site {
+	return pathStructuralPreservingInvalidationEffectSite
+}
+
 func IsPathInvalidationEffectSite(site effectdelta.Site) bool {
 	return site == pathInvalidationEffectSite
+}
+
+func IsPathStructuralPreservingInvalidationEffectSite(site effectdelta.Site) bool {
+	return site == pathStructuralPreservingInvalidationEffectSite
 }
 
 // DynamicIndexFact records a pointwise dynamic index fact for a placeholder table.
@@ -104,6 +138,28 @@ type DynamicIndexFact struct {
 	KeyPath   pathdom.Path
 	ValuePath pathdom.Path
 	Value     dynamicindex.Fact
+}
+
+// KeyMembershipFact records that Key is proven to be a key of Table on normal
+// return.
+type KeyMembershipFact struct {
+	Key   pathdom.Path
+	Table pathdom.Path
+}
+
+// DynamicValueKeyMembershipFact records that values written into Container at
+// Site are keys of Table on normal return.
+type DynamicValueKeyMembershipFact struct {
+	Container pathdom.Path
+	Site      dynamicindex.Site
+	Table     pathdom.Path
+}
+
+// DynamicAllValueKeyMembershipFact records that every present value reachable
+// through Container is a key of Table on normal return.
+type DynamicAllValueKeyMembershipFact struct {
+	Container pathdom.Path
+	Table     pathdom.Path
 }
 
 // BranchProof records a must branch proof over placeholder paths.

@@ -246,6 +246,63 @@ func TestPointCanReachTreatsEntryAsValidPoint(t *testing.T) {
 	}
 }
 
+func TestReachabilityTreatsEntryAsValidPoint(t *testing.T) {
+	c := New()
+	first := c.AddNode(NodeAssign)
+	second := c.AddNode(NodeReturn)
+	c.AddEdge(c.Entry(), first, false)
+	c.AddEdge(first, second, false)
+	c.AddEdge(second, c.Exit(), false)
+
+	reach := NewReachability(c)
+	if !reach.CanReach(c.Entry(), second) {
+		t.Fatalf("entry should reach downstream point %d", second)
+	}
+	if !reach.CanReach(c.Entry(), c.Entry()) {
+		t.Fatalf("entry should reach itself")
+	}
+	if !reach.CanReach(c.Exit(), c.Exit()) {
+		t.Fatalf("exit should reach itself")
+	}
+	if reach.CanReach(second, c.Entry()) {
+		t.Fatalf("later point should not reach entry")
+	}
+}
+
+func TestReachabilityHandlesBranchesAndCycles(t *testing.T) {
+	c := New()
+	branch := c.AddNode(NodeBranch)
+	left := c.AddNode(NodeAssign)
+	right := c.AddNode(NodeAssign)
+	join := c.AddNode(NodeJoin)
+	c.AddEdge(c.Entry(), branch, false)
+	c.AddEdge(branch, left, true)
+	c.AddEdge(branch, right, false)
+	c.AddEdge(left, join, false)
+	c.AddEdge(right, join, false)
+	c.AddEdge(join, branch, false)
+	c.AddEdge(join, c.Exit(), false)
+
+	reach := NewReachability(c)
+	for _, target := range []Point{branch, left, right, join, c.Exit()} {
+		if !reach.CanReach(c.Entry(), target) {
+			t.Fatalf("entry should reach %d", target)
+		}
+	}
+	if !reach.CanReach(left, right) || !reach.CanReach(right, left) {
+		t.Fatalf("cycle through join should connect both branch arms")
+	}
+	if reach.CanReach(c.Exit(), c.Entry()) {
+		t.Fatalf("exit should not reach entry")
+	}
+	if reach.CanReach(Point(c.Size()+10), c.Entry()) {
+		t.Fatalf("invalid source point should not reach entry")
+	}
+	if reach.CanReach(c.Entry(), Point(c.Size()+10)) {
+		t.Fatalf("entry should not reach invalid target point")
+	}
+}
+
 func TestPredecessors(t *testing.T) {
 	t.Run("no predecessors", func(t *testing.T) {
 		c := New()
@@ -690,6 +747,32 @@ func TestEdgeCond(t *testing.T) {
 	})
 }
 
+func TestEdgeCondUsesSuccessorAdjacency(t *testing.T) {
+	c := New()
+	branch := c.AddBranch()
+	thenBlock := c.AddNode(NodeAssign)
+	elseBlock := c.AddNode(NodeAssign)
+
+	for i := 0; i < 128; i++ {
+		from := c.AddNode(NodeAssign)
+		to := c.AddNode(NodeAssign)
+		c.AddEdge(from, to, i%2 == 0)
+	}
+
+	c.AddEdge(branch, thenBlock, true)
+	c.AddEdge(branch, elseBlock, false)
+
+	if len(c.succs[branch]) != len(c.succConds[branch]) {
+		t.Fatalf("successor conditions = %d, want one condition per successor %d", len(c.succConds[branch]), len(c.succs[branch]))
+	}
+	if cond, ok := c.EdgeCond(branch, thenBlock); !ok || !cond {
+		t.Fatalf("then edge cond = %v, %v; want true, true", cond, ok)
+	}
+	if cond, ok := c.EdgeCond(branch, elseBlock); !ok || cond {
+		t.Fatalf("else edge cond = %v, %v; want false, true", cond, ok)
+	}
+}
+
 func TestAddBranch(t *testing.T) {
 	c := New()
 
@@ -877,6 +960,100 @@ func BenchmarkNew(b *testing.B) {
 	}
 }
 
+func TestReadOnlyGraphHelpersUseCFGViews(t *testing.T) {
+	c := New()
+	a := c.AddNode(NodeAssign)
+	b := c.AddNode(NodeAssign)
+	c.AddEdge(c.Entry(), a, false)
+	c.AddEdge(a, b, false)
+
+	succs := SuccessorsReadOnly(c, a)
+	if len(succs) != 1 || succs[0] != b {
+		t.Fatalf("SuccessorsReadOnly(%d) = %v, want [%d]", a, succs, b)
+	}
+	if &succs[0] != &c.succs[int(a)][0] {
+		t.Fatal("SuccessorsReadOnly copied CFG successors; want internal read-only view")
+	}
+
+	preds := PredecessorsReadOnly(c, b)
+	if len(preds) != 1 || preds[0] != a {
+		t.Fatalf("PredecessorsReadOnly(%d) = %v, want [%d]", b, preds, a)
+	}
+	if &preds[0] != &c.preds[int(b)][0] {
+		t.Fatal("PredecessorsReadOnly copied CFG predecessors; want internal read-only view")
+	}
+
+	rpo := RPOReadOnly(c)
+	if len(rpo) == 0 {
+		t.Fatal("RPOReadOnly returned empty order")
+	}
+	if &rpo[0] != &c.rpo[0] {
+		t.Fatal("RPOReadOnly copied CFG RPO; want cached read-only view")
+	}
+}
+
+func TestReadOnlyGraphHelpersPreserveFallbackCopySemantics(t *testing.T) {
+	c := New()
+	a := c.AddNode(NodeAssign)
+	b := c.AddNode(NodeAssign)
+	c.AddEdge(a, b, false)
+
+	graph := copyOnlyGraph{cfg: c}
+	succs := SuccessorsReadOnly(graph, a)
+	if len(succs) != 1 || succs[0] != b {
+		t.Fatalf("SuccessorsReadOnly fallback = %v, want [%d]", succs, b)
+	}
+	if &succs[0] == &c.succs[int(a)][0] {
+		t.Fatal("SuccessorsReadOnly fallback returned CFG internals; want Graph copy semantics")
+	}
+
+	preds := PredecessorsReadOnly(graph, b)
+	if len(preds) != 1 || preds[0] != a {
+		t.Fatalf("PredecessorsReadOnly fallback = %v, want [%d]", preds, a)
+	}
+	if &preds[0] == &c.preds[int(b)][0] {
+		t.Fatal("PredecessorsReadOnly fallback returned CFG internals; want Graph copy semantics")
+	}
+
+	rpo := RPOReadOnly(graph)
+	if len(rpo) == 0 {
+		t.Fatal("RPOReadOnly fallback returned empty order")
+	}
+	if len(c.rpo) != 0 && &rpo[0] == &c.rpo[0] {
+		t.Fatal("RPOReadOnly fallback returned CFG internals; want Graph copy semantics")
+	}
+}
+
+type copyOnlyGraph struct {
+	cfg *CFG
+}
+
+func (g copyOnlyGraph) ID() uint64 { return g.cfg.ID() }
+
+func (g copyOnlyGraph) Entry() Point { return g.cfg.Entry() }
+
+func (g copyOnlyGraph) Exit() Point { return g.cfg.Exit() }
+
+func (g copyOnlyGraph) Node(p Point) *Node { return g.cfg.Node(p) }
+
+func (g copyOnlyGraph) RPO() []Point { return g.cfg.RPO() }
+
+func (g copyOnlyGraph) Predecessors(p Point) []Point { return g.cfg.Predecessors(p) }
+
+func (g copyOnlyGraph) Successors(p Point) []Point { return g.cfg.Successors(p) }
+
+func (g copyOnlyGraph) Edges() []Edge { return g.cfg.Edges() }
+
+func (g copyOnlyGraph) Size() int { return g.cfg.Size() }
+
+func (g copyOnlyGraph) EdgeCond(from, to Point) (bool, bool) {
+	return g.cfg.EdgeCond(from, to)
+}
+
+func (g copyOnlyGraph) IsJoin(p Point) bool { return g.cfg.IsJoin(p) }
+
+func (g copyOnlyGraph) IsBranch(p Point) bool { return g.cfg.IsBranch(p) }
+
 func BenchmarkAddNode(b *testing.B) {
 	c := New()
 	b.ResetTimer()
@@ -918,6 +1095,26 @@ func BenchmarkSuccessors(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = c.Successors(n1)
+	}
+}
+
+func BenchmarkEdgeCondLargeGraph(b *testing.B) {
+	c := New()
+	var branch, thenBlock Point
+	for i := 0; i < 1000; i++ {
+		from := c.AddNode(NodeAssign)
+		to := c.AddNode(NodeAssign)
+		c.AddEdge(from, to, false)
+	}
+	branch = c.AddBranch()
+	thenBlock = c.AddNode(NodeAssign)
+	elseBlock := c.AddNode(NodeAssign)
+	c.AddEdge(branch, thenBlock, true)
+	c.AddEdge(branch, elseBlock, false)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = c.EdgeCond(branch, thenBlock)
 	}
 }
 

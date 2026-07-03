@@ -5,15 +5,31 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
+
+type testExternalTypes map[string]typ.Type
+
+func (m testExternalTypes) ResolveTypeRef(path []string) (typ.Type, bool) {
+	if len(path) == 2 {
+		t, ok := m[path[0]+"."+path[1]]
+		return t, ok
+	}
+	return nil, false
+}
 
 func TestLowerTypeCastCallPublishesArgumentAndResultEvidence(t *testing.T) {
 	reg := standard.Registry()
@@ -36,7 +52,7 @@ local v = Point(data)
 	if !refinements[0].TargetPath().Equal(dataPath) {
 		t.Fatalf("postcondition target = %s, want %s", refinements[0].TargetPath(), dataPath)
 	}
-	assertProductPointLike(t, reg, refinementConstraint(t, refinements[0].Value()))
+	assertUntrustedPointNarrowing(t, reg, refinementConstraint(t, refinements[0].Value()))
 
 	results := facts.CallResultValues(callPoint)
 	if len(results) != 1 {
@@ -45,7 +61,42 @@ local v = Point(data)
 	if results[0].Index() != 0 {
 		t.Fatalf("call result index = %d, want 0", results[0].Index())
 	}
-	assertProductPointLike(t, reg, results[0].Value())
+	assertTypeIsPointProof(t, reg, results[0].Value())
+}
+
+func TestLowerPrimitiveTypeCastCallPublishesResultEvidence(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local data: any = 1
+local v = number(data)
+`)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	castStmt := mustLocalStmt(t, stmts, 1)
+	castCall := castStmt.Exprs[0].(*ast.FuncCallExpr)
+	callPoint := requireCallPoint(t, built.Graph, result, castCall)
+
+	results := facts.CallResultValues(callPoint)
+	if len(results) != 1 {
+		t.Fatalf("primitive call result values = %d, want 1: %#v", len(results), results)
+	}
+	assertTypeIsRuntimeProof(t, reg, results[0].Value(), typ.Number)
+}
+
+func TestLowerPrimitiveTypeCastCallRespectsValueShadow(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local number = function(value) return value end
+local data: any = 1
+local v = number(data)
+`)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	castStmt := mustLocalStmt(t, stmts, 2)
+	castCall := castStmt.Exprs[0].(*ast.FuncCallExpr)
+	callPoint := requireCallPoint(t, built.Graph, result, castCall)
+
+	if results := facts.CallResultValues(callPoint); len(results) != 0 {
+		t.Fatalf("shadowed primitive call results = %#v, want none", results)
+	}
 }
 
 func TestLowerTypeIsErrorNilBranchPublishesArgumentEvidence(t *testing.T) {
@@ -73,11 +124,45 @@ end
 		if !ok {
 			continue
 		}
-		assertProductPointLike(t, reg, refinementConstraint(t, value))
+		assertUntrustedPointNarrowing(t, reg, refinementConstraint(t, value))
 		found = true
 	}
 	if !found {
 		t.Fatalf("missing true-edge Point refinement for %s at branch %d", dataPath, branchPoint)
+	}
+}
+
+func TestLowerImportedTypeIsMemberCalleePublishesResultSlots(t *testing.T) {
+	reg := standard.Registry()
+	appError := typetable.NewRecord().
+		Field("code", typ.String).
+		Field("message", typ.String).
+		Build()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local errors = require("errors")
+local raw: any = {}
+local validated, err = errors.AppError:is(raw)
+`, "require")
+	resolver := typeresolve.NewWithExternal(bindings, testExternalTypes{"errors.AppError": appError})
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, TypeResolver: resolver})
+	castStmt := mustLocalStmt(t, stmts, 2)
+	castCall := castStmt.Exprs[0].(*ast.FuncCallExpr)
+	callPoint := requireCallPoint(t, built.Graph, result, castCall)
+
+	values := facts.CallResultValues(callPoint)
+	if len(values) != 2 {
+		t.Fatalf("imported Type:is call result values = %d, want 2: %#v", len(values), values)
+	}
+	gotType, ok := typevalue.TypeOf(reg, values[0].Value())
+	wantType := typ.MaterializeOptional(appError)
+	if !ok || !typ.TypeEquals(gotType, wantType) {
+		t.Fatalf("type witness = %v/%v, want %v", gotType, ok, wantType)
+	}
+	if got := product.PresenceOf(values[0].Value()); !presence.Equal(got, presence.Maybe()) {
+		t.Fatalf("value presence = %s, want maybe before the success branch proves it present", got)
+	}
+	if got := product.Get(reg, values[0].Value(), assertion.Key); !got.Has(assertion.RuntimeClaim) {
+		t.Fatalf("assertion = %s, want runtime validation proof", got)
 	}
 }
 
@@ -105,7 +190,7 @@ end
 		if !ok {
 			continue
 		}
-		assertProductPointLike(t, reg, refinementConstraint(t, value))
+		assertUntrustedPointNarrowing(t, reg, refinementConstraint(t, value))
 		found = true
 	}
 	if !found {
@@ -140,7 +225,7 @@ end
 		if !ok {
 			continue
 		}
-		assertProductPointLike(t, reg, refinementConstraint(t, value))
+		assertUntrustedPointNarrowing(t, reg, refinementConstraint(t, value))
 		found = true
 	}
 	if !found {
@@ -255,6 +340,39 @@ func assertProductPointLike(t *testing.T, reg *axis.Registry, value product.Valu
 	}
 	if got := product.Get(reg, value, runtimekind.Key); !runtimekind.Equal(got, runtimekind.Singleton(runtimekind.Table)) {
 		t.Fatalf("runtime kind = %s, want table", got)
+	}
+}
+
+func assertTypeIsPointProof(t *testing.T, reg *axis.Registry, value product.Value) {
+	t.Helper()
+	assertProductPointLike(t, reg, value)
+	if got := product.Get(reg, value, assertion.Key); !got.Has(assertion.RuntimeClaim) {
+		t.Fatalf("assertion = %s, want runtime validation proof", got)
+	}
+}
+
+func assertTypeIsRuntimeProof(t *testing.T, reg *axis.Registry, value product.Value, want typ.Type) {
+	t.Helper()
+	if got := product.PresenceOf(value); !presence.Equal(got, presence.Present()) {
+		t.Fatalf("presence = %s, want present", got)
+	}
+	gotType, ok := typevalue.TypeOf(reg, value)
+	if !ok || !typ.TypeEquals(gotType, want) {
+		t.Fatalf("type witness = %v/%v, want %v", gotType, ok, want)
+	}
+	if got := product.Get(reg, value, assertion.Key); !got.Has(assertion.RuntimeClaim) {
+		t.Fatalf("assertion = %s, want runtime validation proof", got)
+	}
+}
+
+func assertUntrustedPointNarrowing(t *testing.T, reg *axis.Registry, value product.Value) {
+	t.Helper()
+	assertProductPointLike(t, reg, value)
+	if got := product.Get(reg, value, evidence.Key); !got.IsExplicitTop() {
+		t.Fatalf("evidence = %s, want explicit top origin preserved", got)
+	}
+	if got := product.Get(reg, value, assertion.Key); got.Has(assertion.RuntimeClaim) {
+		t.Fatalf("assertion = %s, argument narrowing must not be runtime validation proof", got)
 	}
 }
 

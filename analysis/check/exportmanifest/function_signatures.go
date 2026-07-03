@@ -3,10 +3,13 @@ package exportmanifest
 import (
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+	"github.com/wippyai/go-lua/analysis/check/internal/staticmemberwitness"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
@@ -16,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -23,13 +27,18 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/refinement"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -114,7 +123,11 @@ func publishFunctionDefinitionSignatures(
 		if !ok {
 			continue
 		}
-		if sig, ok := functionExpressionSignature(prog, root, fact.Func, name); ok {
+		target := pathdom.Path{}
+		if fact.HasTargetPath {
+			target = fact.TargetPath
+		}
+		if sig, ok := functionExpressionSignature(prog, root, fact.Func, name, target); ok {
 			m.DefineFunctionSignature(name, sig)
 		}
 	}
@@ -145,17 +158,16 @@ func publishOrdinaryAssignmentFunctionSignatures(
 			continue
 		}
 		expr := ordinaryAssignmentRHSExpr(fact)
+		fn, ok := expr.(*ast.FunctionExpr)
+		if ok {
+			sig, ok := functionExpressionSignature(prog, root, fn, name, fact.Path)
+			if ok {
+				m.DefineFunctionSignature(name, sig)
+				continue
+			}
+		}
 		if sig, ok := root.ExpressionSignatureAt(point, expr); ok {
 			m.DefineFunctionSignature(name, sig.Clone())
-			continue
-		}
-		fn, ok := expr.(*ast.FunctionExpr)
-		if !ok {
-			continue
-		}
-		sig, ok := functionExpressionSignature(prog, root, fn, name)
-		if ok {
-			m.DefineFunctionSignature(name, sig)
 		}
 	}
 }
@@ -195,22 +207,32 @@ func functionSignatureName(modulePath string, member segment.Segment) (string, b
 	}
 }
 
-func functionExpressionSignature(prog program.Result, result *body.Result, fn *ast.FunctionExpr, name string) (signature.Function, bool) {
+func functionExpressionSignature(prog program.Result, result *body.Result, fn *ast.FunctionExpr, name string, target pathdom.Path) (signature.Function, bool) {
 	fnType, typed := functionSignatureType(result, fn)
-	sum, summarized := functionSummary(prog, result, fn)
+	sum, summarized := functionSummary(prog, result, fn, target)
 	if !typed {
 		if !summarized {
 			return signature.Function{}, false
 		}
+		if inferred, ok := inferredFunctionTypeFromSummary(result.Registry(), result, fn, sum); ok {
+			return signature.Function{
+				Type:               inferred,
+				Effect:             functionSummaryEffect(sum, inferred),
+				OperationalEffects: functionSummaryOperationalEffects(result.Registry(), sum, inferred, name),
+			}, true
+		}
 		arity := untypedFunctionParamArity(result, fn)
 		sig := signature.Function{
-			Effect:             functionSummaryEffectForArity(sum, arity, 0),
-			OperationalEffects: functionSummaryOperationalEffectsForArity(result.Registry(), sum, arity, 0, ""),
+			Effect:             functionSummaryEffectForArity(sum, arity, len(sum.Returns)),
+			OperationalEffects: functionSummaryOperationalEffectsForArity(result.Registry(), sum, arity, len(sum.Returns), ""),
 		}
 		if sig.Effect.Pure() && (sig.OperationalEffects == nil || sig.OperationalEffects.IsEmpty()) {
 			return signature.Function{}, false
 		}
 		return sig, true
+	}
+	if summarized {
+		fnType = functionTypeWithInferredReturns(result.Registry(), result, fnType, sum)
 	}
 	sig := signature.Function{Type: fnType}
 	if summarized {
@@ -220,7 +242,44 @@ func functionExpressionSignature(prog program.Result, result *body.Result, fn *a
 	return sig, true
 }
 
+func inferredFunctionTypeFromSummary(reg *axis.Registry, result *body.Result, fn *ast.FunctionExpr, sum summary.Summary) (*typ.Function, bool) {
+	if reg == nil || result == nil || fn == nil {
+		return nil, false
+	}
+	slots := result.FunctionParamSlots(fn)
+	builder := typ.Func().ReserveParams(len(slots))
+	inferredParam := false
+	for i, slot := range slots {
+		if slot.Vararg {
+			continue
+		}
+		if slot.Type != nil {
+			return nil, false
+		}
+		t := typ.Any
+		if i < len(sum.ParamObligations) {
+			obligation, ok := typevalue.TypeOf(reg, sum.ParamObligations[i])
+			if ok && portableInferredSignatureType(obligation) {
+				t = obligation
+				inferredParam = true
+			}
+		}
+		builder.Param(slot.Name, t)
+	}
+	returns, inferredReturn := inferredPortableReturnTypes(reg, result, sum)
+	if len(returns) != 0 {
+		builder.Returns(returns...)
+	}
+	if !inferredParam && !inferredReturn {
+		return nil, false
+	}
+	return builder.Build(), true
+}
+
 func functionSignatureType(result *body.Result, fn *ast.FunctionExpr) (*typ.Function, bool) {
+	if !functionSignatureParamsFullyTyped(result, fn) {
+		return nil, false
+	}
 	t, ok := functionDefinitionMemberType(result, fn)
 	if !ok {
 		return nil, false
@@ -229,16 +288,160 @@ func functionSignatureType(result *body.Result, fn *ast.FunctionExpr) (*typ.Func
 	return fnType, ok && fnType != nil
 }
 
-func functionSummary(prog program.Result, result *body.Result, fn *ast.FunctionExpr) (summary.Summary, bool) {
+func functionSignatureParamsFullyTyped(result *body.Result, fn *ast.FunctionExpr) bool {
+	if result == nil || fn == nil {
+		return false
+	}
+	for _, slot := range result.FunctionParamSlots(fn) {
+		if slot.Vararg {
+			continue
+		}
+		if slot.Type == nil && !slot.ImplicitSelf {
+			return false
+		}
+	}
+	return true
+}
+
+func functionSummary(prog program.Result, result *body.Result, fn *ast.FunctionExpr, target pathdom.Path) (summary.Summary, bool) {
 	id, ok := result.FunctionSymbol(fn)
-	if !ok || id == 0 {
-		return summary.Summary{}, false
+	if ok && id != 0 {
+		if key, ok := prog.FunctionKey(id); ok {
+			return prog.Snapshot().Read(key)
+		}
 	}
-	key, ok := prog.FunctionKey(id)
+	if !target.IsEmpty() {
+		if key, ok := prog.PathKey(target.Key()); ok {
+			return prog.Snapshot().Read(key)
+		}
+	}
+	return summary.Summary{}, false
+}
+
+func functionTypeWithInferredReturns(reg *axis.Registry, result *body.Result, fn *typ.Function, sum summary.Summary) *typ.Function {
+	if reg == nil || fn == nil || len(sum.Returns) == 0 {
+		return fn
+	}
+	returns, ok := inferredPortableReturnTypes(reg, result, sum)
 	if !ok {
-		return summary.Summary{}, false
+		return fn
 	}
-	return prog.Snapshot().Read(key)
+	if len(returns) == 0 {
+		return fn
+	}
+	if len(fn.Returns) != 0 {
+		next := append([]typ.Type(nil), fn.Returns...)
+		changed := false
+		for i := range next {
+			if i >= len(returns) {
+				break
+			}
+			if declaredReturnCanUsePortableSummary(next[i]) {
+				next[i] = returns[i]
+				changed = true
+			}
+		}
+		if !changed {
+			return fn
+		}
+		return typ.RebuildFunction(typ.FunctionParts{
+			TypeParams: fn.TypeParams,
+			Params:     fn.Params,
+			Variadic:   fn.Variadic,
+			Returns:    next,
+		})
+	}
+	return typ.RebuildFunction(typ.FunctionParts{
+		TypeParams: fn.TypeParams,
+		Params:     fn.Params,
+		Variadic:   fn.Variadic,
+		Returns:    returns,
+	})
+}
+
+func declaredReturnCanUsePortableSummary(t typ.Type) bool {
+	return typ.IsAny(t) || typ.IsUnknown(t)
+}
+
+func inferredPortableReturnTypes(reg *axis.Registry, result *body.Result, sum summary.Summary) ([]typ.Type, bool) {
+	if reg == nil || len(sum.Returns) == 0 {
+		return nil, false
+	}
+	returns := make([]typ.Type, 0, len(sum.Returns))
+	for _, value := range sum.Returns {
+		value = enrichManifestReturnValue(reg, result, sum, value)
+		t, ok := typevalue.TypeOf(reg, value)
+		if !ok || !portableInferredSignatureType(t) {
+			return nil, false
+		}
+		returns = append(returns, t)
+	}
+	return returns, true
+}
+
+func enrichManifestReturnValue(reg *axis.Registry, result *body.Result, sum summary.Summary, value product.Value) product.Value {
+	if reg == nil || result == nil || len(sum.HeapTableObjects) == 0 {
+		return value
+	}
+	id, ok := product.Get(reg, value, identity.Key).ID()
+	if !ok {
+		return value
+	}
+	object, ok := sum.HeapTableObjects[id]
+	if !ok {
+		return value
+	}
+	ks := sum.HeapKeySpace
+	if ks == nil {
+		ks = result.KeySpace()
+	}
+	if ks == nil {
+		return value
+	}
+	builder := staticmemberwitness.NewBuilder()
+	for memberKey, memberValue := range object.StaticMembers() {
+		if product.Equal(reg, memberValue, product.Bottom(reg)) {
+			continue
+		}
+		segments, ok := ks.SuffixSegmentsView(memberKey)
+		if !ok {
+			continue
+		}
+		memberType, ok := manifestStaticMemberValueType(reg, result, memberValue)
+		if !ok {
+			continue
+		}
+		builder.Add(segments, memberType)
+	}
+	witness, ok := builder.Build()
+	if !ok {
+		return value
+	}
+	if existing, ok := typevalue.TypeOf(reg, value); ok && existing != nil {
+		if merged, ok := typetable.OverlayRecordMembers(existing, witness); ok {
+			witness = merged
+		}
+	}
+	return typevalue.WithWitness(reg, value, witness)
+}
+
+func manifestStaticMemberValueType(reg *axis.Registry, result *body.Result, value product.Value) (typ.Type, bool) {
+	if result != nil {
+		if fn, ok := result.FunctionValueTypeForValue(value); ok && fn != nil {
+			return fn, true
+		}
+	}
+	t, ok := typevalue.TypeOf(reg, value)
+	return t, ok && t != nil
+}
+
+func portableInferredSignatureType(t typ.Type) bool {
+	return t != nil &&
+		!typ.IsAny(t) &&
+		!typ.IsUnknown(t) &&
+		!typ.IsNever(t) &&
+		!declaredTypeContainsBoundaryTop(t) &&
+		!typ.ContainsTypeParam(t)
 }
 
 func untypedFunctionParamArity(result *body.Result, fn *ast.FunctionExpr) int {
@@ -263,7 +466,7 @@ func functionSummaryEffect(s summary.Summary, fn *typ.Function) effect.Row {
 	if fn == nil {
 		return effect.Empty
 	}
-	return functionSummaryEffectForArity(s, len(fn.Params), len(fn.Returns))
+	return functionSummaryEffectForArity(s, len(fn.Params), functionSummaryReturnArity(s, fn))
 }
 
 func functionSummaryEffectForArity(s summary.Summary, paramArity, returnArity int) effect.Row {
@@ -287,20 +490,56 @@ func functionSummaryOperationalEffects(reg *axis.Registry, s summary.Summary, fn
 	if fn == nil {
 		return nil
 	}
-	return functionSummaryOperationalEffectsForArity(reg, s, len(fn.Params), len(fn.Returns), signatureName)
+	return functionSummaryOperationalEffectsForArity(reg, s, len(fn.Params), functionSummaryReturnArity(s, fn), signatureName, fn.Returns)
 }
 
-func functionSummaryOperationalEffectsForArity(reg *axis.Registry, s summary.Summary, paramArity, returnArity int, signatureName string) *signature.OperationalEffects {
+func functionSummaryReturnArity(s summary.Summary, fn *typ.Function) int {
+	if fn != nil && len(fn.Returns) != 0 {
+		return len(fn.Returns)
+	}
+	return len(s.Returns)
+}
+
+func functionSummaryOperationalEffectsForArity(reg *axis.Registry, s summary.Summary, paramArity, returnArity int, signatureName string, returnTypes ...[]typ.Type) *signature.OperationalEffects {
+	var declaredReturns []typ.Type
+	if len(returnTypes) != 0 {
+		declaredReturns = returnTypes[0]
+	}
+	presenceRefinements := operationalNormalReturnPresenceRefinements(s.NormalReturnParams, paramArity)
+	for _, refinement := range operationalNormalReturnFactPresenceRefinements(s.NormalReturnFacts, paramArity, returnArity) {
+		presenceRefinements = appendOperationalPresenceRefinement(presenceRefinements, refinement)
+	}
+	sortOperationalPresenceRefinements(presenceRefinements)
+	typeRefinements := operationalNormalReturnTypeRefinements(reg, s.NormalReturnParams, paramArity)
+	for _, refinement := range operationalNormalReturnFactTypeRefinements(reg, s.NormalReturnFacts, paramArity, returnArity) {
+		typeRefinements = appendOperationalTypeRefinement(typeRefinements, refinement)
+	}
+	sortOperationalTypeRefinements(typeRefinements)
+	branchProofs := operationalBranchProofs(s.NormalReturnFacts, paramArity, returnArity)
+	sortOperationalBranchProofs(branchProofs)
+	var returnPresenceRelations []signature.ReturnPresenceRelation
+	if len(declaredReturns) != 0 {
+		returnPresenceRelations = operationalReturnPresenceRelations(s.ReturnPresenceRelations, returnArity)
+	}
+	var allocationTemplates []signature.ReturnAllocationTemplate
+	if len(declaredReturns) != 0 {
+		allocationTemplates = operationalReturnAllocationTemplates(reg, s, signatureName, returnArity, declaredReturns)
+	}
 	out := signature.OperationalEffects{
-		ReturnPresenceRelations:         operationalReturnPresenceRelations(s.ReturnPresenceRelations, returnArity),
-		NormalReturnPresenceRefinements: operationalNormalReturnPresenceRefinements(s.NormalReturnParams, paramArity),
+		ReturnPresenceRelations:         returnPresenceRelations,
+		NormalReturnPresenceRefinements: presenceRefinements,
+		NormalReturnTypeRefinements:     typeRefinements,
+		PathPresenceImplications:        operationalPathPresenceImplications(reg, s.NormalReturnFacts, paramArity, returnArity),
 		PathStaticMembers:               operationalPathStaticMembers(s.NormalReturnFacts, paramArity, reg),
 		PathInvalidations:               operationalPathInvalidations(s.NormalReturnFacts, paramArity),
-		DynamicIndexFacts:               operationalDynamicIndexFacts(s.NormalReturnFacts, paramArity, reg),
+		BranchProofs:                    branchProofs,
+		DynamicIndexFacts:               operationalDynamicIndexFacts(s.NormalReturnFacts, paramArity, returnArity, reg),
+		KeyMemberships:                  operationalKeyMemberships(s.NormalReturnFacts, paramArity, returnArity),
+		DynamicValueKeys:                operationalDynamicValueKeys(s.NormalReturnFacts, paramArity, returnArity),
 		FrozenTables:                    operationalFrozenTables(s.NormalReturnFacts, paramArity),
 		EscapeEvents:                    operationalEscapeEvents(s.NormalReturnFacts, paramArity),
 		StoreRelations:                  operationalStoreRelations(s.NormalReturnFacts, paramArity),
-		ReturnAllocationTemplates:       operationalReturnAllocationTemplates(reg, s, signatureName, returnArity),
+		ReturnAllocationTemplates:       allocationTemplates,
 	}
 	if out.IsEmpty() {
 		return nil
@@ -308,7 +547,7 @@ func functionSummaryOperationalEffectsForArity(reg *axis.Registry, s summary.Sum
 	return &out
 }
 
-func operationalReturnAllocationTemplates(reg *axis.Registry, s summary.Summary, signatureName string, returnArity int) []signature.ReturnAllocationTemplate {
+func operationalReturnAllocationTemplates(reg *axis.Registry, s summary.Summary, signatureName string, returnArity int, declaredReturns []typ.Type) []signature.ReturnAllocationTemplate {
 	if reg == nil || signatureName == "" || returnArity <= 0 || len(s.Returns) == 0 || len(s.HeapTableObjects) == 0 || s.HeapKeySpace == nil {
 		return nil
 	}
@@ -317,11 +556,15 @@ func operationalReturnAllocationTemplates(reg *axis.Registry, s summary.Summary,
 		if i >= returnArity {
 			break
 		}
+		declared := declaredReturnAt(declaredReturns, i)
+		if typ.IsAny(declared) || typ.IsUnknown(declared) {
+			continue
+		}
 		id, ok := product.Get(reg, value, identity.Key).ID()
 		if !ok {
 			continue
 		}
-		template, ok := allocationTemplateForReturn(reg, s.HeapKeySpace, s.HeapTableObjects, signatureName, i, id)
+		template, ok := allocationTemplateForReturn(reg, s.HeapKeySpace, s.HeapTableObjects, signatureName, i, id, declared)
 		if ok {
 			out = append(out, template)
 		}
@@ -336,6 +579,7 @@ func allocationTemplateForReturn(
 	signatureName string,
 	returnIndex int,
 	rootID identity.ID,
+	declared typ.Type,
 ) (signature.ReturnAllocationTemplate, bool) {
 	if _, ok := objects[rootID]; !ok {
 		return signature.ReturnAllocationTemplate{}, false
@@ -351,7 +595,7 @@ func allocationTemplateForReturn(
 		emitted:       make(map[signature.AllocationTemplateID]struct{}),
 	}
 	rootTemplate := projector.templateID(rootID, "root")
-	projector.visit(rootID, rootTemplate, "root")
+	projector.visit(rootID, rootTemplate, "root", declared)
 	if len(projector.out) == 0 {
 		return signature.ReturnAllocationTemplate{}, false
 	}
@@ -389,7 +633,7 @@ func (p *allocationTemplateProjector) templateID(raw identity.ID, path string) s
 	return id
 }
 
-func (p *allocationTemplateProjector) visit(raw identity.ID, templateID signature.AllocationTemplateID, path string) {
+func (p *allocationTemplateProjector) visit(raw identity.ID, templateID signature.AllocationTemplateID, path string, declared typ.Type) {
 	if raw == (identity.ID{}) || templateID == "" {
 		return
 	}
@@ -406,15 +650,21 @@ func (p *allocationTemplateProjector) visit(raw identity.ID, templateID signatur
 	p.visiting[templateID] = struct{}{}
 	projected := signature.AllocationObjectTemplate{ID: templateID}
 	if t, ok := typevalue.TypeOf(p.reg, object.Root()); ok {
-		projected.Type = t
+		projected.Type = allocationTemplateExportType(t, declared)
+	} else if declared != nil {
+		projected.Type = declared
 	}
 	for _, member := range sortedHeapStaticMembers(p.ks, object.StaticMembers()) {
+		memberDeclared, declaredOK := allocationTemplateMemberDeclaredType(declared, member.suffix)
+		if declaredOK && declaredTypeContainsBoundaryTop(memberDeclared) {
+			continue
+		}
 		memberID, ok := product.Get(p.reg, member.value, identity.Key).ID()
 		if !ok {
 			continue
 		}
 		childPath := path + segment.FormatSegments(member.suffix)
-		childTemplate, ok := p.templateRef(memberID, childPath)
+		childTemplate, ok := p.templateRef(memberID, childPath, memberDeclared)
 		if !ok {
 			continue
 		}
@@ -427,7 +677,7 @@ func (p *allocationTemplateProjector) visit(raw identity.ID, templateID signatur
 		var projectedEntry signature.AllocationDynamicEntryTemplate
 		if keyID, ok := product.Get(p.reg, entry.fact.KeyValue, identity.Key).ID(); ok {
 			keyPath := fmt.Sprintf("%s:dynamic:%d:key", path, entry.index)
-			if keyTemplate, ok := p.templateRef(keyID, keyPath); ok {
+			if keyTemplate, ok := p.templateRef(keyID, keyPath, nil); ok {
 				projectedEntry.Key = keyTemplate
 			}
 		}
@@ -436,7 +686,7 @@ func (p *allocationTemplateProjector) visit(raw identity.ID, templateID signatur
 		}
 		if valueID, ok := product.Get(p.reg, entry.fact.Value, identity.Key).ID(); ok {
 			valuePath := fmt.Sprintf("%s:dynamic:%d:value", path, entry.index)
-			if valueTemplate, ok := p.templateRef(valueID, valuePath); ok {
+			if valueTemplate, ok := p.templateRef(valueID, valuePath, nil); ok {
 				projectedEntry.Value = valueTemplate
 			}
 		}
@@ -450,12 +700,12 @@ func (p *allocationTemplateProjector) visit(raw identity.ID, templateID signatur
 	p.out = append(p.out, projected)
 }
 
-func (p *allocationTemplateProjector) templateRef(raw identity.ID, path string) (signature.AllocationTemplateID, bool) {
+func (p *allocationTemplateProjector) templateRef(raw identity.ID, path string, declared typ.Type) (signature.AllocationTemplateID, bool) {
 	if _, ok := p.exportableObject(raw); !ok {
 		return "", false
 	}
 	id := p.templateID(raw, path)
-	p.visit(raw, id, path)
+	p.visit(raw, id, path, declared)
 	return id, true
 }
 
@@ -470,6 +720,58 @@ func (p *allocationTemplateProjector) exportableObject(raw identity.ID) (heapide
 	return object, true
 }
 
+func declaredReturnAt(returns []typ.Type, index int) typ.Type {
+	if index < 0 || index >= len(returns) {
+		return nil
+	}
+	return returns[index]
+}
+
+func allocationTemplateExportType(impl, declared typ.Type) typ.Type {
+	if declared == nil {
+		return impl
+	}
+	if declared != nil && declaredTypeContainsBoundaryTop(declared) {
+		return declared
+	}
+	if merged, ok := allocationTemplateDeclaredEnvelope(impl, declared); ok {
+		return merged
+	}
+	return impl
+}
+
+func allocationTemplateDeclaredEnvelope(impl, declared typ.Type) (typ.Type, bool) {
+	if impl == nil || declared == nil {
+		return declared, declared != nil
+	}
+	declaredInner := unwrap.Optional(declared)
+	declaredOptional := unwrap.IsOptionalLike(declared) && declaredInner != nil && !typ.TypeEquals(declaredInner, declared)
+	implInner := unwrap.Optional(impl)
+	merged, ok := mergeRecordMembers(implInner, declaredInner)
+	if !ok {
+		return nil, false
+	}
+	if declaredOptional {
+		return typ.MaterializeOptional(merged), true
+	}
+	return merged, true
+}
+
+func allocationTemplateMemberDeclaredType(declared typ.Type, suffix []segment.Segment) (typ.Type, bool) {
+	if declared == nil || len(suffix) == 0 {
+		return nil, false
+	}
+	t, ok := luatypeprojection.ApplySegments(declared, suffix)
+	if !ok || t == nil {
+		return nil, false
+	}
+	return t, true
+}
+
+func declaredTypeContainsBoundaryTop(t typ.Type) bool {
+	return refinement.ContainsBoundaryTop(t)
+}
+
 type heapStaticMember struct {
 	suffix []segment.Segment
 	value  product.Value
@@ -478,7 +780,7 @@ type heapStaticMember struct {
 func sortedHeapStaticMembers(ks *keyspace.KeySpace, in map[keyspace.Key]product.Value) []heapStaticMember {
 	out := make([]heapStaticMember, 0, len(in))
 	for key, value := range in {
-		suffix, ok := ks.SuffixSegments(key)
+		suffix, ok := ks.SuffixSegmentsView(key)
 		if !ok {
 			continue
 		}
@@ -565,6 +867,132 @@ func operationalNormalReturnPresenceRefinements(values []product.Value, arity in
 	return out
 }
 
+func operationalNormalReturnTypeRefinements(reg *axis.Registry, values []product.Value, arity int) []signature.PathTypeRefinement {
+	if reg == nil || arity <= 0 || len(values) == 0 {
+		return nil
+	}
+	limit := arity
+	if len(values) < limit {
+		limit = len(values)
+	}
+	var out []signature.PathTypeRefinement
+	for i := range limit {
+		if !presence.Equal(product.PresenceOf(values[i]), presence.Present()) {
+			continue
+		}
+		t, ok := typevalue.TypeOf(reg, values[i])
+		if !ok || t == nil || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) {
+			continue
+		}
+		out = append(out, signature.PathTypeRefinement{
+			Path:      pathdom.NewPlaceholder(i),
+			Type:      t,
+			Assertion: product.Get(reg, values[i], assertion.Key),
+		})
+	}
+	return out
+}
+
+func operationalNormalReturnFactPresenceRefinements(facts callboundary.NormalReturnFacts, paramArity, returnArity int) []signature.PathPresenceRefinement {
+	if len(facts.PathRefinements) == 0 {
+		return nil
+	}
+	var out []signature.PathPresenceRefinement
+	for _, fact := range facts.PathRefinements {
+		if !boundaryPathInArity(fact.Path, paramArity, returnArity) {
+			continue
+		}
+		p := product.PresenceOf(fact.Value)
+		if !operationalPresence(p) || presence.Equal(p, presence.Maybe()) {
+			continue
+		}
+		out = appendOperationalPresenceRefinement(out, signature.PathPresenceRefinement{
+			Path:     fact.Path,
+			Presence: p,
+		})
+	}
+	return out
+}
+
+func operationalNormalReturnFactTypeRefinements(reg *axis.Registry, facts callboundary.NormalReturnFacts, paramArity, returnArity int) []signature.PathTypeRefinement {
+	if reg == nil || len(facts.PathRefinements) == 0 {
+		return nil
+	}
+	var out []signature.PathTypeRefinement
+	for _, fact := range facts.PathRefinements {
+		if !boundaryPathInArity(fact.Path, paramArity, returnArity) {
+			continue
+		}
+		t, ok := typevalue.TypeOf(reg, fact.Value)
+		if !ok || t == nil || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) {
+			continue
+		}
+		out = appendOperationalTypeRefinement(out, signature.PathTypeRefinement{
+			Path:      fact.Path,
+			Type:      t,
+			Assertion: product.Get(reg, fact.Value, assertion.Key),
+		})
+	}
+	return out
+}
+
+func appendOperationalPresenceRefinement(out []signature.PathPresenceRefinement, next signature.PathPresenceRefinement) []signature.PathPresenceRefinement {
+	for _, existing := range out {
+		if existing.Path.Equal(next.Path) && presence.Equal(existing.Presence, next.Presence) {
+			return out
+		}
+	}
+	return append(out, next)
+}
+
+func appendOperationalTypeRefinement(out []signature.PathTypeRefinement, next signature.PathTypeRefinement) []signature.PathTypeRefinement {
+	for _, existing := range out {
+		if existing.Path.Equal(next.Path) && typ.TypeEquals(existing.Type, next.Type) && assertion.Equal(existing.Assertion, next.Assertion) {
+			return out
+		}
+	}
+	return append(out, next)
+}
+
+func sortOperationalPresenceRefinements(refinements []signature.PathPresenceRefinement) {
+	sort.SliceStable(refinements, func(i, j int) bool {
+		left, right := refinements[i], refinements[j]
+		if left.Path.String() != right.Path.String() {
+			return left.Path.String() < right.Path.String()
+		}
+		return left.Presence < right.Presence
+	})
+}
+
+func sortOperationalTypeRefinements(refinements []signature.PathTypeRefinement) {
+	sort.SliceStable(refinements, func(i, j int) bool {
+		left, right := refinements[i], refinements[j]
+		if left.Path.String() != right.Path.String() {
+			return left.Path.String() < right.Path.String()
+		}
+		if leftType, rightType := fmt.Sprint(left.Type), fmt.Sprint(right.Type); leftType != rightType {
+			return leftType < rightType
+		}
+		return left.Assertion.String() < right.Assertion.String()
+	})
+}
+
+func sortOperationalBranchProofs(proofs []signature.BranchProof) {
+	sort.SliceStable(proofs, func(i, j int) bool {
+		left, right := proofs[i], proofs[j]
+		if left.Kind != right.Kind {
+			return left.Kind < right.Kind
+		}
+		if left.Path.String() != right.Path.String() {
+			return left.Path.String() < right.Path.String()
+		}
+		if left.Other.String() != right.Other.String() {
+			return left.Other.String() < right.Other.String()
+		}
+		return left.Presence < right.Presence
+	})
+}
+
 func operationalPathStaticMembers(facts callboundary.NormalReturnFacts, arity int, reg *axis.Registry) []signature.PathStaticMemberFact {
 	if arity <= 0 || len(facts.PathStaticMembers) == 0 || reg == nil {
 		return nil
@@ -586,20 +1014,97 @@ func operationalPathStaticMembers(facts callboundary.NormalReturnFacts, arity in
 	return out
 }
 
+func operationalPathPresenceImplications(reg *axis.Registry, facts callboundary.NormalReturnFacts, paramArity, returnArity int) []signature.PathPresenceImplication {
+	if reg == nil || len(facts.PathPresenceImplications) == 0 {
+		return nil
+	}
+	out := make([]signature.PathPresenceImplication, 0, len(facts.PathPresenceImplications))
+	for _, fact := range facts.PathPresenceImplications {
+		if !boundaryPathInArity(fact.Trigger, paramArity, returnArity) || !boundaryPathInArity(fact.Target, paramArity, returnArity) {
+			continue
+		}
+		implication := signature.PathPresenceImplication{
+			Trigger:         fact.Trigger,
+			TriggerPresence: fact.TriggerPresence,
+			HasTriggerType:  fact.HasTriggerValue,
+			Target:          fact.Target,
+			TargetPresence:  fact.TargetPresence,
+		}
+		if fact.HasTriggerValue {
+			triggerType, ok := typevalue.TypeOf(reg, fact.TriggerValue)
+			if !ok {
+				continue
+			}
+			implication.TriggerType = triggerType
+		}
+		out = append(out, implication)
+	}
+	return out
+}
+
 func operationalPathInvalidations(facts callboundary.NormalReturnFacts, arity int) []signature.PathInvalidation {
 	return operationalArityFacts(facts.PathInvalidations, arity,
 		func(f callboundary.PathInvalidationFact) pathdom.Path { return f.Path },
 		func(p pathdom.Path) signature.PathInvalidation { return signature.PathInvalidation{Path: p} })
 }
 
-func operationalDynamicIndexFacts(facts callboundary.NormalReturnFacts, arity int, reg *axis.Registry) []signature.DynamicIndexFact {
-	if arity <= 0 || reg == nil || len(facts.DynamicIndexFacts) == 0 {
+func operationalBranchProofs(facts callboundary.NormalReturnFacts, paramArity, returnArity int) []signature.BranchProof {
+	if len(facts.BranchProofs) == 0 {
+		return nil
+	}
+	out := make([]signature.BranchProof, 0, len(facts.BranchProofs))
+	for _, proof := range facts.BranchProofs {
+		if !boundaryPathInArity(proof.Path, paramArity, returnArity) {
+			continue
+		}
+		switch proof.Kind {
+		case pathevidence.BranchProofPathPresence:
+			out = append(out, signature.BranchProof{
+				Kind:     signature.BranchProofPathPresence,
+				Path:     proof.Path,
+				Presence: proof.Presence,
+			})
+		case pathevidence.BranchProofPathEqual, pathevidence.BranchProofPathNotEqual, pathevidence.BranchProofIndexInRange:
+			if !boundaryPathInArity(proof.Other, paramArity, returnArity) {
+				continue
+			}
+			kind, ok := signatureBranchProofKind(proof.Kind)
+			if !ok {
+				continue
+			}
+			out = append(out, signature.BranchProof{
+				Kind:  kind,
+				Path:  proof.Path,
+				Other: proof.Other,
+			})
+		}
+	}
+	return out
+}
+
+func signatureBranchProofKind(kind pathevidence.BranchProofKind) (signature.BranchProofKind, bool) {
+	switch kind {
+	case pathevidence.BranchProofPathPresence:
+		return signature.BranchProofPathPresence, true
+	case pathevidence.BranchProofPathEqual:
+		return signature.BranchProofPathEqual, true
+	case pathevidence.BranchProofPathNotEqual:
+		return signature.BranchProofPathNotEqual, true
+	case pathevidence.BranchProofIndexInRange:
+		return signature.BranchProofIndexInRange, true
+	default:
+		return 0, false
+	}
+}
+
+func operationalDynamicIndexFacts(facts callboundary.NormalReturnFacts, paramArity, returnArity int, reg *axis.Registry) []signature.DynamicIndexFact {
+	if reg == nil || len(facts.DynamicIndexFacts) == 0 {
 		return nil
 	}
 	domain := dynamicindex.Domain(reg)
 	out := make([]signature.DynamicIndexFact, 0, len(facts.DynamicIndexFacts))
 	for _, fact := range facts.DynamicIndexFacts {
-		if fact.Site == "" || !placeholderPathInArity(fact.Table, arity) {
+		if fact.Site == "" || !boundaryPathInArity(fact.Table, paramArity, returnArity) {
 			continue
 		}
 		if domain.Equal(fact.Value, dynamicindex.Bottom(reg)) ||
@@ -608,11 +1113,11 @@ func operationalDynamicIndexFacts(facts callboundary.NormalReturnFacts, arity in
 			!operationalPresence(fact.Value.KeyPresence) {
 			continue
 		}
-		key, ok := operationalDynamicIndexOperand(reg, fact.KeyPath, fact.Value.KeyValue, arity)
+		key, ok := operationalDynamicIndexOperand(reg, fact.KeyPath, fact.Value.KeyValue, paramArity)
 		if !ok {
 			continue
 		}
-		value, ok := operationalDynamicIndexOperand(reg, fact.ValuePath, fact.Value.Value, arity)
+		value, ok := operationalDynamicIndexOperand(reg, fact.ValuePath, fact.Value.Value, paramArity)
 		if !ok {
 			continue
 		}
@@ -656,6 +1161,44 @@ func operationalDynamicIndexAdmission(admission dynamicindex.Admission) (signatu
 	default:
 		return "", false
 	}
+}
+
+func operationalKeyMemberships(facts callboundary.NormalReturnFacts, paramArity, returnArity int) []signature.KeyMembership {
+	if len(facts.KeyMemberships) == 0 {
+		return nil
+	}
+	out := make([]signature.KeyMembership, 0, len(facts.KeyMemberships))
+	for _, fact := range facts.KeyMemberships {
+		if !boundaryPathInArity(fact.Key, paramArity, returnArity) ||
+			!boundaryPathInArity(fact.Table, paramArity, returnArity) {
+			continue
+		}
+		out = append(out, signature.KeyMembership{
+			Key:   fact.Key,
+			Table: fact.Table,
+		})
+	}
+	return out
+}
+
+func operationalDynamicValueKeys(facts callboundary.NormalReturnFacts, paramArity, returnArity int) []signature.DynamicValueKeyMembership {
+	if len(facts.DynamicValueKeys) == 0 {
+		return nil
+	}
+	out := make([]signature.DynamicValueKeyMembership, 0, len(facts.DynamicValueKeys))
+	for _, fact := range facts.DynamicValueKeys {
+		if fact.Site == "" ||
+			!boundaryPathInArity(fact.Container, paramArity, returnArity) ||
+			!boundaryPathInArity(fact.Table, paramArity, returnArity) {
+			continue
+		}
+		out = append(out, signature.DynamicValueKeyMembership{
+			Container: fact.Container,
+			Site:      string(fact.Site),
+			Table:     fact.Table,
+		})
+	}
+	return out
 }
 
 func operationalFrozenTables(facts callboundary.NormalReturnFacts, arity int) []signature.FrozenTable {
@@ -720,6 +1263,29 @@ func operationalStoreRelations(facts callboundary.NormalReturnFacts, arity int) 
 func placeholderPathInArity(p pathdom.Path, arity int) bool {
 	idx := p.PlaceholderIndex()
 	return idx >= 0 && idx < arity
+}
+
+func boundaryPathInArity(p pathdom.Path, paramArity, returnArity int) bool {
+	if p.IsPlaceholder() {
+		idx := p.PlaceholderIndex()
+		return idx >= 0 && idx < paramArity
+	}
+	if idx, ok := returnSlotPathIndex(p); ok {
+		return idx >= 0 && idx < returnArity
+	}
+	return false
+}
+
+func returnSlotPathIndex(p pathdom.Path) (int, bool) {
+	if p.Symbol != 0 || !strings.HasPrefix(p.Root, "ret[") || !strings.HasSuffix(p.Root, "]") {
+		return 0, false
+	}
+	body := strings.TrimSuffix(strings.TrimPrefix(p.Root, "ret["), "]")
+	index, err := strconv.Atoi(body)
+	if err != nil || index < 0 || p.Root != "ret["+strconv.Itoa(index)+"]" {
+		return 0, false
+	}
+	return index, true
 }
 
 func operationalPresence(p presence.Value) bool {

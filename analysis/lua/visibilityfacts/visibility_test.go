@@ -101,6 +101,51 @@ func TestResolverSeedsEntryForRootCallArgumentPath(t *testing.T) {
 	}
 }
 
+func TestResolverSeedsEntryForAssignedParameterPath(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"bindings"}}}
+	stmts := []ast.Stmt{&ast.LocalAssignStmt{Names: []string{"f"}, Exprs: []ast.Expr{fn}}}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	params := bindings.ParamSymbols(fn)
+	if len(params) != 1 || params[0] == 0 {
+		t.Fatalf("ParamSymbols = %#v, want one bindings parameter", params)
+	}
+	bindingsSym := params[0]
+	bindingsPath := pathdom.NewPath(bindingsSym, "bindings")
+	checkpointPath := bindingsPath.Field("checkpoint")
+	graph, points := linearGraph(cfg.NodeAssign)
+	assignPoint := points[0]
+	facts := factflow.NewFacts(factflow.FactsInput{
+		RootAssignments: map[cfg.Point]factflow.RootAssignment{
+			assignPoint: factflow.NewRootAssignment(
+				factflow.RootAssignmentOrdinaryRootWrite,
+				bindingsSym,
+				bindingsPath,
+				factflow.NewUnknownValueSource(0),
+			),
+		},
+		ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+			1: checkpointPath,
+		},
+	})
+
+	resolver := Resolver(bindings, graph, facts)
+	entryKey := resolver.KeyAt(graph.Entry(), checkpointPath)
+	if entryKey == "" {
+		t.Fatalf("assigned parameter member path has no entry visibility")
+	}
+	assignKey := resolver.KeyAt(assignPoint, checkpointPath)
+	if assignKey == "" {
+		t.Fatalf("assigned parameter member path has no assignment visibility")
+	}
+	if assignKey == entryKey {
+		t.Fatalf("assignment key = entry key %q, want reassignment to create a new parameter version", assignKey)
+	}
+	assignInputKey := resolver.Before().KeyAt(assignPoint, checkpointPath)
+	if assignInputKey != entryKey {
+		t.Fatalf("assignment input key = %q, want original entry key %q", assignInputKey, entryKey)
+	}
+}
+
 func TestResolverSeedsEntryForAssignedGlobalPath(t *testing.T) {
 	_, bindings := parseBoundChunk(t, `g = 1`, "g")
 	globalSym, ok := bindings.GlobalSymbol("g")

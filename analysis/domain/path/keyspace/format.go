@@ -14,13 +14,18 @@ import (
 // identities hold for the resolver, stable-symbol, rootless, and canonical
 // stable-named spellings.
 func (ks *KeySpace) Format(k Key) pathdom.PathKey {
-	if k.Kind == KindInvalid {
+	if k.Kind == KindInvalid || !ks.validKey(k) {
 		return ""
+	}
+	if cached, ok := ks.formatByKey[k]; ok {
+		return pathdom.PathKey(cached)
 	}
 	var b strings.Builder
 	ks.writeRoot(&b, k)
 	b.WriteString(ks.suffix(k.Segs))
-	return pathdom.PathKey(b.String())
+	out := b.String()
+	ks.formatByKey[k] = out
+	return pathdom.PathKey(out)
 }
 
 func (ks *KeySpace) writeRoot(b *strings.Builder, k Key) {

@@ -2,7 +2,6 @@ package access
 
 import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
-	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -31,31 +30,11 @@ func indexKeyUnion(u *typ.Union, depth int, mode indexMode, missingNil bool, pro
 	if u == nil || len(u.Members) == 0 {
 		return fieldResult{}
 	}
-	out := make([]typ.Type, 0, len(u.Members))
-	nilable := false
-	for _, member := range u.Members {
-		res := indexByKeyVariants(member, depth+1, mode, missingNil, project)
-		if !res.ok {
-			if mode == indexRuntime && missingNil {
-				nilable = true
-				continue
-			}
-			return fieldResult{}
-		}
-		if res.nilable {
-			nilable = true
-		}
-		if res.t != nil {
-			out = append(out, res.t)
-		}
-	}
-	if len(out) == 0 {
-		if nilable {
-			return fieldResult{t: typ.Nil, ok: true}
-		}
-		return fieldResult{}
-	}
-	return fieldResult{t: normalize.UnionForEvidence(out...), ok: true, nilable: nilable}
+	return distributeUnionResults(u.Members, depth, func(member typ.Type, depth int) fieldResult {
+		return indexByKeyVariants(member, depth, mode, missingNil, project)
+	}, func(typ.Type, int) bool {
+		return mode == indexRuntime && missingNil
+	})
 }
 
 func literalStringKey(t typ.Type) (string, bool) {

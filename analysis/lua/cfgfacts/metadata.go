@@ -17,6 +17,7 @@ type Metadata struct {
 	labels          map[cfg.Point]LabelFact
 	gotos           map[cfg.Point]GotoFact
 	shortCircuits   map[cfg.Point]ShortCircuitGuardFact
+	exprEvaluations map[cfg.Point]ExpressionEvaluationFact
 }
 
 func (m Metadata) Assignment(point cfg.Point) (AssignmentFact, bool) {
@@ -127,6 +128,18 @@ func (m *Metadata) SetShortCircuitGuard(point cfg.Point, fact ShortCircuitGuardF
 		m.shortCircuits = make(map[cfg.Point]ShortCircuitGuardFact)
 	}
 	m.shortCircuits[point] = fact
+}
+
+func (m Metadata) ExpressionEvaluation(point cfg.Point) (ExpressionEvaluationFact, bool) {
+	fact, ok := m.exprEvaluations[point]
+	return fact, ok
+}
+
+func (m *Metadata) SetExpressionEvaluation(point cfg.Point, fact ExpressionEvaluationFact) {
+	if m.exprEvaluations == nil {
+		m.exprEvaluations = make(map[cfg.Point]ExpressionEvaluationFact)
+	}
+	m.exprEvaluations[point] = fact
 }
 
 // ShortCircuitGuardPoints returns the points carrying short-circuit guard facts

@@ -1,7 +1,9 @@
 package diagnostics
 
 import (
+	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
@@ -13,14 +15,20 @@ func assignmentDiagnostic(name string, want, got typ.Type, expr ast.Expr, annota
 	sourceName := exprEvidenceName(expr)
 	exprSpan := spanWithEvidenceName(ast.SpanOf(expr), sourceName)
 	typeSpan := ast.SpanOf(annotation)
-	extraEvidence = clarifyTypeMismatchEvidence(extraEvidence, sourceName, got, exprSpan, "declared type")
-	extraEvidence = appendMissingNilGuardEvidence(extraEvidence, sourceName, got, exprSpan)
+	sourceIndexed := assignmentExprLooksIndexed(expr)
+	extraEvidence = clarifyTypeMismatchEvidence(extraEvidence, sourceName, got, exprSpan, "declared type", sourceIndexed)
+	extraEvidence = appendMissingNilGuardEvidence(extraEvidence, sourceName, got, exprSpan, sourceIndexed)
+	extraEvidence = appendSameRenderedIndexedReadProofEvidence(extraEvidence, sourceName, got, want, exprSpan, sourceIndexed)
+	sourceEvidence := assignmentSourceTypeEvidence(sourceName, got)
+	if indexedReadMissingProofMismatch(got, want, extraEvidence) && sourceName != "" && sourceName != unknownSourceName {
+		sourceEvidence = sourceName + " can be nil here"
+	}
 	evidence := []diagnostic.Evidence{
 		{
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnostic.TrustProven,
 			Span:    exprSpan,
-			Message: assignmentSourceTypeEvidence(sourceName, got),
+			Message: sourceEvidence,
 		},
 		{
 			Kind:    diagnostic.EvidenceUserAssertion,
@@ -34,9 +42,9 @@ func assignmentDiagnostic(name string, want, got typ.Type, expr ast.Expr, annota
 		Span:        exprSpan,
 		Code:        CodeAssignmentType,
 		Severity:    diagnostic.SeverityError,
-		Message:     assignmentMessage(sourceName, got, want),
+		Message:     assignmentMessageForEvidence(sourceName, got, want, extraEvidence),
 		Explanation: diagnostic.NewExplanation(evidence...),
-		Help:        assignmentHelp(sourceName, got),
+		Help:        assignmentHelpForEvidence(sourceName, got, extraEvidence),
 		Labels: []diagnostic.Label{
 			sourceLabel(exprSpan, labelAssignedValue),
 			sourceLabel(typeSpan, labelDeclaredType),
@@ -48,8 +56,9 @@ func objectMemberAssignmentDiagnostic(memberName string, want, got typ.Type, exp
 	sourceName := exprEvidenceName(expr)
 	exprSpan := spanWithEvidenceName(ast.SpanOf(expr), sourceName)
 	typeSpan := ast.SpanOf(annotation)
-	extraEvidence = clarifyTypeMismatchEvidence(extraEvidence, sourceName, got, exprSpan, "declared type")
-	extraEvidence = appendMissingNilGuardEvidence(extraEvidence, sourceName, got, exprSpan)
+	sourceIndexed := assignmentExprLooksIndexed(expr)
+	extraEvidence = clarifyTypeMismatchEvidence(extraEvidence, sourceName, got, exprSpan, "declared type", sourceIndexed)
+	extraEvidence = appendMissingNilGuardEvidence(extraEvidence, sourceName, got, exprSpan, sourceIndexed)
 	evidence := []diagnostic.Evidence{
 		{
 			Kind:    diagnostic.EvidenceAbstractFact,
@@ -73,7 +82,7 @@ func objectMemberAssignmentDiagnostic(memberName string, want, got typ.Type, exp
 		Span:        exprSpan,
 		Code:        CodeAssignmentType,
 		Severity:    diagnostic.SeverityError,
-		Message:     memberAssignmentMessage(memberName, sourceName, got, want),
+		Message:     memberAssignmentMessageForEvidence(memberName, sourceName, got, want, extraEvidence),
 		Explanation: diagnostic.NewExplanation(evidence...),
 		Help:        assignmentHelp(helpName, got),
 		Labels: []diagnostic.Label{
@@ -81,6 +90,66 @@ func objectMemberAssignmentDiagnostic(memberName string, want, got typ.Type, exp
 			sourceLabel(typeSpan, labelDeclaredType),
 		},
 	})
+}
+
+func assignmentMessageForEvidence(sourceName string, got, want typ.Type, evidence []diagnostic.Evidence) string {
+	if indexedReadMissingProofMismatch(got, want, evidence) && sourceName != "" && sourceName != unknownSourceName {
+		return fmt.Sprintf("cannot assign %s because it may be nil", sourceName)
+	}
+	if sameRenderedTypeNeedsValidationProof(got, want, evidence) {
+		subject := boundaryEvidenceSubject(sourceName)
+		return fmt.Sprintf("cannot assign %s because %s comes from any/unknown; no proof shows it satisfies the declared type", sourceName, subject)
+	}
+	return assignmentMessage(sourceName, got, want)
+}
+
+func memberAssignmentMessageForEvidence(memberName string, sourceName string, got, want typ.Type, evidence []diagnostic.Evidence) string {
+	if sameRenderedTypeNeedsValidationProof(got, want, evidence) {
+		subject := boundaryEvidenceSubject(sourceName)
+		return fmt.Sprintf("cannot assign %s to %s because %s comes from any/unknown; no proof shows it satisfies the declared type", sourceName, memberName, subject)
+	}
+	return memberAssignmentMessage(memberName, sourceName, got, want)
+}
+
+func assignmentHelpForEvidence(sourceName string, got typ.Type, evidence []diagnostic.Evidence) string {
+	if indexedReadHasMissingProof(evidence) && sourceName != "" && sourceName != unknownSourceName {
+		return fmt.Sprintf("Guard `%s` with a nil check, provide a default value, or change the target type to accept nil.", sourceName)
+	}
+	return assignmentHelp(sourceName, got)
+}
+
+func appendSameRenderedIndexedReadProofEvidence(items []diagnostic.Evidence, sourceName string, got, want typ.Type, sourceSpan diagnostic.Span, sourceIndexed bool) []diagnostic.Evidence {
+	if !sourceIndexed ||
+		sourceName == "" ||
+		sourceName == unknownSourceName ||
+		evidenceHasKind(items, diagnostic.EvidenceMissingProof) ||
+		formatType(got) != formatType(want) {
+		return items
+	}
+	return append(items, diagnostic.Evidence{
+		Kind:    diagnostic.EvidenceMissingProof,
+		Trust:   diagnostic.TrustUnknown,
+		Reason:  diagnostic.EvidenceReasonIndexReadValidationMissing,
+		Span:    sourceSpan,
+		Message: indexedReadExpectedProofMessage(sourceName, "declared type"),
+	})
+}
+
+func indexedReadMissingProofMismatch(got, want typ.Type, evidence []diagnostic.Evidence) bool {
+	return indexedReadHasMissingProof(evidence) && (typ.Nil.Equals(got) || formatType(got) == formatType(want))
+}
+
+func indexedReadHasMissingProof(evidence []diagnostic.Evidence) bool {
+	for _, item := range evidence {
+		if item.Kind == diagnostic.EvidenceMissingProof && item.Reason == diagnostic.EvidenceReasonIndexReadValidationMissing {
+			return true
+		}
+	}
+	return false
+}
+
+func sameRenderedTypeNeedsValidationProof(got, want typ.Type, evidence []diagnostic.Evidence) bool {
+	return formatType(got) == formatType(want) && evidenceNeedsValidationProof(got, evidence)
 }
 
 // underSuppliedTargetDiagnostic reports a destructuring target that an
@@ -135,14 +204,20 @@ func pathAssignmentDiagnostic(target ast.Expr, value ast.Expr, got, want typ.Typ
 	targetName := exprEvidenceName(target)
 	valueSpan := spanWithEvidenceName(ast.SpanOf(value), valueName)
 	targetSpan := spanWithEvidenceName(ast.SpanOf(target), targetName)
-	extraEvidence = clarifyTypeMismatchEvidence(extraEvidence, valueName, got, valueSpan, "declared type")
-	extraEvidence = appendMissingNilGuardEvidence(extraEvidence, valueName, got, valueSpan)
+	valueIndexed := assignmentExprLooksIndexed(value)
+	extraEvidence = clarifyTypeMismatchEvidence(extraEvidence, valueName, got, valueSpan, "declared type", valueIndexed)
+	extraEvidence = appendMissingNilGuardEvidence(extraEvidence, valueName, got, valueSpan, valueIndexed)
+	extraEvidence = appendSameRenderedIndexedReadProofEvidence(extraEvidence, valueName, got, want, valueSpan, valueIndexed)
+	sourceEvidence := assignmentSourceTypeEvidence(valueName, got)
+	if indexedReadMissingProofMismatch(got, want, extraEvidence) && valueName != "" && valueName != unknownSourceName {
+		sourceEvidence = valueName + " can be nil here"
+	}
 	evidence := []diagnostic.Evidence{
 		{
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnostic.TrustProven,
 			Span:    valueSpan,
-			Message: assignmentSourceTypeEvidence(valueName, got),
+			Message: sourceEvidence,
 		},
 		{
 			Kind:    diagnostic.EvidenceAbstractFact,
@@ -156,9 +231,9 @@ func pathAssignmentDiagnostic(target ast.Expr, value ast.Expr, got, want typ.Typ
 		Span:        valueSpan,
 		Code:        CodeAssignmentType,
 		Severity:    diagnostic.SeverityError,
-		Message:     assignmentMessage(valueName, got, want),
+		Message:     assignmentMessageForEvidence(valueName, got, want, extraEvidence),
 		Explanation: diagnostic.NewExplanation(evidence...),
-		Help:        assignmentHelp(valueName, got),
+		Help:        assignmentHelpForEvidence(valueName, got, extraEvidence),
 		Labels: []diagnostic.Label{
 			sourceLabel(valueSpan, labelAssignedValue),
 			sourceLabel(targetSpan, labelAssignmentTarget),
@@ -308,16 +383,48 @@ func luaDotFieldName(name string) bool {
 	return true
 }
 
-func appendMissingNilGuardEvidence(items []diagnostic.Evidence, sourceName string, got typ.Type, sourceSpan diagnostic.Span) []diagnostic.Evidence {
-	if sourceName == "" || sourceName == unknownSourceName || !valueMayBeNil(got) || evidenceHasKind(items, diagnostic.EvidenceMissingProof) {
+func appendMissingNilGuardEvidence(items []diagnostic.Evidence, sourceName string, got typ.Type, sourceSpan diagnostic.Span, sourceIndexed ...bool) []diagnostic.Evidence {
+	indexed := assignmentSourceLooksIndexed(sourceName, sourceIndexed...)
+	directIndexed := len(sourceIndexed) > 0 && sourceIndexed[0]
+	if sourceName == "" ||
+		sourceName == unknownSourceName ||
+		(!valueMayBeNil(got) && !(directIndexed && typ.Nil.Equals(got))) ||
+		evidenceHasKind(items, diagnostic.EvidenceMissingProof) {
 		return items
+	}
+	reason := diagnostic.EvidenceReasonBoundaryValidationMissing
+	message := missingNonNilGuardHereMessage(sourceName)
+	if indexed {
+		reason = diagnostic.EvidenceReasonIndexReadValidationMissing
+		message = indexedReadExpectedProofMessage(sourceName, "declared type")
 	}
 	return append(items, diagnostic.Evidence{
 		Kind:    diagnostic.EvidenceMissingProof,
 		Trust:   diagnostic.TrustUnknown,
+		Reason:  reason,
 		Span:    sourceSpan,
-		Message: missingNonNilGuardHereMessage(sourceName),
+		Message: message,
 	})
+}
+
+func assignmentSourceLooksIndexed(sourceName string, sourceIndexed ...bool) bool {
+	if len(sourceIndexed) > 0 && sourceIndexed[0] {
+		return true
+	}
+	return strings.Contains(sourceName, "[") && strings.Contains(sourceName, "]")
+}
+
+func assignmentExprLooksIndexed(expr ast.Expr) bool {
+	switch e := expr.(type) {
+	case *ast.AttrGetExpr:
+		return e.KeySyntax == ast.AttrKeyIndex
+	case *ast.CastExpr:
+		return assignmentExprLooksIndexed(e.Expr)
+	case *ast.NonNilAssertExpr:
+		return assignmentExprLooksIndexed(e.Expr)
+	default:
+		return false
+	}
 }
 
 func evidenceHasKind(items []diagnostic.Evidence, kind diagnostic.EvidenceKind) bool {
@@ -329,11 +436,12 @@ func evidenceHasKind(items []diagnostic.Evidence, kind diagnostic.EvidenceKind) 
 	return false
 }
 
-func clarifyTypeMismatchEvidence(items []diagnostic.Evidence, sourceName string, got typ.Type, sourceSpan diagnostic.Span, expectedKind string) []diagnostic.Evidence {
+func clarifyTypeMismatchEvidence(items []diagnostic.Evidence, sourceName string, got typ.Type, sourceSpan diagnostic.Span, expectedKind string, sourceIndexed ...bool) []diagnostic.Evidence {
 	if len(items) == 0 || sourceName == "" || sourceName == unknownSourceName {
 		return items
 	}
 	out := append([]diagnostic.Evidence(nil), items...)
+	preserveAssignedValueBoundary := evidenceHasAssignedValuePrecisionBoundary(out)
 	for i := range out {
 		if sourceSpan.Valid() && sameStart(out[i].Span, sourceSpan) && !hasUsefulEnd(out[i].Span) {
 			out[i].Span = sourceSpan
@@ -342,6 +450,14 @@ func clarifyTypeMismatchEvidence(items []diagnostic.Evidence, sourceName string,
 		case diagnostic.EvidenceReasonIndexReadValidationMissing:
 			out[i].Message = indexedReadExpectedProofMessage(sourceName, expectedKind)
 		case diagnostic.EvidenceReasonBoundaryValidationMissing:
+			if preserveAssignedValueBoundary && strings.Contains(out[i].Message, "assigned value") {
+				continue
+			}
+			if assignmentSourceLooksIndexed(sourceName, sourceIndexed...) {
+				out[i].Reason = diagnostic.EvidenceReasonIndexReadValidationMissing
+				out[i].Message = indexedReadExpectedProofMessage(sourceName, expectedKind)
+				continue
+			}
 			if _, ok := got.(*typ.Optional); ok {
 				out[i].Message = missingNonNilGuardHereMessage(sourceName)
 				continue
@@ -350,6 +466,16 @@ func clarifyTypeMismatchEvidence(items []diagnostic.Evidence, sourceName string,
 		}
 	}
 	return out
+}
+
+func evidenceHasAssignedValuePrecisionBoundary(items []diagnostic.Evidence) bool {
+	for _, item := range items {
+		if item.Reason == diagnostic.EvidenceReasonExplicitBoundaryValidation &&
+			strings.Contains(item.Message, "assigned value") {
+			return true
+		}
+	}
+	return false
 }
 
 func spanWithEvidenceName(span diagnostic.Span, sourceName string) diagnostic.Span {

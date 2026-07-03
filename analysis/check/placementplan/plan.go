@@ -267,7 +267,13 @@ func (a *aggregate) plan() Plan {
 	for id, children := range a.children {
 		ids[id] = struct{}{}
 		for child := range children {
-			ids[child] = struct{}{}
+			if _, ok := a.objects[child]; ok {
+				ids[child] = struct{}{}
+				continue
+			}
+			if _, ok := a.placements[child]; ok {
+				ids[child] = struct{}{}
+			}
 		}
 	}
 	for id := range a.placements {

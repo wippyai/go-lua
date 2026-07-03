@@ -2,7 +2,6 @@ package diagnostics
 
 import (
 	"fmt"
-	"strings"
 
 	typeformat "github.com/wippyai/go-lua/analysis/type/format"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -11,6 +10,11 @@ import (
 func (diagnosticDisplay) Type(t typ.Type) string {
 	if t == nil {
 		return "unknown"
+	}
+	if projectionHasNil(t) {
+		if present := projectionWithoutNil(t); present != nil && !typ.IsNever(present) && topLikeType(present) {
+			return typeformat.Short(present)
+		}
 	}
 	return typeformat.Short(t)
 }
@@ -147,46 +151,6 @@ func (diagnosticDisplay) FrozenTableAssignmentHelp() string {
 
 func (diagnosticDisplay) FrozenTableCallHelp() string {
 	return "Create a mutable copy before calling the mutator, or call it before the table is frozen."
-}
-
-func (diagnosticDisplay) ResourceUnreleasedMessage(resourceName, protocol, current, final string) string {
-	if strings.TrimSpace(current) == "" {
-		return fmt.Sprintf("resource %s remains in a non-final %s state at function exit; expected %s", codeName(resourceName), protocol, lifecycleStateName(final))
-	}
-	return fmt.Sprintf("resource %s remains in %s state %s at function exit; expected %s", codeName(resourceName), protocol, lifecycleStateName(current), lifecycleStateName(final))
-}
-
-func (diagnosticDisplay) ResourceAcquireEvidence(resourceName, protocol, current, final string) string {
-	return fmt.Sprintf("this call acquires %s as %s:%s and requires %s before local ownership ends", codeName(resourceName), protocol, lifecycleStateName(current), lifecycleStateName(final))
-}
-
-func (diagnosticDisplay) ResourceTransitionEvidence(resourceName, protocol, from, to string) string {
-	if from == "" {
-		return fmt.Sprintf("this call transitions %s in protocol %s to %s on a reachable path", codeName(resourceName), protocol, lifecycleStateName(to))
-	}
-	return fmt.Sprintf("this call transitions %s in protocol %s from %s to %s on a reachable path", codeName(resourceName), protocol, lifecycleStateName(from), lifecycleStateName(to))
-}
-
-func (diagnosticDisplay) ResourceEscapeEvidence(resourceName, protocol string) string {
-	return fmt.Sprintf("this call escapes local ownership of %s in protocol %s on a reachable path", codeName(resourceName), protocol)
-}
-
-func (diagnosticDisplay) ResourceExitObligationEvidence(resourceName, protocol, current, final string) string {
-	return fmt.Sprintf("exit state still has %s in protocol %s at %s; no proof reaches %s or escapes ownership on every path", codeName(resourceName), protocol, lifecycleStateName(current), lifecycleStateName(final))
-}
-
-func (diagnosticDisplay) ResourceUnreleasedHelp(resourceName, final string) string {
-	return fmt.Sprintf("Transition %s to %s or escape ownership on every return path.", codeName(resourceName), lifecycleStateName(final))
-}
-
-func lifecycleStateName(state string) string {
-	if strings.TrimSpace(state) == "" {
-		return "a non-final state"
-	}
-	if strings.Contains(state, "`") {
-		return state
-	}
-	return codeName(state)
 }
 
 func (diagnosticDisplay) UnresolvedTypeMessage(name string) string {

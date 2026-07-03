@@ -18,19 +18,13 @@ type Param struct {
 // Functions support generics via TypeParams, variadic arguments via Variadic,
 // and multiple return values via Returns.
 type Function struct {
-	TypeParams            []*TypeParam // Generic type parameters (empty for non-generic)
-	Params                []Param      // Positional parameters
-	Variadic              Type         // Variadic element type (nil if not variadic)
-	Returns               []Type       // Return types (empty for void functions)
-	hash                  uint64
-	containsAny           bool
-	containsNever         bool
-	containsTypeParam     bool
-	containsInstantiated  bool
-	containsGeneric       bool
-	containsRecursive     bool
-	containsOpenRecursive bool
-	strCache              stringCache
+	TypeParams []*TypeParam // Generic type parameters (empty for non-generic)
+	Params     []Param      // Positional parameters
+	Variadic   Type         // Variadic element type (nil if not variadic)
+	Returns    []Type       // Return types (empty for void functions)
+	hash       uint64
+	typeProperties
+	strCache stringCache
 }
 
 // FunctionBuilder provides a fluent API for constructing function types.
@@ -114,6 +108,24 @@ func (b *FunctionBuilder) Build() *Function {
 		b.variadic,
 		b.returns,
 	)
+}
+
+// CloneFunction returns an ownership-isolated copy of an already-canonical
+// function type. It preserves the immutable hash/flag metadata and copies only
+// the exported slice fields, avoiding a semantic rebuild. The private string
+// cache is intentionally reset because sync.Once must not be copied after use.
+func CloneFunction(fn *Function) *Function {
+	if fn == nil {
+		return nil
+	}
+	return &Function{
+		TypeParams:     append([]*TypeParam(nil), fn.TypeParams...),
+		Params:         append([]Param(nil), fn.Params...),
+		Variadic:       fn.Variadic,
+		Returns:        append([]Type(nil), fn.Returns...),
+		hash:           fn.hash,
+		typeProperties: fn.typeProperties,
+	}
 }
 
 func (f *Function) Kind() kind.Kind { return kind.Function }

@@ -69,41 +69,30 @@ func projectUnionWithoutNil(u *typ.Union, mode nilProjectionMode) (typ.Type, boo
 		return typ.Never, false
 	}
 	nilable := false
-	keptCount := 0
-	for _, member := range u.Members {
+	var members []typ.Type
+	for i, member := range u.Members {
 		normalized := unwrap.NormalizeNil(member)
 		if normalized == nil {
 			continue
 		}
 		nonNil, memberNilable := withoutNil(normalized, mode)
-		if memberNilable {
-			nilable = true
-		}
-		if nonNil == nil {
-			nonNil = normalized
-		}
-		if nonNil.Kind().IsNever() {
+		if !memberNilable {
+			if nilable {
+				members = appendProjectedUnionMember(members, normalized, mode)
+			}
 			continue
 		}
-		keptCount++
+		if !nilable {
+			nilable = true
+			members = make([]typ.Type, 0, len(u.Members)-1)
+			for _, prefix := range u.Members[:i] {
+				members = appendProjectedUnionMember(members, prefix, mode)
+			}
+		}
+		members = appendNonNeverUnionMember(members, nonNil)
 	}
 	if !nilable {
 		return u, false
-	}
-	members := make([]typ.Type, 0, keptCount)
-	for _, member := range u.Members {
-		member = unwrap.NormalizeNil(member)
-		if member == nil {
-			continue
-		}
-		nonNil, _ := withoutNil(member, mode)
-		if nonNil == nil {
-			nonNil = member
-		}
-		if nonNil.Kind().IsNever() {
-			continue
-		}
-		members = append(members, nonNil)
 	}
 	if len(members) == 0 {
 		return typ.Never, true
@@ -112,4 +101,23 @@ func projectUnionWithoutNil(u *typ.Union, mode nilProjectionMode) (typ.Type, boo
 		return members[0], true
 	}
 	return typ.MaterializeUnion(members), true
+}
+
+func appendProjectedUnionMember(members []typ.Type, member typ.Type, mode nilProjectionMode) []typ.Type {
+	member = unwrap.NormalizeNil(member)
+	if member == nil {
+		return members
+	}
+	nonNil, _ := withoutNil(member, mode)
+	if nonNil == nil {
+		nonNil = member
+	}
+	return appendNonNeverUnionMember(members, nonNil)
+}
+
+func appendNonNeverUnionMember(members []typ.Type, member typ.Type) []typ.Type {
+	if member == nil || member.Kind().IsNever() {
+		return members
+	}
+	return append(members, member)
 }

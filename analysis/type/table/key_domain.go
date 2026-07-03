@@ -71,3 +71,7 @@ func keyDomainAliasTargetFor(alias *typ.Alias, policy keyDomainAliasPolicy) typ.
 	}
 	return alias.Target
 }
+
+func keyDomainIsTop(t typ.Type) bool {
+	return typ.IsAny(t) || typ.IsUnknown(t)
+}

@@ -1,6 +1,7 @@
 package typecall
 
 import (
+	typelit "github.com/wippyai/go-lua/analysis/type/literal"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/subst"
@@ -51,12 +52,30 @@ type GenericCallTrace struct {
 	Contributions []InferenceContribution
 }
 
+// TypeParamBinding records one inferred type argument for a function type
+// parameter. The Param pointer is the canonical binder from the original
+// generic function signature, so callers can substitute type-bearing sidecars
+// without matching by name.
+type TypeParamBinding struct {
+	Param *typ.TypeParam
+	Type  typ.Type
+	Index int
+}
+
 // InstantiateGenericCall infers type arguments for a generic function call from
 // concrete argument types, validates type-parameter constraints, and returns the
 // callable signature with inferred type parameters substituted.
 func InstantiateGenericCall(fn *typ.Function, args []typ.Type) (*typ.Function, []ArgumentConstraintViolation) {
-	instantiated, violations, _ := instantiateGenericCall(fn, args, false)
+	instantiated, violations, _, _ := instantiateGenericCall(fn, args, false)
 	return instantiated, violations
+}
+
+// InstantiateGenericCallWithBindings is the boundary-facing variant used when
+// non-type signature payloads, such as operational effects, must be substituted
+// with the exact same inferred type arguments as the callable type.
+func InstantiateGenericCallWithBindings(fn *typ.Function, args []typ.Type) (*typ.Function, []ArgumentConstraintViolation, []TypeParamBinding) {
+	instantiated, violations, _, bindings := instantiateGenericCall(fn, args, false)
+	return instantiated, violations, typeParamBindings(fn, bindings)
 }
 
 // InstantiateGenericCallWithTrace is the diagnostics-facing variant of
@@ -64,12 +83,13 @@ func InstantiateGenericCall(fn *typ.Function, args []typ.Type) (*typ.Function, [
 // violations, plus the concrete argument locations that contributed to each
 // inferred type parameter.
 func InstantiateGenericCallWithTrace(fn *typ.Function, args []typ.Type) (*typ.Function, []ArgumentConstraintViolation, GenericCallTrace) {
-	return instantiateGenericCall(fn, args, true)
+	instantiated, violations, trace, _ := instantiateGenericCall(fn, args, true)
+	return instantiated, violations, trace
 }
 
-func instantiateGenericCall(fn *typ.Function, args []typ.Type, trace bool) (*typ.Function, []ArgumentConstraintViolation, GenericCallTrace) {
+func instantiateGenericCall(fn *typ.Function, args []typ.Type, trace bool) (*typ.Function, []ArgumentConstraintViolation, GenericCallTrace, map[*typ.TypeParam]inferredArg) {
 	if fn == nil || len(fn.TypeParams) == 0 {
-		return fn, nil, GenericCallTrace{}
+		return fn, nil, GenericCallTrace{}, nil
 	}
 	bindings := make(map[*typ.TypeParam]inferredArg, len(fn.TypeParams))
 	for i, arg := range args {
@@ -115,10 +135,10 @@ func instantiateGenericCall(fn *typ.Function, args []typ.Type, trace bool) (*typ
 
 	instantiated, ok := subst.Params(fn, params, argsToSubstitute).(*typ.Function)
 	if !ok {
-		return fn, violations, genericCallTraceFromBindings(fn.TypeParams, bindings)
+		return fn, violations, genericCallTraceFromBindings(fn.TypeParams, bindings), bindings
 	}
 	violations = append(violations, validateInstantiatedArguments(instantiated, args)...)
-	return instantiated, violations, genericCallTraceFromBindings(fn.TypeParams, bindings)
+	return instantiated, violations, genericCallTraceFromBindings(fn.TypeParams, bindings), bindings
 }
 
 type inferredArg struct {
@@ -664,6 +684,25 @@ func genericCallTraceFromBindings(params []*typ.TypeParam, bindings map[*typ.Typ
 	return out
 }
 
+func typeParamBindings(fn *typ.Function, bindings map[*typ.TypeParam]inferredArg) []TypeParamBinding {
+	if fn == nil || len(bindings) == 0 {
+		return nil
+	}
+	out := make([]TypeParamBinding, 0, len(bindings))
+	for _, param := range fn.TypeParams {
+		binding, ok := inferredBindingForParam(bindings, param)
+		if !ok || binding.typ == nil {
+			continue
+		}
+		out = append(out, TypeParamBinding{
+			Param: param,
+			Type:  binding.typ,
+			Index: binding.index,
+		})
+	}
+	return out
+}
+
 func inferredBindingForParam(bindings map[*typ.TypeParam]inferredArg, param *typ.TypeParam) (inferredArg, bool) {
 	if binding, ok := bindings[param]; ok {
 		return binding, true
@@ -689,5 +728,17 @@ func mergeInferredTypes(left typ.Type, right typ.Type) typ.Type {
 	if subtype.IsSubtype(right, left) {
 		return left
 	}
+	if merged, ok := mergeInferredLiteralFamilies(left, right); ok {
+		return merged
+	}
 	return normalize.UnionForEvidence(left, right)
+}
+
+func mergeInferredLiteralFamilies(left typ.Type, right typ.Type) (typ.Type, bool) {
+	leftBase, leftOK := typelit.FamilyBase(left)
+	rightBase, rightOK := typelit.FamilyBase(right)
+	if !leftOK || !rightOK {
+		return nil, false
+	}
+	return typelit.MergeFamilyBases(leftBase, rightBase)
 }

@@ -5,6 +5,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
+const BuiltinTopName = typ.BuiltinTableTopName
+
+// BuiltinTopMarker returns the canonical source-level Lua `table` type.
+func BuiltinTopMarker() typ.Type {
+	return typ.BuiltinTableTopMarker()
+}
+
 // IsBuiltinTopMarker reports whether t is the builtin Lua `table` top marker.
 //
 // The checker models `table` as an interface named "table" with no methods.
@@ -17,8 +24,7 @@ func IsBuiltinTopMarker(t typ.Type) bool {
 	if t == nil {
 		return false
 	}
-	iface, ok := t.(*typ.Interface)
-	return ok && iface.Name == "table" && len(iface.Methods) == 0
+	return typ.IsBuiltinTableTopMarker(t)
 }
 
 // IsLike reports whether t has a table-like type surface.

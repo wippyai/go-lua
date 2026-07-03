@@ -2,6 +2,7 @@ package inspect
 
 import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 func containsMatching(t typ.Type, pred func(typ.Type) bool) bool {
@@ -12,25 +13,54 @@ func containsMatching(t typ.Type, pred func(typ.Type) bool) bool {
 	return contains(t, pred, scan)
 }
 
+// ContainsAny reports whether t contains the gradual any type.
+func ContainsAny(t typ.Type) bool {
+	return typ.ContainsAny(t)
+}
+
+// ContainsUnknown reports whether t contains the unresolved unknown type.
+func ContainsUnknown(t typ.Type) bool {
+	return containsMatching(t, typ.IsUnknown)
+}
+
 // ContainsTypeParam reports whether t contains a type parameter.
 func ContainsTypeParam(t typ.Type) bool {
-	return containsMatching(t, func(t typ.Type) bool {
-		_, ok := t.(*typ.TypeParam)
-		return ok
-	})
+	return typ.ContainsTypeParam(t)
 }
 
 // ContainsInstantiated reports whether t contains a generic instantiation.
 func ContainsInstantiated(t typ.Type) bool {
-	return containsMatching(t, func(t typ.Type) bool {
-		_, ok := t.(*typ.Instantiated)
-		return ok
-	})
+	return typ.ContainsInstantiated(t)
 }
 
 // ContainsRecursive reports whether t contains a recursive product.
 func ContainsRecursive(t typ.Type) bool {
 	return typ.ContainsRecursive(t)
+}
+
+// IsMultiArmUnion reports whether t resolves through transparent wrappers to a
+// union with at least two members.
+func IsMultiArmUnion(t typ.Type) bool {
+	return isMultiArmUnionDepth(t, 0)
+}
+
+func isMultiArmUnionDepth(t typ.Type, depth int) bool {
+	if t == nil || depth > typ.DefaultRecursionDepth {
+		return false
+	}
+	switch v := unwrap.Annotated(t).(type) {
+	case *typ.Union:
+		return len(v.Members) >= 2
+	case *typ.Alias:
+		return isMultiArmUnionDepth(v.UnaliasedTarget(), depth+1)
+	case *typ.Recursive:
+		if v.Body == nil || v.Body == t {
+			return false
+		}
+		return isMultiArmUnionDepth(v.Body, depth+1)
+	default:
+		return false
+	}
 }
 
 func contains(t typ.Type, pred func(typ.Type) bool, scan *Scanner) bool {

@@ -12,66 +12,64 @@
         "severity": "error",
         "code": "type.call.direct.argument_type",
         "message_contains": [
-          "argument 1",
-          "{name: \"no-id-here\"}",
-          "not {id: string}"
+          "argument 1 is {name: \"no-id-here\"}, not {id: string}"
         ],
         "min_evidence": 3,
         "evidence_contains": [
           "argument 1 has type {name: \"no-id-here\"}",
-          "need_id parameter 1 expects {id: string}",
+          "need_id parameter 1.id expects {id: string}",
           "object literal does not provide field \"id\""
         ],
         "evidence": [
           {
-            "file": "main.lua",
-            "line": 3,
-            "column": 16,
-            "kind": "abstract fact",
             "trust": "proven",
             "contains": [
               "argument 1 has type {name: \"no-id-here\"}"
-            ]
-          },
-          {
-            "kind": "user assertion",
-            "trust": "claimed",
-            "contains": [
-              "need_id parameter 1 expects {id: string}"
-            ]
-          },
-          {
+            ],
+            "kind": "abstract fact",
             "file": "main.lua",
             "line": 3,
-            "column": 16,
-            "kind": "missing proof",
-            "trust": "unknown",
+            "column": 16
+          },
+          {
+            "trust": "claimed",
+            "contains": [
+              "need_id parameter 1.id expects {id: string}"
+            ],
+            "kind": "user assertion"
+          },
+          {
+            "trust": "refuted",
             "contains": [
               "object literal does not provide field \"id\""
-            ]
+            ],
+            "kind": "missing proof",
+            "file": "main.lua",
+            "line": 3,
+            "column": 16
           }
         ],
         "render_contains": [
-          "error[type.call.direct.argument_type]:",
-          "need_id({ name = \"no-id-here\" })",
-          "because:",
-          "object literal does not provide field \"id\""
+          "argument 1 is {name: \"no-id-here\"}, not {id: string}",
+          "return need_id({ name = \"no-id-here\" })",
+          "because:"
         ],
         "render_ordered_contains": [
           "error[type.call.direct.argument_type]: argument 1 is {name: \"no-id-here\"}, not {id: string}",
           "--> main.lua:3:16",
           "return need_id({ name = \"no-id-here\" })",
           "because:",
-          "proven: argument 1 has type {name: \"no-id-here\"}",
-          "claimed: need_id parameter 1 expects {id: string}",
-          "missing proof: object literal does not provide field \"id\"",
-          "help: Pass a value for argument 1 that satisfies the parameter type"
+          "1. proven: argument 1 has type {name: \"no-id-here\"}",
+          "2. claimed: need_id parameter 1.id expects {id: string}",
+          "3. missing proof: object literal does not provide field \"id\"",
+          "help: Pass a value for argument 1 that satisfies the parameter type, or change the callee signature if that argument is valid."
         ],
         "render_not_contains": [
-          "type mismatch",
-          "invalid argument",
           "^~",
-          "want"
+          "where:"
+        ],
+        "help_contains": [
+          "Pass a value for argument 1 that satisfies the parameter type, or change the callee signature if that argument is valid."
         ],
         "min_labels": 1,
         "label_contains": [
@@ -79,16 +77,13 @@
         ],
         "labels": [
           {
-            "file": "main.lua",
-            "line": 3,
-            "column": 16,
             "contains": [
               "argument value"
-            ]
+            ],
+            "file": "main.lua",
+            "line": 3,
+            "column": 16
           }
-        ],
-        "help_contains": [
-          "parameter type"
         ]
       }
     ]

@@ -1,13 +1,17 @@
 package lua
 
 import (
+	"fmt"
 	"os"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"testing"
 	"time"
 )
 
 const defaultFixtureDeadline = 30 * time.Second
+const defaultFixtureMemoryLimitBytes int64 = 8 << 30
 
 // fixtureDeadline bounds a normal fixture step. FIXTURE_DEADLINE_SECONDS is a
 // local/CI override for stress runs; fixture manifests may request a larger
@@ -42,13 +46,94 @@ func fixtureSequential() bool {
 	}
 }
 
-// runWithDeadline runs fn under the per-fixture deadline. On timeout it fails
-// the step without claiming the root cause: a timeout can be slow finite
-// diagnostic production, a too-small fixture budget, or a real fixed-point
-// convergence bug. The worker goroutine may continue running until the test
-// binary exits, but its result is ignored. fn may call t.* methods; t.Fatal in
-// fn (via FailNow/Goexit) terminates the worker cleanly through the deferred
-// done signal.
+func fixtureParallelism() int {
+	if fixtureSequential() {
+		return 1
+	}
+	if v := os.Getenv("FIXTURE_PARALLELISM"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	if n := runtime.GOMAXPROCS(0) / 2; n > 1 {
+		if n > 4 {
+			return 4
+		}
+		return n
+	}
+	return 1
+}
+
+func fixtureTimeoutExitsProcess() bool {
+	switch os.Getenv("FIXTURE_TIMEOUT_EXIT") {
+	case "0", "false", "FALSE", "no", "NO":
+		return false
+	default:
+		return true
+	}
+}
+
+func fixtureMemoryLimitBytes() int64 {
+	if v := os.Getenv("FIXTURE_MEMORY_LIMIT_MB"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			return defaultFixtureMemoryLimitBytes
+		}
+		return int64(n) << 20
+	}
+	return defaultFixtureMemoryLimitBytes
+}
+
+func startFixtureMemoryGuard(t *testing.T) {
+	t.Helper()
+	limit := fixtureMemoryLimitBytes()
+	if limit <= 0 {
+		return
+	}
+	previous := debug.SetMemoryLimit(limit)
+	t.Cleanup(func() {
+		debug.SetMemoryLimit(previous)
+	})
+
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		close(done)
+	})
+	go func() {
+		ticker := time.NewTicker(250 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				var mem runtime.MemStats
+				runtime.ReadMemStats(&mem)
+				if int64(mem.HeapAlloc) <= limit {
+					continue
+				}
+				fmt.Fprintf(os.Stderr, "fatal: fixture heap allocation exceeded %d MiB (heap=%d MiB); exiting before runaway analysis can exhaust the machine\n", limit>>20, mem.HeapAlloc>>20)
+				os.Exit(2)
+			}
+		}
+	}()
+}
+
+func failFixtureDeadline(t *testing.T, message string) {
+	t.Helper()
+	if fixtureTimeoutExitsProcess() {
+		fmt.Fprintln(os.Stderr, message)
+		fmt.Fprintln(os.Stderr, "fatal: fixture deadline timed out; exiting the test process so the uncancellable worker goroutine cannot keep allocating memory")
+		os.Exit(2)
+	}
+	t.Fatal(message)
+}
+
+// runWithDeadline runs fn under the per-fixture deadline. On timeout, the
+// default behavior is process-level fail-fast: Go cannot kill the worker
+// goroutine, so continuing the same test binary can stack runaway analyses and
+// exhaust memory. Set FIXTURE_TIMEOUT_EXIT=0 only for local debugging when a
+// lingering worker is acceptable.
 func runWithDeadline(t *testing.T, suite namedSuite, step string, fn func(t *testing.T)) {
 	t.Helper()
 	deadline := fixtureDeadlineForSuite(suite)
@@ -71,7 +156,7 @@ func runWithDeadline(t *testing.T, suite namedSuite, step string, fn func(t *tes
 			panic(r)
 		}
 	case <-time.After(deadline):
-		t.Fatalf("fixture deadline exceeded: %s/%s did not complete within %s (slow finite analysis or possible abstract-interpreter non-convergence; rerun with FIXTURE_DEADLINE_SECONDS=%d to distinguish)", suite.Name, step, deadline, int(deadline.Seconds())*4)
+		failFixtureDeadline(t, fmt.Sprintf("fixture deadline exceeded: %s/%s did not complete within %s (slow finite analysis or possible abstract-interpreter non-convergence; rerun that fixture directly with FIXTURE_DEADLINE_SECONDS=%d and FIXTURE_TIMEOUT_EXIT=0 if investigating)", suite.Name, step, deadline, int(deadline.Seconds())*4))
 	}
 }
 
@@ -83,6 +168,8 @@ func TestFixtures(t *testing.T) {
 	if len(suites) == 0 {
 		t.Fatal("no fixture suites found")
 	}
+	startFixtureMemoryGuard(t)
+	fixtureSlots := make(chan struct{}, fixtureParallelism())
 	report := newFixtureImpactRecorder()
 	t.Cleanup(func() {
 		report.finish(t)
@@ -93,6 +180,10 @@ func TestFixtures(t *testing.T) {
 			if !fixtureSequential() {
 				t.Parallel()
 			}
+			fixtureSlots <- struct{}{}
+			t.Cleanup(func() {
+				<-fixtureSlots
+			})
 			suiteStart := time.Now()
 			defer func() {
 				report.recordSuite(s.Name, fixtureTestStatus(t), time.Since(suiteStart), s.Suite.Skip)
@@ -163,6 +254,31 @@ func TestFixtureOrder_GenericRegistryThenMultiReturn(t *testing.T) {
 	runCheckPhase(t, multi)
 }
 
+func TestFixtureOrder_GoogleMetadataThenOptionalHttpBody(t *testing.T) {
+	suites, err := discoverFixtures("testdata/fixtures")
+	if err != nil {
+		t.Fatalf("discovering fixtures: %v", err)
+	}
+
+	var metadata namedSuite
+	var optionalBody namedSuite
+	for _, s := range suites {
+		switch s.Name {
+		case "modules/google-client-metadata-regression":
+			metadata = s
+		case "modules/imported-optional-method-zero-arg-read":
+			optionalBody = s
+		}
+	}
+
+	if metadata.Name == "" || optionalBody.Name == "" {
+		t.Fatalf("missing target suites: metadata=%q optionalBody=%q", metadata.Name, optionalBody.Name)
+	}
+
+	runCheckPhase(t, metadata)
+	runCheckPhase(t, optionalBody)
+}
+
 func TestFixtureDeadlineForSuiteUsesManifestBudget(t *testing.T) {
 	t.Setenv("FIXTURE_DEADLINE_SECONDS", "")
 	suite := namedSuite{Suite: fixtureSuite{DeadlineSeconds: 42}}
@@ -176,6 +292,60 @@ func TestFixtureDeadlineForSuiteEnvOverridesManifestBudget(t *testing.T) {
 	suite := namedSuite{Suite: fixtureSuite{DeadlineSeconds: 42}}
 	if got := fixtureDeadlineForSuite(suite); got != 7*time.Second {
 		t.Fatalf("fixtureDeadlineForSuite = %s, want 7s", got)
+	}
+}
+
+func TestFixtureParallelismEnvOverride(t *testing.T) {
+	t.Setenv("FIXTURE_SEQUENTIAL", "")
+	t.Setenv("FIXTURE_PARALLELISM", "3")
+	if got := fixtureParallelism(); got != 3 {
+		t.Fatalf("fixtureParallelism = %d, want 3", got)
+	}
+}
+
+func TestFixtureParallelismDefaultIsCapped(t *testing.T) {
+	t.Setenv("FIXTURE_SEQUENTIAL", "")
+	t.Setenv("FIXTURE_PARALLELISM", "")
+	previous := runtime.GOMAXPROCS(32)
+	defer runtime.GOMAXPROCS(previous)
+	if got := fixtureParallelism(); got != 4 {
+		t.Fatalf("fixtureParallelism = %d, want capped default 4", got)
+	}
+}
+
+func TestFixtureSequentialForcesSingleSlot(t *testing.T) {
+	t.Setenv("FIXTURE_SEQUENTIAL", "1")
+	t.Setenv("FIXTURE_PARALLELISM", "8")
+	if got := fixtureParallelism(); got != 1 {
+		t.Fatalf("fixtureParallelism = %d, want 1", got)
+	}
+}
+
+func TestFixtureTimeoutExitsProcessByDefault(t *testing.T) {
+	t.Setenv("FIXTURE_TIMEOUT_EXIT", "")
+	if !fixtureTimeoutExitsProcess() {
+		t.Fatal("fixture timeout should exit the process by default")
+	}
+}
+
+func TestFixtureTimeoutExitCanBeDisabled(t *testing.T) {
+	t.Setenv("FIXTURE_TIMEOUT_EXIT", "0")
+	if fixtureTimeoutExitsProcess() {
+		t.Fatal("fixture timeout exit should be disabled by FIXTURE_TIMEOUT_EXIT=0")
+	}
+}
+
+func TestFixtureMemoryLimitDefaultGuardsRunawayFixtures(t *testing.T) {
+	t.Setenv("FIXTURE_MEMORY_LIMIT_MB", "")
+	if got := fixtureMemoryLimitBytes(); got != defaultFixtureMemoryLimitBytes {
+		t.Fatalf("fixtureMemoryLimitBytes = %d, want %d", got, defaultFixtureMemoryLimitBytes)
+	}
+}
+
+func TestFixtureMemoryLimitCanBeDisabled(t *testing.T) {
+	t.Setenv("FIXTURE_MEMORY_LIMIT_MB", "0")
+	if got := fixtureMemoryLimitBytes(); got != 0 {
+		t.Fatalf("fixtureMemoryLimitBytes = %d, want disabled", got)
 	}
 }
 

@@ -26,6 +26,12 @@ func typeWithPresence(t typ.Type, p presence.Value) typ.Type {
 	return t
 }
 
+// TypeWithPresence applies a value-presence lane to a type witness using the
+// same projection TypeOf uses when reconstructing a value type.
+func TypeWithPresence(t typ.Type, p presence.Value) typ.Type {
+	return typeWithPresence(t, p)
+}
+
 // TypeIncludesNil reports whether t admits nil, by direct nil evidence or a
 // nil-bearing projection.
 func TypeIncludesNil(t typ.Type) bool {
@@ -61,6 +67,16 @@ func projectionHasNilDepth(t typ.Type, depth int) bool {
 				return true
 			}
 		}
+	case *typ.Intersection:
+		if len(tt.Members) == 0 {
+			return false
+		}
+		for _, member := range tt.Members {
+			if !projectionHasNilDepth(member, depth+1) {
+				return false
+			}
+		}
+		return true
 	case *typ.Alias:
 		return projectionHasNilDepth(tt.UnaliasedTarget(), depth+1)
 	case *typ.Instantiated:

@@ -13,7 +13,7 @@
         ],
         "min_evidence": 1,
         "evidence_contains": [
-          "right operand `maybe` can be string or nil here"
+          "right operand `maybe` has type nil"
         ],
         "evidence": [
           {
@@ -23,7 +23,7 @@
             "kind": "abstract fact",
             "trust": "proven",
             "contains": [
-              "right operand `maybe` can be string or nil here"
+              "right operand `maybe` has type nil"
             ]
           }
         ],
@@ -37,7 +37,7 @@
           "--> main.lua:2:25",
           "return \"prefix:\" .. maybe",
           "because:",
-          "proven: right operand `maybe` can be string or nil here",
+          "proven: right operand `maybe` has type nil",
           "help: Guard `maybe` or provide a default string before using `..`."
         ],
         "render_not_contains": [

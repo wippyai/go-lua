@@ -19,16 +19,10 @@ func StructuralTypeOf(reg *axis.Registry, cache *Cache, value product.Value, opt
 	valuePresence := product.PresenceOf(value)
 	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
 		if t, ok := witness.Type(); ok {
-			t = structuralTypeWithPresence(t, valuePresence, opts)
-			if !origin.IsBottom() && !origin.IsTop() {
-				if narrowed, ok := cache.NarrowVariantByOrigin(t, origin.Family(), origin.CasesRef()); ok {
-					return narrowed, true
-				}
-				if narrowed, ok := cache.TypeFromVariantOrigin(origin.Family(), origin.CasesRef()); ok {
-					return structuralTypeWithPresence(narrowed, valuePresence, opts), true
-				}
+			if narrowed, ok := narrowTypeByOrigin(t, origin, cache); ok {
+				return structuralTypeWithPresence(narrowed, valuePresence, opts), true
 			}
-			return t, true
+			return structuralTypeWithPresence(t, valuePresence, opts), true
 		}
 	}
 	if !origin.IsBottom() && !origin.IsTop() {

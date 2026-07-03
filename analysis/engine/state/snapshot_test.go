@@ -98,6 +98,20 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 	if got := s.PathRefinementsSnapshot(ks).Refinements[pathKey]; !valueDomain.Equal(got, present) {
 		t.Fatalf("fresh path snapshot = %s, want present", formatValue(reg, got))
 	}
+	var iteratedRefinements int
+	s.ForEachPathRefinement(func(key keyspace.Key, value product.Value) bool {
+		iteratedRefinements++
+		if key != pathHeapKey {
+			t.Fatalf("iterated path-refinement key = %+v, want %+v", key, pathHeapKey)
+		}
+		if !valueDomain.Equal(value, present) {
+			t.Fatalf("iterated path-refinement value = %s, want present", formatValue(reg, value))
+		}
+		return true
+	})
+	if iteratedRefinements != 1 {
+		t.Fatalf("iterated path-refinement count = %d, want 1", iteratedRefinements)
+	}
 
 	memberSnapshot := s.PathStaticMembersSnapshot(ks)
 	if memberSnapshot.Bottom || memberSnapshot.Top || len(memberSnapshot.Members) != 1 {
@@ -109,6 +123,20 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 	}
 	if got := s.PathStaticMembersSnapshot(ks).Members[memberKey]; !valueDomain.Equal(got, present) {
 		t.Fatalf("fresh static-member snapshot = %s, want present", formatValue(reg, got))
+	}
+	var iteratedMembers int
+	s.ForEachPathStaticMember(func(key keyspace.Key, value product.Value) bool {
+		iteratedMembers++
+		if key != memberHeapKey {
+			t.Fatalf("iterated static-member key = %+v, want %+v", key, memberHeapKey)
+		}
+		if !valueDomain.Equal(value, present) {
+			t.Fatalf("iterated static-member value = %s, want present", formatValue(reg, value))
+		}
+		return true
+	})
+	if iteratedMembers != 1 {
+		t.Fatalf("iterated static-member count = %d, want 1", iteratedMembers)
 	}
 
 	dynamicSnapshot := s.DynamicIndexFactsSnapshot()

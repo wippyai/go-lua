@@ -13,7 +13,7 @@ func relationGraphKeyAt(resolver *visibility.Resolver, point cfg.Point, path pat
 	if path.Symbol == 0 {
 		return state.RelOperand{}, false
 	}
-	key, ok := visibility.RootOrVisibleStateKeyAt(resolver, point, path)
+	key, ok := visibility.AddressAt(resolver, point, path).RootOrVisibleStateKey()
 	if !ok {
 		return state.RelOperand{}, false
 	}

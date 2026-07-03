@@ -20,13 +20,17 @@ func projectNormalReturnParamEqualities(reg *axis.Registry, result ResultReader)
 	if len(params) == 0 {
 		return nil
 	}
+	reachability, ok := newNormalReturnReachability(reg, result, graph)
+	if !ok {
+		return nil
+	}
 	var out []summary.ParamEquality
 	for _, point := range graph.RPO() {
 		fact, ok := branchReader.BranchCondition(point)
 		if !ok {
 			continue
 		}
-		normalCond, ok := normalReturnBranchCondition(reg, result, graph, point)
+		normalCond, ok := normalReturnBranchConditionWithReachability(graph, reachability, point)
 		if !ok {
 			continue
 		}

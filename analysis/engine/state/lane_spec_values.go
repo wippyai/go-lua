@@ -1,24 +1,19 @@
 package state
 
-import (
-	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
-	"github.com/wippyai/go-lua/analysis/domain/state/key"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
-)
+import "github.com/wippyai/go-lua/analysis/domain/value/axis"
 
 const LaneValues LaneID = "values"
 
 var valuesLaneSpec = laneSpec{
 	id: LaneValues,
 	build: func(reg *axis.Registry) laneOps {
-		domain := lift.Map[key.Value, product.Value](product.Domain(reg))
+		domain := valueLaneDomain(reg)
 		return stateLane(domain,
-			func(s State) map[key.Value]product.Value {
-				return s.values.asMap(domain)
+			func(s State) valueLane {
+				return s.values
 			},
-			func(out *State, values map[key.Value]product.Value) {
-				out.values = valueLaneFromMap(domain, values)
+			func(out *State, values valueLane) {
+				out.values = values
 			},
 		)
 	},

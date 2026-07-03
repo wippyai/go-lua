@@ -1,9 +1,7 @@
 package effectlowering
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/calloutcome"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -11,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -29,6 +26,7 @@ type ModuleLoadOutcomeProviderConfig struct {
 	NameForSite           SignatureSiteNameFunc
 	Sources               sourcevalue.SourceValues
 	ExpressionRefinements map[factflow.ExprRef]factflow.ExpressionRefinement
+	TypeValues            *typevalue.Cache
 }
 
 // ModuleLoadOutcomeProvider materializes require("exact-path") slot zero from
@@ -39,7 +37,8 @@ func ModuleLoadOutcomeProvider(config ModuleLoadOutcomeProviderConfig) callpaylo
 	nameFor := config.NameFor
 	nameForSite := config.NameForSite
 	sources := config.Sources
-	expressionRefinements := config.ExpressionRefinements
+	expressionRefinements := sourcevalue.NewExpressionRefinements(config.ExpressionRefinements)
+	typeValues := config.TypeValues
 	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
 		if exports == nil || (nameFor == nil && nameForSite == nil) || sources == nil {
 			return callpayload.CallOutcome{}
@@ -55,11 +54,11 @@ func ModuleLoadOutcomeProvider(config ModuleLoadOutcomeProviderConfig) callpaylo
 		if !ok {
 			return callpayload.CallOutcome{}
 		}
-		value, ok := sourcevalue.WithExpressionRefinements(ctx.Registry, sources, expressionRefinements).ValueOfSource(ctx.Point, arg, in, read)
+		value, ok := expressionRefinements.Bind(ctx.Registry, sources).ValueOfSource(ctx.Point, arg, in, read)
 		if !ok {
 			return callpayload.CallOutcome{}
 		}
-		path, ok := exactStringLiteral(ctx.Registry, value)
+		path, ok := typevalue.StringLiteralOf(ctx.Registry, value)
 		if !ok {
 			return callpayload.CallOutcome{}
 		}
@@ -70,31 +69,10 @@ func ModuleLoadOutcomeProvider(config ModuleLoadOutcomeProviderConfig) callpaylo
 		out := callpayload.CallOutcome{
 			Results: []callpayload.CallResult{{
 				Index: 0,
-				Value: returnValueFromType(ctx.Registry, exportType),
+				Value: returnValueFromTypeCached(ctx.Registry, typeValues, exportType),
 			}},
 		}
 		out.PostReturnAuthority = calloutcome.HasAuthoritativePostReturnEvidence(ctx.Registry, out)
 		return out
 	}
-}
-
-func exactStringLiteral(reg *axis.Registry, value product.Value) (string, bool) {
-	if reg == nil {
-		return "", false
-	}
-	witness := product.Get(reg, value, typewitness.Key)
-	t, ok := witness.Type()
-	if !ok {
-		return "", false
-	}
-	return stringLiteralFromWitness(t)
-}
-
-func stringLiteralFromWitness(t typ.Type) (string, bool) {
-	lit, ok := t.(*typ.Literal)
-	if !ok || lit.Base != kind.String {
-		return "", false
-	}
-	value, ok := lit.Value.(string)
-	return value, ok
 }

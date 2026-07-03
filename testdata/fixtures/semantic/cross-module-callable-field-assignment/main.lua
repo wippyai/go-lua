@@ -11,8 +11,11 @@ local imported = protocol.accept
 registry.primary = imported
 registry.backup = protocol.reject
 
-local first = registry.primary
-if first then
+local function exercise_first(first: protocol.Handler?): ()
+    if not first then
+        return
+    end
+
     local result = first({id = "r1", retries = 2})
     if result.ok then
         local label: string = result.label
@@ -24,6 +27,8 @@ if first then
         print(reason)
     end
 end
+
+exercise_first(registry.primary)
 
 registry.primary = function(req: protocol.Request): protocol.Response
     return {

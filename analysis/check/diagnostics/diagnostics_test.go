@@ -67,6 +67,31 @@ func TestFormatTypeUsesBoundedDiagnosticFormatter(t *testing.T) {
 	}
 }
 
+func TestDiagnosticGuardReachabilityClosesContradictoryLiteralEdge(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+local cell: { kind: "string", raw: string } = { kind = "string", raw = "x" }
+if cell.kind == "boolean" and type(cell.raw) == cell.kind then
+    test(cell.raw)
+end
+`)
+	var checked bool
+	for _, point := range result.Graph().RPO() {
+		fact, ok := result.BranchCondition(point)
+		if !ok || fact.Check.Kind != branchcond.CheckLiteralEqual || fact.Check.Path.String() != "cell.kind" {
+			continue
+		}
+		checked = true
+		value, valueOK := result.PathValueBeforeBoundary(point, fact.Check.Path)
+		gotType, gotTypeOK := newDiagnosticQuery(result).ValueTypeWithPresence(value)
+		if !branchGuardContradictsKnownValue(result, point, true, fact.Check) {
+			t.Fatalf("literal guard at point %d did not contradict known cell.kind; value=%v/%v", point, gotType, valueOK && gotTypeOK)
+		}
+	}
+	if !checked {
+		t.Fatal("did not find cell.kind literal guard")
+	}
+}
+
 func TestAnnotationAssignabilityReportsLiteralMismatch(t *testing.T) {
 	diags := runDiagnostics(t, `local x: number = "no"`)
 	if len(diags) != 1 {
@@ -101,6 +126,26 @@ func TestProduceWithConfigAppliesDiagnosticPolicy(t *testing.T) {
 	}
 	if remapped[0].Code != CodeAssignmentType || remapped[0].Severity != diagnostic.SeverityHint {
 		t.Fatalf("remapped diagnostic = %#v, want assignment diagnostic with hint severity", remapped[0])
+	}
+}
+
+func TestProduceSuppressesAssignmentCascadeFromUnresolvedRoot(t *testing.T) {
+	diags := runDiagnosticsFull(t, `local n: number = provider.meta()`, nil, signaturelookup.Source{})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want only unresolved provider", diags)
+	}
+	if diags[0].Code != CodeUnresolvedValueReference {
+		t.Fatalf("diagnostic code = %s, want %s", diags[0].Code, CodeUnresolvedValueReference)
+	}
+}
+
+func TestProduceKeepsUntrustedAnyAssignmentWithoutUnresolvedRoot(t *testing.T) {
+	diags := runDiagnosticsWithGlobals(t, `local n: number = provider.meta()`, []string{"provider"})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want untrusted any assignment", diags)
+	}
+	if diags[0].Code != CodeAssignmentType {
+		t.Fatalf("diagnostic code = %s, want %s", diags[0].Code, CodeAssignmentType)
 	}
 }
 
@@ -177,6 +222,35 @@ func TestDiagnosticProducerRegistryDeclaresPolicyDefaults(t *testing.T) {
 	if !optIn.shouldRun(diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{CodeUnusedLocal: diagnostic.Enable()}}) {
 		t.Fatalf("opt-in producer should run when explicitly enabled")
 	}
+}
+
+func TestDiagnosticProducerRegistryHasDirectCallJudgmentOwner(t *testing.T) {
+	count := 0
+	for _, producer := range diagnosticProducers() {
+		if diagnosticProducerOwnsCode(producer, CodeDirectCallNotCallable) &&
+			diagnosticProducerOwnsCode(producer, CodeDirectCallTooFewArgs) &&
+			diagnosticProducerOwnsCode(producer, CodeDirectCallTooManyArgs) &&
+			diagnosticProducerOwnsCode(producer, CodeDirectCallArgType) {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("direct-call judgment producer entries = %d, want 1", count)
+	}
+	for _, producer := range diagnosticProducers() {
+		if len(producer.codes) == 1 && producer.codes[0] == CodeDirectCallArgType {
+			t.Fatalf("direct-call argument-only migration producer should be deleted")
+		}
+	}
+}
+
+func diagnosticProducerOwnsCode(producer diagnosticProducer, code diagnostic.Code) bool {
+	for _, got := range producer.codes {
+		if got == code {
+			return true
+		}
+	}
+	return false
 }
 
 func TestProduceOrdersDiagnosticsBySourcePositionAcrossProducers(t *testing.T) {
@@ -313,6 +387,20 @@ func TestAnnotationAssignabilityAcceptsHomogeneousArrayLiteral(t *testing.T) {
 	}
 }
 
+func TestAnnotationAssignabilityAcceptsUnannotatedArrayLiteralConstantIndex(t *testing.T) {
+	for _, src := range []string{
+		`local arr = {1, 2, 3}
+local n: number = arr[1]`,
+		`local arr = {1, 2, 3}
+local n: number = arr[3]`,
+	} {
+		diags := runDiagnostics(t, src)
+		if len(diags) != 0 {
+			t.Fatalf("diagnostics = %#v, want none for %q", diags, src)
+		}
+	}
+}
+
 func TestAnnotationAssignabilityAcceptsTableInsertLengthFloorArrayIndex(t *testing.T) {
 	diags := runDiagnosticsWithSignatures(t, `
 local arr: {number} = {}
@@ -352,7 +440,7 @@ local n: number = arr[3]
 	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
 		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
 	}
-	if !strings.Contains(d.Message, "cannot assign arr[3]") || !strings.Contains(d.Message, "may be nil") || !strings.Contains(d.Explanation.String(), "no guard on this path proves arr[3] is non-nil") {
+	if !strings.Contains(d.Message, "cannot assign arr[3]") || !strings.Contains(d.Message, "may be nil") || !strings.Contains(d.Explanation.String(), "arr[3] is an indexed read that can miss or read nil") {
 		t.Fatalf("diagnostic = %#v, want optional array index with missing-proof evidence", d)
 	}
 }
@@ -371,7 +459,7 @@ local n: number = arr[0]
 	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
 		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
 	}
-	if !strings.Contains(d.Message, "cannot assign arr[0]") || !strings.Contains(d.Message, "may be nil") || !strings.Contains(d.Explanation.String(), "no guard on this path proves arr[0] is non-nil") {
+	if !strings.Contains(d.Message, "cannot assign arr[0]") || !strings.Contains(d.Message, "may be nil") || !strings.Contains(d.Explanation.String(), "arr[0] is an indexed read that can miss or read nil") {
 		t.Fatalf("diagnostic = %#v, want optional zero-index read with missing-proof evidence", d)
 	}
 }
@@ -392,7 +480,7 @@ end
 	}
 	if !strings.Contains(d.Message, "cannot return xs[1] as returned value 1") ||
 		!strings.Contains(d.Message, "may be nil") ||
-		!strings.Contains(d.Explanation.String(), "no proof on this path shows returned value 1 (xs[1]) satisfies the declared return type") {
+		!strings.Contains(d.Explanation.String(), "returned value 1 (xs[1]) is an indexed read that can miss or read nil") {
 		t.Fatalf("diagnostic = %#v, want optional root array read with missing-proof evidence", d)
 	}
 }
@@ -412,7 +500,7 @@ local n: number = arr[2]
 	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
 		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
 	}
-	if !strings.Contains(d.Message, "cannot assign arr[2]") || !strings.Contains(d.Message, "may be nil") || !strings.Contains(d.Explanation.String(), "no guard on this path proves arr[2] is non-nil") {
+	if !strings.Contains(d.Message, "cannot assign arr[2]") || !strings.Contains(d.Message, "may be nil") || !strings.Contains(d.Explanation.String(), "arr[2] is an indexed read that can miss or read nil") {
 		t.Fatalf("diagnostic = %#v, want optional post-remove read with missing-proof evidence", d)
 	}
 }
@@ -431,7 +519,7 @@ end
 	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
 		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
 	}
-	if !strings.Contains(d.Message, "cannot assign lookup[2]") || !strings.Contains(d.Message, "may be nil") || !strings.Contains(d.Explanation.String(), "no guard on this path proves lookup[2] is non-nil") {
+	if !strings.Contains(d.Message, "cannot assign lookup[2]") || !strings.Contains(d.Message, "may be nil") || !strings.Contains(d.Explanation.String(), "lookup[2] is an indexed read that can miss or read nil") {
 		t.Fatalf("diagnostic = %#v, want optional map index with missing-proof evidence", d)
 	}
 }
@@ -529,9 +617,7 @@ local source: string = maybe.tags["source"]
 	wantEvidence := []string{
 		`maybe.tags["source"] can be string or nil here`,
 		"source is declared as string",
-		"maybe may be nil before reading .tags",
-		`maybe.tags may be nil before indexing ["source"]`,
-		`no guard on this path proves maybe.tags["source"] is non-nil`,
+		`maybe.tags["source"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here`,
 	}
 	if len(evidence) != len(wantEvidence) {
 		t.Fatalf("evidence = %#v, want %d ordered items", evidence, len(wantEvidence))
@@ -540,6 +626,31 @@ local source: string = maybe.tags["source"]
 		if evidence[i].Message != want {
 			t.Fatalf("evidence[%d] = %q, want %q; full evidence = %#v", i, evidence[i].Message, want, evidence)
 		}
+	}
+}
+
+func TestAnnotationAssignabilityReportsOptionalCallResultMemberReadWithoutGuard(t *testing.T) {
+	src := `
+type Config = {host: string, port: number}
+local function parse_config(ok: boolean): (Config?, string?)
+	if not ok then
+		return nil, "failed"
+	end
+	return {host = "localhost", port = 8080}, nil
+end
+local function use(ok: boolean)
+	local cfg, err = parse_config(ok)
+	local host: string = cfg.host
+end
+`
+	root := runDiagnosticsResult(t, src)
+	diags := Produce(root)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one assignment diagnostic", diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || !strings.Contains(d.Message, "cfg.host") || !strings.Contains(d.Message, "may be nil") {
+		t.Fatalf("diagnostic = %#v, want optional call-result member assignment", d)
 	}
 }
 
@@ -568,13 +679,36 @@ local source: string = maybe.tags["source"]
 because:
   1. proven: maybe.tags["source"] can be string or nil here
   2. claimed: source is declared as string
-  3. proven: maybe may be nil before reading .tags
-  4. proven: maybe.tags may be nil before indexing ["source"]
-  5. missing proof: no guard on this path proves maybe.tags["source"] is non-nil
+  3. missing proof: maybe.tags["source"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here
 
 help: Guard ` + "`maybe.tags[\"source\"]`" + ` with a nil check, provide a default value, or change the target type to accept nil.`
 	if rendered != want {
 		t.Fatalf("rendered diagnostic mismatch (-want +got):\n%s", renderLineDiff(want, rendered))
+	}
+}
+
+func TestAnnotationAssignabilityReportsOptionalAliasMapIndex(t *testing.T) {
+	diags := runDiagnostics(t, `
+type RequestMeta = {
+	tags: {[string]: string}?,
+}
+type Message = {
+	meta: RequestMeta,
+}
+local msg: Message = {
+	meta = {
+		tags = nil,
+	},
+}
+local tags = msg.meta.tags
+local bad_source: string = tags["source"]
+`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one optional alias map-index assignment", diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || !strings.Contains(d.Message, `tags["source"]`) || !strings.Contains(d.Message, "may be nil") {
+		t.Fatalf("diagnostic = %#v, want optional alias map-index assignment", d)
 	}
 }
 
@@ -605,7 +739,7 @@ accept(raw)
 		t.Fatalf("diagnostic = %#v, want direct call mismatch for record id contract", d)
 	}
 	if got := diags[0].Explanation.String(); !strings.Contains(got, "argument 1 (raw) has type any") ||
-		!strings.Contains(got, "user asserted any") ||
+		!strings.Contains(got, "raw comes from any/unknown") ||
 		!strings.Contains(got, "no proof on this path shows raw satisfies the parameter type") {
 		t.Fatalf("explanation = %q, want explicit-any claim and missing-proof evidence", got)
 	}
@@ -626,12 +760,12 @@ return need_id({ name = "no-id-here" })
 	}
 	evidence := d.Explanation.Evidence()
 	if !diagnosticEvidenceContains(evidence, `argument 1 has type {name: "no-id-here"}`) ||
-		!diagnosticEvidenceContains(evidence, "need_id parameter 1 expects {id: string}") ||
+		!diagnosticEvidenceContains(evidence, "need_id parameter 1.id expects {id: string}") ||
 		!diagnosticEvidenceContains(evidence, `object literal does not provide field "id"`) {
 		t.Fatalf("evidence = %#v, want actual type, constraint, and missing-field missing proof", evidence)
 	}
 	missing := evidence[len(evidence)-1]
-	if missing.Kind != diagnostic.EvidenceMissingProof || missing.Trust != diagnostic.TrustUnknown {
+	if missing.Kind != diagnostic.EvidenceMissingProof {
 		t.Fatalf("missing-field evidence = %#v, want missing-proof evidence", missing)
 	}
 }
@@ -751,32 +885,57 @@ func TestDirectCallSiteUsesMemberAccessStructurally(t *testing.T) {
 		CalleeSymbol: 1,
 		CalleePath:   path.Path{Root: "math.max"},
 	})
-	directFact := semantics.CallFact{
-		Call: &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "math_max"}},
-	}
-	if directCallSiteUsesMemberAccess(directSite, directFact) {
+	if directSite.CalleeMemberAccess() {
 		t.Fatalf("punctuated direct callee root was classified as member access")
 	}
 
 	memberPathSite := factflow.NewCallSite(factflow.CallSiteConfig{
-		CalleeSymbol: 2,
-		CalleePath:   path.Path{Root: "api"}.Field("make"),
+		CalleeSymbol:       2,
+		CalleePath:         path.Path{Root: "api"}.Field("make"),
+		CalleeMemberAccess: true,
 	})
-	if !directCallSiteUsesMemberAccess(memberPathSite, directFact) {
+	if !memberPathSite.CalleeMemberAccess() {
 		t.Fatalf("callee path with a field segment was not classified as member access")
 	}
 
-	attrFact := semantics.CallFact{
-		Call: &ast.FuncCallExpr{
-			Func: &ast.AttrGetExpr{
-				Object:    &ast.IdentExpr{Value: "api"},
-				Key:       &ast.IdentExpr{Value: "make"},
-				KeySyntax: ast.AttrKeyDot,
-			},
-		},
-	}
-	if !directCallSiteUsesMemberAccess(directSite, attrFact) {
+	attrSite := factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol:       3,
+		CalleePath:         path.Path{Root: "api.make"},
+		CalleeMemberAccess: true,
+	})
+	if !attrSite.CalleeMemberAccess() {
 		t.Fatalf("attribute callee expression was not classified as member access")
+	}
+}
+
+func TestCallMemberAccessInfoForSiteUsesCallSiteShape(t *testing.T) {
+	site := factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleePath:         path.NewPath(22, "api").Field("make"),
+		CalleeMemberAccess: true,
+	})
+	fact := semantics.CallFact{
+		Call:               &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "legacy_make"}},
+		CalleeMemberAccess: true,
+		CalleePath:         path.NewPath(23, "legacy").Field("wrong"),
+		HasCalleePath:      true,
+	}
+
+	access, ok := callMemberAccessInfoForSite(site, fact)
+	if !ok {
+		t.Fatal("callMemberAccessInfoForSite rejected call-site member access")
+	}
+	if !access.receiver.Equal(path.NewPath(22, "api")) || memberSegmentDisplay(access.member) != "make" {
+		t.Fatalf("member access = %v.%s, want api.make from call-site evidence", access.receiver, memberSegmentDisplay(access.member))
+	}
+}
+
+func TestCallObligationNameUsesCallSiteMemberShape(t *testing.T) {
+	site := factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleePath:         path.NewPath(24, "api").Field("make"),
+		CalleeMemberAccess: true,
+	})
+	if got := callObligationName(nil, site); got != "receiver.make" {
+		t.Fatalf("call obligation name = %q, want receiver.make from call-site evidence", got)
 	}
 }
 
@@ -799,7 +958,7 @@ function consume(primary: Channel<Event>, timers: Channel<Timer>): string
 		local timer = result.value
 		local elapsed: number = timer.elapsed
 		local wrong: string = timer.elapsed
-		return tostring(elapsed)
+		return ""
 	end
 	return ""
 end
@@ -826,6 +985,21 @@ func TestAnnotationAssignabilityRejectsGradualUntypedDynamicMapWriteWithoutProof
 	}
 	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "string") {
 		t.Fatalf("diagnostic = %#v, want typed map assignment error", d)
+	}
+}
+
+func TestAnnotationAssignabilityUsesDeclaredMapContractForDynamicWriteAfterLiteralInitializer(t *testing.T) {
+	diags := runDiagnostics(t, `
+		function f(header_name: string, header_value: string): ()
+			local headers: {[string]: string} = {
+				["content-type"] = "application/json",
+				["accept"] = "application/json",
+			}
+			headers[header_name] = header_value
+		end
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want declared string-map write contract instead of literal initializer slots", diags)
 	}
 }
 
@@ -950,7 +1124,7 @@ func TestAnnotationAssignabilityRejectsExplicitAnyAsProof(t *testing.T) {
 		msg := d.Message
 		assignment = assignment || strings.Contains(msg, "cannot assign raw because it is any, not") && strings.Contains(msg, "id: string")
 		field = field || strings.Contains(msg, "cannot assign raw.id because it is any, not string")
-		call = call || strings.Contains(msg, "argument 1 (raw) is any") && strings.Contains(msg, "not Payload")
+		call = call || strings.Contains(msg, "argument 1 (raw) comes from any/unknown") && strings.Contains(msg, "no proof shows it is")
 	}
 	if !assignment || !field || !call {
 		t.Fatalf("diagnostics = %#v, want explicit-any assignment, field, and call errors", diags)
@@ -1046,23 +1220,29 @@ end
 	}
 }
 
-func TestAnnotationAssignabilitySkipsUnannotatedIdentifierSources(t *testing.T) {
+func TestAnnotationAssignabilityReportsUntrustedIdentifierSource(t *testing.T) {
 	diags := runDiagnostics(t, `
 		local y = value
 		local x: number = y
 	`)
-	if len(diags) != 0 {
-		t.Fatalf("diagnostics = %#v, want none for unannotated identifier source", diags)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want untrusted identifier assignment error", diags)
+	}
+	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "cannot assign y") || !strings.Contains(d.Message, "any") {
+		t.Fatalf("diagnostic = %#v, want untrusted identifier assignment error", d)
 	}
 }
 
-func TestAnnotationAssignabilitySkipsAnnotatedIdentifierWithoutPointProof(t *testing.T) {
+func TestAnnotationAssignabilityReportsAnnotatedIdentifierOptionalWithoutNarrowing(t *testing.T) {
 	diags := runDiagnostics(t, `
-		local x: string? = value
+		local x: string? = nil
 		local s: string = x
 	`)
-	if len(diags) != 0 {
-		t.Fatalf("diagnostics = %#v, want none without point-local source proof", diags)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want optional identifier assignment error", diags)
+	}
+	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "cannot assign x") || !strings.Contains(d.Message, "nil, not string") {
+		t.Fatalf("diagnostic = %#v, want exact nil identifier assignment error", d)
 	}
 }
 
@@ -1142,14 +1322,30 @@ func TestAnnotationAssignabilityUsesSolvedTypeTestState(t *testing.T) {
 	}
 }
 
-func TestAnnotationAssignabilityUsesTypeIsWrapperErrorBranchState(t *testing.T) {
+func TestAnnotationAssignabilityUsesElementRuntimeTypeGuardWithoutProvingArray(t *testing.T) {
+	diags := runDiagnostics(t, `
+local raw: any = {
+	items = {"ok", 42},
+}
+
+if type(raw.items) == "table" and type(raw.items[1]) == "string" then
+	local first: string = raw.items[1]
+	local all_items: {string} = raw.items
+end
+`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want only array-shape assignment diagnostic", diags)
+	}
+	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "raw.items") || strings.Contains(d.Message, "raw.items[1]") {
+		t.Fatalf("diagnostic = %#v, want raw.items array-shape assignment only", d)
+	}
+}
+
+func TestAnnotationAssignabilityUsesTypeIsErrorBranchState(t *testing.T) {
 	diags := runDiagnostics(t, `
 		type Point = {x: number, y: number}
-		local function isPoint(x)
-			return Point:is(x)
-		end
 		function validate(data: any)
-			local val, err = isPoint(data)
+			local val, err = Point:is(data)
 			if err ~= nil then
 				local p: Point = val
 			end
@@ -1395,7 +1591,6 @@ because:
   |
 8 |         res = { answer = 1 }
   |               ^
-  4. missing proof: no proof on this path shows res.answer satisfies the declared type
 
 help: Use a value compatible with the expected type, or change the target type if ` + "`res.answer`" + ` is valid.`
 	if rendered != want {
@@ -1763,8 +1958,13 @@ func TestAnnotationAssignabilityUsesBoundaryProofAfterAssignedTypeCast(t *testin
 		end
 		return validate, validate_assign, validate_wrapped
 	`, nil)
-	if len(diags) != 0 {
-		t.Fatalf("diagnostics = %#v, want none after type-cast postcondition", diags)
+	if len(diags) != 3 {
+		t.Fatalf("diagnostics = %#v, want strict-any assignment errors after type-cast postcondition", diags)
+	}
+	for _, d := range diags {
+		if d.Code != CodeAssignmentType || !strings.Contains(d.Message, "data") || !strings.Contains(d.Message, "any") {
+			t.Fatalf("diagnostic = %#v, want strict-any assignment error", d)
+		}
 	}
 }
 

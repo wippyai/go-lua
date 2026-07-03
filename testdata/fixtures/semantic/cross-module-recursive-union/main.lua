@@ -1,4 +1,5 @@
 local builder = require("builder")
+local protocol = require("protocol")
 
 local node = builder.make()
 if node.kind == "group" then
@@ -8,8 +9,13 @@ if node.kind == "group" then
     end
 end
 
-if node.kind == "text" then
-    local children = node.children -- expect-error
+local function inspect(candidate: protocol.Node): ()
+    if candidate.kind == "text" then
+        local children = candidate.children -- expect-error
+        print(children)
+    end
 end
+
+inspect(node)
 
 return "ok"

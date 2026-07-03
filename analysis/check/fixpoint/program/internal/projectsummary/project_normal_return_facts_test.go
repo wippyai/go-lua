@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
@@ -23,22 +24,27 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
+	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func TestCFGReachabilityCacheTreatsEntryAsReachablePoint(t *testing.T) {
+func TestProjectSummaryReachabilityTreatsEntryAsReachablePoint(t *testing.T) {
 	graph := cfg.New()
 	body := graph.AddNode(cfg.NodeAssign)
 	graph.AddEdge(graph.Entry(), body, false)
 	graph.AddEdge(body, graph.Exit(), false)
 
-	reach := newCFGReachabilityCache(graph)
-	if !reach.canReach(graph.Entry(), graph.Exit()) {
+	reach := cfg.NewReachability(graph)
+	if !reach.CanReach(graph.Entry(), graph.Exit()) {
 		t.Fatalf("entry should reach exit through project-summary reachability cache")
 	}
-	if !reach.canReach(graph.Entry(), graph.Entry()) {
+	if !reach.CanReach(graph.Entry(), graph.Entry()) {
 		t.Fatalf("entry should reach itself through project-summary reachability cache")
 	}
 }
@@ -334,6 +340,87 @@ func TestFromResultDoesNotProjectExitNumFloorForReassignedParameter(t *testing.T
 	}
 }
 
+func TestFromResultProjectsReturnedDynamicKeyMembershipFacts(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	table := symbol.ID(914)
+	keys := symbol.ID(915)
+	returnPoint := cfg.Point(914)
+	returnExpr := factflow.ExprRef(914)
+	keysPath := pathdom.NewPath(keys, "keys")
+	tablePath := pathdom.NewPath(table, "source")
+	keysKey := ks.FromPath(keysPath)
+	tableKey := testStateKey(t, tablePath.Key())
+	site := dynamicindex.Site("project.returned.keys")
+	value := presentProduct(reg)
+
+	exit := state.State{}.
+		WriteDynamicIndexFact(reg, dynamicindex.Key{Table: keysKey, Site: site}, dynamicindex.Fact{
+			KeyPresence: presence.Present(),
+			KeyValue:    value,
+			Value:       value,
+			Admission:   dynamicindex.AdmissionAdmitted,
+		}).
+		AddDynamicIndexValueKeyMembership(keysKey, site, tableKey)
+
+	got := FromResult(normalReturnFactProjectResultStub{
+		reg:          reg,
+		graph:        cfg.New(),
+		exit:         exit,
+		slots:        []key.Value{key.SymbolValue(table)},
+		keys:         ks,
+		returnPoints: []cfg.Point{returnPoint},
+		returnSources: map[cfg.Point][]factflow.ValueSource{
+			returnPoint: {{Kind: factflow.ValueSourceExpression, ExprRef: returnExpr, HasExpr: true}},
+		},
+		exprPaths: map[factflow.ExprRef]pathdom.Path{
+			returnExpr: keysPath,
+		},
+	}).NormalReturnFacts
+
+	assertDynamicAdmission(t, got.DynamicIndexFacts, string(site), pathdom.Path{Root: "ret[0]"}, dynamicindex.AdmissionAdmitted)
+	if len(got.DynamicValueKeys) != 1 ||
+		!got.DynamicValueKeys[0].Container.Equal(pathdom.Path{Root: "ret[0]"}) ||
+		got.DynamicValueKeys[0].Site != site ||
+		!got.DynamicValueKeys[0].Table.Equal(pathdom.NewPlaceholder(0)) {
+		t.Fatalf("DynamicValueKeys = %#v, want ret[0] values proven as keys of $0", got.DynamicValueKeys)
+	}
+}
+
+func TestFromResultProjectsReturnedPathStaticMemberFacts(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	obj := symbol.ID(916)
+	returnPoint := cfg.Point(916)
+	returnExpr := factflow.ExprRef(916)
+	objStatePath := pathdom.Path{Root: "obj", Symbol: obj, Version: 1}
+	objReturnPath := pathdom.NewPath(obj, "obj")
+	memberValue := presentProduct(reg)
+
+	exit := state.State{}.
+		WritePathStaticMember(ks, objStatePath.Field("get_x").Key(), memberValue)
+	if _, ok := exit.ReadPathStaticMember(ks, objStatePath.Field("get_x").Key()); !ok {
+		t.Fatalf("test setup did not write static member for %s", objStatePath.Field("get_x").Key())
+	}
+	stub := normalReturnFactProjectResultStub{
+		reg:          reg,
+		graph:        cfg.New(),
+		exit:         exit,
+		keys:         ks,
+		returnPoints: []cfg.Point{returnPoint},
+		returnSources: map[cfg.Point][]factflow.ValueSource{
+			returnPoint: {{Kind: factflow.ValueSourceExpression, ExprRef: returnExpr, HasExpr: true}},
+		},
+		exprPaths: map[factflow.ExprRef]pathdom.Path{
+			returnExpr: objReturnPath,
+		},
+	}
+
+	got := FromResult(stub).NormalReturnFacts
+
+	assertPathStaticMember(t, reg, got.PathStaticMembers, pathdom.Path{Root: "ret[0]"}.Field("get_x"), memberValue)
+}
+
 func TestFromResultSkipsTopSnapshotsAndTopNormalReturnFacts(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()
@@ -408,6 +495,206 @@ func TestFromResultProjectsAssignmentBasedParameterInvalidationWithoutExitState(
 
 	got := FromResult(stub).NormalReturnFacts
 	assertPathInvalidation(t, got.PathInvalidations, pathdom.NewPlaceholder(0))
+	assertStructuralPreservingPathInvalidation(t, got.PathInvalidations, pathdom.NewPlaceholder(0))
+	assertNonClearingPathInvalidation(t, got.PathInvalidations, pathdom.NewPlaceholder(0))
+}
+
+func TestFromResultProjectsDynamicContainerAssignmentAsStructuralPreservingInvalidation(t *testing.T) {
+	reg := standard.Registry()
+	param := symbol.ID(9251)
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+	stub := normalReturnFactProjectAssignmentStub{
+		normalReturnFactProjectResultStub: normalReturnFactProjectResultStub{
+			reg:   reg,
+			graph: graph,
+			exit:  state.State{},
+			slots: []key.Value{key.SymbolValue(param)},
+		},
+		assignments: map[cfg.Point]semantics.OrdinaryAssignmentFact{
+			assign: {
+				ContainerPath:    pathdom.NewPath(param, "").Field("metadata"),
+				HasContainerPath: true,
+			},
+		},
+	}
+
+	got := FromResult(stub).NormalReturnFacts
+	want := pathdom.NewPlaceholder(0).Field("metadata")
+	assertPathInvalidation(t, got.PathInvalidations, want)
+	assertStructuralPreservingPathInvalidation(t, got.PathInvalidations, want)
+	assertNonClearingPathInvalidation(t, got.PathInvalidations, want)
+}
+
+func TestFromResultProjectsDirectFieldAssignmentAsStructuralPreservingTargetClearInvalidation(t *testing.T) {
+	reg := standard.Registry()
+	param := symbol.ID(9252)
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+	stub := normalReturnFactProjectAssignmentStub{
+		normalReturnFactProjectResultStub: normalReturnFactProjectResultStub{
+			reg:   reg,
+			graph: graph,
+			exit:  state.State{},
+			slots: []key.Value{key.SymbolValue(param)},
+		},
+		assignments: map[cfg.Point]semantics.OrdinaryAssignmentFact{
+			assign: {
+				Path:    pathdom.NewPath(param, "").Field("metadata"),
+				HasPath: true,
+			},
+		},
+	}
+
+	got := FromResult(stub).NormalReturnFacts
+	want := pathdom.NewPlaceholder(0).Field("metadata")
+	assertPathInvalidation(t, got.PathInvalidations, want)
+	assertStructuralPreservingPathInvalidation(t, got.PathInvalidations, want)
+	assertClearingPathInvalidation(t, got.PathInvalidations, want)
+}
+
+func TestFromResultProjectsCapturedRootReassignmentInvalidation(t *testing.T) {
+	reg := standard.Registry()
+	captured := symbol.ID(926)
+	fn := &ast.FunctionExpr{}
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+	stub := normalReturnFactProjectAssignmentStub{
+		normalReturnFactProjectResultStub: normalReturnFactProjectResultStub{
+			reg:   reg,
+			graph: graph,
+			exit:  state.State{},
+		},
+		fn: fn,
+		captures: []bind.Capture{{
+			Captured:     captured,
+			CapturedName: "value",
+		}},
+		assignments: map[cfg.Point]semantics.OrdinaryAssignmentFact{
+			assign: {
+				Symbol:    captured,
+				HasSymbol: true,
+			},
+		},
+	}
+
+	got := FromResult(stub).NormalReturnFacts
+	assertPathInvalidation(t, got.PathInvalidations, pathdom.NewPath(captured, ""))
+}
+
+func TestFromResultProjectsCapturedRootReassignmentPersistentWrite(t *testing.T) {
+	reg := standard.Registry()
+	captured := symbol.ID(927)
+	fn := &ast.FunctionExpr{}
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+	value := presentProduct(reg)
+	stub := normalReturnFactProjectAssignmentStub{
+		normalReturnFactProjectResultStub: normalReturnFactProjectResultStub{
+			reg:   reg,
+			graph: graph,
+			exit:  state.State{}.WriteValue(reg, key.SymbolValue(captured), value),
+		},
+		fn: fn,
+		captures: []bind.Capture{{
+			Captured:     captured,
+			CapturedName: "captured",
+		}},
+		assignments: map[cfg.Point]semantics.OrdinaryAssignmentFact{
+			assign: {
+				Symbol:    captured,
+				HasSymbol: true,
+			},
+		},
+	}
+
+	got := FromResult(stub).NormalReturnFacts
+	assertPathValueFact(t, reg, got.PersistentPathWrites, pathdom.NewPath(captured, ""), portableBoundaryValue(reg, value))
+}
+
+func TestFromResultProjectsCapturedRootReassignmentPersistentWriteFromPresentSource(t *testing.T) {
+	reg := standard.Registry()
+	captured := symbol.ID(9271)
+	fn := &ast.FunctionExpr{}
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+
+	record := typetable.NewRecord().
+		Field("apply", typ.Func().Returns(typ.String).Build()).
+		Build()
+	optional := typeexpr.Optional(record)
+	optionalValue := typevalue.WithWitness(reg, typevalue.FromType(reg, optional), optional)
+	assignValue := &ast.TableExpr{}
+	stub := normalReturnFactProjectAssignmentStub{
+		normalReturnFactProjectResultStub: normalReturnFactProjectResultStub{
+			reg:   reg,
+			graph: graph,
+			exit:  state.State{}.WriteValue(reg, key.SymbolValue(captured), optionalValue),
+		},
+		fn: fn,
+		captures: []bind.Capture{{
+			Captured:     captured,
+			CapturedName: "captured",
+		}},
+		assignments: map[cfg.Point]semantics.OrdinaryAssignmentFact{
+			assign: {
+				Symbol:    captured,
+				HasSymbol: true,
+				Value:     assignValue,
+			},
+		},
+		exprValuesBefore: map[cfg.Point]product.Value{
+			assign: optionalValue,
+		},
+	}
+
+	got := FromResult(stub).NormalReturnFacts
+	fact := findPathRefinement(got.PersistentPathWrites, pathdom.NewPath(captured, ""))
+	if fact == nil {
+		t.Fatalf("PersistentPathWrites = %#v, want captured write", got.PersistentPathWrites)
+	}
+	gotType, ok := typevalue.TypeOf(reg, fact.Value)
+	if !ok || !typ.TypeEquals(gotType, record) {
+		t.Fatalf("persistent write type = %v/%v, want present %v", gotType, ok, record)
+	}
+}
+
+func TestFromResultDoesNotProjectParameterRootReassignmentInvalidation(t *testing.T) {
+	reg := standard.Registry()
+	param := symbol.ID(928)
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+	stub := normalReturnFactProjectAssignmentStub{
+		normalReturnFactProjectResultStub: normalReturnFactProjectResultStub{
+			reg:   reg,
+			graph: graph,
+			exit:  state.State{},
+			slots: []key.Value{key.SymbolValue(param)},
+		},
+		assignments: map[cfg.Point]semantics.OrdinaryAssignmentFact{
+			assign: {
+				Symbol:    param,
+				HasSymbol: true,
+			},
+		},
+	}
+
+	got := FromResult(stub).NormalReturnFacts
+	if len(got.PathInvalidations) != 0 {
+		t.Fatalf("PathInvalidations = %#v, want none for callee-local parameter rebinding", got.PathInvalidations)
+	}
 }
 
 func TestFromResultProjectsHeapTableObjectsFromExitSnapshots(t *testing.T) {
@@ -648,18 +935,132 @@ func TestFromResultProjectsMandatoryCallOutcomeLifecycleFactsForCapturedPath(t *
 	assertLifecycleFact(t, got.LifecycleFacts, capturedPath, callboundary.LifecycleTransition)
 }
 
+func TestFromResultProjectsMandatoryCallOutcomePersistentPathWrites(t *testing.T) {
+	reg := standard.Registry()
+	captured := symbol.ID(948)
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+	capturedPath := pathdom.NewPath(captured, "captured")
+	value := presentProduct(reg)
+
+	stub := normalReturnFactProjectCallStub{
+		normalReturnFactProjectResultStub: normalReturnFactProjectResultStub{
+			reg:   reg,
+			graph: graph,
+			exit:  state.State{},
+		},
+		calls: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{Context: factflow.CallSiteContextStatement}),
+		},
+		outcomes: map[cfg.Point]callpayload.CallOutcome{
+			call: {
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					PersistentPathWrites: []callboundary.PathValueFact{{Path: capturedPath, Value: value}},
+				},
+			},
+		},
+	}
+
+	got := FromResult(stub).NormalReturnFacts
+	assertPathValueFact(t, reg, got.PersistentPathWrites, capturedPath, value)
+}
+
+func TestFromResultDoesNotProjectBranchLocalCallOutcomePersistentPathWrites(t *testing.T) {
+	reg := standard.Registry()
+	captured := symbol.ID(949)
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, call, true)
+	graph.AddEdge(branch, graph.Exit(), false)
+	graph.AddEdge(call, graph.Exit(), false)
+	capturedPath := pathdom.NewPath(captured, "captured")
+
+	stub := normalReturnFactProjectCallStub{
+		normalReturnFactProjectResultStub: normalReturnFactProjectResultStub{
+			reg:   reg,
+			graph: graph,
+			exit:  state.State{},
+		},
+		calls: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{Context: factflow.CallSiteContextStatement}),
+		},
+		outcomes: map[cfg.Point]callpayload.CallOutcome{
+			call: {
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					PersistentPathWrites: []callboundary.PathValueFact{{Path: capturedPath, Value: presentProduct(reg)}},
+				},
+			},
+		},
+	}
+
+	got := FromResult(stub).NormalReturnFacts
+	if len(got.PersistentPathWrites) != 0 {
+		t.Fatalf("PersistentPathWrites = %#v, want none for branch-local call", got.PersistentPathWrites)
+	}
+}
+
+func TestFromResultProjectsGuardedCallOutcomePersistentPathWritesWhenBypassEdgeUnreachable(t *testing.T) {
+	reg := standard.Registry()
+	captured := symbol.ID(950)
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, call, true)
+	graph.AddEdge(branch, graph.Exit(), false)
+	graph.AddEdge(call, graph.Exit(), false)
+	capturedPath := pathdom.NewPath(captured, "captured")
+	value := presentProduct(reg)
+
+	stub := normalReturnFactProjectCallStub{
+		normalReturnFactProjectResultStub: normalReturnFactProjectResultStub{
+			reg:   reg,
+			graph: graph,
+			exit:  state.State{},
+			edgeReach: map[[2]cfg.Point]bool{
+				{branch, graph.Exit()}: false,
+			},
+		},
+		calls: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{Context: factflow.CallSiteContextStatement}),
+		},
+		outcomes: map[cfg.Point]callpayload.CallOutcome{
+			call: {
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					PersistentPathWrites: []callboundary.PathValueFact{{Path: capturedPath, Value: value}},
+				},
+			},
+		},
+	}
+
+	got := FromResult(stub).NormalReturnFacts
+	assertPathValueFact(t, reg, got.PersistentPathWrites, capturedPath, value)
+}
+
 type normalReturnFactProjectResultStub struct {
-	reg        *axis.Registry
-	graph      cfg.Graph
-	exit       state.State
-	slots      []key.Value
-	keys       *keyspace.KeySpace
-	reassigned map[key.Value]struct{}
+	reg           *axis.Registry
+	graph         cfg.Graph
+	exit          state.State
+	slots         []key.Value
+	keys          *keyspace.KeySpace
+	reassigned    map[key.Value]struct{}
+	returnPoints  []cfg.Point
+	returnSources map[cfg.Point][]factflow.ValueSource
+	exprPaths     map[factflow.ExprRef]pathdom.Path
+	edgeReach     map[[2]cfg.Point]bool
 }
 
 type normalReturnFactProjectAssignmentStub struct {
 	normalReturnFactProjectResultStub
-	assignments map[cfg.Point]semantics.OrdinaryAssignmentFact
+	assignments      map[cfg.Point]semantics.OrdinaryAssignmentFact
+	exprValuesBefore map[cfg.Point]product.Value
+	fn               *ast.FunctionExpr
+	captures         []bind.Capture
+	kinds            map[symbol.ID]symbol.Kind
 }
 
 type normalReturnFactProjectCallStub struct {
@@ -702,6 +1103,32 @@ func (r normalReturnFactProjectAssignmentStub) OrdinaryAssignment(point cfg.Poin
 	return fact, ok
 }
 
+func (r normalReturnFactProjectAssignmentStub) ExpressionValueBeforeBoundary(point cfg.Point, _ ast.Expr) (product.Value, bool) {
+	value, ok := r.exprValuesBefore[point]
+	return value, ok
+}
+
+func (r normalReturnFactProjectAssignmentStub) Function() *ast.FunctionExpr {
+	return r.fn
+}
+
+func (r normalReturnFactProjectAssignmentStub) DirectCaptures(fn *ast.FunctionExpr) []bind.Capture {
+	if fn == nil || fn != r.fn || len(r.captures) == 0 {
+		return nil
+	}
+	out := make([]bind.Capture, len(r.captures))
+	copy(out, r.captures)
+	return out
+}
+
+func (r normalReturnFactProjectAssignmentStub) SymbolKind(id symbol.ID) (symbol.Kind, bool) {
+	if len(r.kinds) == 0 {
+		return 0, false
+	}
+	kind, ok := r.kinds[id]
+	return kind, ok
+}
+
 func normalReturnFactProjectTestResult(
 	reg *axis.Registry,
 	ks *keyspace.KeySpace,
@@ -734,7 +1161,40 @@ func (r normalReturnFactProjectResultStub) Graph() cfg.Graph { return r.graph }
 
 func (r normalReturnFactProjectResultStub) ExitState() (state.State, bool) { return r.exit, true }
 
-func (r normalReturnFactProjectResultStub) ReturnPoints() []cfg.Point { return nil }
+func (r normalReturnFactProjectResultStub) EdgeCanCompleteNormally(from, to cfg.Point) bool {
+	if r.edgeReach == nil {
+		return true
+	}
+	reachable, ok := r.edgeReach[[2]cfg.Point{from, to}]
+	if !ok {
+		return true
+	}
+	return reachable
+}
+
+func (r normalReturnFactProjectResultStub) ReturnPoints() []cfg.Point {
+	if len(r.returnPoints) == 0 {
+		return nil
+	}
+	out := make([]cfg.Point, len(r.returnPoints))
+	copy(out, r.returnPoints)
+	return out
+}
+
+func (r normalReturnFactProjectResultStub) ReturnValueSources(point cfg.Point) ([]factflow.ValueSource, bool) {
+	sources, ok := r.returnSources[point]
+	if !ok {
+		return nil, false
+	}
+	out := make([]factflow.ValueSource, len(sources))
+	copy(out, sources)
+	return out, true
+}
+
+func (r normalReturnFactProjectResultStub) ExpressionPathRef(ref factflow.ExprRef) (pathdom.Path, bool) {
+	p, ok := r.exprPaths[ref]
+	return p, ok
+}
 
 func (r normalReturnFactProjectResultStub) ParameterValueSlots() []key.Value {
 	if len(r.slots) == 0 {
@@ -903,6 +1363,16 @@ func assertPathStaticMember(t *testing.T, reg *axis.Registry, facts []callbounda
 	t.Fatalf("PathStaticMembers = %#v, want %s = %#v", facts, target, want)
 }
 
+func assertPathValueFact(t *testing.T, reg *axis.Registry, facts []callboundary.PathValueFact, target pathdom.Path, want product.Value) {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.Path.Equal(target) && product.Equal(reg, fact.Value, want) {
+			return
+		}
+	}
+	t.Fatalf("PathValueFacts = %#v, want %s = %#v", facts, target, want)
+}
+
 func assertPathInvalidation(t *testing.T, facts []callboundary.PathInvalidationFact, target pathdom.Path) {
 	t.Helper()
 	for _, fact := range facts {
@@ -911,6 +1381,36 @@ func assertPathInvalidation(t *testing.T, facts []callboundary.PathInvalidationF
 		}
 	}
 	t.Fatalf("PathInvalidations = %#v, want %s", facts, target)
+}
+
+func assertStructuralPreservingPathInvalidation(t *testing.T, facts []callboundary.PathInvalidationFact, target pathdom.Path) {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.Path.Equal(target) && fact.PreserveStructuralWitness {
+			return
+		}
+	}
+	t.Fatalf("PathInvalidations = %#v, want structural-preserving %s", facts, target)
+}
+
+func assertClearingPathInvalidation(t *testing.T, facts []callboundary.PathInvalidationFact, target pathdom.Path) {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.Path.Equal(target) && fact.ClearTarget {
+			return
+		}
+	}
+	t.Fatalf("PathInvalidations = %#v, want target-clearing %s", facts, target)
+}
+
+func assertNonClearingPathInvalidation(t *testing.T, facts []callboundary.PathInvalidationFact, target pathdom.Path) {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.Path.Equal(target) && !fact.ClearTarget {
+			return
+		}
+	}
+	t.Fatalf("PathInvalidations = %#v, want non-target-clearing %s", facts, target)
 }
 
 func findPathRefinement(facts []callboundary.PathValueFact, path pathdom.Path) *callboundary.PathValueFact {

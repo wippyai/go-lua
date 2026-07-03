@@ -67,6 +67,93 @@ end
 	}
 }
 
+func TestDirectCallArgumentPreservesObjectLiteralSelfShapeAfterNestedFieldWrite(t *testing.T) {
+	result := Check(`
+type Envelope = { kind: string, id: string }
+type ActorState = {
+    processed: {[string]: Envelope},
+    counters: {[string]: number},
+    last_id: string?,
+}
+type Actor = {
+    state: ActorState,
+    handlers: {[string]: (Actor, Envelope) -> ()},
+    dispatch: (self: Actor, message: Envelope) -> (),
+}
+
+local actor: Actor
+actor = {
+    state = {
+        processed = {},
+        counters = {},
+        last_id = nil,
+    },
+    handlers = {},
+    dispatch = function(self: Actor, message: Envelope): ()
+        local handler = self.handlers[message.kind]
+        if not handler then
+            return
+        end
+        self.state.last_id = message.id
+        handler(self, message)
+    end,
+}
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want object-literal self to keep Actor shape after nested state write", result.Diagnostics)
+	}
+}
+
+func TestDirectCallArgumentPreservesObjectLiteralSelfShapeAfterNestedFieldWriteAndStateCallee(t *testing.T) {
+	result := Check(`
+type AppError = { code: string }
+type Envelope = { kind: string, id: string }
+type StringResult = {ok: true, value: string} | {ok: false, error: AppError}
+type ActorState = {
+    processed: {[string]: Envelope},
+    counters: {[string]: number},
+    last_id: string?,
+}
+type Actor = {
+    state: ActorState,
+    handlers: {[string]: (Actor, Envelope) -> StringResult},
+    dispatch: (self: Actor, message: Envelope) -> StringResult,
+}
+
+local function bump(state: ActorState, key: string): ()
+    local current = state.counters[key]
+    if current then
+        state.counters[key] = current + 1
+    else
+        state.counters[key] = 1
+    end
+end
+
+local actor: Actor
+actor = {
+    state = {
+        processed = {},
+        counters = {},
+        last_id = nil,
+    },
+    handlers = {},
+    dispatch = function(self: Actor, message: Envelope): StringResult
+        local handler = self.handlers[message.kind]
+        if not handler then
+            return {ok = false, error = {code = "missing"}}
+        end
+        self.state.processed[message.id] = message
+        self.state.last_id = message.id
+        bump(self.state, message.kind)
+        return handler(self, message)
+    end,
+}
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want object-literal self to keep Actor shape after nested write and state callee", result.Diagnostics)
+	}
+}
+
 func TestDirectCallArgumentReportsBadNestedFieldReplacement(t *testing.T) {
 	result := Check(`
 type Envelope = { kind: string, id: string }

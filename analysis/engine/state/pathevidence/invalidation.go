@@ -6,6 +6,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
 
 type PathKeyDescendantInvalidationPrefixes struct {
@@ -21,17 +22,26 @@ func (l Lane) InvalidatePathKeySubtree(ks *keyspace.KeySpace, pathKey pathdom.Pa
 	if !ok {
 		return l, false
 	}
+	return l.InvalidatePathKeySubtreePrefixes(ks, prefixes), true
+}
+
+// InvalidatePathKeySubtreePrefixes removes finite path evidence for a
+// precomputed subtree invalidation plan. Callers that need the same plan for
+// coupled lanes should compute PathKeySubtreeInvalidationPrefixes once and pass
+// it here instead of recomputing alias expansion.
+func (l Lane) InvalidatePathKeySubtreePrefixes(ks *keyspace.KeySpace, prefixes []pathdom.PathKey) Lane {
 	prefixKeys := structuralPrefixKeys(ks, prefixes)
 	match := func(candidate keyspace.Key) bool {
 		return pathKeyInAnyPrefix(ks, candidate, prefixKeys)
 	}
-	return l.invalidatePathKeyEvidence(
+	out, _ := l.invalidatePathKeyEvidence(
 		func(m map[keyspace.Key]product.Value) (map[keyspace.Key]product.Value, bool) {
 			return deletePathKeySubtrees(ks, m, prefixKeys)
 		},
 		match,
 		func(proof BranchProof) bool { return branchProofMatchesPath(proof, match) },
 	)
+	return out
 }
 
 // invalidatePathKeyEvidence drops refinement and static-member entries via
@@ -67,13 +77,20 @@ func (l Lane) InvalidatePathKeyDescendants(ks *keyspace.KeySpace, pathKey pathdo
 	if !ok {
 		return l, false
 	}
+	return l.InvalidatePathKeyDescendantPrefixes(ks, prefixes), true
+}
+
+// InvalidatePathKeyDescendantPrefixes removes finite path evidence for a
+// precomputed descendant invalidation plan. It is the plan-consuming companion
+// to PathKeyDescendantInvalidationPrefixes.
+func (l Lane) InvalidatePathKeyDescendantPrefixes(ks *keyspace.KeySpace, prefixes PathKeyDescendantInvalidationPrefixes) Lane {
 	descendantKeys := structuralPrefixKeys(ks, prefixes.Descendants)
 	subtreeKeys := structuralPrefixKeys(ks, prefixes.Subtrees)
 	match := func(candidate keyspace.Key) bool {
 		return pathKeyInAnyStrictPrefix(ks, candidate, descendantKeys) ||
 			pathKeyInAnyPrefix(ks, candidate, subtreeKeys)
 	}
-	return l.invalidatePathKeyEvidence(
+	out, _ := l.invalidatePathKeyEvidence(
 		func(m map[keyspace.Key]product.Value) (map[keyspace.Key]product.Value, bool) {
 			return deletePathKeyDescendantPrefixes(ks, m, descendantKeys, subtreeKeys)
 		},
@@ -94,6 +111,7 @@ func (l Lane) InvalidatePathKeyDescendants(ks *keyspace.KeySpace, pathKey pathdo
 			return false
 		},
 	)
+	return out
 }
 
 // pathKeyInDescendantInvalidationOrRoot reports whether candidate is the
@@ -301,9 +319,23 @@ func structuralPrefixKeys(ks *keyspace.KeySpace, prefixes []pathdom.PathKey) []k
 	for _, prefix := range prefixes {
 		if key, ok := ks.FromPathKey(prefix); ok {
 			out = append(out, key)
+			if stable, ok := localStableCounterpart(ks, key); ok {
+				out = append(out, stable)
+			}
 		}
 	}
 	return out
+}
+
+func localStableCounterpart(ks *keyspace.KeySpace, key keyspace.Key) (keyspace.Key, bool) {
+	if ks == nil || key.Kind != keyspace.KindResolverSym || key.Sym == 0 {
+		return keyspace.Key{}, false
+	}
+	segments, ok := ks.SegmentsView(key)
+	if !ok {
+		return keyspace.Key{}, false
+	}
+	return ks.FromStableSymbol(key.Sym, segments)
 }
 
 func deletePathKeySubtrees(
@@ -346,23 +378,7 @@ func deleteMatchingPathKeys(
 	in map[keyspace.Key]product.Value,
 	match func(keyspace.Key) bool,
 ) (map[keyspace.Key]product.Value, bool) {
-	if len(in) == 0 {
-		return in, false
-	}
-	out := make(map[keyspace.Key]product.Value, len(in))
-	changed := false
-	for pathKey, value := range in {
-		if match(pathKey) {
-			changed = true
-			continue
-		}
-		out[pathKey] = value
-	}
-	if !changed {
-		return in, false
-	}
-	if len(out) == 0 {
-		return nil, true
-	}
-	return out, true
+	return mapedit.DeleteMatching(in, func(pathKey keyspace.Key, _ product.Value) bool {
+		return match(pathKey)
+	})
 }

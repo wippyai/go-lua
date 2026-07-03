@@ -39,48 +39,58 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 	if typeResolver == nil {
 		typeResolver = typeresolve.New(config.Bindings)
 	}
+	symbolTypes := lowerSymbolTypes(config.Bindings, graph, result, typeResolver)
+	declaredReturnLocalTypes := lowerDeclaredReturnLocalTypes(config.Bindings, graph, result, typeResolver)
+	returnLocalObjectLiteralTypes := lowerReturnLocalObjectLiteralTypes(config.Bindings, graph, result, typeResolver)
+	symbolTypes = mergeSymbolTypes(symbolTypes, declaredReturnLocalTypes)
 	l := lowerer{
-		registry:                config.Registry,
-		bindings:                config.Bindings,
-		graphID:                 graph.ID(),
-		typeResolver:            typeResolver,
-		typeValues:              config.TypeValues,
-		callPoints:              callPointsByExpr(builtCallFacts(graph, result)),
-		symbolTypes:             lowerSymbolTypes(config.Bindings, graph, result, typeResolver),
-		exprs:                   make(map[any]factflow.ExprRef),
-		types:                   make(map[any]factflow.TypeRef),
-		expressionValues:        make(map[factflow.ExprRef]product.Value),
-		expressionOperations:    make(map[factflow.ExprRef]factflow.ExpressionOperation),
-		expressionFunctions:     make(map[factflow.ExprRef]symbol.ID),
-		expressionPaths:         make(map[factflow.ExprRef]pathdom.Path),
-		dynamicIndexExpressions: make(map[factflow.ExprRef]factflow.DynamicIndexExpression),
-		expressionConditions:    make(map[factflow.ExprRef]factflow.ExpressionCondition),
+		registry:                      config.Registry,
+		bindings:                      config.Bindings,
+		graphID:                       graph.ID(),
+		typeResolver:                  typeResolver,
+		typeValues:                    config.TypeValues,
+		callPoints:                    callPointsByExpr(builtCallFacts(graph, result)),
+		symbolTypes:                   symbolTypes,
+		declaredReturnLocalTypes:      declaredReturnLocalTypes,
+		returnLocalObjectLiteralTypes: returnLocalObjectLiteralTypes,
+		exprs:                         make(map[any]factflow.ExprRef),
+		types:                         make(map[any]factflow.TypeRef),
+		expressionValues:              make(map[factflow.ExprRef]product.Value),
+		expressionOperations:          make(map[factflow.ExprRef]factflow.ExpressionOperation),
+		expressionFunctions:           make(map[factflow.ExprRef]symbol.ID),
+		expressionPaths:               make(map[factflow.ExprRef]pathdom.Path),
+		dynamicIndexExpressions:       make(map[factflow.ExprRef]factflow.DynamicIndexExpression),
+		expressionConditions:          make(map[factflow.ExprRef]factflow.ExpressionCondition),
 	}
 	input := factflow.FactsInput{
-		RootAssignments:             make(map[cfg.Point]factflow.RootAssignment),
-		PathAssignments:             make(map[cfg.Point]factflow.PathAssignment),
-		PathStaticMemberWrites:      make(map[cfg.Point]factflow.PathStaticMemberWrite),
-		DynamicIndexWrites:          make(map[cfg.Point]factflow.DynamicIndexWrite),
-		PathDescendantInvalidations: make(map[cfg.Point]factflow.PathDescendantInvalidation),
-		BranchRefinements:           make(map[cfg.Point]factflow.BranchRefinementSet),
-		BranchPresenceRelations:     make(map[cfg.Point]factflow.BranchPresenceRelationSet),
-		BranchPathRelations:         make(map[cfg.Point]factflow.BranchPathRelationSet),
-		BranchPathEvidence:          make(map[cfg.Point]factflow.BranchPathEvidenceSet),
-		ChannelSelects:              make(map[cfg.Point]factflow.ChannelSelectSet),
-		PostconditionRefinements:    make(map[cfg.Point]factflow.PostconditionRefinementSet),
-		CallResultValues:            make(map[cfg.Point]factflow.CallResultValueSet),
-		ReturnPresenceRelations:     make(map[cfg.Point]factflow.ReturnPresenceRelationSet),
-		Returns:                     make(map[cfg.Point]factflow.Return),
-		CallSites:                   make(map[cfg.Point]factflow.CallSite),
-		ObjectLiterals:              make(map[factflow.ExprRef]factflow.ObjectLiteral),
-		ExpressionValues:            make(map[factflow.ExprRef]product.Value),
-		ExpressionOperations:        make(map[factflow.ExprRef]factflow.ExpressionOperation),
-		ExpressionFunctions:         make(map[factflow.ExprRef]symbol.ID),
-		ExpressionRefinements:       make(map[factflow.ExprRef]factflow.ExpressionRefinement),
-		DynamicIndexExpressions:     make(map[factflow.ExprRef]factflow.DynamicIndexExpression),
+		RootAssignments:               make(map[cfg.Point]factflow.RootAssignment),
+		PathAssignments:               make(map[cfg.Point]factflow.PathAssignment),
+		PathStaticMemberWrites:        make(map[cfg.Point]factflow.PathStaticMemberWrite),
+		DynamicIndexWrites:            make(map[cfg.Point]factflow.DynamicIndexWrite),
+		PathDescendantInvalidations:   make(map[cfg.Point]factflow.PathDescendantInvalidation),
+		BranchEdgeReachability:        make(map[cfg.Point]factflow.BranchEdgeReachability),
+		BranchConditionSources:        make(map[cfg.Point]factflow.ValueSource),
+		BranchRefinements:             make(map[cfg.Point]factflow.BranchRefinementSet),
+		BranchPresenceRelations:       make(map[cfg.Point]factflow.BranchPresenceRelationSet),
+		BranchPathRelations:           make(map[cfg.Point]factflow.BranchPathRelationSet),
+		BranchPathEvidence:            make(map[cfg.Point]factflow.BranchPathEvidenceSet),
+		PathValuePresenceImplications: make(map[cfg.Point]factflow.PathValuePresenceImplicationSet),
+		ChannelSelects:                make(map[cfg.Point]factflow.ChannelSelectSet),
+		PostconditionRefinements:      make(map[cfg.Point]factflow.PostconditionRefinementSet),
+		CallResultValues:              make(map[cfg.Point]factflow.CallResultValueSet),
+		ReturnPresenceRelations:       make(map[cfg.Point]factflow.ReturnPresenceRelationSet),
+		Returns:                       make(map[cfg.Point]factflow.Return),
+		CallSites:                     make(map[cfg.Point]factflow.CallSite),
+		ObjectLiterals:                make(map[factflow.ExprRef]factflow.ObjectLiteral),
+		ExpressionValues:              make(map[factflow.ExprRef]product.Value),
+		ExpressionOperations:          make(map[factflow.ExprRef]factflow.ExpressionOperation),
+		ExpressionFunctions:           make(map[factflow.ExprRef]symbol.ID),
+		ExpressionRefinements:         make(map[factflow.ExprRef]factflow.ExpressionRefinement),
+		DynamicIndexExpressions:       make(map[factflow.ExprRef]factflow.DynamicIndexExpression),
 	}
 	for _, point := range graph.RPO() {
-		if fact, ok := result.LocalAssignment(point); ok {
+		if view, ok := result.LocalAssignmentView(point); ok {
+			fact, _ := view.Borrowed()
 			if lowered, ok := l.localAssignment(fact); ok {
 				input.RootAssignments[point] = lowered
 				l.addAssertionRefinementsForSource(&input, fact.Source)
@@ -95,11 +105,15 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 				}
 			}
 		}
-		if fact, ok := result.OrdinaryAssignment(point); ok {
+		if view, ok := result.OrdinaryAssignmentView(point); ok {
+			fact, _ := view.Borrowed()
 			if lowered, ok := l.pathAssignment(fact); ok {
 				input.PathAssignments[point] = lowered
 				if lowered, ok := l.pathStaticMemberWrite(fact); ok {
 					input.PathStaticMemberWrites[point] = lowered
+				}
+				if lowered, ok := l.ordinaryAssignment(fact); ok {
+					input.RootAssignments[point] = lowered
 				}
 				l.addAssertionRefinementsForSource(&input, fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
@@ -116,12 +130,16 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 			}
 			if lowered, ok := l.dynamicIndexWrite(fact); ok {
 				input.DynamicIndexWrites[point] = lowered
+				l.addAssertionRefinementsForSource(&input, fact.Source)
+				l.addObjectLiteral(&input, result, fact.Source)
+				l.addDynamicIndexObjectLiteralExpectedTypes(&input, fact)
 			}
 			if lowered, ok := l.pathDescendantInvalidation(fact); ok {
 				input.PathDescendantInvalidations[point] = lowered
 			}
 		}
-		if fact, ok := result.Return(point); ok {
+		if view, ok := result.ReturnView(point); ok {
+			fact, _ := view.Borrowed()
 			input.Returns[point] = factflow.NewReturn(l.returnValueSources(fact.Sources, result))
 			if relations := l.typeIsReturnPresenceRelations(fact.Sources, result); len(relations) != 0 {
 				appendReturnPresenceRelations(input.ReturnPresenceRelations, point, relations...)
@@ -132,7 +150,8 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 			}
 			l.addReturnObjectLiteralExpectedTypes(&input, result, fact)
 		}
-		if fact, ok := result.Call(point); ok {
+		if view, ok := result.CallView(point); ok {
+			fact, _ := view.Borrowed()
 			input.CallSites[point] = l.callSite(fact)
 			if lowered := l.channelSelects(point, result); len(lowered) != 0 {
 				input.ChannelSelects[point] = factflow.NewChannelSelectSet(lowered...)
@@ -155,6 +174,10 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 			}
 		}
 		if fact, ok := result.BranchCondition(point); ok {
+			input.BranchConditionSources[point] = l.valueSource(fact.Source)
+			if reachability, ok := branchEdgeReachability(fact.Condition); ok {
+				input.BranchEdgeReachability[point] = reachability
+			}
 			if lowered := l.branchRefinements(fact); len(lowered) != 0 {
 				appendBranchRefinement(input.BranchRefinements, point, lowered...)
 			}
@@ -166,6 +189,9 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 			}
 			if lowered := l.branchDiffConstraints(fact); len(lowered) != 0 {
 				appendBranchDiffConstraint(input.BranchRefinements, point, lowered...)
+			}
+			if lowered := l.branchAliasRefinements(fact.Condition); len(lowered) != 0 {
+				appendBranchRefinement(input.BranchRefinements, point, lowered...)
 			}
 			if lowered, ok := l.branchPathRelations(fact); ok {
 				input.BranchPathRelations[point] = lowered
@@ -185,7 +211,9 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		}
 	}
 	l.addTypeIsBranchRefinements(&input, graph, result)
+	l.addProtectedCallBranchRefinements(&input, graph, result)
 	l.addReturnPresenceRelations(&input, graph, result)
+	l.addConditionalAssignmentImplications(&input, graph, result)
 	input.ExpressionValues = l.expressionValues
 	input.ExpressionOperations = l.expressionOperations
 	input.ExpressionFunctions = l.expressionFunctions
@@ -196,21 +224,23 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 }
 
 type lowerer struct {
-	registry                *axis.Registry
-	bindings                *bind.Result
-	graphID                 uint64
-	typeResolver            *typeresolve.Resolver
-	typeValues              *typevalue.Cache
-	callPoints              map[*ast.FuncCallExpr]cfg.Point
-	symbolTypes             map[symbol.ID]typ.Type
-	exprs                   map[any]factflow.ExprRef
-	types                   map[any]factflow.TypeRef
-	expressionValues        map[factflow.ExprRef]product.Value
-	expressionOperations    map[factflow.ExprRef]factflow.ExpressionOperation
-	expressionFunctions     map[factflow.ExprRef]symbol.ID
-	expressionPaths         map[factflow.ExprRef]pathdom.Path
-	dynamicIndexExpressions map[factflow.ExprRef]factflow.DynamicIndexExpression
-	expressionConditions    map[factflow.ExprRef]factflow.ExpressionCondition
+	registry                      *axis.Registry
+	bindings                      *bind.Result
+	graphID                       uint64
+	typeResolver                  *typeresolve.Resolver
+	typeValues                    *typevalue.Cache
+	callPoints                    map[*ast.FuncCallExpr]cfg.Point
+	symbolTypes                   map[symbol.ID]typ.Type
+	declaredReturnLocalTypes      map[symbol.ID]typ.Type
+	returnLocalObjectLiteralTypes map[symbol.ID]typ.Type
+	exprs                         map[any]factflow.ExprRef
+	types                         map[any]factflow.TypeRef
+	expressionValues              map[factflow.ExprRef]product.Value
+	expressionOperations          map[factflow.ExprRef]factflow.ExpressionOperation
+	expressionFunctions           map[factflow.ExprRef]symbol.ID
+	expressionPaths               map[factflow.ExprRef]pathdom.Path
+	dynamicIndexExpressions       map[factflow.ExprRef]factflow.DynamicIndexExpression
+	expressionConditions          map[factflow.ExprRef]factflow.ExpressionCondition
 }
 
 func (l *lowerer) valueFromType(t typ.Type) product.Value {
@@ -241,7 +271,11 @@ func builtCallFacts(graph cfg.Graph, result *semantics.Result) map[*ast.FuncCall
 	}
 	out := make(map[*ast.FuncCallExpr]cfg.Point)
 	for _, point := range graph.RPO() {
-		fact, ok := result.Call(point)
+		view, ok := result.CallView(point)
+		if !ok {
+			continue
+		}
+		fact, ok := view.Borrowed()
 		if !ok || fact.Call == nil {
 			continue
 		}

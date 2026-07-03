@@ -4,10 +4,13 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
@@ -22,6 +25,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/channelselect"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestChannelSelectResultPathFromChannel(t *testing.T) {
@@ -271,6 +275,88 @@ func TestFactsNodeTransferMaterializesChannelSelectResultFromStructuralNestedCas
 				),
 			},
 		}),
+		Visibility:  resolver,
+		ProjectPath: testLuaPathTypeProjector,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, initial)
+
+	resultValue := got.ReadReturnSlot(reg, 0)
+	assertChannelSelectCasePayload(t, reg, resultValue, channelselectfact.ID(selectID), 0, eventPayload)
+}
+
+func TestFactsNodeTransferMaterializesChannelSelectResultFromNarrowedNestedUnionCasePath(t *testing.T) {
+	reg := standard.Registry()
+	typeValues := typevalue.NewCache()
+	point := cfg.Point(732)
+	result := symbol.ID(735)
+	route := symbol.ID(736)
+	resultPath := pathdom.NewPath(result, "result")
+	routePath := pathdom.NewPath(route, "route")
+	casePath := routePath.Field("ch")
+	selectID := factflow.ChannelSelectID("select-narrowed-nested-case")
+	eventPayload := typetable.NewRecord().
+		Field("kind", typ.LiteralString("event")).
+		Field("id", typ.String).
+		Build()
+	timerPayload := typetable.NewRecord().
+		Field("kind", typ.LiteralString("timer")).
+		Field("elapsed", typ.Number).
+		Build()
+	routeA := typetable.NewRecord().
+		Field("kind", typ.LiteralString("route_a")).
+		Field("ch", typ.Instantiate(ambient.ChannelGeneric(), eventPayload)).
+		Build()
+	routeB := typetable.NewRecord().
+		Field("kind", typ.LiteralString("route_b")).
+		Field("ch", typ.Instantiate(ambient.ChannelGeneric(), timerPayload)).
+		Build()
+	routeUnion := typeexpr.Union(routeA, routeB)
+	family, cases, ok := variant.OriginByPathLiteral(routeUnion, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "kind"},
+	}, typ.LiteralString("route_a"))
+	if !ok {
+		t.Fatal("missing route_a variant origin")
+	}
+
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, result, "result")
+	visibilityBuilder.Define(point, route, "route")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	routeValue := typeValues.FromTypeWithWitness(reg, routeUnion)
+	routeValue = product.Set(reg, routeValue, variantorigin.Key, variantorigin.Of(family, cases))
+	caseKey := resolver.KeyAt(point, casePath)
+	if caseKey == "" {
+		t.Fatal("missing case path key")
+	}
+	initial := state.State{}.
+		WriteValue(reg, key.SymbolValue(route), routeValue).
+		WritePathKey(reg, resolver.KeySpace(), caseKey, presentValue(reg))
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			ChannelSelects: map[cfg.Point]factflow.ChannelSelectSet{
+				point: factflow.NewChannelSelectSet(
+					factflow.NewChannelSelect(factflow.ChannelSelectConfig{
+						SelectID:      selectID,
+						Kind:          factflow.ChannelSelectSelect,
+						ResultPath:    resultPath,
+						HasResultPath: true,
+						Index:         0,
+					}),
+					factflow.NewChannelSelect(factflow.ChannelSelectConfig{
+						SelectID:    selectID,
+						Kind:        factflow.ChannelSelectReceive,
+						ResultPath:  resultPath,
+						CasePath:    casePath,
+						HasCasePath: true,
+						Index:       0,
+					}),
+				),
+			},
+		}),
+		TypeValues:  typeValues,
 		Visibility:  resolver,
 		ProjectPath: testLuaPathTypeProjector,
 	})(transfer.NodeContext{

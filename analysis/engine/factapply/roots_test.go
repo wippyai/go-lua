@@ -5,6 +5,9 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -16,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -80,6 +84,51 @@ func TestFactsNodeTransferAppliesOrdinaryAssignmentThroughResolver(t *testing.T)
 
 	assertValue(t, reg, got[graph.Exit()], key.SymbolValue(target), assigned)
 	assertResolverCall(t, resolver, assign, source)
+}
+
+func TestFactsNodeTransferFreshContainerRootSeedsClosedDynamicAllValueInvariant(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(1111)
+	container := symbol.ID(1111)
+	table := symbol.ID(1112)
+	containerPath := path.NewPath(container, "channel_to_id")
+	tablePath := path.NewPath(table, "registered_channels")
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(1111), HasExpr: true}
+	rootValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(testTableLiteralID(source.ExprRef)))
+	sources := &recordingSourceValues{values: map[factflow.ValueSource]product.Value{source: rootValue}}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, container, "channel_to_id")
+	visibilityBuilder.Define(point, table, "registered_channels")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	containerKey := resolver.KeySpace().FromPath(containerPath)
+	tableStateKey, ok := visibility.RootOrVisibleStateKeyAt(resolver, point, tablePath)
+	if !ok {
+		t.Fatal("missing table state key")
+	}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			RootAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, container, containerPath, source),
+			},
+			ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
+				source.ExprRef: factflow.NewObjectLiteral(nil),
+			},
+		}),
+		Sources:    sources,
+		Visibility: resolver,
+		ClosedDynamicAllValues: []ClosedDynamicAllValueInvariant{
+			{Container: containerPath, Table: tablePath},
+		},
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	tables := got.DynamicIndexAllValuesKeyMembershipTables(containerKey)
+	if len(tables) != 1 || tables[0] != tableStateKey {
+		t.Fatalf("all-value memberships = %#v, want %s", tables, tableStateKey)
+	}
 }
 
 func TestFactsNodeTransferRootAssignmentAddsPathEqualityProofForPathSource(t *testing.T) {
@@ -331,6 +380,118 @@ func TestFactsNodeTransferRootAssignmentUsesSourceBeforeFallbackDeclaredValue(t 
 	assertValue(t, reg, got[graph.Exit()], key.SymbolValue(target), assigned)
 	assertRuntimeKind(t, reg, got[graph.Exit()].ReadValue(reg, key.SymbolValue(target)), runtimekind.Singleton(runtimekind.Number))
 	assertResolverCall(t, resolver, assign, source)
+}
+
+func TestFactsNodeTransferOrdinaryRootWriteFromAnyOriginTableSourceOverwritesAny(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(1301), HasExpr: true}
+	target := symbol.ID(1041)
+	assigned := product.Set(reg, typevalue.FromType(reg, typetable.BuiltinTopMarker()), evidence.Key, evidence.ExplicitTop())
+	assigned = typevalue.WithWitness(reg, assigned, typetable.BuiltinTopMarker())
+	resolver := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{source: assigned},
+	}
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: state.State{}.WriteValue(reg, key.SymbolValue(target), typevalue.FromType(reg, typ.Any)),
+		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				RootAssignments: map[cfg.Point]factflow.RootAssignment{
+					assign: factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, target, path.NewPath(target, "bindings"), source),
+				},
+			}),
+			Sources: resolver,
+		}),
+	})
+
+	written := got[graph.Exit()].ReadValue(reg, key.SymbolValue(target))
+	writtenType, ok := typevalue.TypeOf(reg, written)
+	if !ok || !typ.TypeEquals(writtenType, typetable.BuiltinTopMarker()) {
+		t.Fatalf("written type = %v/%v in %s, want builtin table marker", writtenType, ok, formatValue(reg, written))
+	}
+	assertResolverCall(t, resolver, assign, source)
+}
+
+func TestFactsNodeTransferRootAssignmentOverlaysDeclaredContractOnSource(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(14), HasExpr: true}
+	target := symbol.ID(105)
+	sourceType := typetable.NewRecord().Field("id", typ.LiteralString("u1")).Build()
+	declaredType := typetable.NewRecord().Field("id", typ.String).Field("name", typ.String).Build()
+	assigned := typevalue.WithWitness(reg, typevalue.FromType(reg, sourceType), sourceType)
+	declared := typevalue.WithWitness(reg, typevalue.FromType(reg, declaredType), declaredType)
+	resolver := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{source: assigned},
+	}
+
+	got := transfer.Run(transfer.Config{
+		Graph:    graph,
+		Registry: reg,
+		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				RootAssignments: map[cfg.Point]factflow.RootAssignment{
+					assign: factflow.NewRootAssignmentWithDeclaredOverlayValue(factflow.RootAssignmentOrdinaryRootWrite, target, path.NewPath(target, "local"), source, declared),
+				},
+			}),
+			Sources: resolver,
+		}),
+	})
+
+	written := got[graph.Exit()].ReadValue(reg, key.SymbolValue(target))
+	writtenType, ok := typevalue.TypeOf(reg, written)
+	if !ok || !typ.TypeEquals(writtenType, declaredType) {
+		t.Fatalf("written type = %v/%v, want declared contract %v", writtenType, ok, declaredType)
+	}
+	assertResolverCall(t, resolver, assign, source)
+}
+
+func TestFactsNodeTransferRootAssignmentOverlayAdoptsDeclaredPresenceAndKeepsEvidence(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(15), HasExpr: true}
+	target := symbol.ID(106)
+	assigned := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Maybe()), evidence.Key, evidence.ExplicitTop())
+	declared := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	resolver := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{source: assigned},
+	}
+
+	got := transfer.Run(transfer.Config{
+		Graph:    graph,
+		Registry: reg,
+		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				RootAssignments: map[cfg.Point]factflow.RootAssignment{
+					assign: factflow.NewRootAssignmentWithDeclaredOverlayValue(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "local"), source, declared),
+				},
+			}),
+			Sources: resolver,
+		}),
+	})
+
+	value := got[graph.Exit()].ReadValue(reg, key.SymbolValue(target))
+	if gotPresence := product.PresenceOf(value); !presence.Equal(gotPresence, presence.Present()) {
+		t.Fatalf("presence = %s, want present from declared overlay", gotPresence)
+	}
+	if gotEvidence := product.Get(reg, value, evidence.Key); !evidence.Equal(gotEvidence, evidence.ExplicitTop()) {
+		t.Fatalf("evidence = %s, want explicit-top source evidence preserved", gotEvidence)
+	}
 }
 
 func TestFactsNodeTransferRootAssignmentInvalidatesVisiblePathSubtree(t *testing.T) {

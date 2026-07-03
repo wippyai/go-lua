@@ -47,6 +47,9 @@ func Map[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[map[K]V] 
 	isTop := func(m map[K]V) bool {
 		return m != nil && reflect.ValueOf(m).Pointer() == topPtr
 	}
+	sameMapValue := func(a, b map[K]V) bool {
+		return reflect.ValueOf(a).Pointer() == reflect.ValueOf(b).Pointer()
+	}
 
 	// canonicalize drops keys whose value Equals elem.Bottom() so that an
 	// explicit bottom entry and an absent key denote the same function and
@@ -84,6 +87,9 @@ func Map[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[map[K]V] 
 			return topSentinel
 		},
 		Equal: func(a, b map[K]V) bool {
+			if sameMapValue(a, b) {
+				return true
+			}
 			at, bt := isTop(a), isTop(b)
 			if at || bt {
 				// The top sentinel is Equal only to itself.
@@ -110,6 +116,9 @@ func Map[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[map[K]V] 
 			return true
 		},
 		LessOrEq: func(a, b map[K]V) bool {
+			if sameMapValue(a, b) {
+				return true
+			}
 			if isTop(b) {
 				return true
 			}
@@ -120,6 +129,9 @@ func Map[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[map[K]V] 
 			return pointwiseLessOrEq(a, b, elem.Bottom(), elem.LessOrEq)
 		},
 		Join: func(a, b map[K]V) map[K]V {
+			if sameMapValue(a, b) {
+				return a
+			}
 			if isTop(a) || isTop(b) {
 				return topSentinel
 			}
@@ -139,6 +151,9 @@ func Map[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[map[K]V] 
 			return pointwiseMap(a, b, elem.Bottom(), elem.Join, elem.Equal)
 		},
 		Widen: func(prev, next map[K]V) map[K]V {
+			if sameMapValue(prev, next) {
+				return prev
+			}
 			if isTop(prev) || isTop(next) {
 				return topSentinel
 			}
@@ -163,6 +178,9 @@ func Map[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[map[K]V] 
 	// intersection automatically, since get returns bottom there).
 	if elem.Meet != nil {
 		l.Meet = func(a, b map[K]V) map[K]V {
+			if sameMapValue(a, b) {
+				return a
+			}
 			if isTop(a) {
 				return canonicalizeTop(b, isTop, canonicalize, topSentinel)
 			}
@@ -208,6 +226,7 @@ func pointwiseMap[K comparable, V any](
 	equal func(V, V) bool,
 ) map[K]V {
 	var out map[K]V
+	outCap := pointwiseMapOutputCap(a, b)
 	for k, av := range a {
 		bv, ok := b[k]
 		if !ok {
@@ -218,7 +237,7 @@ func pointwiseMap[K comparable, V any](
 			continue
 		}
 		if out == nil {
-			out = make(map[K]V, len(a)+len(b))
+			out = make(map[K]V, outCap)
 		}
 		out[k] = v
 	}
@@ -231,11 +250,35 @@ func pointwiseMap[K comparable, V any](
 			continue
 		}
 		if out == nil {
-			out = make(map[K]V, len(a)+len(b))
+			out = make(map[K]V, outCap)
 		}
 		out[k] = v
 	}
 	return out
+}
+
+func pointwiseMapOutputCap[K comparable, V any](a, b map[K]V) int {
+	if len(a) == 0 {
+		return len(b)
+	}
+	if len(b) == 0 {
+		return len(a)
+	}
+	common := 0
+	if len(a) <= len(b) {
+		for k := range a {
+			if _, ok := b[k]; ok {
+				common++
+			}
+		}
+	} else {
+		for k := range b {
+			if _, ok := a[k]; ok {
+				common++
+			}
+		}
+	}
+	return len(a) + len(b) - common
 }
 
 // canonicalizeTop computes Meet(Top, x) = x: top is the identity for meet, so

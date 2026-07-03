@@ -10,8 +10,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -59,6 +63,34 @@ func TestSourceValuesExpressionMapResolvesAndDoesNotMutateState(t *testing.T) {
 		t.Fatalf("expression value = %s, want %s", formatValue(reg, got), formatValue(reg, value))
 	}
 	assertStateEqual(t, reg, in, wantState)
+}
+
+func TestWithExpressionValueRebindsExpressionProvider(t *testing.T) {
+	reg := standard.Registry()
+	expr := ExprRef(11)
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: expr, HasExpr: true}
+	want := typevalue.FromType(reg, typ.String)
+	base := NewSourceValues(SourceValuesConfig{Registry: reg})
+	rebound := WithExpressionValue(base, func(point cfg.Point, gotExpr ExprRef, gotSource ValueSource, _ state.State) (product.Value, bool) {
+		if point != 3 {
+			t.Fatalf("point = %d, want 3", point)
+		}
+		if gotExpr != expr {
+			t.Fatalf("expr = %d, want %d", gotExpr, expr)
+		}
+		if gotSource != source {
+			t.Fatalf("source = %#v, want %#v", gotSource, source)
+		}
+		return want, true
+	})
+
+	got, ok := rebound.ValueOfSource(cfg.Point(3), source, state.State{}, nil)
+	if !ok {
+		t.Fatal("rebound expression source did not resolve")
+	}
+	if !product.Equal(reg, got, want) {
+		t.Fatalf("rebound expression value = %s, want %s", formatValue(reg, got), formatValue(reg, want))
+	}
 }
 
 func TestSourceValuesNilReturnsAbsentPresence(t *testing.T) {
@@ -221,6 +253,275 @@ func TestSourceValuesPathBackedOperationOperandUsesFlowValue(t *testing.T) {
 	}
 }
 
+func TestSourceValuesOperationOperandPrefersObjectLiteralOverCachedRuntimeKind(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(651)
+	opExpr := ExprRef(6510)
+	tableExpr := ExprRef(6511)
+	tableSource := ValueSource{Kind: ValueSourceExpression, ExprRef: tableExpr, HasExpr: true}
+	opSource := ValueSource{Kind: ValueSourceExpression, ExprRef: opExpr, HasExpr: true}
+	op, ok := NewBinaryExpressionOperation("or", NewNilValueSource(0), tableSource)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation returned false")
+	}
+	wantType := typ.NewArray(typ.Any)
+	want := typevalue.WithWitness(reg, typevalue.FromType(reg, wantType), wantType)
+	cachedRuntimeTable := product.Set(
+		reg,
+		product.NewWithPresence(reg, product.ShapeTop, presence.Present()),
+		runtimekind.Key,
+		runtimekind.Singleton(runtimekind.Table),
+	)
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			tableExpr: cachedRuntimeTable,
+		},
+		ObjectLiteralView: func(expr ExprRef) (ObjectLiteralView, bool) {
+			if expr != tableExpr {
+				return ObjectLiteralView{}, false
+			}
+			return NewObjectLiteral(nil).View(), true
+		},
+		ObjectLiteralFromView: func(ObjectLiteralView, ValueSourceResolver) (product.Value, bool) {
+			return want, true
+		},
+		ExpressionOps: map[ExprRef]ExpressionOperation{
+			opExpr: op,
+		},
+		ExpressionOp: func(got ExpressionOperation, left product.Value, right product.Value) (product.Value, bool) {
+			gotType, ok := typevalue.TypeOf(reg, right)
+			if !ok || !typ.TypeEquals(gotType, wantType) {
+				t.Fatalf("right operand = %s/%v, want object-literal type %v", formatValue(reg, right), ok, wantType)
+			}
+			return right, true
+		},
+	})
+
+	got, ok := resolver.ValueOfSource(point, opSource, state.State{}, nil)
+	if !ok || !product.Equal(reg, got, want) {
+		t.Fatalf("operation source = %s/%v, want object literal value %s/true", formatValue(reg, got), ok, formatValue(reg, want))
+	}
+}
+
+func TestSourceValuesExpressionOperationWinsOverCachedStaticValue(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(653)
+	opExpr := ExprRef(6530)
+	leftExpr := ExprRef(6531)
+	rightExpr := ExprRef(6532)
+	opSource := ValueSource{Kind: ValueSourceExpression, ExprRef: opExpr, HasExpr: true}
+	leftSource := ValueSource{Kind: ValueSourceExpression, ExprRef: leftExpr, HasExpr: true}
+	rightSource := ValueSource{Kind: ValueSourceExpression, ExprRef: rightExpr, HasExpr: true}
+	op, ok := NewBinaryExpressionOperation("or", leftSource, rightSource)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation returned false")
+	}
+	cachedNil := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.Nil), typ.Nil)
+	stringValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	want := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	var calls int
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			opExpr:    cachedNil,
+			leftExpr:  cachedNil,
+			rightExpr: stringValue,
+		},
+		ExpressionOps: map[ExprRef]ExpressionOperation{
+			opExpr: op,
+		},
+		ExpressionOp: func(got ExpressionOperation, left product.Value, right product.Value) (product.Value, bool) {
+			calls++
+			return want, true
+		},
+	})
+
+	got, ok := resolver.ValueOfSource(point, opSource, state.State{}, nil)
+	if !ok || !product.Equal(reg, got, want) {
+		t.Fatalf("operation source = %s/%v, want operation value %s/true", formatValue(reg, got), ok, formatValue(reg, want))
+	}
+	if calls != 1 {
+		t.Fatalf("expression operation calls = %d, want 1", calls)
+	}
+}
+
+func TestSourceValuesOperationOperandOperationWinsOverCachedStaticValue(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(654)
+	outerExpr := ExprRef(6540)
+	innerExpr := ExprRef(6541)
+	fallbackExpr := ExprRef(6542)
+	outerSource := ValueSource{Kind: ValueSourceExpression, ExprRef: outerExpr, HasExpr: true}
+	innerSource := ValueSource{Kind: ValueSourceExpression, ExprRef: innerExpr, HasExpr: true}
+	fallbackSource := ValueSource{Kind: ValueSourceExpression, ExprRef: fallbackExpr, HasExpr: true}
+	innerOp, ok := NewBinaryExpressionOperation("or", NewNilValueSource(0), fallbackSource)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation(inner) returned false")
+	}
+	outerOp, ok := NewBinaryExpressionOperation("..", innerSource, fallbackSource)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation(outer) returned false")
+	}
+	cachedNil := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.Nil), typ.Nil)
+	stringValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			innerExpr:    cachedNil,
+			fallbackExpr: stringValue,
+		},
+		ExpressionOps: map[ExprRef]ExpressionOperation{
+			innerExpr: innerOp,
+			outerExpr: outerOp,
+		},
+		ExpressionOp: func(got ExpressionOperation, left product.Value, right product.Value) (product.Value, bool) {
+			if got.Op() == "or" {
+				return stringValue, true
+			}
+			if got.Op() == ".." {
+				leftType, ok := typevalue.TypeOf(reg, left)
+				if !ok || !typ.TypeEquals(leftType, typ.String) {
+					t.Fatalf("nested operation operand = %s/%v, want string from inner operation", formatValue(reg, left), ok)
+				}
+				return stringValue, true
+			}
+			return product.Value{}, false
+		},
+	})
+
+	got, ok := resolver.ValueOfSource(point, outerSource, state.State{}, nil)
+	if !ok {
+		t.Fatal("outer operation source did not resolve")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("outer operation type = %v/%v, want string", gotType, ok)
+	}
+}
+
+func TestSourceValuesObjectLiteralPrefersViewOverCachedTopOrigin(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(652)
+	litExpr := ExprRef(6520)
+	fieldExpr := ExprRef(6521)
+	litSource := ValueSource{Kind: ValueSourceExpression, ExprRef: litExpr, HasExpr: true}
+	fieldSource := ValueSource{Kind: ValueSourceExpression, ExprRef: fieldExpr, HasExpr: true}
+	lit := NewObjectLiteral([]ObjectEntry{
+		NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "id"}}}, fieldSource),
+	})
+	cachedTop := product.Set(reg, product.Top(), evidence.Key, evidence.ExplicitTop())
+	fieldValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	wantType := typetable.NewRecord().Field("id", typ.String).Build()
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			litExpr:   cachedTop,
+			fieldExpr: fieldValue,
+		},
+		ObjectLiteralView: func(expr ExprRef) (ObjectLiteralView, bool) {
+			if expr != litExpr {
+				return ObjectLiteralView{}, false
+			}
+			return lit.View(), true
+		},
+		ObjectLiteralFromView: func(got ObjectLiteralView, resolver ValueSourceResolver) (product.Value, bool) {
+			entryValue, ok := resolver.ResolveValueSource(fieldSource)
+			if !ok {
+				t.Fatal("object-literal entry source did not resolve")
+			}
+			entryType, ok := typevalue.TypeOf(reg, entryValue)
+			if !ok || !typ.TypeEquals(entryType, typ.String) {
+				t.Fatalf("entry type = %v/%v, want string", entryType, ok)
+			}
+			return typevalue.WithWitness(reg, typevalue.FromType(reg, wantType), wantType), true
+		},
+	})
+
+	got, ok := resolver.ValueOfSource(point, litSource, state.State{}, nil)
+	if !ok {
+		t.Fatal("object literal source did not resolve")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, wantType) {
+		t.Fatalf("object literal type = %v/%v, want %v", gotType, ok, wantType)
+	}
+}
+
+func TestSourceValuesPathBackedExpressionOverlaysFlowPresenceOnCachedType(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(66)
+	expr := ExprRef(6601)
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: expr, HasExpr: true}
+	declared := typeexpr.Optional(typ.String)
+	cached := typevalue.WithWitness(reg, typevalue.FromType(reg, declared), declared)
+	flow := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			expr: cached,
+		},
+		ExpressionPaths: map[ExprRef]struct{}{
+			expr: {},
+		},
+		ExpressionValue: func(gotPoint cfg.Point, gotExpr ExprRef, gotSource ValueSource, in state.State) (product.Value, bool) {
+			if gotPoint != point || gotExpr != expr || gotSource.ExprRef != expr {
+				return product.Value{}, false
+			}
+			return flow, true
+		},
+	})
+
+	got, ok := resolver.ValueOfSource(point, source, state.State{}, nil)
+	if !ok {
+		t.Fatal("path-backed expression did not resolve")
+	}
+	if gotPresence := product.PresenceOf(got); !presence.Equal(gotPresence, presence.Present()) {
+		t.Fatalf("presence = %s, want present overlay from flow", gotPresence)
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("type = %v/%v, want present cached type string", gotType, ok)
+	}
+}
+
+func TestSourceValuesPathBackedExpressionNarrowsMaybeCachedPresenceByFlow(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(6602)
+	expr := ExprRef(6602)
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: expr, HasExpr: true}
+	declared := typeexpr.Optional(typ.String)
+	cached := product.WithPresence(reg, typevalue.WithWitness(reg, typevalue.FromType(reg, declared), declared), presence.Maybe())
+	flow := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			expr: cached,
+		},
+		ExpressionPaths: map[ExprRef]struct{}{
+			expr: {},
+		},
+		ExpressionValue: func(gotPoint cfg.Point, gotExpr ExprRef, gotSource ValueSource, in state.State) (product.Value, bool) {
+			if gotPoint != point || gotExpr != expr || gotSource.ExprRef != expr {
+				return product.Value{}, false
+			}
+			return flow, true
+		},
+	})
+
+	got, ok := resolver.ValueOfSource(point, source, state.State{}, nil)
+	if !ok {
+		t.Fatal("path-backed expression did not resolve")
+	}
+	if gotPresence := product.PresenceOf(got); !presence.Equal(gotPresence, presence.Present()) {
+		t.Fatalf("presence = %s, want present from flow proof", gotPresence)
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("type = %v/%v, want string", gotType, ok)
+	}
+}
+
 func TestSourceValuesExpressionAndVarargProvidersAreGenericHooks(t *testing.T) {
 	reg := standard.Registry()
 	exprValue := presentValue(reg)
@@ -256,6 +557,373 @@ func TestSourceValuesExpressionAndVarargProvidersAreGenericHooks(t *testing.T) {
 	}
 }
 
+func TestSourceValuesProviderRecoversFromNonAssertedCachedTop(t *testing.T) {
+	reg := standard.Registry()
+	expr := ExprRef(56)
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: expr, HasExpr: true}
+	cached := product.Set(reg, product.Top(), evidence.Key, evidence.ExplicitTop())
+	recovered := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			expr: cached,
+		},
+		ExpressionValue: func(point cfg.Point, got ExprRef, source ValueSource, in state.State) (product.Value, bool) {
+			if point != cfg.Point(56) || got != expr || source.ExprRef != expr {
+				return product.Value{}, false
+			}
+			return recovered, true
+		},
+	})
+
+	got, ok := resolver.ValueOfSource(cfg.Point(56), source, state.State{}, nil)
+	if !ok {
+		t.Fatal("expression provider did not resolve")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("recovered type = %v/%v, want string", gotType, ok)
+	}
+}
+
+func TestSourceValuesPathBackedAnyPrefersFlowTableWitness(t *testing.T) {
+	reg := standard.Registry()
+	expr := ExprRef(5601)
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: expr, HasExpr: true}
+	cached := product.Set(reg, product.Top(), evidence.Key, evidence.ExplicitTop())
+	flow := typevalue.WithWitness(reg, typevalue.FromType(reg, typetable.BuiltinTopMarker()), typetable.BuiltinTopMarker())
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			expr: cached,
+		},
+		ExpressionPaths: map[ExprRef]struct{}{
+			expr: {},
+		},
+		ExpressionValue: func(point cfg.Point, got ExprRef, source ValueSource, in state.State) (product.Value, bool) {
+			if point != cfg.Point(5601) || got != expr || source.ExprRef != expr {
+				return product.Value{}, false
+			}
+			return flow, true
+		},
+	})
+
+	got, ok := resolver.ValueOfSource(cfg.Point(5601), source, state.State{}, nil)
+	if !ok {
+		t.Fatal("path-backed expression did not resolve")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typetable.BuiltinTopMarker()) {
+		t.Fatalf("path-backed flow type = %v/%v, want builtin table marker", gotType, ok)
+	}
+}
+
+func TestSourceValuesPathBackedAnyPrefersFlowRuntimeKindEvidence(t *testing.T) {
+	reg := standard.Registry()
+	expr := ExprRef(5602)
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: expr, HasExpr: true}
+	cached := product.Set(reg, product.Top(), evidence.Key, evidence.ExplicitTop())
+	flow := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	flow = product.Set(reg, flow, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			expr: cached,
+		},
+		ExpressionPaths: map[ExprRef]struct{}{
+			expr: {},
+		},
+		ExpressionValue: func(point cfg.Point, got ExprRef, source ValueSource, in state.State) (product.Value, bool) {
+			if point != cfg.Point(5602) || got != expr || source.ExprRef != expr {
+				return product.Value{}, false
+			}
+			return flow, true
+		},
+	})
+
+	got, ok := resolver.ValueOfSource(cfg.Point(5602), source, state.State{}, nil)
+	if !ok {
+		t.Fatal("path-backed expression did not resolve")
+	}
+	if gotKinds := product.Get(reg, got, runtimekind.Key); !runtimekind.Equal(gotKinds, runtimekind.Singleton(runtimekind.Table)) {
+		t.Fatalf("path-backed flow runtime kind = %s, want table", gotKinds)
+	}
+}
+
+func TestSourceValuesPathBackedRuntimeKindDoesNotReplacePreciseCachedType(t *testing.T) {
+	reg := standard.Registry()
+	expr := ExprRef(5603)
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: expr, HasExpr: true}
+	cached := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	flow := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	flow = product.Set(reg, flow, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			expr: cached,
+		},
+		ExpressionPaths: map[ExprRef]struct{}{
+			expr: {},
+		},
+		ExpressionValue: func(point cfg.Point, got ExprRef, source ValueSource, in state.State) (product.Value, bool) {
+			if point != cfg.Point(5603) || got != expr || source.ExprRef != expr {
+				return product.Value{}, false
+			}
+			return flow, true
+		},
+	})
+
+	got, ok := resolver.ValueOfSource(cfg.Point(5603), source, state.State{}, nil)
+	if !ok {
+		t.Fatal("path-backed expression did not resolve")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("path-backed cached type = %v/%v, want string", gotType, ok)
+	}
+}
+
+func TestSourceValuesPathBackedTableTypeKeepsFlowIdentity(t *testing.T) {
+	reg := standard.Registry()
+	expr := ExprRef(56031)
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: expr, HasExpr: true}
+	recordType := typetable.NewRecord().Field("id", typ.String).Build()
+	cached := typevalue.WithWitness(reg, typevalue.FromType(reg, recordType), recordType)
+	wantID := identity.ID{Kind: "lua.table", Site: "source-value", Index: 1}
+	flow := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(wantID))
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			expr: cached,
+		},
+		ExpressionPaths: map[ExprRef]struct{}{
+			expr: {},
+		},
+		ExpressionValue: func(point cfg.Point, got ExprRef, source ValueSource, in state.State) (product.Value, bool) {
+			if point != cfg.Point(56031) || got != expr || source.ExprRef != expr {
+				return product.Value{}, false
+			}
+			return flow, true
+		},
+	})
+
+	got, ok := resolver.ValueOfSource(cfg.Point(56031), source, state.State{}, nil)
+	if !ok {
+		t.Fatal("path-backed expression did not resolve")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, recordType) {
+		t.Fatalf("path-backed cached type = %v/%v, want %v", gotType, ok, recordType)
+	}
+	if gotID, ok := product.Get(reg, got, identity.Key).ID(); !ok || gotID != wantID {
+		t.Fatalf("path-backed identity = %v/%v, want %v", gotID, ok, wantID)
+	}
+	if gotPresence := product.PresenceOf(got); !presence.Equal(gotPresence, presence.Present()) {
+		t.Fatalf("presence = %s, want present", gotPresence)
+	}
+}
+
+func TestSourceValuesPathBackedNonTableTypeRejectsFlowIdentity(t *testing.T) {
+	reg := standard.Registry()
+	expr := ExprRef(56032)
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: expr, HasExpr: true}
+	cached := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	flow := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(identity.ID{Kind: "lua.table", Site: "source-value", Index: 2}))
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			expr: cached,
+		},
+		ExpressionPaths: map[ExprRef]struct{}{
+			expr: {},
+		},
+		ExpressionValue: func(point cfg.Point, got ExprRef, source ValueSource, in state.State) (product.Value, bool) {
+			if point != cfg.Point(56032) || got != expr || source.ExprRef != expr {
+				return product.Value{}, false
+			}
+			return flow, true
+		},
+	})
+
+	got, ok := resolver.ValueOfSource(cfg.Point(56032), source, state.State{}, nil)
+	if !ok {
+		t.Fatal("path-backed expression did not resolve")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("path-backed cached type = %v/%v, want string", gotType, ok)
+	}
+	if gotID, ok := product.Get(reg, got, identity.Key).ID(); ok {
+		t.Fatalf("path-backed identity = %v, want none", gotID)
+	}
+}
+
+func TestSourceValuesPathBackedRuntimeKindNarrowsCachedUnionType(t *testing.T) {
+	reg := standard.Registry()
+	expr := ExprRef(5604)
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: expr, HasExpr: true}
+	mapType := typetable.NewMap(typ.String, typ.String)
+	declared := typeexpr.Union(typ.Nil, typ.String, mapType)
+	cached := typevalue.WithWitness(reg, typevalue.FromType(reg, declared), declared)
+	flow := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	flow = product.Set(reg, flow, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			expr: cached,
+		},
+		ExpressionPaths: map[ExprRef]struct{}{
+			expr: {},
+		},
+		ExpressionValue: func(point cfg.Point, got ExprRef, source ValueSource, in state.State) (product.Value, bool) {
+			if point != cfg.Point(5604) || got != expr || source.ExprRef != expr {
+				return product.Value{}, false
+			}
+			return flow, true
+		},
+	})
+
+	got, ok := resolver.ValueOfSource(cfg.Point(5604), source, state.State{}, nil)
+	if !ok {
+		t.Fatal("path-backed expression did not resolve")
+	}
+	if gotPresence := product.PresenceOf(got); !presence.Equal(gotPresence, presence.Present()) {
+		t.Fatalf("presence = %s, want present runtime-kind proof", gotPresence)
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, mapType) {
+		t.Fatalf("path-backed narrowed type = %v/%v, want %v", gotType, ok, mapType)
+	}
+}
+
+func TestSourceValuesPreservesExplicitAnyRefinementOverRecoveredProviderValue(t *testing.T) {
+	reg := standard.Registry()
+	inner := ExprRef(57)
+	outer := ExprRef(58)
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: outer, HasExpr: true}
+	cached := product.Set(reg, product.Top(), evidence.Key, evidence.ExplicitTop())
+	cached = product.Set(reg, cached, assertion.Key, assertion.Any())
+	recovered := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	base := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			inner: cached,
+		},
+		ExpressionValue: func(point cfg.Point, got ExprRef, source ValueSource, in state.State) (product.Value, bool) {
+			if point != cfg.Point(57) || got != inner || source.ExprRef != inner {
+				return product.Value{}, false
+			}
+			return recovered, true
+		},
+	})
+	resolver := WithExpressionRefinements(reg, base, map[ExprRef]ExpressionRefinement{
+		outer: NewExpressionRefinement(
+			ValueSource{Kind: ValueSourceExpression, ExprRef: inner, HasExpr: true},
+			product.Set(reg, typevalue.FromType(reg, typ.Any), assertion.Key, assertion.Any()),
+		),
+	})
+
+	got, ok := resolver.ValueOfSource(cfg.Point(57), source, state.State{}, nil)
+	if !ok {
+		t.Fatal("expression source did not resolve")
+	}
+	if claims := product.Get(reg, got, assertion.Key); !claims.Has(assertion.AnyClaim) {
+		t.Fatalf("assertion = %s, want explicit any claim preserved", claims)
+	}
+	if ev := product.Get(reg, got, evidence.Key); !ev.IsExplicitTop() {
+		t.Fatalf("evidence = %s, want explicit top preserved", ev)
+	}
+}
+
+func TestSourceValuesDynamicIndexExpressionProjectsCallResultTableSource(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(61)
+	callPoint := cfg.Point(60)
+	tableExpr := ExprRef(6010)
+	keyExpr := ExprRef(6011)
+	indexExpr := ExprRef(6012)
+	tableSource := ValueSource{Kind: ValueSourceCall, ExprRef: tableExpr, HasExpr: true, CallPoint: callPoint, HasCallPoint: true, ResultIndex: 0}
+	keySource := ValueSource{Kind: ValueSourceExpression, ExprRef: keyExpr, HasExpr: true}
+	indexSource := ValueSource{Kind: ValueSourceExpression, ExprRef: indexExpr, HasExpr: true}
+	dyn, ok := NewDynamicIndexExpressionFromSource(tableSource, keySource)
+	if !ok {
+		t.Fatal("NewDynamicIndexExpressionFromSource returned false")
+	}
+	memberType := typetable.NewRecord().Field("id", typ.String).Build()
+	tableType := typetable.NewRecord().StaticStringIndex("root", memberType).Build()
+	keyType := typ.LiteralString("root")
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			keyExpr: typevalue.WithWitness(reg, typevalue.FromType(reg, keyType), keyType),
+		},
+		DynamicIndexExprs: map[ExprRef]DynamicIndexExpression{
+			indexExpr: dyn,
+		},
+	})
+	read := func(got cfg.Point) state.State {
+		if got != callPoint {
+			return state.State{}
+		}
+		return state.State{}.WriteReturnSlot(reg, 0, typevalue.WithWitness(reg, typevalue.FromType(reg, tableType), tableType))
+	}
+
+	got, ok := resolver.ValueOfSource(point, indexSource, state.State{}, read)
+	if !ok {
+		t.Fatal("dynamic index source did not resolve")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, memberType) {
+		t.Fatalf("dynamic index type = %v/%v, want %v", gotType, ok, memberType)
+	}
+}
+
+func TestSourceValuesDynamicIndexExpressionGivesExpressionProviderFirstRefusal(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(62)
+	tableExpr := ExprRef(6210)
+	keyExpr := ExprRef(6211)
+	indexExpr := ExprRef(6212)
+	tableSource := ValueSource{Kind: ValueSourceExpression, ExprRef: tableExpr, HasExpr: true}
+	keySource := ValueSource{Kind: ValueSourceExpression, ExprRef: keyExpr, HasExpr: true}
+	indexSource := ValueSource{Kind: ValueSourceExpression, ExprRef: indexExpr, HasExpr: true}
+	dyn, ok := NewDynamicIndexExpressionFromSource(tableSource, keySource)
+	if !ok {
+		t.Fatal("NewDynamicIndexExpressionFromSource returned false")
+	}
+	tableType := typ.NewMap(typ.String, typ.Number)
+	provenValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	var providerCalls int
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			tableExpr: typevalue.WithWitness(reg, typevalue.FromType(reg, tableType), tableType),
+			keyExpr:   typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String),
+		},
+		DynamicIndexExprs: map[ExprRef]DynamicIndexExpression{
+			indexExpr: dyn,
+		},
+		ExpressionValue: func(gotPoint cfg.Point, gotExpr ExprRef, gotSource ValueSource, in state.State) (product.Value, bool) {
+			if gotPoint != point || gotExpr != indexExpr || gotSource.ExprRef != indexExpr {
+				return product.Value{}, false
+			}
+			providerCalls++
+			return provenValue, true
+		},
+	})
+
+	got, ok := resolver.ValueOfSource(point, indexSource, state.State{}, nil)
+	if !ok {
+		t.Fatal("dynamic index source did not resolve")
+	}
+	if providerCalls != 1 {
+		t.Fatalf("expression provider calls = %d, want one dynamic-index first-refusal call", providerCalls)
+	}
+	if !product.Equal(reg, got, provenValue) {
+		t.Fatalf("dynamic index value = %s, want proof-aware provider value %s", formatValue(reg, got), formatValue(reg, provenValue))
+	}
+}
+
 func TestSourceValuesObjectLiteralViewResolver(t *testing.T) {
 	reg := standard.Registry()
 	expr := ExprRef(61)
@@ -274,12 +942,12 @@ func TestSourceValuesObjectLiteralViewResolver(t *testing.T) {
 			}
 			return lit.View(), true
 		},
-		ObjectLiteralFromView: func(got ObjectLiteralView, resolve func(ValueSource) (product.Value, bool)) (product.Value, bool) {
+		ObjectLiteralFromView: func(got ObjectLiteralView, resolver ValueSourceResolver) (product.Value, bool) {
 			viewCalls++
 			if got.EntryCount() != 1 {
 				t.Fatalf("view entry count = %d, want 1", got.EntryCount())
 			}
-			value, ok := resolve(nilSource)
+			value, ok := resolver.ResolveValueSource(nilSource)
 			if !ok {
 				t.Fatal("view evaluator did not resolve entry source")
 			}
@@ -296,6 +964,57 @@ func TestSourceValuesObjectLiteralViewResolver(t *testing.T) {
 	}
 	if viewCalls != 1 {
 		t.Fatalf("view calls = %d, want one view resolution", viewCalls)
+	}
+}
+
+func TestExpressionRefinementsApplyInsideObjectLiteralViewResolver(t *testing.T) {
+	reg := standard.Registry()
+	root := ExprRef(62)
+	inner := ExprRef(63)
+	outer := ExprRef(64)
+	rootSource := ValueSource{Kind: ValueSourceExpression, ExprRef: root, HasExpr: true}
+	innerSource := ValueSource{Kind: ValueSourceExpression, ExprRef: inner, HasExpr: true}
+	outerSource := ValueSource{Kind: ValueSourceExpression, ExprRef: outer, HasExpr: true}
+	lit := NewObjectLiteral([]ObjectEntry{
+		NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "value"}}}, outerSource),
+	})
+	baseResolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			inner: presentValue(reg),
+		},
+		ObjectLiteralView: func(got ExprRef) (ObjectLiteralView, bool) {
+			if got != root {
+				return ObjectLiteralView{}, false
+			}
+			return lit.View(), true
+		},
+		ObjectLiteralFromView: func(got ObjectLiteralView, resolver ValueSourceResolver) (product.Value, bool) {
+			var resolved bool
+			got.ForEachEntry(func(entry ObjectEntryView) bool {
+				value, ok := resolver.ResolveValueSource(entry.Source())
+				if !ok {
+					t.Fatal("object literal entry source did not resolve through expression refinement")
+				}
+				kind := product.Get(reg, value, runtimekind.Key)
+				if !runtimekind.Equal(kind, runtimekind.Singleton(runtimekind.Table)) {
+					t.Fatalf("entry runtime kind = %s, want table refinement", kind)
+				}
+				resolved = true
+				return true
+			})
+			if !resolved {
+				t.Fatal("object literal entry was not visited")
+			}
+			return presentValue(reg), true
+		},
+	})
+	resolver := WithExpressionRefinements(reg, baseResolver, map[ExprRef]ExpressionRefinement{
+		outer: NewExpressionRefinement(innerSource, runtimeKindRefinement(reg, runtimekind.Singleton(runtimekind.Table))),
+	})
+
+	if _, ok := resolver.ValueOfSource(cfg.Point(1), rootSource, state.State{}, nil); !ok {
+		t.Fatal("object literal root source did not resolve")
 	}
 }
 
@@ -372,6 +1091,39 @@ func TestExpressionRefinementSourceValuesMeetsRefinementAndDoesNotMutateBase(t *
 	}
 	if baseKind := product.Get(reg, base, runtimekind.Key); !runtimekind.Equal(baseKind, runtimekind.Top()) {
 		t.Fatalf("base expression value mutated with runtime kind = %s", baseKind)
+	}
+}
+
+func TestExpressionRefinementsOwnInputAndBindRepeatedly(t *testing.T) {
+	reg := standard.Registry()
+	inner := ExprRef(40)
+	outer := ExprRef(41)
+	replacement := ExprRef(42)
+	innerSource := ValueSource{Kind: ValueSourceExpression, ExprRef: inner, HasExpr: true}
+	replacementSource := ValueSource{Kind: ValueSourceExpression, ExprRef: replacement, HasExpr: true}
+	baseResolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			inner:       presentValue(reg),
+			replacement: presentValue(reg),
+		},
+	})
+	input := map[ExprRef]ExpressionRefinement{
+		outer: NewExpressionRefinement(innerSource, runtimeKindRefinement(reg, runtimekind.Singleton(runtimekind.Table))),
+	}
+	owned := NewExpressionRefinements(input)
+
+	input[outer] = NewExpressionRefinement(replacementSource, runtimeKindRefinement(reg, runtimekind.Singleton(runtimekind.Function)))
+
+	for i := 0; i < 2; i++ {
+		resolver := owned.Bind(reg, baseResolver)
+		got, ok := resolver.ValueOfSource(cfg.Point(1), ValueSource{Kind: ValueSourceExpression, ExprRef: outer, HasExpr: true}, state.State{}, nil)
+		if !ok {
+			t.Fatalf("bind %d did not resolve owned refinement", i)
+		}
+		if gotKind := product.Get(reg, got, runtimekind.Key); !runtimekind.Equal(gotKind, runtimekind.Singleton(runtimekind.Table)) {
+			t.Fatalf("bind %d runtime kind = %s, want original table refinement", i, gotKind)
+		}
 	}
 }
 
@@ -459,6 +1211,112 @@ func TestExpressionRefinementSourceValuesCanMeetCorePresenceRefinement(t *testin
 	}
 	if gotPresence := product.PresenceOf(got); !presence.Equal(gotPresence, presence.Absent()) {
 		t.Fatalf("presence refinement = %s, want absent", gotPresence)
+	}
+}
+
+func TestExpressionRefinementSourceValuesNonNilClaimMarksOptionalWitnessPresent(t *testing.T) {
+	reg := standard.Registry()
+	inner := ExprRef(18)
+	outer := ExprRef(19)
+	optionalString := typeexpr.Optional(typ.String)
+	base := typevalue.WithWitness(reg, typevalue.FromType(reg, optionalString), optionalString)
+	refinement := product.Set(reg, product.Top(), assertion.Key, assertion.NonNil())
+	baseResolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			inner: base,
+		},
+	})
+	resolver := WithExpressionRefinements(reg, baseResolver, map[ExprRef]ExpressionRefinement{
+		outer: NewExpressionRefinement(
+			ValueSource{Kind: ValueSourceExpression, ExprRef: inner, HasExpr: true},
+			refinement,
+		),
+	})
+
+	got, ok := resolver.ValueOfSource(cfg.Point(1), ValueSource{Kind: ValueSourceExpression, ExprRef: outer, HasExpr: true}, state.State{}, nil)
+	if !ok {
+		t.Fatal("non-nil refinement source did not resolve")
+	}
+	if gotPresence := product.PresenceOf(got); !presence.Equal(gotPresence, presence.Present()) {
+		t.Fatalf("presence = %s, want present", gotPresence)
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("type = %v/%v, want string after non-nil projection", gotType, ok)
+	}
+}
+
+func TestExpressionRefinementSourceValuesAppliesDeclaredContractWithoutErasingAnyEvidence(t *testing.T) {
+	reg := standard.Registry()
+	inner := ExprRef(16)
+	outer := ExprRef(17)
+	base := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), assertion.Key, assertion.Any())
+	base = product.Set(reg, base, evidence.Key, evidence.ExplicitTop())
+	declared := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.Number), typ.Number)
+	declared = product.Set(reg, declared, assertion.Key, assertion.Type())
+	baseResolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			inner: base,
+		},
+	})
+	resolver := WithExpressionRefinements(reg, baseResolver, map[ExprRef]ExpressionRefinement{
+		outer: NewExpressionDeclaredContract(
+			ValueSource{Kind: ValueSourceExpression, ExprRef: inner, HasExpr: true},
+			declared,
+		),
+	})
+
+	got, ok := resolver.ValueOfSource(cfg.Point(1), ValueSource{Kind: ValueSourceExpression, ExprRef: outer, HasExpr: true}, state.State{}, nil)
+	if !ok {
+		t.Fatal("declared-contract refinement source did not resolve")
+	}
+	if gotAssertion := product.Get(reg, got, assertion.Key); !assertion.Equal(gotAssertion, assertion.Of(assertion.TypeClaim, assertion.AnyClaim)) {
+		t.Fatalf("assertion = %s, want type+any", gotAssertion)
+	}
+	if gotEvidence := product.Get(reg, got, evidence.Key); !evidence.Equal(gotEvidence, evidence.ExplicitTop()) {
+		t.Fatalf("evidence = %s, want explicit-top from inner any", gotEvidence)
+	}
+	gotWitness := product.Get(reg, got, typewitness.Key)
+	gotType, ok := gotWitness.Type()
+	if !ok || !typ.TypeEquals(gotType, typ.Number) {
+		t.Fatalf("type witness = %v/%v, want number", gotWitness, ok)
+	}
+}
+
+func TestExpressionRefinementDeclaredScalarContractClearsStaleAnyEvidenceAfterRuntimeProof(t *testing.T) {
+	reg := standard.Registry()
+	inner := ExprRef(18)
+	outer := ExprRef(19)
+	base := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	base = product.Set(reg, base, runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	base = product.Set(reg, base, evidence.Key, evidence.ExplicitTop())
+	declared := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	declared = product.Set(reg, declared, assertion.Key, assertion.Type())
+	baseResolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			inner: base,
+		},
+	})
+	resolver := WithExpressionRefinements(reg, baseResolver, map[ExprRef]ExpressionRefinement{
+		outer: NewExpressionDeclaredContract(
+			ValueSource{Kind: ValueSourceExpression, ExprRef: inner, HasExpr: true},
+			declared,
+		),
+	})
+
+	got, ok := resolver.ValueOfSource(cfg.Point(1), ValueSource{Kind: ValueSourceExpression, ExprRef: outer, HasExpr: true}, state.State{}, nil)
+	if !ok {
+		t.Fatal("declared-contract refinement source did not resolve")
+	}
+	if gotEvidence := product.Get(reg, got, evidence.Key); !evidence.Equal(gotEvidence, evidence.Top()) {
+		t.Fatalf("evidence = %s, want trusted top after scalar runtime proof satisfies declared contract", gotEvidence)
+	}
+	gotType, ok := typevalue.WitnessOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("type witness = %v/%v, want string", gotType, ok)
 	}
 }
 

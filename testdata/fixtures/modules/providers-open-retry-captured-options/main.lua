@@ -1,7 +1,14 @@
 local test = require("test")
 local providers = require("providers")
 
-local captured_options = nil
+type RetryOptions = {
+    retry: {
+        max_attempts: number,
+        initial_delay: number,
+    }?,
+}
+
+local captured_options: RetryOptions? = nil
 
 providers._contract = {
     get = function(_contract_id)
@@ -9,7 +16,7 @@ providers._contract = {
             with_context = function(self, _context)
                 return self
             end,
-            with_options = function(self, opts)
+            with_options = function(self, opts: RetryOptions)
                 captured_options = opts
                 return self
             end,
@@ -27,9 +34,12 @@ local instance, err = providers.open("wippy.llm.provider:openai", {
 test.is_nil(err, "open should succeed")
 assert(instance)
 test.not_nil(captured_options, "captured options expected")
-test.not_nil(captured_options.retry, "retry expected")
+local options = captured_options
+assert(options)
+test.not_nil(options.retry, "retry expected")
+assert(options.retry)
 
-local attempts: number = captured_options.retry.max_attempts
-local delay: number = captured_options.retry.initial_delay
+local attempts: number = options.retry.max_attempts
+local delay: number = options.retry.initial_delay
 
 return attempts, delay

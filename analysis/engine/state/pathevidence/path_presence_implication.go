@@ -5,15 +5,51 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
 
 // PathPresenceImplication records a must implication between two path
-// presences: when Trigger has TriggerPresence, Target has TargetPresence.
+// facts: when Trigger has either TriggerPresence or TriggerValue, Target has
+// TargetPresence.
 type PathPresenceImplication struct {
 	Trigger         keyspace.Key
 	TriggerPresence presence.Value
+	TriggerValue    product.Value
+	HasTriggerValue bool
 	Target          keyspace.Key
 	TargetPresence  presence.Value
+}
+
+// NewPathPresenceImplication creates a presence-triggered implication.
+func NewPathPresenceImplication(
+	trigger keyspace.Key,
+	triggerPresence presence.Value,
+	target keyspace.Key,
+	targetPresence presence.Value,
+) PathPresenceImplication {
+	return PathPresenceImplication{
+		Trigger:         trigger,
+		TriggerPresence: triggerPresence,
+		Target:          target,
+		TargetPresence:  targetPresence,
+	}
+}
+
+// NewPathValuePresenceImplication creates a value-triggered implication.
+func NewPathValuePresenceImplication(
+	trigger keyspace.Key,
+	triggerValue product.Value,
+	target keyspace.Key,
+	targetPresence presence.Value,
+) PathPresenceImplication {
+	return PathPresenceImplication{
+		Trigger:         trigger,
+		TriggerValue:    triggerValue,
+		HasTriggerValue: true,
+		Target:          target,
+		TargetPresence:  targetPresence,
+	}
 }
 
 // AddPathPresenceImplication records a persistent must implication.
@@ -48,6 +84,12 @@ func validPathPresenceImplication(implication PathPresenceImplication) bool {
 	if implication.Trigger == (keyspace.Key{}) || implication.Target == (keyspace.Key{}) {
 		return false
 	}
+	if implication.HasTriggerValue {
+		if implication.TriggerValue == product.Top() {
+			return false
+		}
+		return pathPresenceImplicationPresenceValid(implication.TargetPresence)
+	}
 	if !pathPresenceImplicationPresenceValid(implication.TriggerPresence) {
 		return false
 	}
@@ -75,25 +117,9 @@ func deletePathPresenceImplicationsMatching(
 	in map[PathPresenceImplication]struct{},
 	matches func(keyspace.Key) bool,
 ) (map[PathPresenceImplication]struct{}, bool) {
-	if len(in) == 0 {
-		return in, false
-	}
-	out := make(map[PathPresenceImplication]struct{}, len(in))
-	changed := false
-	for implication := range in {
-		if pathPresenceImplicationMatchesPath(implication, matches) {
-			changed = true
-			continue
-		}
-		out[implication] = struct{}{}
-	}
-	if !changed {
-		return in, false
-	}
-	if len(out) == 0 {
-		return nil, true
-	}
-	return out, true
+	return mapedit.DeleteMatching(in, func(implication PathPresenceImplication, _ struct{}) bool {
+		return pathPresenceImplicationMatchesPath(implication, matches)
+	})
 }
 
 func pathPresenceImplicationMatchesPath(
@@ -129,6 +155,9 @@ func pathPresenceImplicationLess(ks *keyspace.KeySpace, a, b PathPresenceImplica
 	}
 	if a.Target != b.Target {
 		return ks.Less(a.Target, b.Target)
+	}
+	if a.HasTriggerValue != b.HasTriggerValue {
+		return !a.HasTriggerValue
 	}
 	if a.TriggerPresence.String() != b.TriggerPresence.String() {
 		return a.TriggerPresence.String() < b.TriggerPresence.String()

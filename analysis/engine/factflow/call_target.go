@@ -23,6 +23,7 @@ type CallResultTarget struct {
 	resultIndex  int
 	targetSymbol symbol.ID
 	targetPath   path.Path
+	targetKey    path.PathKey
 }
 
 // CallResultTargetView provides read-only access to a call result target
@@ -33,12 +34,18 @@ type CallResultTargetView struct {
 
 // NewCallResultTarget creates a call result target descriptor.
 func NewCallResultTarget(kind CallResultTargetKind, index, resultIndex int, targetSymbol symbol.ID, targetPath path.Path) CallResultTarget {
+	ownedPath := targetPath.Clone()
+	targetKey := path.PathKey("")
+	if !ownedPath.IsEmpty() {
+		targetKey = ownedPath.Key()
+	}
 	return CallResultTarget{
 		kind:         kind,
 		index:        index,
 		resultIndex:  resultIndex,
 		targetSymbol: targetSymbol,
-		targetPath:   targetPath.Clone(),
+		targetPath:   ownedPath,
+		targetKey:    targetKey,
 	}
 }
 
@@ -72,8 +79,12 @@ func (v CallResultTargetView) TargetSymbol() symbol.ID { return v.target.targetS
 // TargetPath returns a defensive copy of the target's path identity.
 func (v CallResultTargetView) TargetPath() path.Path { return v.target.targetPath.Clone() }
 
+// TargetPathRef returns the target path for immediate read-only use.
+// Callers must not mutate or retain the returned path.
+func (v CallResultTargetView) TargetPathRef() path.Path { return v.target.targetPath }
+
 // TargetPathKey returns the target path's structural key.
-func (v CallResultTargetView) TargetPathKey() path.PathKey { return v.target.targetPath.Key() }
+func (v CallResultTargetView) TargetPathKey() path.PathKey { return v.target.targetKey }
 
 // TargetPathEmpty reports whether the target path has no identity.
 func (v CallResultTargetView) TargetPathEmpty() bool { return v.target.targetPath.IsEmpty() }

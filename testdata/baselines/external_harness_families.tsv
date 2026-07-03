@@ -1,0 +1,20 @@
+/home/wolfy-j/wippy/wippy-golua-seam/tests/app	assignment type mismatch	1
+/home/wolfy-j/wippy/wippy-golua-seam/tests/app	argument 2.headers["Authorization"] is any, not string	1
+/home/wolfy-j/wippy/session	assignment type mismatch	1
+/home/wolfy-j/wippy/session	argument type mismatch	1
+/home/wolfy-j/wippy/framework/src/test	assignment type mismatch	3
+/home/wolfy-j/wippy/framework/src/test	argument type mismatch	2
+/home/wolfy-j/wippy/framework/src/test	argument 2.name is any, not string	1
+/home/wolfy-j/wippy/framework/src/agent/src	argument type mismatch	3
+/home/wolfy-j/wippy/framework/src/agent/src	assignment type mismatch	2
+/home/wolfy-j/wippy/framework/src/agent/src	argument unknown-value mismatch	1
+/home/wolfy-j/wippy/framework/src/bootloader	argument unknown-value mismatch	1
+/home/wolfy-j/wippy/framework/src/llm/src	return type mismatch	2
+/home/wolfy-j/wippy/framework/src/llm/src	argument type mismatch	2
+/home/wolfy-j/wippy/framework/src/llm/src	unknown value	1
+/home/wolfy-j/wippy/framework/src/llm/src	concat optional operand	1
+/home/wolfy-j/wippy/framework/src/migration	optional argument without proof	4
+/home/wolfy-j/wippy/framework/src/migration	assignment type mismatch	1
+/home/wolfy-j/wippy/framework/src/views	argument type mismatch	7
+/home/wolfy-j/wippy/framework/src/views	assignment type mismatch	4
+/home/wolfy-j/wippy/framework/src/views	assignment untrusted-any mismatch	1

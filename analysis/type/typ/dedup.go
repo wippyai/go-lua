@@ -81,38 +81,143 @@ func sameUnionMember(a, b Type) bool {
 }
 
 func sameRecursiveIdentityGraph(a, b Type) bool {
-	left := make(map[uint64]bool)
-	right := make(map[uint64]bool)
-	collectRecursiveIdentities(a, left, nil)
-	collectRecursiveIdentities(b, right, nil)
-	if len(left) != len(right) {
+	var left, right recursiveIdentitySet
+	var leftSeen, rightSeen recursivePointerSet
+	collectRecursiveIdentities(a, &left, &leftSeen)
+	collectRecursiveIdentities(b, &right, &rightSeen)
+	if left.len() != right.len() {
 		return false
 	}
-	for id := range left {
-		if !right[id] {
+	return left.all(func(id uint64) bool {
+		if !right.has(id) {
+			return false
+		}
+		return true
+	})
+}
+
+type recursiveIdentitySet struct {
+	small    [8]uint64
+	smallLen int
+	large    map[uint64]struct{}
+}
+
+func (s *recursiveIdentitySet) add(id uint64) {
+	if s == nil || id == 0 || s.has(id) {
+		return
+	}
+	if s.large != nil {
+		s.large[id] = struct{}{}
+		return
+	}
+	if s.smallLen < len(s.small) {
+		s.small[s.smallLen] = id
+		s.smallLen++
+		return
+	}
+	s.large = make(map[uint64]struct{}, len(s.small)+1)
+	for i := 0; i < s.smallLen; i++ {
+		s.large[s.small[i]] = struct{}{}
+		s.small[i] = 0
+	}
+	s.smallLen = 0
+	s.large[id] = struct{}{}
+}
+
+func (s *recursiveIdentitySet) has(id uint64) bool {
+	if s == nil || id == 0 {
+		return false
+	}
+	if s.large != nil {
+		_, ok := s.large[id]
+		return ok
+	}
+	for i := 0; i < s.smallLen; i++ {
+		if s.small[i] == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *recursiveIdentitySet) len() int {
+	if s == nil {
+		return 0
+	}
+	if s.large != nil {
+		return len(s.large)
+	}
+	return s.smallLen
+}
+
+func (s *recursiveIdentitySet) all(fn func(uint64) bool) bool {
+	if s == nil || fn == nil {
+		return true
+	}
+	if s.large != nil {
+		for id := range s.large {
+			if !fn(id) {
+				return false
+			}
+		}
+		return true
+	}
+	for i := 0; i < s.smallLen; i++ {
+		if !fn(s.small[i]) {
 			return false
 		}
 	}
 	return true
 }
 
-func collectRecursiveIdentities(t Type, ids map[uint64]bool, seen map[uintptr]bool) {
+type recursivePointerSet struct {
+	small    [128]uintptr
+	smallLen int
+	large    map[uintptr]struct{}
+}
+
+func (s *recursivePointerSet) enter(ptr uintptr) bool {
+	if s == nil || ptr == 0 {
+		return true
+	}
+	if s.large != nil {
+		if _, ok := s.large[ptr]; ok {
+			return false
+		}
+		s.large[ptr] = struct{}{}
+		return true
+	}
+	for i := 0; i < s.smallLen; i++ {
+		if s.small[i] == ptr {
+			return false
+		}
+	}
+	if s.smallLen < len(s.small) {
+		s.small[s.smallLen] = ptr
+		s.smallLen++
+		return true
+	}
+	s.large = make(map[uintptr]struct{}, len(s.small)+1)
+	for i := 0; i < s.smallLen; i++ {
+		s.large[s.small[i]] = struct{}{}
+		s.small[i] = 0
+	}
+	s.smallLen = 0
+	s.large[ptr] = struct{}{}
+	return true
+}
+
+func collectRecursiveIdentities(t Type, ids *recursiveIdentitySet, seen *recursivePointerSet) {
 	t = unwrapAnnotatedOrNil(t)
 	if t == nil {
 		return
 	}
 	ptr := typePointer(t)
-	if ptr != 0 {
-		if seen == nil {
-			seen = make(map[uintptr]bool)
-		}
-		if seen[ptr] {
-			return
-		}
-		seen[ptr] = true
+	if !seen.enter(ptr) {
+		return
 	}
 	if rec, ok := t.(*Recursive); ok {
-		ids[rec.ID] = true
+		ids.add(rec.ID)
 	}
 	WalkChildren(t, func(child Type) bool {
 		collectRecursiveIdentities(child, ids, seen)

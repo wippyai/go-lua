@@ -19,10 +19,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
+	"github.com/wippyai/go-lua/analysis/type/access"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -35,6 +38,16 @@ func TestCheckRunsActiveDiagnostics(t *testing.T) {
 	}
 	if result.Diagnostics[0].Position.File != "test.lua" {
 		t.Fatalf("diagnostic file = %q, want test.lua", result.Diagnostics[0].Position.File)
+	}
+}
+
+func TestCheckFilePreservesDiagnosticFilename(t *testing.T) {
+	result := CheckFile(`local x: number = "no"`, "main.lua")
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	if result.Diagnostics[0].Position.File != "main.lua" {
+		t.Fatalf("diagnostic file = %q, want main.lua", result.Diagnostics[0].Position.File)
 	}
 }
 
@@ -56,12 +69,142 @@ func TestCheckDiagnosticPolicyControlsCode(t *testing.T) {
 	}
 }
 
+func TestCheckCanUseJudgmentDirectCallArguments(t *testing.T) {
+	result := Check(`local function need_string(value: string): ()
+end
+need_string(42)`)
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	diag := result.Diagnostics[0]
+	if diag.Code != diagnostics.CodeDirectCallArgType {
+		t.Fatalf("diagnostic code = %s, want %s", diag.Code, diagnostics.CodeDirectCallArgType)
+	}
+	if !strings.Contains(diag.Message, "argument 1 is 42, not string") {
+		t.Fatalf("message = %q, want judgment-rendered argument mismatch", diag.Message)
+	}
+}
+
+func TestCheckCanUseJudgmentDirectCallContract(t *testing.T) {
+	result := Check(`local x: number = 1
+x()`)
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	if result.Diagnostics[0].Code != diagnostics.CodeDirectCallNotCallable {
+		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeDirectCallNotCallable)
+	}
+	if !strings.Contains(result.Diagnostics[0].Message, "x is number, not callable") {
+		t.Fatalf("message = %q, want judgment-rendered callee mismatch", result.Diagnostics[0].Message)
+	}
+}
+
 func TestOrderedManifestsSkipsNilModuleManifest(t *testing.T) {
 	cfg := config{modules: map[string]*ModuleResult{
 		"broken": {},
 	}}
 	if got := cfg.orderedManifests(); len(got) != 0 {
 		t.Fatalf("ordered manifests = %#v, want nil module manifest skipped", got)
+	}
+}
+
+func TestImportedLookupTableLiteralKeyKeepsExportedStaticMemberPrecision(t *testing.T) {
+	mapper := CheckFileAndExport(`
+type FinishReasonMap = {[string]: string}
+local M = {}
+
+local finish_reasons: FinishReasonMap = {}
+finish_reasons["end_turn"] = "stop"
+finish_reasons["max_tokens"] = "length"
+M.finish_reasons = finish_reasons
+
+function M.map_finish_reason(api_reason: string): string
+	return M.finish_reasons[api_reason] or "unknown"
+end
+
+return M
+`, "mapper", "mapper.lua", WithStdlib())
+	if len(mapper.Errors) != 0 {
+		t.Fatalf("mapper diagnostics = %#v, want none", mapper.Errors)
+	}
+	export, ok := mapper.Manifest.Export.(*typ.Record)
+	if !ok {
+		t.Fatalf("mapper export = %T %[1]v, want record", mapper.Manifest.Export)
+	}
+	field := export.GetField("finish_reasons")
+	if field == nil {
+		t.Fatalf("mapper export fields = %#v, want finish_reasons", export.Fields)
+	}
+	if field.Optional {
+		t.Fatalf("mapper finish_reasons optional = true, want dominating export assignment present")
+	}
+	indexed, ok := access.RuntimeIndex(field.Type, typ.LiteralString("end_turn"))
+	if !ok || !typ.TypeEquals(indexed, typ.LiteralString("stop")) {
+		t.Fatalf("manifest finish_reasons[end_turn] = %v/%v, want literal \"stop\"", indexed, ok)
+	}
+
+	result := CheckFile(`
+local mapper = require("mapper")
+local direct: string = mapper.finish_reasons["end_turn"]
+`, "main.lua", WithStdlib(), WithModule("mapper", mapper))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("main diagnostics = %#v, want none", result.Diagnostics)
+	}
+}
+
+func TestOptionalMapReadIntoUnionAliasReportsNilObligation(t *testing.T) {
+	result := Check(`
+type Task = {kind: "task", id: string}
+type Timer = {kind: "timer", id: string}
+type Envelope = Task | Timer
+type State = {processed: {[string]: Envelope}}
+
+local state: State = {processed = {}}
+state.processed["known"] = {kind = "task", id = "known"}
+local missing: Envelope = state.processed["missing"]
+`)
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	diag := result.Diagnostics[0]
+	if diag.Code != diagnostics.CodeAssignmentType {
+		t.Fatalf("diagnostic code = %s, want %s", diag.Code, diagnostics.CodeAssignmentType)
+	}
+	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{})
+	if !strings.Contains(rendered, `state.processed["missing"] can be`) ||
+		!strings.Contains(rendered, "nil") ||
+		!strings.Contains(rendered, "indexed read that can miss") {
+		t.Fatalf("rendered diagnostic missing nil/index evidence:\n%s", rendered)
+	}
+}
+
+func TestOptionalMapReadFromAnnotatedConstructorResultIntoUnionAliasReportsNilObligation(t *testing.T) {
+	result := Check(`
+type Task = {kind: "task", id: string}
+type Timer = {kind: "timer", id: string}
+type Envelope = Task | Timer
+type State = {processed: {[string]: Envelope}, counters: {[string]: number}}
+type Actor = {state: State}
+
+local function new_actor(): Actor
+	return {state = {processed = {}, counters = {}}}
+end
+
+local actor = new_actor()
+actor.state.processed["known"] = {kind = "task", id = "known"}
+actor.state.counters["known"] = 1
+local missing_processed: Envelope = actor.state.processed["missing"]
+local missing_counter: number = actor.state.counters["missing"]
+`)
+	if len(result.Diagnostics) != 2 {
+		t.Fatalf("diagnostics = %d, want 2: %#v; processed source: %s",
+			len(result.Diagnostics), result.Diagnostics, localAssignmentSourceDebugAtLine(t, result, 15))
+	}
+	rendered := diagnostic.Render(result.Diagnostics[0], diagnostic.RenderOptions{}) + "\n" +
+		diagnostic.Render(result.Diagnostics[1], diagnostic.RenderOptions{})
+	if !strings.Contains(rendered, `actor.state.processed["missing"] can be`) ||
+		!strings.Contains(rendered, `actor.state.counters["missing"] can be`) {
+		t.Fatalf("rendered diagnostics missing optional map read evidence:\n%s", rendered)
 	}
 }
 
@@ -299,6 +442,71 @@ func TestCheckAndExportPublishesReturnedTableDottedFunctionMemberMultiReturns(t 
 	}
 }
 
+func TestCheckAndExportUnannotatedFunctionReturnKeepsAssignedOptionalField(t *testing.T) {
+	registry := CheckFileAndExport(`
+type Entry = {
+    id: string,
+    data: {[string]: any},
+}
+
+local pages = {}
+
+local function qualify_id(entry_id: string, relative_id: string): string
+    return entry_id .. ":" .. relative_id
+end
+
+function pages.build_page(entry: Entry)
+    local raw_data_func = entry.data.data_func
+    local data_func: string? = nil
+    if type(raw_data_func) == "string" and raw_data_func ~= "" then
+        data_func = qualify_id(entry.id, raw_data_func)
+    end
+
+    local page = {}
+    page.data_func = data_func
+    return page
+end
+
+return pages
+`, "page_registry", "page_registry.lua", WithStdlib())
+	if len(registry.Errors) != 0 {
+		t.Fatalf("registry diagnostics = %#v, want none", registry.Errors)
+	}
+	sig, ok := registry.Manifest.FunctionSignatures["page_registry.build_page"]
+	if !ok || sig.Type == nil || len(sig.Type.Returns) != 1 {
+		t.Fatalf("missing page_registry.build_page return signature: %#v", registry.Manifest.FunctionSignatures)
+	}
+	wantReturn := typetable.NewRecord().
+		Field("data_func", typeexpr.Optional(typ.String)).
+		Build()
+	if !typ.TypeEquals(sig.Type.Returns[0], wantReturn) {
+		t.Fatalf("build_page return = %v, want %v", sig.Type.Returns[0], wantReturn)
+	}
+
+	result := CheckFile(`
+local page_registry = require("page_registry")
+
+local function get_page_data(page)
+    if not page or not page.data_func or page.data_func == "" then
+        return {}, nil
+    end
+
+    local name: string = page.data_func
+    return {name}, nil
+end
+
+local page = page_registry.build_page({
+    id = "demo",
+    data = { data_func = "load_data" },
+})
+
+return get_page_data(page)
+`, "main.lua", WithStdlib(), WithModule("page_registry", registry))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, export = %v, want guarded returned field to stay string?", result.Diagnostics, registry.Manifest.Export)
+	}
+}
+
 func TestRequireCheckAndExportedAssignedFunctionLiteralUsesErrorReturnSignature(t *testing.T) {
 	mod := CheckAndExport(`
 		local client = {}
@@ -382,6 +590,32 @@ func TestCheckAndExportPublishesNormalReturnAbsentParamRefinement(t *testing.T) 
 	}
 	if hasNormalReturnAbsentRefinement(sig.Effect, 1) {
 		t.Fatalf("signature effect = %v, did not expect absent refinement for msg param", sig.Effect)
+	}
+}
+
+func TestCheckAndExportPublishesNormalReturnPresentParamRefinement(t *testing.T) {
+	mod := CheckAndExport(`
+		local test = {}
+		function test.not_nil(val: any, msg: string?)
+			if val == nil then
+				error(msg or "expected non-nil", 2)
+			end
+		end
+		return test
+	`, "test", WithStdlib())
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	sig, ok := mod.Manifest.FunctionSignatures["test.not_nil"]
+	if !ok {
+		t.Fatalf("missing test.not_nil function signature: %#v", mod.Manifest.FunctionSignatures)
+	}
+	if !hasNormalReturnPresentRefinement(sig.Effect, 0) {
+		t.Fatalf("signature effect = %v, want normal return present refinement for param 0", sig.Effect)
+	}
+	if hasNormalReturnPresentRefinement(sig.Effect, 1) {
+		t.Fatalf("signature effect = %v, did not expect present refinement for msg param", sig.Effect)
 	}
 }
 
@@ -616,6 +850,293 @@ func TestRequireCheckAndExportedIsNilUsesNormalReturnRefinementForSiblingReturn(
 	}
 }
 
+func TestRequireCheckAndExportedNotNilUsesNormalReturnRefinementForValueReturn(t *testing.T) {
+	testMod := CheckAndExport(`
+		local test = {}
+		function test.not_nil(val: any, msg: string?)
+			if val == nil then
+				error(msg or "expected non-nil", 2)
+			end
+		end
+		return test
+	`, "test", WithStdlib())
+	if len(testMod.Errors) != 0 {
+		t.Fatalf("test module errors = %#v, want none", testMod.Errors)
+	}
+
+	clientMod := CheckAndExport(`
+		local client = {}
+		type Response = {
+			metadata: {
+				response_id: string,
+			},
+		}
+		function client.request(ok: boolean): (Response?, string?)
+			if ok then
+				return {
+					metadata = {
+						response_id = "resp-123",
+					},
+				}, nil
+			end
+			return nil, "failed"
+		end
+		return client
+	`, "client", WithStdlib())
+	if len(clientMod.Errors) != 0 {
+		t.Fatalf("client module errors = %#v, want none", clientMod.Errors)
+	}
+
+	result := Check(`
+		local test = require("test")
+		local client = require("client")
+		local response, err = client.request(true)
+		test.is_nil(err, "no error expected")
+		test.not_nil(response, "response expected")
+		local id: string = response.metadata.response_id
+	`, WithStdlib(), WithModule("test", testMod), WithModule("client", clientMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none after imported not_nil normal-return refinement", result.Diagnostics)
+	}
+}
+
+func TestRequireCheckAndExportedNotNilRefinesHelperReturnUsedAsMethodReceiver(t *testing.T) {
+	testMod := CheckAndExport(`
+		local test = {}
+		function test.not_nil(val: any, msg: string?): any
+			if val == nil then
+				error(msg or "expected non-nil", 2)
+			end
+			return val
+		end
+		return test
+	`, "test", WithStdlib())
+	if len(testMod.Errors) != 0 {
+		t.Fatalf("test module errors = %#v, want none", testMod.Errors)
+	}
+
+	result := Check(`
+		local test = require("test")
+
+		type Binding = {
+			get_context: (Binding, { host: { kind: string } }) -> string,
+		}
+
+		local function make_binding(): Binding?
+			return {
+				get_context = function(self: Binding, input: { host: { kind: string } }): string
+					return input.host.kind
+				end,
+			}
+		end
+
+		local function open_binding()
+			local instance = make_binding()
+			test.not_nil(instance, "binding expected")
+			return instance
+		end
+
+		local value: string = open_binding():get_context({ host = { kind = "session" } })
+	`, WithStdlib(), WithModule("test", testMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want helper return refined before method receiver use", result.Diagnostics)
+	}
+}
+
+func TestRequireCheckAndExportedNotNilRefinesFluentErrorReturnHelperReceiver(t *testing.T) {
+	testMod := CheckAndExport(`
+		local test = {}
+		function test.is_nil(val: any, msg: string?)
+			if val ~= nil then
+				error(msg or "expected nil", 2)
+			end
+		end
+		function test.not_nil(val: any, msg: string?): any
+			if val == nil then
+				error(msg or "expected non-nil", 2)
+			end
+			return val
+		end
+		return test
+	`, "test", WithStdlib())
+	if len(testMod.Errors) != 0 {
+		t.Fatalf("test module errors = %#v, want none", testMod.Errors)
+	}
+
+	contract := manifest.New("contract")
+	instanceType := typ.NewInterface("BindingInstance", []typ.Method{
+		{
+			Name: "get_context",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Param("input", typetable.NewRecord().
+					Field("host", typetable.NewRecord().
+						Field("kind", typ.String).
+						Build()).
+					Build()).
+				Returns(typ.String).
+				Build(),
+		},
+	})
+	defType := typ.NewInterface("BindingDefinition", nil)
+	defType.Methods = []typ.Method{
+		{
+			Name: "with_actor",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Param("actor", typ.Any).
+				Returns(defType).
+				Build(),
+		},
+		{
+			Name: "with_scope",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Param("scope", typ.Any).
+				Returns(defType).
+				Build(),
+		},
+		{
+			Name: "open",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Param("id", typ.String).
+				Returns(typeexpr.Optional(instanceType), typeexpr.Optional(typ.String)).
+				Build(),
+		},
+	}
+	getType := typ.Func().
+		Param("id", typ.String).
+		Returns(typeexpr.Optional(defType), typeexpr.Optional(typ.String)).
+		Build()
+	contract.SetExport(typetable.NewRecord().
+		Field("get", getType).
+		Build())
+	contract.DefineFunctionSignature("get", errorReturnSignature(getType))
+
+	result := Check(`
+		local test = require("test")
+		local contract = require("contract")
+
+		local function open_binding()
+			local def, def_err = contract.get("binding")
+			test.is_nil(def_err, "contract.get")
+			test.not_nil(def, "definition expected")
+
+			local instance, open_err = def
+				:with_actor({})
+				:with_scope({})
+				:open("binding")
+			test.is_nil(open_err, "contract.open")
+			test.not_nil(instance, "binding expected")
+			return instance
+		end
+
+		local value: string = open_binding():get_context({ host = { kind = "session" } })
+	`, WithStdlib(), WithModule("test", testMod), WithManifest("contract", contract))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want asserted fluent helper return refined before method receiver use", result.Diagnostics)
+	}
+}
+
+func TestRequireCheckAndExportedNotNilRefinesFluentHelperWithLocalContractIDs(t *testing.T) {
+	testMod := CheckAndExport(`
+		local test = {}
+		function test.is_nil(val: any, msg: string?)
+			if val ~= nil then
+				error(msg or "expected nil", 2)
+			end
+		end
+		function test.not_nil(val: any, msg: string?): any
+			if val == nil then
+				error(msg or "expected non-nil", 2)
+			end
+			return val
+		end
+		return test
+	`, "test", WithStdlib())
+	if len(testMod.Errors) != 0 {
+		t.Fatalf("test module errors = %#v, want none", testMod.Errors)
+	}
+
+	contract := manifest.New("contract")
+	instanceType := typ.NewInterface("BindingInstance", []typ.Method{
+		{
+			Name: "get_context",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Param("input", typetable.NewRecord().
+					Field("host", typetable.NewRecord().
+						Field("kind", typ.String).
+						Build()).
+					Build()).
+				Returns(typ.String).
+				Build(),
+		},
+	})
+	defType := typ.NewInterface("BindingDefinition", nil)
+	defType.Methods = []typ.Method{
+		{
+			Name: "with_actor",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Param("actor", typ.Any).
+				Returns(defType).
+				Build(),
+		},
+		{
+			Name: "with_scope",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Param("scope", typ.Any).
+				Returns(defType).
+				Build(),
+		},
+		{
+			Name: "open",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Param("id", typ.String).
+				Returns(typeexpr.Optional(instanceType), typeexpr.Optional(typ.String)).
+				Build(),
+		},
+	}
+	getType := typ.Func().
+		Param("id", typ.String).
+		Returns(typeexpr.Optional(defType), typeexpr.Optional(typ.String)).
+		Build()
+	contract.SetExport(typetable.NewRecord().
+		Field("get", getType).
+		Build())
+	contract.DefineFunctionSignature("get", errorReturnSignature(getType))
+
+	result := Check(`
+		local test = require("test")
+		local contract = require("contract")
+		local CONTRACT_ID = "wippy.agent:run_context"
+		local BINDING_ID = "wippy.session.run_context:binding"
+
+		local function open_binding()
+			local def, def_err = contract.get(CONTRACT_ID)
+			test.is_nil(def_err, "contract.get")
+			test.not_nil(def, "definition expected")
+
+			local instance, open_err = def
+				:with_actor({})
+				:with_scope({})
+				:open(BINDING_ID)
+			test.is_nil(open_err, "contract.open")
+			test.not_nil(instance, "binding expected")
+			return instance
+		end
+
+		local value: string = open_binding():get_context({ host = { kind = "session" } })
+	`, WithStdlib(), WithModule("test", testMod), WithManifest("contract", contract))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want local contract ID constants to preserve asserted fluent helper return", result.Diagnostics)
+	}
+}
+
 func TestCheckAndExportPublishesReturnedTableFunctionMemberParams(t *testing.T) {
 	mod := CheckAndExport(`
 		local client = {}
@@ -684,6 +1205,153 @@ func TestCheckHelperSummaryObligationChecksImportedMemberForwardedArg(t *testing
 	}
 	if result.Diagnostics[0].Code != diagnostics.CodeDirectCallArgType {
 		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeDirectCallArgType)
+	}
+}
+
+func TestCheckHelperSummaryUsesFieldCarriedImportedProviderMember(t *testing.T) {
+	mod := CheckAndExport(`
+		local client = {}
+		function client.invoke(model_id: string, payload: any, options: any)
+			return {}
+		end
+		return client
+	`, "bedrock_client")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	clean := Check(`
+		local bedrock_client = require("bedrock_client")
+		local handler = {
+			_client = bedrock_client,
+		}
+		local function helper(client, model_id)
+			return client.invoke(model_id, {}, {})
+		end
+		helper(handler._client, "amazon.titan-embed-text-v2:0")
+	`, WithStdlib(), WithModule("bedrock_client", mod))
+	if len(clean.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want field-carried provider member to stay callable", clean.Diagnostics)
+	}
+
+	mismatch := Check(`
+		local bedrock_client = require("bedrock_client")
+		local handler = {
+			_client = bedrock_client,
+		}
+		local function helper(client, model_id)
+			return client.invoke(model_id, {}, {})
+		end
+		local contract_args = nil :: any
+		helper(handler._client, contract_args.model)
+	`, WithStdlib(), WithModule("bedrock_client", mod))
+	if len(mismatch.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(mismatch.Diagnostics), mismatch.Diagnostics)
+	}
+	if mismatch.Diagnostics[0].Code != diagnostics.CodeDirectCallArgType {
+		t.Fatalf("diagnostic code = %s, want %s", mismatch.Diagnostics[0].Code, diagnostics.CodeDirectCallArgType)
+	}
+}
+
+func TestCheckHelperSummaryKeepsUnannotatedFieldCarriedImportedProviderMemberCallable(t *testing.T) {
+	mod := CheckAndExport(`
+		local client = {}
+		function client.invoke(model_id, payload, options)
+			return {}
+		end
+		return client
+	`, "bedrock_client")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	result := Check(`
+		local bedrock_client = require("bedrock_client")
+		local handler = {
+			_client = bedrock_client,
+		}
+		local function helper(client, model_id)
+			return client.invoke(model_id, {}, {})
+		end
+		helper(handler._client, "amazon.titan-embed-text-v2:0")
+	`, WithStdlib(), WithModule("bedrock_client", mod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want unannotated field-carried provider member to stay callable", result.Diagnostics)
+	}
+}
+
+func TestCheckUnannotatedFactoryReturnKeepsStringFallbackField(t *testing.T) {
+	http := manifest.New("http_client")
+	http.SetExport(typetable.NewRecord().
+		Field("get", typ.Func().
+			Param("url", typ.String).
+			Param("options", typ.Any).
+			Returns(typ.Any).
+			Build()).
+		Build())
+
+	result := Check(`
+		local http_client = require("http_client")
+
+		local function resolve_config()
+			local config = {
+				base_url = nil or "https://api.example.test",
+				timeout = 600,
+			}
+			return config
+		end
+
+		local function request(endpoint_path: string)
+			local config = resolve_config()
+			local full_url = config.base_url .. endpoint_path
+			return http_client.get(full_url, { timeout = config.timeout })
+		end
+
+		request("/v1/messages")
+	`, WithStdlib(), WithManifest("http_client", http))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want unannotated factory return to preserve string fallback field", result.Diagnostics)
+	}
+}
+
+func TestCheckUnannotatedFactoryReturnKeepsNestedOptionalStringFallbackField(t *testing.T) {
+	http := manifest.New("http_client")
+	http.SetExport(typetable.NewRecord().
+		Field("get", typ.Func().
+			Param("url", typ.String).
+			Param("options", typ.Any).
+			Returns(typ.Any).
+			Build()).
+		Build())
+
+	result := Check(`
+		local http_client = require("http_client")
+
+		local function resolve_config()
+			local ctx_all = nil :: any
+			local function resolve_string(key: string, default_env: string?): string?
+				if ctx_all[key] then
+					return tostring(ctx_all[key])
+				end
+				return nil
+			end
+			local config = {
+				base_url = resolve_string("base_url", "BASE_URL") or "https://api.example.test",
+				timeout = tonumber(resolve_string("timeout", "TIMEOUT")) or 600,
+			}
+			return config
+		end
+
+		local function request(endpoint_path: string)
+			local config = resolve_config()
+			local full_url = config.base_url .. endpoint_path
+			return http_client.get(full_url, { timeout = config.timeout })
+		end
+
+		request("/v1/messages")
+	`, WithStdlib(), WithManifest("http_client", http))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want nested optional helper fallback fields to survive factory return", result.Diagnostics)
 	}
 }
 
@@ -955,7 +1623,8 @@ func TestRequireCheckAndExportedStaticStringOptionalMemberHasBoundaryEvidence(t 
 				local n: number = mod["value"]
 			`, WithStdlib(), WithModule("mod", mod))
 			requireAssignmentDiagnosticWithEvidence(t, result, fmt.Sprintf("export = %v, read = mod[\"value\"]", mod.Manifest.Export))
-			requireEvidenceMessage(t, result.Diagnostics[0], "no guard on this path proves mod[\"value\"] is non-nil")
+			requireEvidenceMessage(t, result.Diagnostics[0], "mod[\"value\"] is an indexed read that can miss or read nil")
+			requireEvidenceMessage(t, result.Diagnostics[0], "no proof shows the selected slot satisfies the declared type here")
 		})
 	}
 }
@@ -1287,12 +1956,8 @@ func TestCheckAndExportPublishesAssignedMetatableClassTableShape(t *testing.T) {
 	if classField == nil {
 		t.Fatalf("export fields = %#v, want Widget class table field", export.Fields)
 	}
-	classRecord, ok := classField.Type.(*typ.Record)
-	if !ok {
-		t.Fatalf("Widget field type = %T %[1]v, want record", classField.Type)
-	}
-	requireFunctionField(t, classRecord, "new")
-	requireFunctionField(t, classRecord, "label")
+	requireFunctionFieldFromType(t, classField.Type, "new")
+	requireFunctionFieldFromType(t, classField.Type, "label")
 	requireFunctionField(t, export, "new")
 
 	result := Check(`
@@ -1453,13 +2118,32 @@ func TestEffectOnlyImportedMemberSignatureDoesNotSuppressStructuralCallDiagnosti
 	if len(result.Diagnostics) != 1 {
 		t.Fatalf("diagnostics = %d, want 1: %#v", len(result.Diagnostics), result.Diagnostics)
 	}
-	if result.Diagnostics[0].Code != diagnostics.CodeMissingMember {
-		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeMissingMember)
+	if result.Diagnostics[0].Code != diagnostics.CodeNotCallable {
+		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeNotCallable)
 	}
-	requireEvidenceMessage(t, result.Diagnostics[0], "pkg.run has receiver type")
+	requireEvidenceMessage(t, result.Diagnostics[0], "pkg.run has type number at call")
 }
 
-func TestTypedImportedMemberSignatureDoesNotSuppressOptionalReceiverDiagnostic(t *testing.T) {
+func TestAnyMemberCallReportsMissingCallableProof(t *testing.T) {
+	result := Check(`
+local function compile(config: {context_merger: any}): ()
+    config.context_merger({}, {}, {})
+end
+`)
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one non-callable any member diagnostic", result.Diagnostics)
+	}
+	diag := result.Diagnostics[0]
+	if diag.Code != diagnostics.CodeNotCallable {
+		t.Fatalf("diagnostic code = %s, want %s", diag.Code, diagnostics.CodeNotCallable)
+	}
+	if !strings.Contains(diag.Message, "config.context_merger comes from any/unknown") ||
+		!strings.Contains(diag.Message, "no proof shows it is callable") {
+		t.Fatalf("diagnostic message = %q, want callable proof-boundary message", diag.Message)
+	}
+}
+
+func TestTypedImportedMemberSignatureAcceptsPresentRequireReceiverDespiteOptionalAnnotation(t *testing.T) {
 	m := manifest.New("pkg")
 	runType := typ.Func().Build()
 	m.SetExport(typetable.NewRecord().Field("run", runType).Build())
@@ -1469,13 +2153,9 @@ func TestTypedImportedMemberSignatureDoesNotSuppressOptionalReceiverDiagnostic(t
 		local pkg: {run: () -> ()}? = require("pkg")
 		pkg.run()
 	`, WithStdlib(), WithManifest("pkg", m))
-	if len(result.Diagnostics) != 1 {
-		t.Fatalf("diagnostics = %d, want 1: %#v", len(result.Diagnostics), result.Diagnostics)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none for present require receiver", result.Diagnostics)
 	}
-	if result.Diagnostics[0].Code != diagnostics.CodeMissingMember {
-		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeMissingMember)
-	}
-	requireEvidenceMessage(t, result.Diagnostics[0], "pkg.run has receiver type")
 }
 
 func TestTypedImportedMemberSignatureDoesNotSuppressOptionalMemberDiagnostic(t *testing.T) {
@@ -1612,20 +2292,22 @@ func TestRequireManifestExportFailsClosedForUnknownOrDynamicPath(t *testing.T) {
 	m := providerManifest("provider")
 
 	unknown := Check(`
-		local provider = require("missing")
-		local n: number = provider.meta()
-	`, WithStdlib(), WithManifest("provider", m))
-	if len(unknown.Diagnostics) != 0 {
-		t.Fatalf("unknown diagnostics = %#v, want none without manifest precision", unknown.Diagnostics)
-	}
+			local provider = require("missing")
+			local n: number = provider.meta()
+		`, WithStdlib(), WithManifest("provider", m))
+	unknownDiag := requireDiagnosticCode(t, unknown, diagnostics.CodeAssignmentType)
+	requireEvidenceMessage(t, unknownDiag, "provider.meta(...) has type any")
+	requireEvidenceMessage(t, unknownDiag, "n is declared as number")
+	requireEvidenceMessage(t, unknownDiag, "no proof on this path shows provider.meta(...) satisfies the declared type")
 
 	dynamic := Check(`
 		local provider = require(module_name)
 		local n: number = provider.meta()
 	`, WithStdlib(), WithManifest("provider", m), WithGlobals("module_name"))
-	if len(dynamic.Diagnostics) != 0 {
-		t.Fatalf("dynamic diagnostics = %#v, want none without exact literal precision", dynamic.Diagnostics)
-	}
+	diag := requireDiagnosticCode(t, dynamic, diagnostics.CodeDirectCallArgType)
+	requireEvidenceMessage(t, diag, "argument 1 (module_name) has type any")
+	requireEvidenceMessage(t, diag, "require parameter 1 expects string")
+	requireEvidenceMessage(t, diag, "no proof on this path shows module_name satisfies the parameter type")
 }
 
 func TestRequireManifestExportMatchesExactPathOnly(t *testing.T) {
@@ -1642,12 +2324,13 @@ func TestRequireManifestExportMatchesExactPathOnly(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			result := Check(fmt.Sprintf(`
-				local provider = require(%q)
-				local n: number = provider.meta()
-			`, tc.call), WithStdlib(), WithManifest(tc.m.Path, tc.m))
-			if len(result.Diagnostics) != 0 {
-				t.Fatalf("diagnostics = %#v, want none without exact manifest match", result.Diagnostics)
-			}
+					local provider = require(%q)
+					local n: number = provider.meta()
+				`, tc.call), WithStdlib(), WithManifest(tc.m.Path, tc.m))
+			diag := requireDiagnosticCode(t, result, diagnostics.CodeAssignmentType)
+			requireEvidenceMessage(t, diag, "provider.meta(...) has type any")
+			requireEvidenceMessage(t, diag, "n is declared as number")
+			requireEvidenceMessage(t, diag, "no proof on this path shows provider.meta(...) satisfies the declared type")
 		})
 	}
 }
@@ -2182,7 +2865,40 @@ end
 		t.Fatal("missing exit state")
 	}
 	if depth := maxSharedPlacementDepth(root.Registry(), exit); depth < 3 {
-		t.Fatalf("max shared placement depth = %d, want at least item -> child -> meta: %s\ncalls: %s", depth, placementSummary(root.Registry(), root.KeySpace(), exit), callOutcomeDebug(root))
+		t.Fatalf("max shared placement depth = %d, want at least item -> child -> meta: %s\npoints: %s\ncalls: %s\nbatch source: %s", depth, placementSummary(root.Registry(), root.KeySpace(), exit), pointPlacementDebug(root), callOutcomeDebug(root), localAssignmentSourceDebugAtLine(t, result, 4))
+	}
+}
+
+func TestCheckProcessSendPromotesCrossModuleReturnedRootPlacement(t *testing.T) {
+	builderMod := CheckAndExport(`
+local M = {}
+function M.build(): { items: {[string]: { id: string }} }
+    return {items = {["route-1"] = {id = "route-1"}}}
+end
+return M
+`, "builder", WithStdlib())
+	if len(builderMod.Errors) != 0 {
+		t.Fatalf("builder diagnostics = %#v, want none", builderMod.Errors)
+	}
+
+	result := Check(`
+local builder = require("builder")
+local batch = builder.build()
+process.send("worker-1", "route.ready", batch)
+`, WithStdlib(), WithModule("builder", builderMod), WithManifest("process", ProcessManifest()), WithGlobals("process"))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if result.checked == nil || result.checked.RootResult() == nil {
+		t.Fatal("missing checked root result")
+	}
+	root := result.checked.RootResult()
+	exit, ok := root.ExitState()
+	if !ok {
+		t.Fatal("missing exit state")
+	}
+	if shared, _ := placementCounts(exit); shared == 0 {
+		t.Fatalf("shared placements = 0, want returned batch placement: %s\ncalls: %s", placementSummary(root.Registry(), root.KeySpace(), exit), callOutcomeDebug(root))
 	}
 }
 
@@ -2298,21 +3014,53 @@ func callOutcomeDebug(root *body.Result) string {
 		}
 		outcomeText := "no-outcome"
 		if outcome, ok := root.CallOutcomeAt(point); ok {
+			escapeText := ""
+			for i, event := range outcome.NormalReturnFacts.EscapeEvents {
+				if escapeText != "" {
+					escapeText += ","
+				}
+				escapeText += fmt.Sprintf("%d:%s:%v", i, event.Target.String(), event.Recursive)
+			}
+			if escapeText == "" {
+				escapeText = "none"
+			}
 			resultIDs := ""
 			for i, result := range outcome.Results {
+				resultText := fmt.Sprintf("%d", i)
 				if id, ok := valueIdentity(root.Registry(), result.Value); ok {
-					if resultIDs != "" {
-						resultIDs += ","
-					}
-					resultIDs += fmt.Sprintf("%d:%s", i, id)
+					resultText += fmt.Sprintf(":%s", id)
 				}
+				if t, ok := typevalue.TypeOf(root.Registry(), result.Value); ok {
+					resultText += fmt.Sprintf(":%s", t)
+				}
+				if resultIDs != "" {
+					resultIDs += ","
+				}
+				resultIDs += resultText
 			}
 			if resultIDs == "" {
 				resultIDs = "none"
 			}
-			outcomeText = fmt.Sprintf("escapes=%d heap=%d results=[%s]", len(outcome.NormalReturnFacts.EscapeEvents), len(outcome.HeapTableObjects), resultIDs)
+			outcomeText = fmt.Sprintf("escapes=[%s] heap=%d results=[%s]", escapeText, len(outcome.HeapTableObjects), resultIDs)
+		}
+		stateText := "no-boundary-state"
+		if st, ok := root.StateAtBoundary(point); ok {
+			placements := st.PlacementsSnapshot()
+			escapes := st.EscapeEventsSnapshot()
+			stateText = fmt.Sprintf("statePlacements=%d stateEscapes=%d", len(placements.Placements), len(escapes.Facts))
 		}
 		paths := ""
+		sources := ""
+		site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
+			if sources != "" {
+				sources += ","
+			}
+			sources += fmt.Sprintf("%d:kind=%d expr=%v ref=%d", i, source.Kind, source.HasExpr, source.ExprRef)
+			return true
+		})
+		if sources == "" {
+			sources = "no-arg-sources"
+		}
 		if fact, ok := root.Call(point); ok {
 			for _, arg := range fact.Args {
 				argPath, ok := root.ExpressionPath(arg)
@@ -2346,13 +3094,68 @@ func callOutcomeDebug(root *body.Result) string {
 		if paths == "" {
 			paths = "no-arg-paths"
 		}
+		callee := site.CalleePath().String()
+		if callee == "" {
+			callee = "no-callee-path"
+		}
+		receiver := "no-receiver"
+		if receiverPath, ok := site.ReceiverPath(); ok {
+			receiver = receiverPath.String()
+			if value, ok := root.PathValueAtBoundary(point, receiverPath); ok {
+				if t, ok := typevalue.TypeOf(root.Registry(), value); ok {
+					receiver += fmt.Sprintf(":%s", t.String())
+				} else {
+					receiver += ":no-type"
+				}
+			} else {
+				receiver += ":no-value"
+			}
+		}
+		method := site.MethodName()
+		if method == "" {
+			method = "no-method"
+		}
 		if out != "" {
 			out += "; "
 		}
-		out += fmt.Sprintf("p%d %s %s args=[%s]", point, signatureText, outcomeText, paths)
+		out += fmt.Sprintf("p%d %s %s %s callee=%s receiver=%s method=%s sources=[%s] args=[%s]", point, signatureText, outcomeText, stateText, callee, receiver, method, sources, paths)
 	}
 	if out == "" {
 		return "<no calls>"
+	}
+	return out
+}
+
+func pointPlacementDebug(root *body.Result) string {
+	if root == nil || root.Graph() == nil {
+		return "<no graph>"
+	}
+	out := ""
+	for _, point := range root.Graph().RPO() {
+		solvedCount := -1
+		if st, ok := root.StateAt(point); ok {
+			solvedCount = len(st.PlacementsSnapshot().Placements)
+		}
+		boundaryCount := -1
+		if st, ok := root.StateAtBoundary(point); ok {
+			boundaryCount = len(st.PlacementsSnapshot().Placements)
+		}
+		branchText := ""
+		if fact, ok := root.BranchCondition(point); ok {
+			if value, ok := root.ExpressionValueBeforeBoundary(point, fact.Condition); ok {
+				tp := "no-type"
+				if gotType, typeOK := typevalue.TypeOf(root.Registry(), value); typeOK {
+					tp = gotType.String()
+				}
+				branchText = fmt.Sprintf(" branch=%s", tp)
+			} else {
+				branchText = " branch=no-value"
+			}
+		}
+		if out != "" {
+			out += "; "
+		}
+		out += fmt.Sprintf("p%d solved=%d boundary=%d%s", point, solvedCount, boundaryCount, branchText)
 	}
 	return out
 }
@@ -2547,6 +3350,24 @@ func requireFunctionField(t *testing.T, rec *typ.Record, name string) *typ.Funct
 	return fn
 }
 
+func requireFunctionFieldFromType(t *testing.T, got typ.Type, name string) *typ.Function {
+	t.Helper()
+	if rec, ok := got.(*typ.Record); ok {
+		return requireFunctionField(t, rec, name)
+	}
+	if intersection, ok := got.(*typ.Intersection); ok {
+		for _, member := range intersection.Members {
+			if rec, ok := member.(*typ.Record); ok {
+				if field := rec.GetField(name); field != nil {
+					return requireFunctionField(t, rec, name)
+				}
+			}
+		}
+	}
+	t.Fatalf("type %T %[1]v does not expose function field %q", got, name)
+	return nil
+}
+
 func hasErrorReturn(row effect.Row, valueIndex, errorIndex int) bool {
 	return row.Has(func(label effect.Label) bool {
 		err, ok := effect.NormalizeLabel(label).(returns.ErrorReturn)
@@ -2561,6 +3382,16 @@ func hasNormalReturnAbsentRefinement(row effect.Row, paramIndex int) bool {
 			return false
 		}
 		return postcondition.Absent{}.Equals(refinement.Refinement)
+	})
+}
+
+func hasNormalReturnPresentRefinement(row effect.Row, paramIndex int) bool {
+	return row.Has(func(label effect.Label) bool {
+		refinement, ok := effect.NormalizeLabel(label).(postcondition.NormalReturnRefinement)
+		if !ok || refinement.Target.Index != paramIndex {
+			return false
+		}
+		return postcondition.Present{}.Equals(refinement.Refinement)
 	})
 }
 

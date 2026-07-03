@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
@@ -27,6 +28,9 @@ func (l *lowerer) pathStaticValue(target path.Path) (product.Value, bool) {
 	}
 	t, ok := l.symbolTypes[target.Symbol]
 	if !ok {
+		return product.Value{}, false
+	}
+	if typ.IsAny(t) || typ.IsUnknown(t) {
 		return product.Value{}, false
 	}
 	t, ok = luatypeprojection.ApplySegments(t, target.Segments)

@@ -16,10 +16,10 @@ local function map_invariance(m: {[string]: string}): nil
     return nil
 end
 
--- A concrete cast adopts its type for inference but cannot prove an obligation.
+-- A concrete cast is runtime validation on the normal path.
 local function need(o: {name: string}): number return 1 end
-local function cast_no_launder(y: any): number
-    return need(y as {name: string}) -- expect-error
+local function cast_runtime_validate(y: any): number
+    return need(y as {name: string})
 end
 
 -- Missing required field on a call argument.
@@ -207,7 +207,7 @@ local function covariant_interproc_sink(): number
     return n
 end
 
-return array_covariance, map_invariance, cast_no_launder, missing_field_arg,
+return array_covariance, map_invariance, cast_runtime_validate, missing_field_arg,
     missing_field_return, floor_div, return_operator, gmatch_iter, empty_literal,
     undersupply, fresh_escape, interproc, nonnil_assert_always_nil,
     nonnil_assert_narrowed_nil, covariant_alias_closure, covariant_cast,

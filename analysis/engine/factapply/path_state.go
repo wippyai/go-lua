@@ -4,6 +4,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -11,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
@@ -36,38 +38,93 @@ func writePathAt(
 	if !ok {
 		return s, false
 	}
-	out := s
-	out = writeLocalPathKeyWithStaticStringAlias(reg, ks, out, localKey, value)
+	edit := s.EditPathEvidence(reg)
+	writeLocalPathKeyWithStaticStringAliasEdit(ks, &edit, localKey, value)
 	for _, target := range s.EquivalentStateKeys(ks, stateKey) {
-		out = writeStateKeyWithStaticStringAlias(reg, ks, out, target, value)
+		writeStateKeyWithStaticStringAliasEdit(ks, &edit, target, value)
 	}
-	return out, true
+	return edit.Done(), true
 }
 
-func writeStateKeyWithStaticStringAlias(
-	reg *axis.Registry,
-	ks *keyspace.KeySpace,
-	s state.State,
-	stateKey pathaddr.StateKey,
-	value product.Value,
-) state.State {
+func pathWriteLocalKeysAt(
+	aliasState state.State,
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	path pathdom.Path,
+) ([]keyspace.Key, bool) {
+	pathKey := factPathKeyAt(resolver, point, path)
+	if pathKey == "" {
+		return nil, false
+	}
+	ks := resolver.KeySpace()
+	stateKey, ok := pathaddr.StateKeyFromPathKey(pathKey)
+	if !ok {
+		return nil, false
+	}
 	localKey, ok := ks.FromPathKey(stateKey.PathKey())
 	if !ok {
-		return s
+		return nil, false
 	}
-	return writeLocalPathKeyWithStaticStringAlias(reg, ks, s, localKey, value)
+	keys := make([]keyspace.Key, 0, 2+len(aliasState.EquivalentStateKeys(ks, stateKey))*2)
+	keys = appendLocalPathKeyWithStaticStringAlias(keys, ks, localKey)
+	for _, target := range aliasState.EquivalentStateKeys(ks, stateKey) {
+		localAlias, ok := ks.FromPathKey(target.PathKey())
+		if !ok {
+			continue
+		}
+		keys = appendLocalPathKeyWithStaticStringAlias(keys, ks, localAlias)
+	}
+	return dedupeKeyspaceKeys(keys), true
 }
 
-func writeLocalPathKeyWithStaticStringAlias(
-	reg *axis.Registry,
+func appendLocalPathKeyWithStaticStringAlias(keys []keyspace.Key, ks *keyspace.KeySpace, localKey keyspace.Key) []keyspace.Key {
+	keys = append(keys, localKey)
+	if canonical, ok := ks.FieldCanonical(localKey); ok {
+		keys = append(keys, canonical)
+	}
+	return keys
+}
+
+func writeStateKeyWithStaticStringAliasEdit(
 	ks *keyspace.KeySpace,
-	s state.State,
+	edit *state.PathEvidenceEdit,
+	stateKey pathaddr.StateKey,
+	value product.Value,
+) {
+	localKey, ok := ks.FromPathKey(stateKey.PathKey())
+	if !ok {
+		return
+	}
+	writeLocalPathKeyWithStaticStringAliasEdit(ks, edit, localKey, value)
+}
+
+func writeLocalPathKeyWithStaticStringAliasEdit(
+	ks *keyspace.KeySpace,
+	edit *state.PathEvidenceEdit,
 	localKey keyspace.Key,
 	value product.Value,
-) state.State {
-	out := s.WriteLocalPathKey(reg, localKey, value)
+) {
+	edit.WriteLocalPathKey(localKey, value)
 	if canonical, ok := ks.FieldCanonical(localKey); ok {
-		out = out.WriteLocalPathKey(reg, canonical, value)
+		edit.WriteLocalPathKey(canonical, value)
+	}
+}
+
+func dedupeKeyspaceKeys(in []keyspace.Key) []keyspace.Key {
+	if len(in) < 2 {
+		return in
+	}
+	seen := make(map[keyspace.Key]struct{}, len(in))
+	out := in[:0]
+	for _, key := range in {
+		if key.Kind == keyspace.KindInvalid {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, key)
 	}
 	return out
 }
@@ -90,12 +147,29 @@ func invalidatePathDescendantsAt(
 	return invalidatePathAt(s, resolver, point, path, invalidateStateKeyDescendants)
 }
 
+func invalidatePathDescendantsPreservingDynamicValueKeyMembershipsAt(
+	s state.State,
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	path pathdom.Path,
+) (state.State, bool) {
+	return invalidatePathAt(s, resolver, point, path, invalidateStateKeyDescendantsPreservingDynamicValueKeyMemberships)
+}
+
 func invalidateStateKeySubtree(s state.State, ks *keyspace.KeySpace, stateKey pathaddr.StateKey) (state.State, bool) {
 	return s.InvalidatePathKeySubtree(ks, stateKey.PathKey())
 }
 
+func invalidateStateKeySubtreePreservingDynamicValueKeyMemberships(s state.State, ks *keyspace.KeySpace, stateKey pathaddr.StateKey) (state.State, bool) {
+	return s.InvalidatePathKeySubtreePreservingDynamicValueKeyMemberships(ks, stateKey.PathKey())
+}
+
 func invalidateStateKeyDescendants(s state.State, ks *keyspace.KeySpace, stateKey pathaddr.StateKey) (state.State, bool) {
 	return s.InvalidatePathKeyDescendants(ks, stateKey.PathKey())
+}
+
+func invalidateStateKeyDescendantsPreservingDynamicValueKeyMemberships(s state.State, ks *keyspace.KeySpace, stateKey pathaddr.StateKey) (state.State, bool) {
+	return s.InvalidatePathKeyDescendantsPreservingDynamicValueKeyMemberships(ks, stateKey.PathKey())
 }
 
 // invalidatePathAt resolves path to a key at point and applies invalidate to
@@ -235,28 +309,92 @@ func invalidateHeapStaticMembersAt(
 	targets := pathStaticMemberInvalidationTargets(ks, s, stateKey, descendantsOnly)
 	out := s
 	for _, target := range targets {
-		k, ok := ks.InternStateKey(target.key)
-		if !ok || k.Sym == 0 {
-			continue
-		}
-		root := out.ReadValue(reg, statekey.SymbolValue(k.Sym))
-		id, ok := product.Get(reg, root, identity.Key).ID()
+		out = invalidateHeapTableFactsForStateKey(reg, s, out, resolver, point, ks, target)
+	}
+	return out, true
+}
+
+func invalidateHeapTableFactsForStateKey(
+	reg *axis.Registry,
+	base state.State,
+	out state.State,
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	ks *keyspace.KeySpace,
+	target pathStaticMemberInvalidationTarget,
+) state.State {
+	k, ok := ks.InternStateKey(target.key)
+	if !ok || k.Sym == 0 {
+		return out
+	}
+	segs, ok := ks.SegmentsView(k)
+	if !ok {
+		return out
+	}
+	out = invalidateHeapTableFactsForOwner(reg, out, ks, base.ReadValue(reg, statekey.SymbolValue(k.Sym)), segs, target.descendantsOnly)
+	root := pathdom.NewPath(k.Sym, "").AppendSegments(segs)
+	for split := 1; split <= len(segs); split++ {
+		ownerPath := root.RootOnly().AppendSegments(segs[:split])
+		owner, ok := resolvePathValueAt(reg, resolver, point, base, ownerPath, nil)
 		if !ok {
 			continue
 		}
-		segs := ks.Segments(k)
-		object := out.ReadHeapTableObject(reg, id)
-		var changed bool
-		if target.descendantsOnly {
-			object, changed = object.WithoutStaticMemberDescendants(ks, segs)
-		} else {
-			object, changed = object.WithoutStaticMemberSubtree(ks, segs)
+		out = invalidateHeapTableFactsForOwner(reg, out, ks, owner.value, segs[split:], target.descendantsOnly)
+	}
+	return out
+}
+
+func invalidateHeapTableFactsForOwner(
+	reg *axis.Registry,
+	out state.State,
+	ks *keyspace.KeySpace,
+	owner product.Value,
+	segs []segment.Segment,
+	descendantsOnly bool,
+) state.State {
+	id, ok := product.Get(reg, owner, identity.Key).ID()
+	if !ok {
+		return out
+	}
+	object := out.ReadHeapTableObject(reg, id)
+	var changed bool
+	if next, ok := invalidateHeapObjectRootStructuralWitness(reg, object); ok {
+		object = next
+		changed = true
+	}
+	if descendantsOnly {
+		if next, ok := object.WithoutStaticMemberDescendants(ks, segs); ok {
+			object = next
+			changed = true
 		}
-		if changed {
-			out = out.WriteHeapTableObject(reg, id, object)
+		if next, ok := object.WithoutDynamicIndexFactDescendants(ks, segs); ok {
+			object = next
+			changed = true
+		}
+	} else {
+		if next, ok := object.WithoutStaticMemberSubtree(ks, segs); ok {
+			object = next
+			changed = true
+		}
+		if next, ok := object.WithoutDynamicIndexFactSubtree(ks, segs); ok {
+			object = next
+			changed = true
 		}
 	}
-	return out, true
+	if changed {
+		return out.WriteHeapTableObject(reg, id, object)
+	}
+	return out
+}
+
+func invalidateHeapObjectRootStructuralWitness(reg *axis.Registry, object heapidentity.TableObject) (heapidentity.TableObject, bool) {
+	root := object.Root()
+	next := product.Set(reg, root, typewitness.Key, typewitness.Top())
+	next = product.Set(reg, next, variantorigin.Key, variantorigin.Top())
+	if product.Equal(reg, root, next) {
+		return object, false
+	}
+	return object.WithRoot(next), true
 }
 
 func pathMutationStateKeys(ks *keyspace.KeySpace, s state.State, stateKey pathaddr.StateKey, includeDescendantAliases bool) []pathaddr.StateKey {

@@ -119,11 +119,46 @@ func TestFreshMethodReceiverCanWidenToBaseReceiver(t *testing.T) {
 	}
 }
 
+func TestFreshRecursiveRecordMethodReceiversCanWidenAcrossEquivalentAliases(t *testing.T) {
+	buildLogger := func() *typ.Recursive {
+		return typ.NewRecursive("Logger", func(self typ.Type) typ.Type {
+			return typetable.NewRecord().
+				Field("level", typ.String).
+				Field("log", typ.Func().Param("self", self).Param("msg", typ.String).Build()).
+				Field("debug", typ.Func().Param("self", self).Param("msg", typ.String).Build()).
+				Build()
+		})
+	}
+	sourceSelf := buildLogger()
+	target := buildLogger()
+	source := typetable.NewRecord().
+		Field("level", typ.String).
+		Field("log", typ.Func().Param("self", sourceSelf).Param("msg", typ.String).Build()).
+		Field("debug", typ.Func().Param("self", sourceSelf).Param("msg", typ.String).Build()).
+		Build()
+
+	if !IsFreshAssignable(source, target) {
+		t.Fatal("fresh recursive method receiver should satisfy an equivalent declared recursive alias")
+	}
+}
+
 func TestRecordWidthDepthReadonlyAndMutable(t *testing.T) {
 	named := typetable.NewRecord().Field("name", typ.String).Build()
 	namedAge := typetable.NewRecord().Field("name", typ.String).Field("age", typ.Number).Build()
 	if !IsSubtype(namedAge, named) || IsSubtype(named, namedAge) {
 		t.Fatal("record width check should require target fields only")
+	}
+
+	staticName := typetable.NewRecord().StaticStringIndex("name", typ.String).Build()
+	if !IsSubtype(staticName, named) {
+		t.Fatal("exact static string member should satisfy an equivalent dot-field read")
+	}
+	if !IsSubtype(named, staticName) {
+		t.Fatal("dot field should satisfy an equivalent exact static string member read")
+	}
+	badStaticName := typetable.NewRecord().StaticStringIndex("name", typ.Number).Build()
+	if IsSubtype(badStaticName, named) {
+		t.Fatal("static string member with wrong type should not satisfy dot-field")
 	}
 
 	mutableInteger := typetable.NewRecord().Field("x", typ.Integer).Build()
@@ -171,6 +206,26 @@ func TestFreshRecordExplicitNilAssignableToNilableField(t *testing.T) {
 	if !IsFreshAssignable(source, typeexpr.Optional(target)) {
 		t.Fatal("fresh record with explicit nil field should assign through optional record target")
 	}
+
+	projectionSource := typetable.NewRecord().
+		Field("id", typ.LiteralString("queued-1")).
+		Field("status", typ.LiteralString("queued")).
+		Field("output", typ.Nil).
+		Field("error_code", typ.Nil).
+		Field("retryable", typ.Nil).
+		Field("updated_at", typ.LiteralInt(1)).
+		Build()
+	projectionTarget := typetable.NewRecord().
+		Field("id", typ.String).
+		Field("status", status).
+		Field("output", typeexpr.Optional(typ.String)).
+		Field("error_code", typeexpr.Optional(typ.String)).
+		Field("retryable", typeexpr.Optional(typ.Boolean)).
+		Field("updated_at", typeexpr.Optional(typ.Number)).
+		Build()
+	if !IsFreshAssignable(projectionSource, projectionTarget) {
+		t.Fatal("fresh record should allow explicit nils and literals for optional record-field contracts")
+	}
 }
 
 func TestRecordStaticMembersAreChecked(t *testing.T) {
@@ -181,6 +236,72 @@ func TestRecordStaticMembersAreChecked(t *testing.T) {
 	}
 	if IsSubtype(typetable.NewRecord().Build(), super) {
 		t.Fatal("missing required static member should fail closed")
+	}
+}
+
+func TestRecordReadableFieldAndStaticMemberShareOptionalReadonlyPolicy(t *testing.T) {
+	readonlyStaticSource := typetable.NewRecord().
+		AddStaticMember(typ.StaticMember{
+			Kind:     typ.StaticMemberStringIndex,
+			Name:     "id",
+			Type:     typ.String,
+			Readonly: true,
+		}).
+		Build()
+	mutableFieldTarget := typetable.NewRecord().Field("id", typ.String).Build()
+	if IsSubtype(readonlyStaticSource, mutableFieldTarget) {
+		t.Fatal("readonly static string member must not satisfy mutable dot-field target")
+	}
+
+	readonlyFieldSource := typetable.NewRecord().ReadonlyField("id", typ.String).Build()
+	mutableStaticTarget := typetable.NewRecord().StaticStringIndex("id", typ.String).Build()
+	if IsSubtype(readonlyFieldSource, mutableStaticTarget) {
+		t.Fatal("readonly dot field must not satisfy mutable static string target")
+	}
+
+	optionalStaticSource := typetable.NewRecord().
+		AddStaticMember(typ.StaticMember{
+			Kind:     typ.StaticMemberStringIndex,
+			Name:     "id",
+			Type:     typ.String,
+			Optional: true,
+		}).
+		Build()
+	if IsSubtype(optionalStaticSource, mutableFieldTarget) {
+		t.Fatal("optional static string member must not satisfy required dot-field target")
+	}
+
+	optionalFieldSource := typetable.NewRecord().OptField("id", typ.String).Build()
+	if IsSubtype(optionalFieldSource, mutableStaticTarget) {
+		t.Fatal("optional dot field must not satisfy required static string target")
+	}
+}
+
+func TestFreshAssignableRecordRequiresTargetFields(t *testing.T) {
+	source := typetable.NewRecord().
+		Field("elapsed", typ.Number).
+		Build()
+	target := typetable.NewRecord().
+		Field("id", typ.String).
+		Field("count", typ.Number).
+		Build()
+
+	if IsFreshAssignable(source, target) {
+		t.Fatal("fresh record widening must not ignore missing required target fields")
+	}
+}
+
+func TestFreshAssignableRecordAllowsMissingOptionalTargetFields(t *testing.T) {
+	source := typetable.NewRecord().
+		Field("id", typ.String).
+		Build()
+	target := typetable.NewRecord().
+		Field("id", typ.String).
+		OptField("note", typeexpr.Optional(typ.String)).
+		Build()
+
+	if !IsFreshAssignable(source, target) {
+		t.Fatal("fresh record widening should allow absent optional target fields")
 	}
 }
 
@@ -242,6 +363,101 @@ func TestTableShapesAndMapViews(t *testing.T) {
 	}
 	if IsSubtype(typ.NewMap(typ.String, typ.Any), typetable.NewRecord().Build()) {
 		t.Fatal("map should not satisfy an empty record target")
+	}
+}
+
+func TestFreshAssignableRecordLiteralAdoptsTableTopField(t *testing.T) {
+	source := typetable.NewRecord().
+		Field("model", typ.LiteralString("x")).
+		Field("options", typetable.NewRecord().Build()).
+		Build()
+	target := typetable.NewRecord().
+		Field("model", typ.String).
+		Field("options", typetable.BuiltinTopMarker()).
+		Build()
+
+	if !IsFreshAssignable(source, target) {
+		t.Fatal("fresh record literal should let nested empty table adopt table field contract")
+	}
+}
+
+func TestFreshAssignableRecordLiteralAdoptsEmptyArrayField(t *testing.T) {
+	contentPart := typetable.NewRecord().
+		Field("type", typ.String).
+		Field("text", typ.String).
+		Build()
+	source := typetable.NewRecord().
+		Field("content", typetable.NewRecord().Build()).
+		Build()
+	target := typetable.NewRecord().
+		Field("content", typ.NewArray(contentPart)).
+		Build()
+
+	if !IsFreshAssignable(source, target) {
+		t.Fatal("fresh record literal should let nested empty table adopt array field contract")
+	}
+}
+
+func TestFreshAssignableNestedGenericUnionPayloadArrayLiteral(t *testing.T) {
+	renderPayload := typetable.NewRecord().
+		Field("kind", typ.LiteralString("render")).
+		Field("template", typ.String).
+		Build()
+	indexPayload := typetable.NewRecord().
+		Field("kind", typ.LiteralString("index")).
+		Field("terms", typ.NewArray(typ.String)).
+		Build()
+	payload := typeexpr.Union(renderPayload, indexPayload)
+	param := typ.NewTypeParam("T", nil)
+	envelope := typ.NewGeneric("Envelope", []*typ.TypeParam{param},
+		typetable.NewRecord().Field("payload", param).Build(),
+	)
+	target := typetable.NewRecord().
+		Field("kind", typ.LiteralString("dispatch")).
+		Field("envelope", typ.Instantiate(envelope, payload)).
+		Build()
+	source := typetable.NewRecord().
+		Field("kind", typ.LiteralString("dispatch")).
+		Field("envelope", typetable.NewRecord().
+			Field("payload", typetable.NewRecord().
+				Field("kind", typ.LiteralString("index")).
+				Field("terms", typ.NewTuple(typ.LiteralString("lua"), typ.LiteralString("types"), typ.LiteralString("cache"))).
+				Build()).
+			Build()).
+		Build()
+
+	if !IsFreshAssignable(source, target) {
+		t.Fatalf("fresh nested payload literal should widen tuple terms to string[] through the selected union arm")
+	}
+}
+
+func TestFreshAssignableNestedRecordStaticMembersToOptionalMapComponent(t *testing.T) {
+	source := typetable.NewRecord().
+		Field("enabled", typ.LiteralBool(true)).
+		Field("description_suffix", typ.LiteralString(" (runs specialized agent in parallel)")).
+		Field("default_schema", typetable.NewRecord().
+			Field("type", typ.LiteralString("object")).
+			Field("properties", typetable.NewRecord().
+				Field("message", typetable.NewRecord().
+					Field("type", typ.LiteralString("string")).
+					Field("description", typ.LiteralString("The message to forward to the agent")).
+					Build()).
+				Build()).
+			Field("required", typ.NewTuple(typ.LiteralString("message"))).
+			Build()).
+		Build()
+	target := typetable.NewRecord().
+		Field("enabled", typ.Boolean).
+		Field("description_suffix", typ.String).
+		Field("default_schema", typetable.NewRecord().
+			Field("type", typ.String).
+			OptField("properties", typeexpr.Optional(typ.NewMap(typ.String, typ.Any))).
+			OptField("required", typeexpr.Optional(typ.Any)).
+			Build()).
+		Build()
+
+	if !IsFreshAssignable(source, typeexpr.Optional(target)) {
+		t.Fatal("fresh nested record with static members should satisfy optional map-component field contract")
 	}
 }
 

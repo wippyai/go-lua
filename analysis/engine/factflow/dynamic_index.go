@@ -23,12 +23,14 @@ const (
 type DynamicIndexWrite struct {
 	tablePath path.Path
 	keyPath   path.Path
+	valuePath path.Path
 	keySource ValueSource
 	source    ValueSource
 
 	admission      dynamicindex.Admission
 	readbackIntent DynamicIndexReadbackIntent
 	hasKeyPath     bool
+	hasValuePath   bool
 }
 
 // NewDynamicIndexWrite creates a dynamic-index write event.
@@ -51,6 +53,10 @@ func NewDynamicIndexWrite(
 // TablePath returns the table path receiving the dynamic index write.
 func (w DynamicIndexWrite) TablePath() path.Path { return w.tablePath.Clone() }
 
+// TablePathRef returns the dynamic-index table path for immediate read-only use.
+// Callers must not mutate or retain the returned path.
+func (w DynamicIndexWrite) TablePathRef() path.Path { return w.tablePath }
+
 // WithKeyPath returns a copy carrying the statically resolved path for the
 // dynamic key operand, when the key expression itself has stable identity.
 func (w DynamicIndexWrite) WithKeyPath(keyPath path.Path) DynamicIndexWrite {
@@ -72,6 +78,45 @@ func (w DynamicIndexWrite) KeyPath() (path.Path, bool) {
 	return w.keyPath.Clone(), true
 }
 
+// KeyPathRef returns the dynamic key path for immediate read-only use.
+// Callers must not mutate or retain the returned path.
+func (w DynamicIndexWrite) KeyPathRef() (path.Path, bool) {
+	if !w.hasKeyPath {
+		return path.Path{}, false
+	}
+	return w.keyPath, true
+}
+
+// WithValuePath returns a copy carrying the statically resolved path for the
+// value operand, when the assigned value expression itself has stable identity.
+func (w DynamicIndexWrite) WithValuePath(valuePath path.Path) DynamicIndexWrite {
+	if valuePath.IsEmpty() {
+		w.valuePath = path.Path{}
+		w.hasValuePath = false
+		return w
+	}
+	w.valuePath = valuePath.Clone()
+	w.hasValuePath = true
+	return w
+}
+
+// ValuePath returns the statically resolved path for the assigned value operand.
+func (w DynamicIndexWrite) ValuePath() (path.Path, bool) {
+	if !w.hasValuePath {
+		return path.Path{}, false
+	}
+	return w.valuePath.Clone(), true
+}
+
+// ValuePathRef returns the assigned value path for immediate read-only use.
+// Callers must not mutate or retain the returned path.
+func (w DynamicIndexWrite) ValuePathRef() (path.Path, bool) {
+	if !w.hasValuePath {
+		return path.Path{}, false
+	}
+	return w.valuePath, true
+}
+
 // KeySource returns the source evidence for the dynamic key.
 func (w DynamicIndexWrite) KeySource() ValueSource { return w.keySource }
 
@@ -89,6 +134,7 @@ func (w DynamicIndexWrite) ReadbackIntent() DynamicIndexReadbackIntent {
 func (w DynamicIndexWrite) copy() DynamicIndexWrite {
 	w.tablePath = w.tablePath.Clone()
 	w.keyPath = w.keyPath.Clone()
+	w.valuePath = w.valuePath.Clone()
 	return w
 }
 

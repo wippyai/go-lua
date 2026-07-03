@@ -50,6 +50,13 @@ func (s Set[K, F]) cloneOne(f F) F {
 	return f
 }
 
+func (s Set[K, F]) maybeCloneOne(f F, clone bool) F {
+	if clone {
+		return s.cloneOne(f)
+	}
+	return f
+}
+
 func (s Set[K, F]) dominates(super, sub F) bool {
 	if s.Dominates != nil {
 		return s.Dominates(super, sub)
@@ -61,6 +68,17 @@ func (s Set[K, F]) dominates(super, sub F) bool {
 // (resolved by Prefer), compressed by subsumption, and ordered by Less. The
 // empty set is represented as nil.
 func (s Set[K, F]) Normalize(in []F) []F {
+	return s.normalize(in, true)
+}
+
+// NormalizeOwned returns the canonical form of in and may reuse fact payloads
+// from in. Use it only when the caller owns the input slice and every mutable
+// field inside each fact.
+func (s Set[K, F]) NormalizeOwned(in []F) []F {
+	return s.normalize(in, false)
+}
+
+func (s Set[K, F]) normalize(in []F, clone bool) []F {
 	if len(in) == 0 {
 		return nil
 	}
@@ -75,7 +93,7 @@ func (s Set[K, F]) Normalize(in []F) []F {
 		} else if s.Valid != nil && !s.Valid(fact) {
 			continue
 		}
-		fact = s.cloneOne(fact)
+		fact = s.maybeCloneOne(fact, clone)
 		key := s.Key(fact)
 		if kept, ok := merged[key]; ok && !(s.Prefer != nil && s.Prefer(kept, fact)) {
 			continue
@@ -100,6 +118,18 @@ func (s Set[K, F]) Clone(in []F) []F {
 
 // Equal reports whether a and b have the same canonical form.
 func (s Set[K, F]) Equal(a, b []F) bool {
+	if len(a) == len(b) {
+		same := true
+		for i := range a {
+			if s.Key(a[i]) != s.Key(b[i]) || !s.EqualFact(a[i], b[i]) {
+				same = false
+				break
+			}
+		}
+		if same {
+			return true
+		}
+	}
 	a = s.Normalize(a)
 	b = s.Normalize(b)
 	if len(a) != len(b) {

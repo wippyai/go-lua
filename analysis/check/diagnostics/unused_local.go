@@ -8,14 +8,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 )
 
-type unusedLocals struct{}
+type unusedLocals producerContext
 
-func (unusedLocals) Produce(result *body.Result) []diagnostic.Diagnostic {
+func (p unusedLocals) Produce(result *body.Result) []diagnostic.Diagnostic {
 	graph := result.Graph()
 	if graph == nil {
 		return nil
 	}
-	reachable := collectDiagnosticReachability(result, graph)
+	reachable := collectDiagnosticReachability(result, graph, producerContext(p).guardEnvironments(result))
 	readsByPoint := collectReachableSymbolReads(result, graph, reachable)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {

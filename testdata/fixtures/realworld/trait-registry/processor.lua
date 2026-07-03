@@ -3,7 +3,7 @@ local types = require("types")
 local M = {}
 
 function M.normalize_tool(tool_def: types.TraitToolDef): types.TraitToolEntry
-    if type(tool_def) == "string" then
+    if type(tool_def) ~= "table" then
         return {id = tool_def}
     end
     local entry: types.TraitToolEntry = {

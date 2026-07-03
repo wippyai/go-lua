@@ -36,20 +36,42 @@ func FormatSegments(segs []Segment) string {
 		return ""
 	}
 	var b strings.Builder
+	b.Grow(FormattedLen(segs))
+	WriteFormattedSegments(&b, segs)
+	return b.String()
+}
+
+// FormattedLen returns the exact byte length FormatSegments will emit.
+func FormattedLen(segs []Segment) int {
+	total := 0
+	for _, seg := range segs {
+		switch seg.Kind {
+		case SegmentField:
+			total += 1 + len(seg.Name)
+		case SegmentIndexString:
+			total += quotedPathIndexLen(seg.Name)
+		case SegmentIndexInt:
+			total += 2 + signedDecimalLen(seg.Index)
+		}
+	}
+	return total
+}
+
+// WriteFormattedSegments appends the canonical FormatSegments suffix to b.
+func WriteFormattedSegments(b *strings.Builder, segs []Segment) {
 	for _, seg := range segs {
 		switch seg.Kind {
 		case SegmentField:
 			b.WriteByte('.')
 			b.WriteString(seg.Name)
 		case SegmentIndexString:
-			writeQuotedPathIndex(&b, seg.Name)
+			writeQuotedPathIndex(b, seg.Name)
 		case SegmentIndexInt:
 			b.WriteByte('[')
-			b.WriteString(strconv.Itoa(seg.Index))
+			writeInt(b, seg.Index)
 			b.WriteByte(']')
 		}
 	}
-	return b.String()
 }
 
 // InternFormattedSegments parses the canonical suffix emitted by FormatSegments.
@@ -198,4 +220,61 @@ func writeQuotedPathIndex(b *strings.Builder, key string) {
 		}
 	}
 	b.WriteString("\"]")
+}
+
+func quotedPathIndexLen(key string) int {
+	n := 4 + len(key)
+	for i := 0; i < len(key); i++ {
+		switch key[i] {
+		case '\\', '"':
+			n++
+		}
+	}
+	return n
+}
+
+func writeInt(b *strings.Builder, n int) {
+	var buf [20]byte
+	u := uint64(n)
+	if n < 0 {
+		b.WriteByte('-')
+		u = uint64(-(n + 1)) + 1
+	}
+	out := buf[:0]
+	out = appendUint(out, u)
+	b.Write(out)
+}
+
+func signedDecimalLen(n int) int {
+	if n < 0 {
+		return 1 + unsignedDecimalLen(uint64(-(n+1))+1)
+	}
+	return unsignedDecimalLen(uint64(n))
+}
+
+func unsignedDecimalLen(n uint64) int {
+	digits := 1
+	for n >= 10 {
+		n /= 10
+		digits++
+	}
+	return digits
+}
+
+func appendUint(out []byte, n uint64) []byte {
+	var rev [20]byte
+	i := 0
+	for {
+		rev[i] = byte('0' + n%10)
+		i++
+		n /= 10
+		if n == 0 {
+			break
+		}
+	}
+	for i > 0 {
+		i--
+		out = append(out, rev[i])
+	}
+	return out
 }

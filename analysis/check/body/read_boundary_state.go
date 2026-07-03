@@ -1,14 +1,62 @@
 package body
 
 import (
+	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
+	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
+
+func (r *Result) cachedSourceValue(
+	mode sourceValueReadMode,
+	point cfg.Point,
+	source factflow.ValueSource,
+	compute func() (product.Value, bool),
+) (product.Value, bool) {
+	if r == nil || compute == nil {
+		return product.Value{}, false
+	}
+	key := sourceValueCacheKey{mode: mode, point: point, source: source}
+	return r.queries.sourceValue(key, compute)
+}
+
+func (r *Result) cachedPathValue(
+	mode sourceValueReadMode,
+	point cfg.Point,
+	p pathdom.Path,
+	compute func() (product.Value, bool),
+) (product.Value, bool) {
+	if r == nil || compute == nil || p.IsEmpty() {
+		return product.Value{}, false
+	}
+	key, ok := r.pathValueCacheKey(mode, point, p)
+	if !ok {
+		return product.Value{}, false
+	}
+	return r.queries.pathValue(key, compute)
+}
+
+func (r *Result) pathValueCacheKey(mode sourceValueReadMode, point cfg.Point, p pathdom.Path) (pathValueCacheKey, bool) {
+	pathID, ok := keyspace.PathIdentityFromPath(r.pathValueKeySpace(), p)
+	if !ok {
+		return pathValueCacheKey{}, false
+	}
+	return pathValueCacheKey{mode: mode, point: point, path: pathID}, true
+}
+
+func (r *Result) pathValueKeySpace() *keyspace.KeySpace {
+	if r == nil || r.visibility == nil {
+		return nil
+	}
+	return r.visibility.KeySpace()
+}
 
 func (r *Result) boundaryStateAt(point cfg.Point) (state.State, bool) {
 	if r == nil {
@@ -20,6 +68,18 @@ func (r *Result) boundaryStateAt(point cfg.Point) (state.State, bool) {
 		}
 	}
 	return r.solvedStateAt(point)
+}
+
+// StateAtBoundary returns the diagnostic/call-boundary state for point. Unlike
+// StateAt, this includes the point's boundary transfer when that transfer
+// materializes facts needed by same-point consumers, such as object-literal heap
+// entries for a call argument.
+func (r *Result) StateAtBoundary(point cfg.Point) (state.State, bool) {
+	st, ok := r.boundaryStateAt(point)
+	if !ok {
+		return state.State{}, false
+	}
+	return st.Snapshot(), true
 }
 
 func (r *Result) boundaryRead(point cfg.Point) state.State {
@@ -94,7 +154,7 @@ func (r *Result) needsBoundaryNodeOutput(point cfg.Point) bool {
 		return true
 	}
 	if r.callOutcome != nil {
-		if _, ok := r.facts.CallSite(point); ok {
+		if _, ok := r.facts.CallSiteView(point); ok {
 			return true
 		}
 	}
@@ -114,15 +174,43 @@ func (r *Result) needsBoundaryNodeOutput(point cfg.Point) bool {
 		len(r.facts.PostconditionPathRelations(point)) != 0
 }
 
-func (r *Result) boundarySources() sourcevalue.SourceValues {
+func (r *Result) readExprConfig(mode sourceValueReadMode) readexpr.Config {
+	if r == nil {
+		return readexpr.Config{}
+	}
+	resolver := r.visibility
+	var proofState func(cfg.Point) (state.State, bool)
+	var proofVisibility *visibility.Resolver
+	if mode == sourceValueReadBeforeBoundary {
+		proofState = r.boundaryStateAt
+		proofVisibility = resolver
+		resolver = resolver.Before()
+	}
+	return readexpr.Config{
+		Registry:        r.registry,
+		Facts:           r.facts,
+		Visibility:      resolver,
+		TypeValues:      r.typeValues,
+		ProofState:      proofState,
+		ProofVisibility: proofVisibility,
+	}
+}
+
+func (r *Result) boundarySources(mode sourceValueReadMode) sourcevalue.SourceValues {
 	if r == nil || r.sources == nil {
 		return nil
 	}
-	return sourcevalue.WithExpressionRefinements(r.registry, r.sources, r.exprRefinements)
+	if cached := r.queries.sourceResolver(mode); cached != nil {
+		return cached
+	}
+	sources := sourcevalue.WithExpressionValue(r.sources, readexpr.Provider(r.readExprConfig(mode)))
+	sources = r.exprRefinements.Bind(r.registry, sources)
+	r.queries.rememberSourceResolver(mode, sources)
+	return sources
 }
 
-func (r *Result) sourceValueAtPoint(point cfg.Point, source factflow.ValueSource, st state.State, read func(cfg.Point) state.State) (product.Value, bool) {
-	sources := r.boundarySources()
+func (r *Result) sourceValueAtPoint(mode sourceValueReadMode, point cfg.Point, source factflow.ValueSource, st state.State, read func(cfg.Point) state.State) (product.Value, bool) {
+	sources := r.boundarySources(mode)
 	if sources == nil {
 		return product.Value{}, false
 	}

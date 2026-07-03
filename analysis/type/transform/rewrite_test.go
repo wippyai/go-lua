@@ -354,6 +354,18 @@ func TestRewrite_Record(t *testing.T) {
 	}
 }
 
+func TestRewrite_RecordNoOpReturnsSamePointer(t *testing.T) {
+	rec := newRecord().
+		Field("x", typ.String).
+		OptStaticStringIndex("raw", typ.Boolean).
+		Build()
+
+	result := Rewrite(rec, replaceNumber(typ.Integer))
+	if result != rec {
+		t.Fatal("expected record node to preserve pointer when fields and static members are unchanged")
+	}
+}
+
 func TestRewrite_RecordNormalizesNilableOptionalFieldPayload(t *testing.T) {
 	rec := newRecord().OptField("maybe", typ.Number).Build()
 	result := Rewrite(rec, replaceNumber(typeexpr.Union(typ.String, typ.Nil)))
@@ -458,6 +470,17 @@ func TestRewrite_Instantiated(t *testing.T) {
 	}
 }
 
+func TestRewrite_InstantiatedNoOpReturnsSamePointer(t *testing.T) {
+	tp := typ.NewTypeParam("T", nil)
+	g := typ.NewGeneric("Box", []*typ.TypeParam{tp}, typ.NewArray(tp))
+	inst := typ.Instantiate(g, typ.String)
+
+	result := Rewrite(inst, replaceNumber(typ.Boolean))
+	if result != inst {
+		t.Fatal("expected instantiated node to preserve pointer when type args are unchanged")
+	}
+}
+
 func TestRewrite_Meta(t *testing.T) {
 	meta := typ.NewMeta(typ.Number)
 	result := Rewrite(meta, replaceNumber(typ.String))
@@ -506,7 +529,7 @@ func TestRewrite_GenericBodyAndTypeParamConstraint(t *testing.T) {
 
 func TestRewrite_FunctionTypeParamConstraint(t *testing.T) {
 	tp := typ.NewTypeParam("T", typ.Number)
-	fn := typ.Func().TypeParamRef(tp).Param("value", tp).Build()
+	fn := typ.Func().TypeParamRef(tp).Param("value", tp).Variadic(tp).Returns(tp).Build()
 	result := Rewrite(fn, replaceNumber(typ.String))
 	got, ok := result.(*typ.Function)
 	if !ok {
@@ -518,6 +541,14 @@ func TestRewrite_FunctionTypeParamConstraint(t *testing.T) {
 	param, ok := got.Params[0].Type.(*typ.TypeParam)
 	if !ok || param != got.TypeParams[0] || param.Constraint != typ.String {
 		t.Fatalf("expected rewritten parameter type param, got %v", got.Params[0].Type)
+	}
+	variadic, ok := got.Variadic.(*typ.TypeParam)
+	if !ok || variadic != got.TypeParams[0] {
+		t.Fatalf("expected rewritten variadic type param, got %v", got.Variadic)
+	}
+	ret, ok := got.Returns[0].(*typ.TypeParam)
+	if !ok || ret != got.TypeParams[0] {
+		t.Fatalf("expected rewritten return type param, got %v", got.Returns[0])
 	}
 }
 

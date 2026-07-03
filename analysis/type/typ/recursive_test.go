@@ -595,6 +595,45 @@ func TestUnionKeepsMutualRecursiveFamiliesByIdentity(t *testing.T) {
 	}
 }
 
+func TestRecursiveIdentityGraphReflectsSetBodyRewrite(t *testing.T) {
+	child := NewRecursivePlaceholder("Child")
+	child.SetBody(newRecord().Field("value", String).Build())
+	root := NewRecursivePlaceholder("Root")
+	root.SetBody(newRecord().Field("child", child).Build())
+	wrapper := NewArray(root)
+
+	if !sameRecursiveIdentityGraph(wrapper, root) {
+		t.Fatal("wrapper and root should initially share recursive identity graph")
+	}
+
+	root.SetBody(newRecord().Field("value", Number).Build())
+	if sameRecursiveIdentityGraph(wrapper, child) {
+		t.Fatal("recursive identity graph should reflect SetBody rewrite instead of a stale cached child")
+	}
+}
+
+func TestRecursiveIdentityGraphUsesInlineStorageForSmallGraphs(t *testing.T) {
+	recA := NewRecursivePlaceholder("A")
+	recB := NewRecursivePlaceholder("B")
+	recA.SetBody(newRecord().OptField("b", recB).Build())
+	recB.SetBody(newRecord().OptField("a", recA).Build())
+	left := NewArray(recA)
+	right := newRecord().Field("root", recA).Build()
+
+	if !sameRecursiveIdentityGraph(left, right) {
+		t.Fatal("test setup should compare the same mutual-recursive identity graph")
+	}
+
+	allocs := testing.AllocsPerRun(100, func() {
+		if !sameRecursiveIdentityGraph(left, right) {
+			t.Fatal("recursive identity graph mismatch")
+		}
+	})
+	if allocs > 1 {
+		t.Fatalf("sameRecursiveIdentityGraph allocations/run = %.1f, want inline storage", allocs)
+	}
+}
+
 func TestRecursiveContentFlagsDoNotForceGraphClosure(t *testing.T) {
 	rec := NewRecursivePlaceholder("Node")
 	rec.SetBody(newRecord().Field("value", String).Build())
@@ -895,6 +934,59 @@ func TestKnownContainsOpenRecursiveReflectsCurrentChildGraphState(t *testing.T) 
 	child.SetBody(newRecord().Field("value", Number).Build())
 	if knownContainsOpenRecursive(wrapper) {
 		t.Fatal("wrapper should reflect child becoming closed again after construction")
+	}
+}
+
+func TestRecursiveGraphClosureDependencyInvalidatesThroughChildSetBody(t *testing.T) {
+	child := NewRecursivePlaceholder("Child")
+	child.SetBody(newRecord().Field("value", String).Build())
+	root := NewRecursivePlaceholder("Root")
+	root.SetBody(newRecord().Field("child", child).Build())
+
+	if knownContainsOpenRecursive(root) {
+		t.Fatal("closed child should not make root open-recursive")
+	}
+
+	child.SetBody(nil)
+	if !knownContainsOpenRecursive(root) {
+		t.Fatal("root should reflect child becoming open after root closure was cached")
+	}
+
+	child.SetBody(newRecord().Field("value", Number).Build())
+	if knownContainsOpenRecursive(root) {
+		t.Fatal("root should reflect child becoming closed again")
+	}
+}
+
+func TestExportedContainsPredicatesSeeOpenRecursiveBodyMutation(t *testing.T) {
+	tp := NewTypeParam("T", nil)
+	box := NewGeneric("Box", []*TypeParam{tp}, newRecord().Field("value", tp).Build())
+
+	cases := []struct {
+		name     string
+		contains func(Type) bool
+		marker   Type
+	}{
+		{name: "any", contains: ContainsAny, marker: Any},
+		{name: "never", contains: ContainsNever, marker: Never},
+		{name: "type-param", contains: ContainsTypeParam, marker: NewTypeParam("Free", nil)},
+		{name: "instantiated", contains: ContainsInstantiated, marker: Instantiate(box, String)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			child := NewRecursivePlaceholder("Child")
+			root := newRecord().Field("child", child).Build()
+
+			if tc.contains(root) {
+				t.Fatal("predicate reported marker before recursive placeholder body existed")
+			}
+
+			child.SetBody(newRecord().Field("value", tc.marker).Build())
+			if !tc.contains(root) {
+				t.Fatal("predicate missed marker introduced by later recursive body")
+			}
+		})
 	}
 }
 

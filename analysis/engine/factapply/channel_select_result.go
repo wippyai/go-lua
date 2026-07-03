@@ -33,6 +33,8 @@ func applyChannelSelectResult(
 	events []factflow.ChannelSelect,
 ) state.State {
 	groups := channelSelectResultGroups(events)
+	var edit state.ValueEdit
+	editing := false
 	for selectID, group := range groups {
 		if !group.hasResult || group.resultIndex < 0 || len(group.cases) == 0 && !group.hasDefault {
 			continue
@@ -41,9 +43,16 @@ func applyChannelSelectResult(
 		if !ok {
 			continue
 		}
-		out = out.WriteReturnSlot(ctx.Registry, group.resultIndex, resultValue)
+		if !editing {
+			edit = out.EditValues(ctx.Registry)
+			editing = true
+		}
+		edit.WriteReturnSlot(group.resultIndex, resultValue)
 	}
-	return out
+	if !editing {
+		return out
+	}
+	return edit.Done()
 }
 
 func channelSelectResultGroups(events []factflow.ChannelSelect) map[factflow.ChannelSelectID]channelSelectResultGroup {
@@ -142,14 +151,51 @@ func channelSelectCasePathPayloadType(
 	casePath pathdom.Path,
 ) (typ.Type, bool) {
 	resolved, ok := resolvePathValueAtCached(typeValues, ctx.Registry, resolver, ctx.Point, out, casePath, projectPath)
-	if !ok {
-		return nil, false
+	if ok {
+		if payload, ok := channelPayloadTypeFromValue(ctx.Registry, resolved.value); ok {
+			return payload, true
+		}
 	}
-	channelType, ok := valueWitnessType(ctx.Registry, resolved.value)
+	return channelSelectProjectedPayloadType(ctx, typeValues, resolver, projectPath, out, casePath)
+}
+
+func channelPayloadTypeFromValue(reg *axis.Registry, value product.Value) (typ.Type, bool) {
+	channelType, ok := valueWitnessType(reg, value)
 	if !ok {
 		return nil, false
 	}
 	return ambient.ChannelPayloadType(channelType)
+}
+
+func channelSelectProjectedPayloadType(
+	ctx transfer.NodeContext,
+	typeValues *typevalue.Cache,
+	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
+	out state.State,
+	casePath pathdom.Path,
+) (typ.Type, bool) {
+	if projected, ok := projectPathDynamicIndexValue(ctx.Registry, resolver, ctx.Point, out, casePath); ok {
+		if payload, ok := channelPayloadTypeFromValue(ctx.Registry, projected); ok {
+			return payload, true
+		}
+	}
+	if projected, ok := projectPathHeapStaticMemberValue(ctx.Registry, resolver, ctx.Point, out, casePath); ok {
+		if payload, ok := channelPayloadTypeFromValue(ctx.Registry, projected); ok {
+			return payload, true
+		}
+	}
+	if projected, ok := projectPathStructuralValueCached(typeValues, ctx.Registry, out, casePath, projectPath); ok {
+		if payload, ok := channelPayloadTypeFromValue(ctx.Registry, projected); ok {
+			return payload, true
+		}
+	}
+	if projected, ok := projectPathOriginValue(typeValues, ctx.Registry, out, casePath, projectPath); ok {
+		if payload, ok := channelPayloadTypeFromValue(ctx.Registry, projected); ok {
+			return payload, true
+		}
+	}
+	return nil, false
 }
 
 func valueWitnessType(reg *axis.Registry, value product.Value) (typ.Type, bool) {

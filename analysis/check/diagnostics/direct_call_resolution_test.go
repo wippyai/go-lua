@@ -25,7 +25,7 @@ func TestDirectCallArgumentSourceTypeResolutionLiteral(t *testing.T) {
 	}
 }
 
-func TestDirectCallArgumentSourceTypeResolutionConcreteCastUsesProofSource(t *testing.T) {
+func TestDirectCallArgumentSourceTypeResolutionScalarCastUsesRuntimeValidation(t *testing.T) {
 	inner := &ast.IdentExpr{Value: "payload"}
 	resolution := resolveDirectCallArgumentSourceType(nil, nil, 0, guardEnv{}, semantics.CallFact{}, 0, &ast.CastExpr{
 		Expr: inner,
@@ -34,13 +34,13 @@ func TestDirectCallArgumentSourceTypeResolutionConcreteCastUsesProofSource(t *te
 	if !resolution.OK {
 		t.Fatalf("resolution = %#v, want concrete cast argument", resolution)
 	}
-	if !resolution.UntrustedTopLike {
-		t.Fatalf("resolution = %#v, want proof mismatch path for concrete cast", resolution)
+	if resolution.UntrustedTopLike {
+		t.Fatalf("resolution = %#v, want scalar cast runtime validation", resolution)
 	}
 	if resolution.ReadBoundary == nil {
-		t.Fatalf("concrete cast resolution should preserve an inner-value boundary reader")
+		t.Fatalf("scalar cast resolution should preserve the cast boundary reader")
 	}
-	if !resolution.TypeMismatch(nil, 0, typ.String) {
-		t.Fatalf("cast obligation should still require proof against string")
+	if resolution.TypeMismatch(nil, 0, typ.String) {
+		t.Fatalf("scalar runtime cast passed to string should not mismatch")
 	}
 }

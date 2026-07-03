@@ -3,12 +3,8 @@ package typ
 // BuiltinPrimitiveName reports whether name is one of the built-in primitive
 // type names.
 func BuiltinPrimitiveName(name string) bool {
-	switch name {
-	case "nil", "boolean", "number", "integer", "string", "any", "unknown", "never", "self":
-		return true
-	default:
-		return false
-	}
+	_, ok := BuiltinPrimitiveType(name)
+	return ok
 }
 
 // BuiltinPrimitiveType returns the singleton type for a built-in primitive

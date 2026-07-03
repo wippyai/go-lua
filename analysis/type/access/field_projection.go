@@ -42,21 +42,7 @@ func fieldInRecord(r *typ.Record, name string) fieldResult {
 	if r == nil {
 		return fieldResult{}
 	}
-	if f := r.GetField(name); f != nil {
-		return fieldResult{t: f.Type, ok: true, nilable: f.Optional}
-	}
-	if member := r.GetStaticStringIndex(name); member != nil {
-		return fieldResult{t: member.Type, ok: true, nilable: member.Optional}
-	}
-	if r.HasMapComponent() {
-		if typetable.MapComponentKeyMayContainString(r.MapKey, name) {
-			return fieldResult{t: r.MapValue, ok: true, nilable: true}
-		}
-	}
-	if r.Open {
-		return fieldResult{t: typ.Unknown, ok: true}
-	}
-	return fieldResult{}
+	return stringKeyInRecord(r, name)
 }
 
 func fieldInMap(key typ.Type, value typ.Type, name string) fieldResult {

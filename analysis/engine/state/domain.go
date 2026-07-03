@@ -13,9 +13,19 @@ var domainCache registrycache.Cache[lattice.Lattice[State]]
 
 // Domain builds the default State lattice with every state axis enabled.
 func Domain(reg *axis.Registry) lattice.Lattice[State] {
-	return domainCache.Get(reg, func() lattice.Lattice[State] {
-		return defaultLaneCatalog.Domain(reg)
-	})
+	return domainCache.GetFor(reg, defaultStateDomain)
+}
+
+// IsBottom reports whether st is the unreachable bottom element of the default
+// state product lattice for reg. Consumers outside the transfer engine should
+// use this instead of inferring reachability from any individual lane.
+func IsBottom(reg *axis.Registry, st State) bool {
+	domain := Domain(reg)
+	return domain.Equal(st, domain.Bottom())
+}
+
+func defaultStateDomain(reg *axis.Registry) lattice.Lattice[State] {
+	return defaultLaneCatalog.Domain(reg)
 }
 
 // NormalizeForDomain returns st in the canonical shape owned by domain. For a

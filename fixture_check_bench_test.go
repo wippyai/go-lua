@@ -8,6 +8,7 @@ var fixtureCheckBenchmarkSuites = []string{
 	"regression/deadlock-dataflow-node",
 	"realworld/advanced-type-system-stress",
 	"realworld/plugin-runtime-pipeline-soundness",
+	"realworld/wippy-scheduler-create-integration",
 }
 
 func BenchmarkFixtureChecks(b *testing.B) {

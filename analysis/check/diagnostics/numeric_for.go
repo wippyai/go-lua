@@ -24,7 +24,7 @@ func (p numericForOperands) Produce(result *body.Result) []diagnostic.Diagnostic
 	if graph == nil {
 		return nil
 	}
-	envs := cachedGuardEnvironments(result)
+	envs := producerContext(p).guardEnvironments(result)
 	typer := newExpressionTyper(result, p.resolver)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {

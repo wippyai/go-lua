@@ -19,6 +19,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -36,6 +37,7 @@ import (
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
@@ -76,6 +78,293 @@ func TestFromProgramResultExportsReturnedTableMemberErrorReturnEffect(t *testing
 	assertSignatureReturnPresenceRelation(t, sig.OperationalEffects.ReturnPresenceRelations, 1, presence.Absent(), 0, presence.Present())
 }
 
+func TestFromProgramResultExportsUntypedParamObligationAsFunctionType(t *testing.T) {
+	result := checkProgram(t, `
+		local client = {}
+		local http: {get: (url: string, options: table) -> ()} = {
+			get = function(url: string, options: table): () end
+		}
+		function client.request(endpoint_path)
+			local full_url = "https://api.example.test" .. endpoint_path
+			return http.get(full_url, {})
+		end
+		return client
+	`)
+
+	m := FromProgramResult("client", result)
+	sig, ok := m.FunctionSignatures["client.request"]
+	if !ok {
+		t.Fatalf("missing client.request function signature: %#v", m.FunctionSignatures)
+	}
+	if sig.Type == nil || len(sig.Type.Params) != 1 {
+		t.Fatalf("client.request type = %#v, want one inferred parameter", sig.Type)
+	}
+	got := sig.Type.Params[0].Type
+	want := typ.MaterializeUnion([]typ.Type{typ.Number, typ.String})
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("endpoint_path type = %v, want %v", got, want)
+	}
+}
+
+func TestFromProgramResultExportsRuntimeCastReturnForUntypedMemberFunction(t *testing.T) {
+	result := checkProgram(t, `
+		local client = {}
+		function client.resolve(entry)
+			local url = entry.url or ""
+			return url :: string
+		end
+		return client
+	`)
+
+	root := result.RootResult()
+	var raw summary.Summary
+	var hasRaw bool
+	exportRoots := returnedExportSourcePaths(root)
+	if len(exportRoots) == 0 {
+		t.Fatalf("missing returned export root")
+	}
+	for _, point := range root.Graph().RPO() {
+		fact, ok := root.FunctionDefinition(point)
+		if !ok || fact.Func == nil || fact.Name == nil {
+			continue
+		}
+		member, ok := functionDefinitionExportMember(root, exportRoots[0].path, fact.Name)
+		if !ok || member.Name != "resolve" {
+			continue
+		}
+		target := pathdom.Path{}
+		if fact.HasTargetPath {
+			target = fact.TargetPath
+		}
+		raw, hasRaw = functionSummary(result, root, fact.Func, target)
+		break
+	}
+	if !hasRaw {
+		t.Fatalf("missing raw summary for client.resolve")
+	}
+
+	m := FromProgramResult("client", result)
+	sig, ok := m.FunctionSignatures["client.resolve"]
+	if !ok {
+		var rawReturnTypes []typ.Type
+		for _, value := range raw.Returns {
+			if t, ok := typevalue.TypeOf(root.Registry(), value); ok {
+				rawReturnTypes = append(rawReturnTypes, t)
+			}
+		}
+		t.Fatalf("missing client.resolve function signature: %#v; raw summary returns = %#v (%#v)", m.FunctionSignatures, rawReturnTypes, raw.Returns)
+	}
+	if sig.Type == nil || len(sig.Type.Returns) != 1 || !typ.TypeEquals(sig.Type.Returns[0], typ.String) {
+		t.Fatalf("client.resolve type = %#v, want one string return", sig.Type)
+	}
+}
+
+func TestFromProgramResultExportsGenericFunctionDefinitionMemberType(t *testing.T) {
+	result := checkProgram(t, `
+type Collection<T> = {
+    items: {T},
+    count: (self: Collection<T>) -> number,
+}
+
+local M = {}
+
+function M.new<T>(): Collection<T>
+    local c: Collection<T> = {
+        items = {},
+        count = function(self: Collection<T>): number
+            return #self.items
+        end,
+    }
+    return c
+end
+
+return M
+`)
+
+	m := FromProgramResult("collection", result)
+	record, ok := m.Export.(*typ.Record)
+	if !ok {
+		t.Fatalf("export = %T %[1]v, want record", m.Export)
+	}
+	field, ok := fieldByName(record, "new")
+	if !ok {
+		t.Fatalf("export fields = %#v, want new", record.Fields)
+	}
+	fn, ok := field.Type.(*typ.Function)
+	if !ok {
+		t.Fatalf("new type = %T %[1]v, want function", field.Type)
+	}
+	if len(fn.TypeParams) != 1 || fn.TypeParams[0].Name != "T" {
+		t.Fatalf("new type params = %#v, want T", fn.TypeParams)
+	}
+	if len(fn.Returns) != 1 || typ.IsAny(fn.Returns[0]) || typ.IsUnknown(fn.Returns[0]) {
+		t.Fatalf("new returns = %#v, want concrete generic Collection<T>", fn.Returns)
+	}
+}
+
+func TestFromProgramResultRefinesDeclaredAnyReturnWhenSummaryIsPortable(t *testing.T) {
+	result := checkProgram(t, `
+local M = {}
+local Runner = {}
+Runner.__index = Runner
+
+function Runner:run(): any
+    return {
+        status = "error",
+        error = "failed",
+        migrations_failed = 1,
+    }
+end
+
+function M.setup(database_id: string): any
+    local self = setmetatable({}, Runner)
+    return self
+end
+
+	return M
+`)
+	root := result.RootResult()
+	var raw summary.Summary
+	var hasRaw bool
+	exportRoots := returnedExportSourcePaths(root)
+	if len(exportRoots) == 0 {
+		t.Fatalf("missing returned export root")
+	}
+	for _, point := range root.Graph().RPO() {
+		fact, ok := root.FunctionDefinition(point)
+		if !ok || fact.Func == nil || fact.Name == nil {
+			continue
+		}
+		member, ok := functionDefinitionExportMember(root, exportRoots[0].path, fact.Name)
+		if !ok || member.Name != "setup" {
+			continue
+		}
+		target := pathdom.Path{}
+		if fact.HasTargetPath {
+			target = fact.TargetPath
+		}
+		raw, hasRaw = functionSummary(result, root, fact.Func, target)
+		break
+	}
+
+	m := FromProgramResult("runner", result)
+	sig, ok := m.FunctionSignatures["runner.setup"]
+	if !ok {
+		t.Fatalf("missing runner.setup function signature: %#v", m.FunctionSignatures)
+	}
+	if sig.Type == nil || len(sig.Type.Returns) != 1 {
+		t.Fatalf("runner.setup type = %#v, want one inferred return", sig.Type)
+	}
+	if typ.IsAny(sig.Type.Returns[0]) || typ.IsUnknown(sig.Type.Returns[0]) {
+		var rawReturns []typ.Type
+		var rawReturnStrings []string
+		var rawReturnIDs []identity.ID
+		var heapIDs []identity.ID
+		var heapMemberStrings []string
+		heapObjects := 0
+		if hasRaw {
+			heapObjects = len(raw.HeapTableObjects)
+			for id := range raw.HeapTableObjects {
+				heapIDs = append(heapIDs, id)
+			}
+			for _, value := range raw.Returns {
+				if id, ok := product.Get(root.Registry(), value, identity.Key).ID(); ok {
+					rawReturnIDs = append(rawReturnIDs, id)
+				}
+				if t, ok := typevalue.TypeOf(root.Registry(), value); ok {
+					rawReturns = append(rawReturns, t)
+					rawReturnStrings = append(rawReturnStrings, t.String())
+				}
+			}
+			for _, id := range rawReturnIDs {
+				object, ok := raw.HeapTableObjects[id]
+				if !ok {
+					continue
+				}
+				for _, memberValue := range object.StaticMembers() {
+					memberType := "<none>"
+					if fn, ok := root.FunctionValueTypeForValue(memberValue); ok && fn != nil {
+						memberType = "fn:" + fn.String()
+					} else if t, ok := typevalue.TypeOf(root.Registry(), memberValue); ok {
+						memberType = "type:" + t.String()
+					}
+					if memberID, ok := product.Get(root.Registry(), memberValue, identity.Key).ID(); ok {
+						heapMemberStrings = append(heapMemberStrings, memberID.String()+":"+memberType)
+					} else {
+						heapMemberStrings = append(heapMemberStrings, "no-id:"+memberType)
+					}
+				}
+			}
+		}
+		t.Fatalf("runner.setup returns = %#v, raw summary returns = %#v (%v), raw return ids = %#v, raw heap ids = %#v, raw heap members = %v, raw heap objects = %d, want proven portable implementation shape instead of declared any", sig.Type.Returns, rawReturns, rawReturnStrings, rawReturnIDs, heapIDs, heapMemberStrings, heapObjects)
+	}
+	record, ok := unwrap.Annotated(sig.Type.Returns[0]).(*typ.Record)
+	if !ok {
+		t.Fatalf("runner.setup return = %T %[1]v, want record with metatable/prototype surface", sig.Type.Returns[0])
+	}
+	member, ok := staticMemberByStringKey(record, "run")
+	if !ok {
+		t.Fatalf("runner.setup return = %v, want run prototype method", record)
+	}
+	run, ok := member.Type.(*typ.Function)
+	if !ok || len(run.Returns) != 1 {
+		t.Fatalf("run member type = %T %[1]v, want one-return function", member.Type)
+	}
+	runResult, ok := unwrap.Annotated(run.Returns[0]).(*typ.Record)
+	if !ok {
+		t.Fatalf("run return = %T %[1]v, want record", run.Returns[0])
+	}
+	errorField, ok := fieldByName(runResult, "error")
+	if !ok || !typ.TypeEquals(errorField.Type, typ.LiteralString("failed")) {
+		t.Fatalf("run return fields = %#v, want error literal string", runResult.Fields)
+	}
+}
+
+func TestFromProgramResultExportsStaticStringMembersFromAssignedLookupTable(t *testing.T) {
+	result := checkProgram(t, `
+type FinishReasonMap = {[string]: string}
+local M = {}
+
+local finish_reasons: FinishReasonMap = {}
+finish_reasons["end_turn"] = "stop"
+finish_reasons["max_tokens"] = "length"
+M.finish_reasons = finish_reasons
+
+function M.map_finish_reason(api_reason: string): string
+	return M.finish_reasons[api_reason] or "unknown"
+end
+
+return M
+`)
+
+	m := FromProgramResult("mapper", result)
+	record, ok := m.Export.(*typ.Record)
+	if !ok {
+		t.Fatalf("export = %T %[1]v, want record", m.Export)
+	}
+	field, ok := fieldByName(record, "finish_reasons")
+	if !ok {
+		t.Fatalf("export fields = %#v, want finish_reasons", record.Fields)
+	}
+	tableRecord, ok := unwrap.Alias(field.Type).(*typ.Record)
+	if !ok {
+		t.Fatalf("finish_reasons type = %T %[1]v, want record", field.Type)
+	}
+	member, ok := staticMemberByStringKey(tableRecord, "end_turn")
+	if !ok {
+		t.Fatalf("finish_reasons static members = %#v, want end_turn", tableRecord.StaticMembers)
+	}
+	if member.Optional {
+		t.Fatalf("end_turn optional = true, want proven present")
+	}
+	if !typ.TypeEquals(member.Type, typ.LiteralString("stop")) {
+		t.Fatalf("end_turn type = %v, want literal \"stop\"", member.Type)
+	}
+	if tableRecord.MapValue == nil || !typ.TypeEquals(tableRecord.MapValue, typ.String) {
+		t.Fatalf("finish_reasons map value = %v, want string", tableRecord.MapValue)
+	}
+}
+
 func TestFromProgramResultExportsIsNilNormalReturnRefinementEffect(t *testing.T) {
 	result := checkProgram(t, `
 		local test = {}
@@ -98,6 +387,65 @@ func TestFromProgramResultExportsIsNilNormalReturnRefinementEffect(t *testing.T)
 	}
 	if hasNormalReturnAbsentRefinement(sig.Effect, 1) {
 		t.Fatalf("test.is_nil effect = %v, did not expect absent refinement for msg param", sig.Effect)
+	}
+}
+
+func TestFromProgramResultExportsRuntimeTypeGuardNormalReturnTypeRefinement(t *testing.T) {
+	result := checkProgram(t, `
+		local test = {}
+		function test.is_string(value, msg)
+			if type(value) ~= "string" then
+				error(msg or "expected string", 2)
+			end
+			return value
+		end
+		return test
+	`)
+	root := result.RootResult()
+	var raw summary.Summary
+	var hasRaw bool
+	exportRoots := returnedExportSourcePaths(root)
+	if len(exportRoots) == 0 {
+		t.Fatalf("missing returned export root")
+	}
+	for _, point := range root.Graph().RPO() {
+		fact, ok := root.FunctionDefinition(point)
+		if !ok || fact.Func == nil || fact.Name == nil {
+			continue
+		}
+		member, ok := functionDefinitionExportMember(root, exportRoots[0].path, fact.Name)
+		if !ok || member.Name != "is_string" {
+			continue
+		}
+		target := pathdom.Path{}
+		if fact.HasTargetPath {
+			target = fact.TargetPath
+		}
+		raw, hasRaw = functionSummary(result, root, fact.Func, target)
+		break
+	}
+	if !hasRaw {
+		t.Fatalf("missing raw summary for test.is_string")
+	}
+	if len(raw.NormalReturnParams) == 0 {
+		t.Fatalf("raw normal-return params = %#v, want $0:string", raw.NormalReturnParams)
+	}
+
+	m := FromProgramResult("test", result)
+	sig, ok := m.FunctionSignatures["test.is_string"]
+	if !ok {
+		t.Fatalf("missing test.is_string function signature: %#v", m.FunctionSignatures)
+	}
+	if sig.OperationalEffects == nil {
+		t.Fatalf("test.is_string operational effects = nil")
+	}
+	if len(sig.OperationalEffects.NormalReturnTypeRefinements) != 1 ||
+		!sig.OperationalEffects.NormalReturnTypeRefinements[0].Path.Equal(pathdom.NewPlaceholder(0)) ||
+		!typ.TypeEquals(sig.OperationalEffects.NormalReturnTypeRefinements[0].Type, typ.String) {
+		t.Fatalf("normal-return type refinements = %#v, raw normal-return params = %#v, raw normal-return facts = %#v, want $0:string", sig.OperationalEffects.NormalReturnTypeRefinements, raw.NormalReturnParams, raw.NormalReturnFacts)
+	}
+	if !sig.OperationalEffects.NormalReturnTypeRefinements[0].Assertion.Has(assertion.RuntimeClaim) {
+		t.Fatalf("normal-return type refinement assertion = %s, want runtime proof", sig.OperationalEffects.NormalReturnTypeRefinements[0].Assertion.String())
 	}
 }
 
@@ -294,6 +642,11 @@ func TestFunctionSummaryOperationalEffectsPreservesDescendantBoundaryFacts(t *te
 		!presence.Equal(got.NormalReturnPresenceRefinements[1].Presence, presence.Absent()) {
 		t.Fatalf("normal-return presence refinements = %#v", got.NormalReturnPresenceRefinements)
 	}
+	if len(got.NormalReturnTypeRefinements) != 1 ||
+		!got.NormalReturnTypeRefinements[0].Path.Equal(pathdom.NewPlaceholder(0)) ||
+		!typ.TypeEquals(got.NormalReturnTypeRefinements[0].Type, typ.Number) {
+		t.Fatalf("normal-return type refinements = %#v", got.NormalReturnTypeRefinements)
+	}
 	if len(got.PathInvalidations) != 1 || !got.PathInvalidations[0].Path.Equal(pathdom.NewPlaceholder(0).Field("items")) {
 		t.Fatalf("path invalidations = %#v", got.PathInvalidations)
 	}
@@ -325,6 +678,7 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 		typevalue.FromType(reg, typ.LiteralString("raw-product-sentinel")),
 		typ.LiteralString("raw-product-sentinel"),
 	)
+	pathRefinementValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
 	dynamicKey := typevalue.WithWitness(
 		reg,
 		typevalue.FromType(reg, typ.LiteralString("send")),
@@ -400,7 +754,10 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 		NormalReturnFacts: callboundary.NormalReturnFacts{
 			PathRefinements: []callboundary.PathValueFact{{
 				Path:  pathdom.NewPlaceholder(0).Field("rawProduct"),
-				Value: rawProduct,
+				Value: pathRefinementValue,
+			}, {
+				Path:  pathdom.NewPlaceholder(2),
+				Value: present,
 			}},
 			PathStaticMembers: []callboundary.PathStaticMemberFact{
 				{Path: pathdom.NewPlaceholder(0).Field("kind"), Value: typevalue.FromType(reg, typ.String)},
@@ -419,6 +776,24 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 					Value:       dynamicValue,
 					Admission:   dynamicindex.AdmissionAdmitted,
 				},
+			}, {
+				Table: pathdom.Path{Root: "ret[0]"},
+				Site:  "callee.returned.keys",
+				Value: dynamicindex.Fact{
+					KeyPresence: presence.Present(),
+					KeyValue:    dynamicKey,
+					Value:       dynamicValue,
+					Admission:   dynamicindex.AdmissionAdmitted,
+				},
+			}},
+			KeyMemberships: []callboundary.KeyMembershipFact{{
+				Key:   pathdom.NewPlaceholder(1).Field("key"),
+				Table: pathdom.NewPlaceholder(0).Field("table"),
+			}},
+			DynamicValueKeys: []callboundary.DynamicValueKeyMembershipFact{{
+				Container: pathdom.Path{Root: "ret[0]"},
+				Site:      "callee.returned.keys",
+				Table:     pathdom.NewPlaceholder(0).Field("table"),
 			}},
 			BranchProofs: []callboundary.BranchProof{{
 				Kind:  pathevidence.BranchProofPathEqual,
@@ -466,7 +841,12 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 		}},
 		NormalReturnPresenceRefinements: []signature.PathPresenceRefinement{
 			{Path: pathdom.NewPlaceholder(0), Presence: presence.Present()},
+			{Path: pathdom.NewPlaceholder(0).Field("rawProduct"), Presence: presence.Present()},
 			{Path: pathdom.NewPlaceholder(1), Presence: presence.Absent()},
+			{Path: pathdom.NewPlaceholder(2), Presence: presence.Present()},
+		},
+		NormalReturnTypeRefinements: []signature.PathTypeRefinement{
+			{Path: pathdom.NewPlaceholder(0).Field("rawProduct"), Type: typ.String},
 		},
 		PathStaticMembers: []signature.PathStaticMemberFact{{
 			Path: pathdom.NewPlaceholder(0).Field("kind"),
@@ -474,6 +854,11 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 		}},
 		PathInvalidations: []signature.PathInvalidation{{
 			Path: pathdom.NewPlaceholder(1).Field("items"),
+		}},
+		BranchProofs: []signature.BranchProof{{
+			Kind:  signature.BranchProofPathEqual,
+			Path:  pathdom.NewPlaceholder(0).Field("branchOnly"),
+			Other: pathdom.NewPlaceholder(1).Field("branchOther"),
 		}},
 		DynamicIndexFacts: []signature.DynamicIndexFact{{
 			Table:       pathdom.NewPlaceholder(0).Field("dynamicOnly"),
@@ -487,6 +872,26 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 				Type: dynamicValueType,
 			},
 			Admission: signature.DynamicIndexAdmissionAdmitted,
+		}, {
+			Table:       pathdom.Path{Root: "ret[0]"},
+			Site:        "callee.returned.keys",
+			KeyPresence: presence.Present(),
+			Key: signature.DynamicIndexOperand{
+				Type: typ.LiteralString("send"),
+			},
+			Value: signature.DynamicIndexOperand{
+				Type: dynamicValueType,
+			},
+			Admission: signature.DynamicIndexAdmissionAdmitted,
+		}},
+		KeyMemberships: []signature.KeyMembership{{
+			Key:   pathdom.NewPlaceholder(1).Field("key"),
+			Table: pathdom.NewPlaceholder(0).Field("table"),
+		}},
+		DynamicValueKeys: []signature.DynamicValueKeyMembership{{
+			Container: pathdom.Path{Root: "ret[0]"},
+			Site:      "callee.returned.keys",
+			Table:     pathdom.NewPlaceholder(0).Field("table"),
 		}},
 		FrozenTables: []signature.FrozenTable{{
 			Target: pathdom.NewPlaceholder(0).Field("sealed"),
@@ -523,7 +928,10 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 		`"normalReturnPresenceRefinements"`,
 		`"pathStaticMembers"`,
 		`"pathInvalidations"`,
+		`"branchProofs"`,
 		`"dynamicIndexFacts"`,
+		`"keyMemberships"`,
+		`"dynamicValueKeys"`,
 		`"frozenTables"`,
 		`"escapeEvents"`,
 		`"storeRelations"`,
@@ -536,7 +944,6 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 		`"pathRefinements"`,
 		`"PathRefinements"`,
 		`"DynamicIndexFacts"`,
-		`"branchProofs"`,
 		`"BranchProofs"`,
 		`"channelSelects"`,
 		`"ChannelSelects"`,
@@ -561,8 +968,6 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 		"heap-only",
 		"heap.dynamic",
 		"staticRaw",
-		"branchOnly",
-		"branchOther",
 		"callee.select",
 		"selectResult",
 		"selectCase",
@@ -632,7 +1037,7 @@ func TestFunctionSummaryOperationalEffectsExportsReturnAllocationTemplate(t *tes
 			entryID:     heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: entryValue}),
 			unrelatedID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: unrelatedValue}),
 		},
-	}, typ.Func().Returns(typ.Any).Build(), "builder.build")
+	}, typ.Func().Returns(rootType).Build(), "builder.build")
 	if got == nil || len(got.ReturnAllocationTemplates) != 1 {
 		t.Fatalf("allocation templates = %#v, want one return template", got)
 	}
@@ -679,6 +1084,94 @@ func TestFunctionSummaryOperationalEffectsExportsReturnAllocationTemplate(t *tes
 	}
 }
 
+func TestFunctionSummaryOperationalEffectsDoesNotExportAllocationForDeclaredAnyReturn(t *testing.T) {
+	reg := standard.Registry()
+	rootID := identity.ID{Kind: "lua.table", Site: "declared-any-template", Index: 1}
+	rootType := typetable.NewRecord().Field("value", typ.LiteralString("impl")).Build()
+	rootValue := product.Set(reg, typevalue.WithWitness(reg, typevalue.FromType(reg, rootType), rootType), identity.Key, identity.Singleton(rootID))
+	ks := keyspace.New()
+
+	got := functionSummaryOperationalEffects(reg, summary.Summary{
+		Returns:      []product.Value{rootValue},
+		HeapKeySpace: ks,
+		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+			rootID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: rootValue}),
+		},
+	}, typ.Func().Returns(typ.Any).Build(), "builder.any")
+	if got != nil && len(got.ReturnAllocationTemplates) != 0 {
+		t.Fatalf("allocation templates = %#v, want none for declared any return", got.ReturnAllocationTemplates)
+	}
+}
+
+func TestFunctionSummaryOperationalEffectsClampsAllocationRootWithDeclaredAnyField(t *testing.T) {
+	reg := standard.Registry()
+	rootID := identity.ID{Kind: "lua.table", Site: "declared-any-field-template", Index: 1}
+	implType := typetable.NewRecord().Field("value", typ.LiteralString("impl")).Build()
+	declaredType := typetable.NewRecord().Field("value", typ.Any).Build()
+	rootValue := product.Set(reg, typevalue.WithWitness(reg, typevalue.FromType(reg, implType), implType), identity.Key, identity.Singleton(rootID))
+	ks := keyspace.New()
+
+	got := functionSummaryOperationalEffects(reg, summary.Summary{
+		Returns:      []product.Value{rootValue},
+		HeapKeySpace: ks,
+		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+			rootID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: rootValue}),
+		},
+	}, typ.Func().Returns(declaredType).Build(), "builder.record")
+	if got == nil || len(got.ReturnAllocationTemplates) != 1 {
+		t.Fatalf("allocation templates = %#v, want one clamped template", got)
+	}
+	root := allocationTemplateObject(got.ReturnAllocationTemplates[0].Objects, "builder.record:return:0:root")
+	if root == nil {
+		t.Fatalf("missing root object in %#v", got.ReturnAllocationTemplates[0].Objects)
+	}
+	if !typ.TypeEquals(root.Type, declaredType) {
+		t.Fatalf("root type = %v, want declared %v", root.Type, declaredType)
+	}
+}
+
+func TestFunctionSummaryOperationalEffectsPreservesDeclaredOptionalReturnMembers(t *testing.T) {
+	reg := standard.Registry()
+	rootID := identity.ID{Kind: "lua.table", Site: "declared-optional-member-template", Index: 1}
+	streamType := typetable.NewRecord().Field("read", typ.Func().Returns(typ.String).Build()).Build()
+	implType := typetable.NewRecord().
+		Field("status_code", typ.LiteralNumber(500)).
+		Field("stream", streamType).
+		Build()
+	declaredRecord := typetable.NewRecord().
+		Field("status_code", typ.Number).
+		OptField("body", typ.String).
+		OptField("stream", streamType).
+		Build()
+	declaredType := typeexpr.Optional(declaredRecord)
+	rootValue := product.Set(reg, typevalue.WithWitness(reg, typevalue.FromType(reg, implType), implType), identity.Key, identity.Singleton(rootID))
+	ks := keyspace.New()
+
+	got := functionSummaryOperationalEffects(reg, summary.Summary{
+		Returns:      []product.Value{rootValue},
+		HeapKeySpace: ks,
+		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+			rootID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: rootValue}),
+		},
+	}, typ.Func().Returns(declaredType).Build(), "http_client.get")
+	if got == nil || len(got.ReturnAllocationTemplates) != 1 {
+		t.Fatalf("allocation templates = %#v, want one template", got)
+	}
+	root := allocationTemplateObject(got.ReturnAllocationTemplates[0].Objects, "http_client.get:return:0:root")
+	if root == nil {
+		t.Fatalf("missing root object in %#v", got.ReturnAllocationTemplates[0].Objects)
+	}
+	wantRecord := typetable.NewRecord().
+		Field("status_code", typ.LiteralNumber(500)).
+		OptField("body", typ.String).
+		OptField("stream", streamType).
+		Build()
+	want := typeexpr.Optional(wantRecord)
+	if !typ.TypeEquals(root.Type, want) {
+		t.Fatalf("root type = %v, want declared envelope %v", root.Type, want)
+	}
+}
+
 func TestFunctionSummaryOperationalEffectsSkipsReturnAllocationBeyondDeclaredReturns(t *testing.T) {
 	reg := standard.Registry()
 	rootID := identity.ID{Kind: "lua.table", Site: "summary-template", Index: 1}
@@ -713,7 +1206,7 @@ func TestFunctionSummaryOperationalEffectsSkipsDanglingReturnAllocationRefs(t *t
 	if !ok {
 		t.Fatal("child suffix key failed")
 	}
-	fn := typ.Func().Returns(typ.Any).Build()
+	fn := typ.Func().Returns(typetable.NewRecord().Build()).Build()
 	rootItemsKey, ok := ks.FromStateKey(pathdom.PathKey("root.items"))
 	if !ok {
 		t.Fatal("root items table key failed")
@@ -832,7 +1325,11 @@ func TestFromProgramResultExportsUntypedDynamicIndexOperationOnlySignature(t *te
 		if !ok || fact.Func == nil {
 			continue
 		}
-		if got, ok := functionSummary(result, root, fact.Func); ok {
+		target := pathdom.Path{}
+		if fact.HasTargetPath {
+			target = fact.TargetPath
+		}
+		if got, ok := functionSummary(result, root, fact.Func, target); ok {
 			raw, hasRaw = got, true
 			break
 		}

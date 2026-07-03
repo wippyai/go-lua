@@ -6,13 +6,22 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestPathStateAdaptersUseResolvedKeysAndRejectMissingVersion(t *testing.T) {
@@ -110,6 +119,32 @@ func TestPathStateAdapterInvalidateSubtreeDropsEquivalentStaticMemberFacts(t *te
 	}
 }
 
+func TestPathStateAdapterInvalidateDescendantsKeepsSiblingStaticMemberFacts(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(11)
+	sym := symbol.ID(45)
+	resolver := resolverWithVisibleVersion(point, sym, "self")
+	ks := resolver.KeySpace()
+	metadataPath := path.NewPath(sym, "self").Field("metadata")
+	metadataChild := path.PathKey("sym45@1.metadata.title")
+	targetsKey := path.PathKey("sym45@1.targets")
+	present := presentValue(reg)
+	in := state.State{}.
+		WritePathStaticMember(ks, metadataChild, present).
+		WritePathStaticMember(ks, targetsKey, present)
+
+	out, ok := invalidatePathDescendantsAt(in, resolver, point, metadataPath)
+	if !ok {
+		t.Fatal("invalidatePathDescendantsAt rejected visible metadata path")
+	}
+	if got, ok := out.ReadPathStaticMember(ks, metadataChild); ok {
+		t.Fatalf("metadata child %s = %s, want invalidated", metadataChild, formatValue(reg, got))
+	}
+	if got, ok := out.ReadPathStaticMember(ks, targetsKey); !ok || !product.Equal(reg, got, present) {
+		t.Fatalf("targets sibling %s = %s/%v, want preserved", targetsKey, formatValue(reg, got), ok)
+	}
+}
+
 func TestStateKeysWithEquivalentAliasesIncludesPrimaryOnce(t *testing.T) {
 	ks := keyspace.New()
 	primary := path.PathKey("sym51@1.child")
@@ -136,6 +171,99 @@ func TestStateKeysWithEquivalentAliasesIncludesPrimaryOnce(t *testing.T) {
 
 	if got := stateKeysWithEquivalentAliases(ks, in, ""); len(got) != 0 {
 		t.Fatalf("empty stateKeysWithEquivalentAliases = %#v, want empty", got)
+	}
+}
+
+func TestPathMutationStateKeysIncludesDescendantAliasUnderInvalidatedRoot(t *testing.T) {
+	ks := keyspace.New()
+	root := testStateKey(t, path.PathKey("sym60@1"))
+	descendantAlias := testStateKey(t, path.PathKey("sym61@1.value"))
+	in := state.State{}.
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathEqual,
+			Path:  mustStateKey(t, ks, path.PathKey("sym61@1.value")),
+			Other: mustStateKey(t, ks, path.PathKey("sym60@1.active.value")),
+		})
+
+	got := pathMutationStateKeys(ks, in, root, true)
+	want := []pathaddr.StateKey{root, testStateKey(t, path.PathKey("sym60@1.active.value")), descendantAlias}
+	if len(got) != len(want) {
+		t.Fatalf("pathMutationStateKeys len = %d (%#v), want %d (%#v)", len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("pathMutationStateKeys[%d] = %s, want %s (all %#v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestInvalidateHeapFactsClearsNestedObjectRelativeFacts(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(62)
+	rootSym := symbol.ID(62)
+	resolver := resolverWithVisibleVersion(point, rootSym, "slots")
+	ks := resolver.KeySpace()
+	rootID := identity.ID{Kind: "test.table", Site: "slots", Index: 1}
+	activeID := identity.ID{Kind: "test.table", Site: "active", Index: 1}
+	valueID := identity.ID{Kind: "test.table", Site: "value", Index: 1}
+	rootValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(rootID))
+	activeValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(activeID))
+	valueValue := product.Set(reg, typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String), identity.Key, identity.Singleton(valueID))
+	stale := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	activeKey, ok := heapidentity.StaticMemberSuffixKey(ks, []segment.Segment{{Kind: segment.SegmentField, Name: "active"}})
+	if !ok {
+		t.Fatal("missing active suffix key")
+	}
+	staleStaticKey, ok := heapidentity.StaticMemberSuffixKey(ks, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "value"},
+		{Kind: segment.SegmentField, Name: "path"},
+	})
+	if !ok {
+		t.Fatal("missing value.path suffix key")
+	}
+	staleDynamicKey := dynamicindex.Key{
+		Table: mustStateKey(t, ks, path.PathKey("sym62@1.active.value")),
+		Site:  dynamicindex.Site("stale"),
+	}
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(rootSym), rootValue).
+		WriteHeapTableObject(reg, rootID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root:          rootValue,
+			StaticMembers: map[keyspace.Key]product.Value{activeKey: activeValue},
+		})).
+		WriteHeapTableObject(reg, activeID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root: activeValue,
+			StaticMembers: map[keyspace.Key]product.Value{
+				staleStaticKey:                 stale,
+				fieldStaticKey(t, ks, "value"): valueValue,
+			},
+			DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
+				staleDynamicKey: {
+					KeyPresence: presence.Present(),
+					KeyValue:    stale,
+					Value:       stale,
+					Admission:   dynamicindex.AdmissionAdmitted,
+				},
+			},
+		})).
+		WriteHeapTableObject(reg, valueID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root: valueValue,
+		}))
+
+	out := invalidateHeapTableFactsForStateKey(reg, in, in, resolver, point, ks, pathStaticMemberInvalidationTarget{
+		key:             testStateKey(t, path.PathKey("sym62@1.active.value")),
+		descendantsOnly: false,
+	})
+	activeObject := out.ReadHeapTableObject(reg, activeID)
+	if got, ok := activeObject.StaticMember(staleStaticKey); ok {
+		t.Fatalf("nested static member survived invalidation: %s", formatValue(reg, got))
+	}
+	if got, ok := activeObject.DynamicIndexFact(staleDynamicKey); ok {
+		t.Fatalf("nested dynamic-index fact survived invalidation: %#v", got)
+	}
+	valueObject := out.ReadHeapTableObject(reg, valueID)
+	if witness := product.Get(reg, valueObject.Root(), typewitness.Key); !witness.IsTop() {
+		t.Fatalf("replaced heap object root witness survived invalidation: %v", witness)
 	}
 }
 

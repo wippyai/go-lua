@@ -15,17 +15,11 @@ import (
 //
 // Members are sorted by hash for deterministic comparison and serialization.
 type Union struct {
-	Members               []Type
-	memberHashes          []uint64
-	hash                  uint64
-	containsAny           bool
-	containsNever         bool
-	containsTypeParam     bool
-	containsInstantiated  bool
-	containsGeneric       bool
-	containsRecursive     bool
-	containsOpenRecursive bool
-	strCache              stringCache
+	Members      []Type
+	memberHashes []uint64
+	hash         uint64
+	typeProperties
+	strCache stringCache
 }
 
 func (u *Union) Kind() kind.Kind { return kind.Union }

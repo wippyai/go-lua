@@ -81,6 +81,13 @@ type EquationSystem[Cell comparable, State any] struct {
 	// cell up the order from its initial value via Join.
 	Initial func(Cell) State
 
+	// InitialSparse returns the starting value only for cells whose initial
+	// value is known to differ from the lattice bottom, or whose exact starting
+	// spelling matters to the caller. Cells for which it returns false start at
+	// Bottom and are materialized lazily on first read/emit. When set,
+	// InitialSparse takes precedence over Initial.
+	InitialSparse func(Cell) (State, bool)
+
 	// Transfer is the equation for one cell. It observes other cells with read
 	// — which records a dependency from the read cell to this cell — and
 	// contributes to cells with emit. A cell may emit to itself. Transfer must
@@ -172,6 +179,12 @@ type solveState[Cell comparable, State any] struct {
 	// cur is the working value of every cell touched so far.
 	cur map[Cell]State
 
+	// declaredCur counts declared system cells currently present in cur. It lets
+	// materialize transfer ownership of cur only when cur is exactly the declared
+	// result keyset; sparse initial states and emitted-only cells otherwise fall
+	// back to the filtered public result contract.
+	declaredCur int
+
 	// visits counts how many times a cell's own Transfer has run. widenChanges
 	// counts strict post-visit changes that consumed WidenDelay.
 	visits       map[Cell]int
@@ -219,23 +232,22 @@ func newState[Cell comparable, State any](sys EquationSystem[Cell, State]) *solv
 	if initial == nil {
 		initial = func(Cell) State { return sys.Lattice.Bottom() }
 	}
+	initialSparse := sys.InitialSparse
 
 	n := len(sys.Cells)
 	s := &solveState[Cell, State]{
-		domain:       sys.Lattice,
-		transfer:     sys.Transfer,
-		widenAt:      widenAt,
-		widenDelay:   widenDelay,
-		abstract:     abstract,
-		stats:        sys.Stats,
-		order:        make(map[Cell]int, n),
-		cur:          make(map[Cell]State, n),
-		visits:       make(map[Cell]int, n),
-		widenChanges: make(map[Cell]int, n),
-		dependents:   make(map[Cell][]Cell),
-		dependEdge:   make(map[edge[Cell]]struct{}),
-		queue:        make([]Cell, 0, n),
-		inQueue:      make(map[Cell]struct{}, n),
+		domain:     sys.Lattice,
+		transfer:   sys.Transfer,
+		widenAt:    widenAt,
+		widenDelay: widenDelay,
+		abstract:   abstract,
+		stats:      sys.Stats,
+		order:      make(map[Cell]int, n),
+		cur:        make(map[Cell]State, n),
+		dependents: make(map[Cell][]Cell),
+		dependEdge: make(map[edge[Cell]]struct{}),
+		queue:      make([]Cell, 0, n),
+		inQueue:    make(map[Cell]struct{}, n),
 	}
 
 	// Seed initial values and the worklist in Cells order. Deduplicate so a
@@ -246,7 +258,15 @@ func newState[Cell comparable, State any](sys EquationSystem[Cell, State]) *solv
 			continue
 		}
 		s.order[c] = len(s.order)
-		s.cur[c] = initial(c)
+		if initialSparse != nil {
+			if value, ok := initialSparse(c); ok {
+				s.cur[c] = value
+				s.declaredCur++
+			}
+		} else {
+			s.cur[c] = initial(c)
+			s.declaredCur++
+		}
 		s.enqueue(c)
 	}
 	return s
@@ -260,6 +280,9 @@ func (s *solveState[Cell, State]) curOf(c Cell) State {
 	}
 	v := s.domain.Bottom()
 	s.cur[c] = v
+	if _, declared := s.order[c]; declared {
+		s.declaredCur++
+	}
 	return v
 }
 
@@ -308,8 +331,8 @@ func (s *solveState[Cell, State]) emit(d Cell, v State) {
 	prev := s.curOf(d)
 	next := s.domain.Join(prev, v)
 	delayConsumed := false
-	if s.widenAt(d) && s.visits[d] > 0 {
-		if s.widenChanges[d] >= max(0, s.widenDelay(d)) {
+	if s.widenAt(d) && s.visitCount(d) > 0 {
+		if s.widenChangeCount(d) >= max(0, s.widenDelay(d)) {
 			next = s.domain.Widen(prev, next)
 		} else {
 			delayConsumed = true
@@ -321,9 +344,40 @@ func (s *solveState[Cell, State]) emit(d Cell, v State) {
 	}
 	s.cur[d] = next
 	if delayConsumed {
-		s.widenChanges[d]++
+		s.recordWidenChange(d)
 	}
 	s.requeueChanged(d)
+}
+
+func (s *solveState[Cell, State]) visitCount(c Cell) int {
+	if s.visits == nil {
+		return 0
+	}
+	return s.visits[c]
+}
+
+func (s *solveState[Cell, State]) recordVisit(c Cell) {
+	if !s.widenAt(c) {
+		return
+	}
+	if s.visits == nil {
+		s.visits = make(map[Cell]int, 1)
+	}
+	s.visits[c]++
+}
+
+func (s *solveState[Cell, State]) widenChangeCount(c Cell) int {
+	if s.widenChanges == nil {
+		return 0
+	}
+	return s.widenChanges[c]
+}
+
+func (s *solveState[Cell, State]) recordWidenChange(c Cell) {
+	if s.widenChanges == nil {
+		s.widenChanges = make(map[Cell]int, 1)
+	}
+	s.widenChanges[c]++
 }
 
 // requeueChanged re-queues a cell whose value moved and every cell that read
@@ -387,14 +441,21 @@ func (s *solveState[Cell, State]) run() {
 			s.stats.TransferCalls++
 		}
 		s.transfer(c, read, emit)
-		s.visits[c]++
+		s.recordVisit(c)
 	}
 }
 
 func (s *solveState[Cell, State]) materialize() map[Cell]State {
+	if s.declaredCur == len(s.order) && len(s.cur) == len(s.order) {
+		return s.cur
+	}
 	out := make(map[Cell]State, len(s.order))
 	for c := range s.order {
-		out[c] = s.cur[c]
+		if value, ok := s.cur[c]; ok {
+			out[c] = value
+		} else {
+			out[c] = s.domain.Bottom()
+		}
 	}
 	return out
 }

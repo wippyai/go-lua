@@ -57,10 +57,28 @@ func (m Map[K, F, V]) cloneOne(f F) F {
 	return f
 }
 
+func (m Map[K, F, V]) maybeCloneOne(f F, clone bool) F {
+	if clone {
+		return m.cloneOne(f)
+	}
+	return f
+}
+
 // Normalize returns the canonical form of in: valid facts only, the value
 // bottom dropped, one fact per key with colliding values joined, ordered by
 // Less. The empty map is represented as nil.
 func (m Map[K, F, V]) Normalize(in []F) []F {
+	return m.normalize(in, true)
+}
+
+// NormalizeOwned returns the canonical form of in and may reuse fact payloads
+// from in. Use it only when the caller owns the input slice and every mutable
+// field inside each fact.
+func (m Map[K, F, V]) NormalizeOwned(in []F) []F {
+	return m.normalize(in, false)
+}
+
+func (m Map[K, F, V]) normalize(in []F, clone bool) []F {
 	if len(in) == 0 {
 		return nil
 	}
@@ -70,7 +88,7 @@ func (m Map[K, F, V]) Normalize(in []F) []F {
 		if m.Valid != nil && !m.Valid(fact) {
 			continue
 		}
-		fact = m.cloneOne(fact)
+		fact = m.maybeCloneOne(fact, clone)
 		if !m.KeepBottom && m.Domain.Equal(m.Value(fact), bottom) {
 			continue
 		}
@@ -106,6 +124,18 @@ func (m Map[K, F, V]) Clone(in []F) []F {
 
 // Equal reports whether a and b have the same canonical form.
 func (m Map[K, F, V]) Equal(a, b []F) bool {
+	if len(a) == len(b) {
+		same := true
+		for i := range a {
+			if m.Key(a[i]) != m.Key(b[i]) || !m.Domain.Equal(m.Value(a[i]), m.Value(b[i])) {
+				same = false
+				break
+			}
+		}
+		if same {
+			return true
+		}
+	}
 	a = m.Normalize(a)
 	b = m.Normalize(b)
 	if len(a) != len(b) {

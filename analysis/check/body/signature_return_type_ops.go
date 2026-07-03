@@ -13,12 +13,17 @@ func signatureReturnTypeOps() effectlowering.ReturnTypeOps {
 		CallableReturn: typecall.CallableReturn,
 		ElementOf:      projection.ElementOf,
 		TypeProjection: luatypeprojection.Apply,
-		InstantiateGenericCall: func(fn *typ.Function, args []typ.Type) (*typ.Function, bool) {
-			instantiated, violations := typecall.InstantiateGenericCall(fn, args)
+		InstantiateGenericCall: func(fn *typ.Function, args []typ.Type) (effectlowering.GenericCallInstantiation, bool) {
+			instantiated, violations, bindings := typecall.InstantiateGenericCallWithBindings(fn, args)
 			if len(violations) != 0 {
-				return fn, false
+				return effectlowering.GenericCallInstantiation{}, false
 			}
-			return instantiated, instantiated != nil
+			out := effectlowering.GenericCallInstantiation{Type: instantiated}
+			for _, binding := range bindings {
+				out.TypeParams = append(out.TypeParams, binding.Param)
+				out.TypeArgs = append(out.TypeArgs, binding.Type)
+			}
+			return out, instantiated != nil
 		},
 	}
 }

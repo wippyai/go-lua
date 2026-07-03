@@ -84,6 +84,22 @@ func (p Path) Parent() Path {
 	}
 }
 
+// ParentView returns the path without its last segment, borrowing p's segment
+// storage. Callers must treat the returned path as read-only and must not retain
+// it beyond the immediate operation. Use Parent when an owned mutable path is
+// required.
+func (p Path) ParentView() Path {
+	if len(p.Segments) == 0 {
+		return Path{}
+	}
+	return Path{
+		Root:     p.Root,
+		Symbol:   p.Symbol,
+		Version:  p.Version,
+		Segments: p.Segments[:len(p.Segments)-1],
+	}
+}
+
 // LastSegment returns the final segment of the path, if any.
 // Returns (segment, true) if the path has segments, (zero, false) otherwise.
 func (p Path) LastSegment() (segment.Segment, bool) {

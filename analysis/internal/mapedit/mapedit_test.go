@@ -83,3 +83,46 @@ func TestWithoutLastKeyReturnsNil(t *testing.T) {
 		t.Fatalf("Without last key = %#v, want nil", next)
 	}
 }
+
+func TestDeleteMatchingCreatesIndependentCopy(t *testing.T) {
+	original := map[string]int{"a": 1, "b": 2, "c": 3}
+	next, removed := DeleteMatching(original, func(_ string, value int) bool {
+		return value%2 == 0
+	})
+	if !removed {
+		t.Fatalf("DeleteMatching should report removal")
+	}
+	if len(next) != 2 || next["a"] != 1 || next["c"] != 3 {
+		t.Fatalf("DeleteMatching = %#v, want only odd values", next)
+	}
+	next["a"] = 99
+	if got := original["a"]; got != 1 {
+		t.Fatalf("DeleteMatching should not mutate original map, got original[a]=%d", got)
+	}
+}
+
+func TestDeleteMatchingNoMatchReturnsOriginalUnchanged(t *testing.T) {
+	original := map[string]int{"a": 1}
+	next, removed := DeleteMatching(original, func(_ string, value int) bool {
+		return value == 2
+	})
+	if removed {
+		t.Fatalf("DeleteMatching should report no removal")
+	}
+	next["a"] = 2
+	if got := original["a"]; got != 2 {
+		t.Fatalf("DeleteMatching no-op should leave map unchanged and shared, got original[a]=%d", got)
+	}
+}
+
+func TestDeleteMatchingAllMatchesReturnsNil(t *testing.T) {
+	next, removed := DeleteMatching(map[string]int{"a": 1}, func(string, int) bool {
+		return true
+	})
+	if !removed {
+		t.Fatalf("DeleteMatching should report removal")
+	}
+	if next != nil {
+		t.Fatalf("DeleteMatching last entry = %#v, want nil", next)
+	}
+}

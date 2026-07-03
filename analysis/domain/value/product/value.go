@@ -104,6 +104,21 @@ func WithPresence(reg *axis.Registry, v Value, p presence.Value) Value {
 	return internRuntime(rt, ShapeOf(v), p, copySlots(v))
 }
 
+// WithCompatiblePresenceFrom applies source's concrete presence to base when
+// base has no conflicting concrete presence. It returns false for unknown,
+// bottom, or contradictory presence evidence.
+func WithCompatiblePresenceFrom(reg *axis.Registry, base, source Value) (Value, bool) {
+	sourcePresence := PresenceOf(source)
+	if sourcePresence.IsBottom() || sourcePresence.IsTop() {
+		return Value{}, false
+	}
+	basePresence := PresenceOf(base)
+	if !basePresence.IsTop() && !presence.Equal(basePresence, sourcePresence) {
+		return Value{}, false
+	}
+	return WithPresence(reg, base, sourcePresence), true
+}
+
 // Get reads a typed axis value. If the axis is omitted, Get returns the axis
 // Top value.
 func Get[T any](reg *axis.Registry, v Value, key axis.Key[T]) T {

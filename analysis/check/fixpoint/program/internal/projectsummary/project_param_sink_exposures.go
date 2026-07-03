@@ -47,8 +47,7 @@ func projectParamSinkExposures(reg *axis.Registry, result ResultReader, exit sta
 	if len(params) == 0 {
 		return nil
 	}
-	reader, ok := result.(ordinaryAssignmentReader)
-	if !ok {
+	if !hasOrdinaryAssignmentFactReader(result) {
 		return nil
 	}
 	pathReader, ok := result.(expressionPathReader)
@@ -80,7 +79,7 @@ func projectParamSinkExposures(reg *axis.Registry, result ResultReader, exit sta
 		if noNormal != nil && noNormal.NoNormalReturn(point) {
 			continue
 		}
-		fact, ok := reader.OrdinaryAssignment(point)
+		fact, ok := ordinaryAssignmentFactAt(result, point)
 		if !ok || !fact.HasPath || fact.Path.Symbol == 0 || len(fact.Path.Segments) == 0 {
 			continue
 		}
@@ -180,6 +179,9 @@ func capturedSinkSymbols(captureReader functionCaptureReader) map[symbol.ID]stru
 func persistentSinkSymbol(kindReader symbolKindReader, captured map[symbol.ID]struct{}, id symbol.ID) bool {
 	if _, ok := captured[id]; ok {
 		return true
+	}
+	if kindReader == nil {
+		return false
 	}
 	kind, ok := kindReader.SymbolKind(id)
 	if !ok {
