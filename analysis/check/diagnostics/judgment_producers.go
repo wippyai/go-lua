@@ -120,11 +120,10 @@ func judgmentContext(result *body.Result, sourceFile string) pass.Context {
 }
 
 func judgmentContextWithParents(result *body.Result, parents []*body.Result, sourceFile string) pass.Context {
-	query := newDiagnosticQuery(result, parents...)
 	return pass.Context{
 		FunctionKey: sourceFile,
 		SourceFile:  sourceFile,
-		Reader:      query.reader,
+		Reader:      internalreadmodel.NewWithParents(result, parents...),
 	}
 }
 

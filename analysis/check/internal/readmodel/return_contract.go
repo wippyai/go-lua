@@ -84,7 +84,7 @@ func (r Reader) returnObjectLiteralEntry(point cfg.Point, index int, source sour
 			Expected:           entryExpected,
 			ExpectedLabel:      label,
 			SourceLabel:        sourceLabel,
-			SourceSpan:         sourceSpanFromSemantic(entry.ValueSpan),
+			SourceSpan:         sourceSpanFromBody(entry.ValueSpan),
 			DeclarationSpan:    readmodelSourceSpanAt(expectedSpans, index),
 			UntrustedTopOrigin: untrustedTopOrigin,
 			ExplicitTopOrigin:  r.ValueHasExplicitTopOrigin(value),

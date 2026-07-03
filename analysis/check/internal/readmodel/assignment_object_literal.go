@@ -141,7 +141,7 @@ func (r Reader) assignmentObjectLiteralEntryCandidate(point cfg.Point, literal b
 			TypeWithPresence:   t,
 			Expected:           entryExpected,
 			ExpectedSource:     target.ExpectedSource,
-			SourceSpan:         sourceSpanFromSemantic(entry.ValueSpan),
+			SourceSpan:         sourceSpanFromBody(entry.ValueSpan),
 			DeclarationSpan:    target.ExpectedSpan,
 			UntrustedTopOrigin: untrustedTopOrigin,
 			ExplicitTopOrigin:  explicitTopOrigin,

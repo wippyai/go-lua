@@ -15,42 +15,21 @@ func sourceSpanFromFactflow(span factflow.SourceSpan) SourceSpan {
 	}
 }
 
-func sourceSpanFromSemantic(span body.SourceSpan) SourceSpan {
-	endCol := span.EndCol
-	if span.EndLine == span.StartLine && endCol <= span.StartCol {
-		endCol = span.StartCol + 1
-	}
-	return SourceSpan{
-		StartLine: span.StartLine,
-		StartCol:  span.StartCol,
-		EndLine:   span.EndLine,
-		EndCol:    endCol,
-	}
-}
-
 func sourceSpanFromAST(span source.Span) SourceSpan {
-	endCol := span.EndCol
-	if span.EndLine == span.StartLine && endCol <= span.StartCol {
-		endCol = span.StartCol + 1
-	}
 	return SourceSpan{
 		StartLine: span.StartLine,
 		StartCol:  span.StartCol,
 		EndLine:   span.EndLine,
-		EndCol:    endCol,
+		EndCol:    normalizedEndCol(span.StartLine, span.StartCol, span.EndLine, span.EndCol),
 	}
 }
 
 func sourceSpanFromBody(span body.SourceSpan) SourceSpan {
-	endCol := span.EndCol
-	if span.EndLine == span.StartLine && endCol <= span.StartCol {
-		endCol = span.StartCol + 1
-	}
 	return SourceSpan{
 		StartLine: span.StartLine,
 		StartCol:  span.StartCol,
 		EndLine:   span.EndLine,
-		EndCol:    endCol,
+		EndCol:    normalizedEndCol(span.StartLine, span.StartCol, span.EndLine, span.EndCol),
 	}
 }
 
@@ -67,4 +46,11 @@ func sourceSpansFromBody(spans []body.SourceSpan) []SourceSpan {
 
 func sourceSpanValid(span SourceSpan) bool {
 	return span.StartLine > 0 && span.StartCol > 0
+}
+
+func normalizedEndCol(startLine, startCol, endLine, endCol int) int {
+	if endLine == startLine && endCol <= startCol {
+		return startCol + 1
+	}
+	return endCol
 }
