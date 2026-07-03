@@ -188,42 +188,38 @@ func callOutcomePathMatchesAny(target pathdom.Path, candidates []pathdom.Path) b
 }
 
 func applyNormalReturnNumFloor(
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	boundaryPaths callboundary.PathBindings,
+	ctx normalReturnApplyContext,
 	out state.State,
 	fact callboundary.NumFloorFact,
 ) state.State {
-	targetPath, ok := boundaryPaths.Substitute(fact.Path)
+	targetPath, ok := ctx.substitute(fact.Path)
 	if !ok || targetPath.Symbol == 0 {
 		return out
 	}
-	pathKey, ok := visibility.AddressAt(resolver, point, targetPath).RootOrVisibleStateKey()
+	pathKey, ok := visibility.AddressAt(ctx.resolver, ctx.point, targetPath).RootOrVisibleStateKey()
 	if !ok {
 		return out
 	}
-	return out.WriteNumFloor(resolver.KeySpace(), pathKey, fact.Floor)
+	return out.WriteNumFloor(ctx.resolver.KeySpace(), pathKey, fact.Floor)
 }
 
 func applyNormalReturnRelConstraint(
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	boundaryPaths callboundary.PathBindings,
+	ctx normalReturnApplyContext,
 	out state.State,
 	fact callboundary.RelConstraintFact,
 ) state.State {
-	aKey, ok := callRelationGraphKeyAt(resolver, point, boundaryPaths, fact.A)
+	aKey, ok := ctx.relationGraphKey(fact.A)
 	if !ok {
 		return out
 	}
-	cKey, ok := callRelationGraphKeyAt(resolver, point, boundaryPaths, fact.C)
+	cKey, ok := ctx.relationGraphKey(fact.C)
 	if !ok {
 		return out
 	}
 	var bKey state.RelOperand
 	coB := fact.CoB
 	if coB != 0 && !fact.B.Path.IsEmpty() {
-		bKey, ok = callRelationGraphKeyAt(resolver, point, boundaryPaths, fact.B)
+		bKey, ok = ctx.relationGraphKey(fact.B)
 		if !ok {
 			return out
 		}
@@ -231,19 +227,6 @@ func applyNormalReturnRelConstraint(
 		coB = 0
 	}
 	return out.WriteScaledConstraint(fact.CoA, aKey, coB, bKey, cKey, fact.K)
-}
-
-func callRelationGraphKeyAt(
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	boundaryPaths callboundary.PathBindings,
-	operand callboundary.RelOperand,
-) (state.RelOperand, bool) {
-	targetPath, ok := boundaryPaths.Substitute(operand.Path)
-	if !ok || targetPath.Symbol == 0 {
-		return state.RelOperand{}, false
-	}
-	return relationGraphKeyAt(resolver, point, targetPath, operand.IsLength)
 }
 
 // applyCallParamExposures eager-widens each argument object the callee exposes
@@ -757,12 +740,10 @@ func bindPlaceholderPath(bindings []pathdom.Path, index int, p pathdom.Path) []p
 }
 
 func callBranchProofAt(
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	boundaryPaths callboundary.PathBindings,
+	ctx normalReturnApplyContext,
 	proof callboundary.BranchProof,
 ) (pathevidence.BranchProof, bool) {
-	path, ok := callOutcomeKeyspaceKeyAt(resolver, point, boundaryPaths, proof.Path)
+	path, ok := ctx.keyspaceKey(proof.Path)
 	if !ok {
 		return pathevidence.BranchProof{}, false
 	}
@@ -774,7 +755,7 @@ func callBranchProofAt(
 			Presence: proof.Presence,
 		}, true
 	case pathevidence.BranchProofPathEqual, pathevidence.BranchProofPathNotEqual, pathevidence.BranchProofIndexInRange:
-		other, ok := callOutcomeKeyspaceKeyAt(resolver, point, boundaryPaths, proof.Other)
+		other, ok := ctx.keyspaceKey(proof.Other)
 		if !ok {
 			return pathevidence.BranchProof{}, false
 		}
@@ -789,9 +770,7 @@ func callBranchProofAt(
 }
 
 func callChannelSelectFactAt(
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	boundaryPaths callboundary.PathBindings,
+	ctx normalReturnApplyContext,
 	event callboundary.ChannelSelectFact,
 ) (channelselectfact.Fact, bool) {
 	switch event.Kind {
@@ -806,14 +785,14 @@ func callChannelSelectFactAt(
 		HasDefault: event.HasDefault,
 	}
 	if !event.Result.IsEmpty() {
-		resultStateKey, ok := callOutcomeStateKeyAt(resolver, point, boundaryPaths, event.Result)
+		resultStateKey, ok := ctx.stateKey(event.Result)
 		if !ok {
 			return channelselectfact.Fact{}, false
 		}
 		fact.Result = resultStateKey
 	}
 	if !event.Case.IsEmpty() {
-		caseStateKey, ok := callOutcomeStateKeyAt(resolver, point, boundaryPaths, event.Case)
+		caseStateKey, ok := ctx.stateKey(event.Case)
 		if !ok {
 			return channelselectfact.Fact{}, false
 		}

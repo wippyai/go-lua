@@ -56,6 +56,14 @@ func (ctx normalReturnApplyContext) visibleStateKey(path pathdom.Path) (pathaddr
 	return callOutcomeVisibleStateKeyAt(ctx.resolver, ctx.point, ctx.boundaryPaths, path)
 }
 
+func (ctx normalReturnApplyContext) relationGraphKey(operand callboundary.RelOperand) (state.RelOperand, bool) {
+	targetPath, ok := ctx.substitute(operand.Path)
+	if !ok || targetPath.Symbol == 0 {
+		return state.RelOperand{}, false
+	}
+	return relationGraphKeyAt(ctx.resolver, ctx.point, targetPath, operand.IsLength)
+}
+
 type normalReturnApplyLane struct {
 	id    callboundary.NormalReturnFactLaneID
 	phase normalReturnApplyPhase
@@ -402,7 +410,7 @@ func applyNormalReturnDynamicAllValues(ctx normalReturnApplyContext, out state.S
 
 func applyNormalReturnBranchProofs(ctx normalReturnApplyContext, out state.State) state.State {
 	for _, proof := range ctx.normalFacts.BranchProofs {
-		stateProof, ok := callBranchProofAt(ctx.resolver, ctx.point, ctx.boundaryPaths, proof)
+		stateProof, ok := callBranchProofAt(ctx, proof)
 		if !ok {
 			continue
 		}
@@ -445,21 +453,21 @@ func applyNormalReturnPathRelationProof(ctx normalReturnApplyContext, out state.
 
 func applyNormalReturnNumFloors(ctx normalReturnApplyContext, out state.State) state.State {
 	for _, fact := range ctx.normalFacts.NumFloors {
-		out = applyNormalReturnNumFloor(ctx.resolver, ctx.point, ctx.boundaryPaths, out, fact)
+		out = applyNormalReturnNumFloor(ctx, out, fact)
 	}
 	return out
 }
 
 func applyNormalReturnRelConstraints(ctx normalReturnApplyContext, out state.State) state.State {
 	for _, fact := range ctx.normalFacts.RelConstraints {
-		out = applyNormalReturnRelConstraint(ctx.resolver, ctx.point, ctx.boundaryPaths, out, fact)
+		out = applyNormalReturnRelConstraint(ctx, out, fact)
 	}
 	return out
 }
 
 func applyNormalReturnChannelSelects(ctx normalReturnApplyContext, out state.State) state.State {
 	for _, event := range ctx.normalFacts.ChannelSelects {
-		fact, ok := callChannelSelectFactAt(ctx.resolver, ctx.point, ctx.boundaryPaths, event)
+		fact, ok := callChannelSelectFactAt(ctx, event)
 		if !ok {
 			continue
 		}
@@ -544,7 +552,7 @@ func applyNormalReturnEscapeEvents(ctx normalReturnApplyContext, out state.State
 		if !ok {
 			continue
 		}
-		targetStateKey, ok := factStateKeyAt(ctx.resolver, ctx.point, targetPath)
+		targetStateKey, ok := ctx.visibleStateKey(event.Target)
 		if !ok {
 			continue
 		}
