@@ -195,6 +195,7 @@ func TestRenderAssignmentJudgmentUnknownIncludesMissingProof(t *testing.T) {
 func TestRenderAssignmentJudgmentOptionalSourceUsesNilHelp(t *testing.T) {
 	item := assignmentJudgmentFixture(typ.MaterializeOptional(typ.String), typ.String, judgment.VerdictUnknown)
 	item.Actual = item.Actual.WithLabel("n")
+	item.Evidence[2].Detail = judgment.MayBeNilEvidenceDetail()
 
 	d, ok := renderAssignmentJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
 	if !ok {
@@ -215,6 +216,7 @@ func TestRenderAssignmentJudgmentRefutedOptionalSourceIncludesMissingGuard(t *te
 	item := assignmentJudgmentFixture(typ.MaterializeOptional(typ.Number), typ.Number, judgment.VerdictRefuted)
 	item.Actual = item.Actual.WithLabel("h")
 	item.Evidence[2].Trust = judgment.EvidenceTrustRefuted
+	item.Evidence[2].Detail = judgment.MayBeNilEvidenceDetail()
 
 	d, ok := renderAssignmentJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
 	if !ok {

@@ -73,11 +73,14 @@ func assignmentJudgment(ctx Context, functionKey string, assignment readmodel.As
 		missingProofTrust = judgment.EvidenceTrustRefuted
 	}
 	var missingProofDetail judgment.EvidenceDetail
-	if assignment.Check.Mismatch.Kind == readmodel.AssignmentMismatchMissingRequiredField {
+	switch assignment.Check.Mismatch.Kind {
+	case readmodel.AssignmentMismatchMissingRequiredField:
 		missingProofDetail = judgment.MissingRequiredFieldTypeEvidenceDetail(
 			assignment.Check.Mismatch.Field,
 			assignment.Check.Mismatch.Type,
 		)
+	case readmodel.AssignmentMismatchMayBeNil:
+		missingProofDetail = judgment.MayBeNilEvidenceDetail()
 	}
 	var sourceDetail judgment.EvidenceDetail
 	if assignment.CallResult.Present {

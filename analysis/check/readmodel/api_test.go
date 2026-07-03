@@ -208,6 +208,24 @@ func TestPlanAssignmentCheckRejectsMissingRequiredFieldBeforeValueProof(t *testi
 	}
 }
 
+func TestPlanAssignmentCheckClassifiesMayBeNilMismatch(t *testing.T) {
+	check := PlanAssignmentCheck(AssignmentCheckPlan{
+		Assignment: Assignment{
+			TypeWithPresence: typeexpr.Optional(typ.String),
+			Expected:         typ.String,
+		},
+		IsSubtype: func(sub, super typ.Type) bool {
+			return false
+		},
+	})
+	if check.Mismatch.Kind != AssignmentMismatchMayBeNil {
+		t.Fatalf("mismatch = %#v, want may-be-nil", check.Mismatch)
+	}
+	if !check.ProvenMismatch {
+		t.Fatal("may-be-nil concrete mismatch was not marked as proven mismatch")
+	}
+}
+
 func TestPlanAssignmentCheckMarksConcreteSubtypeFailureAsMismatch(t *testing.T) {
 	check := PlanAssignmentCheck(AssignmentCheckPlan{
 		Assignment: Assignment{

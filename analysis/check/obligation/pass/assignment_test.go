@@ -393,6 +393,9 @@ end`, "test.lua")
 	if got[0].Verdict != judgment.VerdictRefuted {
 		t.Fatalf("verdict = %v, want refuted optional index mismatch", got[0].Verdict)
 	}
+	if !hasMissingProofDetail(got[0], judgment.EvidenceDetailMayBeNil) {
+		t.Fatalf("evidence = %#v, want may-be-nil missing-proof detail", got[0].Evidence)
+	}
 }
 
 func TestAssignmentsReportsGuardedOptionalArrayFieldElementRead(t *testing.T) {
@@ -419,6 +422,9 @@ end`, "test.lua")
 	}
 	if got[0].Verdict != judgment.VerdictRefuted {
 		t.Fatalf("verdict = %v, want refuted optional element mismatch", got[0].Verdict)
+	}
+	if !hasMissingProofDetail(got[0], judgment.EvidenceDetailMayBeNil) {
+		t.Fatalf("evidence = %#v, want may-be-nil missing-proof detail", got[0].Evidence)
 	}
 }
 
@@ -856,6 +862,15 @@ func dynamicAssignmentTargetDetail(item judgment.Judgment, label string) bool {
 	for _, evidence := range item.Evidence {
 		if evidence.Detail.Kind == judgment.EvidenceDetailDynamicAssignmentTarget &&
 			evidence.Detail.SubjectLabel == label {
+			return true
+		}
+	}
+	return false
+}
+
+func hasMissingProofDetail(item judgment.Judgment, kind judgment.EvidenceDetailKind) bool {
+	for _, evidence := range item.Evidence {
+		if evidence.Kind == judgment.EvidenceMissingProof && evidence.Detail.Kind == kind {
 			return true
 		}
 	}

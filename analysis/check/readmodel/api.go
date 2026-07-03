@@ -273,6 +273,7 @@ type AssignmentMismatchKind uint8
 const (
 	AssignmentMismatchNone AssignmentMismatchKind = iota
 	AssignmentMismatchMissingRequiredField
+	AssignmentMismatchMayBeNil
 )
 
 // AssignmentMismatch carries structured mismatch detail without diagnostic
@@ -749,6 +750,8 @@ func PlanAssignmentCheck(plan AssignmentCheckPlan) AssignmentCheck {
 			Field: plan.MissingRequiredField,
 			Type:  plan.MissingRequiredFieldType,
 		}
+	} else if AssignmentMayBeNilMismatch(assignment.TypeWithPresence, assignment.Expected) {
+		mismatch = AssignmentMismatch{Kind: AssignmentMismatchMayBeNil}
 	}
 	return AssignmentCheck{
 		Assignment:     &assignment,
@@ -803,6 +806,12 @@ func (plan AssignmentCheckPlan) assignmentProofAdmissible() bool {
 		return false
 	}
 	return plan.IsSubtype(plan.Assignment.TypeWithPresence, plan.Assignment.Expected)
+}
+
+// AssignmentMayBeNilMismatch reports whether an assignment source may be nil
+// while the declared target type rejects nil.
+func AssignmentMayBeNilMismatch(got, want typ.Type) bool {
+	return TypeMayBeNilMismatch(got, want)
 }
 
 // CallSite is the solved read model for one call expression. It is the public
@@ -1094,7 +1103,7 @@ func PlanCallArgumentMismatchSubject(plan CallArgumentMismatchSubjectPlan) (Call
 // CallArgumentMayBeNilMismatch reports whether an argument may be nil while
 // the expected type rejects nil.
 func CallArgumentMayBeNilMismatch(got, want typ.Type) bool {
-	return got != nil && want != nil && typevalue.TypeIncludesNil(got) && !typevalue.TypeIncludesNil(want)
+	return TypeMayBeNilMismatch(got, want)
 }
 
 // ObligationTypeReportable reports whether an expected type is precise enough
@@ -1128,6 +1137,13 @@ func ObligationTypeIsGradual(t typ.Type) bool {
 // readmodel type projection rules.
 func TypeIncludesNil(t typ.Type) bool {
 	return typevalue.TypeIncludesNil(t)
+}
+
+// TypeMayBeNilMismatch reports whether got admits nil while want rejects nil.
+// Obligation check planners use this single law when classifying assignment
+// and call-boundary nilability proof failures.
+func TypeMayBeNilMismatch(got, want typ.Type) bool {
+	return got != nil && want != nil && typevalue.TypeIncludesNil(got) && !typevalue.TypeIncludesNil(want)
 }
 
 // CallArgumentObligationTypeReportable is a compatibility alias for direct-call

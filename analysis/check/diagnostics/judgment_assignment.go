@@ -342,7 +342,7 @@ func assignmentJudgmentExtraEvidence(item judgment.Judgment, sourceName string, 
 	}
 	if sourceName != "" && sourceName != unknownSourceName &&
 		typ.Nil.Equals(got) &&
-		!projectionHasNil(want) &&
+		assignmentJudgmentMissingProofMayBeNil(item) &&
 		!assignmentSourceEndsWithIndex(sourceName) {
 		out = append(out, assignmentJudgmentNilableAccessEvidence(item)...)
 		out = append(out, assignmentJudgmentSourceContributionEvidence(item)...)
@@ -357,7 +357,7 @@ func assignmentJudgmentExtraEvidence(item judgment.Judgment, sourceName string, 
 		}
 		return out
 	}
-	if sourceName != "" && sourceName != unknownSourceName && projectionHasNil(got) && !projectionHasNil(want) {
+	if sourceName != "" && sourceName != unknownSourceName && assignmentJudgmentMissingProofMayBeNil(item) {
 		out = append(out, assignmentJudgmentSourceContributionEvidence(item)...)
 		if assignmentSourceLooksIndexed(sourceName) {
 			return appendMissingNilGuardEvidence(out, sourceName, got, sourceSpan, true)
@@ -395,6 +395,16 @@ func assignmentJudgmentMissingProofMessage(item judgment.Judgment, sourceName st
 func assignmentJudgmentHasDynamicTargetEvidence(item judgment.Judgment) bool {
 	for _, evidence := range item.Evidence {
 		if evidence.Detail.Kind == judgment.EvidenceDetailDynamicAssignmentTarget {
+			return true
+		}
+	}
+	return false
+}
+
+func assignmentJudgmentMissingProofMayBeNil(item judgment.Judgment) bool {
+	for _, evidence := range item.Evidence {
+		if evidence.Kind == judgment.EvidenceMissingProof &&
+			evidence.Detail.Kind == judgment.EvidenceDetailMayBeNil {
 			return true
 		}
 	}
