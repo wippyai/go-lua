@@ -54,6 +54,12 @@ func TestSummaryLaneRegistryCoversEveryPayloadField(t *testing.T) {
 		if !lane.slot && lane.lessOrEq == nil {
 			t.Fatalf("non-slot summary lane %s has nil less-or-eq hook", lane.fieldName)
 		}
+		if !lane.slot && lane.assignJoin == nil {
+			t.Fatalf("non-slot summary lane %s has nil join hook", lane.fieldName)
+		}
+		if !lane.slot && lane.assignWiden == nil {
+			t.Fatalf("non-slot summary lane %s has nil widen hook", lane.fieldName)
+		}
 		if _, ok := registered[lane.fieldName]; ok {
 			t.Fatalf("summary lane %s registered more than once", lane.fieldName)
 		}

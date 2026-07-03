@@ -13,6 +13,8 @@ type summaryLane struct {
 	normalizeOwned func(reg *axis.Registry, s *Summary)
 	equal          func(reg *axis.Registry, a, b Summary, normalized bool) bool
 	lessOrEq       func(reg *axis.Registry, a, b Summary) bool
+	assignJoin     func(reg *axis.Registry, a, b Summary, out *Summary)
+	assignWiden    func(reg *axis.Registry, prev, next Summary, out *Summary)
 }
 
 var summaryLanes = []summaryLane{
@@ -49,6 +51,18 @@ var summaryLanes = []summaryLane{
 		lessOrEq: func(_ *axis.Registry, a, b Summary) bool {
 			return paramMemberCallObligationLane.LessOrEq(a.ParamMemberCallObligations, b.ParamMemberCallObligations)
 		},
+		assignJoin: func(_ *axis.Registry, a, b Summary, out *Summary) {
+			out.ParamMemberCallObligations = paramMemberCallObligationLane.Join(
+				a.ParamMemberCallObligations,
+				b.ParamMemberCallObligations,
+			)
+		},
+		assignWiden: func(_ *axis.Registry, prev, next Summary, out *Summary) {
+			out.ParamMemberCallObligations = paramMemberCallObligationLane.Join(
+				prev.ParamMemberCallObligations,
+				next.ParamMemberCallObligations,
+			)
+		},
 	},
 	{
 		fieldName:   "ParamMemberReturnSlots",
@@ -62,6 +76,12 @@ var summaryLanes = []summaryLane{
 		},
 		lessOrEq: func(_ *axis.Registry, a, b Summary) bool {
 			return paramMemberReturnSlotLane.LessOrEq(a.ParamMemberReturnSlots, b.ParamMemberReturnSlots)
+		},
+		assignJoin: func(_ *axis.Registry, a, b Summary, out *Summary) {
+			out.ParamMemberReturnSlots = paramMemberReturnSlotLane.Join(a.ParamMemberReturnSlots, b.ParamMemberReturnSlots)
+		},
+		assignWiden: func(_ *axis.Registry, prev, next Summary, out *Summary) {
+			out.ParamMemberReturnSlots = paramMemberReturnSlotLane.Join(prev.ParamMemberReturnSlots, next.ParamMemberReturnSlots)
 		},
 	},
 	{
@@ -77,6 +97,12 @@ var summaryLanes = []summaryLane{
 		lessOrEq: func(_ *axis.Registry, a, b Summary) bool {
 			return returnParamPathAliasLane.LessOrEq(a.ReturnParamPathAliases, b.ReturnParamPathAliases)
 		},
+		assignJoin: func(_ *axis.Registry, a, b Summary, out *Summary) {
+			out.ReturnParamPathAliases = returnParamPathAliasLane.Join(a.ReturnParamPathAliases, b.ReturnParamPathAliases)
+		},
+		assignWiden: func(_ *axis.Registry, prev, next Summary, out *Summary) {
+			out.ReturnParamPathAliases = returnParamPathAliasLane.Join(prev.ReturnParamPathAliases, next.ReturnParamPathAliases)
+		},
 	},
 	{
 		fieldName:   "ParamSinkExposures",
@@ -91,6 +117,12 @@ var summaryLanes = []summaryLane{
 		lessOrEq: func(reg *axis.Registry, a, b Summary) bool {
 			return paramSinkExposuresLessOrEq(reg, a.ParamSinkExposures, b.ParamSinkExposures)
 		},
+		assignJoin: func(reg *axis.Registry, a, b Summary, out *Summary) {
+			out.ParamSinkExposures = joinParamSinkExposures(reg, a.ParamSinkExposures, b.ParamSinkExposures)
+		},
+		assignWiden: func(reg *axis.Registry, prev, next Summary, out *Summary) {
+			out.ParamSinkExposures = joinParamSinkExposures(reg, prev.ParamSinkExposures, next.ParamSinkExposures)
+		},
 	},
 	{
 		fieldName:   "CapturedPathObligations",
@@ -104,6 +136,20 @@ var summaryLanes = []summaryLane{
 		},
 		lessOrEq: func(reg *axis.Registry, a, b Summary) bool {
 			return capturedPathObligationsLessOrEq(reg, a.CapturedPathObligations, b.CapturedPathObligations)
+		},
+		assignJoin: func(reg *axis.Registry, a, b Summary, out *Summary) {
+			out.CapturedPathObligations = joinCapturedPathObligations(
+				reg,
+				a.CapturedPathObligations,
+				b.CapturedPathObligations,
+			)
+		},
+		assignWiden: func(reg *axis.Registry, prev, next Summary, out *Summary) {
+			out.CapturedPathObligations = widenCapturedPathObligations(
+				reg,
+				prev.CapturedPathObligations,
+				next.CapturedPathObligations,
+			)
 		},
 	},
 	{
@@ -144,6 +190,12 @@ var summaryLanes = []summaryLane{
 		lessOrEq: func(reg *axis.Registry, a, b Summary) bool {
 			return paramEqualitiesSummaryLessOrEq(reg, a, b)
 		},
+		assignJoin: func(reg *axis.Registry, a, b Summary, out *Summary) {
+			out.NormalReturnParamEqualities = joinParamEqualities(reg, a, b)
+		},
+		assignWiden: func(reg *axis.Registry, prev, next Summary, out *Summary) {
+			out.NormalReturnParamEqualities = joinParamEqualities(reg, prev, next)
+		},
 	},
 	{
 		fieldName:   "NormalReturnFacts",
@@ -158,6 +210,12 @@ var summaryLanes = []summaryLane{
 		lessOrEq: func(reg *axis.Registry, a, b Summary) bool {
 			return normalReturnFactsLessOrEq(reg, a.NormalReturnFacts, b.NormalReturnFacts)
 		},
+		assignJoin: func(reg *axis.Registry, a, b Summary, out *Summary) {
+			out.NormalReturnFacts = joinNormalReturnFacts(reg, a.NormalReturnFacts, b.NormalReturnFacts)
+		},
+		assignWiden: func(reg *axis.Registry, prev, next Summary, out *Summary) {
+			out.NormalReturnFacts = widenNormalReturnFacts(reg, prev.NormalReturnFacts, next.NormalReturnFacts)
+		},
 	},
 	{
 		fieldName:   "HeapTableObjects",
@@ -171,6 +229,12 @@ var summaryLanes = []summaryLane{
 		},
 		lessOrEq: func(reg *axis.Registry, a, b Summary) bool {
 			return heapTableObjectsLessOrEq(reg, a.HeapTableObjects, b.HeapTableObjects)
+		},
+		assignJoin: func(reg *axis.Registry, a, b Summary, out *Summary) {
+			out.HeapTableObjects, out.HeapKeySpace = joinSummaryHeapTableObjects(reg, a, b)
+		},
+		assignWiden: func(reg *axis.Registry, prev, next Summary, out *Summary) {
+			out.HeapTableObjects, out.HeapKeySpace = widenSummaryHeapTableObjects(reg, prev, next)
 		},
 	},
 	{
@@ -197,6 +261,20 @@ var summaryLanes = []summaryLane{
 				reg,
 				a.ReturnConditionParamRefinements,
 				b.ReturnConditionParamRefinements,
+			)
+		},
+		assignJoin: func(reg *axis.Registry, a, b Summary, out *Summary) {
+			out.ReturnConditionParamRefinements = joinReturnConditionParamRefinements(
+				reg,
+				a.ReturnConditionParamRefinements,
+				b.ReturnConditionParamRefinements,
+			)
+		},
+		assignWiden: func(reg *axis.Registry, prev, next Summary, out *Summary) {
+			out.ReturnConditionParamRefinements = joinReturnConditionParamRefinements(
+				reg,
+				prev.ReturnConditionParamRefinements,
+				next.ReturnConditionParamRefinements,
 			)
 		},
 	},
@@ -226,6 +304,20 @@ var summaryLanes = []summaryLane{
 				b.ReturnConditionSlotRefinements,
 			)
 		},
+		assignJoin: func(reg *axis.Registry, a, b Summary, out *Summary) {
+			out.ReturnConditionSlotRefinements = joinReturnConditionSlotRefinements(
+				reg,
+				a.ReturnConditionSlotRefinements,
+				b.ReturnConditionSlotRefinements,
+			)
+		},
+		assignWiden: func(reg *axis.Registry, prev, next Summary, out *Summary) {
+			out.ReturnConditionSlotRefinements = joinReturnConditionSlotRefinements(
+				reg,
+				prev.ReturnConditionSlotRefinements,
+				next.ReturnConditionSlotRefinements,
+			)
+		},
 	},
 	{
 		fieldName: "ReturnParamLiteralCases",
@@ -242,6 +334,16 @@ var summaryLanes = []summaryLane{
 		lessOrEq: func(reg *axis.Registry, a, b Summary) bool {
 			return returnParamLiteralCasesLessOrEq(reg, a.ReturnParamLiteralCases, b.ReturnParamLiteralCases)
 		},
+		assignJoin: func(reg *axis.Registry, a, b Summary, out *Summary) {
+			out.ReturnParamLiteralCases = joinReturnParamLiteralCases(reg, a.ReturnParamLiteralCases, b.ReturnParamLiteralCases)
+		},
+		assignWiden: func(reg *axis.Registry, prev, next Summary, out *Summary) {
+			out.ReturnParamLiteralCases = widenReturnParamLiteralCases(
+				reg,
+				prev.ReturnParamLiteralCases,
+				next.ReturnParamLiteralCases,
+			)
+		},
 	},
 	{
 		fieldName: "ReturnPresenceRelations",
@@ -257,6 +359,15 @@ var summaryLanes = []summaryLane{
 		},
 		lessOrEq: func(_ *axis.Registry, a, b Summary) bool {
 			return returnPresenceRelationLane.LessOrEq(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
+		},
+		assignJoin: func(_ *axis.Registry, a, b Summary, out *Summary) {
+			out.ReturnPresenceRelations = returnPresenceRelationLane.Join(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
+		},
+		assignWiden: func(_ *axis.Registry, prev, next Summary, out *Summary) {
+			out.ReturnPresenceRelations = returnPresenceRelationLane.Join(
+				prev.ReturnPresenceRelations,
+				next.ReturnPresenceRelations,
+			)
 		},
 	},
 }
@@ -320,4 +431,22 @@ func summaryNonSlotLanesLessOrEq(reg *axis.Registry, a, b Summary) bool {
 		}
 	}
 	return true
+}
+
+func assignSummaryNonSlotLanesJoin(reg *axis.Registry, a, b Summary, out *Summary) {
+	for _, lane := range summaryLanes {
+		if lane.slot {
+			continue
+		}
+		lane.assignJoin(reg, a, b, out)
+	}
+}
+
+func assignSummaryNonSlotLanesWiden(reg *axis.Registry, prev, next Summary, out *Summary) {
+	for _, lane := range summaryLanes {
+		if lane.slot {
+			continue
+		}
+		lane.assignWiden(reg, prev, next, out)
+	}
 }

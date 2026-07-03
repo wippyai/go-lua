@@ -184,35 +184,7 @@ func Join(reg *axis.Registry, a, b Summary) Summary {
 			normalReturnParamConditionAt(reg, b, i),
 		)
 	}
-	out.ParamMemberCallObligations = paramMemberCallObligationLane.Join(
-		a.ParamMemberCallObligations,
-		b.ParamMemberCallObligations,
-	)
-	out.ParamMemberReturnSlots = paramMemberReturnSlotLane.Join(
-		a.ParamMemberReturnSlots,
-		b.ParamMemberReturnSlots,
-	)
-	out.ReturnParamPathAliases = returnParamPathAliasLane.Join(
-		a.ReturnParamPathAliases,
-		b.ReturnParamPathAliases,
-	)
-	out.ParamSinkExposures = joinParamSinkExposures(reg, a.ParamSinkExposures, b.ParamSinkExposures)
-	out.CapturedPathObligations = joinCapturedPathObligations(reg, a.CapturedPathObligations, b.CapturedPathObligations)
-	out.NormalReturnParamEqualities = joinParamEqualities(reg, a, b)
-	out.NormalReturnFacts = joinNormalReturnFacts(reg, a.NormalReturnFacts, b.NormalReturnFacts)
-	out.HeapTableObjects, out.HeapKeySpace = joinSummaryHeapTableObjects(reg, a, b)
-	out.ReturnConditionParamRefinements = joinReturnConditionParamRefinements(
-		reg,
-		a.ReturnConditionParamRefinements,
-		b.ReturnConditionParamRefinements,
-	)
-	out.ReturnConditionSlotRefinements = joinReturnConditionSlotRefinements(
-		reg,
-		a.ReturnConditionSlotRefinements,
-		b.ReturnConditionSlotRefinements,
-	)
-	out.ReturnParamLiteralCases = joinReturnParamLiteralCases(reg, a.ReturnParamLiteralCases, b.ReturnParamLiteralCases)
-	out.ReturnPresenceRelations = returnPresenceRelationLane.Join(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
+	assignSummaryNonSlotLanesJoin(reg, a, b, &out)
 	return NormalizeOwned(reg, out)
 }
 
@@ -302,35 +274,7 @@ func Widen(reg *axis.Registry, prev, next Summary) Summary {
 			normalReturnParamConditionAt(reg, next, i),
 		)
 	}
-	out.ParamMemberCallObligations = paramMemberCallObligationLane.Join(
-		prev.ParamMemberCallObligations,
-		next.ParamMemberCallObligations,
-	)
-	out.ParamMemberReturnSlots = paramMemberReturnSlotLane.Join(
-		prev.ParamMemberReturnSlots,
-		next.ParamMemberReturnSlots,
-	)
-	out.ReturnParamPathAliases = returnParamPathAliasLane.Join(
-		prev.ReturnParamPathAliases,
-		next.ReturnParamPathAliases,
-	)
-	out.ParamSinkExposures = joinParamSinkExposures(reg, prev.ParamSinkExposures, next.ParamSinkExposures)
-	out.CapturedPathObligations = widenCapturedPathObligations(reg, prev.CapturedPathObligations, next.CapturedPathObligations)
-	out.NormalReturnParamEqualities = joinParamEqualities(reg, prev, next)
-	out.NormalReturnFacts = widenNormalReturnFacts(reg, prev.NormalReturnFacts, next.NormalReturnFacts)
-	out.HeapTableObjects, out.HeapKeySpace = widenSummaryHeapTableObjects(reg, prev, next)
-	out.ReturnConditionParamRefinements = joinReturnConditionParamRefinements(
-		reg,
-		prev.ReturnConditionParamRefinements,
-		next.ReturnConditionParamRefinements,
-	)
-	out.ReturnConditionSlotRefinements = joinReturnConditionSlotRefinements(
-		reg,
-		prev.ReturnConditionSlotRefinements,
-		next.ReturnConditionSlotRefinements,
-	)
-	out.ReturnParamLiteralCases = widenReturnParamLiteralCases(reg, prev.ReturnParamLiteralCases, next.ReturnParamLiteralCases)
-	out.ReturnPresenceRelations = returnPresenceRelationLane.Join(prev.ReturnPresenceRelations, next.ReturnPresenceRelations)
+	assignSummaryNonSlotLanesWiden(reg, prev, next, &out)
 	return NormalizeOwned(reg, out)
 }
 
