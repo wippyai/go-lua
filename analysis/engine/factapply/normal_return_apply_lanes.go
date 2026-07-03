@@ -194,7 +194,7 @@ func applyNormalReturnPathInvalidations(ctx normalReturnApplyContext, out state.
 		if !ok {
 			continue
 		}
-		mutatesDynamicIndex := callOutcomePathMatchesAny(fact.Path, dynamicIndexMutationTables)
+		mutatesDynamicIndex := normalReturnPathMatchesAny(fact.Path, dynamicIndexMutationTables)
 		if callOutcomeConcreteRootInvalidation(fact.Path) && !mutatesDynamicIndex {
 			out = writeRootSymbol(ctx.node, ctx.resolver, out, targetPath.Symbol, targetPath, product.Top())
 			continue
