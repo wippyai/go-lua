@@ -137,6 +137,31 @@ func TestRegistryLookupReturnsDefensiveCopy(t *testing.T) {
 	}
 }
 
+func TestRegistryCodesReturnsDeterministicDefensiveList(t *testing.T) {
+	reg := NewRegistry([]CodeSpec{
+		{Code: CodeReturn},
+		{Code: CodeCallArgType},
+		{Code: CodeAssignment},
+	})
+
+	got := reg.Codes()
+	want := []Code{CodeAssignment, CodeCallArgType, CodeReturn}
+	if len(got) != len(want) {
+		t.Fatalf("Codes len = %d, want %d: %#v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("Codes[%d] = %s, want %s: %#v", i, got[i], want[i], got)
+		}
+	}
+
+	got[0] = CodeConcatOperand
+	again := reg.Codes()
+	if again[0] != CodeAssignment {
+		t.Fatalf("Codes returned mutable registry storage: %#v", again)
+	}
+}
+
 func TestNewRegistryRejectsEmptyAndDuplicateCodes(t *testing.T) {
 	requirePanic(t, func() {
 		_ = NewRegistry([]CodeSpec{{}})
@@ -147,6 +172,19 @@ func TestNewRegistryRejectsEmptyAndDuplicateCodes(t *testing.T) {
 			{Code: CodeCallArgType},
 		})
 	})
+}
+
+func TestDefaultPolicyCoversDefaultRegistry(t *testing.T) {
+	policy := DefaultPolicy()
+	for _, code := range DefaultRegistry().Codes() {
+		for _, verdict := range []Verdict{VerdictProven, VerdictUnknown, VerdictRefuted} {
+			for _, mode := range []StrictnessMode{StrictnessDefault, StrictnessLenient, StrictnessStrict} {
+				if _, ok := policy.LevelFor(Judgment{Code: code, Verdict: verdict}, mode); !ok {
+					t.Fatalf("default policy missing code=%s verdict=%v mode=%s", code, verdict, mode)
+				}
+			}
+		}
+	}
 }
 
 func TestDefaultPolicyMapsVerdictWithoutChangingJudgment(t *testing.T) {

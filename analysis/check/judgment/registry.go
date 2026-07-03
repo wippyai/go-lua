@@ -1,5 +1,7 @@
 package judgment
 
+import "sort"
+
 // CodeSpec is the single registration record for a semantic judgment code.
 // Renderers and policy layers may reference these specs, but producers should
 // not invent code metadata locally.
@@ -248,6 +250,18 @@ func (r Registry) Lookup(code Code) (CodeSpec, bool) {
 		return CodeSpec{}, false
 	}
 	return cloneCodeSpec(spec), true
+}
+
+// Codes returns every registered code in deterministic order.
+func (r Registry) Codes() []Code {
+	out := make([]Code, 0, len(r.specs))
+	for code := range r.specs {
+		out = append(out, code)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i] < out[j]
+	})
+	return out
 }
 
 // Validate reports whether a judgment matches its code registration.
