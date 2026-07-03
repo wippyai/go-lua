@@ -36,6 +36,26 @@ type normalReturnApplyContext struct {
 	freshDynamicIndexMutationTables map[keyspace.Key]struct{}
 }
 
+func (ctx normalReturnApplyContext) substitute(path pathdom.Path) (pathdom.Path, bool) {
+	return ctx.boundaryPaths.Substitute(path)
+}
+
+func (ctx normalReturnApplyContext) pathKey(path pathdom.Path) (pathdom.PathKey, bool) {
+	return callOutcomePathKeyAt(ctx.resolver, ctx.point, ctx.boundaryPaths, path)
+}
+
+func (ctx normalReturnApplyContext) keyspaceKey(path pathdom.Path) (keyspace.Key, bool) {
+	return callOutcomeKeyspaceKeyAt(ctx.resolver, ctx.point, ctx.boundaryPaths, path)
+}
+
+func (ctx normalReturnApplyContext) stateKey(path pathdom.Path) (pathaddr.StateKey, bool) {
+	return callOutcomeStateKeyAt(ctx.resolver, ctx.point, ctx.boundaryPaths, path)
+}
+
+func (ctx normalReturnApplyContext) visibleStateKey(path pathdom.Path) (pathaddr.StateKey, bool) {
+	return callOutcomeVisibleStateKeyAt(ctx.resolver, ctx.point, ctx.boundaryPaths, path)
+}
+
 type normalReturnApplyLane struct {
 	id    callboundary.NormalReturnFactLaneID
 	phase normalReturnApplyPhase
@@ -149,7 +169,7 @@ func buildNormalReturnApplyLanes(handlers map[callboundary.NormalReturnFactLaneI
 
 func applyNormalReturnPathRefinements(ctx normalReturnApplyContext, out state.State) state.State {
 	for _, fact := range ctx.normalFacts.PathRefinements {
-		targetPath, ok := ctx.boundaryPaths.Substitute(fact.Path)
+		targetPath, ok := ctx.substitute(fact.Path)
 		if !ok {
 			continue
 		}
@@ -161,7 +181,7 @@ func applyNormalReturnPathRefinements(ctx normalReturnApplyContext, out state.St
 func applyNormalReturnPathInvalidations(ctx normalReturnApplyContext, out state.State) state.State {
 	dynamicIndexMutationTables := normalReturnDynamicIndexMutationTables(ctx.normalFacts.DynamicIndexFacts)
 	for _, fact := range ctx.normalFacts.PathInvalidations {
-		targetPath, ok := ctx.boundaryPaths.Substitute(fact.Path)
+		targetPath, ok := ctx.substitute(fact.Path)
 		if !ok {
 			continue
 		}
@@ -195,7 +215,7 @@ func boundaryRootBoundToDescendant(factPath, targetPath pathdom.Path) bool {
 
 func applyNormalReturnPersistentPathWrites(ctx normalReturnApplyContext, out state.State) state.State {
 	for _, fact := range ctx.normalFacts.PersistentPathWrites {
-		targetPath, ok := ctx.boundaryPaths.Substitute(fact.Path)
+		targetPath, ok := ctx.substitute(fact.Path)
 		if !ok {
 			continue
 		}
@@ -208,7 +228,7 @@ func applyNormalReturnPathStaticMembers(ctx normalReturnApplyContext, out state.
 	edit := out.Edit(ctx.node.Registry)
 	changed := false
 	for _, fact := range ctx.normalFacts.PathStaticMembers {
-		targetPathKey, ok := callOutcomePathKeyAt(ctx.resolver, ctx.point, ctx.boundaryPaths, fact.Path)
+		targetPathKey, ok := ctx.pathKey(fact.Path)
 		if !ok {
 			continue
 		}
@@ -224,11 +244,11 @@ func applyNormalReturnPathStaticMembers(ctx normalReturnApplyContext, out state.
 
 func applyNormalReturnPathPresenceImplications(ctx normalReturnApplyContext, out state.State) state.State {
 	for _, fact := range ctx.normalFacts.PathPresenceImplications {
-		trigger, ok := callOutcomeKeyspaceKeyAt(ctx.resolver, ctx.point, ctx.boundaryPaths, fact.Trigger)
+		trigger, ok := ctx.keyspaceKey(fact.Trigger)
 		if !ok {
 			continue
 		}
-		target, ok := callOutcomeKeyspaceKeyAt(ctx.resolver, ctx.point, ctx.boundaryPaths, fact.Target)
+		target, ok := ctx.keyspaceKey(fact.Target)
 		if !ok {
 			continue
 		}
@@ -249,7 +269,7 @@ func applyNormalReturnDynamicIndexFacts(ctx normalReturnApplyContext, out state.
 	if len(ctx.normalFacts.DynamicIndexFacts) != 0 {
 		clearedContainers := make(map[keyspace.Key]struct{}, len(ctx.normalFacts.DynamicIndexFacts))
 		for _, fact := range ctx.normalFacts.DynamicIndexFacts {
-			tableKey, ok := callOutcomeKeyspaceKeyAt(ctx.resolver, ctx.point, ctx.boundaryPaths, fact.Table)
+			tableKey, ok := ctx.keyspaceKey(fact.Table)
 			if !ok {
 				continue
 			}
@@ -263,11 +283,11 @@ func applyNormalReturnDynamicIndexFacts(ctx normalReturnApplyContext, out state.
 	}
 	dynamicChanged := false
 	for _, fact := range ctx.normalFacts.DynamicIndexFacts {
-		tableKey, ok := callOutcomeKeyspaceKeyAt(ctx.resolver, ctx.point, ctx.boundaryPaths, fact.Table)
+		tableKey, ok := ctx.keyspaceKey(fact.Table)
 		if !ok {
 			continue
 		}
-		tablePath, ok := ctx.boundaryPaths.Substitute(fact.Table)
+		tablePath, ok := ctx.substitute(fact.Table)
 		if !ok {
 			continue
 		}
@@ -275,7 +295,7 @@ func applyNormalReturnDynamicIndexFacts(ctx normalReturnApplyContext, out state.
 			Table: tableKey,
 			Site:  fact.Site,
 		}
-		valuePath, hasValuePath := ctx.boundaryPaths.Substitute(fact.ValuePath)
+		valuePath, hasValuePath := ctx.substitute(fact.ValuePath)
 		if edit.WriteDynamicIndexFact(key, fact.Value) {
 			dynamicChanged = true
 		}
@@ -337,11 +357,11 @@ func addNormalReturnDynamicAllValueMembershipsFromPath(
 
 func applyNormalReturnKeyMemberships(ctx normalReturnApplyContext, out state.State) state.State {
 	for _, fact := range ctx.normalFacts.KeyMemberships {
-		keyStateKey, ok := callOutcomeStateKeyAt(ctx.resolver, ctx.point, ctx.boundaryPaths, fact.Key)
+		keyStateKey, ok := ctx.stateKey(fact.Key)
 		if !ok {
 			continue
 		}
-		tableStateKey, ok := callOutcomeStateKeyAt(ctx.resolver, ctx.point, ctx.boundaryPaths, fact.Table)
+		tableStateKey, ok := ctx.stateKey(fact.Table)
 		if !ok {
 			continue
 		}
@@ -352,11 +372,11 @@ func applyNormalReturnKeyMemberships(ctx normalReturnApplyContext, out state.Sta
 
 func applyNormalReturnDynamicValueKeys(ctx normalReturnApplyContext, out state.State) state.State {
 	for _, fact := range ctx.normalFacts.DynamicValueKeys {
-		containerKey, ok := callOutcomeKeyspaceKeyAt(ctx.resolver, ctx.point, ctx.boundaryPaths, fact.Container)
+		containerKey, ok := ctx.keyspaceKey(fact.Container)
 		if !ok {
 			continue
 		}
-		tableStateKey, ok := callOutcomeStateKeyAt(ctx.resolver, ctx.point, ctx.boundaryPaths, fact.Table)
+		tableStateKey, ok := ctx.stateKey(fact.Table)
 		if !ok {
 			continue
 		}
@@ -367,11 +387,11 @@ func applyNormalReturnDynamicValueKeys(ctx normalReturnApplyContext, out state.S
 
 func applyNormalReturnDynamicAllValues(ctx normalReturnApplyContext, out state.State) state.State {
 	for _, fact := range ctx.normalFacts.DynamicAllValues {
-		containerKey, ok := callOutcomeKeyspaceKeyAt(ctx.resolver, ctx.point, ctx.boundaryPaths, fact.Container)
+		containerKey, ok := ctx.keyspaceKey(fact.Container)
 		if !ok {
 			continue
 		}
-		tableStateKey, ok := callOutcomeStateKeyAt(ctx.resolver, ctx.point, ctx.boundaryPaths, fact.Table)
+		tableStateKey, ok := ctx.stateKey(fact.Table)
 		if !ok {
 			continue
 		}
@@ -398,11 +418,11 @@ func applyNormalReturnPathRelationProof(ctx normalReturnApplyContext, out state.
 	default:
 		return out
 	}
-	leftPath, ok := ctx.boundaryPaths.Substitute(proof.Path)
+	leftPath, ok := ctx.substitute(proof.Path)
 	if !ok {
 		return out
 	}
-	rightPath, ok := ctx.boundaryPaths.Substitute(proof.Other)
+	rightPath, ok := ctx.substitute(proof.Other)
 	if !ok {
 		return out
 	}
@@ -450,7 +470,7 @@ func applyNormalReturnChannelSelects(ctx normalReturnApplyContext, out state.Sta
 
 func applyNormalReturnFrozenTables(ctx normalReturnApplyContext, out state.State) state.State {
 	for _, fact := range ctx.normalFacts.FrozenTables {
-		targetPath, ok := ctx.boundaryPaths.Substitute(fact.Target)
+		targetPath, ok := ctx.substitute(fact.Target)
 		if !ok {
 			continue
 		}
@@ -468,7 +488,7 @@ func applyNormalReturnFrozenTables(ctx normalReturnApplyContext, out state.State
 
 func applyNormalReturnEffectDeltas(ctx normalReturnApplyContext, out state.State) state.State {
 	for _, delta := range ctx.normalFacts.EffectDeltas {
-		targetKey, ok := callOutcomeKeyspaceKeyAt(ctx.resolver, ctx.point, ctx.boundaryPaths, delta.Target)
+		targetKey, ok := ctx.keyspaceKey(delta.Target)
 		if !ok {
 			continue
 		}
@@ -483,11 +503,11 @@ func applyNormalReturnEffectDeltas(ctx normalReturnApplyContext, out state.State
 
 func applyNormalReturnStoreRelations(ctx normalReturnApplyContext, out state.State) state.State {
 	for _, relation := range ctx.normalFacts.StoreRelations {
-		sourceStateKey, ok := callOutcomeStateKeyAt(ctx.resolver, ctx.point, ctx.boundaryPaths, relation.Source)
+		sourceStateKey, ok := ctx.stateKey(relation.Source)
 		if !ok {
 			continue
 		}
-		intoStateKey, ok := callOutcomeStateKeyAt(ctx.resolver, ctx.point, ctx.boundaryPaths, relation.Into)
+		intoStateKey, ok := ctx.stateKey(relation.Into)
 		if !ok {
 			continue
 		}
@@ -501,7 +521,7 @@ func applyNormalReturnStoreRelations(ctx normalReturnApplyContext, out state.Sta
 
 func applyNormalReturnLifecycleFacts(ctx normalReturnApplyContext, out state.State) state.State {
 	for _, fact := range ctx.normalFacts.LifecycleFacts {
-		targetStateKey, ok := callOutcomeVisibleStateKeyAt(ctx.resolver, ctx.point, ctx.boundaryPaths, fact.Target)
+		targetStateKey, ok := ctx.visibleStateKey(fact.Target)
 		if !ok || fact.Protocol == "" {
 			continue
 		}
@@ -520,7 +540,7 @@ func applyNormalReturnLifecycleFacts(ctx normalReturnApplyContext, out state.Sta
 
 func applyNormalReturnEscapeEvents(ctx normalReturnApplyContext, out state.State) state.State {
 	for _, event := range ctx.normalFacts.EscapeEvents {
-		targetPath, ok := ctx.boundaryPaths.Substitute(event.Target)
+		targetPath, ok := ctx.substitute(event.Target)
 		if !ok {
 			continue
 		}
