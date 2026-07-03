@@ -205,6 +205,72 @@ func TestDefaultPolicyMapsVerdictWithoutChangingJudgment(t *testing.T) {
 	}
 }
 
+func TestDefaultPolicyCategories(t *testing.T) {
+	tests := []struct {
+		name    string
+		code    Code
+		verdict Verdict
+		mode    StrictnessMode
+		want    Level
+	}{
+		{
+			name:    "strictness tunable type unknown is warning only in lenient mode",
+			code:    CodeCallArgType,
+			verdict: VerdictUnknown,
+			mode:    StrictnessLenient,
+			want:    LevelWarning,
+		},
+		{
+			name:    "strictness tunable type refuted stays error in lenient mode",
+			code:    CodeAssignment,
+			verdict: VerdictRefuted,
+			mode:    StrictnessLenient,
+			want:    LevelError,
+		},
+		{
+			name:    "refuted-only hard error does not report unknown evidence",
+			code:    CodeMemberRead,
+			verdict: VerdictUnknown,
+			mode:    StrictnessStrict,
+			want:    LevelDisabled,
+		},
+		{
+			name:    "refuted-only hard error reports refuted evidence",
+			code:    CodeUnresolvedValue,
+			verdict: VerdictRefuted,
+			mode:    StrictnessDefault,
+			want:    LevelError,
+		},
+		{
+			name:    "lint warning does not report unknown evidence",
+			code:    CodeConcatOperand,
+			verdict: VerdictUnknown,
+			mode:    StrictnessDefault,
+			want:    LevelDisabled,
+		},
+		{
+			name:    "lint warning reports refuted evidence as warning",
+			code:    CodeDeadAssignment,
+			verdict: VerdictRefuted,
+			mode:    StrictnessStrict,
+			want:    LevelWarning,
+		},
+	}
+
+	policy := DefaultPolicy()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := policy.LevelFor(Judgment{Code: tt.code, Verdict: tt.verdict}, tt.mode)
+			if !ok {
+				t.Fatalf("missing policy row for code=%s verdict=%v mode=%s", tt.code, tt.verdict, tt.mode)
+			}
+			if got != tt.want {
+				t.Fatalf("level = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func requirePanic(t *testing.T, fn func()) {
 	t.Helper()
 	defer func() {
