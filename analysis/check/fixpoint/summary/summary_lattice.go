@@ -21,41 +21,9 @@ func Normalize(reg *axis.Registry, s Summary) Summary {
 // mutate mutable lanes in s. Callers must only use this when they own s and all
 // of its map/slice lanes.
 func NormalizeOwned(reg *axis.Registry, out Summary) Summary {
-	bottom := product.Bottom(reg)
-	for len(out.Returns) > 0 && product.Equal(reg, out.Returns[len(out.Returns)-1], bottom) {
-		out.Returns = out.Returns[:len(out.Returns)-1]
+	for _, lane := range summaryLanes {
+		lane.normalizeOwned(reg, &out)
 	}
-	top := product.Top()
-	for len(out.ParamObligations) > 0 &&
-		product.Equal(reg, out.ParamObligations[len(out.ParamObligations)-1], top) {
-		out.ParamObligations = out.ParamObligations[:len(out.ParamObligations)-1]
-	}
-	out.ParamMemberCallObligations = paramMemberCallObligationLane.Normalize(out.ParamMemberCallObligations)
-	out.ParamMemberReturnSlots = paramMemberReturnSlotLane.Normalize(out.ParamMemberReturnSlots)
-	out.ReturnParamPathAliases = returnParamPathAliasLane.Normalize(out.ReturnParamPathAliases)
-	out.ParamSinkExposures = normalizeParamSinkExposures(reg, out.ParamSinkExposures)
-	out.CapturedPathObligations = normalizeCapturedPathObligations(reg, out.CapturedPathObligations)
-	for len(out.NormalReturnParams) > 0 &&
-		product.Equal(reg, out.NormalReturnParams[len(out.NormalReturnParams)-1], bottom) {
-		out.NormalReturnParams = out.NormalReturnParams[:len(out.NormalReturnParams)-1]
-	}
-	for len(out.NormalReturnParamConditions) > 0 &&
-		!out.NormalReturnParamConditions[len(out.NormalReturnParamConditions)-1].IsUseful() {
-		out.NormalReturnParamConditions = out.NormalReturnParamConditions[:len(out.NormalReturnParamConditions)-1]
-	}
-	out.NormalReturnParamEqualities = normalizeParamEqualities(out.NormalReturnParamEqualities)
-	out.NormalReturnFacts = normalizeOwnedNormalReturnFacts(reg, out.NormalReturnFacts)
-	out.HeapTableObjects = normalizeOwnedHeapTableObjects(reg, out.HeapTableObjects)
-	out.ReturnConditionParamRefinements = normalizeReturnConditionParamRefinements(
-		reg,
-		out.ReturnConditionParamRefinements,
-	)
-	out.ReturnConditionSlotRefinements = normalizeReturnConditionSlotRefinements(
-		reg,
-		out.ReturnConditionSlotRefinements,
-	)
-	out.ReturnParamLiteralCases = normalizeReturnParamLiteralCases(reg, out.ReturnParamLiteralCases)
-	out.ReturnPresenceRelations = returnPresenceRelationLane.Normalize(out.ReturnPresenceRelations)
 	if summaryBottom(out) {
 		return Summary{}
 	}

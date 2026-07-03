@@ -45,6 +45,9 @@ func TestSummaryLaneRegistryCoversEveryPayloadField(t *testing.T) {
 		if lane.assignClone == nil {
 			t.Fatalf("summary lane %s has nil clone assignment", lane.fieldName)
 		}
+		if lane.normalizeOwned == nil {
+			t.Fatalf("summary lane %s has nil normalize hook", lane.fieldName)
+		}
 		if _, ok := registered[lane.fieldName]; ok {
 			t.Fatalf("summary lane %s registered more than once", lane.fieldName)
 		}
