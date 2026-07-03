@@ -2428,7 +2428,18 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 		})
 	})
 	requirePanic(t, func() {
+		edit := top.EditValues(reg)
+		edit.Write(slot, present)
+	})
+	requirePanic(t, func() {
+		top.SeedValues(reg, []ValueSeed{{Slot: slot, Value: present}})
+	})
+	requirePanic(t, func() {
 		top.WriteDynamicIndexFact(reg, dynamicKey, dynamicFact)
+	})
+	requirePanic(t, func() {
+		edit := top.EditDynamicIndex(reg)
+		edit.Write(dynamicKey, dynamicFact)
 	})
 	requirePanic(t, func() {
 		top.WriteHeapTableObject(reg, heapID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: present}))

@@ -73,9 +73,7 @@ func (s State) WriteValue(reg *axis.Registry, slot key.Value, value product.Valu
 	if slot == 0 || !s.laneEnabled(laneValuesBit) {
 		return s
 	}
-	if s.values.top {
-		panic("state: cannot finite-write value slot into top value lane")
-	}
+	requireFiniteLaneForWrite(s.values.top, "finite-write", "value slot", "value")
 	values, changed := s.values.write(reg, slot, value)
 	if !changed {
 		return s
@@ -143,9 +141,7 @@ func (e *ValueEdit) Write(slot key.Value, value product.Value) {
 	if slot == 0 || !e.enabled {
 		return
 	}
-	if e.state.values.top {
-		panic("state: cannot finite-write value slot into top value lane")
-	}
+	requireFiniteLaneForWrite(e.state.values.top, "finite-write", "value slot", "value")
 	bottom := e.valueDomain.Bottom()
 	current := e.Read(slot)
 	if e.valueDomain.Equal(current, value) {
@@ -243,9 +239,7 @@ func (s State) SeedValues(reg *axis.Registry, seeds []ValueSeed) State {
 	if reg == nil || len(seeds) == 0 || !s.laneEnabled(laneValuesBit) {
 		return s
 	}
-	if s.values.top {
-		panic("state: cannot seed value slots into top value lane")
-	}
+	requireFiniteLaneForWrite(s.values.top, "seed", "value slots", "value")
 	values, changed := s.values.seed(reg, seeds)
 	if !changed {
 		return s

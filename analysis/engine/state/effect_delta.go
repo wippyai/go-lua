@@ -16,9 +16,7 @@ func (s State) WriteEffectDelta(key effectdelta.Key, delta effectdelta.Value) St
 	if key.Target.Kind == keyspace.KindInvalid || !s.laneEnabled(laneEffectDeltasBit) {
 		return s
 	}
-	if s.effectDeltas.top {
-		panic("state: cannot finite-write effect delta into top effect-delta lane")
-	}
+	requireFiniteLaneForWrite(s.effectDeltas.top, "finite-write", "effect delta", "effect-delta")
 	if delta.Change == effectdelta.ChangeBottom {
 		deltas, changed := s.effectDeltas.without(key)
 		if !changed {

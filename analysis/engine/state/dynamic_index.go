@@ -37,9 +37,7 @@ func (s State) WriteDynamicIndexFact(reg *axis.Registry, key dynamicindex.Key, f
 	if key.Table.Kind == keyspace.KindInvalid || !s.laneEnabled(laneDynamicIndexBit) {
 		return s
 	}
-	if s.dynamicIndex.top {
-		panic("state: cannot finite-write dynamic index fact into top dynamic-index lane")
-	}
+	requireFiniteLaneForWrite(s.dynamicIndex.top, "finite-write", "dynamic index fact", "dynamic-index")
 	domain := dynamicindex.Domain(reg)
 	if domain.Equal(fact, domain.Bottom()) {
 		facts, changed := s.dynamicIndex.without(key)
@@ -108,9 +106,7 @@ func (e *DynamicIndexEdit) Write(key dynamicindex.Key, fact dynamicindex.Fact) b
 	if e == nil || key.Table.Kind == keyspace.KindInvalid || !e.enabled {
 		return false
 	}
-	if e.state.dynamicIndex.top {
-		panic("state: cannot finite-write dynamic index fact into top dynamic-index lane")
-	}
+	requireFiniteLaneForWrite(e.state.dynamicIndex.top, "finite-write", "dynamic index fact", "dynamic-index")
 	domain := dynamicindex.Domain(e.reg)
 	current := e.Read(key)
 	if domain.Equal(current, fact) {

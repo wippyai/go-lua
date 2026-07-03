@@ -17,9 +17,7 @@ func (s State) WriteHeapTableObject(reg *axis.Registry, id identity.ID, object h
 	if id == (identity.ID{}) || !s.laneEnabled(laneHeapTableIdentityBit) {
 		return s
 	}
-	if s.heapTableIdentity.top {
-		panic("state: cannot finite-write heap table object into top heap-identity lane")
-	}
+	requireFiniteLaneForWrite(s.heapTableIdentity.top, "finite-write", "heap table object", "heap-identity")
 	domain := heapidentity.ObjectDomain(reg)
 	if domain.Equal(object, domain.Bottom()) {
 		objects, changed := s.heapTableIdentity.without(id)
