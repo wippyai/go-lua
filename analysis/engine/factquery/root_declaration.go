@@ -16,6 +16,42 @@ type RootDeclarationSource struct {
 	Symbol symbol.ID
 }
 
+// RootDeclarationQuery answers root-declaration dominance questions for one
+// CFG/fact set. It owns the immediate-dominator chain so callers that ask
+// several questions for the same body do not repeatedly recompute dominance.
+type RootDeclarationQuery struct {
+	facts     factflow.Facts
+	idom      map[cfg.Point]cfg.Point
+	graphSize int
+}
+
+// NewRootDeclarationQuery computes a reusable declaration query for graph.
+func NewRootDeclarationQuery(facts factflow.Facts, graph cfg.Graph) RootDeclarationQuery {
+	if graph == nil {
+		return RootDeclarationQuery{facts: facts}
+	}
+	dominators := dominance.ComputeImmediateDominatorInfo(graph)
+	if dominators == nil {
+		return RootDeclarationQuery{facts: facts}
+	}
+	return RootDeclarationQuery{
+		facts:     facts,
+		idom:      dominators.Map(),
+		graphSize: graph.Size(),
+	}
+}
+
+// NewRootDeclarationQueryWithDominators adapts an existing immediate-dominator
+// map into a declaration query. The map must describe the same immutable CFG
+// represented by graphSize.
+func NewRootDeclarationQueryWithDominators(
+	facts factflow.Facts,
+	idom map[cfg.Point]cfg.Point,
+	graphSize int,
+) RootDeclarationQuery {
+	return RootDeclarationQuery{facts: facts, idom: idom, graphSize: graphSize}
+}
+
 // DominatingRootDeclarationSource finds the local declaration source for target
 // on the immediate-dominator chain ending at point. An ordinary root write to
 // the same symbol stops the search because the declaration source no longer
@@ -26,7 +62,8 @@ func DominatingRootDeclarationSource(
 	facts factflow.Facts,
 	graph cfg.Graph,
 ) (RootDeclarationSource, bool) {
-	return dominatingDeclarationSource(point, pathdom.Path{Symbol: target}, facts, graph, false)
+	return NewRootDeclarationQuery(facts, graph).
+		DominatingRootDeclarationSource(point, target)
 }
 
 // DominatingPathRootDeclarationSource finds the root declaration source for
@@ -40,7 +77,8 @@ func DominatingPathRootDeclarationSource(
 	facts factflow.Facts,
 	graph cfg.Graph,
 ) (RootDeclarationSource, bool) {
-	return dominatingDeclarationSource(point, target, facts, graph, true)
+	return NewRootDeclarationQuery(facts, graph).
+		DominatingPathRootDeclarationSource(point, target)
 }
 
 // DominatingOrdinaryRootWrite reports whether an ordinary write to target's root
@@ -52,28 +90,51 @@ func DominatingOrdinaryRootWrite(
 	facts factflow.Facts,
 	graph cfg.Graph,
 ) (cfg.Point, bool) {
-	if point == 0 || target == 0 || graph == nil {
+	return NewRootDeclarationQuery(facts, graph).
+		DominatingOrdinaryRootWrite(point, target)
+}
+
+// DominatingRootDeclarationSource finds the local declaration source for target
+// on this query's immediate-dominator chain.
+func (q RootDeclarationQuery) DominatingRootDeclarationSource(
+	point cfg.Point,
+	target symbol.ID,
+) (RootDeclarationSource, bool) {
+	return q.dominatingDeclarationSource(point, pathdom.Path{Symbol: target}, false)
+}
+
+// DominatingPathRootDeclarationSource finds the root declaration source for
+// target on this query's immediate-dominator chain.
+func (q RootDeclarationQuery) DominatingPathRootDeclarationSource(
+	point cfg.Point,
+	target pathdom.Path,
+) (RootDeclarationSource, bool) {
+	return q.dominatingDeclarationSource(point, target, true)
+}
+
+// DominatingOrdinaryRootWrite reports whether an ordinary write to target's root
+// dominates point on this query's immediate-dominator chain.
+func (q RootDeclarationQuery) DominatingOrdinaryRootWrite(
+	point cfg.Point,
+	target symbol.ID,
+) (cfg.Point, bool) {
+	if point == 0 || target == 0 || q.idom == nil {
 		return 0, false
 	}
-	dominators := dominance.ComputeImmediateDominatorInfo(graph)
-	if dominators == nil {
-		return 0, false
-	}
-	idom := dominators.Map()
-	visited := make(map[cfg.Point]struct{}, graph.Size())
+	visited := make(map[cfg.Point]struct{}, q.graphSize)
 	for cursor := point; ; {
 		if _, ok := visited[cursor]; ok {
 			return 0, false
 		}
 		visited[cursor] = struct{}{}
-		assignment, ok := facts.RootAssignment(cursor)
+		assignment, ok := q.facts.RootAssignment(cursor)
 		if ok && assignment.TargetSymbol() == target {
 			targetPath := assignment.TargetPath()
 			if assignment.Kind() == factflow.RootAssignmentOrdinaryRootWrite && len(targetPath.Segments) == 0 {
 				return cursor, true
 			}
 		}
-		parent, ok := idom[cursor]
+		parent, ok := q.idom[cursor]
 		if !ok || parent == cursor {
 			return 0, false
 		}
@@ -81,35 +142,28 @@ func DominatingOrdinaryRootWrite(
 	}
 }
 
-func dominatingDeclarationSource(
+func (q RootDeclarationQuery) dominatingDeclarationSource(
 	point cfg.Point,
 	target pathdom.Path,
-	facts factflow.Facts,
-	graph cfg.Graph,
 	pathAware bool,
 ) (RootDeclarationSource, bool) {
-	if point == 0 || graph == nil {
+	if point == 0 || q.idom == nil {
 		return RootDeclarationSource{}, false
 	}
 	if target.Symbol == 0 {
 		return RootDeclarationSource{}, false
 	}
-	dominators := dominance.ComputeImmediateDominatorInfo(graph)
-	if dominators == nil {
-		return RootDeclarationSource{}, false
-	}
-	idom := dominators.Map()
-	visited := make(map[cfg.Point]struct{}, graph.Size())
+	visited := make(map[cfg.Point]struct{}, q.graphSize)
 	for cursor := point; ; {
 		if _, ok := visited[cursor]; ok {
 			return RootDeclarationSource{}, false
 		}
 		visited[cursor] = struct{}{}
-		assignment, ok := facts.RootAssignment(cursor)
+		assignment, ok := q.facts.RootAssignment(cursor)
 		if ok && assignment.TargetSymbol() == target.Symbol {
 			targetPath := assignment.TargetPath()
 			if !pathAware && len(targetPath.Segments) != 0 {
-				parent, ok := idom[cursor]
+				parent, ok := q.idom[cursor]
 				if !ok || parent == cursor {
 					return RootDeclarationSource{}, false
 				}
@@ -127,7 +181,7 @@ func dominatingDeclarationSource(
 				return RootDeclarationSource{}, false
 			}
 		}
-		parent, ok := idom[cursor]
+		parent, ok := q.idom[cursor]
 		if !ok || parent == cursor {
 			return RootDeclarationSource{}, false
 		}

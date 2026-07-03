@@ -33,6 +33,36 @@ func TestDominatingRootDeclarationSourceFindsDeclarationOnIDomChain(t *testing.T
 	}
 }
 
+func TestRootDeclarationQueryAnswersMultipleQuestions(t *testing.T) {
+	graph := cfg.New()
+	decl := graph.AddNode(cfg.NodeAssign)
+	write := graph.AddNode(cfg.NodeAssign)
+	use := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), decl, false)
+	graph.AddEdge(decl, write, false)
+	graph.AddEdge(write, use, false)
+	graph.AddEdge(use, graph.Exit(), false)
+	declTarget := symbol.ID(31)
+	writeTarget := symbol.ID(32)
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(41), HasExpr: true}
+	facts := factflow.NewFacts(factflow.FactsInput{
+		RootAssignments: map[cfg.Point]factflow.RootAssignment{
+			decl:  factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, declTarget, pathdom.NewPath(declTarget, "decl"), source),
+			write: factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, writeTarget, pathdom.NewPath(writeTarget, "write"), factflow.ValueSource{}),
+		},
+	})
+	query := NewRootDeclarationQuery(facts, graph)
+
+	declaration, ok := query.DominatingRootDeclarationSource(use, declTarget)
+	if !ok || declaration.Point != decl || declaration.Source.ExprRef != source.ExprRef {
+		t.Fatalf("declaration = %#v/%v, want point %d expr %d", declaration, ok, decl, source.ExprRef)
+	}
+	replacement, ok := query.DominatingOrdinaryRootWrite(use, writeTarget)
+	if !ok || replacement != write {
+		t.Fatalf("replacement = %d/%v, want %d/true", replacement, ok, write)
+	}
+}
+
 func TestDominatingRootDeclarationSourceStopsAtOrdinaryRootWrite(t *testing.T) {
 	graph := cfg.New()
 	decl := graph.AddNode(cfg.NodeAssign)

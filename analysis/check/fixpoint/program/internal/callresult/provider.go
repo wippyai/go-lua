@@ -1140,7 +1140,8 @@ func SummaryArgumentTypeProvider(config ProviderConfig) func(transfer.NodeContex
 	functionTypes := index.functionTypes
 	sources := config.Sources
 	return func(ctx transfer.NodeContext, source factflow.ValueSource, in state.State, read func(cfg.Point) state.State) (typ.Type, bool) {
-		return callArgumentType(ctx, source, summaries, facts, functionKeys, functionExpressionKeys, functionTypes, sources, in, read)
+		rootDeclarations := rootDeclarationQueryProvider(facts, ctx.Graph)
+		return callArgumentType(ctx, source, summaries, facts, rootDeclarations, functionKeys, functionExpressionKeys, functionTypes, sources, in, read)
 	}
 }
 
@@ -1203,13 +1204,14 @@ func callArgumentTypes(
 	if argCount == 0 {
 		return nil
 	}
+	rootDeclarations := rootDeclarationQueryProvider(facts, ctx.Graph)
 	var args []typ.Type
 	for i := 0; i < argCount; i++ {
 		source, ok := site.ArgumentSourceAt(i)
 		if !ok {
 			continue
 		}
-		t, ok := callArgumentType(ctx, source, summaries, facts, functionKeys, functionExpressionKeys, functionTypes, sources, in, read)
+		t, ok := callArgumentType(ctx, source, summaries, facts, rootDeclarations, functionKeys, functionExpressionKeys, functionTypes, sources, in, read)
 		if !ok {
 			continue
 		}
@@ -1221,12 +1223,27 @@ func callArgumentTypes(
 	return args
 }
 
+func rootDeclarationQueryProvider(
+	facts factflow.Facts,
+	graph cfg.Graph,
+) func() factquery.RootDeclarationQuery {
+	var query factquery.RootDeclarationQuery
+	var ready bool
+	return func() factquery.RootDeclarationQuery {
+		if !ready {
+			query = factquery.NewRootDeclarationQuery(facts, graph)
+			ready = true
+		}
+		return query
+	}
+}
+
 func sourceValueAtArgument(
 	reg *axis.Registry,
 	point cfg.Point,
 	source factflow.ValueSource,
 	facts factflow.Facts,
-	graph cfg.Graph,
+	rootDeclarations func() factquery.RootDeclarationQuery,
 	sources sourcevalue.SourceValues,
 	in state.State,
 	read func(cfg.Point) state.State,
@@ -1238,7 +1255,7 @@ func sourceValueAtArgument(
 	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
 		return value, ok
 	}
-	if value, ok := valueFromRootDeclarationSource(reg, point, source.ExprRef, facts, graph, sources, in, read); ok {
+	if value, ok := valueFromRootDeclarationSource(reg, point, source.ExprRef, facts, rootDeclarations, sources, in, read); ok {
 		return value, true
 	}
 	return value, ok
@@ -1249,7 +1266,7 @@ func valueFromRootDeclarationSource(
 	point cfg.Point,
 	expr factflow.ExprRef,
 	facts factflow.Facts,
-	graph cfg.Graph,
+	rootDeclarations func() factquery.RootDeclarationQuery,
 	sources sourcevalue.SourceValues,
 	in state.State,
 	read func(cfg.Point) state.State,
@@ -1261,7 +1278,10 @@ func valueFromRootDeclarationSource(
 	if !ok || exprPath.Symbol == 0 || len(exprPath.Segments) != 0 {
 		return product.Value{}, false
 	}
-	decl, ok := factquery.DominatingRootDeclarationSource(point, exprPath.Symbol, facts, graph)
+	if rootDeclarations == nil {
+		return product.Value{}, false
+	}
+	decl, ok := rootDeclarations().DominatingRootDeclarationSource(point, exprPath.Symbol)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -1300,6 +1320,7 @@ func callArgumentType(
 	source factflow.ValueSource,
 	summaries summary.Reader,
 	facts factflow.Facts,
+	rootDeclarations func() factquery.RootDeclarationQuery,
 	functionKeys map[symbol.ID]summary.SummaryKey,
 	functionExpressionKeys map[factflow.ExprRef]summary.SummaryKey,
 	functionTypes map[summary.SummaryKey]*typ.Function,
@@ -1313,7 +1334,7 @@ func callArgumentType(
 	if sources == nil {
 		return nil, false
 	}
-	value, ok := sourceValueAtArgument(ctx.Registry, ctx.Point, source, facts, ctx.Graph, sources, in, read)
+	value, ok := sourceValueAtArgument(ctx.Registry, ctx.Point, source, facts, rootDeclarations, sources, in, read)
 	if !ok {
 		return nil, false
 	}

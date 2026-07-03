@@ -378,7 +378,11 @@ func (r *Result) DominatingPathRootDeclarationSource(point cfg.Point, target pat
 	if graph == nil {
 		return factquery.RootDeclarationSource{}, false
 	}
-	return factquery.DominatingPathRootDeclarationSource(point, target, r.facts, graph)
+	return factquery.NewRootDeclarationQueryWithDominators(
+		r.facts,
+		r.queries.immediateDominatorMap(graph),
+		graph.Size(),
+	).DominatingPathRootDeclarationSource(point, target)
 }
 
 func (r *Result) DynamicIndexExpressionRef(expr factflow.ExprRef) (factflow.DynamicIndexExpression, bool) {
