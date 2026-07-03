@@ -175,13 +175,14 @@ func diagnosticProducers() []diagnosticProducer {
 				if result == nil {
 					return nil
 				}
-				query := newDiagnosticQuery(result, context.parents...)
-				items := pass.New(pass.RedundantConditions{}).Run(pass.Context{
-					Reader:      query.reader,
-					FunctionKey: "body",
-					SourceFile:  "",
-				})
-				return renderJudgmentDiagnostics(items, context.judgmentPolicy, context.judgmentStrictness)
+				return produceJudgmentsWithParentsAndPolicy(
+					result,
+					context.parents,
+					"",
+					context.judgmentPolicy,
+					context.judgmentStrictness,
+					pass.RedundantConditions{},
+				)
 			},
 		},
 		{
@@ -191,20 +192,18 @@ func diagnosticProducers() []diagnosticProducer {
 				if result == nil {
 					return nil
 				}
-				query := newDiagnosticQuery(result, context.parents...)
-				items := pass.New(
+				return produceJudgmentsWithParentsAndPolicy(
+					result,
+					context.parents,
+					"",
+					context.judgmentPolicy,
+					context.judgmentStrictness,
 					pass.DiscriminatedUnions{},
 					pass.Optionals{},
 					pass.ResultShapes{},
 					pass.Registrations{},
 					pass.TableDispatches{},
-				).Run(pass.Context{
-					Reader:      query.reader,
-					FunctionKey: "body",
-					SourceFile:  "",
-				})
-				out := renderJudgmentDiagnostics(items, context.judgmentPolicy, context.judgmentStrictness)
-				return out
+				)
 			},
 		},
 		{

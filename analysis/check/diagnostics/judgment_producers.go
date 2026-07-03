@@ -103,6 +103,10 @@ func produceJudgmentsWithPolicy(result *body.Result, sourceFile string, policy j
 	return renderJudgmentDiagnostics(pass.New(producers...).Run(judgmentContext(result, sourceFile)), policy, mode)
 }
 
+func produceJudgmentsWithParentsAndPolicy(result *body.Result, parents []*body.Result, sourceFile string, policy judgment.Policy, mode judgment.StrictnessMode, producers ...pass.Producer) []diagnostic.Diagnostic {
+	return renderJudgmentDiagnostics(pass.New(producers...).Run(judgmentContextWithParents(result, parents, sourceFile)), policy, mode)
+}
+
 func produceReachableJudgmentsWithPolicy(result *body.Result, sourceFile string, policy judgment.Policy, mode judgment.StrictnessMode, producers ...pass.Producer) []diagnostic.Diagnostic {
 	return renderJudgmentDiagnostics(pass.New(producers...).Run(reachableJudgmentContext(result, sourceFile)), policy, mode)
 }
@@ -112,7 +116,11 @@ func produceReachableCallJudgmentsWithPolicy(result *body.Result, sourceFile str
 }
 
 func judgmentContext(result *body.Result, sourceFile string) pass.Context {
-	query := newDiagnosticQuery(result)
+	return judgmentContextWithParents(result, nil, sourceFile)
+}
+
+func judgmentContextWithParents(result *body.Result, parents []*body.Result, sourceFile string) pass.Context {
+	query := newDiagnosticQuery(result, parents...)
 	return pass.Context{
 		FunctionKey: sourceFile,
 		SourceFile:  sourceFile,
