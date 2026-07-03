@@ -104,6 +104,14 @@ func TryRun(config Config) (Result, error) {
 			return state.NormalizeForDomain(domain, st)
 		}
 	}
+	reachableEmpty := normalize(state.Reachable(state.State{}))
+	tracksReachability := !domain.Equal(reachableEmpty, domain.Bottom())
+	markReachable := func(st state.State) state.State {
+		if !tracksReachability {
+			return normalize(st)
+		}
+		return normalize(state.Reachable(st))
+	}
 	cells := graph.RPO()
 	if len(cells) != 0 {
 		cells = append([]cfg.Point(nil), cells...)
@@ -137,16 +145,19 @@ func TryRun(config Config) (Result, error) {
 		InitialSparse: func(point cfg.Point) (state.State, bool) {
 			if config.Initial != nil {
 				if initial, ok := config.Initial(point); ok {
-					return normalize(initial), true
+					return markReachable(initial), true
 				}
 			}
 			if point == entry {
-				return normalize(config.EntryState), true
+				return markReachable(config.EntryState), true
 			}
 			return state.State{}, false
 		},
 		Transfer: func(point cfg.Point, read func(cfg.Point) state.State, emit func(cfg.Point, state.State)) {
 			in := normalize(read(point))
+			if tracksReachability && domain.Equal(in, domain.Bottom()) {
+				return
+			}
 			out := normalize(nodeTransfer(NodeContext{
 				Graph:    graph,
 				Registry: registry,

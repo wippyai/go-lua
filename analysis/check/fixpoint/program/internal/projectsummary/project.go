@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -39,6 +40,14 @@ type stateAtReader interface {
 
 type branchConditionReader interface {
 	BranchCondition(cfg.Point) (semantics.BranchConditionFact, bool)
+}
+
+type branchSufficientCheckReader interface {
+	BranchConditionSufficientChecksOnEdge(semantics.BranchConditionFact, bool) []branchcond.ImpliedCheck
+}
+
+type pointDominatorReader interface {
+	PointDominates(dominator, point cfg.Point) bool
 }
 
 type noNormalReturnReader interface {
@@ -121,6 +130,7 @@ func FromResult(result ResultReader) summary.Summary {
 		HeapKeySpace:                    heapKeySpace,
 		ReturnConditionParamRefinements: projectReturnConditionParamRefinements(result),
 		ReturnConditionSlotRefinements:  projectReturnConditionSlotRefinements(reg, result),
+		ReturnParamLiteralCases:         projectReturnParamLiteralCases(reg, result),
 		ReturnPresenceRelations:         projectReturnPresenceRelations(reg, result),
 	}
 

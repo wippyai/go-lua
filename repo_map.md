@@ -1,49 +1,54 @@
 # Repo map: /home/wolfy-j/wippy/go-lua/analysis/check
 
-_358 files, leaf model `gemma-4-26b`, reduce model `gemma-4-26b`._
+_339 files, leaf model `gemma-4-26b`, reduce model `gemma-4-26b`._
 
-> This package provides a sophisticated static analysis framework that transforms Lua AST provenance into structured semantic judgments. It employs lattice-based fixed-point analysis to resolve function summaries and manages the full lifecycle of diagnostic generation, from obligation production to manifest exportation.
+> This package orchestrates the final stages of the analysis pipeline, including fixed-point iteration, obligation checking, and diagnostic generation. It converts internal program models into structured results such as error reports, memory placement plans, and stable module export manifests.
 
 ## Architecture
 
-- **check/** — This directory implements the semantic analysis engine responsible for verifying type safety, contract obligations, and program invariants through fixed-point iteration and diagnostic generation.
-  - **body/** — This directory implements the core data-flow analysis engine responsible for solving the semantics, types, and symbol bindings of Lua function bodies and code chunks.
+- **check/** — This directory implements the semantic validation engine that transforms raw analysis data into formal judgments, diagnostics, and module manifests.
+  - **body/** — This directory implements the core static analysis engine responsible for solving data-flow, type inference, and control-flow queries for Lua code bodies.
     - `api.go` — Provides the public API for preparing and solving static analysis for Lua code chunks and functions.
-    - `branch_truthy_proof.go` — Provides logic to determine if a specific path's truthiness is proven by a dominating branch and remains valid without reassignment.
+    - `branch_truthy_proof.go` — Provides methods to identify and verify branch points that prove a path's truthiness or literal value at a specific point in the control flow graph.
     - `call_identity.go` — Resolves stable string names for function call sites and callees within the analysis engine.
     - `call_identity_test.go` — This file contains unit tests for verifying that function call signatures are correctly identified through module imports, aliases, and variable captures.
-    - `call_invalidation.go` — Implements logic to determine if a function call invalidates specific tracked paths by analyzing call signatures, outcomes, and argument/receiver bindings.
-    - `check_test.go` — Provides unit tests for the body analysis engine, covering chunk checking, function analysis, type refinement, and boundary state management.
+    - `call_invalidation.go` — Implements logic to determine if function calls invalidate specific tracked paths or guard facts within the analysis engine.
+    - `check_test.go` — Provides unit tests for the body analysis engine, verifying type inference, path sensitivity, and effect tracking.
     - `config.go` — Provides utility functions for cloning, transforming, and querying the configuration used during body analysis.
     - `config_test.go` — Provides unit tests for the Config struct and its SolveConfig method to ensure proper field propagation and slice isolation.
+    - `control_flow_queries.go` — Provides control-flow analysis queries including reachability and dominance relationships on a CFG.
     - `covariant_widen.go` — Implements the logic for rebuilding and widening witness types for covariantly-exposed objects.
     - `declaration_dominance.go` — Provides logic to identify the nearest dominating local assignment that defines a symbol's root value.
     - `entry_contextual_function.go` — Resolves function signatures and parameter types based on their contextual usage in return statements or method receivers.
-    - `entry_state.go` — This file manages the initialization of analysis states by seeding entry points with parameter, global, and module export type information.
-    - `entry_state_test.go` — Unit tests for verifying the generation of entry state seeds for functions and global configurations during analysis.
-    - `function_value_types.go` — Provides a read-only projection of converged function summaries to resolve callable value types at specific program points or via identities and paths.
+    - `entry_state.go` — This file manages the initialization of analysis states by seeding entry points with parameter and global variable type information.
+    - `entry_state_test.go` — This file contains unit tests for the entry state analysis logic, verifying how function parameters and global variables are seeded with types and evidence.
+    - `function_definition_query.go` — Provides methods to identify the nearest dominating function definition for a specific path and CFG point.
+    - `function_value_types.go` — Provides methods to resolve and query converged function value types and their contexts at specific program points or via identities/paths.
     - `function_value_types_test.go` — Unit tests for verifying function value type analysis, including context matching and call site resolution.
     - `generic_for_transfer.go` — Implements data transfer logic for generic loop variables in Lua, resolving their values and key memberships based on iterator types.
     - `generic_for_transfer_test.go` — Unit tests for the type analysis of generic `for` loops, covering iterator behavior, type narrowing, and loop variable synthesis.
     - `import_outcomes.go` — Provides logic for resolving the values and types of callees at call sites during analysis.
     - `import_outcomes_test.go` — This file contains unit tests for verifying the logic of import outcome analysis and callee value resolution.
     - `imported_type_is_test.go` — This file contains unit tests to verify that types imported from external modules are correctly handled and their result slots are properly published during chunk preparation.
+    - `index_expression.go` — Provides analysis methods to determine if Lua index expressions are numeric or safe for reading based on affine linear terms.
     - `module_type_alias.go` — Resolves type references for local module aliases created via `require` statements.
+    - `object_literal_keys.go` — Provides functionality to extract static string keys from object literals or nested object literals at a specific path.
     - `object_literal_sourcevalue.go` — Provides factory functions to create evaluators for object literal views and expression operations.
     - `object_literal_sourcevalue_test.go` — Unit tests for the object literal and expression operation evaluators within the body analysis package.
-    - `path_invalidation.go` — Determines if a specific path loses stability between two points in a control flow graph by analyzing invalidation facts, assignments, and function calls.
-    - `query_cache.go` — Provides memoization for derived queries, source values, and call outcomes during result analysis.
+    - `path_invalidation.go` — Implements logic to determine if a specific path loses stability between two points in a control flow graph.
+    - `query_cache.go` — Provides memoization for derived queries, values, and reachability information during the analysis of a single Result.
     - `query_cache_test.go` — Provides unit tests for the resultQueryCache implementation, specifically verifying the transition from inline storage to map-based storage.
-    - `read_boundary.go` — Provides methods for resolving and projecting solved values, paths, and call outcomes at specific CFG points (boundaries) for diagnostic and explanatory purposes.
+    - `read_boundary.go` — Provides methods for resolving and projecting solved values, paths, and call outcomes at analysis boundaries.
     - `read_boundary_state.go` — Provides methods for retrieving and caching program states and values at control-flow boundaries.
     - `read_boundary_state_test.go` — This file contains unit tests for the `needsBoundaryNodeOutput` method of the `Result` struct to ensure various factflow inputs correctly trigger boundary node requirements.
-    - `read_boundary_test.go` — This file contains unit tests for the boundary-related projection and value retrieval logic within the analysis engine.
+    - `read_boundary_test.go` — Unit tests for boundary-related analysis logic, including path value projection, source value resolution, and identity aliasing.
     - `rebind.go` — Updates an existing analysis result with new call-boundary providers and resets query caches.
-    - `result_accessors.go` — Provides an accessor API for querying the analysis results of a function body, including control flow, state, semantics, and symbol bindings.
+    - `result_accessors.go` — Provides a high-level query API for accessing analysis results, including control flow, state, semantics, and symbol bindings.
     - `result_parameter_readmodel.go` — Provides methods for the Result type to identify parameter value slots and those that have been reassigned within a function body.
     - `result_return_readmodel.go` — Provides methods for querying return points, value sources, and presence relations from a function body result.
     - `return_type_values.go` — Extracts and resolves the product values representing a function's declared return types for use in call-site analysis.
     - `run.go` — Orchestrates the preparation of static analysis state and the execution of data-flow solving for Lua code chunks and functions.
+    - `runtime_type_guard.go` — Determines if a runtime type guard in the control flow graph proves a specific type at a given point.
     - `signature_argument_type.go` — Provides a method to resolve the contextual type of a function-expression argument at a specific boundary point.
     - `signature_return_type_ops.go` — Provides an implementation of the ReturnTypeOps interface to handle return type resolution and generic call instantiation.
     - `static_test.go` — This file contains unit tests for the static analysis engine's prepared function and chunk solving logic.
@@ -126,38 +131,23 @@ _358 files, leaf model `gemma-4-26b`, reduce model `gemma-4-26b`._
   - **contract/** — This directory defines the canonical, read-only representation of function signatures and type contracts used for obligation checking.
     - `contract.go` — Provides a read-only, canonical representation of callable function signatures and parameter/result types for obligation checkers.
     - `contract_test.go` — Provides unit tests for converting function types and signatures into contract representations.
-  - **diagnostics/** — This directory is responsible for transforming internal analysis judgments and type information into human-readable semantic diagnostics, errors, and warnings.
+  - **diagnostics/** — This directory is responsible for transforming internal analysis judgments and obligations into human-readable, formatted diagnostic messages and error reports.
     - `assignment_path_test.go` — Unit tests for verifying diagnostic reporting during assignment operations, including type mismatches and optional target checks.
-    - `assignment_projection.go` — This file provides logic for determining the types of member reads (dot-field access) when the receiver or the path may be nil, specifically for diagnostic purposes.
     - `assignment_target_reads.go` — Recursively identifies and emits expressions that are read when an assignment target is accessed.
-    - `branch_chain.go` — Provides utility functions to analyze and traverse chains of nested if-else-if statements within an AST.
-    - `concat_operand.go` — Responsible for detecting and reporting potential runtime nil risks when using operands in string concatenation operations.
-    - `condition_reachability.go` — Analyzes control flow graphs to identify and provide proofs for redundant or tautological branch conditions.
-    - `condition_reachability_test.go` — Provides unit tests for the literal condition reachability proof logic within the diagnostics package.
-    - `contextual_ownership.go` — Determines if a function argument is owned by the call site based on whether its type annotation contains free type parameters.
+    - `concat_operand.go` — Implements diagnostic generation and rendering for invalid concatenation operands.
+    - `condition_reachability.go` — Converts redundant condition judgments into formatted diagnostic objects.
     - `dead_assignment_test.go` — This file contains unit tests for the dead assignment diagnostic rule, verifying its detection logic, configuration options, and error reporting.
     - `diagnostic_constructor_test.go` — Unit test that enforces the use of the `diagnostic.New` constructor and proper position derivation across the diagnostics package.
-    - `diagnostics.go` — This file is responsible for producing semantic diagnostics (errors, warnings, lints) from completed analysis results.
-    - `diagnostics_test.go` — This file contains unit tests for the diagnostic engine, verifying type checking, assignment assignability, and error reporting.
+    - `diagnostics.go` — This file is responsible for generating semantic diagnostics from completed analysis results by running a suite of diagnostic producers.
+    - `diagnostics_test.go` — Provides unit tests for the diagnostic engine, covering type assignment, unresolved references, and diagnostic rendering.
     - `direct_call_signature_test.go` — This file contains unit tests for verifying diagnostic reporting of direct function call signature mismatches, such as incorrect argument types or arity errors.
-    - `direct_call_test.go` — Provides unit tests for direct function call diagnostics, including argument mismatch, non-callable targets, and result assignment errors.
-    - `discriminated_union_exhaustiveness.go` — Implements a diagnostic producer that checks for exhaustiveness in discriminated union handling.
-    - `discriminated_union_exhaustiveness_chain.go` — Implements logic to detect non-exhaustive discriminated union checks within if-else chains.
-    - `discriminated_union_exhaustiveness_chain_render.go` — This file constructs diagnostic objects and explanations for reporting non-exhaustive discriminated union pattern matches.
-    - `discriminated_union_exhaustiveness_discriminants.go` — Provides logic for identifying and analyzing discriminant cases in discriminated unions to support exhaustiveness checking.
-    - `discriminated_union_exhaustiveness_optional.go` — Implements diagnostic logic to detect missing nil-checks in conditional chains involving optional types.
-    - `discriminated_union_exhaustiveness_optional_render.go` — Constructs diagnostic objects for reporting missing cases in optional discriminated union exhaustiveness checks.
-    - `discriminated_union_exhaustiveness_registration.go` — Implements logic to detect non-exhaustive registration of cases in discriminated unions by comparing registration calls against dispatch calls.
-    - `discriminated_union_exhaustiveness_registration_collect.go` — Identifies and collects registration calls, mutations, and dispatch calls to track discriminated union exhaustiveness.
-    - `discriminated_union_exhaustiveness_registration_flow.go` — Implements logic to track whether discriminated union registrations are invalidated or can cover specific cases during control flow analysis.
-    - `discriminated_union_exhaustiveness_registration_render.go` — Constructs diagnostic objects and explanations for missing registration cases in discriminated unions.
+    - `direct_call_test.go` — Provides unit tests for direct function call diagnostics, including argument count, type mismatch, nilability, and result assignment validation.
+    - `discriminated_union_exhaustiveness_chain_render.go` — This file provides logic for rendering diagnostic messages and explanations related to discriminated union exhaustiveness checks.
+    - `discriminated_union_exhaustiveness_optional_render.go` — Provides logic to render diagnostic messages specifically for missing cases in optional discriminated union exhaustiveness checks.
+    - `discriminated_union_exhaustiveness_registration_render.go` — Responsible for rendering diagnostic messages and explanations for discriminated union exhaustiveness registration judgments.
     - `discriminated_union_exhaustiveness_render.go` — Provides string formatting utilities for rendering diagnostic messages related to discriminated union exhaustiveness.
-    - `discriminated_union_exhaustiveness_result_shape.go` — Implements exhaustiveness checking for discriminated union result shapes by analyzing property access and control flow guards.
-    - `discriminated_union_exhaustiveness_result_shape_render.go` — Constructs diagnostic objects and explanations for discriminated union exhaustiveness errors.
-    - `discriminated_union_exhaustiveness_table_dispatch.go` — Implements logic to detect non-exhaustive table-based dispatch for discriminated unions by analyzing expression paths and table keys.
-    - `discriminated_union_exhaustiveness_table_dispatch_keys.go` — Implements logic to track and resolve the set of keys present in a table at a specific program point to support discriminated union exhaustiveness checking.
-    - `discriminated_union_exhaustiveness_table_dispatch_render.go` — Constructs diagnostic objects and explanations for non-exhaustive discriminated union dispatch tables.
-    - `discriminated_union_exhaustiveness_table_dispatch_summary.go` — This file implements logic to track and summarize table keys used for dispatching to support discriminated union exhaustiveness checking.
+    - `discriminated_union_exhaustiveness_result_shape_render.go` — This file provides logic to render diagnostic messages and explanations for discriminated union exhaustiveness errors.
+    - `discriminated_union_exhaustiveness_table_dispatch_render.go` — This file provides logic for rendering diagnostic messages and explanations related to non-exhaustive discriminated union table dispatches.
     - `display.go` — Provides a high-level API for generating human-readable diagnostic messages and evidence strings for the static analyzer.
     - `display_call_messages.go` — Provides formatted error and evidence messages for diagnostic reporting related to function calls, nil safety, and type mismatches.
     - `display_contract_messages.go` — Provides methods for generating human-readable error and help messages for type-checking diagnostics.
@@ -166,32 +156,21 @@ _358 files, leaf model `gemma-4-26b`, reduce model `gemma-4-26b`._
     - `display_type_annotation.go` — This file provides logic for converting AST type expressions into human-readable string representations for diagnostic display.
     - `evidence_reason_test.go` — Provides unit tests for the `clarifyTypeMismatchEvidence` function to ensure diagnostic messages are correctly formatted and reasoned.
     - `exhaustiveness_render_helpers.go` — Provides internal string formatting utilities for rendering lists of case names in diagnostic messages.
-    - `expected_type_projection.go` — This file provides logic to project and resolve the expected type of a value after traversing a sequence of path segments.
     - `expected_type_projection_test.go` — Provides unit tests for the expectedTypeAtSegments function to ensure correct type projection of nested generic arguments.
+    - `expected_type_projection_test_helpers_test.go` — Provides helper functions for testing type projection by traversing a type structure through a sequence of segments.
     - `expr_walk.go` — Provides a utility function to recursively traverse the child nodes of an AST expression.
     - `expr_walk_test.go` — Provides unit tests for the walkExprChildren function to ensure correct AST traversal order and logic.
     - `expression_evidence_name.go` — Provides logic for generating and refining diagnostic messages and evidence related to expression names and type mismatches.
-    - `expression_type.go` — Performs type inference and flow-sensitive type narrowing for Lua expressions during static analysis.
-    - `flow_cache.go` — Provides a memoization layer for CFG reachability and dominance information to optimize diagnostic generation.
     - `frozen_table_mutation_test.go` — This file contains unit tests for the frozen table mutation diagnostic rule.
-    - `function_definition_helpers.go` — Provides helper functions to locate the function definition that dominates a specific control flow point for a given path.
-    - `function_literal_helpers.go` — Provides utility functions to extract function literal expressions from AST nodes, accounting for source provenance wrapping.
-    - `function_type_helpers.go` — Provides utility functions for converting AST function expressions into type representations and accessing function return types.
-    - `generic_inference_conflict.go` — Provides logic to detect type conflicts during generic type inference.
-    - `generic_inference_evidence_test.go` — Provides unit tests for the generic type inference conflict detection logic.
-    - `guard_env.go` — Computes and manages the fixpoint of environmental constraints (guards) across a control flow graph to track variable presence, truthiness, and type refinements.
-    - `guard_env_test.go` — Unit tests for the guard environment logic used in diagnostic analysis.
-    - `index_read_projection.go` — Performs type projection and range validation for index-based access (array/table indexing) during static analysis.
-    - `invalidation_helpers.go` — Provides helper logic to determine if two distinct paths resolve to the same identity at a specific point.
-    - `judgment_adapter.go` — This file adapts internal judgment data into diagnostic objects for reporting.
+    - `judgment_adapter.go` — Maps internal judgment data into diagnostic objects and severity levels.
     - `judgment_assignment.go` — Responsible for generating diagnostic messages and evidence for type assignment judgments and call result mismatches.
     - `judgment_assignment_test.go` — This file contains unit tests for rendering and producing diagnostics related to assignment judgments.
     - `judgment_channel_select.go` — This file generates and renders diagnostic messages related to the exhaustiveness of channel select statements.
     - `judgment_dead_assignment.go` — This file implements the logic to transform dead assignment judgments into user-facing diagnostic reports.
-    - `judgment_direct_call.go` — This file generates diagnostic messages and evidence for type mismatches and contract violations occurring during direct function calls.
-    - `judgment_direct_call_arity.go` — This file implements the logic for detecting and rendering diagnostics related to direct function call arity mismatches.
-    - `judgment_direct_call_callee.go` — This file generates diagnostic messages and evidence for errors related to direct function calls and method invocations, such as non-callable targets or nil dereferences.
-    - `judgment_direct_call_test.go` — This file contains unit tests for generating and rendering diagnostics related to direct function calls, including argument type mismatches, arity errors, and callee validity.
+    - `judgment_direct_call.go` — Generates diagnostic messages and evidence for type mismatches and contract violations in direct function calls.
+    - `judgment_direct_call_arity.go` — This file handles the generation and rendering of diagnostic messages related to function call arity mismatches.
+    - `judgment_direct_call_callee.go` — This file generates diagnostic messages and evidence for errors related to calling non-callable or potentially nil targets.
+    - `judgment_direct_call_test.go` — Provides unit tests for generating and rendering diagnostics related to direct function calls, including argument types, arity, and callee validity.
     - `judgment_frozen_table.go` — This file implements the logic for generating and rendering diagnostic messages related to illegal mutations of frozen tables.
     - `judgment_lifecycle.go` — This file handles the generation and rendering of diagnostic reports related to resource lifecycle obligations and proofs.
     - `judgment_member_read.go` — Generates and renders diagnostic messages for member read violations based on judgment results and policies.
@@ -206,41 +185,32 @@ _358 files, leaf model `gemma-4-26b`, reduce model `gemma-4-26b`._
     - `lifecycle_obligation_test.go` — This file contains unit tests for lifecycle obligation diagnostics, ensuring unreleased resources trigger warnings with correct evidence and rendering.
     - `lifecycle_report.go` — Defines the data structure and string formatting logic for reporting resource lifecycle violations.
     - `lifecycle_report_test.go` — Unit tests for the lifecycle resource report diagnostic type to ensure correct message generation and enforcement of text ownership.
-    - `literal_narrowing_helpers.go` — Provides helper logic to refine a type based on literal constraints, truthiness, or falsiness within a guard environment.
-    - `member_access_helpers.go` — Provides utility functions for constructing member access paths, determining call types, and extracting segment suffixes during diagnostic analysis.
+    - `member_access_helpers.go` — Provides utility functions for constructing member access strings and extracting names from attribute expression AST nodes.
     - `member_access_test.go` — This file contains unit tests for member access diagnostics, verifying error reporting for missing members, incorrect call arguments, and type narrowing.
     - `nonnil_assert_test.go` — Provides unit tests for verifying the detection of invalid non-nil assertions in Lua code.
     - `numeric_for_test.go` — Provides unit tests for the numeric 'for' loop diagnostic logic to ensure type mismatches are correctly identified.
-    - `object_literal_assignment_test.go` — This file contains unit tests for diagnostics related to object literal assignments, ensuring type safety and proper error reporting when mixing object literals with `any` types or mismatched annotations.
-    - `object_literal_mismatch.go` — Performs type checking and diagnostic reporting for mismatches between object literals and expected record or interface types.
-    - `path_identity_helpers.go` — Provides utility functions for comparing path identity based on symbols or roots.
-    - `precedence.go` — Defines and applies rules to suppress redundant or secondary diagnostics based on their spatial relationship and precedence.
+    - `object_literal_assignment_test.go` — This file contains unit tests for diagnostics related to object literal assignments, ensuring type safety and proper error reporting when using `any` or mismatched types in literals.
+    - `precedence.go` — Implements logic to suppress redundant or secondary diagnostics based on predefined precedence rules and span coverage.
     - `precedence_test.go` — This file contains unit tests for the diagnostic precedence logic used to suppress redundant error messages.
-    - `query.go` — Provides a facade for diagnostic producers to query solved analysis facts and type information.
-    - `redundant_condition_test.go` — Unit tests for the redundant condition diagnostic rule, verifying its detection, explanation rendering, and interaction with effect analysis.
-    - `resolver.go` — Implements a type resolution system for resolving type aliases, interfaces, and generic type parameters within a Lua analysis context.
+    - `query.go` — Provides a facade for querying solved analysis facts through a read model.
+    - `redundant_condition_test.go` — Unit tests for the redundant condition diagnostic rule, verifying its detection logic, evidence generation, and rendering.
     - `return_contract_test.go` — This file contains unit tests for verifying that the return contract diagnostic correctly identifies mismatches between declared return types and actual returned values.
-    - `runtime_guard.go` — Provides logic to determine if runtime type guards in the control flow graph prove a specific type requirement.
-    - `source_projection.go` — This file provides logic for projecting types from source expressions and local declarations during diagnostic analysis.
-    - `trust.go` — Implements logic for detecting and reporting type mismatches and trust issues related to "top-like" types (Any/Unknown) at program boundaries.
-    - `type_compare_projection.go` — Implements complex type comparison logic to determine if two types are compatible, including recursive unfolding and projection handling.
-    - `type_compare_projection_test.go` — Unit tests for the type compatibility logic within the diagnostics package.
-    - `type_resolution.go` — Implements logic to resolve and prioritize type diagnostic information through a sequence of resolution attempts.
-    - `type_resolution_test.go` — Provides unit tests for the firstDiagnosticTypeResolution function within the diagnostics package.
-    - `type_syntax_helpers.go` — Provides utility functions to detect the presence of type parameter syntax within a type hierarchy.
+    - `top_like_type.go` — Determines if a given type is considered a top-like type (nil, any, or unknown).
+    - `type_projection_helpers.go` — Provides utility functions for resolving and simplifying type projections and unwrapping type wrappers during diagnostic analysis.
+    - `type_syntax_helpers_test.go` — Provides utility functions to detect the presence of type parameter syntax within a type hierarchy.
     - `unused_local_test.go` — Provides unit tests for the unused local variable diagnostic rule.
   - **exportmanifest/** — This directory is responsible for transforming program analysis results into structured module manifests that define a module's exported API, types, and side effects.
     - `callback_protocol.go` — Infers framework callback ordering by analyzing how exported APIs store parameters into slots and how those slots are subsequently invoked.
     - `effect_boundary.go` — Filters effect labels in an export manifest to remove those belonging to imported or standard library vocabularies.
     - `export.go` — Converts solved program results into module manifests by extracting stable type information and signatures.
     - `export_test.go` — Provides unit tests for the record member merging logic within the export manifest package.
-    - `function_signatures.go` — This file is responsible for extracting and publishing function signatures, including types and operational effects, into a module manifest based on program analysis results.
+    - `function_signatures.go` — Responsible for extracting and publishing function signatures, including types, effects, and operational effects, into a module manifest.
     - `function_signatures_test.go` — Provides unit tests for converting program analysis results into export manifests, covering type inference, operational effects, and allocation templates.
     - `object_type.go` — This file implements type inference and contract resolution for exported objects and records in Lua modules.
     - `provided_globals.go` — Identifies and records ambient Lua globals installed by a module, including those forwarded through exported callback parameters.
     - `source_type.go` — Resolves and maps AST expressions and source provenance to their corresponding type representations within an export manifest.
     - `type_defs.go` — This file provides logic to extract and register type definitions from a body result into a module manifest.
-  - **fixpoint/** — This directory provides the core engine and mathematical framework for performing iterative fixed-point program analysis.
+  - **fixpoint/** — This directory implements the fixed-point iteration engine and lattice logic required to compute and stabilize function summaries during Lua program analysis.
     - **fixpoint/program/** — This directory orchestrates the fixed-point summary analysis of Lua programs by composing function bodies into queryable equations and managing context propagation.
       - `call_context_entry.go` — This file provides functions to recursively seed and propagate heap object identities and call context information between analysis states.
       - `call_context_entry_test.go` — Provides unit tests for call context entry logic, specifically regarding heap object seeding and parameter application.
@@ -259,8 +229,8 @@ _358 files, leaf model `gemma-4-26b`, reduce model `gemma-4-26b`._
       - `method_receiver_context.go` — Responsible for analyzing and applying metatable method receiver contexts and entry states to program functions.
       - `param_inference.go` — Implements parameter type inference by joining argument values from all observed call sites of enclosed functions.
       - `program.go` — Orchestrates fixed-point summary analysis for Lua programs by composing function bodies into queryable equations.
-      - `program_test.go` — Provides unit tests for the program analysis engine, covering chunk execution, summary caching, generic specialization, and metatable method handling.
-      - **fixpoint/program/internal/** — This directory implements the internal logic for transforming and projecting fixpoint analysis results into structured program summaries and call outcomes.
+      - `program_test.go` — This file contains unit tests for the program analysis engine, specifically verifying fixpoint iteration, summary caching, and type refinement for Lua code.
+      - **fixpoint/program/internal/** — This directory provides the internal logic for projecting, validating, and adapting local program facts into summarized formats for interprocedural fixpoint analysis.
         - **fixpoint/program/internal/callresult/** — This directory transforms fixpoint summaries into actionable call outcomes by resolving function identities and parameter obligations.
           - `provider.go` — Adapts fixpoint summaries into factflow call outcomes by resolving function identities, return values, and parameter obligations.
           - `provider_test.go` — This file contains unit tests for the `callresult` package, specifically verifying the logic of the `OutcomeProvider` in mapping function summaries to call outcomes.
@@ -268,13 +238,13 @@ _358 files, leaf model `gemma-4-26b`, reduce model `gemma-4-26b`._
         - **fixpoint/program/internal/memberaccess/** — This directory provides centralized logic for validating and resolving member access semantics during summary projection and call-result application.
           - `memberaccess.go` — Provides centralized logic for validating and resolving member access semantics for summary projection and call-result application.
           - `memberaccess_test.go` — Unit tests for member access validation, path generation, and callability analysis.
-        - **fixpoint/program/internal/projectsummary/** — This directory implements the projection logic that transforms detailed internal function analysis results into condensed fixed-point summaries for interprocedural analysis.
+        - **fixpoint/program/internal/projectsummary/** — This directory implements the logic to transform detailed internal function analysis results into concise, boundary-compatible fixed-point summaries.
           - `boundary_path_projector.go` — Manages the rebasing of local function state paths into boundary-compatible paths for function summaries.
           - `boundary_path_projector_test.go` — Provides unit tests for the boundary path projector to verify path rebasing and relational constraint projection.
           - `member_stability_cache_test.go` — Provides unit tests for the member stability caching logic within the project summary analysis.
           - `normal_return_project_lanes.go` — Defines a set of projection functions that extract various analysis facts from a program state during a normal return.
           - `normal_return_project_lanes_test.go` — Provides unit tests to ensure that all normal return project lanes are correctly registered and mapped to their corresponding storage lanes.
-          - `project.go` — Converts completed analysis results into fixed-point summaries by projecting state and obligations.
+          - `project.go` — This file provides logic to project a completed analysis result into a fixed-point summary for program analysis.
           - `project_normal_reachability.go` — Implements reachability analysis to determine if a program point can reach a normal exit in the control flow graph.
           - `project_normal_return_conditions.go` — This file calculates the conditions under which function parameters lead to a normal return using control flow graph analysis.
           - `project_normal_return_equalities.go` — Analyzes and extracts equalities between function parameters based on branch conditions encountered during normal return paths.
@@ -286,6 +256,7 @@ _358 files, leaf model `gemma-4-26b`, reduce model `gemma-4-26b`._
           - `project_return_condition_refinements.go` — Extracts refinements from return condition expressions to map them back to function parameters.
           - `project_return_condition_slots.go` — This file implements logic to project refinements of return values based on the truthiness of specific return slots.
           - `project_return_param_aliases.go` — Identifies aliases between function return values and input parameters by tracing paths through object literals and local assignments.
+          - `project_return_param_literal_cases.go` — Identifies cases where function return values are literal values derived from input parameters based on branch conditions.
           - `project_return_presence_relations.go` — This file implements logic to project and reconcile return presence relations from analysis results into a summary format.
           - `project_return_slots.go` — This file implements logic to project and enrich function return values by combining actual exit values with heap identity witnesses and declared type contracts.
           - `project_test.go` — Provides unit tests for the project summary projection logic.
@@ -296,7 +267,7 @@ _358 files, leaf model `gemma-4-26b`, reduce model `gemma-4-26b`._
     - **fixpoint/ref/** — This directory provides a mechanism for creating compact, comparable function identities used to uniquely reference functions across different namespaces.
       - `ref.go` — Provides compact, comparable function identities for analysis summaries using different namespaces.
       - `ref_test.go` — Provides unit tests for the FuncRef type and its constructor functions.
-    - **fixpoint/summary/** — This directory defines the lattice-based data structures and algebraic operations required to represent and merge function summaries during fixpoint analysis.
+    - **fixpoint/summary/** — This directory defines the data structures, lattice operations, and storage mechanisms for function summaries used during fixpoint analysis.
       - `captured_path_obligation.go` — Provides lattice operations and normalization for sets of captured path obligations.
       - `channel_select_facts.go` — Defines the lattice and keying logic for channel select facts used in fixpoint analysis.
       - `dynamic_index_facts.go` — Provides lattice operations and normalization utilities for managing collections of dynamic index facts.
@@ -324,63 +295,73 @@ _358 files, leaf model `gemma-4-26b`, reduce model `gemma-4-26b`._
       - `rel_constraint_facts.go` — Implements the lattice operations (Normalize, Clone, Equal, LessOrEq, Join, Widen) for relational constraint facts used in fixpoint analysis.
       - `return_condition.go` — Defines the data structures and lattice operations for managing parameter refinements derived from function return conditions.
       - `return_condition_slot.go` — Defines the data structures and lattice operations for tracking refinements where the truthiness of one return slot affects the value of another.
+      - `return_param_literal_case.go` — Defines the data structures and lattice operations for tracking cases where a specific parameter literal type results in a specific return value.
       - `return_presence_relation.go` — Defines the data structures and lattice logic for tracking implications between the presence of values in different return slots.
       - `snapshot.go` — Provides immutable, key-based storage and retrieval for normalized analysis summaries.
       - `store_relation_facts.go` — Defines the lattice structure and keying logic for representing store relations between paths.
-      - `summary.go` — Defines the data structure and utility methods for fixed-point analysis function summaries.
+      - `summary.go` — Defines the data structure and management methods for fixed-point analysis function summaries.
       - `summary_key.go` — Defines the data structures used to uniquely identify and sort function summaries based on call-entry dimensions.
       - `summary_lattice.go` — Implements the lattice operations (Join, Widen, Equal, LessOrEq) and normalization for the Summary type used in fixpoint analysis.
       - `summary_slots.go` — Provides helper functions to access and evaluate specific elements within a function summary, such as return values and parameter obligations.
       - `summary_test.go` — Provides unit tests for the summary package, verifying summary key ordering, snapshot operations, normalization, joining, widening, and cloning logic.
-  - **internal/** — This directory provides the internal implementation details for the analysis checking phase, transforming raw AST and contract data into structured, typed diagnostic models.
+  - **internal/** — This directory provides the internal implementation details for the analysis checking engine, focusing on state projection, type witnessing, and source mapping.
     - **internal/callcontract/** — This directory provides an abstraction layer for Lua callable contract operations and generic type inference provenance.
       - `callcontract.go` — Provides an abstraction layer for Lua callable contract operations and generic type inference provenance to decouple readmodel code from the underlying typecall implementation.
       - `callcontract_test.go` — Unit tests for the call contract logic, including generic type instantiation, receiver binding, and inference conflict detection.
-    - **internal/readmodel/** — This directory transforms solved body boundary values into typed diagnostic read data for various analysis categories.
+    - **internal/readmodel/** — This directory transforms solved body boundary values into typed diagnostic data and implements specialized logic for detecting non-exhaustive pattern matching.
+      - `discriminated_union.go` — This file implements logic to detect non-exhaustive pattern matching (if/elseif chains) on discriminated unions within the readmodel.
+      - `optional_exhaustiveness.go` — Identifies code paths where an optional value is consumed but the nil case is not explicitly handled.
       - `readmodel.go` — Projects solved body boundary values into typed diagnostic read data for various analysis categories.
       - `readmodel_test.go` — Provides unit tests for the readmodel, verifying type projection, assignment analysis, call site reporting, and provenance tracking.
+      - `registration_exhaustiveness.go` — Analyzes callback registries to detect if all cases of a discriminated union are registered before being dispatched.
+      - `table_dispatch_exhaustiveness.go` — Analyzes and identifies missing keys in table-based dispatch patterns to detect non-exhaustive discriminated unions.
     - **internal/sourcebridge/** — This directory provides logic for converting Lua AST provenance data into factflow value source representations.
       - `source_value.go` — Converts Lua AST provenance data into factflow value source representations.
       - `source_value_test.go` — This file contains unit tests for converting AST-based source provenance into factflow value sources.
     - **internal/staticmemberwitness/** — This directory provides a mechanism for constructing type witnesses by aggregating types associated with specific path segments.
       - `static_member_witness.go` — Constructs a type witness (record) by aggregating types associated with specific path segments.
-  - **judgment/** — This directory manages the formal representation, registry, and comparison of semantic diagnostic judgments and their associated evidence.
-    - `judgment.go` — Defines the semantic obligation records and structured evidence used to represent diagnostic results after analysis.
+  - **judgment/** — This directory defines the data structures, policies, and reference mechanisms used to represent and validate semantic diagnostic results.
+    - `judgment.go` — Defines the semantic obligation records and evidence structures used to represent diagnostic results after analysis.
     - `judgment_test.go` — Provides unit tests for evidence chain joining, subject reference stability, judgment lookups, and registry/policy validation.
-    - `legacy_baseline.go` — Provides functionality to parse and map legacy JSONL diagnostic records into shadow records for migration comparison.
-    - `legacy_baseline_test.go` — Provides unit tests for the legacy baseline shadow record parsing logic.
-    - `policy.go` — Defines the policy for mapping judgment results (code, verdict, and strictness mode) to diagnostic severity levels.
+    - `policy.go` — Defines the policy and strictness settings that determine the severity level of various code judgments.
     - `refs.go` — Provides constructors and methods for creating stable, canonical references for types and values.
     - `refs_test.go` — Provides unit tests for verifying the stability and formatting of type and value reference keys.
-    - `registry.go` — Manages a central registry of semantic judgment code specifications and provides lookup and validation logic.
-    - `shadowdiff.go` — Provides logic for comparing legacy diagnostic outputs against new judgments using stable shadow records to facilitate migration.
-    - `shadowdiff_test.go` — Provides unit tests for shadow record comparison, conversion, and delta application logic.
-  - **obligation/** — This directory provides the engine for generating semantic obligations, such as type mismatches and linting errors, by orchestrating specialized producers.
-    - **obligation/pass/** — This directory implements the orchestration and specific logic for various static analysis passes that generate semantic judgments and obligations from a read model.
-      - `assignment.go` — This file implements a type obligation pass that generates judgments for assignment mismatches and optional assignment targets.
+    - `registry.go` — Manages the registration, lookup, and validation of semantic judgment code specifications.
+  - **obligation/** — This directory implements the logic for transforming read model data into formal semantic judgments through specialized analysis passes.
+    - **obligation/pass/** — This directory implements a suite of static analysis passes that generate type obligation judgments and semantic errors from a read model.
+      - `assignment.go` — This file implements a pass that generates type obligation judgments for variable assignments and optional assignment targets based on a read model.
       - `assignment_test.go` — Unit tests for the assignment and return value obligation passes in the type checker.
+      - `call_argument.go` — This file implements a static analysis pass that generates type obligation judgments for function call arguments based on readmodel reports.
+      - `call_argument_test.go` — Provides unit tests for the CallArguments obligation pass to verify type checking of function arguments.
+      - `call_arity.go` — Implements a pass that generates judgments for function call arity mismatches.
+      - `call_arity_test.go` — This file contains unit tests for the CallArity obligation pass to ensure function call argument counts are validated against signatures.
+      - `call_callee.go` — Implements an analysis pass that generates judgments regarding the callability of function targets at call sites.
+      - `call_callee_test.go` — Unit tests for the CallCallee obligation pass to ensure correct detection of non-callable targets, nil values, and missing members.
       - `channel_select.go` — Implements an analysis pass that generates exhaustiveness judgments for channel select result branches.
       - `channel_select_test.go` — Provides unit tests for the channel select obligation pass to ensure correct judgment of exhaustive channel selection.
+      - `concat_operand.go` — Identifies and emits obligations for concatenation operands that pose a runtime nil risk.
+      - `concat_operand_test.go` — Provides unit tests for the concat operand obligation pass to ensure optional operands are correctly refuted.
       - `dead_assignment.go` — Implements a linting pass that identifies and reports dead assignments where a value is overwritten or the scope exits before being read.
       - `dead_assignment_test.go` — Provides unit tests for the dead assignment analysis pass.
-      - `direct_call_argument.go` — This file implements a static analysis pass that generates judgments regarding type mismatches and obligations for function call arguments.
-      - `direct_call_argument_test.go` — This file contains unit tests for the `DirectCallArguments` obligation pass, verifying type mismatches in function calls.
-      - `direct_call_arity.go` — Implements an analysis pass that generates judgments for mismatches between expected and actual function call arity.
-      - `direct_call_arity_test.go` — This file contains unit tests for the DirectCallArity obligation pass to ensure it correctly identifies incorrect function call argument counts.
-      - `direct_call_callee.go` — Implements an analysis pass that generates judgments regarding the validity and callability of direct function call targets.
-      - `direct_call_callee_test.go` — Provides unit tests for the DirectCallCallee obligation pass to verify detection of non-callable targets, nil values, and missing members.
+      - `discriminated_union.go` — This file implements a type-checking pass that generates exhaustiveness obligations for if/elseif chains operating on discriminated unions.
       - `frozen_table.go` — Implements an analysis pass that detects and reports attempts to mutate tables that have been proven frozen.
       - `frozen_table_test.go` — Provides unit tests for the frozen table mutation analysis pass.
       - `lifecycle.go` — Implements a static analysis pass that detects resources left in non-final typestates at function exit.
       - `lifecycle_test.go` — Provides unit tests for the lifecycle obligation analysis pass.
       - `member_read.go` — Implements a static analysis pass that generates judgments for member reads where the receiver is known to lack the requested member.
-      - `nonnil_assertion.go` — Implements a static analysis pass that identifies non-nil assertions that are guaranteed to fail because the operand is always nil.
+      - `nonnil_assertion.go` — Identifies and reports non-nil assertions that are proven to fail because the operand is always nil.
       - `nonnil_assertion_test.go` — Provides unit tests for the non-nil assertion obligation pass to ensure correct refutation and skipping logic.
-      - `numeric_for.go` — Implements a static analysis pass to identify numeric-for loop operands that are guaranteed not to be numbers.
+      - `numeric_for.go` — Implements a static analysis pass that identifies and reports numeric-for loop operands that are known not to be numbers.
       - `numeric_for_test.go` — Provides unit tests for the numeric-for-operand obligation pass to verify type checking and evidence collection in Lua for-loops.
+      - `optional.go` — Implements an analysis pass that generates exhaustiveness obligations for optional nil/value branches.
       - `pass.go` — Orchestrates the execution of obligation producers to generate semantic judgments from a read model.
       - `pass_test.go` — Provides unit tests for the obligation pass implementation, verifying producer ordering and reachability filtering.
-      - `return.go` — This file implements a type-checking pass that generates judgments regarding whether function return values match their declared types.
+      - `redundant_condition.go` — Implements a static analysis pass to detect and report redundant branch conditions that have already been proven by preceding guards.
+      - `redundant_condition_test.go` — Provides unit tests for the redundant condition analysis pass.
+      - `registration.go` — Implements an analysis pass that detects non-exhaustive callback registries for discriminated unions.
+      - `result_shape.go` — Implements a pass that generates exhaustiveness judgments for field reads occurring on only one case of a discriminated union.
+      - `return.go` — This file implements an analysis pass that generates judgments regarding return type obligations from the read model.
+      - `table_dispatch.go` — Emits exhaustiveness obligations for table dispatches indexed by discriminated-union case keys.
       - `unresolved_type.go` — Implements a type-checking pass that identifies and reports type references that cannot be resolved within the current namespace.
       - `unresolved_type_test.go` — Provides unit tests for the UnresolvedTypes obligation pass to ensure out-of-scope type references are correctly identified and refuted.
       - `unresolved_value.go` — Implements an analysis pass that identifies and reports identifier references that remain unresolved as implicit globals.
@@ -390,9 +371,9 @@ _358 files, leaf model `gemma-4-26b`, reduce model `gemma-4-26b`._
   - **placementplan/** — This directory is responsible for aggregating and generating placement plans that define object memory locations and ownership status.
     - `plan.go` — Responsible for aggregating and generating placement plans that describe the memory location and ownership status of objects.
     - `plan_test.go` — Provides unit tests for the placement plan generation and aggregation logic.
-  - **readmodel/** — This directory provides a syntax-free data surface and structured API for consuming solved analysis state.
-    - `api.go` — Defines the syntax-free read surface and data structures for obligation producers to consume solved analysis state.
-    - `api_test.go` — Unit tests for the readmodel API, verifying logic for assignment checks, call argument reporting, and callee analysis.
+  - **readmodel/** — This directory defines the standardized data structures and API surface used to represent analysis findings in a syntax-free format.
+    - `api.go` — Defines the syntax-free read surface and data records used by obligation producers to report analysis findings.
+    - `api_test.go` — Unit tests for the readmodel API, verifying type checking logic, assignment/return/call analysis, and error reporting.
 
 ## Anomalies
 
@@ -420,28 +401,29 @@ _358 files, leaf model `gemma-4-26b`, reduce model `gemma-4-26b`._
 - **[layering]** internal/readmodel -> fixpoint/program (lower layer imports higher)
 - **[layering]** internal/readmodel -> readmodel (lower layer imports higher)
 - **[hub:fan-out]** obligation/pass/lifecycle_test.go  (5) — imports many modules
-- **[hub:fan-out]** checktest/checktest.go  (5) — imports many modules
 - **[hub:fan-out]** obligation/pass/assignment_test.go  (5) — imports many modules
-- **[hub:fan-out]** obligation/pass/frozen_table_test.go  (4) — imports many modules
-- **[hub:fan-out]** obligation/pass/nonnil_assertion_test.go  (4) — imports many modules
-- **[hub:fan-out]** obligation/pass/direct_call_argument_test.go  (4) — imports many modules
-- **[hub:fan-out]** obligation/pass/numeric_for_test.go  (4) — imports many modules
-- **[hub:fan-out]** obligation/pass/unresolved_value_test.go  (4) — imports many modules
-- **[hub:fan-out]** obligation/pass/unresolved_type_test.go  (4) — imports many modules
+- **[hub:fan-out]** checktest/checktest.go  (5) — imports many modules
+- **[hub:fan-out]** obligation/pass/redundant_condition_test.go  (4) — imports many modules
 - **[hub:fan-out]** obligation/pass/channel_select_test.go  (4) — imports many modules
-- **[hub:fan-out]** obligation/pass/direct_call_arity_test.go  (4) — imports many modules
-- **[hub:fan-out]** fixpoint/program/program_test.go  (4) — imports many modules
-- **[hub:fan-out]** obligation/pass/dead_assignment_test.go  (4) — imports many modules
+- **[hub:fan-out]** obligation/pass/frozen_table_test.go  (4) — imports many modules
 - **[hub:fan-out]** obligation/pass/unused_local_test.go  (4) — imports many modules
-- **[hub:fan-in]** judgment/judgment.go  (52) — imported by many
-- **[dir]** diagnostics: exhaustiveness_render_helpers.go contains a code smell where `codeName` is called but not defined.
-- **[dir]** internal/readmodel: Layering violation: this lower layer imports higher layers (body, contract, fixpoint/program, and readmodel).
+- **[hub:fan-out]** obligation/pass/numeric_for_test.go  (4) — imports many modules
+- **[hub:fan-out]** obligation/pass/concat_operand_test.go  (4) — imports many modules
+- **[hub:fan-out]** obligation/pass/dead_assignment_test.go  (4) — imports many modules
+- **[hub:fan-out]** obligation/pass/nonnil_assertion_test.go  (4) — imports many modules
+- **[hub:fan-out]** obligation/pass/call_arity_test.go  (4) — imports many modules
+- **[hub:fan-out]** obligation/pass/call_argument_test.go  (4) — imports many modules
+- **[hub:fan-out]** obligation/pass/unresolved_type_test.go  (4) — imports many modules
+- **[hub:fan-out]** obligation/pass/unresolved_value_test.go  (4) — imports many modules
+- **[hub:fan-out]** fixpoint/program/program_test.go  (4) — imports many modules
+- **[hub:fan-in]** judgment/judgment.go  (66) — imported by many
+- **[dir]** diagnostics: exhaustiveness_render_helpers.go contains a reference to an undefined variable `codeName`.
 - `diagnostics/exhaustiveness_render_helpers.go`: codeName is called but not defined in this file.
 
 ## Coupling
 
-Resolved 258 file→file edges across 55 directory→directory edges.
+Resolved 292 file→file edges across 55 directory→directory edges.
 
 - Module cycles: 13
 - Layering violations: 10
-- Top external deps: testing (154), github.com/wippyai/go-lua/analysis/type/typ (136), github.com/wippyai/go-lua/analysis/domain/path (101), strings (101), github.com/wippyai/go-lua/analysis/diagnostic (99), github.com/wippyai/go-lua/analysis/ir/cfg (97), github.com/wippyai/go-lua/analysis/domain/value/product (84), github.com/wippyai/go-lua/compiler/ast (84), github.com/wippyai/go-lua/analysis/domain/value/axis (69), github.com/wippyai/go-lua/analysis/engine/factflow (61), github.com/wippyai/go-lua/analysis/domain/value/typevalue (54), github.com/wippyai/go-lua/analysis/engine/state (54)
+- Top external deps: testing (149), github.com/wippyai/go-lua/analysis/type/typ (118), strings (100), github.com/wippyai/go-lua/analysis/diagnostic (87), github.com/wippyai/go-lua/analysis/domain/path (86), github.com/wippyai/go-lua/analysis/ir/cfg (80), github.com/wippyai/go-lua/analysis/domain/value/product (77), github.com/wippyai/go-lua/analysis/domain/value/axis (70), github.com/wippyai/go-lua/compiler/ast (65), github.com/wippyai/go-lua/analysis/engine/factflow (60), github.com/wippyai/go-lua/analysis/engine/state (54), github.com/wippyai/go-lua/analysis/domain/value/typevalue (53)

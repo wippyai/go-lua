@@ -35,6 +35,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/projection"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -217,13 +218,13 @@ func functionExpressionSignature(prog program.Result, result *body.Result, fn *a
 		if inferred, ok := inferredFunctionTypeFromSummary(result.Registry(), result, fn, sum); ok {
 			return signature.Function{
 				Type:               inferred,
-				Effect:             functionSummaryEffect(sum, inferred),
+				Effect:             functionSummaryEffect(result.Registry(), sum, inferred),
 				OperationalEffects: functionSummaryOperationalEffects(result.Registry(), sum, inferred, name),
 			}, true
 		}
 		arity := untypedFunctionParamArity(result, fn)
 		sig := signature.Function{
-			Effect:             functionSummaryEffectForArity(sum, arity, len(sum.Returns)),
+			Effect:             functionSummaryEffectForArity(result.Registry(), sum, arity, len(sum.Returns)),
 			OperationalEffects: functionSummaryOperationalEffectsForArity(result.Registry(), sum, arity, len(sum.Returns), ""),
 		}
 		if sig.Effect.Pure() && (sig.OperationalEffects == nil || sig.OperationalEffects.IsEmpty()) {
@@ -236,7 +237,7 @@ func functionExpressionSignature(prog program.Result, result *body.Result, fn *a
 	}
 	sig := signature.Function{Type: fnType}
 	if summarized {
-		sig.Effect = functionSummaryEffect(sum, fnType)
+		sig.Effect = functionSummaryEffect(result.Registry(), sum, fnType)
 		sig.OperationalEffects = functionSummaryOperationalEffects(result.Registry(), sum, fnType, name)
 	}
 	return sig, true
@@ -462,16 +463,17 @@ func untypedFunctionParamArity(result *body.Result, fn *ast.FunctionExpr) int {
 	return arity
 }
 
-func functionSummaryEffect(s summary.Summary, fn *typ.Function) effect.Row {
+func functionSummaryEffect(reg *axis.Registry, s summary.Summary, fn *typ.Function) effect.Row {
 	if fn == nil {
 		return effect.Empty
 	}
-	return functionSummaryEffectForArity(s, len(fn.Params), functionSummaryReturnArity(s, fn))
+	return functionSummaryEffectForArity(reg, s, len(fn.Params), functionSummaryReturnArity(s, fn))
 }
 
-func functionSummaryEffectForArity(s summary.Summary, paramArity, returnArity int) effect.Row {
+func functionSummaryEffectForArity(reg *axis.Registry, s summary.Summary, paramArity, returnArity int) effect.Row {
 	labels := errorReturnLabels(s.ReturnPresenceRelations, returnArity)
 	labels = append(labels, normalReturnParamRefinementLabels(s.NormalReturnParams, paramArity)...)
+	labels = append(labels, returnParamLiteralCaseLabels(reg, s.ReturnParamLiteralCases, paramArity, returnArity)...)
 	storeRelations, exactStoreSources, exactStoreTargets := normalReturnStoreRelationLabels(s.NormalReturnFacts, paramArity)
 	labels = append(labels, storeRelations...)
 	labels = append(labels, normalReturnOwnershipLabels(s.NormalReturnFacts, paramArity, exactStoreSources)...)
@@ -1438,6 +1440,52 @@ func normalReturnParamRefinementLabels(values []product.Value, arity int) []effe
 		}
 	}
 	return out
+}
+
+func returnParamLiteralCaseLabels(reg *axis.Registry, cases []summary.ReturnParamLiteralCase, paramArity, returnArity int) []effect.Label {
+	if reg == nil || paramArity <= 0 || returnArity <= 0 || len(cases) == 0 {
+		return nil
+	}
+	var out []effect.Label
+	for _, c := range cases {
+		if c.ParamIndex < 0 || c.ParamIndex >= paramArity ||
+			c.ReturnIndex < 0 || c.ReturnIndex >= returnArity ||
+			c.When == nil {
+			continue
+		}
+		then, ok := typevalue.TypeOf(reg, c.Value)
+		if !ok || !portableInferredSignatureType(then) {
+			continue
+		}
+		proj, ok := projectionFromSegments(c.ParamSuffix)
+		if !ok {
+			continue
+		}
+		out = append(out, returns.Return{
+			ReturnIndex: c.ReturnIndex,
+			Transform: returns.ConditionalType{
+				Source:     effect.ParamRef{Index: c.ParamIndex},
+				Projection: proj,
+				When:       c.When,
+				Then:       then,
+			},
+		})
+	}
+	return out
+}
+
+func projectionFromSegments(segments []segment.Segment) (projection.Projection, bool) {
+	if len(segments) == 0 {
+		return projection.Projection{}, true
+	}
+	steps := make([]projection.Step, 0, len(segments))
+	for _, seg := range segments {
+		if seg.Kind != segment.SegmentField || seg.Name == "" {
+			return projection.Projection{}, false
+		}
+		steps = append(steps, projection.Field(seg.Name))
+	}
+	return projection.Projection{Steps: steps}, true
 }
 
 func errorReturnLabels(relations []summary.ReturnPresenceRelation, arity int) []effect.Label {

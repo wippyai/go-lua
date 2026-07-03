@@ -29,8 +29,10 @@ const (
 	CodeDeadAssignment     Code = "lint.dead.assignment"
 	CodeChannelSelect      Code = "channel.select.exhaustiveness"
 	CodeDiscriminatedUnion Code = "union.discriminated.exhaustiveness"
+	CodeOptional           Code = "union.optional.exhaustiveness"
 	CodeResultShape        Code = "union.result_shape.exhaustiveness"
 	CodeRegistration       Code = "union.registration.exhaustiveness"
+	CodeTableDispatch      Code = "union.table_dispatch.exhaustiveness"
 	CodeUnresolvedValue    Code = "value.reference.unresolved"
 	CodeUnresolvedType     Code = "type.reference.unresolved"
 	CodeRedundantCondition Code = "condition.redundant"
@@ -48,8 +50,8 @@ const (
 	VerdictRefuted
 )
 
-// SubjectKind identifies the stable subject namespace used for deduplication,
-// precedence, and shadow-diff matching.
+// SubjectKind identifies the stable subject namespace used for deduplication
+// and precedence.
 type SubjectKind uint8
 
 const (
@@ -84,8 +86,7 @@ func (s SubjectRef) WithLabel(label string) SubjectRef {
 	return s
 }
 
-// StableKey returns a deterministic identity for dedup, precedence, and
-// shadow-diff matching.
+// StableKey returns a deterministic identity for dedup and precedence.
 func (s SubjectRef) StableKey() string {
 	var b strings.Builder
 	b.WriteString(s.FunctionKey)
@@ -182,6 +183,11 @@ const (
 	EvidenceDetailDiscriminatedUnionHandled
 	EvidenceDetailDiscriminatedUnionMissing
 	EvidenceDetailDiscriminatedUnionNoDefault
+	EvidenceDetailOptionalTarget
+	EvidenceDetailOptionalPossible
+	EvidenceDetailOptionalConsumed
+	EvidenceDetailOptionalMissing
+	EvidenceDetailOptionalNoDefault
 	EvidenceDetailResultShapeUnion
 	EvidenceDetailResultShapeFieldCase
 	EvidenceDetailResultShapeMissingProof
@@ -189,6 +195,10 @@ const (
 	EvidenceDetailRegistrationPossible
 	EvidenceDetailRegistrationRegistered
 	EvidenceDetailRegistrationMissing
+	EvidenceDetailTableDispatchLookup
+	EvidenceDetailTableDispatchPossible
+	EvidenceDetailTableDispatchKeys
+	EvidenceDetailTableDispatchMissing
 	EvidenceDetailRedundantConditionCheck
 	EvidenceDetailRedundantConditionProof
 	EvidenceDetailRedundantConditionStability
@@ -262,6 +272,22 @@ func RegistrationMissingEvidenceDetail(cases string) EvidenceDetail {
 	return EvidenceDetail{Kind: EvidenceDetailRegistrationMissing, CaseList: cases}
 }
 
+func TableDispatchLookupEvidenceDetail(table, target string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailTableDispatchLookup, SubjectLabel: table, Field: target}
+}
+
+func TableDispatchPossibleEvidenceDetail(cases string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailTableDispatchPossible, CaseList: cases}
+}
+
+func TableDispatchKeysEvidenceDetail(keys string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailTableDispatchKeys, CaseList: keys}
+}
+
+func TableDispatchMissingEvidenceDetail(cases string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailTableDispatchMissing, CaseList: cases}
+}
+
 func DiscriminatedUnionTargetEvidenceDetail(target string) EvidenceDetail {
 	return EvidenceDetail{Kind: EvidenceDetailDiscriminatedUnionTarget, SubjectLabel: target}
 }
@@ -280,6 +306,26 @@ func DiscriminatedUnionMissingEvidenceDetail(cases string) EvidenceDetail {
 
 func DiscriminatedUnionNoDefaultEvidenceDetail() EvidenceDetail {
 	return EvidenceDetail{Kind: EvidenceDetailDiscriminatedUnionNoDefault}
+}
+
+func OptionalTargetEvidenceDetail(target string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailOptionalTarget, SubjectLabel: target}
+}
+
+func OptionalPossibleEvidenceDetail(target string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailOptionalPossible, SubjectLabel: target}
+}
+
+func OptionalConsumedEvidenceDetail(target string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailOptionalConsumed, SubjectLabel: target}
+}
+
+func OptionalMissingEvidenceDetail(cases string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailOptionalMissing, CaseList: cases}
+}
+
+func OptionalNoDefaultEvidenceDetail() EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailOptionalNoDefault}
 }
 
 // MissingRequiredFieldEvidenceDetail records that a structural proof failed

@@ -52,10 +52,26 @@ func signatureReturnValue(
 	returnTypeOps ReturnTypeOps,
 	typeValues *typevalue.Cache,
 ) (product.Value, bool) {
-	transform, ok := activeReturnTransform(sig, index)
-	if !ok {
-		return product.Value{}, false
+	for _, transform := range activeReturnTransforms(sig, index) {
+		if value, ok := signatureReturnTransformValue(ctx, sources, expressionRefinements, sig, transform, argSources, in, read, returnTypeOps, typeValues); ok {
+			return value, true
+		}
 	}
+	return product.Value{}, false
+}
+
+func signatureReturnTransformValue(
+	ctx transfer.NodeContext,
+	sources sourcevalue.SourceValues,
+	expressionRefinements sourcevalue.ExpressionRefinements,
+	sig signature.Function,
+	transform returns.ReturnType,
+	argSources signatureArgumentReader,
+	in state.State,
+	read func(cfg.Point) state.State,
+	returnTypeOps ReturnTypeOps,
+	typeValues *typevalue.Cache,
+) (product.Value, bool) {
 	if transform, ok := returns.AsSameAs(transform); ok {
 		return sameAsReturnValue(ctx, sources, expressionRefinements, transform.Source, argSources, in, read)
 	}
@@ -348,6 +364,15 @@ func signatureCallArgumentType(
 }
 
 func activeReturnTransform(sig signature.Function, index int) (returns.ReturnType, bool) {
+	transforms := activeReturnTransforms(sig, index)
+	if len(transforms) == 0 {
+		return nil, false
+	}
+	return transforms[0], true
+}
+
+func activeReturnTransforms(sig signature.Function, index int) []returns.ReturnType {
+	var out []returns.ReturnType
 	for _, label := range sig.Effect.Labels {
 		ret, ok := effect.NormalizeLabel(label).(returns.Return)
 		if !ok || ret.ReturnIndex != index {
@@ -357,10 +382,10 @@ func activeReturnTransform(sig signature.Function, index int) (returns.ReturnTyp
 			continue
 		}
 		if operationalReturnTransform(ret.Transform) {
-			return ret.Transform, true
+			out = append(out, ret.Transform)
 		}
 	}
-	return nil, false
+	return out
 }
 
 func operationalReturnTransform(transform returns.ReturnType) bool {

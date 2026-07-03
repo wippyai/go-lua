@@ -17,6 +17,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
+const globalTableName = "_G"
+
 func parameterEntryState(
 	reg *axis.Registry,
 	typeValues *typevalue.Cache,
@@ -150,6 +152,7 @@ func configuredGlobalEntrySeeds(
 		return nil
 	}
 	globalTop := product.Set(reg, product.Top(), evidence.Key, evidence.GradualTop())
+	presentGlobalTop := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), evidence.Key, evidence.GradualTop())
 	var seeds []state.ValueSeed
 	appendSeed := func(name string) {
 		id, ok := bindings.GlobalSymbol(name)
@@ -166,6 +169,9 @@ func configuredGlobalEntrySeeds(
 			}
 		}
 		value := globalTop
+		if name == globalTableName {
+			value = presentGlobalTop
+		}
 		if t := globalTypes[name]; t != nil && typeValues != nil {
 			value = typeValues.FromTypeWithWitness(reg, t)
 		}

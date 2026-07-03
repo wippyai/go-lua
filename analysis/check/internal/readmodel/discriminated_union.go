@@ -3,24 +3,18 @@ package readmodel
 import (
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/check/body"
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	typeformat "github.com/wippyai/go-lua/analysis/type/format"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 type DiscriminatedUnionExhaustiveness = readapi.DiscriminatedUnionExhaustiveness
-
-type discriminatedUnionBranch struct {
-	point cfg.Point
-	fact  semantics.BranchConditionFact
-}
 
 type discriminatedUnionCandidate struct {
 	target  path.Path
@@ -47,26 +41,9 @@ func (r Reader) ForEachDiscriminatedUnionExhaustiveness(visit func(Discriminated
 	if r.result == nil || visit == nil || r.result.Graph() == nil {
 		return false
 	}
-	branches := r.discriminatedUnionBranches()
-	if len(branches) == 0 {
-		return false
-	}
-	ifs := make([]*ast.IfStmt, 0, len(branches))
-	byIf := make(map[*ast.IfStmt]discriminatedUnionBranch, len(branches))
-	for _, branch := range branches {
-		if branch.fact.If == nil {
-			continue
-		}
-		ifs = append(ifs, branch.fact.If)
-		byIf[branch.fact.If] = branch
-	}
-	nested := nestedElseIfStatements(ifs)
 	visited := false
-	for _, branch := range branches {
-		if branch.fact.If == nil || nested[branch.fact.If] {
-			continue
-		}
-		item, ok := r.discriminatedUnionChain(branch.fact.If, byIf)
+	for _, chain := range r.result.IfBranchChains() {
+		item, ok := r.discriminatedUnionChain(chain)
 		if !ok {
 			continue
 		}
@@ -78,36 +55,15 @@ func (r Reader) ForEachDiscriminatedUnionExhaustiveness(visit func(Discriminated
 	return visited
 }
 
-func (r Reader) discriminatedUnionBranches() []discriminatedUnionBranch {
-	graph := r.result.Graph()
-	var out []discriminatedUnionBranch
-	for _, point := range cfg.RPOReadOnly(graph) {
-		if !r.result.PointNormallyReachable(point) {
-			continue
-		}
-		branch, ok := r.result.BranchCondition(point)
-		if !ok || branch.If == nil {
-			continue
-		}
-		out = append(out, discriminatedUnionBranch{point: point, fact: branch})
-	}
-	return out
-}
-
-func (r Reader) discriminatedUnionChain(head *ast.IfStmt, byIf map[*ast.IfStmt]discriminatedUnionBranch) (DiscriminatedUnionExhaustiveness, bool) {
-	if hasDefaultElse(head) {
+func (r Reader) discriminatedUnionChain(chain body.IfBranchChain) (DiscriminatedUnionExhaustiveness, bool) {
+	if chain.HasDefaultElse {
 		return DiscriminatedUnionExhaustiveness{}, false
 	}
-	chain := ifElseIfChain(head)
 	var selected discriminatedUnionCandidate
 	selectedSet := false
 	handled := make(map[int]bool)
-	for _, stmt := range chain {
-		branch, ok := byIf[stmt]
-		if !ok {
-			return DiscriminatedUnionExhaustiveness{}, false
-		}
-		candidate, ok := r.discriminatedUnionCandidateForCheck(branch.point, branch.fact.Check)
+	for _, branch := range chain.Branches {
+		candidate, ok := r.discriminatedUnionCandidateForCheck(branch.Point, branch.Fact.Check)
 		if !ok {
 			return DiscriminatedUnionExhaustiveness{}, false
 		}
@@ -139,20 +95,13 @@ func (r Reader) discriminatedUnionChain(head *ast.IfStmt, byIf map[*ast.IfStmt]d
 		return DiscriminatedUnionExhaustiveness{}, false
 	}
 	return DiscriminatedUnionExhaustiveness{
-		Point:    selectedPoint(head, byIf),
-		Span:     sourceSpanFromAST(ast.SpanOf(head.Condition)),
+		Point:    chain.Head.Point,
+		Span:     sourceSpanFromBody(chain.Head.ConditionSpan),
 		Target:   selected.target.String(),
 		Possible: possible,
 		Handled:  handledNames,
 		Missing:  missing,
 	}, true
-}
-
-func selectedPoint(head *ast.IfStmt, byIf map[*ast.IfStmt]discriminatedUnionBranch) cfg.Point {
-	if branch, ok := byIf[head]; ok {
-		return branch.point
-	}
-	return 0
 }
 
 func (r Reader) discriminatedUnionCandidateForCheck(point cfg.Point, check branchcond.Check) (discriminatedUnionCandidate, bool) {
@@ -217,8 +166,8 @@ func (r Reader) discriminatedUnionRootType(point cfg.Point, root path.Path) (typ
 	if root.Symbol == 0 {
 		return nil, false
 	}
-	if annotated, ok := r.symbolDeclaredType(root.Symbol); ok {
-		return r.resultShapeTransparentComparableType(annotated), true
+	if annotated, ok := r.result.SymbolDeclaredType(root.Symbol); ok {
+		return r.result.TransparentComparableType(annotated), true
 	}
 	value, ok := r.result.SymbolValueAtBoundary(point, root.Symbol)
 	if !ok {
@@ -277,47 +226,4 @@ func discriminatedUnionCaseName(target path.Path, suffix []segment.Segment, case
 
 func sameDiscriminatedUnionCandidate(a, b discriminatedUnionCandidate) bool {
 	return a.family == b.family && a.target.Equal(b.target) && a.anchor.Equal(b.anchor)
-}
-
-func nestedElseIfStatements(stmts []*ast.IfStmt) map[*ast.IfStmt]bool {
-	out := make(map[*ast.IfStmt]bool)
-	for _, stmt := range stmts {
-		if stmt == nil || len(stmt.Else) == 0 {
-			continue
-		}
-		if nested, ok := stmt.Else[0].(*ast.IfStmt); ok && nested != nil {
-			out[nested] = true
-		}
-	}
-	return out
-}
-
-func hasDefaultElse(stmt *ast.IfStmt) bool {
-	for stmt != nil {
-		if len(stmt.Else) == 0 {
-			return false
-		}
-		next, ok := stmt.Else[0].(*ast.IfStmt)
-		if !ok {
-			return true
-		}
-		stmt = next
-	}
-	return false
-}
-
-func ifElseIfChain(head *ast.IfStmt) []*ast.IfStmt {
-	var chain []*ast.IfStmt
-	for stmt := head; stmt != nil; {
-		chain = append(chain, stmt)
-		if len(stmt.Else) == 0 {
-			break
-		}
-		next, ok := stmt.Else[0].(*ast.IfStmt)
-		if !ok {
-			break
-		}
-		stmt = next
-	}
-	return chain
 }

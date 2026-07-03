@@ -8,10 +8,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/check/obligation/pass"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -43,9 +41,8 @@ const (
 )
 
 type producerContext struct {
-	resolver       typeannotation.Resolver
-	parent         *body.Result
-	dispatchTables map[pathdom.PathKey]dispatchTableSummary
+	parent  *body.Result
+	parents []*body.Result
 
 	judgmentPolicy     judgment.Policy
 	judgmentStrictness judgment.StrictnessMode
@@ -178,7 +175,7 @@ func diagnosticProducers() []diagnosticProducer {
 				if result == nil {
 					return nil
 				}
-				query := newDiagnosticQuery(result)
+				query := newDiagnosticQuery(result, context.parents...)
 				items := pass.New(pass.RedundantConditions{}).Run(pass.Context{
 					Reader:      query.reader,
 					FunctionKey: "body",
@@ -194,14 +191,19 @@ func diagnosticProducers() []diagnosticProducer {
 				if result == nil {
 					return nil
 				}
-				query := newDiagnosticQuery(result)
-				items := pass.New(pass.DiscriminatedUnions{}, pass.ResultShapes{}).Run(pass.Context{
+				query := newDiagnosticQuery(result, context.parents...)
+				items := pass.New(
+					pass.DiscriminatedUnions{},
+					pass.Optionals{},
+					pass.ResultShapes{},
+					pass.Registrations{},
+					pass.TableDispatches{},
+				).Run(pass.Context{
 					Reader:      query.reader,
 					FunctionKey: "body",
 					SourceFile:  "",
 				})
 				out := renderJudgmentDiagnostics(items, context.judgmentPolicy, context.judgmentStrictness)
-				out = append(out, discriminatedUnionExhaustiveness(context).Produce(result)...)
 				return out
 			},
 		},
@@ -240,7 +242,7 @@ func Produce(result *body.Result) []diagnostic.Diagnostic {
 }
 
 func ProduceWithConfig(result *body.Result, config Config) []diagnostic.Diagnostic {
-	out := config.Policy.Apply(produceWithResolver(result, nil, nil, config, nil))
+	out := config.Policy.Apply(produceWithParents(result, config, nil))
 	out = diagnostic.Deduplicate(out)
 	diagnostic.Sort(out)
 	out = applyDiagnosticPrecedence(out, defaultDiagnosticPrecedenceRules())
@@ -248,19 +250,16 @@ func ProduceWithConfig(result *body.Result, config Config) []diagnostic.Diagnost
 	return out
 }
 
-func produceWithResolver(
+func produceWithParents(
 	result *body.Result,
-	parent typeannotation.Resolver,
-	inheritedDispatchTables map[pathdom.PathKey]dispatchTableSummary,
 	config Config,
 	parentResult *body.Result,
+	parentResults ...*body.Result,
 ) []diagnostic.Diagnostic {
-	resolver := newResultResolver(result, parent)
-	childDispatchTables := collectDispatchTableSummaries(result, inheritedDispatchTables)
 	context := producerContext{
-		resolver:           resolver,
-		parent:             parentResult,
-		dispatchTables:     cloneDispatchTableSummaries(inheritedDispatchTables),
+		parent:  parentResult,
+		parents: append([]*body.Result(nil), parentResults...),
+
 		judgmentPolicy:     normalizedJudgmentPolicy(config.JudgmentPolicy),
 		judgmentStrictness: config.JudgmentStrictness,
 	}
@@ -272,7 +271,8 @@ func produceWithResolver(
 		out = append(out, producer.produce(result, context)...)
 	}
 	for _, fn := range diagnosticFunctionResults(result) {
-		out = append(out, produceWithResolver(fn, resolver, childDispatchTables, config, result)...)
+		childParents := append(append([]*body.Result(nil), parentResults...), result)
+		out = append(out, produceWithParents(fn, config, result, childParents...)...)
 	}
 	return out
 }

@@ -1,23 +1,11 @@
 package diagnostics
 
 import (
-	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/judgment"
-	"github.com/wippyai/go-lua/analysis/check/obligation/pass"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
-
-func produceConcatOperandJudgmentDiagnosticsWithPolicy(result *body.Result, sourceFile string, policy judgment.Policy, mode judgment.StrictnessMode) []diagnostic.Diagnostic {
-	query := newDiagnosticQuery(result)
-	items := pass.New(pass.ConcatOperands{}).Run(pass.Context{
-		FunctionKey: sourceFile,
-		SourceFile:  sourceFile,
-		Reader:      query.reader,
-	})
-	return renderJudgmentDiagnostics(items, policy, mode)
-}
 
 func renderConcatOperandJudgmentWithPolicy(item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
 	if item.Code != judgment.CodeConcatOperand || item.Subject.Kind != judgment.SubjectExpression || len(item.Spans) == 0 {

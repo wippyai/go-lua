@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
@@ -186,6 +187,66 @@ func TestLowerStaticTruthinessMarksImpossibleBranchEdges(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLowerCompoundOrLiteralImplicationsStayOnProvenOuterEdges(t *testing.T) {
+	_, bindings, built, result := parseSemanticFunction(t, `
+function f(kind: string?)
+	if not kind or kind == "auto" or kind == "any" or kind == "" then
+		return { mode = "AUTO" }
+	end
+	return nil
+end
+`)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	var directFalsyPoint cfg.Point
+	var compoundPoint cfg.Point
+	for _, point := range built.Graph.RPO() {
+		fact, ok := result.BranchCondition(point)
+		if !ok {
+			continue
+		}
+		if fact.Check.Kind == branchcond.CheckFalsy {
+			directFalsyPoint = point
+		}
+		if fact.Check.Kind == branchcond.CheckNone {
+			if _, ok := fact.Condition.(*ast.LogicalOpExpr); ok && compoundPoint == 0 {
+				compoundPoint = point
+			}
+		}
+	}
+	if directFalsyPoint == 0 {
+		t.Fatal("missing direct `not kind` branch point")
+	}
+	if compoundPoint == 0 {
+		t.Fatal("missing compound `or` branch point")
+	}
+	assertTruthyEvidenceOpposite(t, facts, directFalsyPoint, true)
+	assertTruthyEvidenceOpposite(t, facts, compoundPoint, false)
+	for _, refinement := range facts.BranchRefinements(compoundPoint) {
+		if hasBranchRefinementValue(refinement, true) {
+			t.Fatalf("compound branch implication unexpectedly refines true edge for %s", refinement.TargetPath())
+		}
+	}
+}
+
+func hasBranchRefinementValue(refinement factflow.BranchRefinement, edge bool) bool {
+	_, ok := refinement.ValueForEdge(edge)
+	return ok
+}
+
+func assertTruthyEvidenceOpposite(t *testing.T, facts factflow.Facts, point cfg.Point, want bool) {
+	t.Helper()
+	for _, proof := range facts.BranchPathEvidence(point) {
+		if proof.Kind() != factflow.BranchPathEvidenceTruthy {
+			continue
+		}
+		if got := proof.OppositeEdgeImpliesFalsy(); got != want {
+			t.Fatalf("point %d truthy evidence opposite-falsy = %v, want %v", point, got, want)
+		}
+		return
+	}
+	t.Fatalf("point %d has no truthy evidence", point)
 }
 
 func TestLowerMemberPathBranchRefinement(t *testing.T) {
@@ -792,6 +853,47 @@ func TestLowerOpenScalarDescendantLiteralBranchKeepsPathProof(t *testing.T) {
 	gotType, ok := typevalue.TypeOf(standard.Registry(), constraint)
 	if !ok || !typ.TypeEquals(gotType, typ.LiteralString("boolean")) {
 		t.Fatalf("true-edge type = %v/%v, want literal boolean type name", gotType, ok)
+	}
+}
+
+func TestLowerOpenRootScalarLiteralBranchKeepsNegatedEdgeProof(t *testing.T) {
+	root := symbol.ID(805)
+	rootPath := path.NewPath(root, "kind")
+	l := lowerer{
+		registry:   standard.Registry(),
+		typeValues: typevalue.NewCache(),
+	}
+
+	refinements := l.branchRefinementsForCheck(branchcond.Check{
+		Kind:          branchcond.CheckLiteralEqual,
+		Path:          rootPath,
+		Literal:       typ.LiteralString("auto"),
+		LiteralString: "auto",
+	})
+	refinement, ok := branchRefinementAt(refinements, rootPath)
+	if !ok {
+		t.Fatalf("missing root literal refinement; got %#v", refinements)
+	}
+	trueValue, ok := refinement.TrueValue()
+	if !ok {
+		t.Fatal("missing true-edge root literal refinement")
+	}
+	falseValue, ok := refinement.FalseValue()
+	if !ok || !falseValue.NegatedLiteral() {
+		t.Fatalf("false-edge root literal refinement = %#v/%v, want negated literal", falseValue, ok)
+	}
+	for label, value := range map[string]factflow.ValueRefinement{
+		"true edge":  trueValue,
+		"false edge": falseValue,
+	} {
+		constraint, ok := value.Constraint()
+		if !ok {
+			t.Fatalf("%s constraint missing", label)
+		}
+		gotType, ok := typevalue.TypeOf(standard.Registry(), constraint)
+		if !ok || !typ.TypeEquals(gotType, typ.LiteralString("auto")) {
+			t.Fatalf("%s type = %v/%v, want literal auto", label, gotType, ok)
+		}
 	}
 }
 

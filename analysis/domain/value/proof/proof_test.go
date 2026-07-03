@@ -32,6 +32,25 @@ func TestValueProofAdmissibleRejectsAnyClaimWithoutRuntimeProof(t *testing.T) {
 	}
 }
 
+func TestValueProofAdmissibleAcceptsAnyClaimForTopLikeContract(t *testing.T) {
+	reg := registry()
+	value := typevalue.NewCache().FromTypeWithWitness(reg, typ.Any)
+	value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
+	value = product.Set(reg, value, assertion.Key, assertion.Of(assertion.AnyClaim))
+
+	proofs := New(reg, typevalue.NewCache())
+	for _, want := range []typ.Type{
+		typ.Any,
+		typ.Unknown,
+		typ.MaterializeOptional(typ.Any),
+		typ.MaterializeOptional(typ.Unknown),
+	} {
+		if !proofs.ValueProofAdmissible(value, want) {
+			t.Fatalf("explicit any should satisfy top-like contract %s", want)
+		}
+	}
+}
+
 func TestValueProofAdmissibleAcceptsRuntimeProof(t *testing.T) {
 	reg := registry()
 	value := typevalue.NewCache().FromTypeWithWitness(reg, typ.String)

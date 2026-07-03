@@ -203,6 +203,40 @@ func TestRun_EdgeTransferDoesNotExposeConditionForOrdinaryEdges(t *testing.T) {
 	}
 }
 
+func TestRun_UnreachableBranchInputDoesNotRunNodeTransfer(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	slot := key.ReturnSlot(10)
+	got := Run(Config{
+		Graph:    graph,
+		Registry: reg,
+		NodeTransfer: func(ctx NodeContext, in state.State) state.State {
+			if ctx.Point == elsePoint {
+				return in.WriteValue(reg, slot, absentValue(reg))
+			}
+			return in
+		},
+		EdgeTransfer: func(ctx EdgeContext, out state.State) state.State {
+			if ctx.Edge.From == branch && !ctx.Edge.Cond {
+				return state.Domain(reg).Bottom()
+			}
+			return out
+		},
+	})
+
+	assertValue(t, reg, got[elsePoint], slot, product.Bottom(reg))
+	assertValue(t, reg, got[graph.Exit()], slot, product.Bottom(reg))
+}
+
 func TestRun_JoinPointJoinsPredecessorStatesViaStateDomain(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()

@@ -289,3 +289,9 @@ func (s State) reachable() State {
 	s.canonical = true
 	return s
 }
+
+// Reachable returns st marked as a reachable, possibly-empty program state for
+// every enabled lane that can distinguish unreachable bottom from empty top.
+func Reachable(st State) State {
+	return st.reachable()
+}

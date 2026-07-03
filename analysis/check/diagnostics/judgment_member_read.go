@@ -1,22 +1,9 @@
 package diagnostics
 
 import (
-	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/judgment"
-	"github.com/wippyai/go-lua/analysis/check/obligation/pass"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 )
-
-func produceMemberReadJudgmentDiagnosticsWithPolicy(result *body.Result, sourceFile string, policy judgment.Policy, mode judgment.StrictnessMode) []diagnostic.Diagnostic {
-	query := newDiagnosticQuery(result)
-	items := pass.New(pass.MemberReads{}).Run(pass.Context{
-		FunctionKey:    sourceFile,
-		SourceFile:     sourceFile,
-		Reader:         query.reader,
-		PointReachable: result.PointNormallyReachable,
-	})
-	return renderJudgmentDiagnostics(items, policy, mode)
-}
 
 func renderMemberReadJudgmentWithPolicy(item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
 	if item.Code != judgment.CodeMemberRead || item.Subject.Kind != judgment.SubjectExpression || len(item.Spans) == 0 {

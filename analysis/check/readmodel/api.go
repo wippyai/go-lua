@@ -7,17 +7,17 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/branchcond"
-	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typecall"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
@@ -39,14 +39,16 @@ type Reader interface {
 	ForEachDeadAssignment(func(DeadAssignment) bool) bool
 	ForEachChannelSelectExhaustiveness(func(ChannelSelectExhaustiveness) bool) bool
 	ForEachDiscriminatedUnionExhaustiveness(func(DiscriminatedUnionExhaustiveness) bool) bool
+	ForEachOptionalExhaustiveness(func(OptionalExhaustiveness) bool) bool
 	ForEachRegistrationExhaustiveness(func(RegistrationExhaustiveness) bool) bool
+	ForEachTableDispatchExhaustiveness(func(TableDispatchExhaustiveness) bool) bool
 	ForEachUnresolvedValueReference(func(UnresolvedValueReference) bool) bool
 	ForEachUnresolvedTypeReference(func(UnresolvedTypeReference) bool) bool
 	ForEachMissingMemberRead(func(MissingMemberRead) bool) bool
 	ForEachResultShapeExhaustiveness(func(ResultShapeExhaustiveness) bool) bool
 	ForEachRedundantConditionBranch(func(RedundantConditionBranch) bool) bool
-	DominatingTruthyBranchForPath(cfg.Point, branchcond.Check) (DominatingBranchProof, bool)
-	DominatingBranchCheckForPath(cfg.Point, branchcond.Check, func(branchcond.Check, bool) bool) (DominatingBranchProof, bool)
+	DominatingTruthyBranchForPath(cfg.Point, BranchCheck) (DominatingBranchProof, bool)
+	DominatingBranchCheckForPath(cfg.Point, BranchCheck, func(BranchCheck, bool) bool) (DominatingBranchProof, bool)
 }
 
 // SourceSpan is a syntax-free source range exported by the read model.
@@ -62,12 +64,57 @@ func (s SourceSpan) Valid() bool {
 	return s.StartLine != 0 || s.StartCol != 0 || s.EndLine != 0 || s.EndCol != 0
 }
 
+// BranchCheckKind is the syntax-free readmodel vocabulary for a lowered branch
+// predicate. Lua syntax normalization owns producing these facts; obligation
+// producers consume this DTO instead of importing the Lua lowering package.
+type BranchCheckKind uint8
+
+const (
+	BranchCheckNone BranchCheckKind = iota
+	BranchCheckTruthy
+	BranchCheckFalsy
+	BranchCheckNil
+	BranchCheckNotNil
+	BranchCheckTypeEqual
+	BranchCheckTypeNot
+	BranchCheckLiteralEqual
+	BranchCheckLiteralNot
+	BranchCheckPathEqual
+	BranchCheckPathNot
+	BranchCheckLenGe
+	BranchCheckIndexInRange
+	BranchCheckNumGe
+)
+
+// BranchCheck is a lowered branch predicate with no AST/source dependency.
+type BranchCheck struct {
+	Kind          BranchCheckKind
+	Path          path.Path
+	OtherPath     path.Path
+	TypeName      string
+	Literal       typ.Type
+	LiteralString string
+	LenFloor      int64
+	NumFloor      int64
+	Negated       bool
+}
+
+func (c BranchCheck) LiteralValue() (typ.Type, bool) {
+	if c.Literal != nil {
+		return c.Literal, true
+	}
+	if c.Kind == BranchCheckLiteralEqual || c.Kind == BranchCheckLiteralNot {
+		return typ.LiteralString(c.LiteralString), true
+	}
+	return nil, false
+}
+
 // RedundantConditionBranch is one normally reachable user-visible branch
 // condition. It carries the lowered check plus source spans so obligation
 // producers do not inspect syntax or body internals.
 type RedundantConditionBranch struct {
 	Point         cfg.Point
-	Check         branchcond.Check
+	Check         BranchCheck
 	ConditionSpan SourceSpan
 	StatementSpan SourceSpan
 }
@@ -76,7 +123,7 @@ type RedundantConditionBranch struct {
 // proves something about the same path at a later branch.
 type DominatingBranchProof struct {
 	Point cfg.Point
-	Check branchcond.Check
+	Check BranchCheck
 	Edge  bool
 	Span  SourceSpan
 }
@@ -556,19 +603,44 @@ type DiscriminatedUnionExhaustiveness struct {
 	Missing  []string
 }
 
+// OptionalExhaustiveness is the solved read model for a branch chain that
+// consumes the present/value case of an optional path but has no branch/default
+// that handles the nil case.
+type OptionalExhaustiveness struct {
+	Point   cfg.Point
+	Span    SourceSpan
+	Target  string
+	Missing []string
+}
+
 // RegistrationExhaustiveness is the solved read model for callback registries
 // that register handlers for only part of a discriminated union before a
 // dispatch call.
 type RegistrationExhaustiveness struct {
-	Point            cfg.Point
-	Registry         string
-	Target           string
-	Possible         []string
-	Registered       []string
-	Missing          []string
-	MissingFor       []string
-	RegistrationSpan SourceSpan
-	DispatchSpan     SourceSpan
+	Point             cfg.Point
+	Registry          string
+	Target            string
+	Possible          []string
+	Registered        []string
+	Missing           []string
+	MissingFor        []string
+	RegistrationSpan  SourceSpan
+	RegistrationSpans []SourceSpan
+	DispatchSpan      SourceSpan
+}
+
+// TableDispatchExhaustiveness is the solved read model for dispatch tables
+// indexed by discriminated-union cases while missing one or more case keys.
+type TableDispatchExhaustiveness struct {
+	Point      cfg.Point
+	Table      string
+	Target     string
+	Possible   []string
+	Keys       []string
+	Missing    []string
+	MissingFor []string
+	TableSpan  SourceSpan
+	LookupSpan SourceSpan
 }
 
 // UnresolvedValueReference is the solved read model for an identifier read that
@@ -1035,6 +1107,27 @@ func ObligationTypeReportable(t typ.Type) bool {
 		!typ.IsAny(base) &&
 		!typ.IsUnknown(base) &&
 		!refinement.ContainsFreeTypeParam(t)
+}
+
+// ObligationTypeContainsFreeTypeParam reports whether an obligation type still
+// depends on an uninstantiated type parameter. Internal readmodels should use
+// this instead of reaching into the type-refinement package for reportability
+// decisions.
+func ObligationTypeContainsFreeTypeParam(t typ.Type) bool {
+	return refinement.ContainsFreeTypeParam(t)
+}
+
+// ObligationTypeIsGradual reports whether an obligation type is gradual/top-like
+// enough that internal readmodels should avoid treating it as a precise
+// user-facing contract.
+func ObligationTypeIsGradual(t typ.Type) bool {
+	return typ.IsAny(t) || typ.IsUnknown(t)
+}
+
+// TypeIncludesNil reports whether a type admits nil according to the canonical
+// readmodel type projection rules.
+func TypeIncludesNil(t typ.Type) bool {
+	return typevalue.TypeIncludesNil(t)
 }
 
 // CallArgumentObligationTypeReportable is a compatibility alias for direct-call

@@ -2321,14 +2321,60 @@ local auto_mode: string = auto_config.mode
 
 local none_config, none_err = map_tool_config("none", tools)
 local none_mode: string = none_config.mode
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want simple literal call arguments to select branch-specific return shape", result.Diagnostics)
+	}
+}
+
+func TestCheckLiteralArgumentNamedLoopReturnShapeFiniteContainerFrontier(t *testing.T) {
+	result := Check(`
+local function map_tool_config(choice, available_tools)
+    if not choice or choice == "auto" or choice == "any" or choice == "" then
+        return { mode = "AUTO" }, nil
+    elseif choice == "none" then
+        return { mode = "NONE" }, nil
+    elseif type(choice) == "string" then
+        for _, tool in ipairs(available_tools or {}) do
+            if tool.name == choice then
+                return {
+                    mode = "ANY",
+                    allowedFunctionNames = { choice },
+                }, nil
+            end
+        end
+        return nil, "not found"
+    end
+    return "AUTO", nil
+end
+
+local tools = {
+    { name = "get_weather" },
+    { name = "calculate" },
+}
 
 local named_config, named_err = map_tool_config("get_weather", tools)
 local named_mode: string = named_config.mode
 local named_allowed: string = named_config.allowedFunctionNames[1]
 `, WithStdlib())
-	if len(result.Diagnostics) != 0 {
-		t.Fatalf("diagnostics = %#v, want literal call arguments to select branch-specific return shape", result.Diagnostics)
-	}
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeAssignmentType,
+		DiagnosticCount: 2,
+		Line:            27,
+		MessageContains: []string{"named_config.mode", "may be nil"},
+		EvidenceContains: []string{
+			"named_config may be nil before reading .mode",
+		},
+	})
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeAssignmentType,
+		DiagnosticCount: 2,
+		Line:            28,
+		MessageContains: []string{"named_config.allowedFunctionNames[1]", "may be nil"},
+		EvidenceContains: []string{
+			"indexed read that can miss or read nil",
+		},
+	})
 }
 
 func TestCheckImportedLiteralArgumentSelectsReturnShape(t *testing.T) {
@@ -2373,13 +2419,97 @@ local auto_mode: string = auto_config.mode
 
 local none_config, none_err = mapper.map_tool_config("none", tools)
 local none_mode: string = none_config.mode
+`, WithStdlib(), WithModule("mapper", mapper))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want imported simple literal call arguments to select branch-specific return shape", result.Diagnostics)
+	}
+}
+
+func TestCheckImportedLiteralArgumentNamedLoopReturnShapeFiniteContainerFrontier(t *testing.T) {
+	mapper := CheckAndExport(`
+local M = {}
+
+function M.map_tool_config(choice, available_tools)
+    if not choice or choice == "auto" or choice == "any" or choice == "" then
+        return { mode = "AUTO" }, nil
+    elseif choice == "none" then
+        return { mode = "NONE" }, nil
+    elseif type(choice) == "string" then
+        for _, tool in ipairs(available_tools or {}) do
+            if tool.name == choice then
+                return {
+                    mode = "ANY",
+                    allowedFunctionNames = { choice },
+                }, nil
+            end
+        end
+        return nil, "not found"
+    end
+    return "AUTO", nil
+end
+
+return M
+`, "mapper", WithStdlib())
+	if len(mapper.Errors) != 0 {
+		t.Fatalf("mapper diagnostics = %#v, want clean export", mapper.Errors)
+	}
+
+	result := Check(`
+local mapper = require("mapper")
+
+local tools = {
+    { name = "get_weather" },
+    { name = "calculate" },
+}
 
 local named_config, named_err = mapper.map_tool_config("get_weather", tools)
 local named_mode: string = named_config.mode
 local named_allowed: string = named_config.allowedFunctionNames[1]
 `, WithStdlib(), WithModule("mapper", mapper))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeAssignmentType,
+		DiagnosticCount: 2,
+		Line:            10,
+		MessageContains: []string{"named_config.mode", "may be nil"},
+		EvidenceContains: []string{
+			"named_config may be nil before reading .mode",
+		},
+	})
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeAssignmentType,
+		DiagnosticCount: 2,
+		Line:            11,
+		MessageContains: []string{"named_config.allowedFunctionNames[1]", "may be nil"},
+		EvidenceContains: []string{
+			"indexed read that can miss or read nil",
+		},
+	})
+}
+
+func TestCheckImportedSufficientOrLiteralArgumentSelectsReturnShape(t *testing.T) {
+	picker := CheckAndExport(`
+local M = {}
+
+function M.pick(choice)
+    if not choice or choice == "auto" or choice == "any" then
+        return { mode = "AUTO" }, nil
+    end
+    return nil, "unsupported"
+end
+
+return M
+`, "picker", WithStdlib())
+	if len(picker.Errors) != 0 {
+		t.Fatalf("picker diagnostics = %#v, want clean export", picker.Errors)
+	}
+
+	result := Check(`
+local picker = require("picker")
+local config, err = picker.pick("auto")
+local mode: string = config.mode
+`, WithStdlib(), WithModule("picker", picker))
 	if len(result.Diagnostics) != 0 {
-		t.Fatalf("diagnostics = %#v, want imported literal call arguments to select branch-specific return shape", result.Diagnostics)
+		t.Fatalf("diagnostics = %#v, want imported literal argument to select OR return case", result.Diagnostics)
 	}
 }
 

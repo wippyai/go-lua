@@ -38,16 +38,20 @@ func (l *lowerer) rootLiteralRefinement(target path.Path, lit typ.Type, cond boo
 // drops the matched member; for an open scalar a single literal cannot be
 // subtracted, so the opposite edge keeps the declared type.
 func (l *lowerer) rootScalarLiteralRefinement(target path.Path, kind branchcond.CheckKind, lit typ.Type) (factflow.BranchRefinement, bool) {
-	rootType, ok := l.symbolTypes[target.Symbol]
-	if !ok || lit == nil || !subtype.IsSubtype(lit, rootType) {
+	if target.Symbol == 0 || lit == nil {
 		return factflow.BranchRefinement{}, false
 	}
 	matched := factflow.NewValueConstraint(l.valueFromTypeWithWitness(lit))
 	var unmatched factflow.ValueRefinement
-	hasUnmatched := false
-	if excluded, ok := variant.NarrowByLiteralNot(rootType, lit); ok {
-		unmatched = factflow.NewValueConstraint(l.valueFromTypeWithWitness(excluded))
-		hasUnmatched = true
+	hasUnmatched := true
+	if rootType, ok := l.symbolTypes[target.Symbol]; ok && subtype.IsSubtype(lit, rootType) {
+		if excluded, ok := variant.NarrowByLiteralNot(rootType, lit); ok {
+			unmatched = factflow.NewValueConstraint(l.valueFromTypeWithWitness(excluded))
+		} else {
+			unmatched = factflow.NewNegatedLiteralConstraint(l.valueFromTypeWithWitness(lit))
+		}
+	} else {
+		unmatched = factflow.NewNegatedLiteralConstraint(l.valueFromTypeWithWitness(lit))
 	}
 	if kind == branchcond.CheckLiteralNot {
 		return factflow.NewBranchRefinement(target, unmatched, hasUnmatched, matched, true), true
@@ -68,7 +72,7 @@ func (l *lowerer) literalBranchRefinement(target path.Path, kind branchcond.Chec
 	}
 	anchorType, anchor, rest, ok := narrowAnchor(rootType, target, lit)
 	if !ok {
-		return factflow.BranchRefinement{}, false
+		return l.descendantLiteralRefinement(target, kind, lit)
 	}
 	matched, hasMatched := variant.NarrowByPathLiteral(anchorType, rest, lit)
 	unmatched, hasUnmatched := variant.NarrowByPathLiteralNot(anchorType, rest, lit)

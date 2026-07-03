@@ -4,26 +4,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/judgment"
-	"github.com/wippyai/go-lua/analysis/check/obligation/pass"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
-
-func produceAssignmentJudgmentDiagnostics(result *body.Result, sourceFile string) []diagnostic.Diagnostic {
-	return produceAssignmentJudgmentDiagnosticsWithPolicy(result, sourceFile, judgment.DefaultPolicy(), judgment.StrictnessDefault)
-}
-
-func produceAssignmentJudgmentDiagnosticsWithPolicy(result *body.Result, sourceFile string, policy judgment.Policy, mode judgment.StrictnessMode) []diagnostic.Diagnostic {
-	query := newDiagnosticQuery(result)
-	items := pass.New(pass.Assignments{}).Run(pass.Context{
-		FunctionKey: sourceFile,
-		SourceFile:  sourceFile,
-		Reader:      query.reader,
-	})
-	return renderJudgmentDiagnostics(items, policy, mode)
-}
 
 func renderAssignmentJudgmentWithPolicy(item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
 	if item.Code != judgment.CodeAssignment || item.Subject.Kind != judgment.SubjectPath || len(item.Spans) == 0 {

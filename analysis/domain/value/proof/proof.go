@@ -296,10 +296,25 @@ func (r Reader) IsSubtype(sub, super typ.Type) bool {
 }
 
 func (r Reader) explicitTopProofAdmissible(value product.Value, want typ.Type) bool {
+	if topLikeContract(want) {
+		return true
+	}
 	return r.runtimeValidationAdmissible(value, want) ||
 		r.exactLiteralWitnessAdmissible(value, want) ||
 		r.freshStructuralWitnessAdmissible(value, want) ||
 		r.userScalarAssertionAdmissible(value, want)
+}
+
+func topLikeContract(t typ.Type) bool {
+	t = unwrap.Alias(t)
+	if typ.IsAny(t) || typ.IsUnknown(t) {
+		return true
+	}
+	if inner := unwrap.Optional(t); inner != nil {
+		inner = unwrap.Alias(inner)
+		return typ.IsAny(inner) || typ.IsUnknown(inner)
+	}
+	return false
 }
 
 func (r Reader) freshStructuralWitnessAdmissible(value product.Value, want typ.Type) bool {

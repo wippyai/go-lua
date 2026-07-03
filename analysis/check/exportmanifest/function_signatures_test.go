@@ -451,7 +451,7 @@ func TestFromProgramResultExportsRuntimeTypeGuardNormalReturnTypeRefinement(t *t
 
 func TestFunctionSummaryEffectDoesNotSerializeParamObligationsToManifestEffects(t *testing.T) {
 	reg := standard.Registry()
-	got := functionSummaryEffect(summary.Summary{
+	got := functionSummaryEffect(reg, summary.Summary{
 		ParamObligations: []product.Value{
 			typevalue.FromType(reg, typ.Number),
 		},
@@ -486,7 +486,7 @@ func TestAnalyzedExportEffectRowDropsImportOrStdlibVocabulary(t *testing.T) {
 }
 
 func TestFunctionSummaryEffectExportsExactRootOwnershipBoundaryFacts(t *testing.T) {
-	got := functionSummaryEffect(summary.Summary{
+	got := functionSummaryEffect(standard.Registry(), summary.Summary{
 		NormalReturnFacts: callboundary.NormalReturnFacts{
 			EscapeEvents: []callboundary.EscapeEventFact{
 				{Target: pathdom.NewPlaceholder(0), Kind: callboundary.EscapeEventSend, Recursive: true},
@@ -551,7 +551,7 @@ func TestFunctionSummaryEffectExportsExactRootOwnershipBoundaryFacts(t *testing.
 }
 
 func TestFunctionSummaryEffectExportsExactStoreRelationWithoutDegradedPair(t *testing.T) {
-	got := functionSummaryEffect(summary.Summary{
+	got := functionSummaryEffect(standard.Registry(), summary.Summary{
 		NormalReturnFacts: callboundary.NormalReturnFacts{
 			EscapeEvents: []callboundary.EscapeEventFact{
 				{Target: pathdom.NewPlaceholder(0), Kind: callboundary.EscapeEventStore, Recursive: true},
@@ -1432,6 +1432,142 @@ func assertManifestHasNoImportOrStdlibFunctionEffectLabels(t *testing.T, m *mani
 			assertNoImportOrStdlibEffectLabels(t, sig.Effect)
 		})
 	}
+}
+
+func TestFunctionSummaryEffectExportsParamLiteralReturnCases(t *testing.T) {
+	reg := standard.Registry()
+	returnType := typetable.NewRecord().
+		Field("mode", typ.LiteralString("NONE")).
+		Build()
+	row := functionSummaryEffectForArity(reg, summary.Summary{
+		ReturnParamLiteralCases: []summary.ReturnParamLiteralCase{{
+			ParamIndex:  0,
+			When:        typ.LiteralString("none"),
+			ReturnIndex: 0,
+			Value:       typevalue.WithWitness(reg, typevalue.FromType(reg, returnType), returnType),
+		}},
+	}, 1, 1)
+
+	if len(row.Labels) != 1 {
+		t.Fatalf("labels = %#v, want one conditional return label", row.Labels)
+	}
+	ret, ok := effect.NormalizeLabel(row.Labels[0]).(returns.Return)
+	if !ok || ret.ReturnIndex != 0 {
+		t.Fatalf("label = %#v, want return[0]", row.Labels[0])
+	}
+	conditional, ok := returns.AsConditionalType(ret.Transform)
+	if !ok {
+		t.Fatalf("transform = %#v, want ConditionalType", ret.Transform)
+	}
+	if conditional.Source.Index != 0 ||
+		!typ.TypeEquals(conditional.When, typ.LiteralString("none")) ||
+		!typ.TypeEquals(conditional.Then, returnType) {
+		t.Fatalf("conditional = %#v, want param 0 none -> %s", conditional, returnType)
+	}
+}
+
+func TestFromProgramResultExportsSufficientOrLiteralReturnCases(t *testing.T) {
+	result := checkProgram(t, `
+		local M = {}
+		function M.pick(choice)
+			if not choice or choice == "auto" or choice == "any" then
+				return { mode = "AUTO" }, nil
+			end
+			return nil, "unsupported"
+		end
+		return M
+	`)
+	root := result.RootResult()
+	var raw summary.Summary
+	var hasRaw bool
+	for _, point := range root.Graph().RPO() {
+		fact, ok := root.FunctionDefinition(point)
+		if !ok || fact.Func == nil || fact.Name == nil {
+			continue
+		}
+		member, ok := functionDefinitionExportMember(root, returnedExportSourcePaths(root)[0].path, fact.Name)
+		if !ok || member.Name != "pick" {
+			continue
+		}
+		target := pathdom.Path{}
+		if fact.HasTargetPath {
+			target = fact.TargetPath
+		}
+		raw, hasRaw = functionSummary(result, root, fact.Func, target)
+		break
+	}
+	if !hasRaw {
+		t.Fatalf("missing raw summary for picker.pick")
+	}
+	if got, ok := summaryReturnLiteralCaseValuePresence(raw, 0, typ.LiteralString("auto")); !ok || !presence.Equal(got, presence.Present()) {
+		t.Fatalf("raw auto return case presence = %v, %v; want present", got, ok)
+	}
+
+	m := FromProgramResult("picker", result)
+	sig, ok := m.FunctionSignatures["picker.pick"]
+	if !ok {
+		t.Fatalf("missing picker.pick function signature: %#v", m.FunctionSignatures)
+	}
+	if !hasConditionalReturnCase(sig.Effect, 0, typ.LiteralString("auto")) {
+		t.Fatalf("effect = %v, want auto literal return case", sig.Effect)
+	}
+	if got, ok := conditionalReturnThen(sig.Effect, 0, typ.LiteralString("auto")); !ok || isOptionalType(got) {
+		t.Fatalf("auto return case then = %v, %v; want non-optional record", got, ok)
+	}
+	if !hasConditionalReturnCase(sig.Effect, 0, typ.LiteralString("any")) {
+		t.Fatalf("effect = %v, want any literal return case", sig.Effect)
+	}
+	data, err := manifest.Encode(m)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	decoded, err := manifest.Decode(data)
+	if err != nil {
+		t.Fatalf("Decode: %v\n%s", err, data)
+	}
+	decodedSig, ok := decoded.FunctionSignatures["picker.pick"]
+	if !ok {
+		t.Fatalf("decoded signatures = %#v, want picker.pick", decoded.FunctionSignatures)
+	}
+	if !hasConditionalReturnCase(decodedSig.Effect, 0, typ.LiteralString("auto")) {
+		t.Fatalf("decoded effect = %v, want auto literal return case", decodedSig.Effect)
+	}
+}
+
+func hasConditionalReturnCase(row effect.Row, returnIndex int, when typ.Type) bool {
+	_, ok := conditionalReturnThen(row, returnIndex, when)
+	return ok
+}
+
+func conditionalReturnThen(row effect.Row, returnIndex int, when typ.Type) (typ.Type, bool) {
+	var out typ.Type
+	found := row.Has(func(label effect.Label) bool {
+		ret, ok := effect.NormalizeLabel(label).(returns.Return)
+		if !ok || ret.ReturnIndex != returnIndex {
+			return false
+		}
+		conditional, ok := returns.AsConditionalType(ret.Transform)
+		if !ok || !typ.TypeEquals(conditional.When, when) {
+			return false
+		}
+		out = conditional.Then
+		return true
+	})
+	return out, found
+}
+
+func isOptionalType(t typ.Type) bool {
+	_, ok := unwrap.Alias(t).(*typ.Optional)
+	return ok
+}
+
+func summaryReturnLiteralCaseValuePresence(sum summary.Summary, returnIndex int, when typ.Type) (presence.Value, bool) {
+	for _, c := range sum.ReturnParamLiteralCases {
+		if c.ReturnIndex == returnIndex && typ.TypeEquals(c.When, when) {
+			return product.PresenceOf(c.Value), true
+		}
+	}
+	return presence.Bottom(), false
 }
 
 func assertNoImportOrStdlibEffectLabels(t *testing.T, row effect.Row) {

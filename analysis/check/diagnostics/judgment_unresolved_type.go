@@ -1,22 +1,9 @@
 package diagnostics
 
 import (
-	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/check/judgment"
-	"github.com/wippyai/go-lua/analysis/check/obligation/pass"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 )
-
-func produceUnresolvedTypeJudgmentDiagnosticsWithPolicy(result, parent *body.Result, sourceFile string, policy judgment.Policy, mode judgment.StrictnessMode) []diagnostic.Diagnostic {
-	reader := readmodel.NewWithParent(result, parent)
-	items := pass.New(pass.UnresolvedTypes{}).Run(pass.Context{
-		FunctionKey: sourceFile,
-		SourceFile:  sourceFile,
-		Reader:      reader,
-	})
-	return renderJudgmentDiagnostics(items, policy, mode)
-}
 
 func renderUnresolvedTypeJudgmentWithPolicy(item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
 	if item.Code != judgment.CodeUnresolvedType || item.Subject.Kind != judgment.SubjectPath || len(item.Spans) == 0 {

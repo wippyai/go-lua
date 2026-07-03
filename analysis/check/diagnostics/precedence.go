@@ -152,14 +152,51 @@ func diagnosticPrecedenceMatches(relation diagnosticPrecedenceRelation, cause, d
 	case diagnosticPrecedenceCoveredSpan:
 		return diagnosticSameFileOrUnknown(dependent, cause) && diagnosticSpanCovers(dependent.Span, cause.Span)
 	case diagnosticPrecedenceCauseCoversSpan:
-		return diagnosticSameFileOrUnknown(dependent, cause) && diagnosticSpanCovers(cause.Span, dependent.Span)
+		return diagnosticCauseCoversSpan(cause, dependent)
 	default:
 		return false
 	}
 }
 
+func diagnosticCauseCoversSpan(cause, dependent diagnostic.Diagnostic) bool {
+	dependentFile := dependent.Position.File
+	if diagnosticSpanWithFileCovers(cause.Position.File, cause.Span, dependentFile, dependent.Span) {
+		return true
+	}
+	for _, evidence := range cause.Explanation.Evidence() {
+		file := evidence.File
+		if file == "" {
+			file = cause.Position.File
+		}
+		if diagnosticSpanWithFileCovers(file, evidence.Span, dependentFile, dependent.Span) {
+			return true
+		}
+	}
+	for _, label := range cause.Labels {
+		file := label.File
+		if file == "" {
+			file = cause.Position.File
+		}
+		if diagnosticSpanWithFileCovers(file, label.Span, dependentFile, dependent.Span) {
+			return true
+		}
+	}
+	return false
+}
+
+func diagnosticSpanWithFileCovers(containerFile string, container diagnostic.Span, innerFile string, inner diagnostic.Span) bool {
+	if !diagnosticFileSameOrUnknown(containerFile, innerFile) {
+		return false
+	}
+	return diagnosticSpanCovers(container, inner)
+}
+
 func diagnosticSameFileOrUnknown(a, b diagnostic.Diagnostic) bool {
-	return a.Position.File == "" || b.Position.File == "" || a.Position.File == b.Position.File
+	return diagnosticFileSameOrUnknown(a.Position.File, b.Position.File)
+}
+
+func diagnosticFileSameOrUnknown(a, b string) bool {
+	return a == "" || b == "" || a == b
 }
 
 func diagnosticSpanCovers(container, inner diagnostic.Span) bool {

@@ -231,6 +231,9 @@ func primarySpan(d Diagnostic) Span {
 func remainingLabels(labels []Label, primaryFile string, rendered map[labelRenderKey]struct{}) []Label {
 	out := make([]Label, 0, len(labels))
 	for _, label := range labels {
+		if label.Message == "" {
+			continue
+		}
 		if !label.Span.Valid() && label.File == "" {
 			continue
 		}
@@ -251,7 +254,7 @@ type sourceLineKey struct {
 func labelsBySourceLine(labels []Label, primaryFile string) map[sourceLineKey][]Label {
 	out := make(map[sourceLineKey][]Label)
 	for _, label := range labels {
-		if !label.Span.Valid() {
+		if !label.Span.Valid() || label.Message == "" {
 			continue
 		}
 		file := labelFile(primaryFile, label)

@@ -88,7 +88,7 @@ func TestFactsEdgeTransferContradictoryBranchRefinementKillsEdge(t *testing.T) {
 				},
 				BranchPathEvidence: map[cfg.Point]factflow.BranchPathEvidenceSet{
 					branch: factflow.NewBranchPathEvidenceSet(
-						factflow.NewBranchPathTruthyEvidenceOnEdge(pathdom.NewPath(target, "x"), true),
+						factflow.NewBranchPathTruthyEvidenceWithOppositeOnEdge(pathdom.NewPath(target, "x"), true),
 					),
 				},
 			}),
@@ -100,6 +100,62 @@ func TestFactsEdgeTransferContradictoryBranchRefinementKillsEdge(t *testing.T) {
 		t.Fatalf("then edge state = %#v, want unreachable bottom", got[thenPoint])
 	}
 	assertValue(t, reg, got[elsePoint], key.SymbolValue(target), typevalue.Nil(reg))
+}
+
+func TestFactsEdgeTransferNegatedRootLiteralKillsOnlyContradictoryEdge(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	target := symbol.ID(313)
+	typeValues := typevalue.NewCache()
+	lit := typeValues.FromTypeWithWitness(reg, typ.LiteralString("auto"))
+	initial := state.State{}.WriteValue(reg, key.SymbolValue(target), lit)
+	notAuto := factflow.NewNegatedLiteralConstraint(lit)
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						factflow.NewBranchRefinement(pathdom.NewPath(target, "kind"), factflow.ValueRefinement{}, false, notAuto, true),
+					),
+				},
+			}),
+		}),
+	})
+
+	assertValue(t, reg, got[thenPoint], key.SymbolValue(target), lit)
+	domain := state.Domain(reg)
+	if !domain.Equal(got[elsePoint], domain.Bottom()) {
+		t.Fatalf("else edge state = %#v, want unreachable bottom for proven \"auto\" ~= \"auto\"", got[elsePoint])
+	}
+
+	broad := typeValues.FromTypeWithWitness(reg, typ.String)
+	got = transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: state.State{}.WriteValue(reg, key.SymbolValue(target), broad),
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						factflow.NewBranchRefinement(pathdom.NewPath(target, "kind"), factflow.ValueRefinement{}, false, notAuto, true),
+					),
+				},
+			}),
+		}),
+	})
+	assertValue(t, reg, got[elsePoint], key.SymbolValue(target), broad)
 }
 
 func TestFactsEdgeTransferTruthyGuardOnRequiredFunctionMemberKillsFalseEdge(t *testing.T) {
@@ -136,7 +192,7 @@ func TestFactsEdgeTransferTruthyGuardOnRequiredFunctionMemberKillsFalseEdge(t *t
 			Facts: factflow.NewFacts(factflow.FactsInput{
 				BranchPathEvidence: map[cfg.Point]factflow.BranchPathEvidenceSet{
 					branch: factflow.NewBranchPathEvidenceSet(
-						factflow.NewBranchPathTruthyEvidenceOnEdge(initPath, true),
+						factflow.NewBranchPathTruthyEvidenceWithOppositeOnEdge(initPath, true),
 					),
 				},
 			}),
@@ -321,6 +377,94 @@ func TestFactsEdgeTransferFalsyAbsentKeepsOptionalNonBooleanElseReachable(t *tes
 	if gotPresence := product.PresenceOf(refined); !presence.Equal(gotPresence, presence.Absent()) {
 		t.Fatalf("false-edge presence = %s (%s), want absent", gotPresence, formatValue(reg, refined))
 	}
+}
+
+func TestFactsEdgeTransferFalsyAbsentKillsExactStringEdge(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	target := symbol.ID(317)
+	targetPath := pathdom.NewPath(target, "choice")
+	exact := typevalue.FromType(reg, typ.LiteralString("auto"))
+	absent := product.NewWithPresence(reg, product.ShapeTop, presence.Absent())
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: state.State{}.WriteValue(reg, key.SymbolValue(target), exact),
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						factflow.NewBranchRefinement(
+							targetPath,
+							factflow.NewFalsyAbsentConstraint(absent),
+							true,
+							factflow.NewValueConstraint(product.NewWithPresence(reg, product.ShapeTop, presence.Present())),
+							true,
+						),
+					),
+				},
+			}),
+		}),
+	})
+
+	if !stateIsBottom(reg, got[thenPoint]) {
+		t.Fatalf("true edge state = %v, want unreachable because exact string cannot be falsy", got[thenPoint])
+	}
+	if stateIsBottom(reg, got[elsePoint]) {
+		t.Fatal("false edge unexpectedly bottom")
+	}
+	assertValue(t, reg, got[elsePoint], key.SymbolValue(target), exact)
+}
+
+func TestFactsEdgeTransferOneWayTruthyEvidenceDoesNotKillOppositeEdge(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	target := symbol.ID(318)
+	targetPath := pathdom.NewPath(target, "choice")
+	exact := typevalue.FromType(reg, typ.LiteralString("auto"))
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: state.State{}.WriteValue(reg, key.SymbolValue(target), exact),
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchPathEvidence: map[cfg.Point]factflow.BranchPathEvidenceSet{
+					branch: factflow.NewBranchPathEvidenceSet(
+						factflow.NewBranchPathTruthyEvidenceOnEdge(targetPath, false),
+					),
+				},
+			}),
+		}),
+	})
+
+	if stateIsBottom(reg, got[thenPoint]) {
+		t.Fatal("true edge was killed by one-way truthy evidence from the false edge")
+	}
+	if stateIsBottom(reg, got[elsePoint]) {
+		t.Fatal("false edge unexpectedly bottom")
+	}
+	assertValue(t, reg, got[thenPoint], key.SymbolValue(target), exact)
+	assertValue(t, reg, got[elsePoint], key.SymbolValue(target), exact)
 }
 
 func TestFactsEdgeTransferAppliesMultipleRefinementsOnSameBranchEdge(t *testing.T) {
@@ -1317,7 +1461,7 @@ func TestFactsEdgeTransferDescendantTruthyFalseEdgeNarrowsRootOriginFromFlowType
 		},
 		BranchPathEvidence: map[cfg.Point]factflow.BranchPathEvidenceSet{
 			branch: factflow.NewBranchPathEvidenceSet(
-				factflow.NewBranchPathTruthyEvidenceOnEdge(okPath, true),
+				factflow.NewBranchPathTruthyEvidenceWithOppositeOnEdge(okPath, true),
 			),
 		},
 	})

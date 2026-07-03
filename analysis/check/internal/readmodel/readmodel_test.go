@@ -811,7 +811,6 @@ local source: string = maybe.tags["source"]
 		var pathDebug string
 		var canMiss bool
 		var declaredDebug string
-		reader := New(result)
 		for _, point := range result.Graph().RPO() {
 			fact, ok := result.LocalAssignment(point)
 			if !ok || fact.Name != "source" {
@@ -820,8 +819,8 @@ local source: string = maybe.tags["source"]
 			if p, ok := result.ExpressionPath(fact.Expr); ok {
 				pathDebug = p.String()
 			}
-			canMiss = reader.memberReadCanMiss(point, fact.Expr)
-			if t, ok := reader.declaredExprTypeAt(point, fact.Expr); ok && t != nil {
+			canMiss = result.MemberReadCanMiss(point, fact.Expr)
+			if t, ok := result.DeclaredExpressionTypeAt(point, fact.Expr); ok && t != nil {
 				declaredDebug = t.String()
 			}
 		}
@@ -886,7 +885,6 @@ end
 		var pathDebug string
 		var canMiss bool
 		var declaredDebug string
-		reader := New(result)
 		for _, point := range result.Graph().RPO() {
 			fact, ok := result.LocalAssignment(point)
 			if !ok || fact.Name != "stale_path" {
@@ -895,8 +893,8 @@ end
 			if p, ok := result.ExpressionPath(fact.Expr); ok {
 				pathDebug = p.String()
 			}
-			canMiss = reader.memberReadCanMiss(point, fact.Expr)
-			if t, ok := reader.declaredExprTypeAt(point, fact.Expr); ok && t != nil {
+			canMiss = result.MemberReadCanMiss(point, fact.Expr)
+			if t, ok := result.DeclaredExpressionTypeAt(point, fact.Expr); ok && t != nil {
 				declaredDebug = t.String()
 			}
 		}
@@ -1085,7 +1083,7 @@ end
 	var found bool
 	for _, point := range child.Graph().RPO() {
 		fact, ok := child.OrdinaryAssignment(point)
-		if !ok || assignmentSourceLabel(fact.Target) != "bag[key]" {
+		if !ok || body.AssignmentSourceLabel(fact.Target) != "bag[key]" {
 			continue
 		}
 		found = true
@@ -1867,6 +1865,35 @@ end
 	}
 	if reports[0].Kind != readapi.CallCalleeReportNotCallable || !reports[0].MemberAccess || !typ.IsAny(reports[0].Type) {
 		t.Fatalf("callee report = %#v, want member any callable-proof report", reports[0])
+	}
+}
+
+func TestForEachCallUsesReceiverContractBeforeImpreciseMemberProjection(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type MessageChannel = Channel<string>
+function f(raw: any)
+	local inbox = raw as MessageChannel
+	inbox:case_receive()
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	result := checked.RootResult()
+	if result == nil || len(result.FunctionResults()) != 1 {
+		t.Fatalf("function results = %#v, want one", result)
+	}
+	var reports []CallCalleeReport
+	New(result.FunctionResults()[0]).ForEachCall(func(call CallSite) bool {
+		if call.Callee.Kind != readapi.CallCalleeReportNone {
+			reports = append(reports, call.Callee)
+		}
+		return true
+	})
+	if len(reports) != 0 {
+		t.Fatalf("callee reports = %#v, want none because receiver contract provides case_receive", reports)
 	}
 }
 

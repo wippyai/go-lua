@@ -19,8 +19,7 @@ import (
 // Missing or unknown evidence is treated as admitting false so branch narrowing
 // remains sound.
 func CanBeFalse(reg *axis.Registry, value product.Value) bool {
-	witness := product.Get(reg, value, typewitness.Key)
-	t, ok := witness.Type()
+	t, ok := typevalue.TypeOf(reg, value)
 	if !ok || t == nil {
 		return true
 	}
@@ -126,6 +125,51 @@ func typeAdmitsFalsy(t typ.Type, depth int) bool {
 // LiteralType returns the literal type carried by a product constraint.
 func LiteralType(reg *axis.Registry, constraint product.Value) (typ.Type, bool) {
 	t, ok := typevalue.TypeOf(reg, constraint)
+	if !ok {
+		return nil, false
+	}
+	if _, ok := t.(*typ.Literal); !ok {
+		return nil, false
+	}
+	return t, true
+}
+
+// NegatedLiteralContradictsValue reports whether a value is already proven to
+// be the exact literal excluded by a negated literal constraint. The constraint
+// must carry an explicit literal witness; derived broad type evidence is not
+// enough to make a control-flow edge unreachable.
+func NegatedLiteralContradictsValue(reg *axis.Registry, typeCache *typevalue.Cache, value, constraint product.Value) bool {
+	lit, ok := LiteralWitnessType(reg, constraint)
+	if !ok || lit == nil {
+		return false
+	}
+	var valueType typ.Type
+	if typeCache != nil {
+		valueType, _ = typeCache.TypeOf(reg, value)
+	}
+	if valueType == nil {
+		valueType, _ = typevalue.TypeOf(reg, value)
+	}
+	if valueType == nil {
+		return false
+	}
+	if typeCache != nil {
+		return typeCache.IsSubtype(valueType, lit)
+	}
+	return subtype.IsSubtype(valueType, lit)
+}
+
+// LiteralWitnessType returns the literal type carried by a value's explicit
+// type witness. It is stricter than LiteralType, which may derive a literal
+// from other axes.
+func LiteralWitnessType(reg *axis.Registry, value product.Value) (typ.Type, bool) {
+	if reg == nil {
+		return nil, false
+	}
+	if _, ok := reg.LookupErased(typewitness.Key.ID()); !ok {
+		return nil, false
+	}
+	t, ok := typevalue.WitnessOf(reg, value)
 	if !ok {
 		return nil, false
 	}

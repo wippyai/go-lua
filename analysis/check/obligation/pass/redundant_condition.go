@@ -5,7 +5,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/check/readmodel"
-	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -56,7 +55,7 @@ func redundantConditionProofFromDominatingTruthy(reader readmodel.Reader, branch
 	}
 	proofSpan := proof.Span
 	switch check.Kind {
-	case branchcond.CheckTruthy:
+	case readmodel.BranchCheckTruthy:
 		return redundantConditionProof{
 			always:    true,
 			check:     truthyConditionCheck(check.Path.String()),
@@ -64,21 +63,21 @@ func redundantConditionProofFromDominatingTruthy(reader readmodel.Reader, branch
 			stable:    conditionStabilityEvidence(check.Path.String()),
 			proofSpan: proofSpan,
 		}, true
-	case branchcond.CheckFalsy:
+	case readmodel.BranchCheckFalsy:
 		return redundantConditionProof{
 			check:     falsyConditionCheck(check.Path.String()),
 			proven:    conditionPathProofEvidence(check.Path.String(), "truthy"),
 			stable:    conditionStabilityEvidence(check.Path.String()),
 			proofSpan: proofSpan,
 		}, true
-	case branchcond.CheckNil:
+	case readmodel.BranchCheckNil:
 		return redundantConditionProof{
 			check:     nilConditionCheck(check.Path.String()),
 			proven:    conditionPathProofEvidence(check.Path.String(), "not nil"),
 			stable:    conditionStabilityEvidence(check.Path.String()),
 			proofSpan: proofSpan,
 		}, true
-	case branchcond.CheckNotNil:
+	case readmodel.BranchCheckNotNil:
 		return redundantConditionProof{
 			always:    true,
 			check:     nonNilConditionCheck(check.Path.String()),
@@ -86,11 +85,11 @@ func redundantConditionProofFromDominatingTruthy(reader readmodel.Reader, branch
 			stable:    conditionStabilityEvidence(check.Path.String()),
 			proofSpan: proofSpan,
 		}, true
-	case branchcond.CheckTypeEqual:
+	case readmodel.BranchCheckTypeEqual:
 		if check.TypeName == "nil" {
 			return runtimeTypeConditionProof(check, false, "not nil", false, proofSpan), true
 		}
-	case branchcond.CheckTypeNot:
+	case readmodel.BranchCheckTypeNot:
 		if check.TypeName == "nil" {
 			return runtimeTypeConditionProof(check, true, "not nil", true, proofSpan), true
 		}
@@ -103,7 +102,7 @@ func redundantConditionProofFromDominatingDirectCheck(reader readmodel.Reader, b
 	if check.Path.IsEmpty() {
 		return redundantConditionProof{}, false
 	}
-	proof, ok := reader.DominatingBranchCheckForPath(branch.Point, check, func(prior branchcond.Check, edge bool) bool {
+	proof, ok := reader.DominatingBranchCheckForPath(branch.Point, check, func(prior readmodel.BranchCheck, edge bool) bool {
 		return directBranchCheckDetermines(prior, edge, check)
 	})
 	if !ok {
@@ -116,37 +115,37 @@ func redundantConditionProofFromDominatingDirectCheck(reader readmodel.Reader, b
 	return out, true
 }
 
-func directBranchCheckDetermines(prior branchcond.Check, cond bool, current branchcond.Check) bool {
+func directBranchCheckDetermines(prior readmodel.BranchCheck, cond bool, current readmodel.BranchCheck) bool {
 	_, ok := directBranchConditionProof(prior, cond, current, readmodel.SourceSpan{})
 	return ok
 }
 
-func directBranchConditionProof(prior branchcond.Check, cond bool, current branchcond.Check, proofSpan readmodel.SourceSpan) (redundantConditionProof, bool) {
+func directBranchConditionProof(prior readmodel.BranchCheck, cond bool, current readmodel.BranchCheck, proofSpan readmodel.SourceSpan) (redundantConditionProof, bool) {
 	switch current.Kind {
-	case branchcond.CheckTruthy, branchcond.CheckFalsy:
+	case readmodel.BranchCheckTruthy, readmodel.BranchCheckFalsy:
 		return directTruthyConditionProof(prior, cond, current, proofSpan)
-	case branchcond.CheckLiteralEqual, branchcond.CheckLiteralNot:
+	case readmodel.BranchCheckLiteralEqual, readmodel.BranchCheckLiteralNot:
 		return directLiteralConditionProof(prior, cond, current, proofSpan)
-	case branchcond.CheckTypeEqual, branchcond.CheckTypeNot:
+	case readmodel.BranchCheckTypeEqual, readmodel.BranchCheckTypeNot:
 		if current.TypeName == "nil" {
 			if proof, ok := directNilConditionProof(prior, cond, current, proofSpan); ok {
 				return proof, true
 			}
 		}
 		return directTypeConditionProof(prior, cond, current, proofSpan)
-	case branchcond.CheckNil, branchcond.CheckNotNil:
+	case readmodel.BranchCheckNil, readmodel.BranchCheckNotNil:
 		return directNilConditionProof(prior, cond, current, proofSpan)
 	default:
 		return redundantConditionProof{}, false
 	}
 }
 
-func directTruthyConditionProof(prior branchcond.Check, cond bool, current branchcond.Check, proofSpan readmodel.SourceSpan) (redundantConditionProof, bool) {
+func directTruthyConditionProof(prior readmodel.BranchCheck, cond bool, current readmodel.BranchCheck, proofSpan readmodel.SourceSpan) (redundantConditionProof, bool) {
 	provenTruthy, proven, ok := truthinessProofFromBranch(prior, cond)
 	if !ok {
 		return redundantConditionProof{}, false
 	}
-	wantsTruthy := current.Kind == branchcond.CheckTruthy
+	wantsTruthy := current.Kind == readmodel.BranchCheckTruthy
 	check := truthyConditionCheck(current.Path.String())
 	if !wantsTruthy {
 		check = falsyConditionCheck(current.Path.String())
@@ -160,27 +159,27 @@ func directTruthyConditionProof(prior branchcond.Check, cond bool, current branc
 	}, true
 }
 
-func truthinessProofFromBranch(check branchcond.Check, cond bool) (bool, string, bool) {
+func truthinessProofFromBranch(check readmodel.BranchCheck, cond bool) (bool, string, bool) {
 	switch check.Kind {
-	case branchcond.CheckTruthy:
+	case readmodel.BranchCheckTruthy:
 		if cond {
 			return true, "truthy", true
 		}
 		return false, "falsy", true
-	case branchcond.CheckFalsy:
+	case readmodel.BranchCheckFalsy:
 		if cond {
 			return false, "falsy", true
 		}
 		return true, "truthy", true
-	case branchcond.CheckTypeEqual, branchcond.CheckTypeNot:
-		positive := (check.Kind == branchcond.CheckTypeEqual) == cond
+	case readmodel.BranchCheckTypeEqual, readmodel.BranchCheckTypeNot:
+		positive := (check.Kind == readmodel.BranchCheckTypeEqual) == cond
 		return runtimeTypeTruthinessProof(check.TypeName, positive)
-	case branchcond.CheckLiteralEqual, branchcond.CheckLiteralNot:
+	case readmodel.BranchCheckLiteralEqual, readmodel.BranchCheckLiteralNot:
 		lit, ok := check.LiteralValue()
 		if !ok {
 			return false, "", false
 		}
-		positive := (check.Kind == branchcond.CheckLiteralEqual) == cond
+		positive := (check.Kind == readmodel.BranchCheckLiteralEqual) == cond
 		return literalTruthinessProof(lit, positive)
 	}
 	return false, "", false
@@ -210,7 +209,7 @@ func literalTruthinessProof(lit typ.Type, positive bool) (bool, string, bool) {
 	return true, "truthy", true
 }
 
-func directLiteralConditionProof(prior branchcond.Check, cond bool, current branchcond.Check, proofSpan readmodel.SourceSpan) (redundantConditionProof, bool) {
+func directLiteralConditionProof(prior readmodel.BranchCheck, cond bool, current readmodel.BranchCheck, proofSpan readmodel.SourceSpan) (redundantConditionProof, bool) {
 	lit, ok := current.LiteralValue()
 	if !ok {
 		return redundantConditionProof{}, false
@@ -227,7 +226,7 @@ func directLiteralConditionProof(prior branchcond.Check, cond bool, current bran
 	if positive && !match {
 		equalHolds = false
 	}
-	negated := current.Kind == branchcond.CheckLiteralNot
+	negated := current.Kind == readmodel.BranchCheckLiteralNot
 	operator := "equals"
 	if negated {
 		operator = "does not equal"
@@ -245,22 +244,22 @@ func directLiteralConditionProof(prior branchcond.Check, cond bool, current bran
 	}, true
 }
 
-func literalProofFromBranch(check branchcond.Check, cond bool) (typ.Type, bool, bool) {
+func literalProofFromBranch(check readmodel.BranchCheck, cond bool) (typ.Type, bool, bool) {
 	lit, ok := check.LiteralValue()
 	if !ok {
 		return nil, false, false
 	}
 	switch check.Kind {
-	case branchcond.CheckLiteralEqual:
+	case readmodel.BranchCheckLiteralEqual:
 		return lit, cond, true
-	case branchcond.CheckLiteralNot:
+	case readmodel.BranchCheckLiteralNot:
 		return lit, !cond, true
 	default:
 		return nil, false, false
 	}
 }
 
-func directTypeConditionProof(prior branchcond.Check, cond bool, current branchcond.Check, proofSpan readmodel.SourceSpan) (redundantConditionProof, bool) {
+func directTypeConditionProof(prior readmodel.BranchCheck, cond bool, current readmodel.BranchCheck, proofSpan readmodel.SourceSpan) (redundantConditionProof, bool) {
 	name, positive, ok := typeProofFromBranch(prior, cond)
 	if !ok {
 		return redundantConditionProof{}, false
@@ -272,7 +271,7 @@ func directTypeConditionProof(prior branchcond.Check, cond bool, current branchc
 	if positive && name != current.TypeName {
 		typeEqualHolds = false
 	}
-	negated := current.Kind == branchcond.CheckTypeNot
+	negated := current.Kind == readmodel.BranchCheckTypeNot
 	proven := conditionTypeProofEvidence(current.Path.String(), name)
 	if !positive {
 		proven = conditionPathProofEvidence(current.Path.String(), "not "+name)
@@ -286,37 +285,37 @@ func directTypeConditionProof(prior branchcond.Check, cond bool, current branchc
 	}, true
 }
 
-func typeProofFromBranch(check branchcond.Check, cond bool) (string, bool, bool) {
+func typeProofFromBranch(check readmodel.BranchCheck, cond bool) (string, bool, bool) {
 	if check.TypeName == "" {
 		return "", false, false
 	}
 	switch check.Kind {
-	case branchcond.CheckTypeEqual:
+	case readmodel.BranchCheckTypeEqual:
 		return check.TypeName, cond, true
-	case branchcond.CheckTypeNot:
+	case readmodel.BranchCheckTypeNot:
 		return check.TypeName, !cond, true
 	default:
 		return "", false, false
 	}
 }
 
-func directNilConditionProof(prior branchcond.Check, cond bool, current branchcond.Check, proofSpan readmodel.SourceSpan) (redundantConditionProof, bool) {
+func directNilConditionProof(prior readmodel.BranchCheck, cond bool, current readmodel.BranchCheck, proofSpan readmodel.SourceSpan) (redundantConditionProof, bool) {
 	provenNil, ok := nilProofFromBranch(prior, cond)
 	if !ok {
 		return redundantConditionProof{}, false
 	}
 	var wantsNil bool
 	switch current.Kind {
-	case branchcond.CheckNil:
+	case readmodel.BranchCheckNil:
 		wantsNil = true
-	case branchcond.CheckNotNil:
+	case readmodel.BranchCheckNotNil:
 		wantsNil = false
-	case branchcond.CheckTypeEqual:
+	case readmodel.BranchCheckTypeEqual:
 		if current.TypeName != "nil" {
 			return redundantConditionProof{}, false
 		}
 		wantsNil = true
-	case branchcond.CheckTypeNot:
+	case readmodel.BranchCheckTypeNot:
 		if current.TypeName != "nil" {
 			return redundantConditionProof{}, false
 		}
@@ -329,7 +328,7 @@ func directNilConditionProof(prior branchcond.Check, cond bool, current branchco
 		proven = "nil"
 	}
 	always := provenNil == wantsNil
-	if current.Kind == branchcond.CheckNil {
+	if current.Kind == readmodel.BranchCheckNil {
 		return redundantConditionProof{
 			always:    always,
 			check:     nilConditionCheck(current.Path.String()),
@@ -338,7 +337,7 @@ func directNilConditionProof(prior branchcond.Check, cond bool, current branchco
 			proofSpan: proofSpan,
 		}, true
 	}
-	if current.Kind == branchcond.CheckNotNil {
+	if current.Kind == readmodel.BranchCheckNotNil {
 		return redundantConditionProof{
 			always:    always,
 			check:     nonNilConditionCheck(current.Path.String()),
@@ -347,21 +346,21 @@ func directNilConditionProof(prior branchcond.Check, cond bool, current branchco
 			proofSpan: proofSpan,
 		}, true
 	}
-	negated := current.Kind == branchcond.CheckTypeNot
+	negated := current.Kind == readmodel.BranchCheckTypeNot
 	return runtimeTypeConditionProof(current, negated, proven, always, proofSpan), true
 }
 
-func nilProofFromBranch(check branchcond.Check, cond bool) (bool, bool) {
+func nilProofFromBranch(check readmodel.BranchCheck, cond bool) (bool, bool) {
 	switch check.Kind {
-	case branchcond.CheckNil:
+	case readmodel.BranchCheckNil:
 		return cond, true
-	case branchcond.CheckNotNil:
+	case readmodel.BranchCheckNotNil:
 		return !cond, true
-	case branchcond.CheckTypeEqual:
+	case readmodel.BranchCheckTypeEqual:
 		if check.TypeName == "nil" {
 			return cond, true
 		}
-	case branchcond.CheckTypeNot:
+	case readmodel.BranchCheckTypeNot:
 		if check.TypeName == "nil" {
 			return !cond, true
 		}
@@ -369,7 +368,7 @@ func nilProofFromBranch(check branchcond.Check, cond bool) (bool, bool) {
 	return false, false
 }
 
-func runtimeTypeConditionProof(check branchcond.Check, negated bool, proven string, always bool, proofSpan readmodel.SourceSpan) redundantConditionProof {
+func runtimeTypeConditionProof(check readmodel.BranchCheck, negated bool, proven string, always bool, proofSpan readmodel.SourceSpan) redundantConditionProof {
 	return redundantConditionProof{
 		always:    always,
 		check:     fmt.Sprintf("type(%s) %s %q", check.Path.String(), typeCheckOperator(negated), check.TypeName),

@@ -13,8 +13,8 @@ type diagnosticQuery struct {
 	reader readmodel.Reader
 }
 
-func newDiagnosticQuery(result *body.Result) diagnosticQuery {
+func newDiagnosticQuery(result *body.Result, parents ...*body.Result) diagnosticQuery {
 	return diagnosticQuery{
-		reader: readmodel.New(result),
+		reader: readmodel.NewWithParents(result, parents...),
 	}
 }

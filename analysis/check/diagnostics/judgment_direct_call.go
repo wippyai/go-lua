@@ -5,45 +5,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/judgment"
-	"github.com/wippyai/go-lua/analysis/check/obligation/pass"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
-
-func produceDirectCallArgumentJudgmentDiagnostics(result *body.Result, sourceFile string) []diagnostic.Diagnostic {
-	return produceDirectCallArgumentJudgmentDiagnosticsWithPolicy(result, sourceFile, judgment.DefaultPolicy(), judgment.StrictnessDefault)
-}
-
-func produceDirectCallArgumentJudgmentDiagnosticsWithPolicy(result *body.Result, sourceFile string, policy judgment.Policy, mode judgment.StrictnessMode) []diagnostic.Diagnostic {
-	query := newDiagnosticQuery(result)
-	items := pass.New(pass.CallArguments{}).Run(pass.Context{
-		FunctionKey:                   sourceFile,
-		SourceFile:                    sourceFile,
-		Reader:                        query.reader,
-		SuppressCallerOwnedParameters: result.IsCallContextResult(),
-		PointReachable:                result.PointNormallyReachable,
-	})
-	return renderJudgmentDiagnostics(items, policy, mode)
-}
-
-func produceDirectCallContractJudgmentDiagnosticsWithPolicy(result *body.Result, sourceFile string, policy judgment.Policy, mode judgment.StrictnessMode) []diagnostic.Diagnostic {
-	query := newDiagnosticQuery(result)
-	ctx := pass.Context{
-		FunctionKey:                   sourceFile,
-		SourceFile:                    sourceFile,
-		Reader:                        query.reader,
-		SuppressCallerOwnedParameters: result.IsCallContextResult(),
-		PointReachable:                result.PointNormallyReachable,
-	}
-	items := firstDirectCallContractJudgmentPerCall(
-		pass.New(pass.CallCallee{}).Run(ctx),
-		pass.New(pass.CallArity{}).Run(ctx),
-		pass.New(pass.CallArguments{}).Run(ctx),
-	)
-	return renderJudgmentDiagnostics(items, policy, mode)
-}
 
 func firstDirectCallContractJudgmentPerCall(groups ...[]judgment.Judgment) []judgment.Judgment {
 	var out []judgment.Judgment

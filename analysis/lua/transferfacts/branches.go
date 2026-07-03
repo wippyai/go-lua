@@ -33,15 +33,9 @@ func (l *lowerer) branchRefinement(fact semantics.BranchConditionFact) (factflow
 			l.falsyAbsentRefinement(), true,
 		), true
 	case branchcond.CheckFalsy:
-		trueValue := factflow.ValueRefinement{}
-		hasTrue := false
-		if len(target.Segments) != 0 {
-			trueValue = l.boolLiteralRefinement(false)
-			hasTrue = true
-		}
 		return factflow.NewBranchRefinement(
 			target,
-			trueValue, hasTrue,
+			l.falsyAbsentRefinement(), true,
 			l.typedPresenceRefinement(target, presence.Present()), true,
 		), true
 	case branchcond.CheckLiteralEqual, branchcond.CheckLiteralNot:

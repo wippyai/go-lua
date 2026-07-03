@@ -236,6 +236,7 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 			if proof.Kind() == factflow.BranchPathEvidenceTruthy &&
 				proof.ActiveOnEdge(!ctx.Edge.Cond) &&
 				!proof.ActiveOnEdge(ctx.Edge.Cond) &&
+				proof.OppositeEdgeImpliesFalsy() &&
 				branchFalsyEvidenceContradictsCurrentValue(config.TypeValues, ctx.Registry, config.Visibility, config.ProjectPath, ctx.Edge.From, out, proof.PathRef()) {
 				unreachable = true
 				return false
@@ -293,7 +294,10 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 			}
 		}
 		config.Facts.ForEachBranchPathEvidence(ctx.Edge.From, func(proof factflow.BranchPathEvidence) bool {
-			if proof.Kind() == factflow.BranchPathEvidenceTruthy && proof.ActiveOnEdge(!ctx.Edge.Cond) && !proof.ActiveOnEdge(ctx.Edge.Cond) {
+			if proof.Kind() == factflow.BranchPathEvidenceTruthy &&
+				proof.ActiveOnEdge(!ctx.Edge.Cond) &&
+				!proof.ActiveOnEdge(ctx.Edge.Cond) &&
+				proof.OppositeEdgeImpliesFalsy() {
 				out = applyDescendantTruthyOppositeRootOriginRefinement(
 					config.TypeValues,
 					ctx.Registry,
@@ -335,6 +339,9 @@ func branchConditionEdgeUnreachable(
 	}
 	value, ok := sources.ValueOfSource(ctx.Edge.From, source, in, ctx.Read)
 	if !ok {
+		return false
+	}
+	if product.Equal(ctx.Registry, value, product.Bottom(ctx.Registry)) {
 		return false
 	}
 	if ctx.Edge.Cond {

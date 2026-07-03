@@ -560,11 +560,14 @@ f("ok")
 `), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
 		CodeRedundantCondition: diagnostic.Enable(),
 	}}})
-	if len(diags) != 1 {
-		t.Fatalf("diagnostics = %#v, want only the explicitly enabled impossible-branch diagnostic", diags)
+	if len(diags) != 2 {
+		t.Fatalf("diagnostics = %#v, want impossible-branch warning and later not-callable error", diags)
 	}
 	if d := diags[0]; d.Code != CodeRedundantCondition || !strings.Contains(d.Message, "always false") {
 		t.Fatalf("first diagnostic = %#v, want redundant-condition warning", d)
+	}
+	if d := diags[1]; d.Code != CodeDirectCallNotCallable || !strings.Contains(d.Message, "f is number, not callable") {
+		t.Fatalf("second diagnostic = %#v, want not-callable error for later call", d)
 	}
 }
 

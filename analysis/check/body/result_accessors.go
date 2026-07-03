@@ -426,6 +426,13 @@ func (r *Result) ExpressionImpliedChecksOnEdge(expr ast.Expr, cond bool) []branc
 	return branchcond.ImpliedChecksOnEdge(expr, r.bindings, cond)
 }
 
+func (r *Result) BranchConditionSufficientChecksOnEdge(fact semantics.BranchConditionFact, cond bool) []branchcond.ImpliedCheck {
+	if r == nil || r.bindings == nil || fact.Condition == nil {
+		return nil
+	}
+	return branchcond.SufficientChecksOnEdge(fact.Condition, r.bindings, cond)
+}
+
 func (r *Result) TypeDefinition(point cfg.Point) (cfgfacts.TypeDefinitionFact, bool) {
 	if r == nil || r.semantics == nil {
 		return cfgfacts.TypeDefinitionFact{}, false

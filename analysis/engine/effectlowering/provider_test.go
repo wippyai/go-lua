@@ -41,7 +41,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -49,6 +48,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/projection"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typecall"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -3747,6 +3747,52 @@ func TestSignatureOutcomeProviderConditionalTypeUsesSpecializedReturnWhenProject
 	}
 	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.String))
 	assertTypeWitness(t, reg, got[0].Value, typ.String)
+}
+
+func TestSignatureOutcomeProviderConditionalTypeTriesLaterMatchingCase(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(2102)
+	choiceRef := factflow.ExprRef(2102)
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"select_mode": {
+				Type: typ.Func().
+					Param("choice", typ.String).
+					Returns(typeexpr.Union(typ.String, typ.Number, typ.Boolean)).
+					Build(),
+				Effect: effect.Empty.
+					With(returns.Return{ReturnIndex: 0, Transform: returns.ConditionalType{
+						Source: effect.ParamRef{Index: 0},
+						When:   typ.LiteralString("auto"),
+						Then:   typ.String,
+					}}).
+					With(returns.Return{ReturnIndex: 0, Transform: returns.ConditionalType{
+						Source: effect.ParamRef{Index: 0},
+						When:   typ.LiteralString("none"),
+						Then:   typ.Boolean,
+					}}),
+			},
+		},
+		NameFor:       staticName("select_mode"),
+		ReturnTypeOps: testReturnTypeOps(),
+		Facts: signatureOutcomeProviderFacts(point, []factflow.ValueSource{
+			{Kind: factflow.ValueSourceExpression, ExprRef: choiceRef, HasExpr: true},
+		}),
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+			Registry: reg,
+			ExpressionValues: map[factflow.ExprRef]product.Value{
+				choiceRef: typevalue.WithWitness(reg, typevalue.FromType(reg, typ.LiteralString("none")), typ.LiteralString("none")),
+			},
+		}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
+
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got), got)
+	}
+	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.Boolean))
+	assertTypeWitness(t, reg, got[0].Value, typ.Boolean)
 }
 
 func TestSignatureOutcomeProviderConditionalTypeUsesDeclaredReturnWhenCaseIsNotProven(t *testing.T) {

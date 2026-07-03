@@ -27,23 +27,33 @@ func (l *lowerer) branchPathEvidence(fact semantics.BranchConditionFact) []factf
 }
 
 func (l *lowerer) branchPathEvidenceForCheck(check branchcond.Check) []factflow.BranchPathEvidence {
-	out := l.branchPathEvidenceForCheckOnEdge(check, true)
-	out = append(out, l.branchPathEvidenceForCheckOnEdge(check, false)...)
+	out := l.branchPathEvidenceForDirectCheckOnEdge(check, true)
+	out = append(out, l.branchPathEvidenceForDirectCheckOnEdge(check, false)...)
 	return out
 }
 
+func (l *lowerer) branchPathEvidenceForDirectCheckOnEdge(check branchcond.Check, cond bool) []factflow.BranchPathEvidence {
+	return l.branchPathEvidenceForCheckPolarityOnEdge(check, cond, cond, true)
+}
+
 func (l *lowerer) branchPathEvidenceForCheckOnEdge(check branchcond.Check, cond bool) []factflow.BranchPathEvidence {
-	return l.branchPathEvidenceForCheckPolarityOnEdge(check, cond, cond)
+	return l.branchPathEvidenceForCheckPolarityOnEdge(check, cond, cond, false)
 }
 
 func (l *lowerer) branchPathEvidenceForImplication(implied branchcond.ImpliedCheck) []factflow.BranchPathEvidence {
-	return l.branchPathEvidenceForCheckPolarityOnEdge(implied.Check, implied.Polarity, implied.Edge)
+	return l.branchPathEvidenceForCheckPolarityOnEdge(implied.Check, implied.Polarity, implied.Edge, false)
 }
 
-func (l *lowerer) branchPathEvidenceForCheckPolarityOnEdge(check branchcond.Check, polarity bool, edge bool) []factflow.BranchPathEvidence {
+func (l *lowerer) branchPathEvidenceForCheckPolarityOnEdge(check branchcond.Check, polarity bool, edge bool, inverseOpposite bool) []factflow.BranchPathEvidence {
 	target := check.Path
 	if target.IsEmpty() {
 		return nil
+	}
+	truthyEvidence := func() factflow.BranchPathEvidence {
+		if inverseOpposite {
+			return factflow.NewBranchPathTruthyEvidenceWithOppositeOnEdge(target, edge)
+		}
+		return factflow.NewBranchPathTruthyEvidenceOnEdge(target, edge)
 	}
 	switch check.Kind {
 	case branchcond.CheckNil:
@@ -60,14 +70,14 @@ func (l *lowerer) branchPathEvidenceForCheckPolarityOnEdge(check branchcond.Chec
 		if polarity {
 			return []factflow.BranchPathEvidence{
 				factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Present(), edge),
-				factflow.NewBranchPathTruthyEvidenceOnEdge(target, edge),
+				truthyEvidence(),
 			}
 		}
 	case branchcond.CheckFalsy:
 		if !polarity {
 			return []factflow.BranchPathEvidence{
 				factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Present(), edge),
-				factflow.NewBranchPathTruthyEvidenceOnEdge(target, edge),
+				truthyEvidence(),
 			}
 		}
 	case branchcond.CheckTypeEqual:

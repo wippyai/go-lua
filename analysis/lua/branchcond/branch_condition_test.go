@@ -438,6 +438,39 @@ func TestFalsyChecksExtractSupportedDisjuncts(t *testing.T) {
 	assertLiteralCheck(t, got[2], CheckLiteralEqual, fieldPath, "")
 }
 
+func TestSufficientChecksOnEdgeExtractsTruthyDisjunctCases(t *testing.T) {
+	choice := ident("choice")
+	choiceAuto := ident("choice")
+	choiceAny := ident("choice")
+	expr := &ast.LogicalOpExpr{
+		Operator: "or",
+		Lhs:      &ast.UnaryNotOpExpr{Expr: choice},
+		Rhs: &ast.LogicalOpExpr{
+			Operator: "or",
+			Lhs:      &ast.RelationalOpExpr{Operator: "==", Lhs: choiceAuto, Rhs: stringLit("auto")},
+			Rhs:      &ast.RelationalOpExpr{Operator: "==", Lhs: choiceAny, Rhs: stringLit("any")},
+		},
+	}
+	bindings := bindReturn(expr)
+	choicePath := path.NewPath(mustIdentSymbol(t, bindings, choice), "choice")
+
+	got := SufficientChecksOnEdge(expr, bindings, true)
+
+	if len(got) != 3 {
+		t.Fatalf("SufficientChecksOnEdge returned %d checks, want falsy + two literal cases: %#v", len(got), got)
+	}
+	if !got[0].Polarity || !got[0].Edge || got[0].Check.Kind != CheckFalsy || !got[0].Check.Path.Equal(choicePath) {
+		t.Fatalf("first sufficient case = %#v, want truthy outer edge from not choice", got[0])
+	}
+	assertLiteralCheck(t, got[1].Check, CheckLiteralEqual, choicePath, "auto")
+	assertLiteralCheck(t, got[2].Check, CheckLiteralEqual, choicePath, "any")
+	for i, sufficient := range got {
+		if !sufficient.Edge || !sufficient.Polarity {
+			t.Fatalf("case %d = %#v, want true outer edge and true leaf polarity", i, sufficient)
+		}
+	}
+}
+
 func TestNormalizeLiteralComparisons(t *testing.T) {
 	tests := []struct {
 		name     string

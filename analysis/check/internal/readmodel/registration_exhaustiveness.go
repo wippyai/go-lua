@@ -2,20 +2,12 @@ package readmodel
 
 import (
 	"sort"
-	"strings"
 
+	"github.com/wippyai/go-lua/analysis/check/body"
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
 	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
-	typeformat "github.com/wippyai/go-lua/analysis/type/format"
-	"github.com/wippyai/go-lua/analysis/type/subst"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/unwrap"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 type RegistrationExhaustiveness = readapi.RegistrationExhaustiveness
@@ -115,11 +107,16 @@ func (r Reader) registrationCalls() ([]registrationReadCall, []openRegistrationM
 		if !ok {
 			continue
 		}
-		if reg, ok := r.registrationCall(site, call, point); ok {
-			registrations = append(registrations, reg)
-			continue
+		shape, hasShape := r.result.RegistryKeyCallShape(point, site, call)
+		if hasShape {
+			if reg, ok := r.registrationCall(shape, point); ok {
+				registrations = append(registrations, reg)
+				continue
+			}
 		}
-		if mutation, ok := r.openRegistrationMutation(site, point, call); ok {
+		args := r.result.CallArgumentInfos(point, call)
+		receiver, hasReceiver := body.CallSiteMemberReceiverPath(site)
+		if mutation, ok := r.openRegistrationMutation(point, shape, hasShape, receiver, hasReceiver, args); ok {
 			mutation.point = point
 			open = append(open, mutation)
 		}
@@ -127,35 +124,35 @@ func (r Reader) registrationCalls() ([]registrationReadCall, []openRegistrationM
 	return registrations, open
 }
 
-func (r Reader) registrationAssignment(fact semantics.OrdinaryAssignmentFact, point cfg.Point) (registrationReadCall, bool) {
-	registry, key, ok := r.registrationAssignmentTarget(point, fact)
-	if !ok || !r.registrationCallbackExpr(point, fact.Value) {
+func (r Reader) registrationAssignment(fact body.OrdinaryAssignmentFact, point cfg.Point) (registrationReadCall, bool) {
+	target, ok := r.result.StaticStringAssignmentTarget(point, fact)
+	if !ok || !r.result.AssignmentValueProvenFunctionAtBoundary(point, fact) {
 		return registrationReadCall{}, false
 	}
 	return registrationReadCall{
 		point:    point,
-		registry: registry,
-		key:      key,
-		span:     sourceSpanFromAST(ast.SpanOf(fact.Target)),
+		registry: target.Container,
+		key:      target.Key,
+		span:     sourceSpanFromBody(target.Span),
 	}, true
 }
 
-func (r Reader) openRegistrationAssignment(point cfg.Point, fact semantics.OrdinaryAssignmentFact) (openRegistrationMutation, bool) {
-	if registry, key, ok := r.registrationAssignmentTarget(point, fact); ok {
+func (r Reader) openRegistrationAssignment(point cfg.Point, fact body.OrdinaryAssignmentFact) (openRegistrationMutation, bool) {
+	if target, ok := r.result.StaticStringAssignmentTarget(point, fact); ok {
 		return openRegistrationMutation{
-			path:           registry,
-			registry:       registry,
-			key:            key,
+			path:           target.Container,
+			registry:       target.Container,
+			key:            target.Key,
 			hasKey:         true,
 			aliasSensitive: true,
-			mayRegister:    r.registrationValueMayRegister(point, fact.Value),
+			mayRegister:    r.result.AssignmentValueMayBeFunctionBeforeBoundary(point, fact),
 		}, true
 	}
 	if fact.HasPath && fact.Path.Symbol != 0 {
 		mutation := openRegistrationMutation{
 			path:           fact.Path,
 			aliasSensitive: true,
-			mayRegister:    r.registrationValueMayRegister(point, fact.Value),
+			mayRegister:    r.result.AssignmentValueMayBeFunctionBeforeBoundary(point, fact),
 		}
 		if key, ok := fact.Path.DirectFieldName(); ok {
 			mutation.registry = path.Path{Root: fact.Path.Root, Symbol: fact.Path.Symbol, Version: fact.Path.Version}
@@ -183,90 +180,47 @@ func (r Reader) openRegistrationAssignment(point cfg.Point, fact semantics.Ordin
 	return openRegistrationMutation{}, false
 }
 
-func (r Reader) registrationAssignmentTarget(point cfg.Point, fact semantics.OrdinaryAssignmentFact) (path.Path, string, bool) {
-	if fact.HasPath && fact.Path.Symbol != 0 {
-		if seg, ok := fact.Path.LastSegment(); ok {
-			if key, keyOK := registrationSegmentStringKey(seg); keyOK {
-				return fact.Path.Parent(), key, true
-			}
-		}
-	}
-	attr, ok := fact.Target.(*ast.AttrGetExpr)
-	if !ok || attr.KeySyntax != ast.AttrKeyIndex {
-		return path.Path{}, "", false
-	}
-	registry, ok := r.result.ExpressionPath(attr.Object)
-	if !ok || registry.Symbol == 0 {
-		return path.Path{}, "", false
-	}
-	key, ok := r.result.StaticStringExprValueAtBoundary(point, attr.Key)
-	return registry, key, ok
-}
-
-func (r Reader) registrationCall(site factflow.CallSite, fact semantics.CallFact, point cfg.Point) (registrationReadCall, bool) {
-	registry, keyIndex, ok := registrationRegistryAndKeyIndex(r.result, site, fact)
-	if !ok || keyIndex < 0 || keyIndex >= len(fact.Args)-1 {
+func (r Reader) registrationCall(shape body.RegistryKeyCallShape, point cfg.Point) (registrationReadCall, bool) {
+	keyIndex := shape.KeyIndex
+	if keyIndex < 0 || keyIndex >= len(shape.Args)-1 {
 		return registrationReadCall{}, false
 	}
-	key, ok := r.result.StaticStringExprValueAtBoundary(point, fact.Args[keyIndex])
-	if !ok || !r.registrationCallbackExpr(point, fact.Args[keyIndex+1]) {
+	keyArg := shape.Args[keyIndex]
+	callbackArg := shape.Args[keyIndex+1]
+	if !keyArg.HasStaticString || !callbackArg.ProvenFunction {
 		return registrationReadCall{}, false
 	}
 	return registrationReadCall{
 		point:    point,
-		registry: registry,
-		key:      key,
-		span:     sourceSpanFromAST(ast.SpanOf(fact.Call)),
+		registry: shape.Registry,
+		key:      keyArg.StaticString,
+		span:     sourceSpanFromBody(shape.Span),
 	}, true
 }
 
-func registrationRegistryAndKeyIndex(result resultPathResolver, site factflow.CallSite, fact semantics.CallFact) (path.Path, int, bool) {
-	if fact.Call == nil {
-		return path.Path{}, 0, false
-	}
-	if registry, ok := callSiteMemberReceiverPath(site); ok && len(fact.Args) >= 2 {
-		return registry, 0, true
-	}
-	if len(fact.Args) >= 3 {
-		if registry, ok := result.ExpressionPath(fact.Args[0]); ok && registry.Symbol != 0 {
-			return registry, 1, true
+func (r Reader) openRegistrationMutation(point cfg.Point, shape body.RegistryKeyCallShape, hasShape bool, receiver path.Path, hasReceiver bool, args []body.CallArgumentInfo) (openRegistrationMutation, bool) {
+	if hasShape {
+		keyIndex := shape.KeyIndex
+		if keyIndex >= 0 && keyIndex < len(shape.Args)-1 {
+			keyArg := shape.Args[keyIndex]
+			callbackArg := shape.Args[keyIndex+1]
+			if keyArg.HasStaticString && callbackArg.ProvenFunction {
+				return openRegistrationMutation{}, false
+			}
+			if callbackArg.ProvenFunction {
+				return openRegistrationMutation{path: shape.Registry, opensAll: true, aliasSensitive: true, mayRegister: true}, true
+			}
 		}
 	}
-	return path.Path{}, 0, false
-}
-
-type resultPathResolver interface {
-	ExpressionPath(ast.Expr) (path.Path, bool)
-}
-
-func (r Reader) openRegistrationMutation(site factflow.CallSite, point cfg.Point, fact semantics.CallFact) (openRegistrationMutation, bool) {
-	registry, keyIndex, ok := registrationRegistryAndKeyIndex(r.result, site, fact)
-	if ok && keyIndex >= 0 && keyIndex < len(fact.Args)-1 {
-		if _, ok := r.result.StaticStringExprValueAtBoundary(point, fact.Args[keyIndex]); ok && r.registrationCallbackExpr(point, fact.Args[keyIndex+1]) {
-			return openRegistrationMutation{}, false
-		}
-		if r.registrationCallbackExpr(point, fact.Args[keyIndex+1]) {
-			return openRegistrationMutation{path: registry, opensAll: true, aliasSensitive: true, mayRegister: true}, true
-		}
-	}
-	if receiver, ok := callSiteMemberReceiverPath(site); ok && r.result.CallMayInvalidateTrackedPath(point, receiver) {
+	if hasReceiver && r.result.CallMayInvalidateTrackedPath(point, receiver) {
 		return openRegistrationMutation{path: receiver, opensAll: true, aliasSensitive: true, mayRegister: true}, true
 	}
-	for _, arg := range fact.Args {
-		argPath, ok := r.result.ExpressionPath(arg)
-		if ok && r.result.CallMayInvalidateTrackedPath(point, argPath) {
-			return openRegistrationMutation{path: argPath, opensAll: true, aliasSensitive: true, mayRegister: true}, true
+	for _, arg := range args {
+		if arg.HasPath && r.result.CallMayInvalidateTrackedPath(point, arg.Path) {
+			return openRegistrationMutation{path: arg.Path, opensAll: true, aliasSensitive: true, mayRegister: true}, true
 		}
 	}
 	return openRegistrationMutation{}, false
-}
-
-func (r Reader) registrationValueMayRegister(point cfg.Point, expr ast.Expr) bool {
-	return r.result.ExpressionMayBeFunctionBeforeBoundary(point, expr)
-}
-
-func (r Reader) registrationCallbackExpr(point cfg.Point, expr ast.Expr) bool {
-	return r.result.ExpressionProvenFunctionAtBoundary(point, expr)
 }
 
 func (r Reader) dispatchCalls() []dispatchReadCall {
@@ -277,28 +231,27 @@ func (r Reader) dispatchCalls() []dispatchReadCall {
 			continue
 		}
 		site, ok := r.result.CallSite(point)
-		if !ok || r.isRegistrationLikeCall(site, point, fact) {
+		if !ok || r.isRegistrationLikeCall(point, site, fact) {
 			continue
 		}
-		registry, args, ok := dispatchRegistryAndArgs(r.result, site, fact)
+		shape, ok := r.result.DispatchCallShape(point, site, fact)
 		if !ok {
 			continue
 		}
-		for _, arg := range args {
-			argPath, ok := r.result.ExpressionPath(arg)
-			if !ok || argPath.Symbol == 0 {
+		for _, arg := range shape.Args {
+			if !arg.HasPath || arg.Path.Symbol == 0 {
 				continue
 			}
-			discriminant, cases, ok := r.registrationStringDiscriminantCasesForArgument(point, argPath)
+			discriminant, cases, ok := r.registrationStringDiscriminantCasesForArgument(point, arg.Path)
 			if !ok {
 				continue
 			}
 			out = append(out, dispatchReadCall{
 				point:        point,
-				registry:     registry,
+				registry:     shape.Registry,
 				discriminant: discriminant,
 				cases:        cases,
-				span:         sourceSpanFromAST(ast.SpanOf(fact.Call)),
+				span:         sourceSpanFromBody(shape.Span),
 			})
 			break
 		}
@@ -306,36 +259,16 @@ func (r Reader) dispatchCalls() []dispatchReadCall {
 	return out
 }
 
-func (r Reader) isRegistrationLikeCall(site factflow.CallSite, point cfg.Point, fact semantics.CallFact) bool {
-	if _, ok := r.registrationCall(site, fact, point); ok {
-		return true
-	}
-	_, keyIndex, ok := registrationRegistryAndKeyIndex(r.result, site, fact)
-	if !ok || keyIndex < 0 || keyIndex >= len(fact.Args)-1 {
+func (r Reader) isRegistrationLikeCall(point cfg.Point, site factflow.CallSite, fact body.CallFact) bool {
+	shape, ok := r.result.RegistryKeyCallShape(point, site, fact)
+	if !ok {
 		return false
 	}
-	return r.registrationCallbackExpr(point, fact.Args[keyIndex+1])
-}
-
-func dispatchRegistryAndArgs(result resultPathResolver, site factflow.CallSite, fact semantics.CallFact) (path.Path, []ast.Expr, bool) {
-	if registry, ok := callSiteMemberReceiverPath(site); ok && len(fact.Args) > 0 {
-		return registry, fact.Args, true
+	if _, ok := r.registrationCall(shape, point); ok {
+		return true
 	}
-	if len(fact.Args) >= 2 {
-		registry, ok := result.ExpressionPath(fact.Args[0])
-		if ok && registry.Symbol != 0 {
-			return registry, fact.Args[1:], true
-		}
-	}
-	return path.Path{}, nil, false
-}
-
-func callSiteMemberReceiverPath(site factflow.CallSite) (path.Path, bool) {
-	receiver, _, ok := site.CalleeMemberAccessPath()
-	if !ok || receiver.IsEmpty() {
-		return path.Path{}, false
-	}
-	return receiver, true
+	keyIndex := shape.KeyIndex
+	return keyIndex >= 0 && keyIndex < len(shape.Args)-1 && shape.Args[keyIndex+1].ProvenFunction
 }
 
 func (r Reader) registrationInvalidatedBeforeDispatch(open []openRegistrationMutation, reg registrationReadCall, dispatch dispatchReadCall) bool {
@@ -410,15 +343,16 @@ func (r Reader) registrationExhaustiveness(dispatch dispatchReadCall, open []ope
 	}
 	sort.Strings(registered)
 	return RegistrationExhaustiveness{
-		Point:            dispatch.point,
-		Registry:         dispatch.registry.String(),
-		Target:           dispatch.discriminant.String(),
-		Possible:         possible,
-		Registered:       registered,
-		Missing:          missing,
-		MissingFor:       missingFor,
-		RegistrationSpan: firstRegistrationSpan(registrations),
-		DispatchSpan:     dispatch.span,
+		Point:             dispatch.point,
+		Registry:          dispatch.registry.String(),
+		Target:            dispatch.discriminant.String(),
+		Possible:          possible,
+		Registered:        registered,
+		Missing:           missing,
+		MissingFor:        missingFor,
+		RegistrationSpan:  firstRegistrationSpan(registrations),
+		RegistrationSpans: registrationSpans(registrations),
+		DispatchSpan:      dispatch.span,
 	}, true
 }
 
@@ -436,216 +370,19 @@ func firstRegistrationSpan(registrations map[string]registrationReadCall) Source
 	return span
 }
 
-func (r Reader) registrationStringDiscriminantCasesForArgument(point cfg.Point, argPath path.Path) (path.Path, []registrationDiscriminantCase, bool) {
-	if len(argPath.Segments) > 0 {
-		cases, ok := r.registrationStringDiscriminantCases(point, argPath)
-		return argPath, cases, ok
+func registrationSpans(registrations map[string]registrationReadCall) []SourceSpan {
+	items := make([]registrationReadCall, 0, len(registrations))
+	for _, reg := range registrations {
+		items = append(items, reg)
 	}
-	for _, domain := range r.registrationStringDiscriminantDomainsForRoot(point, argPath) {
-		return domain.target, domain.cases, true
-	}
-	return path.Path{}, nil, false
-}
-
-type registrationStringDiscriminantDomain struct {
-	target path.Path
-	cases  []registrationDiscriminantCase
-}
-
-func (r Reader) registrationStringDiscriminantDomainsForRoot(point cfg.Point, root path.Path) []registrationStringDiscriminantDomain {
-	rootType, ok := r.discriminatedUnionRootType(point, root)
-	if !ok {
-		return nil
-	}
-	out := r.registrationStringDiscriminantDomainsForType(root, nil, rootType, 0)
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].target.String() < out[j].target.String()
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].point < items[j].point
 	})
-	return out
-}
-
-func (r Reader) registrationStringDiscriminantDomainsForType(root path.Path, prefix []segment.Segment, t typ.Type, depth int) []registrationStringDiscriminantDomain {
-	if t == nil || depth > typ.DefaultRecursionDepth {
-		return nil
-	}
-	if _, cases, ok := variant.OriginCasesOfType(t); ok && len(cases) >= 2 {
-		return registrationStringDiscriminantDomainsForCases(root, prefix, cases)
-	}
-	var out []registrationStringDiscriminantDomain
-	for _, child := range r.registrationStaticDiscriminantChildren(t, depth) {
-		nextPrefix := appendSegment(prefix, child.segment)
-		out = append(out, r.registrationStringDiscriminantDomainsForType(root, nextPrefix, child.typ, depth+1)...)
+	out := make([]SourceSpan, 0, len(items))
+	for _, item := range items {
+		if item.span.Valid() {
+			out = append(out, item.span)
+		}
 	}
 	return out
-}
-
-func registrationStringDiscriminantDomainsForCases(root path.Path, prefix []segment.Segment, cases []variant.OriginCase) []registrationStringDiscriminantDomain {
-	var out []registrationStringDiscriminantDomain
-	domains, ok := variant.LiteralDiscriminantDomainsForCases(cases)
-	if !ok {
-		return nil
-	}
-	for _, domain := range domains {
-		suffix := domain.Suffix
-		target := root.AppendSegments(prefix).AppendSegments(suffix)
-		domainCases, ok := registrationStringDiscriminantCasesFor(target, suffix, cases)
-		if !ok {
-			continue
-		}
-		out = append(out, registrationStringDiscriminantDomain{target: target, cases: domainCases})
-	}
-	return out
-}
-
-type registrationStaticDiscriminantChild struct {
-	segment segment.Segment
-	typ     typ.Type
-}
-
-func (r Reader) registrationStaticDiscriminantChildren(t typ.Type, depth int) []registrationStaticDiscriminantChild {
-	if t == nil || depth > typ.DefaultRecursionDepth {
-		return nil
-	}
-	switch v := unwrap.Annotated(t).(type) {
-	case *typ.Alias:
-		return r.registrationStaticDiscriminantChildren(v.UnaliasedTarget(), depth+1)
-	case *typ.Optional:
-		return r.registrationStaticDiscriminantChildren(v.Inner, depth+1)
-	case *typ.Recursive:
-		if v.Body == nil || v.Body == t {
-			return nil
-		}
-		return r.registrationStaticDiscriminantChildren(v.Body, depth+1)
-	case *typ.Instantiated:
-		expanded, ok := subst.ExpandInstantiatedChanged(v)
-		if !ok {
-			return nil
-		}
-		return r.registrationStaticDiscriminantChildren(expanded, depth+1)
-	case *typ.Record:
-		out := make([]registrationStaticDiscriminantChild, 0, len(v.Fields)+len(v.StaticMembers))
-		for _, field := range v.Fields {
-			out = append(out, registrationStaticDiscriminantChild{
-				segment: segment.Segment{Kind: segment.SegmentField, Name: field.Name},
-				typ:     field.Type,
-			})
-		}
-		for _, member := range v.StaticMembers {
-			if member.Kind != typ.StaticMemberStringIndex {
-				continue
-			}
-			out = append(out, registrationStaticDiscriminantChild{
-				segment: segment.Segment{Kind: segment.SegmentIndexString, Name: member.Name},
-				typ:     member.Type,
-			})
-		}
-		return out
-	default:
-		return nil
-	}
-}
-
-func (r Reader) registrationStringDiscriminantCases(point cfg.Point, target path.Path) ([]registrationDiscriminantCase, bool) {
-	for _, anchor := range r.discriminatedUnionAnchors(point, target) {
-		_, cases, ok := variant.OriginCasesOfType(anchor.anchorType)
-		if !ok || len(cases) < 2 {
-			continue
-		}
-		domainCases, ok := registrationStringDiscriminantCasesFor(target, anchor.suffix, cases)
-		if !ok {
-			continue
-		}
-		return domainCases, true
-	}
-	return nil, false
-}
-
-func registrationStringDiscriminantCasesFor(target path.Path, suffix []segment.Segment, cases []variant.OriginCase) ([]registrationDiscriminantCase, bool) {
-	out := make([]registrationDiscriminantCase, 0, len(cases))
-	seen := make(map[string]struct{}, len(cases))
-	for _, c := range cases {
-		key, ok := registrationDiscriminantCaseStringKey(c.Type, suffix)
-		if !ok {
-			return nil, false
-		}
-		if _, duplicate := seen[key]; duplicate {
-			return nil, false
-		}
-		seen[key] = struct{}{}
-		out = append(out, registrationDiscriminantCase{
-			index: c.Index,
-			name:  registrationDiscriminantCaseName(target, suffix, c.Type),
-			key:   key,
-		})
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].name != out[j].name {
-			return out[i].name < out[j].name
-		}
-		return out[i].index < out[j].index
-	})
-	return out, true
-}
-
-func registrationDiscriminantCaseName(target path.Path, suffix []segment.Segment, caseType typ.Type) string {
-	if field, ok := variant.FieldAtPath(caseType, suffix); ok {
-		return target.String() + " == " + typeformat.Short(field)
-	}
-	return typeformat.Short(caseType)
-}
-
-func registrationDiscriminantCaseStringKey(caseType typ.Type, suffix []segment.Segment) (string, bool) {
-	field, ok := variant.FieldAtPath(caseType, suffix)
-	if !ok {
-		return "", false
-	}
-	lit, ok := field.(*typ.Literal)
-	if !ok {
-		return "", false
-	}
-	value, ok := lit.Value.(string)
-	return value, ok
-}
-
-func registrationSegmentStringKey(seg segment.Segment) (string, bool) {
-	switch seg.Kind {
-	case segment.SegmentField, segment.SegmentIndexString:
-		return seg.Name, seg.Name != ""
-	default:
-		return "", false
-	}
-}
-
-func registrationCaseName(registry, key string) string {
-	if identifierName(key) {
-		return registry + "." + key
-	}
-	return registry + "[" + typeformat.Short(typ.LiteralString(key)) + "]"
-}
-
-func identifierName(s string) bool {
-	if s == "" {
-		return false
-	}
-	if !((s[0] >= 'A' && s[0] <= 'Z') || (s[0] >= 'a' && s[0] <= 'z') || s[0] == '_') {
-		return false
-	}
-	for i := 1; i < len(s); i++ {
-		ch := s[i]
-		if !((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_') {
-			return false
-		}
-	}
-	return true
-}
-
-func appendSegment(prefix []segment.Segment, seg segment.Segment) []segment.Segment {
-	next := make([]segment.Segment, 0, len(prefix)+1)
-	next = append(next, prefix...)
-	next = append(next, seg)
-	return next
-}
-
-func caseListKey(cases []string) string {
-	return strings.Join(cases, "\x1f")
 }

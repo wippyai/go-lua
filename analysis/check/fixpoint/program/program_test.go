@@ -35,6 +35,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
@@ -647,6 +648,182 @@ local suite_names = sorted_keys(suites)
 			}
 		}
 		t.Fatalf("specialized sorted_keys call context missing (saw base=%v, site=%v, argOK=%v, argType=%v/%v)", sawBase, siteOK, argOK, argType, typeOK)
+	}
+}
+
+func TestCollectCallContextKeysSeedScalarLiteralArguments(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function select_shape(kind)
+	if kind == "auto" then
+		return { mode = "AUTO" }
+	end
+	return nil
+end
+
+local config = select_shape("auto")
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	keys := collectKeys(bindings, summary.DefaultSummaryKey(ref.Root()), reg, nil, importlookup.Source{}, stmts)
+	if _, err := collectCallContextKeys(&keys, stmts, bindings, body.Config{Registry: reg}, nil); err != nil {
+		t.Fatalf("collectCallContextKeys: %v", err)
+	}
+	if keys.contexts.Len() != 1 {
+		t.Fatalf("call contexts = %d, want one literal-specialized context", keys.contexts.Len())
+	}
+	context := keys.contexts.Entry(0)
+	if !context.hasEntryState {
+		t.Fatal("literal-specialized context missing entry state")
+	}
+	slots := bindings.ParamSlots(context.funcExpr)
+	if len(slots) == 0 || slots[0].Symbol == 0 {
+		t.Fatalf("callee param slots = %#v, want first parameter", slots)
+	}
+	value := context.entryState.ReadValue(reg, statekey.SymbolValue(slots[0].Symbol))
+	got, ok := typevalue.TypeOf(reg, value)
+	if !ok || !typ.TypeEquals(got, typ.LiteralString("auto")) {
+		t.Fatalf("literal context param type = %v/%v, want \"auto\"", got, ok)
+	}
+}
+
+func TestRunChunkScalarLiteralContextSelectsReturnShape(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function select_shape(kind)
+	if kind == "auto" then
+		return { mode = "AUTO" }
+	end
+	return nil
+end
+
+local config = select_shape("auto")
+local mode: string = config.mode
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result, err := RunBoundChunk(stmts, bindings, Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := result.RootResult()
+	if root == nil {
+		t.Fatal("RootResult missing")
+	}
+	var sawContext bool
+	for _, child := range root.FunctionResults() {
+		if child == nil || !child.IsCallContextResult() {
+			continue
+		}
+		sawContext = true
+		entry, ok := child.EntryState()
+		if !ok {
+			t.Fatal("literal call context missing entry state")
+		}
+		fn := child.Function()
+		slots := bindings.ParamSlots(fn)
+		if len(slots) == 0 || slots[0].Symbol == 0 {
+			t.Fatalf("context function param slots = %#v", slots)
+		}
+		entryValue := entry.ReadValue(reg, statekey.SymbolValue(slots[0].Symbol))
+		entryType, entryTypeOK := typevalue.TypeOf(reg, entryValue)
+		if !entryTypeOK || !typ.TypeEquals(entryType, typ.LiteralString("auto")) {
+			t.Fatalf("literal context entry param type = %v/%v, want \"auto\"", entryType, entryTypeOK)
+		}
+		var literalBranch cfg.Point
+		for _, point := range child.Graph().RPO() {
+			fact, ok := child.BranchCondition(point)
+			if !ok || fact.Check.Kind != branchcond.CheckLiteralEqual {
+				continue
+			}
+			lit, hasLit := fact.Check.LiteralValue()
+			if hasLit && typ.TypeEquals(lit, typ.LiteralString("auto")) {
+				literalBranch = point
+				break
+			}
+		}
+		if literalBranch == 0 {
+			t.Fatal("literal context branch for kind == \"auto\" missing")
+		}
+		sawFalseEdge := false
+		for _, succ := range child.Graph().Successors(literalBranch) {
+			cond, ok := child.Graph().EdgeCond(literalBranch, succ)
+			if !ok || cond {
+				continue
+			}
+			sawFalseEdge = true
+			falseState, ok := child.StateAt(succ)
+			if !ok || !state.IsBottom(reg, falseState) {
+				t.Fatalf("literal context false edge state = %#v/%v, want bottom", falseState, ok)
+			}
+		}
+		if !sawFalseEdge {
+			t.Fatal("literal context branch false edge missing")
+		}
+		exit, ok := child.ExitState()
+		if !ok {
+			t.Fatal("literal call context missing exit state")
+		}
+		ret := exit.ReadReturnSlot(reg, 0)
+		gotType, ok := typevalue.TypeOf(reg, ret)
+		if !ok || !typ.TypeEquals(gotType, typetable.NewRecord().Field("mode", typ.LiteralString("AUTO")).Build()) {
+			t.Fatalf("literal context return type = %v/%v, want {mode=\"AUTO\"}", gotType, ok)
+		}
+	}
+	if !sawContext {
+		t.Fatal("literal-specialized function result missing")
+	}
+	diags := diagnostics.Produce(root)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want literal context return shape to prove config.mode", diags)
+	}
+}
+
+func TestRunChunkScalarLiteralContextClosesCompoundOrFallback(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function select_shape(kind)
+	if not kind or kind == "auto" or kind == "any" or kind == "" then
+		return { mode = "AUTO" }
+	elseif kind == "none" then
+		return { mode = "NONE" }
+	end
+	return nil
+end
+
+local config = select_shape("auto")
+local mode: string = config.mode
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result, err := RunBoundChunk(stmts, bindings, Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunBoundChunk: %v", err)
+	}
+	root := result.RootResult()
+	if root == nil {
+		t.Fatal("RootResult missing")
+	}
+	var sawContext bool
+	for _, child := range root.FunctionResults() {
+		if child == nil || !child.IsCallContextResult() {
+			continue
+		}
+		sawContext = true
+		exit, ok := child.ExitState()
+		if !ok {
+			t.Fatal("compound literal call context missing exit state")
+		}
+		ret := exit.ReadReturnSlot(reg, 0)
+		gotType, ok := typevalue.TypeOf(reg, ret)
+		wantType := typetable.NewRecord().Field("mode", typ.LiteralString("AUTO")).Build()
+		if !ok || !typ.TypeEquals(gotType, wantType) {
+			t.Fatalf("compound literal context return type = %v/%v, want %v", gotType, ok, wantType)
+		}
+	}
+	if !sawContext {
+		t.Fatal("compound literal-specialized function result missing")
+	}
+	diags := diagnostics.Produce(root)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want compound literal context return shape to prove config.mode", diags)
 	}
 }
 

@@ -174,6 +174,16 @@ var defaultPolicy = NewPolicy(map[PolicyKey]Level{
 	{Code: CodeDiscriminatedUnion, Verdict: VerdictUnknown, Mode: StrictnessStrict}:  LevelDisabled,
 	{Code: CodeDiscriminatedUnion, Verdict: VerdictRefuted, Mode: StrictnessStrict}:  LevelWarning,
 
+	{Code: CodeOptional, Verdict: VerdictProven, Mode: StrictnessDefault}:  LevelDisabled,
+	{Code: CodeOptional, Verdict: VerdictUnknown, Mode: StrictnessDefault}: LevelDisabled,
+	{Code: CodeOptional, Verdict: VerdictRefuted, Mode: StrictnessDefault}: LevelWarning,
+	{Code: CodeOptional, Verdict: VerdictProven, Mode: StrictnessLenient}:  LevelDisabled,
+	{Code: CodeOptional, Verdict: VerdictUnknown, Mode: StrictnessLenient}: LevelDisabled,
+	{Code: CodeOptional, Verdict: VerdictRefuted, Mode: StrictnessLenient}: LevelWarning,
+	{Code: CodeOptional, Verdict: VerdictProven, Mode: StrictnessStrict}:   LevelDisabled,
+	{Code: CodeOptional, Verdict: VerdictUnknown, Mode: StrictnessStrict}:  LevelDisabled,
+	{Code: CodeOptional, Verdict: VerdictRefuted, Mode: StrictnessStrict}:  LevelWarning,
+
 	{Code: CodeResultShape, Verdict: VerdictProven, Mode: StrictnessDefault}:  LevelDisabled,
 	{Code: CodeResultShape, Verdict: VerdictUnknown, Mode: StrictnessDefault}: LevelDisabled,
 	{Code: CodeResultShape, Verdict: VerdictRefuted, Mode: StrictnessDefault}: LevelWarning,
@@ -193,6 +203,16 @@ var defaultPolicy = NewPolicy(map[PolicyKey]Level{
 	{Code: CodeRegistration, Verdict: VerdictProven, Mode: StrictnessStrict}:   LevelDisabled,
 	{Code: CodeRegistration, Verdict: VerdictUnknown, Mode: StrictnessStrict}:  LevelDisabled,
 	{Code: CodeRegistration, Verdict: VerdictRefuted, Mode: StrictnessStrict}:  LevelWarning,
+
+	{Code: CodeTableDispatch, Verdict: VerdictProven, Mode: StrictnessDefault}:  LevelDisabled,
+	{Code: CodeTableDispatch, Verdict: VerdictUnknown, Mode: StrictnessDefault}: LevelDisabled,
+	{Code: CodeTableDispatch, Verdict: VerdictRefuted, Mode: StrictnessDefault}: LevelWarning,
+	{Code: CodeTableDispatch, Verdict: VerdictProven, Mode: StrictnessLenient}:  LevelDisabled,
+	{Code: CodeTableDispatch, Verdict: VerdictUnknown, Mode: StrictnessLenient}: LevelDisabled,
+	{Code: CodeTableDispatch, Verdict: VerdictRefuted, Mode: StrictnessLenient}: LevelWarning,
+	{Code: CodeTableDispatch, Verdict: VerdictProven, Mode: StrictnessStrict}:   LevelDisabled,
+	{Code: CodeTableDispatch, Verdict: VerdictUnknown, Mode: StrictnessStrict}:  LevelDisabled,
+	{Code: CodeTableDispatch, Verdict: VerdictRefuted, Mode: StrictnessStrict}:  LevelWarning,
 
 	{Code: CodeUnresolvedValue, Verdict: VerdictProven, Mode: StrictnessDefault}:  LevelDisabled,
 	{Code: CodeUnresolvedValue, Verdict: VerdictUnknown, Mode: StrictnessDefault}: LevelDisabled,

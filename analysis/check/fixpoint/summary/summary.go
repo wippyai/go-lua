@@ -25,6 +25,7 @@ type Summary struct {
 	HeapTableObjects                map[identity.ID]heapidentity.TableObject
 	ReturnConditionParamRefinements []ReturnConditionParamRefinement
 	ReturnConditionSlotRefinements  []ReturnConditionSlotRefinement
+	ReturnParamLiteralCases         []ReturnParamLiteralCase
 	ReturnPresenceRelations         []ReturnPresenceRelation
 
 	// HeapKeySpace is the keyspace under which HeapTableObjects' rootless
@@ -105,6 +106,7 @@ func (s Summary) Clone() Summary {
 	out.HeapKeySpace = s.HeapKeySpace
 	out.ReturnConditionParamRefinements = cloneReturnConditionParamRefinements(s.ReturnConditionParamRefinements)
 	out.ReturnConditionSlotRefinements = cloneReturnConditionSlotRefinements(s.ReturnConditionSlotRefinements)
+	out.ReturnParamLiteralCases = cloneReturnParamLiteralCases(s.ReturnParamLiteralCases)
 	out.ReturnPresenceRelations = returnPresenceRelationLane.Clone(s.ReturnPresenceRelations)
 	return out
 }

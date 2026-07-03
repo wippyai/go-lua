@@ -3,21 +3,9 @@ package diagnostics
 import (
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/judgment"
-	"github.com/wippyai/go-lua/analysis/check/obligation/pass"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 )
-
-func produceCallArityJudgmentDiagnostics(result *body.Result, sourceFile string) []diagnostic.Diagnostic {
-	query := newDiagnosticQuery(result)
-	items := pass.New(pass.CallArity{}).Run(pass.Context{
-		FunctionKey: sourceFile,
-		SourceFile:  sourceFile,
-		Reader:      query.reader,
-	})
-	return renderJudgmentDiagnostics(items, judgment.DefaultPolicy(), judgment.StrictnessDefault)
-}
 
 func renderCallArityJudgmentWithPolicy(item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
 	if item.Code != judgment.CodeCallArity || item.Subject.Kind != judgment.SubjectCallExpression || len(item.Spans) == 0 {

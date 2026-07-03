@@ -85,6 +85,29 @@ func TestCheckChunkSeedsGradualTopForConfiguredGlobal(t *testing.T) {
 	}
 }
 
+func TestCheckChunkSeedsGlobalTableAsPresentGradualTop(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, "_G.describe = function() end")
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"_G"}})
+	id, ok := bindings.GlobalSymbol("_G")
+	if !ok {
+		t.Fatal("global table symbol _G not bound")
+	}
+	seeds := configuredGlobalEntrySeeds(reg, nil, bindings, []string{"_G"}, nil)
+	if len(seeds) != 1 {
+		t.Fatalf("entry seeds = %d, want 1", len(seeds))
+	}
+	entry := seedEntryStateValues(reg, state.State{}, seeds)
+	value := entry.ReadValue(reg, key.SymbolValue(id))
+	if got := product.PresenceOf(value); !presence.Equal(got, presence.Present()) {
+		t.Fatalf("_G presence = %s, want present", got)
+	}
+	got := product.Get(reg, value, evidence.Key)
+	if !evidence.Equal(got, evidence.GradualTop()) {
+		t.Fatalf("_G evidence = %s, want %s", got, evidence.GradualTop())
+	}
+}
+
 func TestCheckChunkSeedsTypeWitnessForConfiguredGlobalType(t *testing.T) {
 	reg := standard.Registry()
 	typeValues := typevalue.NewCache()

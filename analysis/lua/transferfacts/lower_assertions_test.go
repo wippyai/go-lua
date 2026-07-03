@@ -5,12 +5,14 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -788,4 +790,65 @@ func TestLowerExpandedClaimWrappedCallKeepsPerResultSlotRefinements(t *testing.T
 			}
 		})
 	}
+}
+
+func TestLowerConcreteCastWrappedAnyCallPublishesRuntimeWitness(t *testing.T) {
+	makeCall := &ast.FuncCallExpr{Func: ident("make")}
+	local := localAssign([]string{"a"}, &ast.CastExpr{
+		Expr:   makeCall,
+		Type:   primitiveType("number"),
+		Syntax: ast.CastSyntaxAs,
+	})
+	stmts := []ast.Stmt{local}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	reg := standard.Registry()
+	facts := lowerFacts(t, result, built.Graph, reg)
+	points := requireStmtPoints(t, built, local, 2)
+	source := mustLocalSource(t, facts, points[1])
+	refinement, ok := facts.ExpressionRefinement(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing refinement for source ref %d", source.ExprRef)
+	}
+	assertConcreteCastRefinementProduct(t, refinement.Refinement(), typ.Number)
+
+	anyResult := typevalueWithExplicitAny(reg, typ.Any)
+	transferFn := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
+		Facts: facts,
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+			Registry: reg,
+		}),
+		CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
+				Results: []callpayload.CallResult{{Index: 0, Value: anyResult}},
+			}
+		},
+	})
+
+	out := transferFn(transfer.NodeContext{Registry: reg, Point: points[1]}, state.State{})
+	fact, ok := facts.LocalAssignment(points[1])
+	if !ok {
+		t.Fatalf("missing local assignment")
+	}
+	assigned := out.ReadValue(reg, key.SymbolValue(fact.TargetSymbol()))
+	if got := product.Get(reg, assigned, assertion.Key); !got.Has(assertion.RuntimeClaim) || !got.Has(assertion.TypeClaim) {
+		t.Fatalf("assigned assertion = %s, want runtime type claim", got)
+	}
+	witness := product.Get(reg, assigned, typewitness.Key)
+	gotType, ok := witness.Type()
+	if !ok || !typ.TypeEquals(gotType, typ.Number) {
+		t.Fatalf("assigned witness = %v/%v, want number", witness, ok)
+	}
+}
+
+func typevalueWithExplicitAny(reg *axis.Registry, t typ.Type) product.Value {
+	value := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
+	value = product.Set(reg, value, assertion.Key, assertion.Any())
+	return typevalue.WithWitness(reg, value, t)
 }

@@ -9,6 +9,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
@@ -174,7 +175,9 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 			}
 		}
 		if fact, ok := result.BranchCondition(point); ok {
-			input.BranchConditionSources[point] = l.valueSource(fact.Source)
+			if fact.Check.Kind != branchcond.CheckNone {
+				input.BranchConditionSources[point] = l.valueSource(fact.Source)
+			}
 			if reachability, ok := branchEdgeReachability(fact.Condition); ok {
 				input.BranchEdgeReachability[point] = reachability
 			}

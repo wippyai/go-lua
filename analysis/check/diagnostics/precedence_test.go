@@ -117,6 +117,26 @@ func TestApplyDiagnosticPrecedenceSuppressesNotCallableForUnionExhaustivenessCau
 	}
 }
 
+func TestApplyDiagnosticPrecedenceSuppressesNotCallableAtUnionRelatedSpan(t *testing.T) {
+	call := precedenceDiagnostic("main.lua", CodeNotCallable, source.Span{StartLine: 8, StartCol: 1, EndLine: 8, EndCol: 10})
+	exhaustive := precedenceDiagnostic("main.lua", CodeDiscriminatedUnionExhaustive, source.Span{StartLine: 11, StartCol: 13, EndLine: 11, EndCol: 34})
+	exhaustive.Labels = []diagnostic.Label{{
+		Span:    source.Span{StartLine: 8, StartCol: 1, EndLine: 8, EndCol: 30},
+		Message: "registration call",
+	}}
+	exhaustive.Explanation = diagnostic.NewExplanation(diagnostic.Evidence{
+		Kind:    diagnostic.EvidenceAbstractFact,
+		Trust:   diagnostic.TrustProven,
+		Span:    source.Span{StartLine: 8, StartCol: 1, EndLine: 8, EndCol: 30},
+		Message: "registered cases",
+	})
+
+	got := applyDiagnosticPrecedence([]diagnostic.Diagnostic{call, exhaustive}, defaultDiagnosticPrecedenceRules())
+	if len(got) != 1 || got[0].Code != CodeDiscriminatedUnionExhaustive {
+		t.Fatalf("precedence result = %#v, want only union exhaustiveness cause", got)
+	}
+}
+
 func TestApplyDiagnosticPrecedenceSuppressesAssignmentForDirectCallContractCauses(t *testing.T) {
 	causes := []diagnostic.Code{
 		CodeDirectCallNotCallable,

@@ -72,6 +72,9 @@ func branchRefinementContradictsCurrentValue(
 	if !ok || product.Equal(reg, current.value, product.Bottom(reg)) {
 		return false
 	}
+	if refinement.NegatedLiteral() {
+		return valuerefine.NegatedLiteralContradictsValue(reg, typeValues, current.value, constraint)
+	}
 	refined := valuerefine.MeetConstraint(reg, current.value, constraint)
 	return product.Equal(reg, refined, product.Bottom(reg)) || presence.Equal(product.PresenceOf(refined), presence.Bottom())
 }
@@ -222,6 +225,9 @@ func applyValueRefinementAtWithoutImplicationsCached(
 		return out
 	}
 	if len(targetPath.Segments) == 0 {
+		if refinement.NegatedLiteral() {
+			return out
+		}
 		var preserve narrowedRootDescendantFacts
 		if constraint, ok := refinement.Constraint(); ok && rootRefinementInvalidatesDescendants(reg, refinement) {
 			var narrowedRoot typ.Type

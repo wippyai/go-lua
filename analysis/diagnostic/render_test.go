@@ -829,6 +829,29 @@ func TestRenderDiagnosticOmitsImplicitSpanlessLabels(t *testing.T) {
 	containsAll(t, rendered, "--> main.lua:1:7", "1 | local x = nil", "  |       ↑ assigned value")
 }
 
+func TestRenderDiagnosticOmitsStructuralEmptyLabels(t *testing.T) {
+	d := Diagnostic{
+		Position: Position{File: "main.lua", Line: 1, Column: 7},
+		Span:     Span{StartLine: 1, StartCol: 7, EndLine: 1, EndCol: 8},
+		Code:     Code("type.assignment"),
+		Message:  "cannot assign nil to string",
+		Severity: SeverityError,
+		Labels: []Label{
+			{Span: Span{StartLine: 1, StartCol: 7, EndLine: 1, EndCol: 8}, Message: "assigned value"},
+			{Span: Span{StartLine: 1, StartCol: 15, EndLine: 1, EndCol: 18}},
+		},
+	}
+
+	rendered := Render(d, RenderOptions{
+		Sources:             SourceMap{"main.lua": "local x = nil"},
+		ShowSourceLabelRows: true,
+	})
+	if strings.Contains(rendered, "\nwhere:\n") || strings.Contains(rendered, "^") {
+		t.Fatalf("rendered structural empty label:\n%s", rendered)
+	}
+	containsAll(t, rendered, "--> main.lua:1:7", "1 | local x = nil", "  |       ↑ assigned value")
+}
+
 func TestRenderDiagnosticCrossFileEvidenceChain(t *testing.T) {
 	d := Diagnostic{
 		Position: Position{File: "main.lua", Line: 3, Column: 33},

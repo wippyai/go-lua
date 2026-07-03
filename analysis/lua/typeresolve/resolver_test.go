@@ -5,6 +5,9 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/module/typelookup"
+	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -139,6 +142,34 @@ end
 	}
 	if len(inst.TypeArgs) != 1 || inst.TypeArgs[0] != paramType {
 		t.Fatalf("instantiated args = %#v, want function T %v", inst.TypeArgs, paramType)
+	}
+}
+
+func TestResolverTypeInstantiatesAmbientChannelAliasWithExternalMemberType(t *testing.T) {
+	stmts, err := parse.ParseString(`
+type Message = process.Message
+type MessageChannel = Channel<Message>
+`, "test")
+	if err != nil {
+		t.Fatalf("ParseString error: %v", err)
+	}
+	messageType := typ.NewInterface("process.Message", nil)
+	process := manifest.New("process")
+	process.DefineType("Message", messageType)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	stmt, ok := stmts[1].(*ast.TypeDefStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want TypeDefStmt", stmts[1])
+	}
+
+	resolver := NewWithExternal(bindings, typelookup.Source{Manifests: []*manifest.Manifest{process}})
+	got, ok := resolver.Type(stmt.Type)
+	if !ok {
+		t.Fatal("Type(MessageChannel) returned ok=false")
+	}
+	payload, ok := ambient.ChannelPayloadType(got)
+	if !ok || !typ.TypeEquals(payload, messageType) {
+		t.Fatalf("ChannelPayloadType(%s) = %v/%v, want %s", got, payload, ok, messageType)
 	}
 }
 

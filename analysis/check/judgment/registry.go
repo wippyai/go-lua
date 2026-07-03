@@ -142,6 +142,15 @@ var defaultRegistry = NewRegistry([]CodeSpec{
 		DefaultVerdict: VerdictRefuted,
 	},
 	{
+		Code:        CodeOptional,
+		SubjectKind: SubjectExpression,
+		RequiredEvidence: []EvidenceKind{
+			EvidenceAbstractFact,
+			EvidenceMissingProof,
+		},
+		DefaultVerdict: VerdictRefuted,
+	},
+	{
 		Code:        CodeResultShape,
 		SubjectKind: SubjectExpression,
 		RequiredEvidence: []EvidenceKind{
@@ -152,6 +161,15 @@ var defaultRegistry = NewRegistry([]CodeSpec{
 	},
 	{
 		Code:        CodeRegistration,
+		SubjectKind: SubjectExpression,
+		RequiredEvidence: []EvidenceKind{
+			EvidenceAbstractFact,
+			EvidenceMissingProof,
+		},
+		DefaultVerdict: VerdictRefuted,
+	},
+	{
+		Code:        CodeTableDispatch,
 		SubjectKind: SubjectExpression,
 		RequiredEvidence: []EvidenceKind{
 			EvidenceAbstractFact,

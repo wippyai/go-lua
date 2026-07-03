@@ -46,7 +46,8 @@ func (p Pass) WithRegistry(registry judgment.Registry) Pass {
 }
 
 // Run emits all valid judgments. Invalid records are dropped at the boundary so
-// producer mistakes do not enter shadow-diff baselines as if they were policy.
+// producer mistakes do not enter rendering, deduplication, or policy as if they
+// were valid facts.
 func (p Pass) Run(ctx Context) []judgment.Judgment {
 	var out []judgment.Judgment
 	for _, producer := range p.producers {

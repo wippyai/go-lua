@@ -26,6 +26,9 @@ func TestCanBeFalseUsesTypeWitness(t *testing.T) {
 	if !CanBeFalse(reg, typevalue.WithWitness(reg, typevalue.FromType(reg, typ.Boolean), typ.Boolean)) {
 		t.Fatal("boolean value cannot be false")
 	}
+	if CanBeFalse(reg, typevalue.FromType(reg, typ.LiteralString("auto"))) {
+		t.Fatal("exact string literal value can be false")
+	}
 	if !CanBeFalse(reg, product.Top()) {
 		t.Fatal("unknown value cannot be false")
 	}
@@ -220,6 +223,24 @@ func TestMeetConstraintRejectsDisjointLiteralWitnesses(t *testing.T) {
 	if !product.Equal(reg, got, product.Bottom(reg)) {
 		gotType, gotOK := typevalue.TypeOf(reg, got)
 		t.Fatalf("refined value = %v/%v, want bottom for disjoint literal witnesses", gotType, gotOK)
+	}
+}
+
+func TestNegatedLiteralContradictsValueUsesExactWitness(t *testing.T) {
+	reg := standard.Registry()
+	lit := typ.LiteralString("auto")
+	constraint := typevalue.WithWitness(reg, typevalue.FromType(reg, lit), lit)
+	exact := typevalue.WithWitness(reg, typevalue.FromType(reg, lit), lit)
+	broad := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+
+	if !NegatedLiteralContradictsValue(reg, nil, exact, constraint) {
+		t.Fatal("exact literal value should contradict negated same literal")
+	}
+	if NegatedLiteralContradictsValue(reg, nil, broad, constraint) {
+		t.Fatal("broad string should not contradict negated specific string literal")
+	}
+	if NegatedLiteralContradictsValue(reg, nil, exact, typevalue.FromType(reg, lit)) {
+		t.Fatal("constraint without literal witness should not contradict")
 	}
 }
 

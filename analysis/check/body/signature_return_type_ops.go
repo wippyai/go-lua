@@ -2,10 +2,10 @@ package body
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
-	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/type/projection"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typecall"
 )
 
 func signatureReturnTypeOps() effectlowering.ReturnTypeOps {

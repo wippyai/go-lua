@@ -1,8 +1,8 @@
 package typeoperator
 
 import (
-	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typecall"
 )
 
 func binaryMetamethodReturn(first typ.Type, name string, second typ.Type) (typ.Type, bool) {

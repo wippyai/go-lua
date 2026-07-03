@@ -35,8 +35,9 @@ type BranchPathEvidence struct {
 	otherPath    path.Path
 	hasOtherPath bool
 
-	activeOnTrue  bool
-	activeOnFalse bool
+	activeOnTrue             bool
+	activeOnFalse            bool
+	oppositeEdgeImpliesFalsy bool
 }
 
 // BranchPathEvidenceSet groups branch path evidence emitted at the same CFG point.
@@ -83,6 +84,15 @@ func NewBranchPathTruthyEvidenceOnEdge(targetPath path.Path, cond bool) BranchPa
 		activeOnTrue:  cond,
 		activeOnFalse: !cond,
 	}
+}
+
+// NewBranchPathTruthyEvidenceWithOppositeOnEdge records truthiness on one edge
+// of a direct truthiness condition. Unlike truthiness implied by a compound
+// condition, a direct check also proves the opposite edge is falsy.
+func NewBranchPathTruthyEvidenceWithOppositeOnEdge(targetPath path.Path, cond bool) BranchPathEvidence {
+	out := NewBranchPathTruthyEvidenceOnEdge(targetPath, cond)
+	out.oppositeEdgeImpliesFalsy = true
+	return out
 }
 
 // NewBranchPathEqualityEvidence creates path-equality evidence.
@@ -188,6 +198,14 @@ func (p BranchPathEvidence) ActiveOnEdge(cond bool) bool {
 		return p.activeOnTrue
 	}
 	return p.activeOnFalse
+}
+
+// OppositeEdgeImpliesFalsy reports whether truthiness on the active edge is
+// known to prove falsiness on the opposite branch edge. This holds for direct
+// conditions such as `if x` and `if not x`, but not for a truthy leaf implied by
+// one edge of a compound condition like `a or b`.
+func (p BranchPathEvidence) OppositeEdgeImpliesFalsy() bool {
+	return p.oppositeEdgeImpliesFalsy
 }
 
 // Presence returns the path presence value, if this evidence carries one.

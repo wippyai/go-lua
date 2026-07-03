@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
+	internalreadmodel "github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -1952,7 +1953,6 @@ func TestOptionalPathEquivalenceUsesDominatingAliasDeclaration(t *testing.T) {
 		t.Fatalf("nested function results = %d, want 1", len(root.FunctionResults()))
 	}
 	result := root.FunctionResults()[0]
-	resolver := newResultResolver(result, newResultResolver(root, nil))
 	branchPoint, aliasPath := requireBranchCheckPath(t, result, branchcond.CheckNotNil, "alias")
 	_, aliasExpr := requireLocalAssignmentExprByName(t, result, "alias")
 	maybePath, ok := result.ExpressionPath(aliasExpr)
@@ -1962,12 +1962,13 @@ func TestOptionalPathEquivalenceUsesDominatingAliasDeclaration(t *testing.T) {
 	if !result.PathsAliasAtBoundary(branchPoint, maybePath, aliasPath) {
 		t.Fatalf("PathsAliasAtBoundary(%s, %s) = false, want dominating alias equivalence", maybePath, aliasPath)
 	}
-	if !optionalPathConsumesTarget(result, branchPoint, maybePath, aliasPath) {
-		t.Fatalf("optionalPathConsumesTarget(%s, %s) = false, want alias-guarded source consumption", maybePath, aliasPath)
-	}
-	aliasType, ok := optionalPathType(result, resolver, branchPoint, aliasPath)
-	if !ok || !optionalTypeHasValue(aliasType) {
-		t.Fatalf("optionalPathType(%s) = (%v, %v), want optional source type", aliasPath, aliasType, ok)
+	var got []string
+	internalreadmodel.New(result).ForEachOptionalExhaustiveness(func(item internalreadmodel.OptionalExhaustiveness) bool {
+		got = append(got, item.Target)
+		return true
+	})
+	if len(got) != 1 || got[0] != "alias" {
+		t.Fatalf("optional exhaustiveness targets = %#v, want alias", got)
 	}
 }
 

@@ -54,6 +54,7 @@ func NormalizeOwned(reg *axis.Registry, out Summary) Summary {
 		reg,
 		out.ReturnConditionSlotRefinements,
 	)
+	out.ReturnParamLiteralCases = normalizeReturnParamLiteralCases(reg, out.ReturnParamLiteralCases)
 	out.ReturnPresenceRelations = returnPresenceRelationLane.Normalize(out.ReturnPresenceRelations)
 	if len(out.Returns) == 0 &&
 		len(out.ParamObligations) == 0 &&
@@ -69,6 +70,7 @@ func NormalizeOwned(reg *axis.Registry, out Summary) Summary {
 		len(out.HeapTableObjects) == 0 &&
 		len(out.ReturnConditionParamRefinements) == 0 &&
 		len(out.ReturnConditionSlotRefinements) == 0 &&
+		len(out.ReturnParamLiteralCases) == 0 &&
 		len(out.ReturnPresenceRelations) == 0 {
 		return Summary{}
 	}
@@ -147,6 +149,7 @@ func equal(reg *axis.Registry, a, b Summary, normalized bool) bool {
 		heapTableObjectsEqual(reg, a.HeapTableObjects, b.HeapTableObjects) &&
 		returnConditionParamRefinementsEqual(reg, a.ReturnConditionParamRefinements, b.ReturnConditionParamRefinements) &&
 		returnConditionSlotRefinementsEqual(reg, a.ReturnConditionSlotRefinements, b.ReturnConditionSlotRefinements) &&
+		returnParamLiteralCasesEqual(reg, a.ReturnParamLiteralCases, b.ReturnParamLiteralCases) &&
 		returnPresenceRelationLane.Equal(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
 }
 
@@ -201,6 +204,7 @@ func LessOrEq(reg *axis.Registry, a, b Summary) bool {
 		heapTableObjectsLessOrEq(reg, a.HeapTableObjects, b.HeapTableObjects) &&
 		returnConditionParamRefinementsLessOrEq(reg, a.ReturnConditionParamRefinements, b.ReturnConditionParamRefinements) &&
 		returnConditionSlotRefinementsLessOrEq(reg, a.ReturnConditionSlotRefinements, b.ReturnConditionSlotRefinements) &&
+		returnParamLiteralCasesLessOrEq(reg, a.ReturnParamLiteralCases, b.ReturnParamLiteralCases) &&
 		returnPresenceRelationLane.LessOrEq(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
 }
 
@@ -276,6 +280,7 @@ func Join(reg *axis.Registry, a, b Summary) Summary {
 		a.ReturnConditionSlotRefinements,
 		b.ReturnConditionSlotRefinements,
 	)
+	out.ReturnParamLiteralCases = joinReturnParamLiteralCases(reg, a.ReturnParamLiteralCases, b.ReturnParamLiteralCases)
 	out.ReturnPresenceRelations = returnPresenceRelationLane.Join(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
 	return NormalizeOwned(reg, out)
 }
@@ -393,6 +398,7 @@ func Widen(reg *axis.Registry, prev, next Summary) Summary {
 		prev.ReturnConditionSlotRefinements,
 		next.ReturnConditionSlotRefinements,
 	)
+	out.ReturnParamLiteralCases = widenReturnParamLiteralCases(reg, prev.ReturnParamLiteralCases, next.ReturnParamLiteralCases)
 	out.ReturnPresenceRelations = returnPresenceRelationLane.Join(prev.ReturnPresenceRelations, next.ReturnPresenceRelations)
 	return NormalizeOwned(reg, out)
 }
@@ -412,6 +418,7 @@ func summaryBottom(s Summary) bool {
 		len(s.HeapTableObjects) == 0 &&
 		len(s.ReturnConditionParamRefinements) == 0 &&
 		len(s.ReturnConditionSlotRefinements) == 0 &&
+		len(s.ReturnParamLiteralCases) == 0 &&
 		len(s.ReturnPresenceRelations) == 0
 }
 
@@ -426,5 +433,6 @@ func summaryPairNonSlotLanesEmpty(a, b Summary) bool {
 		len(a.HeapTableObjects) == 0 && len(b.HeapTableObjects) == 0 &&
 		len(a.ReturnConditionParamRefinements) == 0 && len(b.ReturnConditionParamRefinements) == 0 &&
 		len(a.ReturnConditionSlotRefinements) == 0 && len(b.ReturnConditionSlotRefinements) == 0 &&
+		len(a.ReturnParamLiteralCases) == 0 && len(b.ReturnParamLiteralCases) == 0 &&
 		len(a.ReturnPresenceRelations) == 0 && len(b.ReturnPresenceRelations) == 0
 }
