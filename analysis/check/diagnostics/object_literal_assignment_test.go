@@ -5,64 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/diagnostic"
-	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
-	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
-
-func TestObjectLiteralDiagnosticTypeSeparatesDotFieldAndBracketStringMember(t *testing.T) {
-	got := objectLiteralType(nil, semantics.ObjectLiteralFact{
-		Entries: []semantics.ObjectEntryFact{
-			{
-				Suffix: path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "id"}}},
-				Value:  &ast.StringExpr{Value: "field"},
-			},
-			{
-				Suffix: path.Path{Segments: []segment.Segment{{Kind: segment.SegmentIndexString, Name: "id"}}},
-				Value:  &ast.TrueExpr{},
-			},
-		},
-	})
-	want := typetable.NewRecord().
-		Field("id", typ.LiteralString("field")).
-		StaticStringIndex("id", typ.LiteralBool(true)).
-		Build()
-	if !typ.TypeEquals(got, want) {
-		t.Fatalf("object literal diagnostic type = %v, want %v", got, want)
-	}
-}
-
-func objectLiteralType(want typ.Type, fact semantics.ObjectLiteralFact) typ.Type {
-	builder := typetable.NewRecord()
-	for _, entry := range fact.Entries {
-		if len(entry.Suffix.Segments) != 1 {
-			continue
-		}
-		seg := entry.Suffix.Segments[0]
-		if (seg.Kind != segment.SegmentField && seg.Kind != segment.SegmentIndexString) || seg.Name == "" {
-			continue
-		}
-		fieldType, ok := valueexpr.LiteralType(entry.Value)
-		if !ok {
-			if expected, ok := expectedTypeAtSegments(want, entry.Suffix.Segments); ok {
-				fieldType = expected
-			} else {
-				fieldType = typ.Unknown
-			}
-		}
-		switch seg.Kind {
-		case segment.SegmentField:
-			builder = builder.Field(seg.Name, fieldType)
-		case segment.SegmentIndexString:
-			builder = builder.StaticStringIndex(seg.Name, fieldType)
-		}
-	}
-	return builder.Build()
-}
 
 func TestAnnotationAssignabilityAcceptsBracketStringMapLiteralEntries(t *testing.T) {
 	diags := runDiagnostics(t, `
