@@ -60,6 +60,64 @@ func TestCallOutcomeLaneRegistryCoversEveryFieldOnce(t *testing.T) {
 	}
 }
 
+func TestCallOutcomeSupplementalFactRolesExcludeResultAndAuthority(t *testing.T) {
+	roles := CallOutcomeSupplementalFactRoles()
+	if len(roles) != len(callOutcomeLanes)-2 {
+		t.Fatalf("supplemental fact roles = %d, want call outcome lanes minus result/authority = %d", len(roles), len(callOutcomeLanes)-2)
+	}
+	for _, role := range roles {
+		switch role.FieldName {
+		case "Results", "PostReturnAuthority":
+			t.Fatalf("%s must be handled outside supplemental fact roles", role.FieldName)
+		}
+	}
+}
+
+func TestBindCallOutcomeSupplementalFactRolesUsesRoleOrder(t *testing.T) {
+	handlers := callOutcomeSupplementalFactRoleTestHandlers()
+	bindings := BindCallOutcomeSupplementalFactRoles("test", handlers, func(v int) bool { return v > 0 })
+	roles := CallOutcomeSupplementalFactRoles()
+	if len(bindings) != len(roles) {
+		t.Fatalf("bindings = %d, want roles = %d", len(bindings), len(roles))
+	}
+	for i, binding := range bindings {
+		if binding.Role != roles[i] {
+			t.Fatalf("binding %d role = %#v, want %#v", i, binding.Role, roles[i])
+		}
+		if binding.Value != i+1 {
+			t.Fatalf("binding %d value = %d, want %d", i, binding.Value, i+1)
+		}
+	}
+}
+
+func TestBindCallOutcomeSupplementalFactRolesRejectsMissingInvalidAndOrphanHandlers(t *testing.T) {
+	missing := callOutcomeSupplementalFactRoleTestHandlers()
+	delete(missing, "NormalReturnFacts")
+	requirePanic(t, func() {
+		_ = BindCallOutcomeSupplementalFactRoles("test", missing, func(v int) bool { return v > 0 })
+	})
+
+	invalid := callOutcomeSupplementalFactRoleTestHandlers()
+	invalid["NormalReturnFacts"] = 0
+	requirePanic(t, func() {
+		_ = BindCallOutcomeSupplementalFactRoles("test", invalid, func(v int) bool { return v > 0 })
+	})
+
+	orphan := callOutcomeSupplementalFactRoleTestHandlers()
+	orphan["NotAField"] = 99
+	requirePanic(t, func() {
+		_ = BindCallOutcomeSupplementalFactRoles("test", orphan, func(v int) bool { return v > 0 })
+	})
+}
+
+func callOutcomeSupplementalFactRoleTestHandlers() map[string]int {
+	out := make(map[string]int)
+	for i, role := range CallOutcomeSupplementalFactRoles() {
+		out[role.FieldName] = i + 1
+	}
+	return out
+}
+
 func callOutcomeLaneByField(fieldName string) (callOutcomeLane, bool) {
 	for _, lane := range callOutcomeLanes {
 		if lane.fieldName == fieldName {
@@ -95,4 +153,14 @@ func callOutcomeWithOneField(t *testing.T, fieldName string) CallOutcome {
 		t.Fatalf("CallOutcome.%s has unsupported test kind %s", fieldName, value.Kind())
 	}
 	return out
+}
+
+func requirePanic(t *testing.T, fn func()) {
+	t.Helper()
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic")
+		}
+	}()
+	fn()
 }

@@ -29,18 +29,11 @@ import (
 )
 
 func TestSupplementalFactLanesMatchCallOutcomeFieldRoles(t *testing.T) {
-	payloadRoles := make(map[string]callpayload.CallOutcomeFieldRole)
-	for _, role := range callpayload.CallOutcomeFieldRoles() {
-		if role.FieldName == "" {
-			t.Fatal("call payload role with empty field name")
-		}
-		if _, ok := payloadRoles[role.FieldName]; ok {
-			t.Fatalf("call payload role %s registered more than once", role.FieldName)
-		}
-		payloadRoles[role.FieldName] = role
+	payloadRoles := callpayload.CallOutcomeSupplementalFactRoles()
+	if len(supplementalFactLanes) != len(payloadRoles) {
+		t.Fatalf("supplemental fact lanes = %d, want payload role count %d", len(supplementalFactLanes), len(payloadRoles))
 	}
 
-	supplementalRoles := make(map[string]supplementalFactLane)
 	for _, lane := range supplementalFactLanes {
 		if lane.role.FieldName == "" {
 			t.Fatal("supplemental fact lane with empty field name")
@@ -48,29 +41,10 @@ func TestSupplementalFactLanesMatchCallOutcomeFieldRoles(t *testing.T) {
 		if lane.merge == nil {
 			t.Fatalf("supplemental fact lane %s has nil merge function", lane.role.FieldName)
 		}
-		if _, ok := supplementalRoles[lane.role.FieldName]; ok {
-			t.Fatalf("supplemental fact lane %s registered more than once", lane.role.FieldName)
-		}
-		role, ok := payloadRoles[lane.role.FieldName]
-		if !ok {
-			t.Fatalf("supplemental fact lane %s has no call payload role", lane.role.FieldName)
-		}
+		role := payloadRoles[0]
+		payloadRoles = payloadRoles[1:]
 		if lane.role != role {
 			t.Fatalf("supplemental fact lane %s role = %#v, payload role = %#v", lane.role.FieldName, lane.role, role)
-		}
-		supplementalRoles[lane.role.FieldName] = lane
-	}
-
-	for _, role := range payloadRoles {
-		switch role.FieldName {
-		case "Results", "PostReturnAuthority":
-			if _, ok := supplementalRoles[role.FieldName]; ok {
-				t.Fatalf("%s is handled outside supplemental fact lanes", role.FieldName)
-			}
-			continue
-		}
-		if _, ok := supplementalRoles[role.FieldName]; !ok {
-			t.Fatalf("call payload role %s has no supplemental fact lane", role.FieldName)
 		}
 	}
 }
@@ -79,26 +53,25 @@ func TestBuildSupplementalFactLanesRejectsMissingHandler(t *testing.T) {
 	handlers := supplementalFactLaneTestHandlers()
 	delete(handlers, "NormalReturnFacts")
 	requirePanic(t, func() {
-		_ = buildSupplementalFactLanes(supplementalFactLaneHandlers(handlers))
+		_ = buildSupplementalFactLanes(handlers)
 	})
 }
 
 func TestBuildSupplementalFactLanesRejectsOrphanHandler(t *testing.T) {
 	handlers := supplementalFactLaneTestHandlers()
 	handlers["NotAField"] = supplementalFactLaneHandler{
-		fieldName: "NotAField",
-		merge:     func(*axis.Registry, *callpayload.CallOutcome, callpayload.CallOutcome) {},
+		merge: func(*axis.Registry, *callpayload.CallOutcome, callpayload.CallOutcome) {},
 	}
 	requirePanic(t, func() {
-		_ = buildSupplementalFactLanes(supplementalFactLaneHandlers(handlers))
+		_ = buildSupplementalFactLanes(handlers)
 	})
 }
 
 func TestBuildSupplementalFactLanesRejectsInvalidHandler(t *testing.T) {
 	handlers := supplementalFactLaneTestHandlers()
-	handlers["NormalReturnFacts"] = supplementalFactLaneHandler{fieldName: "NormalReturnFacts"}
+	handlers["NormalReturnFacts"] = supplementalFactLaneHandler{}
 	requirePanic(t, func() {
-		_ = buildSupplementalFactLanes(supplementalFactLaneHandlers(handlers))
+		_ = buildSupplementalFactLanes(handlers)
 	})
 }
 
@@ -123,18 +96,9 @@ func supplementalFactLaneTestHandlers() map[string]supplementalFactLaneHandler {
 	out := make(map[string]supplementalFactLaneHandler)
 	for _, lane := range supplementalFactLanes {
 		out[lane.role.FieldName] = supplementalFactLaneHandler{
-			fieldName:          lane.role.FieldName,
 			merge:              lane.merge,
 			mergeAuthoritative: lane.mergeAuthoritative,
 		}
-	}
-	return out
-}
-
-func supplementalFactLaneHandlers(in map[string]supplementalFactLaneHandler) []supplementalFactLaneHandler {
-	out := make([]supplementalFactLaneHandler, 0, len(in))
-	for _, handler := range in {
-		out = append(out, handler)
 	}
 	return out
 }

@@ -93,6 +93,13 @@ type CallOutcomeFieldRole struct {
 	PostReturn bool
 }
 
+// CallOutcomeFieldRoleBinding pairs a layer-owned handler with the canonical
+// call-outcome field role it extends.
+type CallOutcomeFieldRoleBinding[T any] struct {
+	Role  CallOutcomeFieldRole
+	Value T
+}
+
 // CallOutcomeFieldRoles returns the registered CallOutcome field roles in
 // canonical struct order. The returned slice is a copy.
 func CallOutcomeFieldRoles() []CallOutcomeFieldRole {
@@ -101,6 +108,59 @@ func CallOutcomeFieldRoles() []CallOutcomeFieldRole {
 		out[i] = CallOutcomeFieldRole{
 			FieldName:  lane.fieldName,
 			PostReturn: lane.postReturn,
+		}
+	}
+	return out
+}
+
+// CallOutcomeSupplementalFactRoles returns fields merged through supplemental
+// fact lanes. Result slots and post-return authority are handled by separate
+// call-outcome merge laws.
+func CallOutcomeSupplementalFactRoles() []CallOutcomeFieldRole {
+	roles := CallOutcomeFieldRoles()
+	out := roles[:0]
+	for _, role := range roles {
+		switch role.FieldName {
+		case "Results", "PostReturnAuthority":
+			continue
+		default:
+			out = append(out, role)
+		}
+	}
+	return out
+}
+
+// BindCallOutcomeSupplementalFactRoles orders layer-owned handlers by the
+// canonical supplemental fact roles and rejects missing, invalid, or orphan
+// handlers.
+func BindCallOutcomeSupplementalFactRoles[T any](
+	owner string,
+	handlers map[string]T,
+	valid func(T) bool,
+) []CallOutcomeFieldRoleBinding[T] {
+	if owner == "" {
+		owner = "call-outcome supplemental fact"
+	}
+	roles := CallOutcomeSupplementalFactRoles()
+	out := make([]CallOutcomeFieldRoleBinding[T], 0, len(roles))
+	seen := make(map[string]struct{}, len(roles))
+	for _, role := range roles {
+		handler, ok := handlers[role.FieldName]
+		if !ok {
+			panic(owner + " lane missing handler for " + role.FieldName)
+		}
+		if valid != nil && !valid(handler) {
+			panic(owner + " lane has invalid handler for " + role.FieldName)
+		}
+		out = append(out, CallOutcomeFieldRoleBinding[T]{
+			Role:  role,
+			Value: handler,
+		})
+		seen[role.FieldName] = struct{}{}
+	}
+	for fieldName := range handlers {
+		if _, ok := seen[fieldName]; !ok {
+			panic(owner + " lane has no supplemental fact role for " + fieldName)
 		}
 	}
 	return out
