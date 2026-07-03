@@ -225,16 +225,16 @@ func DefaultRegistry() Registry {
 	return defaultRegistry
 }
 
-// NewRegistry builds a registry from specs. Later duplicate codes are ignored;
-// code ownership should be explicit and one-spec-per-code.
+// NewRegistry builds a registry from specs. Code ownership is explicit and
+// one-spec-per-code; empty or duplicate codes are construction errors.
 func NewRegistry(specs []CodeSpec) Registry {
 	out := make(map[Code]CodeSpec, len(specs))
 	for _, spec := range specs {
 		if spec.Code == "" {
-			continue
+			panic("judgment: empty code spec")
 		}
 		if _, exists := out[spec.Code]; exists {
-			continue
+			panic("judgment: duplicate code spec for " + string(spec.Code))
 		}
 		out[spec.Code] = cloneCodeSpec(spec)
 	}

@@ -137,6 +137,18 @@ func TestRegistryLookupReturnsDefensiveCopy(t *testing.T) {
 	}
 }
 
+func TestNewRegistryRejectsEmptyAndDuplicateCodes(t *testing.T) {
+	requirePanic(t, func() {
+		_ = NewRegistry([]CodeSpec{{}})
+	})
+	requirePanic(t, func() {
+		_ = NewRegistry([]CodeSpec{
+			{Code: CodeCallArgType},
+			{Code: CodeCallArgType},
+		})
+	})
+}
+
 func TestDefaultPolicyMapsVerdictWithoutChangingJudgment(t *testing.T) {
 	j := Judgment{Code: CodeCallArgType, Verdict: VerdictUnknown}
 	defaultLevel, ok := DefaultPolicy().LevelFor(j, StrictnessDefault)
@@ -153,4 +165,14 @@ func TestDefaultPolicyMapsVerdictWithoutChangingJudgment(t *testing.T) {
 	if j.Verdict != VerdictUnknown {
 		t.Fatalf("policy mutated judgment verdict to %v", j.Verdict)
 	}
+}
+
+func requirePanic(t *testing.T, fn func()) {
+	t.Helper()
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic")
+		}
+	}()
+	fn()
 }
