@@ -11,6 +11,8 @@ type summaryLane struct {
 	empty          func(Summary) bool
 	assignClone    func(src Summary, dst *Summary)
 	normalizeOwned func(reg *axis.Registry, s *Summary)
+	equal          func(reg *axis.Registry, a, b Summary, normalized bool) bool
+	lessOrEq       func(reg *axis.Registry, a, b Summary) bool
 }
 
 var summaryLanes = []summaryLane{
@@ -41,6 +43,12 @@ var summaryLanes = []summaryLane{
 		normalizeOwned: func(_ *axis.Registry, s *Summary) {
 			s.ParamMemberCallObligations = paramMemberCallObligationLane.Normalize(s.ParamMemberCallObligations)
 		},
+		equal: func(_ *axis.Registry, a, b Summary, _ bool) bool {
+			return paramMemberCallObligationLane.Equal(a.ParamMemberCallObligations, b.ParamMemberCallObligations)
+		},
+		lessOrEq: func(_ *axis.Registry, a, b Summary) bool {
+			return paramMemberCallObligationLane.LessOrEq(a.ParamMemberCallObligations, b.ParamMemberCallObligations)
+		},
 	},
 	{
 		fieldName:   "ParamMemberReturnSlots",
@@ -48,6 +56,12 @@ var summaryLanes = []summaryLane{
 		assignClone: func(src Summary, dst *Summary) { dst.ParamMemberReturnSlots = cloneSlice(src.ParamMemberReturnSlots) },
 		normalizeOwned: func(_ *axis.Registry, s *Summary) {
 			s.ParamMemberReturnSlots = paramMemberReturnSlotLane.Normalize(s.ParamMemberReturnSlots)
+		},
+		equal: func(_ *axis.Registry, a, b Summary, _ bool) bool {
+			return paramMemberReturnSlotLane.Equal(a.ParamMemberReturnSlots, b.ParamMemberReturnSlots)
+		},
+		lessOrEq: func(_ *axis.Registry, a, b Summary) bool {
+			return paramMemberReturnSlotLane.LessOrEq(a.ParamMemberReturnSlots, b.ParamMemberReturnSlots)
 		},
 	},
 	{
@@ -57,6 +71,12 @@ var summaryLanes = []summaryLane{
 		normalizeOwned: func(_ *axis.Registry, s *Summary) {
 			s.ReturnParamPathAliases = returnParamPathAliasLane.Normalize(s.ReturnParamPathAliases)
 		},
+		equal: func(_ *axis.Registry, a, b Summary, _ bool) bool {
+			return returnParamPathAliasLane.Equal(a.ReturnParamPathAliases, b.ReturnParamPathAliases)
+		},
+		lessOrEq: func(_ *axis.Registry, a, b Summary) bool {
+			return returnParamPathAliasLane.LessOrEq(a.ReturnParamPathAliases, b.ReturnParamPathAliases)
+		},
 	},
 	{
 		fieldName:   "ParamSinkExposures",
@@ -65,6 +85,12 @@ var summaryLanes = []summaryLane{
 		normalizeOwned: func(reg *axis.Registry, s *Summary) {
 			s.ParamSinkExposures = normalizeParamSinkExposures(reg, s.ParamSinkExposures)
 		},
+		equal: func(reg *axis.Registry, a, b Summary, _ bool) bool {
+			return paramSinkExposuresEqual(reg, a.ParamSinkExposures, b.ParamSinkExposures)
+		},
+		lessOrEq: func(reg *axis.Registry, a, b Summary) bool {
+			return paramSinkExposuresLessOrEq(reg, a.ParamSinkExposures, b.ParamSinkExposures)
+		},
 	},
 	{
 		fieldName:   "CapturedPathObligations",
@@ -72,6 +98,12 @@ var summaryLanes = []summaryLane{
 		assignClone: func(src Summary, dst *Summary) { dst.CapturedPathObligations = cloneSlice(src.CapturedPathObligations) },
 		normalizeOwned: func(reg *axis.Registry, s *Summary) {
 			s.CapturedPathObligations = normalizeCapturedPathObligations(reg, s.CapturedPathObligations)
+		},
+		equal: func(reg *axis.Registry, a, b Summary, _ bool) bool {
+			return capturedPathObligationsEqual(reg, a.CapturedPathObligations, b.CapturedPathObligations)
+		},
+		lessOrEq: func(reg *axis.Registry, a, b Summary) bool {
+			return capturedPathObligationsLessOrEq(reg, a.CapturedPathObligations, b.CapturedPathObligations)
 		},
 	},
 	{
@@ -106,6 +138,12 @@ var summaryLanes = []summaryLane{
 		normalizeOwned: func(_ *axis.Registry, s *Summary) {
 			s.NormalReturnParamEqualities = normalizeParamEqualities(s.NormalReturnParamEqualities)
 		},
+		equal: func(reg *axis.Registry, a, b Summary, _ bool) bool {
+			return paramEqualitiesSummaryEqual(reg, a, b)
+		},
+		lessOrEq: func(reg *axis.Registry, a, b Summary) bool {
+			return paramEqualitiesSummaryLessOrEq(reg, a, b)
+		},
 	},
 	{
 		fieldName:   "NormalReturnFacts",
@@ -114,6 +152,12 @@ var summaryLanes = []summaryLane{
 		normalizeOwned: func(reg *axis.Registry, s *Summary) {
 			s.NormalReturnFacts = normalizeOwnedNormalReturnFacts(reg, s.NormalReturnFacts)
 		},
+		equal: func(reg *axis.Registry, a, b Summary, normalized bool) bool {
+			return normalReturnFactsEqualFor(reg, a.NormalReturnFacts, b.NormalReturnFacts, normalized)
+		},
+		lessOrEq: func(reg *axis.Registry, a, b Summary) bool {
+			return normalReturnFactsLessOrEq(reg, a.NormalReturnFacts, b.NormalReturnFacts)
+		},
 	},
 	{
 		fieldName:   "HeapTableObjects",
@@ -121,6 +165,12 @@ var summaryLanes = []summaryLane{
 		assignClone: func(src Summary, dst *Summary) { dst.HeapTableObjects = cloneHeapTableObjects(src.HeapTableObjects) },
 		normalizeOwned: func(reg *axis.Registry, s *Summary) {
 			s.HeapTableObjects = normalizeOwnedHeapTableObjects(reg, s.HeapTableObjects)
+		},
+		equal: func(reg *axis.Registry, a, b Summary, _ bool) bool {
+			return heapTableObjectsEqual(reg, a.HeapTableObjects, b.HeapTableObjects)
+		},
+		lessOrEq: func(reg *axis.Registry, a, b Summary) bool {
+			return heapTableObjectsLessOrEq(reg, a.HeapTableObjects, b.HeapTableObjects)
 		},
 	},
 	{
@@ -133,6 +183,20 @@ var summaryLanes = []summaryLane{
 			s.ReturnConditionParamRefinements = normalizeReturnConditionParamRefinements(
 				reg,
 				s.ReturnConditionParamRefinements,
+			)
+		},
+		equal: func(reg *axis.Registry, a, b Summary, _ bool) bool {
+			return returnConditionParamRefinementsEqual(
+				reg,
+				a.ReturnConditionParamRefinements,
+				b.ReturnConditionParamRefinements,
+			)
+		},
+		lessOrEq: func(reg *axis.Registry, a, b Summary) bool {
+			return returnConditionParamRefinementsLessOrEq(
+				reg,
+				a.ReturnConditionParamRefinements,
+				b.ReturnConditionParamRefinements,
 			)
 		},
 	},
@@ -148,6 +212,20 @@ var summaryLanes = []summaryLane{
 				s.ReturnConditionSlotRefinements,
 			)
 		},
+		equal: func(reg *axis.Registry, a, b Summary, _ bool) bool {
+			return returnConditionSlotRefinementsEqual(
+				reg,
+				a.ReturnConditionSlotRefinements,
+				b.ReturnConditionSlotRefinements,
+			)
+		},
+		lessOrEq: func(reg *axis.Registry, a, b Summary) bool {
+			return returnConditionSlotRefinementsLessOrEq(
+				reg,
+				a.ReturnConditionSlotRefinements,
+				b.ReturnConditionSlotRefinements,
+			)
+		},
 	},
 	{
 		fieldName: "ReturnParamLiteralCases",
@@ -158,6 +236,12 @@ var summaryLanes = []summaryLane{
 		normalizeOwned: func(reg *axis.Registry, s *Summary) {
 			s.ReturnParamLiteralCases = normalizeReturnParamLiteralCases(reg, s.ReturnParamLiteralCases)
 		},
+		equal: func(reg *axis.Registry, a, b Summary, _ bool) bool {
+			return returnParamLiteralCasesEqual(reg, a.ReturnParamLiteralCases, b.ReturnParamLiteralCases)
+		},
+		lessOrEq: func(reg *axis.Registry, a, b Summary) bool {
+			return returnParamLiteralCasesLessOrEq(reg, a.ReturnParamLiteralCases, b.ReturnParamLiteralCases)
+		},
 	},
 	{
 		fieldName: "ReturnPresenceRelations",
@@ -167,6 +251,12 @@ var summaryLanes = []summaryLane{
 		},
 		normalizeOwned: func(_ *axis.Registry, s *Summary) {
 			s.ReturnPresenceRelations = returnPresenceRelationLane.Normalize(s.ReturnPresenceRelations)
+		},
+		equal: func(_ *axis.Registry, a, b Summary, _ bool) bool {
+			return returnPresenceRelationLane.Equal(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
+		},
+		lessOrEq: func(_ *axis.Registry, a, b Summary) bool {
+			return returnPresenceRelationLane.LessOrEq(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
 		},
 	},
 }
@@ -202,6 +292,30 @@ func summaryNonSlotLanesEmpty(s Summary) bool {
 			continue
 		}
 		if !lane.empty(s) {
+			return false
+		}
+	}
+	return true
+}
+
+func summaryNonSlotLanesEqual(reg *axis.Registry, a, b Summary, normalized bool) bool {
+	for _, lane := range summaryLanes {
+		if lane.slot {
+			continue
+		}
+		if !lane.equal(reg, a, b, normalized) {
+			return false
+		}
+	}
+	return true
+}
+
+func summaryNonSlotLanesLessOrEq(reg *axis.Registry, a, b Summary) bool {
+	for _, lane := range summaryLanes {
+		if lane.slot {
+			continue
+		}
+		if !lane.lessOrEq(reg, a, b) {
 			return false
 		}
 	}

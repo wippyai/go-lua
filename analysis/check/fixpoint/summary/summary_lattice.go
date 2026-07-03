@@ -92,18 +92,7 @@ func equal(reg *axis.Registry, a, b Summary, normalized bool) bool {
 			return false
 		}
 	}
-	return paramEqualitiesSummaryEqual(reg, a, b) &&
-		paramMemberCallObligationLane.Equal(a.ParamMemberCallObligations, b.ParamMemberCallObligations) &&
-		paramMemberReturnSlotLane.Equal(a.ParamMemberReturnSlots, b.ParamMemberReturnSlots) &&
-		returnParamPathAliasLane.Equal(a.ReturnParamPathAliases, b.ReturnParamPathAliases) &&
-		paramSinkExposuresEqual(reg, a.ParamSinkExposures, b.ParamSinkExposures) &&
-		capturedPathObligationsEqual(reg, a.CapturedPathObligations, b.CapturedPathObligations) &&
-		normalReturnFactsEqualFor(reg, a.NormalReturnFacts, b.NormalReturnFacts, normalized) &&
-		heapTableObjectsEqual(reg, a.HeapTableObjects, b.HeapTableObjects) &&
-		returnConditionParamRefinementsEqual(reg, a.ReturnConditionParamRefinements, b.ReturnConditionParamRefinements) &&
-		returnConditionSlotRefinementsEqual(reg, a.ReturnConditionSlotRefinements, b.ReturnConditionSlotRefinements) &&
-		returnParamLiteralCasesEqual(reg, a.ReturnParamLiteralCases, b.ReturnParamLiteralCases) &&
-		returnPresenceRelationLane.Equal(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
+	return summaryNonSlotLanesEqual(reg, a, b, normalized)
 }
 
 func normalReturnFactsEqualFor(reg *axis.Registry, a, b callboundary.NormalReturnFacts, normalized bool) bool {
@@ -147,18 +136,7 @@ func LessOrEq(reg *axis.Registry, a, b Summary) bool {
 			return false
 		}
 	}
-	return paramEqualitiesSummaryLessOrEq(reg, a, b) &&
-		paramMemberCallObligationLane.LessOrEq(a.ParamMemberCallObligations, b.ParamMemberCallObligations) &&
-		paramMemberReturnSlotLane.LessOrEq(a.ParamMemberReturnSlots, b.ParamMemberReturnSlots) &&
-		returnParamPathAliasLane.LessOrEq(a.ReturnParamPathAliases, b.ReturnParamPathAliases) &&
-		paramSinkExposuresLessOrEq(reg, a.ParamSinkExposures, b.ParamSinkExposures) &&
-		capturedPathObligationsLessOrEq(reg, a.CapturedPathObligations, b.CapturedPathObligations) &&
-		normalReturnFactsLessOrEq(reg, a.NormalReturnFacts, b.NormalReturnFacts) &&
-		heapTableObjectsLessOrEq(reg, a.HeapTableObjects, b.HeapTableObjects) &&
-		returnConditionParamRefinementsLessOrEq(reg, a.ReturnConditionParamRefinements, b.ReturnConditionParamRefinements) &&
-		returnConditionSlotRefinementsLessOrEq(reg, a.ReturnConditionSlotRefinements, b.ReturnConditionSlotRefinements) &&
-		returnParamLiteralCasesLessOrEq(reg, a.ReturnParamLiteralCases, b.ReturnParamLiteralCases) &&
-		returnPresenceRelationLane.LessOrEq(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
+	return summaryNonSlotLanesLessOrEq(reg, a, b)
 }
 
 // Join returns the componentwise join of a and b. Missing return and
