@@ -1,6 +1,7 @@
 package summary
 
 import (
+	"reflect"
 	"sort"
 	"testing"
 
@@ -21,6 +22,60 @@ import (
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
+
+func TestSummaryLaneRegistryCoversEveryPayloadField(t *testing.T) {
+	fields := make(map[string]reflect.StructField)
+	typ := reflect.TypeOf(Summary{})
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		if field.Name == "HeapKeySpace" {
+			continue
+		}
+		fields[field.Name] = field
+	}
+
+	registered := make(map[string]struct{})
+	for _, lane := range summaryLanes {
+		if lane.fieldName == "" {
+			t.Fatal("summary lane with empty field name")
+		}
+		if lane.empty == nil {
+			t.Fatalf("summary lane %s has nil empty predicate", lane.fieldName)
+		}
+		if _, ok := registered[lane.fieldName]; ok {
+			t.Fatalf("summary lane %s registered more than once", lane.fieldName)
+		}
+		if _, ok := fields[lane.fieldName]; !ok {
+			t.Fatalf("summary lane references missing field %s", lane.fieldName)
+		}
+		registered[lane.fieldName] = struct{}{}
+	}
+	for field := range fields {
+		if _, ok := registered[field]; !ok {
+			t.Fatalf("Summary.%s has no registered summary lane", field)
+		}
+	}
+}
+
+func TestSummaryLaneRegistryLeavesHeapKeySpaceAsMetadata(t *testing.T) {
+	for _, lane := range summaryLanes {
+		if lane.fieldName == "HeapKeySpace" {
+			t.Fatal("HeapKeySpace is metadata, not a summary lattice lane")
+		}
+	}
+}
+
+func TestSummaryEmptyChecksUseLaneRegistry(t *testing.T) {
+	for _, lane := range summaryLanes {
+		s := summaryWithOneLane(t, lane.fieldName)
+		if summaryBottom(s) {
+			t.Fatalf("summaryBottom ignored lane %s", lane.fieldName)
+		}
+		if !lane.slot && summaryNonSlotLanesEmpty(s) {
+			t.Fatalf("summaryNonSlotLanesEmpty ignored lane %s", lane.fieldName)
+		}
+	}
+}
 
 func TestSummaryKeyComparableAndDeterministicOrdering(t *testing.T) {
 	a := ref.FuncRef{Kind: ref.KindCFG, ID: 1}
@@ -69,6 +124,31 @@ func TestSummaryKeyAxesAreDistinct(t *testing.T) {
 	if facts == references {
 		t.Fatalf("Facts and References keys should be distinct")
 	}
+}
+
+func summaryWithOneLane(t *testing.T, fieldName string) Summary {
+	t.Helper()
+	if fieldName == "NormalReturnFacts" {
+		return Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+			PathRefinements: []callboundary.PathValueFact{{}},
+		}}
+	}
+	var out Summary
+	value := reflect.ValueOf(&out).Elem().FieldByName(fieldName)
+	if !value.IsValid() {
+		t.Fatalf("Summary.%s does not exist", fieldName)
+	}
+	switch value.Kind() {
+	case reflect.Map:
+		m := reflect.MakeMapWithSize(value.Type(), 1)
+		m.SetMapIndex(reflect.Zero(value.Type().Key()), reflect.Zero(value.Type().Elem()))
+		value.Set(m)
+	case reflect.Slice:
+		value.Set(reflect.Append(value, reflect.Zero(value.Type().Elem())))
+	default:
+		t.Fatalf("Summary.%s has unsupported test kind %s", fieldName, value.Kind())
+	}
+	return out
 }
 
 func TestSnapshotExactReads(t *testing.T) {

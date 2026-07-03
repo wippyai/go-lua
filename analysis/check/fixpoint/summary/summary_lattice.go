@@ -56,22 +56,7 @@ func NormalizeOwned(reg *axis.Registry, out Summary) Summary {
 	)
 	out.ReturnParamLiteralCases = normalizeReturnParamLiteralCases(reg, out.ReturnParamLiteralCases)
 	out.ReturnPresenceRelations = returnPresenceRelationLane.Normalize(out.ReturnPresenceRelations)
-	if len(out.Returns) == 0 &&
-		len(out.ParamObligations) == 0 &&
-		len(out.ParamMemberCallObligations) == 0 &&
-		len(out.ParamMemberReturnSlots) == 0 &&
-		len(out.ReturnParamPathAliases) == 0 &&
-		len(out.ParamSinkExposures) == 0 &&
-		len(out.CapturedPathObligations) == 0 &&
-		len(out.NormalReturnParams) == 0 &&
-		len(out.NormalReturnParamConditions) == 0 &&
-		len(out.NormalReturnParamEqualities) == 0 &&
-		out.NormalReturnFacts.Empty() &&
-		len(out.HeapTableObjects) == 0 &&
-		len(out.ReturnConditionParamRefinements) == 0 &&
-		len(out.ReturnConditionSlotRefinements) == 0 &&
-		len(out.ReturnParamLiteralCases) == 0 &&
-		len(out.ReturnPresenceRelations) == 0 {
+	if summaryBottom(out) {
 		return Summary{}
 	}
 	return out
@@ -404,35 +389,9 @@ func Widen(reg *axis.Registry, prev, next Summary) Summary {
 }
 
 func summaryBottom(s Summary) bool {
-	return len(s.Returns) == 0 &&
-		len(s.ParamObligations) == 0 &&
-		len(s.ParamMemberCallObligations) == 0 &&
-		len(s.ParamMemberReturnSlots) == 0 &&
-		len(s.ReturnParamPathAliases) == 0 &&
-		len(s.ParamSinkExposures) == 0 &&
-		len(s.CapturedPathObligations) == 0 &&
-		len(s.NormalReturnParams) == 0 &&
-		len(s.NormalReturnParamConditions) == 0 &&
-		len(s.NormalReturnParamEqualities) == 0 &&
-		s.NormalReturnFacts.Empty() &&
-		len(s.HeapTableObjects) == 0 &&
-		len(s.ReturnConditionParamRefinements) == 0 &&
-		len(s.ReturnConditionSlotRefinements) == 0 &&
-		len(s.ReturnParamLiteralCases) == 0 &&
-		len(s.ReturnPresenceRelations) == 0
+	return summaryLanesEmpty(s)
 }
 
 func summaryPairNonSlotLanesEmpty(a, b Summary) bool {
-	return len(a.ParamMemberCallObligations) == 0 && len(b.ParamMemberCallObligations) == 0 &&
-		len(a.ParamMemberReturnSlots) == 0 && len(b.ParamMemberReturnSlots) == 0 &&
-		len(a.ReturnParamPathAliases) == 0 && len(b.ReturnParamPathAliases) == 0 &&
-		len(a.ParamSinkExposures) == 0 && len(b.ParamSinkExposures) == 0 &&
-		len(a.CapturedPathObligations) == 0 && len(b.CapturedPathObligations) == 0 &&
-		len(a.NormalReturnParamEqualities) == 0 && len(b.NormalReturnParamEqualities) == 0 &&
-		a.NormalReturnFacts.Empty() && b.NormalReturnFacts.Empty() &&
-		len(a.HeapTableObjects) == 0 && len(b.HeapTableObjects) == 0 &&
-		len(a.ReturnConditionParamRefinements) == 0 && len(b.ReturnConditionParamRefinements) == 0 &&
-		len(a.ReturnConditionSlotRefinements) == 0 && len(b.ReturnConditionSlotRefinements) == 0 &&
-		len(a.ReturnParamLiteralCases) == 0 && len(b.ReturnParamLiteralCases) == 0 &&
-		len(a.ReturnPresenceRelations) == 0 && len(b.ReturnPresenceRelations) == 0
+	return summaryNonSlotLanesEmpty(a) && summaryNonSlotLanesEmpty(b)
 }
