@@ -64,5 +64,25 @@ func (p Pass) Run(ctx Context) []judgment.Judgment {
 			out = append(out, item)
 		}
 	}
+	return suppressJudgmentCascades(out)
+}
+
+func suppressJudgmentCascades(in []judgment.Judgment) []judgment.Judgment {
+	if len(in) < 2 {
+		return in
+	}
+	invalidAssignments := make(map[string]cfg.Point)
+	out := in[:0]
+	for _, item := range in {
+		if item.Code == judgment.CodeAssignment && item.Subject.Label != "" {
+			invalidAssignments[item.Subject.Label] = item.Point
+		}
+		if item.Code == judgment.CodeReturn && item.Actual.Label != "" {
+			if causePoint, ok := invalidAssignments[item.Actual.Label]; ok && causePoint < item.Point {
+				continue
+			}
+		}
+		out = append(out, item)
+	}
 	return out
 }

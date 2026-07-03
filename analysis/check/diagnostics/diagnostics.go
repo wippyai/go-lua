@@ -138,8 +138,11 @@ func diagnosticProducers() []diagnosticProducer {
 	return []diagnosticProducer{
 		parentJudgmentProducer([]diagnostic.Code{CodeUnresolvedTypeReference}, pass.UnresolvedTypes{}),
 		requiredJudgmentProducer([]diagnostic.Code{CodeUnresolvedValueReference}, pass.UnresolvedValues{}),
-		requiredJudgmentProducer([]diagnostic.Code{CodeAssignmentType, CodeOptionalAssignmentTarget, CodeDirectCallResultAssignment}, pass.Assignments{}),
-		requiredJudgmentProducer([]diagnostic.Code{CodeReturnContractType}, pass.Returns{}),
+		requiredJudgmentProducer(
+			[]diagnostic.Code{CodeAssignmentType, CodeOptionalAssignmentTarget, CodeDirectCallResultAssignment, CodeReturnContractType},
+			pass.Assignments{},
+			pass.Returns{},
+		),
 		directCallContractJudgmentProducer(),
 		requiredJudgmentProducer([]diagnostic.Code{CodeConcatOperand}, pass.ConcatOperands{}),
 		requiredJudgmentProducer([]diagnostic.Code{CodeNumericForOperand}, pass.NumericForOperands{}),

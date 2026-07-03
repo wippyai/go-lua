@@ -50,6 +50,25 @@ func TestPassFiltersUnreachableJudgments(t *testing.T) {
 	}
 }
 
+func TestPassSuppressesReturnCascadeFromInvalidAssignment(t *testing.T) {
+	producer := fakeProducer{
+		name: "cascade",
+		items: []judgment.Judgment{
+			assignmentJudgment("x", 3),
+			returnJudgment("x", 4),
+			returnJudgment("y", 5),
+		},
+	}
+
+	got := obligationpass.New(producer).Run(obligationpass.Context{FunctionKey: "fn"})
+	if len(got) != 2 {
+		t.Fatalf("judgments = %d, want 2: %#v", len(got), got)
+	}
+	if got[0].Code != judgment.CodeAssignment || got[1].Code != judgment.CodeReturn || got[1].Actual.Label != "y" {
+		t.Fatalf("cascade suppression kept wrong judgments: %#v", got)
+	}
+}
+
 type fakeProducer struct {
 	name  string
 	items []judgment.Judgment
@@ -72,6 +91,42 @@ func callArgJudgment(key string, point cfg.Point) judgment.Judgment {
 			Kind:        judgment.SubjectCallArgument,
 			Key:         key,
 		},
+		Evidence: judgment.EvidenceChain{
+			{Kind: judgment.EvidenceAbstractFact},
+			{Kind: judgment.EvidenceUserAssertion},
+			{Kind: judgment.EvidenceMissingProof},
+		},
+	}
+}
+
+func assignmentJudgment(label string, point cfg.Point) judgment.Judgment {
+	return judgment.Judgment{
+		Code:  judgment.CodeAssignment,
+		Point: point,
+		Subject: judgment.SubjectRef{
+			FunctionKey: "fn",
+			Kind:        judgment.SubjectPath,
+			Key:         "assign:" + label,
+			Label:       label,
+		},
+		Evidence: judgment.EvidenceChain{
+			{Kind: judgment.EvidenceAbstractFact},
+			{Kind: judgment.EvidenceUserAssertion},
+			{Kind: judgment.EvidenceMissingProof},
+		},
+	}
+}
+
+func returnJudgment(sourceLabel string, point cfg.Point) judgment.Judgment {
+	return judgment.Judgment{
+		Code:  judgment.CodeReturn,
+		Point: point,
+		Subject: judgment.SubjectRef{
+			FunctionKey: "fn",
+			Kind:        judgment.SubjectReturnValue,
+			Key:         "return:" + sourceLabel,
+		},
+		Actual: judgment.ValueRef{Label: sourceLabel},
 		Evidence: judgment.EvidenceChain{
 			{Kind: judgment.EvidenceAbstractFact},
 			{Kind: judgment.EvidenceUserAssertion},
