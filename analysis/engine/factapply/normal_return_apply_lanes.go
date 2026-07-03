@@ -63,7 +63,6 @@ func (ctx normalReturnApplyContext) relationGraphKey(operand callboundary.RelOpe
 }
 
 type normalReturnApplyLane struct {
-	id    callboundary.NormalReturnFactLaneID
 	phase normalReturnApplyPhase
 	apply func(normalReturnApplyContext, state.State) state.State
 }
@@ -165,7 +164,6 @@ func buildNormalReturnApplyLanes(handlers map[callboundary.NormalReturnFactLaneI
 	for _, binding := range bindings {
 		handler := binding.Value
 		out = append(out, normalReturnApplyLane{
-			id:    binding.ID,
 			phase: handler.phase,
 			apply: handler.apply,
 		})

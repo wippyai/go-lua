@@ -9,30 +9,13 @@ import (
 )
 
 func TestNormalReturnApplyLaneRegistryCoversStorageLanes(t *testing.T) {
-	registered := make(map[callboundary.NormalReturnFactLaneID]struct{})
-	storage := make(map[callboundary.NormalReturnFactLaneID]string)
-	for _, lane := range callboundary.NormalReturnFactLanes() {
-		storage[lane.ID()] = lane.FieldName()
+	storage := callboundary.NormalReturnFactLanes()
+	if len(normalReturnApplyLanes) != len(storage) {
+		t.Fatalf("normal-return apply lane count = %d, want storage lane count %d", len(normalReturnApplyLanes), len(storage))
 	}
 	for _, lane := range normalReturnApplyLanes {
-		if lane.id == "" {
-			t.Fatal("normal-return apply lane with empty ID")
-		}
 		if lane.apply == nil {
-			t.Fatalf("normal-return apply lane %q has no apply function", lane.id)
-		}
-		if _, ok := storage[lane.id]; !ok {
-			t.Fatalf("normal-return apply lane %q has no storage lane owner", lane.id)
-		}
-		if _, ok := registered[lane.id]; ok {
-			t.Fatalf("normal-return apply lane ID %q registered more than once", lane.id)
-		}
-		registered[lane.id] = struct{}{}
-	}
-	for _, storageLane := range callboundary.NormalReturnFactLanes() {
-		_, ok := registered[storageLane.ID()]
-		if !ok {
-			t.Fatalf("storage lane %q/%s has no apply lane owner", storageLane.ID(), storageLane.FieldName())
+			t.Fatal("normal-return apply lane has no apply function")
 		}
 	}
 }

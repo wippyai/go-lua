@@ -24,7 +24,6 @@ type normalReturnProjectContext struct {
 }
 
 type normalReturnProjectLane struct {
-	id      callboundary.NormalReturnFactLaneID
 	project func(normalReturnProjectContext, *callboundary.NormalReturnFacts)
 }
 
@@ -56,7 +55,6 @@ func buildNormalReturnProjectLanes(handlers map[callboundary.NormalReturnFactLan
 	out := make([]normalReturnProjectLane, 0, len(bindings))
 	for _, binding := range bindings {
 		out = append(out, normalReturnProjectLane{
-			id:      binding.ID,
 			project: binding.Value,
 		})
 	}
