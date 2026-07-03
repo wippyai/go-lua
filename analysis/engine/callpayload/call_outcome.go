@@ -85,6 +85,27 @@ type callOutcomeLane struct {
 	has        func(CallOutcome) bool
 }
 
+// CallOutcomeFieldRole describes one registered CallOutcome field's boundary
+// role. It intentionally omits the lane's predicate: callers may classify
+// fields, but only callpayload owns field-presence semantics.
+type CallOutcomeFieldRole struct {
+	FieldName  string
+	PostReturn bool
+}
+
+// CallOutcomeFieldRoles returns the registered CallOutcome field roles in
+// canonical struct order. The returned slice is a copy.
+func CallOutcomeFieldRoles() []CallOutcomeFieldRole {
+	out := make([]CallOutcomeFieldRole, len(callOutcomeLanes))
+	for i, lane := range callOutcomeLanes {
+		out[i] = CallOutcomeFieldRole{
+			FieldName:  lane.fieldName,
+			PostReturn: lane.postReturn,
+		}
+	}
+	return out
+}
+
 var callOutcomeLanes = []callOutcomeLane{
 	{
 		fieldName: "Results",

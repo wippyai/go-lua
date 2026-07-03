@@ -1,6 +1,7 @@
 package calloutcome
 
 import (
+	"reflect"
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -26,6 +27,70 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
+
+func TestSupplementalFactLanesMatchCallOutcomeFieldRoles(t *testing.T) {
+	payloadRoles := make(map[string]callpayload.CallOutcomeFieldRole)
+	for _, role := range callpayload.CallOutcomeFieldRoles() {
+		if role.FieldName == "" {
+			t.Fatal("call payload role with empty field name")
+		}
+		if _, ok := payloadRoles[role.FieldName]; ok {
+			t.Fatalf("call payload role %s registered more than once", role.FieldName)
+		}
+		payloadRoles[role.FieldName] = role
+	}
+
+	supplementalRoles := make(map[string]supplementalFactLane)
+	for _, lane := range supplementalFactLanes {
+		if lane.fieldName == "" {
+			t.Fatal("supplemental fact lane with empty field name")
+		}
+		if lane.merge == nil {
+			t.Fatalf("supplemental fact lane %s has nil merge function", lane.fieldName)
+		}
+		if _, ok := supplementalRoles[lane.fieldName]; ok {
+			t.Fatalf("supplemental fact lane %s registered more than once", lane.fieldName)
+		}
+		role, ok := payloadRoles[lane.fieldName]
+		if !ok {
+			t.Fatalf("supplemental fact lane %s has no call payload role", lane.fieldName)
+		}
+		if lane.postReturn != role.PostReturn {
+			t.Fatalf("supplemental fact lane %s postReturn = %v, payload role = %v", lane.fieldName, lane.postReturn, role.PostReturn)
+		}
+		supplementalRoles[lane.fieldName] = lane
+	}
+
+	for _, role := range payloadRoles {
+		switch role.FieldName {
+		case "Results", "PostReturnAuthority":
+			if _, ok := supplementalRoles[role.FieldName]; ok {
+				t.Fatalf("%s is handled outside supplemental fact lanes", role.FieldName)
+			}
+			continue
+		}
+		if _, ok := supplementalRoles[role.FieldName]; !ok {
+			t.Fatalf("call payload role %s has no supplemental fact lane", role.FieldName)
+		}
+	}
+}
+
+func TestCallOutcomeFieldRolesCoverStructFields(t *testing.T) {
+	fields := make(map[string]struct{})
+	typ := reflect.TypeOf(callpayload.CallOutcome{})
+	for i := 0; i < typ.NumField(); i++ {
+		fields[typ.Field(i).Name] = struct{}{}
+	}
+	for _, role := range callpayload.CallOutcomeFieldRoles() {
+		if _, ok := fields[role.FieldName]; !ok {
+			t.Fatalf("call payload role references missing field %s", role.FieldName)
+		}
+		delete(fields, role.FieldName)
+	}
+	for field := range fields {
+		t.Fatalf("CallOutcome.%s has no exported field role", field)
+	}
+}
 
 func TestWithSupplementalKeepsPrimarySlotsFillsMissingSlotsAndMergesSideFactsWithoutAuthority(t *testing.T) {
 	reg := standard.Registry()

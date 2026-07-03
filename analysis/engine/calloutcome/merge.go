@@ -144,27 +144,135 @@ func resultSlotCarriesUntrustedTopEvidence(reg *axis.Registry, value product.Val
 }
 
 func withSupplementalFacts(reg *axis.Registry, out, second callpayload.CallOutcome) callpayload.CallOutcome {
-	out.ParamObligations = append(out.ParamObligations, second.ParamObligations...)
-	out.PathObligations = append(out.PathObligations, second.PathObligations...)
-	out.ParamExposures = append(out.ParamExposures, second.ParamExposures...)
-	if out.PostReturnAuthority {
-		out.HeapTableObjects = withAuthoritativeResultHeapTableObjects(reg, out.HeapTableObjects, second.HeapTableObjects, out.Results)
-		return out
+	authoritative := out.PostReturnAuthority
+	for _, lane := range supplementalFactLanes {
+		if authoritative && lane.postReturn {
+			if lane.mergeAuthoritative != nil {
+				lane.mergeAuthoritative(reg, &out, second)
+			}
+			continue
+		}
+		lane.merge(reg, &out, second)
 	}
-	out.NormalReturnFacts = out.NormalReturnFacts.Append(second.NormalReturnFacts)
-	out.HeapTableObjects = withSupplementalHeapTableObjects(reg, out.HeapTableObjects, second.HeapTableObjects)
-	out.Placements = withSupplementalPlacements(out.Placements, second.Placements)
-	out.ParamPathRefinements = append(out.ParamPathRefinements, second.ParamPathRefinements...)
-	out.ParamPathWrites = append(out.ParamPathWrites, second.ParamPathWrites...)
-	out.ParamLengthFloors = append(out.ParamLengthFloors, second.ParamLengthFloors...)
-	out.ParamPathInvalidations = append(out.ParamPathInvalidations, second.ParamPathInvalidations...)
-	out.ParamConditions = append(out.ParamConditions, second.ParamConditions...)
-	out.ParamPathRelations = append(out.ParamPathRelations, second.ParamPathRelations...)
-	out.ReturnConditionRefinements = append(out.ReturnConditionRefinements, second.ReturnConditionRefinements...)
-	out.ReturnConditionSlots = append(out.ReturnConditionSlots, second.ReturnConditionSlots...)
-	out.ReturnPresenceRelations = append(out.ReturnPresenceRelations, second.ReturnPresenceRelations...)
-	out.PostReturnAuthority = second.PostReturnAuthority
+	if !authoritative {
+		out.PostReturnAuthority = second.PostReturnAuthority
+	}
 	return out
+}
+
+type supplementalFactLane struct {
+	fieldName          string
+	postReturn         bool
+	merge              func(*axis.Registry, *callpayload.CallOutcome, callpayload.CallOutcome)
+	mergeAuthoritative func(*axis.Registry, *callpayload.CallOutcome, callpayload.CallOutcome)
+}
+
+var supplementalFactLanes = []supplementalFactLane{
+	{
+		fieldName:  "NormalReturnFacts",
+		postReturn: true,
+		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+			out.NormalReturnFacts = out.NormalReturnFacts.Append(second.NormalReturnFacts)
+		},
+	},
+	{
+		fieldName:  "HeapTableObjects",
+		postReturn: true,
+		merge: func(reg *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+			out.HeapTableObjects = withSupplementalHeapTableObjects(reg, out.HeapTableObjects, second.HeapTableObjects)
+		},
+		mergeAuthoritative: func(reg *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+			out.HeapTableObjects = withAuthoritativeResultHeapTableObjects(reg, out.HeapTableObjects, second.HeapTableObjects, out.Results)
+		},
+	},
+	{
+		fieldName:  "Placements",
+		postReturn: true,
+		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+			out.Placements = withSupplementalPlacements(out.Placements, second.Placements)
+		},
+	},
+	{
+		fieldName: "ParamObligations",
+		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+			out.ParamObligations = append(out.ParamObligations, second.ParamObligations...)
+		},
+	},
+	{
+		fieldName: "PathObligations",
+		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+			out.PathObligations = append(out.PathObligations, second.PathObligations...)
+		},
+	},
+	{
+		fieldName:  "ParamPathRefinements",
+		postReturn: true,
+		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+			out.ParamPathRefinements = append(out.ParamPathRefinements, second.ParamPathRefinements...)
+		},
+	},
+	{
+		fieldName:  "ParamPathWrites",
+		postReturn: true,
+		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+			out.ParamPathWrites = append(out.ParamPathWrites, second.ParamPathWrites...)
+		},
+	},
+	{
+		fieldName:  "ParamLengthFloors",
+		postReturn: true,
+		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+			out.ParamLengthFloors = append(out.ParamLengthFloors, second.ParamLengthFloors...)
+		},
+	},
+	{
+		fieldName:  "ParamPathInvalidations",
+		postReturn: true,
+		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+			out.ParamPathInvalidations = append(out.ParamPathInvalidations, second.ParamPathInvalidations...)
+		},
+	},
+	{
+		fieldName:  "ParamConditions",
+		postReturn: true,
+		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+			out.ParamConditions = append(out.ParamConditions, second.ParamConditions...)
+		},
+	},
+	{
+		fieldName:  "ParamPathRelations",
+		postReturn: true,
+		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+			out.ParamPathRelations = append(out.ParamPathRelations, second.ParamPathRelations...)
+		},
+	},
+	{
+		fieldName:  "ReturnConditionRefinements",
+		postReturn: true,
+		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+			out.ReturnConditionRefinements = append(out.ReturnConditionRefinements, second.ReturnConditionRefinements...)
+		},
+	},
+	{
+		fieldName:  "ReturnConditionSlots",
+		postReturn: true,
+		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+			out.ReturnConditionSlots = append(out.ReturnConditionSlots, second.ReturnConditionSlots...)
+		},
+	},
+	{
+		fieldName:  "ReturnPresenceRelations",
+		postReturn: true,
+		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+			out.ReturnPresenceRelations = append(out.ReturnPresenceRelations, second.ReturnPresenceRelations...)
+		},
+	},
+	{
+		fieldName: "ParamExposures",
+		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+			out.ParamExposures = append(out.ParamExposures, second.ParamExposures...)
+		},
+	},
 }
 
 func withAuthoritativeResultHeapTableObjects(
