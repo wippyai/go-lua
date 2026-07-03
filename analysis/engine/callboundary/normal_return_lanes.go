@@ -1,6 +1,9 @@
 package callboundary
 
-import pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+import (
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	engineregistry "github.com/wippyai/go-lua/analysis/engine/registry"
+)
 
 // NormalReturnFactLaneID names one typed normal-return fact lane. The ID is the
 // stable architectural owner for operations over the corresponding storage field.
@@ -101,28 +104,31 @@ func BindNormalReturnFactLanes[T any](
 	if owner == "" {
 		owner = "normal-return"
 	}
-	storage := NormalReturnFactLanes()
-	out := make([]NormalReturnFactLaneBinding[T], 0, len(storage))
-	seen := make(map[NormalReturnFactLaneID]struct{}, len(storage))
-	for _, storageLane := range storage {
-		id := storageLane.ID()
-		handler, ok := handlers[id]
-		if !ok {
-			panic(owner + " lane missing handler for " + string(id))
-		}
-		if valid != nil && !valid(handler) {
-			panic(owner + " lane has invalid handler for " + string(id))
-		}
+	bindings := engineregistry.BindOrdered(engineregistry.BindOptions[NormalReturnFactLaneID, NormalReturnFactLane, T]{
+		Owner:    owner + " lane",
+		Roles:    normalReturnFactLaneRoles(),
+		Handlers: handlers,
+		Valid:    valid,
+		KeyName:  func(id NormalReturnFactLaneID) string { return string(id) },
+	})
+	out := make([]NormalReturnFactLaneBinding[T], 0, len(bindings))
+	for _, binding := range bindings {
 		out = append(out, NormalReturnFactLaneBinding[T]{
-			ID:      id,
-			Storage: storageLane,
-			Value:   handler,
+			ID:      binding.Key,
+			Storage: binding.Role,
+			Value:   binding.Handler,
 		})
-		seen[id] = struct{}{}
 	}
-	for id := range handlers {
-		if _, ok := seen[id]; !ok {
-			panic(owner + " lane has no storage owner for " + string(id))
+	return out
+}
+
+func normalReturnFactLaneRoles() []engineregistry.Role[NormalReturnFactLaneID, NormalReturnFactLane] {
+	storage := NormalReturnFactLanes()
+	out := make([]engineregistry.Role[NormalReturnFactLaneID, NormalReturnFactLane], len(storage))
+	for i, lane := range storage {
+		out[i] = engineregistry.Role[NormalReturnFactLaneID, NormalReturnFactLane]{
+			Key:   lane.ID(),
+			Value: lane,
 		}
 	}
 	return out

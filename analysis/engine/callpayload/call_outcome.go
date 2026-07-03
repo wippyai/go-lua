@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	engineregistry "github.com/wippyai/go-lua/analysis/engine/registry"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -141,26 +142,30 @@ func BindCallOutcomeSupplementalFactRoles[T any](
 	if owner == "" {
 		owner = "call-outcome supplemental fact"
 	}
-	roles := CallOutcomeSupplementalFactRoles()
-	out := make([]CallOutcomeFieldRoleBinding[T], 0, len(roles))
-	seen := make(map[string]struct{}, len(roles))
-	for _, role := range roles {
-		handler, ok := handlers[role.FieldName]
-		if !ok {
-			panic(owner + " lane missing handler for " + role.FieldName)
-		}
-		if valid != nil && !valid(handler) {
-			panic(owner + " lane has invalid handler for " + role.FieldName)
-		}
+	bindings := engineregistry.BindOrdered(engineregistry.BindOptions[string, CallOutcomeFieldRole, T]{
+		Owner:    owner + " lane",
+		Roles:    callOutcomeSupplementalFactRoleEntries(),
+		Handlers: handlers,
+		Valid:    valid,
+		KeyName:  func(fieldName string) string { return fieldName },
+	})
+	out := make([]CallOutcomeFieldRoleBinding[T], 0, len(bindings))
+	for _, binding := range bindings {
 		out = append(out, CallOutcomeFieldRoleBinding[T]{
-			Role:  role,
-			Value: handler,
+			Role:  binding.Role,
+			Value: binding.Handler,
 		})
-		seen[role.FieldName] = struct{}{}
 	}
-	for fieldName := range handlers {
-		if _, ok := seen[fieldName]; !ok {
-			panic(owner + " lane has no supplemental fact role for " + fieldName)
+	return out
+}
+
+func callOutcomeSupplementalFactRoleEntries() []engineregistry.Role[string, CallOutcomeFieldRole] {
+	roles := CallOutcomeSupplementalFactRoles()
+	out := make([]engineregistry.Role[string, CallOutcomeFieldRole], len(roles))
+	for i, role := range roles {
+		out[i] = engineregistry.Role[string, CallOutcomeFieldRole]{
+			Key:   role.FieldName,
+			Value: role,
 		}
 	}
 	return out
