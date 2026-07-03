@@ -61,52 +61,9 @@ func (s Summary) Clone() Summary {
 		return Summary{}
 	}
 	out := Summary{}
-	if len(s.Returns) > 0 {
-		out.Returns = make([]product.Value, len(s.Returns))
-		copy(out.Returns, s.Returns)
-	}
-	if len(s.ParamObligations) > 0 {
-		out.ParamObligations = make([]product.Value, len(s.ParamObligations))
-		copy(out.ParamObligations, s.ParamObligations)
-	}
-	if len(s.ParamMemberCallObligations) > 0 {
-		out.ParamMemberCallObligations = make([]ParamMemberCallObligation, len(s.ParamMemberCallObligations))
-		copy(out.ParamMemberCallObligations, s.ParamMemberCallObligations)
-	}
-	if len(s.ParamMemberReturnSlots) > 0 {
-		out.ParamMemberReturnSlots = make([]ParamMemberReturnSlot, len(s.ParamMemberReturnSlots))
-		copy(out.ParamMemberReturnSlots, s.ParamMemberReturnSlots)
-	}
-	if len(s.ReturnParamPathAliases) > 0 {
-		out.ReturnParamPathAliases = make([]ReturnParamPathAlias, len(s.ReturnParamPathAliases))
-		copy(out.ReturnParamPathAliases, s.ReturnParamPathAliases)
-	}
-	if len(s.ParamSinkExposures) > 0 {
-		out.ParamSinkExposures = make([]ParamSinkExposure, len(s.ParamSinkExposures))
-		copy(out.ParamSinkExposures, s.ParamSinkExposures)
-	}
-	if len(s.CapturedPathObligations) > 0 {
-		out.CapturedPathObligations = make([]CapturedPathObligation, len(s.CapturedPathObligations))
-		copy(out.CapturedPathObligations, s.CapturedPathObligations)
-	}
-	if len(s.NormalReturnParams) > 0 {
-		out.NormalReturnParams = make([]product.Value, len(s.NormalReturnParams))
-		copy(out.NormalReturnParams, s.NormalReturnParams)
-	}
-	if len(s.NormalReturnParamConditions) > 0 {
-		out.NormalReturnParamConditions = make([]ParamCondition, len(s.NormalReturnParamConditions))
-		copy(out.NormalReturnParamConditions, s.NormalReturnParamConditions)
-	}
-	if len(s.NormalReturnParamEqualities) > 0 {
-		out.NormalReturnParamEqualities = make([]ParamEquality, len(s.NormalReturnParamEqualities))
-		copy(out.NormalReturnParamEqualities, s.NormalReturnParamEqualities)
-	}
-	out.NormalReturnFacts = cloneNormalReturnFacts(s.NormalReturnFacts)
-	out.HeapTableObjects = cloneHeapTableObjects(s.HeapTableObjects)
 	out.HeapKeySpace = s.HeapKeySpace
-	out.ReturnConditionParamRefinements = cloneReturnConditionParamRefinements(s.ReturnConditionParamRefinements)
-	out.ReturnConditionSlotRefinements = cloneReturnConditionSlotRefinements(s.ReturnConditionSlotRefinements)
-	out.ReturnParamLiteralCases = cloneReturnParamLiteralCases(s.ReturnParamLiteralCases)
-	out.ReturnPresenceRelations = returnPresenceRelationLane.Clone(s.ReturnPresenceRelations)
+	for _, lane := range summaryLanes {
+		lane.assignClone(s, &out)
+	}
 	return out
 }

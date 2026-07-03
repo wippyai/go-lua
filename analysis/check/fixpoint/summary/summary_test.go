@@ -42,6 +42,9 @@ func TestSummaryLaneRegistryCoversEveryPayloadField(t *testing.T) {
 		if lane.empty == nil {
 			t.Fatalf("summary lane %s has nil empty predicate", lane.fieldName)
 		}
+		if lane.assignClone == nil {
+			t.Fatalf("summary lane %s has nil clone assignment", lane.fieldName)
+		}
 		if _, ok := registered[lane.fieldName]; ok {
 			t.Fatalf("summary lane %s registered more than once", lane.fieldName)
 		}
