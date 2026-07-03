@@ -68,6 +68,13 @@ func (r Reader) forEachLocalAssignment(point cfg.Point, fact body.LocalAssignmen
 	if fact.Type == nil || (fact.Expr == nil && fact.Source.Kind == sourceprovenance.SourceExpression) {
 		return true
 	}
+	if fact.Expr == nil && len(fact.Exprs) == 0 {
+		// A declaration without an initializer defers the annotated contract
+		// to later assignments; flow-sensitive use analysis owns the implicit
+		// nil state. Only nil-filled targets of an initialized multi-assignment
+		// remain assignment obligations.
+		return true
+	}
 	expected, ok := r.result.LocalAssignmentExpectedType(point, fact)
 	if !ok || !readapi.ObligationTypeReportable(expected) {
 		return true
