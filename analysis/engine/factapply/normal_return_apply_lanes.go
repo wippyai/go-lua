@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -443,49 +442,6 @@ func applyNormalReturnRelConstraint(
 		coB = 0
 	}
 	return out.WriteScaledConstraint(fact.CoA, aKey, coB, bKey, cKey, fact.K)
-}
-
-func applyNormalReturnChannelSelects(ctx normalReturnApplyContext, out state.State) state.State {
-	for _, event := range ctx.normalFacts.ChannelSelects {
-		fact, ok := callChannelSelectFactAt(ctx, event)
-		if !ok {
-			continue
-		}
-		out = out.AddChannelSelectFact(fact)
-	}
-	return out
-}
-
-func callChannelSelectFactAt(
-	ctx normalReturnApplyContext,
-	event callboundary.ChannelSelectFact,
-) (channelselectfact.Fact, bool) {
-	switch event.Kind {
-	case channelselectfact.FactSelect, channelselectfact.FactReceive, channelselectfact.FactCase:
-	default:
-		return channelselectfact.Fact{}, false
-	}
-	fact := channelselectfact.Fact{
-		Select:     event.Select,
-		Kind:       event.Kind,
-		Index:      event.Index,
-		HasDefault: event.HasDefault,
-	}
-	if !event.Result.IsEmpty() {
-		resultStateKey, ok := ctx.stateKey(event.Result)
-		if !ok {
-			return channelselectfact.Fact{}, false
-		}
-		fact.Result = resultStateKey
-	}
-	if !event.Case.IsEmpty() {
-		caseStateKey, ok := ctx.stateKey(event.Case)
-		if !ok {
-			return channelselectfact.Fact{}, false
-		}
-		fact.Case = caseStateKey
-	}
-	return fact, true
 }
 
 func applyNormalReturnFrozenTables(ctx normalReturnApplyContext, out state.State) state.State {
