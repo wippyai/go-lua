@@ -34,6 +34,11 @@ type operationalEffectsWire struct {
 	ReturnAllocationTemplates       []returnAllocationTemplateWire  `json:"returnAllocationTemplates,omitempty"`
 }
 
+type operationalEffectsWireLane struct {
+	fieldName    string
+	canonicalize func(*operationalEffectsWire)
+}
+
 type returnPresenceRelationWire struct {
 	TriggerIndex    *int   `json:"triggerIndex"`
 	TriggerPresence string `json:"triggerPresence"`
@@ -159,6 +164,199 @@ type boundaryPathWire struct {
 	Param  *int   `json:"param,omitempty"`
 	Return *int   `json:"return,omitempty"`
 	Suffix string `json:"suffix,omitempty"`
+}
+
+var operationalEffectsWireLanes = []operationalEffectsWireLane{
+	{
+		fieldName: "ReturnPresenceRelations",
+		canonicalize: func(w *operationalEffectsWire) {
+			sort.Slice(w.ReturnPresenceRelations, func(i, j int) bool {
+				left, right := w.ReturnPresenceRelations[i], w.ReturnPresenceRelations[j]
+				if c := compareOptionalInt(left.TriggerIndex, right.TriggerIndex); c != 0 {
+					return c < 0
+				}
+				if left.TriggerPresence != right.TriggerPresence {
+					return left.TriggerPresence < right.TriggerPresence
+				}
+				if c := compareOptionalInt(left.TargetIndex, right.TargetIndex); c != 0 {
+					return c < 0
+				}
+				return left.TargetPresence < right.TargetPresence
+			})
+		},
+	},
+	{
+		fieldName: "NormalReturnPresenceRefinements",
+		canonicalize: func(w *operationalEffectsWire) {
+			sort.Slice(w.NormalReturnPresenceRefinements, func(i, j int) bool {
+				left, right := w.NormalReturnPresenceRefinements[i], w.NormalReturnPresenceRefinements[j]
+				if c := comparePlaceholderPathWire(left.Path, right.Path); c != 0 {
+					return c < 0
+				}
+				return left.Presence < right.Presence
+			})
+		},
+	},
+	{
+		fieldName: "NormalReturnTypeRefinements",
+		canonicalize: func(w *operationalEffectsWire) {
+			sort.Slice(w.NormalReturnTypeRefinements, func(i, j int) bool {
+				left, right := w.NormalReturnTypeRefinements[i], w.NormalReturnTypeRefinements[j]
+				if c := comparePlaceholderPathWire(left.Path, right.Path); c != 0 {
+					return c < 0
+				}
+				if leftKey, rightKey := typeWireKey(left.Type), typeWireKey(right.Type); leftKey != rightKey {
+					return leftKey < rightKey
+				}
+				return strings.Join(left.Assertions, ",") < strings.Join(right.Assertions, ",")
+			})
+		},
+	},
+	{
+		fieldName: "PathPresenceImplications",
+		canonicalize: func(w *operationalEffectsWire) {
+			sort.Slice(w.PathPresenceImplications, func(i, j int) bool {
+				return comparePathPresenceImplicationWire(w.PathPresenceImplications[i], w.PathPresenceImplications[j]) < 0
+			})
+		},
+	},
+	{
+		fieldName: "PathStaticMembers",
+		canonicalize: func(w *operationalEffectsWire) {
+			sort.Slice(w.PathStaticMembers, func(i, j int) bool {
+				left, right := w.PathStaticMembers[i], w.PathStaticMembers[j]
+				if c := comparePlaceholderPathWire(left.Path, right.Path); c != 0 {
+					return c < 0
+				}
+				return typeWireKey(left.Type) < typeWireKey(right.Type)
+			})
+		},
+	},
+	{
+		fieldName: "PathInvalidations",
+		canonicalize: func(w *operationalEffectsWire) {
+			sort.Slice(w.PathInvalidations, func(i, j int) bool {
+				return comparePlaceholderPathWire(w.PathInvalidations[i].Path, w.PathInvalidations[j].Path) < 0
+			})
+		},
+	},
+	{
+		fieldName: "BranchProofs",
+		canonicalize: func(w *operationalEffectsWire) {
+			sort.Slice(w.BranchProofs, func(i, j int) bool {
+				return compareBranchProofWire(w.BranchProofs[i], w.BranchProofs[j]) < 0
+			})
+		},
+	},
+	{
+		fieldName: "DynamicIndexFacts",
+		canonicalize: func(w *operationalEffectsWire) {
+			sort.Slice(w.DynamicIndexFacts, func(i, j int) bool {
+				left, right := w.DynamicIndexFacts[i], w.DynamicIndexFacts[j]
+				if c := compareBoundaryPathWire(left.Table, right.Table); c != 0 {
+					return c < 0
+				}
+				if left.Site != right.Site {
+					return left.Site < right.Site
+				}
+				if left.KeyPresence != right.KeyPresence {
+					return left.KeyPresence < right.KeyPresence
+				}
+				if c := compareDynamicIndexOperandWire(left.Key, right.Key); c != 0 {
+					return c < 0
+				}
+				if c := compareDynamicIndexOperandWire(left.Value, right.Value); c != 0 {
+					return c < 0
+				}
+				return left.Admission < right.Admission
+			})
+		},
+	},
+	{
+		fieldName: "KeyMemberships",
+		canonicalize: func(w *operationalEffectsWire) {
+			sort.Slice(w.KeyMemberships, func(i, j int) bool {
+				left, right := w.KeyMemberships[i], w.KeyMemberships[j]
+				if c := compareBoundaryPathWire(left.Key, right.Key); c != 0 {
+					return c < 0
+				}
+				return compareBoundaryPathWire(left.Table, right.Table) < 0
+			})
+		},
+	},
+	{
+		fieldName: "DynamicValueKeys",
+		canonicalize: func(w *operationalEffectsWire) {
+			sort.Slice(w.DynamicValueKeys, func(i, j int) bool {
+				left, right := w.DynamicValueKeys[i], w.DynamicValueKeys[j]
+				if c := compareBoundaryPathWire(left.Container, right.Container); c != 0 {
+					return c < 0
+				}
+				if left.Site != right.Site {
+					return left.Site < right.Site
+				}
+				return compareBoundaryPathWire(left.Table, right.Table) < 0
+			})
+		},
+	},
+	{
+		fieldName: "FrozenTables",
+		canonicalize: func(w *operationalEffectsWire) {
+			sort.Slice(w.FrozenTables, func(i, j int) bool {
+				return comparePlaceholderPathWire(w.FrozenTables[i].Target, w.FrozenTables[j].Target) < 0
+			})
+		},
+	},
+	{
+		fieldName: "EscapeEvents",
+		canonicalize: func(w *operationalEffectsWire) {
+			sort.Slice(w.EscapeEvents, func(i, j int) bool {
+				left, right := w.EscapeEvents[i], w.EscapeEvents[j]
+				if c := comparePlaceholderPathWire(left.Target, right.Target); c != 0 {
+					return c < 0
+				}
+				if left.Kind != right.Kind {
+					return left.Kind < right.Kind
+				}
+				return !left.Recursive && right.Recursive
+			})
+		},
+	},
+	{
+		fieldName: "StoreRelations",
+		canonicalize: func(w *operationalEffectsWire) {
+			sort.Slice(w.StoreRelations, func(i, j int) bool {
+				left, right := w.StoreRelations[i], w.StoreRelations[j]
+				if c := comparePlaceholderPathWire(left.Source, right.Source); c != 0 {
+					return c < 0
+				}
+				return comparePlaceholderPathWire(left.Into, right.Into) < 0
+			})
+		},
+	},
+	{
+		fieldName: "LifecycleEffects",
+		canonicalize: func(w *operationalEffectsWire) {
+			sort.Slice(w.LifecycleEffects, func(i, j int) bool {
+				return compareLifecycleEffectWire(w.LifecycleEffects[i], w.LifecycleEffects[j]) < 0
+			})
+		},
+	},
+	{
+		fieldName: "ReturnAllocationTemplates",
+		canonicalize: func(w *operationalEffectsWire) {
+			for i := range w.ReturnAllocationTemplates {
+				canonicalizeReturnAllocationTemplateWire(&w.ReturnAllocationTemplates[i])
+			}
+			sort.Slice(w.ReturnAllocationTemplates, func(i, j int) bool {
+				left, right := w.ReturnAllocationTemplates[i], w.ReturnAllocationTemplates[j]
+				if c := compareOptionalInt(left.ReturnIndex, right.ReturnIndex); c != 0 {
+					return c < 0
+				}
+				return left.Root < right.Root
+			})
+		},
+	},
 }
 
 func encodeOperationalEffects(e *signature.OperationalEffects) (*operationalEffectsWire, error) {
@@ -502,121 +700,9 @@ func canonicalizeOperationalEffectsWire(w *operationalEffectsWire) {
 	if w == nil {
 		return
 	}
-	sort.Slice(w.ReturnPresenceRelations, func(i, j int) bool {
-		left, right := w.ReturnPresenceRelations[i], w.ReturnPresenceRelations[j]
-		if c := compareOptionalInt(left.TriggerIndex, right.TriggerIndex); c != 0 {
-			return c < 0
-		}
-		if left.TriggerPresence != right.TriggerPresence {
-			return left.TriggerPresence < right.TriggerPresence
-		}
-		if c := compareOptionalInt(left.TargetIndex, right.TargetIndex); c != 0 {
-			return c < 0
-		}
-		return left.TargetPresence < right.TargetPresence
-	})
-	sort.Slice(w.NormalReturnPresenceRefinements, func(i, j int) bool {
-		left, right := w.NormalReturnPresenceRefinements[i], w.NormalReturnPresenceRefinements[j]
-		if c := comparePlaceholderPathWire(left.Path, right.Path); c != 0 {
-			return c < 0
-		}
-		return left.Presence < right.Presence
-	})
-	sort.Slice(w.NormalReturnTypeRefinements, func(i, j int) bool {
-		left, right := w.NormalReturnTypeRefinements[i], w.NormalReturnTypeRefinements[j]
-		if c := comparePlaceholderPathWire(left.Path, right.Path); c != 0 {
-			return c < 0
-		}
-		if leftKey, rightKey := typeWireKey(left.Type), typeWireKey(right.Type); leftKey != rightKey {
-			return leftKey < rightKey
-		}
-		return strings.Join(left.Assertions, ",") < strings.Join(right.Assertions, ",")
-	})
-	sort.Slice(w.PathPresenceImplications, func(i, j int) bool {
-		return comparePathPresenceImplicationWire(w.PathPresenceImplications[i], w.PathPresenceImplications[j]) < 0
-	})
-	sort.Slice(w.PathStaticMembers, func(i, j int) bool {
-		left, right := w.PathStaticMembers[i], w.PathStaticMembers[j]
-		if c := comparePlaceholderPathWire(left.Path, right.Path); c != 0 {
-			return c < 0
-		}
-		return typeWireKey(left.Type) < typeWireKey(right.Type)
-	})
-	sort.Slice(w.PathInvalidations, func(i, j int) bool {
-		return comparePlaceholderPathWire(w.PathInvalidations[i].Path, w.PathInvalidations[j].Path) < 0
-	})
-	sort.Slice(w.BranchProofs, func(i, j int) bool {
-		return compareBranchProofWire(w.BranchProofs[i], w.BranchProofs[j]) < 0
-	})
-	sort.Slice(w.DynamicIndexFacts, func(i, j int) bool {
-		left, right := w.DynamicIndexFacts[i], w.DynamicIndexFacts[j]
-		if c := compareBoundaryPathWire(left.Table, right.Table); c != 0 {
-			return c < 0
-		}
-		if left.Site != right.Site {
-			return left.Site < right.Site
-		}
-		if left.KeyPresence != right.KeyPresence {
-			return left.KeyPresence < right.KeyPresence
-		}
-		if c := compareDynamicIndexOperandWire(left.Key, right.Key); c != 0 {
-			return c < 0
-		}
-		if c := compareDynamicIndexOperandWire(left.Value, right.Value); c != 0 {
-			return c < 0
-		}
-		return left.Admission < right.Admission
-	})
-	sort.Slice(w.KeyMemberships, func(i, j int) bool {
-		left, right := w.KeyMemberships[i], w.KeyMemberships[j]
-		if c := compareBoundaryPathWire(left.Key, right.Key); c != 0 {
-			return c < 0
-		}
-		return compareBoundaryPathWire(left.Table, right.Table) < 0
-	})
-	sort.Slice(w.DynamicValueKeys, func(i, j int) bool {
-		left, right := w.DynamicValueKeys[i], w.DynamicValueKeys[j]
-		if c := compareBoundaryPathWire(left.Container, right.Container); c != 0 {
-			return c < 0
-		}
-		if left.Site != right.Site {
-			return left.Site < right.Site
-		}
-		return compareBoundaryPathWire(left.Table, right.Table) < 0
-	})
-	sort.Slice(w.FrozenTables, func(i, j int) bool {
-		return comparePlaceholderPathWire(w.FrozenTables[i].Target, w.FrozenTables[j].Target) < 0
-	})
-	sort.Slice(w.EscapeEvents, func(i, j int) bool {
-		left, right := w.EscapeEvents[i], w.EscapeEvents[j]
-		if c := comparePlaceholderPathWire(left.Target, right.Target); c != 0 {
-			return c < 0
-		}
-		if left.Kind != right.Kind {
-			return left.Kind < right.Kind
-		}
-		return !left.Recursive && right.Recursive
-	})
-	sort.Slice(w.StoreRelations, func(i, j int) bool {
-		left, right := w.StoreRelations[i], w.StoreRelations[j]
-		if c := comparePlaceholderPathWire(left.Source, right.Source); c != 0 {
-			return c < 0
-		}
-		return comparePlaceholderPathWire(left.Into, right.Into) < 0
-	})
-	sort.Slice(w.LifecycleEffects, func(i, j int) bool {
-		return compareLifecycleEffectWire(w.LifecycleEffects[i], w.LifecycleEffects[j]) < 0
-	})
-	for i := range w.ReturnAllocationTemplates {
-		canonicalizeReturnAllocationTemplateWire(&w.ReturnAllocationTemplates[i])
+	for _, lane := range operationalEffectsWireLanes {
+		lane.canonicalize(w)
 	}
-	sort.Slice(w.ReturnAllocationTemplates, func(i, j int) bool {
-		left, right := w.ReturnAllocationTemplates[i], w.ReturnAllocationTemplates[j]
-		if c := compareOptionalInt(left.ReturnIndex, right.ReturnIndex); c != 0 {
-			return c < 0
-		}
-		return left.Root < right.Root
-	})
 }
 
 func encodePathPresenceImplication(fact signature.PathPresenceImplication) (pathPresenceImplicationWire, error) {
