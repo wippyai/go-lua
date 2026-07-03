@@ -23,7 +23,7 @@ func renderAssignmentJudgmentWithPolicy(item judgment.Judgment, policy judgment.
 		return diagnostic.Diagnostic{}, false
 	}
 	span := diagnosticSpanFromJudgment(item.Spans[0])
-	declSpan := assignmentJudgmentEvidenceSpan(item, judgment.EvidenceUserAssertion)
+	declSpan := diagnosticEvidenceSpanOrPrimary(item, judgment.EvidenceUserAssertion)
 	target := item.Subject.Label
 	if target == "" {
 		target = "value"
@@ -75,7 +75,7 @@ func renderAssignmentJudgmentWithPolicy(item judgment.Judgment, policy judgment.
 		{
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
-			Span:    assignmentJudgmentEvidenceSpan(item, judgment.EvidenceAbstractFact),
+			Span:    diagnosticEvidenceSpanOrPrimary(item, judgment.EvidenceAbstractFact),
 			Message: sourceEvidence,
 		},
 		{
@@ -252,7 +252,7 @@ func renderOptionalAssignmentTargetJudgmentWithPolicy(item judgment.Judgment, po
 	}
 	containerType := item.Actual.ProjectedType
 	targetSpan := diagnosticSpanFromJudgment(item.Spans[0])
-	containerSpan := assignmentJudgmentEvidenceSpan(item, judgment.EvidenceAbstractFact)
+	containerSpan := diagnosticEvidenceSpanOrPrimary(item, judgment.EvidenceAbstractFact)
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		Span:     targetSpan,
 		Code:     CodeOptionalAssignmentTarget,
@@ -314,18 +314,6 @@ func assignmentJudgmentSourceLabel(missingField bool) string {
 		return labelObjectLiteral
 	}
 	return labelAssignedValue
-}
-
-func assignmentJudgmentEvidenceSpan(item judgment.Judgment, kind judgment.EvidenceKind) diagnostic.Span {
-	for _, evidence := range item.Evidence {
-		if evidence.Kind == kind && evidence.Span.StartLine != 0 {
-			return diagnosticSpanFromJudgment(evidence.Span)
-		}
-	}
-	if len(item.Spans) == 0 {
-		return diagnostic.Span{}
-	}
-	return diagnosticSpanFromJudgment(item.Spans[0])
 }
 
 func assignmentJudgmentExtraEvidence(item judgment.Judgment, sourceName string, got, want typ.Type, sourceSpan diagnostic.Span) []diagnostic.Evidence {

@@ -31,7 +31,7 @@ func renderNumericForJudgmentWithPolicy(item judgment.Judgment, policy judgment.
 		{
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
-			Span:    numericForJudgmentEvidenceSpan(item, judgment.EvidenceAbstractFact, span),
+			Span:    diagnosticEvidenceSpanOr(item, judgment.EvidenceAbstractFact, span),
 			Message: numericForOperandTypeEvidence(role, got),
 		},
 	}
@@ -62,7 +62,7 @@ func numericForJudgmentExplicitTopEvidence(item judgment.Judgment, span diagnost
 			Kind:    diagnostic.EvidencePrecisionBoundary,
 			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidencePrecisionBoundary, diagnostic.TrustUnknown),
 			Reason:  diagnostic.EvidenceReasonExplicitBoundaryValidation,
-			Span:    numericForJudgmentEvidenceSpan(item, judgment.EvidencePrecisionBoundary, span),
+			Span:    diagnosticEvidenceSpanOr(item, judgment.EvidencePrecisionBoundary, span),
 			Message: explicitBoundaryProofMessageForSubject(subject, want),
 		})
 	}
@@ -71,18 +71,9 @@ func numericForJudgmentExplicitTopEvidence(item judgment.Judgment, span diagnost
 			Kind:    diagnostic.EvidenceMissingProof,
 			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceMissingProof, diagnostic.TrustUnknown),
 			Reason:  diagnostic.EvidenceReasonBoundaryValidationMissing,
-			Span:    numericForJudgmentEvidenceSpan(item, judgment.EvidenceMissingProof, span),
+			Span:    diagnosticEvidenceSpanOr(item, judgment.EvidenceMissingProof, span),
 			Message: missingBoundaryProofMessageForSubject(subject, want),
 		})
 	}
 	return out
-}
-
-func numericForJudgmentEvidenceSpan(item judgment.Judgment, kind judgment.EvidenceKind, fallback diagnostic.Span) diagnostic.Span {
-	for _, evidence := range item.Evidence {
-		if evidence.Kind == kind && evidence.Span.StartLine != 0 {
-			return diagnosticSpanFromJudgment(evidence.Span)
-		}
-	}
-	return fallback
 }

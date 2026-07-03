@@ -86,6 +86,46 @@ func diagnosticSpanFromJudgment(span judgment.SpanRef) diagnostic.Span {
 	}
 }
 
+func diagnosticSpanFromJudgmentEvidence(evidence judgment.Evidence) (diagnostic.Span, bool) {
+	if evidence.Span.StartLine == 0 {
+		return diagnostic.Span{}, false
+	}
+	return diagnosticSpanFromJudgment(evidence.Span), true
+}
+
+func diagnosticEvidenceSpan(item judgment.Judgment, kind judgment.EvidenceKind) (diagnostic.Span, bool) {
+	for _, evidence := range item.Evidence {
+		if evidence.Kind != kind {
+			continue
+		}
+		if span, ok := diagnosticSpanFromJudgmentEvidence(evidence); ok {
+			return span, true
+		}
+	}
+	return diagnostic.Span{}, false
+}
+
+func diagnosticEvidenceSpanOr(item judgment.Judgment, kind judgment.EvidenceKind, fallback diagnostic.Span) diagnostic.Span {
+	if span, ok := diagnosticEvidenceSpan(item, kind); ok {
+		return span
+	}
+	return fallback
+}
+
+func diagnosticEvidenceSpanOrPrimary(item judgment.Judgment, kind judgment.EvidenceKind) diagnostic.Span {
+	if len(item.Spans) == 0 {
+		return diagnostic.Span{}
+	}
+	return diagnosticEvidenceSpanOr(item, kind, diagnosticSpanFromJudgment(item.Spans[0]))
+}
+
+func diagnosticJudgmentEvidenceSpanOr(evidence judgment.Evidence, fallback diagnostic.Span) diagnostic.Span {
+	if span, ok := diagnosticSpanFromJudgmentEvidence(evidence); ok {
+		return span
+	}
+	return fallback
+}
+
 func diagnosticTrustFromJudgmentEvidence(item judgment.Judgment, kind judgment.EvidenceKind, fallback diagnostic.TrustKind) diagnostic.TrustKind {
 	if trust, ok := item.EvidenceTrustFor(kind); ok {
 		return diagnosticTrustFromJudgmentTrust(trust, fallback)

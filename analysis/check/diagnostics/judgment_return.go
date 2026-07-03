@@ -23,7 +23,7 @@ func renderReturnJudgmentWithPolicy(item judgment.Judgment, policy judgment.Poli
 		return diagnostic.Diagnostic{}, false
 	}
 	span := diagnosticSpanFromJudgment(item.Spans[0])
-	declSpan := returnJudgmentEvidenceSpan(item, judgment.EvidenceUserAssertion)
+	declSpan := diagnosticEvidenceSpanOrPrimary(item, judgment.EvidenceUserAssertion)
 	label := item.Subject.Label
 	if label == "" {
 		label = "returned value"
@@ -34,7 +34,7 @@ func renderReturnJudgmentWithPolicy(item judgment.Judgment, policy judgment.Poli
 		{
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
-			Span:    returnJudgmentEvidenceSpan(item, judgment.EvidenceAbstractFact),
+			Span:    diagnosticEvidenceSpanOrPrimary(item, judgment.EvidenceAbstractFact),
 			Message: assignmentSourceTypeEvidence(subject, got),
 		},
 		{
@@ -120,7 +120,7 @@ func returnJudgmentExtraEvidence(item judgment.Judgment, subject, sourceName str
 				Kind:    diagnostic.EvidencePrecisionBoundary,
 				Trust:   diagnosticTrustFromJudgmentTrust(evidence.Trust, diagnostic.TrustUnknown),
 				Reason:  diagnostic.EvidenceReasonExplicitBoundaryValidation,
-				Span:    returnJudgmentEvidenceSpanOr(evidence, primary),
+				Span:    diagnosticJudgmentEvidenceSpanOr(evidence, primary),
 				Message: returnExplicitBoundaryProofMessage(subject),
 			})
 		}
@@ -142,23 +142,4 @@ func returnJudgmentExtraEvidence(item judgment.Judgment, subject, sourceName str
 		Message: missingMessage,
 	})
 	return out
-}
-
-func returnJudgmentEvidenceSpan(item judgment.Judgment, kind judgment.EvidenceKind) diagnostic.Span {
-	for _, evidence := range item.Evidence {
-		if evidence.Kind == kind && evidence.Span.StartLine != 0 {
-			return diagnosticSpanFromJudgment(evidence.Span)
-		}
-	}
-	if len(item.Spans) > 0 {
-		return diagnosticSpanFromJudgment(item.Spans[0])
-	}
-	return diagnostic.Span{}
-}
-
-func returnJudgmentEvidenceSpanOr(evidence judgment.Evidence, fallback diagnostic.Span) diagnostic.Span {
-	if evidence.Span.StartLine != 0 {
-		return diagnosticSpanFromJudgment(evidence.Span)
-	}
-	return fallback
 }

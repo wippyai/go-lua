@@ -26,19 +26,10 @@ func renderNonNilAssertionJudgmentWithPolicy(item judgment.Judgment, policy judg
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
-				Span:    nonNilAssertionJudgmentEvidenceSpan(item, span),
+				Span:    diagnosticEvidenceSpanOr(item, judgment.EvidenceAbstractFact, span),
 				Message: nonNilAssertAlwaysNilEvidence(name),
 			},
 		),
 		Help: nonNilAssertAlwaysNilHelp(name),
 	}), true
-}
-
-func nonNilAssertionJudgmentEvidenceSpan(item judgment.Judgment, fallback diagnostic.Span) diagnostic.Span {
-	for _, evidence := range item.Evidence {
-		if evidence.Kind == judgment.EvidenceAbstractFact && evidence.Span.StartLine != 0 {
-			return diagnosticSpanFromJudgment(evidence.Span)
-		}
-	}
-	return fallback
 }
