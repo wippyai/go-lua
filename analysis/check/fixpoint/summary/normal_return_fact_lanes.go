@@ -114,25 +114,16 @@ func normalReturnSummaryLaneNoReg[T any](
 }
 
 func buildNormalReturnSummaryLanes(handlers map[callboundary.NormalReturnFactLaneID]normalReturnSummaryLane) []normalReturnSummaryLane {
-	storage := callboundary.NormalReturnFactLanes()
-	out := make([]normalReturnSummaryLane, 0, len(storage))
-	seen := make(map[callboundary.NormalReturnFactLaneID]struct{}, len(storage))
-	for _, storageLane := range storage {
-		id := storageLane.ID()
-		lane, ok := handlers[id]
-		if !ok {
-			panic("normal-return summary lane missing handler for " + string(id))
-		}
-		if lane.id != id {
-			panic("normal-return summary lane registered with mismatched ID for " + string(id))
+	bindings := callboundary.BindNormalReturnFactLanes("normal-return summary", handlers, func(lane normalReturnSummaryLane) bool {
+		return lane.id != ""
+	})
+	out := make([]normalReturnSummaryLane, 0, len(bindings))
+	for _, binding := range bindings {
+		lane := binding.Value
+		if lane.id != binding.ID {
+			panic("normal-return summary lane registered with mismatched ID for " + string(binding.ID))
 		}
 		out = append(out, lane)
-		seen[id] = struct{}{}
-	}
-	for id := range handlers {
-		if _, ok := seen[id]; !ok {
-			panic("normal-return summary lane has no storage owner for " + string(id))
-		}
 	}
 	return out
 }

@@ -132,29 +132,17 @@ var normalReturnApplyLanes = buildNormalReturnApplyLanes(map[callboundary.Normal
 })
 
 func buildNormalReturnApplyLanes(handlers map[callboundary.NormalReturnFactLaneID]normalReturnApplyLaneHandler) []normalReturnApplyLane {
-	storage := callboundary.NormalReturnFactLanes()
-	out := make([]normalReturnApplyLane, 0, len(storage))
-	seen := make(map[callboundary.NormalReturnFactLaneID]struct{}, len(storage))
-	for _, storageLane := range storage {
-		id := storageLane.ID()
-		handler, ok := handlers[id]
-		if !ok {
-			panic("normal-return apply lane missing handler for " + string(id))
-		}
-		if handler.apply == nil {
-			panic("normal-return apply lane has nil handler for " + string(id))
-		}
+	bindings := callboundary.BindNormalReturnFactLanes("normal-return apply", handlers, func(handler normalReturnApplyLaneHandler) bool {
+		return handler.apply != nil
+	})
+	out := make([]normalReturnApplyLane, 0, len(bindings))
+	for _, binding := range bindings {
+		handler := binding.Value
 		out = append(out, normalReturnApplyLane{
-			id:    id,
+			id:    binding.ID,
 			phase: handler.phase,
 			apply: handler.apply,
 		})
-		seen[id] = struct{}{}
-	}
-	for id := range handlers {
-		if _, ok := seen[id]; !ok {
-			panic("normal-return apply lane has no storage owner for " + string(id))
-		}
 	}
 	return out
 }

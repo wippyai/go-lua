@@ -50,28 +50,15 @@ var normalReturnProjectLanes = buildNormalReturnProjectLanes(map[callboundary.No
 })
 
 func buildNormalReturnProjectLanes(handlers map[callboundary.NormalReturnFactLaneID]func(normalReturnProjectContext, *callboundary.NormalReturnFacts)) []normalReturnProjectLane {
-	storage := callboundary.NormalReturnFactLanes()
-	out := make([]normalReturnProjectLane, 0, len(storage))
-	seen := make(map[callboundary.NormalReturnFactLaneID]struct{}, len(storage))
-	for _, storageLane := range storage {
-		id := storageLane.ID()
-		handler, ok := handlers[id]
-		if !ok {
-			panic("normal-return project lane missing handler for " + string(id))
-		}
-		if handler == nil {
-			panic("normal-return project lane has nil handler for " + string(id))
-		}
+	bindings := callboundary.BindNormalReturnFactLanes("normal-return project", handlers, func(handler func(normalReturnProjectContext, *callboundary.NormalReturnFacts)) bool {
+		return handler != nil
+	})
+	out := make([]normalReturnProjectLane, 0, len(bindings))
+	for _, binding := range bindings {
 		out = append(out, normalReturnProjectLane{
-			id:      id,
-			project: handler,
+			id:      binding.ID,
+			project: binding.Value,
 		})
-		seen[id] = struct{}{}
-	}
-	for id := range handlers {
-		if _, ok := seen[id]; !ok {
-			panic("normal-return project lane has no storage owner for " + string(id))
-		}
 	}
 	return out
 }

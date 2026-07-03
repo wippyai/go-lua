@@ -61,6 +61,50 @@ func TestNormalReturnFactsEmptyAndAppendCoverEveryLane(t *testing.T) {
 	}
 }
 
+func TestBindNormalReturnFactLanesUsesStorageOrder(t *testing.T) {
+	handlers := normalReturnFactLaneTestHandlers()
+	bindings := BindNormalReturnFactLanes("test", handlers, func(v int) bool { return v > 0 })
+	storage := NormalReturnFactLanes()
+	if len(bindings) != len(storage) {
+		t.Fatalf("bindings len = %d, want %d", len(bindings), len(storage))
+	}
+	for i, binding := range bindings {
+		if binding.ID != storage[i].ID() {
+			t.Fatalf("binding[%d].ID = %q, want storage lane %q", i, binding.ID, storage[i].ID())
+		}
+		if binding.Storage.ID() != storage[i].ID() {
+			t.Fatalf("binding[%d].Storage = %q, want %q", i, binding.Storage.ID(), storage[i].ID())
+		}
+		if binding.Value != i+1 {
+			t.Fatalf("binding[%d].Value = %d, want %d", i, binding.Value, i+1)
+		}
+	}
+}
+
+func TestBindNormalReturnFactLanesRejectsMissingHandler(t *testing.T) {
+	handlers := normalReturnFactLaneTestHandlers()
+	delete(handlers, NormalReturnFactLanes()[0].ID())
+	mustPanic(t, func() {
+		_ = BindNormalReturnFactLanes("test", handlers, func(v int) bool { return v > 0 })
+	})
+}
+
+func TestBindNormalReturnFactLanesRejectsInvalidHandler(t *testing.T) {
+	handlers := normalReturnFactLaneTestHandlers()
+	handlers[NormalReturnFactLanes()[0].ID()] = 0
+	mustPanic(t, func() {
+		_ = BindNormalReturnFactLanes("test", handlers, func(v int) bool { return v > 0 })
+	})
+}
+
+func TestBindNormalReturnFactLanesRejectsOrphanHandler(t *testing.T) {
+	handlers := normalReturnFactLaneTestHandlers()
+	handlers[NormalReturnFactLaneID("orphan")] = 1
+	mustPanic(t, func() {
+		_ = BindNormalReturnFactLanes("test", handlers, func(v int) bool { return v > 0 })
+	})
+}
+
 func TestNormalReturnFactsHotOperationsUseLaneRegistry(t *testing.T) {
 	file := parseNormalReturnFactsSource(t)
 	fields := normalReturnFactsStorageFields(t)
@@ -80,6 +124,24 @@ func TestNormalReturnFactsHotOperationsUseLaneRegistry(t *testing.T) {
 	if field := firstSelectedStorageField(appendNonEmpty, fields); field != "" {
 		t.Fatalf("appendNonEmptyNormalReturnFacts selects storage field %s directly; use lane registry", field)
 	}
+}
+
+func normalReturnFactLaneTestHandlers() map[NormalReturnFactLaneID]int {
+	handlers := make(map[NormalReturnFactLaneID]int)
+	for i, lane := range NormalReturnFactLanes() {
+		handlers[lane.ID()] = i + 1
+	}
+	return handlers
+}
+
+func mustPanic(t *testing.T, fn func()) {
+	t.Helper()
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic")
+		}
+	}()
+	fn()
 }
 
 func TestNormalReturnFactsAppendFastPathsEmptySides(t *testing.T) {

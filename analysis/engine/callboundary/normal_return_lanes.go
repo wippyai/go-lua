@@ -81,6 +81,53 @@ func NormalReturnFactLanes() []NormalReturnFactLane {
 	return out
 }
 
+// NormalReturnFactLaneBinding pairs a layer-owned handler with the canonical
+// storage lane it extends.
+type NormalReturnFactLaneBinding[T any] struct {
+	ID      NormalReturnFactLaneID
+	Storage NormalReturnFactLane
+	Value   T
+}
+
+// BindNormalReturnFactLanes orders layer-owned handlers by the storage-lane
+// registry and rejects missing, invalid, or orphan handlers. This keeps storage
+// as the sole owner of the lane set while summary/projection/application keep
+// ownership of their per-lane behavior.
+func BindNormalReturnFactLanes[T any](
+	owner string,
+	handlers map[NormalReturnFactLaneID]T,
+	valid func(T) bool,
+) []NormalReturnFactLaneBinding[T] {
+	if owner == "" {
+		owner = "normal-return"
+	}
+	storage := NormalReturnFactLanes()
+	out := make([]NormalReturnFactLaneBinding[T], 0, len(storage))
+	seen := make(map[NormalReturnFactLaneID]struct{}, len(storage))
+	for _, storageLane := range storage {
+		id := storageLane.ID()
+		handler, ok := handlers[id]
+		if !ok {
+			panic(owner + " lane missing handler for " + string(id))
+		}
+		if valid != nil && !valid(handler) {
+			panic(owner + " lane has invalid handler for " + string(id))
+		}
+		out = append(out, NormalReturnFactLaneBinding[T]{
+			ID:      id,
+			Storage: storageLane,
+			Value:   handler,
+		})
+		seen[id] = struct{}{}
+	}
+	for id := range handlers {
+		if _, ok := seen[id]; !ok {
+			panic(owner + " lane has no storage owner for " + string(id))
+		}
+	}
+	return out
+}
+
 // FilterPaths returns the subset of registered facts whose lane-owned boundary
 // paths satisfy keep. It is intentionally lane-defined: some storage lanes do
 // not replay through this path-filtering operation and therefore register an
