@@ -42,23 +42,23 @@ func TestSupplementalFactLanesMatchCallOutcomeFieldRoles(t *testing.T) {
 
 	supplementalRoles := make(map[string]supplementalFactLane)
 	for _, lane := range supplementalFactLanes {
-		if lane.fieldName == "" {
+		if lane.role.FieldName == "" {
 			t.Fatal("supplemental fact lane with empty field name")
 		}
 		if lane.merge == nil {
-			t.Fatalf("supplemental fact lane %s has nil merge function", lane.fieldName)
+			t.Fatalf("supplemental fact lane %s has nil merge function", lane.role.FieldName)
 		}
-		if _, ok := supplementalRoles[lane.fieldName]; ok {
-			t.Fatalf("supplemental fact lane %s registered more than once", lane.fieldName)
+		if _, ok := supplementalRoles[lane.role.FieldName]; ok {
+			t.Fatalf("supplemental fact lane %s registered more than once", lane.role.FieldName)
 		}
-		role, ok := payloadRoles[lane.fieldName]
+		role, ok := payloadRoles[lane.role.FieldName]
 		if !ok {
-			t.Fatalf("supplemental fact lane %s has no call payload role", lane.fieldName)
+			t.Fatalf("supplemental fact lane %s has no call payload role", lane.role.FieldName)
 		}
-		if lane.postReturn != role.PostReturn {
-			t.Fatalf("supplemental fact lane %s postReturn = %v, payload role = %v", lane.fieldName, lane.postReturn, role.PostReturn)
+		if lane.role != role {
+			t.Fatalf("supplemental fact lane %s role = %#v, payload role = %#v", lane.role.FieldName, lane.role, role)
 		}
-		supplementalRoles[lane.fieldName] = lane
+		supplementalRoles[lane.role.FieldName] = lane
 	}
 
 	for _, role := range payloadRoles {
@@ -73,6 +73,33 @@ func TestSupplementalFactLanesMatchCallOutcomeFieldRoles(t *testing.T) {
 			t.Fatalf("call payload role %s has no supplemental fact lane", role.FieldName)
 		}
 	}
+}
+
+func TestBuildSupplementalFactLanesRejectsMissingHandler(t *testing.T) {
+	handlers := supplementalFactLaneTestHandlers()
+	delete(handlers, "NormalReturnFacts")
+	requirePanic(t, func() {
+		_ = buildSupplementalFactLanes(supplementalFactLaneHandlers(handlers))
+	})
+}
+
+func TestBuildSupplementalFactLanesRejectsOrphanHandler(t *testing.T) {
+	handlers := supplementalFactLaneTestHandlers()
+	handlers["NotAField"] = supplementalFactLaneHandler{
+		fieldName: "NotAField",
+		merge:     func(*axis.Registry, *callpayload.CallOutcome, callpayload.CallOutcome) {},
+	}
+	requirePanic(t, func() {
+		_ = buildSupplementalFactLanes(supplementalFactLaneHandlers(handlers))
+	})
+}
+
+func TestBuildSupplementalFactLanesRejectsInvalidHandler(t *testing.T) {
+	handlers := supplementalFactLaneTestHandlers()
+	handlers["NormalReturnFacts"] = supplementalFactLaneHandler{fieldName: "NormalReturnFacts"}
+	requirePanic(t, func() {
+		_ = buildSupplementalFactLanes(supplementalFactLaneHandlers(handlers))
+	})
 }
 
 func TestCallOutcomeFieldRolesCoverStructFields(t *testing.T) {
@@ -90,6 +117,36 @@ func TestCallOutcomeFieldRolesCoverStructFields(t *testing.T) {
 	for field := range fields {
 		t.Fatalf("CallOutcome.%s has no exported field role", field)
 	}
+}
+
+func supplementalFactLaneTestHandlers() map[string]supplementalFactLaneHandler {
+	out := make(map[string]supplementalFactLaneHandler)
+	for _, lane := range supplementalFactLanes {
+		out[lane.role.FieldName] = supplementalFactLaneHandler{
+			fieldName:          lane.role.FieldName,
+			merge:              lane.merge,
+			mergeAuthoritative: lane.mergeAuthoritative,
+		}
+	}
+	return out
+}
+
+func supplementalFactLaneHandlers(in map[string]supplementalFactLaneHandler) []supplementalFactLaneHandler {
+	out := make([]supplementalFactLaneHandler, 0, len(in))
+	for _, handler := range in {
+		out = append(out, handler)
+	}
+	return out
+}
+
+func requirePanic(t *testing.T, fn func()) {
+	t.Helper()
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic")
+		}
+	}()
+	fn()
 }
 
 func TestWithSupplementalKeepsPrimarySlotsFillsMissingSlotsAndMergesSideFactsWithoutAuthority(t *testing.T) {

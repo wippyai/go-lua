@@ -146,7 +146,7 @@ func resultSlotCarriesUntrustedTopEvidence(reg *axis.Registry, value product.Val
 func withSupplementalFacts(reg *axis.Registry, out, second callpayload.CallOutcome) callpayload.CallOutcome {
 	authoritative := out.PostReturnAuthority
 	for _, lane := range supplementalFactLanes {
-		if authoritative && lane.postReturn {
+		if authoritative && lane.role.PostReturn {
 			if lane.mergeAuthoritative != nil {
 				lane.mergeAuthoritative(reg, &out, second)
 			}
@@ -161,23 +161,26 @@ func withSupplementalFacts(reg *axis.Registry, out, second callpayload.CallOutco
 }
 
 type supplementalFactLane struct {
-	fieldName          string
-	postReturn         bool
+	role               callpayload.CallOutcomeFieldRole
 	merge              func(*axis.Registry, *callpayload.CallOutcome, callpayload.CallOutcome)
 	mergeAuthoritative func(*axis.Registry, *callpayload.CallOutcome, callpayload.CallOutcome)
 }
 
-var supplementalFactLanes = []supplementalFactLane{
+type supplementalFactLaneHandler struct {
+	fieldName          string
+	merge              func(*axis.Registry, *callpayload.CallOutcome, callpayload.CallOutcome)
+	mergeAuthoritative func(*axis.Registry, *callpayload.CallOutcome, callpayload.CallOutcome)
+}
+
+var supplementalFactLanes = buildSupplementalFactLanes([]supplementalFactLaneHandler{
 	{
-		fieldName:  "NormalReturnFacts",
-		postReturn: true,
+		fieldName: "NormalReturnFacts",
 		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
 			out.NormalReturnFacts = out.NormalReturnFacts.Append(second.NormalReturnFacts)
 		},
 	},
 	{
-		fieldName:  "HeapTableObjects",
-		postReturn: true,
+		fieldName: "HeapTableObjects",
 		merge: func(reg *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
 			out.HeapTableObjects = withSupplementalHeapTableObjects(reg, out.HeapTableObjects, second.HeapTableObjects)
 		},
@@ -186,8 +189,7 @@ var supplementalFactLanes = []supplementalFactLane{
 		},
 	},
 	{
-		fieldName:  "Placements",
-		postReturn: true,
+		fieldName: "Placements",
 		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
 			out.Placements = withSupplementalPlacements(out.Placements, second.Placements)
 		},
@@ -205,64 +207,55 @@ var supplementalFactLanes = []supplementalFactLane{
 		},
 	},
 	{
-		fieldName:  "ParamPathRefinements",
-		postReturn: true,
+		fieldName: "ParamPathRefinements",
 		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
 			out.ParamPathRefinements = append(out.ParamPathRefinements, second.ParamPathRefinements...)
 		},
 	},
 	{
-		fieldName:  "ParamPathWrites",
-		postReturn: true,
+		fieldName: "ParamPathWrites",
 		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
 			out.ParamPathWrites = append(out.ParamPathWrites, second.ParamPathWrites...)
 		},
 	},
 	{
-		fieldName:  "ParamLengthFloors",
-		postReturn: true,
+		fieldName: "ParamLengthFloors",
 		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
 			out.ParamLengthFloors = append(out.ParamLengthFloors, second.ParamLengthFloors...)
 		},
 	},
 	{
-		fieldName:  "ParamPathInvalidations",
-		postReturn: true,
+		fieldName: "ParamPathInvalidations",
 		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
 			out.ParamPathInvalidations = append(out.ParamPathInvalidations, second.ParamPathInvalidations...)
 		},
 	},
 	{
-		fieldName:  "ParamConditions",
-		postReturn: true,
+		fieldName: "ParamConditions",
 		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
 			out.ParamConditions = append(out.ParamConditions, second.ParamConditions...)
 		},
 	},
 	{
-		fieldName:  "ParamPathRelations",
-		postReturn: true,
+		fieldName: "ParamPathRelations",
 		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
 			out.ParamPathRelations = append(out.ParamPathRelations, second.ParamPathRelations...)
 		},
 	},
 	{
-		fieldName:  "ReturnConditionRefinements",
-		postReturn: true,
+		fieldName: "ReturnConditionRefinements",
 		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
 			out.ReturnConditionRefinements = append(out.ReturnConditionRefinements, second.ReturnConditionRefinements...)
 		},
 	},
 	{
-		fieldName:  "ReturnConditionSlots",
-		postReturn: true,
+		fieldName: "ReturnConditionSlots",
 		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
 			out.ReturnConditionSlots = append(out.ReturnConditionSlots, second.ReturnConditionSlots...)
 		},
 	},
 	{
-		fieldName:  "ReturnPresenceRelations",
-		postReturn: true,
+		fieldName: "ReturnPresenceRelations",
 		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
 			out.ReturnPresenceRelations = append(out.ReturnPresenceRelations, second.ReturnPresenceRelations...)
 		},
@@ -273,6 +266,47 @@ var supplementalFactLanes = []supplementalFactLane{
 			out.ParamExposures = append(out.ParamExposures, second.ParamExposures...)
 		},
 	},
+})
+
+func buildSupplementalFactLanes(handlers []supplementalFactLaneHandler) []supplementalFactLane {
+	byField := make(map[string]supplementalFactLaneHandler, len(handlers))
+	for _, handler := range handlers {
+		if handler.fieldName == "" {
+			panic("supplemental fact lane with empty field name")
+		}
+		if handler.merge == nil {
+			panic("supplemental fact lane " + handler.fieldName + " has nil merge function")
+		}
+		if _, ok := byField[handler.fieldName]; ok {
+			panic("supplemental fact lane " + handler.fieldName + " registered more than once")
+		}
+		byField[handler.fieldName] = handler
+	}
+
+	out := make([]supplementalFactLane, 0, len(handlers))
+	seen := make(map[string]struct{}, len(handlers))
+	for _, role := range callpayload.CallOutcomeFieldRoles() {
+		switch role.FieldName {
+		case "Results", "PostReturnAuthority":
+			continue
+		}
+		handler, ok := byField[role.FieldName]
+		if !ok {
+			panic("supplemental fact lane missing handler for " + role.FieldName)
+		}
+		out = append(out, supplementalFactLane{
+			role:               role,
+			merge:              handler.merge,
+			mergeAuthoritative: handler.mergeAuthoritative,
+		})
+		seen[role.FieldName] = struct{}{}
+	}
+	for fieldName := range byField {
+		if _, ok := seen[fieldName]; !ok {
+			panic("supplemental fact lane has no call payload role for " + fieldName)
+		}
+	}
+	return out
 }
 
 func withAuthoritativeResultHeapTableObjects(
