@@ -6,8 +6,6 @@ import (
 )
 
 type normalReturnSummaryLane struct {
-	id callboundary.NormalReturnFactLaneID
-
 	empty          func(*callboundary.NormalReturnFacts) bool
 	normalize      func(*axis.Registry, *callboundary.NormalReturnFacts, *callboundary.NormalReturnFacts)
 	normalizeOwned func(*axis.Registry, *callboundary.NormalReturnFacts, *callboundary.NormalReturnFacts)
@@ -19,7 +17,6 @@ type normalReturnSummaryLane struct {
 }
 
 func normalReturnSummarySliceLane[T any](
-	id callboundary.NormalReturnFactLaneID,
 	get func(*callboundary.NormalReturnFacts) *[]T,
 	normalize func(*axis.Registry, []T) []T,
 	clone func([]T) []T,
@@ -28,11 +25,10 @@ func normalReturnSummarySliceLane[T any](
 	join func(*axis.Registry, []T, []T) []T,
 	widen func(*axis.Registry, []T, []T) []T,
 ) normalReturnSummaryLane {
-	return normalReturnSummarySliceLaneOwned(id, get, normalize, normalize, clone, equal, lessOrEq, join, widen)
+	return normalReturnSummarySliceLaneOwned(get, normalize, normalize, clone, equal, lessOrEq, join, widen)
 }
 
 func normalReturnSummarySliceLaneOwned[T any](
-	id callboundary.NormalReturnFactLaneID,
 	get func(*callboundary.NormalReturnFacts) *[]T,
 	normalize func(*axis.Registry, []T) []T,
 	normalizeOwned func(*axis.Registry, []T) []T,
@@ -43,7 +39,6 @@ func normalReturnSummarySliceLaneOwned[T any](
 	widen func(*axis.Registry, []T, []T) []T,
 ) normalReturnSummaryLane {
 	return normalReturnSummaryLane{
-		id: id,
 		empty: func(in *callboundary.NormalReturnFacts) bool {
 			return len(*get(in)) == 0
 		},
@@ -72,7 +67,6 @@ func normalReturnSummarySliceLaneOwned[T any](
 }
 
 func normalReturnSummaryLaneNoRegOwned[T any](
-	id callboundary.NormalReturnFactLaneID,
 	get func(*callboundary.NormalReturnFacts) *[]T,
 	normalize func([]T) []T,
 	normalizeOwned func([]T) []T,
@@ -82,7 +76,7 @@ func normalReturnSummaryLaneNoRegOwned[T any](
 	join func([]T, []T) []T,
 	widen func([]T, []T) []T,
 ) normalReturnSummaryLane {
-	return normalReturnSummarySliceLaneOwned(id, get,
+	return normalReturnSummarySliceLaneOwned(get,
 		func(_ *axis.Registry, in []T) []T { return normalize(in) },
 		func(_ *axis.Registry, in []T) []T { return normalizeOwned(in) },
 		clone,
@@ -94,7 +88,6 @@ func normalReturnSummaryLaneNoRegOwned[T any](
 }
 
 func normalReturnSummaryLaneNoReg[T any](
-	id callboundary.NormalReturnFactLaneID,
 	get func(*callboundary.NormalReturnFacts) *[]T,
 	normalize func([]T) []T,
 	clone func([]T) []T,
@@ -103,7 +96,7 @@ func normalReturnSummaryLaneNoReg[T any](
 	join func([]T, []T) []T,
 	widen func([]T, []T) []T,
 ) normalReturnSummaryLane {
-	return normalReturnSummarySliceLane(id, get,
+	return normalReturnSummarySliceLane(get,
 		func(_ *axis.Registry, in []T) []T { return normalize(in) },
 		clone,
 		func(_ *axis.Registry, a, b []T) bool { return equal(a, b) },
@@ -115,56 +108,63 @@ func normalReturnSummaryLaneNoReg[T any](
 
 func buildNormalReturnSummaryLanes(handlers map[callboundary.NormalReturnFactLaneID]normalReturnSummaryLane) []normalReturnSummaryLane {
 	bindings := callboundary.BindNormalReturnFactLanes("normal-return summary", handlers, func(lane normalReturnSummaryLane) bool {
-		return lane.id != ""
+		return normalReturnSummaryLaneValid(lane)
 	})
 	out := make([]normalReturnSummaryLane, 0, len(bindings))
 	for _, binding := range bindings {
-		lane := binding.Value
-		if lane.id != binding.ID {
-			panic("normal-return summary lane registered with mismatched ID for " + string(binding.ID))
-		}
-		out = append(out, lane)
+		out = append(out, binding.Value)
 	}
 	return out
 }
 
+func normalReturnSummaryLaneValid(lane normalReturnSummaryLane) bool {
+	return lane.empty != nil &&
+		lane.normalize != nil &&
+		lane.normalizeOwned != nil &&
+		lane.clone != nil &&
+		lane.equal != nil &&
+		lane.lessOrEq != nil &&
+		lane.join != nil &&
+		lane.widen != nil
+}
+
 var normalReturnSummaryLanes = buildNormalReturnSummaryLanes(map[callboundary.NormalReturnFactLaneID]normalReturnSummaryLane{
-	callboundary.LanePathRefinements: normalReturnSummarySliceLaneOwned(callboundary.LanePathRefinements,
+	callboundary.LanePathRefinements: normalReturnSummarySliceLaneOwned(
 		func(f *callboundary.NormalReturnFacts) *[]callboundary.PathValueFact { return &f.PathRefinements },
 		normalizePathValueFacts, normalizePathValueFactsOwned, clonePathValueFacts, pathValueFactsEqual, pathValueFactsLessOrEq, joinPathValueFacts, widenPathValueFacts),
-	callboundary.LanePersistentPathWrites: normalReturnSummarySliceLaneOwned(callboundary.LanePersistentPathWrites,
+	callboundary.LanePersistentPathWrites: normalReturnSummarySliceLaneOwned(
 		func(f *callboundary.NormalReturnFacts) *[]callboundary.PathValueFact { return &f.PersistentPathWrites },
 		normalizePersistentPathWrites, normalizePersistentPathWritesOwned, clonePathValueFacts, persistentPathWritesEqual, persistentPathWritesLessOrEq, joinPersistentPathWrites, widenPersistentPathWrites),
-	callboundary.LanePathStaticMembers: normalReturnSummarySliceLaneOwned(callboundary.LanePathStaticMembers,
+	callboundary.LanePathStaticMembers: normalReturnSummarySliceLaneOwned(
 		func(f *callboundary.NormalReturnFacts) *[]callboundary.PathStaticMemberFact {
 			return &f.PathStaticMembers
 		},
 		normalizePathStaticMemberFacts, normalizePathStaticMemberFactsOwned, clonePathStaticMemberFacts, pathStaticMemberFactsEqual, pathStaticMemberFactsLessOrEq, joinPathStaticMemberFacts, widenPathStaticMemberFacts),
-	callboundary.LanePathInvalidations: normalReturnSummaryLaneNoRegOwned(callboundary.LanePathInvalidations,
+	callboundary.LanePathInvalidations: normalReturnSummaryLaneNoRegOwned(
 		func(f *callboundary.NormalReturnFacts) *[]callboundary.PathInvalidationFact {
 			return &f.PathInvalidations
 		},
 		pathInvalidationLane.Normalize, pathInvalidationLane.NormalizeOwned, pathInvalidationLane.Clone, pathInvalidationLane.Equal, pathInvalidationLane.LessOrEq, pathInvalidationLane.Join, pathInvalidationLane.Widen),
-	callboundary.LaneDynamicIndexFacts: normalReturnSummarySliceLaneOwned(callboundary.LaneDynamicIndexFacts,
+	callboundary.LaneDynamicIndexFacts: normalReturnSummarySliceLaneOwned(
 		func(f *callboundary.NormalReturnFacts) *[]callboundary.DynamicIndexFact { return &f.DynamicIndexFacts },
 		normalizeDynamicIndexFacts, normalizeDynamicIndexFactsOwned, cloneDynamicIndexFacts, dynamicIndexFactsEqual, dynamicIndexFactsLessOrEq, joinDynamicIndexFacts, widenDynamicIndexFacts),
-	callboundary.LaneKeyMemberships: normalReturnSummaryLaneNoRegOwned(callboundary.LaneKeyMemberships,
+	callboundary.LaneKeyMemberships: normalReturnSummaryLaneNoRegOwned(
 		func(f *callboundary.NormalReturnFacts) *[]callboundary.KeyMembershipFact { return &f.KeyMemberships },
 		keyMembershipLane.Normalize, keyMembershipLane.NormalizeOwned, keyMembershipLane.Clone, keyMembershipLane.Equal, keyMembershipLane.LessOrEq, keyMembershipLane.Join, keyMembershipLane.Widen),
-	callboundary.LaneDynamicValueKeys: normalReturnSummaryLaneNoRegOwned(callboundary.LaneDynamicValueKeys,
+	callboundary.LaneDynamicValueKeys: normalReturnSummaryLaneNoRegOwned(
 		func(f *callboundary.NormalReturnFacts) *[]callboundary.DynamicValueKeyMembershipFact {
 			return &f.DynamicValueKeys
 		},
 		dynamicValueKeyMembershipLane.Normalize, dynamicValueKeyMembershipLane.NormalizeOwned, dynamicValueKeyMembershipLane.Clone, dynamicValueKeyMembershipLane.Equal, dynamicValueKeyMembershipLane.LessOrEq, dynamicValueKeyMembershipLane.Join, dynamicValueKeyMembershipLane.Widen),
-	callboundary.LaneDynamicAllValues: normalReturnSummaryLaneNoRegOwned(callboundary.LaneDynamicAllValues,
+	callboundary.LaneDynamicAllValues: normalReturnSummaryLaneNoRegOwned(
 		func(f *callboundary.NormalReturnFacts) *[]callboundary.DynamicAllValueKeyMembershipFact {
 			return &f.DynamicAllValues
 		},
 		dynamicAllValueKeyMembershipLane.Normalize, dynamicAllValueKeyMembershipLane.NormalizeOwned, dynamicAllValueKeyMembershipLane.Clone, dynamicAllValueKeyMembershipLane.Equal, dynamicAllValueKeyMembershipLane.LessOrEq, dynamicAllValueKeyMembershipLane.Join, dynamicAllValueKeyMembershipLane.Widen),
-	callboundary.LaneBranchProofs: normalReturnSummaryLaneNoRegOwned(callboundary.LaneBranchProofs,
+	callboundary.LaneBranchProofs: normalReturnSummaryLaneNoRegOwned(
 		func(f *callboundary.NormalReturnFacts) *[]callboundary.BranchProof { return &f.BranchProofs },
 		branchProofLane.Normalize, branchProofLane.NormalizeOwned, branchProofLane.Clone, branchProofLane.Equal, branchProofLane.LessOrEq, branchProofLane.Join, branchProofLane.Join),
-	callboundary.LanePathPresenceImplications: normalReturnSummaryLaneNoRegOwned(callboundary.LanePathPresenceImplications,
+	callboundary.LanePathPresenceImplications: normalReturnSummaryLaneNoRegOwned(
 		func(f *callboundary.NormalReturnFacts) *[]callboundary.PathPresenceImplicationFact {
 			return &f.PathPresenceImplications
 		},
@@ -175,28 +175,28 @@ var normalReturnSummaryLanes = buildNormalReturnSummaryLanes(map[callboundary.No
 		pathPresenceImplicationLane.LessOrEq,
 		pathPresenceImplicationLane.Join,
 		pathPresenceImplicationLane.Widen),
-	callboundary.LaneChannelSelects: normalReturnSummaryLaneNoRegOwned(callboundary.LaneChannelSelects,
+	callboundary.LaneChannelSelects: normalReturnSummaryLaneNoRegOwned(
 		func(f *callboundary.NormalReturnFacts) *[]callboundary.ChannelSelectFact { return &f.ChannelSelects },
 		channelSelectLane.Normalize, channelSelectLane.NormalizeOwned, channelSelectLane.Clone, channelSelectLane.Equal, channelSelectLane.LessOrEq, channelSelectLane.Join, channelSelectLane.Join),
-	callboundary.LaneFrozenTables: normalReturnSummaryLaneNoRegOwned(callboundary.LaneFrozenTables,
+	callboundary.LaneFrozenTables: normalReturnSummaryLaneNoRegOwned(
 		func(f *callboundary.NormalReturnFacts) *[]callboundary.FrozenTableFact { return &f.FrozenTables },
 		frozenTableLane.Normalize, frozenTableLane.NormalizeOwned, frozenTableLane.Clone, frozenTableLane.Equal, frozenTableLane.LessOrEq, frozenTableLane.Join, frozenTableLane.Join),
-	callboundary.LaneEffectDeltas: normalReturnSummarySliceLaneOwned(callboundary.LaneEffectDeltas,
+	callboundary.LaneEffectDeltas: normalReturnSummarySliceLaneOwned(
 		func(f *callboundary.NormalReturnFacts) *[]callboundary.EffectDelta { return &f.EffectDeltas },
 		normalizeEffectDeltas, normalizeEffectDeltasOwned, cloneEffectDeltas, effectDeltasEqual, effectDeltasLessOrEq, joinEffectDeltas, widenEffectDeltas),
-	callboundary.LaneEscapeEvents: normalReturnSummaryLaneNoRegOwned(callboundary.LaneEscapeEvents,
+	callboundary.LaneEscapeEvents: normalReturnSummaryLaneNoRegOwned(
 		func(f *callboundary.NormalReturnFacts) *[]callboundary.EscapeEventFact { return &f.EscapeEvents },
 		escapeEventLane.Normalize, escapeEventLane.NormalizeOwned, escapeEventLane.Clone, escapeEventLane.Equal, escapeEventLane.LessOrEq, escapeEventLane.Join, escapeEventLane.Widen),
-	callboundary.LaneStoreRelations: normalReturnSummaryLaneNoRegOwned(callboundary.LaneStoreRelations,
+	callboundary.LaneStoreRelations: normalReturnSummaryLaneNoRegOwned(
 		func(f *callboundary.NormalReturnFacts) *[]callboundary.StoreRelationFact { return &f.StoreRelations },
 		storeRelationLane.Normalize, storeRelationLane.NormalizeOwned, storeRelationLane.Clone, storeRelationLane.Equal, storeRelationLane.LessOrEq, storeRelationLane.Join, storeRelationLane.Widen),
-	callboundary.LaneLifecycleFacts: normalReturnSummaryLaneNoRegOwned(callboundary.LaneLifecycleFacts,
+	callboundary.LaneLifecycleFacts: normalReturnSummaryLaneNoRegOwned(
 		func(f *callboundary.NormalReturnFacts) *[]callboundary.LifecycleFact { return &f.LifecycleFacts },
 		lifecycleLane.Normalize, lifecycleLane.NormalizeOwned, lifecycleLane.Clone, lifecycleLane.Equal, lifecycleLane.LessOrEq, lifecycleLane.Join, lifecycleLane.Widen),
-	callboundary.LaneNumFloors: normalReturnSummaryLaneNoRegOwned(callboundary.LaneNumFloors,
+	callboundary.LaneNumFloors: normalReturnSummaryLaneNoRegOwned(
 		func(f *callboundary.NormalReturnFacts) *[]callboundary.NumFloorFact { return &f.NumFloors },
 		numFloorLane.Normalize, numFloorLane.NormalizeOwned, numFloorLane.Clone, numFloorLane.Equal, numFloorLane.LessOrEq, numFloorLane.Join, numFloorLane.Widen),
-	callboundary.LaneRelConstraints: normalReturnSummaryLaneNoRegOwned(callboundary.LaneRelConstraints,
+	callboundary.LaneRelConstraints: normalReturnSummaryLaneNoRegOwned(
 		func(f *callboundary.NormalReturnFacts) *[]callboundary.RelConstraintFact { return &f.RelConstraints },
 		relConstraintLane.Normalize, relConstraintLane.NormalizeOwned, relConstraintLane.Clone, relConstraintLane.Equal, relConstraintLane.LessOrEq, relConstraintLane.Join, relConstraintLane.Widen),
 })

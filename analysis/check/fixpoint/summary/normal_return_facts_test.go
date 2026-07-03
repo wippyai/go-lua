@@ -21,20 +21,13 @@ import (
 )
 
 func TestNormalReturnSummaryLaneRegistryCoversStorageLanes(t *testing.T) {
-	registered := make(map[callboundary.NormalReturnFactLaneID]struct{})
-	for _, lane := range normalReturnSummaryLanes {
-		if lane.id == "" {
-			t.Fatal("summary normal-return lane with empty ID")
-		}
-		if _, ok := registered[lane.id]; ok {
-			t.Fatalf("summary normal-return lane ID %q registered more than once", lane.id)
-		}
-		registered[lane.id] = struct{}{}
+	storage := callboundary.NormalReturnFactLanes()
+	if len(normalReturnSummaryLanes) != len(storage) {
+		t.Fatalf("summary normal-return lanes = %d, want storage lane count %d", len(normalReturnSummaryLanes), len(storage))
 	}
-	for _, storageLane := range callboundary.NormalReturnFactLanes() {
-		_, ok := registered[storageLane.ID()]
-		if !ok {
-			t.Fatalf("storage lane %q/%s has no summary lane owner", storageLane.ID(), storageLane.FieldName())
+	for _, lane := range normalReturnSummaryLanes {
+		if !normalReturnSummaryLaneValid(lane) {
+			t.Fatal("summary normal-return lane has incomplete behavior")
 		}
 	}
 }
