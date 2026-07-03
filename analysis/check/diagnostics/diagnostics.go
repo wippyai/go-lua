@@ -8,10 +8,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/check/obligation/pass"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
-	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 const (
@@ -269,116 +265,9 @@ func produceWithParents(
 		}
 		out = append(out, producer.produce(result, context)...)
 	}
-	for _, fn := range diagnosticFunctionResults(result) {
+	for _, fn := range result.ReportableFunctionResults() {
 		childParents := append(append([]*body.Result(nil), parentResults...), result)
 		out = append(out, produceWithParents(fn, config, result, childParents...)...)
 	}
 	return out
-}
-
-func diagnosticFunctionResults(result *body.Result) []*body.Result {
-	functions := result.FunctionResults()
-	if len(functions) == 0 {
-		return nil
-	}
-	hasContext := make(map[*ast.FunctionExpr]struct{})
-	for _, fn := range functions {
-		if fn == nil || !fn.IsCallContextResult() {
-			continue
-		}
-		if expr := fn.Function(); expr != nil {
-			hasContext[expr] = struct{}{}
-		}
-	}
-	if len(hasContext) == 0 {
-		return functions
-	}
-	out := make([]*body.Result, 0, len(functions))
-	for _, fn := range functions {
-		if fn == nil {
-			continue
-		}
-		if !fn.IsCallContextResult() {
-			if expr := fn.Function(); expr != nil {
-				if _, ok := hasContext[expr]; ok && !hasImplicitSelfEntrySurface(fn) && !hasExplicitValidationResultSurface(fn) {
-					continue
-				}
-			}
-		}
-		out = append(out, fn)
-	}
-	return out
-}
-
-func hasExplicitValidationResultSurface(result *body.Result) bool {
-	if result == nil {
-		return false
-	}
-	fn := result.Function()
-	if fn == nil {
-		return false
-	}
-	if len(fn.TypeParams) != 0 {
-		return false
-	}
-	if len(fn.ReturnTypes) != 0 {
-		return true
-	}
-	for _, slot := range result.FunctionParamSlots(fn) {
-		if !slot.ImplicitSelf && slot.Type != nil {
-			return true
-		}
-	}
-	if fn.ParList == nil {
-		return false
-	}
-	for _, expr := range fn.ParList.Types {
-		if expr != nil {
-			return true
-		}
-	}
-	return fn.ParList.VarargType != nil
-}
-
-func hasImplicitSelfEntrySurface(result *body.Result) bool {
-	if result == nil {
-		return false
-	}
-	fn := result.Function()
-	if fn == nil {
-		return false
-	}
-	self := symbol.ID(0)
-	for _, slot := range result.FunctionParamSlots(fn) {
-		if slot.ImplicitSelf && slot.Symbol != 0 {
-			self = slot.Symbol
-			break
-		}
-	}
-	if self == 0 {
-		return false
-	}
-	entry, ok := result.EntryState()
-	if !ok {
-		return false
-	}
-	ks := result.KeySpace()
-	if ks == nil {
-		return false
-	}
-	found := false
-	entry.ForEachPathStaticMember(func(memberKey keyspace.Key, _ product.Value) bool {
-		if memberKey.Sym != self {
-			return true
-		}
-		switch memberKey.Kind {
-		case keyspace.KindResolverSym, keyspace.KindStableSym:
-			if len(ks.Segments(memberKey)) != 0 {
-				found = true
-				return false
-			}
-		}
-		return true
-	})
-	return found
 }
