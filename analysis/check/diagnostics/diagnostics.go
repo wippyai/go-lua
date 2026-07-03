@@ -68,28 +68,28 @@ func diagnosticProducers() []diagnosticProducer {
 			codes:          []diagnostic.Code{CodeUnresolvedTypeReference},
 			defaultEnabled: true,
 			produce: func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
-				return produceUnresolvedTypeJudgmentDiagnosticsWithPolicy(result, context.parent, "", context.judgmentPolicy, context.judgmentStrictness)
+				return context.produceJudgmentsWithParent(result, context.parent, pass.UnresolvedTypes{})
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeUnresolvedValueReference},
 			defaultEnabled: true,
 			produce: func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
-				return produceUnresolvedValueJudgmentDiagnosticsWithPolicy(result, "", context.judgmentPolicy, context.judgmentStrictness)
+				return context.produceJudgments(result, pass.UnresolvedValues{})
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeAssignmentType, CodeOptionalAssignmentTarget, CodeDirectCallResultAssignment},
 			defaultEnabled: true,
 			produce: func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
-				return produceAssignmentJudgmentDiagnosticsWithPolicy(result, "", context.judgmentPolicy, context.judgmentStrictness)
+				return context.produceJudgments(result, pass.Assignments{})
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeReturnContractType},
 			defaultEnabled: true,
 			produce: func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
-				return produceReturnJudgmentDiagnosticsWithPolicy(result, "", context.judgmentPolicy, context.judgmentStrictness)
+				return context.produceJudgments(result, pass.Returns{})
 			},
 		},
 		{
@@ -107,61 +107,56 @@ func diagnosticProducers() []diagnosticProducer {
 				if result == nil {
 					return nil
 				}
-				return produceDirectCallContractJudgmentDiagnosticsWithPolicy(
-					result,
-					"",
-					context.judgmentPolicy,
-					context.judgmentStrictness,
-				)
+				return context.produceDirectCallContractJudgments(result)
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeConcatOperand},
 			defaultEnabled: true,
 			produce: func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
-				return produceConcatOperandJudgmentDiagnosticsWithPolicy(result, "", context.judgmentPolicy, context.judgmentStrictness)
+				return context.produceJudgments(result, pass.ConcatOperands{})
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeNumericForOperand},
 			defaultEnabled: true,
 			produce: func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
-				return produceNumericForJudgmentDiagnosticsWithPolicy(result, "", context.judgmentPolicy, context.judgmentStrictness)
+				return context.produceJudgments(result, pass.NumericForOperands{})
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeNonNilAssertAlwaysNil},
 			defaultEnabled: true,
 			produce: func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
-				return produceNonNilAssertionJudgmentDiagnosticsWithPolicy(result, "", context.judgmentPolicy, context.judgmentStrictness)
+				return context.produceJudgments(result, pass.NonNilAssertions{})
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeMissingMember},
 			defaultEnabled: true,
 			produce: func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
-				return produceMemberReadJudgmentDiagnosticsWithPolicy(result, "", context.judgmentPolicy, context.judgmentStrictness)
+				return context.produceReachableJudgments(result, pass.MemberReads{})
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeChannelSelectExhaustive},
 			defaultEnabled: true,
 			produce: func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
-				return produceChannelSelectJudgmentDiagnosticsWithPolicy(result, "", context.judgmentPolicy, context.judgmentStrictness)
+				return context.produceJudgments(result, pass.ChannelSelects{})
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeUnusedLocal},
 			defaultEnabled: false,
 			produce: func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
-				return produceUnusedLocalJudgmentDiagnosticsWithPolicy(result, "", context.judgmentPolicy, context.judgmentStrictness)
+				return context.produceJudgments(result, pass.UnusedLocals{})
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeDeadAssignment},
 			defaultEnabled: false,
 			produce: func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
-				return produceDeadAssignmentJudgmentDiagnosticsWithPolicy(result, "", context.judgmentPolicy, context.judgmentStrictness)
+				return context.produceJudgments(result, pass.DeadAssignments{})
 			},
 		},
 		{
@@ -171,12 +166,9 @@ func diagnosticProducers() []diagnosticProducer {
 				if result == nil {
 					return nil
 				}
-				return produceJudgmentsWithParentsAndPolicy(
+				return context.produceJudgmentsWithParents(
 					result,
 					context.parents,
-					"",
-					context.judgmentPolicy,
-					context.judgmentStrictness,
 					pass.RedundantConditions{},
 				)
 			},
@@ -188,12 +180,9 @@ func diagnosticProducers() []diagnosticProducer {
 				if result == nil {
 					return nil
 				}
-				return produceJudgmentsWithParentsAndPolicy(
+				return context.produceJudgmentsWithParents(
 					result,
 					context.parents,
-					"",
-					context.judgmentPolicy,
-					context.judgmentStrictness,
 					pass.DiscriminatedUnions{},
 					pass.Optionals{},
 					pass.ResultShapes{},
@@ -206,14 +195,14 @@ func diagnosticProducers() []diagnosticProducer {
 			codes:          []diagnostic.Code{CodeFrozenTableMutation},
 			defaultEnabled: false,
 			produce: func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
-				return produceFrozenTableJudgmentDiagnosticsWithPolicy(result, "", context.judgmentPolicy, context.judgmentStrictness)
+				return context.produceJudgments(result, pass.FrozenTableMutations{})
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeResourceUnreleased},
 			defaultEnabled: false,
 			produce: func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
-				return produceLifecycleJudgmentDiagnosticsWithPolicy(result, "", context.judgmentPolicy, context.judgmentStrictness)
+				return context.produceJudgments(result, pass.LifecycleObligations{})
 			},
 		},
 	}
