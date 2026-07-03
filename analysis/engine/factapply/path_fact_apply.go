@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -654,22 +653,6 @@ func factStateKeyAt(resolver *visibility.Resolver, point cfg.Point, path pathdom
 
 func factKeyspaceKeyAt(resolver *visibility.Resolver, point cfg.Point, path pathdom.Path) (keyspace.Key, bool) {
 	return visibility.AddressAt(resolver, point, path).VisibleKeyspaceKey()
-}
-
-func callOutcomeKeyspaceKeyAt(
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	boundaryPaths callboundary.PathBindings,
-	path pathdom.Path,
-) (keyspace.Key, bool) {
-	targetPath, ok := boundaryPaths.Substitute(path)
-	if !ok {
-		return keyspace.Key{}, false
-	}
-	if callboundary.IsConcreteSymbolPath(path) {
-		return visibility.AddressAt(resolver, point, targetPath).RootOrVisibleKeyspaceKey()
-	}
-	return factKeyspaceKeyAt(resolver, point, targetPath)
 }
 
 func addPathEqualityProofFromSource(

@@ -670,16 +670,3 @@ func applyNormalReturnEscapeEvents(ctx normalReturnApplyContext, out state.State
 	}
 	return out
 }
-
-func callOutcomeVisibleStateKeyAt(
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	boundaryPaths callboundary.PathBindings,
-	path pathdom.Path,
-) (pathaddr.StateKey, bool) {
-	targetPath, ok := boundaryPaths.Substitute(path)
-	if !ok {
-		return "", false
-	}
-	return factStateKeyAt(resolver, point, targetPath)
-}
