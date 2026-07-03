@@ -12,6 +12,31 @@ func (p Path) SameRoot(other Path) bool {
 	return p.Root == other.Root && p.Version == other.Version
 }
 
+// SameRootIgnoringVersion reports whether two paths refer to the same root
+// identity while deliberately ignoring point-local path versions. Use this only
+// for syntax/projection comparisons that are not state-key identity checks.
+func (p Path) SameRootIgnoringVersion(other Path) bool {
+	if p.Symbol != 0 || other.Symbol != 0 {
+		return p.Symbol != 0 && p.Symbol == other.Symbol
+	}
+	return p.Root != "" && p.Root == other.Root
+}
+
+// EqualIgnoringVersion compares root identity and suffix while deliberately
+// ignoring point-local path versions. Use this only for syntax/projection
+// comparisons that should survive SSA-version churn.
+func (p Path) EqualIgnoringVersion(other Path) bool {
+	if !p.SameRootIgnoringVersion(other) || len(p.Segments) != len(other.Segments) {
+		return false
+	}
+	for i := range p.Segments {
+		if p.Segments[i] != other.Segments[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // HasPrefix reports whether prefix identifies p itself or an ancestor of p.
 func (p Path) HasPrefix(prefix Path) bool {
 	if !p.SameRoot(prefix) || len(prefix.Segments) > len(p.Segments) {

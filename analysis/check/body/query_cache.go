@@ -8,6 +8,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -22,6 +23,8 @@ type resultQueryCache struct {
 	normalReachable     map[cfg.Point]bool
 	normalReachableSet  bool
 	signatureTypes      map[string]cachedSignatureType
+	reachability        *cfg.Reachability
+	immediateDominators map[cfg.Point]cfg.Point
 	readContexts        [sourceValueReadModeCount]readexpr.Context
 	sourceResolvers     [sourceValueReadModeCount]sourcevalue.SourceValues
 	callOutcomeCapacity int
@@ -44,6 +47,8 @@ func (c *resultQueryCache) reset() {
 	c.normalReachable = nil
 	c.normalReachableSet = false
 	c.signatureTypes = nil
+	c.reachability = nil
+	c.immediateDominators = nil
 	c.readContexts = [sourceValueReadModeCount]readexpr.Context{}
 	c.sourceResolvers = [sourceValueReadModeCount]sourcevalue.SourceValues{}
 }
@@ -253,6 +258,26 @@ func (c *resultQueryCache) rememberSignatureType(name string, cached cachedSigna
 		c.signatureTypes = make(map[string]cachedSignatureType)
 	}
 	c.signatureTypes[name] = cached
+}
+
+func (c *resultQueryCache) controlReachability(graph cfg.Graph) *cfg.Reachability {
+	if c == nil || graph == nil {
+		return nil
+	}
+	if c.reachability == nil {
+		c.reachability = cfg.NewReachability(graph)
+	}
+	return c.reachability
+}
+
+func (c *resultQueryCache) immediateDominatorMap(graph cfg.Graph) map[cfg.Point]cfg.Point {
+	if c == nil || graph == nil {
+		return nil
+	}
+	if c.immediateDominators == nil {
+		c.immediateDominators = dominance.ComputeImmediateDominatorInfo(graph).Map()
+	}
+	return c.immediateDominators
 }
 
 func (c *resultQueryCache) readContext(mode sourceValueReadMode) *readexpr.Context {

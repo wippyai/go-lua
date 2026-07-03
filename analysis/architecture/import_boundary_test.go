@@ -981,95 +981,25 @@ func TestDirectFunctionContractSchemaHasNeutralOwner(t *testing.T) {
 			t.Fatalf("%s does not contain direct-function contract owner marker %q", owner, want)
 		}
 	}
-
-	directCall := filepath.Join("..", "check", "diagnostics", "direct_call.go")
-	directCallContent, err := os.ReadFile(directCall)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, banned := range []string{
-		"type directFunctionContract struct",
-		"type directCallParam struct",
-		"type directCallResult struct",
-		"func lowerDirectFunctionContract",
-		"func lowerDirectFunctionType",
-		"func lowerDirectCallResult",
-		"func lowerDirectCallParam",
-	} {
-		if bytes.Contains(directCallContent, []byte(banned)) {
-			t.Fatalf("%s contains direct-function contract owner marker %q; direct_function_contract.go owns this schema", directCall, banned)
-		}
-	}
 }
 
-func TestDirectFunctionContractResolutionHasNeutralOwner(t *testing.T) {
-	owner := filepath.Join("..", "check", "diagnostics", "direct_function_contract_query.go")
-	ownerContent, err := os.ReadFile(owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{
+func TestDeletedDirectFunctionContractResolutionDoesNotRegrow(t *testing.T) {
+	assertDiagnosticsMarkersAbsent(t, []string{
 		"func currentDirectFunctionContract",
 		"func currentFunctionValueContract",
 		"func lossyImplicitSelfMemberFallback",
-	} {
-		if !bytes.Contains(ownerContent, []byte(want)) {
-			t.Fatalf("%s does not contain direct-function contract resolution marker %q", owner, want)
-		}
-	}
-
-	directCall := filepath.Join("..", "check", "diagnostics", "direct_call.go")
-	directCallContent, err := os.ReadFile(directCall)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, banned := range []string{
-		"func currentDirectFunctionContract",
-		"func currentFunctionValueContract",
-		"func lossyImplicitSelfMemberFallback",
-	} {
-		if bytes.Contains(directCallContent, []byte(banned)) {
-			t.Fatalf("%s contains direct-function contract resolution marker %q; direct_function_contract_query.go owns this resolution", directCall, banned)
-		}
-	}
+	})
 }
 
-func TestDirectCallArgumentSourceResolutionHasNeutralOwner(t *testing.T) {
-	owner := filepath.Join("..", "check", "diagnostics", "direct_call_argument_source.go")
-	ownerContent, err := os.ReadFile(owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{
+func TestDeletedDirectCallArgumentSourceResolutionDoesNotRegrow(t *testing.T) {
+	assertDiagnosticsMarkersAbsent(t, []string{
 		"type directCallArgumentSourceTypeResolution struct",
 		"func resolveDirectCallArgumentSourceType",
 		"func boundaryCallArgumentReaderType",
 		"func directCallArgumentFlowExpressionType",
 		"func directCallArgumentContractSourceType",
 		"func boundaryCallArgumentReader",
-	} {
-		if !bytes.Contains(ownerContent, []byte(want)) {
-			t.Fatalf("%s does not contain direct-call argument source marker %q", owner, want)
-		}
-	}
-
-	directCall := filepath.Join("..", "check", "diagnostics", "direct_call.go")
-	directCallContent, err := os.ReadFile(directCall)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, banned := range []string{
-		"type directCallArgumentSourceTypeResolution struct",
-		"func resolveDirectCallArgumentSourceType",
-		"func boundaryCallArgumentReaderType",
-		"func directCallArgumentFlowExpressionType",
-		"func directCallArgumentContractSourceType",
-		"func boundaryCallArgumentReader",
-	} {
-		if bytes.Contains(directCallContent, []byte(banned)) {
-			t.Fatalf("%s contains direct-call argument source marker %q; direct_call_argument_source.go owns this resolution", directCall, banned)
-		}
-	}
+	})
 }
 
 func TestDirectFunctionContractReceiverBindingHasNeutralOwner(t *testing.T) {
@@ -1089,22 +1019,30 @@ func TestDirectFunctionContractReceiverBindingHasNeutralOwner(t *testing.T) {
 			t.Fatalf("%s does not contain direct-function receiver binding marker %q", owner, want)
 		}
 	}
+}
 
-	directCall := filepath.Join("..", "check", "diagnostics", "direct_call.go")
-	directCallContent, err := os.ReadFile(directCall)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, banned := range []string{
-		"func bindDirectCallReceiver",
-		"func directCallDeclaredReceiverType",
-		"func directCallContractHasUnboundReceiverSlot",
-		"func contextIndependentImplicitSelfArgument",
-		"func implicitSelfArgumentInResultTree",
-	} {
-		if bytes.Contains(directCallContent, []byte(banned)) {
-			t.Fatalf("%s contains direct-function receiver binding marker %q; direct_function_contract_receiver.go owns this binding", directCall, banned)
+func assertDiagnosticsMarkersAbsent(t *testing.T, markers []string) {
+	t.Helper()
+	root := filepath.Join("..", "check", "diagnostics")
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, marker := range markers {
+			if bytes.Contains(content, []byte(marker)) {
+				t.Fatalf("%s contains deleted legacy marker %q", path, marker)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -1158,22 +1096,6 @@ func TestDirectCallDefinitionDiscoveryHasNeutralOwner(t *testing.T) {
 		}
 	}
 
-	directCall := filepath.Join("..", "check", "diagnostics", "direct_call.go")
-	directCallContent, err := os.ReadFile(directCall)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, banned := range []string{
-		"type directCallDefinitionCache struct",
-		"func newDirectCallDefinitionCache",
-		"func directCallDefinitions",
-		"func computeDirectCallDefinitions",
-		"func directFunctionExprFromExpr",
-	} {
-		if bytes.Contains(directCallContent, []byte(banned)) {
-			t.Fatalf("%s contains direct-call definition discovery marker %q; direct_call_definitions.go owns this discovery/cache", directCall, banned)
-		}
-	}
 }
 
 func TestDirectCallFunctionLiteralContextHasNeutralOwner(t *testing.T) {
@@ -1195,32 +1117,10 @@ func TestDirectCallFunctionLiteralContextHasNeutralOwner(t *testing.T) {
 		}
 	}
 
-	directCall := filepath.Join("..", "check", "diagnostics", "direct_call.go")
-	directCallContent, err := os.ReadFile(directCall)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, banned := range []string{
-		"func functionLiteralArgumentContextuallyChecked",
-		"func functionLiteralTypeAdmitsContext",
-		"func topLikeFunctionPlaceholder",
-		"func placeholderFunctionLiteralTypeAdmitsContext",
-		"func functionLiteralHasExplicitParamTypes",
-		"func unwrapFunctionLiteralArgument",
-	} {
-		if bytes.Contains(directCallContent, []byte(banned)) {
-			t.Fatalf("%s contains direct-call function-literal context marker %q; direct_call_function_literal.go owns this context", directCall, banned)
-		}
-	}
 }
 
-func TestDirectCallCalleeDiagnosticsHaveNeutralOwner(t *testing.T) {
-	owner := filepath.Join("..", "check", "diagnostics", "direct_call_callee.go")
-	ownerContent, err := os.ReadFile(owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{
+func TestDeletedDirectCallCalleeDiagnosticsDoNotRegrow(t *testing.T) {
+	assertDiagnosticsMarkersAbsent(t, []string{
 		"func (p directCallContract) possiblyNilCallee",
 		"func (p directCallContract) invalidDominatingCalleeDeclarationWouldReport",
 		"func calleeFlowType",
@@ -1228,30 +1128,7 @@ func TestDirectCallCalleeDiagnosticsHaveNeutralOwner(t *testing.T) {
 		"func directPossiblyNilCalleeDiagnostic",
 		"func directCalleeDiagnostic",
 		"func directNotCallableDiagnostic",
-	} {
-		if !bytes.Contains(ownerContent, []byte(want)) {
-			t.Fatalf("%s does not contain direct-call callee diagnostic marker %q", owner, want)
-		}
-	}
-
-	directCall := filepath.Join("..", "check", "diagnostics", "direct_call.go")
-	directCallContent, err := os.ReadFile(directCall)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, banned := range []string{
-		"func (p directCallContract) possiblyNilCallee",
-		"func (p directCallContract) invalidDominatingCalleeDeclarationWouldReport",
-		"func calleeFlowType",
-		"func boundaryMaybeNilCalleeType",
-		"func directPossiblyNilCalleeDiagnostic",
-		"func directCalleeDiagnostic",
-		"func directNotCallableDiagnostic",
-	} {
-		if bytes.Contains(directCallContent, []byte(banned)) {
-			t.Fatalf("%s contains direct-call callee diagnostic marker %q; direct_call_callee.go owns this callee path", directCall, banned)
-		}
-	}
+	})
 }
 
 func TestDirectCallArgumentDiagnosticsHaveNeutralOwner(t *testing.T) {
@@ -1276,26 +1153,6 @@ func TestDirectCallArgumentDiagnosticsHaveNeutralOwner(t *testing.T) {
 		}
 	}
 
-	directCall := filepath.Join("..", "check", "diagnostics", "direct_call.go")
-	directCallContent, err := os.ReadFile(directCall)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, banned := range []string{
-		"func tooFewArgsDiagnostic",
-		"func tooManyArgsDiagnostic",
-		"func argTypeDiagnostic",
-		"func argProofBoundaryDiagnostic",
-		"func objectLiteralArgTypeDiagnostic",
-		"func argTypeDiagnosticEnvelope",
-		"func argTypeDiagnosticEnvelopeWithSubject",
-		"func directCallArgumentSpan",
-		"func directCallDeclarationEvidenceSpan",
-	} {
-		if bytes.Contains(directCallContent, []byte(banned)) {
-			t.Fatalf("%s contains direct-call argument diagnostic marker %q; direct_call_argument_diagnostic.go owns this rendering", directCall, banned)
-		}
-	}
 }
 
 func TestDirectCallSiteHelpersHaveNeutralOwner(t *testing.T) {
@@ -1314,20 +1171,6 @@ func TestDirectCallSiteHelpersHaveNeutralOwner(t *testing.T) {
 		}
 	}
 
-	directCall := filepath.Join("..", "check", "diagnostics", "direct_call.go")
-	directCallContent, err := os.ReadFile(directCall)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, banned := range []string{
-		"func callMemberAccessInfoForSite",
-		"func directCallDisplayName",
-		"func displayPath",
-	} {
-		if bytes.Contains(directCallContent, []byte(banned)) {
-			t.Fatalf("%s contains direct-call site helper marker %q; direct_call_site.go owns this shared call-site logic", directCall, banned)
-		}
-	}
 }
 
 func TestDirectCallArgumentSemanticsHaveNeutralOwner(t *testing.T) {
@@ -1350,24 +1193,6 @@ func TestDirectCallArgumentSemanticsHaveNeutralOwner(t *testing.T) {
 		}
 	}
 
-	directCall := filepath.Join("..", "check", "diagnostics", "direct_call.go")
-	directCallContent, err := os.ReadFile(directCall)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, banned := range []string{
-		"func objectLiteralMemberMismatchForCallArgument",
-		"func displayAliasDescribesFlowType",
-		"func containsTypeParamSyntax",
-		"func declaredArgumentExprType",
-		"func directCallArgumentDisplayType",
-		"func genericObjectLiteralArgTypeMismatch",
-		"func genericObjectLiteralMissingFieldEvidence",
-	} {
-		if bytes.Contains(directCallContent, []byte(banned)) {
-			t.Fatalf("%s contains direct-call argument semantic marker %q; direct_call_argument_semantics.go owns this shared argument logic", directCall, banned)
-		}
-	}
 }
 
 func TestFixpointProgramUsesSemanticBoundaryReads(t *testing.T) {

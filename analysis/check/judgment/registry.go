@@ -65,6 +65,141 @@ var defaultRegistry = NewRegistry([]CodeSpec{
 		},
 		DefaultVerdict: VerdictRefuted,
 	},
+	{
+		Code:        CodeReturn,
+		SubjectKind: SubjectReturnValue,
+		RequiredEvidence: []EvidenceKind{
+			EvidenceAbstractFact,
+			EvidenceUserAssertion,
+			EvidenceMissingProof,
+		},
+		DefaultVerdict: VerdictUnknown,
+	},
+	{
+		Code:        CodeNonNilAssertion,
+		SubjectKind: SubjectExpression,
+		RequiredEvidence: []EvidenceKind{
+			EvidenceAbstractFact,
+		},
+		DefaultVerdict: VerdictRefuted,
+	},
+	{
+		Code:        CodeNumericForOperand,
+		SubjectKind: SubjectExpression,
+		RequiredEvidence: []EvidenceKind{
+			EvidenceAbstractFact,
+		},
+		DefaultVerdict: VerdictRefuted,
+	},
+	{
+		Code:        CodeFrozenTable,
+		SubjectKind: SubjectPath,
+		RequiredEvidence: []EvidenceKind{
+			EvidenceAbstractFact,
+		},
+		DefaultVerdict: VerdictRefuted,
+	},
+	{
+		Code:        CodeLifecycle,
+		SubjectKind: SubjectPath,
+		RequiredEvidence: []EvidenceKind{
+			EvidenceMissingProof,
+		},
+		DefaultVerdict: VerdictRefuted,
+	},
+	{
+		Code:        CodeUnusedLocal,
+		SubjectKind: SubjectPath,
+		RequiredEvidence: []EvidenceKind{
+			EvidenceAbstractFact,
+		},
+		DefaultVerdict: VerdictRefuted,
+	},
+	{
+		Code:        CodeDeadAssignment,
+		SubjectKind: SubjectPath,
+		RequiredEvidence: []EvidenceKind{
+			EvidenceAbstractFact,
+		},
+		DefaultVerdict: VerdictRefuted,
+	},
+	{
+		Code:        CodeChannelSelect,
+		SubjectKind: SubjectExpression,
+		RequiredEvidence: []EvidenceKind{
+			EvidenceAbstractFact,
+			EvidenceMissingProof,
+		},
+		DefaultVerdict: VerdictRefuted,
+	},
+	{
+		Code:        CodeDiscriminatedUnion,
+		SubjectKind: SubjectExpression,
+		RequiredEvidence: []EvidenceKind{
+			EvidenceAbstractFact,
+			EvidenceMissingProof,
+		},
+		DefaultVerdict: VerdictRefuted,
+	},
+	{
+		Code:        CodeResultShape,
+		SubjectKind: SubjectExpression,
+		RequiredEvidence: []EvidenceKind{
+			EvidenceAbstractFact,
+			EvidenceMissingProof,
+		},
+		DefaultVerdict: VerdictRefuted,
+	},
+	{
+		Code:        CodeRegistration,
+		SubjectKind: SubjectExpression,
+		RequiredEvidence: []EvidenceKind{
+			EvidenceAbstractFact,
+			EvidenceMissingProof,
+		},
+		DefaultVerdict: VerdictRefuted,
+	},
+	{
+		Code:        CodeUnresolvedValue,
+		SubjectKind: SubjectPath,
+		RequiredEvidence: []EvidenceKind{
+			EvidenceAbstractFact,
+		},
+		DefaultVerdict: VerdictRefuted,
+	},
+	{
+		Code:        CodeUnresolvedType,
+		SubjectKind: SubjectPath,
+		RequiredEvidence: []EvidenceKind{
+			EvidenceAbstractFact,
+		},
+		DefaultVerdict: VerdictRefuted,
+	},
+	{
+		Code:        CodeRedundantCondition,
+		SubjectKind: SubjectExpression,
+		RequiredEvidence: []EvidenceKind{
+			EvidenceAbstractFact,
+		},
+		DefaultVerdict: VerdictRefuted,
+	},
+	{
+		Code:        CodeMemberRead,
+		SubjectKind: SubjectExpression,
+		RequiredEvidence: []EvidenceKind{
+			EvidenceAbstractFact,
+			EvidenceMissingProof,
+		},
+		DefaultVerdict: VerdictRefuted,
+	},
+	{
+		Code:        CodeConcatOperand,
+		SubjectKind: SubjectExpression,
+		RequiredEvidence: []EvidenceKind{
+			EvidenceAbstractFact,
+		},
+		DefaultVerdict: VerdictRefuted,
+	},
 })
 
 // DefaultRegistry returns the standard judgment-code registry.

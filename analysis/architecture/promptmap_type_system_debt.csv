@@ -476,9 +476,6 @@ analysis/check/diagnostics/dead_assignment.go,""localNameSpan, ast.SpanOf"",dupl
 analysis/check/diagnostics/dead_assignment.go,""deadAssignmentSymbolKind, result.SymbolKind"",hardcoded semantic cases,analysis/lua/semantics
 analysis/check/diagnostics/dead_assignment.go,""firstOverwritesBeforeRead, walk"",performance waste,analysis/check/diagnostics/cfg_traversal_engine
 analysis/check/diagnostics/dead_assignment.go,""deadAssignmentDiagnostic, diagnosticEvidenceSpanLess"",maintenance sprawl,analysis/check/diagnostics/diagnostic_formatter",192,14051,
-analysis/check/diagnostics/direct_call_resolution_test.go,true,YES,"file,symbols,debt kind,suggested canonical owner
-analysis/check/diagnostics/direct_call_resolution_test.go,""resolveDirectCallArgumentSourceType, guardEnv, producerContext"",overloaded helpers,analysis/lua/semantics
-analysis/check/diagnostics/direct_call_resolution_test.go,""resolution.UntrustedTopLike, resolution.ReadBoundary"",proof propagation split across layers,analysis/type/subtype",95,7426,
 analysis/check/diagnostics/discriminated_union_exhaustiveness_chain_render.go,true,YES,"file,symbols,debt kind,suggested canonical owner
 analysis/check/diagnostics/discriminated_union_exhaustiveness_chain_render.go,""discriminantCaseList, selectedDiscriminantPathEvidence, possibleDiscriminantCasesEvidence, handledDiscriminantCasesEvidence, missingDiscriminantCasesEvidence, missingDiscriminantDefaultEvidence"",duplicate vocabulary / hardcoded semantic cases,diagnostic.TemplateEngine",84,2674,
 analysis/check/diagnostics/direct_call_signature_test.go,true,YES,"file,symbols,debt kind,suggested canonical owner
@@ -519,13 +516,6 @@ analysis/check/diagnostics/discriminated_union_exhaustiveness_registration.go,tr
 analysis/check/diagnostics/discriminated_union_exhaustiveness_registration.go,""registrationCaseName, registrationExhaustivenessDiagnosticFor, registrationEvidence"",hardcoded semantic cases,analysis/domain/path
 analysis/check/diagnostics/discriminated_union_exhaustiveness_registration.go,""registrationDiagnostics, registrationExhaustivenessDiagnosticFor"",proof propagation split across layers,analysis/check/body
 analysis/check/diagnostics/discriminated_union_exhaustiveness_registration.go,""registrationCall, openRegistrationMutation, dispatchCall"",overloaded helpers,analysis/check/diagnostics/types",144,4929,
-analysis/check/diagnostics/direct_call.go,true,YES,"file,symbols,debt kind,suggested canonical owner
-analysis/check/diagnostics/direct_call.go,""produceDirectCallContract, currentDirectFunctionContract, currentFunctionValueContract"",parallel routes,analysis/check/diagnostics/contract_resolver
-analysis/check/diagnostics/direct_call.go,""directCallArgumentSourceTypeResolution, resolveDirectCallArgumentSourceType"",overloaded helpers,analysis/check/diagnostics/argument_resolver
-analysis/check/diagnostics/direct_call.go,""directCallContract, directFunctionContract, directCallParam, directCallResult"",duplicate vocabulary,analysis/check/diagnostics/types
-analysis/check/diagnostics/direct_call.go,""lossyImplicitSelfMemberFallback, implicitSelfArgumentInResultTree, implicitSelfArgumentInResult"",proof propagation split across layers,analysis/check/diagnostics/flow_analysis
-analysis/check/diagnostics/direct_call.go,""directCallDisplayName, displayPath, directCallArgumentDisplayType"",duplicate vocabulary,analysis/check/diagnostics/display
-analysis/check/diagnostics/direct_call.go,""directCallArgumentLoop, directCallArgumentSourceTypeResolution"",maintenance sprawl,analysis/check/diagnostics/argument_resolver",266,12465,
 analysis/check/diagnostics/discriminated_union_exhaustiveness_registration_render.go,true,YES,"file,symbols,debt kind,suggested canonical owner
 analysis/check/diagnostics/discriminated_union_exhaustiveness_registration_render.go,""registrationExhaustivenessMessage, registrationExhaustivenessExplanation, registrationExhaustivenessHelp, registrationDispatchEvidence, possibleDiscriminantCasesEvidence, registeredCasesEvidence, missingRegistrationsEvidence"",hardcoded semantic cases,diagnostic.MessageTemplateRegistry
 analysis/check/diagnostics/discriminated_union_exhaustiveness_registration_render.go,""registrationExhaustivenessExplanation"",proof propagation split across layers,diagnostic.EvidenceFactory",123,6060,

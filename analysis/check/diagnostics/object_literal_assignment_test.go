@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -35,31 +36,32 @@ func TestObjectLiteralDiagnosticTypeSeparatesDotFieldAndBracketStringMember(t *t
 	}
 }
 
-func TestDirectObjectLiteralArgumentTypeSeparatesDotFieldAndBracketStringMember(t *testing.T) {
-	table := &ast.TableExpr{Fields: []*ast.Field{
-		{
-			Key:       &ast.StringExpr{Value: "id"},
-			KeySyntax: ast.AttrKeyDot,
-			Value:     &ast.StringExpr{Value: "field"},
-		},
-		{
-			Key:       &ast.StringExpr{Value: "id"},
-			KeySyntax: ast.AttrKeyIndex,
-			Value:     &ast.TrueExpr{},
-		},
-	}}
-
-	got, ok := directObjectLiteralArgumentType(nil, nil, 0, table, nil)
-	if !ok {
-		t.Fatal("directObjectLiteralArgumentType returned false")
+func objectLiteralType(want typ.Type, fact semantics.ObjectLiteralFact) typ.Type {
+	builder := typetable.NewRecord()
+	for _, entry := range fact.Entries {
+		if len(entry.Suffix.Segments) != 1 {
+			continue
+		}
+		seg := entry.Suffix.Segments[0]
+		if (seg.Kind != segment.SegmentField && seg.Kind != segment.SegmentIndexString) || seg.Name == "" {
+			continue
+		}
+		fieldType, ok := valueexpr.LiteralType(entry.Value)
+		if !ok {
+			if expected, ok := expectedTypeAtSegments(want, entry.Suffix.Segments); ok {
+				fieldType = expected
+			} else {
+				fieldType = typ.Unknown
+			}
+		}
+		switch seg.Kind {
+		case segment.SegmentField:
+			builder = builder.Field(seg.Name, fieldType)
+		case segment.SegmentIndexString:
+			builder = builder.StaticStringIndex(seg.Name, fieldType)
+		}
 	}
-	want := typetable.NewRecord().
-		Field("id", typ.LiteralString("field")).
-		StaticStringIndex("id", typ.LiteralBool(true)).
-		Build()
-	if !typ.TypeEquals(got, want) {
-		t.Fatalf("direct object literal argument type = %v, want %v", got, want)
-	}
+	return builder.Build()
 }
 
 func TestAnnotationAssignabilityAcceptsBracketStringMapLiteralEntries(t *testing.T) {
@@ -122,8 +124,9 @@ func TestAnnotationAssignabilityRejectsObjectLiteralExplicitAnyMember(t *testing
 		evidence: []diagnosticEvidenceWant{
 			{kind: diagnostic.EvidenceAbstractFact, trust: diagnostic.TrustProven, message: "raw has type any", span: diagnostic.Span{StartLine: 3, StartCol: 24, EndLine: 3, EndCol: 26}},
 			{kind: diagnostic.EvidenceUserAssertion, trust: diagnostic.TrustClaimed, message: "p.id is declared as string", span: diagnostic.Span{StartLine: 3, StartCol: 10, EndLine: 3, EndCol: 14}},
+			{kind: diagnostic.EvidenceUserAssertion, trust: diagnostic.TrustClaimed, reason: diagnostic.EvidenceReasonUserAssertedAny, message: "user asserted any; not abstract-interpreter proof", span: diagnostic.Span{StartLine: 3, StartCol: 24, EndLine: 3, EndCol: 26}},
 			{kind: diagnostic.EvidencePrecisionBoundary, trust: diagnostic.TrustUnknown, reason: diagnostic.EvidenceReasonExplicitBoundaryValidation, message: "raw comes from any/unknown", span: diagnostic.Span{StartLine: 3, StartCol: 24, EndLine: 3, EndCol: 26}},
-			{kind: diagnostic.EvidenceMissingProof, trust: diagnostic.TrustUnknown, reason: diagnostic.EvidenceReasonBoundaryValidationMissing, message: "no proof on this path shows raw satisfies the declared type", span: diagnostic.Span{StartLine: 3, StartCol: 24, EndLine: 3, EndCol: 26}},
+			{kind: diagnostic.EvidenceMissingProof, trust: diagnostic.TrustUnknown, reason: diagnostic.EvidenceReasonBoundaryValidationMissing, message: "no proof on this path shows raw is string", span: diagnostic.Span{StartLine: 3, StartCol: 24, EndLine: 3, EndCol: 26}},
 		},
 		help: "Use a value compatible with the expected type, or change the target type if `raw` is valid.",
 		renderContains: []string{
@@ -134,8 +137,9 @@ func TestAnnotationAssignabilityRejectsObjectLiteralExplicitAnyMember(t *testing
 			"3 | local p: Point = {id = raw}",
 			"1. proven: raw has type any",
 			"2. claimed: p.id is declared as string",
-			"3. unvalidated value: raw comes from any/unknown",
-			"4. missing proof: no proof on this path shows raw satisfies the declared type",
+			"3. claimed: user asserted any; not abstract-interpreter proof",
+			"4. unvalidated value: raw comes from any/unknown",
+			"5. missing proof: no proof on this path shows raw is string",
 			"help: Use a value compatible with the expected type, or change the target type if `raw` is valid.",
 		},
 	})
@@ -233,6 +237,7 @@ func TestReturnContractRejectsObjectLiteralExplicitAnyMember(t *testing.T) {
 		evidence: []diagnosticEvidenceWant{
 			{kind: diagnostic.EvidenceAbstractFact, trust: diagnostic.TrustProven, message: "returned value 1.id (raw) has type any", span: diagnostic.Span{StartLine: 3, StartCol: 15, EndLine: 3, EndCol: 17}},
 			{kind: diagnostic.EvidenceUserAssertion, trust: diagnostic.TrustClaimed, message: "returned value 1.id must satisfy declared return type string", span: diagnostic.Span{StartLine: 2, StartCol: 26, EndLine: 2, EndCol: 30}},
+			{kind: diagnostic.EvidenceUserAssertion, trust: diagnostic.TrustClaimed, reason: diagnostic.EvidenceReasonUserAssertedAny, message: "user asserted any; not abstract-interpreter proof", span: diagnostic.Span{StartLine: 3, StartCol: 15, EndLine: 3, EndCol: 17}},
 			{kind: diagnostic.EvidencePrecisionBoundary, trust: diagnostic.TrustUnknown, reason: diagnostic.EvidenceReasonExplicitBoundaryValidation, message: "returned value 1.id (raw) comes from any/unknown", span: diagnostic.Span{StartLine: 3, StartCol: 15, EndLine: 3, EndCol: 17}},
 			{kind: diagnostic.EvidenceMissingProof, trust: diagnostic.TrustUnknown, reason: diagnostic.EvidenceReasonBoundaryValidationMissing, message: "no proof on this path shows returned value 1.id (raw) satisfies the declared return type", span: diagnostic.Span{StartLine: 3, StartCol: 15, EndLine: 3, EndCol: 17}},
 		},
@@ -247,8 +252,9 @@ func TestReturnContractRejectsObjectLiteralExplicitAnyMember(t *testing.T) {
 			" --> main.lua:2:26",
 			"  |                          ↓ declared return type",
 			"2 | function make(raw: any): Point",
-			"3. unvalidated value: returned value 1.id (raw) comes from any/unknown",
-			"4. missing proof: no proof on this path shows returned value 1.id (raw) satisfies the declared return type",
+			"3. claimed: user asserted any; not abstract-interpreter proof",
+			"4. unvalidated value: returned value 1.id (raw) comes from any/unknown",
+			"5. missing proof: no proof on this path shows returned value 1.id (raw) satisfies the declared return type",
 			"help: Return a value compatible with the declared return type, or change the return annotation if the returned value is valid.",
 		},
 	})

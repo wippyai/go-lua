@@ -15,14 +15,6 @@ func nestedElseIfStatements(stmts []*ast.IfStmt) map[*ast.IfStmt]bool {
 	return out
 }
 
-func hasElseIf(stmt *ast.IfStmt) bool {
-	if stmt == nil || len(stmt.Else) == 0 {
-		return false
-	}
-	_, ok := stmt.Else[0].(*ast.IfStmt)
-	return ok
-}
-
 func hasDefaultElse(stmt *ast.IfStmt) bool {
 	for stmt != nil {
 		if len(stmt.Else) == 0 {

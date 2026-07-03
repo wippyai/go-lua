@@ -5,7 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/check/readmodel"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 // Assignments emits annotated-assignment type obligations from solved state.
@@ -32,6 +32,30 @@ func (Assignments) Produce(ctx Context) []judgment.Judgment {
 		out = append(out, optionalAssignmentTargetJudgment(ctx, functionKey, target))
 		return true
 	})
+	return suppressAssignmentCascadeJudgments(out)
+}
+
+func suppressAssignmentCascadeJudgments(in []judgment.Judgment) []judgment.Judgment {
+	if len(in) < 2 {
+		return in
+	}
+	refutedTargets := make(map[string]cfg.Point)
+	out := in[:0]
+	for _, item := range in {
+		if item.Code == judgment.CodeAssignment &&
+			item.Verdict == judgment.VerdictRefuted &&
+			item.Subject.Label != "" {
+			refutedTargets[item.Subject.Label] = item.Point
+		}
+		if item.Code == judgment.CodeAssignment &&
+			item.Actual.Label != "" &&
+			item.Subject.Label != item.Actual.Label {
+			if causePoint, ok := refutedTargets[item.Actual.Label]; ok && causePoint < item.Point {
+				continue
+			}
+		}
+		out = append(out, item)
+	}
 	return out
 }
 
@@ -41,20 +65,11 @@ func assignmentJudgment(ctx Context, functionKey string, assignment readmodel.As
 		verdict = judgment.VerdictRefuted
 	}
 	actualTrust := judgment.EvidenceTrustUnknown
-	if !typ.TypeEquals(assignment.TypeWithPresence, nil) {
+	if assignment.ActualTypeKnown() {
 		actualTrust = judgment.EvidenceTrustProven
 	}
-	actual := assignment.TypeWithPresence
-	if typ.TypeEquals(actual, nil) {
-		actual = typ.Unknown
-	}
-	if verdict == judgment.VerdictUnknown &&
-		assignment.UntrustedTopOrigin &&
-		(typ.IsAny(actual) || typ.IsUnknown(actual) || typ.TypeEquals(actual, assignment.Expected)) {
-		actual = typ.Any
-	}
 	missingProofTrust := judgment.EvidenceTrustUnknown
-	if verdict == judgment.VerdictRefuted {
+	if assignment.MissingProofRefuted() {
 		missingProofTrust = judgment.EvidenceTrustRefuted
 	}
 	var missingProofDetail judgment.EvidenceDetail
@@ -64,10 +79,25 @@ func assignmentJudgment(ctx Context, functionKey string, assignment readmodel.As
 			assignment.Check.Mismatch.Type,
 		)
 	}
+	var sourceDetail judgment.EvidenceDetail
+	if assignment.CallResult.Present {
+		if assignment.CallResult.UnderSupplied {
+			sourceDetail = judgment.UnderSuppliedCallResultAssignmentEvidenceDetail(
+				assignment.CallResult.CallableName,
+				assignment.CallResult.ResultIndex,
+			)
+		} else {
+			sourceDetail = judgment.CallResultAssignmentEvidenceDetail(
+				assignment.CallResult.CallableName,
+				assignment.CallResult.ResultIndex,
+			)
+		}
+	}
 	evidence := judgment.EvidenceChain{
 		{
-			Kind:  judgment.EvidenceAbstractFact,
-			Trust: actualTrust,
+			Kind:   judgment.EvidenceAbstractFact,
+			Trust:  actualTrust,
+			Detail: sourceDetail,
 			Origin: judgment.OriginRef{
 				Point: assignment.Point,
 				Key:   "assignment:actual",
@@ -84,6 +114,37 @@ func assignmentJudgment(ctx Context, functionKey string, assignment readmodel.As
 			Span: spanFromReadModel(ctx.SourceFile, assignment.DeclarationSpan),
 		},
 	}
+	if assignment.CallResult.Present && !assignment.CallResult.UnderSupplied && assignment.CallResult.ReturnSpan.StartLine != 0 {
+		evidence = append(evidence, judgment.Evidence{
+			Kind:   judgment.EvidenceUserAssertion,
+			Trust:  judgment.EvidenceTrustClaimed,
+			Detail: sourceDetail,
+			Origin: judgment.OriginRef{
+				Point: assignment.Point,
+				Key:   "assignment:call-result-return",
+			},
+			Span: spanFromReadModel(ctx.SourceFile, assignment.CallResult.ReturnSpan),
+		})
+	}
+	if assignment.ExpectedSource == readmodel.AssignmentExpectedDynamicTarget {
+		evidence[1].Detail = judgment.DynamicAssignmentTargetEvidenceDetail(assignment.TargetLabel)
+	}
+	if assignment.ExplicitTopOrigin {
+		sourceLabel := assignment.SourceLabel
+		if sourceLabel == "" {
+			sourceLabel = "assigned value"
+		}
+		evidence = append(evidence, judgment.Evidence{
+			Kind:   judgment.EvidenceUserAssertion,
+			Trust:  judgment.EvidenceTrustClaimed,
+			Detail: judgment.UserAssertedAnyEvidenceDetail(sourceLabel),
+			Origin: judgment.OriginRef{
+				Point: assignment.Point,
+				Key:   "assignment:explicit-any",
+			},
+			Span: spanFromReadModel(ctx.SourceFile, assignment.SourceSpan),
+		})
+	}
 	for i, access := range assignment.NilableAccesses {
 		evidence = append(evidence, judgment.Evidence{
 			Kind:  judgment.EvidenceAbstractFact,
@@ -98,6 +159,22 @@ func assignmentJudgment(ctx Context, functionKey string, assignment readmodel.As
 				Key:   fmt.Sprintf("assignment:nilable-access:%d", i),
 			},
 			Span: spanFromReadModel(ctx.SourceFile, access.Span),
+		})
+	}
+	for i, contributor := range assignment.SourceContributors {
+		evidence = append(evidence, judgment.Evidence{
+			Kind:  judgment.EvidenceAbstractFact,
+			Trust: judgment.EvidenceTrustProven,
+			Detail: judgment.AssignmentSourceContributionEvidenceDetail(
+				contributor.RootLabel,
+				contributor.ReadLabel,
+				contributor.Type,
+			),
+			Origin: judgment.OriginRef{
+				Point: assignment.Point,
+				Key:   fmt.Sprintf("assignment:source-contributor:%d", i),
+			},
+			Span: spanFromReadModel(ctx.SourceFile, contributor.Span),
 		})
 	}
 	evidence = append(evidence, judgment.Evidence{
@@ -128,7 +205,7 @@ func assignmentJudgment(ctx Context, functionKey string, assignment readmodel.As
 			fmt.Sprintf("assignment:%d:%s", assignment.Point, assignment.TargetKey),
 		).WithLabel(assignment.TargetLabel),
 		Expected: judgment.NewTypeRef(assignment.Expected).WithLabel(assignment.ExpectedLabel),
-		Actual:   judgment.NewValueRef(assignment.ValueHash, actual).WithLabel(assignment.SourceLabel),
+		Actual:   judgment.NewValueRef(assignment.ValueHash, assignment.EffectiveActualType()).WithLabel(assignment.SourceLabel),
 		Verdict:  verdict,
 		Evidence: evidence,
 		Spans:    []judgment.SpanRef{spanFromReadModel(ctx.SourceFile, assignment.SourceSpan)},

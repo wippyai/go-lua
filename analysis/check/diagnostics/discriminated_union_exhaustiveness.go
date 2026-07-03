@@ -35,24 +35,19 @@ func (p discriminatedUnionExhaustiveness) Produce(result *body.Result) []diagnos
 		if branch.fact.If == nil || nested[branch.fact.If] {
 			continue
 		}
-		if diag, ok := p.chainDiagnostic(result, branch.fact.If, byIf); ok {
-			out = append(out, diag)
-		}
 		if diag, ok := p.optionalChainDiagnostic(result, branch.fact.If, byIf); ok {
 			out = append(out, diag)
 		}
 	}
 	out = append(out, p.tableDispatchDiagnostics(result, graph)...)
 	out = append(out, p.registrationDiagnostics(result, graph)...)
-	out = append(out, p.resultShapeConsumptionDiagnostics(result, graph)...)
 	return out
 }
 
 func (p discriminatedUnionExhaustiveness) discriminantBranchConditions(result *body.Result, graph cfg.Graph) []discriminantBranch {
-	envs := producerContext(p).guardEnvironments(result)
 	var out []discriminantBranch
 	for _, point := range graph.RPO() {
-		if !guardEnvReachableAt(envs, point) {
+		if !result.PointNormallyReachable(point) {
 			continue
 		}
 		branch, ok := result.BranchCondition(point)

@@ -11,8 +11,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
+	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
+	"github.com/wippyai/go-lua/analysis/type/subst"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -22,8 +26,27 @@ import (
 // this interface into body, syntax, or engine state internals.
 type Reader interface {
 	ForEachCall(func(CallSite) bool) bool
+	CallCalleeReportAt(cfg.Point) (CallCalleeReport, bool)
 	ForEachAssignment(func(Assignment) bool) bool
 	ForEachOptionalAssignmentTarget(func(OptionalAssignmentTarget) bool) bool
+	ForEachReturn(func(Return) bool) bool
+	ForEachNonNilAssertion(func(NonNilAssertion) bool) bool
+	ForEachNumericForOperand(func(NumericForOperand) bool) bool
+	ForEachConcatOperand(func(ConcatOperand) bool) bool
+	ForEachFrozenTableMutation(func(FrozenTableMutation) bool) bool
+	ForEachLifecycleObligation(func(LifecycleObligation) bool) bool
+	ForEachUnusedLocal(func(UnusedLocal) bool) bool
+	ForEachDeadAssignment(func(DeadAssignment) bool) bool
+	ForEachChannelSelectExhaustiveness(func(ChannelSelectExhaustiveness) bool) bool
+	ForEachDiscriminatedUnionExhaustiveness(func(DiscriminatedUnionExhaustiveness) bool) bool
+	ForEachRegistrationExhaustiveness(func(RegistrationExhaustiveness) bool) bool
+	ForEachUnresolvedValueReference(func(UnresolvedValueReference) bool) bool
+	ForEachUnresolvedTypeReference(func(UnresolvedTypeReference) bool) bool
+	ForEachMissingMemberRead(func(MissingMemberRead) bool) bool
+	ForEachResultShapeExhaustiveness(func(ResultShapeExhaustiveness) bool) bool
+	ForEachRedundantConditionBranch(func(RedundantConditionBranch) bool) bool
+	DominatingTruthyBranchForPath(cfg.Point, branchcond.Check) (DominatingBranchProof, bool)
+	DominatingBranchCheckForPath(cfg.Point, branchcond.Check, func(branchcond.Check, bool) bool) (DominatingBranchProof, bool)
 }
 
 // SourceSpan is a syntax-free source range exported by the read model.
@@ -32,6 +55,58 @@ type SourceSpan struct {
 	StartCol  int
 	EndLine   int
 	EndCol    int
+}
+
+// Valid reports whether the span points at a real source range.
+func (s SourceSpan) Valid() bool {
+	return s.StartLine != 0 || s.StartCol != 0 || s.EndLine != 0 || s.EndCol != 0
+}
+
+// RedundantConditionBranch is one normally reachable user-visible branch
+// condition. It carries the lowered check plus source spans so obligation
+// producers do not inspect syntax or body internals.
+type RedundantConditionBranch struct {
+	Point         cfg.Point
+	Check         branchcond.Check
+	ConditionSpan SourceSpan
+	StatementSpan SourceSpan
+}
+
+// DominatingBranchProof is the readmodel view of a prior branch edge that
+// proves something about the same path at a later branch.
+type DominatingBranchProof struct {
+	Point cfg.Point
+	Check branchcond.Check
+	Edge  bool
+	Span  SourceSpan
+}
+
+type obligationActualPolicy struct {
+	TypeWithPresence   typ.Type
+	Expected           typ.Type
+	UntrustedTopOrigin bool
+	ProvenMismatch     bool
+}
+
+func (p obligationActualPolicy) ActualTypeKnown() bool {
+	return !typ.TypeEquals(p.TypeWithPresence, nil)
+}
+
+func (p obligationActualPolicy) EffectiveActualType() typ.Type {
+	actual := p.TypeWithPresence
+	if typ.TypeEquals(actual, nil) {
+		actual = typ.Unknown
+	}
+	if !p.ProvenMismatch &&
+		p.UntrustedTopOrigin &&
+		(typ.IsAny(actual) || typ.IsUnknown(actual) || typ.TypeEquals(actual, p.Expected)) {
+		return typ.Any
+	}
+	return actual
+}
+
+func (p obligationActualPolicy) MissingProofRefuted() bool {
+	return p.ProvenMismatch && !p.UntrustedTopOrigin
 }
 
 // Assignment is the solved read model for one annotated assignment target.
@@ -47,12 +122,65 @@ type Assignment struct {
 	TypeWithPresence   typ.Type
 	Expected           typ.Type
 	ExpectedLabel      string
+	ExpectedSource     AssignmentExpectedSource
 	SourceSpan         SourceSpan
 	DeclarationSpan    SourceSpan
 	NilableAccesses    []NilableAccessEvidence
+	SourceContributors []AssignmentSourceContribution
+	CallResult         CallResultAssignmentSource
 	UntrustedTopOrigin bool
+	ExplicitTopOrigin  bool
 	Check              AssignmentCheck
 }
+
+// ActualTypeKnown reports whether the solved assignment source carried a
+// concrete type witness at the write site.
+func (a Assignment) ActualTypeKnown() bool {
+	return a.actualPolicy().ActualTypeKnown()
+}
+
+// EffectiveActualType returns the type the obligation layer should attach to
+// the assignment judgment. Missing solved types render as unknown; untrusted
+// top flows stay visibly any when the checker cannot prove a concrete mismatch.
+func (a Assignment) EffectiveActualType() typ.Type {
+	return a.actualPolicy().EffectiveActualType()
+}
+
+// MissingProofRefuted reports whether the failed assignment obligation is a
+// proven type contradiction rather than an untrusted-top precision boundary.
+func (a Assignment) MissingProofRefuted() bool {
+	return a.actualPolicy().MissingProofRefuted()
+}
+
+func (a Assignment) actualPolicy() obligationActualPolicy {
+	return obligationActualPolicy{
+		TypeWithPresence:   a.TypeWithPresence,
+		Expected:           a.Expected,
+		UntrustedTopOrigin: a.UntrustedTopOrigin,
+		ProvenMismatch:     a.Check.ProvenMismatch,
+	}
+}
+
+// CallResultAssignmentSource records that an assignment source is a specific
+// result slot from a callable. It lets renderers explain call-result assignment
+// failures without re-lowering callable contracts from syntax.
+type CallResultAssignmentSource struct {
+	Present       bool
+	CallableName  string
+	ResultIndex   int
+	ReturnSpan    SourceSpan
+	UnderSupplied bool
+}
+
+// AssignmentExpectedSource classifies where an assignment target obligation
+// came from. Renderers use this to explain the authority without re-inspecting
+// syntax or type structure.
+type AssignmentExpectedSource uint8
+
+const (
+	AssignmentExpectedDeclared AssignmentExpectedSource = iota
+	AssignmentExpectedDynamicTarget
+)
 
 // NilableAccessEvidence records an intermediate source access whose receiver
 // may be nil before a later assignment reads from it.
@@ -60,6 +188,15 @@ type NilableAccessEvidence struct {
 	Label  string
 	Access string
 	Span   SourceSpan
+}
+
+// AssignmentSourceContribution records a prior write that contributes one
+// concrete arm to the assigned source value.
+type AssignmentSourceContribution struct {
+	RootLabel string
+	ReadLabel string
+	Type      typ.Type
+	Span      SourceSpan
 }
 
 // AssignmentCheck is the solved proof result for an assignment source against
@@ -111,6 +248,424 @@ type OptionalAssignmentTarget struct {
 	TargetSpan     SourceSpan
 }
 
+// Return is the solved read model for one returned expression checked against
+// an explicit function return annotation.
+type Return struct {
+	Point              cfg.Point
+	Index              int
+	Value              product.Value
+	ValueHash          uint64
+	TypeWithPresence   typ.Type
+	Expected           typ.Type
+	ExpectedLabel      string
+	SourceLabel        string
+	SourceSpan         SourceSpan
+	DeclarationSpan    SourceSpan
+	UntrustedTopOrigin bool
+	ExplicitTopOrigin  bool
+	Check              ReturnCheck
+}
+
+// HasUnownedTopActual reports whether the return source is only absent,
+// unknown, or gradual without an explicit user assertion. Such values do not
+// carry enough authority for a return diagnostic under the default obligation
+// policy.
+func (ret Return) HasUnownedTopActual() bool {
+	if ret.ExplicitTopOrigin {
+		return false
+	}
+	return typ.TypeEquals(ret.TypeWithPresence, nil) ||
+		typ.IsAny(ret.TypeWithPresence) ||
+		typ.IsUnknown(ret.TypeWithPresence)
+}
+
+// ActualTypeKnown reports whether the solved return source carried a concrete
+// type witness at the return site.
+func (ret Return) ActualTypeKnown() bool {
+	return ret.actualPolicy().ActualTypeKnown()
+}
+
+// EffectiveActualType returns the type the obligation layer should attach to
+// the return judgment. Missing solved types render as unknown; untrusted top
+// flows stay visibly any when the checker cannot prove a concrete mismatch.
+func (ret Return) EffectiveActualType() typ.Type {
+	return ret.actualPolicy().EffectiveActualType()
+}
+
+// MissingProofRefuted reports whether the failed return obligation is a proven
+// type contradiction rather than an untrusted-top precision boundary.
+func (ret Return) MissingProofRefuted() bool {
+	return ret.actualPolicy().MissingProofRefuted()
+}
+
+func (ret Return) actualPolicy() obligationActualPolicy {
+	return obligationActualPolicy{
+		TypeWithPresence:   ret.TypeWithPresence,
+		Expected:           ret.Expected,
+		UntrustedTopOrigin: ret.UntrustedTopOrigin,
+		ProvenMismatch:     ret.Check.ProvenMismatch,
+	}
+}
+
+// ReturnCheck is the solved proof result for one returned value against its
+// declared return type.
+type ReturnCheck struct {
+	Return         *Return
+	Expected       typ.Type
+	Admissible     bool
+	ProvenMismatch bool
+}
+
+// ReturnCheckPlan carries already-solved proof inputs for one returned value.
+type ReturnCheckPlan struct {
+	Return              Return
+	ValueAdmissible     bool
+	ValueProvenMismatch bool
+	IsSubtype           func(typ.Type, typ.Type) bool
+}
+
+// NonNilAssertion is the solved read model for one `expr!` runtime assertion.
+// It exposes the operand's proved type at the assertion point without requiring
+// obligation producers to inspect syntax or rebuild flow facts.
+type NonNilAssertion struct {
+	Point            cfg.Point
+	OperandLabel     string
+	OperandKey       string
+	Value            product.Value
+	ValueHash        uint64
+	TypeWithPresence typ.Type
+	OperandNilOnly   bool
+	OperandSpan      SourceSpan
+	AssertionSpan    SourceSpan
+}
+
+// NonNilAssertionOperandNilOnly reports whether an assertion operand is
+// statically nil on every normally reachable path. Gradual and unknown values
+// remain inconclusive so the assertion is not reported as definitely failing.
+func NonNilAssertionOperandNilOnly(t typ.Type) bool {
+	if t == nil || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) {
+		return false
+	}
+	return typ.Nil.Equals(unwrap.NormalizeNil(t))
+}
+
+// ConcatOperand is the solved read model for one `..` operand whose static
+// projection still includes nil at the operation boundary.
+type ConcatOperand struct {
+	Point            cfg.Point
+	Side             string
+	OperandLabel     string
+	OperandKey       string
+	TypeWithPresence typ.Type
+	OperandSpan      SourceSpan
+}
+
+// NilRisk reports whether the operand projection can include nil and should be
+// surfaced as a runtime concat risk.
+func (o ConcatOperand) NilRisk() bool {
+	return ConcatOperandNilRisk(o.TypeWithPresence)
+}
+
+// ConcatOperandNilRisk reports whether a projected operand type can include nil
+// and is concrete enough to report.
+func ConcatOperandNilRisk(t typ.Type) bool {
+	if t == nil || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) {
+		return false
+	}
+	return typevalue.ProjectionHasNil(t)
+}
+
+// NumericForOperand is the solved read model for one numeric-for operand
+// (`init`, `limit`, or `step`). It carries the operand type and source role
+// without exposing syntax to obligation producers.
+type NumericForOperand struct {
+	Point               cfg.Point
+	Role                string
+	OperandLabel        string
+	OperandKey          string
+	TypeWithPresence    typ.Type
+	OperandSpan         SourceSpan
+	ExplicitTopLikeCast bool
+	DefinitelyNotNumber bool
+}
+
+// NumericForDefinitelyNotNumber reports whether a numeric-for operand type is
+// precise enough to prove the operand cannot be a number. Gradual, unknown, nil,
+// and partly numeric unions stay admissible at this layer; the obligation pass
+// should only emit when this proof is true.
+func NumericForDefinitelyNotNumber(t typ.Type) bool {
+	if t == nil || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) {
+		return false
+	}
+	if base := unwrap.Optional(t); typ.IsNever(base) {
+		return false
+	}
+	if subtype.IsSubtype(t, typ.Number) {
+		return false
+	}
+	return !numericForMayContainNumber(t, 0)
+}
+
+func numericForMayContainNumber(t typ.Type, depth int) bool {
+	if t == nil || depth > typ.DefaultRecursionDepth {
+		return true
+	}
+	if typ.IsNever(t) {
+		return false
+	}
+	if typ.IsAny(t) || typ.IsUnknown(t) {
+		return true
+	}
+	if subtype.IsSubtype(t, typ.Number) {
+		return true
+	}
+	switch v := unwrap.Annotated(t).(type) {
+	case *typ.Alias:
+		return numericForMayContainNumber(v.UnaliasedTarget(), depth+1)
+	case *typ.Optional:
+		return numericForMayContainNumber(v.Inner, depth+1)
+	case *typ.Union:
+		for _, member := range v.Members {
+			if numericForMayContainNumber(member, depth+1) {
+				return true
+			}
+		}
+		return false
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(v)
+		return expanded == nil || expanded == t || numericForMayContainNumber(expanded, depth+1)
+	default:
+		switch v.Kind() {
+		case kind.Nil, kind.Boolean, kind.String, kind.Function, kind.Array, kind.Map, kind.Record, kind.Tuple, kind.ReadonlyMap:
+			return false
+		case kind.Literal:
+			return subtype.IsSubtype(v, typ.Number)
+		default:
+			return true
+		}
+	}
+}
+
+// FrozenTableMutationKind classifies how a frozen table is mutated.
+type FrozenTableMutationKind uint8
+
+const (
+	FrozenTableMutationAssignment FrozenTableMutationKind = iota + 1
+	FrozenTableMutationCall
+)
+
+// FrozenTableMutation is the solved read model for a write or call that mutates
+// a table identity already proved frozen at that program point.
+type FrozenTableMutation struct {
+	Point              cfg.Point
+	Kind               FrozenTableMutationKind
+	ContainerLabel     string
+	ContainerKey       string
+	MutationSpan       SourceSpan
+	FreezeProofSpan    SourceSpan
+	HasFreezeProofSpan bool
+}
+
+// LifecycleSiteKind classifies a typestate lifecycle fact site.
+type LifecycleSiteKind uint8
+
+const (
+	LifecycleSiteAcquire LifecycleSiteKind = iota + 1
+	LifecycleSiteTransition
+	LifecycleSiteEscape
+)
+
+// LifecycleSite records one reachable lifecycle fact that contributes evidence
+// to an open typestate obligation at function exit.
+type LifecycleSite struct {
+	Point       cfg.Point
+	Kind        LifecycleSiteKind
+	Resource    string
+	Protocol    string
+	From        string
+	To          string
+	TargetLabel string
+	Span        SourceSpan
+}
+
+// LifecycleObligation is the solved read model for a resource whose typestate
+// obligation remains open at function exit.
+type LifecycleObligation struct {
+	Point    cfg.Point
+	Resource string
+	Protocol string
+	Current  string
+	Finals   []string
+	Sites    []LifecycleSite
+}
+
+// UnusedLocal is the solved read model for a local declaration whose symbol has
+// no reachable read in its scope.
+type UnusedLocal struct {
+	Point cfg.Point
+	Name  string
+	Key   string
+	Span  SourceSpan
+}
+
+// DeadAssignment is the solved read model for a write whose assigned value is
+// discarded before any reachable read on every normal path.
+type DeadAssignment struct {
+	Point      cfg.Point
+	Name       string
+	Key        string
+	WriteSpan  SourceSpan
+	Overwrites []DeadAssignmentOverwrite
+	Exits      []DeadAssignmentExit
+}
+
+// DeadAssignmentOverwrite is one later write on the all-path frontier that
+// replaces the earlier assigned value before it can be read.
+type DeadAssignmentOverwrite struct {
+	Point cfg.Point
+	Span  SourceSpan
+}
+
+// DeadAssignmentExit is one all-path frontier exit that leaves the value
+// unread. Span may be zero when the exit is the synthetic function exit.
+type DeadAssignmentExit struct {
+	Point cfg.Point
+	Span  SourceSpan
+}
+
+// ChannelSelectExhaustiveness is the solved read model for an elseif chain
+// that handles only part of a channel.select result without a default case.
+type ChannelSelectExhaustiveness struct {
+	Point         cfg.Point
+	Span          SourceSpan
+	ResultChannel string
+	Handled       []string
+	Missing       []string
+	HasDefault    bool
+}
+
+// DiscriminatedUnionExhaustiveness is the solved read model for an if/elseif
+// branch chain that checks some, but not all, cases of a discriminated union and
+// has no default else branch.
+type DiscriminatedUnionExhaustiveness struct {
+	Point    cfg.Point
+	Span     SourceSpan
+	Target   string
+	Possible []string
+	Handled  []string
+	Missing  []string
+}
+
+// RegistrationExhaustiveness is the solved read model for callback registries
+// that register handlers for only part of a discriminated union before a
+// dispatch call.
+type RegistrationExhaustiveness struct {
+	Point            cfg.Point
+	Registry         string
+	Target           string
+	Possible         []string
+	Registered       []string
+	Missing          []string
+	MissingFor       []string
+	RegistrationSpan SourceSpan
+	DispatchSpan     SourceSpan
+}
+
+// UnresolvedValueReference is the solved read model for an identifier read that
+// binding left as an implicit global and no configured/imported/type namespace
+// proves valid in this scope.
+type UnresolvedValueReference struct {
+	Point cfg.Point
+	Name  string
+	Key   string
+	Span  SourceSpan
+}
+
+// UnresolvedTypeReference is an annotation type name that binding could not
+// resolve in the current lexical/module type namespace.
+type UnresolvedTypeReference struct {
+	Point cfg.Point
+	Name  string
+	Key   string
+	Span  SourceSpan
+}
+
+// MissingMemberRead is the solved read model for a static member read whose
+// receiver is known to reject the member on this path.
+type MissingMemberRead struct {
+	Point        cfg.Point
+	ReadLabel    string
+	MemberName   string
+	ReceiverType typ.Type
+	Span         SourceSpan
+}
+
+// ResultShapeExhaustiveness is the solved read model for a case-specific field
+// read on a discriminated union when no dominating proof establishes the
+// required case.
+type ResultShapeExhaustiveness struct {
+	Point         cfg.Point
+	ReceiverLabel string
+	ReadLabel     string
+	Discriminant  string
+	RequiredCase  string
+	Span          SourceSpan
+}
+
+// PlanReturnCheck returns the complete proof result for one returned value.
+func PlanReturnCheck(plan ReturnCheckPlan) ReturnCheck {
+	ret := plan.Return
+	return ReturnCheck{
+		Return:         &ret,
+		Expected:       ret.Expected,
+		Admissible:     plan.returnProofAdmissible(),
+		ProvenMismatch: plan.returnProvenMismatch(),
+	}
+}
+
+func (plan ReturnCheckPlan) returnProvenMismatch() bool {
+	if plan.ValueProvenMismatch {
+		return true
+	}
+	if typ.TypeEquals(plan.Return.TypeWithPresence, nil) ||
+		typ.TypeEquals(plan.Return.Expected, nil) ||
+		plan.IsSubtype == nil ||
+		plan.Return.UntrustedTopOrigin {
+		return false
+	}
+	if typ.IsAny(plan.Return.TypeWithPresence) ||
+		typ.IsUnknown(plan.Return.TypeWithPresence) ||
+		typ.IsNever(plan.Return.TypeWithPresence) {
+		return false
+	}
+	return !plan.IsSubtype(plan.Return.TypeWithPresence, plan.Return.Expected)
+}
+
+func (plan ReturnCheckPlan) returnProofAdmissible() bool {
+	if plan.Return.UntrustedTopOrigin && typ.TypeEquals(plan.Return.TypeWithPresence, nil) {
+		return false
+	}
+	if plan.ValueAdmissible {
+		return true
+	}
+	if !typ.TypeEquals(plan.Return.TypeWithPresence, nil) &&
+		!typ.TypeEquals(plan.Return.Expected, nil) &&
+		plan.IsSubtype != nil &&
+		!typ.IsAny(plan.Return.TypeWithPresence) &&
+		!typ.IsUnknown(plan.Return.TypeWithPresence) &&
+		!typ.IsNever(plan.Return.TypeWithPresence) &&
+		!plan.IsSubtype(plan.Return.TypeWithPresence, plan.Return.Expected) {
+		return false
+	}
+	if plan.Return.UntrustedTopOrigin || typ.TypeEquals(plan.Return.TypeWithPresence, nil) || typ.TypeEquals(plan.Return.Expected, nil) || plan.IsSubtype == nil {
+		return false
+	}
+	if typ.IsAny(plan.Return.TypeWithPresence) || typ.IsUnknown(plan.Return.TypeWithPresence) || typ.IsNever(plan.Return.TypeWithPresence) {
+		return false
+	}
+	return plan.IsSubtype(plan.Return.TypeWithPresence, plan.Return.Expected)
+}
+
 // PlanAssignmentCheck returns the complete proof result for one annotated
 // assignment source against the declared target type.
 func PlanAssignmentCheck(plan AssignmentCheckPlan) AssignmentCheck {
@@ -127,12 +682,33 @@ func PlanAssignmentCheck(plan AssignmentCheckPlan) AssignmentCheck {
 		Assignment:     &assignment,
 		Expected:       assignment.Expected,
 		Admissible:     plan.assignmentProofAdmissible(),
-		ProvenMismatch: plan.ValueProvenMismatch,
+		ProvenMismatch: plan.assignmentProvenMismatch(),
 		Mismatch:       mismatch,
 	}
 }
 
+func (plan AssignmentCheckPlan) assignmentProvenMismatch() bool {
+	if plan.ValueProvenMismatch || plan.MissingRequiredField != "" {
+		return true
+	}
+	if typ.TypeEquals(plan.Assignment.TypeWithPresence, nil) ||
+		typ.TypeEquals(plan.Assignment.Expected, nil) ||
+		plan.IsSubtype == nil ||
+		plan.Assignment.UntrustedTopOrigin {
+		return false
+	}
+	if typ.IsAny(plan.Assignment.TypeWithPresence) ||
+		typ.IsUnknown(plan.Assignment.TypeWithPresence) ||
+		typ.IsNever(plan.Assignment.TypeWithPresence) {
+		return false
+	}
+	return !plan.IsSubtype(plan.Assignment.TypeWithPresence, plan.Assignment.Expected)
+}
+
 func (plan AssignmentCheckPlan) assignmentProofAdmissible() bool {
+	if plan.MissingRequiredField != "" {
+		return false
+	}
 	if plan.Assignment.UntrustedTopOrigin && typ.TypeEquals(plan.Assignment.TypeWithPresence, nil) {
 		return false
 	}
@@ -250,16 +826,20 @@ const (
 	CallCalleeReportNone CallCalleeReportKind = iota
 	CallCalleeReportNotCallable
 	CallCalleeReportMayBeNil
+	CallCalleeReportMissingMember
 )
 
-// CallCalleeReport is the solved read model for a direct-call callee
-// obligation. Member-call failures are owned by member-call diagnostics; this
-// report covers direct callees whose solved value is not callable or may be nil.
+// CallCalleeReport is the solved read model for a call target obligation.
+// Plain callees use this path for nil/non-callable targets. Member callees use
+// it for non-callable targets, optional method receivers, and conservative
+// missing-member shape reports when solved receiver evidence is precise enough.
 type CallCalleeReport struct {
 	Kind         CallCalleeReportKind
 	CallableName string
 	Type         typ.Type
 	Callable     bool
+	MemberAccess bool
+	MemberName   string
 	Span         SourceSpan
 }
 
@@ -267,17 +847,23 @@ type CallCalleeReport struct {
 // classify callable failures. Internal readmodels own resolving the callee
 // value; public readmodel owns deciding if it should report.
 type CallCalleeReportPlan struct {
-	CallableName string
-	Type         typ.Type
-	Callable     bool
-	Span         SourceSpan
-	CallSpan     SourceSpan
+	CallableName                 string
+	Type                         typ.Type
+	Callable                     bool
+	MemberAccess                 bool
+	ImpreciseMemberRequiresProof bool
+	Span                         SourceSpan
+	CallSpan                     SourceSpan
 }
 
 // PlanCallCalleeReport returns the direct-callee report for plan, or zero when
 // the callee is definitely callable or too imprecise to report.
 func PlanCallCalleeReport(plan CallCalleeReportPlan) CallCalleeReport {
-	if plan.Type == nil || typ.IsAny(plan.Type) || typ.IsUnknown(plan.Type) || typ.IsNever(plan.Type) {
+	if plan.Type == nil || typ.IsNever(plan.Type) {
+		return CallCalleeReport{}
+	}
+	imprecise := typ.IsAny(plan.Type) || typ.IsUnknown(plan.Type)
+	if imprecise && !plan.ImpreciseMemberRequiresProof {
 		return CallCalleeReport{}
 	}
 	name := plan.CallableName
@@ -291,6 +877,7 @@ func PlanCallCalleeReport(plan CallCalleeReportPlan) CallCalleeReport {
 			CallableName: name,
 			Type:         plan.Type,
 			Callable:     plan.Callable,
+			MemberAccess: plan.MemberAccess,
 			Span:         span,
 		}
 	}
@@ -299,6 +886,7 @@ func PlanCallCalleeReport(plan CallCalleeReportPlan) CallCalleeReport {
 			Kind:         CallCalleeReportNotCallable,
 			CallableName: name,
 			Type:         plan.Type,
+			MemberAccess: plan.MemberAccess,
 			Span:         span,
 		}
 	}
@@ -511,6 +1099,18 @@ type CallArgumentCheck struct {
 	ProvenMismatch bool
 }
 
+// ActualTypeKnown reports whether the solved call argument carried a concrete
+// type witness at the call boundary.
+func (check CallArgumentCheck) ActualTypeKnown() bool {
+	return check.Argument.TypeWithPresence != nil
+}
+
+// MissingProofRefuted reports whether the failed call-argument obligation is a
+// proven type contradiction rather than an unknown proof gap.
+func (check CallArgumentCheck) MissingProofRefuted() bool {
+	return check.ProvenMismatch
+}
+
 // CallArgumentCheckPlan carries the solved facts needed to assemble the
 // report-facing proof result for one argument. Internal readmodels supply facts;
 // public readmodel owns nested-subject selection, nil mismatch classification,
@@ -652,8 +1252,8 @@ func PlanCallArgumentReports(plan CallArgumentReportPlan) []CallArgumentReport {
 		reported[indexed.Index] = struct{}{}
 	}
 
-	out = plan.appendObligations(out, reported, argsByIndex, plan.ExplicitParams)
-	out = plan.appendObligations(out, reported, argsByIndex, plan.OutcomeParams)
+	out = plan.appendObligations(out, reported, argsByIndex, plan.ExplicitParams, false)
+	out = plan.appendObligations(out, reported, argsByIndex, plan.OutcomeParams, true)
 	return out
 }
 
@@ -662,6 +1262,7 @@ func (plan CallArgumentReportPlan) appendObligations(
 	reported map[int]struct{},
 	argsByIndex map[int]CallArgument,
 	obligations []IndexedCallArgumentObligation,
+	reserveAdmissible bool,
 ) []CallArgumentReport {
 	for _, indexed := range obligations {
 		if _, seen := reported[indexed.Index]; seen || !CallArgumentObligationTypeReportable(indexed.Obligation.Type) {
@@ -673,7 +1274,9 @@ func (plan CallArgumentReportPlan) appendObligations(
 		}
 		check := plan.check(arg, indexed.Obligation)
 		if check.Admissible {
-			reported[indexed.Index] = struct{}{}
+			if reserveAdmissible {
+				reported[indexed.Index] = struct{}{}
+			}
 			continue
 		}
 		out = append(out, CallArgumentReport{
@@ -724,6 +1327,7 @@ type CallContractSource struct {
 	Kind           CallContractSourceKind
 	Name           string
 	ParameterSpans []SourceSpan
+	ResultSpans    []SourceSpan
 }
 
 // ParameterLabel returns the stable display label for parameter index.
@@ -750,6 +1354,14 @@ func (s CallContractSource) ParameterSpan(index int) SourceSpan {
 	return s.ParameterSpans[index]
 }
 
+// ResultSpan returns the declaration span for return slot index, when known.
+func (s CallContractSource) ResultSpan(index int) SourceSpan {
+	if index < 0 || index >= len(s.ResultSpans) {
+		return SourceSpan{}
+	}
+	return s.ResultSpans[index]
+}
+
 // CallArgumentObligation is one expected type for one call argument in an
 // already-planned report.
 type CallArgumentObligation struct {
@@ -761,8 +1373,8 @@ type CallArgumentObligation struct {
 
 // CallArgumentObligationOrigin records why a projected call-site obligation
 // exists. Direct signature checks leave HasOrigin false; summary-projected
-// member-call obligations use this to render the chain from caller argument to
-// the member parameter that required the type.
+// obligations use this to render the callee-use chain. Member-call obligations
+// additionally include the provider and member parameter that required the type.
 type CallArgumentObligationOrigin struct {
 	HasOrigin         bool
 	FunctionName      string

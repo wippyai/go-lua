@@ -1,38 +1,74 @@
 package diagnostics
 
-import "github.com/wippyai/go-lua/analysis/diagnostic"
+import (
+	"github.com/wippyai/go-lua/analysis/check/judgment"
+	"github.com/wippyai/go-lua/analysis/diagnostic"
+)
 
-func newResultShapeExhaustivenessDiagnostic(evidence resultShapeEvidence) diagnostic.Diagnostic {
+func renderResultShapeJudgmentWithPolicy(item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
+	if item.Code != judgment.CodeResultShape || item.Subject.Kind != judgment.SubjectExpression || len(item.Spans) == 0 {
+		return diagnostic.Diagnostic{}, false
+	}
+	severity, ok := diagnosticSeverityForJudgment(item, policy, mode)
+	if !ok {
+		return diagnostic.Diagnostic{}, false
+	}
+	readPath, requiredCase, ok := resultShapeJudgmentReadAndCase(item)
+	if !ok {
+		return diagnostic.Diagnostic{}, false
+	}
+	span := diagnosticSpanFromJudgment(item.Spans[0])
 	return diagnostic.New(diagnostic.DiagnosticSpec{
-		Span:        evidence.readSpan,
+		File:        item.Spans[0].File,
+		Span:        span,
 		Code:        CodeDiscriminatedUnionExhaustive,
-		Severity:    diagnostic.SeverityWarning,
-		Message:     resultShapeExhaustivenessMessage(evidence.readPath, evidence.requiredCase),
-		Explanation: resultShapeExhaustivenessExplanation(evidence),
+		Severity:    severity,
+		Message:     resultShapeExhaustivenessMessage(readPath, requiredCase),
+		Explanation: resultShapeExhaustivenessExplanation(item, span),
 		Help:        resultShapeExhaustivenessHelp(),
-		Labels:      []diagnostic.Label{sourceLabel(evidence.readSpan, labelResultFieldRead)},
-	})
+		Labels:      []diagnostic.Label{sourceLabel(span, labelResultFieldRead)},
+	}), true
 }
 
-func resultShapeExhaustivenessExplanation(evidence resultShapeEvidence) diagnostic.Explanation {
-	return diagnostic.NewExplanation(
-		diagnostic.Evidence{
-			Kind:    diagnostic.EvidenceAbstractFact,
-			Trust:   diagnostic.TrustProven,
-			Span:    evidence.readSpan,
-			Message: resultShapeUnionEvidence(evidence.receiver, evidence.discriminant),
-		},
-		diagnostic.Evidence{
-			Kind:    diagnostic.EvidenceAbstractFact,
-			Trust:   diagnostic.TrustProven,
-			Span:    evidence.readSpan,
-			Message: resultShapeFieldCaseEvidence(evidence.readPath, evidence.requiredCase),
-		},
-		diagnostic.Evidence{
-			Kind:    diagnostic.EvidenceMissingProof,
-			Trust:   diagnostic.TrustUnknown,
-			Span:    evidence.readSpan,
-			Message: resultShapeMissingProofEvidence(evidence.requiredCase),
-		},
-	)
+func resultShapeJudgmentReadAndCase(item judgment.Judgment) (string, string, bool) {
+	for _, evidence := range item.Evidence {
+		if evidence.Detail.Kind == judgment.EvidenceDetailResultShapeFieldCase {
+			return evidence.Detail.SubjectLabel, evidence.Detail.CaseList, evidence.Detail.SubjectLabel != "" && evidence.Detail.CaseList != ""
+		}
+	}
+	return "", "", false
+}
+
+func resultShapeExhaustivenessExplanation(item judgment.Judgment, fallback diagnostic.Span) diagnostic.Explanation {
+	var evidence []diagnostic.Evidence
+	for _, itemEvidence := range item.Evidence {
+		span := diagnosticSpanFromJudgment(itemEvidence.Span)
+		if !span.Valid() {
+			span = fallback
+		}
+		switch itemEvidence.Detail.Kind {
+		case judgment.EvidenceDetailResultShapeUnion:
+			evidence = append(evidence, diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceAbstractFact,
+				Trust:   diagnosticTrustFromJudgmentTrust(itemEvidence.Trust, diagnostic.TrustProven),
+				Span:    span,
+				Message: resultShapeUnionEvidence(itemEvidence.Detail.SubjectLabel, itemEvidence.Detail.Field),
+			})
+		case judgment.EvidenceDetailResultShapeFieldCase:
+			evidence = append(evidence, diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceAbstractFact,
+				Trust:   diagnosticTrustFromJudgmentTrust(itemEvidence.Trust, diagnostic.TrustProven),
+				Span:    span,
+				Message: resultShapeFieldCaseEvidence(itemEvidence.Detail.SubjectLabel, itemEvidence.Detail.CaseList),
+			})
+		case judgment.EvidenceDetailResultShapeMissingProof:
+			evidence = append(evidence, diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceMissingProof,
+				Trust:   diagnosticTrustFromJudgmentTrust(itemEvidence.Trust, diagnostic.TrustUnknown),
+				Span:    span,
+				Message: resultShapeMissingProofEvidence(itemEvidence.Detail.CaseList),
+			})
+		}
+	}
+	return diagnostic.NewExplanation(evidence...)
 }

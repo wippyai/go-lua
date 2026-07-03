@@ -132,6 +132,25 @@ func MemberCallable(receiver typ.Type, name string) (*typ.Function, MemberCallSt
 	return fn, convertMemberCallStatus(status), ok
 }
 
+// MemberCall resolves a receiver member for call syntax without requiring the
+// member to be callable. It returns the member type when one exists and the
+// call-status classification owned by the Lua call contract layer.
+func MemberCall(receiver typ.Type, member segment.Segment) (typ.Type, MemberCallStatus, bool) {
+	switch member.Kind {
+	case segment.SegmentField:
+		t, status := typecall.MemberCall(receiver, member.Name)
+		return t, convertMemberCallStatus(status), true
+	case segment.SegmentIndexString:
+		t, status := typecall.IndexedMemberCall(receiver, typ.LiteralString(member.Name))
+		return t, convertMemberCallStatus(status), true
+	case segment.SegmentIndexInt:
+		t, status := typecall.IndexedMemberCall(receiver, typ.LiteralInt(int64(member.Index)))
+		return t, convertMemberCallStatus(status), true
+	default:
+		return nil, MemberCallMissing, false
+	}
+}
+
 // InferenceContributionKey returns the stable deduplication key for a generic
 // inference contribution. The key belongs with the inference-path vocabulary so
 // read models do not duplicate path-step encoding rules.

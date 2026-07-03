@@ -19,7 +19,6 @@ type resultResolver struct {
 	interfaces map[bind.TypeDeclID]*ast.InterfaceDefStmt
 	aliasNames map[string]bind.TypeDecl
 	ifaceNames map[string]bind.TypeDecl
-	knownNames map[string]struct{}
 	cache      map[bind.TypeDeclID]typ.Type
 	params     map[bind.TypeDeclID]*typ.TypeParam
 	active     map[typeDeclKey]bool
@@ -44,7 +43,6 @@ func newResultResolver(result *body.Result, parent typeannotation.Resolver) *res
 		interfaces: make(map[bind.TypeDeclID]*ast.InterfaceDefStmt),
 		aliasNames: make(map[string]bind.TypeDecl),
 		ifaceNames: make(map[string]bind.TypeDecl),
-		knownNames: make(map[string]struct{}),
 		cache:      make(map[bind.TypeDeclID]typ.Type),
 		params:     make(map[bind.TypeDeclID]*typ.TypeParam),
 		active:     make(map[typeDeclKey]bool),
@@ -72,7 +70,6 @@ func newResultResolver(result *body.Result, parent typeannotation.Resolver) *res
 			if ok {
 				r.aliases[decl.ID] = fact.Type
 				r.aliasNames[decl.Name] = decl
-				r.knownNames[decl.Name] = struct{}{}
 			}
 		case cfgfacts.TypeDefinitionInterface:
 			if fact.Interface == nil || fact.Interface.Name == "" {
@@ -82,7 +79,6 @@ func newResultResolver(result *body.Result, parent typeannotation.Resolver) *res
 			if ok {
 				r.interfaces[decl.ID] = fact.Interface
 				r.ifaceNames[decl.Name] = decl
-				r.knownNames[decl.Name] = struct{}{}
 			}
 		}
 	}
@@ -125,54 +121,6 @@ func (r *resultResolver) Type(expr ast.TypeExpr) (typ.Type, bool) {
 		return typeannotation.Type(expr, nil)
 	}
 	return typeannotation.TypeWithGuard(expr, r, &r.current)
-}
-
-func (r *resultResolver) TypeRefResolved(ref *ast.TypeRefExpr) bool {
-	if r == nil || ref == nil || len(ref.Path) == 0 {
-		return false
-	}
-	if _, ok := r.ResolveTypeRef(ref.Path); ok {
-		return true
-	}
-	if len(ref.Path) != 1 {
-		return false
-	}
-	if r.result != nil {
-		if _, ok := r.result.TypeRef(ref); ok {
-			return true
-		}
-	}
-	_, ok := resolveInParentScope(ref.Path, r.parent)
-	return ok || !r.hasKnownTypeName(ref.Path[0])
-}
-
-func (r *resultResolver) PrimitiveTypeResolved(expr *ast.PrimitiveTypeExpr) bool {
-	if r == nil || expr == nil {
-		return false
-	}
-	if typ.BuiltinPrimitiveName(expr.Name) {
-		return true
-	}
-	if r.result != nil {
-		if _, ok := r.result.PrimitiveTypeRef(expr); ok {
-			return true
-		}
-	}
-	_, ok := resolveInParentScope([]string{expr.Name}, r.parent)
-	return ok || !r.hasKnownTypeName(expr.Name)
-}
-
-func (r *resultResolver) hasKnownTypeName(name string) bool {
-	if r == nil || name == "" {
-		return false
-	}
-	if _, ok := r.knownNames[name]; ok {
-		return true
-	}
-	if parent, ok := r.parent.(*resultResolver); ok {
-		return parent.hasKnownTypeName(name)
-	}
-	return false
 }
 
 func (r *resultResolver) currentBinding(name string) (bind.TypeDecl, bool) {

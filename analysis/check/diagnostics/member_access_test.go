@@ -5,11 +5,8 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
+	internalreadmodel "github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
-	"github.com/wippyai/go-lua/analysis/type/access"
-	"github.com/wippyai/go-lua/analysis/type/inspect"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 func TestMemberCallPreservesRootPresenceGuardAcrossUnrelatedDynamicIndexWrite(t *testing.T) {
@@ -254,40 +251,18 @@ func TestMemberReadReportsBracketVariantWriteInvalidatedGuardWithEvidence(t *tes
 
 func assertStalePathMissingMemberEvidence(t *testing.T, result *body.Result) {
 	t.Helper()
-	point, expr := requireLocalAssignmentExprByName(t, result, "stale_path")
-	read, ok := expr.(*ast.AttrGetExpr)
-	if !ok {
-		t.Fatalf("stale_path expr = %T, want AttrGetExpr", expr)
+	var reads []internalreadmodel.MissingMemberRead
+	internalreadmodel.New(result).ForEachMissingMemberRead(func(read internalreadmodel.MissingMemberRead) bool {
+		if read.ReadLabel == "slots.active.value.path" {
+			reads = append(reads, read)
+		}
+		return true
+	})
+	if len(reads) != 1 {
+		t.Fatalf("missing member reads = %#v, want stale slots.active.value.path read", reads)
 	}
-	envs := guardEnvironments(result)
-	context := producerContext{resolver: newResultResolver(result, nil)}
-	typers := memberReadTypers{
-		narrowed: newStructuralFlowExpressionTyper(result, context.resolver, point, envs[point]),
-		base:     newStructuralFlowExpressionTyper(result, context.resolver, point, guardEnv{}),
-		result:   result,
-		point:    point,
-	}
-	receiver, ok := typers.receiverType(read.Object)
-	if !ok {
-		t.Fatal("member-read receiver type unavailable")
-	}
-	if !fieldProvablyAbsent(receiver, "path") {
-		t.Fatalf("receiver type = %s, want path provably absent", formatType(receiver))
-	}
-	broad, broadOK := typers.base.broadType(read.Object)
-	if !broadOK || !inspect.IsMultiArmUnion(broad) {
-		t.Fatalf("broad receiver type = %s/%v, want original union", formatType(broad), ok)
-	}
-	fieldBroad := broad
-	if withoutNil := projectionWithoutNil(broad); withoutNil != nil && !typ.IsNever(withoutNil) {
-		fieldBroad = withoutNil
-	}
-	if field, ok := access.Field(fieldBroad, "path"); !ok {
-		t.Fatalf("broad receiver type = %s, does not admit path after nil stripping; field=%s/%v", formatType(broad), formatType(field), ok)
-	}
-	produced, ok, suppressed := memberRead(context).read(read, typers, false)
-	if suppressed || !ok || produced.Code != CodeMissingMember {
-		t.Fatalf("memberRead.read = %#v/%v suppressed=%v, want missing-member diagnostic", produced, ok, suppressed)
+	if reads[0].MemberName != "path" || !strings.Contains(formatType(reads[0].ReceiverType), "timer") {
+		t.Fatalf("missing member read = %#v, want missing path on timer receiver", reads[0])
 	}
 
 	diags := Produce(result)

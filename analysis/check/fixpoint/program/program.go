@@ -3790,6 +3790,14 @@ func functionValueTypesFromSummaries(reg *axis.Registry, summaries summary.Reade
 			out.ByPath = make(map[factflow.CalleePathKey]*typ.Function)
 		}
 		out.ByPath[pathKey] = fn
+		if def := keys.functionByKey[key]; def != nil {
+			if spans := functionReturnTypeSourceSpans(def); len(spans) != 0 {
+				if out.ReturnSpansByPath == nil {
+					out.ReturnSpansByPath = make(map[factflow.CalleePathKey][]factflow.SourceSpan)
+				}
+				out.ReturnSpansByPath[pathKey] = spans
+			}
+		}
 	}
 	keys.contexts.ForEach(func(context keyedFunction) {
 		sym, ok := keys.functionSymbol(context.funcExpr)
@@ -3817,6 +3825,26 @@ func functionValueTypesFromSummaries(reg *axis.Registry, summaries summary.Reade
 			Type:      fn,
 		})
 	})
+	return out
+}
+
+func functionReturnTypeSourceSpans(fn *ast.FunctionExpr) []factflow.SourceSpan {
+	if fn == nil || len(fn.ReturnTypes) == 0 {
+		return nil
+	}
+	out := make([]factflow.SourceSpan, len(fn.ReturnTypes))
+	for i, ret := range fn.ReturnTypes {
+		span := ast.SpanOf(ret)
+		if span.StartLine == 0 || span.StartCol == 0 {
+			continue
+		}
+		out[i] = factflow.SourceSpan{
+			StartLine: span.StartLine,
+			StartCol:  span.StartCol,
+			EndLine:   span.EndLine,
+			EndCol:    span.EndCol,
+		}
+	}
 	return out
 }
 

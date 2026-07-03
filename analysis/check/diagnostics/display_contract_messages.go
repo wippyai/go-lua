@@ -130,6 +130,10 @@ func (diagnosticDisplay) ExplicitBoundaryProofMessageForSubject(subject string, 
 	return fmt.Sprintf("%s comes from any/unknown", boundaryEvidenceSubject(subject))
 }
 
+func (diagnosticDisplay) UserAssertedAnyEvidence() string {
+	return "user asserted any; not abstract-interpreter proof"
+}
+
 func (d diagnosticDisplay) MissingBoundaryProofMessage(want typ.Type) string {
 	return "no proof on this path shows assigned value is " + d.Type(want)
 }

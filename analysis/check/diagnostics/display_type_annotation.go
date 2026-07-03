@@ -155,10 +155,6 @@ func formatTypeAnnotationDepth(expr ast.TypeExpr, depth int) (string, bool) {
 	}
 }
 
-func formatTypeAnnotationList(exprs []ast.TypeExpr, sep string) (string, bool) {
-	return formatTypeAnnotationListDepth(exprs, sep, 0)
-}
-
 func formatTypeAnnotationListDepth(exprs []ast.TypeExpr, sep string, depth int) (string, bool) {
 	parts := make([]string, 0, len(exprs))
 	for _, expr := range exprs {
@@ -169,10 +165,6 @@ func formatTypeAnnotationListDepth(exprs []ast.TypeExpr, sep string, depth int) 
 		parts = append(parts, part)
 	}
 	return strings.Join(parts, sep), true
-}
-
-func formatRecordTypeAnnotation(expr *ast.RecordTypeExpr) (string, bool) {
-	return formatRecordTypeAnnotationDepth(expr, 0)
 }
 
 func formatRecordTypeAnnotationDepth(expr *ast.RecordTypeExpr, depth int) (string, bool) {
@@ -196,10 +188,6 @@ func formatRecordTypeAnnotationDepth(expr *ast.RecordTypeExpr, depth int) (strin
 		prefix = "readonly {"
 	}
 	return prefix + strings.Join(fields, ", ") + "}", true
-}
-
-func formatFunctionTypeAnnotation(expr *ast.FunctionTypeExpr) (string, bool) {
-	return formatFunctionTypeAnnotationDepth(expr, 0)
 }
 
 func formatFunctionTypeAnnotationDepth(expr *ast.FunctionTypeExpr, depth int) (string, bool) {
@@ -238,10 +226,6 @@ func formatFunctionTypeAnnotationDepth(expr *ast.FunctionTypeExpr, depth int) (s
 		name += "<" + typeParams + ">"
 	}
 	return name + "(" + strings.Join(params, ", ") + ") -> " + returns, true
-}
-
-func formatTypeAnnotationReturns(exprs []ast.TypeExpr) (string, bool) {
-	return formatTypeAnnotationReturnsDepth(exprs, 0)
 }
 
 func formatTypeAnnotationReturnsDepth(exprs []ast.TypeExpr, depth int) (string, bool) {

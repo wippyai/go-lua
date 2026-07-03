@@ -1,10 +1,12 @@
 package body
 
 import (
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
@@ -12,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -23,6 +26,7 @@ import (
 type FunctionValueTypes struct {
 	ByIdentity         map[identity.ID]*typ.Function
 	ByPath             map[factflow.CalleePathKey]*typ.Function
+	ReturnSpansByPath  map[factflow.CalleePathKey][]factflow.SourceSpan
 	ContextsByIdentity map[identity.ID][]FunctionValueContext
 }
 
@@ -85,6 +89,126 @@ func (r *Result) FunctionValueTypeAtBoundary(point cfg.Point, expr ast.Expr) (*t
 	return nil, false
 }
 
+// ExpressionProvenFunctionAtBoundary reports whether expr is proven to resolve
+// to a Lua function value at point. It follows dominating assignments and
+// current function-value summaries so diagnostics do not re-implement function
+// binding flow.
+func (r *Result) ExpressionProvenFunctionAtBoundary(point cfg.Point, expr ast.Expr) bool {
+	if r == nil || expr == nil {
+		return false
+	}
+	if _, ok := functionLiteralExpr(expr); ok {
+		return true
+	}
+	if _, ok := r.FunctionValueTypeAtBoundary(point, expr); ok {
+		return true
+	}
+	p, ok := r.ExpressionPath(expr)
+	if !ok || p.IsEmpty() {
+		return false
+	}
+	return r.pathProvenFunctionAtBoundary(point, p, nil)
+}
+
+// ExpressionMayBeFunctionBeforeBoundary reports whether expr is either proven
+// callable or still may be a function before point's node-local effects run.
+// Unknown reads return true so callers that model open registration/mutation
+// stay conservative.
+func (r *Result) ExpressionMayBeFunctionBeforeBoundary(point cfg.Point, expr ast.Expr) bool {
+	if r.ExpressionProvenFunctionAtBoundary(point, expr) {
+		return true
+	}
+	if r == nil || r.registry == nil {
+		return true
+	}
+	value, ok := r.ExpressionValueBeforeBoundary(point, expr)
+	if !ok {
+		return true
+	}
+	if product.Get(r.registry, value, runtimekind.Key).Contains(runtimekind.Function) {
+		return true
+	}
+	if valueType, ok := typevalue.TypeOf(r.registry, value); ok {
+		return typ.IsAny(valueType) || typ.IsUnknown(valueType)
+	}
+	return false
+}
+
+func (r *Result) pathProvenFunctionAtBoundary(point cfg.Point, target pathdom.Path, seen map[pathdom.PathKey]struct{}) bool {
+	graph := r.Graph()
+	if graph == nil || target.IsEmpty() {
+		return false
+	}
+	key := target.Key()
+	if _, ok := seen[key]; ok {
+		return false
+	}
+	if seen == nil {
+		seen = make(map[pathdom.PathKey]struct{}, 1)
+	}
+	seen[key] = struct{}{}
+	if r.DominatingFunctionDefinitionForPath(point, target) != nil {
+		return true
+	}
+	visited := make(map[cfg.Point]struct{}, graph.Size())
+	for cursor := point; ; {
+		if _, ok := visited[cursor]; ok {
+			return false
+		}
+		visited[cursor] = struct{}{}
+		if fact, ok := r.LocalAssignment(cursor); ok &&
+			len(target.Segments) == 0 &&
+			fact.HasSymbol &&
+			fact.Symbol == target.Symbol {
+			return r.assignmentSourceProvenFunctionAtBoundary(cursor, fact.Expr, seen)
+		}
+		if fact, ok := r.OrdinaryAssignment(cursor); ok {
+			if len(target.Segments) == 0 &&
+				fact.HasSymbol &&
+				fact.Symbol == target.Symbol {
+				return r.assignmentSourceProvenFunctionAtBoundary(cursor, fact.Value, seen)
+			}
+			if fact.HasPath && fact.Path.Equal(target) {
+				return r.assignmentSourceProvenFunctionAtBoundary(cursor, fact.Value, seen)
+			}
+			if fact.HasPath && target.HasPrefix(fact.Path) {
+				return false
+			}
+		}
+		parent, ok := r.ImmediateDominator(cursor)
+		if !ok || parent == cursor {
+			return false
+		}
+		cursor = parent
+	}
+}
+
+func (r *Result) assignmentSourceProvenFunctionAtBoundary(point cfg.Point, expr ast.Expr, seen map[pathdom.PathKey]struct{}) bool {
+	if _, ok := functionLiteralExpr(expr); ok {
+		return true
+	}
+	if _, ok := r.FunctionValueTypeAtBoundary(point, expr); ok {
+		return true
+	}
+	p, ok := r.ExpressionPath(expr)
+	if !ok || p.IsEmpty() {
+		return false
+	}
+	return r.pathProvenFunctionAtBoundary(point, p, seen)
+}
+
+func functionLiteralExpr(expr ast.Expr) (*ast.FunctionExpr, bool) {
+	if fn, ok := expr.(*ast.FunctionExpr); ok {
+		return fn, true
+	}
+	inner, ok := sourceprovenance.ProofInner(expr)
+	if !ok {
+		return nil, false
+	}
+	fn, ok := inner.(*ast.FunctionExpr)
+	return fn, ok
+}
+
 // FunctionValueTypeForValue resolves a callable value's converged function type
 // from its identity, independent of a program point. Context-sensitive entries
 // still require FunctionValueTypeAtBoundary; this read model is for structural
@@ -118,6 +242,20 @@ func (r *Result) FunctionValueTypeForCalleePath(key factflow.CalleePathKey) (*ty
 	}
 	fn, ok := r.funcTypes.ByPath[key]
 	return fn, ok && fn != nil
+}
+
+// FunctionReturnTypeSpansForCalleePath returns immutable return annotation
+// spans associated with a function-value summary path, when that path came from
+// a local function definition.
+func (r *Result) FunctionReturnTypeSpansForCalleePath(key factflow.CalleePathKey) []factflow.SourceSpan {
+	if r == nil || !key.Valid() || len(r.funcTypes.ReturnSpansByPath) == 0 {
+		return nil
+	}
+	spans := r.funcTypes.ReturnSpansByPath[key]
+	if len(spans) == 0 {
+		return nil
+	}
+	return append([]factflow.SourceSpan(nil), spans...)
 }
 
 // FunctionValueTypeForCallSiteAtBoundary resolves a call site's current
@@ -280,6 +418,7 @@ func cloneFunctionValueTypes(in FunctionValueTypes) FunctionValueTypes {
 	out := in
 	out.ByIdentity = nil
 	out.ByPath = nil
+	out.ReturnSpansByPath = nil
 	out.ContextsByIdentity = nil
 	if len(in.ByIdentity) != 0 {
 		out.ByIdentity = make(map[identity.ID]*typ.Function, len(in.ByIdentity))
@@ -291,6 +430,12 @@ func cloneFunctionValueTypes(in FunctionValueTypes) FunctionValueTypes {
 		out.ByPath = make(map[factflow.CalleePathKey]*typ.Function, len(in.ByPath))
 		for key, fn := range in.ByPath {
 			out.ByPath[key] = fn
+		}
+	}
+	if len(in.ReturnSpansByPath) != 0 {
+		out.ReturnSpansByPath = make(map[factflow.CalleePathKey][]factflow.SourceSpan, len(in.ReturnSpansByPath))
+		for key, spans := range in.ReturnSpansByPath {
+			out.ReturnSpansByPath[key] = append([]factflow.SourceSpan(nil), spans...)
 		}
 	}
 	if len(in.ContextsByIdentity) != 0 {

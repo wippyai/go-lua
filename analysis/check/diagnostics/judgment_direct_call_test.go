@@ -70,9 +70,9 @@ func TestRenderDirectCallArityJudgmentTooFew(t *testing.T) {
 	item := directCallArityJudgmentFixture(judgment.ArityTooFewEvidenceDetail(2, 1), []judgment.SpanRef{
 		{File: "main.lua", StartLine: 4, StartCol: 1, EndLine: 4, EndCol: 7},
 	})
-	d, ok := renderDirectCallArityJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
+	d, ok := renderCallArityJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
 	if !ok {
-		t.Fatal("renderDirectCallArityJudgmentWithPolicy returned false")
+		t.Fatal("renderCallArityJudgmentWithPolicy returned false")
 	}
 	if d.Code != CodeDirectCallTooFewArgs || d.Severity != diagnostic.SeverityError {
 		t.Fatalf("diagnostic = %#v, want too-few-args error", d)
@@ -99,7 +99,7 @@ add(1, 2, 3)`)
 		t.Fatal("RootResult nil")
 	}
 
-	diags := produceDirectCallArityJudgmentDiagnostics(result, "main.lua")
+	diags := produceCallArityJudgmentDiagnostics(result, "main.lua")
 	if len(diags) != 2 {
 		t.Fatalf("diagnostics = %d, want two arity diagnostics: %#v", len(diags), diags)
 	}
@@ -120,7 +120,7 @@ maybe()`)
 		t.Fatal("RootResult nil")
 	}
 
-	diags := produceDirectCallCalleeJudgmentDiagnostics(result, "main.lua")
+	diags := produceCallCalleeJudgmentDiagnostics(result, "main.lua")
 	if len(diags) != 2 {
 		t.Fatalf("diagnostics = %d, want two callee diagnostics: %#v", len(diags), diags)
 	}
@@ -143,12 +143,40 @@ maybe()`)
 	}
 }
 
+func TestProduceDirectCallCalleeJudgmentDiagnosticsForMissingMember(t *testing.T) {
+	result := runDiagnosticsResult(t, `type Client = {id: string}
+function f(c: Client)
+    c.invoke()
+end`)
+	if result == nil || len(result.FunctionResults()) != 1 {
+		t.Fatalf("function results = %#v, want one", result)
+	}
+
+	diags := produceCallCalleeJudgmentDiagnostics(result.FunctionResults()[0], "main.lua")
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want one missing-member diagnostic: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeMissingMember || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic = %#v, want missing-member error", d)
+	}
+	if !strings.Contains(d.Message, `has no member "invoke"`) {
+		t.Fatalf("message = %q, want missing member invoke", d.Message)
+	}
+	if !diagnosticHasLabel(d, labelMemberCall) {
+		t.Fatalf("labels = %#v, want member-call label", d.Labels)
+	}
+	if !diagnosticEvidenceContains(d.Explanation.Evidence(), "c.invoke has receiver type") {
+		t.Fatalf("evidence = %#v, want receiver type evidence", d.Explanation.Evidence())
+	}
+}
+
 func TestRenderDirectCallCalleeJudgmentUsesLenientPolicySeverity(t *testing.T) {
 	item := directCallCalleeJudgmentFixture(judgment.CalleeMayBeNilEvidenceDetail(true), typ.MaterializeOptional(typ.Func().Returns(typ.String).Build()))
 
-	d, ok := renderDirectCallCalleeJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessLenient)
+	d, ok := renderCallCalleeJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessLenient)
 	if !ok {
-		t.Fatal("renderDirectCallCalleeJudgmentWithPolicy returned false")
+		t.Fatal("renderCallCalleeJudgmentWithPolicy returned false")
 	}
 	if d.Severity != diagnostic.SeverityWarning {
 		t.Fatalf("severity = %s, want warning", d.Severity)
@@ -160,9 +188,9 @@ func TestRenderDirectCallArityJudgmentTooManyUsesExtraArgumentSpan(t *testing.T)
 		{File: "main.lua", StartLine: 4, StartCol: 1, EndLine: 4, EndCol: 13},
 		{File: "main.lua", StartLine: 4, StartCol: 11, EndLine: 4, EndCol: 12},
 	})
-	d, ok := renderDirectCallArityJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
+	d, ok := renderCallArityJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
 	if !ok {
-		t.Fatal("renderDirectCallArityJudgmentWithPolicy returned false")
+		t.Fatal("renderCallArityJudgmentWithPolicy returned false")
 	}
 	if d.Code != CodeDirectCallTooManyArgs || d.Severity != diagnostic.SeverityError {
 		t.Fatalf("diagnostic = %#v, want too-many-args error", d)
@@ -579,6 +607,21 @@ need_pair(42, "wrong")`)
 	}
 	if pairArgDiags != 1 {
 		t.Fatalf("need_pair diagnostics = %d, want one contract diagnostic for the call: %#v", pairArgDiags, diags)
+	}
+}
+
+func TestProduceDirectCallContractUsesSolvedReachability(t *testing.T) {
+	result := runDiagnosticsResult(t, `local function need_string(value: string): ()
+end
+if false then
+	need_string(42)
+end`)
+
+	diags := ProduceWithConfig(result, Config{})
+	for _, diag := range diags {
+		if diag.Code == CodeDirectCallArgType {
+			t.Fatalf("diagnostics = %#v, want no direct-call argument diagnostic from unreachable branch", diags)
+		}
 	}
 }
 

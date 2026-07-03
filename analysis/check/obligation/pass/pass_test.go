@@ -30,6 +30,26 @@ func TestPassRunsProducersInOrderAndFiltersInvalidJudgments(t *testing.T) {
 	}
 }
 
+func TestPassFiltersUnreachableJudgments(t *testing.T) {
+	producer := fakeProducer{
+		name: "reachability",
+		items: []judgment.Judgment{
+			callArgJudgment("reachable", 1),
+			callArgJudgment("unreachable", 2),
+		},
+	}
+
+	got := obligationpass.New(producer).Run(obligationpass.Context{
+		FunctionKey: "fn",
+		PointReachable: func(point cfg.Point) bool {
+			return point == 1
+		},
+	})
+	if len(got) != 1 || got[0].Subject.Key != "reachable" {
+		t.Fatalf("judgments = %#v, want only reachable point", got)
+	}
+}
+
 type fakeProducer struct {
 	name  string
 	items []judgment.Judgment

@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
@@ -12,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 type discriminantCase struct {
@@ -75,25 +75,7 @@ func discriminantRootType(result *body.Result, resolver typeannotation.Resolver,
 	if !ok {
 		return nil, false
 	}
-	return newDiagnosticQuery(result).FullVariantOriginType(value)
-}
-
-func discriminantCasesFor(target pathdom.Path, suffix []segment.Segment, cases []variant.OriginCase) []discriminantCase {
-	out := make([]discriminantCase, 0, len(cases))
-	for _, c := range cases {
-		out = append(out, discriminantCase{
-			index:   c.Index,
-			name:    discriminantCaseName(target, suffix, c.Type),
-			literal: discriminantCaseLiteralType(c.Type, suffix),
-		})
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].name != out[j].name {
-			return out[i].name < out[j].name
-		}
-		return out[i].index < out[j].index
-	})
-	return out
+	return readmodel.New(result).FullVariantOriginType(value)
 }
 
 func discriminantCaseName(target pathdom.Path, suffix []segment.Segment, caseType typ.Type) string {
@@ -103,9 +85,6 @@ func discriminantCaseName(target pathdom.Path, suffix []segment.Segment, caseTyp
 	return formatType(caseType)
 }
 
-func sameDiscriminantCandidate(a, b discriminantCandidate) bool {
-	return a.family == b.family && a.target.Equal(b.target) && a.anchor.Equal(b.anchor)
-}
 func discriminantCaseLiteralType(caseType typ.Type, suffix []segment.Segment) typ.Type {
 	lit, _ := discriminantCaseLiteral(caseType, suffix)
 	return lit
@@ -235,23 +214,6 @@ func appendSegment(prefix []segment.Segment, seg segment.Segment) []segment.Segm
 	return next
 }
 
-func stringLiteralExprValue(expr ast.Expr) (string, bool) {
-	lit, ok := expr.(*ast.StringExpr)
-	if !ok {
-		return "", false
-	}
-	return lit.Value, true
-}
-
-func pathSetContains(paths []pathdom.Path, target pathdom.Path) bool {
-	for _, p := range paths {
-		if p.Equal(target) {
-			return true
-		}
-	}
-	return false
-}
-
 func (p discriminatedUnionExhaustiveness) stringDiscriminantCases(result *body.Result, point cfg.Point, target pathdom.Path) ([]discriminantCase, bool) {
 	for _, anchor := range p.discriminantAnchors(result, point, target) {
 		_, cases, ok := variant.OriginCasesOfType(anchor.anchorType)
@@ -306,35 +268,6 @@ func discriminantCaseStringKey(caseType typ.Type, suffix []segment.Segment) (str
 	}
 	value, ok := lit.Value.(string)
 	return value, ok
-}
-
-func sameSegments(a, b []segment.Segment) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-func staticStringExprValueAt(result *body.Result, point cfg.Point, expr ast.Expr) (string, bool) {
-	if key, ok := stringLiteralExprValue(expr); ok {
-		return key, true
-	}
-	if result == nil || expr == nil {
-		return "", false
-	}
-	value, ok := newDiagnosticQuery(result).ExpressionValueAtBoundary(point, expr)
-	if !ok {
-		return "", false
-	}
-	t, ok := newDiagnosticQuery(result).ValueTypeWithPresence(value)
-	if !ok {
-		return "", false
-	}
-	return literalStringKey(unwrap.Annotated(t))
 }
 
 func segmentStringKey(seg segment.Segment) (string, bool) {

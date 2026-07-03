@@ -6,7 +6,6 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 type dispatchTableSummary struct {
@@ -44,7 +43,7 @@ func collectObjectLiteralDispatchTableSummaries(result *body.Result, out *map[pa
 	if result == nil || out == nil || table.IsEmpty() {
 		return
 	}
-	if keys, ok := objectLiteralDispatchKeys(fact); ok {
+	if keys, span, ok := result.ObjectLiteralStaticStringKeysAtPath(fact, nil); ok {
 		if *out == nil {
 			*out = make(map[pathdom.PathKey]dispatchTableSummary, 1)
 		}
@@ -52,7 +51,7 @@ func collectObjectLiteralDispatchTableSummaries(result *body.Result, out *map[pa
 			table: table.String(),
 			path:  table.Clone(),
 			keys:  keys,
-			span:  ast.SpanOf(fact.Table),
+			span:  span,
 		}
 	}
 	for _, entry := range fact.Entries {
@@ -117,7 +116,7 @@ func updateDispatchTableSummariesForCall(result *body.Result, summaries map[path
 		return
 	}
 	for summaryKey, summary := range summaries {
-		if callMayInvalidateTrackedPath(result, point, summary.path) {
+		if result.CallMayInvalidateTrackedPath(point, summary.path) {
 			delete(summaries, summaryKey)
 		}
 	}

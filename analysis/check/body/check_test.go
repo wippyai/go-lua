@@ -7,6 +7,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/lifecycle"
+	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
@@ -164,6 +165,136 @@ local missing_counter: number = actor.state.counters["missing"]
 			t.Fatalf("%s ExpressionValueAtBoundary returned false", name)
 		}
 		assertPresence(t, reg, got, presence.Maybe())
+	}
+}
+
+func TestStaticStringExprValueAtBoundaryUsesBoundaryLiteralType(t *testing.T) {
+	reg := standard.Registry()
+	result, err := CheckChunk(parseChunk(t, `
+		local key = "audit"
+		local sink = key
+	`), Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	point, expr := requireLocalAssignmentExprByName(t, result, "sink")
+	got, ok := result.StaticStringExprValueAtBoundary(point, expr)
+	if !ok || got != "audit" {
+		t.Fatalf("StaticStringExprValueAtBoundary = (%q, %v), want audit literal", got, ok)
+	}
+}
+
+func TestDominatingRuntimeTypeGuardProvesRejectingBranchCannotReach(t *testing.T) {
+	reg := standard.Registry()
+	result, err := CheckChunk(parseChunk(t, `
+		local value: any = "audit"
+		if type(value) == "string" then
+			local after = value
+		end
+	`), Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	point, expr := requireLocalAssignmentExprByName(t, result, "after")
+	p, ok := result.ExpressionPath(expr)
+	if !ok {
+		t.Fatalf("ExpressionPath(after expr) returned false")
+	}
+	if !result.DominatingRuntimeTypeGuardProves(point, p, typ.String) {
+		t.Fatal("DominatingRuntimeTypeGuardProves(string) = false, want true")
+	}
+	if result.DominatingRuntimeTypeGuardProves(point, p, typ.Number) {
+		t.Fatal("DominatingRuntimeTypeGuardProves(number) = true, want false")
+	}
+}
+
+func TestExpressionProvenFunctionAtBoundaryFollowsDominatingAlias(t *testing.T) {
+	reg := standard.Registry()
+	result, err := CheckChunk(parseChunk(t, `
+		local callback = function() end
+		local alias = callback
+		local sink = alias
+	`), Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	point, expr := requireLocalAssignmentExprByName(t, result, "sink")
+	if !result.ExpressionProvenFunctionAtBoundary(point, expr) {
+		t.Fatal("ExpressionProvenFunctionAtBoundary(alias) = false, want true")
+	}
+}
+
+func TestExpressionMayBeFunctionBeforeBoundaryRejectsProvenString(t *testing.T) {
+	reg := standard.Registry()
+	result, err := CheckChunk(parseChunk(t, `
+		local value = "not a callback"
+		local sink = value
+	`), Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	point, expr := requireLocalAssignmentExprByName(t, result, "sink")
+	if result.ExpressionMayBeFunctionBeforeBoundary(point, expr) {
+		t.Fatal("ExpressionMayBeFunctionBeforeBoundary(string alias) = true, want false")
+	}
+}
+
+func TestPathsAliasAtBoundaryFollowsDominatingLocalAlias(t *testing.T) {
+	reg := standard.Registry()
+	result, err := CheckChunk(parseChunk(t, `
+		local source = { value = "ready" }
+		local alias = source
+		local via_alias = alias.value
+		local via_source = source.value
+	`), Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	point, aliasExpr := requireLocalAssignmentExprByName(t, result, "via_alias")
+	_, sourceExpr := requireLocalAssignmentExprByName(t, result, "via_source")
+	aliasPath, ok := result.ExpressionPath(aliasExpr)
+	if !ok {
+		t.Fatal("alias expression path not found")
+	}
+	sourcePath, ok := result.ExpressionPath(sourceExpr)
+	if !ok {
+		t.Fatal("source expression path not found")
+	}
+	if !result.PathsAliasAtBoundary(point, aliasPath, sourcePath) {
+		t.Fatalf("PathsAliasAtBoundary(%s, %s) = false, want dominating alias equivalence", aliasPath, sourcePath)
+	}
+}
+
+func TestObjectLiteralStaticStringKeysAtPathReadsNestedTable(t *testing.T) {
+	reg := standard.Registry()
+	result, err := CheckChunk(parseChunk(t, `
+		local routes = {
+			handlers = {
+				create = true,
+				["cancel"] = true,
+				[1] = true,
+			},
+			other = true,
+		}
+	`), Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	_, expr := requireLocalAssignmentExprByName(t, result, "routes")
+	literal, ok := result.ObjectLiteral(expr)
+	if !ok {
+		t.Fatal("root object literal not found")
+	}
+	suffix := path.NewPath(0, "routes").Field("handlers").Segments
+	keys, span, ok := result.ObjectLiteralStaticStringKeysAtPath(literal, suffix)
+	if !ok {
+		t.Fatal("ObjectLiteralStaticStringKeysAtPath returned false")
+	}
+	if !span.Valid() {
+		t.Fatalf("ObjectLiteralStaticStringKeysAtPath span = %#v, want valid nested table span", span)
+	}
+	if !keys["create"] || !keys["cancel"] || keys["other"] || keys["1"] {
+		t.Fatalf("nested static string keys = %#v, want create/cancel only", keys)
 	}
 }
 
@@ -506,6 +637,97 @@ func TestCallOutcomeAtCachesSolvedBoundaryOutcome(t *testing.T) {
 	}
 }
 
+func TestCallMayInvalidateTrackedPathBetweenFindsReachableCall(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function inspect(record: {value: string})
+	touch(record)
+	local after = record.value
+end`)
+
+	result, err := CheckFunction(fn, Config{
+		Registry: reg,
+		Globals:  []string{"touch"},
+	})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	point, expr := requireLocalAssignmentExprByName(t, result, "after")
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok {
+		t.Fatalf("after source = %T, want AttrGetExpr", expr)
+	}
+	recordPath, ok := result.ExpressionPath(attr.Object)
+	if !ok {
+		t.Fatal("record path not found")
+	}
+	if !result.CallMayInvalidateTrackedPathBetween(result.Graph().Entry(), point, recordPath) {
+		t.Fatalf("CallMayInvalidateTrackedPathBetween(entry, %d, %s) = false, want reachable unknown call invalidation", point, recordPath)
+	}
+}
+
+func TestCallMayInvalidateGuardFactKeepsRootAcrossTargetedMutation(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function inspect(test: any): ()
+	local box = { value = test }
+	if box then
+		mutate(box)
+		local root = box
+		local child = box.value
+	end
+end`)
+	m := manifest.New("guard-mutation")
+	m.DefineFunctionSignature("mutate", signature.Function{
+		Type: typ.Func().
+			Param("box", typ.Any).
+			Build(),
+		Effect: effect.Row{Labels: []effect.Label{
+			mutation.Mutate{
+				Target:    effect.ParamRef{Index: 0},
+				Transform: mutation.Unchanged{},
+			},
+		}},
+	})
+	result, err := CheckFunction(fn, Config{
+		Registry: reg,
+		Globals:  []string{"mutate"},
+		Signatures: signaturelookup.Source{
+			Manifests: []*manifest.Manifest{m},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	callPoint, ok := onlyCallPoint(t, result)
+	if !ok {
+		t.Fatal("call point not found")
+	}
+	_, rootPath := localSourcePath(t, result, "root")
+	_, childPath := localSourcePath(t, result, "child")
+	if result.CallMayInvalidateGuardFact(callPoint, rootPath) {
+		t.Fatalf("CallMayInvalidateGuardFact(%d, %s) = true, want targeted mutation to preserve root guard", callPoint, rootPath)
+	}
+	if !result.CallMayInvalidateGuardFact(callPoint, childPath) {
+		t.Fatalf("CallMayInvalidateGuardFact(%d, %s) = false, want targeted mutation to clear descendant guard", callPoint, childPath)
+	}
+}
+
+func onlyCallPoint(t *testing.T, result *Result) (cfg.Point, bool) {
+	t.Helper()
+	found := cfg.Point(0)
+	for _, point := range result.Graph().RPO() {
+		if _, ok := result.CallSite(point); !ok {
+			continue
+		}
+		if found != 0 {
+			t.Fatalf("found multiple call points: %d and %d", found, point)
+		}
+		found = point
+	}
+	return found, found != 0
+}
+
 func TestCheckFunctionWhileIndexReadCarriesRangeAndPositiveProofs(t *testing.T) {
 	reg := standard.Registry()
 	fn := parseFunction(t, `
@@ -717,6 +939,18 @@ end`)
 		assertPresence(t, reg, value, presence.Present())
 		assertRuntimeKind(t, reg, value, runtimekind.Singleton(runtimekind.Number))
 	}
+	point, expr := requireLocalAssignmentExprByName(t, result, "shifted")
+	shifted, ok := expr.(*ast.AttrGetExpr)
+	if !ok {
+		t.Fatalf("shifted source = %T, want indexed attr", expr)
+	}
+	arrayPath, ok := result.ExpressionPath(shifted.Object)
+	if !ok {
+		t.Fatal("shifted array expression path not found")
+	}
+	if !result.IndexReadSafeForExpressionAtBoundary(point, shifted.Key, arrayPath) {
+		t.Fatalf("index read %s[%s] not marked safe at point %d for guarded shifted expression", arrayPath, shifted.Key, point)
+	}
 }
 
 func TestCheckFunctionInRangeDynamicIndexKeepsElementNil(t *testing.T) {
@@ -793,6 +1027,10 @@ end`)
 	}
 	if !result.IndexReadSafeAtBoundary(point, indexPath, 1, 0, arrayPath) {
 		t.Fatalf("index read %s[%s] not marked safe at point %d despite range and positive proofs", arrayPath, indexPath, point)
+	}
+	keyType, ok := result.NumericIndexExpressionTypeAtBoundary(point, attr.Key)
+	if !ok || !typ.SameNodeOrAcyclicEqual(keyType, typ.Number) {
+		t.Fatalf("numeric index type = %v/%v, want number", keyType, ok)
 	}
 	value, ok := result.ExpressionValueBeforeBoundary(point, attr)
 	if !ok {
@@ -2226,6 +2464,157 @@ end
 	}
 }
 
+func TestPathProvenTruthyByDominatingBranch(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `function f(x: string?): ()
+	if x then
+		local y: string = x
+	end
+end`)
+	result, err := CheckFunction(fn, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	point, exprPath := localSourcePath(t, result, "y")
+	if !result.PathProvenTruthyByDominatingBranch(point, exprPath) {
+		t.Fatalf("PathProvenTruthyByDominatingBranch(%d, %s) = false, want true", point, exprPath)
+	}
+	branch, ok := result.DominatingTruthyBranchForPath(point, exprPath)
+	if !ok {
+		t.Fatalf("DominatingTruthyBranchForPath(%d, %s) = false, want proof origin", point, exprPath)
+	}
+	if fact, ok := result.BranchCondition(branch); !ok || fact.Condition == nil {
+		t.Fatalf("DominatingTruthyBranchForPath origin %d has no branch condition", branch)
+	}
+}
+
+func TestPathProvenTruthyByDominatingBranchStopsAtReassignment(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `function f(x: string?): ()
+	if x then
+		x = nil
+		local y: string? = x
+	end
+end`)
+	result, err := CheckFunction(fn, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	point, exprPath := localSourcePath(t, result, "y")
+	if result.PathProvenTruthyByDominatingBranch(point, exprPath) {
+		t.Fatalf("PathProvenTruthyByDominatingBranch(%d, %s) = true, want false after reassignment", point, exprPath)
+	}
+}
+
+func TestPathProvenTruthyByDominatingBranchStopsAtCapturedMutationCall(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `function f(x: string?): ()
+	local function clear()
+		x = nil
+	end
+	if x then
+		clear()
+		local y: string? = x
+	end
+end`)
+	result, err := CheckFunction(fn, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	point, exprPath := localSourcePath(t, result, "y")
+	if result.PathProvenTruthyByDominatingBranch(point, exprPath) {
+		t.Fatalf("PathProvenTruthyByDominatingBranch(%d, %s) = true, want false after captured mutation call", point, exprPath)
+	}
+}
+
+func TestPathProvenTruthyByDominatingBranchStopsAtAliasedMemberWrite(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `function f(test: any): ()
+	local box = { value = test }
+	local alias = box
+	if box.value then
+		alias.value = false
+		local y = box.value
+	end
+end`)
+	result, err := CheckFunction(fn, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	point, exprPath := localSourcePath(t, result, "y")
+	if result.PathProvenTruthyByDominatingBranch(point, exprPath) {
+		t.Fatalf("PathProvenTruthyByDominatingBranch(%d, %s) = true, want false after aliased member write", point, exprPath)
+	}
+}
+
+func TestDominatingBranchCheckForPathFindsLiteralGuardOrigin(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `function f(kind: string): ()
+	if kind == "ready" then
+		local y = kind
+	end
+end`)
+	result, err := CheckFunction(fn, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	point, exprPath := localSourcePath(t, result, "y")
+	branch, cond, ok := result.DominatingBranchCheckForPath(point, exprPath, func(_ cfg.Point, check branchcond.Check, edge bool) bool {
+		lit, hasLit := check.LiteralValue()
+		return edge &&
+			check.Kind == branchcond.CheckLiteralEqual &&
+			hasLit &&
+			typ.TypeEquals(lit, typ.LiteralString("ready"))
+	})
+	if !ok {
+		t.Fatalf("DominatingBranchCheckForPath(%d, %s) = false, want literal guard origin", point, exprPath)
+	}
+	if !cond {
+		t.Fatalf("DominatingBranchCheckForPath edge = false, want true edge")
+	}
+	if fact, ok := result.BranchCondition(branch); !ok || fact.Condition == nil {
+		t.Fatalf("DominatingBranchCheckForPath origin %d has no branch condition", branch)
+	}
+}
+
+func TestDominatingBranchCheckForPathStopsAtMemberInvalidation(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `function f(test: any): ()
+	local item = { kind = test }
+	if item.kind == "ready" then
+		item.kind = "other"
+		local y = item.kind
+	end
+end`)
+	result, err := CheckFunction(fn, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	point, exprPath := localSourcePath(t, result, "y")
+	if _, _, ok := result.DominatingBranchCheckForPath(point, exprPath, func(_ cfg.Point, check branchcond.Check, edge bool) bool {
+		return edge && check.Kind == branchcond.CheckLiteralEqual
+	}); ok {
+		t.Fatalf("DominatingBranchCheckForPath(%d, %s) = true, want false after member invalidation", point, exprPath)
+	}
+}
+
+func localSourcePath(t *testing.T, result *Result, name string) (cfg.Point, path.Path) {
+	t.Helper()
+	for _, point := range result.Graph().RPO() {
+		fact, ok := result.LocalAssignment(point)
+		if !ok || fact.Name != name || fact.Expr == nil {
+			continue
+		}
+		exprPath, ok := result.ExpressionPath(fact.Expr)
+		if !ok {
+			t.Fatalf("local %s at point %d has no expression path", name, point)
+		}
+		return point, exprPath
+	}
+	t.Fatalf("local %s not found", name)
+	return 0, path.Path{}
+}
+
 func TestReadBoundaryPathComparisonNarrowsUnionParameterPayload(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
@@ -3186,6 +3575,286 @@ func requireLocalAssignmentPoint(t *testing.T, result *Result, stmt *ast.LocalAs
 	}
 	t.Fatalf("missing local assignment point for index %d", index)
 	return 0
+}
+
+func TestResultPointCanReachUsesBodyQueryCache(t *testing.T) {
+	reg := standard.Registry()
+	result, err := CheckChunk(parseChunk(t, `
+		local seed = 1
+		local next = seed + 1
+	`), Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	graph := result.Graph()
+	if !result.PointCanReach(graph.Entry(), graph.Exit()) {
+		t.Fatalf("entry should reach exit")
+	}
+	if !result.PointCanReach(graph.Entry(), graph.Entry()) {
+		t.Fatalf("entry should reach itself")
+	}
+	if result.PointCanReach(graph.Exit(), graph.Entry()) {
+		t.Fatalf("exit should not reach entry in an acyclic chunk")
+	}
+}
+
+func TestDominatingLiteralBranchForPathFindsStableLiteralGuard(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+		local rec = { kind = "file" }
+		if rec.kind == "file" then
+			local after = rec.kind
+		end
+	`)
+	result, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	ifStmt, ok := stmts[1].(*ast.IfStmt)
+	if !ok {
+		t.Fatalf("stmt 1 = %T, want if", stmts[1])
+	}
+	useStmt, ok := ifStmt.Then[0].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("then stmt 0 = %T, want local assignment", ifStmt.Then[0])
+	}
+	point := requireLocalAssignmentPoint(t, result, useStmt, 0)
+	p, ok := result.ExpressionPath(useStmt.Exprs[0])
+	if !ok {
+		t.Fatalf("missing path for guarded read")
+	}
+
+	lit, branch, ok := result.DominatingLiteralBranchForPath(point, p)
+	if !ok {
+		t.Fatalf("DominatingLiteralBranchForPath = !ok, want proof")
+	}
+	if branch == 0 {
+		t.Fatalf("proof branch is zero")
+	}
+	if !typ.TypeEquals(lit, typ.LiteralString("file")) {
+		t.Fatalf("literal proof = %s, want \"file\"", lit)
+	}
+	if !result.DominatingBranchProvesLiteral(point, p, typ.LiteralString("file")) {
+		t.Fatalf("DominatingBranchProvesLiteral(\"file\") = false, want true")
+	}
+}
+
+func TestDominatingLiteralBranchForPathStopsAtMemberInvalidation(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+		local rec = { kind = "file" }
+		if rec.kind == "file" then
+			rec.kind = "timer"
+			local after = rec.kind
+		end
+	`)
+	result, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	ifStmt, ok := stmts[1].(*ast.IfStmt)
+	if !ok {
+		t.Fatalf("stmt 1 = %T, want if", stmts[1])
+	}
+	useStmt, ok := ifStmt.Then[1].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("then stmt 1 = %T, want local assignment", ifStmt.Then[1])
+	}
+	point := requireLocalAssignmentPoint(t, result, useStmt, 0)
+	p, ok := result.ExpressionPath(useStmt.Exprs[0])
+	if !ok {
+		t.Fatalf("missing path for guarded read")
+	}
+
+	if lit, branch, ok := result.DominatingLiteralBranchForPath(point, p); ok {
+		t.Fatalf("DominatingLiteralBranchForPath = (%s, %d, true), want invalidated proof rejected", lit, branch)
+	}
+}
+
+func TestDominatingLiteralBranchForPathFollowsSameSuffixAlias(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+		local rec = { kind = "file" }
+		local alias = rec
+		if alias.kind == "file" then
+			local after = rec.kind
+		end
+	`)
+	result, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	ifStmt, ok := stmts[2].(*ast.IfStmt)
+	if !ok {
+		t.Fatalf("stmt 2 = %T, want if", stmts[2])
+	}
+	useStmt, ok := ifStmt.Then[0].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("then stmt 0 = %T, want local assignment", ifStmt.Then[0])
+	}
+	point := requireLocalAssignmentPoint(t, result, useStmt, 0)
+	p, ok := result.ExpressionPath(useStmt.Exprs[0])
+	if !ok {
+		t.Fatalf("missing path for guarded read")
+	}
+
+	lit, _, ok := result.DominatingLiteralBranchForPath(point, p)
+	if !ok {
+		t.Fatalf("DominatingLiteralBranchForPath(alias guard) = !ok, want proof")
+	}
+	if !typ.TypeEquals(lit, typ.LiteralString("file")) {
+		t.Fatalf("literal proof = %s, want \"file\"", lit)
+	}
+}
+
+func TestDominatingLiteralBranchForPathRejectsInvalidatedAliasGuard(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+		local rec = { kind = "file" }
+		local alias = rec
+		if alias.kind == "file" then
+			rec.kind = "timer"
+			local after = alias.kind
+		end
+	`)
+	result, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	ifStmt, ok := stmts[2].(*ast.IfStmt)
+	if !ok {
+		t.Fatalf("stmt 2 = %T, want if", stmts[2])
+	}
+	useStmt, ok := ifStmt.Then[1].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("then stmt 1 = %T, want local assignment", ifStmt.Then[1])
+	}
+	point := requireLocalAssignmentPoint(t, result, useStmt, 0)
+	p, ok := result.ExpressionPath(useStmt.Exprs[0])
+	if !ok {
+		t.Fatalf("missing path for guarded read")
+	}
+
+	if lit, branch, ok := result.DominatingLiteralBranchForPath(point, p); ok {
+		t.Fatalf("DominatingLiteralBranchForPath = (%s, %d, true), want invalidated alias proof rejected", lit, branch)
+	}
+}
+
+func TestPathLiteralTypeAtBoundaryReadsSolvedDiscriminantLiteral(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+		local rec: { kind: "file", path: string } | { kind: "timer", elapsed: number } = { kind = "file", path = "/tmp/a" }
+		if rec.kind == "file" then
+			local after = rec.path
+		end
+	`)
+	result, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	ifStmt, ok := stmts[1].(*ast.IfStmt)
+	if !ok {
+		t.Fatalf("stmt 1 = %T, want if", stmts[1])
+	}
+	useStmt, ok := ifStmt.Then[0].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("then stmt 0 = %T, want local assignment", ifStmt.Then[0])
+	}
+	point := requireLocalAssignmentPoint(t, result, useStmt, 0)
+	readPath, ok := result.ExpressionPath(useStmt.Exprs[0])
+	if !ok {
+		t.Fatalf("missing read path")
+	}
+	discriminant := readPath.RootOnly().Field("kind")
+	lit, ok := result.PathLiteralTypeAtBoundary(point, discriminant)
+	if !ok {
+		t.Fatalf("PathLiteralTypeAtBoundary(%s) = !ok, want literal", discriminant)
+	}
+	if !typ.TypeEquals(lit, typ.LiteralString("file")) {
+		t.Fatalf("PathLiteralTypeAtBoundary(%s) = %s, want \"file\"", discriminant, lit)
+	}
+}
+
+func TestPathLiteralTypeAtBoundaryUsesCurrentPostAssignmentLiteral(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+		local rec = { kind = "file" }
+		if rec.kind == "file" then
+			rec.kind = "timer"
+			local after = rec.kind
+		end
+	`)
+	result, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	ifStmt, ok := stmts[1].(*ast.IfStmt)
+	if !ok {
+		t.Fatalf("stmt 1 = %T, want if", stmts[1])
+	}
+	useStmt, ok := ifStmt.Then[1].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("then stmt 1 = %T, want local assignment", ifStmt.Then[1])
+	}
+	point := requireLocalAssignmentPoint(t, result, useStmt, 0)
+	p, ok := result.ExpressionPath(useStmt.Exprs[0])
+	if !ok {
+		t.Fatalf("missing read path")
+	}
+	lit, ok := result.PathLiteralTypeAtBoundary(point, p)
+	if !ok {
+		t.Fatalf("PathLiteralTypeAtBoundary(%s) = !ok, want literal", p)
+	}
+	if !typ.TypeEquals(lit, typ.LiteralString("timer")) {
+		t.Fatalf("PathLiteralTypeAtBoundary(%s) = %s, want \"timer\"", p, lit)
+	}
+}
+
+func TestResultImmediateDominatorQueriesUseBodyCache(t *testing.T) {
+	reg := standard.Registry()
+	result, err := CheckChunk(parseChunk(t, `
+		local seed = 1
+		local next = seed + 1
+		local final = next + 1
+	`), Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	graph := result.Graph()
+	parent, ok := result.ImmediateDominator(graph.Exit())
+	if !ok || parent == 0 || parent == graph.Exit() {
+		t.Fatalf("exit immediate dominator = (%d, %v), want concrete parent", parent, ok)
+	}
+	if !result.PointDominates(parent, graph.Exit()) {
+		t.Fatalf("immediate dominator %d should dominate exit", parent)
+	}
+	if !result.PointDominates(graph.Entry(), graph.Exit()) {
+		t.Fatalf("entry should dominate exit")
+	}
+}
+
+func TestDominatingFunctionDefinitionForPath(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+		function handler()
+			return 1
+		end
+		local use = handler
+	`)
+	stmt := stmts[1].(*ast.LocalAssignStmt)
+	result, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	usePoint := requireLocalAssignmentPoint(t, result, stmt, 0)
+	usePath, ok := result.ExpressionPath(stmt.Exprs[0])
+	if !ok || usePath.IsEmpty() {
+		t.Fatalf("use path = %s/%v, want handler path", usePath, ok)
+	}
+	fn, definitionPoint, ok := result.DominatingFunctionDefinitionForPathWithPoint(usePoint, usePath)
+	if !ok || fn == nil || definitionPoint == 0 {
+		t.Fatalf("dominating function definition = (%v, %d, %v), want handler definition", fn, definitionPoint, ok)
+	}
 }
 
 func assertProductEqual(t *testing.T, reg *axis.Registry, got, want product.Value) {

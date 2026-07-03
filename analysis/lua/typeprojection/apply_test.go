@@ -4,7 +4,9 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/projection"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -125,6 +127,48 @@ func TestApplySegmentsMixedTraversal(t *testing.T) {
 	assertProjectionType(t, got, typeexpr.Optional(typ.String))
 }
 
+func TestApplySegmentsFieldSyntaxReadsMapValue(t *testing.T) {
+	slot := typetable.NewRecord().
+		Field("value", typetable.NewRecord().Field("path", typ.String).Build()).
+		Build()
+	source := typetable.NewMap(typ.String, slot)
+
+	got, ok := ApplySegments(source, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "active"},
+		{Kind: segment.SegmentField, Name: "value"},
+		{Kind: segment.SegmentField, Name: "path"},
+	})
+	if !ok {
+		t.Fatal("ApplySegments field syntax over map failed")
+	}
+	assertProjectionType(t, got, typeexpr.Optional(typ.String))
+}
+
+func TestApplySegmentsMissingUnionMemberBecomesOptional(t *testing.T) {
+	file := typetable.NewRecord().
+		Field("kind", typ.LiteralString("file")).
+		Field("path", typ.String).
+		Build()
+	timer := typetable.NewRecord().
+		Field("kind", typ.LiteralString("timer")).
+		Field("seconds", typ.Number).
+		Build()
+	slot := typetable.NewRecord().
+		Field("value", typeexpr.Union(file, timer)).
+		Build()
+	source := typetable.NewMap(typ.String, slot)
+
+	got, ok := ApplySegments(source, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "active"},
+		{Kind: segment.SegmentField, Name: "value"},
+		{Kind: segment.SegmentField, Name: "path"},
+	})
+	if !ok {
+		t.Fatal("ApplySegments missing union member failed")
+	}
+	assertProjectionType(t, got, typeexpr.Optional(typ.String))
+}
+
 func TestApplyWriteSegmentsUsesWritableIndexAtLeaf(t *testing.T) {
 	source := typetable.NewRecord().
 		Field("items", typ.NewArray(
@@ -151,6 +195,77 @@ func TestApplyWriteSegmentsUsesWritableIndexAtLeaf(t *testing.T) {
 	})
 	if !ok {
 		t.Fatal("ApplyWriteSegments optional element failed")
+	}
+	assertProjectionType(t, got, typeexpr.Optional(typ.Number))
+}
+
+func TestApplyWriteSegmentsMeetsUnionRecordFields(t *testing.T) {
+	source := typ.MaterializeUnion([]typ.Type{
+		typetable.NewRecord().Field("value", typ.Number).Build(),
+		typetable.NewRecord().Field("value", typ.String).Build(),
+	})
+
+	got, ok := ApplyWriteSegments(source, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "value"},
+	})
+	if !ok {
+		t.Fatal("ApplyWriteSegments union field failed")
+	}
+	assertProjectionType(t, got, normalize.IntersectionForMeet(typ.Number, typ.String))
+	if subtype.IsSubtype(typ.LiteralString("bad"), got) {
+		t.Fatalf("literal string was accepted by union field write meet %v", got)
+	}
+
+	got, ok = ApplyWriteSegments(source, []segment.Segment{
+		{Kind: segment.SegmentIndexString, Name: "value"},
+	})
+	if !ok {
+		t.Fatal("ApplyWriteSegments union bracket field failed")
+	}
+	assertProjectionType(t, got, normalize.IntersectionForMeet(typ.Number, typ.String))
+	if subtype.IsSubtype(typ.LiteralString("bad"), got) {
+		t.Fatalf("literal string was accepted by union bracket write meet %v", got)
+	}
+}
+
+func TestDynamicWriteValueTypeMeetsClosedRecordStringFields(t *testing.T) {
+	source := typetable.NewRecord().
+		Field("id", typ.String).
+		Field("count", typ.Number).
+		Build()
+
+	got, ok := DynamicWriteValueType(source, typ.String)
+	if !ok {
+		t.Fatal("DynamicWriteValueType closed record string key failed")
+	}
+	assertProjectionType(t, got, normalize.IntersectionForMeet(typ.Number, typ.String))
+	if got == nil || got.String() == "" {
+		t.Fatalf("DynamicWriteValueType returned invalid meet: %v", got)
+	}
+	if subtype.IsSubtype(typ.LiteralString("bad"), got) {
+		t.Fatalf("literal string was accepted by dynamic-write meet %v", got)
+	}
+}
+
+func TestDynamicWriteValueTypeIgnoresAnyRecordSlotsInMeet(t *testing.T) {
+	source := typetable.NewRecord().
+		Field("id", typ.String).
+		Field("meta", typ.Any).
+		Build()
+
+	got, ok := DynamicWriteValueType(source, typ.String)
+	if !ok {
+		t.Fatal("DynamicWriteValueType closed record string key failed")
+	}
+	assertProjectionType(t, got, typ.String)
+}
+
+func TestDynamicWriteValueTypeUsesMapContractDirectly(t *testing.T) {
+	source := typ.NewMap(typ.String, typ.Number)
+
+	got, ok := DynamicWriteValueType(source, typ.String)
+	if !ok {
+		t.Fatal("DynamicWriteValueType map write failed")
 	}
 	assertProjectionType(t, got, typeexpr.Optional(typ.Number))
 }

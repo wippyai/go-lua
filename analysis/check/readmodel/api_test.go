@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestPlanAssignmentCheckHonorsTrustedValueProofBeforePlainSubtype(t *testing.T) {
@@ -21,6 +22,207 @@ func TestPlanAssignmentCheckHonorsTrustedValueProofBeforePlainSubtype(t *testing
 	})
 	if !check.Admissible {
 		t.Fatalf("assignment check = %#v, want trusted value proof to admit assignment", check)
+	}
+}
+
+func TestNumericForDefinitelyNotNumberClassifiesSolvedOperandTypes(t *testing.T) {
+	cases := []struct {
+		name string
+		t    typ.Type
+		want bool
+	}{
+		{name: "plain string", t: typ.String, want: true},
+		{name: "plain number", t: typ.Number, want: false},
+		{name: "integer subtype", t: typ.Integer, want: false},
+		{name: "partly numeric union", t: typeexpr.Union(typ.Number, typ.String), want: false},
+		{name: "non numeric union", t: typeexpr.Union(typ.String, typ.Boolean), want: true},
+		{name: "alias to number", t: typ.NewAlias("Count", typ.Number), want: false},
+		{name: "nil is non numeric", t: typ.Nil, want: true},
+		{name: "any stays inconclusive", t: typ.Any, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := NumericForDefinitelyNotNumber(tc.t); got != tc.want {
+				t.Fatalf("NumericForDefinitelyNotNumber(%v) = %v, want %v", tc.t, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNonNilAssertionOperandNilOnlyClassifiesSolvedOperandTypes(t *testing.T) {
+	cases := []struct {
+		name string
+		t    typ.Type
+		want bool
+	}{
+		{name: "plain nil", t: typ.Nil, want: true},
+		{name: "optional string", t: typeexpr.Optional(typ.String), want: false},
+		{name: "plain string", t: typ.String, want: false},
+		{name: "any", t: typ.Any, want: false},
+		{name: "unknown", t: typ.Unknown, want: false},
+		{name: "never", t: typ.Never, want: false},
+		{name: "alias to nil remains inconclusive", t: typ.NewAlias("NilAlias", typ.Nil), want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := NonNilAssertionOperandNilOnly(tc.t); got != tc.want {
+				t.Fatalf("NonNilAssertionOperandNilOnly(%v) = %v, want %v", tc.t, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestReturnEffectiveActualTypeAndProofPolicy(t *testing.T) {
+	untrusted := Return{
+		TypeWithPresence:   typ.Unknown,
+		Expected:           typ.String,
+		UntrustedTopOrigin: true,
+		Check:              ReturnCheck{},
+	}
+	if !typ.TypeEquals(untrusted.EffectiveActualType(), typ.Any) {
+		t.Fatalf("untrusted effective actual = %v, want any", untrusted.EffectiveActualType())
+	}
+	if untrusted.MissingProofRefuted() {
+		t.Fatal("untrusted missing proof was refuted; want precision boundary")
+	}
+
+	concrete := Return{
+		TypeWithPresence: typ.Number,
+		Expected:         typ.String,
+		Check: ReturnCheck{
+			ProvenMismatch: true,
+		},
+	}
+	if !concrete.ActualTypeKnown() {
+		t.Fatal("concrete return actual type was not marked known")
+	}
+	if concrete.HasUnownedTopActual() {
+		t.Fatal("concrete return was classified as unowned top")
+	}
+	if !typ.TypeEquals(concrete.EffectiveActualType(), typ.Number) {
+		t.Fatalf("concrete effective actual = %v, want number", concrete.EffectiveActualType())
+	}
+	if !concrete.MissingProofRefuted() {
+		t.Fatal("concrete mismatch did not refute missing proof")
+	}
+
+	implicitUnknown := Return{TypeWithPresence: typ.Unknown}
+	if !implicitUnknown.HasUnownedTopActual() {
+		t.Fatal("implicit unknown return was not classified as unowned top")
+	}
+
+	explicitAny := Return{TypeWithPresence: typ.Any, ExplicitTopOrigin: true}
+	if explicitAny.HasUnownedTopActual() {
+		t.Fatal("explicit any return was classified as unowned top")
+	}
+}
+
+func TestAssignmentEffectiveActualTypeAndProofPolicy(t *testing.T) {
+	untrusted := Assignment{
+		TypeWithPresence:   typ.Unknown,
+		Expected:           typ.String,
+		UntrustedTopOrigin: true,
+		Check:              AssignmentCheck{},
+	}
+	if !typ.TypeEquals(untrusted.EffectiveActualType(), typ.Any) {
+		t.Fatalf("untrusted effective actual = %v, want any", untrusted.EffectiveActualType())
+	}
+	if untrusted.MissingProofRefuted() {
+		t.Fatal("untrusted missing proof was refuted; want precision boundary")
+	}
+
+	concrete := Assignment{
+		TypeWithPresence: typ.Number,
+		Expected:         typ.String,
+		Check: AssignmentCheck{
+			ProvenMismatch: true,
+		},
+	}
+	if !concrete.ActualTypeKnown() {
+		t.Fatal("concrete assignment actual type was not marked known")
+	}
+	if !typ.TypeEquals(concrete.EffectiveActualType(), typ.Number) {
+		t.Fatalf("concrete effective actual = %v, want number", concrete.EffectiveActualType())
+	}
+	if !concrete.MissingProofRefuted() {
+		t.Fatal("concrete mismatch did not refute missing proof")
+	}
+
+	missing := Assignment{}
+	if !typ.TypeEquals(missing.EffectiveActualType(), typ.Unknown) {
+		t.Fatalf("missing effective actual = %v, want unknown", missing.EffectiveActualType())
+	}
+
+	explicitAny := Assignment{
+		TypeWithPresence:  typ.Any,
+		Expected:          typ.String,
+		ExplicitTopOrigin: true,
+		Check: AssignmentCheck{
+			ProvenMismatch: true,
+		},
+	}
+	if !typ.TypeEquals(explicitAny.EffectiveActualType(), typ.Any) {
+		t.Fatalf("explicit any effective actual = %v, want any", explicitAny.EffectiveActualType())
+	}
+}
+
+func TestCallArgumentCheckActualTypeAndProofPolicy(t *testing.T) {
+	unknown := CallArgumentCheck{}
+	if unknown.ActualTypeKnown() {
+		t.Fatal("empty call argument check actual type was marked known")
+	}
+	if unknown.MissingProofRefuted() {
+		t.Fatal("empty call argument check refuted missing proof")
+	}
+
+	concrete := CallArgumentCheck{
+		Argument: CallArgument{
+			TypeWithPresence: typ.String,
+		},
+		ProvenMismatch: true,
+	}
+	if !concrete.ActualTypeKnown() {
+		t.Fatal("concrete call argument actual type was not marked known")
+	}
+	if !concrete.MissingProofRefuted() {
+		t.Fatal("concrete call argument mismatch did not refute missing proof")
+	}
+}
+
+func TestPlanAssignmentCheckRejectsMissingRequiredFieldBeforeValueProof(t *testing.T) {
+	expected := typetable.NewRecord().Field("name", typ.String).Build()
+	check := PlanAssignmentCheck(AssignmentCheckPlan{
+		Assignment: Assignment{
+			TypeWithPresence: typetable.NewRecord().Build(),
+			Expected:         expected,
+		},
+		ValueAdmissible:      true,
+		MissingRequiredField: "name",
+		IsSubtype:            func(typ.Type, typ.Type) bool { return true },
+	})
+	if check.Admissible {
+		t.Fatal("missing required field was treated as admissible")
+	}
+	if check.Mismatch.Kind != AssignmentMismatchMissingRequiredField || check.Mismatch.Field != "name" {
+		t.Fatalf("mismatch = %#v, want missing required field name", check.Mismatch)
+	}
+}
+
+func TestPlanAssignmentCheckMarksConcreteSubtypeFailureAsMismatch(t *testing.T) {
+	check := PlanAssignmentCheck(AssignmentCheckPlan{
+		Assignment: Assignment{
+			TypeWithPresence: typ.String,
+			Expected:         typ.Number,
+		},
+		IsSubtype: func(sub, super typ.Type) bool {
+			return false
+		},
+	})
+	if check.Admissible {
+		t.Fatal("concrete subtype failure was treated as admissible")
+	}
+	if !check.ProvenMismatch {
+		t.Fatal("concrete subtype failure was not marked as proven mismatch")
 	}
 }
 
@@ -163,6 +365,31 @@ func TestPlanCallArgumentReportsSkipsGradualExpectedTypesWithoutReservingIndex(t
 	}
 }
 
+func TestPlanCallArgumentReportsKeepsStricterOutcomeAfterAdmissibleExplicitParam(t *testing.T) {
+	reports := PlanCallArgumentReports(CallArgumentReportPlan{
+		Args: []CallArgument{{Index: 0, TypeWithPresence: typ.LiteralString("not-number")}},
+		ExplicitParams: []IndexedCallArgumentObligation{
+			{Index: 0, Obligation: CallArgumentObligation{Type: typ.MaterializeUnion([]typ.Type{typ.Number, typ.String}), ExpectedLabel: "declared union"}},
+		},
+		OutcomeParams: []IndexedCallArgumentObligation{
+			{Index: 0, Obligation: CallArgumentObligation{Type: typ.Number, ExpectedLabel: "callee-use obligation"}},
+		},
+		Check: func(arg CallArgument, obligation CallArgumentObligation) CallArgumentCheck {
+			return CallArgumentCheck{
+				Argument:   arg,
+				Expected:   obligation.Type,
+				Admissible: obligation.ExpectedLabel == "declared union",
+			}
+		},
+	})
+	if len(reports) != 1 {
+		t.Fatalf("PlanCallArgumentReports produced %#v, want stricter outcome report", reports)
+	}
+	if reports[0].Obligation.ExpectedLabel != "callee-use obligation" {
+		t.Fatalf("report = %#v, want outcome obligation after admissible explicit param", reports[0])
+	}
+}
+
 func TestCallArgumentObligationTypeReportableTreatsOptionalGradualAsInternal(t *testing.T) {
 	if CallArgumentObligationTypeReportable(typ.MaterializeOptional(typ.Any)) {
 		t.Fatal("any? should be an internal gradual obligation, not a reportable contract")
@@ -297,9 +524,34 @@ func TestPlanCallCalleeReport(t *testing.T) {
 			want: CallCalleeReport{},
 		},
 		{
+			name: "any member access needs callable proof",
+			plan: CallCalleeReportPlan{CallableName: "target.member", Type: typ.Any, MemberAccess: true, ImpreciseMemberRequiresProof: true},
+			want: CallCalleeReport{
+				Kind:         CallCalleeReportNotCallable,
+				CallableName: "target.member",
+				Type:         typ.Any,
+				MemberAccess: true,
+			},
+		},
+		{
+			name: "any member namespace without receiver proof stays gradual",
+			plan: CallCalleeReportPlan{CallableName: "target.member", Type: typ.Any, MemberAccess: true},
+			want: CallCalleeReport{},
+		},
+		{
 			name: "unknown is not a callee report",
 			plan: CallCalleeReportPlan{CallableName: "target", Type: typ.Unknown},
 			want: CallCalleeReport{},
+		},
+		{
+			name: "unknown member access needs callable proof",
+			plan: CallCalleeReportPlan{CallableName: "target.member", Type: typ.Unknown, MemberAccess: true, ImpreciseMemberRequiresProof: true},
+			want: CallCalleeReport{
+				Kind:         CallCalleeReportNotCallable,
+				CallableName: "target.member",
+				Type:         typ.Unknown,
+				MemberAccess: true,
+			},
 		},
 		{
 			name: "never is not a callee report",

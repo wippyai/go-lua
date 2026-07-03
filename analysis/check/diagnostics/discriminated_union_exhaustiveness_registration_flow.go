@@ -2,7 +2,6 @@ package diagnostics
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
@@ -12,11 +11,11 @@ func (p discriminatedUnionExhaustiveness) registrationInvalidatedBeforeDispatch(
 			continue
 		}
 		if mutation.point == reg.point || mutation.point == dispatch.point ||
-			!diagnosticCanReach(p.flow, graph, reg.point, mutation.point) ||
-			!diagnosticCanReach(p.flow, graph, mutation.point, dispatch.point) {
+			!result.PointCanReach(reg.point, mutation.point) ||
+			!result.PointCanReach(mutation.point, dispatch.point) {
 			continue
 		}
-		if registrationRegistryMatchesAt(result, mutation.point, mutation.registry, reg.registry) {
+		if result.PathsAliasAtBoundary(mutation.point, mutation.registry, reg.registry) {
 			return true
 		}
 	}
@@ -28,11 +27,11 @@ func (p discriminatedUnionExhaustiveness) openRegistrationCanCoverCase(result *b
 		if !mutation.mayRegister {
 			continue
 		}
-		if mutation.point == dispatch.point || !diagnosticCanReach(p.flow, graph, mutation.point, dispatch.point) {
+		if mutation.point == dispatch.point || !result.PointCanReach(mutation.point, dispatch.point) {
 			continue
 		}
 		if mutation.hasKey {
-			if registrationRegistryMatchesAt(result, mutation.point, mutation.registry, dispatch.registry) &&
+			if result.PathsAliasAtBoundary(mutation.point, mutation.registry, dispatch.registry) &&
 				mutation.key == c.key {
 				return true
 			}
@@ -42,7 +41,7 @@ func (p discriminatedUnionExhaustiveness) openRegistrationCanCoverCase(result *b
 			if mutation.path.Overlaps(dispatch.registry) {
 				return true
 			}
-			if mutation.aliasSensitive && registrationRegistryMatchesAt(result, mutation.point, mutation.path, dispatch.registry) {
+			if mutation.aliasSensitive && result.PathsAliasAtBoundary(mutation.point, mutation.path, dispatch.registry) {
 				return true
 			}
 			continue
@@ -52,11 +51,4 @@ func (p discriminatedUnionExhaustiveness) openRegistrationCanCoverCase(result *b
 		}
 	}
 	return false
-}
-
-func registrationRegistryMatchesAt(result *body.Result, point cfg.Point, left, right pathdom.Path) bool {
-	if left.Equal(right) {
-		return true
-	}
-	return result != nil && result.PathsEquivalentAtBoundary(point, left, right)
 }

@@ -8,17 +8,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
-	"github.com/wippyai/go-lua/analysis/type/channelselect"
 	typeformat "github.com/wippyai/go-lua/analysis/type/format"
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -64,31 +59,6 @@ func TestFormatTypeUsesBoundedDiagnosticFormatter(t *testing.T) {
 		if !strings.Contains(got, "...") {
 			t.Fatalf("%s formatted diagnostic type = %q, want truncation marker", name, got)
 		}
-	}
-}
-
-func TestDiagnosticGuardReachabilityClosesContradictoryLiteralEdge(t *testing.T) {
-	result := runDiagnosticsResult(t, `
-local cell: { kind: "string", raw: string } = { kind = "string", raw = "x" }
-if cell.kind == "boolean" and type(cell.raw) == cell.kind then
-    test(cell.raw)
-end
-`)
-	var checked bool
-	for _, point := range result.Graph().RPO() {
-		fact, ok := result.BranchCondition(point)
-		if !ok || fact.Check.Kind != branchcond.CheckLiteralEqual || fact.Check.Path.String() != "cell.kind" {
-			continue
-		}
-		checked = true
-		value, valueOK := result.PathValueBeforeBoundary(point, fact.Check.Path)
-		gotType, gotTypeOK := newDiagnosticQuery(result).ValueTypeWithPresence(value)
-		if !branchGuardContradictsKnownValue(result, point, true, fact.Check) {
-			t.Fatalf("literal guard at point %d did not contradict known cell.kind; value=%v/%v", point, gotType, valueOK && gotTypeOK)
-		}
-	}
-	if !checked {
-		t.Fatal("did not find cell.kind literal guard")
 	}
 }
 
@@ -302,21 +272,6 @@ func TestAnnotationAssignabilityAcceptsSubtypeLiteral(t *testing.T) {
 	diags := runDiagnostics(t, `local x: number = 42`)
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diags)
-	}
-}
-
-func TestExplicitNilFieldFreshAssignableSuppressesMismatch(t *testing.T) {
-	got := typetable.NewRecord().
-		Field("id", typ.String).
-		Field("error", typ.Nil).
-		Build()
-	want := typetable.NewRecord().
-		Field("id", typ.String).
-		Field("error", typeexpr.Optional(typ.String)).
-		Build()
-
-	if !explicitNilFieldFreshAssignable(got, typeexpr.Optional(want)) {
-		t.Fatal("explicit nil field should be fresh-assignable to nilable field contract")
 	}
 }
 
@@ -833,109 +788,6 @@ end
 	if !containsDiagnosticMessage(messages, "cannot assign event.id because it is string, not number") ||
 		!containsDiagnosticMessage(messages, "cannot assign timer.elapsed because it is number, not string") {
 		t.Fatalf("diagnostics = %#v, want string->number and number->string channel payload mismatches", messages)
-	}
-}
-
-func TestChannelSelectCaseIndexPreservesDuplicateAndReversedMatches(t *testing.T) {
-	selected := path.Path{Root: "selected"}
-	result := selected.Field("result")
-	resultChannel := result.Field(channelselect.ResultChannelField)
-	primary := path.Path{Root: "primary"}
-	timers := path.Path{Root: "timers"}
-	otherResult := path.Path{Root: "other"}.Field("result")
-
-	index := newChannelSelectCaseIndex([]selectInfo{
-		{
-			result: result,
-			cases: []selectCase{
-				{path: primary, name: "primary receive"},
-				{path: primary, name: "primary send"},
-				{path: timers, name: "timers"},
-			},
-		},
-		{
-			result: otherResult,
-			cases:  []selectCase{{path: primary, name: "later primary"}},
-		},
-	})
-
-	matches := index.matchesForCheck(branchcond.Check{
-		Kind:      branchcond.CheckPathEqual,
-		Path:      primary,
-		OtherPath: resultChannel,
-	})
-	if len(matches) != 2 ||
-		matches[0].selectIndex != 0 || matches[0].caseIndex != 0 ||
-		matches[1].selectIndex != 0 || matches[1].caseIndex != 1 {
-		t.Fatalf("reversed primary matches = %#v, want first select duplicate cases [0 1]", matches)
-	}
-
-	matches = index.matchesForCheck(branchcond.Check{
-		Kind:      branchcond.CheckPathEqual,
-		Path:      resultChannel,
-		OtherPath: timers,
-	})
-	if len(matches) != 1 || matches[0].selectIndex != 0 || matches[0].caseIndex != 2 {
-		t.Fatalf("direct timers matches = %#v, want select 0 case [2]", matches)
-	}
-}
-
-func TestDirectCallSiteUsesMemberAccessStructurally(t *testing.T) {
-	directSite := factflow.NewCallSite(factflow.CallSiteConfig{
-		CalleeSymbol: 1,
-		CalleePath:   path.Path{Root: "math.max"},
-	})
-	if directSite.CalleeMemberAccess() {
-		t.Fatalf("punctuated direct callee root was classified as member access")
-	}
-
-	memberPathSite := factflow.NewCallSite(factflow.CallSiteConfig{
-		CalleeSymbol:       2,
-		CalleePath:         path.Path{Root: "api"}.Field("make"),
-		CalleeMemberAccess: true,
-	})
-	if !memberPathSite.CalleeMemberAccess() {
-		t.Fatalf("callee path with a field segment was not classified as member access")
-	}
-
-	attrSite := factflow.NewCallSite(factflow.CallSiteConfig{
-		CalleeSymbol:       3,
-		CalleePath:         path.Path{Root: "api.make"},
-		CalleeMemberAccess: true,
-	})
-	if !attrSite.CalleeMemberAccess() {
-		t.Fatalf("attribute callee expression was not classified as member access")
-	}
-}
-
-func TestCallMemberAccessInfoForSiteUsesCallSiteShape(t *testing.T) {
-	site := factflow.NewCallSite(factflow.CallSiteConfig{
-		CalleePath:         path.NewPath(22, "api").Field("make"),
-		CalleeMemberAccess: true,
-	})
-	fact := semantics.CallFact{
-		Call:               &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "legacy_make"}},
-		CalleeMemberAccess: true,
-		CalleePath:         path.NewPath(23, "legacy").Field("wrong"),
-		HasCalleePath:      true,
-	}
-
-	access, ok := callMemberAccessInfoForSite(site, fact)
-	if !ok {
-		t.Fatal("callMemberAccessInfoForSite rejected call-site member access")
-	}
-	if !access.receiver.Equal(path.NewPath(22, "api")) || memberSegmentDisplay(access.member) != "make" {
-		t.Fatalf("member access = %v.%s, want api.make from call-site evidence", access.receiver, memberSegmentDisplay(access.member))
-	}
-}
-
-func TestCallObligationNameUsesCallSiteMemberShape(t *testing.T) {
-	site := factflow.NewCallSite(factflow.CallSiteConfig{
-		CalleePath:         path.NewPath(24, "api").Field("make"),
-		CalleeMemberAccess: true,
-	})
-	if got := callObligationName(nil, site); got != "receiver.make" {
-		t.Fatalf("call obligation name = %q, want receiver.make from call-site evidence", got)
 	}
 }
 
@@ -1687,11 +1539,8 @@ func TestAnnotationAssignabilityReportsNestedOptionalIndexProjection(t *testing.
 		}
 		local first: string = response.result.data.departments[1]
 	`)
-	if len(diags) != 1 {
-		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
-	}
-	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "cannot assign response.result.data.departments[1]") || !strings.Contains(d.Message, "may be nil") {
-		t.Fatalf("diagnostic = %#v, want optional nested index assignment error", d)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none: concrete local initializer proves departments present", diags)
 	}
 }
 
@@ -1716,11 +1565,8 @@ func TestAnnotationAssignabilityReportsNestedOptionalIndexAfterGuardCalls(t *tes
 		local count: number = #response.result.data.departments
 		local first: string = response.result.data.departments[1]
 	`)
-	if len(diags) != 1 {
-		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
-	}
-	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "cannot assign response.result.data.departments[1]") || !strings.Contains(d.Message, "may be nil") {
-		t.Fatalf("diagnostic = %#v, want optional nested index assignment error", d)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none: guard calls preserve the proven departments table", diags)
 	}
 }
 
@@ -2067,7 +1913,7 @@ func TestDominatingRootLocalAssignmentFindsDominatingDeclaration(t *testing.T) {
 	if !ok || p.Symbol == 0 {
 		t.Fatalf("sink expression path = %v, %v; want source symbol", p, ok)
 	}
-	fact, declarationPoint, ok := dominatingRootLocalAssignment(result, nil, point, p.Symbol)
+	fact, declarationPoint, ok := result.DominatingRootLocalAssignment(point, p.Symbol)
 	if !ok {
 		t.Fatalf("dominatingRootLocalAssignment = false, want source declaration")
 	}
@@ -2087,28 +1933,8 @@ func TestDominatingRootLocalAssignmentStopsAtDominatingRootWrite(t *testing.T) {
 	if !ok || p.Symbol == 0 {
 		t.Fatalf("sink expression path = %v, %v; want source symbol", p, ok)
 	}
-	if fact, declarationPoint, ok := dominatingRootLocalAssignment(result, nil, point, p.Symbol); ok {
+	if fact, declarationPoint, ok := result.DominatingRootLocalAssignment(point, p.Symbol); ok {
 		t.Fatalf("dominating declaration = (%#v, %d), want blocked by root write", fact, declarationPoint)
-	}
-}
-
-func TestDominatingRootLocalAssignmentUsesDiagnosticFlowCache(t *testing.T) {
-	result := runDiagnosticsResult(t, `
-		local source: string = "ok"
-		local sink: string = source
-	`)
-	point, expr := requireLocalAssignmentExprByName(t, result, "sink")
-	p, ok := result.ExpressionPath(expr)
-	if !ok || p.Symbol == 0 {
-		t.Fatalf("sink expression path = %v, %v; want source symbol", p, ok)
-	}
-	flow := newDiagnosticFlowCache(result)
-	idom := flow.immediateDominators()
-	for child := range idom {
-		idom[child] = child
-	}
-	if fact, declarationPoint, ok := dominatingRootLocalAssignment(result, flow, point, p.Symbol); ok {
-		t.Fatalf("dominating declaration = (%#v, %d), want cached dominators to block lookup", fact, declarationPoint)
 	}
 }
 
@@ -2126,7 +1952,6 @@ func TestOptionalPathEquivalenceUsesDominatingAliasDeclaration(t *testing.T) {
 		t.Fatalf("nested function results = %d, want 1", len(root.FunctionResults()))
 	}
 	result := root.FunctionResults()[0]
-	flow := newDiagnosticFlowCache(result)
 	resolver := newResultResolver(result, newResultResolver(root, nil))
 	branchPoint, aliasPath := requireBranchCheckPath(t, result, branchcond.CheckNotNil, "alias")
 	_, aliasExpr := requireLocalAssignmentExprByName(t, result, "alias")
@@ -2134,62 +1959,15 @@ func TestOptionalPathEquivalenceUsesDominatingAliasDeclaration(t *testing.T) {
 	if !ok || maybePath.IsEmpty() {
 		t.Fatalf("alias source path = %v, %v; want maybe path", maybePath, ok)
 	}
-	if !optionalPathsEquivalentAt(result, flow, branchPoint, maybePath, aliasPath) {
-		t.Fatalf("optionalPathsEquivalentAt(%s, %s) = false, want dominating alias equivalence", maybePath, aliasPath)
+	if !result.PathsAliasAtBoundary(branchPoint, maybePath, aliasPath) {
+		t.Fatalf("PathsAliasAtBoundary(%s, %s) = false, want dominating alias equivalence", maybePath, aliasPath)
 	}
-	if !optionalPathConsumesTarget(result, flow, branchPoint, maybePath, aliasPath) {
+	if !optionalPathConsumesTarget(result, branchPoint, maybePath, aliasPath) {
 		t.Fatalf("optionalPathConsumesTarget(%s, %s) = false, want alias-guarded source consumption", maybePath, aliasPath)
 	}
-	aliasType, ok := optionalPathType(result, resolver, flow, branchPoint, aliasPath)
+	aliasType, ok := optionalPathType(result, resolver, branchPoint, aliasPath)
 	if !ok || !optionalTypeHasValue(aliasType) {
 		t.Fatalf("optionalPathType(%s) = (%v, %v), want optional source type", aliasPath, aliasType, ok)
-	}
-}
-
-func TestStaticStringExprValueAtUsesBoundaryLiteralType(t *testing.T) {
-	result := runDiagnosticsResult(t, `
-		local key = "audit"
-		local sink = key
-	`)
-	point, expr := requireLocalAssignmentExprByName(t, result, "sink")
-	got, ok := staticStringExprValueAt(result, point, expr)
-	if !ok || got != "audit" {
-		t.Fatalf("staticStringExprValueAt = (%q, %v), want audit literal", got, ok)
-	}
-}
-
-func TestDiagnosticFlowCacheCachesImmediateDominators(t *testing.T) {
-	result := runDiagnosticsResult(t, `
-		local seed = 1
-		local next = seed + 1
-		local final = next + 1
-	`)
-	flow := newDiagnosticFlowCache(result)
-	first := flow.immediateDominators()
-	if len(first) == 0 {
-		t.Fatalf("immediate dominators = empty")
-	}
-	sentinel := cfg.Point(999999)
-	first[sentinel] = result.Graph().Entry()
-	second := flow.immediateDominators()
-	if got, ok := second[sentinel]; !ok || got != result.Graph().Entry() {
-		t.Fatalf("immediate dominators were recomputed instead of cached: got (%d, %v)", got, ok)
-	}
-	delete(second, sentinel)
-}
-
-func TestDiagnosticFlowCacheTreatsEntryAsReachablePoint(t *testing.T) {
-	result := runDiagnosticsResult(t, `
-		local seed = 1
-		local next = seed + 1
-	`)
-	graph := result.Graph()
-	flow := newDiagnosticFlowCache(result)
-	if !flow.canReach(graph.Entry(), graph.Exit()) {
-		t.Fatalf("entry should reach exit through diagnostic flow cache")
-	}
-	if !flow.canReach(graph.Entry(), graph.Entry()) {
-		t.Fatalf("entry should reach itself through diagnostic flow cache")
 	}
 }
 
@@ -2208,49 +1986,6 @@ func requireBranchCheckPath(t *testing.T, result *body.Result, kind branchcond.C
 	}
 	t.Fatalf("branch check %v for %q not found; available branch paths: %v", kind, pathText, available)
 	return 0, path.Path{}
-}
-
-func TestTruthyDominatingBranchProofsRecognizeTrueArmPresence(t *testing.T) {
-	result := runDiagnosticsResult(t, `
-		local owner: string? = value
-		if owner then
-			local out = ":" .. owner
-		end
-	`)
-	point, expr := requireLocalAssignmentExprByName(t, result, "out")
-	concat, ok := expr.(*ast.StringConcatOpExpr)
-	if !ok {
-		t.Fatalf("out expression = %T, want string concat", expr)
-	}
-	ownerPath, ok := result.ExpressionPath(concat.Rhs)
-	if !ok || ownerPath.IsEmpty() {
-		t.Fatalf("owner expression path = %v, %v; want resolved path", ownerPath, ok)
-	}
-	if !newTruthyDominatingBranchProofs(result).provesPresent(point, ownerPath) {
-		t.Fatalf("truthy guard did not prove %s present at concat point", ownerPath.String())
-	}
-}
-
-func TestTruthyDominatingBranchProofsDoNotLeakPastJoin(t *testing.T) {
-	result := runDiagnosticsResult(t, `
-		local owner: string? = value
-		if owner then
-			local inside = owner
-		end
-		local out = ":" .. owner
-	`)
-	point, expr := requireLocalAssignmentExprByName(t, result, "out")
-	concat, ok := expr.(*ast.StringConcatOpExpr)
-	if !ok {
-		t.Fatalf("out expression = %T, want string concat", expr)
-	}
-	ownerPath, ok := result.ExpressionPath(concat.Rhs)
-	if !ok || ownerPath.IsEmpty() {
-		t.Fatalf("owner expression path = %v, %v; want resolved path", ownerPath, ok)
-	}
-	if newTruthyDominatingBranchProofs(result).provesPresent(point, ownerPath) {
-		t.Fatalf("truthy guard incorrectly proved %s present after the if join", ownerPath.String())
-	}
 }
 
 func diagnosticMessages(diags []diagnostic.Diagnostic) []string {

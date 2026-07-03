@@ -8,11 +8,26 @@ import (
 type judgmentDiagnosticRenderer func(judgment.Judgment, judgment.Policy, judgment.StrictnessMode) (diagnostic.Diagnostic, bool)
 
 var judgmentDiagnosticRenderers = map[judgment.Code]judgmentDiagnosticRenderer{
-	judgment.CodeCallArgType:      renderDirectCallArgumentJudgmentWithPolicy,
-	judgment.CodeCallArity:        renderDirectCallArityJudgmentWithPolicy,
-	judgment.CodeCallCallee:       renderDirectCallCalleeJudgmentWithPolicy,
-	judgment.CodeAssignment:       renderAssignmentJudgmentWithPolicy,
-	judgment.CodeAssignmentTarget: renderOptionalAssignmentTargetJudgmentWithPolicy,
+	judgment.CodeCallArgType:        renderDirectCallArgumentJudgmentWithPolicy,
+	judgment.CodeCallArity:          renderCallArityJudgmentWithPolicy,
+	judgment.CodeCallCallee:         renderCallCalleeJudgmentWithPolicy,
+	judgment.CodeAssignment:         renderAssignmentJudgmentWithPolicy,
+	judgment.CodeAssignmentTarget:   renderOptionalAssignmentTargetJudgmentWithPolicy,
+	judgment.CodeReturn:             renderReturnJudgmentWithPolicy,
+	judgment.CodeNonNilAssertion:    renderNonNilAssertionJudgmentWithPolicy,
+	judgment.CodeNumericForOperand:  renderNumericForJudgmentWithPolicy,
+	judgment.CodeFrozenTable:        renderFrozenTableJudgmentWithPolicy,
+	judgment.CodeLifecycle:          renderLifecycleJudgmentWithPolicy,
+	judgment.CodeUnusedLocal:        renderUnusedLocalJudgmentWithPolicy,
+	judgment.CodeDeadAssignment:     renderDeadAssignmentJudgmentWithPolicy,
+	judgment.CodeChannelSelect:      renderChannelSelectJudgmentWithPolicy,
+	judgment.CodeDiscriminatedUnion: renderDiscriminatedUnionJudgmentWithPolicy,
+	judgment.CodeResultShape:        renderResultShapeJudgmentWithPolicy,
+	judgment.CodeUnresolvedValue:    renderUnresolvedValueJudgmentWithPolicy,
+	judgment.CodeUnresolvedType:     renderUnresolvedTypeJudgmentWithPolicy,
+	judgment.CodeRedundantCondition: renderRedundantConditionJudgmentWithPolicy,
+	judgment.CodeMemberRead:         renderMemberReadJudgmentWithPolicy,
+	judgment.CodeConcatOperand:      renderConcatOperandJudgmentWithPolicy,
 }
 
 func renderJudgmentDiagnostics(items []judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) []diagnostic.Diagnostic {

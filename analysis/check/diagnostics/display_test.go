@@ -655,12 +655,6 @@ func TestNilabilityProofMessagesUseCentralDisplay(t *testing.T) {
 	if got := assignmentSourceTypeEvidence("argument 1", typ.LiteralInt(42)); got != "argument 1 has literal value 42" {
 		t.Fatalf("assignmentSourceTypeEvidence literal = %q", got)
 	}
-	if got := reassignedCallResultFieldEvidenceMessage("res", "res.answer", typ.LiteralInt(1)); got != "res is reassigned before the read; after that assignment, res.answer has literal value 1" {
-		t.Fatalf("reassignedCallResultFieldEvidenceMessage = %q", got)
-	}
-	if got := reassignedCallResultFieldEvidenceMessage("", "", nil); got != "call result is reassigned before the read; the read may use that later assignment" {
-		t.Fatalf("reassignedCallResultFieldEvidenceMessage fallback = %q", got)
-	}
 	if got := optionalAssignmentTargetMessage("bag"); got != "cannot assign through optional bag without nil check" {
 		t.Fatalf("optionalAssignmentTargetMessage = %q", got)
 	}
@@ -754,9 +748,6 @@ func TestReturnProofMessagesUseCentralDisplay(t *testing.T) {
 	}
 	if got := callResultDeclaredReturnEvidence("get", "call result 1", typ.MaterializeOptional(typ.String)); got != "get declares call result 1 as string?" {
 		t.Fatalf("callResultDeclaredReturnEvidence = %q", got)
-	}
-	if got := callResultMissingNonNilProofMessage("call result 1"); got != "no guard on this path proves call result 1 is non-nil before assignment" {
-		t.Fatalf("callResultMissingNonNilProofMessage = %q", got)
 	}
 }
 

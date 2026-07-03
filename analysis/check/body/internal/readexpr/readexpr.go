@@ -457,6 +457,25 @@ func dynamicIndexExpressionValue(config Config, point cfg.Point, dyn factflow.Dy
 	return product.Value{}, false
 }
 
+// DynamicIndexReadProvenPresent reports whether the solved facts prove that a
+// dynamic-index expression reads an existing non-nil slot at point. It exposes
+// the same proof used by expression projection so diagnostic readmodels do not
+// rebuild in-range or key-membership logic independently.
+func DynamicIndexReadProvenPresent(config Config, point cfg.Point, expr factflow.ExprRef, in state.State) bool {
+	dyn, ok := config.Facts.DynamicIndexExpression(expr)
+	if !ok {
+		return false
+	}
+	if dynamicIndexKeyMembershipProvesRead(config, point, dyn, in) ||
+		dynamicIndexInBoundsProvesRead(config, point, dyn, in) {
+		return true
+	}
+	if _, ok := dynamicIndexExpressionProvenMemberValue(config, point, dyn, in); ok {
+		return true
+	}
+	return false
+}
+
 func dynamicIndexKeyMembershipProvesRead(config Config, point cfg.Point, dyn factflow.DynamicIndexExpression, in state.State) bool {
 	if config.Visibility == nil {
 		return false
@@ -1964,8 +1983,20 @@ func projectFinalStaticMember(config Config, point cfg.Point, p pathdom.Path, in
 	}
 	if hasParent {
 		value = inheritProjectedParentPresence(config.Registry, value, parentValue)
+		value = mergeFinalStaticMemberWithCurrentParent(config, p, parentValue, value)
 	}
 	return value, true
+}
+
+func mergeFinalStaticMemberWithCurrentParent(config Config, p pathdom.Path, parentValue product.Value, value product.Value) product.Value {
+	if len(p.Segments) == 0 || identityvalue.HasExact(config.Registry, parentValue) {
+		return value
+	}
+	current, ok := projectFromValueEvidence(config, parentValue, p.Segments[len(p.Segments)-1:])
+	if !ok || product.LessOrEq(config.Registry, current, value) {
+		return value
+	}
+	return current
 }
 
 func refineProjectionWithRootType(config Config, p pathdom.Path, rootValue, projected product.Value) product.Value {

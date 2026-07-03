@@ -540,6 +540,36 @@ func (r *Result) FunctionParamTypeSpansForTargetPath(target path.Path) []factflo
 	return nil
 }
 
+func (r *Result) FunctionReturnTypeSpansForTargetPath(target path.Path) []factflow.SourceSpan {
+	if r == nil || target.IsEmpty() || r.Graph() == nil {
+		return nil
+	}
+	for _, point := range r.Graph().RPO() {
+		def, ok := r.FunctionDefinition(point)
+		if !ok || !def.HasTargetPath || !def.TargetPath.Equal(target) || def.Func == nil {
+			continue
+		}
+		if len(def.Func.ReturnTypes) == 0 {
+			return nil
+		}
+		out := make([]factflow.SourceSpan, len(def.Func.ReturnTypes))
+		for i, ret := range def.Func.ReturnTypes {
+			span := ast.SpanOf(ret)
+			if span.StartLine == 0 || span.StartCol == 0 {
+				continue
+			}
+			out[i] = factflow.SourceSpan{
+				StartLine: span.StartLine,
+				StartCol:  span.StartCol,
+				EndLine:   span.EndLine,
+				EndCol:    span.EndCol,
+			}
+		}
+		return out
+	}
+	return nil
+}
+
 func (r *Result) FunctionTypeParams(fn *ast.FunctionExpr) []bind.TypeDecl {
 	if r == nil || r.bindings == nil || fn == nil {
 		return nil

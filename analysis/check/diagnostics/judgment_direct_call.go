@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/check/obligation/pass"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -18,63 +17,32 @@ func produceDirectCallArgumentJudgmentDiagnostics(result *body.Result, sourceFil
 }
 
 func produceDirectCallArgumentJudgmentDiagnosticsWithPolicy(result *body.Result, sourceFile string, policy judgment.Policy, mode judgment.StrictnessMode) []diagnostic.Diagnostic {
-	return produceDirectCallArgumentJudgmentDiagnosticsFiltered(result, sourceFile, policy, mode, nil)
-}
-
-func produceDirectCallArgumentJudgmentDiagnosticsFiltered(
-	result *body.Result,
-	sourceFile string,
-	policy judgment.Policy,
-	mode judgment.StrictnessMode,
-	reachable func(cfg.Point) bool,
-) []diagnostic.Diagnostic {
 	query := newDiagnosticQuery(result)
-	items := pass.New(pass.DirectCallArguments{}).Run(pass.Context{
-		FunctionKey: sourceFile,
-		SourceFile:  sourceFile,
-		Reader:      query.reader,
+	items := pass.New(pass.CallArguments{}).Run(pass.Context{
+		FunctionKey:                   sourceFile,
+		SourceFile:                    sourceFile,
+		Reader:                        query.reader,
+		SuppressCallerOwnedParameters: result.IsCallContextResult(),
+		PointReachable:                result.PointNormallyReachable,
 	})
-	items = filterJudgmentsByPoint(items, reachable)
 	return renderJudgmentDiagnostics(items, policy, mode)
 }
 
 func produceDirectCallContractJudgmentDiagnosticsWithPolicy(result *body.Result, sourceFile string, policy judgment.Policy, mode judgment.StrictnessMode) []diagnostic.Diagnostic {
-	return produceDirectCallContractJudgmentDiagnosticsFiltered(result, sourceFile, policy, mode, nil)
-}
-
-func produceDirectCallContractJudgmentDiagnosticsFiltered(
-	result *body.Result,
-	sourceFile string,
-	policy judgment.Policy,
-	mode judgment.StrictnessMode,
-	reachable func(cfg.Point) bool,
-) []diagnostic.Diagnostic {
 	query := newDiagnosticQuery(result)
 	ctx := pass.Context{
-		FunctionKey: sourceFile,
-		SourceFile:  sourceFile,
-		Reader:      query.reader,
+		FunctionKey:                   sourceFile,
+		SourceFile:                    sourceFile,
+		Reader:                        query.reader,
+		SuppressCallerOwnedParameters: result.IsCallContextResult(),
+		PointReachable:                result.PointNormallyReachable,
 	}
 	items := firstDirectCallContractJudgmentPerCall(
-		pass.New(pass.DirectCallCallee{}).Run(ctx),
-		pass.New(pass.DirectCallArity{}).Run(ctx),
-		pass.New(pass.DirectCallArguments{}).Run(ctx),
+		pass.New(pass.CallCallee{}).Run(ctx),
+		pass.New(pass.CallArity{}).Run(ctx),
+		pass.New(pass.CallArguments{}).Run(ctx),
 	)
-	items = filterJudgmentsByPoint(items, reachable)
 	return renderJudgmentDiagnostics(items, policy, mode)
-}
-
-func filterJudgmentsByPoint(items []judgment.Judgment, reachable func(cfg.Point) bool) []judgment.Judgment {
-	if len(items) == 0 || reachable == nil {
-		return items
-	}
-	out := items[:0]
-	for _, item := range items {
-		if reachable(item.Point) {
-			out = append(out, item)
-		}
-	}
-	return out
 }
 
 func firstDirectCallContractJudgmentPerCall(groups ...[]judgment.Judgment) []judgment.Judgment {
@@ -287,8 +255,11 @@ func directCallArgumentExpectedEvidenceMessage(display diagnosticDisplay, item j
 			continue
 		}
 		detail := evidence.Detail
-		if detail.FunctionName == "" || detail.SubjectLabel == "" || detail.ProviderLabel == "" || detail.MemberParam <= 0 {
+		if detail.FunctionName == "" || detail.SubjectLabel == "" {
 			break
+		}
+		if detail.ProviderLabel == "" || detail.MemberParam <= 0 {
+			return display.CallParamObligationEvidence(detail.FunctionName, detail.SubjectLabel, want)
 		}
 		return display.MemberCallParamObligationEvidence(detail.FunctionName, detail.SubjectLabel, detail.ProviderLabel, detail.MemberParam, want)
 	}

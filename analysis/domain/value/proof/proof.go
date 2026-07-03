@@ -95,6 +95,15 @@ func (r Reader) ValueHasUntrustedTopOrigin(value product.Value) bool {
 	return got.IsGradualTop() || got.IsExplicitTop()
 }
 
+// ValueHasExplicitTopOrigin reports whether value crossed an explicit
+// any/unknown assertion boundary. Gradual top does not satisfy this predicate.
+func (r Reader) ValueHasExplicitTopOrigin(value product.Value) bool {
+	if r.reg == nil {
+		return false
+	}
+	return product.Get(r.reg, value, evidence.Key).IsExplicitTop()
+}
+
 func (r Reader) ValueHasExactIdentity(value product.Value) bool {
 	return identityvalue.HasExact(r.reg, value)
 }

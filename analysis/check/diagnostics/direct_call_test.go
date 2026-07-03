@@ -247,7 +247,7 @@ func TestCallParamObligationReportsStricterThanDirectUnionContract(t *testing.T)
 	if !diagnosticEvidenceContains(evidence, "inside scale, argument 1 must satisfy number") {
 		t.Fatalf("explanation = %q, want callee-use obligation evidence", d.Explanation.String())
 	}
-	if len(evidence) < 2 || !spanEqual(evidence[1].Span, d.Labels[0].Span) {
+	if len(evidence) < 2 || !diagnosticSpanEqual(evidence[1].Span, d.Labels[0].Span) {
 		t.Fatalf("obligation evidence span = %#v, label span = %#v; want argument-focused evidence", evidence, d.Labels)
 	}
 }
@@ -365,54 +365,8 @@ func TestDirectCallUsesGenericModuleResultFalseEdgeBoundaryProof(t *testing.T) {
 	}
 }
 
-func TestModuleResultFalseEdgeFlowTypesArgumentAsString(t *testing.T) {
-	result := runDiagnosticsResult(t, `
-		type Result<T> = { ok: true, value: T } | { ok: false, error: string }
-
-		local M = {}
-
-		function M.err<T>(message: string): Result<T>
-			return { ok = false, error = message }
-		end
-
-		function M.map<T, U>(result: Result<T>, fn: (T) -> U): Result<U>
-			if result.ok then
-				return { ok = true, value = fn(result.value) }
-			end
-			return M.err(result.error)
-		end
-
-		return M
-	`)
-	rootResolver := newResultResolver(result, nil)
-	guards := newDiagnosticGuardCache()
-	for _, child := range result.FunctionResults() {
-		if child == nil || child.Graph() == nil {
-			continue
-		}
-		resolver := newResultResolver(child, rootResolver)
-		envs := guards.environments(child)
-		for _, point := range child.Graph().RPO() {
-			fact, ok := child.Call(point)
-			if !ok || fact.Call == nil || len(fact.Call.Args) != 1 {
-				continue
-			}
-			argPath, ok := child.ExpressionPath(fact.Call.Args[0])
-			if !ok || argPath.String() != "result.error" {
-				continue
-			}
-			got, ok := newFlowExpressionTyper(child, resolver, point, envs[point]).typeOf(fact.Call.Args[0])
-			if !ok || !typ.TypeEquals(got, typ.String) {
-				t.Fatalf("flow type for result.error = %v/%v, want string", got, ok)
-			}
-			return
-		}
-	}
-	t.Fatal("M.err(result.error) call not found")
-}
-
-func TestDirectCallFlowTypesNestedValidatedOptionalStringHelperReturn(t *testing.T) {
-	result := runDiagnosticsResult(t, `
+func TestDirectCallAcceptsNestedValidatedOptionalStringHelperReturn(t *testing.T) {
+	diags := runDiagnostics(t, `
 local function string_or_nil(value: any): string?
     if type(value) == "string" and value ~= "" then
         return value
@@ -427,52 +381,8 @@ local function run(config: { run_context_binding: any }): ()
     configure(string_or_nil(config.run_context_binding))
 end
 `)
-	resolver := newResultResolver(result, nil)
-	guards := newDiagnosticGuardCache()
-	for _, child := range result.FunctionResults() {
-		if child == nil || child.Graph() == nil {
-			continue
-		}
-		childResolver := newResultResolver(child, resolver)
-		envs := guards.environments(child)
-		for _, point := range child.Graph().RPO() {
-			fact, ok := child.Call(point)
-			if !ok || fact.Call == nil || len(fact.Call.Args) != 1 {
-				continue
-			}
-			call, ok := fact.Call.Args[0].(*ast.FuncCallExpr)
-			if !ok {
-				continue
-			}
-			got, ok := newFlowExpressionTyper(child, childResolver, point, envs[point]).typeOf(call)
-			if !ok || !typ.TypeEquals(got, typ.MaterializeOptional(typ.String)) {
-				t.Fatalf("flow type for string_or_nil(...) = %v/%v, want string?", got, ok)
-			}
-			return
-		}
-	}
-	t.Fatal("configure(string_or_nil(...)) call not found")
-}
-
-func TestDirectCallDefinitionCacheBuildsOncePerResult(t *testing.T) {
-	result := runDiagnosticsResult(t, `
-		local function helper(): string
-			return "ok"
-		end
-		return helper()
-	`)
-	cache := newDirectCallDefinitionCache()
-	context := producerContext{
-		guards:            newDiagnosticGuardCache(),
-		directDefinitions: cache,
-	}
-	first := directCallDefinitions(result, context, nil)
-	second := directCallDefinitions(result, context, nil)
-	if len(first) == 0 || len(second) == 0 {
-		t.Fatalf("definition cache returned empty maps: first=%d second=%d", len(first), len(second))
-	}
-	if cache.builds != 1 {
-		t.Fatalf("cache builds = %d, want 1", cache.builds)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want validated optional helper result accepted", diags)
 	}
 }
 
@@ -615,35 +525,17 @@ func TestTypedOptionalParamDefaultLocalHasStringFlowType(t *testing.T) {
 	t.Fatal("lvl assignment not found")
 }
 
-func TestTypedOptionalParamConcatArgumentHasStringFlowType(t *testing.T) {
-	result := runDiagnosticsResult(t, `
+func TestTypedOptionalParamConcatArgumentAccepted(t *testing.T) {
+	diags := runDiagnostics(t, `
 		local function log(msg: string, level: string?)
 			local lvl = level or "INFO"
 			print(lvl .. ": " .. msg)
 		end
 		return log
 	`)
-	rootResolver := newResultResolver(result, nil)
-	guards := newDiagnosticGuardCache()
-	for _, child := range result.FunctionResults() {
-		if child == nil || child.Graph() == nil {
-			continue
-		}
-		resolver := newResultResolver(child, rootResolver)
-		envs := guards.environments(child)
-		for _, point := range child.Graph().RPO() {
-			fact, ok := child.Call(point)
-			if !ok || fact.Call == nil || len(fact.Call.Args) != 1 {
-				continue
-			}
-			got, ok := newFlowExpressionTyper(child, resolver, point, envs[point]).typeOf(fact.Call.Args[0])
-			if !ok || !typ.TypeEquals(got, typ.String) {
-				t.Fatalf("print argument flow type = %v/%v, want string", got, ok)
-			}
-			return
-		}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want defaulted optional concat argument accepted", diags)
 	}
-	t.Fatal("print call not found")
 }
 
 func TestDirectCallAcceptsUntypedDefaultOptional(t *testing.T) {
@@ -757,7 +649,7 @@ local x: string = api.make()
 		!strings.Contains(d.Message, "string") {
 		t.Fatalf("message = %q, want number result to string target mismatch", d.Message)
 	}
-	if !diagnosticEvidenceContains(d.Explanation.Evidence(), "returns number") ||
+	if !diagnosticEvidenceContains(d.Explanation.Evidence(), "declares call result 1 as number") ||
 		!diagnosticEvidenceContains(d.Explanation.Evidence(), "assignment target x requires string") {
 		t.Fatalf("evidence = %#v, want member-call result and target annotation evidence", d.Explanation.Evidence())
 	}
@@ -777,7 +669,11 @@ local x: string = api.make()
   |                   ↑ call result
 
 because:
-  1. proven: api.make returns number
+  1. claimed: api.make declares call result 1 as number
+ --> diagnostics_test.lua:3:24
+  |
+  |                        ↓ declared return type
+3 |     make = function(): number
   2. claimed: assignment target x requires string
 
 help: Assign the call result to a compatible target type, or change the callee return type if this result is valid.`

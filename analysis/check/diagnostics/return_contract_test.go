@@ -67,7 +67,7 @@ return parse_count("10")
 			!strings.Contains(d.Message, "number") {
 			t.Fatalf("return contract diagnostic = %#v, want literal string-to-number mismatch", d)
 		}
-		if got := d.Explanation.String(); !strings.Contains(got, `returned value 1 has literal value "bad"`) ||
+		if got := d.Explanation.String(); !strings.Contains(got, `returned value 1 ("bad") has literal value "bad"`) ||
 			!strings.Contains(got, "returned value 1 must satisfy declared return type number") {
 			t.Fatalf("return contract explanation = %q, want literal and declared-return evidence", got)
 		}

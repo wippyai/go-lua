@@ -75,14 +75,14 @@ local s: string = raw`)
 	}
 }
 
-func TestProduceWithConfigCanOptIntoAssignmentJudgments(t *testing.T) {
+func TestProduceUsesAssignmentJudgmentsByDefault(t *testing.T) {
 	result := runDiagnosticsResult(t, `local raw: any = 1
 local s: string = raw`)
 	if result == nil {
 		t.Fatal("RootResult nil")
 	}
 
-	diags := ProduceWithConfig(result, Config{UseAssignmentJudgments: true})
+	diags := ProduceWithConfig(result, Config{})
 	var assignment []diagnostic.Diagnostic
 	for _, d := range diags {
 		if d.Code == CodeAssignmentType {
@@ -97,7 +97,7 @@ local s: string = raw`)
 	}
 }
 
-func TestProduceWithConfigAssignmentJudgmentsIncludeOptionalTarget(t *testing.T) {
+func TestProduceAssignmentJudgmentsIncludeOptionalTargetByDefault(t *testing.T) {
 	result := runDiagnosticsResult(t, `type Bag = {name: string}
 function update(bag: Bag?): ()
 	bag.name = "ok"
@@ -106,7 +106,7 @@ end`)
 		t.Fatal("RootResult nil")
 	}
 
-	diags := ProduceWithConfig(result, Config{UseAssignmentJudgments: true})
+	diags := ProduceWithConfig(result, Config{})
 	var optional []diagnostic.Diagnostic
 	for _, d := range diags {
 		if d.Code == CodeOptionalAssignmentTarget {

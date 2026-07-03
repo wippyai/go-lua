@@ -12,6 +12,7 @@ type diagnosticPrecedenceRelation uint8
 
 const (
 	diagnosticPrecedenceCoveredSpan diagnosticPrecedenceRelation = iota + 1
+	diagnosticPrecedenceCauseCoversSpan
 )
 
 func defaultDiagnosticPrecedenceRules() []diagnosticPrecedenceRule {
@@ -70,6 +71,21 @@ func defaultDiagnosticPrecedenceRules() []diagnosticPrecedenceRule {
 			cause:      CodeDirectCallResultAssignment,
 			suppressed: CodeAssignmentType,
 			relation:   diagnosticPrecedenceCoveredSpan,
+		},
+		{
+			cause:      CodeDiscriminatedUnionExhaustive,
+			suppressed: CodeReturnContractType,
+			relation:   diagnosticPrecedenceCoveredSpan,
+		},
+		{
+			cause:      CodeDiscriminatedUnionExhaustive,
+			suppressed: CodeNotCallable,
+			relation:   diagnosticPrecedenceCauseCoversSpan,
+		},
+		{
+			cause:      CodeDiscriminatedUnionExhaustive,
+			suppressed: CodeDirectCallNotCallable,
+			relation:   diagnosticPrecedenceCauseCoversSpan,
 		},
 	}
 }
@@ -135,6 +151,8 @@ func diagnosticPrecedenceMatches(relation diagnosticPrecedenceRelation, cause, d
 	switch relation {
 	case diagnosticPrecedenceCoveredSpan:
 		return diagnosticSameFileOrUnknown(dependent, cause) && diagnosticSpanCovers(dependent.Span, cause.Span)
+	case diagnosticPrecedenceCauseCoversSpan:
+		return diagnosticSameFileOrUnknown(dependent, cause) && diagnosticSpanCovers(cause.Span, dependent.Span)
 	default:
 		return false
 	}

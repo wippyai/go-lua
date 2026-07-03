@@ -51,23 +51,31 @@ func TestApplyDiagnosticPrecedenceKeepsUncoveredDependent(t *testing.T) {
 
 func TestDefaultDiagnosticPrecedenceRulesDeclareCascadeOwnership(t *testing.T) {
 	rules := defaultDiagnosticPrecedenceRules()
-	want := map[[2]diagnostic.Code]struct{}{
-		{CodeUnresolvedValueReference, CodeAssignmentType}:          {},
-		{CodeMissingMember, CodeAssignmentType}:                     {},
-		{CodeDirectCallNotCallable, CodeAssignmentType}:             {},
-		{CodeDirectCallNotCallable, CodeDirectCallResultAssignment}: {},
-		{CodeDirectCallTooFewArgs, CodeAssignmentType}:              {},
-		{CodeDirectCallTooFewArgs, CodeDirectCallResultAssignment}:  {},
-		{CodeDirectCallTooManyArgs, CodeAssignmentType}:             {},
-		{CodeDirectCallTooManyArgs, CodeDirectCallResultAssignment}: {},
-		{CodeDirectCallArgType, CodeAssignmentType}:                 {},
-		{CodeDirectCallArgType, CodeDirectCallResultAssignment}:     {},
-		{CodeDirectCallResultAssignment, CodeAssignmentType}:        {},
+	want := map[[2]diagnostic.Code]diagnosticPrecedenceRelation{
+		{CodeUnresolvedValueReference, CodeAssignmentType}:            diagnosticPrecedenceCoveredSpan,
+		{CodeMissingMember, CodeAssignmentType}:                       diagnosticPrecedenceCoveredSpan,
+		{CodeDirectCallNotCallable, CodeAssignmentType}:               diagnosticPrecedenceCoveredSpan,
+		{CodeDirectCallNotCallable, CodeDirectCallResultAssignment}:   diagnosticPrecedenceCoveredSpan,
+		{CodeDirectCallTooFewArgs, CodeAssignmentType}:                diagnosticPrecedenceCoveredSpan,
+		{CodeDirectCallTooFewArgs, CodeDirectCallResultAssignment}:    diagnosticPrecedenceCoveredSpan,
+		{CodeDirectCallTooManyArgs, CodeAssignmentType}:               diagnosticPrecedenceCoveredSpan,
+		{CodeDirectCallTooManyArgs, CodeDirectCallResultAssignment}:   diagnosticPrecedenceCoveredSpan,
+		{CodeDirectCallArgType, CodeAssignmentType}:                   diagnosticPrecedenceCoveredSpan,
+		{CodeDirectCallArgType, CodeDirectCallResultAssignment}:       diagnosticPrecedenceCoveredSpan,
+		{CodeDirectCallResultAssignment, CodeAssignmentType}:          diagnosticPrecedenceCoveredSpan,
+		{CodeDiscriminatedUnionExhaustive, CodeReturnContractType}:    diagnosticPrecedenceCoveredSpan,
+		{CodeDiscriminatedUnionExhaustive, CodeNotCallable}:           diagnosticPrecedenceCauseCoversSpan,
+		{CodeDiscriminatedUnionExhaustive, CodeDirectCallNotCallable}: diagnosticPrecedenceCauseCoversSpan,
 	}
 	for _, rule := range rules {
-		delete(want, [2]diagnostic.Code{rule.cause, rule.suppressed})
-		if rule.relation != diagnosticPrecedenceCoveredSpan {
-			t.Fatalf("rule %#v uses relation %v, want covered span", rule, rule.relation)
+		key := [2]diagnostic.Code{rule.cause, rule.suppressed}
+		relation, ok := want[key]
+		if !ok {
+			continue
+		}
+		delete(want, key)
+		if rule.relation != relation {
+			t.Fatalf("rule %#v uses relation %v, want %v", rule, rule.relation, relation)
 		}
 	}
 	if len(want) != 0 {
@@ -82,6 +90,30 @@ func TestApplyDiagnosticPrecedenceSuppressesAssignmentForMemberMissingCause(t *t
 	got := applyDiagnosticPrecedence([]diagnostic.Diagnostic{assignment, memberMissing}, defaultDiagnosticPrecedenceRules())
 	if len(got) != 1 || got[0].Code != CodeMissingMember {
 		t.Fatalf("precedence result = %#v, want only member-missing cause", got)
+	}
+}
+
+func TestApplyDiagnosticPrecedenceSuppressesReturnForResultShapeExhaustivenessCause(t *testing.T) {
+	ret := precedenceDiagnostic("main.lua", CodeReturnContractType, source.Span{StartLine: 7, StartCol: 10, EndLine: 7, EndCol: 30})
+	exhaustive := precedenceDiagnostic("main.lua", CodeDiscriminatedUnionExhaustive, source.Span{StartLine: 7, StartCol: 18, EndLine: 7, EndCol: 24})
+
+	got := applyDiagnosticPrecedence([]diagnostic.Diagnostic{ret, exhaustive}, defaultDiagnosticPrecedenceRules())
+	if len(got) != 1 || got[0].Code != CodeDiscriminatedUnionExhaustive {
+		t.Fatalf("precedence result = %#v, want only result-shape exhaustiveness cause", got)
+	}
+}
+
+func TestApplyDiagnosticPrecedenceSuppressesNotCallableForUnionExhaustivenessCause(t *testing.T) {
+	for _, suppressed := range []diagnostic.Code{CodeNotCallable, CodeDirectCallNotCallable} {
+		t.Run(string(suppressed), func(t *testing.T) {
+			call := precedenceDiagnostic("main.lua", suppressed, source.Span{StartLine: 7, StartCol: 10, EndLine: 7, EndCol: 24})
+			exhaustive := precedenceDiagnostic("main.lua", CodeDiscriminatedUnionExhaustive, source.Span{StartLine: 7, StartCol: 10, EndLine: 7, EndCol: 30})
+
+			got := applyDiagnosticPrecedence([]diagnostic.Diagnostic{call, exhaustive}, defaultDiagnosticPrecedenceRules())
+			if len(got) != 1 || got[0].Code != CodeDiscriminatedUnionExhaustive {
+				t.Fatalf("precedence result = %#v, want only union exhaustiveness cause", got)
+			}
+		})
 	}
 }
 

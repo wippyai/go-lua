@@ -20,6 +20,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
@@ -806,6 +807,46 @@ func TestLowerChannelSelectFacts(t *testing.T) {
 		if !ok || !typ.TypeEquals(payloadType, payloadTypes[i]) {
 			t.Fatalf("receive payload type %d = %v/%v, want %v", i, payloadType, ok, payloadTypes[i])
 		}
+	}
+}
+
+func TestLowerOrdinaryRootTableConstructorReassignmentKeepsRuntimeValue(t *testing.T) {
+	target := symbol.ID(1201)
+	table := &ast.TableExpr{}
+	shape, ok := sourceprovenance.NewSourceShape(true, false, false, false)
+	if !ok {
+		t.Fatal("invalid source shape")
+	}
+	source, ok := sourceprovenance.NewExpressionSource(table, 0, 0, 0, shape)
+	if !ok {
+		t.Fatal("invalid expression source")
+	}
+	reg := standard.Registry()
+	fact, ok := (&lowerer{
+		registry:   reg,
+		typeValues: typevalue.NewCache(),
+		symbolTypes: map[symbol.ID]typ.Type{
+			target: typetable.NewRecord().Field("answer", typ.String).Build(),
+		},
+		exprs:            make(map[any]factflow.ExprRef),
+		expressionValues: make(map[factflow.ExprRef]product.Value),
+	}).ordinaryAssignment(semantics.OrdinaryAssignmentFact{
+		Target:    ident("res"),
+		Value:     table,
+		Source:    source,
+		Symbol:    target,
+		HasSymbol: true,
+		Path:      path.NewPath(target, "res"),
+		HasPath:   true,
+	})
+	if !ok {
+		t.Fatal("ordinary assignment did not lower")
+	}
+	if fact.DeclaredValueOverlays() {
+		t.Fatalf("ordinary reassignment overlays contextual type; fresh table value must survive")
+	}
+	if _, ok := fact.DeclaredValue(); ok {
+		t.Fatalf("ordinary reassignment carries declared value; fresh table value must survive")
 	}
 }
 

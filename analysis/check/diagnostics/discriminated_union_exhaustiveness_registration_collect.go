@@ -3,14 +3,9 @@ package diagnostics
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
-	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -120,7 +115,7 @@ func registrationAssignmentTarget(result *body.Result, point cfg.Point, fact sem
 	if !ok || registry.Symbol == 0 {
 		return pathdom.Path{}, "", false
 	}
-	key, ok := staticStringExprValueAt(result, point, attr.Key)
+	key, ok := result.StaticStringExprValueAtBoundary(point, attr.Key)
 	return registry, key, ok
 }
 
@@ -129,7 +124,7 @@ func registrationCallFromFact(result *body.Result, site factflow.CallSite, fact 
 	if !ok || keyIndex < 0 || keyIndex >= len(fact.Args)-1 {
 		return registrationCall{}, false
 	}
-	key, ok := staticStringExprValueAt(result, point, fact.Args[keyIndex])
+	key, ok := result.StaticStringExprValueAtBoundary(point, fact.Args[keyIndex])
 	if !ok || !registrationCallbackExpr(result, point, fact.Args[keyIndex+1]) {
 		return registrationCall{}, false
 	}
@@ -160,19 +155,19 @@ func registrationRegistryAndKeyIndex(result *body.Result, site factflow.CallSite
 func openRegistrationMutationFromFact(result *body.Result, site factflow.CallSite, point cfg.Point, fact semantics.CallFact) (openRegistrationMutation, bool) {
 	registry, keyIndex, ok := registrationRegistryAndKeyIndex(result, site, fact)
 	if ok && keyIndex >= 0 && keyIndex < len(fact.Args)-1 {
-		if _, ok := staticStringExprValueAt(result, point, fact.Args[keyIndex]); ok && registrationCallbackExpr(result, point, fact.Args[keyIndex+1]) {
+		if _, ok := result.StaticStringExprValueAtBoundary(point, fact.Args[keyIndex]); ok && registrationCallbackExpr(result, point, fact.Args[keyIndex+1]) {
 			return openRegistrationMutation{}, false
 		}
 		if registrationCallbackExpr(result, point, fact.Args[keyIndex+1]) {
 			return openRegistrationMutation{path: registry, opensAll: true, aliasSensitive: true, mayRegister: true}, true
 		}
 	}
-	if receiver, ok := callSiteMemberReceiverPath(site); ok && callMayInvalidateTrackedPath(result, point, receiver) {
+	if receiver, ok := callSiteMemberReceiverPath(site); ok && result.CallMayInvalidateTrackedPath(point, receiver) {
 		return openRegistrationMutation{path: receiver, opensAll: true, aliasSensitive: true, mayRegister: true}, true
 	}
 	for _, arg := range fact.Args {
 		argPath, ok := result.ExpressionPath(arg)
-		if ok && callMayInvalidateTrackedPath(result, point, argPath) {
+		if ok && result.CallMayInvalidateTrackedPath(point, argPath) {
 			return openRegistrationMutation{path: argPath, opensAll: true, aliasSensitive: true, mayRegister: true}, true
 		}
 	}
@@ -180,101 +175,11 @@ func openRegistrationMutationFromFact(result *body.Result, site factflow.CallSit
 }
 
 func registrationValueMayRegister(result *body.Result, point cfg.Point, expr ast.Expr) bool {
-	if registrationCallbackExpr(result, point, expr) {
-		return true
-	}
-	if result == nil || result.Registry() == nil {
-		return true
-	}
-	value, ok := newDiagnosticQuery(result).ExpressionValueBeforeBoundary(point, expr)
-	if !ok {
-		return true
-	}
-	if product.Get(result.Registry(), value, runtimekind.Key).Contains(runtimekind.Function) {
-		return true
-	}
-	if valueType, ok := typevalue.TypeOf(result.Registry(), value); ok {
-		return typ.IsAny(valueType) || typ.IsUnknown(valueType)
-	}
-	return false
+	return result.ExpressionMayBeFunctionBeforeBoundary(point, expr)
 }
 
 func registrationCallbackExpr(result *body.Result, point cfg.Point, expr ast.Expr) bool {
-	if _, ok := directFunctionExprFromExpr(expr); ok {
-		return true
-	}
-	if _, ok := result.FunctionValueTypeAtBoundary(point, expr); ok {
-		return true
-	}
-	path, ok := result.ExpressionPath(expr)
-	if !ok || path.IsEmpty() {
-		return false
-	}
-	return registrationCallbackPathExpr(result, point, path, nil)
-}
-
-func registrationCallbackPathExpr(result *body.Result, point cfg.Point, target pathdom.Path, seen map[pathdom.PathKey]struct{}) bool {
-	graph := result.Graph()
-	if graph == nil || target.IsEmpty() {
-		return false
-	}
-	key := target.Key()
-	if _, ok := seen[key]; ok {
-		return false
-	}
-	if seen == nil {
-		seen = make(map[pathdom.PathKey]struct{}, 1)
-	}
-	seen[key] = struct{}{}
-	if dominatingFunctionDefinitionForPath(result, point, target) != nil {
-		return true
-	}
-	idom := dominance.ComputeImmediateDominatorInfo(graph).Map()
-	visited := make(map[cfg.Point]struct{}, graph.Size())
-	for cursor := point; ; {
-		if _, ok := visited[cursor]; ok {
-			return false
-		}
-		visited[cursor] = struct{}{}
-		if fact, ok := result.LocalAssignment(cursor); ok &&
-			len(target.Segments) == 0 &&
-			fact.HasSymbol &&
-			fact.Symbol == target.Symbol {
-			return registrationCallbackSourceExpr(result, cursor, fact.Expr, seen)
-		}
-		if fact, ok := result.OrdinaryAssignment(cursor); ok {
-			if len(target.Segments) == 0 &&
-				fact.HasSymbol &&
-				fact.Symbol == target.Symbol {
-				return registrationCallbackSourceExpr(result, cursor, fact.Value, seen)
-			}
-			if fact.HasPath && fact.Path.Equal(target) {
-				return registrationCallbackSourceExpr(result, cursor, fact.Value, seen)
-			}
-			if fact.HasPath && target.HasPrefix(fact.Path) {
-				return false
-			}
-		}
-		parent, ok := idom[cursor]
-		if !ok || parent == cursor {
-			return false
-		}
-		cursor = parent
-	}
-}
-
-func registrationCallbackSourceExpr(result *body.Result, point cfg.Point, expr ast.Expr, seen map[pathdom.PathKey]struct{}) bool {
-	if _, ok := directFunctionExprFromExpr(expr); ok {
-		return true
-	}
-	if _, ok := result.FunctionValueTypeAtBoundary(point, expr); ok {
-		return true
-	}
-	path, ok := result.ExpressionPath(expr)
-	if !ok || path.IsEmpty() {
-		return false
-	}
-	return registrationCallbackPathExpr(result, point, path, seen)
+	return result.ExpressionProvenFunctionAtBoundary(point, expr)
 }
 
 func (p discriminatedUnionExhaustiveness) dispatchCalls(result *body.Result, graph cfg.Graph) []dispatchCall {

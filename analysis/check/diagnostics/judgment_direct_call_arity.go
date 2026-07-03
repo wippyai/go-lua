@@ -9,9 +9,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 )
 
-func produceDirectCallArityJudgmentDiagnostics(result *body.Result, sourceFile string) []diagnostic.Diagnostic {
+func produceCallArityJudgmentDiagnostics(result *body.Result, sourceFile string) []diagnostic.Diagnostic {
 	query := newDiagnosticQuery(result)
-	items := pass.New(pass.DirectCallArity{}).Run(pass.Context{
+	items := pass.New(pass.CallArity{}).Run(pass.Context{
 		FunctionKey: sourceFile,
 		SourceFile:  sourceFile,
 		Reader:      query.reader,
@@ -19,7 +19,7 @@ func produceDirectCallArityJudgmentDiagnostics(result *body.Result, sourceFile s
 	return renderJudgmentDiagnostics(items, judgment.DefaultPolicy(), judgment.StrictnessDefault)
 }
 
-func renderDirectCallArityJudgmentWithPolicy(item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
+func renderCallArityJudgmentWithPolicy(item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
 	if item.Code != judgment.CodeCallArity || item.Subject.Kind != judgment.SubjectCallExpression || len(item.Spans) == 0 {
 		return diagnostic.Diagnostic{}, false
 	}

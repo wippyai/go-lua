@@ -14,21 +14,27 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/proof"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/factquery"
 	enginesourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/access"
+	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -181,6 +187,86 @@ func (r *Result) ExpressionValueBeforeBoundary(point cfg.Point, expr ast.Expr) (
 	return r.expressionAssignmentSourceValueAtBoundary(point, expr, r.SourceValueBeforeBoundary)
 }
 
+// SourceReadProvenPresentBeforeBoundary reports whether source is a dynamic
+// indexed read whose solved facts prove the selected slot is present before the
+// boundary at point. It is the public read-boundary wrapper around readexpr's
+// in-range/key-membership proof so diagnostics do not duplicate that logic.
+func (r *Result) SourceReadProvenPresentBeforeBoundary(point cfg.Point, source factflow.ValueSource) bool {
+	if r == nil || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		return false
+	}
+	in, ok := r.solvedStateAt(point)
+	if !ok || state.IsBottom(r.registry, in) {
+		return false
+	}
+	return readexpr.DynamicIndexReadProvenPresent(r.readExprConfig(sourceValueReadBeforeBoundary), point, source.ExprRef, in)
+}
+
+// ExpressionReadProvenPresentBeforeBoundary reports whether expr's lowered
+// source is a dynamic indexed read proven present before the boundary at point.
+func (r *Result) ExpressionReadProvenPresentBeforeBoundary(point cfg.Point, expr ast.Expr) bool {
+	if r == nil || expr == nil {
+		return false
+	}
+	if p, ok := r.ExpressionPath(expr); ok && r.PathProvenPresentBeforeBoundary(point, p) {
+		return true
+	}
+	if fact, ok := r.LocalAssignment(point); ok && fact.Expr == expr {
+		if lowered, ok := r.facts.LocalAssignment(point); ok {
+			return r.SourceReadProvenPresentBeforeBoundary(point, lowered.Source())
+		}
+	}
+	if fact, ok := r.OrdinaryAssignment(point); ok && fact.Value == expr {
+		if lowered, ok := r.facts.OrdinaryAssignment(point); ok {
+			return r.SourceReadProvenPresentBeforeBoundary(point, lowered.Source())
+		}
+		if lowered, ok := r.facts.PathAssignment(point); ok {
+			return r.SourceReadProvenPresentBeforeBoundary(point, lowered.Source())
+		}
+	}
+	return false
+}
+
+// PathProvenPresentBeforeBoundary reports whether the solved branch evidence
+// proves p present before the boundary at point. It is the static-path sibling
+// of SourceReadProvenPresentBeforeBoundary's dynamic-index proof.
+func (r *Result) PathProvenPresentBeforeBoundary(point cfg.Point, p pathdom.Path) bool {
+	if r == nil || r.visibility == nil || p.IsEmpty() {
+		return false
+	}
+	ks := r.visibility.KeySpace()
+	if ks == nil {
+		return false
+	}
+	in, ok := r.solvedStateAt(point)
+	if !ok || state.IsBottom(r.registry, in) {
+		return false
+	}
+	snapshot := in.BranchProofsSnapshot(ks)
+	if snapshot.Bottom || snapshot.Top || len(snapshot.Proofs) == 0 {
+		return false
+	}
+	address := visibility.AddressAt(r.visibility, point, p)
+	found := false
+	address.ForEachStateKey(func(stateKey pathaddr.StateKey) bool {
+		key, ok := ks.InternStateKey(stateKey)
+		if !ok {
+			return true
+		}
+		for _, proof := range snapshot.Proofs {
+			if proof.Kind != pathevidence.BranchProofPathPresence ||
+				proof.Path != key ||
+				!presence.Equal(proof.Presence, presence.Present()) {
+				continue
+			}
+			found = true
+			return false
+		}
+		return true
+	}, visibility.StateKeyVisible, visibility.StateKeyRootOrVisible, visibility.StateKeyStructural)
+	return found
+}
+
 func (r *Result) attributeExpressionValueBeforeBoundary(point cfg.Point, expr ast.Expr) (product.Value, bool) {
 	attr, ok := expr.(*ast.AttrGetExpr)
 	if !ok || attr.Object == nil || attr.Key == nil {
@@ -259,6 +345,62 @@ func attrKeyLiteralType(expr ast.Expr) (typ.Type, bool) {
 	default:
 		return nil, false
 	}
+}
+
+// StaticStringExprValueAtBoundary returns the statically-known string literal
+// for expr at point. Literal syntax is accepted directly; non-literal
+// expressions must be proven by the solved product value at the boundary.
+func (r *Result) StaticStringExprValueAtBoundary(point cfg.Point, expr ast.Expr) (string, bool) {
+	if key, ok := staticStringLiteralExpr(expr); ok {
+		return key, true
+	}
+	if r == nil || expr == nil || r.registry == nil || r.typeValues == nil {
+		return "", false
+	}
+	value, ok := r.ExpressionValueAtBoundary(point, expr)
+	if !ok {
+		return "", false
+	}
+	t, ok := proof.New(r.registry, r.typeValues).ValueTypeWithPresence(value)
+	if !ok {
+		return "", false
+	}
+	lit, ok := unwrap.Annotated(t).(*typ.Literal)
+	if !ok || lit.Base != kind.String {
+		return "", false
+	}
+	name, ok := lit.Value.(string)
+	return name, ok
+}
+
+// PathLiteralTypeAtBoundary returns the current solved literal type for p at
+// point. It is the canonical post-solve query for consumers that need to know
+// whether flow facts have collapsed a path to one concrete literal value.
+func (r *Result) PathLiteralTypeAtBoundary(point cfg.Point, p pathdom.Path) (typ.Type, bool) {
+	if r == nil || p.IsEmpty() || r.registry == nil || r.typeValues == nil {
+		return nil, false
+	}
+	value, ok := r.PathValueAtBoundary(point, p)
+	if !ok {
+		return nil, false
+	}
+	t, ok := proof.New(r.registry, r.typeValues).ValueTypeWithPresence(value)
+	if !ok {
+		return nil, false
+	}
+	lit, ok := unwrap.Annotated(t).(*typ.Literal)
+	if !ok {
+		return nil, false
+	}
+	return lit, true
+}
+
+func staticStringLiteralExpr(expr ast.Expr) (string, bool) {
+	lit, ok := expr.(*ast.StringExpr)
+	if !ok || lit == nil {
+		return "", false
+	}
+	return lit.Value, true
 }
 
 func (r *Result) returnExpressionValueAtBoundary(point cfg.Point, expr ast.Expr) (product.Value, bool) {
@@ -498,6 +640,90 @@ func (r *Result) PathsEquivalentAtBoundary(point cfg.Point, left, right pathdom.
 		}
 	}
 	return false
+}
+
+// DistinctPathsShareExactIdentityAtBoundary reports whether two different
+// paths project to values with the same singleton runtime identity at point.
+// Path equality and path-relation equality are handled by
+// PathsEquivalentAtBoundary; this query owns the value-identity fallback.
+func (r *Result) DistinctPathsShareExactIdentityAtBoundary(point cfg.Point, left, right pathdom.Path) bool {
+	if r == nil || left.IsEmpty() || right.IsEmpty() || left.Equal(right) {
+		return false
+	}
+	if r.PathsEquivalentAtBoundary(point, left, right) {
+		return true
+	}
+	leftValue, leftOK := r.PathValueAtBoundary(point, left)
+	rightValue, rightOK := r.PathValueAtBoundary(point, right)
+	if !leftOK || !rightOK {
+		return false
+	}
+	leftID, leftOK := identityvalue.ExactID(r.registry, leftValue)
+	rightID, rightOK := identityvalue.ExactID(r.registry, rightValue)
+	return leftOK && rightOK && leftID == rightID
+}
+
+// PathsAliasAtBoundary reports whether the solved boundary model proves two
+// paths denote the same value path. It owns the fallback ladder diagnostics
+// used to spell locally: exact path, solved path-equivalence, exact runtime
+// identity, and dominating local alias declarations.
+func (r *Result) PathsAliasAtBoundary(point cfg.Point, left, right pathdom.Path) bool {
+	if r == nil || left.IsEmpty() || right.IsEmpty() {
+		return false
+	}
+	return left.Equal(right) ||
+		r.PathsEquivalentAtBoundary(point, left, right) ||
+		r.DistinctPathsShareExactIdentityAtBoundary(point, left, right) ||
+		r.dominatingAliasPathAtBoundary(point, left, right) ||
+		r.dominatingAliasPathAtBoundary(point, right, left)
+}
+
+// PathsAliasWithSameSuffixAtBoundary reports whether two paths with the same
+// field/index suffix denote the same projected value at point. It is stricter
+// than PathsAliasAtBoundary: different suffixes are not considered aliases even
+// if another fact lane could relate the complete paths.
+func (r *Result) PathsAliasWithSameSuffixAtBoundary(point cfg.Point, left, right pathdom.Path) bool {
+	if r == nil || left.IsEmpty() || right.IsEmpty() || !samePathSuffix(left, right) {
+		return false
+	}
+	if left.Equal(right) || r.PathsEquivalentAtBoundary(point, left, right) {
+		return true
+	}
+	if r.DistinctPathsShareExactIdentityAtBoundary(point, left, right) {
+		return true
+	}
+	return len(left.Segments) > 0 &&
+		r.DistinctPathsShareExactIdentityAtBoundary(point, left.RootOnly(), right.RootOnly())
+}
+
+func samePathSuffix(left, right pathdom.Path) bool {
+	if len(left.Segments) != len(right.Segments) {
+		return false
+	}
+	for i := range left.Segments {
+		if left.Segments[i] != right.Segments[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *Result) dominatingAliasPathAtBoundary(point cfg.Point, alias, target pathdom.Path) bool {
+	if r == nil || alias.Symbol == 0 || target.Symbol == 0 {
+		return false
+	}
+	fact, _, ok := r.DominatingRootLocalAssignment(point, alias.Symbol)
+	if !ok || fact.Expr == nil {
+		return false
+	}
+	source, ok := r.ExpressionPath(fact.Expr)
+	if !ok || source.IsEmpty() {
+		return false
+	}
+	source = source.AppendSegments(alias.Segments)
+	return source.Equal(target) ||
+		r.PathsEquivalentAtBoundary(point, source, target) ||
+		r.DistinctPathsShareExactIdentityAtBoundary(point, source, target)
 }
 
 // LengthFloorAtBoundary returns the proven length floor for array path p at the

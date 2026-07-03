@@ -4,11 +4,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/check/body"
 	testutil "github.com/wippyai/go-lua/analysis/check/checktest"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	obligationpass "github.com/wippyai/go-lua/analysis/check/obligation/pass"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/compiler/parse"
 )
 
 func TestAssignmentsRefutesConcreteMismatch(t *testing.T) {
@@ -40,6 +45,73 @@ func TestAssignmentsRefutesConcreteMismatch(t *testing.T) {
 	}
 	if len(item.Spans) != 1 || item.Spans[0].File != "test.lua" || item.Spans[0].StartLine != 1 {
 		t.Fatalf("spans = %#v, want source span on test.lua line 1", item.Spans)
+	}
+}
+
+func TestReturnsRefutesConcreteMismatch(t *testing.T) {
+	stmts, err := parse.ParseString(strings.TrimSpace(`local function f(): number
+    return "bad"
+end`), "test.lua")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: standard.Registry()}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil || len(root.FunctionResults()) != 1 {
+		t.Fatalf("root/functions = %#v, want one function result", root)
+	}
+	var got []judgment.Judgment
+	got = append(got, obligationpass.New(obligationpass.Returns{}).Run(obligationpass.Context{
+		FunctionKey: "fixture:return",
+		SourceFile:  "test.lua",
+		Reader:      readmodel.New(root.FunctionResults()[0]),
+	})...)
+	if len(got) != 1 {
+		t.Fatalf("judgments = %d, want 1: %#v", len(got), got)
+	}
+	item := got[0]
+	if item.Code != judgment.CodeReturn {
+		t.Fatalf("code = %q, want %q", item.Code, judgment.CodeReturn)
+	}
+	if item.Verdict != judgment.VerdictRefuted {
+		t.Fatalf("verdict = %v, want refuted", item.Verdict)
+	}
+	if item.Subject.Kind != judgment.SubjectReturnValue || item.Subject.Label != "returned value 1" {
+		t.Fatalf("subject = %#v, want return-value subject labelled returned value 1", item.Subject)
+	}
+	if item.Actual.ProjectedType == nil || item.Expected.Type == nil {
+		t.Fatalf("actual/expected = %#v/%#v, want concrete types", item.Actual, item.Expected)
+	}
+	if len(item.Spans) != 1 || item.Spans[0].File != "test.lua" || item.Spans[0].StartLine != 2 {
+		t.Fatalf("spans = %#v, want return expression span on test.lua line 2", item.Spans)
+	}
+}
+
+func TestReturnsSkipsPlainUnknownWithoutBoundary(t *testing.T) {
+	stmts, err := parse.ParseString(strings.TrimSpace(`local function f(x): string
+    return x.id
+end`), "test.lua")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: standard.Registry()}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil || len(root.FunctionResults()) != 1 {
+		t.Fatalf("root/functions = %#v, want one function result", root)
+	}
+	got := obligationpass.New(obligationpass.Returns{}).Run(obligationpass.Context{
+		FunctionKey: "fixture:return",
+		SourceFile:  "test.lua",
+		Reader:      readmodel.New(root.FunctionResults()[0]),
+	})
+	if len(got) != 0 {
+		t.Fatalf("judgments = %#v, want none for plain unknown without boundary", got)
 	}
 }
 
@@ -223,18 +295,6 @@ end
 			Reader:      readmodel.New(result),
 		})
 		if len(got) != 0 {
-			for _, point := range result.Graph().RPO() {
-				fact, ok := result.LocalAssignment(point)
-				if !ok || fact.Name != "code" {
-					continue
-				}
-				if value, ok := result.ExpressionValueBeforeBoundary(point, fact.Expr); ok {
-					valueType, typeOK := readmodel.New(result).ValueType(value)
-					t.Logf("program before-boundary code value type=%v/%v", valueType, typeOK)
-				} else {
-					t.Logf("program before-boundary code value missing")
-				}
-			}
 			t.Fatalf("function %p judgments = %#v, want exported Type:is proof accepted", result.Function(), got)
 		}
 	}
@@ -263,6 +323,35 @@ func TestAssignmentsReportsObjectLiteralEntryMismatch(t *testing.T) {
 	if got[0].Verdict != judgment.VerdictRefuted {
 		t.Fatalf("verdict = %v, want refuted", got[0].Verdict)
 	}
+}
+
+func TestAssignmentsCarriesExplicitAnyAssertionEvidence(t *testing.T) {
+	result := testutil.CheckFile(`local x: number = "no" as any`, "test.lua").RootResult()
+	if result == nil {
+		t.Fatal("RootResult nil")
+	}
+
+	got := obligationpass.New(obligationpass.Assignments{}).Run(obligationpass.Context{
+		FunctionKey: "fixture:assignment",
+		SourceFile:  "test.lua",
+		Reader:      readmodel.New(result),
+	})
+	if len(got) != 1 {
+		t.Fatalf("judgments = %d, want 1: %#v", len(got), got)
+	}
+	if !userAssertedAnyDetail(got[0], "assigned value") {
+		t.Fatalf("evidence = %#v, want explicit-any assertion detail", got[0].Evidence)
+	}
+}
+
+func userAssertedAnyDetail(item judgment.Judgment, label string) bool {
+	for _, evidence := range item.Evidence {
+		if evidence.Detail.Kind == judgment.EvidenceDetailUserAssertedAny &&
+			evidence.Detail.SubjectLabel == label {
+			return true
+		}
+	}
+	return false
 }
 
 func TestAssignmentsCarriesMissingRequiredFieldEvidenceDetail(t *testing.T) {
@@ -643,8 +732,10 @@ end`, "test.lua")
 	if got[0].Subject.Label != "stale_path" {
 		t.Fatalf("subject = %q, want stale_path", got[0].Subject.Label)
 	}
-	if got[0].Actual.ProjectedType != typ.Unknown {
-		t.Fatalf("actual type = %v, want canonical unknown for invalidated stale alias read", got[0].Actual.ProjectedType)
+	if got[0].Actual.ProjectedType == nil ||
+		!strings.Contains(got[0].Actual.ProjectedType.String(), "string") ||
+		!typevalue.TypeIncludesNil(got[0].Actual.ProjectedType) {
+		t.Fatalf("actual type = %v, want precise string|nil for invalidated stale alias read", got[0].Actual.ProjectedType)
 	}
 }
 
@@ -678,6 +769,68 @@ end`, "test.lua")
 	}
 }
 
+func TestAssignmentsReportFunctionBodyClosedRecordDynamicWrite(t *testing.T) {
+	checked := testutil.CheckFile(`type Key = "name" | "count"
+type Bag = {name: string, count: number}
+
+local function f(bag: Bag, key: Key): ()
+	bag[key] = "bad"
+end`, "test.lua")
+
+	got := assignmentJudgmentsForAllBodies(checked)
+	var readAssignments []readmodel.Assignment
+	for _, result := range checked.BodyResults() {
+		readmodel.New(result).ForEachAssignment(func(assignment readmodel.Assignment) bool {
+			readAssignments = append(readAssignments, assignment)
+			return true
+		})
+	}
+	var assignments []judgment.Judgment
+	for _, item := range got {
+		if item.Code == judgment.CodeAssignment && item.Subject.Label == "bag[key]" {
+			assignments = append(assignments, item)
+		}
+	}
+	if len(assignments) != 1 {
+		t.Fatalf("bag[key] assignment judgments = %d, want 1 across %d bodies; read assignments=%#v judgments=%#v", len(assignments), len(checked.BodyResults()), readAssignments, got)
+	}
+	if assignments[0].Verdict != judgment.VerdictRefuted {
+		t.Fatalf("verdict = %v, want refuted", assignments[0].Verdict)
+	}
+	if !strings.Contains(assignments[0].Expected.Type.String(), "number") {
+		t.Fatalf("expected = %v, want contract including number slot", assignments[0].Expected.Type)
+	}
+	if !dynamicAssignmentTargetDetail(assignments[0], "bag[key]") {
+		t.Fatalf("evidence = %#v, want dynamic assignment target detail", assignments[0].Evidence)
+	}
+}
+
+func TestAssignmentsSuppressesCascadeFromPreviouslyRefutedSourcePath(t *testing.T) {
+	checked := testutil.CheckFile(`
+local M = {}
+function M.f(): string
+	return "ok"
+end
+
+M.f = 42
+local g: () -> string = M.f
+`, "test.lua")
+
+	got := assignmentJudgmentsForAllBodies(checked)
+	var assignments []judgment.Judgment
+	for _, item := range got {
+		if item.Code == judgment.CodeAssignment {
+			assignments = append(assignments, item)
+		}
+	}
+	if len(assignments) != 1 {
+		t.Fatalf("assignment judgments = %d, want only root M.f write: %#v", len(assignments), assignments)
+	}
+	if assignments[0].Subject.Label != "M.f" || assignments[0].Actual.Label == "M.f" {
+		t.Fatalf("judgment labels = subject %q actual %q, want M.f write cause", assignments[0].Subject.Label, assignments[0].Actual.Label)
+	}
+}
+
 func assignmentJudgmentsForAllBodies(checked testutil.Result) []judgment.Judgment {
 	var out []judgment.Judgment
 	for _, result := range checked.BodyResults() {
@@ -697,6 +850,16 @@ func assignmentMissingRequiredFieldDetail(item judgment.Judgment) (string, bool)
 		}
 	}
 	return "", false
+}
+
+func dynamicAssignmentTargetDetail(item judgment.Judgment, label string) bool {
+	for _, evidence := range item.Evidence {
+		if evidence.Detail.Kind == judgment.EvidenceDetailDynamicAssignmentTarget &&
+			evidence.Detail.SubjectLabel == label {
+			return true
+		}
+	}
+	return false
 }
 
 func hasMayBeNilAccessEvidence(item judgment.Judgment, label, access string) bool {

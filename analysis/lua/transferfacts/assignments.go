@@ -365,9 +365,6 @@ func (l *lowerer) ordinaryAssignment(fact semantics.OrdinaryAssignmentFact) (fac
 	if len(target.Segments) != 0 {
 		return factflow.RootAssignment{}, false
 	}
-	if declared, ok := l.ordinaryRootDeclaredOverlayContract(fact); ok {
-		return factflow.NewRootAssignmentWithDeclaredOverlayValue(factflow.RootAssignmentOrdinaryRootWrite, fact.Symbol, target, l.valueSource(fact.Source), l.valueFromTypeWithWitness(declared)), true
-	}
 	return factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, fact.Symbol, target, l.valueSource(fact.Source)), true
 }
 
@@ -391,20 +388,6 @@ func (l *lowerer) globalTableFieldRootTarget(fact semantics.OrdinaryAssignmentFa
 		return 0, path.Path{}, false
 	}
 	return target, path.NewPath(target, name), true
-}
-
-func (l *lowerer) ordinaryRootDeclaredOverlayContract(fact semantics.OrdinaryAssignmentFact) (typ.Type, bool) {
-	if !fact.HasSymbol || fact.Symbol == 0 || (fact.HasPath && len(fact.Path.Segments) != 0) {
-		return nil, false
-	}
-	if !tableConstructorExpr(fact.Value) {
-		return nil, false
-	}
-	t, ok := l.symbolTypes[fact.Symbol]
-	if !ok || !declaredReturnLocalContractType(t) {
-		return nil, false
-	}
-	return luatypeprojection.PresentConstructorRoot(t), true
 }
 
 // addReassignExposure records a covariant exposure for an ordinary root

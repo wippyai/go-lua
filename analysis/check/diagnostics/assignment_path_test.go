@@ -45,7 +45,7 @@ func TestAssignmentReportsNestedDynamicVariantWriteInvalidatedGuardWithEvidence(
 		t.Fatalf("message = %q, want string assignment mismatch", d.Message)
 	}
 	assertAssignmentPathEvidence(t, d,
-		"slots.active.value.path can be unknown or nil here",
+		"slots.active.value.path can be string or nil here",
 		"stale_path is declared as string",
 		"no guard on this path proves slots.active.value.path is non-nil",
 		"Guard `slots.active.value.path` with a nil check",
@@ -308,7 +308,7 @@ func TestAssignmentReportsDynamicIndexWriteInvalidatedGuardWithEvidence(t *testi
 	assertAssignmentPathEvidence(t, d,
 		"box.value has type nil",
 		"after is declared as string",
-		"no proof on this path shows box.value satisfies the declared type",
+		"no proof on this path shows box.value is string",
 		"Use a value compatible with the expected type",
 	)
 	if len(d.Labels) < 2 || d.Labels[0].Message != "assigned value" || d.Labels[1].Message != "declared type" {
@@ -384,7 +384,7 @@ func TestAssignmentRejectsNilThroughPossiblyPresentDynamicIndexKey(t *testing.T)
 		t.Fatalf("diagnostics = %#v, want one dynamic-index write mismatch", diags)
 	}
 	d := diags[0]
-	if d.Code != CodeAssignmentType || !strings.Contains(d.Message, "cannot assign nil") || !strings.Contains(d.Message, "string") {
+	if d.Code != CodeAssignmentType || !strings.Contains(d.Message, "assigned value is nil") || !strings.Contains(d.Message, "string") {
 		t.Fatalf("diagnostic = %#v, want nil rejected against possible name:string slot", d)
 	}
 }
@@ -514,7 +514,7 @@ func TestAssignmentReportsSummaryPathInvalidatedGuardWithEvidence(t *testing.T) 
 	}
 	if !strings.Contains(evidence[0].Message, "box.value has type nil") ||
 		!strings.Contains(evidence[1].Message, "after is declared as string") ||
-		!strings.Contains(d.Explanation.String(), "no proof on this path shows box.value satisfies the declared type") {
+		!strings.Contains(d.Explanation.String(), "no proof on this path shows box.value is string") {
 		t.Fatalf("evidence = %#v, want path-specific source, declaration, and guard evidence", evidence)
 	}
 	if len(d.Labels) < 2 || d.Labels[0].Message != "assigned value" || d.Labels[1].Message != "declared type" {

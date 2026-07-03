@@ -252,6 +252,22 @@ func TestPathPrefixPredicatesUseCanonicalRootIdentity(t *testing.T) {
 	if !differentVersion.SameRoot(rootVersion) {
 		t.Fatalf("SameRoot rejected matching symbol/version")
 	}
+	if !differentVersion.SameRootIgnoringVersion(root) {
+		t.Fatalf("SameRootIgnoringVersion rejected matching symbol with different version")
+	}
+	if differentVersion.SameRootIgnoringVersion(NewPath(symbol.ID(11), "old")) {
+		t.Fatalf("SameRootIgnoringVersion accepted different symbols")
+	}
+	left := root
+	left.Version = 1
+	right := NewPath(symbol.ID(10), "new").Field("items")
+	right.Version = 2
+	if !left.EqualIgnoringVersion(right) {
+		t.Fatalf("EqualIgnoringVersion rejected matching symbol/suffix with different version/display root")
+	}
+	if left.EqualIgnoringVersion(right.Field("name")) {
+		t.Fatalf("EqualIgnoringVersion accepted different suffix")
+	}
 }
 
 func TestPathSuffixAfterCopiesRemainder(t *testing.T) {

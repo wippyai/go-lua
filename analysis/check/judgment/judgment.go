@@ -15,11 +15,27 @@ import (
 type Code string
 
 const (
-	CodeCallArgType      Code = "call.argument.type"
-	CodeCallArity        Code = "call.arity"
-	CodeCallCallee       Code = "call.callee"
-	CodeAssignment       Code = "assignment.type"
-	CodeAssignmentTarget Code = "assignment.optional_target"
+	CodeCallArgType        Code = "call.argument.type"
+	CodeCallArity          Code = "call.arity"
+	CodeCallCallee         Code = "call.callee"
+	CodeAssignment         Code = "assignment.type"
+	CodeAssignmentTarget   Code = "assignment.optional_target"
+	CodeReturn             Code = "return.type"
+	CodeNonNilAssertion    Code = "assertion.nonnil"
+	CodeNumericForOperand  Code = "for.numeric.operand"
+	CodeFrozenTable        Code = "effect.freeze.mutation"
+	CodeLifecycle          Code = "effect.lifecycle.unreleased"
+	CodeUnusedLocal        Code = "lint.unused.local"
+	CodeDeadAssignment     Code = "lint.dead.assignment"
+	CodeChannelSelect      Code = "channel.select.exhaustiveness"
+	CodeDiscriminatedUnion Code = "union.discriminated.exhaustiveness"
+	CodeResultShape        Code = "union.result_shape.exhaustiveness"
+	CodeRegistration       Code = "union.registration.exhaustiveness"
+	CodeUnresolvedValue    Code = "value.reference.unresolved"
+	CodeUnresolvedType     Code = "type.reference.unresolved"
+	CodeRedundantCondition Code = "condition.redundant"
+	CodeMemberRead         Code = "member.read"
+	CodeConcatOperand      Code = "operator.concat.operand"
 )
 
 // Verdict classifies whether the solved state proves or refutes an obligation.
@@ -103,6 +119,11 @@ type OriginRef struct {
 	Key   string
 }
 
+const (
+	OriginFrozenTableMutation = "frozen-table:mutation"
+	OriginFrozenTableProof    = "frozen-table:proof"
+)
+
 // EvidenceKind classifies a structured proof step.
 type EvidenceKind uint8
 
@@ -138,7 +159,40 @@ const (
 	EvidenceDetailArityTooMany
 	EvidenceDetailCalleeNotCallable
 	EvidenceDetailCalleeMayBeNil
+	EvidenceDetailMemberMissing
 	EvidenceDetailCallParamObligation
+	EvidenceDetailAssignmentSourceContribution
+	EvidenceDetailDynamicAssignmentTarget
+	EvidenceDetailUserAssertedAny
+	EvidenceDetailCallResultAssignment
+	EvidenceDetailFrozenTableAssignment
+	EvidenceDetailFrozenTableCall
+	EvidenceDetailLifecycleAcquire
+	EvidenceDetailLifecycleTransition
+	EvidenceDetailLifecycleEscape
+	EvidenceDetailLifecycleMissingProof
+	EvidenceDetailDeadAssignmentOverwrite
+	EvidenceDetailDeadAssignmentExit
+	EvidenceDetailChannelSelectResult
+	EvidenceDetailChannelSelectHandled
+	EvidenceDetailChannelSelectMissing
+	EvidenceDetailChannelSelectNoDefault
+	EvidenceDetailDiscriminatedUnionTarget
+	EvidenceDetailDiscriminatedUnionPossible
+	EvidenceDetailDiscriminatedUnionHandled
+	EvidenceDetailDiscriminatedUnionMissing
+	EvidenceDetailDiscriminatedUnionNoDefault
+	EvidenceDetailResultShapeUnion
+	EvidenceDetailResultShapeFieldCase
+	EvidenceDetailResultShapeMissingProof
+	EvidenceDetailRegistrationDispatch
+	EvidenceDetailRegistrationPossible
+	EvidenceDetailRegistrationRegistered
+	EvidenceDetailRegistrationMissing
+	EvidenceDetailRedundantConditionCheck
+	EvidenceDetailRedundantConditionProof
+	EvidenceDetailRedundantConditionStability
+	EvidenceDetailConcatOperand
 )
 
 // EvidenceDetail carries renderer-independent detail for one evidence node.
@@ -148,12 +202,84 @@ type EvidenceDetail struct {
 	FieldType     typ.Type
 	Param         string
 	Callable      bool
+	MemberAccess  bool
 	ExpectedCount int
 	ActualCount   int
 	FunctionName  string
 	SubjectLabel  string
 	ProviderLabel string
 	MemberParam   int
+	ResultIndex   int
+	UnderSupplied bool
+	Resource      string
+	Protocol      string
+	CurrentState  string
+	FromState     string
+	ToState       string
+	FinalState    string
+	CaseList      string
+	Message       string
+	Always        bool
+}
+
+func RedundantConditionCheckEvidenceDetail(message string, always bool) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailRedundantConditionCheck, Message: message, Always: always}
+}
+
+func RedundantConditionProofEvidenceDetail(message string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailRedundantConditionProof, Message: message}
+}
+
+func RedundantConditionStabilityEvidenceDetail(message string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailRedundantConditionStability, Message: message}
+}
+
+func ResultShapeUnionEvidenceDetail(receiver, discriminant string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailResultShapeUnion, SubjectLabel: receiver, Field: discriminant}
+}
+
+func ResultShapeFieldCaseEvidenceDetail(readPath, requiredCase string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailResultShapeFieldCase, SubjectLabel: readPath, CaseList: requiredCase}
+}
+
+func ResultShapeMissingProofEvidenceDetail(requiredCase string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailResultShapeMissingProof, CaseList: requiredCase}
+}
+
+func RegistrationDispatchEvidenceDetail(registry, target string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailRegistrationDispatch, SubjectLabel: registry, Field: target}
+}
+
+func RegistrationPossibleEvidenceDetail(cases string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailRegistrationPossible, CaseList: cases}
+}
+
+func RegistrationRegisteredEvidenceDetail(cases string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailRegistrationRegistered, CaseList: cases}
+}
+
+func RegistrationMissingEvidenceDetail(cases string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailRegistrationMissing, CaseList: cases}
+}
+
+func DiscriminatedUnionTargetEvidenceDetail(target string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailDiscriminatedUnionTarget, SubjectLabel: target}
+}
+
+func DiscriminatedUnionPossibleEvidenceDetail(cases string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailDiscriminatedUnionPossible, CaseList: cases}
+}
+
+func DiscriminatedUnionHandledEvidenceDetail(cases string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailDiscriminatedUnionHandled, CaseList: cases}
+}
+
+func DiscriminatedUnionMissingEvidenceDetail(cases string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailDiscriminatedUnionMissing, CaseList: cases}
+}
+
+func DiscriminatedUnionNoDefaultEvidenceDetail() EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailDiscriminatedUnionNoDefault}
 }
 
 // MissingRequiredFieldEvidenceDetail records that a structural proof failed
@@ -198,10 +324,28 @@ func CalleeNotCallableEvidenceDetail() EvidenceDetail {
 	return EvidenceDetail{Kind: EvidenceDetailCalleeNotCallable}
 }
 
+// MemberCalleeNotCallableEvidenceDetail records a member call whose target has
+// a concrete non-callable type.
+func MemberCalleeNotCallableEvidenceDetail() EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailCalleeNotCallable, MemberAccess: true}
+}
+
 // CalleeMayBeNilEvidenceDetail records a call whose target may be nil before
 // it is invoked.
 func CalleeMayBeNilEvidenceDetail(callable bool) EvidenceDetail {
 	return EvidenceDetail{Kind: EvidenceDetailCalleeMayBeNil, Callable: callable}
+}
+
+// MemberCalleeMayBeNilEvidenceDetail records a member call whose target may be
+// nil before it is invoked.
+func MemberCalleeMayBeNilEvidenceDetail(callable bool) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailCalleeMayBeNil, Callable: callable, MemberAccess: true}
+}
+
+// MemberMissingEvidenceDetail records a member call whose receiver lacks the
+// requested member.
+func MemberMissingEvidenceDetail(member string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailMemberMissing, Field: member, MemberAccess: true}
 }
 
 // CallParamObligationEvidenceDetail records that a caller argument is being
@@ -214,6 +358,54 @@ func CallParamObligationEvidenceDetail(functionName, subjectLabel, providerLabel
 		ProviderLabel: providerLabel,
 		MemberParam:   memberParam,
 	}
+}
+
+// AssignmentSourceContributionEvidenceDetail records a prior assignment that
+// contributes one concrete arm to a later source read.
+func AssignmentSourceContributionEvidenceDetail(rootLabel, readLabel string, t typ.Type) EvidenceDetail {
+	return EvidenceDetail{
+		Kind:          EvidenceDetailAssignmentSourceContribution,
+		ProviderLabel: rootLabel,
+		SubjectLabel:  readLabel,
+		FieldType:     t,
+	}
+}
+
+// DynamicAssignmentTargetEvidenceDetail records that an assignment target type
+// comes from a dynamic write whose value must satisfy every possible target
+// slot, rather than from an explicit local annotation.
+func DynamicAssignmentTargetEvidenceDetail(subjectLabel string) EvidenceDetail {
+	return EvidenceDetail{
+		Kind:         EvidenceDetailDynamicAssignmentTarget,
+		SubjectLabel: subjectLabel,
+	}
+}
+
+// UserAssertedAnyEvidenceDetail records an explicit user any/unknown assertion
+// that is not an abstract-interpreter proof.
+func UserAssertedAnyEvidenceDetail(subjectLabel string) EvidenceDetail {
+	return EvidenceDetail{
+		Kind:         EvidenceDetailUserAssertedAny,
+		SubjectLabel: subjectLabel,
+	}
+}
+
+// CallResultAssignmentEvidenceDetail records that an assignment source is a
+// specific result slot from a callable.
+func CallResultAssignmentEvidenceDetail(functionName string, resultIndex int) EvidenceDetail {
+	return EvidenceDetail{
+		Kind:         EvidenceDetailCallResultAssignment,
+		FunctionName: functionName,
+		ResultIndex:  resultIndex,
+	}
+}
+
+// UnderSuppliedCallResultAssignmentEvidenceDetail records that a target receives
+// a call result slot the callee does not produce, so Lua fills the slot with nil.
+func UnderSuppliedCallResultAssignmentEvidenceDetail(functionName string, resultIndex int) EvidenceDetail {
+	detail := CallResultAssignmentEvidenceDetail(functionName, resultIndex)
+	detail.UnderSupplied = true
+	return detail
 }
 
 // Evidence is one structured proof or missing-proof step. It carries stable
@@ -387,11 +579,26 @@ func evidenceIdentityLess(a, b evidenceIdentity) bool {
 	if a.detail.Callable != b.detail.Callable {
 		return !a.detail.Callable && b.detail.Callable
 	}
+	if a.detail.MemberAccess != b.detail.MemberAccess {
+		return !a.detail.MemberAccess && b.detail.MemberAccess
+	}
 	if a.detail.ExpectedCount != b.detail.ExpectedCount {
 		return a.detail.ExpectedCount < b.detail.ExpectedCount
 	}
 	if a.detail.ActualCount != b.detail.ActualCount {
 		return a.detail.ActualCount < b.detail.ActualCount
+	}
+	if a.detail.ResultIndex != b.detail.ResultIndex {
+		return a.detail.ResultIndex < b.detail.ResultIndex
+	}
+	if a.detail.UnderSupplied != b.detail.UnderSupplied {
+		return !a.detail.UnderSupplied && b.detail.UnderSupplied
+	}
+	if a.detail.Message != b.detail.Message {
+		return a.detail.Message < b.detail.Message
+	}
+	if a.detail.Always != b.detail.Always {
+		return !a.detail.Always && b.detail.Always
 	}
 	return a.kind < b.kind
 }

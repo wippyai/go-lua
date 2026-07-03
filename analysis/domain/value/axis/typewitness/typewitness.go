@@ -344,6 +344,12 @@ func scalarLeq(a, b typ.Type) bool {
 	if typ.SameNodeOrAcyclicEqual(a, b) {
 		return true
 	}
+	if typ.TypeEquals(a, b) {
+		return true
+	}
+	if opt, ok := unwrap.Annotated(b).(*typ.Optional); ok {
+		return typ.TypeEquals(a, typ.Nil) || scalarLeq(a, opt.Inner)
+	}
 	if base, ok := typelit.FamilyBase(a); ok && typ.SameNodeOrAcyclicEqual(base, b) {
 		return true
 	}

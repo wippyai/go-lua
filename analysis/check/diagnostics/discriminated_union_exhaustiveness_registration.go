@@ -58,8 +58,8 @@ func (p discriminatedUnionExhaustiveness) registrationDiagnostics(result *body.R
 	for _, dispatch := range p.dispatchCalls(result, graph) {
 		seen := make(map[string]registrationCall)
 		for _, reg := range registrations {
-			if !registrationRegistryMatchesAt(result, reg.point, reg.registry, dispatch.registry) ||
-				!diagnosticCanReach(p.flow, graph, reg.point, dispatch.point) {
+			if !result.PathsAliasAtBoundary(reg.point, reg.registry, dispatch.registry) ||
+				!result.PointCanReach(reg.point, dispatch.point) {
 				continue
 			}
 			if p.registrationInvalidatedBeforeDispatch(result, graph, openRegistries, reg, dispatch) {

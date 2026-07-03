@@ -155,6 +155,42 @@ func TestMeetRejectsDistinctStringLiteralWitnesses(t *testing.T) {
 	}
 }
 
+func TestMeetPreservesStructurallyEqualOptionalRecords(t *testing.T) {
+	leftRecord := typetable.NewRecord().
+		Field("code", typ.String).
+		Field("message", typ.String).
+		Build()
+	rightRecord := typetable.NewRecord().
+		Field("code", typ.String).
+		Field("message", typ.String).
+		Build()
+	left := typeexpr.Optional(leftRecord)
+	right := typeexpr.Optional(rightRecord)
+	if !typ.TypeEquals(left, right) {
+		t.Fatalf("test setup produced unequal records: %v vs %v", left, right)
+	}
+
+	got := Meet(Of(left), Of(right))
+	gotType, ok := got.Type()
+	if !ok || !typ.TypeEquals(gotType, left) {
+		t.Fatalf("Meet(structurally equal optional records) = %v/%v, want %v", gotType, ok, left)
+	}
+}
+
+func TestMeetPreservesRecordInsideOptionalRecord(t *testing.T) {
+	record := typetable.NewRecord().
+		Field("code", typ.String).
+		Field("message", typ.String).
+		Build()
+	optional := typeexpr.Optional(record)
+
+	got := Meet(Of(optional), Of(record))
+	gotType, ok := got.Type()
+	if !ok || !typ.TypeEquals(gotType, record) {
+		t.Fatalf("Meet(optional record, present record) = %v/%v, want %v", gotType, ok, record)
+	}
+}
+
 func TestWidenCollapsesScalarLiteralGrowthToPrimitiveFamily(t *testing.T) {
 	tests := []struct {
 		name string

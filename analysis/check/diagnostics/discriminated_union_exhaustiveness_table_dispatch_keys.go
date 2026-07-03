@@ -6,8 +6,6 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/ir/dominance"
-	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -22,7 +20,7 @@ func (p discriminatedUnionExhaustiveness) dispatchTableKeysAt(result *body.Resul
 		if !ok {
 			return nil, diagnostic.Span{}, false
 		}
-		if p.trackedPathMayBeInvalidatedBetween(result, result.Graph(), basePoint, point, table) {
+		if result.CallMayInvalidateTrackedPathBetween(basePoint, point, table) {
 			return nil, diagnostic.Span{}, false
 		}
 		return keys, tableSpan, true
@@ -34,12 +32,6 @@ func (p discriminatedUnionExhaustiveness) dispatchTableBaseKeysAt(result *body.R
 	graph := result.Graph()
 	if graph == nil || table.Symbol == 0 {
 		return nil, diagnostic.Span{}, 0, false
-	}
-	var idom map[cfg.Point]cfg.Point
-	if p.flow != nil && p.flow.graph == graph {
-		idom = p.flow.immediateDominators()
-	} else {
-		idom = dominance.ComputeImmediateDominatorInfo(graph).Map()
 	}
 	visited := make(map[cfg.Point]struct{}, graph.Size())
 	for cursor := point; ; {
@@ -61,13 +53,13 @@ func (p discriminatedUnionExhaustiveness) dispatchTableBaseKeysAt(result *body.R
 			if !ok {
 				return nil, diagnostic.Span{}, 0, false
 			}
-			keys, span, ok := objectLiteralDispatchKeysAtPath(result, literal, table.Segments)
+			keys, span, ok := result.ObjectLiteralStaticStringKeysAtPath(literal, table.Segments)
 			if !ok {
 				return nil, diagnostic.Span{}, 0, false
 			}
 			return keys, span, cursor, true
 		}
-		parent, ok := idom[cursor]
+		parent, ok := result.ImmediateDominator(cursor)
 		if !ok || parent == cursor {
 			return nil, diagnostic.Span{}, 0, false
 		}
@@ -85,81 +77,10 @@ func (p discriminatedUnionExhaustiveness) inheritedDispatchTableKeysAt(result *b
 	if !ok {
 		return nil, diagnostic.Span{}, false
 	}
-	if p.trackedPathMayBeInvalidatedBetween(result, result.Graph(), result.Graph().Entry(), point, table) {
+	if result.CallMayInvalidateTrackedPathBetween(result.Graph().Entry(), point, table) {
 		return nil, diagnostic.Span{}, false
 	}
 	return keys, tableSpan, true
-}
-
-func (p discriminatedUnionExhaustiveness) trackedPathMayBeInvalidatedBetween(result *body.Result, graph cfg.Graph, from, to cfg.Point, target pathdom.Path) bool {
-	if result == nil || graph == nil || target.IsEmpty() {
-		return false
-	}
-	for _, candidate := range graph.RPO() {
-		if candidate == to {
-			continue
-		}
-		if !diagnosticCanReach(p.flow, graph, from, candidate) || !diagnosticCanReach(p.flow, graph, candidate, to) {
-			continue
-		}
-		if callMayInvalidateTrackedPath(result, candidate, target) {
-			return true
-		}
-	}
-	return false
-}
-
-func objectLiteralDispatchKeys(fact semantics.ObjectLiteralFact) (map[string]bool, bool) {
-	if fact.Table == nil {
-		return nil, false
-	}
-	keys := make(map[string]bool, len(fact.Table.Fields))
-	arrayIndex := 0
-	for _, field := range fact.Table.Fields {
-		suffix, ok := pathexpr.ResolveTableFieldSuffix(field, &arrayIndex)
-		if !ok {
-			return nil, false
-		}
-		switch suffix.Kind {
-		case pathexpr.TableFieldSuffixField, pathexpr.TableFieldSuffixStringIndex:
-			if suffix.Segment.Name == "" {
-				return nil, false
-			}
-			keys[suffix.Segment.Name] = true
-		case pathexpr.TableFieldSuffixImplicitIndex, pathexpr.TableFieldSuffixIntIndex:
-			continue
-		default:
-			return nil, false
-		}
-	}
-	return keys, true
-}
-
-func objectLiteralDispatchKeysAtPath(result *body.Result, fact semantics.ObjectLiteralFact, suffix []segment.Segment) (map[string]bool, diagnostic.Span, bool) {
-	if len(suffix) == 0 {
-		keys, ok := objectLiteralDispatchKeys(fact)
-		return keys, ast.SpanOf(fact.Table), ok
-	}
-	nested, ok := nestedObjectLiteralFact(result, fact, suffix)
-	if !ok {
-		return nil, diagnostic.Span{}, false
-	}
-	keys, ok := objectLiteralDispatchKeys(nested)
-	return keys, ast.SpanOf(nested.Table), ok
-}
-
-func nestedObjectLiteralFact(result *body.Result, fact semantics.ObjectLiteralFact, suffix []segment.Segment) (semantics.ObjectLiteralFact, bool) {
-	if result == nil || len(suffix) == 0 {
-		return semantics.ObjectLiteralFact{}, false
-	}
-	for _, entry := range fact.Entries {
-		if !sameSegments(entry.Suffix.Segments, suffix) {
-			continue
-		}
-		nested, ok := result.ObjectLiteral(entry.Value)
-		return nested, ok
-	}
-	return semantics.ObjectLiteralFact{}, false
 }
 
 func (p discriminatedUnionExhaustiveness) applyReachableDispatchTableAssignments(
@@ -173,15 +94,6 @@ func (p discriminatedUnionExhaustiveness) applyReachableDispatchTableAssignments
 	if graph == nil {
 		return diagnostic.Span{}, false
 	}
-	var idom map[cfg.Point]cfg.Point
-	if p.flow != nil && p.flow.graph == graph {
-		idom = p.flow.immediateDominators()
-	} else {
-		idom = dominance.ComputeImmediateDominatorInfo(graph).Map()
-	}
-	if len(idom) == 0 {
-		return diagnostic.Span{}, false
-	}
 	for _, candidate := range graph.RPO() {
 		if candidate == from || candidate == point {
 			continue
@@ -192,11 +104,11 @@ func (p discriminatedUnionExhaustiveness) applyReachableDispatchTableAssignments
 		}
 		key, staticKey, touches := dispatchTableAssignmentKeyForPath(result, candidate, fact, table)
 		if !touches ||
-			!diagnosticCanReach(p.flow, graph, from, candidate) ||
-			!diagnosticCanReach(p.flow, graph, candidate, point) {
+			!result.PointCanReach(from, candidate) ||
+			!result.PointCanReach(candidate, point) {
 			continue
 		}
-		if dominance.Dominates(idom, candidate, point) {
+		if result.PointDominates(candidate, point) {
 			if replacement, replacementSpan, ok := dispatchTableReplacementKeys(result, fact, table); ok {
 				replaceDispatchKeySet(keys, replacement)
 				tableSpan = replacementSpan
@@ -230,7 +142,7 @@ func dispatchTableReplacementKeys(result *body.Result, fact semantics.OrdinaryAs
 	if !ok {
 		return nil, diagnostic.Span{}, false
 	}
-	return objectLiteralDispatchKeysAtPath(result, literal, suffix)
+	return result.ObjectLiteralStaticStringKeysAtPath(literal, suffix)
 }
 
 func dispatchTableReplacementSuffix(fact semantics.OrdinaryAssignmentFact, table pathdom.Path) ([]segment.Segment, bool) {
@@ -322,5 +234,5 @@ func dispatchTableDynamicAssignmentKey(result *body.Result, point cfg.Point, fac
 	if !container.Equal(table) && !result.PathsEquivalentAtBoundary(point, container, table) {
 		return "", false
 	}
-	return staticStringExprValueAt(result, point, attr.Key)
+	return result.StaticStringExprValueAtBoundary(point, attr.Key)
 }

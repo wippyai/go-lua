@@ -6,13 +6,16 @@ package pass
 import (
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/check/readmodel"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 // Context is the only semantic input an obligation producer receives.
 type Context struct {
-	FunctionKey string
-	SourceFile  string
-	Reader      readmodel.Reader
+	FunctionKey                   string
+	SourceFile                    string
+	Reader                        readmodel.Reader
+	SuppressCallerOwnedParameters bool
+	PointReachable                func(cfg.Point) bool
 }
 
 // Producer emits one family of semantic judgments from a solved body view.
@@ -52,6 +55,9 @@ func (p Pass) Run(ctx Context) []judgment.Judgment {
 		}
 		for _, item := range producer.Produce(ctx) {
 			if item.Code == "" || !p.registry.Validate(item) {
+				continue
+			}
+			if ctx.PointReachable != nil && !ctx.PointReachable(item.Point) {
 				continue
 			}
 			out = append(out, item)

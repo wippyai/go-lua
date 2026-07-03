@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/type/access"
+	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/projection"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -66,20 +67,46 @@ func Apply(source typ.Type, p projection.Projection) (typ.Type, bool) {
 func ApplySegments(source typ.Type, segments []segment.Segment) (typ.Type, bool) {
 	current := source
 	for _, seg := range segments {
-		var ok bool
-		switch seg.Kind {
-		case segment.SegmentField, segment.SegmentIndexString:
-			current, ok = access.Field(current, seg.Name)
-		case segment.SegmentIndexInt:
-			current, ok = access.RuntimeIndex(current, typ.LiteralInt(int64(seg.Index)))
-		default:
-			return nil, false
-		}
+		next, ok := readSegmentType(current, seg, 0)
 		if !ok {
 			return nil, false
 		}
+		current = next
 	}
 	return current, current != nil
+}
+
+func readSegmentType(current typ.Type, seg segment.Segment, depth int) (typ.Type, bool) {
+	if current == nil || depth > typ.DefaultRecursionDepth {
+		return nil, false
+	}
+	if union, ok := unwrap.Annotated(current).(*typ.Union); ok {
+		members := make([]typ.Type, 0, len(union.Members)+1)
+		missing := false
+		for _, member := range union.Members {
+			projected, ok := readSegmentType(member, seg, depth+1)
+			if !ok {
+				missing = true
+				continue
+			}
+			members = append(members, projected)
+		}
+		if len(members) == 0 {
+			return nil, false
+		}
+		if missing {
+			members = append(members, typ.Nil)
+		}
+		return normalize.UnionForEvidence(members...), true
+	}
+	switch seg.Kind {
+	case segment.SegmentField, segment.SegmentIndexString:
+		return access.Field(current, seg.Name)
+	case segment.SegmentIndexInt:
+		return access.RuntimeIndex(current, typ.LiteralInt(int64(seg.Index)))
+	default:
+		return nil, false
+	}
 }
 
 // ApplyWriteSegments applies a path suffix as an assignment target contract.
@@ -89,22 +116,52 @@ func ApplySegments(source typ.Type, segments []segment.Segment) (typ.Type, bool)
 func ApplyWriteSegments(source typ.Type, segments []segment.Segment) (typ.Type, bool) {
 	current := source
 	for _, seg := range segments {
-		var ok bool
-		switch seg.Kind {
-		case segment.SegmentField:
-			current, ok = access.Field(current, seg.Name)
-		case segment.SegmentIndexString:
-			current, ok = access.WritableIndex(current, typ.LiteralString(seg.Name))
-		case segment.SegmentIndexInt:
-			current, ok = access.WritableIndex(current, typ.LiteralInt(int64(seg.Index)))
-		default:
-			return nil, false
-		}
+		next, ok := writeSegmentType(current, seg, 0)
 		if !ok {
 			return nil, false
 		}
+		current = next
 	}
 	return current, current != nil
+}
+
+func writeSegmentType(source typ.Type, seg segment.Segment, depth int) (typ.Type, bool) {
+	if source == nil || depth > typ.DefaultRecursionDepth {
+		return nil, false
+	}
+	switch t := unwrap.Annotated(source).(type) {
+	case *typ.Optional:
+		return writeSegmentType(t.Inner, seg, depth+1)
+	case *typ.Union:
+		var members []typ.Type
+		for _, member := range t.Members {
+			next, ok := writeSegmentType(member, seg, depth+1)
+			if ok {
+				members = append(members, next)
+			}
+		}
+		return dynamicWriteMeet(members)
+	case *typ.Intersection:
+		var members []typ.Type
+		for _, member := range t.Members {
+			next, ok := writeSegmentType(member, seg, depth+1)
+			if ok {
+				members = append(members, next)
+			}
+		}
+		return dynamicWriteMeet(members)
+	default:
+		switch seg.Kind {
+		case segment.SegmentField:
+			return access.Field(source, seg.Name)
+		case segment.SegmentIndexString:
+			return access.WritableIndex(source, typ.LiteralString(seg.Name))
+		case segment.SegmentIndexInt:
+			return access.WritableIndex(source, typ.LiteralInt(int64(seg.Index)))
+		default:
+			return nil, false
+		}
+	}
 }
 
 // ApplyConstructorSegments applies a constructor path to a declared type. Unlike

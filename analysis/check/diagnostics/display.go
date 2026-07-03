@@ -339,6 +339,10 @@ func explicitBoundaryProofMessageForSubject(subject string, want typ.Type) strin
 	return display.ExplicitBoundaryProofMessageForSubject(subject, want)
 }
 
+func userAssertedAnyEvidence() string {
+	return display.UserAssertedAnyEvidence()
+}
+
 func missingBoundaryProofMessage(want typ.Type) string {
 	return display.MissingBoundaryProofMessage(want)
 }
@@ -413,10 +417,6 @@ func underSuppliedTargetHelp(name string) string {
 
 func assignmentTargetTypeEvidence(targetName string, want typ.Type) string {
 	return display.AssignmentTargetTypeEvidence(targetName, want)
-}
-
-func reassignedCallResultFieldEvidenceMessage(rootName, readName string, replacement typ.Type) string {
-	return display.ReassignedCallResultFieldEvidence(rootName, readName, replacement)
 }
 
 func optionalAssignmentTargetMessage(containerName string) string {
@@ -509,10 +509,6 @@ func callResultAssignmentHelp(got typ.Type) string {
 
 func callResultDeclaredReturnEvidence(name, label string, got typ.Type) string {
 	return display.CallResultDeclaredReturnEvidence(name, label, got)
-}
-
-func callResultMissingNonNilProofMessage(label string) string {
-	return display.CallResultMissingNonNilProofMessage(label)
 }
 
 func possiblyNilCallTargetMessage(name string) string {

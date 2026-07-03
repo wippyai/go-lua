@@ -141,9 +141,7 @@ func (r *signatureIdentityResolver) stableCalleeName(callee symbol.ID, calleePat
 	if name == "" {
 		return "", false
 	}
-	if len(calleePath.Segments) == 0 {
-		return name, true
-	}
+	var fullName string
 	var b strings.Builder
 	b.WriteString(name)
 	for _, seg := range calleePath.Segments {
@@ -160,7 +158,11 @@ func (r *signatureIdentityResolver) stableCalleeName(callee symbol.ID, calleePat
 			return "", false
 		}
 	}
-	return b.String(), true
+	fullName = b.String()
+	if len(calleePath.Segments) == 0 {
+		fullName = name
+	}
+	return fullName, true
 }
 
 func (r *signatureIdentityResolver) implicitBuiltinIteratorName(callee symbol.ID, calleePath path.Path) (string, bool) {

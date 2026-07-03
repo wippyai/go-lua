@@ -5,6 +5,8 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -129,6 +131,75 @@ func TestPathValueAtBoundaryCachesSolvedReadModelProjection(t *testing.T) {
 	}
 	if !product.Equal(reg, first, second) || !product.Equal(reg, first, want) {
 		t.Fatalf("cached path values = %v then %v, want %v", first, second, want)
+	}
+}
+
+func TestDistinctPathsShareExactIdentityAtBoundary(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(19)
+	leftSym := symbol.ID(1901)
+	rightSym := symbol.ID(1902)
+	otherSym := symbol.ID(1903)
+	leftPath := pathdom.NewPath(leftSym, "left")
+	rightPath := pathdom.NewPath(rightSym, "right")
+	otherPath := pathdom.NewPath(otherSym, "other")
+	sharedID := identity.LuaTableLiteral(19, 1)
+	otherID := identity.LuaTableLiteral(19, 2)
+	st := state.State{}.
+		WriteValue(reg, statekey.SymbolValue(leftSym), identityvalue.Present(reg, sharedID)).
+		WriteValue(reg, statekey.SymbolValue(rightSym), identityvalue.Present(reg, sharedID)).
+		WriteValue(reg, statekey.SymbolValue(otherSym), identityvalue.Present(reg, otherID))
+	builder := visibility.NewBuilder()
+	builder.Define(point, leftSym, "left")
+	builder.Define(point, rightSym, "right")
+	builder.Define(point, otherSym, "other")
+	result := &Result{
+		registry:   reg,
+		visibility: visibility.NewResolver(builder.Build()),
+		flow: transfer.Result{
+			point: st,
+		},
+	}
+
+	if !result.DistinctPathsShareExactIdentityAtBoundary(point, leftPath, rightPath) {
+		t.Fatal("DistinctPathsShareExactIdentityAtBoundary(shared identities) = false, want true")
+	}
+	if result.DistinctPathsShareExactIdentityAtBoundary(point, leftPath, leftPath) {
+		t.Fatal("DistinctPathsShareExactIdentityAtBoundary(same path) = true, want false")
+	}
+	if result.DistinctPathsShareExactIdentityAtBoundary(point, leftPath, otherPath) {
+		t.Fatal("DistinctPathsShareExactIdentityAtBoundary(distinct identities) = true, want false")
+	}
+}
+
+func TestPathsAliasWithSameSuffixAtBoundaryUsesRootIdentity(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(20)
+	leftSym := symbol.ID(2001)
+	rightSym := symbol.ID(2002)
+	leftPath := pathdom.NewPath(leftSym, "left").Field("kind")
+	rightPath := pathdom.NewPath(rightSym, "right").Field("kind")
+	otherSuffixPath := pathdom.NewPath(rightSym, "right").Field("value")
+	sharedID := identity.LuaTableLiteral(20, 1)
+	st := state.State{}.
+		WriteValue(reg, statekey.SymbolValue(leftSym), identityvalue.Present(reg, sharedID)).
+		WriteValue(reg, statekey.SymbolValue(rightSym), identityvalue.Present(reg, sharedID))
+	builder := visibility.NewBuilder()
+	builder.Define(point, leftSym, "left")
+	builder.Define(point, rightSym, "right")
+	result := &Result{
+		registry:   reg,
+		visibility: visibility.NewResolver(builder.Build()),
+		flow: transfer.Result{
+			point: st,
+		},
+	}
+
+	if !result.PathsAliasWithSameSuffixAtBoundary(point, leftPath, rightPath) {
+		t.Fatal("PathsAliasWithSameSuffixAtBoundary(shared root identity, same suffix) = false, want true")
+	}
+	if result.PathsAliasWithSameSuffixAtBoundary(point, leftPath, otherSuffixPath) {
+		t.Fatal("PathsAliasWithSameSuffixAtBoundary(shared root identity, different suffix) = true, want false")
 	}
 }
 
