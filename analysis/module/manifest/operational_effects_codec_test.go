@@ -33,6 +33,12 @@ func TestOperationalEffectsWireLaneRegistryCoversEveryWireField(t *testing.T) {
 		if lane.fieldName == "" {
 			t.Fatal("operational effects wire lane with empty field name")
 		}
+		if lane.encode == nil {
+			t.Fatalf("operational effects wire lane %s has nil encoder", lane.fieldName)
+		}
+		if lane.decode == nil {
+			t.Fatalf("operational effects wire lane %s has nil decoder", lane.fieldName)
+		}
 		if lane.canonicalize == nil {
 			t.Fatalf("operational effects wire lane %s has nil canonicalizer", lane.fieldName)
 		}
@@ -47,6 +53,20 @@ func TestOperationalEffectsWireLaneRegistryCoversEveryWireField(t *testing.T) {
 	for field := range wireFields {
 		if _, ok := registered[field]; !ok {
 			t.Fatalf("operationalEffectsWire.%s has no registered wire lane", field)
+		}
+	}
+}
+
+func TestEncodeDecodeOperationalEffectsUseLaneRegistry(t *testing.T) {
+	file := parseOperationalEffectsCodecSource(t)
+	fields := sliceFieldNames(reflect.TypeOf(operationalEffectsWire{}))
+	for _, name := range []string{"encodeOperationalEffects", "decodeOperationalEffects"} {
+		fn := requireManifestFuncDecl(t, file, name)
+		if !manifestFuncUsesIdent(fn, "operationalEffectsWireLanes") {
+			t.Fatalf("%s must iterate operationalEffectsWireLanes", name)
+		}
+		if field := firstSelectedManifestField(fn, fields); field != "" {
+			t.Fatalf("%s selects field %s directly; use operationalEffectsWireLanes", name, field)
 		}
 	}
 }
