@@ -40,8 +40,6 @@ func (l dynamicIndexLane) without(key dynamicindex.Key) (dynamicIndexLane, bool)
 }
 
 func (l dynamicIndexLane) with(key dynamicindex.Key, fact dynamicindex.Fact) dynamicIndexLane {
-	if fact.Admission == dynamicindex.AdmissionBottom {
-		panic("state: dynamic index lane with requires non-bottom fact")
-	}
+	requireNonBottomLaneValue(fact.Admission == dynamicindex.AdmissionBottom, "dynamic index", "fact")
 	return dynamicIndexLane{l.mapLane.with(key, fact)}
 }

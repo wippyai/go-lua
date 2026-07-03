@@ -39,8 +39,6 @@ func (l placementLane) without(id identity.ID) (placementLane, bool) {
 }
 
 func (l placementLane) with(id identity.ID, value placement.Value) placementLane {
-	if value == placement.Bottom {
-		panic("state: placement lane with requires non-bottom placement")
-	}
+	requireNonBottomLaneValue(value == placement.Bottom, "placement", "placement")
 	return placementLane{l.mapLane.with(id, value)}
 }

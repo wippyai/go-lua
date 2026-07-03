@@ -39,8 +39,6 @@ func (l effectDeltaLane) without(key effectdelta.Key) (effectDeltaLane, bool) {
 }
 
 func (l effectDeltaLane) with(key effectdelta.Key, delta effectdelta.Value) effectDeltaLane {
-	if delta.Change == effectdelta.ChangeBottom {
-		panic("state: effect delta lane with requires non-bottom delta")
-	}
+	requireNonBottomLaneValue(delta.Change == effectdelta.ChangeBottom, "effect delta", "delta")
 	return effectDeltaLane{l.mapLane.with(key, delta)}
 }
