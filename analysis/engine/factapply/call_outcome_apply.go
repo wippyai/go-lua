@@ -15,10 +15,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
-	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -185,48 +183,6 @@ func callOutcomePathMatchesAny(target pathdom.Path, candidates []pathdom.Path) b
 		}
 	}
 	return false
-}
-
-func applyNormalReturnNumFloor(
-	ctx normalReturnApplyContext,
-	out state.State,
-	fact callboundary.NumFloorFact,
-) state.State {
-	targetPath, ok := ctx.substitute(fact.Path)
-	if !ok || targetPath.Symbol == 0 {
-		return out
-	}
-	pathKey, ok := visibility.AddressAt(ctx.resolver, ctx.point, targetPath).RootOrVisibleStateKey()
-	if !ok {
-		return out
-	}
-	return out.WriteNumFloor(ctx.resolver.KeySpace(), pathKey, fact.Floor)
-}
-
-func applyNormalReturnRelConstraint(
-	ctx normalReturnApplyContext,
-	out state.State,
-	fact callboundary.RelConstraintFact,
-) state.State {
-	aKey, ok := ctx.relationGraphKey(fact.A)
-	if !ok {
-		return out
-	}
-	cKey, ok := ctx.relationGraphKey(fact.C)
-	if !ok {
-		return out
-	}
-	var bKey state.RelOperand
-	coB := fact.CoB
-	if coB != 0 && !fact.B.Path.IsEmpty() {
-		bKey, ok = ctx.relationGraphKey(fact.B)
-		if !ok {
-			return out
-		}
-	} else {
-		coB = 0
-	}
-	return out.WriteScaledConstraint(fact.CoA, aKey, coB, bKey, cKey, fact.K)
 }
 
 // applyCallParamExposures eager-widens each argument object the callee exposes
@@ -737,68 +693,6 @@ func bindPlaceholderPath(bindings []pathdom.Path, index int, p pathdom.Path) []p
 	}
 	bindings[index] = p
 	return bindings
-}
-
-func callBranchProofAt(
-	ctx normalReturnApplyContext,
-	proof callboundary.BranchProof,
-) (pathevidence.BranchProof, bool) {
-	path, ok := ctx.keyspaceKey(proof.Path)
-	if !ok {
-		return pathevidence.BranchProof{}, false
-	}
-	switch proof.Kind {
-	case pathevidence.BranchProofPathPresence:
-		return pathevidence.BranchProof{
-			Kind:     pathevidence.BranchProofPathPresence,
-			Path:     path,
-			Presence: proof.Presence,
-		}, true
-	case pathevidence.BranchProofPathEqual, pathevidence.BranchProofPathNotEqual, pathevidence.BranchProofIndexInRange:
-		other, ok := ctx.keyspaceKey(proof.Other)
-		if !ok {
-			return pathevidence.BranchProof{}, false
-		}
-		return pathevidence.BranchProof{
-			Kind:  proof.Kind,
-			Path:  path,
-			Other: other,
-		}, true
-	default:
-		return pathevidence.BranchProof{}, false
-	}
-}
-
-func callChannelSelectFactAt(
-	ctx normalReturnApplyContext,
-	event callboundary.ChannelSelectFact,
-) (channelselectfact.Fact, bool) {
-	switch event.Kind {
-	case channelselectfact.FactSelect, channelselectfact.FactReceive, channelselectfact.FactCase:
-	default:
-		return channelselectfact.Fact{}, false
-	}
-	fact := channelselectfact.Fact{
-		Select:     event.Select,
-		Kind:       event.Kind,
-		Index:      event.Index,
-		HasDefault: event.HasDefault,
-	}
-	if !event.Result.IsEmpty() {
-		resultStateKey, ok := ctx.stateKey(event.Result)
-		if !ok {
-			return channelselectfact.Fact{}, false
-		}
-		fact.Result = resultStateKey
-	}
-	if !event.Case.IsEmpty() {
-		caseStateKey, ok := ctx.stateKey(event.Case)
-		if !ok {
-			return channelselectfact.Fact{}, false
-		}
-		fact.Case = caseStateKey
-	}
-	return fact, true
 }
 
 func callOutcomeStateKeyAt(
