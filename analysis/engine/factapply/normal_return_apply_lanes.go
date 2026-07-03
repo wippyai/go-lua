@@ -42,6 +42,11 @@ type normalReturnApplyLane struct {
 	apply func(normalReturnApplyContext, state.State) state.State
 }
 
+type normalReturnApplyLaneHandler struct {
+	phase normalReturnApplyPhase
+	apply func(normalReturnApplyContext, state.State) state.State
+}
+
 func applyNormalReturnFactPhase(ctx normalReturnApplyContext, phase normalReturnApplyPhase, out state.State) state.State {
 	for _, lane := range normalReturnApplyLanes {
 		if lane.phase == phase {
@@ -51,97 +56,107 @@ func applyNormalReturnFactPhase(ctx normalReturnApplyContext, phase normalReturn
 	return out
 }
 
-var normalReturnApplyLanes = []normalReturnApplyLane{
-	{
-		id:    callboundary.LanePathRefinements,
+var normalReturnApplyLanes = buildNormalReturnApplyLanes(map[callboundary.NormalReturnFactLaneID]normalReturnApplyLaneHandler{
+	callboundary.LanePathRefinements: {
 		phase: normalReturnApplyBeforeParamFacts,
 		apply: applyNormalReturnPathRefinements,
 	},
-	{
-		id:    callboundary.LanePathInvalidations,
+	callboundary.LanePathInvalidations: {
 		phase: normalReturnApplyAfterParamFacts,
 		apply: applyNormalReturnPathInvalidations,
 	},
-	{
-		id:    callboundary.LanePersistentPathWrites,
+	callboundary.LanePersistentPathWrites: {
 		phase: normalReturnApplyAfterParamFacts,
 		apply: applyNormalReturnPersistentPathWrites,
 	},
-	{
-		id:    callboundary.LanePathStaticMembers,
+	callboundary.LanePathStaticMembers: {
 		phase: normalReturnApplyAfterParamRelations,
 		apply: applyNormalReturnPathStaticMembers,
 	},
-	{
-		id:    callboundary.LanePathPresenceImplications,
+	callboundary.LanePathPresenceImplications: {
 		phase: normalReturnApplyAfterParamRelations,
 		apply: applyNormalReturnPathPresenceImplications,
 	},
-	{
-		id:    callboundary.LaneDynamicIndexFacts,
+	callboundary.LaneDynamicIndexFacts: {
 		phase: normalReturnApplyAfterParamRelations,
 		apply: applyNormalReturnDynamicIndexFacts,
 	},
-	{
-		id:    callboundary.LaneKeyMemberships,
+	callboundary.LaneKeyMemberships: {
 		phase: normalReturnApplyAfterParamRelations,
 		apply: applyNormalReturnKeyMemberships,
 	},
-	{
-		id:    callboundary.LaneDynamicValueKeys,
+	callboundary.LaneDynamicValueKeys: {
 		phase: normalReturnApplyAfterParamRelations,
 		apply: applyNormalReturnDynamicValueKeys,
 	},
-	{
-		id:    callboundary.LaneDynamicAllValues,
+	callboundary.LaneDynamicAllValues: {
 		phase: normalReturnApplyAfterParamRelations,
 		apply: applyNormalReturnDynamicAllValues,
 	},
-	{
-		id:    callboundary.LaneBranchProofs,
+	callboundary.LaneBranchProofs: {
 		phase: normalReturnApplyAfterParamRelations,
 		apply: applyNormalReturnBranchProofs,
 	},
-	{
-		id:    callboundary.LaneNumFloors,
+	callboundary.LaneNumFloors: {
 		phase: normalReturnApplyAfterParamRelations,
 		apply: applyNormalReturnNumFloors,
 	},
-	{
-		id:    callboundary.LaneRelConstraints,
+	callboundary.LaneRelConstraints: {
 		phase: normalReturnApplyAfterParamRelations,
 		apply: applyNormalReturnRelConstraints,
 	},
-	{
-		id:    callboundary.LaneChannelSelects,
+	callboundary.LaneChannelSelects: {
 		phase: normalReturnApplyAfterParamRelations,
 		apply: applyNormalReturnChannelSelects,
 	},
-	{
-		id:    callboundary.LaneFrozenTables,
+	callboundary.LaneFrozenTables: {
 		phase: normalReturnApplyAfterParamRelations,
 		apply: applyNormalReturnFrozenTables,
 	},
-	{
-		id:    callboundary.LaneEffectDeltas,
+	callboundary.LaneEffectDeltas: {
 		phase: normalReturnApplyAfterParamRelations,
 		apply: applyNormalReturnEffectDeltas,
 	},
-	{
-		id:    callboundary.LaneStoreRelations,
+	callboundary.LaneStoreRelations: {
 		phase: normalReturnApplyAfterParamRelations,
 		apply: applyNormalReturnStoreRelations,
 	},
-	{
-		id:    callboundary.LaneLifecycleFacts,
+	callboundary.LaneLifecycleFacts: {
 		phase: normalReturnApplyAfterParamRelations,
 		apply: applyNormalReturnLifecycleFacts,
 	},
-	{
-		id:    callboundary.LaneEscapeEvents,
+	callboundary.LaneEscapeEvents: {
 		phase: normalReturnApplyAfterParamRelations,
 		apply: applyNormalReturnEscapeEvents,
 	},
+})
+
+func buildNormalReturnApplyLanes(handlers map[callboundary.NormalReturnFactLaneID]normalReturnApplyLaneHandler) []normalReturnApplyLane {
+	storage := callboundary.NormalReturnFactLanes()
+	out := make([]normalReturnApplyLane, 0, len(storage))
+	seen := make(map[callboundary.NormalReturnFactLaneID]struct{}, len(storage))
+	for _, storageLane := range storage {
+		id := storageLane.ID()
+		handler, ok := handlers[id]
+		if !ok {
+			panic("normal-return apply lane missing handler for " + string(id))
+		}
+		if handler.apply == nil {
+			panic("normal-return apply lane has nil handler for " + string(id))
+		}
+		out = append(out, normalReturnApplyLane{
+			id:    id,
+			phase: handler.phase,
+			apply: handler.apply,
+		})
+		seen[id] = struct{}{}
+	}
+	for id := range handlers {
+		if _, ok := seen[id]; !ok {
+			panic("normal-return apply lane has no storage owner for " + string(id))
+		}
+	}
+	return out
 }
 
 func applyNormalReturnPathRefinements(ctx normalReturnApplyContext, out state.State) state.State {

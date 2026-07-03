@@ -1,6 +1,10 @@
 package summary
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"reflect"
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -31,6 +35,21 @@ func TestNormalReturnSummaryLaneRegistryCoversStorageLanes(t *testing.T) {
 		_, ok := registered[storageLane.ID()]
 		if !ok {
 			t.Fatalf("storage lane %q/%s has no summary lane owner", storageLane.ID(), storageLane.FieldName())
+		}
+	}
+}
+
+func TestNormalReturnFactsSummaryOperationsUseLaneRegistry(t *testing.T) {
+	file := parseNormalReturnFactsSource(t)
+	fields := normalReturnFactsStorageFields(t)
+
+	for _, name := range []string{"normalizeNormalReturnFactsWith", "cloneNormalReturnFacts"} {
+		fn := requireFuncDecl(t, file, name)
+		if !funcUsesIdent(fn, "normalReturnSummaryLanes") {
+			t.Fatalf("%s must iterate normalReturnSummaryLanes", name)
+		}
+		if field := firstSelectedStorageField(fn, fields); field != "" {
+			t.Fatalf("%s selects storage field %s directly; use normalReturnSummaryLanes", name, field)
 		}
 	}
 }
@@ -176,6 +195,68 @@ func TestNormalReturnFactsNormalizeKeepsConcreteCapturedPathBoundaryFacts(t *tes
 		!facts.RelConstraints[0].C.Path.Equal(placeholder) || !facts.RelConstraints[0].C.IsLength {
 		t.Fatalf("RelConstraints = %#v, want only placeholder relation fact", facts.RelConstraints)
 	}
+}
+
+func parseNormalReturnFactsSource(t *testing.T) *ast.File {
+	t.Helper()
+	file, err := parser.ParseFile(token.NewFileSet(), "normal_return_facts.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse normal_return_facts.go: %v", err)
+	}
+	return file
+}
+
+func requireFuncDecl(t *testing.T, file *ast.File, name string) *ast.FuncDecl {
+	t.Helper()
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if ok && fn.Name.Name == name {
+			return fn
+		}
+	}
+	t.Fatalf("function %s not found", name)
+	return nil
+}
+
+func funcUsesIdent(fn *ast.FuncDecl, name string) bool {
+	found := false
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		ident, ok := node.(*ast.Ident)
+		if ok && ident.Name == name {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func normalReturnFactsStorageFields(t *testing.T) map[string]struct{} {
+	t.Helper()
+	out := make(map[string]struct{})
+	typ := reflect.TypeOf(callboundary.NormalReturnFacts{})
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		if field.Type.Kind() == reflect.Slice {
+			out[field.Name] = struct{}{}
+		}
+	}
+	return out
+}
+
+func firstSelectedStorageField(fn *ast.FuncDecl, fields map[string]struct{}) string {
+	var found string
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		sel, ok := node.(*ast.SelectorExpr)
+		if ok {
+			if _, isStorageField := fields[sel.Sel.Name]; isStorageField {
+				found = sel.Sel.Name
+				return false
+			}
+		}
+		return true
+	})
+	return found
 }
 
 func TestNormalReturnFactsLifecycleKeyDistinguishesFinalStateSets(t *testing.T) {

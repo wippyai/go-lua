@@ -28,79 +28,52 @@ type normalReturnProjectLane struct {
 	project func(normalReturnProjectContext, *callboundary.NormalReturnFacts)
 }
 
-var normalReturnProjectLanes = []normalReturnProjectLane{
-	{
-		id:      callboundary.LanePathRefinements,
-		project: projectNormalReturnPathRefinements,
-	},
-	{
-		id:      callboundary.LanePathInvalidations,
-		project: projectNormalReturnPathInvalidations,
-	},
-	{
-		id:      callboundary.LanePersistentPathWrites,
-		project: projectNormalReturnPersistentPathWrites,
-	},
-	{
-		id:      callboundary.LanePathStaticMembers,
-		project: projectNormalReturnPathStaticMembers,
-	},
-	{
-		id:      callboundary.LanePathPresenceImplications,
-		project: projectNormalReturnPathPresenceImplications,
-	},
-	{
-		id:      callboundary.LaneDynamicIndexFacts,
-		project: projectNormalReturnDynamicIndexFacts,
-	},
-	{
-		id:      callboundary.LaneKeyMemberships,
-		project: projectNormalReturnKeyMemberships,
-	},
-	{
-		id:      callboundary.LaneDynamicValueKeys,
-		project: projectNormalReturnDynamicValueKeys,
-	},
-	{
-		id:      callboundary.LaneDynamicAllValues,
-		project: projectNormalReturnDynamicAllValues,
-	},
-	{
-		id:      callboundary.LaneBranchProofs,
-		project: projectNormalReturnBranchProofs,
-	},
-	{
-		id:      callboundary.LaneNumFloors,
-		project: projectNormalReturnNumFloors,
-	},
-	{
-		id:      callboundary.LaneRelConstraints,
-		project: projectNormalReturnRelConstraints,
-	},
-	{
-		id:      callboundary.LaneChannelSelects,
-		project: projectNormalReturnChannelSelects,
-	},
-	{
-		id:      callboundary.LaneFrozenTables,
-		project: projectNormalReturnFrozenTables,
-	},
-	{
-		id:      callboundary.LaneEffectDeltas,
-		project: projectNormalReturnEffectDeltas,
-	},
-	{
-		id:      callboundary.LaneEscapeEvents,
-		project: projectNormalReturnEscapeEvents,
-	},
-	{
-		id:      callboundary.LaneStoreRelations,
-		project: projectNormalReturnStoreRelations,
-	},
-	{
-		id:      callboundary.LaneLifecycleFacts,
-		project: projectNormalReturnLifecycleFacts,
-	},
+var normalReturnProjectLanes = buildNormalReturnProjectLanes(map[callboundary.NormalReturnFactLaneID]func(normalReturnProjectContext, *callboundary.NormalReturnFacts){
+	callboundary.LanePathRefinements:          projectNormalReturnPathRefinements,
+	callboundary.LanePathInvalidations:        projectNormalReturnPathInvalidations,
+	callboundary.LanePersistentPathWrites:     projectNormalReturnPersistentPathWrites,
+	callboundary.LanePathStaticMembers:        projectNormalReturnPathStaticMembers,
+	callboundary.LanePathPresenceImplications: projectNormalReturnPathPresenceImplications,
+	callboundary.LaneDynamicIndexFacts:        projectNormalReturnDynamicIndexFacts,
+	callboundary.LaneKeyMemberships:           projectNormalReturnKeyMemberships,
+	callboundary.LaneDynamicValueKeys:         projectNormalReturnDynamicValueKeys,
+	callboundary.LaneDynamicAllValues:         projectNormalReturnDynamicAllValues,
+	callboundary.LaneBranchProofs:             projectNormalReturnBranchProofs,
+	callboundary.LaneNumFloors:                projectNormalReturnNumFloors,
+	callboundary.LaneRelConstraints:           projectNormalReturnRelConstraints,
+	callboundary.LaneChannelSelects:           projectNormalReturnChannelSelects,
+	callboundary.LaneFrozenTables:             projectNormalReturnFrozenTables,
+	callboundary.LaneEffectDeltas:             projectNormalReturnEffectDeltas,
+	callboundary.LaneEscapeEvents:             projectNormalReturnEscapeEvents,
+	callboundary.LaneStoreRelations:           projectNormalReturnStoreRelations,
+	callboundary.LaneLifecycleFacts:           projectNormalReturnLifecycleFacts,
+})
+
+func buildNormalReturnProjectLanes(handlers map[callboundary.NormalReturnFactLaneID]func(normalReturnProjectContext, *callboundary.NormalReturnFacts)) []normalReturnProjectLane {
+	storage := callboundary.NormalReturnFactLanes()
+	out := make([]normalReturnProjectLane, 0, len(storage))
+	seen := make(map[callboundary.NormalReturnFactLaneID]struct{}, len(storage))
+	for _, storageLane := range storage {
+		id := storageLane.ID()
+		handler, ok := handlers[id]
+		if !ok {
+			panic("normal-return project lane missing handler for " + string(id))
+		}
+		if handler == nil {
+			panic("normal-return project lane has nil handler for " + string(id))
+		}
+		out = append(out, normalReturnProjectLane{
+			id:      id,
+			project: handler,
+		})
+		seen[id] = struct{}{}
+	}
+	for id := range handlers {
+		if _, ok := seen[id]; !ok {
+			panic("normal-return project lane has no storage owner for " + string(id))
+		}
+	}
+	return out
 }
 
 func projectNormalReturnPathRefinements(ctx normalReturnProjectContext, out *callboundary.NormalReturnFacts) {
