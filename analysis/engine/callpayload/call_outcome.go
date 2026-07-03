@@ -59,30 +59,113 @@ type CallOutcome struct {
 // Empty reports whether the outcome carries no result, authority, diagnostic,
 // exposure, or post-return evidence.
 func (o CallOutcome) Empty() bool {
-	return len(o.Results) == 0 &&
-		!o.PostReturnAuthority &&
-		!o.HasPostReturnEvidence() &&
-		len(o.ParamObligations) == 0 &&
-		len(o.PathObligations) == 0 &&
-		len(o.ParamExposures) == 0
+	for _, lane := range callOutcomeLanes {
+		if lane.has(o) {
+			return false
+		}
+	}
+	return true
 }
 
 // HasPostReturnEvidence reports whether the outcome carries caller-visible
 // facts that hold after a normal return. Result slots are intentionally
 // separate because weak top/any/unknown results do not establish authority.
 func (o CallOutcome) HasPostReturnEvidence() bool {
-	return !o.NormalReturnFacts.Empty() ||
-		len(o.HeapTableObjects) != 0 ||
-		len(o.Placements) != 0 ||
-		len(o.ParamPathRefinements) != 0 ||
-		len(o.ParamPathWrites) != 0 ||
-		len(o.ParamLengthFloors) != 0 ||
-		len(o.ParamPathInvalidations) != 0 ||
-		len(o.ParamConditions) != 0 ||
-		len(o.ParamPathRelations) != 0 ||
-		len(o.ReturnConditionRefinements) != 0 ||
-		len(o.ReturnConditionSlots) != 0 ||
-		len(o.ReturnPresenceRelations) != 0
+	for _, lane := range callOutcomeLanes {
+		if lane.postReturn && lane.has(o) {
+			return true
+		}
+	}
+	return false
+}
+
+type callOutcomeLane struct {
+	fieldName  string
+	postReturn bool
+	has        func(CallOutcome) bool
+}
+
+var callOutcomeLanes = []callOutcomeLane{
+	{
+		fieldName: "Results",
+		has:       func(o CallOutcome) bool { return len(o.Results) != 0 },
+	},
+	{
+		fieldName: "PostReturnAuthority",
+		has:       func(o CallOutcome) bool { return o.PostReturnAuthority },
+	},
+	{
+		fieldName:  "NormalReturnFacts",
+		postReturn: true,
+		has:        func(o CallOutcome) bool { return !o.NormalReturnFacts.Empty() },
+	},
+	{
+		fieldName:  "HeapTableObjects",
+		postReturn: true,
+		has:        func(o CallOutcome) bool { return len(o.HeapTableObjects) != 0 },
+	},
+	{
+		fieldName:  "Placements",
+		postReturn: true,
+		has:        func(o CallOutcome) bool { return len(o.Placements) != 0 },
+	},
+	{
+		fieldName: "ParamObligations",
+		has:       func(o CallOutcome) bool { return len(o.ParamObligations) != 0 },
+	},
+	{
+		fieldName: "PathObligations",
+		has:       func(o CallOutcome) bool { return len(o.PathObligations) != 0 },
+	},
+	{
+		fieldName:  "ParamPathRefinements",
+		postReturn: true,
+		has:        func(o CallOutcome) bool { return len(o.ParamPathRefinements) != 0 },
+	},
+	{
+		fieldName:  "ParamPathWrites",
+		postReturn: true,
+		has:        func(o CallOutcome) bool { return len(o.ParamPathWrites) != 0 },
+	},
+	{
+		fieldName:  "ParamLengthFloors",
+		postReturn: true,
+		has:        func(o CallOutcome) bool { return len(o.ParamLengthFloors) != 0 },
+	},
+	{
+		fieldName:  "ParamPathInvalidations",
+		postReturn: true,
+		has:        func(o CallOutcome) bool { return len(o.ParamPathInvalidations) != 0 },
+	},
+	{
+		fieldName:  "ParamConditions",
+		postReturn: true,
+		has:        func(o CallOutcome) bool { return len(o.ParamConditions) != 0 },
+	},
+	{
+		fieldName:  "ParamPathRelations",
+		postReturn: true,
+		has:        func(o CallOutcome) bool { return len(o.ParamPathRelations) != 0 },
+	},
+	{
+		fieldName:  "ReturnConditionRefinements",
+		postReturn: true,
+		has:        func(o CallOutcome) bool { return len(o.ReturnConditionRefinements) != 0 },
+	},
+	{
+		fieldName:  "ReturnConditionSlots",
+		postReturn: true,
+		has:        func(o CallOutcome) bool { return len(o.ReturnConditionSlots) != 0 },
+	},
+	{
+		fieldName:  "ReturnPresenceRelations",
+		postReturn: true,
+		has:        func(o CallOutcome) bool { return len(o.ReturnPresenceRelations) != 0 },
+	},
+	{
+		fieldName: "ParamExposures",
+		has:       func(o CallOutcome) bool { return len(o.ParamExposures) != 0 },
+	},
 }
 
 // CallParamExposure records that the callee exposes one explicit argument (or a
