@@ -269,6 +269,7 @@ func directCallArgumentSourceEvidenceLabel(item judgment.Judgment, fallback stri
 	for _, evidence := range item.Evidence {
 		if evidence.Kind == judgment.EvidenceUserAssertion &&
 			evidence.Detail.Kind == judgment.EvidenceDetailCallParamObligation &&
+			evidence.Detail.ProviderLabel != "" &&
 			evidence.Detail.SubjectLabel != "" {
 			return evidence.Detail.SubjectLabel
 		}

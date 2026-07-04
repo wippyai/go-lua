@@ -547,8 +547,8 @@ end
 
 invoke(p, mutate, "ok")
 `)
-	diag := requireDiagnosticCodeWithEvidence(t, result, diagnostics.CodeDirectCallArgType, "inside invoke, argument 3 is passed to argument 1.send parameter 1, which requires number")
-	requireEvidenceMessage(t, diag, "inside invoke, argument 3 is passed to argument 1.send parameter 1, which requires number")
+	diag := requireDiagnosticCodeWithEvidence(t, result, diagnostics.CodeDirectCallArgType, "inside invoke, argument 1 (payload) is passed to provider.send parameter 1, which requires number")
+	requireEvidenceMessage(t, diag, "inside invoke, argument 1 (payload) is passed to provider.send parameter 1, which requires number")
 }
 
 func TestMemberCallObligationSuppressesExplicitAnyProviderEvidence(t *testing.T) {
@@ -578,9 +578,9 @@ p.send = function(v: number): () end
 local box = { client = p }
 invoke(box, "bad")
 `)
-	diag := requireDiagnosticCodeWithEvidence(t, result, diagnostics.CodeDirectCallArgType, "inside invoke, argument 2 is passed to argument 1.client.send parameter 1, which requires number")
+	diag := requireDiagnosticCodeWithEvidence(t, result, diagnostics.CodeDirectCallArgType, "inside invoke, argument 1 (payload) is passed to client.send parameter 1, which requires number")
 	requireEvidenceMessage(t, diag, "argument")
-	requireEvidenceMessage(t, diag, "inside invoke, argument 2 is passed to argument 1.client.send parameter 1, which requires number")
+	requireEvidenceMessage(t, diag, "inside invoke, argument 1 (payload) is passed to client.send parameter 1, which requires number")
 }
 
 func TestMemberCallObligationIgnoresNestedProviderMemberOverwrittenInCallee(t *testing.T) {
@@ -693,18 +693,18 @@ invoke(p, "bad")
 				Kind:            diagnostic.EvidenceAbstractFact,
 				Trust:           diagnostic.TrustProven,
 				Span:            diagnostic.Span{StartLine: 9, StartCol: 11, EndLine: 9, EndCol: 15},
-				MessageContains: []string{"argument 2", `literal value "bad"`},
+				MessageContains: []string{"argument 1 (payload)", `literal value "bad"`},
 			},
 			{
 				Kind:            diagnostic.EvidenceAbstractFact,
 				Trust:           diagnostic.TrustProven,
 				Span:            diagnostic.Span{StartLine: 9, StartCol: 11, EndLine: 9, EndCol: 15},
-				MessageContains: []string{"inside invoke", "argument 1.send parameter 1", "requires number"},
+				MessageContains: []string{"inside invoke", "argument 1 (payload)", "provider.send parameter 1", "requires number"},
 			},
 			{
 				Kind:            diagnostic.EvidenceMissingProof,
 				Trust:           diagnostic.TrustUnknown,
-				MessageContains: []string{"no proof", "argument 2 is number"},
+				MessageContains: []string{"no proof", "argument 1 (payload) is number"},
 			},
 		},
 		LabelContains: []string{"argument value"},
@@ -714,9 +714,9 @@ invoke(p, "bad")
 			`error[type.call.direct.argument_type]: argument 2 is "bad", not number`,
 			`9 | invoke(p, "bad")`,
 			`  |           ↑ argument value`,
-			`1. proven: argument 2 has literal value "bad"`,
-			`2. proven: inside invoke, argument 2 is passed to argument 1.send parameter 1, which requires number`,
-			`3. missing proof: no proof on this path shows argument 2 is number`,
+			`1. proven: argument 1 (payload) has literal value "bad"`,
+			`2. proven: inside invoke, argument 1 (payload) is passed to provider.send parameter 1, which requires number`,
+			`3. missing proof: no proof on this path shows argument 1 (payload) is number`,
 			`help: Pass a value for argument 2 that satisfies the parameter type, or change the callee signature if that argument is valid.`,
 		},
 		RenderNotContains: []string{
@@ -736,9 +736,9 @@ invoke(p, "bad")
   |           ↑ argument value
 
 because:
-  1. proven: argument 2 has literal value "bad"
-  2. proven: inside invoke, argument 2 is passed to argument 1.send parameter 1, which requires number
-  3. missing proof: no proof on this path shows argument 2 is number
+  1. proven: argument 1 (payload) has literal value "bad"
+  2. proven: inside invoke, argument 1 (payload) is passed to provider.send parameter 1, which requires number
+  3. missing proof: no proof on this path shows argument 1 (payload) is number
 
 help: Pass a value for argument 2 that satisfies the parameter type, or change the callee signature if that argument is valid.`
 	assertRenderedEqual(t, rendered, want)
