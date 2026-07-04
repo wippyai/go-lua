@@ -2,10 +2,11 @@ package body
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
-	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -47,24 +48,9 @@ func (r *Result) OrdinaryAssignmentTargetTypeAt(point cfg.Point, fact OrdinaryAs
 		}
 	}
 	var projected typ.Type
-	if attr.KeySyntax != ast.AttrKeyIndex {
-		name := ast.KeyName(attr.Key)
-		if name == "" {
-			if hasDeclared {
-				return r.ordinaryAssignmentDeclaredTargetTypeResult(point, fact.Target, declared, hasHardDeclared), true
-			}
-			return OrdinaryAssignmentTargetType{}, false
-		}
-		t, ok := access.Field(container, name)
-		if !ok {
-			if hasDeclared {
-				return r.ordinaryAssignmentDeclaredTargetTypeResult(point, fact.Target, declared, hasHardDeclared), true
-			}
-			return OrdinaryAssignmentTargetType{}, false
-		}
-		projected = t
-	} else if key, ok := attr.Key.(*ast.StringExpr); ok && key != nil {
-		t, ok := access.Field(container, key.Value)
+	if seg, ok := staticAssignmentWriteSegment(attr); ok {
+		writeContainer := staticAssignmentWriteContainer(container, declaredContainer, hasDeclaredContainer)
+		t, ok := luatypeprojection.ApplyWriteSegments(writeContainer, []segment.Segment{seg})
 		if !ok {
 			if hasDeclared {
 				return r.ordinaryAssignmentDeclaredTargetTypeResult(point, fact.Target, declared, hasHardDeclared), true
@@ -137,15 +123,8 @@ func (r *Result) ordinaryAssignmentDeclaredTargetExpressionType(point cfg.Point,
 	if !ok || container == nil {
 		return nil, false
 	}
-	if attr.KeySyntax != ast.AttrKeyIndex {
-		name := ast.KeyName(attr.Key)
-		if name == "" {
-			return nil, false
-		}
-		return access.Field(container, name)
-	}
-	if key, ok := attr.Key.(*ast.StringExpr); ok && key != nil {
-		return access.WritableIndex(container, typ.LiteralString(key.Value))
+	if seg, ok := staticAssignmentWriteSegment(attr); ok {
+		return luatypeprojection.ApplyWriteSegments(container, []segment.Segment{seg})
 	}
 	keyType, ok := LiteralExpressionType(attr.Key)
 	if !ok {
@@ -155,6 +134,57 @@ func (r *Result) ordinaryAssignmentDeclaredTargetExpressionType(point cfg.Point,
 		return nil, false
 	}
 	return luatypeprojection.DynamicWriteValueType(container, keyType)
+}
+
+func staticAssignmentWriteSegment(attr *ast.AttrGetExpr) (segment.Segment, bool) {
+	if attr == nil || attr.Key == nil {
+		return segment.Segment{}, false
+	}
+	if attr.KeySyntax != ast.AttrKeyIndex {
+		name := ast.KeyName(attr.Key)
+		if name == "" {
+			return segment.Segment{}, false
+		}
+		return segment.Segment{Kind: segment.SegmentField, Name: name}, true
+	}
+	if key, ok := attr.Key.(*ast.StringExpr); ok && key != nil {
+		return segment.Segment{Kind: segment.SegmentIndexString, Name: key.Value}, true
+	}
+	return segment.Segment{}, false
+}
+
+func staticAssignmentWriteContainer(current, declared typ.Type, hasDeclared bool) typ.Type {
+	if hasDeclared && declared != nil && !declaredAssignmentContainerIsUnion(declared, 0) {
+		return declared
+	}
+	return current
+}
+
+func declaredAssignmentContainerIsUnion(t typ.Type, depth int) bool {
+	if t == nil || depth > typ.DefaultRecursionDepth {
+		return false
+	}
+	switch tt := t.(type) {
+	case *typ.Annotated:
+		return declaredAssignmentContainerIsUnion(tt.Inner, depth+1)
+	case *typ.Alias:
+		next := tt.UnaliasedTarget()
+		if next == nil || next == t {
+			return false
+		}
+		return declaredAssignmentContainerIsUnion(next, depth+1)
+	case *typ.Optional:
+		return declaredAssignmentContainerIsUnion(tt.Inner, depth+1)
+	case *typ.Recursive:
+		if tt.Body == nil || tt.Body == t {
+			return false
+		}
+		return declaredAssignmentContainerIsUnion(tt.Body, depth+1)
+	case *typ.Union:
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *Result) ordinaryAssignmentTargetTypeResult(point cfg.Point, target ast.Expr, t typ.Type) OrdinaryAssignmentTargetType {
@@ -206,6 +236,8 @@ func widerWritableType(a, b typ.Type) typ.Type {
 		return b
 	case b == nil:
 		return a
+	case assignmentWriteIntersectionIncludesDeclared(a, b):
+		return b
 	case subtype.IsSubtype(a, b) || subtype.IsFreshAssignable(a, b):
 		return b
 	case subtype.IsSubtype(b, a):
@@ -213,6 +245,19 @@ func widerWritableType(a, b typ.Type) typ.Type {
 	default:
 		return a
 	}
+}
+
+func assignmentWriteIntersectionIncludesDeclared(projected, declared typ.Type) bool {
+	intersection, ok := projected.(*typ.Intersection)
+	if !ok || declared == nil {
+		return false
+	}
+	for _, member := range intersection.Members {
+		if typ.TypeEquals(member, declared) || subtype.IsSubtype(member, declared) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Result) declaredWritePathType(p path.Path) (typ.Type, bool) {
@@ -237,9 +282,30 @@ func (r *Result) dominatingDeclarationSourceWritePathType(point cfg.Point, p pat
 	if !ok || !declaration.Source.HasExpr {
 		return nil, false
 	}
+	if t, ok := r.declarationSourceRefinementWritePathType(declaration.Source.ExprRef, p.Segments); ok {
+		return t, true
+	}
 	sourcePath, ok := r.ExpressionRefPath(declaration.Source.ExprRef)
 	if !ok || sourcePath.IsEmpty() || sourcePath.Symbol == 0 {
 		return nil, false
 	}
 	return r.declaredWritePathType(sourcePath.AppendSegments(p.Segments))
+}
+
+func (r *Result) declarationSourceRefinementWritePathType(expr factflow.ExprRef, segments []segment.Segment) (typ.Type, bool) {
+	if r == nil || expr == 0 {
+		return nil, false
+	}
+	refinement, ok := r.facts.ExpressionRefinement(expr)
+	if !ok || refinement.Mode() != factflow.ExpressionRefinementRuntimeValidation {
+		return nil, false
+	}
+	t, ok := r.valueTypeWithPresence(refinement.Refinement())
+	if !ok || t == nil {
+		return nil, false
+	}
+	if len(segments) == 0 {
+		return t, true
+	}
+	return luatypeprojection.ApplyWriteSegments(t, segments)
 }

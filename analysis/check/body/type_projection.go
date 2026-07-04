@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/literal"
 	"github.com/wippyai/go-lua/analysis/type/subst"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/transform"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -151,7 +152,46 @@ func TypeIsGradual(t typ.Type) bool {
 }
 
 func TypeFamilyBase(t typ.Type) (typ.Type, bool) {
-	return literal.FamilyBase(t)
+	if base, ok := literal.FamilyBase(t); ok {
+		return base, true
+	}
+	return intersectionFamilyBase(t, 0)
+}
+
+func intersectionFamilyBase(t typ.Type, depth int) (typ.Type, bool) {
+	if t == nil || depth > typ.DefaultRecursionDepth {
+		return nil, false
+	}
+	switch v := unwrap.Annotated(t).(type) {
+	case *typ.Alias:
+		next := v.UnaliasedTarget()
+		if next == nil || next == t {
+			return nil, false
+		}
+		return intersectionFamilyBase(next, depth+1)
+	case *typ.Optional:
+		return intersectionFamilyBase(v.Inner, depth+1)
+	case *typ.Intersection:
+		for _, candidate := range v.Members {
+			if candidate == nil {
+				continue
+			}
+			coversAll := true
+			for _, member := range v.Members {
+				if member == nil || typ.TypeEquals(member, candidate) {
+					continue
+				}
+				if !subtype.IsSubtype(member, candidate) {
+					coversAll = false
+					break
+				}
+			}
+			if coversAll {
+				return candidate, true
+			}
+		}
+	}
+	return nil, false
 }
 
 func TypeIsMultiArmUnion(t typ.Type) bool {

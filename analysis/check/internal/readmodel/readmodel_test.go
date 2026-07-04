@@ -1463,6 +1463,206 @@ end
 	}
 }
 
+func TestOrdinaryAssignmentTargetTypeUsesWriteMeetForStaticUnionRecordFields(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Box = {value: number} | {value: string}
+
+local function dot(box: Box): ()
+	box.value = "bad"
+end
+
+local function bracket(box: Box): ()
+	box["value"] = "bad"
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{
+		Check: body.Config{
+			Registry:   reg,
+			Globals:    []string{"pairs", "tostring"},
+			Signatures: signaturelookup.Source{IncludeStdlib: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil || len(root.FunctionResults()) != 2 {
+		t.Fatalf("function results = %#v, want two children", root)
+	}
+	var checkedTargets int
+	for _, child := range root.FunctionResults() {
+		reader := New(child)
+		for _, point := range child.Graph().RPO() {
+			fact, ok := child.OrdinaryAssignment(point)
+			if !ok {
+				continue
+			}
+			label := body.AssignmentSourceLabel(fact.Target)
+			if label != "box.value" && label != `box["value"]` {
+				continue
+			}
+			checkedTargets++
+			got, ok := reader.ordinaryAssignmentTargetType(point, fact)
+			if !ok {
+				t.Fatalf("ordinaryAssignmentTargetType returned false for %s", label)
+			}
+			if subtype.IsSubtype(typ.LiteralString("bad"), got) {
+				t.Fatalf("%s target type = %v, want write meet rejecting literal string", label, got)
+			}
+		}
+	}
+	if checkedTargets != 2 {
+		t.Fatalf("checked static union write targets = %d, want 2", checkedTargets)
+	}
+}
+
+func TestOrdinaryAssignmentTargetTypeUsesDeclaredRecordForMutableLiteralField(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Projection = {
+	status: "queued" | "started" | "completed" | "failed",
+}
+
+local projection: Projection = {
+	status = "queued",
+}
+projection.status = "started"
+`)
+	checked, err := program.RunChunk(stmts, program.Config{
+		Check: body.Config{
+			Registry:   reg,
+			Globals:    []string{"pairs", "tostring"},
+			Signatures: signaturelookup.Source{IncludeStdlib: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatalf("root result is nil")
+	}
+	reader := New(root)
+	var found bool
+	for _, point := range root.Graph().RPO() {
+		fact, ok := root.OrdinaryAssignment(point)
+		if !ok || body.AssignmentSourceLabel(fact.Target) != "projection.status" {
+			continue
+		}
+		found = true
+		got, ok := reader.ordinaryAssignmentTargetType(point, fact)
+		if !ok {
+			t.Fatal("ordinaryAssignmentTargetType returned false for projection.status")
+		}
+		if !subtype.IsSubtype(typ.LiteralString("started"), got) {
+			t.Fatalf("target type = %v, want declared status union accepting \"started\"", got)
+		}
+	}
+	if !found {
+		t.Fatal("missing projection.status ordinary assignment")
+	}
+}
+
+func TestOrdinaryAssignmentTargetTypeWidensMapRecoveredMutableLiteralField(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Projection = {
+	status: "queued" | "started" | "completed" | "failed",
+}
+type State = {
+	projections: {[string]: Projection},
+}
+
+local state: State = {
+	projections = {},
+}
+local projection = state.projections["task"]
+if not projection then
+	projection = {
+		status = "queued",
+	}
+	state.projections["task"] = projection
+end
+projection.status = "started"
+`)
+	checked, err := program.RunChunk(stmts, program.Config{
+		Check: body.Config{
+			Registry:   reg,
+			Globals:    []string{"pairs", "tostring"},
+			Signatures: signaturelookup.Source{IncludeStdlib: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatalf("root result is nil")
+	}
+	reader := New(root)
+	var found bool
+	for _, point := range root.Graph().RPO() {
+		fact, ok := root.OrdinaryAssignment(point)
+		if !ok || body.AssignmentSourceLabel(fact.Target) != "projection.status" {
+			continue
+		}
+		found = true
+		got, ok := reader.ordinaryAssignmentTargetType(point, fact)
+		if !ok {
+			t.Fatal("ordinaryAssignmentTargetType returned false for projection.status")
+		}
+		if !subtype.IsSubtype(typ.LiteralString("started"), got) {
+			t.Fatalf("target type = %v, want recovered status union accepting \"started\"", got)
+		}
+	}
+	if !found {
+		t.Fatal("missing projection.status ordinary assignment")
+	}
+}
+
+func TestOrdinaryAssignmentTargetTypePreservesCastWidenedAliasContract(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local narrow: {x: number} = {x = 1}
+local wide = narrow as {x: number | string}
+wide.x = "boom"
+`)
+	checked, err := program.RunChunk(stmts, program.Config{
+		Check: body.Config{
+			Registry:   reg,
+			Globals:    []string{"pairs", "tostring"},
+			Signatures: signaturelookup.Source{IncludeStdlib: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatalf("root result is nil")
+	}
+	reader := New(root)
+	var found bool
+	for _, point := range root.Graph().RPO() {
+		fact, ok := root.OrdinaryAssignment(point)
+		if !ok || body.AssignmentSourceLabel(fact.Target) != "wide.x" {
+			continue
+		}
+		found = true
+		got, ok := reader.ordinaryAssignmentTargetType(point, fact)
+		if !ok {
+			t.Fatal("ordinaryAssignmentTargetType returned false for wide.x")
+		}
+		if !subtype.IsSubtype(typ.LiteralString("boom"), got) {
+			t.Fatalf("target type = %v, want cast-widened union accepting string", got)
+		}
+	}
+	if !found {
+		t.Fatal("missing wide.x ordinary assignment")
+	}
+}
+
 func TestOrdinaryAssignmentTargetTypeUsesPairsClosedRecordKeys(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
