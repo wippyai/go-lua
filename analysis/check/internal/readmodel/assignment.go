@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -211,8 +212,12 @@ func (r Reader) forEachOrdinaryAssignment(point cfg.Point, fact body.OrdinaryAss
 	if fact.Target == nil || fact.Value == nil {
 		return true
 	}
-	expected, ok := r.ordinaryAssignmentTargetType(point, fact)
-	if !ok || !readapi.ObligationTypeReportable(expected) {
+	target, ok := r.ordinaryAssignmentTarget(point, fact)
+	if !ok {
+		return true
+	}
+	expected := r.ordinaryWritableTargetType(target.Type, target.TargetValue, target.HasValue, target.Declared)
+	if !readapi.ObligationTypeReportable(expected) {
 		return true
 	}
 	value, ok := r.ordinaryAssignmentSourceValue(point, fact)
@@ -232,6 +237,9 @@ func (r Reader) forEachOrdinaryAssignment(point cfg.Point, fact body.OrdinaryAss
 		}
 	}
 	t, _ := r.assignmentSourceTypeForExpr(point, fact.Value, value)
+	if inferredReplacementAccepted(target.Declared, expected, t) {
+		return true
+	}
 	assignment := Assignment{
 		Point:              point,
 		TargetLabel:        presentation.TargetLabel,
@@ -352,15 +360,23 @@ func assignmentSourceIndexedRead(expr ast.Expr) bool {
 	return ok && attr.KeySyntax == ast.AttrKeyIndex
 }
 
-func (r Reader) ordinaryAssignmentTargetType(point cfg.Point, fact body.OrdinaryAssignmentFact) (typ.Type, bool) {
+func (r Reader) ordinaryAssignmentTarget(point cfg.Point, fact body.OrdinaryAssignmentFact) (body.OrdinaryAssignmentTargetType, bool) {
 	target, ok := r.result.OrdinaryAssignmentTargetTypeAt(point, fact)
+	if !ok {
+		return body.OrdinaryAssignmentTargetType{}, false
+	}
+	return target, true
+}
+
+func (r Reader) ordinaryAssignmentTargetType(point cfg.Point, fact body.OrdinaryAssignmentFact) (typ.Type, bool) {
+	target, ok := r.ordinaryAssignmentTarget(point, fact)
 	if !ok {
 		return nil, false
 	}
-	return r.ordinaryWritableTargetType(target.Type, target.TargetValue, target.HasValue), true
+	return r.ordinaryWritableTargetType(target.Type, target.TargetValue, target.HasValue, target.Declared), true
 }
 
-func (r Reader) ordinaryWritableTargetType(current typ.Type, targetValue product.Value, hasValue bool) typ.Type {
+func (r Reader) ordinaryWritableTargetType(current typ.Type, targetValue product.Value, hasValue bool, declared bool) typ.Type {
 	if current == nil {
 		return nil
 	}
@@ -369,8 +385,25 @@ func (r Reader) ordinaryWritableTargetType(current typ.Type, targetValue product
 			return family
 		}
 	}
-	if base, ok := body.TypeFamilyBase(current); ok && base != nil {
-		return base
+	if !declared {
+		if base, ok := body.TypeFamilyBase(current); ok && base != nil {
+			return base
+		}
 	}
 	return current
+}
+
+func inferredReplacementAccepted(declared bool, expected, actual typ.Type) bool {
+	if declared || expected == nil || actual == nil {
+		return false
+	}
+	if _, ok := unwrap.Annotated(expected).(*typ.Function); ok {
+		_, actualOK := unwrap.Annotated(actual).(*typ.Function)
+		return actualOK
+	}
+	if _, ok := unwrap.Annotated(expected).(*typ.Record); ok {
+		_, actualOK := unwrap.Annotated(actual).(*typ.Record)
+		return actualOK
+	}
+	return false
 }

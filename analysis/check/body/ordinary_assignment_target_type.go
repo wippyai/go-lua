@@ -20,6 +20,7 @@ type OrdinaryAssignmentTargetType struct {
 	Type        typ.Type
 	TargetValue product.Value
 	HasValue    bool
+	Declared    bool
 }
 
 func (r *Result) OrdinaryAssignmentTargetTypeAt(point cfg.Point, fact OrdinaryAssignmentFact) (OrdinaryAssignmentTargetType, bool) {
@@ -27,14 +28,14 @@ func (r *Result) OrdinaryAssignmentTargetTypeAt(point cfg.Point, fact OrdinaryAs
 	attr, ok := assignmentTargetAttrExpr(fact.Target)
 	if !ok || attr.Object == nil || attr.Key == nil {
 		if hasDeclared {
-			return r.ordinaryAssignmentTargetTypeResult(point, fact.Target, declared), true
+			return r.ordinaryAssignmentDeclaredTargetTypeResult(point, fact.Target, declared), true
 		}
 		return OrdinaryAssignmentTargetType{}, false
 	}
 	container, ok := r.ExpressionTypeBeforeBoundary(point, attr.Object)
 	if !ok || container == nil {
 		if hasDeclared {
-			return r.ordinaryAssignmentTargetTypeResult(point, fact.Target, declared), true
+			return r.ordinaryAssignmentDeclaredTargetTypeResult(point, fact.Target, declared), true
 		}
 		return OrdinaryAssignmentTargetType{}, false
 	}
@@ -43,14 +44,14 @@ func (r *Result) OrdinaryAssignmentTargetTypeAt(point cfg.Point, fact OrdinaryAs
 		name := ast.KeyName(attr.Key)
 		if name == "" {
 			if hasDeclared {
-				return r.ordinaryAssignmentTargetTypeResult(point, fact.Target, declared), true
+				return r.ordinaryAssignmentDeclaredTargetTypeResult(point, fact.Target, declared), true
 			}
 			return OrdinaryAssignmentTargetType{}, false
 		}
 		t, ok := access.Field(container, name)
 		if !ok {
 			if hasDeclared {
-				return r.ordinaryAssignmentTargetTypeResult(point, fact.Target, declared), true
+				return r.ordinaryAssignmentDeclaredTargetTypeResult(point, fact.Target, declared), true
 			}
 			return OrdinaryAssignmentTargetType{}, false
 		}
@@ -59,7 +60,7 @@ func (r *Result) OrdinaryAssignmentTargetTypeAt(point cfg.Point, fact OrdinaryAs
 		t, ok := access.Field(container, key.Value)
 		if !ok {
 			if hasDeclared {
-				return r.ordinaryAssignmentTargetTypeResult(point, fact.Target, declared), true
+				return r.ordinaryAssignmentDeclaredTargetTypeResult(point, fact.Target, declared), true
 			}
 			return OrdinaryAssignmentTargetType{}, false
 		}
@@ -71,14 +72,14 @@ func (r *Result) OrdinaryAssignmentTargetTypeAt(point cfg.Point, fact OrdinaryAs
 		}
 		if !ok || keyType == nil {
 			if hasDeclared {
-				return r.ordinaryAssignmentTargetTypeResult(point, fact.Target, declared), true
+				return r.ordinaryAssignmentDeclaredTargetTypeResult(point, fact.Target, declared), true
 			}
 			return OrdinaryAssignmentTargetType{}, false
 		}
 		t, ok := luatypeprojection.DynamicWriteValueType(container, keyType)
 		if !ok {
 			if hasDeclared {
-				return r.ordinaryAssignmentTargetTypeResult(point, fact.Target, declared), true
+				return r.ordinaryAssignmentDeclaredTargetTypeResult(point, fact.Target, declared), true
 			}
 			return OrdinaryAssignmentTargetType{}, false
 		}
@@ -95,7 +96,9 @@ func (r *Result) OrdinaryAssignmentTargetTypeAt(point cfg.Point, fact OrdinaryAs
 	if !hasDeclared && !hasSyntaxDeclared && inferredNilOnlyWriteTarget(projected) {
 		return OrdinaryAssignmentTargetType{}, false
 	}
-	return r.ordinaryAssignmentTargetTypeResult(point, fact.Target, projected), true
+	out := r.ordinaryAssignmentTargetTypeResult(point, fact.Target, projected)
+	out.Declared = hasDeclared || hasSyntaxDeclared
+	return out, true
 }
 
 func inferredNilOnlyWriteTarget(t typ.Type) bool {
@@ -148,6 +151,12 @@ func (r *Result) ordinaryAssignmentTargetTypeResult(point cfg.Point, target ast.
 			out.HasValue = true
 		}
 	}
+	return out
+}
+
+func (r *Result) ordinaryAssignmentDeclaredTargetTypeResult(point cfg.Point, target ast.Expr, t typ.Type) OrdinaryAssignmentTargetType {
+	out := r.ordinaryAssignmentTargetTypeResult(point, target, t)
+	out.Declared = true
 	return out
 }
 
