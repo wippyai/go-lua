@@ -42,6 +42,8 @@ type producerContext struct {
 
 	judgmentPolicy     judgment.Policy
 	judgmentStrictness judgment.StrictnessMode
+
+	suppressDirectCallContracts bool
 }
 
 type diagnosticProducer struct {
@@ -115,6 +117,9 @@ func directCallContractJudgmentProducer() diagnosticProducer {
 		defaultEnabled: true,
 		produce: func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
 			if result == nil {
+				return nil
+			}
+			if context.suppressDirectCallContracts {
 				return nil
 			}
 			return context.produceDirectCallContractJudgments(result)
@@ -203,7 +208,21 @@ func produceWithParents(
 
 		judgmentPolicy:     normalizedJudgmentPolicy(config.JudgmentPolicy),
 		judgmentStrictness: config.JudgmentStrictness,
+
+		suppressDirectCallContracts: directCallContractsOwnedByContext(parentResult, result),
 	}
+	out := produceOne(result, config, context)
+	if result == nil {
+		return out
+	}
+	for _, fn := range result.ReportableFunctionResults() {
+		childParents := append(append([]*body.Result(nil), parentResults...), result)
+		out = append(out, produceWithParents(fn, config, result, childParents...)...)
+	}
+	return out
+}
+
+func produceOne(result *body.Result, config Config, context producerContext) []diagnostic.Diagnostic {
 	var out []diagnostic.Diagnostic
 	for _, producer := range diagnosticProducers() {
 		if !producer.shouldRun(config.Policy) {
@@ -211,9 +230,18 @@ func produceWithParents(
 		}
 		out = append(out, producer.produce(result, context)...)
 	}
-	for _, fn := range result.ReportableFunctionResults() {
-		childParents := append(append([]*body.Result(nil), parentResults...), result)
-		out = append(out, produceWithParents(fn, config, result, childParents...)...)
-	}
 	return out
+}
+
+func directCallContractsOwnedByContext(parent, result *body.Result) bool {
+	if parent == nil || result == nil || result.IsCallContextResult() || result.Function() == nil {
+		return false
+	}
+	for _, sibling := range parent.FunctionResults() {
+		if sibling == nil || !sibling.IsCallContextResult() || sibling.Function() != result.Function() {
+			continue
+		}
+		return true
+	}
+	return false
 }
