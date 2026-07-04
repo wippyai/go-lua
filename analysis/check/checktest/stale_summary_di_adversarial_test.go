@@ -38,23 +38,23 @@ local s: string = f()
 			StartLine: 12,
 			StartCol:  19,
 			EndLine:   12,
-			EndCol:    19,
+			EndCol:    20,
 		},
 		MessageContains: []string{"call result 1", "number", "not string"},
 		EvidenceMin:     2,
 		EvidenceContains: []string{
-			"returns number",
+			"declares call result 1 as number",
 			"assignment target s requires string",
 		},
 		EvidenceOrdered: []string{
-			"returns number",
+			"declares call result 1 as number",
 			"assignment target s requires string",
 		},
 		EvidenceChain: []diagnosticEvidenceExpectation{
 			{
-				Kind:            diagnostic.EvidenceAbstractFact,
-				Trust:           diagnostic.TrustProven,
-				MessageContains: []string{"f", "returns number"},
+				Kind:            diagnostic.EvidenceUserAssertion,
+				Trust:           diagnostic.TrustClaimed,
+				MessageContains: []string{"f", "declares call result 1", "number"},
 			},
 			{
 				Kind:            diagnostic.EvidenceUserAssertion,
@@ -75,7 +75,7 @@ local s: string = f()
 			"12 | local s: string = f()",
 			"call result",
 			"because:",
-			"proven: f returns number",
+			"claimed: f declares call result 1 as number",
 			"claimed: assignment target s requires string",
 		},
 		RenderNotContains: []string{
