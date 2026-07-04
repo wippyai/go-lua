@@ -62,6 +62,13 @@ func TestNormalReturnFactDescriptorsDeriveLiveLanes(t *testing.T) {
 	}
 }
 
+func appendDerivedNormalReturnFacts(f, other NormalReturnFacts) NormalReturnFacts {
+	for _, lane := range derivedNormalReturnFactLanes() {
+		f = lane.Append(f, other)
+	}
+	return f
+}
+
 // TestNormalReturnFactDescriptorsAppendParity proves descriptor-derived Append
 // produces a struct identical to the public NormalReturnFacts.Append over the
 // rich corpus, including the empty-side fast paths.
@@ -89,6 +96,17 @@ func TestNormalReturnFactDescriptorsAppendParity(t *testing.T) {
 	}
 }
 
+func filterDerivedNormalReturnFacts(f NormalReturnFacts, keep NormalReturnPathPredicate) NormalReturnFacts {
+	if f.Empty() || keep == nil {
+		return NormalReturnFacts{}
+	}
+	var out NormalReturnFacts
+	for _, lane := range derivedNormalReturnFactLanes() {
+		lane.filter(&out, f, keep)
+	}
+	return out
+}
+
 // TestNormalReturnFactDescriptorsFilterParity proves descriptor-derived
 // FilterPaths is byte-identical to the public FilterPaths across match/other/all
 // predicates.
@@ -109,6 +127,17 @@ func TestNormalReturnFactDescriptorsFilterParity(t *testing.T) {
 			}
 		})
 	}
+}
+
+func dropDerivedNormalReturnFacts(f NormalReturnFacts, shouldDrop NormalReturnPathPredicate) NormalReturnFacts {
+	if f.Empty() || shouldDrop == nil {
+		return f
+	}
+	var out NormalReturnFacts
+	for _, lane := range derivedNormalReturnFactLanes() {
+		lane.drop(&out, f, shouldDrop)
+	}
+	return out
 }
 
 // TestNormalReturnFactDescriptorsDropParity proves descriptor-derived

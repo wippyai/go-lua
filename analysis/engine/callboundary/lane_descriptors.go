@@ -320,38 +320,3 @@ func NormalReturnFactDescriptors() BoundaryFactTable[NormalReturnLaneOps] {
 func derivedNormalReturnFactLanes() []NormalReturnFactLane {
 	return DeriveBoundaryLanes(normalReturnFactDescriptors, BoundaryFactDescriptor[NormalReturnLaneOps].deriveNormalReturnLane)
 }
-
-// appendDerivedNormalReturnFacts appends every derived lane from other onto f,
-// mirroring appendNonEmptyNormalReturnFacts over the descriptor table. It backs
-// the parity oracle and is the shape the flip installs.
-func appendDerivedNormalReturnFacts(f, other NormalReturnFacts) NormalReturnFacts {
-	for _, lane := range derivedNormalReturnFactLanes() {
-		f = lane.Append(f, other)
-	}
-	return f
-}
-
-// filterDerivedNormalReturnFacts reproduces FilterPaths over the derived lanes.
-func filterDerivedNormalReturnFacts(f NormalReturnFacts, keep NormalReturnPathPredicate) NormalReturnFacts {
-	if f.Empty() || keep == nil {
-		return NormalReturnFacts{}
-	}
-	var out NormalReturnFacts
-	for _, lane := range derivedNormalReturnFactLanes() {
-		lane.filter(&out, f, keep)
-	}
-	return out
-}
-
-// dropDerivedNormalReturnFacts reproduces DropFactsTouchingPaths over the
-// derived lanes.
-func dropDerivedNormalReturnFacts(f NormalReturnFacts, shouldDrop NormalReturnPathPredicate) NormalReturnFacts {
-	if f.Empty() || shouldDrop == nil {
-		return f
-	}
-	var out NormalReturnFacts
-	for _, lane := range derivedNormalReturnFactLanes() {
-		lane.drop(&out, f, shouldDrop)
-	}
-	return out
-}

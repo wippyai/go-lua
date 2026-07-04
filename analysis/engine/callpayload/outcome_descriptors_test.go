@@ -32,6 +32,24 @@ func TestCallOutcomeDescriptorsDeriveLiveLanes(t *testing.T) {
 	}
 }
 
+func derivedCallOutcomeEmpty(o CallOutcome) bool {
+	for _, lane := range derivedCallOutcomeLanes() {
+		if lane.has(o) {
+			return false
+		}
+	}
+	return true
+}
+
+func derivedCallOutcomeHasPostReturnEvidence(o CallOutcome) bool {
+	for _, lane := range derivedCallOutcomeLanes() {
+		if lane.postReturn && lane.has(o) {
+			return true
+		}
+	}
+	return false
+}
+
 // TestCallOutcomeDescriptorsEmptyAndEvidenceParity proves descriptor-derived
 // Empty and HasPostReturnEvidence match the public methods for the empty
 // outcome and for every single-field-populated outcome.

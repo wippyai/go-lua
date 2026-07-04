@@ -107,24 +107,3 @@ func CallOutcomeDescriptors() callboundary.BoundaryFactTable[CallOutcomeLaneOps]
 func derivedCallOutcomeLanes() []callOutcomeLane {
 	return callboundary.DeriveBoundaryLanes(callOutcomeDescriptors, deriveCallOutcomeLane)
 }
-
-// derivedCallOutcomeEmpty reproduces CallOutcome.Empty over the derived lanes.
-func derivedCallOutcomeEmpty(o CallOutcome) bool {
-	for _, lane := range derivedCallOutcomeLanes() {
-		if lane.has(o) {
-			return false
-		}
-	}
-	return true
-}
-
-// derivedCallOutcomeHasPostReturnEvidence reproduces
-// CallOutcome.HasPostReturnEvidence over the derived lanes.
-func derivedCallOutcomeHasPostReturnEvidence(o CallOutcome) bool {
-	for _, lane := range derivedCallOutcomeLanes() {
-		if lane.postReturn && lane.has(o) {
-			return true
-		}
-	}
-	return false
-}
