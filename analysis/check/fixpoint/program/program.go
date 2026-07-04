@@ -2589,9 +2589,7 @@ type materializedProgram struct {
 	keys        programKeys
 }
 
-type resultSummaryProjectionCache struct {
-	entries map[*body.Result]summary.Summary
-}
+type resultSummaryProjectionCache struct{}
 
 func newResultSummaryProjectionCache() *resultSummaryProjectionCache {
 	return &resultSummaryProjectionCache{}
@@ -2601,20 +2599,7 @@ func (c *resultSummaryProjectionCache) project(result *body.Result) (summary.Sum
 	if result == nil {
 		return summary.Summary{}, false
 	}
-	if c == nil {
-		return summaryprojection.FromResult(result), true
-	}
-	if c.entries != nil {
-		if got, ok := c.entries[result]; ok {
-			return got.Clone(), true
-		}
-	}
-	got := summaryprojection.FromResult(result)
-	if c.entries == nil {
-		c.entries = make(map[*body.Result]summary.Summary)
-	}
-	c.entries[result] = got
-	return got.Clone(), true
+	return summaryprojection.FromResult(result), true
 }
 
 type materializedSolveCache struct {
@@ -3106,15 +3091,33 @@ func refineMaterializedSummaryProofs(
 	if reg == nil || materialized.root == nil {
 		return materialized.root, initial, nil
 	}
-	next, changed := snapshotWithMaterializedSummaryProofs(reg, initial, materialized)
-	if !changed || rematerialize == nil {
-		return materialized.root, next, nil
+	current := initial
+	valueSlotRematerialized := false
+	normalFactRematerialized := false
+	for {
+		next, changed := snapshotWithMaterializedSummaryProofs(reg, current, materialized)
+		if !changed || rematerialize == nil {
+			return materialized.root, next, nil
+		}
+		needsRematerialize := materializedCoreProofChangesAffectMaterialization(reg, current, next)
+		if !needsRematerialize && !normalFactRematerialized && materializedNormalReturnFactChanges(reg, current, next) {
+			needsRematerialize = true
+			normalFactRematerialized = true
+		}
+		if !needsRematerialize && !valueSlotRematerialized && materializedValueSlotChanges(reg, current, next) {
+			needsRematerialize = true
+			valueSlotRematerialized = true
+		}
+		if !needsRematerialize {
+			return materialized.root, next, nil
+		}
+		var err error
+		materialized, err = rematerialize(next, materialized.keys)
+		if err != nil {
+			return nil, summary.Snapshot{}, err
+		}
+		current = next
 	}
-	rematerialized, err := rematerialize(next, materialized.keys)
-	if err != nil {
-		return nil, summary.Snapshot{}, err
-	}
-	return rematerialized.root, next, nil
 }
 
 func snapshotWithMaterializedSummaryProofs(
@@ -3143,6 +3146,96 @@ func snapshotWithMaterializedSummaryProofs(
 	return summary.NewSnapshotOwnedNormalized(reg, nextEntries...), true
 }
 
+func materializedCoreProofChangesAffectMaterialization(reg *axis.Registry, before, after summary.Snapshot) bool {
+	beforeEntries := summaryEntriesByKey(before)
+	for _, entry := range after.EntriesOwnedNormalized() {
+		prev := beforeEntries[entry.Key]
+		next := entry.Summary
+		if !paramObligationsEqual(reg, prev.ParamObligations, next.ParamObligations) ||
+			!paramMemberCallObligationsEqual(prev.ParamMemberCallObligations, next.ParamMemberCallObligations) ||
+			!returnPresenceRelationsEqual(prev.ReturnPresenceRelations, next.ReturnPresenceRelations) ||
+			!returnConditionSlotRefinementsEqual(reg, prev.ReturnConditionSlotRefinements, next.ReturnConditionSlotRefinements) {
+			return true
+		}
+	}
+	return false
+}
+
+func materializedNormalReturnFactChanges(reg *axis.Registry, before, after summary.Snapshot) bool {
+	beforeEntries := summaryEntriesByKey(before)
+	for _, entry := range after.EntriesOwnedNormalized() {
+		prev := beforeEntries[entry.Key]
+		next := entry.Summary
+		if !normalReturnFactsMaterializationEqual(reg, prev.NormalReturnFacts, next.NormalReturnFacts) {
+			return true
+		}
+	}
+	return false
+}
+
+func materializedValueSlotChanges(reg *axis.Registry, before, after summary.Snapshot) bool {
+	beforeEntries := summaryEntriesByKey(before)
+	for _, entry := range after.EntriesOwnedNormalized() {
+		prev := beforeEntries[entry.Key]
+		next := entry.Summary
+		if !productValueSlicesEqual(reg, prev.Returns, next.Returns) ||
+			!productValueSlicesEqual(reg, prev.NormalReturnParams, next.NormalReturnParams) {
+			return true
+		}
+	}
+	return false
+}
+
+func summaryEntriesByKey(snapshot summary.Snapshot) map[summary.SummaryKey]summary.Summary {
+	entries := snapshot.EntriesOwnedNormalized()
+	out := make(map[summary.SummaryKey]summary.Summary, len(entries))
+	for _, entry := range entries {
+		out[entry.Key] = entry.Summary
+	}
+	return out
+}
+
+func normalReturnFactsMaterializationEqual(reg *axis.Registry, a, b callboundary.NormalReturnFacts) bool {
+	return pathValueFactsEqual(reg, a.PersistentPathWrites, b.PersistentPathWrites) &&
+		pathStaticMemberFactsEqual(reg, a.PathStaticMembers, b.PathStaticMembers)
+}
+
+func pathValueFactsEqual(reg *axis.Registry, a, b []callboundary.PathValueFact) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !a[i].Path.Equal(b[i].Path) || !product.Equal(reg, a[i].Value, b[i].Value) {
+			return false
+		}
+	}
+	return true
+}
+
+func pathStaticMemberFactsEqual(reg *axis.Registry, a, b []callboundary.PathStaticMemberFact) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !a[i].Path.Equal(b[i].Path) || !product.Equal(reg, a[i].Value, b[i].Value) {
+			return false
+		}
+	}
+	return true
+}
+
+func productValueSlicesEqual(reg *axis.Registry, a, b []product.Value) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !product.Equal(reg, a[i], b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 func overlayMaterializedSummaryProofsForResult(
 	reg *axis.Registry,
 	entries map[summary.SummaryKey]summary.Summary,
@@ -3168,12 +3261,14 @@ func overlayMaterializedSummaryProofsForResult(
 		next.NormalReturnParams = params
 		changed = true
 	}
-	if paramObligationsOverlayAllowed(reg, projected.ParamObligations) &&
+	if len(projected.ParamObligations) != 0 &&
+		paramObligationsOverlayAllowed(reg, projected.ParamObligations) &&
 		!paramObligationsEqual(reg, projected.ParamObligations, current.ParamObligations) {
 		next.ParamObligations = append([]product.Value(nil), projected.ParamObligations...)
 		changed = true
 	}
-	if paramMemberCallObligationsSubset(projected.ParamMemberCallObligations, current.ParamMemberCallObligations) &&
+	if len(projected.ParamMemberCallObligations) != 0 &&
+		paramMemberCallObligationsSubset(projected.ParamMemberCallObligations, current.ParamMemberCallObligations) &&
 		!paramMemberCallObligationsEqual(projected.ParamMemberCallObligations, current.ParamMemberCallObligations) {
 		next.ParamMemberCallObligations = append([]summary.ParamMemberCallObligation(nil), projected.ParamMemberCallObligations...)
 		changed = true
@@ -3194,12 +3289,12 @@ func overlayMaterializedSummaryProofsForResult(
 		next.NormalReturnFacts.PathStaticMembers = members
 		changed = true
 	}
-	next.ReturnPresenceRelations = projected.ReturnPresenceRelations
-	if !returnPresenceRelationsEqual(next.ReturnPresenceRelations, current.ReturnPresenceRelations) {
+	if relations, ok := overlayMaterializedReturnPresenceRelations(reg, current.ReturnPresenceRelations, projected.ReturnPresenceRelations); ok {
+		next.ReturnPresenceRelations = relations
 		changed = true
 	}
-	next.ReturnConditionSlotRefinements = projected.ReturnConditionSlotRefinements
-	if !returnConditionSlotRefinementsEqual(reg, next.ReturnConditionSlotRefinements, current.ReturnConditionSlotRefinements) {
+	if refinements, ok := overlayMaterializedReturnConditionSlotRefinements(reg, current.ReturnConditionSlotRefinements, projected.ReturnConditionSlotRefinements); ok {
+		next.ReturnConditionSlotRefinements = refinements
 		changed = true
 	}
 	if !changed {
@@ -3269,6 +3364,44 @@ func overlayMaterializedPathStaticMembers(
 		return current, false
 	}
 	return projectedSummary.NormalReturnFacts.PathStaticMembers, true
+}
+
+func overlayMaterializedReturnPresenceRelations(
+	reg *axis.Registry,
+	current []summary.ReturnPresenceRelation,
+	projected []summary.ReturnPresenceRelation,
+) ([]summary.ReturnPresenceRelation, bool) {
+	if len(projected) == 0 {
+		return current, false
+	}
+	currentSummary := summary.Normalize(reg, summary.Summary{ReturnPresenceRelations: current})
+	combined := make([]summary.ReturnPresenceRelation, 0, len(current)+len(projected))
+	combined = append(combined, current...)
+	combined = append(combined, projected...)
+	combinedSummary := summary.Normalize(reg, summary.Summary{ReturnPresenceRelations: combined})
+	if summary.EqualNormalized(reg, currentSummary, combinedSummary) {
+		return current, false
+	}
+	return combinedSummary.ReturnPresenceRelations, true
+}
+
+func overlayMaterializedReturnConditionSlotRefinements(
+	reg *axis.Registry,
+	current []summary.ReturnConditionSlotRefinement,
+	projected []summary.ReturnConditionSlotRefinement,
+) ([]summary.ReturnConditionSlotRefinement, bool) {
+	if len(projected) == 0 {
+		return current, false
+	}
+	currentSummary := summary.Normalize(reg, summary.Summary{ReturnConditionSlotRefinements: current})
+	combined := make([]summary.ReturnConditionSlotRefinement, 0, len(current)+len(projected))
+	combined = append(combined, current...)
+	combined = append(combined, projected...)
+	combinedSummary := summary.Normalize(reg, summary.Summary{ReturnConditionSlotRefinements: combined})
+	if summary.EqualNormalized(reg, currentSummary, combinedSummary) {
+		return current, false
+	}
+	return combinedSummary.ReturnConditionSlotRefinements, true
 }
 
 func materializedPersistentPathWritesRefineCurrent(
@@ -3561,7 +3694,7 @@ func materializeFunctionTree(
 	cache.writeResult(keys.rootKey, root)
 	applyDefinitionCaptureEntryStatesFromResult(&keys, fn, root, config.Registry)
 	funcTypes := functionValueTypesFromSummaries(config.Registry, cache, keys, config.ModuleTypes)
-	body.WithOwnedFunctionValueTypes(root, funcTypes)
+	installMaterializedFunctionValueTypes(cache, keys, funcTypes, root, nil, nil)
 	baseResults := make(map[*ast.FunctionExpr]*body.Result, len(keys.functions))
 	indexBase := summaryIndexBase(keys)
 	shape := materializedProgramShapeDigest(keys)
@@ -3600,10 +3733,7 @@ func materializeFunctionTree(
 	}
 	if len(baseResults) != 0 {
 		funcTypes = functionValueTypesFromSummaries(config.Registry, cache, keys, config.ModuleTypes)
-		body.WithOwnedFunctionValueTypes(root, funcTypes)
-		for _, result := range baseResults {
-			body.WithOwnedFunctionValueTypes(result, funcTypes)
-		}
+		installMaterializedFunctionValueTypes(cache, keys, funcTypes, root, baseResults, nil)
 	}
 	refreshedContexts := refreshExistingCallContextEntriesFromMaterializedResults(&keys, root, baseResults, config)
 	beforeMaterializedCollection := keys.contexts.Len()
@@ -3623,10 +3753,7 @@ func materializeFunctionTree(
 	recordProgramShape(stats, keys)
 	if refreshedContexts || addedContexts {
 		funcTypes = functionValueTypesFromSummaries(config.Registry, cache, keys, config.ModuleTypes)
-		body.WithOwnedFunctionValueTypes(root, funcTypes)
-		for _, result := range baseResults {
-			body.WithOwnedFunctionValueTypes(result, funcTypes)
-		}
+		installMaterializedFunctionValueTypes(cache, keys, funcTypes, root, baseResults, nil)
 	}
 	contextResultByKey, err := materializeDiscoveredContexts(prepared, config, stats, cache, keyFor, &keys, solveCache)
 	if err != nil {
@@ -3634,12 +3761,8 @@ func materializeFunctionTree(
 	}
 	if len(contextResultByKey) != 0 {
 		funcTypes = functionValueTypesFromSummaries(config.Registry, cache, keys, config.ModuleTypes)
-		body.WithOwnedFunctionValueTypes(root, funcTypes)
-		for _, result := range baseResults {
-			body.WithOwnedFunctionValueTypes(result, funcTypes)
-		}
+		installMaterializedFunctionValueTypes(cache, keys, funcTypes, root, baseResults, contextResultByKey)
 		for key, result := range contextResultByKey {
-			body.WithOwnedFunctionValueTypes(result, funcTypes)
 			if resultKeys != nil {
 				resultKeys[result] = key
 			}
@@ -3671,7 +3794,47 @@ func materializeFunctionTree(
 		body.WithFunctionResults(parent, children)
 	}
 	attach(root, fn)
+	installMaterializedFunctionValueTypes(cache, keys, funcTypes, root, baseResults, contextResultByKey)
 	return root, keys, nil
+}
+
+func installMaterializedFunctionValueTypes(
+	cache *materializedSummaryCache,
+	keys programKeys,
+	funcTypes body.FunctionValueTypes,
+	root *body.Result,
+	baseResults map[*ast.FunctionExpr]*body.Result,
+	contextResults map[summary.SummaryKey]*body.Result,
+) {
+	if root != nil {
+		body.WithOwnedFunctionValueTypes(root, funcTypes)
+		if cache != nil {
+			cache.writeResult(keys.rootKey, root)
+		}
+	}
+	for fn, result := range baseResults {
+		if result == nil {
+			continue
+		}
+		body.WithOwnedFunctionValueTypes(result, funcTypes)
+		if cache == nil {
+			continue
+		}
+		key, ok := keys.summaryKeyForFunction(fn)
+		if !ok {
+			continue
+		}
+		cache.writeResult(key, result)
+	}
+	for key, result := range contextResults {
+		if result == nil {
+			continue
+		}
+		body.WithOwnedFunctionValueTypes(result, funcTypes)
+		if cache != nil {
+			cache.writeResult(key, result)
+		}
+	}
 }
 
 func materializeDiscoveredContexts(

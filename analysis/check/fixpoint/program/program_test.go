@@ -278,7 +278,7 @@ func TestMaterializedSummaryCacheReadClonesOwnedBase(t *testing.T) {
 	}
 }
 
-func TestResultSummaryProjectionCacheClonesCachedSummary(t *testing.T) {
+func TestResultSummaryProjectionReadsCurrentResultAndClonesSummary(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `return "ok"`)
 	result, err := RunChunk(stmts, Config{Check: body.Config{Registry: reg}})
