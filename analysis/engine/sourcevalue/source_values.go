@@ -135,6 +135,14 @@ func (r sourceValueResolver) valueOfSource(
 	if !source.Valid() {
 		return product.Value{}, false
 	}
+	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
+		if value, ok := r.valueOfObjectLiteral(point, source.ExprRef, in, read, active); ok {
+			if refinement, refineOK := r.expressionRefinements.Lookup(source.ExprRef); refineOK {
+				return applyExpressionRefinement(r.registry, value, refinement), true
+			}
+			return value, true
+		}
+	}
 	if source.HasExpr {
 		if refinement, ok := r.expressionRefinements.Lookup(source.ExprRef); ok {
 			if active[source.ExprRef] {
@@ -185,9 +193,6 @@ func (r sourceValueResolver) valueOfExpression(
 	}
 	cached, hasCached := r.expressionValues[source.ExprRef]
 	_, pathBacked := r.pathBacked[source.ExprRef]
-	if value, ok := r.valueOfObjectLiteral(point, source.ExprRef, in, read, active); ok {
-		return value, true
-	}
 	if _, isDynamicIndex := r.dynamicIndexExprs[source.ExprRef]; isDynamicIndex && r.expressionValue != nil {
 		if value, ok := r.expressionValue(point, source.ExprRef, source, in); ok {
 			return value, true
@@ -640,6 +645,12 @@ func (r expressionRefinementSourceValues) valueOfSource(
 	if !source.HasExpr {
 		return r.base.ValueOfSource(point, source, in, read)
 	}
+	if value, ok := r.valueOfObjectLiteral(point, source.ExprRef, in, read, active); ok {
+		if refinement, refineOK := r.refinements.Lookup(source.ExprRef); refineOK {
+			return applyExpressionRefinement(r.registry, value, refinement), true
+		}
+		return value, true
+	}
 	if refinement, ok := r.refinements.Lookup(source.ExprRef); ok {
 		if active[source.ExprRef] {
 			return product.Value{}, false
@@ -659,6 +670,20 @@ func (r expressionRefinementSourceValues) valueOfSource(
 		return value, true
 	}
 	return r.base.ValueOfSource(point, source, in, read)
+}
+
+func (r expressionRefinementSourceValues) valueOfObjectLiteral(
+	point cfg.Point,
+	expr factflow.ExprRef,
+	in state.State,
+	read func(cfg.Point) state.State,
+	active map[factflow.ExprRef]bool,
+) (product.Value, bool) {
+	base, ok := r.base.(sourceValueResolver)
+	if !ok {
+		return product.Value{}, false
+	}
+	return base.valueOfObjectLiteral(point, expr, in, read, active)
 }
 
 func (r expressionRefinementSourceValues) valueOfExpressionOperation(

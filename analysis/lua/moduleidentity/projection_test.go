@@ -148,6 +148,64 @@ func TestProjectionResolvesLocalAliasOfExplicitGlobalModuleRoot(t *testing.T) {
 	}
 }
 
+func TestProjectionResolvesCapturedAliasOfExplicitGlobalModuleRoot(t *testing.T) {
+	stmts := parseChunk(t, `
+		local table = table
+		function make()
+			return table.create(4, 0)
+		end
+		make()
+	`)
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"require", "table"}})
+	def, ok := stmts[1].(*ast.FuncDefStmt)
+	if !ok || def.Func == nil {
+		t.Fatalf("stmt 1 = %T, want function definition", stmts[1])
+	}
+	built := cfgbuild.BuildFunction(def.Func, bindings)
+	if built == nil || built.Graph == nil {
+		t.Fatal("BuildFunction returned nil")
+	}
+	sem, err := semantics.ExtractFunction(def.Func, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractFunction: %v", err)
+	}
+	projection := New(bindings, built.Graph, sem)
+
+	got := onlySignatureName(t, projection, built.Graph, sem)
+	if got != "table.create" {
+		t.Fatalf("SignatureName(captured explicit global module root alias) = %q, want table.create", got)
+	}
+}
+
+func TestProjectionKeepsCapturedRequireModuleRootAlias(t *testing.T) {
+	stmts := parseChunk(t, `
+		local json = require("json")
+		function decode()
+			return json.decode("{}")
+		end
+		decode()
+	`)
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"require"}})
+	def, ok := stmts[1].(*ast.FuncDefStmt)
+	if !ok || def.Func == nil {
+		t.Fatalf("stmt 1 = %T, want function definition", stmts[1])
+	}
+	built := cfgbuild.BuildFunction(def.Func, bindings)
+	if built == nil || built.Graph == nil {
+		t.Fatal("BuildFunction returned nil")
+	}
+	sem, err := semantics.ExtractFunction(def.Func, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractFunction: %v", err)
+	}
+	projection := New(bindings, built.Graph, sem)
+
+	got := onlySignatureName(t, projection, built.Graph, sem)
+	if got != "json.decode" {
+		t.Fatalf("SignatureName(captured require module root alias) = %q, want json.decode", got)
+	}
+}
+
 func TestProjectionDoesNotResolveImplicitGlobalSignatureAlias(t *testing.T) {
 	projection, graph, sem := buildProjection(t, `
 		local store = ownership.store

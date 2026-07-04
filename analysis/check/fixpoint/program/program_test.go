@@ -8,6 +8,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
+	summaryprojection "github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/projectsummary"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
@@ -300,6 +301,58 @@ func TestResultSummaryProjectionCacheClonesCachedSummary(t *testing.T) {
 	}
 	if !product.Equal(reg, second.Returns[0], want) {
 		t.Fatalf("cached projected return = %#v, want original %#v", second.Returns[0], want)
+	}
+}
+
+func TestSetmetatableConstructorSummaryKeepsLiteralFields(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local table = table
+local FlowGraph = {}
+local flow_graph_mt = { __index = FlowGraph }
+
+function FlowGraph.new()
+	return setmetatable({
+		node_order = table.create(4, 0),
+	}, flow_graph_mt)
+end
+`)
+	result, err := RunChunk(stmts, Config{Check: body.Config{
+		Registry: reg,
+		Signatures: signaturelookup.Source{
+			IncludeStdlib: true,
+		},
+	}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := result.RootResult()
+	if root == nil {
+		t.Fatal("RootResult missing")
+	}
+	children := root.FunctionResults()
+	if len(children) != 1 {
+		t.Fatalf("function results = %d, want constructor only", len(children))
+	}
+	constructor := children[0]
+	sum := summaryprojection.FromResult(constructor)
+	if len(sum.Returns) != 1 {
+		t.Fatalf("summary returns = %d, want one", len(sum.Returns))
+	}
+	gotType, ok := typevalue.TypeOf(reg, sum.Returns[0])
+	if !ok {
+		t.Fatalf("constructor return has no type: %#v", sum.Returns[0])
+	}
+	rec, ok := gotType.(*typ.Record)
+	if !ok {
+		t.Fatalf("constructor return type = %v, want record", gotType)
+	}
+	field := rec.GetField("node_order")
+	if field == nil {
+		t.Fatalf("constructor return type = %v, want node_order field", gotType)
+	}
+	if typ.IsUnknown(field.Type) || typ.IsAny(field.Type) {
+		t.Fatalf("node_order type = %v, want concrete table field", field.Type)
 	}
 }
 

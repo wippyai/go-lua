@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
@@ -279,10 +280,10 @@ func withAuthoritativeResultHeapTableObjects(
 	if reg == nil {
 		return left
 	}
-	allowed := make(map[identity.ID]struct{}, len(results))
+	allowed := make(map[identity.ID]product.Value, len(results))
 	for _, result := range results {
 		if id, ok := product.Get(reg, result.Value, identity.Key).ID(); ok {
-			allowed[id] = struct{}{}
+			allowed[id] = result.Value
 		}
 	}
 	if len(allowed) == 0 {
@@ -290,7 +291,7 @@ func withAuthoritativeResultHeapTableObjects(
 	}
 	filtered := make(map[identity.ID]heapidentity.TableObject)
 	for id, object := range right {
-		if _, ok := allowed[id]; ok {
+		if resultValue, ok := allowed[id]; ok && supplementalHeapObjectCarriesEvidence(reg, object, resultValue) {
 			filtered[id] = object
 		}
 	}
@@ -298,6 +299,16 @@ func withAuthoritativeResultHeapTableObjects(
 		return left
 	}
 	return withSupplementalHeapTableObjects(reg, left, filtered)
+}
+
+func supplementalHeapObjectCarriesEvidence(reg *axis.Registry, object heapidentity.TableObject, resultValue product.Value) bool {
+	if len(object.StaticMembers()) != 0 || len(object.DynamicIndexFacts()) != 0 {
+		return true
+	}
+	if reg == nil {
+		return true
+	}
+	return !product.Equal(reg, object.Root(), resultValue)
 }
 
 func withSupplementalPlacements(
@@ -354,7 +365,47 @@ func withSupplementalHeapTableObjects(
 		}
 		return out
 	}
-	return heapidentity.CloneMap(heapidentity.MapDomain(reg).Join(left, right))
+	out := heapidentity.CloneMap(left)
+	for id, object := range right {
+		if existing, ok := out[id]; ok {
+			out[id] = mergeSupplementalHeapTableObject(reg, existing, object)
+			continue
+		}
+		out[id] = object
+	}
+	return out
+}
+
+func mergeSupplementalHeapTableObject(reg *axis.Registry, left, right heapidentity.TableObject) heapidentity.TableObject {
+	domain := heapidentity.ObjectDomain(reg)
+	switch {
+	case domain.Equal(left, domain.Bottom()):
+		return right
+	case domain.Equal(right, domain.Bottom()):
+		return left
+	}
+	staticMembers := left.StaticMembers()
+	for key, value := range right.StaticMembers() {
+		if existing, ok := staticMembers[key]; ok {
+			staticMembers[key] = product.Join(reg, existing, value)
+			continue
+		}
+		staticMembers[key] = value
+	}
+	dynamicFacts := left.DynamicIndexFacts()
+	dynamicDomain := dynamicindex.Domain(reg)
+	for key, fact := range right.DynamicIndexFacts() {
+		if existing, ok := dynamicFacts[key]; ok {
+			dynamicFacts[key] = dynamicDomain.Join(existing, fact)
+			continue
+		}
+		dynamicFacts[key] = fact
+	}
+	return heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+		Root:              product.Join(reg, left.Root(), right.Root()),
+		StaticMembers:     staticMembers,
+		DynamicIndexFacts: dynamicFacts,
+	})
 }
 
 func resultSlotLacksSpecificTypeEvidence(reg *axis.Registry, value product.Value) bool {

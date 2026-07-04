@@ -428,11 +428,18 @@ func (p *Projection) addCapturedAliasNames(fn *ast.FunctionExpr) {
 		return
 	}
 	for _, capture := range p.bindings.DirectCaptures(fn) {
-		modulePath, ok := LocalRequireModulePath(p.bindings, capture.Captured)
-		if !ok {
+		if modulePath, ok := LocalRequireModulePath(p.bindings, capture.Captured); ok {
+			p.addAliasName(capture.CapturedName, modulePath)
+		}
+		origin, ok := p.bindings.LocalOrigin(capture.Captured)
+		if !ok || origin.Stmt == nil {
 			continue
 		}
-		p.addAliasName(capture.CapturedName, modulePath)
+		name := capture.CapturedName
+		if name == "" && origin.Index >= 0 && origin.Index < len(origin.Stmt.Names) {
+			name = origin.Stmt.Names[origin.Index]
+		}
+		p.addRootAlias(capture.Captured, name, exprAt(origin.Stmt.Exprs, origin.Index), 0, true)
 	}
 }
 

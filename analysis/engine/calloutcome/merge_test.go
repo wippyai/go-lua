@@ -6,6 +6,7 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -103,6 +104,10 @@ func supplementalFactLaneTestHandlers() map[string]supplementalFactLaneHandler {
 	return out
 }
 
+func fieldSuffix(name string) pathdom.Path {
+	return pathdom.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: name}}}
+}
+
 func requirePanic(t *testing.T, fn func()) {
 	t.Helper()
 	defer func() {
@@ -197,6 +202,46 @@ func TestWithSupplementalKeepsPrimarySlotsFillsMissingSlotsAndMergesSideFactsWit
 		got.ReturnConditionSlots[0].ReturnValue ||
 		got.ReturnConditionSlots[0].TargetIndex != 1 {
 		t.Fatalf("return condition slots = %#v, want supplemental relation", got.ReturnConditionSlots)
+	}
+}
+
+func TestWithSupplementalHeapObjectsPreservesOneSidedStaticMembers(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	id := identity.ID{Kind: "lua.table", Site: "supplemental", Index: 1}
+	key, ok := heapidentity.StaticMemberSuffixKey(ks, fieldSuffix("field").Segments)
+	if !ok {
+		t.Fatal("failed to build static member key")
+	}
+	root := product.Top()
+	member := product.Set(reg, product.Top(), evidence.Key, evidence.ExplicitTop())
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
+			HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+				id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+					Root:          root,
+					StaticMembers: map[keyspace.Key]product.Value{key: member},
+				}),
+			},
+		}
+	}
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
+			HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+				id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: root}),
+			},
+		}
+	}
+
+	got := WithSupplemental(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+
+	object, ok := got.HeapTableObjects[id]
+	if !ok {
+		t.Fatalf("heap objects = %#v, want %v", got.HeapTableObjects, id)
+	}
+	gotMember, ok := object.StaticMember(key)
+	if !ok || !product.Equal(reg, gotMember, member) {
+		t.Fatalf("static member = %#v/%v, want %#v", gotMember, ok, member)
 	}
 }
 
@@ -687,6 +732,31 @@ func TestWithSupplementalAuthorityKeepsHeapFactsForAuthoritativeResultIdentity(t
 	}
 	if value, ok := object.StaticMember(memberKey); !ok {
 		t.Fatalf("static member = %v/%v, want propagated member for authoritative result object", value, ok)
+	}
+}
+
+func TestWithSupplementalAuthorityDropsEmptyHeapFactForAuthoritativeResultIdentity(t *testing.T) {
+	reg := standard.Registry()
+	resultID := identity.ID{Kind: "table", Site: "compose-result-empty", Index: 1}
+	resultValue := product.Set(reg, typevalue.FromType(reg, typetable.NewRecord().Build()), identity.Key, identity.Singleton(resultID))
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
+			PostReturnAuthority: true,
+			Results:             []callpayload.CallResult{{Index: 0, Value: resultValue}},
+		}
+	}
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
+			HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+				resultID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: resultValue}),
+			},
+		}
+	}
+
+	got := WithSupplemental(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+
+	if len(got.HeapTableObjects) != 0 {
+		t.Fatalf("HeapTableObjects = %#v, want empty no-op heap fact filtered", got.HeapTableObjects)
 	}
 }
 

@@ -1165,6 +1165,41 @@ func TestExpressionRefinementsApplyInsideObjectLiteralViewResolver(t *testing.T)
 	}
 }
 
+func TestExpressionRefinementOnObjectLiteralPreservesLiteralIdentity(t *testing.T) {
+	reg := standard.Registry()
+	expr := ExprRef(65)
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: expr, HasExpr: true}
+	litID := identity.ID{Kind: "test.table", Site: "literal", Index: 1}
+	litValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(litID))
+	refinement := runtimeKindRefinement(reg, runtimekind.Singleton(runtimekind.Table))
+	baseResolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ObjectLiteralView: func(got ExprRef) (ObjectLiteralView, bool) {
+			if got != expr {
+				return ObjectLiteralView{}, false
+			}
+			return NewObjectLiteral(nil).View(), true
+		},
+		ObjectLiteralFromView: func(ObjectLiteralView, ValueSourceResolver) (product.Value, bool) {
+			return litValue, true
+		},
+	})
+	resolver := WithExpressionRefinements(reg, baseResolver, map[ExprRef]ExpressionRefinement{
+		expr: NewExpressionRefinement(source, refinement),
+	})
+
+	got, ok := resolver.ValueOfSource(cfg.Point(1), source, state.State{}, nil)
+	if !ok {
+		t.Fatal("refined object literal source did not resolve")
+	}
+	if gotID := product.Get(reg, got, identity.Key); !identity.Equal(gotID, identity.Singleton(litID)) {
+		t.Fatalf("identity = %s, want literal identity", gotID)
+	}
+	if gotKind := product.Get(reg, got, runtimekind.Key); !runtimekind.Equal(gotKind, runtimekind.Singleton(runtimekind.Table)) {
+		t.Fatalf("runtimekind = %s, want table refinement", gotKind)
+	}
+}
+
 func TestSourceValuesPathBackedExpressionPrefersVariantOriginFlow(t *testing.T) {
 	reg := standard.Registry()
 	expr := ExprRef(77)
