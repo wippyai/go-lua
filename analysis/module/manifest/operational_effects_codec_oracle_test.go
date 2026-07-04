@@ -199,12 +199,12 @@ func mustMarshalWire(t *testing.T, w *operationalEffectsWire) []byte {
 	return data
 }
 
-// TestOperationalEffectsDescriptorCodecMatchesHandwritten is the codec oracle. It
-// asserts the descriptor-driven lane table produces byte-identical wire JSON and
-// Equal-equivalent decoded facts against the existing production codec across a
-// fully-populated corpus, single-lane isolation, permuted input order, empty, and
-// nil inputs.
-func TestOperationalEffectsDescriptorCodecMatchesHandwritten(t *testing.T) {
+// TestOperationalEffectsDescriptorCodecRoundTrips is the descriptor codec oracle.
+// Across a fully-populated corpus, single-lane isolation, permuted input order,
+// empty, and nil inputs it asserts the descriptor-driven wire codec round-trips
+// facts (decode of the encoded wire is Equal to the source) and produces stable,
+// permutation-invariant canonical wire bytes.
+func TestOperationalEffectsDescriptorCodecRoundTrips(t *testing.T) {
 	rich := oracleRichOperationalEffects()
 
 	reversed := rich.Clone()
@@ -229,51 +229,44 @@ func TestOperationalEffectsDescriptorCodecMatchesHandwritten(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			wireOld, errOld := encodeOperationalEffects(tc.e)
-			wireNew, errNew := encodeOperationalEffectsWith(descriptorWireLanes, tc.e)
-			if (errOld == nil) != (errNew == nil) {
-				t.Fatalf("encode error mismatch: old=%v new=%v", errOld, errNew)
+			wire, err := encodeOperationalEffects(tc.e)
+			if err != nil {
+				t.Fatalf("encodeOperationalEffects: %v", err)
 			}
-			if errOld != nil {
-				return
-			}
+			bytesFirst := mustMarshalWire(t, wire)
 
-			bytesOld := mustMarshalWire(t, wireOld)
-			bytesNew := mustMarshalWire(t, wireNew)
-			if string(bytesOld) != string(bytesNew) {
-				t.Fatalf("wire bytes differ:\nold: %s\nnew: %s", bytesOld, bytesNew)
-			}
-
-			factsOld, err := decodeOperationalEffects(wireOld)
+			facts, err := decodeOperationalEffects(wire)
 			if err != nil {
 				t.Fatalf("decodeOperationalEffects: %v", err)
 			}
-			factsNew, err := decodeOperationalEffectsWith(descriptorWireLanes, wireNew)
-			if err != nil {
-				t.Fatalf("decodeOperationalEffectsWith: %v", err)
-			}
-			if !factsOld.Equals(factsNew) {
-				t.Fatalf("decoded facts differ:\nold: %#v\nnew: %#v", factsOld, factsNew)
-			}
 
-			// Round-trip stability: re-encoding decoded facts through the
-			// descriptor codec reproduces the same canonical wire bytes.
-			reWire, err := encodeOperationalEffectsWith(descriptorWireLanes, &factsNew)
+			// Round-trip stability: re-encoding the decoded facts reproduces
+			// the same canonical wire bytes.
+			reWire, err := encodeOperationalEffects(&facts)
 			if err != nil {
 				t.Fatalf("re-encode: %v", err)
 			}
-			if got := mustMarshalWire(t, reWire); string(got) != string(bytesNew) {
-				t.Fatalf("round-trip bytes differ:\nfirst:  %s\nsecond: %s", bytesNew, got)
+			if got := mustMarshalWire(t, reWire); string(got) != string(bytesFirst) {
+				t.Fatalf("round-trip bytes differ:\nfirst:  %s\nsecond: %s", bytesFirst, got)
+			}
+
+			// Decoding the re-encoded wire yields Equal facts.
+			reFacts, err := decodeOperationalEffects(reWire)
+			if err != nil {
+				t.Fatalf("re-decode: %v", err)
+			}
+			if !facts.Equals(reFacts) {
+				t.Fatalf("decoded facts differ across round-trip:\nfirst:  %#v\nsecond: %#v", facts, reFacts)
 			}
 		})
 	}
 
 	// Permutation invariance: reversed input canonicalizes to the same bytes.
-	richWire, err := encodeOperationalEffectsWith(descriptorWireLanes, &rich)
+	richWire, err := encodeOperationalEffects(&rich)
 	if err != nil {
 		t.Fatalf("encode rich: %v", err)
 	}
-	reversedWire, err := encodeOperationalEffectsWith(descriptorWireLanes, &reversed)
+	reversedWire, err := encodeOperationalEffects(&reversed)
 	if err != nil {
 		t.Fatalf("encode reversed: %v", err)
 	}

@@ -45,7 +45,7 @@ func wireLane[Fact any, Wire any](
 			for i := range src {
 				encoded, err := encodeElem(src[i])
 				if err != nil {
-					return fmt.Errorf("%s: %w", fieldName, err)
+					return err
 				}
 				*dst = append(*dst, encoded)
 			}
@@ -60,7 +60,7 @@ func wireLane[Fact any, Wire any](
 			for i := range src {
 				decoded, err := decodeElem(src[i])
 				if err != nil {
-					return fmt.Errorf("%s: %w", fieldName, err)
+					return err
 				}
 				*dst = append(*dst, decoded)
 			}
@@ -80,63 +80,36 @@ func wireLane[Fact any, Wire any](
 	}
 }
 
-// encodeOperationalEffectsWith runs the whole-OperationalEffects encode over a
-// lane table. It is the single driver behind encodeOperationalEffects.
-func encodeOperationalEffectsWith(lanes []operationalEffectsWireLane, e *signature.OperationalEffects) (*operationalEffectsWire, error) {
-	if e == nil || e.IsEmpty() {
-		return nil, nil
-	}
-	out := &operationalEffectsWire{}
-	for _, lane := range lanes {
-		if err := lane.encode(e, out); err != nil {
-			return nil, err
-		}
-	}
-	canonicalizeOperationalEffectsWireWith(lanes, out)
-	return out, nil
-}
-
-// decodeOperationalEffectsWith runs the whole-OperationalEffects decode over a
-// lane table. It is the single driver behind decodeOperationalEffects.
-func decodeOperationalEffectsWith(lanes []operationalEffectsWireLane, w *operationalEffectsWire) (signature.OperationalEffects, error) {
-	if w == nil {
-		return signature.OperationalEffects{}, nil
-	}
-	var out signature.OperationalEffects
-	for _, lane := range lanes {
-		if err := lane.decode(w, &out); err != nil {
-			return signature.OperationalEffects{}, err
-		}
-	}
-	return out, nil
-}
-
-func canonicalizeOperationalEffectsWireWith(lanes []operationalEffectsWireLane, w *operationalEffectsWire) {
-	if w == nil {
-		return
-	}
-	for _, lane := range lanes {
-		lane.canonicalize(w)
-	}
-}
-
-// descriptorWireLanes is the descriptor-driven wire lane table. It registers one
-// entry per OperationalEffects fact kind in canonical field order.
-var descriptorWireLanes = []operationalEffectsWireLane{
+// operationalEffectsWireLanes is the descriptor-driven wire lane table. It
+// registers one entry per OperationalEffects fact kind in canonical field order;
+// encodeOperationalEffects, decodeOperationalEffects, and
+// canonicalizeOperationalEffectsWire drive it. Adding a fact kind is a single
+// wireLane entry.
+var operationalEffectsWireLanes = []operationalEffectsWireLane{
 	wireLane("ReturnPresenceRelations",
-		func(e *signature.OperationalEffects) *[]signature.ReturnPresenceRelation { return &e.ReturnPresenceRelations },
+		func(e *signature.OperationalEffects) *[]signature.ReturnPresenceRelation {
+			return &e.ReturnPresenceRelations
+		},
 		func(w *operationalEffectsWire) *[]returnPresenceRelationWire { return &w.ReturnPresenceRelations },
 		encodeReturnPresenceRelation, decodeReturnPresenceRelation, compareReturnPresenceRelationWire, nil),
 	wireLane("NormalReturnPresenceRefinements",
-		func(e *signature.OperationalEffects) *[]signature.PathPresenceRefinement { return &e.NormalReturnPresenceRefinements },
-		func(w *operationalEffectsWire) *[]pathPresenceRefinementWire { return &w.NormalReturnPresenceRefinements },
+		func(e *signature.OperationalEffects) *[]signature.PathPresenceRefinement {
+			return &e.NormalReturnPresenceRefinements
+		},
+		func(w *operationalEffectsWire) *[]pathPresenceRefinementWire {
+			return &w.NormalReturnPresenceRefinements
+		},
 		encodeNormalReturnPresenceRefinement, decodeNormalReturnPresenceRefinement, comparePathPresenceRefinementWire, nil),
 	wireLane("NormalReturnTypeRefinements",
-		func(e *signature.OperationalEffects) *[]signature.PathTypeRefinement { return &e.NormalReturnTypeRefinements },
+		func(e *signature.OperationalEffects) *[]signature.PathTypeRefinement {
+			return &e.NormalReturnTypeRefinements
+		},
 		func(w *operationalEffectsWire) *[]pathTypeRefinementWire { return &w.NormalReturnTypeRefinements },
 		encodeNormalReturnTypeRefinement, decodeNormalReturnTypeRefinement, comparePathTypeRefinementWire, nil),
 	wireLane("PathPresenceImplications",
-		func(e *signature.OperationalEffects) *[]signature.PathPresenceImplication { return &e.PathPresenceImplications },
+		func(e *signature.OperationalEffects) *[]signature.PathPresenceImplication {
+			return &e.PathPresenceImplications
+		},
 		func(w *operationalEffectsWire) *[]pathPresenceImplicationWire { return &w.PathPresenceImplications },
 		encodePathPresenceImplication, decodePathPresenceImplication, comparePathPresenceImplicationWire, nil),
 	wireLane("PathStaticMembers",
@@ -160,7 +133,9 @@ var descriptorWireLanes = []operationalEffectsWireLane{
 		func(w *operationalEffectsWire) *[]keyMembershipWire { return &w.KeyMemberships },
 		encodeKeyMembership, decodeKeyMembership, compareKeyMembershipWire, nil),
 	wireLane("DynamicValueKeys",
-		func(e *signature.OperationalEffects) *[]signature.DynamicValueKeyMembership { return &e.DynamicValueKeys },
+		func(e *signature.OperationalEffects) *[]signature.DynamicValueKeyMembership {
+			return &e.DynamicValueKeys
+		},
 		func(w *operationalEffectsWire) *[]dynamicValueKeyMembershipWire { return &w.DynamicValueKeys },
 		encodeDynamicValueKeyMembership, decodeDynamicValueKeyMembership, compareDynamicValueKeyMembershipWire, nil),
 	wireLane("FrozenTables",
@@ -180,7 +155,9 @@ var descriptorWireLanes = []operationalEffectsWireLane{
 		func(w *operationalEffectsWire) *[]lifecycleEffectWire { return &w.LifecycleEffects },
 		encodeLifecycleEffect, decodeLifecycleEffect, compareLifecycleEffectWire, nil),
 	wireLane("ReturnAllocationTemplates",
-		func(e *signature.OperationalEffects) *[]signature.ReturnAllocationTemplate { return &e.ReturnAllocationTemplates },
+		func(e *signature.OperationalEffects) *[]signature.ReturnAllocationTemplate {
+			return &e.ReturnAllocationTemplates
+		},
 		func(w *operationalEffectsWire) *[]returnAllocationTemplateWire { return &w.ReturnAllocationTemplates },
 		encodeReturnAllocationTemplate, decodeReturnAllocationTemplate, compareReturnAllocationTemplateWire,
 		canonicalizeReturnAllocationTemplateWire),
@@ -189,11 +166,11 @@ var descriptorWireLanes = []operationalEffectsWireLane{
 func encodeReturnPresenceRelation(relation signature.ReturnPresenceRelation) (returnPresenceRelationWire, error) {
 	trigger, err := encodePresence(relation.TriggerPresence)
 	if err != nil {
-		return returnPresenceRelationWire{}, fmt.Errorf("trigger presence: %w", err)
+		return returnPresenceRelationWire{}, fmt.Errorf("return relation trigger presence: %w", err)
 	}
 	target, err := encodePresence(relation.TargetPresence)
 	if err != nil {
-		return returnPresenceRelationWire{}, fmt.Errorf("target presence: %w", err)
+		return returnPresenceRelationWire{}, fmt.Errorf("return relation target presence: %w", err)
 	}
 	return returnPresenceRelationWire{
 		TriggerIndex:    encodeInt(relation.TriggerIndex),
@@ -206,11 +183,11 @@ func encodeReturnPresenceRelation(relation signature.ReturnPresenceRelation) (re
 func decodeReturnPresenceRelation(w returnPresenceRelationWire) (signature.ReturnPresenceRelation, error) {
 	trigger, err := decodePresence(w.TriggerPresence)
 	if err != nil {
-		return signature.ReturnPresenceRelation{}, fmt.Errorf("trigger presence: %w", err)
+		return signature.ReturnPresenceRelation{}, fmt.Errorf("return relation trigger presence: %w", err)
 	}
 	target, err := decodePresence(w.TargetPresence)
 	if err != nil {
-		return signature.ReturnPresenceRelation{}, fmt.Errorf("target presence: %w", err)
+		return signature.ReturnPresenceRelation{}, fmt.Errorf("return relation target presence: %w", err)
 	}
 	triggerIndex, err := decodeRequiredInt(w.TriggerIndex, "return relation trigger index missing")
 	if err != nil {
@@ -231,11 +208,11 @@ func decodeReturnPresenceRelation(w returnPresenceRelationWire) (signature.Retur
 func encodeNormalReturnPresenceRefinement(refinement signature.PathPresenceRefinement) (pathPresenceRefinementWire, error) {
 	p, err := encodePlaceholderPath(refinement.Path)
 	if err != nil {
-		return pathPresenceRefinementWire{}, fmt.Errorf("path: %w", err)
+		return pathPresenceRefinementWire{}, fmt.Errorf("normal return presence refinement path: %w", err)
 	}
 	pr, err := encodePresence(refinement.Presence)
 	if err != nil {
-		return pathPresenceRefinementWire{}, err
+		return pathPresenceRefinementWire{}, fmt.Errorf("normal return presence refinement: %w", err)
 	}
 	return pathPresenceRefinementWire{Path: p, Presence: pr}, nil
 }
@@ -243,11 +220,11 @@ func encodeNormalReturnPresenceRefinement(refinement signature.PathPresenceRefin
 func decodeNormalReturnPresenceRefinement(w pathPresenceRefinementWire) (signature.PathPresenceRefinement, error) {
 	p, err := decodePlaceholderPath(w.Path)
 	if err != nil {
-		return signature.PathPresenceRefinement{}, fmt.Errorf("path: %w", err)
+		return signature.PathPresenceRefinement{}, fmt.Errorf("normal return presence refinement path: %w", err)
 	}
 	pr, err := decodePresence(w.Presence)
 	if err != nil {
-		return signature.PathPresenceRefinement{}, err
+		return signature.PathPresenceRefinement{}, fmt.Errorf("normal return presence refinement: %w", err)
 	}
 	return signature.PathPresenceRefinement{Path: p, Presence: pr}, nil
 }
@@ -255,14 +232,14 @@ func decodeNormalReturnPresenceRefinement(w pathPresenceRefinementWire) (signatu
 func encodeNormalReturnTypeRefinement(refinement signature.PathTypeRefinement) (pathTypeRefinementWire, error) {
 	p, err := encodePlaceholderPath(refinement.Path)
 	if err != nil {
-		return pathTypeRefinementWire{}, fmt.Errorf("path: %w", err)
+		return pathTypeRefinementWire{}, fmt.Errorf("normal return type refinement path: %w", err)
 	}
 	if refinement.Type == nil {
-		return pathTypeRefinementWire{}, fmt.Errorf("type: missing")
+		return pathTypeRefinementWire{}, fmt.Errorf("normal return type refinement type: missing")
 	}
 	t, err := encodeType(refinement.Type)
 	if err != nil {
-		return pathTypeRefinementWire{}, fmt.Errorf("type: %w", err)
+		return pathTypeRefinementWire{}, fmt.Errorf("normal return type refinement type: %w", err)
 	}
 	return pathTypeRefinementWire{
 		Path:       p,
@@ -274,18 +251,18 @@ func encodeNormalReturnTypeRefinement(refinement signature.PathTypeRefinement) (
 func decodeNormalReturnTypeRefinement(w pathTypeRefinementWire) (signature.PathTypeRefinement, error) {
 	p, err := decodePlaceholderPath(w.Path)
 	if err != nil {
-		return signature.PathTypeRefinement{}, fmt.Errorf("path: %w", err)
+		return signature.PathTypeRefinement{}, fmt.Errorf("normal return type refinement path: %w", err)
 	}
 	t, err := decodeType(w.Type)
 	if err != nil {
-		return signature.PathTypeRefinement{}, fmt.Errorf("type: %w", err)
+		return signature.PathTypeRefinement{}, fmt.Errorf("normal return type refinement type: %w", err)
 	}
 	if t == nil {
-		return signature.PathTypeRefinement{}, fmt.Errorf("type: missing")
+		return signature.PathTypeRefinement{}, fmt.Errorf("normal return type refinement type: missing")
 	}
 	assertionClaim, err := decodeAssertion(w.Assertions)
 	if err != nil {
-		return signature.PathTypeRefinement{}, fmt.Errorf("assertions: %w", err)
+		return signature.PathTypeRefinement{}, fmt.Errorf("normal return type refinement assertions: %w", err)
 	}
 	return signature.PathTypeRefinement{Path: p, Type: t, Assertion: assertionClaim}, nil
 }
@@ -293,14 +270,14 @@ func decodeNormalReturnTypeRefinement(w pathTypeRefinementWire) (signature.PathT
 func encodePathStaticMember(member signature.PathStaticMemberFact) (pathStaticMemberWire, error) {
 	p, err := encodePlaceholderPath(member.Path)
 	if err != nil {
-		return pathStaticMemberWire{}, fmt.Errorf("path: %w", err)
+		return pathStaticMemberWire{}, fmt.Errorf("path static member path: %w", err)
 	}
 	if member.Type == nil {
-		return pathStaticMemberWire{}, fmt.Errorf("type: missing")
+		return pathStaticMemberWire{}, fmt.Errorf("path static member type: missing")
 	}
 	t, err := encodeType(member.Type)
 	if err != nil {
-		return pathStaticMemberWire{}, fmt.Errorf("type: %w", err)
+		return pathStaticMemberWire{}, fmt.Errorf("path static member type: %w", err)
 	}
 	return pathStaticMemberWire{Path: p, Type: t}, nil
 }
@@ -308,14 +285,14 @@ func encodePathStaticMember(member signature.PathStaticMemberFact) (pathStaticMe
 func decodePathStaticMember(w pathStaticMemberWire) (signature.PathStaticMemberFact, error) {
 	p, err := decodePlaceholderPath(w.Path)
 	if err != nil {
-		return signature.PathStaticMemberFact{}, fmt.Errorf("path: %w", err)
+		return signature.PathStaticMemberFact{}, fmt.Errorf("path static member path: %w", err)
 	}
 	t, err := decodeType(w.Type)
 	if err != nil {
-		return signature.PathStaticMemberFact{}, fmt.Errorf("type: %w", err)
+		return signature.PathStaticMemberFact{}, fmt.Errorf("path static member type: %w", err)
 	}
 	if t == nil {
-		return signature.PathStaticMemberFact{}, fmt.Errorf("type: missing")
+		return signature.PathStaticMemberFact{}, fmt.Errorf("path static member type: missing")
 	}
 	return signature.PathStaticMemberFact{Path: p, Type: t}, nil
 }
@@ -323,7 +300,7 @@ func decodePathStaticMember(w pathStaticMemberWire) (signature.PathStaticMemberF
 func encodePathInvalidation(invalidation signature.PathInvalidation) (pathInvalidationWire, error) {
 	p, err := encodePlaceholderPath(invalidation.Path)
 	if err != nil {
-		return pathInvalidationWire{}, err
+		return pathInvalidationWire{}, fmt.Errorf("path invalidation: %w", err)
 	}
 	return pathInvalidationWire{Path: p}, nil
 }
@@ -331,7 +308,7 @@ func encodePathInvalidation(invalidation signature.PathInvalidation) (pathInvali
 func decodePathInvalidation(w pathInvalidationWire) (signature.PathInvalidation, error) {
 	p, err := decodePlaceholderPath(w.Path)
 	if err != nil {
-		return signature.PathInvalidation{}, err
+		return signature.PathInvalidation{}, fmt.Errorf("path invalidation: %w", err)
 	}
 	return signature.PathInvalidation{Path: p}, nil
 }
@@ -339,7 +316,7 @@ func decodePathInvalidation(w pathInvalidationWire) (signature.PathInvalidation,
 func encodeFrozenTable(frozen signature.FrozenTable) (frozenTableWire, error) {
 	p, err := encodePlaceholderPath(frozen.Target)
 	if err != nil {
-		return frozenTableWire{}, err
+		return frozenTableWire{}, fmt.Errorf("frozen table: %w", err)
 	}
 	return frozenTableWire{Target: p}, nil
 }
@@ -347,7 +324,7 @@ func encodeFrozenTable(frozen signature.FrozenTable) (frozenTableWire, error) {
 func decodeFrozenTable(w frozenTableWire) (signature.FrozenTable, error) {
 	p, err := decodePlaceholderPath(w.Target)
 	if err != nil {
-		return signature.FrozenTable{}, err
+		return signature.FrozenTable{}, fmt.Errorf("frozen table: %w", err)
 	}
 	return signature.FrozenTable{Target: p}, nil
 }
@@ -355,7 +332,7 @@ func decodeFrozenTable(w frozenTableWire) (signature.FrozenTable, error) {
 func encodeEscapeEvent(event signature.EscapeEvent) (escapeEventWire, error) {
 	p, err := encodePlaceholderPath(event.Target)
 	if err != nil {
-		return escapeEventWire{}, fmt.Errorf("target: %w", err)
+		return escapeEventWire{}, fmt.Errorf("escape event target: %w", err)
 	}
 	kind, err := encodeEscapeKind(event.Kind)
 	if err != nil {
@@ -367,7 +344,7 @@ func encodeEscapeEvent(event signature.EscapeEvent) (escapeEventWire, error) {
 func decodeEscapeEvent(w escapeEventWire) (signature.EscapeEvent, error) {
 	p, err := decodePlaceholderPath(w.Target)
 	if err != nil {
-		return signature.EscapeEvent{}, fmt.Errorf("target: %w", err)
+		return signature.EscapeEvent{}, fmt.Errorf("escape event target: %w", err)
 	}
 	kind, err := decodeEscapeKind(w.Kind)
 	if err != nil {
@@ -379,11 +356,11 @@ func decodeEscapeEvent(w escapeEventWire) (signature.EscapeEvent, error) {
 func encodeStoreRelation(relation signature.StoreRelation) (storeRelationWire, error) {
 	source, err := encodePlaceholderPath(relation.Source)
 	if err != nil {
-		return storeRelationWire{}, fmt.Errorf("source: %w", err)
+		return storeRelationWire{}, fmt.Errorf("store relation source: %w", err)
 	}
 	into, err := encodePlaceholderPath(relation.Into)
 	if err != nil {
-		return storeRelationWire{}, fmt.Errorf("target: %w", err)
+		return storeRelationWire{}, fmt.Errorf("store relation target: %w", err)
 	}
 	return storeRelationWire{Source: source, Into: into}, nil
 }
@@ -391,11 +368,11 @@ func encodeStoreRelation(relation signature.StoreRelation) (storeRelationWire, e
 func decodeStoreRelation(w storeRelationWire) (signature.StoreRelation, error) {
 	source, err := decodePlaceholderPath(w.Source)
 	if err != nil {
-		return signature.StoreRelation{}, fmt.Errorf("source: %w", err)
+		return signature.StoreRelation{}, fmt.Errorf("store relation source: %w", err)
 	}
 	into, err := decodePlaceholderPath(w.Into)
 	if err != nil {
-		return signature.StoreRelation{}, fmt.Errorf("target: %w", err)
+		return signature.StoreRelation{}, fmt.Errorf("store relation target: %w", err)
 	}
 	return signature.StoreRelation{Source: source, Into: into}, nil
 }
