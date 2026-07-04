@@ -40,13 +40,13 @@ end
 			"box.value has type nil",
 			"after is declared as string",
 			"clear(...) may change box, so the read of box.value needs a fresh check",
-			"no proof on this path shows box.value satisfies the declared type",
+			"no proof on this path shows box.value is string",
 		},
 		EvidenceOrdered: []string{
 			"box.value has type nil",
 			"after is declared as string",
 			"clear(...) may change box, so the read of box.value needs a fresh check",
-			"no proof on this path shows box.value satisfies the declared type",
+			"no proof on this path shows box.value is string",
 		},
 		EvidenceChain: []diagnosticEvidenceExpectation{
 			{
@@ -67,7 +67,7 @@ end
 			{
 				Kind:            diagnostic.EvidenceMissingProof,
 				Trust:           diagnostic.TrustUnknown,
-				MessageContains: []string{"no proof", "declared type"},
+				MessageContains: []string{"no proof", "box.value", "string"},
 			},
 		},
 		LabelMin: 2,
@@ -86,7 +86,7 @@ end
 			"proven: box.value has type nil",
 			"claimed: after is declared as string",
 			"proven: clear(...) may change box, so the read of box.value needs a fresh check",
-			"missing proof: no proof on this path shows box.value satisfies the declared type",
+			"missing proof: no proof on this path shows box.value is string",
 		},
 		RenderNotContains: []string{
 			"want string",
@@ -137,13 +137,13 @@ end
 			"box.value has type nil",
 			"after is declared as string",
 			"mutator.clear(...) may change box, so the read of box.value needs a fresh check",
-			"no proof on this path shows box.value satisfies the declared type",
+			"no proof on this path shows box.value is string",
 		},
 		EvidenceOrdered: []string{
 			"box.value has type nil",
 			"after is declared as string",
 			"mutator.clear(...) may change box, so the read of box.value needs a fresh check",
-			"no proof on this path shows box.value satisfies the declared type",
+			"no proof on this path shows box.value is string",
 		},
 		LabelMin: 2,
 		LabelContains: []string{
@@ -161,7 +161,7 @@ end
 			"proven: box.value has type nil",
 			"claimed: after is declared as string",
 			"proven: mutator.clear(...) may change box, so the read of box.value needs a fresh check",
-			"missing proof: no proof on this path shows box.value satisfies the declared type",
+			"missing proof: no proof on this path shows box.value is string",
 		},
 		RenderNotContains: []string{
 			"want string",
