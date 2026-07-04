@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
@@ -349,6 +350,54 @@ func TestFunctionValueTypeForCallSiteAtBoundaryRejectsStalePathWhenCurrentValueI
 	}
 }
 
+func TestFunctionValueTypeForCallSiteAtBoundaryUsesCurrentMemberCallableWitness(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(813)
+	calleeSym := symbol.ID(8130)
+	currentFn := typ.Func().Param("value", typ.String).Build()
+	staleFn := typ.Func().Param("value", typ.Number).Build()
+	calleePath := path.NewPath(calleeSym, "api").Field("send")
+	calleeKey, ok := factflow.CalleePathKeyFromPath(calleePath)
+	if !ok {
+		t.Fatal("CalleePathKeyFromPath failed")
+	}
+
+	value := typevalue.WithWitness(reg, typevalue.FromType(reg, currentFn), currentFn)
+	result := functionValueCallSitePathResult(t, reg, point, calleeSym, calleePath, value)
+	WithOwnedFunctionValueTypes(result, FunctionValueTypes{
+		ByPath: map[factflow.CalleePathKey]*typ.Function{
+			calleeKey: staleFn,
+		},
+	})
+
+	got, ok := result.FunctionValueTypeForCallSiteAtBoundary(point, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol:       calleeSym,
+		CalleePath:         calleePath,
+		CalleeMemberAccess: true,
+	}))
+	if !ok || got != currentFn {
+		t.Fatalf("FunctionValueTypeForCallSiteAtBoundary = %v/%v, want current member callable witness", got, ok)
+	}
+}
+
+func TestFunctionValueTypeForCallSiteAtBoundaryDoesNotUseDirectCallableWitness(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(814)
+	calleeSym := symbol.ID(8140)
+	currentFn := typ.Func().Returns(typ.String).Build()
+	calleePath := path.NewPath(calleeSym, "handler")
+	value := typevalue.WithWitness(reg, typevalue.FromType(reg, currentFn), currentFn)
+	result := functionValueCallSiteResult(reg, point, calleeSym, value)
+
+	got, ok := result.FunctionValueTypeForCallSiteAtBoundary(point, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: calleeSym,
+		CalleePath:   calleePath,
+	}))
+	if ok || got != nil {
+		t.Fatalf("FunctionValueTypeForCallSiteAtBoundary = %v/%v, want direct callable witness left unknown", got, ok)
+	}
+}
+
 func TestFunctionValueTypeForCallSiteAtBoundaryFallsBackToCalleePathSummaryWhenCurrentValueMissing(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(812)
@@ -388,6 +437,24 @@ func functionValueCallSiteResult(reg *axis.Registry, point cfg.Point, calleeSym 
 		visibility: visibility.NewResolver(builder.Build()),
 		flow: transfer.Result{
 			point: st,
+		},
+	}
+}
+
+func functionValueCallSitePathResult(t *testing.T, reg *axis.Registry, point cfg.Point, calleeSym symbol.ID, calleePath path.Path, value product.Value) *Result {
+	t.Helper()
+	builder := visibility.NewBuilder()
+	builder.Define(point, calleeSym, calleePath.Root)
+	resolver := visibility.NewResolver(builder.Build())
+	stateKey, ok := resolver.StateKeyAt(point, calleePath)
+	if !ok {
+		t.Fatalf("StateKeyAt(%s) failed", calleePath.String())
+	}
+	return &Result{
+		registry:   reg,
+		visibility: resolver,
+		flow: transfer.Result{
+			point: state.State{}.WritePathKey(reg, resolver.KeySpace(), stateKey.PathKey(), value),
 		},
 	}
 }

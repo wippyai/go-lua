@@ -289,7 +289,11 @@ func (r *Result) FunctionValueTypeForCallSiteAtBoundary(point cfg.Point, site fa
 		if fn, ok := r.FunctionValueTypeForValueAtBoundary(point, value); ok {
 			return fn, true
 		}
-		if !valueHasCallableType(r.registry, r.typeValues, value) {
+		fn, callable := callableTypeFromValue(r.registry, r.typeValues, value)
+		if site.CalleeMemberAccess() && callable && fn != nil {
+			return fn, true
+		}
+		if !callable {
 			return nil, false
 		}
 	}
@@ -297,15 +301,19 @@ func (r *Result) FunctionValueTypeForCallSiteAtBoundary(point cfg.Point, site fa
 }
 
 func valueHasCallableType(reg *axis.Registry, typeValues *typevalue.Cache, value product.Value) bool {
+	_, ok := callableTypeFromValue(reg, typeValues, value)
+	return ok
+}
+
+func callableTypeFromValue(reg *axis.Registry, typeValues *typevalue.Cache, value product.Value) (*typ.Function, bool) {
 	if reg == nil {
-		return false
+		return nil, false
 	}
 	t, ok := typeValues.TypeOf(reg, value)
 	if !ok || t == nil {
-		return false
+		return nil, false
 	}
-	_, ok = typecall.Callable(t)
-	return ok
+	return typecall.Callable(t)
 }
 
 func (r *Result) functionTypeForValue(current state.State, hasCurrent bool, value product.Value) (*typ.Function, bool) {
