@@ -44,14 +44,14 @@ import (
 // bind.BindChunk) and built must be cfgbuild.BuildChunk over the same stmts.
 // Points in the returned Body index into built.Graph.
 func Lower(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result) *cir.Body {
-	return lowerInto(name, stmts, bindings, built, nil, typeresolve.New(bindings))
+	return lowerInto(name, stmts, bindings, built, typeresolve.New(bindings))
 }
 
-// lowerInto lowers one function-scope statement list (a chunk when fn is nil, a
-// nested function body otherwise) onto its shared graph. resolver is the shared
-// lexical type resolver, threaded through nested protos so type identities and
-// their caches stay consistent across the whole chunk.
-func lowerInto(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result, fn *ast.FunctionExpr, resolver *typeresolve.Resolver) *cir.Body {
+// lowerInto lowers one function-scope statement list (a chunk or a nested
+// function body) onto its shared graph. resolver is the shared lexical type
+// resolver, threaded through nested protos so type identities and their caches
+// stay consistent across the whole chunk.
+func lowerInto(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result, resolver *typeresolve.Resolver) *cir.Body {
 	b := &builder{
 		body:        cir.NewBody(name),
 		graph:       built.Graph,
@@ -59,7 +59,6 @@ func lowerInto(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgb
 		points:      built.StmtPoints,
 		bindings:    bindings,
 		resolver:    resolver,
-		curFn:       fn,
 		pointInstrs: make(map[cfg.Point][]cir.Instruction),
 		callTemps:   make(map[*ast.FuncCallExpr]*callResult),
 		guardByCond: make(map[ast.Expr]cfg.Point),
@@ -84,7 +83,6 @@ type builder struct {
 	points   cfgbuild.StmtPoints
 	bindings *bind.Result
 	resolver *typeresolve.Resolver
-	curFn    *ast.FunctionExpr
 
 	curPoint    cfg.Point
 	pointInstrs map[cfg.Point][]cir.Instruction
@@ -654,7 +652,7 @@ func (b *builder) emitClosure(dst cir.Operand, fn *ast.FunctionExpr) {
 	childBuilt := cfgbuild.BuildFunction(fn, b.bindings)
 	var ref cir.FuncRef
 	if childBuilt != nil && childBuilt.Graph != nil {
-		childBody := lowerInto(name, fn.Stmts, b.bindings, childBuilt, fn, b.resolver)
+		childBody := lowerInto(name, fn.Stmts, b.bindings, childBuilt, b.resolver)
 		ref = b.body.AddProto(cir.FuncProto{Name: name, Body: childBody, Graph: childBuilt.Graph})
 	}
 
