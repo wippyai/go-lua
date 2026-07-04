@@ -269,13 +269,28 @@ func (r Reader) callParamObligationsAt(point cfg.Point) []callParamObligation {
 		if !ok || !readapi.CallArgumentObligationTypeReportable(t) {
 			continue
 		}
-		out = append(out, callParamObligation{
+		next := callParamObligation{
 			Index:  obligation.ParamIndex,
 			Type:   t,
 			Origin: r.callParamObligationOrigin(point, obligation),
-		})
+		}
+		out = appendPreferredCallParamObligation(out, next)
 	}
 	return out
+}
+
+func appendPreferredCallParamObligation(out []callParamObligation, next callParamObligation) []callParamObligation {
+	if !next.Origin.HasOrigin {
+		return append(out, next)
+	}
+	for i, existing := range out {
+		if existing.Index != next.Index || existing.Origin.HasOrigin || !typ.TypeEquals(existing.Type, next.Type) {
+			continue
+		}
+		out[i] = next
+		return out
+	}
+	return append(out, next)
 }
 
 func (r Reader) callParamObligationOrigin(point cfg.Point, obligation callpayload.CallParamObligation) readapi.CallArgumentObligationOrigin {

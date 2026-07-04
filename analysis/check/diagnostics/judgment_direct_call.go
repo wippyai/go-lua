@@ -182,6 +182,8 @@ func directCallArgumentJudgmentEvidence(display diagnosticDisplay, item judgment
 		missingProof = missingRequiredMethodTypeEvidence(want, typ.Method{Name: detail.Field, Type: functionTypeOrNil(detail.FieldType)})
 	} else if detail, ok := directCallArgumentMethodTypeMismatch(item); ok {
 		missingProof = methodTypeMismatchEvidence(want, detail.Field, detail.ActualType, detail.FieldType)
+	} else if directCallArgumentHasCallParamObligation(item) {
+		missingProof = fmt.Sprintf("no proof on this path shows %s is %s", wording.MissingName, display.Type(want))
 	}
 	missingProofReason := diagnostic.EvidenceReasonUnspecified
 	if item.HasEvidence(judgment.EvidencePrecisionBoundary) {
@@ -191,6 +193,15 @@ func directCallArgumentJudgmentEvidence(display diagnosticDisplay, item judgment
 	if _, ok := directCallArgumentMissingRequiredMethod(item); ok {
 		missingProofTrust = diagnostic.TrustUnknown
 	}
+	if directCallArgumentHasCallParamObligation(item) {
+		missingProofTrust = diagnostic.TrustUnknown
+	}
+	expectedEvidenceKind := diagnostic.EvidenceUserAssertion
+	expectedEvidenceTrust := diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceUserAssertion, diagnostic.TrustClaimed)
+	if directCallArgumentHasCallParamObligation(item) {
+		expectedEvidenceKind = diagnostic.EvidenceAbstractFact
+		expectedEvidenceTrust = diagnostic.TrustProven
+	}
 	evidence := []diagnostic.Evidence{
 		{
 			Kind:    diagnostic.EvidenceAbstractFact,
@@ -199,8 +210,8 @@ func directCallArgumentJudgmentEvidence(display diagnosticDisplay, item judgment
 			Message: display.SourceTypeEvidence(wording.Subject, got),
 		},
 		{
-			Kind:    diagnostic.EvidenceUserAssertion,
-			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceUserAssertion, diagnostic.TrustClaimed),
+			Kind:    expectedEvidenceKind,
+			Trust:   expectedEvidenceTrust,
 			Span:    directCallArgumentJudgmentEvidenceSpan(item, judgment.EvidenceUserAssertion),
 			Message: directCallArgumentExpectedEvidenceMessage(display, item, expectedLabel, want),
 		},
@@ -262,6 +273,15 @@ func directCallArgumentExpectedEvidenceMessage(display diagnosticDisplay, item j
 		return display.MemberCallParamObligationEvidence(detail.FunctionName, detail.SubjectLabel, detail.ProviderLabel, detail.MemberParam, want)
 	}
 	return fmt.Sprintf("%s expects %s", fallback, display.Type(want))
+}
+
+func directCallArgumentHasCallParamObligation(item judgment.Judgment) bool {
+	for _, evidence := range item.Evidence {
+		if evidence.Detail.Kind == judgment.EvidenceDetailCallParamObligation {
+			return true
+		}
+	}
+	return false
 }
 
 func directCallArgumentGenericConflictEvidence(display diagnosticDisplay, item judgment.Judgment, wording directCallArgumentWording, primary diagnostic.Span, paramName string, got, want typ.Type) []diagnostic.Evidence {

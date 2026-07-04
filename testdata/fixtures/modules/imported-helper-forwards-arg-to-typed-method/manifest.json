@@ -18,10 +18,10 @@
         "min_evidence": 5,
         "evidence_contains": [
           "argument 2 (model_id) has type any",
-          "inside helper, argument 2 must satisfy string",
+          "inside helper, argument 2 is passed to argument 1.invoke parameter 1, which requires string",
           "user asserted any; not abstract-interpreter proof",
           "model_id comes from any/unknown",
-          "no proof on this path shows model_id satisfies the parameter type"
+          "no proof on this path shows model_id is string"
         ],
         "evidence": [
           {
@@ -35,11 +35,11 @@
             "column": 24
           },
           {
-            "trust": "claimed",
+            "trust": "proven",
             "contains": [
-              "inside helper, argument 2 must satisfy string"
+              "inside helper, argument 2 is passed to argument 1.invoke parameter 1, which requires string"
             ],
-            "kind": "user assertion"
+            "kind": "abstract fact"
           },
           {
             "trust": "claimed",
@@ -64,7 +64,7 @@
           {
             "trust": "unknown",
             "contains": [
-              "no proof on this path shows model_id satisfies the parameter type"
+              "no proof on this path shows model_id is string"
             ],
             "kind": "missing proof",
             "reason": "boundary validation missing",
@@ -84,10 +84,10 @@
           "helper(bedrock_client, model_id) -- expect-error: no proof shows it is string",
           "because:",
           "1. proven: argument 2 (model_id) has type any",
-          "2. claimed: inside helper, argument 2 must satisfy string",
+          "2. proven: inside helper, argument 2 is passed to argument 1.invoke parameter 1, which requires string",
           "3. claimed: user asserted any; not abstract-interpreter proof",
           "4. unvalidated value: model_id comes from any/unknown",
-          "5. missing proof: no proof on this path shows model_id satisfies the parameter type",
+          "5. missing proof: no proof on this path shows model_id is string",
           "help: Validate or narrow `model_id` before passing it; any/unknown values do not prove parameter contracts."
         ],
         "render_not_contains": [
