@@ -91,6 +91,9 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) callpayload
 		refinedSources := expressionRefinements.Bind(ctx.Registry, sources)
 		var receiverType typ.Type
 		name, ok := signatureNameForSite(ctx, site, nameForSite, nameFor)
+		if ok && site.MethodName() != "" {
+			receiverType, _ = receiverTypeForMethodSite(ctx, site, in, refinedSources, read)
+		}
 		if !ok {
 			name, receiverType, ok = receiverMethodSignatureName(ctx, site, in, refinedSources, read)
 			if !ok {
@@ -221,30 +224,8 @@ func receiverMethodSignatureName(ctx transfer.NodeContext, site factflow.CallSit
 	if method == "" || ctx.Registry == nil {
 		return "", nil, false
 	}
-	receiverPath, ok := site.ReceiverPath()
-	if ok && receiverPath.Symbol != 0 && len(receiverPath.Segments) == 0 {
-		if name, receiverType, ok := receiverMethodSignatureNameFromValue(ctx.Registry, in.ReadSymbolValue(ctx.Registry, receiverPath.Symbol), method); ok {
-			return name, receiverType, true
-		}
-	}
-
-	if sources == nil {
-		return "", nil, false
-	}
-	receiverSource, ok := site.ReceiverSource()
+	receiverType, ok := receiverTypeForMethodSite(ctx, site, in, sources, read)
 	if !ok {
-		return "", nil, false
-	}
-	value, ok := sources.ValueOfSource(ctx.Point, receiverSource, in, read)
-	if !ok {
-		return "", nil, false
-	}
-	return receiverMethodSignatureNameFromValue(ctx.Registry, value, method)
-}
-
-func receiverMethodSignatureNameFromValue(reg *axis.Registry, value product.Value, method string) (string, typ.Type, bool) {
-	receiverType, ok := typevalue.TypeOf(reg, value)
-	if !ok || receiverType == nil || typ.IsAny(receiverType) || typ.IsUnknown(receiverType) || typ.IsNever(receiverType) {
 		return "", nil, false
 	}
 	iface, ok := receiverSignatureInterface(receiverType)
@@ -252,6 +233,51 @@ func receiverMethodSignatureNameFromValue(reg *axis.Registry, value product.Valu
 		return "", nil, false
 	}
 	return iface.Name + "." + method, receiverType, true
+}
+
+func receiverTypeForMethodSite(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, sources sourcevalue.SourceValues, read func(cfg.Point) state.State) (typ.Type, bool) {
+	if ctx.Registry == nil {
+		return nil, false
+	}
+	receiverPath, ok := site.ReceiverPath()
+	if ok && receiverPath.Symbol != 0 && len(receiverPath.Segments) == 0 {
+		if receiverType, ok := receiverTypeFromValue(ctx.Registry, in.ReadSymbolValue(ctx.Registry, receiverPath.Symbol)); ok {
+			return receiverType, true
+		}
+	}
+
+	if sources == nil {
+		return nil, false
+	}
+	receiverSource, ok := site.ReceiverSource()
+	if !ok {
+		return nil, false
+	}
+	value, ok := sources.ValueOfSource(ctx.Point, receiverSource, in, read)
+	if !ok {
+		return nil, false
+	}
+	return receiverTypeFromValue(ctx.Registry, value)
+}
+
+func receiverMethodSignatureNameFromValue(reg *axis.Registry, value product.Value, method string) (string, typ.Type, bool) {
+	receiverType, ok := receiverTypeFromValue(reg, value)
+	if !ok {
+		return "", nil, false
+	}
+	iface, ok := receiverSignatureInterface(receiverType)
+	if !ok {
+		return "", nil, false
+	}
+	return iface.Name + "." + method, receiverType, true
+}
+
+func receiverTypeFromValue(reg *axis.Registry, value product.Value) (typ.Type, bool) {
+	receiverType, ok := typevalue.TypeOf(reg, value)
+	if !ok || receiverType == nil || typ.IsAny(receiverType) || typ.IsUnknown(receiverType) || typ.IsNever(receiverType) {
+		return nil, false
+	}
+	return receiverType, true
 }
 
 func receiverSignatureInterface(receiverType typ.Type) (*typ.Interface, bool) {

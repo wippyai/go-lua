@@ -573,6 +573,47 @@ func TestSignatureOutcomeProviderBindsSelfReturnForFluentReceiverSource(t *testi
 	assertPresence(t, reg, open.Results[1].Value, presence.Maybe())
 }
 
+func TestSignatureOutcomeProviderBindsSelfReturnWhenNameForSiteResolvesMethod(t *testing.T) {
+	reg := standard.Registry()
+	receiverSymbol := symbol.ID(411)
+	point := cfg.Point(35)
+	contractType := typ.NewInterface("contract.Contract", nil)
+	withScopeType := typ.Func().
+		Param("self", typ.Self).
+		Param("scope", typ.Any).
+		Returns(typ.Self).
+		Build()
+	contractType.Methods = []typ.Method{
+		{Name: "with_scope", Type: withScopeType},
+	}
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"contract.Contract.with_scope": {Type: withScopeType},
+		},
+		NameForSite: func(transfer.NodeContext, factflow.CallSiteView) (string, bool) {
+			return "contract.Contract.with_scope", true
+		},
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg}),
+	})
+	receiverValue := typevalue.WithWitness(reg, typevalue.FromType(reg, contractType), contractType)
+	got := provider(
+		transfer.NodeContext{Registry: reg, Point: point},
+		factflow.NewCallSite(factflow.CallSiteConfig{
+			MethodName:      "with_scope",
+			ReceiverPath:    path.NewPath(receiverSymbol, "contract"),
+			HasReceiverPath: true,
+			ArgumentSources: []factflow.ValueSource{{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(411), HasExpr: true}},
+		}).View(),
+		state.State{}.WriteValue(reg, key.SymbolValue(receiverSymbol), receiverValue),
+		nil,
+	)
+
+	if len(got.Results) != 1 {
+		t.Fatalf("results = %#v, want one Self-bound method result", got.Results)
+	}
+	assertTypeWitness(t, reg, got.Results[0].Value, contractType)
+}
+
 func TestSignatureOutcomeProviderLowersErrorReturnToReturnPresenceRelations(t *testing.T) {
 	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
 		Signatures: signatureMap{
