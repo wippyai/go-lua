@@ -502,6 +502,38 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 	}
 }
 
+func TestParamDirectMutationExposureFromPathInvalidation(t *testing.T) {
+	reg := standard.Registry()
+	typeValues := typevalue.NewCache()
+	wide := typetable.NewRecord().Field("x", typeexpr.Union(typ.Number, typ.String)).Build()
+	got := summary.Summary{
+		NormalReturnFacts: callboundary.NormalReturnFacts{
+			PathInvalidations: []callboundary.PathInvalidationFact{
+				{Path: path.NewPlaceholder(0).Field("x")},
+				{Path: path.NewPlaceholder(1).Field("x")},
+				{Path: path.NewPlaceholder(0)},
+			},
+		},
+	}
+	fn := typ.Func().Param("w", wide).Param("unpassed", wide).Build()
+
+	exposures := paramDirectMutationExposures(reg, typeValues, 1, got, fn)
+
+	if len(exposures) != 1 {
+		t.Fatalf("exposures = %#v, want one direct mutation exposure", exposures)
+	}
+	if !exposures[0].Source.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("source = %s, want $0", exposures[0].Source.String())
+	}
+	if exposures[0].Kind != factflow.CovariantExposureRecord {
+		t.Fatalf("kind = %v, want record exposure", exposures[0].Kind)
+	}
+	contract, ok := typevalue.TypeOf(reg, exposures[0].Contract)
+	if !ok || !typ.TypeEquals(contract, wide) {
+		t.Fatalf("contract = %v ok=%v, want %s", contract, ok, wide.String())
+	}
+}
+
 func TestOutcomeProviderCarriesNestedSummaryEscapeEvents(t *testing.T) {
 	reg := standard.Registry()
 	callee := symbol.ID(39)

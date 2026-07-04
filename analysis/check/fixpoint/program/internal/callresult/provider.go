@@ -205,6 +205,9 @@ func OutcomeProvider(config ProviderConfig) callpayload.CallOutcomeProvider {
 		if fn != nil && len(got.NormalReturnFacts.StoreRelations) != 0 {
 			out.ParamExposures = append(out.ParamExposures, paramStoreRelationExposures(ctx.Registry, typeValues, site.ArgumentSourceCount(), got, fn)...)
 		}
+		if fn != nil && len(got.NormalReturnFacts.PathInvalidations) != 0 {
+			out.ParamExposures = append(out.ParamExposures, paramDirectMutationExposures(ctx.Registry, typeValues, site.ArgumentSourceCount(), got, fn)...)
+		}
 		if len(got.ParamSinkExposures) != 0 {
 			out.ParamExposures = append(out.ParamExposures, paramSinkExposures(ctx.Registry, typeValues, site.ArgumentSourceCount(), got)...)
 		}
@@ -2046,6 +2049,37 @@ func paramStoreRelationExposures(reg *axis.Registry, typeValues *typevalue.Cache
 			continue
 		}
 		exposure, ok := newParamExposure(reg, typeValues, pathdom.NewPlaceholder(sourceIndex), contract)
+		if !ok {
+			continue
+		}
+		out = append(out, exposure)
+	}
+	return out
+}
+
+// paramDirectMutationExposures lowers direct callee-side writes through a
+// parameter path into covariant call-boundary exposures. A normal-return
+// invalidation below $N proves the callee may have mutated the caller's argument
+// through its declared parameter view, so the caller must widen that argument to
+// the callee's parameter contract before later narrow reads.
+func paramDirectMutationExposures(reg *axis.Registry, typeValues *typevalue.Cache, argCount int, got summary.Summary, fn *typ.Function) []callpayload.CallParamExposure {
+	if reg == nil || fn == nil || len(got.NormalReturnFacts.PathInvalidations) == 0 {
+		return nil
+	}
+	var out []callpayload.CallParamExposure
+	for _, invalidation := range got.NormalReturnFacts.PathInvalidations {
+		if !invalidation.Path.IsPlaceholder() || len(invalidation.Path.Segments) == 0 {
+			continue
+		}
+		paramIndex := invalidation.Path.PlaceholderIndex()
+		if paramIndex < 0 || paramIndex >= argCount || paramIndex >= len(fn.Params) {
+			continue
+		}
+		contract := fn.Params[paramIndex].Type
+		if contract == nil {
+			continue
+		}
+		exposure, ok := newParamExposure(reg, typeValues, pathdom.NewPlaceholder(paramIndex), contract)
 		if !ok {
 			continue
 		}
