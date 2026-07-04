@@ -459,7 +459,7 @@ local raw = ({ id = "ok" } :: any)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallArgType)
 	requireEvidenceMessage(t, diag, "inside forward, argument 1 must satisfy {id: string}")
 	if got := diag.Explanation.String(); !strings.Contains(got, "user asserted any") ||
-		!strings.Contains(got, "no proof on this path shows raw satisfies the parameter type") {
+		!strings.Contains(got, "no proof on this path shows raw is {id: string}") {
 		t.Fatalf("explanation = %q, want explicit-any callee obligation and missing-proof evidence", got)
 	}
 }
