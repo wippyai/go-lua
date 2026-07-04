@@ -5206,6 +5206,24 @@ end
 	}
 }
 
+func TestCheckBuilderSqlizerCallResultsSatisfyArrayElements(t *testing.T) {
+	result := Check(`
+local sql = require("sql")
+
+local function run(session_id: string, kind: string): ()
+    local query = sql.builder.select("COUNT(*) as count")
+        :from("artifacts")
+        :where(sql.builder.and_({
+            sql.builder.expr("session_id = ?", session_id),
+            sql.builder.expr("kind = ?", kind)
+        }))
+end
+`, WithStdlib(), WithManifest("sql", sqlWrapperManifest()))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want single-result sqlizer calls to satisfy sqlizer array elements", result.Diagnostics)
+	}
+}
+
 func TestCheckDirectErrorReturnPreservesValuePresenceCorrelation(t *testing.T) {
 	result := Check(`
 type DB = {
@@ -9252,6 +9270,15 @@ func sqlWrapperManifest() *manifest.Manifest {
 				Build(),
 		},
 	})
+	sqlizerType := typ.NewInterface("sql.Sqlizer", []typ.Method{
+		{
+			Name: "to_sql",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Returns(typ.String, typ.NewArray(typ.Any), typeexpr.Optional(luaErrorType)).
+				Build(),
+		},
+	})
 	dbType := typ.NewInterface("sql.DB", []typ.Method{
 		{
 			Name: "release",
@@ -9284,12 +9311,22 @@ func sqlWrapperManifest() *manifest.Manifest {
 			Variadic(typ.String).
 			Returns(queryType).
 			Build()).
+		Field("expr", typ.Func().
+			Param("sql", typ.String).
+			Variadic(typ.Any).
+			Returns(sqlizerType).
+			Build()).
+		Field("and_", typ.Func().
+			Param("conditions", typ.NewArray(sqlizerType)).
+			Returns(sqlizerType).
+			Build()).
 		Build()
 	getType := typ.Func().
 		Param("name", typ.String).
 		Returns(typeexpr.Optional(dbType), typeexpr.Optional(luaErrorType)).
 		Build()
 	m := manifest.New("sql")
+	m.DefineType("Sqlizer", sqlizerType)
 	m.SetExport(typetable.NewRecord().
 		Field("get", getType).
 		Field("builder", builderType).
