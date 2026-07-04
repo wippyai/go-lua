@@ -117,8 +117,8 @@ end
 		t.Fatal("frame source value missing")
 	}
 	got, ok := typevalue.TypeOf(reg, value)
-	if !ok || !typ.TypeEquals(got, typeexpr.Optional(typeexpr.Union(typ.LiteralString("a"), typ.LiteralString("b"), typ.LiteralString("c")))) {
-		t.Fatalf("frame source type = %v/%v, want optional literal union", got, ok)
+	if !ok || !subtype.IsSubtype(got, typ.String) || typevalue.TypeIncludesNil(got) {
+		t.Fatalf("frame source type = %v/%v, want non-nil string subtype", got, ok)
 	}
 	semantic, ok := child.LocalAssignment(point)
 	if !ok || !semantic.HasSymbol {

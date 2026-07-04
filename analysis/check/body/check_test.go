@@ -1026,6 +1026,65 @@ end`)
 	}
 }
 
+func TestCheckFunctionModuloLengthDynamicIndexBeforeBoundaryDropsMissNil(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function read(index: integer): string
+	local frames = {"a", "b", "c"}
+	local frame = frames[((index - 1) % #frames) + 1]
+	return frame
+end`)
+
+	result, err := CheckFunction(fn, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	point, expr := requireLocalAssignmentExprByName(t, result, "frame")
+	value, ok := result.ExpressionValueBeforeBoundary(point, expr)
+	if !ok {
+		t.Fatal("ExpressionValueBeforeBoundary(frame) returned false")
+	}
+	indexed, ok := expr.(*ast.AttrGetExpr)
+	if !ok {
+		t.Fatalf("frame source = %T, want indexed attr", expr)
+	}
+	arrayPath, ok := result.ExpressionPath(indexed.Object)
+	if !ok {
+		t.Fatal("frames expression path not found")
+	}
+	if !result.IndexReadSafeForExpressionAtBoundary(point, indexed.Key, arrayPath) {
+		t.Fatalf("modulo length index read %s[%s] not marked safe at point %d", arrayPath, indexed.Key, point)
+	}
+	assertPresence(t, reg, value, presence.Present())
+}
+
+func TestCheckFunctionModuloLengthDynamicIndexRequiresIntegerNumerator(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function read(index: number): string
+	local frames = {"a", "b", "c"}
+	local frame = frames[((index - 1) % #frames) + 1]
+	return frame
+end`)
+
+	result, err := CheckFunction(fn, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	point, expr := requireLocalAssignmentExprByName(t, result, "frame")
+	indexed, ok := expr.(*ast.AttrGetExpr)
+	if !ok {
+		t.Fatalf("frame source = %T, want indexed attr", expr)
+	}
+	arrayPath, ok := result.ExpressionPath(indexed.Object)
+	if !ok {
+		t.Fatal("frames expression path not found")
+	}
+	if result.IndexReadSafeForExpressionAtBoundary(point, indexed.Key, arrayPath) {
+		t.Fatalf("modulo length index read %s[%s] marked safe without integer numerator proof", arrayPath, indexed.Key)
+	}
+}
+
 func TestCheckFunctionInRangeDynamicIndexKeepsElementNil(t *testing.T) {
 	reg := standard.Registry()
 	fn := parseFunction(t, `

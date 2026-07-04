@@ -408,6 +408,11 @@ func (r Reader) callArgumentBoundaryCandidate(point cfg.Point, source factflow.V
 	if !ok {
 		return product.Value{}, false
 	}
+	currentType, currentTypeOK := r.ValueTypeWithPresence(current)
+	candidateType, candidateTypeOK := r.ValueTypeWithPresence(value)
+	if currentTypeOK && candidateTypeOK && readapi.TypeMayBeNilMismatch(currentType, candidateType) {
+		return product.Value{}, false
+	}
 	if r.valueHasReadableType(value) && r.ValueHash(value) != r.ValueHash(current) {
 		return value, true
 	}

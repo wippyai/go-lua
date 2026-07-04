@@ -1982,6 +1982,9 @@ func callContextParamEntryValue(reg *axis.Registry, actual product.Value, actual
 		if !contractOK {
 			return actual, true
 		}
+		if !actualParamEntryValueSatisfiesContract(reg, actual, contract) {
+			return contract, true
+		}
 		if actualParamEntryValueIsMorePrecise(reg, actual, contract) {
 			return actual, true
 		}
@@ -1991,6 +1994,18 @@ func callContextParamEntryValue(reg *axis.Registry, actual product.Value, actual
 		return contract, true
 	}
 	return product.Value{}, false
+}
+
+func actualParamEntryValueSatisfiesContract(reg *axis.Registry, actual, contract product.Value) bool {
+	if reg == nil {
+		return false
+	}
+	actualType, actualOK := typevalue.TypeOf(reg, actual)
+	contractType, contractOK := typevalue.TypeOf(reg, contract)
+	if !actualOK || !contractOK || actualType == nil || contractType == nil {
+		return false
+	}
+	return subtype.IsSubtype(actualType, contractType)
 }
 
 func actualParamEntryValueIsMorePrecise(reg *axis.Registry, actual, contextual product.Value) bool {

@@ -7769,6 +7769,19 @@ end
 	})
 }
 
+func TestCheckDottedFunctionAnnotatedParameterReturnIsPresent(t *testing.T) {
+	result := Check(`
+local term = {}
+
+function term.cyan(s: string): string
+    return s
+end
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want dotted function annotated parameter to be present inside body", result.Diagnostics)
+	}
+}
+
 func TestCheckCapturedModuleTableStaticArrayFieldLiteralIndex(t *testing.T) {
 	result := Check(`
 local term = {}

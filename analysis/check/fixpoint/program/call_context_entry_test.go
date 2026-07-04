@@ -109,6 +109,25 @@ func TestCallContextParamEntryValueDoesNotTrustDataShapeForExplicitAnyContract(t
 	}
 }
 
+func TestCallContextParamEntryValueKeepsContractForIncompatibleActual(t *testing.T) {
+	reg := standard.Registry()
+	actualType := typ.MaterializeOptional(typ.String)
+	actual := typevalue.WithWitness(reg, typevalue.FromType(reg, actualType), actualType)
+	contract, ok := paramContractEntryValue(reg, typ.String)
+	if !ok {
+		t.Fatal("paramContractEntryValue(string) returned !ok")
+	}
+
+	got, ok := callContextParamEntryValue(reg, actual, true, contract, true)
+	if !ok {
+		t.Fatal("callContextParamEntryValue returned !ok")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("context param type = %v/%v, want declared string contract", gotType, ok)
+	}
+}
+
 func TestSeedEntryCallableHeapObjectsForValueKeepsCallbacksDropsDataMembers(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()

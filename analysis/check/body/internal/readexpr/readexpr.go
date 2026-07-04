@@ -515,6 +515,9 @@ func dynamicIndexInBoundsProvesRead(config Config, point cfg.Point, dyn factflow
 		floor, ok := proofState.ReadLenFloor(proofVisibility.KeySpace(), arrayKey)
 		return ok && floor >= 1
 	}
+	if dynamicIndexModuloLengthProvesRead(config, point, dyn.KeySource(), dyn.TablePathRef(), proofState, proofVisibility) {
+		return true
+	}
 	term, ok := dynamicIndexIntegerTerm(config, dyn.KeySource())
 	if !ok || term.Coeff <= 0 || term.Path.IsEmpty() {
 		return false
@@ -564,6 +567,110 @@ func dynamicIndexTermFloor(resolver *visibility.Resolver, point cfg.Point, in st
 		return 0, false
 	}
 	return floor, true
+}
+
+func dynamicIndexModuloLengthProvesRead(
+	config Config,
+	point cfg.Point,
+	source factflow.ValueSource,
+	arrayPath pathdom.Path,
+	in state.State,
+	resolver *visibility.Resolver,
+) bool {
+	modSource, ok := dynamicIndexPlusOneModuloSource(config, source)
+	if !ok {
+		return false
+	}
+	op, ok := config.Facts.ExpressionOperation(modSource.ExprRef)
+	if !ok || op.Kind() != factflow.ExpressionOperationBinary || op.Op() != "%" {
+		return false
+	}
+	if !dynamicIndexKeyIsArrayLength(config, op.Right(), arrayPath) {
+		return false
+	}
+	if !dynamicIndexArrayLengthKnownAtLeastOne(config, point, arrayPath, in, resolver) {
+		return false
+	}
+	return dynamicIndexSourceHasIntegerType(config, point, op.Left(), in)
+}
+
+func dynamicIndexArrayLengthKnownAtLeastOne(config Config, point cfg.Point, arrayPath pathdom.Path, in state.State, resolver *visibility.Resolver) bool {
+	arrayKey, ok := visibility.AddressAt(resolver, point, arrayPath).VisibleStateKey()
+	if ok {
+		if floor, ok := in.ReadLenFloor(resolver.KeySpace(), arrayKey); ok && floor >= 1 {
+			return true
+		}
+	}
+	tableValue, ok := Project(config, point, arrayPath, in)
+	if !ok {
+		return false
+	}
+	tableType, ok := config.TypeValues.TypeOf(config.Registry, tableValue)
+	return ok && staticallyNonEmptySequenceType(tableType, 0)
+}
+
+func dynamicIndexSourceHasIntegerType(config Config, point cfg.Point, source factflow.ValueSource, in state.State) bool {
+	if value, ok := dynamicIndexExpressionKeyValue(config, point, source, in); ok {
+		return typevalue.HasIntegerType(config.Registry, value)
+	}
+	term, ok := dynamicIndexIntegerTerm(config, source)
+	if !ok || term.Path.IsEmpty() {
+		return false
+	}
+	value, ok := Project(config, point, term.Path, in)
+	return ok && typevalue.HasIntegerType(config.Registry, value)
+}
+
+func staticallyNonEmptySequenceType(t typ.Type, depth int) bool {
+	if t == nil || depth > typ.DefaultRecursionDepth {
+		return false
+	}
+	switch tt := unwrap.Alias(t).(type) {
+	case *typ.Tuple:
+		return len(tt.Elements) > 0
+	case *typ.Record:
+		member := tt.GetStaticIntIndex(1)
+		return member != nil && !member.Optional
+	case *typ.Optional:
+		return staticallyNonEmptySequenceType(tt.Inner, depth+1)
+	case *typ.Union:
+		if len(tt.Members) == 0 {
+			return false
+		}
+		for _, member := range tt.Members {
+			if !staticallyNonEmptySequenceType(member, depth+1) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func dynamicIndexPlusOneModuloSource(config Config, source factflow.ValueSource) (factflow.ValueSource, bool) {
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		return factflow.ValueSource{}, false
+	}
+	op, ok := config.Facts.ExpressionOperation(source.ExprRef)
+	if !ok || op.Kind() != factflow.ExpressionOperationBinary || op.Op() != "+" {
+		return factflow.ValueSource{}, false
+	}
+	if c, ok := dynamicIndexIntegerConstant(config, op.Right()); ok && c == 1 && dynamicIndexSourceIsModulo(config, op.Left()) {
+		return op.Left(), true
+	}
+	if c, ok := dynamicIndexIntegerConstant(config, op.Left()); ok && c == 1 && dynamicIndexSourceIsModulo(config, op.Right()) {
+		return op.Right(), true
+	}
+	return factflow.ValueSource{}, false
+}
+
+func dynamicIndexSourceIsModulo(config Config, source factflow.ValueSource) bool {
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		return false
+	}
+	op, ok := config.Facts.ExpressionOperation(source.ExprRef)
+	return ok && op.Kind() == factflow.ExpressionOperationBinary && op.Op() == "%"
 }
 
 func dynamicIndexContainerCanDropMissNil(config Config, point cfg.Point, dyn factflow.DynamicIndexExpression, in state.State) bool {
