@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 )
 
 // Print renders a Body as deterministic text, one instruction per line, in the
@@ -268,48 +267,48 @@ func (b *Body) spellCheck(inst Instruction) string {
 		neg = " (neg)"
 	}
 	switch c.Kind {
-	case branchcond.CheckNone:
+	case CheckNone:
 		// A condition that did not normalize to a path check: name the value.
 		return "cond " + b.spellOperand(inst.A)
-	case branchcond.CheckTruthy:
+	case CheckTruthy:
 		return "truthy " + subject
-	case branchcond.CheckFalsy:
+	case CheckFalsy:
 		return "falsy " + subject
-	case branchcond.CheckNil:
+	case CheckNil:
 		return "nil " + subject
-	case branchcond.CheckNotNil:
+	case CheckNotNil:
 		return "notnil " + subject
-	case branchcond.CheckTypeEqual:
+	case CheckTypeEqual:
 		return "type_eq " + subject + " " + typeCheckOperand(c)
-	case branchcond.CheckTypeNot:
+	case CheckTypeNot:
 		return "type_ne " + subject + " " + typeCheckOperand(c)
-	case branchcond.CheckLiteralEqual:
+	case CheckLiteralEqual:
 		return "lit_eq " + subject + " " + literalCheckOperand(c)
-	case branchcond.CheckLiteralNot:
+	case CheckLiteralNot:
 		return "lit_ne " + subject + " " + literalCheckOperand(c)
-	case branchcond.CheckPathEqual:
+	case CheckPathEqual:
 		return "path_eq " + subject + " " + c.OtherPath.String()
-	case branchcond.CheckPathNot:
+	case CheckPathNot:
 		return "path_ne " + subject + " " + c.OtherPath.String()
-	case branchcond.CheckLenGe:
+	case CheckLenGe:
 		return "len_ge " + subject + " " + strconv.FormatInt(c.LenFloor, 10) + neg
-	case branchcond.CheckIndexInRange:
+	case CheckIndexInRange:
 		return "in_range " + subject + " " + c.OtherPath.String() + neg
-	case branchcond.CheckNumGe:
+	case CheckNumGe:
 		return "num_ge " + subject + " " + strconv.FormatInt(c.NumFloor, 10) + neg
 	default:
 		return "cond?"
 	}
 }
 
-func typeCheckOperand(c branchcond.Check) string {
+func typeCheckOperand(c Check) string {
 	if c.TypeName != "" {
 		return strconv.Quote(c.TypeName)
 	}
 	return "== " + c.OtherPath.String()
 }
 
-func literalCheckOperand(c branchcond.Check) string {
+func literalCheckOperand(c Check) string {
 	if lit, ok := c.LiteralValue(); ok && lit != nil {
 		return lit.String()
 	}

@@ -3,7 +3,6 @@ package cir
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 )
 
 // Body holds the lowered instruction stream for one function together with its
@@ -23,7 +22,7 @@ type Body struct {
 	paths  []path.Path
 	consts []Const
 	types  []Type
-	checks []branchcond.Check
+	checks []Check
 	protos []FuncProto
 
 	operandPool []Operand
@@ -83,7 +82,7 @@ func NewBody(name string) *Body {
 		paths:      make([]path.Path, 1),
 		consts:     make([]Const, 1),
 		types:      make([]Type, 1),
-		checks:     make([]branchcond.Check, 1),
+		checks:     make([]Check, 1),
 		protos:     make([]FuncProto, 1),
 		pathIndex:  make(map[path.PathKey]PathRef),
 		constIndex: make(map[Const]ConstRef),
@@ -139,9 +138,9 @@ func (b *Body) TypeSpelling(ref TypeRef) string {
 }
 
 // Check returns the interned branch check for ref.
-func (b *Body) Check(ref CheckRef) branchcond.Check {
+func (b *Body) Check(ref CheckRef) Check {
 	if ref == 0 || int(ref) >= len(b.checks) {
-		return branchcond.Check{}
+		return Check{}
 	}
 	return b.checks[ref]
 }
@@ -197,7 +196,7 @@ func (b *Body) InternType(spelling string) TypeRef {
 
 // InternCheck appends a branch check and returns its 1-based ref. Checks are not
 // deduplicated: each branch owns exactly one.
-func (b *Body) InternCheck(c branchcond.Check) CheckRef {
+func (b *Body) InternCheck(c Check) CheckRef {
 	ref := CheckRef(len(b.checks))
 	b.checks = append(b.checks, c)
 	return ref

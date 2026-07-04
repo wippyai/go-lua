@@ -1,4 +1,4 @@
-package lower
+package cirlower
 
 import (
 	"strings"

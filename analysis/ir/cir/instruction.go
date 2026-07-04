@@ -3,7 +3,7 @@
 //
 // cir replaces the point-keyed half of the fact pipeline. Each function body
 // lowers to a flat instruction stream; instructions carry canonical operands
-// (interned paths, constants, type refs) and a branchcond.Check descriptor for
+// (interned paths, constants, type refs) and a Check descriptor for
 // conditions. The instruction set is the stable plug-in interface between
 // lowering (syntax translation + binding/type resolution only) and the transfer
 // interpreter (all value derivation). Lowering never concludes anything about

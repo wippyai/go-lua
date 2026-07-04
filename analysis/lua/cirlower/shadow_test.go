@@ -1,4 +1,4 @@
-package cir_test
+package cirlower_test
 
 import (
 	"os"
@@ -10,7 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/cir"
-	"github.com/wippyai/go-lua/analysis/ir/cir/lower"
+	"github.com/wippyai/go-lua/analysis/lua/cirlower"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
@@ -73,7 +73,7 @@ func TestShadowCoverage(t *testing.T) {
 			skippedExtract++
 			continue
 		}
-		res := lower.Chunk("main", stmts, bindings)
+		res := cirlower.Chunk("main", stmts, bindings)
 		if res == nil || res.Body == nil {
 			skippedExtract++
 			continue

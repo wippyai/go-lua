@@ -1,10 +1,10 @@
-package lower_test
+package cirlower_test
 
 import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/ir/cir"
-	"github.com/wippyai/go-lua/analysis/ir/cir/lower"
+	"github.com/wippyai/go-lua/analysis/lua/cirlower"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -23,7 +23,7 @@ func lowerSourceG(t *testing.T, src string, globals ...string) string {
 		t.Fatalf("parse %q: %v", src, err)
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: globals})
-	res := lower.Chunk("main", stmts, bindings)
+	res := cirlower.Chunk("main", stmts, bindings)
 	return cir.Print(res.Body, res.Graph)
 }
 

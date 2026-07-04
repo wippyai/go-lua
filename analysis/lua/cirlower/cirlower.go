@@ -12,7 +12,7 @@
 // while, return, direct and method calls, table literals, binary/unary/concat
 // operators, casts, non-nil assertions, and type annotations as claims. Out of
 // scope constructs lower to a Noop point or an opaque assignment.
-package lower
+package cirlower
 
 import (
 	"strconv"
@@ -195,23 +195,62 @@ func (b *builder) lowerLocalAssign(s *ast.LocalAssignStmt) {
 		for i := range s.Names {
 			dsts[i] = b.localPath(s, i)
 		}
-		// local a, b = f() binds all results from one call.
-		if len(s.Names) > 1 && len(s.Exprs) == 1 {
-			if call, ok := s.Exprs[0].(*ast.FuncCallExpr); ok {
-				b.lowerCall(call, dsts, false)
-				b.emitAnnotations(s, dsts)
-				return
-			}
-		}
-		for i := range s.Names {
-			if i < len(s.Exprs) {
-				b.lowerExprInto(dsts[i], s.Exprs[i])
-			} else {
-				b.emitAssign(dsts[i], b.constNil())
-			}
-		}
+		b.lowerBindingList(dsts, s.Exprs)
 		b.emitAnnotations(s, dsts)
 	})
+}
+
+// lowerBindingList binds a value list into a fixed list of simple destinations,
+// preserving Lua's tail expansion: the final expression, when a call or vararg,
+// fills every remaining destination (adjusted to that exact count); a shorter
+// list nil-fills the rest. Excess expressions are still lowered for their value.
+func (b *builder) lowerBindingList(dsts []cir.Operand, exprs []ast.Expr) {
+	n := len(dsts)
+	if len(exprs) == 0 {
+		for _, d := range dsts {
+			b.emitAssign(d, b.constNil())
+		}
+		return
+	}
+	last := len(exprs) - 1
+	for i, e := range exprs {
+		if i > last {
+			break
+		}
+		if i >= n {
+			// No destination: lower for its value/side effect and drop the result.
+			if i == last && ast.CanProduceMultipleValues(e) {
+				b.lowerMultiValue(e)
+			} else {
+				b.lowerExpr(e)
+			}
+			continue
+		}
+		if i == last {
+			b.lowerBindingTail(dsts[i:], e)
+			return
+		}
+		b.lowerExprInto(dsts[i], e)
+	}
+}
+
+// lowerBindingTail binds the final value expression into the remaining
+// destinations. A call adjusts its result count to len(dsts); a vararg expands
+// across them; any other value binds the head and nil-fills the rest.
+func (b *builder) lowerBindingTail(dsts []cir.Operand, e ast.Expr) {
+	switch e := e.(type) {
+	case *ast.FuncCallExpr:
+		b.lowerCall(e, dsts, false)
+	case *ast.Comma3Expr:
+		for _, d := range dsts {
+			b.emitAssign(d, cir.Operand{Kind: cir.OperandVararg})
+		}
+	default:
+		b.lowerExprInto(dsts[0], e)
+		for _, d := range dsts[1:] {
+			b.emitAssign(d, b.constNil())
+		}
+	}
 }
 
 // emitAnnotations records declared local type annotations as annotation claims.
@@ -233,24 +272,58 @@ func (b *builder) emitAnnotations(s *ast.LocalAssignStmt, dsts []cir.Operand) {
 
 func (b *builder) lowerAssign(s *ast.AssignStmt) {
 	b.seq(cfg.NodeAssign, func() {
-		// a, b = f(): multi-target single-call.
-		if len(s.Lhs) > 1 && len(s.Rhs) == 1 {
-			if call, ok := s.Rhs[0].(*ast.FuncCallExpr); ok {
-				dsts := make([]cir.Operand, len(s.Lhs))
-				for i, target := range s.Lhs {
-					dsts[i], _ = b.targetOperand(target)
+		n := len(s.Lhs)
+		last := len(s.Rhs) - 1
+		for i, rhs := range s.Rhs {
+			if i >= n {
+				// Extra value with no target: lower for its side effect and drop it.
+				if i == last && ast.CanProduceMultipleValues(rhs) {
+					b.lowerMultiValue(rhs)
+				} else {
+					b.lowerExpr(rhs)
 				}
-				b.lowerCall(call, dsts, false)
+				continue
+			}
+			if i == last {
+				b.lowerAssignTail(s.Lhs[i:], rhs)
 				return
 			}
-		}
-		for i, target := range s.Lhs {
-			if i >= len(s.Rhs) {
-				break
-			}
-			b.lowerAssignTarget(target, s.Rhs[i])
+			b.lowerAssignTarget(s.Lhs[i], rhs)
 		}
 	})
+}
+
+// lowerAssignTail binds the final value into the remaining targets. A call over
+// two or more simple (identifier or static-member) targets adjusts its result
+// count to fill them; otherwise the head target takes the value.
+func (b *builder) lowerAssignTail(targets []ast.Expr, value ast.Expr) {
+	if call, ok := value.(*ast.FuncCallExpr); ok && len(targets) > 1 {
+		if dsts, simple := b.resultDsts(targets); simple {
+			b.lowerCall(call, dsts, false)
+			return
+		}
+	}
+	b.lowerAssignTarget(targets[0], value)
+}
+
+// resultDsts maps assignment targets to call-result destination operands, and
+// reports whether every target is a simple path (identifier or static member)
+// that can receive a call result directly.
+func (b *builder) resultDsts(targets []ast.Expr) ([]cir.Operand, bool) {
+	dsts := make([]cir.Operand, len(targets))
+	for i, tgt := range targets {
+		switch tgt.(type) {
+		case *ast.IdentExpr, *ast.AttrGetExpr:
+			p, ok := pathexpr.Resolve(tgt, b.bindings)
+			if !ok {
+				return nil, false
+			}
+			dsts[i] = b.pathOperand(p)
+		default:
+			return nil, false
+		}
+	}
+	return dsts, true
 }
 
 // lowerAssignTarget lowers a single target = value pair to the right write op.
@@ -313,7 +386,7 @@ func (b *builder) lowerReturn(s *ast.ReturnStmt) {
 func (b *builder) lowerIf(s *ast.IfStmt) {
 	b.open(cfg.NodeBranch)
 	check := branchcond.Normalize(s.Condition, b.bindings)
-	inst := cir.Instruction{Op: cir.OpBranch, Point: b.curPoint, Check: b.body.InternCheck(check)}
+	inst := cir.Instruction{Op: cir.OpBranch, Point: b.curPoint, Check: b.body.InternCheck(lowerCheck(check))}
 	if check.Kind == branchcond.CheckNone {
 		inst.A = b.lowerExpr(s.Condition)
 	}
@@ -337,7 +410,7 @@ func (b *builder) lowerIf(s *ast.IfStmt) {
 func (b *builder) lowerWhile(s *ast.WhileStmt) {
 	b.open(cfg.NodeBranch)
 	check := branchcond.Normalize(s.Condition, b.bindings)
-	inst := cir.Instruction{Op: cir.OpBranch, Point: b.curPoint, Check: b.body.InternCheck(check)}
+	inst := cir.Instruction{Op: cir.OpBranch, Point: b.curPoint, Check: b.body.InternCheck(lowerCheck(check))}
 	if check.Kind == branchcond.CheckNone {
 		inst.A = b.lowerExpr(s.Condition)
 	}
@@ -369,7 +442,7 @@ func (b *builder) lowerRepeat(s *ast.RepeatStmt) {
 
 	b.open(cfg.NodeBranch)
 	check := branchcond.Normalize(s.Condition, b.bindings)
-	inst := cir.Instruction{Op: cir.OpBranch, Point: b.curPoint, Check: b.body.InternCheck(check)}
+	inst := cir.Instruction{Op: cir.OpBranch, Point: b.curPoint, Check: b.body.InternCheck(lowerCheck(check))}
 	if check.Kind == branchcond.CheckNone {
 		inst.A = b.lowerExpr(s.Condition)
 	}
@@ -957,5 +1030,24 @@ func relOperator(op string) cir.Operator {
 		return cir.BinGe
 	default:
 		return cir.OperatorNone
+	}
+}
+
+// lowerCheck projects a normalized branch condition into the neutral cir.Check
+// descriptor the IR stores. branchcond owns the syntax-facing normalization; the
+// IR keeps only the resolved path and type identities, so the descriptor crosses
+// into the IR layer without carrying any syntax dependency. The kind enumerations
+// are defined in lockstep, so the kind maps by position.
+func lowerCheck(c branchcond.Check) cir.Check {
+	return cir.Check{
+		Kind:          cir.CheckKind(c.Kind),
+		Path:          c.Path,
+		OtherPath:     c.OtherPath,
+		TypeName:      c.TypeName,
+		Literal:       c.Literal,
+		LiteralString: c.LiteralString,
+		LenFloor:      c.LenFloor,
+		NumFloor:      c.NumFloor,
+		Negated:       c.Negated,
 	}
 }
