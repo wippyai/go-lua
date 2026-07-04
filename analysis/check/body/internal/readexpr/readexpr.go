@@ -603,9 +603,28 @@ func dynamicIndexIntegerTerm(config Config, source factflow.ValueSource) (dynami
 		return dynamicIndexTermPlusConstant(config, op.Right(), op.Left(), 1)
 	case "-":
 		return dynamicIndexTermPlusConstant(config, op.Left(), op.Right(), -1)
+	case "*":
+		if term, ok := dynamicIndexTermScaled(config, op.Left(), op.Right()); ok {
+			return term, true
+		}
+		return dynamicIndexTermScaled(config, op.Right(), op.Left())
 	default:
 		return dynamicIndexTerm{}, false
 	}
+}
+
+func dynamicIndexTermScaled(config Config, constSource, termSource factflow.ValueSource) (dynamicIndexTerm, bool) {
+	c, ok := dynamicIndexIntegerConstant(config, constSource)
+	if !ok || c <= 0 {
+		return dynamicIndexTerm{}, false
+	}
+	term, ok := dynamicIndexIntegerTerm(config, termSource)
+	if !ok {
+		return dynamicIndexTerm{}, false
+	}
+	term.Coeff *= c
+	term.Offset *= c
+	return term, true
 }
 
 func dynamicIndexTermPlusConstant(config Config, termSource, constSource factflow.ValueSource, sign int64) (dynamicIndexTerm, bool) {

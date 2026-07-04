@@ -158,7 +158,11 @@ func assignmentJudgment(ctx Context, functionKey string, assignment readmodel.As
 			assignment.Check.Mismatch.Type,
 		)
 	case readmodel.AssignmentMismatchMayBeNil:
-		missingProofDetail = judgment.MayBeNilEvidenceDetail()
+		if assignment.SourceIndexedRead {
+			missingProofDetail = judgment.IndexedReadMissingProofEvidenceDetail()
+		} else {
+			missingProofDetail = judgment.MayBeNilEvidenceDetail()
+		}
 	}
 	var sourceDetail judgment.EvidenceDetail
 	if assignment.CallResult.Present {

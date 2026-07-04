@@ -165,6 +165,7 @@ type Assignment struct {
 	SourceLabel        string
 	TargetKey          string
 	SourceKey          string
+	SourceIndexedRead  bool
 	Value              product.Value
 	ValueHash          uint64
 	TypeWithPresence   typ.Type

@@ -102,6 +102,7 @@ func (r Reader) forEachLocalAssignment(point cfg.Point, fact body.LocalAssignmen
 		SourceLabel:        presentation.SourceLabel,
 		TargetKey:          assignmentTargetKey(fact),
 		SourceKey:          r.assignmentSourceKey(point, fact.Expr),
+		SourceIndexedRead:  assignmentSourceIndexedRead(fact.Expr),
 		Value:              value,
 		ValueHash:          r.ValueHash(value),
 		TypeWithPresence:   t,
@@ -223,6 +224,7 @@ func (r Reader) forEachOrdinaryAssignment(point cfg.Point, fact body.OrdinaryAss
 		SourceLabel:        presentation.SourceLabel,
 		TargetKey:          r.assignmentTargetKeyForOrdinary(point, fact),
 		SourceKey:          r.assignmentSourceKey(point, fact.Value),
+		SourceIndexedRead:  assignmentSourceIndexedRead(fact.Value),
 		Value:              value,
 		ValueHash:          r.ValueHash(value),
 		TypeWithPresence:   t,
@@ -329,6 +331,11 @@ func (r Reader) assignmentSourceKey(point cfg.Point, expr ast.Expr) string {
 		return ""
 	}
 	return "path:" + p.String()
+}
+
+func assignmentSourceIndexedRead(expr ast.Expr) bool {
+	attr, ok := expr.(*ast.AttrGetExpr)
+	return ok && attr.KeySyntax == ast.AttrKeyIndex
 }
 
 func (r Reader) ordinaryAssignmentTargetType(point cfg.Point, fact body.OrdinaryAssignmentFact) (typ.Type, bool) {

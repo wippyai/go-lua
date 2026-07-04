@@ -432,8 +432,8 @@ end`, "test.lua")
 	if got[0].Verdict != judgment.VerdictRefuted {
 		t.Fatalf("verdict = %v, want refuted optional index mismatch", got[0].Verdict)
 	}
-	if !hasMissingProofDetail(got[0], judgment.EvidenceDetailMayBeNil) {
-		t.Fatalf("evidence = %#v, want may-be-nil missing-proof detail", got[0].Evidence)
+	if !hasMissingProofDetail(got[0], judgment.EvidenceDetailIndexedReadMissingProof) {
+		t.Fatalf("evidence = %#v, want indexed-read missing-proof detail", got[0].Evidence)
 	}
 }
 
@@ -469,8 +469,8 @@ end`, "test.lua")
 	if got[0].Verdict != judgment.VerdictRefuted {
 		t.Fatalf("verdict = %v, want refuted optional element mismatch", got[0].Verdict)
 	}
-	if !hasMissingProofDetail(got[0], judgment.EvidenceDetailMayBeNil) {
-		t.Fatalf("evidence = %#v, want may-be-nil missing-proof detail", got[0].Evidence)
+	if !hasMissingProofDetail(got[0], judgment.EvidenceDetailIndexedReadMissingProof) {
+		t.Fatalf("evidence = %#v, want indexed-read missing-proof detail", got[0].Evidence)
 	}
 }
 

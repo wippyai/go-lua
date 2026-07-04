@@ -166,6 +166,7 @@ const (
 	EvidenceDetailDynamicAssignmentTarget
 	EvidenceDetailUserAssertedAny
 	EvidenceDetailCallResultAssignment
+	EvidenceDetailIndexedReadMissingProof
 	EvidenceDetailFrozenTableAssignment
 	EvidenceDetailFrozenTableCall
 	EvidenceDetailLifecycleAcquire
@@ -434,6 +435,12 @@ func UserAssertedAnyEvidenceDetail(subjectLabel string) EvidenceDetail {
 		Kind:         EvidenceDetailUserAssertedAny,
 		SubjectLabel: subjectLabel,
 	}
+}
+
+// IndexedReadMissingProofEvidenceDetail records that an indexed read may miss
+// or read nil unless the current path proves the selected slot is valid.
+func IndexedReadMissingProofEvidenceDetail() EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailIndexedReadMissingProof}
 }
 
 // CallResultAssignmentEvidenceDetail records that an assignment source is a

@@ -376,6 +376,9 @@ func assignmentJudgmentExtraEvidence(item judgment.Judgment, sourceName string, 
 	if sourceName != "" && sourceName != unknownSourceName && assignmentJudgmentMissingProofMayBeNil(item) {
 		out = append(out, assignmentJudgmentSourceContributionEvidence(item)...)
 		out = append(out, assignmentJudgmentNilableAccessEvidence(item)...)
+		if assignmentJudgmentMissingProofIndexedRead(item) {
+			return appendMissingNilGuardEvidence(out, sourceName, got, sourceSpan, true)
+		}
 		if assignmentSourceLooksIndexed(sourceName) {
 			return appendMissingNilGuardEvidence(out, sourceName, got, sourceSpan, true)
 		}
@@ -408,6 +411,9 @@ func assignmentJudgmentExtraEvidence(item judgment.Judgment, sourceName string, 
 
 func assignmentJudgmentMissingProofMessage(item judgment.Judgment, sourceName string, got typ.Type, want typ.Type) string {
 	subject := boundaryEvidenceSubject(sourceName)
+	if assignmentJudgmentMissingProofIndexedRead(item) {
+		return indexedReadExpectedProofMessage(subject, "declared type")
+	}
 	if assignmentJudgmentHasDynamicTargetEvidence(item) {
 		return fmt.Sprintf("no proof on this path shows %s satisfies the declared type", subject)
 	}
@@ -429,7 +435,18 @@ func assignmentJudgmentHasDynamicTargetEvidence(item judgment.Judgment) bool {
 func assignmentJudgmentMissingProofMayBeNil(item judgment.Judgment) bool {
 	for _, evidence := range item.Evidence {
 		if evidence.Kind == judgment.EvidenceMissingProof &&
-			evidence.Detail.Kind == judgment.EvidenceDetailMayBeNil {
+			(evidence.Detail.Kind == judgment.EvidenceDetailMayBeNil ||
+				evidence.Detail.Kind == judgment.EvidenceDetailIndexedReadMissingProof) {
+			return true
+		}
+	}
+	return false
+}
+
+func assignmentJudgmentMissingProofIndexedRead(item judgment.Judgment) bool {
+	for _, evidence := range item.Evidence {
+		if evidence.Kind == judgment.EvidenceMissingProof &&
+			evidence.Detail.Kind == judgment.EvidenceDetailIndexedReadMissingProof {
 			return true
 		}
 	}
@@ -502,6 +519,9 @@ func assignmentNilableAccessMessage(label, access string) string {
 }
 
 func assignmentJudgmentMissingProofReason(item judgment.Judgment) diagnostic.EvidenceReason {
+	if assignmentJudgmentMissingProofIndexedRead(item) {
+		return diagnostic.EvidenceReasonIndexReadValidationMissing
+	}
 	if item.HasEvidence(judgment.EvidencePrecisionBoundary) {
 		return diagnostic.EvidenceReasonBoundaryValidationMissing
 	}
