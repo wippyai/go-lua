@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -315,12 +316,17 @@ func (r Reader) memberReceiverPathType(point cfg.Point, p path.Path) (typ.Type, 
 }
 
 func (r Reader) declaredReceiverPathType(p path.Path) (typ.Type, bool) {
-	if p.Symbol != 0 {
-		if receiver, ok := r.result.SymbolDeclaredType(p.Symbol); ok {
-			return receiver, true
-		}
+	if p.Symbol == 0 {
+		return nil, false
 	}
-	return nil, false
+	receiver, ok := r.result.SymbolDeclaredType(p.Symbol)
+	if !ok {
+		return nil, false
+	}
+	if len(p.Segments) == 0 {
+		return receiver, true
+	}
+	return luatypeprojection.ApplySegments(receiver, p.Segments)
 }
 
 func preferDeclaredReceiverType(current, declared typ.Type) bool {
