@@ -125,6 +125,10 @@ accept(id(raw))
 because:
   1. proven: argument 1 can be T or nil here
   2. claimed: accept parameter 1 expects {id: string}
+ --> test.lua:5:28
+  |
+5 | local function accept(req: { id: string }): ()
+  |                            ^
   3. claimed: user asserted any; not abstract-interpreter proof
   4. unvalidated value: argument 1 comes from any/unknown
   5. missing proof: no proof on this path shows argument 1 satisfies the parameter type
