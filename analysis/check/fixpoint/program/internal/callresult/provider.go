@@ -2,8 +2,6 @@
 package callresult
 
 import (
-	"strconv"
-
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/memberaccess"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -1961,7 +1959,7 @@ func memberCallParamSubjectLabel(fn *typ.Function, obligation summary.ParamMembe
 	if name == "" {
 		return ""
 	}
-	return "argument " + strconv.Itoa(obligation.ArgParam+1) + " (" + name + ")"
+	return "argument " + nonNegativeDecimal(obligation.ArgParam+1) + " (" + name + ")"
 }
 
 func memberCallParamProviderLabel(fn *typ.Function, obligation summary.ParamMemberCallObligation) string {
@@ -1970,7 +1968,7 @@ func memberCallParamProviderLabel(fn *typ.Function, obligation summary.ParamMemb
 	}
 	root := functionParamName(fn, obligation.ReceiverParam)
 	if root == "" {
-		root = "argument " + strconv.Itoa(obligation.ReceiverParam+1)
+		root = "argument " + nonNegativeDecimal(obligation.ReceiverParam+1)
 	}
 	var segs []segment.Segment
 	if obligation.ReceiverPath != "" {
@@ -1982,6 +1980,20 @@ func memberCallParamProviderLabel(fn *typ.Function, obligation summary.ParamMemb
 	}
 	segs = append(segs, obligation.Member)
 	return root + segment.FormatSegments(segs)
+}
+
+func nonNegativeDecimal(n int) string {
+	if n <= 0 {
+		return "0"
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(buf[i:])
 }
 
 func functionParamName(fn *typ.Function, index int) string {
