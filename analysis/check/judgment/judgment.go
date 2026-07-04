@@ -165,6 +165,7 @@ const (
 	EvidenceDetailMemberMissing
 	EvidenceDetailCallParamObligation
 	EvidenceDetailAssignmentSourceContribution
+	EvidenceDetailAssignmentCallInvalidation
 	EvidenceDetailDynamicAssignmentTarget
 	EvidenceDetailUserAssertedAny
 	EvidenceDetailCallResultAssignment
@@ -430,6 +431,17 @@ func AssignmentSourceContributionEvidenceDetail(rootLabel, readLabel string, t t
 		ProviderLabel: rootLabel,
 		SubjectLabel:  readLabel,
 		FieldType:     t,
+	}
+}
+
+// AssignmentCallInvalidationEvidenceDetail records a prior call that may have
+// invalidated the assignment source read.
+func AssignmentCallInvalidationEvidenceDetail(callLabel, invalidatedLabel, readLabel string) EvidenceDetail {
+	return EvidenceDetail{
+		Kind:          EvidenceDetailAssignmentCallInvalidation,
+		ProviderLabel: callLabel,
+		Field:         invalidatedLabel,
+		SubjectLabel:  readLabel,
 	}
 }
 

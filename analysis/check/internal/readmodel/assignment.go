@@ -114,6 +114,7 @@ func (r Reader) forEachLocalAssignment(point cfg.Point, fact body.LocalAssignmen
 		DeclarationSpan:    sourceSpanFromBody(presentation.DeclarationSpan),
 		NilableAccesses:    assignmentNilableAccessEvidenceFromBody(r.result.AssignmentNilableAccessEvidence(point, fact.Expr)),
 		SourceContributors: assignmentSourceContributorsFromBody(r.result.AssignmentSourceContributions(point, fact.Expr)),
+		CallInvalidations:  assignmentCallInvalidationsFromBody(r.result.AssignmentCallInvalidations(point, fact.Expr)),
 		CallResult:         r.assignmentCallResultSource(fact.Source),
 		UntrustedTopOrigin: r.ValueHasUntrustedTopOrigin(value),
 		ExplicitTopOrigin:  r.ValueHasExplicitTopOrigin(value),
@@ -207,6 +208,22 @@ func assignmentSourceContributorsFromBody(contributors []body.AssignmentSourceCo
 	return out
 }
 
+func assignmentCallInvalidationsFromBody(invalidations []body.AssignmentCallInvalidation) []readapi.AssignmentCallInvalidation {
+	if len(invalidations) == 0 {
+		return nil
+	}
+	out := make([]readapi.AssignmentCallInvalidation, 0, len(invalidations))
+	for _, invalidation := range invalidations {
+		out = append(out, readapi.AssignmentCallInvalidation{
+			CallLabel:        invalidation.CallLabel,
+			ReadLabel:        invalidation.ReadLabel,
+			InvalidatedLabel: invalidation.InvalidatedLabel,
+			Span:             sourceSpanFromBody(invalidation.Span),
+		})
+	}
+	return out
+}
+
 func (r Reader) forEachOrdinaryAssignment(point cfg.Point, fact body.OrdinaryAssignmentFact, visit func(Assignment) bool, visited *bool) bool {
 	if fact.Target == nil || fact.Value == nil {
 		return true
@@ -255,6 +272,7 @@ func (r Reader) forEachOrdinaryAssignment(point cfg.Point, fact body.OrdinaryAss
 		DeclarationSpan:    sourceSpanFromBody(presentation.TargetSpan),
 		NilableAccesses:    assignmentNilableAccessEvidenceFromBody(r.result.AssignmentNilableAccessEvidence(point, fact.Value)),
 		SourceContributors: assignmentSourceContributorsFromBody(r.result.AssignmentSourceContributions(point, fact.Value)),
+		CallInvalidations:  assignmentCallInvalidationsFromBody(r.result.AssignmentCallInvalidations(point, fact.Value)),
 		UntrustedTopOrigin: r.ValueHasUntrustedTopOrigin(value),
 		ExplicitTopOrigin:  r.ValueHasExplicitTopOrigin(value),
 	}

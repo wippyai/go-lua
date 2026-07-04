@@ -273,6 +273,22 @@ func assignmentJudgment(ctx Context, functionKey string, assignment readmodel.As
 			Span: spanFromReadModel(ctx.SourceFile, contributor.Span),
 		})
 	}
+	for i, invalidation := range assignment.CallInvalidations {
+		evidence = append(evidence, judgment.Evidence{
+			Kind:  judgment.EvidenceAbstractFact,
+			Trust: judgment.EvidenceTrustProven,
+			Detail: judgment.AssignmentCallInvalidationEvidenceDetail(
+				invalidation.CallLabel,
+				invalidation.InvalidatedLabel,
+				invalidation.ReadLabel,
+			),
+			Origin: judgment.OriginRef{
+				Point: assignment.Point,
+				Key:   fmt.Sprintf("assignment:call-invalidation:%d", i),
+			},
+			Span: spanFromReadModel(ctx.SourceFile, invalidation.Span),
+		})
+	}
 	evidence = append(evidence, judgment.Evidence{
 		Kind:   judgment.EvidenceMissingProof,
 		Trust:  missingProofTrust,

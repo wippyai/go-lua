@@ -176,6 +176,7 @@ type Assignment struct {
 	DeclarationSpan    SourceSpan
 	NilableAccesses    []NilableAccessEvidence
 	SourceContributors []AssignmentSourceContribution
+	CallInvalidations  []AssignmentCallInvalidation
 	CallResult         CallResultAssignmentSource
 	UntrustedTopOrigin bool
 	ExplicitTopOrigin  bool
@@ -246,6 +247,15 @@ type AssignmentSourceContribution struct {
 	ReadLabel string
 	Type      typ.Type
 	Span      SourceSpan
+}
+
+// AssignmentCallInvalidation records a prior call that invalidated the source
+// read, making an earlier guard proof stale.
+type AssignmentCallInvalidation struct {
+	CallLabel        string
+	ReadLabel        string
+	InvalidatedLabel string
+	Span             SourceSpan
 }
 
 // AssignmentCheck is the solved proof result for an assignment source against

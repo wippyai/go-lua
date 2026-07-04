@@ -412,10 +412,11 @@ func assignmentJudgmentExtraEvidence(item judgment.Judgment, sourceName string, 
 		!assignmentSourceEndsWithIndex(sourceName) {
 		out = append(out, assignmentJudgmentNilableAccessEvidence(item)...)
 		out = append(out, assignmentJudgmentSourceContributionEvidence(item)...)
+		out = append(out, assignmentJudgmentCallInvalidationEvidence(item)...)
 		if !evidenceHasKind(out, diagnostic.EvidenceMissingProof) {
 			out = append(out, diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceMissingProof,
-				Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceMissingProof, missingProofTrustFromJudgment(item.Verdict)),
+				Trust:   assignmentMissingProofTrust(item),
 				Reason:  assignmentJudgmentMissingProofReason(item),
 				Span:    sourceSpan,
 				Message: assignmentJudgmentMissingProofMessage(item, sourceName, got, want),
@@ -426,6 +427,7 @@ func assignmentJudgmentExtraEvidence(item judgment.Judgment, sourceName string, 
 	if sourceName != "" && sourceName != unknownSourceName && assignmentJudgmentMissingProofMayBeNil(item) {
 		out = append(out, assignmentJudgmentSourceContributionEvidence(item)...)
 		out = append(out, assignmentJudgmentNilableAccessEvidence(item)...)
+		out = append(out, assignmentJudgmentCallInvalidationEvidence(item)...)
 		if assignmentJudgmentMissingProofIndexedRead(item) {
 			return appendMissingNilGuardEvidence(out, sourceName, got, sourceSpan, true)
 		}
@@ -436,11 +438,12 @@ func assignmentJudgmentExtraEvidence(item judgment.Judgment, sourceName string, 
 	}
 	out = append(out, assignmentJudgmentNilableAccessEvidence(item)...)
 	out = append(out, assignmentJudgmentSourceContributionEvidence(item)...)
+	out = append(out, assignmentJudgmentCallInvalidationEvidence(item)...)
 	if item.Verdict == judgment.VerdictUnknown || item.HasEvidence(judgment.EvidencePrecisionBoundary) {
 		if !evidenceHasKind(out, diagnostic.EvidenceMissingProof) {
 			out = append(out, diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceMissingProof,
-				Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceMissingProof, missingProofTrustFromJudgment(item.Verdict)),
+				Trust:   assignmentMissingProofTrust(item),
 				Reason:  assignmentJudgmentMissingProofReason(item),
 				Span:    sourceSpan,
 				Message: assignmentJudgmentMissingProofMessage(item, sourceName, got, want),
@@ -464,6 +467,9 @@ func assignmentJudgmentMissingProofMessage(item judgment.Judgment, sourceName st
 	if assignmentJudgmentMissingProofIndexedRead(item) {
 		return indexedReadExpectedProofMessage(subject, "declared type")
 	}
+	if assignmentJudgmentHasCallInvalidationEvidence(item) {
+		return fmt.Sprintf("no proof on this path shows %s satisfies the declared type", subject)
+	}
 	if assignmentJudgmentHasDynamicTargetEvidence(item) {
 		return fmt.Sprintf("no proof on this path shows %s satisfies the declared type", subject)
 	}
@@ -471,6 +477,15 @@ func assignmentJudgmentMissingProofMessage(item judgment.Judgment, sourceName st
 		return missingBoundaryProofMessageForSubject(subject, want)
 	}
 	return missingExpectedProofMessage(subject, "declared type")
+}
+
+func assignmentJudgmentHasCallInvalidationEvidence(item judgment.Judgment) bool {
+	for _, evidence := range item.Evidence {
+		if evidence.Detail.Kind == judgment.EvidenceDetailAssignmentCallInvalidation {
+			return true
+		}
+	}
+	return false
 }
 
 func assignmentJudgmentHasDynamicTargetEvidence(item judgment.Judgment) bool {
@@ -559,6 +574,47 @@ func assignmentJudgmentSourceContributionEvidence(item judgment.Judgment) []diag
 		})
 	}
 	return out
+}
+
+func assignmentJudgmentCallInvalidationEvidence(item judgment.Judgment) []diagnostic.Evidence {
+	var out []diagnostic.Evidence
+	for _, evidence := range item.Evidence {
+		if evidence.Kind != judgment.EvidenceAbstractFact ||
+			evidence.Detail.Kind != judgment.EvidenceDetailAssignmentCallInvalidation {
+			continue
+		}
+		out = append(out, diagnostic.Evidence{
+			Kind:  diagnostic.EvidenceAbstractFact,
+			Trust: diagnosticTrustFromJudgmentTrust(evidence.Trust, diagnostic.TrustProven),
+			Span:  diagnosticSpanFromJudgment(evidence.Span),
+			Message: assignmentCallInvalidationMessage(
+				evidence.Detail.ProviderLabel,
+				evidence.Detail.Field,
+				evidence.Detail.SubjectLabel,
+			),
+		})
+	}
+	return out
+}
+
+func assignmentMissingProofTrust(item judgment.Judgment) diagnostic.TrustKind {
+	if assignmentJudgmentHasCallInvalidationEvidence(item) {
+		return diagnostic.TrustUnknown
+	}
+	return diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceMissingProof, missingProofTrustFromJudgment(item.Verdict))
+}
+
+func assignmentCallInvalidationMessage(callLabel, invalidatedLabel, readLabel string) string {
+	if callLabel == "" {
+		callLabel = "call"
+	}
+	if invalidatedLabel == "" {
+		invalidatedLabel = "the source"
+	}
+	if readLabel == "" {
+		readLabel = "assigned value"
+	}
+	return fmt.Sprintf("%s may change %s, so the read of %s needs a fresh check", callLabel, invalidatedLabel, readLabel)
 }
 
 func assignmentNilableAccessMessage(label, access string) string {
