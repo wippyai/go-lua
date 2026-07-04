@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -94,16 +95,24 @@ func lowerReturnLocalTypes(bindings *bind.Result, graph cfg.Graph, result *seman
 		if state.invalid || !state.seen || state.symbol == 0 {
 			continue
 		}
-		if existing, ok := out[state.symbol]; ok && !typ.TypeEquals(existing, declared[slot]) {
+		contract := returnedLocalDeclaredContract(declared[slot])
+		if existing, ok := out[state.symbol]; ok && !typ.TypeEquals(existing, contract) {
 			delete(out, state.symbol)
 			continue
 		}
-		out[state.symbol] = declared[slot]
+		out[state.symbol] = contract
 	}
 	if len(out) == 0 {
 		return nil
 	}
 	return out
+}
+
+func returnedLocalDeclaredContract(declared typ.Type) typ.Type {
+	if inner := unwrap.Optional(declared); inner != nil {
+		return inner
+	}
+	return declared
 }
 
 func returnSourceMayOmitDeclaredLocal(source sourceprovenance.ASTSource, declared typ.Type) bool {

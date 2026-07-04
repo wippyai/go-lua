@@ -242,7 +242,7 @@ end
 	}
 }
 
-func TestLowerSetmetatableReturnLocalCarriesDeclaredContract(t *testing.T) {
+func TestLowerSetmetatableReturnLocalCarriesNonNilDeclaredContract(t *testing.T) {
 	reg := standard.Registry()
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function make(): {run: (self: any) -> ()}?
@@ -273,7 +273,7 @@ end
 		t.Fatalf("missing declared return value")
 	}
 	gotType, ok := typevalue.TypeOf(reg, declared)
-	want := typeexpr.Optional(typetable.NewRecord().Field("run", typ.Func().Param("self", typ.Any).Build()).Build())
+	want := typetable.NewRecord().Field("run", typ.Func().Param("self", typ.Any).Build()).Build()
 	if !ok || !typ.TypeEquals(gotType, want) {
 		t.Fatalf("declared return local type = %v/%v, want %v", gotType, ok, want)
 	}

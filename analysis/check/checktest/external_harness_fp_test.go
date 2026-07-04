@@ -578,6 +578,45 @@ end
 	}
 }
 
+func TestCheckFreshPartialTableStaysPresentBeforeReturnCast(t *testing.T) {
+	result := Check(`
+local output = {}
+
+type Streamer = {
+    pid: string,
+    topic: string,
+    buffer: string,
+    buffer_size: number,
+    send_content: (self: Streamer, text: string) -> boolean,
+}
+
+function output.streamer(pid: string?, topic: string?, buffer_size: number?): (Streamer?, string?)
+    if not pid then
+        return nil, "PID is required for streamer"
+    end
+
+    local streamer = {
+        pid = pid,
+        topic = topic or "llm_response",
+        buffer = "",
+        buffer_size = buffer_size or 10,
+    }
+
+    local target_pid = tostring(pid)
+    local target_topic = tostring(topic or "llm_response")
+
+    streamer.send_content = function(self: Streamer, text: string): boolean
+        return target_pid ~= "" and target_topic ~= "" and text ~= ""
+    end
+
+    return streamer :: Streamer
+end
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want fresh partial table to stay non-nil while methods are attached before return cast", result.Diagnostics)
+	}
+}
+
 func TestCheckTypeCallReturnsExactRuntimeKindLiteral(t *testing.T) {
 	result := Check(`
 local tag: "string" = type("x")
