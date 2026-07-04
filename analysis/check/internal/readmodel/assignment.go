@@ -406,22 +406,33 @@ func (r Reader) inferredReplacementAccepted(_ cfg.Point, target body.OrdinaryAss
 }
 
 func inferredRecordReplacementAccepted(actual typ.Type) bool {
+	ok, hasBroadTable := inferredRecordReplacementSurface(actual)
+	return ok && hasBroadTable
+}
+
+func inferredRecordReplacementSurface(actual typ.Type) (bool, bool) {
 	switch t := unwrap.Annotated(actual).(type) {
 	case *typ.Record:
-		return true
+		return true, false
 	case *typ.Optional:
-		return false
+		return false, false
 	case *typ.Union:
 		if len(t.Members) == 0 {
-			return false
+			return false, false
 		}
+		hasBroadTable := false
 		for _, member := range t.Members {
-			if !inferredRecordReplacementAccepted(member) {
-				return false
+			ok, broad := inferredRecordReplacementSurface(member)
+			if !ok {
+				return false, false
 			}
+			hasBroadTable = hasBroadTable || broad
 		}
-		return true
+		return true, hasBroadTable
 	default:
-		return typetable.IsLike(t)
+		if typetable.IsBuiltinTopMarker(t) {
+			return true, true
+		}
+		return false, false
 	}
 }
