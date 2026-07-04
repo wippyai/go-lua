@@ -1231,6 +1231,69 @@ end
 	}
 }
 
+func TestCheckMemberReadNormalContinuationProvesReceiverForAssignment(t *testing.T) {
+	result := Check(`
+type Suite = {
+    tests: {table}?,
+    children: {Suite},
+    before_all: fun()?,
+}
+
+local function clear_suite_references(suite: Suite?)
+    if suite.tests then
+        for i, test_case in ipairs(suite.tests) do
+            suite.tests[i].fn = nil
+        end
+    end
+
+    suite.before_all = nil
+    suite.children = {}
+end
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want successful member read to prove optional receiver non-nil on normal continuation", result.Diagnostics)
+	}
+}
+
+func TestCheckConditionalMemberReadDoesNotProveReceiverForAssignment(t *testing.T) {
+	result := Check(`
+type Suite = {
+    tests: {table}?,
+    before_all: fun()?,
+}
+
+local function clear_suite_references(flag: boolean, suite: Suite?)
+    if flag and suite.tests then
+    end
+
+    suite.before_all = nil
+end
+`, WithStdlib())
+	if len(result.Diagnostics) == 0 {
+		t.Fatalf("diagnostics = none, want conditional RHS read not to prove optional receiver non-nil")
+	}
+}
+
+func TestCheckInvalidatedMemberReadDoesNotProveReceiverForAssignment(t *testing.T) {
+	result := Check(`
+type Suite = {
+    tests: {table}?,
+    before_all: fun()?,
+}
+
+local function clear_suite_references(suite: Suite?)
+    if suite.tests then
+    end
+
+    suite = nil
+    suite.before_all = nil
+end
+`, WithStdlib())
+	if len(result.Diagnostics) == 0 {
+		t.Fatalf("diagnostics = none, want stale member-read receiver proof rejected after reassignment")
+	}
+}
+
 func TestCheckConstructorFallbackArrayFieldLengthWithoutMetadataCall(t *testing.T) {
 	result := Check(`
 local node = {}

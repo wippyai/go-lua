@@ -235,6 +235,8 @@ func (r *Result) ExpressionReadProvenPresentBeforeBoundary(point cfg.Point, expr
 		return true
 	} else if ok && r.requiredPathDescendantProvenPresentBeforeBoundary(point, p) {
 		return true
+	} else if ok && r.DominatingRequiredMemberReadProvesPathPresent(point, p) {
+		return true
 	}
 	if value, ok := r.ExpressionValueBeforeBoundary(point, expr); ok &&
 		presence.Equal(product.PresenceOf(value), presence.Present()) {

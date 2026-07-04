@@ -64,6 +64,9 @@ func (r *Result) optionalAssignmentTargetOccurrence(point cfg.Point, fact Ordina
 		presence.Equal(product.PresenceOf(value), presence.Present()) {
 		return OptionalAssignmentTargetOccurrence{}, false
 	}
+	if r.ExpressionReadProvenPresentBeforeBoundary(point, container) {
+		return OptionalAssignmentTargetOccurrence{}, false
+	}
 	return OptionalAssignmentTargetOccurrence{
 		Point:          point,
 		ContainerLabel: ExpressionLabel(container),

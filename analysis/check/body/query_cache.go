@@ -22,6 +22,9 @@ type resultQueryCache struct {
 	edgeNormal          map[edgeNormalCacheKey]bool
 	normalReachable     map[cfg.Point]bool
 	normalReachableSet  bool
+	memberReadSources   []dominatingMemberReadPresenceSource
+	memberReadSourcesOK bool
+	memberReadPresence  map[dominatingMemberReadPresenceKey]bool
 	signatureTypes      map[string]cachedSignatureType
 	reachability        *cfg.Reachability
 	immediateDominators map[cfg.Point]cfg.Point
@@ -46,6 +49,9 @@ func (c *resultQueryCache) reset() {
 	c.edgeNormal = nil
 	c.normalReachable = nil
 	c.normalReachableSet = false
+	c.memberReadSources = nil
+	c.memberReadSourcesOK = false
+	c.memberReadPresence = nil
 	c.signatureTypes = nil
 	c.reachability = nil
 	c.immediateDominators = nil
