@@ -86,7 +86,9 @@ func (r Reader) assignmentObjectLiteralEntryCandidate(point cfg.Point, literal b
 		}
 		untrustedTopOrigin := valueOK && r.ValueHasUntrustedTopOrigin(value)
 		explicitTopOrigin := valueOK && r.ValueHasExplicitTopOrigin(value)
-		if t == nil || (r.IsSubtype(t, entryExpected) && !untrustedTopOrigin) {
+		valueAdmissible := valueOK && r.ValueProofAdmissible(value, entryExpected)
+		valueProvenMismatch := valueOK && r.ValueWitnessProvenMismatch(value, entryExpected)
+		if t == nil || valueAdmissible || (r.IsSubtype(t, entryExpected) && !untrustedTopOrigin) {
 			continue
 		}
 		targetLabel := target.Label + segment.FormatSegments(entry.Suffix.Segments)
@@ -114,8 +116,8 @@ func (r Reader) assignmentObjectLiteralEntryCandidate(point cfg.Point, literal b
 		}
 		assignment.Check = readapi.PlanAssignmentCheck(readapi.AssignmentCheckPlan{
 			Assignment:          assignment,
-			ValueAdmissible:     false,
-			ValueProvenMismatch: true,
+			ValueAdmissible:     valueAdmissible,
+			ValueProvenMismatch: valueProvenMismatch,
 		})
 		return assignment, true
 	}
