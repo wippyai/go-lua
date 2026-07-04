@@ -4,8 +4,9 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/ir/cir"
-	"github.com/wippyai/go-lua/analysis/lua/cirlower"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
+	"github.com/wippyai/go-lua/analysis/lua/cirlower"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
@@ -23,8 +24,9 @@ func lowerSourceG(t *testing.T, src string, globals ...string) string {
 		t.Fatalf("parse %q: %v", src, err)
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: globals})
-	res := cirlower.Chunk("main", stmts, bindings)
-	return cir.Print(res.Body, res.Graph)
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	body := cirlower.Lower("main", stmts, bindings, built)
+	return cir.Print(body, built.Graph)
 }
 
 func TestGolden(t *testing.T) {
@@ -51,7 +53,8 @@ b1: y = nil
 b2: branch type_eq x "number"  then b4 else b3
 b3: y = 0
 b4: y = x
-b5: exit
+b5: noop
+b6: exit
 `,
 		},
 		{
@@ -60,9 +63,11 @@ b5: exit
 			want: `body main
 b0: entry
 b1: s = 0
-b2: i = iterate.numeric [1, 10, 1]
-b3: exit
+b2: i = _
+b3: iterate.numeric [1, 10, 1]
 b4: s = add s i
+b5: noop
+b6: exit
 `,
 		},
 		{
@@ -88,8 +93,9 @@ b2: exit
 			src:  "local n = obj:len()",
 			want: `body main
 b0: entry
-b1: n = call obj:len()
-b2: exit
+b1: %0 = call obj:len()
+b2: n = %0
+b3: exit
 `,
 		},
 		{
@@ -117,11 +123,13 @@ b3: exit
 			src:  "local a, b = f()\nreturn g(h())",
 			want: `body main
 b0: entry
-b1: a, b = call f()
-b2: %1 = call h() multret
-    %0 = call g(%1...) multret
-    return %0...
-b3: exit
+b1: %0, %1 = call f()
+b2: a = %0
+b3: b = %1
+b4: %2 = call h() multret
+b5: %3 = call g(%2...) multret
+b6: return %3...
+b7: exit
 `,
 		},
 		{
@@ -163,9 +171,9 @@ func TestGoldenExtended(t *testing.T) {
 			want: `body main
 b0: entry
 b1: s = 0
-b2: noop
-b3: s = add s 1
-b4: branch num_ge s 11  then b5 else b2
+b2: s = add s 1
+b3: branch num_ge s 11  then b4 else b2
+b4: noop
 b5: exit
 `,
 		},
@@ -175,10 +183,13 @@ b5: exit
 			globals: []string{"cond", "x"},
 			want: `body main
 b0: entry
-b1: branch truthy cond  then b2 else b4
-b2: branch truthy x  then b3 else b1
+b1: branch truthy cond  then b2 else b6
+b2: branch truthy x  then b5 else b3
 b3: noop
-b4: exit
+b4: noop
+b5: noop
+b6: noop
+b7: exit
 `,
 		},
 		{
@@ -187,9 +198,59 @@ b4: exit
 			globals: []string{"a", "b", "c"},
 			want: `body main
 b0: entry
-b1: %0 = and a b
+b1: noop
+b2: noop
+b3: noop
+b4: noop
+b5: noop
+b6: noop
+b7: %0 = and a b
     y = or %0 c
-b2: exit
+b8: exit
+`,
+		},
+		{
+			name:    "logical_and_effectful",
+			src:     "local y = a and f()",
+			globals: []string{"a", "f"},
+			want: `body main
+b0: entry
+b1: %1 = a
+    branch truthy a  then b2 else b3
+b2: %0 = call f()
+    %1 = %0
+b3: noop
+b4: y = %1
+b5: exit
+`,
+		},
+		{
+			name:    "logical_or_effectful",
+			src:     "local y = a or f()",
+			globals: []string{"a", "f"},
+			want: `body main
+b0: entry
+b1: %1 = a
+    branch truthy a  then b3 else b2
+b2: %0 = call f()
+    %1 = %0
+b3: noop
+b4: y = %1
+b5: exit
+`,
+		},
+		{
+			name:    "logical_and_member_effectful",
+			src:     "local y = a and t.f",
+			globals: []string{"a", "t"},
+			want: `body main
+b0: entry
+b1: %0 = a
+    branch truthy a  then b2 else b3
+b2: %0 = t.f
+b3: noop
+b4: y = %0
+b5: exit
 `,
 		},
 		{
@@ -198,14 +259,16 @@ b2: exit
 			want: `body main
 b0: entry
 b1: inc = closure main.fn0
-b2: r = call inc(2)
-b3: exit
+b2: %0 = call inc(2)
+b3: r = %0
+b4: exit
 
 body main.fn0
 b0: entry
-b1: %0 = add n 1
+b1: noop
+b2: %0 = add n 1
     return %0
-b2: exit
+b3: exit
 `,
 		},
 		{
@@ -219,8 +282,9 @@ b2: exit
 
 body main.fn0
 b0: entry
-b1: return v
-b2: exit
+b1: noop
+b2: return v
+b3: exit
 `,
 		},
 		{
@@ -234,8 +298,10 @@ b2: exit
 
 body main.fn0
 b0: entry
-b1: return v
-b2: exit
+b1: noop
+b2: noop
+b3: return v
+b4: exit
 `,
 		},
 		{
@@ -263,13 +329,13 @@ b2: exit
 			want: `body main
 b0: entry
 b1: %0 = call f() multret
-    tbl = table [1, 2, %0]
-b2: exit
+b2: tbl = table [1, 2, %0]
+b3: exit
 `,
 		},
 		{
-			name: "nested_closure",
-			src:  "local mk = function() return function() return x end end",
+			name:    "nested_closure",
+			src:     "local mk = function() return function() return x end end",
 			globals: []string{"x"},
 			want: `body main
 b0: entry
@@ -294,10 +360,12 @@ b2: exit
 			globals: []string{"channel"},
 			want: `body main
 b0: entry
-b1: ch = nil
+b1: noop
+b2: ch = nil
     ch = claim.annotation ch : Channel<{kind: string}>
-b2: r = select [ch] default
-b3: exit
+b3: %0 = select [ch] default
+b4: r = %0
+b5: exit
 `,
 		},
 		{
@@ -306,9 +374,9 @@ b3: exit
 			want: `body main
 b0: entry
 b1: %0 = call f()
-    %1 = call g() multret
-    call print(%0, %1...)
-b2: exit
+b2: %1 = call g() multret
+b3: call print(%0, %1...)
+b4: exit
 `,
 		},
 		{
@@ -316,9 +384,12 @@ b2: exit
 			src:  "local a, b, c = f(), g()",
 			want: `body main
 b0: entry
-b1: a = call f()
-    b, c = call g()
-b2: exit
+b1: %0 = call f()
+b2: %1, %2 = call g()
+b3: a = %0
+b4: b = %1
+b5: c = %2
+b6: exit
 `,
 		},
 	}

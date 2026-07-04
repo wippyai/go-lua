@@ -10,26 +10,25 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/cir"
-	"github.com/wippyai/go-lua/analysis/lua/cirlower"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
+	"github.com/wippyai/go-lua/analysis/lua/cirlower"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
-// TestShadowCoverage is an opt-in (CIR_SHADOW=1) completeness harness. For every
-// fixture main.lua it can parse+bind, it runs BOTH the existing point-keyed
-// semantics extraction (imported read-only) and the cir lowering, then compares
-// construct COVERAGE: every semantics assign/call/branch/return fact must have a
-// corresponding cir instruction with matching operand identity (path key). The
-// two pipelines build independent CFGs with independent point numbering, so the
-// comparison is a per-category multiset over operand identities rather than a
-// point-by-point diff. This proves lowering completeness; full point-state
-// equality is a later migration concern.
+// TestShadowCoverage is an opt-in (CIR_SHADOW=1) per-point completeness oracle.
+// Because D1a lowers onto the SAME cfgbuild graph that semantics extracts from,
+// the comparison is now a true per-point diff: for every point that carries a
+// semantics fact (assign / call / branch / return, imported read-only), the cir
+// Body must carry an instruction AT THAT POINT whose operand identity (path key)
+// matches. It reports corpus-wide coverage per category and lists the residual
+// gaps honestly rather than masking them.
 //
-// It reports corpus-wide coverage per category in the test log. Residual gaps
-// (e.g. short-circuit and/or lowered as OpLogical rather than branch topology)
-// are expected and surfaced honestly rather than masked.
+// Known residual: a conservatively pure short-circuit `and`/`or` right operand
+// keeps the OpLogical value form on the enclosing statement point, so the guard
+// point cfgbuild materializes (which semantics reconstructs a branch fact for)
+// carries no cir branch. These points surface as the branch-category gap.
 func TestShadowCoverage(t *testing.T) {
 	if os.Getenv("CIR_SHADOW") != "1" {
 		t.Skip("set CIR_SHADOW=1 to run the cir lowering coverage harness")
@@ -42,11 +41,11 @@ func TestShadowCoverage(t *testing.T) {
 	}
 
 	categories := []string{"assign", "call", "branch", "return"}
-	semTotals := map[string]int{}
+	total := map[string]int{}
 	covered := map[string]int{}
+	gapSamples := map[string][]string{}
 
 	var processed, skippedParse, skippedBind, skippedExtract int
-	uncoveredSamples := map[string][]string{}
 
 	for _, file := range fixtures {
 		src, err := os.ReadFile(file)
@@ -73,153 +72,94 @@ func TestShadowCoverage(t *testing.T) {
 			skippedExtract++
 			continue
 		}
-		res := cirlower.Chunk("main", stmts, bindings)
-		if res == nil || res.Body == nil {
+		body := cirlower.Lower("main", stmts, bindings, built)
+		if body == nil {
 			skippedExtract++
 			continue
 		}
 		processed++
 
-		semKeys := semanticKeys(sem, built.Graph)
-		cirKeys := cirKeys(res.Body)
-
-		for _, cat := range categories {
-			s := semKeys[cat]
-			c := cirKeys[cat]
-			for key, n := range s {
-				semTotals[cat] += n
-				have := c[key]
-				if have > n {
-					have = n
-				}
-				covered[cat] += have
-				if have < n && len(uncoveredSamples[cat]) < 12 {
-					uncoveredSamples[cat] = append(uncoveredSamples[cat], key)
-				}
+		for _, pt := range built.Graph.RPO() {
+			keys := cirPointKeys(body, pt)
+			if f, ok := sem.LocalAssignment(pt); ok {
+				scorePoint(total, covered, gapSamples, "assign", keys, semLocalAssignKey(f))
+			}
+			if f, ok := sem.OrdinaryAssignment(pt); ok {
+				scorePoint(total, covered, gapSamples, "assign", keys, semOrdinaryAssignKey(f))
+			}
+			if f, ok := sem.Call(pt); ok {
+				scorePoint(total, covered, gapSamples, "call", keys, semCallKey(f))
+			}
+			if _, ok := sem.Return(pt); ok {
+				scorePoint(total, covered, gapSamples, "return", keys, "return")
+			}
+			if f, ok := sem.BranchCondition(pt); ok {
+				scorePoint(total, covered, gapSamples, "branch", keys, semBranchKey(f))
 			}
 		}
 	}
 
-	t.Logf("cir shadow coverage over %d/%d fixtures (parse-skip %d, bind-skip %d, extract-skip %d)",
+	t.Logf("cir per-point coverage over %d/%d fixtures (parse-skip %d, bind-skip %d, extract-skip %d)",
 		processed, len(fixtures), skippedParse, skippedBind, skippedExtract)
 
-	var totalSem, totalCovered int
+	var totalAll, coveredAll int
 	for _, cat := range categories {
-		ts := semTotals[cat]
-		tc := covered[cat]
-		totalSem += ts
-		totalCovered += tc
-		t.Logf("  %-7s %6d/%-6d  %s", cat, tc, ts, pct(tc, ts))
-		if samples := uncoveredSamples[cat]; len(samples) > 0 {
+		tc, cc := total[cat], covered[cat]
+		totalAll += tc
+		coveredAll += cc
+		t.Logf("  %-7s %6d/%-6d  %s", cat, cc, tc, pct(cc, tc))
+		if samples := gapSamples[cat]; len(samples) > 0 {
 			t.Logf("    uncovered sample keys: %v", samples)
 		}
 	}
-	t.Logf("  %-7s %6d/%-6d  %s", "TOTAL", totalCovered, totalSem, pct(totalCovered, totalSem))
+	t.Logf("  %-7s %6d/%-6d  %s", "TOTAL", coveredAll, totalAll, pct(coveredAll, totalAll))
 }
 
-func pct(n, d int) string {
-	if d == 0 {
-		return "n/a"
+// scorePoint records one semantics fact at a point and whether cir carries a
+// matching instruction key in the same category at that same point.
+func scorePoint(total, covered map[string]int, gaps map[string][]string, cat string, keys map[string]map[string]bool, key string) {
+	total[cat]++
+	if keys[cat][key] {
+		covered[cat]++
+		return
 	}
-	return strconv.FormatFloat(100*float64(n)/float64(d), 'f', 2, 64) + "%"
+	if len(gaps[cat]) < 12 {
+		gaps[cat] = append(gaps[cat], key)
+	}
 }
 
-// semanticKeys collects the point-keyed semantics facts into per-category
-// operand-identity multisets.
-func semanticKeys(sem *semantics.Result, graph *cfg.CFG) map[string]map[string]int {
-	out := map[string]map[string]int{
+// cirPointKeys collects the destination and control identities cir attaches to a
+// single point, per category, so a semantics fact at that point can be matched
+// against them.
+func cirPointKeys(b *cir.Body, pt cfg.Point) map[string]map[string]bool {
+	out := map[string]map[string]bool{
 		"assign": {}, "call": {}, "branch": {}, "return": {},
 	}
-	for _, pt := range graph.RPO() {
-		if f, ok := sem.LocalAssignment(pt); ok {
-			out["assign"][semLocalAssignKey(f)]++
-		}
-		if f, ok := sem.OrdinaryAssignment(pt); ok {
-			out["assign"][semOrdinaryAssignKey(f)]++
-		}
-		if f, ok := sem.Call(pt); ok {
-			out["call"][semCallKey(f)]++
-		}
-		if _, ok := sem.Return(pt); ok {
-			out["return"]["return"]++
-		}
-		if f, ok := sem.BranchCondition(pt); ok {
-			out["branch"][semBranchKey(f)]++
-		}
-	}
-	return out
-}
-
-func semLocalAssignKey(f semantics.LocalAssignmentFact) string {
-	if f.HasSymbol {
-		return string(path.NewPath(f.Symbol, f.Name).Key())
-	}
-	return "name:" + f.Name
-}
-
-func semOrdinaryAssignKey(f semantics.OrdinaryAssignmentFact) string {
-	switch {
-	case f.HasPath:
-		return string(f.Path.Key())
-	case f.HasContainerPath:
-		return string(f.ContainerPath.Key())
-	case f.HasSymbol:
-		return string(path.NewPath(f.Symbol, "").Key())
-	default:
-		return "target"
-	}
-}
-
-func semCallKey(f semantics.CallFact) string {
-	if f.HasCalleePath {
-		return string(f.CalleePath.Key())
-	}
-	if f.Method != "" {
-		if f.HasReceiverPath {
-			return string(f.ReceiverPath.Key()) + ":" + f.Method
-		}
-		return "recv:" + f.Method
-	}
-	return "callexpr"
-}
-
-func semBranchKey(f semantics.BranchConditionFact) string {
-	return string(f.Check.Path.Key()) + "|" + strconv.Itoa(int(f.Check.Kind))
-}
-
-// cirKeys collects the top-level cir body's destination and control identities
-// into the same per-category multisets. Nested closure protos are excluded
-// because semantics.ExtractChunk covers the top-level chunk only.
-func cirKeys(b *cir.Body) map[string]map[string]int {
-	out := map[string]map[string]int{
-		"assign": {}, "call": {}, "branch": {}, "return": {},
-	}
-	for i := 0; i < b.Len(); i++ {
-		inst := b.Instr(i)
+	for _, inst := range b.PointInstructions(pt) {
 		switch inst.Op {
 		case cir.OpAssign, cir.OpBinOp, cir.OpUnOp, cir.OpConcat, cir.OpMakeTable,
 			cir.OpClaim, cir.OpLogical, cir.OpClosure, cir.OpSelect,
 			cir.OpStaticMemberWrite, cir.OpDynamicIndexWrite:
 			if k, ok := cirDstKey(b, inst.Dst); ok {
-				out["assign"][k]++
+				out["assign"][k] = true
 			}
 		case cir.OpCall:
-			out["call"][cirCallKey(b, inst)]++
+			out["call"][cirCallKey(b, inst)] = true
 			for _, r := range b.Operands(inst.Results) {
 				if k, ok := cirDstKey(b, r); ok {
-					out["assign"][k]++
+					out["assign"][k] = true
 				}
 			}
 		case cir.OpIterate:
 			for _, r := range b.Operands(inst.Results) {
 				if k, ok := cirDstKey(b, r); ok {
-					out["assign"][k]++
+					out["assign"][k] = true
 				}
 			}
 		case cir.OpReturn:
-			out["return"]["return"]++
+			out["return"]["return"] = true
 		case cir.OpBranch:
-			out["branch"][cirBranchKey(b, inst)]++
+			out["branch"][cirBranchKey(b, inst)] = true
 		}
 	}
 	return out
@@ -258,6 +198,50 @@ func cirCallKey(b *cir.Body, inst cir.Instruction) string {
 func cirBranchKey(b *cir.Body, inst cir.Instruction) string {
 	c := b.Check(inst.Check)
 	return string(c.Path.Key()) + "|" + strconv.Itoa(int(c.Kind))
+}
+
+func pct(n, d int) string {
+	if d == 0 {
+		return "n/a"
+	}
+	return strconv.FormatFloat(100*float64(n)/float64(d), 'f', 2, 64) + "%"
+}
+
+func semLocalAssignKey(f semantics.LocalAssignmentFact) string {
+	if f.HasSymbol {
+		return string(path.NewPath(f.Symbol, f.Name).Key())
+	}
+	return "name:" + f.Name
+}
+
+func semOrdinaryAssignKey(f semantics.OrdinaryAssignmentFact) string {
+	switch {
+	case f.HasPath:
+		return string(f.Path.Key())
+	case f.HasContainerPath:
+		return string(f.ContainerPath.Key())
+	case f.HasSymbol:
+		return string(path.NewPath(f.Symbol, "").Key())
+	default:
+		return "target"
+	}
+}
+
+func semCallKey(f semantics.CallFact) string {
+	if f.HasCalleePath {
+		return string(f.CalleePath.Key())
+	}
+	if f.Method != "" {
+		if f.HasReceiverPath {
+			return string(f.ReceiverPath.Key()) + ":" + f.Method
+		}
+		return "recv:" + f.Method
+	}
+	return "callexpr"
+}
+
+func semBranchKey(f semantics.BranchConditionFact) string {
+	return string(f.Check.Path.Key()) + "|" + strconv.Itoa(int(f.Check.Kind))
 }
 
 // repoRoot ascends from the test working directory to the module root.
