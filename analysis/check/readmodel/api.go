@@ -328,6 +328,7 @@ type Return struct {
 	Expected           typ.Type
 	ExpectedLabel      string
 	SourceLabel        string
+	SourceIndexedRead  bool
 	SourceSpan         SourceSpan
 	DeclarationSpan    SourceSpan
 	UntrustedTopOrigin bool
@@ -401,6 +402,7 @@ type ReturnMismatchKind uint8
 const (
 	ReturnMismatchNone ReturnMismatchKind = iota
 	ReturnMismatchMissingRequiredField
+	ReturnMismatchMayBeNil
 )
 
 type ReturnMismatch struct {
@@ -744,6 +746,8 @@ func PlanReturnCheck(plan ReturnCheckPlan) ReturnCheck {
 			Field: plan.MissingRequiredField,
 			Type:  plan.MissingRequiredFieldType,
 		}
+	} else if TypeMayBeNilMismatch(ret.TypeWithPresence, ret.Expected) {
+		mismatch = ReturnMismatch{Kind: ReturnMismatchMayBeNil}
 	}
 	return ReturnCheck{
 		Return:         &ret,

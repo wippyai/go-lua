@@ -50,6 +50,12 @@ func returnJudgment(ctx Context, functionKey string, ret readmodel.Return) judgm
 			ret.Check.Mismatch.Field,
 			ret.Check.Mismatch.Type,
 		)
+	case readmodel.ReturnMismatchMayBeNil:
+		if ret.SourceIndexedRead {
+			missingProofDetail = judgment.IndexedReadMissingProofEvidenceDetail()
+		} else {
+			missingProofDetail = judgment.MayBeNilEvidenceDetail()
+		}
 	}
 	evidence := judgment.EvidenceChain{
 		{

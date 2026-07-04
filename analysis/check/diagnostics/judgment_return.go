@@ -51,7 +51,7 @@ func renderReturnJudgmentWithPolicy(item judgment.Judgment, policy judgment.Poli
 		Code:        CodeReturnContractType,
 		Severity:    severity,
 		Message:     returnJudgmentMessage(subject, sourceName, label, got, want, item),
-		Help:        returnJudgmentHelp(sourceName, got),
+		Help:        returnJudgmentHelp(sourceName, got, item.ReturnMissingProofMayBeNil(), item.ReturnMissingProofIndexedRead()),
 		Explanation: diagnostic.NewExplanation(evidence...),
 		Labels: []diagnostic.Label{
 			sourceLabel(span, labelReturnedValue),
@@ -74,10 +74,12 @@ func returnJudgmentSubject(label, sourceName string) string {
 }
 
 func returnJudgmentMessage(subject, sourceName, label string, got, want typ.Type, item judgment.Judgment) string {
-	if item.HasEvidence(judgment.EvidencePrecisionBoundary) && !nilSafetyMismatch(got, want) {
+	missingNilProof := item.ReturnMissingProofMayBeNil()
+	indexedReadMissingProof := item.ReturnMissingProofIndexedRead()
+	if item.HasEvidence(judgment.EvidencePrecisionBoundary) && !missingNilProof {
 		return fmt.Sprintf("%s comes from any/unknown; no proof shows it satisfies declared return type %s", subject, formatType(want))
 	}
-	if nilSafetyMismatch(got, want) {
+	if missingNilProof && (!typ.Nil.Equals(got) || indexedReadMissingProof) {
 		if sourceName != "" && sourceName != label {
 			return fmt.Sprintf("cannot return %s as %s because it may be nil", sourceName, label)
 		}
@@ -94,8 +96,8 @@ func returnJudgmentMessage(subject, sourceName, label string, got, want typ.Type
 	return fmt.Sprintf("%s is %s, not %s", subject, gotText, wantText)
 }
 
-func returnJudgmentHelp(sourceName string, got typ.Type) string {
-	if sourceName != "" && sourceName != unknownSourceName && valueMayBeNil(got) {
+func returnJudgmentHelp(sourceName string, got typ.Type, missingNilProof bool, indexedReadMissingProof bool) string {
+	if sourceName != "" && sourceName != unknownSourceName && missingNilProof && (!typ.Nil.Equals(got) || indexedReadMissingProof) {
 		return fmt.Sprintf("Guard `%s` with a nil check, return a default value, or change the return type to accept nil.", sourceName)
 	}
 	return "Return a value compatible with the declared return type, or change the return annotation if the returned value is valid."
@@ -125,12 +127,13 @@ func returnJudgmentExtraEvidence(item judgment.Judgment, subject, sourceName str
 			})
 		}
 	}
-	if !typ.IsAny(got) && !typ.IsUnknown(got) && !item.HasEvidence(judgment.EvidencePrecisionBoundary) && !nilSafetyMismatch(got, want) {
+	missingNilProof := item.ReturnMissingProofMayBeNil()
+	if !typ.IsAny(got) && !typ.IsUnknown(got) && !item.HasEvidence(judgment.EvidencePrecisionBoundary) && !missingNilProof {
 		return out
 	}
 	missingReason := diagnostic.EvidenceReasonBoundaryValidationMissing
 	missingMessage := returnMissingProofMessage(subject)
-	if nilSafetyMismatch(got, want) && strings.Contains(sourceName, "[") {
+	if item.ReturnMissingProofIndexedRead() {
 		missingReason = diagnostic.EvidenceReasonIndexReadValidationMissing
 		missingMessage = returnIndexedReadProofMessage(subject)
 	}

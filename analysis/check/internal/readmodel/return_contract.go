@@ -95,6 +95,7 @@ func (r Reader) returnObjectLiteralEntry(occ body.ReturnValueOccurrence, expecte
 			Expected:           entryExpected,
 			ExpectedLabel:      label,
 			SourceLabel:        sourceLabel,
+			SourceIndexedRead:  returnSourceIndexedRead(entry.Source),
 			SourceSpan:         sourceSpanFromBody(entry.ValueSpan),
 			DeclarationSpan:    readmodelSourceSpanAt(expectedSpans, occ.Index),
 			UntrustedTopOrigin: untrustedTopOrigin,
@@ -172,6 +173,7 @@ func (r Reader) returnLoweredObjectLiteralEntry(point cfg.Point, index int, lite
 			Expected:           entryExpected,
 			ExpectedLabel:      label,
 			SourceLabel:        sourceLabel,
+			SourceIndexedRead:  false,
 			SourceSpan:         sourceSpanFromFactflow(entry.ValueSpan()),
 			DeclarationSpan:    readmodelSourceSpanAt(expectedSpans, index),
 			UntrustedTopOrigin: untrustedTopOrigin,
@@ -248,16 +250,17 @@ func (r Reader) returnMissingRequiredField(point cfg.Point, index int, rootValue
 	}
 	label := returnExpectedLabel(index) + "." + field
 	ret := Return{
-		Point:            point,
-		Index:            index,
-		Value:            rootValue,
-		ValueHash:        r.ValueHash(rootValue),
-		TypeWithPresence: actual,
-		Expected:         fieldType,
-		ExpectedLabel:    label,
-		SourceLabel:      returnExpectedLabel(index),
-		SourceSpan:       sourceSpan,
-		DeclarationSpan:  readmodelSourceSpanAt(expectedSpans, index),
+		Point:             point,
+		Index:             index,
+		Value:             rootValue,
+		ValueHash:         r.ValueHash(rootValue),
+		TypeWithPresence:  actual,
+		Expected:          fieldType,
+		ExpectedLabel:     label,
+		SourceLabel:       returnExpectedLabel(index),
+		SourceIndexedRead: false,
+		SourceSpan:        sourceSpan,
+		DeclarationSpan:   readmodelSourceSpanAt(expectedSpans, index),
 	}
 	ret.Check = readapi.PlanReturnCheck(readapi.ReturnCheckPlan{
 		Return:                   ret,
@@ -287,6 +290,7 @@ func (r Reader) returnValue(occ body.ReturnValueOccurrence, expectedValue produc
 		Expected:           expected,
 		ExpectedLabel:      returnExpectedLabel(occ.Index),
 		SourceLabel:        occ.SourceLabel,
+		SourceIndexedRead:  returnSourceIndexedRead(occ.Source),
 		SourceSpan:         sourceSpanFromBody(occ.SourceSpan),
 		DeclarationSpan:    readmodelSourceSpanAt(expectedSpans, occ.Index),
 		UntrustedTopOrigin: r.ValueHasUntrustedTopOrigin(value),
@@ -339,4 +343,10 @@ func returnSourceConcreteRuntimeCast(source sourceprovenance.ASTSource) bool {
 			return false
 		}
 	}
+}
+
+func returnSourceIndexedRead(source sourceprovenance.ASTSource) bool {
+	return source.Kind == sourceprovenance.SourceExpression &&
+		source.Expr != nil &&
+		body.AssignmentSourceIndexedRead(source.Expr)
 }

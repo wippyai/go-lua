@@ -122,6 +122,48 @@ end`), "test.lua")
 	}
 }
 
+func TestReturnsCarriesMayBeNilEvidenceDetail(t *testing.T) {
+	checked := testutil.CheckFile(`local function f(value: string?): string
+	return value
+end`, "test.lua")
+
+	var got []judgment.Judgment
+	for _, result := range checked.BodyResults() {
+		got = append(got, obligationpass.New(obligationpass.Returns{}).Run(obligationpass.Context{
+			FunctionKey: "fixture:return",
+			SourceFile:  "test.lua",
+			Reader:      readmodel.New(result),
+		})...)
+	}
+	if len(got) != 1 {
+		t.Fatalf("judgments = %d, want 1: %#v", len(got), got)
+	}
+	if !hasMissingProofDetail(got[0], judgment.EvidenceDetailMayBeNil) {
+		t.Fatalf("evidence = %#v, want may-be-nil missing-proof detail", got[0].Evidence)
+	}
+}
+
+func TestReturnsCarriesIndexedReadEvidenceDetail(t *testing.T) {
+	checked := testutil.CheckFile(`local function f(values: {string}): string
+	return values[1]
+end`, "test.lua")
+
+	var got []judgment.Judgment
+	for _, result := range checked.BodyResults() {
+		got = append(got, obligationpass.New(obligationpass.Returns{}).Run(obligationpass.Context{
+			FunctionKey: "fixture:return",
+			SourceFile:  "test.lua",
+			Reader:      readmodel.New(result),
+		})...)
+	}
+	if len(got) != 1 {
+		t.Fatalf("judgments = %d, want 1: %#v", len(got), got)
+	}
+	if !hasMissingProofDetail(got[0], judgment.EvidenceDetailIndexedReadMissingProof) {
+		t.Fatalf("evidence = %#v, want indexed-read missing-proof detail", got[0].Evidence)
+	}
+}
+
 func TestReturnsSkipsPlainUnknownWithoutBoundary(t *testing.T) {
 	stmts, err := parse.ParseString(strings.TrimSpace(`local function f(x): string
     return x.id
