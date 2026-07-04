@@ -184,6 +184,50 @@ func TestAssignmentProofQueriesUseStructuredEvidence(t *testing.T) {
 	}
 }
 
+func TestCallArgumentProofSummaryUsesStructuredEvidence(t *testing.T) {
+	j := Judgment{
+		Verdict: VerdictUnknown,
+		Evidence: EvidenceChain{
+			{
+				Kind:   EvidenceMissingProof,
+				Detail: MayBeNilEvidenceDetail(),
+			},
+			{
+				Kind:   EvidenceMissingProof,
+				Detail: GenericConflictEvidenceDetail("T"),
+			},
+			{
+				Kind: EvidenceUserAssertion,
+				Detail: CallParamObligationEvidenceDetail(
+					"listen",
+					"payload",
+					"source.primary",
+					2,
+				),
+			},
+			{
+				Kind: EvidencePrecisionBoundary,
+			},
+		},
+	}
+
+	summary := j.CallArgumentProof()
+	if !summary.MayBeNil ||
+		!summary.GenericConflict ||
+		summary.GenericParam != "T" ||
+		!summary.CallParamObligation ||
+		summary.CallParamSubjectLabel != "payload" ||
+		!summary.PrecisionBoundary {
+		t.Fatalf("CallArgumentProof = %#v, want nil/generic/call-param/precision summary", summary)
+	}
+	if !summary.Renderable(VerdictUnknown) {
+		t.Fatalf("CallArgumentProof.Renderable(unknown) = false, want true for precision boundary")
+	}
+	if summary.CallParamDetail.ProviderLabel != "source.primary" || summary.CallParamDetail.MemberParam != 2 {
+		t.Fatalf("CallArgumentProof call-param detail = %#v", summary.CallParamDetail)
+	}
+}
+
 func TestDefaultRegistryValidatesCallArgumentJudgmentShape(t *testing.T) {
 	j := Judgment{
 		Code:    CodeCallArgType,
