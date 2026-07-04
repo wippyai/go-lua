@@ -17,13 +17,26 @@ import (
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
+type shadowCoverageExpectation struct {
+	covered int
+	total   int
+}
+
+var expectedShadowCoverage = map[string]shadowCoverageExpectation{
+	"assign": {covered: 2986, total: 2987},
+	"call":   {covered: 1714, total: 1714},
+	"branch": {covered: 407, total: 418},
+	"return": {covered: 186, total: 186},
+}
+
 // TestShadowCoverage is an opt-in (WIR_SHADOW=1) per-point completeness oracle.
 // Because D1a lowers onto the SAME cfgbuild graph that semantics extracts from,
 // the comparison is now a true per-point diff: for every point that carries a
 // semantics fact (assign / call / branch / return, imported read-only), the wir
 // Body must carry an instruction AT THAT POINT whose operand identity (path key)
-// matches. It reports corpus-wide coverage per category and lists the residual
-// gaps honestly rather than masking them.
+// matches. It pins corpus-wide coverage per category and lists the residual gaps
+// honestly rather than masking them. Better coverage should update the expected
+// frontier intentionally; worse coverage fails immediately.
 //
 // Known residual: a conservatively pure short-circuit `and`/`or` right operand
 // keeps the OpLogical value form on the enclosing statement point, so the guard
@@ -38,6 +51,9 @@ func TestShadowCoverage(t *testing.T) {
 	fixtures := findMainLua(t, filepath.Join(root, "testdata", "fixtures"))
 	if len(fixtures) == 0 {
 		t.Fatal("no fixtures found")
+	}
+	if len(fixtures) != 574 {
+		t.Fatalf("fixture corpus drifted: got %d main.lua files, want 574", len(fixtures))
 	}
 
 	categories := []string{"assign", "call", "branch", "return"}
@@ -110,6 +126,10 @@ func TestShadowCoverage(t *testing.T) {
 		t.Logf("  %-7s %6d/%-6d  %s", cat, cc, tc, pct(cc, tc))
 		if samples := gapSamples[cat]; len(samples) > 0 {
 			t.Logf("    uncovered sample keys: %v", samples)
+		}
+		want := expectedShadowCoverage[cat]
+		if cc != want.covered || tc != want.total {
+			t.Fatalf("%s coverage drifted: got %d/%d, want %d/%d; gaps=%v", cat, cc, tc, want.covered, want.total, gapSamples[cat])
 		}
 	}
 	t.Logf("  %-7s %6d/%-6d  %s", "TOTAL", coveredAll, totalAll, pct(coveredAll, totalAll))
