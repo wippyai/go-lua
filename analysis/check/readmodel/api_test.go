@@ -208,6 +208,29 @@ func TestPlanAssignmentCheckRejectsMissingRequiredFieldBeforeValueProof(t *testi
 	}
 }
 
+func TestPlanReturnCheckRejectsMissingRequiredFieldBeforeValueProof(t *testing.T) {
+	expected := typetable.NewRecord().Field("name", typ.String).Build()
+	check := PlanReturnCheck(ReturnCheckPlan{
+		Return: Return{
+			TypeWithPresence: typetable.NewRecord().Build(),
+			Expected:         expected,
+		},
+		ValueAdmissible:          true,
+		MissingRequiredField:     "name",
+		MissingRequiredFieldType: typ.String,
+		IsSubtype:                func(typ.Type, typ.Type) bool { return true },
+	})
+	if check.Admissible {
+		t.Fatal("missing required return field was treated as admissible")
+	}
+	if !check.ProvenMismatch {
+		t.Fatal("missing required return field was not a proven mismatch")
+	}
+	if check.Mismatch.Kind != ReturnMismatchMissingRequiredField || check.Mismatch.Field != "name" {
+		t.Fatalf("mismatch = %#v, want missing required field name", check.Mismatch)
+	}
+}
+
 func TestPlanAssignmentCheckClassifiesMayBeNilMismatch(t *testing.T) {
 	check := PlanAssignmentCheck(AssignmentCheckPlan{
 		Assignment: Assignment{

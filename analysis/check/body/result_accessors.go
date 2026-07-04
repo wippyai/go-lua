@@ -286,6 +286,13 @@ func (r *Result) ObjectLiteral(expr ast.Expr) (semantics.ObjectLiteralFact, bool
 	return r.semantics.ObjectLiteral(expr)
 }
 
+func (r *Result) ObjectLiteralViewForSource(source factflow.ValueSource) (factflow.ObjectLiteralView, bool) {
+	if r == nil || !source.HasExpr || source.ExprRef == 0 {
+		return factflow.ObjectLiteralView{}, false
+	}
+	return r.facts.ObjectLiteralView(source.ExprRef)
+}
+
 func (r *Result) OrdinaryAssignment(point cfg.Point) (semantics.OrdinaryAssignmentFact, bool) {
 	if r == nil || r.semantics == nil {
 		return semantics.OrdinaryAssignmentFact{}, false

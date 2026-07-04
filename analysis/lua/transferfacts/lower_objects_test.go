@@ -47,6 +47,46 @@ func TestLowerObjectLiteralEntryCarriesSyntaxFreeMetadata(t *testing.T) {
 	}
 }
 
+func TestLowerObjectLiteralEntryLabelsAttributeValue(t *testing.T) {
+	table := &ast.TableExpr{Fields: []*ast.Field{
+		{Key: stringLit("id"), KeySyntax: ast.AttrKeyDot, Value: objectAttrGet(ident("payload"), "id")},
+	}}
+	local := localAssign([]string{"t"}, table)
+	stmts := []ast.Stmt{local}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	point := requireStmtPoints(t, built, local, 1)[0]
+	localFact, ok := facts.LocalAssignment(point)
+	if !ok {
+		t.Fatalf("missing local assignment fact")
+	}
+	literal, ok := facts.ObjectLiteral(localFact.Source().ExprRef)
+	if !ok {
+		t.Fatalf("missing object literal sidecar")
+	}
+	entries := literal.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+	if got := entries[0].ValueLabel(); got != "payload.id" {
+		t.Fatalf("entry label = %q, want payload.id", got)
+	}
+}
+
+func objectAttrGet(object ast.Expr, field string) *ast.AttrGetExpr {
+	return &ast.AttrGetExpr{
+		Object:    object,
+		Key:       stringLit(field),
+		KeySyntax: ast.AttrKeyDot,
+	}
+}
+
 func TestLowerObjectLiteralSidecarUsesAssignmentExprRef(t *testing.T) {
 	leafValue := number("1")
 	stringValue := number("2")

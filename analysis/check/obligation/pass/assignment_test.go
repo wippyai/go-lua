@@ -91,6 +91,37 @@ end`), "test.lua")
 	}
 }
 
+func TestReturnsCarriesMissingRequiredFieldEvidenceDetail(t *testing.T) {
+	stmts, err := parse.ParseString(strings.TrimSpace(`type Holder = { required: string, optional: number? }
+local function f(): Holder
+    local self = { optional = 1 }
+    return self
+end`), "test.lua")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: standard.Registry()}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil || len(root.FunctionResults()) != 1 {
+		t.Fatalf("root/functions = %#v, want one function result", root)
+	}
+	got := obligationpass.New(obligationpass.Returns{}).Run(obligationpass.Context{
+		FunctionKey: "fixture:return",
+		SourceFile:  "test.lua",
+		Reader:      readmodel.New(root.FunctionResults()[0]),
+	})
+	if len(got) != 1 {
+		t.Fatalf("judgments = %d, want 1: %#v", len(got), got)
+	}
+	field, ok := assignmentMissingRequiredFieldDetail(got[0])
+	if !ok || field != "required" {
+		t.Fatalf("evidence = %#v, want missing required field required", got[0].Evidence)
+	}
+}
+
 func TestReturnsSkipsPlainUnknownWithoutBoundary(t *testing.T) {
 	stmts, err := parse.ParseString(strings.TrimSpace(`local function f(x): string
     return x.id

@@ -802,6 +802,47 @@ end
 	}
 }
 
+func TestForEachReturnProjectsDeclaredObjectLiteralExplicitAnyMember(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Point = { id: string }
+local function make(raw: any): Point
+	local result = { id = raw }
+	return result
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil || len(root.FunctionResults()) != 1 {
+		t.Fatalf("root/functions = %#v, want one function result", root)
+	}
+	var returns []Return
+	New(root.FunctionResults()[0]).ForEachReturn(func(ret Return) bool {
+		returns = append(returns, ret)
+		return true
+	})
+	if len(returns) != 1 {
+		t.Fatalf("returns = %d, want 1: %#v", len(returns), returns)
+	}
+	ret := returns[0]
+	if got, want := ret.ExpectedLabel, "returned value 1.id"; got != want {
+		t.Fatalf("expected label = %q, want %q", got, want)
+	}
+	if got, want := ret.SourceLabel, "raw"; got != want {
+		t.Fatalf("source label = %q, want %q", got, want)
+	}
+	assertSameType(t, ret.Expected, typ.String)
+	if !ret.UntrustedTopOrigin || !ret.ExplicitTopOrigin {
+		t.Fatalf("top origins = untrusted:%v explicit:%v, want both", ret.UntrustedTopOrigin, ret.ExplicitTopOrigin)
+	}
+	if ret.Check.Admissible {
+		t.Fatalf("check = %#v, want missing proof", ret.Check)
+	}
+}
+
 func TestForEachReturnRejectsAnyReceiverMethodReturnAsStringProof(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `

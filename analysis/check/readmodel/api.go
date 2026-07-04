@@ -372,14 +372,30 @@ type ReturnCheck struct {
 	Expected       typ.Type
 	Admissible     bool
 	ProvenMismatch bool
+	Mismatch       ReturnMismatch
 }
 
 // ReturnCheckPlan carries already-solved proof inputs for one returned value.
 type ReturnCheckPlan struct {
-	Return              Return
-	ValueAdmissible     bool
-	ValueProvenMismatch bool
-	IsSubtype           func(typ.Type, typ.Type) bool
+	Return                   Return
+	ValueAdmissible          bool
+	ValueProvenMismatch      bool
+	MissingRequiredField     string
+	MissingRequiredFieldType typ.Type
+	IsSubtype                func(typ.Type, typ.Type) bool
+}
+
+type ReturnMismatchKind uint8
+
+const (
+	ReturnMismatchNone ReturnMismatchKind = iota
+	ReturnMismatchMissingRequiredField
+)
+
+type ReturnMismatch struct {
+	Kind  ReturnMismatchKind
+	Field string
+	Type  typ.Type
 }
 
 // NonNilAssertion is the solved read model for one `expr!` runtime assertion.
@@ -698,16 +714,25 @@ type ResultShapeExhaustiveness struct {
 // PlanReturnCheck returns the complete proof result for one returned value.
 func PlanReturnCheck(plan ReturnCheckPlan) ReturnCheck {
 	ret := plan.Return
+	var mismatch ReturnMismatch
+	if plan.MissingRequiredField != "" {
+		mismatch = ReturnMismatch{
+			Kind:  ReturnMismatchMissingRequiredField,
+			Field: plan.MissingRequiredField,
+			Type:  plan.MissingRequiredFieldType,
+		}
+	}
 	return ReturnCheck{
 		Return:         &ret,
 		Expected:       ret.Expected,
 		Admissible:     plan.returnProofAdmissible(),
 		ProvenMismatch: plan.returnProvenMismatch(),
+		Mismatch:       mismatch,
 	}
 }
 
 func (plan ReturnCheckPlan) returnProvenMismatch() bool {
-	if plan.ValueProvenMismatch {
+	if plan.ValueProvenMismatch || plan.MissingRequiredField != "" {
 		return true
 	}
 	if typ.TypeEquals(plan.Return.TypeWithPresence, nil) ||
@@ -725,6 +750,9 @@ func (plan ReturnCheckPlan) returnProvenMismatch() bool {
 }
 
 func (plan ReturnCheckPlan) returnProofAdmissible() bool {
+	if plan.MissingRequiredField != "" {
+		return false
+	}
 	if plan.Return.UntrustedTopOrigin && typ.TypeEquals(plan.Return.TypeWithPresence, nil) {
 		return false
 	}

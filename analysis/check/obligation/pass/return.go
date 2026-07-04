@@ -43,6 +43,14 @@ func returnJudgment(ctx Context, functionKey string, ret readmodel.Return) judgm
 	if ret.MissingProofRefuted() {
 		missingProofTrust = judgment.EvidenceTrustRefuted
 	}
+	var missingProofDetail judgment.EvidenceDetail
+	switch ret.Check.Mismatch.Kind {
+	case readmodel.ReturnMismatchMissingRequiredField:
+		missingProofDetail = judgment.MissingRequiredFieldTypeEvidenceDetail(
+			ret.Check.Mismatch.Field,
+			ret.Check.Mismatch.Type,
+		)
+	}
 	evidence := judgment.EvidenceChain{
 		{
 			Kind:  judgment.EvidenceAbstractFact,
@@ -63,8 +71,9 @@ func returnJudgment(ctx Context, functionKey string, ret readmodel.Return) judgm
 			Span: spanFromReadModel(ctx.SourceFile, ret.DeclarationSpan),
 		},
 		{
-			Kind:  judgment.EvidenceMissingProof,
-			Trust: missingProofTrust,
+			Kind:   judgment.EvidenceMissingProof,
+			Trust:  missingProofTrust,
+			Detail: missingProofDetail,
 			Origin: judgment.OriginRef{
 				Point: ret.Point,
 				Key:   "return:proof",
