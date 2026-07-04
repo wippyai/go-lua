@@ -103,6 +103,27 @@ func TestCallSignatureTypeUsesImplicitStdlibGlobalIdentity(t *testing.T) {
 	}
 }
 
+func TestCallSignatureDoesNotUseManifestForUnresolvedImplicitGlobal(t *testing.T) {
+	m := manifest.New("ambient")
+	m.DefineFunctionSignature("imported", signature.Function{
+		Type: typ.Func().Param("src", typ.String).Returns(typ.Number).Build(),
+	})
+
+	result, err := CheckChunk(parseChunk(t, `local value = imported(42)`), Config{
+		Registry: standard.Registry(),
+		Signatures: signaturelookup.Source{
+			Manifests: []*manifest.Manifest{m},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	if sig, ok := onlyCallSignature(t, result); ok {
+		t.Fatalf("signature = %v, want none for unresolved implicit global", sig)
+	}
+}
+
 func TestCallSignatureUsesImportedStaticIntMemberIdentity(t *testing.T) {
 	wantType := typ.Func().Param("src", typ.String).Returns(typ.Number).Build()
 	m := manifest.New("pkg")

@@ -10,22 +10,37 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
+	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
 type signatureIdentityResolver struct {
-	bindings   *bind.Result
-	graph      cfg.Graph
-	imports    moduleidentity.Projection
-	callPoints map[factflow.ExprRef]cfg.Point
+	bindings            *bind.Result
+	graph               cfg.Graph
+	imports             moduleidentity.Projection
+	implicitStdlibNames map[string]struct{}
+	callPoints          map[factflow.ExprRef]cfg.Point
 }
 
-func newSignatureIdentityResolver(bindings *bind.Result, graph cfg.Graph, modules moduleidentity.Projection) *signatureIdentityResolver {
+func newSignatureIdentityResolver(bindings *bind.Result, graph cfg.Graph, modules moduleidentity.Projection, signatures signaturelookup.Source) *signatureIdentityResolver {
 	return &signatureIdentityResolver{
-		bindings: bindings,
-		graph:    graph,
-		imports:  modules,
+		bindings:            bindings,
+		graph:               graph,
+		imports:             modules,
+		implicitStdlibNames: implicitStdlibSignatureNames(signatures),
 	}
+}
+
+func implicitStdlibSignatureNames(signatures signaturelookup.Source) map[string]struct{} {
+	if !signatures.IncludeStdlib {
+		return nil
+	}
+	names := signaturelookup.StdlibSignatureNames()
+	out := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		out[name] = struct{}{}
+	}
+	return out
 }
 
 func (r *signatureIdentityResolver) indexCallSites(facts factflow.Facts) {
@@ -201,6 +216,9 @@ func (r *signatureIdentityResolver) implicitGlobalCalleeName(callee symbol.ID, c
 	}
 	name := r.bindings.Name(root)
 	if name == "" {
+		return "", false
+	}
+	if _, ok := r.implicitStdlibNames[name]; !ok {
 		return "", false
 	}
 	if len(calleePath.Segments) == 0 {

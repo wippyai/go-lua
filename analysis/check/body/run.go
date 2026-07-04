@@ -98,7 +98,7 @@ func (c *checker) prepare(bindings *bind.Result, built *cfgbuild.Result, sem *se
 		TypeValues:   config.TypeValues,
 	})
 	facts := lowered.Facts
-	signatureID := newSignatureIdentityResolver(bindings, built.Graph, modules)
+	signatureID := newSignatureIdentityResolver(bindings, built.Graph, modules, config.Signatures)
 	signatureNameForCall := signatureID.nameForCall
 	if hasSignatures(config.Signatures) {
 		facts = effectlowering.WithSignatureNoNormalReturns(effectlowering.SignatureNoNormalReturnConfig{
