@@ -3,6 +3,7 @@ package body
 import (
 	"strconv"
 
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -16,6 +17,8 @@ type ReturnValueOccurrence struct {
 	Source      sourceprovenance.ASTSource
 	SourceLabel string
 	SourceSpan  SourceSpan
+	SourcePath  pathdom.Path
+	HasPath     bool
 }
 
 // ForEachReturnValueOccurrence visits returned expressions from reachable
@@ -41,6 +44,7 @@ func (r *Result) ForEachReturnValueOccurrence(visit func(ReturnValueOccurrence) 
 				SourceLabel: returnSourceExprLabel(expr),
 				SourceSpan:  sourceSpanFromAST(ast.SpanOf(expr)),
 			}
+			occ.SourcePath, occ.HasPath = r.returnSourceExprPath(expr)
 			visited = true
 			if !visit(occ) {
 				return true
@@ -48,6 +52,17 @@ func (r *Result) ForEachReturnValueOccurrence(visit func(ReturnValueOccurrence) 
 		}
 	}
 	return visited
+}
+
+func (r *Result) returnSourceExprPath(expr ast.Expr) (pathdom.Path, bool) {
+	if p, ok := r.ExpressionPath(expr); ok {
+		return p, true
+	}
+	inner, ok := sourceprovenance.ProofInner(expr)
+	if !ok || inner == nil || inner == expr {
+		return pathdom.Path{}, false
+	}
+	return r.ExpressionPath(inner)
 }
 
 func returnSourceAt(fact ReturnFact, index int) sourceprovenance.ASTSource {

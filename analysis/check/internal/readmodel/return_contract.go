@@ -5,7 +5,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -13,7 +12,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 // ForEachReturn visits returned expressions with explicit declared return
@@ -32,9 +30,9 @@ func (r Reader) ForEachReturn(visit func(Return) bool) bool {
 		if occ.Index >= len(expectedValues) {
 			return true
 		}
-		ret, ok := r.returnObjectLiteralEntry(occ.Point, occ.Index, occ.Source, expectedValues[occ.Index], expectedSpans)
+		ret, ok := r.returnObjectLiteralEntry(occ, expectedValues[occ.Index], expectedSpans)
 		if !ok {
-			ret, ok = r.returnDeclaredObjectLiteralEntry(occ.Point, occ.Index, occ.Source, expectedValues[occ.Index], expectedSpans)
+			ret, ok = r.returnDeclaredObjectLiteralEntry(occ, expectedValues[occ.Index], expectedSpans)
 		}
 		if !ok {
 			ret, ok = r.returnValue(occ, expectedValues[occ.Index], expectedSpans)
@@ -50,7 +48,8 @@ func (r Reader) ForEachReturn(visit func(Return) bool) bool {
 	}) || visited
 }
 
-func (r Reader) returnObjectLiteralEntry(point cfg.Point, index int, source sourceprovenance.ASTSource, expectedValue product.Value, expectedSpans []SourceSpan) (Return, bool) {
+func (r Reader) returnObjectLiteralEntry(occ body.ReturnValueOccurrence, expectedValue product.Value, expectedSpans []SourceSpan) (Return, bool) {
+	source := occ.Source
 	if source.Kind != sourceprovenance.SourceExpression || source.Expr == nil {
 		return Return{}, false
 	}
@@ -62,13 +61,13 @@ func (r Reader) returnObjectLiteralEntry(point cfg.Point, index int, source sour
 	if !ok {
 		return Return{}, false
 	}
-	rootValue, rootValueOK := r.SourceValue(point, source)
+	rootValue, rootValueOK := r.SourceValue(occ.Point, source)
 	for _, entry := range literal.Entries {
 		entryExpected, ok := body.ExpectedTypeAtSegments(expected, entry.Suffix.Segments)
 		if !ok || !readapi.ObligationTypeReportable(entryExpected) {
 			continue
 		}
-		value, ok := r.SourceValue(point, entry.Source)
+		value, ok := r.SourceValue(occ.Point, entry.Source)
 		if !ok {
 			continue
 		}
@@ -77,14 +76,14 @@ func (r Reader) returnObjectLiteralEntry(point cfg.Point, index int, source sour
 		if actual == nil || (r.IsSubtype(actual, entryExpected) && !untrustedTopOrigin) {
 			continue
 		}
-		label := returnExpectedLabel(index) + segment.FormatSegments(entry.Suffix.Segments)
+		label := returnExpectedLabel(occ.Index) + segment.FormatSegments(entry.Suffix.Segments)
 		sourceLabel := entry.ValueLabel
 		if sourceLabel == "" {
 			sourceLabel = label
 		}
 		ret := Return{
-			Point:              point,
-			Index:              index,
+			Point:              occ.Point,
+			Index:              occ.Index,
 			Value:              value,
 			ValueHash:          r.ValueHash(value),
 			TypeWithPresence:   actual,
@@ -92,7 +91,7 @@ func (r Reader) returnObjectLiteralEntry(point cfg.Point, index int, source sour
 			ExpectedLabel:      label,
 			SourceLabel:        sourceLabel,
 			SourceSpan:         sourceSpanFromBody(entry.ValueSpan),
-			DeclarationSpan:    readmodelSourceSpanAt(expectedSpans, index),
+			DeclarationSpan:    readmodelSourceSpanAt(expectedSpans, occ.Index),
 			UntrustedTopOrigin: untrustedTopOrigin,
 			ExplicitTopOrigin:  r.ValueHasExplicitTopOrigin(value),
 		}
@@ -105,20 +104,20 @@ func (r Reader) returnObjectLiteralEntry(point cfg.Point, index int, source sour
 		return ret, true
 	}
 	if rootValueOK {
-		return r.returnSemanticObjectLiteralMissingRequired(point, index, literal, rootValue, expected, sourceSpanFromAST(ast.SpanOf(source.Expr)), expectedSpans)
+		return r.returnSemanticObjectLiteralMissingRequired(occ.Point, occ.Index, literal, rootValue, expected, sourceSpanFromBody(occ.SourceSpan), expectedSpans)
 	}
 	return Return{}, false
 }
 
-func (r Reader) returnDeclaredObjectLiteralEntry(point cfg.Point, index int, source sourceprovenance.ASTSource, expectedValue product.Value, expectedSpans []SourceSpan) (Return, bool) {
+func (r Reader) returnDeclaredObjectLiteralEntry(occ body.ReturnValueOccurrence, expectedValue product.Value, expectedSpans []SourceSpan) (Return, bool) {
+	source := occ.Source
 	if r.result == nil || source.Kind != sourceprovenance.SourceExpression || source.Expr == nil {
 		return Return{}, false
 	}
-	p, ok := r.returnDeclarationPath(source.Expr)
-	if !ok || p.IsEmpty() || p.Symbol == 0 {
+	if !occ.HasPath || occ.SourcePath.IsEmpty() || occ.SourcePath.Symbol == 0 {
 		return Return{}, false
 	}
-	declaration, ok := r.result.DominatingPathRootDeclarationSource(point, p)
+	declaration, ok := r.result.DominatingPathRootDeclarationSource(occ.Point, occ.SourcePath)
 	if !ok {
 		return Return{}, false
 	}
@@ -126,19 +125,8 @@ func (r Reader) returnDeclaredObjectLiteralEntry(point cfg.Point, index int, sou
 	if !ok {
 		return Return{}, false
 	}
-	rootValue, rootValueOK := r.SourceValue(point, source)
-	return r.returnLoweredObjectLiteralEntry(point, index, literal, rootValue, rootValueOK, sourceSpanFromAST(ast.SpanOf(source.Expr)), expectedValue, expectedSpans)
-}
-
-func (r Reader) returnDeclarationPath(expr ast.Expr) (pathdom.Path, bool) {
-	if p, ok := r.result.ExpressionPath(expr); ok {
-		return p, true
-	}
-	inner, ok := sourceprovenance.ProofInner(expr)
-	if !ok || inner == nil || inner == expr {
-		return pathdom.Path{}, false
-	}
-	return r.result.ExpressionPath(inner)
+	rootValue, rootValueOK := r.SourceValue(occ.Point, source)
+	return r.returnLoweredObjectLiteralEntry(occ.Point, occ.Index, literal, rootValue, rootValueOK, sourceSpanFromBody(occ.SourceSpan), expectedValue, expectedSpans)
 }
 
 func (r Reader) returnLoweredObjectLiteralEntry(point cfg.Point, index int, literal factflow.ObjectLiteralView, rootValue product.Value, rootValueOK bool, sourceSpan SourceSpan, expectedValue product.Value, expectedSpans []SourceSpan) (Return, bool) {
