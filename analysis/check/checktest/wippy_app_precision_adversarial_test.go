@@ -6845,9 +6845,9 @@ end
 
 return dispatch
 `, WithStdlib())
-	if !hasDiagnosticCode(result.Diagnostics, diagnostics.CodeMissingMember) {
-		t.Fatalf("diagnostics = %#v, want stale reverse-map read after primary delete to stay unsafe", result.Diagnostics)
-	}
+	diag := requireDiagnosticCode(t, result, diagnostics.CodeOptionalMethodCall)
+	requireEvidenceMessage(t, diag, "receiver channel_info is optional at call to channel_info.handler")
+	requireEvidenceMessage(t, diag, "no nil check proves receiver channel_info is present")
 }
 
 func TestCheckGlobalTableOverrideFeedsGlobalFunctionCall(t *testing.T) {
@@ -7047,9 +7047,9 @@ end
 
 return dispatch
 `, WithStdlib())
-	if !hasDiagnosticCode(result.Diagnostics, diagnostics.CodeMissingMember) {
-		t.Fatalf("diagnostics = %#v, want conservative diagnostic when reverse map can contain unpaired ids", result.Diagnostics)
-	}
+	diag := requireDiagnosticCode(t, result, diagnostics.CodeOptionalMethodCall)
+	requireEvidenceMessage(t, diag, "receiver channel_info is optional at call to channel_info.handler")
+	requireEvidenceMessage(t, diag, "no nil check proves receiver channel_info is present")
 }
 
 func TestCheckDynamicReverseMapReadInvalidatesProofAfterDirectOverwrite(t *testing.T) {
@@ -7078,9 +7078,9 @@ end
 
 	return dispatch
 `, WithStdlib())
-	if !hasDiagnosticCode(result.Diagnostics, diagnostics.CodeMissingMember) {
-		t.Fatalf("diagnostics = %#v, want overwrite to drop reverse-map proof", result.Diagnostics)
-	}
+	diag := requireDiagnosticCode(t, result, diagnostics.CodeOptionalMethodCall)
+	requireEvidenceMessage(t, diag, "receiver channel_info is optional at call to channel_info.handler")
+	requireEvidenceMessage(t, diag, "no nil check proves receiver channel_info is present")
 }
 
 func TestCheckDynamicMapReadWithoutMembershipProofIsOptional(t *testing.T) {
@@ -7097,9 +7097,9 @@ end
 
 return dispatch
 `, WithStdlib())
-	if !hasDiagnosticCode(result.Diagnostics, diagnostics.CodeMissingMember) {
-		t.Fatalf("diagnostics = %#v, want map read without key-membership proof to be optional", result.Diagnostics)
-	}
+	diag := requireDiagnosticCode(t, result, diagnostics.CodeOptionalMethodCall)
+	requireEvidenceMessage(t, diag, "receiver channel_info is optional at call to channel_info.handler")
+	requireEvidenceMessage(t, diag, "no nil check proves receiver channel_info is present")
 }
 
 func TestCheckColonMethodOptionalMapReturnContractAcceptsNilableRead(t *testing.T) {
