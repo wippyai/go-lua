@@ -569,6 +569,12 @@ func (p paramObligationProjector) addTypedExpressionObligation(out []product.Val
 			p.add(out, param, value)
 			return
 		}
+		if param, suffix, ok := p.expressionParamSuffix(expr); ok {
+			if suffixedValue, valueOK := obligationValueFromType(p.reg, obligationTypeAtSuffix(want, suffix)); valueOK {
+				p.add(out, param, suffixedValue)
+				return
+			}
+		}
 	}
 	if source, ok := p.stableLocalSourceExpr(expr); ok {
 		if p.expressionValueSatisfiesType(expr, want) && p.expressionHasPath(source) {
@@ -1238,15 +1244,7 @@ func (p paramObligationProjector) addArithmeticObligations(out []product.Value, 
 }
 
 func (p paramObligationProjector) addArithmeticOperand(out []product.Value, expr ast.Expr) {
-	param, ok := p.unconditionalParamIndex(expr)
-	if !ok {
-		return
-	}
-	value, ok := obligationValueFromType(p.reg, typ.Number)
-	if !ok {
-		return
-	}
-	p.add(out, param, value)
+	p.addTypedExpressionObligation(out, expr, typ.Number, 0)
 }
 
 func (p paramObligationProjector) addLengthOperandObligation(out []product.Value, expr ast.Expr) {
@@ -1318,6 +1316,18 @@ func (p paramObligationProjector) unconditionalParamIndex(expr ast.Expr) (int, b
 		return 0, false
 	}
 	return p.unconditionalPathParamIndex(exprPath)
+}
+
+func (p paramObligationProjector) expressionParamSuffix(expr ast.Expr) (int, []segment.Segment, bool) {
+	pathReader, ok := p.result.(expressionPathReader)
+	if !ok || expr == nil {
+		return 0, nil, false
+	}
+	exprPath, ok := pathReader.ExpressionPath(expr)
+	if !ok {
+		return 0, nil, false
+	}
+	return p.unconditionalReceiverParamPath(exprPath)
 }
 
 func (p paramObligationProjector) unconditionalPathParamIndex(exprPath pathdom.Path) (int, bool) {

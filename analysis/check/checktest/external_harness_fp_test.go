@@ -2397,6 +2397,48 @@ end
 	}
 }
 
+func TestCheckTableFieldHelperInfersNumericParamFromBodyUse(t *testing.T) {
+	result := Check(`
+local helpers = {}
+
+function helpers.assert_result(result, expected_delay)
+    if expected_delay then
+        local ok: boolean = math.abs(result.delay_applied - expected_delay) < 50
+    end
+end
+
+helpers.assert_result({ delay_applied = 25 }, 25)
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want table-field helper body-use to infer numeric parameter", result.Diagnostics)
+	}
+}
+
+func TestCheckTableFieldHelperReportsAnyCallerForBodyMemberObligation(t *testing.T) {
+	result := Check(`
+local helpers = {}
+
+function helpers.assert_result(result, expected_delay)
+    if expected_delay then
+        local ok: boolean = math.abs(result.delay_applied - expected_delay) < 50
+    end
+end
+
+local function run(raw: any): ()
+    helpers.assert_result(raw, 25)
+end
+`, WithStdlib())
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDirectCallArgType,
+		DiagnosticCount: 1,
+		MessageContains: []string{
+			"raw",
+			"delay_applied",
+			"number",
+		},
+	})
+}
+
 func TestCheckUntypedMessageMetadataDefaultDoesNotValidateTable(t *testing.T) {
 	result := Check(`
 local function build(messages: any): ()

@@ -584,6 +584,28 @@ end`), body.Config{Registry: reg})
 	projectAssertParamObligationKind(t, reg, got, 0, runtimekind.Singleton(runtimekind.Number))
 }
 
+func TestFromResultProjectsParamObligationFromArithmeticMemberOperand(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function f(result)
+	return result.delay_applied * 2
+end`), body.Config{Registry: reg})
+
+	got := summaryprojection.FromResult(result)
+
+	if len(got.ParamObligations) == 0 {
+		t.Fatalf("param obligations = %#v, want obligation for result.delay_applied", got.ParamObligations)
+	}
+	gotType, ok := typevalue.TypeOf(reg, got.ParamObligations[0])
+	if !ok {
+		t.Fatalf("param obligation type missing: %#v", got.ParamObligations[0])
+	}
+	want := typetable.NewRecord().Field("delay_applied", typ.Number).Build()
+	if !typ.TypeEquals(gotType, want) {
+		t.Fatalf("param obligation type = %v, want %v", gotType, want)
+	}
+}
+
 func TestFromResultProjectsParamMemberObligationFromLengthOperand(t *testing.T) {
 	reg := standard.Registry()
 	result := projectCheckFunction(t, projectParseFunction(t, `
