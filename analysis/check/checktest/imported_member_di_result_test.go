@@ -47,9 +47,9 @@ func TestRequireCheckAndExportedReturnedTableDottedMemberNamesResultEvidence(t *
 		local provider = require("provider")
 		local n: number = provider.meta()
 	`, WithStdlib(), WithModule("provider", mod))
-	requireDirectCallResultDiagnosticWithEvidence(t, result, "direct imported member result")
-	requireEvidenceMessage(t, result.Diagnostics[0], "provider.meta returns")
-	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target n requires number")
+	requireAssignmentDiagnosticWithEvidence(t, result, "direct imported member result")
+	requireEvidenceMessage(t, result.Diagnostics[0], "provider.meta(...) has type {name: string}")
+	requireEvidenceMessage(t, result.Diagnostics[0], "n is declared as number")
 }
 
 func TestRequireCheckInjectedContainerMemberKeepsImportedResultEvidence(t *testing.T) {
@@ -69,9 +69,9 @@ func TestRequireCheckInjectedContainerMemberKeepsImportedResultEvidence(t *testi
 		local container = { client = provider }
 		local n: number = container.client.meta()
 	`, WithStdlib(), WithModule("provider", mod))
-	requireDirectCallResultDiagnosticWithEvidence(t, result, "container-injected imported member result")
-	requireEvidenceMessage(t, result.Diagnostics[0], "provider.meta returns")
-	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target n requires number")
+	requireAssignmentDiagnosticWithEvidence(t, result, "container-injected imported member result")
+	requireEvidenceMessage(t, result.Diagnostics[0], "container.client.meta(...) has type {name: string}")
+	requireEvidenceMessage(t, result.Diagnostics[0], "n is declared as number")
 }
 
 func TestRequireCheckInjectedConstructorReturnNamesMemberResultEvidence(t *testing.T) {
@@ -94,9 +94,9 @@ func TestRequireCheckInjectedConstructorReturnNamesMemberResultEvidence(t *testi
 		local container = new_container(provider)
 		local n: number = container.client.meta()
 	`, WithStdlib(), WithModule("provider", mod))
-	requireDirectCallResultDiagnosticWithEvidence(t, result, "constructor-returned injected imported member result")
-	requireEvidenceMessage(t, result.Diagnostics[0], "container.client.meta returns")
-	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target n requires number")
+	requireAssignmentDiagnosticWithEvidence(t, result, "constructor-returned injected imported member result")
+	requireEvidenceMessage(t, result.Diagnostics[0], "container.client.meta(...) has type {name: string}")
+	requireEvidenceMessage(t, result.Diagnostics[0], "n is declared as number")
 }
 
 func TestRequireCheckImportedBuilderFactoryReturnKeepsReceiverMethods(t *testing.T) {
@@ -347,13 +347,16 @@ func TestRequireCheckInjectedContainerMemberReassignmentDropsStaleImportedResult
 		container.client = replacement
 		local n: number = container.client.meta()
 	`, WithStdlib(), WithModule("provider", mod))
-	if len(result.Diagnostics) != 0 {
+	if len(result.Diagnostics) != 1 {
 		debug := "<no checked result>"
 		if result.checked != nil && result.checked.RootResult() != nil {
 			debug = callOutcomeDebug(result.checked.RootResult())
 		}
-		t.Fatalf("diagnostics = %d, want no stale provider.meta evidence after member reassignment: %#v\ncalls: %s", len(result.Diagnostics), result.Diagnostics, debug)
+		t.Fatalf("diagnostics = %d, want one incompatible replacement assignment diagnostic: %#v\ncalls: %s", len(result.Diagnostics), result.Diagnostics, debug)
 	}
+	requireAssignmentDiagnosticWithEvidence(t, result, "incompatible replacement should be rejected at assignment")
+	requireEvidenceMessage(t, result.Diagnostics[0], "replacement has type {meta: fun() -> number}")
+	requireEvidenceMessage(t, result.Diagnostics[0], "container.client is declared as {meta: fun() -> {name: string}}")
 }
 
 func TestRequireCheckLocalDottedMethodDeclarationKeepsResultEvidence(t *testing.T) {
@@ -392,9 +395,13 @@ func TestRequireCheckInjectedContainerMemberReassignmentUsesReplacementResultEvi
 		container.client = replacement
 		local n: number = container.client.meta()
 	`, WithStdlib(), WithModule("provider", mod))
-	requireDirectCallResultDiagnosticWithEvidence(t, result, "reassigned injected member replacement result")
-	requireEvidenceMessage(t, result.Diagnostics[0], "container.client.meta returns string")
-	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target n requires number")
+	if len(result.Diagnostics) != 2 {
+		t.Fatalf("diagnostics = %d, want replacement assignment plus call assignment diagnostics: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	requireEvidenceMessage(t, result.Diagnostics[0], "replacement has type {meta: fun() -> string}")
+	requireEvidenceMessage(t, result.Diagnostics[0], "container.client is declared as {meta: fun() -> {name: string}}")
+	requireEvidenceMessage(t, result.Diagnostics[1], "container.client.meta(...) has type string")
+	requireEvidenceMessage(t, result.Diagnostics[1], "n is declared as number")
 }
 
 func TestRequireCheckNestedFactoryDIDropsStaleBranchButKeepsSiblingEvidence(t *testing.T) {
@@ -434,44 +441,45 @@ func TestRequireCheckNestedFactoryDIDropsStaleBranchButKeepsSiblingEvidence(t *t
 		local bad: number = root.api.backup.meta()
 	`
 	result := Check(src, WithStdlib(), WithModule("provider", mod))
-	if len(result.Diagnostics) != 1 {
+	if len(result.Diagnostics) != 2 {
 		debug := "<no checked result>"
 		if result.checked != nil && result.checked.RootResult() != nil {
 			debug = callOutcomeDebug(result.checked.RootResult())
 		}
-		t.Fatalf("diagnostics = %d, want one nested factory DI diagnostic: %#v\ncalls: %s", len(result.Diagnostics), result.Diagnostics, debug)
+		t.Fatalf("diagnostics = %d, want replacement assignment plus nested factory DI diagnostic: %#v\ncalls: %s", len(result.Diagnostics), result.Diagnostics, debug)
 	}
+	requireEvidenceMessage(t, result.Diagnostics[0], "replacement has type {meta: fun() -> number}")
+	requireEvidenceMessage(t, result.Diagnostics[0], "root.api.primary is declared as {meta: fun() -> {name: string}}")
 	requireDiagnostic(t, result, diagnosticExpectation{
-		Code:            diagnostics.CodeDirectCallResultAssignment,
+		Code:            diagnostics.CodeAssignmentType,
 		Severity:        diagnostic.SeverityError,
-		DiagnosticCount: 1,
+		DiagnosticCount: 2,
 		Line:            23,
 		Column:          23,
 		Span:            diagnostic.Span{StartLine: 23, StartCol: 23, EndLine: 23, EndCol: 42},
-		MessageContains: []string{"call result", "not number"},
+		MessageContains: []string{"root.api.backup.meta(...)", "not number"},
 		EvidenceChain: []diagnosticEvidenceExpectation{
 			{
 				Kind:            diagnostic.EvidenceAbstractFact,
 				Trust:           diagnostic.TrustProven,
-				MessageContains: []string{"root.api.backup.meta returns"},
+				MessageContains: []string{"root.api.backup.meta(...) has type {name: string}"},
 			},
 			{
 				Kind:            diagnostic.EvidenceUserAssertion,
 				Trust:           diagnostic.TrustClaimed,
-				MessageContains: []string{"assignment target bad requires number"},
+				MessageContains: []string{"bad is declared as number"},
 			},
 		},
-		LabelMin:      2,
-		LabelContains: []string{"call result", "declared type"},
-		HelpContains:  []string{"Assign the call result", "compatible target type", "callee return type"},
-		Sources:       diagnostic.SourceMap{"test.lua": src},
+		LabelMin:     2,
+		HelpContains: []string{"Use a value compatible with the expected type"},
+		Sources:      diagnostic.SourceMap{"test.lua": src},
 		RenderOrderedContains: []string{
-			"error[type.call.direct.result_assignment]",
+			"error[type.assignment]",
 			"↓ declared type",
 			"local bad: number = root.api.backup.meta()",
-			"↑ call result",
-			"1. proven: root.api.backup.meta returns",
-			"2. claimed: assignment target bad requires number",
+			"↑ assigned value",
+			"1. proven: root.api.backup.meta(...) has type {name: string}",
+			"2. claimed: bad is declared as number",
 		},
 		RenderNotContains: []string{
 			"provider.meta returns",
@@ -479,9 +487,9 @@ func TestRequireCheckNestedFactoryDIDropsStaleBranchButKeepsSiblingEvidence(t *t
 			"^~",
 		},
 	})
-	requireDirectCallResultDiagnosticWithEvidence(t, result, "nested factory DI keeps sibling imported member evidence")
-	requireEvidenceMessage(t, result.Diagnostics[0], "root.api.backup.meta returns")
-	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target bad requires number")
+	requireAssignmentDiagnosticWithEvidence(t, Result{Diagnostics: []diagnostic.Diagnostic{result.Diagnostics[1]}}, "nested factory DI keeps sibling imported member evidence")
+	requireEvidenceMessage(t, result.Diagnostics[1], "root.api.backup.meta(...) has type {name: string}")
+	requireEvidenceMessage(t, result.Diagnostics[1], "bad is declared as number")
 }
 
 func TestRequireCheckInjectedHelperReturnKeepsImportedMemberResultType(t *testing.T) {

@@ -19,31 +19,27 @@ func TestClosureCaptureSeesReassignmentAfterCapture(t *testing.T) {
 end
 `
 	result := Check(src)
-	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallResultAssignment)
-	requireEvidenceMessage(t, diag, "get declares call result 1 as string?")
-	requireEvidenceMessage(t, diag, "assignment target out requires string")
-	requireEvidenceMessage(t, diag, "no guard on this path proves call result 1 is non-nil before assignment")
+	diag := requireDiagnosticCode(t, result, diagnostics.CodeAssignmentType)
+	requireEvidenceMessage(t, diag, "get(...) has type nil")
+	requireEvidenceMessage(t, diag, "out is declared as string")
+	requireEvidenceMessage(t, diag, "no proof on this path shows get(...) is string")
 	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
 		Sources:             diagnostic.SourceMap{"test.lua": src},
 		ShowSourceLabelRows: true,
 	})
-	want := `error[type.call.direct.result_assignment]: call result 1 is string?, not string
+	want := `error[type.assignment]: cannot assign get(...) because it is nil, not string
  --> test.lua:7:25
   |
   |                ↓ declared type
 7 |     local out: string = get()
-  |                         ↑ call result
+  |                         ↑ assigned value
 
 because:
-  1. claimed: get declares call result 1 as string?
- --> test.lua:3:17
-  |
-  |                 ↓ callee declaration
-3 |     local get = function(): string?
-  2. claimed: assignment target out requires string
-  3. missing proof: no guard on this path proves call result 1 is non-nil before assignment
+  1. proven: get(...) has type nil
+  2. claimed: out is declared as string
+  3. missing proof: no proof on this path shows get(...) is string
 
-help: Guard the call result before assigning it, provide a default value, or change the target type to accept nil.`
+help: Use a value compatible with the expected type, or change the target type if ` + "`get(...)`" + ` is valid.`
 	assertRenderedEqual(t, rendered, want)
 }
 
@@ -62,33 +58,31 @@ end
 `
 	result := Check(src)
 	requireDiagnostic(t, result, diagnosticExpectation{
-		Code:            diagnostics.CodeDirectCallResultAssignment,
+		Code:            diagnostics.CodeAssignmentType,
 		Severity:        diagnostic.SeverityError,
 		DiagnosticCount: 1,
 		Line:            9,
 		Column:          25,
 		Span:            diagnostic.Span{StartLine: 9, StartCol: 25, EndLine: 9, EndCol: 27},
-		MessageContains: []string{"call result 1", "string?", "not string"},
+		MessageContains: []string{"get(...)", "may be nil"},
 		EvidenceMin:     3,
 		EvidenceOrdered: []string{
-			"get declares call result 1 as string?",
-			"assignment target out requires string",
-			"no guard on this path proves call result 1 is non-nil before assignment",
+			"get(...) can be string or nil here",
+			"out is declared as string",
+			"no guard on this path proves get(...) is non-nil",
 		},
-		LabelMin: 3,
+		LabelMin: 2,
 		LabelContains: []string{
-			"call result",
 			"declared type",
-			"callee declaration",
+			"assigned value",
 		},
-		HelpContains: []string{"Guard the call result"},
+		HelpContains: []string{"Guard `get(...)`"},
 		Sources:      diagnostic.SourceMap{"test.lua": src},
 		RenderOrderedContains: []string{
 			"9 |     local out: string = get()",
-			"1. claimed: get declares call result 1 as string?",
-			"3 |     local get = function(): string?",
-			"2. claimed: assignment target out requires string",
-			"3. missing proof: no guard on this path proves call result 1 is non-nil before assignment",
+			"1. proven: get(...) can be string or nil here",
+			"2. claimed: out is declared as string",
+			"3. missing proof: no guard on this path proves get(...) is non-nil",
 		},
 		RenderNotContains: []string{
 			"^",

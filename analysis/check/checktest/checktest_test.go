@@ -658,9 +658,9 @@ func TestRequireCheckAndExportedStaticStringFunctionMemberNamesResultEvidence(t 
 		local client = require("client")
 		local n: number = client["fetch"]()
 	`, WithStdlib(), WithModule("client", mod))
-	requireDirectCallResultDiagnosticWithEvidence(t, result, "static string imported member result")
-	requireEvidenceMessage(t, result.Diagnostics[0], "client.fetch returns")
-	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target n requires number")
+	requireAssignmentDiagnosticWithEvidence(t, result, "static string imported member result")
+	requireEvidenceMessage(t, result.Diagnostics[0], `client["fetch"](...) has type string`)
+	requireEvidenceMessage(t, result.Diagnostics[0], "n is declared as number")
 }
 
 func TestRequireCheckAndExportedStaticIntFunctionMemberNamesResultEvidence(t *testing.T) {
@@ -679,9 +679,9 @@ func TestRequireCheckAndExportedStaticIntFunctionMemberNamesResultEvidence(t *te
 		local runtime = require("runtime")
 		local n: number = runtime[1]()
 	`, WithStdlib(), WithModule("runtime", mod))
-	requireDirectCallResultDiagnosticWithEvidence(t, result, "static int imported member result")
-	requireEvidenceMessage(t, result.Diagnostics[0], "runtime[1] returns")
-	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target n requires number")
+	requireAssignmentDiagnosticWithEvidence(t, result, "static int imported member result")
+	requireEvidenceMessage(t, result.Diagnostics[0], "runtime[1](...) has type string")
+	requireEvidenceMessage(t, result.Diagnostics[0], "n is declared as number")
 }
 
 func TestRequireCheckAndExportedMultiReturnMemberNamesResultEvidence(t *testing.T) {
@@ -700,12 +700,10 @@ func TestRequireCheckAndExportedMultiReturnMemberNamesResultEvidence(t *testing.
 		local client = require("client")
 		local value: number?, err: number = client.fetch("id")
 	`, WithStdlib(), WithModule("client", mod))
-	requireDirectCallResultDiagnosticWithEvidence(t, result, "imported member multi-return result")
-	if !strings.Contains(result.Diagnostics[0].Message, "call result 2") {
-		t.Fatalf("diagnostic message = %q, want call result 2", result.Diagnostics[0].Message)
-	}
-	requireEvidenceMessage(t, result.Diagnostics[0], "client.fetch returns")
-	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target err requires number")
+	requireAssignmentDiagnosticWithEvidence(t, result, "imported member multi-return result")
+	requireEvidenceMessage(t, result.Diagnostics[0], "client.fetch(...) can be string or nil here")
+	requireEvidenceMessage(t, result.Diagnostics[0], "err is declared as number")
+	requireEvidenceMessage(t, result.Diagnostics[0], "no guard on this path proves client.fetch(...) is non-nil")
 }
 
 func TestRequireCheckAndExportedReturnedTableDottedMemberKeepsMultiReturns(t *testing.T) {

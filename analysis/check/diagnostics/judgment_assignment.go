@@ -29,7 +29,7 @@ func renderAssignmentJudgmentWithPolicy(item judgment.Judgment, policy judgment.
 		target = "value"
 	}
 	sourceName := item.Actual.Label
-	if detail, ok := assignmentJudgmentCallResultDetail(item); ok && !detail.UnderSupplied && !assignmentJudgmentMissingProofMayBeNil(item) {
+	if detail, ok := assignmentJudgmentCallResultDetail(item); ok && !detail.UnderSupplied && assignmentJudgmentHasCallResultReturnSpan(item) {
 		return renderCallResultAssignmentJudgment(item, detail, got, want, severity, span, declSpan)
 	}
 	underSuppliedDetail, underSupplied := assignmentJudgmentUnderSuppliedCallResultDetail(item)
@@ -220,6 +220,11 @@ func assignmentJudgmentCallResultReturnSpan(item judgment.Judgment) (diagnostic.
 		}
 	}
 	return diagnostic.Span{}, false
+}
+
+func assignmentJudgmentHasCallResultReturnSpan(item judgment.Judgment) bool {
+	_, ok := assignmentJudgmentCallResultReturnSpan(item)
+	return ok
 }
 
 func diagnosticSpanEqual(a, b diagnostic.Span) bool {

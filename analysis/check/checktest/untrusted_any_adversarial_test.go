@@ -20,26 +20,25 @@ local req: { id: string } = id(raw)
 `, "\n")
 	result := Check(src)
 	diag := requireDiagnostic(t, result, diagnosticExpectation{
-		Code:            diagnostics.CodeDirectCallResultAssignment,
+		Code:            diagnostics.CodeAssignmentType,
 		Severity:        diagnostic.SeverityError,
 		DiagnosticCount: 1,
 		Line:            6,
 		Column:          29,
 		MessageContains: []string{
-			"call result 1",
-			"any",
-			"not {id: string}",
+			"id(...)",
+			"may be nil",
 		},
 		EvidenceChain: []diagnosticEvidenceExpectation{
 			{
 				Kind:            diagnostic.EvidenceAbstractFact,
 				Trust:           diagnostic.TrustProven,
-				MessageContains: []string{"id returns any"},
+				MessageContains: []string{"id(...) can be T or nil here"},
 			},
 			{
 				Kind:            diagnostic.EvidenceUserAssertion,
 				Trust:           diagnostic.TrustClaimed,
-				MessageContains: []string{"assignment target req requires {id: string}"},
+				MessageContains: []string{"req is declared as {id: string}"},
 			},
 			{
 				Kind:            diagnostic.EvidenceUserAssertion,
@@ -49,49 +48,49 @@ local req: { id: string } = id(raw)
 			{
 				Kind:            diagnostic.EvidencePrecisionBoundary,
 				Trust:           diagnostic.TrustUnknown,
-				MessageContains: []string{"call result 1 comes from any/unknown"},
+				MessageContains: []string{"id(...) comes from any/unknown"},
 			},
 			{
 				Kind:            diagnostic.EvidenceMissingProof,
 				Trust:           diagnostic.TrustUnknown,
-				MessageContains: []string{"no proof on this path", "call result 1", "{id: string}"},
+				MessageContains: []string{"no guard on this path proves id(...) is non-nil"},
 			},
 		},
-		LabelContains: []string{"declared type", "call result"},
-		HelpContains:  []string{"Assign the call result", "compatible target type", "change the callee return type"},
+		LabelContains: []string{"declared type", "assigned value"},
+		HelpContains:  []string{"Guard `id(...)`"},
 		Sources:       diagnostic.SourceMap{"test.lua": src},
 		RenderOrderedContains: []string{
-			`error[type.call.direct.result_assignment]: call result 1 is any, not {id: string}`,
+			`error[type.assignment]: cannot assign id(...) because it may be nil`,
 			`  |            ↓ declared type`,
 			`6 | local req: { id: string } = id(raw)`,
-			`  |                             ↑ call result`,
-			`1. proven: id returns any`,
-			`2. claimed: assignment target req requires {id: string}`,
+			`  |                             ↑ assigned value`,
+			`1. proven: id(...) can be T or nil here`,
+			`2. claimed: req is declared as {id: string}`,
 			`3. claimed: user asserted any; not abstract-interpreter proof`,
-			`4. unvalidated value: call result 1 comes from any/unknown`,
-			`5. missing proof: no proof on this path shows call result 1 is {id: string}`,
-			`help: Assign the call result to a compatible target type, or change the callee return type if this result is valid.`,
+			`4. unvalidated value: id(...) comes from any/unknown`,
+			`5. missing proof: no guard on this path proves id(...) is non-nil`,
+			"help: Guard `id(...)`",
 		},
 	})
 	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
 		Sources:             diagnostic.SourceMap{"test.lua": src},
 		ShowSourceLabelRows: true,
 	})
-	want := `error[type.call.direct.result_assignment]: call result 1 is any, not {id: string}
+	want := `error[type.assignment]: cannot assign id(...) because it may be nil
  --> test.lua:6:29
   |
   |            ↓ declared type
 6 | local req: { id: string } = id(raw)
-  |                             ↑ call result
+  |                             ↑ assigned value
 
 because:
-  1. proven: id returns any
-  2. claimed: assignment target req requires {id: string}
+  1. proven: id(...) can be T or nil here
+  2. claimed: req is declared as {id: string}
   3. claimed: user asserted any; not abstract-interpreter proof
-  4. unvalidated value: call result 1 comes from any/unknown
-  5. missing proof: no proof on this path shows call result 1 is {id: string}
+  4. unvalidated value: id(...) comes from any/unknown
+  5. missing proof: no guard on this path proves id(...) is non-nil
 
-help: Assign the call result to a compatible target type, or change the callee return type if this result is valid.`
+help: Guard ` + "`id(...)`" + ` with a nil check, provide a default value, or change the target type to accept nil.`
 	assertRenderedEqual(t, rendered, want)
 }
 
@@ -497,13 +496,13 @@ local req: { id: string }, label: string = pair(raw)
 	if len(result.Diagnostics) != 1 {
 		t.Fatalf("diagnostics = %#v, want exactly one diagnostic for first return slot", result.Diagnostics)
 	}
-	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallResultAssignment)
-	if !strings.Contains(diag.Message, "call result 1") || strings.Contains(diag.Message, "call result 2") {
+	diag := requireDiagnosticCode(t, result, diagnostics.CodeAssignmentType)
+	if !strings.Contains(diag.Message, "pair(...)") || strings.Contains(diag.Message, "label") {
 		t.Fatalf("message = %q, want first result slot only", diag.Message)
 	}
 	if got := diag.Explanation.String(); !strings.Contains(got, "user asserted any") ||
-		!strings.Contains(got, "call result 1 comes from any/unknown") ||
-		!strings.Contains(got, "no proof on this path shows call result 1 is {id: string}") {
+		!strings.Contains(got, "pair(...) comes from any/unknown") ||
+		!strings.Contains(got, "no guard on this path proves pair(...) is non-nil") {
 		t.Fatalf("explanation = %q, want explicit-any claim and missing-proof evidence", got)
 	}
 }
