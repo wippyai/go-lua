@@ -37,7 +37,7 @@ func iteratorKeyValue(reg *axis.Registry, typeValues *typevalue.Cache, iter iter
 				return iteratorPresent(reg, typeValues.FromTypeWithWitness(reg, keyType)), true
 			}
 		}
-		return product.Value{}, false
+		return iteratorDynamicKeyedValue(reg, sourceValue)
 	default:
 		return product.Value{}, false
 	}
@@ -49,12 +49,18 @@ func iteratorElementValue(reg *axis.Registry, typeValues *typevalue.Cache, iter 
 		if iter.Kind == iteration.IterateIndexed {
 			return iteratorDynamicIndexedElementValue(reg, sourceValue)
 		}
+		if iter.Kind == iteration.IterateKeyed {
+			return iteratorDynamicKeyedValue(reg, sourceValue)
+		}
 		return product.Value{}, false
 	}
 	elem, ok := iteratorElementOf(sourceType)
 	if !ok {
 		if iter.Kind == iteration.IterateIndexed {
 			return iteratorDynamicIndexedElementValue(reg, sourceValue)
+		}
+		if iter.Kind == iteration.IterateKeyed {
+			return iteratorDynamicKeyedValue(reg, sourceValue)
 		}
 		return product.Value{}, false
 	}
@@ -75,6 +81,13 @@ func iteratorDynamicIndexedElementValue(reg *axis.Registry, sourceValue product.
 	return product.Value{}, false
 }
 
+func iteratorDynamicKeyedValue(reg *axis.Registry, sourceValue product.Value) (product.Value, bool) {
+	if !iteratorSourceProvenTable(reg, sourceValue) {
+		return product.Value{}, false
+	}
+	return iteratorPresent(reg, product.Top()), true
+}
+
 func iteratorPresent(reg *axis.Registry, value product.Value) product.Value {
 	if reg == nil {
 		return value
@@ -91,6 +104,24 @@ func iteratorSourceCouldBeTable(reg *axis.Registry, sourceValue product.Value) b
 		return false
 	}
 	return !runtimekind.Intersect(kinds, runtimekind.Singleton(runtimekind.Table)).IsBottom()
+}
+
+func iteratorSourceProvenTable(reg *axis.Registry, sourceValue product.Value) bool {
+	if reg == nil {
+		return false
+	}
+	tableKind := runtimekind.Singleton(runtimekind.Table)
+	kinds := product.Get(reg, sourceValue, runtimekind.Key)
+	if !kinds.IsTop() && !kinds.IsBottom() && kinds.Covers(tableKind) && tableKind.Covers(kinds) {
+		return true
+	}
+	if sourceType, ok := typevalue.TypeOf(reg, sourceValue); ok {
+		if typeKinds, ok := typevalue.RuntimeKindFromType(sourceType); ok &&
+			typeKinds.Covers(tableKind) && tableKind.Covers(typeKinds) {
+			return true
+		}
+	}
+	return false
 }
 
 func iteratorKeyOf(source typ.Type) (typ.Type, bool) {

@@ -412,6 +412,9 @@ func (l *lowerer) scalarOperationType(expr ast.Expr) (typ.Type, bool) {
 	case *ast.ArithmeticOpExpr:
 		return l.binaryOperationType(expr.Lhs, expr.Operator, expr.Rhs)
 	case *ast.RelationalOpExpr:
+		if expr.Operator == "==" || expr.Operator == "~=" {
+			return typ.Boolean, true
+		}
 		return l.binaryOperationType(expr.Lhs, expr.Operator, expr.Rhs)
 	case *ast.StringConcatOpExpr:
 		return l.binaryOperationType(expr.Lhs, "..", expr.Rhs)

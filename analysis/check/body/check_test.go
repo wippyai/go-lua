@@ -3072,6 +3072,75 @@ end
 	}
 }
 
+func TestReadBoundaryTypeGuardedMemberFallbackLocalIsOptionalString(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function f(page: {id: any})
+    local id = type(page.id) == "string" and (page.id :: string) or nil
+end
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	functions := bindings.NestedFunctions(nil)
+	if len(functions) != 1 {
+		t.Fatalf("nested functions = %d, want 1", len(functions))
+	}
+	result, err := CheckBoundFunction(functions[0], bindings, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckBoundFunction: %v", err)
+	}
+	fn := result.Function()
+	local := fn.Stmts[0].(*ast.LocalAssignStmt)
+	point := requireLocalAssignmentPoint(t, result, local, 0)
+	fact, ok := result.LocalAssignment(point)
+	if !ok {
+		t.Fatal("id local assignment fact missing")
+	}
+	value, ok := result.LocalAssignmentSourceValueAtBoundary(point, fact.Source)
+	if !ok {
+		t.Fatal("LocalAssignmentSourceValueAtBoundary(id) returned false")
+	}
+	got, ok := typevalue.TypeOf(reg, value)
+	want := typ.MaterializeOptional(typ.String)
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("id type = %v/%v evidence=%s presence=%s, want %v", got, ok, product.Get(reg, value, evidence.Key), product.PresenceOf(value), want)
+	}
+}
+
+func TestReadBoundaryPairsValueTypeGuardCarriesRuntimeKind(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function f(context: table): ()
+    for context_key, env_var in pairs(context) do
+        if type(context_key) == "string" and type(env_var) == "string" then
+            local value = env_var
+        end
+    end
+end
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	functions := bindings.NestedFunctions(nil)
+	if len(functions) != 1 {
+		t.Fatalf("nested functions = %d, want 1", len(functions))
+	}
+	result, err := CheckBoundFunction(functions[0], bindings, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckBoundFunction: %v", err)
+	}
+	fn := result.Function()
+	loop := fn.Stmts[0].(*ast.GenericForStmt)
+	ifStmt := loop.Stmts[0].(*ast.IfStmt)
+	local := ifStmt.Then[0].(*ast.LocalAssignStmt)
+	point := requireLocalAssignmentPoint(t, result, local, 0)
+	value, ok := result.ExpressionValueAtBoundary(point, local.Exprs[0])
+	if !ok {
+		t.Fatal("ExpressionValueAtBoundary(env_var) returned false")
+	}
+	if gotKinds := product.Get(reg, value, runtimekind.Key); !runtimekind.Equal(gotKinds, runtimekind.Singleton(runtimekind.String)) {
+		gotType, _ := typevalue.TypeOf(reg, value)
+		t.Fatalf("env_var runtime kind = %s type=%v evidence=%s, want string", gotKinds, gotType, product.Get(reg, value, evidence.Key))
+	}
+}
+
 func TestPathProvenTruthyByDominatingBranch(t *testing.T) {
 	reg := standard.Registry()
 	fn := parseFunction(t, `function f(x: string?): ()

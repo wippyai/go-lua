@@ -219,6 +219,46 @@ local boolean_ok = need_string(false :: string)
 	}
 }
 
+func TestCheckTypeGuardedMemberFallbackSatisfiesOptionalStringParameter(t *testing.T) {
+	result := Check(`
+local function log_missing_once(id: string?): ()
+end
+
+local function fetch_for_page(page: {id: any}): ()
+    local id = type(page.id) == "string" and (page.id :: string) or nil
+    log_missing_once(id)
+end
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want guarded member fallback to prove optional string parameter", result.Diagnostics)
+	}
+}
+
+func TestCheckPairsValueTypeGuardSatisfiesStringParameter(t *testing.T) {
+	result := Check(`
+local env = {}
+function env.get(env_var: string): string?
+    return env_var
+end
+
+local function resolve_context(context: table): table
+    local resolved = {}
+    for context_key, env_var in pairs(context) do
+        if type(context_key) == "string" and type(env_var) == "string" then
+            local value = env.get(env_var)
+            if value then
+                resolved[context_key] = value
+            end
+        end
+    end
+    return resolved
+end
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want pairs value type guard to prove string parameter", result.Diagnostics)
+	}
+}
+
 func TestCheckInferredObjectFieldSurvivesSiblingDynamicWrite(t *testing.T) {
 	result := Check(`
 local FlowGraph = {}

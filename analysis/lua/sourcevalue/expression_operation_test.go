@@ -123,6 +123,38 @@ func TestExpressionOperationOrWithPresentFallbackProvesNonNilWithoutLaunderingAn
 	}
 }
 
+func TestExpressionOperationGuardedScalarOrNilKeepsValidatedOptionalType(t *testing.T) {
+	reg := standard.Registry()
+	source := factflow.NewNilValueSource(0)
+	andOp, ok := factflow.NewBinaryExpressionOperation("and", source, source)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation(and) returned false")
+	}
+	orOp, ok := factflow.NewBinaryExpressionOperation("or", source, source)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation(or) returned false")
+	}
+	condition := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.Boolean), typ.Boolean)
+	validated := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	left, ok := ExpressionOperationValue(reg, nil, andOp, condition, validated)
+	if !ok {
+		t.Fatal("guarded and value did not resolve")
+	}
+	nilValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.Nil), typ.Nil)
+	got, ok := ExpressionOperationValue(reg, nil, orOp, left, nilValue)
+	if !ok {
+		t.Fatal("guarded fallback value did not resolve")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	want := typ.MaterializeOptional(typ.String)
+	if !ok || !typ.TypeEquals(gotType, want) {
+		t.Fatalf("guarded fallback type = %v/%v, want %v", gotType, ok, want)
+	}
+	if gotEvidence := product.Get(reg, got, evidence.Key); gotEvidence.IsExplicitTop() || gotEvidence.IsGradualTop() {
+		t.Fatalf("guarded fallback evidence = %s, want concrete proof", gotEvidence)
+	}
+}
+
 func TestExpressionOperationLogicalSkipDoesNotInheritSkippedTopOriginEvidence(t *testing.T) {
 	reg := standard.Registry()
 	source := factflow.NewNilValueSource(0)

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
@@ -1470,12 +1471,26 @@ func TestLowerTypeGuardRuntimeTypeNames(t *testing.T) {
 			runtimeKind:    runtimekind.Singleton(tt.tag),
 			hasRuntimeKind: true,
 		})
+		trueConstraint, trueConstraintOK := trueValue.Constraint()
+		if !trueConstraintOK {
+			t.Fatalf("%s true edge missing constraint", tt.typeName)
+		}
+		if got := product.Get(l.registry, trueConstraint, assertion.Key); !got.Has(assertion.RuntimeClaim) {
+			t.Fatalf("%s true edge assertion = %s, want runtime claim", tt.typeName, got)
+		}
 		assertValueRefinement(t, tt.typeName+" false edge", falseValue, valueRefinementExpectation{
 			presence:       falsePresence,
 			hasPresence:    falseHasPresence,
 			runtimeKind:    runtimekind.Top().Without(tt.tag),
 			hasRuntimeKind: true,
 		})
+		falseConstraint, falseConstraintOK := falseValue.Constraint()
+		if !falseConstraintOK {
+			t.Fatalf("%s false edge missing constraint", tt.typeName)
+		}
+		if got := product.Get(l.registry, falseConstraint, assertion.Key); !got.Has(assertion.RuntimeClaim) {
+			t.Fatalf("%s false edge assertion = %s, want runtime claim", tt.typeName, got)
+		}
 	}
 }
 

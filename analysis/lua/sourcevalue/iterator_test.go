@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -100,6 +101,29 @@ func TestIteratorVariableValueProjectsIndexedBroadTableWithTopOrigin(t *testing.
 	}
 	if got := product.Get(reg, elemValue, evidence.Key); !evidence.Equal(got, evidence.ExplicitTop()) {
 		t.Fatalf("element evidence = %s, want explicit top", got)
+	}
+}
+
+func TestIteratorVariableValueProjectsKeyedBroadTable(t *testing.T) {
+	reg := standard.Registry()
+	iter := iteration.Iterator{Source: effect.ParamRef{Index: 0}, Kind: iteration.IterateKeyed}
+	tableMarker := typetable.BuiltinTopMarker()
+	source := typevalue.WithWitness(reg, typevalue.FromType(reg, tableMarker), tableMarker)
+
+	keyValue, ok := IteratorVariableValue(reg, nil, iter, 0, source, nil, false)
+	if !ok {
+		t.Fatal("IteratorVariableValue keyed broad-table key returned false")
+	}
+	if got := product.PresenceOf(keyValue); !presence.Equal(got, presence.Present()) {
+		t.Fatalf("key presence = %s, want present", got)
+	}
+
+	elemValue, ok := IteratorVariableValue(reg, nil, iter, 1, source, nil, false)
+	if !ok {
+		t.Fatal("IteratorVariableValue keyed broad-table element returned false")
+	}
+	if got := product.PresenceOf(elemValue); !presence.Equal(got, presence.Present()) {
+		t.Fatalf("element presence = %s, want present", got)
 	}
 }
 
