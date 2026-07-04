@@ -929,6 +929,37 @@ func TestWidenReturnSlotsPreservesNilRecordUnionWitness(t *testing.T) {
 	}
 }
 
+func TestWidenReturnSlotsPreservesBoundedCorrelatedRecordUnion(t *testing.T) {
+	reg := standard.Registry()
+	running := typetable.NewRecord().
+		Field("migrations_failed", typ.LiteralInt(0)).
+		Field("status", typ.LiteralString("running")).
+		Build()
+	errorCase := typetable.NewRecord().
+		Field("error", typ.LiteralString("failed")).
+		Field("migrations_failed", typ.Integer).
+		Field("status", typ.LiteralString("error")).
+		Build()
+	completeCase := typetable.NewRecord().
+		Field("migrations_failed", typ.LiteralInt(0)).
+		Field("status", typ.LiteralString("complete")).
+		Build()
+	correlated := typenormalize.UnionForEvidence(errorCase, completeCase)
+
+	got := Widen(reg,
+		Summary{Returns: []product.Value{typevalue.WithWitness(reg, typevalue.FromType(reg, running), running)}},
+		Summary{Returns: []product.Value{typevalue.WithWitness(reg, typevalue.FromType(reg, correlated), correlated)}},
+	)
+	if len(got.Returns) != 1 {
+		t.Fatalf("Widen returned %d slots, want 1", len(got.Returns))
+	}
+	gotType, ok := typevalue.TypeOf(reg, got.Returns[0])
+	wantType := typenormalize.UnionForEvidence(running, errorCase, completeCase)
+	if !ok || !typ.TypeEquals(gotType, wantType) {
+		t.Fatalf("widened return type = %v/%v, want %v", gotType, ok, wantType)
+	}
+}
+
 func TestNormalizeTrimsTrailingBottomReturnSlots(t *testing.T) {
 	reg := mustRegistry(t)
 	s := Summary{

@@ -2932,7 +2932,7 @@ end
 	}
 }
 
-func TestCheckAnyDiscriminantDoesNotProveSiblingErrorString(t *testing.T) {
+func TestCheckAnyDiscriminantDoesNotEmitNilWarningForPresentSibling(t *testing.T) {
 	result := Check(`
 local function execute_migration(): any
     local external: any = {}
@@ -2970,14 +2970,9 @@ local function boot(): BootloaderResult
     return { status = "complete", message = "ok" }
 end
 `, WithStdlib())
-	requireDiagnostic(t, result, diagnosticExpectation{
-		Code:     diagnostics.CodeConcatOperand,
-		Severity: diagnostic.SeverityWarning,
-		MessageContains: []string{
-			"right operand",
-			"may be nil",
-		},
-	})
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none: present any is not a nil-risk proof failure", result.Diagnostics)
+	}
 }
 
 func TestCheckAnyMapHelperParamDoesNotInheritFreshCallerMemberContract(t *testing.T) {

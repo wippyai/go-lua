@@ -6,6 +6,8 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/proof"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
@@ -23,8 +25,14 @@ func (r *Result) ExpressionTypeBeforeBoundary(point cfg.Point, expr ast.Expr) (t
 	if r == nil || expr == nil {
 		return nil, false
 	}
+	if _, ok := expr.(*ast.UnaryLenOpExpr); ok {
+		return typ.Integer, true
+	}
 	if value, ok := r.ExpressionValueBeforeBoundary(point, expr); ok {
 		if t, typeOK := r.valueTypeWithPresence(value); typeOK && t != nil {
+			if narrowed, narrowedOK := r.discriminantProvenMemberExpressionTypeBeforeBoundary(point, expr); narrowedOK {
+				return narrowed, true
+			}
 			return t, true
 		}
 	}
@@ -43,7 +51,141 @@ func (r *Result) ExpressionTypeBeforeBoundary(point cfg.Point, expr ast.Expr) (t
 			return luatypeprojection.ApplySegments(declared, p.Segments)
 		}
 	}
+	if declared, ok := r.DeclaredExpressionTypeAt(point, expr); ok && declared != nil {
+		return declared, true
+	}
 	return LiteralExpressionType(expr)
+}
+
+func (r *Result) memberExpressionTypeBeforeBoundary(point cfg.Point, expr ast.Expr) (typ.Type, bool) {
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok || attr.Object == nil || attr.Key == nil {
+		return nil, false
+	}
+	container, ok := r.ExpressionTypeBeforeBoundary(point, attr.Object)
+	if !ok || container == nil {
+		return nil, false
+	}
+	if r.ExpressionReadProvenPresentBeforeBoundary(point, attr.Object) {
+		if withoutNil := ProjectionWithoutNil(container); withoutNil != nil && !typ.IsNever(withoutNil) {
+			container = withoutNil
+		}
+	}
+	key, ok := memberReadKeyTypeBeforeBoundary(r, point, attr)
+	if !ok || key == nil {
+		return nil, false
+	}
+	projected, projectedOK := access.RuntimeIndex(container, key)
+	if narrowed, narrowedOK := r.discriminantProvenMemberExpressionTypeBeforeBoundary(point, expr); narrowedOK {
+		return narrowed, true
+	}
+	return projected, projectedOK
+}
+
+func (r *Result) discriminantProvenMemberExpressionTypeBeforeBoundary(point cfg.Point, expr ast.Expr) (typ.Type, bool) {
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok {
+		return nil, false
+	}
+	receiver, member, ok := memberReadFieldPath(r, attr)
+	if !ok {
+		return nil, false
+	}
+	return r.discriminantProvenMemberTypeBeforeBoundary(point, receiver, member)
+}
+
+func memberReadFieldPath(r *Result, attr *ast.AttrGetExpr) (pathdom.Path, string, bool) {
+	if r == nil || attr == nil || attr.Object == nil || attr.Key == nil || attr.KeySyntax == ast.AttrKeyIndex {
+		return pathdom.Path{}, "", false
+	}
+	member := ast.KeyName(attr.Key)
+	if member == "" {
+		return pathdom.Path{}, "", false
+	}
+	receiver, ok := r.ExpressionPath(attr.Object)
+	if !ok || receiver.IsEmpty() || receiver.Symbol == 0 {
+		return pathdom.Path{}, "", false
+	}
+	return receiver, member, true
+}
+
+func (r *Result) discriminantProvenMemberTypeBeforeBoundary(point cfg.Point, receiver pathdom.Path, member string) (typ.Type, bool) {
+	if r == nil || receiver.IsEmpty() || receiver.Symbol == 0 || member == "" {
+		return nil, false
+	}
+	receiverType, ok := r.discriminantReceiverTypeBeforeBoundary(point, receiver)
+	if !ok || receiverType == nil {
+		return nil, false
+	}
+	_, cases, ok := variant.OriginCasesOfType(receiverType)
+	if !ok || len(cases) < 2 {
+		return nil, false
+	}
+	requiredIndex := -1
+	var requiredType typ.Type
+	for _, c := range cases {
+		field, fieldOK := TypeField(c.Type, member)
+		if !fieldOK {
+			continue
+		}
+		if requiredIndex >= 0 {
+			return nil, false
+		}
+		requiredIndex = c.Index
+		requiredType = field
+	}
+	if requiredIndex < 0 || requiredType == nil {
+		return nil, false
+	}
+	domains, ok := variant.LiteralDiscriminantDomainsForCases(cases)
+	if !ok {
+		return nil, false
+	}
+	for _, domain := range domains {
+		discriminant := receiver.AppendSegments(domain.Suffix)
+		for _, c := range cases {
+			if c.Index != requiredIndex {
+				continue
+			}
+			lit, litOK := variant.FieldAtPath(c.Type, domain.Suffix)
+			if !litOK || lit == nil {
+				continue
+			}
+			if r.DominatingBranchProvesLiteral(point, discriminant, lit) {
+				return requiredType, true
+			}
+			if current, currentOK := r.PathLiteralTypeAtBoundary(point, discriminant); currentOK && typ.TypeEquals(current, lit) {
+				return requiredType, true
+			}
+		}
+	}
+	return nil, false
+}
+
+func (r *Result) discriminantReceiverTypeBeforeBoundary(point cfg.Point, receiver pathdom.Path) (typ.Type, bool) {
+	root := receiver.RootOnly()
+	var rootType typ.Type
+	if annotated, ok := r.SymbolDeclaredType(root.Symbol); ok {
+		rootType = r.TransparentComparableType(annotated)
+	} else if value, ok := r.SymbolValueAtBoundary(point, root.Symbol); ok {
+		if full, fullOK := r.FullVariantOriginType(value); fullOK {
+			rootType = full
+		} else if witnessed, witnessedOK := typevalue.TypeOf(r.registry, value); witnessedOK {
+			rootType = witnessed
+		}
+	}
+	if rootType == nil {
+		return nil, false
+	}
+	current := rootType
+	for _, seg := range receiver.Segments {
+		next, ok := TypeAtSegment(current, seg)
+		if !ok || next == nil {
+			return nil, false
+		}
+		current = next
+	}
+	return current, true
 }
 
 // LiteralExpressionType returns the static type of a literal expression.
@@ -195,6 +337,12 @@ func expressionLabelDepth(expr ast.Expr, depth int) string {
 		return expressionLabelDepth(e.Expr, depth+1)
 	case *ast.NonNilAssertExpr:
 		return expressionLabelDepth(e.Expr, depth+1)
+	case *ast.UnaryLenOpExpr:
+		object := expressionLabelDepth(e.Expr, depth+1)
+		if object == "" {
+			return ""
+		}
+		return "#" + object
 	default:
 		return ""
 	}
@@ -232,6 +380,10 @@ func attrKeyLabel(expr *ast.AttrGetExpr) string {
 			return "[" + key.Value + "]"
 		case *ast.IdentExpr:
 			return "[" + key.Value + "]"
+		case *ast.UnaryLenOpExpr:
+			if label := expressionLabelDepth(key, 0); label != "" {
+				return "[" + label + "]"
+			}
 		}
 	}
 	if name := ast.KeyName(expr.Key); name != "" {

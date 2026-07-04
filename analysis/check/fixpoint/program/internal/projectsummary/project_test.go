@@ -884,6 +884,50 @@ end`), body.Config{
 	}
 }
 
+func TestFromResultReturnSourceDoesNotDiscardAccumulatorShape(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function run_migrations(failed: boolean): any
+	local results = {
+		status = "running",
+		migrations_failed = 0,
+	}
+	if failed then
+		results.migrations_failed = results.migrations_failed + 1
+		results.status = "error"
+		results.error = "failed"
+	else
+		results.status = "complete"
+	end
+	return results
+end`), body.Config{Registry: reg})
+
+	got := summaryprojection.FromResult(result)
+
+	if len(got.Returns) != 1 {
+		t.Fatalf("returns = %d, want one", len(got.Returns))
+	}
+	gotType, ok := typevalue.TypeOf(reg, got.Returns[0])
+	if !ok {
+		t.Fatalf("return 0 has no type witness")
+	}
+	rec, ok := gotType.(*typ.Record)
+	if !ok {
+		t.Fatalf("return 0 type = %v, want accumulator record shape", gotType)
+	}
+	if field := rec.GetField("migrations_failed"); field == nil || !typ.TypeEquals(field.Type, typ.Integer) {
+		t.Fatalf("migrations_failed field = %#v, want integer", field)
+	}
+	status := rec.GetField("status")
+	if status == nil {
+		t.Fatalf("return 0 type = %v, want status field", gotType)
+	}
+	if !subtype.IsSubtype(typ.LiteralString("error"), status.Type) ||
+		!subtype.IsSubtype(typ.LiteralString("complete"), status.Type) {
+		t.Fatalf("status field = %v, want at least error|complete", status.Type)
+	}
+}
+
 func TestFromResultTreatsOmittedEstablishedReturnSlotsAsAbsent(t *testing.T) {
 	reg := standard.Registry()
 	result := projectCheckFunction(t, projectParseFunction(t, `

@@ -210,9 +210,7 @@ func widenedStableRecord(a, b typ.Type) (typ.Type, bool) {
 	}
 	if ar.Open != br.Open ||
 		!sameWitnessType(ar.Metatable, br.Metatable) ||
-		!sameWitnessType(ar.MapKey, br.MapKey) ||
-		len(ar.Fields) != len(br.Fields) ||
-		len(ar.StaticMembers) != len(br.StaticMembers) {
+		!sameWitnessType(ar.MapKey, br.MapKey) {
 		return nil, false
 	}
 	var mapValue typ.Type
@@ -227,33 +225,16 @@ func widenedStableRecord(a, b typ.Type) (typ.Type, bool) {
 		}
 		mapValue = widened
 	}
-	fields := make([]typ.Field, len(ar.Fields))
-	for i := range ar.Fields {
-		af, bf := ar.Fields[i], br.Fields[i]
-		if af.Name != bf.Name || af.Optional != bf.Optional || af.Readonly != bf.Readonly {
-			return nil, false
-		}
-		widened, ok := widenRecordMemberType(af.Type, bf.Type)
-		if !ok {
-			return nil, false
-		}
-		fields[i] = af
-		fields[i].Type = widened
+	fields, commonFields, ok := widenedStableRecordFields(ar.Fields, br.Fields)
+	if !ok {
+		return nil, false
 	}
-	members := make([]typ.StaticMember, len(ar.StaticMembers))
-	for i := range ar.StaticMembers {
-		am, bm := ar.StaticMembers[i], br.StaticMembers[i]
-		if typ.CompareStaticMembers(am, bm) != 0 ||
-			am.Optional != bm.Optional ||
-			am.Readonly != bm.Readonly {
-			return nil, false
-		}
-		widened, ok := widenRecordMemberType(am.Type, bm.Type)
-		if !ok {
-			return nil, false
-		}
-		members[i] = am
-		members[i].Type = widened
+	members, commonMembers, ok := widenedStableRecordMembers(ar.StaticMembers, br.StaticMembers)
+	if !ok {
+		return nil, false
+	}
+	if commonFields+commonMembers == 0 {
+		return nil, false
 	}
 	return typ.RebuildRecord(typ.RecordParts{
 		Fields:        fields,
@@ -264,6 +245,96 @@ func widenedStableRecord(a, b typ.Type) (typ.Type, bool) {
 		Open:          ar.Open,
 		AssumeSorted:  true,
 	}), true
+}
+
+func widenedStableRecordFields(a, b []typ.Field) ([]typ.Field, int, bool) {
+	out := make([]typ.Field, 0, len(a)+len(b))
+	i, j := 0, 0
+	common := 0
+	for i < len(a) || j < len(b) {
+		switch {
+		case i >= len(a):
+			out = append(out, optionalBranchField(b[j]))
+			j++
+		case j >= len(b):
+			out = append(out, optionalBranchField(a[i]))
+			i++
+		case a[i].Name == b[j].Name:
+			if a[i].Readonly != b[j].Readonly {
+				return nil, 0, false
+			}
+			widened, ok := widenRecordMemberType(a[i].Type, b[j].Type)
+			if !ok {
+				return nil, 0, false
+			}
+			field := a[i]
+			field.Type = widened
+			field.Optional = a[i].Optional || b[j].Optional
+			out = append(out, field)
+			common++
+			i++
+			j++
+		case a[i].Name < b[j].Name:
+			out = append(out, optionalBranchField(a[i]))
+			i++
+		default:
+			out = append(out, optionalBranchField(b[j]))
+			j++
+		}
+	}
+	return out, common, true
+}
+
+func optionalBranchField(field typ.Field) typ.Field {
+	field.Optional = true
+	return field
+}
+
+func widenedStableRecordMembers(a, b []typ.StaticMember) ([]typ.StaticMember, int, bool) {
+	out := make([]typ.StaticMember, 0, len(a)+len(b))
+	i, j := 0, 0
+	common := 0
+	for i < len(a) || j < len(b) {
+		switch {
+		case i >= len(a):
+			out = append(out, optionalBranchStaticMember(b[j]))
+			j++
+		case j >= len(b):
+			out = append(out, optionalBranchStaticMember(a[i]))
+			i++
+		default:
+			cmp := typ.CompareStaticMembers(a[i], b[j])
+			switch {
+			case cmp == 0:
+				if a[i].Readonly != b[j].Readonly {
+					return nil, 0, false
+				}
+				widened, ok := widenRecordMemberType(a[i].Type, b[j].Type)
+				if !ok {
+					return nil, 0, false
+				}
+				member := a[i]
+				member.Type = widened
+				member.Optional = a[i].Optional || b[j].Optional
+				out = append(out, member)
+				common++
+				i++
+				j++
+			case cmp < 0:
+				out = append(out, optionalBranchStaticMember(a[i]))
+				i++
+			default:
+				out = append(out, optionalBranchStaticMember(b[j]))
+				j++
+			}
+		}
+	}
+	return out, common, true
+}
+
+func optionalBranchStaticMember(member typ.StaticMember) typ.StaticMember {
+	member.Optional = true
+	return member
 }
 
 func widenRecordMemberType(prev, next typ.Type) (typ.Type, bool) {

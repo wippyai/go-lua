@@ -166,7 +166,8 @@ func (r *Result) walkConcatOperands(
 		}
 	}
 	if concat, ok := expr.(*ast.StringConcatOpExpr); ok {
-		if !r.walkConcatExprChildren(point, expr, ctx, seen, visit, visited, depth+1) {
+		if !r.walkConcatOperands(point, concat.Lhs, ctx, seen, visit, visited, depth+1) ||
+			!r.walkConcatOperands(point, concat.Rhs, ctx, seen, visit, visited, depth+1) {
 			return false
 		}
 		key := concatSeenKey{expr: concat, point: point}
@@ -174,13 +175,19 @@ func (r *Result) walkConcatOperands(
 			return true
 		}
 		seen[key] = struct{}{}
-		if operand, ok := r.concatOperand(point, concat.Lhs, "left", ctx); ok {
-			*visited = true
-			return visit(operand)
+		if _, nested := concat.Lhs.(*ast.StringConcatOpExpr); !nested {
+			if operand, ok := r.concatOperand(point, concat.Lhs, "left", ctx); ok {
+				*visited = true
+				if !visit(operand) {
+					return false
+				}
+			}
 		}
-		if operand, ok := r.concatOperand(point, concat.Rhs, "right", ctx); ok {
-			*visited = true
-			return visit(operand)
+		if _, nested := concat.Rhs.(*ast.StringConcatOpExpr); !nested {
+			if operand, ok := r.concatOperand(point, concat.Rhs, "right", ctx); ok {
+				*visited = true
+				return visit(operand)
+			}
 		}
 		return true
 	}
@@ -466,8 +473,11 @@ func (r *Result) concatOperandProvenPresentBySolvedValue(point cfg.Point, operan
 }
 
 func concatOperandNilRisk(t typ.Type) bool {
-	if t == nil || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) {
+	if t == nil || typ.IsNever(t) {
 		return false
+	}
+	if typ.IsAny(t) || typ.IsUnknown(t) {
+		return true
 	}
 	return typevalue.ProjectionHasNil(t)
 }

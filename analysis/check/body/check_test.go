@@ -1419,6 +1419,62 @@ end`)
 	}
 }
 
+func TestCheckChunkFlatDiscriminantDoesNotHideConcatNilRiskInDynamicMemberAssignment(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function merge(last: {content: {{type: string, text: string?}}}, part: {type: string, text: string?}, text_type: string): ()
+	if part.type == text_type and
+		last.content[#last.content] and
+		last.content[#last.content].type == text_type then
+		last.content[#last.content].text = last.content[#last.content].text .. "\n\n" .. part.text
+	end
+end
+`)
+	result, err := CheckFunction(fn, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	var point cfg.Point
+	var concat *ast.StringConcatOpExpr
+	for _, candidate := range result.Graph().RPO() {
+		fact, ok := result.OrdinaryAssignment(candidate)
+		if !ok {
+			continue
+		}
+		if got, ok := fact.Value.(*ast.StringConcatOpExpr); ok {
+			point = candidate
+			concat = got
+			break
+		}
+	}
+	if concat == nil {
+		t.Fatal("missing ordinary assignment concat")
+	}
+	var leftExpr ast.Expr
+	var rightExpr ast.Expr
+	collectConcatLeaves(concat, &leftExpr, &rightExpr)
+	if leftExpr == nil || rightExpr == nil {
+		t.Fatalf("concat leaves left=%T right=%T, want first and last operands", leftExpr, rightExpr)
+	}
+	left, leftOK := result.concatOperand(point, leftExpr, "left", concatOperandContext{})
+	right, rightOK := result.concatOperand(point, rightExpr, "right", concatOperandContext{})
+	if !leftOK || !rightOK {
+		t.Fatalf("concat operands left=%v/%#v right=%v/%#v, want both nil-risk", leftOK, left, rightOK, right)
+	}
+}
+
+func collectConcatLeaves(expr ast.Expr, first *ast.Expr, last *ast.Expr) {
+	if concat, ok := expr.(*ast.StringConcatOpExpr); ok {
+		collectConcatLeaves(concat.Lhs, first, last)
+		collectConcatLeaves(concat.Rhs, first, last)
+		return
+	}
+	if *first == nil {
+		*first = expr
+	}
+	*last = expr
+}
+
 func TestCheckFunctionReverseNumericForLengthInitCarriesRangeAndPositiveProofs(t *testing.T) {
 	reg := standard.Registry()
 	fn := parseFunction(t, `

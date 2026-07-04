@@ -194,8 +194,36 @@ func joinReturnValue(reg *axis.Registry, left, right product.Value) product.Valu
 }
 
 func widenReturnValue(reg *axis.Registry, prev, next product.Value) product.Value {
+	if joined, ok := boundedJoinedReturnValue(reg, prev, next); ok {
+		return joined
+	}
 	widened := product.Widen(reg, prev, next)
 	return preserveJoinedReturnTypeWitness(reg, widened, prev, next)
+}
+
+func boundedJoinedReturnValue(reg *axis.Registry, prev, next product.Value) (product.Value, bool) {
+	joined := product.Join(reg, prev, next)
+	if product.Equal(reg, joined, product.Top()) {
+		return product.Value{}, false
+	}
+	t, ok := typevalue.TypeOf(reg, joined)
+	if !ok || returnTypeAlternativeCount(t) > 8 {
+		return product.Value{}, false
+	}
+	if !product.LessOrEq(reg, prev, joined) || !product.LessOrEq(reg, next, joined) {
+		return product.Value{}, false
+	}
+	return joined, true
+}
+
+func returnTypeAlternativeCount(t typ.Type) int {
+	if t == nil {
+		return 0
+	}
+	if union, ok := t.(*typ.Union); ok {
+		return len(union.Members)
+	}
+	return 1
 }
 
 func preserveJoinedReturnTypeWitness(reg *axis.Registry, joined, left, right product.Value) product.Value {

@@ -27,6 +27,20 @@ func projectReturnSlots(
 	arity int,
 	declared []product.Value,
 ) []product.Value {
+	fallback := projectReturnSlotsFromExit(reg, result, exit, arity, declared)
+	if returns, ok := projectReturnSlotsFromSources(reg, result, exit, arity); ok && returnSlotsAtLeastAsPrecise(reg, returns, fallback) {
+		return returns
+	}
+	return fallback
+}
+
+func projectReturnSlotsFromExit(
+	reg *axis.Registry,
+	result ResultReader,
+	exit state.State,
+	arity int,
+	declared []product.Value,
+) []product.Value {
 	returns := make([]product.Value, arity)
 	for i := range returns {
 		returns[i] = exit.ReadValue(reg, key.ReturnSlot(i))
@@ -38,6 +52,52 @@ func projectReturnSlots(
 		}
 	}
 	return returns
+}
+
+func returnSlotsAtLeastAsPrecise(reg *axis.Registry, candidate, fallback []product.Value) bool {
+	if len(candidate) != len(fallback) {
+		return false
+	}
+	for i := range candidate {
+		if !product.LessOrEq(reg, candidate[i], fallback[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func projectReturnSlotsFromSources(
+	reg *axis.Registry,
+	result ResultReader,
+	exit state.State,
+	arity int,
+) ([]product.Value, bool) {
+	slots := newReturnSlotProjection(reg, result)
+	if !slots.OK() || arity <= 0 || len(slots.reachable) == 0 {
+		return nil, false
+	}
+	returns := make([]product.Value, arity)
+	for i := range returns {
+		returns[i] = product.Bottom(reg)
+	}
+	for _, point := range slots.reachable {
+		sources, ok := slots.Sources(point)
+		if !ok {
+			return nil, false
+		}
+		for i := range returns {
+			value, ok := slots.Value(point, sources, i)
+			if !ok {
+				return nil, false
+			}
+			value = enrichReturnSlotFromHeapIdentity(reg, result, exit, value)
+			if i < len(slots.declared) {
+				value = mergeDeclaredReturnSourceValue(reg, slots, value, i)
+			}
+			returns[i] = product.Join(reg, returns[i], value)
+		}
+	}
+	return returns, true
 }
 
 func enrichReturnSlotFromHeapIdentity(reg *axis.Registry, result ResultReader, exit state.State, value product.Value) product.Value {
@@ -126,13 +186,30 @@ func joinDeclaredReturnValue(reg *axis.Registry, value product.Value, declared p
 	return product.WithPresence(reg, refinement.MergeDeclaredContract(reg, value, declared), product.PresenceOf(declared))
 }
 
+func mergeDeclaredReturnSourceValue(reg *axis.Registry, slots returnSlotProjection, value product.Value, index int) product.Value {
+	if index < 0 || index >= len(slots.declared) || !declaredReturnValueUseful(reg, slots.declared[index]) {
+		return value
+	}
+	if product.Equal(reg, value, product.Bottom(reg)) || product.Equal(reg, value, product.Top()) || !typevalue.HasConcreteType(reg, value) {
+		return joinDeclaredReturnValue(reg, value, slots.declared[index])
+	}
+	return slots.ValueWithDeclaredContract(value, index)
+}
+
 func joinDeclaredReturnValueIfUseful(reg *axis.Registry, value product.Value, declared product.Value) product.Value {
 	if product.Equal(reg, value, product.Bottom(reg)) || product.Equal(reg, value, product.Top()) {
 		return joinDeclaredReturnValue(reg, value, declared)
 	}
-	t, ok := typevalue.TypeOf(reg, declared)
-	if !ok || t == nil || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) {
+	if !declaredReturnValueUseful(reg, declared) {
 		return value
 	}
 	return joinDeclaredReturnValue(reg, value, declared)
+}
+
+func declaredReturnValueUseful(reg *axis.Registry, declared product.Value) bool {
+	t, ok := typevalue.TypeOf(reg, declared)
+	if !ok || t == nil || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) {
+		return false
+	}
+	return true
 }

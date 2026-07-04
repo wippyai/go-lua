@@ -247,6 +247,52 @@ func TestWidenStableRecordShapeKeepsUnchangedFields(t *testing.T) {
 	}
 }
 
+func TestWidenStableRecordShapeKeepsBranchOnlyFieldsOptional(t *testing.T) {
+	prev := typetable.NewRecord().
+		Field("status", typ.LiteralString("running")).
+		Field("migrations_failed", typ.LiteralInt(0)).
+		Build()
+	next := typetable.NewRecord().
+		Field("status", typ.LiteralString("error")).
+		Field("migrations_failed", typ.LiteralInt(1)).
+		Field("error", typ.String).
+		Build()
+
+	got := Widen(Of(prev), Of(next))
+	gotType, ok := got.Type()
+	want := typetable.NewRecord().
+		OptField("error", typ.String).
+		Field("migrations_failed", typ.Integer).
+		Field("status", typ.String).
+		Build()
+	if !ok || !typ.TypeEquals(gotType, want) {
+		t.Fatalf("Widen(record branch-only field) = %v/%v, want %v", gotType, ok, want)
+	}
+}
+
+func TestWidenStableRecordShapeKeepsBranchOnlyStaticMembersOptional(t *testing.T) {
+	prev := typetable.NewRecord().
+		Field("status", typ.LiteralString("running")).
+		StaticStringIndex("run", typ.Func().Returns(typ.Nil).Build()).
+		Build()
+	next := typetable.NewRecord().
+		Field("status", typ.LiteralString("ready")).
+		StaticStringIndex("run", typ.Func().Returns(typ.Nil).Build()).
+		StaticStringIndex("stop", typ.Func().Returns(typ.Nil).Build()).
+		Build()
+
+	got := Widen(Of(prev), Of(next))
+	gotType, ok := got.Type()
+	rec, recOK := gotType.(*typ.Record)
+	if !ok || !recOK {
+		t.Fatalf("Widen(record branch-only static member) = %v/%v, want record", gotType, ok)
+	}
+	stop := rec.GetStaticStringIndex("stop")
+	if stop == nil || !stop.Optional {
+		t.Fatalf("stop member = %#v, want optional branch-only static member", stop)
+	}
+}
+
 func TestWidenStableRecordShapeWithMethodSurface(t *testing.T) {
 	prev := typetable.NewRecord().
 		Field("node_order", typ.NewArray(typ.String)).

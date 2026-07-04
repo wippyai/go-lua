@@ -1953,6 +1953,129 @@ end
 	}
 }
 
+func TestForEachConcatOperandDoesNotTreatFlatStringDiscriminantAsSiblingProof(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type ContentPart = {
+	type: string,
+	text: string?,
+}
+
+local function merge(part: ContentPart): ()
+	if part.type == "text" then
+		local text = "" .. part.text
+	end
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil || len(root.FunctionResults()) != 1 {
+		t.Fatalf("root/functions = %#v, want one function result", root)
+	}
+	var got []ConcatOperand
+	New(root.FunctionResults()[0]).ForEachConcatOperand(func(operand ConcatOperand) bool {
+		got = append(got, operand)
+		return true
+	})
+	if len(got) != 1 {
+		t.Fatalf("concat operands = %d, want part.text nil-risk operand: %#v", len(got), got)
+	}
+	if got[0].OperandLabel != "part.text" || !got[0].NilRisk() {
+		t.Fatalf("concat operand = %#v, want nil-risk part.text", got[0])
+	}
+}
+
+func TestForEachConcatOperandDoesNotTreatConstantPathDiscriminantAsSiblingProof(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type ContentPart = {
+	type: string,
+	text: string?,
+}
+
+local prompt = {
+	CONTENT_TYPE = {
+		TEXT = "text",
+	},
+}
+
+local function merge(part: ContentPart): ()
+	if part.type == prompt.CONTENT_TYPE.TEXT then
+		local text = "" .. part.text
+	end
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil || len(root.FunctionResults()) != 1 {
+		t.Fatalf("root/functions = %#v, want one function result", root)
+	}
+	var got []ConcatOperand
+	New(root.FunctionResults()[0]).ForEachConcatOperand(func(operand ConcatOperand) bool {
+		got = append(got, operand)
+		return true
+	})
+	if len(got) != 1 {
+		t.Fatalf("concat operands = %d, want part.text nil-risk operand: %#v", len(got), got)
+	}
+	if got[0].OperandLabel != "part.text" || !got[0].NilRisk() {
+		t.Fatalf("concat operand = %#v, want nil-risk part.text", got[0])
+	}
+}
+
+func TestForEachConcatOperandReportsDynamicMemberAndSiblingAfterFlatDiscriminant(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type ContentPart = {
+	type: string,
+	text: string?,
+}
+
+local prompt = {
+	CONTENT_TYPE = {
+		TEXT = "text",
+	},
+}
+
+local function merge(last: {content: {ContentPart}}, part: ContentPart): ()
+	if part.type == prompt.CONTENT_TYPE.TEXT and
+		last.content[#last.content] and
+		last.content[#last.content].type == prompt.CONTENT_TYPE.TEXT then
+		last.content[#last.content].text = last.content[#last.content].text .. "\n\n" .. part.text
+	end
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil || len(root.FunctionResults()) != 1 {
+		t.Fatalf("root/functions = %#v, want one function result", root)
+	}
+	var got []ConcatOperand
+	New(root.FunctionResults()[0]).ForEachConcatOperand(func(operand ConcatOperand) bool {
+		got = append(got, operand)
+		return true
+	})
+	labels := map[string]bool{}
+	for _, operand := range got {
+		if !operand.NilRisk() {
+			t.Fatalf("concat operand = %#v, want nil risk", operand)
+		}
+		labels[operand.OperandLabel] = true
+	}
+	if !labels["last.content[#last.content].text"] || !labels["part.text"] {
+		t.Fatalf("concat labels = %#v, want last.content[#last.content].text and part.text; operands=%#v", labels, got)
+	}
+}
+
 func TestForEachCallReportsArityFromCanonicalContract(t *testing.T) {
 	reg := standard.Registry()
 	m := manifest.New("test")
