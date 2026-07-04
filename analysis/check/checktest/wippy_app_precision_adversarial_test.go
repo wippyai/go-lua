@@ -485,6 +485,32 @@ end
 	})
 }
 
+func TestCheckStdlibMathMaxMinPreserveIntegerInputs(t *testing.T) {
+	result := Check(`
+local function clamp_counts(prompt_tokens: integer, cached: integer): string
+    local write_count = math.max(0, prompt_tokens - cached)
+    local smaller = math.min(write_count, prompt_tokens)
+    return string.rep(".", smaller)
+end
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want math.max/min over integer inputs to satisfy integer parameter", result.Diagnostics)
+	}
+}
+
+func TestCheckStdlibMathMaxDoesNotLaunderNumberIntoInteger(t *testing.T) {
+	result := Check(`
+local function repeat_from_number(n: number): string
+    local count = math.max(0, n)
+    return string.rep(".", count)
+end
+`, WithStdlib())
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDirectCallArgType,
+		MessageContains: []string{"argument 2 (count)", "number", "not integer"},
+	})
+}
+
 func TestCheckModuloDerivedTupleIndexIsPresent(t *testing.T) {
 	result := Check(`
 local frames = {"a", "b", "c"}
@@ -1421,6 +1447,106 @@ local kind: string = err:kind()
 `, WithStdlib(), WithModule("assert2", assertMod))
 	if len(result.Diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want imported value nil assert to prove error slot present for unannotated local result function", result.Diagnostics)
+	}
+}
+
+func TestCheckUntypedExportedBuilderParamDoesNotSpecializeFromCaller(t *testing.T) {
+	testMod := CheckAndExport(`
+local M = {}
+
+function M.is_nil(value: any, msg: string?)
+    if value ~= nil then
+        error(msg or "expected nil", 2)
+    end
+end
+
+return M
+`, "test", WithStdlib())
+	if len(testMod.Errors) != 0 {
+		t.Fatalf("test module diagnostics = %#v, want clean helper export", testMod.Errors)
+	}
+
+	promptMod := CheckAndExport(`
+local M = {}
+
+function M.new()
+    local builder = {
+        messages = {},
+    }
+    builder.get_messages = function(self)
+        return self.messages
+    end
+    return builder
+end
+
+return M
+`, "prompt", WithStdlib())
+	if len(promptMod.Errors) != 0 {
+		t.Fatalf("prompt module diagnostics = %#v, want clean constructor export", promptMod.Errors)
+	}
+
+	builderMod := CheckAndExport(`
+local prompt = require("prompt")
+local M = {}
+
+function M.build(messages)
+    if not messages then
+        return nil, "failed"
+    end
+    for _, msg in ipairs(messages) do
+        local metadata: table = msg.metadata or {}
+        if metadata.ready then
+            return nil, "unexpected"
+        end
+    end
+    return prompt.new(), nil
+end
+
+return M
+`, "builder", WithStdlib(), WithModule("prompt", promptMod))
+	if !hasDiagnosticCode(builderMod.Errors, diagnostics.CodeAssignmentType) {
+		t.Fatalf("builder module diagnostics = %#v, want strict-any assignment diagnostic for untyped exported parameter", builderMod.Errors)
+	}
+
+	typedBuilderMod := CheckAndExport(`
+local prompt = require("prompt")
+local M = {}
+
+type Message = {
+    metadata: table?,
+}
+
+function M.build(messages: {Message})
+    if not messages then
+        return nil, "failed"
+    end
+    for _, msg in ipairs(messages) do
+        local metadata: table = msg.metadata or {}
+        if metadata.ready then
+            return nil, "unexpected"
+        end
+    end
+    return prompt.new(), nil
+end
+
+return M
+`, "builder", WithStdlib(), WithModule("prompt", promptMod))
+	if len(typedBuilderMod.Errors) != 0 {
+		t.Fatalf("typed builder module diagnostics = %#v, want declared parameter shape to make body clean", typedBuilderMod.Errors)
+	}
+
+	result := Check(`
+local test = require("test")
+local builder_mod = require("builder")
+
+local builder, err = builder_mod.build({
+    { metadata = {} },
+})
+test.is_nil(err, "no error expected")
+builder:get_messages()
+`, WithStdlib(), WithModule("test", testMod), WithModule("prompt", promptMod), WithModule("builder", typedBuilderMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want imported nil assert to prove typed imported-constructor-backed builder return present", result.Diagnostics)
 	}
 }
 

@@ -406,8 +406,8 @@ var registry = map[string]signature.Function{
 	"math.ldexp": sig(typ.Func().Param("m", typ.Number).Param("e", typ.Integer).Returns(typ.Number).Build()),
 	"math.log":   sig(typ.Func().Param("x", typ.Number).OptParam("base", typ.Number).Returns(typ.Number).Build()),
 	"math.log10": sig(typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()),
-	"math.max":   sig(typ.Func().Param("x", typ.Number).Variadic(typ.Number).Returns(typ.Number).Build()),
-	"math.min":   sig(typ.Func().Param("x", typ.Number).Variadic(typ.Number).Returns(typ.Number).Build()),
+	"math.max":   numericExtremumSig(),
+	"math.min":   numericExtremumSig(),
 	"math.mod":   sig(typ.Func().Param("x", typ.Number).Param("y", typ.Number).Returns(typ.Number).Build()),
 	"math.modf":  sig(typ.Func().Param("x", typ.Number).Returns(typ.Integer, typ.Number).Build()),
 	"math.pow":   sig(typ.Func().Param("x", typ.Number).Param("y", typ.Number).Returns(typ.Number).Build()),
@@ -594,6 +594,18 @@ func SignatureNames() []string {
 		out = append(out, name)
 	}
 	return out
+}
+
+func numericExtremumSig() signature.Function {
+	tp := typ.NewTypeParam("T", typ.Number)
+	return sig(
+		typ.Func().
+			TypeParamRef(tp).
+			Param("x", tp).
+			Variadic(tp).
+			Returns(tp).
+			Build(),
+	)
 }
 
 func sig(fn *typ.Function, labels ...effect.Label) signature.Function {
