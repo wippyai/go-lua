@@ -997,6 +997,80 @@ end
 	}
 }
 
+func TestForEachReturnProjectsDeclaredObjectLiteralFieldThroughRootCast(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Spec = { id: string, prompt: string }
+local function make(raw: any): Spec
+	local spec = { id = "agent", prompt = raw.prompt }
+	return spec :: Spec
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil || len(root.FunctionResults()) != 1 {
+		t.Fatalf("root/functions = %#v, want one function result", root)
+	}
+	var returns []Return
+	New(root.FunctionResults()[0]).ForEachReturn(func(ret Return) bool {
+		returns = append(returns, ret)
+		return true
+	})
+	if len(returns) != 1 {
+		t.Fatalf("returns = %d, want 1: %#v", len(returns), returns)
+	}
+	ret := returns[0]
+	if got, want := ret.ExpectedLabel, "returned value 1.prompt"; got != want {
+		t.Fatalf("expected label = %q, want %q", got, want)
+	}
+	if got, want := ret.SourceLabel, "raw.prompt"; got != want {
+		t.Fatalf("source label = %q, want %q", got, want)
+	}
+	if !ret.UntrustedTopOrigin {
+		t.Fatalf("untrusted origin = false, want any-derived field proof")
+	}
+	if ret.Check.Admissible {
+		t.Fatalf("check = %#v, want missing field proof despite root cast", ret.Check)
+	}
+}
+
+func TestForEachReturnRootCastSkipsMissingFieldsOnCopiedTable(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Payload = { host: table, agent: table? }
+local function copy(payload: Payload?): Payload
+	local out = {}
+	for k, v in pairs(payload or {}) do
+		out[k] = v
+	end
+	return out :: Payload
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{
+		Check: body.Config{Registry: reg, Globals: []string{"pairs"}},
+	})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil || len(root.FunctionResults()) != 1 {
+		t.Fatalf("root/functions = %#v, want one function result", root)
+	}
+	var returns []Return
+	New(root.FunctionResults()[0]).ForEachReturn(func(ret Return) bool {
+		returns = append(returns, ret)
+		return true
+	})
+	for _, ret := range returns {
+		if !ret.Check.Admissible {
+			t.Fatalf("returns = %#v, want root cast to validate copied table shape", returns)
+		}
+	}
+}
+
 func TestForEachReturnRejectsAnyReceiverMethodReturnAsStringProof(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `

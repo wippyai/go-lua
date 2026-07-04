@@ -120,9 +120,6 @@ func (r Reader) returnDeclaredObjectLiteralEntry(occ body.ReturnValueOccurrence,
 	if r.result == nil || source.Kind != sourceprovenance.SourceExpression || source.Expr == nil {
 		return Return{}, false
 	}
-	if returnSourceConcreteRuntimeCast(source) {
-		return Return{}, false
-	}
 	if !occ.HasPath || occ.SourcePath.IsEmpty() || occ.SourcePath.Symbol == 0 {
 		return Return{}, false
 	}
@@ -135,10 +132,20 @@ func (r Reader) returnDeclaredObjectLiteralEntry(occ body.ReturnValueOccurrence,
 		return Return{}, false
 	}
 	rootValue, rootValueOK := r.SourceValue(occ.Point, source)
-	return r.returnLoweredObjectLiteralEntry(occ.Point, occ.Index, literal, rootValue, rootValueOK, sourceSpanFromBody(occ.SourceSpan), expectedValue, expectedSpans)
+	return r.returnLoweredObjectLiteralEntry(
+		occ.Point,
+		occ.Index,
+		literal,
+		rootValue,
+		rootValueOK,
+		sourceSpanFromBody(occ.SourceSpan),
+		expectedValue,
+		expectedSpans,
+		!returnSourceConcreteRuntimeCast(source),
+	)
 }
 
-func (r Reader) returnLoweredObjectLiteralEntry(point cfg.Point, index int, literal factflow.ObjectLiteralView, rootValue product.Value, rootValueOK bool, sourceSpan SourceSpan, expectedValue product.Value, expectedSpans []SourceSpan) (Return, bool) {
+func (r Reader) returnLoweredObjectLiteralEntry(point cfg.Point, index int, literal factflow.ObjectLiteralView, rootValue product.Value, rootValueOK bool, sourceSpan SourceSpan, expectedValue product.Value, expectedSpans []SourceSpan, reportMissingRequired bool) (Return, bool) {
 	expected, ok := r.ValueTypeWithPresence(expectedValue)
 	if !ok || expected == nil || typ.IsAny(expected) || typ.IsUnknown(expected) || typ.IsNever(expected) || refinement.ContainsFreeTypeParam(expected) {
 		return Return{}, false
@@ -191,7 +198,7 @@ func (r Reader) returnLoweredObjectLiteralEntry(point cfg.Point, index int, lite
 	if found {
 		return out, true
 	}
-	if rootValueOK {
+	if rootValueOK && reportMissingRequired {
 		return r.returnLoweredObjectLiteralMissingRequired(point, index, literal, rootValue, expected, sourceSpan, expectedSpans)
 	}
 	return Return{}, false
