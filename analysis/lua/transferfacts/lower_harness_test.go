@@ -465,6 +465,44 @@ local root = make()["root"]
 	}
 }
 
+func TestLowerDotAfterDynamicIndexExpressionCarriesTableSource(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local items = {}
+local k = 1
+items[k] = {id = "root"}
+local id = items[k].id
+`)
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	idSource := mustLocalSource(t, facts, requireStmtPoints(t, built, stmts[3], 1)[0])
+	if _, ok := facts.ExpressionPath(idSource.ExprRef); ok {
+		t.Fatalf("dot after dynamic index source ref %d unexpectedly has a static expression path", idSource.ExprRef)
+	}
+	dotExpr, ok := facts.DynamicIndexExpression(idSource.ExprRef)
+	if !ok {
+		t.Fatalf("missing dynamic-index expression for dot-after-dynamic source ref %d", idSource.ExprRef)
+	}
+	if !dotExpr.TablePath().IsEmpty() {
+		t.Fatalf("dot-after-dynamic table path = %v, want empty", dotExpr.TablePath())
+	}
+	tableSource, ok := dotExpr.TableSource()
+	if !ok || tableSource.Kind != factflow.ValueSourceExpression || !tableSource.HasExpr {
+		t.Fatalf("dot-after-dynamic table source = %#v, want expression source", tableSource)
+	}
+	if _, ok := facts.DynamicIndexExpression(tableSource.ExprRef); !ok {
+		t.Fatalf("dot-after-dynamic table source ref %d is not the receiver dynamic-index expression", tableSource.ExprRef)
+	}
+	keySource := dotExpr.KeySource()
+	keyValue, ok := facts.ExpressionValue(keySource.ExprRef)
+	if !ok {
+		t.Fatalf("missing dot key expression value for ref %d", keySource.ExprRef)
+	}
+	keyType, ok := typevalue.TypeOf(standard.Registry(), keyValue)
+	if !ok || !typ.TypeEquals(keyType, typ.LiteralString("id")) {
+		t.Fatalf("dot key type = %v/%v, want literal string id", keyType, ok)
+	}
+}
+
 func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
 	local := localAssign([]string{"t", "k", "x"}, number("0"), stringLit("key"), number("0"))
 	dotWrite := assign([]ast.Expr{dot(ident("t"), "x")}, number("1"))

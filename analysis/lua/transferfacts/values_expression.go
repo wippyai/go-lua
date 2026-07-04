@@ -58,7 +58,8 @@ func (l *lowerer) dynamicIndexExpression(expr ast.Expr) (factflow.DynamicIndexEx
 		return factflow.DynamicIndexExpression{}, false
 	}
 	attr, ok := inner.(*ast.AttrGetExpr)
-	if !ok || attr.Key == nil || attr.KeySyntax != ast.AttrKeyIndex {
+	if !ok || attr.Key == nil ||
+		(attr.KeySyntax != ast.AttrKeyIndex && attr.KeySyntax != ast.AttrKeyDot) {
 		return factflow.DynamicIndexExpression{}, false
 	}
 	keySource, ok := l.dynamicIndexKeySource(attr)
@@ -67,6 +68,11 @@ func (l *lowerer) dynamicIndexExpression(expr ast.Expr) (factflow.DynamicIndexEx
 	}
 	tableSource, hasTableSource := l.expressionOperandSource(attr.Object)
 	tablePath, hasTablePath := pathexpr.Resolve(attr.Object, l.bindings)
+	if attr.KeySyntax == ast.AttrKeyDot {
+		if aliasPath, ok := pathexpr.ResolveAlias(attr.Object, l.bindings); ok && !aliasPath.IsEmpty() {
+			return factflow.DynamicIndexExpression{}, false
+		}
+	}
 	if hasTablePath && !tablePath.IsEmpty() {
 		expr, ok := factflow.NewDynamicIndexExpression(tablePath, keySource)
 		if !ok {

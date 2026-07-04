@@ -330,24 +330,38 @@ func dynamicIndexExpressionPath(config Config, point cfg.Point, dyn factflow.Dyn
 	if !ok {
 		return pathdom.Path{}, false
 	}
-	name, ok := staticStringKey(config.Registry, config.TypeValues, keyValue)
+	seg, ok := staticScalarKeySegment(config.Registry, config.TypeValues, keyValue)
 	if !ok {
 		return pathdom.Path{}, false
 	}
-	return dyn.TablePathRef().IndexStr(name), true
+	return dyn.TablePathRef().Append(seg), true
 }
 
-func staticStringKey(reg *axis.Registry, typeValues *typevalue.Cache, value product.Value) (string, bool) {
+func staticScalarKeySegment(reg *axis.Registry, typeValues *typevalue.Cache, value product.Value) (segment.Segment, bool) {
 	t, ok := typeValues.TypeOf(reg, value)
 	if !ok {
-		return "", false
+		return segment.Segment{}, false
 	}
 	lit, ok := unwrap.Alias(t).(*typ.Literal)
-	if !ok || lit.Base != kind.String {
-		return "", false
+	if !ok {
+		return segment.Segment{}, false
 	}
-	name, ok := lit.Value.(string)
-	return name, ok
+	switch lit.Base {
+	case kind.String:
+		name, ok := lit.Value.(string)
+		if !ok {
+			return segment.Segment{}, false
+		}
+		return segment.Segment{Kind: segment.SegmentIndexString, Name: name}, true
+	case kind.Integer:
+		index, ok := lit.Value.(int64)
+		if !ok || int64(int(index)) != index {
+			return segment.Segment{}, false
+		}
+		return segment.Segment{Kind: segment.SegmentIndexInt, Index: int(index)}, true
+	default:
+		return segment.Segment{}, false
+	}
 }
 
 func dynamicIndexExpressionKeyValue(config Config, point cfg.Point, source factflow.ValueSource, in state.State) (product.Value, bool) {
@@ -371,6 +385,9 @@ func dynamicIndexExpressionKeyValueActive(
 		}
 		if value, ok := dynamicIndexExpressionOperationValue(config, point, source.ExprRef, in, active); ok {
 			return value, true
+		}
+		if dyn, ok := config.Facts.DynamicIndexExpression(source.ExprRef); ok {
+			return dynamicIndexExpressionValueActive(config, point, source.ExprRef, dyn, in, active)
 		}
 		value, ok := config.Facts.ExpressionValue(source.ExprRef)
 		return value, ok
@@ -420,17 +437,50 @@ func dynamicIndexExpressionOperationValue(
 }
 
 func dynamicIndexExpressionValue(config Config, point cfg.Point, dyn factflow.DynamicIndexExpression, in state.State) (product.Value, bool) {
+	return dynamicIndexExpressionValueActive(config, point, 0, dyn, in, nil)
+}
+
+func dynamicIndexExpressionValueActive(
+	config Config,
+	point cfg.Point,
+	expr factflow.ExprRef,
+	dyn factflow.DynamicIndexExpression,
+	in state.State,
+	active map[factflow.ExprRef]bool,
+) (product.Value, bool) {
 	reg := config.Registry
 	if reg == nil || config.TypeValues == nil {
 		return product.Value{}, false
+	}
+	if expr != 0 {
+		if active[expr] {
+			return product.Value{}, false
+		}
+		if active == nil {
+			active = make(map[factflow.ExprRef]bool, 1)
+		}
+		active[expr] = true
+		defer delete(active, expr)
 	}
 	if value, ok := dynamicIndexExpressionProvenMemberValue(config, point, dyn, in); ok {
 		return value, true
 	}
 	tableValue, tableValueOK := Project(config, point, dyn.TablePathRef(), in)
+	if !tableValueOK {
+		if tableSource, ok := dyn.TableSource(); ok {
+			tableValue, tableValueOK = dynamicIndexExpressionKeyValueActive(config, point, tableSource, in, active)
+		}
+	}
 	if tableValueOK {
-		keyValue, keyValueOK := dynamicIndexExpressionKeyValue(config, point, dyn.KeySource(), in)
+		keyValue, keyValueOK := dynamicIndexExpressionKeyValueActive(config, point, dyn.KeySource(), in, active)
 		if keyValueOK {
+			if config.Visibility != nil {
+				if seg, ok := staticScalarKeySegment(reg, config.TypeValues, keyValue); ok {
+					if value, ok := sourcevalue.HeapMemberFromValue(reg, config.Visibility.KeySpace(), in, tableValue, []segment.Segment{seg}); ok {
+						return value, true
+					}
+				}
+			}
 			if value, ok := config.TypeValues.RuntimeIndex(reg, tableValue, keyValue); ok {
 				value = sourcevalue.InheritTopOriginEvidence(reg, value, tableValue)
 				value = sourcevalue.InheritTopOriginEvidence(reg, value, keyValue)
@@ -872,12 +922,12 @@ func dynamicIndexFactDefinitelyPresent(reg *axis.Registry, fact dynamicindex.Fac
 }
 
 func dynamicIndexFactHasExactReadKey(config Config, fact dynamicindex.Fact, readKeyValue product.Value) bool {
-	readName, ok := staticStringKey(config.Registry, config.TypeValues, readKeyValue)
+	readSeg, ok := staticScalarKeySegment(config.Registry, config.TypeValues, readKeyValue)
 	if !ok {
 		return false
 	}
-	factName, ok := staticStringKey(config.Registry, config.TypeValues, fact.KeyValue)
-	return ok && factName == readName
+	factSeg, ok := staticScalarKeySegment(config.Registry, config.TypeValues, fact.KeyValue)
+	return ok && factSeg == readSeg
 }
 
 func forEachDynamicIndexPathStateKey(config Config, point cfg.Point, p pathdom.Path, fn func(pathaddr.StateKey) bool) bool {

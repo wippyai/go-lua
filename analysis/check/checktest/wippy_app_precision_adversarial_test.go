@@ -1550,6 +1550,42 @@ builder:get_messages()
 	}
 }
 
+func TestCheckDynamicIndexGuardPreservesInsertedObjectFieldShape(t *testing.T) {
+	jsonMod := CheckAndExport(`
+local M = {}
+
+function M.decode(s: string): (any, string?)
+    return {}, nil
+end
+
+return M
+`, "json", WithStdlib())
+	if len(jsonMod.Errors) != 0 {
+		t.Fatalf("json module diagnostics = %#v, want clean helper export", jsonMod.Errors)
+	}
+
+	result := Check(`
+local json = require("json")
+
+local tool_calls = {}
+local index = 1
+
+tool_calls[index] = {
+    partial_json = "",
+}
+
+if tool_calls[index] and tool_calls[index].partial_json then
+    local json_str = tool_calls[index].partial_json
+    if json_str ~= "" then
+        json.decode(json_str)
+    end
+end
+	`, WithStdlib(), WithModule("json", jsonMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want guarded dynamic-index object field to preserve inserted string shape", result.Diagnostics)
+	}
+}
+
 func TestCheckImportedTypeAssertRefinesAnyToString(t *testing.T) {
 	assertMod := CheckAndExport(`
 local M = {}

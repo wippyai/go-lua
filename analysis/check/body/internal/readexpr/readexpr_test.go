@@ -230,8 +230,8 @@ func TestDynamicIndexProviderUsesExactLiteralKeyFactWhenPathMembershipVersionDif
 		}))
 	if gotKey, ok := dynamicIndexExpressionKeyValue(Config{Registry: reg, Facts: facts, Visibility: resolver, TypeValues: typeValues}, point, keySource, in); !ok {
 		t.Fatal("key value did not resolve")
-	} else if name, ok := staticStringKey(reg, typeValues, gotKey); !ok || name != "alpha" {
-		t.Fatalf("key value = %v/%v, want alpha", name, ok)
+	} else if seg, ok := staticScalarKeySegment(reg, typeValues, gotKey); !ok || seg.Kind != segment.SegmentIndexString || seg.Name != "alpha" {
+		t.Fatalf("key segment = %#v/%v, want string index alpha", seg, ok)
 	}
 	if !dynamicIndexFactDefinitelyPresent(reg, dynamicindex.NewFact(reg, dynamicindex.FactConfig{Value: arrayValue, HasValue: true, Admission: dynamicindex.AdmissionUnknown})) {
 		t.Fatalf("array value not classified present: %v", product.PresenceOf(arrayValue))
