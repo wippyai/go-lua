@@ -566,3 +566,86 @@ func TestFactsNodeTransferRootAssignmentInvalidatesVisiblePathSubtree(t *testing
 		})
 	}
 }
+
+func TestFactsNodeTransferPresentRootAssignmentPreservesPresentTargetImplication(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(61)
+	trigger := symbol.ID(161)
+	target := symbol.ID(162)
+	triggerPath := path.NewPath(trigger, "use_template")
+	targetPath := path.NewPath(target, "executor")
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(61), HasExpr: true}
+	present := presentValue(reg)
+	absent := absentValue(reg)
+
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, trigger, "use_template")
+	visibilityBuilder.Define(point, target, "executor")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	triggerKey, triggerOK := factKeyspaceKeyAt(resolver, point, triggerPath)
+	targetKey, targetOK := factKeyspaceKeyAt(resolver, point, targetPath)
+	if !triggerOK || !targetOK {
+		t.Fatalf("missing keyspace keys: trigger=%v target=%v", triggerOK, targetOK)
+	}
+	implication := pathevidence.NewPathValuePresenceImplication(
+		triggerKey,
+		typevalue.WithWitness(reg, typevalue.FromType(reg, typ.False), typ.False),
+		targetKey,
+		presence.Present(),
+	)
+
+	run := func(assigned product.Value) state.State {
+		sources := &recordingSourceValues{
+			values: map[factflow.ValueSource]product.Value{source: assigned},
+		}
+		return NewFactsNodeTransfer(FactsNodeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				RootAssignments: map[cfg.Point]factflow.RootAssignment{
+					point: factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, target, targetPath, source),
+				},
+			}),
+			Sources:    sources,
+			Visibility: resolver,
+		})(transfer.NodeContext{
+			Registry: reg,
+			Point:    point,
+		}, state.State{}.AddPathPresenceImplication(implication))
+	}
+
+	if got := run(present); !got.HasPathPresenceImplication(implication) {
+		t.Fatalf("present root assignment dropped still-valid path-presence implication")
+	}
+	if got := run(absent); got.HasPathPresenceImplication(implication) {
+		t.Fatalf("absent root assignment preserved invalid path-presence implication")
+	}
+}
+
+func TestPathPresenceImplicationActivationAcceptsRootTarget(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(62)
+	trigger := symbol.ID(261)
+	target := symbol.ID(262)
+	triggerPath := path.NewPath(trigger, "use_template")
+	targetPath := path.NewPath(target, "executor")
+
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, trigger, "use_template")
+	visibilityBuilder.Define(point, target, "executor")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+
+	triggerKey := resolver.KeySpace().FromPath(triggerPath)
+	targetKey := resolver.KeySpace().FromPath(targetPath)
+	falseValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.False), typ.False)
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(trigger), falseValue).
+		WriteValue(reg, key.SymbolValue(target), product.Top()).
+		AddPathPresenceImplication(pathevidence.NewPathValuePresenceImplication(
+			triggerKey,
+			falseValue,
+			targetKey,
+			presence.Present(),
+		))
+	got := activatePathPresenceImplications(reg, resolver, point, in)
+
+	assertValue(t, reg, got, key.SymbolValue(target), presentValue(reg))
+}

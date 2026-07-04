@@ -16,6 +16,7 @@ import (
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -262,11 +263,79 @@ func writeRootSymbol(ctx transfer.NodeContext, resolver *visibility.Resolver, ou
 		return out
 	}
 	if resolver != nil {
+		preserved := rootAssignmentPreservedPathPresenceImplications(ctx.Registry, resolver, ctx.Point, out, targetPath, value)
 		if invalidated, ok := invalidatePathSubtreeAt(out, resolver, ctx.Point, targetPath); ok {
 			out = invalidated
 		}
+		for _, implication := range preserved {
+			out = out.AddPathPresenceImplication(implication)
+		}
 	}
 	return out.WriteValue(ctx.Registry, key.SymbolValue(target), value)
+}
+
+func rootAssignmentPreservedPathPresenceImplications(
+	reg *axis.Registry,
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	out state.State,
+	targetPath pathdom.Path,
+	value product.Value,
+) []pathevidence.PathPresenceImplication {
+	if reg == nil || resolver == nil || targetPath.Symbol == 0 || len(targetPath.Segments) != 0 {
+		return nil
+	}
+	targetKey, ok := factKeyspaceKeyAt(resolver, point, targetPath)
+	if !ok {
+		return nil
+	}
+	snapshot := out.PathPresenceImplicationsSnapshot(resolver.KeySpace())
+	if snapshot.Bottom || len(snapshot.Implications) == 0 {
+		return nil
+	}
+	var preserved []pathevidence.PathPresenceImplication
+	for _, implication := range snapshot.Implications {
+		if !rootAssignmentPreservesPathPresenceImplication(reg, targetKey, value, implication) {
+			continue
+		}
+		preserved = append(preserved, implication)
+	}
+	return preserved
+}
+
+func rootAssignmentPreservesPathPresenceImplication(
+	reg *axis.Registry,
+	targetKey keyspace.Key,
+	value product.Value,
+	implication pathevidence.PathPresenceImplication,
+) bool {
+	triggerMatches := implication.Trigger == targetKey
+	targetMatches := implication.Target == targetKey
+	if !triggerMatches && !targetMatches {
+		return false
+	}
+	if triggerMatches && !rootAssignmentValueSatisfiesImplicationTrigger(reg, value, implication) {
+		return false
+	}
+	if targetMatches && !rootAssignmentValueSatisfiesPresence(reg, value, implication.TargetPresence) {
+		return false
+	}
+	return true
+}
+
+func rootAssignmentValueSatisfiesImplicationTrigger(reg *axis.Registry, value product.Value, implication pathevidence.PathPresenceImplication) bool {
+	if implication.HasTriggerValue {
+		return product.Domain(reg).LessOrEq(value, implication.TriggerValue)
+	}
+	return rootAssignmentValueSatisfiesPresence(reg, value, implication.TriggerPresence)
+}
+
+func rootAssignmentValueSatisfiesPresence(reg *axis.Registry, value product.Value, want presence.Value) bool {
+	if !presence.Equal(want, presence.Present()) && !presence.Equal(want, presence.Absent()) {
+		return false
+	}
+	constraint := product.NewWithPresence(reg, product.ShapeTop, want)
+	return product.Domain(reg).LessOrEq(value, constraint)
 }
 
 func applyClosedDynamicAllValueRootAssignment(

@@ -2798,6 +2798,93 @@ end
 	}
 }
 
+func TestCollectPlainMethodReceiverUsesDeclaredReturnLocal(t *testing.T) {
+	stmts := parseChunk(t, `
+type Executor = {
+	with_context: (self: Executor, ctx: table) -> Executor,
+}
+
+local function make_executor(): Executor
+	local e = {}
+	function e:with_context(ctx: table): Executor
+		return self
+	end
+	return e
+end
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	context := collectMetatableMethodContext(bindings, nil, body.Config{}.ModuleExports, stmts)
+	makeAssign, ok := stmts[1].(*ast.LocalAssignStmt)
+	if !ok || len(makeAssign.Exprs) == 0 {
+		t.Fatalf("make_executor stmt = %T, want local function assignment", stmts[1])
+	}
+	makeFn, ok := makeAssign.Exprs[0].(*ast.FunctionExpr)
+	if !ok || len(makeFn.Stmts) == 0 {
+		t.Fatalf("make_executor expr = %#v, want function body", makeAssign.Exprs[0])
+	}
+	localE, ok := makeFn.Stmts[0].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("first make_executor stmt = %T, want local e assignment", makeFn.Stmts[0])
+	}
+	e := mustBoundLocalAt(t, bindings, localE, 0)
+	receiver := context.methodReceivers[e]
+	member, ok := access.Field(receiver, "with_context")
+	if !ok {
+		t.Fatalf("receiver = %v, want with_context method surface", receiver)
+	}
+	fn, ok := unwrap.Alias(member).(*typ.Function)
+	if !ok || len(fn.Params) == 0 {
+		t.Fatalf("with_context = %v, want function with self param", member)
+	}
+	if _, ok := access.Field(fn.Params[0].Type, "with_context"); !ok {
+		t.Fatalf("with_context self = %v, want declared return receiver surface", fn.Params[0].Type)
+	}
+}
+
+func TestRunChunkBooleanModeLoopReceiverPresentAtMethodCall(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Executor = {
+    with_context: (self: Executor, ctx: table) -> Executor,
+}
+
+local function make_executor(): Executor
+    local e = {}
+    function e:with_context(ctx: table): Executor
+        return self
+    end
+    return e
+end
+
+local function run(use_template: boolean): ()
+    local executor = nil
+    if not use_template then
+        executor = make_executor()
+    end
+
+    for i = 1, 2 do
+        if use_template then
+        else
+            executor = executor:with_context({})
+        end
+    end
+end
+`)
+	result, err := RunChunk(stmts, Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := result.RootResult()
+	run, point, receiver := findNestedReceiverCall(t, root, "with_context")
+	value, ok := run.PathValueAtBoundary(point, receiver)
+	if !ok {
+		t.Fatalf("PathValueAtBoundary(%s) returned false", receiver.Key())
+	}
+	if got := product.PresenceOf(value); !presence.Equal(got, presence.Present()) {
+		t.Fatalf("receiver presence = %s in %#v, want present at loop method call", got, value)
+	}
+}
+
 func TestCollectKeysMethodOriginTypeIncludesSelfFromStandaloneSetmetatable(t *testing.T) {
 	stmts := parseChunk(t, `
 local QueryBuilder = {}

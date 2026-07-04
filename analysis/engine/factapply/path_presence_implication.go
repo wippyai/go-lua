@@ -161,7 +161,7 @@ func applyPathValuePresenceImplication(
 	if !ok {
 		return out
 	}
-	target, ok := factKeyspaceKeyAt(resolver, ctx.Point, fact.TargetPathRef())
+	target, ok := visibility.AddressAt(resolver, ctx.Point, fact.TargetPathRef()).RootOrVisibleKeyspaceKey()
 	if !ok {
 		return out
 	}
@@ -306,6 +306,9 @@ func pathKeyCurrentlyVisible(resolver *visibility.Resolver, point cfg.Point, pat
 	}
 	k, ok := resolver.KeySpace().FromStateKey(pathKey)
 	if !ok {
+		return true
+	}
+	if k.Kind == keyspace.KindUnversionedSym && k.Segs == 0 && k.Sym != 0 {
 		return true
 	}
 	segments, ok := resolver.KeySpace().SegmentsView(k)

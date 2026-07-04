@@ -132,6 +132,29 @@ end
 	}
 }
 
+func TestLowerConditionalAssignmentPublishesValuePresenceImplicationBeforeLoop(t *testing.T) {
+	_, bindings, built, result := parseSemanticFunction(t, `
+function f(
+    use_template: boolean,
+    make_executor: () -> { with_context: (self: any, context: table) -> any }
+)
+    local executor: { with_context: (self: any, context: table) -> any }? = nil
+    if not use_template then
+        executor = make_executor()
+    end
+
+    for i = 1, 2 do
+        if use_template then
+        else
+            executor = executor:with_context({})
+        end
+    end
+end
+`)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	assertUseTemplateFalseImpliesExecutorPresent(t, bindings, built, facts)
+}
+
 func TestLowerStaticTruthinessMarksImpossibleBranchEdges(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -187,6 +210,31 @@ func TestLowerStaticTruthinessMarksImpossibleBranchEdges(t *testing.T) {
 				t.Fatalf("false-edge unreachable = %v, want %v", got, tc.wantFalseBlocked)
 			}
 		})
+	}
+}
+
+func assertUseTemplateFalseImpliesExecutorPresent(t *testing.T, bindings *bind.Result, built *cfgbuild.Result, facts factflow.Facts) {
+	t.Helper()
+	var found bool
+	for _, point := range built.Graph.RPO() {
+		for _, implication := range facts.PathValuePresenceImplications(point) {
+			trigger := implication.TriggerPath()
+			target := implication.TargetPath()
+			if bindings.Name(trigger.Symbol) != "use_template" || bindings.Name(target.Symbol) != "executor" {
+				continue
+			}
+			gotType, ok := typevalue.TypeOf(standard.Registry(), implication.TriggerValue())
+			if !ok || !typ.TypeEquals(gotType, typ.False) {
+				t.Fatalf("trigger value = %v/%v, want false literal", gotType, ok)
+			}
+			if !presence.Equal(implication.TargetPresence(), presence.Present()) {
+				t.Fatalf("target presence = %s, want present", implication.TargetPresence())
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing use_template=false => executor present implication")
 	}
 }
 

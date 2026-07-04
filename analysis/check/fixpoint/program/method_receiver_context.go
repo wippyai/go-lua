@@ -299,6 +299,7 @@ func (c methodReceiverCollector) collectSetmetatableReceivers(stmts []ast.Stmt, 
 			c.collectAssignmentSetmetatableReceiver(s)
 		case *ast.ReturnStmt:
 			for i, expr := range s.Exprs {
+				c.collectReturnLocalDeclaredReceiver(expr, typeAt(returnTypes, i))
 				c.collectReturnSetmetatableReceiver(expr, 0, typeAt(returnTypes, i), stmts[:stmtIndex])
 			}
 		case *ast.FuncCallStmt:
@@ -436,6 +437,17 @@ func (c methodReceiverCollector) collectAssignmentSetmetatableReceiver(stmt *ast
 
 func (c methodReceiverCollector) collectSetmetatableReceiver(expr ast.Expr, target symbol.ID, targetType typ.Type) {
 	c.collectSetmetatableReceiverWithDerived(expr, target, targetType, nil)
+}
+
+func (c methodReceiverCollector) collectReturnLocalDeclaredReceiver(expr ast.Expr, targetType typ.Type) {
+	if !usableMetatableReceiverType(targetType) {
+		return
+	}
+	p, ok := pathexpr.Resolve(expr, c.bindings)
+	if !ok || p.Symbol == 0 || len(p.Segments) != 0 {
+		return
+	}
+	c.localTypes[p.Symbol] = targetType
 }
 
 func (c methodReceiverCollector) collectReturnSetmetatableReceiver(expr ast.Expr, target symbol.ID, targetType typ.Type, prefix []ast.Stmt) {
