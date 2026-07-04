@@ -57,7 +57,7 @@ func binaryOpDepth(left typ.Type, op string, right typ.Type, depth int) (typ.Typ
 	if op != ".." && (isNilOrOptional(left) || isNilOrOptional(right)) {
 		return nil, false
 	}
-	if result, ok := dynamicBinaryResult(left, right); ok {
+	if result, ok := dynamicBinaryResult(left, op, right); ok {
 		return result, true
 	}
 
@@ -237,16 +237,27 @@ func normalizeOperatorResults(results ...typ.Type) typ.Type {
 	return normalize.UnionForEvidence(results...)
 }
 
-func dynamicBinaryResult(left, right typ.Type) (typ.Type, bool) {
+func dynamicBinaryResult(left typ.Type, op string, right typ.Type) (typ.Type, bool) {
 	switch {
 	case typ.IsNever(left) || typ.IsNever(right):
 		return typ.Never, true
+	case isOrderedComparisonOp(op) && (typ.IsAny(left) || typ.IsAny(right) || typ.IsUnknown(left) || typ.IsUnknown(right)):
+		return typ.Boolean, true
 	case typ.IsAny(left) || typ.IsAny(right):
 		return typ.Unknown, true
 	case typ.IsUnknown(left) || typ.IsUnknown(right):
 		return typ.Unknown, true
 	default:
 		return nil, false
+	}
+}
+
+func isOrderedComparisonOp(op string) bool {
+	switch op {
+	case "<", ">", "<=", ">=":
+		return true
+	default:
+		return false
 	}
 }
 

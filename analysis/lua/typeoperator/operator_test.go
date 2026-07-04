@@ -253,11 +253,11 @@ func TestOperatorAnyUnknownNeverPolicy(t *testing.T) {
 	}{
 		{name: "any arithmetic", left: typ.Any, op: "+", right: typ.String, want: typ.Unknown},
 		{name: "any concat", left: typ.Any, op: "..", right: typ.String, want: typ.Unknown},
-		{name: "any ordering", left: typ.Any, op: "<", right: typ.Number, want: typ.Unknown},
+		{name: "any ordering", left: typ.Any, op: "<", right: typ.Number, want: typ.Boolean},
 		{name: "any bitwise", left: typ.Any, op: "&", right: typ.Integer, want: typ.Unknown},
 		{name: "unknown arithmetic", left: typ.Unknown, op: "+", right: typ.String, want: typ.Unknown},
 		{name: "never arithmetic", left: typ.Never, op: "+", right: typ.Integer, want: typ.Never},
-		{name: "unknown relation", left: typ.Unknown, op: "<", right: typ.Number, want: typ.Unknown},
+		{name: "unknown relation", left: typ.Unknown, op: "<", right: typ.Number, want: typ.Boolean},
 		{name: "never equality is invariant boolean", left: typ.Never, op: "==", right: typ.Integer, want: typ.Boolean},
 	}
 

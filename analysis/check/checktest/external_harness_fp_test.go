@@ -2361,6 +2361,28 @@ end
 	})
 }
 
+func TestCheckRelationalExpressionWithDynamicDefaultSatisfiesBooleanReturn(t *testing.T) {
+	result := Check(`
+local function should_recall_memory(messages: any, options: any): boolean
+    local cooldown = options.recall_cooldown or 1
+    local messages_since_recall = 0
+
+    for i = #messages, 1, -1 do
+        local message = messages[i]
+        if message.metadata and message.metadata.memory_ids then
+            break
+        end
+        messages_since_recall = messages_since_recall + 1
+    end
+
+    return messages_since_recall >= cooldown
+end
+`, WithStdlib())
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeReturnContractType) {
+		t.Fatalf("diagnostics = %#v, want relational expression result to prove boolean return", result.Diagnostics)
+	}
+}
+
 func TestCheckUntypedMessageMetadataDefaultDoesNotValidateTable(t *testing.T) {
 	result := Check(`
 local function build(messages: any): ()
