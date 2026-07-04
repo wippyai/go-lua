@@ -209,6 +209,11 @@ func (r *Result) ExpressionReadProvenPresentBeforeBoundary(point cfg.Point, expr
 	if r == nil || expr == nil {
 		return false
 	}
+	if attr, ok := expr.(*ast.AttrGetExpr); ok && attr.KeySyntax == ast.AttrKeyIndex && attr.Object != nil && attr.Key != nil {
+		if containerPath, ok := r.ExpressionPath(attr.Object); ok && r.IndexReadSafeForExpressionAtBoundary(point, attr.Key, containerPath) {
+			return true
+		}
+	}
 	if p, ok := r.ExpressionPath(expr); ok && r.PathProvenPresentBeforeBoundary(point, p) {
 		return true
 	} else if ok && r.requiredPathDescendantProvenPresentBeforeBoundary(point, p) {

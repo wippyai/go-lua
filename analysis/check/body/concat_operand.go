@@ -393,7 +393,10 @@ func (r *Result) concatIndexedReadType(point cfg.Point, attr *ast.AttrGetExpr) (
 	}
 	key, ok := r.ExpressionTypeBeforeBoundary(point, attr.Key)
 	if !ok || key == nil {
-		return nil, false
+		key, ok = r.NumericIndexExpressionTypeAtBoundary(point, attr.Key)
+		if !ok || key == nil {
+			return nil, false
+		}
 	}
 	indexed, ok := access.RuntimeIndex(container, key)
 	if !ok || indexed == nil {

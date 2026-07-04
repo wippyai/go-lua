@@ -1112,6 +1112,125 @@ end`)
 	assertPresence(t, reg, value, presence.Present())
 }
 
+func TestCheckFunctionNumericForZeroStartDoesNotMarkIndexReadSafe(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function labels(xs: {string})
+	for i = 0, #xs do
+		local v: string? = xs[i]
+	end
+end`)
+
+	result, err := CheckFunction(fn, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	point, expr := requireLocalAssignmentExprByName(t, result, "v")
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok {
+		t.Fatalf("v source = %T, want indexed attr", expr)
+	}
+	arrayPath, ok := result.ExpressionPath(attr.Object)
+	if !ok {
+		t.Fatal("array expression path not found")
+	}
+	indexPath, ok := result.ExpressionPath(attr.Key)
+	if !ok {
+		t.Fatal("index expression path not found")
+	}
+	if !result.IndexInRangeAtBoundary(point, indexPath, arrayPath) {
+		t.Fatalf("missing upper-bound proof for %s <= len(%s)", indexPath, arrayPath)
+	}
+	if floor, ok := result.NumericFloorAtBoundary(point, indexPath); ok && floor >= 1 {
+		t.Fatalf("unexpected positive floor for zero-start numeric-for index: %d", floor)
+	}
+	if result.IndexReadSafeAtBoundary(point, indexPath, 1, 0, arrayPath) {
+		t.Fatalf("index read %s[%s] marked safe with upper-bound proof but no positive floor", arrayPath, indexPath)
+	}
+	value, ok := result.ExpressionValueBeforeBoundary(point, attr)
+	if !ok {
+		t.Fatal("ExpressionValueBeforeBoundary for xs[i] returned false")
+	}
+	assertPresence(t, reg, value, presence.Maybe())
+}
+
+func TestCheckFunctionNumericForDifferentLengthDoesNotMarkIndexReadSafe(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function labels(xs: {string}, bounds: {string})
+	for i = 1, #bounds do
+		local v: string? = xs[i]
+	end
+end`)
+
+	result, err := CheckFunction(fn, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	point, expr := requireLocalAssignmentExprByName(t, result, "v")
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok {
+		t.Fatalf("v source = %T, want indexed attr", expr)
+	}
+	arrayPath, ok := result.ExpressionPath(attr.Object)
+	if !ok {
+		t.Fatal("array expression path not found")
+	}
+	indexPath, ok := result.ExpressionPath(attr.Key)
+	if !ok {
+		t.Fatal("index expression path not found")
+	}
+	if result.IndexInRangeAtBoundary(point, indexPath, arrayPath) {
+		t.Fatalf("index read %s[%s] has upper-bound proof from unrelated loop bound", arrayPath, indexPath)
+	}
+	if result.IndexReadSafeAtBoundary(point, indexPath, 1, 0, arrayPath) {
+		t.Fatalf("index read %s[%s] marked safe with unrelated loop bound", arrayPath, indexPath)
+	}
+	value, ok := result.ExpressionValueBeforeBoundary(point, attr)
+	if !ok {
+		t.Fatal("ExpressionValueBeforeBoundary for xs[i] returned false")
+	}
+	assertPresence(t, reg, value, presence.Maybe())
+}
+
+func TestCheckFunctionNumericForUnsafeIndexConcatProducesNilRiskOccurrence(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function labels(xs: {string})
+	for i = 0, #xs do
+		local label: string = "item:" .. xs[i]
+	end
+end`)
+
+	result, err := CheckFunction(fn, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	point, expr := requireLocalAssignmentExprByName(t, result, "label")
+	concat, ok := expr.(*ast.StringConcatOpExpr)
+	if !ok {
+		t.Fatalf("label source = %T, want string concat", expr)
+	}
+	if occ, ok := result.concatOperand(point, concat.Rhs, "right", concatOperandContext{}); !ok {
+		t.Fatal("direct concat operand projection did not report nil-risk unsafe numeric-for index read")
+	} else if !typevalue.ProjectionHasNil(occ.TypeWithPresence) {
+		t.Fatalf("concat occurrence type = %v, want nil-risk type", occ.TypeWithPresence)
+	}
+	found := false
+	result.ForEachConcatOperandOccurrence(func(occ ConcatOperandOccurrence) bool {
+		if occ.Side == "right" && occ.OperandLabel == "xs[i]" {
+			found = true
+			if !typevalue.ProjectionHasNil(occ.TypeWithPresence) {
+				t.Fatalf("concat occurrence type = %v, want nil-risk type", occ.TypeWithPresence)
+			}
+		}
+		return true
+	})
+	if !found {
+		t.Fatal("missing nil-risk concat occurrence for unsafe numeric-for index read")
+	}
+}
+
 func TestCheckFunctionReverseNumericForLengthInitCarriesRangeAndPositiveProofs(t *testing.T) {
 	reg := standard.Registry()
 	fn := parseFunction(t, `
