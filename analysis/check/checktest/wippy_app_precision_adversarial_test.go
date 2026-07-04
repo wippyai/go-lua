@@ -5781,8 +5781,8 @@ type Builder = {
     get_messages: (self: Builder) -> {Message},
 }
 
-function M.new(): Builder
-    local messages: {Message} = {}
+function M.new(messages: {Message}?)
+    local stored_messages: {Message} = messages or {}
     return {
         add_system = function(self: Builder, text: string): () end,
         add_user = function(self: Builder, text: string): () end,
@@ -5792,7 +5792,7 @@ function M.new(): Builder
         add_function_call = function(self: Builder, name: string, args: string, call_id: string, opts: table?): () end,
         add_function_result = function(self: Builder, name: string, result: string, call_id: string): () end,
         get_messages = function(self: Builder): {Message}
-            return messages
+            return stored_messages
         end,
     }
 end
@@ -5969,6 +5969,93 @@ local built = builder:get_messages()
 `, WithStdlib(), WithModule("prompt_builder", builderMod), WithModule("consts", constsMod), WithModule("testassert", assertMod))
 	if len(result.Diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want prompt_builder-shaped imported build relation plus imported nil assertion to prove builder present", result.Diagnostics)
+	}
+}
+
+func TestCheckImportedPromptBuilderReturnCorrelationSurvivesIndependentBodyDiagnostic(t *testing.T) {
+	promptMod := CheckAndExport(`
+local M = {}
+
+type Message = { role: string, content: string? }
+type Builder = {
+    get_messages: (self: Builder) -> {Message},
+}
+
+function M.new(messages: {Message}?)
+    local stored_messages: {Message} = messages or {}
+    return {
+        get_messages = function(self: Builder): {Message}
+            return stored_messages
+        end,
+    }
+end
+
+return M
+`, "prompt", WithStdlib())
+	if len(promptMod.Errors) != 0 {
+		t.Fatalf("prompt module diagnostics = %#v, want clean constructor export", promptMod.Errors)
+	}
+
+	builderMod := CheckAndExport(`
+local M = {
+    _prompt = require("prompt"),
+}
+
+function M.build(messages, options)
+    if not messages then
+        return nil, "Messages are required"
+    end
+
+    local builder = M._prompt.new()
+    for _, msg in ipairs(messages) do
+        local metadata: table = msg.metadata or {}
+        if metadata.skip then
+            -- The metadata assignment above is a separate body diagnostic when
+            -- messages is untyped. It must not erase the proven build result
+            -- shape: normal success still returns builder, nil.
+        end
+    end
+    return builder, nil
+end
+
+return M
+`, "prompt_builder", WithStdlib(), WithModule("prompt", promptMod))
+	if len(builderMod.Errors) == 0 {
+		t.Fatalf("prompt_builder module diagnostics = %#v, want independent body diagnostic to exercise partial-summary export", builderMod.Errors)
+	}
+
+	assertMod := CheckAndExport(`
+local M = {}
+
+function M.is_nil(val: any, msg: string?)
+    if val ~= nil then
+        error((msg or "assertion failed") .. ": expected nil")
+    end
+end
+
+return M
+`, "testassert", WithStdlib())
+	if len(assertMod.Errors) != 0 {
+		t.Fatalf("assert module diagnostics = %#v, want clean helper export", assertMod.Errors)
+	}
+
+	result := Check(`
+local prompt_builder = require("prompt_builder")
+local test = require("testassert")
+
+local messages = {
+    {
+        message_id = "msg-1",
+        metadata = { skip = false },
+    }
+}
+
+local builder, err = prompt_builder.build(messages, {})
+test.is_nil(err)
+local built = builder:get_messages()
+`, WithStdlib(), WithModule("prompt_builder", builderMod), WithModule("testassert", assertMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want exported result correlation to survive unrelated callee body diagnostic", result.Diagnostics)
 	}
 }
 
