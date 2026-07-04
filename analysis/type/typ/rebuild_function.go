@@ -31,6 +31,7 @@ func newCanonicalFunction(
 	variadic Type,
 	returns []Type,
 ) *Function {
+	returns = normalizeFunctionReturns(returns)
 	h := uint64(kind.Function)
 	typeParamsCopy := make([]*TypeParam, len(typeParams))
 	for i, tp := range typeParams {
@@ -76,6 +77,35 @@ func newCanonicalFunction(
 		hash:           h,
 		typeProperties: props,
 	}
+}
+
+func normalizeFunctionReturns(returns []Type) []Type {
+	if len(returns) == 0 {
+		return nil
+	}
+	var out []Type
+	for i, r := range returns {
+		r = requiredFunctionSlotType("returns", r)
+		if tuple, ok := r.(*Tuple); ok {
+			if out == nil {
+				out = make([]Type, 0, len(returns)+len(tuple.Elements))
+				for _, prefix := range returns[:i] {
+					out = append(out, requiredFunctionSlotType("returns", prefix))
+				}
+			}
+			for _, elem := range tuple.Elements {
+				out = append(out, requiredFunctionSlotType("returns", elem))
+			}
+			continue
+		}
+		if out != nil {
+			out = append(out, r)
+		}
+	}
+	if out != nil {
+		return out
+	}
+	return returns
 }
 
 func requiredFunctionSlotType(slot string, t Type) Type {

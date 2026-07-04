@@ -108,6 +108,28 @@ func TestFunctionMultiReturn(t *testing.T) {
 	}
 }
 
+func TestFunctionReturnTupleCanonicalizesToReturnList(t *testing.T) {
+	single := Func().
+		Returns(NewTuple(String)).
+		Build()
+	if len(single.Returns) != 1 || single.Returns[0] != String {
+		t.Fatalf("single tuple returns = %#v, want scalar string return", single.Returns)
+	}
+	if single.String() != "fun() -> string" {
+		t.Fatalf("single tuple string = %q, want scalar return display", single.String())
+	}
+
+	multi := Func().
+		Returns(Boolean, NewTuple(Number, String)).
+		Build()
+	if len(multi.Returns) != 3 || multi.Returns[0] != Boolean || multi.Returns[1] != Number || multi.Returns[2] != String {
+		t.Fatalf("multi tuple returns = %#v, want flattened return list", multi.Returns)
+	}
+	if multi.String() != "fun() -> (boolean, number, string)" {
+		t.Fatalf("multi tuple string = %q, want flattened return display", multi.String())
+	}
+}
+
 func TestFunctionEquality(t *testing.T) {
 	f1 := Func().Param("x", Number).Returns(Boolean).Build()
 	f2 := Func().Param("y", Number).Returns(Boolean).Build()

@@ -8862,6 +8862,139 @@ return claude_client
 	}
 }
 
+func TestCheckSingleReturnTupleCallArgumentProjectsToScalar(t *testing.T) {
+	sqlManifest := sqlWrapperManifest()
+	data, err := manifest.Encode(sqlManifest)
+	if err != nil {
+		t.Fatalf("Encode sql manifest: %v", err)
+	}
+	decodedSQL, err := manifest.Decode(data)
+	if err != nil {
+		t.Fatalf("Decode sql manifest: %v", err)
+	}
+
+	result := Check(`
+local sql = require("sql")
+
+local function run(session_id: string, kind: string): ()
+    local query = sql.builder.select("COUNT(*) as count")
+        :from("artifacts")
+        :where(sql.builder.and_({
+            sql.builder.expr("session_id = ?", session_id),
+            sql.builder.expr("kind = ?", kind)
+        }))
+end
+`, WithStdlib(), WithManifest("sql", decodedSQL))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want round-tripped single-result sqlizer call argument to project to its scalar value", result.Diagnostics)
+	}
+}
+
+func TestCheckImportedSingleTupleReturnCallArgumentProjectsToScalar(t *testing.T) {
+	sqlizerType := typ.NewInterface("sql.Sqlizer", []typ.Method{
+		{
+			Name: "to_sql",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Returns(typ.String, typ.NewArray(typ.Any), typeexpr.Optional(typ.String)).
+				Build(),
+		},
+	})
+	queryType := typ.NewInterface("sql.Query", []typ.Method{
+		{
+			Name: "where",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Param("condition", sqlizerType).
+				Returns(typ.Self).
+				Build(),
+		},
+	})
+	builderType := typetable.NewRecord().
+		Field("select", typ.Func().
+			Param("field", typ.String).
+			Returns(queryType).
+			Build()).
+		Field("expr", typ.Func().
+			Param("sql", typ.String).
+			Variadic(typ.Any).
+			Returns(typ.NewTuple(sqlizerType)).
+			Build()).
+		Field("and_", typ.Func().
+			Param("conditions", typ.NewArray(sqlizerType)).
+			Returns(typ.NewTuple(sqlizerType)).
+			Build()).
+		Build()
+	sqlManifest := manifest.New("sql")
+	sqlManifest.DefineType("Sqlizer", sqlizerType)
+	sqlManifest.SetExport(typetable.NewRecord().
+		Field("builder", builderType).
+		Build())
+
+	result := Check(`
+local sql = require("sql")
+
+local function run(session_id: string, kind: string): ()
+    local query = sql.builder.select("COUNT(*) as count")
+        :where(sql.builder.and_({
+            sql.builder.expr("session_id = ?", session_id),
+            sql.builder.expr("kind = ?", kind)
+        }))
+end
+`, WithStdlib(), WithManifest("sql", sqlManifest))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want imported single-tuple return call argument to project to its scalar value", result.Diagnostics)
+	}
+}
+
+func TestCheckVariadicInterfaceArgumentRejectsTableLiteralAsTable(t *testing.T) {
+	sqlizerType := typ.NewInterface("sql.Sqlizer", []typ.Method{
+		{
+			Name: "to_sql",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Returns(typ.String, typ.NewArray(typ.Any), typeexpr.Optional(typ.String)).
+				Build(),
+		},
+	})
+	builderType := typetable.NewRecord().
+		Field("expr", typ.Func().
+			Param("sql", typ.String).
+			Variadic(typ.Any).
+			Returns(sqlizerType).
+			Build()).
+		Field("and_", typ.Func().
+			Variadic(sqlizerType).
+			Returns(sqlizerType).
+			Build()).
+		Build()
+	sqlManifest := manifest.New("sql")
+	sqlManifest.DefineType("Sqlizer", sqlizerType)
+	sqlManifest.SetExport(typetable.NewRecord().
+		Field("builder", builderType).
+		Build())
+
+	result := Check(`
+local sql = require("sql")
+
+local function run(session_id: string, kind: string): ()
+    sql.builder.and_({
+        sql.builder.expr("session_id = ?", session_id),
+        sql.builder.expr("kind = ?", kind)
+    })
+end
+`, WithStdlib(), WithManifest("sql", sqlManifest))
+	if len(result.Diagnostics) == 0 {
+		t.Fatalf("diagnostics = none, want table literal rejected when variadic Sqlizer is required")
+	}
+	for _, diag := range result.Diagnostics {
+		if strings.Contains(diag.Message, "is sql.Sqlizer, not sql.Sqlizer") ||
+			strings.Contains(diag.Message, "is (sql.Sqlizer), not sql.Sqlizer") {
+			t.Fatalf("diagnostic = %q, want mismatch reported on table literal argument, not a self-contradictory element", diag.Message)
+		}
+	}
+}
+
 func TestCheckInsertedMessageRowsPreserveContentMemberThroughIPairs(t *testing.T) {
 	result := Check(`
 local function merge_messages(contract_messages): ()

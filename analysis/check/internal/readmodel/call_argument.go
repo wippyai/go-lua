@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // callArgumentMismatchSubjectPlan projects object-literal facts into pure
@@ -34,36 +35,38 @@ func (r Reader) callArgumentMismatchSubjectPlan(point cfg.Point, arg CallArgumen
 		Argument: arg,
 		Expected: want,
 	}
-	for _, entry := range lit.Entries() {
-		suffix := entry.Suffix()
-		expected, ok := body.ExpectedTypeAtSegments(want, suffix.Segments)
-		if !ok || expected == nil {
-			continue
+	if callArgumentExpectedHasObjectEntries(want) {
+		for _, entry := range lit.Entries() {
+			suffix := entry.Suffix()
+			expected, ok := body.ExpectedTypeAtSegments(want, suffix.Segments)
+			if !ok || expected == nil {
+				continue
+			}
+			value, ok := r.objectEntryValue(point, entry)
+			if !ok {
+				continue
+			}
+			got, _ := r.ValueTypeWithPresence(value)
+			if arg.FunctionType != nil {
+				got = arg.FunctionType
+			}
+			plan.Candidates = append(plan.Candidates, readapi.CallArgumentMismatchCandidate{
+				Argument: CallArgument{
+					Index:                arg.Index,
+					Value:                value,
+					ValueHash:            r.ValueHash(value),
+					TypeWithPresence:     got,
+					UntrustedTopOrigin:   r.ValueHasUntrustedTopOrigin(value),
+					CallerOwnedParameter: arg.CallerOwnedParameter,
+					FunctionType:         arg.FunctionType,
+					Span:                 sourceSpanFromFactflow(entry.ValueSpan()),
+					Label:                readapi.CallArgumentMemberLabel(arg.Index, suffix.Segments, entry.ValueLabel()),
+				},
+				Expected:    expected,
+				LabelSuffix: readapi.CallArgumentExpectedLabelSuffix(suffix.Segments),
+				Admissible:  r.ValueProofAdmissible(value, expected),
+			})
 		}
-		value, ok := r.objectEntryValue(point, entry)
-		if !ok {
-			continue
-		}
-		got, _ := r.ValueTypeWithPresence(value)
-		if arg.FunctionType != nil {
-			got = arg.FunctionType
-		}
-		plan.Candidates = append(plan.Candidates, readapi.CallArgumentMismatchCandidate{
-			Argument: CallArgument{
-				Index:                arg.Index,
-				Value:                value,
-				ValueHash:            r.ValueHash(value),
-				TypeWithPresence:     got,
-				UntrustedTopOrigin:   r.ValueHasUntrustedTopOrigin(value),
-				CallerOwnedParameter: arg.CallerOwnedParameter,
-				FunctionType:         arg.FunctionType,
-				Span:                 sourceSpanFromFactflow(entry.ValueSpan()),
-				Label:                readapi.CallArgumentMemberLabel(arg.Index, suffix.Segments, entry.ValueLabel()),
-			},
-			Expected:    expected,
-			LabelSuffix: readapi.CallArgumentExpectedLabelSuffix(suffix.Segments),
-			Admissible:  r.ValueProofAdmissible(value, expected),
-		})
 	}
 	if field, ok := body.MissingRequiredRecordField(want, func(name string) bool {
 		for _, entry := range lit.Entries() {
@@ -92,6 +95,20 @@ func (r Reader) callArgumentMismatchSubjectPlan(point cfg.Point, arg CallArgumen
 		}
 	}
 	return plan, true
+}
+
+func callArgumentExpectedHasObjectEntries(t typ.Type) bool {
+	switch tt := unwrap.Optional(t).(type) {
+	case *typ.Record, *typ.Array, *typ.Map, *typ.ReadonlyMap, *typ.Tuple:
+		return true
+	case *typ.Union:
+		for _, member := range tt.Members {
+			if callArgumentExpectedHasObjectEntries(member) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // checkCallArgument returns the complete solved proof result for one argument

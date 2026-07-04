@@ -152,10 +152,29 @@ func directCallArgumentJudgmentMessage(display diagnosticDisplay, item judgment.
 	}
 	gotText := display.Type(got)
 	wantText := display.Type(want)
+	if tupleText, ok := directCallArgumentTupleValueText(display, got, want); ok {
+		return fmt.Sprintf("%s is %s, not %s", wording.Subject, tupleText, wantText)
+	}
 	if gotText == wantText {
 		return fmt.Sprintf("cannot prove %s satisfies parameter type %s", wording.Subject, wantText)
 	}
 	return fmt.Sprintf("%s is %s, not %s", wording.Subject, gotText, wantText)
+}
+
+func directCallArgumentTupleValueText(display diagnosticDisplay, got, want typ.Type) (string, bool) {
+	tuple, ok := got.(*typ.Tuple)
+	if !ok || len(tuple.Elements) == 0 || want == nil {
+		return "", false
+	}
+	for _, elem := range tuple.Elements {
+		if !typ.TypeEquals(elem, want) {
+			return "", false
+		}
+	}
+	if len(tuple.Elements) == 1 {
+		return "a tuple/table value containing " + display.Type(tuple.Elements[0]), true
+	}
+	return "a tuple/table value containing " + display.Type(tuple.Elements[0]) + " values", true
 }
 
 func directCallArgumentJudgmentHelp(display diagnosticDisplay, wording directCallArgumentWording, mayBeNil bool, precisionBoundary bool, genericConflict bool, genericParam string) string {
