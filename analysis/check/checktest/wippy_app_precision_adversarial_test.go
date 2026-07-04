@@ -5765,6 +5765,213 @@ end
 	}
 }
 
+func TestCheckImportedPromptBuilderShapePreservesErrorReturnCorrelation(t *testing.T) {
+	promptMod := CheckAndExport(`
+local M = {}
+
+type Message = { role: string, content: string? }
+type Builder = {
+    add_system: (self: Builder, text: string) -> (),
+    add_user: (self: Builder, text: string) -> (),
+    add_developer: (self: Builder, text: string, metadata: table?) -> (),
+    add_assistant: (self: Builder, text: string, metadata: table?) -> (),
+    add_cache_marker: (self: Builder, text: string) -> (),
+    add_function_call: (self: Builder, name: string, args: string, call_id: string, opts: table?) -> (),
+    add_function_result: (self: Builder, name: string, result: string, call_id: string) -> (),
+    get_messages: (self: Builder) -> {Message},
+}
+
+function M.new(): Builder
+    local messages: {Message} = {}
+    return {
+        add_system = function(self: Builder, text: string): () end,
+        add_user = function(self: Builder, text: string): () end,
+        add_developer = function(self: Builder, text: string, metadata: table?): () end,
+        add_assistant = function(self: Builder, text: string, metadata: table?): () end,
+        add_cache_marker = function(self: Builder, text: string): () end,
+        add_function_call = function(self: Builder, name: string, args: string, call_id: string, opts: table?): () end,
+        add_function_result = function(self: Builder, name: string, result: string, call_id: string): () end,
+        get_messages = function(self: Builder): {Message}
+            return messages
+        end,
+    }
+end
+
+return M
+`, "prompt", WithStdlib())
+	if len(promptMod.Errors) != 0 {
+		t.Fatalf("prompt module diagnostics = %#v, want clean constructor export", promptMod.Errors)
+	}
+
+	constsMod := CheckAndExport(`
+local M = {
+    MSG_TYPE = {
+        USER = "user",
+        ASSISTANT = "assistant",
+        SYSTEM = "system",
+        DEVELOPER = "developer",
+        FUNCTION = "function",
+        PRIVATE_FUNCTION = "private_function",
+        ARTIFACT = "artifact",
+        DELEGATION = "delegation",
+    },
+    FUNC_STATUS = {
+        PENDING = "pending",
+        SUCCESS = "success",
+        ERROR = "error",
+    },
+}
+return M
+`, "consts", WithStdlib())
+	if len(constsMod.Errors) != 0 {
+		t.Fatalf("consts module diagnostics = %#v, want clean const export", constsMod.Errors)
+	}
+
+	jsonMod := CheckAndExport(`
+local M = {}
+function M.decode(text: string)
+    return text, nil
+end
+function M.encode(value: any): string
+    return tostring(value)
+end
+return M
+`, "json", WithStdlib())
+	if len(jsonMod.Errors) != 0 {
+		t.Fatalf("json module diagnostics = %#v, want clean json export", jsonMod.Errors)
+	}
+
+	builderMod := CheckAndExport(`
+local json = require("json")
+local consts = require("consts")
+
+local M = {
+    _prompt = require("prompt"),
+}
+
+function M.build(messages, contexts, session_meta, options)
+    if not messages then
+        return nil, "Messages are required"
+    end
+
+    options = options or {}
+    local include_contexts = options.include_contexts ~= false
+    local cache_markers = options.cache_markers ~= false
+    local builder = M._prompt.new()
+
+    if include_contexts and contexts and #contexts > 0 then
+        local memory_text = "Session context memory:\n\n"
+        for _, context in ipairs(contexts) do
+            memory_text = memory_text .. "## " .. tostring(context.type) .. "\n" .. tostring(context.text) .. "\n\n"
+        end
+        builder:add_system(memory_text)
+        if cache_markers then
+            builder:add_cache_marker("context_memories")
+        end
+    end
+
+    for _, msg in ipairs(messages) do
+        local metadata: table = {}
+        if type(msg.metadata) == "table" then
+            metadata = msg.metadata :: table
+        end
+        if msg.type == consts.MSG_TYPE.USER then
+            builder:add_user(msg.data :: string)
+            if cache_markers and metadata.last_checkpoint then
+                builder:add_cache_marker("checkpoint_" .. tostring(msg.message_id))
+            end
+        elseif msg.type == consts.MSG_TYPE.ASSISTANT then
+            builder:add_assistant(msg.data :: string, metadata)
+        elseif msg.type == consts.MSG_TYPE.DEVELOPER then
+            builder:add_developer(msg.data :: string, metadata)
+        elseif msg.type == consts.MSG_TYPE.FUNCTION then
+            local func_name = tostring(metadata.function_name)
+            if func_name ~= "" and metadata.status then
+                local args = msg.data
+                if type(args) == "string" then
+                    local parsed, parse_err = json.decode(args)
+                    if not parse_err then
+                        args = parsed
+                    end
+                end
+                local llm_call_id = tostring(metadata.call_id or msg.message_id)
+                builder:add_function_call(func_name, args :: string, llm_call_id, nil)
+                if metadata.status == consts.FUNC_STATUS.PENDING then
+                    builder:add_function_result(func_name, "incomplete", llm_call_id)
+                elseif metadata.status == consts.FUNC_STATUS.SUCCESS or metadata.status == consts.FUNC_STATUS.ERROR then
+                    local result_content = metadata.result
+                    if type(result_content) == "table" then
+                        result_content = json.encode(result_content)
+                    elseif result_content == nil then
+                        result_content = "nil"
+                    else
+                        result_content = tostring(result_content)
+                    end
+                    builder:add_function_result(func_name, tostring(result_content), llm_call_id)
+                end
+            end
+        elseif msg.type == consts.MSG_TYPE.ARTIFACT then
+            if msg.data and msg.data ~= "" then
+                builder:add_developer("Artifact: " .. tostring(msg.data), metadata)
+            end
+        end
+    end
+
+    return builder, nil
+end
+
+return M
+`, "prompt_builder", WithStdlib(), WithModule("prompt", promptMod), WithModule("consts", constsMod), WithModule("json", jsonMod))
+	if len(builderMod.Errors) != 0 {
+		t.Fatalf("prompt_builder module diagnostics = %#v, want clean build export", builderMod.Errors)
+	}
+
+	assertMod := CheckAndExport(`
+local M = {}
+
+function M.is_nil(val: any, msg: string?)
+    if val ~= nil then
+        error((msg or "assertion failed") .. ": expected nil")
+    end
+end
+
+return M
+`, "testassert", WithStdlib())
+	if len(assertMod.Errors) != 0 {
+		t.Fatalf("assert module diagnostics = %#v, want clean helper export", assertMod.Errors)
+	}
+
+	result := Check(`
+local prompt_builder = require("prompt_builder")
+local consts = require("consts")
+local test = require("testassert")
+
+local messages = {
+    {
+        message_id = "msg-1",
+        type = consts.MSG_TYPE.FUNCTION,
+        data = "{}",
+        metadata = {
+            function_name = "execute",
+            call_id = "call-1",
+            status = consts.FUNC_STATUS.PENDING,
+        }
+    }
+}
+
+local builder, err = prompt_builder.build(messages, {}, {}, {
+    include_contexts = false,
+    cache_markers = false,
+})
+
+test.is_nil(err)
+local built = builder:get_messages()
+`, WithStdlib(), WithModule("prompt_builder", builderMod), WithModule("consts", constsMod), WithModule("testassert", assertMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want prompt_builder-shaped imported build relation plus imported nil assertion to prove builder present", result.Diagnostics)
+	}
+}
+
 func TestCheckDeclaredStringMapDynamicWriteUsesAnnotationNotLiteralInitializerSlots(t *testing.T) {
 	result := Check(`
 local function prepare_headers(config: {headers: {[string]: string}?}): {[string]: string}

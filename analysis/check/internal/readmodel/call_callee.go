@@ -6,6 +6,8 @@ import (
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -64,6 +66,9 @@ func (r Reader) callCalleeReport(point cfg.Point, site factflow.CallSite) CallCa
 	if !ok {
 		return CallCalleeReport{}
 	}
+	if r.calleeValueProvenFunction(value) && !readapi.TypeIncludesNil(t) {
+		return CallCalleeReport{}
+	}
 	if declared, ok := r.declaredCalleeType(p); ok {
 		if readapi.CallCalleeDeclaredNilOwnedByDeclaration(t, declared) {
 			return CallCalleeReport{}
@@ -99,6 +104,16 @@ func (r Reader) callCalleeReport(point cfg.Point, site factflow.CallSite) CallCa
 		Span:                         sourceSpanFromFactflow(site.CalleeSpan()),
 		CallSpan:                     sourceSpanFromFactflow(site.CallSpan()),
 	})
+}
+
+func (r Reader) calleeValueProvenFunction(value product.Value) bool {
+	if r.result == nil || r.result.Registry() == nil {
+		return false
+	}
+	kinds := product.Get(r.result.Registry(), value, runtimekind.Key)
+	return !kinds.IsTop() && !kinds.IsBottom() &&
+		kinds.Contains(runtimekind.Function) &&
+		!kinds.Contains(runtimekind.Nil)
 }
 
 func (r Reader) impreciseMemberCalleeRequiresProof(point cfg.Point, site factflow.CallSite) bool {

@@ -678,6 +678,97 @@ local kind: string = err:kind()
 	}
 }
 
+func TestCheckerPreservesImportAliasSignatureEffectsThroughRequire(t *testing.T) {
+	assertMod := analysistest.CheckAndExport(`
+local M = {}
+
+function M.is_string(value, msg)
+	if type(value) ~= "string" then
+		error(msg or "expected string", 2)
+	end
+	return value
+end
+
+return M
+`, "app.lib:assert", analysistest.WithStdlib())
+	if len(assertMod.Errors) != 0 {
+		t.Fatalf("assert module diagnostics = %#v, want clean helper export", assertMod.Errors)
+	}
+	assertManifest := roundTripFacadeManifest(t, "app.lib:assert", assertMod.Manifest)
+
+	chunk, err := parse.ParseString(`
+local assert = require("assert2")
+
+local function check(result: {err: any}): boolean
+	assert.is_string(result.err, "error must be string, got " .. type(result.err))
+	local hit = string.find(result.err, "not allowed", 1, true)
+	return hit ~= nil
+end
+`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	database := db.New()
+	database.Connect("assert2", assertManifest)
+
+	checker := NewChecker(database, Deps{})
+	session := checker.CheckChunkWithImports(chunk, "test.lua", map[string]*typemanifest.Manifest{
+		"assert2": assertManifest,
+	})
+	if len(session.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want require alias to preserve import signature effects", session.Diagnostics)
+	}
+}
+
+func TestCheckerPreservesRequireAliasSignatureEffectsFromDirtyModuleManifest(t *testing.T) {
+	assertMod := analysistest.CheckAndExport(`
+local M = {}
+
+function M.is_string(value, msg)
+	if type(value) ~= "string" then
+		error(msg or "expected string", 2)
+	end
+	return value
+end
+
+function M.unrelated_bad_helper(err, substr)
+	local actual_msg = type(err) == "table" and err.message or tostring(err)
+	return string.find(actual_msg, substr, 1, true)
+end
+
+return M
+`, "app.lib:assert", analysistest.WithStdlib())
+	if len(assertMod.Errors) == 0 {
+		t.Fatalf("assert module unexpectedly clean; fixture must keep an unrelated dirty helper")
+	}
+	assertManifest := roundTripFacadeManifest(t, "app.lib:assert", assertMod.Manifest)
+
+	chunk, err := parse.ParseString(`
+local assert = require("assert2")
+
+local function check(result: {err: any}): boolean
+	assert.is_string(result.err, "error must be string, got " .. type(result.err))
+	local hit = string.find(result.err, "not allowed", 1, true)
+	return hit ~= nil
+end
+`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	database := db.New()
+	database.Connect("assert2", assertManifest)
+
+	checker := NewChecker(database, Deps{})
+	session := checker.CheckChunkWithImports(chunk, "test.lua", map[string]*typemanifest.Manifest{
+		"assert2": assertManifest,
+	})
+	if len(session.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want dirty imported module to preserve independent require alias signature effects", session.Diagnostics)
+	}
+}
+
 func TestCheckerPreservesManifestAliasCastThroughUnannotatedChannelSelectHelper(t *testing.T) {
 	chunk, err := parse.ParseString(`
 type Message = process.Message

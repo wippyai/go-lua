@@ -95,13 +95,97 @@ return M
 local assert = require("assert2")
 
 local function check(result: {err: any}): boolean
-    assert.is_string(result.err, "error must be string")
+    assert.is_string(result.err, "error must be string, got " .. type(result.err))
     local hit = string.find(result.err, "not allowed", 1, true)
     return hit ~= nil
 end
 `, WithStdlib(), WithModule("assert2", assertMod))
 	if len(result.Diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want imported type assertion to refine result.err to string", result.Diagnostics)
+	}
+}
+
+func TestCheckImportedTypeAssertSurvivesUnrelatedModuleDiagnostic(t *testing.T) {
+	assertMod := CheckAndExport(`
+local M = {}
+
+function M.is_string(value, msg)
+    if type(value) ~= "string" then
+        error(msg or "expected string", 2)
+    end
+    return value
+end
+
+function M.unrelated_bad_helper(err, substr)
+    local actual_msg = type(err) == "table" and err.message or tostring(err)
+    return string.find(actual_msg, substr, 1, true)
+end
+
+return M
+`, "assert2", WithStdlib())
+	if len(assertMod.Errors) == 0 {
+		t.Fatalf("assert module unexpectedly clean; fixture must keep an unrelated dirty helper")
+	}
+
+	result := Check(`
+local assert = require("assert2")
+
+local function check(result: {err: any}): boolean
+    assert.is_string(result.err, "error must be string")
+    local hit = string.find(result.err, "not allowed", 1, true)
+    return hit ~= nil
+end
+`, WithStdlib(), WithModule("assert2", assertMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want clean helper effect to survive unrelated diagnostics in same imported module", result.Diagnostics)
+	}
+}
+
+func TestCheckReboundImportedTypeAssertRefinesMemberPath(t *testing.T) {
+	assertMod := CheckAndExport(`
+local M = {}
+
+function M.is_string(value, msg)
+    if type(value) ~= "string" then
+        error(msg or "expected string", 2)
+    end
+    return value
+end
+
+return M
+`, "app.lib:assert", WithStdlib())
+	if len(assertMod.Errors) != 0 {
+		t.Fatalf("assert module diagnostics = %#v, want clean helper export", assertMod.Errors)
+	}
+
+	result := Check(`
+local assert = require("assert2")
+
+local function check(result: {err: any}): boolean
+    assert.is_string(result.err, "error must be string, got " .. type(result.err))
+    local hit = string.find(result.err, "not allowed", 1, true)
+    return hit ~= nil
+end
+`, WithStdlib(), WithManifest("assert2", assertMod.Manifest.Rebound("assert2")))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want rebound imported type assertion to refine result.err to string", result.Diagnostics)
+	}
+}
+
+func TestCheckRuntimeFunctionMemberGuardProvesCallable(t *testing.T) {
+	result := Check(`
+local function prepare(prompt_input: table): any
+    if type(prompt_input.build) == "function" then
+        local prompt_result = prompt_input:build()
+        return prompt_result
+    elseif type(prompt_input.get_messages) == "function" then
+        return prompt_input:get_messages()
+    end
+    return nil
+end
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want runtime function member guard to prove method call is callable", result.Diagnostics)
 	}
 }
 
