@@ -135,11 +135,14 @@ short-circuits (`x and f()` must not run `f` on falsy `x`). Purity classificatio
   and the closed instruction set stays small. The short-circuit *result*
   selection plus the guard narrowing (truthy/falsy `A`) are still derived by
   transfer, not concluded in lowering.
-- **Impure right operand** lowers to branch topology: the bypass edge assigns
-  `Dst = A`; the taken edge evaluates `B` then assigns `Dst = B`; the two edges
-  merge at the CFG join. `and` takes the RHS edge when `A` is truthy, `or` when
-  `A` is falsy. This models effect gating correctly with no new instruction —
-  the branch is ordinary CFG topology and the two assigns are ordinary `OpAssign`.
+- **Impure right operand** lowers to branch topology, threading the short-circuit
+  result through one temp `%t`. The **guard point** assigns `%t = A` and then
+  `OpBranch` on `A`; the **taken edge** (the RHS-eval point, or the last RHS call
+  point when the RHS carries calls) overwrites `%t = B`; the CFG **join** merges,
+  and the enclosing point reads `%t`. `and` takes the RHS edge when `A` is truthy,
+  `or` when `A` is falsy. Because `%t = A` precedes the branch, the bypass edge
+  keeps `A` while only the taken edge evaluates (and can materialize the effects
+  of) `B` — effect gating with no phi and no new instruction.
 
 - **Consumer-2 codegen impact.** `OpLogical` expands to a TEST + conditional
   jump; the branch-topology form is already the TEST + jump in the CFG, so a
@@ -147,11 +150,17 @@ short-circuits (`x and f()` must not run `f` on falsy `x`). Purity classificatio
 
 Under same-CFG lowering (D1a) the impure branch topology is **not synthesized by
 cirlower** — cfgbuild already materializes it. `cfgbuild.appendShortCircuitValueCalls`
-emits the guard branch, the RHS-eval point, and the join, and records them in
-`cfgfacts.Metadata` (`ShortCircuitGuard(point) -> {Stmt, Condition}`,
-`ExpressionEvaluation(point) -> {Stmt, Expr}`). cirlower maps `OpBranch` onto the
-guard point and the RHS assigns onto the eval point; the pure case has no eval
-point and carries `OpLogical` on the enclosing statement point.
+emits the guard branch, the RHS-eval point (when the RHS has no calls; otherwise
+the RHS calls sit on the taken edge), and the join, recording them in
+`cfgfacts.Metadata` (`ShortCircuitGuard(point) -> {Stmt, Condition=LHS}`,
+`ExpressionEvaluation(point) -> {Stmt, Expr=RHS}`). The bypass edge carries **no
+point** (it is a direct `branch -> join` edge), which is why the result is
+threaded as `%t = A` on the guard rather than as a bypass-edge assign. cirlower
+correlates the guard point by `Condition` identity (`= LogicalOpExpr.Lhs`) and the
+taken anchor by `Expr` identity / the RHS's last pre-lowered call point, both
+per-`LogicalOpExpr` so nested logicals map independently. The pure case ignores
+this materialized topology (its guard/eval/join points carry no cir instruction
+and print as `noop`) and carries `OpLogical` on the enclosing statement point.
 
 ### Closures / function definitions — `OpClosure` + nested protos
 
@@ -185,15 +194,18 @@ A call not matching the shape falls through to an ordinary `OpCall`.
 
 ## Coverage harness (`CIR_SHADOW`)
 
-`shadow_test.go` (`package cir_test`, gated on `CIR_SHADOW=1`) runs both the
-point-keyed semantics extraction and cir lowering over every `testdata/fixtures`
-`main.lua` and compares per-category construct coverage by operand identity
-(path `Key()`), since the two pipelines build independent CFGs. It proves
-lowering *completeness* (full point-state equality is a migration concern). Last
-run: 574/574 fixtures, TOTAL 99.13% — assign 99.97%, call 99.53%, branch 91.15%,
-return 100%. Residuals: the branch gap is the `OpLogical` short-circuit decision
-above; a handful of call misses are computed/first-class callees keyed as
-`callexpr`; one assign miss is a computed assignment target with no static path.
+`shadow_test.go` (`package cirlower_test`, gated on `CIR_SHADOW=1`) is a
+**per-point** coverage oracle. Because D1a lowers onto the same cfgbuild graph
+semantics extracts from, it is a true per-point diff, not a cross-CFG multiset:
+for every point carrying a semantics fact (assign / call / branch / return,
+imported read-only), the cir Body must carry an instruction *at that same point*
+whose operand identity (path `Key()`) matches. Last run: 574/574 fixtures, TOTAL
+99.77% — assign 99.97% (2986/2987), call 100% (1714/1714), branch 97.37%
+(407/418), return 100% (186/186). Residuals: the 11 branch misses are the pure
+short-circuit guard points (the `OpLogical` value form leaves the cfgbuild-
+materialized guard branch instruction-less — the intentional D3 pure-case gap);
+the single assign miss is a computed assignment target with no static path. call
+reaches 100% under the per-point split (one `OpCall` per call point).
 
 ## Locked decisions (Stage 4, journal #1392)
 
@@ -236,9 +248,13 @@ pre-existing points rather than allocating its own:
   point. The prototype's folded `Results` window on `OpCall` is a self-CFG-only
   encoding.
 - **Loop headers split.** numeric-for is `NodeAssign` (loop-var preheader) +
-  `NodeBranch`; generic-for is `NodeBranch` + one `NodeAssign` per loop var.
-  `OpIterate` maps to the branch point; loop-var binding maps to the assign
-  point(s).
+  `NodeBranch`; generic-for is `NodeBranch` + one `NodeAssign` per loop var. The
+  iterator header `OpIterate` (carrying the `List` sources: numeric bounds
+  `init,limit,step`, or the generic iterator exprs) maps to the branch point; the
+  loop-variable binding maps to the assign point(s) as `OpAssign var = _` — the
+  variable is bound by iteration, its element value derived by transfer from the
+  header, so lowering records the binding site with an opaque source rather than
+  concluding a value.
 - **Joins carry no instruction.** `NodeJoin` points print as `noop`; cir attaches
   nothing to them.
 - **Construct discovery.** cirlower reads `cfgbuild.Result.StmtPoints`
@@ -257,13 +273,32 @@ Body; `CachingResolver` memoizes it. The real implementation (factapply, later
 step) closes over the Body to decode an operand's interned path and delegates to
 `visibility.Resolver`; cir ships only the contract and a test fake.
 
-## Skeleton step 1 status
+## Skeleton step 2 status
 
-Landed in cir/cirlower lanes: **D2** (resolver interface + caching + fake),
-**D5** (resolved TypeRef). **D1a** same-CFG rewrite and **D3** effectful-logical
-branch topology are specified above and remain the next slice; the prototype
-self-CFG `Chunk` entry stays as the transition path until `Lower(chunk, bindings,
-cfgResult)` replaces it and the goldens migrate to the shared-graph form.
+Landed in cir/cirlower lanes: **D1a** (same-CFG `Lower(name, stmts, bindings,
+*cfgbuild.Result) *cir.Body` keyed on the shared graph's points; the self-CFG
+`Chunk`/`lowerBody` path and the `Result{Body,Graph}` pair are deleted — one
+owner), **D2** (resolver interface + caching + fake), **D3** (purity-split
+logical: pure RHS keeps `OpLogical` on the enclosing point, impure RHS threads the
+result through the cfgbuild short-circuit topology), **D5** (resolved TypeRef).
+Goldens migrated to the shared-graph form; the `CIR_SHADOW` harness is now a
+per-point oracle (99.77% total). Nested functions build their own child graph via
+`cfgbuild.BuildFunction` and lower recursively, exactly as the engine prepares
+protos.
+
+What **factapply step 3** (the dispatch skeleton, not this lane) will need from
+this shape: (a) it reads instructions off the shared graph via
+`Body.PointInstructions(point)` — every point either carries a window or is a
+structural `noop`; (b) the multret contract is split — an `OpCall` binds its
+result temps in `Results` at the call point and per-target `OpAssign temp ->
+target` on the following assign points, so result publication keys on the call
+point while target state keys on the assign points; (c) `ResultSpread` /
+`ListSpread` mark the single open multret tail (patched onto the producing
+`OpCall` when it is found in a spread position); (d) the loop-var `OpAssign var =
+_` sites want their element type resolved from the dominating `OpIterate` header;
+(e) the pure-logical guard/eval/join points are instruction-less `noop`s (transfer
+evaluates `OpLogical` on the enclosing point), while the impure form is ordinary
+`OpBranch` + `OpAssign` threaded through one temp.
 
 ## Lowering scope (Stage 4 — full dialect)
 
@@ -271,13 +306,16 @@ Covered: local/ordinary assignment (incl. static member + dynamic index writes,
 multret tail expansion across multiple targets), if/elseif/else, numeric +
 generic for, while, repeat/until, break, goto/label topology, return, direct +
 method calls, table constructors (array + hash + trailing spread), binary /
-unary / n-ary concat, short-circuit and/or (`OpLogical`), closures and function
-definitions (`OpClosure` + nested protos, methods), channel-select (`OpSelect`),
-cast / non-nil assert / annotation claims, varargs, multret (call-in-middle vs
-tail). Golden tests in `lower/lower_test.go` (incl. adversarial multret);
-completeness measured by the `CIR_SHADOW` harness (99.13% over 574 fixtures).
+unary / n-ary concat, short-circuit and/or (purity split: `OpLogical` for pure
+RHS, branch topology for effectful RHS), closures and function definitions
+(`OpClosure` + nested protos, methods), channel-select (`OpSelect`), cast /
+non-nil assert / annotation claims, varargs, multret (call-in-middle vs tail).
+Golden tests in `cirlower/cirlower_test.go` (incl. adversarial multret and the
+effectful-logical branch topology); completeness measured by the per-point
+`CIR_SHADOW` harness (99.77% over 574 fixtures).
 
-Residual gaps (explicit): short-circuit and/or is a value op, not branch topology
-(≈9% branch-category divergence — intentional, see Stage 4 decision); a small
-number of computed/first-class callees and computed assignment targets carry no
-static path and key as `callexpr`/`target`. cir is consumed by nothing yet.
+Residual gaps (explicit): a conservatively pure short-circuit `and`/`or` keeps the
+`OpLogical` value form, so the cfgbuild-materialized guard branch carries no cir
+instruction (≈2.6% branch-category divergence — intentional, see D3); one computed
+assignment target carries no static path and keys as `target`. cir is consumed by
+nothing yet.
