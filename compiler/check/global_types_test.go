@@ -732,6 +732,13 @@ function M.is_string(value, msg)
 	return value
 end
 
+function M.not_nil(value, msg)
+	if value == nil then
+		error(msg or "expected non-nil", 2)
+	end
+	return value
+end
+
 function M.unrelated_bad_helper(err, substr)
 	local actual_msg = type(err) == "table" and err.message or tostring(err)
 	return string.find(actual_msg, substr, 1, true)
@@ -766,6 +773,56 @@ end
 	})
 	if len(session.Diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want dirty imported module to preserve independent require alias signature effects", session.Diagnostics)
+	}
+}
+
+func TestCheckerPreservesRequireAliasSignatureEffectsOnAnyRoot(t *testing.T) {
+	assertMod := analysistest.CheckAndExport(`
+local M = {}
+
+function M.is_string(value, msg)
+	if type(value) ~= "string" then
+		error(msg or "expected string", 2)
+	end
+	return value
+end
+
+function M.unrelated_bad_helper(err, substr)
+	local actual_msg = type(err) == "table" and err.message or tostring(err)
+	return string.find(actual_msg, substr, 1, true)
+end
+
+return M
+`, "app.lib:assert", analysistest.WithStdlib())
+	if len(assertMod.Errors) == 0 {
+		t.Fatalf("assert module unexpectedly clean; fixture must keep an unrelated dirty helper")
+	}
+	assertManifest := roundTripFacadeManifest(t, "app.lib:assert", assertMod.Manifest)
+
+	chunk, err := parse.ParseString(`
+local assert = require("assert2")
+
+local function check(result: any): boolean
+	assert.not_nil(result, "result required")
+	assert.is_string(result.err, "error must be string, got " .. type(result.err))
+	local hit = string.find(result.err, "not allowed", 1, true)
+		or string.find(result.err, "network", 1, true)
+	return hit ~= nil
+end
+`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	database := db.New()
+	database.Connect("assert2", assertManifest)
+
+	checker := NewChecker(database, Deps{})
+	session := checker.CheckChunkWithImports(chunk, "test.lua", map[string]*typemanifest.Manifest{
+		"assert2": assertManifest,
+	})
+	if len(session.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want dirty imported module to refine any-root member path through require alias signature effects", session.Diagnostics)
 	}
 }
 
