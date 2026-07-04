@@ -542,6 +542,112 @@ func TestExpressionConditionRefinesShortCircuitRightOperandState(t *testing.T) {
 	}
 }
 
+func TestNestedLogicalConditionDerivesFallbackStateWhenInnerRHSIsTruthy(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(661)
+	guardExpr := ExprRef(6610)
+	memberExpr := ExprRef(6611)
+	innerExpr := ExprRef(6612)
+	fallbackExpr := ExprRef(6613)
+	outerExpr := ExprRef(6614)
+	memberSym := symbol.ID(661)
+	fallbackSym := symbol.ID(662)
+	memberPath := path.Path{Symbol: memberSym}
+	fallbackPath := path.Path{Symbol: fallbackSym}
+	guardSource := ValueSource{Kind: ValueSourceExpression, ExprRef: guardExpr, HasExpr: true}
+	memberSource := ValueSource{Kind: ValueSourceExpression, ExprRef: memberExpr, HasExpr: true}
+	innerSource := ValueSource{Kind: ValueSourceExpression, ExprRef: innerExpr, HasExpr: true}
+	fallbackSource := ValueSource{Kind: ValueSourceExpression, ExprRef: fallbackExpr, HasExpr: true}
+	innerOp, ok := NewBinaryExpressionOperation("and", guardSource, memberSource)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation(inner) returned false")
+	}
+	outerOp, ok := NewBinaryExpressionOperation("or", innerSource, fallbackSource)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation(outer) returned false")
+	}
+	anyValue := product.NewWithPresence(reg, product.ShapeTop, presence.Maybe())
+	anyValue = product.Set(reg, anyValue, evidence.Key, evidence.ExplicitTop())
+	anyValue = product.Set(reg, anyValue, assertion.Key, assertion.Any())
+	anyValue = typevalue.WithWitness(reg, anyValue, typ.Any)
+	boolValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.Boolean), typ.Boolean)
+	stringValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			guardExpr:    boolValue,
+			memberExpr:   anyValue,
+			fallbackExpr: anyValue,
+		},
+		ExpressionPaths: map[ExprRef]struct{}{
+			memberExpr:   {},
+			fallbackExpr: {},
+		},
+		ExpressionOps: map[ExprRef]ExpressionOperation{
+			innerExpr: innerOp,
+			outerExpr: outerOp,
+		},
+		ExpressionConditions: map[ExprRef]ExpressionCondition{
+			guardExpr: NewExpressionCondition(
+				[]PostconditionRefinement{
+					NewPostconditionRefinement(memberPath, NewValueConstraint(stringValue)),
+				},
+				[]PostconditionRefinement{
+					NewPostconditionRefinement(fallbackPath, NewValueConstraint(stringValue)),
+				},
+				nil,
+				nil,
+			),
+		},
+		ExpressionCondition: func(gotPoint cfg.Point, in state.State, facts ExpressionConditionFacts) state.State {
+			if gotPoint != point {
+				t.Fatalf("condition point = %d, want %d", gotPoint, point)
+			}
+			out := in
+			for _, refinement := range facts.Refinements() {
+				switch {
+				case refinement.TargetPathRef().Equal(memberPath):
+					out = out.WriteValue(reg, key.SymbolValue(memberSym), stringValue)
+				case refinement.TargetPathRef().Equal(fallbackPath):
+					out = out.WriteValue(reg, key.SymbolValue(fallbackSym), stringValue)
+				default:
+					t.Fatalf("unexpected refinement target: %#v", refinement.TargetPathRef())
+				}
+			}
+			return out
+		},
+		ExpressionValue: func(_ cfg.Point, expr ExprRef, _ ValueSource, in state.State) (product.Value, bool) {
+			switch expr {
+			case memberExpr:
+				return in.ReadValue(reg, key.SymbolValue(memberSym)), true
+			case fallbackExpr:
+				return in.ReadValue(reg, key.SymbolValue(fallbackSym)), true
+			default:
+				return product.Value{}, false
+			}
+		},
+		ExpressionOp: func(got ExpressionOperation, _ product.Value, right product.Value) (product.Value, bool) {
+			rightType, ok := typevalue.WitnessOf(reg, right)
+			if !ok || !typ.TypeEquals(rightType, typ.String) {
+				t.Fatalf("%s right operand type = %v/%v, want string", got.Op(), rightType, ok)
+			}
+			return right, true
+		},
+	})
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: outerExpr, HasExpr: true}
+	initial := state.State{}.
+		WriteValue(reg, key.SymbolValue(memberSym), anyValue).
+		WriteValue(reg, key.SymbolValue(fallbackSym), anyValue)
+	got, ok := resolver.ValueOfSource(point, source, initial, nil)
+	if !ok {
+		t.Fatal("outer operation source did not resolve")
+	}
+	gotType, ok := typevalue.WitnessOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("operation result type = %v/%v, want string", gotType, ok)
+	}
+}
+
 func TestExpressionRuntimeValidationUsesRefinementWhenOperandDisjoint(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(812)

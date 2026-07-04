@@ -445,7 +445,7 @@ func (r sourceValueResolver) valueOfExpressionOperation(
 	}
 	var right product.Value
 	if op.Kind() == factflow.ExpressionOperationBinary {
-		rightIn := r.logicalRightOperandState(point, op, in)
+		rightIn := r.logicalRightOperandState(point, op, in, read, active)
 		right, ok = r.valueOfOperationSource(point, op.Right(), rightIn, read, active)
 		if !ok {
 			delete(active, expr)
@@ -456,7 +456,13 @@ func (r sourceValueResolver) valueOfExpressionOperation(
 	return r.expressionOp(op, left, right)
 }
 
-func (r sourceValueResolver) logicalRightOperandState(point cfg.Point, op factflow.ExpressionOperation, in state.State) state.State {
+func (r sourceValueResolver) logicalRightOperandState(
+	point cfg.Point,
+	op factflow.ExpressionOperation,
+	in state.State,
+	read func(cfg.Point) state.State,
+	active map[factflow.ExprRef]bool,
+) state.State {
 	if r.expressionCondition == nil || op.Kind() != factflow.ExpressionOperationBinary {
 		return in
 	}
@@ -473,15 +479,87 @@ func (r sourceValueResolver) logicalRightOperandState(point cfg.Point, op factfl
 	if left.Kind != factflow.ValueSourceExpression || !left.HasExpr {
 		return in
 	}
-	condition, ok := r.expressionConditions[left.ExprRef]
-	if !ok {
-		return in
+	if next, ok := r.expressionConditionState(point, left.ExprRef, conditionValue, in, read, active); ok {
+		return next
 	}
-	facts := condition.FactsForValue(conditionValue)
-	if facts.IsEmpty() {
-		return in
+	return in
+}
+
+func (r sourceValueResolver) expressionConditionState(
+	point cfg.Point,
+	expr factflow.ExprRef,
+	value bool,
+	in state.State,
+	read func(cfg.Point) state.State,
+	active map[factflow.ExprRef]bool,
+) (state.State, bool) {
+	if condition, ok := r.expressionConditions[expr]; ok {
+		facts := condition.FactsForValue(value)
+		if !facts.IsEmpty() {
+			return r.expressionCondition(point, in, facts), true
+		}
 	}
-	return r.expressionCondition(point, in, facts)
+	return r.derivedLogicalExpressionConditionState(point, expr, value, in, read, active)
+}
+
+func (r sourceValueResolver) derivedLogicalExpressionConditionState(
+	point cfg.Point,
+	expr factflow.ExprRef,
+	value bool,
+	in state.State,
+	read func(cfg.Point) state.State,
+	active map[factflow.ExprRef]bool,
+) (state.State, bool) {
+	op, ok := r.expressionOps[expr]
+	if !ok || op.Kind() != factflow.ExpressionOperationBinary {
+		return state.State{}, false
+	}
+	if active[expr] {
+		return state.State{}, false
+	}
+	if active == nil {
+		active = make(map[factflow.ExprRef]bool, 1)
+	}
+	active[expr] = true
+	defer delete(active, expr)
+	switch op.Op() {
+	case "and":
+		if value {
+			return state.State{}, false
+		}
+		rightIn := r.logicalRightOperandState(point, op, in, read, active)
+		right, ok := r.valueOfOperationSource(point, op.Right(), rightIn, read, active)
+		if !ok || valueref.CanBeFalsy(r.registry, right) {
+			return state.State{}, false
+		}
+		return r.conditionStateForSource(point, op.Left(), false, in, read, active)
+	case "or":
+		if !value {
+			return state.State{}, false
+		}
+		rightIn := r.logicalRightOperandState(point, op, in, read, active)
+		right, ok := r.valueOfOperationSource(point, op.Right(), rightIn, read, active)
+		if !ok || valueref.CanBeTruthy(r.registry, right) {
+			return state.State{}, false
+		}
+		return r.conditionStateForSource(point, op.Left(), true, in, read, active)
+	default:
+		return state.State{}, false
+	}
+}
+
+func (r sourceValueResolver) conditionStateForSource(
+	point cfg.Point,
+	source factflow.ValueSource,
+	value bool,
+	in state.State,
+	read func(cfg.Point) state.State,
+	active map[factflow.ExprRef]bool,
+) (state.State, bool) {
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		return state.State{}, false
+	}
+	return r.expressionConditionState(point, source.ExprRef, value, in, read, active)
 }
 
 func (r sourceValueResolver) valueOfOperationSource(
@@ -765,7 +843,7 @@ func (r expressionRefinementSourceValues) valueOfExpressionOperation(
 	}
 	var right product.Value
 	if op.Kind() == factflow.ExpressionOperationBinary {
-		rightIn := base.logicalRightOperandState(point, op, in)
+		rightIn := base.logicalRightOperandState(point, op, in, read, active)
 		right, ok = r.valueOfOperationSource(point, op.Right(), rightIn, read, active)
 		if !ok {
 			delete(active, expr)
