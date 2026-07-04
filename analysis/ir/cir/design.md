@@ -120,30 +120,38 @@ Full-coverage lowering resolves three design points the prototype deferred. Each
 translates syntax and resolves bindings only; every value conclusion stays in
 transfer.
 
-### Short-circuit `and` / `or` — `OpLogical` value form
+### Short-circuit `and` / `or` — purity split (`OpLogical` + branch topology)
 
-`a and b` / `a or b` lower to a single `OpLogical{Dst, A, B, Operator}` rather
-than a branch pair with a value merge. Rationale: the closed instruction set
-stays small and needs no `Phi`/merge op; both operands are lowered as ordinary
-operands and the short-circuit *result* selection plus the right-operand guard
-narrowing (truthy/falsy `A`) are derived by transfer — that narrowing is a value
-conclusion, so it belongs in transfer, not lowering. This mirrors what the
-reference pipeline attaches to a short-circuit guard (`branchcond.Normalize` on
-the guard operand), except cir carries it as an operator whose transfer rule
-re-derives the same check instead of a synthetic branch point.
+Locked by decision **D3**. `and` / `or` lowering is chosen by the conservative
+purity of the short-circuited right operand, because the right operand is only
+conditionally evaluated and its *effects* must not materialize when the guard
+short-circuits (`x and f()` must not run `f` on falsy `x`). Purity classification:
+
+- **Conservatively pure** = literals and plain identifier reads only. A member
+  read (`t.f`) is impure — `__index` can be a metamethod with arbitrary effects.
+  Index reads, calls, nested logicals, and any compound expression are impure.
+- **Pure right operand** keeps the single value form `OpLogical{Dst, A, B, op}`:
+  eager evaluation of a pure `B` is observationally free, so no branch is needed
+  and the closed instruction set stays small. The short-circuit *result*
+  selection plus the guard narrowing (truthy/falsy `A`) are still derived by
+  transfer, not concluded in lowering.
+- **Impure right operand** lowers to branch topology: the bypass edge assigns
+  `Dst = A`; the taken edge evaluates `B` then assigns `Dst = B`; the two edges
+  merge at the CFG join. `and` takes the RHS edge when `A` is truthy, `or` when
+  `A` is falsy. This models effect gating correctly with no new instruction —
+  the branch is ordinary CFG topology and the two assigns are ordinary `OpAssign`.
 
 - **Consumer-2 codegen impact.** `OpLogical` expands to a TEST + conditional
-  jump: `A` is evaluated first, `B` only on the taken edge. A transfer-proven
-  guard (`A` known truthy/falsy) authorizes eliding the second operand's type
-  guard or folding the whole expression to one side.
-- **Residual (flagged).** Operand evaluation order / side-effect gating of the
-  right operand is *not* modeled as a CFG edge in cir (it is a value op, not a
-  branch). The reference pipeline emits extra short-circuit *guard branch points*
-  for conditions like `x.f and g()`; cir does not. The `CIR_SHADOW` harness
-  surfaces this as the branch-category residual (~9%, almost entirely `|0`
-  CheckNone guard points and truthy/falsy checks on and/or operands). This is the
-  one construct where cir intentionally trades branch-topology parity for a
-  smaller instruction set; transfer must re-derive the guard from `OpLogical`.
+  jump; the branch-topology form is already the TEST + jump in the CFG, so a
+  transfer-proven guard (`A` known truthy/falsy) folds either form to one side.
+
+Under same-CFG lowering (D1a) the impure branch topology is **not synthesized by
+cirlower** — cfgbuild already materializes it. `cfgbuild.appendShortCircuitValueCalls`
+emits the guard branch, the RHS-eval point, and the join, and records them in
+`cfgfacts.Metadata` (`ShortCircuitGuard(point) -> {Stmt, Condition}`,
+`ExpressionEvaluation(point) -> {Stmt, Expr}`). cirlower maps `OpBranch` onto the
+guard point and the RHS assigns onto the eval point; the pure case has no eval
+point and carries `OpLogical` on the enclosing statement point.
 
 ### Closures / function definitions — `OpClosure` + nested protos
 
@@ -187,29 +195,75 @@ return 100%. Residuals: the branch gap is the `OpLogical` short-circuit decision
 above; a handful of call misses are computed/first-class callees keyed as
 `callexpr`; one assign miss is a computed assignment target with no static path.
 
-## Open questions for the Codex design round
+## Locked decisions (Stage 4, journal #1392)
 
-1. **Operand interning strategy.** Adopt `keyspace.Key` as the canonical path ref
-   (structural, no string hashing, already the state-key currency) vs the
-   prototype's `path.PathKey` strings. `keyspace` ids are per-KeySpace and must
-   not be serialized — does a `Body` carry its `KeySpace`, or does interning run
-   against a shared per-function space? Const/type interning likewise.
-2. **Multret/vararg encoding** (above) — confirm dual-marker over projection
-   instructions; confirm it satisfies both summary result-counting and codegen.
-3. **Select recognition-then-lowering.** *Resolved (Stage 4):* lowering runs the
-   structural recognition and emits `OpSelect` directly with the channel-case
-   operands modeled as the `List` and `SelectDefault` set. See the Stage 4
-   decision above.
-4. **Migration seam vs factflow.** How does the transfer interpreter consume cir
-   in parallel with the existing `factflow.Facts` path during construct-by-
-   construct migration (shadow diff, byte-identical oracle)? Which lane is the
-   source of truth per construct, and where is the switch?
-5. **Type ref identity.** Prototype stores a syntactic spelling. Production should
-   carry the resolved `typ.Type` / ShapeID ref (attached post-bind), keyed for
-   both transfer and codegen. Where is that resolution attached?
-6. **Logical `and`/`or` short-circuit.** *Resolved (Stage 4):* chosen the
-   dedicated value form (`OpLogical`) over control-flow lowering — see the Stage 4
-   decision above, including the flagged branch-topology residual.
+All six design-round questions are resolved. D-labels reference the locked
+journal decision.
+
+- **D1 — same-CFG lowering.** cir attaches to the same `cfg.Graph` `body.Run`
+  solves. cirlower's independent CFG build is replaced by consuming the graph
+  cfgbuild already produced; the state-equality oracle is per-point on that
+  shared graph. See "Same-CFG point mapping" below.
+- **D2 — operand vs state-cell identity.** cir operands stay source path refs
+  (the `PathKey` pool). Transfer-time address resolution runs through a cached
+  `AddressResolver` keyed `(point, operand, mode)` producing `keyspace.Key` state
+  keys. Operand identity is deliberately not state-cell identity. Interface +
+  fake live in `resolver.go`; the production binding to `visibility.Resolver` is
+  factapply's, not cir's.
+- **D3 — logical purity split.** See the short-circuit section above.
+- **D5 — resolved type refs.** `Type` interns the resolved `typ.Type` by
+  `typ.EqualityHash`; the display spelling is `t.String()`, kept only for
+  printing. cirlower resolves type expressions through `typeresolve.Resolver`,
+  the same path the engine uses. The `<type>`/`<lit>` syntactic fallbacks are
+  deleted; an unresolved type expression interns to the none ref. ShapeID stays
+  deferred to codegen consumer work.
+- **Multret/vararg** and **select recognition** stay as the prototype resolved
+  them (dual spread markers; `OpSelect` at lowering).
+
+## Same-CFG point mapping (D1a)
+
+cfgbuild is the point authority. Its point granularity differs from the
+prototype's one-point-per-statement model, so cirlower maps constructs onto the
+pre-existing points rather than allocating its own:
+
+- **Per-call points.** cfgbuild emits one `NodeCall` point per call in Lua
+  evaluation order (`appendValueExprCalls`) before the owning statement's own
+  point. cir lowers one `OpCall` (into temps) per call and places it on the
+  matching call point.
+- **Per-target points.** each assignment target and each `local` symbol gets its
+  own `NodeAssign` point. Multret result binding therefore splits: `OpCall` into
+  head temps at the call point, then one `OpAssign temp -> target` per target
+  point. The prototype's folded `Results` window on `OpCall` is a self-CFG-only
+  encoding.
+- **Loop headers split.** numeric-for is `NodeAssign` (loop-var preheader) +
+  `NodeBranch`; generic-for is `NodeBranch` + one `NodeAssign` per loop var.
+  `OpIterate` maps to the branch point; loop-var binding maps to the assign
+  point(s).
+- **Joins carry no instruction.** `NodeJoin` points print as `noop`; cir attaches
+  nothing to them.
+- **Construct discovery.** cirlower reads `cfgbuild.Result.StmtPoints`
+  (stmt -> points, in creation order) plus `cfgfacts.Metadata`
+  (`Assignment`/`Loop`/`NumericFor`/`GenericFor`/`ShortCircuitGuard`/
+  `ExpressionEvaluation`/`Label`/`Goto`). Together these expose every construct's
+  point identity; **no cfgbuild change is required.** D1a is a large but fully
+  in-lane rewrite, not a cfgbuild handoff.
+
+## Operand address resolution (D2)
+
+`resolver.go` defines `AddressResolver.Resolve(point, op, mode) -> (keyspace.Key,
+bool)` with the four access modes `ReadBefore` / `WriteLocal` / `RootOrVisible` /
+`Evidence`. Resolution is a pure function of `(point, op, mode)` for a fixed
+Body; `CachingResolver` memoizes it. The real implementation (factapply, later
+step) closes over the Body to decode an operand's interned path and delegates to
+`visibility.Resolver`; cir ships only the contract and a test fake.
+
+## Skeleton step 1 status
+
+Landed in cir/cirlower lanes: **D2** (resolver interface + caching + fake),
+**D5** (resolved TypeRef). **D1a** same-CFG rewrite and **D3** effectful-logical
+branch topology are specified above and remain the next slice; the prototype
+self-CFG `Chunk` entry stays as the transition path until `Lower(chunk, bindings,
+cfgResult)` replaces it and the goldens migrate to the shared-graph form.
 
 ## Lowering scope (Stage 4 — full dialect)
 
