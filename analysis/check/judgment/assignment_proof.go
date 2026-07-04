@@ -1,5 +1,59 @@
 package judgment
 
+// AssignmentProofSummary is the renderer-facing classification of assignment
+// proof evidence. It centralizes the mapping from low-level evidence details to
+// user-visible proof categories, so renderers do not independently interpret
+// the judgment evidence chain.
+type AssignmentProofSummary struct {
+	MayBeNil          bool
+	IndexedRead       bool
+	CallResult        bool
+	CallInvalidated   bool
+	DynamicTarget     bool
+	PrecisionBoundary bool
+}
+
+// AssignmentProofReason classifies the semantic reason an assignment proof is
+// missing without importing diagnostic-layer reason codes.
+type AssignmentProofReason uint8
+
+const (
+	AssignmentProofReasonUnspecified AssignmentProofReason = iota
+	AssignmentProofReasonIndexedRead
+	AssignmentProofReasonBoundaryValidation
+)
+
+// Reason returns the proof reason renderers should map to diagnostic evidence
+// metadata.
+func (s AssignmentProofSummary) Reason() AssignmentProofReason {
+	if s.IndexedRead {
+		return AssignmentProofReasonIndexedRead
+	}
+	if s.PrecisionBoundary || s.CallResult {
+		return AssignmentProofReasonBoundaryValidation
+	}
+	return AssignmentProofReasonUnspecified
+}
+
+// BoundaryProofMissing reports whether the missing proof should be explained as
+// a boundary validation failure rather than a plain declared-type proof.
+func (s AssignmentProofSummary) BoundaryProofMissing() bool {
+	return s.CallInvalidated || s.DynamicTarget
+}
+
+// AssignmentProof returns the structured proof categories carried by an
+// assignment judgment.
+func (j Judgment) AssignmentProof() AssignmentProofSummary {
+	return AssignmentProofSummary{
+		MayBeNil:          j.AssignmentMissingProofMayBeNil(),
+		IndexedRead:       j.AssignmentMissingProofIndexedRead(),
+		CallResult:        j.HasEvidenceDetail(EvidenceDetailCallResultAssignment),
+		CallInvalidated:   j.AssignmentHasCallInvalidationEvidence(),
+		DynamicTarget:     j.AssignmentHasDynamicTargetEvidence(),
+		PrecisionBoundary: j.HasEvidence(EvidencePrecisionBoundary),
+	}
+}
+
 // AssignmentCallResultDetail returns the call-result evidence attached to an
 // assignment judgment.
 func (j Judgment) AssignmentCallResultDetail() (EvidenceDetail, bool) {

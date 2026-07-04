@@ -168,6 +168,20 @@ func TestAssignmentProofQueriesUseStructuredEvidence(t *testing.T) {
 	if !j.AssignmentMissingProofIndexedRead() {
 		t.Fatal("AssignmentMissingProofIndexedRead = false, want true")
 	}
+	summary := j.AssignmentProof()
+	if !summary.IndexedRead ||
+		!summary.MayBeNil ||
+		!summary.CallInvalidated ||
+		!summary.DynamicTarget ||
+		!summary.CallResult {
+		t.Fatalf("AssignmentProof = %#v, want indexed/nil/invalidation/dynamic/call-result summary", summary)
+	}
+	if summary.Reason() != AssignmentProofReasonIndexedRead {
+		t.Fatalf("AssignmentProof.Reason = %v, want indexed read", summary.Reason())
+	}
+	if !summary.BoundaryProofMissing() {
+		t.Fatalf("AssignmentProof.BoundaryProofMissing = false, want true")
+	}
 }
 
 func TestDefaultRegistryValidatesCallArgumentJudgmentShape(t *testing.T) {
