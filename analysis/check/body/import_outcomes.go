@@ -5,10 +5,12 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/factquery"
@@ -254,6 +256,50 @@ func methodTypeValue(reg *axis.Registry, typeValues *typevalue.Cache, receiverTy
 		return product.Value{}, false
 	}
 	return typeValues.FromTypeWithWitness(reg, methodType), true
+}
+
+func explicitAnyReceiverMethodOutcomeProvider(
+	reg *axis.Registry,
+	sources sourcevalue.SourceValues,
+	typeValues *typevalue.Cache,
+) callpayload.CallOutcomeProvider {
+	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
+		if reg == nil || sources == nil || typeValues == nil || site.MethodName() == "" {
+			return callpayload.CallOutcome{}
+		}
+		source, ok := site.ReceiverSource()
+		if !ok {
+			return callpayload.CallOutcome{}
+		}
+		receiverValue, ok := sources.ValueOfSource(ctx.Point, source, in, read)
+		if !ok || !product.Get(reg, receiverValue, evidence.Key).IsExplicitTop() {
+			return callpayload.CallOutcome{}
+		}
+		value := typeValues.FromTypeWithWitness(reg, typ.Any)
+		value = sourcevalue.InheritTopOriginEvidence(reg, value, receiverValue)
+		capacity := site.ResultTargetCount()
+		if capacity < 1 {
+			capacity = 1
+		}
+		results := make([]callpayload.CallResult, 0, capacity)
+		seen := make(map[int]struct{}, site.ResultTargetCount())
+		site.ForEachResultTarget(func(target factflow.CallResultTargetView) bool {
+			index := target.ResultIndex()
+			if index < 0 {
+				return true
+			}
+			if _, ok := seen[index]; ok {
+				return true
+			}
+			seen[index] = struct{}{}
+			results = append(results, callpayload.CallResult{Index: index, Value: value})
+			return true
+		})
+		if len(results) == 0 {
+			results = append(results, callpayload.CallResult{Index: 0, Value: value})
+		}
+		return callpayload.CallOutcome{Results: results}
+	}
 }
 
 func channelMethodReceiverTypeProvider(

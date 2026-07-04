@@ -587,6 +587,58 @@ func TestWithSupplementalPreservesPrimaryNonTypeEvidence(t *testing.T) {
 	}
 }
 
+func TestWithSupplementalPromotesGradualResultEvidenceToExplicit(t *testing.T) {
+	reg := standard.Registry()
+	gradual := product.Set(reg, typevalue.FromType(reg, typ.Any), evidence.Key, evidence.GradualTop())
+	explicit := product.Set(reg, typevalue.FromType(reg, typ.Any), evidence.Key, evidence.ExplicitTop())
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: gradual}}}
+	}
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: explicit}}}
+	}
+
+	got := WithSupplemental(primary, supplemental)(
+		transfer.NodeContext{Registry: reg},
+		factflow.NewCallSite(factflow.CallSiteConfig{}).View(),
+		state.State{},
+		nil,
+	)
+
+	if len(got.Results) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got.Results), got.Results)
+	}
+	if ev := product.Get(reg, got.Results[0].Value, evidence.Key); !ev.IsExplicitTop() {
+		t.Fatalf("evidence = %s, want explicit top", ev)
+	}
+}
+
+func TestWithSupplementalDoesNotDemoteExplicitResultEvidenceToGradual(t *testing.T) {
+	reg := standard.Registry()
+	explicit := product.Set(reg, typevalue.FromType(reg, typ.Any), evidence.Key, evidence.ExplicitTop())
+	gradual := product.Set(reg, typevalue.FromType(reg, typ.Any), evidence.Key, evidence.GradualTop())
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: explicit}}}
+	}
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: gradual}}}
+	}
+
+	got := WithSupplemental(primary, supplemental)(
+		transfer.NodeContext{Registry: reg},
+		factflow.NewCallSite(factflow.CallSiteConfig{}).View(),
+		state.State{},
+		nil,
+	)
+
+	if len(got.Results) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got.Results), got.Results)
+	}
+	if ev := product.Get(reg, got.Results[0].Value, evidence.Key); !ev.IsExplicitTop() {
+		t.Fatalf("evidence = %s, want explicit top", ev)
+	}
+}
+
 func TestWithSupplementalMergesHeapTableObjectsWithoutAuthority(t *testing.T) {
 	reg := standard.Registry()
 	tableID := identity.ID{Kind: "table", Site: "compose", Index: 1}

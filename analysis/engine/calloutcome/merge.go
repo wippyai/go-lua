@@ -117,6 +117,9 @@ func supplementalResultSlotPosition(results []callpayload.CallResult, position m
 }
 
 func refinedResultSlotValue(reg *axis.Registry, current, supplemental product.Value) (product.Value, bool) {
+	if resultSlotEvidencePromotesGradualToExplicit(reg, current, supplemental) {
+		return supplemental, true
+	}
 	if reg == nil ||
 		product.Equal(reg, current, supplemental) ||
 		resultSlotLacksSpecificTypeEvidence(reg, supplemental) ||
@@ -137,6 +140,15 @@ func refinedResultSlotValue(reg *axis.Registry, current, supplemental product.Va
 		return product.WithPresence(reg, merged, product.PresenceOf(supplemental)), true
 	}
 	return product.Value{}, false
+}
+
+func resultSlotEvidencePromotesGradualToExplicit(reg *axis.Registry, current, supplemental product.Value) bool {
+	if reg == nil {
+		return false
+	}
+	currentEvidence := product.Get(reg, current, evidence.Key)
+	supplementalEvidence := product.Get(reg, supplemental, evidence.Key)
+	return currentEvidence.IsGradualTop() && supplementalEvidence.IsExplicitTop()
 }
 
 func resultSlotCarriesUntrustedTopEvidence(reg *axis.Registry, value product.Value) bool {

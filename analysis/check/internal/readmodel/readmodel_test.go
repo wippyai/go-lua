@@ -802,6 +802,47 @@ end
 	}
 }
 
+func TestForEachReturnRejectsAnyReceiverMethodReturnAsStringProof(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function call_provider(provider_instance: any): (table?, string?)
+	local raw_result, err = (provider_instance :: any):structured_output({})
+	if err then
+		return nil, err:message()
+	end
+	return raw_result :: table, nil
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil || len(root.FunctionResults()) != 1 {
+		t.Fatalf("root/functions = %#v, want one function result", root)
+	}
+	var returns []Return
+	New(root.FunctionResults()[0]).ForEachReturn(func(ret Return) bool {
+		if ret.Index == 1 && ret.SourceLabel == "err:message(...)" {
+			returns = append(returns, ret)
+		}
+		return true
+	})
+	if len(returns) != 1 {
+		t.Fatalf("returns = %#v, want one err:message return", returns)
+	}
+	ret := returns[0]
+	if !ret.UntrustedTopOrigin {
+		t.Fatalf("untrusted origin = false, want err:message() from any receiver marked untrusted")
+	}
+	if !ret.ExplicitTopOrigin {
+		t.Fatalf("explicit top origin = false, want err:message() to carry explicit any receiver origin")
+	}
+	if ret.Check.Admissible {
+		t.Fatalf("check = %#v, want missing proof for any receiver method return", ret.Check)
+	}
+}
+
 func TestForEachAssignmentProjectsOptionalNestedIndexedReadAsNilableDeclaredSlot(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `

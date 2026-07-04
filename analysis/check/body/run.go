@@ -435,6 +435,7 @@ func preparedCallOutcomeSupplement(
 		Callable:    typecall.Callable,
 		TypeValues:  typeValues,
 	}))
+	providers = append(providers, explicitAnyReceiverMethodOutcomeProvider(reg, sources, typeValues))
 	return calloutcome.ComposeSupplemental(providers...)
 }
 

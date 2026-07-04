@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
@@ -200,5 +201,55 @@ func TestCallableValueOutcomeUsesTypedStaticMethodOverWeakExactPath(t *testing.T
 	gotType, ok := typevalue.TypeOf(reg, got.Results[0].Value)
 	if !ok || !typ.TypeEquals(gotType, typ.Number) {
 		t.Fatalf("callable outcome return type = %v/%v, want number (outcome %#v)", gotType, ok, got)
+	}
+}
+
+func TestExplicitAnyReceiverMethodResultSurvivesMultiReturnAssignment(t *testing.T) {
+	reg := standard.Registry()
+	result, err := CheckChunk(parseChunk(t, `
+local provider_instance: any = nil
+local raw_result, err = (provider_instance :: any):structured_output({})
+if err then
+	local message = err:message()
+end
+`), Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	var messagePoint cfg.Point
+	var receiverSource factflow.ValueSource
+	for _, point := range result.Graph().RPO() {
+		fact, ok := result.Call(point)
+		if !ok || fact.Method != "message" {
+			continue
+		}
+		site, ok := result.CallSite(point)
+		if !ok {
+			t.Fatalf("message call has no lowered call site at %d", point)
+		}
+		var hasReceiver bool
+		receiverSource, hasReceiver = site.ReceiverSource()
+		if !hasReceiver {
+			t.Fatalf("message call has no receiver source at %d", point)
+		}
+		messagePoint = point
+		break
+	}
+	if messagePoint == 0 {
+		t.Fatal("missing err:message call")
+	}
+	receiverValue, ok := result.SourceValueAtBoundary(messagePoint, receiverSource)
+	if !ok {
+		t.Fatalf("message receiver source did not resolve at %d", messagePoint)
+	}
+	if ev := product.Get(reg, receiverValue, evidence.Key); !ev.IsExplicitTop() {
+		t.Fatalf("message receiver evidence = %s, want explicit top from upstream :: any call", ev)
+	}
+	outcome, ok := result.CallOutcomeAt(messagePoint)
+	if !ok || len(outcome.Results) == 0 {
+		t.Fatalf("message outcome = %#v/%v, want result", outcome, ok)
+	}
+	if ev := product.Get(reg, outcome.Results[0].Value, evidence.Key); !ev.IsExplicitTop() {
+		t.Fatalf("message result evidence = %s, want explicit top inherited from receiver", ev)
 	}
 }
