@@ -105,6 +105,43 @@ end
 	}
 }
 
+func TestCheckImportedTypeAssertRefinesMemberPathOnAnyRoot(t *testing.T) {
+	assertMod := CheckAndExport(`
+local M = {}
+
+function M.is_string(value, msg)
+    if type(value) ~= "string" then
+        error(msg or "expected string", 2)
+    end
+    return value
+end
+
+function M.unrelated_bad_helper(err, substr)
+    local actual_msg = type(err) == "table" and err.message or tostring(err)
+    return string.find(actual_msg, substr, 1, true)
+end
+
+return M
+`, "assert2", WithStdlib())
+	if len(assertMod.Errors) == 0 {
+		t.Fatalf("assert module unexpectedly clean; fixture must keep an unrelated dirty helper")
+	}
+
+	result := Check(`
+local assert = require("assert2")
+
+local function check(result: any): boolean
+    assert.is_string(result.err, "error must be string, got " .. type(result.err))
+    local hit = string.find(result.err, "not allowed", 1, true)
+        or string.find(result.err, "network", 1, true)
+    return hit ~= nil
+end
+`, WithStdlib(), WithModule("assert2", assertMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want imported runtime assertion to refine result.err even when result root is any", result.Diagnostics)
+	}
+}
+
 func TestCheckImportedTypeAssertSurvivesUnrelatedModuleDiagnostic(t *testing.T) {
 	assertMod := CheckAndExport(`
 local M = {}
