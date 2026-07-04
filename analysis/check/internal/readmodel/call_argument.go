@@ -416,6 +416,9 @@ func (r Reader) callArgumentBoundaryCandidate(point cfg.Point, source factflow.V
 	if !ok || p.IsEmpty() {
 		return product.Value{}, false
 	}
+	if len(p.Segments) == 0 {
+		return product.Value{}, false
+	}
 	value, ok := r.result.PathValueAtBoundary(point, p)
 	if !ok {
 		return product.Value{}, false

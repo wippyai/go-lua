@@ -58,7 +58,7 @@ end
 		Code: diagnostics.CodeDirectCallArgType,
 		MessageContains: []string{
 			"value",
-			"any/unknown",
+			"string",
 			"integer",
 		},
 	})

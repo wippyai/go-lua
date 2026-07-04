@@ -1953,6 +1953,45 @@ end
 	}
 }
 
+func TestForEachCallKeepsDifferentContractAfterInvalidDeclaration(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function need_integer(value: integer): ()
+end
+
+local function f(raw: any): ()
+	local value: string = raw
+	need_integer(value)
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	result := checked.RootResult()
+	if result == nil {
+		t.Fatal("RootResult nil")
+	}
+	var reports []CallArgumentReport
+	var calls int
+	for _, fn := range result.FunctionResults() {
+		New(fn).ForEachCall(func(call CallSite) bool {
+			calls++
+			reports = append(reports, call.Reports...)
+			return true
+		})
+	}
+	if len(reports) != 1 {
+		t.Fatalf("calls = %d argument reports = %#v, want integer contract report after invalid string declaration", calls, reports)
+	}
+	if reports[0].Check.Admissible {
+		t.Fatalf("argument report is admissible: %#v", reports[0])
+	}
+	if !typ.TypeEquals(reports[0].Check.Expected, typ.Integer) {
+		t.Fatalf("expected = %v, want integer", reports[0].Check.Expected)
+	}
+}
+
 func TestForEachCallReportsDottedMemberFunctionContract(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
