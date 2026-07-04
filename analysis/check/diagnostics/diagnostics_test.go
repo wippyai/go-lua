@@ -949,7 +949,8 @@ func TestAnnotationAssignabilityRejectsExplicitAnyForClosedRecordDynamicWrite(t 
 	}
 	explanation := d.Explanation.String()
 	if !strings.Contains(explanation, "user asserted any") ||
-		!strings.Contains(explanation, "no proof on this path shows raw satisfies the declared type") {
+		!strings.Contains(explanation, "raw comes from any/unknown") ||
+		!strings.Contains(explanation, "no proof on this path shows raw is string") {
 		t.Fatalf("explanation = %q, want explicit-any missing-proof evidence for string field", explanation)
 	}
 }
@@ -990,7 +991,7 @@ func TestAnnotationAssignabilityRejectsExplicitAnyAsProof(t *testing.T) {
 	var assignment, field, call bool
 	for _, d := range diags {
 		msg := d.Message
-		assignment = assignment || strings.Contains(msg, "cannot assign raw because it is any, not") && strings.Contains(msg, "id: string")
+		assignment = assignment || strings.Contains(msg, "cannot assign raw because it is any, not Payload")
 		field = field || strings.Contains(msg, "cannot assign raw.id because it is any, not string")
 		call = call || strings.Contains(msg, "argument 1 (raw) comes from any/unknown") && strings.Contains(msg, "no proof shows it is")
 	}

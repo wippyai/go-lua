@@ -389,7 +389,7 @@ func TestOrdinaryAssignmentRejectsObjectLiteralExplicitAnyMember(t *testing.T) {
 		t.Fatalf("diagnostic = %#v, want any-to-string ordinary assignment member mismatch", d)
 	}
 	if got := diags[0].Explanation.String(); !strings.Contains(got, "raw comes from any/unknown") ||
-		!strings.Contains(got, "no proof on this path shows raw satisfies the declared type") {
+		!strings.Contains(got, "no proof on this path shows raw is string") {
 		t.Fatalf("explanation = %q, want any/unknown boundary and missing-proof evidence", got)
 	}
 	if d := diags[0]; len(d.Labels) < 2 || d.Labels[0].Message != "assigned value" ||
