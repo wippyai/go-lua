@@ -131,15 +131,15 @@ end
 		Sources:             diagnostic.SourceMap{"test.lua": src},
 		ShowSourceLabelRows: true,
 	})
-	want := `error[type.call.direct.argument_type]: listen cannot infer one T for argument 2: argument 2.channel implies {id: string, kind: "event"}, but argument 2.decode return 1 implies {elapsed: number, kind: "timer"}
+	want := `error[type.call.direct.argument_type]: listen argument 2 gives ` + "`T`" + ` incompatible types: argument 2.channel (source.primary) implies {id: string, kind: "event"}, but argument 2.decode (decode_timer) return 1 implies {elapsed: number, kind: "timer"}
  --> test.lua:19:12
    |
 19 |     channel = source.primary,
    |               ↑ argument value
 
 because:
-  1. proven: argument 2.channel contributes {id: string, kind: "event"} for ` + "`T`" + `
-  2. proven: argument 2.decode return 1 also contributes {elapsed: number, kind: "timer"} for ` + "`T`" + `
+  1. proven: argument 2.channel (source.primary) contributes {id: string, kind: "event"} for ` + "`T`" + `
+  2. proven: argument 2.decode (decode_timer) return 1 also contributes {elapsed: number, kind: "timer"} for ` + "`T`" + `
  --> test.lua:20:11
    |
 20 |     decode = decode_timer,
