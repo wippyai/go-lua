@@ -691,6 +691,28 @@ end`), body.Config{
 	}
 }
 
+func TestFromResultDoesNotProjectGuardedMemberCallObligation(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function f(provider: { emit: fun(value: string): () }, x: unknown)
+	if type(x) == "string" then
+		provider.emit(x)
+	end
+end`), body.Config{
+		Registry: reg,
+		Globals:  []string{"type"},
+	})
+
+	got := summaryprojection.FromResult(result)
+
+	if len(got.ParamObligations) != 0 {
+		t.Fatalf("param obligations = %#v, want none for guarded member call", got.ParamObligations)
+	}
+	if len(got.ParamMemberCallObligations) != 0 {
+		t.Fatalf("member call obligations = %#v, want none for guarded member call", got.ParamMemberCallObligations)
+	}
+}
+
 func TestFromResultDoesNotProjectReassignedParamObligation(t *testing.T) {
 	reg := standard.Registry()
 	result := projectCheckFunction(t, projectParseFunction(t, `

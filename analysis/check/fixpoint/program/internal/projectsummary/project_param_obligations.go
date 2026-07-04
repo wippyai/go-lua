@@ -473,6 +473,9 @@ func (p paramObligationProjector) addCallOutcomeObligations(out []product.Value,
 		if obligation.ParamIndex < 0 || obligation.ParamIndex >= len(fact.Args) {
 			continue
 		}
+		if want, ok := typevalue.TypeOf(p.reg, obligation.Value); ok && p.expressionValueSatisfiesType(fact.Args[obligation.ParamIndex], want) {
+			continue
+		}
 		param, ok := p.unconditionalParamIndex(fact.Args[obligation.ParamIndex])
 		if !ok {
 			continue
@@ -564,6 +567,9 @@ func (p paramObligationProjector) addTypedExpressionObligation(out []product.Val
 	if expr == nil || depth > typ.DefaultRecursionDepth {
 		return
 	}
+	if p.expressionValueSatisfiesType(expr, want) {
+		return
+	}
 	if value, ok := obligationValueFromType(p.reg, want); ok {
 		if param, ok := p.unconditionalParamIndex(expr); ok {
 			p.add(out, param, value)
@@ -581,9 +587,6 @@ func (p paramObligationProjector) addTypedExpressionObligation(out []product.Val
 			return
 		}
 		p.addTypedExpressionObligation(out, source, want, depth+1)
-		return
-	}
-	if p.expressionValueSatisfiesType(expr, want) {
 		return
 	}
 	switch e := expr.(type) {
@@ -604,6 +607,11 @@ func (p paramObligationProjector) expressionValueSatisfiesType(expr ast.Expr, wa
 	if expr == nil || want == nil || p.reg == nil {
 		return false
 	}
+	if valueReader, ok := p.result.(expressionValueBeforeReader); ok {
+		if value, valueOK := valueReader.ExpressionValueBeforeBoundary(p.point, expr); valueOK {
+			return p.valueSatisfiesType(value, want)
+		}
+	}
 	pathReader, ok := p.result.(expressionPathReader)
 	if !ok {
 		return false
@@ -620,6 +628,10 @@ func (p paramObligationProjector) expressionValueSatisfiesType(expr ast.Expr, wa
 	if !ok {
 		return false
 	}
+	return p.valueSatisfiesType(value, want)
+}
+
+func (p paramObligationProjector) valueSatisfiesType(value product.Value, want typ.Type) bool {
 	got, ok := typevalue.TypeOf(p.reg, value)
 	if !ok || got == nil || typ.IsAny(got) || typ.IsUnknown(got) || typ.IsNever(got) {
 		return false
@@ -872,10 +884,15 @@ func (p paramObligationProjector) memberCallObligations(fact semantics.CallFact,
 	if fact.Receiver != nil && fact.Method != "" {
 		memberOffset = 1
 	}
+	params := p.callParamTypes(fact, site)
 	var out []summary.ParamMemberCallObligation
 	for i, arg := range fact.Args {
 		argParam, ok := p.unconditionalParamIndex(arg)
 		if !ok {
+			continue
+		}
+		memberParamIndex := i + memberOffset
+		if memberParamIndex < len(params) && p.expressionValueSatisfiesType(arg, params[memberParamIndex]) {
 			continue
 		}
 		out = append(out, summary.ParamMemberCallObligation{
@@ -883,7 +900,7 @@ func (p paramObligationProjector) memberCallObligations(fact semantics.CallFact,
 			ReceiverPath:     receiverPath,
 			Member:           member,
 			ArgParam:         argParam,
-			MemberParamIndex: i + memberOffset,
+			MemberParamIndex: memberParamIndex,
 			SubjectLabel:     p.memberCallArgumentSubjectLabel(i, p.params[argParam]),
 			ProviderLabel:    p.memberCallProviderLabel(receiver, member),
 		})

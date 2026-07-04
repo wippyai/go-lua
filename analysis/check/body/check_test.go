@@ -3171,6 +3171,82 @@ end
 	}
 }
 
+func TestReadBoundaryTypeGuardedAliasCallArgumentIsString(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function normalize(raw_arguments: unknown): table
+	local json = {}
+	function json.decode(src: string): (any, string?)
+		return {}, nil
+	end
+	local arguments = raw_arguments
+	if type(arguments) == "string" then
+		local parsed, parse_err = json.decode(arguments)
+		if not parse_err and type(parsed) == "table" then
+			arguments = parsed
+		else
+			arguments = { value = arguments }
+		end
+	end
+	if not arguments or type(arguments) ~= "table" then
+		arguments = { run = true }
+	end
+	return arguments
+end
+`)
+	result, err := CheckFunction(fn, Config{Registry: reg, Signatures: signaturelookup.Source{IncludeStdlib: true}})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	var decodePoint cfg.Point
+	var decodeSource factflow.ValueSource
+	for _, point := range result.Graph().RPO() {
+		fact, ok := result.Call(point)
+		if !ok || len(fact.Args) != 1 {
+			continue
+		}
+		if fact.CalleePath.String() != "json.decode" {
+			continue
+		}
+		site, ok := result.CallSite(point)
+		if !ok {
+			t.Fatalf("call site missing at point %d", point)
+		}
+		source, ok := site.ArgumentSourceAt(0)
+		if !ok {
+			t.Fatalf("decode call at point %d has no first argument source", point)
+		}
+		decodePoint = point
+		decodeSource = source
+		break
+	}
+	if decodePoint == 0 {
+		t.Fatal("json.decode call point not found")
+	}
+	value, ok := result.SourceValueBeforeBoundary(decodePoint, decodeSource)
+	if !ok {
+		t.Fatalf("SourceValueBeforeBoundary(arguments) returned false")
+	}
+	got, ok := typevalue.TypeOf(reg, value)
+	if !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("decode argument type = %v/%v evidence=%s presence=%s, want string",
+			got, ok, product.Get(reg, value, evidence.Key), product.PresenceOf(value))
+	}
+	fact, ok := result.Call(decodePoint)
+	if !ok || len(fact.Args) != 1 {
+		t.Fatalf("decode call fact = %#v/%v, want one argument", fact, ok)
+	}
+	exprValue, ok := result.ExpressionValueBeforeBoundary(decodePoint, fact.Args[0])
+	if !ok {
+		t.Fatalf("ExpressionValueBeforeBoundary(arguments expr) returned false")
+	}
+	exprType, ok := typevalue.TypeOf(reg, exprValue)
+	if !ok || !typ.TypeEquals(exprType, typ.String) {
+		t.Fatalf("decode argument expression type = %v/%v evidence=%s presence=%s, want string",
+			exprType, ok, product.Get(reg, exprValue, evidence.Key), product.PresenceOf(exprValue))
+	}
+}
+
 func TestPathProvenTruthyByDominatingBranch(t *testing.T) {
 	reg := standard.Registry()
 	fn := parseFunction(t, `function f(x: string?): ()
