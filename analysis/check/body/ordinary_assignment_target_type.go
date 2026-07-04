@@ -33,11 +33,18 @@ func (r *Result) OrdinaryAssignmentTargetTypeAt(point cfg.Point, fact OrdinaryAs
 		return OrdinaryAssignmentTargetType{}, false
 	}
 	container, ok := r.ExpressionTypeBeforeBoundary(point, attr.Object)
+	declaredContainer, hasDeclaredContainer := r.DeclaredExpressionTypeAt(point, attr.Object)
+	if !hasDeclaredContainer {
+		declaredContainer, hasDeclaredContainer = r.dynamicWriteDeclaredContainerType(point)
+	}
 	if !ok || container == nil {
-		if hasDeclared {
+		if hasDeclaredContainer && declaredContainer != nil {
+			container = declaredContainer
+		} else if hasDeclared {
 			return r.ordinaryAssignmentDeclaredTargetTypeResult(point, fact.Target, declared), true
+		} else {
+			return OrdinaryAssignmentTargetType{}, false
 		}
-		return OrdinaryAssignmentTargetType{}, false
 	}
 	var projected typ.Type
 	if attr.KeySyntax != ast.AttrKeyIndex {
@@ -66,7 +73,10 @@ func (r *Result) OrdinaryAssignmentTargetTypeAt(point cfg.Point, fact OrdinaryAs
 		}
 		projected = t
 	} else {
-		keyType, ok := r.ExpressionTypeBeforeBoundary(point, attr.Key)
+		keyType, ok := r.dynamicWriteKeyType(point)
+		if !ok {
+			keyType, ok = r.ExpressionTypeBeforeBoundary(point, attr.Key)
+		}
 		if !ok {
 			keyType, ok = LiteralExpressionType(attr.Key)
 		}
@@ -77,6 +87,9 @@ func (r *Result) OrdinaryAssignmentTargetTypeAt(point cfg.Point, fact OrdinaryAs
 			return OrdinaryAssignmentTargetType{}, false
 		}
 		t, ok := luatypeprojection.DynamicWriteValueType(container, keyType)
+		if !ok && hasDeclaredContainer && declaredContainer != nil && !typ.TypeEquals(container, declaredContainer) {
+			t, ok = luatypeprojection.DynamicWriteValueType(declaredContainer, keyType)
+		}
 		if !ok {
 			if hasDeclared {
 				return r.ordinaryAssignmentDeclaredTargetTypeResult(point, fact.Target, declared), true
@@ -152,6 +165,32 @@ func (r *Result) ordinaryAssignmentTargetTypeResult(point cfg.Point, target ast.
 		}
 	}
 	return out
+}
+
+func (r *Result) dynamicWriteDeclaredContainerType(point cfg.Point) (typ.Type, bool) {
+	if r == nil {
+		return nil, false
+	}
+	write, ok := r.DynamicIndexWrite(point)
+	if !ok {
+		return nil, false
+	}
+	return r.DeclaredPathTypeAt(point, write.TablePathRef(), true)
+}
+
+func (r *Result) dynamicWriteKeyType(point cfg.Point) (typ.Type, bool) {
+	if r == nil {
+		return nil, false
+	}
+	write, ok := r.DynamicIndexWrite(point)
+	if !ok {
+		return nil, false
+	}
+	value, ok := r.SourceValueBeforeBoundary(point, write.KeySource())
+	if !ok {
+		return nil, false
+	}
+	return r.valueTypeWithPresence(value)
 }
 
 func (r *Result) ordinaryAssignmentDeclaredTargetTypeResult(point cfg.Point, target ast.Expr, t typ.Type) OrdinaryAssignmentTargetType {

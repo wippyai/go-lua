@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
@@ -312,6 +313,24 @@ func TestMeetConstraintKeepsPreciseTableSubtypeForBroadTypeGuardWitness(t *testi
 				t.Fatalf("refined type = %v/%v, want %v", gotType, ok, tc.want)
 			}
 		})
+	}
+}
+
+func TestMeetConstraintKeepsExplicitAnyReachableForTableTypeGuard(t *testing.T) {
+	reg := standard.Registry()
+	value := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.Any), typ.Any)
+	value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
+	value = product.Set(reg, value, assertion.Key, assertion.Any())
+	constraint := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
+	constraint = product.Set(reg, constraint, assertion.Key, assertion.Runtime())
+	constraint = typevalue.WithWitness(reg, constraint, typetable.BuiltinTopMarker())
+
+	got := MeetConstraint(reg, value, constraint)
+	if product.Equal(reg, got, product.Bottom(reg)) {
+		t.Fatal("table type guard collapsed explicit any value to unreachable")
+	}
+	if kind := product.Get(reg, got, runtimekind.Key); !runtimekind.Equal(kind, runtimekind.Singleton(runtimekind.Table)) {
+		t.Fatalf("runtime kind = %v, want table", kind)
 	}
 }
 

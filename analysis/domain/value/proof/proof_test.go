@@ -73,6 +73,20 @@ func TestValueProofAdmissibleRejectsAnyClaimForRecordWithConcreteField(t *testin
 	}
 }
 
+func TestValueProofAdmissibleRejectsRuntimeTableKindForOptionalFieldRecord(t *testing.T) {
+	reg := registry()
+	value := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
+	value = product.Set(reg, value, assertion.Key, assertion.Of(assertion.RuntimeClaim))
+	want := typetable.NewRecord().
+		OptField("id", typ.String).
+		OptField("priority", typ.Number).
+		Build()
+
+	if New(reg, typevalue.NewCache()).ValueProofAdmissible(value, want) {
+		t.Fatalf("runtime table kind should not satisfy optional-field record schema without a record validation proof")
+	}
+}
+
 func TestValueProofAdmissibleAcceptsRuntimeProof(t *testing.T) {
 	reg := registry()
 	value := typevalue.NewCache().FromTypeWithWitness(reg, typ.String)

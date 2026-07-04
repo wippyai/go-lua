@@ -330,6 +330,53 @@ counters[key] = 1
 	}
 }
 
+func TestForEachAssignmentReportsRuntimeTableAppendToOptionalFieldRecordArray(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type BindingSpec = {
+	id: string?,
+	priority: number?,
+}
+
+local function normalize(binding: any): {BindingSpec}
+	local normalized: {BindingSpec} = {}
+	if type(binding) == "table" then
+		normalized[#normalized + 1] = binding
+	end
+	return normalized
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil || len(root.FunctionResults()) != 1 {
+		t.Fatalf("function results = %#v, want one child", root)
+	}
+	child := root.FunctionResults()[0]
+	reader := New(child)
+	var got []Assignment
+	reader.ForEachAssignment(func(assignment Assignment) bool {
+		if assignment.SourceLabel == "binding" {
+			got = append(got, assignment)
+		}
+		return true
+	})
+	if len(got) != 1 {
+		t.Fatalf("dynamic append assignments = %#v, want one binding append assignment", got)
+	}
+	if got[0].Check.Admissible {
+		t.Fatalf("assignment check is admissible, want runtime table rejected for BindingSpec element contract")
+	}
+	if got[0].Expected == nil || !strings.Contains(got[0].Expected.String(), "id") || !strings.Contains(got[0].Expected.String(), "priority") {
+		t.Fatalf("expected = %v, want BindingSpec element contract", got[0].Expected)
+	}
+}
+
 func TestForEachAssignmentReportsObjectLiteralExplicitAnyMember(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `

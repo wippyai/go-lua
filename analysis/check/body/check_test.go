@@ -1642,6 +1642,45 @@ end`)
 	}
 }
 
+func TestOrdinaryAssignmentTargetTypeUsesDeclaredArrayForDynamicAppend(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type BindingSpec = {
+	id: string?,
+	priority: number?,
+}
+
+local normalized: {BindingSpec} = {}
+local binding: any = {}
+if type(binding) == "table" then
+	normalized[#normalized + 1] = binding
+end
+`)
+	result, err := CheckChunk(stmts, Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	ifStmt := stmts[3].(*ast.IfStmt)
+	assign := ifStmt.Then[0].(*ast.AssignStmt)
+	point := requireOrdinaryAssignmentPoint(t, result, assign, 0)
+	fact, ok := result.OrdinaryAssignment(point)
+	if !ok {
+		t.Fatal("missing ordinary assignment fact")
+	}
+	target, ok := result.OrdinaryAssignmentTargetTypeAt(point, fact)
+	if !ok {
+		write, writeOK := result.DynamicIndexWrite(point)
+		declared, declaredOK := result.dynamicWriteDeclaredContainerType(point)
+		t.Fatalf("OrdinaryAssignmentTargetTypeAt returned false for declared-array dynamic append; dynamicWrite=%v table=%v declared=%v/%v", writeOK, write.TablePathRef(), declared, declaredOK)
+	}
+	if got := target.Type.String(); !strings.Contains(got, "id: string?") || !strings.Contains(got, "priority: number?") {
+		t.Fatalf("target type = %v, want BindingSpec element contract", target.Type)
+	}
+}
+
 func TestCheckFunctionReturnSlotPreservesAnnotatedArrayAfterDynamicIPairsInsert(t *testing.T) {
 	reg := standard.Registry()
 	fn := parseFunction(t, `
