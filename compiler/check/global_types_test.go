@@ -1165,7 +1165,7 @@ return require("test").run_cases(define_tests)
 	}
 }
 
-func TestCheckerFacadePreservesImportedLiteralArgumentReturnShape(t *testing.T) {
+func TestCheckerFacadePreservesImportedSimpleLiteralArgumentReturnShape(t *testing.T) {
 	mapperMod := analysistest.CheckAndExport(`
 local M = {}
 
@@ -1208,6 +1208,57 @@ local auto_mode: string = auto_config.mode
 
 local none_config, none_error = mapper.map_tool_config("none", test_tools)
 local none_mode: string = none_config.mode
+`, "mapper_test.lua")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	checker := NewChecker(db.New(), Deps{})
+	session := checker.CheckChunkWithImports(chunk, "wippy.llm.google:mapper_test", map[string]*typemanifest.Manifest{
+		"google_mapper": mapperManifest,
+	})
+	if len(session.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want facade import to preserve simple literal-argument return shape", session.Diagnostics)
+	}
+}
+
+func TestCheckerFacadeKeepsImportedNamedLoopReturnShapeFrontier(t *testing.T) {
+	mapperMod := analysistest.CheckAndExport(`
+local M = {}
+
+function M.map_tool_config(choice, available_tools)
+    if not choice or choice == "auto" or choice == "any" or choice == "" then
+        return { mode = "AUTO" }, nil
+    elseif choice == "none" then
+        return { mode = "NONE" }, nil
+    elseif type(choice) == "string" then
+        for _, tool in ipairs(available_tools or {}) do
+            if tool.name == choice then
+                return {
+                    mode = "ANY",
+                    allowedFunctionNames = { choice },
+                }, nil
+            end
+        end
+        return nil, "not found"
+    end
+    return "AUTO", nil
+end
+
+return M
+`, "wippy.llm.google:mapper", analysistest.WithStdlib())
+	if len(mapperMod.Errors) != 0 {
+		t.Fatalf("mapper diagnostics = %#v, want clean export", mapperMod.Errors)
+	}
+	mapperManifest := roundTripFacadeManifest(t, "google_mapper", mapperMod.Manifest)
+
+	chunk, err := parse.ParseString(`
+local mapper = require("google_mapper")
+
+local test_tools = {
+    { name = "get_weather" },
+    { name = "calculate" },
+}
 
 local named_config, named_error = mapper.map_tool_config("get_weather", test_tools)
 local named_mode: string = named_config.mode
@@ -1221,8 +1272,8 @@ local named_allowed: string = named_config.allowedFunctionNames[1]
 	session := checker.CheckChunkWithImports(chunk, "wippy.llm.google:mapper_test", map[string]*typemanifest.Manifest{
 		"google_mapper": mapperManifest,
 	})
-	if len(session.Diagnostics) != 0 {
-		t.Fatalf("diagnostics = %#v, want facade import to preserve literal-argument return shape", session.Diagnostics)
+	if len(session.Diagnostics) != 2 {
+		t.Fatalf("diagnostics = %#v, want named loop finite-container frontier diagnostics", session.Diagnostics)
 	}
 }
 

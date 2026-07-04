@@ -76,7 +76,7 @@ func (c *Checker) CheckChunkWithImports(chunk []ast.Stmt, entryID string, import
 
 func (c *Checker) checkChunk(chunk []ast.Stmt, entryID string, imports map[string]*typemanifest.Manifest) *Session {
 	manifests := append(c.canonicalManifests(), currentImportManifests(imports)...)
-	globalTypes := mergedGlobalTypes(c.deps.GlobalTypes, importedAliasGlobalTypes(imports))
+	globalTypes := mergedGlobalTypes(c.deps.GlobalTypes, importedAmbientGlobalTypes(manifests), importedAliasGlobalTypes(imports))
 	checked, err := program.RunChunk(chunk, program.Config{
 		Check: body.Config{
 			Registry:    standard.Registry(),
@@ -191,6 +191,24 @@ func importedModuleGlobals(manifests []*typemanifest.Manifest) []string {
 		if m != nil {
 			out = append(out, m.Globals...)
 		}
+	}
+	return out
+}
+
+func importedAmbientGlobalTypes(manifests []*typemanifest.Manifest) map[string]typ.Type {
+	out := make(map[string]typ.Type)
+	for _, m := range manifests {
+		if m == nil {
+			continue
+		}
+		for name, t := range m.GlobalTypes {
+			if name != "" && t != nil {
+				out[name] = t
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

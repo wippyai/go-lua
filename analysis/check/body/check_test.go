@@ -2126,6 +2126,42 @@ func TestCheckChunkSeedsDeclaredLocalValueWhenLiteralSourceUnresolved(t *testing
 	assertRuntimeKind(t, reg, got, runtimekind.Join(runtimekind.Singleton(runtimekind.String), runtimekind.Singleton(runtimekind.Number)))
 }
 
+func TestUninitializedLocalDeclarationValueAtBoundaryStopsAfterRootWrite(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local x: string?
+local before = x
+x = "ready"
+local after = x
+`)
+
+	result, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	xDecl := stmts[0].(*ast.LocalAssignStmt)
+	beforeDecl := stmts[1].(*ast.LocalAssignStmt)
+	xWrite := stmts[2].(*ast.AssignStmt)
+	afterDecl := stmts[3].(*ast.LocalAssignStmt)
+	x := mustLocalAt(t, result, xDecl, 0)
+
+	beforePoint := requireLocalAssignmentPoint(t, result, beforeDecl, 0)
+	before, ok := result.UninitializedLocalDeclarationValueAtBoundary(beforePoint, x)
+	if !ok || !typevalue.HasOnlyNilType(reg, before) {
+		t.Fatalf("implicit declaration nil before write = %v/%v, want nil", before, ok)
+	}
+
+	writePoint := requireOrdinaryAssignmentPoint(t, result, xWrite, 0)
+	afterPoint := requireLocalAssignmentPoint(t, result, afterDecl, 0)
+	if got, ok := result.UninitializedLocalDeclarationValueAtBoundary(writePoint, x); ok {
+		t.Fatalf("implicit declaration nil at root write = %v/%v, want absent", got, ok)
+	}
+	if got, ok := result.UninitializedLocalDeclarationValueAtBoundary(afterPoint, x); ok {
+		t.Fatalf("implicit declaration nil after root write = %v/%v, want absent", got, ok)
+	}
+}
+
 func TestCheckFunctionRunsIntraprocedurally(t *testing.T) {
 	reg := standard.Registry()
 	fn := parseFunction(t, "function f(a) local b = a return b end")
@@ -3983,6 +4019,18 @@ func requireLocalAssignmentPoint(t *testing.T, result *Result, stmt *ast.LocalAs
 		}
 	}
 	t.Fatalf("missing local assignment point for index %d", index)
+	return 0
+}
+
+func requireOrdinaryAssignmentPoint(t *testing.T, result *Result, stmt *ast.AssignStmt, index int) cfg.Point {
+	t.Helper()
+	for _, point := range result.Graph().RPO() {
+		fact, ok := result.OrdinaryAssignment(point)
+		if ok && fact.Stmt == stmt && fact.Index == index {
+			return point
+		}
+	}
+	t.Fatalf("missing ordinary assignment point for index %d", index)
 	return 0
 }
 

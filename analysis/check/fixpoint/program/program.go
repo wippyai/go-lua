@@ -1621,7 +1621,10 @@ func captureValueReaderAt(result *body.Result, point cfg.Point) captureValueRead
 		if id == 0 {
 			return product.Value{}, false
 		}
-		return result.SymbolValueAtBoundary(point, id)
+		if value, ok := result.SymbolValueAtBoundary(point, id); ok {
+			return value, true
+		}
+		return result.UninitializedLocalDeclarationValueAtBoundary(point, id)
 	}
 }
 

@@ -39,6 +39,10 @@ type Manifest struct {
 	// reporting an unknown value.
 	Globals []string
 
+	// GlobalTypes are the exported value types for ambient globals installed by
+	// this module. The key is the bare global name, matching Globals.
+	GlobalTypes map[string]typ.Type
+
 	// CallbackPhaseRegistrations describe functions that register a callback for
 	// a named execution phase. CallbackPhaseInvocations describe functions whose
 	// callback parameter executes with previously registered phases before or
@@ -72,6 +76,18 @@ func (m *Manifest) DefineGlobal(name string) {
 		return
 	}
 	m.Globals = append(m.Globals, name)
+}
+
+// DefineGlobalType records the exported value type for an ambient global.
+func (m *Manifest) DefineGlobalType(name string, t typ.Type) {
+	if m == nil || name == "" || t == nil {
+		return
+	}
+	m.DefineGlobal(name)
+	if m.GlobalTypes == nil {
+		m.GlobalTypes = make(map[string]typ.Type)
+	}
+	m.GlobalTypes[name] = t
 }
 
 func (m *Manifest) DefineCallbackPhaseRegistration(function string, callbackParam int, phase string) {
@@ -248,6 +264,23 @@ func Encode(m *Manifest) ([]byte, error) {
 		}
 	}
 
+	if len(m.GlobalTypes) > 0 {
+		names := make([]string, 0, len(m.GlobalTypes))
+		for name := range m.GlobalTypes {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+
+		wm.GlobalTypes = make([]namedTypeWire, 0, len(names))
+		for _, name := range names {
+			encoded, err := encodeType(m.GlobalTypes[name])
+			if err != nil {
+				return nil, fmt.Errorf("manifest: encode global type %q: %w", name, err)
+			}
+			wm.GlobalTypes = append(wm.GlobalTypes, namedTypeWire{Name: name, Type: encoded})
+		}
+	}
+
 	if len(m.TypestateProtocols) > 0 {
 		names := make([]string, 0, len(m.TypestateProtocols))
 		for protocol := range m.TypestateProtocols {
@@ -327,6 +360,14 @@ func Decode(data []byte) (*Manifest, error) {
 		m.DefineType(named.Name, t)
 	}
 
+	for _, named := range wm.GlobalTypes {
+		t, err := decodeType(named.Type)
+		if err != nil {
+			return nil, fmt.Errorf("manifest: decode global type %q: %w", named.Name, err)
+		}
+		m.DefineGlobalType(named.Name, t)
+	}
+
 	for _, protocol := range wm.TypestateProtocols {
 		def, err := decodeTypestateProtocol(protocol)
 		if err != nil {
@@ -357,6 +398,7 @@ type manifestWire struct {
 	Version                    string                          `json:"version,omitempty"`
 	Export                     *typeWire                       `json:"export,omitempty"`
 	Types                      []namedTypeWire                 `json:"types,omitempty"`
+	GlobalTypes                []namedTypeWire                 `json:"globalTypes,omitempty"`
 	TypestateProtocols         []typestateProtocolWire         `json:"typestateProtocols,omitempty"`
 	FunctionSignatures         []functionSignatureWire         `json:"functionSignatures,omitempty"`
 	Globals                    []string                        `json:"globals,omitempty"`

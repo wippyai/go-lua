@@ -51,6 +51,86 @@ return require("test").run_cases(define_tests)
 	}
 }
 
+func TestCheckModuleProvidedGlobalTypesAnalyzeCallbackImporter(t *testing.T) {
+	mod := CheckAndExport(`
+local M = {}
+function M.it(name: string, body: () -> ()): ()
+    body()
+end
+function M.run_cases(fn: () -> ()): ()
+    _G.it = M.it
+    fn()
+end
+return M
+`, "test", WithStdlib())
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module diagnostics = %#v, want clean provider", mod.Errors)
+	}
+	if mod.Manifest.GlobalTypes["it"] == nil {
+		t.Fatalf("manifest global types = %#v, want typed it ambient global", mod.Manifest.GlobalTypes)
+	}
+
+	result := Check(`
+local function define_tests()
+    it("case", function()
+        local out: string = 1
+    end)
+end
+return require("test").run_cases(define_tests)
+`, WithStdlib(), WithManifest("test", mod.Manifest))
+	if !hasDiagnosticCode(result.Diagnostics, diagnostics.CodeAssignmentType) {
+		t.Fatalf("diagnostics = %#v, want callback body analyzed through typed ambient global", result.Diagnostics)
+	}
+}
+
+func TestCheckModuleProvidedGlobalTypesAnalyzeCapturedOptionalLocalInCallback(t *testing.T) {
+	mod := CheckAndExport(`
+local M = {}
+function M.it(name: string, body: () -> ()): ()
+    body()
+end
+function M.run_cases(fn: () -> ()): ()
+    _G.it = M.it
+    fn()
+end
+return M
+`, "test", WithStdlib())
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module diagnostics = %#v, want clean provider", mod.Errors)
+	}
+
+	result := Check(`
+type Runtime = {
+    apply: (string) -> string,
+}
+
+local function define_tests()
+    local lifecycle_runtime: Runtime?
+    it("case", function()
+        local out: string = lifecycle_runtime.apply("start")
+    end)
+end
+return require("test").run_cases(define_tests)
+`, WithStdlib(), WithManifest("test", mod.Manifest))
+	if !hasDiagnosticCode(result.Diagnostics, diagnostics.CodeOptionalMethodCall) {
+		t.Fatalf("diagnostics = %#v, want captured optional local member access diagnosed", result.Diagnostics)
+	}
+}
+
+func TestCheckUninitializedOptionalLocalMemberAccessDiagnosed(t *testing.T) {
+	result := Check(`
+type Runtime = {
+    apply: (string) -> string,
+}
+
+local lifecycle_runtime: Runtime?
+local out: string = lifecycle_runtime.apply("start")
+`, WithStdlib())
+	if !hasDiagnosticCode(result.Diagnostics, diagnostics.CodeOptionalMethodCall) {
+		t.Fatalf("diagnostics = %#v, want optional local member access diagnosed", result.Diagnostics)
+	}
+}
+
 // A wrapper that exposes a callback API backed by another module's ambient
 // globals must republish those globals. This is the migration shape:
 // migration.define(fn) returns a closure that eventually calls core.define(fn),
@@ -297,18 +377,24 @@ function M.describe(name, body)
 end
 
 function M.before_each(body)
-    context.current.before_each = body
+    if context.current ~= nil then
+        context.current.before_each = body
+    end
 end
 
 function M.after_each(body)
-    context.current.after_each = body
+    if context.current ~= nil then
+        context.current.after_each = body
+    end
 end
 
 function M.it(name, body)
-    table.insert(context.current.tests, {
-        name = name,
-        fn = body,
-    })
+    if context.current ~= nil then
+        table.insert(context.current.tests, {
+            name = name,
+            fn = body,
+        })
+    end
 end
 
 local function get_suite_ancestry(suite)
@@ -448,8 +534,8 @@ end
 
 return require("test").run_cases(define_tests)
 `, WithStdlib(), WithManifest("test", testmod.Manifest))
-	if !hasDiagnosticCode(result.Diagnostics, diagnostics.CodeMissingMember) {
-		t.Fatalf("diagnostics = %#v, want missing-member when setup storage has no replay proof", result.Diagnostics)
+	if !hasDiagnosticCode(result.Diagnostics, diagnostics.CodeOptionalMethodCall) {
+		t.Fatalf("diagnostics = %#v, want optional receiver when setup storage has no replay proof", result.Diagnostics)
 	}
 }
 
@@ -535,8 +621,8 @@ end
 
 return require("test").run_cases(define_tests)
 `, WithStdlib(), WithManifest("test", testmod.Manifest))
-	if !hasDiagnosticCode(result.Diagnostics, diagnostics.CodeMissingMember) {
-		t.Fatalf("diagnostics = %#v, want missing-member when setup registration does not dominate case", result.Diagnostics)
+	if !hasDiagnosticCode(result.Diagnostics, diagnostics.CodeOptionalMethodCall) {
+		t.Fatalf("diagnostics = %#v, want optional receiver when setup registration does not dominate case", result.Diagnostics)
 	}
 }
 

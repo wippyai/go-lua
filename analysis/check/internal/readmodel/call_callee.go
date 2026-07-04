@@ -212,7 +212,7 @@ func (r Reader) expressionReceiverMethodCalleeReport(point cfg.Point, site factf
 }
 
 func (r Reader) memberReceiverNilableAtCall(point cfg.Point, site factflow.CallSite) (typ.Type, bool) {
-	if site.MethodName() == "" {
+	if site.MethodName() == "" && !site.CalleeMemberAccess() {
 		return nil, false
 	}
 	receiver, ok := r.callReceiverType(point, site)

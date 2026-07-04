@@ -74,6 +74,19 @@ func collectProvidedGlobals(m *manifest.Manifest, result *body.Result) {
 			continue
 		}
 		m.DefineGlobal(name)
+		if t, ok := result.DeclaredExpressionTypeAt(point, fact.Value); ok {
+			m.DefineGlobalType(name, t)
+			continue
+		}
+		if fn, ok := result.FunctionValueTypeAtBoundary(point, fact.Value); ok {
+			m.DefineGlobalType(name, fn)
+			continue
+		}
+		if value, ok := result.OrdinaryAssignmentSourceValueForExplanationAtBoundary(point, fact.Source); ok {
+			if t, ok := result.ValueType(value); ok {
+				m.DefineGlobalType(name, t)
+			}
+		}
 	}
 }
 

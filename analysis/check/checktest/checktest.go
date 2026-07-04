@@ -261,6 +261,7 @@ func checkSource(src, filename string, opts ...Option) Result {
 	moduleTypes := cfg.moduleTypeSource()
 	structural := precheck.Precheck(stmts)
 	globals := cfg.globals
+	globalTypes := manifestGlobalTypes(cfg.orderedManifests())
 	for _, m := range cfg.orderedManifests() {
 		if m != nil {
 			globals = append(globals, m.Globals...)
@@ -270,6 +271,7 @@ func checkSource(src, filename string, opts ...Option) Result {
 		Check: body.Config{
 			Registry:      reg,
 			Globals:       globals,
+			GlobalTypes:   globalTypes,
 			StateLanes:    cfg.stateLanes,
 			Signatures:    signatures,
 			ModuleExports: moduleExports,
@@ -302,6 +304,24 @@ func checkSource(src, filename string, opts ...Option) Result {
 	setDefaultFile(diags, filename)
 	diagnostic.Sort(diags)
 	return Result{Diagnostics: diags, checked: &checked, placement: placementplan.FromProgramResult(checked)}
+}
+
+func manifestGlobalTypes(manifests []*manifest.Manifest) map[string]typ.Type {
+	out := make(map[string]typ.Type)
+	for _, m := range manifests {
+		if m == nil {
+			continue
+		}
+		for name, t := range m.GlobalTypes {
+			if name != "" && t != nil {
+				out[name] = t
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func applyOptions(opts []Option) config {

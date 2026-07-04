@@ -153,6 +153,23 @@ func (r *Result) LocalAssignmentSourceValueForExplanationAtBoundary(point cfg.Po
 	return r.localAssignmentBoundaryValue(point, source, r.SourceValueForExplanationAtBoundary)
 }
 
+// OrdinaryAssignmentSourceValueForExplanationAtBoundary is the explanatory
+// counterpart for ordinary assignment sources.
+func (r *Result) OrdinaryAssignmentSourceValueForExplanationAtBoundary(point cfg.Point, source sourceprovenance.ASTSource) (product.Value, bool) {
+	if r == nil {
+		return product.Value{}, false
+	}
+	fact, ok := r.OrdinaryAssignment(point)
+	if !ok || fact.Source != source {
+		return product.Value{}, false
+	}
+	lowered, ok := r.facts.OrdinaryAssignment(point)
+	if !ok {
+		return product.Value{}, false
+	}
+	return r.SourceValueForExplanationAtBoundary(point, lowered.Source())
+}
+
 // ExpressionValueAtBoundary projects a Lua expression's product value at the
 // diagnostic read boundary for point.
 func (r *Result) ExpressionValueAtBoundary(point cfg.Point, expr ast.Expr) (product.Value, bool) {
@@ -973,6 +990,24 @@ func (r *Result) SymbolValueAtBoundary(point cfg.Point, id symbol.ID) (product.V
 		return product.Value{}, false
 	}
 	return r.PathValueAtBoundary(point, pathdom.NewPath(id, r.SymbolName(id)))
+}
+
+// UninitializedLocalDeclarationValueAtBoundary returns Lua's implicit nil for a
+// local declaration without an initializer when that declaration still owns the
+// root symbol at point.
+func (r *Result) UninitializedLocalDeclarationValueAtBoundary(point cfg.Point, id symbol.ID) (product.Value, bool) {
+	if r == nil || r.registry == nil || id == 0 {
+		return product.Value{}, false
+	}
+	declaration, ok := r.DominatingPathRootDeclarationSource(point, pathdom.NewPath(id, r.SymbolName(id)))
+	if !ok {
+		return product.Value{}, false
+	}
+	fact, ok := r.LocalAssignment(declaration.Point)
+	if !ok || !fact.HasSymbol || fact.Symbol != id || fact.Expr != nil || fact.Source.Kind != sourceprovenance.SourceNil {
+		return product.Value{}, false
+	}
+	return typevalue.Nil(r.registry), true
 }
 
 // CallOutcomeAt resolves the configured call-boundary evidence for point.
