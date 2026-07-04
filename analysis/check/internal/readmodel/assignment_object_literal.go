@@ -118,6 +118,7 @@ func (r Reader) assignmentObjectLiteralEntryCandidate(point cfg.Point, literal b
 			Assignment:          assignment,
 			ValueAdmissible:     valueAdmissible,
 			ValueProvenMismatch: valueProvenMismatch,
+			IsSubtype:           r.IsSubtype,
 		})
 		return assignment, true
 	}
