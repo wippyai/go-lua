@@ -5529,14 +5529,14 @@ end
 func TestCheckStringUnpackNonLiteralFormatStaysAny(t *testing.T) {
 	result := Check(`
 local function parse(buf: string, fmt: string): integer
-    local total_length: integer = string.unpack(fmt, buf, 1) :: integer
+    local total_length: integer = string.unpack(fmt, buf, 1)
     return total_length
 end
 `, WithStdlib())
 	requireDiagnostic(t, result, diagnosticExpectation{
-		Code:            diagnostics.CodeDirectCallResultAssignment,
+		Code:            diagnostics.CodeAssignmentType,
 		DiagnosticCount: 1,
-		MessageContains: []string{"call result 1 is any", "not integer"},
+		MessageContains: []string{"string.unpack(...)", "any", "not integer"},
 	})
 }
 
