@@ -1614,8 +1614,8 @@ func TestFromProgramResultExportsUntypedTableMemberFunctionShapeWithAnyReturns(t
 	inferred, ok := inferredFunctionTypeFromSummary(root.Registry(), root, fn, raw)
 	if !ok || inferred == nil {
 		var returnTypes []typ.Type
-		for _, value := range raw.Returns {
-			t, _ := typevalue.TypeOf(root.Registry(), enrichManifestReturnValue(root.Registry(), root, raw, value))
+		for i, value := range raw.Returns {
+			t, _ := typevalue.TypeOf(root.Registry(), enrichManifestReturnValue(root.Registry(), root, raw, i, value))
 			returnTypes = append(returnTypes, t)
 		}
 		t.Fatalf("inferred function type = %v, %v; slots = %#v; returns = %#v; want function type from raw summary", inferred, ok, root.FunctionParamSlots(fn), returnTypes)
@@ -1636,6 +1636,35 @@ func TestFromProgramResultExportsUntypedTableMemberFunctionShapeWithAnyReturns(t
 		!typ.IsAny(sig.Type.Returns[1]) ||
 		!typ.IsAny(sig.Type.Returns[2]) {
 		t.Fatalf("returns = %#v, want (concrete string-like, any, any)", sig.Type.Returns)
+	}
+}
+
+func TestFromProgramResultExportsUntypedConstructorPostAssignedMethodShape(t *testing.T) {
+	result := checkProgram(t, `
+		local M = {}
+		function M.new(messages)
+			local builder = {
+				messages = messages or {},
+			}
+			builder.get_messages = function(self: any)
+				return self.messages
+			end
+			return builder
+		end
+		return M
+	`)
+
+	m := FromProgramResult("prompt", result)
+	sig, ok := m.FunctionSignatures["prompt.new"]
+	if !ok || sig.Type == nil || len(sig.Type.Returns) != 1 {
+		t.Fatalf("missing prompt.new function signature: %#v", m.FunctionSignatures)
+	}
+	if typ.IsAny(sig.Type.Returns[0]) || typ.IsUnknown(sig.Type.Returns[0]) {
+		t.Fatalf("prompt.new return = %v, want returned builder record shape", sig.Type.Returns[0])
+	}
+	rec, ok := unwrap.Alias(sig.Type.Returns[0]).(*typ.Record)
+	if !ok || rec == nil || rec.GetField("get_messages") == nil {
+		t.Fatalf("prompt.new return = %v, want get_messages member", sig.Type.Returns[0])
 	}
 }
 

@@ -769,6 +769,120 @@ end
 	}
 }
 
+func TestCheckerPreservesDirtyImportedBuilderErrorReturnCorrelation(t *testing.T) {
+	promptMod := analysistest.CheckAndExport(`
+local M = {}
+
+type Message = { role: string, content: string? }
+type Builder = {
+	get_messages: (self: table) -> {Message},
+}
+
+function M.new(messages: {Message}?)
+	local builder = {
+		messages = messages or {},
+	}
+	builder.get_messages = function(self: any)
+		return self.messages
+	end
+	return builder
+end
+
+return M
+`, "prompt", analysistest.WithStdlib())
+	if len(promptMod.Errors) != 0 {
+		t.Fatalf("prompt diagnostics = %#v, want clean constructor export", promptMod.Errors)
+	}
+	promptNewSig, ok := promptMod.Manifest.FunctionSignatures["prompt.new"]
+	if !ok {
+		t.Fatalf("missing prompt.new signature: %#v", promptMod.Manifest.FunctionSignatures)
+	}
+	if promptNewSig.Type == nil || len(promptNewSig.Type.Returns) == 0 {
+		t.Fatalf("prompt.new signature = %#v, want inferred constructor return type", promptNewSig)
+	}
+
+	builderMod := analysistest.CheckAndExport(`
+local M = {
+	_prompt = require("prompt"),
+}
+
+function M.build(messages)
+	if not messages then
+		return nil, "Messages are required"
+	end
+
+	local builder = M._prompt.new()
+	for _, msg in ipairs(messages) do
+		local metadata: table = msg.metadata or {}
+		if metadata.skip then
+			builder:get_messages()
+		end
+	end
+
+	return builder, nil
+end
+
+return M
+`, "prompt_builder", analysistest.WithStdlib(), analysistest.WithModule("prompt", promptMod))
+	if len(builderMod.Errors) == 0 {
+		t.Fatalf("builder diagnostics = %#v, want dirty body to exercise exported partial summary", builderMod.Errors)
+	}
+	builderManifest := roundTripFacadeManifest(t, "prompt_builder", builderMod.Manifest)
+	buildSig, ok := builderManifest.FunctionSignatures["prompt_builder.build"]
+	if !ok {
+		t.Fatalf("missing prompt_builder.build signature: %#v", builderManifest.FunctionSignatures)
+	}
+	if buildSig.Effect.Pure() {
+		t.Fatalf("prompt_builder.build effect = %s, want exported error-return effect", buildSig.Effect)
+	}
+	if buildSig.OperationalEffects == nil || len(buildSig.OperationalEffects.ReturnPresenceRelations) == 0 {
+		t.Fatalf("prompt_builder.build operational return relations = %#v, want exported error-return presence relation", buildSig.OperationalEffects)
+	}
+
+	assertMod := analysistest.CheckAndExport(`
+local M = {}
+
+function M.is_nil(value: any, msg: string?)
+	if value ~= nil then
+		error(msg or "expected nil")
+	end
+end
+
+return M
+`, "testassert", analysistest.WithStdlib())
+	if len(assertMod.Errors) != 0 {
+		t.Fatalf("assert diagnostics = %#v, want clean helper export", assertMod.Errors)
+	}
+	assertManifest := roundTripFacadeManifest(t, "testassert", assertMod.Manifest)
+
+	chunk, err := parse.ParseString(`
+local prompt_builder = require("prompt_builder")
+local test = require("testassert")
+
+local builder, err = prompt_builder.build({
+	{ metadata = { skip = false } },
+})
+test.is_nil(err)
+local messages = builder:get_messages()
+`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	database := db.New()
+	database.Connect("prompt_builder", builderManifest)
+	database.Connect("testassert", assertManifest)
+
+	checker := NewChecker(database, Deps{})
+	session := checker.CheckChunkWithImports(chunk, "test.lua", map[string]*typemanifest.Manifest{
+		"prompt_builder": builderManifest,
+		"testassert":     assertManifest,
+	})
+	if len(session.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want dirty imported build result relation plus nil assertion to prove builder present", session.Diagnostics)
+	}
+}
+
 func TestCheckerPreservesManifestAliasCastThroughUnannotatedChannelSelectHelper(t *testing.T) {
 	chunk, err := parse.ParseString(`
 type Message = process.Message

@@ -26,6 +26,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -39,6 +40,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -211,11 +213,15 @@ func functionSignatureName(modulePath string, member segment.Segment) (string, b
 func functionExpressionSignature(prog program.Result, result *body.Result, fn *ast.FunctionExpr, name string, target pathdom.Path) (signature.Function, bool) {
 	fnType, typed := functionSignatureType(result, fn)
 	sum, summarized := functionSummary(prog, result, fn, target)
+	summaryResult := materializedFunctionResult(result, fn)
+	if summaryResult == nil {
+		summaryResult = result
+	}
 	if !typed {
 		if !summarized {
 			return signature.Function{}, false
 		}
-		if inferred, ok := inferredFunctionTypeFromSummary(result.Registry(), result, fn, sum); ok {
+		if inferred, ok := inferredFunctionTypeFromSummary(result.Registry(), summaryResult, fn, sum); ok {
 			return signature.Function{
 				Type:               inferred,
 				Effect:             functionSummaryEffect(result.Registry(), sum, inferred),
@@ -233,7 +239,7 @@ func functionExpressionSignature(prog program.Result, result *body.Result, fn *a
 		return sig, true
 	}
 	if summarized {
-		fnType = functionTypeWithInferredReturns(result.Registry(), result, fnType, sum)
+		fnType = functionTypeWithInferredReturns(result.Registry(), summaryResult, fnType, sum)
 	}
 	sig := signature.Function{Type: fnType}
 	if summarized {
@@ -241,6 +247,24 @@ func functionExpressionSignature(prog program.Result, result *body.Result, fn *a
 		sig.OperationalEffects = functionSummaryOperationalEffects(result.Registry(), sum, fnType, name)
 	}
 	return sig, true
+}
+
+func materializedFunctionResult(result *body.Result, fn *ast.FunctionExpr) *body.Result {
+	if result == nil || fn == nil {
+		return nil
+	}
+	for _, child := range result.FunctionResults() {
+		if child == nil {
+			continue
+		}
+		if child.Function() == fn && !child.IsCallContextResult() {
+			return child
+		}
+		if found := materializedFunctionResult(child, fn); found != nil {
+			return found
+		}
+	}
+	return nil
 }
 
 func inferredFunctionTypeFromSummary(reg *axis.Registry, result *body.Result, fn *ast.FunctionExpr, sum summary.Summary) (*typ.Function, bool) {
@@ -370,10 +394,16 @@ func inferredPortableReturnTypes(reg *axis.Registry, result *body.Result, sum su
 	}
 	returns := make([]typ.Type, 0, len(sum.Returns))
 	inferred := false
-	for _, value := range sum.Returns {
-		value = enrichManifestReturnValue(reg, result, sum, value)
+	for i, value := range sum.Returns {
+		value = enrichManifestReturnValue(reg, result, sum, i, value)
+		pathType, hasPathType := inferredPathBackedReturnType(result, i)
 		t, ok := typevalue.TypeOf(reg, value)
 		if !ok || t == nil {
+			if hasPathType {
+				returns = append(returns, pathType)
+				inferred = true
+				continue
+			}
 			returns = append(returns, typ.Any)
 			inferred = true
 			continue
@@ -382,11 +412,21 @@ func inferredPortableReturnTypes(reg *axis.Registry, result *body.Result, sum su
 			return nil, false
 		}
 		if typ.IsAny(t) || typ.IsUnknown(t) {
+			if hasPathType {
+				returns = append(returns, pathType)
+				inferred = true
+				continue
+			}
 			returns = append(returns, typ.Any)
 			inferred = true
 			continue
 		}
 		if !portableInferredSignatureType(t) {
+			if hasPathType {
+				returns = append(returns, pathType)
+				inferred = true
+				continue
+			}
 			returns = append(returns, typ.Any)
 			inferred = true
 			continue
@@ -397,8 +437,50 @@ func inferredPortableReturnTypes(reg *axis.Registry, result *body.Result, sum su
 	return returns, inferred
 }
 
-func enrichManifestReturnValue(reg *axis.Registry, result *body.Result, sum summary.Summary, value product.Value) product.Value {
-	if reg == nil || result == nil || len(sum.HeapTableObjects) == 0 {
+func inferredPathBackedReturnType(result *body.Result, returnIndex int) (typ.Type, bool) {
+	if result == nil || returnIndex < 0 {
+		return nil, false
+	}
+	var members []typ.Type
+	for _, point := range result.ReturnPoints() {
+		sources, ok := result.ReturnValueSources(point)
+		if !ok || returnIndex >= len(sources) {
+			return nil, false
+		}
+		source := sources[returnIndex]
+		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+			return nil, false
+		}
+		p, ok := result.ExpressionPathRef(source.ExprRef)
+		if !ok || p.IsEmpty() {
+			return nil, false
+		}
+		t, ok := pathExportRecordType(result, point, p)
+		if !ok || !portablePathBackedReturnType(t) {
+			return nil, false
+		}
+		members = append(members, t)
+	}
+	if len(members) == 0 {
+		return nil, false
+	}
+	return typeexpr.Union(members...), true
+}
+
+func portablePathBackedReturnType(t typ.Type) bool {
+	return t != nil &&
+		!typ.IsAny(t) &&
+		!typ.IsUnknown(t) &&
+		!typ.IsNever(t) &&
+		!typ.ContainsTypeParam(t)
+}
+
+func enrichManifestReturnValue(reg *axis.Registry, result *body.Result, sum summary.Summary, returnIndex int, value product.Value) product.Value {
+	if reg == nil || result == nil {
+		return value
+	}
+	value = enrichManifestReturnValueFromReturnStaticMembers(reg, result, sum, returnIndex, value)
+	if len(sum.HeapTableObjects) == 0 {
 		return value
 	}
 	id, ok := product.Get(reg, value, identity.Key).ID()
@@ -436,6 +518,34 @@ func enrichManifestReturnValue(reg *axis.Registry, result *body.Result, sum summ
 		return value
 	}
 	if existing, ok := typevalue.TypeOf(reg, value); ok && existing != nil {
+		if merged, ok := typetable.OverlayRecordMembers(existing, witness); ok {
+			witness = merged
+		}
+	}
+	return typevalue.WithWitness(reg, value, witness)
+}
+
+func enrichManifestReturnValueFromReturnStaticMembers(reg *axis.Registry, result *body.Result, sum summary.Summary, returnIndex int, value product.Value) product.Value {
+	if returnIndex < 0 || len(sum.NormalReturnFacts.PathStaticMembers) == 0 {
+		return value
+	}
+	root := fmt.Sprintf("ret[%d]", returnIndex)
+	builder := staticmemberwitness.NewBuilder()
+	for _, fact := range sum.NormalReturnFacts.PathStaticMembers {
+		if fact.Path.Root != root || len(fact.Path.Segments) == 0 {
+			continue
+		}
+		memberType, ok := manifestStaticMemberValueType(reg, result, fact.Value)
+		if !ok {
+			continue
+		}
+		builder.Add(fact.Path.Segments, memberType)
+	}
+	witness, ok := builder.Build()
+	if !ok {
+		return value
+	}
+	if existing, ok := typevalue.TypeOf(reg, value); ok && existing != nil && !typ.IsAny(existing) && !typ.IsUnknown(existing) {
 		if merged, ok := typetable.OverlayRecordMembers(existing, witness); ok {
 			witness = merged
 		}
