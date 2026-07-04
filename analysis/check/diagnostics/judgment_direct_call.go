@@ -269,11 +269,7 @@ func directCallArgumentJudgmentEvidence(display diagnosticDisplay, item judgment
 
 func directCallArgumentUserAssertionEvidence(item judgment.Judgment) []diagnostic.Evidence {
 	var out []diagnostic.Evidence
-	for _, evidence := range item.Evidence {
-		if evidence.Kind != judgment.EvidenceUserAssertion ||
-			evidence.Detail.Kind != judgment.EvidenceDetailUserAssertedAny {
-			continue
-		}
+	for _, evidence := range item.EvidenceKindDetails(judgment.EvidenceUserAssertion, judgment.EvidenceDetailUserAssertedAny) {
 		out = append(out, diagnostic.Evidence{
 			Kind:    diagnostic.EvidenceUserAssertion,
 			Trust:   diagnosticTrustFromJudgmentTrust(evidence.Trust, diagnostic.TrustClaimed),
@@ -286,41 +282,30 @@ func directCallArgumentUserAssertionEvidence(item judgment.Judgment) []diagnosti
 }
 
 func directCallArgumentSourceEvidenceLabel(item judgment.Judgment, fallback string) string {
-	for _, evidence := range item.Evidence {
-		if evidence.Kind == judgment.EvidenceUserAssertion &&
-			evidence.Detail.Kind == judgment.EvidenceDetailCallParamObligation &&
-			evidence.Detail.ProviderLabel != "" &&
-			evidence.Detail.SubjectLabel != "" {
-			return evidence.Detail.SubjectLabel
-		}
+	if evidence, ok := item.FirstEvidenceKindDetail(judgment.EvidenceUserAssertion, judgment.EvidenceDetailCallParamObligation); ok &&
+		evidence.Detail.ProviderLabel != "" &&
+		evidence.Detail.SubjectLabel != "" {
+		return evidence.Detail.SubjectLabel
 	}
 	return fallback
 }
 
 func directCallArgumentExpectedEvidenceMessage(display diagnosticDisplay, item judgment.Judgment, fallback string, want typ.Type) string {
-	for _, evidence := range item.Evidence {
-		if evidence.Kind != judgment.EvidenceUserAssertion || evidence.Detail.Kind != judgment.EvidenceDetailCallParamObligation {
-			continue
-		}
+	if evidence, ok := item.FirstEvidenceKindDetail(judgment.EvidenceUserAssertion, judgment.EvidenceDetailCallParamObligation); ok {
 		detail := evidence.Detail
-		if detail.FunctionName == "" || detail.SubjectLabel == "" {
-			break
-		}
-		if detail.ProviderLabel == "" || detail.MemberParam <= 0 {
+		switch {
+		case detail.FunctionName == "" || detail.SubjectLabel == "":
+		case detail.ProviderLabel == "" || detail.MemberParam <= 0:
 			return display.CallParamObligationEvidence(detail.FunctionName, detail.SubjectLabel, want)
+		default:
+			return display.MemberCallParamObligationEvidence(detail.FunctionName, detail.SubjectLabel, detail.ProviderLabel, detail.MemberParam, want)
 		}
-		return display.MemberCallParamObligationEvidence(detail.FunctionName, detail.SubjectLabel, detail.ProviderLabel, detail.MemberParam, want)
 	}
 	return fmt.Sprintf("%s expects %s", fallback, display.Type(want))
 }
 
 func directCallArgumentHasCallParamObligation(item judgment.Judgment) bool {
-	for _, evidence := range item.Evidence {
-		if evidence.Detail.Kind == judgment.EvidenceDetailCallParamObligation {
-			return true
-		}
-	}
-	return false
+	return item.HasEvidenceDetail(judgment.EvidenceDetailCallParamObligation)
 }
 
 func directCallArgumentGenericConflictEvidence(display diagnosticDisplay, item judgment.Judgment, wording directCallArgumentWording, primary diagnostic.Span, paramName string, got, want typ.Type) []diagnostic.Evidence {
@@ -373,10 +358,8 @@ func directCallArgumentGenericConflictEvidence(display diagnosticDisplay, item j
 
 func directCallArgumentJudgmentEvidenceLabels(item judgment.Judgment, kind judgment.EvidenceKind) []string {
 	var out []string
-	for _, evidence := range item.Evidence {
-		if evidence.Kind == kind {
-			out = append(out, evidence.Detail.SubjectLabel)
-		}
+	for _, evidence := range item.EvidenceOfKind(kind) {
+		out = append(out, evidence.Detail.SubjectLabel)
 	}
 	return out
 }
@@ -386,7 +369,7 @@ func directCallArgumentGenericConflictHelp(paramName string) string {
 }
 
 func directCallArgumentJudgmentEvidenceSpan(item judgment.Judgment, kind judgment.EvidenceKind) diagnostic.Span {
-	for _, evidence := range item.Evidence {
+	for _, evidence := range item.EvidenceOfKind(kind) {
 		if evidence.Kind != kind || evidence.Span.StartLine == 0 || evidence.Span.StartCol == 0 {
 			continue
 		}
@@ -397,7 +380,7 @@ func directCallArgumentJudgmentEvidenceSpan(item judgment.Judgment, kind judgmen
 
 func directCallArgumentJudgmentEvidenceSpans(item judgment.Judgment, kind judgment.EvidenceKind) []diagnostic.Span {
 	var spans []diagnostic.Span
-	for _, evidence := range item.Evidence {
+	for _, evidence := range item.EvidenceOfKind(kind) {
 		if evidence.Kind != kind || evidence.Span.StartLine == 0 || evidence.Span.StartCol == 0 {
 			continue
 		}
@@ -407,55 +390,33 @@ func directCallArgumentJudgmentEvidenceSpans(item judgment.Judgment, kind judgme
 }
 
 func directCallArgumentMissingRequiredField(item judgment.Judgment) (string, bool) {
-	for _, evidence := range item.Evidence {
-		if evidence.Kind != judgment.EvidenceMissingProof {
-			continue
-		}
-		if evidence.Detail.Kind == judgment.EvidenceDetailMissingRequiredField && evidence.Detail.Field != "" {
-			return evidence.Detail.Field, true
-		}
+	if evidence, ok := item.FirstEvidenceKindDetail(judgment.EvidenceMissingProof, judgment.EvidenceDetailMissingRequiredField); ok && evidence.Detail.Field != "" {
+		return evidence.Detail.Field, true
 	}
 	return "", false
 }
 
 func directCallArgumentMissingRequiredMethod(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
-	for _, evidence := range item.Evidence {
-		if evidence.Kind != judgment.EvidenceMissingProof {
-			continue
-		}
-		if evidence.Detail.Kind == judgment.EvidenceDetailMissingRequiredMethod && evidence.Detail.Field != "" {
-			return evidence.Detail, true
-		}
+	if evidence, ok := item.FirstEvidenceKindDetail(judgment.EvidenceMissingProof, judgment.EvidenceDetailMissingRequiredMethod); ok && evidence.Detail.Field != "" {
+		return evidence.Detail, true
 	}
 	return judgment.EvidenceDetail{}, false
 }
 
 func directCallArgumentMethodTypeMismatch(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
-	for _, evidence := range item.Evidence {
-		if evidence.Kind != judgment.EvidenceMissingProof {
-			continue
-		}
-		if evidence.Detail.Kind == judgment.EvidenceDetailMethodTypeMismatch && evidence.Detail.Field != "" {
-			return evidence.Detail, true
-		}
+	if evidence, ok := item.FirstEvidenceKindDetail(judgment.EvidenceMissingProof, judgment.EvidenceDetailMethodTypeMismatch); ok && evidence.Detail.Field != "" {
+		return evidence.Detail, true
 	}
 	return judgment.EvidenceDetail{}, false
 }
 
 func directCallArgumentMayBeNil(item judgment.Judgment) bool {
-	for _, evidence := range item.Evidence {
-		if evidence.Kind == judgment.EvidenceMissingProof && evidence.Detail.Kind == judgment.EvidenceDetailMayBeNil {
-			return true
-		}
-	}
-	return false
+	return item.HasEvidenceKindDetail(judgment.EvidenceMissingProof, judgment.EvidenceDetailMayBeNil)
 }
 
 func directCallArgumentGenericConflict(item judgment.Judgment) (bool, string, string) {
-	for _, evidence := range item.Evidence {
-		if evidence.Kind == judgment.EvidenceMissingProof && evidence.Detail.Kind == judgment.EvidenceDetailGenericConflict {
-			return true, evidence.Detail.Param, evidence.Detail.FunctionName
-		}
+	if evidence, ok := item.FirstEvidenceKindDetail(judgment.EvidenceMissingProof, judgment.EvidenceDetailGenericConflict); ok {
+		return true, evidence.Detail.Param, evidence.Detail.FunctionName
 	}
 	return false, "", ""
 }

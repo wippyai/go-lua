@@ -64,20 +64,18 @@ func renderCallArityJudgmentWithPolicy(item judgment.Judgment, policy judgment.P
 }
 
 func directCallArityDetail(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
-	for _, evidence := range item.Evidence {
-		if evidence.Kind != judgment.EvidenceMissingProof {
-			continue
-		}
-		if evidence.Detail.Kind == judgment.EvidenceDetailArityTooFew || evidence.Detail.Kind == judgment.EvidenceDetailArityTooMany {
-			return evidence.Detail, true
-		}
+	if evidence, ok := item.FirstEvidenceKindDetail(judgment.EvidenceMissingProof, judgment.EvidenceDetailArityTooFew); ok {
+		return evidence.Detail, true
+	}
+	if evidence, ok := item.FirstEvidenceKindDetail(judgment.EvidenceMissingProof, judgment.EvidenceDetailArityTooMany); ok {
+		return evidence.Detail, true
 	}
 	return judgment.EvidenceDetail{}, false
 }
 
 func directCallArityEvidenceSpan(item judgment.Judgment, kind judgment.EvidenceKind) diagnostic.Span {
-	for _, evidence := range item.Evidence {
-		if evidence.Kind == kind && evidence.Span.StartLine != 0 {
+	for _, evidence := range item.EvidenceOfKind(kind) {
+		if evidence.Span.StartLine != 0 {
 			return diagnosticSpanFromJudgment(evidence.Span)
 		}
 	}

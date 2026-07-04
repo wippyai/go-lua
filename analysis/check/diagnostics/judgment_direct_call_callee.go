@@ -67,11 +67,12 @@ func renderCallCalleeJudgmentWithPolicy(item judgment.Judgment, policy judgment.
 }
 
 func directCallCalleeDetail(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
-	for _, evidence := range item.Evidence {
-		if evidence.Kind != judgment.EvidenceMissingProof {
-			continue
-		}
-		if evidence.Detail.Kind == judgment.EvidenceDetailCalleeNotCallable || evidence.Detail.Kind == judgment.EvidenceDetailCalleeMayBeNil || evidence.Detail.Kind == judgment.EvidenceDetailMemberMissing {
+	for _, detail := range []judgment.EvidenceDetailKind{
+		judgment.EvidenceDetailCalleeNotCallable,
+		judgment.EvidenceDetailCalleeMayBeNil,
+		judgment.EvidenceDetailMemberMissing,
+	} {
+		if evidence, ok := item.FirstEvidenceKindDetail(judgment.EvidenceMissingProof, detail); ok {
 			return evidence.Detail, true
 		}
 	}

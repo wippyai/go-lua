@@ -512,6 +512,50 @@ func (j Judgment) EvidenceTrustFor(kind EvidenceKind) (EvidenceTrust, bool) {
 	return j.Evidence.TrustFor(kind)
 }
 
+// FirstEvidence returns the first evidence node of kind.
+func (j Judgment) FirstEvidence(kind EvidenceKind) (Evidence, bool) {
+	return j.Evidence.First(kind)
+}
+
+// FirstEvidenceDetail returns the first evidence node carrying detail.
+func (j Judgment) FirstEvidenceDetail(detail EvidenceDetailKind) (Evidence, bool) {
+	return j.Evidence.FirstDetail(detail)
+}
+
+// FirstEvidenceKindDetail returns the first evidence node whose outer kind and
+// structured detail both match.
+func (j Judgment) FirstEvidenceKindDetail(kind EvidenceKind, detail EvidenceDetailKind) (Evidence, bool) {
+	return j.Evidence.FirstKindDetail(kind, detail)
+}
+
+// HasEvidenceDetail reports whether any evidence node carries detail.
+func (j Judgment) HasEvidenceDetail(detail EvidenceDetailKind) bool {
+	return j.Evidence.HasDetail(detail)
+}
+
+// HasEvidenceKindDetail reports whether any evidence node matches both kind
+// and detail.
+func (j Judgment) HasEvidenceKindDetail(kind EvidenceKind, detail EvidenceDetailKind) bool {
+	return j.Evidence.HasKindDetail(kind, detail)
+}
+
+// HasAnyEvidenceKindDetail reports whether any evidence node matches kind and
+// one of the supplied details.
+func (j Judgment) HasAnyEvidenceKindDetail(kind EvidenceKind, details ...EvidenceDetailKind) bool {
+	return j.Evidence.HasAnyKindDetail(kind, details...)
+}
+
+// EvidenceKindDetails returns the evidence nodes matching kind and detail in
+// chain order.
+func (j Judgment) EvidenceKindDetails(kind EvidenceKind, detail EvidenceDetailKind) EvidenceChain {
+	return j.Evidence.KindDetails(kind, detail)
+}
+
+// EvidenceOfKind returns evidence nodes of kind in chain order.
+func (j Judgment) EvidenceOfKind(kind EvidenceKind) EvidenceChain {
+	return j.Evidence.OfKind(kind)
+}
+
 // Has reports whether the chain carries at least one evidence node of kind.
 func (c EvidenceChain) Has(kind EvidenceKind) bool {
 	_, ok := c.TrustFor(kind)
@@ -520,12 +564,86 @@ func (c EvidenceChain) Has(kind EvidenceKind) bool {
 
 // TrustFor returns the trust of the first evidence node of kind.
 func (c EvidenceChain) TrustFor(kind EvidenceKind) (EvidenceTrust, bool) {
-	for _, item := range c {
-		if item.Kind == kind {
-			return item.Trust, true
-		}
+	if item, ok := c.First(kind); ok {
+		return item.Trust, true
 	}
 	return EvidenceTrustUnknown, false
+}
+
+// First returns the first evidence node of kind.
+func (c EvidenceChain) First(kind EvidenceKind) (Evidence, bool) {
+	for _, item := range c {
+		if item.Kind == kind {
+			return item, true
+		}
+	}
+	return Evidence{}, false
+}
+
+// FirstDetail returns the first evidence node carrying detail.
+func (c EvidenceChain) FirstDetail(detail EvidenceDetailKind) (Evidence, bool) {
+	for _, item := range c {
+		if item.Detail.Kind == detail {
+			return item, true
+		}
+	}
+	return Evidence{}, false
+}
+
+// FirstKindDetail returns the first evidence node whose outer kind and
+// structured detail both match.
+func (c EvidenceChain) FirstKindDetail(kind EvidenceKind, detail EvidenceDetailKind) (Evidence, bool) {
+	for _, item := range c {
+		if item.Kind == kind && item.Detail.Kind == detail {
+			return item, true
+		}
+	}
+	return Evidence{}, false
+}
+
+// HasDetail reports whether any evidence node carries detail.
+func (c EvidenceChain) HasDetail(detail EvidenceDetailKind) bool {
+	_, ok := c.FirstDetail(detail)
+	return ok
+}
+
+// HasKindDetail reports whether any evidence node matches both kind and detail.
+func (c EvidenceChain) HasKindDetail(kind EvidenceKind, detail EvidenceDetailKind) bool {
+	_, ok := c.FirstKindDetail(kind, detail)
+	return ok
+}
+
+// HasAnyKindDetail reports whether any evidence node matches kind and one of
+// the supplied details.
+func (c EvidenceChain) HasAnyKindDetail(kind EvidenceKind, details ...EvidenceDetailKind) bool {
+	for _, detail := range details {
+		if c.HasKindDetail(kind, detail) {
+			return true
+		}
+	}
+	return false
+}
+
+// KindDetails returns evidence nodes matching kind and detail in chain order.
+func (c EvidenceChain) KindDetails(kind EvidenceKind, detail EvidenceDetailKind) EvidenceChain {
+	var out EvidenceChain
+	for _, item := range c {
+		if item.Kind == kind && item.Detail.Kind == detail {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+// OfKind returns evidence nodes of kind in chain order.
+func (c EvidenceChain) OfKind(kind EvidenceKind) EvidenceChain {
+	var out EvidenceChain
+	for _, item := range c {
+		if item.Kind == kind {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // JoinEvidenceChains joins branch evidence. Evidence present with the same

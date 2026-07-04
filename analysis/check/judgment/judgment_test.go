@@ -101,6 +101,34 @@ func TestJudgmentEvidenceLookupUsesChain(t *testing.T) {
 	}
 }
 
+func TestJudgmentEvidenceDetailLookupUsesChain(t *testing.T) {
+	j := Judgment{Evidence: EvidenceChain{
+		{Kind: EvidenceAbstractFact, Trust: EvidenceTrustProven, Detail: EvidenceDetail{Kind: EvidenceDetailMayBeNil, SubjectLabel: "box"}},
+		{Kind: EvidenceMissingProof, Trust: EvidenceTrustUnknown, Detail: EvidenceDetail{Kind: EvidenceDetailIndexedReadMissingProof}},
+		{Kind: EvidenceMissingProof, Trust: EvidenceTrustRefuted, Detail: EvidenceDetail{Kind: EvidenceDetailMissingRequiredField, Field: "id"}},
+	}}
+
+	if !j.HasEvidenceDetail(EvidenceDetailMayBeNil) {
+		t.Fatal("HasEvidenceDetail(EvidenceDetailMayBeNil) = false, want true")
+	}
+	if !j.HasEvidenceKindDetail(EvidenceMissingProof, EvidenceDetailIndexedReadMissingProof) {
+		t.Fatal("HasEvidenceKindDetail(EvidenceMissingProof, EvidenceDetailIndexedReadMissingProof) = false, want true")
+	}
+	if !j.HasAnyEvidenceKindDetail(EvidenceMissingProof, EvidenceDetailMayBeNil, EvidenceDetailIndexedReadMissingProof) {
+		t.Fatal("HasAnyEvidenceKindDetail did not match indexed-read detail")
+	}
+	ev, ok := j.FirstEvidenceKindDetail(EvidenceMissingProof, EvidenceDetailMissingRequiredField)
+	if !ok || ev.Detail.Field != "id" {
+		t.Fatalf("FirstEvidenceKindDetail missing required field = %#v, %v; want id, true", ev, ok)
+	}
+	if got := j.EvidenceKindDetails(EvidenceMissingProof, EvidenceDetailMissingRequiredField); len(got) != 1 || got[0].Detail.Field != "id" {
+		t.Fatalf("EvidenceKindDetails = %#v, want one missing id field", got)
+	}
+	if _, ok := j.FirstEvidenceKindDetail(EvidenceUserAssertion, EvidenceDetailMissingRequiredField); ok {
+		t.Fatal("FirstEvidenceKindDetail matched wrong outer evidence kind")
+	}
+}
+
 func TestDefaultRegistryValidatesCallArgumentJudgmentShape(t *testing.T) {
 	j := Judgment{
 		Code:    CodeCallArgType,

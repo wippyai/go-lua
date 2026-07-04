@@ -225,10 +225,8 @@ func callResultSubject(index int) string {
 }
 
 func assignmentJudgmentCallResultDetail(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
-	for _, evidence := range item.Evidence {
-		if evidence.Detail.Kind == judgment.EvidenceDetailCallResultAssignment {
-			return evidence.Detail, true
-		}
+	if evidence, ok := item.FirstEvidenceDetail(judgment.EvidenceDetailCallResultAssignment); ok {
+		return evidence.Detail, true
 	}
 	return judgment.EvidenceDetail{}, false
 }
@@ -239,12 +237,9 @@ func assignmentJudgmentUnderSuppliedCallResultDetail(item judgment.Judgment) (ju
 }
 
 func assignmentJudgmentCallResultReturnSpan(item judgment.Judgment) (diagnostic.Span, bool) {
-	for _, evidence := range item.Evidence {
-		if evidence.Kind == judgment.EvidenceUserAssertion &&
-			evidence.Detail.Kind == judgment.EvidenceDetailCallResultAssignment &&
-			evidence.Span.StartLine != 0 {
-			return diagnosticSpanFromJudgment(evidence.Span), true
-		}
+	evidence, ok := item.FirstEvidenceKindDetail(judgment.EvidenceUserAssertion, judgment.EvidenceDetailCallResultAssignment)
+	if ok && evidence.Span.StartLine != 0 {
+		return diagnosticSpanFromJudgment(evidence.Span), true
 	}
 	return diagnostic.Span{}, false
 }
@@ -315,28 +310,22 @@ func renderOptionalAssignmentTargetJudgmentWithPolicy(item judgment.Judgment, po
 }
 
 func assignmentJudgmentMissingRequiredField(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
-	for _, evidence := range item.Evidence {
-		if evidence.Detail.Kind == judgment.EvidenceDetailMissingRequiredField && evidence.Detail.Field != "" {
-			return evidence.Detail, true
-		}
+	if evidence, ok := item.FirstEvidenceDetail(judgment.EvidenceDetailMissingRequiredField); ok && evidence.Detail.Field != "" {
+		return evidence.Detail, true
 	}
 	return judgment.EvidenceDetail{}, false
 }
 
 func assignmentJudgmentMissingRequiredMethod(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
-	for _, evidence := range item.Evidence {
-		if evidence.Detail.Kind == judgment.EvidenceDetailMissingRequiredMethod && evidence.Detail.Field != "" {
-			return evidence.Detail, true
-		}
+	if evidence, ok := item.FirstEvidenceDetail(judgment.EvidenceDetailMissingRequiredMethod); ok && evidence.Detail.Field != "" {
+		return evidence.Detail, true
 	}
 	return judgment.EvidenceDetail{}, false
 }
 
 func assignmentJudgmentMethodTypeMismatch(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
-	for _, evidence := range item.Evidence {
-		if evidence.Detail.Kind == judgment.EvidenceDetailMethodTypeMismatch && evidence.Detail.Field != "" {
-			return evidence.Detail, true
-		}
+	if evidence, ok := item.FirstEvidenceDetail(judgment.EvidenceDetailMethodTypeMismatch); ok && evidence.Detail.Field != "" {
+		return evidence.Detail, true
 	}
 	return judgment.EvidenceDetail{}, false
 }
@@ -354,14 +343,12 @@ func assignmentJudgmentExpectedTypeLabel(item judgment.Judgment, target string, 
 }
 
 func assignmentJudgmentExpectedEvidence(item judgment.Judgment, target string, fallback typ.Type, expectedDisplay string) string {
-	for _, evidence := range item.Evidence {
-		if evidence.Detail.Kind == judgment.EvidenceDetailDynamicAssignmentTarget {
-			label := evidence.Detail.SubjectLabel
-			if label == "" {
-				label = target
-			}
-			return fmt.Sprintf("assignment target %s requires %s", label, formatType(fallback))
+	if evidence, ok := item.FirstEvidenceDetail(judgment.EvidenceDetailDynamicAssignmentTarget); ok {
+		label := evidence.Detail.SubjectLabel
+		if label == "" {
+			label = target
 		}
+		return fmt.Sprintf("assignment target %s requires %s", label, formatType(fallback))
 	}
 	if expectedDisplay == "" {
 		expectedDisplay = assignmentJudgmentExpectedTypeLabel(item, target, fallback)
@@ -370,19 +357,15 @@ func assignmentJudgmentExpectedEvidence(item judgment.Judgment, target string, f
 }
 
 func assignmentJudgmentExpectedEvidenceKind(item judgment.Judgment) diagnostic.EvidenceKind {
-	for _, evidence := range item.Evidence {
-		if evidence.Detail.Kind == judgment.EvidenceDetailDynamicAssignmentTarget {
-			return diagnostic.EvidenceAbstractFact
-		}
+	if item.HasEvidenceDetail(judgment.EvidenceDetailDynamicAssignmentTarget) {
+		return diagnostic.EvidenceAbstractFact
 	}
 	return diagnostic.EvidenceUserAssertion
 }
 
 func assignmentJudgmentExpectedEvidenceTrust(item judgment.Judgment) diagnostic.TrustKind {
-	for _, evidence := range item.Evidence {
-		if evidence.Detail.Kind == judgment.EvidenceDetailDynamicAssignmentTarget {
-			return diagnostic.TrustProven
-		}
+	if item.HasEvidenceDetail(judgment.EvidenceDetailDynamicAssignmentTarget) {
+		return diagnostic.TrustProven
 	}
 	return diagnostic.TrustClaimed
 }
@@ -482,51 +465,28 @@ func assignmentJudgmentMissingProofMessage(item judgment.Judgment, sourceName st
 }
 
 func assignmentJudgmentHasCallInvalidationEvidence(item judgment.Judgment) bool {
-	for _, evidence := range item.Evidence {
-		if evidence.Detail.Kind == judgment.EvidenceDetailAssignmentCallInvalidation {
-			return true
-		}
-	}
-	return false
+	return item.HasEvidenceDetail(judgment.EvidenceDetailAssignmentCallInvalidation)
 }
 
 func assignmentJudgmentHasDynamicTargetEvidence(item judgment.Judgment) bool {
-	for _, evidence := range item.Evidence {
-		if evidence.Detail.Kind == judgment.EvidenceDetailDynamicAssignmentTarget {
-			return true
-		}
-	}
-	return false
+	return item.HasEvidenceDetail(judgment.EvidenceDetailDynamicAssignmentTarget)
 }
 
 func assignmentJudgmentMissingProofMayBeNil(item judgment.Judgment) bool {
-	for _, evidence := range item.Evidence {
-		if evidence.Kind == judgment.EvidenceMissingProof &&
-			(evidence.Detail.Kind == judgment.EvidenceDetailMayBeNil ||
-				evidence.Detail.Kind == judgment.EvidenceDetailIndexedReadMissingProof) {
-			return true
-		}
-	}
-	return false
+	return item.HasAnyEvidenceKindDetail(
+		judgment.EvidenceMissingProof,
+		judgment.EvidenceDetailMayBeNil,
+		judgment.EvidenceDetailIndexedReadMissingProof,
+	)
 }
 
 func assignmentJudgmentMissingProofIndexedRead(item judgment.Judgment) bool {
-	for _, evidence := range item.Evidence {
-		if evidence.Kind == judgment.EvidenceMissingProof &&
-			evidence.Detail.Kind == judgment.EvidenceDetailIndexedReadMissingProof {
-			return true
-		}
-	}
-	return false
+	return item.HasEvidenceKindDetail(judgment.EvidenceMissingProof, judgment.EvidenceDetailIndexedReadMissingProof)
 }
 
 func assignmentJudgmentUserAssertionEvidence(item judgment.Judgment) []diagnostic.Evidence {
 	var out []diagnostic.Evidence
-	for _, evidence := range item.Evidence {
-		if evidence.Kind != judgment.EvidenceUserAssertion ||
-			evidence.Detail.Kind != judgment.EvidenceDetailUserAssertedAny {
-			continue
-		}
+	for _, evidence := range item.EvidenceKindDetails(judgment.EvidenceUserAssertion, judgment.EvidenceDetailUserAssertedAny) {
 		out = append(out, diagnostic.Evidence{
 			Kind:    diagnostic.EvidenceUserAssertion,
 			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceUserAssertion, diagnostic.TrustClaimed),
@@ -540,11 +500,8 @@ func assignmentJudgmentUserAssertionEvidence(item judgment.Judgment) []diagnosti
 
 func assignmentJudgmentNilableAccessEvidence(item judgment.Judgment) []diagnostic.Evidence {
 	var out []diagnostic.Evidence
-	for _, evidence := range item.Evidence {
-		if evidence.Kind != judgment.EvidenceAbstractFact ||
-			evidence.Detail.Kind != judgment.EvidenceDetailMayBeNil ||
-			evidence.Detail.SubjectLabel == "" ||
-			evidence.Detail.Field == "" {
+	for _, evidence := range item.EvidenceKindDetails(judgment.EvidenceAbstractFact, judgment.EvidenceDetailMayBeNil) {
+		if evidence.Detail.SubjectLabel == "" || evidence.Detail.Field == "" {
 			continue
 		}
 		out = append(out, diagnostic.Evidence{
@@ -559,11 +516,7 @@ func assignmentJudgmentNilableAccessEvidence(item judgment.Judgment) []diagnosti
 
 func assignmentJudgmentSourceContributionEvidence(item judgment.Judgment) []diagnostic.Evidence {
 	var out []diagnostic.Evidence
-	for _, evidence := range item.Evidence {
-		if evidence.Kind != judgment.EvidenceAbstractFact ||
-			evidence.Detail.Kind != judgment.EvidenceDetailAssignmentSourceContribution {
-			continue
-		}
+	for _, evidence := range item.EvidenceKindDetails(judgment.EvidenceAbstractFact, judgment.EvidenceDetailAssignmentSourceContribution) {
 		out = append(out, diagnostic.Evidence{
 			Kind:  diagnostic.EvidenceAbstractFact,
 			Trust: diagnosticTrustFromJudgmentTrust(evidence.Trust, diagnostic.TrustProven),
@@ -580,11 +533,7 @@ func assignmentJudgmentSourceContributionEvidence(item judgment.Judgment) []diag
 
 func assignmentJudgmentCallInvalidationEvidence(item judgment.Judgment) []diagnostic.Evidence {
 	var out []diagnostic.Evidence
-	for _, evidence := range item.Evidence {
-		if evidence.Kind != judgment.EvidenceAbstractFact ||
-			evidence.Detail.Kind != judgment.EvidenceDetailAssignmentCallInvalidation {
-			continue
-		}
+	for _, evidence := range item.EvidenceKindDetails(judgment.EvidenceAbstractFact, judgment.EvidenceDetailAssignmentCallInvalidation) {
 		out = append(out, diagnostic.Evidence{
 			Kind:  diagnostic.EvidenceAbstractFact,
 			Trust: diagnosticTrustFromJudgmentTrust(evidence.Trust, diagnostic.TrustProven),
