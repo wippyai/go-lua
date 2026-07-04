@@ -467,6 +467,22 @@ func missingRequiredMethodTypeEvidence(contract typ.Type, method typ.Method) str
 	return display.MissingRequiredMethodTypeEvidence(contract, method)
 }
 
+func methodTypeMismatchMessage(contract typ.Type, method string, got, want typ.Type) string {
+	return display.MethodTypeMismatchMessage(contract, method, got, want)
+}
+
+func argumentMissingRequiredMethodMessage(argument string, contract typ.Type, method string) string {
+	return display.ArgumentMissingRequiredMethodMessage(argument, contract, method)
+}
+
+func argumentMethodTypeMismatchMessage(argument string, contract typ.Type, method string, got, want typ.Type) string {
+	return display.ArgumentMethodTypeMismatchMessage(argument, contract, method, got, want)
+}
+
+func methodTypeMismatchEvidence(contract typ.Type, method string, got, want typ.Type) string {
+	return display.MethodTypeMismatchEvidence(contract, method, got, want)
+}
+
 func objectLiteralShapeEvidence(t typ.Type) string {
 	return display.ObjectLiteralShapeEvidence(t)
 }

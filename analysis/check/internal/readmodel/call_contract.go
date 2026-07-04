@@ -70,7 +70,7 @@ func (r Reader) callContractAt(point cfg.Point) (callContract, bool) {
 		instantiated, violations, conflicts := r.instantiateCallFunctionType(point, site, fn)
 		return callContract{
 			Contract:                    callcontract.BindReceiver(contract.FromFunctionType(instantiated), r.callReceiverTypeOrNil(point, site), callReceiverSupplied(site)),
-			Source:                      CallContractSource{Kind: CallContractSourceFunctionValue, Name: r.callContractSourceName(site), ResultSpans: r.localFunctionReturnTypeSpans(site)},
+			Source:                      CallContractSource{Kind: CallContractSourceFunctionValue, Name: r.callContractSourceName(site), ParameterSpans: r.localFunctionParamTypeSpans(point, site), ResultSpans: r.localFunctionReturnTypeSpans(site)},
 			GenericConstraintViolations: violations,
 			GenericInferenceConflicts:   conflicts,
 		}, true
@@ -89,17 +89,31 @@ func (r Reader) declaredLocalCallContract(point cfg.Point, site factflow.CallSit
 	instantiated, violations, conflicts := r.instantiateCallFunctionType(point, site, fn)
 	return callContract{
 		Contract:                    callcontract.BindReceiver(contract.FromFunctionType(instantiated), r.callReceiverTypeOrNil(point, site), callReceiverSupplied(site)),
-		Source:                      CallContractSource{Kind: CallContractSourceLocalFunction, Name: r.callContractSourceName(site), ParameterSpans: r.localFunctionParamTypeSpans(site), ResultSpans: r.localFunctionReturnTypeSpans(site)},
+		Source:                      CallContractSource{Kind: CallContractSourceLocalFunction, Name: r.callContractSourceName(site), ParameterSpans: r.localFunctionParamTypeSpans(point, site), ResultSpans: r.localFunctionReturnTypeSpans(site)},
 		GenericConstraintViolations: violations,
 		GenericInferenceConflicts:   conflicts,
 	}, true
 }
 
-func (r Reader) localFunctionParamTypeSpans(site factflow.CallSite) []SourceSpan {
+func (r Reader) localFunctionParamTypeSpans(point cfg.Point, site factflow.CallSite) []SourceSpan {
 	if r.result == nil {
 		return nil
 	}
-	spans := r.result.FunctionParamTypeSpansForTargetPath(site.CalleePathRef())
+	spans := r.result.FunctionParamTypeSpansForCalleePath(site.View().CalleePathKey())
+	if len(spans) == 0 {
+		spans = r.result.FunctionParamTypeSpansForTargetPath(site.CalleePathRef())
+	}
+	if len(spans) == 0 {
+		if fn := r.result.DominatingFunctionDefinitionForPath(point, site.CalleePathRef()); fn != nil {
+			slots := r.result.FunctionParamSlots(fn)
+			spans = make([]factflow.SourceSpan, len(slots))
+			for i := range slots {
+				if span, ok := r.result.FunctionParamTypeSpan(fn, i); ok {
+					spans[i] = span
+				}
+			}
+		}
+	}
 	if len(spans) == 0 {
 		return nil
 	}

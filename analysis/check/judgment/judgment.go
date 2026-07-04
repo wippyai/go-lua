@@ -154,6 +154,8 @@ type EvidenceDetailKind uint8
 const (
 	EvidenceDetailNone EvidenceDetailKind = iota
 	EvidenceDetailMissingRequiredField
+	EvidenceDetailMissingRequiredMethod
+	EvidenceDetailMethodTypeMismatch
 	EvidenceDetailMayBeNil
 	EvidenceDetailGenericConflict
 	EvidenceDetailArityTooFew
@@ -211,6 +213,7 @@ type EvidenceDetail struct {
 	Kind          EvidenceDetailKind
 	Field         string
 	FieldType     typ.Type
+	ActualType    typ.Type
 	Param         string
 	Callable      bool
 	MemberAccess  bool
@@ -339,6 +342,18 @@ func MissingRequiredFieldEvidenceDetail(field string) EvidenceDetail {
 // field and its expected field type.
 func MissingRequiredFieldTypeEvidenceDetail(field string, fieldType typ.Type) EvidenceDetail {
 	return EvidenceDetail{Kind: EvidenceDetailMissingRequiredField, Field: field, FieldType: fieldType}
+}
+
+// MissingRequiredMethodTypeEvidenceDetail records an absent required interface
+// method and its expected method type.
+func MissingRequiredMethodTypeEvidenceDetail(method string, methodType typ.Type) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailMissingRequiredMethod, Field: method, FieldType: methodType}
+}
+
+// MethodTypeMismatchEvidenceDetail records an interface method whose provided
+// type does not satisfy the required method signature.
+func MethodTypeMismatchEvidenceDetail(method string, actual, expected typ.Type) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailMethodTypeMismatch, Field: method, ActualType: actual, FieldType: expected}
 }
 
 // MayBeNilEvidenceDetail records that the argument value may be nil while the

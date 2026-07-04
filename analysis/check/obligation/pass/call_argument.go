@@ -130,6 +130,10 @@ func callArgumentJudgment(
 	switch arg.Mismatch.Kind {
 	case readmodel.CallArgumentMismatchMissingRequiredField:
 		missingProofDetail = judgment.MissingRequiredFieldEvidenceDetail(arg.Mismatch.Field)
+	case readmodel.CallArgumentMismatchMissingRequiredMethod:
+		missingProofDetail = judgment.MissingRequiredMethodTypeEvidenceDetail(arg.Mismatch.Field, arg.Mismatch.Type)
+	case readmodel.CallArgumentMismatchMethodType:
+		missingProofDetail = judgment.MethodTypeMismatchEvidenceDetail(arg.Mismatch.Field, arg.Mismatch.ActualType, arg.Mismatch.Type)
 	case readmodel.CallArgumentMismatchMayBeNil:
 		missingProofDetail = judgment.MayBeNilEvidenceDetail()
 	}

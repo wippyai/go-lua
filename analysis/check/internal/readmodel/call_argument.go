@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -78,6 +79,17 @@ func (r Reader) callArgumentMismatchSubjectPlan(point cfg.Point, arg CallArgumen
 		return false
 	}); ok {
 		plan.MissingRequiredField = field
+	}
+	if mismatch, ok := subtype.RecordInterfaceMismatch(arg.TypeWithPresence, want); ok {
+		switch mismatch.Kind {
+		case subtype.InterfaceMismatchMissingMethod:
+			plan.MissingRequiredMethod = mismatch.Method.Name
+			plan.MissingRequiredMethodType = mismatch.Expected
+		case subtype.InterfaceMismatchMethodType:
+			plan.MethodMismatchName = mismatch.Method.Name
+			plan.MethodMismatchExpected = mismatch.Expected
+			plan.MethodMismatchActual = mismatch.Actual
+		}
 	}
 	return plan, true
 }

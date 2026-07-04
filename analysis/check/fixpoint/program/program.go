@@ -3806,6 +3806,12 @@ func functionValueTypesFromSummaries(reg *axis.Registry, summaries summary.Reade
 		}
 		out.ByPath[pathKey] = fn
 		if def := keys.functionByKey[key]; def != nil {
+			if spans := functionParamTypeSourceSpans(def); len(spans) != 0 {
+				if out.ParamSpansByPath == nil {
+					out.ParamSpansByPath = make(map[factflow.CalleePathKey][]factflow.SourceSpan)
+				}
+				out.ParamSpansByPath[pathKey] = spans
+			}
 			if spans := functionReturnTypeSourceSpans(def); len(spans) != 0 {
 				if out.ReturnSpansByPath == nil {
 					out.ReturnSpansByPath = make(map[factflow.CalleePathKey][]factflow.SourceSpan)
@@ -3840,6 +3846,29 @@ func functionValueTypesFromSummaries(reg *axis.Registry, summaries summary.Reade
 			Type:      fn,
 		})
 	})
+	return out
+}
+
+func functionParamTypeSourceSpans(fn *ast.FunctionExpr) []factflow.SourceSpan {
+	if fn == nil || fn.ParList == nil || len(fn.ParList.Types) == 0 {
+		return nil
+	}
+	out := make([]factflow.SourceSpan, len(fn.ParList.Types))
+	for i, paramType := range fn.ParList.Types {
+		if paramType == nil {
+			continue
+		}
+		span := ast.SpanOf(paramType)
+		if span.StartLine == 0 || span.StartCol == 0 {
+			continue
+		}
+		out[i] = factflow.SourceSpan{
+			StartLine: span.StartLine,
+			StartCol:  span.StartCol,
+			EndLine:   span.EndLine,
+			EndCol:    span.EndCol,
+		}
+	}
 	return out
 }
 

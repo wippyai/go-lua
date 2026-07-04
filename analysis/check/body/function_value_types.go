@@ -26,6 +26,7 @@ import (
 type FunctionValueTypes struct {
 	ByIdentity         map[identity.ID]*typ.Function
 	ByPath             map[factflow.CalleePathKey]*typ.Function
+	ParamSpansByPath   map[factflow.CalleePathKey][]factflow.SourceSpan
 	ReturnSpansByPath  map[factflow.CalleePathKey][]factflow.SourceSpan
 	ContextsByIdentity map[identity.ID][]FunctionValueContext
 }
@@ -244,6 +245,20 @@ func (r *Result) FunctionValueTypeForCalleePath(key factflow.CalleePathKey) (*ty
 	return fn, ok && fn != nil
 }
 
+// FunctionParamTypeSpansForCalleePath returns immutable parameter annotation
+// spans associated with a function-value summary path, when that path came from
+// a local function definition.
+func (r *Result) FunctionParamTypeSpansForCalleePath(key factflow.CalleePathKey) []factflow.SourceSpan {
+	if r == nil || !key.Valid() || len(r.funcTypes.ParamSpansByPath) == 0 {
+		return nil
+	}
+	spans := r.funcTypes.ParamSpansByPath[key]
+	if len(spans) == 0 {
+		return nil
+	}
+	return append([]factflow.SourceSpan(nil), spans...)
+}
+
 // FunctionReturnTypeSpansForCalleePath returns immutable return annotation
 // spans associated with a function-value summary path, when that path came from
 // a local function definition.
@@ -418,6 +433,7 @@ func cloneFunctionValueTypes(in FunctionValueTypes) FunctionValueTypes {
 	out := in
 	out.ByIdentity = nil
 	out.ByPath = nil
+	out.ParamSpansByPath = nil
 	out.ReturnSpansByPath = nil
 	out.ContextsByIdentity = nil
 	if len(in.ByIdentity) != 0 {
@@ -430,6 +446,12 @@ func cloneFunctionValueTypes(in FunctionValueTypes) FunctionValueTypes {
 		out.ByPath = make(map[factflow.CalleePathKey]*typ.Function, len(in.ByPath))
 		for key, fn := range in.ByPath {
 			out.ByPath[key] = fn
+		}
+	}
+	if len(in.ParamSpansByPath) != 0 {
+		out.ParamSpansByPath = make(map[factflow.CalleePathKey][]factflow.SourceSpan, len(in.ParamSpansByPath))
+		for key, spans := range in.ParamSpansByPath {
+			out.ParamSpansByPath[key] = append([]factflow.SourceSpan(nil), spans...)
 		}
 	}
 	if len(in.ReturnSpansByPath) != 0 {

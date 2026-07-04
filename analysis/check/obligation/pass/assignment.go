@@ -157,6 +157,17 @@ func assignmentJudgment(ctx Context, functionKey string, assignment readmodel.As
 			assignment.Check.Mismatch.Field,
 			assignment.Check.Mismatch.Type,
 		)
+	case readmodel.AssignmentMismatchMissingRequiredMethod:
+		missingProofDetail = judgment.MissingRequiredMethodTypeEvidenceDetail(
+			assignment.Check.Mismatch.Field,
+			assignment.Check.Mismatch.Type,
+		)
+	case readmodel.AssignmentMismatchMethodType:
+		missingProofDetail = judgment.MethodTypeMismatchEvidenceDetail(
+			assignment.Check.Mismatch.Field,
+			assignment.Check.Mismatch.ActualType,
+			assignment.Check.Mismatch.Type,
+		)
 	case readmodel.AssignmentMismatchMayBeNil:
 		if assignment.SourceIndexedRead {
 			missingProofDetail = judgment.IndexedReadMissingProofEvidenceDetail()

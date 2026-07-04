@@ -34,6 +34,8 @@ func renderAssignmentJudgmentWithPolicy(item judgment.Judgment, policy judgment.
 	}
 	underSuppliedDetail, underSupplied := assignmentJudgmentUnderSuppliedCallResultDetail(item)
 	missingField, hasMissingField := assignmentJudgmentMissingRequiredField(item)
+	missingMethod, hasMissingMethod := assignmentJudgmentMissingRequiredMethod(item)
+	methodMismatch, hasMethodMismatch := assignmentJudgmentMethodTypeMismatch(item)
 	evidenceSourceName := sourceName
 	if evidenceSourceName == "" {
 		evidenceSourceName = "assigned value"
@@ -63,6 +65,9 @@ func renderAssignmentJudgmentWithPolicy(item judgment.Judgment, policy judgment.
 		sourceEvidence = evidenceSourceName + " can be nil here"
 	}
 	if hasMissingField {
+		sourceEvidence = objectLiteralShapeEvidence(got)
+	}
+	if hasMissingMethod || hasMethodMismatch {
 		sourceEvidence = objectLiteralShapeEvidence(got)
 	}
 	message := assignmentMessageForEvidenceDisplay(sourceName, got, want, expectedDisplay, extraEvidence)
@@ -102,7 +107,29 @@ func renderAssignmentJudgmentWithPolicy(item judgment.Judgment, policy judgment.
 			Message: missingRequiredFieldPathEvidence(path, missingField.FieldType),
 		})
 	}
+	if hasMissingMethod {
+		message = missingRequiredMethodMessage(want, missingMethod.Field)
+		help = missingRequiredMethodHelp(missingMethod.Field)
+		evidence = append(evidence, diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceMissingProof,
+			Trust:   diagnostic.TrustUnknown,
+			Span:    span,
+			Message: missingRequiredMethodTypeEvidence(want, typ.Method{Name: missingMethod.Field, Type: functionTypeOrNil(missingMethod.FieldType)}),
+		})
+	}
+	if hasMethodMismatch {
+		message = methodTypeMismatchMessage(want, methodMismatch.Field, methodMismatch.ActualType, methodMismatch.FieldType)
+		evidence = append(evidence, diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceMissingProof,
+			Trust:   diagnostic.TrustUnknown,
+			Span:    span,
+			Message: methodTypeMismatchEvidence(want, methodMismatch.Field, methodMismatch.ActualType, methodMismatch.FieldType),
+		})
+	}
 	sourceLabelMessage := assignmentJudgmentSourceLabel(hasMissingField)
+	if hasMissingMethod || hasMethodMismatch {
+		sourceLabelMessage = labelObjectLiteral
+	}
 	if underSupplied {
 		sourceLabelMessage = labelCallResult
 	}
@@ -294,6 +321,29 @@ func assignmentJudgmentMissingRequiredField(item judgment.Judgment) (judgment.Ev
 		}
 	}
 	return judgment.EvidenceDetail{}, false
+}
+
+func assignmentJudgmentMissingRequiredMethod(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
+	for _, evidence := range item.Evidence {
+		if evidence.Detail.Kind == judgment.EvidenceDetailMissingRequiredMethod && evidence.Detail.Field != "" {
+			return evidence.Detail, true
+		}
+	}
+	return judgment.EvidenceDetail{}, false
+}
+
+func assignmentJudgmentMethodTypeMismatch(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
+	for _, evidence := range item.Evidence {
+		if evidence.Detail.Kind == judgment.EvidenceDetailMethodTypeMismatch && evidence.Detail.Field != "" {
+			return evidence.Detail, true
+		}
+	}
+	return judgment.EvidenceDetail{}, false
+}
+
+func functionTypeOrNil(t typ.Type) *typ.Function {
+	fn, _ := t.(*typ.Function)
+	return fn
 }
 
 func assignmentJudgmentExpectedTypeLabel(item judgment.Judgment, target string, fallback typ.Type) string {

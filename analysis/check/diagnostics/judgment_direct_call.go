@@ -55,6 +55,12 @@ func renderDirectCallArgumentJudgmentWithPolicy(item judgment.Judgment, policy j
 	genericConflict, genericParam := directCallArgumentGenericConflict(item)
 	message := directCallArgumentJudgmentMessage(display, wording, got, want, mayBeNil, precisionBoundary, genericConflict, genericParam)
 	help := directCallArgumentJudgmentHelp(display, wording, mayBeNil, precisionBoundary, genericConflict, genericParam)
+	if detail, ok := directCallArgumentMissingRequiredMethod(item); ok {
+		message = argumentMissingRequiredMethodMessage(wording.Role, want, detail.Field)
+	}
+	if detail, ok := directCallArgumentMethodTypeMismatch(item); ok {
+		message = argumentMethodTypeMismatchMessage(wording.Role, want, detail.Field, detail.ActualType, detail.FieldType)
+	}
 	span := diagnosticSpanFromJudgment(item.Spans[0])
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		File:        item.Spans[0].File,
@@ -172,10 +178,18 @@ func directCallArgumentJudgmentEvidence(display diagnosticDisplay, item judgment
 		missingProof = missingNonNilGuardHereMessage(wording.SourceName)
 	} else if field, ok := directCallArgumentMissingRequiredField(item); ok {
 		missingProof = display.MissingRequiredFieldEvidence(field)
+	} else if detail, ok := directCallArgumentMissingRequiredMethod(item); ok {
+		missingProof = missingRequiredMethodTypeEvidence(want, typ.Method{Name: detail.Field, Type: functionTypeOrNil(detail.FieldType)})
+	} else if detail, ok := directCallArgumentMethodTypeMismatch(item); ok {
+		missingProof = methodTypeMismatchEvidence(want, detail.Field, detail.ActualType, detail.FieldType)
 	}
 	missingProofReason := diagnostic.EvidenceReasonUnspecified
 	if item.HasEvidence(judgment.EvidencePrecisionBoundary) {
 		missingProofReason = diagnostic.EvidenceReasonBoundaryValidationMissing
+	}
+	missingProofTrust := diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceMissingProof, missingProofTrustFromJudgment(item.Verdict))
+	if _, ok := directCallArgumentMissingRequiredMethod(item); ok {
+		missingProofTrust = diagnostic.TrustUnknown
 	}
 	evidence := []diagnostic.Evidence{
 		{
@@ -207,7 +221,7 @@ func directCallArgumentJudgmentEvidence(display diagnosticDisplay, item judgment
 	}
 	evidence = append(evidence, diagnostic.Evidence{
 		Kind:    diagnostic.EvidenceMissingProof,
-		Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceMissingProof, missingProofTrustFromJudgment(item.Verdict)),
+		Trust:   missingProofTrust,
 		Reason:  missingProofReason,
 		Span:    primary,
 		Message: missingProof,
@@ -324,6 +338,30 @@ func directCallArgumentMissingRequiredField(item judgment.Judgment) (string, boo
 		}
 	}
 	return "", false
+}
+
+func directCallArgumentMissingRequiredMethod(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
+	for _, evidence := range item.Evidence {
+		if evidence.Kind != judgment.EvidenceMissingProof {
+			continue
+		}
+		if evidence.Detail.Kind == judgment.EvidenceDetailMissingRequiredMethod && evidence.Detail.Field != "" {
+			return evidence.Detail, true
+		}
+	}
+	return judgment.EvidenceDetail{}, false
+}
+
+func directCallArgumentMethodTypeMismatch(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
+	for _, evidence := range item.Evidence {
+		if evidence.Kind != judgment.EvidenceMissingProof {
+			continue
+		}
+		if evidence.Detail.Kind == judgment.EvidenceDetailMethodTypeMismatch && evidence.Detail.Field != "" {
+			return evidence.Detail, true
+		}
+	}
+	return judgment.EvidenceDetail{}, false
 }
 
 func directCallArgumentMayBeNil(item judgment.Judgment) bool {

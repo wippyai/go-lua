@@ -260,12 +260,17 @@ type AssignmentCheck struct {
 
 // AssignmentCheckPlan carries already-solved proof inputs for one assignment.
 type AssignmentCheckPlan struct {
-	Assignment               Assignment
-	ValueAdmissible          bool
-	ValueProvenMismatch      bool
-	MissingRequiredField     string
-	MissingRequiredFieldType typ.Type
-	IsSubtype                func(typ.Type, typ.Type) bool
+	Assignment                Assignment
+	ValueAdmissible           bool
+	ValueProvenMismatch       bool
+	MissingRequiredField      string
+	MissingRequiredFieldType  typ.Type
+	MissingRequiredMethod     string
+	MissingRequiredMethodType typ.Type
+	MethodMismatchName        string
+	MethodMismatchExpected    typ.Type
+	MethodMismatchActual      typ.Type
+	IsSubtype                 func(typ.Type, typ.Type) bool
 }
 
 // AssignmentMismatchKind classifies a structural assignment mismatch reason
@@ -275,15 +280,18 @@ type AssignmentMismatchKind uint8
 const (
 	AssignmentMismatchNone AssignmentMismatchKind = iota
 	AssignmentMismatchMissingRequiredField
+	AssignmentMismatchMissingRequiredMethod
+	AssignmentMismatchMethodType
 	AssignmentMismatchMayBeNil
 )
 
 // AssignmentMismatch carries structured mismatch detail without diagnostic
 // wording.
 type AssignmentMismatch struct {
-	Kind  AssignmentMismatchKind
-	Field string
-	Type  typ.Type
+	Kind       AssignmentMismatchKind
+	Field      string
+	Type       typ.Type
+	ActualType typ.Type
 }
 
 // OptionalAssignmentTarget is the solved read model for a write through an
@@ -752,6 +760,19 @@ func PlanAssignmentCheck(plan AssignmentCheckPlan) AssignmentCheck {
 			Field: plan.MissingRequiredField,
 			Type:  plan.MissingRequiredFieldType,
 		}
+	} else if plan.MissingRequiredMethod != "" {
+		mismatch = AssignmentMismatch{
+			Kind:  AssignmentMismatchMissingRequiredMethod,
+			Field: plan.MissingRequiredMethod,
+			Type:  plan.MissingRequiredMethodType,
+		}
+	} else if plan.MethodMismatchName != "" {
+		mismatch = AssignmentMismatch{
+			Kind:       AssignmentMismatchMethodType,
+			Field:      plan.MethodMismatchName,
+			Type:       plan.MethodMismatchExpected,
+			ActualType: plan.MethodMismatchActual,
+		}
 	} else if AssignmentMayBeNilMismatch(assignment.TypeWithPresence, assignment.Expected) {
 		mismatch = AssignmentMismatch{Kind: AssignmentMismatchMayBeNil}
 	}
@@ -765,7 +786,7 @@ func PlanAssignmentCheck(plan AssignmentCheckPlan) AssignmentCheck {
 }
 
 func (plan AssignmentCheckPlan) assignmentProvenMismatch() bool {
-	if plan.ValueProvenMismatch || plan.MissingRequiredField != "" {
+	if plan.ValueProvenMismatch || plan.MissingRequiredField != "" || plan.MissingRequiredMethod != "" || plan.MethodMismatchName != "" {
 		return true
 	}
 	if typ.TypeEquals(plan.Assignment.TypeWithPresence, nil) ||
@@ -783,7 +804,7 @@ func (plan AssignmentCheckPlan) assignmentProvenMismatch() bool {
 }
 
 func (plan AssignmentCheckPlan) assignmentProofAdmissible() bool {
-	if plan.MissingRequiredField != "" {
+	if plan.MissingRequiredField != "" || plan.MissingRequiredMethod != "" || plan.MethodMismatchName != "" {
 		return false
 	}
 	if plan.Assignment.UntrustedTopOrigin && typ.TypeEquals(plan.Assignment.TypeWithPresence, nil) {
@@ -1037,14 +1058,18 @@ type CallArgumentMismatchKind uint8
 const (
 	CallArgumentMismatchNone CallArgumentMismatchKind = iota
 	CallArgumentMismatchMissingRequiredField
+	CallArgumentMismatchMissingRequiredMethod
+	CallArgumentMismatchMethodType
 	CallArgumentMismatchMayBeNil
 )
 
 // CallArgumentMismatch carries structured mismatch detail without diagnostic
 // wording.
 type CallArgumentMismatch struct {
-	Kind  CallArgumentMismatchKind
-	Field string
+	Kind       CallArgumentMismatchKind
+	Field      string
+	Type       typ.Type
+	ActualType typ.Type
 }
 
 // CallArgumentMismatchCandidate is one nested argument member that may become
@@ -1061,10 +1086,15 @@ type CallArgumentMismatchCandidate struct {
 // expected member types; public readmodel owns which candidate becomes the
 // user-facing report subject.
 type CallArgumentMismatchSubjectPlan struct {
-	Argument             CallArgument
-	Expected             typ.Type
-	Candidates           []CallArgumentMismatchCandidate
-	MissingRequiredField string
+	Argument                  CallArgument
+	Expected                  typ.Type
+	Candidates                []CallArgumentMismatchCandidate
+	MissingRequiredField      string
+	MissingRequiredMethod     string
+	MissingRequiredMethodType typ.Type
+	MethodMismatchName        string
+	MethodMismatchExpected    typ.Type
+	MethodMismatchActual      typ.Type
 }
 
 // CallArgumentMismatchSubject is the selected report subject for one argument
@@ -1100,6 +1130,25 @@ func PlanCallArgumentMismatchSubject(plan CallArgumentMismatchSubjectPlan) (Call
 			Expected:    plan.Expected,
 			LabelSuffix: CallArgumentExpectedLabelSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: plan.MissingRequiredField}}),
 		}, true
+	}
+	if plan.MissingRequiredMethod != "" {
+		arg := plan.Argument
+		arg.Mismatch = CallArgumentMismatch{
+			Kind:  CallArgumentMismatchMissingRequiredMethod,
+			Field: plan.MissingRequiredMethod,
+			Type:  plan.MissingRequiredMethodType,
+		}
+		return CallArgumentMismatchSubject{Argument: arg, Expected: plan.Expected}, true
+	}
+	if plan.MethodMismatchName != "" {
+		arg := plan.Argument
+		arg.Mismatch = CallArgumentMismatch{
+			Kind:       CallArgumentMismatchMethodType,
+			Field:      plan.MethodMismatchName,
+			Type:       plan.MethodMismatchExpected,
+			ActualType: plan.MethodMismatchActual,
+		}
+		return CallArgumentMismatchSubject{Argument: arg, Expected: plan.Expected}, true
 	}
 	return CallArgumentMismatchSubject{}, false
 }

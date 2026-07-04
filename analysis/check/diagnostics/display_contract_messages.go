@@ -340,6 +340,34 @@ func (d diagnosticDisplay) MissingRequiredMethodTypeEvidence(contract typ.Type, 
 	return fmt.Sprintf("required method %s has type %s, but the object literal does not provide it", method.Name, d.Type(method.Type))
 }
 
+func (d diagnosticDisplay) MethodTypeMismatchMessage(contract typ.Type, method string, got, want typ.Type) string {
+	if contract == nil {
+		return fmt.Sprintf("object literal method %q has type %s, not %s", method, d.Type(got), d.Type(want))
+	}
+	return fmt.Sprintf("object literal does not implement %s: method %q has type %s, not %s", d.Type(contract), method, d.Type(got), d.Type(want))
+}
+
+func (d diagnosticDisplay) ArgumentMissingRequiredMethodMessage(argument string, contract typ.Type, method string) string {
+	if contract == nil {
+		return fmt.Sprintf("%s is missing required method %q", argument, method)
+	}
+	return fmt.Sprintf("%s does not implement %s: missing method %q", argument, d.Type(contract), method)
+}
+
+func (d diagnosticDisplay) ArgumentMethodTypeMismatchMessage(argument string, contract typ.Type, method string, got, want typ.Type) string {
+	if contract == nil {
+		return fmt.Sprintf("%s method %q has type %s, not %s", argument, method, d.Type(got), d.Type(want))
+	}
+	return fmt.Sprintf("%s does not implement %s: method %q has type %s, not %s", argument, d.Type(contract), method, d.Type(got), d.Type(want))
+}
+
+func (d diagnosticDisplay) MethodTypeMismatchEvidence(contract typ.Type, method string, got, want typ.Type) string {
+	if contract == nil {
+		return fmt.Sprintf("method %s has type %s, not %s", method, d.Type(got), d.Type(want))
+	}
+	return fmt.Sprintf("method %s has type %s, but %s requires %s", method, d.Type(got), d.Type(contract), d.Type(want))
+}
+
 func (d diagnosticDisplay) ObjectLiteralShapeEvidence(t typ.Type) string {
 	return fmt.Sprintf("object literal has type %s", d.AssignmentType(t))
 }
