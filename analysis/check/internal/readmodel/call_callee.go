@@ -49,6 +49,9 @@ func (r Reader) callCalleeReport(point cfg.Point, site factflow.CallSite) CallCa
 		if report, ok := r.missingMemberCalleeReport(point, site, receiverPath, member); ok {
 			return report
 		}
+		if r.memberCalleeCallableFromDiscriminantProof(point, site) {
+			return CallCalleeReport{}
+		}
 		if r.memberCalleeCallableFromReceiver(point, site) {
 			return CallCalleeReport{}
 		}
@@ -106,6 +109,11 @@ func (r Reader) impreciseMemberCalleeRequiresProof(point cfg.Point, site factflo
 	return ok && receiver != nil && !typ.IsAny(receiver) && !typ.IsUnknown(receiver) && !typ.IsNever(receiver)
 }
 
+func (r Reader) memberCalleeCallableFromDiscriminantProof(point cfg.Point, site factflow.CallSite) bool {
+	memberType, ok := r.discriminantProvenMemberType(point, site)
+	return ok && calleeTypeCallable(memberType)
+}
+
 func (r Reader) memberCalleeCallableFromReceiver(point cfg.Point, site factflow.CallSite) bool {
 	name, ok := memberCallableName(site)
 	if !ok {
@@ -120,6 +128,9 @@ func (r Reader) memberCalleeCallableFromReceiver(point cfg.Point, site factflow.
 }
 
 func (r Reader) missingMemberCalleeReport(point cfg.Point, site factflow.CallSite, receiverPath path.Path, member segment.Segment) (CallCalleeReport, bool) {
+	if _, ok := r.discriminantProvenMemberType(point, site); ok {
+		return CallCalleeReport{}, false
+	}
 	receiverType, ok := r.callReceiverType(point, site)
 	if !ok || receiverType == nil || typ.IsAny(receiverType) || typ.IsUnknown(receiverType) || typ.IsNever(receiverType) {
 		return CallCalleeReport{}, false
@@ -260,12 +271,31 @@ func (r Reader) memberCallFunctionType(point cfg.Point, site factflow.CallSite) 
 	if !ok {
 		return nil, false
 	}
+	if memberType, ok := r.discriminantProvenMemberType(point, site); ok {
+		return callcontract.Callable(memberType)
+	}
 	receiver, ok := r.callReceiverType(point, site)
 	if !ok {
 		return nil, false
 	}
 	fn, status, ok := callcontract.MemberCallable(receiver, method)
 	return fn, ok && status == callcontract.MemberCallOK && fn != nil
+}
+
+func (r Reader) discriminantProvenMemberType(point cfg.Point, site factflow.CallSite) (typ.Type, bool) {
+	if r.result == nil {
+		return nil, false
+	}
+	receiver, member, ok := site.CalleeMemberAccessPath()
+	if !ok || receiver.IsEmpty() {
+		return nil, false
+	}
+	switch member.Kind {
+	case segment.SegmentField, segment.SegmentIndexString:
+		return r.result.DiscriminantProvenMemberTypeBeforeBoundary(point, receiver, member.Name)
+	default:
+		return nil, false
+	}
 }
 
 func memberCallableName(site factflow.CallSite) (string, bool) {

@@ -162,6 +162,13 @@ func (r *Result) discriminantProvenMemberTypeBeforeBoundary(point cfg.Point, rec
 	return nil, false
 }
 
+// DiscriminantProvenMemberTypeBeforeBoundary returns a member type that is
+// proven by a dominating discriminant guard on receiver or an alias-equivalent
+// path. It is the syntax-free query used by diagnostics and call contracts.
+func (r *Result) DiscriminantProvenMemberTypeBeforeBoundary(point cfg.Point, receiver pathdom.Path, member string) (typ.Type, bool) {
+	return r.discriminantProvenMemberTypeBeforeBoundary(point, receiver, member)
+}
+
 func (r *Result) discriminantReceiverTypeBeforeBoundary(point cfg.Point, receiver pathdom.Path) (typ.Type, bool) {
 	root := receiver.RootOnly()
 	var rootType typ.Type

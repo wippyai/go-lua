@@ -2823,6 +2823,49 @@ end
 	}
 }
 
+func TestForEachCallUsesAliasDiscriminantProofForMemberCallee(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type SpecialData = {
+	kind: "special",
+	run: (self: SpecialData) -> (),
+}
+type OtherData = {
+	kind: "other",
+}
+type Data = SpecialData | OtherData
+type Obj = {
+	data: Data,
+}
+
+local function dispatch(obj: Obj): ()
+	local sub = obj.data
+	if obj.data.kind == "special" then
+		sub:run()
+	end
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	result := checked.RootResult()
+	if result == nil || len(result.FunctionResults()) != 1 {
+		t.Fatalf("function results = %#v, want one", result)
+	}
+	var calls []CallSite
+	New(result.FunctionResults()[0]).ForEachCall(func(call CallSite) bool {
+		calls = append(calls, call)
+		return true
+	})
+	if len(calls) != 1 {
+		t.Fatalf("calls = %#v, want one sub:run call", calls)
+	}
+	if calls[0].Callee.Kind != readapi.CallCalleeReportNone || len(calls[0].Reports) != 0 {
+		t.Fatalf("call = %#v, want alias discriminant proof to satisfy member callee", calls[0])
+	}
+}
+
 func TestForEachCallSkipsOptionalCallableMemberAfterPresenceGuard(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `

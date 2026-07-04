@@ -371,6 +371,41 @@ func TestPathsAliasAtBoundaryFollowsDominatingLocalAlias(t *testing.T) {
 	}
 }
 
+func TestPathsAliasWithSameSuffixAtBoundaryFollowsAliasedPrefix(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+		local source = { data = { kind = "special" } }
+		local alias = source.data
+		if source.data.kind == "special" then
+			local via_alias = alias.kind
+		end
+	`)
+	result, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	ifStmt, ok := stmts[2].(*ast.IfStmt)
+	if !ok {
+		t.Fatalf("stmt 2 = %T, want if", stmts[2])
+	}
+	cond, ok := ifStmt.Condition.(*ast.RelationalOpExpr)
+	if !ok {
+		t.Fatalf("if condition = %T, want relational", ifStmt.Condition)
+	}
+	guardPath, ok := result.ExpressionPath(cond.Lhs)
+	if !ok {
+		t.Fatal("guard path not found")
+	}
+	point, aliasExpr := requireLocalAssignmentExprByName(t, result, "via_alias")
+	aliasPath, ok := result.ExpressionPath(aliasExpr)
+	if !ok {
+		t.Fatal("alias path not found")
+	}
+	if !result.PathsAliasWithSameSuffixAtBoundary(point, aliasPath, guardPath) {
+		t.Fatalf("PathsAliasWithSameSuffixAtBoundary(%s, %s) = false, want alias-prefix projection", aliasPath, guardPath)
+	}
+}
+
 func TestObjectLiteralStaticStringKeysAtPathReadsNestedTable(t *testing.T) {
 	reg := standard.Registry()
 	result, err := CheckChunk(parseChunk(t, `

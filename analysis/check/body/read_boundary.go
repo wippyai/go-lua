@@ -823,7 +823,15 @@ func (r *Result) PathsAliasAtBoundary(point cfg.Point, left, right pathdom.Path)
 // than PathsAliasAtBoundary: different suffixes are not considered aliases even
 // if another fact lane could relate the complete paths.
 func (r *Result) PathsAliasWithSameSuffixAtBoundary(point cfg.Point, left, right pathdom.Path) bool {
-	if r == nil || left.IsEmpty() || right.IsEmpty() || !samePathSuffix(left, right) {
+	if r == nil || left.IsEmpty() || right.IsEmpty() {
+		return false
+	}
+	return r.pathsAliasWithExactSuffixAtBoundary(point, left, right) ||
+		r.pathsAliasWithProjectedSuffixAtBoundary(point, left, right)
+}
+
+func (r *Result) pathsAliasWithExactSuffixAtBoundary(point cfg.Point, left, right pathdom.Path) bool {
+	if !samePathSuffix(left, right) {
 		return false
 	}
 	if left.Equal(right) || r.PathsEquivalentAtBoundary(point, left, right) {
@@ -836,16 +844,40 @@ func (r *Result) PathsAliasWithSameSuffixAtBoundary(point cfg.Point, left, right
 		r.DistinctPathsShareExactIdentityAtBoundary(point, left.RootOnly(), right.RootOnly())
 }
 
-func samePathSuffix(left, right pathdom.Path) bool {
-	if len(left.Segments) != len(right.Segments) {
-		return false
+func (r *Result) pathsAliasWithProjectedSuffixAtBoundary(point cfg.Point, left, right pathdom.Path) bool {
+	maxSuffix := len(left.Segments)
+	if len(right.Segments) < maxSuffix {
+		maxSuffix = len(right.Segments)
 	}
-	for i := range left.Segments {
-		if left.Segments[i] != right.Segments[i] {
-			return false
+	for suffixLen := 1; suffixLen <= maxSuffix; suffixLen++ {
+		leftPrefixLen := len(left.Segments) - suffixLen
+		rightPrefixLen := len(right.Segments) - suffixLen
+		if !sameSegments(left.Segments[leftPrefixLen:], right.Segments[rightPrefixLen:]) {
+			continue
+		}
+		leftPrefix := pathPrefix(left, leftPrefixLen)
+		rightPrefix := pathPrefix(right, rightPrefixLen)
+		if r.PathsAliasAtBoundary(point, leftPrefix, rightPrefix) {
+			return true
 		}
 	}
-	return true
+	return false
+}
+
+func samePathSuffix(left, right pathdom.Path) bool {
+	return sameSegments(left.Segments, right.Segments)
+}
+
+func pathPrefix(p pathdom.Path, segments int) pathdom.Path {
+	if segments <= 0 {
+		return p.RootOnly()
+	}
+	if segments >= len(p.Segments) {
+		return p.Clone()
+	}
+	prefix := p.RootOnly()
+	prefix.Segments = append(prefix.Segments, p.Segments[:segments]...)
+	return prefix
 }
 
 func (r *Result) dominatingAliasPathAtBoundary(point cfg.Point, alias, target pathdom.Path) bool {
