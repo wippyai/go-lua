@@ -26,8 +26,8 @@ func TestRequireCheckAndExportedReturnedTableDottedMemberKeepsReturnType(t *test
 	if len(result.Diagnostics) != 1 {
 		t.Fatalf("diagnostics = %d, want 1: %#v", len(result.Diagnostics), result.Diagnostics)
 	}
-	if result.Diagnostics[0].Code != diagnostics.CodeDirectCallResultAssignment {
-		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeDirectCallResultAssignment)
+	if result.Diagnostics[0].Code != diagnostics.CodeAssignmentType {
+		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeAssignmentType)
 	}
 }
 

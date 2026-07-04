@@ -627,7 +627,7 @@ func TestRequireCheckAndExportedGenericMemberSignatureRejectsAnnotatedCallResult
 		MessageContains: []string{
 			"result.map(...)",
 			"{ok: true, value: string}",
-			"{ok: true, value: number}",
+			"NumberResult",
 		},
 		EvidenceMin: 2,
 		EvidenceChain: []diagnosticEvidenceExpectation{
@@ -647,7 +647,7 @@ func TestRequireCheckAndExportedGenericMemberSignatureRejectsAnnotatedCallResult
 		HelpContains:  []string{"Use a value compatible", "change the target type", "`result.map(...)` is valid"},
 		Sources:       diagnostic.SourceMap{"test.lua": src},
 		RenderOrderedContains: []string{
-			"error[type.assignment]: cannot assign result.map(...) because it is {ok: true, value: string} | {error: string, ok: false}, not {ok: true, value: number} | {error: string, ok: false}",
+			"error[type.assignment]: cannot assign result.map(...) because it is {ok: true, value: string} | {error: string, ok: false}, not NumberResult",
 			"test.lua:6:38",
 			"↓ declared type",
 			"6 |         local wrong_result: NumberResult = result.map(decoded, function(value: string)",

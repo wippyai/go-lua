@@ -174,7 +174,7 @@ state.counters = "bad"
 bump(state)
 	`)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeAssignmentType)
-	requireEvidenceMessage(t, diag, "assignment target state.counters requires {[string]: number}")
+	requireEvidenceMessage(t, diag, "state.counters is declared as {[string]: number}")
 }
 
 func TestDirectCallArgumentStillRejectsUntrustedAnyAsRecord(t *testing.T) {

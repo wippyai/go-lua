@@ -75,7 +75,7 @@ local wrong_rows: {Timer} = rows
 			"{elapsed: number}[]",
 		},
 		EvidenceContains: []string{
-			"wrong_rows is declared as {Timer}",
+			"wrong_rows is declared as {elapsed: number}[]",
 		},
 	})
 }
