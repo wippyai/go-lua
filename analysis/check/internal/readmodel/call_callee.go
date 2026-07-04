@@ -333,7 +333,7 @@ func (r Reader) callReceiverType(point cfg.Point, site factflow.CallSite) (typ.T
 }
 
 func (r Reader) memberReceiverPathType(point cfg.Point, p path.Path) (typ.Type, bool) {
-	if value, ok := r.result.PathValueAtBoundary(point, p); ok {
+	if value, ok := r.result.PathValueBeforeBoundary(point, p); ok {
 		if receiver, ok := r.ValueTypeWithPresence(value); ok && callcontract.ReceiverTypeUsable(receiver) {
 			if declared, declaredOK := r.declaredReceiverPathType(p); declaredOK &&
 				preferDeclaredReceiverType(receiver, declared) {

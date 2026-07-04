@@ -3092,6 +3092,38 @@ end
 	})
 }
 
+func TestForEachCallUsesPreCallReceiverStateForOptionalMethodReport(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local value = {}
+function value:clear()
+	value = false
+end
+if value then
+	value:clear()
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	result := checked.RootResult()
+	if result == nil {
+		t.Fatalf("root result is nil")
+	}
+	var found bool
+	New(result).ForEachCall(func(call CallSite) bool {
+		found = true
+		if call.Callee.Kind != readapi.CallCalleeReportNone {
+			t.Fatalf("callee report = %#v, want guarded receiver before method effects", call.Callee)
+		}
+		return true
+	})
+	if !found {
+		t.Fatal("missing value.clear call")
+	}
+}
+
 func TestForEachCallAcceptsUnionMemberCalleeWhenAllArmsCallable(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
