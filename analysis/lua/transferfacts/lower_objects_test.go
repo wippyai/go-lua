@@ -437,7 +437,7 @@ end`)
 	}{
 		"error.type":    {path: fieldChainSuffix("error", "type"), typ: typ.String},
 		"error.message": {path: fieldChainSuffix("error", "message"), typ: typ.String},
-		"error.code":    {path: fieldChainSuffix("error", "code"), typ: typeexpr.Optional(typ.Any)},
+		"error.code":    {path: fieldChainSuffix("error", "code"), typ: typ.MaterializeOptional(typ.Any)},
 	}
 	for _, entry := range literal.Entries() {
 		suffix := entry.Suffix()

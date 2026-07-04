@@ -27,6 +27,7 @@ import (
 func (r *Result) WithMemberReadNilWitness(point cfg.Point, expr ast.Expr, value product.Value) product.Value {
 	if r == nil || r.Registry() == nil || expr == nil ||
 		!r.MemberReadCanMissOrDeclaredNilable(point, expr) ||
+		r.memberReadValueAlreadyProvenPresent(point, expr, value) ||
 		r.ExpressionReadProvenPresentBeforeBoundary(point, expr) ||
 		r.memberReadHasExactPathProof(point, expr) ||
 		r.memberReadHasExactHeapProof(point, expr) ||
@@ -54,6 +55,21 @@ func (r *Result) WithMemberReadNilWitness(point cfg.Point, expr ast.Expr, value 
 	}
 	value = product.WithPresence(r.Registry(), value, presence.Maybe())
 	return typevalue.WithWitness(r.Registry(), value, normalize.Optional(got))
+}
+
+func (r *Result) memberReadValueAlreadyProvenPresent(point cfg.Point, expr ast.Expr, value product.Value) bool {
+	if r == nil || r.Registry() == nil || !presence.Equal(product.PresenceOf(value), presence.Present()) {
+		return false
+	}
+	p, ok := r.ExpressionPath(expr)
+	if !ok || p.IsEmpty() {
+		return false
+	}
+	solved, ok := r.PathValueBeforeBoundary(point, p)
+	if !ok {
+		return false
+	}
+	return presence.Equal(product.PresenceOf(solved), presence.Present())
 }
 
 // MemberReadCanMissOrDeclaredNilable reports whether expr is a member read that
@@ -87,6 +103,11 @@ func (r *Result) MemberReadCanMiss(point cfg.Point, expr ast.Expr) bool {
 	}
 	if !ok || container == nil {
 		return false
+	}
+	if r.ExpressionReadProvenPresentBeforeBoundary(point, attr.Object) {
+		if withoutNil := ProjectionWithoutNil(container); withoutNil != nil && !typ.IsNever(withoutNil) {
+			container = withoutNil
+		}
 	}
 	var key typ.Type
 	if attr.KeySyntax != ast.AttrKeyIndex {

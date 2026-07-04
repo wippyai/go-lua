@@ -2,6 +2,7 @@ package checktest
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -229,6 +230,11 @@ end
 	}
 	if got := result.Diagnostics[0].Code.String(); got != "type.assignment" {
 		t.Fatalf("diagnostic code = %s, want type.assignment", got)
+	}
+	if message := result.Diagnostics[0].Message; !strings.Contains(message, "string") ||
+		!strings.Contains(message, "not number") ||
+		strings.Contains(message, "may be nil") {
+		t.Fatalf("diagnostic message = %q, want string-not-number without nilability", message)
 	}
 }
 

@@ -739,6 +739,9 @@ func allocationTemplateExportType(impl, declared typ.Type) typ.Type {
 	if merged, ok := allocationTemplateDeclaredEnvelope(impl, declared); ok {
 		return merged
 	}
+	if impl != nil && !refinement.ContainsFreeTypeParam(declared) && !typ.IsAny(declared) && !typ.IsUnknown(declared) && !typ.IsNever(declared) {
+		return declared
+	}
 	return impl
 }
 

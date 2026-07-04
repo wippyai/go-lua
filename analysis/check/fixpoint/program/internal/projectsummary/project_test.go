@@ -317,6 +317,23 @@ end`), body.Config{Registry: reg})
 	}
 }
 
+func TestFromResultProjectsAnyParamPresenceAfterAssert(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function f(x: any)
+	assert(x)
+end`), body.Config{Registry: reg})
+
+	got := summaryprojection.FromResult(result)
+
+	if len(got.NormalReturnParams) != 1 {
+		t.Fatalf("normal return params = %d, want 1: %#v", len(got.NormalReturnParams), got)
+	}
+	if gotPresence := product.PresenceOf(got.NormalReturnParams[0]); !presence.Equal(gotPresence, presence.Present()) {
+		t.Fatalf("normal return param presence = %s, want present", gotPresence)
+	}
+}
+
 func TestFromResultProjectsParamConstraintAfterErrorGuard(t *testing.T) {
 	reg := standard.Registry()
 	result := projectCheckFunction(t, projectParseFunction(t, `
@@ -680,6 +697,7 @@ end`), body.Config{Registry: reg})
 
 	projectAssertReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Present(), 0, presence.Absent())
 	projectAssertReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Absent(), 0, presence.Present())
+	projectAssertReturnPresenceRelation(t, got.ReturnPresenceRelations, 0, presence.Absent(), 1, presence.Present())
 	if len(got.Returns) != 2 {
 		t.Fatalf("returns = %d, want 2", len(got.Returns))
 	}
@@ -705,6 +723,7 @@ end`), body.Config{Registry: reg})
 
 	projectAssertReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Present(), 0, presence.Absent())
 	projectAssertReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Absent(), 0, presence.Present())
+	projectAssertReturnPresenceRelation(t, got.ReturnPresenceRelations, 0, presence.Absent(), 1, presence.Present())
 }
 
 func TestFromResultInfersFalseReturnConditionSlotRefinement(t *testing.T) {

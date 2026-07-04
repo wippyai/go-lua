@@ -13,6 +13,7 @@ import (
 	typelit "github.com/wippyai/go-lua/analysis/type/literal"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typecall"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // ArgumentConstraintViolation describes an inferred generic argument that does
@@ -101,7 +102,19 @@ func ParamConsumesReceiver(name string, param typ.Type, receiver typ.Type) bool 
 // ReceiverTypeUsable reports whether a receiver type is precise enough to drive
 // receiver binding and member-call contract lookup.
 func ReceiverTypeUsable(t typ.Type) bool {
+	t = ReceiverContractType(t)
 	return t != nil && !typ.IsAny(t) && !typ.IsUnknown(t)
+}
+
+// ReceiverContractType returns the structural receiver shape used for member
+// lookup. A constrained type parameter is callable through its upper bound: the
+// generic value remains symbolic for assignment/inference, but receiver
+// nilability and member lookup are governed by the constraint.
+func ReceiverContractType(t typ.Type) typ.Type {
+	if param, ok := unwrap.Annotations(t).(*typ.TypeParam); ok && param.Constraint != nil {
+		return param.Constraint
+	}
+	return t
 }
 
 // BindReceiver consumes the first callable parameter when call syntax supplies
@@ -111,6 +124,7 @@ func BindReceiver(callContract contract.Contract, receiver typ.Type, supplied bo
 	if !supplied {
 		return callContract
 	}
+	receiver = ReceiverContractType(receiver)
 	params := callContract.Params()
 	if len(params) == 0 {
 		return callContract
@@ -128,6 +142,7 @@ func BindReceiver(callContract contract.Contract, receiver typ.Type, supplied bo
 // MemberCallable resolves a receiver member for call syntax and returns its
 // callable witness.
 func MemberCallable(receiver typ.Type, name string) (*typ.Function, MemberCallStatus, bool) {
+	receiver = ReceiverContractType(receiver)
 	fn, status, ok := typecall.MemberCallable(receiver, name)
 	return fn, convertMemberCallStatus(status), ok
 }
@@ -136,6 +151,7 @@ func MemberCallable(receiver typ.Type, name string) (*typ.Function, MemberCallSt
 // member to be callable. It returns the member type when one exists and the
 // call-status classification owned by the Lua call contract layer.
 func MemberCall(receiver typ.Type, member segment.Segment) (typ.Type, MemberCallStatus, bool) {
+	receiver = ReceiverContractType(receiver)
 	switch member.Kind {
 	case segment.SegmentField:
 		t, status := typecall.MemberCall(receiver, member.Name)

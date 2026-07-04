@@ -72,13 +72,20 @@ func suppressJudgmentCascades(in []judgment.Judgment) []judgment.Judgment {
 		return in
 	}
 	invalidAssignments := make(map[string]cfg.Point)
-	out := in[:0]
 	for _, item := range in {
 		if item.Code == judgment.CodeAssignment && item.Subject.Label != "" {
 			invalidAssignments[item.Subject.Label] = item.Point
 		}
+	}
+	out := in[:0]
+	for _, item := range in {
 		if item.Code == judgment.CodeReturn && item.Actual.Label != "" {
 			if causePoint, ok := invalidAssignments[item.Actual.Label]; ok && causePoint < item.Point {
+				continue
+			}
+		}
+		if item.Code == judgment.CodeConcatOperand && item.Subject.Label != "" {
+			if causePoint, ok := invalidAssignments[item.Subject.Label]; ok && causePoint < item.Point {
 				continue
 			}
 		}

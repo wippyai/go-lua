@@ -399,8 +399,16 @@ func assignmentMessage(sourceName string, got, want typ.Type) string {
 	return display.AssignmentMessage(sourceName, got, want)
 }
 
+func assignmentMessageDisplay(sourceName string, got, want typ.Type, wantDisplay string) string {
+	return display.AssignmentMessageDisplay(sourceName, got, want, wantDisplay)
+}
+
 func memberAssignmentMessage(memberName string, sourceName string, got, want typ.Type) string {
 	return display.MemberAssignmentMessage(memberName, sourceName, got, want)
+}
+
+func memberAssignmentMessageDisplay(memberName string, sourceName string, got, want typ.Type, wantDisplay string) string {
+	return display.MemberAssignmentMessageDisplay(memberName, sourceName, got, want, wantDisplay)
 }
 
 func assignmentHelp(sourceName string, got typ.Type) string {

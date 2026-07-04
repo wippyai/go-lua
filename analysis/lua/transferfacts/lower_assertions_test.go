@@ -98,6 +98,13 @@ func TestLowerClaimsPreserveCastSyntaxVariantsWithoutProofRefinements(t *testing
 			source := mustLocalSource(t, facts, tc.point)
 			if tc.typ != nil {
 				assertLoweredConcreteCastAssertion(t, facts, source, tc.typ, factflow.ValueSourceExpression)
+				refinement, ok := facts.ExpressionRefinement(source.ExprRef)
+				if !ok {
+					t.Fatalf("missing assertion for source ref %d", source.ExprRef)
+				}
+				if got := refinement.Mode(); got != factflow.ExpressionRefinementRuntimeValidation {
+					t.Fatalf("refinement mode = %v, want %v", got, factflow.ExpressionRefinementRuntimeValidation)
+				}
 			} else {
 				assertLoweredAssertion(t, facts, source, tc.want, factflow.ValueSourceExpression)
 			}
@@ -585,7 +592,8 @@ local a, b = (x as any) as number, (x :: any) :: number
 		base := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), assertion.Key, assertion.Any())
 		base = product.Set(reg, base, evidence.Key, evidence.ExplicitTop())
 		want := applyConcreteCastRefinement(reg, base, typ.Number)
-		want = product.Set(reg, want, assertion.Key, assertion.Of(assertion.TypeClaim, assertion.RuntimeClaim, assertion.AnyClaim))
+		wantClaim := assertion.Of(assertion.TypeClaim, assertion.RuntimeClaim)
+		want = product.Set(reg, want, assertion.Key, wantClaim)
 		want = product.Set(reg, want, evidence.Key, evidence.ExplicitTop())
 		if !product.Equal(reg, assigned, want) {
 			t.Fatalf("assigned claim/evidence = %s/%s, want %s/%s",
@@ -595,6 +603,58 @@ local a, b = (x as any) as number, (x :: any) :: number
 		if got := product.Get(reg, assigned, evidence.Key); !evidence.Equal(got, evidence.ExplicitTop()) {
 			t.Fatalf("assigned evidence = %v, want explicit-top", got)
 		}
+	}
+}
+
+func TestLowerColonCastRuntimeValidationClearsStaleAnyEvidence(t *testing.T) {
+	stmts, _, built, result := parseSemanticChunk(t, `
+local x: any = 1
+local a = x :: string
+`)
+
+	reg := standard.Registry()
+	facts := lowerFacts(t, result, built.Graph, reg)
+	local := mustLocalStmt(t, stmts, 1)
+	point := requireStmtPoints(t, built, local, 1)[0]
+	source := mustLocalSource(t, facts, point)
+	refinement, ok := facts.ExpressionRefinement(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing cast refinement for source ref %d", source.ExprRef)
+	}
+	if got := refinement.Mode(); got != factflow.ExpressionRefinementRuntimeValidation {
+		t.Fatalf("refinement mode = %v, want runtime validation", got)
+	}
+	input := product.NewWithPresence(reg, product.ShapeTop, presence.Maybe())
+	input = product.Set(reg, input, evidence.Key, evidence.ExplicitTop())
+	input = product.Set(reg, input, assertion.Key, assertion.Any())
+	input = typevalue.WithWitness(reg, input, typ.Any)
+	inner := refinement.Source()
+	transferFn := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
+		Facts: facts,
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+			Registry: reg,
+			ExpressionValues: map[factflow.ExprRef]product.Value{
+				inner.ExprRef: input,
+			},
+		}),
+	})
+
+	out := transferFn(transfer.NodeContext{Registry: reg, Point: point}, state.State{})
+	fact, ok := facts.LocalAssignment(point)
+	if !ok {
+		t.Fatalf("missing local assignment at point %d", point)
+	}
+	assigned := out.ReadValue(reg, key.SymbolValue(fact.TargetSymbol()))
+	if got := product.Get(reg, assigned, assertion.Key); !assertion.Equal(got, assertion.Of(assertion.TypeClaim, assertion.RuntimeClaim)) {
+		t.Fatalf("assigned assertion = %s, want runtime type claim", got)
+	}
+	if got := product.PresenceOf(assigned); !presence.Equal(got, presence.Present()) {
+		t.Fatalf("assigned presence = %s, want present", got)
+	}
+	witness := product.Get(reg, assigned, typewitness.Key)
+	gotType, ok := witness.Type()
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("assigned witness = %v/%v, want string", witness, ok)
 	}
 }
 

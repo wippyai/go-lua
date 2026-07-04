@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/projection"
+	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -224,6 +225,22 @@ func expectedConstructorEntryType(source typ.Type, segments []segment.Segment, d
 	leaf := len(segments) == 1
 
 	switch t := current.(type) {
+	case *typ.TypeParam:
+		if t.Constraint == nil || t.Constraint == source {
+			return nil, false
+		}
+		return expectedConstructorEntryType(t.Constraint, segments, depth+1)
+	case *typ.Recursive:
+		if t.Body == nil || t.Body == source {
+			return nil, false
+		}
+		return expectedConstructorEntryType(t.Body, segments, depth+1)
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(t)
+		if expanded == nil || expanded == source {
+			return nil, false
+		}
+		return expectedConstructorEntryType(expanded, segments, depth+1)
 	case *typ.Record:
 		next, ok := constructorRecordSegment(t, seg)
 		if !ok {

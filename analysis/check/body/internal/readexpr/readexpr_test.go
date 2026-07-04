@@ -910,6 +910,48 @@ func TestProjectExactPresentChildUsesGenericVariantRootArm(t *testing.T) {
 	}
 }
 
+func TestProjectExactTableChildStillUsesNarrowedRootOrigin(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(14)
+	eventSym := symbol.ID(24)
+	resolver := testResolver(point, eventSym, "event")
+	eventPath := path.NewPath(eventSym, "event")
+	readPath := eventPath.Field("usage")
+	childKey := resolver.KeyAt(point, readPath)
+	usage := typetable.NewRecord().
+		Field("input_tokens", typ.Number).
+		Field("output_tokens", typ.Number).
+		Build()
+	done := typetable.NewRecord().
+		Field("type", typ.LiteralString("done")).
+		Field("usage", typeexpr.Optional(usage)).
+		Build()
+	other := typetable.NewRecord().
+		Field("type", typ.LiteralString("other")).
+		Build()
+	event := typeexpr.Union(done, other)
+	doneFamily, doneCases, ok := variant.OriginByPathLiteral(event, []segment.Segment{{Kind: segment.SegmentField, Name: "type"}}, typ.LiteralString("done"))
+	if !ok {
+		t.Fatal("missing done event origin")
+	}
+	rootValue := typevalue.WithWitness(reg, typevalue.FromType(reg, event), event)
+	rootValue = product.Set(reg, rootValue, variantorigin.Key, variantorigin.Of(doneFamily, doneCases))
+	childValue := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	childValue = product.Set(reg, childValue, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(eventSym), rootValue).
+		WritePathKey(reg, resolver.KeySpace(), childKey, childValue)
+
+	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
+	if !ok {
+		t.Fatalf("Project returned false")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, usage) {
+		t.Fatalf("Project type = %v/%v, want Usage", gotType, ok)
+	}
+}
+
 func TestProjectPresentRootWitnessMakesNestedPathNonOptional(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(10)

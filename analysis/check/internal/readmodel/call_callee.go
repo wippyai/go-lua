@@ -35,6 +35,16 @@ func (r Reader) callCalleeReport(point cfg.Point, site factflow.CallSite) CallCa
 		receiverPath, member, hasMemberPath = site.CalleeMemberAccessPath()
 	}
 	if memberAccess && hasMemberPath {
+		if receiverType, ok := r.memberReceiverNilableAtCall(point, site); ok {
+			return readapi.PlanCallCalleeReport(readapi.CallCalleeReportPlan{
+				CallableName: r.callContractSourceName(site),
+				Type:         receiverType,
+				Callable:     false,
+				MemberAccess: true,
+				Span:         sourceSpanFromFactflow(site.CalleeSpan()),
+				CallSpan:     sourceSpanFromFactflow(site.CallSpan()),
+			})
+		}
 		if report, ok := r.missingMemberCalleeReport(point, site, receiverPath, member); ok {
 			return report
 		}
@@ -277,13 +287,13 @@ func (r Reader) callReceiverType(point cfg.Point, site factflow.CallSite) (typ.T
 	if r.result == nil {
 		return nil, false
 	}
+	if p, ok := site.ReceiverPath(); ok && !p.IsEmpty() {
+		return r.memberReceiverPathType(point, p)
+	}
 	if source, ok := site.ReceiverSource(); ok {
 		if receiver, ok := r.receiverSourceType(point, source); ok && callcontract.ReceiverTypeUsable(receiver) {
 			return receiver, true
 		}
-	}
-	if p, ok := site.ReceiverPath(); ok && !p.IsEmpty() {
-		return r.memberReceiverPathType(point, p)
 	}
 	if p, _, ok := site.CalleeMemberAccessPath(); ok && !p.IsEmpty() {
 		return r.memberReceiverPathType(point, p)
@@ -294,15 +304,35 @@ func (r Reader) callReceiverType(point cfg.Point, site factflow.CallSite) (typ.T
 func (r Reader) memberReceiverPathType(point cfg.Point, p path.Path) (typ.Type, bool) {
 	if value, ok := r.result.PathValueAtBoundary(point, p); ok {
 		if receiver, ok := r.ValueTypeWithPresence(value); ok && callcontract.ReceiverTypeUsable(receiver) {
+			if declared, declaredOK := r.declaredReceiverPathType(p); declaredOK &&
+				preferDeclaredReceiverType(receiver, declared) {
+				return declared, true
+			}
 			return receiver, true
 		}
 	}
+	return r.declaredReceiverPathType(p)
+}
+
+func (r Reader) declaredReceiverPathType(p path.Path) (typ.Type, bool) {
 	if p.Symbol != 0 {
 		if receiver, ok := r.result.SymbolDeclaredType(p.Symbol); ok {
 			return receiver, true
 		}
 	}
 	return nil, false
+}
+
+func preferDeclaredReceiverType(current, declared typ.Type) bool {
+	if current == nil || declared == nil {
+		return false
+	}
+	currentContract := callcontract.ReceiverContractType(body.TypeWithoutOptionalNil(current))
+	declaredContract := callcontract.ReceiverContractType(body.TypeWithoutOptionalNil(declared))
+	return typevalue.TypeIncludesNil(current) &&
+		!typevalue.TypeIncludesNil(declared) &&
+		callcontract.ReceiverTypeUsable(currentContract) &&
+		callcontract.ReceiverTypeUsable(declaredContract)
 }
 
 func (r Reader) receiverSourceType(point cfg.Point, source factflow.ValueSource) (typ.Type, bool) {

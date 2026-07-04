@@ -400,6 +400,68 @@ func TestSourceValuesOperationOperandOperationWinsOverCachedStaticValue(t *testi
 	}
 }
 
+func TestExpressionRefinementsApplyToOperationOperands(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(655)
+	leftInner := ExprRef(6550)
+	leftOuter := ExprRef(6551)
+	rightExpr := ExprRef(6552)
+	opExpr := ExprRef(6553)
+	leftSource := ValueSource{Kind: ValueSourceExpression, ExprRef: leftOuter, HasExpr: true}
+	rightSource := ValueSource{Kind: ValueSourceExpression, ExprRef: rightExpr, HasExpr: true}
+	opSource := ValueSource{Kind: ValueSourceExpression, ExprRef: opExpr, HasExpr: true}
+	op, ok := NewBinaryExpressionOperation("*", leftSource, rightSource)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation returned false")
+	}
+	anyValue := product.NewWithPresence(reg, product.ShapeTop, presence.Maybe())
+	anyValue = product.Set(reg, anyValue, evidence.Key, evidence.ExplicitTop())
+	anyValue = product.Set(reg, anyValue, assertion.Key, assertion.Any())
+	anyValue = typevalue.WithWitness(reg, anyValue, typ.Any)
+	numberValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.Number), typ.Number)
+	base := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			leftInner: anyValue,
+			rightExpr: numberValue,
+		},
+		ExpressionOps: map[ExprRef]ExpressionOperation{
+			opExpr: op,
+		},
+		ExpressionOp: func(got ExpressionOperation, left product.Value, right product.Value) (product.Value, bool) {
+			if got.Op() != "*" {
+				return product.Value{}, false
+			}
+			leftClaim := product.Get(reg, left, assertion.Key)
+			if !leftClaim.Has(assertion.RuntimeClaim) || leftClaim.Has(assertion.AnyClaim) {
+				t.Fatalf("left operand assertion = %s, want runtime proof without stale any", leftClaim)
+			}
+			leftType, ok := typevalue.WitnessOf(reg, left)
+			if !ok || !typ.TypeEquals(leftType, typ.Number) {
+				t.Fatalf("left operand type = %v/%v, want number", leftType, ok)
+			}
+			return numberValue, true
+		},
+	})
+	refinement := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.Number), typ.Number)
+	refinement = product.Set(reg, refinement, assertion.Key, assertion.Of(assertion.TypeClaim, assertion.RuntimeClaim))
+	resolver := WithExpressionRefinements(reg, base, map[ExprRef]ExpressionRefinement{
+		leftOuter: NewExpressionRuntimeValidation(
+			ValueSource{Kind: ValueSourceExpression, ExprRef: leftInner, HasExpr: true},
+			refinement,
+		),
+	})
+
+	got, ok := resolver.ValueOfSource(point, opSource, state.State{}, nil)
+	if !ok {
+		t.Fatal("operation source did not resolve")
+	}
+	gotType, ok := typevalue.WitnessOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typ.Number) {
+		t.Fatalf("operation result type = %v/%v, want number", gotType, ok)
+	}
+}
+
 func TestSourceValuesObjectLiteralPrefersViewOverCachedTopOrigin(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(652)
@@ -755,6 +817,43 @@ func TestSourceValuesPathBackedNonTableTypeRejectsFlowIdentity(t *testing.T) {
 	}
 	if gotID, ok := product.Get(reg, got, identity.Key).ID(); ok {
 		t.Fatalf("path-backed identity = %v, want none", gotID)
+	}
+}
+
+func TestSourceValuesPathBackedConcreteTypeRejectsExplicitTopFlow(t *testing.T) {
+	reg := standard.Registry()
+	expr := ExprRef(56033)
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: expr, HasExpr: true}
+	cached := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.Number), typ.Number)
+	flow := product.NewWithPresence(reg, product.ShapeTop, presence.Maybe())
+	flow = product.Set(reg, flow, evidence.Key, evidence.ExplicitTop())
+	flow = product.Set(reg, flow, assertion.Key, assertion.Any())
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			expr: cached,
+		},
+		ExpressionPaths: map[ExprRef]struct{}{
+			expr: {},
+		},
+		ExpressionValue: func(point cfg.Point, got ExprRef, source ValueSource, in state.State) (product.Value, bool) {
+			if point != cfg.Point(56033) || got != expr || source.ExprRef != expr {
+				return product.Value{}, false
+			}
+			return flow, true
+		},
+	})
+
+	got, ok := resolver.ValueOfSource(cfg.Point(56033), source, state.State{}, nil)
+	if !ok {
+		t.Fatal("path-backed expression did not resolve")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typ.Number) {
+		t.Fatalf("path-backed cached type = %v/%v, want number", gotType, ok)
+	}
+	if gotEvidence := product.Get(reg, got, evidence.Key); gotEvidence.IsExplicitTop() {
+		t.Fatalf("path-backed evidence = %s, want cached concrete evidence", gotEvidence)
 	}
 }
 

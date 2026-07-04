@@ -6,6 +6,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/type/access"
+	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -21,52 +23,121 @@ type OrdinaryAssignmentTargetType struct {
 }
 
 func (r *Result) OrdinaryAssignmentTargetTypeAt(point cfg.Point, fact OrdinaryAssignmentFact) (OrdinaryAssignmentTargetType, bool) {
-	if fact.HasPath && !fact.Path.IsEmpty() {
-		if declared, ok := r.declaredWritePathType(fact.Path); ok {
-			return r.ordinaryAssignmentTargetTypeResult(point, fact.Target, declared), true
-		}
-		if declared, ok := r.dominatingDeclarationSourceWritePathType(point, fact.Path); ok {
-			return r.ordinaryAssignmentTargetTypeResult(point, fact.Target, declared), true
-		}
-	}
+	declared, hasDeclared := r.ordinaryAssignmentDeclaredPathType(point, fact)
 	attr, ok := assignmentTargetAttrExpr(fact.Target)
 	if !ok || attr.Object == nil || attr.Key == nil {
+		if hasDeclared {
+			return r.ordinaryAssignmentTargetTypeResult(point, fact.Target, declared), true
+		}
 		return OrdinaryAssignmentTargetType{}, false
 	}
 	container, ok := r.ExpressionTypeBeforeBoundary(point, attr.Object)
 	if !ok || container == nil {
+		if hasDeclared {
+			return r.ordinaryAssignmentTargetTypeResult(point, fact.Target, declared), true
+		}
 		return OrdinaryAssignmentTargetType{}, false
 	}
+	var projected typ.Type
 	if attr.KeySyntax != ast.AttrKeyIndex {
 		name := ast.KeyName(attr.Key)
 		if name == "" {
+			if hasDeclared {
+				return r.ordinaryAssignmentTargetTypeResult(point, fact.Target, declared), true
+			}
 			return OrdinaryAssignmentTargetType{}, false
 		}
 		t, ok := access.Field(container, name)
 		if !ok {
+			if hasDeclared {
+				return r.ordinaryAssignmentTargetTypeResult(point, fact.Target, declared), true
+			}
 			return OrdinaryAssignmentTargetType{}, false
 		}
-		return r.ordinaryAssignmentTargetTypeResult(point, fact.Target, t), true
-	}
-	if key, ok := attr.Key.(*ast.StringExpr); ok && key != nil {
+		projected = t
+	} else if key, ok := attr.Key.(*ast.StringExpr); ok && key != nil {
 		t, ok := access.Field(container, key.Value)
 		if !ok {
+			if hasDeclared {
+				return r.ordinaryAssignmentTargetTypeResult(point, fact.Target, declared), true
+			}
 			return OrdinaryAssignmentTargetType{}, false
 		}
-		return r.ordinaryAssignmentTargetTypeResult(point, fact.Target, t), true
+		projected = t
+	} else {
+		keyType, ok := r.ExpressionTypeBeforeBoundary(point, attr.Key)
+		if !ok {
+			keyType, ok = LiteralExpressionType(attr.Key)
+		}
+		if !ok || keyType == nil {
+			if hasDeclared {
+				return r.ordinaryAssignmentTargetTypeResult(point, fact.Target, declared), true
+			}
+			return OrdinaryAssignmentTargetType{}, false
+		}
+		t, ok := luatypeprojection.DynamicWriteValueType(container, keyType)
+		if !ok {
+			if hasDeclared {
+				return r.ordinaryAssignmentTargetTypeResult(point, fact.Target, declared), true
+			}
+			return OrdinaryAssignmentTargetType{}, false
+		}
+		projected = t
 	}
-	keyType, ok := r.ExpressionTypeBeforeBoundary(point, attr.Key)
+	if hasDeclared {
+		projected = widerWritableType(projected, declared)
+	}
+	hasSyntaxDeclared := false
+	if syntaxDeclared, ok := r.ordinaryAssignmentDeclaredTargetExpressionType(point, attr); ok {
+		hasSyntaxDeclared = true
+		projected = widerWritableType(projected, syntaxDeclared)
+	}
+	if !hasDeclared && !hasSyntaxDeclared && inferredNilOnlyWriteTarget(projected) {
+		return OrdinaryAssignmentTargetType{}, false
+	}
+	return r.ordinaryAssignmentTargetTypeResult(point, fact.Target, projected), true
+}
+
+func inferredNilOnlyWriteTarget(t typ.Type) bool {
+	return typ.IsNever(t) || (t != nil && t.Kind() == kind.Nil)
+}
+
+func (r *Result) ordinaryAssignmentDeclaredPathType(point cfg.Point, fact OrdinaryAssignmentFact) (typ.Type, bool) {
+	if !fact.HasPath || fact.Path.IsEmpty() {
+		return nil, false
+	}
+	if declared, ok := r.declaredWritePathType(fact.Path); ok {
+		return declared, true
+	}
+	return r.dominatingDeclarationSourceWritePathType(point, fact.Path)
+}
+
+func (r *Result) ordinaryAssignmentDeclaredTargetExpressionType(point cfg.Point, attr *ast.AttrGetExpr) (typ.Type, bool) {
+	if attr == nil || attr.Object == nil || attr.Key == nil {
+		return nil, false
+	}
+	container, ok := r.DeclaredExpressionTypeAt(point, attr.Object)
+	if !ok || container == nil {
+		return nil, false
+	}
+	if attr.KeySyntax != ast.AttrKeyIndex {
+		name := ast.KeyName(attr.Key)
+		if name == "" {
+			return nil, false
+		}
+		return access.Field(container, name)
+	}
+	if key, ok := attr.Key.(*ast.StringExpr); ok && key != nil {
+		return access.WritableIndex(container, typ.LiteralString(key.Value))
+	}
+	keyType, ok := LiteralExpressionType(attr.Key)
 	if !ok {
-		keyType, ok = LiteralExpressionType(attr.Key)
+		keyType, ok = r.DeclaredExpressionTypeAt(point, attr.Key)
 	}
 	if !ok || keyType == nil {
-		return OrdinaryAssignmentTargetType{}, false
+		return nil, false
 	}
-	t, ok := luatypeprojection.DynamicWriteValueType(container, keyType)
-	if !ok {
-		return OrdinaryAssignmentTargetType{}, false
-	}
-	return r.ordinaryAssignmentTargetTypeResult(point, fact.Target, t), true
+	return luatypeprojection.DynamicWriteValueType(container, keyType)
 }
 
 func (r *Result) ordinaryAssignmentTargetTypeResult(point cfg.Point, target ast.Expr, t typ.Type) OrdinaryAssignmentTargetType {
@@ -78,6 +149,21 @@ func (r *Result) ordinaryAssignmentTargetTypeResult(point cfg.Point, target ast.
 		}
 	}
 	return out
+}
+
+func widerWritableType(a, b typ.Type) typ.Type {
+	switch {
+	case a == nil:
+		return b
+	case b == nil:
+		return a
+	case subtype.IsSubtype(a, b):
+		return b
+	case subtype.IsSubtype(b, a):
+		return a
+	default:
+		return a
+	}
 }
 
 func (r *Result) declaredWritePathType(p path.Path) (typ.Type, bool) {

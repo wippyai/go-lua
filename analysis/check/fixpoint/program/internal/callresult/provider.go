@@ -1249,7 +1249,7 @@ func sourceValueAtArgument(
 	read func(cfg.Point) state.State,
 ) (product.Value, bool) {
 	value, ok := valueOfSource(point, source, sources, in, read)
-	if t, okType := typeFromValue(reg, value); okType && UsableType(reg, value, t) {
+	if t, okType := inferenceTypeFromValue(reg, value); okType && UsableType(reg, value, t) {
 		return value, true
 	}
 	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
@@ -1338,7 +1338,7 @@ func callArgumentType(
 	if !ok {
 		return nil, false
 	}
-	t, ok := typeFromValue(ctx.Registry, value)
+	t, ok := inferenceTypeFromValue(ctx.Registry, value)
 	if !ok || !UsableType(ctx.Registry, value, t) {
 		return nil, false
 	}
@@ -1412,6 +1412,13 @@ func functionTypeWithSummaryReturns(reg *axis.Registry, fn *typ.Function, return
 
 func typeFromValue(reg *axis.Registry, value product.Value) (typ.Type, bool) {
 	return typevalue.TypeOf(reg, value)
+}
+
+func inferenceTypeFromValue(reg *axis.Registry, value product.Value) (typ.Type, bool) {
+	if reg == nil {
+		return nil, false
+	}
+	return proof.New(reg, nil).ValueTypeWithPresence(value)
 }
 
 func typeWitnessValue(reg *axis.Registry, typeValues *typevalue.Cache, t typ.Type) product.Value {
@@ -1538,7 +1545,7 @@ func clampDeclaredReturnHeapMembers(
 	if !ok {
 		return objects, false
 	}
-	contracts := declaredReturnMemberBoundaryContracts(reg, typeValues, ks, declared)
+	contracts := declaredReturnMemberBoundaryContracts(reg, typeValues, ks, declared, object.StaticMembers())
 	if len(contracts) == 0 {
 		return objects, false
 	}
@@ -1569,39 +1576,37 @@ func clampDeclaredReturnHeapMembers(
 	return next, true
 }
 
-func declaredReturnMemberBoundaryContracts(reg *axis.Registry, typeValues *typevalue.Cache, ks *keyspace.KeySpace, declared typ.Type) map[keyspace.Key]product.Value {
-	record, ok := declaredReturnRecord(declared)
-	if !ok {
+func declaredReturnMemberBoundaryContracts(reg *axis.Registry, typeValues *typevalue.Cache, ks *keyspace.KeySpace, declared typ.Type, existing map[keyspace.Key]product.Value) map[keyspace.Key]product.Value {
+	if len(existing) == 0 {
 		return nil
 	}
 	out := make(map[keyspace.Key]product.Value)
-	add := func(segments []segment.Segment, t typ.Type) {
-		if !declaredTypeContainsBoundaryTop(t) {
-			return
+	for key, current := range existing {
+		segments, ok := ks.SuffixSegmentsView(key)
+		if !ok || len(segments) == 0 {
+			continue
 		}
-		key, ok := heapidentity.StaticMemberSuffixKey(ks, segments)
-		if !ok {
-			return
+		t, ok := luatypeprojection.ApplySegments(declared, segments)
+		if !ok || t == nil {
+			continue
+		}
+		currentType, currentTypeOK := typevalue.TypeOf(reg, current)
+		if !declaredTypeContainsBoundaryTop(t) && currentTypeOK && declaredMemberAcceptsCurrent(typeValues, currentType, t) {
+			continue
 		}
 		out[key] = typeWitnessValue(reg, typeValues, t)
-	}
-	for _, field := range record.Fields {
-		add([]segment.Segment{{Kind: segment.SegmentField, Name: field.Name}}, field.Type)
-		add([]segment.Segment{{Kind: segment.SegmentIndexString, Name: field.Name}}, field.Type)
-	}
-	for _, member := range record.StaticMembers {
-		switch member.Kind {
-		case typ.StaticMemberStringIndex:
-			add([]segment.Segment{{Kind: segment.SegmentIndexString, Name: member.Name}}, member.Type)
-			add([]segment.Segment{{Kind: segment.SegmentField, Name: member.Name}}, member.Type)
-		case typ.StaticMemberIntIndex:
-			add([]segment.Segment{{Kind: segment.SegmentIndexInt, Index: int(member.Index)}}, member.Type)
-		}
 	}
 	if len(out) == 0 {
 		return nil
 	}
 	return out
+}
+
+func declaredMemberAcceptsCurrent(typeValues *typevalue.Cache, current, declared typ.Type) bool {
+	if typeValues != nil {
+		return typeValues.IsSubtype(current, declared)
+	}
+	return typevalue.NewCache().IsSubtype(current, declared)
 }
 
 func declaredReturnRecord(t typ.Type) (*typ.Record, bool) {

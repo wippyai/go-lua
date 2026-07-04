@@ -29,7 +29,7 @@ func renderAssignmentJudgmentWithPolicy(item judgment.Judgment, policy judgment.
 		target = "value"
 	}
 	sourceName := item.Actual.Label
-	if detail, ok := assignmentJudgmentCallResultDetail(item); ok && !detail.UnderSupplied {
+	if detail, ok := assignmentJudgmentCallResultDetail(item); ok && !detail.UnderSupplied && !assignmentJudgmentMissingProofMayBeNil(item) {
 		return renderCallResultAssignmentJudgment(item, detail, got, want, severity, span, declSpan)
 	}
 	underSuppliedDetail, underSupplied := assignmentJudgmentUnderSuppliedCallResultDetail(item)
@@ -43,6 +43,8 @@ func renderAssignmentJudgmentWithPolicy(item judgment.Judgment, policy judgment.
 		evidenceSourceName = target
 	}
 	extraEvidence := assignmentJudgmentExtraEvidence(item, evidenceSourceName, got, want, span)
+	expectedDisplay := assignmentJudgmentExpectedTypeLabel(item, target, want)
+	dynamicTarget := assignmentJudgmentHasDynamicTargetEvidence(item)
 	if underSupplied {
 		source := item.Actual.Label
 		if source == "" {
@@ -63,9 +65,9 @@ func renderAssignmentJudgmentWithPolicy(item judgment.Judgment, policy judgment.
 	if hasMissingField {
 		sourceEvidence = objectLiteralShapeEvidence(got)
 	}
-	message := assignmentMessageForEvidence(sourceName, got, want, extraEvidence)
-	if assignmentJudgmentTargetLooksMember(target, sourceName) {
-		message = memberAssignmentMessageForEvidence(target, sourceName, got, want, extraEvidence)
+	message := assignmentMessageForEvidenceDisplay(sourceName, got, want, expectedDisplay, extraEvidence)
+	if assignmentJudgmentTargetLooksMember(target, sourceName) && !dynamicTarget {
+		message = memberAssignmentMessageForEvidenceDisplay(target, sourceName, got, want, expectedDisplay, extraEvidence)
 	}
 	help := assignmentHelpForEvidence(sourceName, got, extraEvidence)
 	if underSupplied {
@@ -79,10 +81,10 @@ func renderAssignmentJudgmentWithPolicy(item judgment.Judgment, policy judgment.
 			Message: sourceEvidence,
 		},
 		{
-			Kind:    diagnostic.EvidenceUserAssertion,
-			Trust:   diagnostic.TrustClaimed,
+			Kind:    assignmentJudgmentExpectedEvidenceKind(item),
+			Trust:   assignmentJudgmentExpectedEvidenceTrust(item),
 			Span:    declSpan,
-			Message: assignmentJudgmentExpectedEvidence(item, target, want),
+			Message: assignmentJudgmentExpectedEvidence(item, target, want, expectedDisplay),
 		},
 	}
 	evidence = append(evidence, extraEvidence...)
@@ -107,7 +109,7 @@ func renderAssignmentJudgmentWithPolicy(item judgment.Judgment, policy judgment.
 	labels := []diagnostic.Label{sourceLabel(span, sourceLabelMessage)}
 	if !diagnosticSpanEqual(declSpan, span) {
 		expectedLabel := labelDeclaredType
-		if assignmentJudgmentHasDynamicTargetEvidence(item) {
+		if dynamicTarget {
 			expectedLabel = labelAssignmentTarget
 		}
 		labels = append(labels, sourceLabel(declSpan, expectedLabel))
@@ -296,7 +298,7 @@ func assignmentJudgmentExpectedTypeLabel(item judgment.Judgment, target string, 
 	return formatType(fallback)
 }
 
-func assignmentJudgmentExpectedEvidence(item judgment.Judgment, target string, fallback typ.Type) string {
+func assignmentJudgmentExpectedEvidence(item judgment.Judgment, target string, fallback typ.Type, expectedDisplay string) string {
 	for _, evidence := range item.Evidence {
 		if evidence.Detail.Kind == judgment.EvidenceDetailDynamicAssignmentTarget {
 			label := evidence.Detail.SubjectLabel
@@ -306,7 +308,28 @@ func assignmentJudgmentExpectedEvidence(item judgment.Judgment, target string, f
 			return fmt.Sprintf("assignment target %s requires %s", label, formatType(fallback))
 		}
 	}
-	return fmt.Sprintf("%s is declared as %s", target, assignmentJudgmentExpectedTypeLabel(item, target, fallback))
+	if expectedDisplay == "" {
+		expectedDisplay = assignmentJudgmentExpectedTypeLabel(item, target, fallback)
+	}
+	return fmt.Sprintf("%s is declared as %s", target, expectedDisplay)
+}
+
+func assignmentJudgmentExpectedEvidenceKind(item judgment.Judgment) diagnostic.EvidenceKind {
+	for _, evidence := range item.Evidence {
+		if evidence.Detail.Kind == judgment.EvidenceDetailDynamicAssignmentTarget {
+			return diagnostic.EvidenceAbstractFact
+		}
+	}
+	return diagnostic.EvidenceUserAssertion
+}
+
+func assignmentJudgmentExpectedEvidenceTrust(item judgment.Judgment) diagnostic.TrustKind {
+	for _, evidence := range item.Evidence {
+		if evidence.Detail.Kind == judgment.EvidenceDetailDynamicAssignmentTarget {
+			return diagnostic.TrustProven
+		}
+	}
+	return diagnostic.TrustClaimed
 }
 
 func assignmentJudgmentSourceLabel(missingField bool) string {
@@ -347,10 +370,10 @@ func assignmentJudgmentExtraEvidence(item judgment.Judgment, sourceName string, 
 	}
 	if sourceName != "" && sourceName != unknownSourceName && assignmentJudgmentMissingProofMayBeNil(item) {
 		out = append(out, assignmentJudgmentSourceContributionEvidence(item)...)
+		out = append(out, assignmentJudgmentNilableAccessEvidence(item)...)
 		if assignmentSourceLooksIndexed(sourceName) {
 			return appendMissingNilGuardEvidence(out, sourceName, got, sourceSpan, true)
 		}
-		out = append(out, assignmentJudgmentNilableAccessEvidence(item)...)
 		return appendMissingNilGuardEvidence(out, sourceName, got, sourceSpan, false)
 	}
 	out = append(out, assignmentJudgmentNilableAccessEvidence(item)...)
@@ -365,6 +388,15 @@ func assignmentJudgmentExtraEvidence(item judgment.Judgment, sourceName string, 
 				Message: assignmentJudgmentMissingProofMessage(item, sourceName, got, want),
 			})
 		}
+	}
+	if assignmentJudgmentHasDynamicTargetEvidence(item) && !evidenceHasKind(out, diagnostic.EvidenceMissingProof) {
+		out = append(out, diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceMissingProof,
+			Trust:   diagnostic.TrustUnknown,
+			Reason:  diagnostic.EvidenceReasonBoundaryValidationMissing,
+			Span:    sourceSpan,
+			Message: assignmentJudgmentMissingProofMessage(item, sourceName, got, want),
+		})
 	}
 	return out
 }
@@ -466,6 +498,9 @@ func assignmentNilableAccessMessage(label, access string) string {
 
 func assignmentJudgmentMissingProofReason(item judgment.Judgment) diagnostic.EvidenceReason {
 	if item.HasEvidence(judgment.EvidencePrecisionBoundary) {
+		return diagnostic.EvidenceReasonBoundaryValidationMissing
+	}
+	if _, ok := assignmentJudgmentCallResultDetail(item); ok {
 		return diagnostic.EvidenceReasonBoundaryValidationMissing
 	}
 	return diagnostic.EvidenceReasonUnspecified

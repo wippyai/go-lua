@@ -28,6 +28,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/channelselect"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -303,6 +304,29 @@ row[key] = value
 	}
 	if !strings.Contains(got[0].Expected.String(), "string") || !strings.Contains(got[0].Expected.String(), "number") {
 		t.Fatalf("assignment expected = %v, want meet of closed-record field contracts", got[0].Expected)
+	}
+}
+
+func TestForEachAssignmentKeepsLiteralIntegerWitnessForDynamicMapWrite(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local counters: {[string]: integer} = {}
+local key = "sent"
+counters[key] = 1
+`)
+	result, err := body.CheckChunk(stmts, body.Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	var got []Assignment
+	New(result).ForEachAssignment(func(assignment Assignment) bool {
+		if assignment.TargetLabel == "counters[key]" {
+			got = append(got, assignment)
+		}
+		return true
+	})
+	if len(got) != 0 {
+		t.Fatalf("dynamic integer write assignments = %#v, want literal integer source accepted", got)
 	}
 }
 
@@ -966,6 +990,41 @@ end
 	}
 }
 
+func TestForEachMissingMemberReadReportsOwnedUnionArmMissingField(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type TextNode = { kind: "text", value: string }
+type GroupNode = { kind: "group", children: {TreeNode} }
+type TreeNode = TextNode | GroupNode
+
+local function build()
+	local tree: TreeNode = { kind = "text", value = "leaf" }
+	if tree.kind == "text" then
+		local children = tree.children
+	end
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil || len(root.FunctionResults()) != 1 {
+		t.Fatalf("function results = %#v, want one child", root)
+	}
+	var got []MissingMemberRead
+	New(root.FunctionResults()[0]).ForEachMissingMemberRead(func(read MissingMemberRead) bool {
+		got = append(got, read)
+		return true
+	})
+	if len(got) != 1 {
+		t.Fatalf("missing member reads = %#v, want union-arm children miss", got)
+	}
+	if got[0].ReadLabel != "tree.children" || got[0].MemberName != "children" {
+		t.Fatalf("missing member read = %#v, want tree.children", got[0])
+	}
+}
+
 func TestForEachAssignmentUsesStdlibAssertPostcondition(t *testing.T) {
 	reg := standard.Registry()
 	checked, err := program.RunChunk(parseChunk(t, `
@@ -1058,6 +1117,56 @@ end
 	}
 }
 
+func TestForEachAssignmentPreservesLoopCarriedRecordInObjectLiteralEntry(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Usage = { input_tokens: number, output_tokens: number }
+type DoneEvent = { type: "done", usage: Usage? }
+type OtherEvent = { type: "delta", text: string }
+type Event = DoneEvent | OtherEvent
+type StreamResult = { usage: Usage }
+
+local function process(events: {Event}): StreamResult
+    local usage: Usage = { input_tokens = 0, output_tokens = 0 }
+    for _, event in ipairs(events) do
+        if event.type == "done" then
+            if event.usage then
+                usage = event.usage
+            end
+        end
+    end
+    local result: StreamResult = {
+        usage = usage,
+    }
+    return result
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{
+		Check: body.Config{
+			Registry:   reg,
+			Signatures: signaturelookup.Source{IncludeStdlib: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil || len(root.FunctionResults()) != 1 {
+		t.Fatalf("root/functions = %#v, want one function result", root)
+	}
+	var resultUsage []Assignment
+	New(root.FunctionResults()[0]).ForEachAssignment(func(assignment Assignment) bool {
+		if assignment.TargetLabel == "result.usage" {
+			resultUsage = append(resultUsage, assignment)
+		}
+		return true
+	})
+	if len(resultUsage) != 0 {
+		canonical, canonicalOK := New(root.FunctionResults()[0]).ValueTypeWithPresence(resultUsage[0].Value)
+		t.Fatalf("result.usage assignments = %#v, canonical source type = %v/%v, want accumulator record accepted", resultUsage, canonical, canonicalOK)
+	}
+}
+
 func TestOrdinaryAssignmentTargetTypeUsesFunctionParameterAnnotations(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
@@ -1069,7 +1178,11 @@ local function f(bag: Bag, key: Key): ()
 end
 `)
 	checked, err := program.RunChunk(stmts, program.Config{
-		Check: body.Config{Registry: reg},
+		Check: body.Config{
+			Registry:   reg,
+			Globals:    []string{"pairs", "tostring"},
+			Signatures: signaturelookup.Source{IncludeStdlib: true},
+		},
 	})
 	if err != nil {
 		t.Fatalf("RunChunk: %v", err)
@@ -1102,7 +1215,7 @@ end
 		if !sourceOK {
 			t.Fatal("ValueTypeWithPresence returned false for dynamic-write source")
 		}
-		if sourceType == nil || !strings.Contains(sourceType.String(), "string") {
+		if sourceType == nil || !subtype.IsSubtype(sourceType, typ.String) {
 			t.Fatalf("source type = %v, want string-like source", sourceType)
 		}
 		if reader.ValueProofAdmissible(value, got) {
@@ -1111,6 +1224,115 @@ end
 	}
 	if !found {
 		t.Fatal("missing bag[key] ordinary assignment")
+	}
+}
+
+func TestOrdinaryAssignmentTargetTypeUsesPairsClosedRecordKeys(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local item = {
+	count = 1,
+	name = "ready",
+}
+
+for key, value in pairs(item) do
+	item[key] = tostring(value)
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{
+		Check: body.Config{
+			Registry:   reg,
+			Signatures: signaturelookup.Source{IncludeStdlib: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatal("missing root result")
+	}
+	reader := New(root)
+	var found bool
+	for _, point := range root.Graph().RPO() {
+		fact, ok := root.OrdinaryAssignment(point)
+		if !ok || body.AssignmentSourceLabel(fact.Target) != "item[key]" {
+			continue
+		}
+		found = true
+		got, ok := reader.ordinaryAssignmentTargetType(point, fact)
+		if !ok {
+			t.Fatal("ordinaryAssignmentTargetType returned false for pairs dynamic write")
+		}
+		if !strings.Contains(got.String(), "1") || !strings.Contains(got.String(), `"ready"`) {
+			t.Fatalf("target type = %v, want meet of closed record literal fields", got)
+		}
+		value, valueOK := reader.ordinaryAssignmentSourceValue(point, fact)
+		if !valueOK {
+			t.Fatal("SourceValue returned false for pairs dynamic-write source")
+		}
+		sourceType, sourceOK := reader.ValueTypeWithPresence(value)
+		if !sourceOK {
+			t.Fatal("ValueTypeWithPresence returned false for dynamic-write source")
+		}
+		if sourceType == nil || !subtype.IsSubtype(sourceType, typ.String) {
+			t.Fatalf("source type = %v, want string-like source", sourceType)
+		}
+		if reader.ValueProofAdmissible(value, got) {
+			t.Fatalf("ValueProofAdmissible accepted %v for %v", sourceType, got)
+		}
+	}
+	if !found {
+		t.Fatal("missing item[key] ordinary assignment")
+	}
+}
+
+func TestForEachAssignmentUsesLocalFunctionInsertedArrayReturnSlot(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Entry = {id: string, meta: {type: string, suite: string?, order: number?}?}
+
+local function group_by_suite(entries: {Entry})
+	local no_suite = {}
+	for _, entry in ipairs(entries) do
+		table.insert(no_suite, entry)
+	end
+	return no_suite
+end
+
+local entries: {Entry} = {}
+local no_suite = group_by_suite(entries)
+local uncategorized: {Entry} = no_suite
+`)
+	checked, err := program.RunChunk(stmts, program.Config{
+		Check: body.Config{
+			Registry:   reg,
+			Globals:    []string{"ipairs", "table"},
+			Signatures: signaturelookup.Source{IncludeStdlib: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatal("missing root result")
+	}
+	var got []Assignment
+	New(root).ForEachAssignment(func(assignment Assignment) bool {
+		if assignment.TargetLabel == "uncategorized" {
+			got = append(got, assignment)
+		}
+		return true
+	})
+	if len(got) != 1 {
+		t.Fatalf("uncategorized assignments = %#v, want one", got)
+	}
+	if !got[0].Check.Admissible {
+		t.Fatalf("assignment check is not admissible with source=%v expected=%v", got[0].TypeWithPresence, got[0].Expected)
+	}
+	if got[0].TypeWithPresence == nil || !strings.Contains(got[0].TypeWithPresence.String(), "id: string") {
+		t.Fatalf("source type = %v, want returned Entry array", got[0].TypeWithPresence)
 	}
 }
 

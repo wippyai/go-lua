@@ -1439,6 +1439,52 @@ func TestFactsNodeTransferCallOutcomeParamPathRefinementUsesArgumentNotReceiver(
 	assertValue(t, reg, got, key.SymbolValue(receiver), product.Top())
 }
 
+func TestFactsNodeTransferCallOutcomeParamPathRefinementAppliesToMemberArgument(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(617)
+	obj := symbol.ID(617)
+	argExpr := factflow.ExprRef(617)
+	objPath := pathdom.NewPath(obj, "obj")
+	memberPath := objPath.Field("data")
+	present := presentValue(reg)
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, obj, "obj")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	memberKey := resolver.KeyAt(point, memberPath)
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			CallSites: map[cfg.Point]factflow.CallSite{
+				point: factflow.NewCallSite(factflow.CallSiteConfig{
+					Context: factflow.CallSiteContextStatement,
+					ArgumentSources: []factflow.ValueSource{
+						{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+					},
+				}),
+			},
+			ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+				argExpr: memberPath,
+			},
+		}),
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
+				ParamPathRefinements: []callpayload.CallParamPathRefinement{
+					{Path: pathdom.NewPlaceholder(0), Value: present},
+				},
+			}
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	gotMember := got.ReadPathKey(reg, resolver.KeySpace(), memberKey)
+	if !presence.Equal(product.PresenceOf(gotMember), presence.Present()) {
+		t.Fatalf("member argument presence = %s in %s, want present", product.PresenceOf(gotMember), formatValue(reg, gotMember))
+	}
+}
+
 func TestFactsNodeTransferCallOutcomeRebasesNestedEscapeEventToConsumerChildPath(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(618)

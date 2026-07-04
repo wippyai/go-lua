@@ -110,6 +110,21 @@ func TestProduceSuppressesAssignmentCascadeFromUnresolvedRoot(t *testing.T) {
 	}
 }
 
+func TestProduceSuppressesConcatCascadeFromInvalidLocalAssignment(t *testing.T) {
+	diags := runDiagnostics(t, `
+type Session = { user_id: string? }
+local ctx: { session: Session } = { session = { user_id = nil } }
+local user_id: string = ctx.session.user_id
+local body = user_id .. ":suffix"
+`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want only assignment cause: %#v", len(diags), diags)
+	}
+	if diags[0].Code != CodeAssignmentType {
+		t.Fatalf("diagnostic code = %s, want %s: %#v", diags[0].Code, CodeAssignmentType, diags)
+	}
+}
+
 func TestProduceKeepsUntrustedAnyAssignmentWithoutUnresolvedRoot(t *testing.T) {
 	diags := runDiagnosticsWithGlobals(t, `local n: number = provider.meta()`, []string{"provider"})
 	if len(diags) != 1 {
@@ -1857,6 +1872,33 @@ func runDiagnosticsWithGlobals(t *testing.T, src string, globals []string) []dia
 func runDiagnosticsWithSignatures(t *testing.T, src string, signatures signaturelookup.Source) []diagnostic.Diagnostic {
 	t.Helper()
 	return runDiagnosticsFull(t, src, []string{"test", "type", "value"}, signatures)
+}
+
+func TestProduceSuppressesLoopDynamicAssignmentCascade(t *testing.T) {
+	diags := runDiagnosticsFull(t, `
+local item = {
+	count = 1,
+	name = "ready",
+}
+
+for key, value in pairs(item) do
+	item[key] = tostring(value)
+end
+
+local count: number = item.count
+`, []string{"pairs", "tostring"}, signaturelookup.Source{IncludeStdlib: true})
+	var assignments []diagnostic.Diagnostic
+	for _, diag := range diags {
+		if diag.Code == CodeAssignmentType {
+			assignments = append(assignments, diag)
+		}
+	}
+	if len(assignments) != 1 {
+		t.Fatalf("assignment diagnostics = %d, want only dynamic write cause: %#v", len(assignments), assignments)
+	}
+	if !strings.Contains(assignments[0].Message, "tostring(...)") || strings.Contains(assignments[0].Message, "item.count") {
+		t.Fatalf("assignment message = %q, want dynamic write cause", assignments[0].Message)
+	}
 }
 
 func runDiagnosticsFull(t *testing.T, src string, globals []string, signatures signaturelookup.Source) []diagnostic.Diagnostic {

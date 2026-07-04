@@ -251,7 +251,7 @@ func (r Reader) callParamObligationsAt(point cfg.Point) []callParamObligation {
 	}
 	out := make([]callParamObligation, 0, len(outcome.ParamObligations))
 	for _, obligation := range outcome.ParamObligations {
-		t, ok := r.ValueType(obligation.Value)
+		t, ok := r.ValueTypeWithPresence(obligation.Value)
 		if !ok || !readapi.CallArgumentObligationTypeReportable(t) {
 			continue
 		}

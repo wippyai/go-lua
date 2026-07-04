@@ -28,6 +28,22 @@ return version
 	}
 }
 
+func TestIntegerMapDynamicWritesKeepIntegerPrecision(t *testing.T) {
+	result := Check(`
+local counters: {[string]: integer} = {}
+local key = "sent"
+local current = counters[key]
+if current then
+    counters[key] = current + 1
+else
+    counters[key] = 1
+end
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("integer map dynamic writes emitted diagnostics: %#v", result.Diagnostics)
+	}
+}
+
 func TestLoopCounterIncrementKeepsIntegerPrecision(t *testing.T) {
 	result := Check(`
 local function take(n: integer): ()

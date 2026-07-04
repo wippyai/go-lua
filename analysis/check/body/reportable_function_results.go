@@ -35,6 +35,9 @@ func (r *Result) ReportableFunctionResults() []*Result {
 		}
 		if !fn.IsCallContextResult() {
 			if expr := fn.Function(); expr != nil {
+				if _, ok := hasContext[expr]; ok && fn.hasImplicitSelfParameter() {
+					continue
+				}
 				if _, ok := hasContext[expr]; ok && !fn.hasImplicitSelfEntrySurface() && !fn.hasExplicitValidationSurface() {
 					continue
 				}
@@ -73,6 +76,22 @@ func (r *Result) hasExplicitValidationSurface() bool {
 		}
 	}
 	return fn.ParList.VarargType != nil
+}
+
+func (r *Result) hasImplicitSelfParameter() bool {
+	if r == nil {
+		return false
+	}
+	fn := r.Function()
+	if fn == nil {
+		return false
+	}
+	for _, slot := range r.FunctionParamSlots(fn) {
+		if slot.ImplicitSelf {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Result) hasImplicitSelfEntrySurface() bool {

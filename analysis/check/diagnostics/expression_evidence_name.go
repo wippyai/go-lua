@@ -51,6 +51,10 @@ func clarifyTypeMismatchEvidence(items []diagnostic.Evidence, sourceName string,
 }
 
 func assignmentMessageForEvidence(sourceName string, got, want typ.Type, evidence []diagnostic.Evidence) string {
+	return assignmentMessageForEvidenceDisplay(sourceName, got, want, "", evidence)
+}
+
+func assignmentMessageForEvidenceDisplay(sourceName string, got, want typ.Type, wantDisplay string, evidence []diagnostic.Evidence) string {
 	if indexedReadMissingProofMismatch(got, want, evidence) && sourceName != "" && sourceName != unknownSourceName {
 		return "cannot assign " + sourceName + " because it may be nil"
 	}
@@ -58,15 +62,19 @@ func assignmentMessageForEvidence(sourceName string, got, want typ.Type, evidenc
 		subject := boundaryEvidenceSubject(sourceName)
 		return "cannot assign " + sourceName + " because " + subject + " comes from any/unknown; no proof shows it satisfies the declared type"
 	}
-	return assignmentMessage(sourceName, got, want)
+	return assignmentMessageDisplay(sourceName, got, want, wantDisplay)
 }
 
 func memberAssignmentMessageForEvidence(memberName string, sourceName string, got, want typ.Type, evidence []diagnostic.Evidence) string {
+	return memberAssignmentMessageForEvidenceDisplay(memberName, sourceName, got, want, "", evidence)
+}
+
+func memberAssignmentMessageForEvidenceDisplay(memberName string, sourceName string, got, want typ.Type, wantDisplay string, evidence []diagnostic.Evidence) string {
 	if sameRenderedTypeNeedsValidationProof(got, want, evidence) {
 		subject := boundaryEvidenceSubject(sourceName)
 		return "cannot assign " + sourceName + " to " + memberName + " because " + subject + " comes from any/unknown; no proof shows it satisfies the declared type"
 	}
-	return memberAssignmentMessage(memberName, sourceName, got, want)
+	return memberAssignmentMessageDisplay(memberName, sourceName, got, want, wantDisplay)
 }
 
 func assignmentHelpForEvidence(sourceName string, got typ.Type, evidence []diagnostic.Evidence) string {

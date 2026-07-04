@@ -89,6 +89,9 @@ func branchEdgeValueTriggers(reg *axis.Registry, refinements []factflow.BranchRe
 		if !ok {
 			continue
 		}
+		if value.FalsyAbsent() {
+			continue
+		}
 		constraint, ok := value.Constraint()
 		if !ok || product.Equal(reg, constraint, product.Bottom(reg)) || constraint == product.Top() {
 			continue

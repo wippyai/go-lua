@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // FactsInput carries point-keyed facts used to construct an immutable Facts snapshot.
@@ -38,6 +39,7 @@ type FactsInput struct {
 	ExpressionPaths               map[ExprRef]pathdom.Path
 	DynamicIndexExpressions       map[ExprRef]DynamicIndexExpression
 	ExpressionConditions          map[ExprRef]ExpressionCondition
+	SymbolTypes                   map[symbol.ID]typ.Type
 }
 
 // Facts is an immutable point-keyed transfer facts snapshot.
@@ -71,6 +73,7 @@ type Facts struct {
 	expressionPaths               map[ExprRef]pathdom.Path
 	dynamicIndexExpressions       map[ExprRef]DynamicIndexExpression
 	expressionConditions          map[ExprRef]ExpressionCondition
+	symbolTypes                   map[symbol.ID]typ.Type
 }
 
 // NewFacts copies the supplied point-keyed facts into an immutable snapshot.
@@ -105,6 +108,7 @@ func NewFacts(input FactsInput) Facts {
 		expressionPaths:               copyExpressionPathMap(input.ExpressionPaths),
 		dynamicIndexExpressions:       copyDynamicIndexExpressionMap(input.DynamicIndexExpressions),
 		expressionConditions:          copyExpressionConditionMap(input.ExpressionConditions),
+		symbolTypes:                   copySymbolTypeMap(input.SymbolTypes),
 	}
 }
 
@@ -566,6 +570,12 @@ func (f Facts) ExpressionCondition(expr ExprRef) (ExpressionCondition, bool) {
 	return condition.copy(), true
 }
 
+// SymbolType returns the lowered declared/contextual type known for a symbol.
+func (f Facts) SymbolType(id symbol.ID) (typ.Type, bool) {
+	t, ok := f.symbolTypes[id]
+	return t, ok && t != nil
+}
+
 func copyNoNormalReturnMap(in map[cfg.Point]struct{}) map[cfg.Point]struct{} {
 	if len(in) == 0 {
 		return nil
@@ -598,6 +608,20 @@ func copyExpressionFunctionMap(in map[ExprRef]symbol.ID) map[ExprRef]symbol.ID {
 			continue
 		}
 		out[ref] = id
+	}
+	return out
+}
+
+func copySymbolTypeMap(in map[symbol.ID]typ.Type) map[symbol.ID]typ.Type {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[symbol.ID]typ.Type, len(in))
+	for id, t := range in {
+		if id == 0 || t == nil {
+			continue
+		}
+		out[id] = t
 	}
 	return out
 }

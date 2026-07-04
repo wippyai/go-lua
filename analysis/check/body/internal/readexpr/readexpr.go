@@ -38,7 +38,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
@@ -1208,7 +1207,7 @@ func exactValueOnlyProvesPresence(reg *axis.Registry, value product.Value) bool 
 		}
 	}
 	if _, ok := reg.LookupErased(runtimekind.Key.ID()); ok {
-		if kindValue := product.Get(reg, value, runtimekind.Key); !kindValue.IsTop() {
+		if kindValue := product.Get(reg, value, runtimekind.Key); !kindValue.IsTop() && !runtimekind.Equal(kindValue, runtimekind.Singleton(runtimekind.Table)) {
 			return false
 		}
 	}
@@ -1873,9 +1872,7 @@ func projectHeapDynamicMember(config Config, parent product.Value, last segment.
 		return product.Value{}, false
 	}
 	if maybeMissing {
-		if t, ok := config.TypeValues.TypeOf(reg, joined); ok {
-			joined = product.Meet(reg, joined, config.TypeValues.FromTypeWithWitness(reg, typeexpr.Optional(t)))
-		}
+		joined = product.Join(reg, joined, product.Absent(reg))
 	}
 	return joined, true
 }

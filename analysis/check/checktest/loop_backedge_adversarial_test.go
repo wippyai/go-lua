@@ -93,3 +93,53 @@ end
 		},
 	})
 }
+
+func TestLoopBackedgePreservesAnnotatedRecordAfterGuardedOptionalAssignment(t *testing.T) {
+	result := Check(`
+type Usage = { input_tokens: number, output_tokens: number }
+type DoneEvent = { type: "done", usage: Usage? }
+type OtherEvent = { type: "other" }
+type Event = DoneEvent | OtherEvent
+type StreamResult = { usage: Usage }
+
+local function process(events: {Event}): StreamResult
+    local usage: Usage = { input_tokens = 0, output_tokens = 0 }
+    for _, event in ipairs(events) do
+        if event.type == "done" then
+            if event.usage then
+                usage = event.usage
+            end
+        end
+    end
+    local result: StreamResult = {
+        usage = usage,
+    }
+    return result
+end
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want loop-carried annotated record shape preserved", result.Diagnostics)
+	}
+}
+
+func TestLoopBackedgePreservesInlineAnnotatedRecordAfterGuardedOptionalAssignment(t *testing.T) {
+	result := Check(`
+local function process(events: {{ type: "done", usage: { input_tokens: number, output_tokens: number }? } | { type: "other" }}): { usage: { input_tokens: number, output_tokens: number } }
+    local usage: { input_tokens: number, output_tokens: number } = { input_tokens = 0, output_tokens = 0 }
+    for _, event in ipairs(events) do
+        if event.type == "done" then
+            if event.usage then
+                usage = event.usage
+            end
+        end
+    end
+    local result: { usage: { input_tokens: number, output_tokens: number } } = {
+        usage = usage,
+    }
+    return result
+end
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want inline loop-carried annotated record shape preserved", result.Diagnostics)
+	}
+}

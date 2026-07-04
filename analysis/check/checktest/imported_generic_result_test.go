@@ -60,6 +60,164 @@ func TestCheckAndExportPublishesErrorReturnFromImportedGenericResultField(t *tes
 	}
 }
 
+func TestCheckAndExportConsumesErrorReturnFromImportedGenericResultField(t *testing.T) {
+	resultMod := CheckFileAndExport(`
+		type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+		local result = {}
+		result.Result = Result
+		function result.ok<T>(value: T): Result<T>
+			return { ok = true, value = value }
+		end
+		function result.err<T>(message: string): Result<T>
+			return { ok = false, error = message }
+		end
+		function result.map<T, U>(r: Result<T>, fn: (T) -> U): Result<U>
+			if r.ok then
+				return result.ok(fn(r.value))
+			end
+			return { ok = false, error = r.error }
+		end
+		function result.and_then<T, U>(r: Result<T>, fn: (T) -> Result<U>): Result<U>
+			if r.ok then
+				return fn(r.value)
+			end
+			return { ok = false, error = r.error }
+		end
+		return result
+	`, "result", "result.lua")
+	if len(resultMod.Errors) != 0 {
+		t.Fatalf("result module errors = %#v, want none", resultMod.Errors)
+	}
+
+	repoMod := CheckFileAndExport(`
+		local result = require("result")
+		type User = { id: string, email: string, name: string, active: boolean }
+		local repo = {}
+		repo.User = User
+		local users: {[string]: User} = {
+			["u1"] = { id = "u1", email = "a@test", name = "Ada", active = true },
+			["u2"] = { id = "u2", email = "b@test", name = "Bob", active = false },
+		}
+		function repo.find_by_id(id: string): Result<User>
+			local user = users[id]
+			if not user then
+				return result.err("missing")
+			end
+			return result.ok(user)
+		end
+		function repo.find_active(id: string): Result<User>
+			local r = repo.find_by_id(id)
+			return result.and_then(r, function(user: User): Result<User>
+				if not user.active then
+					return result.err("inactive")
+				end
+				return result.ok(user)
+			end)
+		end
+		return repo
+	`, "repo", "repo.lua", WithStdlib(), WithModule("result", resultMod))
+	if len(repoMod.Errors) != 0 {
+		t.Fatalf("repo module errors = %#v, want none", repoMod.Errors)
+	}
+
+	serviceMod := CheckFileAndExport(`
+		local repo = require("repo")
+		local result = require("result")
+		type Greeting = { message: string, user_name: string }
+		local service = {}
+		function service.greet_user(id: string): Result<Greeting>
+			local user_result = repo.find_active(id)
+			return result.map(user_result, function(user: User): Greeting
+				return { message = "Hello, " .. user.name, user_name = user.name }
+			end)
+		end
+		function service.get_email(id: string): (string?, string?)
+			local r = repo.find_by_id(id)
+			if r.ok then
+				return r.value.email, nil
+			end
+			return nil, r.error
+		end
+		return service
+	`, "service", "service.lua", WithStdlib(), WithModule("result", resultMod), WithModule("repo", repoMod))
+	if len(serviceMod.Errors) != 0 {
+		t.Fatalf("service module errors = %#v, want none", serviceMod.Errors)
+	}
+
+	checked := CheckFile(`
+		local service = require("service")
+		local greeting = service.greet_user("u1")
+		if greeting.ok then
+			local msg: string = greeting.value.message
+			local name: string = greeting.value.user_name
+		end
+		local fail = service.greet_user("u2")
+		if not fail.ok then
+			local err_msg: string = fail.error
+		end
+		local email, err = service.get_email("u1")
+		if err == nil then
+			local e: string = email
+		end
+	`, "main.lua", WithStdlib(), WithModule("service", serviceMod))
+	if len(checked.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want imported error-return correlation", checked.Diagnostics)
+	}
+}
+
+func TestGuardedMapReadLocalKeepsRequiredFieldPresent(t *testing.T) {
+	checked := Check(`
+type User = { id: string, email: string }
+local users: {[string]: User} = {
+	["u1"] = { id = "u1", email = "a@test" },
+}
+local user = users["u1"]
+if not user then
+	return
+end
+local email: string = user.email
+`, WithStdlib())
+	if len(checked.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want guarded map read field present", checked.Diagnostics)
+	}
+}
+
+func TestImportedDeclaredResultNarrowsValueFieldMember(t *testing.T) {
+	resultMod := CheckFileAndExport(`
+		type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+		local result = {}
+		result.Result = Result
+		return result
+	`, "result", "result.lua")
+	if len(resultMod.Errors) != 0 {
+		t.Fatalf("result module errors = %#v, want none", resultMod.Errors)
+	}
+
+	repoMod := CheckFileAndExport(`
+		local result = require("result")
+		type User = { id: string, email: string }
+		local repo = {}
+		function repo.find_by_id(id: string): Result<User>
+			return { ok = true, value = { id = id, email = "a@test" } }
+		end
+		return repo
+	`, "repo", "repo.lua", WithStdlib(), WithModule("result", resultMod))
+	if len(repoMod.Errors) != 0 {
+		t.Fatalf("repo module errors = %#v, want none", repoMod.Errors)
+	}
+
+	checked := CheckFile(`
+		local repo = require("repo")
+		local r = repo.find_by_id("u1")
+		if r.ok then
+			local email: string = r.value.email
+		end
+	`, "main.lua", WithStdlib(), WithModule("repo", repoMod))
+	if len(checked.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want imported declared result value member to narrow", checked.Diagnostics)
+	}
+}
+
 func TestCheckAndExportPublishesErrorReturnFromLocalGenericResultField(t *testing.T) {
 	mod := CheckAndExport(`
 		type Result<T> = { ok: true, value: T } | { ok: false, error: string }

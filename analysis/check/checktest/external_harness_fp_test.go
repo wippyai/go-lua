@@ -1164,6 +1164,30 @@ end
 	}
 }
 
+func TestCheckNilInitializedConstructorFieldDoesNotBecomeNeverWriteContract(t *testing.T) {
+	result := Check(`
+local Graph = {}
+local mt = { __index = Graph }
+
+function Graph.new()
+    return setmetatable({
+        session_parent_id = nil,
+    }, mt)
+end
+
+local function build(session_context)
+    local graph = Graph.new()
+    if session_context and session_context.node_id then
+        graph.session_parent_id = session_context.node_id
+    end
+    return graph
+end
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want nil-initialized unannotated field to stay writable", result.Diagnostics)
+	}
+}
+
 func TestCheckConstructorFallbackArrayFieldLengthWithoutMetadataCall(t *testing.T) {
 	result := Check(`
 local node = {}

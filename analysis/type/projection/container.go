@@ -14,8 +14,9 @@ func ElementOf(t typ.Type) (typ.Type, bool) {
 }
 
 // KeyOf projects the key type iterated over Lua container shapes. Arrays and
-// tuples key by integer; maps and record map components key by their declared key
-// type. A union keys by the union of its members' key types, skipping nil members.
+// tuples key by integer; maps key by their declared key type. Records key by
+// their map component plus any statically known closed-record members. A union
+// keys by the union of its members' key types, skipping nil members.
 func KeyOf(t typ.Type) (typ.Type, bool) {
 	return keyOfDepth(t, 0)
 }
@@ -72,15 +73,43 @@ func keyOfDepthProject(t typ.Type, depth int) (typ.Type, bool) {
 		}
 		return tt.Key, true
 	case *typ.Record:
-		if tt.HasMapComponent() && unwrap.NormalizeNil(tt.MapKey) != nil {
-			return tt.MapKey, true
-		}
-		return nil, false
+		return keyOfRecord(tt)
 	case *typ.Union:
 		return projectContainerUnion(tt.Members, depth, keyOfDepth)
 	default:
 		return nil, false
 	}
+}
+
+func keyOfRecord(record *typ.Record) (typ.Type, bool) {
+	if record == nil {
+		return nil, false
+	}
+	members := make([]typ.Type, 0, len(record.Fields)+len(record.StaticMembers)+1)
+	if record.HasMapComponent() && unwrap.NormalizeNil(record.MapKey) != nil {
+		members = append(members, record.MapKey)
+	}
+	if !record.Open {
+		for _, field := range record.Fields {
+			if field.Name != "" {
+				members = append(members, typ.LiteralString(field.Name))
+			}
+		}
+		for _, member := range record.StaticMembers {
+			switch member.Kind {
+			case typ.StaticMemberStringIndex:
+				if member.Name != "" {
+					members = append(members, typ.LiteralString(member.Name))
+				}
+			case typ.StaticMemberIntIndex:
+				members = append(members, typ.LiteralInt(member.Index))
+			}
+		}
+	}
+	if len(members) == 0 {
+		return nil, false
+	}
+	return normalize.UnionForEvidence(members...), true
 }
 
 func elementOfDepth(t typ.Type, depth int) (typ.Type, bool) {

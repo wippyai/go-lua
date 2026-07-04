@@ -17,7 +17,7 @@
         "min_evidence": 3,
         "evidence_contains": [
           "argument 2 has literal value \"bad\"",
-          "parameter 2 expects number",
+          "inside invoke, argument 2 must satisfy number",
           "no proof on this path shows argument 2 satisfies the parameter type"
         ],
         "evidence": [
@@ -34,7 +34,7 @@
           {
             "trust": "claimed",
             "contains": [
-              "parameter 2 expects number"
+              "inside invoke, argument 2 must satisfy number"
             ],
             "kind": "user assertion"
           },
@@ -60,7 +60,7 @@
           "invoke(p, \"bad\")",
           "because:",
           "1. proven: argument 2 has literal value \"bad\"",
-          "2. claimed: parameter 2 expects number",
+          "2. claimed: inside invoke, argument 2 must satisfy number",
           "3. missing proof: no proof on this path shows argument 2 satisfies the parameter type",
           "help: Pass a value for argument 2 that satisfies the parameter type, or change the callee signature if that argument is valid."
         ],

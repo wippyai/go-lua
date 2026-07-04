@@ -1130,6 +1130,44 @@ func TestFunctionSummaryOperationalEffectsClampsAllocationRootWithDeclaredAnyFie
 	}
 }
 
+func TestFunctionSummaryOperationalEffectsUsesDeclaredUnionAllocationRoot(t *testing.T) {
+	reg := standard.Registry()
+	rootID := identity.ID{Kind: "lua.table", Site: "declared-result-template", Index: 1}
+	userType := typetable.NewRecord().
+		Field("id", typ.String).
+		Field("email", typ.String).
+		Build()
+	errorArm := typetable.NewRecord().
+		Field("ok", typ.LiteralBool(false)).
+		Field("error", typ.String).
+		Build()
+	successArm := typetable.NewRecord().
+		Field("ok", typ.LiteralBool(true)).
+		Field("value", userType).
+		Build()
+	declaredType := typeexpr.Union(successArm, errorArm)
+	rootValue := product.Set(reg, typevalue.WithWitness(reg, typevalue.FromType(reg, errorArm), errorArm), identity.Key, identity.Singleton(rootID))
+	ks := keyspace.New()
+
+	got := functionSummaryOperationalEffects(reg, summary.Summary{
+		Returns:      []product.Value{rootValue},
+		HeapKeySpace: ks,
+		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+			rootID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: rootValue}),
+		},
+	}, typ.Func().Returns(declaredType).Build(), "repo.find_by_id")
+	if got == nil || len(got.ReturnAllocationTemplates) != 1 {
+		t.Fatalf("allocation templates = %#v, want one declared-union template", got)
+	}
+	root := allocationTemplateObject(got.ReturnAllocationTemplates[0].Objects, "repo.find_by_id:return:0:root")
+	if root == nil {
+		t.Fatalf("missing root object in %#v", got.ReturnAllocationTemplates[0].Objects)
+	}
+	if !typ.TypeEquals(root.Type, declaredType) {
+		t.Fatalf("root type = %v, want declared union %v", root.Type, declaredType)
+	}
+}
+
 func TestFunctionSummaryOperationalEffectsPreservesDeclaredOptionalReturnMembers(t *testing.T) {
 	reg := standard.Registry()
 	rootID := identity.ID{Kind: "lua.table", Site: "declared-optional-member-template", Index: 1}

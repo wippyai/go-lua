@@ -219,26 +219,40 @@ func (d diagnosticDisplay) AnnotatedTypeEvidence(name string, t typ.Type) string
 }
 
 func (d diagnosticDisplay) AssignmentMessage(sourceName string, got, want typ.Type) string {
+	return d.AssignmentMessageDisplay(sourceName, got, want, "")
+}
+
+func (d diagnosticDisplay) AssignmentMessageDisplay(sourceName string, got, want typ.Type, wantDisplay string) string {
+	if wantDisplay == "" {
+		wantDisplay = d.Type(want)
+	}
 	if sourceName != "" && sourceName != unknownSourceName && nilSafetyMismatch(got, want) {
 		return fmt.Sprintf("cannot assign %s because it may be nil", sourceName)
 	}
 	if sourceName != "" && sourceName != unknownSourceName {
-		return fmt.Sprintf("cannot assign %s because it is %s, not %s", sourceName, d.Type(got), d.Type(want))
+		return fmt.Sprintf("cannot assign %s because it is %s, not %s", sourceName, d.Type(got), wantDisplay)
 	}
-	return fmt.Sprintf("cannot assign %s to %s", d.Type(got), d.Type(want))
+	return fmt.Sprintf("cannot assign %s to %s", d.Type(got), wantDisplay)
 }
 
 func (d diagnosticDisplay) MemberAssignmentMessage(memberName string, sourceName string, got, want typ.Type) string {
+	return d.MemberAssignmentMessageDisplay(memberName, sourceName, got, want, "")
+}
+
+func (d diagnosticDisplay) MemberAssignmentMessageDisplay(memberName string, sourceName string, got, want typ.Type, wantDisplay string) string {
+	if wantDisplay == "" {
+		wantDisplay = d.Type(want)
+	}
 	if sourceName == "" || sourceName == unknownSourceName {
 		if nilSafetyMismatch(got, want) {
 			return fmt.Sprintf("cannot assign %s because assigned value may be nil", memberName)
 		}
-		return fmt.Sprintf("cannot assign %s because assigned value is %s, not %s", memberName, d.Type(got), d.Type(want))
+		return fmt.Sprintf("cannot assign %s because assigned value is %s, not %s", memberName, d.Type(got), wantDisplay)
 	}
 	if nilSafetyMismatch(got, want) {
 		return fmt.Sprintf("cannot assign %s to %s because %s may be nil", sourceName, memberName, sourceName)
 	}
-	return fmt.Sprintf("cannot assign %s to %s because %s is %s, not %s", sourceName, memberName, sourceName, d.Type(got), d.Type(want))
+	return fmt.Sprintf("cannot assign %s to %s because %s is %s, not %s", sourceName, memberName, sourceName, d.Type(got), wantDisplay)
 }
 
 func (diagnosticDisplay) AssignmentHelp(sourceName string, got typ.Type) string {

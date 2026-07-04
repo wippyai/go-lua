@@ -14,7 +14,7 @@
         ],
         "min_evidence": 2,
         "evidence_contains": [
-          "returned value 1 has literal value \"bad\"",
+          "returned value 1 (\"bad\") has literal value \"bad\"",
           "returned value 1 must satisfy declared return type number"
         ],
         "evidence": [
@@ -25,7 +25,7 @@
             "kind": "abstract fact",
             "trust": "proven",
             "contains": [
-              "returned value 1 has literal value \"bad\""
+              "returned value 1 (\"bad\") has literal value \"bad\""
             ]
           },
           {
@@ -46,11 +46,11 @@
           "Return a value compatible with the declared return type"
         ],
         "render_ordered_contains": [
-          "error[type.return.contract]: returned value 1 is \"bad\", not number",
+          "error[type.return.contract]: returned value 1 (\"bad\") is \"bad\", not number",
           "--> main.lua:6:12",
           "return \"bad\"",
           "because:",
-          "1. proven: returned value 1 has literal value \"bad\"",
+          "1. proven: returned value 1 (\"bad\") has literal value \"bad\"",
           "2. claimed: returned value 1 must satisfy declared return type number",
           "--> main.lua:5:42",
           "help: Return a value compatible with the declared return type"

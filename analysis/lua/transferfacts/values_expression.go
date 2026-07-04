@@ -227,6 +227,11 @@ func (l *lowerer) addExpressionFunction(ref factflow.ExprRef, expr ast.Expr) {
 }
 
 func (l *lowerer) expressionValue(expr ast.Expr) (product.Value, bool) {
+	if cast, ok := expr.(*ast.CastExpr); ok {
+		if value, ok := l.concreteCastExpressionValue(cast); ok {
+			return value, true
+		}
+	}
 	if _, ok := sourceprovenance.ProofInner(expr); !ok {
 		value := l.valueFromType(typ.Any)
 		return product.Set(l.registry, value, assertion.Key, assertion.Any()), true
@@ -266,6 +271,23 @@ func (l *lowerer) expressionValue(expr ast.Expr) (product.Value, bool) {
 		return value, true
 	}
 	return product.Value{}, false
+}
+
+func (l *lowerer) concreteCastExpressionValue(expr *ast.CastExpr) (product.Value, bool) {
+	if expr == nil {
+		return product.Value{}, false
+	}
+	if expr.Syntax != ast.CastSyntaxAs && expr.Syntax != ast.CastSyntaxColonColon {
+		return product.Value{}, false
+	}
+	t, ok := l.resolveType(expr.Type)
+	if !ok || t == nil {
+		return product.Value{}, false
+	}
+	if typ.IsAny(t) || typ.IsUnknown(t) {
+		return product.Value{}, false
+	}
+	return l.valueFromTypeWithWitness(t), true
 }
 
 func (l *lowerer) refineLogicalOperationValue(expr *ast.LogicalOpExpr, value product.Value) product.Value {

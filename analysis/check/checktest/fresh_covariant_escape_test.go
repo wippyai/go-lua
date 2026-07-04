@@ -79,6 +79,25 @@ end return f`, WithStdlib())
 	}
 }
 
+// TestCastAliasWideViewAllowsWriteAndReportsAtNarrowRead pins mutable cast
+// views: the cast result has the wider writable target type, while the original
+// object is still exposed to that wider view and later reads from it are unsafe.
+func TestCastAliasWideViewAllowsWriteAndReportsAtNarrowRead(t *testing.T) {
+	result := Check(`local function f(): number
+    local narrow: { x: number } = { x = 1 }
+    local wide = narrow as { x: number | string }
+    wide.x = "boom"
+    local n: number = narrow.x
+    return n
+end return f`, WithStdlib())
+	for _, diag := range result.Diagnostics {
+		if diag.Code == diagnostics.CodeAssignmentType && diag.Position.Line == 4 {
+			t.Fatalf("unexpected assignment diagnostic on cast-view write: %#v", diag)
+		}
+	}
+	requireAssignmentDiagnosticAtLineContaining(t, result, 5, "narrow.x")
+}
+
 // TestInterprocReturnMemberCovariantAliasReportsAtRead pins the return-member
 // exposure route: a callee may store a parameter into a wider returned member.
 // The caller then mutates through the returned view, so the original argument's

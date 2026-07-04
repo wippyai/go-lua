@@ -7,6 +7,7 @@ type ExpressionRefinementMode uint8
 const (
 	ExpressionRefinementMeet ExpressionRefinementMode = iota
 	ExpressionRefinementDeclaredContract
+	ExpressionRefinementRuntimeValidation
 )
 
 // ExpressionRefinement describes a source expression whose value is resolved
@@ -34,6 +35,16 @@ func NewExpressionDeclaredContract(source ValueSource, declared product.Value) E
 		source:     source,
 		refinement: declared,
 		mode:       ExpressionRefinementDeclaredContract,
+	}
+}
+
+// NewExpressionRuntimeValidation creates a refinement that models a runtime
+// check: if the expression produces a value, it satisfies the validated target.
+func NewExpressionRuntimeValidation(source ValueSource, validated product.Value) ExpressionRefinement {
+	return ExpressionRefinement{
+		source:     source,
+		refinement: validated,
+		mode:       ExpressionRefinementRuntimeValidation,
 	}
 }
 

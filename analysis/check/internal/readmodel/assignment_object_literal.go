@@ -43,24 +43,10 @@ func (r Reader) assignmentObjectLiteralShapeType(point cfg.Point, fact body.Loca
 		return nil, false
 	}
 	return body.ObjectLiteralShapeType(literal, func(entry body.ObjectEntryFact) (typ.Type, bool) {
-		t, literalOK := body.LiteralExpressionType(entry.Value)
-		if !literalOK {
-			value, valueOK := r.SourceValue(point, entry.Source)
-			if !valueOK {
-				return nil, false
-			}
-			if loweredSource, ok := sourcebridge.ValueSourceFromASTSource(entry.Source); ok {
-				if before, beforeOK := r.result.SourceValueBeforeBoundary(point, loweredSource); beforeOK {
-					value = before
-				}
-			}
-			t, ok = r.result.ObjectLiteralEntryType(value)
-			if !ok {
-				t, ok = r.ValueTypeWithPresence(value)
-				if !ok || t == nil {
-					return nil, false
-				}
-			}
+		value, valueOK := r.assignmentObjectLiteralEntryValue(point, entry)
+		t, ok := r.assignmentObjectLiteralEntryType(point, entry, value, valueOK)
+		if !ok || t == nil {
+			return nil, false
 		}
 		return t, true
 	})
@@ -93,30 +79,10 @@ func (r Reader) assignmentObjectLiteralEntryCandidate(point cfg.Point, literal b
 		if !ok || !readapi.ObligationTypeReportable(entryExpected) {
 			continue
 		}
-		t, literalOK := body.LiteralExpressionType(entry.Value)
-		value, valueOK := r.SourceValue(point, entry.Source)
-		if !literalOK && !valueOK {
+		value, valueOK := r.assignmentObjectLiteralEntryValue(point, entry)
+		t, typeOK := r.assignmentObjectLiteralEntryType(point, entry, value, valueOK)
+		if !typeOK {
 			continue
-		}
-		if !literalOK {
-			entryValue := value
-			if loweredSource, ok := sourcebridge.ValueSourceFromASTSource(entry.Source); ok {
-				if before, beforeOK := r.result.SourceValueBeforeBoundary(point, loweredSource); beforeOK {
-					entryValue = before
-				}
-			}
-			var ok bool
-			t, ok = r.result.ObjectLiteralEntryType(entryValue)
-			if !ok {
-				if !r.result.ObjectLiteralEntryHasUntrustedTopOrigin(entryValue) {
-					continue
-				}
-				if projected, projectedOK := r.ValueTypeWithPresence(entryValue); projectedOK && projected != nil {
-					t = projected
-				} else {
-					t = typ.Unknown
-				}
-			}
 		}
 		untrustedTopOrigin := valueOK && r.ValueHasUntrustedTopOrigin(value)
 		explicitTopOrigin := valueOK && r.ValueHasExplicitTopOrigin(value)
@@ -154,6 +120,51 @@ func (r Reader) assignmentObjectLiteralEntryCandidate(point cfg.Point, literal b
 		return assignment, true
 	}
 	return Assignment{}, false
+}
+
+func (r Reader) assignmentObjectLiteralEntryType(point cfg.Point, entry body.ObjectEntryFact, value product.Value, valueOK bool) (typ.Type, bool) {
+	if t, ok := body.LiteralExpressionType(entry.Value); ok {
+		return t, true
+	}
+	if r.result != nil && entry.Value != nil {
+		if t, ok := r.result.ExpressionTypeBeforeBoundary(point, entry.Value); ok && t != nil {
+			return t, true
+		}
+	}
+	if !valueOK {
+		return nil, false
+	}
+	if t, ok := r.result.ObjectLiteralEntryType(value); ok {
+		return t, true
+	}
+	if !r.result.ObjectLiteralEntryHasUntrustedTopOrigin(value) {
+		return nil, false
+	}
+	if projected, ok := r.ValueTypeWithPresence(value); ok && projected != nil {
+		return projected, true
+	}
+	return typ.Unknown, true
+}
+
+func (r Reader) assignmentObjectLiteralEntryValue(point cfg.Point, entry body.ObjectEntryFact) (product.Value, bool) {
+	if r.result == nil {
+		return product.Value{}, false
+	}
+	if entry.Value != nil {
+		if value, ok := r.result.ExpressionValueBeforeBoundary(point, entry.Value); ok {
+			return r.result.WithMemberReadNilWitness(point, entry.Value, value), true
+		}
+	}
+	value, ok := r.SourceValue(point, entry.Source)
+	if loweredSource, loweredOK := sourcebridge.ValueSourceFromASTSource(entry.Source); loweredOK {
+		if before, beforeOK := r.result.SourceValueBeforeBoundary(point, loweredSource); beforeOK {
+			value, ok = before, true
+		}
+	}
+	if !ok {
+		return product.Value{}, false
+	}
+	return value, true
 }
 
 func assignmentValueHash(r Reader, value product.Value, ok bool) uint64 {

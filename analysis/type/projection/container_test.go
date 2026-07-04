@@ -116,6 +116,7 @@ func TestKeyOfContainerShapes(t *testing.T) {
 		{name: "map", in: typetable.NewMap(typ.String, typ.Number), want: typ.String},
 		{name: "readonly map", in: typetable.NewReadonlyMap(typ.Integer, typ.Boolean), want: typ.Integer},
 		{name: "record map component", in: typetable.NewRecord().MapComponent(typ.String, typ.Boolean).Build(), want: typ.String},
+		{name: "closed record fields", in: typetable.NewRecord().Field("count", typ.Number).Field("name", typ.String).Build(), want: typ.MaterializeUnion([]typ.Type{typ.LiteralString("count"), typ.LiteralString("name")})},
 		{name: "tuple", in: typ.NewTuple(typ.String, typ.Number), want: typ.Integer},
 	}
 	for _, tc := range cases {

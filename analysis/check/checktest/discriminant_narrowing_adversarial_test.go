@@ -88,3 +88,23 @@ end
 		LabelContains:     []string{"argument value"},
 	})
 }
+
+func TestNegativeDiscriminantGuardDoesNotProveSiblingFieldWhenOtherVariantLacksIt(t *testing.T) {
+	result := Check(`
+type Auth = { kind: "auth", scope: string }
+type Query = { kind: "query", resource: string }
+type Tick = { kind: "tick" }
+type Request = Auth | Query | Tick
+
+local function f(request: Request): string
+    if request.kind ~= "auth" then
+        local resource: string = request.resource
+        return resource
+    end
+    return request.scope
+end
+`)
+	if !hasDiagnosticCode(result.Diagnostics, diagnostics.CodeAssignmentType) {
+		t.Fatalf("diagnostics = %#v, want request.kind ~= auth not to prove resource because tick remains", result.Diagnostics)
+	}
+}

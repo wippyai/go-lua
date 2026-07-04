@@ -37,6 +37,15 @@
             ]
           },
           {
+            "kind": "unvalidated value",
+            "trust": "unknown",
+            "line": 12,
+            "column": 19,
+            "contains": [
+              "async_obj:get_value(...) comes from any/unknown"
+            ]
+          },
+          {
             "kind": "missing proof",
             "trust": "unknown",
             "reason": "boundary validation missing",
@@ -50,6 +59,7 @@
         "evidence_contains": [
           "async_obj:get_value(...) has type any",
           "v is declared as number",
+          "async_obj:get_value(...) comes from any/unknown",
           "no proof on this path shows async_obj:get_value(...) satisfies the declared type"
         ],
         "render_contains": [
@@ -63,7 +73,8 @@
           "because:",
           "1. proven: async_obj:get_value(...) has type any",
           "2. claimed: v is declared as number",
-          "3. missing proof: no proof on this path shows async_obj:get_value(...) satisfies the declared type",
+          "3. unvalidated value: async_obj:get_value(...) comes from any/unknown",
+          "4. missing proof: no proof on this path shows async_obj:get_value(...) satisfies the declared type",
           "help: Use a value compatible with the expected type, or change the target type if `async_obj:get_value(...)` is valid."
         ],
         "render_not_contains": [

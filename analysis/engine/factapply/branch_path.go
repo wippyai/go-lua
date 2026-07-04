@@ -152,6 +152,11 @@ func applyPathEqualityAtCached(
 	leftPath pathdom.Path,
 	rightPath pathdom.Path,
 ) state.State {
+	if leftKey, leftOK := factKeyspaceKeyAt(resolver, point, leftPath); leftOK {
+		if rightKey, rightOK := factKeyspaceKeyAt(resolver, point, rightPath); rightOK {
+			out = closeBranchProofsAcrossEquality(resolver.KeySpace(), out, leftKey, rightKey)
+		}
+	}
 	out = applyPathOriginRelation(typeValues, reg, resolver, projectPath, point, out, leftPath, rightPath, true)
 	if stateIsBottom(reg, out) {
 		return out

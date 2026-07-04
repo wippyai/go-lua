@@ -17,7 +17,7 @@
         ],
         "min_evidence": 2,
         "evidence_contains": [
-          "assigned value has literal value 123",
+          "node.label has literal value 123",
           "node.label is declared as string"
         ],
         "evidence": [
@@ -28,7 +28,7 @@
             "kind": "abstract fact",
             "trust": "proven",
             "contains": [
-              "assigned value has literal value 123"
+              "node.label has literal value 123"
             ]
           },
           {
@@ -43,16 +43,16 @@
           }
         ],
         "render_contains": [
-          "error[type.assignment]: cannot assign node.label because assigned value is 123, not string",
+          "error[type.assignment]: cannot assign node.label because it is 123, not string",
           "local node: TreeNode = {label = 123, owner = tree, children = {}, parent = nil}",
           "because:"
         ],
         "render_ordered_contains": [
-          "error[type.assignment]: cannot assign node.label because assigned value is 123, not string",
+          "error[type.assignment]: cannot assign node.label because it is 123, not string",
           "--> main.lua:6:33",
           "local node: TreeNode = {label = 123, owner = tree, children = {}, parent = nil}",
           "because:",
-          "1. proven: assigned value has literal value 123",
+          "1. proven: node.label has literal value 123",
           "2. claimed: node.label is declared as string",
           "help: Use a value compatible with the expected type, or change the target type if `node.label` is valid."
         ],

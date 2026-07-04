@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
@@ -134,6 +135,49 @@ end
 	assignedType, ok := typevalue.TypeOf(reg, assigned)
 	if !ok || !subtype.IsSubtype(assignedType, typ.String) {
 		t.Fatalf("assigned frame type = %v/%v, want subtype of string", assignedType, ok)
+	}
+}
+
+func TestRunBoundChunkCapturedTableInsertSurvivesCallContextRefresh(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local suites = {}
+
+local function register(name: string)
+    table.insert(suites, {name = name, count = 0})
+end
+
+local function run()
+    for _, s in ipairs(suites) do
+        local n: string = s.name
+    end
+end
+
+register("a")
+run()
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result, err := RunBoundChunk(stmts, bindings, Config{
+		Check: body.Config{
+			Registry:   reg,
+			Signatures: signaturelookup.Source{IncludeStdlib: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunBoundChunk: %v", err)
+	}
+	runResult, point, _ := findNestedLocalByName(t, result.RootResult(), "n")
+	source, ok := runResult.LoweredLocalAssignment(point)
+	if !ok {
+		t.Fatal("lowered n assignment missing")
+	}
+	value, ok := runResult.SourceValueAtBoundary(point, source.Source())
+	if !ok {
+		t.Fatal("n source value missing")
+	}
+	got, ok := typevalue.TypeOf(reg, value)
+	if !ok || !subtype.IsSubtype(got, typ.String) {
+		t.Fatalf("s.name source type = %v/%v, want string", got, ok)
 	}
 }
 

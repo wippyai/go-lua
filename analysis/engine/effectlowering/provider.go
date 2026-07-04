@@ -182,7 +182,9 @@ func signatureNameForSite(
 	nameFor SignatureNameFunc,
 ) (string, bool) {
 	if nameForSite != nil {
-		return nameForSite(ctx, site)
+		if name, ok := nameForSite(ctx, site); ok {
+			return name, true
+		}
 	}
 	if nameFor == nil {
 		return "", false

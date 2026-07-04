@@ -90,6 +90,12 @@ end
 function M.tree_type(): Type<TreeNode>
     return {
         decode = function(raw: any): TreeNode
+            if tostring(raw) == "text" then
+                return {
+                    kind = "text",
+                    value = tostring(raw),
+                }
+            end
             return {
                 kind = "group",
                 children = {

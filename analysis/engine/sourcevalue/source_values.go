@@ -217,18 +217,21 @@ func (r sourceValueResolver) valueOfExpression(
 	// nil|string|map narrowed by type(x) == "table".
 	if pathBacked && hasCached {
 		if flowValue, ok := r.flowExpressionValue(point, source, in, read); ok {
-			if carriesType(r.registry, r.typeValues, flowValue) ||
+			if (carriesType(r.registry, r.typeValues, flowValue) && (!hasTopOrigin(r.registry, flowValue) || cachedAllowsRuntimeKindOverride(r.registry, r.typeValues, cached))) ||
 				(carriesRuntimeKindEvidence(r.registry, flowValue) && cachedAllowsRuntimeKindOverride(r.registry, r.typeValues, cached)) {
 				return flowValue, true
 			}
-			if refined, refinedOK := refineCachedByIdentity(r.registry, cached, flowValue); refinedOK {
+			if refined, refinedOK := refineCachedByIdentity(r.registry, r.typeValues, cached, flowValue); refinedOK {
 				return refined, true
 			}
 			if refined, refinedOK := refineCachedByRuntimeKind(r.registry, r.typeValues, cached, flowValue); refinedOK {
 				return refined, true
 			}
-			if refined, refinedOK := refineCachedByFlowEvidence(r.registry, cached, flowValue); refinedOK {
-				return refined, true
+			if cachedFlowEvidenceMergeAllowed(r.registry, r.typeValues, cached, flowValue) &&
+				(!hasTopOrigin(r.registry, flowValue) || cachedAllowsRuntimeKindOverride(r.registry, r.typeValues, cached)) {
+				if refined, refinedOK := refineCachedByFlowEvidence(r.registry, cached, flowValue); refinedOK {
+					return refined, true
+				}
 			}
 		}
 		return cached, true
@@ -239,6 +242,14 @@ func (r sourceValueResolver) valueOfExpression(
 func hasTopOrigin(reg *axis.Registry, value product.Value) bool {
 	ev := product.Get(reg, value, evidence.Key)
 	return ev.IsGradualTop() || ev.IsExplicitTop()
+}
+
+func cachedFlowEvidenceMergeAllowed(reg *axis.Registry, typeValues *typevalue.Cache, cached, flow product.Value) bool {
+	id := product.Get(reg, flow, identity.Key)
+	if id.IsBottom() || id.IsTop() {
+		return true
+	}
+	return cachedRuntimeMayBeTable(reg, typeValues, cached)
 }
 
 func refineCachedByFlowEvidence(reg *axis.Registry, cached, flow product.Value) (product.Value, bool) {
@@ -281,12 +292,12 @@ func carriesRuntimeKindEvidence(reg *axis.Registry, value product.Value) bool {
 	return !kinds.IsBottom() && !kinds.IsTop()
 }
 
-func refineCachedByIdentity(reg *axis.Registry, cached, flow product.Value) (product.Value, bool) {
+func refineCachedByIdentity(reg *axis.Registry, typeValues *typevalue.Cache, cached, flow product.Value) (product.Value, bool) {
 	id := product.Get(reg, flow, identity.Key)
 	if id.IsBottom() || id.IsTop() {
 		return product.Value{}, false
 	}
-	if !RuntimeMayBeTable(reg, cached, true) {
+	if !cachedRuntimeMayBeTable(reg, typeValues, cached) {
 		return product.Value{}, false
 	}
 	refined := product.Set(reg, cached, identity.Key, id)
@@ -294,6 +305,25 @@ func refineCachedByIdentity(reg *axis.Registry, cached, flow product.Value) (pro
 		refined = withPresence
 	}
 	return refined, true
+}
+
+func cachedRuntimeMayBeTable(reg *axis.Registry, typeValues *typevalue.Cache, cached product.Value) bool {
+	if !RuntimeMayBeTable(reg, cached, true) {
+		return false
+	}
+	kinds := product.Get(reg, cached, runtimekind.Key)
+	if !kinds.IsTop() {
+		return true
+	}
+	t, ok := typeValues.TypeOf(reg, cached)
+	if !ok {
+		return true
+	}
+	typeKinds, ok := typevalue.RuntimeKindFromType(t)
+	if !ok {
+		return true
+	}
+	return typeKinds.Contains(runtimekind.Table)
 }
 
 func cachedAllowsRuntimeKindOverride(reg *axis.Registry, typeValues *typevalue.Cache, cached product.Value) bool {
@@ -625,12 +655,79 @@ func (r expressionRefinementSourceValues) valueOfSource(
 		}
 		return applyExpressionRefinement(r.registry, value, refinement), true
 	}
+	if value, ok := r.valueOfExpressionOperation(point, source.ExprRef, in, read, active); ok {
+		return value, true
+	}
 	return r.base.ValueOfSource(point, source, in, read)
+}
+
+func (r expressionRefinementSourceValues) valueOfExpressionOperation(
+	point cfg.Point,
+	expr factflow.ExprRef,
+	in state.State,
+	read func(cfg.Point) state.State,
+	active map[factflow.ExprRef]bool,
+) (product.Value, bool) {
+	base, ok := r.base.(sourceValueResolver)
+	if !ok || base.expressionOp == nil {
+		return product.Value{}, false
+	}
+	op, ok := base.expressionOps[expr]
+	if !ok {
+		return product.Value{}, false
+	}
+	if active[expr] {
+		return product.Value{}, false
+	}
+	if active == nil {
+		active = make(map[factflow.ExprRef]bool, 1)
+	}
+	active[expr] = true
+	left, ok := r.valueOfOperationSource(point, op.Left(), in, read, active)
+	if !ok {
+		delete(active, expr)
+		return product.Value{}, false
+	}
+	var right product.Value
+	if op.Kind() == factflow.ExpressionOperationBinary {
+		right, ok = r.valueOfOperationSource(point, op.Right(), in, read, active)
+		if !ok {
+			delete(active, expr)
+			return product.Value{}, false
+		}
+	}
+	delete(active, expr)
+	return base.expressionOp(op, left, right)
+}
+
+func (r expressionRefinementSourceValues) valueOfOperationSource(
+	point cfg.Point,
+	source factflow.ValueSource,
+	in state.State,
+	read func(cfg.Point) state.State,
+	active map[factflow.ExprRef]bool,
+) (product.Value, bool) {
+	if !source.Valid() {
+		return product.Value{}, false
+	}
+	return r.valueOfSource(point, source, in, read, active)
 }
 
 func applyExpressionRefinement(reg *axis.Registry, value product.Value, refinement factflow.ExpressionRefinement) product.Value {
 	var out product.Value
 	switch refinement.Mode() {
+	case factflow.ExpressionRefinementRuntimeValidation:
+		merged := valueref.MergeDeclaredContract(reg, value, refinement.Refinement())
+		validated := refinement.Refinement()
+		validatedClaim := product.Get(reg, validated, assertion.Key)
+		if !validatedClaim.IsTop() {
+			merged = product.Set(reg, merged, assertion.Key, validatedClaim)
+		}
+		validatedPresence := product.PresenceOf(validated)
+		if !presence.Equal(validatedPresence, presence.Maybe()) {
+			merged = product.WithPresence(reg, merged, validatedPresence)
+		}
+		out = merged
 	case factflow.ExpressionRefinementDeclaredContract:
 		merged := valueref.MergeDeclaredContract(reg, value, refinement.Refinement())
 		declaredClaim := product.Get(reg, refinement.Refinement(), assertion.Key)

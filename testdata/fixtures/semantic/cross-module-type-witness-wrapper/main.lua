@@ -2,7 +2,7 @@ local protocol = require("protocol")
 local json = require("json")
 local process = require("process")
 
-local function handle(source: protocol.Source): string
+local function handle(source: protocol.Source, payload: string): string
     local record = json.decode("{}", protocol.raw_record_type())
     local id: string = record.id
     local bad_id: number = record.id -- expect-error
@@ -135,7 +135,12 @@ local function handle(source: protocol.Source): string
         id = id .. stats_id .. tostring(child_count)
     end
 
-    local tree = json.decode("{}", protocol.tree_type())
+    local tree: protocol.TreeNode
+    if payload == "text" then
+        tree = { kind = "text", value = payload }
+    else
+        tree = json.decode(payload, protocol.tree_type())
+    end
     if tree.kind == "group" then
         local first = tree.children[1]
         if first and first.kind == "text" then

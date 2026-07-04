@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	obligationpass "github.com/wippyai/go-lua/analysis/check/obligation/pass"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/parse"
@@ -325,6 +326,37 @@ func TestAssignmentsReportsObjectLiteralEntryMismatch(t *testing.T) {
 	}
 }
 
+func TestAssignmentsReportsRecursiveObjectLiteralEntryMismatch(t *testing.T) {
+	result := testutil.CheckFile(`
+type Tree = { root: TreeNode? }
+type TreeNode = { label: string, owner: Tree, children: {TreeNode}, parent: TreeNode? }
+
+local tree: Tree = {root = nil}
+local node: TreeNode = {label = 123, owner = tree, children = {}, parent = nil}
+`, "test.lua").RootResult()
+	if result == nil {
+		t.Fatal("RootResult nil")
+	}
+
+	got := obligationpass.New(obligationpass.Assignments{}).Run(obligationpass.Context{
+		FunctionKey: "fixture:assignment",
+		SourceFile:  "test.lua",
+		Reader:      readmodel.New(result),
+	})
+	if len(got) != 1 {
+		t.Fatalf("judgments = %d, want 1: %#v", len(got), got)
+	}
+	if got[0].Subject.Label != "node.label" {
+		t.Fatalf("subject label = %q, want node.label", got[0].Subject.Label)
+	}
+	if got[0].Actual.Label != "node.label" {
+		t.Fatalf("actual label = %q, want node.label", got[0].Actual.Label)
+	}
+	if got[0].Verdict != judgment.VerdictRefuted {
+		t.Fatalf("verdict = %v, want refuted", got[0].Verdict)
+	}
+}
+
 func TestAssignmentsCarriesExplicitAnyAssertionEvidence(t *testing.T) {
 	result := testutil.CheckFile(`local x: number = "no" as any`, "test.lua").RootResult()
 	if result == nil {
@@ -383,7 +415,14 @@ func TestAssignmentsReportsIndexedArrayReadAsOptional(t *testing.T) {
 	local first: string = departments[1]
 end`, "test.lua")
 
-	got := assignmentJudgmentsForAllBodies(checked)
+	var got []judgment.Judgment
+	for _, result := range checked.BodyResults() {
+		got = append(got, obligationpass.New(obligationpass.Assignments{}).Run(obligationpass.Context{
+			FunctionKey: "fixture:assignment",
+			SourceFile:  "test.lua",
+			Reader:      readmodel.New(result),
+		})...)
+	}
 	if len(got) != 1 {
 		t.Fatalf("judgments = %d, want 1: %#v", len(got), got)
 	}
@@ -413,7 +452,14 @@ local function f(response: Response): ()
 	end
 end`, "test.lua")
 
-	got := assignmentJudgmentsForAllBodies(checked)
+	var got []judgment.Judgment
+	for _, result := range checked.BodyResults() {
+		got = append(got, obligationpass.New(obligationpass.Assignments{}).Run(obligationpass.Context{
+			FunctionKey: "fixture:assignment",
+			SourceFile:  "test.lua",
+			Reader:      readmodel.New(result),
+		})...)
+	}
 	if len(got) != 1 {
 		t.Fatalf("judgments = %d, want one optional element assignment: %#v", len(got), got)
 	}
@@ -435,7 +481,14 @@ func TestAssignmentsPreservesRuntimeKindAtUntrustedBoundary(t *testing.T) {
 	end
 end`, "test.lua")
 
-	got := assignmentJudgmentsForAllBodies(checked)
+	var got []judgment.Judgment
+	for _, result := range checked.BodyResults() {
+		got = append(got, obligationpass.New(obligationpass.Assignments{}).Run(obligationpass.Context{
+			FunctionKey: "fixture:assignment",
+			SourceFile:  "test.lua",
+			Reader:      readmodel.New(result),
+		})...)
+	}
 	if len(got) != 1 {
 		t.Fatalf("judgments = %d, want 1: %#v", len(got), got)
 	}
@@ -834,6 +887,86 @@ local g: () -> string = M.f
 	}
 	if assignments[0].Subject.Label != "M.f" || assignments[0].Actual.Label == "M.f" {
 		t.Fatalf("judgment labels = subject %q actual %q, want M.f write cause", assignments[0].Subject.Label, assignments[0].Actual.Label)
+	}
+}
+
+func TestAssignmentsSuppressesCascadeFromPreviouslyRefutedDynamicTargetRoot(t *testing.T) {
+	checked := testutil.CheckFile(`type Key = "name" | "count"
+type Bag = {name: string, count: number}
+
+local function f(bag: Bag, key: Key): ()
+	bag[key] = "bad"
+	local count: number = bag.count
+end`, "test.lua")
+
+	got := assignmentJudgmentsForAllBodies(checked)
+	var assignments []judgment.Judgment
+	for _, item := range got {
+		if item.Code == judgment.CodeAssignment {
+			assignments = append(assignments, item)
+		}
+	}
+	if len(assignments) != 1 {
+		t.Fatalf("assignment judgments = %d, want only dynamic write cause: %#v", len(assignments), assignments)
+	}
+	if assignments[0].Subject.Label != "bag[key]" || assignments[0].Actual.Label == "bag.count" {
+		t.Fatalf("judgment labels = subject %q actual %q, want bag[key] write cause", assignments[0].Subject.Label, assignments[0].Actual.Label)
+	}
+	if !dynamicAssignmentTargetDetail(assignments[0], "bag[key]") {
+		t.Fatalf("evidence = %#v, want dynamic assignment target detail", assignments[0].Evidence)
+	}
+}
+
+func TestAssignmentsSuppressesCascadeFromLoopDynamicTargetRootBySourceOrder(t *testing.T) {
+	stmts, err := parse.ParseString(`
+local item = {
+	count = 1,
+	name = "ready",
+}
+
+for key, value in pairs(item) do
+	item[key] = tostring(value)
+end
+
+local count: number = item.count
+`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	checked, err := program.RunChunk(stmts, program.Config{
+		Check: body.Config{
+			Registry:   standard.Registry(),
+			Globals:    []string{"pairs", "tostring"},
+			Signatures: signaturelookup.Source{IncludeStdlib: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatal("missing root result")
+	}
+	got := obligationpass.New(obligationpass.Assignments{}).Run(obligationpass.Context{
+		FunctionKey: "fixture:assignment",
+		SourceFile:  "test.lua",
+		Reader:      readmodel.New(root),
+	})
+	var assignments []judgment.Judgment
+	for _, item := range got {
+		if item.Code == judgment.CodeAssignment {
+			assignments = append(assignments, item)
+		}
+	}
+	if len(assignments) != 1 {
+		t.Fatalf("assignment judgments = %d, want only loop dynamic write cause: %#v", len(assignments), assignments)
+	}
+	if assignments[0].Subject.Label != "item[key]" || assignments[0].Actual.Label != "tostring(...)" {
+		t.Fatalf("judgment labels = subject %q actual %q, want item[key]/tostring(...)", assignments[0].Subject.Label, assignments[0].Actual.Label)
+	}
+	if !dynamicAssignmentTargetDetail(assignments[0], "item[key]") {
+		t.Fatalf("evidence = %#v, want dynamic assignment target detail", assignments[0].Evidence)
 	}
 }
 

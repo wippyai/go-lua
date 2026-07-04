@@ -18,7 +18,7 @@
         "min_evidence": 4,
         "evidence_contains": [
           "argument 2 (model_id) has type any",
-          "parameter 2 expects string",
+          "inside helper, argument 2 must satisfy string",
           "model_id comes from any/unknown",
           "no proof on this path shows model_id satisfies the parameter type"
         ],
@@ -36,7 +36,7 @@
           {
             "trust": "claimed",
             "contains": [
-              "parameter 2 expects string"
+              "inside helper, argument 2 must satisfy string"
             ],
             "kind": "user assertion"
           },
@@ -73,7 +73,7 @@
           "helper(bedrock_client, model_id) -- expect-error: no proof shows it is string",
           "because:",
           "1. proven: argument 2 (model_id) has type any",
-          "2. claimed: parameter 2 expects string",
+          "2. claimed: inside helper, argument 2 must satisfy string",
           "3. unvalidated value: model_id comes from any/unknown",
           "4. missing proof: no proof on this path shows model_id satisfies the parameter type",
           "help: Validate or narrow `model_id` before passing it; any/unknown values do not prove parameter contracts."

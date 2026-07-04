@@ -29,6 +29,7 @@ import (
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
+	"github.com/wippyai/go-lua/analysis/type/projection"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -127,6 +128,14 @@ func genericForVariableValue(
 		return product.Value{}, false
 	}
 	assertedSourceType, hasAssertedSourceType := genericForAssertedIteratorSourceType(generic, sourceIndex, typeResolver)
+	if !hasAssertedSourceType {
+		if recovered, ok := genericForDeclaredPathIteratorSourceType(argSource, facts); ok {
+			if genericForIteratorSourceTypeProjects(iter, generic.VariableIndex, recovered) {
+				assertedSourceType = recovered
+				hasAssertedSourceType = true
+			}
+		}
+	}
 	if !hasAssertedSourceType {
 		if recovered, ok := genericForDominatingPathIteratorSourceType(ctx, typeValues, argSource, facts, sources); ok {
 			assertedSourceType = recovered
@@ -257,6 +266,22 @@ func genericForValueIsTopLike(reg *axis.Registry, typeValues *typevalue.Cache, v
 	}
 	t, ok := typeValues.TypeOf(reg, value)
 	return !ok || typ.IsAny(t) || typ.IsUnknown(t)
+}
+
+func genericForIteratorSourceTypeProjects(iter iteration.Iterator, variableIndex int, sourceType typ.Type) bool {
+	if sourceType == nil {
+		return false
+	}
+	switch variableIndex {
+	case 0:
+		_, ok := projection.KeyOf(sourceType)
+		return ok
+	case 1:
+		_, ok := projection.ElementOf(sourceType)
+		return ok
+	default:
+		return false
+	}
 }
 
 func genericForKeyMembershipTransfer(
@@ -578,7 +603,9 @@ func genericForHeapContainerVariableValue(
 		return product.Value{}, false
 	}
 	object := in.ReadHeapTableObject(ctx.Registry, id)
-	if !product.Equal(ctx.Registry, object.Root(), sourceValue) {
+	root := object.Root()
+	rootID, ok := product.Get(ctx.Registry, root, identity.Key).ID()
+	if !ok || rootID != id || product.Equal(ctx.Registry, product.Meet(ctx.Registry, root, sourceValue), product.Bottom(ctx.Registry)) {
 		return product.Value{}, false
 	}
 	if variableIndex == 1 && iter.Kind == iteration.IterateIndexed {
@@ -794,6 +821,24 @@ func genericForDominatingPathIteratorSourceType(
 	rootType, ok := luasourcevalue.ObjectLiteralEntryType(ctx.Registry, typeValues, rootValue)
 	if !ok {
 		return nil, false
+	}
+	return luatypeprojection.ApplySegments(rootType, p.Segments)
+}
+
+func genericForDeclaredPathIteratorSourceType(argSource factflow.ValueSource, facts factflow.Facts) (typ.Type, bool) {
+	if !argSource.HasExpr {
+		return nil, false
+	}
+	p, ok := facts.ExpressionPathRef(argSource.ExprRef)
+	if !ok || p.Symbol == 0 {
+		return nil, false
+	}
+	rootType, ok := facts.SymbolType(p.Symbol)
+	if !ok || rootType == nil {
+		return nil, false
+	}
+	if len(p.Segments) == 0 {
+		return rootType, true
 	}
 	return luatypeprojection.ApplySegments(rootType, p.Segments)
 }

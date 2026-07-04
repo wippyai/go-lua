@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -181,6 +182,78 @@ func TestStaticStringExprValueAtBoundaryUsesBoundaryLiteralType(t *testing.T) {
 	got, ok := result.StaticStringExprValueAtBoundary(point, expr)
 	if !ok || got != "audit" {
 		t.Fatalf("StaticStringExprValueAtBoundary = (%q, %v), want audit literal", got, ok)
+	}
+}
+
+func TestReturnSlotUsesRuntimeCastInsideBinaryOperation(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function f(v: any): number
+	return (v :: number) * 2
+end`)
+	result, err := CheckFunction(fn, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	points := result.ReturnPoints()
+	if len(points) != 1 {
+		t.Fatalf("ReturnPoints len = %d, want 1", len(points))
+	}
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok || len(ret.Exprs) != 1 {
+		t.Fatalf("function body = %#v, want single return expression", fn.Stmts)
+	}
+	value, ok := result.ExpressionValueAtBoundary(points[0], ret.Exprs[0])
+	if !ok {
+		t.Fatalf("ExpressionValueAtBoundary(%d) returned false", points[0])
+	}
+	fact, ok := result.facts.Return(points[0])
+	if !ok {
+		t.Fatalf("ReturnFact(%d) returned false", points[0])
+	}
+	sources := fact.Sources()
+	if len(sources) != 1 {
+		t.Fatalf("return sources len = %d, want 1", len(sources))
+	}
+	source := sources[0]
+	if !source.HasExpr {
+		t.Fatalf("return source has no expr ref: %#v", source)
+	}
+	op, ok := result.facts.ExpressionOperation(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing expression operation for return source ref %d", source.ExprRef)
+	}
+	leftValue, ok := result.SourceValueAtBoundary(points[0], op.Left())
+	if !ok {
+		t.Fatalf("left operand SourceValueAtBoundary returned false for %#v", op.Left())
+	}
+	if cached, ok := result.facts.ExpressionValue(op.Left().ExprRef); !ok {
+		t.Fatalf("missing cached expression value for left operand ref %d", op.Left().ExprRef)
+	} else if cachedType, cachedOK := typevalue.WitnessOf(reg, cached); !cachedOK || !typ.TypeEquals(cachedType, typ.Number) {
+		t.Fatalf("cached left operand witness = %v/%v, want number; assertion=%s evidence=%s presence=%s runtime=%s",
+			cachedType, cachedOK,
+			product.Get(reg, cached, assertion.Key),
+			product.Get(reg, cached, evidence.Key),
+			product.PresenceOf(cached),
+			product.Get(reg, cached, runtimekind.Key))
+	}
+	leftType, leftOK := typevalue.WitnessOf(reg, leftValue)
+	if !leftOK || !typ.TypeEquals(leftType, typ.Number) {
+		t.Fatalf("left operand witness = %v/%v, want number; assertion=%s evidence=%s presence=%s runtime=%s",
+			leftType, leftOK,
+			product.Get(reg, leftValue, assertion.Key),
+			product.Get(reg, leftValue, evidence.Key),
+			product.PresenceOf(leftValue),
+			product.Get(reg, leftValue, runtimekind.Key))
+	}
+	got, ok := typevalue.WitnessOf(reg, value)
+	if !ok || !typ.TypeEquals(got, typ.Number) {
+		t.Fatalf("return slot witness = %v/%v, want number; assertion=%s evidence=%s presence=%s runtime=%s",
+			got, ok,
+			product.Get(reg, value, assertion.Key),
+			product.Get(reg, value, evidence.Key),
+			product.PresenceOf(value),
+			product.Get(reg, value, runtimekind.Key))
 	}
 }
 
@@ -1199,6 +1272,35 @@ end`)
 	got, ok := typevalue.TypeOf(reg, exit.ReadReturnSlot(reg, 1))
 	if !ok || !typ.TypeEquals(got, typ.NewArray(typ.Any)) {
 		t.Fatalf("return slot 2 type = %v/%v, want any[]", got, ok)
+	}
+}
+
+func TestCheckFunctionReturnSlotInfersInsertedParamElementArray(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function group_by_suite(entries: {{id: string}})
+	local no_suite = {}
+	for _, entry in ipairs(entries) do
+		table.insert(no_suite, entry)
+	end
+	return no_suite
+end`)
+
+	result, err := CheckFunction(fn, Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	exit, ok := result.ExitState()
+	if !ok {
+		t.Fatalf("missing exit state")
+	}
+	want := typ.NewArray(typetable.NewRecord().Field("id", typ.String).Build())
+	got, ok := typevalue.TypeOf(reg, exit.ReadReturnSlot(reg, 0))
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("return slot 1 type = %v/%v, want %v", got, ok, want)
 	}
 }
 

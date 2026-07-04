@@ -56,7 +56,8 @@ func TestLowerIdentifierNilTruthyFalsyBranches(t *testing.T) {
 	assertLoweredBranchValuePresence(t, facts, truthyPoint, xPath, presence.Present(), true, presence.Absent(), true)
 	assertLoweredBranchFalsyAbsent(t, facts, truthyPoint, xPath, false)
 	assertLoweredBranchPresenceProof(t, facts, truthyPoint, xPath, presence.Present(), true, false)
-	assertLoweredBranchValuePresence(t, facts, falsyPoint, xPath, presence.Bottom(), false, presence.Present(), true)
+	assertLoweredBranchValuePresence(t, facts, falsyPoint, xPath, presence.Absent(), true, presence.Present(), true)
+	assertLoweredBranchFalsyAbsent(t, facts, falsyPoint, xPath, true)
 	assertLoweredBranchPresenceProof(t, facts, falsyPoint, xPath, presence.Present(), false, true)
 }
 

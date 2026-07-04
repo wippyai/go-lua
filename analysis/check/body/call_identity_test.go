@@ -79,6 +79,30 @@ func TestCallSignatureTypeCachesReadOnlyFunctionType(t *testing.T) {
 	}
 }
 
+func TestCallSignatureTypeUsesImplicitStdlibGlobalIdentity(t *testing.T) {
+	result, err := CheckChunk(parseChunk(t, `
+		local value = tostring(1)
+	`), Config{
+		Registry:   standard.Registry(),
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	site, ok := onlyCallSite(t, result)
+	if !ok {
+		t.Fatal("missing tostring call site")
+	}
+	fn, ok := result.CallSignatureType(site)
+	if !ok {
+		t.Fatal("missing implicit stdlib tostring signature type")
+	}
+	if len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], typ.String) {
+		t.Fatalf("tostring signature = %v, want string return", fn)
+	}
+}
+
 func TestCallSignatureUsesImportedStaticIntMemberIdentity(t *testing.T) {
 	wantType := typ.Func().Param("src", typ.String).Returns(typ.Number).Build()
 	m := manifest.New("pkg")

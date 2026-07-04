@@ -622,11 +622,17 @@ func TestNilabilityProofMessagesUseCentralDisplay(t *testing.T) {
 	if got := assignmentMessage("cache.value", typ.Number, typ.String); got != "cannot assign cache.value because it is number, not string" {
 		t.Fatalf("assignmentMessage path mismatch = %q", got)
 	}
+	if got := assignmentMessageDisplay("M.run", typ.Func().Returns(typ.Nil).Build(), typ.Func().Returns(typ.String).Build(), "fun() -> Res"); got != "cannot assign M.run because it is fun() -> nil, not fun() -> Res" {
+		t.Fatalf("assignmentMessageDisplay alias = %q", got)
+	}
 	if got := assignmentMessage("", typ.Number, typ.String); got != "cannot assign number to string" {
 		t.Fatalf("assignmentMessage mismatch = %q", got)
 	}
 	if got := memberAssignmentMessage("p.id", "raw", typ.Any, typ.String); got != "cannot assign raw to p.id because raw is any, not string" {
 		t.Fatalf("memberAssignmentMessage mismatch = %q", got)
+	}
+	if got := memberAssignmentMessageDisplay("M.run", "f", typ.Func().Returns(typ.Nil).Build(), typ.Func().Returns(typ.String).Build(), "fun() -> Res"); got != "cannot assign f to M.run because f is fun() -> nil, not fun() -> Res" {
+		t.Fatalf("memberAssignmentMessageDisplay alias = %q", got)
 	}
 	if got := memberAssignmentMessage("impl.read", unknownSourceName, typ.Number, typ.String); got != "cannot assign impl.read because assigned value is number, not string" {
 		t.Fatalf("memberAssignmentMessage fallback = %q", got)

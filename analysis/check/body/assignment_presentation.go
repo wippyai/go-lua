@@ -174,6 +174,43 @@ func TypeAnnotationLabel(expr ast.TypeExpr) string {
 			args = append(args, label)
 		}
 		return base + "<" + strings.Join(args, ", ") + ">"
+	case *ast.FunctionTypeExpr:
+		params := make([]string, 0, len(e.Params)+1)
+		for _, param := range e.Params {
+			label := TypeAnnotationLabel(param.Type)
+			if label == "" {
+				return ""
+			}
+			if param.Name != "" {
+				label = param.Name + ": " + label
+			}
+			params = append(params, label)
+		}
+		if e.Variadic != nil {
+			label := TypeAnnotationLabel(e.Variadic)
+			if label == "" {
+				return ""
+			}
+			params = append(params, "...: "+label)
+		}
+		returns := "()"
+		if len(e.Returns) == 1 {
+			returns = TypeAnnotationLabel(e.Returns[0])
+			if returns == "" {
+				return ""
+			}
+		} else if len(e.Returns) > 1 {
+			parts := make([]string, 0, len(e.Returns))
+			for _, ret := range e.Returns {
+				label := TypeAnnotationLabel(ret)
+				if label == "" {
+					return ""
+				}
+				parts = append(parts, label)
+			}
+			returns = strings.Join(parts, ", ")
+		}
+		return "fun(" + strings.Join(params, ", ") + ") -> " + returns
 	}
 	return ""
 }

@@ -4,7 +4,7 @@ function M.f(): string
     return "ok"
 end
 
-M.f = 42
-local g: () -> string = M.f -- expect-error
+M.f = 42 -- expect-error
+local g: () -> string = M.f
 
 return "ok"

@@ -372,6 +372,127 @@ end`)
 	assertExpressionTypeAtBoundary(t, reg, result, exprLocal, typ.String)
 }
 
+func TestGenericForIPairsElementSupportsDiscriminantMemberProjection(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Usage = { input_tokens: number, output_tokens: number }
+type DoneEvent = { type: "done", usage: Usage? }
+type OtherEvent = { type: "other" }
+type Event = DoneEvent | OtherEvent
+local events: {Event} = {}
+for _, event in ipairs(events) do
+	if event.type == "done" then
+		if event.usage then
+			local usage = event.usage
+		end
+	end
+end`)
+
+	result, err := CheckChunk(stmts, Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	point, expr := requireLocalAssignmentExprByName(t, result, "usage")
+	got, ok := result.ExpressionValueAtBoundary(point, expr)
+	if !ok {
+		t.Fatal("ExpressionValueAtBoundary returned false")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	usage := typetable.NewRecord().
+		Field("input_tokens", typ.Number).
+		Field("output_tokens", typ.Number).
+		Build()
+	if !ok || !typ.TypeEquals(gotType, usage) {
+		t.Fatalf("event.usage type = %v/%v, want Usage", gotType, ok)
+	}
+}
+
+func TestGenericForLoopCarriesAnnotatedAccumulatorRecord(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Usage = { input_tokens: number, output_tokens: number }
+type DoneEvent = { type: "done", usage: Usage? }
+type OtherEvent = { type: "other" }
+type Event = DoneEvent | OtherEvent
+type Result = { usage: Usage }
+local events: {Event} = {}
+local usage: Usage = { input_tokens = 0, output_tokens = 0 }
+for _, event in ipairs(events) do
+	if event.type == "done" then
+		if event.usage then
+			usage = event.usage
+		end
+	end
+end
+local result: Result = { usage = usage }`)
+
+	result, err := CheckChunk(stmts, Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	point, expr := requireLocalAssignmentExprByName(t, result, "result")
+	got, ok := result.ExpressionValueAtBoundary(point, expr)
+	if !ok {
+		t.Fatal("ExpressionValueAtBoundary returned false")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	usage := typetable.NewRecord().
+		Field("input_tokens", typ.Number).
+		Field("output_tokens", typ.Number).
+		Build()
+	want := typetable.NewRecord().Field("usage", usage).Build()
+	if !ok || !typ.TypeEquals(gotType, want) {
+		t.Fatalf("result literal type = %v/%v, want Result", gotType, ok)
+	}
+}
+
+func TestGenericForParamLoopCarriesAnnotatedAccumulatorRecord(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function process(events: {{ type: "done", usage: { input_tokens: number, output_tokens: number }? } | { type: "other" }}): ()
+	local usage: { input_tokens: number, output_tokens: number } = { input_tokens = 0, output_tokens = 0 }
+	for _, event in ipairs(events) do
+		if event.type == "done" then
+			if event.usage then
+				usage = event.usage
+			end
+		end
+	end
+	local result: { usage: { input_tokens: number, output_tokens: number } } = { usage = usage }
+end`)
+
+	result, err := CheckFunction(fn, Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+
+	point, expr := requireLocalAssignmentExprByName(t, result, "result")
+	got, ok := result.ExpressionValueAtBoundary(point, expr)
+	if !ok {
+		t.Fatal("ExpressionValueAtBoundary returned false")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	usage := typetable.NewRecord().
+		Field("input_tokens", typ.Number).
+		Field("output_tokens", typ.Number).
+		Build()
+	want := typetable.NewRecord().Field("usage", usage).Build()
+	if !ok || !typ.TypeEquals(gotType, want) {
+		t.Fatalf("result literal type = %v/%v, want Result", gotType, ok)
+	}
+}
+
 func TestGenericForPairsUsesNestedDeclaredMapTypeAfterDescendantWrites(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `

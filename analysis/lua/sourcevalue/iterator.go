@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/projection"
+	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -141,8 +142,17 @@ func iteratorEmptyRecordWitness(source typ.Type) bool {
 
 func iteratorSourceType(reg *axis.Registry, sourceValue product.Value, assertedSourceType typ.Type, hasAssertedSourceType bool) (typ.Type, bool) {
 	if hasAssertedSourceType {
+		if refinement.ContainsFreeTypeParam(assertedSourceType) {
+			if sourceType, ok := iteratorSourceValueType(reg, sourceValue); ok && !refinement.ContainsFreeTypeParam(sourceType) {
+				return sourceType, true
+			}
+		}
 		return assertedSourceType, true
 	}
+	return iteratorSourceValueType(reg, sourceValue)
+}
+
+func iteratorSourceValueType(reg *axis.Registry, sourceValue product.Value) (typ.Type, bool) {
 	sourceType, ok := ObjectLiteralEntryType(reg, nil, sourceValue)
 	if !ok {
 		return nil, false

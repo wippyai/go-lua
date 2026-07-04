@@ -214,6 +214,7 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		WidenDelay:   config.WidenDelay,
 		Stats:        transferStats(config.Stats),
 	})
+	flow = s.finalizeReturnSlotHeapWitnesses(flow, typeValues)
 	return &Result{
 		registry:        s.registry,
 		bindings:        s.bindings,
@@ -237,6 +238,41 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		stateLanes:      append([]state.LaneID(nil), config.StateLanes...),
 		queries:         newResultQueryCache(s.facts),
 	}
+}
+
+func (s *Static) finalizeReturnSlotHeapWitnesses(flow transfer.Result, typeValues *typevalue.Cache) transfer.Result {
+	if s == nil || s.cfg.Graph == nil || s.registry == nil || len(flow) == 0 {
+		return flow
+	}
+	exit := s.cfg.Graph.Exit()
+	exitState, ok := flow[exit]
+	if !ok {
+		return flow
+	}
+	slots := make(map[int]struct{})
+	for _, point := range s.cfg.Graph.RPO() {
+		fact, ok := s.facts.Return(point)
+		if !ok {
+			continue
+		}
+		for i, source := range fact.Sources() {
+			index := source.TargetIndex
+			if index < 0 {
+				index = i
+			}
+			slots[index] = struct{}{}
+		}
+	}
+	for index := range slots {
+		value := exitState.ReadReturnSlot(s.registry, index)
+		projected, ok := sourcevalue.HeapObjectContainerType(s.registry, typeValues, exitState, value)
+		if !ok {
+			continue
+		}
+		exitState = exitState.WriteReturnSlot(s.registry, index, typevalue.WithWitness(s.registry, value, projected))
+	}
+	flow[exit] = exitState
+	return flow
 }
 
 func (s *Static) solveEntryState(typeValues *typevalue.Cache, entry state.State, initial transfer.InitialState) (state.State, transfer.InitialState) {

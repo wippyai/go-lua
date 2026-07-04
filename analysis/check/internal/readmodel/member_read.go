@@ -69,12 +69,31 @@ func (r Reader) exactLocalMissingFieldReadsNil(occ body.StaticMemberReadOccurren
 	if name == "" || !occ.HasReceiverValueBeforeBoundary {
 		return false
 	}
+	if r.declaredUnionHasMemberOnAnotherArm(occ, name) {
+		return false
+	}
 	value := occ.ReceiverValueBeforeBoundary
 	if !r.ValueHasLocalExclusiveExactIdentity(occ.Point, value) {
 		return false
 	}
 	receiver, ok := r.ValueType(value)
 	return ok && body.ClosedRecordLacksField(receiver, name)
+}
+
+func (r Reader) declaredUnionHasMemberOnAnotherArm(occ body.StaticMemberReadOccurrence, name string) bool {
+	if r.result == nil || name == "" {
+		return false
+	}
+	broad, broadOK := r.result.DeclaredPathTypeAt(occ.Point, occ.ReceiverPath, occ.HasReceiverPath)
+	if !broadOK || broad == nil || !body.TypeIsMultiArmUnion(broad) {
+		return false
+	}
+	fieldBroad := broad
+	if withoutNil := readmodelProjectionWithoutNil(broad); withoutNil != nil && !typ.IsNever(withoutNil) {
+		fieldBroad = withoutNil
+	}
+	_, ok := body.TypeField(fieldBroad, name)
+	return ok
 }
 
 func readmodelProjectionWithoutNil(t typ.Type) typ.Type {

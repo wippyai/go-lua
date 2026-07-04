@@ -69,6 +69,25 @@ func TestPassSuppressesReturnCascadeFromInvalidAssignment(t *testing.T) {
 	}
 }
 
+func TestPassSuppressesConcatCascadeFromInvalidAssignment(t *testing.T) {
+	producer := fakeProducer{
+		name: "cascade",
+		items: []judgment.Judgment{
+			concatJudgment("user_id", 4),
+			assignmentJudgment("user_id", 3),
+			concatJudgment("room_id", 5),
+		},
+	}
+
+	got := obligationpass.New(producer).Run(obligationpass.Context{FunctionKey: "fn"})
+	if len(got) != 2 {
+		t.Fatalf("judgments = %d, want 2: %#v", len(got), got)
+	}
+	if got[0].Code != judgment.CodeAssignment || got[1].Code != judgment.CodeConcatOperand || got[1].Subject.Label != "room_id" {
+		t.Fatalf("cascade suppression kept wrong judgments: %#v", got)
+	}
+}
+
 type fakeProducer struct {
 	name  string
 	items []judgment.Judgment
@@ -132,5 +151,29 @@ func returnJudgment(sourceLabel string, point cfg.Point) judgment.Judgment {
 			{Kind: judgment.EvidenceUserAssertion},
 			{Kind: judgment.EvidenceMissingProof},
 		},
+	}
+}
+
+func concatJudgment(label string, point cfg.Point) judgment.Judgment {
+	return judgment.Judgment{
+		Code:  judgment.CodeConcatOperand,
+		Point: point,
+		Subject: judgment.SubjectRef{
+			FunctionKey: "fn",
+			Kind:        judgment.SubjectExpression,
+			Key:         "concat:" + label,
+			Label:       label,
+		},
+		Actual: judgment.ValueRef{Label: label},
+		Evidence: judgment.EvidenceChain{
+			{
+				Kind: judgment.EvidenceAbstractFact,
+				Detail: judgment.EvidenceDetail{
+					Kind:  judgment.EvidenceDetailConcatOperand,
+					Field: "left",
+				},
+			},
+		},
+		Spans: []judgment.SpanRef{{StartLine: int(point), StartCol: 1, EndLine: int(point), EndCol: 2}},
 	}
 }

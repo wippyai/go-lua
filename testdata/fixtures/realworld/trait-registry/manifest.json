@@ -11,10 +11,11 @@
         "message_contains": [
           "cannot assign spec.tools[1].id because it may be nil"
         ],
-        "min_evidence": 3,
+        "min_evidence": 4,
         "evidence_contains": [
           "spec.tools[1].id can be string or nil here",
           "first_tool_id is declared as string",
+          "spec.tools[1] may be nil before reading .id",
           "spec.tools[1].id is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
         ],
         "evidence": [
@@ -39,6 +40,16 @@
             ]
           },
           {
+            "file": "main.lua",
+            "line": 26,
+            "column": 35,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "spec.tools[1] may be nil before reading .id"
+            ]
+          },
+          {
             "kind": "missing proof",
             "trust": "unknown",
             "contains": [
@@ -59,7 +70,8 @@
           "because:",
           "1. proven: spec.tools[1].id can be string or nil here",
           "2. claimed: first_tool_id is declared as string",
-          "3. missing proof: spec.tools[1].id is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
+          "3. proven: spec.tools[1] may be nil before reading .id",
+          "4. missing proof: spec.tools[1].id is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
           "help: Guard `spec.tools[1].id` with a nil check"
         ],
         "render_not_contains": [

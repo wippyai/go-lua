@@ -93,7 +93,7 @@
         ],
         "min_evidence": 3,
         "evidence_contains": [
-          "object literal has type {x: number}",
+          "object literal has type {x: 10}",
           "required field p.y has type number, but the object literal does not provide it",
           "p is declared as Point"
         ],
@@ -105,7 +105,7 @@
             "kind": "abstract fact",
             "trust": "proven",
             "contains": [
-              "object literal has type {x: number}"
+              "object literal has type {x: 10}"
             ]
           },
           {
@@ -133,7 +133,7 @@
           "error[type.assignment]: object literal is missing required field \"y\"",
           "local p: Point = {x = 10}",
           "because:",
-          "object literal has type {x: number}",
+          "object literal has type {x: 10}",
           "required field p.y has type number, but the object literal does not provide it",
           "Add field `y`"
         ],
@@ -142,7 +142,7 @@
           "--> main.lua:8:18",
           "local p: Point = {x = 10}",
           "because:",
-          "proven: object literal has type {x: number}",
+          "proven: object literal has type {x: 10}",
           "claimed: p is declared as Point",
           "proven: required field p.y has type number, but the object literal does not provide it",
           "help: Add field `y`"

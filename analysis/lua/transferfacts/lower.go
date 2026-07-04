@@ -88,6 +88,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		ExpressionFunctions:           make(map[factflow.ExprRef]symbol.ID),
 		ExpressionRefinements:         make(map[factflow.ExprRef]factflow.ExpressionRefinement),
 		DynamicIndexExpressions:       make(map[factflow.ExprRef]factflow.DynamicIndexExpression),
+		SymbolTypes:                   symbolTypes,
 	}
 	for _, point := range graph.RPO() {
 		if view, ok := result.LocalAssignmentView(point); ok {

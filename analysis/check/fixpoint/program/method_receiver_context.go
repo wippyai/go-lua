@@ -143,6 +143,7 @@ func collectMetatableMethodContext(bindings *bind.Result, external typeannotatio
 		}
 	}
 	collector.ensureSelfIndexPrototypeReceiverBases()
+	collector.ensurePlainMethodReceiverBases()
 	proof := collector.proof()
 	seedReceivers := collector.seedReceiverMap()
 	collector.attachMethodSurfaces(proof)
@@ -323,14 +324,21 @@ func (c methodReceiverCollector) collectLocalTypes(stmt *ast.LocalAssignStmt) {
 	}
 	symbols := c.bindings.LocalSymbols(stmt)
 	for i, sym := range symbols {
-		if sym == 0 || i >= len(stmt.Types) || stmt.Types[i] == nil {
+		if sym == 0 {
 			continue
 		}
-		t, ok := c.resolver.Type(stmt.Types[i])
-		if !ok || !usableMetatableReceiverType(t) {
-			continue
+		var (
+			t  typ.Type
+			ok bool
+		)
+		if i < len(stmt.Types) && stmt.Types[i] != nil {
+			t, ok = c.resolver.Type(stmt.Types[i])
+		} else {
+			t, ok = c.staticExpressionType(exprAt(stmt.Exprs, i))
 		}
-		c.localTypes[sym] = t
+		if ok && usableMetatableReceiverType(t) {
+			c.localTypes[sym] = t
+		}
 	}
 }
 
@@ -812,6 +820,31 @@ func (c methodReceiverCollector) ensureSelfIndexPrototypeReceiverBases() {
 			c.surfaceOnly = make(map[symbol.ID]struct{})
 		}
 		c.surfaceOnly[methods] = struct{}{}
+	}
+}
+
+func (c methodReceiverCollector) ensurePlainMethodReceiverBases() {
+	if c.bindings == nil {
+		return
+	}
+	for _, origin := range c.bindings.FunctionOrigins() {
+		if origin.Func == nil || origin.Kind != bind.FunctionOriginMethod {
+			continue
+		}
+		table, ok := methodFunctionTableSymbol(c.bindings, origin)
+		if !ok || table == 0 {
+			continue
+		}
+		if _, present := c.receivers[table]; present {
+			continue
+		}
+		if receiver := c.localTypes[table]; usableMetatableReceiverType(receiver) {
+			c.receivers[table] = receiver
+			continue
+		}
+		if receiver, ok := c.declaredMethodReceiver(table); ok {
+			c.receivers[table] = receiver
+		}
 	}
 }
 

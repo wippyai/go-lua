@@ -63,7 +63,10 @@ func (r *signatureIdentityResolver) nameForCallee(ctx transfer.NodeContext, call
 	if name, ok := r.stableCalleeName(callee, calleePath); ok {
 		return name, true
 	}
-	return r.imports.SignatureName(ctx.Point, calleePath)
+	if name, ok := r.imports.SignatureName(ctx.Point, calleePath); ok {
+		return name, true
+	}
+	return r.implicitGlobalCalleeName(callee, calleePath)
 }
 
 func (r *signatureIdentityResolver) nameForSite(site factflow.CallSite) (string, bool) {
@@ -183,4 +186,41 @@ func (r *signatureIdentityResolver) implicitBuiltinIteratorName(callee symbol.ID
 	default:
 		return "", false
 	}
+}
+
+func (r *signatureIdentityResolver) implicitGlobalCalleeName(callee symbol.ID, calleePath path.Path) (string, bool) {
+	if r == nil || r.bindings == nil {
+		return "", false
+	}
+	root := callee
+	if calleePath.Symbol != 0 {
+		root = calleePath.Symbol
+	}
+	if root == 0 || !r.bindings.IsImplicitGlobalSymbol(root) {
+		return "", false
+	}
+	name := r.bindings.Name(root)
+	if name == "" {
+		return "", false
+	}
+	if len(calleePath.Segments) == 0 {
+		return name, true
+	}
+	var b strings.Builder
+	b.WriteString(name)
+	for _, seg := range calleePath.Segments {
+		switch seg.Kind {
+		case segment.SegmentField, segment.SegmentIndexString:
+			if seg.Name == "" {
+				return "", false
+			}
+			b.WriteByte('.')
+			b.WriteString(seg.Name)
+		case segment.SegmentIndexInt:
+			b.WriteString(segment.FormatSegments([]segment.Segment{seg}))
+		default:
+			return "", false
+		}
+	}
+	return b.String(), true
 }

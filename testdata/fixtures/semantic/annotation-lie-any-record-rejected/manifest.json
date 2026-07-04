@@ -11,8 +11,7 @@
         "message_contains": [
           "cannot assign raw",
           "any",
-          "id: string",
-          "retries: number"
+          "not User"
         ],
         "min_evidence": 4,
         "evidence_contains": [
@@ -22,7 +21,7 @@
           "no proof on this path shows raw satisfies the declared type"
         ],
         "render_contains": [
-          "error[type.assignment]: cannot assign raw because it is any, not {id: string, retries: number}",
+          "error[type.assignment]: cannot assign raw because it is any, not User",
           "local user: User = raw -- expect-error",
           "because:"
         ],
@@ -71,7 +70,7 @@
           }
         ],
         "render_ordered_contains": [
-          "error[type.assignment]: cannot assign raw because it is any, not {id: string, retries: number}",
+          "error[type.assignment]: cannot assign raw because it is any, not User",
           "--> main.lua:11:20",
           "local user: User = raw -- expect-error",
           "because:",

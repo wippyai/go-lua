@@ -82,8 +82,9 @@ func applyBranchPathEvidence(
 		}
 	}
 	out = out.AddBranchProof(stateProof)
+	ks := resolver.KeySpace()
+	out = closeBranchProofsAcrossKnownEqualities(ks, out)
 	if stateProof.Kind == pathevidence.BranchProofPathEqual {
-		ks := resolver.KeySpace()
 		out = closeCongruenceAcrossEquality(ctx.Registry, ks, out, ks.Format(stateProof.Path), ks.Format(stateProof.Other))
 		out = out.CanonicalizeTypestateResources(ks)
 	}
@@ -115,6 +116,74 @@ func closeCongruenceAcrossEquality(reg *axis.Registry, ks *keyspace.KeySpace, ou
 		out = propagateRefinementAcrossEquality(reg, ks, out, key, value, bKey, aKey, memberSafe)
 	}
 	return out
+}
+
+func closeBranchProofsAcrossEquality(ks *keyspace.KeySpace, out state.State, aKey, bKey keyspace.Key) state.State {
+	if ks == nil || aKey == bKey {
+		return out
+	}
+	snap := out.BranchProofsSnapshot(ks)
+	if snap.Bottom || snap.Top || len(snap.Proofs) == 0 {
+		return out
+	}
+	for _, proof := range snap.Proofs {
+		out = mirrorBranchProofAcrossEquality(ks, out, proof, aKey, bKey)
+		out = mirrorBranchProofAcrossEquality(ks, out, proof, bKey, aKey)
+	}
+	return out
+}
+
+func closeBranchProofsAcrossKnownEqualities(ks *keyspace.KeySpace, out state.State) state.State {
+	if ks == nil {
+		return out
+	}
+	snap := out.BranchProofsSnapshot(ks)
+	if snap.Bottom || snap.Top || len(snap.Proofs) == 0 {
+		return out
+	}
+	for _, proof := range snap.Proofs {
+		if proof.Kind != pathevidence.BranchProofPathEqual {
+			continue
+		}
+		out = closeBranchProofsAcrossEquality(ks, out, proof.Path, proof.Other)
+	}
+	return out
+}
+
+func mirrorBranchProofAcrossEquality(ks *keyspace.KeySpace, out state.State, proof pathevidence.BranchProof, fromKey, toKey keyspace.Key) state.State {
+	rebasedPath, ok := rebaseBranchProofKey(ks, proof.Path, fromKey, toKey)
+	if !ok {
+		return out
+	}
+	mirrored := proof
+	mirrored.Path = rebasedPath
+	switch proof.Kind {
+	case pathevidence.BranchProofPathPresence:
+		return out.AddBranchProof(mirrored)
+	case pathevidence.BranchProofIndexInRange:
+		if proof.Other != (keyspace.Key{}) {
+			if rebasedOther, otherOK := rebaseBranchProofKey(ks, proof.Other, fromKey, toKey); otherOK {
+				mirrored.Other = rebasedOther
+			}
+		}
+		return out.AddBranchProof(mirrored)
+	default:
+		return out
+	}
+}
+
+func rebaseBranchProofKey(ks *keyspace.KeySpace, proofKey, fromKey, toKey keyspace.Key) (keyspace.Key, bool) {
+	if !ks.HasPrefix(proofKey, fromKey) {
+		return keyspace.Key{}, false
+	}
+	if ks.HasStrictPrefix(toKey, fromKey) && ks.HasPrefix(proofKey, toKey) {
+		return keyspace.Key{}, false
+	}
+	rebased, ok := ks.Rebase(proofKey, fromKey, toKey)
+	if !ok || !ks.HasPrefix(rebased, toKey) || rebased == proofKey {
+		return keyspace.Key{}, false
+	}
+	return rebased, true
 }
 
 func propagateRefinementAcrossEquality(reg *axis.Registry, ks *keyspace.KeySpace, out state.State, key pathdom.PathKey, value product.Value, fromKey, toKey pathdom.PathKey, memberSafe bool) state.State {

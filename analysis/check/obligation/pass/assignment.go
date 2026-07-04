@@ -2,6 +2,7 @@ package pass
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/check/readmodel"
@@ -39,24 +40,101 @@ func suppressAssignmentCascadeJudgments(in []judgment.Judgment) []judgment.Judgm
 	if len(in) < 2 {
 		return in
 	}
-	refutedTargets := make(map[string]cfg.Point)
+	refutedTargets := make(map[string]assignmentCascadeCause)
+	refutedDynamicRoots := make(map[string]assignmentCascadeCause)
 	out := in[:0]
 	for _, item := range in {
 		if item.Code == judgment.CodeAssignment &&
 			item.Verdict == judgment.VerdictRefuted &&
 			item.Subject.Label != "" {
-			refutedTargets[item.Subject.Label] = item.Point
+			cause := assignmentCascadeCauseFor(item)
+			refutedTargets[item.Subject.Label] = cause
+			if root, ok := refutedDynamicAssignmentRootKey(item); ok {
+				refutedDynamicRoots[root] = cause
+			}
 		}
 		if item.Code == judgment.CodeAssignment &&
 			item.Actual.Label != "" &&
 			item.Subject.Label != item.Actual.Label {
-			if causePoint, ok := refutedTargets[item.Actual.Label]; ok && causePoint < item.Point {
+			if cause, ok := refutedTargets[item.Actual.Label]; ok && assignmentCascadeCausePrecedes(cause, item) {
+				continue
+			}
+			if assignmentSourceCoveredByDynamicRoot(item.Actual.Key, refutedDynamicRoots, item) {
 				continue
 			}
 		}
 		out = append(out, item)
 	}
 	return out
+}
+
+type assignmentCascadeCause struct {
+	point cfg.Point
+	span  judgment.SpanRef
+}
+
+func assignmentCascadeCauseFor(item judgment.Judgment) assignmentCascadeCause {
+	cause := assignmentCascadeCause{point: item.Point}
+	if len(item.Spans) != 0 {
+		cause.span = item.Spans[0]
+	}
+	return cause
+}
+
+func assignmentCascadeCausePrecedes(cause assignmentCascadeCause, item judgment.Judgment) bool {
+	if cause.point < item.Point {
+		return true
+	}
+	if len(item.Spans) == 0 || cause.span.StartLine == 0 || item.Spans[0].StartLine == 0 {
+		return false
+	}
+	return spanBefore(cause.span, item.Spans[0])
+}
+
+func spanBefore(a, b judgment.SpanRef) bool {
+	if a.File != "" && b.File != "" && a.File != b.File {
+		return false
+	}
+	if a.StartLine != b.StartLine {
+		return a.StartLine < b.StartLine
+	}
+	return a.StartCol < b.StartCol
+}
+
+func refutedDynamicAssignmentRootKey(item judgment.Judgment) (string, bool) {
+	if !assignmentHasDynamicTargetDetail(item) {
+		return "", false
+	}
+	prefix := fmt.Sprintf("assignment:%d:", item.Point)
+	targetKey, ok := strings.CutPrefix(item.Subject.Key, prefix)
+	if !ok || targetKey == "" || !strings.HasPrefix(targetKey, "path:") {
+		return "", false
+	}
+	return targetKey, true
+}
+
+func assignmentHasDynamicTargetDetail(item judgment.Judgment) bool {
+	for _, evidence := range item.Evidence {
+		if evidence.Detail.Kind == judgment.EvidenceDetailDynamicAssignmentTarget {
+			return true
+		}
+	}
+	return false
+}
+
+func assignmentSourceCoveredByDynamicRoot(sourceKey string, roots map[string]assignmentCascadeCause, item judgment.Judgment) bool {
+	if sourceKey == "" || len(roots) == 0 {
+		return false
+	}
+	for root, cause := range roots {
+		if !assignmentCascadeCausePrecedes(cause, item) {
+			continue
+		}
+		if sourceKey == root || strings.HasPrefix(sourceKey, root+".") || strings.HasPrefix(sourceKey, root+"[") {
+			return true
+		}
+	}
+	return false
 }
 
 func assignmentJudgment(ctx Context, functionKey string, assignment readmodel.Assignment) judgment.Judgment {
@@ -199,6 +277,10 @@ func assignmentJudgment(ctx Context, functionKey string, assignment readmodel.As
 			},
 		})
 	}
+	actual := judgment.NewValueRef(assignment.ValueHash, assignment.EffectiveActualType()).WithLabel(assignment.SourceLabel)
+	if assignment.SourceKey != "" {
+		actual.Key = assignment.SourceKey
+	}
 	return judgment.Judgment{
 		Code:  judgment.CodeAssignment,
 		Point: assignment.Point,
@@ -208,7 +290,7 @@ func assignmentJudgment(ctx Context, functionKey string, assignment readmodel.As
 			fmt.Sprintf("assignment:%d:%s", assignment.Point, assignment.TargetKey),
 		).WithLabel(assignment.TargetLabel),
 		Expected: judgment.NewTypeRef(assignment.Expected).WithLabel(assignment.ExpectedLabel),
-		Actual:   judgment.NewValueRef(assignment.ValueHash, assignment.EffectiveActualType()).WithLabel(assignment.SourceLabel),
+		Actual:   actual,
 		Verdict:  verdict,
 		Evidence: evidence,
 		Spans:    []judgment.SpanRef{spanFromReadModel(ctx.SourceFile, assignment.SourceSpan)},

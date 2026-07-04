@@ -33,6 +33,29 @@ func TestRenderAssignmentJudgmentConcreteMismatch(t *testing.T) {
 	}
 }
 
+func TestRenderAssignmentJudgmentMessageUsesDeclaredAliasLabel(t *testing.T) {
+	expected := typ.Func().Returns(typetable.NewRecord().Field("answer", typ.String).Build()).Build()
+	actual := typ.Func().Returns(typ.Nil).Build()
+	item := assignmentJudgmentFixture(actual, expected, judgment.VerdictRefuted)
+	item.Subject = item.Subject.WithLabel("f")
+	item.Actual = item.Actual.WithLabel("M.run")
+	item.Expected = item.Expected.WithLabel("fun() -> Res")
+
+	d, ok := renderAssignmentJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
+	if !ok {
+		t.Fatal("renderAssignmentJudgmentWithPolicy returned false")
+	}
+	if !strings.Contains(d.Message, "not fun() -> Res") {
+		t.Fatalf("message = %q, want declared alias label", d.Message)
+	}
+	if strings.Contains(d.Message, "{answer: string}") {
+		t.Fatalf("message = %q, should not expand declared alias", d.Message)
+	}
+	if !diagnosticEvidenceContains(d.Explanation.Evidence(), "f is declared as fun() -> Res") {
+		t.Fatalf("evidence = %#v, want declared alias evidence", d.Explanation.Evidence())
+	}
+}
+
 func TestProduceAssignmentJudgmentDiagnosticsFromResult(t *testing.T) {
 	result := runDiagnosticsResult(t, `local n: number = "bad"
 local ok: number = 1`)

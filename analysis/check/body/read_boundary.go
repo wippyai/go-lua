@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/constraint/solver"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -210,6 +211,15 @@ func (r *Result) ExpressionReadProvenPresentBeforeBoundary(point cfg.Point, expr
 	}
 	if p, ok := r.ExpressionPath(expr); ok && r.PathProvenPresentBeforeBoundary(point, p) {
 		return true
+	} else if ok && r.requiredPathDescendantProvenPresentBeforeBoundary(point, p) {
+		return true
+	}
+	if value, ok := r.ExpressionValueBeforeBoundary(point, expr); ok &&
+		presence.Equal(product.PresenceOf(value), presence.Present()) {
+		return true
+	}
+	if r.requiredMemberReadProvenPresentBeforeBoundary(point, expr) {
+		return true
 	}
 	if fact, ok := r.LocalAssignment(point); ok && fact.Expr == expr {
 		if lowered, ok := r.facts.LocalAssignment(point); ok {
@@ -225,6 +235,114 @@ func (r *Result) ExpressionReadProvenPresentBeforeBoundary(point cfg.Point, expr
 		}
 	}
 	return false
+}
+
+func (r *Result) requiredPathDescendantProvenPresentBeforeBoundary(point cfg.Point, p pathdom.Path) bool {
+	if r == nil || p.IsEmpty() || len(p.Segments) == 0 {
+		return false
+	}
+	for n := len(p.Segments) - 1; n >= 0; n-- {
+		prefix := pathdom.Path{Root: p.Root, Symbol: p.Symbol, Version: p.Version}
+		if n > 0 {
+			prefix.Segments = append([]segment.Segment(nil), p.Segments[:n]...)
+		}
+		if !r.PathProvenPresentBeforeBoundary(point, prefix) {
+			continue
+		}
+		prefixType, ok := r.pathTypeBeforeBoundary(point, prefix)
+		if !ok || prefixType == nil {
+			continue
+		}
+		if withoutNil := ProjectionWithoutNil(prefixType); withoutNil != nil && !typ.IsNever(withoutNil) {
+			prefixType = withoutNil
+		}
+		if requiredSegmentsPresent(prefixType, p.Segments[n:]) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Result) pathTypeBeforeBoundary(point cfg.Point, p pathdom.Path) (typ.Type, bool) {
+	if value, ok := r.PathValueBeforeBoundary(point, p); ok {
+		if t, typeOK := r.valueTypeWithPresence(value); typeOK && t != nil {
+			return t, true
+		}
+	}
+	return r.DeclaredPathTypeAt(point, p, !p.IsEmpty())
+}
+
+func requiredSegmentsPresent(root typ.Type, suffix []segment.Segment) bool {
+	current := root
+	for _, seg := range suffix {
+		keyType, ok := segmentLiteralType(seg)
+		if !ok || current == nil {
+			return false
+		}
+		next, ok := access.RuntimeIndex(current, keyType)
+		if !ok || next == nil || typevalue.TypeIncludesNil(next) {
+			return false
+		}
+		current = next
+	}
+	return true
+}
+
+func segmentLiteralType(seg segment.Segment) (typ.Type, bool) {
+	switch seg.Kind {
+	case segment.SegmentField, segment.SegmentIndexString:
+		if seg.Name == "" {
+			return nil, false
+		}
+		return typ.LiteralString(seg.Name), true
+	case segment.SegmentIndexInt:
+		return typ.LiteralInt(int64(seg.Index)), true
+	default:
+		return nil, false
+	}
+}
+
+func (r *Result) requiredMemberReadProvenPresentBeforeBoundary(point cfg.Point, expr ast.Expr) bool {
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok || attr.Object == nil || attr.Key == nil {
+		return false
+	}
+	if !r.ExpressionReadProvenPresentBeforeBoundary(point, attr.Object) {
+		return false
+	}
+	container, ok := r.ExpressionTypeBeforeBoundary(point, attr.Object)
+	if !ok || container == nil {
+		container, ok = r.DeclaredExpressionTypeAt(point, attr.Object)
+	}
+	if !ok || container == nil {
+		return false
+	}
+	if withoutNil := ProjectionWithoutNil(container); withoutNil != nil && !typ.IsNever(withoutNil) {
+		container = withoutNil
+	}
+	key, ok := memberReadKeyTypeBeforeBoundary(r, point, attr)
+	if !ok || key == nil {
+		return false
+	}
+	member, ok := access.RuntimeIndex(container, key)
+	return ok && member != nil && !typevalue.TypeIncludesNil(member)
+}
+
+func memberReadKeyTypeBeforeBoundary(r *Result, point cfg.Point, attr *ast.AttrGetExpr) (typ.Type, bool) {
+	if attr == nil || attr.Key == nil {
+		return nil, false
+	}
+	if attr.KeySyntax != ast.AttrKeyIndex {
+		name := ast.KeyName(attr.Key)
+		if name == "" {
+			return nil, false
+		}
+		return typ.LiteralString(name), true
+	}
+	if key, ok := r.ExpressionTypeBeforeBoundary(point, attr.Key); ok {
+		return key, true
+	}
+	return LiteralExpressionType(attr.Key)
 }
 
 // PathProvenPresentBeforeBoundary reports whether the solved branch evidence

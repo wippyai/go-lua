@@ -36,6 +36,15 @@
             ]
           },
           {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "line": 19,
+            "column": 25,
+            "contains": [
+              "res may be nil before reading .answer"
+            ]
+          },
+          {
             "kind": "missing proof",
             "trust": "unknown",
             "reason": "boundary validation missing",
@@ -49,6 +58,7 @@
         "evidence_contains": [
           "res.answer can be \"ok\" or nil here",
           "answer is declared as string",
+          "res may be nil before reading .answer",
           "no guard on this path proves res.answer is non-nil"
         ],
         "render_contains": [
@@ -62,7 +72,8 @@
           "because:",
           "1. proven: res.answer can be \"ok\" or nil here",
           "2. claimed: answer is declared as string",
-          "3. missing proof: no guard on this path proves res.answer is non-nil",
+          "3. proven: res may be nil before reading .answer",
+          "4. missing proof: no guard on this path proves res.answer is non-nil",
           "help: Guard `res.answer` with a nil check, provide a default value, or change the target type to accept nil."
         ],
         "render_not_contains": [

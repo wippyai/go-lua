@@ -48,7 +48,7 @@ func (r Reader) returnObjectLiteralEntry(point cfg.Point, index int, source sour
 	if source.Kind != sourceprovenance.SourceExpression || source.Expr == nil {
 		return Return{}, false
 	}
-	expected, ok := r.ValueType(expectedValue)
+	expected, ok := r.ValueTypeWithPresence(expectedValue)
 	if !ok || expected == nil || typ.IsAny(expected) || typ.IsUnknown(expected) || typ.IsNever(expected) || refinement.ContainsFreeTypeParam(expected) {
 		return Return{}, false
 	}
@@ -101,7 +101,7 @@ func (r Reader) returnObjectLiteralEntry(point cfg.Point, index int, source sour
 }
 
 func (r Reader) returnValue(occ body.ReturnValueOccurrence, expectedValue product.Value, expectedSpans []SourceSpan) (Return, bool) {
-	expected, ok := r.ValueType(expectedValue)
+	expected, ok := r.ValueTypeWithPresence(expectedValue)
 	if !ok || expected == nil || typ.IsAny(expected) || typ.IsUnknown(expected) || typ.IsNever(expected) || refinement.ContainsFreeTypeParam(expected) {
 		return Return{}, false
 	}

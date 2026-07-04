@@ -68,6 +68,118 @@ end
 	}
 }
 
+func TestCheckMethodReturnContractUsesCallContextReceiver(t *testing.T) {
+	result := Check(`
+local Counter = {count = 0}
+function Counter:increment(): ()
+    self.count = self.count + 1
+end
+function Counter:get(): number
+    return self.count
+end
+Counter:increment()
+local n: number = Counter:get()
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want method return checked through call-context receiver shape", result.Diagnostics)
+	}
+}
+
+func TestCheckGenericMapLoopUsesContextualItemType(t *testing.T) {
+	result := Check(`
+type Metric = { name: string, value: number }
+type Event = { name: string }
+
+local function map<T, U>(items: {T}, fn: (T) -> U): {U}
+    local out: {U} = {}
+    for _, item in ipairs(items) do
+        table.insert(out, fn(item))
+    end
+    return out
+end
+
+local function metric(name: string, value: number): Metric
+    return { name = name, value = value }
+end
+
+local metrics = { metric("latency", 42) }
+local events: {Event} = map(metrics, function(metric: Metric): Event
+    return { name = metric.name }
+end)
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want contextual generic map item to satisfy callback parameter", result.Diagnostics)
+	}
+}
+
+func TestCheckCrossModuleGenericMapLoopUsesContextualItemType(t *testing.T) {
+	protocol := CheckAndExport(`
+type Event = { name: string, tags: {[string]: string} }
+type Metric = { name: string, value: number, tags: {[string]: string} }
+local M = {}
+M.Event = Event
+M.Metric = Metric
+return M
+`, "protocol")
+	if len(protocol.Errors) != 0 {
+		t.Fatalf("protocol diagnostics = %#v, want none", protocol.Errors)
+	}
+	builder := CheckAndExport(`
+local protocol = require("protocol")
+local M = {}
+function M.metric(name: string, value: number, tags: {[string]: string}): protocol.Metric
+    return { name = name, value = value, tags = tags }
+end
+function M.event(metric: protocol.Metric): protocol.Event
+    return { name = metric.name, tags = metric.tags }
+end
+return M
+`, "builder", WithModule("protocol", protocol))
+	if len(builder.Errors) != 0 {
+		t.Fatalf("builder diagnostics = %#v, want none", builder.Errors)
+	}
+	result := Check(`
+local builder = require("builder")
+local protocol = require("protocol")
+
+local function map<T, U>(items: {T}, fn: (T) -> U): {U}
+    local out: {U} = {}
+    for _, item in ipairs(items) do
+        table.insert(out, fn(item))
+    end
+    return out
+end
+
+local metrics = {
+    builder.metric("latency", 42, {source = "api"}),
+}
+local events: {protocol.Event} = map(metrics, function(metric: protocol.Metric): protocol.Event
+    return builder.event(metric)
+end)
+local wrong_events: {protocol.Metric} = map(metrics, function(metric: protocol.Metric): protocol.Event
+    return builder.event(metric)
+end)
+`, WithStdlib(), WithModule("protocol", protocol), WithModule("builder", builder))
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want only the intentionally wrong result assignment", result.Diagnostics)
+	}
+	if result.Diagnostics[0].Position.Line != 19 {
+		t.Fatalf("diagnostic line = %d, want wrong_events assignment only", result.Diagnostics[0].Position.Line)
+	}
+}
+
+func TestCheckNilInitializedOptionalMethodReceiverReports(t *testing.T) {
+	result := Check(`
+type Handler = {
+    run: fun(self: Handler, id: string): number
+}
+
+local maybe_handler: Handler? = nil
+maybe_handler:run("job-1")
+`)
+	requireDiagnosticCode(t, result, diagnostics.CodeOptionalMethodCall)
+}
+
 func TestCheckOptionalLiteralUnionOrDefaultPreservesUnion(t *testing.T) {
 	result := Check(`
 type Level = "debug" | "info"
@@ -6987,6 +7099,24 @@ return dispatch
 `, WithStdlib())
 	if !hasDiagnosticCode(result.Diagnostics, diagnostics.CodeMissingMember) {
 		t.Fatalf("diagnostics = %#v, want map read without key-membership proof to be optional", result.Diagnostics)
+	}
+}
+
+func TestCheckColonMethodOptionalMapReturnContractAcceptsNilableRead(t *testing.T) {
+	result := Check(`
+type Decision = {kind: "allow"} | {kind: "deny"}
+type Store = {
+    state: {cached: {[string]: Decision}},
+    lookup: (self: Store, key: string) -> Decision?,
+}
+
+local Store = {}
+function Store:lookup(key: string): Decision?
+    return self.state.cached[key]
+end
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want optional method return to accept nilable map read", result.Diagnostics)
 	}
 }
 

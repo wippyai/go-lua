@@ -298,6 +298,7 @@ func applyReturn(
 ) state.State {
 	var edit state.ValueEdit
 	editing := false
+	var returnSlots []int
 	for i, source := range fact.Sources() {
 		targetIndex := source.TargetIndex
 		if targetIndex < 0 {
@@ -306,20 +307,32 @@ func applyReturn(
 		value, ok := returnSourceValue(ctx, facts, sources, read, in, out, source, resolver, projectPath, typeValues)
 		if !ok {
 			value = product.Top()
+		} else {
+			out, _ = materializeObjectLiteralHeapCachedWithKnownSourceValue(ctx, resolver, facts, sources, read, in, out, source, value, true, typeValues)
+			if projected, projectedOK := sourcevalue.HeapObjectContainerType(ctx.Registry, typeValues, out, value); projectedOK {
+				value = typevalue.WithWitness(ctx.Registry, value, projected)
+			}
 		}
 		if !editing {
 			edit = out.EditValues(ctx.Registry)
 			editing = true
 		}
 		edit.WriteReturnSlot(targetIndex, value)
-		if ok {
-			out, _ = materializeObjectLiteralHeapCachedWithKnownSourceValue(ctx, resolver, facts, sources, read, in, out, source, value, true, typeValues)
-		}
+		returnSlots = append(returnSlots, targetIndex)
 	}
 	if !editing {
 		return out
 	}
-	return edit.DoneOn(out)
+	out = edit.DoneOn(out)
+	for _, index := range returnSlots {
+		value := out.ReadReturnSlot(ctx.Registry, index)
+		projected, ok := sourcevalue.HeapObjectContainerType(ctx.Registry, typeValues, out, value)
+		if !ok {
+			continue
+		}
+		out = out.WriteReturnSlot(ctx.Registry, index, typevalue.WithWitness(ctx.Registry, value, projected))
+	}
+	return out
 }
 
 func returnSourceValue(

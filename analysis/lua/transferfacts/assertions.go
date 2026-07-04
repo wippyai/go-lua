@@ -50,10 +50,17 @@ func (l *lowerer) addCastAssertion(input *factflow.FactsInput, outer sourceprove
 	innerSource := l.valueSource(inner)
 	if product.Get(l.registry, refinement, assertion.Key).Has(assertion.AnyClaim) {
 		input.ExpressionRefinements[outerSource.ExprRef] = factflow.NewExpressionRefinement(innerSource, refinement)
+	} else if castSyntaxIsRuntimeValidation(outer.Expr) {
+		input.ExpressionRefinements[outerSource.ExprRef] = factflow.NewExpressionRuntimeValidation(innerSource, refinement)
 	} else {
 		input.ExpressionRefinements[outerSource.ExprRef] = factflow.NewExpressionDeclaredContract(innerSource, refinement)
 	}
 	l.addAssertionRefinementsForSource(input, inner)
+}
+
+func castSyntaxIsRuntimeValidation(expr ast.Expr) bool {
+	cast, ok := expr.(*ast.CastExpr)
+	return ok && cast != nil && (cast.Syntax == ast.CastSyntaxAs || cast.Syntax == ast.CastSyntaxColonColon)
 }
 
 func (l *lowerer) assertionRefinement(value assertion.Value) product.Value {
