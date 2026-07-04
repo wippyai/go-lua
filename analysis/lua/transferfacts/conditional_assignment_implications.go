@@ -14,15 +14,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typecall"
-	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // addConditionalAssignmentImplications derives merge-point facts of the form:
 // if a later path value proves the same branch condition, then a target assigned
-// on that branch edge is present. This preserves correlations such as
+// on that branch edge keeps the value assigned on that edge. This preserves correlations such as
 // `if not use_template then executor = make() end` across the join, while still
-// requiring every path on the selected edge to end with a definitely-present
-// write and the opposite edge to contradict the trigger value.
+// requiring every path on the selected edge to end with a compatible write and
+// the opposite edge to contradict the trigger value.
 func (l *lowerer) addConditionalAssignmentImplications(input *factflow.FactsInput, graph cfg.Graph, result *semantics.Result) {
 	if input == nil || graph == nil || result == nil || len(input.RootAssignments) == 0 {
 		return
@@ -31,13 +30,26 @@ func (l *lowerer) addConditionalAssignmentImplications(input *factflow.FactsInpu
 	if len(postdom) == 0 {
 		return
 	}
-	for _, branch := range graph.RPO() {
+	rpo := graph.RPO()
+	continuationJoins := newBranchContinuationJoinCache(graph, rpo)
+	for _, branch := range rpo {
 		if !graph.IsBranch(branch) {
 			continue
 		}
 		join, ok := postdom[branch]
+		if ok && join == graph.Exit() {
+			join, ok = continuationJoins.join(branch)
+		}
 		if !ok || join == branch || join == graph.Exit() {
 			continue
+		}
+		incoming := l.assignmentStateBeforePoint(input, graph, result, branch)
+		edgeAssignments := make(map[cfg.Point]presentAssignmentState)
+		for _, succ := range cfg.SuccessorsReadOnly(graph, branch) {
+			edgeAssignments[succ] = l.presentAssignmentsOnBranchEdge(input, graph, result, succ, join, incoming)
+		}
+		for succ, selected := range edgeAssignments {
+			l.addBranchAssignmentValueImplications(input, join, incoming, selected, oppositeBranchAssignmentStates(graph, branch, succ, edgeAssignments))
 		}
 		refinements := input.BranchRefinements[branch].Refinements()
 		if len(refinements) == 0 {
@@ -48,7 +60,7 @@ func (l *lowerer) addConditionalAssignmentImplications(input *factflow.FactsInpu
 			if !ok {
 				continue
 			}
-			present := l.presentAssignmentsOnBranchEdge(input, graph, result, succ, join)
+			present := edgeAssignments[succ]
 			if len(present) == 0 {
 				continue
 			}
@@ -57,20 +69,239 @@ func (l *lowerer) addConditionalAssignmentImplications(input *factflow.FactsInpu
 					continue
 				}
 				for _, target := range present {
-					if target.Symbol == 0 {
+					if target.path.Symbol == 0 || !target.fromBranch {
 						continue
 					}
-					appendPathValuePresenceImplications(input.PathValuePresenceImplications, join,
-						factflow.NewPathValuePresenceImplication(
-							trigger.path,
-							trigger.value,
-							target,
-							presence.Present(),
-						),
-					)
+					if target.hasValue {
+						appendPathValuePresenceImplications(input.PathValuePresenceImplications, join,
+							factflow.NewPathValueRefinementImplication(
+								trigger.path,
+								trigger.value,
+								target.path,
+								target.value,
+							),
+						)
+					} else {
+						appendPathValuePresenceImplications(input.PathValuePresenceImplications, join,
+							factflow.NewPathValuePresenceImplication(
+								trigger.path,
+								trigger.value,
+								target.path,
+								presence.Present(),
+							),
+						)
+					}
 				}
 			}
 		}
+	}
+}
+
+func (l *lowerer) addBranchAssignmentValueImplications(
+	input *factflow.FactsInput,
+	join cfg.Point,
+	incoming presentAssignmentState,
+	selected presentAssignmentState,
+	opposites []presentAssignmentState,
+) {
+	if input == nil || len(selected) == 0 || len(opposites) == 0 {
+		return
+	}
+	for triggerSym, trigger := range selected {
+		if !trigger.fromBranch || !trigger.hasValue {
+			continue
+		}
+		if _, ok := literalBoolValue(l.registry, trigger.value); !ok {
+			continue
+		}
+		if !oppositeAssignmentsContradictTrigger(l.registry, triggerSym, trigger, incoming, opposites) {
+			continue
+		}
+		for targetSym, target := range selected {
+			if targetSym == triggerSym || !target.fromBranch || target.path.Symbol == 0 {
+				continue
+			}
+			if target.hasValue {
+				appendPathValuePresenceImplications(input.PathValuePresenceImplications, join,
+					factflow.NewPathTruthyValueRefinementImplication(
+						trigger.path,
+						trigger.value,
+						target.path,
+						target.value,
+					),
+				)
+			} else {
+				appendPathValuePresenceImplications(input.PathValuePresenceImplications, join,
+					factflow.NewPathValuePresenceImplication(
+						trigger.path,
+						trigger.value,
+						target.path,
+						presence.Present(),
+					),
+				)
+			}
+		}
+	}
+}
+
+type branchContinuationJoinCache struct {
+	graph     cfg.Graph
+	rpo       []cfg.Point
+	rpoIndex  map[cfg.Point]int
+	reachable map[cfg.Point]map[cfg.Point]struct{}
+}
+
+func newBranchContinuationJoinCache(graph cfg.Graph, rpo []cfg.Point) branchContinuationJoinCache {
+	index := make(map[cfg.Point]int, len(rpo))
+	for i, point := range rpo {
+		index[point] = i
+	}
+	return branchContinuationJoinCache{
+		graph:     graph,
+		rpo:       append([]cfg.Point(nil), rpo...),
+		rpoIndex:  index,
+		reachable: make(map[cfg.Point]map[cfg.Point]struct{}),
+	}
+}
+
+func (c branchContinuationJoinCache) join(branch cfg.Point) (cfg.Point, bool) {
+	graph := c.graph
+	if graph == nil || !graph.IsBranch(branch) {
+		return 0, false
+	}
+	successors := cfg.SuccessorsReadOnly(graph, branch)
+	if len(successors) < 2 {
+		return 0, false
+	}
+	counts := make(map[cfg.Point]int)
+	for _, succ := range successors {
+		reachable := c.reachableBeforeExit(succ)
+		if len(reachable) == 0 {
+			return 0, false
+		}
+		for point := range reachable {
+			counts[point]++
+		}
+	}
+	branchIndex := c.rpoIndex[branch]
+	for _, point := range c.rpo {
+		if point == graph.Exit() || c.rpoIndex[point] <= branchIndex {
+			continue
+		}
+		if counts[point] == len(successors) {
+			return point, true
+		}
+	}
+	return 0, false
+}
+
+func (c branchContinuationJoinCache) reachableBeforeExit(start cfg.Point) map[cfg.Point]struct{} {
+	if cached, ok := c.reachable[start]; ok {
+		return cached
+	}
+	graph := c.graph
+	if graph == nil || start == graph.Exit() {
+		return nil
+	}
+	seen := map[cfg.Point]struct{}{}
+	queue := []cfg.Point{start}
+	for len(queue) != 0 {
+		point := queue[0]
+		queue = queue[1:]
+		if point == graph.Exit() {
+			continue
+		}
+		if _, ok := seen[point]; ok {
+			continue
+		}
+		seen[point] = struct{}{}
+		for _, succ := range cfg.SuccessorsReadOnly(graph, point) {
+			if succ != graph.Exit() {
+				queue = append(queue, succ)
+			}
+		}
+	}
+	c.reachable[start] = seen
+	return seen
+}
+
+func oppositeBranchAssignmentStates(
+	graph cfg.Graph,
+	branch cfg.Point,
+	selected cfg.Point,
+	states map[cfg.Point]presentAssignmentState,
+) []presentAssignmentState {
+	var out []presentAssignmentState
+	for _, succ := range cfg.SuccessorsReadOnly(graph, branch) {
+		if succ == selected {
+			continue
+		}
+		out = append(out, states[succ])
+	}
+	return out
+}
+
+func oppositeAssignmentsContradictTrigger(
+	reg *axis.Registry,
+	triggerSym symbol.ID,
+	trigger conditionalAssignment,
+	incoming presentAssignmentState,
+	opposites []presentAssignmentState,
+) bool {
+	if reg == nil || len(opposites) == 0 {
+		return false
+	}
+	if incomingTriggerContradictsWithoutOppositeBranchWrite(reg, triggerSym, trigger, incoming, opposites) {
+		return true
+	}
+	for _, opposite := range opposites {
+		other, ok := opposite[triggerSym]
+		if !ok || !other.hasValue {
+			other, ok = incoming[triggerSym]
+		}
+		if !ok || !other.hasValue {
+			return false
+		}
+		meet := product.Meet(reg, trigger.value, other.value)
+		if !product.Equal(reg, meet, product.Bottom(reg)) && !presence.Equal(product.PresenceOf(meet), presence.Bottom()) {
+			return false
+		}
+	}
+	return true
+}
+
+func incomingTriggerContradictsWithoutOppositeBranchWrite(
+	reg *axis.Registry,
+	triggerSym symbol.ID,
+	trigger conditionalAssignment,
+	incoming presentAssignmentState,
+	opposites []presentAssignmentState,
+) bool {
+	baseline, ok := incoming[triggerSym]
+	if !ok || !baseline.hasValue {
+		return false
+	}
+	for _, opposite := range opposites {
+		if other, ok := opposite[triggerSym]; ok && other.fromBranch {
+			return false
+		}
+	}
+	meet := product.Meet(reg, trigger.value, baseline.value)
+	return product.Equal(reg, meet, product.Bottom(reg)) || presence.Equal(product.PresenceOf(meet), presence.Bottom())
+}
+
+func literalBoolValue(reg *axis.Registry, value product.Value) (bool, bool) {
+	t, ok := typevalue.TypeOf(reg, value)
+	if !ok {
+		return false, false
+	}
+	switch {
+	case typ.TypeEquals(t, typ.True):
+		return true, true
+	case typ.TypeEquals(t, typ.False):
+		return false, true
+	default:
+		return false, false
 	}
 }
 
@@ -123,7 +354,14 @@ func branchTriggerContradictedOnEdge(reg *axis.Registry, refinements []factflow.
 	return false
 }
 
-type presentAssignmentState map[symbol.ID]path.Path
+type conditionalAssignment struct {
+	path       path.Path
+	value      product.Value
+	hasValue   bool
+	fromBranch bool
+}
+
+type presentAssignmentState map[symbol.ID]conditionalAssignment
 
 func (l *lowerer) presentAssignmentsOnBranchEdge(
 	input *factflow.FactsInput,
@@ -131,14 +369,15 @@ func (l *lowerer) presentAssignmentsOnBranchEdge(
 	result *semantics.Result,
 	start cfg.Point,
 	join cfg.Point,
-) []path.Path {
+	initial presentAssignmentState,
+) presentAssignmentState {
 	region := branchRegion(graph, start, join)
 	if len(region) == 0 {
 		return nil
 	}
 	in := make(map[cfg.Point]presentAssignmentState, len(region))
 	out := make(map[cfg.Point]presentAssignmentState, len(region))
-	in[start] = presentAssignmentState{}
+	in[start] = clonePresentAssignmentState(initial)
 	changed := true
 	for changed {
 		changed = false
@@ -147,6 +386,9 @@ func (l *lowerer) presentAssignmentsOnBranchEdge(
 				continue
 			}
 			nextIn, ok := incomingPresentAssignmentState(graph, region, out, point, start)
+			if point == start {
+				nextIn, ok = clonePresentAssignmentState(initial), true
+			}
 			if !ok {
 				continue
 			}
@@ -154,7 +396,7 @@ func (l *lowerer) presentAssignmentsOnBranchEdge(
 				in[point] = nextIn
 				changed = true
 			}
-			nextOut := l.transferPresentAssignmentState(input, result, point, nextIn)
+			nextOut := l.transferPresentAssignmentState(input, result, point, nextIn, true)
 			if prior, ok := out[point]; !ok || !presentAssignmentStateEqual(prior, nextOut) {
 				out[point] = nextOut
 				changed = true
@@ -165,11 +407,51 @@ func (l *lowerer) presentAssignmentsOnBranchEdge(
 	if !ok || len(joined) == 0 {
 		return nil
 	}
-	targets := make([]path.Path, 0, len(joined))
-	for _, target := range joined {
-		targets = append(targets, target.Clone())
+	return clonePresentAssignmentState(joined)
+}
+
+func (l *lowerer) assignmentStateBeforePoint(
+	input *factflow.FactsInput,
+	graph cfg.Graph,
+	result *semantics.Result,
+	stop cfg.Point,
+) presentAssignmentState {
+	if input == nil || graph == nil || stop == graph.Entry() {
+		return presentAssignmentState{}
 	}
-	return targets
+	in := make(map[cfg.Point]presentAssignmentState)
+	out := make(map[cfg.Point]presentAssignmentState)
+	in[graph.Entry()] = presentAssignmentState{}
+	changed := true
+	for changed {
+		changed = false
+		for _, point := range graph.RPO() {
+			if point == stop {
+				continue
+			}
+			nextIn, ok := incomingPresentAssignmentState(graph, nil, out, point, graph.Entry())
+			if point == graph.Entry() {
+				nextIn, ok = presentAssignmentState{}, true
+			}
+			if !ok {
+				continue
+			}
+			if prior, ok := in[point]; !ok || !presentAssignmentStateEqual(prior, nextIn) {
+				in[point] = nextIn
+				changed = true
+			}
+			nextOut := l.transferPresentAssignmentState(input, result, point, nextIn, false)
+			if prior, ok := out[point]; !ok || !presentAssignmentStateEqual(prior, nextOut) {
+				out[point] = nextOut
+				changed = true
+			}
+		}
+	}
+	nextIn, ok := incomingPresentAssignmentState(graph, nil, out, stop, graph.Entry())
+	if !ok {
+		return presentAssignmentState{}
+	}
+	return nextIn
 }
 
 func branchRegion(graph cfg.Graph, start cfg.Point, join cfg.Point) map[cfg.Point]bool {
@@ -207,7 +489,7 @@ func incomingPresentAssignmentState(
 	var merged presentAssignmentState
 	seen := false
 	for _, pred := range cfg.PredecessorsReadOnly(graph, point) {
-		if !region[pred] {
+		if region != nil && !region[pred] {
 			continue
 		}
 		state, ok := out[pred]
@@ -255,13 +537,16 @@ func (l *lowerer) transferPresentAssignmentState(
 	result *semantics.Result,
 	point cfg.Point,
 	in presentAssignmentState,
+	fromBranch bool,
 ) presentAssignmentState {
 	out := clonePresentAssignmentState(in)
 	if fact, ok := input.RootAssignments[point]; ok {
 		target := fact.TargetPath()
 		if target.Symbol != 0 && len(target.Segments) == 0 {
-			if l.rootAssignmentSourceDefinitelyPresent(result, fact.Source()) {
-				out[target.Symbol] = target
+			if value, ok := l.rootAssignmentSourceValue(result, fact.Source()); ok {
+				out[target.Symbol] = conditionalAssignment{path: target, value: value, hasValue: true, fromBranch: fromBranch}
+			} else if l.rootAssignmentSourceDefinitelyPresent(result, fact.Source()) {
+				out[target.Symbol] = conditionalAssignment{path: target, fromBranch: fromBranch}
 			} else {
 				delete(out, target.Symbol)
 			}
@@ -271,47 +556,59 @@ func (l *lowerer) transferPresentAssignmentState(
 }
 
 func (l *lowerer) rootAssignmentSourceDefinitelyPresent(result *semantics.Result, source factflow.ValueSource) bool {
+	if value, ok := l.rootAssignmentSourceValue(result, source); ok {
+		return presence.Equal(product.PresenceOf(value), presence.Present())
+	}
 	switch source.Kind {
 	case factflow.ValueSourceNil, factflow.ValueSourceUnknown, factflow.ValueSourceVararg:
 		return false
-	case factflow.ValueSourceExpression:
-		value, ok := l.expressionValues[source.ExprRef]
-		return ok && presence.Equal(product.PresenceOf(value), presence.Present())
-	case factflow.ValueSourceCall:
-		return l.callSourceDefinitelyPresent(result, source)
 	default:
 		return false
 	}
 }
 
-func (l *lowerer) callSourceDefinitelyPresent(result *semantics.Result, source factflow.ValueSource) bool {
+func (l *lowerer) rootAssignmentSourceValue(result *semantics.Result, source factflow.ValueSource) (product.Value, bool) {
+	switch source.Kind {
+	case factflow.ValueSourceExpression:
+		value, ok := l.expressionValues[source.ExprRef]
+		if !ok || !usefulConditionalAssignmentValue(l.registry, value) {
+			return product.Value{}, false
+		}
+		return value, true
+	case factflow.ValueSourceCall:
+		return l.callSourceValue(result, source)
+	default:
+		return product.Value{}, false
+	}
+}
+
+func (l *lowerer) callSourceValue(result *semantics.Result, source factflow.ValueSource) (product.Value, bool) {
 	if result == nil || !source.HasCallPoint || source.ResultIndex > 0 {
-		return false
+		return product.Value{}, false
 	}
 	view, ok := result.CallView(source.CallPoint)
 	if !ok {
-		return false
+		return product.Value{}, false
 	}
 	fact, _ := view.Borrowed()
 	t, ok := l.callFirstReturnType(fact)
-	return ok && returnTypeProvesPresent(t)
+	if !ok {
+		return product.Value{}, false
+	}
+	value := l.valueFromTypeWithWitness(t)
+	if !usefulConditionalAssignmentValue(l.registry, value) {
+		return product.Value{}, false
+	}
+	return value, true
 }
 
-func returnTypeProvesPresent(t typ.Type) bool {
-	return returnTypeHasConcreteTopShape(t) && !typevalue.ProjectionHasNil(t)
-}
-
-func returnTypeHasConcreteTopShape(t typ.Type) bool {
-	t = unwrap.Alias(t)
-	if t == nil || typ.IsNever(t) || typ.IsAny(t) || typ.IsUnknown(t) {
+func usefulConditionalAssignmentValue(reg *axis.Registry, value product.Value) bool {
+	if reg == nil || value == product.Top() || product.Equal(reg, value, product.Bottom(reg)) {
 		return false
 	}
-	if union, ok := t.(*typ.Union); ok {
-		for _, member := range union.Members {
-			if !returnTypeHasConcreteTopShape(member) {
-				return false
-			}
-		}
+	t, ok := typevalue.TypeOf(reg, value)
+	if !ok || t == nil || typ.IsAny(t) || typ.IsUnknown(t) {
+		return false
 	}
 	return true
 }
@@ -329,7 +626,7 @@ func (l *lowerer) callFirstReturnType(fact semantics.CallFact) (typ.Type, bool) 
 }
 
 func (l *lowerer) callCalleeType(fact semantics.CallFact) (typ.Type, bool) {
-	if fact.HasCalleeSymbol && fact.CalleeSymbol != 0 {
+	if fact.HasCalleeSymbol && fact.CalleeSymbol != 0 && !fact.CalleeMemberAccess {
 		if t, ok := l.symbolTypes[fact.CalleeSymbol]; ok {
 			return t, true
 		}
@@ -353,7 +650,8 @@ func clonePresentAssignmentState(in presentAssignmentState) presentAssignmentSta
 	}
 	out := make(presentAssignmentState, len(in))
 	for sym, target := range in {
-		out[sym] = target.Clone()
+		target.path = target.path.Clone()
+		out[sym] = target
 	}
 	return out
 }
@@ -365,8 +663,9 @@ func intersectPresentAssignmentState(a, b presentAssignmentState) presentAssignm
 	out := make(presentAssignmentState)
 	for sym, left := range a {
 		right, ok := b[sym]
-		if ok && left.Equal(right) {
-			out[sym] = left.Clone()
+		if ok && conditionalAssignmentsEqual(left, right) {
+			left.path = left.path.Clone()
+			out[sym] = left
 		}
 	}
 	return out
@@ -378,9 +677,19 @@ func presentAssignmentStateEqual(a, b presentAssignmentState) bool {
 	}
 	for sym, left := range a {
 		right, ok := b[sym]
-		if !ok || !left.Equal(right) {
+		if !ok || !conditionalAssignmentsEqual(left, right) {
 			return false
 		}
 	}
 	return true
+}
+
+func conditionalAssignmentsEqual(a, b conditionalAssignment) bool {
+	if !a.path.Equal(b.path) || a.hasValue != b.hasValue {
+		return false
+	}
+	if !a.hasValue {
+		return true
+	}
+	return a.value == b.value
 }

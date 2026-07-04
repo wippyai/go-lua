@@ -259,6 +259,7 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 				return out
 			}
 		}
+		out = activatePathPresenceImplications(ctx.Registry, config.Visibility, ctx.Edge.From, out)
 		for _, fact := range config.Facts.BranchLenRefinements(ctx.Edge.From) {
 			if fact.Cond() != ctx.Edge.Cond {
 				continue

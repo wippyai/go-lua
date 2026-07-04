@@ -9,12 +9,16 @@ import (
 
 // PathValuePresenceImplication publishes a persistent implication at a CFG
 // point: when triggerPath is proven to satisfy triggerValue, targetPath has
-// targetPresence.
+// targetPresence or targetValue.
 type PathValuePresenceImplication struct {
-	triggerPath    path.Path
-	triggerValue   product.Value
-	targetPath     path.Path
-	targetPresence presence.Value
+	triggerPath        path.Path
+	triggerValue       product.Value
+	triggerPresence    presence.Value
+	hasTriggerPresence bool
+	targetPath         path.Path
+	targetPresence     presence.Value
+	targetValue        product.Value
+	hasTargetValue     bool
 }
 
 // PathValuePresenceImplicationSet groups point-local implication publishes.
@@ -36,6 +40,38 @@ func NewPathValuePresenceImplication(
 	}
 }
 
+func NewPathValueRefinementImplication(
+	triggerPath path.Path,
+	triggerValue product.Value,
+	targetPath path.Path,
+	targetValue product.Value,
+) PathValuePresenceImplication {
+	return PathValuePresenceImplication{
+		triggerPath:    triggerPath.Clone(),
+		triggerValue:   triggerValue,
+		targetPath:     targetPath.Clone(),
+		targetValue:    targetValue,
+		hasTargetValue: true,
+	}
+}
+
+func NewPathTruthyValueRefinementImplication(
+	triggerPath path.Path,
+	triggerValue product.Value,
+	targetPath path.Path,
+	targetValue product.Value,
+) PathValuePresenceImplication {
+	return PathValuePresenceImplication{
+		triggerPath:        triggerPath.Clone(),
+		triggerValue:       triggerValue,
+		triggerPresence:    presence.Present(),
+		hasTriggerPresence: true,
+		targetPath:         targetPath.Clone(),
+		targetValue:        targetValue,
+		hasTargetValue:     true,
+	}
+}
+
 func NewPathValuePresenceImplicationSet(implications ...PathValuePresenceImplication) PathValuePresenceImplicationSet {
 	return PathValuePresenceImplicationSet{implications: copyPathValuePresenceImplicationSlice(implications)}
 }
@@ -48,6 +84,10 @@ func (i PathValuePresenceImplication) TriggerPathRef() path.Path { return i.trig
 
 func (i PathValuePresenceImplication) TriggerValue() product.Value { return i.triggerValue }
 
+func (i PathValuePresenceImplication) TriggerPresence() presence.Value { return i.triggerPresence }
+
+func (i PathValuePresenceImplication) HasTriggerPresence() bool { return i.hasTriggerPresence }
+
 func (i PathValuePresenceImplication) TargetPath() path.Path { return i.targetPath.Clone() }
 
 // TargetPathRef returns the target path for immediate read-only use.
@@ -55,6 +95,10 @@ func (i PathValuePresenceImplication) TargetPath() path.Path { return i.targetPa
 func (i PathValuePresenceImplication) TargetPathRef() path.Path { return i.targetPath }
 
 func (i PathValuePresenceImplication) TargetPresence() presence.Value { return i.targetPresence }
+
+func (i PathValuePresenceImplication) TargetValue() product.Value { return i.targetValue }
+
+func (i PathValuePresenceImplication) HasTargetValue() bool { return i.hasTargetValue }
 
 func (i PathValuePresenceImplication) copy() PathValuePresenceImplication {
 	i.triggerPath = i.triggerPath.Clone()

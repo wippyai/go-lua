@@ -3,6 +3,7 @@ package transferfacts
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
@@ -10,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
+	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/kind"
@@ -20,7 +22,13 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func lowerSymbolTypes(bindings *bind.Result, graph cfg.Graph, result *semantics.Result, resolver *typeresolve.Resolver) map[symbol.ID]typ.Type {
+func lowerSymbolTypes(
+	bindings *bind.Result,
+	graph cfg.Graph,
+	result *semantics.Result,
+	resolver *typeresolve.Resolver,
+	moduleExports importlookup.Source,
+) map[symbol.ID]typ.Type {
 	if bindings == nil || graph == nil || result == nil {
 		return nil
 	}
@@ -41,6 +49,19 @@ func lowerSymbolTypes(bindings *bind.Result, graph cfg.Graph, result *semantics.
 	if fn := result.Function(); fn != nil {
 		for _, slot := range bindings.ParamSlots(fn) {
 			add(slot.Symbol, slot.Type)
+		}
+		for _, capture := range bindings.DirectCaptures(fn) {
+			if capture.Captured == 0 {
+				continue
+			}
+			if _, present := out[capture.Captured]; present {
+				continue
+			}
+			if modulePath, ok := moduleidentity.LocalRequireModulePath(bindings, capture.Captured); ok {
+				if t, ok := moduleExports.LookupExport(modulePath); ok {
+					out[capture.Captured] = t
+				}
+			}
 		}
 	}
 	for _, point := range graph.RPO() {
@@ -102,6 +123,12 @@ func lowerSymbolTypes(bindings *bind.Result, graph cfg.Graph, result *semantics.
 		}
 		if _, present := out[fact.Symbol]; present {
 			continue
+		}
+		if modulePath, ok := moduleidentity.LocalRequireModulePath(bindings, fact.Symbol); ok {
+			if t, ok := moduleExports.LookupExport(modulePath); ok {
+				out[fact.Symbol] = t
+				continue
+			}
 		}
 		if fn, ok := fact.Expr.(*ast.FunctionExpr); ok {
 			if t, ok := functionExpressionType(fn, bindings, resolver); ok {

@@ -53,6 +53,18 @@ func (l Lane) HasBranchProof(proof BranchProof) bool {
 	return ok
 }
 
+func (l Lane) HasBranchProofKind(kind BranchProofKind) bool {
+	if l.proofsBottom || kind == 0 {
+		return false
+	}
+	for proof := range l.proofs {
+		if proof.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
 func (l Lane) EquivalentPathKeys(ks *keyspace.KeySpace, pathKey pathdom.PathKey) []pathdom.PathKey {
 	if pathKey == "" || l.proofsBottom || len(l.proofs) == 0 {
 		return nil

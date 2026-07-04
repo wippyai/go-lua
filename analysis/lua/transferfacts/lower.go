@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
+	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -23,10 +24,11 @@ import (
 // by factflow.Facts; higher semantic layers add branch, iterator, interproc,
 // and diagnostic facts separately.
 type Config struct {
-	Registry     *axis.Registry
-	Bindings     *bind.Result
-	TypeResolver *typeresolve.Resolver
-	TypeValues   *typevalue.Cache
+	Registry      *axis.Registry
+	Bindings      *bind.Result
+	TypeResolver  *typeresolve.Resolver
+	TypeValues    *typevalue.Cache
+	ModuleExports importlookup.Source
 }
 
 type Lowered struct {
@@ -49,7 +51,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 	if typeResolver == nil {
 		typeResolver = typeresolve.New(config.Bindings)
 	}
-	symbolTypes := lowerSymbolTypes(config.Bindings, graph, result, typeResolver)
+	symbolTypes := lowerSymbolTypes(config.Bindings, graph, result, typeResolver, config.ModuleExports)
 	declaredReturnLocalTypes := lowerDeclaredReturnLocalTypes(config.Bindings, graph, result, typeResolver)
 	returnLocalObjectLiteralTypes := lowerReturnLocalObjectLiteralTypes(config.Bindings, graph, result, typeResolver)
 	symbolTypes = mergeSymbolTypes(symbolTypes, declaredReturnLocalTypes)

@@ -92,10 +92,11 @@ func (c *checker) prepare(bindings *bind.Result, built *cfgbuild.Result, sem *se
 	moduleTypes := newRequireAliasTypeResolver(modules, config.ModuleTypes)
 	typeResolver := typeresolve.NewWithExternal(bindings, moduleTypes)
 	lowered := transferfacts.LowerWithSidecars(sem, built.Graph, transferfacts.Config{
-		Registry:     config.Registry,
-		Bindings:     bindings,
-		TypeResolver: typeResolver,
-		TypeValues:   config.TypeValues,
+		Registry:      config.Registry,
+		Bindings:      bindings,
+		TypeResolver:  typeResolver,
+		TypeValues:    config.TypeValues,
+		ModuleExports: config.ModuleExports,
 	})
 	facts := lowered.Facts
 	signatureID := newSignatureIdentityResolver(bindings, built.Graph, modules, config.Signatures)

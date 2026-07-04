@@ -357,6 +357,13 @@ func (s State) HasBranchProof(proof pathevidence.BranchProof) bool {
 	return s.pathEvidence.HasBranchProof(proof)
 }
 
+func (s State) HasBranchProofKind(kind pathevidence.BranchProofKind) bool {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return false
+	}
+	return s.pathEvidence.HasBranchProofKind(kind)
+}
+
 // HasIndexInRangeProof is the path-key compatibility adapter for in-range
 // branch proofs. Boundary code that already resolved visibility should call
 // HasIndexInRangeProofForStateKeys.

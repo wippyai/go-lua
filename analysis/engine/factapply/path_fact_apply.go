@@ -101,12 +101,14 @@ func applyBranchPathEvidence(
 	}
 	out = out.AddBranchProof(stateProof)
 	ks := resolver.KeySpace()
-	out = closeBranchProofsAcrossKnownEqualities(ks, out)
+	if stateProof.Kind == pathevidence.BranchProofPathEqual || out.HasBranchProofKind(pathevidence.BranchProofPathEqual) {
+		out = closeBranchProofsAcrossKnownEqualities(ks, out)
+	}
 	if stateProof.Kind == pathevidence.BranchProofPathEqual {
 		out = closeCongruenceAcrossEquality(ctx.Registry, ks, out, ks.Format(stateProof.Path), ks.Format(stateProof.Other))
 		out = out.CanonicalizeTypestateResources(ks)
 	}
-	return out
+	return activatePathPresenceImplications(ctx.Registry, resolver, ctx.Edge.From, out)
 }
 
 // closeCongruenceAcrossEquality propagates existing path refinements across a

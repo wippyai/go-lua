@@ -11,14 +11,17 @@ import (
 
 // PathPresenceImplication records a must implication between two path
 // facts: when Trigger has either TriggerPresence or TriggerValue, Target has
-// TargetPresence.
+// TargetPresence or TargetValue.
 type PathPresenceImplication struct {
-	Trigger         keyspace.Key
-	TriggerPresence presence.Value
-	TriggerValue    product.Value
-	HasTriggerValue bool
-	Target          keyspace.Key
-	TargetPresence  presence.Value
+	Trigger            keyspace.Key
+	TriggerPresence    presence.Value
+	TriggerValue       product.Value
+	HasTriggerValue    bool
+	HasTriggerPresence bool
+	Target             keyspace.Key
+	TargetPresence     presence.Value
+	TargetValue        product.Value
+	HasTargetValue     bool
 }
 
 // NewPathPresenceImplication creates a presence-triggered implication.
@@ -49,6 +52,44 @@ func NewPathValuePresenceImplication(
 		HasTriggerValue: true,
 		Target:          target,
 		TargetPresence:  targetPresence,
+	}
+}
+
+// NewPathValueRefinementImplication creates a value-triggered implication that
+// refines the target to a stored value when activated.
+func NewPathValueRefinementImplication(
+	trigger keyspace.Key,
+	triggerValue product.Value,
+	target keyspace.Key,
+	targetValue product.Value,
+) PathPresenceImplication {
+	return PathPresenceImplication{
+		Trigger:         trigger,
+		TriggerValue:    triggerValue,
+		HasTriggerValue: true,
+		Target:          target,
+		TargetValue:     targetValue,
+		HasTargetValue:  true,
+	}
+}
+
+// NewPathTruthyValueRefinementImplication creates a value-triggered implication
+// that only activates after the trigger path has also been proven truthy.
+func NewPathTruthyValueRefinementImplication(
+	trigger keyspace.Key,
+	triggerValue product.Value,
+	target keyspace.Key,
+	targetValue product.Value,
+) PathPresenceImplication {
+	return PathPresenceImplication{
+		Trigger:            trigger,
+		TriggerPresence:    presence.Present(),
+		TriggerValue:       triggerValue,
+		HasTriggerValue:    true,
+		HasTriggerPresence: true,
+		Target:             target,
+		TargetValue:        targetValue,
+		HasTargetValue:     true,
 	}
 }
 
@@ -88,10 +129,19 @@ func validPathPresenceImplication(implication PathPresenceImplication) bool {
 		if implication.TriggerValue == product.Top() {
 			return false
 		}
+		if implication.HasTriggerPresence && !pathPresenceImplicationPresenceValid(implication.TriggerPresence) {
+			return false
+		}
+		if implication.HasTargetValue {
+			return implication.TargetValue != product.Top()
+		}
 		return pathPresenceImplicationPresenceValid(implication.TargetPresence)
 	}
 	if !pathPresenceImplicationPresenceValid(implication.TriggerPresence) {
 		return false
+	}
+	if implication.HasTargetValue {
+		return implication.TargetValue != product.Top()
 	}
 	return pathPresenceImplicationPresenceValid(implication.TargetPresence)
 }

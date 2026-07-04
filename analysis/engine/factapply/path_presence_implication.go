@@ -157,7 +157,7 @@ func applyPathValuePresenceImplication(
 	if resolver == nil {
 		return out
 	}
-	trigger, ok := factKeyspaceKeyAt(resolver, ctx.Point, fact.TriggerPathRef())
+	trigger, ok := visibility.AddressAt(resolver, ctx.Point, fact.TriggerPathRef()).RootOrVisibleKeyspaceKey()
 	if !ok {
 		return out
 	}
@@ -165,12 +165,32 @@ func applyPathValuePresenceImplication(
 	if !ok {
 		return out
 	}
-	out = out.AddPathPresenceImplication(pathevidence.NewPathValuePresenceImplication(
-		trigger,
-		fact.TriggerValue(),
-		target,
-		fact.TargetPresence(),
-	))
+	var implication pathevidence.PathPresenceImplication
+	if fact.HasTargetValue() {
+		if fact.HasTriggerPresence() {
+			implication = pathevidence.NewPathTruthyValueRefinementImplication(
+				trigger,
+				fact.TriggerValue(),
+				target,
+				fact.TargetValue(),
+			)
+		} else {
+			implication = pathevidence.NewPathValueRefinementImplication(
+				trigger,
+				fact.TriggerValue(),
+				target,
+				fact.TargetValue(),
+			)
+		}
+	} else {
+		implication = pathevidence.NewPathValuePresenceImplication(
+			trigger,
+			fact.TriggerValue(),
+			target,
+			fact.TargetPresence(),
+		)
+	}
+	out = out.AddPathPresenceImplication(implication)
 	return activatePathPresenceImplications(ctx.Registry, resolver, ctx.Point, out)
 }
 
@@ -226,6 +246,18 @@ func pathPresenceImplicationTriggered(
 		if !ok || product.Equal(reg, current, product.Bottom(reg)) {
 			return false
 		}
+		if implication.HasTriggerPresence {
+			presenceConstraint := product.NewWithPresence(reg, product.ShapeTop, implication.TriggerPresence)
+			if !product.Domain(reg).LessOrEq(current, presenceConstraint) && !out.HasBranchProof(pathevidence.BranchProof{
+				Kind:     pathevidence.BranchProofPathPresence,
+				Path:     implication.Trigger,
+				Presence: implication.TriggerPresence,
+			}) {
+				return false
+			}
+			meet := product.Meet(reg, current, implication.TriggerValue)
+			return !product.Equal(reg, meet, product.Bottom(reg)) && !presence.Equal(product.PresenceOf(meet), presence.Bottom())
+		}
 		return product.Domain(reg).LessOrEq(current, implication.TriggerValue)
 	}
 	if !presenceIsConcrete(implication.TriggerPresence) {
@@ -244,30 +276,62 @@ func applyPathPresenceImplicationTarget(
 ) state.State {
 	ks := resolver.KeySpace()
 	targetKey := ks.Format(implication.Target)
-	if !presenceIsConcrete(implication.TargetPresence) || !pathKeyCurrentlyVisible(resolver, point, targetKey) {
+	if !implication.HasTargetValue && !presenceIsConcrete(implication.TargetPresence) {
 		return out
 	}
-	constraint := product.NewWithPresence(reg, product.ShapeTop, implication.TargetPresence)
+	if !pathKeyCurrentlyVisible(resolver, point, targetKey) {
+		return out
+	}
+	constraint := implication.TargetValue
+	if !implication.HasTargetValue {
+		constraint = product.NewWithPresence(reg, product.ShapeTop, implication.TargetPresence)
+	}
 	if sym, ok := rootSymbolForResolverPathKey(ks, targetKey); ok {
-		if presenceImplicationTargetInvalidatesDescendants(implication.TargetPresence) {
+		if presenceImplicationTargetInvalidatesDescendants(implication) {
 			if invalidated, valid := out.InvalidatePathKeyDescendants(ks, targetKey); valid {
 				out = invalidated
 			}
 		}
 		slot := key.SymbolValue(sym)
 		return out.UpdateValue(reg, slot, func(value product.Value) product.Value {
+			if implication.HasTargetValue {
+				return assignmentImplicationTargetValue(reg, value, constraint)
+			}
 			return product.Meet(reg, value, constraint)
 		})
 	}
 	current := out.ReadPathKey(reg, ks, targetKey)
+	if implication.HasTargetValue {
+		return out.WritePathKey(reg, ks, targetKey, assignmentImplicationTargetValue(reg, current, constraint))
+	}
 	if product.Equal(reg, current, product.Bottom(reg)) {
 		return out.WritePathKey(reg, ks, targetKey, constraint)
 	}
 	return out.WritePathKey(reg, ks, targetKey, product.Meet(reg, current, constraint))
 }
 
-func presenceImplicationTargetInvalidatesDescendants(target presence.Value) bool {
-	return presence.Equal(target, presence.Absent())
+func assignmentImplicationTargetValue(reg *axis.Registry, current product.Value, assigned product.Value) product.Value {
+	if reg == nil || product.Equal(reg, current, product.Bottom(reg)) {
+		return assigned
+	}
+	currentPresence := product.PresenceOf(current)
+	if !presenceIsConcrete(currentPresence) {
+		return assigned
+	}
+	presenceConstraint := product.NewWithPresence(reg, product.ShapeTop, currentPresence)
+	refined := product.Meet(reg, assigned, presenceConstraint)
+	if product.Equal(reg, refined, product.Bottom(reg)) || presence.Equal(product.PresenceOf(refined), presence.Bottom()) {
+		return assigned
+	}
+	return refined
+}
+
+func presenceImplicationTargetInvalidatesDescendants(implication pathevidence.PathPresenceImplication) bool {
+	targetPresence := implication.TargetPresence
+	if implication.HasTargetValue {
+		targetPresence = product.PresenceOf(implication.TargetValue)
+	}
+	return presence.Equal(targetPresence, presence.Absent())
 }
 
 func readPathKeyPresence(

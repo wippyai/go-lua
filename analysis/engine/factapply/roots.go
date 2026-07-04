@@ -320,8 +320,13 @@ func rootAssignmentPreservesPathPresenceImplication(
 	if triggerMatches && !rootAssignmentValueSatisfiesImplicationTrigger(reg, value, implication) {
 		return false
 	}
-	if targetMatches && !rootAssignmentValueSatisfiesPresence(reg, value, implication.TargetPresence) {
-		return false
+	if targetMatches {
+		if implication.HasTargetValue {
+			return product.Domain(reg).LessOrEq(value, implication.TargetValue)
+		}
+		if !rootAssignmentValueSatisfiesPresence(reg, value, implication.TargetPresence) {
+			return false
+		}
 	}
 	return true
 }

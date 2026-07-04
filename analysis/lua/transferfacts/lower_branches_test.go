@@ -16,6 +16,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/module/importlookup"
+	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -121,7 +123,11 @@ end
 			if !ok || !typ.TypeEquals(gotType, typ.False) {
 				t.Fatalf("trigger value = %v/%v, want false literal", gotType, ok)
 			}
-			if !presence.Equal(implication.TargetPresence(), presence.Present()) {
+			if implication.HasTargetValue() {
+				if gotTargetType, ok := typevalue.TypeOf(standard.Registry(), implication.TargetValue()); !ok || gotTargetType == nil {
+					t.Fatalf("target value type = %v/%v, want executor value witness", gotTargetType, ok)
+				}
+			} else if !presence.Equal(implication.TargetPresence(), presence.Present()) {
 				t.Fatalf("target presence = %s, want present", implication.TargetPresence())
 			}
 			found = true
@@ -129,6 +135,177 @@ end
 	}
 	if !found {
 		t.Fatalf("missing use_template=false => executor present implication")
+	}
+}
+
+func TestLowerConditionalAssignmentPublishesValueRefinementImplicationAtMerge(t *testing.T) {
+	_, bindings, built, result := parseSemanticFunction(t, `
+function f(
+    provided: any?,
+    get_db: () -> { release: (self: any) -> () }?
+)
+    local db: any
+    local need_release = false
+    if provided then
+        db = provided
+    else
+        db = get_db()
+        need_release = true
+    end
+end
+`)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	var found bool
+	for _, point := range built.Graph.RPO() {
+		for _, implication := range facts.PathValuePresenceImplications(point) {
+			trigger := implication.TriggerPath()
+			target := implication.TargetPath()
+			if bindings.Name(trigger.Symbol) != "need_release" || bindings.Name(target.Symbol) != "db" {
+				continue
+			}
+			gotTriggerType, ok := typevalue.TypeOf(standard.Registry(), implication.TriggerValue())
+			if !ok || !typ.TypeEquals(gotTriggerType, typ.True) {
+				t.Fatalf("trigger value = %v/%v, want true literal", gotTriggerType, ok)
+			}
+			if !implication.HasTargetValue() {
+				t.Fatalf("implication = %#v, want target value refinement", implication)
+			}
+			if gotTargetType, ok := typevalue.TypeOf(standard.Registry(), implication.TargetValue()); !ok || gotTargetType == nil {
+				t.Fatalf("target value type = %v/%v, want provider return type witness", gotTargetType, ok)
+			}
+			found = true
+		}
+	}
+	if !found {
+		var got []factflow.PathValuePresenceImplication
+		for _, point := range built.Graph.RPO() {
+			got = append(got, facts.PathValuePresenceImplications(point)...)
+		}
+		t.Fatalf("missing need_release=true => db has provider return value implication; got %#v", got)
+	}
+}
+
+func TestLowerConditionalAssignmentPublishesValueRefinementThroughErrorGuard(t *testing.T) {
+	_, bindings, built, result := parseSemanticFunction(t, `
+function f(
+    provided: any?,
+    get_db: () -> ({ release: (self: any) -> () }?, string?)
+)
+    local db: any
+    local db_err: any
+    local need_release = false
+    if provided then
+        db = provided
+    else
+        db, db_err = get_db()
+        if db_err then
+            return
+        end
+        need_release = true
+    end
+    if need_release then
+        db:release()
+    end
+end
+`)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	var found bool
+	for _, point := range built.Graph.RPO() {
+		for _, implication := range facts.PathValuePresenceImplications(point) {
+			trigger := implication.TriggerPath()
+			target := implication.TargetPath()
+			if bindings.Name(trigger.Symbol) != "need_release" || bindings.Name(target.Symbol) != "db" {
+				continue
+			}
+			gotTriggerType, ok := typevalue.TypeOf(standard.Registry(), implication.TriggerValue())
+			if !ok || !typ.TypeEquals(gotTriggerType, typ.True) {
+				t.Fatalf("trigger value = %v/%v, want true literal", gotTriggerType, ok)
+			}
+			if !implication.HasTargetValue() {
+				t.Fatalf("implication = %#v, want target value refinement", implication)
+			}
+			if gotTargetType, ok := typevalue.TypeOf(standard.Registry(), implication.TargetValue()); !ok || gotTargetType == nil {
+				t.Fatalf("target value type = %v/%v, want provider return type witness", gotTargetType, ok)
+			}
+			found = true
+		}
+	}
+	if !found {
+		var got []factflow.PathValuePresenceImplication
+		for _, point := range built.Graph.RPO() {
+			got = append(got, facts.PathValuePresenceImplications(point)...)
+		}
+		t.Fatalf("missing need_release=true => db has provider return value implication after error guard; got %#v", got)
+	}
+}
+
+func TestLowerConditionalAssignmentUsesCapturedRequireExportReturn(t *testing.T) {
+	stmts := parseChunk(t, `
+local sql = require("sql")
+
+function run(options: { db: any?, database_id: string? }): ()
+    local db: any
+    local db_err: any
+    local need_release = false
+    if options.db then
+        db = options.db
+    else
+        db, db_err = sql.get(tostring(options.database_id))
+        if db_err then
+            return
+        end
+        need_release = true
+    end
+    if need_release then
+        db:release()
+    end
+end
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	def, ok := stmts[1].(*ast.FuncDefStmt)
+	if !ok || def.Func == nil {
+		t.Fatalf("stmt[1] = %T, want function definition", stmts[1])
+	}
+	built := cfgbuild.BuildFunction(def.Func, bindings)
+	result, err := semantics.ExtractFunction(def.Func, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractFunction: %v", err)
+	}
+	dbType := typetable.NewRecord().
+		Field("release", typ.Func().Param("self", typ.Self).Build()).
+		Build()
+	getType := typ.Func().
+		Param("name", typ.String).
+		Returns(typeexpr.Optional(dbType), typeexpr.Optional(typ.String)).
+		Build()
+	sqlManifest := manifest.New("sql")
+	sqlManifest.SetExport(typetable.NewRecord().Field("get", getType).Build())
+	lowered := LowerWithSidecars(result, built.Graph, Config{
+		Registry:      standard.Registry(),
+		Bindings:      bindings,
+		ModuleExports: importlookup.Source{Manifests: []*manifest.Manifest{sqlManifest}},
+	})
+	facts := lowered.Facts
+	var found bool
+	for _, point := range built.Graph.RPO() {
+		for _, implication := range facts.PathValuePresenceImplications(point) {
+			trigger := implication.TriggerPath()
+			target := implication.TargetPath()
+			if bindings.Name(trigger.Symbol) != "need_release" || bindings.Name(target.Symbol) != "db" {
+				continue
+			}
+			if !implication.HasTargetValue() {
+				t.Fatalf("implication = %#v, want target value from captured require return", implication)
+			}
+			found = true
+		}
+	}
+	if !found {
+		var got []factflow.PathValuePresenceImplication
+		for _, point := range built.Graph.RPO() {
+			got = append(got, facts.PathValuePresenceImplications(point)...)
+		}
+		t.Fatalf("missing need_release=true => db has sql.get return value implication; got %#v", got)
 	}
 }
 
@@ -227,7 +404,11 @@ func assertUseTemplateFalseImpliesExecutorPresent(t *testing.T, bindings *bind.R
 			if !ok || !typ.TypeEquals(gotType, typ.False) {
 				t.Fatalf("trigger value = %v/%v, want false literal", gotType, ok)
 			}
-			if !presence.Equal(implication.TargetPresence(), presence.Present()) {
+			if implication.HasTargetValue() {
+				if gotTargetType, ok := typevalue.TypeOf(standard.Registry(), implication.TargetValue()); !ok || gotTargetType == nil {
+					t.Fatalf("target value type = %v/%v, want executor value witness", gotTargetType, ok)
+				}
+			} else if !presence.Equal(implication.TargetPresence(), presence.Present()) {
 				t.Fatalf("target presence = %s, want present", implication.TargetPresence())
 			}
 			found = true

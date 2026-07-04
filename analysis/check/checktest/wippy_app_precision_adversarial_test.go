@@ -9366,6 +9366,78 @@ local formatted: string = time.now():format(time.RFC3339)
 	}
 }
 
+func TestCheckModuleLocalStringConstantSurvivesLaterFunctionRead(t *testing.T) {
+	result := Check(`
+local contract = require("contract")
+
+local module = {}
+local CONTRACT_ID = "wippy.llm:usage_tracker"
+
+module._usage_tracker = nil
+
+local function get_usage_tracker()
+    if module._usage_tracker then
+        return module._usage_tracker
+    end
+
+    local tracker_contract, err = contract.get(CONTRACT_ID)
+    if not err and tracker_contract then
+        local instance, open_err = tracker_contract:open()
+        if not open_err then
+            module._usage_tracker = instance
+            return instance
+        end
+    end
+
+    return nil
+end
+
+return module
+`, WithManifest("contract", contractWrapperManifest()))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want module-local literal contract id to remain string in later local function", result.Diagnostics)
+	}
+}
+
+func TestCheckBooleanFlagCorrelatesResourceProviderBranch(t *testing.T) {
+	result := Check(`
+local sql = require("sql")
+
+type RunOptions = {
+    database_id: string?,
+    db: any?,
+}
+
+local function run(options: RunOptions): ()
+    local opts: RunOptions = options
+    local db: any
+    local db_err: any
+    local need_release = false
+
+    if opts.db then
+        db = opts.db
+    else
+        db, db_err = sql.get(tostring(opts.database_id))
+        if db_err then
+            return
+        end
+        need_release = true
+    end
+
+    if not db then
+        return
+    end
+
+    if need_release then
+        db:release()
+    end
+end
+`, WithManifest("sql", sqlWrapperManifest()), WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want boolean release flag to preserve the sql.get provider branch for db:release()", result.Diagnostics)
+	}
+}
+
 func hasOperationalNormalReturnTypeRefinement(sig signature.Function, paramIndex int, want typ.Type) bool {
 	if sig.OperationalEffects == nil {
 		return false
