@@ -80,7 +80,7 @@ func TestShadowCoverage(t *testing.T) {
 		processed++
 
 		for _, pt := range built.Graph.RPO() {
-			keys := cirPointKeys(body, pt)
+			keys := wirPointKeys(body, pt)
 			if f, ok := sem.LocalAssignment(pt); ok {
 				scorePoint(total, covered, gapSamples, "assign", keys, semLocalAssignKey(f))
 			}
@@ -128,10 +128,10 @@ func scorePoint(total, covered map[string]int, gaps map[string][]string, cat str
 	}
 }
 
-// cirPointKeys collects the destination and control identities wir attaches to a
+// wirPointKeys collects the destination and control identities wir attaches to a
 // single point, per category, so a semantics fact at that point can be matched
 // against them.
-func cirPointKeys(b *wir.Body, pt cfg.Point) map[string]map[string]bool {
+func wirPointKeys(b *wir.Body, pt cfg.Point) map[string]map[string]bool {
 	out := map[string]map[string]bool{
 		"assign": {}, "call": {}, "branch": {}, "return": {},
 	}
@@ -140,32 +140,32 @@ func cirPointKeys(b *wir.Body, pt cfg.Point) map[string]map[string]bool {
 		case wir.OpAssign, wir.OpBinOp, wir.OpUnOp, wir.OpConcat, wir.OpMakeTable,
 			wir.OpClaim, wir.OpLogical, wir.OpClosure, wir.OpSelect,
 			wir.OpStaticMemberWrite, wir.OpDynamicIndexWrite:
-			if k, ok := cirDstKey(b, inst.Dst); ok {
+			if k, ok := wirDstKey(b, inst.Dst); ok {
 				out["assign"][k] = true
 			}
 		case wir.OpCall:
-			out["call"][cirCallKey(b, inst)] = true
+			out["call"][wirCallKey(b, inst)] = true
 			for _, r := range b.Operands(inst.Results) {
-				if k, ok := cirDstKey(b, r); ok {
+				if k, ok := wirDstKey(b, r); ok {
 					out["assign"][k] = true
 				}
 			}
 		case wir.OpIterate:
 			for _, r := range b.Operands(inst.Results) {
-				if k, ok := cirDstKey(b, r); ok {
+				if k, ok := wirDstKey(b, r); ok {
 					out["assign"][k] = true
 				}
 			}
 		case wir.OpReturn:
 			out["return"]["return"] = true
 		case wir.OpBranch:
-			out["branch"][cirBranchKey(b, inst)] = true
+			out["branch"][wirBranchKey(b, inst)] = true
 		}
 	}
 	return out
 }
 
-func cirDstKey(b *wir.Body, op wir.Operand) (string, bool) {
+func wirDstKey(b *wir.Body, op wir.Operand) (string, bool) {
 	if op.Kind != wir.OperandPath {
 		return "", false
 	}
@@ -176,7 +176,7 @@ func cirDstKey(b *wir.Body, op wir.Operand) (string, bool) {
 	return string(p.Key()), true
 }
 
-func cirCallKey(b *wir.Body, inst wir.Instruction) string {
+func wirCallKey(b *wir.Body, inst wir.Instruction) string {
 	if inst.Call.Method != 0 {
 		method := b.Const(inst.Call.Method).Str
 		// Match semantics' callee identity, which folds a method call into the
@@ -189,13 +189,13 @@ func cirCallKey(b *wir.Body, inst wir.Instruction) string {
 		}
 		return "recv:" + method
 	}
-	if k, ok := cirDstKey(b, inst.Call.Callee); ok {
+	if k, ok := wirDstKey(b, inst.Call.Callee); ok {
 		return k
 	}
 	return "callexpr"
 }
 
-func cirBranchKey(b *wir.Body, inst wir.Instruction) string {
+func wirBranchKey(b *wir.Body, inst wir.Instruction) string {
 	c := b.Check(inst.Check)
 	return string(c.Path.Key()) + "|" + strconv.Itoa(int(c.Kind))
 }
