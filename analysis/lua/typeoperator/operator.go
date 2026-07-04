@@ -92,7 +92,7 @@ func unaryOpDepth(op string, operand typ.Type, depth int) (typ.Type, bool) {
 	if isNilOrOptional(operand) {
 		return nil, false
 	}
-	if result, ok := dynamicUnaryResult(operand); ok {
+	if result, ok := dynamicUnaryResult(op, operand); ok {
 		return result, true
 	}
 
@@ -261,10 +261,12 @@ func isOrderedComparisonOp(op string) bool {
 	}
 }
 
-func dynamicUnaryResult(operand typ.Type) (typ.Type, bool) {
+func dynamicUnaryResult(op string, operand typ.Type) (typ.Type, bool) {
 	switch {
 	case typ.IsNever(operand):
 		return typ.Never, true
+	case op == "#" && (typ.IsAny(operand) || typ.IsUnknown(operand)):
+		return typ.Integer, true
 	case typ.IsAny(operand):
 		return typ.Unknown, true
 	case typ.IsUnknown(operand):

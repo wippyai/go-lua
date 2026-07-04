@@ -287,7 +287,13 @@ func TestOperatorAnyUnknownNeverPolicy(t *testing.T) {
 	if !ok {
 		t.Fatal("UnaryOp(#, any) failed")
 	}
-	assertType(t, got, typ.Unknown)
+	assertType(t, got, typ.Integer)
+
+	got, ok = UnaryOp("#", typ.Unknown)
+	if !ok {
+		t.Fatal("UnaryOp(#, unknown) failed")
+	}
+	assertType(t, got, typ.Integer)
 
 	got, ok = UnaryOp("-", typ.Never)
 	if !ok {

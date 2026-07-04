@@ -2383,6 +2383,20 @@ end
 	}
 }
 
+func TestCheckLengthOfDynamicValueSatisfiesIntegerCapacity(t *testing.T) {
+	result := Check(`
+local function build_messages(prompt_builder: any): ()
+    local conversation_messages = prompt_builder:get_messages()
+    local final_message_count = 2 + #conversation_messages
+    local final_messages = table.create(final_message_count, 0)
+    table.insert(final_messages, { role = "system" })
+end
+`, WithStdlib())
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDirectCallArgType) {
+		t.Fatalf("diagnostics = %#v, want length expression to prove integer capacity", result.Diagnostics)
+	}
+}
+
 func TestCheckUntypedMessageMetadataDefaultDoesNotValidateTable(t *testing.T) {
 	result := Check(`
 local function build(messages: any): ()
