@@ -32,12 +32,13 @@ scratch.local_only = false
 		Line:            4,
 		Column:          22,
 		MessageContains: []string{
-			"cannot assign false to true",
+			"cannot assign scratch.local_only",
+			"assigned value is false",
+			"not true",
 		},
 		EvidenceOrdered: []string{
 			"assigned value has literal value false",
-			"assignment target scratch.local_only requires true",
-			"no proof on this path shows assigned value is true",
+			"scratch.local_only is declared as true",
 		},
 	})
 }
