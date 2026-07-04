@@ -782,11 +782,15 @@ func TestAssignmentsAcceptsMutableLiteralFieldWidening(t *testing.T) {
 obj.value = obj.value + 1
 
 local item = {route = ""}
-item.route = "primary"`, "test.lua")
+item.route = "primary"
+
+local registry = {active = nil}
+registry.active = {name = "suite"}
+registry.active = nil`, "test.lua")
 
 	got := assignmentJudgmentsForAllBodies(checked)
 	if len(got) != 0 {
-		t.Fatalf("judgments = %#v, want mutable literal field writes accepted", got)
+		t.Fatalf("judgments = %#v, want mutable literal field writes and inferred nil clearing accepted", got)
 	}
 }
 

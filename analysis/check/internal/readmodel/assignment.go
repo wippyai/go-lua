@@ -395,6 +395,9 @@ func (r Reader) inferredReplacementAccepted(point cfg.Point, target body.Ordinar
 	if target.Declared {
 		return false
 	}
+	if typ.TypeEquals(actual, typ.Nil) {
+		return true
+	}
 	if _, ok := unwrap.Annotated(expected).(*typ.Function); ok {
 		_, actualOK := unwrap.Annotated(actual).(*typ.Function)
 		return actualOK

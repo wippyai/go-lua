@@ -1188,6 +1188,49 @@ end
 	}
 }
 
+func TestCheckNilInitializedSingletonFieldCanBeRestoredAfterConcreteWrite(t *testing.T) {
+	result := Check(`
+local test = {}
+
+local _default_context = {
+    current_describe = nil,
+    suites_hierarchy = {},
+    tests = {},
+}
+
+function test.suite(name: string)
+    return {
+        name = name,
+        tests = {},
+        children = {},
+        parent = nil,
+        full_path = name,
+    }
+end
+
+function test.describe(name: string, fn: fun())
+    local old_describe = _default_context.current_describe
+    local new_suite = test.suite(name)
+
+    if old_describe then
+        new_suite.parent = old_describe
+        table.insert(old_describe.children, new_suite)
+        new_suite.full_path = old_describe.full_path .. " > " .. name
+    else
+        table.insert(_default_context.suites_hierarchy, new_suite)
+    end
+
+    _default_context.current_describe = new_suite
+    fn()
+    table.insert(_default_context.tests, new_suite)
+    _default_context.current_describe = old_describe
+end
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want nil-initialized singleton field to restore saved nil-or-suite value after concrete write", result.Diagnostics)
+	}
+}
+
 func TestCheckConstructorFallbackArrayFieldLengthWithoutMetadataCall(t *testing.T) {
 	result := Check(`
 local node = {}
