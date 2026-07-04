@@ -348,7 +348,7 @@ func (s *Static) callOutcomeProvider(config SolveConfig, typeValues *typevalue.C
 			Facts:         s.facts,
 			Sources:       s.sources,
 			ArgumentType:  effectlowering.SignatureArgumentTypeFunc(signatureArgumentType),
-			ReturnValue:   stdlibSignatureReturnValue(s.registry, typeValues, s.sources, sourcevalue.NewExpressionRefinements(s.facts.ExpressionRefinements()), s.visibility),
+			ReturnValue:   stdlibSignatureReturnValue(s.registry, typeValues, s.facts, s.sources, sourcevalue.NewExpressionRefinements(s.facts.ExpressionRefinements()), s.visibility),
 			KeySpace:      s.visibility.KeySpace(),
 		})
 		providers = append([]callpayload.CallOutcomeProvider{signatureProvider}, providers...)

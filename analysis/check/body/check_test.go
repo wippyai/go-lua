@@ -1211,6 +1211,31 @@ end`)
 	}
 }
 
+func TestCheckFunctionTableUnpackUsesLengthFloorForFirstReturn(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function build(): ()
+	local select_fields = { "id", "name" }
+	table.insert(select_fields, "created_at")
+	local first: string = unpack(select_fields)
+end`)
+
+	result, err := CheckFunction(fn, Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	point, expr := requireLocalAssignmentExprByName(t, result, "first")
+	value, ok := result.ExpressionValueBeforeBoundary(point, expr)
+	if !ok {
+		t.Fatal("ExpressionValueBeforeBoundary returned false")
+	}
+	assertPresence(t, reg, value, presence.Present())
+	assertRuntimeKind(t, reg, value, runtimekind.Singleton(runtimekind.String))
+}
+
 func TestCheckFunctionNumericForLengthLimitCarriesRangeAndPositiveProofs(t *testing.T) {
 	reg := standard.Registry()
 	fn := parseFunction(t, `

@@ -637,6 +637,30 @@ func TestExtractChunkObjectLiteralCallArgumentEntriesAndSources(t *testing.T) {
 	assertEntry(t, nestedFact.Entries[0], 0, fieldChainSuffix("user_id"), userID)
 }
 
+func TestCallArgumentMetadataLabelsUnpackExpansion(t *testing.T) {
+	values := ident("values")
+	unpackCall := &ast.FuncCallExpr{Func: ident("unpack"), Args: []ast.Expr{values}}
+	acceptCall := &ast.FuncCallExpr{Func: ident("accept"), Args: []ast.Expr{unpackCall}}
+	stmt := &ast.FuncCallStmt{Expr: acceptCall}
+	stmts := []ast.Stmt{stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"accept", "unpack"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	points := requireStmtPoints(t, built, stmt, 2)
+	fact, ok := result.Call(points[1])
+	if !ok || fact.Call != acceptCall {
+		t.Fatalf("accept call fact = %#v, ok=%v", fact, ok)
+	}
+	if len(fact.ArgumentLabels) != 1 || fact.ArgumentLabels[0] != "unpack(...)" {
+		t.Fatalf("argument labels = %#v, want unpack(...)", fact.ArgumentLabels)
+	}
+}
+
 func TestExtractFunctionObjectLiteralReturnCallArgument(t *testing.T) {
 	event := stringLit("created")
 	arg := &ast.TableExpr{Fields: []*ast.Field{{

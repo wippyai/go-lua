@@ -1,6 +1,7 @@
 package body
 
 import (
+	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -20,6 +21,7 @@ import (
 func stdlibSignatureReturnValue(
 	reg *axis.Registry,
 	typeValues *typevalue.Cache,
+	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
 	refinements sourcevalue.ExpressionRefinements,
 	visibilityResolver *visibility.Resolver,
@@ -39,7 +41,7 @@ func stdlibSignatureReturnValue(
 		case ctx.Name == "string.unpack" && ctx.Index == 0:
 			return stringUnpackFirstReturnValue(reg, sourceResolver, ctx)
 		case (ctx.Name == "unpack" || ctx.Name == "table.unpack") && ctx.Index == 0:
-			return tableUnpackFirstReturnValue(reg, typeValues, sourceResolver, visibilityResolver, ctx)
+			return tableUnpackFirstReturnValue(reg, typeValues, facts, sourceResolver, visibilityResolver, ctx)
 		default:
 			return product.Value{}, false
 		}
@@ -121,6 +123,7 @@ func stringUnpackFirstReturnValue(
 func tableUnpackFirstReturnValue(
 	reg *axis.Registry,
 	typeValues *typevalue.Cache,
+	facts factflow.Facts,
 	resolver sourcevalue.SourceValues,
 	visibilityResolver *visibility.Resolver,
 	ctx effectlowering.SignatureReturnContext,
@@ -132,6 +135,23 @@ func tableUnpackFirstReturnValue(
 	value, ok := resolver.ValueOfSource(ctx.Node.Point, arg, ctx.In, ctx.Read)
 	if !ok {
 		return product.Value{}, false
+	}
+	if arg.Kind == factflow.ValueSourceExpression && arg.HasExpr {
+		if p, ok := facts.ExpressionPathRef(arg.ExprRef); ok && !p.IsEmpty() {
+			firstPath := p.AppendSegments([]segment.Segment{{
+				Kind:  segment.SegmentIndexInt,
+				Index: 1,
+			}})
+			if first, ok := readexpr.Project(readexpr.Config{
+				Registry:        reg,
+				Facts:           facts,
+				Visibility:      visibilityResolver,
+				TypeValues:      typeValues,
+				ProofVisibility: visibilityResolver,
+			}, ctx.Node.Point, firstPath, ctx.In); ok {
+				return first, true
+			}
+		}
 	}
 	if visibilityResolver != nil {
 		if first, ok := sourcevalue.HeapMemberFromValue(reg, visibilityResolver.KeySpace(), ctx.In, value, []segment.Segment{{

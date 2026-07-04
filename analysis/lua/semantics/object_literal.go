@@ -112,7 +112,31 @@ func expressionLabel(expr ast.Expr) string {
 		return expressionLabel(e.Expr)
 	case *ast.NonNilAssertExpr:
 		return expressionLabel(e.Expr)
+	case *ast.FuncCallExpr:
+		if unpackCallLabel(e) {
+			return "unpack(...)"
+		}
+		return ""
 	default:
 		return ""
 	}
+}
+
+func unpackCallLabel(call *ast.FuncCallExpr) bool {
+	if call == nil || call.Method != "" || call.Receiver != nil {
+		return false
+	}
+	if ident, ok := call.Func.(*ast.IdentExpr); ok {
+		return ident.Value == "unpack"
+	}
+	attr, ok := call.Func.(*ast.AttrGetExpr)
+	if !ok {
+		return false
+	}
+	obj, ok := attr.Object.(*ast.IdentExpr)
+	if !ok || obj.Value != "table" {
+		return false
+	}
+	key, ok := attr.Key.(*ast.StringExpr)
+	return ok && key.Value == "unpack"
 }
