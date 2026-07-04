@@ -209,6 +209,9 @@ func genericForPathStaticMemberContainerVariableValue(
 		if !ok || len(segments) != 1 || !genericForStaticMemberSegmentMatchesIterator(iter, segments[0]) {
 			return true
 		}
+		if presence.Equal(product.PresenceOf(value), presence.Absent()) {
+			return true
+		}
 		if variableIndex == 0 {
 			keyValue, ok := genericForStaticMemberKeyValue(ctx, typeValues, segments[0])
 			if !ok {
@@ -624,6 +627,9 @@ func genericForHeapStaticMemberVariableValue(ctx transfer.NodeContext, iter iter
 		if !ok || len(segs) != 1 || !genericForDirectContainerSegment(iter, segs[0]) {
 			continue
 		}
+		if presence.Equal(product.PresenceOf(value), presence.Absent()) {
+			continue
+		}
 		if !seen {
 			out = value
 			seen = true
@@ -649,6 +655,9 @@ func genericForDynamicIndexFactsVariableValue(
 	found := false
 	for _, fact := range facts {
 		if !genericForDynamicIndexFactMatchesIterator(ctx.Registry, typeValues, iter, fact) {
+			continue
+		}
+		if presence.Equal(product.PresenceOf(fact.Value), presence.Absent()) {
 			continue
 		}
 		value := fact.Value
@@ -706,6 +715,9 @@ func genericForDynamicIndexContainerVariableValue(
 	found := false
 	if in.ForEachDynamicIndexFact(func(key dynamicindex.Key, fact dynamicindex.Fact) bool {
 		if key.Table != tableKey || !genericForDynamicIndexFactMatchesIterator(ctx.Registry, typeValues, iter, fact) {
+			return true
+		}
+		if presence.Equal(product.PresenceOf(fact.Value), presence.Absent()) {
 			return true
 		}
 		value := fact.Value
