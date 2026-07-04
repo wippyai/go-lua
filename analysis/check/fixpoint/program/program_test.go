@@ -2965,6 +2965,52 @@ end
 	}
 }
 
+func TestMetatableConstructorBranchOnlyFieldsStayOptional(t *testing.T) {
+	stmts := parseChunk(t, `
+type Resource = {
+	close: (self: Resource) -> (),
+}
+
+local function open_resource(): Resource
+	return {
+		close = function(self: Resource) end,
+	}
+end
+
+local Holder = {}
+Holder.__index = Holder
+
+function Holder.new(flag: boolean)
+	local self = setmetatable({}, Holder)
+	if flag then
+		self.resource = open_resource()
+	end
+	return self
+end
+
+function Holder:close(): ()
+	self.resource:close()
+end
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"setmetatable"}})
+	receivers := metatableMethodReceiverTypes(bindings, nil, body.Config{}.ModuleExports, stmts)
+	holder := mustBoundLocalAt(t, bindings, stmts[2].(*ast.LocalAssignStmt), 0)
+	record, ok := unwrap.Alias(receivers[holder]).(*typ.Record)
+	if !ok {
+		t.Fatalf("receiver = %v, want record", receivers[holder])
+	}
+	field := record.GetField("resource")
+	if field == nil {
+		t.Fatalf("receiver = %v, want optional resource field", receivers[holder])
+	}
+	if !field.Optional {
+		t.Fatalf("resource field = %#v, want optional field", field)
+	}
+	if unwrap.IsOptionalLike(field.Type) {
+		t.Fatalf("resource field type = %v, want non-nil payload carried by optional field shape", field.Type)
+	}
+}
+
 func TestMetatableMethodEntryStaticMembersUseSeedReceiverOnce(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `

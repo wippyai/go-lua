@@ -21,6 +21,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	typenormalize "github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -195,6 +196,11 @@ type methodReceiverCollector struct {
 	metaIndexes   map[symbol.ID]symbol.ID
 	receivers     map[symbol.ID]typ.Type
 	surfaceOnly   map[symbol.ID]struct{}
+}
+
+type constructorField struct {
+	t        typ.Type
+	optional bool
 }
 
 type metatableMethodProof struct {
@@ -483,7 +489,7 @@ func (c methodReceiverCollector) returnedLocalConstructorReceiver(self symbol.ID
 	var (
 		seen   bool
 		base   typ.Type
-		fields map[string]typ.Type
+		fields map[string]constructorField
 	)
 	for _, stmt := range prefix {
 		if !seen {
@@ -503,7 +509,7 @@ func (c methodReceiverCollector) returnedLocalConstructorReceiver(self symbol.ID
 						base = t
 					}
 				}
-				fields = make(map[string]typ.Type)
+				fields = make(map[string]constructorField)
 				break
 			}
 			continue
@@ -511,6 +517,10 @@ func (c methodReceiverCollector) returnedLocalConstructorReceiver(self symbol.ID
 		switch s := stmt.(type) {
 		case *ast.AssignStmt:
 			if !c.collectConstructorAssignments(self, fields, s) {
+				return nil, false
+			}
+		case *ast.IfStmt:
+			if !c.collectConstructorBranch(self, fields, s) {
 				return nil, false
 			}
 		case *ast.LocalAssignStmt:
@@ -550,7 +560,7 @@ func (c methodReceiverCollector) constructorReceiverType(self symbol.ID, base ty
 	if self == 0 {
 		return nil, false
 	}
-	fields := make(map[string]typ.Type)
+	fields := make(map[string]constructorField)
 	for _, stmt := range tail {
 		switch s := stmt.(type) {
 		case *ast.AssignStmt:
@@ -559,6 +569,10 @@ func (c methodReceiverCollector) constructorReceiverType(self symbol.ID, base ty
 			}
 		case *ast.LocalAssignStmt:
 			if c.localAssignMentionsSymbol(s, self) {
+				return nil, false
+			}
+		case *ast.IfStmt:
+			if !c.collectConstructorBranch(self, fields, s) {
 				return nil, false
 			}
 		case *ast.ReturnStmt:
@@ -573,7 +587,7 @@ func (c methodReceiverCollector) constructorReceiverType(self symbol.ID, base ty
 	return nil, false
 }
 
-func (c methodReceiverCollector) collectConstructorAssignments(self symbol.ID, fields map[string]typ.Type, stmt *ast.AssignStmt) bool {
+func (c methodReceiverCollector) collectConstructorAssignments(self symbol.ID, fields map[string]constructorField, stmt *ast.AssignStmt) bool {
 	if stmt == nil {
 		return true
 	}
@@ -589,7 +603,7 @@ func (c methodReceiverCollector) collectConstructorAssignments(self symbol.ID, f
 				delete(fields, name)
 				continue
 			}
-			fields[name] = widenConstructorFieldType(t)
+			fields[name] = constructorField{t: widenConstructorFieldType(t)}
 			continue
 		}
 		if container, ok := pathexpr.ResolveMutationContainer(lhs, c.bindings); ok && container.Symbol == self {
@@ -597,6 +611,92 @@ func (c methodReceiverCollector) collectConstructorAssignments(self symbol.ID, f
 		}
 	}
 	return true
+}
+
+func (c methodReceiverCollector) collectConstructorBranch(self symbol.ID, fields map[string]constructorField, stmt *ast.IfStmt) bool {
+	if stmt == nil {
+		return true
+	}
+	thenFields := cloneConstructorFields(fields)
+	elseFields := cloneConstructorFields(fields)
+	if !c.collectConstructorBranchStatements(self, thenFields, stmt.Then) {
+		return false
+	}
+	if !c.collectConstructorBranchStatements(self, elseFields, stmt.Else) {
+		return false
+	}
+	merged := mergeConstructorFields(thenFields, elseFields)
+	for name := range fields {
+		delete(fields, name)
+	}
+	for name, field := range merged {
+		fields[name] = field
+	}
+	return true
+}
+
+func (c methodReceiverCollector) collectConstructorBranchStatements(self symbol.ID, fields map[string]constructorField, stmts []ast.Stmt) bool {
+	for _, stmt := range stmts {
+		switch s := stmt.(type) {
+		case *ast.AssignStmt:
+			if !c.collectConstructorAssignments(self, fields, s) {
+				return false
+			}
+		case *ast.LocalAssignStmt:
+			if c.localAssignMentionsSymbol(s, self) {
+				return false
+			}
+		case *ast.IfStmt:
+			if !c.collectConstructorBranch(self, fields, s) {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func cloneConstructorFields(fields map[string]constructorField) map[string]constructorField {
+	out := make(map[string]constructorField, len(fields))
+	for name, field := range fields {
+		out[name] = field
+	}
+	return out
+}
+
+func mergeConstructorFields(left, right map[string]constructorField) map[string]constructorField {
+	out := make(map[string]constructorField, len(left)+len(right))
+	for name, field := range left {
+		if other, ok := right[name]; ok {
+			out[name] = mergeConstructorField(field, other)
+		} else {
+			field.optional = true
+			out[name] = field
+		}
+	}
+	for name, field := range right {
+		if _, ok := left[name]; ok {
+			continue
+		}
+		field.optional = true
+		out[name] = field
+	}
+	return out
+}
+
+func mergeConstructorField(left, right constructorField) constructorField {
+	if left.t == nil {
+		left.t = right.t
+	}
+	if right.t == nil || typ.TypeEquals(left.t, right.t) {
+		left.optional = left.optional || right.optional
+		return left
+	}
+	return constructorField{
+		t:        typenormalize.UnionForEvidence(left.t, right.t),
+		optional: left.optional || right.optional,
+	}
 }
 
 func (c methodReceiverCollector) localAssignMentionsSymbol(stmt *ast.LocalAssignStmt, self symbol.ID) bool {
@@ -611,16 +711,20 @@ func (c methodReceiverCollector) localAssignMentionsSymbol(stmt *ast.LocalAssign
 	return false
 }
 
-func (c methodReceiverCollector) buildConstructorReceiver(base typ.Type, fields map[string]typ.Type) (typ.Type, bool) {
+func (c methodReceiverCollector) buildConstructorReceiver(base typ.Type, fields map[string]constructorField) (typ.Type, bool) {
 	if len(fields) == 0 {
 		return base, usableMetatableReceiverType(base)
 	}
 	overlay := typetable.NewRecord()
-	for name, t := range fields {
-		if name == "" || !usableConstructorFieldType(t) {
+	for name, field := range fields {
+		if name == "" || !usableConstructorFieldType(field.t) {
 			continue
 		}
-		overlay.Field(name, t)
+		if field.optional {
+			overlay.OptField(name, field.t)
+		} else {
+			overlay.Field(name, field.t)
+		}
 	}
 	witness := overlay.Build()
 	if base == nil {
