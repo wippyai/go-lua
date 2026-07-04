@@ -36,6 +36,9 @@ func (l *lowerer) localAssignment(fact semantics.LocalAssignmentFact) (factflow.
 	if declared, ok := l.declaredReturnLocalContract(fact); ok {
 		return factflow.NewRootAssignmentWithDeclaredContractValue(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source, l.valueFromTypeWithWitness(declared)), true
 	}
+	if declared, ok := l.returnLocalObjectLiteralContract(fact); ok && recordWithCallableField(declared) {
+		return factflow.NewRootAssignmentWithDeclaredContractValue(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source, l.valueFromTypeWithWitness(declared)), true
+	}
 	if declared, ok := l.localCastContract(fact.Expr); ok {
 		return factflow.NewRootAssignmentWithDeclaredOverlayValue(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source, declared), true
 	}
@@ -334,6 +337,8 @@ func recordWithCallableFieldDepth(t typ.Type, depth int) bool {
 	switch v := unwrap.Annotated(t).(type) {
 	case *typ.Alias:
 		return recordWithCallableFieldDepth(v.UnaliasedTarget(), depth+1)
+	case *typ.Optional:
+		return recordWithCallableFieldDepth(v.Inner, depth+1)
 	case *typ.Recursive:
 		if v.Body == nil || v.Body == t {
 			return false

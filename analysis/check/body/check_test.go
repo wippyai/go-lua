@@ -257,6 +257,39 @@ end`)
 	}
 }
 
+func TestReturnSlotUsesRuntimeCastOnCallProducer(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function f(): {id: string}
+	local Proto = {}
+	local self = {id = "ok"}
+	return setmetatable(self, Proto) :: {id: string}
+end`)
+	result, err := CheckFunction(fn, Config{Registry: reg, Globals: []string{"setmetatable"}})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	points := result.ReturnPoints()
+	if len(points) != 1 {
+		t.Fatalf("ReturnPoints len = %d, want 1", len(points))
+	}
+	exit, ok := result.ExitState()
+	if !ok {
+		t.Fatal("ExitState returned false")
+	}
+	value := exit.ReadReturnSlot(reg, 0)
+	got, ok := typevalue.WitnessOf(reg, value)
+	want := typetable.NewRecord().Field("id", typ.String).Build()
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("return slot witness = %v/%v, want %v; assertion=%s evidence=%s presence=%s runtime=%s",
+			got, ok, want,
+			product.Get(reg, value, assertion.Key),
+			product.Get(reg, value, evidence.Key),
+			product.PresenceOf(value),
+			product.Get(reg, value, runtimekind.Key))
+	}
+}
+
 func TestDominatingRuntimeTypeGuardProvesRejectingBranchCannotReach(t *testing.T) {
 	reg := standard.Registry()
 	result, err := CheckChunk(parseChunk(t, `

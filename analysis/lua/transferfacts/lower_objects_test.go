@@ -242,6 +242,43 @@ end
 	}
 }
 
+func TestLowerSetmetatableReturnLocalCarriesDeclaredContract(t *testing.T) {
+	reg := standard.Registry()
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function make(): {run: (self: any) -> ()}?
+    local mt = {}
+    local instance = {}
+    if false then
+        return nil
+    end
+    return setmetatable(instance, mt), nil
+end
+`)
+
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	localStmt, ok := fn.Stmts[1].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want instance local assignment", fn.Stmts[1])
+	}
+	point := requireStmtPoints(t, built, localStmt, 1)[0]
+	localFact, ok := facts.LocalAssignment(point)
+	if !ok {
+		t.Fatalf("missing instance local assignment at point %d", point)
+	}
+	if !localFact.DeclaredValueContracts() {
+		t.Fatalf("setmetatable-returned local should carry declared return contract")
+	}
+	declared, ok := localFact.DeclaredValue()
+	if !ok {
+		t.Fatalf("missing declared return value")
+	}
+	gotType, ok := typevalue.TypeOf(reg, declared)
+	want := typeexpr.Optional(typetable.NewRecord().Field("run", typ.Func().Param("self", typ.Any).Build()).Build())
+	if !ok || !typ.TypeEquals(gotType, want) {
+		t.Fatalf("declared return local type = %v/%v, want %v", gotType, ok, want)
+	}
+}
+
 func TestLowerAnnotatedEmptyMapObjectLiteralCarriesExpectedContract(t *testing.T) {
 	stmts, _, built, result := parseSemanticChunk(t, `local t: {[string]: string} = {}`)
 	reg := standard.Registry()

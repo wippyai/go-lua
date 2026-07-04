@@ -8,6 +8,7 @@ import (
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -67,6 +68,9 @@ func lowerReturnLocalTypes(bindings *bind.Result, graph cfg.Graph, result *seman
 			}
 			id, ok := resolveSymbol(source, bindings)
 			if !ok {
+				if returnSourceMayOmitDeclaredLocal(source, declared[slot]) {
+					continue
+				}
 				states[slot].invalid = true
 				continue
 			}
@@ -100,6 +104,24 @@ func lowerReturnLocalTypes(bindings *bind.Result, graph cfg.Graph, result *seman
 		return nil
 	}
 	return out
+}
+
+func returnSourceMayOmitDeclaredLocal(source sourceprovenance.ASTSource, declared typ.Type) bool {
+	if declared == nil || !subtype.IsSubtype(typ.Nil, declared) {
+		return false
+	}
+	if source.Kind == sourceprovenance.SourceNil {
+		return true
+	}
+	if source.Kind != sourceprovenance.SourceExpression {
+		return false
+	}
+	inner, ok := sourceprovenance.ProofInner(source.Expr)
+	if !ok {
+		return false
+	}
+	_, isNil := inner.(*ast.NilExpr)
+	return isNil
 }
 
 type returnSlotLocalState struct {

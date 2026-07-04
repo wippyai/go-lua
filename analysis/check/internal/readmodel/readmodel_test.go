@@ -762,6 +762,39 @@ end
 	}
 }
 
+func TestForEachReturnAcceptsRuntimeCastOnCallProducer(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local Proto = {}
+
+local function f(): {id: string}
+	local self = {id = "ok"}
+	return setmetatable(self, Proto) :: {id: string}
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{
+		Check: body.Config{Registry: reg, Globals: []string{"setmetatable"}},
+	})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil || len(root.FunctionResults()) != 1 {
+		t.Fatalf("root/functions = %#v, want one function result", root)
+	}
+	var returns []Return
+	New(root.FunctionResults()[0]).ForEachReturn(func(ret Return) bool {
+		returns = append(returns, ret)
+		return true
+	})
+	if len(returns) != 1 {
+		t.Fatalf("returns = %#v, want one return projection", returns)
+	}
+	if ret := returns[0]; !ret.Check.Admissible {
+		t.Fatalf("return check = %#v, want runtime-validated call producer accepted", ret.Check)
+	}
+}
+
 func TestForEachReturnProjectsObjectLiteralExplicitAnyMember(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `

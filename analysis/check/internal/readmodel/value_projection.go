@@ -46,7 +46,21 @@ func (r Reader) SourceValue(point cfg.Point, source sourceprovenance.ASTSource) 
 			return r.result.PathValueAtBoundary(point, p)
 		}
 		return product.Value{}, false
-	case sourceprovenance.SourceCall, sourceprovenance.SourceVararg, sourceprovenance.SourceNil, sourceprovenance.SourceUnknown:
+	case sourceprovenance.SourceCall:
+		if source.Expr != nil && source.ResultIndex == 0 {
+			if value, ok := r.result.ExpressionValueAtBoundary(point, source.Expr); ok {
+				return value, true
+			}
+		}
+		if value, ok := r.result.LocalAssignmentSourceValueForExplanationAtBoundary(point, source); ok {
+			return value, true
+		}
+		valueSource, ok := sourcebridge.ValueSourceFromASTSource(source)
+		if !ok {
+			return product.Value{}, false
+		}
+		return r.result.SourceValueForExplanationAtBoundary(point, valueSource)
+	case sourceprovenance.SourceVararg, sourceprovenance.SourceNil, sourceprovenance.SourceUnknown:
 		if value, ok := r.result.LocalAssignmentSourceValueForExplanationAtBoundary(point, source); ok {
 			return value, true
 		}
