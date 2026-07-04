@@ -1,11 +1,6 @@
 package checktest
 
-import (
-	"testing"
-
-	"github.com/wippyai/go-lua/analysis/check/diagnostics"
-	"github.com/wippyai/go-lua/analysis/diagnostic"
-)
+import "testing"
 
 func TestObjectLiteralDotFieldDiscriminantSatisfiesUnionArm(t *testing.T) {
 	result := Check(`
@@ -20,7 +15,7 @@ local event: Event = {kind = "stop", code = 1}
 	}
 }
 
-func TestObjectLiteralBracketStringDiscriminantDoesNotSatisfyDotFieldUnion(t *testing.T) {
+func TestObjectLiteralBracketStringDiscriminantSatisfiesDotFieldUnion(t *testing.T) {
 	src := `
 type Start = {kind: "start", payload: string}
 type Stop = {kind: "stop", code: number}
@@ -29,48 +24,7 @@ type Event = Start | Stop
 local event: Event = {["kind"] = "stop", code = 1}
 `
 	result := Check(src)
-	requireDiagnostic(t, result, diagnosticExpectation{
-		Code:            diagnostics.CodeAssignmentType,
-		DiagnosticCount: 1,
-		Line:            6,
-		Column:          22,
-		Span:            diagnostic.Span{StartLine: 6, StartCol: 22, EndLine: 6, EndCol: 50},
-		MessageContains: []string{
-			`{code: 1, ["kind"]: "stop"}`,
-			`not`,
-			`{kind: "start", payload: string} | {code: number, kind: "stop"}`,
-		},
-		EvidenceMin: 4,
-		EvidenceOrdered: []string{
-			`assigned value has type {code: 1, ["kind"]: "stop"}`,
-			`event is declared as Event`,
-			`union arm 1 ({kind: "start", payload: string}) rejected: requires .kind; literal provides ["kind"] instead`,
-			`union arm 2 ({code: number, kind: "stop"}) rejected: requires .kind; literal provides ["kind"] instead`,
-		},
-		LabelMin:      2,
-		LabelContains: []string{"declared type", "assigned value"},
-		HelpContains: []string{
-			"Use a value compatible with the expected type",
-			"change the target type",
-		},
-		Sources: diagnostic.SourceMap{"test.lua": src},
-		RenderOrderedContains: []string{
-			`error[type.assignment]: cannot assign {code: 1, ["kind"]: "stop"} to {kind: "start", payload: string} | {code: number, kind: "stop"}`,
-			"--> test.lua:6:22",
-			"↓ declared type",
-			`6 | local event: Event = {["kind"] = "stop", code = 1}`,
-			"↑ assigned value",
-			"because:",
-			`1. proven: assigned value has type {code: 1, ["kind"]: "stop"}`,
-			"2. claimed: event is declared as Event",
-			`3. refuted: union arm 1 ({kind: "start", payload: string}) rejected: requires .kind; literal provides ["kind"] instead`,
-			`4. refuted: union arm 2 ({code: number, kind: "stop"}) rejected: requires .kind; literal provides ["kind"] instead`,
-			"help: Use a value compatible with the expected type",
-		},
-		RenderNotContains: []string{
-			"^~",
-			"where:",
-			"want Event",
-		},
-	})
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want bracket string key to satisfy dot field", result.Diagnostics)
+	}
 }
