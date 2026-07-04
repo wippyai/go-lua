@@ -30,6 +30,7 @@ type fixtureSuite struct {
 	Stdlib          *bool         `json:"stdlib,omitempty"`
 	Packages        []string      `json:"packages,omitempty"` // predefined system packages: "channel", "process", "time", "funcs", "uuid"
 	DeadlineSeconds int           `json:"deadline_seconds,omitempty"`
+	Serial          bool          `json:"serial,omitempty"`
 	Check           *fixtureCheck `json:"check,omitempty"`
 	Run             *fixtureRun   `json:"run,omitempty"`
 	Bench           *fixtureBench `json:"bench,omitempty"`

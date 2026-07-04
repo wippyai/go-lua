@@ -6,12 +6,15 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 )
 
 const defaultFixtureDeadline = 30 * time.Second
 const defaultFixtureMemoryLimitBytes int64 = 8 << 30
+
+var fixtureSlotAcquireMu sync.Mutex
 
 // fixtureDeadline bounds a normal fixture step. FIXTURE_DEADLINE_SECONDS is a
 // local/CI override for stress runs; fixture manifests may request a larger
@@ -174,42 +177,67 @@ func TestFixtures(t *testing.T) {
 	t.Cleanup(func() {
 		report.finish(t)
 	})
+	runFixtureSuites(t, suites, fixtureSlots, func(t *testing.T, s namedSuite) {
+		suiteStart := time.Now()
+		defer func() {
+			report.recordSuite(s.Name, fixtureTestStatus(t), time.Since(suiteStart), s.Suite.Skip)
+		}()
+		if s.Suite.Skip != "" {
+			t.Skip(s.Suite.Skip)
+		}
+		t.Run("check", func(t *testing.T) {
+			stepStart := time.Now()
+			defer func() {
+				report.recordStep(s.Name, "check", fixtureTestStatus(t), time.Since(stepStart), fixtureCheckSkipReason(s))
+			}()
+			runWithDeadline(t, s, "check", func(t *testing.T) {
+				runCheckPhase(t, s)
+			})
+		})
+		t.Run("run", func(t *testing.T) {
+			stepStart := time.Now()
+			defer func() {
+				report.recordStep(s.Name, "run", fixtureTestStatus(t), time.Since(stepStart), fixtureRunSkipReason(s))
+			}()
+			runWithDeadline(t, s, "run", func(t *testing.T) {
+				runExecPhase(t, s)
+			})
+		})
+	})
+}
+
+func runFixtureSuites(t *testing.T, suites []namedSuite, slots chan struct{}, run func(*testing.T, namedSuite)) {
+	t.Helper()
 	for _, s := range suites {
 		s := s
 		t.Run(s.Name, func(t *testing.T) {
 			if !fixtureSequential() {
 				t.Parallel()
 			}
-			fixtureSlots <- struct{}{}
-			t.Cleanup(func() {
-				<-fixtureSlots
-			})
-			suiteStart := time.Now()
-			defer func() {
-				report.recordSuite(s.Name, fixtureTestStatus(t), time.Since(suiteStart), s.Suite.Skip)
-			}()
-			if s.Suite.Skip != "" {
-				t.Skip(s.Suite.Skip)
-			}
-			t.Run("check", func(t *testing.T) {
-				stepStart := time.Now()
-				defer func() {
-					report.recordStep(s.Name, "check", fixtureTestStatus(t), time.Since(stepStart), fixtureCheckSkipReason(s))
-				}()
-				runWithDeadline(t, s, "check", func(t *testing.T) {
-					runCheckPhase(t, s)
-				})
-			})
-			t.Run("run", func(t *testing.T) {
-				stepStart := time.Now()
-				defer func() {
-					report.recordStep(s.Name, "run", fixtureTestStatus(t), time.Since(stepStart), fixtureRunSkipReason(s))
-				}()
-				runWithDeadline(t, s, "run", func(t *testing.T) {
-					runExecPhase(t, s)
-				})
-			})
+			t.Cleanup(acquireFixtureSlots(slots, s))
+			run(t, s)
 		})
+	}
+}
+
+func fixtureSlotCount(slots chan struct{}, suite namedSuite) int {
+	if suite.Suite.Serial {
+		return cap(slots)
+	}
+	return 1
+}
+
+func acquireFixtureSlots(slots chan struct{}, suite namedSuite) func() {
+	slotCount := fixtureSlotCount(slots, suite)
+	fixtureSlotAcquireMu.Lock()
+	for i := 0; i < slotCount; i++ {
+		slots <- struct{}{}
+	}
+	fixtureSlotAcquireMu.Unlock()
+	return func() {
+		for i := 0; i < slotCount; i++ {
+			<-slots
+		}
 	}
 }
 
@@ -310,6 +338,16 @@ func TestFixtureParallelismDefaultIsCapped(t *testing.T) {
 	defer runtime.GOMAXPROCS(previous)
 	if got := fixtureParallelism(); got != 4 {
 		t.Fatalf("fixtureParallelism = %d, want capped default 4", got)
+	}
+}
+
+func TestSerialFixtureAcquiresAllSlots(t *testing.T) {
+	slots := make(chan struct{}, 4)
+	if got := fixtureSlotCount(slots, namedSuite{}); got != 1 {
+		t.Fatalf("fixtureSlotCount normal = %d, want 1", got)
+	}
+	if got := fixtureSlotCount(slots, namedSuite{Suite: fixtureSuite{Serial: true}}); got != 4 {
+		t.Fatalf("fixtureSlotCount serial = %d, want all slots", got)
 	}
 }
 

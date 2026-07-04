@@ -190,6 +190,46 @@ func TestRekeyValueLanesKeepsStableSymbolStaticMembers(t *testing.T) {
 	}
 }
 
+func TestBranchProofsSnapshotOrdersByFormattedKeys(t *testing.T) {
+	ks := keyspace.New()
+	proofs := []BranchProof{
+		{
+			Kind:  BranchProofPathEqual,
+			Path:  mustStateKey(t, ks, pathdom.PathKey("sym2@1.z")),
+			Other: mustStateKey(t, ks, pathdom.PathKey("sym2@1.a")),
+		},
+		{
+			Kind:     BranchProofPathPresence,
+			Path:     mustStateKey(t, ks, pathdom.PathKey("sym10@1")),
+			Presence: presence.Present(),
+		},
+		{
+			Kind:     BranchProofPathPresence,
+			Path:     mustStateKey(t, ks, pathdom.PathKey("sym2@1.a")),
+			Presence: presence.Maybe(),
+		},
+	}
+	l := Lane{}
+	for _, proof := range proofs {
+		var changed bool
+		l, changed = l.AddBranchProof(proof)
+		if !changed {
+			t.Fatalf("AddBranchProof(%#v) reported unchanged", proof)
+		}
+	}
+
+	got := l.BranchProofsSnapshot(ks).Proofs
+	want := []BranchProof{proofs[1], proofs[2], proofs[0]}
+	if len(got) != len(want) {
+		t.Fatalf("snapshot proof count = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("proof[%d] = %#v, want %#v", i, got[i], want[i])
+		}
+	}
+}
+
 func mustStructKey(t *testing.T, ks *keyspace.KeySpace, key pathdom.PathKey) keyspace.Key {
 	t.Helper()
 	structKey, ok := ks.FromPathKey(key)

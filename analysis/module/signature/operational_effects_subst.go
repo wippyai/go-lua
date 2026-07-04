@@ -13,21 +13,42 @@ func SubstituteOperationalTypes(e *OperationalEffects, params []*typ.TypeParam, 
 		return cloneOperationalEffects(e)
 	}
 	out := e.Clone()
-	for i := range out.NormalReturnTypeRefinements {
-		out.NormalReturnTypeRefinements[i].Type = subst.Params(out.NormalReturnTypeRefinements[i].Type, params, args)
+	for _, lane := range operationalEffectLanes {
+		if lane.substituteTypes != nil {
+			lane.substituteTypes(&out, params, args)
+		}
 	}
-	for i := range out.PathStaticMembers {
-		out.PathStaticMembers[i].Type = subst.Params(out.PathStaticMembers[i].Type, params, args)
+	return &out
+}
+
+func substitutePathTypeRefinementTypes(e *OperationalEffects, params []*typ.TypeParam, args []typ.Type) {
+	for i := range e.NormalReturnTypeRefinements {
+		e.NormalReturnTypeRefinements[i].Type = subst.Params(e.NormalReturnTypeRefinements[i].Type, params, args)
 	}
-	for i := range out.PathPresenceImplications {
-		out.PathPresenceImplications[i].TriggerType = subst.Params(out.PathPresenceImplications[i].TriggerType, params, args)
+}
+
+func substitutePathStaticMemberTypes(e *OperationalEffects, params []*typ.TypeParam, args []typ.Type) {
+	for i := range e.PathStaticMembers {
+		e.PathStaticMembers[i].Type = subst.Params(e.PathStaticMembers[i].Type, params, args)
 	}
-	for i := range out.DynamicIndexFacts {
-		out.DynamicIndexFacts[i].Key.Type = subst.Params(out.DynamicIndexFacts[i].Key.Type, params, args)
-		out.DynamicIndexFacts[i].Value.Type = subst.Params(out.DynamicIndexFacts[i].Value.Type, params, args)
+}
+
+func substitutePathPresenceImplicationTypes(e *OperationalEffects, params []*typ.TypeParam, args []typ.Type) {
+	for i := range e.PathPresenceImplications {
+		e.PathPresenceImplications[i].TriggerType = subst.Params(e.PathPresenceImplications[i].TriggerType, params, args)
 	}
-	for templateIndex := range out.ReturnAllocationTemplates {
-		objects := out.ReturnAllocationTemplates[templateIndex].Objects
+}
+
+func substituteDynamicIndexFactTypes(e *OperationalEffects, params []*typ.TypeParam, args []typ.Type) {
+	for i := range e.DynamicIndexFacts {
+		e.DynamicIndexFacts[i].Key.Type = subst.Params(e.DynamicIndexFacts[i].Key.Type, params, args)
+		e.DynamicIndexFacts[i].Value.Type = subst.Params(e.DynamicIndexFacts[i].Value.Type, params, args)
+	}
+}
+
+func substituteReturnAllocationTemplateTypes(e *OperationalEffects, params []*typ.TypeParam, args []typ.Type) {
+	for templateIndex := range e.ReturnAllocationTemplates {
+		objects := e.ReturnAllocationTemplates[templateIndex].Objects
 		for objectIndex := range objects {
 			objects[objectIndex].Type = subst.Params(objects[objectIndex].Type, params, args)
 			for entryIndex := range objects[objectIndex].DynamicEntries {
@@ -36,5 +57,4 @@ func SubstituteOperationalTypes(e *OperationalEffects, params []*typ.TypeParam, 
 			}
 		}
 	}
-	return &out
 }

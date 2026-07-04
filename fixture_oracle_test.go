@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -247,16 +248,63 @@ func TestCuratedOracle(t *testing.T) {
 	}
 	startFixtureMemoryGuard(t)
 
+	var mu sync.Mutex
 	var verdicts []oracleVerdict
 	pass, fail, skipped, deadlockPass, deadlockFail := 0, 0, 0, 0, 0
-	for _, s := range suites {
-		s := s
+	t.Cleanup(func() {
+		total := pass + fail
+		t.Logf("CURATED ORACLE SCORECARD: %d/%d fixtures PASS against curated truth (%d fail, %d skipped); deadlock-* %d pass / %d fail",
+			pass, total, fail, skipped, deadlockPass, deadlockFail)
+
+		// Bucket the failures by dominant cause for the worklist.
+		codeBuckets := make(map[string]int)
+		var failNames []oracleVerdict
+		for _, v := range verdicts {
+			if v.passed {
+				continue
+			}
+			failNames = append(failNames, v)
+			for _, u := range v.unexpected {
+				if code := extractCode(u); code != "" {
+					codeBuckets[code]++
+				}
+			}
+		}
+
+		sort.Slice(failNames, func(i, j int) bool { return failNames[i].name < failNames[j].name })
+		for _, v := range failNames {
+			t.Logf("FAIL %s: %d missing, %d unexpected", v.name, len(v.missing), len(v.unexpected))
+			for _, m := range v.missing {
+				t.Logf("    MISS: %s", m)
+			}
+			for _, u := range v.unexpected {
+				t.Logf("    FALSE+: %s", u)
+			}
+		}
+
+		var codes []string
+		for c := range codeBuckets {
+			codes = append(codes, c)
+		}
+		sort.Slice(codes, func(i, j int) bool { return codeBuckets[codes[i]] > codeBuckets[codes[j]] })
+		t.Logf("--- FALSE-POSITIVE CODE HISTOGRAM ---")
+		for _, c := range codes {
+			t.Logf("  %s: %d", c, codeBuckets[c])
+		}
+	})
+
+	fixtureSlots := make(chan struct{}, fixtureParallelism())
+	runFixtureSuites(t, suites, fixtureSlots, func(t *testing.T, s namedSuite) {
 		skip, deadlock := shouldSkipOracleSuite(s)
 		if skip {
+			mu.Lock()
 			skipped++
-			continue
+			mu.Unlock()
+			t.Skip("oracle fixture skipped")
 		}
 		v := oracleFixtureVerdictWithDeadline(t, s)
+		mu.Lock()
+		defer mu.Unlock()
 		verdicts = append(verdicts, v)
 		if v.passed {
 			pass++
@@ -269,47 +317,7 @@ func TestCuratedOracle(t *testing.T) {
 				deadlockFail++
 			}
 		}
-	}
-
-	total := pass + fail
-	t.Logf("CURATED ORACLE SCORECARD: %d/%d fixtures PASS against curated truth (%d fail, %d skipped); deadlock-* %d pass / %d fail",
-		pass, total, fail, skipped, deadlockPass, deadlockFail)
-
-	// Bucket the failures by dominant cause for the worklist.
-	codeBuckets := make(map[string]int)
-	var failNames []oracleVerdict
-	for _, v := range verdicts {
-		if v.passed {
-			continue
-		}
-		failNames = append(failNames, v)
-		for _, u := range v.unexpected {
-			if code := extractCode(u); code != "" {
-				codeBuckets[code]++
-			}
-		}
-	}
-
-	sort.Slice(failNames, func(i, j int) bool { return failNames[i].name < failNames[j].name })
-	for _, v := range failNames {
-		t.Logf("FAIL %s: %d missing, %d unexpected", v.name, len(v.missing), len(v.unexpected))
-		for _, m := range v.missing {
-			t.Logf("    MISS: %s", m)
-		}
-		for _, u := range v.unexpected {
-			t.Logf("    FALSE+: %s", u)
-		}
-	}
-
-	var codes []string
-	for c := range codeBuckets {
-		codes = append(codes, c)
-	}
-	sort.Slice(codes, func(i, j int) bool { return codeBuckets[codes[i]] > codeBuckets[codes[j]] })
-	t.Logf("--- FALSE-POSITIVE CODE HISTOGRAM ---")
-	for _, c := range codes {
-		t.Logf("  %s: %d", c, codeBuckets[c])
-	}
+	})
 }
 
 // TestCuratedGate is the hard regression gate for the curated oracle: it pins the

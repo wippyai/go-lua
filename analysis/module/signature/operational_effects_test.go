@@ -53,11 +53,47 @@ func TestOperationalEffectsHotOperationsUseLaneRegistry(t *testing.T) {
 	}
 }
 
+func TestSubstituteOperationalTypesUsesLaneRegistry(t *testing.T) {
+	file := parseOperationalEffectsFile(t, "operational_effects_subst.go")
+	fn := requireOperationalEffectsFuncDecl(t, file, "SubstituteOperationalTypes")
+	if !funcUsesIdent(fn, "operationalEffectLanes") {
+		t.Fatal("SubstituteOperationalTypes must iterate operationalEffectLanes")
+	}
+	if field := firstSelectedOperationalEffectsField(fn, operationalEffectsSliceFields(t)); field != "" {
+		t.Fatalf("SubstituteOperationalTypes selects field %s directly; use operationalEffectLanes", field)
+	}
+}
+
+func TestOperationalEffectLaneRegistryOwnsTypeSubstitution(t *testing.T) {
+	wantTyped := map[string]struct{}{
+		"NormalReturnTypeRefinements": {},
+		"PathPresenceImplications":    {},
+		"PathStaticMembers":           {},
+		"DynamicIndexFacts":           {},
+		"ReturnAllocationTemplates":   {},
+	}
+	for _, lane := range operationalEffectLanes {
+		_, want := wantTyped[lane.fieldName]
+		got := lane.substituteTypes != nil
+		if got != want {
+			t.Fatalf("operational effect lane %s substituteTypes present = %v, want %v", lane.fieldName, got, want)
+		}
+		delete(wantTyped, lane.fieldName)
+	}
+	for field := range wantTyped {
+		t.Fatalf("typed operational effect field %s has no lane owner", field)
+	}
+}
+
 func parseOperationalEffectsSource(t *testing.T) *ast.File {
+	return parseOperationalEffectsFile(t, "operational_effects.go")
+}
+
+func parseOperationalEffectsFile(t *testing.T, name string) *ast.File {
 	t.Helper()
-	file, err := parser.ParseFile(token.NewFileSet(), "operational_effects.go", nil, 0)
+	file, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
 	if err != nil {
-		t.Fatalf("parse operational_effects.go: %v", err)
+		t.Fatalf("parse %s: %v", name, err)
 	}
 	return file
 }
