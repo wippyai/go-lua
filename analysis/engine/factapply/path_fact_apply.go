@@ -5,6 +5,7 @@ import (
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -49,9 +50,26 @@ func applyPathStaticMemberWrite(
 		edit.WriteLocalPathStaticMember(canonical, value)
 	}
 	out = edit.Done()
+	out = applyPathStaticMemberWriteContainerPresence(ctx, resolver, out, targetPath)
 	out = writeHeapTableStaticMember(ctx, resolver, out, targetPath, value)
 	out = addPathEqualityProofFromSource(resolver, facts, ctx.Point, out, targetPath, source)
 	return addPathEqualityProofFromDynamicIndexSource(ctx, resolver, facts, sources, read, in, out, targetPath, source)
+}
+
+func applyPathStaticMemberWriteContainerPresence(
+	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
+	out state.State,
+	targetPath pathdom.Path,
+) state.State {
+	if targetPath.Symbol == 0 || len(targetPath.Segments) == 0 {
+		return out
+	}
+	present := product.NewWithPresence(ctx.Registry, product.ShapeTop, presence.Present())
+	for parent := targetPath.Parent(); !parent.IsEmpty(); parent = parent.Parent() {
+		out = applyValueRefinementAt(ctx.Registry, resolver, nil, ctx.Point, out, parent, factflow.NewValueConstraint(present))
+	}
+	return out
 }
 
 func applyBranchPathEvidence(

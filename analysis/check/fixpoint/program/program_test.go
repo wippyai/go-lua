@@ -33,6 +33,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -738,6 +739,158 @@ local config = select_shape("auto")
 	if !ok || !typ.TypeEquals(got, typ.LiteralString("auto")) {
 		t.Fatalf("literal context param type = %v/%v, want \"auto\"", got, ok)
 	}
+}
+
+func TestCollectCallContextKeysSeedWrittenGlobalRead(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function call_scheduler()
+    return decide_execution_strategy()
+end
+
+function decide_execution_strategy()
+    return "stale"
+end
+
+function replacement_strategy()
+    return 1
+end
+
+decide_execution_strategy = replacement_strategy
+
+call_scheduler()
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	keys := collectKeys(bindings, summary.DefaultSummaryKey(ref.Root()), reg, nil, importlookup.Source{}, stmts)
+	if _, err := collectCallContextKeys(&keys, stmts, bindings, body.Config{Registry: reg}, nil); err != nil {
+		t.Fatalf("collectCallContextKeys: %v", err)
+	}
+	callScheduler := functionOriginByName(t, bindings, "call_scheduler")
+	decideSym, ok := bindings.GlobalSymbol("decide_execution_strategy")
+	if !ok {
+		t.Fatal("decide_execution_strategy global symbol missing")
+	}
+	replacement := functionOriginByName(t, bindings, "replacement_strategy")
+	wantID := identity.LuaFunction(uint64(replacement.Symbol))
+	for _, context := range keys.contexts.Entries() {
+		if context.funcExpr != callScheduler.Func || !context.hasEntryState {
+			continue
+		}
+		got := context.entryState.ReadValue(reg, statekey.SymbolValue(decideSym))
+		id, ok := product.Get(reg, got, identity.Key).ID()
+		if !ok || id != wantID {
+			t.Fatalf("call_scheduler context global value identity = %v/%v, want %v (value=%v)", id, ok, wantID, got)
+		}
+		return
+	}
+	t.Fatalf("call_scheduler context missing; contexts=%d", keys.contexts.Len())
+}
+
+func TestCollectKeysRejectsStaticPathForReassignedGlobalFunction(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+function handler()
+    return "stale"
+end
+
+function replacement()
+    return 1
+end
+
+handler = replacement
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	keys := collectKeys(bindings, summary.DefaultSummaryKey(ref.Root()), reg, nil, importlookup.Source{}, stmts)
+	handler, ok := bindings.GlobalSymbol("handler")
+	if !ok {
+		t.Fatal("handler global symbol missing")
+	}
+	if len(bindings.WriteIdents(handler)) <= 1 {
+		t.Fatalf("handler writes = %d, want function declaration plus reassignment", len(bindings.WriteIdents(handler)))
+	}
+	handlerPath := path.NewPath(handler, "handler")
+	handlerKey, ok := factflow.CalleePathKeyFromPath(handlerPath)
+	if !ok {
+		t.Fatal("handler callee path key missing")
+	}
+	if _, ok := keys.pathKeys[handlerKey]; ok {
+		t.Fatalf("handler static path key exists for reassigned global; calls must use current value identity")
+	}
+}
+
+func TestCollectCallContextKeysSeedCapturedTableDynamicFacts(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local suites = {}
+
+local function register(name: string)
+    table.insert(suites, {name = name, count = 0})
+end
+
+local function run()
+    for _, s in ipairs(suites) do
+        local n: string = s.name
+    end
+end
+
+register("a")
+run()
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result, err := RunBoundChunk(stmts, bindings, Config{
+		Check: body.Config{
+			Registry:   reg,
+			Signatures: signaturelookup.Source{IncludeStdlib: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunBoundChunk: %v", err)
+	}
+	register := functionOriginByName(t, bindings, "register")
+	registerKey, ok := result.FunctionKey(register.Symbol)
+	if !ok {
+		t.Fatalf("register summary key missing")
+	}
+	registerSummary, ok := result.Snapshot().Read(registerKey)
+	if !ok {
+		t.Fatalf("register summary missing for %v", registerKey)
+	}
+	if len(registerSummary.NormalReturnFacts.DynamicIndexFacts) == 0 {
+		t.Fatalf("register summary dynamic-index facts missing")
+	}
+	for _, origin := range bindings.FunctionOrigins() {
+		if !origin.HasTargetSymbol || bindings.Name(origin.TargetSymbol) != "run" {
+			continue
+		}
+		for _, context := range result.RootResult().FunctionResults() {
+			if context.Function() != origin.Func || !context.IsCallContextResult() {
+				continue
+			}
+			entry, ok := context.EntryState()
+			if !ok {
+				t.Fatalf("run context missing entry state")
+			}
+			suites := capturedSymbolByName(t, bindings, origin.Func, "suites")
+			value := entry.ReadValue(reg, statekey.SymbolValue(suites))
+			id, ok := product.Get(reg, value, identity.Key).ID()
+			if !ok {
+				t.Fatalf("run context suites value has no table identity: %v", value)
+			}
+			object := entry.ReadHeapTableObject(reg, id)
+			if heapidentity.ObjectDomain(reg).Equal(object, heapidentity.ObjectDomain(reg).Bottom()) {
+				t.Fatalf("run context missing suites heap object for %v", id)
+			}
+			for _, fact := range object.DynamicIndexFacts() {
+				if tpe, ok := typevalue.TypeOf(reg, fact.Value); ok {
+					if member, ok := access.Field(tpe, "name"); ok && subtype.IsSubtype(member, typ.String) {
+						return
+					}
+				}
+			}
+			t.Fatalf("run context suites heap facts = %#v, want inserted record value with string name", object.DynamicIndexFacts())
+		}
+	}
+	t.Fatalf("run context missing")
 }
 
 func TestRunChunkScalarLiteralContextSelectsReturnShape(t *testing.T) {
@@ -4142,6 +4295,17 @@ func stateHasPathKeyMembership(ks *keyspace.KeySpace, st state.State, keySymbol,
 		}
 	}
 	return false
+}
+
+func capturedSymbolByName(t *testing.T, bindings *bind.Result, fn *ast.FunctionExpr, name string) symbol.ID {
+	t.Helper()
+	for _, capture := range bindings.DirectCaptures(fn) {
+		if capture.CapturedName == name && capture.Captured != 0 {
+			return capture.Captured
+		}
+	}
+	t.Fatalf("capture %q not found: %#v", name, bindings.DirectCaptures(fn))
+	return 0
 }
 
 func requireCallByCalleeName(t *testing.T, result *body.Result, name string) cfg.Point {

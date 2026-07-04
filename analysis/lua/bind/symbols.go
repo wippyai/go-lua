@@ -324,6 +324,7 @@ func (b *binder) bindReadIdent(ident *ast.IdentExpr) {
 	}
 	b.result.readIdents[id] = append(b.result.readIdents[id], ident)
 	b.recordDirectCapture(id)
+	b.recordDirectGlobalRead(id)
 }
 
 func (b *binder) bindTypeQueryIdent(ident *ast.IdentExpr) {

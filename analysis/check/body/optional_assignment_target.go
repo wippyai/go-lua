@@ -1,6 +1,8 @@
 package body
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -56,6 +58,10 @@ func (r *Result) optionalAssignmentTargetOccurrence(point cfg.Point, fact Ordina
 		typ.IsUnknown(containerType) ||
 		typ.IsNever(containerType) ||
 		!typevalue.ProjectionHasNil(containerType) {
+		return OptionalAssignmentTargetOccurrence{}, false
+	}
+	if value, ok := r.ExpressionValueBeforeBoundary(point, container); ok &&
+		presence.Equal(product.PresenceOf(value), presence.Present()) {
 		return OptionalAssignmentTargetOccurrence{}, false
 	}
 	return OptionalAssignmentTargetOccurrence{

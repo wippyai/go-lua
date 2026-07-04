@@ -167,6 +167,41 @@ func TestFactsNodeTransferStaticMemberWriteUpdatesHeapTableIdentity(t *testing.T
 	}
 }
 
+func TestFactsNodeTransferStaticMemberWriteRefinesContainersPresent(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(4013)
+	target := symbol.ID(4013)
+	targetPath := pathdom.NewPath(target, "state").Field("nested").Field("handler")
+	valueSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(4013), HasExpr: true}
+	value := presentValue(reg)
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{valueSource: value},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "state")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			PathStaticMemberWrites: map[cfg.Point]factflow.PathStaticMemberWrite{
+				point: factflow.NewPathStaticMemberWrite(targetPath, valueSource),
+			},
+		}),
+		Sources:    sources,
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.WriteValue(reg, key.SymbolValue(target), product.Top()))
+
+	root := got.ReadValue(reg, key.SymbolValue(target))
+	if gotPresence := product.PresenceOf(root); !presence.Equal(gotPresence, presence.Present()) {
+		t.Fatalf("root presence = %s in %s, want present", gotPresence, formatValue(reg, root))
+	}
+	assertPathPresence(t, reg, ks, got, pathdom.PathKey("sym4013@1.nested"), presence.Present())
+}
+
 func TestFactsNodeTransferAppliesDynamicIndexWriteKeyValueAdmission(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(402)

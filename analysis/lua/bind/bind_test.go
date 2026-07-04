@@ -321,6 +321,9 @@ func TestFuncDefTargetSymbol(t *testing.T) {
 		t.Fatalf("global FuncDefTargetSymbol = %d/%v, want %d/true", id, ok, globalID)
 	}
 	assertKind(t, r, id, symbol.Global)
+	if !r.HasWrite(globalID) {
+		t.Fatalf("HasWrite(global function target %d) = false, want true", globalID)
+	}
 
 	localID := mustLocalAt(t, r, localDecl, 0)
 	id, ok = r.FuncDefTargetSymbol(localStmt)
@@ -663,6 +666,37 @@ func TestDirectCapturesOuterParamLocalAndGlobals(t *testing.T) {
 	captures[0].CapturedName = "mutated"
 	if got := r.DirectCaptures(child)[0].CapturedName; got != "x" {
 		t.Fatalf("DirectCaptures returned mutable backing slice; name = %q", got)
+	}
+}
+
+func TestDirectGlobalReadsTracksGlobalsWithoutCapturingThem(t *testing.T) {
+	globalRead := ident("handler")
+	localRead := ident("x")
+	child := function(nil, ret(globalRead, localRead))
+	localDecl := localAssign([]string{"x"}, number("1"))
+	outer := function(nil,
+		localDecl,
+		localAssign([]string{"child"}, child),
+	)
+
+	r := BindFunction(outer, Options{Globals: []string{"handler"}})
+
+	globalID := mustSymbol(t, r, globalRead)
+	localID := mustLocalAt(t, r, localDecl, 0)
+	assertKind(t, r, globalID, symbol.Global)
+	if got := mustSymbol(t, r, localRead); got != localID {
+		t.Fatalf("local read resolved to %d, want %d", got, localID)
+	}
+	if got, want := captureIDs(r.DirectCaptures(child)), []symbol.ID{localID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("DirectCaptures(child) = %v, want %v", got, want)
+	}
+	if got, want := r.DirectGlobalReads(child), []symbol.ID{globalID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("DirectGlobalReads(child) = %v, want %v", got, want)
+	}
+	got := r.DirectGlobalReads(child)
+	got[0] = 0
+	if reread := r.DirectGlobalReads(child); len(reread) != 1 || reread[0] != globalID {
+		t.Fatalf("DirectGlobalReads returned mutable backing slice: %v", reread)
 	}
 }
 

@@ -136,6 +136,16 @@ func (r *Result) DirectCaptures(fn *ast.FunctionExpr) []Capture {
 	return cloneCaptures(r.directCaptures[fn])
 }
 
+// DirectGlobalReads returns global symbols directly read by fn in first-use
+// order. Globals are not closure captures, but interprocedural analysis needs
+// them as entry-state dependencies because Lua globals are mutable values.
+func (r *Result) DirectGlobalReads(fn *ast.FunctionExpr) []symbol.ID {
+	if r == nil || fn == nil {
+		return nil
+	}
+	return cloneSymbols(r.directGlobalReads[fn])
+}
+
 // ParamSymbols returns ordered parameter symbols for fn.
 func (r *Result) ParamSymbols(fn *ast.FunctionExpr) []symbol.ID {
 	if r == nil || fn == nil {
@@ -237,6 +247,30 @@ func (b *binder) recordDirectCapture(id symbol.ID) {
 		CapturedName:      b.result.names[id],
 		DeclaringFunction: declaringFn,
 	})
+}
+
+func (b *binder) recordDirectGlobalRead(id symbol.ID) {
+	if id == 0 {
+		return
+	}
+	current := b.currentFunction()
+	if current == nil {
+		return
+	}
+	kind, ok := b.result.kinds[id]
+	if !ok || kind != symbol.Global {
+		return
+	}
+	seen := b.result.directGlobalSeen[current]
+	if seen == nil {
+		seen = make(map[symbol.ID]struct{})
+		b.result.directGlobalSeen[current] = seen
+	}
+	if _, ok := seen[id]; ok {
+		return
+	}
+	seen[id] = struct{}{}
+	b.result.directGlobalReads[current] = append(b.result.directGlobalReads[current], id)
 }
 
 func (b *binder) bindVararg() {

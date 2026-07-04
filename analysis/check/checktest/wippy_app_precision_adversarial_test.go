@@ -6744,6 +6744,21 @@ return make_actor
 	}
 }
 
+func TestCheckSequentialAnyMemberWritesDoNotMakeContainerOptional(t *testing.T) {
+	result := Check(`
+local function configure(state: any): any
+    state.register_channel = function() return true end
+    state.unregister_channel = function() return true end
+    return state
+end
+
+return configure
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want sequential member writes through any container to stay non-optional", result.Diagnostics)
+	}
+}
+
 func TestCheckDynamicReverseMapReadUsesClosedInvariantInSameFunctionAsFreshTables(t *testing.T) {
 	result := Check(`
 type ChannelInfo = {

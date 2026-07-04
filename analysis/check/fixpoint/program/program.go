@@ -677,7 +677,7 @@ func collectKeys(bindings *bind.Result, root summary.SummaryKey, reg *axis.Regis
 		if origin.HasTargetSymbol && origin.TargetSymbol != 0 && functionTargetCanUseDirectSymbolKey(bindings, origin.TargetSymbol) {
 			out.targetKeys[origin.TargetSymbol] = key
 		}
-		if targetPath, ok := pathTargets[origin.Func]; ok {
+		if targetPath, ok := pathTargets[origin.Func]; ok && (!origin.HasTargetSymbol || functionTargetCanUseStaticPathKey(bindings, origin.TargetSymbol)) {
 			pathKey, ok := factflow.CalleePathKeyFromPath(targetPath)
 			if !ok {
 				continue
@@ -707,6 +707,17 @@ func functionTargetCanUseDirectSymbolKey(bindings *bind.Result, target symbol.ID
 	}
 	kind, ok := bindings.Kind(target)
 	return ok && kind != symbol.Global
+}
+
+func functionTargetCanUseStaticPathKey(bindings *bind.Result, target symbol.ID) bool {
+	if bindings == nil || target == 0 {
+		return false
+	}
+	kind, ok := bindings.Kind(target)
+	if !ok {
+		return false
+	}
+	return kind != symbol.Global || len(bindings.WriteIdents(target)) <= 1
 }
 
 func appendSummaryKeyUnique(keys []summary.SummaryKey, key summary.SummaryKey) []summary.SummaryKey {
@@ -1679,6 +1690,24 @@ func (s *closureCaptureSeeder) apply(
 			entry, capturedSeen = s.apply(capturedFn, entry)
 			seen = seen || capturedSeen
 		}
+	}
+	for _, global := range s.bindings.DirectGlobalReads(fn) {
+		if !s.bindings.HasWrite(global) {
+			continue
+		}
+		slot := statekey.SymbolValue(global)
+		if slot == 0 {
+			continue
+		}
+		value := s.capturedValue(global, slot)
+		if !contextEntryValueUseful(s.reg, value) {
+			continue
+		}
+		entry = entry.WriteValue(s.reg, slot, value)
+		if updated, ok := seedEntryHeapObjectsForValue(s.reg, s.caller, entry, value); ok {
+			entry = updated
+		}
+		seen = true
 	}
 	return entry, seen
 }
@@ -3563,6 +3592,12 @@ func materializeFunctionTree(
 	if stats != nil && keys.contexts.Len() > beforeMaterializedCollection {
 		stats.MaterializedContextNewContexts += keys.contexts.Len() - beforeMaterializedCollection
 	}
+	closedDynamicResults := make(map[*ast.FunctionExpr]*body.Result, len(baseResults)+1)
+	closedDynamicResults[nil] = root
+	for fn, result := range baseResults {
+		closedDynamicResults[fn] = result
+	}
+	applyClosedDynamicAllValueEntryStates(&keys, prepared, config.Registry, root, closedDynamicResults)
 	recordProgramShape(stats, keys)
 	if refreshedContexts || addedContexts {
 		funcTypes = functionValueTypesFromSummaries(config.Registry, cache, keys)

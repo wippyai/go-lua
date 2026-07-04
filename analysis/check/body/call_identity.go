@@ -218,10 +218,11 @@ func (r *signatureIdentityResolver) implicitGlobalCalleeName(callee symbol.ID, c
 	if name == "" {
 		return "", false
 	}
-	if _, ok := r.implicitStdlibNames[name]; !ok {
-		return "", false
-	}
+	fullName := name
 	if len(calleePath.Segments) == 0 {
+		if _, ok := r.implicitStdlibNames[fullName]; !ok {
+			return "", false
+		}
 		return name, true
 	}
 	var b strings.Builder
@@ -240,5 +241,9 @@ func (r *signatureIdentityResolver) implicitGlobalCalleeName(callee symbol.ID, c
 			return "", false
 		}
 	}
-	return b.String(), true
+	fullName = b.String()
+	if _, ok := r.implicitStdlibNames[fullName]; !ok {
+		return "", false
+	}
+	return fullName, true
 }

@@ -32,6 +32,8 @@ type Result struct {
 	declaringFunctions map[symbol.ID]*ast.FunctionExpr
 	directCaptures     map[*ast.FunctionExpr][]Capture
 	directCaptureSeen  map[*ast.FunctionExpr]map[symbol.ID]struct{}
+	directGlobalReads  map[*ast.FunctionExpr][]symbol.ID
+	directGlobalSeen   map[*ast.FunctionExpr]map[symbol.ID]struct{}
 
 	paramSymbols      map[*ast.FunctionExpr][]symbol.ID
 	varargSymbols     map[*ast.FunctionExpr]symbol.ID
@@ -68,6 +70,8 @@ func newResult(opts Options) *Result {
 		declaringFunctions:    make(map[symbol.ID]*ast.FunctionExpr),
 		directCaptures:        make(map[*ast.FunctionExpr][]Capture),
 		directCaptureSeen:     make(map[*ast.FunctionExpr]map[symbol.ID]struct{}),
+		directGlobalReads:     make(map[*ast.FunctionExpr][]symbol.ID),
+		directGlobalSeen:      make(map[*ast.FunctionExpr]map[symbol.ID]struct{}),
 		paramSymbols:          make(map[*ast.FunctionExpr][]symbol.ID),
 		varargSymbols:         make(map[*ast.FunctionExpr]symbol.ID),
 		paramSlots:            make(map[*ast.FunctionExpr][]ParamSlot),

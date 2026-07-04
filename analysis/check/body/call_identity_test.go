@@ -103,6 +103,32 @@ func TestCallSignatureTypeUsesImplicitStdlibGlobalIdentity(t *testing.T) {
 	}
 }
 
+func TestCallSignatureTypeUsesImplicitStdlibMemberIdentity(t *testing.T) {
+	result, err := CheckChunk(parseChunk(t, `
+		local items: string[] = {}
+		table.insert(items, "a")
+	`), Config{
+		Registry:   standard.Registry(),
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	site, ok := onlyCallSite(t, result)
+	if !ok {
+		t.Fatal("missing table.insert call site")
+	}
+	name, ok := result.CallSignatureName(site)
+	if !ok || name != "table.insert" {
+		t.Fatalf("signature name = %q/%v, want table.insert", name, ok)
+	}
+	fn, ok := result.CallSignatureType(site)
+	if !ok || fn == nil {
+		t.Fatalf("missing implicit stdlib table.insert signature type")
+	}
+}
+
 func TestCallSignatureDoesNotUseManifestForUnresolvedImplicitGlobal(t *testing.T) {
 	m := manifest.New("ambient")
 	m.DefineFunctionSignature("imported", signature.Function{
