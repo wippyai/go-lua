@@ -470,10 +470,10 @@ func assignmentJudgmentMissingProofMessage(item judgment.Judgment, sourceName st
 		return indexedReadExpectedProofMessage(subject, "declared type")
 	}
 	if assignmentJudgmentHasCallInvalidationEvidence(item) {
-		return fmt.Sprintf("no proof on this path shows %s satisfies the declared type", subject)
+		return missingBoundaryProofMessageForSubject(subject, want)
 	}
 	if assignmentJudgmentHasDynamicTargetEvidence(item) {
-		return fmt.Sprintf("no proof on this path shows %s satisfies the declared type", subject)
+		return missingBoundaryProofMessageForSubject(subject, want)
 	}
 	if sourceName == "assigned value" || typ.Nil.Equals(got) || item.Expected.Label == "" {
 		return missingBoundaryProofMessageForSubject(subject, want)

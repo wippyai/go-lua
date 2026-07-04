@@ -39,14 +39,14 @@
             "line": 13,
             "column": 14,
             "contains": [
-              "no proof on this path shows tostring(...) satisfies the declared type"
+              "no proof on this path shows tostring(...) is 1 & \"ready\""
             ]
           }
         ],
         "evidence_contains": [
           "tostring(...) has type string",
           "assignment target item[key] requires 1 & \"ready\"",
-          "no proof on this path shows tostring(...) satisfies the declared type"
+          "no proof on this path shows tostring(...) is 1 & \"ready\""
         ],
         "render_contains": [
           "item[key] = tostring(value)",
@@ -60,7 +60,7 @@
           "because:",
           "1. proven: tostring(...) has type string",
           "2. proven: assignment target item[key] requires 1 & \"ready\"",
-          "3. missing proof: no proof on this path shows tostring(...) satisfies the declared type",
+          "3. missing proof: no proof on this path shows tostring(...) is 1 & \"ready\"",
           "help: Use a value compatible with the expected type, or change the target type if `tostring(...)` is valid."
         ],
         "render_not_contains": [

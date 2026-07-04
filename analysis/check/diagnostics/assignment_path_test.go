@@ -384,7 +384,7 @@ func TestAssignmentRejectsNilThroughPossiblyPresentDynamicIndexKey(t *testing.T)
 		t.Fatalf("diagnostics = %#v, want one dynamic-index write mismatch", diags)
 	}
 	d := diags[0]
-	if d.Code != CodeAssignmentType || !strings.Contains(d.Message, "assigned value is nil") || !strings.Contains(d.Message, "string") {
+	if d.Code != CodeAssignmentType || !strings.Contains(d.Message, "cannot assign nil") || !strings.Contains(d.Message, "string") {
 		t.Fatalf("diagnostic = %#v, want nil rejected against possible name:string slot", d)
 	}
 }
