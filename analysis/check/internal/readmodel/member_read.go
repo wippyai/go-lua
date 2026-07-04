@@ -2,6 +2,7 @@ package readmodel
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
+	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -12,15 +13,44 @@ func (r Reader) ForEachMissingMemberRead(visit func(MissingMemberRead) bool) boo
 	if r.result == nil || visit == nil || r.result.Graph() == nil {
 		return false
 	}
+	var occurrences []body.StaticMemberReadOccurrence
+	nilDefault := map[missingMemberReadKey]bool{}
+	r.result.ForEachMissingMemberReadOccurrence(func(occ body.StaticMemberReadOccurrence) bool {
+		occurrences = append(occurrences, occ)
+		if occ.AllowExactNilRead {
+			nilDefault[missingMemberOccurrenceKey(occ)] = true
+		}
+		return true
+	})
 	visited := false
-	return r.result.ForEachMissingMemberReadOccurrence(func(occ body.StaticMemberReadOccurrence) bool {
+	for _, occ := range occurrences {
+		if !occ.AllowExactNilRead && nilDefault[missingMemberOccurrenceKey(occ)] {
+			continue
+		}
 		item, ok := r.missingMemberRead(occ)
 		if !ok {
-			return true
+			continue
 		}
 		visited = true
-		return visit(item)
-	}) || visited
+		if !visit(item) {
+			return true
+		}
+	}
+	return visited
+}
+
+type missingMemberReadKey struct {
+	readLabel  string
+	memberName string
+	span       readapi.SourceSpan
+}
+
+func missingMemberOccurrenceKey(occ body.StaticMemberReadOccurrence) missingMemberReadKey {
+	return missingMemberReadKey{
+		readLabel:  occ.ReadLabel,
+		memberName: occ.MemberName,
+		span:       sourceSpanFromBody(occ.Span),
+	}
 }
 
 func (r Reader) missingMemberRead(occ body.StaticMemberReadOccurrence) (MissingMemberRead, bool) {
@@ -31,16 +61,16 @@ func (r Reader) missingMemberRead(occ body.StaticMemberReadOccurrence) (MissingM
 	if occ.AllowExactNilRead && r.exactLocalMissingFieldReadsNil(occ, memberName) {
 		return MissingMemberRead{}, false
 	}
-	if occ.HasReceiverValueAtBoundary && r.ValueHasUntrustedTopOrigin(occ.ReceiverValueAtBoundary) {
-		return MissingMemberRead{}, false
-	}
 	receiverType := occ.ReceiverTypeBeforeBoundary
 	if !occ.HasReceiverTypeBeforeBoundary || receiverType == nil || typ.IsAny(receiverType) || typ.IsUnknown(receiverType) || typ.IsNever(receiverType) {
 		return MissingMemberRead{}, false
 	}
+	if occ.AllowExactNilRead && body.TypeFieldProvablyAbsent(receiverType, memberName) {
+		return MissingMemberRead{}, false
+	}
 	report := body.UnionArmRejectsFieldRead(receiverType, memberName)
 	if !report {
-		broad, broadOK := r.result.DeclaredPathTypeAt(occ.Point, occ.ReceiverPath, occ.HasReceiverPath)
+		broad, broadOK := r.missingMemberBroadReceiverType(occ, receiverType)
 		if !broadOK || broad == nil || !body.TypeIsMultiArmUnion(broad) {
 			return MissingMemberRead{}, false
 		}
@@ -63,6 +93,30 @@ func (r Reader) missingMemberRead(occ body.StaticMemberReadOccurrence) (MissingM
 		ReceiverType: receiverType,
 		Span:         sourceSpanFromBody(occ.Span),
 	}, true
+}
+
+func (r Reader) missingMemberBroadReceiverType(occ body.StaticMemberReadOccurrence, current typ.Type) (typ.Type, bool) {
+	if r.result == nil {
+		return nil, false
+	}
+	if broad, ok := r.result.DeclaredPathTypeAt(occ.Point, occ.ReceiverPath, occ.HasReceiverPath); ok {
+		return broad, true
+	}
+	if occ.HasReceiverValueAtBoundary {
+		if broad, ok := r.FullVariantOriginType(occ.ReceiverValueAtBoundary); ok && currentBelongsToBroadFamily(r, current, broad) {
+			return broad, true
+		}
+	}
+	if occ.HasReceiverValueBeforeBoundary {
+		if broad, ok := r.FullVariantOriginType(occ.ReceiverValueBeforeBoundary); ok && currentBelongsToBroadFamily(r, current, broad) {
+			return broad, true
+		}
+	}
+	return nil, false
+}
+
+func currentBelongsToBroadFamily(r Reader, current, broad typ.Type) bool {
+	return current != nil && broad != nil && r.IsSubtype(current, broad)
 }
 
 func (r Reader) exactLocalMissingFieldReadsNil(occ body.StaticMemberReadOccurrence, name string) bool {
