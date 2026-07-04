@@ -41,6 +41,30 @@ local elapsed: number = time.now():sub(start):milliseconds()
 	}
 }
 
+func TestCheckerUsesGlobalTypeStaticStringConstantInMethodArgument(t *testing.T) {
+	chunk, err := parse.ParseString(`
+local formatted: string = time.now():format(time.RFC3339)
+`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	timeType := typ.NewInterface("time.Time", []typ.Method{
+		{Name: "format", Type: typ.Func().Param("self", typ.Self).Param("layout", typ.String).Returns(typ.String).Build()},
+	})
+	timeModule := typ.NewRecord().
+		Field("now", typ.Func().Returns(timeType).Build()).
+		Field("RFC3339", typ.String).
+		Build()
+
+	checker := NewChecker(db.New(), Deps{
+		GlobalTypes: map[string]typ.Type{"time": timeModule},
+	})
+	session := checker.CheckChunk(chunk, "test.lua")
+	if len(session.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want global type static string constant to satisfy method argument", session.Diagnostics)
+	}
+}
+
 func TestCheckerUsesCurrentImportAliasAsTypedEntryGlobal(t *testing.T) {
 	chunk, err := parse.ParseString(`
 local assert = assert2
@@ -773,6 +797,44 @@ end
 	session := checker.CheckChunk(chunk, "test.lua")
 	if len(session.Diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want concrete manifest alias cast to validate any-returning call", session.Diagnostics)
+	}
+}
+
+func TestCheckerAmbientGlobalTypeWinsOverSameNamedImportAlias(t *testing.T) {
+	provider := analysistest.CheckAndExport(`
+local M = {}
+
+function M.define(fn: () -> ()): ()
+    _G.migration = function(name: string, body: () -> ()): () body() end
+    fn()
+end
+
+return M
+`, "migration", analysistest.WithStdlib())
+	if len(provider.Errors) != 0 {
+		t.Fatalf("provider diagnostics = %#v, want clean provider", provider.Errors)
+	}
+	migrationManifest := roundTripFacadeManifest(t, "migration", provider.Manifest)
+
+	chunk, err := parse.ParseString(`
+return require("migration").define(function()
+    migration("create", function()
+        local ok: boolean = true
+    end)
+end)
+`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	database := db.New()
+	database.Connect("migration", migrationManifest)
+	checker := NewChecker(database, Deps{})
+	session := checker.CheckChunkWithImports(chunk, "test.lua", map[string]*typemanifest.Manifest{
+		"migration": migrationManifest,
+	})
+	if len(session.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want provided ambient global to own same-named import alias in callback", session.Diagnostics)
 	}
 }
 

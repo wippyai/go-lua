@@ -11,6 +11,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/module/importlookup"
+	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/access"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -176,6 +178,45 @@ local elapsed: number = time.now():sub(time.now()):milliseconds()
 	gotType, ok := typevalue.TypeOf(reg, got)
 	if !ok || !typ.TypeEquals(gotType, timeModule) {
 		t.Fatalf("entry type = %s, want %s", gotType, timeModule)
+	}
+}
+
+func TestEntrySeedPlanLetsConfiguredGlobalTypeOwnModuleNameCollision(t *testing.T) {
+	reg := standard.Registry()
+	typeValues := typevalue.NewCache()
+	stmts := parseChunk(t, `migration("create", function() end)`)
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"migration"}})
+	id, ok := bindings.GlobalSymbol("migration")
+	if !ok {
+		t.Fatal("configured global symbol migration not bound")
+	}
+
+	dslType := typ.Func().
+		Param("name", typ.String).
+		Param("body", typ.Func().Build()).
+		Build()
+	moduleType := typetable.NewRecord().
+		Field("define", typ.Func().Param("fn", typ.Func().Build()).Build()).
+		Build()
+	m := manifest.New("migration")
+	m.SetExport(moduleType)
+	m.DefineGlobalType("migration", dslType)
+
+	seeds := entrySeedPlan(
+		reg,
+		typeValues,
+		bindings,
+		nil,
+		[]string{"migration"},
+		map[string]typ.Type{"migration": dslType},
+		importlookup.Source{Manifests: []*manifest.Manifest{m}},
+		nil,
+	)
+	entry := seedEntryStateValues(reg, state.State{}, seeds)
+	got := entry.ReadValue(reg, key.SymbolValue(id))
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, dslType) {
+		t.Fatalf("migration entry type = %s/%v, want provided DSL global %s", gotType, ok, dslType)
 	}
 }
 

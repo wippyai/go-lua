@@ -9334,6 +9334,7 @@ func timeManifestForPrecisionTests() *manifest.Manifest {
 		{Name: "seconds", Type: typ.Func().Param("self", typ.Self).Returns(typ.Number).Build()},
 	})
 	timeType := typ.NewInterface("time.Time", []typ.Method{
+		{Name: "format", Type: typ.Func().Param("self", typ.Self).Param("layout", typ.String).Returns(typ.String).Build()},
 		{Name: "unix", Type: typ.Func().Param("self", typ.Self).Returns(typ.Integer).Build()},
 		{Name: "sub", Type: typ.Func().Param("self", typ.Self).Param("t", typ.Self).Returns(durationType).Build()},
 	})
@@ -9341,8 +9342,28 @@ func timeManifestForPrecisionTests() *manifest.Manifest {
 	m.DefineType("Duration", durationType)
 	m.SetExport(typetable.NewRecord().
 		Field("now", typ.Func().Returns(timeType).Build()).
+		Field("RFC3339", typ.String).
+		Field("RFC3339NANO", typ.String).
 		Build())
 	return m
+}
+
+func TestCheckManifestStaticStringConstantPassesStringParameter(t *testing.T) {
+	timeMod := timeManifestForPrecisionTests()
+	result := Check(`
+local time = require("time")
+
+local function format(layout: string): string
+    return layout
+end
+
+local out: string = format(time.RFC3339)
+local nano: string = format(time.RFC3339NANO)
+local formatted: string = time.now():format(time.RFC3339)
+`, WithStdlib(), WithManifest("time", timeMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want manifest static string constants to satisfy string parameters", result.Diagnostics)
+	}
 }
 
 func hasOperationalNormalReturnTypeRefinement(sig signature.Function, paramIndex int, want typ.Type) bool {

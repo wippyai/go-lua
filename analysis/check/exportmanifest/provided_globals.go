@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -75,19 +76,30 @@ func collectProvidedGlobals(m *manifest.Manifest, result *body.Result) {
 		}
 		m.DefineGlobal(name)
 		if t, ok := result.DeclaredExpressionTypeAt(point, fact.Value); ok {
-			m.DefineGlobalType(name, t)
+			defineProvidedGlobalType(m, name, t)
 			continue
 		}
 		if fn, ok := result.FunctionValueTypeAtBoundary(point, fact.Value); ok {
-			m.DefineGlobalType(name, fn)
+			defineProvidedGlobalType(m, name, fn)
+			continue
+		}
+		if t, ok := sourceType(result, point, fact.Source); ok {
+			defineProvidedGlobalType(m, name, t)
 			continue
 		}
 		if value, ok := result.OrdinaryAssignmentSourceValueForExplanationAtBoundary(point, fact.Source); ok {
 			if t, ok := result.ValueType(value); ok {
-				m.DefineGlobalType(name, t)
+				defineProvidedGlobalType(m, name, t)
 			}
 		}
 	}
+}
+
+func defineProvidedGlobalType(m *manifest.Manifest, name string, t typ.Type) {
+	if t == nil || typ.TypeEquals(t, typ.Nil) {
+		return
+	}
+	m.DefineGlobalType(name, t)
 }
 
 // singleFieldName returns the field name when segments addresses exactly one
@@ -206,12 +218,15 @@ func (f *providedGlobalForwarding) collect(m *manifest.Manifest) {
 			if !ok {
 				continue
 			}
-			globals, providerArgs := providerGlobalsForCall(result, point, site, call)
+			provider, globals, providerArgs := providerGlobalsForCall(result, point, site, call)
 			if len(globals) == 0 || !f.callPassesWatchedCallback(result, providerArgs) {
 				continue
 			}
 			for _, name := range globals {
 				m.DefineGlobal(name)
+				if provider != nil {
+					defineProvidedGlobalType(m, name, provider.GlobalTypes[name])
+				}
 			}
 		}
 	}
@@ -268,35 +283,35 @@ func (f *providedGlobalForwarding) exprIsWatchedCallback(result *body.Result, ex
 	return ok
 }
 
-func providerGlobalsForCall(result *body.Result, point cfg.Point, site factflow.CallSite, call semantics.CallFact) ([]string, []ast.Expr) {
+func providerGlobalsForCall(result *body.Result, point cfg.Point, site factflow.CallSite, call semantics.CallFact) (*manifest.Manifest, []string, []ast.Expr) {
 	name, ok := result.CallSignatureName(site)
 	if ok {
-		if globals := providerGlobalsForSignatureName(result, name); len(globals) != 0 {
-			return globals, call.Args
+		if provider, globals := providerGlobalsForSignatureName(result, name); len(globals) != 0 {
+			return provider, globals, call.Args
 		}
 	}
 	if isBareGlobalCall(result, call, "pcall") && len(call.Args) != 0 {
 		name, ok := result.ExpressionSignatureNameAt(point, call.Args[0])
 		if !ok {
-			return nil, nil
+			return nil, nil, nil
 		}
-		if globals := providerGlobalsForSignatureName(result, name); len(globals) != 0 {
-			return globals, call.Args[1:]
+		if provider, globals := providerGlobalsForSignatureName(result, name); len(globals) != 0 {
+			return provider, globals, call.Args[1:]
 		}
 	}
-	return nil, nil
+	return nil, nil, nil
 }
 
-func providerGlobalsForSignatureName(result *body.Result, name string) []string {
+func providerGlobalsForSignatureName(result *body.Result, name string) (*manifest.Manifest, []string) {
 	for _, m := range result.SignatureManifests() {
 		if m == nil || len(m.Globals) == 0 {
 			continue
 		}
 		if signatureNameBelongsToManifest(name, m.Path) {
-			return m.Globals
+			return m, m.Globals
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 func isBareGlobalCall(result *body.Result, call semantics.CallFact, name string) bool {

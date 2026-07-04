@@ -47,7 +47,7 @@ func entrySeedPlan(
 	typeResolver *typeresolve.Resolver,
 ) []state.ValueSeed {
 	seeds := functionParamEntrySeeds(reg, typeValues, bindings, fn, typeResolver)
-	seeds = append(seeds, ambientModuleGlobalEntrySeeds(reg, typeValues, bindings, moduleExports)...)
+	seeds = append(seeds, ambientModuleGlobalEntrySeeds(reg, typeValues, bindings, moduleExports, globalTypes)...)
 	seeds = append(seeds, configuredGlobalEntrySeeds(reg, typeValues, bindings, globals, globalTypes)...)
 	return seeds
 }
@@ -186,13 +186,22 @@ func configuredGlobalEntrySeeds(
 	return seeds
 }
 
-func ambientModuleGlobalEntrySeeds(reg *axis.Registry, typeValues *typevalue.Cache, bindings *bind.Result, exports importlookup.Source) []state.ValueSeed {
+func ambientModuleGlobalEntrySeeds(
+	reg *axis.Registry,
+	typeValues *typevalue.Cache,
+	bindings *bind.Result,
+	exports importlookup.Source,
+	globalTypes map[string]typ.Type,
+) []state.ValueSeed {
 	if reg == nil || bindings == nil || len(exports.Manifests) == 0 {
 		return nil
 	}
 	seeds := make([]state.ValueSeed, 0, len(exports.Manifests))
 	for _, m := range exports.Manifests {
 		if m == nil || m.Path == "" || m.Export == nil {
+			continue
+		}
+		if globalTypes[m.Path] != nil {
 			continue
 		}
 		id, ok := bindings.GlobalSymbol(m.Path)

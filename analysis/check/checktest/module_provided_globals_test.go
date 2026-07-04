@@ -51,6 +51,34 @@ return require("test").run_cases(define_tests)
 	}
 }
 
+func TestCheckModuleProvidedGlobalOverridesImportAliasInsideCallback(t *testing.T) {
+	provider := CheckAndExport(`
+local M = {}
+function M.define(fn: () -> ()): ()
+    _G.migration = function(name: string, body: () -> ()): () body() end
+    fn()
+end
+return M
+`, "migration", WithStdlib())
+	if len(provider.Errors) != 0 {
+		t.Fatalf("provider diagnostics = %#v, want clean provider", provider.Errors)
+	}
+	if got := provider.Manifest.GlobalTypes["migration"]; got == nil {
+		t.Fatalf("provider global types = %#v, want typed migration DSL global", provider.Manifest.GlobalTypes)
+	}
+
+	result := Check(`
+return require("migration").define(function()
+    migration("create", function()
+        local ok: boolean = true
+    end)
+end)
+`, WithStdlib(), WithManifest("migration", provider.Manifest))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want callback DSL global to override import alias inside callback", result.Diagnostics)
+	}
+}
+
 func TestCheckModuleProvidedGlobalTypesAnalyzeCallbackImporter(t *testing.T) {
 	mod := CheckAndExport(`
 local M = {}
@@ -239,6 +267,50 @@ end)
 `, WithStdlib(), WithManifest("wrapper", wrapper.Manifest))
 	if len(result.Diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want helper-forwarded wrapper globals recognized in callback", result.Diagnostics)
+	}
+}
+
+func TestCheckModuleProvidedGlobalTypesForwardThroughReturnedClosureWithSameName(t *testing.T) {
+	core := CheckAndExport(`
+local M = {}
+function M.define(fn: () -> ()): ()
+    _G.migration = function(name: string, body: () -> ()): () body() end
+    fn()
+end
+return M
+`, "core", WithStdlib())
+	if len(core.Errors) != 0 {
+		t.Fatalf("core diagnostics = %#v, want clean provider", core.Errors)
+	}
+
+	wrapper := CheckAndExport(`
+local M = {}
+local core = require("core")
+
+function M.define(fn: () -> ()): () -> any
+    return function(options: any?): any
+        return core.define(fn)
+    end
+end
+
+return M
+`, "migration", WithStdlib(), WithManifest("core", core.Manifest))
+	if len(wrapper.Errors) != 0 {
+		t.Fatalf("wrapper diagnostics = %#v, want clean wrapper", wrapper.Errors)
+	}
+	if wrapper.Manifest.GlobalTypes["migration"] == nil {
+		t.Fatalf("wrapper global types = %#v, want forwarded typed migration DSL global", wrapper.Manifest.GlobalTypes)
+	}
+
+	result := Check(`
+return require("migration").define(function()
+    migration("create", function()
+        local ok: boolean = true
+    end)
+end)
+`, WithStdlib(), WithManifest("migration", wrapper.Manifest))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want forwarded same-name DSL global type in returned closure", result.Diagnostics)
 	}
 }
 
