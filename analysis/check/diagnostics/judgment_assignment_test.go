@@ -235,6 +235,23 @@ func TestRenderAssignmentJudgmentOptionalSourceUsesNilHelp(t *testing.T) {
 	}
 }
 
+func TestRenderAssignmentJudgmentNilGuardIsDrivenByEvidence(t *testing.T) {
+	item := assignmentJudgmentFixture(typ.String, typ.String, judgment.VerdictUnknown)
+	item.Actual = item.Actual.WithLabel("n")
+	item.Evidence[2].Detail = judgment.MayBeNilEvidenceDetail()
+
+	d, ok := renderAssignmentJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
+	if !ok {
+		t.Fatal("renderAssignmentJudgmentWithPolicy returned false")
+	}
+	if !strings.Contains(d.Help, "Guard `n` with a nil check") {
+		t.Fatalf("help = %q, want nil guard help from structured evidence", d.Help)
+	}
+	if !diagnosticEvidenceContains(d.Explanation.Evidence(), "no guard on this path proves n is non-nil") {
+		t.Fatalf("evidence = %#v, want nil guard evidence from judgment detail", d.Explanation.Evidence())
+	}
+}
+
 func TestRenderAssignmentJudgmentRefutedOptionalSourceIncludesMissingGuard(t *testing.T) {
 	item := assignmentJudgmentFixture(typ.MaterializeOptional(typ.Number), typ.Number, judgment.VerdictRefuted)
 	item.Actual = item.Actual.WithLabel("h")

@@ -61,7 +61,7 @@ func renderAssignmentJudgmentWithPolicy(item judgment.Judgment, policy judgment.
 		extraEvidence = append([]diagnostic.Evidence{underSuppliedEvidence}, extraEvidence...)
 	}
 	sourceEvidence := assignmentSourceTypeEvidence(evidenceSourceName, got)
-	if indexedReadMissingProofMismatchForSource(evidenceSourceName, got, want, extraEvidence) && typ.Nil.Equals(got) && evidenceSourceName != "" && evidenceSourceName != unknownSourceName {
+	if indexedReadMissingProofMismatchForSource(evidenceSourceName, extraEvidence) && typ.Nil.Equals(got) && evidenceSourceName != "" && evidenceSourceName != unknownSourceName {
 		sourceEvidence = evidenceSourceName + " can be nil here"
 	}
 	if hasMissingField {
@@ -74,7 +74,7 @@ func renderAssignmentJudgmentWithPolicy(item judgment.Judgment, policy judgment.
 	if assignmentJudgmentTargetLooksMember(target, sourceName) && !dynamicTarget {
 		message = memberAssignmentMessageForEvidenceDisplay(target, sourceName, got, want, expectedDisplay, extraEvidence)
 	}
-	help := assignmentHelpForEvidence(sourceName, got, extraEvidence)
+	help := assignmentHelpForEvidence(sourceName, got, extraEvidence, assignmentJudgmentMissingProofMayBeNil(item))
 	if underSupplied {
 		help = underSuppliedTargetHelp(target)
 	}
@@ -401,12 +401,12 @@ func assignmentJudgmentExtraEvidence(item judgment.Judgment, sourceName string, 
 		}
 		out = append(out, assignmentJudgmentCallInvalidationEvidence(item)...)
 		if assignmentJudgmentMissingProofIndexedRead(item) {
-			return appendMissingNilGuardEvidence(out, sourceName, got, sourceSpan, true)
+			return appendMissingNilGuardEvidence(out, sourceName, sourceSpan, true)
 		}
 		if assignmentSourceLooksIndexed(sourceName) {
-			return appendMissingNilGuardEvidence(out, sourceName, got, sourceSpan, true)
+			return appendMissingNilGuardEvidence(out, sourceName, sourceSpan, true)
 		}
-		return appendMissingNilGuardEvidence(out, sourceName, got, sourceSpan, false)
+		return appendMissingNilGuardEvidence(out, sourceName, sourceSpan, false)
 	}
 	out = append(out, assignmentJudgmentNilableAccessEvidence(item)...)
 	out = append(out, assignmentJudgmentSourceContributionEvidence(item)...)
@@ -444,7 +444,7 @@ func evidenceHasKind(items []diagnostic.Evidence, kind diagnostic.EvidenceKind) 
 }
 
 func assignmentMessageForEvidenceDisplay(sourceName string, got, want typ.Type, wantDisplay string, evidence []diagnostic.Evidence) string {
-	if indexedReadMissingProofMismatch(got, want, evidence) && sourceName != "" && sourceName != unknownSourceName {
+	if indexedReadMissingProofMismatch(evidence) && sourceName != "" && sourceName != unknownSourceName {
 		return "cannot assign " + sourceName + " because it may be nil"
 	}
 	if sameRenderedTypeNeedsValidationProof(got, want, evidence) {
@@ -462,24 +462,26 @@ func memberAssignmentMessageForEvidenceDisplay(memberName string, sourceName str
 	return memberAssignmentMessageDisplay(memberName, sourceName, got, want, wantDisplay)
 }
 
-func assignmentHelpForEvidence(sourceName string, got typ.Type, evidence []diagnostic.Evidence) string {
-	if indexedReadHasMissingProof(evidence) && sourceName != "" && sourceName != unknownSourceName {
+func assignmentHelpForEvidence(sourceName string, got typ.Type, evidence []diagnostic.Evidence, missingNilProof bool) string {
+	if missingNilProof &&
+		(!typ.Nil.Equals(got) || indexedReadHasMissingProof(evidence)) &&
+		evidenceHasKind(evidence, diagnostic.EvidenceMissingProof) &&
+		sourceName != "" &&
+		sourceName != unknownSourceName {
 		return "Guard `" + sourceName + "` with a nil check, provide a default value, or change the target type to accept nil."
 	}
 	return assignmentHelp(sourceName, got)
 }
 
-func indexedReadMissingProofMismatchForSource(sourceName string, got, want typ.Type, evidence []diagnostic.Evidence) bool {
+func indexedReadMissingProofMismatchForSource(sourceName string, evidence []diagnostic.Evidence) bool {
 	if !assignmentSourceLooksIndexed(sourceName) && !assignmentSourceEndsWithIndex(sourceName) {
 		return false
 	}
-	return indexedReadMissingProofMismatch(got, want, evidence)
+	return indexedReadMissingProofMismatch(evidence)
 }
 
-func indexedReadMissingProofMismatch(got, want typ.Type, evidence []diagnostic.Evidence) bool {
-	return indexedReadHasMissingProof(evidence) &&
-		projectionHasNil(got) &&
-		!projectionHasNil(want)
+func indexedReadMissingProofMismatch(evidence []diagnostic.Evidence) bool {
+	return indexedReadHasMissingProof(evidence)
 }
 
 func indexedReadHasMissingProof(items []diagnostic.Evidence) bool {
@@ -496,12 +498,10 @@ func sameRenderedTypeNeedsValidationProof(got, want typ.Type, evidence []diagnos
 	return typ.TypeEquals(got, want) && evidenceHasKind(evidence, diagnostic.EvidencePrecisionBoundary)
 }
 
-func appendMissingNilGuardEvidence(items []diagnostic.Evidence, sourceName string, got typ.Type, sourceSpan diagnostic.Span, sourceIndexed ...bool) []diagnostic.Evidence {
+func appendMissingNilGuardEvidence(items []diagnostic.Evidence, sourceName string, sourceSpan diagnostic.Span, sourceIndexed ...bool) []diagnostic.Evidence {
 	indexed := assignmentSourceLooksIndexed(sourceName, sourceIndexed...)
-	directIndexed := len(sourceIndexed) > 0 && sourceIndexed[0]
 	if sourceName == "" ||
 		sourceName == unknownSourceName ||
-		(!valueMayBeNil(got) && !(directIndexed && typ.Nil.Equals(got))) ||
 		evidenceHasKind(items, diagnostic.EvidenceMissingProof) {
 		return items
 	}
