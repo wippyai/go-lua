@@ -89,6 +89,9 @@ func missingAssertionInner(expr ast.Expr) bool {
 	if exprNil(expr) {
 		return true
 	}
+	if cast, ok := expr.(*ast.CastExpr); ok && cast != nil && exprNil(cast.Expr) {
+		return false
+	}
 	if !assertionWrapper(expr) {
 		return false
 	}

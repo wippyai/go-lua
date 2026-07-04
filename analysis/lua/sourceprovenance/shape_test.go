@@ -173,6 +173,17 @@ func TestTypedNilExprPublicSourcesAreExplicitUnknown(t *testing.T) {
 	}
 }
 
+func TestNilLiteralCastRemainsExpressionSource(t *testing.T) {
+	expr := &ast.CastExpr{
+		Expr: nil,
+		Type: &ast.PrimitiveTypeExpr{Name: "string"},
+	}
+	source := SourceForExpr(expr, 0, 0, 0, true, false, nil)
+	if source.Kind != SourceExpression || source.Expr != expr || source.TargetIndex != 0 || !source.Valid() {
+		t.Fatalf("nil cast source = %#v, want expression source for outer cast", source)
+	}
+}
+
 func TestBrokenAssertionWrapperSourcesAreExplicitUnknown(t *testing.T) {
 	broken := &ast.CastExpr{
 		Expr: &ast.NonNilAssertExpr{},

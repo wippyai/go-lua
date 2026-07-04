@@ -718,6 +718,9 @@ func applyExpressionRefinement(reg *axis.Registry, value product.Value, refineme
 	switch refinement.Mode() {
 	case factflow.ExpressionRefinementRuntimeValidation:
 		merged := valueref.MergeDeclaredContract(reg, value, refinement.Refinement())
+		if _, ok := typevalue.WitnessOf(reg, merged); product.ShapeOf(merged).IsBottom() || !ok {
+			merged = refinement.Refinement()
+		}
 		validated := refinement.Refinement()
 		validatedClaim := product.Get(reg, validated, assertion.Key)
 		if !validatedClaim.IsTop() {

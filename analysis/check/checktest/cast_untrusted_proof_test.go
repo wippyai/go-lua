@@ -151,8 +151,8 @@ end
 		Line:            14,
 		MessageContains: []string{
 			"argument 1",
-			"unknown",
-			"not string",
+			"any/unknown",
+			"no proof shows it is string",
 		},
 	})
 }
@@ -171,8 +171,8 @@ return f
 		DiagnosticCount: 1,
 		MessageContains: []string{
 			"argument 1",
-			"any",
-			"not string",
+			"any/unknown",
+			"no proof shows it is string",
 		},
 	})
 }
