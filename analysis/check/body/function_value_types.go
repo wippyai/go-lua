@@ -234,6 +234,26 @@ func (r *Result) FunctionValueTypeForValueAtBoundary(point cfg.Point, value prod
 	return r.functionTypeForValue(current, hasCurrent, value)
 }
 
+// FunctionValueTypeForPathValueAtBoundary resolves a callable path's converged
+// function type using the currently solved value as the freshness guard. A path
+// summary is used only when the value at the consumer is still callable, so a
+// later reassignment to a non-function cannot reuse an older definition.
+func (r *Result) FunctionValueTypeForPathValueAtBoundary(point cfg.Point, p pathdom.Path, value product.Value) (*typ.Function, bool) {
+	if r == nil || p.IsEmpty() {
+		return nil, false
+	}
+	if fn, ok := r.FunctionValueTypeForValueAtBoundary(point, value); ok {
+		return fn, true
+	}
+	if !valueHasCallableType(r.registry, r.typeValues, value) {
+		return nil, false
+	}
+	if key, ok := factflow.CalleePathKeyFromPath(p); ok {
+		return r.FunctionValueTypeForCalleePath(key)
+	}
+	return nil, false
+}
+
 // FunctionValueTypeForCalleePath resolves a converged local function-value type
 // by the callee path key carried in call-site evidence. It is intentionally
 // syntax-free so post-solve consumers do not re-lower AST parameter slots.

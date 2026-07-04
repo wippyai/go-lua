@@ -369,15 +369,32 @@ func inferredPortableReturnTypes(reg *axis.Registry, result *body.Result, sum su
 		return nil, false
 	}
 	returns := make([]typ.Type, 0, len(sum.Returns))
+	inferred := false
 	for _, value := range sum.Returns {
 		value = enrichManifestReturnValue(reg, result, sum, value)
 		t, ok := typevalue.TypeOf(reg, value)
-		if !ok || !portableInferredSignatureType(t) {
+		if !ok || t == nil {
+			returns = append(returns, typ.Any)
+			inferred = true
+			continue
+		}
+		if typ.IsNever(t) || typ.ContainsTypeParam(t) {
 			return nil, false
 		}
+		if typ.IsAny(t) || typ.IsUnknown(t) {
+			returns = append(returns, typ.Any)
+			inferred = true
+			continue
+		}
+		if !portableInferredSignatureType(t) {
+			returns = append(returns, typ.Any)
+			inferred = true
+			continue
+		}
+		inferred = true
 		returns = append(returns, t)
 	}
-	return returns, true
+	return returns, inferred
 }
 
 func enrichManifestReturnValue(reg *axis.Registry, result *body.Result, sum summary.Summary, value product.Value) product.Value {

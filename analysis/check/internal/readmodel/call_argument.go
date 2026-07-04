@@ -263,11 +263,40 @@ func (r Reader) callArgument(point cfg.Point, site factflow.CallSite, index int,
 	if fn, ok := r.contextualFunctionArgumentType(point, source); ok {
 		arg.FunctionType = fn
 		arg.TypeWithPresence = fn
+	} else if fn, ok := r.functionArgumentPathType(point, source, value); ok {
+		arg.FunctionType = fn
+		arg.TypeWithPresence = fn
+	} else if fn, ok := r.functionArgumentPathStaticType(point, source); ok {
+		arg.FunctionType = fn
+		arg.TypeWithPresence = fn
 	} else if fn, ok := r.result.FunctionValueTypeForValueAtBoundary(point, value); ok {
 		arg.FunctionType = fn
 		arg.TypeWithPresence = fn
 	}
 	return arg
+}
+
+func (r Reader) functionArgumentPathStaticType(point cfg.Point, source factflow.ValueSource) (*typ.Function, bool) {
+	if r.result == nil || !source.HasExpr || source.ExprRef == 0 {
+		return nil, false
+	}
+	p, ok := r.result.ExpressionPathRef(source.ExprRef)
+	if !ok {
+		p, ok = r.result.ExpressionRefPath(source.ExprRef)
+	}
+	if !ok || p.IsEmpty() {
+		return nil, false
+	}
+	if fn, ok := r.result.PathSignatureTypeAt(point, p); ok && fn != nil {
+		return fn, true
+	}
+	if t, ok := r.result.DeclaredPathTypeAt(point, p, true); ok && t != nil {
+		fn, ok := t.(*typ.Function)
+		if ok && fn != nil {
+			return fn, true
+		}
+	}
+	return nil, false
 }
 
 func (r Reader) admissibleCallArgumentProofCandidate(arg CallArgument, want typ.Type) (CallArgument, bool) {
@@ -375,6 +404,20 @@ func (r Reader) contextualFunctionArgumentType(point cfg.Point, source factflow.
 	}
 	fn, ok := t.(*typ.Function)
 	return fn, ok && fn != nil
+}
+
+func (r Reader) functionArgumentPathType(point cfg.Point, source factflow.ValueSource, value product.Value) (*typ.Function, bool) {
+	if r.result == nil || !source.HasExpr || source.ExprRef == 0 {
+		return nil, false
+	}
+	p, ok := r.result.ExpressionPathRef(source.ExprRef)
+	if !ok {
+		p, ok = r.result.ExpressionRefPath(source.ExprRef)
+	}
+	if !ok || p.IsEmpty() {
+		return nil, false
+	}
+	return r.result.FunctionValueTypeForPathValueAtBoundary(point, p, value)
 }
 
 func (r Reader) callArgumentSpan(point cfg.Point, index int) SourceSpan {

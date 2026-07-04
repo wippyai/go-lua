@@ -38,6 +38,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
@@ -1569,6 +1570,72 @@ func TestFromProgramResultExportsSufficientOrLiteralReturnCases(t *testing.T) {
 	}
 	if !hasConditionalReturnCase(decodedSig.Effect, 0, typ.LiteralString("auto")) {
 		t.Fatalf("decoded effect = %v, want auto literal return case", decodedSig.Effect)
+	}
+}
+
+func TestFromProgramResultExportsUntypedTableMemberFunctionShapeWithAnyReturns(t *testing.T) {
+	result := checkProgram(t, `
+		local M = {}
+		function M.classify_error(api_error)
+			if not api_error then
+				return "server_error", "Unknown error", nil
+			end
+			return "invalid_request", api_error.message or "Bad request", { status_code = api_error.status_code }
+		end
+		return M
+	`)
+	root := result.RootResult()
+	var fn *ast.FunctionExpr
+	var raw summary.Summary
+	var hasRaw bool
+	for _, point := range root.Graph().RPO() {
+		fact, ok := root.FunctionDefinition(point)
+		if !ok || fact.Func == nil || fact.Name == nil {
+			continue
+		}
+		member, ok := functionDefinitionExportMember(root, returnedExportSourcePaths(root)[0].path, fact.Name)
+		if !ok || member.Name != "classify_error" {
+			continue
+		}
+		target := pathdom.Path{}
+		if fact.HasTargetPath {
+			target = fact.TargetPath
+		}
+		fn = fact.Func
+		raw, hasRaw = functionSummary(result, root, fact.Func, target)
+		break
+	}
+	if !hasRaw {
+		t.Fatalf("missing raw summary for M.classify_error")
+	}
+	if len(raw.Returns) != 3 {
+		t.Fatalf("raw returns = %d, want 3", len(raw.Returns))
+	}
+	inferred, ok := inferredFunctionTypeFromSummary(root.Registry(), root, fn, raw)
+	if !ok || inferred == nil {
+		var returnTypes []typ.Type
+		for _, value := range raw.Returns {
+			t, _ := typevalue.TypeOf(root.Registry(), enrichManifestReturnValue(root.Registry(), root, raw, value))
+			returnTypes = append(returnTypes, t)
+		}
+		t.Fatalf("inferred function type = %v, %v; slots = %#v; returns = %#v; want function type from raw summary", inferred, ok, root.FunctionParamSlots(fn), returnTypes)
+	}
+
+	m := FromProgramResult("mapper", result)
+	sig, ok := m.FunctionSignatures["mapper.classify_error"]
+	if !ok || sig.Type == nil {
+		t.Fatalf("missing mapper.classify_error function signature: %#v", m.FunctionSignatures)
+	}
+	if len(sig.Type.Params) != 1 || !typ.IsAny(sig.Type.Params[0].Type) {
+		t.Fatalf("params = %#v, want one any param", sig.Type.Params)
+	}
+	if len(sig.Type.Returns) != 3 {
+		t.Fatalf("returns = %#v, want 3 return slots", sig.Type.Returns)
+	}
+	if typ.IsAny(sig.Type.Returns[0]) || typ.IsUnknown(sig.Type.Returns[0]) ||
+		!typ.IsAny(sig.Type.Returns[1]) ||
+		!typ.IsAny(sig.Type.Returns[2]) {
+		t.Fatalf("returns = %#v, want (concrete string-like, any, any)", sig.Type.Returns)
 	}
 }
 

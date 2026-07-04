@@ -2,10 +2,13 @@
 package exportmanifest
 
 import (
+	"strings"
+
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -20,13 +23,14 @@ import (
 // framework callback protocols.
 func FromProgramResult(path string, result program.Result) *manifest.Manifest {
 	m := manifest.New(path)
+	publishFunctionSignatures(m, path, result)
 	if export, ok := exportType(result); ok {
+		export = exportTypeWithFunctionSignatures(path, export, m.FunctionSignatures)
 		m.SetExport(export)
 	} else {
 		m.SetExport(typ.Unknown)
 	}
 	publishTypeDefinitions(m, result.RootResult())
-	publishFunctionSignatures(m, path, result)
 	publishProvidedGlobals(m, result)
 	publishCallbackProtocols(m, path, result)
 	return m
@@ -170,6 +174,93 @@ func mergeStaticMember(existing, next typ.StaticMember) typ.StaticMember {
 		Optional: existing.Optional || next.Optional,
 		Readonly: existing.Readonly && next.Readonly,
 	}
+}
+
+func exportTypeWithFunctionSignatures(modulePath string, export typ.Type, sigs map[string]signature.Function) typ.Type {
+	if modulePath == "" || len(sigs) == 0 {
+		return export
+	}
+	record, ok := unwrap.Annotated(export).(*typ.Record)
+	if !ok {
+		return export
+	}
+	fields := append([]typ.Field(nil), record.Fields...)
+	staticMembers := append([]typ.StaticMember(nil), record.StaticMembers...)
+	for name, sig := range sigs {
+		member, ok := directFunctionSignatureStaticMember(modulePath, name, sig)
+		if !ok {
+			continue
+		}
+		if member.Kind == typ.StaticMemberStringIndex {
+			if mergeFunctionSignatureField(fields, member.Name, member.Type) {
+				continue
+			}
+		}
+		staticMembers = mergeStaticMembers(staticMembers, []typ.StaticMember{member})
+	}
+	if len(fields) == len(record.Fields) && len(staticMembers) == len(record.StaticMembers) {
+		same := true
+		for i := range fields {
+			if fields[i].Name != record.Fields[i].Name ||
+				fields[i].Optional != record.Fields[i].Optional ||
+				fields[i].Readonly != record.Fields[i].Readonly ||
+				!typ.TypeEquals(fields[i].Type, record.Fields[i].Type) {
+				same = false
+				break
+			}
+		}
+		for i := range staticMembers {
+			if typ.CompareStaticMembers(staticMembers[i], record.StaticMembers[i]) != 0 ||
+				!typ.TypeEquals(staticMembers[i].Type, record.StaticMembers[i].Type) {
+				same = false
+				break
+			}
+		}
+		if same {
+			return export
+		}
+	}
+	return typetable.RebuildRecord(typ.RecordParts{
+		Fields:        fields,
+		StaticMembers: staticMembers,
+		Metatable:     record.Metatable,
+		MapKey:        record.MapKey,
+		MapValue:      record.MapValue,
+		Open:          record.Open,
+	})
+}
+
+func mergeFunctionSignatureField(fields []typ.Field, name string, t typ.Type) bool {
+	if name == "" || t == nil {
+		return false
+	}
+	for i := range fields {
+		if fields[i].Name != name {
+			continue
+		}
+		fields[i].Type = mergeManifestMemberType(fields[i].Type, t)
+		return true
+	}
+	return false
+}
+
+func directFunctionSignatureStaticMember(modulePath, name string, sig signature.Function) (typ.StaticMember, bool) {
+	if sig.Type == nil || modulePath == "" {
+		return typ.StaticMember{}, false
+	}
+	prefix := modulePath + "."
+	if !strings.HasPrefix(name, prefix) {
+		return typ.StaticMember{}, false
+	}
+	member := strings.TrimPrefix(name, prefix)
+	if member == "" || strings.ContainsAny(member, ".:[]") {
+		return typ.StaticMember{}, false
+	}
+	return typ.StaticMember{
+		Kind: typ.StaticMemberStringIndex,
+		Name: member,
+		Type: sig.Type,
+	}, true
 }
 
 func mergeManifestMemberType(existing, next typ.Type) typ.Type {

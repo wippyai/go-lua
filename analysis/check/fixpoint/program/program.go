@@ -22,6 +22,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/proof"
 	valueref "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
@@ -3545,7 +3546,7 @@ func materializeFunctionTree(
 	cache := newMaterializedSummaryCache(config.Registry, summaries, projections)
 	cache.writeResult(keys.rootKey, root)
 	applyDefinitionCaptureEntryStatesFromResult(&keys, fn, root, config.Registry)
-	funcTypes := functionValueTypesFromSummaries(config.Registry, cache, keys)
+	funcTypes := functionValueTypesFromSummaries(config.Registry, cache, keys, config.ModuleTypes)
 	body.WithOwnedFunctionValueTypes(root, funcTypes)
 	baseResults := make(map[*ast.FunctionExpr]*body.Result, len(keys.functions))
 	indexBase := summaryIndexBase(keys)
@@ -3583,6 +3584,13 @@ func materializeFunctionTree(
 		}
 		baseResults[origin.funcExpr] = result
 	}
+	if len(baseResults) != 0 {
+		funcTypes = functionValueTypesFromSummaries(config.Registry, cache, keys, config.ModuleTypes)
+		body.WithOwnedFunctionValueTypes(root, funcTypes)
+		for _, result := range baseResults {
+			body.WithOwnedFunctionValueTypes(result, funcTypes)
+		}
+	}
 	refreshedContexts := refreshExistingCallContextEntriesFromMaterializedResults(&keys, root, baseResults, config)
 	beforeMaterializedCollection := keys.contexts.Len()
 	addedContexts, err := collectMaterializedCallContextKeys(&keys, root, baseResults, config)
@@ -3600,7 +3608,7 @@ func materializeFunctionTree(
 	applyClosedDynamicAllValueEntryStates(&keys, prepared, config.Registry, root, closedDynamicResults)
 	recordProgramShape(stats, keys)
 	if refreshedContexts || addedContexts {
-		funcTypes = functionValueTypesFromSummaries(config.Registry, cache, keys)
+		funcTypes = functionValueTypesFromSummaries(config.Registry, cache, keys, config.ModuleTypes)
 		body.WithOwnedFunctionValueTypes(root, funcTypes)
 		for _, result := range baseResults {
 			body.WithOwnedFunctionValueTypes(result, funcTypes)
@@ -3611,7 +3619,7 @@ func materializeFunctionTree(
 		return nil, keys, err
 	}
 	if len(contextResultByKey) != 0 {
-		funcTypes = functionValueTypesFromSummaries(config.Registry, cache, keys)
+		funcTypes = functionValueTypesFromSummaries(config.Registry, cache, keys, config.ModuleTypes)
 		body.WithOwnedFunctionValueTypes(root, funcTypes)
 		for _, result := range baseResults {
 			body.WithOwnedFunctionValueTypes(result, funcTypes)
@@ -3819,13 +3827,13 @@ func containsTopLikeAnnotationTypeDepth(t typ.Type, seen map[typ.Type]bool, dept
 	})
 }
 
-func functionValueTypesFromSummaries(reg *axis.Registry, summaries summary.Reader, keys programKeys) body.FunctionValueTypes {
+func functionValueTypesFromSummaries(reg *axis.Registry, summaries summary.Reader, keys programKeys, external typeannotation.Resolver) body.FunctionValueTypes {
 	if reg == nil || summaries == nil {
 		return body.FunctionValueTypes{}
 	}
 	out := body.FunctionValueTypes{}
 	for id, key := range keys.functionIDs {
-		fn, ok := functionTypeFromSummary(reg, summaries, key, keys.functionTypes[key])
+		fn, ok := functionTypeFromSummary(reg, summaries, key, functionValueDeclaredType(keys, key, external))
 		if !ok {
 			continue
 		}
@@ -3835,7 +3843,7 @@ func functionValueTypesFromSummaries(reg *axis.Registry, summaries summary.Reade
 		out.ByIdentity[id] = fn
 	}
 	for pathKey, key := range keys.pathKeys {
-		fn, ok := functionTypeFromSummary(reg, summaries, key, keys.functionTypes[key])
+		fn, ok := functionTypeFromSummary(reg, summaries, key, functionValueDeclaredType(keys, key, external))
 		if !ok {
 			continue
 		}
@@ -3868,9 +3876,9 @@ func functionValueTypesFromSummaries(reg *axis.Registry, summaries summary.Reade
 			return
 		}
 		id := identity.LuaFunction(uint64(sym))
-		fn, ok := functionTypeFromSummary(reg, summaries, context.key, keys.functionTypes[context.key])
+		fn, ok := functionTypeFromSummary(reg, summaries, context.key, functionValueDeclaredType(keys, context.key, external))
 		if !ok {
-			fn, ok = functionTypeFromSummary(reg, summaries, baseKey, keys.functionTypes[baseKey])
+			fn, ok = functionTypeFromSummary(reg, summaries, baseKey, functionValueDeclaredType(keys, baseKey, external))
 		}
 		if !ok || fn == nil {
 			return
@@ -3885,6 +3893,24 @@ func functionValueTypesFromSummaries(reg *axis.Registry, summaries summary.Reade
 		})
 	})
 	return out
+}
+
+func functionValueDeclaredType(keys programKeys, key summary.SummaryKey, external typeannotation.Resolver) *typ.Function {
+	if fn := keys.functionTypes[key]; fn != nil {
+		return fn
+	}
+	if keys.bindings == nil {
+		return nil
+	}
+	def := keys.functionByKey[key]
+	if def == nil {
+		return nil
+	}
+	fn, ok := lowerFunctionValueExprType(def, keys.bindings, external)
+	if !ok {
+		return nil
+	}
+	return fn
 }
 
 func functionParamTypeSourceSpans(fn *ast.FunctionExpr) []factflow.SourceSpan {
@@ -4053,10 +4079,11 @@ func returnTypesFromSummary(reg *axis.Registry, sum summary.Summary) ([]typ.Type
 		return nil, false
 	}
 	out := make([]typ.Type, 0, len(sum.Returns))
+	reader := proof.New(reg, nil)
 	for _, value := range sum.Returns {
-		t, ok := typevalue.TypeOf(reg, value)
+		t, ok := reader.ValueTypeWithPresence(value)
 		if !ok || t == nil {
-			return nil, false
+			t = typ.Any
 		}
 		out = append(out, t)
 	}
@@ -4078,6 +4105,14 @@ func functionStmts(fn *ast.FunctionExpr) []ast.Stmt {
 }
 
 func lowerFunctionExprType(fn *ast.FunctionExpr, bindings *bind.Result, external typeannotation.Resolver) (*typ.Function, bool) {
+	return lowerFunctionExprTypeWithUntypedParams(fn, bindings, external, false)
+}
+
+func lowerFunctionValueExprType(fn *ast.FunctionExpr, bindings *bind.Result, external typeannotation.Resolver) (*typ.Function, bool) {
+	return lowerFunctionExprTypeWithUntypedParams(fn, bindings, external, true)
+}
+
+func lowerFunctionExprTypeWithUntypedParams(fn *ast.FunctionExpr, bindings *bind.Result, external typeannotation.Resolver, allowUntypedRegularParams bool) (*typ.Function, bool) {
 	if fn == nil || bindings == nil {
 		return nil, false
 	}
@@ -4092,7 +4127,7 @@ func lowerFunctionExprType(fn *ast.FunctionExpr, bindings *bind.Result, external
 		builder.TypeParamRef(param)
 	}
 	slots := bindings.ParamSlots(fn)
-	if functionSlotsHaveUntypedRegularParam(slots) {
+	if !allowUntypedRegularParams && functionSlotsHaveUntypedRegularParam(slots) {
 		return nil, false
 	}
 	builder.ReserveParams(len(slots))

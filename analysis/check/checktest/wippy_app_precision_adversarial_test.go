@@ -5224,6 +5224,152 @@ end
 	}
 }
 
+func TestCheckTableMemberFunctionCarriesInferredReturnsToCallbackParam(t *testing.T) {
+	result := Check(`
+type ApiError = { message: string?, status_code: integer? }
+local mapper = {}
+
+function mapper.classify_error(api_error: ApiError?)
+    if not api_error then
+        return "server_error", "Unknown error", nil
+    end
+    return "invalid_request", api_error.message or "Bad request", { status_code = api_error.status_code }
+end
+
+local function classifier(fn: (http_err: ApiError?) -> (string, string, table?)): ()
+end
+
+classifier(mapper.classify_error)
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want table-member function declaration to carry inferred return tuple to callback parameter", result.Diagnostics)
+	}
+}
+
+func TestCheckUntypedTableMemberFunctionCallbackReportsPreciseReturnAny(t *testing.T) {
+	result := Check(`
+local mapper = {}
+
+function mapper.classify_error(api_error)
+    if not api_error then
+        return "server_error", "Unknown error", nil
+    end
+    return "invalid_request", api_error.message or "Bad request", { status_code = api_error.status_code }
+end
+
+local function classifier(fn: (http_err: any?) -> (string, string, table?)): ()
+end
+
+classifier(mapper.classify_error)
+`, WithStdlib())
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one precise callback return diagnostic", result.Diagnostics)
+	}
+	if result.Diagnostics[0].Code != diagnostics.CodeDirectCallArgType {
+		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeDirectCallArgType)
+	}
+	if strings.Contains(result.Diagnostics[0].Message, "fun(...any)") ||
+		!strings.Contains(result.Diagnostics[0].Message, "fun(api_error: any)") ||
+		!strings.Contains(result.Diagnostics[0].Message, "any") {
+		t.Fatalf("diagnostic message = %q, want precise untyped function value with any return evidence", result.Diagnostics[0].Message)
+	}
+}
+
+func TestCheckImportedTableMemberFunctionCarriesInferredReturnsToCallbackParam(t *testing.T) {
+	mapper := CheckAndExport(`
+type ApiError = { message: string?, status_code: integer? }
+local M = {}
+
+function M.classify_error(api_error: ApiError?)
+    if not api_error then
+        return "server_error", "Unknown error", nil
+    end
+    return "invalid_request", api_error.message or "Bad request", { status_code = api_error.status_code }
+end
+
+return M
+`, "mapper", WithStdlib())
+	if len(mapper.Errors) != 0 {
+		t.Fatalf("mapper diagnostics = %#v, want clean export", mapper.Errors)
+	}
+	if sig, ok := mapper.Manifest.FunctionSignatures["mapper.classify_error"]; !ok || sig.Type == nil {
+		t.Fatalf("exported signatures = %#v, want mapper.classify_error function type", mapper.Manifest.FunctionSignatures)
+	}
+
+	result := Check(`
+local mapper = require("mapper")
+type ApiError = { message: string?, status_code: integer? }
+
+local function classifier(fn: (http_err: ApiError?) -> (string, string, table?)): ()
+end
+
+classifier(mapper.classify_error)
+`, WithStdlib(), WithModule("mapper", mapper))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want imported table-member function declaration to carry inferred return tuple to callback parameter", result.Diagnostics)
+	}
+}
+
+func TestCheckUntypedImportedTableMemberFunctionCallbackReportsPreciseReturnAny(t *testing.T) {
+	mapper := CheckAndExport(`
+local M = {}
+
+function M.classify_error(api_error)
+    if not api_error then
+        return "server_error", "Unknown error", nil
+    end
+    return "invalid_request", api_error.message or "Bad request", { status_code = api_error.status_code }
+end
+
+return M
+`, "mapper", WithStdlib())
+	if len(mapper.Errors) != 0 {
+		t.Fatalf("mapper diagnostics = %#v, want clean export", mapper.Errors)
+	}
+	if sig, ok := mapper.Manifest.FunctionSignatures["mapper.classify_error"]; !ok || sig.Type == nil {
+		t.Fatalf("exported signatures = %#v, want mapper.classify_error function type for untyped member", mapper.Manifest.FunctionSignatures)
+	}
+	record, ok := mapper.Manifest.Export.(*typ.Record)
+	if !ok {
+		t.Fatalf("export type = %#v, want record", mapper.Manifest.Export)
+	}
+	memberType := typ.Type(nil)
+	for _, field := range record.Fields {
+		if field.Name == "classify_error" {
+			memberType = field.Type
+			break
+		}
+	}
+	if memberType == nil {
+		if member := record.GetStaticStringIndex("classify_error"); member != nil {
+			memberType = member.Type
+		}
+	}
+	if memberType == nil || typ.IsAny(memberType) || typ.IsUnknown(memberType) {
+		t.Fatalf("export member classify_error = %v in export %#v, want precise function type", memberType, mapper.Manifest.Export)
+	}
+
+	result := Check(`
+local mapper = require("mapper")
+
+local function classifier(fn: (http_err: any?) -> (string, string, table?)): ()
+end
+
+classifier(mapper.classify_error)
+`, WithStdlib(), WithModule("mapper", mapper))
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one precise imported callback return diagnostic", result.Diagnostics)
+	}
+	if result.Diagnostics[0].Code != diagnostics.CodeDirectCallArgType {
+		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeDirectCallArgType)
+	}
+	if strings.Contains(result.Diagnostics[0].Message, "fun(...any)") ||
+		!strings.Contains(result.Diagnostics[0].Message, "fun(api_error: any)") ||
+		!strings.Contains(result.Diagnostics[0].Message, "any") {
+		t.Fatalf("diagnostic message = %q, want precise imported untyped function value with any return evidence", result.Diagnostics[0].Message)
+	}
+}
+
 func TestCheckDirectErrorReturnPreservesValuePresenceCorrelation(t *testing.T) {
 	result := Check(`
 type DB = {
