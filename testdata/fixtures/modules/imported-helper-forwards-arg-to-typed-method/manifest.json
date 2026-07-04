@@ -17,17 +17,17 @@
         ],
         "min_evidence": 5,
         "evidence_contains": [
-          "argument 2 (model_id) has type any",
-          "inside helper, argument 2 is passed to argument 1.invoke parameter 1, which requires string",
+          "argument 1 (model_id) has type any",
+          "inside helper, argument 1 (model_id) is passed to client.invoke parameter 1, which requires string",
           "user asserted any; not abstract-interpreter proof",
           "model_id comes from any/unknown",
-          "no proof on this path shows model_id is string"
+          "no proof on this path shows argument 1 (model_id) is string"
         ],
         "evidence": [
           {
             "trust": "proven",
             "contains": [
-              "argument 2 (model_id) has type any"
+              "argument 1 (model_id) has type any"
             ],
             "kind": "abstract fact",
             "file": "main.lua",
@@ -37,7 +37,7 @@
           {
             "trust": "proven",
             "contains": [
-              "inside helper, argument 2 is passed to argument 1.invoke parameter 1, which requires string"
+              "inside helper, argument 1 (model_id) is passed to client.invoke parameter 1, which requires string"
             ],
             "kind": "abstract fact"
           },
@@ -64,7 +64,7 @@
           {
             "trust": "unknown",
             "contains": [
-              "no proof on this path shows model_id is string"
+              "no proof on this path shows argument 1 (model_id) is string"
             ],
             "kind": "missing proof",
             "reason": "boundary validation missing",
@@ -83,11 +83,11 @@
           "--> main.lua:12:24",
           "helper(bedrock_client, model_id) -- expect-error: no proof shows it is string",
           "because:",
-          "1. proven: argument 2 (model_id) has type any",
-          "2. proven: inside helper, argument 2 is passed to argument 1.invoke parameter 1, which requires string",
+          "1. proven: argument 1 (model_id) has type any",
+          "2. proven: inside helper, argument 1 (model_id) is passed to client.invoke parameter 1, which requires string",
           "3. claimed: user asserted any; not abstract-interpreter proof",
           "4. unvalidated value: model_id comes from any/unknown",
-          "5. missing proof: no proof on this path shows model_id is string",
+          "5. missing proof: no proof on this path shows argument 1 (model_id) is string",
           "help: Validate or narrow `model_id` before passing it; any/unknown values do not prove parameter contracts."
         ],
         "render_not_contains": [

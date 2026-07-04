@@ -337,13 +337,23 @@ func (r Reader) callParamObligationOrigin(point cfg.Point, obligation callpayloa
 	return readapi.CallArgumentObligationOrigin{
 		HasOrigin:         true,
 		FunctionName:      r.callContractSourceName(site),
-		SubjectLabel:      callArgumentLabel(obligation.Origin.ArgParam),
+		SubjectLabel:      callParamObligationSubjectLabel(obligation.Origin),
 		ProviderLabel:     callParamObligationProviderLabel(obligation.Origin),
 		MemberParamNumber: obligation.Origin.MemberParamIndex + 1,
 	}
 }
 
+func callParamObligationSubjectLabel(origin callpayload.CallParamObligationOrigin) string {
+	if origin.SubjectLabel != "" {
+		return origin.SubjectLabel
+	}
+	return callArgumentLabel(origin.ArgParam)
+}
+
 func callParamObligationProviderLabel(origin callpayload.CallParamObligationOrigin) string {
+	if origin.ProviderLabel != "" {
+		return origin.ProviderLabel
+	}
 	var segs []segment.Segment
 	if origin.ReceiverPath != "" {
 		var ok bool

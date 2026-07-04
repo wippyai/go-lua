@@ -2,14 +2,17 @@ package summary
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice/factset"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 )
 
 // paramMemberCallObligationLane is the canonical may (union) membership lattice
 // for parameter member-call obligations.
-var paramMemberCallObligationLane = factset.Set[ParamMemberCallObligation, ParamMemberCallObligation]{
-	Key:       func(o ParamMemberCallObligation) ParamMemberCallObligation { return o },
-	EqualFact: func(a, b ParamMemberCallObligation) bool { return a == b },
+var paramMemberCallObligationLane = factset.Set[paramMemberCallObligationKey, ParamMemberCallObligation]{
+	Key: paramMemberCallObligationSemanticKey,
+	EqualFact: func(a, b ParamMemberCallObligation) bool {
+		return paramMemberCallObligationSemanticKey(a) == paramMemberCallObligationSemanticKey(b)
+	},
 	Less: func(a, b ParamMemberCallObligation) bool {
 		if a.ReceiverParam != b.ReceiverParam {
 			return a.ReceiverParam < b.ReceiverParam
@@ -31,6 +34,38 @@ var paramMemberCallObligationLane = factset.Set[ParamMemberCallObligation, Param
 		}
 		return o.ReceiverPath == "" || o.ReceiverPath.Valid()
 	},
+	Prefer: func(kept, incoming ParamMemberCallObligation) bool {
+		return paramMemberCallObligationLabelScore(incoming) > paramMemberCallObligationLabelScore(kept)
+	},
+}
+
+type paramMemberCallObligationKey struct {
+	ReceiverParam    int
+	ReceiverPath     pathaddr.SuffixKey
+	Member           segment.Segment
+	ArgParam         int
+	MemberParamIndex int
+}
+
+func paramMemberCallObligationSemanticKey(o ParamMemberCallObligation) paramMemberCallObligationKey {
+	return paramMemberCallObligationKey{
+		ReceiverParam:    o.ReceiverParam,
+		ReceiverPath:     o.ReceiverPath,
+		Member:           o.Member,
+		ArgParam:         o.ArgParam,
+		MemberParamIndex: o.MemberParamIndex,
+	}
+}
+
+func paramMemberCallObligationLabelScore(o ParamMemberCallObligation) int {
+	score := 0
+	if o.SubjectLabel != "" {
+		score++
+	}
+	if o.ProviderLabel != "" {
+		score++
+	}
+	return score
 }
 
 // paramMemberReturnSlotLane is the canonical must (intersection) membership

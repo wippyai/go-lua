@@ -16,15 +16,15 @@
         ],
         "min_evidence": 3,
         "evidence_contains": [
-          "argument 2 has literal value \"bad\"",
-          "inside invoke, argument 2 is passed to argument 1.send parameter 1, which requires number",
-          "no proof on this path shows argument 2 is number"
+          "argument 1 (payload) has literal value \"bad\"",
+          "inside invoke, argument 1 (payload) is passed to provider.send parameter 1, which requires number",
+          "no proof on this path shows argument 1 (payload) is number"
         ],
         "evidence": [
           {
             "trust": "proven",
             "contains": [
-              "argument 2 has literal value \"bad\""
+              "argument 1 (payload) has literal value \"bad\""
             ],
             "kind": "abstract fact",
             "file": "main.lua",
@@ -34,14 +34,14 @@
           {
             "trust": "proven",
             "contains": [
-              "inside invoke, argument 2 is passed to argument 1.send parameter 1, which requires number"
+              "inside invoke, argument 1 (payload) is passed to provider.send parameter 1, which requires number"
             ],
             "kind": "abstract fact"
           },
           {
             "trust": "unknown",
             "contains": [
-              "no proof on this path shows argument 2 is number"
+              "no proof on this path shows argument 1 (payload) is number"
             ],
             "kind": "missing proof",
             "file": "main.lua",
@@ -59,9 +59,9 @@
           "--> main.lua:9:11",
           "invoke(p, \"bad\")",
           "because:",
-          "1. proven: argument 2 has literal value \"bad\"",
-          "2. proven: inside invoke, argument 2 is passed to argument 1.send parameter 1, which requires number",
-          "3. missing proof: no proof on this path shows argument 2 is number",
+          "1. proven: argument 1 (payload) has literal value \"bad\"",
+          "2. proven: inside invoke, argument 1 (payload) is passed to provider.send parameter 1, which requires number",
+          "3. missing proof: no proof on this path shows argument 1 (payload) is number",
           "help: Pass a value for argument 2 that satisfies the parameter type, or change the callee signature if that argument is valid."
         ],
         "render_not_contains": [

@@ -305,6 +305,8 @@ type CallParamObligationOrigin struct {
 	Member           segment.Segment
 	ArgParam         int
 	MemberParamIndex int
+	SubjectLabel     string
+	ProviderLabel    string
 }
 
 // CallParamPathRefinement records a normal-return value constraint for a

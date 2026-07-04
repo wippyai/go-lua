@@ -190,7 +190,7 @@ func directCallArgumentJudgmentEvidence(display diagnosticDisplay, item judgment
 	} else if detail, ok := directCallArgumentMethodTypeMismatch(item); ok {
 		missingProof = methodTypeMismatchEvidence(want, detail.Field, detail.ActualType, detail.FieldType)
 	} else if directCallArgumentHasCallParamObligation(item) {
-		missingProof = fmt.Sprintf("no proof on this path shows %s is %s", wording.MissingName, display.Type(want))
+		missingProof = fmt.Sprintf("no proof on this path shows %s is %s", directCallArgumentSourceEvidenceLabel(item, wording.MissingName), display.Type(want))
 	}
 	missingProofReason := diagnostic.EvidenceReasonUnspecified
 	if item.HasEvidence(judgment.EvidencePrecisionBoundary) {
@@ -214,7 +214,7 @@ func directCallArgumentJudgmentEvidence(display diagnosticDisplay, item judgment
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustUnknown),
 			Span:    primary,
-			Message: display.SourceTypeEvidence(wording.Subject, got),
+			Message: display.SourceTypeEvidence(directCallArgumentSourceEvidenceLabel(item, wording.Subject), got),
 		},
 		{
 			Kind:    expectedEvidenceKind,
@@ -263,6 +263,17 @@ func directCallArgumentUserAssertionEvidence(item judgment.Judgment) []diagnosti
 		})
 	}
 	return out
+}
+
+func directCallArgumentSourceEvidenceLabel(item judgment.Judgment, fallback string) string {
+	for _, evidence := range item.Evidence {
+		if evidence.Kind == judgment.EvidenceUserAssertion &&
+			evidence.Detail.Kind == judgment.EvidenceDetailCallParamObligation &&
+			evidence.Detail.SubjectLabel != "" {
+			return evidence.Detail.SubjectLabel
+		}
+	}
+	return fallback
 }
 
 func directCallArgumentExpectedEvidenceMessage(display diagnosticDisplay, item judgment.Judgment, fallback string, want typ.Type) string {

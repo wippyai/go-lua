@@ -16,6 +16,8 @@ type ParamMemberCallObligation struct {
 	Member           segment.Segment
 	ArgParam         int
 	MemberParamIndex int
+	SubjectLabel     string `json:"-"`
+	ProviderLabel    string `json:"-"`
 }
 
 // ParamMemberReturnSlot records that a function return slot delegates to a

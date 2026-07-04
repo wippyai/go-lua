@@ -277,7 +277,7 @@ func TestCallParamObligationRejectsObjectLiteralExplicitAnyMember(t *testing.T) 
 		if d.Code == CodeDirectCallArgType &&
 			strings.Contains(d.Message, "argument 2.id (raw) comes from any/unknown") {
 			if got := d.Explanation.String(); !strings.Contains(got, "raw comes from any/unknown") ||
-				!strings.Contains(got, "no proof on this path shows raw satisfies the parameter type") {
+				!strings.Contains(got, "no proof on this path shows argument 1 (payload) is string") {
 				t.Fatalf("explanation = %q, want any/unknown boundary and missing-proof evidence", got)
 			}
 			if !diagnosticHasLabel(d, "argument value") {
@@ -308,7 +308,7 @@ func TestCallParamObligationRejectsExplicitAnyStructuralWitness(t *testing.T) {
 			strings.Contains(d.Message, "argument 2") &&
 			strings.Contains(d.Message, "id") {
 			if got := d.Explanation.String(); !strings.Contains(got, "raw comes from any/unknown") ||
-				!strings.Contains(got, "no proof on this path shows raw satisfies the parameter type") {
+				!strings.Contains(got, "no proof on this path shows argument 1 (payload) is {id: string}") {
 				t.Fatalf("explanation = %q, want explicit-any claim and missing-proof evidence", got)
 			}
 			return
@@ -335,7 +335,7 @@ func TestCallParamObligationRejectsAsAnyCastEscape(t *testing.T) {
 			continue
 		}
 		if !strings.Contains(got, "argument 2 comes from any/unknown") ||
-			!strings.Contains(got, "no proof on this path shows argument 2 satisfies the parameter type") {
+			!strings.Contains(got, "no proof on this path shows argument 1 (payload) is number") {
 			t.Fatalf("explanation = %q, want explicit-any claim and missing-proof evidence", got)
 		}
 		if !strings.Contains(d.Help, "Validate or narrow") ||

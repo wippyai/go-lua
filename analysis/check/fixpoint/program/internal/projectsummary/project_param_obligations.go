@@ -1,6 +1,8 @@
 package projectsummary
 
 import (
+	"strconv"
+
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/memberaccess"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -91,6 +93,10 @@ type expressionPathReader interface {
 
 type symbolTypeAnnotationReader interface {
 	SymbolTypeAnnotation(symbol.ID) (ast.TypeExpr, bool)
+}
+
+type symbolNameReader interface {
+	SymbolName(symbol.ID) string
 }
 
 type pathValueAtBoundaryReader interface {
@@ -869,9 +875,36 @@ func (p paramObligationProjector) memberCallObligations(fact semantics.CallFact,
 			Member:           member,
 			ArgParam:         argParam,
 			MemberParamIndex: i + memberOffset,
+			SubjectLabel:     p.memberCallArgumentSubjectLabel(i, p.params[argParam]),
+			ProviderLabel:    p.memberCallProviderLabel(receiver, member),
 		})
 	}
 	return out
+}
+
+func (p paramObligationProjector) memberCallArgumentSubjectLabel(index int, param pathdom.Path) string {
+	if param.IsEmpty() {
+		return ""
+	}
+	return "argument " + strconv.Itoa(index+1) + " (" + p.pathLabel(param) + ")"
+}
+
+func (p paramObligationProjector) memberCallProviderLabel(receiver pathdom.Path, member segment.Segment) string {
+	if receiver.IsEmpty() {
+		return ""
+	}
+	return p.pathLabel(receiver) + segment.FormatSegments([]segment.Segment{member})
+}
+
+func (p paramObligationProjector) pathLabel(path pathdom.Path) string {
+	if path.Symbol != 0 {
+		if names, ok := p.result.(symbolNameReader); ok {
+			if name := names.SymbolName(path.Symbol); name != "" {
+				return name + segment.FormatSegments(path.Segments)
+			}
+		}
+	}
+	return path.String()
 }
 
 func (p paramObligationProjector) memberCallReceiverStable(receiver pathdom.Path, member segment.Segment) bool {

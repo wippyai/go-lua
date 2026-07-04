@@ -787,7 +787,7 @@ invoke(p, "bad")
 `)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallArgType)
 	requireEvidenceMessage(t, diag, `argument 1 (payload) has literal value "bad"`)
-	requireEvidenceMessage(t, diag, "inside provider[1], argument 1 must satisfy number")
+	requireEvidenceMessage(t, diag, "inside invoke, argument 1 (payload) is passed to provider[1] parameter 1, which requires number")
 }
 
 func TestMemberCallObligationReportsInferredStaticIntProviderMemberMismatch(t *testing.T) {
@@ -803,7 +803,7 @@ invoke(p, "bad")
 `)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallArgType)
 	requireEvidenceMessage(t, diag, `argument 1 (payload) has literal value "bad"`)
-	requireEvidenceMessage(t, diag, "inside provider[1], argument 1 must satisfy number")
+	requireEvidenceMessage(t, diag, "inside invoke, argument 1 (payload) is passed to provider[1] parameter 1, which requires number")
 }
 
 func TestMemberCallObligationReportsInferredStaticStringProviderMemberMismatch(t *testing.T) {
@@ -819,7 +819,7 @@ invoke(p, "bad")
 `)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallArgType)
 	requireEvidenceMessage(t, diag, `argument 1 (payload) has literal value "bad"`)
-	requireEvidenceMessage(t, diag, "inside provider.send, argument 1 must satisfy number")
+	requireEvidenceMessage(t, diag, "inside invoke, argument 1 (payload) is passed to provider.send parameter 1, which requires number")
 }
 
 func TestMemberCallObligationUsesLatestInferredProviderMember(t *testing.T) {
@@ -836,7 +836,7 @@ invoke(p, 42)
 `)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallArgType)
 	requireEvidenceMessage(t, diag, "argument 1 (payload) has literal value 42")
-	requireEvidenceMessage(t, diag, "inside provider[1], argument 1 must satisfy string")
+	requireEvidenceMessage(t, diag, "inside invoke, argument 1 (payload) is passed to provider[1] parameter 1, which requires string")
 }
 
 func TestMemberCallObligationDoesNotUseBranchOnlyProviderMember(t *testing.T) {

@@ -2,6 +2,8 @@
 package callresult
 
 import (
+	"strconv"
+
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/memberaccess"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -219,7 +221,7 @@ func OutcomeProvider(config ProviderConfig) callpayload.CallOutcomeProvider {
 			out.ParamObligations = append(out.ParamObligations, functionTypeParamObligationsForSite(ctx, typeValues, site, fn, sources, in, read)...)
 		}
 		if len(got.ParamMemberCallObligations) != 0 {
-			out.ParamObligations = append(out.ParamObligations, memberCallParamObligations(ctx, site, got, sources, in, read, typeValues)...)
+			out.ParamObligations = append(out.ParamObligations, memberCallParamObligations(ctx, site, got, fn, sources, in, read, typeValues)...)
 		}
 		return out
 	}
@@ -1885,6 +1887,7 @@ func memberCallParamObligations(
 	ctx transfer.NodeContext,
 	site factflow.CallSiteView,
 	got summary.Summary,
+	fn *typ.Function,
 	sources sourcevalue.SourceValues,
 	in state.State,
 	read func(cfg.Point) state.State,
@@ -1942,10 +1945,50 @@ func memberCallParamObligations(
 				Member:           obligation.Member,
 				ArgParam:         obligation.ArgParam,
 				MemberParamIndex: obligation.MemberParamIndex,
+				SubjectLabel:     memberCallParamSubjectLabel(fn, obligation),
+				ProviderLabel:    memberCallParamProviderLabel(fn, obligation),
 			},
 		})
 	}
 	return out
+}
+
+func memberCallParamSubjectLabel(fn *typ.Function, obligation summary.ParamMemberCallObligation) string {
+	if obligation.SubjectLabel != "" {
+		return obligation.SubjectLabel
+	}
+	name := functionParamName(fn, obligation.ArgParam)
+	if name == "" {
+		return ""
+	}
+	return "argument " + strconv.Itoa(obligation.ArgParam+1) + " (" + name + ")"
+}
+
+func memberCallParamProviderLabel(fn *typ.Function, obligation summary.ParamMemberCallObligation) string {
+	if obligation.ProviderLabel != "" {
+		return obligation.ProviderLabel
+	}
+	root := functionParamName(fn, obligation.ReceiverParam)
+	if root == "" {
+		root = "argument " + strconv.Itoa(obligation.ReceiverParam+1)
+	}
+	var segs []segment.Segment
+	if obligation.ReceiverPath != "" {
+		var ok bool
+		segs, ok = pathaddr.RelativeStaticMemberSuffixSegments(obligation.ReceiverPath)
+		if !ok {
+			return ""
+		}
+	}
+	segs = append(segs, obligation.Member)
+	return root + segment.FormatSegments(segs)
+}
+
+func functionParamName(fn *typ.Function, index int) string {
+	if fn == nil || index < 0 || index >= len(fn.Params) {
+		return ""
+	}
+	return fn.Params[index].Name
 }
 
 func projectMemberObligationReceiver(receiver typ.Type, receiverPath pathaddr.SuffixKey) (typ.Type, bool) {
