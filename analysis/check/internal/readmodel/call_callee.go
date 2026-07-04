@@ -327,6 +327,9 @@ func preferDeclaredReceiverType(current, declared typ.Type) bool {
 	if current == nil || declared == nil {
 		return false
 	}
+	if typ.IsAny(declared) || typ.IsUnknown(declared) {
+		return true
+	}
 	currentContract := callcontract.ReceiverContractType(body.TypeWithoutOptionalNil(current))
 	declaredContract := callcontract.ReceiverContractType(body.TypeWithoutOptionalNil(declared))
 	return typevalue.TypeIncludesNil(current) &&

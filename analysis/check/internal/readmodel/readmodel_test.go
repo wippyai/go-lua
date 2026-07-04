@@ -2185,6 +2185,35 @@ end
 	}
 }
 
+func TestForEachCallLeavesDeclaredAnyLocalMethodReceiverGradual(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+function f()
+	local router: any = {}
+	router:on("commit", function() end)
+	router:dispatch({})
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	result := checked.RootResult()
+	if result == nil || len(result.FunctionResults()) != 1 {
+		t.Fatalf("function results = %#v, want one", result)
+	}
+	var reports []CallCalleeReport
+	New(result.FunctionResults()[0]).ForEachCall(func(call CallSite) bool {
+		if call.Callee.Kind != readapi.CallCalleeReportNone {
+			reports = append(reports, call.Callee)
+		}
+		return true
+	})
+	if len(reports) != 0 {
+		t.Fatalf("callee reports = %#v, want declared any receiver to stay gradual", reports)
+	}
+}
+
 func TestForEachCallReportsOptionalCallableDotMemberCallee(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
