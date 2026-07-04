@@ -8739,6 +8739,129 @@ return client
 	}
 }
 
+func TestCheckBodyUsageParamObligationFromUnannotatedExportedCapturedConcatOperand(t *testing.T) {
+	result := Check(`
+type HTTP = {
+    get: (url: string, options: table) -> (),
+    post: (url: string, options: table) -> (),
+}
+
+local http: HTTP = {
+    get = function(url: string, options: table): () end,
+    post = function(url: string, options: table): () end,
+}
+
+local client = {
+    _http_client = http,
+}
+
+function client.request(endpoint_path, options)
+    options = options or {}
+    local method = options.method or "POST"
+    local base_url = "https://api.example.test"
+    local full_url = base_url .. endpoint_path
+    local http_options = { timeout = tonumber(options.timeout) or 600 }
+    if method == "GET" then
+        return client._http_client.get(full_url, http_options)
+    end
+    return client._http_client.post(full_url, http_options)
+end
+
+return client
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want unannotated exported table-field function body to use its own param obligations before nested calls", result.Diagnostics)
+	}
+}
+
+func TestCheckClaudeStyleConfigBaseURLFeedsUnannotatedExportedRequest(t *testing.T) {
+	result := Check(`
+type HTTP = {
+    get: (url: string, options: table) -> (),
+    delete: (url: string, options: table) -> (),
+    put: (url: string, options: table) -> (),
+    patch: (url: string, options: table) -> (),
+    post: (url: string, options: table) -> (),
+}
+type Ctx = {
+    all: () -> any,
+}
+type Env = {
+    get: (name: string) -> string?,
+}
+
+local http_client: HTTP = {
+    get = function(url: string, options: table): () end,
+    delete = function(url: string, options: table): () end,
+    put = function(url: string, options: table): () end,
+    patch = function(url: string, options: table): () end,
+    post = function(url: string, options: table): () end,
+}
+local env: Env = { get = function(name: string): string? return nil end }
+local ctx: Ctx = { all = function(): any return nil end }
+
+local claude_client = {}
+claude_client._http_client = http_client
+claude_client._env = env
+claude_client._ctx = ctx
+
+local function resolve_config()
+    local ctx_all = claude_client._ctx.all() or {}
+
+    local function resolve_string(key: string, default_env: string?): string?
+        if ctx_all[key] then
+            return tostring(ctx_all[key])
+        end
+        local env_key = key .. "_env"
+        if ctx_all[env_key] then
+            local val = claude_client._env.get(tostring(ctx_all[env_key]))
+            if val and val ~= "" then return val end
+        end
+        if default_env then
+            local val = claude_client._env.get(default_env)
+            if val and val ~= "" then return val end
+        end
+        return nil
+    end
+
+    local config = {
+        api_key = resolve_string("api_key", "ANTHROPIC_API_KEY"),
+        base_url = resolve_string("base_url", "ANTHROPIC_BASE_URL") or "https://api.anthropic.com",
+        api_version = resolve_string("api_version", "ANTHROPIC_API_VERSION") or "2023-06-01",
+        beta_features = ctx_all.beta_features or {},
+        timeout = tonumber(resolve_string("timeout", "ANTHROPIC_TIMEOUT")) or 600,
+        headers = ctx_all.headers
+    }
+    return config
+end
+
+function claude_client.request(endpoint_path, payload, options)
+    options = options or {}
+    local method = options.method or "POST"
+    local config = resolve_config()
+    local full_url = config.base_url .. endpoint_path
+    local http_options: {[string]: any} = {
+        timeout = tonumber(options.timeout) or config.timeout,
+    }
+    if method == "GET" then
+        return claude_client._http_client.get(full_url, http_options)
+    elseif method == "DELETE" then
+        return claude_client._http_client.delete(full_url, http_options)
+    elseif method == "PUT" then
+        return claude_client._http_client.put(full_url, http_options)
+    elseif method == "PATCH" then
+        return claude_client._http_client.patch(full_url, http_options)
+    end
+    return claude_client._http_client.post(full_url, http_options)
+end
+
+return claude_client
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want Claude-style defaulted config base_url to stay string in unannotated exported request", result.Diagnostics)
+	}
+}
+
 func TestCheckInsertedMessageRowsPreserveContentMemberThroughIPairs(t *testing.T) {
 	result := Check(`
 local function merge_messages(contract_messages): ()

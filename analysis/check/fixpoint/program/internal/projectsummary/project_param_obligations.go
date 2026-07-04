@@ -615,7 +615,10 @@ func (p paramObligationProjector) expressionValueSatisfiesType(expr ast.Expr, wa
 		return false
 	}
 	got, ok := typevalue.TypeOf(p.reg, value)
-	return ok && got != nil && subtype.IsSubtype(got, want)
+	if !ok || got == nil || typ.IsAny(got) || typ.IsUnknown(got) || typ.IsNever(got) {
+		return false
+	}
+	return subtype.IsSubtype(got, want)
 }
 
 func (p paramObligationProjector) expressionHasPath(expr ast.Expr) bool {
@@ -766,9 +769,6 @@ func concatOperandObligationType() typ.Type {
 
 func (p paramObligationProjector) callParamTypes(fact semantics.CallFact, site factflow.CallSiteView) []typ.Type {
 	receiver, member, hasMemberCall := memberCallReceiverForSite(fact, site)
-	if hasMemberCall && !p.memberCallReceiverStable(receiver, member) {
-		return nil
-	}
 	if sigReader, ok := p.result.(callSignatureViewReader); ok {
 		if fn, ok := sigReader.CallSiteViewSignatureType(site); ok {
 			return functionParamTypes(fn, false)
@@ -780,6 +780,9 @@ func (p paramObligationProjector) callParamTypes(fact semantics.CallFact, site f
 		}
 	}
 	if hasMemberCall {
+		if _, _, receiverFromParam := p.unconditionalReceiverParamPath(receiver); receiverFromParam && !p.memberCallReceiverStable(receiver, member) {
+			return nil
+		}
 		receiverType, ok := p.receiverType(receiver)
 		if ok {
 			fn, status, ok := memberaccess.Callable(receiverType, member)

@@ -265,6 +265,63 @@ return client
 	}
 }
 
+func TestRunBoundChunkExportedFieldFunctionUsesProjectedFieldConcatBodyParamObligation(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type HTTP = {
+    get: (url: string, options: table) -> ()
+}
+type Config = {
+    base_url: string,
+    headers: any,
+}
+
+local http: HTTP = {
+    get = function(url: string, options: table): () end
+}
+
+local client = {}
+client._http_client = http
+
+local function resolve_config(): Config
+    return {
+        base_url = "https://api.example.test",
+        headers = client.headers,
+    }
+end
+
+function client.request(endpoint_path)
+    local config = resolve_config()
+    local full_url = config.base_url .. endpoint_path
+    return client._http_client.get(full_url, {})
+end
+
+return client
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result, err := RunBoundChunk(stmts, bindings, Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunBoundChunk: %v", err)
+	}
+	request, point, fullURL := findNestedLocalByName(t, result.RootResult(), "full_url")
+	value, ok := request.SymbolValueAtBoundary(point, fullURL)
+	if !ok {
+		t.Fatalf("full_url boundary value missing at %v", point)
+	}
+	got, ok := typevalue.TypeOf(reg, value)
+	if !ok || !subtype.IsSubtype(got, typ.String) {
+		requestFn := findFunctionForPath(t, bindings, stmts, "client.request")
+		slots := bindings.ParamSlots(requestFn)
+		paramType := typ.Type(nil)
+		paramOK := false
+		if len(slots) != 0 {
+			paramValue, _ := request.SymbolValueAtBoundary(point, slots[0].Symbol)
+			paramType, paramOK = typevalue.TypeOf(reg, paramValue)
+		}
+		t.Fatalf("full_url type = %v/%v, want string from projected-field concat obligation; endpoint_path type = %v/%v", got, ok, paramType, paramOK)
+	}
+}
+
 func TestCapturedFunctionEntryCarriesTransitiveClosureEnvironment(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `

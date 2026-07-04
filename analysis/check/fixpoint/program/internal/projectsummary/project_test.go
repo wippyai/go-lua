@@ -489,6 +489,20 @@ end`), body.Config{Registry: reg})
 	projectAssertParamObligationKind(t, reg, got, 1, want)
 }
 
+func TestFromResultProjectsParamObligationThroughProjectedFieldConcat(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function f(http: {get: (url: string, options: table) -> ()}, config: {base_url: string, headers: any}, endpoint_path)
+	local full_url = config.base_url .. endpoint_path
+	return http.get(full_url, {})
+end`), body.Config{Registry: reg})
+
+	got := summaryprojection.FromResult(result)
+
+	want := runtimekind.Join(runtimekind.Singleton(runtimekind.String), runtimekind.Singleton(runtimekind.Number))
+	projectAssertParamObligationKind(t, reg, got, 2, want)
+}
+
 func TestFromResultProjectsNestedReturnParamPathAliases(t *testing.T) {
 	reg := standard.Registry()
 	result := projectCheckFunction(t, projectParseFunction(t, `
