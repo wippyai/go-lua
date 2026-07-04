@@ -129,6 +129,47 @@ func TestJudgmentEvidenceDetailLookupUsesChain(t *testing.T) {
 	}
 }
 
+func TestAssignmentProofQueriesUseStructuredEvidence(t *testing.T) {
+	j := Judgment{Evidence: EvidenceChain{
+		{
+			Kind:   EvidenceUserAssertion,
+			Detail: UnderSuppliedCallResultAssignmentEvidenceDetail("load", 1),
+			Span:   SpanRef{StartLine: 12, StartCol: 8},
+		},
+		{
+			Kind:   EvidenceAbstractFact,
+			Detail: AssignmentCallInvalidationEvidenceDetail("mutate()", "box.value", "box.value"),
+		},
+		{
+			Kind:   EvidenceAbstractFact,
+			Detail: DynamicAssignmentTargetEvidenceDetail("slots[k]"),
+		},
+		{
+			Kind:   EvidenceMissingProof,
+			Detail: IndexedReadMissingProofEvidenceDetail(),
+		},
+	}}
+
+	if detail, ok := j.AssignmentUnderSuppliedCallResultDetail(); !ok || !detail.UnderSupplied || detail.FunctionName != "load" {
+		t.Fatalf("AssignmentUnderSuppliedCallResultDetail = %#v, %v; want load under-supplied", detail, ok)
+	}
+	if span, ok := j.AssignmentCallResultReturnSpan(); !ok || span.StartLine != 12 || span.StartCol != 8 {
+		t.Fatalf("AssignmentCallResultReturnSpan = %#v, %v; want declared return span", span, ok)
+	}
+	if !j.AssignmentHasCallInvalidationEvidence() {
+		t.Fatal("AssignmentHasCallInvalidationEvidence = false, want true")
+	}
+	if !j.AssignmentHasDynamicTargetEvidence() {
+		t.Fatal("AssignmentHasDynamicTargetEvidence = false, want true")
+	}
+	if !j.AssignmentMissingProofMayBeNil() {
+		t.Fatal("AssignmentMissingProofMayBeNil = false, want true for indexed read")
+	}
+	if !j.AssignmentMissingProofIndexedRead() {
+		t.Fatal("AssignmentMissingProofIndexedRead = false, want true")
+	}
+}
+
 func TestDefaultRegistryValidatesCallArgumentJudgmentShape(t *testing.T) {
 	j := Judgment{
 		Code:    CodeCallArgType,

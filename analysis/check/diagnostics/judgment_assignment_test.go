@@ -268,6 +268,9 @@ func TestRenderAssignmentJudgmentPrecisionBoundaryIncludesBoundaryEvidence(t *te
 	if !diagnosticEvidenceContains(d.Explanation.Evidence(), "raw comes from any/unknown") {
 		t.Fatalf("evidence = %#v, want precision boundary evidence", d.Explanation.Evidence())
 	}
+	if !strings.Contains(d.Message, "raw comes from any/unknown; no proof shows it satisfies the declared type") {
+		t.Fatalf("message = %q, want same-rendered-type validation proof wording", d.Message)
+	}
 	if !diagnosticEvidenceContains(d.Explanation.Evidence(), "no proof on this path shows raw satisfies the declared type") {
 		t.Fatalf("evidence = %#v, want missing proof evidence", d.Explanation.Evidence())
 	}
