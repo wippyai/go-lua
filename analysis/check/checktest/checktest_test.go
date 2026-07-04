@@ -2012,9 +2012,11 @@ func TestWithManifestThreadsFunctionSignaturesIntoActiveChecking(t *testing.T) {
 	if len(mismatch.Diagnostics) != 1 {
 		t.Fatalf("mismatch diagnostics = %d, want 1: %#v", len(mismatch.Diagnostics), mismatch.Diagnostics)
 	}
-	if mismatch.Diagnostics[0].Code != diagnostics.CodeDirectCallResultAssignment {
-		t.Fatalf("diagnostic code = %s, want %s", mismatch.Diagnostics[0].Code, diagnostics.CodeDirectCallResultAssignment)
+	if mismatch.Diagnostics[0].Code != diagnostics.CodeAssignmentType {
+		t.Fatalf("diagnostic code = %s, want %s", mismatch.Diagnostics[0].Code, diagnostics.CodeAssignmentType)
 	}
+	requireEvidenceMessage(t, mismatch.Diagnostics[0], "f(...) has type number")
+	requireEvidenceMessage(t, mismatch.Diagnostics[0], "x is declared as string")
 
 	matching := Check(`local x: number = f()`, WithManifest("test", m), WithGlobals("f"))
 	if len(matching.Diagnostics) != 0 {
@@ -2052,9 +2054,11 @@ func TestWithManifestResolvesExplicitDottedGlobalStaticCalleePathOnly(t *testing
 	if len(globalMismatch.Diagnostics) != 1 {
 		t.Fatalf("global diagnostics = %d, want 1: %#v", len(globalMismatch.Diagnostics), globalMismatch.Diagnostics)
 	}
-	if globalMismatch.Diagnostics[0].Code != diagnostics.CodeDirectCallResultAssignment {
-		t.Fatalf("global diagnostic code = %s, want %s", globalMismatch.Diagnostics[0].Code, diagnostics.CodeDirectCallResultAssignment)
+	if globalMismatch.Diagnostics[0].Code != diagnostics.CodeAssignmentType {
+		t.Fatalf("global diagnostic code = %s, want %s", globalMismatch.Diagnostics[0].Code, diagnostics.CodeAssignmentType)
 	}
+	requireEvidenceMessage(t, globalMismatch.Diagnostics[0], "pkg.make(...) has type number")
+	requireEvidenceMessage(t, globalMismatch.Diagnostics[0], "x is declared as string")
 
 	localRoot := Check(`
 		local pkg = {}
@@ -2219,9 +2223,9 @@ func TestRequireManifestExportTypesImportedValueAndMemberCall(t *testing.T) {
 		local provider = require("provider")
 		local n: number = provider.meta()
 	`, WithStdlib(), WithManifest("provider", m))
-	requireDirectCallResultDiagnosticWithEvidence(t, mismatch, "typed imported provider member result")
-	requireEvidenceMessage(t, mismatch.Diagnostics[0], "provider.meta returns")
-	requireEvidenceMessage(t, mismatch.Diagnostics[0], "assignment target n requires number")
+	requireAssignmentDiagnosticWithEvidence(t, mismatch, "typed imported provider member result")
+	requireEvidenceMessage(t, mismatch.Diagnostics[0], "provider.meta(...) has type string")
+	requireEvidenceMessage(t, mismatch.Diagnostics[0], "n is declared as number")
 }
 
 func TestImportedOptionalMethodZeroArgReadUsesExportedOperationalErrorReturn(t *testing.T) {
