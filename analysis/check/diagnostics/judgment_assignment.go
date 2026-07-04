@@ -426,7 +426,9 @@ func assignmentJudgmentExtraEvidence(item judgment.Judgment, sourceName string, 
 	}
 	if sourceName != "" && sourceName != unknownSourceName && assignmentJudgmentMissingProofMayBeNil(item) {
 		out = append(out, assignmentJudgmentSourceContributionEvidence(item)...)
-		out = append(out, assignmentJudgmentNilableAccessEvidence(item)...)
+		if !assignmentJudgmentMissingProofIndexedRead(item) {
+			out = append(out, assignmentJudgmentNilableAccessEvidence(item)...)
+		}
 		out = append(out, assignmentJudgmentCallInvalidationEvidence(item)...)
 		if assignmentJudgmentMissingProofIndexedRead(item) {
 			return appendMissingNilGuardEvidence(out, sourceName, got, sourceSpan, true)

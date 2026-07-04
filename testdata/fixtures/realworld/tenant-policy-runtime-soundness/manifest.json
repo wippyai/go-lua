@@ -525,16 +525,6 @@
             "file": "main.lua",
             "line": 59,
             "column": 24,
-            "kind": "abstract fact",
-            "trust": "proven",
-            "contains": [
-              "protocol.meta(...).tags may be nil before indexing [\"source\"]"
-            ]
-          },
-          {
-            "file": "main.lua",
-            "line": 59,
-            "column": 24,
             "kind": "missing proof",
             "trust": "unknown",
             "reason": "index read validation missing",
@@ -555,7 +545,6 @@
           "because:",
           "proven: protocol.meta(...).tags[\"source\"] can be string or nil here",
           "claimed: source is declared as string",
-          "proven: protocol.meta(...).tags may be nil before indexing [\"source\"]",
           "missing proof: protocol.meta(...).tags[\"source\"] is an indexed read that can miss or read nil",
           "help: Guard `protocol.meta(...).tags[\"source\"]` with a nil check"
         ],
@@ -697,12 +686,10 @@
           "cannot assign store:lookup_policy(...).tags[\"source\"]",
           "may be nil"
         ],
-        "min_evidence": 5,
+        "min_evidence": 3,
         "evidence_contains": [
           "store:lookup_policy(...).tags[\"source\"] can be string or nil here",
           "missing_status is declared as string",
-          "store:lookup_policy(...) may be nil before reading .tags",
-          "store:lookup_policy(...).tags may be nil before indexing [\"source\"]",
           "store:lookup_policy(...).tags[\"source\"] is an indexed read that can miss or read nil"
         ],
         "evidence": [
@@ -730,26 +717,6 @@
             "file": "main.lua",
             "line": 66,
             "column": 32,
-            "kind": "abstract fact",
-            "trust": "proven",
-            "contains": [
-              "store:lookup_policy(...) may be nil before reading .tags"
-            ]
-          },
-          {
-            "file": "main.lua",
-            "line": 66,
-            "column": 32,
-            "kind": "abstract fact",
-            "trust": "proven",
-            "contains": [
-              "store:lookup_policy(...).tags may be nil before indexing [\"source\"]"
-            ]
-          },
-          {
-            "file": "main.lua",
-            "line": 66,
-            "column": 32,
             "kind": "missing proof",
             "trust": "unknown",
             "reason": "index read validation missing",
@@ -770,8 +737,6 @@
           "because:",
           "proven: store:lookup_policy(...).tags[\"source\"] can be string or nil here",
           "claimed: missing_status is declared as string",
-          "proven: store:lookup_policy(...) may be nil before reading .tags",
-          "proven: store:lookup_policy(...).tags may be nil before indexing [\"source\"]",
           "missing proof: store:lookup_policy(...).tags[\"source\"] is an indexed read that can miss or read nil",
           "help: Guard `store:lookup_policy(...).tags[\"source\"]` with a nil check"
         ],
