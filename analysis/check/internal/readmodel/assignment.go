@@ -237,7 +237,7 @@ func (r Reader) forEachOrdinaryAssignment(point cfg.Point, fact body.OrdinaryAss
 		}
 	}
 	t, _ := r.assignmentSourceTypeForExpr(point, fact.Value, value)
-	if inferredReplacementAccepted(target.Declared, expected, t) {
+	if r.inferredReplacementAccepted(point, target, expected, t) {
 		return true
 	}
 	assignment := Assignment{
@@ -393,17 +393,22 @@ func (r Reader) ordinaryWritableTargetType(current typ.Type, targetValue product
 	return current
 }
 
-func inferredReplacementAccepted(declared bool, expected, actual typ.Type) bool {
-	if declared || expected == nil || actual == nil {
+func (r Reader) inferredReplacementAccepted(point cfg.Point, target body.OrdinaryAssignmentTargetType, expected, actual typ.Type) bool {
+	if expected == nil || actual == nil {
 		return false
 	}
-	if _, ok := unwrap.Annotated(expected).(*typ.Function); ok {
-		_, actualOK := unwrap.Annotated(actual).(*typ.Function)
-		return actualOK
+	if !target.Declared {
+		if _, ok := unwrap.Annotated(expected).(*typ.Function); ok {
+			_, actualOK := unwrap.Annotated(actual).(*typ.Function)
+			return actualOK
+		}
+	}
+	if !r.ValueHasLocalExclusiveExactIdentity(point, target.TargetValue) {
+		return false
 	}
 	if _, ok := unwrap.Annotated(expected).(*typ.Record); ok {
-		_, actualOK := unwrap.Annotated(actual).(*typ.Record)
-		return actualOK
+		_, actualRecordOK := unwrap.Annotated(actual).(*typ.Record)
+		return actualRecordOK
 	}
 	return false
 }
