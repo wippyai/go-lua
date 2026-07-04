@@ -1,0 +1,519 @@
+package manifest
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/wippyai/go-lua/analysis/module/signature"
+)
+
+// wireLane builds one operationalEffectsWireLane from per-element behavior. It
+// is the descriptor constructor for the OperationalEffects wire codec: a lane
+// is fully described by the source fact slice, the wire slice, a per-element
+// encode/decode pair, and a canonical comparison. The generic driver walks the
+// registered lanes for whole-OperationalEffects encode, decode, and canonical
+// ordering, so adding a fact kind is a single descriptor entry rather than a
+// new plural encoder/decoder plus an inline sort closure.
+//
+// Growth sketch. The same descriptor shape extends to the producer side: a
+// summary-slot generator can attach, keyed by lane, a projector from
+// callboundary.NormalReturnFacts into the source fact slice this lane already
+// serializes. Because storage lanes (callboundary.NormalReturnFactLanes) and
+// wire lanes share field names and per-element vocabulary, a future
+// CallOutcome/NormalReturnFacts generation pass registers one handler per lane
+// against these descriptors instead of hand-threading each field, mirroring the
+// callboundary lane binding. That generation is intentionally not implemented
+// here; this file owns only the wire layer.
+func wireLane[Fact any, Wire any](
+	fieldName string,
+	facts func(*signature.OperationalEffects) *[]Fact,
+	wires func(*operationalEffectsWire) *[]Wire,
+	encodeElem func(Fact) (Wire, error),
+	decodeElem func(Wire) (Fact, error),
+	compare func(Wire, Wire) int,
+	canonElem func(*Wire),
+) operationalEffectsWireLane {
+	return operationalEffectsWireLane{
+		fieldName: fieldName,
+		encode: func(e *signature.OperationalEffects, out *operationalEffectsWire) error {
+			src := *facts(e)
+			if len(src) == 0 {
+				return nil
+			}
+			dst := wires(out)
+			for i := range src {
+				encoded, err := encodeElem(src[i])
+				if err != nil {
+					return fmt.Errorf("%s: %w", fieldName, err)
+				}
+				*dst = append(*dst, encoded)
+			}
+			return nil
+		},
+		decode: func(w *operationalEffectsWire, out *signature.OperationalEffects) error {
+			src := *wires(w)
+			if len(src) == 0 {
+				return nil
+			}
+			dst := facts(out)
+			for i := range src {
+				decoded, err := decodeElem(src[i])
+				if err != nil {
+					return fmt.Errorf("%s: %w", fieldName, err)
+				}
+				*dst = append(*dst, decoded)
+			}
+			return nil
+		},
+		canonicalize: func(w *operationalEffectsWire) {
+			dst := wires(w)
+			if canonElem != nil {
+				for i := range *dst {
+					canonElem(&(*dst)[i])
+				}
+			}
+			sort.Slice(*dst, func(i, j int) bool {
+				return compare((*dst)[i], (*dst)[j]) < 0
+			})
+		},
+	}
+}
+
+// encodeOperationalEffectsWith runs the whole-OperationalEffects encode over a
+// lane table. It is the single driver behind encodeOperationalEffects.
+func encodeOperationalEffectsWith(lanes []operationalEffectsWireLane, e *signature.OperationalEffects) (*operationalEffectsWire, error) {
+	if e == nil || e.IsEmpty() {
+		return nil, nil
+	}
+	out := &operationalEffectsWire{}
+	for _, lane := range lanes {
+		if err := lane.encode(e, out); err != nil {
+			return nil, err
+		}
+	}
+	canonicalizeOperationalEffectsWireWith(lanes, out)
+	return out, nil
+}
+
+// decodeOperationalEffectsWith runs the whole-OperationalEffects decode over a
+// lane table. It is the single driver behind decodeOperationalEffects.
+func decodeOperationalEffectsWith(lanes []operationalEffectsWireLane, w *operationalEffectsWire) (signature.OperationalEffects, error) {
+	if w == nil {
+		return signature.OperationalEffects{}, nil
+	}
+	var out signature.OperationalEffects
+	for _, lane := range lanes {
+		if err := lane.decode(w, &out); err != nil {
+			return signature.OperationalEffects{}, err
+		}
+	}
+	return out, nil
+}
+
+func canonicalizeOperationalEffectsWireWith(lanes []operationalEffectsWireLane, w *operationalEffectsWire) {
+	if w == nil {
+		return
+	}
+	for _, lane := range lanes {
+		lane.canonicalize(w)
+	}
+}
+
+// descriptorWireLanes is the descriptor-driven wire lane table. It registers one
+// entry per OperationalEffects fact kind in canonical field order.
+var descriptorWireLanes = []operationalEffectsWireLane{
+	wireLane("ReturnPresenceRelations",
+		func(e *signature.OperationalEffects) *[]signature.ReturnPresenceRelation { return &e.ReturnPresenceRelations },
+		func(w *operationalEffectsWire) *[]returnPresenceRelationWire { return &w.ReturnPresenceRelations },
+		encodeReturnPresenceRelation, decodeReturnPresenceRelation, compareReturnPresenceRelationWire, nil),
+	wireLane("NormalReturnPresenceRefinements",
+		func(e *signature.OperationalEffects) *[]signature.PathPresenceRefinement { return &e.NormalReturnPresenceRefinements },
+		func(w *operationalEffectsWire) *[]pathPresenceRefinementWire { return &w.NormalReturnPresenceRefinements },
+		encodeNormalReturnPresenceRefinement, decodeNormalReturnPresenceRefinement, comparePathPresenceRefinementWire, nil),
+	wireLane("NormalReturnTypeRefinements",
+		func(e *signature.OperationalEffects) *[]signature.PathTypeRefinement { return &e.NormalReturnTypeRefinements },
+		func(w *operationalEffectsWire) *[]pathTypeRefinementWire { return &w.NormalReturnTypeRefinements },
+		encodeNormalReturnTypeRefinement, decodeNormalReturnTypeRefinement, comparePathTypeRefinementWire, nil),
+	wireLane("PathPresenceImplications",
+		func(e *signature.OperationalEffects) *[]signature.PathPresenceImplication { return &e.PathPresenceImplications },
+		func(w *operationalEffectsWire) *[]pathPresenceImplicationWire { return &w.PathPresenceImplications },
+		encodePathPresenceImplication, decodePathPresenceImplication, comparePathPresenceImplicationWire, nil),
+	wireLane("PathStaticMembers",
+		func(e *signature.OperationalEffects) *[]signature.PathStaticMemberFact { return &e.PathStaticMembers },
+		func(w *operationalEffectsWire) *[]pathStaticMemberWire { return &w.PathStaticMembers },
+		encodePathStaticMember, decodePathStaticMember, comparePathStaticMemberWire, nil),
+	wireLane("PathInvalidations",
+		func(e *signature.OperationalEffects) *[]signature.PathInvalidation { return &e.PathInvalidations },
+		func(w *operationalEffectsWire) *[]pathInvalidationWire { return &w.PathInvalidations },
+		encodePathInvalidation, decodePathInvalidation, comparePathInvalidationWire, nil),
+	wireLane("BranchProofs",
+		func(e *signature.OperationalEffects) *[]signature.BranchProof { return &e.BranchProofs },
+		func(w *operationalEffectsWire) *[]branchProofWire { return &w.BranchProofs },
+		encodeBranchProof, decodeBranchProof, compareBranchProofWire, nil),
+	wireLane("DynamicIndexFacts",
+		func(e *signature.OperationalEffects) *[]signature.DynamicIndexFact { return &e.DynamicIndexFacts },
+		func(w *operationalEffectsWire) *[]dynamicIndexFactWire { return &w.DynamicIndexFacts },
+		encodeDynamicIndexFact, decodeDynamicIndexFact, compareDynamicIndexFactWire, nil),
+	wireLane("KeyMemberships",
+		func(e *signature.OperationalEffects) *[]signature.KeyMembership { return &e.KeyMemberships },
+		func(w *operationalEffectsWire) *[]keyMembershipWire { return &w.KeyMemberships },
+		encodeKeyMembership, decodeKeyMembership, compareKeyMembershipWire, nil),
+	wireLane("DynamicValueKeys",
+		func(e *signature.OperationalEffects) *[]signature.DynamicValueKeyMembership { return &e.DynamicValueKeys },
+		func(w *operationalEffectsWire) *[]dynamicValueKeyMembershipWire { return &w.DynamicValueKeys },
+		encodeDynamicValueKeyMembership, decodeDynamicValueKeyMembership, compareDynamicValueKeyMembershipWire, nil),
+	wireLane("FrozenTables",
+		func(e *signature.OperationalEffects) *[]signature.FrozenTable { return &e.FrozenTables },
+		func(w *operationalEffectsWire) *[]frozenTableWire { return &w.FrozenTables },
+		encodeFrozenTable, decodeFrozenTable, compareFrozenTableWire, nil),
+	wireLane("EscapeEvents",
+		func(e *signature.OperationalEffects) *[]signature.EscapeEvent { return &e.EscapeEvents },
+		func(w *operationalEffectsWire) *[]escapeEventWire { return &w.EscapeEvents },
+		encodeEscapeEvent, decodeEscapeEvent, compareEscapeEventWire, nil),
+	wireLane("StoreRelations",
+		func(e *signature.OperationalEffects) *[]signature.StoreRelation { return &e.StoreRelations },
+		func(w *operationalEffectsWire) *[]storeRelationWire { return &w.StoreRelations },
+		encodeStoreRelation, decodeStoreRelation, compareStoreRelationWire, nil),
+	wireLane("LifecycleEffects",
+		func(e *signature.OperationalEffects) *[]signature.LifecycleEffect { return &e.LifecycleEffects },
+		func(w *operationalEffectsWire) *[]lifecycleEffectWire { return &w.LifecycleEffects },
+		encodeLifecycleEffect, decodeLifecycleEffect, compareLifecycleEffectWire, nil),
+	wireLane("ReturnAllocationTemplates",
+		func(e *signature.OperationalEffects) *[]signature.ReturnAllocationTemplate { return &e.ReturnAllocationTemplates },
+		func(w *operationalEffectsWire) *[]returnAllocationTemplateWire { return &w.ReturnAllocationTemplates },
+		encodeReturnAllocationTemplate, decodeReturnAllocationTemplate, compareReturnAllocationTemplateWire,
+		canonicalizeReturnAllocationTemplateWire),
+}
+
+func encodeReturnPresenceRelation(relation signature.ReturnPresenceRelation) (returnPresenceRelationWire, error) {
+	trigger, err := encodePresence(relation.TriggerPresence)
+	if err != nil {
+		return returnPresenceRelationWire{}, fmt.Errorf("trigger presence: %w", err)
+	}
+	target, err := encodePresence(relation.TargetPresence)
+	if err != nil {
+		return returnPresenceRelationWire{}, fmt.Errorf("target presence: %w", err)
+	}
+	return returnPresenceRelationWire{
+		TriggerIndex:    encodeInt(relation.TriggerIndex),
+		TriggerPresence: trigger,
+		TargetIndex:     encodeInt(relation.TargetIndex),
+		TargetPresence:  target,
+	}, nil
+}
+
+func decodeReturnPresenceRelation(w returnPresenceRelationWire) (signature.ReturnPresenceRelation, error) {
+	trigger, err := decodePresence(w.TriggerPresence)
+	if err != nil {
+		return signature.ReturnPresenceRelation{}, fmt.Errorf("trigger presence: %w", err)
+	}
+	target, err := decodePresence(w.TargetPresence)
+	if err != nil {
+		return signature.ReturnPresenceRelation{}, fmt.Errorf("target presence: %w", err)
+	}
+	triggerIndex, err := decodeRequiredInt(w.TriggerIndex, "return relation trigger index missing")
+	if err != nil {
+		return signature.ReturnPresenceRelation{}, err
+	}
+	targetIndex, err := decodeRequiredInt(w.TargetIndex, "return relation target index missing")
+	if err != nil {
+		return signature.ReturnPresenceRelation{}, err
+	}
+	return signature.ReturnPresenceRelation{
+		TriggerIndex:    triggerIndex,
+		TriggerPresence: trigger,
+		TargetIndex:     targetIndex,
+		TargetPresence:  target,
+	}, nil
+}
+
+func encodeNormalReturnPresenceRefinement(refinement signature.PathPresenceRefinement) (pathPresenceRefinementWire, error) {
+	p, err := encodePlaceholderPath(refinement.Path)
+	if err != nil {
+		return pathPresenceRefinementWire{}, fmt.Errorf("path: %w", err)
+	}
+	pr, err := encodePresence(refinement.Presence)
+	if err != nil {
+		return pathPresenceRefinementWire{}, err
+	}
+	return pathPresenceRefinementWire{Path: p, Presence: pr}, nil
+}
+
+func decodeNormalReturnPresenceRefinement(w pathPresenceRefinementWire) (signature.PathPresenceRefinement, error) {
+	p, err := decodePlaceholderPath(w.Path)
+	if err != nil {
+		return signature.PathPresenceRefinement{}, fmt.Errorf("path: %w", err)
+	}
+	pr, err := decodePresence(w.Presence)
+	if err != nil {
+		return signature.PathPresenceRefinement{}, err
+	}
+	return signature.PathPresenceRefinement{Path: p, Presence: pr}, nil
+}
+
+func encodeNormalReturnTypeRefinement(refinement signature.PathTypeRefinement) (pathTypeRefinementWire, error) {
+	p, err := encodePlaceholderPath(refinement.Path)
+	if err != nil {
+		return pathTypeRefinementWire{}, fmt.Errorf("path: %w", err)
+	}
+	if refinement.Type == nil {
+		return pathTypeRefinementWire{}, fmt.Errorf("type: missing")
+	}
+	t, err := encodeType(refinement.Type)
+	if err != nil {
+		return pathTypeRefinementWire{}, fmt.Errorf("type: %w", err)
+	}
+	return pathTypeRefinementWire{
+		Path:       p,
+		Type:       t,
+		Assertions: encodeAssertion(refinement.Assertion),
+	}, nil
+}
+
+func decodeNormalReturnTypeRefinement(w pathTypeRefinementWire) (signature.PathTypeRefinement, error) {
+	p, err := decodePlaceholderPath(w.Path)
+	if err != nil {
+		return signature.PathTypeRefinement{}, fmt.Errorf("path: %w", err)
+	}
+	t, err := decodeType(w.Type)
+	if err != nil {
+		return signature.PathTypeRefinement{}, fmt.Errorf("type: %w", err)
+	}
+	if t == nil {
+		return signature.PathTypeRefinement{}, fmt.Errorf("type: missing")
+	}
+	assertionClaim, err := decodeAssertion(w.Assertions)
+	if err != nil {
+		return signature.PathTypeRefinement{}, fmt.Errorf("assertions: %w", err)
+	}
+	return signature.PathTypeRefinement{Path: p, Type: t, Assertion: assertionClaim}, nil
+}
+
+func encodePathStaticMember(member signature.PathStaticMemberFact) (pathStaticMemberWire, error) {
+	p, err := encodePlaceholderPath(member.Path)
+	if err != nil {
+		return pathStaticMemberWire{}, fmt.Errorf("path: %w", err)
+	}
+	if member.Type == nil {
+		return pathStaticMemberWire{}, fmt.Errorf("type: missing")
+	}
+	t, err := encodeType(member.Type)
+	if err != nil {
+		return pathStaticMemberWire{}, fmt.Errorf("type: %w", err)
+	}
+	return pathStaticMemberWire{Path: p, Type: t}, nil
+}
+
+func decodePathStaticMember(w pathStaticMemberWire) (signature.PathStaticMemberFact, error) {
+	p, err := decodePlaceholderPath(w.Path)
+	if err != nil {
+		return signature.PathStaticMemberFact{}, fmt.Errorf("path: %w", err)
+	}
+	t, err := decodeType(w.Type)
+	if err != nil {
+		return signature.PathStaticMemberFact{}, fmt.Errorf("type: %w", err)
+	}
+	if t == nil {
+		return signature.PathStaticMemberFact{}, fmt.Errorf("type: missing")
+	}
+	return signature.PathStaticMemberFact{Path: p, Type: t}, nil
+}
+
+func encodePathInvalidation(invalidation signature.PathInvalidation) (pathInvalidationWire, error) {
+	p, err := encodePlaceholderPath(invalidation.Path)
+	if err != nil {
+		return pathInvalidationWire{}, err
+	}
+	return pathInvalidationWire{Path: p}, nil
+}
+
+func decodePathInvalidation(w pathInvalidationWire) (signature.PathInvalidation, error) {
+	p, err := decodePlaceholderPath(w.Path)
+	if err != nil {
+		return signature.PathInvalidation{}, err
+	}
+	return signature.PathInvalidation{Path: p}, nil
+}
+
+func encodeFrozenTable(frozen signature.FrozenTable) (frozenTableWire, error) {
+	p, err := encodePlaceholderPath(frozen.Target)
+	if err != nil {
+		return frozenTableWire{}, err
+	}
+	return frozenTableWire{Target: p}, nil
+}
+
+func decodeFrozenTable(w frozenTableWire) (signature.FrozenTable, error) {
+	p, err := decodePlaceholderPath(w.Target)
+	if err != nil {
+		return signature.FrozenTable{}, err
+	}
+	return signature.FrozenTable{Target: p}, nil
+}
+
+func encodeEscapeEvent(event signature.EscapeEvent) (escapeEventWire, error) {
+	p, err := encodePlaceholderPath(event.Target)
+	if err != nil {
+		return escapeEventWire{}, fmt.Errorf("target: %w", err)
+	}
+	kind, err := encodeEscapeKind(event.Kind)
+	if err != nil {
+		return escapeEventWire{}, err
+	}
+	return escapeEventWire{Target: p, Kind: kind, Recursive: event.Recursive}, nil
+}
+
+func decodeEscapeEvent(w escapeEventWire) (signature.EscapeEvent, error) {
+	p, err := decodePlaceholderPath(w.Target)
+	if err != nil {
+		return signature.EscapeEvent{}, fmt.Errorf("target: %w", err)
+	}
+	kind, err := decodeEscapeKind(w.Kind)
+	if err != nil {
+		return signature.EscapeEvent{}, err
+	}
+	return signature.EscapeEvent{Target: p, Kind: kind, Recursive: w.Recursive}, nil
+}
+
+func encodeStoreRelation(relation signature.StoreRelation) (storeRelationWire, error) {
+	source, err := encodePlaceholderPath(relation.Source)
+	if err != nil {
+		return storeRelationWire{}, fmt.Errorf("source: %w", err)
+	}
+	into, err := encodePlaceholderPath(relation.Into)
+	if err != nil {
+		return storeRelationWire{}, fmt.Errorf("target: %w", err)
+	}
+	return storeRelationWire{Source: source, Into: into}, nil
+}
+
+func decodeStoreRelation(w storeRelationWire) (signature.StoreRelation, error) {
+	source, err := decodePlaceholderPath(w.Source)
+	if err != nil {
+		return signature.StoreRelation{}, fmt.Errorf("source: %w", err)
+	}
+	into, err := decodePlaceholderPath(w.Into)
+	if err != nil {
+		return signature.StoreRelation{}, fmt.Errorf("target: %w", err)
+	}
+	return signature.StoreRelation{Source: source, Into: into}, nil
+}
+
+func compareReturnPresenceRelationWire(a, b returnPresenceRelationWire) int {
+	if c := compareOptionalInt(a.TriggerIndex, b.TriggerIndex); c != 0 {
+		return c
+	}
+	if c := strings.Compare(a.TriggerPresence, b.TriggerPresence); c != 0 {
+		return c
+	}
+	if c := compareOptionalInt(a.TargetIndex, b.TargetIndex); c != 0 {
+		return c
+	}
+	return strings.Compare(a.TargetPresence, b.TargetPresence)
+}
+
+func comparePathPresenceRefinementWire(a, b pathPresenceRefinementWire) int {
+	if c := comparePlaceholderPathWire(a.Path, b.Path); c != 0 {
+		return c
+	}
+	return strings.Compare(a.Presence, b.Presence)
+}
+
+func comparePathTypeRefinementWire(a, b pathTypeRefinementWire) int {
+	if c := comparePlaceholderPathWire(a.Path, b.Path); c != 0 {
+		return c
+	}
+	if c := strings.Compare(typeWireKey(a.Type), typeWireKey(b.Type)); c != 0 {
+		return c
+	}
+	return strings.Compare(strings.Join(a.Assertions, ","), strings.Join(b.Assertions, ","))
+}
+
+func comparePathStaticMemberWire(a, b pathStaticMemberWire) int {
+	if c := comparePlaceholderPathWire(a.Path, b.Path); c != 0 {
+		return c
+	}
+	return strings.Compare(typeWireKey(a.Type), typeWireKey(b.Type))
+}
+
+func comparePathInvalidationWire(a, b pathInvalidationWire) int {
+	return comparePlaceholderPathWire(a.Path, b.Path)
+}
+
+func compareDynamicIndexFactWire(a, b dynamicIndexFactWire) int {
+	if c := compareBoundaryPathWire(a.Table, b.Table); c != 0 {
+		return c
+	}
+	if c := strings.Compare(a.Site, b.Site); c != 0 {
+		return c
+	}
+	if c := strings.Compare(a.KeyPresence, b.KeyPresence); c != 0 {
+		return c
+	}
+	if c := compareDynamicIndexOperandWire(a.Key, b.Key); c != 0 {
+		return c
+	}
+	if c := compareDynamicIndexOperandWire(a.Value, b.Value); c != 0 {
+		return c
+	}
+	return strings.Compare(a.Admission, b.Admission)
+}
+
+func compareKeyMembershipWire(a, b keyMembershipWire) int {
+	if c := compareBoundaryPathWire(a.Key, b.Key); c != 0 {
+		return c
+	}
+	return compareBoundaryPathWire(a.Table, b.Table)
+}
+
+func compareDynamicValueKeyMembershipWire(a, b dynamicValueKeyMembershipWire) int {
+	if c := compareBoundaryPathWire(a.Container, b.Container); c != 0 {
+		return c
+	}
+	if c := strings.Compare(a.Site, b.Site); c != 0 {
+		return c
+	}
+	return compareBoundaryPathWire(a.Table, b.Table)
+}
+
+func compareFrozenTableWire(a, b frozenTableWire) int {
+	return comparePlaceholderPathWire(a.Target, b.Target)
+}
+
+func compareEscapeEventWire(a, b escapeEventWire) int {
+	if c := comparePlaceholderPathWire(a.Target, b.Target); c != 0 {
+		return c
+	}
+	if c := strings.Compare(a.Kind, b.Kind); c != 0 {
+		return c
+	}
+	return compareBoolWire(a.Recursive, b.Recursive)
+}
+
+func compareStoreRelationWire(a, b storeRelationWire) int {
+	if c := comparePlaceholderPathWire(a.Source, b.Source); c != 0 {
+		return c
+	}
+	return comparePlaceholderPathWire(a.Into, b.Into)
+}
+
+func compareReturnAllocationTemplateWire(a, b returnAllocationTemplateWire) int {
+	if c := compareOptionalInt(a.ReturnIndex, b.ReturnIndex); c != 0 {
+		return c
+	}
+	return strings.Compare(a.Root, b.Root)
+}
+
+// compareBoolWire orders false before true, matching the legacy escape-event
+// canonical ordering.
+func compareBoolWire(a, b bool) int {
+	switch {
+	case a == b:
+		return 0
+	case !a:
+		return -1
+	default:
+		return 1
+	}
+}
