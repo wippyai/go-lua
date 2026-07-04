@@ -300,9 +300,9 @@ listen("events", {
 		t.Fatalf("contribution spans = %#v, want channel and decode contribution spans", contributionSpans)
 	}
 	contributionLabels := genericConflictContributionLabels(got[0])
-	if len(contributionLabels) != 2 || contributionLabels[0] != "argument 2.channel.value" ||
-		contributionLabels[1] != "argument 2.decode return 1" {
-		t.Fatalf("contribution labels = %#v, want channel and decode return labels", contributionLabels)
+	if len(contributionLabels) != 2 || contributionLabels[0] != "argument 2.channel (source.primary)" ||
+		contributionLabels[1] != "argument 2.decode (decode_timer) return 1" {
+		t.Fatalf("contribution labels = %#v, want user-facing channel and decode return labels", contributionLabels)
 	}
 }
 

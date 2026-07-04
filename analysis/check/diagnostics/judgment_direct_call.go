@@ -142,10 +142,11 @@ func directCallArgumentJudgmentMessage(display diagnosticDisplay, item judgment.
 	if genericConflict {
 		labels := directCallArgumentJudgmentEvidenceLabels(item, judgment.EvidenceAbstractFact)
 		if len(labels) >= 2 && labels[0] != "" && labels[1] != "" {
-			if genericFunction == "" {
-				genericFunction = "callee"
+			prefix := wording.Subject
+			if genericFunction != "" {
+				prefix = genericFunction + " " + prefix
 			}
-			return fmt.Sprintf("%s cannot infer one %s for %s: %s implies %s, but %s implies %s", genericFunction, genericParamName(genericParam), wording.Subject, labels[0], display.Type(want), labels[1], display.Type(got))
+			return fmt.Sprintf("%s gives `%s` incompatible types: %s implies %s, but %s implies %s", prefix, genericParamName(genericParam), labels[0], display.Type(want), labels[1], display.Type(got))
 		}
 		return fmt.Sprintf("%s gives `%s` incompatible types: %s and %s", wording.Subject, genericParamName(genericParam), display.Type(want), display.Type(got))
 	}

@@ -223,10 +223,68 @@ func (r Reader) genericInferenceReportContributions(point cfg.Point, index int, 
 		out = append(out, CallGenericInferenceContribution{
 			Type:  contribution.Type,
 			Span:  r.inferenceContributionSpan(point, index, contribution),
-			Label: genericInferenceContributionLabel(index, contribution),
+			Label: r.inferenceContributionLabel(point, index, contribution),
 		})
 	}
 	return out
+}
+
+func (r Reader) inferenceContributionLabel(point cfg.Point, index int, contribution callcontract.InferenceContribution) string {
+	if r.result == nil {
+		return genericInferenceContributionLabel(index, contribution)
+	}
+	site, ok := r.result.CallSite(point)
+	if !ok || index < 0 {
+		return genericInferenceContributionLabel(index, contribution)
+	}
+	source, ok := site.ArgumentSourceAt(index)
+	if !ok || !source.HasExpr {
+		return genericInferenceContributionLabel(index, contribution)
+	}
+	fact, ok := r.result.ObjectLiteralExpr(source.ExprRef)
+	if !ok {
+		return genericInferenceContributionLabel(index, contribution)
+	}
+	bestDepth := -1
+	bestLabel := ""
+	for _, entry := range fact.Entries() {
+		suffix := entry.Suffix()
+		depth := len(suffix.Segments)
+		if depth <= bestDepth || !callcontract.InferenceContributionHasSegmentPrefix(contribution, suffix.Segments) {
+			continue
+		}
+		if label := readapi.CallArgumentMemberLabel(index, suffix.Segments, entry.ValueLabel()); label != "" {
+			label += genericInferenceCallableContributionSuffix(contribution, depth)
+			bestDepth = depth
+			bestLabel = label
+		}
+	}
+	if bestLabel != "" {
+		return bestLabel
+	}
+	return genericInferenceContributionLabel(index, contribution)
+}
+
+func genericInferenceCallableContributionSuffix(contribution callcontract.InferenceContribution, prefixDepth int) string {
+	if prefixDepth < 0 || prefixDepth >= len(contribution.Path) {
+		return ""
+	}
+	var b strings.Builder
+	for _, step := range contribution.Path[prefixDepth:] {
+		switch step.Kind {
+		case callcontract.InferencePathFunctionParam:
+			b.WriteString(" parameter ")
+			if step.Name != "" {
+				b.WriteString(step.Name)
+			} else {
+				b.WriteString(strconv.Itoa(step.Index + 1))
+			}
+		case callcontract.InferencePathFunctionReturn:
+			b.WriteString(" return ")
+			b.WriteString(strconv.Itoa(step.Index))
+		}
+	}
+	return b.String()
 }
 
 func genericInferenceContributionLabel(index int, contribution callcontract.InferenceContribution) string {
