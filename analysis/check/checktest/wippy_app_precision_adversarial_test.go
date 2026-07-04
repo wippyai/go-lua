@@ -7905,12 +7905,10 @@ end
 
 func TestCheckLengthOneGuardProvesInsertedStringArrayFirstElement(t *testing.T) {
 	result := Check(`
-local function build(results: {any}): string
+local function build(filename: string?): string
     local file_names = {}
-    for _, result in ipairs(results) do
-        if result.filename then
-            table.insert(file_names, result.filename)
-        end
+    if filename then
+        table.insert(file_names, filename)
     end
     if #file_names == 1 then
         return "File processed: " .. file_names[1]

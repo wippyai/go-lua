@@ -1107,6 +1107,110 @@ end`)
 	assertRuntimeKind(t, reg, value, runtimekind.Singleton(runtimekind.Number))
 }
 
+func TestCheckFunctionTableInsertLengthGuardProvesFirstElementPresent(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function read(name: string?): ()
+	local names = {}
+	if name then
+		table.insert(names, name)
+	end
+	if #names == 1 then
+		local first: string = names[1]
+	end
+end`)
+
+	result, err := CheckFunction(fn, Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	point, expr := requireLocalAssignmentExprByName(t, result, "first")
+	indexed, ok := expr.(*ast.AttrGetExpr)
+	if !ok {
+		t.Fatalf("first source = %T, want indexed attr", expr)
+	}
+	arrayPath, ok := result.ExpressionPath(indexed.Object)
+	if !ok {
+		t.Fatal("names expression path not found")
+	}
+	if floor, ok := result.LengthFloorAtBoundary(point, arrayPath); !ok || floor < 1 {
+		t.Fatalf("length floor for %s at point %d = %d/%v, want >=1", arrayPath, point, floor, ok)
+	}
+	value, ok := result.ExpressionValueBeforeBoundary(point, expr)
+	if !ok {
+		t.Fatal("ExpressionValueBeforeBoundary returned false")
+	}
+	assertPresence(t, reg, value, presence.Present())
+	assertRuntimeKind(t, reg, value, runtimekind.Singleton(runtimekind.String))
+}
+
+func TestCheckFunctionReturnSlotUsesTableInsertLengthGuardedConcat(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function build(filename: string?): string
+	local file_names = {}
+	if filename then
+		table.insert(file_names, filename)
+	end
+	if #file_names == 1 then
+		return "File processed: " .. file_names[1]
+	end
+	return ""
+end`)
+
+	result, err := CheckFunction(fn, Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	var returnPoint cfg.Point
+	var returned ast.Expr
+	for _, point := range result.ReturnPoints() {
+		fact, ok := result.ReturnFact(point)
+		if !ok || len(fact.Exprs) == 0 {
+			continue
+		}
+		if _, ok := fact.Exprs[0].(*ast.StringConcatOpExpr); ok {
+			returnPoint = point
+			returned = fact.Exprs[0]
+			break
+		}
+	}
+	if returned == nil {
+		t.Fatal("missing concat return expression")
+	}
+	concat := returned.(*ast.StringConcatOpExpr)
+	operandValue, ok := result.ExpressionValueBeforeBoundary(returnPoint, concat.Rhs)
+	if !ok {
+		t.Fatal("ExpressionValueBeforeBoundary(file_names[1]) returned false")
+	}
+	operandType, ok := typevalue.TypeOf(reg, operandValue)
+	if !ok || !typ.TypeEquals(operandType, typ.String) {
+		t.Fatalf("file_names[1] type = %v/%v, want string", operandType, ok)
+	}
+	exprValue, ok := result.ExpressionValueAtBoundary(returnPoint, returned)
+	if !ok {
+		t.Fatal("ExpressionValueAtBoundary(return concat) returned false")
+	}
+	exprType, ok := typevalue.TypeOf(reg, exprValue)
+	if !ok || !typ.TypeEquals(exprType, typ.String) {
+		t.Fatalf("return expression type = %v/%v, want string", exprType, ok)
+	}
+	exit, ok := result.ExitState()
+	if !ok {
+		t.Fatal("missing exit state")
+	}
+	got, ok := typevalue.TypeOf(reg, exit.ReadReturnSlot(reg, 0))
+	if !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("return slot 1 type = %v/%v, want string", got, ok)
+	}
+}
+
 func TestCheckFunctionNumericForLengthLimitCarriesRangeAndPositiveProofs(t *testing.T) {
 	reg := standard.Registry()
 	fn := parseFunction(t, `

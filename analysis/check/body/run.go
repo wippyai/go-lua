@@ -115,10 +115,11 @@ func (c *checker) prepare(bindings *bind.Result, built *cfgbuild.Result, sem *se
 	expressionValue := userExpressionValue
 	if expressionValue == nil {
 		expressionValue = readexpr.Provider(readexpr.Config{
-			Registry:   config.Registry,
-			Facts:      facts,
-			Visibility: resolver.Before(),
-			TypeValues: config.TypeValues,
+			Registry:        config.Registry,
+			Facts:           facts,
+			Visibility:      resolver.Before(),
+			TypeValues:      config.TypeValues,
+			ProofVisibility: resolver,
 		})
 	}
 	expressionValues := config.ExpressionValues

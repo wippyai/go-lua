@@ -109,6 +109,25 @@ func TestTableMutatorRecordTypePreservesMixedRecordShape(t *testing.T) {
 	}
 }
 
+func TestTableMutatorTargetTypeTransformsSupportedUnionArms(t *testing.T) {
+	target := typeexpr.Union(
+		typetable.NewRecord().Build(),
+		typ.NewArray(typ.String),
+	)
+	got, ok := tableMutatorTargetType(target, typ.String)
+	want := typ.NewArray(typ.String)
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("table mutator union target type = %v/%v, want %v", got, ok, want)
+	}
+}
+
+func TestTableMutatorTargetTypeRejectsUnsupportedUnionArm(t *testing.T) {
+	target := typeexpr.Union(typ.Nil, typ.NewArray(typ.String))
+	if got, ok := tableMutatorTargetType(target, typ.String); ok {
+		t.Fatalf("table mutator union target type = %v/true, want false for nil arm", got)
+	}
+}
+
 func TestSignatureOutcomeProviderPrefersCallSiteNameResolver(t *testing.T) {
 	reg := standard.Registry()
 	callee := symbol.ID(701)

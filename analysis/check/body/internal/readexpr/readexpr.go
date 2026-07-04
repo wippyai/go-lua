@@ -1273,12 +1273,14 @@ func projectDynamicOrHeapMember(
 	reg := config.Registry
 	if dynamicProjected, ok := projectFromDynamicIndexFacts(config, point, p, in); ok {
 		dynamicProjected = refineProjectionWithCurrentRootType(config, point, p, in, dynamicProjected)
+		dynamicProjected = dropInBoundsIndexNil(config, point, p, in, dynamicProjected)
 		if value, ok := strongProjectedValueOrFallback(reg, dynamicProjected, exact, hasExact); ok {
 			return value, true
 		}
 	}
 	if heapProjected, ok := projectFromHeapIdentity(config, point, p, in); ok {
 		heapProjected = refineProjectionWithCurrentRootType(config, point, p, in, heapProjected)
+		heapProjected = dropInBoundsIndexNil(config, point, p, in, heapProjected)
 		if value, ok := strongProjectedValueOrFallback(reg, heapProjected, exact, hasExact); ok {
 			return value, true
 		}

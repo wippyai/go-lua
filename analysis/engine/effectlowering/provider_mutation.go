@@ -299,6 +299,9 @@ func tableMutatorTargetType(targetType, valueType typ.Type) (typ.Type, bool) {
 	if targetType == nil || valueType == nil {
 		return nil, false
 	}
+	if union, ok := unwrap.Alias(targetType).(*typ.Union); ok {
+		return tableMutatorUnionTargetType(union, valueType)
+	}
 	insertedElement := valueType
 	if existingElement, ok := projection.ElementOf(targetType); ok {
 		insertedElement = tableMutatorInsertedElementType(existingElement, valueType)
@@ -314,6 +317,21 @@ func tableMutatorTargetType(targetType, valueType typ.Type) (typ.Type, bool) {
 	default:
 		return nil, false
 	}
+}
+
+func tableMutatorUnionTargetType(target *typ.Union, valueType typ.Type) (typ.Type, bool) {
+	if target == nil || len(target.Members) == 0 {
+		return nil, false
+	}
+	members := make([]typ.Type, 0, len(target.Members))
+	for _, member := range target.Members {
+		refined, ok := tableMutatorTargetType(member, valueType)
+		if !ok {
+			return nil, false
+		}
+		members = append(members, refined)
+	}
+	return normalize.UnionForEvidence(members...), true
 }
 
 func tableMutatorRecordType(target *typ.Record, insertedElement typ.Type) (typ.Type, bool) {
