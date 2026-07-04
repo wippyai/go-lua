@@ -19,6 +19,8 @@ func TestElementOfContainerShapes(t *testing.T) {
 		{name: "map", in: typetable.NewMap(typ.String, typ.Number), want: typ.Number},
 		{name: "readonly map", in: typetable.NewReadonlyMap(typ.String, typ.Boolean), want: typ.Boolean},
 		{name: "record map component", in: typetable.NewRecord().MapComponent(typ.Integer, typ.String).Build(), want: typ.String},
+		{name: "closed record fields", in: typetable.NewRecord().Field("count", typ.LiteralInt(1)).Field("name", typ.LiteralString("ready")).Build(), want: typ.MaterializeUnion([]typ.Type{typ.LiteralInt(1), typ.LiteralString("ready")})},
+		{name: "record map and closed fields", in: typetable.NewRecord().MapComponent(typ.String, typ.Number).Field("name", typ.LiteralString("ready")).Build(), want: typ.MaterializeUnion([]typ.Type{typ.Number, typ.LiteralString("ready")})},
 		{name: "single tuple", in: typ.NewTuple(typ.Integer), want: typ.Integer},
 		{name: "multi tuple", in: typ.NewTuple(typ.String, typ.Number), want: typ.MaterializeUnion([]typ.Type{typ.String, typ.Number})},
 	}

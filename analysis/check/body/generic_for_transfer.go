@@ -334,14 +334,25 @@ func genericForKeyMembershipTransfer(
 	}
 	switch iter.Kind {
 	case iteration.IterateKeyed:
-		if generic.VariableIndex != 0 {
-			return out
-		}
 		tableKey, ok := visibility.AddressAt(resolver, ctx.Point, sourcePath).VisibleStateKey()
 		if !ok {
 			return out
 		}
-		return out.AddPathKeyMembership(targetKey, tableKey)
+		if generic.VariableIndex == 0 {
+			return out.AddPathKeyMembership(targetKey, tableKey)
+		}
+		if generic.VariableIndex != 1 || len(generic.Symbols) == 0 || generic.Symbols[0] == 0 {
+			return out
+		}
+		containerKey, ok := visibility.AddressAt(resolver, ctx.Point, sourcePath).VisibleKeyspaceKey()
+		if !ok {
+			return out
+		}
+		keyStateKey, ok := visibility.AddressAt(resolver, ctx.Point, pathdom.Path{Symbol: generic.Symbols[0]}).VisibleStateKey()
+		if !ok {
+			return out
+		}
+		return out.AddDynamicIndexReadOrigin(targetKey, containerKey, keyStateKey)
 	case iteration.IterateIndexed:
 		if generic.VariableIndex != 1 {
 			return out
@@ -614,7 +625,7 @@ func genericForHeapContainerVariableValue(
 	if !ok || rootID != id || product.Equal(ctx.Registry, product.Meet(ctx.Registry, root, sourceValue), product.Bottom(ctx.Registry)) {
 		return product.Value{}, false
 	}
-	if variableIndex == 1 && iter.Kind == iteration.IterateIndexed {
+	if variableIndex == 1 && (iter.Kind == iteration.IterateIndexed || iter.Kind == iteration.IterateKeyed) {
 		if value, ok := genericForHeapStaticMemberVariableValue(ctx, iter, ks, object); ok {
 			return value, true
 		}

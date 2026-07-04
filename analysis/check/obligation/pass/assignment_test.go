@@ -1047,6 +1047,47 @@ local count: number = item.count
 	}
 }
 
+func TestAssignmentsAcceptsPairsSelfWriteThroughDynamicTarget(t *testing.T) {
+	stmts, err := parse.ParseString(`
+local item = {
+	count = 1,
+	name = "ready",
+}
+
+for key, value in pairs(item) do
+	item[key] = value
+end
+`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	checked, err := program.RunChunk(stmts, program.Config{
+		Check: body.Config{
+			Registry:   standard.Registry(),
+			Globals:    []string{"pairs"},
+			Signatures: signaturelookup.Source{IncludeStdlib: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatal("missing root result")
+	}
+	got := obligationpass.New(obligationpass.Assignments{}).Run(obligationpass.Context{
+		FunctionKey: "fixture:assignment",
+		SourceFile:  "test.lua",
+		Reader:      readmodel.New(root),
+	})
+	for _, item := range got {
+		if item.Code == judgment.CodeAssignment {
+			t.Fatalf("assignment judgment = %#v, want clean pairs self-write", item)
+		}
+	}
+}
+
 func assignmentJudgmentsForAllBodies(checked testutil.Result) []judgment.Judgment {
 	var out []judgment.Judgment
 	for _, result := range checked.BodyResults() {

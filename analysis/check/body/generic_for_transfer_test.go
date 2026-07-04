@@ -639,6 +639,47 @@ end`)
 	}
 }
 
+func TestGenericForPairsValueCarriesClosedStaticMemberUnionBeforeSelfWrite(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local item = {
+	count = 1,
+	name = "ready",
+}
+
+for key, value in pairs(item) do
+	item[key] = value
+end`)
+
+	result, err := CheckChunk(stmts, Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	loop := stmts[1].(*ast.GenericForStmt)
+	assign := loop.Stmts[0].(*ast.AssignStmt)
+	point := requireOrdinaryAssignmentPoint(t, result, assign, 0)
+	value, ok := result.ExpressionValueBeforeBoundary(point, assign.Rhs[0])
+	if !ok {
+		t.Fatal("ExpressionValueBeforeBoundary returned false for loop value")
+	}
+	got, ok := typevalue.TypeOf(reg, value)
+	want := typ.MaterializeUnion([]typ.Type{typ.LiteralInt(1), typ.LiteralString("ready")})
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("loop value type = %v/%v, want %v", got, ok, want)
+	}
+	fact, ok := result.OrdinaryAssignment(point)
+	if !ok {
+		t.Fatal("missing ordinary assignment fact")
+	}
+	if !result.AssignmentSourceMatchesDynamicTargetRead(point, fact) {
+		t.Fatal("loop value is not recorded as read from the same dynamic target slot")
+	}
+}
+
 func TestGenericForUnknownIteratorDoesNotSynthesizeLoopVariable(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `

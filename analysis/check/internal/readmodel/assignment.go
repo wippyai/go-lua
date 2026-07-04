@@ -279,7 +279,7 @@ func (r Reader) forEachOrdinaryAssignment(point cfg.Point, fact body.OrdinaryAss
 	}
 	assignment.Check = readapi.PlanAssignmentCheck(readapi.AssignmentCheckPlan{
 		Assignment:          assignment,
-		ValueAdmissible:     r.ValueProofAdmissible(value, expected),
+		ValueAdmissible:     r.ValueProofAdmissible(value, expected) || r.result.AssignmentSourceMatchesDynamicTargetRead(point, fact),
 		ValueProvenMismatch: r.ValueWitnessProvenMismatch(value, expected),
 		IsSubtype:           r.IsSubtype,
 	})

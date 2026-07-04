@@ -134,10 +134,7 @@ func elementOfDepthProject(t typ.Type, depth int) (typ.Type, bool) {
 		}
 		return tt.Value, true
 	case *typ.Record:
-		if tt.HasMapComponent() && unwrap.NormalizeNil(tt.MapValue) != nil {
-			return tt.MapValue, true
-		}
-		return nil, false
+		return elementOfRecord(tt)
 	case *typ.Tuple:
 		if len(tt.Elements) == 0 {
 			return nil, false
@@ -154,6 +151,32 @@ func elementOfDepthProject(t typ.Type, depth int) (typ.Type, bool) {
 	default:
 		return nil, false
 	}
+}
+
+func elementOfRecord(record *typ.Record) (typ.Type, bool) {
+	if record == nil {
+		return nil, false
+	}
+	members := make([]typ.Type, 0, len(record.Fields)+len(record.StaticMembers)+1)
+	if record.HasMapComponent() && unwrap.NormalizeNil(record.MapValue) != nil {
+		members = append(members, record.MapValue)
+	}
+	if !record.Open {
+		for _, field := range record.Fields {
+			if unwrap.NormalizeNil(field.Type) != nil {
+				members = append(members, field.Type)
+			}
+		}
+		for _, member := range record.StaticMembers {
+			if unwrap.NormalizeNil(member.Type) != nil {
+				members = append(members, member.Type)
+			}
+		}
+	}
+	if len(members) == 0 {
+		return nil, false
+	}
+	return normalize.UnionForEvidence(members...), true
 }
 
 func projectContainerUnion(members []typ.Type, depth int, project func(typ.Type, int) (typ.Type, bool)) (typ.Type, bool) {
