@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestInternPoolsAreOneBasedAndDeduped(t *testing.T) {
@@ -24,11 +25,14 @@ func TestInternPoolsAreOneBasedAndDeduped(t *testing.T) {
 	if b.InternConst(c) != b.InternConst(c) {
 		t.Fatalf("const interning not deduped")
 	}
-	if b.InternType("string") != b.InternType("string") {
+	if b.InternType(typ.String) != b.InternType(typ.String) {
 		t.Fatalf("type interning not deduped")
 	}
-	if b.InternType("") != 0 {
-		t.Fatalf("empty type must intern to none")
+	if b.InternType(typ.String) == b.InternType(typ.Number) {
+		t.Fatalf("distinct resolved types must intern distinctly")
+	}
+	if b.InternType(nil) != 0 {
+		t.Fatalf("nil (unresolved) type must intern to none")
 	}
 	// Distinct checks are never deduped: each branch owns one.
 	if b.InternCheck(b.Check(0)) == b.InternCheck(b.Check(0)) {

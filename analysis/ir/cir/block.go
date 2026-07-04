@@ -3,6 +3,7 @@ package cir
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // Body holds the lowered instruction stream for one function together with its
@@ -29,7 +30,7 @@ type Body struct {
 
 	pathIndex  map[path.PathKey]PathRef
 	constIndex map[Const]ConstRef
-	typeIndex  map[string]TypeRef
+	typeIndex  map[uint64]TypeRef
 }
 
 // FuncProto is a nested function lowered as its own Body and CFG. A parent
@@ -68,11 +69,14 @@ type Const struct {
 	Str    string
 }
 
-// Type is an interned type reference. Spelling is the resolved syntactic form;
-// the resolved type identity (typ.Type / ShapeID) is attached by the transfer
-// layer and the codegen backend, not stored in lowering.
+// Type is an interned type reference: the resolved type identity together with a
+// display spelling derived from it. Lowering resolves type expressions through
+// the same resolution path the engine uses (decision D5), so the pool carries
+// real typ.Type identity for the transfer interpreter, not a syntactic spelling.
+// Display is t.String(); it exists only for printing and never keys the pool.
 type Type struct {
-	Spelling string
+	T       typ.Type
+	Display string
 }
 
 // NewBody creates an empty Body with reserved index-0 sentinels in each pool.
@@ -86,7 +90,7 @@ func NewBody(name string) *Body {
 		protos:     make([]FuncProto, 1),
 		pathIndex:  make(map[path.PathKey]PathRef),
 		constIndex: make(map[Const]ConstRef),
-		typeIndex:  make(map[string]TypeRef),
+		typeIndex:  make(map[uint64]TypeRef),
 	}
 	return b
 }
@@ -129,12 +133,20 @@ func (b *Body) Const(ref ConstRef) Const {
 	return b.consts[ref]
 }
 
-// TypeSpelling returns the interned type spelling for ref.
-func (b *Body) TypeSpelling(ref TypeRef) string {
+// Type returns the resolved type identity for ref, or nil for a none ref.
+func (b *Body) Type(ref TypeRef) typ.Type {
+	if ref == 0 || int(ref) >= len(b.types) {
+		return nil
+	}
+	return b.types[ref].T
+}
+
+// TypeDisplay returns the interned type's display spelling for ref.
+func (b *Body) TypeDisplay(ref TypeRef) string {
 	if ref == 0 || int(ref) >= len(b.types) {
 		return ""
 	}
-	return b.types[ref].Spelling
+	return b.types[ref].Display
 }
 
 // Check returns the interned branch check for ref.
@@ -179,18 +191,21 @@ func (b *Body) InternConst(c Const) ConstRef {
 	return ref
 }
 
-// InternType interns a type spelling and returns its 1-based ref. The empty
-// spelling is none.
-func (b *Body) InternType(spelling string) TypeRef {
-	if spelling == "" {
+// InternType interns a resolved type by its stable identity and returns its
+// 1-based ref. A nil type (an unresolved type expression) is none. Interning
+// keys on typ.EqualityHash, the canonical structural dedup hash, so distinct
+// spellings of the same resolved type share one ref.
+func (b *Body) InternType(t typ.Type) TypeRef {
+	if t == nil {
 		return 0
 	}
-	if ref, ok := b.typeIndex[spelling]; ok {
+	h := typ.EqualityHash(t)
+	if ref, ok := b.typeIndex[h]; ok {
 		return ref
 	}
 	ref := TypeRef(len(b.types))
-	b.types = append(b.types, Type{Spelling: spelling})
-	b.typeIndex[spelling] = ref
+	b.types = append(b.types, Type{T: t, Display: t.String()})
+	b.typeIndex[h] = ref
 	return ref
 }
 

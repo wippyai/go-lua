@@ -295,7 +295,7 @@ b2: exit
 			want: `body main
 b0: entry
 b1: ch = nil
-    ch = claim.annotation ch : Channel<Message>
+    ch = claim.annotation ch : Channel<{kind: string}>
 b2: r = select [ch] default
 b3: exit
 `,

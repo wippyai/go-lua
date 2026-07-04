@@ -205,7 +205,7 @@ func (b *Body) spellClaim(inst Instruction) string {
 	kind := claimMnemonic(inst.Claim)
 	s := b.spellOperand(inst.Dst) + " = claim." + kind + " " + b.spellOperand(inst.A)
 	if inst.Type != 0 {
-		s += " : " + b.TypeSpelling(inst.Type)
+		s += " : " + b.TypeDisplay(inst.Type)
 	}
 	return s
 }
@@ -231,7 +231,7 @@ func (b *Body) spellOperand(op Operand) string {
 	case OperandConst:
 		return spellConst(b.Const(ConstRef(op.Ref)))
 	case OperandType:
-		return b.TypeSpelling(TypeRef(op.Ref))
+		return b.TypeDisplay(TypeRef(op.Ref))
 	case OperandTemp:
 		return "%" + strconv.FormatUint(uint64(op.Ref), 10)
 	case OperandVararg:

@@ -24,6 +24,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/channelruntime"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
+	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -37,18 +38,21 @@ type Result struct {
 // Chunk lowers a bound statement chunk into cir. bindings must be the result of
 // binding stmts (e.g. bind.BindChunk).
 func Chunk(name string, stmts []ast.Stmt, bindings *bind.Result) *Result {
-	return lowerBody(name, stmts, bindings, nil)
+	return lowerBody(name, stmts, bindings, nil, typeresolve.New(bindings))
 }
 
 // lowerBody lowers one function-scope statement list (a chunk when fn is nil, a
 // nested function body otherwise) into its own Body and CFG. Break/goto/label
-// scopes are function-local and reset per call.
-func lowerBody(name string, stmts []ast.Stmt, bindings *bind.Result, fn *ast.FunctionExpr) *Result {
+// scopes are function-local and reset per call. resolver is the shared lexical
+// type resolver, threaded through nested protos so type identities and their
+// caches are consistent across the whole chunk.
+func lowerBody(name string, stmts []ast.Stmt, bindings *bind.Result, fn *ast.FunctionExpr, resolver *typeresolve.Resolver) *Result {
 	g := cfg.New()
 	b := &builder{
 		body:         cir.NewBody(name),
 		graph:        g,
 		bindings:     bindings,
+		resolver:     resolver,
 		curFn:        fn,
 		labels:       make(map[string]cfg.Point),
 		pendingGotos: make(map[string][]cfg.Point),
@@ -81,6 +85,7 @@ type builder struct {
 	body     *cir.Body
 	graph    *cfg.CFG
 	bindings *bind.Result
+	resolver *typeresolve.Resolver
 	curFn    *ast.FunctionExpr
 
 	pending  []pend
@@ -591,7 +596,7 @@ func (b *builder) lowerFuncDef(s *ast.FuncDefStmt) {
 func (b *builder) emitClosure(dst cir.Operand, fn *ast.FunctionExpr) {
 	name := b.body.Name + ".fn" + strconv.Itoa(b.protoSeq)
 	b.protoSeq++
-	child := lowerBody(name, fn.Stmts, b.bindings, fn)
+	child := lowerBody(name, fn.Stmts, b.bindings, fn, b.resolver)
 	ref := b.body.AddProto(cir.FuncProto{Name: name, Body: child.Body, Graph: child.Graph})
 
 	caps := b.bindings.DirectCaptures(fn)
@@ -943,8 +948,18 @@ func (b *builder) internString(s string) cir.ConstRef {
 	return b.body.InternConst(cir.Const{Kind: cir.ConstString, Str: s})
 }
 
+// internType resolves an AST type expression to its typ.Type identity through
+// the shared lexical resolver and interns it. An unresolved type expression
+// yields the none ref; there is no syntactic-spelling fallback.
 func (b *builder) internType(t ast.TypeExpr) cir.TypeRef {
-	return b.body.InternType(spellType(t))
+	if t == nil {
+		return 0
+	}
+	resolved, ok := b.resolver.Type(t)
+	if !ok {
+		return 0
+	}
+	return b.body.InternType(resolved)
 }
 
 // targetOperand returns the destination operand for an assignment target and
