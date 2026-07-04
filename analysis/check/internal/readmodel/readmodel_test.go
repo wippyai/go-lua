@@ -377,6 +377,48 @@ end
 	}
 }
 
+func TestForEachAssignmentAcceptsInferredRecordFieldTableReplacement(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local caller = {}
+caller.__index = caller
+
+function caller.new(): any
+	local self = setmetatable({}, caller)
+	self.wrapper_context = {}
+	return self
+end
+
+function caller:set_wrapper_context(context: table?): any
+	self.wrapper_context = context or {}
+	return self
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{
+		Registry: reg,
+		Globals:  []string{"setmetatable"},
+	}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatal("RootResult nil")
+	}
+	var assignments []Assignment
+	for _, child := range root.FunctionResults() {
+		New(child).ForEachAssignment(func(assignment Assignment) bool {
+			if assignment.TargetLabel == "self.wrapper_context" {
+				assignments = append(assignments, assignment)
+			}
+			return true
+		})
+	}
+	if len(assignments) != 0 {
+		t.Fatalf("self.wrapper_context assignments = %#v, want inferred table-like field replacement accepted", assignments)
+	}
+}
+
 func TestForEachAssignmentReportsObjectLiteralExplicitAnyMember(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `

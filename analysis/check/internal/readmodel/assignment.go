@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -387,22 +388,40 @@ func (r Reader) ordinaryWritableTargetType(current typ.Type, targetValue product
 	return current
 }
 
-func (r Reader) inferredReplacementAccepted(point cfg.Point, target body.OrdinaryAssignmentTargetType, expected, actual typ.Type) bool {
+func (r Reader) inferredReplacementAccepted(_ cfg.Point, target body.OrdinaryAssignmentTargetType, expected, actual typ.Type) bool {
 	if expected == nil || actual == nil {
 		return false
 	}
-	if !target.Declared {
-		if _, ok := unwrap.Annotated(expected).(*typ.Function); ok {
-			_, actualOK := unwrap.Annotated(actual).(*typ.Function)
-			return actualOK
-		}
-	}
-	if !r.ValueHasLocalExclusiveExactIdentity(point, target.TargetValue) {
+	if target.Declared {
 		return false
 	}
+	if _, ok := unwrap.Annotated(expected).(*typ.Function); ok {
+		_, actualOK := unwrap.Annotated(actual).(*typ.Function)
+		return actualOK
+	}
 	if _, ok := unwrap.Annotated(expected).(*typ.Record); ok {
-		_, actualRecordOK := unwrap.Annotated(actual).(*typ.Record)
-		return actualRecordOK
+		return inferredRecordReplacementAccepted(actual)
 	}
 	return false
+}
+
+func inferredRecordReplacementAccepted(actual typ.Type) bool {
+	switch t := unwrap.Annotated(actual).(type) {
+	case *typ.Record:
+		return true
+	case *typ.Optional:
+		return false
+	case *typ.Union:
+		if len(t.Members) == 0 {
+			return false
+		}
+		for _, member := range t.Members {
+			if !inferredRecordReplacementAccepted(member) {
+				return false
+			}
+		}
+		return true
+	default:
+		return typetable.IsLike(t)
+	}
 }
