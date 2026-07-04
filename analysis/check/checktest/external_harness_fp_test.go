@@ -4895,3 +4895,30 @@ end
 		t.Fatalf("diagnostics = %#v, want closure method to keep captured tostring locals as strings", result.Diagnostics)
 	}
 }
+
+func TestCheckModuleLocalStringConstantFeedsImportedFunction(t *testing.T) {
+	contract := manifest.New("contract")
+	contract.DefineFunctionSignature("contract.get", signature.Function{
+		Type: typ.Func().
+			Param("id", typ.String).
+			Returns(typ.Any, typeexpr.Optional(typ.String)).
+			Build(),
+	})
+
+	result := Check(`
+local contract = require("contract")
+
+local USAGE_TRACKER_CONTRACT = "wippy.llm:usage_tracker"
+
+local function get_usage_tracker()
+    local tracker_contract, err = contract.get(USAGE_TRACKER_CONTRACT)
+    if err then
+        return nil
+    end
+    return tracker_contract
+end
+`, WithStdlib(), WithManifest("contract", contract))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want module-local literal string constant to satisfy imported string parameter", result.Diagnostics)
+	}
+}
