@@ -4410,7 +4410,7 @@ local function validate_graph(graph)
                 node_id = node_id,
                 has_success_route = false,
                 has_error_route = #edges.error_targets > 0,
-                metadata = nd.metadata,
+                metadata = edges.metadata,
             })
         end
     end
