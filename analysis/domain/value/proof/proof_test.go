@@ -37,6 +37,7 @@ func TestValueProofAdmissibleAcceptsAnyClaimForTopLikeContract(t *testing.T) {
 	value := typevalue.NewCache().FromTypeWithWitness(reg, typ.Any)
 	value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
 	value = product.Set(reg, value, assertion.Key, assertion.Of(assertion.AnyClaim))
+	value = product.WithPresence(reg, value, presence.Present())
 
 	proofs := New(reg, typevalue.NewCache())
 	for _, want := range []typ.Type{
@@ -44,10 +45,31 @@ func TestValueProofAdmissibleAcceptsAnyClaimForTopLikeContract(t *testing.T) {
 		typ.Unknown,
 		typ.MaterializeOptional(typ.Any),
 		typ.MaterializeOptional(typ.Unknown),
+		typ.NewArray(typ.Any),
+		typ.NewMap(typ.String, typ.Any),
+		typ.MaterializeOptional(typ.NewArray(typ.Any)),
 	} {
 		if !proofs.ValueProofAdmissible(value, want) {
 			t.Fatalf("explicit any should satisfy top-like contract %s", want)
 		}
+	}
+}
+
+func TestValueProofAdmissibleRejectsAnyClaimForRecordWithConcreteField(t *testing.T) {
+	reg := registry()
+	value := typevalue.NewCache().FromTypeWithWitness(reg, typetable.NewRecord().
+		Field("id", typ.String).
+		Field("payload", typ.Any).
+		Build())
+	value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
+	value = product.Set(reg, value, assertion.Key, assertion.Of(assertion.AnyClaim))
+	want := typetable.NewRecord().
+		Field("id", typ.String).
+		Field("payload", typ.Any).
+		Build()
+
+	if New(reg, typevalue.NewCache()).ValueProofAdmissible(value, want) {
+		t.Fatalf("explicit any should not satisfy record contract with concrete field without runtime proof")
 	}
 }
 

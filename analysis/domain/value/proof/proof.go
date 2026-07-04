@@ -306,13 +306,26 @@ func (r Reader) explicitTopProofAdmissible(value product.Value, want typ.Type) b
 }
 
 func topLikeContract(t typ.Type) bool {
+	return topLikeContractAt(t, 0)
+}
+
+func topLikeContractAt(t typ.Type, depth int) bool {
+	if t == nil || depth > typ.DefaultRecursionDepth {
+		return false
+	}
 	t = unwrap.Alias(t)
 	if typ.IsAny(t) || typ.IsUnknown(t) {
 		return true
 	}
-	if inner := unwrap.Optional(t); inner != nil {
-		inner = unwrap.Alias(inner)
-		return typ.IsAny(inner) || typ.IsUnknown(inner)
+	switch tt := t.(type) {
+	case *typ.Optional:
+		return tt != nil && topLikeContractAt(tt.Inner, depth+1)
+	case *typ.Array:
+		return tt != nil && topLikeContractAt(tt.Element, depth+1)
+	case *typ.Map:
+		return tt != nil && topLikeContractAt(tt.Value, depth+1)
+	case *typ.ReadonlyMap:
+		return tt != nil && topLikeContractAt(tt.Value, depth+1)
 	}
 	return false
 }
