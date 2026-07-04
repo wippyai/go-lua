@@ -462,6 +462,86 @@ func TestExpressionRefinementsApplyToOperationOperands(t *testing.T) {
 	}
 }
 
+func TestExpressionConditionRefinesShortCircuitRightOperandState(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(660)
+	guardExpr := ExprRef(6600)
+	valueExpr := ExprRef(6601)
+	opExpr := ExprRef(6602)
+	valueSym := symbol.ID(660)
+	valuePath := path.Path{Symbol: valueSym}
+	guardSource := ValueSource{Kind: ValueSourceExpression, ExprRef: guardExpr, HasExpr: true}
+	valueSource := ValueSource{Kind: ValueSourceExpression, ExprRef: valueExpr, HasExpr: true}
+	opSource := ValueSource{Kind: ValueSourceExpression, ExprRef: opExpr, HasExpr: true}
+	op, ok := NewBinaryExpressionOperation("and", guardSource, valueSource)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation returned false")
+	}
+	anyValue := product.NewWithPresence(reg, product.ShapeTop, presence.Maybe())
+	anyValue = product.Set(reg, anyValue, evidence.Key, evidence.ExplicitTop())
+	anyValue = product.Set(reg, anyValue, assertion.Key, assertion.Any())
+	anyValue = typevalue.WithWitness(reg, anyValue, typ.Any)
+	boolValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.Boolean), typ.Boolean)
+	stringValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			guardExpr: boolValue,
+			valueExpr: anyValue,
+		},
+		ExpressionPaths: map[ExprRef]struct{}{
+			valueExpr: {},
+		},
+		ExpressionOps: map[ExprRef]ExpressionOperation{
+			opExpr: op,
+		},
+		ExpressionConditions: map[ExprRef]ExpressionCondition{
+			guardExpr: NewExpressionCondition(
+				[]PostconditionRefinement{
+					NewPostconditionRefinement(valuePath, NewValueConstraint(stringValue)),
+				},
+				nil,
+				nil,
+				nil,
+			),
+		},
+		ExpressionCondition: func(gotPoint cfg.Point, in state.State, facts ExpressionConditionFacts) state.State {
+			if gotPoint != point {
+				t.Fatalf("condition point = %d, want %d", gotPoint, point)
+			}
+			refinements := facts.Refinements()
+			if len(refinements) != 1 || !refinements[0].TargetPathRef().Equal(valuePath) {
+				t.Fatalf("condition refinements = %#v, want value path refinement", refinements)
+			}
+			return in.WriteValue(reg, key.SymbolValue(valueSym), stringValue)
+		},
+		ExpressionValue: func(_ cfg.Point, expr ExprRef, _ ValueSource, in state.State) (product.Value, bool) {
+			if expr == valueExpr {
+				return in.ReadValue(reg, key.SymbolValue(valueSym)), true
+			}
+			return product.Value{}, false
+		},
+		ExpressionOp: func(got ExpressionOperation, _ product.Value, right product.Value) (product.Value, bool) {
+			if got.Op() != "and" {
+				return product.Value{}, false
+			}
+			rightType, ok := typevalue.WitnessOf(reg, right)
+			if !ok || !typ.TypeEquals(rightType, typ.String) {
+				t.Fatalf("right operand type = %v/%v, want string", rightType, ok)
+			}
+			return right, true
+		},
+	})
+	got, ok := resolver.ValueOfSource(point, opSource, state.State{}.WriteValue(reg, key.SymbolValue(valueSym), anyValue), nil)
+	if !ok {
+		t.Fatal("operation source did not resolve")
+	}
+	gotType, ok := typevalue.WitnessOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("operation result type = %v/%v, want string", gotType, ok)
+	}
+}
+
 func TestExpressionRuntimeValidationUsesRefinementWhenOperandDisjoint(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(812)

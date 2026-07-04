@@ -3141,6 +3141,36 @@ end
 	}
 }
 
+func TestReadBoundaryNestedLogicalTypeGuardReturnIsString(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function label(success: boolean, value: any): string
+	return success and "ok" or (type(value) == "string" and ("value:" .. value) or "failed")
+end
+`)
+	result, err := CheckFunction(fn, Config{Registry: reg, Signatures: signaturelookup.Source{IncludeStdlib: true}})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	returnPoints := result.ReturnPoints()
+	if len(returnPoints) != 1 {
+		t.Fatalf("return points = %v, want one", returnPoints)
+	}
+	returnFact, ok := result.ReturnFact(returnPoints[0])
+	if !ok || len(returnFact.Exprs) != 1 {
+		t.Fatalf("return fact = %#v/%v, want one expression", returnFact, ok)
+	}
+	value, ok := result.ExpressionValueAtBoundary(returnPoints[0], returnFact.Exprs[0])
+	if !ok {
+		t.Fatal("ExpressionValueAtBoundary(return expression) returned false")
+	}
+	got, ok := typevalue.TypeOf(reg, value)
+	if !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("return expression type = %v/%v evidence=%s presence=%s, want string",
+			got, ok, product.Get(reg, value, evidence.Key), product.PresenceOf(value))
+	}
+}
+
 func TestPathProvenTruthyByDominatingBranch(t *testing.T) {
 	reg := standard.Registry()
 	fn := parseFunction(t, `function f(x: string?): ()

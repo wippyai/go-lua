@@ -37,6 +37,10 @@ type ObjectLiteralViewEvaluator func(lit factflow.ObjectLiteralView, resolver fa
 // optional because the generic transfer engine cannot infer vararg shape.
 type VarargValueProvider func(point cfg.Point, source factflow.ValueSource, in state.State, read func(cfg.Point) state.State) (product.Value, bool)
 
+// ExpressionConditionStateRefiner applies the path facts selected by a
+// short-circuit condition to the temporary state used for the right operand.
+type ExpressionConditionStateRefiner func(point cfg.Point, in state.State, facts factflow.ExpressionConditionFacts) state.State
+
 // SourceValuesConfig configures the generic ValueSource resolver.
 type SourceValuesConfig struct {
 	Registry   *axis.Registry
@@ -52,8 +56,10 @@ type SourceValuesConfig struct {
 	ObjectLiteralView     func(factflow.ExprRef) (factflow.ObjectLiteralView, bool)
 	ObjectLiteralFromView ObjectLiteralViewEvaluator
 	ExpressionOps         map[factflow.ExprRef]factflow.ExpressionOperation
+	ExpressionConditions  map[factflow.ExprRef]factflow.ExpressionCondition
 	DynamicIndexExprs     map[factflow.ExprRef]factflow.DynamicIndexExpression
 	ExpressionOp          ExpressionOperationEvaluator
+	ExpressionCondition   ExpressionConditionStateRefiner
 	ExpressionValue       ExpressionValueProvider
 	VarargValue           VarargValueProvider
 }
@@ -73,8 +79,10 @@ func NewSourceValues(config SourceValuesConfig) SourceValues {
 		objectLiteralView:     config.ObjectLiteralView,
 		objectLiteralFromView: config.ObjectLiteralFromView,
 		expressionOps:         copyExpressionOps(config.ExpressionOps),
+		expressionConditions:  copyExpressionConditions(config.ExpressionConditions),
 		dynamicIndexExprs:     copyDynamicIndexExpressions(config.DynamicIndexExprs),
 		expressionOp:          config.ExpressionOp,
+		expressionCondition:   config.ExpressionCondition,
 		expressionValue:       config.ExpressionValue,
 		varargValue:           config.VarargValue,
 	}
@@ -110,8 +118,10 @@ type sourceValueResolver struct {
 	objectLiteralView     func(factflow.ExprRef) (factflow.ObjectLiteralView, bool)
 	objectLiteralFromView ObjectLiteralViewEvaluator
 	expressionOps         map[factflow.ExprRef]factflow.ExpressionOperation
+	expressionConditions  map[factflow.ExprRef]factflow.ExpressionCondition
 	dynamicIndexExprs     map[factflow.ExprRef]factflow.DynamicIndexExpression
 	expressionOp          ExpressionOperationEvaluator
+	expressionCondition   ExpressionConditionStateRefiner
 	expressionValue       ExpressionValueProvider
 	varargValue           VarargValueProvider
 }
@@ -435,7 +445,8 @@ func (r sourceValueResolver) valueOfExpressionOperation(
 	}
 	var right product.Value
 	if op.Kind() == factflow.ExpressionOperationBinary {
-		right, ok = r.valueOfOperationSource(point, op.Right(), in, read, active)
+		rightIn := r.logicalRightOperandState(point, op, in)
+		right, ok = r.valueOfOperationSource(point, op.Right(), rightIn, read, active)
 		if !ok {
 			delete(active, expr)
 			return product.Value{}, false
@@ -443,6 +454,34 @@ func (r sourceValueResolver) valueOfExpressionOperation(
 	}
 	delete(active, expr)
 	return r.expressionOp(op, left, right)
+}
+
+func (r sourceValueResolver) logicalRightOperandState(point cfg.Point, op factflow.ExpressionOperation, in state.State) state.State {
+	if r.expressionCondition == nil || op.Kind() != factflow.ExpressionOperationBinary {
+		return in
+	}
+	var conditionValue bool
+	switch op.Op() {
+	case "and":
+		conditionValue = true
+	case "or":
+		conditionValue = false
+	default:
+		return in
+	}
+	left := op.Left()
+	if left.Kind != factflow.ValueSourceExpression || !left.HasExpr {
+		return in
+	}
+	condition, ok := r.expressionConditions[left.ExprRef]
+	if !ok {
+		return in
+	}
+	facts := condition.FactsForValue(conditionValue)
+	if facts.IsEmpty() {
+		return in
+	}
+	return r.expressionCondition(point, in, facts)
 }
 
 func (r sourceValueResolver) valueOfOperationSource(
@@ -551,6 +590,17 @@ func copyExpressionOps(in map[factflow.ExprRef]factflow.ExpressionOperation) map
 	out := make(map[factflow.ExprRef]factflow.ExpressionOperation, len(in))
 	for ref, op := range in {
 		out[ref] = op
+	}
+	return out
+}
+
+func copyExpressionConditions(in map[factflow.ExprRef]factflow.ExpressionCondition) map[factflow.ExprRef]factflow.ExpressionCondition {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[factflow.ExprRef]factflow.ExpressionCondition, len(in))
+	for ref, condition := range in {
+		out[ref] = condition
 	}
 	return out
 }
@@ -715,7 +765,8 @@ func (r expressionRefinementSourceValues) valueOfExpressionOperation(
 	}
 	var right product.Value
 	if op.Kind() == factflow.ExpressionOperationBinary {
-		right, ok = r.valueOfOperationSource(point, op.Right(), in, read, active)
+		rightIn := base.logicalRightOperandState(point, op, in)
+		right, ok = r.valueOfOperationSource(point, op.Right(), rightIn, read, active)
 		if !ok {
 			delete(active, expr)
 			return product.Value{}, false

@@ -140,10 +140,14 @@ func (c *checker) prepare(bindings *bind.Result, built *cfgbuild.Result, sem *se
 		ObjectLiteralView:     facts.ObjectLiteralView,
 		ObjectLiteralFromView: objectLiteralViewEvaluator(config.Registry, config.TypeValues),
 		ExpressionOps:         facts.ExpressionOperations(),
+		ExpressionConditions:  facts.ExpressionConditions(),
 		DynamicIndexExprs:     facts.DynamicIndexExpressions(),
 		ExpressionOp:          expressionOperationEvaluator(config.Registry, config.TypeValues),
-		ExpressionValue:       expressionValue,
-		VarargValue:           config.VarargValue,
+		ExpressionCondition: func(point cfg.Point, in state.State, selected factflow.ExpressionConditionFacts) state.State {
+			return factapply.ApplyExpressionConditionFacts(config.Registry, resolver, luaPathTypeProjector, point, in, selected)
+		},
+		ExpressionValue: expressionValue,
+		VarargValue:     config.VarargValue,
 	})
 	calleeValue := calleeValueProvider(config.Registry, facts, resolver, sources, config.TypeValues, bindings, typeResolver)
 	receiverFn := declaredReceiverCallableProvider(facts, bindings, typeResolver)

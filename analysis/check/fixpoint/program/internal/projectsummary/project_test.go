@@ -633,7 +633,7 @@ end`), body.Config{Registry: reg})
 func TestFromResultDoesNotProjectGuardedParamObligation(t *testing.T) {
 	reg := standard.Registry()
 	result := projectCheckFunction(t, projectParseFunction(t, `
-function f(x)
+function f(x: unknown)
 	if type(x) == "number" then
 		return x * 2
 	end
@@ -666,6 +666,28 @@ end`), body.Config{
 
 	if len(got.ParamObligations) != 0 {
 		t.Fatalf("param obligations = %#v, want none for guarded alias use", got.ParamObligations)
+	}
+}
+
+func TestFromResultDoesNotProjectGuardedAliasTypedCallObligation(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function f(x)
+	local function sink(s: string): ()
+	end
+	local y = x
+	if type(y) == "string" then
+		sink(y)
+	end
+end`), body.Config{
+		Registry: reg,
+		Globals:  []string{"type"},
+	})
+
+	got := summaryprojection.FromResult(result)
+
+	if len(got.ParamObligations) != 0 {
+		t.Fatalf("param obligations = %#v, want none for guarded typed call through alias", got.ParamObligations)
 	}
 }
 

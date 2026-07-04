@@ -566,6 +566,12 @@ func (f Facts) ExpressionCondition(expr ExprRef) (ExpressionCondition, bool) {
 	return condition.copy(), true
 }
 
+// ExpressionConditions returns expression-conditional path facts keyed by
+// expression.
+func (f Facts) ExpressionConditions() map[ExprRef]ExpressionCondition {
+	return copyExpressionConditionMap(f.expressionConditions)
+}
+
 func copyNoNormalReturnMap(in map[cfg.Point]struct{}) map[cfg.Point]struct{} {
 	if len(in) == 0 {
 		return nil
