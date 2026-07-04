@@ -43,6 +43,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -2758,6 +2759,43 @@ func methodImplicitSelfEntryType(t *testing.T, root *body.Result, method string)
 		}
 	}
 	return nil, false
+}
+
+func TestCollectPlainMethodReceiverPrefersSiblingDeclaredTypeOverLocalTableShape(t *testing.T) {
+	stmts := parseChunk(t, `
+type Store = {
+	started_at: number,
+	run: (self: Store) -> number,
+}
+
+local Store = {}
+
+function Store:run(): number
+	return self.started_at
+end
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	context := collectMetatableMethodContext(bindings, nil, body.Config{}.ModuleExports, stmts)
+	methods := mustBoundLocalAt(t, bindings, stmts[1].(*ast.LocalAssignStmt), 0)
+
+	seed, ok := context.seedReceivers[methods]
+	if !ok {
+		t.Fatalf("seed receiver missing for Store")
+	}
+	field, ok := access.Field(seed, "started_at")
+	if !ok || !typ.TypeEquals(field, typ.Number) {
+		t.Fatalf("seed receiver started_at = %v/%v, want declared number field", field, ok)
+	}
+	receiver, ok := context.methodReceivers[methods]
+	if !ok {
+		t.Fatalf("method receiver missing for Store")
+	}
+	if field, ok := access.Field(receiver, "started_at"); !ok || !typ.TypeEquals(field, typ.Number) {
+		t.Fatalf("method receiver started_at = %v/%v, want declared number field", field, ok)
+	}
+	if method, ok := access.Field(receiver, "run"); !ok || method == nil {
+		t.Fatalf("method receiver run = %v/%v, want method surface retained", method, ok)
+	}
 }
 
 func TestCollectKeysMethodOriginTypeIncludesSelfFromStandaloneSetmetatable(t *testing.T) {

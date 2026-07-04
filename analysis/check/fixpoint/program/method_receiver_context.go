@@ -838,11 +838,11 @@ func (c methodReceiverCollector) ensurePlainMethodReceiverBases() {
 		if _, present := c.receivers[table]; present {
 			continue
 		}
-		if receiver := c.localTypes[table]; usableMetatableReceiverType(receiver) {
+		if receiver, ok := c.declaredMethodReceiver(table); ok {
 			c.receivers[table] = receiver
 			continue
 		}
-		if receiver, ok := c.declaredMethodReceiver(table); ok {
+		if receiver := c.localTypes[table]; usableMetatableReceiverType(receiver) {
 			c.receivers[table] = receiver
 		}
 	}

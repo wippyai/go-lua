@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
@@ -559,6 +560,43 @@ a:add("five")`, "test.lua").RootResult()
 	}
 	if got[0].Spans[0].StartLine != 12 {
 		t.Fatalf("span = %#v, want argument on line 12", got[0].Spans[0])
+	}
+}
+
+func TestCallArgumentsUseImportedReceiverFieldTypeInMethodBody(t *testing.T) {
+	timeMod := manifest.New("time")
+	durationType := typ.NewInterface("time.Duration", []typ.Method{})
+	timeType := typ.NewInterface("time.Time", []typ.Method{
+		{Name: "sub", Type: typ.Func().Param("self", typ.Self).Param("other", typ.Self).Returns(durationType).Build()},
+	})
+	timeMod.DefineType("Time", timeType)
+	timeMod.DefineType("Duration", durationType)
+	timeMod.SetExport(typetable.NewRecord().
+		Field("now", typ.Func().Returns(timeType).Build()).
+		Build())
+
+	result := testutil.CheckFile(`
+local time = require("time")
+
+type Store = {
+    started_at: time.Time,
+    run: (self: Store, now: time.Time) -> time.Duration,
+}
+
+local Store = {}
+
+function Store:run(now: time.Time): time.Duration
+    return now:sub(self.started_at)
+end
+`, "test.lua", testutil.WithManifest("time", timeMod), testutil.WithGlobals("time"))
+
+	var got []judgment.Judgment
+	p := obligationpass.New(obligationpass.CallArguments{})
+	for _, bodyResult := range result.BodyResults() {
+		got = append(got, p.Run(contextForBody("fixture:store", "test.lua", bodyResult))...)
+	}
+	if len(got) != 0 {
+		t.Fatalf("judgments = %#v, want imported receiver field type to satisfy parameter", got)
 	}
 }
 

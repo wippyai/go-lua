@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/access"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -63,6 +64,44 @@ end
 	got := product.Get(reg, value, evidence.Key)
 	if !evidence.Equal(got, evidence.GradualTop()) {
 		t.Fatalf("implicit self evidence = %s, want %s", got, evidence.GradualTop())
+	}
+}
+
+func TestCheckFunctionSeedsImplicitSelfFromRecursiveSiblingType(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Store = {
+	started_at: number,
+	summarize: (self: Store) -> number,
+}
+
+local Store = {}
+
+function Store:summarize(): number
+	return self.started_at
+end
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	functions := bindings.NestedFunctions(nil)
+	if len(functions) != 1 {
+		t.Fatalf("nested functions = %d, want 1", len(functions))
+	}
+	fn := functions[0]
+	slot := mustParamSlot(t, bindings, fn, 0)
+	if !slot.ImplicitSelf {
+		t.Fatalf("slot = %#v, want implicit self", slot)
+	}
+
+	seeds := functionParamEntrySeeds(reg, nil, bindings, fn, nil)
+	entry := seedEntryStateValues(reg, state.State{}, seeds)
+	value := entry.ReadValue(reg, key.SymbolValue(slot.Symbol))
+	selfType, ok := typevalue.StructuralTypeOf(reg, nil, value, typevalue.StructuralTypeOptions{ApplyPresence: true})
+	if !ok {
+		t.Fatalf("implicit self seed has no structural type: %#v", value)
+	}
+	field, ok := access.Field(selfType, "started_at")
+	if !ok || !typ.TypeEquals(field, typ.Number) {
+		t.Fatalf("self.started_at type = %v/%v, want number from recursive sibling receiver", field, ok)
 	}
 }
 
