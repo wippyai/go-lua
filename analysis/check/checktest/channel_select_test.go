@@ -138,13 +138,14 @@ end
    |               ↑ argument value
 
 because:
-  1. claimed: listen parameter 2 requires one consistent T across this argument
-  2. proven: listen inferred T includes {id: string, kind: "event"} from argument 2.channel
-  3. proven: listen inferred T includes {elapsed: number, kind: "timer"} from argument 2.decode return 1
+  1. proven: argument 2.channel contributes {id: string, kind: "event"} for ` + "`T`" + `
+  2. proven: argument 2.decode return 1 also contributes {elapsed: number, kind: "timer"} for ` + "`T`" + `
  --> test.lua:20:11
    |
 20 |     decode = decode_timer,
    |              ^
+  3. claimed: argument 2 expects one consistent type for ` + "`T`" + `
+  4. missing proof: no single type for ` + "`T`" + ` satisfies every contribution in argument 2
 
 help: Make each use of ` + "`T`" + ` in this argument agree on the same type, or split the callee signature into separate type parameters if those values are intentionally different.`
 	assertRenderedEqual(t, rendered, want)

@@ -1549,6 +1549,7 @@ type CallArgumentObligationOrigin struct {
 // generic type parameter imply incompatible concrete types.
 type CallGenericInferenceConflict struct {
 	Index         int
+	FunctionName  string
 	ParamName     string
 	Span          SourceSpan
 	Contributions []CallGenericInferenceContribution
@@ -1557,8 +1558,9 @@ type CallGenericInferenceConflict struct {
 // CallGenericInferenceContribution records one nested argument position that
 // contributed a concrete type to generic inference.
 type CallGenericInferenceContribution struct {
-	Type typ.Type
-	Span SourceSpan
+	Type  typ.Type
+	Span  SourceSpan
+	Label string
 }
 
 // GenericInferenceContributionSpanCandidate is one possible source span for a

@@ -298,6 +298,11 @@ listen("events", {
 		contributionSpans[1].StartLine != 14 || contributionSpans[1].StartCol != 14 {
 		t.Fatalf("contribution spans = %#v, want channel and decode contribution spans", contributionSpans)
 	}
+	contributionLabels := genericConflictContributionLabels(got[0])
+	if len(contributionLabels) != 2 || contributionLabels[0] != "argument 2.channel.value" ||
+		contributionLabels[1] != "argument 2.decode return 1" {
+		t.Fatalf("contribution labels = %#v, want channel and decode return labels", contributionLabels)
+	}
 }
 
 func TestCallArgumentsReportsSummaryParamObligation(t *testing.T) {
@@ -746,4 +751,15 @@ func genericConflictContributionSpans(item judgment.Judgment) []judgment.SpanRef
 		}
 	}
 	return spans
+}
+
+func genericConflictContributionLabels(item judgment.Judgment) []string {
+	var labels []string
+	for _, evidence := range item.Evidence {
+		if evidence.Kind == judgment.EvidenceAbstractFact &&
+			evidence.Detail.SubjectLabel != "" {
+			labels = append(labels, evidence.Detail.SubjectLabel)
+		}
+	}
+	return labels
 }

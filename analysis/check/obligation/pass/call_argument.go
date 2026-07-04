@@ -73,6 +73,9 @@ func genericInferenceConflictJudgment(
 				Point: point,
 				Key:   fmt.Sprintf("arg:%d:generic:%s:contribution:%d", arg.Index, conflict.ParamName, i),
 			},
+			Detail: judgment.EvidenceDetail{
+				SubjectLabel: contribution.Label,
+			},
 			Span: spanFromReadModel(ctx.SourceFile, contribution.Span),
 		})
 	}
@@ -83,7 +86,11 @@ func genericInferenceConflictJudgment(
 			Point: point,
 			Key:   fmt.Sprintf("arg:%d:generic:%s:conflict", arg.Index, conflict.ParamName),
 		},
-		Detail: judgment.GenericConflictEvidenceDetail(conflict.ParamName),
+		Detail: judgment.EvidenceDetail{
+			Kind:         judgment.EvidenceDetailGenericConflict,
+			Param:        conflict.ParamName,
+			FunctionName: conflict.FunctionName,
+		},
 	})
 	return judgment.Judgment{
 		Code:  judgment.CodeCallArgType,

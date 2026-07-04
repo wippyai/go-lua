@@ -52,8 +52,8 @@ func renderDirectCallArgumentJudgmentWithPolicy(item judgment.Judgment, policy j
 	display := diagnosticDisplay{}
 	mayBeNil := directCallArgumentMayBeNil(item)
 	precisionBoundary := item.HasEvidence(judgment.EvidencePrecisionBoundary)
-	genericConflict, genericParam := directCallArgumentGenericConflict(item)
-	message := directCallArgumentJudgmentMessage(display, wording, got, want, mayBeNil, precisionBoundary, genericConflict, genericParam)
+	genericConflict, genericParam, genericFunction := directCallArgumentGenericConflict(item)
+	message := directCallArgumentJudgmentMessage(display, item, wording, got, want, mayBeNil, precisionBoundary, genericConflict, genericParam, genericFunction)
 	help := directCallArgumentJudgmentHelp(display, wording, mayBeNil, precisionBoundary, genericConflict, genericParam)
 	if detail, ok := directCallArgumentMissingRequiredMethod(item); ok {
 		message = argumentMissingRequiredMethodMessage(wording.Role, want, detail.Field)
@@ -123,7 +123,7 @@ func directCallArgumentSourceName(label string) string {
 	return source
 }
 
-func directCallArgumentJudgmentMessage(display diagnosticDisplay, wording directCallArgumentWording, got, want typ.Type, mayBeNil bool, precisionBoundary bool, genericConflict bool, genericParam string) string {
+func directCallArgumentJudgmentMessage(display diagnosticDisplay, item judgment.Judgment, wording directCallArgumentWording, got, want typ.Type, mayBeNil bool, precisionBoundary bool, genericConflict bool, genericParam string, genericFunction string) string {
 	if precisionBoundary {
 		return fmt.Sprintf("%s comes from any/unknown; no proof shows it is %s", wording.Subject, display.Type(want))
 	}
@@ -140,6 +140,13 @@ func directCallArgumentJudgmentMessage(display diagnosticDisplay, wording direct
 		return fmt.Sprintf("cannot pass %s because it may be nil", wording.Subject)
 	}
 	if genericConflict {
+		labels := directCallArgumentJudgmentEvidenceLabels(item, judgment.EvidenceAbstractFact)
+		if len(labels) >= 2 && labels[0] != "" && labels[1] != "" {
+			if genericFunction == "" {
+				genericFunction = "callee"
+			}
+			return fmt.Sprintf("%s cannot infer one %s for %s: %s implies %s, but %s implies %s", genericFunction, genericParamName(genericParam), wording.Subject, labels[0], display.Type(want), labels[1], display.Type(got))
+		}
 		return fmt.Sprintf("%s gives `%s` incompatible types: %s and %s", wording.Subject, genericParamName(genericParam), display.Type(want), display.Type(got))
 	}
 	gotText := display.Type(got)
@@ -169,7 +176,7 @@ func directCallArgumentJudgmentHelp(display diagnosticDisplay, wording directCal
 func directCallArgumentJudgmentEvidence(display diagnosticDisplay, item judgment.Judgment, wording directCallArgumentWording, primary diagnostic.Span) []diagnostic.Evidence {
 	got := item.Actual.ProjectedType
 	want := item.Expected.Type
-	if genericConflict, genericParam := directCallArgumentGenericConflict(item); genericConflict {
+	if genericConflict, genericParam, _ := directCallArgumentGenericConflict(item); genericConflict {
 		return directCallArgumentGenericConflictEvidence(display, item, wording, primary, genericParamName(genericParam), got, want)
 	}
 	expectedLabel := directCallArgumentExpectedLabel(item, wording.Subject)
@@ -287,6 +294,7 @@ func directCallArgumentHasCallParamObligation(item judgment.Judgment) bool {
 func directCallArgumentGenericConflictEvidence(display diagnosticDisplay, item judgment.Judgment, wording directCallArgumentWording, primary diagnostic.Span, paramName string, got, want typ.Type) []diagnostic.Evidence {
 	expectedLabel := directCallArgumentExpectedLabel(item, wording.Subject)
 	contributionSpans := directCallArgumentJudgmentEvidenceSpans(item, judgment.EvidenceAbstractFact)
+	contributionLabels := directCallArgumentJudgmentEvidenceLabels(item, judgment.EvidenceAbstractFact)
 	firstSpan := primary
 	secondSpan := primary
 	if len(contributionSpans) > 0 {
@@ -295,18 +303,26 @@ func directCallArgumentGenericConflictEvidence(display diagnosticDisplay, item j
 	if len(contributionSpans) > 1 {
 		secondSpan = contributionSpans[1]
 	}
+	firstSubject := wording.Subject
+	secondSubject := wording.Subject
+	if len(contributionLabels) > 0 && contributionLabels[0] != "" {
+		firstSubject = contributionLabels[0]
+	}
+	if len(contributionLabels) > 1 && contributionLabels[1] != "" {
+		secondSubject = contributionLabels[1]
+	}
 	return []diagnostic.Evidence{
 		{
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnostic.TrustProven,
 			Span:    firstSpan,
-			Message: fmt.Sprintf("%s contributes %s for `%s`", wording.Subject, display.Type(want), paramName),
+			Message: fmt.Sprintf("%s contributes %s for `%s`", firstSubject, display.Type(want), paramName),
 		},
 		{
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnostic.TrustProven,
 			Span:    secondSpan,
-			Message: fmt.Sprintf("%s also contributes %s for `%s`", wording.Subject, display.Type(got), paramName),
+			Message: fmt.Sprintf("%s also contributes %s for `%s`", secondSubject, display.Type(got), paramName),
 		},
 		{
 			Kind:    diagnostic.EvidenceUserAssertion,
@@ -321,6 +337,16 @@ func directCallArgumentGenericConflictEvidence(display diagnosticDisplay, item j
 			Message: fmt.Sprintf("no single type for `%s` satisfies every contribution in %s", paramName, wording.MissingName),
 		},
 	}
+}
+
+func directCallArgumentJudgmentEvidenceLabels(item judgment.Judgment, kind judgment.EvidenceKind) []string {
+	var out []string
+	for _, evidence := range item.Evidence {
+		if evidence.Kind == kind {
+			out = append(out, evidence.Detail.SubjectLabel)
+		}
+	}
+	return out
 }
 
 func directCallArgumentGenericConflictHelp(paramName string) string {
@@ -393,13 +419,13 @@ func directCallArgumentMayBeNil(item judgment.Judgment) bool {
 	return false
 }
 
-func directCallArgumentGenericConflict(item judgment.Judgment) (bool, string) {
+func directCallArgumentGenericConflict(item judgment.Judgment) (bool, string, string) {
 	for _, evidence := range item.Evidence {
 		if evidence.Kind == judgment.EvidenceMissingProof && evidence.Detail.Kind == judgment.EvidenceDetailGenericConflict {
-			return true, evidence.Detail.Param
+			return true, evidence.Detail.Param, evidence.Detail.FunctionName
 		}
 	}
-	return false, ""
+	return false, "", ""
 }
 
 func genericParamName(name string) string {

@@ -2,6 +2,7 @@ package readmodel
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/contract"
 	"github.com/wippyai/go-lua/analysis/check/internal/callcontract"
@@ -200,9 +201,11 @@ func (r Reader) genericInferenceConflicts(point cfg.Point, trace callcontract.Ge
 		return nil
 	}
 	out := make([]CallGenericInferenceConflict, 0, len(conflicts))
+	site, _ := r.result.CallSite(point)
 	for _, conflict := range conflicts {
 		out = append(out, CallGenericInferenceConflict{
 			Index:         conflict.Index,
+			FunctionName:  r.callContractSourceName(site),
 			ParamName:     conflict.ParamName,
 			Span:          r.callArgumentSpan(point, conflict.Index),
 			Contributions: r.genericInferenceReportContributions(point, conflict.Index, conflict.Contributions),
@@ -218,11 +221,44 @@ func (r Reader) genericInferenceReportContributions(point cfg.Point, index int, 
 	out := make([]CallGenericInferenceContribution, 0, len(contributions))
 	for _, contribution := range contributions {
 		out = append(out, CallGenericInferenceContribution{
-			Type: contribution.Type,
-			Span: r.inferenceContributionSpan(point, index, contribution),
+			Type:  contribution.Type,
+			Span:  r.inferenceContributionSpan(point, index, contribution),
+			Label: genericInferenceContributionLabel(index, contribution),
 		})
 	}
 	return out
+}
+
+func genericInferenceContributionLabel(index int, contribution callcontract.InferenceContribution) string {
+	var b strings.Builder
+	b.WriteString("argument ")
+	b.WriteString(strconv.Itoa(index + 1))
+	for _, step := range contribution.Path {
+		switch step.Kind {
+		case callcontract.InferencePathField:
+			b.WriteString(".")
+			b.WriteString(step.Name)
+		case callcontract.InferencePathStaticString:
+			b.WriteString("[")
+			b.WriteString(strconv.Quote(step.Name))
+			b.WriteString("]")
+		case callcontract.InferencePathStaticInt:
+			b.WriteString("[")
+			b.WriteString(strconv.Itoa(step.Index))
+			b.WriteString("]")
+		case callcontract.InferencePathFunctionParam:
+			b.WriteString(" parameter ")
+			if step.Name != "" {
+				b.WriteString(step.Name)
+			} else {
+				b.WriteString(strconv.Itoa(step.Index + 1))
+			}
+		case callcontract.InferencePathFunctionReturn:
+			b.WriteString(" return ")
+			b.WriteString(strconv.Itoa(step.Index))
+		}
+	}
+	return b.String()
 }
 
 func (r Reader) inferenceContributionSpan(point cfg.Point, index int, contribution callcontract.InferenceContribution) SourceSpan {
