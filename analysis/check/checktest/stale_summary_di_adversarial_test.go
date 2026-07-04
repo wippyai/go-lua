@@ -786,8 +786,8 @@ local p: { [1]: (number) -> () } = {
 invoke(p, "bad")
 `)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallArgType)
-	requireEvidenceMessage(t, diag, `argument 2 has literal value "bad"`)
-	requireEvidenceMessage(t, diag, "inside invoke, argument 2 is passed to argument 1[1] parameter 1, which requires number")
+	requireEvidenceMessage(t, diag, `argument 1 (payload) has literal value "bad"`)
+	requireEvidenceMessage(t, diag, "inside provider[1], argument 1 must satisfy number")
 }
 
 func TestMemberCallObligationReportsInferredStaticIntProviderMemberMismatch(t *testing.T) {
@@ -802,8 +802,8 @@ p[1] = function(v: number): () end
 invoke(p, "bad")
 `)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallArgType)
-	requireEvidenceMessage(t, diag, `argument 2 has literal value "bad"`)
-	requireEvidenceMessage(t, diag, "inside invoke, argument 2 is passed to argument 1[1] parameter 1, which requires number")
+	requireEvidenceMessage(t, diag, `argument 1 (payload) has literal value "bad"`)
+	requireEvidenceMessage(t, diag, "inside provider[1], argument 1 must satisfy number")
 }
 
 func TestMemberCallObligationReportsInferredStaticStringProviderMemberMismatch(t *testing.T) {
@@ -818,8 +818,8 @@ p["send"] = function(v: number): () end
 invoke(p, "bad")
 `)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallArgType)
-	requireEvidenceMessage(t, diag, `argument 2 has literal value "bad"`)
-	requireEvidenceMessage(t, diag, "inside invoke, argument 2 is passed to argument 1.send parameter 1, which requires number")
+	requireEvidenceMessage(t, diag, `argument 1 (payload) has literal value "bad"`)
+	requireEvidenceMessage(t, diag, "inside provider.send, argument 1 must satisfy number")
 }
 
 func TestMemberCallObligationUsesLatestInferredProviderMember(t *testing.T) {
@@ -835,8 +835,8 @@ p[1] = function(v: string): () end
 invoke(p, 42)
 `)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallArgType)
-	requireEvidenceMessage(t, diag, "argument 2 has literal value 42")
-	requireEvidenceMessage(t, diag, "inside invoke, argument 2 is passed to argument 1[1] parameter 1, which requires string")
+	requireEvidenceMessage(t, diag, "argument 1 (payload) has literal value 42")
+	requireEvidenceMessage(t, diag, "inside provider[1], argument 1 must satisfy string")
 }
 
 func TestMemberCallObligationDoesNotUseBranchOnlyProviderMember(t *testing.T) {
