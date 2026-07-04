@@ -169,6 +169,22 @@ func callArgumentJudgment(
 			check.ExpectedOrigin.MemberParamNumber,
 		)
 	}
+	if arg.ExplicitTopOrigin {
+		sourceLabel := arg.Label
+		if sourceLabel == "" {
+			sourceLabel = callArgumentSubjectLabel(arg)
+		}
+		evidence = append(evidence, judgment.Evidence{
+			Kind:   judgment.EvidenceUserAssertion,
+			Trust:  judgment.EvidenceTrustClaimed,
+			Detail: judgment.UserAssertedAnyEvidenceDetail(sourceLabel),
+			Origin: judgment.OriginRef{
+				Point: point,
+				Key:   fmt.Sprintf("arg:%d:explicit-any", arg.Index),
+			},
+			Span: spanFromReadModel(ctx.SourceFile, arg.Span),
+		})
+	}
 	if arg.UntrustedTopOrigin {
 		evidence = append(evidence, judgment.Evidence{
 			Kind:  judgment.EvidencePrecisionBoundary,

@@ -191,6 +191,7 @@ func directCallArgumentJudgmentEvidence(display diagnosticDisplay, item judgment
 			Message: directCallArgumentExpectedEvidenceMessage(display, item, expectedLabel, want),
 		},
 	}
+	evidence = append(evidence, directCallArgumentUserAssertionEvidence(item)...)
 	if item.HasEvidence(judgment.EvidencePrecisionBoundary) {
 		sourceName := wording.Subject
 		if wording.SourceName != "" {
@@ -212,6 +213,24 @@ func directCallArgumentJudgmentEvidence(display diagnosticDisplay, item judgment
 		Message: missingProof,
 	})
 	return evidence
+}
+
+func directCallArgumentUserAssertionEvidence(item judgment.Judgment) []diagnostic.Evidence {
+	var out []diagnostic.Evidence
+	for _, evidence := range item.Evidence {
+		if evidence.Kind != judgment.EvidenceUserAssertion ||
+			evidence.Detail.Kind != judgment.EvidenceDetailUserAssertedAny {
+			continue
+		}
+		out = append(out, diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceUserAssertion,
+			Trust:   diagnosticTrustFromJudgmentTrust(evidence.Trust, diagnostic.TrustClaimed),
+			Reason:  diagnostic.EvidenceReasonUserAssertedAny,
+			Span:    diagnosticSpanFromJudgment(evidence.Span),
+			Message: userAssertedAnyEvidence(),
+		})
+	}
+	return out
 }
 
 func directCallArgumentExpectedEvidenceMessage(display diagnosticDisplay, item judgment.Judgment, fallback string, want typ.Type) string {

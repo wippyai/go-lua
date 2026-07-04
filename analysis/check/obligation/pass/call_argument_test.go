@@ -599,6 +599,24 @@ func TestCallArgumentsKeepsUntrustedAnyUnknown(t *testing.T) {
 	}
 }
 
+func TestCallArgumentsKeepsExplicitAnyAssertionEvidence(t *testing.T) {
+	result := checkFunction(t, `function f() local raw = (nil :: any) need_string(raw) end`, stringSignatureManifest())
+
+	got := obligationpass.New(obligationpass.CallArguments{}).Run(obligationpass.Context{
+		FunctionKey: "fixture:f",
+		Reader:      readmodel.New(result),
+	})
+	if len(got) != 1 {
+		t.Fatalf("judgments = %d, want 1: %#v", len(got), got)
+	}
+	if !hasEvidenceKind(got[0], judgment.EvidencePrecisionBoundary) {
+		t.Fatalf("evidence = %#v, want untrusted precision-boundary evidence", got[0].Evidence)
+	}
+	if !hasEvidenceDetail(got[0], judgment.EvidenceDetailUserAssertedAny) {
+		t.Fatalf("evidence = %#v, want explicit-any user assertion evidence", got[0].Evidence)
+	}
+}
+
 func TestCallArgumentsKeepsUntrustedOrDefaultUnknown(t *testing.T) {
 	result := checkFunction(t, `function f(args)
 	local url = (args and args.url) or "http://localhost:8085/hello"
@@ -674,6 +692,15 @@ func parseFunction(t *testing.T, src string) *ast.FunctionExpr {
 func hasEvidenceKind(item judgment.Judgment, kind judgment.EvidenceKind) bool {
 	for _, evidence := range item.Evidence {
 		if evidence.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func hasEvidenceDetail(item judgment.Judgment, detail judgment.EvidenceDetailKind) bool {
+	for _, evidence := range item.Evidence {
+		if evidence.Detail.Kind == detail {
 			return true
 		}
 	}

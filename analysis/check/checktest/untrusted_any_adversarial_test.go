@@ -109,31 +109,27 @@ accept(id(raw))
 	result := Check(src)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallArgType)
 	if got := diag.Explanation.String(); !strings.Contains(got, "user asserted any") ||
-		!strings.Contains(got, "no proof on this path shows id(...) satisfies the parameter type") {
+		!strings.Contains(got, "no proof on this path shows argument 1 satisfies the parameter type") {
 		t.Fatalf("explanation = %q, want explicit-any claim and missing-proof evidence", got)
 	}
 	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
 		Sources:             diagnostic.SourceMap{"test.lua": src},
 		ShowSourceLabelRows: true,
 	})
-	want := `error[type.call.direct.argument_type]: argument 1 (id(...)) comes from any/unknown; no proof shows it is {id: string}
+	want := `error[type.call.direct.argument_type]: argument 1 comes from any/unknown; no proof shows it is {id: string}
  --> test.lua:9:8
   |
 9 | accept(id(raw))
   |        ↑ argument value
 
 because:
-  1. proven: argument 1 (id(...)) has type any
+  1. proven: argument 1 can be T or nil here
   2. claimed: accept parameter 1 expects {id: string}
- --> test.lua:5:28
-  |
-5 | local function accept(req: { id: string }): ()
-  |                            ^
   3. claimed: user asserted any; not abstract-interpreter proof
-  4. unvalidated value: argument 1 (id(...)) comes from any/unknown
-  5. missing proof: no proof on this path shows id(...) satisfies the parameter type
+  4. unvalidated value: argument 1 comes from any/unknown
+  5. missing proof: no proof on this path shows argument 1 satisfies the parameter type
 
-help: Validate or narrow ` + "`id(...)`" + ` before passing it; any/unknown values do not prove parameter contracts.`
+help: Validate or narrow this argument before passing it; any/unknown values do not prove parameter contracts.`
 	assertRenderedEqual(t, rendered, want)
 }
 
@@ -439,7 +435,7 @@ accept(again(id(raw)))
 `)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallArgType)
 	if got := diag.Explanation.String(); !strings.Contains(got, "user asserted any") ||
-		!strings.Contains(got, "no proof on this path shows again(...) satisfies the parameter type") {
+		!strings.Contains(got, "no proof on this path shows argument 1 satisfies the parameter type") {
 		t.Fatalf("explanation = %q, want explicit-any claim and missing-proof evidence", got)
 	}
 }
@@ -457,7 +453,7 @@ local raw = ({ id = "ok" } :: any)
 	forward(raw)
 `)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallArgType)
-	requireEvidenceMessage(t, diag, "inside forward, argument 1 (raw) must satisfy {id: string}")
+	requireEvidenceMessage(t, diag, "inside forward, argument 1 must satisfy {id: string}")
 	if got := diag.Explanation.String(); !strings.Contains(got, "user asserted any") ||
 		!strings.Contains(got, "no proof on this path shows raw satisfies the parameter type") {
 		t.Fatalf("explanation = %q, want explicit-any callee obligation and missing-proof evidence", got)

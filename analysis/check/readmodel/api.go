@@ -1010,21 +1010,23 @@ func CallCalleeDeclaredNilOwnedByDeclaration(valueType, declared typ.Type) bool 
 
 // CallArgument is the solved read model for one call argument.
 type CallArgument struct {
-	Index                int
-	Value                product.Value
-	ValueHash            uint64
-	TypeWithPresence     typ.Type
-	UntrustedTopOrigin   bool
-	ProofCandidateValue  product.Value
-	ProofCandidateHash   uint64
-	ProofCandidateType   typ.Type
-	ProofCandidateTop    bool
-	HasProofCandidate    bool
-	CallerOwnedParameter bool
-	FunctionType         *typ.Function
-	Span                 SourceSpan
-	Label                string
-	Mismatch             CallArgumentMismatch
+	Index                     int
+	Value                     product.Value
+	ValueHash                 uint64
+	TypeWithPresence          typ.Type
+	UntrustedTopOrigin        bool
+	ExplicitTopOrigin         bool
+	ProofCandidateValue       product.Value
+	ProofCandidateHash        uint64
+	ProofCandidateType        typ.Type
+	ProofCandidateTop         bool
+	ProofCandidateExplicitTop bool
+	HasProofCandidate         bool
+	CallerOwnedParameter      bool
+	FunctionType              *typ.Function
+	Span                      SourceSpan
+	Label                     string
+	Mismatch                  CallArgumentMismatch
 }
 
 // CallArgumentMismatchKind classifies a structural argument mismatch reason

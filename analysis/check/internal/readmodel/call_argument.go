@@ -235,6 +235,7 @@ func (r Reader) callArgument(point cfg.Point, site factflow.CallSite, index int,
 		ValueHash:            r.ValueHash(value),
 		TypeWithPresence:     got,
 		UntrustedTopOrigin:   r.ValueHasUntrustedTopOrigin(value),
+		ExplicitTopOrigin:    r.ValueHasExplicitTopOrigin(value),
 		CallerOwnedParameter: r.callerOwnedParameterArgument(point, source),
 		Span:                 callArgumentSpan(site, index),
 		Label:                r.callArgumentLabel(site, index, source),
@@ -244,6 +245,7 @@ func (r Reader) callArgument(point cfg.Point, site factflow.CallSite, index int,
 		arg.ProofCandidateHash = r.ValueHash(candidate)
 		arg.ProofCandidateType, _ = r.ValueTypeWithPresence(candidate)
 		arg.ProofCandidateTop = r.ValueHasUntrustedTopOrigin(candidate)
+		arg.ProofCandidateExplicitTop = r.ValueHasExplicitTopOrigin(candidate)
 		arg.HasProofCandidate = true
 	}
 	if fn, ok := r.contextualFunctionArgumentType(point, source); ok {
@@ -264,6 +266,7 @@ func (r Reader) admissibleCallArgumentProofCandidate(arg CallArgument, want typ.
 	arg.ValueHash = arg.ProofCandidateHash
 	arg.TypeWithPresence = arg.ProofCandidateType
 	arg.UntrustedTopOrigin = arg.ProofCandidateTop
+	arg.ExplicitTopOrigin = arg.ProofCandidateExplicitTop
 	arg.Mismatch = CallArgumentMismatch{}
 	return arg, true
 }

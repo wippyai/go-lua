@@ -15,10 +15,11 @@
         "message_contains": [
           "argument 2 (model_id) comes from any/unknown; no proof shows it is string"
         ],
-        "min_evidence": 4,
+        "min_evidence": 5,
         "evidence_contains": [
           "argument 2 (model_id) has type any",
           "inside helper, argument 2 must satisfy string",
+          "user asserted any; not abstract-interpreter proof",
           "model_id comes from any/unknown",
           "no proof on this path shows model_id satisfies the parameter type"
         ],
@@ -39,6 +40,16 @@
               "inside helper, argument 2 must satisfy string"
             ],
             "kind": "user assertion"
+          },
+          {
+            "trust": "claimed",
+            "contains": [
+              "user asserted any; not abstract-interpreter proof"
+            ],
+            "kind": "user assertion",
+            "file": "main.lua",
+            "line": 12,
+            "column": 24
           },
           {
             "trust": "unknown",
@@ -74,8 +85,9 @@
           "because:",
           "1. proven: argument 2 (model_id) has type any",
           "2. claimed: inside helper, argument 2 must satisfy string",
-          "3. unvalidated value: model_id comes from any/unknown",
-          "4. missing proof: no proof on this path shows model_id satisfies the parameter type",
+          "3. claimed: user asserted any; not abstract-interpreter proof",
+          "4. unvalidated value: model_id comes from any/unknown",
+          "5. missing proof: no proof on this path shows model_id satisfies the parameter type",
           "help: Validate or narrow `model_id` before passing it; any/unknown values do not prove parameter contracts."
         ],
         "render_not_contains": [
