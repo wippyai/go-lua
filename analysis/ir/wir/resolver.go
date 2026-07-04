@@ -1,4 +1,4 @@
-package cir
+package wir
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
@@ -44,9 +44,9 @@ func (m AccessMode) String() string {
 	}
 }
 
-// AddressResolver maps a cir operand at a CFG point to an opaque state-cell key.
+// AddressResolver maps a wir operand at a CFG point to an opaque state-cell key.
 //
-// Operand identity is not state-cell identity by design (decision D2): a cir
+// Operand identity is not state-cell identity by design (decision D2): a wir
 // operand is a source path ref, stable across the whole Body, whereas the state
 // cell it addresses depends on the point (SSA version), the access mode
 // (before/after, root/visible, evidence), and visibility. The resolver owns that
@@ -54,7 +54,7 @@ func (m AccessMode) String() string {
 //
 // The production implementation binds to the engine visibility resolver inside
 // factapply and is constructed per Body (it closes over the Body to decode an
-// operand's interned path). cir defines only the contract and a test fake.
+// operand's interned path). wir defines only the contract and a test fake.
 //
 // Caching contract: Resolve is a pure function of (point, op, mode) for a fixed
 // Body, so a resolver MAY memoize its result and callers MAY assume repeated

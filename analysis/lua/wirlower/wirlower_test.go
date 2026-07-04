@@ -1,16 +1,16 @@
-package cirlower_test
+package wirlower_test
 
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/ir/cir"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
-	"github.com/wippyai/go-lua/analysis/lua/cirlower"
+	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
-// lowerSource parses, binds, lowers, and prints src to the golden textual cir.
+// lowerSource parses, binds, lowers, and prints src to the golden textual wir.
 func lowerSource(t *testing.T, src string) string {
 	t.Helper()
 	return lowerSourceG(t, src, "type", "print", "pairs", "ipairs", "f", "g", "h", "obj", "t")
@@ -25,8 +25,8 @@ func lowerSourceG(t *testing.T, src string, globals ...string) string {
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: globals})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	body := cirlower.Lower("main", stmts, bindings, built)
-	return cir.Print(body, built.Graph)
+	body := wirlower.Lower("main", stmts, bindings, built)
+	return wir.Print(body, built.Graph)
 }
 
 func TestGolden(t *testing.T) {
@@ -147,7 +147,7 @@ b2: exit
 		t.Run(tc.name, func(t *testing.T) {
 			got := lowerSource(t, tc.src)
 			if got != tc.want {
-				t.Fatalf("cir mismatch for %s\n--- got ---\n%s\n--- want ---\n%s", tc.name, got, tc.want)
+				t.Fatalf("wir mismatch for %s\n--- got ---\n%s\n--- want ---\n%s", tc.name, got, tc.want)
 			}
 		})
 	}
@@ -402,7 +402,7 @@ b6: exit
 			}
 			got := lowerSourceG(t, tc.src, globals...)
 			if got != tc.want {
-				t.Fatalf("cir mismatch for %s\n--- got ---\n%s\n--- want ---\n%s", tc.name, got, tc.want)
+				t.Fatalf("wir mismatch for %s\n--- got ---\n%s\n--- want ---\n%s", tc.name, got, tc.want)
 			}
 		})
 	}

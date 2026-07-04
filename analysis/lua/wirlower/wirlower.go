@@ -1,6 +1,6 @@
-// Package cirlower lowers typed-Lua syntax into cir attached to the shared CFG
+// Package wirlower lowers typed-Lua syntax into wir attached to the shared CFG
 // that cfgbuild already produced (decision D1a). It creates no CFG topology of
-// its own: cfgbuild is the point authority, and cirlower maps each Lua construct
+// its own: cfgbuild is the point authority, and wirlower maps each Lua construct
 // onto the pre-existing points it discovers through cfgbuild.Result.StmtPoints
 // (statement -> points, in creation order) and cfgfacts.Metadata (short-circuit
 // guard / expression-evaluation sidecars).
@@ -10,7 +10,7 @@
 // the transfer interpreter's job. Conditions are lowered through
 // branchcond.Normalize (a closed descriptor) and attached to OpBranch; paths
 // come from pathexpr/keyspace; nothing here concludes anything about values.
-// That boundary is the whole point of cir.
+// That boundary is the whole point of wir.
 //
 // Point granularity follows cfgbuild: one OpCall per call (each on its own
 // NodeCall point, in Lua evaluation order, before the owning statement's own
@@ -19,14 +19,14 @@
 // branch point, the loop-variable binding on the assign point(s)); joins carry
 // no instruction. Short-circuit and/or follows the always-materialized
 // short-circuit topology cfgbuild emits (decision D3, purity split).
-package cirlower
+package wirlower
 
 import (
 	"strconv"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/ir/cir"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/callorder"
@@ -43,7 +43,7 @@ import (
 // the same AST. bindings must be the result of binding stmts (e.g.
 // bind.BindChunk) and built must be cfgbuild.BuildChunk over the same stmts.
 // Points in the returned Body index into built.Graph.
-func Lower(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result) *cir.Body {
+func Lower(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result) *wir.Body {
 	return lowerInto(name, stmts, bindings, built, typeresolve.New(bindings))
 }
 
@@ -51,15 +51,15 @@ func Lower(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild
 // function body) onto its shared graph. resolver is the shared lexical type
 // resolver, threaded through nested protos so type identities and their caches
 // stay consistent across the whole chunk.
-func lowerInto(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result, resolver *typeresolve.Resolver) *cir.Body {
+func lowerInto(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result, resolver *typeresolve.Resolver) *wir.Body {
 	b := &builder{
-		body:        cir.NewBody(name),
+		body:        wir.NewBody(name),
 		graph:       built.Graph,
 		meta:        built.Meta,
 		points:      built.StmtPoints,
 		bindings:    bindings,
 		resolver:    resolver,
-		pointInstrs: make(map[cfg.Point][]cir.Instruction),
+		pointInstrs: make(map[cfg.Point][]wir.Instruction),
 		callTemps:   make(map[*ast.FuncCallExpr]*callResult),
 		guardByCond: make(map[ast.Expr]cfg.Point),
 		evalByExpr:  make(map[ast.Expr]cfg.Point),
@@ -67,17 +67,17 @@ func lowerInto(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgb
 	b.indexShortCircuits()
 
 	b.curPoint = b.graph.Entry()
-	b.emit(cir.Instruction{Op: cir.OpEntry})
+	b.emit(wir.Instruction{Op: wir.OpEntry})
 	b.lowerStmts(stmts)
 	b.curPoint = b.graph.Exit()
-	b.emit(cir.Instruction{Op: cir.OpExit})
+	b.emit(wir.Instruction{Op: wir.OpExit})
 
 	b.flush()
 	return b.body
 }
 
 type builder struct {
-	body     *cir.Body
+	body     *wir.Body
 	graph    cfg.Graph
 	meta     cfgfacts.Metadata
 	points   cfgbuild.StmtPoints
@@ -85,7 +85,7 @@ type builder struct {
 	resolver *typeresolve.Resolver
 
 	curPoint    cfg.Point
-	pointInstrs map[cfg.Point][]cir.Instruction
+	pointInstrs map[cfg.Point][]wir.Instruction
 	tempSeq     uint32
 	protoSeq    int
 
@@ -96,7 +96,7 @@ type builder struct {
 	callTemps map[*ast.FuncCallExpr]*callResult
 
 	// guardByCond and evalByExpr index the short-circuit sidecar points cfgbuild
-	// records outside StmtPoints, keyed by the AST identity cirlower matches on
+	// records outside StmtPoints, keyed by the AST identity wirlower matches on
 	// (the guard condition = LogicalOpExpr.Lhs, the eval expr = the RHS).
 	guardByCond map[ast.Expr]cfg.Point
 	evalByExpr  map[ast.Expr]cfg.Point
@@ -105,8 +105,8 @@ type builder struct {
 // callResult records the result temps a pre-lowered call binds together with the
 // slot to patch when the call is later found in a spread (multret) tail.
 type callResult struct {
-	head  cir.Operand
-	temps []cir.Operand
+	head  wir.Operand
+	temps []wir.Operand
 	point cfg.Point
 	index int
 }
@@ -127,7 +127,7 @@ func (b *builder) indexShortCircuits() {
 // emit accumulates an instruction on the current point. Instructions are flushed
 // to the Body in point order once lowering completes; accumulation lets the
 // short-circuit RHS patch a producer's ResultSpread before flush.
-func (b *builder) emit(inst cir.Instruction) {
+func (b *builder) emit(inst wir.Instruction) {
 	inst.Point = b.curPoint
 	b.pointInstrs[b.curPoint] = append(b.pointInstrs[b.curPoint], inst)
 }
@@ -149,8 +149,8 @@ func (b *builder) flush() {
 	}
 }
 
-func (b *builder) newTemp() cir.Operand {
-	op := cir.Operand{Kind: cir.OperandTemp, Ref: b.tempSeq}
+func (b *builder) newTemp() wir.Operand {
+	op := wir.Operand{Kind: wir.OperandTemp, Ref: b.tempSeq}
 	b.tempSeq++
 	return op
 }
@@ -222,11 +222,11 @@ func (b *builder) lowerLocalAssign(s *ast.LocalAssignStmt) {
 		dst := b.localPath(s, i)
 		b.bindInto(dst, values[i])
 		if i < len(s.Types) && s.Types[i] != nil {
-			b.emit(cir.Instruction{
-				Op:    cir.OpClaim,
+			b.emit(wir.Instruction{
+				Op:    wir.OpClaim,
 				Dst:   dst,
 				A:     dst,
-				Claim: cir.ClaimAnnotation,
+				Claim: wir.ClaimAnnotation,
 				Type:  b.internType(s.Types[i]),
 			})
 		}
@@ -257,16 +257,16 @@ func (b *builder) lowerAssignTarget(target ast.Expr, v binding) {
 		b.bindInto(dst, v)
 	case *ast.AttrGetExpr:
 		if p, ok := pathexpr.Resolve(t, b.bindings); ok {
-			b.emit(cir.Instruction{
-				Op:  cir.OpStaticMemberWrite,
+			b.emit(wir.Instruction{
+				Op:  wir.OpStaticMemberWrite,
 				Dst: b.pathOperand(p),
 				A:   b.bindingOperand(v),
 			})
 			return
 		}
 		container, _ := pathexpr.ResolveMutationContainer(t, b.bindings)
-		b.emit(cir.Instruction{
-			Op:  cir.OpDynamicIndexWrite,
+		b.emit(wir.Instruction{
+			Op:  wir.OpDynamicIndexWrite,
 			Dst: b.pathOperand(container),
 			A:   b.lowerExpr(t.Key),
 			B:   b.bindingOperand(v),
@@ -294,7 +294,7 @@ const (
 type binding struct {
 	kind bindingKind
 	expr ast.Expr
-	op   cir.Operand
+	op   wir.Operand
 }
 
 // planValues maps n destinations to their source values, preserving Lua tail
@@ -348,14 +348,14 @@ func tempBinding(cr *callResult, k int) binding {
 // bindInto writes a planned value into a destination that can receive a produced
 // instruction directly (a path or temp), keeping the compact `dst = op a b` form
 // for compound expressions.
-func (b *builder) bindInto(dst cir.Operand, v binding) {
+func (b *builder) bindInto(dst wir.Operand, v binding) {
 	switch v.kind {
 	case bindExpr:
 		b.lowerExprInto(dst, v.expr)
 	case bindOperand:
 		b.emitAssign(dst, v.op)
 	case bindVararg:
-		b.emitAssign(dst, cir.Operand{Kind: cir.OperandVararg})
+		b.emitAssign(dst, wir.Operand{Kind: wir.OperandVararg})
 	default:
 		b.emitAssign(dst, b.constNil())
 	}
@@ -363,14 +363,14 @@ func (b *builder) bindInto(dst cir.Operand, v binding) {
 
 // bindingOperand reduces a planned value to a single operand (for member/index
 // writes, which take the value as an operand rather than a destination).
-func (b *builder) bindingOperand(v binding) cir.Operand {
+func (b *builder) bindingOperand(v binding) wir.Operand {
 	switch v.kind {
 	case bindExpr:
 		return b.lowerExpr(v.expr)
 	case bindOperand:
 		return v.op
 	case bindVararg:
-		return cir.Operand{Kind: cir.OperandVararg}
+		return wir.Operand{Kind: wir.OperandVararg}
 	default:
 		return b.constNil()
 	}
@@ -437,11 +437,11 @@ func (b *builder) emitCallAt(point cfg.Point, call *ast.FuncCallExpr, resultCoun
 	b.curPoint = point
 	defer func() { b.curPoint = prev }()
 
-	temps := make([]cir.Operand, resultCount)
+	temps := make([]wir.Operand, resultCount)
 	for i := range temps {
 		temps[i] = b.newTemp()
 	}
-	head := cir.Operand{}
+	head := wir.Operand{}
 	if len(temps) > 0 {
 		head = temps[0]
 	}
@@ -454,8 +454,8 @@ func (b *builder) emitCallAt(point cfg.Point, call *ast.FuncCallExpr, resultCoun
 	}
 
 	args, argSpread := b.lowerValueList(call.Args)
-	inst := cir.Instruction{
-		Op:         cir.OpCall,
+	inst := wir.Instruction{
+		Op:         wir.OpCall,
 		List:       b.body.AppendOperands(args),
 		Results:    b.body.AppendOperands(temps),
 		ListSpread: argSpread,
@@ -505,8 +505,8 @@ func (b *builder) lowerReturn(s *ast.ReturnStmt) {
 	b.preLowerListCalls(s.Exprs, pts[:nCalls])
 	b.curPoint = pts[nCalls]
 	ops, spread := b.lowerValueList(s.Exprs)
-	b.emit(cir.Instruction{
-		Op:         cir.OpReturn,
+	b.emit(wir.Instruction{
+		Op:         wir.OpReturn,
 		List:       b.body.AppendOperands(ops),
 		ListSpread: spread,
 	})
@@ -561,7 +561,7 @@ func (b *builder) condCallCount(cond ast.Expr) int {
 
 func (b *builder) emitBranch(cond ast.Expr) {
 	check := branchcond.Normalize(cond, b.bindings)
-	inst := cir.Instruction{Op: cir.OpBranch, Check: b.body.InternCheck(lowerCheck(check))}
+	inst := wir.Instruction{Op: wir.OpBranch, Check: b.body.InternCheck(lowerCheck(check))}
 	if check.Kind == branchcond.CheckNone {
 		inst.A = b.lowerExpr(cond)
 	}
@@ -581,18 +581,18 @@ func (b *builder) lowerNumberFor(s *ast.NumberForStmt) {
 	// preheader (NodeAssign): the loop-variable binding (value derived by transfer
 	// from the iterator header on the branch point).
 	b.curPoint = pts[nCalls]
-	b.emitAssign(b.numForOperand(s), cir.Operand{})
+	b.emitAssign(b.numForOperand(s), wir.Operand{})
 	// branch (NodeBranch): the numeric iterator header carrying the bounds.
 	b.curPoint = pts[nCalls+1]
-	list := []cir.Operand{b.lowerExpr(s.Init), b.lowerExpr(s.Limit)}
+	list := []wir.Operand{b.lowerExpr(s.Init), b.lowerExpr(s.Limit)}
 	if s.Step != nil {
 		list = append(list, b.lowerExpr(s.Step))
 	} else {
 		list = append(list, b.constNumber("1"))
 	}
-	b.emit(cir.Instruction{
-		Op:   cir.OpIterate,
-		Iter: cir.IterNumeric,
+	b.emit(wir.Instruction{
+		Op:   wir.OpIterate,
+		Iter: wir.IterNumeric,
 		List: b.body.AppendOperands(list),
 	})
 	b.lowerStmts(s.Stmts)
@@ -608,9 +608,9 @@ func (b *builder) lowerGenericFor(s *ast.GenericForStmt) {
 	// branch (NodeBranch): the generic iterator header carrying the sources.
 	b.curPoint = pts[nCalls]
 	srcOps, spread := b.lowerValueList(s.Exprs)
-	b.emit(cir.Instruction{
-		Op:         cir.OpIterate,
-		Iter:       cir.IterGeneric,
+	b.emit(wir.Instruction{
+		Op:         wir.OpIterate,
+		Iter:       wir.IterGeneric,
 		List:       b.body.AppendOperands(srcOps),
 		ListSpread: spread,
 	})
@@ -618,7 +618,7 @@ func (b *builder) lowerGenericFor(s *ast.GenericForStmt) {
 	varOps := b.genericForOperands(s)
 	for i := range s.Names {
 		b.curPoint = pts[nCalls+1+i]
-		b.emitAssign(varOps[i], cir.Operand{})
+		b.emitAssign(varOps[i], wir.Operand{})
 	}
 	b.lowerStmts(s.Stmts)
 }
@@ -639,30 +639,30 @@ func (b *builder) lowerFuncDef(s *ast.FuncDefStmt) {
 	tmp := b.newTemp()
 	b.emitClosure(tmp, s.Func)
 	if ok {
-		b.emit(cir.Instruction{Op: cir.OpStaticMemberWrite, Dst: b.pathOperand(p), A: tmp})
+		b.emit(wir.Instruction{Op: wir.OpStaticMemberWrite, Dst: b.pathOperand(p), A: tmp})
 	}
 }
 
 // emitClosure lowers fn into its own proto Body (built on its own cfgbuild
 // graph) and emits an OpClosure into dst carrying the capture operands in bind
 // order.
-func (b *builder) emitClosure(dst cir.Operand, fn *ast.FunctionExpr) {
+func (b *builder) emitClosure(dst wir.Operand, fn *ast.FunctionExpr) {
 	name := b.body.Name + ".fn" + strconv.Itoa(b.protoSeq)
 	b.protoSeq++
 	childBuilt := cfgbuild.BuildFunction(fn, b.bindings)
-	var ref cir.FuncRef
+	var ref wir.FuncRef
 	if childBuilt != nil && childBuilt.Graph != nil {
 		childBody := lowerInto(name, fn.Stmts, b.bindings, childBuilt, b.resolver)
-		ref = b.body.AddProto(cir.FuncProto{Name: name, Body: childBody, Graph: childBuilt.Graph})
+		ref = b.body.AddProto(wir.FuncProto{Name: name, Body: childBody, Graph: childBuilt.Graph})
 	}
 
 	caps := b.bindings.DirectCaptures(fn)
-	ops := make([]cir.Operand, 0, len(caps))
+	ops := make([]wir.Operand, 0, len(caps))
 	for _, c := range caps {
 		ops = append(ops, b.pathOperand(path.NewPath(c.Captured, c.CapturedName)))
 	}
-	b.emit(cir.Instruction{
-		Op:   cir.OpClosure,
+	b.emit(wir.Instruction{
+		Op:   wir.OpClosure,
 		Dst:  dst,
 		Func: ref,
 		List: b.body.AppendOperands(ops),
@@ -674,7 +674,7 @@ func (b *builder) emitClosure(dst cir.Operand, fn *ast.FunctionExpr) {
 // maybeLowerSelect recognizes the ambient channel.select runtime call and emits
 // an OpSelect over its recognized receive-case channels. It returns false when
 // call is not a select so the caller lowers it as an ordinary call.
-func (b *builder) maybeLowerSelect(dst cir.Operand, call *ast.FuncCallExpr) bool {
+func (b *builder) maybeLowerSelect(dst wir.Operand, call *ast.FuncCallExpr) bool {
 	if !channelruntime.IsSelectCall(call, b.bindings) {
 		return false
 	}
@@ -682,7 +682,7 @@ func (b *builder) maybeLowerSelect(dst cir.Operand, call *ast.FuncCallExpr) bool
 	if !ok {
 		return false
 	}
-	ops := make([]cir.Operand, 0, len(table.Fields))
+	ops := make([]wir.Operand, 0, len(table.Fields))
 	hasDefault := false
 	for _, f := range table.Fields {
 		if f == nil {
@@ -700,8 +700,8 @@ func (b *builder) maybeLowerSelect(dst cir.Operand, call *ast.FuncCallExpr) bool
 			ops = append(ops, b.pathOperand(p))
 		}
 	}
-	b.emit(cir.Instruction{
-		Op:            cir.OpSelect,
+	b.emit(wir.Instruction{
+		Op:            wir.OpSelect,
 		Dst:           dst,
 		List:          b.body.AppendOperands(ops),
 		SelectDefault: hasDefault,
@@ -714,7 +714,7 @@ func (b *builder) maybeLowerSelect(dst cir.Operand, call *ast.FuncCallExpr) bool
 // lowerExprInto lowers e so its value lands in dst, choosing the producing
 // instruction by syntax. Calls are already pre-lowered at their own points, so
 // a call expression here copies its head result temp.
-func (b *builder) lowerExprInto(dst cir.Operand, e ast.Expr) {
+func (b *builder) lowerExprInto(dst wir.Operand, e ast.Expr) {
 	switch e := e.(type) {
 	case *ast.NilExpr, *ast.TrueExpr, *ast.FalseExpr, *ast.NumberExpr, *ast.StringExpr:
 		b.emitAssign(dst, b.constOperand(e))
@@ -728,21 +728,21 @@ func (b *builder) lowerExprInto(dst cir.Operand, e ast.Expr) {
 		b.emitBinOp(dst, relOperator(e.Operator), e.Lhs, e.Rhs)
 	case *ast.StringConcatOpExpr:
 		ops := b.flattenConcat(e)
-		b.emit(cir.Instruction{Op: cir.OpConcat, Dst: dst, List: b.body.AppendOperands(ops)})
+		b.emit(wir.Instruction{Op: wir.OpConcat, Dst: dst, List: b.body.AppendOperands(ops)})
 	case *ast.UnaryMinusOpExpr:
-		b.emitUnOp(dst, cir.UnNeg, e.Expr)
+		b.emitUnOp(dst, wir.UnNeg, e.Expr)
 	case *ast.UnaryNotOpExpr:
-		b.emitUnOp(dst, cir.UnNot, e.Expr)
+		b.emitUnOp(dst, wir.UnNot, e.Expr)
 	case *ast.UnaryLenOpExpr:
-		b.emitUnOp(dst, cir.UnLen, e.Expr)
+		b.emitUnOp(dst, wir.UnLen, e.Expr)
 	case *ast.UnaryBNotOpExpr:
-		b.emitUnOp(dst, cir.UnBNot, e.Expr)
+		b.emitUnOp(dst, wir.UnBNot, e.Expr)
 	case *ast.FuncCallExpr:
 		b.emitAssign(dst, b.callValue(e))
 	case *ast.CastExpr:
-		b.emit(cir.Instruction{Op: cir.OpClaim, Dst: dst, A: b.lowerExpr(e.Expr), Claim: cir.ClaimCast, Type: b.internType(e.Type)})
+		b.emit(wir.Instruction{Op: wir.OpClaim, Dst: dst, A: b.lowerExpr(e.Expr), Claim: wir.ClaimCast, Type: b.internType(e.Type)})
 	case *ast.NonNilAssertExpr:
-		b.emit(cir.Instruction{Op: cir.OpClaim, Dst: dst, A: b.lowerExpr(e.Expr), Claim: cir.ClaimAssert})
+		b.emit(wir.Instruction{Op: wir.OpClaim, Dst: dst, A: b.lowerExpr(e.Expr), Claim: wir.ClaimAssert})
 	case *ast.LogicalOpExpr:
 		b.lowerLogicalInto(dst, e)
 	case *ast.FunctionExpr:
@@ -750,14 +750,14 @@ func (b *builder) lowerExprInto(dst cir.Operand, e ast.Expr) {
 	case *ast.TableExpr:
 		b.lowerTable(dst, e)
 	case *ast.Comma3Expr:
-		b.emitAssign(dst, cir.Operand{Kind: cir.OperandVararg})
+		b.emitAssign(dst, wir.Operand{Kind: wir.OperandVararg})
 	default:
-		b.emitAssign(dst, cir.Operand{})
+		b.emitAssign(dst, wir.Operand{})
 	}
 }
 
 // lowerExpr lowers e to an operand, allocating a temp for compound expressions.
-func (b *builder) lowerExpr(e ast.Expr) cir.Operand {
+func (b *builder) lowerExpr(e ast.Expr) wir.Operand {
 	switch e := e.(type) {
 	case *ast.NilExpr, *ast.TrueExpr, *ast.FalseExpr, *ast.NumberExpr, *ast.StringExpr:
 		return b.constOperand(e)
@@ -775,12 +775,12 @@ func (b *builder) lowerExpr(e ast.Expr) cir.Operand {
 	case *ast.LogicalOpExpr:
 		if b.logicalRHSPure(e.Rhs) {
 			t := b.newTemp()
-			b.emit(cir.Instruction{Op: cir.OpLogical, Dst: t, A: b.lowerExpr(e.Lhs), B: b.lowerExpr(e.Rhs), Operator: logicalOperator(e)})
+			b.emit(wir.Instruction{Op: wir.OpLogical, Dst: t, A: b.lowerExpr(e.Lhs), B: b.lowerExpr(e.Rhs), Operator: logicalOperator(e)})
 			return t
 		}
 		return b.lowerLogicalValue(e)
 	case *ast.Comma3Expr:
-		return cir.Operand{Kind: cir.OperandVararg}
+		return wir.Operand{Kind: wir.OperandVararg}
 	default:
 		t := b.newTemp()
 		b.lowerExprInto(t, e)
@@ -789,25 +789,25 @@ func (b *builder) lowerExpr(e ast.Expr) cir.Operand {
 }
 
 // callValue returns the head result temp of a call already lowered at its point.
-func (b *builder) callValue(call *ast.FuncCallExpr) cir.Operand {
+func (b *builder) callValue(call *ast.FuncCallExpr) wir.Operand {
 	if cr, ok := b.callTemps[call]; ok {
 		return cr.head
 	}
-	return cir.Operand{}
+	return wir.Operand{}
 }
 
 // lowerMultiValue lowers a tail-position expression that expands to all its
 // values, marking the producing call as multret. It returns the head operand.
-func (b *builder) lowerMultiValue(e ast.Expr) cir.Operand {
+func (b *builder) lowerMultiValue(e ast.Expr) wir.Operand {
 	switch e := e.(type) {
 	case *ast.FuncCallExpr:
 		if cr, ok := b.callTemps[e]; ok {
 			b.markSpread(cr)
 			return cr.head
 		}
-		return cir.Operand{}
+		return wir.Operand{}
 	case *ast.Comma3Expr:
-		return cir.Operand{Kind: cir.OperandVararg}
+		return wir.Operand{Kind: wir.OperandVararg}
 	default:
 		return b.lowerExpr(e)
 	}
@@ -817,18 +817,18 @@ func (b *builder) lowerMultiValue(e ast.Expr) cir.Operand {
 // spread (open multret) tail position.
 func (b *builder) markSpread(cr *callResult) {
 	insts := b.pointInstrs[cr.point]
-	if cr.index >= 0 && cr.index < len(insts) && insts[cr.index].Op == cir.OpCall {
+	if cr.index >= 0 && cr.index < len(insts) && insts[cr.index].Op == wir.OpCall {
 		insts[cr.index].ResultSpread = true
 	}
 }
 
 // lowerValueList lowers an expression list, expanding a final multi-value
 // producer. It returns the operands and whether the tail is an open spread.
-func (b *builder) lowerValueList(exprs []ast.Expr) ([]cir.Operand, bool) {
+func (b *builder) lowerValueList(exprs []ast.Expr) ([]wir.Operand, bool) {
 	if len(exprs) == 0 {
 		return nil, false
 	}
-	ops := make([]cir.Operand, 0, len(exprs))
+	ops := make([]wir.Operand, 0, len(exprs))
 	spread := false
 	last := len(exprs) - 1
 	for i, e := range exprs {
@@ -848,9 +848,9 @@ func (b *builder) lowerValueList(exprs []ast.Expr) ([]cir.Operand, bool) {
 // right operand (literal or plain identifier read) keeps the single OpLogical
 // value form; an effectful right operand maps onto the branch topology cfgbuild
 // already materialized (guard branch + RHS-eval point + join).
-func (b *builder) lowerLogicalInto(dst cir.Operand, e *ast.LogicalOpExpr) {
+func (b *builder) lowerLogicalInto(dst wir.Operand, e *ast.LogicalOpExpr) {
 	if b.logicalRHSPure(e.Rhs) {
-		b.emit(cir.Instruction{Op: cir.OpLogical, Dst: dst, A: b.lowerExpr(e.Lhs), B: b.lowerExpr(e.Rhs), Operator: logicalOperator(e)})
+		b.emit(wir.Instruction{Op: wir.OpLogical, Dst: dst, A: b.lowerExpr(e.Lhs), B: b.lowerExpr(e.Rhs), Operator: logicalOperator(e)})
 		return
 	}
 	b.emitAssign(dst, b.lowerLogicalValue(e))
@@ -862,14 +862,14 @@ func (b *builder) lowerLogicalInto(dst cir.Operand, e *ast.LogicalOpExpr) {
 // point) overwrites the temp with the right operand; the CFG join merges. The
 // bypass edge carries no point, so retaining the left operand's assignment before
 // the branch models effect gating without a phi.
-func (b *builder) lowerLogicalValue(e *ast.LogicalOpExpr) cir.Operand {
+func (b *builder) lowerLogicalValue(e *ast.LogicalOpExpr) wir.Operand {
 	guard, hasGuard := b.guardByCond[e.Lhs]
 	anchor, hasAnchor := b.rhsAnchorPoint(e.Rhs)
 	if !hasGuard || !hasAnchor {
 		// The topology cfgbuild expected is absent (e.g. a shape callorder
 		// rejected): fall back to the value form so the result is still bound.
 		t := b.newTemp()
-		b.emit(cir.Instruction{Op: cir.OpLogical, Dst: t, A: b.lowerExpr(e.Lhs), B: b.lowerExpr(e.Rhs), Operator: logicalOperator(e)})
+		b.emit(wir.Instruction{Op: wir.OpLogical, Dst: t, A: b.lowerExpr(e.Lhs), B: b.lowerExpr(e.Rhs), Operator: logicalOperator(e)})
 		return t
 	}
 	result := b.newTemp()
@@ -878,7 +878,7 @@ func (b *builder) lowerLogicalValue(e *ast.LogicalOpExpr) cir.Operand {
 	b.curPoint = guard
 	b.emitAssign(result, b.lowerExpr(e.Lhs))
 	check := branchcond.Normalize(e.Lhs, b.bindings)
-	guardInst := cir.Instruction{Op: cir.OpBranch, Check: b.body.InternCheck(lowerCheck(check))}
+	guardInst := wir.Instruction{Op: wir.OpBranch, Check: b.body.InternCheck(lowerCheck(check))}
 	if check.Kind == branchcond.CheckNone {
 		guardInst.A = b.lowerExpr(e.Lhs)
 	}
@@ -921,11 +921,11 @@ func (b *builder) logicalRHSPure(rhs ast.Expr) bool {
 	}
 }
 
-func logicalOperator(e *ast.LogicalOpExpr) cir.Operator {
+func logicalOperator(e *ast.LogicalOpExpr) wir.Operator {
 	if e.Operator == "or" {
-		return cir.LogOr
+		return wir.LogOr
 	}
-	return cir.LogAnd
+	return wir.LogAnd
 }
 
 // ---- table constructors -------------------------------------------------
@@ -934,9 +934,9 @@ func logicalOperator(e *ast.LogicalOpExpr) cir.Operator {
 // spread parts. Every field value becomes a List operand; a final keyless
 // multi-value producer marks the list tail as an open spread. Field keys are
 // structural syntax recovered by transfer from the constructor.
-func (b *builder) lowerTable(dst cir.Operand, t *ast.TableExpr) {
+func (b *builder) lowerTable(dst wir.Operand, t *ast.TableExpr) {
 	last := lastFieldIndex(t.Fields)
-	ops := make([]cir.Operand, 0, len(t.Fields))
+	ops := make([]wir.Operand, 0, len(t.Fields))
 	spread := false
 	for i, f := range t.Fields {
 		if f == nil || f.Value == nil {
@@ -949,7 +949,7 @@ func (b *builder) lowerTable(dst cir.Operand, t *ast.TableExpr) {
 		}
 		ops = append(ops, b.lowerExpr(f.Value))
 	}
-	b.emit(cir.Instruction{Op: cir.OpMakeTable, Dst: dst, List: b.body.AppendOperands(ops), ListSpread: spread})
+	b.emit(wir.Instruction{Op: wir.OpMakeTable, Dst: dst, List: b.body.AppendOperands(ops), ListSpread: spread})
 }
 
 func lastFieldIndex(fields []*ast.Field) int {
@@ -961,8 +961,8 @@ func lastFieldIndex(fields []*ast.Field) int {
 	return -1
 }
 
-func (b *builder) flattenConcat(e *ast.StringConcatOpExpr) []cir.Operand {
-	var ops []cir.Operand
+func (b *builder) flattenConcat(e *ast.StringConcatOpExpr) []wir.Operand {
+	var ops []wir.Operand
 	var walk func(x ast.Expr)
 	walk = func(x ast.Expr) {
 		if c, ok := x.(*ast.StringConcatOpExpr); ok {
@@ -979,33 +979,33 @@ func (b *builder) flattenConcat(e *ast.StringConcatOpExpr) []cir.Operand {
 
 // ---- operand encoding ---------------------------------------------------
 
-func (b *builder) emitAssign(dst, src cir.Operand) {
-	b.emit(cir.Instruction{Op: cir.OpAssign, Dst: dst, A: src})
+func (b *builder) emitAssign(dst, src wir.Operand) {
+	b.emit(wir.Instruction{Op: wir.OpAssign, Dst: dst, A: src})
 }
 
-func (b *builder) emitBinOp(dst cir.Operand, op cir.Operator, lhs, rhs ast.Expr) {
+func (b *builder) emitBinOp(dst wir.Operand, op wir.Operator, lhs, rhs ast.Expr) {
 	a := b.lowerExpr(lhs)
 	c := b.lowerExpr(rhs)
-	b.emit(cir.Instruction{Op: cir.OpBinOp, Dst: dst, A: a, B: c, Operator: op})
+	b.emit(wir.Instruction{Op: wir.OpBinOp, Dst: dst, A: a, B: c, Operator: op})
 }
 
-func (b *builder) emitUnOp(dst cir.Operand, op cir.Operator, operand ast.Expr) {
+func (b *builder) emitUnOp(dst wir.Operand, op wir.Operator, operand ast.Expr) {
 	a := b.lowerExpr(operand)
-	b.emit(cir.Instruction{Op: cir.OpUnOp, Dst: dst, A: a, Operator: op})
+	b.emit(wir.Instruction{Op: wir.OpUnOp, Dst: dst, A: a, Operator: op})
 }
 
 // readOperand returns the operand for a value read: a path operand when the
 // expression resolves to a static path, else a temp holding an opaque read.
-func (b *builder) readOperand(e ast.Expr) cir.Operand {
+func (b *builder) readOperand(e ast.Expr) wir.Operand {
 	if p, ok := pathexpr.Resolve(e, b.bindings); ok {
 		return b.pathOperand(p)
 	}
 	t := b.newTemp()
-	b.emit(cir.Instruction{Op: cir.OpAssign, Dst: t, A: cir.Operand{}})
+	b.emit(wir.Instruction{Op: wir.OpAssign, Dst: t, A: wir.Operand{}})
 	return t
 }
 
-func (b *builder) calleeOperand(e ast.Expr) cir.Operand {
+func (b *builder) calleeOperand(e ast.Expr) wir.Operand {
 	if p, ok := pathexpr.Resolve(e, b.bindings); ok {
 		return b.pathOperand(p)
 	}
@@ -1015,51 +1015,51 @@ func (b *builder) calleeOperand(e ast.Expr) cir.Operand {
 	return b.lowerExpr(e)
 }
 
-func (b *builder) constOperand(e ast.Expr) cir.Operand {
+func (b *builder) constOperand(e ast.Expr) wir.Operand {
 	switch e := e.(type) {
 	case *ast.NilExpr:
-		return b.pooledConst(cir.Const{Kind: cir.ConstNil})
+		return b.pooledConst(wir.Const{Kind: wir.ConstNil})
 	case *ast.TrueExpr:
-		return b.pooledConst(cir.Const{Kind: cir.ConstBool, Bool: true})
+		return b.pooledConst(wir.Const{Kind: wir.ConstBool, Bool: true})
 	case *ast.FalseExpr:
-		return b.pooledConst(cir.Const{Kind: cir.ConstBool, Bool: false})
+		return b.pooledConst(wir.Const{Kind: wir.ConstBool, Bool: false})
 	case *ast.NumberExpr:
-		return b.pooledConst(cir.Const{Kind: cir.ConstNumber, Number: e.Value})
+		return b.pooledConst(wir.Const{Kind: wir.ConstNumber, Number: e.Value})
 	case *ast.StringExpr:
-		return b.pooledConst(cir.Const{Kind: cir.ConstString, Str: e.Value})
+		return b.pooledConst(wir.Const{Kind: wir.ConstString, Str: e.Value})
 	default:
-		return cir.Operand{}
+		return wir.Operand{}
 	}
 }
 
-func (b *builder) constNil() cir.Operand {
-	return b.pooledConst(cir.Const{Kind: cir.ConstNil})
+func (b *builder) constNil() wir.Operand {
+	return b.pooledConst(wir.Const{Kind: wir.ConstNil})
 }
 
-func (b *builder) constNumber(raw string) cir.Operand {
-	return b.pooledConst(cir.Const{Kind: cir.ConstNumber, Number: raw})
+func (b *builder) constNumber(raw string) wir.Operand {
+	return b.pooledConst(wir.Const{Kind: wir.ConstNumber, Number: raw})
 }
 
-func (b *builder) pooledConst(c cir.Const) cir.Operand {
-	return cir.Operand{Kind: cir.OperandConst, Ref: uint32(b.body.InternConst(c))}
+func (b *builder) pooledConst(c wir.Const) wir.Operand {
+	return wir.Operand{Kind: wir.OperandConst, Ref: uint32(b.body.InternConst(c))}
 }
 
-func (b *builder) pathOperand(p path.Path) cir.Operand {
+func (b *builder) pathOperand(p path.Path) wir.Operand {
 	ref := b.body.InternPath(p)
 	if ref == 0 {
-		return cir.Operand{}
+		return wir.Operand{}
 	}
-	return cir.Operand{Kind: cir.OperandPath, Ref: uint32(ref)}
+	return wir.Operand{Kind: wir.OperandPath, Ref: uint32(ref)}
 }
 
-func (b *builder) internString(s string) cir.ConstRef {
-	return b.body.InternConst(cir.Const{Kind: cir.ConstString, Str: s})
+func (b *builder) internString(s string) wir.ConstRef {
+	return b.body.InternConst(wir.Const{Kind: wir.ConstString, Str: s})
 }
 
 // internType resolves an AST type expression to its typ.Type identity through
 // the shared lexical resolver and interns it. An unresolved type expression
 // yields the none ref; there is no syntactic-spelling fallback.
-func (b *builder) internType(t ast.TypeExpr) cir.TypeRef {
+func (b *builder) internType(t ast.TypeExpr) wir.TypeRef {
 	if t == nil {
 		return 0
 	}
@@ -1072,30 +1072,30 @@ func (b *builder) internType(t ast.TypeExpr) cir.TypeRef {
 
 // targetOperand returns the destination operand for an assignment target and
 // whether it resolved to a path.
-func (b *builder) targetOperand(target ast.Expr) (cir.Operand, bool) {
+func (b *builder) targetOperand(target ast.Expr) (wir.Operand, bool) {
 	if p, ok := pathexpr.Resolve(target, b.bindings); ok {
 		return b.pathOperand(p), true
 	}
 	return b.newTemp(), false
 }
 
-func (b *builder) localPath(s *ast.LocalAssignStmt, i int) cir.Operand {
+func (b *builder) localPath(s *ast.LocalAssignStmt, i int) wir.Operand {
 	if sym, ok := b.bindings.LocalSymbolAt(s, i); ok {
 		return b.pathOperand(path.Path{Root: s.Names[i], Symbol: sym})
 	}
 	return b.pathOperand(path.Path{Root: s.Names[i]})
 }
 
-func (b *builder) numForOperand(s *ast.NumberForStmt) cir.Operand {
+func (b *builder) numForOperand(s *ast.NumberForStmt) wir.Operand {
 	if sym, ok := b.bindings.NumForSymbol(s); ok {
 		return b.pathOperand(path.Path{Root: s.Name, Symbol: sym})
 	}
 	return b.pathOperand(path.Path{Root: s.Name})
 }
 
-func (b *builder) genericForOperands(s *ast.GenericForStmt) []cir.Operand {
+func (b *builder) genericForOperands(s *ast.GenericForStmt) []wir.Operand {
 	syms := b.bindings.GenericForSymbols(s)
-	ops := make([]cir.Operand, len(s.Names))
+	ops := make([]wir.Operand, len(s.Names))
 	for i, name := range s.Names {
 		p := path.Path{Root: name}
 		if i < len(syms) {
@@ -1138,63 +1138,63 @@ func isVararg(e ast.Expr) bool {
 	return ok
 }
 
-func arithOperator(op string) cir.Operator {
+func arithOperator(op string) wir.Operator {
 	switch op {
 	case "+":
-		return cir.BinAdd
+		return wir.BinAdd
 	case "-":
-		return cir.BinSub
+		return wir.BinSub
 	case "*":
-		return cir.BinMul
+		return wir.BinMul
 	case "/":
-		return cir.BinDiv
+		return wir.BinDiv
 	case "//":
-		return cir.BinIDiv
+		return wir.BinIDiv
 	case "%":
-		return cir.BinMod
+		return wir.BinMod
 	case "^":
-		return cir.BinPow
+		return wir.BinPow
 	case "&":
-		return cir.BinBAnd
+		return wir.BinBAnd
 	case "|":
-		return cir.BinBOr
+		return wir.BinBOr
 	case "~":
-		return cir.BinBXor
+		return wir.BinBXor
 	case "<<":
-		return cir.BinShl
+		return wir.BinShl
 	case ">>":
-		return cir.BinShr
+		return wir.BinShr
 	default:
-		return cir.OperatorNone
+		return wir.OperatorNone
 	}
 }
 
-func relOperator(op string) cir.Operator {
+func relOperator(op string) wir.Operator {
 	switch op {
 	case "==":
-		return cir.BinEq
+		return wir.BinEq
 	case "~=":
-		return cir.BinNe
+		return wir.BinNe
 	case "<":
-		return cir.BinLt
+		return wir.BinLt
 	case "<=":
-		return cir.BinLe
+		return wir.BinLe
 	case ">":
-		return cir.BinGt
+		return wir.BinGt
 	case ">=":
-		return cir.BinGe
+		return wir.BinGe
 	default:
-		return cir.OperatorNone
+		return wir.OperatorNone
 	}
 }
 
-// lowerCheck projects a normalized branch condition into the neutral cir.Check
+// lowerCheck projects a normalized branch condition into the neutral wir.Check
 // descriptor the IR stores. branchcond owns the syntax-facing normalization; the
 // IR keeps only the resolved path and type identities. The kind enumerations are
 // defined in lockstep, so the kind maps by position.
-func lowerCheck(c branchcond.Check) cir.Check {
-	return cir.Check{
-		Kind:          cir.CheckKind(c.Kind),
+func lowerCheck(c branchcond.Check) wir.Check {
+	return wir.Check{
+		Kind:          wir.CheckKind(c.Kind),
 		Path:          c.Path,
 		OtherPath:     c.OtherPath,
 		TypeName:      c.TypeName,

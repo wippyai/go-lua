@@ -1,4 +1,4 @@
-package cir
+package wir
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"

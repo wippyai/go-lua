@@ -1,7 +1,7 @@
-// Package cir defines the checker instruction IR: a small, closed instruction
+// Package wir defines the checker instruction IR: a small, closed instruction
 // set lowered from typed-Lua syntax and attached per CFG point.
 //
-// cir replaces the point-keyed half of the fact pipeline. Each function body
+// wir replaces the point-keyed half of the fact pipeline. Each function body
 // lowers to a flat instruction stream; instructions carry canonical operands
 // (interned paths, constants, type refs) and a Check descriptor for
 // conditions. The instruction set is the stable plug-in interface between
@@ -14,7 +14,7 @@
 // slice, operands are scalar (kind, uint32 index) handles into per-Body intern
 // pools, and variadic operand lists reference a shared pool by (start, len)
 // range rather than per-instruction slices.
-package cir
+package wir
 
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -182,7 +182,7 @@ type CallInfo struct {
 	Method ConstRef
 }
 
-// Instruction is a single cir operation. Field meaning is selected by Op; unused
+// Instruction is a single wir operation. Field meaning is selected by Op; unused
 // slots are zero. The struct is a flat value stored in Body.instrs.
 type Instruction struct {
 	Op    Op

@@ -1,4 +1,4 @@
-package cirlower_test
+package wirlower_test
 
 import (
 	"os"
@@ -9,18 +9,18 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/ir/cir"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
-	"github.com/wippyai/go-lua/analysis/lua/cirlower"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
-// TestShadowCoverage is an opt-in (CIR_SHADOW=1) per-point completeness oracle.
+// TestShadowCoverage is an opt-in (WIR_SHADOW=1) per-point completeness oracle.
 // Because D1a lowers onto the SAME cfgbuild graph that semantics extracts from,
 // the comparison is now a true per-point diff: for every point that carries a
-// semantics fact (assign / call / branch / return, imported read-only), the cir
+// semantics fact (assign / call / branch / return, imported read-only), the wir
 // Body must carry an instruction AT THAT POINT whose operand identity (path key)
 // matches. It reports corpus-wide coverage per category and lists the residual
 // gaps honestly rather than masking them.
@@ -28,10 +28,10 @@ import (
 // Known residual: a conservatively pure short-circuit `and`/`or` right operand
 // keeps the OpLogical value form on the enclosing statement point, so the guard
 // point cfgbuild materializes (which semantics reconstructs a branch fact for)
-// carries no cir branch. These points surface as the branch-category gap.
+// carries no wir branch. These points surface as the branch-category gap.
 func TestShadowCoverage(t *testing.T) {
-	if os.Getenv("CIR_SHADOW") != "1" {
-		t.Skip("set CIR_SHADOW=1 to run the cir lowering coverage harness")
+	if os.Getenv("WIR_SHADOW") != "1" {
+		t.Skip("set WIR_SHADOW=1 to run the wir lowering coverage harness")
 	}
 
 	root := repoRoot(t)
@@ -72,7 +72,7 @@ func TestShadowCoverage(t *testing.T) {
 			skippedExtract++
 			continue
 		}
-		body := cirlower.Lower("main", stmts, bindings, built)
+		body := wirlower.Lower("main", stmts, bindings, built)
 		if body == nil {
 			skippedExtract++
 			continue
@@ -99,7 +99,7 @@ func TestShadowCoverage(t *testing.T) {
 		}
 	}
 
-	t.Logf("cir per-point coverage over %d/%d fixtures (parse-skip %d, bind-skip %d, extract-skip %d)",
+	t.Logf("wir per-point coverage over %d/%d fixtures (parse-skip %d, bind-skip %d, extract-skip %d)",
 		processed, len(fixtures), skippedParse, skippedBind, skippedExtract)
 
 	var totalAll, coveredAll int
@@ -115,7 +115,7 @@ func TestShadowCoverage(t *testing.T) {
 	t.Logf("  %-7s %6d/%-6d  %s", "TOTAL", coveredAll, totalAll, pct(coveredAll, totalAll))
 }
 
-// scorePoint records one semantics fact at a point and whether cir carries a
+// scorePoint records one semantics fact at a point and whether wir carries a
 // matching instruction key in the same category at that same point.
 func scorePoint(total, covered map[string]int, gaps map[string][]string, cat string, keys map[string]map[string]bool, key string) {
 	total[cat]++
@@ -128,61 +128,61 @@ func scorePoint(total, covered map[string]int, gaps map[string][]string, cat str
 	}
 }
 
-// cirPointKeys collects the destination and control identities cir attaches to a
+// cirPointKeys collects the destination and control identities wir attaches to a
 // single point, per category, so a semantics fact at that point can be matched
 // against them.
-func cirPointKeys(b *cir.Body, pt cfg.Point) map[string]map[string]bool {
+func cirPointKeys(b *wir.Body, pt cfg.Point) map[string]map[string]bool {
 	out := map[string]map[string]bool{
 		"assign": {}, "call": {}, "branch": {}, "return": {},
 	}
 	for _, inst := range b.PointInstructions(pt) {
 		switch inst.Op {
-		case cir.OpAssign, cir.OpBinOp, cir.OpUnOp, cir.OpConcat, cir.OpMakeTable,
-			cir.OpClaim, cir.OpLogical, cir.OpClosure, cir.OpSelect,
-			cir.OpStaticMemberWrite, cir.OpDynamicIndexWrite:
+		case wir.OpAssign, wir.OpBinOp, wir.OpUnOp, wir.OpConcat, wir.OpMakeTable,
+			wir.OpClaim, wir.OpLogical, wir.OpClosure, wir.OpSelect,
+			wir.OpStaticMemberWrite, wir.OpDynamicIndexWrite:
 			if k, ok := cirDstKey(b, inst.Dst); ok {
 				out["assign"][k] = true
 			}
-		case cir.OpCall:
+		case wir.OpCall:
 			out["call"][cirCallKey(b, inst)] = true
 			for _, r := range b.Operands(inst.Results) {
 				if k, ok := cirDstKey(b, r); ok {
 					out["assign"][k] = true
 				}
 			}
-		case cir.OpIterate:
+		case wir.OpIterate:
 			for _, r := range b.Operands(inst.Results) {
 				if k, ok := cirDstKey(b, r); ok {
 					out["assign"][k] = true
 				}
 			}
-		case cir.OpReturn:
+		case wir.OpReturn:
 			out["return"]["return"] = true
-		case cir.OpBranch:
+		case wir.OpBranch:
 			out["branch"][cirBranchKey(b, inst)] = true
 		}
 	}
 	return out
 }
 
-func cirDstKey(b *cir.Body, op cir.Operand) (string, bool) {
-	if op.Kind != cir.OperandPath {
+func cirDstKey(b *wir.Body, op wir.Operand) (string, bool) {
+	if op.Kind != wir.OperandPath {
 		return "", false
 	}
-	p := b.Path(cir.PathRef(op.Ref))
+	p := b.Path(wir.PathRef(op.Ref))
 	if p.IsEmpty() {
 		return "", false
 	}
 	return string(p.Key()), true
 }
 
-func cirCallKey(b *cir.Body, inst cir.Instruction) string {
+func cirCallKey(b *wir.Body, inst wir.Instruction) string {
 	if inst.Call.Method != 0 {
 		method := b.Const(inst.Call.Method).Str
 		// Match semantics' callee identity, which folds a method call into the
 		// receiver.method member path (dot form), not a distinct receiver:method key.
-		if inst.Call.Receiver.Kind == cir.OperandPath {
-			p := b.Path(cir.PathRef(inst.Call.Receiver.Ref))
+		if inst.Call.Receiver.Kind == wir.OperandPath {
+			p := b.Path(wir.PathRef(inst.Call.Receiver.Ref))
 			if !p.IsEmpty() {
 				return string(p.Field(method).Key())
 			}
@@ -195,7 +195,7 @@ func cirCallKey(b *cir.Body, inst cir.Instruction) string {
 	return "callexpr"
 }
 
-func cirBranchKey(b *cir.Body, inst cir.Instruction) string {
+func cirBranchKey(b *wir.Body, inst wir.Instruction) string {
 	c := b.Check(inst.Check)
 	return string(c.Path.Key()) + "|" + strconv.Itoa(int(c.Kind))
 }

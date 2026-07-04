@@ -1,4 +1,4 @@
-package cir
+package wir
 
 import (
 	"testing"

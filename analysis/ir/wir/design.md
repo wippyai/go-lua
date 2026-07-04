@@ -1,10 +1,10 @@
-# cir — checker instruction IR (scaffold + prototype)
+# wir — checker instruction IR (scaffold + prototype)
 
-cir replaces the point-keyed half of the fact pipeline with a small, closed
+wir replaces the point-keyed half of the fact pipeline with a small, closed
 instruction set attached per `cfg.Point`. Lowering translates syntax and
 resolves bindings/types only; every value derivation (refinements, narrowing,
 type conclusions) moves into the transfer interpreter, keyed on instruction
-kind. cir does not replace the CFG — topology stays in `analysis/ir/cfg`.
+kind. wir does not replace the CFG — topology stays in `analysis/ir/cfg`.
 
 ## Instruction set
 
@@ -56,7 +56,7 @@ round-trip).
 ## Multi-value / multret encoding (the hard design point)
 
 Lua calls and varargs produce a dynamic number of values. Losing that arity is
-unacceptable for both consumers. cir encodes it with two orthogonal, explicit
+unacceptable for both consumers. wir encodes it with two orthogonal, explicit
 markers rather than flattening:
 
 - `ResultSpread` (on `Call`): the call's produced result count is open (multret,
@@ -92,7 +92,7 @@ encoding most expensive to change later.
 
 ## Consumer 2: bytecode/JIT backend (codegen)
 
-cir + CFG, annotated with solved checker facts (types, ShapeIDs, placement,
+wir + CFG, annotated with solved checker facts (types, ShapeIDs, placement,
 nilability) and judgments (JIR), is the input to a future arena-VM bytecode
 backend that emits specialized bytecode with judgment-proven guard elimination.
 Encoding impact, per decision:
@@ -103,7 +103,7 @@ Encoding impact, per decision:
 - **Multret markers** give codegen exact `CALL`/`RETURN` operand counts where
   static, and the `C=0` (multret) form where `ResultSpread`/`ListSpread` is set,
   without re-deriving arity. (Contrast go-lua-arena `compiler/bytecode` +
-  `value.Proto`, which cir must not lose parity with; cir does not mirror its
+  `value.Proto`, which wir must not lose parity with; wir does not mirror its
   layout.)
 - **Explicit receiver binding** in `Call` (`Receiver` + `Method`, never a folded
   member-call blob) decomposes to a `SELF`-style op directly.
@@ -149,17 +149,17 @@ short-circuits (`x and f()` must not run `f` on falsy `x`). Purity classificatio
   transfer-proven guard (`A` known truthy/falsy) folds either form to one side.
 
 Under same-CFG lowering (D1a) the impure branch topology is **not synthesized by
-cirlower** — cfgbuild already materializes it. `cfgbuild.appendShortCircuitValueCalls`
+wirlower** — cfgbuild already materializes it. `cfgbuild.appendShortCircuitValueCalls`
 emits the guard branch, the RHS-eval point (when the RHS has no calls; otherwise
 the RHS calls sit on the taken edge), and the join, recording them in
 `cfgfacts.Metadata` (`ShortCircuitGuard(point) -> {Stmt, Condition=LHS}`,
 `ExpressionEvaluation(point) -> {Stmt, Expr=RHS}`). The bypass edge carries **no
 point** (it is a direct `branch -> join` edge), which is why the result is
-threaded as `%t = A` on the guard rather than as a bypass-edge assign. cirlower
+threaded as `%t = A` on the guard rather than as a bypass-edge assign. wirlower
 correlates the guard point by `Condition` identity (`= LogicalOpExpr.Lhs`) and the
 taken anchor by `Expr` identity / the RHS's last pre-lowered call point, both
 per-`LogicalOpExpr` so nested logicals map independently. The pure case ignores
-this materialized topology (its guard/eval/join points carry no cir instruction
+this materialized topology (its guard/eval/join points carry no wir instruction
 and print as `noop`) and carries `OpLogical` on the enclosing statement point.
 
 ### Closures / function definitions — `OpClosure` + nested protos
@@ -192,13 +192,13 @@ A call not matching the shape falls through to an ordinary `OpCall`.
   a `SELECT` opcode; `SelectDefault` picks the blocking vs non-blocking form. No
   re-recognition at codegen — the shape is settled at lowering.
 
-## Coverage harness (`CIR_SHADOW`)
+## Coverage harness (`WIR_SHADOW`)
 
-`shadow_test.go` (`package cirlower_test`, gated on `CIR_SHADOW=1`) is a
+`shadow_test.go` (`package wirlower_test`, gated on `WIR_SHADOW=1`) is a
 **per-point** coverage oracle. Because D1a lowers onto the same cfgbuild graph
 semantics extracts from, it is a true per-point diff, not a cross-CFG multiset:
 for every point carrying a semantics fact (assign / call / branch / return,
-imported read-only), the cir Body must carry an instruction *at that same point*
+imported read-only), the wir Body must carry an instruction *at that same point*
 whose operand identity (path `Key()`) matches. Last run: 574/574 fixtures, TOTAL
 99.77% — assign 99.97% (2986/2987), call 100% (1714/1714), branch 97.37%
 (407/418), return 100% (186/186). Residuals: the 11 branch misses are the pure
@@ -212,20 +212,20 @@ reaches 100% under the per-point split (one `OpCall` per call point).
 All six design-round questions are resolved. D-labels reference the locked
 journal decision.
 
-- **D1 — same-CFG lowering.** cir attaches to the same `cfg.Graph` `body.Run`
-  solves. cirlower's independent CFG build is replaced by consuming the graph
+- **D1 — same-CFG lowering.** wir attaches to the same `cfg.Graph` `body.Run`
+  solves. wirlower's independent CFG build is replaced by consuming the graph
   cfgbuild already produced; the state-equality oracle is per-point on that
   shared graph. See "Same-CFG point mapping" below.
-- **D2 — operand vs state-cell identity.** cir operands stay source path refs
+- **D2 — operand vs state-cell identity.** wir operands stay source path refs
   (the `PathKey` pool). Transfer-time address resolution runs through a cached
   `AddressResolver` keyed `(point, operand, mode)` producing `keyspace.Key` state
   keys. Operand identity is deliberately not state-cell identity. Interface +
   fake live in `resolver.go`; the production binding to `visibility.Resolver` is
-  factapply's, not cir's.
+  factapply's, not wir's.
 - **D3 — logical purity split.** See the short-circuit section above.
 - **D5 — resolved type refs.** `Type` interns the resolved `typ.Type` by
   `typ.EqualityHash`; the display spelling is `t.String()`, kept only for
-  printing. cirlower resolves type expressions through `typeresolve.Resolver`,
+  printing. wirlower resolves type expressions through `typeresolve.Resolver`,
   the same path the engine uses. The `<type>`/`<lit>` syntactic fallbacks are
   deleted; an unresolved type expression interns to the none ref. ShapeID stays
   deferred to codegen consumer work.
@@ -235,12 +235,12 @@ journal decision.
 ## Same-CFG point mapping (D1a)
 
 cfgbuild is the point authority. Its point granularity differs from the
-prototype's one-point-per-statement model, so cirlower maps constructs onto the
+prototype's one-point-per-statement model, so wirlower maps constructs onto the
 pre-existing points rather than allocating its own:
 
 - **Per-call points.** cfgbuild emits one `NodeCall` point per call in Lua
   evaluation order (`appendValueExprCalls`) before the owning statement's own
-  point. cir lowers one `OpCall` (into temps) per call and places it on the
+  point. wir lowers one `OpCall` (into temps) per call and places it on the
   matching call point.
 - **Per-target points.** each assignment target and each `local` symbol gets its
   own `NodeAssign` point. Multret result binding therefore splits: `OpCall` into
@@ -255,9 +255,9 @@ pre-existing points rather than allocating its own:
   variable is bound by iteration, its element value derived by transfer from the
   header, so lowering records the binding site with an opaque source rather than
   concluding a value.
-- **Joins carry no instruction.** `NodeJoin` points print as `noop`; cir attaches
+- **Joins carry no instruction.** `NodeJoin` points print as `noop`; wir attaches
   nothing to them.
-- **Construct discovery.** cirlower reads `cfgbuild.Result.StmtPoints`
+- **Construct discovery.** wirlower reads `cfgbuild.Result.StmtPoints`
   (stmt -> points, in creation order) plus `cfgfacts.Metadata`
   (`Assignment`/`Loop`/`NumericFor`/`GenericFor`/`ShortCircuitGuard`/
   `ExpressionEvaluation`/`Label`/`Goto`). Together these expose every construct's
@@ -271,17 +271,17 @@ bool)` with the four access modes `ReadBefore` / `WriteLocal` / `RootOrVisible` 
 `Evidence`. Resolution is a pure function of `(point, op, mode)` for a fixed
 Body; `CachingResolver` memoizes it. The real implementation (factapply, later
 step) closes over the Body to decode an operand's interned path and delegates to
-`visibility.Resolver`; cir ships only the contract and a test fake.
+`visibility.Resolver`; wir ships only the contract and a test fake.
 
 ## Skeleton step 2 status
 
-Landed in cir/cirlower lanes: **D1a** (same-CFG `Lower(name, stmts, bindings,
-*cfgbuild.Result) *cir.Body` keyed on the shared graph's points; the self-CFG
+Landed in wir/wirlower lanes: **D1a** (same-CFG `Lower(name, stmts, bindings,
+*cfgbuild.Result) *wir.Body` keyed on the shared graph's points; the self-CFG
 `Chunk`/`lowerBody` path and the `Result{Body,Graph}` pair are deleted — one
 owner), **D2** (resolver interface + caching + fake), **D3** (purity-split
 logical: pure RHS keeps `OpLogical` on the enclosing point, impure RHS threads the
 result through the cfgbuild short-circuit topology), **D5** (resolved TypeRef).
-Goldens migrated to the shared-graph form; the `CIR_SHADOW` harness is now a
+Goldens migrated to the shared-graph form; the `WIR_SHADOW` harness is now a
 per-point oracle (99.77% total). Nested functions build their own child graph via
 `cfgbuild.BuildFunction` and lower recursively, exactly as the engine prepares
 protos.
@@ -310,12 +310,12 @@ unary / n-ary concat, short-circuit and/or (purity split: `OpLogical` for pure
 RHS, branch topology for effectful RHS), closures and function definitions
 (`OpClosure` + nested protos, methods), channel-select (`OpSelect`), cast /
 non-nil assert / annotation claims, varargs, multret (call-in-middle vs tail).
-Golden tests in `cirlower/cirlower_test.go` (incl. adversarial multret and the
+Golden tests in `wirlower/wirlower_test.go` (incl. adversarial multret and the
 effectful-logical branch topology); completeness measured by the per-point
-`CIR_SHADOW` harness (99.77% over 574 fixtures).
+`WIR_SHADOW` harness (99.77% over 574 fixtures).
 
 Residual gaps (explicit): a conservatively pure short-circuit `and`/`or` keeps the
-`OpLogical` value form, so the cfgbuild-materialized guard branch carries no cir
+`OpLogical` value form, so the cfgbuild-materialized guard branch carries no wir
 instruction (≈2.6% branch-category divergence — intentional, see D3); one computed
-assignment target carries no static path and keys as `target`. cir is consumed by
+assignment target carries no static path and keys as `target`. wir is consumed by
 nothing yet.
