@@ -2267,8 +2267,8 @@ end
 		DiagnosticCount: 1,
 		MessageContains: []string{
 			"name",
-			"any",
-			"not string",
+			"any/unknown",
+			"no proof shows it is string",
 		},
 	})
 }

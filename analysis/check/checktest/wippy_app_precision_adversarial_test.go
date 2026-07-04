@@ -575,7 +575,7 @@ take(options.data_id or uuid.v7())
 `)
 	requireDiagnostic(t, result, diagnosticExpectation{
 		Code:            diagnostics.CodeDirectCallArgType,
-		MessageContains: []string{"argument 1 is any", "not string"},
+		MessageContains: []string{"argument 1", "any/unknown", "no proof shows it is string"},
 	})
 }
 
@@ -5933,7 +5933,7 @@ end
 `, WithStdlib())
 	diag := requireDiagnostic(t, result, diagnosticExpectation{
 		Code:            diagnostics.CodeDirectCallArgType,
-		MessageContains: []string{"argument 1", "any", "not string"},
+		MessageContains: []string{"argument 1", "any/unknown", "no proof shows it is string"},
 	})
 	if strings.Contains(diag.Message, "may be nil") {
 		t.Fatalf("message = %q, want untrusted-any boundary, not nil-only fallback explanation", diag.Message)
