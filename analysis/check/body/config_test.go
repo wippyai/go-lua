@@ -1,9 +1,11 @@
 package body
 
 import (
+	"reflect"
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
@@ -17,6 +19,10 @@ import (
 func TestConfigSolveConfigOwnsPerSolveAxes(t *testing.T) {
 	typeValues := typevalue.NewCache()
 	stats := &Stats{}
+	entryTable := identity.ID{Kind: "table", Site: "config-entry", Index: 1}
+	initialTable := identity.ID{Kind: "table", Site: "config-initial", Index: 1}
+	entryState := state.State{}.FreezeTable(entryTable)
+	initialState := state.State{}.FreezeTable(initialTable)
 	invariant := factapply.ClosedDynamicAllValueInvariant{
 		Container: pathdom.NewPath(1, "container"),
 		Table:     pathdom.NewPath(2, "table"),
@@ -35,6 +41,10 @@ func TestConfigSolveConfigOwnsPerSolveAxes(t *testing.T) {
 	}
 
 	config := Config{
+		EntryState: entryState,
+		Initial: func(cfg.Point) (state.State, bool) {
+			return initialState, true
+		},
 		TypeValues:                   typeValues,
 		ClosedDynamicAllValues:       []factapply.ClosedDynamicAllValueInvariant{invariant},
 		StateLanes:                   []state.LaneID{state.LaneValues, state.LaneFrozenTables},
@@ -52,6 +62,15 @@ func TestConfigSolveConfigOwnsPerSolveAxes(t *testing.T) {
 	}
 
 	solve := config.SolveConfig()
+	if !solve.EntryState.IsTableFrozen(entryTable) {
+		t.Fatal("SolveConfig did not carry EntryState")
+	}
+	if solve.Initial == nil {
+		t.Fatal("SolveConfig did not carry Initial")
+	}
+	if got, ok := solve.Initial(0); !ok || !got.IsTableFrozen(initialTable) {
+		t.Fatalf("SolveConfig Initial returned frozen=%v ok=%v, want frozen initial state", got.IsTableFrozen(initialTable), ok)
+	}
 	if solve.TypeValues != typeValues {
 		t.Fatal("SolveConfig did not carry TypeValues")
 	}
@@ -75,5 +94,16 @@ func TestConfigSolveConfigOwnsPerSolveAxes(t *testing.T) {
 	config.ClosedDynamicAllValues[0] = factapply.ClosedDynamicAllValueInvariant{}
 	if got := solve.ClosedDynamicAllValues[0].Container.String(); got != invariant.Container.String() {
 		t.Fatalf("SolveConfig ClosedDynamicAllValues aliased caller slice: got %q", got)
+	}
+}
+
+func TestSolveConfigAxesAreConfigBacked(t *testing.T) {
+	configType := reflect.TypeOf(Config{})
+	solveType := reflect.TypeOf(SolveConfig{})
+	for i := 0; i < solveType.NumField(); i++ {
+		field := solveType.Field(i)
+		if _, ok := configType.FieldByName(field.Name); !ok {
+			t.Fatalf("SolveConfig field %s has no Config owner; add it to Config or document why it is solve-only", field.Name)
+		}
 	}
 }
