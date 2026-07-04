@@ -5561,6 +5561,210 @@ end
 	}
 }
 
+func TestCheckInferredErrorReturnPreservesValuePresenceCorrelation(t *testing.T) {
+	result := Check(`
+type Builder = {
+    get_messages: (self: Builder) -> {string},
+}
+
+local function make_builder(input: {string}?)
+    if not input then
+        return nil, "missing input"
+    end
+    local builder: Builder = {
+        get_messages = function(self: Builder): {string}
+            return input
+        end,
+    }
+    return builder, nil
+end
+
+local function run(input: {string}): ()
+    local builder, err = make_builder(input)
+    if err then
+        return
+    end
+    local messages = builder:get_messages()
+end
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want inferred error-return relation to prove builder present after err guard", result.Diagnostics)
+	}
+}
+
+func TestCheckImportedNilAssertPreservesInferredErrorReturnCorrelation(t *testing.T) {
+	assertMod := CheckAndExport(`
+local M = {}
+
+function M.is_nil(value: any, msg: string?)
+    if value ~= nil then
+        error(msg or "expected nil")
+    end
+end
+
+return M
+`, "testassert", WithStdlib())
+	if len(assertMod.Errors) != 0 {
+		t.Fatalf("assert module diagnostics = %#v, want clean helper export", assertMod.Errors)
+	}
+
+	result := Check(`
+local test = require("testassert")
+
+type Builder = {
+    get_messages: (self: Builder) -> {string},
+}
+
+local function make_builder(input: {string}?)
+    if not input then
+        return nil, "missing input"
+    end
+    local builder: Builder = {
+        get_messages = function(self: Builder): {string}
+            return input
+        end,
+    }
+    return builder, nil
+end
+
+local function run(input: {string}): ()
+    local builder, err = make_builder(input)
+    test.is_nil(err)
+    local messages = builder:get_messages()
+end
+`, WithStdlib(), WithModule("testassert", assertMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want imported nil assertion to preserve inferred error-return relation", result.Diagnostics)
+	}
+}
+
+func TestCheckImportedFunctionPreservesInferredErrorReturnCorrelation(t *testing.T) {
+	builderMod := CheckAndExport(`
+local M = {}
+
+type Builder = {
+    get_messages: (self: Builder) -> {string},
+}
+
+function M.build(input: {string}?)
+    if not input then
+        return nil, "missing input"
+    end
+    local builder: Builder = {
+        get_messages = function(self: Builder): {string}
+            return input
+        end,
+    }
+    return builder, nil
+end
+
+return M
+`, "builder", WithStdlib())
+	if len(builderMod.Errors) != 0 {
+		t.Fatalf("builder module diagnostics = %#v, want clean helper export", builderMod.Errors)
+	}
+
+	assertMod := CheckAndExport(`
+local M = {}
+
+function M.is_nil(value: any, msg: string?)
+    if value ~= nil then
+        error(msg or "expected nil")
+    end
+end
+
+return M
+`, "testassert", WithStdlib())
+	if len(assertMod.Errors) != 0 {
+		t.Fatalf("assert module diagnostics = %#v, want clean helper export", assertMod.Errors)
+	}
+
+	result := Check(`
+local builder_mod = require("builder")
+local test = require("testassert")
+
+local function run(input: {string}): ()
+    local builder, err = builder_mod.build(input)
+    test.is_nil(err)
+    local messages = builder:get_messages()
+end
+`, WithStdlib(), WithModule("builder", builderMod), WithModule("testassert", assertMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want imported build return relation plus imported nil assertion to prove builder present", result.Diagnostics)
+	}
+}
+
+func TestCheckImportedFunctionPreservesConstructorBackedInferredErrorReturnCorrelation(t *testing.T) {
+	promptMod := CheckAndExport(`
+local M = {}
+
+type Builder = {
+    get_messages: (self: Builder) -> {string},
+}
+
+function M.new(): Builder
+    return {
+        get_messages = function(self: Builder): {string}
+            return { "ok" }
+        end,
+    }
+end
+
+return M
+`, "prompt", WithStdlib())
+	if len(promptMod.Errors) != 0 {
+		t.Fatalf("prompt module diagnostics = %#v, want clean constructor export", promptMod.Errors)
+	}
+
+	builderMod := CheckAndExport(`
+local M = {
+    _prompt = require("prompt"),
+}
+
+function M.build(input: {string}?)
+    if not input then
+        return nil, "missing input"
+    end
+    local builder = M._prompt.new()
+    return builder, nil
+end
+
+return M
+`, "builder", WithStdlib(), WithModule("prompt", promptMod))
+	if len(builderMod.Errors) != 0 {
+		t.Fatalf("builder module diagnostics = %#v, want clean helper export", builderMod.Errors)
+	}
+
+	assertMod := CheckAndExport(`
+local M = {}
+
+function M.is_nil(value: any, msg: string?)
+    if value ~= nil then
+        error(msg or "expected nil")
+    end
+end
+
+return M
+`, "testassert", WithStdlib())
+	if len(assertMod.Errors) != 0 {
+		t.Fatalf("assert module diagnostics = %#v, want clean helper export", assertMod.Errors)
+	}
+
+	result := Check(`
+local builder_mod = require("builder")
+local test = require("testassert")
+
+local function run(input: {string}): ()
+    local builder, err = builder_mod.build(input)
+    test.is_nil(err)
+    local messages = builder:get_messages()
+end
+`, WithStdlib(), WithModule("builder", builderMod), WithModule("testassert", assertMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want constructor-backed imported build return relation to prove builder present", result.Diagnostics)
+	}
+}
+
 func TestCheckDeclaredStringMapDynamicWriteUsesAnnotationNotLiteralInitializerSlots(t *testing.T) {
 	result := Check(`
 local function prepare_headers(config: {headers: {[string]: string}?}): {[string]: string}
