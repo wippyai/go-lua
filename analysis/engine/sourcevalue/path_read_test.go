@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -222,10 +223,14 @@ func TestInheritTopOriginEvidenceCopiesTopEvidence(t *testing.T) {
 	reg := standard.Registry()
 	child := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	parent := product.Set(reg, product.Top(), evidence.Key, evidence.ExplicitTop())
+	parent = product.Set(reg, parent, assertion.Key, assertion.Runtime())
 
 	got := InheritTopOriginEvidence(reg, child, parent)
 	if gotEvidence := product.Get(reg, got, evidence.Key); !evidence.Equal(gotEvidence, evidence.ExplicitTop()) {
 		t.Fatalf("evidence = %s, want explicit-top", gotEvidence)
+	}
+	if gotAssertion := product.Get(reg, got, assertion.Key); !gotAssertion.Has(assertion.RuntimeClaim) || gotAssertion.Has(assertion.AnyClaim) {
+		t.Fatalf("assertion = %s, want runtime claim only", gotAssertion)
 	}
 }
 

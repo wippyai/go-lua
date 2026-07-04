@@ -204,7 +204,7 @@ func AdoptExpectedSegmentTypeCached(typeValues *typevalue.Cache, rec *typ.Record
 	if !ok || declared == nil || inferred == nil {
 		return nil, false
 	}
-	if typ.IsAny(declared) || typ.IsUnknown(declared) || typ.IsAny(inferred) || typ.IsUnknown(inferred) {
+	if typ.IsAny(inferred) || typ.IsUnknown(inferred) {
 		return nil, false
 	}
 	if !typeValues.IsSubtype(inferred, declared) {

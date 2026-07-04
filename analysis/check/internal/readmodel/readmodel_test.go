@@ -2512,6 +2512,53 @@ end
 	}
 }
 
+func TestForEachCallAcceptsGuardedConcreteDynamicReadFromTypedAnyMap(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type ActiveSession = {
+	pid: any,
+	created_at: number,
+	terminating: boolean,
+}
+
+local function terminate(session_id: string, session_info: ActiveSession): ()
+end
+
+local state = {
+	active_sessions = {} :: {[string]: ActiveSession},
+}
+
+local session_id = "s1"
+state.active_sessions[session_id] = {
+	pid = "pid",
+	created_at = 1,
+	terminating = false,
+}
+state.active_sessions[session_id] = nil
+
+local session_info = state.active_sessions[session_id]
+if session_info then
+	terminate(session_id, session_info)
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	result := checked.RootResult()
+	if result == nil {
+		t.Fatal("RootResult nil")
+	}
+	var reports []CallArgumentReport
+	New(result).ForEachCall(func(call CallSite) bool {
+		reports = append(reports, call.Reports...)
+		return true
+	})
+	if len(reports) != 0 {
+		t.Fatalf("argument reports = %#v, want guarded concrete dynamic-index read accepted", reports)
+	}
+}
+
 func TestForEachCallKeepsDifferentContractAfterInvalidDeclaration(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `

@@ -299,10 +299,36 @@ func (r Reader) explicitTopProofAdmissible(value product.Value, want typ.Type) b
 	if topLikeContract(want) {
 		return true
 	}
+	if explicitTopRecordWithTopLikeMember(want) && product.Get(r.reg, value, assertion.Key).IsTop() {
+		if t, ok := typevalue.WitnessOf(r.reg, value); ok && r.IsSubtype(t, want) {
+			return true
+		}
+		if t, ok := ConcreteBoundaryType(r.reg, r.typeCache, value); ok && r.IsSubtype(t, want) {
+			return true
+		}
+	}
 	return r.runtimeValidationAdmissible(value, want) ||
 		r.exactLiteralWitnessAdmissible(value, want) ||
 		r.freshStructuralWitnessAdmissible(value, want) ||
 		r.userScalarAssertionAdmissible(value, want)
+}
+
+func explicitTopRecordWithTopLikeMember(t typ.Type) bool {
+	rec, ok := unwrap.Alias(t).(*typ.Record)
+	if !ok || rec == nil {
+		return false
+	}
+	for _, field := range rec.Fields {
+		if topLikeContract(field.Type) {
+			return true
+		}
+	}
+	for _, member := range rec.StaticMembers {
+		if topLikeContract(member.Type) {
+			return true
+		}
+	}
+	return rec.HasMapComponent() && topLikeContract(rec.MapValue)
 }
 
 func topLikeContract(t typ.Type) bool {

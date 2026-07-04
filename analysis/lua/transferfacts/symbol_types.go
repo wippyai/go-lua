@@ -12,7 +12,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/access"
+	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typecall"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -108,6 +110,10 @@ func lowerSymbolTypes(bindings *bind.Result, graph cfg.Graph, result *semantics.
 			}
 		}
 		if t, ok := callFirstReturnType(out, bindings, fact.Expr); ok {
+			out[fact.Symbol] = t
+			continue
+		}
+		if t, ok := objectLiteralTypeFromSymbols(out, bindings, resolver, fact.Expr); ok {
 			out[fact.Symbol] = t
 			continue
 		}
@@ -324,6 +330,77 @@ func expressionTypeFromSymbols(symbolTypes map[symbol.ID]typ.Type, bindings *bin
 		return access.RuntimeIndex(container, key)
 	}
 	return nil, false
+}
+
+func objectLiteralTypeFromSymbols(symbolTypes map[symbol.ID]typ.Type, bindings *bind.Result, resolver *typeresolve.Resolver, expr ast.Expr) (typ.Type, bool) {
+	table, ok := expr.(*ast.TableExpr)
+	if !ok || table == nil || resolver == nil {
+		return nil, false
+	}
+	builder := typetable.NewConstructorBuilder()
+	seen := false
+	for _, field := range table.Fields {
+		key, ok := constructorKeyFromField(field)
+		if !ok {
+			continue
+		}
+		valueType, ok := constructorValueTypeFromSymbols(symbolTypes, bindings, resolver, field.Value)
+		if !ok || valueType == nil {
+			continue
+		}
+		if !builder.Add([]typetable.ConstructorKey{key}, valueType) {
+			return nil, false
+		}
+		seen = true
+	}
+	if !seen {
+		return nil, false
+	}
+	return builder.Build()
+}
+
+func constructorKeyFromField(field *ast.Field) (typetable.ConstructorKey, bool) {
+	if field == nil || field.Key == nil {
+		return typetable.ConstructorKey{}, false
+	}
+	switch key := field.Key.(type) {
+	case *ast.IdentExpr:
+		if field.KeySyntax != ast.AttrKeyDot {
+			return typetable.ConstructorKey{}, false
+		}
+		return typetable.ConstructorKey{Kind: typetable.ConstructorField, Name: key.Value}, true
+	case *ast.StringExpr:
+		if field.KeySyntax == ast.AttrKeyDot {
+			return typetable.ConstructorKey{Kind: typetable.ConstructorField, Name: key.Value}, true
+		}
+		return typetable.ConstructorKey{Kind: typetable.ConstructorStringIndex, Name: key.Value}, true
+	case *ast.NumberExpr:
+		t, ok := valueexpr.LiteralType(key)
+		if !ok {
+			return typetable.ConstructorKey{}, false
+		}
+		if lit, ok := t.(*typ.Literal); ok && lit.Base == kind.Integer {
+			if n, ok := lit.Value.(int64); ok {
+				return typetable.ConstructorKey{Kind: typetable.ConstructorIntIndex, Index: n}, true
+			}
+		}
+		return typetable.ConstructorKey{}, false
+	default:
+		return typetable.ConstructorKey{}, false
+	}
+}
+
+func constructorValueTypeFromSymbols(symbolTypes map[symbol.ID]typ.Type, bindings *bind.Result, resolver *typeresolve.Resolver, expr ast.Expr) (typ.Type, bool) {
+	switch e := expr.(type) {
+	case *ast.CastExpr:
+		return resolver.Type(e.Type)
+	case *ast.NonNilAssertExpr:
+		return constructorValueTypeFromSymbols(symbolTypes, bindings, resolver, e.Expr)
+	case *ast.TableExpr:
+		return objectLiteralTypeFromSymbols(symbolTypes, bindings, resolver, e)
+	default:
+		return expressionTypeFromSymbols(symbolTypes, bindings, expr)
+	}
 }
 
 // accessChainType resolves the type of a static field/index access expression

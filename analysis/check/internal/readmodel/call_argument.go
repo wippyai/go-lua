@@ -409,10 +409,13 @@ func (r Reader) callArgumentValue(point cfg.Point, source factflow.ValueSource) 
 }
 
 func (r Reader) callArgumentBoundaryCandidate(point cfg.Point, source factflow.ValueSource, current product.Value) (product.Value, bool) {
-	if r.result == nil || !source.HasExpr || r.ValueHasUntrustedTopOrigin(current) {
+	if r.result == nil || !source.HasExpr {
 		return product.Value{}, false
 	}
 	p, ok := r.result.ExpressionPathRef(source.ExprRef)
+	if !ok {
+		p, ok = r.result.ExpressionRefPath(source.ExprRef)
+	}
 	if !ok || p.IsEmpty() {
 		return product.Value{}, false
 	}

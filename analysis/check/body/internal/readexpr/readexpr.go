@@ -424,6 +424,9 @@ func dynamicIndexExpressionValue(config Config, point cfg.Point, dyn factflow.Dy
 	if reg == nil || config.TypeValues == nil {
 		return product.Value{}, false
 	}
+	if value, ok := dynamicIndexExpressionProvenMemberValue(config, point, dyn, in); ok {
+		return value, true
+	}
 	tableValue, tableValueOK := Project(config, point, dyn.TablePathRef(), in)
 	if tableValueOK {
 		keyValue, keyValueOK := dynamicIndexExpressionKeyValue(config, point, dyn.KeySource(), in)
@@ -446,12 +449,6 @@ func dynamicIndexExpressionValue(config Config, point cfg.Point, dyn factflow.Dy
 				return value, true
 			}
 		}
-	}
-	if value, ok := dynamicIndexExpressionProvenMemberValue(config, point, dyn, in); ok {
-		if tableValueOK {
-			value = sourcevalue.InheritTopOriginEvidence(reg, value, tableValue)
-		}
-		return value, true
 	}
 	return product.Value{}, false
 }

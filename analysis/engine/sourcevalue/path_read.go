@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
@@ -199,7 +200,13 @@ func WithoutNilRuntimeKind(reg *axis.Registry, value product.Value) product.Valu
 func InheritTopOriginEvidence(reg *axis.Registry, value, parent product.Value) product.Value {
 	parentEvidence := product.Get(reg, parent, evidence.Key)
 	if parentEvidence.IsGradualTop() || parentEvidence.IsExplicitTop() {
-		return product.Set(reg, value, evidence.Key, parentEvidence)
+		out := product.Set(reg, value, evidence.Key, parentEvidence)
+		parentAssertion := product.Get(reg, parent, assertion.Key)
+		if parentAssertion.Has(assertion.RuntimeClaim) {
+			current := product.Get(reg, out, assertion.Key)
+			out = product.Set(reg, out, assertion.Key, assertion.Combine(current, assertion.Runtime()))
+		}
+		return out
 	}
 	return value
 }

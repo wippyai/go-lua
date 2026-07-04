@@ -301,6 +301,45 @@ func TestObjectLiteralTypeAdoptsExpectedRecordFieldAndStaticStringMemberBySegmen
 	}
 }
 
+func TestObjectLiteralValueExpectedAnyFieldDoesNotTaintWholeRecord(t *testing.T) {
+	reg := standard.Registry()
+	typeValues := typevalue.NewCache()
+	pidSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(1251), HasExpr: true}
+	createdSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(1252), HasExpr: true}
+	expected := typetable.NewRecord().
+		Field("pid", typ.Any).
+		Field("created_at", typ.Number).
+		Build()
+	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
+		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("pid"), pidSource).
+			WithExpected(typeValues.FromTypeWithWitness(reg, typ.Any)),
+		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("created_at"), createdSource).
+			WithExpected(typeValues.FromTypeWithWitness(reg, typ.Number)),
+	}).WithExpected(typeValues.FromTypeWithWitness(reg, expected))
+
+	got, ok := ObjectLiteralValueFromViewCached(reg, typeValues, lit.View(), factflow.ValueSourceResolverFunc(func(source factflow.ValueSource) (product.Value, bool) {
+		switch source {
+		case pidSource:
+			return typeValues.FromTypeWithWitness(reg, typ.LiteralString("pid")), true
+		case createdSource:
+			return typeValues.FromTypeWithWitness(reg, typ.LiteralInt(1)), true
+		default:
+			return product.Value{}, false
+		}
+	}))
+
+	if !ok {
+		t.Fatal("ObjectLiteralValueFromViewCached returned false")
+	}
+	gotType, ok := typeValues.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, expected) {
+		t.Fatalf("object literal type = %v/%v, want expected %v", gotType, ok, expected)
+	}
+	if ObjectLiteralEntryHasUntrustedTopOrigin(reg, got) {
+		t.Fatalf("object literal value inherited top-origin from expected any field")
+	}
+}
+
 func TestObjectLiteralTypePreservesNestedWitnessShape(t *testing.T) {
 	reg := standard.Registry()
 	payloadParam := typ.NewTypeParam("T", nil)
