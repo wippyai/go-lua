@@ -193,6 +193,11 @@ func definitionEntryPoint(result *body.Result, origin bind.FunctionOrigin) (cfg.
 			if ok && fact.Stmt == origin.Stmt && fact.Index == origin.LocalIndex {
 				return point, true
 			}
+		case bind.FunctionOriginLiteral:
+			fact, ok := result.OrdinaryAssignment(point)
+			if ok && fact.Value == origin.Func {
+				return point, true
+			}
 		}
 	}
 	return 0, false
@@ -202,6 +207,8 @@ func definitionEntryPointCandidate(origin bind.FunctionOrigin) bool {
 	switch origin.Kind {
 	case bind.FunctionOriginDeclaration, bind.FunctionOriginMethod, bind.FunctionOriginLocalAssignment:
 		return origin.Stmt != nil
+	case bind.FunctionOriginLiteral:
+		return true
 	default:
 		return false
 	}

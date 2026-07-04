@@ -4850,3 +4850,48 @@ end
 		t.Fatalf("diagnostics = %#v, want validate_graph leaf record shape to survive metadata and route checks", result.Diagnostics)
 	}
 }
+
+func TestCheckClosureMethodCapturesTostringLocalAsStringArgument(t *testing.T) {
+	process := manifest.New("process")
+	process.DefineFunctionSignature("process.send", signature.Function{
+		Type: typ.Func().
+			Param("pid", typ.String).
+			Param("topic", typ.String).
+			Param("payload", typ.Any).
+			Returns(typ.Boolean).
+			Build(),
+	})
+
+	result := Check(`
+local process = require("process")
+
+type Streamer = {
+    send_content: (self: Streamer, text: string) -> boolean,
+}
+
+local output = {}
+
+function output.content(text: string): table
+    return { type = "chunk", content = text }
+end
+
+function output.streamer(pid: string?, topic: string?): (Streamer?, string?)
+    if not pid then
+        return nil, "PID is required for streamer"
+    end
+
+    local streamer = {}
+    local target_pid = tostring(pid)
+    local target_topic = tostring(topic or "llm_response")
+
+    streamer.send_content = function(self: Streamer, text: string): boolean
+        return process.send(target_pid, target_topic, output.content(text))
+    end
+
+    return streamer :: Streamer, nil
+end
+`, WithStdlib(), WithManifest("process", process))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want closure method to keep captured tostring locals as strings", result.Diagnostics)
+	}
+}

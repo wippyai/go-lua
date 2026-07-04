@@ -1715,15 +1715,29 @@ func (s *closureCaptureSeeder) apply(
 
 func (s *closureCaptureSeeder) capturedValue(sym symbol.ID, slot statekey.Value) product.Value {
 	value := s.caller.ReadValue(s.reg, slot)
-	if contextEntryValueUseful(s.reg, value) {
-		return value
-	}
 	if s != nil && s.readCaptured != nil {
-		if value, ok := s.readCaptured(sym); ok && contextEntryValueUseful(s.reg, value) {
-			return value
+		if solved, ok := s.readCaptured(sym); ok && contextEntryValueUseful(s.reg, solved) {
+			return preciseCapturedValue(s.reg, value, solved)
 		}
 	}
 	return value
+}
+
+func preciseCapturedValue(reg *axis.Registry, slot, solved product.Value) product.Value {
+	if !contextEntryValueUseful(reg, slot) {
+		return solved
+	}
+	if product.LessOrEq(reg, solved, slot) {
+		return solved
+	}
+	if product.LessOrEq(reg, slot, solved) {
+		return slot
+	}
+	meet := product.Meet(reg, slot, solved)
+	if contextEntryValueUseful(reg, meet) {
+		return meet
+	}
+	return slot
 }
 
 func (s *closureCaptureSeeder) seedCapturedPathEvidence(capture bind.Capture, entry state.State) (state.State, bool) {
