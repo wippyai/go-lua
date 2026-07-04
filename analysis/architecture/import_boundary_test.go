@@ -1309,8 +1309,19 @@ func TestPathAddressPipelineHasPositiveOwner(t *testing.T) {
 			contains: []string{
 				"visibility.AddressAt(resolver, point, path).VisibleStateKey()",
 				"visibility.AddressAt(resolver, point, path).VisibleKeyspaceKey()",
-				"visibility.AddressAt(resolver, point, targetPath).RootOrVisibleKeyspaceKey()",
+			},
+		},
+		{
+			path: filepath.Join("..", "engine", "factapply", "dynamic_index_write.go"),
+			contains: []string{
 				"visibility.AddressAt(resolver, point, tablePath).ForEachStateKey(",
+				"visibility.AddressAt(resolver, point, tablePath).RootOrVisibleKeyspaceKey()",
+			},
+		},
+		{
+			path: filepath.Join("..", "engine", "factapply", "call_outcome_paths.go"),
+			contains: []string{
+				"visibility.AddressAt(resolver, point, targetPath).RootOrVisibleKeyspaceKey()",
 			},
 		},
 		{
@@ -1503,34 +1514,21 @@ func TestStateOwnsPlacementQualifiedValueIdentityQueries(t *testing.T) {
 }
 
 func TestDiagnosticQueryHasPositiveProjectionOwner(t *testing.T) {
-	owner := filepath.Join("..", "check", "diagnostics", "query.go")
+	owner := filepath.Join("..", "check", "diagnostics", "judgment_producers.go")
 	content, err := os.ReadFile(owner)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"type diagnosticQuery struct",
-		"func newDiagnosticQuery",
-		"reader readmodel.Reader",
-		"readmodel.NewWithParents(result, parents...)",
-	} {
-		if !bytes.Contains(content, []byte(want)) {
-			t.Fatalf("%s does not contain positive diagnostic-query owner marker %q", owner, want)
-		}
-	}
-	producerOwner := filepath.Join("..", "check", "diagnostics", "judgment_producers.go")
-	producerOwnerContent, err := os.ReadFile(producerOwner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{
 		"func judgmentContext",
+		"func judgmentContextWithParents",
 		"func reachableJudgmentContext",
 		"func reachableCallJudgmentContext",
+		"readmodel.NewWithParents(result, parents...)",
 		"internalreadmodel.NewWithParent(result, parent)",
 	} {
-		if !bytes.Contains(producerOwnerContent, []byte(want)) {
-			t.Fatalf("%s does not contain judgment producer owner marker %q", producerOwner, want)
+		if !bytes.Contains(content, []byte(want)) {
+			t.Fatalf("%s does not contain judgment producer owner marker %q", owner, want)
 		}
 	}
 
@@ -1542,7 +1540,6 @@ func TestDiagnosticQueryHasPositiveProjectionOwner(t *testing.T) {
 		if entry.IsDir() ||
 			!strings.HasSuffix(path, ".go") ||
 			strings.HasSuffix(path, "_test.go") ||
-			filepath.Base(path) == "query.go" ||
 			filepath.Base(path) == "judgment_producers.go" {
 			return nil
 		}

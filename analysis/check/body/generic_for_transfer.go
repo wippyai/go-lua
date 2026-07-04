@@ -29,6 +29,7 @@ import (
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/projection"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -39,6 +40,7 @@ func genericForNodeTransfer(
 	sem *semantics.Result,
 	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
+	symbolTypes map[symbol.ID]typ.Type,
 	signatures signaturelookup.Source,
 	signatureID *signatureIdentityResolver,
 	typeResolver *typeresolve.Resolver,
@@ -79,7 +81,7 @@ func genericForNodeTransfer(
 			refinedSourceRegistry = ctx.Registry
 		}
 		boundSources = refinedSources
-		if value, ok := genericForVariableValue(ctx, typeValues, fact, facts, boundSources, signatures, signatureID, typeResolver, callOutcome, ks, resolver, in); ok {
+		if value, ok := genericForVariableValue(ctx, typeValues, fact, facts, boundSources, symbolTypes, signatures, signatureID, typeResolver, callOutcome, ks, resolver, in); ok {
 			out = out.WriteValue(ctx.Registry, key.SymbolValue(target), value)
 		}
 		return genericForKeyMembershipTransfer(ctx, typeValues, fact, facts, signatures, signatureID, resolver, out, targetPath)
@@ -92,6 +94,7 @@ func genericForVariableValue(
 	generic cfgfacts.GenericForFact,
 	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
+	symbolTypes map[symbol.ID]typ.Type,
 	signatures signaturelookup.Source,
 	signatureID *signatureIdentityResolver,
 	typeResolver *typeresolve.Resolver,
@@ -129,7 +132,7 @@ func genericForVariableValue(
 	}
 	assertedSourceType, hasAssertedSourceType := genericForAssertedIteratorSourceType(generic, sourceIndex, typeResolver)
 	if !hasAssertedSourceType {
-		if recovered, ok := genericForDeclaredPathIteratorSourceType(argSource, facts); ok {
+		if recovered, ok := genericForDeclaredPathIteratorSourceType(argSource, facts, symbolTypes); ok {
 			if genericForIteratorSourceTypeProjects(iter, generic.VariableIndex, recovered) {
 				assertedSourceType = recovered
 				hasAssertedSourceType = true
@@ -837,7 +840,7 @@ func genericForDominatingPathIteratorSourceType(
 	return luatypeprojection.ApplySegments(rootType, p.Segments)
 }
 
-func genericForDeclaredPathIteratorSourceType(argSource factflow.ValueSource, facts factflow.Facts) (typ.Type, bool) {
+func genericForDeclaredPathIteratorSourceType(argSource factflow.ValueSource, facts factflow.Facts, symbolTypes map[symbol.ID]typ.Type) (typ.Type, bool) {
 	if !argSource.HasExpr {
 		return nil, false
 	}
@@ -845,7 +848,7 @@ func genericForDeclaredPathIteratorSourceType(argSource factflow.ValueSource, fa
 	if !ok || p.Symbol == 0 {
 		return nil, false
 	}
-	rootType, ok := facts.SymbolType(p.Symbol)
+	rootType, ok := symbolTypes[p.Symbol]
 	if !ok || rootType == nil {
 		return nil, false
 	}

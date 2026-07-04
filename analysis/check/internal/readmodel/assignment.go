@@ -13,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 // ForEachAssignment visits annotated local assignments in deterministic RPO
@@ -91,7 +90,7 @@ func (r Reader) forEachLocalAssignment(point cfg.Point, fact body.LocalAssignmen
 		return true
 	}
 	presentation := body.LocalAssignmentPresentationFor(fact)
-	t, _ := r.assignmentSourceTypeForExpr(point, fact.Expr, value)
+	t, _ := r.assignmentSourceTypeForPresenceProof(point, r.result.AssignmentSourceReadProvenPresent(point, fact.Expr), value)
 	missingField, missingFieldOK := assignmentMissingRequired(point, r, fact, expected)
 	if missingFieldOK {
 		if shape, shapeOK := r.assignmentObjectLiteralShapeType(point, fact); shapeOK {
@@ -103,8 +102,8 @@ func (r Reader) forEachLocalAssignment(point cfg.Point, fact body.LocalAssignmen
 		TargetLabel:        fact.Name,
 		SourceLabel:        presentation.SourceLabel,
 		TargetKey:          assignmentTargetKey(fact),
-		SourceKey:          r.assignmentSourceKey(point, fact.Expr),
-		SourceIndexedRead:  assignmentSourceIndexedRead(fact.Expr),
+		SourceKey:          r.result.AssignmentSourcePathKey(fact.Expr),
+		SourceIndexedRead:  body.AssignmentSourceIndexedRead(fact.Expr),
 		Value:              value,
 		ValueHash:          r.ValueHash(value),
 		TypeWithPresence:   t,
@@ -236,7 +235,7 @@ func (r Reader) forEachOrdinaryAssignment(point cfg.Point, fact body.OrdinaryAss
 			return visit(entry)
 		}
 	}
-	t, _ := r.assignmentSourceTypeForExpr(point, fact.Value, value)
+	t, _ := r.assignmentSourceTypeForPresenceProof(point, r.result.AssignmentSourceReadProvenPresent(point, fact.Value), value)
 	if r.inferredReplacementAccepted(point, target, expected, t) {
 		return true
 	}
@@ -245,8 +244,8 @@ func (r Reader) forEachOrdinaryAssignment(point cfg.Point, fact body.OrdinaryAss
 		TargetLabel:        presentation.TargetLabel,
 		SourceLabel:        presentation.SourceLabel,
 		TargetKey:          r.assignmentTargetKeyForOrdinary(point, fact),
-		SourceKey:          r.assignmentSourceKey(point, fact.Value),
-		SourceIndexedRead:  assignmentSourceIndexedRead(fact.Value),
+		SourceKey:          r.result.AssignmentSourcePathKey(fact.Value),
+		SourceIndexedRead:  body.AssignmentSourceIndexedRead(fact.Value),
 		Value:              value,
 		ValueHash:          r.ValueHash(value),
 		TypeWithPresence:   t,
@@ -307,15 +306,13 @@ func (r Reader) assignmentSourceType(point cfg.Point, value product.Value) (typ.
 	return r.ValueTypeWithPresence(value)
 }
 
-func (r Reader) assignmentSourceTypeForExpr(point cfg.Point, expr ast.Expr, value product.Value) (typ.Type, bool) {
+func (r Reader) assignmentSourceTypeForPresenceProof(point cfg.Point, provenPresent bool, value product.Value) (typ.Type, bool) {
 	t, ok := r.assignmentSourceType(point, value)
-	if !ok || t == nil || expr == nil || r.result == nil {
+	if !ok || t == nil || !provenPresent {
 		return t, ok
 	}
-	if r.result.ExpressionReadProvenPresentBeforeBoundary(point, expr) {
-		if withoutNil := body.ProjectionWithoutNil(t); withoutNil != nil && !typ.IsNever(withoutNil) {
-			return withoutNil, true
-		}
+	if withoutNil := body.ProjectionWithoutNil(t); withoutNil != nil && !typ.IsNever(withoutNil) {
+		return withoutNil, true
 	}
 	return t, true
 }
@@ -331,33 +328,12 @@ func (r Reader) assignmentTargetKeyForOrdinary(point cfg.Point, fact body.Ordina
 	if fact.HasPath && !fact.Path.IsEmpty() {
 		return "path:" + fact.Path.String()
 	}
-	if r.result != nil && fact.Target != nil {
-		if p, ok := r.result.ExpressionPath(fact.Target); ok && !p.IsEmpty() {
-			return "path:" + p.String()
-		}
-		if attr, ok := fact.Target.(*ast.AttrGetExpr); ok && attr.Object != nil {
-			if p, ok := r.result.ExpressionPath(attr.Object); ok && !p.IsEmpty() {
-				return "path:" + p.String()
-			}
+	if r.result != nil {
+		if key := r.result.OrdinaryAssignmentTargetPathKey(fact); key != "" {
+			return key
 		}
 	}
 	return "ordinary:" + strconv.Itoa(int(point)) + ":" + strconv.Itoa(fact.Index)
-}
-
-func (r Reader) assignmentSourceKey(point cfg.Point, expr ast.Expr) string {
-	if r.result == nil || expr == nil {
-		return ""
-	}
-	p, ok := r.result.ExpressionPath(expr)
-	if !ok || p.IsEmpty() {
-		return ""
-	}
-	return "path:" + p.String()
-}
-
-func assignmentSourceIndexedRead(expr ast.Expr) bool {
-	attr, ok := expr.(*ast.AttrGetExpr)
-	return ok && attr.KeySyntax == ast.AttrKeyIndex
 }
 
 func (r Reader) ordinaryAssignmentTarget(point cfg.Point, fact body.OrdinaryAssignmentFact) (body.OrdinaryAssignmentTargetType, bool) {

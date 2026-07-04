@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/sourceprojection"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -90,12 +91,13 @@ func (c *checker) prepare(bindings *bind.Result, built *cfgbuild.Result, sem *se
 	modules := moduleidentity.New(bindings, built.Graph, sem)
 	moduleTypes := newRequireAliasTypeResolver(modules, config.ModuleTypes)
 	typeResolver := typeresolve.NewWithExternal(bindings, moduleTypes)
-	facts := transferfacts.Lower(sem, built.Graph, transferfacts.Config{
+	lowered := transferfacts.LowerWithSidecars(sem, built.Graph, transferfacts.Config{
 		Registry:     config.Registry,
 		Bindings:     bindings,
 		TypeResolver: typeResolver,
 		TypeValues:   config.TypeValues,
 	})
+	facts := lowered.Facts
 	signatureID := newSignatureIdentityResolver(bindings, built.Graph, modules)
 	signatureNameForCall := signatureID.nameForCall
 	if hasSignatures(config.Signatures) {
@@ -160,6 +162,7 @@ func (c *checker) prepare(bindings *bind.Result, built *cfgbuild.Result, sem *se
 		modules:               modules,
 		signatureID:           signatureID,
 		facts:                 facts,
+		symbolTypes:           lowered.SymbolTypes,
 		visibility:            resolver,
 		sources:               sources,
 		calleeValue:           calleeValue,
@@ -194,7 +197,7 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		TypeValues:             typeValues,
 		ClosedDynamicAllValues: config.ClosedDynamicAllValues,
 	})
-	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.semantics, s.facts, s.sources, s.signatures, s.signatureID, s.typeNS, typeValues, callOutcome, s.visibility.KeySpace(), s.visibility)
+	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.semantics, s.facts, s.sources, s.symbolTypes, s.signatures, s.signatureID, s.typeNS, typeValues, callOutcome, s.visibility.KeySpace(), s.visibility)
 	edgeTransfer := factapply.NewFactsEdgeTransfer(factapply.FactsEdgeTransferConfig{
 		Facts:       s.facts,
 		Sources:     s.sources,
@@ -226,6 +229,7 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		modules:         s.modules,
 		signatureID:     s.signatureID,
 		facts:           s.facts,
+		symbolTypes:     s.symbolTypes,
 		exprRefinements: sourcevalue.NewExpressionRefinements(s.facts.ExpressionRefinements()),
 		typeNS:          s.typeNS,
 		flow:            flow,
@@ -266,7 +270,7 @@ func (s *Static) finalizeReturnSlotHeapWitnesses(flow transfer.Result, typeValue
 	}
 	for index := range slots {
 		value := exitState.ReadReturnSlot(s.registry, index)
-		projected, ok := sourcevalue.HeapObjectContainerType(s.registry, typeValues, exitState, value)
+		projected, ok := sourceprojection.HeapObjectContainerType(s.registry, typeValues, exitState, value)
 		if !ok {
 			continue
 		}

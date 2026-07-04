@@ -29,12 +29,21 @@ type Config struct {
 	TypeValues   *typevalue.Cache
 }
 
+type Lowered struct {
+	Facts       factflow.Facts
+	SymbolTypes map[symbol.ID]typ.Type
+}
+
 func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Facts {
+	return LowerWithSidecars(result, graph, config).Facts
+}
+
+func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config) Lowered {
 	if config.Registry == nil {
 		panic("transferfacts: Config.Registry is required")
 	}
 	if result == nil || graph == nil {
-		return factflow.NewFacts(factflow.FactsInput{})
+		return Lowered{Facts: factflow.NewFacts(factflow.FactsInput{})}
 	}
 	typeResolver := config.TypeResolver
 	if typeResolver == nil {
@@ -88,7 +97,6 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		ExpressionFunctions:           make(map[factflow.ExprRef]symbol.ID),
 		ExpressionRefinements:         make(map[factflow.ExprRef]factflow.ExpressionRefinement),
 		DynamicIndexExpressions:       make(map[factflow.ExprRef]factflow.DynamicIndexExpression),
-		SymbolTypes:                   symbolTypes,
 	}
 	for _, point := range graph.RPO() {
 		if view, ok := result.LocalAssignmentView(point); ok {
@@ -224,7 +232,21 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 	input.ExpressionPaths = l.expressionPaths
 	input.DynamicIndexExpressions = l.dynamicIndexExpressions
 	input.ExpressionConditions = l.expressionConditions
-	return factflow.NewFacts(input)
+	return Lowered{
+		Facts:       factflow.NewFacts(input),
+		SymbolTypes: copySymbolTypes(symbolTypes),
+	}
+}
+
+func copySymbolTypes(in map[symbol.ID]typ.Type) map[symbol.ID]typ.Type {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[symbol.ID]typ.Type, len(in))
+	for id, t := range in {
+		out[id] = t
+	}
+	return out
 }
 
 type lowerer struct {

@@ -26,6 +26,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/module/typelookup"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -97,6 +98,7 @@ type Static struct {
 	modules     moduleidentity.Projection
 	signatureID *signatureIdentityResolver
 	facts       factflow.Facts
+	symbolTypes map[symbol.ID]typ.Type
 	visibility  *visibility.Resolver
 	sources     sourcevalue.SourceValues
 	calleeValue CalleeValueFunc
@@ -171,6 +173,7 @@ type Result struct {
 	modules         moduleidentity.Projection
 	signatureID     *signatureIdentityResolver
 	facts           factflow.Facts
+	symbolTypes     map[symbol.ID]typ.Type
 	exprRefinements sourcevalue.ExpressionRefinements
 	typeNS          *typeresolve.Resolver
 	flow            transfer.Result

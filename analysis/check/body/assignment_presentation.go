@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -53,6 +54,54 @@ func OrdinaryAssignmentPresentationFor(fact OrdinaryAssignmentFact) OrdinaryAssi
 		TargetSpan:    sourceSpanFromAST(ast.SpanOf(fact.Target)),
 		DynamicTarget: ordinaryAssignmentDynamicTarget(fact.Target),
 	}
+}
+
+// AssignmentSourcePathKey returns the canonical path key for an assignment
+// source expression when lowering proved one.
+func (r *Result) AssignmentSourcePathKey(expr ast.Expr) string {
+	if r == nil || expr == nil {
+		return ""
+	}
+	return assignmentPathKey(r.ExpressionPath(expr))
+}
+
+// OrdinaryAssignmentTargetPathKey returns the canonical path key for an
+// ordinary assignment target. For member writes, the containing object path is
+// used as a stable fallback when the full target path is unavailable.
+func (r *Result) OrdinaryAssignmentTargetPathKey(fact OrdinaryAssignmentFact) string {
+	if r == nil || fact.Target == nil {
+		return ""
+	}
+	if key := assignmentPathKey(r.ExpressionPath(fact.Target)); key != "" {
+		return key
+	}
+	if attr, ok := fact.Target.(*ast.AttrGetExpr); ok && attr.Object != nil {
+		return assignmentPathKey(r.ExpressionPath(attr.Object))
+	}
+	return ""
+}
+
+// AssignmentSourceReadProvenPresent reports whether the assignment source read
+// was proven present before the assignment boundary.
+func (r *Result) AssignmentSourceReadProvenPresent(point cfg.Point, expr ast.Expr) bool {
+	if r == nil || expr == nil {
+		return false
+	}
+	return r.ExpressionReadProvenPresentBeforeBoundary(point, expr)
+}
+
+// AssignmentSourceIndexedRead reports whether an assignment source is a bracket
+// member read, which can miss even when the container is present.
+func AssignmentSourceIndexedRead(expr ast.Expr) bool {
+	attr, ok := expr.(*ast.AttrGetExpr)
+	return ok && attr.KeySyntax == ast.AttrKeyIndex
+}
+
+func assignmentPathKey(p pathdom.Path, ok bool) string {
+	if !ok || p.IsEmpty() {
+		return ""
+	}
+	return "path:" + p.String()
 }
 
 func (r *Result) LocalAssignmentExpectedType(point cfg.Point, fact LocalAssignmentFact) (typ.Type, bool) {

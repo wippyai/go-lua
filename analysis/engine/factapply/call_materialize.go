@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/sourceprojection"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -309,7 +310,7 @@ func applyReturn(
 			value = product.Top()
 		} else {
 			out, _ = materializeObjectLiteralHeapCachedWithKnownSourceValue(ctx, resolver, facts, sources, read, in, out, source, value, true, typeValues)
-			if projected, projectedOK := sourcevalue.HeapObjectContainerType(ctx.Registry, typeValues, out, value); projectedOK {
+			if projected, projectedOK := sourceprojection.HeapObjectContainerType(ctx.Registry, typeValues, out, value); projectedOK {
 				value = typevalue.WithWitness(ctx.Registry, value, projected)
 			}
 		}
@@ -326,7 +327,7 @@ func applyReturn(
 	out = edit.DoneOn(out)
 	for _, index := range returnSlots {
 		value := out.ReadReturnSlot(ctx.Registry, index)
-		projected, ok := sourcevalue.HeapObjectContainerType(ctx.Registry, typeValues, out, value)
+		projected, ok := sourceprojection.HeapObjectContainerType(ctx.Registry, typeValues, out, value)
 		if !ok {
 			continue
 		}
