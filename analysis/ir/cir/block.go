@@ -24,12 +24,22 @@ type Body struct {
 	consts []Const
 	types  []Type
 	checks []branchcond.Check
+	protos []FuncProto
 
 	operandPool []Operand
 
 	pathIndex  map[path.PathKey]PathRef
 	constIndex map[Const]ConstRef
 	typeIndex  map[string]TypeRef
+}
+
+// FuncProto is a nested function lowered as its own Body and CFG. A parent
+// OpClosure references it by FuncRef; the child owns its own topology exactly
+// like a top-level function.
+type FuncProto struct {
+	Name  string
+	Body  *Body
+	Graph *cfg.CFG
 }
 
 // pointRange is the instruction window owned by one CFG point.
@@ -74,6 +84,7 @@ func NewBody(name string) *Body {
 		consts:     make([]Const, 1),
 		types:      make([]Type, 1),
 		checks:     make([]branchcond.Check, 1),
+		protos:     make([]FuncProto, 1),
 		pathIndex:  make(map[path.PathKey]PathRef),
 		constIndex: make(map[Const]ConstRef),
 		typeIndex:  make(map[string]TypeRef),
@@ -190,6 +201,29 @@ func (b *Body) InternCheck(c branchcond.Check) CheckRef {
 	ref := CheckRef(len(b.checks))
 	b.checks = append(b.checks, c)
 	return ref
+}
+
+// AddProto appends a nested function proto and returns its 1-based ref.
+func (b *Body) AddProto(p FuncProto) FuncRef {
+	ref := FuncRef(len(b.protos))
+	b.protos = append(b.protos, p)
+	return ref
+}
+
+// Proto returns the nested proto for ref, or the zero FuncProto for a none ref.
+func (b *Body) Proto(ref FuncRef) FuncProto {
+	if ref == 0 || int(ref) >= len(b.protos) {
+		return FuncProto{}
+	}
+	return b.protos[ref]
+}
+
+// Protos returns the nested function protos (excluding the index-0 sentinel).
+func (b *Body) Protos() []FuncProto {
+	if len(b.protos) <= 1 {
+		return nil
+	}
+	return b.protos[1:]
 }
 
 // AppendOperands copies ops into the shared pool and returns their range.

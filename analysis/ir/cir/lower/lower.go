@@ -15,11 +15,14 @@
 package lower
 
 import (
+	"strconv"
+
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/cir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
+	"github.com/wippyai/go-lua/analysis/lua/channelruntime"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -34,11 +37,21 @@ type Result struct {
 // Chunk lowers a bound statement chunk into cir. bindings must be the result of
 // binding stmts (e.g. bind.BindChunk).
 func Chunk(name string, stmts []ast.Stmt, bindings *bind.Result) *Result {
+	return lowerBody(name, stmts, bindings, nil)
+}
+
+// lowerBody lowers one function-scope statement list (a chunk when fn is nil, a
+// nested function body otherwise) into its own Body and CFG. Break/goto/label
+// scopes are function-local and reset per call.
+func lowerBody(name string, stmts []ast.Stmt, bindings *bind.Result, fn *ast.FunctionExpr) *Result {
 	g := cfg.New()
 	b := &builder{
-		body:     cir.NewBody(name),
-		graph:    g,
-		bindings: bindings,
+		body:         cir.NewBody(name),
+		graph:        g,
+		bindings:     bindings,
+		curFn:        fn,
+		labels:       make(map[string]cfg.Point),
+		pendingGotos: make(map[string][]cfg.Point),
 	}
 
 	entry := g.Entry()
@@ -68,11 +81,21 @@ type builder struct {
 	body     *cir.Body
 	graph    *cfg.CFG
 	bindings *bind.Result
+	curFn    *ast.FunctionExpr
 
 	pending  []pend
 	curPoint cfg.Point
 	curStart int
 	tempSeq  uint32
+	protoSeq int
+
+	// breakStack holds, per enclosing loop, the open ends produced by `break`
+	// statements. They merge into the loop's exit pending set when the loop closes.
+	breakStack [][]pend
+	// labels maps a resolved label name to its CFG point; pendingGotos holds goto
+	// source points awaiting a forward label definition.
+	labels       map[string]cfg.Point
+	pendingGotos map[string][]cfg.Point
 }
 
 // begin starts an instruction window at point p.
@@ -132,8 +155,18 @@ func (b *builder) lowerStmt(stmt ast.Stmt) {
 		b.lowerGenericFor(s)
 	case *ast.WhileStmt:
 		b.lowerWhile(s)
+	case *ast.RepeatStmt:
+		b.lowerRepeat(s)
 	case *ast.ReturnStmt:
 		b.lowerReturn(s)
+	case *ast.FuncDefStmt:
+		b.lowerFuncDef(s)
+	case *ast.BreakStmt:
+		b.lowerBreak()
+	case *ast.LabelStmt:
+		b.lowerLabel(s)
+	case *ast.GotoStmt:
+		b.lowerGoto(s)
 	case *ast.DoBlockStmt:
 		b.lowerStmts(s.Stmts)
 	case *ast.TypeDefStmt, *ast.InterfaceDefStmt:
@@ -312,13 +345,41 @@ func (b *builder) lowerWhile(s *ast.WhileStmt) {
 	b.finish()
 	header := b.curPoint
 
+	b.pushBreak()
 	b.pending = []pend{{p: header, cond: true}}
 	b.lowerStmts(s.Stmts)
 	// Body ends loop back to the header.
 	for _, e := range b.pending {
 		b.graph.AddEdge(e.p, header, e.cond)
 	}
+	b.pending = append([]pend{{p: header, cond: false}}, b.popBreak()...)
+}
+
+// lowerRepeat lowers `repeat body until cond`. The body always runs once, so it
+// precedes the condition branch; the branch exits the loop when cond is true and
+// loops back to the body header when false.
+func (b *builder) lowerRepeat(s *ast.RepeatStmt) {
+	header := b.open(cfg.NodeNoop)
+	b.body.Emit(cir.Instruction{Op: cir.OpNoop, Point: header})
+	b.finish()
+
+	b.pushBreak()
 	b.pending = []pend{{p: header, cond: false}}
+	b.lowerStmts(s.Stmts)
+
+	b.open(cfg.NodeBranch)
+	check := branchcond.Normalize(s.Condition, b.bindings)
+	inst := cir.Instruction{Op: cir.OpBranch, Point: b.curPoint, Check: b.body.InternCheck(check)}
+	if check.Kind == branchcond.CheckNone {
+		inst.A = b.lowerExpr(s.Condition)
+	}
+	b.body.Emit(inst)
+	b.finish()
+	branch := b.curPoint
+
+	// until cond: true edge exits the loop, false edge repeats the body.
+	b.graph.AddEdge(branch, header, false)
+	b.pending = append([]pend{{p: branch, cond: true}}, b.popBreak()...)
 }
 
 func (b *builder) lowerNumberFor(s *ast.NumberForStmt) {
@@ -340,12 +401,13 @@ func (b *builder) lowerNumberFor(s *ast.NumberForStmt) {
 	b.finish()
 	header := b.curPoint
 
+	b.pushBreak()
 	b.pending = []pend{{p: header, cond: true}}
 	b.lowerStmts(s.Stmts)
 	for _, e := range b.pending {
 		b.graph.AddEdge(e.p, header, e.cond)
 	}
-	b.pending = []pend{{p: header, cond: false}}
+	b.pending = append([]pend{{p: header, cond: false}}, b.popBreak()...)
 }
 
 func (b *builder) lowerGenericFor(s *ast.GenericForStmt) {
@@ -363,12 +425,153 @@ func (b *builder) lowerGenericFor(s *ast.GenericForStmt) {
 	b.finish()
 	header := b.curPoint
 
+	b.pushBreak()
 	b.pending = []pend{{p: header, cond: true}}
 	b.lowerStmts(s.Stmts)
 	for _, e := range b.pending {
 		b.graph.AddEdge(e.p, header, e.cond)
 	}
-	b.pending = []pend{{p: header, cond: false}}
+	b.pending = append([]pend{{p: header, cond: false}}, b.popBreak()...)
+}
+
+// pushBreak opens a break scope for an enclosing loop.
+func (b *builder) pushBreak() {
+	b.breakStack = append(b.breakStack, nil)
+}
+
+// popBreak closes the innermost break scope and returns its collected open ends.
+func (b *builder) popBreak() []pend {
+	n := len(b.breakStack) - 1
+	ends := b.breakStack[n]
+	b.breakStack = b.breakStack[:n]
+	return ends
+}
+
+// lowerBreak routes the current path to the innermost loop exit and terminates
+// straight-line flow (nothing falls through after a break).
+func (b *builder) lowerBreak() {
+	b.open(cfg.NodeNoop)
+	b.body.Emit(cir.Instruction{Op: cir.OpNoop, Point: b.curPoint})
+	b.finish()
+	if n := len(b.breakStack); n > 0 {
+		b.breakStack[n-1] = append(b.breakStack[n-1], pend{p: b.curPoint, cond: false})
+	}
+	b.pending = nil
+}
+
+// lowerLabel materializes a label point, linking both fall-through flow and any
+// forward gotos targeting it, then becomes the new open end.
+func (b *builder) lowerLabel(s *ast.LabelStmt) {
+	gotos := b.pendingGotos[s.Name]
+	delete(b.pendingGotos, s.Name)
+	p := b.graph.AddNode(cfg.NodeNoop)
+	b.linkTo(p)
+	for _, from := range gotos {
+		b.graph.AddEdge(from, p, false)
+	}
+	b.begin(p)
+	b.body.Emit(cir.Instruction{Op: cir.OpNoop, Point: p})
+	b.finish()
+	b.labels[s.Name] = p
+	b.pending = []pend{{p: p, cond: false}}
+}
+
+// lowerGoto emits a jump point: an edge straight to a resolved label, or a
+// pending entry for a forward label. Flow does not fall through a goto.
+func (b *builder) lowerGoto(s *ast.GotoStmt) {
+	b.open(cfg.NodeNoop)
+	b.body.Emit(cir.Instruction{Op: cir.OpNoop, Point: b.curPoint})
+	b.finish()
+	if target, ok := b.labels[s.Label]; ok {
+		b.graph.AddEdge(b.curPoint, target, false)
+	} else {
+		b.pendingGotos[s.Label] = append(b.pendingGotos[s.Label], b.curPoint)
+	}
+	b.pending = nil
+}
+
+// lowerFuncDef lowers a function definition statement (function a.b.c() ... end)
+// as a closure value written to its resolved name path.
+func (b *builder) lowerFuncDef(s *ast.FuncDefStmt) {
+	b.seq(cfg.NodeAssign, func() {
+		p, ok := pathexpr.ResolveFuncName(s.Name, b.bindings)
+		if ok && len(p.Segments) == 0 {
+			b.emitClosure(b.pathOperand(p), s.Func)
+			return
+		}
+		tmp := b.newTemp()
+		b.emitClosure(tmp, s.Func)
+		if ok {
+			// Member/method target: write the closure into the resolved member path.
+			b.body.Emit(cir.Instruction{
+				Op:    cir.OpStaticMemberWrite,
+				Point: b.curPoint,
+				Dst:   b.pathOperand(p),
+				A:     tmp,
+			})
+		}
+	})
+}
+
+// emitClosure lowers fn into its own proto Body and emits an OpClosure into dst
+// carrying the capture (upvalue) operands in bind order.
+func (b *builder) emitClosure(dst cir.Operand, fn *ast.FunctionExpr) {
+	name := b.body.Name + ".fn" + strconv.Itoa(b.protoSeq)
+	b.protoSeq++
+	child := lowerBody(name, fn.Stmts, b.bindings, fn)
+	ref := b.body.AddProto(cir.FuncProto{Name: name, Body: child.Body, Graph: child.Graph})
+
+	caps := b.bindings.DirectCaptures(fn)
+	ops := make([]cir.Operand, 0, len(caps))
+	for _, c := range caps {
+		ops = append(ops, b.pathOperand(path.NewPath(c.Captured, c.CapturedName)))
+	}
+	b.body.Emit(cir.Instruction{
+		Op:    cir.OpClosure,
+		Point: b.curPoint,
+		Dst:   dst,
+		Func:  ref,
+		List:  b.body.AppendOperands(ops),
+	})
+}
+
+// maybeLowerSelect recognizes the ambient channel.select runtime call and emits
+// an OpSelect over its recognized receive-case channels. It returns false when
+// call is not a select so the caller lowers it as an ordinary call.
+func (b *builder) maybeLowerSelect(dst cir.Operand, call *ast.FuncCallExpr) bool {
+	if !channelruntime.IsSelectCall(call, b.bindings) {
+		return false
+	}
+	table, ok := call.Args[0].(*ast.TableExpr)
+	if !ok {
+		return false
+	}
+	ops := make([]cir.Operand, 0, len(table.Fields))
+	hasDefault := false
+	for _, f := range table.Fields {
+		if f == nil {
+			continue
+		}
+		if f.Key != nil && ast.KeyName(f.Key) == "default" {
+			hasDefault = true
+			continue
+		}
+		cc, ok := f.Value.(*ast.FuncCallExpr)
+		if !ok || !channelruntime.IsReceiveCaseCall(cc, b.bindings) {
+			continue
+		}
+		if p, ok := pathexpr.Resolve(cc.Receiver, b.bindings); ok && !p.IsEmpty() {
+			ops = append(ops, b.pathOperand(p))
+		}
+	}
+	b.body.Emit(cir.Instruction{
+		Op:            cir.OpSelect,
+		Point:         b.curPoint,
+		Dst:           dst,
+		List:          b.body.AppendOperands(ops),
+		SelectDefault: hasDefault,
+	})
+	return true
 }
 
 // lowerExprInto lowers e so its value lands in dst, choosing the producing
@@ -422,14 +625,31 @@ func (b *builder) lowerExprInto(dst cir.Operand, e ast.Expr) {
 			A:     src,
 			Claim: cir.ClaimAssert,
 		})
+	case *ast.LogicalOpExpr:
+		b.emitLogical(dst, e)
+	case *ast.FunctionExpr:
+		b.emitClosure(dst, e)
 	case *ast.TableExpr:
 		b.lowerTable(dst, e)
 	case *ast.Comma3Expr:
 		b.emitAssign(dst, cir.Operand{Kind: cir.OperandVararg})
 	default:
-		// Out of subset (e.g. function literal): opaque source.
+		// Out of subset: opaque source.
 		b.emitAssign(dst, cir.Operand{})
 	}
+}
+
+// emitLogical lowers a short-circuit and/or into an OpLogical value form. The
+// operands are lowered eagerly; the short-circuit result and the guard narrowing
+// the right operand inherits are derived by transfer, not concluded here.
+func (b *builder) emitLogical(dst cir.Operand, e *ast.LogicalOpExpr) {
+	op := cir.LogAnd
+	if e.Operator == "or" {
+		op = cir.LogOr
+	}
+	a := b.lowerExpr(e.Lhs)
+	c := b.lowerExpr(e.Rhs)
+	b.body.Emit(cir.Instruction{Op: cir.OpLogical, Point: b.curPoint, Dst: dst, A: a, B: c, Operator: op})
 }
 
 // lowerExpr lowers e to an operand, allocating a temp for compound expressions.
@@ -493,6 +713,10 @@ func (b *builder) lowerValueList(exprs []ast.Expr) ([]cir.Operand, bool) {
 // lowerCall emits an OpCall. results are the bound destinations (nil for a
 // statement call); resultSpread marks the call as multret (open result count).
 func (b *builder) lowerCall(call *ast.FuncCallExpr, results []cir.Operand, resultSpread bool) {
+	// A recognized channel.select bound to a single result lowers to OpSelect.
+	if len(results) == 1 && b.maybeLowerSelect(results[0], call) {
+		return
+	}
 	args, argSpread := b.lowerValueList(call.Args)
 	inst := cir.Instruction{
 		Op:           cir.OpCall,
@@ -515,21 +739,42 @@ func (b *builder) lowerCall(call *ast.FuncCallExpr, results []cir.Operand, resul
 	b.body.Emit(inst)
 }
 
+// lowerTable lowers a table constructor over its array, hash, and trailing
+// spread parts. Every field value becomes a List operand; a final keyless
+// multi-value producer ({..., f()}) marks the list tail as an open spread. Field
+// keys are structural syntax recovered by transfer from the constructor, not
+// lowered as operands.
 func (b *builder) lowerTable(dst cir.Operand, t *ast.TableExpr) {
-	entries := pathexpr.ObjectEntries(t)
-	ops := make([]cir.Operand, 0, len(entries))
-	for _, entry := range entries {
-		if !entry.Final && entry.Value == nil {
+	last := lastFieldIndex(t.Fields)
+	ops := make([]cir.Operand, 0, len(t.Fields))
+	spread := false
+	for i, f := range t.Fields {
+		if f == nil || f.Value == nil {
 			continue
 		}
-		ops = append(ops, b.lowerExpr(entry.Value))
+		if i == last && f.Key == nil && ast.CanProduceMultipleValues(f.Value) {
+			ops = append(ops, b.lowerMultiValue(f.Value))
+			spread = true
+			continue
+		}
+		ops = append(ops, b.lowerExpr(f.Value))
 	}
 	b.body.Emit(cir.Instruction{
-		Op:    cir.OpMakeTable,
-		Point: b.curPoint,
-		Dst:   dst,
-		List:  b.body.AppendOperands(ops),
+		Op:         cir.OpMakeTable,
+		Point:      b.curPoint,
+		Dst:        dst,
+		List:       b.body.AppendOperands(ops),
+		ListSpread: spread,
 	})
+}
+
+func lastFieldIndex(fields []*ast.Field) int {
+	for i := len(fields) - 1; i >= 0; i-- {
+		if fields[i] != nil && fields[i].Value != nil {
+			return i
+		}
+	}
+	return -1
 }
 
 func (b *builder) flattenConcat(e *ast.StringConcatOpExpr) []cir.Operand {

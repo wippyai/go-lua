@@ -48,6 +48,15 @@ func Print(b *Body, graph cfg.Graph) string {
 			}
 		}
 	}
+	// Nested function protos print as their own labelled body blocks, appended in
+	// definition order so a closure line and its proto read together.
+	for _, proto := range b.Protos() {
+		if proto.Body == nil || proto.Graph == nil {
+			continue
+		}
+		sb.WriteByte('\n')
+		sb.WriteString(Print(proto.Body, proto.Graph))
+	}
 	return sb.String()
 }
 
@@ -120,7 +129,19 @@ func (b *Body) spellInstruction(inst Instruction) string {
 	case OpClaim:
 		return b.spellClaim(inst)
 	case OpSelect:
-		return b.spellOperand(inst.Dst) + " = select [" + b.spellOperandList(inst.List) + "]"
+		s := b.spellOperand(inst.Dst) + " = select [" + b.spellOperandList(inst.List) + "]"
+		if inst.SelectDefault {
+			s += " default"
+		}
+		return s
+	case OpLogical:
+		return b.spellOperand(inst.Dst) + " = " + operatorMnemonic(inst.Operator) + " " + b.spellOperand(inst.A) + " " + b.spellOperand(inst.B)
+	case OpClosure:
+		s := b.spellOperand(inst.Dst) + " = closure " + b.Proto(inst.Func).Name
+		if inst.List.Len > 0 {
+			s += " [" + b.spellOperandList(inst.List) + "]"
+		}
+		return s
 	default:
 		return "?" + strconv.Itoa(int(inst.Op))
 	}
@@ -344,6 +365,10 @@ func operatorMnemonic(op Operator) string {
 		return "len"
 	case UnBNot:
 		return "bnot"
+	case LogAnd:
+		return "and"
+	case LogOr:
+		return "or"
 	default:
 		return fmt.Sprintf("op%d", op)
 	}

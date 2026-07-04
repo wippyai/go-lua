@@ -58,6 +58,13 @@ const (
 	OpClaim
 	// OpSelect is a recognized channel-select over case operands in List.
 	OpSelect
+	// OpLogical computes a short-circuit Dst = A <and|or> B. Unlike OpBinOp it is
+	// not a strict operator: transfer derives which operand flows to Dst and the
+	// guard narrowing the right operand inherits (truthy/falsy A). See design.md.
+	OpLogical
+	// OpClosure materializes a function literal into Dst. Func references the
+	// nested Body proto; List names the captured (upvalue) operands in bind order.
+	OpClosure
 )
 
 // Operator selects the arithmetic, relational, or unary operation for OpBinOp
@@ -92,6 +99,9 @@ const (
 	UnNot
 	UnLen
 	UnBNot
+	// Short-circuit logical operators for OpLogical.
+	LogAnd
+	LogOr
 )
 
 // IterKind distinguishes numeric and generic for-loop headers for OpIterate.
@@ -144,13 +154,15 @@ type Operand struct {
 	Ref  uint32
 }
 
-// PathRef, ConstRef, TypeRef, and CheckRef are 1-based indices into the matching
-// Body intern pool. A zero ref means none (index 0 is a reserved sentinel).
+// PathRef, ConstRef, TypeRef, CheckRef, and FuncRef are 1-based indices into the
+// matching Body intern pool. A zero ref means none (index 0 is a reserved
+// sentinel).
 type (
 	PathRef  uint32
 	ConstRef uint32
 	TypeRef  uint32
 	CheckRef uint32
+	FuncRef  uint32
 )
 
 // OperandRange is a [Start, Start+Len) window into Body.operandPool for a
@@ -194,12 +206,16 @@ type Instruction struct {
 	// for-loop variables).
 	Results OperandRange
 
-	Operator Operator  // OpBinOp / OpUnOp selector
+	Operator Operator  // OpBinOp / OpUnOp / OpLogical selector
 	Iter     IterKind  // OpIterate numeric/generic
 	Claim    ClaimKind // OpClaim family
 	Type     TypeRef   // OpClaim target, OpMakeTable declared type (0 = none)
 	Check    CheckRef  // OpBranch condition descriptor (0 = none)
+	Func     FuncRef   // OpClosure nested proto (0 = none)
 	Call     CallInfo  // OpCall shape
+
+	// SelectDefault marks an OpSelect that carries a default (non-blocking) case.
+	SelectDefault bool
 
 	// ListSpread marks that the final List operand expands to all runtime values it
 	// produces (an open multi-value tail): `return f()`, `g(a, h())`, `f(...)`. The
