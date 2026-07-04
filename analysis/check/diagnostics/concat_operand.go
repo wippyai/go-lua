@@ -2,8 +2,8 @@ package diagnostics
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/judgment"
+	"github.com/wippyai/go-lua/analysis/check/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -54,7 +54,7 @@ func concatOperandEvidenceReason(got typ.Type) diagnostic.EvidenceReason {
 	if got != nil && typ.Nil.Equals(got) {
 		return diagnostic.EvidenceReasonExactType
 	}
-	if typevalue.ProjectionHasNil(got) {
+	if readmodel.ProjectionHasNil(got) {
 		return diagnostic.EvidenceReasonUnionType
 	}
 	return diagnostic.EvidenceReasonUnspecified

@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/proof"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/kind"
@@ -456,7 +457,19 @@ func ConcatOperandNilRisk(t typ.Type) bool {
 	if t == nil || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) {
 		return false
 	}
+	return ProjectionHasNil(t)
+}
+
+// ProjectionHasNil reports whether the projected display type still admits nil.
+// Diagnostics use this public readmodel wrapper instead of reaching into the
+// value-domain projection packages directly.
+func ProjectionHasNil(t typ.Type) bool {
 	return typevalue.ProjectionHasNil(t)
+}
+
+// ProjectionWithoutNil returns the display projection with nil removed.
+func ProjectionWithoutNil(t typ.Type) typ.Type {
+	return proof.ProjectionWithoutNil(t)
 }
 
 // NumericForOperand is the solved read model for one numeric-for operand
