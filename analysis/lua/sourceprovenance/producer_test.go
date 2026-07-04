@@ -102,6 +102,37 @@ func TestProofInnerIsFunctionStopsAtProofBoundary(t *testing.T) {
 	}
 }
 
+func TestConcreteRuntimeCastSourceClassifiesValidationCasts(t *testing.T) {
+	expr := &ast.IdentExpr{Value: "x"}
+	source := ASTSource{
+		Kind: SourceExpression,
+		Expr: &ast.NonNilAssertExpr{
+			Expr: &ast.CastExpr{
+				Expr:   expr,
+				Type:   &ast.PrimitiveTypeExpr{Name: "number"},
+				Syntax: ast.CastSyntaxColonColon,
+			},
+		},
+	}
+	if !ConcreteRuntimeCastSource(source) {
+		t.Fatal("ConcreteRuntimeCastSource rejected concrete runtime cast")
+	}
+
+	source.Expr = &ast.CastExpr{
+		Expr:   expr,
+		Type:   &ast.PrimitiveTypeExpr{Name: "any"},
+		Syntax: ast.CastSyntaxColonColon,
+	}
+	if ConcreteRuntimeCastSource(source) {
+		t.Fatal("ConcreteRuntimeCastSource accepted top-like any cast")
+	}
+
+	source.Kind = SourceCall
+	if ConcreteRuntimeCastSource(source) {
+		t.Fatal("ConcreteRuntimeCastSource accepted non-expression source")
+	}
+}
+
 func TestTypedNilProducersAreAbsent(t *testing.T) {
 	var call *ast.FuncCallExpr
 	var callExpr ast.Expr = call

@@ -132,6 +132,38 @@ func ProofInnerIsFunction(expr ast.Expr) bool {
 	return ok
 }
 
+// ConcreteRuntimeCastSource reports whether source is an expression wrapped in
+// a concrete runtime validation cast. Top-like casts such as `:: any` are
+// precision boundaries, not validation.
+func ConcreteRuntimeCastSource(source ASTSource) bool {
+	if source.Kind != SourceExpression || source.Expr == nil {
+		return false
+	}
+	expr := source.Expr
+	for {
+		switch wrapped := expr.(type) {
+		case *ast.NonNilAssertExpr:
+			if wrapped == nil {
+				return false
+			}
+			expr = wrapped.Expr
+		case *ast.CastExpr:
+			if wrapped == nil || wrapped.Type == nil {
+				return false
+			}
+			if wrapped.Syntax != ast.CastSyntaxAs && wrapped.Syntax != ast.CastSyntaxColonColon {
+				return false
+			}
+			if castTargetIsProofBoundary(wrapped.Type) {
+				return false
+			}
+			return true
+		default:
+			return false
+		}
+	}
+}
+
 func castTargetIsProofBoundary(t ast.TypeExpr) bool {
 	primitive, ok := t.(*ast.PrimitiveTypeExpr)
 	return ok && castsem.IsTopLikeTarget(primitive.Name)
