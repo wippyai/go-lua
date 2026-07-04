@@ -388,7 +388,7 @@ func (r Reader) ordinaryWritableTargetType(current typ.Type, targetValue product
 	return current
 }
 
-func (r Reader) inferredReplacementAccepted(_ cfg.Point, target body.OrdinaryAssignmentTargetType, expected, actual typ.Type) bool {
+func (r Reader) inferredReplacementAccepted(point cfg.Point, target body.OrdinaryAssignmentTargetType, expected, actual typ.Type) bool {
 	if expected == nil || actual == nil {
 		return false
 	}
@@ -400,39 +400,42 @@ func (r Reader) inferredReplacementAccepted(_ cfg.Point, target body.OrdinaryAss
 		return actualOK
 	}
 	if _, ok := unwrap.Annotated(expected).(*typ.Record); ok {
-		return inferredRecordReplacementAccepted(actual)
+		localExclusive := target.HasValue && r.result != nil && r.result.ValueHasLocalExclusiveExactIdentity(point, target.TargetValue)
+		return inferredRecordReplacementAccepted(actual, localExclusive)
 	}
 	return false
 }
 
-func inferredRecordReplacementAccepted(actual typ.Type) bool {
-	ok, hasBroadTable := inferredRecordReplacementSurface(actual)
-	return ok && hasBroadTable
+func inferredRecordReplacementAccepted(actual typ.Type, localExclusive bool) bool {
+	ok, hasBroadTable, hasConcreteRecord := inferredRecordReplacementSurface(actual)
+	return ok && (hasBroadTable || (localExclusive && hasConcreteRecord))
 }
 
-func inferredRecordReplacementSurface(actual typ.Type) (bool, bool) {
+func inferredRecordReplacementSurface(actual typ.Type) (ok bool, hasBroadTable bool, hasConcreteRecord bool) {
 	switch t := unwrap.Annotated(actual).(type) {
 	case *typ.Record:
-		return true, false
+		return true, false, true
 	case *typ.Optional:
-		return false, false
+		return false, false, false
 	case *typ.Union:
 		if len(t.Members) == 0 {
-			return false, false
+			return false, false, false
 		}
 		hasBroadTable := false
+		hasConcreteRecord := false
 		for _, member := range t.Members {
-			ok, broad := inferredRecordReplacementSurface(member)
+			ok, broad, record := inferredRecordReplacementSurface(member)
 			if !ok {
-				return false, false
+				return false, false, false
 			}
 			hasBroadTable = hasBroadTable || broad
+			hasConcreteRecord = hasConcreteRecord || record
 		}
-		return true, hasBroadTable
+		return true, hasBroadTable, hasConcreteRecord
 	default:
 		if typetable.IsBuiltinTopMarker(t) {
-			return true, true
+			return true, true, false
 		}
-		return false, false
+		return false, false, false
 	}
 }

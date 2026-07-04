@@ -419,6 +419,38 @@ end
 	}
 }
 
+func TestForEachAssignmentAcceptsLocalExclusiveInferredRecordReplacement(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local root = { api = {} }
+function root.api.send(v: number): () end
+
+root.api = {
+	send = function(v: string): () end,
+}
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{
+		Registry: reg,
+	}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatal("RootResult nil")
+	}
+	var assignments []Assignment
+	New(root).ForEachAssignment(func(assignment Assignment) bool {
+		if assignment.TargetLabel == "root.api" {
+			assignments = append(assignments, assignment)
+		}
+		return true
+	})
+	if len(assignments) != 0 {
+		t.Fatalf("root.api assignments = %#v, want local exclusive inferred record replacement accepted", assignments)
+	}
+}
+
 func TestForEachAssignmentReportsObjectLiteralExplicitAnyMember(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
