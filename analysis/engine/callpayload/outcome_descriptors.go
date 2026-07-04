@@ -34,9 +34,7 @@ func callOutcomeLaneDescriptor(fieldName string, wireRef []string, postReturn bo
 	}
 }
 
-// deriveCallOutcomeLane rebuilds the storage lane a descriptor describes. It is
-// the flip target: callOutcomeLanes becomes
-// DeriveBoundaryLanes(callOutcomeDescriptors, deriveCallOutcomeLane).
+// deriveCallOutcomeLane rebuilds the storage lane a descriptor describes.
 func deriveCallOutcomeLane(d callboundary.BoundaryFactDescriptor[CallOutcomeLaneOps]) callOutcomeLane {
 	return callOutcomeLane{
 		fieldName:  string(d.Kind),
@@ -53,8 +51,8 @@ func deriveCallOutcomeLane(d callboundary.BoundaryFactDescriptor[CallOutcomeLane
 // refs to callboundary.NormalReturnFactDescriptors, and the remaining lanes are
 // caller-relative param/return evidence with no OperationalEffects wire lane.
 //
-// The parity oracle in outcome_descriptors_test.go proves DeriveBoundaryLanes
-// over this table reproduces the hand-wired callOutcomeLanes behavior for
+// outcome_descriptors_test.go proves DeriveBoundaryLanes over this table
+// reproduces the live callOutcomeLanes behavior for
 // Empty, HasPostReturnEvidence, and every per-field presence predicate.
 var callOutcomeDescriptors = func() callboundary.BoundaryFactTable[CallOutcomeLaneOps] {
 	t := callboundary.BoundaryFactTable[CallOutcomeLaneOps]{
@@ -105,8 +103,7 @@ func CallOutcomeDescriptors() callboundary.BoundaryFactTable[CallOutcomeLaneOps]
 	return out
 }
 
-// derivedCallOutcomeLanes is the lane slice the flip promotes to
-// callOutcomeLanes. It is exercised by the parity oracle today.
+// derivedCallOutcomeLanes is the lane slice used by callOutcomeLanes.
 func derivedCallOutcomeLanes() []callOutcomeLane {
 	return callboundary.DeriveBoundaryLanes(callOutcomeDescriptors, deriveCallOutcomeLane)
 }

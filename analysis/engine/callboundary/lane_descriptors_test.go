@@ -39,15 +39,15 @@ func richNormalReturnFactsCorpus() (facts NormalReturnFacts, match, other pathdo
 	return facts, match, other
 }
 
-// TestNormalReturnFactDescriptorsDeriveHandWiredLanes proves the descriptor
+// TestNormalReturnFactDescriptorsDeriveLiveLanes proves the descriptor
 // table derives lanes that are structurally identical (id, field name, and
-// path-filter participation) to the hand-wired storage lane registry, in the
+// path-filter participation) to the live storage lane registry, in the
 // same order.
-func TestNormalReturnFactDescriptorsDeriveHandWiredLanes(t *testing.T) {
+func TestNormalReturnFactDescriptorsDeriveLiveLanes(t *testing.T) {
 	derived := derivedNormalReturnFactLanes()
 	hand := NormalReturnFactLanes()
 	if len(derived) != len(hand) {
-		t.Fatalf("derived lanes = %d, want hand-wired = %d", len(derived), len(hand))
+		t.Fatalf("derived lanes = %d, want live = %d", len(derived), len(hand))
 	}
 	for i := range hand {
 		if derived[i].ID() != hand[i].ID() {

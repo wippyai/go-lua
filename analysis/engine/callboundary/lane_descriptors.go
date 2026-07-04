@@ -22,10 +22,9 @@ type BoundaryFactKind string
 //     summary slots, presence predicate for CallOutcome) rather than forcing one
 //     operation shape across structurally different families.
 //
-// The spine exists so the later flip can replace each family's hand-wired lane
-// literal with DeriveBoundaryLanes over this descriptor table, mechanically,
-// while the parity oracles prove the derived behavior equals the hand-wired
-// behavior first.
+// The spine lets each boundary-schema family derive its live lane registry from
+// one descriptor table while tests prove the derived behavior stays equal to the
+// public operations.
 type BoundaryFactDescriptor[Ops any] struct {
 	Kind    BoundaryFactKind
 	WireRef []string
@@ -62,8 +61,7 @@ func (t BoundaryFactTable[Ops]) Validate(family string) {
 }
 
 // DeriveBoundaryLanes maps each descriptor to a family lane through build,
-// preserving table order. Families use it to synthesize their hand-wired lane
-// type from the descriptor table.
+// preserving table order.
 func DeriveBoundaryLanes[Ops, Lane any](t BoundaryFactTable[Ops], build func(BoundaryFactDescriptor[Ops]) Lane) []Lane {
 	out := make([]Lane, len(t))
 	for i, d := range t {
@@ -76,7 +74,7 @@ func DeriveBoundaryLanes[Ops, Lane any](t BoundaryFactTable[Ops], build func(Bou
 // payload. It mirrors the storage-level fields of NormalReturnFactLane: the
 // field name, length, append, and optional path filter/drop hooks. Building an
 // Ops through normalReturnLaneDescriptor reuses normalReturnSliceLane so the
-// descriptor table and the hand-wired lane table share one construction path.
+// descriptor table and live lane registry share one construction path.
 type NormalReturnLaneOps struct {
 	fieldName     string
 	len           func(NormalReturnFacts) int
@@ -92,9 +90,7 @@ func (o NormalReturnLaneOps) FieldName() string { return o.fieldName }
 // FiltersByPath reports whether the lane participates in path filtering.
 func (o NormalReturnLaneOps) FiltersByPath() bool { return o.filtersByPath }
 
-// deriveLane rebuilds the storage lane the ops describe. It is the flip target:
-// normalReturnFactLanes becomes DeriveBoundaryLanes(normalReturnFactDescriptors,
-// BoundaryFactDescriptor[NormalReturnLaneOps].deriveLane).
+// deriveLane rebuilds the storage lane the ops describe.
 func (d BoundaryFactDescriptor[Ops]) deriveNormalReturnLane() NormalReturnFactLane {
 	ops := any(d.Ops).(NormalReturnLaneOps)
 	return NormalReturnFactLane{
@@ -136,7 +132,7 @@ func normalReturnLaneDescriptor[T any](
 // normalReturnFactLanes, adding the WireRef link to the manifest
 // OperationalEffects wire lanes each kind lowers from. The parity oracle in
 // lane_descriptors_test.go proves DeriveBoundaryLanes over this table reproduces
-// the hand-wired normalReturnFactLanes behavior for Append, FilterPaths, and
+// the live normalReturnFactLanes behavior for Append, FilterPaths, and
 // DropFactsTouchingPaths across a rich corpus.
 //
 // WireRef ground truth comes from the effectlowering provider that lowers
@@ -320,8 +316,7 @@ func NormalReturnFactDescriptors() BoundaryFactTable[NormalReturnLaneOps] {
 	return out
 }
 
-// derivedNormalReturnFactLanes is the lane slice the flip promotes to
-// normalReturnFactLanes. It is exercised by the parity oracle today.
+// derivedNormalReturnFactLanes is the lane slice used by normalReturnFactLanes.
 func derivedNormalReturnFactLanes() []NormalReturnFactLane {
 	return DeriveBoundaryLanes(normalReturnFactDescriptors, BoundaryFactDescriptor[NormalReturnLaneOps].deriveNormalReturnLane)
 }

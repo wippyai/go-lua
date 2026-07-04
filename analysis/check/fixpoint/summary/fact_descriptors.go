@@ -28,9 +28,7 @@ type SummarySlotOps struct {
 // are driven inline rather than per-lane.
 func (o SummarySlotOps) Slot() bool { return o.slot }
 
-// deriveSummaryLane rebuilds the summaryLane a descriptor describes. It is the
-// flip target: summaryLanes becomes
-// DeriveBoundaryLanes(summaryFactDescriptors, deriveSummaryLane).
+// deriveSummaryLane rebuilds the summaryLane a descriptor describes.
 func deriveSummaryLane(d callboundary.BoundaryFactDescriptor[SummarySlotOps]) summaryLane {
 	return summaryLane{
 		fieldName:      string(d.Kind),
@@ -66,8 +64,8 @@ func summarySlotDescriptor(fieldName string, wireRef []string, ops SummarySlotOp
 // through the signature return/param/postcondition encoders, not the
 // OperationalEffects wire codec, so they carry a nil WireRef.
 //
-// The parity oracle in fact_descriptors_test.go proves DeriveBoundaryLanes over
-// this table reproduces the hand-wired summaryLanes behavior lane-for-lane
+// fact_descriptors_test.go proves DeriveBoundaryLanes over
+// this table reproduces the live summaryLanes behavior lane-for-lane
 // (order, field name, slot flag, and every non-nil op) across a populated
 // corpus, so the whole-summary Join/Widen/Equal/LessOrEq/Normalize drivers stay
 // invariant after the flip.
@@ -422,8 +420,7 @@ func SummaryFactDescriptors() callboundary.BoundaryFactTable[SummarySlotOps] {
 	return out
 }
 
-// derivedSummaryLanes is the lane slice the flip promotes to summaryLanes. It is
-// exercised by the parity oracle today.
+// derivedSummaryLanes is the lane slice used by summaryLanes.
 func derivedSummaryLanes() []summaryLane {
 	return callboundary.DeriveBoundaryLanes(summaryFactDescriptors, deriveSummaryLane)
 }
