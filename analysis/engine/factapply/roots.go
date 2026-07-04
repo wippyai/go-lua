@@ -309,6 +309,9 @@ func rootAssignmentPreservesPathPresenceImplication(
 	value product.Value,
 	implication pathevidence.PathPresenceImplication,
 ) bool {
+	if !implication.HasTriggerValue {
+		return false
+	}
 	triggerMatches := implication.Trigger == targetKey
 	targetMatches := implication.Target == targetKey
 	if !triggerMatches && !targetMatches {
