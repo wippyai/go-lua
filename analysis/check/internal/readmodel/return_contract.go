@@ -9,9 +9,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/castsem"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 // ForEachReturn visits returned expressions with explicit declared return
@@ -51,6 +53,9 @@ func (r Reader) ForEachReturn(visit func(Return) bool) bool {
 func (r Reader) returnObjectLiteralEntry(occ body.ReturnValueOccurrence, expectedValue product.Value, expectedSpans []SourceSpan) (Return, bool) {
 	source := occ.Source
 	if source.Kind != sourceprovenance.SourceExpression || source.Expr == nil {
+		return Return{}, false
+	}
+	if returnSourceConcreteRuntimeCast(source) {
 		return Return{}, false
 	}
 	expected, ok := r.ValueTypeWithPresence(expectedValue)
@@ -112,6 +117,9 @@ func (r Reader) returnObjectLiteralEntry(occ body.ReturnValueOccurrence, expecte
 func (r Reader) returnDeclaredObjectLiteralEntry(occ body.ReturnValueOccurrence, expectedValue product.Value, expectedSpans []SourceSpan) (Return, bool) {
 	source := occ.Source
 	if r.result == nil || source.Kind != sourceprovenance.SourceExpression || source.Expr == nil {
+		return Return{}, false
+	}
+	if returnSourceConcreteRuntimeCast(source) {
 		return Return{}, false
 	}
 	if !occ.HasPath || occ.SourcePath.IsEmpty() || occ.SourcePath.Symbol == 0 {
@@ -302,4 +310,33 @@ func readmodelSourceSpanAt(spans []SourceSpan, index int) SourceSpan {
 		return SourceSpan{}
 	}
 	return spans[index]
+}
+
+func returnSourceConcreteRuntimeCast(source sourceprovenance.ASTSource) bool {
+	if source.Kind != sourceprovenance.SourceExpression || source.Expr == nil {
+		return false
+	}
+	expr := source.Expr
+	for {
+		switch wrapped := expr.(type) {
+		case *ast.NonNilAssertExpr:
+			if wrapped == nil {
+				return false
+			}
+			expr = wrapped.Expr
+		case *ast.CastExpr:
+			if wrapped == nil || wrapped.Type == nil {
+				return false
+			}
+			if wrapped.Syntax != ast.CastSyntaxAs && wrapped.Syntax != ast.CastSyntaxColonColon {
+				return false
+			}
+			if primitive, ok := wrapped.Type.(*ast.PrimitiveTypeExpr); ok && castsem.IsTopLikeTarget(primitive.Name) {
+				return false
+			}
+			return true
+		default:
+			return false
+		}
+	}
 }

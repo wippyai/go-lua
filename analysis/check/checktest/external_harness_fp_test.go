@@ -617,6 +617,27 @@ end
 	}
 }
 
+func TestCheckReturnedCopiedTableCastValidatesRequiredFields(t *testing.T) {
+	result := Check(`
+type Payload = {
+    host: table,
+    agent: table?,
+    reason: string?,
+}
+
+local function copy_payload(payload: Payload?): Payload
+    local out = {}
+    for k, v in pairs(payload or {}) do
+        out[k] = v
+    end
+    return out :: Payload
+end
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want concrete return cast to validate copied table payload", result.Diagnostics)
+	}
+}
+
 func TestCheckTypeCallReturnsExactRuntimeKindLiteral(t *testing.T) {
 	result := Check(`
 local tag: "string" = type("x")
