@@ -166,7 +166,7 @@ func widerWritableType(a, b typ.Type) typ.Type {
 		return b
 	case b == nil:
 		return a
-	case subtype.IsSubtype(a, b):
+	case subtype.IsSubtype(a, b) || subtype.IsFreshAssignable(a, b):
 		return b
 	case subtype.IsSubtype(b, a):
 		return a

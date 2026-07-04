@@ -106,6 +106,9 @@ func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
 		if supRec, ok := wide.(*typ.Record); ok {
 			return c.canWidenRecordTo(subRec, supRec, depth+1)
 		}
+		if supArray, ok := wide.(*typ.Array); ok {
+			return c.canWidenRecordToArray(subRec, supArray, depth+1)
+		}
 		if supMap, ok := wide.(*typ.Map); ok {
 			return c.canWidenRecordToMap(subRec, supMap, depth+1)
 		}
@@ -207,6 +210,32 @@ func (c *checker) canWidenRecordToMap(narrow *typ.Record, wide *typ.Map, depth i
 			return false
 		}
 		if !c.check(narrow.MapValue, wide.Value, depth+1) && !c.canWidenTo(narrow.MapValue, wide.Value, depth+1) {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *checker) canWidenRecordToArray(narrow *typ.Record, wide *typ.Array, depth int) bool {
+	if narrow == nil || wide == nil {
+		return false
+	}
+	if len(narrow.Fields) != 0 {
+		return false
+	}
+	for _, m := range narrow.StaticMembers {
+		if m.Kind != typ.StaticMemberIntIndex {
+			return false
+		}
+		if !c.check(m.Type, wide.Element, depth+1) && !c.canWidenTo(m.Type, wide.Element, depth+1) {
+			return false
+		}
+	}
+	if narrow.HasMapComponent() {
+		if !c.check(narrow.MapKey, typ.Integer, depth+1) {
+			return false
+		}
+		if !c.check(narrow.MapValue, wide.Element, depth+1) && !c.canWidenTo(narrow.MapValue, wide.Element, depth+1) {
 			return false
 		}
 	}

@@ -184,6 +184,20 @@ func TestRecordWidthDepthReadonlyAndMutable(t *testing.T) {
 	}
 }
 
+func TestStaticIndexRecordSatisfiesContainerTargets(t *testing.T) {
+	indexed := typetable.NewRecord().StaticIntIndex(1, typ.String).Build()
+	if IsSubtype(indexed, typ.NewArray(typ.String)) {
+		t.Fatal("exact integer slots should not become strict array subtypes")
+	}
+	if !IsFreshAssignable(indexed, typ.NewArray(typ.String)) {
+		t.Fatal("fresh record with exact integer slot should assign to array target")
+	}
+	if IsFreshAssignable(indexed, typ.NewArray(typ.Number)) {
+		t.Fatal("fresh record with exact integer slot must still check array element type")
+	}
+
+}
+
 func TestFreshRecordExplicitNilAssignableToNilableField(t *testing.T) {
 	status := typeexpr.Union(
 		typ.LiteralString("queued"),
