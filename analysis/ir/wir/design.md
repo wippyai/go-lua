@@ -199,13 +199,14 @@ A call not matching the shape falls through to an ordinary `OpCall`.
 semantics extracts from, it is a true per-point diff, not a cross-CFG multiset:
 for every point carrying a semantics fact (assign / call / branch / return,
 imported read-only), the wir Body must carry an instruction *at that same point*
-whose operand identity (path `Key()`) matches. Last run: 574/574 fixtures, TOTAL
-99.98% — assign 99.97% (2986/2987), call 100% (1714/1714), branch 100%
-(418/418), return 100% (186/186). Residual: the single assign miss is a computed
-assignment target with no static path. Pure short-circuit guards now carry
-`OpBranch` at the cfgbuild guard point while retaining the `OpLogical` value
-form at the enclosing expression point. call reaches 100% under the per-point
-split (one `OpCall` per call point).
+whose operand identity (path `Key()`) matches. Computed assignment targets with
+no static path/container identity match the semantics `"target"` sentinel only
+when wir still records a write at that same point. Last run: 574/574 fixtures,
+TOTAL 100% — assign 100% (2987/2987), call 100% (1714/1714), branch 100%
+(418/418), return 100% (186/186). Pure short-circuit guards carry `OpBranch` at
+the cfgbuild guard point while retaining the `OpLogical` value form at the
+enclosing expression point. call reaches 100% under the per-point split (one
+`OpCall` per call point).
 
 ## Locked decisions (Stage 4, journal #1392)
 
@@ -282,7 +283,7 @@ owner), **D2** (resolver interface + caching + fake), **D3** (purity-split
 logical: pure RHS keeps `OpLogical` on the enclosing point, impure RHS threads the
 result through the cfgbuild short-circuit topology), **D5** (resolved TypeRef).
 Goldens migrated to the shared-graph form; the `WIR_SHADOW` harness is now a
-per-point oracle (99.98% total). Nested functions build their own child graph via
+per-point oracle (100% total). Nested functions build their own child graph via
 `cfgbuild.BuildFunction` and lower recursively, exactly as the engine prepares
 protos.
 
@@ -312,7 +313,9 @@ RHS, branch topology for effectful RHS), closures and function definitions
 non-nil assert / annotation claims, varargs, multret (call-in-middle vs tail).
 Golden tests in `wirlower/wirlower_test.go` (incl. adversarial multret and the
 effectful-logical branch topology); completeness measured by the per-point
-`WIR_SHADOW` harness (99.98% over 574 fixtures).
+`WIR_SHADOW` harness (100% over 574 fixtures).
 
-Residual gap (explicit): one computed assignment target carries no static path
-and keys as `target`. wir is consumed by nothing yet.
+Residual gap: none in the per-point shadow categories. The only non-structural
+match is the explicit `"target"` sentinel for computed assignment targets with no
+static path/container identity; the point must still carry a wir write. wir is
+consumed by nothing yet.

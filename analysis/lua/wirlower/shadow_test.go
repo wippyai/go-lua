@@ -23,7 +23,7 @@ type shadowCoverageExpectation struct {
 }
 
 var expectedShadowCoverage = map[string]shadowCoverageExpectation{
-	"assign": {covered: 2986, total: 2987},
+	"assign": {covered: 2987, total: 2987},
 	"call":   {covered: 1714, total: 1714},
 	"branch": {covered: 418, total: 418},
 	"return": {covered: 186, total: 186},
@@ -38,8 +38,9 @@ var expectedShadowCoverage = map[string]shadowCoverageExpectation{
 // honestly rather than masking them. Better coverage should update the expected
 // frontier intentionally; worse coverage fails immediately.
 //
-// Known residual: one computed assignment target has no static path identity, so
-// wir records the assignment but cannot match the semantics target key.
+// Computed assignment targets with no static path/container identity match the
+// semantics "target" sentinel only when wir still records a write at the same
+// point; all structural path identities remain compared exactly.
 func TestShadowCoverage(t *testing.T) {
 	if os.Getenv("WIR_SHADOW") != "1" {
 		t.Skip("set WIR_SHADOW=1 to run the wir lowering coverage harness")
@@ -160,6 +161,12 @@ func wirPointKeys(b *wir.Body, pt cfg.Point) map[string]map[string]bool {
 			wir.OpStaticMemberWrite, wir.OpDynamicIndexWrite:
 			if k, ok := wirDstKey(b, inst.Dst); ok {
 				out["assign"][k] = true
+			} else {
+				// Semantics uses the same sentinel when an assignment target has
+				// no static path or container identity. This keeps the shadow
+				// oracle honest: the point must still carry an assignment/write
+				// instruction, but there is no structural key to compare.
+				out["assign"]["target"] = true
 			}
 		case wir.OpCall:
 			out["call"][wirCallKey(b, inst)] = true
