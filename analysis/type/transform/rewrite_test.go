@@ -527,6 +527,99 @@ func TestRewrite_GenericBodyAndTypeParamConstraint(t *testing.T) {
 	}
 }
 
+func TestRewrite_GenericDescentDoesNotCaptureNestedSameNameBinder(t *testing.T) {
+	outer := typ.NewTypeParam("T", nil)
+	inner := typ.NewTypeParam("T", nil)
+	innerResult := typ.NewGeneric("Result", []*typ.TypeParam{inner}, newRecord().
+		Field("ok", typ.Boolean).
+		Field("value", inner).
+		Build())
+	outerRecord := newRecord().
+		Field("outer", outer).
+		Field("inner", innerResult).
+		Build()
+
+	got := Rewrite(outerRecord, func(node typ.Type) (typ.Type, bool) {
+		if tp, ok := node.(*typ.TypeParam); ok && tp.Name == "T" {
+			return typ.String, true
+		}
+		return nil, false
+	})
+	body, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("rewrite result = %T, want record", got)
+	}
+	outerField := body.GetField("outer")
+	if outerField == nil || outerField.Type != typ.String {
+		t.Fatalf("outer field = %v, want substituted string", outerField)
+	}
+	innerField := body.GetField("inner")
+	if innerField == nil {
+		t.Fatal("missing inner field")
+	}
+	gotInner, ok := innerField.Type.(*typ.Generic)
+	if !ok {
+		t.Fatalf("inner field = %T %[1]v, want Result generic", innerField.Type)
+	}
+	if len(gotInner.TypeParams) != 1 || gotInner.TypeParams[0] != inner {
+		t.Fatalf("inner binder changed/captured: %#v, want original inner binder", gotInner.TypeParams)
+	}
+	gotInnerBody, ok := gotInner.Body.(*typ.Record)
+	if !ok {
+		t.Fatalf("inner body = %T, want record", gotInner.Body)
+	}
+	valueField := gotInnerBody.GetField("value")
+	if valueField == nil || valueField.Type != inner {
+		t.Fatalf("inner value field = %v, want original inner binder", valueField)
+	}
+}
+
+func TestRewrite_FunctionDescentDoesNotCaptureNestedSameNameBinder(t *testing.T) {
+	outer := typ.NewTypeParam("T", nil)
+	inner := typ.NewTypeParam("T", nil)
+	callback := typ.Func().
+		TypeParamRef(inner).
+		Param("value", inner).
+		Returns(inner).
+		Build()
+	container := newRecord().
+		Field("outer", outer).
+		Field("callback", callback).
+		Build()
+
+	got := Rewrite(container, func(node typ.Type) (typ.Type, bool) {
+		if tp, ok := node.(*typ.TypeParam); ok && tp.Name == "T" {
+			return typ.String, true
+		}
+		return nil, false
+	})
+	body, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("rewrite result = %T, want record", got)
+	}
+	outerField := body.GetField("outer")
+	if outerField == nil || outerField.Type != typ.String {
+		t.Fatalf("outer field = %v, want substituted string", outerField)
+	}
+	callbackField := body.GetField("callback")
+	if callbackField == nil {
+		t.Fatal("missing callback field")
+	}
+	gotCallback, ok := callbackField.Type.(*typ.Function)
+	if !ok {
+		t.Fatalf("callback field = %T %[1]v, want function", callbackField.Type)
+	}
+	if len(gotCallback.TypeParams) != 1 || gotCallback.TypeParams[0] != inner {
+		t.Fatalf("callback binder changed/captured: %#v, want original inner binder", gotCallback.TypeParams)
+	}
+	if gotCallback.Params[0].Type != inner {
+		t.Fatalf("callback param = %v, want original inner binder", gotCallback.Params[0].Type)
+	}
+	if gotCallback.Returns[0] != inner {
+		t.Fatalf("callback return = %v, want original inner binder", gotCallback.Returns[0])
+	}
+}
+
 func TestRewrite_FunctionTypeParamConstraint(t *testing.T) {
 	tp := typ.NewTypeParam("T", typ.Number)
 	fn := typ.Func().TypeParamRef(tp).Param("value", tp).Variadic(tp).Returns(tp).Build()

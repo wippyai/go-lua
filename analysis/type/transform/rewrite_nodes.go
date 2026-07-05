@@ -8,11 +8,12 @@ import (
 
 func rewriteFunction(v *typ.Function, orig typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursion.Guard, depth int, memo map[rewriteKey]typ.Type) typ.Type {
 	typeParams, typeParamReplacements, changed := rewriteTypeParamList(v.TypeParams, fn, guard, depth, memo)
-	rewriteChild := rewriteFnWithTypeParamReplacements(fn, typeParamReplacements)
+	rewriteChild := rewriteFnWithTypeParamScope(fn, v.TypeParams, typeParamReplacements)
+	childMemo := rewriteMemoForTypeParamScope(memo, v.TypeParams, typeParamReplacements)
 
 	var params []typ.Param
 	for i, p := range v.Params {
-		newType := rewriteDepth(p.Type, rewriteChild, guard, depth, memo)
+		newType := rewriteDepth(p.Type, rewriteChild, guard, depth, childMemo)
 		if newType != p.Type {
 			if params == nil {
 				params = make([]typ.Param, len(v.Params))
@@ -27,7 +28,7 @@ func rewriteFunction(v *typ.Function, orig typ.Type, fn func(typ.Type) (typ.Type
 
 	var returns []typ.Type
 	for i, r := range v.Returns {
-		newRet := rewriteDepth(r, rewriteChild, guard, depth, memo)
+		newRet := rewriteDepth(r, rewriteChild, guard, depth, childMemo)
 		if newRet != r {
 			if returns == nil {
 				returns = make([]typ.Type, len(v.Returns))
@@ -42,7 +43,7 @@ func rewriteFunction(v *typ.Function, orig typ.Type, fn func(typ.Type) (typ.Type
 
 	var variadic typ.Type
 	if v.Variadic != nil {
-		variadic = rewriteDepth(v.Variadic, rewriteChild, guard, depth, memo)
+		variadic = rewriteDepth(v.Variadic, rewriteChild, guard, depth, childMemo)
 		if variadic != v.Variadic {
 			changed = true
 		}
@@ -91,7 +92,13 @@ func rewriteTypeParam(v *typ.TypeParam, orig typ.Type, fn func(typ.Type) (typ.Ty
 func rewriteGeneric(v *typ.Generic, orig typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursion.Guard, depth int, memo map[rewriteKey]typ.Type) typ.Type {
 	typeParams, typeParamReplacements, changed := rewriteTypeParamList(v.TypeParams, fn, guard, depth, memo)
 
-	body := rewriteDepth(v.Body, rewriteFnWithTypeParamReplacements(fn, typeParamReplacements), guard, depth, memo)
+	body := rewriteDepth(
+		v.Body,
+		rewriteFnWithTypeParamScope(fn, v.TypeParams, typeParamReplacements),
+		guard,
+		depth,
+		rewriteMemoForTypeParamScope(memo, v.TypeParams, typeParamReplacements),
+	)
 	if body != v.Body {
 		changed = true
 	}
@@ -110,9 +117,8 @@ func rewriteTypeParamList(params []*typ.TypeParam, fn func(typ.Type) (typ.Type, 
 	var replacements map[*typ.TypeParam]*typ.TypeParam
 	changed := false
 	for i, p := range params {
-		newParamType := rewriteDepth(p, fn, guard, depth, memo)
-		newParam, ok := newParamType.(*typ.TypeParam)
-		if !ok || newParam == p {
+		newParam := rewriteTypeParamBinder(p, fn, guard, depth, memo)
+		if newParam == p {
 			if out != nil {
 				out[i] = p
 			}
@@ -132,8 +138,24 @@ func rewriteTypeParamList(params []*typ.TypeParam, fn func(typ.Type) (typ.Type, 
 	return out, replacements, changed
 }
 
-func rewriteFnWithTypeParamReplacements(fn func(typ.Type) (typ.Type, bool), replacements map[*typ.TypeParam]*typ.TypeParam) func(typ.Type) (typ.Type, bool) {
-	if len(replacements) == 0 {
+func rewriteTypeParamBinder(p *typ.TypeParam, fn func(typ.Type) (typ.Type, bool), guard recursion.Guard, depth int, memo map[rewriteKey]typ.Type) *typ.TypeParam {
+	if p == nil {
+		return p
+	}
+	if replacement, ok := fn(p); ok {
+		if newParam, ok := replacement.(*typ.TypeParam); ok {
+			return newParam
+		}
+	}
+	constraint := rewriteDepth(p.Constraint, fn, guard, depth, memo)
+	if constraint == p.Constraint {
+		return p
+	}
+	return typ.NewTypeParam(p.Name, constraint)
+}
+
+func rewriteFnWithTypeParamScope(fn func(typ.Type) (typ.Type, bool), binders []*typ.TypeParam, replacements map[*typ.TypeParam]*typ.TypeParam) func(typ.Type) (typ.Type, bool) {
+	if len(replacements) == 0 && len(binders) == 0 {
 		return fn
 	}
 	return func(t typ.Type) (typ.Type, bool) {
@@ -141,9 +163,34 @@ func rewriteFnWithTypeParamReplacements(fn func(typ.Type) (typ.Type, bool), repl
 			if replacement, ok := replacements[tp]; ok {
 				return replacement, true
 			}
+			if typeParamShadowsBinder(tp, binders) {
+				return nil, false
+			}
 		}
 		return fn(t)
 	}
+}
+
+func typeParamShadowsBinder(tp *typ.TypeParam, binders []*typ.TypeParam) bool {
+	if tp == nil {
+		return false
+	}
+	for _, binder := range binders {
+		if binder == nil {
+			continue
+		}
+		if tp == binder || tp.Name == binder.Name || tp.Equals(binder) {
+			return true
+		}
+	}
+	return false
+}
+
+func rewriteMemoForTypeParamScope(memo map[rewriteKey]typ.Type, binders []*typ.TypeParam, replacements map[*typ.TypeParam]*typ.TypeParam) map[rewriteKey]typ.Type {
+	if len(binders) == 0 && len(replacements) == 0 {
+		return memo
+	}
+	return nil
 }
 
 func rewriteRecursive(v *typ.Recursive, orig typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursion.Guard, depth int, memo map[rewriteKey]typ.Type) typ.Type {
