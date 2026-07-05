@@ -617,6 +617,26 @@ func (b *builder) emitCallAt(point cfg.Point, call *ast.FuncCallExpr, resultCoun
 	}
 	cr.index = len(b.pointInstrs[point])
 	b.emit(inst)
+	b.recordContextCallResultTarget(point, resultCount, meta)
+}
+
+func (b *builder) recordContextCallResultTarget(point cfg.Point, resultCount int, meta callMetadata) {
+	if resultCount == 0 {
+		return
+	}
+	target := wir.CallResultTarget{
+		Index:       meta.expr,
+		ResultIndex: 0,
+	}
+	switch meta.context {
+	case wir.CallContextReturnSource:
+		target.Kind = wir.CallResultTargetReturn
+	case wir.CallContextExpressionProducer:
+		target.Kind = wir.CallResultTargetExpression
+	default:
+		return
+	}
+	b.body.SetCallResultTarget(point, target)
 }
 
 // ---- calls, statement position -----------------------------------------

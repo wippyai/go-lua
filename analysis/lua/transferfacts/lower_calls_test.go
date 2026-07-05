@@ -288,14 +288,8 @@ end
 		t.Fatalf("missing WIR call site at point %d", callPoint)
 	}
 	targets := site.ResultTargets()
-	if len(targets) != 1 {
-		t.Fatalf("call result targets = %#v, want one", targets)
-	}
-	if got := targets[0].TargetPath(); !got.IsEmpty() || got.Equal(valuePath) {
-		t.Fatalf("call result target path = %v, want empty WIR target not semantic path %v", got, valuePath)
-	}
-	if targets[0].TargetSymbol() != 0 {
-		t.Fatalf("call result target symbol = %d, want 0 without WIR target", targets[0].TargetSymbol())
+	if len(targets) != 0 {
+		t.Fatalf("call result targets = %#v, want no semantic fallback target for %v", targets, valuePath)
 	}
 }
 
@@ -395,6 +389,30 @@ end
 	}
 	if targets[0].Kind() != factflow.CallResultTargetExpression || targets[0].Index() != 7 || targets[0].ResultIndex() != 0 {
 		t.Fatalf("call result target = %#v, want WIR expression index 7 result 0", targets[0])
+	}
+}
+
+func TestLowerReturnCallResultTargetComesFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): string
+    return make()
+end
+`, "make")
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
+	}
+	callPoint := requireStmtPoints(t, built, ret, 2)[0]
+	body := wirlower.Lower("return-target", fn.Stmts, bindings, built)
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	site, ok := facts.CallSite(callPoint)
+	if !ok {
+		t.Fatalf("missing WIR call site at point %d", callPoint)
+	}
+	targets := site.ResultTargets()
+	if len(targets) != 1 || targets[0].Kind() != factflow.CallResultTargetReturn || targets[0].Index() != 0 || targets[0].ResultIndex() != 0 {
+		t.Fatalf("return call targets = %#v, want WIR return index 0 result 0", targets)
 	}
 }
 

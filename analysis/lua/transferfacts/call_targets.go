@@ -21,30 +21,10 @@ func (l *lowerer) evidenceCallSiteResultTargets(targets []semantics.CallResultTa
 }
 
 func (l *lowerer) callSiteResultTargetsFromWIR(point cfg.Point, targets []semantics.CallResultTarget) []factflow.CallResultTarget {
-	if l != nil && l.wir != nil && len(targets) == 0 {
+	if l != nil && l.wir != nil {
 		return lowerWIRCallResultTargets(l.wir.CallResultTargets(point))
 	}
-	out := l.evidenceCallSiteResultTargets(targets)
-	if l == nil || l.wir == nil || len(out) == 0 {
-		return out
-	}
-	for i, lowered := range out {
-		target, ok := l.wir.CallResultTarget(point, lowered.ResultIndex())
-		if !ok {
-			if callResultTargetNeedsWIRPath(lowered) {
-				out[i] = factflow.NewCallResultTarget(
-					lowered.Kind(),
-					lowered.Index(),
-					lowered.ResultIndex(),
-					0,
-					path.Path{},
-				)
-			}
-			continue
-		}
-		out[i] = lowerWIRCallResultTarget(target, lowered)
-	}
-	return out
+	return l.evidenceCallSiteResultTargets(targets)
 }
 
 func lowerWIRCallResultTargets(targets []wir.CallResultTarget) []factflow.CallResultTarget {
@@ -53,12 +33,12 @@ func lowerWIRCallResultTargets(targets []wir.CallResultTarget) []factflow.CallRe
 	}
 	out := make([]factflow.CallResultTarget, len(targets))
 	for i, target := range targets {
-		out[i] = lowerWIRCallResultTarget(target, factflow.CallResultTarget{})
+		out[i] = lowerWIRCallResultTarget(target)
 	}
 	return out
 }
 
-func lowerWIRCallResultTarget(target wir.CallResultTarget, fallback factflow.CallResultTarget) factflow.CallResultTarget {
+func lowerWIRCallResultTarget(target wir.CallResultTarget) factflow.CallResultTarget {
 	targetKind := factflow.CallResultTargetUnknown
 	switch target.Kind {
 	case wir.CallResultTargetLocalAssignment:
@@ -69,36 +49,14 @@ func lowerWIRCallResultTarget(target wir.CallResultTarget, fallback factflow.Cal
 		targetKind = factflow.CallResultTargetReturn
 	case wir.CallResultTargetExpression:
 		targetKind = factflow.CallResultTargetExpression
-	default:
-		targetKind = fallback.Kind()
 	}
 	targetIndex := target.Index
-	if targetIndex < 0 {
-		targetIndex = fallback.Index()
-	}
 	resultIndex := target.ResultIndex
-	if resultIndex < 0 {
-		resultIndex = fallback.ResultIndex()
-	}
 	targetSymbol := symbol.ID(0)
 	if !target.Path.IsEmpty() {
 		targetSymbol = target.Path.Symbol
-	} else {
-		targetSymbol = fallback.TargetSymbol()
-		if callResultTargetNeedsWIRPath(fallback) {
-			targetSymbol = 0
-		}
 	}
 	return factflow.NewCallResultTarget(targetKind, targetIndex, resultIndex, targetSymbol, target.Path)
-}
-
-func callResultTargetNeedsWIRPath(target factflow.CallResultTarget) bool {
-	switch target.Kind() {
-	case factflow.CallResultTargetLocalAssignment, factflow.CallResultTargetOrdinaryAssignment:
-		return true
-	default:
-		return false
-	}
 }
 
 func (l *lowerer) callResultTargetPath(point cfg.Point, fact semantics.CallFact, resultIndex int) (path.Path, bool) {
