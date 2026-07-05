@@ -107,6 +107,26 @@ func TypeIsCall(expr ast.Expr) (*ast.FuncCallExpr, bool) {
 	return typeCallShape(expr, "is", true)
 }
 
+// TypeIsCallReceiver reports a direct one-argument `receiver:is(path)` or
+// `receiver.is(path)` call and returns the receiver expression whose type value
+// is being applied to the argument path.
+func TypeIsCallReceiver(expr ast.Expr) (*ast.FuncCallExpr, ast.Expr, bool) {
+	call, ok := TypeIsCall(expr)
+	if !ok {
+		return nil, nil, false
+	}
+	if call.Receiver != nil && call.Method == "is" {
+		return call, call.Receiver, true
+	}
+	if call.Receiver == nil && call.Method == "" {
+		attr, ok := call.Func.(*ast.AttrGetExpr)
+		if ok && attr.KeySyntax == ast.AttrKeyDot && ast.KeyName(attr.Key) == "is" {
+			return call, attr.Object, true
+		}
+	}
+	return nil, nil, false
+}
+
 func Normalize(expr ast.Expr, bindings *bind.Result) Check {
 	if p, ok := pathexpr.Resolve(expr, bindings); ok {
 		return Check{Kind: CheckTruthy, Path: p}

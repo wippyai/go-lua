@@ -21,7 +21,7 @@ func (l *lowerer) typeIsCall(fact semantics.CallFact) (typ.Type, path.Path, bool
 }
 
 func (l *lowerer) typeIsCallExpr(call *ast.FuncCallExpr) (typ.Type, path.Path, bool) {
-	call, receiver, ok := typeIsCallReceiver(call)
+	call, receiver, ok := branchcond.TypeIsCallReceiver(call)
 	if !ok {
 		return nil, path.Path{}, false
 	}
@@ -34,23 +34,6 @@ func (l *lowerer) typeIsCallExpr(call *ast.FuncCallExpr) (typ.Type, path.Path, b
 		return nil, path.Path{}, false
 	}
 	return t, argPath, true
-}
-
-func typeIsCallReceiver(expr ast.Expr) (*ast.FuncCallExpr, ast.Expr, bool) {
-	call, ok := branchcond.TypeIsCall(expr)
-	if !ok {
-		return nil, nil, false
-	}
-	if call.Receiver != nil && call.Method == "is" {
-		return call, call.Receiver, true
-	}
-	if call.Receiver == nil && call.Method == "" {
-		attr, ok := call.Func.(*ast.AttrGetExpr)
-		if ok && attr.KeySyntax == ast.AttrKeyDot && ast.KeyName(attr.Key) == "is" {
-			return call, attr.Object, true
-		}
-	}
-	return nil, nil, false
 }
 
 func (l *lowerer) addTypeIsBranchRefinements(input *factflow.FactsInput, graph cfg.Graph, result *semantics.Result) {

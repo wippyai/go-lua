@@ -326,6 +326,25 @@ func TestTypeIsCallShapeRecognition(t *testing.T) {
 	}
 }
 
+func TestTypeIsCallReceiverRecognition(t *testing.T) {
+	methodRoot := ident("Point")
+	arg := dot(ident("data"), "item")
+	methodCall := typeIsCall(methodRoot, arg)
+	memberRoot := ident("Shape")
+	memberCall := &ast.FuncCallExpr{Func: dot(memberRoot, "is"), Args: []ast.Expr{arg}}
+	wrapped := &ast.NonNilAssertExpr{Expr: memberCall}
+
+	if gotCall, gotReceiver, ok := TypeIsCallReceiver(methodCall); !ok || gotCall != methodCall || gotReceiver != methodRoot {
+		t.Fatalf("TypeIsCallReceiver(method) = %p/%p/%v, want %p/%p/true", gotCall, gotReceiver, ok, methodCall, methodRoot)
+	}
+	if gotCall, gotReceiver, ok := TypeIsCallReceiver(wrapped); !ok || gotCall != memberCall || gotReceiver != memberRoot {
+		t.Fatalf("TypeIsCallReceiver(member) = %p/%p/%v, want %p/%p/true", gotCall, gotReceiver, ok, memberCall, memberRoot)
+	}
+	if gotCall, gotReceiver, ok := TypeIsCallReceiver(typeCall(arg)); ok || gotCall != nil || gotReceiver != nil {
+		t.Fatalf("TypeIsCallReceiver(type call) = %p/%p/%v, want nil/nil/false", gotCall, gotReceiver, ok)
+	}
+}
+
 func TestTruthyChecksExtractSupportedConjuncts(t *testing.T) {
 	value := ident("value")
 	expr := &ast.LogicalOpExpr{
