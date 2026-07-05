@@ -208,6 +208,49 @@ local t = {
 	assertEntry(4, suffixPath(segment.Segment{Kind: segment.SegmentIndexInt, Index: 2}))
 }
 
+func TestTableConstructorCarriesFlattenedNestedEntryMetadata(t *testing.T) {
+	body := lowerBody(t, `
+local t = {
+    x = 1,
+    a = {
+        b = 2,
+        [dynamic] = 3,
+    },
+}
+`, "dynamic")
+	var root wir.Instruction
+	for i := 0; i < body.Len(); i++ {
+		candidate := body.Instr(i)
+		if candidate.Op == wir.OpMakeTable && candidate.Dst.Kind == wir.OperandPath {
+			root = candidate
+			break
+		}
+	}
+	if root.Op != wir.OpMakeTable {
+		t.Fatal("missing root OpMakeTable")
+	}
+	entries := body.TableEntries(root.TableEntries)
+	if len(entries) != 3 {
+		t.Fatalf("root table entries = %#v, want x, a, and a.b", entries)
+	}
+	want := []path.Path{
+		suffixPath(segment.Segment{Kind: segment.SegmentField, Name: "x"}),
+		suffixPath(segment.Segment{Kind: segment.SegmentField, Name: "a"}),
+		suffixPath(
+			segment.Segment{Kind: segment.SegmentField, Name: "a"},
+			segment.Segment{Kind: segment.SegmentField, Name: "b"},
+		),
+	}
+	for i := range want {
+		if !entries[i].Suffix.Equal(want[i]) {
+			t.Fatalf("entry %d suffix = %v, want %v", i, entries[i].Suffix, want[i])
+		}
+		if entries[i].Value.Kind == wir.OperandNone {
+			t.Fatalf("entry %d missing value operand", i)
+		}
+	}
+}
+
 func suffixPath(segs ...segment.Segment) path.Path {
 	return path.Path{Segments: append([]segment.Segment(nil), segs...)}
 }

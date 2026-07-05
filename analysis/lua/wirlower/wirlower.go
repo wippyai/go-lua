@@ -1031,6 +1031,12 @@ func (b *builder) lowerTable(dst wir.Operand, t *ast.TableExpr) {
 		ops = append(ops, value)
 		if suffix, ok := entryByField[f]; ok {
 			entries = append(entries, wir.TableEntry{Suffix: suffix, Value: value})
+			for _, nested := range b.tableEntriesForProducedOperand(value) {
+				entries = append(entries, wir.TableEntry{
+					Suffix: suffix.AppendPathSuffix(nested.Suffix),
+					Value:  nested.Value,
+				})
+			}
 		}
 	}
 	b.emit(wir.Instruction{
@@ -1040,6 +1046,21 @@ func (b *builder) lowerTable(dst wir.Operand, t *ast.TableExpr) {
 		TableEntries: b.body.AppendTableEntries(entries),
 		ListSpread:   spread,
 	})
+}
+
+func (b *builder) tableEntriesForProducedOperand(op wir.Operand) []wir.TableEntry {
+	if op.Kind != wir.OperandTemp {
+		return nil
+	}
+	insts := b.pointInstrs[b.curPoint]
+	for i := len(insts) - 1; i >= 0; i-- {
+		inst := insts[i]
+		if inst.Op != wir.OpMakeTable || inst.Dst != op {
+			continue
+		}
+		return b.body.TableEntries(inst.TableEntries)
+	}
+	return nil
 }
 
 func lastFieldIndex(fields []*ast.Field) int {
