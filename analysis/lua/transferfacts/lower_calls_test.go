@@ -460,6 +460,48 @@ end
 	}
 }
 
+func TestLowerDirectMemberCallShapeComesFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): ()
+    local obj = { run = function() end }
+    local other = { run = function() end }
+    obj.run()
+end
+`)
+	stmt, ok := fn.Stmts[2].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[2])
+	}
+	points := requireStmtPoints(t, built, stmt, 1)
+	objPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "obj")
+	otherPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "other")
+	body := wir.NewBody("synthetic-direct-member-callee")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpCall,
+		Point: points[0],
+		Call: wir.CallInfo{
+			Callee: wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath.Field("run")))},
+		},
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	site, ok := facts.CallSite(points[0])
+	if !ok {
+		t.Fatalf("missing call site at point %d", points[0])
+	}
+	if got := site.CalleeSymbol(); got != otherPath.Symbol || got == objPath.Symbol {
+		t.Fatalf("callee symbol = %d, want WIR symbol %d not semantic symbol %d", got, otherPath.Symbol, objPath.Symbol)
+	}
+	if got := site.CalleePath(); !got.Equal(otherPath.Field("run")) || got.Equal(objPath.Field("run")) {
+		t.Fatalf("callee path = %v, want WIR path %v not semantic path %v", got, otherPath.Field("run"), objPath.Field("run"))
+	}
+	receiver, member, ok := site.CalleeMemberAccessPath()
+	if !ok || !receiver.Equal(otherPath) || receiver.Equal(objPath) || member.Name != "run" {
+		t.Fatalf("member access path = %v/%#v/%v, want WIR receiver %v .run not semantic receiver %v", receiver, member, ok, otherPath, objPath)
+	}
+}
+
 func TestLowerMethodCallReceiverSourcePathComesFromWIR(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(): ()

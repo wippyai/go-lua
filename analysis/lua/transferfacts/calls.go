@@ -32,7 +32,7 @@ func (l *lowerer) callSiteWithArgumentSourcesAt(point cfg.Point, fact semantics.
 	shape := semanticCallSiteShape(fact)
 	if wirShape, ok := l.methodCallShapeFromWIR(point); ok {
 		shape = wirShape
-	} else if wirShape, ok := l.directRootCallShapeFromWIR(point); ok {
+	} else if wirShape, ok := l.directCallShapeFromWIR(point); ok {
 		shape = wirShape
 	}
 	receiverSource, hasReceiverSource := l.callReceiverSource(point, fact)
@@ -134,18 +134,19 @@ func (l *lowerer) methodCallShapeFromWIR(point cfg.Point) (callSiteShape, bool) 
 	}, true
 }
 
-func (l *lowerer) directRootCallShapeFromWIR(point cfg.Point) (callSiteShape, bool) {
+func (l *lowerer) directCallShapeFromWIR(point cfg.Point) (callSiteShape, bool) {
 	inst, ok := l.wirCallInstruction(point)
 	if !ok || inst.Call.Method != 0 || inst.Call.Callee.Kind != wir.OperandPath {
 		return callSiteShape{}, false
 	}
 	calleePath := l.wir.Path(wir.PathRef(inst.Call.Callee.Ref))
-	if calleePath.Symbol == 0 || len(calleePath.Segments) != 0 {
+	if calleePath.Symbol == 0 {
 		return callSiteShape{}, false
 	}
 	return callSiteShape{
-		calleeSymbol: calleePath.Symbol,
-		calleePath:   calleePath,
+		calleeSymbol:       calleePath.Symbol,
+		calleePath:         calleePath,
+		calleeMemberAccess: len(calleePath.Segments) > 0,
 	}, true
 }
 
