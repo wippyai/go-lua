@@ -14,7 +14,7 @@ func (l *lowerer) branchEdgeReachabilityFromWIR(point cfg.Point) (factflow.Branc
 		if inst.Op != wir.OpBranch || l.wir.Check(inst.Check).Kind != wir.CheckNone {
 			continue
 		}
-		truthy, ok := wirStaticLuaTruthiness(l.wir, inst.A, l.wirTempDefs())
+		truthy, ok := l.wirStaticLuaTruthinessAt(point, inst.A)
 		if !ok {
 			return factflow.BranchEdgeReachability{}, false
 		}
@@ -56,6 +56,123 @@ func wirTempDefinitions(body *wir.Body) map[uint32]wir.Instruction {
 		}
 	}
 	return defs
+}
+
+func (l *lowerer) wirTempDefSets() map[uint32][]wir.Instruction {
+	if l.wirTempDefinitionSets != nil {
+		return l.wirTempDefinitionSets
+	}
+	l.wirTempDefinitionSets = wirTempDefinitionSets(l.wir)
+	return l.wirTempDefinitionSets
+}
+
+func wirTempDefinitionSets(body *wir.Body) map[uint32][]wir.Instruction {
+	if body == nil || body.Len() == 0 {
+		return nil
+	}
+	defs := make(map[uint32][]wir.Instruction)
+	for i := 0; i < body.Len(); i++ {
+		inst := body.Instr(i)
+		if inst.Dst.Kind != wir.OperandTemp {
+			continue
+		}
+		defs[inst.Dst.Ref] = append(defs[inst.Dst.Ref], inst)
+	}
+	return defs
+}
+
+func (l *lowerer) wirStaticLuaTruthinessAt(point cfg.Point, operand wir.Operand) (bool, bool) {
+	if truthy, ok := wirStaticLuaTruthiness(l.wir, operand, l.wirTempDefs()); ok {
+		return truthy, true
+	}
+	if operand.Kind != wir.OperandTemp || l.graph == nil {
+		return false, false
+	}
+	defs := l.wirTempDefSets()[operand.Ref]
+	if len(defs) == 0 {
+		return false, false
+	}
+	var out bool
+	var have bool
+	for _, def := range defs {
+		if !l.wirPointStaticallyReachable(def.Point) {
+			continue
+		}
+		if def.Point != point {
+			if l.wirReachability == nil {
+				l.wirReachability = cfg.NewReachability(l.graph)
+			}
+			if !l.wirReachability.CanReach(def.Point, point) {
+				continue
+			}
+		}
+		truthy, ok := wirInstructionTruthiness(l.wir, def, l.wirTempDefs(), nil)
+		if !ok {
+			return false, false
+		}
+		if have && truthy != out {
+			return false, false
+		}
+		out = truthy
+		have = true
+	}
+	return out, have
+}
+
+func (l *lowerer) wirPointStaticallyReachable(point cfg.Point) bool {
+	if l.graph == nil {
+		return true
+	}
+	reachable := l.wirStaticReachablePoints()
+	return reachable[point]
+}
+
+func (l *lowerer) wirStaticReachablePoints() map[cfg.Point]bool {
+	if l.wirStaticReachable != nil {
+		return l.wirStaticReachable
+	}
+	reachable := make(map[cfg.Point]bool)
+	if l.graph == nil {
+		l.wirStaticReachable = reachable
+		return reachable
+	}
+	stack := []cfg.Point{l.graph.Entry()}
+	for len(stack) != 0 {
+		point := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if reachable[point] {
+			continue
+		}
+		reachable[point] = true
+		edgeReachability, hasEdgeReachability := l.staticWIRBranchEdgeReachability(point)
+		for _, succ := range cfg.SuccessorsReadOnly(l.graph, point) {
+			if hasEdgeReachability {
+				if cond, ok := l.graph.EdgeCond(point, succ); ok && edgeReachability.EdgeUnreachable(cond) {
+					continue
+				}
+			}
+			stack = append(stack, succ)
+		}
+	}
+	l.wirStaticReachable = reachable
+	return reachable
+}
+
+func (l *lowerer) staticWIRBranchEdgeReachability(point cfg.Point) (factflow.BranchEdgeReachability, bool) {
+	if l.wir == nil {
+		return factflow.BranchEdgeReachability{}, false
+	}
+	for _, inst := range l.wir.PointInstructions(point) {
+		if inst.Op != wir.OpBranch || l.wir.Check(inst.Check).Kind != wir.CheckNone {
+			continue
+		}
+		truthy, ok := wirStaticLuaTruthiness(l.wir, inst.A, l.wirTempDefs())
+		if !ok {
+			return factflow.BranchEdgeReachability{}, false
+		}
+		return factflow.NewBranchEdgeReachability(!truthy, truthy), true
+	}
+	return factflow.BranchEdgeReachability{}, false
 }
 
 func wirStaticLuaTruthinessWithDefs(

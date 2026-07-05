@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 func TestWIRBranchChecksMatchSemanticDirectBranchChecks(t *testing.T) {
@@ -140,6 +141,22 @@ if (nil :: any) then local k = 1 end
 	}
 	if checked != 17 {
 		t.Fatalf("checked %d static branch conditions, want 17", checked)
+	}
+}
+
+func TestWIRBranchReachabilityDoesNotFallbackToSidecarTruthiness(t *testing.T) {
+	point := cfg.Point(1)
+	body := wir.NewBody("branch")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpBranch,
+		Point: point,
+		Check: body.InternCheck(wir.Check{}),
+	})
+	body.SetPointRange(point, start, start+1)
+
+	lowered := lowerer{wir: body}
+	if got, ok := lowered.branchEdgeReachability(point, &ast.TrueExpr{}); ok {
+		t.Fatalf("WIR branch reachability fell back to sidecar truthiness: %#v", got)
 	}
 }
 

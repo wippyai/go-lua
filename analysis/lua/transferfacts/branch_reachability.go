@@ -3,6 +3,7 @@ package transferfacts
 import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -11,6 +12,9 @@ func (l *lowerer) branchEdgeReachability(point cfg.Point, expr ast.Expr) (factfl
 	if l.wir != nil {
 		if reachability, ok := l.branchEdgeReachabilityFromWIR(point); ok {
 			return reachability, true
+		}
+		if l.wir.HasInstruction(point, wir.OpBranch) {
+			return factflow.BranchEdgeReachability{}, false
 		}
 	}
 	return semanticBranchEdgeReachability(expr)

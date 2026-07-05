@@ -60,6 +60,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 	l := lowerer{
 		registry:                      config.Registry,
 		bindings:                      config.Bindings,
+		graph:                         graph,
 		graphID:                       graph.ID(),
 		typeResolver:                  typeResolver,
 		typeValues:                    config.TypeValues,
@@ -268,11 +269,15 @@ func copySymbolTypes(in map[symbol.ID]typ.Type) map[symbol.ID]typ.Type {
 type lowerer struct {
 	registry                      *axis.Registry
 	bindings                      *bind.Result
+	graph                         cfg.Graph
 	graphID                       uint64
 	typeResolver                  *typeresolve.Resolver
 	typeValues                    *typevalue.Cache
 	wir                           *wir.Body
 	wirTempDefinitions            map[uint32]wir.Instruction
+	wirTempDefinitionSets         map[uint32][]wir.Instruction
+	wirStaticReachable            map[cfg.Point]bool
+	wirReachability               *cfg.Reachability
 	callPoints                    map[*ast.FuncCallExpr]cfg.Point
 	symbolTypes                   map[symbol.ID]typ.Type
 	declaredReturnLocalTypes      map[symbol.ID]typ.Type
