@@ -506,6 +506,9 @@ func (b *builder) emitCallAt(point cfg.Point, call *ast.FuncCallExpr, resultCoun
 		}
 	} else {
 		inst.Call.Callee = b.calleeOperand(call.Func)
+		if calleeType, ok := b.typeValueRef(call.Func); ok {
+			inst.Type = calleeType
+		}
 	}
 	cr.index = len(b.pointInstrs[point])
 	b.emit(inst)

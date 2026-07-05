@@ -139,6 +139,7 @@ local v = number(data)
 		Op:    wir.OpCall,
 		Point: callPoint,
 		Call:  wir.CallInfo{Callee: wir.Operand{Kind: wir.OperandTemp, Ref: 99}},
+		Type:  body.InternType(typ.Number),
 		List:  body.AppendOperands([]wir.Operand{{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))}}),
 	})
 	body.SetPointRange(callPoint, start, start+1)
@@ -202,6 +203,49 @@ local v = 0
 		t.Fatalf("WIR primitive cast result values = %d, want 1: %#v", len(results), results)
 	}
 	assertTypeIsRuntimeProof(t, reg, results[0].Value(), typ.Number)
+}
+
+func TestLowerTypeValueCastFactsFromWIRTypeWithoutSemanticCallView(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local data: any = {}
+local v = 0
+`)
+	dataStmt := mustLocalStmt(t, stmts, 0)
+	localStmt := mustLocalStmt(t, stmts, 1)
+	point := requireStmtPoints(t, built, localStmt, 1)[0]
+	if _, ok := result.CallView(point); ok {
+		t.Fatalf("test point %d unexpectedly has semantic call view", point)
+	}
+	dataPath := path.NewPath(mustLocalAt(t, bindings, dataStmt, 0), "data")
+	pointType := typetable.NewRecord().
+		Field("x", typ.Number).
+		Field("y", typ.Number).
+		Build()
+
+	body := wir.NewBody("synthetic-type-value-cast-no-call-view")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpCall,
+		Point: point,
+		Type:  body.InternType(pointType),
+		List:  body.AppendOperands([]wir.Operand{{Kind: wir.OperandPath, Ref: uint32(body.InternPath(dataPath))}}),
+	})
+	body.SetPointRange(point, start, start+1)
+
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	refinements := facts.PostconditionRefinements(point)
+	if len(refinements) != 1 {
+		t.Fatalf("WIR type-value cast postconditions = %d, want 1: %#v", len(refinements), refinements)
+	}
+	if !refinements[0].TargetPath().Equal(dataPath) {
+		t.Fatalf("postcondition target = %s, want %s", refinements[0].TargetPath(), dataPath)
+	}
+	assertUntrustedPointNarrowing(t, reg, refinementConstraint(t, refinements[0].Value()))
+	results := facts.CallResultValues(point)
+	if len(results) != 1 {
+		t.Fatalf("WIR type-value cast result values = %d, want 1: %#v", len(results), results)
+	}
+	assertTypeIsPointProof(t, reg, results[0].Value())
 }
 
 func TestLowerPrimitiveTypeCastCallRespectsValueShadow(t *testing.T) {

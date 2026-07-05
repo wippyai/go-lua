@@ -9,6 +9,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
@@ -261,6 +263,49 @@ local t = {
 	if !entries[0].ValueSpan.Valid() || entries[0].ValueSpan.StartLine != 3 {
 		t.Fatalf("entry 0 value span = %#v, want valid line 3 span", entries[0].ValueSpan)
 	}
+}
+
+func TestDirectTypeValueCallCarriesResolvedType(t *testing.T) {
+	body := lowerBody(t, `
+type Point = { x: number }
+local raw: any = {}
+local point = Point(raw)
+`)
+	var inst wir.Instruction
+	for i := 0; i < body.Len(); i++ {
+		candidate := body.Instr(i)
+		if candidate.Op == wir.OpCall {
+			inst = candidate
+			break
+		}
+	}
+	if inst.Op != wir.OpCall {
+		t.Fatal("missing OpCall")
+	}
+	got := body.Type(inst.Type)
+	want := typetable.NewRecord().Field("x", typ.Number).Build()
+	if got == nil || !typ.TypeEquals(got, want) {
+		t.Fatalf("OpCall.Type = %v, want %v", got, want)
+	}
+}
+
+func TestDirectPrimitiveNameValueShadowDoesNotCarryType(t *testing.T) {
+	body := lowerBody(t, `
+local number = function(value) return value end
+local raw: any = {}
+local value = number(raw)
+`)
+	for i := 0; i < body.Len(); i++ {
+		inst := body.Instr(i)
+		if inst.Op != wir.OpCall {
+			continue
+		}
+		if inst.Type != 0 {
+			t.Fatalf("shadowed primitive OpCall.Type = %d/%v, want none", inst.Type, body.Type(inst.Type))
+		}
+		return
+	}
+	t.Fatal("missing OpCall")
 }
 
 func TestTableConstructorCarriesFlattenedNestedEntryMetadata(t *testing.T) {

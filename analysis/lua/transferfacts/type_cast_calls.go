@@ -133,7 +133,14 @@ func (l *lowerer) directTypeCastCallAt(point cfg.Point, fact semantics.CallFact)
 func (l *lowerer) directTypeCastCallFromWIR(point cfg.Point) (typ.Type, path.Path, bool) {
 	t, ok := l.typeCastCalleeTypeFromWIRCall(point)
 	if !ok {
-		return nil, path.Path{}, false
+		inst, hasCall := l.wirCallInstruction(point)
+		if !hasCall || inst.Call.Method != 0 || inst.Type == 0 {
+			return nil, path.Path{}, false
+		}
+		t = l.wir.Type(inst.Type)
+		if t == nil {
+			return nil, path.Path{}, false
+		}
 	}
 	argPath, ok := l.callArgumentPathFromWIR(point, 0)
 	if !ok {
