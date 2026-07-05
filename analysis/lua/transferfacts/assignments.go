@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
@@ -481,7 +482,7 @@ func (l *lowerer) dynamicIndexWrite(point cfg.Point, fact semantics.OrdinaryAssi
 	if !ok || tablePath.Symbol == 0 {
 		return factflow.DynamicIndexWrite{}, false
 	}
-	keySource, readKey := l.dynamicIndexKeySource(fact.Target)
+	keySource, readKey := l.dynamicIndexKeySource(point, fact.Target)
 	source := l.valueSource(fact.Source)
 	readValue := fact.Source.Kind != sourceprovenance.SourceUnknown
 	write := factflow.NewDynamicIndexWrite(
@@ -538,7 +539,7 @@ func (l *lowerer) dynamicInvalidationTarget(target ast.Expr) (path.Path, factflo
 				if !ok || tablePath.Symbol == 0 {
 					return path.Path{}, factflow.ValueSource{}, nil, false
 				}
-				keySource, ok := l.dynamicIndexKeySource(attr)
+				keySource, ok := l.dynamicIndexKeySourceFromAST(attr)
 				if !ok {
 					return path.Path{}, factflow.ValueSource{}, nil, false
 				}
@@ -590,7 +591,49 @@ func parseStaticIndex(raw string) (int, bool) {
 	return index, err == nil && index >= 0
 }
 
-func (l *lowerer) dynamicIndexKeySource(target ast.Expr) (factflow.ValueSource, bool) {
+func (l *lowerer) dynamicIndexKeySource(point cfg.Point, target ast.Expr) (factflow.ValueSource, bool) {
+	if source, ok := l.dynamicIndexKeySourceFromWIR(point); ok {
+		return source, true
+	}
+	return l.dynamicIndexKeySourceFromAST(target)
+}
+
+func (l *lowerer) dynamicIndexKeySourceFromWIR(point cfg.Point) (factflow.ValueSource, bool) {
+	if l == nil || l.wir == nil {
+		return factflow.ValueSource{}, false
+	}
+	for _, inst := range l.wir.PointInstructions(point) {
+		if inst.Op != wir.OpDynamicIndexWrite || inst.A.Kind == wir.OperandNone {
+			continue
+		}
+		if source, ok := l.rootPathExpressionSourceFromWIR(
+			"dynamic-index-key",
+			point,
+			inst.A,
+			sourceprovenance.NoSourceIndex,
+			sourceprovenance.NoSourceIndex,
+			true,
+			false,
+			false,
+			symbol.Local,
+			symbol.Param,
+		); ok {
+			return source, true
+		}
+		return l.valueSourceFromWIROperand(
+			inst.A,
+			sourceprovenance.NoSourceIndex,
+			sourceprovenance.NoSourceIndex,
+			true,
+			false,
+			false,
+			l.callResultValueSourcesByTempFromWIR(),
+		)
+	}
+	return factflow.ValueSource{}, false
+}
+
+func (l *lowerer) dynamicIndexKeySourceFromAST(target ast.Expr) (factflow.ValueSource, bool) {
 	attr, ok := target.(*ast.AttrGetExpr)
 	if !ok || attr.Key == nil || sourceprovenance.CanProduceMultipleValues(attr.Key) {
 		return factflow.NewUnknownValueSource(factflow.NoValueSourceIndex), false

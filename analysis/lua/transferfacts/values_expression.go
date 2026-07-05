@@ -62,7 +62,7 @@ func (l *lowerer) dynamicIndexExpression(expr ast.Expr) (factflow.DynamicIndexEx
 		(attr.KeySyntax != ast.AttrKeyIndex && attr.KeySyntax != ast.AttrKeyDot) {
 		return factflow.DynamicIndexExpression{}, false
 	}
-	keySource, ok := l.dynamicIndexKeySource(attr)
+	keySource, ok := l.dynamicIndexKeySourceFromAST(attr)
 	if !ok {
 		return factflow.DynamicIndexExpression{}, false
 	}

@@ -110,6 +110,20 @@ func (l *lowerer) localRootPathExpressionSourceFromWIR(
 	expanded bool,
 	openTail bool,
 ) (factflow.ValueSource, bool) {
+	return l.rootPathExpressionSourceFromWIR(kind, point, op, exprIndex, targetIndex, final, expanded, openTail, symbol.Local)
+}
+
+func (l *lowerer) rootPathExpressionSourceFromWIR(
+	kind string,
+	point cfg.Point,
+	op wir.Operand,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+	allowedKinds ...symbol.Kind,
+) (factflow.ValueSource, bool) {
 	if op.Kind != wir.OperandPath || l == nil || l.wir == nil || l.bindings == nil {
 		return factflow.ValueSource{}, false
 	}
@@ -118,7 +132,7 @@ func (l *lowerer) localRootPathExpressionSourceFromWIR(
 		return factflow.ValueSource{}, false
 	}
 	bindKind, ok := l.bindings.Kind(p.Symbol)
-	if !ok || bindKind != symbol.Local {
+	if !ok || !symbolKindAllowed(bindKind, allowedKinds) {
 		return factflow.ValueSource{}, false
 	}
 	exprRef, ok := l.exprRef(wirPathExprRefKey{

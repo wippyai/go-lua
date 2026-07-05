@@ -116,6 +116,46 @@ end
 	}
 }
 
+func TestLowerDynamicIndexKeySourcePathComesFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(box: any): ()
+    local value = "x"
+    local other = "y"
+    local payload = "z"
+    box[value] = payload
+end
+`)
+	assignStmt := fn.Stmts[3].(*ast.AssignStmt)
+	points := requireStmtPoints(t, built, assignStmt, 1)
+	boxPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "box")
+	valuePath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "value")
+	otherPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "other")
+	payloadPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[2].(*ast.LocalAssignStmt), 0), "payload")
+	body := wir.NewBody("synthetic-dynamic-key")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpDynamicIndexWrite,
+		Point: points[0],
+		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(boxPath))},
+		A:     wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))},
+		B:     wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(payloadPath))},
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	write, ok := facts.DynamicIndexWrite(points[0])
+	if !ok {
+		t.Fatalf("missing dynamic index write at point %d", points[0])
+	}
+	keySource := write.KeySource()
+	if keySource.Kind != factflow.ValueSourceExpression || !keySource.HasExpr {
+		t.Fatalf("dynamic key source = %#v, want expression-backed WIR path", keySource)
+	}
+	gotPath, ok := facts.ExpressionPath(keySource.ExprRef)
+	if !ok || !gotPath.Equal(otherPath) || gotPath.Equal(valuePath) {
+		t.Fatalf("dynamic key expression path = %v/%v, want WIR path %v not semantic path %v", gotPath, ok, otherPath, valuePath)
+	}
+}
+
 func TestLowerPathAndDynamicAssignmentKeepExpressionSourcesDuringWIRMigration(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(box: any, key: string, value: string)
