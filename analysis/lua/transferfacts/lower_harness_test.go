@@ -872,7 +872,7 @@ end
 	body.SetCallResultTarget(point, wir.CallResultTarget{
 		Kind:        wir.CallResultTargetLocalAssignment,
 		Index:       0,
-		ResultIndex: 0,
+		ResultIndex: 2,
 		Path:        selectedPath,
 	})
 
@@ -887,6 +887,9 @@ end
 	}
 	if events[0].Kind() != factflow.ChannelSelectSelect {
 		t.Fatalf("select event = %#v", events[0])
+	}
+	if events[0].Index() != 2 {
+		t.Fatalf("select event index = %d, want WIR result index 2", events[0].Index())
 	}
 	if got, ok := events[0].ResultPath(); !ok || !got.Equal(selectedPath) {
 		t.Fatalf("select result path = %v/%v, want %v", got, ok, selectedPath)

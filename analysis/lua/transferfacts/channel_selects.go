@@ -32,15 +32,28 @@ func (l *lowerer) channelSelectsFromWIR(point cfg.Point) []factflow.ChannelSelec
 		if inst.Op != wir.OpSelect {
 			continue
 		}
-		if target, ok := l.wir.CallResultTarget(point, 0); ok && !target.Path.IsEmpty() {
-			return l.channelSelectEventsFromWIR(point, inst, target.Path)
+		if target, ok := l.channelSelectResultTargetFromWIR(point); ok {
+			return l.channelSelectEventsFromWIR(point, inst, target)
 		}
 	}
 	return nil
 }
 
-func (l *lowerer) channelSelectEventsFromWIR(point cfg.Point, inst wir.Instruction, resultPath pathdom.Path) []factflow.ChannelSelect {
-	if resultPath.IsEmpty() {
+func (l *lowerer) channelSelectResultTargetFromWIR(point cfg.Point) (wir.CallResultTarget, bool) {
+	if l == nil || l.wir == nil {
+		return wir.CallResultTarget{}, false
+	}
+	for _, target := range l.wir.CallResultTargets(point) {
+		if target.Path.IsEmpty() {
+			continue
+		}
+		return target, true
+	}
+	return wir.CallResultTarget{}, false
+}
+
+func (l *lowerer) channelSelectEventsFromWIR(point cfg.Point, inst wir.Instruction, target wir.CallResultTarget) []factflow.ChannelSelect {
+	if target.Path.IsEmpty() {
 		return nil
 	}
 	selectID := factflow.ChannelSelectID("lua.channel_select@" + strconv.Itoa(int(point)))
@@ -48,9 +61,9 @@ func (l *lowerer) channelSelectEventsFromWIR(point cfg.Point, inst wir.Instructi
 		factflow.NewChannelSelect(factflow.ChannelSelectConfig{
 			SelectID:      selectID,
 			Kind:          factflow.ChannelSelectSelect,
-			ResultPath:    resultPath,
+			ResultPath:    target.Path,
 			HasResultPath: true,
-			Index:         0,
+			Index:         target.ResultIndex,
 			HasDefault:    inst.SelectDefault,
 		}),
 	}
@@ -74,7 +87,7 @@ func (l *lowerer) channelSelectEventsFromWIR(point cfg.Point, inst wir.Instructi
 			factflow.NewChannelSelect(factflow.ChannelSelectConfig{
 				SelectID:        selectID,
 				Kind:            factflow.ChannelSelectReceive,
-				ResultPath:      resultPath,
+				ResultPath:      target.Path,
 				HasResultPath:   true,
 				CasePath:        casePath,
 				HasCasePath:     true,
