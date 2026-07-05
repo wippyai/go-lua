@@ -385,7 +385,7 @@ func (l *lowerer) addReturnObjectLiteralExpectedTypes(input *factflow.FactsInput
 	if input == nil || result == nil {
 		return
 	}
-	declared := declaredReturnTypes(result)
+	declared := l.resolvedReturnObjectLiteralExpectedTypes(result)
 	if len(declared) == 0 || len(fact.Sources) == 0 {
 		return
 	}
@@ -393,8 +393,8 @@ func (l *lowerer) addReturnObjectLiteralExpectedTypes(input *factflow.FactsInput
 		if i >= len(declared) || source.Kind != sourceprovenance.SourceExpression || !tableConstructorExpr(source.Expr) {
 			continue
 		}
-		declaredType, ok := l.resolveType(declared[i])
-		if !ok || !luatypeprojection.ReachesTableContract(declaredType) {
+		declaredType := declared[i]
+		if !luatypeprojection.ReachesTableContract(declaredType) {
 			continue
 		}
 		exprRef, hasExpr := l.tableConstructorExprRef(source.Expr)
@@ -407,6 +407,23 @@ func (l *lowerer) addReturnObjectLiteralExpectedTypes(input *factflow.FactsInput
 		}
 		input.ObjectLiterals[exprRef] = l.objectLiteralWithExpectedType(lit, declaredType)
 	}
+}
+
+func (l *lowerer) resolvedReturnObjectLiteralExpectedTypes(result *semantics.Result) []typ.Type {
+	if l != nil && l.wir != nil {
+		return l.wir.DeclaredReturnTypes()
+	}
+	declared := declaredReturnTypes(result)
+	if len(declared) == 0 {
+		return nil
+	}
+	out := make([]typ.Type, len(declared))
+	for i, decl := range declared {
+		if t, ok := l.resolveType(decl); ok {
+			out[i] = t
+		}
+	}
+	return out
 }
 
 // addObjectLiteralFieldExposures records covariant exposures for object-literal

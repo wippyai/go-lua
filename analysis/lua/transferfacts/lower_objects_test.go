@@ -644,6 +644,50 @@ end`)
 	}
 }
 
+func TestLowerWithWIRReturnedObjectLiteralExpectedContractComesFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function new_actor(): { state: { processed: {[string]: string} } }
+	return { state = { processed = {} } }
+end`)
+	body := wirlower.LowerFunction("new_actor", fn, bindings, built)
+	fn.ReturnTypes = nil
+
+	reg := standard.Registry()
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
+	}
+	var returnFact factflow.Return
+	for _, point := range requireStmtPoints(t, built, ret, 1) {
+		if fact, ok := facts.Return(point); ok {
+			returnFact = fact
+			break
+		}
+	}
+	sources := returnFact.Sources()
+	if len(sources) != 1 || !sources[0].HasExpr {
+		t.Fatalf("return sources = %#v, want one expression source", sources)
+	}
+	literal, ok := facts.ObjectLiteral(sources[0].ExprRef)
+	if !ok {
+		t.Fatalf("missing returned object literal for ref %d", sources[0].ExprRef)
+	}
+	expected, ok := literal.Expected()
+	if !ok {
+		t.Fatalf("missing WIR-owned expected contract on returned object literal")
+	}
+	got, ok := typevalue.TypeOf(reg, expected)
+	want := typetable.NewRecord().
+		Field("state", typetable.NewRecord().
+			Field("processed", typetable.NewMap(typ.String, typ.String)).
+			Build()).
+		Build()
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("WIR returned literal expected = %v/%v, want %v", got, ok, want)
+	}
+}
+
 func TestLowerReturnedNestedObjectLiteralCarriesExpectedEntryContracts(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function output_error(err_type: string, message: string, code: any?): { type: string, error: { type: string, message: string, code: any? }? }
