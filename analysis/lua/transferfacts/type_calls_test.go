@@ -133,6 +133,77 @@ end
 	}
 }
 
+func TestLowerTypeIsBranchArgumentPathComesFromWIR(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+type Point = {x: number, y: number}
+local data: any = {}
+local other: any = {}
+local validated, err = Point:is(data)
+if err == nil then
+end
+`)
+	dataStmt := mustLocalStmt(t, stmts, 1)
+	otherStmt := mustLocalStmt(t, stmts, 2)
+	assign := mustLocalStmt(t, stmts, 3)
+	points := requireStmtPoints(t, built, assign, 3)
+	callPoint, valueAssignPoint, errAssignPoint := points[0], points[1], points[2]
+	valuePath := path.NewPath(mustLocalAt(t, bindings, assign, 0), "validated")
+	errPath := path.NewPath(mustLocalAt(t, bindings, assign, 1), "err")
+	dataPath := path.NewPath(mustLocalAt(t, bindings, dataStmt, 0), "data")
+	otherPath := path.NewPath(mustLocalAt(t, bindings, otherStmt, 0), "other")
+	ifStmt := mustIfStmt(t, stmts, 4)
+	branchPoint := requireStmtPoints(t, built, ifStmt, 1)[0]
+
+	body := wir.NewBody("type-is-arg-owner")
+	valueTemp := wir.Operand{Kind: wir.OperandTemp, Ref: 1}
+	errTemp := wir.Operand{Kind: wir.OperandTemp, Ref: 2}
+	callStart := body.Emit(wir.Instruction{
+		Op:      wir.OpCall,
+		Point:   callPoint,
+		Call:    wir.CallInfo{Callee: wir.Operand{Kind: wir.OperandTemp, Ref: 99}},
+		List:    body.AppendOperands([]wir.Operand{{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))}}),
+		Results: body.AppendOperands([]wir.Operand{valueTemp, errTemp}),
+	})
+	body.SetPointRange(callPoint, callStart, callStart+1)
+	body.SetCallResultTarget(callPoint, 0, valuePath)
+	body.SetCallResultTarget(callPoint, 1, errPath)
+	valueAssignStart := body.Emit(wir.Instruction{
+		Op:    wir.OpAssign,
+		Point: valueAssignPoint,
+		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(valuePath))},
+		A:     valueTemp,
+	})
+	body.SetPointRange(valueAssignPoint, valueAssignStart, valueAssignStart+1)
+	errAssignStart := body.Emit(wir.Instruction{
+		Op:    wir.OpAssign,
+		Point: errAssignPoint,
+		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(errPath))},
+		A:     errTemp,
+	})
+	body.SetPointRange(errAssignPoint, errAssignStart, errAssignStart+1)
+	branchStart := body.Emit(wir.Instruction{
+		Op:    wir.OpBranch,
+		Point: branchPoint,
+		Check: body.InternCheck(wir.Check{Kind: wir.CheckNil, Path: errPath}),
+	})
+	body.SetPointRange(branchPoint, branchStart, branchStart+1)
+
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	refinement, ok := branchRefinementAt(facts.BranchRefinements(branchPoint), otherPath)
+	if !ok {
+		t.Fatalf("missing WIR-arg Point refinement for %s at branch %d; got %#v", otherPath, branchPoint, facts.BranchRefinements(branchPoint))
+	}
+	value, ok := refinement.TrueValue()
+	if !ok {
+		t.Fatalf("missing true-edge WIR-arg refinement: %#v", refinement)
+	}
+	assertUntrustedPointNarrowing(t, reg, refinementConstraint(t, value))
+	if _, ok := branchRefinementAt(facts.BranchRefinements(branchPoint), dataPath); ok {
+		t.Fatalf("type-is branch refinement used semantic arg path %s instead of WIR arg path %s", dataPath, otherPath)
+	}
+}
+
 func TestLowerImportedTypeIsMemberCalleePublishesResultSlots(t *testing.T) {
 	reg := standard.Registry()
 	appError := typetable.NewRecord().
