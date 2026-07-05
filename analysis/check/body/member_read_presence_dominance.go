@@ -46,7 +46,7 @@ func (r *Result) dominatingRequiredMemberReadProvesPathPresent(point cfg.Point, 
 			!r.memberReadPresenceSourceMatchesTarget(source, target) ||
 			!r.PointDominates(source.point, point) ||
 			!r.PointCanReach(source.point, point) ||
-			r.PathInvalidatedBetween(source.point, point, target) {
+			r.PathPresenceInvalidatedBetween(source.point, point, target) {
 			continue
 		}
 		return true

@@ -226,6 +226,31 @@ end
 	}
 }
 
+func TestLowerDynamicIndexWriteDoesNotFallbackToASTTargetInWIRMode(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(box: any, key: string, payload: string): ()
+    box[key] = payload
+end
+`)
+	assignStmt := fn.Stmts[0].(*ast.AssignStmt)
+	points := requireStmtPoints(t, built, assignStmt, 1)
+	staticPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "box").Field("name")
+	payloadPath := path.NewPath(bindings.ParamSlots(fn)[2].Symbol, "payload")
+	body := wir.NewBody("synthetic-non-dynamic-write")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpStaticMemberWrite,
+		Point: points[0],
+		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(staticPath))},
+		A:     wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(payloadPath))},
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	if _, ok := facts.DynamicIndexWrite(points[0]); ok {
+		t.Fatalf("WIR mode dynamic index write at point %d fell back to AST target", points[0])
+	}
+}
+
 func TestLowerStaticMemberWriteSourcePathComesFromWIR(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(box: any): ()

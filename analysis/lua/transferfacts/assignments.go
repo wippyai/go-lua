@@ -510,12 +510,9 @@ func (l *lowerer) dynamicIndexWrite(point cfg.Point, fact semantics.OrdinaryAssi
 	if fact.HasPath {
 		return factflow.DynamicIndexWrite{}, false
 	}
-	tablePath, ok := l.directDynamicIndexWriteTablePath(fact.Target)
+	tablePath, ok := l.dynamicIndexWriteTablePath(point, fact.Target)
 	if !ok || tablePath.Symbol == 0 {
 		return factflow.DynamicIndexWrite{}, false
-	}
-	if wirTablePath, ok := l.dynamicIndexWriteTablePathFromWIR(point); ok {
-		tablePath = wirTablePath
 	}
 	keySource, readKey := l.dynamicIndexKeySource(point, fact.Target)
 	source := l.ordinaryAssignmentSource(point, fact.Source)
@@ -534,6 +531,13 @@ func (l *lowerer) dynamicIndexWrite(point cfg.Point, fact semantics.OrdinaryAssi
 		write = write.WithValuePath(valuePath)
 	}
 	return write, true
+}
+
+func (l *lowerer) dynamicIndexWriteTablePath(point cfg.Point, target ast.Expr) (path.Path, bool) {
+	if l != nil && l.wir != nil {
+		return l.dynamicIndexWriteTablePathFromWIR(point)
+	}
+	return l.directDynamicIndexWriteTablePath(target)
 }
 
 func (l *lowerer) dynamicIndexWriteTablePathFromWIR(point cfg.Point) (path.Path, bool) {

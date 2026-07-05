@@ -3016,6 +3016,37 @@ end
 	}
 }
 
+func TestCheckGenericForMemberReadProvesRootReceiverPresentInLoop(t *testing.T) {
+	result := Check(`
+type Route = {
+    target_name: string,
+}
+
+type StaticSource = {
+    routes: {Route},
+}
+
+type Graph = {
+    static_data_sources: {StaticSource},
+    resolve_reference: (self: Graph, name: string) -> (string?, string?),
+}
+
+local function validate_graph(graph: Graph?): ()
+    for _, static_source in ipairs(graph.static_data_sources) do
+        for _, route in ipairs(static_source.routes) do
+            local target_id, err = graph:resolve_reference(route.target_name)
+            if err then
+                return
+            end
+        end
+    end
+end
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want ipairs(graph.static_data_sources) to prove graph present for loop-body method calls", result.Diagnostics)
+	}
+}
+
 func TestCheckNestedOptionalFieldGuardProvesRepeatedNestedReads(t *testing.T) {
 	result := Check(`
 type ProcessResult = {
