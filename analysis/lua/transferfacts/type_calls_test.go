@@ -310,6 +310,56 @@ local validated, err = errors.AppError:is(raw)
 	}
 }
 
+func TestLowerImportedTypeIsReceiverComesFromWIR(t *testing.T) {
+	reg := standard.Registry()
+	appError := typetable.NewRecord().
+		Field("code", typ.String).
+		Build()
+	otherError := typetable.NewRecord().
+		Field("status", typ.Integer).
+		Build()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local errors = require("errors")
+local raw: any = {}
+local validated, err = errors.AppError:is(raw)
+`, "require")
+	errorsStmt := mustLocalStmt(t, stmts, 0)
+	rawStmt := mustLocalStmt(t, stmts, 1)
+	assign := mustLocalStmt(t, stmts, 2)
+	castCall := assign.Exprs[0].(*ast.FuncCallExpr)
+	callPoint := requireCallPoint(t, built.Graph, result, castCall)
+	errorsPath := path.NewPath(mustLocalAt(t, bindings, errorsStmt, 0), "errors")
+	rawPath := path.NewPath(mustLocalAt(t, bindings, rawStmt, 0), "raw")
+	otherReceiver := errorsPath.Field("OtherError")
+
+	body := wir.NewBody("type-is-receiver-owner")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpCall,
+		Point: callPoint,
+		Call: wir.CallInfo{
+			Receiver: wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherReceiver))},
+			Method:   body.InternConst(wir.Const{Kind: wir.ConstString, Str: "is"}),
+		},
+		List: body.AppendOperands([]wir.Operand{{Kind: wir.OperandPath, Ref: uint32(body.InternPath(rawPath))}}),
+	})
+	body.SetPointRange(callPoint, start, start+1)
+
+	resolver := typeresolve.NewWithExternal(bindings, testExternalTypes{
+		"errors.AppError":   appError,
+		"errors.OtherError": otherError,
+	})
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, TypeResolver: resolver, WIR: body})
+	values := facts.CallResultValues(callPoint)
+	if len(values) != 2 {
+		t.Fatalf("imported Type:is call result values = %d, want 2: %#v", len(values), values)
+	}
+	gotType, ok := typevalue.TypeOf(reg, values[0].Value())
+	wantType := typ.MaterializeOptional(otherError)
+	if !ok || !typ.TypeEquals(gotType, wantType) || typ.TypeEquals(gotType, typ.MaterializeOptional(appError)) {
+		t.Fatalf("type witness = %v/%v, want WIR receiver %v not semantic receiver %v", gotType, ok, wantType, typ.MaterializeOptional(appError))
+	}
+}
+
 func TestLowerTypeIsDirectConditionPublishesArgumentEvidence(t *testing.T) {
 	reg := standard.Registry()
 	stmts, bindings, built, result := parseSemanticChunk(t, `

@@ -2,6 +2,7 @@ package transferfacts
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -25,6 +26,9 @@ func (l *lowerer) typeIsCallAt(point cfg.Point, fact semantics.CallFact) (typ.Ty
 	if !ok {
 		return nil, path.Path{}, false
 	}
+	if wirType, ok := l.typeIsReceiverTypeFromWIR(point, fact); ok {
+		t = wirType
+	}
 	if wirPath, ok := l.typeIsArgumentPathFromWIR(point, fact); ok {
 		argPath = wirPath
 	}
@@ -39,6 +43,49 @@ func (l *lowerer) typeIsArgumentPathFromWIR(point cfg.Point, fact semantics.Call
 		return path.Path{}, false
 	}
 	return l.callArgumentPathFromWIR(point, 0)
+}
+
+func (l *lowerer) typeIsReceiverTypeFromWIR(point cfg.Point, fact semantics.CallFact) (typ.Type, bool) {
+	if l == nil || l.wir == nil || l.typeResolver == nil {
+		return nil, false
+	}
+	if _, _, ok := l.typeIsCall(fact); !ok {
+		return nil, false
+	}
+	inst, ok := l.wirCallInstruction(point)
+	if !ok || inst.Call.Receiver.Kind != wir.OperandPath {
+		return nil, false
+	}
+	method := l.wir.Const(inst.Call.Method)
+	if method.Kind != wir.ConstString || method.Str != "is" {
+		return nil, false
+	}
+	receiverPath := l.wir.Path(wir.PathRef(inst.Call.Receiver.Ref))
+	parts, ok := typeRefPartsFromWIRPath(receiverPath)
+	if !ok {
+		return nil, false
+	}
+	return l.typeResolver.ResolveTypeRef(parts)
+}
+
+func typeRefPartsFromWIRPath(p path.Path) ([]string, bool) {
+	if p.Root == "" || len(p.Segments) == 0 {
+		return nil, false
+	}
+	parts := make([]string, 0, 1+len(p.Segments))
+	parts = append(parts, p.Root)
+	for _, seg := range p.Segments {
+		switch seg.Kind {
+		case segment.SegmentField, segment.SegmentIndexString:
+			if seg.Name == "" {
+				return nil, false
+			}
+			parts = append(parts, seg.Name)
+		default:
+			return nil, false
+		}
+	}
+	return parts, true
 }
 
 func (l *lowerer) typeIsCallExpr(call *ast.FuncCallExpr) (typ.Type, path.Path, bool) {
@@ -177,8 +224,8 @@ func (l *lowerer) typeIsExpressionConditionRefinement(expr ast.Expr) (factflow.P
 	), !negated, true
 }
 
-func (l *lowerer) typeIsCallResultValues(fact semantics.CallFact) []factflow.CallResultValue {
-	t, _, ok := l.typeIsCall(fact)
+func (l *lowerer) typeIsCallResultValues(point cfg.Point, fact semantics.CallFact) []factflow.CallResultValue {
+	t, _, ok := l.typeIsCallAt(point, fact)
 	if !ok {
 		return nil
 	}
