@@ -398,6 +398,9 @@ func (r Reader) inferredReplacementAccepted(point cfg.Point, target body.Ordinar
 	if typ.TypeEquals(actual, typ.Nil) {
 		return true
 	}
+	if inferredNumericReplacementAccepted(expected, actual) {
+		return true
+	}
 	if _, ok := unwrap.Annotated(expected).(*typ.Function); ok {
 		_, actualOK := unwrap.Annotated(actual).(*typ.Function)
 		return actualOK
@@ -407,6 +410,10 @@ func (r Reader) inferredReplacementAccepted(point cfg.Point, target body.Ordinar
 		return inferredRecordReplacementAccepted(actual, localExclusive)
 	}
 	return false
+}
+
+func inferredNumericReplacementAccepted(expected, actual typ.Type) bool {
+	return typ.TypeEquals(unwrap.Annotated(expected), typ.Integer) && typ.TypeEquals(unwrap.Annotated(actual), typ.Number)
 }
 
 func inferredRecordReplacementAccepted(actual typ.Type, localExclusive bool) bool {

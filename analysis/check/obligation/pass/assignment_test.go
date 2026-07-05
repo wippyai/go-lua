@@ -822,6 +822,7 @@ func TestAssignmentsAcceptsMutableLiteralFieldWidening(t *testing.T) {
 	value = 0,
 }
 obj.value = obj.value + 1
+obj.value = obj.value / 1000
 
 local item = {route = ""}
 item.route = "primary"
@@ -833,6 +834,21 @@ registry.active = nil`, "test.lua")
 	got := assignmentJudgmentsForAllBodies(checked)
 	if len(got) != 0 {
 		t.Fatalf("judgments = %#v, want mutable literal field writes and inferred nil clearing accepted", got)
+	}
+}
+
+func TestAssignmentsRejectDeclaredIntegerFieldWidening(t *testing.T) {
+	checked := testutil.CheckFile(`local obj: {value: integer} = {
+	value = 0,
+}
+obj.value = obj.value / 1000`, "test.lua")
+
+	got := assignmentJudgmentsForAllBodies(checked)
+	if len(got) != 1 {
+		t.Fatalf("judgments = %#v, want declared integer field widening rejected", got)
+	}
+	if got[0].Code != judgment.CodeAssignment {
+		t.Fatalf("code = %s, want %s", got[0].Code, judgment.CodeAssignment)
 	}
 }
 
