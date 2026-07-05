@@ -43,16 +43,16 @@ func wirTempDefinitions(body *wir.Body) map[uint32]wir.Instruction {
 	ambiguous := make(map[uint32]bool)
 	for i := 0; i < body.Len(); i++ {
 		inst := body.Instr(i)
-		if inst.Dst.Kind == wir.OperandTemp {
-			if ambiguous[inst.Dst.Ref] {
+		for _, temp := range wirInstructionDefinedTemps(body, inst) {
+			if ambiguous[temp] {
 				continue
 			}
-			if _, exists := defs[inst.Dst.Ref]; exists {
-				delete(defs, inst.Dst.Ref)
-				ambiguous[inst.Dst.Ref] = true
+			if _, exists := defs[temp]; exists {
+				delete(defs, temp)
+				ambiguous[temp] = true
 				continue
 			}
-			defs[inst.Dst.Ref] = inst
+			defs[temp] = inst
 		}
 	}
 	return defs
@@ -73,12 +73,27 @@ func wirTempDefinitionSets(body *wir.Body) map[uint32][]wir.Instruction {
 	defs := make(map[uint32][]wir.Instruction)
 	for i := 0; i < body.Len(); i++ {
 		inst := body.Instr(i)
-		if inst.Dst.Kind != wir.OperandTemp {
-			continue
+		for _, temp := range wirInstructionDefinedTemps(body, inst) {
+			defs[temp] = append(defs[temp], inst)
 		}
-		defs[inst.Dst.Ref] = append(defs[inst.Dst.Ref], inst)
 	}
 	return defs
+}
+
+func wirInstructionDefinedTemps(body *wir.Body, inst wir.Instruction) []uint32 {
+	if inst.Dst.Kind == wir.OperandTemp {
+		return []uint32{inst.Dst.Ref}
+	}
+	if inst.Results.Len == 0 {
+		return nil
+	}
+	var out []uint32
+	for _, result := range body.Operands(inst.Results) {
+		if result.Kind == wir.OperandTemp {
+			out = append(out, result.Ref)
+		}
+	}
+	return out
 }
 
 func (l *lowerer) wirStaticLuaTruthinessAt(point cfg.Point, operand wir.Operand) (bool, bool) {

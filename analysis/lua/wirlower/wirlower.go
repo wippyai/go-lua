@@ -38,6 +38,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
+	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/source"
 )
@@ -499,6 +500,9 @@ func (b *builder) emitCallAt(point cfg.Point, call *ast.FuncCallExpr, resultCoun
 		inst.Call.Method = b.internString(call.Method)
 		if call.Receiver != nil {
 			inst.Call.Receiver = b.lowerExpr(call.Receiver)
+			if receiverType, ok := b.typeValueRef(call.Receiver); ok {
+				inst.Type = receiverType
+			}
 		}
 	} else {
 		inst.Call.Callee = b.calleeOperand(call.Func)
@@ -1223,6 +1227,30 @@ func (b *builder) calleeOperand(e ast.Expr) wir.Operand {
 		return b.pathOperand(path.Path{Root: id.Value})
 	}
 	return b.lowerExpr(e)
+}
+
+func (b *builder) typeValueRef(e ast.Expr) (wir.TypeRef, bool) {
+	if b == nil || b.resolver == nil || e == nil {
+		return 0, false
+	}
+	if ident, ok := e.(*ast.IdentExpr); ok && b.bindings != nil {
+		if decl, ok := b.bindings.TypeValueRef(ident); ok {
+			if t, ok := b.resolver.Decl(decl); ok {
+				ref := b.body.InternType(t)
+				return ref, ref != 0
+			}
+		}
+	}
+	parts, ok := valueexpr.TypeValueRefParts(e)
+	if !ok {
+		return 0, false
+	}
+	t, ok := b.resolver.ResolveTypeRef(parts)
+	if !ok {
+		return 0, false
+	}
+	ref := b.body.InternType(t)
+	return ref, ref != 0
 }
 
 func (b *builder) constOperand(e ast.Expr) wir.Operand {

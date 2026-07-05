@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -418,6 +419,96 @@ if Payload:is(value) then local y = value end
 	if got := facts.BranchRefinements(point); len(got) != 0 {
 		t.Fatalf("WIR mode type-is condition at point %d fell back to semantic call/branch sidecars: %#v", point, got)
 	}
+}
+
+func TestWIRTypeIsConditionBranchRefinementUsesLoweredCallSiteWithoutSemanticResult(t *testing.T) {
+	assertWIRTypeIsConditionBranchRefinementWithoutSemanticResult(t, `
+type Payload = { name: string }
+local value: any = {}
+if Payload:is(value) then local y = value end
+`, true)
+}
+
+func TestWIRNegatedTypeIsConditionBranchRefinementUsesLoweredCallSiteWithoutSemanticResult(t *testing.T) {
+	assertWIRTypeIsConditionBranchRefinementWithoutSemanticResult(t, `
+type Payload = { name: string }
+local value: any = {}
+if not Payload:is(value) then local y = value end
+`, false)
+}
+
+func assertWIRTypeIsConditionBranchRefinementWithoutSemanticResult(t *testing.T, src string, wantEdge bool) {
+	t.Helper()
+	stmts, bindings, built, result := parseSemanticChunk(t, src)
+	body := wirlower.Lower("chunk", stmts, bindings, built)
+	seed := Lower(result, built.Graph, Config{
+		Registry:     standard.Registry(),
+		Bindings:     bindings,
+		TypeResolver: typeresolve.New(bindings),
+		WIR:          body,
+	})
+
+	var callPoint cfg.Point
+	for _, point := range built.Graph.RPO() {
+		view, ok := result.CallView(point)
+		if !ok {
+			continue
+		}
+		fact, _ := view.Borrowed()
+		if _, _, ok := (&lowerer{bindings: bindings, typeResolver: typeresolve.New(bindings)}).typeIsCall(fact); ok {
+			callPoint = point
+			break
+		}
+	}
+	if callPoint == 0 {
+		t.Fatal("missing type-is call point")
+	}
+	site, ok := seed.CallSite(callPoint)
+	if !ok {
+		t.Fatalf("missing lowered callsite at type-is call point %d", callPoint)
+	}
+	branchPoint := requireWIRBranchPoint(t, built.Graph, body)
+	valueDecl, ok := stmts[1].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt[1] = %T, want local assignment", stmts[1])
+	}
+	valuePath := path.NewPath(mustLocalAt(t, bindings, valueDecl, 0), "value")
+	input := &factflow.FactsInput{
+		CallSites:         map[cfg.Point]factflow.CallSite{callPoint: site},
+		BranchRefinements: make(map[cfg.Point]factflow.BranchRefinementSet),
+	}
+	lowered := lowerer{
+		registry:     standard.Registry(),
+		bindings:     bindings,
+		wir:          body,
+		typeResolver: typeresolve.New(bindings),
+	}
+	if typ, arg, ok := lowered.typeIsCallSiteFromWIR(callPoint); !ok {
+		t.Fatalf("typeIsCallSiteFromWIR(%d) failed", callPoint)
+	} else if arg.IsEmpty() || typ == nil {
+		t.Fatalf("typeIsCallSiteFromWIR(%d) = %v, %v", callPoint, typ, arg)
+	}
+
+	lowered.addTypeIsBranchRefinements(input, built.Graph, nil)
+
+	refinement, ok := branchRefinementAt(input.BranchRefinements[branchPoint].Refinements(), valuePath)
+	if !ok {
+		t.Fatalf("missing WIR type-is branch refinement at point %d: %#v", branchPoint, input.BranchRefinements[branchPoint])
+	}
+	if _, ok := refinement.ValueForEdge(wantEdge); !ok {
+		t.Fatalf("WIR type-is refinement = %#v, want edge %v witness", refinement, wantEdge)
+	}
+}
+
+func requireWIRBranchPoint(t *testing.T, graph cfg.Graph, body *wir.Body) cfg.Point {
+	t.Helper()
+	for _, point := range graph.RPO() {
+		if body.HasInstruction(point, wir.OpBranch) {
+			return point
+		}
+	}
+	t.Fatal("missing WIR branch point")
+	return 0
 }
 
 func TestLowerWithWIRCorrelationBranchChecksMatchesSidecarLowering(t *testing.T) {

@@ -224,6 +224,14 @@ end
 	errPath := path.NewPath(mustLocalAt(t, bindings, assign, 1), "err")
 	dataPath := path.NewPath(mustLocalAt(t, bindings, dataStmt, 0), "data")
 	otherPath := path.NewPath(mustLocalAt(t, bindings, otherStmt, 0), "other")
+	typeDecl, ok := bindings.TypeDef(stmts[0].(*ast.TypeDefStmt))
+	if !ok {
+		t.Fatal("missing Point type declaration")
+	}
+	pointType, ok := typeresolve.New(bindings).Decl(typeDecl)
+	if !ok {
+		t.Fatal("failed to resolve Point type")
+	}
 	ifStmt := mustIfStmt(t, stmts, 4)
 	branchPoint := requireStmtPoints(t, built, ifStmt, 1)[0]
 
@@ -233,7 +241,8 @@ end
 	callStart := body.Emit(wir.Instruction{
 		Op:      wir.OpCall,
 		Point:   callPoint,
-		Call:    wir.CallInfo{Callee: wir.Operand{Kind: wir.OperandTemp, Ref: 99}},
+		Type:    body.InternType(pointType),
+		Call:    wir.CallInfo{Receiver: wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(path.NewPath(0, "Point")))}, Method: body.InternConst(wir.Const{Kind: wir.ConstString, Str: "is"})},
 		List:    body.AppendOperands([]wir.Operand{{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))}}),
 		Results: body.AppendOperands([]wir.Operand{valueTemp, errTemp}),
 	})

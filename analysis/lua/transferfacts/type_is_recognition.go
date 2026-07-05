@@ -52,24 +52,11 @@ func (l *lowerer) typeIsReceiverTypeFromWIR(point cfg.Point, fact semantics.Call
 	if _, _, ok := l.typeIsCall(fact); !ok {
 		return nil, false
 	}
-	inst, ok := l.wirCallInstruction(point)
-	if !ok || inst.Call.Receiver.Kind != wir.OperandPath {
-		return nil, false
-	}
-	method := l.wir.Const(inst.Call.Method)
-	if method.Kind != wir.ConstString || method.Str != "is" {
-		return nil, false
-	}
-	receiverPath := l.wir.Path(wir.PathRef(inst.Call.Receiver.Ref))
-	parts, ok := typeRefPartsFromWIRPath(receiverPath)
-	if !ok {
-		return nil, false
-	}
-	return l.typeResolver.ResolveTypeRef(parts)
+	return l.typeIsReceiverTypeFromWIRCall(point)
 }
 
 func typeRefPartsFromWIRPath(p path.Path) ([]string, bool) {
-	if p.Root == "" || len(p.Segments) == 0 {
+	if p.Root == "" {
 		return nil, false
 	}
 	parts := make([]string, 0, 1+len(p.Segments))
@@ -105,18 +92,20 @@ func (l *lowerer) typeIsCallExpr(call *ast.FuncCallExpr) (typ.Type, path.Path, b
 }
 
 func (l *lowerer) addTypeIsBranchRefinements(input *factflow.FactsInput, graph cfg.Graph, result *semantics.Result) {
-	if input == nil || graph == nil || result == nil {
+	if input == nil || graph == nil {
+		return
+	}
+	if l != nil && l.wir != nil {
+		l.addTypeIsBranchRefinementsFromWIR(input, graph)
+		return
+	}
+	if result == nil {
 		return
 	}
 	for _, callPoint := range graph.RPO() {
 		view, ok := result.CallView(callPoint)
 		if !ok {
 			continue
-		}
-		if l.wir != nil {
-			if _, ok := input.CallSites[callPoint]; !ok {
-				continue
-			}
 		}
 		fact, _ := view.Borrowed()
 		t, argPath, ok := l.typeIsCallAt(callPoint, fact)
@@ -162,6 +151,120 @@ func (l *lowerer) addTypeIsBranchRefinements(input *factflow.FactsInput, graph c
 	}
 }
 
+func (l *lowerer) addTypeIsBranchRefinementsFromWIR(input *factflow.FactsInput, graph cfg.Graph) {
+	if l == nil || l.wir == nil || input == nil || graph == nil {
+		return
+	}
+	for _, callPoint := range graph.RPO() {
+		site, ok := input.CallSites[callPoint]
+		if !ok {
+			continue
+		}
+		t, argPath, ok := l.typeIsCallSiteFromWIR(callPoint)
+		if !ok {
+			continue
+		}
+		argValue := l.untrustedTypeWitnessValue(t)
+		resultValue := l.typeIsProofValue(t)
+		if site.Context() == factflow.CallSiteContextCondition {
+			l.addTypeIsConditionBranchRefinementsFromWIR(input, graph, callPoint, argPath, argValue)
+		}
+		errPath, ok := callSiteResultTargetPath(site, 1)
+		if !ok {
+			continue
+		}
+		valuePath, hasValuePath := callSiteResultTargetPath(site, 0)
+		targets := typeIsTargets{argPath: argPath, errPath: errPath, valuePath: valuePath, hasValuePath: hasValuePath}
+		establish, ok := typeIsEstablishPoint(input, graph, callPoint, targets)
+		if !ok {
+			continue
+		}
+		activeIn := typeIsActiveIn(input, graph, establish, targets)
+		for _, branch := range graph.RPO() {
+			if !activeIn[branch] || !graph.IsBranch(branch) {
+				continue
+			}
+			edges := l.typeIsSuccessEdges(input, nil, branch, errPath)
+			if hasValuePath && len(edges) != 0 {
+				appendBranchPresenceRelations(input.BranchPresenceRelations, branch,
+					factflow.NewBranchPresenceRelation(errPath, presence.Present(), valuePath, presence.Absent()),
+					factflow.NewBranchPresenceRelation(errPath, presence.Absent(), valuePath, presence.Present()),
+				)
+			}
+			for _, cond := range edges {
+				appendBranchRefinement(input.BranchRefinements, branch,
+					branchRefinementOnEdge(argPath, factflow.NewValueConstraint(argValue), cond),
+				)
+				if hasValuePath {
+					appendBranchRefinement(input.BranchRefinements, branch,
+						branchRefinementOnEdge(valuePath, factflow.NewValueConstraint(resultValue), cond),
+					)
+				}
+			}
+		}
+	}
+}
+
+func (l *lowerer) typeIsCallSiteFromWIR(point cfg.Point) (typ.Type, path.Path, bool) {
+	if l == nil || l.wir == nil || l.typeResolver == nil {
+		return nil, path.Path{}, false
+	}
+	t, ok := l.typeIsReceiverTypeFromWIRCall(point)
+	if !ok {
+		return nil, path.Path{}, false
+	}
+	argPath, ok := l.callArgumentPathFromWIR(point, 0)
+	if !ok {
+		return nil, path.Path{}, false
+	}
+	return t, argPath, true
+}
+
+func (l *lowerer) typeIsReceiverTypeFromWIRCall(point cfg.Point) (typ.Type, bool) {
+	if l == nil || l.wir == nil || l.typeResolver == nil {
+		return nil, false
+	}
+	inst, ok := l.wirCallInstruction(point)
+	if !ok {
+		return nil, false
+	}
+	method := l.wir.Const(inst.Call.Method)
+	if method.Kind != wir.ConstString || method.Str != "is" {
+		return nil, false
+	}
+	if inst.Type != 0 {
+		t := l.wir.Type(inst.Type)
+		return t, t != nil
+	}
+	if inst.Call.Receiver.Kind == wir.OperandType {
+		t := l.wir.Type(wir.TypeRef(inst.Call.Receiver.Ref))
+		return t, t != nil
+	}
+	if inst.Call.Receiver.Kind != wir.OperandPath {
+		return nil, false
+	}
+	receiverPath := l.wir.Path(wir.PathRef(inst.Call.Receiver.Ref))
+	parts, ok := typeRefPartsFromWIRPath(receiverPath)
+	if !ok {
+		return nil, false
+	}
+	return l.typeResolver.ResolveTypeRef(parts)
+}
+
+func callSiteResultTargetPath(site factflow.CallSite, resultIndex int) (path.Path, bool) {
+	for _, target := range site.ResultTargets() {
+		if target.ResultIndex() != resultIndex {
+			continue
+		}
+		targetPath := target.TargetPath()
+		if targetPath.IsEmpty() {
+			continue
+		}
+		return targetPath, true
+	}
+	return path.Path{}, false
+}
+
 func (l *lowerer) addTypeIsConditionBranchRefinements(
 	input *factflow.FactsInput,
 	graph cfg.Graph,
@@ -189,6 +292,63 @@ func (l *lowerer) addTypeIsConditionBranchRefinements(
 			branchRefinementOnEdge(argPath, factflow.NewValueConstraint(value), successCond),
 		)
 	}
+}
+
+func (l *lowerer) addTypeIsConditionBranchRefinementsFromWIR(
+	input *factflow.FactsInput,
+	graph cfg.Graph,
+	callPoint cfg.Point,
+	argPath path.Path,
+	value product.Value,
+) {
+	if l == nil || l.wir == nil {
+		return
+	}
+	for _, branch := range graph.RPO() {
+		if !l.wir.HasInstruction(branch, wir.OpBranch) {
+			continue
+		}
+		successCond, ok := l.typeIsConditionSuccessEdgeFromWIR(branch, callPoint)
+		if !ok {
+			continue
+		}
+		appendBranchRefinement(input.BranchRefinements, branch,
+			branchRefinementOnEdge(argPath, factflow.NewValueConstraint(value), successCond),
+		)
+	}
+}
+
+func (l *lowerer) typeIsConditionSuccessEdgeFromWIR(branch cfg.Point, callPoint cfg.Point) (bool, bool) {
+	if l == nil || l.wir == nil {
+		return false, false
+	}
+	for _, inst := range l.wir.PointInstructions(branch) {
+		if inst.Op != wir.OpBranch {
+			continue
+		}
+		if edge, ok := l.wirBranchOperandCallSuccessEdge(inst.A, callPoint); ok {
+			return edge, true
+		}
+	}
+	return false, false
+}
+
+func (l *lowerer) wirBranchOperandCallSuccessEdge(op wir.Operand, callPoint cfg.Point) (bool, bool) {
+	if op.Kind != wir.OperandTemp {
+		return false, false
+	}
+	def, ok := l.wirTempDefs()[op.Ref]
+	if !ok {
+		return false, false
+	}
+	if def.Op == wir.OpCall && def.Point == callPoint {
+		return true, true
+	}
+	if def.Op == wir.OpUnOp && def.Operator == wir.UnNot {
+		inner, ok := l.wirBranchOperandCallSuccessEdge(def.A, callPoint)
+		return !inner, ok
+	}
+	return false, false
 }
 
 func branchRefinementOnEdge(target path.Path, value factflow.ValueRefinement, cond bool) factflow.BranchRefinement {
