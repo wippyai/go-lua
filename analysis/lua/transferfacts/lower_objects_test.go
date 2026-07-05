@@ -263,6 +263,39 @@ local t = { child = { leaf = payload.id } }
 	}
 }
 
+func TestLowerWithWIRObjectLiteralPublishesWithoutSemanticSidecars(t *testing.T) {
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
+local t = { child = { leaf = payload.id } }
+`, "payload")
+	local, ok := stmts[0].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want local assignment", stmts[0])
+	}
+	tableExpr, ok := local.Exprs[0].(*ast.TableExpr)
+	if !ok {
+		t.Fatalf("expr = %T, want table constructor", local.Exprs[0])
+	}
+	body := wirlower.Lower("chunk-no-sidecars", stmts, bindings, built)
+	_ = tableExpr
+
+	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	literals := facts.ObjectLiterals()
+	if len(literals) < 2 {
+		t.Fatalf("public WIR no-sidecar object literals = %#v, want root and nested constructors", literals)
+	}
+	var sawNestedLeaf bool
+	for _, literal := range literals {
+		for _, entry := range literal.Entries() {
+			if reflect.DeepEqual(entry.Suffix(), fieldChainSuffix("leaf")) && entry.ValueLabel() == "payload.id" {
+				sawNestedLeaf = true
+			}
+		}
+	}
+	if !sawNestedLeaf {
+		t.Fatalf("public WIR no-sidecar object literals = %#v, want nested payload.id leaf", literals)
+	}
+}
+
 func TestLowerWIRObjectLiteralCarriesDeclaredEntryContract(t *testing.T) {
 	reg := standard.Registry()
 	stmts, bindings, built, result := parseSemanticChunk(t, `

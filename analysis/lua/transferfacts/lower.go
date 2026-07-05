@@ -108,6 +108,9 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		ExpressionRefinements:         expressionRefinements,
 		DynamicIndexExpressions:       make(map[factflow.ExprRef]factflow.DynamicIndexExpression),
 	}
+	if l.wir != nil && result == nil {
+		l.addObjectLiteralsFromWIR(&input)
+	}
 	for _, point := range graph.RPO() {
 		if result != nil {
 			if view, ok := result.LocalAssignmentView(point); ok {

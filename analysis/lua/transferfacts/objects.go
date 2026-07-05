@@ -127,6 +127,19 @@ func (l *lowerer) addObjectLiteralFromWIR(input *factflow.FactsInput, inst wir.I
 	l.addNestedObjectLiteralsFromWIR(input, inst)
 }
 
+func (l *lowerer) addObjectLiteralsFromWIR(input *factflow.FactsInput) {
+	if l == nil || l.wir == nil || input == nil {
+		return
+	}
+	for i := 0; i < l.wir.Len(); i++ {
+		inst := l.wir.Instr(i)
+		if inst.Op != wir.OpMakeTable {
+			continue
+		}
+		l.addObjectLiteralFromWIR(input, inst, nil)
+	}
+}
+
 func (l *lowerer) addNestedObjectLiteralsFromWIR(input *factflow.FactsInput, inst wir.Instruction) {
 	if l == nil || l.wir == nil || input == nil {
 		return
