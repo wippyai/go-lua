@@ -57,8 +57,8 @@ Current snapshot:
 - `external_harness_codes.tsv`
 - `external_harness_families.tsv`
 - `external_harness_diagnostics.jsonl`
-- 39 errors
-- 1 warning
+- 77 errors
+- 2 warnings
 - 0 hints
 
 `external_harness_diagnostics.jsonl` is a normalized per-diagnostic shadow-diff
