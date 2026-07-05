@@ -75,11 +75,7 @@ func addDynamicIndexValueKeyMembershipsFromPath(
 	if resolver == nil || sourcePath.IsEmpty() || sourcePath.Symbol == 0 {
 		return out
 	}
-	sourceKey, ok := pathMembershipSourceStateKeyAt(resolver, ctx.Point, sourcePath)
-	if !ok {
-		return out
-	}
-	for _, table := range out.PathKeyMembershipTables(sourceKey) {
+	for _, table := range pathMembershipSourceTablesAt(out, resolver, ctx.Point, sourcePath) {
 		out = out.AddDynamicIndexValueKeyMembership(container, site, table)
 	}
 	return out
@@ -156,11 +152,7 @@ func addNormalReturnDynamicAllValueMembershipsFromPath(
 	if ctx.resolver == nil || valuePath.IsEmpty() || valuePath.Symbol == 0 {
 		return out
 	}
-	sourceKey, ok := pathMembershipSourceStateKeyAt(ctx.resolver, ctx.point, valuePath)
-	if !ok {
-		return out
-	}
-	sourceTables := out.PathKeyMembershipTables(sourceKey)
+	sourceTables := pathMembershipSourceTablesAt(out, ctx.resolver, ctx.point, valuePath)
 	if len(sourceTables) == 0 {
 		return out
 	}

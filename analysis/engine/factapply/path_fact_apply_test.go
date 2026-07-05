@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -496,7 +497,7 @@ func TestFactsNodeTransferDynamicIndexReadCarriesValueKeyMembership(t *testing.T
 	}
 }
 
-func TestDynamicIndexValueMembershipFromRootlessPathUsesRootOrVisibleSource(t *testing.T) {
+func TestDynamicIndexValueMembershipFromRootlessPathUsesVisibleOrRootOrVisibleSource(t *testing.T) {
 	point := cfg.Point(402031)
 	valueSym := symbol.ID(402032)
 	containerSym := symbol.ID(402033)
@@ -517,24 +518,40 @@ func TestDynamicIndexValueMembershipFromRootlessPathUsesRootOrVisibleSource(t *t
 	if !ok {
 		t.Fatal("table key missing")
 	}
-	valueKey, ok := visibility.AddressAt(resolver, point, valuePath).RootOrVisibleStateKey()
+	valueRootKey, ok := visibility.AddressAt(resolver, point, valuePath).RootOrVisibleStateKey()
 	if !ok {
-		t.Fatal("value key missing")
+		t.Fatal("value root-or-visible key missing")
 	}
-	site := dynamicindex.Site("signature.table_mutator:0:-1")
-	in := state.State{}.AddPathKeyMembership(valueKey, tableKey)
+	valueVisibleKey, ok := visibility.AddressAt(resolver, point, valuePath).VisibleStateKey()
+	if !ok {
+		t.Fatal("value visible key missing")
+	}
 
-	got := addDynamicIndexValueKeyMembershipsFromPath(
-		transfer.NodeContext{Point: point, Registry: standard.Registry()},
-		resolver,
-		in,
-		valuePath,
-		containerKey,
-		site,
-	)
-	tables := got.DynamicIndexValueKeyMembershipTables(containerKey, site)
-	if len(tables) != 1 || tables[0] != tableKey {
-		t.Fatalf("dynamic value key memberships = %#v, want table %s", tables, tableKey)
+	site := dynamicindex.Site("signature.table_mutator:0:-1")
+
+	for _, tc := range []struct {
+		name     string
+		valueKey pathaddr.StateKey
+	}{
+		{name: "visible", valueKey: valueVisibleKey},
+		{name: "root-or-visible", valueKey: valueRootKey},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := state.State{}.AddPathKeyMembership(tc.valueKey, tableKey)
+
+			got := addDynamicIndexValueKeyMembershipsFromPath(
+				transfer.NodeContext{Point: point, Registry: standard.Registry()},
+				resolver,
+				in,
+				valuePath,
+				containerKey,
+				site,
+			)
+			tables := got.DynamicIndexValueKeyMembershipTables(containerKey, site)
+			if len(tables) != 1 || tables[0] != tableKey {
+				t.Fatalf("dynamic value key memberships = %#v, want table %s", tables, tableKey)
+			}
+		})
 	}
 }
 

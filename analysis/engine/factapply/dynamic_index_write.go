@@ -130,7 +130,7 @@ func dynamicIndexWriteKeyStateKeyAt(resolver *visibility.Resolver, point cfg.Poi
 	if !ok {
 		return "", false
 	}
-	return pathMembershipSourceStateKeyAt(resolver, point, keyPath)
+	return visibility.AddressAt(resolver, point, keyPath).VisibleStateKey()
 }
 
 func dynamicIndexWriteKeyPath(resolver *visibility.Resolver, facts factflow.Facts, fact factflow.DynamicIndexWrite) (pathdom.Path, bool) {
@@ -201,11 +201,7 @@ func preserveDynamicIndexAllValueKeyMemberships(
 	if !ok {
 		return out
 	}
-	sourceKey, ok := pathMembershipSourceStateKeyAt(resolver, ctx.Point, sourcePath)
-	if !ok {
-		return out
-	}
-	sourceTables := in.PathKeyMembershipTables(sourceKey)
+	sourceTables := pathMembershipSourceTablesAt(in, resolver, ctx.Point, sourcePath)
 	for _, table := range tables {
 		if stateKeyIn(sourceTables, table) {
 			out = out.AddDynamicIndexAllValuesKeyMembership(container, table)
@@ -262,7 +258,7 @@ func addPathKeyMembershipFromDynamicWrite(
 	if !ok || keyPath.IsEmpty() || keyPath.Symbol == 0 {
 		return out
 	}
-	keyStateKey, ok := pathMembershipSourceStateKeyAt(resolver, ctx.Point, keyPath)
+	keyStateKey, ok := visibility.AddressAt(resolver, ctx.Point, keyPath).VisibleStateKey()
 	if !ok {
 		return out
 	}
@@ -287,11 +283,7 @@ func addDynamicIndexValueKeyMembershipsFromWrite(
 	if !ok {
 		return out
 	}
-	sourceKey, ok := pathMembershipSourceStateKeyAt(resolver, ctx.Point, sourcePath)
-	if !ok {
-		return out
-	}
-	for _, table := range in.PathKeyMembershipTables(sourceKey) {
+	for _, table := range pathMembershipSourceTablesAt(in, resolver, ctx.Point, sourcePath) {
 		out = out.AddDynamicIndexValueKeyMembership(container, site, table)
 	}
 	return out
