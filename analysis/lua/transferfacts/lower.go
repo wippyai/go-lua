@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
@@ -29,6 +30,7 @@ type Config struct {
 	TypeResolver  *typeresolve.Resolver
 	TypeValues    *typevalue.Cache
 	ModuleExports importlookup.Source
+	WIR           *wir.Body
 }
 
 type Lowered struct {
@@ -61,6 +63,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		graphID:                       graph.ID(),
 		typeResolver:                  typeResolver,
 		typeValues:                    config.TypeValues,
+		wir:                           config.WIR,
 		callPoints:                    callPointsByExpr(builtCallFacts(graph, result)),
 		symbolTypes:                   symbolTypes,
 		declaredReturnLocalTypes:      declaredReturnLocalTypes,
@@ -186,6 +189,9 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			}
 		}
 		if fact, ok := result.BranchCondition(point); ok {
+			if check, ok := l.directBranchCheckFromWIR(point, fact.Check); ok {
+				fact.Check = check
+			}
 			if fact.Check.Kind != branchcond.CheckNone {
 				input.BranchConditionSources[point] = l.valueSource(fact.Source)
 			}
@@ -257,6 +263,7 @@ type lowerer struct {
 	graphID                       uint64
 	typeResolver                  *typeresolve.Resolver
 	typeValues                    *typevalue.Cache
+	wir                           *wir.Body
 	callPoints                    map[*ast.FuncCallExpr]cfg.Point
 	symbolTypes                   map[symbol.ID]typ.Type
 	declaredReturnLocalTypes      map[symbol.ID]typ.Type

@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
@@ -25,6 +26,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/transferfacts"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
+	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typecall"
@@ -43,6 +45,9 @@ func (c *checker) prepareBoundChunk(stmts []ast.Stmt, bindings *bind.Result) (*S
 		func(built *cfgbuild.Result) (*semantics.Result, error) {
 			return semantics.ExtractChunk(stmts, bindings, built)
 		},
+		func(built *cfgbuild.Result) *wir.Body {
+			return wirlower.Lower("chunk", stmts, bindings, built)
+		},
 	)
 }
 
@@ -55,6 +60,7 @@ func (c *checker) prepareBound(
 	incStat func(),
 	build func() *cfgbuild.Result,
 	extract func(*cfgbuild.Result) (*semantics.Result, error),
+	lowerWIR func(*cfgbuild.Result) *wir.Body,
 ) (*Static, error) {
 	if c.config.Stats != nil {
 		incStat()
@@ -67,7 +73,8 @@ func (c *checker) prepareBound(
 	if err != nil {
 		return nil, fmt.Errorf("check: extract %s semantics: %w", what, err)
 	}
-	return c.prepare(bindings, built, sem), nil
+	wirBody := lowerWIR(built)
+	return c.prepare(bindings, built, sem, wirBody), nil
 }
 
 func (c *checker) prepareFunction(fn *ast.FunctionExpr) (*Static, error) {
@@ -82,10 +89,13 @@ func (c *checker) prepareBoundFunction(fn *ast.FunctionExpr, bindings *bind.Resu
 		func(built *cfgbuild.Result) (*semantics.Result, error) {
 			return semantics.ExtractFunction(fn, bindings, built)
 		},
+		func(built *cfgbuild.Result) *wir.Body {
+			return wirlower.Lower("function", fn.Stmts, bindings, built)
+		},
 	)
 }
 
-func (c *checker) prepare(bindings *bind.Result, built *cfgbuild.Result, sem *semantics.Result) *Static {
+func (c *checker) prepare(bindings *bind.Result, built *cfgbuild.Result, sem *semantics.Result, wirBody *wir.Body) *Static {
 	config := c.config
 	globals := configGlobals(config)
 	modules := moduleidentity.New(bindings, built.Graph, sem)
@@ -97,6 +107,7 @@ func (c *checker) prepare(bindings *bind.Result, built *cfgbuild.Result, sem *se
 		TypeResolver:  typeResolver,
 		TypeValues:    config.TypeValues,
 		ModuleExports: config.ModuleExports,
+		WIR:           wirBody,
 	})
 	facts := lowered.Facts
 	signatureID := newSignatureIdentityResolver(bindings, built.Graph, modules, config.Signatures)
