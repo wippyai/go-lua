@@ -195,7 +195,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			if fact.Check.Kind != branchcond.CheckNone {
 				input.BranchConditionSources[point] = l.valueSource(fact.Source)
 			}
-			if reachability, ok := branchEdgeReachability(fact.Condition); ok {
+			if reachability, ok := l.branchEdgeReachability(point, fact.Condition); ok {
 				input.BranchEdgeReachability[point] = reachability
 			}
 			if lowered := l.branchRefinements(fact); len(lowered) != 0 {
@@ -264,6 +264,7 @@ type lowerer struct {
 	typeResolver                  *typeresolve.Resolver
 	typeValues                    *typevalue.Cache
 	wir                           *wir.Body
+	wirTempDefinitions            map[uint32]wir.Instruction
 	callPoints                    map[*ast.FuncCallExpr]cfg.Point
 	symbolTypes                   map[symbol.ID]typ.Type
 	declaredReturnLocalTypes      map[symbol.ID]typ.Type

@@ -101,6 +101,46 @@ end
 	})
 }
 
+func TestLowerWithWIRBranchReachabilityMatchesSidecarLowering(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+if nil then local a = 1 end
+if false then local b = 1 end
+if true then local c = 1 end
+if 0 then local d = 1 end
+if "" then local e = 1 end
+if not false then local f = 1 end
+if true and false then local g = 1 end
+if false or "fallback" then local h = 1 end
+if {} then local i = 1 end
+if (function() return 1 end) then local j = 1 end
+if (nil :: any) then local k = 1 end
+`)
+	body := wirlower.Lower("chunk", stmts, bindings, built)
+	sidecarFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	var checked int
+	for _, point := range built.Graph.RPO() {
+		fact, ok := result.BranchCondition(point)
+		if !ok {
+			continue
+		}
+		sidecarReachability, ok := semanticBranchEdgeReachability(fact.Condition)
+		if !ok {
+			continue
+		}
+		checked++
+		for _, cond := range []bool{false, true} {
+			want := sidecarReachability.EdgeUnreachable(cond)
+			assertEqualBranchFacts(t, point, "branch reachability", want, wirFacts.BranchEdgeUnreachable(point, cond))
+			assertEqualBranchFacts(t, point, "sidecar branch reachability", want, sidecarFacts.BranchEdgeUnreachable(point, cond))
+		}
+	}
+	if checked != 13 {
+		t.Fatalf("checked %d static branch conditions, want 13", checked)
+	}
+}
+
 func assertWIRBranchFactParity(t *testing.T, built *cfgbuild.Result, result *semantics.Result, body *wir.Body, bindings *bind.Result) {
 	t.Helper()
 	sidecarFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
