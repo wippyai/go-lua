@@ -21,40 +21,6 @@ func (l *lowerer) typeIsCall(fact semantics.CallFact) (typ.Type, path.Path, bool
 	return l.typeIsCallExpr(fact.Call)
 }
 
-func (l *lowerer) typeIsCallAt(point cfg.Point, fact semantics.CallFact) (typ.Type, path.Path, bool) {
-	t, argPath, ok := l.typeIsCall(fact)
-	if !ok {
-		return nil, path.Path{}, false
-	}
-	if wirType, ok := l.typeIsReceiverTypeFromWIR(point, fact); ok {
-		t = wirType
-	}
-	if wirPath, ok := l.typeIsArgumentPathFromWIR(point, fact); ok {
-		argPath = wirPath
-	}
-	return t, argPath, true
-}
-
-func (l *lowerer) typeIsArgumentPathFromWIR(point cfg.Point, fact semantics.CallFact) (path.Path, bool) {
-	if l == nil || l.wir == nil {
-		return path.Path{}, false
-	}
-	if _, _, ok := l.typeIsCall(fact); !ok {
-		return path.Path{}, false
-	}
-	return l.callArgumentPathFromWIR(point, 0)
-}
-
-func (l *lowerer) typeIsReceiverTypeFromWIR(point cfg.Point, fact semantics.CallFact) (typ.Type, bool) {
-	if l == nil || l.wir == nil || l.typeResolver == nil {
-		return nil, false
-	}
-	if _, _, ok := l.typeIsCall(fact); !ok {
-		return nil, false
-	}
-	return l.typeIsReceiverTypeFromWIRCall(point)
-}
-
 func typeRefPartsFromWIRPath(p path.Path) ([]string, bool) {
 	if p.Root == "" {
 		return nil, false
@@ -108,7 +74,7 @@ func (l *lowerer) addTypeIsBranchRefinements(input *factflow.FactsInput, graph c
 			continue
 		}
 		fact, _ := view.Borrowed()
-		t, argPath, ok := l.typeIsCallAt(callPoint, fact)
+		t, argPath, ok := l.typeIsCall(fact)
 		if !ok {
 			continue
 		}
@@ -385,7 +351,7 @@ func (l *lowerer) typeIsExpressionConditionRefinement(expr ast.Expr) (factflow.P
 }
 
 func (l *lowerer) typeIsCallResultValues(point cfg.Point, fact semantics.CallFact) []factflow.CallResultValue {
-	t, _, ok := l.typeIsCallAt(point, fact)
+	t, _, ok := l.typeIsCall(fact)
 	if !ok {
 		return nil
 	}

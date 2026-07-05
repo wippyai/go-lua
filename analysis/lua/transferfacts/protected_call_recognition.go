@@ -28,7 +28,7 @@ func (l *lowerer) addProtectedCallBranchRefinements(input *factflow.FactsInput, 
 			continue
 		}
 		fact, _ := view.Borrowed()
-		payloadType, ok := l.protectedCallPayloadTypeAt(callPoint, fact)
+		payloadType, ok := l.protectedCallPayloadType(fact)
 		if !ok {
 			continue
 		}
@@ -111,28 +111,6 @@ func (l *lowerer) addProtectedCallBranchRefinementsFromWIR(input *factflow.Facts
 			}
 		}
 	}
-}
-
-func (l *lowerer) protectedCallPayloadTypeAt(point cfg.Point, fact semantics.CallFact) (typ.Type, bool) {
-	if t, ok := l.protectedCallPayloadTypeFromWIR(point, fact); ok {
-		return t, true
-	}
-	return l.protectedCallPayloadType(fact)
-}
-
-func (l *lowerer) protectedCallPayloadTypeFromWIR(point cfg.Point, fact semantics.CallFact) (typ.Type, bool) {
-	if l == nil || l.wir == nil || !fact.IsProtectedCall(l.bindings) {
-		return nil, false
-	}
-	callbackPath, ok := l.callArgumentPathFromWIR(point, 0)
-	if !ok {
-		return nil, false
-	}
-	callbackType, ok := l.aliasPathType(callbackPath)
-	if !ok {
-		return nil, false
-	}
-	return typecall.CallableReturn(callbackType)
 }
 
 func (l *lowerer) protectedCallPayloadTypeFromWIRCallSite(point cfg.Point, site factflow.CallSite) (typ.Type, bool) {
