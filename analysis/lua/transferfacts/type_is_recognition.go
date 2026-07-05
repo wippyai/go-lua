@@ -53,11 +53,11 @@ func (l *lowerer) addTypeIsBranchRefinements(input *factflow.FactsInput, graph c
 		argValue := l.untrustedTypeWitnessValue(t)
 		resultValue := l.typeIsProofValue(t)
 		l.addTypeIsConditionBranchRefinements(input, graph, result, fact, argPath, argValue)
-		errPath, ok := callResultTargetPath(fact, 1)
+		errPath, ok := fact.ResultTargetPath(1)
 		if !ok {
 			continue
 		}
-		valuePath, hasValuePath := callResultTargetPath(fact, 0)
+		valuePath, hasValuePath := fact.ResultTargetPath(0)
 		targets := typeIsTargets{argPath: argPath, errPath: errPath, valuePath: valuePath, hasValuePath: hasValuePath}
 		establish, ok := typeIsEstablishPoint(input, graph, callPoint, targets)
 		if !ok {
@@ -206,13 +206,4 @@ type typeIsTargets struct {
 	errPath      path.Path
 	valuePath    path.Path
 	hasValuePath bool
-}
-
-func callResultTargetPath(fact semantics.CallFact, resultIndex int) (path.Path, bool) {
-	for _, target := range fact.ResultTargets {
-		if target.ResultIndex == resultIndex && target.HasPath && !target.Path.IsEmpty() {
-			return target.Path, true
-		}
-	}
-	return path.Path{}, false
 }

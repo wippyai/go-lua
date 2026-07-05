@@ -153,6 +153,16 @@ func (f CallFact) IsProtectedCall(bindings *bind.Result) bool {
 	return f.IsAnyDirectGlobal(bindings, "pcall", "xpcall")
 }
 
+// ResultTargetPath returns the path consuming a particular call result slot.
+func (f CallFact) ResultTargetPath(resultIndex int) (path.Path, bool) {
+	for _, target := range f.ResultTargets {
+		if target.ResultIndex == resultIndex && target.HasPath && !target.Path.IsEmpty() {
+			return target.Path.Clone(), true
+		}
+	}
+	return path.Path{}, false
+}
+
 func callCalleeSpan(call *ast.FuncCallExpr) SourceSpan {
 	if call == nil {
 		return SourceSpan{}

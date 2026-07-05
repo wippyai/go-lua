@@ -25,11 +25,11 @@ func (l *lowerer) addProtectedCallBranchRefinements(input *factflow.FactsInput, 
 		if !ok {
 			continue
 		}
-		okPath, ok := callResultTargetPath(fact, 0)
+		okPath, ok := fact.ResultTargetPath(0)
 		if !ok {
 			continue
 		}
-		payloadPath, ok := callResultTargetPath(fact, 1)
+		payloadPath, ok := fact.ResultTargetPath(1)
 		if !ok {
 			continue
 		}

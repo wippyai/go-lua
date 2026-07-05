@@ -1915,6 +1915,44 @@ local shadow_ok, shadow_result = pcall(run)
 	}
 }
 
+func TestCallFactResultTargetPathReturnsDefensiveCopy(t *testing.T) {
+	stmts, err := parse.ParseString(`
+local a, b = make()
+`, "call_target_path_test.lua")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+	var fact CallFact
+	for _, point := range built.StmtPoints.PointsFor(stmts[0]) {
+		if got, ok := result.Call(point); ok {
+			fact = got
+			break
+		}
+	}
+	if fact.Call == nil {
+		t.Fatal("missing call fact")
+	}
+	want := path.NewPath(mustLocalAt(t, bindings, stmts[0].(*ast.LocalAssignStmt), 1), "b")
+	got, ok := fact.ResultTargetPath(1)
+	if !ok || !got.Equal(want) {
+		t.Fatalf("ResultTargetPath(1) = %#v/%v, want %#v/true", got, ok, want)
+	}
+	got.Segments = append(got.Segments, segment.Segment{Kind: segment.SegmentField, Name: "mutated"})
+	again, ok := fact.ResultTargetPath(1)
+	if !ok || !again.Equal(want) {
+		t.Fatalf("ResultTargetPath exposed mutable path: %#v/%v, want %#v/true", again, ok, want)
+	}
+	if missing, ok := fact.ResultTargetPath(3); ok || !missing.IsEmpty() {
+		t.Fatalf("ResultTargetPath(3) = %#v/%v, want empty/false", missing, ok)
+	}
+}
+
 func TestExtractChunkChannelSelectFacts(t *testing.T) {
 	stmts, err := parse.ParseString(`
 type Event = {kind: string}
