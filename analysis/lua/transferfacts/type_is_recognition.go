@@ -382,6 +382,10 @@ func (l *lowerer) typeIsReturnPresenceRelationsFromSources(
 	if len(sources) == 0 {
 		return nil
 	}
+	isTypeIsCall := l.semanticSourceCallIsTypeIs(result)
+	if l != nil && l.wir != nil {
+		isTypeIsCall = l.wirSourceCallIsTypeIs(callSites)
+	}
 	var out []factflow.ReturnPresenceRelation
 	type resultPair struct {
 		valueTarget int
@@ -394,7 +398,7 @@ func (l *lowerer) typeIsReturnPresenceRelationsFromSources(
 		if source.Kind != factflow.ValueSourceCall || !source.HasCallPoint {
 			continue
 		}
-		if !l.sourceCallIsTypeIs(source, result, callSites) {
+		if !isTypeIsCall(source) {
 			continue
 		}
 		if source.OpenTail && source.Expanded {
@@ -429,27 +433,32 @@ func (l *lowerer) typeIsReturnPresenceRelationsFromSources(
 	return out
 }
 
-func (l *lowerer) sourceCallIsTypeIs(source factflow.ValueSource, result *semantics.Result, callSites map[cfg.Point]factflow.CallSite) bool {
-	if source.Kind != factflow.ValueSourceCall || !source.HasCallPoint {
-		return false
-	}
-	if l != nil && l.wir != nil {
+func (l *lowerer) wirSourceCallIsTypeIs(callSites map[cfg.Point]factflow.CallSite) func(factflow.ValueSource) bool {
+	return func(source factflow.ValueSource) bool {
+		if source.Kind != factflow.ValueSourceCall || !source.HasCallPoint {
+			return false
+		}
 		if _, ok := callSites[source.CallPoint]; !ok {
 			return false
 		}
 		_, _, ok := l.typeIsCallSiteFromWIR(source.CallPoint)
 		return ok
 	}
-	if result == nil {
-		return false
+}
+
+func (l *lowerer) semanticSourceCallIsTypeIs(result *semantics.Result) func(factflow.ValueSource) bool {
+	return func(source factflow.ValueSource) bool {
+		if source.Kind != factflow.ValueSourceCall || !source.HasCallPoint || result == nil {
+			return false
+		}
+		view, ok := result.CallView(source.CallPoint)
+		if !ok {
+			return false
+		}
+		fact, _ := view.Borrowed()
+		_, _, ok = l.typeIsCall(fact)
+		return ok
 	}
-	view, ok := result.CallView(source.CallPoint)
-	if !ok {
-		return false
-	}
-	fact, _ := view.Borrowed()
-	_, _, ok = l.typeIsCall(fact)
-	return ok
 }
 
 func (l *lowerer) typeWitnessValue(t typ.Type) product.Value {
