@@ -229,6 +229,74 @@ end
 	}
 }
 
+func TestLowerDynamicIndexMissingWIRKeyDoesNotFallbackToASTKey(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(box: any, key: string, payload: string): ()
+    box[key] = payload
+end
+`)
+	assignStmt := fn.Stmts[0].(*ast.AssignStmt)
+	points := requireStmtPoints(t, built, assignStmt, 1)
+	boxPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "box")
+	keyPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "key")
+	payloadPath := path.NewPath(bindings.ParamSlots(fn)[2].Symbol, "payload")
+	body := wir.NewBody("synthetic-missing-dynamic-key")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpDynamicIndexWrite,
+		Point: points[0],
+		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(boxPath))},
+		B:     wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(payloadPath))},
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	write, ok := facts.DynamicIndexWrite(points[0])
+	if !ok {
+		t.Fatalf("missing dynamic index write at point %d", points[0])
+	}
+	keySource := write.KeySource()
+	if keySource.Kind != factflow.ValueSourceUnknown || keySource.HasExpr || keySource.PathKey == keyPath.Key() {
+		t.Fatalf("dynamic key source = %#v, want unknown WIR key without AST fallback to %s", keySource, keyPath.Key())
+	}
+	if gotKeyPath, ok := write.KeyPath(); ok || gotKeyPath.Equal(keyPath) {
+		t.Fatalf("dynamic key path = %v/%v, want no AST fallback to %v", gotKeyPath, ok, keyPath)
+	}
+}
+
+func TestLowerDynamicAppendKeySourceComesFromWIRExpression(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(binding: any): ()
+    local normalized: {any} = {}
+    normalized[#normalized + 1] = binding
+end
+`)
+	body := wirlower.Lower("f", fn.Stmts, bindings, built)
+	assignStmt := fn.Stmts[1].(*ast.AssignStmt)
+	points := requireStmtPoints(t, built, assignStmt, 1)
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	write, ok := facts.DynamicIndexWrite(points[0])
+	if !ok {
+		t.Fatalf("missing dynamic index write at point %d", points[0])
+	}
+	keySource := write.KeySource()
+	if keySource.Kind != factflow.ValueSourceExpression || !keySource.HasExpr {
+		t.Fatalf("dynamic append key source = %#v, want WIR expression source", keySource)
+	}
+	op, ok := facts.ExpressionOperation(keySource.ExprRef)
+	if !ok || op.Kind() != factflow.ExpressionOperationBinary || op.Op() != "+" {
+		t.Fatalf("dynamic append key operation = %#v/%v, want binary +", op, ok)
+	}
+	left := op.Left()
+	if left.Kind != factflow.ValueSourceExpression || !left.HasExpr {
+		t.Fatalf("dynamic append key left = %#v, want WIR expression source for #normalized", left)
+	}
+	leftOp, ok := facts.ExpressionOperation(left.ExprRef)
+	if !ok || leftOp.Kind() != factflow.ExpressionOperationUnary || leftOp.Op() != "#" {
+		t.Fatalf("dynamic append key left operation = %#v/%v, want unary #", leftOp, ok)
+	}
+}
+
 func TestLowerDynamicIndexTablePathComesFromWIR(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(box: any, key: string, payload: string): ()
@@ -359,6 +427,41 @@ end
 	gotValuePath, ok := write.ValuePath()
 	if !ok || !gotValuePath.Equal(otherPath) || gotValuePath.Equal(valuePath) {
 		t.Fatalf("dynamic value path = %v/%v, want WIR path %v not semantic path %v", gotValuePath, ok, otherPath, valuePath)
+	}
+}
+
+func TestLowerDynamicIndexNonPathWIRValueDoesNotFallbackToASTValuePath(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(box: any, key: string): ()
+    local payload = "x"
+    box[key] = payload
+end
+`)
+	assignStmt := fn.Stmts[1].(*ast.AssignStmt)
+	points := requireStmtPoints(t, built, assignStmt, 1)
+	boxPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "box")
+	keyPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "key")
+	payloadPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "payload")
+	body := wir.NewBody("synthetic-nonpath-dynamic-value")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpDynamicIndexWrite,
+		Point: points[0],
+		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(boxPath))},
+		A:     wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(keyPath))},
+		B:     wir.Operand{Kind: wir.OperandConst, Ref: uint32(body.InternConst(wir.Const{Kind: wir.ConstString, Str: "literal"}))},
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	write, ok := facts.DynamicIndexWrite(points[0])
+	if !ok {
+		t.Fatalf("missing dynamic index write at point %d", points[0])
+	}
+	if gotValuePath, ok := write.ValuePath(); ok || gotValuePath.Equal(payloadPath) {
+		t.Fatalf("dynamic value path = %v/%v, want no AST fallback to %v", gotValuePath, ok, payloadPath)
+	}
+	if source := write.Source(); source.Kind != factflow.ValueSourceLiteral || source.String != "literal" || source.HasExpr {
+		t.Fatalf("dynamic value source = %#v, want WIR literal source without AST fallback", source)
 	}
 }
 

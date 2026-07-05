@@ -648,8 +648,11 @@ func parseStaticIndex(raw string) (int, bool) {
 }
 
 func (l *lowerer) dynamicIndexKeySource(point cfg.Point, target ast.Expr) (factflow.ValueSource, bool) {
-	if source, ok := l.dynamicIndexKeySourceFromWIR(point); ok {
-		return source, true
+	if l != nil && l.wir != nil {
+		if source, ok := l.dynamicIndexKeySourceFromWIR(point); ok {
+			return source, true
+		}
+		return factflow.NewUnknownValueSource(factflow.NoValueSourceIndex), false
 	}
 	return l.dynamicIndexKeySourceFromAST(target)
 }
@@ -713,6 +716,9 @@ func (l *lowerer) dynamicIndexKeyPath(point cfg.Point, target ast.Expr) (path.Pa
 	}); ok {
 		return p, true
 	}
+	if l != nil && l.wir != nil {
+		return path.Path{}, false
+	}
 	attr, ok := target.(*ast.AttrGetExpr)
 	if !ok || attr.Key == nil {
 		return path.Path{}, false
@@ -725,6 +731,9 @@ func (l *lowerer) dynamicIndexValuePath(point cfg.Point, source sourceprovenance
 		return inst.B
 	}); ok {
 		return p, true
+	}
+	if l != nil && l.wir != nil {
+		return path.Path{}, false
 	}
 	if source.Kind != sourceprovenance.SourceExpression || source.Expr == nil {
 		return path.Path{}, false
