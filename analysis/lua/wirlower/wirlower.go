@@ -495,6 +495,7 @@ func (b *builder) emitCallAt(point cfg.Point, call *ast.FuncCallExpr, resultCoun
 		List:       b.body.AppendOperands(args),
 		Results:    b.body.AppendOperands(temps),
 		ListSpread: argSpread,
+		ExprID:     expressionid.Of(call),
 	}
 	if call.Method != "" {
 		inst.Call.Method = b.internString(call.Method)
@@ -755,6 +756,7 @@ func (b *builder) maybeLowerSelect(dst wir.Operand, call *ast.FuncCallExpr) bool
 		Dst:           dst,
 		List:          b.body.AppendOperands(ops),
 		SelectDefault: hasDefault,
+		ExprID:        expressionid.Of(call),
 	})
 	return true
 }

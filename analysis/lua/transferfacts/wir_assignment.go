@@ -57,6 +57,7 @@ func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, fallback sourceproven
 	if op.Kind != wir.OperandConst && op.Kind != wir.OperandTemp {
 		return factflow.ValueSource{}, false
 	}
+	resultSources := l.resultValueSourcesByTempFromWIR()
 	source, ok := l.valueSourceFromWIROperand(
 		op,
 		fallback.ExprIndex,
@@ -64,19 +65,39 @@ func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, fallback sourceproven
 		fallback.Final,
 		fallback.Expanded,
 		fallback.OpenTail,
-		l.resultValueSourcesByTempFromWIR(),
+		resultSources,
 	)
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
 	if source.Kind == factflow.ValueSourceCall {
-		fallbackSource := l.valueSource(fallback)
-		if fallbackSource.HasExpr {
+		if fallbackSource := l.valueSource(fallback); fallbackSource.HasExpr {
 			source.ExprRef = fallbackSource.ExprRef
 			source.HasExpr = true
+			return source, true
 		}
+		l.addWIRCallResultExprRef(&source, op, fallback, resultSources)
 	}
 	return source, true
+}
+
+func (l *lowerer) addWIRCallResultExprRef(source *factflow.ValueSource, op wir.Operand, fallback sourceprovenance.ASTSource, resultSources map[uint32]wirResultSource) {
+	if l == nil || source == nil || op.Kind != wir.OperandTemp {
+		return
+	}
+	if _, ok := claimKindForAssertionSource(fallback.Expr); ok {
+		return
+	}
+	result, ok := resultSources[op.Ref]
+	if !ok || result.exprID == 0 {
+		return
+	}
+	exprRef, ok := l.exprRef(wirCallExprRefKey{id: result.exprID})
+	if !ok {
+		return
+	}
+	source.ExprRef = exprRef
+	source.HasExpr = true
 }
 
 func (l *lowerer) tableConstructorAssignmentSourceFromWIR(point cfg.Point, fallback sourceprovenance.ASTSource) (factflow.ValueSource, bool) {

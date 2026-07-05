@@ -385,6 +385,34 @@ local second = { child = { b = 2 } }
 	}
 }
 
+func TestCallCarriesStableExpressionIdentity(t *testing.T) {
+	body := lowerBody(t, `
+local first = f()
+local second = g(h())
+`)
+	var ids []wir.ExpressionID
+	for i := 0; i < body.Len(); i++ {
+		inst := body.Instr(i)
+		if inst.Op != wir.OpCall {
+			continue
+		}
+		if inst.ExprID == 0 {
+			t.Fatalf("OpCall at instruction %d missing expression identity", i)
+		}
+		ids = append(ids, inst.ExprID)
+	}
+	if len(ids) != 3 {
+		t.Fatalf("call expression ids = %v, want f, h, and g", ids)
+	}
+	seen := map[wir.ExpressionID]bool{}
+	for _, id := range ids {
+		if seen[id] {
+			t.Fatalf("duplicate call expression id %d in %v", id, ids)
+		}
+		seen[id] = true
+	}
+}
+
 func suffixPath(segs ...segment.Segment) path.Path {
 	return path.Path{Segments: append([]segment.Segment(nil), segs...)}
 }

@@ -95,6 +95,7 @@ func (l *lowerer) returnValueSourceFromWIROperand(
 type wirResultSource struct {
 	point       cfg.Point
 	resultIndex int
+	exprID      wir.ExpressionID
 }
 
 type wirPathExprRefKey struct {
@@ -862,16 +863,20 @@ func (l *lowerer) resultValueSourcesByTempFromWIR() map[uint32]wirResultSource {
 				if result.Kind != wir.OperandTemp {
 					continue
 				}
-				out[result.Ref] = wirResultSource{point: inst.Point, resultIndex: resultIndex}
+				out[result.Ref] = wirResultSource{point: inst.Point, resultIndex: resultIndex, exprID: inst.ExprID}
 			}
 		case wir.OpSelect:
 			if inst.Dst.Kind == wir.OperandTemp {
-				out[inst.Dst.Ref] = wirResultSource{point: inst.Point, resultIndex: 0}
+				out[inst.Dst.Ref] = wirResultSource{point: inst.Point, resultIndex: 0, exprID: inst.ExprID}
 			}
 		}
 	}
 	l.wirResultSources = out
 	return out
+}
+
+type wirCallExprRefKey struct {
+	id wir.ExpressionID
 }
 
 func resultValueSourceFromWIR(

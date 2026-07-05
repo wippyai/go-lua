@@ -7,6 +7,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -546,5 +547,39 @@ end
 	dynamicPoint := requireStmtPoints(t, built, fn.Stmts[2], 1)[0]
 	if _, ok := facts.DynamicIndexWrite(dynamicPoint); ok {
 		t.Fatalf("WIR mode dynamic index write at point %d fell back to semantic sidecar", dynamicPoint)
+	}
+}
+
+func TestAssignmentCallResultExprRefComesFromWIRCallIdentity(t *testing.T) {
+	body := wir.NewBody("call-result-expr")
+	callPoint := cfg.Point(10)
+	assignPoint := cfg.Point(11)
+	callResult := wir.Operand{Kind: wir.OperandTemp, Ref: 1}
+	callStart := body.Emit(wir.Instruction{
+		Op:      wir.OpCall,
+		Point:   callPoint,
+		Results: body.AppendOperands([]wir.Operand{callResult}),
+		ExprID:  wir.ExpressionID(77),
+	})
+	body.SetPointRange(callPoint, callStart, body.Len())
+	assignStart := body.Emit(wir.Instruction{
+		Op:    wir.OpAssign,
+		Point: assignPoint,
+		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(path.NewPath(1, "target")))},
+		A:     callResult,
+	})
+	body.SetPointRange(assignPoint, assignStart, body.Len())
+
+	l := lowerer{
+		wir:   body,
+		exprs: make(map[any]factflow.ExprRef),
+	}
+	source, ok := l.assignmentSourceFromWIR(assignPoint, sourceprovenance.ASTSource{Final: true})
+	if !ok {
+		t.Fatal("assignmentSourceFromWIR returned false")
+	}
+	if source.Kind != factflow.ValueSourceCall || !source.HasCallPoint || source.CallPoint != callPoint ||
+		source.ResultIndex != 0 || !source.HasExpr || source.ExprRef == 0 {
+		t.Fatalf("assignment source = %#v, want WIR call result with WIR-derived expression ref", source)
 	}
 }

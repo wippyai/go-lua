@@ -6,6 +6,9 @@ func (l *lowerer) exprRef(expr any) (factflow.ExprRef, bool) {
 	if expr == nil {
 		return 0, false
 	}
+	if l.exprs == nil {
+		l.exprs = make(map[any]factflow.ExprRef)
+	}
 	if ref, ok := l.exprs[expr]; ok {
 		return ref, true
 	}
