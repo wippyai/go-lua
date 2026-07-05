@@ -163,8 +163,8 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			if relations := l.typeIsReturnPresenceRelations(fact.Sources, result); len(relations) != 0 {
 				appendReturnPresenceRelations(input.ReturnPresenceRelations, point, relations...)
 			}
-			for _, source := range fact.Sources {
-				l.addAssertionRefinementsForSource(&input, source)
+			for index, source := range fact.Sources {
+				l.addReturnAssertionRefinements(&input, point, index, source)
 				l.addObjectLiteral(&input, result, source)
 			}
 			l.addReturnObjectLiteralExpectedTypes(&input, result, fact)

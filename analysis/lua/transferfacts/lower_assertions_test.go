@@ -58,6 +58,34 @@ end
 	assertWIRConcreteCastAssertion(t, facts, reassignFact.Source(), typ.String, factflow.ValueSourcePath)
 }
 
+func TestLowerReturnClaimsUseWIRClaimSources(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(x: any): (number, any)
+    return x as number, x!
+end
+`)
+	body := wirlower.Lower("f", fn.Stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	returnPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
+	ret, ok := facts.Return(returnPoint)
+	if !ok {
+		t.Fatalf("missing return at point %d", returnPoint)
+	}
+	sources := ret.Sources()
+	if len(sources) != 2 {
+		t.Fatalf("return sources = %#v, want two", sources)
+	}
+	if sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr {
+		t.Fatalf("cast return source = %#v, want outer expression source until claim temps become value sources", sources[0])
+	}
+	if sources[1].Kind != factflow.ValueSourceExpression || !sources[1].HasExpr {
+		t.Fatalf("assert return source = %#v, want outer expression source until claim temps become value sources", sources[1])
+	}
+	assertWIRConcreteCastAssertion(t, facts, sources[0], typ.Number, factflow.ValueSourcePath)
+	assertWIRAssertion(t, facts, sources[1], assertion.NonNil(), factflow.ValueSourcePath)
+}
+
 func assertWIRAssertion(t *testing.T, facts factflow.Facts, source factflow.ValueSource, want assertion.Value, wantInnerKind factflow.ValueSourceKind) {
 	t.Helper()
 	claim, ok := facts.ExpressionRefinement(source.ExprRef)

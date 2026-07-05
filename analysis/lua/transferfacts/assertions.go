@@ -40,24 +40,87 @@ func (l *lowerer) addAssignmentAssertionRefinementFromWIRClaim(input *factflow.F
 		if !ok {
 			return false
 		}
-		refinement, mode, ok := l.claimRefinementFromWIR(inst)
-		if !ok {
-			return false
-		}
-		if input.ExpressionRefinements == nil {
-			input.ExpressionRefinements = make(map[factflow.ExprRef]factflow.ExpressionRefinement)
-		}
-		switch mode {
-		case factflow.ExpressionRefinementRuntimeValidation:
-			input.ExpressionRefinements[outerSource.ExprRef] = factflow.NewExpressionRuntimeValidation(innerSource, refinement)
-		case factflow.ExpressionRefinementDeclaredContract:
-			input.ExpressionRefinements[outerSource.ExprRef] = factflow.NewExpressionDeclaredContract(innerSource, refinement)
-		default:
-			input.ExpressionRefinements[outerSource.ExprRef] = factflow.NewExpressionRefinement(innerSource, refinement)
-		}
-		return true
+		return l.addExpressionRefinementFromWIRClaim(input, outerSource, innerSource, inst)
 	}
 	return false
+}
+
+func (l *lowerer) addReturnAssertionRefinements(input *factflow.FactsInput, point cfg.Point, index int, source sourceprovenance.ASTSource) {
+	if l.addReturnAssertionRefinementFromWIRClaim(input, point, index, source) {
+		return
+	}
+	l.addAssertionRefinementsForSource(input, source)
+}
+
+func (l *lowerer) addReturnAssertionRefinementFromWIRClaim(input *factflow.FactsInput, point cfg.Point, index int, source sourceprovenance.ASTSource) bool {
+	if input == nil || l == nil || l.wir == nil || source.Expr == nil || index < 0 {
+		return false
+	}
+	wantClaim, ok := claimKindForAssertionSource(source.Expr)
+	if !ok {
+		return false
+	}
+	outerSource := l.valueSource(source)
+	if !outerSource.HasExpr {
+		return false
+	}
+	inst, ok := l.returnClaimInstructionFromWIR(point, index, wantClaim)
+	if !ok {
+		return false
+	}
+	innerSource, ok := l.claimInnerSourceFromWIR(inst, source)
+	if !ok {
+		return false
+	}
+	return l.addExpressionRefinementFromWIRClaim(input, outerSource, innerSource, inst)
+}
+
+func (l *lowerer) returnClaimInstructionFromWIR(point cfg.Point, index int, claim wir.ClaimKind) (wir.Instruction, bool) {
+	for _, inst := range l.wir.PointInstructions(point) {
+		if inst.Op != wir.OpReturn {
+			continue
+		}
+		ops := l.wir.Operands(inst.List)
+		if index >= len(ops) {
+			return wir.Instruction{}, false
+		}
+		def, ok := l.claimInstructionForOperand(ops[index])
+		if !ok || def.Claim != claim {
+			return wir.Instruction{}, false
+		}
+		return def, true
+	}
+	return wir.Instruction{}, false
+}
+
+func (l *lowerer) claimInstructionForOperand(op wir.Operand) (wir.Instruction, bool) {
+	if op.Kind != wir.OperandTemp {
+		return wir.Instruction{}, false
+	}
+	inst, ok := l.wirTempDefs()[op.Ref]
+	if !ok || inst.Op != wir.OpClaim {
+		return wir.Instruction{}, false
+	}
+	return inst, true
+}
+
+func (l *lowerer) addExpressionRefinementFromWIRClaim(input *factflow.FactsInput, outerSource, innerSource factflow.ValueSource, inst wir.Instruction) bool {
+	refinement, mode, ok := l.claimRefinementFromWIR(inst)
+	if !ok {
+		return false
+	}
+	if input.ExpressionRefinements == nil {
+		input.ExpressionRefinements = make(map[factflow.ExprRef]factflow.ExpressionRefinement)
+	}
+	switch mode {
+	case factflow.ExpressionRefinementRuntimeValidation:
+		input.ExpressionRefinements[outerSource.ExprRef] = factflow.NewExpressionRuntimeValidation(innerSource, refinement)
+	case factflow.ExpressionRefinementDeclaredContract:
+		input.ExpressionRefinements[outerSource.ExprRef] = factflow.NewExpressionDeclaredContract(innerSource, refinement)
+	default:
+		input.ExpressionRefinements[outerSource.ExprRef] = factflow.NewExpressionRefinement(innerSource, refinement)
+	}
+	return true
 }
 
 func claimKindForAssertionSource(expr ast.Expr) (wir.ClaimKind, bool) {
