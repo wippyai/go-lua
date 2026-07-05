@@ -11,7 +11,7 @@ func (l *lowerer) assertPostconditionRefinement(fact semantics.CallFact) (factfl
 		return factflow.PostconditionRefinement{}, false
 	}
 	check := branchcond.Normalize(fact.Args[0], l.bindings)
-	branchRefinement, ok := l.branchRefinement(semantics.BranchConditionFact{Check: check})
+	branchRefinement, ok := l.branchValueRefinementForCheck(check)
 	if !ok {
 		return factflow.PostconditionRefinement{}, false
 	}

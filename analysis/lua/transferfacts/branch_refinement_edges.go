@@ -3,11 +3,10 @@ package transferfacts
 import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 )
 
 func (l *lowerer) branchRefinementsForCheck(check branchcond.Check) []factflow.BranchRefinement {
-	refinement, ok := l.branchRefinement(semantics.BranchConditionFact{Check: check})
+	refinement, ok := l.branchValueRefinementForCheck(check)
 	if !ok {
 		return nil
 	}
@@ -44,7 +43,7 @@ func (l *lowerer) branchImplicationRefinements(implied branchcond.ImpliedCheck) 
 }
 
 func (l *lowerer) branchEdgeRefinement(check branchcond.Check, cond bool) (factflow.BranchRefinement, bool) {
-	refinement, ok := l.branchRefinement(semantics.BranchConditionFact{Check: check})
+	refinement, ok := l.branchValueRefinementForCheck(check)
 	if !ok {
 		return factflow.BranchRefinement{}, false
 	}
@@ -59,7 +58,7 @@ func (l *lowerer) branchEdgeRefinement(check branchcond.Check, cond bool) (factf
 }
 
 func (l *lowerer) branchImplicationRefinement(implied branchcond.ImpliedCheck) (factflow.BranchRefinement, bool) {
-	refinement, ok := l.branchRefinement(semantics.BranchConditionFact{Check: implied.Check})
+	refinement, ok := l.branchValueRefinementForCheck(implied.Check)
 	if !ok {
 		return factflow.BranchRefinement{}, false
 	}

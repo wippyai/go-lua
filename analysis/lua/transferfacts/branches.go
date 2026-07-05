@@ -8,12 +8,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func (l *lowerer) branchRefinement(fact semantics.BranchConditionFact) (factflow.BranchRefinement, bool) {
-	target := fact.Check.Path
+func (l *lowerer) branchValueRefinementForCheck(check branchcond.Check) (factflow.BranchRefinement, bool) {
+	target := check.Path
 	if target.IsEmpty() {
 		return factflow.BranchRefinement{}, false
 	}
-	switch fact.Check.Kind {
+	switch check.Kind {
 	case branchcond.CheckNil:
 		return factflow.NewBranchRefinement(
 			target,
@@ -39,13 +39,13 @@ func (l *lowerer) branchRefinement(fact semantics.BranchConditionFact) (factflow
 			l.typedPresenceRefinement(target, presence.Present()), true,
 		), true
 	case branchcond.CheckLiteralEqual, branchcond.CheckLiteralNot:
-		lit, ok := fact.Check.LiteralValue()
+		lit, ok := check.LiteralValue()
 		if !ok {
 			return factflow.BranchRefinement{}, false
 		}
-		return l.literalBranchRefinement(target, fact.Check.Kind, lit)
+		return l.literalBranchRefinement(target, check.Kind, lit)
 	case branchcond.CheckTypeEqual, branchcond.CheckTypeNot:
-		return l.typeBranchRefinement(target, fact.Check.Kind, fact.Check.TypeName)
+		return l.typeBranchRefinement(target, check.Kind, check.TypeName)
 	case branchcond.CheckNumGe:
 		value := factflow.NewValueConstraint(l.typeWitnessValue(typ.Number))
 		return factflow.NewBranchRefinement(target, value, true, value, true), true
