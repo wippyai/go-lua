@@ -15,7 +15,7 @@ func (l *lowerer) callSiteAt(point cfg.Point, fact semantics.CallFact) (factflow
 	if !ok {
 		return factflow.CallSite{}, false
 	}
-	return l.callSiteWithArgumentSources(fact, args), true
+	return l.callSiteWithArgumentSourcesAt(point, fact, args), true
 }
 
 func (l *lowerer) callSite(fact semantics.CallFact) factflow.CallSite {
@@ -23,6 +23,21 @@ func (l *lowerer) callSite(fact semantics.CallFact) factflow.CallSite {
 }
 
 func (l *lowerer) callSiteWithArgumentSources(fact semantics.CallFact, argumentSources []factflow.ValueSource) factflow.CallSite {
+	receiverSource, hasReceiverSource := l.semanticReceiverSource(fact)
+	return l.callSiteWithArgumentSourcesWithReceiver(fact, argumentSources, receiverSource, hasReceiverSource)
+}
+
+func (l *lowerer) callSiteWithArgumentSourcesAt(point cfg.Point, fact semantics.CallFact, argumentSources []factflow.ValueSource) factflow.CallSite {
+	receiverSource, hasReceiverSource := l.callReceiverSource(point, fact)
+	return l.callSiteWithArgumentSourcesWithReceiver(fact, argumentSources, receiverSource, hasReceiverSource)
+}
+
+func (l *lowerer) callSiteWithArgumentSourcesWithReceiver(
+	fact semantics.CallFact,
+	argumentSources []factflow.ValueSource,
+	receiverSource factflow.ValueSource,
+	hasReceiverSource bool,
+) factflow.CallSite {
 	exprRef, hasExpr := l.exprRef(fact.Call)
 	calleeSymbol := symbol.ID(0)
 	if fact.HasCalleeSymbol {
@@ -40,10 +55,6 @@ func (l *lowerer) callSiteWithArgumentSources(fact semantics.CallFact, argumentS
 	if fact.HasMethodPath {
 		methodPath = fact.MethodPath
 	}
-	receiverSource := factflow.ValueSource{}
-	if fact.HasReceiverSource {
-		receiverSource = l.valueSource(fact.ReceiverSource)
-	}
 	return factflow.NewCallSite(factflow.CallSiteConfig{
 		Context:            callSiteContext(fact.Context),
 		CalleeSymbol:       calleeSymbol,
@@ -55,7 +66,7 @@ func (l *lowerer) callSiteWithArgumentSources(fact semantics.CallFact, argumentS
 		HasMethodPath:      fact.HasMethodPath,
 		MethodName:         fact.Method,
 		ReceiverSource:     receiverSource,
-		HasReceiverSource:  fact.HasReceiverSource,
+		HasReceiverSource:  hasReceiverSource,
 		ExprRef:            exprRef,
 		HasExpr:            hasExpr,
 		ExprIndex:          fact.ExprIndex,
@@ -72,6 +83,52 @@ func (l *lowerer) callSiteWithArgumentSources(fact semantics.CallFact, argumentS
 		Adjusted:           fact.Adjusted,
 		OpenTail:           fact.OpenTail,
 	})
+}
+
+func (l *lowerer) semanticReceiverSource(fact semantics.CallFact) (factflow.ValueSource, bool) {
+	if !fact.HasReceiverSource {
+		return factflow.ValueSource{}, false
+	}
+	return l.valueSource(fact.ReceiverSource), true
+}
+
+func (l *lowerer) callReceiverSource(point cfg.Point, fact semantics.CallFact) (factflow.ValueSource, bool) {
+	fallback, hasFallback := l.semanticReceiverSource(fact)
+	if !hasFallback {
+		return factflow.ValueSource{}, false
+	}
+	if source, ok := l.callReceiverSourceFromWIR(point, fact.ReceiverSource); ok {
+		return source, true
+	}
+	return fallback, true
+}
+
+func (l *lowerer) callReceiverSourceFromWIR(point cfg.Point, fallback sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
+	inst, ok := l.wirCallInstruction(point)
+	if !ok || inst.Call.Method == 0 || inst.Call.Receiver.Kind == wir.OperandNone {
+		return factflow.ValueSource{}, false
+	}
+	if source, ok := l.localRootPathExpressionSourceFromWIR(
+		"call-receiver",
+		point,
+		inst.Call.Receiver,
+		fallback.ExprIndex,
+		fallback.TargetIndex,
+		fallback.Final,
+		fallback.Expanded,
+		fallback.OpenTail,
+	); ok {
+		return source, true
+	}
+	return l.valueSourceFromWIROperand(
+		inst.Call.Receiver,
+		fallback.ExprIndex,
+		fallback.TargetIndex,
+		fallback.Final,
+		fallback.Expanded,
+		fallback.OpenTail,
+		l.callResultValueSourcesByTempFromWIR(),
+	)
 }
 
 func (l *lowerer) callArgumentSources(point cfg.Point, fallback []sourceprovenance.ASTSource) ([]factflow.ValueSource, bool) {

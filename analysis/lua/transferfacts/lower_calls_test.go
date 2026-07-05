@@ -419,6 +419,47 @@ end
 	}
 }
 
+func TestLowerMethodCallReceiverSourcePathComesFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): ()
+    local obj = { run = function(self) end }
+    local other = { run = function(self) end }
+    obj:run()
+end
+`)
+	stmt, ok := fn.Stmts[2].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[2])
+	}
+	points := requireStmtPoints(t, built, stmt, 1)
+	objPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "obj")
+	otherPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "other")
+	body := wir.NewBody("synthetic-method-receiver")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpCall,
+		Point: points[0],
+		Call: wir.CallInfo{
+			Method:   body.InternConst(wir.Const{Kind: wir.ConstString, Str: "run"}),
+			Receiver: wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))},
+		},
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	site, ok := facts.CallSite(points[0])
+	if !ok {
+		t.Fatalf("missing call site at point %d", points[0])
+	}
+	receiverSource, ok := site.ReceiverSource()
+	if !ok || receiverSource.Kind != factflow.ValueSourceExpression || !receiverSource.HasExpr {
+		t.Fatalf("receiver source = %#v/%v, want expression-backed WIR path", receiverSource, ok)
+	}
+	got, ok := facts.ExpressionPath(receiverSource.ExprRef)
+	if !ok || !got.Equal(otherPath) || got.Equal(objPath) {
+		t.Fatalf("receiver expression path = %v/%v, want WIR path %v not semantic path %v", got, ok, otherPath, objPath)
+	}
+}
+
 func TestLowerCallSiteDoesNotFallbackWhenWIRCallInstructionMissing(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(value: string): ()
