@@ -9,9 +9,8 @@ import (
 )
 
 // directBranchCheckFromWIR returns the WIR-owned direct check for a branch
-// point. Compound conditions still use the semantic sidecar because their
-// implication/frozen-table facts depend on AST structure until the transfer
-// interpreter owns that derivation.
+// point. Compound-condition implications live on the branch instruction's WIR
+// metadata ranges; this helper intentionally returns only the direct descriptor.
 func (l *lowerer) directBranchCheckFromWIR(point cfg.Point) (branchcond.Check, bool) {
 	return l.firstDirectBranchCheckFromWIR(point)
 }

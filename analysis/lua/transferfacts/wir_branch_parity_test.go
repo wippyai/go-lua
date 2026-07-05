@@ -173,6 +173,28 @@ end
 	}
 }
 
+func TestLowerWithWIRBooleanAliasBranchRefinementsMatchSidecar(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(target: { transform: string? })
+    local has_transform = target.transform ~= nil
+    if has_transform then
+        local a = true
+    end
+    if not has_transform then
+        local b = true
+    end
+end
+`)
+	body := wirlower.Lower("f", fn.Stmts, bindings, built)
+	sidecarFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	for _, stmt := range []ast.Stmt{fn.Stmts[1], fn.Stmts[2]} {
+		point := requireStmtPoints(t, built, stmt, 1)[0]
+		assertEqualBranchFacts(t, point, "alias branch refinements", sidecarFacts.BranchRefinements(point), wirFacts.BranchRefinements(point))
+	}
+}
+
 func TestLowerWithWIRFrozenTableBranchEvidenceMatchesSidecar(t *testing.T) {
 	stmts, bindings, built, result := parseSemanticChunk(t, `
 local t = {}
@@ -237,6 +259,36 @@ end
 	}
 	if !checkedRefinement || !checkedLen || !checkedNum {
 		t.Fatalf("test did not exercise all lanes: refinement=%v len=%v num=%v", checkedRefinement, checkedLen, checkedNum)
+	}
+}
+
+func TestLowerWithWIRBooleanAliasBranchDoesNotFallbackToSemanticCondition(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(target: { transform: string? })
+    local has_transform = target.transform ~= nil
+    if has_transform then
+        local hit = true
+    end
+end
+`)
+	point := requireStmtPoints(t, built, fn.Stmts[1], 1)[0]
+	targetPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "target").Field("transform")
+	sidecarFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	if _, ok := branchRefinementAt(sidecarFacts.BranchRefinements(point), targetPath); !ok {
+		t.Fatalf("sidecar branch refinements missing alias proof for %s: %#v", targetPath, sidecarFacts.BranchRefinements(point))
+	}
+
+	body := wir.NewBody("branch")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpBranch,
+		Point: point,
+		Check: body.InternCheck(wir.Check{}),
+	})
+	body.SetPointRange(point, start, start+1)
+
+	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	if got := wirFacts.BranchRefinements(point); len(got) != 0 {
+		t.Fatalf("WIR alias branch refinements fell back to semantic condition: %#v", got)
 	}
 }
 

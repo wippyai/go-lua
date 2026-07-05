@@ -114,6 +114,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			}
 			if lowered, ok := l.localAssignment(point, fact); ok {
 				input.RootAssignments[point] = lowered
+				l.addLocalConditionAlias(fact.Symbol, lowered.Source())
 				l.addAssignmentAssertionRefinements(&input, point, lowered.TargetPath(), lowered.Source(), fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
 				l.addObjectLiteralExpectedType(&input, fact)
@@ -281,8 +282,14 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 					appendBranchDiffConstraint(input.BranchRefinements, point, lowered...)
 				}
 			}
-			if lowered := l.branchAliasRefinements(condition); len(lowered) != 0 {
-				appendBranchRefinement(input.BranchRefinements, point, lowered...)
+			if hasWIRBranch {
+				if lowered := l.branchAliasRefinementsFromWIR(point); len(lowered) != 0 {
+					appendBranchRefinement(input.BranchRefinements, point, lowered...)
+				}
+			} else {
+				if lowered := l.branchAliasRefinements(condition); len(lowered) != 0 {
+					appendBranchRefinement(input.BranchRefinements, point, lowered...)
+				}
 			}
 			if lowered, ok := l.branchPathRelationsFromWIR(point); ok {
 				input.BranchPathRelations[point] = lowered
@@ -375,6 +382,7 @@ type lowerer struct {
 	expressionConditions          map[factflow.ExprRef]factflow.ExpressionCondition
 	wirResultSources              map[uint32]wirResultSource
 	expressionRefinements         map[factflow.ExprRef]factflow.ExpressionRefinement
+	localConditionAliases         map[symbol.ID]factflow.ExpressionCondition
 }
 
 func (l *lowerer) valueFromType(t typ.Type) product.Value {
