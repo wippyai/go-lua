@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -32,7 +33,7 @@ func (l *lowerer) objectLiteralEntriesFromWIR(inst wir.Instruction) []factflow.O
 	entries := make([]factflow.ObjectEntry, 0, len(wirEntries))
 	resultSources := l.resultValueSourcesByTempFromWIR()
 	for _, entry := range wirEntries {
-		source, _ := l.valueSourceFromWIROperand(entry.Value, -1, -1, false, false, false, resultSources)
+		source, _ := l.objectEntryValueSourceFromWIR(inst.Point, entry.Value, resultSources)
 		entries = append(entries, factflow.NewObjectEntryWithMetadata(
 			entry.Suffix,
 			source,
@@ -41,6 +42,26 @@ func (l *lowerer) objectLiteralEntriesFromWIR(inst wir.Instruction) []factflow.O
 		))
 	}
 	return entries
+}
+
+func (l *lowerer) objectEntryValueSourceFromWIR(point cfg.Point, op wir.Operand, resultSources map[uint32]wirResultSource) (factflow.ValueSource, bool) {
+	if source, ok := l.pathExpressionSourceFromWIR(
+		"object-entry",
+		point,
+		op,
+		-1,
+		-1,
+		true,
+		false,
+		false,
+		symbol.Local,
+		symbol.Param,
+		symbol.Global,
+		symbol.Upvalue,
+	); ok {
+		return source, true
+	}
+	return l.valueSourceFromWIROperand(op, -1, -1, false, false, false, resultSources)
 }
 
 func (l *lowerer) addObjectLiteral(input *factflow.FactsInput, result *semantics.Result, source sourceprovenance.ASTSource) {
@@ -55,6 +76,9 @@ func (l *lowerer) addObjectLiteralExpr(input *factflow.FactsInput, result *seman
 		return
 	}
 	if result == nil {
+		if inst, ok := l.tableConstructorInstructionForExpr(expr); ok {
+			l.addObjectLiteralFromWIR(input, inst, expr)
+		}
 		return
 	}
 	fact, ok := objectLiteralFact(result, expr)
@@ -80,6 +104,43 @@ func (l *lowerer) addObjectLiteralExpr(input *factflow.FactsInput, result *seman
 	}
 	for _, child := range objectLiteralChildExprs(expr) {
 		l.addObjectLiteralExpr(input, result, child)
+	}
+}
+
+func (l *lowerer) addObjectLiteralFromWIR(input *factflow.FactsInput, inst wir.Instruction, expr ast.Expr) {
+	if input == nil || inst.Op != wir.OpMakeTable {
+		return
+	}
+	exprRef, hasExpr := l.tableConstructorExprRefFromWIR(inst)
+	if !hasExpr {
+		return
+	}
+	lowered := factflow.NewObjectLiteral(l.objectLiteralEntriesFromWIR(inst)).
+		WithIdentity(identity.LuaTableLiteral(l.graphID, uint64(exprRef)))
+	if expected, ok := l.objectLiteralCastExpectedType(expr); ok {
+		lowered = l.objectLiteralWithExpectedType(lowered, expected)
+	}
+	if input.ObjectLiterals == nil {
+		input.ObjectLiterals = make(map[factflow.ExprRef]factflow.ObjectLiteral)
+	}
+	input.ObjectLiterals[exprRef] = lowered
+	l.addNestedObjectLiteralsFromWIR(input, inst)
+}
+
+func (l *lowerer) addNestedObjectLiteralsFromWIR(input *factflow.FactsInput, inst wir.Instruction) {
+	if l == nil || l.wir == nil || input == nil {
+		return
+	}
+	tempDefs := l.wirTempDefs()
+	for _, entry := range l.wir.TableEntries(inst.TableEntries) {
+		if entry.Value.Kind != wir.OperandTemp {
+			continue
+		}
+		nested, ok := tempDefs[entry.Value.Ref]
+		if !ok || nested.Op != wir.OpMakeTable {
+			continue
+		}
+		l.addObjectLiteralFromWIR(input, nested, nil)
 	}
 }
 

@@ -201,6 +201,68 @@ local t = { child = { leaf = 1 } }
 	}
 }
 
+func TestLowerWIRObjectLiteralPublishesWithoutSemanticObjectLiteralFact(t *testing.T) {
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
+local t = { child = { leaf = payload.id } }
+`, "payload")
+	local, ok := stmts[0].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want local assignment", stmts[0])
+	}
+	tableExpr, ok := local.Exprs[0].(*ast.TableExpr)
+	if !ok {
+		t.Fatalf("expr = %T, want table constructor", local.Exprs[0])
+	}
+	body := wirlower.Lower("chunk", stmts, bindings, built)
+	reg := standard.Registry()
+	input := factflow.FactsInput{ObjectLiterals: make(map[factflow.ExprRef]factflow.ObjectLiteral)}
+	l := lowerer{
+		registry: reg,
+		bindings: bindings,
+		graph:    built.Graph,
+		graphID:  built.Graph.ID(),
+		wir:      body,
+		exprs:    make(map[any]factflow.ExprRef),
+	}
+	l.addObjectLiteralExpr(&input, nil, tableExpr)
+	facts := factflow.NewFacts(input)
+
+	rootRef, ok := l.tableConstructorExprRef(tableExpr)
+	if !ok {
+		t.Fatal("missing WIR table expression ref")
+	}
+	literal, ok := facts.ObjectLiteral(rootRef)
+	if !ok {
+		t.Fatalf("missing WIR object literal for root ref %d without semantic fact", rootRef)
+	}
+	if got := len(literal.Entries()); got != 2 {
+		t.Fatalf("root WIR entries = %#v, want flattened child and child.leaf", literal.Entries())
+	}
+	if gotID, ok := literal.Identity(); !ok || gotID != identity.LuaTableLiteral(built.Graph.ID(), uint64(rootRef)) {
+		t.Fatalf("root WIR identity = %v/%v, want graph/ref identity", gotID, ok)
+	}
+	var nestedRef factflow.ExprRef
+	for _, entry := range literal.Entries() {
+		if !reflect.DeepEqual(entry.Suffix(), fieldChainSuffix("child")) {
+			continue
+		}
+		source := entry.Source()
+		if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
+			nestedRef = source.ExprRef
+		}
+	}
+	if nestedRef == 0 {
+		t.Fatalf("root WIR entries = %#v, want child expression source", literal.Entries())
+	}
+	nested, ok := facts.ObjectLiteral(nestedRef)
+	if !ok {
+		t.Fatalf("missing nested WIR object literal for ref %d without semantic fact", nestedRef)
+	}
+	if entries := nested.Entries(); len(entries) != 1 || entries[0].ValueLabel() != "payload.id" {
+		t.Fatalf("nested WIR entries = %#v, want payload.id leaf", entries)
+	}
+}
+
 func TestLowerWIRObjectLiteralCarriesDeclaredEntryContract(t *testing.T) {
 	reg := standard.Registry()
 	stmts, bindings, built, result := parseSemanticChunk(t, `
