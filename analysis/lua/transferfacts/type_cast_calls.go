@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
+	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -111,7 +112,7 @@ func (l *lowerer) typeValueExpr(expr ast.Expr) (typ.Type, bool) {
 			}
 		}
 	}
-	parts, ok := valueTypeRefParts(expr)
+	parts, ok := valueexpr.TypeValueRefParts(expr)
 	if !ok || l.typeResolver == nil {
 		return nil, false
 	}
@@ -128,31 +129,6 @@ func primitiveRuntimeCastType(name string) (typ.Type, bool) {
 		return typ.Integer, true
 	case "string":
 		return typ.String, true
-	default:
-		return nil, false
-	}
-}
-
-func valueTypeRefParts(expr ast.Expr) ([]string, bool) {
-	switch e := expr.(type) {
-	case *ast.IdentExpr:
-		if e.Value == "" {
-			return nil, false
-		}
-		return []string{e.Value}, true
-	case *ast.AttrGetExpr:
-		if e.KeySyntax != ast.AttrKeyDot {
-			return nil, false
-		}
-		name := ast.KeyName(e.Key)
-		if name == "" {
-			return nil, false
-		}
-		parts, ok := valueTypeRefParts(e.Object)
-		if !ok {
-			return nil, false
-		}
-		return append(parts, name), true
 	default:
 		return nil, false
 	}

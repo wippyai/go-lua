@@ -61,3 +61,32 @@ func RuntimeKind(expr ast.Expr) (runtimekind.Value, bool) {
 		return runtimekind.Value{}, false
 	}
 }
+
+// TypeValueRefParts returns the dotted identifier path for a value-level type
+// reference expression such as `Result` or `protocol.Result`. It does not unwrap
+// proof/cast expressions: callers use it for callee identity, where wrappers
+// would change the expression being called.
+func TypeValueRefParts(expr ast.Expr) ([]string, bool) {
+	switch e := expr.(type) {
+	case *ast.IdentExpr:
+		if e.Value == "" {
+			return nil, false
+		}
+		return []string{e.Value}, true
+	case *ast.AttrGetExpr:
+		if e.KeySyntax != ast.AttrKeyDot {
+			return nil, false
+		}
+		name := ast.KeyName(e.Key)
+		if name == "" {
+			return nil, false
+		}
+		parts, ok := TypeValueRefParts(e.Object)
+		if !ok {
+			return nil, false
+		}
+		return append(parts, name), true
+	default:
+		return nil, false
+	}
+}

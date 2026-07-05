@@ -144,6 +144,51 @@ func TestRuntimeKindUnwrapsAssertionAndCast(t *testing.T) {
 	}
 }
 
+func TestTypeValueRefPartsRecognizesDottedRefs(t *testing.T) {
+	expr := &ast.AttrGetExpr{
+		Object: &ast.AttrGetExpr{
+			Object:    &ast.IdentExpr{Value: "protocol"},
+			Key:       &ast.StringExpr{Value: "events"},
+			KeySyntax: ast.AttrKeyDot,
+		},
+		Key:       &ast.StringExpr{Value: "Message"},
+		KeySyntax: ast.AttrKeyDot,
+	}
+
+	got, ok := TypeValueRefParts(expr)
+
+	if !ok {
+		t.Fatal("TypeValueRefParts returned false")
+	}
+	want := []string{"protocol", "events", "Message"}
+	if len(got) != len(want) {
+		t.Fatalf("TypeValueRefParts length = %d, want %d: %#v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("TypeValueRefParts[%d] = %q, want %q (all: %#v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestTypeValueRefPartsRejectsDynamicOrWrappedRefs(t *testing.T) {
+	tests := []struct {
+		name string
+		expr ast.Expr
+	}{
+		{name: "empty ident", expr: &ast.IdentExpr{}},
+		{name: "dynamic index", expr: &ast.AttrGetExpr{Object: &ast.IdentExpr{Value: "protocol"}, Key: &ast.IdentExpr{Value: "name"}, KeySyntax: ast.AttrKeyIndex}},
+		{name: "empty dot key", expr: &ast.AttrGetExpr{Object: &ast.IdentExpr{Value: "protocol"}, Key: &ast.StringExpr{}, KeySyntax: ast.AttrKeyDot}},
+		{name: "wrapped", expr: &ast.NonNilAssertExpr{Expr: &ast.IdentExpr{Value: "Result"}}},
+	}
+
+	for _, tt := range tests {
+		if got, ok := TypeValueRefParts(tt.expr); ok || got != nil {
+			t.Fatalf("%s: TypeValueRefParts = %#v/%v, want nil/false", tt.name, got, ok)
+		}
+	}
+}
+
 func wrappedExpr(inner ast.Expr) ast.Expr {
 	return &ast.CastExpr{Expr: &ast.NonNilAssertExpr{Expr: inner}}
 }
