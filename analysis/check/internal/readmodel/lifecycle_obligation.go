@@ -167,7 +167,7 @@ func (r Reader) collectLifecycleTraceSites(graph cfg.Graph) []lifecycleTraceSite
 			if !ok || target.IsEmpty() {
 				continue
 			}
-			resource, ok := r.result.TypestateResourceAtBoundary(point, target, fact.Protocol)
+			resource, ok := r.result.TypestateResourceAtCallEntry(point, target, fact.Protocol)
 			if !ok {
 				continue
 			}

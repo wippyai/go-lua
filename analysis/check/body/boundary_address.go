@@ -27,6 +27,14 @@ func (r *Result) boundaryAddressContext(point cfg.Point) (boundaryAddressContext
 	return boundaryAddressContext{result: r, point: point, state: in, hasState: hasState}, true
 }
 
+func (r *Result) callEntryAddressContext(point cfg.Point) (boundaryAddressContext, bool) {
+	if r == nil || r.visibility == nil {
+		return boundaryAddressContext{}, false
+	}
+	in, hasState := r.solvedStateAt(point)
+	return boundaryAddressContext{result: r, point: point, state: in, hasState: hasState}, true
+}
+
 func (c boundaryAddressContext) address(p pathdom.Path) (visibility.Address, bool) {
 	if c.result == nil || c.result.visibility == nil || p.IsEmpty() {
 		return visibility.Address{}, false
@@ -80,8 +88,35 @@ func (c boundaryAddressContext) typestateResourceKey(p pathdom.Path) (pathaddr.S
 	return c.state.CanonicalTypestateResourceKey(c.result.visibility.KeySpace(), stateKey), true
 }
 
+func (c boundaryAddressContext) callEntryTypestateResourceKey(p pathdom.Path) (pathaddr.StateKey, bool) {
+	var (
+		stateKey pathaddr.StateKey
+		ok       bool
+	)
+	if p.Root == "" && p.Symbol != 0 && len(p.Segments) == 0 {
+		stateKey, ok = c.rootOrVisibleStateKey(p)
+	} else {
+		stateKey, ok = c.visibleStateKey(p)
+	}
+	if !ok {
+		return "", false
+	}
+	if !c.hasState {
+		return stateKey, true
+	}
+	return c.state.CanonicalTypestateResourceKey(c.result.visibility.KeySpace(), stateKey), true
+}
+
 func (c boundaryAddressContext) typestateResource(p pathdom.Path, protocol typestate.Protocol) (typestate.Resource, bool) {
 	key, ok := c.typestateResourceKey(p)
+	if !ok {
+		return typestate.Resource{}, false
+	}
+	return state.TypestateResourceFromCanonicalKey(key, protocol), true
+}
+
+func (c boundaryAddressContext) callEntryTypestateResource(p pathdom.Path, protocol typestate.Protocol) (typestate.Resource, bool) {
+	key, ok := c.callEntryTypestateResourceKey(p)
 	if !ok {
 		return typestate.Resource{}, false
 	}
@@ -192,6 +227,18 @@ func (r *Result) TypestateResourceAtBoundary(point cfg.Point, p pathdom.Path, pr
 		return typestate.Resource{}, false
 	}
 	return addresses.typestateResource(p, protocol)
+}
+
+// TypestateResourceAtCallEntry returns the typestate resource identity used by
+// call-boundary lifecycle effect application. It uses the solved call-entry
+// state, not the post-call boundary state, so evidence sites join the same
+// resource that the effect lane mutates.
+func (r *Result) TypestateResourceAtCallEntry(point cfg.Point, p pathdom.Path, protocol typestate.Protocol) (typestate.Resource, bool) {
+	addresses, ok := r.callEntryAddressContext(point)
+	if !ok {
+		return typestate.Resource{}, false
+	}
+	return addresses.callEntryTypestateResource(p, protocol)
 }
 
 // PathsEquivalentAtBoundary reports whether the solved boundary state proves

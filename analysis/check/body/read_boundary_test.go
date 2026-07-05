@@ -522,3 +522,33 @@ func TestBoundaryAddressContextCanonicalizesTypestateResourceAliases(t *testing.
 		t.Fatalf("resource = %#v, want canonical tx key/protocol transaction", resource)
 	}
 }
+
+func TestTypestateResourceAtCallEntryUsesRootOrVisibleRootForPathBackedSource(t *testing.T) {
+	point := cfg.Point(10)
+	txSym := symbol.ID(42)
+	rootlessTX := pathdom.Path{Symbol: txSym}
+
+	builder := visibility.NewBuilder()
+	builder.Define(point, txSym, "tx")
+	resolver := visibility.NewResolver(builder.Build())
+	result := &Result{
+		visibility: resolver,
+		flow:       transfer.Result{point: state.State{}},
+	}
+
+	boundaryResource, ok := result.TypestateResourceAtBoundary(point, rootlessTX, typestate.Protocol("transaction"))
+	if !ok {
+		t.Fatal("TypestateResourceAtBoundary returned !ok")
+	}
+	if boundaryResource.ID != typestate.ResourceID("sym42@1") {
+		t.Fatalf("boundary resource = %#v, want visible versioned root", boundaryResource)
+	}
+
+	callEntryResource, ok := result.TypestateResourceAtCallEntry(point, rootlessTX, typestate.Protocol("transaction"))
+	if !ok {
+		t.Fatal("TypestateResourceAtCallEntry returned !ok")
+	}
+	if callEntryResource.ID != typestate.ResourceID("sym42") {
+		t.Fatalf("call-entry resource = %#v, want root-or-visible root", callEntryResource)
+	}
+}
