@@ -146,6 +146,7 @@ func (c *checker) prepare(bindings *bind.Result, built *cfgbuild.Result, sem *se
 	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
 		Registry:              config.Registry,
 		TypeValues:            config.TypeValues,
+		KeySpace:              resolver.KeySpace(),
 		ExpressionValues:      expressionValues,
 		ExpressionPaths:       expressionPaths,
 		ObjectLiteralView:     facts.ObjectLiteralView,

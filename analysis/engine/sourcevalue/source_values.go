@@ -1,6 +1,8 @@
 package sourcevalue
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
@@ -45,6 +47,7 @@ type ExpressionConditionStateRefiner func(point cfg.Point, in state.State, facts
 type SourceValuesConfig struct {
 	Registry   *axis.Registry
 	TypeValues *typevalue.Cache
+	KeySpace   *keyspace.KeySpace
 
 	ExpressionValues map[factflow.ExprRef]product.Value
 	// ExpressionPaths identifies the expressions whose value is an access path
@@ -74,6 +77,7 @@ func NewSourceValues(config SourceValuesConfig) SourceValues {
 	return sourceValueResolver{
 		registry:              registry,
 		typeValues:            config.TypeValues,
+		keySpace:              config.KeySpace,
 		expressionValues:      copyExpressionValues(config.ExpressionValues),
 		pathBacked:            copyExprRefSet(config.ExpressionPaths),
 		objectLiteralView:     config.ObjectLiteralView,
@@ -111,6 +115,7 @@ func WithExpressionValue(base SourceValues, provider ExpressionValueProvider) So
 type sourceValueResolver struct {
 	registry   *axis.Registry
 	typeValues *typevalue.Cache
+	keySpace   *keyspace.KeySpace
 
 	expressionValues      map[factflow.ExprRef]product.Value
 	pathBacked            map[factflow.ExprRef]struct{}
@@ -186,6 +191,44 @@ func (r sourceValueResolver) valueOfSource(
 			return product.Value{}, false
 		}
 		return r.varargValue(point, source, in, read)
+	case factflow.ValueSourcePath:
+		return r.valueOfPathSource(source, in)
+	case factflow.ValueSourceLiteral:
+		return r.valueOfLiteralSource(source)
+	default:
+		return product.Value{}, false
+	}
+}
+
+func (r sourceValueResolver) valueOfPathSource(source factflow.ValueSource, in state.State) (product.Value, bool) {
+	pathKey := source.PathKey
+	if pathKey.Kind == keyspace.KindInvalid {
+		return product.Value{}, false
+	}
+	if (pathKey.Kind == keyspace.KindResolverSym || pathKey.Kind == keyspace.KindUnversionedSym) &&
+		pathKey.Segs == 0 && pathKey.Sym != 0 {
+		value := in.ReadValue(r.registry, key.SymbolValue(pathKey.Sym))
+		if !product.Equal(r.registry, value, product.Bottom(r.registry)) {
+			return value, true
+		}
+	}
+	if r.keySpace == nil {
+		value := in.ReadLocalPathKey(r.registry, pathKey)
+		return value, !product.Equal(r.registry, value, product.Bottom(r.registry))
+	}
+	return readLocalPathKeyWithFieldCanonicalAlias(r.registry, r.keySpace, in, pathKey)
+}
+
+func (r sourceValueResolver) valueOfLiteralSource(source factflow.ValueSource) (product.Value, bool) {
+	switch source.LiteralKind {
+	case factflow.ValueSourceLiteralBool:
+		return typevalue.LiteralBool(r.registry, source.Bool), true
+	case factflow.ValueSourceLiteralInteger:
+		return typevalue.LiteralInt(r.registry, source.Int), true
+	case factflow.ValueSourceLiteralNumber:
+		return typevalue.LiteralNumber(r.registry, source.Float), true
+	case factflow.ValueSourceLiteralString:
+		return typevalue.LiteralString(r.registry, source.String), true
 	default:
 		return product.Value{}, false
 	}

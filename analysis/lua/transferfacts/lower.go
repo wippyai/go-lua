@@ -3,6 +3,7 @@ package transferfacts
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -29,8 +30,10 @@ type Config struct {
 	Bindings      *bind.Result
 	TypeResolver  *typeresolve.Resolver
 	TypeValues    *typevalue.Cache
+	KeySpace      *keyspace.KeySpace
 	ModuleExports importlookup.Source
 	WIR           *wir.Body
+	WIRScalars    bool
 }
 
 type Lowered struct {
@@ -63,7 +66,9 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		graphID:                       graph.ID(),
 		typeResolver:                  typeResolver,
 		typeValues:                    config.TypeValues,
+		keySpace:                      config.KeySpace,
 		wir:                           config.WIR,
+		wirScalars:                    config.WIRScalars,
 		callPoints:                    callPointsByExpr(builtCallFacts(graph, result)),
 		symbolTypes:                   symbolTypes,
 		declaredReturnLocalTypes:      declaredReturnLocalTypes,
@@ -271,7 +276,9 @@ type lowerer struct {
 	graphID                       uint64
 	typeResolver                  *typeresolve.Resolver
 	typeValues                    *typevalue.Cache
+	keySpace                      *keyspace.KeySpace
 	wir                           *wir.Body
+	wirScalars                    bool
 	wirTempDefinitions            map[uint32]wir.Instruction
 	callPoints                    map[*ast.FuncCallExpr]cfg.Point
 	symbolTypes                   map[symbol.ID]typ.Type

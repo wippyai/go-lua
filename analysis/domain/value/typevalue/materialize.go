@@ -41,6 +41,30 @@ func Nil(reg *axis.Registry) product.Value {
 	return WithWitness(reg, FromType(reg, typ.Nil), typ.Nil)
 }
 
+// LiteralBool materializes an exact boolean literal value.
+func LiteralBool(reg *axis.Registry, value bool) product.Value {
+	t := typ.LiteralBool(value)
+	return WithWitness(reg, FromType(reg, t), t)
+}
+
+// LiteralInt materializes an exact integer literal value.
+func LiteralInt(reg *axis.Registry, value int64) product.Value {
+	t := typ.LiteralInt(value)
+	return WithWitness(reg, FromType(reg, t), t)
+}
+
+// LiteralNumber materializes an exact floating-point number literal value.
+func LiteralNumber(reg *axis.Registry, value float64) product.Value {
+	t := typ.LiteralNumber(value)
+	return WithWitness(reg, FromType(reg, t), t)
+}
+
+// LiteralString materializes an exact string literal value.
+func LiteralString(reg *axis.Registry, value string) product.Value {
+	t := typ.LiteralString(value)
+	return WithWitness(reg, FromType(reg, t), t)
+}
+
 // HasConcreteType reports whether value carries type evidence precise enough to
 // prefer over a broader cached declaration. Unknown, any, and never are not
 // concrete refinements.

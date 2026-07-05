@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	"github.com/wippyai/go-lua/compiler/parse/numparse"
 )
 
 func (l *lowerer) valueSources(sources []sourceprovenance.ASTSource) []factflow.ValueSource {
@@ -72,10 +73,48 @@ func (l *lowerer) returnOperandValueSourceFromWIR(
 	callResults map[uint32]wirCallResultSource,
 ) (factflow.ValueSource, bool) {
 	switch op.Kind {
+	case wir.OperandPath:
+		if l.keySpace == nil {
+			return factflow.ValueSource{}, false
+		}
+		p := l.wir.Path(wir.PathRef(op.Ref))
+		if len(p.Segments) != 0 {
+			return factflow.ValueSource{}, false
+		}
+		pathKey := l.keySpace.FromPath(p)
+		if pathKey.Kind == 0 {
+			return factflow.ValueSource{}, false
+		}
+		shape, ok := factflow.NewValueSourceShape(final, listSpread && final, false, listSpread && final)
+		if !ok {
+			return factflow.ValueSource{}, false
+		}
+		return mustValueSource(factflow.NewPathValueSource(pathKey, index, index, 0, shape)), true
 	case wir.OperandConst:
 		c := l.wir.Const(wir.ConstRef(op.Ref))
 		if c.Kind == wir.ConstNil {
 			return factflow.NewNilValueSource(index), true
+		}
+		if !l.wirScalars {
+			return factflow.ValueSource{}, false
+		}
+		shape, ok := factflow.NewValueSourceShape(final, listSpread && final, false, listSpread && final)
+		if !ok {
+			return factflow.ValueSource{}, false
+		}
+		switch c.Kind {
+		case wir.ConstBool:
+			return mustValueSource(factflow.NewBoolLiteralValueSource(c.Bool, index, index, 0, shape)), true
+		case wir.ConstNumber:
+			if i, ok := numparse.ParseIntegerLiteral(c.Number); ok {
+				return mustValueSource(factflow.NewIntegerLiteralValueSource(i, index, index, 0, shape)), true
+			}
+			if f, ok := numparse.ParseFloatLiteral(c.Number); ok {
+				return mustValueSource(factflow.NewNumberLiteralValueSource(f, index, index, 0, shape)), true
+			}
+			return factflow.ValueSource{}, false
+		case wir.ConstString:
+			return mustValueSource(factflow.NewStringLiteralValueSource(c.Str, index, index, 0, shape)), true
 		}
 	case wir.OperandVararg:
 		shape, ok := factflow.NewValueSourceShape(final, listSpread && final, false, listSpread && final)

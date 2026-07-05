@@ -110,6 +110,62 @@ func TestSourceValuesNilReturnsAbsentPresence(t *testing.T) {
 	}
 }
 
+func TestSourceValuesPathSourceReadsRootSymbolValue(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	pathKey, ok := ks.FromResolverKey(symbol.ID(7), 0, nil)
+	if !ok {
+		t.Fatal("FromResolverKey returned false")
+	}
+	source, ok := NewPathValueSource(pathKey, 0, 0, 0, ValueSourceShape{})
+	if !ok {
+		t.Fatalf("NewPathValueSource returned false")
+	}
+	want := product.Set(reg, presentValue(reg), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	in := state.State{}.WriteValue(reg, key.SymbolValue(symbol.ID(7)), want)
+	resolver := NewSourceValues(SourceValuesConfig{Registry: reg, KeySpace: ks})
+
+	got, ok := resolver.ValueOfSource(cfg.Point(1), source, in, nil)
+	if !ok {
+		t.Fatal("path source did not resolve")
+	}
+	if kind := product.Get(reg, got, runtimekind.Key); !runtimekind.Equal(kind, runtimekind.Singleton(runtimekind.String)) {
+		t.Fatalf("path source runtime kind = %s, want string", kind)
+	}
+}
+
+func TestSourceValuesLiteralSourcesResolveWitnesses(t *testing.T) {
+	reg := standard.Registry()
+	resolver := NewSourceValues(SourceValuesConfig{Registry: reg})
+	shape := ValueSourceShape{}
+	cases := []struct {
+		name string
+		make func() (ValueSource, bool)
+		want typ.Type
+	}{
+		{name: "bool", make: func() (ValueSource, bool) { return NewBoolLiteralValueSource(false, 0, 0, 0, shape) }, want: typ.False},
+		{name: "integer", make: func() (ValueSource, bool) { return NewIntegerLiteralValueSource(42, 0, 0, 0, shape) }, want: typ.LiteralInt(42)},
+		{name: "number", make: func() (ValueSource, bool) { return NewNumberLiteralValueSource(3.5, 0, 0, 0, shape) }, want: typ.LiteralNumber(3.5)},
+		{name: "string", make: func() (ValueSource, bool) { return NewStringLiteralValueSource("ready", 0, 0, 0, shape) }, want: typ.LiteralString("ready")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			source, ok := tc.make()
+			if !ok {
+				t.Fatal("constructor returned false")
+			}
+			got, ok := resolver.ValueOfSource(cfg.Point(1), source, state.State{}, nil)
+			if !ok {
+				t.Fatal("literal source did not resolve")
+			}
+			gotType, ok := typevalue.TypeOf(reg, got)
+			if !ok || !typ.TypeEquals(gotType, tc.want) {
+				t.Fatalf("literal type = %v/%v, want %v", gotType, ok, tc.want)
+			}
+		})
+	}
+}
+
 func TestSourceValuesCallReadsReturnSlot(t *testing.T) {
 	reg := standard.Registry()
 	callPoint := cfg.Point(33)

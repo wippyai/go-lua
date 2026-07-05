@@ -163,6 +163,8 @@ func (l *lowerer) returnSourcePresence(input *factflow.FactsInput, source factfl
 	switch source.Kind {
 	case factflow.ValueSourceNil:
 		return presence.Absent(), true
+	case factflow.ValueSourceLiteral:
+		return presence.Present(), true
 	case factflow.ValueSourceExpression:
 		if !source.HasExpr {
 			return presence.Bottom(), false
