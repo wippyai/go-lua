@@ -64,6 +64,7 @@ type SourceValuesConfig struct {
 	ExpressionOp          ExpressionOperationEvaluator
 	ExpressionCondition   ExpressionConditionStateRefiner
 	ExpressionValue       ExpressionValueProvider
+	PreferExpressionValue bool
 	VarargValue           VarargValueProvider
 }
 
@@ -88,6 +89,7 @@ func NewSourceValues(config SourceValuesConfig) SourceValues {
 		expressionOp:          config.ExpressionOp,
 		expressionCondition:   config.ExpressionCondition,
 		expressionValue:       config.ExpressionValue,
+		preferExpressionValue: config.PreferExpressionValue,
 		varargValue:           config.VarargValue,
 	}
 }
@@ -128,6 +130,7 @@ type sourceValueResolver struct {
 	expressionOp          ExpressionOperationEvaluator
 	expressionCondition   ExpressionConditionStateRefiner
 	expressionValue       ExpressionValueProvider
+	preferExpressionValue bool
 	varargValue           VarargValueProvider
 }
 
@@ -251,6 +254,11 @@ func (r sourceValueResolver) valueOfExpression(
 	}
 	cached, hasCached := r.expressionValues[source.ExprRef]
 	_, pathBacked := r.pathBacked[source.ExprRef]
+	if r.preferExpressionValue && r.expressionValue != nil {
+		if value, ok := r.expressionValue(point, source.ExprRef, source, in); ok {
+			return value, true
+		}
+	}
 	if _, isDynamicIndex := r.dynamicIndexExprs[source.ExprRef]; isDynamicIndex && r.expressionValue != nil {
 		if value, ok := r.expressionValue(point, source.ExprRef, source, in); ok {
 			return value, true

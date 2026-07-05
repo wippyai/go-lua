@@ -339,6 +339,57 @@ end
 	}
 }
 
+func TestLowerWithWIRUnaryLengthReturnCarriesProjectedIntegerValue(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(req: {items: {string}}, other: {items: {number}}): integer
+    return #req.items
+end
+`)
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
+	}
+	points := requireStmtPoints(t, built, ret, 1)
+	otherPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "other").Field("items")
+	body := wir.NewBody("synthetic-unary-length-return")
+	temp := wir.Operand{Kind: wir.OperandTemp, Ref: 1}
+	operand := wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))}
+	start := body.Emit(wir.Instruction{Op: wir.OpUnOp, Point: points[0], Dst: temp, A: operand, Operator: wir.UnLen})
+	body.Emit(wir.Instruction{Op: wir.OpReturn, Point: points[0], List: body.AppendOperands([]wir.Operand{temp})})
+	body.SetPointRange(points[0], start, body.Len())
+	reg := standard.Registry()
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+
+	returnFact, ok := facts.Return(points[0])
+	if !ok {
+		t.Fatalf("missing return fact at point %d", points[0])
+	}
+	sources := returnFact.Sources()
+	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr {
+		t.Fatalf("return sources = %#v, want WIR unary expression source", sources)
+	}
+	op, ok := facts.ExpressionOperation(sources[0].ExprRef)
+	if !ok || op.Kind() != factflow.ExpressionOperationUnary || op.Op() != "#" {
+		t.Fatalf("WIR unary operation = %#v/%v, want length", op, ok)
+	}
+	left := op.Left()
+	if left.Kind != factflow.ValueSourceExpression || !left.HasExpr {
+		t.Fatalf("WIR unary operand source = %#v, want expression-backed path", left)
+	}
+	gotPath, ok := facts.ExpressionPath(left.ExprRef)
+	if !ok || !gotPath.Equal(otherPath) {
+		t.Fatalf("WIR unary operand path = %v/%v, want %v", gotPath, ok, otherPath)
+	}
+	value, ok := facts.ExpressionValue(sources[0].ExprRef)
+	if !ok {
+		t.Fatalf("missing WIR unary length expression value for ref %d", sources[0].ExprRef)
+	}
+	got, ok := typevalue.TypeOf(reg, value)
+	if !ok || !typ.TypeEquals(got, typ.Integer) {
+		t.Fatalf("WIR unary length value type = %v/%v, want integer", got, ok)
+	}
+}
+
 func TestLowerWithWIRReturnTempExpressionUsesSegmentedPathOperand(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(): string

@@ -199,7 +199,10 @@ func (r *Result) boundarySources(mode sourceValueReadMode) sourcevalue.SourceVal
 	if cached := r.queries.sourceResolver(mode); cached != nil {
 		return cached
 	}
-	sources := sourcevalue.WithExpressionValue(r.sources, readexpr.Provider(r.readExprConfig(mode)))
+	sources := r.sources
+	if !r.customExpressionValue {
+		sources = sourcevalue.WithExpressionValue(r.sources, readexpr.Provider(r.readExprConfig(mode)))
+	}
 	sources = r.exprRefinements.Bind(r.registry, sources)
 	r.queries.rememberSourceResolver(mode, sources)
 	return sources

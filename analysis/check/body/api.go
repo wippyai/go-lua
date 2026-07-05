@@ -88,26 +88,27 @@ type Stats struct {
 // Static is the reusable, entry-independent analysis artifact for one bound
 // chunk or function body.
 type Static struct {
-	registry    *axis.Registry
-	bindings    *bind.Result
-	cfg         *cfgbuild.Result
-	semantics   *semantics.Result
-	wir         *wir.Body
-	signatures  signaturelookup.Source
-	moduleTypes typelookup.Source
-	moduleLoads importlookup.Source
-	globals     []string
-	globalTypes map[string]typ.Type
-	modules     moduleidentity.Projection
-	signatureID *signatureIdentityResolver
-	facts       factflow.Facts
-	symbolTypes map[symbol.ID]typ.Type
-	visibility  *visibility.Resolver
-	sources     sourcevalue.SourceValues
-	calleeValue CalleeValueFunc
-	receiverFn  ReceiverCallableFunc
-	typeNS      *typeresolve.Resolver
-	typeValues  *typevalue.Cache
+	registry              *axis.Registry
+	bindings              *bind.Result
+	cfg                   *cfgbuild.Result
+	semantics             *semantics.Result
+	wir                   *wir.Body
+	signatures            signaturelookup.Source
+	moduleTypes           typelookup.Source
+	moduleLoads           importlookup.Source
+	globals               []string
+	globalTypes           map[string]typ.Type
+	modules               moduleidentity.Projection
+	signatureID           *signatureIdentityResolver
+	facts                 factflow.Facts
+	symbolTypes           map[symbol.ID]typ.Type
+	visibility            *visibility.Resolver
+	sources               sourcevalue.SourceValues
+	customExpressionValue bool
+	calleeValue           CalleeValueFunc
+	receiverFn            ReceiverCallableFunc
+	typeNS                *typeresolve.Resolver
+	typeValues            *typevalue.Cache
 
 	entrySeeds         []state.ValueSeed
 	entrySeedsPrepared bool
@@ -168,32 +169,33 @@ type SolveConfig struct {
 }
 
 type Result struct {
-	registry        *axis.Registry
-	bindings        *bind.Result
-	cfg             *cfgbuild.Result
-	semantics       *semantics.Result
-	signatures      signaturelookup.Source
-	moduleTypes     typelookup.Source
-	modules         moduleidentity.Projection
-	signatureID     *signatureIdentityResolver
-	facts           factflow.Facts
-	symbolTypes     map[symbol.ID]typ.Type
-	exprRefinements sourcevalue.ExpressionRefinements
-	typeNS          *typeresolve.Resolver
-	flow            transfer.Result
-	boundary        map[cfg.Point]state.State
-	boundaryXfer    transfer.NodeTransfer
-	edgeXfer        transfer.EdgeTransfer
-	visibility      *visibility.Resolver
-	sources         sourcevalue.SourceValues
-	callOutcome     callpayload.CallOutcomeProvider
-	signatureArg    SignatureArgumentTypeFunc
-	typeValues      *typevalue.Cache
-	stateLanes      []state.LaneID
-	functions       []*Result
-	callContext     bool
-	funcTypes       FunctionValueTypes
-	callExprPts     map[*ast.FuncCallExpr]cfg.Point
+	registry              *axis.Registry
+	bindings              *bind.Result
+	cfg                   *cfgbuild.Result
+	semantics             *semantics.Result
+	signatures            signaturelookup.Source
+	moduleTypes           typelookup.Source
+	modules               moduleidentity.Projection
+	signatureID           *signatureIdentityResolver
+	facts                 factflow.Facts
+	symbolTypes           map[symbol.ID]typ.Type
+	exprRefinements       sourcevalue.ExpressionRefinements
+	typeNS                *typeresolve.Resolver
+	flow                  transfer.Result
+	boundary              map[cfg.Point]state.State
+	boundaryXfer          transfer.NodeTransfer
+	edgeXfer              transfer.EdgeTransfer
+	visibility            *visibility.Resolver
+	sources               sourcevalue.SourceValues
+	customExpressionValue bool
+	callOutcome           callpayload.CallOutcomeProvider
+	signatureArg          SignatureArgumentTypeFunc
+	typeValues            *typevalue.Cache
+	stateLanes            []state.LaneID
+	functions             []*Result
+	callContext           bool
+	funcTypes             FunctionValueTypes
+	callExprPts           map[*ast.FuncCallExpr]cfg.Point
 
 	queries resultQueryCache
 

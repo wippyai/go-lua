@@ -1110,6 +1110,90 @@ end`)
 	}
 }
 
+func TestCheckFunctionLengthGuardedReturnIndexBeforeBoundaryDropsMissNil(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function read(parts: {string}, fallback: string): string
+	if #parts >= 2 then
+		return parts[#parts]
+	end
+	return fallback
+end`)
+
+	result, err := CheckFunction(fn, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	var returnPoint cfg.Point
+	var returned ast.Expr
+	for _, point := range result.ReturnPoints() {
+		fact, ok := result.ReturnFact(point)
+		if !ok || len(fact.Exprs) == 0 {
+			continue
+		}
+		if _, ok := fact.Exprs[0].(*ast.AttrGetExpr); ok {
+			returnPoint = point
+			returned = fact.Exprs[0]
+			break
+		}
+	}
+	if returned == nil {
+		t.Fatal("missing indexed return expression")
+	}
+	indexed := returned.(*ast.AttrGetExpr)
+	arrayPath, ok := result.ExpressionPath(indexed.Object)
+	if !ok {
+		t.Fatal("parts expression path not found")
+	}
+	if floor, ok := result.LengthFloorAtBoundary(returnPoint, arrayPath); !ok || floor < 2 {
+		t.Fatalf("length floor for %s at point %d = %d/%v, want >=2", arrayPath, returnPoint, floor, ok)
+	}
+	tableValue, ok := result.PathValueBeforeBoundary(returnPoint, arrayPath)
+	if !ok {
+		t.Fatalf("PathValueBeforeBoundary(%s) returned false", arrayPath)
+	}
+	tableType, ok := typevalue.TypeOf(reg, tableValue)
+	if !ok || !typ.TypeEquals(tableType, typ.NewArray(typ.String)) {
+		t.Fatalf("table type at return = %v/%v, want string array", tableType, ok)
+	}
+	sources, ok := result.ReturnValueSources(returnPoint)
+	if !ok || len(sources) != 1 || sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr {
+		t.Fatalf("return sources = %#v/%v, want one expression source", sources, ok)
+	}
+	dyn, ok := result.facts.DynamicIndexExpression(sources[0].ExprRef)
+	if !ok {
+		t.Fatalf("missing dynamic-index expression for returned source ref %d", sources[0].ExprRef)
+	}
+	key := dyn.KeySource()
+	if key.Kind != factflow.ValueSourceExpression || !key.HasExpr {
+		t.Fatalf("dynamic-index key source = %#v, want expression source", key)
+	}
+	op, ok := result.facts.ExpressionOperation(key.ExprRef)
+	if !ok || op.Kind() != factflow.ExpressionOperationUnary || op.Op() != "#" {
+		t.Fatalf("dynamic-index key operation = %#v/%v, want unary length", op, ok)
+	}
+	left := op.Left()
+	switch {
+	case left.Kind == factflow.ValueSourceExpression && left.HasExpr:
+		gotPath, ok := result.facts.ExpressionPathRef(left.ExprRef)
+		if !ok || !gotPath.Equal(arrayPath) {
+			t.Fatalf("dynamic-index length operand path = %v/%v, want %v", gotPath, ok, arrayPath)
+		}
+	case left.Kind == factflow.ValueSourcePath && left.PathKey == arrayPath.Key():
+	default:
+		t.Fatalf("dynamic-index length operand = %#v, want array path %v", left, arrayPath)
+	}
+	if !result.SourceReadProvenPresentBeforeBoundary(returnPoint, sources[0]) {
+		t.Fatalf("SourceReadProvenPresentBeforeBoundary(%#v) = false, want true", sources[0])
+	}
+	value, ok := result.SourceValueAtBoundary(returnPoint, sources[0])
+	if !ok {
+		t.Fatal("SourceValueAtBoundary(parts[#parts]) returned false")
+	}
+	assertPresence(t, reg, value, presence.Present())
+	assertRuntimeKind(t, reg, value, runtimekind.Singleton(runtimekind.String))
+}
+
 func TestCheckFunctionModuloLengthDynamicIndexBeforeBoundaryDropsMissNil(t *testing.T) {
 	reg := standard.Registry()
 	fn := parseFunction(t, `
@@ -4186,6 +4270,43 @@ func TestCheckChunkUserExpressionValueOverridesDefaultStaticReadProjector(t *tes
 	got := exit.ReadValue(reg, key.SymbolValue(out))
 	assertPresence(t, reg, got, presence.Absent())
 	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.Nil))
+}
+
+func TestCheckChunkSourceValueAtBoundaryPreservesUserExpressionValue(t *testing.T) {
+	reg := standard.Registry()
+	want := product.Set(
+		reg,
+		product.NewWithPresence(reg, product.ShapeTop, presence.Present()),
+		runtimekind.Key,
+		runtimekind.Singleton(runtimekind.Number),
+	)
+	stmts := parseChunk(t, `return x + 1`)
+
+	result, err := CheckChunk(stmts, Config{
+		Registry: reg,
+		Globals:  []string{"x"},
+		ExpressionValue: func(_ cfg.Point, _ factflow.ExprRef, _ factflow.ValueSource, _ state.State) (product.Value, bool) {
+			return want, true
+		},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	points := result.ReturnPoints()
+	if len(points) != 1 {
+		t.Fatalf("ReturnPoints = %v, want one return", points)
+	}
+	sources, ok := result.ReturnValueSources(points[0])
+	if !ok || len(sources) != 1 {
+		t.Fatalf("ReturnValueSources = %#v/%v, want one source", sources, ok)
+	}
+	got, ok := result.SourceValueAtBoundary(points[0], sources[0])
+	if !ok {
+		t.Fatalf("SourceValueAtBoundary returned false for return source %#v", sources[0])
+	}
+	if !product.Equal(reg, got, want) {
+		t.Fatalf("SourceValueAtBoundary = %v, want configured expression value %v", got, want)
+	}
 }
 
 func TestCheckBoundFunctionUsesSuppliedBindingIdentity(t *testing.T) {

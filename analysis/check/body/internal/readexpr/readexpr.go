@@ -814,10 +814,28 @@ func dynamicIndexKeyIsArrayLength(config Config, source factflow.ValueSource, ar
 	}
 	left := op.Left()
 	if left.Kind != factflow.ValueSourceExpression || !left.HasExpr {
-		return false
+		return dynamicIndexSourcePathEqualsArray(left, arrayPath)
 	}
 	p, ok := config.Facts.ExpressionPathRef(left.ExprRef)
 	return ok && p.Equal(arrayPath)
+}
+
+func dynamicIndexSourcePathEqualsArray(source factflow.ValueSource, arrayPath pathdom.Path) bool {
+	if arrayPath.IsEmpty() || source.Kind != factflow.ValueSourcePath || source.PathKey == "" {
+		return false
+	}
+	if source.PathKey == arrayPath.Key() {
+		return true
+	}
+	if p, ok := pathaddr.LocalPathFromKey(source.PathKey); ok {
+		return p.Equal(arrayPath)
+	}
+	sym, segments, ok := pathaddr.ParseSymbolPathKey(source.PathKey)
+	if !ok {
+		return false
+	}
+	p := pathdom.Path{Symbol: sym, Segments: segments}
+	return p.Equal(arrayPath)
 }
 
 func dynamicIndexDiffProvesLELength(config Config, resolver *visibility.Resolver, point cfg.Point, in state.State, term dynamicIndexTerm, arrayPath pathdom.Path) bool {

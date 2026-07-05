@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
@@ -26,7 +27,7 @@ func projectReturnSlots(
 	declared []product.Value,
 ) []product.Value {
 	fallback := projectReturnSlotsFromExit(reg, result, exit, arity, declared)
-	if returns, ok := projectReturnSlotsFromSources(reg, result, exit, arity); ok && returnSlotsAtLeastAsPrecise(reg, returns, fallback) {
+	if returns, ok := projectReturnSlotsFromSources(reg, result, exit, arity, fallback); ok {
 		return returns
 	}
 	return fallback
@@ -52,23 +53,12 @@ func projectReturnSlotsFromExit(
 	return returns
 }
 
-func returnSlotsAtLeastAsPrecise(reg *axis.Registry, candidate, fallback []product.Value) bool {
-	if len(candidate) != len(fallback) {
-		return false
-	}
-	for i := range candidate {
-		if !product.LessOrEq(reg, candidate[i], fallback[i]) {
-			return false
-		}
-	}
-	return true
-}
-
 func projectReturnSlotsFromSources(
 	reg *axis.Registry,
 	result ResultReader,
 	exit state.State,
 	arity int,
+	materialized []product.Value,
 ) ([]product.Value, bool) {
 	slots := newReturnSlotProjection(reg, result)
 	if !slots.OK() || arity <= 0 || len(slots.reachable) == 0 {
@@ -89,6 +79,9 @@ func projectReturnSlotsFromSources(
 				return nil, false
 			}
 			value = enrichReturnSlotFromHeapIdentity(reg, result, exit, value)
+			if i < len(materialized) {
+				value = refineReturnSourceWithMaterializedSlot(reg, value, materialized[i])
+			}
 			if i < len(slots.declared) {
 				value = mergeDeclaredReturnSourceValue(reg, slots, value, i)
 			}
@@ -96,6 +89,31 @@ func projectReturnSlotsFromSources(
 		}
 	}
 	return returns, true
+}
+
+func refineReturnSourceWithMaterializedSlot(reg *axis.Registry, source, slot product.Value) product.Value {
+	if reg == nil ||
+		product.Equal(reg, slot, product.Bottom(reg)) ||
+		product.Equal(reg, slot, product.Top()) {
+		return source
+	}
+	if product.Equal(reg, source, product.Bottom(reg)) || product.Equal(reg, source, product.Top()) {
+		return slot
+	}
+	switch {
+	case product.LessOrEq(reg, slot, source):
+		return slot
+	case product.LessOrEq(reg, source, slot):
+		return source
+	}
+	// The return-source fact preserves the expression and return-point identity;
+	// the materialized return slot preserves transfer effects for that same
+	// expression, such as table.insert element inference. Refining them keeps
+	// both owners canonical without re-reading or compensating at call sites.
+	if refined := refinement.MeetConstraint(reg, source, slot); !product.Equal(reg, refined, product.Bottom(reg)) {
+		return refined
+	}
+	return source
 }
 
 func enrichReturnSlotFromHeapIdentity(reg *axis.Registry, result ResultReader, exit state.State, value product.Value) product.Value {

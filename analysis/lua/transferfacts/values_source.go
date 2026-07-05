@@ -734,9 +734,12 @@ func (l *lowerer) addWIRExpressionOperationValue(exprRef factflow.ExprRef, op fa
 	if !ok {
 		return
 	}
-	rightValue, ok := l.staticValueSourceValue(right)
-	if !ok {
-		return
+	var rightValue product.Value
+	if op.Kind() == factflow.ExpressionOperationBinary {
+		rightValue, ok = l.staticValueSourceValue(right)
+		if !ok {
+			return
+		}
 	}
 	value, ok := luasourcevalue.ExpressionOperationValue(l.registry, l.typeValues, op, leftValue, rightValue)
 	if !ok {
@@ -831,6 +834,7 @@ func (l *lowerer) wirUnaryTempExpressionValueSource(
 		l.expressionOperations = make(map[factflow.ExprRef]factflow.ExpressionOperation)
 	}
 	l.expressionOperations[exprRef] = operation
+	l.addWIRExpressionOperationValue(exprRef, operation, operand, factflow.ValueSource{})
 	shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, openTail)
 	if !ok {
 		return factflow.ValueSource{}, false
@@ -953,6 +957,14 @@ func (l *lowerer) wirInstructionExpressionOperandValueSource(
 	resultSources map[uint32]wirResultSource,
 	seen map[uint32]bool,
 ) (factflow.ValueSource, bool) {
+	if op.Kind == wir.OperandPath {
+		if source, ok := l.valueSourceFromWIRRootPathOperand(op, exprIndex, targetIndex, true, symbol.Local, symbol.Param, symbol.Global, symbol.Upvalue); ok {
+			return source, true
+		}
+		if source, ok := l.pathExpressionSourceFromWIR("expr-op", inst.Point, op, sourceprovenance.NoSourceIndex, sourceprovenance.NoSourceIndex, true, false, false, symbol.Local, symbol.Param, symbol.Global, symbol.Upvalue); ok {
+			return source, true
+		}
+	}
 	if inst.Op == wir.OpConcat || (exprIndex == sourceprovenance.NoSourceIndex && targetIndex == sourceprovenance.NoSourceIndex) {
 		if source, ok := l.pathExpressionSourceFromWIR("expr-op", inst.Point, op, sourceprovenance.NoSourceIndex, sourceprovenance.NoSourceIndex, true, false, false, symbol.Local, symbol.Param, symbol.Global, symbol.Upvalue); ok {
 			return source, true

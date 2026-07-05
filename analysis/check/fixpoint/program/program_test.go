@@ -1696,6 +1696,57 @@ run_suite("other", no_suite)
 	}
 }
 
+func TestRunChunkLocalFunctionInsertedArrayCallOutcomeInfersElementType(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Entry = {id: string, meta: {type: string, suite: string?, order: number?}?}
+
+local function group_by_suite(entries: {Entry})
+	local no_suite = {}
+	for _, entry in ipairs(entries) do
+		table.insert(no_suite, entry)
+	end
+	return no_suite
+end
+
+local entries: {Entry} = {}
+local no_suite = group_by_suite(entries)
+local uncategorized: {Entry} = no_suite
+`)
+
+	result, err := RunChunk(stmts, Config{
+		Check: body.Config{
+			Registry:   reg,
+			Globals:    []string{"ipairs", "table"},
+			Signatures: signaturelookup.Source{IncludeStdlib: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := result.RootResult()
+	if root == nil {
+		t.Fatal("missing root result")
+	}
+	callPoint := requireCallByCalleeName(t, root, "group_by_suite")
+	outcome, ok := root.CallOutcomeAt(callPoint)
+	if !ok || len(outcome.Results) == 0 {
+		t.Fatalf("CallOutcomeAt(%d) = %#v/%v, want inferred return", callPoint, outcome, ok)
+	}
+	gotType, ok := typevalue.TypeOf(reg, outcome.Results[0].Value)
+	want := typ.NewArray(typetable.NewRecord().
+		Field("id", typ.String).
+		Field("meta", typeexpr.Optional(typetable.NewRecord().
+			Field("type", typ.String).
+			Field("suite", typeexpr.Optional(typ.String)).
+			Field("order", typeexpr.Optional(typ.Number)).
+			Build())).
+		Build())
+	if !ok || !typ.TypeEquals(gotType, want) {
+		t.Fatalf("group_by_suite result type = %v/%v (value %#v), want %v", gotType, ok, outcome.Results[0].Value, want)
+	}
+}
+
 func TestRunChunkReexportsManifestSendEffectAsEscapeEvent(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `

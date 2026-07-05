@@ -165,8 +165,9 @@ func (c *checker) prepare(
 		ExpressionCondition: func(point cfg.Point, in state.State, selected factflow.ExpressionConditionFacts) state.State {
 			return factapply.ApplyExpressionConditionFacts(config.Registry, resolver, luaPathTypeProjector, point, in, selected)
 		},
-		ExpressionValue: expressionValue,
-		VarargValue:     config.VarargValue,
+		ExpressionValue:       expressionValue,
+		PreferExpressionValue: userExpressionValue != nil,
+		VarargValue:           config.VarargValue,
 	})
 	refinedSources := sourcevalue.NewExpressionRefinements(facts.ExpressionRefinements()).Bind(config.Registry, sources)
 	calleeValue := calleeValueProvider(config.Registry, facts, resolver, refinedSources, config.TypeValues, bindings, typeResolver)
@@ -191,6 +192,7 @@ func (c *checker) prepare(
 		symbolTypes:           lowered.SymbolTypes,
 		visibility:            resolver,
 		sources:               sources,
+		customExpressionValue: userExpressionValue != nil,
 		calleeValue:           calleeValue,
 		receiverFn:            receiverFn,
 		typeNS:                typeResolver,
@@ -248,28 +250,29 @@ func (s *Static) Solve(config SolveConfig) *Result {
 	})
 	flow = s.finalizeReturnSlotHeapWitnesses(flow, typeValues)
 	return &Result{
-		registry:        s.registry,
-		bindings:        s.bindings,
-		cfg:             s.cfg,
-		semantics:       s.semantics,
-		signatures:      s.signatures,
-		moduleTypes:     s.moduleTypes,
-		modules:         s.modules,
-		signatureID:     s.signatureID,
-		facts:           s.facts,
-		symbolTypes:     s.symbolTypes,
-		exprRefinements: sourcevalue.NewExpressionRefinements(s.facts.ExpressionRefinements()),
-		typeNS:          s.typeNS,
-		flow:            flow,
-		boundaryXfer:    nodeTransfer,
-		edgeXfer:        edgeTransfer,
-		visibility:      s.visibility,
-		sources:         s.sources,
-		callOutcome:     callOutcome,
-		signatureArg:    signatureArgumentType,
-		typeValues:      typeValues,
-		stateLanes:      append([]state.LaneID(nil), config.StateLanes...),
-		queries:         newResultQueryCache(s.facts),
+		registry:              s.registry,
+		bindings:              s.bindings,
+		cfg:                   s.cfg,
+		semantics:             s.semantics,
+		signatures:            s.signatures,
+		moduleTypes:           s.moduleTypes,
+		modules:               s.modules,
+		signatureID:           s.signatureID,
+		facts:                 s.facts,
+		symbolTypes:           s.symbolTypes,
+		exprRefinements:       sourcevalue.NewExpressionRefinements(s.facts.ExpressionRefinements()),
+		typeNS:                s.typeNS,
+		flow:                  flow,
+		boundaryXfer:          nodeTransfer,
+		edgeXfer:              edgeTransfer,
+		visibility:            s.visibility,
+		sources:               s.sources,
+		customExpressionValue: s.customExpressionValue,
+		callOutcome:           callOutcome,
+		signatureArg:          signatureArgumentType,
+		typeValues:            typeValues,
+		stateLanes:            append([]state.LaneID(nil), config.StateLanes...),
+		queries:               newResultQueryCache(s.facts),
 	}
 }
 

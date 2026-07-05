@@ -57,7 +57,7 @@ func TestFromResultProjectsReturnSlotsFromExitState(t *testing.T) {
 		t.Fatalf("FromResult returned %d slots, want 2", len(got.Returns))
 	}
 	projectAssertValue(t, reg, got.Returns[0], first)
-	projectAssertValue(t, reg, got.Returns[1], product.Absent(reg))
+	projectAssertValue(t, reg, got.Returns[1], typevalue.Nil(reg))
 }
 
 func TestFromResultNoExplicitReturnProjectsEmptySummary(t *testing.T) {
@@ -171,6 +171,33 @@ end`)
 	}
 }
 
+func TestFromResultPreservesUnannotatedInsertedParamElementArrayReturn(t *testing.T) {
+	reg := standard.Registry()
+	fn := projectParseFunction(t, `
+function group_by_suite(entries: {{id: string}})
+	local no_suite = {}
+	for _, entry in ipairs(entries) do
+		table.insert(no_suite, entry)
+	end
+	return no_suite
+end`)
+
+	result := projectCheckFunction(t, fn, body.Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	got := summaryprojection.FromResult(result)
+
+	if len(got.Returns) != 1 {
+		t.Fatalf("returns = %d, want 1", len(got.Returns))
+	}
+	want := typ.NewArray(typetable.NewRecord().Field("id", typ.String).Build())
+	gotType, ok := typevalue.TypeOf(reg, got.Returns[0])
+	if !ok || !typ.TypeEquals(gotType, want) {
+		t.Fatalf("return slot type = %v/%v, want %v", gotType, ok, want)
+	}
+}
+
 func TestFromResultDeclaredReturnDoesNotEraseComputedIdentity(t *testing.T) {
 	reg := standard.Registry()
 	retID := identity.ID{Kind: "test.return", Site: "declared", Index: 1}
@@ -272,18 +299,24 @@ func TestFromResultIgnoresDeadReturnFacts(t *testing.T) {
 	live := projectValue(reg, axisKey, projectMarkA)
 	dead := projectValue(reg, axisKey, projectMarkB)
 	values := []product.Value{live, dead}
-	var seen int
+	byExpr := make(map[factflow.ExprRef]product.Value)
 	stmts := projectParseChunk(t, "do return x + 1 end\nreturn x + 2")
 
 	result := projectCheckChunk(t, stmts, body.Config{
 		Registry: reg,
 		Globals:  []string{"x"},
-		ExpressionValue: func(_ cfg.Point, _ factflow.ExprRef, source factflow.ValueSource, _ state.State) (product.Value, bool) {
-			if source.TargetIndex != 0 || seen >= len(values) {
+		ExpressionValue: func(_ cfg.Point, expr factflow.ExprRef, source factflow.ValueSource, _ state.State) (product.Value, bool) {
+			if source.TargetIndex != 0 {
 				return product.Value{}, false
 			}
-			value := values[seen]
-			seen++
+			if value, ok := byExpr[expr]; ok {
+				return value, true
+			}
+			if len(byExpr) >= len(values) {
+				return product.Value{}, false
+			}
+			value := values[len(byExpr)]
+			byExpr[expr] = value
 			return value, true
 		},
 	})
