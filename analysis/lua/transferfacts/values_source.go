@@ -216,13 +216,11 @@ func (l *lowerer) pathExpressionSourceFromWIR(
 		l.expressionPaths = make(map[factflow.ExprRef]path.Path)
 	}
 	l.expressionPaths[exprRef] = p
-	if len(p.Segments) == 0 {
-		if t, ok := l.symbolTypes[p.Symbol]; ok {
-			if l.expressionValues == nil {
-				l.expressionValues = make(map[factflow.ExprRef]product.Value)
-			}
-			l.expressionValues[exprRef] = l.valueFromTypeWithWitness(t)
+	if t, ok := l.aliasPathType(p); ok {
+		if l.expressionValues == nil {
+			l.expressionValues = make(map[factflow.ExprRef]product.Value)
 		}
+		l.expressionValues[exprRef] = l.valueFromTypeWithWitness(t)
 	}
 	shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, openTail)
 	if !ok {
@@ -330,7 +328,9 @@ func (l *lowerer) wirTempExpressionValueSource(
 		return l.valueSourceFromWIROperandSeen(inst.A, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
 	case wir.OpDynamicIndexRead:
 		return l.wirDynamicIndexReadTempExpressionValueSource(op.Ref, inst, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
-	case wir.OpBinOp, wir.OpLogical, wir.OpConcat:
+	case wir.OpConcat:
+		return l.wirConcatTempExpressionValueSource(op.Ref, inst, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
+	case wir.OpBinOp, wir.OpLogical:
 		return l.wirBinaryTempExpressionValueSource(op.Ref, inst, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
 	case wir.OpUnOp:
 		return l.wirUnaryTempExpressionValueSource(op.Ref, inst, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
@@ -343,6 +343,75 @@ func (l *lowerer) wirTempExpressionValueSource(
 	default:
 		return factflow.ValueSource{}, false
 	}
+}
+
+type wirConcatFoldExprRefKey struct {
+	temp  uint32
+	index int
+}
+
+func (l *lowerer) wirConcatTempExpressionValueSource(
+	temp uint32,
+	inst wir.Instruction,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+	resultSources map[uint32]wirResultSource,
+	seen map[uint32]bool,
+) (factflow.ValueSource, bool) {
+	ops := wirConcatOperands(l.wir, inst)
+	if len(ops) == 2 {
+		return l.wirBinaryTempExpressionValueSource(temp, inst, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
+	}
+	if len(ops) < 2 {
+		return factflow.ValueSource{}, false
+	}
+	sources := make([]factflow.ValueSource, len(ops))
+	for i, operand := range ops {
+		source, ok := l.wirInstructionExpressionOperandValueSource(inst, operand, exprIndex, targetIndex, resultSources, seen)
+		if !ok {
+			return factflow.ValueSource{}, false
+		}
+		sources[i] = source
+	}
+	finalRef, ok := l.exprRef(wirTempExprRefKey{temp: temp})
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	foldSource := sources[0]
+	for i := 1; i < len(sources); i++ {
+		ref := finalRef
+		if i != len(sources)-1 {
+			ref, ok = l.exprRef(wirConcatFoldExprRefKey{temp: temp, index: i})
+			if !ok {
+				return factflow.ValueSource{}, false
+			}
+		}
+		operation, ok := factflow.NewBinaryExpressionOperation("..", foldSource, sources[i])
+		if !ok {
+			return factflow.ValueSource{}, false
+		}
+		if l.expressionOperations == nil {
+			l.expressionOperations = make(map[factflow.ExprRef]factflow.ExpressionOperation)
+		}
+		l.expressionOperations[ref] = operation
+		l.addWIRExpressionOperationValue(ref, operation, foldSource, sources[i])
+		foldShape, ok := factflow.NewValueSourceShape(true, false, false, false)
+		if !ok {
+			return factflow.ValueSource{}, false
+		}
+		foldSource, ok = factflow.NewExpressionValueSource(ref, sourceprovenance.NoSourceIndex, sourceprovenance.NoSourceIndex, 0, foldShape)
+		if !ok {
+			return factflow.ValueSource{}, false
+		}
+	}
+	shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, openTail)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return factflow.NewExpressionValueSource(finalRef, exprIndex, targetIndex, 0, shape)
 }
 
 func (l *lowerer) wirDynamicIndexReadTempExpressionValueSource(
@@ -905,7 +974,7 @@ func (l *lowerer) wirBinaryExpressionOperandValueSource(
 
 func wirBinaryExpressionOperands(body *wir.Body, inst wir.Instruction) (wir.Operand, wir.Operand, bool) {
 	if inst.Op == wir.OpConcat && inst.List.Len != 0 {
-		ops := body.Operands(inst.List)
+		ops := wirConcatOperands(body, inst)
 		if len(ops) != 2 {
 			return wir.Operand{}, wir.Operand{}, false
 		}
@@ -915,6 +984,19 @@ func wirBinaryExpressionOperands(body *wir.Body, inst wir.Instruction) (wir.Oper
 		return wir.Operand{}, wir.Operand{}, false
 	}
 	return inst.A, inst.B, true
+}
+
+func wirConcatOperands(body *wir.Body, inst wir.Instruction) []wir.Operand {
+	if inst.Op != wir.OpConcat {
+		return nil
+	}
+	if inst.List.Len != 0 && body != nil {
+		return body.Operands(inst.List)
+	}
+	if inst.A.Kind != wir.OperandNone && inst.B.Kind != wir.OperandNone {
+		return []wir.Operand{inst.A, inst.B}
+	}
+	return nil
 }
 
 func wirExpressionOperator(inst wir.Instruction) (string, bool) {

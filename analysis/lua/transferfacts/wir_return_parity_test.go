@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
@@ -302,6 +303,39 @@ end
 	}
 	if left := op.Left(); left.Kind != factflow.ValueSourceLiteral || left.LiteralKind != factflow.ValueSourceLiteralString || left.String != "left" {
 		t.Fatalf("WIR temp concat left source = %#v, want literal left", left)
+	}
+}
+
+func TestLowerWithWIRNaryConcatReturnCarriesProjectedStringValue(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(req: {method: string, path: string}): string
+    return "Not found: " .. req.method .. " " .. req.path
+end
+`)
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
+	}
+	points := requireStmtPoints(t, built, ret, 1)
+	body := wirlower.Lower("f", fn.Stmts, bindings, built)
+	reg := standard.Registry()
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+
+	returnFact, ok := facts.Return(points[0])
+	if !ok {
+		t.Fatalf("missing return fact at point %d", points[0])
+	}
+	sources := returnFact.Sources()
+	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr {
+		t.Fatalf("return sources = %#v, want WIR n-ary concat expression source", sources)
+	}
+	value, ok := facts.ExpressionValue(sources[0].ExprRef)
+	if !ok {
+		t.Fatalf("missing WIR n-ary concat expression value for ref %d", sources[0].ExprRef)
+	}
+	got, ok := typevalue.TypeOf(reg, value)
+	if !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("WIR n-ary concat value type = %v/%v, want string", got, ok)
 	}
 }
 
