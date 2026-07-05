@@ -419,6 +419,47 @@ end
 	}
 }
 
+func TestLowerDirectRootCallShapeComesFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): ()
+    local callee = function() end
+    local other = function() end
+    callee()
+end
+`)
+	stmt, ok := fn.Stmts[2].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[2])
+	}
+	points := requireStmtPoints(t, built, stmt, 1)
+	calleePath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "callee")
+	otherPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "other")
+	body := wir.NewBody("synthetic-direct-callee")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpCall,
+		Point: points[0],
+		Call: wir.CallInfo{
+			Callee: wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))},
+		},
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	site, ok := facts.CallSite(points[0])
+	if !ok {
+		t.Fatalf("missing call site at point %d", points[0])
+	}
+	if got := site.CalleeSymbol(); got != otherPath.Symbol || got == calleePath.Symbol {
+		t.Fatalf("callee symbol = %d, want WIR symbol %d not semantic symbol %d", got, otherPath.Symbol, calleePath.Symbol)
+	}
+	if got := site.CalleePath(); !got.Equal(otherPath) || got.Equal(calleePath) {
+		t.Fatalf("callee path = %v, want WIR path %v not semantic path %v", got, otherPath, calleePath)
+	}
+	if site.CalleeMemberAccess() {
+		t.Fatalf("direct root call unexpectedly marked as member access")
+	}
+}
+
 func TestLowerMethodCallReceiverSourcePathComesFromWIR(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(): ()
