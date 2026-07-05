@@ -138,27 +138,31 @@ func (l *lowerer) callShapeFromWIR(point cfg.Point) (callSiteShape, bool) {
 
 func (l *lowerer) methodCallShapeFromWIR(point cfg.Point) (callSiteShape, bool) {
 	inst, ok := l.wirCallInstruction(point)
-	if !ok || inst.Call.Method == 0 || inst.Call.Receiver.Kind != wir.OperandPath {
-		return callSiteShape{}, false
-	}
-	receiverPath := l.wir.Path(wir.PathRef(inst.Call.Receiver.Ref))
-	if receiverPath.Symbol == 0 {
+	if !ok || inst.Call.Method == 0 {
 		return callSiteShape{}, false
 	}
 	method := l.wir.Const(inst.Call.Method)
 	if method.Kind != wir.ConstString || method.Str == "" {
 		return callSiteShape{}, false
 	}
-	methodPath := receiverPath.Field(method.Str)
-	return callSiteShape{
-		calleePath:         methodPath,
+	shape := callSiteShape{
 		calleeMemberAccess: true,
-		receiverPath:       receiverPath,
-		hasReceiverPath:    true,
-		methodPath:         methodPath,
-		hasMethodPath:      true,
 		methodName:         method.Str,
-	}, true
+	}
+	if inst.Call.Receiver.Kind != wir.OperandPath {
+		return shape, true
+	}
+	receiverPath := l.wir.Path(wir.PathRef(inst.Call.Receiver.Ref))
+	if receiverPath.Symbol == 0 {
+		return shape, true
+	}
+	methodPath := receiverPath.Field(method.Str)
+	shape.calleePath = methodPath
+	shape.receiverPath = receiverPath
+	shape.hasReceiverPath = true
+	shape.methodPath = methodPath
+	shape.hasMethodPath = true
+	return shape, true
 }
 
 func (l *lowerer) directCallShapeFromWIR(point cfg.Point) (callSiteShape, bool) {

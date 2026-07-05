@@ -845,6 +845,45 @@ end
 	}
 }
 
+func TestLowerMethodCallNameComesFromWIRForExpressionReceiver(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(obj: any): ()
+    obj:run()
+end
+`)
+	stmt, ok := fn.Stmts[0].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[0])
+	}
+	points := requireStmtPoints(t, built, stmt, 1)
+	body := wir.NewBody("synthetic-expression-receiver-method")
+	receiverTemp := wir.Operand{Kind: wir.OperandTemp, Ref: 9}
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpCall,
+		Point: points[0],
+		Call: wir.CallInfo{
+			Method:   body.InternConst(wir.Const{Kind: wir.ConstString, Str: "stop"}),
+			Receiver: receiverTemp,
+		},
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	site, ok := facts.CallSite(points[0])
+	if !ok {
+		t.Fatalf("missing WIR call site at point %d", points[0])
+	}
+	if !site.CalleeMemberAccess() || site.MethodName() != "stop" {
+		t.Fatalf("method call shape = member:%v method:%q, want WIR method stop", site.CalleeMemberAccess(), site.MethodName())
+	}
+	if _, ok := site.ReceiverPath(); ok {
+		t.Fatalf("expression receiver unexpectedly kept semantic receiver path")
+	}
+	if _, ok := site.MethodPath(); ok {
+		t.Fatalf("expression receiver unexpectedly kept semantic method path")
+	}
+}
+
 func TestLowerCallSitePreservesMemberAccessEvidence(t *testing.T) {
 	l := lowerer{exprs: make(map[any]factflow.ExprRef)}
 	site := l.callSite(semantics.CallFact{
