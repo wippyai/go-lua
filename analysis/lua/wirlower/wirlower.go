@@ -573,12 +573,13 @@ func (b *builder) preLowerListCalls(exprs []ast.Expr, callPoints []cfg.Point, co
 }
 
 type callMetadata struct {
-	context  wir.CallContextKind
-	expr     int
-	final    bool
-	expanded bool
-	adjusted bool
-	openTail bool
+	context          wir.CallContextKind
+	expr             int
+	final            bool
+	expanded         bool
+	adjusted         bool
+	openTail         bool
+	conditionNegated bool
 }
 
 func (b *builder) callMetadata(context wir.CallContextKind, exprs []ast.Expr, exprIndex int, call *ast.FuncCallExpr, openTailFinal bool) callMetadata {
@@ -606,6 +607,10 @@ func (b *builder) callMetadata(context wir.CallContextKind, exprs []ast.Expr, ex
 	}
 	if context == wir.CallContextCondition && meta.expr < 0 {
 		meta.expr = 0
+	}
+	if context == wir.CallContextCondition && len(exprs) != 0 {
+		predicate, negated, ok := branchcond.PredicateCall(exprs[0])
+		meta.conditionNegated = ok && predicate == call && negated
 	}
 	return meta
 }
@@ -635,20 +640,21 @@ func (b *builder) emitCallAt(point cfg.Point, call *ast.FuncCallExpr, resultCoun
 
 	args, argSpread := b.lowerValueList(call.Args)
 	inst := wir.Instruction{
-		Op:           wir.OpCall,
-		List:         b.body.AppendOperands(args),
-		Results:      b.body.AppendOperands(temps),
-		ListSpread:   argSpread,
-		ExprID:       expressionid.Of(call),
-		CallContext:  meta.context,
-		CallExpr:     meta.expr,
-		CallFinal:    meta.final,
-		CallExpanded: meta.expanded,
-		CallAdjusted: meta.adjusted,
-		CallOpenTail: meta.openTail,
-		CallSpan:     tableEntryValueSpan(call),
-		CalleeSpan:   callCalleeSourceSpan(call),
-		CallArgs:     b.body.AppendCallArgumentMeta(callArgumentMeta(call.Args)),
+		Op:                   wir.OpCall,
+		List:                 b.body.AppendOperands(args),
+		Results:              b.body.AppendOperands(temps),
+		ListSpread:           argSpread,
+		ExprID:               expressionid.Of(call),
+		CallContext:          meta.context,
+		CallExpr:             meta.expr,
+		CallFinal:            meta.final,
+		CallExpanded:         meta.expanded,
+		CallAdjusted:         meta.adjusted,
+		CallOpenTail:         meta.openTail,
+		CallConditionNegated: meta.conditionNegated,
+		CallSpan:             tableEntryValueSpan(call),
+		CalleeSpan:           callCalleeSourceSpan(call),
+		CallArgs:             b.body.AppendCallArgumentMeta(callArgumentMeta(call.Args)),
 	}
 	if call.Method != "" {
 		inst.Call.Method = b.internString(call.Method)

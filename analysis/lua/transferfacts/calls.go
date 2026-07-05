@@ -18,6 +18,63 @@ func (l *lowerer) callSiteAt(point cfg.Point, fact semantics.CallFact) (factflow
 	return l.callSiteWithArgumentSourcesAt(point, fact, args), true
 }
 
+func (l *lowerer) callSiteFromWIR(point cfg.Point) (factflow.CallSite, bool) {
+	inst, ok := l.wirCallInstruction(point)
+	if !ok {
+		return factflow.CallSite{}, false
+	}
+	args, ok := l.callArgumentSourcesFromWIR(point)
+	if !ok {
+		return factflow.CallSite{}, false
+	}
+	shape, _ := l.callShapeFromWIR(point)
+	metadata, _ := l.callSiteMetadataFromWIR(point)
+	receiverSource, hasReceiverSource := l.callReceiverSourceFromWIR(point, valueSourceShape{
+		exprIndex:   0,
+		targetIndex: 0,
+		final:       true,
+	})
+	if !hasReceiverSource && inst.Call.Method != 0 && inst.Call.Receiver.Kind != wir.OperandNone {
+		receiverSource = factflow.NewUnknownValueSource(0)
+		hasReceiverSource = true
+	}
+	exprRef, hasExpr := l.wirCallExprRef(inst)
+	return factflow.NewCallSite(factflow.CallSiteConfig{
+		Context:            wirCallSiteContext(inst.CallContext),
+		CalleeSymbol:       shape.calleeSymbol,
+		CalleePath:         shape.calleePath,
+		CalleeMemberAccess: shape.calleeMemberAccess,
+		ReceiverPath:       shape.receiverPath,
+		HasReceiverPath:    shape.hasReceiverPath,
+		MethodPath:         shape.methodPath,
+		HasMethodPath:      shape.hasMethodPath,
+		MethodName:         shape.methodName,
+		ReceiverSource:     receiverSource,
+		HasReceiverSource:  hasReceiverSource,
+		ExprRef:            exprRef,
+		HasExpr:            hasExpr,
+		ExprIndex:          inst.CallExpr,
+		ConditionNegated:   inst.CallConditionNegated,
+		ArgumentSources:    args,
+		CallSpan:           metadata.callSpan,
+		CalleeSpan:         metadata.calleeSpan,
+		ArgumentSpans:      metadata.argumentSpans,
+		ArgumentLabels:     metadata.argumentLabels,
+		ResultTargets:      lowerWIRCallResultTargets(l.wir.CallResultTargets(point)),
+		Final:              inst.CallFinal,
+		Expanded:           inst.CallExpanded,
+		Adjusted:           inst.CallAdjusted,
+		OpenTail:           inst.CallOpenTail,
+	}), true
+}
+
+func (l *lowerer) wirCallExprRef(inst wir.Instruction) (factflow.ExprRef, bool) {
+	if inst.ExprID == 0 {
+		return 0, false
+	}
+	return l.exprRef(wirCallExprRefKey{id: inst.ExprID})
+}
+
 func (l *lowerer) callSite(fact semantics.CallFact) factflow.CallSite {
 	return l.callSiteWithArgumentSources(fact, l.valueSources(fact.ArgumentSources))
 }
@@ -337,6 +394,9 @@ func (l *lowerer) callArgumentSources(point cfg.Point, fallback []sourceprovenan
 	if l == nil || l.wir == nil {
 		return l.valueSources(fallback), true
 	}
+	if len(fallback) == 0 {
+		return l.callArgumentSourcesFromWIR(point)
+	}
 	inst, ok := l.wirCallInstruction(point)
 	if !ok {
 		return nil, false
@@ -346,6 +406,31 @@ func (l *lowerer) callArgumentSources(point cfg.Point, fallback []sourceprovenan
 		return nil, false
 	}
 	out := make([]factflow.ValueSource, len(fallback))
+	resultSources := l.resultValueSourcesByTempFromWIR()
+	for i, op := range ops {
+		final := i == len(ops)-1
+		source, ok := l.callArgumentSourceFromWIROperand(point, op, i, i, final, inst.ListSpread && final, resultSources)
+		if !ok {
+			source = factflow.NewUnknownValueSource(i)
+		}
+		out[i] = source
+	}
+	return out, true
+}
+
+func (l *lowerer) callArgumentSourcesFromWIR(point cfg.Point) ([]factflow.ValueSource, bool) {
+	if l == nil || l.wir == nil {
+		return nil, false
+	}
+	inst, ok := l.wirCallInstruction(point)
+	if !ok {
+		return nil, false
+	}
+	ops := l.wir.Operands(inst.List)
+	if len(ops) == 0 {
+		return nil, true
+	}
+	out := make([]factflow.ValueSource, len(ops))
 	resultSources := l.resultValueSourcesByTempFromWIR()
 	for i, op := range ops {
 		final := i == len(ops)-1

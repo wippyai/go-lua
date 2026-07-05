@@ -254,9 +254,12 @@ type Instruction struct {
 	CallExpanded bool
 	CallAdjusted bool
 	CallOpenTail bool
-	CallSpan     source.Span
-	CalleeSpan   source.Span
-	CallArgs     CallArgumentMetaRange
+	// CallConditionNegated is true when a condition call is the operand of unary
+	// `not`, so the CFG true edge corresponds to the call's falsy result.
+	CallConditionNegated bool
+	CallSpan             source.Span
+	CalleeSpan           source.Span
+	CallArgs             CallArgumentMetaRange
 
 	// SelectDefault marks an OpSelect that carries a default (non-blocking) case.
 	SelectDefault bool

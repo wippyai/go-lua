@@ -393,6 +393,103 @@ end
 	}
 }
 
+func TestLowerWIRCallSitePublishesWithoutSemanticCallView(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(payload: {id: string}): ()
+    local marker = true
+end
+`, "make")
+	localStmt, ok := fn.Stmts[0].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want local assignment", fn.Stmts[0])
+	}
+	point := requireStmtPoints(t, built, localStmt, 1)[0]
+	if _, ok := result.CallView(point); ok {
+		t.Fatalf("point %d unexpectedly has semantic call view", point)
+	}
+	makeSym, ok := bindings.GlobalSymbol("make")
+	if !ok {
+		t.Fatal("missing make global symbol")
+	}
+	payloadSym := bindings.ParamSlots(fn)[0].Symbol
+	makePath := path.NewPath(makeSym, "make")
+	payloadID := path.NewPath(payloadSym, "payload").Field("id")
+
+	body := wir.NewBody("synthetic-call-without-semantic-view")
+	resultTemp := wir.Operand{Kind: wir.OperandTemp, Ref: 1}
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpCall,
+		Point: point,
+		Call:  wir.CallInfo{Callee: wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(makePath))}},
+		List: body.AppendOperands([]wir.Operand{
+			{Kind: wir.OperandPath, Ref: uint32(body.InternPath(payloadID))},
+			{Kind: wir.OperandConst, Ref: uint32(body.InternConst(wir.Const{Kind: wir.ConstString, Str: "tag"}))},
+		}),
+		Results:     body.AppendOperands([]wir.Operand{resultTemp}),
+		CallContext: wir.CallContextAssignmentSource,
+		CallExpr:    3,
+		CallFinal:   true,
+		CallSpan:    source.Span{StartLine: 9, StartCol: 3, EndLine: 9, EndCol: 24},
+		CalleeSpan:  source.Span{StartLine: 9, StartCol: 3, EndLine: 9, EndCol: 7},
+		CallArgs: body.AppendCallArgumentMeta([]wir.CallArgumentMeta{
+			{Span: source.Span{StartLine: 9, StartCol: 8, EndLine: 9, EndCol: 18}, Label: "payload.id"},
+			{Span: source.Span{StartLine: 9, StartCol: 20, EndLine: 9, EndCol: 24}, Label: "\"tag\""},
+		}),
+		ExprID: 99,
+	})
+	body.SetPointRange(point, start, start+1)
+	body.SetCallResultTarget(point, wir.CallResultTarget{
+		Kind:        wir.CallResultTargetExpression,
+		Index:       2,
+		ResultIndex: 0,
+	})
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	site, ok := facts.CallSite(point)
+	if !ok {
+		t.Fatalf("missing WIR call site at point %d without semantic CallView", point)
+	}
+	if site.Context() != factflow.CallSiteContextAssignmentSource || site.ExprIndex() != 3 || !site.Final() {
+		t.Fatalf("WIR call site flags = context:%v expr:%d final:%v", site.Context(), site.ExprIndex(), site.Final())
+	}
+	if got := site.CalleePath(); !got.Equal(makePath) {
+		t.Fatalf("WIR call callee path = %v, want %v", got, makePath)
+	}
+	args := site.ArgumentSources()
+	if len(args) != 2 {
+		t.Fatalf("WIR call args = %#v, want two", args)
+	}
+	if args[0].Kind != factflow.ValueSourceExpression || !args[0].HasExpr {
+		t.Fatalf("first WIR call arg = %#v, want expression source", args[0])
+	}
+	gotPath, ok := facts.ExpressionPath(args[0].ExprRef)
+	if !ok || !gotPath.Equal(payloadID) {
+		t.Fatalf("first WIR call arg path = %v/%v, want %v", gotPath, ok, payloadID)
+	}
+	if args[1].Kind != factflow.ValueSourceLiteral || args[1].LiteralKind != factflow.ValueSourceLiteralString || args[1].String != "tag" {
+		t.Fatalf("second WIR call arg = %#v, want string literal tag", args[1])
+	}
+	firstSpan, ok := site.ArgumentSpanAt(0)
+	if !ok || firstSpan.StartCol != 8 {
+		t.Fatalf("first WIR call argument span = %#v/%v", firstSpan, ok)
+	}
+	secondSpan, ok := site.ArgumentSpanAt(1)
+	if !ok || secondSpan.StartCol != 20 {
+		t.Fatalf("second WIR call argument span = %#v/%v", secondSpan, ok)
+	}
+	firstLabel, ok := site.ArgumentLabelAt(0)
+	if !ok || firstLabel != "payload.id" {
+		t.Fatalf("first WIR call argument label = %q/%v", firstLabel, ok)
+	}
+	secondLabel, ok := site.ArgumentLabelAt(1)
+	if !ok || secondLabel != "\"tag\"" {
+		t.Fatalf("second WIR call argument label = %q/%v", secondLabel, ok)
+	}
+	if targets := site.ResultTargets(); len(targets) != 1 || targets[0].Kind() != factflow.CallResultTargetExpression || targets[0].Index() != 2 {
+		t.Fatalf("WIR call targets = %#v, want expression target index 2", targets)
+	}
+}
+
 func TestLowerReturnCallResultTargetComesFromWIR(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(): string
