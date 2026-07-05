@@ -2,6 +2,7 @@ package effectlowering
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -17,12 +18,14 @@ type ReceiverTypeFunc func(ctx transfer.NodeContext, site factflow.CallSiteView,
 
 type AmbientChannelSendOutcomeProviderConfig struct {
 	ReceiverType ReceiverTypeFunc
+	KeySpace     *keyspace.KeySpace
 }
 
 // AmbientChannelSendOutcomeProvider lowers Channel<T>:send(payload) into the
 // same send-escape fact used by manifest-backed process.send.
 func AmbientChannelSendOutcomeProvider(config AmbientChannelSendOutcomeProviderConfig) callpayload.CallOutcomeProvider {
 	receiverType := config.ReceiverType
+	args := signatureArgumentReader{keySpace: config.KeySpace}
 	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
 		if receiverType == nil || site.MethodName() != "send" {
 			return callpayload.CallOutcome{}
@@ -35,7 +38,7 @@ func AmbientChannelSendOutcomeProvider(config AmbientChannelSendOutcomeProviderC
 			return callpayload.CallOutcome{}
 		}
 		arg, ok := site.ArgumentSourceAt(0)
-		if !ok || !callArgumentSourceCanBindPath(arg) {
+		if !ok || !args.callArgumentSourceCanBindPath(arg) {
 			return callpayload.CallOutcome{}
 		}
 		target := 0

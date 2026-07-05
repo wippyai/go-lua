@@ -132,7 +132,7 @@ func genericForVariableValue(
 	}
 	assertedSourceType, hasAssertedSourceType := genericForAssertedIteratorSourceType(generic, sourceIndex, typeResolver)
 	if !hasAssertedSourceType {
-		if recovered, ok := genericForDeclaredPathIteratorSourceType(argSource, facts, symbolTypes); ok {
+		if recovered, ok := genericForDeclaredPathIteratorSourceType(argSource, facts, resolver, symbolTypes); ok {
 			if genericForIteratorSourceTypeProjects(iter, generic.VariableIndex, recovered) {
 				assertedSourceType = recovered
 				hasAssertedSourceType = true
@@ -140,7 +140,7 @@ func genericForVariableValue(
 		}
 	}
 	if !hasAssertedSourceType {
-		if recovered, ok := genericForDominatingPathIteratorSourceType(ctx, typeValues, argSource, facts, sources); ok {
+		if recovered, ok := genericForDominatingPathIteratorSourceType(ctx, typeValues, argSource, facts, resolver, sources); ok {
 			assertedSourceType = recovered
 			hasAssertedSourceType = true
 		}
@@ -186,8 +186,7 @@ func genericForPathStaticMemberContainerVariableValue(
 	source factflow.ValueSource,
 	in state.State,
 ) (product.Value, bool) {
-	if ctx.Registry == nil || resolver == nil || typeValues == nil ||
-		source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+	if ctx.Registry == nil || resolver == nil || typeValues == nil {
 		return product.Value{}, false
 	}
 	if iter.Kind != iteration.IterateIndexed && iter.Kind != iteration.IterateKeyed {
@@ -196,11 +195,11 @@ func genericForPathStaticMemberContainerVariableValue(
 	if variableIndex < 0 || variableIndex > 1 {
 		return product.Value{}, false
 	}
-	sourcePath, ok := facts.ExpressionPathRef(source.ExprRef)
+	sourcePath, ok := valueSourcePath(facts, resolver, source)
 	if !ok || sourcePath.IsEmpty() || sourcePath.Symbol == 0 {
 		return product.Value{}, false
 	}
-	sourceKey, ok := visibility.AddressAt(resolver, ctx.Point, sourcePath).VisibleKeyspaceKey()
+	sourceKey, ok := valueSourcePathKeyspaceKey(resolver, ctx.Point, sourcePath)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -321,10 +320,10 @@ func genericForKeyMembershipTransfer(
 		return out
 	}
 	argSource, ok := site.ArgumentSourceAt(sourceIndex)
-	if !ok || argSource.Kind != factflow.ValueSourceExpression || !argSource.HasExpr {
+	if !ok {
 		return out
 	}
-	sourcePath, ok := facts.ExpressionPathRef(argSource.ExprRef)
+	sourcePath, ok := valueSourcePath(facts, resolver, argSource)
 	if !ok || sourcePath.IsEmpty() || sourcePath.Symbol == 0 {
 		return out
 	}
@@ -334,7 +333,7 @@ func genericForKeyMembershipTransfer(
 	}
 	switch iter.Kind {
 	case iteration.IterateKeyed:
-		tableKey, ok := visibility.AddressAt(resolver, ctx.Point, sourcePath).VisibleStateKey()
+		tableKey, ok := valueSourcePathStateKey(resolver, ctx.Point, sourcePath)
 		if !ok {
 			return out
 		}
@@ -344,7 +343,7 @@ func genericForKeyMembershipTransfer(
 		if generic.VariableIndex != 1 || len(generic.Symbols) == 0 || generic.Symbols[0] == 0 {
 			return out
 		}
-		containerKey, ok := visibility.AddressAt(resolver, ctx.Point, sourcePath).VisibleKeyspaceKey()
+		containerKey, ok := valueSourcePathKeyspaceKey(resolver, ctx.Point, sourcePath)
 		if !ok {
 			return out
 		}
@@ -357,7 +356,7 @@ func genericForKeyMembershipTransfer(
 		if generic.VariableIndex != 1 {
 			return out
 		}
-		containerKey, ok := visibility.AddressAt(resolver, ctx.Point, sourcePath).VisibleKeyspaceKey()
+		containerKey, ok := valueSourcePathKeyspaceKey(resolver, ctx.Point, sourcePath)
 		if !ok {
 			return out
 		}
@@ -701,8 +700,7 @@ func genericForDynamicIndexContainerVariableValue(
 	source factflow.ValueSource,
 	in state.State,
 ) (product.Value, bool) {
-	if ctx.Registry == nil || resolver == nil || typeValues == nil ||
-		source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+	if ctx.Registry == nil || resolver == nil || typeValues == nil {
 		return product.Value{}, false
 	}
 	if iter.Kind != iteration.IterateIndexed && iter.Kind != iteration.IterateKeyed {
@@ -711,11 +709,11 @@ func genericForDynamicIndexContainerVariableValue(
 	if variableIndex < 0 || variableIndex > 1 {
 		return product.Value{}, false
 	}
-	sourcePath, ok := facts.ExpressionPathRef(source.ExprRef)
+	sourcePath, ok := valueSourcePath(facts, resolver, source)
 	if !ok || sourcePath.IsEmpty() || sourcePath.Symbol == 0 {
 		return product.Value{}, false
 	}
-	tableKey, ok := visibility.AddressAt(resolver, ctx.Point, sourcePath).VisibleKeyspaceKey()
+	tableKey, ok := valueSourcePathKeyspaceKey(resolver, ctx.Point, sourcePath)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -823,15 +821,13 @@ func genericForDominatingPathIteratorSourceType(
 	typeValues *typevalue.Cache,
 	argSource factflow.ValueSource,
 	facts factflow.Facts,
+	resolver *visibility.Resolver,
 	sources sourcevalue.SourceValues,
 ) (typ.Type, bool) {
 	if ctx.Graph == nil || ctx.Read == nil || sources == nil {
 		return nil, false
 	}
-	if !argSource.HasExpr {
-		return nil, false
-	}
-	p, ok := facts.ExpressionPathRef(argSource.ExprRef)
+	p, ok := valueSourcePath(facts, resolver, argSource)
 	if !ok || p.Symbol == 0 || len(p.Segments) == 0 {
 		return nil, false
 	}
@@ -851,11 +847,8 @@ func genericForDominatingPathIteratorSourceType(
 	return luatypeprojection.ApplySegments(rootType, p.Segments)
 }
 
-func genericForDeclaredPathIteratorSourceType(argSource factflow.ValueSource, facts factflow.Facts, symbolTypes map[symbol.ID]typ.Type) (typ.Type, bool) {
-	if !argSource.HasExpr {
-		return nil, false
-	}
-	p, ok := facts.ExpressionPathRef(argSource.ExprRef)
+func genericForDeclaredPathIteratorSourceType(argSource factflow.ValueSource, facts factflow.Facts, resolver *visibility.Resolver, symbolTypes map[symbol.ID]typ.Type) (typ.Type, bool) {
+	p, ok := valueSourcePath(facts, resolver, argSource)
 	if !ok || p.Symbol == 0 {
 		return nil, false
 	}

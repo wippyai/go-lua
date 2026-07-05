@@ -450,6 +450,7 @@ func preparedCallOutcomeSupplement(
 	}
 	providers = append(providers, effectlowering.AmbientChannelSendOutcomeProvider(effectlowering.AmbientChannelSendOutcomeProviderConfig{
 		ReceiverType: channelMethodReceiverTypeProvider(reg, facts, resolver, sources, typeValues),
+		KeySpace:     resolver.KeySpace(),
 	}))
 	providers = append(providers, effectlowering.CallableValueOutcomeProvider(effectlowering.CallableValueOutcomeProviderConfig{
 		CalleeValue: effectlowering.CalleeValueFunc(calleeValue),

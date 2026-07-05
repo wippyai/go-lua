@@ -8,10 +8,7 @@ import (
 func (r Reader) callArgumentBindings(site factflow.CallSite) []path.Path {
 	var bindings []path.Path
 	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
-		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-			return true
-		}
-		sourcePath, ok := r.result.ExpressionPathRef(source.ExprRef)
+		sourcePath, ok := r.valueSourcePath(source)
 		if !ok || sourcePath.IsEmpty() {
 			return true
 		}
@@ -29,10 +26,7 @@ func (r Reader) callBindings(site factflow.CallSite) []path.Path {
 		offset = 1
 	}
 	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
-		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-			return true
-		}
-		sourcePath, ok := r.result.ExpressionPathRef(source.ExprRef)
+		sourcePath, ok := r.valueSourcePath(source)
 		if !ok || sourcePath.IsEmpty() {
 			return true
 		}

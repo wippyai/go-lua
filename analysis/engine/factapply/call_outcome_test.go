@@ -1439,6 +1439,45 @@ func TestFactsNodeTransferCallOutcomeParamPathRefinementUsesArgumentNotReceiver(
 	assertValue(t, reg, got, key.SymbolValue(receiver), product.Top())
 }
 
+func TestFactsNodeTransferCallOutcomeParamPathRefinementUsesWIRPathArgument(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(6161)
+	arg := symbol.ID(6161)
+	argPath := pathdom.NewPath(arg, "arg")
+	present := presentValue(reg)
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, arg, "arg")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	source, ok := factflow.NewPathValueSource(argPath.Key(), 0, 0, 0, factflow.ValueSourceShape{})
+	if !ok {
+		t.Fatalf("NewPathValueSource(%q) failed", argPath.Key())
+	}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			CallSites: map[cfg.Point]factflow.CallSite{
+				point: factflow.NewCallSite(factflow.CallSiteConfig{
+					Context:         factflow.CallSiteContextStatement,
+					ArgumentSources: []factflow.ValueSource{source},
+				}),
+			},
+		}),
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
+				ParamPathRefinements: []callpayload.CallParamPathRefinement{
+					{Path: pathdom.NewPlaceholder(0), Value: present},
+				},
+			}
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.WriteValue(reg, key.SymbolValue(arg), product.Top()))
+
+	assertValue(t, reg, got, key.SymbolValue(arg), present)
+}
+
 func TestFactsNodeTransferCallOutcomeParamPathRefinementAppliesToMemberArgument(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(617)
@@ -1681,6 +1720,53 @@ func TestFactsNodeTransferCallOutcomeFrozenTableFactFreezesSingletonIdentity(t *
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: facts,
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					FrozenTables: []callboundary.FrozenTableFact{
+						{Target: pathdom.NewPlaceholder(0)},
+					},
+				},
+			}
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.WriteValue(reg, key.SymbolValue(target), tableValue))
+
+	if !got.IsTableFrozen(tableID) {
+		t.Fatalf("table %v was not frozen", tableID)
+	}
+	if !hasFrozenTableEffectDelta(got.EffectDeltasSnapshot().Deltas) {
+		t.Fatalf("effect deltas = %#v, want frozen-table marker", got.EffectDeltasSnapshot().Deltas)
+	}
+}
+
+func TestFactsNodeTransferCallOutcomeFrozenTableFactUsesWIRPathArgumentMarker(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(7041)
+	target := symbol.ID(7041)
+	targetPath := pathdom.NewPath(target, "obj")
+	tableID := identity.ID{Kind: "lua.table", Site: "freeze-wir-path", Index: 1}
+	tableValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(tableID))
+	source, ok := factflow.NewPathValueSource(targetPath.Key(), 0, 0, 0, factflow.ValueSourceShape{})
+	if !ok {
+		t.Fatalf("NewPathValueSource(%q) failed", targetPath.Key())
+	}
+	builder := visibility.NewBuilder()
+	builder.Define(point, target, "obj")
+	resolver := visibility.NewResolver(builder.Build())
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			CallSites: map[cfg.Point]factflow.CallSite{
+				point: factflow.NewCallSite(factflow.CallSiteConfig{
+					Context:         factflow.CallSiteContextStatement,
+					ArgumentSources: []factflow.ValueSource{source},
+				}),
+			},
+		}),
 		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
 			return callpayload.CallOutcome{
 				NormalReturnFacts: callboundary.NormalReturnFacts{

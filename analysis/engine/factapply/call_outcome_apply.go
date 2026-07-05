@@ -21,8 +21,8 @@ func applyCallOutcomeFacts(
 	site factflow.CallSiteView,
 	outcome callpayload.CallOutcome,
 ) state.State {
-	bindings := callPlaceholderBindings(facts, site)
-	paramBindings := callArgumentPlaceholderBindings(facts, site)
+	bindings := callPlaceholderBindings(facts, resolver, site)
+	paramBindings := callArgumentPlaceholderBindings(facts, resolver, site)
 	returnBindings := callReturnSlotBindings(site)
 	boundaryPaths := callboundary.NewPathBindings(bindings, returnBindings)
 	normalReturnFacts := outcome.NormalReturnFacts

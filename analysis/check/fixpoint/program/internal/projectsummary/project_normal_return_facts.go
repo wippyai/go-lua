@@ -224,7 +224,7 @@ func projectAssignmentDynamicValueKeyMemberships(
 		if !ok {
 			continue
 		}
-		sourcePath, ok := dynamicIndexWriteValuePath(pathReader, write)
+		sourcePath, ok := dynamicIndexWriteValuePath(result, pathReader, write)
 		if !ok {
 			continue
 		}
@@ -279,7 +279,7 @@ func dominatingDynamicWriteKeyMemberships(
 	if graph == nil || !ok {
 		return nil
 	}
-	sourcePath, ok := dynamicIndexWriteValuePath(pathReader, write)
+	sourcePath, ok := dynamicIndexWriteValuePath(result, pathReader, write)
 	if !ok {
 		return nil
 	}
@@ -300,7 +300,7 @@ func dominatingDynamicWriteKeyMemberships(
 		if !ok {
 			continue
 		}
-		keyPath, ok := dynamicIndexWriteKeyPath(pathReader, prior)
+		keyPath, ok := dynamicIndexWriteKeyPath(result, pathReader, prior)
 		if !ok || !keyPath.Equal(sourcePath) {
 			continue
 		}
@@ -317,18 +317,18 @@ func dominatingDynamicWriteKeyMemberships(
 	return out
 }
 
-func dynamicIndexWriteKeyPath(pathReader expressionPathRefReader, write factflow.DynamicIndexWrite) (path.Path, bool) {
+func dynamicIndexWriteKeyPath(result ResultReader, pathReader expressionPathRefReader, write factflow.DynamicIndexWrite) (path.Path, bool) {
 	if keyPath, ok := write.KeyPath(); ok && keyPath.Symbol != 0 {
 		return keyPath, true
 	}
-	return dynamicIndexSourceExpressionPath(pathReader, write.KeySource())
+	return dynamicIndexSourcePath(result, pathReader, write.KeySource())
 }
 
-func dynamicIndexWriteValuePath(pathReader expressionPathRefReader, write factflow.DynamicIndexWrite) (path.Path, bool) {
+func dynamicIndexWriteValuePath(result ResultReader, pathReader expressionPathRefReader, write factflow.DynamicIndexWrite) (path.Path, bool) {
 	if valuePath, ok := write.ValuePath(); ok && valuePath.Symbol != 0 {
 		return valuePath, true
 	}
-	return dynamicIndexSourceExpressionPath(pathReader, write.Source())
+	return dynamicIndexSourcePath(result, pathReader, write.Source())
 }
 
 func dynamicIndexWriteValueBoundaryPath(
@@ -342,8 +342,8 @@ func dynamicIndexWriteValueBoundaryPath(
 	return dynamicIndexValueSourcePlaceholderPath(result, params, write.Source())
 }
 
-func dynamicIndexSourceExpressionPath(pathReader expressionPathRefReader, source factflow.ValueSource) (path.Path, bool) {
-	sourcePath, ok := valueSourcePath(nil, pathReader, source)
+func dynamicIndexSourcePath(result ResultReader, pathReader expressionPathRefReader, source factflow.ValueSource) (path.Path, bool) {
+	sourcePath, ok := valueSourcePath(result, pathReader, source)
 	if !ok || sourcePath.Symbol == 0 {
 		return path.Path{}, false
 	}

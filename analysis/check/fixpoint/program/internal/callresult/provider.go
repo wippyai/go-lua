@@ -196,7 +196,7 @@ func OutcomeProvider(config ProviderConfig) callpayload.CallOutcomeProvider {
 		if returnPresenceRelations != nil && len(got.ParamMemberReturnSlots) != 0 {
 			out.ReturnPresenceRelations = append(
 				out.ReturnPresenceRelations,
-				paramMemberReturnPresenceRelations(ctx, site, got, facts, returnPresenceRelations)...,
+				paramMemberReturnPresenceRelations(ctx, callerKeySpace, site, got, facts, returnPresenceRelations)...,
 			)
 		}
 		if fn != nil && len(got.ReturnParamPathAliases) != 0 {
@@ -1808,6 +1808,7 @@ func normalReturnParamCallRefinement(reg *axis.Registry, value product.Value) pr
 
 func paramMemberReturnPresenceRelations(
 	ctx transfer.NodeContext,
+	ks *keyspace.KeySpace,
 	site factflow.CallSiteView,
 	got summary.Summary,
 	facts factflow.Facts,
@@ -1844,7 +1845,7 @@ func paramMemberReturnPresenceRelations(
 		if !ok {
 			continue
 		}
-		memberPaths := argumentMemberPaths(facts, source, key.member)
+		memberPaths := argumentMemberPaths(ks, facts, source, key.member)
 		if len(memberPaths) == 0 {
 			continue
 		}
@@ -1870,15 +1871,32 @@ func paramMemberReturnPresenceRelations(
 	return out
 }
 
-func argumentMemberPaths(facts factflow.Facts, source factflow.ValueSource, member segment.Segment) []pathdom.Path {
-	if !memberaccess.Valid(member) || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+func argumentMemberPaths(ks *keyspace.KeySpace, facts factflow.Facts, source factflow.ValueSource, member segment.Segment) []pathdom.Path {
+	if !memberaccess.Valid(member) {
 		return nil
 	}
-	p, ok := facts.ExpressionPathRef(source.ExprRef)
+	p, ok := argumentSourcePath(ks, facts, source)
 	if !ok || p.IsEmpty() {
 		return nil
 	}
 	return memberaccess.Paths(p, member)
+}
+
+func argumentSourcePath(ks *keyspace.KeySpace, facts factflow.Facts, source factflow.ValueSource) (pathdom.Path, bool) {
+	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
+		return facts.ExpressionPathRef(source.ExprRef)
+	}
+	if source.Kind != factflow.ValueSourcePath || source.PathKey == "" || ks == nil {
+		return pathdom.Path{}, false
+	}
+	key, ok := ks.FromStateKey(source.PathKey)
+	if !ok || key.Sym == 0 {
+		return pathdom.Path{}, false
+	}
+	return pathdom.Path{
+		Symbol:   key.Sym,
+		Segments: ks.Segments(key),
+	}, true
 }
 
 func memberCallParamObligations(

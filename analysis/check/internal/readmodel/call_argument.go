@@ -294,13 +294,7 @@ func (r Reader) callArgument(point cfg.Point, site factflow.CallSite, index int,
 }
 
 func (r Reader) functionArgumentPathStaticType(point cfg.Point, source factflow.ValueSource) (*typ.Function, bool) {
-	if r.result == nil || !source.HasExpr || source.ExprRef == 0 {
-		return nil, false
-	}
-	p, ok := r.result.ExpressionPathRef(source.ExprRef)
-	if !ok {
-		p, ok = r.result.ExpressionRefPath(source.ExprRef)
-	}
+	p, ok := r.valueSourcePath(source)
 	if !ok || p.IsEmpty() {
 		return nil, false
 	}
@@ -330,22 +324,26 @@ func (r Reader) admissibleCallArgumentProofCandidate(arg CallArgument, want typ.
 }
 
 func (r Reader) callerOwnedParameterArgument(point cfg.Point, source factflow.ValueSource) bool {
-	if r.result == nil || !source.HasExpr {
+	if r.result == nil {
 		return false
 	}
 	return r.callerOwnedParameterSource(point, source, nil)
 }
 
 func (r Reader) callerOwnedParameterSource(point cfg.Point, source factflow.ValueSource, active map[factflow.ExprRef]struct{}) bool {
-	if r.result == nil || !source.HasExpr || source.ExprRef == 0 {
+	if r.result == nil {
 		return false
 	}
-	p, ok := r.result.ExpressionRefPath(source.ExprRef)
-	if ok && r.callerOwnedParameterPath(p) {
-		return true
+	if p, ok := r.valueSourcePath(source); ok {
+		if r.callerOwnedParameterPath(p) {
+			return true
+		}
+		if r.callerOwnedParameterDeclarationSource(point, p, active) {
+			return true
+		}
 	}
-	if ok && r.callerOwnedParameterDeclarationSource(point, p, active) {
-		return true
+	if !source.HasExpr || source.ExprRef == 0 {
+		return false
 	}
 	if active == nil {
 		active = make(map[factflow.ExprRef]struct{}, 1)
@@ -424,13 +422,7 @@ func (r Reader) contextualFunctionArgumentType(point cfg.Point, source factflow.
 }
 
 func (r Reader) functionArgumentPathType(point cfg.Point, source factflow.ValueSource, value product.Value) (*typ.Function, bool) {
-	if r.result == nil || !source.HasExpr || source.ExprRef == 0 {
-		return nil, false
-	}
-	p, ok := r.result.ExpressionPathRef(source.ExprRef)
-	if !ok {
-		p, ok = r.result.ExpressionRefPath(source.ExprRef)
-	}
+	p, ok := r.valueSourcePath(source)
 	if !ok || p.IsEmpty() {
 		return nil, false
 	}
@@ -469,13 +461,7 @@ func (r Reader) callArgumentValue(point cfg.Point, source factflow.ValueSource) 
 }
 
 func (r Reader) callArgumentBoundaryCandidate(point cfg.Point, source factflow.ValueSource, current product.Value) (product.Value, bool) {
-	if r.result == nil || !source.HasExpr {
-		return product.Value{}, false
-	}
-	p, ok := r.result.ExpressionPathRef(source.ExprRef)
-	if !ok {
-		p, ok = r.result.ExpressionRefPath(source.ExprRef)
-	}
+	p, ok := r.valueSourcePath(source)
 	if !ok || p.IsEmpty() {
 		return product.Value{}, false
 	}

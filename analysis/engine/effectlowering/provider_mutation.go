@@ -156,7 +156,7 @@ func readTableMutatorEvidence(
 		return tableMutatorEvidence{}, false
 	}
 	targetSource, ok := args.ArgumentSourceAt(targetIndex)
-	if !ok || !callArgumentSourceCanBindPath(targetSource) {
+	if !ok || !args.callArgumentSourceCanBindPath(targetSource) {
 		return tableMutatorEvidence{}, false
 	}
 	valueIndex, ok := effect.ResolveParamIndex(mutator.Value, args.ArgumentSourceCount())
@@ -209,7 +209,7 @@ func readTableMutatorEvidence(
 	return tableMutatorEvidence{
 		targetIndex:      targetIndex,
 		valueIndex:       valueIndex,
-		valueCanBindPath: callArgumentSourceCanBindPath(valueSource),
+		valueCanBindPath: args.callArgumentSourceCanBindPath(valueSource),
 		indexKey:         returnValueFromTypeCached(ctx.Registry, typeValues, typ.Integer),
 		target:           target,
 		value:            value,

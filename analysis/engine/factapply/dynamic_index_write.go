@@ -126,22 +126,18 @@ func forEachDynamicWriteTableStateKeyAt(resolver *visibility.Resolver, point cfg
 }
 
 func dynamicIndexWriteKeyStateKeyAt(resolver *visibility.Resolver, point cfg.Point, facts factflow.Facts, fact factflow.DynamicIndexWrite) (pathaddr.StateKey, bool) {
-	keyPath, ok := dynamicIndexWriteKeyPath(facts, fact)
+	keyPath, ok := dynamicIndexWriteKeyPath(resolver, facts, fact)
 	if !ok {
 		return "", false
 	}
 	return visibility.AddressAt(resolver, point, keyPath).VisibleStateKey()
 }
 
-func dynamicIndexWriteKeyPath(facts factflow.Facts, fact factflow.DynamicIndexWrite) (pathdom.Path, bool) {
+func dynamicIndexWriteKeyPath(resolver *visibility.Resolver, facts factflow.Facts, fact factflow.DynamicIndexWrite) (pathdom.Path, bool) {
 	if keyPath, ok := fact.KeyPathRef(); ok && keyPath.Symbol != 0 {
 		return keyPath, true
 	}
-	source := fact.KeySource()
-	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-		return pathdom.Path{}, false
-	}
-	sourcePath, ok := facts.ExpressionPathRef(source.ExprRef)
+	sourcePath, ok := callSourcePath(facts, resolver, fact.KeySource())
 	if !ok || sourcePath.IsEmpty() || sourcePath.Symbol == 0 {
 		return pathdom.Path{}, false
 	}
@@ -201,7 +197,7 @@ func preserveDynamicIndexAllValueKeyMemberships(
 	if resolver == nil {
 		return out
 	}
-	sourcePath, ok := dynamicIndexWriteSourcePath(facts, fact)
+	sourcePath, ok := dynamicIndexWriteSourcePath(resolver, facts, fact)
 	if !ok {
 		return out
 	}
@@ -262,11 +258,7 @@ func addPathKeyMembershipFromDynamicWrite(
 	if !ok {
 		return out
 	}
-	keySource := fact.KeySource()
-	if keySource.Kind != factflow.ValueSourceExpression || !keySource.HasExpr {
-		return out
-	}
-	keyPath, ok := facts.ExpressionPathRef(keySource.ExprRef)
+	keyPath, ok := dynamicIndexWriteKeyPath(resolver, facts, fact)
 	if !ok || keyPath.IsEmpty() || keyPath.Symbol == 0 {
 		return out
 	}
@@ -291,7 +283,7 @@ func addDynamicIndexValueKeyMembershipsFromWrite(
 	if resolver == nil || !dynamicIndexFactDefinitelyPresent(ctx.Registry, value) {
 		return out
 	}
-	sourcePath, ok := dynamicIndexWriteSourcePath(facts, fact)
+	sourcePath, ok := dynamicIndexWriteSourcePath(resolver, facts, fact)
 	if !ok {
 		return out
 	}
@@ -305,15 +297,11 @@ func addDynamicIndexValueKeyMembershipsFromWrite(
 	return out
 }
 
-func dynamicIndexWriteSourcePath(facts factflow.Facts, fact factflow.DynamicIndexWrite) (pathdom.Path, bool) {
+func dynamicIndexWriteSourcePath(resolver *visibility.Resolver, facts factflow.Facts, fact factflow.DynamicIndexWrite) (pathdom.Path, bool) {
 	if valuePath, ok := fact.ValuePathRef(); ok && !valuePath.IsEmpty() && valuePath.Symbol != 0 {
 		return valuePath, true
 	}
-	source := fact.Source()
-	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-		return pathdom.Path{}, false
-	}
-	sourcePath, ok := facts.ExpressionPathRef(source.ExprRef)
+	sourcePath, ok := callSourcePath(facts, resolver, fact.Source())
 	if !ok || sourcePath.IsEmpty() || sourcePath.Symbol == 0 {
 		return pathdom.Path{}, false
 	}

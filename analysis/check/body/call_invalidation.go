@@ -164,6 +164,18 @@ func (r *Result) callFactReferencesTrackedPath(site factflow.CallSite, fact sema
 	if receiver, ok := site.ReceiverPath(); ok && target.Overlaps(receiver) {
 		return true
 	}
+	found := false
+	site.ForEachArgumentSource(func(_ int, source factflow.ValueSource) bool {
+		argPath, ok := r.valueSourcePath(source)
+		if ok && target.Overlaps(argPath) {
+			found = true
+			return false
+		}
+		return true
+	})
+	if found {
+		return true
+	}
 	for _, arg := range fact.Args {
 		argPath, ok := r.ExpressionPath(arg)
 		if ok && target.Overlaps(argPath) {
@@ -265,10 +277,7 @@ func (r *Result) callGuardArgumentBindings(site factflow.CallSite) []pathdom.Pat
 	}
 	var bindings []pathdom.Path
 	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
-		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-			return true
-		}
-		sourcePath, ok := r.ExpressionPathRef(source.ExprRef)
+		sourcePath, ok := r.valueSourcePath(source)
 		if !ok || sourcePath.IsEmpty() {
 			return true
 		}
@@ -292,10 +301,7 @@ func (r *Result) callGuardCallBindings(site factflow.CallSite) []pathdom.Path {
 		offset = 1
 	}
 	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
-		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-			return true
-		}
-		sourcePath, ok := r.ExpressionPathRef(source.ExprRef)
+		sourcePath, ok := r.valueSourcePath(source)
 		if !ok || sourcePath.IsEmpty() {
 			return true
 		}

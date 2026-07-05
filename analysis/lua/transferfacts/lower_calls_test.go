@@ -323,8 +323,9 @@ end
 	if len(args) != 6 {
 		t.Fatalf("argument sources = %#v, want six", args)
 	}
-	if args[0].Kind != factflow.ValueSourceExpression || !args[0].HasExpr {
-		t.Fatalf("param argument source = %#v, want semantic expression fallback until call-boundary path sources migrate", args[0])
+	wantParamKey := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "value").Key()
+	if args[0].Kind != factflow.ValueSourcePath || args[0].PathKey != wantParamKey || args[0].HasExpr {
+		t.Fatalf("param argument source = %#v, want WIR path source %q", args[0], wantParamKey)
 	}
 	if args[1].Kind != factflow.ValueSourceLiteral || args[1].LiteralKind != factflow.ValueSourceLiteralString || args[1].String != "ok" || args[1].HasExpr {
 		t.Fatalf("string argument source = %#v, want WIR string literal", args[1])

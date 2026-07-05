@@ -222,7 +222,7 @@ func applyCallReturnConditionRefinements(
 	if !ok || branch != ctx.Edge.From {
 		return out
 	}
-	bindings := callArgumentPlaceholderBindings(facts, site)
+	bindings := callArgumentPlaceholderBindings(facts, resolver, site)
 	callReturnValue := ctx.Edge.Cond
 	if site.ConditionNegated() {
 		callReturnValue = !callReturnValue

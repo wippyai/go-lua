@@ -12,7 +12,7 @@ func applyNormalReturnFrozenTables(ctx normalReturnApplyContext, out state.State
 		if !ok {
 			continue
 		}
-		if targetKey, ok := factKeyspaceKeyAt(ctx.resolver, ctx.point, targetPath); ok {
+		if targetKey, ok := ctx.keyspaceKey(fact.Target); ok {
 			out = out.WriteEffectDelta(effectdelta.Key{
 				Target: targetKey,
 				Site:   callboundary.FrozenTableEffectSite(),

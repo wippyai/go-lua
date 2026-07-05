@@ -82,7 +82,10 @@ func (p boundaryPathProjector) KeyspacePlaceholderPath(stateKey keyspace.Key) (p
 		}
 		return statePath, true
 	}
-	if statePath.Symbol == 0 || statePath.Version == 0 {
+	if statePath.Symbol == 0 {
+		return path.Path{}, false
+	}
+	if statePath.Version == 0 && len(statePath.Segments) != 0 {
 		return path.Path{}, false
 	}
 	return placeholderForParameterPath(p.params, statePath)

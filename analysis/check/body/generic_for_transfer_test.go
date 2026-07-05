@@ -553,7 +553,7 @@ end`)
 		Point:    points[0],
 		Node:     result.Graph().Node(points[0]),
 		Read:     result.stateRead,
-	}, result.typeValues, source, result.facts, result.boundarySources(sourceValueReadBoundary))
+	}, result.typeValues, source, result.facts, result.visibility, result.boundarySources(sourceValueReadBoundary))
 	if !ok {
 		t.Fatalf("failed to recover declared iterator source type for %v", sourcePath)
 	}

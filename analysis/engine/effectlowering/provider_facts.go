@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
@@ -21,10 +22,15 @@ type signatureArgumentReader struct {
 	site              factflow.CallSiteView
 	receiverSource    factflow.ValueSource
 	hasReceiverSource bool
+	keySpace          *keyspace.KeySpace
 }
 
 func signatureArgumentsFromView(site factflow.CallSiteView) signatureArgumentReader {
 	return signatureArgumentReader{site: site}
+}
+
+func signatureArgumentsFromViewWithKeySpace(site factflow.CallSiteView, ks *keyspace.KeySpace) signatureArgumentReader {
+	return signatureArgumentReader{site: site, keySpace: ks}
 }
 
 func signatureArgumentsFromMethodView(site factflow.CallSiteView) signatureArgumentReader {
@@ -37,6 +43,12 @@ func signatureArgumentsFromMethodView(site factflow.CallSiteView) signatureArgum
 		receiverSource:    receiver,
 		hasReceiverSource: true,
 	}
+}
+
+func signatureArgumentsFromMethodViewWithKeySpace(site factflow.CallSiteView, ks *keyspace.KeySpace) signatureArgumentReader {
+	args := signatureArgumentsFromMethodView(site)
+	args.keySpace = ks
+	return args
 }
 
 func (r signatureArgumentReader) ArgumentSourceCount() int {
@@ -79,7 +91,7 @@ func signatureParamPathInvalidationsForReader(sig signature.Function, args signa
 	for _, target := range targets {
 		argIndex, ok := effect.ResolveParamIndex(target.Ref, args.ArgumentSourceCount())
 		source, sourceOK := args.ArgumentSourceAt(argIndex)
-		if !ok || !sourceOK || !callArgumentSourceCanBindPath(source) {
+		if !ok || !sourceOK || !args.callArgumentSourceCanBindPath(source) {
 			continue
 		}
 		if _, ok := seen[argIndex]; ok {
@@ -127,7 +139,7 @@ func signatureParamLengthFloorsForReader(sig signature.Function, args signatureA
 		}
 		argIndex, ok := effect.ResolveParamIndex(target, args.ArgumentSourceCount())
 		source, sourceOK := args.ArgumentSourceAt(argIndex)
-		if !ok || !sourceOK || !callArgumentSourceCanBindPath(source) {
+		if !ok || !sourceOK || !args.callArgumentSourceCanBindPath(source) {
 			continue
 		}
 		out = append(out, callpayload.CallParamLengthFloor{
@@ -195,7 +207,7 @@ func signatureEscapeEventsForReader(sig signature.Function, args signatureArgume
 	out := make([]callboundary.EscapeEventFact, 0, len(sig.Effect.Labels))
 	appendArg := func(index int, kind callboundary.EscapeEventKind) {
 		source, ok := args.ArgumentSourceAt(index)
-		if !ok || !callArgumentSourceCanBindPath(source) {
+		if !ok || !args.callArgumentSourceCanBindPath(source) {
 			return
 		}
 		out = append(out, callboundary.EscapeEventFact{
@@ -250,7 +262,7 @@ func signatureFrozenTablesForReader(sig signature.Function, args signatureArgume
 	appendParam := func(ref effect.ParamRef) {
 		index, ok := effect.ResolveParamIndex(ref, args.ArgumentSourceCount())
 		source, sourceOK := args.ArgumentSourceAt(index)
-		if !ok || !sourceOK || !callArgumentSourceCanBindPath(source) {
+		if !ok || !sourceOK || !args.callArgumentSourceCanBindPath(source) {
 			return
 		}
 		out = append(out, callboundary.FrozenTableFact{
@@ -277,12 +289,12 @@ func signatureStoreRelationsForReader(sig signature.Function, args signatureArgu
 		}
 		source, ok := effect.ResolveParamIndex(sourceRef, args.ArgumentSourceCount())
 		sourceValue, sourceOK := args.ArgumentSourceAt(source)
-		if !ok || !sourceOK || !callArgumentSourceCanBindPath(sourceValue) {
+		if !ok || !sourceOK || !args.callArgumentSourceCanBindPath(sourceValue) {
 			return
 		}
 		into, ok := effect.ResolveParamIndex(intoRef, args.ArgumentSourceCount())
 		intoValue, intoOK := args.ArgumentSourceAt(into)
-		if !ok || !intoOK || !callArgumentSourceCanBindPath(intoValue) {
+		if !ok || !intoOK || !args.callArgumentSourceCanBindPath(intoValue) {
 			return
 		}
 		out = append(out, callboundary.StoreRelationFact{
@@ -307,7 +319,7 @@ func signatureLifecycleFactsForReader(sig signature.Function, args signatureArgu
 	appendFact := func(ref effect.ParamRef, fact callboundary.LifecycleFact) {
 		index, ok := effect.ResolveParamIndex(ref, args.ArgumentSourceCount())
 		source, sourceOK := args.ArgumentSourceAt(index)
-		if !ok || !sourceOK || !callArgumentSourceCanBindPath(source) {
+		if !ok || !sourceOK || !args.callArgumentSourceCanBindPath(source) {
 			return
 		}
 		fact.Target = pathdom.NewPlaceholder(index)
@@ -352,7 +364,7 @@ func signatureParamPathRefinementsForReader(
 	for _, label := range labels {
 		argIndex, ok := effect.ResolveParamIndex(label.Target, args.ArgumentSourceCount())
 		source, sourceOK := args.ArgumentSourceAt(argIndex)
-		if !ok || !sourceOK || !callArgumentSourceCanBindPath(source) {
+		if !ok || !sourceOK || !args.callArgumentSourceCanBindPath(source) {
 			continue
 		}
 		value, ok := signaturePostconditionValue(ctx, label.Refinement)
@@ -367,8 +379,30 @@ func signatureParamPathRefinementsForReader(
 	return out
 }
 
-func callArgumentSourceCanBindPath(source factflow.ValueSource) bool {
-	return source.Kind == factflow.ValueSourceExpression && source.HasExpr
+func (r signatureArgumentReader) callArgumentSourceCanBindPath(source factflow.ValueSource) bool {
+	switch source.Kind {
+	case factflow.ValueSourceExpression:
+		return source.HasExpr
+	case factflow.ValueSourcePath:
+		_, ok := sourcePathFromPathKey(r.keySpace, source.PathKey)
+		return ok
+	default:
+		return false
+	}
+}
+
+func sourcePathFromPathKey(ks *keyspace.KeySpace, raw pathdom.PathKey) (pathdom.Path, bool) {
+	if ks == nil || raw == "" {
+		return pathdom.Path{}, false
+	}
+	key, ok := ks.FromStateKey(raw)
+	if !ok || key.Sym == 0 {
+		return pathdom.Path{}, false
+	}
+	return pathdom.Path{
+		Symbol:   key.Sym,
+		Segments: ks.Segments(key),
+	}, true
 }
 
 func activeNormalReturnRefinementLabels(sig signature.Function) []postcondition.NormalReturnRefinement {

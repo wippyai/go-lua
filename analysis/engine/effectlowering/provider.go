@@ -106,9 +106,9 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) callpayload
 			return callpayload.CallOutcome{}
 		}
 		sig = bindReceiverSelfSignature(sig, receiverType)
-		argSources := signatureArgumentSources(ctx, facts, site)
+		argSources := signatureArgumentSources(ctx, facts, site, providerKeySpace)
 		if site.MethodName() != "" && signatureConsumesReceiver(sig.Type, receiverType) {
-			argSources = signatureMethodArgumentSources(ctx, facts, site)
+			argSources = signatureMethodArgumentSources(ctx, facts, site, providerKeySpace)
 		}
 		sig = instantiateSignatureForCall(ctx, sources, expressionRefinements, argumentType, sig, argSources, in, read, returnTypeOps)
 		var out callpayload.CallOutcome
@@ -363,22 +363,22 @@ func receiverSignatureInterface(receiverType typ.Type) (*typ.Interface, bool) {
 	return iface, true
 }
 
-func signatureArgumentSources(ctx transfer.NodeContext, facts factflow.Facts, site factflow.CallSiteView) signatureArgumentReader {
+func signatureArgumentSources(ctx transfer.NodeContext, facts factflow.Facts, site factflow.CallSiteView, ks *keyspace.KeySpace) signatureArgumentReader {
 	if site.ArgumentSourceCount() != 0 {
-		return signatureArgumentsFromView(site)
+		return signatureArgumentsFromViewWithKeySpace(site, ks)
 	}
 	if factSite, ok := facts.CallSiteView(ctx.Point); ok {
-		return signatureArgumentsFromView(factSite)
+		return signatureArgumentsFromViewWithKeySpace(factSite, ks)
 	}
-	return signatureArgumentReader{}
+	return signatureArgumentReader{keySpace: ks}
 }
 
-func signatureMethodArgumentSources(ctx transfer.NodeContext, facts factflow.Facts, site factflow.CallSiteView) signatureArgumentReader {
+func signatureMethodArgumentSources(ctx transfer.NodeContext, facts factflow.Facts, site factflow.CallSiteView, ks *keyspace.KeySpace) signatureArgumentReader {
 	if site.ArgumentSourceCount() != 0 {
-		return signatureArgumentsFromMethodView(site)
+		return signatureArgumentsFromMethodViewWithKeySpace(site, ks)
 	}
 	if factSite, ok := facts.CallSiteView(ctx.Point); ok {
-		return signatureArgumentsFromMethodView(factSite)
+		return signatureArgumentsFromMethodViewWithKeySpace(factSite, ks)
 	}
-	return signatureArgumentReader{}
+	return signatureArgumentReader{keySpace: ks}
 }

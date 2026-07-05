@@ -51,7 +51,11 @@ func writePathInvalidationMarker(
 	targetPath pathdom.Path,
 	preserveStructuralWitness bool,
 ) state.State {
-	if targetKey, ok := factKeyspaceKeyAt(resolver, point, targetPath); ok {
+	targetKey, ok := factKeyspaceKeyAt(resolver, point, targetPath)
+	if !ok && substitutedRootPath(targetPath) {
+		targetKey, ok = visibility.AddressAt(resolver, point, targetPath).RootOrVisibleKeyspaceKey()
+	}
+	if ok {
 		site := callboundary.PathInvalidationEffectSite()
 		if preserveStructuralWitness {
 			site = callboundary.PathStructuralPreservingInvalidationEffectSite()
@@ -76,6 +80,9 @@ func callOutcomePathKeyAt(
 		return "", false
 	}
 	targetKey := factPathKeyAt(resolver, point, targetPath)
+	if targetKey == "" && substitutedRootPath(targetPath) {
+		targetKey, _ = visibility.AddressAt(resolver, point, targetPath).RootOrVisiblePathKey()
+	}
 	if targetKey == "" {
 		return "", false
 	}
@@ -92,7 +99,7 @@ func callOutcomeStateKeyAt(
 	if !ok {
 		return "", false
 	}
-	if callboundary.IsConcreteSymbolPath(path) {
+	if callboundary.IsConcreteSymbolPath(path) || substitutedRootPath(targetPath) {
 		return visibility.AddressAt(resolver, point, targetPath).RootOrVisibleStateKey()
 	}
 	return factStateKeyAt(resolver, point, targetPath)
@@ -108,6 +115,9 @@ func callOutcomeVisibleStateKeyAt(
 	if !ok {
 		return "", false
 	}
+	if substitutedRootPath(targetPath) {
+		return visibility.AddressAt(resolver, point, targetPath).RootOrVisibleStateKey()
+	}
 	return factStateKeyAt(resolver, point, targetPath)
 }
 
@@ -121,8 +131,12 @@ func callOutcomeKeyspaceKeyAt(
 	if !ok {
 		return keyspace.Key{}, false
 	}
-	if callboundary.IsConcreteSymbolPath(path) {
+	if callboundary.IsConcreteSymbolPath(path) || substitutedRootPath(targetPath) {
 		return visibility.AddressAt(resolver, point, targetPath).RootOrVisibleKeyspaceKey()
 	}
 	return factKeyspaceKeyAt(resolver, point, targetPath)
+}
+
+func substitutedRootPath(path pathdom.Path) bool {
+	return path.Root == "" && path.Symbol != 0 && len(path.Segments) == 0
 }

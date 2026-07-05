@@ -3,9 +3,10 @@ package factapply
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/visibility"
 )
 
-func callPlaceholderBindings(facts factflow.Facts, site factflow.CallSiteView) []pathdom.Path {
+func callPlaceholderBindings(facts factflow.Facts, resolver *visibility.Resolver, site factflow.CallSiteView) []pathdom.Path {
 	var bindings []pathdom.Path
 	offset := 0
 	if receiverPath, ok := site.ReceiverPath(); ok {
@@ -13,10 +14,7 @@ func callPlaceholderBindings(facts factflow.Facts, site factflow.CallSiteView) [
 		offset = 1
 	}
 	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
-		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-			return true
-		}
-		sourcePath, ok := facts.ExpressionPathRef(source.ExprRef)
+		sourcePath, ok := callSourcePath(facts, resolver, source)
 		if !ok || sourcePath.IsEmpty() {
 			return true
 		}
@@ -26,13 +24,10 @@ func callPlaceholderBindings(facts factflow.Facts, site factflow.CallSiteView) [
 	return bindings
 }
 
-func callArgumentPlaceholderBindings(facts factflow.Facts, site factflow.CallSiteView) []pathdom.Path {
+func callArgumentPlaceholderBindings(facts factflow.Facts, resolver *visibility.Resolver, site factflow.CallSiteView) []pathdom.Path {
 	var bindings []pathdom.Path
 	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
-		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-			return true
-		}
-		sourcePath, ok := facts.ExpressionPathRef(source.ExprRef)
+		sourcePath, ok := callSourcePath(facts, resolver, source)
 		if !ok || sourcePath.IsEmpty() {
 			return true
 		}
@@ -40,6 +35,27 @@ func callArgumentPlaceholderBindings(facts factflow.Facts, site factflow.CallSit
 		return true
 	})
 	return bindings
+}
+
+func callSourcePath(facts factflow.Facts, resolver *visibility.Resolver, source factflow.ValueSource) (pathdom.Path, bool) {
+	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
+		return facts.ExpressionPathRef(source.ExprRef)
+	}
+	if source.Kind != factflow.ValueSourcePath || source.PathKey == "" || resolver == nil {
+		return pathdom.Path{}, false
+	}
+	ks := resolver.KeySpace()
+	if ks == nil {
+		return pathdom.Path{}, false
+	}
+	key, ok := ks.FromStateKey(source.PathKey)
+	if !ok || key.Sym == 0 {
+		return pathdom.Path{}, false
+	}
+	return pathdom.Path{
+		Symbol:   key.Sym,
+		Segments: ks.Segments(key),
+	}, true
 }
 
 func callReturnSlotBindings(site factflow.CallSiteView) []pathdom.Path {

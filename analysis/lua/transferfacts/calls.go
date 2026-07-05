@@ -90,9 +90,6 @@ func (l *lowerer) callArgumentSources(point cfg.Point, fallback []sourceprovenan
 		if !ok {
 			continue
 		}
-		if source.Kind == factflow.ValueSourcePath {
-			continue
-		}
 		out[i] = source
 	}
 	return out
