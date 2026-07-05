@@ -2,6 +2,7 @@ package diagnostics
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
@@ -275,6 +276,15 @@ func (ctx ProofContext) AssignmentCallResult(item judgment.Judgment, detail judg
 	}
 }
 
+func (ctx ProofContext) AssignmentCallResultForItem(item judgment.Judgment, got, want typ.Type, callSpan diagnostic.Span) (assignmentCallResultPresentation, bool) {
+	detail, ok := assignmentJudgmentCallResultDetail(item)
+	if !ok || detail.UnderSupplied || !assignmentJudgmentHasCallResultReturnSpan(item) {
+		return assignmentCallResultPresentation{}, false
+	}
+	typeSpan := diagnosticEvidenceSpanOrPrimary(item, judgment.EvidenceUserAssertion)
+	return ctx.AssignmentCallResult(item, detail, got, want, callSpan, typeSpan), true
+}
+
 func (ProofContext) OptionalAssignmentTarget(item judgment.Judgment, targetSpan diagnostic.Span) optionalAssignmentTargetPresentation {
 	containerName := item.Actual.Label
 	if containerName == "" {
@@ -308,6 +318,107 @@ func (ProofContext) OptionalAssignmentTarget(item judgment.Judgment, targetSpan 
 			sourceLabel(targetSpan, labelAssignmentTarget),
 		},
 	}
+}
+
+func assignmentJudgmentCallResultDetail(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
+	return item.AssignmentCallResultDetail()
+}
+
+func callResultSubject(index int) string {
+	if index >= 0 {
+		return fmt.Sprintf("call result %d", index+1)
+	}
+	return "call result"
+}
+
+func assignmentJudgmentUnderSuppliedCallResultDetail(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
+	return item.AssignmentUnderSuppliedCallResultDetail()
+}
+
+func assignmentJudgmentCallResultReturnSpan(item judgment.Judgment) (diagnostic.Span, bool) {
+	span, ok := item.AssignmentCallResultReturnSpan()
+	if ok {
+		return diagnosticSpanFromJudgment(span), true
+	}
+	return diagnostic.Span{}, false
+}
+
+func assignmentJudgmentHasCallResultReturnSpan(item judgment.Judgment) bool {
+	_, ok := assignmentJudgmentCallResultReturnSpan(item)
+	return ok
+}
+
+func diagnosticSpanEqual(a, b diagnostic.Span) bool {
+	return a.StartLine == b.StartLine &&
+		a.StartCol == b.StartCol &&
+		a.EndLine == b.EndLine &&
+		a.EndCol == b.EndCol
+}
+
+func assignmentJudgmentTargetLooksMember(target string, sourceName string) bool {
+	if target == "" || target == sourceName {
+		return false
+	}
+	return strings.Contains(target, ".") || strings.Contains(target, "[")
+}
+
+func assignmentJudgmentMissingRequiredField(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
+	return item.AssignmentMissingRequiredField()
+}
+
+func assignmentJudgmentMissingRequiredMethod(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
+	return item.AssignmentMissingRequiredMethod()
+}
+
+func assignmentJudgmentMethodTypeMismatch(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
+	return item.AssignmentMethodTypeMismatch()
+}
+
+func functionTypeOrNil(t typ.Type) *typ.Function {
+	fn, _ := t.(*typ.Function)
+	return fn
+}
+
+func assignmentJudgmentExpectedTypeLabel(item judgment.Judgment, target string, fallback typ.Type) string {
+	if item.Expected.Label != "" && item.Expected.Label != target {
+		return item.Expected.Label
+	}
+	return formatType(fallback)
+}
+
+func assignmentJudgmentExpectedEvidence(item judgment.Judgment, target string, fallback typ.Type, expectedDisplay string) string {
+	if evidence, ok := item.FirstEvidenceDetail(judgment.EvidenceDetailDynamicAssignmentTarget); ok {
+		label := evidence.Detail.SubjectLabel
+		if label == "" {
+			label = target
+		}
+		return fmt.Sprintf("assignment target %s requires %s", label, formatType(fallback))
+	}
+	if expectedDisplay == "" {
+		expectedDisplay = assignmentJudgmentExpectedTypeLabel(item, target, fallback)
+	}
+	return fmt.Sprintf("%s is declared as %s", target, expectedDisplay)
+}
+
+func assignmentJudgmentExpectedEvidenceKind(item judgment.Judgment) diagnostic.EvidenceKind {
+	if item.HasEvidenceDetail(judgment.EvidenceDetailDynamicAssignmentTarget) {
+		return diagnostic.EvidenceAbstractFact
+	}
+	return diagnostic.EvidenceUserAssertion
+}
+
+func assignmentJudgmentExpectedEvidenceTrust(item judgment.Judgment) diagnostic.TrustKind {
+	if item.HasEvidenceDetail(judgment.EvidenceDetailDynamicAssignmentTarget) {
+		return diagnostic.TrustProven
+	}
+	return diagnostic.TrustClaimed
+}
+
+func assignmentJudgmentSourceLabel(missingField bool) string {
+	if missingField {
+		return labelObjectLiteral
+	}
+	return labelAssignedValue
 }
 
 func (p assignmentProofPresentation) AssignmentMessage(sourceName string, got, want typ.Type, wantDisplay string) string {
