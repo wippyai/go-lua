@@ -303,6 +303,59 @@ end
 	}
 }
 
+func TestLowerCallSiteResultTargetsCanComeOnlyFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): ()
+    make()
+end
+`, "make")
+	callStmt, ok := fn.Stmts[0].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[0])
+	}
+	callPoint := requireStmtPoints(t, built, callStmt, 1)[0]
+	semanticCall, ok := result.Call(callPoint)
+	if !ok {
+		t.Fatalf("missing semantic call at point %d", callPoint)
+	}
+	if got := semanticCall.ResultTargets; len(got) != 0 {
+		t.Fatalf("semantic call result targets = %#v, want none", got)
+	}
+	makeSym, ok := bindings.GlobalSymbol("make")
+	if !ok {
+		t.Fatal("missing make global symbol")
+	}
+	makePath := path.NewPath(makeSym, "make")
+
+	body := wir.NewBody("synthetic-wir-only-call-target")
+	resultTemp := wir.Operand{Kind: wir.OperandTemp, Ref: 1}
+	start := body.Emit(wir.Instruction{
+		Op:      wir.OpCall,
+		Point:   callPoint,
+		Call:    wir.CallInfo{Callee: wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(makePath))}},
+		Results: body.AppendOperands([]wir.Operand{resultTemp}),
+	})
+	body.SetPointRange(callPoint, start, start+1)
+	body.SetCallResultTarget(callPoint, wir.CallResultTarget{
+		Kind:        wir.CallResultTargetExpression,
+		Index:       7,
+		ResultIndex: 0,
+	})
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	site, ok := facts.CallSite(callPoint)
+	if !ok {
+		t.Fatalf("missing WIR call site at point %d", callPoint)
+	}
+	targets := site.ResultTargets()
+	if len(targets) != 1 {
+		t.Fatalf("call result targets = %#v, want WIR-only target", targets)
+	}
+	if targets[0].Kind() != factflow.CallResultTargetExpression || targets[0].Index() != 7 || targets[0].ResultIndex() != 0 {
+		t.Fatalf("call result target = %#v, want WIR expression index 7 result 0", targets[0])
+	}
+}
+
 func TestLowerCallResultTargetPathAccessorComesFromWIR(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(): ()

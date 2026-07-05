@@ -21,6 +21,9 @@ func (l *lowerer) evidenceCallSiteResultTargets(targets []semantics.CallResultTa
 }
 
 func (l *lowerer) callSiteResultTargetsFromWIR(point cfg.Point, targets []semantics.CallResultTarget) []factflow.CallResultTarget {
+	if l != nil && l.wir != nil && len(targets) == 0 {
+		return lowerWIRCallResultTargets(l.wir.CallResultTargets(point))
+	}
 	out := l.evidenceCallSiteResultTargets(targets)
 	if l == nil || l.wir == nil || len(out) == 0 {
 		return out
@@ -40,6 +43,17 @@ func (l *lowerer) callSiteResultTargetsFromWIR(point cfg.Point, targets []semant
 			continue
 		}
 		out[i] = lowerWIRCallResultTarget(target, lowered)
+	}
+	return out
+}
+
+func lowerWIRCallResultTargets(targets []wir.CallResultTarget) []factflow.CallResultTarget {
+	if len(targets) == 0 {
+		return nil
+	}
+	out := make([]factflow.CallResultTarget, len(targets))
+	for i, target := range targets {
+		out[i] = lowerWIRCallResultTarget(target, factflow.CallResultTarget{})
 	}
 	return out
 }
