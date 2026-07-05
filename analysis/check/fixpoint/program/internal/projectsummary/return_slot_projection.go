@@ -1,6 +1,7 @@
 package projectsummary
 
 import (
+	"github.com/wippyai/go-lua/analysis/check/internal/projection"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -74,7 +75,5 @@ func (p returnSlotProjection) ValueWithDeclaredContract(value product.Value, ind
 	if index < 0 || index >= len(p.declared) {
 		return value
 	}
-	valuePresence := product.PresenceOf(value)
-	merged := joinDeclaredReturnValue(p.reg, value, p.declared[index])
-	return product.WithPresence(p.reg, merged, valuePresence)
+	return projection.WithDeclaredContractPreservingPresence(p.reg, value, p.declared[index])
 }

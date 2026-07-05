@@ -1,18 +1,16 @@
 package projectsummary
 
 import (
-	"github.com/wippyai/go-lua/analysis/check/internal/staticmemberwitness"
+	"github.com/wippyai/go-lua/analysis/check/internal/projection"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -116,7 +114,7 @@ func enrichReturnSlotFromHeapIdentity(reg *axis.Registry, result ResultReader, e
 	if heapidentity.ObjectDomain(reg).Equal(object, heapidentity.BottomObject(reg)) {
 		return value
 	}
-	builder := staticmemberwitness.NewBuilder()
+	var members []projection.StaticMemberValue
 	for memberKey, memberValue := range object.StaticMembers() {
 		if product.Equal(reg, memberValue, product.Bottom(reg)) {
 			continue
@@ -125,24 +123,11 @@ func enrichReturnSlotFromHeapIdentity(reg *axis.Registry, result ResultReader, e
 		if !ok {
 			continue
 		}
-		memberType, ok := heapStaticMemberType(reg, result, memberValue)
-		if !ok {
-			continue
-		}
-		builder.Add(segments, memberType)
+		members = append(members, projection.StaticMemberValue{Suffix: segments, Value: memberValue})
 	}
-	witness, ok := builder.Build()
-	if !ok {
-		return value
-	}
-	if existing, ok := typevalue.TypeOf(reg, value); ok && existing != nil {
-		merged, mergedOK := typetable.OverlayRecordMembers(existing, witness)
-		if !mergedOK {
-			return value
-		}
-		witness = merged
-	}
-	return typevalue.WithWitness(reg, value, witness)
+	return projection.WithStaticMemberWitness(reg, value, members, func(member product.Value) (typ.Type, bool) {
+		return heapStaticMemberType(reg, result, member)
+	})
 }
 
 func heapStaticMemberType(reg *axis.Registry, result ResultReader, value product.Value) (typ.Type, bool) {
@@ -183,7 +168,7 @@ func joinOmittedReturnValue(reg *axis.Registry, value product.Value) product.Val
 }
 
 func joinDeclaredReturnValue(reg *axis.Registry, value product.Value, declared product.Value) product.Value {
-	return product.WithPresence(reg, refinement.MergeDeclaredContract(reg, value, declared), product.PresenceOf(declared))
+	return projection.WithDeclaredContract(reg, value, declared)
 }
 
 func mergeDeclaredReturnSourceValue(reg *axis.Registry, slots returnSlotProjection, value product.Value, index int) product.Value {
