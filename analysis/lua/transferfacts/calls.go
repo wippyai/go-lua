@@ -305,6 +305,18 @@ func (l *lowerer) callArgumentPathFromWIR(point cfg.Point, index int) (path.Path
 	return argPath, true
 }
 
+func (l *lowerer) callCalleePathFromWIR(point cfg.Point) (path.Path, bool) {
+	inst, ok := l.wirCallInstruction(point)
+	if !ok || inst.Call.Callee.Kind != wir.OperandPath {
+		return path.Path{}, false
+	}
+	calleePath := l.wir.Path(wir.PathRef(inst.Call.Callee.Ref))
+	if calleePath.IsEmpty() {
+		return path.Path{}, false
+	}
+	return calleePath, true
+}
+
 func sourceSpans(in []semantics.SourceSpan) []factflow.SourceSpan {
 	if len(in) == 0 {
 		return nil

@@ -216,7 +216,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			if lowered, ok := l.typeCastPostconditionRefinement(point, fact); ok {
 				appendPostconditionRefinements(input.PostconditionRefinements, point, lowered)
 			}
-			if lowered, ok := l.typeCastCallResultValue(fact); ok {
+			if lowered, ok := l.typeCastCallResultValue(point, fact); ok {
 				appendCallResultValues(input.CallResultValues, point, lowered)
 			}
 			if lowered := l.typeIsCallResultValues(fact); len(lowered) != 0 {

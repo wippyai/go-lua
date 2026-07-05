@@ -76,8 +76,8 @@ func (l *lowerer) aliasPathType(p path.Path) (typ.Type, bool) {
 	return projected, true
 }
 
-func (l *lowerer) typeCastCallResultValue(fact semantics.CallFact) (factflow.CallResultValue, bool) {
-	t, _, ok := l.directTypeCastCall(fact)
+func (l *lowerer) typeCastCallResultValue(point cfg.Point, fact semantics.CallFact) (factflow.CallResultValue, bool) {
+	t, _, ok := l.directTypeCastCallAt(point, fact)
 	if !ok {
 		return factflow.CallResultValue{}, false
 	}
@@ -105,10 +105,31 @@ func (l *lowerer) directTypeCastCallAt(point cfg.Point, fact semantics.CallFact)
 	if !ok {
 		return nil, path.Path{}, false
 	}
+	if wirType, ok := l.typeCastCalleeTypeFromWIR(point, fact); ok {
+		t = wirType
+	}
 	if wirPath, ok := l.typeCastArgumentPathFromWIR(point, fact); ok {
 		argPath = wirPath
 	}
 	return t, argPath, true
+}
+
+func (l *lowerer) typeCastCalleeTypeFromWIR(point cfg.Point, fact semantics.CallFact) (typ.Type, bool) {
+	if l == nil || l.wir == nil || l.bindings == nil {
+		return nil, false
+	}
+	if _, ok := branchcond.TypeCall(fact.Call); !ok {
+		return nil, false
+	}
+	calleePath, ok := l.callCalleePathFromWIR(point)
+	if !ok || len(calleePath.Segments) != 0 {
+		return nil, false
+	}
+	t, ok := primitiveRuntimeCastType(calleePath.Root)
+	if !ok || !l.bindings.SymbolResolvesToGlobal(calleePath.Symbol, calleePath.Root) {
+		return nil, false
+	}
+	return t, true
 }
 
 func (l *lowerer) typeCastArgumentPathFromWIR(point cfg.Point, fact semantics.CallFact) (path.Path, bool) {

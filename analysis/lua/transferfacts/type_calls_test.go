@@ -83,6 +83,40 @@ local v = number(data)
 	assertTypeIsRuntimeProof(t, reg, results[0].Value(), typ.Number)
 }
 
+func TestLowerPrimitiveTypeCastCalleeComesFromWIR(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local data: any = 1
+local v = number(data)
+`, "string")
+	dataStmt := mustLocalStmt(t, stmts, 0)
+	castStmt := mustLocalStmt(t, stmts, 1)
+	dataPath := path.NewPath(mustLocalAt(t, bindings, dataStmt, 0), "data")
+	castCall := castStmt.Exprs[0].(*ast.FuncCallExpr)
+	callPoint := requireCallPoint(t, built.Graph, result, castCall)
+	stringSym, ok := bindings.GlobalSymbol("string")
+	if !ok {
+		t.Fatal("missing string global symbol")
+	}
+	stringPath := path.NewPath(stringSym, "string")
+
+	body := wir.NewBody("primitive-cast-callee-owner")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpCall,
+		Point: callPoint,
+		Call:  wir.CallInfo{Callee: wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(stringPath))}},
+		List:  body.AppendOperands([]wir.Operand{{Kind: wir.OperandPath, Ref: uint32(body.InternPath(dataPath))}}),
+	})
+	body.SetPointRange(callPoint, start, start+1)
+
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	results := facts.CallResultValues(callPoint)
+	if len(results) != 1 {
+		t.Fatalf("primitive call result values = %d, want 1: %#v", len(results), results)
+	}
+	assertTypeIsRuntimeProof(t, reg, results[0].Value(), typ.String)
+}
+
 func TestLowerPrimitiveTypeCastPostconditionArgumentPathComesFromWIR(t *testing.T) {
 	reg := standard.Registry()
 	stmts, bindings, built, result := parseSemanticChunk(t, `
