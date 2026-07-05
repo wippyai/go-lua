@@ -67,7 +67,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		typeResolver:                  typeResolver,
 		typeValues:                    config.TypeValues,
 		wir:                           config.WIR,
-		callPoints:                    callPointsByExpr(builtCallFacts(graph, result)),
+		callPoints:                    semanticCallPointsByExpr(graph, result, config.WIR),
 		wirCallPoints:                 callPointsByExpressionIDFromWIR(graph, config.WIR),
 		symbolTypes:                   symbolTypes,
 		declaredReturnLocalTypes:      declaredReturnLocalTypes,
@@ -416,6 +416,13 @@ func (l *lowerer) valueFromTypeWithWitness(t typ.Type) product.Value {
 	return l.typeValues.FromTypeWithWitness(l.registry, t)
 }
 
+func semanticCallPointsByExpr(graph cfg.Graph, result *semantics.Result, body *wir.Body) map[*ast.FuncCallExpr]cfg.Point {
+	if body != nil {
+		return nil
+	}
+	return callPointsByExpr(builtCallFacts(graph, result))
+}
+
 func callPointsByExpr(facts map[*ast.FuncCallExpr]cfg.Point) map[*ast.FuncCallExpr]cfg.Point {
 	if len(facts) == 0 {
 		return nil
@@ -472,7 +479,7 @@ func (l *lowerer) callPointForExpr(_ int, call *ast.FuncCallExpr) (cfg.Point, bo
 	if l == nil || call == nil {
 		return 0, false
 	}
-	if len(l.wirCallPoints) != 0 {
+	if l.wir != nil {
 		point, ok := l.wirCallPoints[wir.ExpressionID(expressionid.Of(call))]
 		return point, ok && point != 0
 	}

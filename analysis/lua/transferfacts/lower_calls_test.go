@@ -1655,6 +1655,17 @@ func TestLowerCallPointForExprCanComeOnlyFromWIRExpressionID(t *testing.T) {
 	}
 }
 
+func TestLowerCallPointForExprIgnoresSemanticMapInWIRMode(t *testing.T) {
+	call := &ast.FuncCallExpr{Func: ident("g")}
+	l := lowerer{
+		wir:        wir.NewBody("empty"),
+		callPoints: map[*ast.FuncCallExpr]cfg.Point{call: cfg.Point(99)},
+	}
+	if point, ok := l.callPointForExpr(0, call); ok || point != 0 {
+		t.Fatalf("WIR callPointForExpr fell back to semantic map: %d/%v", point, ok)
+	}
+}
+
 func TestLowerCallSiteMapsUnknownContextExplicitly(t *testing.T) {
 	l := lowerer{exprs: make(map[any]factflow.ExprRef)}
 	site := l.callSite(semantics.CallFact{
