@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
@@ -127,6 +128,44 @@ end
 	sources := returnFact.Sources()
 	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourcePath || sources[0].HasExpr {
 		t.Fatalf("return sources = %#v, want WIR path source without expression ref", sources)
+	}
+}
+
+func TestLowerWithWIRReturnSourcesForSegmentedPath(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): string
+    local value = { name = "x" }
+    local other = { name = "y" }
+    return value.name
+end
+`)
+	ret, ok := fn.Stmts[2].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[2])
+	}
+	points := requireStmtPoints(t, built, ret, 1)
+	valuePath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "value").Field("name")
+	otherPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "other").Field("name")
+	body := wir.NewBody("synthetic-segmented-return")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpReturn,
+		Point: points[0],
+		List:  body.AppendOperands([]wir.Operand{{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))}}),
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	returnFact, ok := facts.Return(points[0])
+	if !ok {
+		t.Fatalf("missing return fact at point %d", points[0])
+	}
+	sources := returnFact.Sources()
+	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr {
+		t.Fatalf("return sources = %#v, want expression-backed WIR path", sources)
+	}
+	gotPath, ok := facts.ExpressionPath(sources[0].ExprRef)
+	if !ok || !gotPath.Equal(otherPath) || gotPath.Equal(valuePath) {
+		t.Fatalf("return source path = %v/%v, want WIR path %v not semantic path %v", gotPath, ok, otherPath, valuePath)
 	}
 }
 

@@ -48,7 +48,7 @@ func (l *lowerer) returnValueSourcesFromWIR(point cfg.Point) ([]factflow.ValueSo
 	callResults := l.callResultValueSourcesByTempFromWIR()
 	for i, op := range ops {
 		final := i == len(ops)-1
-		source, ok := l.returnValueSourceFromWIROperand(op, i, i, final, ret.ListSpread && final, ret.ListSpread && final, callResults)
+		source, ok := l.returnValueSourceFromWIROperand(point, op, i, i, final, ret.ListSpread && final, ret.ListSpread && final, callResults)
 		if !ok {
 			return nil, false
 		}
@@ -70,6 +70,7 @@ func (l *lowerer) wirReturnInstruction(point cfg.Point) (wir.Instruction, bool) 
 }
 
 func (l *lowerer) returnValueSourceFromWIROperand(
+	point cfg.Point,
 	op wir.Operand,
 	exprIndex int,
 	targetIndex int,
@@ -79,6 +80,9 @@ func (l *lowerer) returnValueSourceFromWIROperand(
 	callResults map[uint32]wirCallResultSource,
 ) (factflow.ValueSource, bool) {
 	if source, ok := l.valueSourceFromWIRRootPathOperand(op, exprIndex, targetIndex, final, symbol.Local, symbol.Param); ok {
+		return source, true
+	}
+	if source, ok := l.pathExpressionSourceFromWIR("return", point, op, exprIndex, targetIndex, final, expanded, openTail, symbol.Local, symbol.Param, symbol.Global, symbol.Upvalue); ok {
 		return source, true
 	}
 	return l.valueSourceFromWIROperand(op, exprIndex, targetIndex, final, expanded, openTail, callResults)
