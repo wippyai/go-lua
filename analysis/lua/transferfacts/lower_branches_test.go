@@ -300,6 +300,47 @@ end
 	assertNeedReleaseImpliesDBValue(t, bindings, built.Graph, wirFacts)
 }
 
+func TestConditionalAssignmentCallSourceValueUsesLoweredCallSite(t *testing.T) {
+	reg := standard.Registry()
+	callPoint := cfg.Point(1200)
+	providerSym := symbol.ID(1201)
+	dbType := typetable.NewRecord().
+		Field("release", typ.Func().Param("self", typ.Self).Build()).
+		Build()
+	providerType := typ.Func().Returns(dbType).Build()
+	source, ok := factflow.NewCallValueSource(0, 0, 0, 0, callPoint, factflow.ValueSourceShape{
+		Final: true,
+	})
+	if !ok {
+		t.Fatal("failed to construct call value source")
+	}
+	input := &factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			callPoint: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context:      factflow.CallSiteContextAssignmentSource,
+				CalleeSymbol: providerSym,
+				CalleePath:   path.NewPath(providerSym, "make_db"),
+			}),
+		},
+	}
+	lowered := lowerer{
+		registry: reg,
+		symbolTypes: map[symbol.ID]typ.Type{
+			providerSym: providerType,
+		},
+		typeValues: typevalue.NewCache(),
+	}
+
+	value, ok := lowered.rootAssignmentSourceValue(input, source)
+	if !ok {
+		t.Fatalf("missing call source value from lowered call site")
+	}
+	got, ok := typevalue.TypeOf(reg, value)
+	if !ok || !typ.TypeEquals(got, dbType) {
+		t.Fatalf("call source value type = %v/%v, want %v", got, ok, dbType)
+	}
+}
+
 func assertNeedReleaseImpliesDBValue(t *testing.T, bindings *bind.Result, graph cfg.Graph, facts factflow.Facts) {
 	t.Helper()
 	var found bool

@@ -9,7 +9,6 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -22,8 +21,8 @@ import (
 // `if not use_template then executor = make() end` across the join, while still
 // requiring every path on the selected edge to end with a compatible write and
 // the opposite edge to contradict the trigger value.
-func (l *lowerer) addConditionalAssignmentImplications(input *factflow.FactsInput, graph cfg.Graph, result *semantics.Result) {
-	if input == nil || graph == nil || result == nil || len(input.RootAssignments) == 0 {
+func (l *lowerer) addConditionalAssignmentImplications(input *factflow.FactsInput, graph cfg.Graph) {
+	if input == nil || graph == nil || len(input.RootAssignments) == 0 {
 		return
 	}
 	postdom := dominance.ComputeImmediatePostDominators(graph)
@@ -43,10 +42,10 @@ func (l *lowerer) addConditionalAssignmentImplications(input *factflow.FactsInpu
 		if !ok || join == branch || join == graph.Exit() {
 			continue
 		}
-		incoming := l.assignmentStateBeforePoint(input, graph, result, branch)
+		incoming := l.assignmentStateBeforePoint(input, graph, branch)
 		edgeAssignments := make(map[cfg.Point]presentAssignmentState)
 		for _, succ := range cfg.SuccessorsReadOnly(graph, branch) {
-			edgeAssignments[succ] = l.presentAssignmentsOnBranchEdge(input, graph, result, succ, join, incoming)
+			edgeAssignments[succ] = l.presentAssignmentsOnBranchEdge(input, graph, succ, join, incoming)
 		}
 		for succ, selected := range edgeAssignments {
 			l.addBranchAssignmentValueImplications(input, join, incoming, selected, oppositeBranchAssignmentStates(graph, branch, succ, edgeAssignments))
@@ -366,7 +365,6 @@ type presentAssignmentState map[symbol.ID]conditionalAssignment
 func (l *lowerer) presentAssignmentsOnBranchEdge(
 	input *factflow.FactsInput,
 	graph cfg.Graph,
-	result *semantics.Result,
 	start cfg.Point,
 	join cfg.Point,
 	initial presentAssignmentState,
@@ -396,7 +394,7 @@ func (l *lowerer) presentAssignmentsOnBranchEdge(
 				in[point] = nextIn
 				changed = true
 			}
-			nextOut := l.transferPresentAssignmentState(input, result, point, nextIn, true)
+			nextOut := l.transferPresentAssignmentState(input, point, nextIn, true)
 			if prior, ok := out[point]; !ok || !presentAssignmentStateEqual(prior, nextOut) {
 				out[point] = nextOut
 				changed = true
@@ -413,7 +411,6 @@ func (l *lowerer) presentAssignmentsOnBranchEdge(
 func (l *lowerer) assignmentStateBeforePoint(
 	input *factflow.FactsInput,
 	graph cfg.Graph,
-	result *semantics.Result,
 	stop cfg.Point,
 ) presentAssignmentState {
 	if input == nil || graph == nil || stop == graph.Entry() {
@@ -440,7 +437,7 @@ func (l *lowerer) assignmentStateBeforePoint(
 				in[point] = nextIn
 				changed = true
 			}
-			nextOut := l.transferPresentAssignmentState(input, result, point, nextIn, false)
+			nextOut := l.transferPresentAssignmentState(input, point, nextIn, false)
 			if prior, ok := out[point]; !ok || !presentAssignmentStateEqual(prior, nextOut) {
 				out[point] = nextOut
 				changed = true
@@ -534,7 +531,6 @@ func presentAssignmentStateAtRegionExit(
 
 func (l *lowerer) transferPresentAssignmentState(
 	input *factflow.FactsInput,
-	result *semantics.Result,
 	point cfg.Point,
 	in presentAssignmentState,
 	fromBranch bool,
@@ -543,9 +539,9 @@ func (l *lowerer) transferPresentAssignmentState(
 	if fact, ok := input.RootAssignments[point]; ok {
 		target := fact.TargetPath()
 		if target.Symbol != 0 && len(target.Segments) == 0 {
-			if value, ok := l.rootAssignmentSourceValue(result, fact.Source()); ok {
+			if value, ok := l.rootAssignmentSourceValue(input, fact.Source()); ok {
 				out[target.Symbol] = conditionalAssignment{path: target, value: value, hasValue: true, fromBranch: fromBranch}
-			} else if l.rootAssignmentSourceDefinitelyPresent(result, fact.Source()) {
+			} else if l.rootAssignmentSourceDefinitelyPresent(input, fact.Source()) {
 				out[target.Symbol] = conditionalAssignment{path: target, fromBranch: fromBranch}
 			} else {
 				delete(out, target.Symbol)
@@ -555,8 +551,8 @@ func (l *lowerer) transferPresentAssignmentState(
 	return out
 }
 
-func (l *lowerer) rootAssignmentSourceDefinitelyPresent(result *semantics.Result, source factflow.ValueSource) bool {
-	if value, ok := l.rootAssignmentSourceValue(result, source); ok {
+func (l *lowerer) rootAssignmentSourceDefinitelyPresent(input *factflow.FactsInput, source factflow.ValueSource) bool {
+	if value, ok := l.rootAssignmentSourceValue(input, source); ok {
 		return presence.Equal(product.PresenceOf(value), presence.Present())
 	}
 	switch source.Kind {
@@ -567,7 +563,7 @@ func (l *lowerer) rootAssignmentSourceDefinitelyPresent(result *semantics.Result
 	}
 }
 
-func (l *lowerer) rootAssignmentSourceValue(result *semantics.Result, source factflow.ValueSource) (product.Value, bool) {
+func (l *lowerer) rootAssignmentSourceValue(input *factflow.FactsInput, source factflow.ValueSource) (product.Value, bool) {
 	switch source.Kind {
 	case factflow.ValueSourceExpression:
 		value, ok := l.expressionValues[source.ExprRef]
@@ -576,7 +572,7 @@ func (l *lowerer) rootAssignmentSourceValue(result *semantics.Result, source fac
 		}
 		return value, true
 	case factflow.ValueSourceCall:
-		return l.callSourceValue(result, source)
+		return l.callSourceValue(input, source)
 	case factflow.ValueSourceLiteral:
 		value, ok := l.literalSourceValue(source)
 		if !ok || !usefulConditionalAssignmentValue(l.registry, value) {
@@ -603,16 +599,15 @@ func (l *lowerer) literalSourceValue(source factflow.ValueSource) (product.Value
 	}
 }
 
-func (l *lowerer) callSourceValue(result *semantics.Result, source factflow.ValueSource) (product.Value, bool) {
-	if result == nil || !source.HasCallPoint || source.ResultIndex > 0 {
+func (l *lowerer) callSourceValue(input *factflow.FactsInput, source factflow.ValueSource) (product.Value, bool) {
+	if input == nil || !source.HasCallPoint || source.ResultIndex > 0 {
 		return product.Value{}, false
 	}
-	view, ok := result.CallView(source.CallPoint)
+	site, ok := input.CallSites[source.CallPoint]
 	if !ok {
 		return product.Value{}, false
 	}
-	fact, _ := view.Borrowed()
-	t, ok := l.callFirstReturnType(fact)
+	t, ok := l.callSiteFirstReturnType(site)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -634,8 +629,8 @@ func usefulConditionalAssignmentValue(reg *axis.Registry, value product.Value) b
 	return true
 }
 
-func (l *lowerer) callFirstReturnType(fact semantics.CallFact) (typ.Type, bool) {
-	calleeType, ok := l.callCalleeType(fact)
+func (l *lowerer) callSiteFirstReturnType(site factflow.CallSite) (typ.Type, bool) {
+	calleeType, ok := l.callSiteCalleeType(site)
 	if !ok {
 		return nil, false
 	}
@@ -646,21 +641,22 @@ func (l *lowerer) callFirstReturnType(fact semantics.CallFact) (typ.Type, bool) 
 	return callable.Returns[0], true
 }
 
-func (l *lowerer) callCalleeType(fact semantics.CallFact) (typ.Type, bool) {
-	if fact.HasCalleeSymbol && fact.CalleeSymbol != 0 && !fact.CalleeMemberAccess {
-		if t, ok := l.symbolTypes[fact.CalleeSymbol]; ok {
+func (l *lowerer) callSiteCalleeType(site factflow.CallSite) (typ.Type, bool) {
+	if site.CalleeSymbol() != 0 && !site.CalleeMemberAccess() {
+		if t, ok := l.symbolTypes[site.CalleeSymbol()]; ok {
 			return t, true
 		}
 	}
-	if fact.HasCalleePath && fact.CalleePath.Symbol != 0 {
-		root, ok := l.symbolTypes[fact.CalleePath.Symbol]
+	calleePath := site.CalleePathRef()
+	if calleePath.Symbol != 0 {
+		root, ok := l.symbolTypes[calleePath.Symbol]
 		if !ok {
 			return nil, false
 		}
-		if len(fact.CalleePath.Segments) == 0 {
+		if len(calleePath.Segments) == 0 {
 			return root, true
 		}
-		return luatypeprojection.ApplySegments(root, fact.CalleePath.Segments)
+		return luatypeprojection.ApplySegments(root, calleePath.Segments)
 	}
 	return nil, false
 }
