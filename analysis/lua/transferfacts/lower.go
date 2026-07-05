@@ -163,32 +163,34 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 				input.PathDescendantInvalidations[point] = lowered
 			}
 		}
-		if view, ok := result.ReturnView(point); ok {
-			fact, _ := view.Borrowed()
+		if l.wir != nil {
 			if sources, ok := l.returnValueSourcesFromWIR(point); ok {
 				input.Returns[point] = factflow.NewReturn(sources)
-			} else if l.wir != nil {
-				if _, hasWIRReturn := l.wirReturnInstruction(point); !hasWIRReturn {
-					continue
+			}
+		}
+		if view, ok := result.ReturnView(point); ok {
+			fact, _ := view.Borrowed()
+			if _, hasReturn := input.Returns[point]; !hasReturn {
+				if l.wir != nil {
+					if _, hasWIRReturn := l.wirReturnInstruction(point); !hasWIRReturn {
+						continue
+					}
+					input.Returns[point] = factflow.NewReturn(l.returnValueSources(fact.Sources, result))
+				} else {
+					input.Returns[point] = factflow.NewReturn(l.returnValueSources(fact.Sources, result))
 				}
-				input.Returns[point] = factflow.NewReturn(l.returnValueSources(fact.Sources, result))
-			} else {
-				input.Returns[point] = factflow.NewReturn(l.returnValueSources(fact.Sources, result))
 			}
 			if ret, ok := input.Returns[point]; ok {
 				if relations := l.typeIsReturnPresenceRelationsFromSources(ret.Sources(), result, input.CallSites); len(relations) != 0 {
 					appendReturnPresenceRelations(input.ReturnPresenceRelations, point, relations...)
 				}
+				returnSources := ret.Sources()
+				for index, source := range fact.Sources {
+					l.addReturnAssertionRefinements(&input, point, index, valueSourceAt(returnSources, index), source)
+					l.addObjectLiteral(&input, result, source)
+				}
+				l.addReturnObjectLiteralExpectedTypes(&input, result, fact)
 			}
-			var returnSources []factflow.ValueSource
-			if ret, ok := input.Returns[point]; ok {
-				returnSources = ret.Sources()
-			}
-			for index, source := range fact.Sources {
-				l.addReturnAssertionRefinements(&input, point, index, valueSourceAt(returnSources, index), source)
-				l.addObjectLiteral(&input, result, source)
-			}
-			l.addReturnObjectLiteralExpectedTypes(&input, result, fact)
 		}
 		if l.wir != nil {
 			if lowered := l.channelSelectsFromWIR(point); len(lowered) != 0 {

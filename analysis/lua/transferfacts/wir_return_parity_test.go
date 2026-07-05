@@ -328,3 +328,37 @@ end
 		t.Fatalf("WIR mode return at point %d fell back to semantic sidecar", points[0])
 	}
 }
+
+func TestLowerWithWIRReturnPublishesWithoutSemanticReturnView(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): string
+    local value = "semantic assignment point"
+    return value
+end
+`)
+	local := fn.Stmts[0].(*ast.LocalAssignStmt)
+	points := requireStmtPoints(t, built, local, 1)
+	point := points[0]
+	if _, ok := result.ReturnView(point); ok {
+		t.Fatalf("point %d unexpectedly has semantic return view", point)
+	}
+
+	body := wir.NewBody("synthetic-return-on-non-return-point")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpReturn,
+		Point: point,
+		List:  body.AppendOperands([]wir.Operand{{Kind: wir.OperandConst, Ref: uint32(body.InternConst(wir.Const{Kind: wir.ConstString, Str: "wir"}))}}),
+	})
+	body.SetPointRange(point, start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	returnFact, ok := facts.Return(point)
+	if !ok {
+		t.Fatalf("missing WIR-owned return at point %d without semantic ReturnView", point)
+	}
+	sources := returnFact.Sources()
+	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceLiteral ||
+		sources[0].LiteralKind != factflow.ValueSourceLiteralString || sources[0].String != "wir" {
+		t.Fatalf("WIR return sources = %#v, want literal wir", sources)
+	}
+}
