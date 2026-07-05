@@ -35,7 +35,7 @@ func (r *Result) WithMemberReadNilWitness(point cfg.Point, expr ast.Expr, value 
 		r.memberReadHasLiteralDeclarationProof(point, expr) {
 		return value
 	}
-	got, ok := r.valueTypeWithPresence(value)
+	got, ok := r.ValueTypeWithPresence(value)
 	if !ok || got == nil || typ.IsAny(got) || typ.IsUnknown(got) {
 		if declared, declaredOK := r.DeclaredExpressionTypeAt(point, expr); declaredOK &&
 			declared != nil &&

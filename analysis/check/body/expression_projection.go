@@ -4,8 +4,6 @@ import (
 	"strconv"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/proof"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -29,7 +27,7 @@ func (r *Result) ExpressionTypeBeforeBoundary(point cfg.Point, expr ast.Expr) (t
 		return typ.Integer, true
 	}
 	if value, ok := r.ExpressionValueBeforeBoundary(point, expr); ok {
-		if t, typeOK := r.valueTypeWithPresence(value); typeOK && t != nil {
+		if t, typeOK := r.ValueTypeWithPresence(value); typeOK && t != nil {
 			if narrowed, narrowedOK := r.discriminantProvenMemberExpressionTypeBeforeBoundary(point, expr); narrowedOK {
 				return narrowed, true
 			}
@@ -38,7 +36,7 @@ func (r *Result) ExpressionTypeBeforeBoundary(point cfg.Point, expr ast.Expr) (t
 	}
 	if call, ok := expr.(*ast.FuncCallExpr); ok {
 		if value, valueOK := r.CallExprResultValue(call, 0); valueOK {
-			if t, typeOK := r.valueTypeWithPresence(value); typeOK && t != nil {
+			if t, typeOK := r.ValueTypeWithPresence(value); typeOK && t != nil {
 				return t, true
 			}
 		}
@@ -310,13 +308,6 @@ func (r *Result) SymbolHasTypeAnnotation(id symbol.ID) bool {
 	}
 	expr, ok := r.SymbolTypeAnnotation(id)
 	return ok && expr != nil
-}
-
-func (r *Result) valueTypeWithPresence(value product.Value) (typ.Type, bool) {
-	if r == nil || r.registry == nil || r.typeValues == nil {
-		return nil, false
-	}
-	return proof.New(r.registry, r.typeValues).ValueTypeWithPresence(value)
 }
 
 // ExpressionLabel returns a compact user-facing expression label.

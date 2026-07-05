@@ -466,7 +466,7 @@ func (r *Result) concatOperandProvenPresentBySolvedValue(point cfg.Point, operan
 	if presence.Equal(p, presence.Absent()) {
 		return false
 	}
-	if t, ok := r.valueTypeWithPresence(value); ok && typ.Nil.Equals(t) {
+	if t, ok := r.ValueTypeWithPresence(value); ok && typ.Nil.Equals(t) {
 		return false
 	}
 	return false

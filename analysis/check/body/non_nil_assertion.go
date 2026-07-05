@@ -186,7 +186,7 @@ func (r *Result) nonNilAssertionOccurrence(point cfg.Point, assert *ast.NonNilAs
 
 func (r *Result) nonNilAssertionOperandType(point cfg.Point, operand ast.Expr, value product.Value, valueOK bool) (typ.Type, bool) {
 	if valueOK {
-		if t, ok := r.valueTypeWithPresence(value); ok && t != nil {
+		if t, ok := r.ValueTypeWithPresence(value); ok && t != nil {
 			return t, true
 		}
 	}

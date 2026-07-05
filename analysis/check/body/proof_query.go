@@ -1,6 +1,7 @@
 package body
 
 import (
+	"github.com/wippyai/go-lua/analysis/check/internal/projection"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/proof"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -43,7 +44,7 @@ func (r *Result) ValueTypeWithPresence(value product.Value) (typ.Type, bool) {
 	if r == nil {
 		return nil, false
 	}
-	return r.proofReader().ValueTypeWithPresence(value)
+	return projection.ValueTypeWithPresence(r.registry, r.typeValues, value)
 }
 
 func (r *Result) ValueHasExactIdentity(value product.Value) bool {

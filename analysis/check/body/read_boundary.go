@@ -18,7 +18,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/proof"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -289,7 +288,7 @@ func (r *Result) requiredPathDescendantProvenPresentBeforeBoundary(point cfg.Poi
 
 func (r *Result) pathTypeBeforeBoundary(point cfg.Point, p pathdom.Path) (typ.Type, bool) {
 	if value, ok := r.PathValueBeforeBoundary(point, p); ok {
-		if t, typeOK := r.valueTypeWithPresence(value); typeOK && t != nil {
+		if t, typeOK := r.ValueTypeWithPresence(value); typeOK && t != nil {
 			return t, true
 		}
 	}
@@ -503,7 +502,7 @@ func (r *Result) StaticStringExprValueAtBoundary(point cfg.Point, expr ast.Expr)
 	if !ok {
 		return "", false
 	}
-	t, ok := proof.New(r.registry, r.typeValues).ValueTypeWithPresence(value)
+	t, ok := r.ValueTypeWithPresence(value)
 	if !ok {
 		return "", false
 	}
@@ -526,7 +525,7 @@ func (r *Result) PathLiteralTypeAtBoundary(point cfg.Point, p pathdom.Path) (typ
 	if !ok {
 		return nil, false
 	}
-	t, ok := proof.New(r.registry, r.typeValues).ValueTypeWithPresence(value)
+	t, ok := r.ValueTypeWithPresence(value)
 	if !ok {
 		return nil, false
 	}

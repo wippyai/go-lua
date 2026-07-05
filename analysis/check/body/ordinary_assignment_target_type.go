@@ -221,7 +221,7 @@ func (r *Result) dynamicWriteKeyType(point cfg.Point) (typ.Type, bool) {
 	if !ok {
 		return nil, false
 	}
-	return r.valueTypeWithPresence(value)
+	return r.ValueTypeWithPresence(value)
 }
 
 func (r *Result) ordinaryAssignmentDeclaredTargetTypeResult(point cfg.Point, target ast.Expr, t typ.Type, hardDeclared bool) OrdinaryAssignmentTargetType {
@@ -300,7 +300,7 @@ func (r *Result) declarationSourceRefinementWritePathType(expr factflow.ExprRef,
 	if !ok || refinement.Mode() != factflow.ExpressionRefinementRuntimeValidation {
 		return nil, false
 	}
-	t, ok := r.valueTypeWithPresence(refinement.Refinement())
+	t, ok := r.ValueTypeWithPresence(refinement.Refinement())
 	if !ok || t == nil {
 		return nil, false
 	}
