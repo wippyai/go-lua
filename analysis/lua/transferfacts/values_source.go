@@ -52,7 +52,8 @@ func (l *lowerer) returnValueSourcesFromWIR(point cfg.Point) ([]factflow.ValueSo
 	out := make([]factflow.ValueSource, len(ops))
 	callResults := l.callResultValueSourcesByTempFromWIR()
 	for i, op := range ops {
-		source, ok := l.returnOperandValueSourceFromWIR(op, i, i == len(ops)-1, ret.ListSpread, callResults)
+		final := i == len(ops)-1
+		source, ok := l.valueSourceFromWIROperand(op, i, i, final, ret.ListSpread && final, ret.ListSpread && final, callResults)
 		if !ok {
 			return nil, false
 		}
@@ -66,11 +67,13 @@ type wirCallResultSource struct {
 	resultIndex int
 }
 
-func (l *lowerer) returnOperandValueSourceFromWIR(
+func (l *lowerer) valueSourceFromWIROperand(
 	op wir.Operand,
-	index int,
+	exprIndex int,
+	targetIndex int,
 	final bool,
-	listSpread bool,
+	expanded bool,
+	openTail bool,
 	callResults map[uint32]wirCallResultSource,
 ) (factflow.ValueSource, bool) {
 	switch op.Kind {
@@ -89,42 +92,42 @@ func (l *lowerer) returnOperandValueSourceFromWIR(
 		if !ok || kind != symbol.Param {
 			return factflow.ValueSource{}, false
 		}
-		shape, ok := factflow.NewValueSourceShape(final, listSpread && final, false, listSpread && final)
+		shape, ok := factflow.NewValueSourceShape(final, false, false, false)
 		if !ok {
 			return factflow.ValueSource{}, false
 		}
-		return mustValueSource(factflow.NewPathValueSource(p.Key(), index, index, 0, shape)), true
+		return mustValueSource(factflow.NewPathValueSource(p.Key(), exprIndex, targetIndex, 0, shape)), true
 	case wir.OperandConst:
 		c := l.wir.Const(wir.ConstRef(op.Ref))
 		if c.Kind == wir.ConstNil {
-			return factflow.NewNilValueSource(index), true
+			return factflow.NewNilValueSource(targetIndex), true
 		}
-		shape, ok := factflow.NewValueSourceShape(final, listSpread && final, false, listSpread && final)
+		shape, ok := factflow.NewValueSourceShape(final, false, false, false)
 		if !ok {
 			return factflow.ValueSource{}, false
 		}
 		switch c.Kind {
 		case wir.ConstBool:
-			return mustValueSource(factflow.NewBoolLiteralValueSource(c.Bool, index, index, 0, shape)), true
+			return mustValueSource(factflow.NewBoolLiteralValueSource(c.Bool, exprIndex, targetIndex, 0, shape)), true
 		case wir.ConstNumber:
 			if i, ok := numparse.ParseIntegerLiteral(c.Number); ok {
-				return mustValueSource(factflow.NewIntegerLiteralValueSource(i, index, index, 0, shape)), true
+				return mustValueSource(factflow.NewIntegerLiteralValueSource(i, exprIndex, targetIndex, 0, shape)), true
 			}
 			if f, ok := numparse.ParseFloatLiteral(c.Number); ok {
-				return mustValueSource(factflow.NewNumberLiteralValueSource(f, index, index, 0, shape)), true
+				return mustValueSource(factflow.NewNumberLiteralValueSource(f, exprIndex, targetIndex, 0, shape)), true
 			}
 			return factflow.ValueSource{}, false
 		case wir.ConstString:
-			return mustValueSource(factflow.NewStringLiteralValueSource(c.Str, index, index, 0, shape)), true
+			return mustValueSource(factflow.NewStringLiteralValueSource(c.Str, exprIndex, targetIndex, 0, shape)), true
 		}
 	case wir.OperandVararg:
-		shape, ok := factflow.NewValueSourceShape(final, listSpread && final, false, listSpread && final)
+		shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, openTail)
 		if !ok {
 			return factflow.ValueSource{}, false
 		}
-		return mustValueSource(factflow.NewVarargValueSource(0, index, index, 0, shape)), true
+		return mustValueSource(factflow.NewVarargValueSource(0, exprIndex, targetIndex, 0, shape)), true
 	case wir.OperandTemp:
-		if source, ok := callResultValueSourceFromWIR(op, index, final, listSpread, callResults); ok {
+		if source, ok := callResultValueSourceFromWIR(op, exprIndex, targetIndex, final, expanded, openTail, callResults); ok {
 			return source, true
 		}
 	}
@@ -151,9 +154,11 @@ func (l *lowerer) callResultValueSourcesByTempFromWIR() map[uint32]wirCallResult
 
 func callResultValueSourceFromWIR(
 	op wir.Operand,
-	index int,
+	exprIndex int,
+	targetIndex int,
 	final bool,
-	listSpread bool,
+	expanded bool,
+	openTail bool,
 	callResults map[uint32]wirCallResultSource,
 ) (factflow.ValueSource, bool) {
 	if op.Kind != wir.OperandTemp {
@@ -163,12 +168,11 @@ func callResultValueSourceFromWIR(
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
-	expanded := listSpread && final
-	shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, expanded)
+	shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, openTail)
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
-	return mustValueSource(factflow.NewCallValueSource(0, index, index, result.resultIndex, result.point, shape)), true
+	return mustValueSource(factflow.NewCallValueSource(0, exprIndex, targetIndex, result.resultIndex, result.point, shape)), true
 }
 
 func (l *lowerer) expandTypeIsOpenTailReturnSource(source sourceprovenance.ASTSource, result *semantics.Result) []sourceprovenance.ASTSource {

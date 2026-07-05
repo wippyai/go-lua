@@ -3,11 +3,22 @@ package transferfacts
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
+func (l *lowerer) callSiteAt(point cfg.Point, fact semantics.CallFact) factflow.CallSite {
+	return l.callSiteWithArgumentSources(fact, l.callArgumentSources(point, fact.ArgumentSources))
+}
+
 func (l *lowerer) callSite(fact semantics.CallFact) factflow.CallSite {
+	return l.callSiteWithArgumentSources(fact, l.valueSources(fact.ArgumentSources))
+}
+
+func (l *lowerer) callSiteWithArgumentSources(fact semantics.CallFact, argumentSources []factflow.ValueSource) factflow.CallSite {
 	exprRef, hasExpr := l.exprRef(fact.Call)
 	calleeSymbol := symbol.ID(0)
 	if fact.HasCalleeSymbol {
@@ -45,7 +56,7 @@ func (l *lowerer) callSite(fact semantics.CallFact) factflow.CallSite {
 		HasExpr:            hasExpr,
 		ExprIndex:          fact.ExprIndex,
 		ConditionNegated:   fact.ConditionNegated,
-		ArgumentSources:    l.valueSources(fact.ArgumentSources),
+		ArgumentSources:    argumentSources,
 		CallSpan:           sourceSpan(fact.CallSpan),
 		CalleeSpan:         sourceSpan(fact.CalleeSpan),
 		ArgumentSpans:      sourceSpans(fact.ArgumentSpans),
@@ -57,6 +68,46 @@ func (l *lowerer) callSite(fact semantics.CallFact) factflow.CallSite {
 		Adjusted:           fact.Adjusted,
 		OpenTail:           fact.OpenTail,
 	})
+}
+
+func (l *lowerer) callArgumentSources(point cfg.Point, fallback []sourceprovenance.ASTSource) []factflow.ValueSource {
+	if l == nil || l.wir == nil {
+		return l.valueSources(fallback)
+	}
+	inst, ok := l.wirCallInstruction(point)
+	if !ok {
+		return l.valueSources(fallback)
+	}
+	ops := l.wir.Operands(inst.List)
+	if len(ops) != len(fallback) {
+		return l.valueSources(fallback)
+	}
+	out := l.valueSources(fallback)
+	callResults := l.callResultValueSourcesByTempFromWIR()
+	for i, op := range ops {
+		final := i == len(ops)-1
+		source, ok := l.valueSourceFromWIROperand(op, i, i, final, inst.ListSpread && final, false, callResults)
+		if !ok {
+			continue
+		}
+		if source.Kind == factflow.ValueSourcePath {
+			continue
+		}
+		out[i] = source
+	}
+	return out
+}
+
+func (l *lowerer) wirCallInstruction(point cfg.Point) (wir.Instruction, bool) {
+	if l == nil || l.wir == nil {
+		return wir.Instruction{}, false
+	}
+	for _, inst := range l.wir.PointInstructions(point) {
+		if inst.Op == wir.OpCall {
+			return inst, true
+		}
+	}
+	return wir.Instruction{}, false
 }
 
 func sourceSpans(in []semantics.SourceSpan) []factflow.SourceSpan {

@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -297,6 +298,77 @@ func TestLowerCallSiteUsesSemanticArgumentSources(t *testing.T) {
 	}
 	if label, ok := site.ArgumentLabelAt(0); !ok || label != "wrapped_call" {
 		t.Fatalf("argument label = %q/%v, want wrapped_call/true", label, ok)
+	}
+}
+
+func TestLowerCallSiteUsesWIRArgumentSourcesForLiteralAndCallOperands(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(value: string): ()
+    send(value, "ok", 3, nil, true, produce())
+end
+`, "send", "produce")
+	stmt, ok := fn.Stmts[0].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[0])
+	}
+	points := requireStmtPoints(t, built, stmt, 2)
+	body := wirlower.Lower("f", fn.Stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	site, ok := facts.CallSite(points[1])
+	if !ok {
+		t.Fatalf("missing outer call site at point %d", points[1])
+	}
+	args := site.ArgumentSources()
+	if len(args) != 6 {
+		t.Fatalf("argument sources = %#v, want six", args)
+	}
+	if args[0].Kind != factflow.ValueSourceExpression || !args[0].HasExpr {
+		t.Fatalf("param argument source = %#v, want semantic expression fallback until call-boundary path sources migrate", args[0])
+	}
+	if args[1].Kind != factflow.ValueSourceLiteral || args[1].LiteralKind != factflow.ValueSourceLiteralString || args[1].String != "ok" || args[1].HasExpr {
+		t.Fatalf("string argument source = %#v, want WIR string literal", args[1])
+	}
+	if args[2].Kind != factflow.ValueSourceLiteral || args[2].LiteralKind != factflow.ValueSourceLiteralInteger || args[2].Int != 3 || args[2].HasExpr {
+		t.Fatalf("integer argument source = %#v, want WIR integer literal", args[2])
+	}
+	if args[3].Kind != factflow.ValueSourceNil {
+		t.Fatalf("nil argument source = %#v", args[3])
+	}
+	if args[4].Kind != factflow.ValueSourceLiteral || args[4].LiteralKind != factflow.ValueSourceLiteralBool || !args[4].Bool || args[4].HasExpr {
+		t.Fatalf("bool argument source = %#v, want WIR bool literal", args[4])
+	}
+	if args[5].Kind != factflow.ValueSourceCall || !args[5].HasCallPoint || args[5].CallPoint != points[0] ||
+		!args[5].Final || !args[5].Expanded || args[5].Adjusted || args[5].OpenTail {
+		t.Fatalf("tail call argument source = %#v, want expanded non-open call from point %d", args[5], points[0])
+	}
+}
+
+func TestLowerCallSiteKeepsSemanticArgumentSourceForLocalRootPath(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): ()
+    local value = "x"
+    send(value)
+end
+`, "send")
+	stmt, ok := fn.Stmts[1].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[1])
+	}
+	points := requireStmtPoints(t, built, stmt, 1)
+	body := wirlower.Lower("f", fn.Stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	site, ok := facts.CallSite(points[0])
+	if !ok {
+		t.Fatalf("missing call site at point %d", points[0])
+	}
+	arg, ok := site.ArgumentSourceAt(0)
+	if !ok {
+		t.Fatalf("missing first argument source")
+	}
+	if arg.Kind != factflow.ValueSourceExpression || !arg.HasExpr {
+		t.Fatalf("local argument source = %#v, want semantic expression fallback", arg)
 	}
 }
 

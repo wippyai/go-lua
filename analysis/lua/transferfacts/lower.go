@@ -171,7 +171,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		}
 		if view, ok := result.CallView(point); ok {
 			fact, _ := view.Borrowed()
-			input.CallSites[point] = l.callSite(fact)
+			input.CallSites[point] = l.callSiteAt(point, fact)
 			if lowered := l.channelSelects(point, result); len(lowered) != 0 {
 				input.ChannelSelects[point] = factflow.NewChannelSelectSet(lowered...)
 			}
