@@ -44,11 +44,7 @@ func (r *Result) cachedPathValue(
 }
 
 func (r *Result) pathValueCacheKey(mode sourceValueReadMode, point cfg.Point, p pathdom.Path) (pathValueCacheKey, bool) {
-	pathID, ok := keyspace.PathIdentityFromPath(r.pathValueKeySpace(), p)
-	if !ok {
-		return pathValueCacheKey{}, false
-	}
-	return pathValueCacheKey{mode: mode, point: point, path: pathID}, true
+	return newPathValueCacheKey(r.pathValueKeySpace(), mode, point, p)
 }
 
 func (r *Result) pathValueKeySpace() *keyspace.KeySpace {

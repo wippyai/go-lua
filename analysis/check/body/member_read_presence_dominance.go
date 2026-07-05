@@ -2,15 +2,9 @@ package body
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
-
-type dominatingMemberReadPresenceKey struct {
-	point cfg.Point
-	path  keyspace.PathIdentity
-}
 
 type dominatingMemberReadPresenceSource struct {
 	point    cfg.Point
@@ -25,11 +19,10 @@ func (r *Result) DominatingRequiredMemberReadProvesPathPresent(point cfg.Point, 
 	if r == nil || target.IsEmpty() {
 		return false
 	}
-	pathID, ok := keyspace.PathIdentityFromPath(r.pathValueKeySpace(), target)
+	key, ok := newDominatingMemberReadPresenceKey(r.pathValueKeySpace(), point, target)
 	if !ok {
 		return r.dominatingRequiredMemberReadProvesPathPresent(point, target)
 	}
-	key := dominatingMemberReadPresenceKey{point: point, path: pathID}
 	if r.queries.memberReadPresence != nil {
 		if cached, ok := r.queries.memberReadPresence[key]; ok {
 			return cached
@@ -94,12 +87,11 @@ func (r *Result) dedupeMemberReadPresenceSources(in []dominatingMemberReadPresen
 	seen := make(map[dominatingMemberReadPresenceKey]struct{}, len(in))
 	out := in[:0]
 	for _, source := range in {
-		pathID, ok := keyspace.PathIdentityFromPath(ks, source.receiver)
+		key, ok := newDominatingMemberReadPresenceKey(ks, source.point, source.receiver)
 		if !ok {
 			out = append(out, source)
 			continue
 		}
-		key := dominatingMemberReadPresenceKey{point: source.point, path: pathID}
 		if _, exists := seen[key]; exists {
 			continue
 		}

@@ -60,7 +60,7 @@ func (p boundaryPathProjector) StatePath(stateKey pathaddr.StateKey) (path.Path,
 	if stateKey == "" || p.ks == nil {
 		return path.Path{}, false
 	}
-	k, ok := p.ks.FromStateKey(stateKey.PathKey())
+	k, ok := p.ks.InternStateKey(stateKey)
 	if !ok {
 		return path.Path{}, false
 	}

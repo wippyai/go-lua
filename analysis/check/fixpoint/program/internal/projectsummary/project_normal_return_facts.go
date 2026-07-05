@@ -360,7 +360,7 @@ func stateKeyMatchesPath(ks *keyspace.KeySpace, stateKey pathaddr.StateKey, targ
 	if ks == nil || stateKey == "" || target.Symbol == 0 {
 		return false
 	}
-	key, ok := ks.FromStateKey(stateKey.PathKey())
+	key, ok := ks.InternStateKey(stateKey)
 	if !ok || key.Sym != target.Symbol {
 		return false
 	}

@@ -3,9 +3,11 @@ package body
 import (
 	"testing"
 
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
 func TestResultQueryCachePathValuesUseInlineTierBeforeMap(t *testing.T) {
@@ -69,6 +71,35 @@ func TestResultQueryCacheSourceValuesUseInlineTierBeforeMap(t *testing.T) {
 	cache.reset()
 	if cache.sourceValues.count() != 0 || cache.sourceValues.values != nil || cache.sourceValues.inlineLen != 0 {
 		t.Fatal("reset did not clear source value cache")
+	}
+}
+
+func TestPathValueCacheKeyUsesKeyspaceIdentity(t *testing.T) {
+	ks := keyspace.New()
+	p := pathdom.Path{Root: "item", Symbol: symbol.ID(7), Version: 2}.Field("name")
+
+	got, ok := newPathValueCacheKey(ks, sourceValueReadBoundary, cfg.Point(9), p)
+	if !ok {
+		t.Fatal("newPathValueCacheKey failed")
+	}
+	if got.mode != sourceValueReadBoundary || got.point != cfg.Point(9) {
+		t.Fatalf("cache key = %#v, want mode/point preserved", got)
+	}
+	if got.path.Key.Kind == keyspace.KindInvalid || got.path.Legacy != "" {
+		t.Fatalf("cache key path identity = %#v, want keyspace-backed identity", got.path)
+	}
+}
+
+func TestDominatingMemberReadPresenceKeyUsesSamePathIdentityPolicy(t *testing.T) {
+	ks := keyspace.New()
+	p := pathdom.Path{Root: "item", Symbol: symbol.ID(8), Version: 1}.Field("ready")
+
+	got, ok := newDominatingMemberReadPresenceKey(ks, cfg.Point(4), p)
+	if !ok {
+		t.Fatal("newDominatingMemberReadPresenceKey failed")
+	}
+	if got.point != cfg.Point(4) || got.path.Key.Kind == keyspace.KindInvalid || got.path.Legacy != "" {
+		t.Fatalf("presence key = %#v, want keyspace-backed identity at point 4", got)
 	}
 }
 

@@ -2,6 +2,7 @@ package body
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
@@ -78,6 +79,27 @@ type pathValueCacheKey struct {
 	mode  sourceValueReadMode
 	point cfg.Point
 	path  keyspace.PathIdentity
+}
+
+func newPathValueCacheKey(ks *keyspace.KeySpace, mode sourceValueReadMode, point cfg.Point, p pathdom.Path) (pathValueCacheKey, bool) {
+	pathID, ok := keyspace.PathIdentityFromPath(ks, p)
+	if !ok {
+		return pathValueCacheKey{}, false
+	}
+	return pathValueCacheKey{mode: mode, point: point, path: pathID}, true
+}
+
+type dominatingMemberReadPresenceKey struct {
+	point cfg.Point
+	path  keyspace.PathIdentity
+}
+
+func newDominatingMemberReadPresenceKey(ks *keyspace.KeySpace, point cfg.Point, p pathdom.Path) (dominatingMemberReadPresenceKey, bool) {
+	pathID, ok := keyspace.PathIdentityFromPath(ks, p)
+	if !ok {
+		return dominatingMemberReadPresenceKey{}, false
+	}
+	return dominatingMemberReadPresenceKey{point: point, path: pathID}, true
 }
 
 type cachedProductValue struct {

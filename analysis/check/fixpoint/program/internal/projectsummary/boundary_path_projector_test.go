@@ -1,6 +1,10 @@
 package projectsummary
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
@@ -42,7 +46,7 @@ func TestBoundaryPathProjectorOwnsNormalReturnRebasing(t *testing.T) {
 		{
 			name: "parameter state key rebases to the matching placeholder suffix",
 			got: func() (path.Path, bool) {
-				return projector.StatePath(stateKeyForPath(t, ks, versionedPath(paramSym, 1, "arg").Field("seed").Field("id")))
+				return projector.StatePath(stateKeyForPath(t, versionedPath(paramSym, 1, "arg").Field("seed").Field("id")))
 			},
 			want: path.NewPlaceholder(0).Field("seed").Field("id"),
 		},
@@ -58,7 +62,7 @@ func TestBoundaryPathProjectorOwnsNormalReturnRebasing(t *testing.T) {
 			name: "return-source state key rebases to the matching return slot suffix",
 			got: func() (path.Path, bool) {
 				local := path.Path{Root: "tmp", Symbol: localSym, Version: 3}.Field("node").Field("leaf")
-				return projector.StatePath(stateKeyForPath(t, ks, local))
+				return projector.StatePath(stateKeyForPath(t, local))
 			},
 			want: path.Path{Root: "ret[0]"}.Field("value").Field("leaf"),
 		},
@@ -66,7 +70,7 @@ func TestBoundaryPathProjectorOwnsNormalReturnRebasing(t *testing.T) {
 			name: "captured persistent sink remains a concrete state path",
 			got: func() (path.Path, bool) {
 				captured := versionedPath(capturedSym, 1, "sink").Field("field")
-				return projector.StatePath(stateKeyForPath(t, ks, captured))
+				return projector.StatePath(stateKeyForPath(t, captured))
 			},
 			want: versionedPath(capturedSym, 1, "sink").Field("field"),
 		},
@@ -96,10 +100,10 @@ func TestBoundaryPathProjectorProjectsRelConstraints(t *testing.T) {
 
 	got, ok := projector.RelConstraintFact(state.RelConstraint{
 		CoA: 1,
-		A:   state.RelValueOperand(stateKeyForPath(t, ks, versionedPath(aSym, 1, "a").Field("i"))),
+		A:   state.RelValueOperand(stateKeyForPath(t, versionedPath(aSym, 1, "a").Field("i"))),
 		CoB: -1,
-		B:   state.RelLengthOperand(stateKeyForPath(t, ks, versionedPath(bSym, 1, "b").Field("items"))),
-		C:   state.RelValueOperand(stateKeyForPath(t, ks, versionedPath(bSym, 1, "b").Field("limit"))),
+		B:   state.RelLengthOperand(stateKeyForPath(t, versionedPath(bSym, 1, "b").Field("items"))),
+		C:   state.RelValueOperand(stateKeyForPath(t, versionedPath(bSym, 1, "b").Field("limit"))),
 		K:   1,
 	})
 	if !ok {
@@ -116,9 +120,26 @@ func TestBoundaryPathProjectorProjectsRelConstraints(t *testing.T) {
 	}
 }
 
-func stateKeyForPath(t *testing.T, ks *keyspace.KeySpace, p path.Path) pathaddr.StateKey {
+func TestBoundaryPathProjectorDoesNotDowngradeTypedStateKeys(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	dir := filepath.Dir(file)
+	for _, name := range []string{"boundary_path_projector.go", "project_normal_return_facts.go"} {
+		src, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("ReadFile(%s): %v", name, err)
+		}
+		if strings.Contains(string(src), "FromStateKey(stateKey.PathKey())") {
+			t.Fatalf("%s downgrades typed StateKey through PathKey spelling; use KeySpace.InternStateKey", name)
+		}
+	}
+}
+
+func stateKeyForPath(t *testing.T, p path.Path) pathaddr.StateKey {
 	t.Helper()
-	stateKey, ok := pathaddr.StateKeyFromPathKey(ks.Format(ks.FromPath(p)))
+	stateKey, ok := pathaddr.StateKeyFromPathKey(p.Key())
 	if !ok {
 		t.Fatalf("StateKeyFromPathKey(%q) failed", p.Key())
 	}
