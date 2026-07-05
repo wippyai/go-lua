@@ -3,6 +3,7 @@ package transferfacts
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -14,6 +15,31 @@ func (l *lowerer) evidenceCallSiteResultTargets(targets []semantics.CallResultTa
 	out := make([]factflow.CallResultTarget, len(targets))
 	for i := range targets {
 		out[i] = lowerCallResultTarget(targets[i])
+	}
+	return out
+}
+
+func (l *lowerer) callSiteResultTargetsFromWIR(point cfg.Point, targets []semantics.CallResultTarget) []factflow.CallResultTarget {
+	out := l.evidenceCallSiteResultTargets(targets)
+	if l == nil || l.wir == nil || len(out) == 0 {
+		return out
+	}
+	for i, lowered := range out {
+		target, ok := l.wir.CallResultTarget(point, lowered.ResultIndex())
+		if !ok || target.Path.IsEmpty() {
+			continue
+		}
+		targetSymbol := lowered.TargetSymbol()
+		if targetSymbol == 0 {
+			targetSymbol = target.Path.Symbol
+		}
+		out[i] = factflow.NewCallResultTarget(
+			lowered.Kind(),
+			lowered.Index(),
+			lowered.ResultIndex(),
+			targetSymbol,
+			target.Path,
+		)
 	}
 	return out
 }

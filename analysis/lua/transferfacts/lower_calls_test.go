@@ -154,6 +154,53 @@ func TestLowerMemberCallLocalAssignmentUsesCallResultSource(t *testing.T) {
 	}
 }
 
+func TestLowerCallSiteResultTargetPathComesFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): ()
+    local value = nil
+    local other = nil
+    value = make()
+end
+`, "make")
+	assignStmt, ok := fn.Stmts[2].(*ast.AssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want assignment", fn.Stmts[2])
+	}
+	points := requireStmtPoints(t, built, assignStmt, 2)
+	callPoint := points[0]
+	valuePath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "value")
+	otherPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "other")
+	makeSym, ok := bindings.GlobalSymbol("make")
+	if !ok {
+		t.Fatal("missing make global symbol")
+	}
+	makePath := path.NewPath(makeSym, "make")
+
+	body := wir.NewBody("synthetic-call-target-owner")
+	resultTemp := wir.Operand{Kind: wir.OperandTemp, Ref: 1}
+	start := body.Emit(wir.Instruction{
+		Op:      wir.OpCall,
+		Point:   callPoint,
+		Call:    wir.CallInfo{Callee: wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(makePath))}},
+		Results: body.AppendOperands([]wir.Operand{resultTemp}),
+	})
+	body.SetPointRange(callPoint, start, start+1)
+	body.SetCallResultTarget(callPoint, 0, otherPath)
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	site, ok := facts.CallSite(callPoint)
+	if !ok {
+		t.Fatalf("missing WIR call site at point %d", callPoint)
+	}
+	targets := site.ResultTargets()
+	if len(targets) != 1 {
+		t.Fatalf("call result targets = %#v, want one", targets)
+	}
+	if got := targets[0].TargetPath(); !got.Equal(otherPath) || got.Equal(valuePath) {
+		t.Fatalf("call result target path = %v, want WIR path %v not semantic path %v", got, otherPath, valuePath)
+	}
+}
+
 func TestLowerNegatedConditionCallSiteCarriesPolarity(t *testing.T) {
 	readyCall := &ast.FuncCallExpr{Func: ident("ready")}
 	ifStmt := &ast.IfStmt{Condition: &ast.UnaryNotOpExpr{Expr: readyCall}}

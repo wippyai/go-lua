@@ -25,7 +25,7 @@ func (l *lowerer) callSite(fact semantics.CallFact) factflow.CallSite {
 func (l *lowerer) callSiteWithArgumentSources(fact semantics.CallFact, argumentSources []factflow.ValueSource) factflow.CallSite {
 	shape := semanticCallSiteShape(fact)
 	receiverSource, hasReceiverSource := l.semanticReceiverSource(fact)
-	return l.callSiteWithArgumentSourcesWithShape(fact, argumentSources, shape, receiverSource, hasReceiverSource)
+	return l.callSiteWithArgumentSourcesWithShape(fact, argumentSources, shape, receiverSource, hasReceiverSource, l.evidenceCallSiteResultTargets(fact.ResultTargets))
 }
 
 func (l *lowerer) callSiteWithArgumentSourcesAt(point cfg.Point, fact semantics.CallFact, argumentSources []factflow.ValueSource) factflow.CallSite {
@@ -36,7 +36,7 @@ func (l *lowerer) callSiteWithArgumentSourcesAt(point cfg.Point, fact semantics.
 		shape = wirShape
 	}
 	receiverSource, hasReceiverSource := l.callReceiverSource(point, fact)
-	return l.callSiteWithArgumentSourcesWithShape(fact, argumentSources, shape, receiverSource, hasReceiverSource)
+	return l.callSiteWithArgumentSourcesWithShape(fact, argumentSources, shape, receiverSource, hasReceiverSource, l.callSiteResultTargetsFromWIR(point, fact.ResultTargets))
 }
 
 type callSiteShape struct {
@@ -85,6 +85,7 @@ func (l *lowerer) callSiteWithArgumentSourcesWithShape(
 	shape callSiteShape,
 	receiverSource factflow.ValueSource,
 	hasReceiverSource bool,
+	resultTargets []factflow.CallResultTarget,
 ) factflow.CallSite {
 	exprRef, hasExpr := l.exprRef(fact.Call)
 	return factflow.NewCallSite(factflow.CallSiteConfig{
@@ -109,7 +110,7 @@ func (l *lowerer) callSiteWithArgumentSourcesWithShape(
 		ArgumentSpans:      sourceSpans(fact.ArgumentSpans),
 		ArgumentLabels:     append([]string(nil), fact.ArgumentLabels...),
 		TypeArgs:           l.typeRefs(fact.TypeArgs),
-		ResultTargets:      l.evidenceCallSiteResultTargets(fact.ResultTargets),
+		ResultTargets:      resultTargets,
 		Final:              fact.Final,
 		Expanded:           fact.Expanded,
 		Adjusted:           fact.Adjusted,
