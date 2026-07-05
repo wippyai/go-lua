@@ -4,9 +4,11 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/parse/numparse"
 )
 
@@ -94,6 +96,19 @@ func (l *lowerer) valueSourceFromWIROperand(
 	openTail bool,
 	callResults map[uint32]wirCallResultSource,
 ) (factflow.ValueSource, bool) {
+	return l.valueSourceFromWIROperandSeen(op, exprIndex, targetIndex, final, expanded, openTail, callResults, nil)
+}
+
+func (l *lowerer) valueSourceFromWIROperandSeen(
+	op wir.Operand,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+	callResults map[uint32]wirCallResultSource,
+	seen map[uint32]bool,
+) (factflow.ValueSource, bool) {
 	switch op.Kind {
 	case wir.OperandPath:
 		return l.valueSourceFromWIRRootPathOperand(op, exprIndex, targetIndex, final, symbol.Param)
@@ -130,8 +145,316 @@ func (l *lowerer) valueSourceFromWIROperand(
 		if source, ok := callResultValueSourceFromWIR(op, exprIndex, targetIndex, final, expanded, openTail, callResults); ok {
 			return source, true
 		}
+		if source, ok := l.wirTempExpressionValueSource(op, exprIndex, targetIndex, final, expanded, openTail, callResults, seen); ok {
+			return source, true
+		}
 	}
 	return factflow.ValueSource{}, false
+}
+
+type wirTempExprRefKey struct {
+	temp uint32
+}
+
+func (l *lowerer) wirTempExpressionValueSource(
+	op wir.Operand,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+	callResults map[uint32]wirCallResultSource,
+	seen map[uint32]bool,
+) (factflow.ValueSource, bool) {
+	if op.Kind != wir.OperandTemp || l == nil || l.wir == nil {
+		return factflow.ValueSource{}, false
+	}
+	if seen[op.Ref] {
+		return factflow.ValueSource{}, false
+	}
+	if seen == nil {
+		seen = make(map[uint32]bool)
+	}
+	seen[op.Ref] = true
+	defer delete(seen, op.Ref)
+	inst, ok := l.wirTempDefs()[op.Ref]
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	switch inst.Op {
+	case wir.OpAssign:
+		return l.valueSourceFromWIROperandSeen(inst.A, exprIndex, targetIndex, final, expanded, openTail, callResults, seen)
+	case wir.OpBinOp, wir.OpLogical, wir.OpConcat:
+		return l.wirBinaryTempExpressionValueSource(op.Ref, inst, exprIndex, targetIndex, final, expanded, openTail, callResults, seen)
+	case wir.OpUnOp:
+		return l.wirUnaryTempExpressionValueSource(op.Ref, inst, exprIndex, targetIndex, final, expanded, openTail, callResults, seen)
+	default:
+		return factflow.ValueSource{}, false
+	}
+}
+
+func (l *lowerer) wirBinaryTempExpressionValueSource(
+	temp uint32,
+	inst wir.Instruction,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+	callResults map[uint32]wirCallResultSource,
+	seen map[uint32]bool,
+) (factflow.ValueSource, bool) {
+	op, ok := wirExpressionOperator(inst)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	leftOp, rightOp, ok := wirBinaryExpressionOperands(l.wir, inst)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	left, ok := l.wirExpressionOperandValueSource(leftOp, callResults, seen)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	right, ok := l.wirExpressionOperandValueSource(rightOp, callResults, seen)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	exprRef, ok := l.exprRef(wirTempExprRefKey{temp: temp})
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	operation, ok := factflow.NewBinaryExpressionOperation(op, left, right)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	if l.expressionOperations == nil {
+		l.expressionOperations = make(map[factflow.ExprRef]factflow.ExpressionOperation)
+	}
+	l.expressionOperations[exprRef] = operation
+	l.addWIRExpressionCondition(exprRef, inst)
+	shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, openTail)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return factflow.NewExpressionValueSource(exprRef, exprIndex, targetIndex, 0, shape)
+}
+
+func (l *lowerer) wirUnaryTempExpressionValueSource(
+	temp uint32,
+	inst wir.Instruction,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+	callResults map[uint32]wirCallResultSource,
+	seen map[uint32]bool,
+) (factflow.ValueSource, bool) {
+	op, ok := wirExpressionOperator(inst)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	operand, ok := l.wirExpressionOperandValueSource(inst.A, callResults, seen)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	exprRef, ok := l.exprRef(wirTempExprRefKey{temp: temp})
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	operation, ok := factflow.NewUnaryExpressionOperation(op, operand)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	if l.expressionOperations == nil {
+		l.expressionOperations = make(map[factflow.ExprRef]factflow.ExpressionOperation)
+	}
+	l.expressionOperations[exprRef] = operation
+	shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, openTail)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return factflow.NewExpressionValueSource(exprRef, exprIndex, targetIndex, 0, shape)
+}
+
+func (l *lowerer) addWIRExpressionCondition(exprRef factflow.ExprRef, inst wir.Instruction) {
+	if exprRef == 0 {
+		return
+	}
+	check, ok := l.wirExpressionConditionCheck(inst)
+	if !ok {
+		return
+	}
+	condition := factflow.NewExpressionCondition(
+		postconditionRefinementsFromBranchEdge(l.branchEdgeRefinements(check, true), true),
+		postconditionRefinementsFromBranchEdge(l.branchEdgeRefinements(check, false), false),
+		nil,
+		nil,
+	)
+	if condition.IsEmpty() {
+		return
+	}
+	if l.expressionConditions == nil {
+		l.expressionConditions = make(map[factflow.ExprRef]factflow.ExpressionCondition)
+	}
+	l.expressionConditions[exprRef] = condition
+}
+
+func postconditionRefinementsFromBranchEdge(refinements []factflow.BranchRefinement, edge bool) []factflow.PostconditionRefinement {
+	if len(refinements) == 0 {
+		return nil
+	}
+	out := make([]factflow.PostconditionRefinement, 0, len(refinements))
+	for _, refinement := range refinements {
+		value, ok := refinement.ValueForEdge(edge)
+		if !ok {
+			continue
+		}
+		out = append(out, factflow.NewPostconditionRefinement(refinement.TargetPath(), value))
+	}
+	return out
+}
+
+func (l *lowerer) wirExpressionConditionCheck(inst wir.Instruction) (branchcond.Check, bool) {
+	if inst.Op != wir.OpBinOp || (inst.Operator != wir.BinEq && inst.Operator != wir.BinNe) {
+		return branchcond.Check{}, false
+	}
+	if check, ok := l.wirEqualityConditionCheck(inst.A, inst.B, inst.Operator); ok {
+		return check, true
+	}
+	return l.wirEqualityConditionCheck(inst.B, inst.A, inst.Operator)
+}
+
+func (l *lowerer) wirEqualityConditionCheck(pathOp wir.Operand, literalOp wir.Operand, op wir.Operator) (branchcond.Check, bool) {
+	if pathOp.Kind != wir.OperandPath || literalOp.Kind != wir.OperandConst || l == nil || l.wir == nil {
+		return branchcond.Check{}, false
+	}
+	p := l.wir.Path(wir.PathRef(pathOp.Ref))
+	if p.IsEmpty() {
+		return branchcond.Check{}, false
+	}
+	c := l.wir.Const(wir.ConstRef(literalOp.Ref))
+	if c.Kind == wir.ConstNil {
+		if op == wir.BinEq {
+			return branchcond.Check{Kind: branchcond.CheckNil, Path: p}, true
+		}
+		return branchcond.Check{Kind: branchcond.CheckNotNil, Path: p}, true
+	}
+	lit, ok := wirLiteralType(c)
+	if !ok {
+		return branchcond.Check{}, false
+	}
+	kind := branchcond.CheckLiteralEqual
+	if op == wir.BinNe {
+		kind = branchcond.CheckLiteralNot
+	}
+	return branchcond.Check{Kind: kind, Path: p, Literal: lit}, true
+}
+
+func wirLiteralType(c wir.Const) (typ.Type, bool) {
+	switch c.Kind {
+	case wir.ConstBool:
+		return typ.LiteralBool(c.Bool), true
+	case wir.ConstNumber:
+		if i, ok := numparse.ParseIntegerLiteral(c.Number); ok {
+			return typ.LiteralInt(i), true
+		}
+		if f, ok := numparse.ParseFloatLiteral(c.Number); ok {
+			return typ.LiteralNumber(f), true
+		}
+	case wir.ConstString:
+		return typ.LiteralString(c.Str), true
+	}
+	return nil, false
+}
+
+func (l *lowerer) wirExpressionOperandValueSource(
+	op wir.Operand,
+	callResults map[uint32]wirCallResultSource,
+	seen map[uint32]bool,
+) (factflow.ValueSource, bool) {
+	return l.valueSourceFromWIROperandSeen(op,
+		sourceprovenance.NoSourceIndex,
+		sourceprovenance.NoSourceIndex,
+		true,
+		false,
+		false,
+		callResults,
+		seen,
+	)
+}
+
+func wirBinaryExpressionOperands(body *wir.Body, inst wir.Instruction) (wir.Operand, wir.Operand, bool) {
+	if inst.Op == wir.OpConcat && inst.List.Len != 0 {
+		ops := body.Operands(inst.List)
+		if len(ops) != 2 {
+			return wir.Operand{}, wir.Operand{}, false
+		}
+		return ops[0], ops[1], true
+	}
+	if inst.A.Kind == wir.OperandNone || inst.B.Kind == wir.OperandNone {
+		return wir.Operand{}, wir.Operand{}, false
+	}
+	return inst.A, inst.B, true
+}
+
+func wirExpressionOperator(inst wir.Instruction) (string, bool) {
+	if inst.Op == wir.OpConcat {
+		return "..", true
+	}
+	switch inst.Operator {
+	case wir.BinAdd:
+		return "+", true
+	case wir.BinSub:
+		return "-", true
+	case wir.BinMul:
+		return "*", true
+	case wir.BinDiv:
+		return "/", true
+	case wir.BinIDiv:
+		return "//", true
+	case wir.BinMod:
+		return "%", true
+	case wir.BinPow:
+		return "^", true
+	case wir.BinBAnd:
+		return "&", true
+	case wir.BinBOr:
+		return "|", true
+	case wir.BinBXor:
+		return "~", true
+	case wir.BinShl:
+		return "<<", true
+	case wir.BinShr:
+		return ">>", true
+	case wir.BinEq:
+		return "==", true
+	case wir.BinNe:
+		return "~=", true
+	case wir.BinLt:
+		return "<", true
+	case wir.BinLe:
+		return "<=", true
+	case wir.BinGt:
+		return ">", true
+	case wir.BinGe:
+		return ">=", true
+	case wir.UnNeg:
+		return "-", true
+	case wir.UnNot:
+		return "not", true
+	case wir.UnLen:
+		return "#", true
+	case wir.UnBNot:
+		return "~", true
+	case wir.LogAnd:
+		return "and", true
+	case wir.LogOr:
+		return "or", true
+	default:
+		return "", false
+	}
 }
 
 func (l *lowerer) valueSourceFromWIRRootPathOperand(

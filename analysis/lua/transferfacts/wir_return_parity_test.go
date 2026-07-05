@@ -155,7 +155,7 @@ end
 	}
 }
 
-func TestLowerWithWIRReturnSourcesFallsBackForCompoundExpressionOperands(t *testing.T) {
+func TestLowerWithWIRReturnSourcesUsesTempExpressionOperands(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(value: string): string
     return value .. "!"
@@ -175,7 +175,54 @@ end
 	}
 	sources := returnFact.Sources()
 	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr {
-		t.Fatalf("return sources = %#v, want semantic expression fallback", sources)
+		t.Fatalf("return sources = %#v, want WIR temp expression source", sources)
+	}
+	op, ok := facts.ExpressionOperation(sources[0].ExprRef)
+	if !ok {
+		t.Fatalf("missing WIR temp expression operation for ref %d", sources[0].ExprRef)
+	}
+	if op.Kind() != factflow.ExpressionOperationBinary || op.Op() != ".." {
+		t.Fatalf("WIR temp expression operation = %#v, want concat", op)
+	}
+}
+
+func TestLowerWithWIRReturnSourcesDerivesTempExpressionFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(value: string): string
+    return value .. "!"
+end
+`)
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
+	}
+	points := requireStmtPoints(t, built, ret, 1)
+	body := wir.NewBody("synthetic-return")
+	temp := wir.Operand{Kind: wir.OperandTemp, Ref: 1}
+	left := wir.Operand{Kind: wir.OperandConst, Ref: uint32(body.InternConst(wir.Const{Kind: wir.ConstString, Str: "left"}))}
+	right := wir.Operand{Kind: wir.OperandConst, Ref: uint32(body.InternConst(wir.Const{Kind: wir.ConstString, Str: "right"}))}
+	start := body.Emit(wir.Instruction{Op: wir.OpConcat, Point: points[0], Dst: temp, A: left, B: right})
+	body.Emit(wir.Instruction{Op: wir.OpReturn, Point: points[0], List: body.AppendOperands([]wir.Operand{temp})})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	returnFact, ok := facts.Return(points[0])
+	if !ok {
+		t.Fatalf("missing return fact at point %d", points[0])
+	}
+	sources := returnFact.Sources()
+	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr {
+		t.Fatalf("return sources = %#v, want WIR temp expression source", sources)
+	}
+	op, ok := facts.ExpressionOperation(sources[0].ExprRef)
+	if !ok {
+		t.Fatalf("missing WIR temp expression operation for ref %d", sources[0].ExprRef)
+	}
+	if op.Kind() != factflow.ExpressionOperationBinary || op.Op() != ".." {
+		t.Fatalf("WIR temp expression operation = %#v, want concat", op)
+	}
+	if left := op.Left(); left.Kind != factflow.ValueSourceLiteral || left.LiteralKind != factflow.ValueSourceLiteralString || left.String != "left" {
+		t.Fatalf("WIR temp concat left source = %#v, want literal left", left)
 	}
 }
 

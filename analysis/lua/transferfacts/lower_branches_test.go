@@ -663,6 +663,39 @@ end
 	}
 }
 
+func TestLowerProtectedCallDoesNotFallbackWhenWIRCallInstructionMissing(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local function run_tests(): number
+	return 1
+end
+
+local ok, result = pcall(run_tests)
+if not ok then
+	return
+end
+`, "pcall")
+
+	assign := mustLocalStmt(t, stmts, 1)
+	okPath := path.NewPath(mustLocalAt(t, bindings, assign, 0), "ok")
+	payloadPath := path.NewPath(mustLocalAt(t, bindings, assign, 1), "result")
+	ifStmt := mustIfStmt(t, stmts, 2)
+	point := requireStmtPoints(t, built, ifStmt, 1)[0]
+
+	body := wir.NewBody("branch-only")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpBranch,
+		Point: point,
+		Check: body.InternCheck(wir.Check{Kind: wir.CheckFalsy, Path: okPath}),
+	})
+	body.SetPointRange(point, start, start+1)
+
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	if refinement, ok := branchRefinementAt(facts.BranchRefinements(point), payloadPath); ok {
+		t.Fatalf("WIR mode protected-call refinement used semantic call at point %d without WIR call instruction: %#v", point, refinement)
+	}
+}
+
 func TestLowerNegatedConjunctionIndexGuardPublishesFalseEdgeProofs(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(xs: {number}, i: number)
