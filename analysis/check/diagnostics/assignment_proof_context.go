@@ -33,13 +33,10 @@ type assignmentStructurePresentation struct {
 }
 
 type assignmentDiagnosticPresentation struct {
-	SourceName     string
-	SourceEvidence string
-	Message        string
-	Help           string
-	Evidence       []diagnostic.Evidence
-	SourceLabel    string
-	DynamicTarget  bool
+	Message  string
+	Help     string
+	Evidence []diagnostic.Evidence
+	Labels   []diagnostic.Label
 }
 
 type assignmentCallResultPresentation struct {
@@ -50,12 +47,20 @@ type assignmentCallResultPresentation struct {
 	Labels   []diagnostic.Label
 }
 
+type optionalAssignmentTargetPresentation struct {
+	Message     string
+	Help        string
+	Explanation diagnostic.Explanation
+	Labels      []diagnostic.Label
+}
+
 func diagnosticProofContext() ProofContext {
 	return ProofContext{}
 }
 
 func (ctx ProofContext) AssignmentDiagnostic(item judgment.Judgment, target string, sourceName string, got, want typ.Type, sourceSpan diagnostic.Span, expectedDisplay string) assignmentDiagnosticPresentation {
 	underSuppliedDetail, underSupplied := assignmentJudgmentUnderSuppliedCallResultDetail(item)
+	declSpan := diagnosticEvidenceSpanOrPrimary(item, judgment.EvidenceUserAssertion)
 	evidenceSourceName := sourceName
 	if evidenceSourceName == "" {
 		evidenceSourceName = "assigned value"
@@ -103,23 +108,42 @@ func (ctx ProofContext) AssignmentDiagnostic(item judgment.Judgment, target stri
 		help = underSuppliedTargetHelp(target)
 	}
 
-	sourceLabel := assignmentJudgmentSourceLabel(structureView.MissingField)
+	sourceLabelText := assignmentJudgmentSourceLabel(structureView.MissingField)
 	if structureView.SourceLabel != "" {
-		sourceLabel = structureView.SourceLabel
+		sourceLabelText = structureView.SourceLabel
 	}
 	if underSupplied {
-		sourceLabel = labelCallResult
+		sourceLabelText = labelCallResult
 	}
-	evidence := append([]diagnostic.Evidence{}, extraEvidence...)
+	evidence := []diagnostic.Evidence{
+		{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
+			Span:    diagnosticEvidenceSpanOrPrimary(item, judgment.EvidenceAbstractFact),
+			Message: sourceEvidence,
+		},
+		{
+			Kind:    assignmentJudgmentExpectedEvidenceKind(item),
+			Trust:   assignmentJudgmentExpectedEvidenceTrust(item),
+			Span:    declSpan,
+			Message: assignmentJudgmentExpectedEvidence(item, target, want, expectedDisplay),
+		},
+	}
+	evidence = append(evidence, extraEvidence...)
 	evidence = append(evidence, structureView.Evidence...)
+	labels := []diagnostic.Label{sourceLabel(sourceSpan, sourceLabelText)}
+	if !diagnosticSpanEqual(declSpan, sourceSpan) {
+		expectedLabel := labelDeclaredType
+		if proofView.DynamicTarget {
+			expectedLabel = labelAssignmentTarget
+		}
+		labels = append(labels, sourceLabel(declSpan, expectedLabel))
+	}
 	return assignmentDiagnosticPresentation{
-		SourceName:     sourceName,
-		SourceEvidence: sourceEvidence,
-		Message:        message,
-		Help:           help,
-		Evidence:       evidence,
-		SourceLabel:    sourceLabel,
-		DynamicTarget:  proofView.DynamicTarget,
+		Message:  message,
+		Help:     help,
+		Evidence: evidence,
+		Labels:   labels,
 	}
 }
 
@@ -250,6 +274,41 @@ func (ctx ProofContext) AssignmentCallResult(item judgment.Judgment, detail judg
 		Want:     want,
 		Evidence: evidence,
 		Labels:   labels,
+	}
+}
+
+func (ProofContext) OptionalAssignmentTarget(item judgment.Judgment, targetSpan diagnostic.Span) optionalAssignmentTargetPresentation {
+	containerName := item.Actual.Label
+	if containerName == "" {
+		containerName = "value"
+	}
+	targetName := item.Subject.Label
+	if targetName == "" {
+		targetName = containerName
+	}
+	containerType := item.Actual.ProjectedType
+	containerSpan := diagnosticEvidenceSpanOrPrimary(item, judgment.EvidenceAbstractFact)
+	return optionalAssignmentTargetPresentation{
+		Message: optionalAssignmentTargetMessage(containerName),
+		Help:    optionalAssignmentTargetHelp(containerName),
+		Explanation: diagnostic.NewExplanation(
+			diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceAbstractFact,
+				Trust:   diagnostic.TrustProven,
+				Span:    containerSpan,
+				Message: optionalAssignmentTargetContainerEvidence(containerName, containerType),
+			},
+			diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceAbstractFact,
+				Trust:   diagnostic.TrustProven,
+				Span:    targetSpan,
+				Message: optionalAssignmentTargetWriteEvidence(targetName),
+			},
+		),
+		Labels: []diagnostic.Label{
+			sourceLabel(containerSpan, labelPossiblyNilContainer),
+			sourceLabel(targetSpan, labelAssignmentTarget),
+		},
 	}
 }
 

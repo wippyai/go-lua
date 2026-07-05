@@ -35,37 +35,14 @@ func renderAssignmentJudgmentWithPolicy(item judgment.Judgment, policy judgment.
 	proofContext := diagnosticProofContext()
 	expectedDisplay := assignmentJudgmentExpectedTypeLabel(item, target, want)
 	presentation := proofContext.AssignmentDiagnostic(item, target, sourceName, got, want, span, expectedDisplay)
-	evidence := []diagnostic.Evidence{
-		{
-			Kind:    diagnostic.EvidenceAbstractFact,
-			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
-			Span:    diagnosticEvidenceSpanOrPrimary(item, judgment.EvidenceAbstractFact),
-			Message: presentation.SourceEvidence,
-		},
-		{
-			Kind:    assignmentJudgmentExpectedEvidenceKind(item),
-			Trust:   assignmentJudgmentExpectedEvidenceTrust(item),
-			Span:    declSpan,
-			Message: assignmentJudgmentExpectedEvidence(item, target, want, expectedDisplay),
-		},
-	}
-	evidence = append(evidence, presentation.Evidence...)
-	labels := []diagnostic.Label{sourceLabel(span, presentation.SourceLabel)}
-	if !diagnosticSpanEqual(declSpan, span) {
-		expectedLabel := labelDeclaredType
-		if presentation.DynamicTarget {
-			expectedLabel = labelAssignmentTarget
-		}
-		labels = append(labels, sourceLabel(declSpan, expectedLabel))
-	}
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		Span:        span,
 		Code:        CodeAssignmentType,
 		Severity:    severity,
 		Message:     presentation.Message,
-		Explanation: diagnostic.NewExplanation(evidence...),
+		Explanation: diagnostic.NewExplanation(presentation.Evidence...),
 		Help:        presentation.Help,
-		Labels:      labels,
+		Labels:      presentation.Labels,
 	}), true
 }
 
@@ -140,41 +117,16 @@ func renderOptionalAssignmentTargetJudgmentWithPolicy(item judgment.Judgment, po
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
-	containerName := item.Actual.Label
-	if containerName == "" {
-		containerName = "value"
-	}
-	targetName := item.Subject.Label
-	if targetName == "" {
-		targetName = containerName
-	}
-	containerType := item.Actual.ProjectedType
 	targetSpan := diagnosticSpanFromJudgment(item.Spans[0])
-	containerSpan := diagnosticEvidenceSpanOrPrimary(item, judgment.EvidenceAbstractFact)
+	presentation := diagnosticProofContext().OptionalAssignmentTarget(item, targetSpan)
 	return diagnostic.New(diagnostic.DiagnosticSpec{
-		Span:     targetSpan,
-		Code:     CodeOptionalAssignmentTarget,
-		Severity: severity,
-		Message:  optionalAssignmentTargetMessage(containerName),
-		Help:     optionalAssignmentTargetHelp(containerName),
-		Explanation: diagnostic.NewExplanation(
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceAbstractFact,
-				Trust:   diagnostic.TrustProven,
-				Span:    containerSpan,
-				Message: optionalAssignmentTargetContainerEvidence(containerName, containerType),
-			},
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceAbstractFact,
-				Trust:   diagnostic.TrustProven,
-				Span:    targetSpan,
-				Message: optionalAssignmentTargetWriteEvidence(targetName),
-			},
-		),
-		Labels: []diagnostic.Label{
-			sourceLabel(containerSpan, labelPossiblyNilContainer),
-			sourceLabel(targetSpan, labelAssignmentTarget),
-		},
+		Span:        targetSpan,
+		Code:        CodeOptionalAssignmentTarget,
+		Severity:    severity,
+		Message:     presentation.Message,
+		Help:        presentation.Help,
+		Explanation: presentation.Explanation,
+		Labels:      presentation.Labels,
 	}), true
 }
 
