@@ -1,6 +1,7 @@
 package transferfacts
 
 import (
+	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
@@ -13,6 +14,17 @@ import (
 // interpreter owns that derivation.
 func (l *lowerer) directBranchCheckFromWIR(point cfg.Point) (branchcond.Check, bool) {
 	return l.firstDirectBranchCheckFromWIR(point)
+}
+
+func (l *lowerer) branchConditionSourceFromWIR(check branchcond.Check) (factflow.ValueSource, bool) {
+	if check.Kind != branchcond.CheckTruthy || check.Path.IsEmpty() {
+		return factflow.ValueSource{}, false
+	}
+	shape, ok := factflow.NewValueSourceShape(true, false, false, false)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return factflow.NewPathValueSource(check.Path.Key(), 0, factflow.NoValueSourceIndex, 0, shape)
 }
 
 func (l *lowerer) directBranchCheckAt(point cfg.Point, result *semantics.Result) (branchcond.Check, bool) {

@@ -64,7 +64,11 @@ end
 	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	for _, point := range built.Graph.RPO() {
-		assertEqualBranchFacts(t, point, "condition source", branchConditionSourceForCompare(sidecarFacts, point), branchConditionSourceForCompare(wirFacts, point))
+		if fact, ok := result.BranchCondition(point); ok && fact.Check.Kind == branchcond.CheckTruthy {
+			assertWIRTruthyBranchConditionSource(t, point, wirFacts, fact.Check.Path)
+		} else {
+			assertEqualBranchFacts(t, point, "condition source", branchConditionSourceForCompare(sidecarFacts, point), branchConditionSourceForCompare(wirFacts, point))
+		}
 		assertEqualBranchFacts(t, point, "refinements", sidecarFacts.BranchRefinements(point), wirFacts.BranchRefinements(point))
 		assertEqualBranchFacts(t, point, "len floors", sidecarFacts.BranchLenRefinements(point), wirFacts.BranchLenRefinements(point))
 		assertEqualBranchFacts(t, point, "num floors", sidecarFacts.BranchNumFloorRefinements(point), wirFacts.BranchNumFloorRefinements(point))
@@ -205,7 +209,21 @@ type branchConditionSourceCompare struct {
 
 func branchConditionSourceForCompare(facts factflow.Facts, point cfg.Point) branchConditionSourceCompare {
 	source, ok := facts.BranchConditionSource(point)
+	if source.HasExpr {
+		source.ExprRef = 1
+	}
 	return branchConditionSourceCompare{source: source, ok: ok}
+}
+
+func assertWIRTruthyBranchConditionSource(t *testing.T, point cfg.Point, facts factflow.Facts, want path.Path) {
+	t.Helper()
+	source, ok := facts.BranchConditionSource(point)
+	if !ok {
+		t.Fatalf("missing WIR truthy branch condition source at point %d", point)
+	}
+	if source.Kind != factflow.ValueSourcePath || source.PathKey != want.Key() || source.HasExpr {
+		t.Fatalf("WIR truthy branch condition source at point %d = %#v, want path source %q", point, source, want.Key())
+	}
 }
 
 func assertWIRBranchCheckContains(t *testing.T, body *wir.Body, point cfg.Point, want branchcond.Check) {

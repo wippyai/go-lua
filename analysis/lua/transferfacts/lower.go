@@ -194,11 +194,17 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			}
 		}
 		if fact, ok := result.BranchCondition(point); ok {
+			var branchSource factflow.ValueSource
+			var hasBranchSource bool
 			if check, ok := l.directBranchCheckFromWIR(point); ok {
 				fact.Check = check
+				branchSource, hasBranchSource = l.branchConditionSourceFromWIR(check)
 			}
 			if fact.Check.Kind != branchcond.CheckNone {
-				input.BranchConditionSources[point] = l.valueSource(fact.Source)
+				if !hasBranchSource {
+					branchSource = l.valueSource(fact.Source)
+				}
+				input.BranchConditionSources[point] = branchSource
 			}
 			if reachability, ok := l.branchEdgeReachability(point, fact.Condition); ok {
 				input.BranchEdgeReachability[point] = reachability
