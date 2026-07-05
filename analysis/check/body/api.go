@@ -64,6 +64,7 @@ type Config struct {
 	EntryState             state.State
 	Initial                transfer.InitialState
 	ClosedDynamicAllValues []factapply.ClosedDynamicAllValueInvariant
+	WIRAssignmentTarget    factapply.WIRAssignmentTargetIssueReporter
 
 	WidenAt    func(cfg.Point) bool
 	WidenDelay func(cfg.Point) int
@@ -158,6 +159,7 @@ type SolveConfig struct {
 	CallOutcomeFactory           CallOutcomeFactory
 	SignatureArgumentType        SignatureArgumentTypeFunc
 	SignatureArgumentTypeFactory SignatureArgumentTypeFactory
+	WIRAssignmentTarget          factapply.WIRAssignmentTargetIssueReporter
 
 	WidenAt    func(cfg.Point) bool
 	WidenDelay func(cfg.Point) int

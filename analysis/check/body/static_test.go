@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
+	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -116,6 +117,30 @@ func TestPreparedSolveKeepsPreparedTypeValuesAsCanonicalCache(t *testing.T) {
 	}
 	if result.TypeValues() == solveTypeValues || factoryTypeValues == solveTypeValues {
 		t.Fatal("SolveConfig TypeValues overrode the prepared cache")
+	}
+}
+
+func TestPreparedSolveCanRunWIRAssignmentTargetShadow(t *testing.T) {
+	reg, _ := testRegistry(t)
+	stmts := parseChunk(t, `
+local box = {}
+box.value = "ok"
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	prepared, err := PrepareBoundChunk(stmts, bindings, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("PrepareBoundChunk: %v", err)
+	}
+	var issues []factapply.WIRAssignmentTargetIssue
+
+	solvePreparedForTest(t, prepared, SolveConfig{
+		WIRAssignmentTarget: func(issue factapply.WIRAssignmentTargetIssue) {
+			issues = append(issues, issue)
+		},
+	})
+
+	if len(issues) != 0 {
+		t.Fatalf("WIR assignment target shadow issues = %#v, want none", issues)
 	}
 }
 

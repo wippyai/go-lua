@@ -51,6 +51,7 @@ func (config Config) SolveConfig() SolveConfig {
 		CallOutcomeFactory:           config.CallOutcomeFactory,
 		SignatureArgumentType:        config.SignatureArgumentType,
 		SignatureArgumentTypeFactory: config.SignatureArgumentTypeFactory,
+		WIRAssignmentTarget:          config.WIRAssignmentTarget,
 		WidenAt:                      config.WidenAt,
 		WidenDelay:                   config.WidenDelay,
 		Stats:                        config.Stats,

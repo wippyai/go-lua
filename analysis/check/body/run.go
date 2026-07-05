@@ -223,6 +223,7 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		TypeValues:             typeValues,
 		ClosedDynamicAllValues: config.ClosedDynamicAllValues,
 		WIR:                    s.wir,
+		WIRAssignmentTarget:    config.WIRAssignmentTarget,
 	})
 	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.semantics, s.facts, s.sources, s.symbolTypes, s.signatures, s.signatureID, s.typeNS, typeValues, callOutcome, s.visibility.KeySpace(), s.visibility)
 	edgeTransfer := factapply.NewFactsEdgeTransfer(factapply.FactsEdgeTransferConfig{
