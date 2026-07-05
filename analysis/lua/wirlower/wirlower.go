@@ -489,41 +489,84 @@ func (b *builder) preLowerAssignCalls(exprs []ast.Expr, callPoints []cfg.Point, 
 	last := len(exprs) - 1
 	for i, occ := range calls {
 		results := 1
-		if occ.ExprIndex == last && last < targetCount && isTopLevelCall(exprs[last], occ.Call) {
+		topLevel := isValueListRootCall(exprs, occ)
+		context := valueListCallContext(exprs, occ, wir.CallContextAssignmentSource)
+		meta := b.callMetadata(context, exprs, occ.ExprIndex, occ.Call, false)
+		if occ.ExprIndex == last && last < targetCount && topLevel {
 			results = targetCount - last
 		}
-		b.emitCallAt(callPoints[i], occ.Call, results)
+		b.emitCallAt(callPoints[i], occ.Call, results, meta)
 	}
 }
 
 // preLowerExprCalls emits an OpCall for every call under a single expression
 // (condition, return value, iterator source) onto its NodeCall point, each
 // binding one head temp. Tail spread is applied later by the value-list lowering.
-func (b *builder) preLowerExprCalls(expr ast.Expr, callPoints []cfg.Point) {
+func (b *builder) preLowerExprCalls(expr ast.Expr, callPoints []cfg.Point, context wir.CallContextKind) {
 	calls, ok := callorder.Expr(expr, b.callOrderOptions())
 	if !ok || len(calls) != len(callPoints) {
 		return
 	}
 	for i, occ := range calls {
-		b.emitCallAt(callPoints[i], occ.Call, 1)
+		callContext := exprCallContext(expr, occ.Call, context)
+		b.emitCallAt(callPoints[i], occ.Call, 1, b.callMetadata(callContext, []ast.Expr{expr}, 0, occ.Call, false))
 	}
 }
 
 // preLowerListCalls emits an OpCall for every call under a value list, each
 // binding one head temp (returns / iterator sources / statement expressions).
-func (b *builder) preLowerListCalls(exprs []ast.Expr, callPoints []cfg.Point) {
+func (b *builder) preLowerListCalls(exprs []ast.Expr, callPoints []cfg.Point, context wir.CallContextKind, openTail bool) {
 	calls, ok := callorder.ValueList(exprs, b.callOrderOptions())
 	if !ok || len(calls) != len(callPoints) {
 		return
 	}
 	for i, occ := range calls {
-		b.emitCallAt(callPoints[i], occ.Call, 1)
+		callContext := valueListCallContext(exprs, occ, context)
+		b.emitCallAt(callPoints[i], occ.Call, 1, b.callMetadata(callContext, exprs, occ.ExprIndex, occ.Call, openTail))
 	}
+}
+
+type callMetadata struct {
+	context  wir.CallContextKind
+	expr     int
+	final    bool
+	expanded bool
+	adjusted bool
+	openTail bool
+}
+
+func (b *builder) callMetadata(context wir.CallContextKind, exprs []ast.Expr, exprIndex int, call *ast.FuncCallExpr, openTailFinal bool) callMetadata {
+	meta := callMetadata{context: context, expr: exprIndex}
+	final := true
+	allowExpansion := false
+	openTail := false
+	switch context {
+	case wir.CallContextAssignmentSource, wir.CallContextReturnSource, wir.CallContextIteratorSource:
+		final = exprIndex >= 0 && exprIndex == len(exprs)-1
+		allowExpansion = true
+		openTail = context == wir.CallContextReturnSource && openTailFinal && final
+	case wir.CallContextStatement, wir.CallContextCondition, wir.CallContextExpressionProducer:
+		final = true
+	default:
+		final = false
+	}
+	expanded, adjusted, shapedOpenTail := sourceprovenance.ValueShape(call, final, allowExpansion, openTail)
+	meta.final = final
+	meta.expanded = expanded
+	meta.adjusted = adjusted
+	meta.openTail = shapedOpenTail
+	if context == wir.CallContextExpressionProducer {
+		meta.expr = exprIndex
+	}
+	if context == wir.CallContextCondition && meta.expr < 0 {
+		meta.expr = 0
+	}
+	return meta
 }
 
 // emitCallAt lowers one call onto its dedicated point, binding results result
 // temps. resultCount == 0 is a statement call whose results are discarded.
-func (b *builder) emitCallAt(point cfg.Point, call *ast.FuncCallExpr, resultCount int) {
+func (b *builder) emitCallAt(point cfg.Point, call *ast.FuncCallExpr, resultCount int, meta callMetadata) {
 	prev := b.curPoint
 	b.curPoint = point
 	defer func() { b.curPoint = prev }()
@@ -546,11 +589,17 @@ func (b *builder) emitCallAt(point cfg.Point, call *ast.FuncCallExpr, resultCoun
 
 	args, argSpread := b.lowerValueList(call.Args)
 	inst := wir.Instruction{
-		Op:         wir.OpCall,
-		List:       b.body.AppendOperands(args),
-		Results:    b.body.AppendOperands(temps),
-		ListSpread: argSpread,
-		ExprID:     expressionid.Of(call),
+		Op:           wir.OpCall,
+		List:         b.body.AppendOperands(args),
+		Results:      b.body.AppendOperands(temps),
+		ListSpread:   argSpread,
+		ExprID:       expressionid.Of(call),
+		CallContext:  meta.context,
+		CallExpr:     meta.expr,
+		CallFinal:    meta.final,
+		CallExpanded: meta.expanded,
+		CallAdjusted: meta.adjusted,
+		CallOpenTail: meta.openTail,
 	}
 	if call.Method != "" {
 		inst.Call.Method = b.internString(call.Method)
@@ -585,10 +634,12 @@ func (b *builder) lowerCallStmt(s *ast.FuncCallStmt) {
 	top, _ := sourceprovenance.Call(s.Expr)
 	for i, occ := range calls {
 		results := 1
+		context := wir.CallContextExpressionProducer
 		if occ.Call == top || occ.Call == call {
+			context = wir.CallContextStatement
 			results = 0
 		}
-		b.emitCallAt(pts[i], occ.Call, results)
+		b.emitCallAt(pts[i], occ.Call, results, b.callMetadata(context, []ast.Expr{s.Expr}, 0, occ.Call, false))
 	}
 }
 
@@ -600,7 +651,7 @@ func (b *builder) lowerReturn(s *ast.ReturnStmt) {
 	if len(pts) != nCalls+1 {
 		return
 	}
-	b.preLowerListCalls(s.Exprs, pts[:nCalls])
+	b.preLowerListCalls(s.Exprs, pts[:nCalls], wir.CallContextReturnSource, true)
 	b.curPoint = pts[nCalls]
 	ops, spread := b.lowerValueList(s.Exprs)
 	b.emit(wir.Instruction{
@@ -618,7 +669,7 @@ func (b *builder) lowerIf(s *ast.IfStmt) {
 	if len(pts) != nCalls+1 {
 		return
 	}
-	b.preLowerExprCalls(s.Condition, pts[:nCalls])
+	b.preLowerExprCalls(s.Condition, pts[:nCalls], wir.CallContextCondition)
 	b.curPoint = pts[nCalls]
 	b.emitBranch(s.Condition)
 	b.lowerStmts(s.Then)
@@ -631,7 +682,7 @@ func (b *builder) lowerWhile(s *ast.WhileStmt) {
 	if len(pts) != nCalls+1 {
 		return
 	}
-	b.preLowerExprCalls(s.Condition, pts[:nCalls])
+	b.preLowerExprCalls(s.Condition, pts[:nCalls], wir.CallContextCondition)
 	b.curPoint = pts[nCalls]
 	b.emitBranch(s.Condition)
 	b.lowerStmts(s.Stmts)
@@ -644,7 +695,7 @@ func (b *builder) lowerRepeat(s *ast.RepeatStmt) {
 		return
 	}
 	b.lowerStmts(s.Stmts)
-	b.preLowerExprCalls(s.Condition, pts[:nCalls])
+	b.preLowerExprCalls(s.Condition, pts[:nCalls], wir.CallContextCondition)
 	b.curPoint = pts[nCalls]
 	b.emitBranch(s.Condition)
 }
@@ -680,7 +731,7 @@ func (b *builder) lowerNumberFor(s *ast.NumberForStmt) {
 	if len(pts) != nCalls+2 {
 		return
 	}
-	b.preLowerListCalls(bounds, pts[:nCalls])
+	b.preLowerListCalls(bounds, pts[:nCalls], wir.CallContextIteratorSource, false)
 	// preheader (NodeAssign): the loop-variable binding (value derived by transfer
 	// from the iterator header on the branch point).
 	b.curPoint = pts[nCalls]
@@ -708,7 +759,7 @@ func (b *builder) lowerGenericFor(s *ast.GenericForStmt) {
 	if len(pts) != nCalls+1+len(s.Names) {
 		return
 	}
-	b.preLowerListCalls(s.Exprs, pts[:nCalls])
+	b.preLowerListCalls(s.Exprs, pts[:nCalls], wir.CallContextIteratorSource, false)
 	// branch (NodeBranch): the generic iterator header carrying the sources.
 	b.curPoint = pts[nCalls]
 	srcOps, spread := b.lowerValueList(s.Exprs)
@@ -1465,6 +1516,31 @@ func tailCall(e ast.Expr) (*ast.FuncCallExpr, bool) {
 func isTopLevelCall(expr ast.Expr, call *ast.FuncCallExpr) bool {
 	top, ok := sourceprovenance.Call(expr)
 	return ok && top == call
+}
+
+func isValueListRootCall(exprs []ast.Expr, occ callorder.Occurrence) bool {
+	return occ.ExprIndex >= 0 && occ.ExprIndex < len(exprs) && isTopLevelCall(exprs[occ.ExprIndex], occ.Call)
+}
+
+func valueListCallContext(exprs []ast.Expr, occ callorder.Occurrence, rootContext wir.CallContextKind) wir.CallContextKind {
+	if isValueListRootCall(exprs, occ) {
+		return rootContext
+	}
+	return wir.CallContextExpressionProducer
+}
+
+func exprCallContext(expr ast.Expr, call *ast.FuncCallExpr, rootContext wir.CallContextKind) wir.CallContextKind {
+	if rootContext == wir.CallContextCondition {
+		predicate, _, ok := branchcond.PredicateCall(expr)
+		if ok && predicate == call {
+			return rootContext
+		}
+		return wir.CallContextExpressionProducer
+	}
+	if isTopLevelCall(expr, call) {
+		return rootContext
+	}
+	return wir.CallContextExpressionProducer
 }
 
 func isVararg(e ast.Expr) bool {

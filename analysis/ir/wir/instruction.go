@@ -187,6 +187,19 @@ type CallInfo struct {
 	Method ConstRef
 }
 
+// CallContextKind identifies the syntactic context where an OpCall occurs.
+type CallContextKind uint8
+
+const (
+	CallContextUnknown CallContextKind = iota
+	CallContextStatement
+	CallContextAssignmentSource
+	CallContextReturnSource
+	CallContextIteratorSource
+	CallContextCondition
+	CallContextExpressionProducer
+)
+
 // Instruction is a single wir operation. Field meaning is selected by Op; unused
 // slots are zero. The struct is a flat value stored in Body.instrs.
 type Instruction struct {
@@ -233,6 +246,13 @@ type Instruction struct {
 	Func     FuncRef   // OpClosure nested proto (0 = none)
 	Call     CallInfo  // OpCall shape
 	ExprID   ExpressionID
+
+	CallContext  CallContextKind
+	CallExpr     int
+	CallFinal    bool
+	CallExpanded bool
+	CallAdjusted bool
+	CallOpenTail bool
 
 	// SelectDefault marks an OpSelect that carries a default (non-blocking) case.
 	SelectDefault bool

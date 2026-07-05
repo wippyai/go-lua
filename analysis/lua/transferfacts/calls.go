@@ -24,8 +24,9 @@ func (l *lowerer) callSite(fact semantics.CallFact) factflow.CallSite {
 
 func (l *lowerer) callSiteWithArgumentSources(fact semantics.CallFact, argumentSources []factflow.ValueSource) factflow.CallSite {
 	shape := semanticCallSiteShape(fact)
+	flags := semanticCallSiteFlags(fact)
 	receiverSource, hasReceiverSource := l.semanticReceiverSource(fact)
-	return l.callSiteWithArgumentSourcesWithShape(fact, argumentSources, shape, receiverSource, hasReceiverSource, l.evidenceCallSiteResultTargets(fact.ResultTargets))
+	return l.callSiteWithArgumentSourcesWithShape(fact, argumentSources, shape, flags, receiverSource, hasReceiverSource, l.evidenceCallSiteResultTargets(fact.ResultTargets))
 }
 
 func (l *lowerer) callSiteWithArgumentSourcesAt(point cfg.Point, fact semantics.CallFact, argumentSources []factflow.ValueSource) factflow.CallSite {
@@ -33,8 +34,12 @@ func (l *lowerer) callSiteWithArgumentSourcesAt(point cfg.Point, fact semantics.
 	if wirShape, ok := l.callShapeFromWIR(point); ok {
 		shape = wirShape
 	}
+	flags := semanticCallSiteFlags(fact)
+	if wirFlags, ok := l.callSiteFlagsFromWIR(point); ok {
+		flags = wirFlags
+	}
 	receiverSource, hasReceiverSource := l.callReceiverSource(point, fact)
-	return l.callSiteWithArgumentSourcesWithShape(fact, argumentSources, shape, receiverSource, hasReceiverSource, l.callSiteResultTargetsFromWIR(point, fact.ResultTargets))
+	return l.callSiteWithArgumentSourcesWithShape(fact, argumentSources, shape, flags, receiverSource, hasReceiverSource, l.callSiteResultTargetsFromWIR(point, fact.ResultTargets))
 }
 
 type callSiteShape struct {
@@ -54,6 +59,15 @@ type valueSourceShape struct {
 	final       bool
 	expanded    bool
 	openTail    bool
+}
+
+type callSiteFlags struct {
+	context  factflow.CallSiteContext
+	expr     int
+	final    bool
+	expanded bool
+	adjusted bool
+	openTail bool
 }
 
 func semanticCallSiteShape(fact semantics.CallFact) callSiteShape {
@@ -77,17 +91,29 @@ func semanticCallSiteShape(fact semantics.CallFact) callSiteShape {
 	return shape
 }
 
+func semanticCallSiteFlags(fact semantics.CallFact) callSiteFlags {
+	return callSiteFlags{
+		context:  callSiteContext(fact.Context),
+		expr:     fact.ExprIndex,
+		final:    fact.Final,
+		expanded: fact.Expanded,
+		adjusted: fact.Adjusted,
+		openTail: fact.OpenTail,
+	}
+}
+
 func (l *lowerer) callSiteWithArgumentSourcesWithShape(
 	fact semantics.CallFact,
 	argumentSources []factflow.ValueSource,
 	shape callSiteShape,
+	flags callSiteFlags,
 	receiverSource factflow.ValueSource,
 	hasReceiverSource bool,
 	resultTargets []factflow.CallResultTarget,
 ) factflow.CallSite {
 	exprRef, hasExpr := l.exprRef(fact.Call)
 	return factflow.NewCallSite(factflow.CallSiteConfig{
-		Context:            callSiteContext(fact.Context),
+		Context:            flags.context,
 		CalleeSymbol:       shape.calleeSymbol,
 		CalleePath:         shape.calleePath,
 		CalleeMemberAccess: shape.calleeMemberAccess,
@@ -100,7 +126,7 @@ func (l *lowerer) callSiteWithArgumentSourcesWithShape(
 		HasReceiverSource:  hasReceiverSource,
 		ExprRef:            exprRef,
 		HasExpr:            hasExpr,
-		ExprIndex:          fact.ExprIndex,
+		ExprIndex:          flags.expr,
 		ConditionNegated:   fact.ConditionNegated,
 		ArgumentSources:    argumentSources,
 		CallSpan:           sourceSpan(fact.CallSpan),
@@ -109,11 +135,26 @@ func (l *lowerer) callSiteWithArgumentSourcesWithShape(
 		ArgumentLabels:     append([]string(nil), fact.ArgumentLabels...),
 		TypeArgs:           l.typeRefs(fact.TypeArgs),
 		ResultTargets:      resultTargets,
-		Final:              fact.Final,
-		Expanded:           fact.Expanded,
-		Adjusted:           fact.Adjusted,
-		OpenTail:           fact.OpenTail,
+		Final:              flags.final,
+		Expanded:           flags.expanded,
+		Adjusted:           flags.adjusted,
+		OpenTail:           flags.openTail,
 	})
+}
+
+func (l *lowerer) callSiteFlagsFromWIR(point cfg.Point) (callSiteFlags, bool) {
+	inst, ok := l.wirCallInstruction(point)
+	if !ok || inst.CallContext == wir.CallContextUnknown {
+		return callSiteFlags{}, false
+	}
+	return callSiteFlags{
+		context:  wirCallSiteContext(inst.CallContext),
+		expr:     inst.CallExpr,
+		final:    inst.CallFinal,
+		expanded: inst.CallExpanded,
+		adjusted: inst.CallAdjusted,
+		openTail: inst.CallOpenTail,
+	}, true
 }
 
 func (l *lowerer) callShapeFromWIR(point cfg.Point) (callSiteShape, bool) {
@@ -368,6 +409,25 @@ func callSiteContext(kind semantics.CallContextKind) factflow.CallSiteContext {
 	case semantics.CallContextCondition:
 		return factflow.CallSiteContextCondition
 	case semantics.CallContextExpressionProducer:
+		return factflow.CallSiteContextExpressionProducer
+	default:
+		return factflow.CallSiteContextUnknown
+	}
+}
+
+func wirCallSiteContext(kind wir.CallContextKind) factflow.CallSiteContext {
+	switch kind {
+	case wir.CallContextStatement:
+		return factflow.CallSiteContextStatement
+	case wir.CallContextAssignmentSource:
+		return factflow.CallSiteContextAssignmentSource
+	case wir.CallContextReturnSource:
+		return factflow.CallSiteContextReturnSource
+	case wir.CallContextIteratorSource:
+		return factflow.CallSiteContextIteratorSource
+	case wir.CallContextCondition:
+		return factflow.CallSiteContextCondition
+	case wir.CallContextExpressionProducer:
 		return factflow.CallSiteContextExpressionProducer
 	default:
 		return factflow.CallSiteContextUnknown

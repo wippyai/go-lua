@@ -124,6 +124,48 @@ func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *test
 	}
 }
 
+func TestLowerCallSiteContextFlagsFromWIRLowerer(t *testing.T) {
+	makeCall := &ast.FuncCallExpr{Func: ident("make")}
+	local := localAssign([]string{"a"}, makeCall)
+	printCall := &ast.FuncCallExpr{Func: ident("print")}
+	printStmt := &ast.FuncCallStmt{Expr: printCall}
+	readyCall := &ast.FuncCallExpr{Func: ident("ready")}
+	ifStmt := &ast.IfStmt{Condition: readyCall}
+	iterCall := &ast.FuncCallExpr{Func: ident("iter")}
+	genericFor := &ast.GenericForStmt{Names: []string{"item"}, Exprs: []ast.Expr{iterCall}}
+	tailCall := &ast.FuncCallExpr{Func: ident("tail")}
+	ret := &ast.ReturnStmt{Exprs: []ast.Expr{tailCall}}
+	stmts := []ast.Stmt{local, printStmt, ifStmt, genericFor, ret}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make", "print", "ready", "iter", "tail"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+	body := wirlower.Lower("contexts", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	assertSite := func(label string, point cfg.Point, context factflow.CallSiteContext, exprIndex int, final, expanded, adjusted, openTail bool) {
+		t.Helper()
+		site, ok := facts.CallSite(point)
+		if !ok {
+			t.Fatalf("%s: missing call site at point %d", label, point)
+		}
+		if site.Context() != context || site.ExprIndex() != exprIndex ||
+			site.Final() != final || site.Expanded() != expanded ||
+			site.Adjusted() != adjusted || site.OpenTail() != openTail {
+			t.Fatalf("%s: call site = context:%v expr:%d final:%v expanded:%v adjusted:%v open:%v",
+				label, site.Context(), site.ExprIndex(), site.Final(), site.Expanded(), site.Adjusted(), site.OpenTail())
+		}
+	}
+
+	assertSite("assignment", requireStmtPoints(t, built, local, 2)[0], factflow.CallSiteContextAssignmentSource, 0, true, true, false, false)
+	assertSite("statement", requireStmtPoints(t, built, printStmt, 1)[0], factflow.CallSiteContextStatement, 0, true, false, true, false)
+	assertSite("condition", requireStmtPoints(t, built, ifStmt, 2)[0], factflow.CallSiteContextCondition, 0, true, false, true, false)
+	assertSite("iterator", requireStmtPoints(t, built, genericFor, 3)[0], factflow.CallSiteContextIteratorSource, 0, true, true, false, false)
+	assertSite("return", requireStmtPoints(t, built, ret, 2)[0], factflow.CallSiteContextReturnSource, 0, true, true, false, true)
+}
+
 func TestLowerMemberCallLocalAssignmentUsesCallResultSource(t *testing.T) {
 	makeCall := &ast.FuncCallExpr{
 		Func: dot(ident("builder"), "build"),
@@ -420,6 +462,16 @@ func TestLowerNegatedConditionCallSiteCarriesPolarity(t *testing.T) {
 	}
 	if site.Context() != factflow.CallSiteContextCondition || !site.ConditionNegated() {
 		t.Fatalf("condition call site = context %v negated=%v, want negated condition", site.Context(), site.ConditionNegated())
+	}
+
+	body := wirlower.Lower("negated-condition", stmts, bindings, built)
+	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	wirSite, ok := wirFacts.CallSite(points[0])
+	if !ok {
+		t.Fatalf("missing WIR condition call site")
+	}
+	if wirSite.Context() != factflow.CallSiteContextCondition || !wirSite.ConditionNegated() {
+		t.Fatalf("WIR condition call site = context %v negated=%v, want negated condition", wirSite.Context(), wirSite.ConditionNegated())
 	}
 }
 
@@ -940,6 +992,57 @@ end
 
 	if _, ok := facts.CallSite(points[0]); ok {
 		t.Fatalf("WIR mode call at point %d fell back to semantic sidecar", points[0])
+	}
+}
+
+func TestLowerCallSiteContextAndFlagsComeFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): ()
+    send()
+end
+`, "send")
+	stmt, ok := fn.Stmts[0].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[0])
+	}
+	point := requireStmtPoints(t, built, stmt, 1)[0]
+	fact, ok := result.Call(point)
+	if !ok {
+		t.Fatalf("missing semantic call at point %d", point)
+	}
+	if fact.Context != semantics.CallContextStatement {
+		t.Fatalf("semantic context = %v, want statement", fact.Context)
+	}
+	sendSym, ok := bindings.GlobalSymbol("send")
+	if !ok {
+		t.Fatal("missing send global symbol")
+	}
+	sendPath := path.NewPath(sendSym, "send")
+	body := wir.NewBody("synthetic-call-context")
+	start := body.Emit(wir.Instruction{
+		Op:           wir.OpCall,
+		Point:        point,
+		Call:         wir.CallInfo{Callee: wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(sendPath))}},
+		CallContext:  wir.CallContextReturnSource,
+		CallExpr:     9,
+		CallFinal:    true,
+		CallExpanded: true,
+		CallAdjusted: false,
+		CallOpenTail: true,
+	})
+	body.SetPointRange(point, start, start+1)
+
+	l := lowerer{
+		bindings: bindings,
+		wir:      body,
+		exprs:    make(map[any]factflow.ExprRef),
+	}
+	site := l.callSiteWithArgumentSourcesAt(point, fact, nil)
+	if site.Context() != factflow.CallSiteContextReturnSource || site.ExprIndex() != 9 {
+		t.Fatalf("call site context/index = %v/%d, want WIR return-source/9", site.Context(), site.ExprIndex())
+	}
+	if !site.Final() || !site.Expanded() || site.Adjusted() || !site.OpenTail() {
+		t.Fatalf("call site flags = final:%v expanded:%v adjusted:%v open:%v, want WIR true/true/false/true", site.Final(), site.Expanded(), site.Adjusted(), site.OpenTail())
 	}
 }
 
@@ -1474,6 +1577,52 @@ func TestLowerNestedExpressionProducerCallIsReadableSlotZero(t *testing.T) {
 	}
 	if _, ok := callproducer.FromFacts(facts, points[1]); ok {
 		t.Fatalf("outer statement call unexpectedly lowered as producer")
+	}
+}
+
+func TestLowerNestedExpressionProducerCallFromWIRIsReadableSlotZero(t *testing.T) {
+	inner := &ast.FuncCallExpr{Func: ident("g")}
+	outer := &ast.FuncCallExpr{Func: ident("f"), Args: []ast.Expr{inner}}
+	stmt := &ast.FuncCallStmt{Expr: outer}
+	stmts := []ast.Stmt{stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"f", "g"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	body := wirlower.Lower("nested-call-producer", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	points := requireStmtPoints(t, built, stmt, 2)
+	innerSite, ok := facts.CallSite(points[0])
+	if !ok {
+		t.Fatalf("missing inner call site")
+	}
+	if innerSite.Context() != factflow.CallSiteContextExpressionProducer {
+		t.Fatalf("inner WIR call context = %v, want expression producer", innerSite.Context())
+	}
+	targets := innerSite.ResultTargets()
+	if len(targets) != 1 || targets[0].Kind() != factflow.CallResultTargetExpression || targets[0].ResultIndex() != 0 {
+		t.Fatalf("inner WIR call targets = %#v", targets)
+	}
+	producer, ok := callproducer.FromFacts(facts, points[0])
+	if !ok {
+		t.Fatalf("missing WIR nested call producer")
+	}
+	if producerTargets := producer.ResultTargets(); len(producerTargets) != 1 || producerTargets[0].Kind() != factflow.CallResultTargetExpression || producerTargets[0].ResultIndex() != 0 {
+		t.Fatalf("WIR nested producer targets = %#v", producerTargets)
+	}
+	outerSite, ok := facts.CallSite(points[1])
+	if !ok {
+		t.Fatalf("missing outer call site")
+	}
+	args := outerSite.ArgumentSources()
+	if len(args) != 1 || args[0].Kind != factflow.ValueSourceCall || args[0].CallPoint != points[0] || !args[0].HasCallPoint || args[0].ResultIndex != 0 {
+		t.Fatalf("outer WIR argument sources = %#v, want inner call source", args)
+	}
+	if _, ok := callproducer.FromFacts(facts, points[1]); ok {
+		t.Fatalf("outer WIR statement call unexpectedly lowered as producer")
 	}
 }
 
