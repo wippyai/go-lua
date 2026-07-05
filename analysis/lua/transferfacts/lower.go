@@ -214,9 +214,13 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		if fact, ok := result.BranchCondition(point); ok {
 			var branchSource factflow.ValueSource
 			var hasBranchSource bool
-			if check, ok := l.directBranchCheckFromWIR(point); ok {
-				fact.Check = check
-				branchSource, hasBranchSource = l.branchConditionSourceFromWIR(check)
+			if l.wir != nil {
+				if check, ok := l.directBranchCheckFromWIR(point); ok {
+					fact.Check = check
+					branchSource, hasBranchSource = l.branchConditionSourceFromWIR(check)
+				} else if !l.wir.HasInstruction(point, wir.OpBranch) {
+					continue
+				}
 			}
 			if fact.Check.Kind != branchcond.CheckNone {
 				if !hasBranchSource {

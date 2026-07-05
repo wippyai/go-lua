@@ -96,6 +96,23 @@ func TestDirectBranchCheckFromWIRDoesNotRequireSemanticSidecarMatch(t *testing.T
 	}
 }
 
+func TestLowerBranchDoesNotFallbackWhenWIRBranchInstructionMissing(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(x: string?): ()
+    if x then local y = x end
+end
+`)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: wir.NewBody("empty")})
+
+	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
+	if source, ok := facts.BranchConditionSource(point); ok {
+		t.Fatalf("WIR mode branch at point %d fell back to semantic condition source: %#v", point, source)
+	}
+	if got := facts.BranchRefinements(point); len(got) != 0 {
+		t.Fatalf("WIR mode branch at point %d fell back to semantic refinements: %#v", point, got)
+	}
+}
+
 func TestLowerWithWIRCorrelationBranchChecksMatchesSidecarLowering(t *testing.T) {
 	t.Run("protected_call", func(t *testing.T) {
 		stmts, bindings, built, result := parseSemanticChunk(t, `
