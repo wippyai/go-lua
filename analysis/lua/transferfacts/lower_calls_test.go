@@ -588,6 +588,51 @@ end
 	}
 }
 
+func TestLowerMethodCallSegmentedReceiverSourcePathComesFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): ()
+    local obj = { child = { run = function(self) end } }
+    local other = { child = { run = function(self) end } }
+    obj.child:run()
+end
+`)
+	stmt, ok := fn.Stmts[2].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[2])
+	}
+	points := requireStmtPoints(t, built, stmt, 1)
+	objPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "obj").Field("child")
+	otherPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "other").Field("child")
+	body := wir.NewBody("synthetic-segmented-method-receiver")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpCall,
+		Point: points[0],
+		Call: wir.CallInfo{
+			Method:   body.InternConst(wir.Const{Kind: wir.ConstString, Str: "run"}),
+			Receiver: wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))},
+		},
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	site, ok := facts.CallSite(points[0])
+	if !ok {
+		t.Fatalf("missing call site at point %d", points[0])
+	}
+	receiverSource, ok := site.ReceiverSource()
+	if !ok || receiverSource.Kind != factflow.ValueSourceExpression || !receiverSource.HasExpr {
+		t.Fatalf("receiver source = %#v/%v, want expression-backed WIR path", receiverSource, ok)
+	}
+	gotPath, ok := facts.ExpressionPath(receiverSource.ExprRef)
+	if !ok || !gotPath.Equal(otherPath) || gotPath.Equal(objPath) {
+		t.Fatalf("receiver source path = %v/%v, want WIR path %v not semantic path %v", gotPath, ok, otherPath, objPath)
+	}
+	receiverPath, ok := site.ReceiverPath()
+	if !ok || !receiverPath.Equal(otherPath) || receiverPath.Equal(objPath) {
+		t.Fatalf("receiver path = %v/%v, want WIR path %v not semantic path %v", receiverPath, ok, otherPath, objPath)
+	}
+}
+
 func TestLowerMethodCallReceiverSourceDoesNotRequireSemanticReceiverSource(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(): ()

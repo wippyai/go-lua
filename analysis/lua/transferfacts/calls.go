@@ -195,6 +195,22 @@ func (l *lowerer) callReceiverSourceFromWIR(point cfg.Point, shape valueSourceSh
 	); ok {
 		return source, true
 	}
+	if source, ok := l.pathExpressionSourceFromWIR(
+		"call-receiver",
+		point,
+		inst.Call.Receiver,
+		shape.exprIndex,
+		shape.targetIndex,
+		shape.final,
+		shape.expanded,
+		shape.openTail,
+		symbol.Local,
+		symbol.Param,
+		symbol.Global,
+		symbol.Upvalue,
+	); ok {
+		return source, true
+	}
 	return l.valueSourceFromWIROperand(
 		inst.Call.Receiver,
 		shape.exprIndex,
