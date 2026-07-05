@@ -12,7 +12,6 @@ import (
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
-	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -26,7 +25,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
-	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -387,9 +385,12 @@ func (r *Result) PathProvenPresentBeforeBoundary(point cfg.Point, p pathdom.Path
 	if snapshot.Bottom || snapshot.Top || len(snapshot.Proofs) == 0 {
 		return false
 	}
-	address := visibility.AddressAt(r.visibility, point, p)
+	addresses, ok := r.boundaryAddressContext(point)
+	if !ok {
+		return false
+	}
 	found := false
-	address.ForEachStateKey(func(stateKey pathaddr.StateKey) bool {
+	addresses.forEachPresenceProofStateKey(p, func(stateKey pathaddr.StateKey) bool {
 		key, ok := ks.InternStateKey(stateKey)
 		if !ok {
 			return true
@@ -404,7 +405,7 @@ func (r *Result) PathProvenPresentBeforeBoundary(point cfg.Point, p pathdom.Path
 			return false
 		}
 		return true
-	}, visibility.StateKeyVisible, visibility.StateKeyRootOrVisible, visibility.StateKeyStructural)
+	})
 	return found
 }
 
@@ -673,114 +674,6 @@ func (r *Result) computePathValue(
 		return product.Value{}, false
 	}
 	return value, true
-}
-
-// StateKeyAtBoundary returns the typed point-visible state key for p at point.
-// It is the canonical boundary vocabulary for state lanes that use visible
-// source paths; PathKeyAtBoundary exists only for compatibility with lanes that
-// still expose a path-key string carrier.
-func (r *Result) StateKeyAtBoundary(point cfg.Point, p pathdom.Path) (pathaddr.StateKey, bool) {
-	address, ok := r.boundaryAddress(point, p)
-	if !ok {
-		return "", false
-	}
-	return address.VisibleStateKey()
-}
-
-// PathKeyAtBoundary returns the canonical path key used by fact application at
-// point. It is exposed for diagnostics that need to match solved state lanes
-// back to call-boundary facts without re-deriving visibility policy.
-func (r *Result) PathKeyAtBoundary(point cfg.Point, p pathdom.Path) (pathdom.PathKey, bool) {
-	key, ok := r.StateKeyAtBoundary(point, p)
-	if !ok {
-		return "", false
-	}
-	return key.PathKey(), true
-}
-
-func (r *Result) rootOrVisibleStateKeyAtBoundary(point cfg.Point, p pathdom.Path) (pathaddr.StateKey, bool) {
-	address, ok := r.boundaryAddress(point, p)
-	if !ok {
-		return "", false
-	}
-	return address.RootOrVisibleStateKey()
-}
-
-func (r *Result) boundaryAddress(point cfg.Point, p pathdom.Path) (visibility.Address, bool) {
-	if r == nil || r.visibility == nil || p.IsEmpty() {
-		return visibility.Address{}, false
-	}
-	return visibility.AddressAt(r.visibility, point, p), true
-}
-
-func (r *Result) relationGraphKeyAtBoundary(point cfg.Point, p pathdom.Path, length bool) (state.RelOperand, bool) {
-	stateKey, ok := r.rootOrVisibleStateKeyAtBoundary(point, p)
-	if !ok {
-		return state.RelOperand{}, false
-	}
-	if length {
-		return state.RelLengthOperand(stateKey), true
-	}
-	return state.RelValueOperand(stateKey), true
-}
-
-// TypestateResourceKeyAtBoundary returns the canonical resource key used by the
-// typestate lane at point. It folds proven path equality, matching the
-// call-boundary application semantics.
-func (r *Result) TypestateResourceKeyAtBoundary(point cfg.Point, p pathdom.Path) (pathaddr.StateKey, bool) {
-	stateKey, ok := r.StateKeyAtBoundary(point, p)
-	if !ok {
-		return "", false
-	}
-	in, ok := r.boundaryStateAt(point)
-	if !ok {
-		return stateKey, true
-	}
-	return in.CanonicalTypestateResourceKey(r.visibility.KeySpace(), stateKey), true
-}
-
-// TypestateResourceAtBoundary returns the canonical typestate resource for a
-// protocol target at point. This keeps the conversion from state keys to
-// typestate resource IDs inside the analysis boundary instead of diagnostics.
-func (r *Result) TypestateResourceAtBoundary(point cfg.Point, p pathdom.Path, protocol typestate.Protocol) (typestate.Resource, bool) {
-	key, ok := r.TypestateResourceKeyAtBoundary(point, p)
-	if !ok {
-		return typestate.Resource{}, false
-	}
-	return state.TypestateResourceFromCanonicalKey(key, protocol), true
-}
-
-// PathsEquivalentAtBoundary reports whether the solved boundary state proves
-// left and right are equivalent access paths at point.
-func (r *Result) PathsEquivalentAtBoundary(point cfg.Point, left, right pathdom.Path) bool {
-	if r == nil || r.visibility == nil || left.IsEmpty() || right.IsEmpty() {
-		return false
-	}
-	leftKey, leftOK := r.StateKeyAtBoundary(point, left)
-	rightKey, rightOK := r.StateKeyAtBoundary(point, right)
-	if !leftOK || !rightOK {
-		return false
-	}
-	if leftKey == rightKey {
-		return true
-	}
-	in, ok := r.boundaryStateAt(point)
-	if !ok {
-		return false
-	}
-	leftPathKey := leftKey.PathKey()
-	rightPathKey := rightKey.PathKey()
-	for _, equivalent := range in.EquivalentPathKeys(r.visibility.KeySpace(), leftPathKey) {
-		if equivalent == rightPathKey {
-			return true
-		}
-	}
-	for _, equivalent := range in.EquivalentPathKeys(r.visibility.KeySpace(), rightPathKey) {
-		if equivalent == leftPathKey {
-			return true
-		}
-	}
-	return false
 }
 
 // DistinctPathsShareExactIdentityAtBoundary reports whether two different

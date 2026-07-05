@@ -5,12 +5,14 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -391,5 +393,61 @@ func TestBoundaryStateKeyIsCanonicalTypedPathVocabulary(t *testing.T) {
 
 	if _, ok := result.StateKeyAtBoundary(point, pathdom.Path{}); ok {
 		t.Fatal("StateKeyAtBoundary accepted an empty path")
+	}
+}
+
+func TestBoundaryAddressContextCanonicalizesTypestateResourceAliases(t *testing.T) {
+	point := cfg.Point(10)
+	txSym := symbol.ID(42)
+	aliasSym := symbol.ID(43)
+	tx := pathdom.NewPath(txSym, "tx")
+	alias := pathdom.NewPath(aliasSym, "alias")
+
+	builder := visibility.NewBuilder()
+	builder.Define(point, txSym, "tx")
+	builder.Define(point, aliasSym, "alias")
+	resolver := visibility.NewResolver(builder.Build())
+	txStateKey, ok := visibility.AddressAt(resolver, point, tx).VisibleStateKey()
+	if !ok {
+		t.Fatal("missing tx state key")
+	}
+	aliasStateKey, ok := visibility.AddressAt(resolver, point, alias).VisibleStateKey()
+	if !ok {
+		t.Fatal("missing alias state key")
+	}
+	txKey, ok := resolver.KeySpace().InternStateKey(txStateKey)
+	if !ok {
+		t.Fatal("missing tx keyspace key")
+	}
+	aliasKey, ok := resolver.KeySpace().InternStateKey(aliasStateKey)
+	if !ok {
+		t.Fatal("missing alias keyspace key")
+	}
+	st := state.State{}.AddBranchProof(pathevidence.BranchProof{
+		Kind:  pathevidence.BranchProofPathEqual,
+		Path:  txKey,
+		Other: aliasKey,
+	})
+	result := &Result{
+		visibility: resolver,
+		flow:       transfer.Result{point: st},
+	}
+
+	if !result.PathsEquivalentAtBoundary(point, tx, alias) {
+		t.Fatal("PathsEquivalentAtBoundary did not use boundary address equivalence")
+	}
+	got, ok := result.TypestateResourceKeyAtBoundary(point, alias)
+	if !ok {
+		t.Fatal("TypestateResourceKeyAtBoundary(alias) returned !ok")
+	}
+	if got != txStateKey {
+		t.Fatalf("canonical resource key = %q, want alias folded to %q", got, txStateKey)
+	}
+	resource, ok := result.TypestateResourceAtBoundary(point, alias, typestate.Protocol("transaction"))
+	if !ok {
+		t.Fatal("TypestateResourceAtBoundary(alias) returned !ok")
+	}
+	if resource.ID != typestate.ResourceID(txStateKey.String()) || resource.Protocol != typestate.Protocol("transaction") {
+		t.Fatalf("resource = %#v, want canonical tx key/protocol transaction", resource)
 	}
 }
