@@ -132,6 +132,17 @@ func ProofInnerIsFunction(expr ast.Expr) bool {
 	return ok
 }
 
+// ProofIdent returns the identifier reached through proof-transparent wrappers.
+// It stops at proof boundaries such as an any/unknown cast, matching ProofInner.
+func ProofIdent(expr ast.Expr) (*ast.IdentExpr, bool) {
+	inner, ok := ProofInner(expr)
+	if !ok || exprNil(inner) {
+		return nil, false
+	}
+	ident, ok := inner.(*ast.IdentExpr)
+	return ident, ok && ident != nil
+}
+
 // ConcreteRuntimeCastSource reports whether source is an expression wrapped in
 // a concrete runtime validation cast. Top-like casts such as `:: any` are
 // precision boundaries, not validation.

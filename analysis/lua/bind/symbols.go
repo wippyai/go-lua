@@ -102,7 +102,12 @@ func (r *Result) ResolvesToGlobal(ident *ast.IdentExpr, name string) bool {
 		return false
 	}
 	id, ok := r.SymbolOf(ident)
-	if !ok || id == 0 || r.Name(id) != name {
+	return ok && r.SymbolResolvesToGlobal(id, name)
+}
+
+// SymbolResolvesToGlobal reports whether id is the global symbol with name.
+func (r *Result) SymbolResolvesToGlobal(id symbol.ID, name string) bool {
+	if r == nil || id == 0 || name == "" || r.Name(id) != name {
 		return false
 	}
 	kind, ok := r.Kind(id)

@@ -229,14 +229,28 @@ func TestImplicitGlobals(t *testing.T) {
 	if !r.ResolvesToGlobal(predeclaredRead, "print") {
 		t.Fatalf("predeclared read did not resolve to global print")
 	}
+	predeclaredID := mustSymbol(t, r, predeclaredRead)
+	if !r.SymbolResolvesToGlobal(predeclaredID, "print") {
+		t.Fatalf("predeclared symbol did not resolve to global print")
+	}
 	if !r.ResolvesToGlobal(unresolvedRead, "missing") {
 		t.Fatalf("implicit read did not resolve to global missing")
+	}
+	unresolvedID := mustSymbol(t, r, unresolvedRead)
+	if !r.SymbolResolvesToGlobal(unresolvedID, "missing") {
+		t.Fatalf("implicit symbol did not resolve to global missing")
 	}
 	if r.ResolvesToGlobal(predeclaredRead, "math") {
 		t.Fatalf("print read resolved to wrong global")
 	}
+	if r.SymbolResolvesToGlobal(predeclaredID, "math") {
+		t.Fatalf("print symbol resolved to wrong global")
+	}
 	if r.ResolvesToGlobal(nil, "print") {
 		t.Fatalf("nil ident resolved to global")
+	}
+	if r.SymbolResolvesToGlobal(0, "print") {
+		t.Fatalf("zero symbol resolved to global")
 	}
 
 	gotNames := PredeclaredGlobalNames(map[string]int{"": 1, "b": 2, "a": 3})

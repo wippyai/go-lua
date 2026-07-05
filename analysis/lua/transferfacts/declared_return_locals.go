@@ -263,20 +263,12 @@ func callCalleeIsGlobal(bindings *bind.Result, expr ast.Expr, name string) bool 
 	if bindings == nil || expr == nil || name == "" {
 		return false
 	}
-	inner, ok := sourceprovenance.ProofInner(expr)
-	if !ok {
-		return false
-	}
-	ident, ok := inner.(*ast.IdentExpr)
+	ident, ok := sourceprovenance.ProofIdent(expr)
 	if !ok || ident == nil {
 		return false
 	}
 	sym, ok := bindings.SymbolOf(ident)
-	if !ok || sym == 0 {
-		return false
-	}
-	global, ok := bindings.GlobalSymbol(name)
-	return ok && sym == global
+	return ok && bindings.SymbolResolvesToGlobal(sym, name)
 }
 
 func mergeSymbolTypes(base, extra map[symbol.ID]typ.Type) map[symbol.ID]typ.Type {

@@ -105,8 +105,10 @@ func (l *lowerer) typeValueExpr(expr ast.Expr) (typ.Type, bool) {
 		if ok {
 			return l.resolveDecl(decl)
 		}
-		if t, ok := primitiveRuntimeCastType(ident.Value); ok && l.bindings.ResolvesToGlobal(ident, ident.Value) {
-			return t, true
+		if sym, ok := l.bindings.SymbolOf(ident); ok {
+			if t, ok := primitiveRuntimeCastType(ident.Value); ok && l.bindings.SymbolResolvesToGlobal(sym, ident.Value) {
+				return t, true
+			}
 		}
 	}
 	parts, ok := valueTypeRefParts(expr)

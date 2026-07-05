@@ -102,6 +102,26 @@ func TestProofInnerIsFunctionStopsAtProofBoundary(t *testing.T) {
 	}
 }
 
+func TestProofIdentUsesProofTransparentWrappers(t *testing.T) {
+	ident := &ast.IdentExpr{Value: "x"}
+	wrapped := &ast.NonNilAssertExpr{
+		Expr: &ast.CastExpr{
+			Expr: ident,
+			Type: &ast.PrimitiveTypeExpr{Name: "number"},
+		},
+	}
+	if got, ok := ProofIdent(wrapped); !ok || got != ident {
+		t.Fatalf("ProofIdent(transparent wrappers) = %T/%v, want ident", got, ok)
+	}
+	boundary := &ast.CastExpr{
+		Expr: ident,
+		Type: &ast.PrimitiveTypeExpr{Name: "any"},
+	}
+	if got, ok := ProofIdent(boundary); ok || got != nil {
+		t.Fatalf("ProofIdent(any boundary) = %T/%v, want nil/false", got, ok)
+	}
+}
+
 func TestConcreteRuntimeCastSourceClassifiesValidationCasts(t *testing.T) {
 	expr := &ast.IdentExpr{Value: "x"}
 	source := ASTSource{
