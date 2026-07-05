@@ -398,11 +398,11 @@ func (l *lowerer) wirBinaryTempExpressionValueSource(
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
-	left, ok := l.wirExpressionOperandValueSource(leftOp, callResults, seen)
+	left, ok := l.wirBinaryExpressionOperandValueSource(inst, leftOp, callResults, seen)
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
-	right, ok := l.wirExpressionOperandValueSource(rightOp, callResults, seen)
+	right, ok := l.wirBinaryExpressionOperandValueSource(inst, rightOp, callResults, seen)
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
@@ -569,6 +569,20 @@ func (l *lowerer) wirExpressionOperandValueSource(
 		callResults,
 		seen,
 	)
+}
+
+func (l *lowerer) wirBinaryExpressionOperandValueSource(
+	inst wir.Instruction,
+	op wir.Operand,
+	callResults map[uint32]wirCallResultSource,
+	seen map[uint32]bool,
+) (factflow.ValueSource, bool) {
+	if inst.Op == wir.OpConcat {
+		if source, ok := l.pathExpressionSourceFromWIR("expr-op", inst.Point, op, sourceprovenance.NoSourceIndex, sourceprovenance.NoSourceIndex, true, false, false, symbol.Local, symbol.Param, symbol.Global, symbol.Upvalue); ok {
+			return source, true
+		}
+	}
+	return l.wirExpressionOperandValueSource(op, callResults, seen)
 }
 
 func wirBinaryExpressionOperands(body *wir.Body, inst wir.Instruction) (wir.Operand, wir.Operand, bool) {
