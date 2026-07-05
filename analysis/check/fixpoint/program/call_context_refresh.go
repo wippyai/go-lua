@@ -84,7 +84,7 @@ func refreshExistingCallContextEntryKeyAt(keys *programKeys, owner summary.Summa
 	if !hasPathEntry && !hasCaptureEntry && !hasParamEntry {
 		return summary.SummaryKey{}, false
 	}
-	if !keys.replaceContextForKey(config.Registry, contextKey, fn, entryKeys, entry) {
+	if !keys.refreshContextForKey(config.Registry, contextKey, fn, entryKeys, entry) {
 		return summary.SummaryKey{}, false
 	}
 	return contextKey, true

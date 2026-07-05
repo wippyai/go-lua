@@ -1206,6 +1206,36 @@ func TestSeedValuesWritesOnlyBottomSlotsAndCanonicalizesBottom(t *testing.T) {
 	}
 }
 
+func TestRefreshValueSlotsFromOverlaysOnlyFiniteRefreshedSlots(t *testing.T) {
+	reg := standard.Registry()
+	stateDomain := Domain(reg)
+	keptSlot := key.SymbolValue(symbol.ID(9921))
+	refreshedSlot := key.SymbolValue(symbol.ID(9922))
+	staleSlot := key.SymbolValue(symbol.ID(9923))
+	kept := presentValue(reg)
+	stale := typevalue.FromType(reg, typ.Any)
+	refreshed := typevalue.FromType(reg, typ.String)
+
+	base := State{}.
+		WriteValue(reg, keptSlot, kept).
+		WriteValue(reg, staleSlot, stale)
+	overlay := State{}.
+		WriteValue(reg, refreshedSlot, refreshed).
+		WriteValue(reg, staleSlot, refreshed)
+
+	got := base.RefreshValueSlotsFrom(reg, overlay)
+	want := State{}.
+		WriteValue(reg, keptSlot, kept).
+		WriteValue(reg, refreshedSlot, refreshed).
+		WriteValue(reg, staleSlot, refreshed)
+	if !stateDomain.Equal(got, want) {
+		t.Fatalf("RefreshValueSlotsFrom state = %s, want %s", formatState(reg, keyspace.New(), got), formatState(reg, keyspace.New(), want))
+	}
+	if stateDomain.Equal(got.RefreshValueSlotsFrom(reg, overlay), got) == false {
+		t.Fatalf("RefreshValueSlotsFrom should be stable at fixed point")
+	}
+}
+
 func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()

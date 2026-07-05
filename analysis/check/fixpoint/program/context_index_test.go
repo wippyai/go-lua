@@ -4,9 +4,13 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -153,6 +157,44 @@ func TestContextIndexHasFunctionExpressionRequiresLiveContext(t *testing.T) {
 
 	if keys.contexts.HasFunctionExpression(owner, ref.expr) {
 		t.Fatal("stale function expression ref reported as live")
+	}
+}
+
+func TestProgramKeysRefreshContextForKeyJoinsExistingEntryState(t *testing.T) {
+	reg := standard.Registry()
+	fn := &ast.FunctionExpr{}
+	contextKey := summary.SummaryKey{Entry: summary.EntryKey{Facts: 50}}
+	existingSlot := statekey.SymbolValue(symbol.ID(10))
+	refreshedSlot := statekey.SymbolValue(symbol.ID(11))
+	staleSlot := statekey.SymbolValue(symbol.ID(12))
+	existing := state.State{}.WriteValue(reg, existingSlot, typevalue.FromType(reg, typ.String))
+	existing = existing.WriteValue(reg, staleSlot, typevalue.FromType(reg, typ.Any))
+	refreshed := state.State{}.
+		WriteValue(reg, refreshedSlot, typevalue.FromType(reg, typ.Number)).
+		WriteValue(reg, staleSlot, typevalue.FromType(reg, typ.String))
+	keys := programKeys{contexts: newContextIndex(60)}
+	keys.contexts.appendContext(fn, contextKey, existing, nil)
+
+	if !keys.refreshContextForKey(reg, contextKey, fn, nil, refreshed) {
+		t.Fatal("refreshContextForKey returned unchanged for new entry facts")
+	}
+	if keys.contexts.Len() != 1 {
+		t.Fatalf("refresh appended contexts = %d, want 1", keys.contexts.Len())
+	}
+	entry := keys.contexts.Entry(0)
+	if got := entry.entryState.ReadValue(reg, existingSlot); product.Equal(reg, got, product.Bottom(reg)) {
+		t.Fatal("refresh dropped existing context entry facts")
+	}
+	if got := entry.entryState.ReadValue(reg, refreshedSlot); product.Equal(reg, got, product.Bottom(reg)) {
+		t.Fatal("refresh did not add refreshed context entry facts")
+	}
+	staleValue := entry.entryState.ReadValue(reg, staleSlot)
+	staleType, staleOK := typevalue.TypeOf(reg, staleValue)
+	if !staleOK || staleType != typ.String {
+		t.Fatalf("refresh did not make recomputed entry slot authoritative: got %v/%v, want string", staleType, staleOK)
+	}
+	if keys.refreshContextForKey(reg, contextKey, fn, nil, refreshed) {
+		t.Fatal("refreshContextForKey reported changed after fixed point")
 	}
 }
 

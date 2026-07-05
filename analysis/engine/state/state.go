@@ -249,6 +249,25 @@ func (s State) SeedValues(reg *axis.Registry, seeds []ValueSeed) State {
 	return out
 }
 
+// RefreshValueSlotsFrom overlays every finite value slot carried by refreshed
+// onto s. Context refresh uses this after a normal state join: facts absent
+// from refreshed remain preserved by the join, while slots recomputed by the
+// refreshed entry regain the precision of the current caller state.
+func (s State) RefreshValueSlotsFrom(reg *axis.Registry, refreshed State) State {
+	if reg == nil || !s.laneEnabled(laneValuesBit) {
+		return s
+	}
+	snapshot := refreshed.ValuesSnapshot()
+	if snapshot.Top || len(snapshot.Values) == 0 {
+		return s
+	}
+	edit := s.EditValues(reg)
+	for slot, value := range snapshot.Values {
+		edit.Write(slot, value)
+	}
+	return edit.Done()
+}
+
 // UpdateValue reads slot, applies fn, and writes the transformed value.
 // Transforming a finite entry to product.Bottom(reg) removes it.
 func (s State) UpdateValue(reg *axis.Registry, slot key.Value, fn func(product.Value) product.Value) State {

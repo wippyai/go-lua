@@ -116,23 +116,6 @@ func (idx *contextIndex) mergeContextForKey(reg *axis.Registry, key summary.Summ
 	return mergeContextEntry(reg, context, entryKeys, entry)
 }
 
-func (idx *contextIndex) replaceContextForKey(reg *axis.Registry, key summary.SummaryKey, fn *ast.FunctionExpr, entryKeys *keyspace.KeySpace, entry state.State) bool {
-	context, ok := idx.contextByKey(key)
-	if !ok || context.funcExpr != fn {
-		return false
-	}
-	if context.hasEntryState && reg != nil {
-		current := context.entryState.RekeyPathEvidence(context.entryKeys, entryKeys)
-		if state.Domain(reg).Equal(current, entry) {
-			return false
-		}
-	}
-	context.entryState = entry
-	context.entryKeys = entryKeys
-	context.hasEntryState = true
-	return true
-}
-
 func mergeContextEntry(reg *axis.Registry, context *keyedFunction, entryKeys *keyspace.KeySpace, entry state.State) bool {
 	if context == nil {
 		return false
@@ -145,6 +128,7 @@ func mergeContextEntry(reg *axis.Registry, context *keyedFunction, entryKeys *ke
 	}
 	current := context.entryState.RekeyPathEvidence(context.entryKeys, entryKeys)
 	joined := state.Domain(reg).Join(current, entry)
+	joined = joined.RefreshValueSlotsFrom(reg, entry)
 	if state.Domain(reg).Equal(current, joined) {
 		return false
 	}
@@ -273,12 +257,12 @@ func (k *programKeys) mergeContextForKey(reg *axis.Registry, key summary.Summary
 	return k.contexts.mergeContextForKey(reg, key, fn, entryKeys, entry)
 }
 
-func (k *programKeys) replaceContextForKey(reg *axis.Registry, key summary.SummaryKey, fn *ast.FunctionExpr, entryKeys *keyspace.KeySpace, entry state.State) bool {
+func (k *programKeys) refreshContextForKey(reg *axis.Registry, key summary.SummaryKey, fn *ast.FunctionExpr, entryKeys *keyspace.KeySpace, entry state.State) bool {
 	if k == nil {
 		return false
 	}
 	entry, entryKeys = k.seedMetatableMethodContextEntry(reg, fn, entry, entryKeys)
-	return k.contexts.replaceContextForKey(reg, key, fn, entryKeys, entry)
+	return k.contexts.mergeContextForKey(reg, key, fn, entryKeys, entry)
 }
 
 func (k *programKeys) upsertCallContext(
