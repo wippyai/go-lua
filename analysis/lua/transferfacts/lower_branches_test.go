@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
@@ -636,6 +637,29 @@ end
 	got, ok := typevalue.TypeOf(reg, constraint)
 	if !ok || !typ.TypeEquals(got, typ.Number) {
 		t.Fatalf("pcall payload refinement type = %v/%v, want number; value=%#v", got, ok, constraint)
+	}
+}
+
+func TestLowerProtectedCallSuccessGuardInWIRModeDoesNotFallbackToSidecar(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local function run_tests(): number
+	return 1
+end
+
+local ok, result = pcall(run_tests)
+if not ok then
+	return
+end
+`, "pcall")
+
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: wir.NewBody("empty")})
+	assign := mustLocalStmt(t, stmts, 1)
+	payloadPath := path.NewPath(mustLocalAt(t, bindings, assign, 1), "result")
+	ifStmt := mustIfStmt(t, stmts, 2)
+	point := requireStmtPoints(t, built, ifStmt, 1)[0]
+	if refinement, ok := branchRefinementAt(facts.BranchRefinements(point), payloadPath); ok {
+		t.Fatalf("WIR mode protected-call refinement fell back to semantic branch check at point %d: %#v", point, refinement)
 	}
 }
 

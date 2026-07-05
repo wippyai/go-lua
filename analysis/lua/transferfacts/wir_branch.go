@@ -19,6 +19,9 @@ func (l *lowerer) directBranchCheckAt(point cfg.Point, result *semantics.Result)
 	if check, ok := l.firstDirectBranchCheckFromWIR(point); ok {
 		return check, true
 	}
+	if l != nil && l.wir != nil {
+		return branchcond.Check{}, false
+	}
 	if result == nil {
 		return branchcond.Check{}, false
 	}
