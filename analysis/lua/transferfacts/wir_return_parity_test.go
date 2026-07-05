@@ -129,7 +129,7 @@ end
 	}
 }
 
-func TestLowerWithWIRReturnSourcesFallsBackForLocalRootPath(t *testing.T) {
+func TestLowerWithWIRReturnSourcesUseLocalRootPath(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(): any
     local builder = {}
@@ -149,8 +149,8 @@ end
 		t.Fatalf("missing return fact at point %d", points[0])
 	}
 	sources := returnFact.Sources()
-	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr {
-		t.Fatalf("return sources = %#v, want semantic expression fallback for local root", sources)
+	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourcePath || sources[0].HasExpr {
+		t.Fatalf("return sources = %#v, want WIR local path source without expression ref", sources)
 	}
 }
 

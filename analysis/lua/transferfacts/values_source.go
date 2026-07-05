@@ -53,13 +53,28 @@ func (l *lowerer) returnValueSourcesFromWIR(point cfg.Point) ([]factflow.ValueSo
 	callResults := l.callResultValueSourcesByTempFromWIR()
 	for i, op := range ops {
 		final := i == len(ops)-1
-		source, ok := l.valueSourceFromWIROperand(op, i, i, final, ret.ListSpread && final, ret.ListSpread && final, callResults)
+		source, ok := l.returnValueSourceFromWIROperand(op, i, i, final, ret.ListSpread && final, ret.ListSpread && final, callResults)
 		if !ok {
 			return nil, false
 		}
 		out[i] = source
 	}
 	return out, true
+}
+
+func (l *lowerer) returnValueSourceFromWIROperand(
+	op wir.Operand,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+	callResults map[uint32]wirCallResultSource,
+) (factflow.ValueSource, bool) {
+	if source, ok := l.valueSourceFromWIRRootPathOperand(op, exprIndex, targetIndex, final, symbol.Local, symbol.Param); ok {
+		return source, true
+	}
+	return l.valueSourceFromWIROperand(op, exprIndex, targetIndex, final, expanded, openTail, callResults)
 }
 
 type wirCallResultSource struct {
@@ -78,25 +93,7 @@ func (l *lowerer) valueSourceFromWIROperand(
 ) (factflow.ValueSource, bool) {
 	switch op.Kind {
 	case wir.OperandPath:
-		p := l.wir.Path(wir.PathRef(op.Ref))
-		if len(p.Segments) != 0 {
-			return factflow.ValueSource{}, false
-		}
-		if l.bindings != nil && l.bindings.IsImplicitGlobalSymbol(p.Symbol) {
-			return factflow.ValueSource{}, false
-		}
-		if l.bindings == nil {
-			return factflow.ValueSource{}, false
-		}
-		kind, ok := l.bindings.Kind(p.Symbol)
-		if !ok || kind != symbol.Param {
-			return factflow.ValueSource{}, false
-		}
-		shape, ok := factflow.NewValueSourceShape(final, false, false, false)
-		if !ok {
-			return factflow.ValueSource{}, false
-		}
-		return mustValueSource(factflow.NewPathValueSource(p.Key(), exprIndex, targetIndex, 0, shape)), true
+		return l.valueSourceFromWIRRootPathOperand(op, exprIndex, targetIndex, final, symbol.Param)
 	case wir.OperandConst:
 		c := l.wir.Const(wir.ConstRef(op.Ref))
 		if c.Kind == wir.ConstNil {
@@ -132,6 +129,43 @@ func (l *lowerer) valueSourceFromWIROperand(
 		}
 	}
 	return factflow.ValueSource{}, false
+}
+
+func (l *lowerer) valueSourceFromWIRRootPathOperand(
+	op wir.Operand,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	allowedKinds ...symbol.Kind,
+) (factflow.ValueSource, bool) {
+	if op.Kind != wir.OperandPath || l == nil || l.wir == nil || l.bindings == nil {
+		return factflow.ValueSource{}, false
+	}
+	p := l.wir.Path(wir.PathRef(op.Ref))
+	if len(p.Segments) != 0 {
+		return factflow.ValueSource{}, false
+	}
+	if l.bindings.IsImplicitGlobalSymbol(p.Symbol) {
+		return factflow.ValueSource{}, false
+	}
+	kind, ok := l.bindings.Kind(p.Symbol)
+	if !ok || !symbolKindAllowed(kind, allowedKinds) {
+		return factflow.ValueSource{}, false
+	}
+	shape, ok := factflow.NewValueSourceShape(final, false, false, false)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return mustValueSource(factflow.NewPathValueSource(p.Key(), exprIndex, targetIndex, 0, shape)), true
+}
+
+func symbolKindAllowed(kind symbol.Kind, allowed []symbol.Kind) bool {
+	for _, candidate := range allowed {
+		if kind == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *lowerer) callResultValueSourcesByTempFromWIR() map[uint32]wirCallResultSource {

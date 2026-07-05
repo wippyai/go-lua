@@ -26,12 +26,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
-	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
-	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
@@ -66,15 +64,11 @@ func returnedExportSourcePaths(result *body.Result) []returnedSourcePath {
 	var out []returnedSourcePath
 	seen := make(map[pathdom.PathKey]struct{})
 	for _, point := range result.ReturnPoints() {
-		fact, ok := result.ReturnFact(point)
-		if !ok || len(fact.Sources) == 0 {
+		sources, ok := result.ReturnValueSources(point)
+		if !ok || len(sources) == 0 {
 			continue
 		}
-		source := fact.Sources[0]
-		if source.Kind != sourceprovenance.SourceExpression || source.Expr == nil {
-			continue
-		}
-		p, ok := result.ExpressionPath(source.Expr)
+		p, ok := result.ValueSourcePath(sources[0])
 		if !ok || p.IsEmpty() {
 			continue
 		}
@@ -448,10 +442,7 @@ func inferredPathBackedReturnType(result *body.Result, returnIndex int) (typ.Typ
 			return nil, false
 		}
 		source := sources[returnIndex]
-		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-			return nil, false
-		}
-		p, ok := result.ExpressionPathRef(source.ExprRef)
+		p, ok := result.ValueSourcePath(source)
 		if !ok || p.IsEmpty() {
 			return nil, false
 		}

@@ -50,6 +50,14 @@ func (r *Result) valueSourcePath(source factflow.ValueSource) (pathdom.Path, boo
 	}, true
 }
 
+// ValueSourcePath resolves a factflow value source to its canonical static
+// path when the source is path-backed. It accepts both legacy expression-backed
+// sources and WIR path sources, so boundary consumers do not need to know which
+// lowering path produced the fact.
+func (r *Result) ValueSourcePath(source factflow.ValueSource) (pathdom.Path, bool) {
+	return r.valueSourcePath(source)
+}
+
 func valueSourcePathStateKey(resolver *visibility.Resolver, point cfg.Point, p pathdom.Path) (pathaddr.StateKey, bool) {
 	if rootlessSymbolRoot(p) {
 		return visibility.AddressAt(resolver, point, p).RootOrVisibleStateKey()
