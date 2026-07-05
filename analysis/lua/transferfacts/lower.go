@@ -194,7 +194,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			}
 		}
 		if fact, ok := result.BranchCondition(point); ok {
-			if check, ok := l.directBranchCheckFromWIR(point, fact.Check); ok {
+			if check, ok := l.directBranchCheckFromWIR(point); ok {
 				fact.Check = check
 			}
 			if fact.Check.Kind != branchcond.CheckNone {

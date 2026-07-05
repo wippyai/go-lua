@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	path "github.com/wippyai/go-lua/analysis/domain/path"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
@@ -68,6 +69,26 @@ end
 		assertEqualBranchFacts(t, point, "len floors", sidecarFacts.BranchLenRefinements(point), wirFacts.BranchLenRefinements(point))
 		assertEqualBranchFacts(t, point, "num floors", sidecarFacts.BranchNumFloorRefinements(point), wirFacts.BranchNumFloorRefinements(point))
 		assertEqualBranchFacts(t, point, "path evidence", sidecarFacts.BranchPathEvidence(point), wirFacts.BranchPathEvidence(point))
+	}
+}
+
+func TestDirectBranchCheckFromWIRDoesNotRequireSemanticSidecarMatch(t *testing.T) {
+	point := cfg.Point(1)
+	body := wir.NewBody("branch")
+	x := path.NewPath(1, "x")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpBranch,
+		Point: point,
+		Check: body.InternCheck(wir.Check{Kind: wir.CheckTruthy, Path: x}),
+	})
+	body.SetPointRange(point, start, start+1)
+
+	got, ok := (&lowerer{wir: body}).directBranchCheckFromWIR(point)
+	if !ok {
+		t.Fatal("missing WIR direct branch check")
+	}
+	if got.Kind != branchcond.CheckTruthy || !got.Path.Equal(x) {
+		t.Fatalf("WIR direct branch check = %#v, want truthy x", got)
 	}
 }
 
