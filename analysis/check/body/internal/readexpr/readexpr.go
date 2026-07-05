@@ -100,13 +100,12 @@ type projectionResult struct {
 
 type projectionPathIdentity = keyspace.PathIdentity
 
-func newProjectionPathIdentity(config Config, p pathdom.Path) projectionPathIdentity {
+func newProjectionPathIdentity(config Config, p pathdom.Path) (projectionPathIdentity, bool) {
 	var ks *keyspace.KeySpace
 	if config.Visibility != nil {
 		ks = config.Visibility.KeySpace()
 	}
-	id, _ := keyspace.PathIdentityFromPath(ks, p)
-	return id
+	return keyspace.PathIdentityFromPath(ks, p)
 }
 
 const (
@@ -1165,7 +1164,10 @@ func project(config Config, point cfg.Point, p pathdom.Path, in state.State, ove
 	if p.IsEmpty() {
 		return product.Value{}, false
 	}
-	pathID := newProjectionPathIdentity(config, p)
+	pathID, ok := newProjectionPathIdentity(config, p)
+	if !ok {
+		return product.Value{}, false
+	}
 	memoKey := projectionMemoKey{point: point, path: pathID, overlayRoot: overlayRoot}
 	if result, cached := config.memo.lookup(memoKey); cached {
 		return result.value, result.ok

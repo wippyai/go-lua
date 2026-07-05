@@ -116,6 +116,29 @@ func TestProjectionScratchResetClearsAndRetainsSmallOverflowMaps(t *testing.T) {
 	}
 }
 
+func TestNewProjectionPathIdentityRejectsEmptyPath(t *testing.T) {
+	if got, ok := newProjectionPathIdentity(Config{}, path.Path{}); ok || got != (projectionPathIdentity{}) {
+		t.Fatalf("empty path identity = %#v/%v, want zero/false", got, ok)
+	}
+}
+
+func TestNewProjectionPathIdentityUsesVisibilityKeyspace(t *testing.T) {
+	point := cfg.Point(1)
+	p := path.NewPath(symbol.ID(10), "t").Field("name")
+	resolver := testResolver(point, symbol.ID(10), "t")
+
+	got, ok := newProjectionPathIdentity(Config{Visibility: resolver}, p)
+	if !ok {
+		t.Fatal("identity construction failed")
+	}
+	if got.Key.Kind == keyspace.KindInvalid {
+		t.Fatalf("identity did not use typed keyspace key: %#v", got)
+	}
+	if got.Legacy != "" {
+		t.Fatalf("identity kept legacy fallback with visibility keyspace: %#v", got)
+	}
+}
+
 func TestProjectExactPresentDropsNil(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(1)
