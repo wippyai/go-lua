@@ -814,6 +814,37 @@ end
 	}
 }
 
+func TestLowerCallSiteDoesNotFallbackToSemanticCalleeWhenWIRDirectCalleeUnsupported(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(value: string): ()
+    send(value)
+end
+`, "send")
+	stmt, ok := fn.Stmts[0].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[0])
+	}
+	points := requireStmtPoints(t, built, stmt, 1)
+	valuePath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "value")
+	body := wir.NewBody("synthetic-unsupported-call-callee")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpCall,
+		Point: points[0],
+		Call:  wir.CallInfo{Callee: wir.Operand{Kind: wir.OperandTemp, Ref: 7}},
+		List:  body.AppendOperands([]wir.Operand{{Kind: wir.OperandPath, Ref: uint32(body.InternPath(valuePath))}}),
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	site, ok := facts.CallSite(points[0])
+	if !ok {
+		t.Fatalf("missing WIR call site at point %d", points[0])
+	}
+	if site.CalleeSymbol() != 0 || !site.CalleePath().IsEmpty() || site.CalleeMemberAccess() {
+		t.Fatalf("WIR unsupported callee kept semantic callee identity: symbol=%d path=%s member=%v", site.CalleeSymbol(), site.CalleePath(), site.CalleeMemberAccess())
+	}
+}
+
 func TestLowerCallSitePreservesMemberAccessEvidence(t *testing.T) {
 	l := lowerer{exprs: make(map[any]factflow.ExprRef)}
 	site := l.callSite(semantics.CallFact{

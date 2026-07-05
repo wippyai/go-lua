@@ -30,9 +30,7 @@ func (l *lowerer) callSiteWithArgumentSources(fact semantics.CallFact, argumentS
 
 func (l *lowerer) callSiteWithArgumentSourcesAt(point cfg.Point, fact semantics.CallFact, argumentSources []factflow.ValueSource) factflow.CallSite {
 	shape := semanticCallSiteShape(fact)
-	if wirShape, ok := l.methodCallShapeFromWIR(point); ok {
-		shape = wirShape
-	} else if wirShape, ok := l.directCallShapeFromWIR(point); ok {
+	if wirShape, ok := l.callShapeFromWIR(point); ok {
 		shape = wirShape
 	}
 	receiverSource, hasReceiverSource := l.callReceiverSource(point, fact)
@@ -116,6 +114,26 @@ func (l *lowerer) callSiteWithArgumentSourcesWithShape(
 		Adjusted:           fact.Adjusted,
 		OpenTail:           fact.OpenTail,
 	})
+}
+
+func (l *lowerer) callShapeFromWIR(point cfg.Point) (callSiteShape, bool) {
+	if l == nil || l.wir == nil {
+		return callSiteShape{}, false
+	}
+	inst, hasCall := l.wirCallInstruction(point)
+	if shape, ok := l.methodCallShapeFromWIR(point); ok {
+		return shape, true
+	}
+	if hasCall && inst.Call.Method != 0 {
+		return callSiteShape{}, false
+	}
+	if shape, ok := l.directCallShapeFromWIR(point); ok {
+		return shape, true
+	}
+	if hasCall {
+		return callSiteShape{}, true
+	}
+	return callSiteShape{}, false
 }
 
 func (l *lowerer) methodCallShapeFromWIR(point cfg.Point) (callSiteShape, bool) {
