@@ -224,6 +224,11 @@ func (l *lowerer) callArgumentSources(point cfg.Point, fallback []sourceprovenan
 		final := i == len(ops)-1
 		source, ok := l.callArgumentSourceFromWIROperand(point, op, i, i, final, inst.ListSpread && final, callResults)
 		if !ok {
+			if op.Kind != wir.OperandTemp {
+				source = factflow.NewUnknownValueSource(i)
+				out[i] = source
+				continue
+			}
 			source = l.valueSource(fallback[i])
 		}
 		out[i] = source
@@ -244,6 +249,9 @@ func (l *lowerer) callArgumentSourceFromWIROperand(
 		return source, true
 	}
 	if source, ok := l.valueSourceFromWIRRootPathOperand(op, exprIndex, targetIndex, final, symbol.Param); ok {
+		return source, true
+	}
+	if source, ok := l.pathExpressionSourceFromWIR("call-arg", point, op, exprIndex, targetIndex, final, false, false, symbol.Local, symbol.Param, symbol.Global, symbol.Upvalue); ok {
 		return source, true
 	}
 	return l.valueSourceFromWIROperand(op, exprIndex, targetIndex, final, expanded, false, callResults)

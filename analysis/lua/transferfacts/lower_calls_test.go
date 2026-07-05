@@ -419,6 +419,44 @@ end
 	}
 }
 
+func TestLowerCallSiteSegmentedArgumentPathComesFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): ()
+    local value = { name = "x" }
+    local other = { name = "y" }
+    send(value.name)
+end
+`, "send")
+	stmt, ok := fn.Stmts[2].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[2])
+	}
+	points := requireStmtPoints(t, built, stmt, 1)
+	valuePath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "value").Field("name")
+	otherPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "other").Field("name")
+	body := wir.NewBody("synthetic-segmented-call-arg")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpCall,
+		Point: points[0],
+		List:  body.AppendOperands([]wir.Operand{{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))}}),
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	site, ok := facts.CallSite(points[0])
+	if !ok {
+		t.Fatalf("missing call site at point %d", points[0])
+	}
+	arg, ok := site.ArgumentSourceAt(0)
+	if !ok || arg.Kind != factflow.ValueSourceExpression || !arg.HasExpr {
+		t.Fatalf("argument source = %#v/%v, want expression-backed WIR path", arg, ok)
+	}
+	got, ok := facts.ExpressionPath(arg.ExprRef)
+	if !ok || !got.Equal(otherPath) || got.Equal(valuePath) {
+		t.Fatalf("argument expression path = %v/%v, want WIR path %v not semantic path %v", got, ok, otherPath, valuePath)
+	}
+}
+
 func TestLowerDirectRootCallShapeComesFromWIR(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(): ()
@@ -610,6 +648,37 @@ end
 
 	if _, ok := facts.CallSite(points[0]); ok {
 		t.Fatalf("WIR mode call at point %d fell back to semantic sidecar", points[0])
+	}
+}
+
+func TestLowerCallSiteUsesUnknownForUnsupportedDirectWIRArgument(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(value: string): ()
+    send(value)
+end
+`, "send")
+	stmt, ok := fn.Stmts[0].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[0])
+	}
+	points := requireStmtPoints(t, built, stmt, 1)
+	body := wir.NewBody("synthetic-unsupported-call-arg")
+	unsupported := wir.Operand{Kind: wir.OperandType, Ref: uint32(body.InternType(typ.String))}
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpCall,
+		Point: points[0],
+		List:  body.AppendOperands([]wir.Operand{unsupported}),
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	site, ok := facts.CallSite(points[0])
+	if !ok {
+		t.Fatalf("missing WIR call site at point %d", points[0])
+	}
+	args := site.ArgumentSources()
+	if len(args) != 1 || args[0].Kind != factflow.ValueSourceUnknown || args[0].TargetIndex != 0 {
+		t.Fatalf("WIR call argument sources = %#v, want one unknown source for unsupported direct operand", args)
 	}
 }
 

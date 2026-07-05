@@ -165,6 +165,60 @@ func (l *lowerer) rootPathExpressionSourceFromWIR(
 	return factflow.NewExpressionValueSource(exprRef, exprIndex, targetIndex, 0, shape)
 }
 
+func (l *lowerer) pathExpressionSourceFromWIR(
+	kind string,
+	point cfg.Point,
+	op wir.Operand,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+	allowedKinds ...symbol.Kind,
+) (factflow.ValueSource, bool) {
+	if op.Kind != wir.OperandPath || l == nil || l.wir == nil || l.bindings == nil {
+		return factflow.ValueSource{}, false
+	}
+	p := l.wir.Path(wir.PathRef(op.Ref))
+	if p.IsEmpty() || p.Symbol == 0 {
+		return factflow.ValueSource{}, false
+	}
+	bindKind, ok := l.bindings.Kind(p.Symbol)
+	if !ok || !symbolKindAllowed(bindKind, allowedKinds) {
+		return factflow.ValueSource{}, false
+	}
+	exprRef, ok := l.exprRef(wirPathExprRefKey{
+		kind:        kind,
+		point:       point,
+		path:        p.Key(),
+		exprIndex:   exprIndex,
+		targetIndex: targetIndex,
+		final:       final,
+		expanded:    expanded,
+		openTail:    openTail,
+	})
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	if l.expressionPaths == nil {
+		l.expressionPaths = make(map[factflow.ExprRef]path.Path)
+	}
+	l.expressionPaths[exprRef] = p
+	if len(p.Segments) == 0 {
+		if t, ok := l.symbolTypes[p.Symbol]; ok {
+			if l.expressionValues == nil {
+				l.expressionValues = make(map[factflow.ExprRef]product.Value)
+			}
+			l.expressionValues[exprRef] = l.valueFromTypeWithWitness(t)
+		}
+	}
+	shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, openTail)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return factflow.NewExpressionValueSource(exprRef, exprIndex, targetIndex, 0, shape)
+}
+
 func (l *lowerer) valueSourceFromWIROperand(
 	op wir.Operand,
 	exprIndex int,
