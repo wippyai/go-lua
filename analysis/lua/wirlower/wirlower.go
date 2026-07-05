@@ -44,7 +44,17 @@ import (
 // bind.BindChunk) and built must be cfgbuild.BuildChunk over the same stmts.
 // Points in the returned Body index into built.Graph.
 func Lower(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result) *wir.Body {
-	return lowerInto(name, stmts, bindings, built, typeresolve.New(bindings))
+	return LowerWithResolver(name, stmts, bindings, built, typeresolve.New(bindings))
+}
+
+// LowerWithResolver lowers with the caller's canonical type resolver. This is
+// the production entry point when module/export type refs are in scope; WIR
+// TypeRefs must match the resolver used by transfer facts.
+func LowerWithResolver(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result, resolver *typeresolve.Resolver) *wir.Body {
+	if resolver == nil {
+		resolver = typeresolve.New(bindings)
+	}
+	return lowerInto(name, stmts, bindings, built, resolver)
 }
 
 // lowerInto lowers one function-scope statement list (a chunk or a nested

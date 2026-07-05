@@ -40,7 +40,7 @@ func (l *lowerer) addAssignmentAssertionRefinementFromWIRClaim(input *factflow.F
 		if !ok {
 			return false
 		}
-		return l.addExpressionRefinementFromWIRClaim(input, outerSource, innerSource, inst, source.Expr)
+		return l.addExpressionRefinementFromWIRClaim(input, outerSource, innerSource, inst)
 	}
 	return false
 }
@@ -79,7 +79,7 @@ func (l *lowerer) addCallArgumentAssertionRefinementFromWIRClaim(input *factflow
 	if !ok {
 		return false
 	}
-	return l.addExpressionRefinementFromWIRClaim(input, outerSource, innerSource, inst, source.Expr)
+	return l.addExpressionRefinementFromWIRClaim(input, outerSource, innerSource, inst)
 }
 
 func (l *lowerer) callArgumentClaimInstructionFromWIR(point cfg.Point, index int, claim wir.ClaimKind) (wir.Instruction, bool) {
@@ -118,7 +118,7 @@ func (l *lowerer) addReturnAssertionRefinementFromWIRClaim(input *factflow.Facts
 	if !ok {
 		return false
 	}
-	return l.addExpressionRefinementFromWIRClaim(input, outerSource, innerSource, inst, source.Expr)
+	return l.addExpressionRefinementFromWIRClaim(input, outerSource, innerSource, inst)
 }
 
 func (l *lowerer) returnClaimInstructionFromWIR(point cfg.Point, index int, claim wir.ClaimKind) (wir.Instruction, bool) {
@@ -150,8 +150,8 @@ func (l *lowerer) claimInstructionForOperand(op wir.Operand) (wir.Instruction, b
 	return inst, true
 }
 
-func (l *lowerer) addExpressionRefinementFromWIRClaim(input *factflow.FactsInput, outerSource, innerSource factflow.ValueSource, inst wir.Instruction, expr ast.Expr) bool {
-	refinement, mode, ok := l.claimRefinementFromWIR(inst, expr)
+func (l *lowerer) addExpressionRefinementFromWIRClaim(input *factflow.FactsInput, outerSource, innerSource factflow.ValueSource, inst wir.Instruction) bool {
+	refinement, mode, ok := l.claimRefinementFromWIR(inst)
 	if !ok {
 		return false
 	}
@@ -199,24 +199,17 @@ func (l *lowerer) claimInnerSourceFromWIR(inst wir.Instruction, source sourcepro
 	)
 }
 
-func (l *lowerer) claimRefinementFromWIR(inst wir.Instruction, expr ast.Expr) (product.Value, factflow.ExpressionRefinementMode, bool) {
+func (l *lowerer) claimRefinementFromWIR(inst wir.Instruction) (product.Value, factflow.ExpressionRefinementMode, bool) {
 	switch inst.Claim {
 	case wir.ClaimAssert:
 		return l.assertionRefinement(assertion.NonNil()), factflow.ExpressionRefinementMeet, true
 	case wir.ClaimCast:
-		if cast, ok := expr.(*ast.CastExpr); ok && cast != nil {
-			refinement := l.castAssertionRefinement(cast.Type)
-			if product.Get(l.registry, refinement, assertion.Key).Has(assertion.AnyClaim) {
-				return refinement, factflow.ExpressionRefinementMeet, true
-			}
-			if castSyntaxIsRuntimeValidation(expr) {
-				return refinement, factflow.ExpressionRefinementRuntimeValidation, true
-			}
-			return refinement, factflow.ExpressionRefinementDeclaredContract, true
-		}
 		t := l.wir.Type(inst.Type)
-		if t == nil || typ.IsAny(t) || typ.IsUnknown(t) {
+		if t == nil {
 			return product.Value{}, factflow.ExpressionRefinementMeet, false
+		}
+		if typ.IsAny(t) || typ.IsUnknown(t) {
+			return l.assertionRefinement(assertion.Any()), factflow.ExpressionRefinementMeet, true
 		}
 		refinement := product.Set(l.registry, l.valueFromTypeWithWitness(t), assertion.Key, assertion.Of(assertion.TypeClaim, assertion.RuntimeClaim))
 		return refinement, factflow.ExpressionRefinementRuntimeValidation, true

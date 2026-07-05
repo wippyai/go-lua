@@ -45,8 +45,8 @@ func (c *checker) prepareBoundChunk(stmts []ast.Stmt, bindings *bind.Result) (*S
 		func(built *cfgbuild.Result) (*semantics.Result, error) {
 			return semantics.ExtractChunk(stmts, bindings, built)
 		},
-		func(built *cfgbuild.Result) *wir.Body {
-			return wirlower.Lower("chunk", stmts, bindings, built)
+		func(built *cfgbuild.Result, resolver *typeresolve.Resolver) *wir.Body {
+			return wirlower.LowerWithResolver("chunk", stmts, bindings, built, resolver)
 		},
 	)
 }
@@ -60,7 +60,7 @@ func (c *checker) prepareBound(
 	incStat func(),
 	build func() *cfgbuild.Result,
 	extract func(*cfgbuild.Result) (*semantics.Result, error),
-	lowerWIR func(*cfgbuild.Result) *wir.Body,
+	lowerWIR func(*cfgbuild.Result, *typeresolve.Resolver) *wir.Body,
 ) (*Static, error) {
 	if c.config.Stats != nil {
 		incStat()
@@ -73,8 +73,11 @@ func (c *checker) prepareBound(
 	if err != nil {
 		return nil, fmt.Errorf("check: extract %s semantics: %w", what, err)
 	}
-	wirBody := lowerWIR(built)
-	return c.prepare(bindings, built, sem, wirBody), nil
+	modules := moduleidentity.New(bindings, built.Graph, sem)
+	moduleTypes := newRequireAliasTypeResolver(modules, c.config.ModuleTypes)
+	typeResolver := typeresolve.NewWithExternal(bindings, moduleTypes)
+	wirBody := lowerWIR(built, typeResolver)
+	return c.prepare(bindings, built, sem, wirBody, modules, typeResolver), nil
 }
 
 func (c *checker) prepareFunction(fn *ast.FunctionExpr) (*Static, error) {
@@ -89,18 +92,22 @@ func (c *checker) prepareBoundFunction(fn *ast.FunctionExpr, bindings *bind.Resu
 		func(built *cfgbuild.Result) (*semantics.Result, error) {
 			return semantics.ExtractFunction(fn, bindings, built)
 		},
-		func(built *cfgbuild.Result) *wir.Body {
-			return wirlower.Lower("function", fn.Stmts, bindings, built)
+		func(built *cfgbuild.Result, resolver *typeresolve.Resolver) *wir.Body {
+			return wirlower.LowerWithResolver("function", fn.Stmts, bindings, built, resolver)
 		},
 	)
 }
 
-func (c *checker) prepare(bindings *bind.Result, built *cfgbuild.Result, sem *semantics.Result, wirBody *wir.Body) *Static {
+func (c *checker) prepare(
+	bindings *bind.Result,
+	built *cfgbuild.Result,
+	sem *semantics.Result,
+	wirBody *wir.Body,
+	modules moduleidentity.Projection,
+	typeResolver *typeresolve.Resolver,
+) *Static {
 	config := c.config
 	globals := configGlobals(config)
-	modules := moduleidentity.New(bindings, built.Graph, sem)
-	moduleTypes := newRequireAliasTypeResolver(modules, config.ModuleTypes)
-	typeResolver := typeresolve.NewWithExternal(bindings, moduleTypes)
 	lowered := transferfacts.LowerWithSidecars(sem, built.Graph, transferfacts.Config{
 		Registry:      config.Registry,
 		Bindings:      bindings,

@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
@@ -20,6 +21,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
@@ -125,8 +127,8 @@ function f(raw: any): ()
     payload_data(raw as process.Message)
 end
 `, "payload_data")
-	body := wirlower.Lower("f", fn.Stmts, bindings, built)
 	resolver := typeresolve.NewWithExternal(bindings, testExternalTypes{"process.Message": messageType})
+	body := wirlower.LowerWithResolver("f", fn.Stmts, bindings, built, resolver)
 	facts := Lower(result, built.Graph, Config{
 		Registry:     standard.Registry(),
 		Bindings:     bindings,
@@ -147,6 +149,51 @@ end
 		t.Fatalf("cast argument source = %#v, want expression source for validated cast", args[0])
 	}
 	assertWIRConcreteCastAssertion(t, facts, args[0], messageType, factflow.ValueSourcePath)
+}
+
+func TestLowerCallArgumentWIRClaimTypeBeatsSemanticCastType(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(x: any): ()
+    local sink = function(value: any) end
+    sink(x as string)
+end
+`)
+	callStmt, ok := fn.Stmts[1].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[1])
+	}
+	callPoint := requireStmtPoints(t, built, callStmt, 1)[0]
+	xPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "x")
+	sinkPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "sink")
+
+	body := wir.NewBody("synthetic-claim-type-owner")
+	claimTemp := wir.Operand{Kind: wir.OperandTemp, Ref: 1}
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpClaim,
+		Point: callPoint,
+		Dst:   claimTemp,
+		A:     wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(xPath))},
+		Claim: wir.ClaimCast,
+		Type:  body.InternType(typ.Number),
+	})
+	body.Emit(wir.Instruction{
+		Op:    wir.OpCall,
+		Point: callPoint,
+		Call:  wir.CallInfo{Callee: wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(sinkPath))}},
+		List:  body.AppendOperands([]wir.Operand{claimTemp}),
+	})
+	body.SetPointRange(callPoint, start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	site, ok := facts.CallSite(callPoint)
+	if !ok {
+		t.Fatalf("missing call site at point %d", callPoint)
+	}
+	args := site.ArgumentSources()
+	if len(args) != 1 || args[0].Kind != factflow.ValueSourceExpression || !args[0].HasExpr {
+		t.Fatalf("call argument sources = %#v, want semantic outer expression source", args)
+	}
+	assertWIRConcreteCastAssertion(t, facts, args[0], typ.Number, factflow.ValueSourcePath)
 }
 
 func assertWIRAssertion(t *testing.T, facts factflow.Facts, source factflow.ValueSource, want assertion.Value, wantInnerKind factflow.ValueSourceKind) {
