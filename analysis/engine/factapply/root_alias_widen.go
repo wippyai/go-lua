@@ -156,11 +156,8 @@ func applyCovariantRecordExposure(
 // carries no per-member congruence and relies on the equality proof for its
 // existing read-back diagnostics, so it keeps the equality. A sub-path exposure
 // adds no such equality, so it needs no suppression.
-func covariantExposureSuppressesPathProof(facts factflow.Facts, point cfg.Point, source factflow.ValueSource) bool {
-	if !source.HasExpr {
-		return false
-	}
-	sourcePath, ok := facts.ExpressionPathRef(source.ExprRef)
+func covariantExposureSuppressesPathProof(facts factflow.Facts, resolver *visibility.Resolver, point cfg.Point, source factflow.ValueSource) bool {
+	sourcePath, ok := sourcePathFromValueSource(resolver, facts, source)
 	if !ok || sourcePath.Symbol == 0 || len(sourcePath.Segments) != 0 {
 		return false
 	}

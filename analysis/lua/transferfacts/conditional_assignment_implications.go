@@ -577,6 +577,27 @@ func (l *lowerer) rootAssignmentSourceValue(result *semantics.Result, source fac
 		return value, true
 	case factflow.ValueSourceCall:
 		return l.callSourceValue(result, source)
+	case factflow.ValueSourceLiteral:
+		value, ok := l.literalSourceValue(source)
+		if !ok || !usefulConditionalAssignmentValue(l.registry, value) {
+			return product.Value{}, false
+		}
+		return value, true
+	default:
+		return product.Value{}, false
+	}
+}
+
+func (l *lowerer) literalSourceValue(source factflow.ValueSource) (product.Value, bool) {
+	switch source.LiteralKind {
+	case factflow.ValueSourceLiteralBool:
+		return l.valueFromTypeWithWitness(typ.LiteralBool(source.Bool)), true
+	case factflow.ValueSourceLiteralInteger:
+		return l.valueFromTypeWithWitness(typ.LiteralInt(source.Int)), true
+	case factflow.ValueSourceLiteralNumber:
+		return l.valueFromTypeWithWitness(typ.LiteralNumber(source.Float)), true
+	case factflow.ValueSourceLiteralString:
+		return l.valueFromTypeWithWitness(typ.LiteralString(source.String)), true
 	default:
 		return product.Value{}, false
 	}

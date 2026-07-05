@@ -969,7 +969,7 @@ func TestLowerOrdinaryRootTableConstructorReassignmentKeepsRuntimeValue(t *testi
 		},
 		exprs:            make(map[any]factflow.ExprRef),
 		expressionValues: make(map[factflow.ExprRef]product.Value),
-	}).ordinaryAssignment(semantics.OrdinaryAssignmentFact{
+	}).ordinaryAssignment(0, semantics.OrdinaryAssignmentFact{
 		Target:    ident("res"),
 		Value:     table,
 		Source:    source,

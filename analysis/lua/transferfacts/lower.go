@@ -106,7 +106,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 	for _, point := range graph.RPO() {
 		if view, ok := result.LocalAssignmentView(point); ok {
 			fact, _ := view.Borrowed()
-			if lowered, ok := l.localAssignment(fact); ok {
+			if lowered, ok := l.localAssignment(point, fact); ok {
 				input.RootAssignments[point] = lowered
 				l.addAssertionRefinementsForSource(&input, fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
@@ -122,18 +122,18 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		}
 		if view, ok := result.OrdinaryAssignmentView(point); ok {
 			fact, _ := view.Borrowed()
-			if lowered, ok := l.pathAssignment(fact); ok {
+			if lowered, ok := l.pathAssignment(point, fact); ok {
 				input.PathAssignments[point] = lowered
-				if lowered, ok := l.pathStaticMemberWrite(fact); ok {
+				if lowered, ok := l.pathStaticMemberWrite(point, fact); ok {
 					input.PathStaticMemberWrites[point] = lowered
 				}
-				if lowered, ok := l.ordinaryAssignment(fact); ok {
+				if lowered, ok := l.ordinaryAssignment(point, fact); ok {
 					input.RootAssignments[point] = lowered
 				}
 				l.addAssertionRefinementsForSource(&input, fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
 				l.addStoreExposure(&input, point, fact)
-			} else if lowered, ok := l.ordinaryAssignment(fact); ok {
+			} else if lowered, ok := l.ordinaryAssignment(point, fact); ok {
 				input.RootAssignments[point] = lowered
 				l.addAssertionRefinementsForSource(&input, fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
@@ -143,7 +143,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 					l.addObjectLiteralFieldExposures(&input, result, point, fact.Source, declared)
 				}
 			}
-			if lowered, ok := l.dynamicIndexWrite(fact); ok {
+			if lowered, ok := l.dynamicIndexWrite(point, fact); ok {
 				input.DynamicIndexWrites[point] = lowered
 				l.addAssertionRefinementsForSource(&input, fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
@@ -285,6 +285,7 @@ type lowerer struct {
 	expressionPaths               map[factflow.ExprRef]pathdom.Path
 	dynamicIndexExpressions       map[factflow.ExprRef]factflow.DynamicIndexExpression
 	expressionConditions          map[factflow.ExprRef]factflow.ExpressionCondition
+	wirCallResults                map[uint32]wirCallResultSource
 }
 
 func (l *lowerer) valueFromType(t typ.Type) product.Value {

@@ -32,13 +32,11 @@ func numFloorForSource(
 	source factflow.ValueSource,
 	active map[factflow.ExprRef]bool,
 ) (int64, bool) {
+	if floor, ok := exactIntegerSource(reg, facts, source); ok {
+		return floor, true
+	}
 	if resolver == nil || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
 		return 0, false
-	}
-	if value, ok := facts.ExpressionValue(source.ExprRef); ok {
-		if floor, ok := typevalue.IntegerLiteralValue(reg, value); ok {
-			return floor, true
-		}
 	}
 	if p, ok := facts.ExpressionPathRef(source.ExprRef); ok {
 		pathKey, keyOK := visibility.AddressAt(resolver, point, p).RootOrVisibleStateKey()
@@ -118,14 +116,24 @@ func numFloorPlusConstant(
 }
 
 func exactIntegerSource(reg *axis.Registry, facts factflow.Facts, source factflow.ValueSource) (int64, bool) {
-	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+	switch source.Kind {
+	case factflow.ValueSourceExpression:
+		if !source.HasExpr {
+			return 0, false
+		}
+		value, ok := facts.ExpressionValue(source.ExprRef)
+		if !ok {
+			return 0, false
+		}
+		return typevalue.IntegerLiteralValue(reg, value)
+	case factflow.ValueSourceLiteral:
+		if source.LiteralKind == factflow.ValueSourceLiteralInteger {
+			return source.Int, true
+		}
+		return 0, false
+	default:
 		return 0, false
 	}
-	value, ok := facts.ExpressionValue(source.ExprRef)
-	if !ok {
-		return 0, false
-	}
-	return typevalue.IntegerLiteralValue(reg, value)
 }
 
 func checkedAddInt64(a, b int64) (int64, bool) {

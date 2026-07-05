@@ -1804,6 +1804,10 @@ func TestNumFloorForSourceDerivesExactIntegerPathAndBinaryFloors(t *testing.T) {
 	pathSource := ValueSource{Kind: ValueSourceExpression, ExprRef: pathExpr, HasExpr: true}
 	sumSource := ValueSource{Kind: ValueSourceExpression, ExprRef: sumExpr, HasExpr: true}
 	missingSource := ValueSource{Kind: ValueSourceExpression, ExprRef: missingExpr, HasExpr: true}
+	literalSource, ok := NewIntegerLiteralValueSource(11, 0, 0, 0, ValueSourceShape{Final: true})
+	if !ok {
+		t.Fatal("NewIntegerLiteralValueSource returned false")
+	}
 	oneType := typ.LiteralInt(1)
 	oneValue := typevalue.WithWitness(reg, typevalue.FromType(reg, oneType), oneType)
 	exactType := typ.LiteralInt(7)
@@ -1838,6 +1842,7 @@ func TestNumFloorForSourceDerivesExactIntegerPathAndBinaryFloors(t *testing.T) {
 		ok     bool
 	}{
 		{name: "exact integer", source: exactSource, want: 7, ok: true},
+		{name: "literal integer source", source: literalSource, want: 11, ok: true},
 		{name: "path floor", source: pathSource, want: 3, ok: true},
 		{name: "binary plus constant", source: sumSource, want: 4, ok: true},
 		{name: "missing unresolved", source: missingSource, ok: false},

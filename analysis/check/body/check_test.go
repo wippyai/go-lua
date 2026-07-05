@@ -112,7 +112,10 @@ func TestCheckChunkAcceptsDeclaredLifecycleManifest(t *testing.T) {
 
 func TestCheckChunkAssignsLocalFromExpressionValue(t *testing.T) {
 	reg, markKey := testRegistry(t)
-	stmts := parseChunk(t, "local x = 1")
+	stmts := parseChunk(t, `
+local xs = {}
+local x = xs[1]
+`)
 	want := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), markKey, markLow)
 
 	result, err := CheckChunk(stmts, Config{
@@ -125,7 +128,7 @@ func TestCheckChunkAssignsLocalFromExpressionValue(t *testing.T) {
 		t.Fatalf("CheckChunk: %v", err)
 	}
 
-	x := mustLocalAt(t, result, stmts[0].(*ast.LocalAssignStmt), 0)
+	x := mustLocalAt(t, result, stmts[1].(*ast.LocalAssignStmt), 0)
 	exit, ok := result.ExitState()
 	if !ok {
 		t.Fatalf("missing exit state")
@@ -916,17 +919,7 @@ end`)
 			if !rootOK {
 				t.Fatalf("local i at point %d has no root assignment", candidate)
 			}
-			source := root.Source()
-			if !source.HasExpr {
-				t.Fatalf("local i root assignment source has no expr: %#v", source)
-			}
-			value, ok := result.facts.ExpressionValue(source.ExprRef)
-			if !ok {
-				t.Fatalf("local i source expr %d has no expression value", source.ExprRef)
-			}
-			if got, ok := typevalue.TypeOf(reg, value); !ok || !typ.TypeEquals(got, typ.LiteralInt(1)) {
-				t.Fatalf("local i source expr type = %v/%v, want literal 1", got, ok)
-			}
+			assertSourceLiteralInt(t, reg, result.facts, root.Source(), 1)
 			break
 		}
 	}
@@ -1013,6 +1006,29 @@ end`)
 	}
 	if !result.IndexReadSafeAtBoundary(point, indexPath, 1, 0, arrayPath) {
 		t.Fatalf("index read %s[%s] not marked safe at point %d despite range and positive proofs", arrayPath, indexPath, point)
+	}
+}
+
+func assertSourceLiteralInt(t *testing.T, reg *axis.Registry, facts factflow.Facts, source factflow.ValueSource, want int64) {
+	t.Helper()
+	switch source.Kind {
+	case factflow.ValueSourceLiteral:
+		if source.LiteralKind != factflow.ValueSourceLiteralInteger || source.Int != want {
+			t.Fatalf("literal source = %#v, want integer literal %d", source, want)
+		}
+	case factflow.ValueSourceExpression:
+		if !source.HasExpr {
+			t.Fatalf("expression source has no expr: %#v", source)
+		}
+		value, ok := facts.ExpressionValue(source.ExprRef)
+		if !ok {
+			t.Fatalf("source expr %d has no expression value", source.ExprRef)
+		}
+		if got, ok := typevalue.TypeOf(reg, value); !ok || !typ.TypeEquals(got, typ.LiteralInt(want)) {
+			t.Fatalf("source expr type = %v/%v, want literal %d", got, ok, want)
+		}
+	default:
+		t.Fatalf("source = %#v, want integer literal source", source)
 	}
 }
 

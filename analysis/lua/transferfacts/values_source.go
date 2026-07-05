@@ -135,7 +135,13 @@ func (l *lowerer) valueSourceFromWIROperand(
 }
 
 func (l *lowerer) callResultValueSourcesByTempFromWIR() map[uint32]wirCallResultSource {
+	if l.wirCallResults != nil {
+		return l.wirCallResults
+	}
 	out := make(map[uint32]wirCallResultSource)
+	if l == nil || l.wir == nil {
+		return out
+	}
 	for i := 0; i < l.wir.Len(); i++ {
 		inst := l.wir.Instr(i)
 		if inst.Op != wir.OpCall {
@@ -149,6 +155,7 @@ func (l *lowerer) callResultValueSourcesByTempFromWIR() map[uint32]wirCallResult
 			out[result.Ref] = wirCallResultSource{point: inst.Point, resultIndex: resultIndex}
 		}
 	}
+	l.wirCallResults = out
 	return out
 }
 

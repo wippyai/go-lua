@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -286,9 +287,22 @@ end
 		Bindings:      bindings,
 		ModuleExports: importlookup.Source{Manifests: []*manifest.Manifest{sqlManifest}},
 	})
-	facts := lowered.Facts
+	assertNeedReleaseImpliesDBValue(t, bindings, built.Graph, lowered.Facts)
+
+	body := wirlower.Lower("run", def.Func.Stmts, bindings, built)
+	wirFacts := Lower(result, built.Graph, Config{
+		Registry:      standard.Registry(),
+		Bindings:      bindings,
+		ModuleExports: importlookup.Source{Manifests: []*manifest.Manifest{sqlManifest}},
+		WIR:           body,
+	})
+	assertNeedReleaseImpliesDBValue(t, bindings, built.Graph, wirFacts)
+}
+
+func assertNeedReleaseImpliesDBValue(t *testing.T, bindings *bind.Result, graph cfg.Graph, facts factflow.Facts) {
+	t.Helper()
 	var found bool
-	for _, point := range built.Graph.RPO() {
+	for _, point := range graph.RPO() {
 		for _, implication := range facts.PathValuePresenceImplications(point) {
 			trigger := implication.TriggerPath()
 			target := implication.TargetPath()
@@ -303,7 +317,7 @@ end
 	}
 	if !found {
 		var got []factflow.PathValuePresenceImplication
-		for _, point := range built.Graph.RPO() {
+		for _, point := range graph.RPO() {
 			got = append(got, facts.PathValuePresenceImplications(point)...)
 		}
 		t.Fatalf("missing need_release=true => db has sql.get return value implication; got %#v", got)

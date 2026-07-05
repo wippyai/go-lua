@@ -324,10 +324,10 @@ func addPathEqualityProofFromSource(
 	targetPath pathdom.Path,
 	source factflow.ValueSource,
 ) state.State {
-	if resolver == nil || targetPath.Symbol == 0 || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+	if resolver == nil || targetPath.Symbol == 0 {
 		return out
 	}
-	sourcePath, ok := facts.ExpressionPathRef(source.ExprRef)
+	sourcePath, ok := sourcePathFromValueSource(resolver, facts, source)
 	if !ok || sourcePath.IsEmpty() || sourcePath.Symbol == 0 {
 		return out
 	}
@@ -336,10 +336,31 @@ func addPathEqualityProofFromSource(
 	// the narrow per-field facts would meet back onto the widened source through
 	// reference-equality member congruence, undoing the exposure widen. The eager
 	// source widen carries the sound widened type instead.
-	if covariantExposureSuppressesPathProof(facts, point, source) {
+	if covariantExposureSuppressesPathProof(facts, resolver, point, source) {
 		return out
 	}
 	return addPathEqualityProofAt(resolver, point, out, targetPath, sourcePath)
+}
+
+func sourcePathFromValueSource(
+	resolver *visibility.Resolver,
+	facts factflow.Facts,
+	source factflow.ValueSource,
+) (pathdom.Path, bool) {
+	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
+		return facts.ExpressionPathRef(source.ExprRef)
+	}
+	if source.Kind != factflow.ValueSourcePath || source.PathKey == "" || resolver == nil || resolver.KeySpace() == nil {
+		return pathdom.Path{}, false
+	}
+	key, ok := resolver.KeySpace().FromStateKey(source.PathKey)
+	if !ok || key.Sym == 0 {
+		return pathdom.Path{}, false
+	}
+	return pathdom.Path{
+		Symbol:   key.Sym,
+		Segments: resolver.KeySpace().Segments(key),
+	}, true
 }
 
 func addPathEqualityProofFromDynamicIndexSource(

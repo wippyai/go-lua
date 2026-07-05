@@ -22,12 +22,12 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func (l *lowerer) localAssignment(fact semantics.LocalAssignmentFact) (factflow.RootAssignment, bool) {
+func (l *lowerer) localAssignment(point cfg.Point, fact semantics.LocalAssignmentFact) (factflow.RootAssignment, bool) {
 	if !fact.HasSymbol || fact.Symbol == 0 {
 		return factflow.RootAssignment{}, false
 	}
 	target := path.NewPath(fact.Symbol, fact.Name)
-	source := l.valueSource(fact.Source)
+	source := l.assignmentSource(point, fact.Source)
 	if l.declaredValueApplies(fact) {
 		if declared, ok := l.declaredValue(fact.Type); ok {
 			return factflow.NewRootAssignmentWithDeclaredContractValue(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source, declared), true
@@ -356,10 +356,11 @@ func recordWithCallableFieldDepth(t typ.Type, depth int) bool {
 	}
 }
 
-func (l *lowerer) ordinaryAssignment(fact semantics.OrdinaryAssignmentFact) (factflow.RootAssignment, bool) {
+func (l *lowerer) ordinaryAssignment(point cfg.Point, fact semantics.OrdinaryAssignmentFact) (factflow.RootAssignment, bool) {
+	source := l.valueSource(fact.Source)
 	if !fact.HasSymbol || fact.Symbol == 0 {
 		if targetSymbol, targetPath, ok := l.globalTableFieldRootTarget(fact); ok {
-			return factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, targetSymbol, targetPath, l.valueSource(fact.Source)), true
+			return factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, targetSymbol, targetPath, source), true
 		}
 		return factflow.RootAssignment{}, false
 	}
@@ -370,7 +371,7 @@ func (l *lowerer) ordinaryAssignment(fact semantics.OrdinaryAssignmentFact) (fac
 	if len(target.Segments) != 0 {
 		return factflow.RootAssignment{}, false
 	}
-	return factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, fact.Symbol, target, l.valueSource(fact.Source)), true
+	return factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, fact.Symbol, target, source), true
 }
 
 func (l *lowerer) globalTableFieldRootTarget(fact semantics.OrdinaryAssignmentFact) (symbol.ID, path.Path, bool) {
@@ -458,21 +459,21 @@ func (l *lowerer) addAliasExposureToContractType(input *factflow.FactsInput, poi
 	l.addCovariantExposureType(input, point, sourcePath, contract)
 }
 
-func (l *lowerer) pathAssignment(fact semantics.OrdinaryAssignmentFact) (factflow.PathAssignment, bool) {
+func (l *lowerer) pathAssignment(point cfg.Point, fact semantics.OrdinaryAssignmentFact) (factflow.PathAssignment, bool) {
 	if !fact.HasPath || fact.Path.Symbol == 0 || len(fact.Path.Segments) == 0 {
 		return factflow.PathAssignment{}, false
 	}
 	return factflow.NewPathAssignment(fact.Path, l.valueSource(fact.Source)), true
 }
 
-func (l *lowerer) pathStaticMemberWrite(fact semantics.OrdinaryAssignmentFact) (factflow.PathStaticMemberWrite, bool) {
+func (l *lowerer) pathStaticMemberWrite(point cfg.Point, fact semantics.OrdinaryAssignmentFact) (factflow.PathStaticMemberWrite, bool) {
 	if !fact.HasPath || fact.Path.Symbol == 0 || len(fact.Path.Segments) == 0 {
 		return factflow.PathStaticMemberWrite{}, false
 	}
 	return factflow.NewPathStaticMemberWrite(fact.Path, l.valueSource(fact.Source)), true
 }
 
-func (l *lowerer) dynamicIndexWrite(fact semantics.OrdinaryAssignmentFact) (factflow.DynamicIndexWrite, bool) {
+func (l *lowerer) dynamicIndexWrite(point cfg.Point, fact semantics.OrdinaryAssignmentFact) (factflow.DynamicIndexWrite, bool) {
 	if fact.HasPath {
 		return factflow.DynamicIndexWrite{}, false
 	}

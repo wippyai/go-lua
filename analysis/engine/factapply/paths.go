@@ -69,13 +69,13 @@ func copySourcePathStaticMemberDescendantsAt(
 	targetPath pathdom.Path,
 	source factflow.ValueSource,
 ) state.State {
-	if resolver == nil || targetPath.Symbol == 0 || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+	if resolver == nil || targetPath.Symbol == 0 {
 		return out
 	}
-	if covariantExposureSuppressesPathProof(facts, point, source) {
+	if covariantExposureSuppressesPathProof(facts, resolver, point, source) {
 		return out
 	}
-	sourcePath, ok := facts.ExpressionPathRef(source.ExprRef)
+	sourcePath, ok := sourcePathFromValueSource(resolver, facts, source)
 	if !ok || sourcePath.IsEmpty() || sourcePath.Symbol == 0 {
 		return out
 	}

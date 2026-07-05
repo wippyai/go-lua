@@ -173,6 +173,50 @@ func TestFactsNodeTransferRootAssignmentAddsPathEqualityProofForPathSource(t *te
 	}
 }
 
+func TestFactsNodeTransferRootAssignmentAddsPathEqualityProofForWIRPathSource(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(120)
+	target := symbol.ID(120)
+	sourceSymbol := symbol.ID(121)
+	targetPath := path.NewPath(target, "alias")
+	sourcePath := path.NewPath(sourceSymbol, "box")
+	source, ok := factflow.NewPathValueSource(sourcePath.Key(), 0, 0, 0, factflow.ValueSourceShape{})
+	if !ok {
+		t.Fatalf("NewPathValueSource(%q) failed", sourcePath.Key())
+	}
+	assigned := presentValue(reg)
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{source: assigned},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "alias")
+	visibilityBuilder.Define(point, sourceSymbol, "box")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			RootAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, targetPath, source),
+			},
+		}),
+		Sources:    sources,
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	proof := pathevidence.BranchProof{
+		Kind:  pathevidence.BranchProofPathEqual,
+		Path:  mustStateKey(t, ks, path.PathKey("sym120@1")),
+		Other: mustStateKey(t, ks, path.PathKey("sym121@1")),
+	}
+	if !got.HasBranchProof(proof) {
+		t.Fatalf("missing path equality proof %#v", proof)
+	}
+}
+
 func TestFactsNodeTransferRootAssignmentAddsPathEqualityProofForKnownDynamicIndexSource(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(121)
