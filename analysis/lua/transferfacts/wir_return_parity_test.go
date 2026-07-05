@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -175,5 +176,23 @@ end
 	sources := returnFact.Sources()
 	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr {
 		t.Fatalf("return sources = %#v, want semantic expression fallback", sources)
+	}
+}
+
+func TestLowerWithWIRReturnSourcesDoesNotFallbackWhenReturnInstructionMissing(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(value: string): string
+    return value
+end
+`)
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
+	}
+	points := requireStmtPoints(t, built, ret, 1)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: wir.NewBody("empty")})
+
+	if _, ok := facts.Return(points[0]); ok {
+		t.Fatalf("WIR mode return at point %d fell back to semantic sidecar", points[0])
 	}
 }

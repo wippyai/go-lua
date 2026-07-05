@@ -158,6 +158,11 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			fact, _ := view.Borrowed()
 			if sources, ok := l.returnValueSourcesFromWIR(point); ok {
 				input.Returns[point] = factflow.NewReturn(sources)
+			} else if l.wir != nil {
+				if _, hasWIRReturn := l.wirReturnInstruction(point); !hasWIRReturn {
+					continue
+				}
+				input.Returns[point] = factflow.NewReturn(l.returnValueSources(fact.Sources, result))
 			} else {
 				input.Returns[point] = factflow.NewReturn(l.returnValueSources(fact.Sources, result))
 			}

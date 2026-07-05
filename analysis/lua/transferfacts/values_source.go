@@ -35,17 +35,8 @@ func (l *lowerer) returnValueSources(sources []sourceprovenance.ASTSource, resul
 }
 
 func (l *lowerer) returnValueSourcesFromWIR(point cfg.Point) ([]factflow.ValueSource, bool) {
-	if l == nil || l.wir == nil {
-		return nil, false
-	}
-	var ret wir.Instruction
-	for _, inst := range l.wir.PointInstructions(point) {
-		if inst.Op == wir.OpReturn {
-			ret = inst
-			break
-		}
-	}
-	if ret.Op != wir.OpReturn {
+	ret, ok := l.wirReturnInstruction(point)
+	if !ok {
 		return nil, false
 	}
 	ops := l.wir.Operands(ret.List)
@@ -60,6 +51,18 @@ func (l *lowerer) returnValueSourcesFromWIR(point cfg.Point) ([]factflow.ValueSo
 		out[i] = source
 	}
 	return out, true
+}
+
+func (l *lowerer) wirReturnInstruction(point cfg.Point) (wir.Instruction, bool) {
+	if l == nil || l.wir == nil {
+		return wir.Instruction{}, false
+	}
+	for _, inst := range l.wir.PointInstructions(point) {
+		if inst.Op == wir.OpReturn {
+			return inst, true
+		}
+	}
+	return wir.Instruction{}, false
 }
 
 func (l *lowerer) returnValueSourceFromWIROperand(
