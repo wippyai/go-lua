@@ -464,14 +464,14 @@ func (l *lowerer) pathAssignment(point cfg.Point, fact semantics.OrdinaryAssignm
 	if !fact.HasPath || fact.Path.Symbol == 0 || len(fact.Path.Segments) == 0 {
 		return factflow.PathAssignment{}, false
 	}
-	return factflow.NewPathAssignment(fact.Path, l.valueSource(fact.Source)), true
+	return factflow.NewPathAssignment(fact.Path, l.assignmentSource(point, fact.Source)), true
 }
 
 func (l *lowerer) pathStaticMemberWrite(point cfg.Point, fact semantics.OrdinaryAssignmentFact) (factflow.PathStaticMemberWrite, bool) {
 	if !fact.HasPath || fact.Path.Symbol == 0 || len(fact.Path.Segments) == 0 {
 		return factflow.PathStaticMemberWrite{}, false
 	}
-	return factflow.NewPathStaticMemberWrite(fact.Path, l.valueSource(fact.Source)), true
+	return factflow.NewPathStaticMemberWrite(fact.Path, l.assignmentSource(point, fact.Source)), true
 }
 
 func (l *lowerer) dynamicIndexWrite(point cfg.Point, fact semantics.OrdinaryAssignmentFact) (factflow.DynamicIndexWrite, bool) {
@@ -483,7 +483,7 @@ func (l *lowerer) dynamicIndexWrite(point cfg.Point, fact semantics.OrdinaryAssi
 		return factflow.DynamicIndexWrite{}, false
 	}
 	keySource, readKey := l.dynamicIndexKeySource(point, fact.Target)
-	source := l.valueSource(fact.Source)
+	source := l.assignmentSource(point, fact.Source)
 	readValue := fact.Source.Kind != sourceprovenance.SourceUnknown
 	write := factflow.NewDynamicIndexWrite(
 		tablePath,
