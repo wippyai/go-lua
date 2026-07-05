@@ -157,6 +157,53 @@ local v = number(data)
 	}
 }
 
+func TestLowerPrimitiveTypeCastFactsFromWIRWithoutSemanticCallView(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local data: any = 1
+local v = 0
+`, "number")
+	dataStmt := mustLocalStmt(t, stmts, 0)
+	localStmt := mustLocalStmt(t, stmts, 1)
+	point := requireStmtPoints(t, built, localStmt, 1)[0]
+	if _, ok := result.CallView(point); ok {
+		t.Fatalf("test point %d unexpectedly has semantic call view", point)
+	}
+	dataPath := path.NewPath(mustLocalAt(t, bindings, dataStmt, 0), "data")
+	numberSym, ok := bindings.GlobalSymbol("number")
+	if !ok {
+		t.Fatal("missing number global symbol")
+	}
+	numberPath := path.NewPath(numberSym, "number")
+
+	body := wir.NewBody("synthetic-primitive-cast-no-call-view")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpCall,
+		Point: point,
+		Call:  wir.CallInfo{Callee: wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(numberPath))}},
+		List:  body.AppendOperands([]wir.Operand{{Kind: wir.OperandPath, Ref: uint32(body.InternPath(dataPath))}}),
+	})
+	body.SetPointRange(point, start, start+1)
+
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	refinements := facts.PostconditionRefinements(point)
+	if len(refinements) != 1 {
+		t.Fatalf("WIR primitive cast postconditions = %d, want 1: %#v", len(refinements), refinements)
+	}
+	if !refinements[0].TargetPath().Equal(dataPath) {
+		t.Fatalf("postcondition target = %s, want %s", refinements[0].TargetPath(), dataPath)
+	}
+	got, ok := typevalue.TypeOf(reg, refinementConstraint(t, refinements[0].Value()))
+	if !ok || !typ.TypeEquals(got, typ.Number) {
+		t.Fatalf("postcondition type witness = %v/%v, want number", got, ok)
+	}
+	results := facts.CallResultValues(point)
+	if len(results) != 1 {
+		t.Fatalf("WIR primitive cast result values = %d, want 1: %#v", len(results), results)
+	}
+	assertTypeIsRuntimeProof(t, reg, results[0].Value(), typ.Number)
+}
+
 func TestLowerPrimitiveTypeCastCallRespectsValueShadow(t *testing.T) {
 	reg := standard.Registry()
 	stmts, bindings, built, result := parseSemanticChunk(t, `

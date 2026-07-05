@@ -197,6 +197,12 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			if lowered := l.typeIsCallResultValuesFromWIR(point); len(lowered) != 0 {
 				appendCallResultValues(input.CallResultValues, point, lowered...)
 			}
+			if lowered, ok := l.typeCastPostconditionRefinementFromWIR(point); ok {
+				appendPostconditionRefinements(input.PostconditionRefinements, point, lowered)
+			}
+			if lowered, ok := l.typeCastCallResultValueFromWIR(point); ok {
+				appendCallResultValues(input.CallResultValues, point, lowered)
+			}
 		}
 		if view, ok := result.CallView(point); ok {
 			fact, _ := view.Borrowed()
@@ -224,15 +230,22 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			if lowered, ok := l.assertPostconditionRefinement(fact); ok {
 				input.PostconditionRefinements[point] = factflow.NewPostconditionRefinementSet(lowered)
 			}
-			if lowered, ok := l.typeCastPostconditionRefinement(point, fact); ok {
-				appendPostconditionRefinements(input.PostconditionRefinements, point, lowered)
-			}
-			if lowered, ok := l.typeCastCallResultValue(point, fact); ok {
-				appendCallResultValues(input.CallResultValues, point, lowered)
-			}
 			if l.wir == nil {
+				if lowered, ok := l.typeCastPostconditionRefinement(point, fact); ok {
+					appendPostconditionRefinements(input.PostconditionRefinements, point, lowered)
+				}
+				if lowered, ok := l.typeCastCallResultValue(point, fact); ok {
+					appendCallResultValues(input.CallResultValues, point, lowered)
+				}
 				if lowered := l.typeIsCallResultValues(point, fact); len(lowered) != 0 {
 					appendCallResultValues(input.CallResultValues, point, lowered...)
+				}
+			} else if _, _, ok := l.directTypeCastCallFromWIR(point); !ok {
+				if lowered, ok := l.typeCastPostconditionRefinement(point, fact); ok {
+					appendPostconditionRefinements(input.PostconditionRefinements, point, lowered)
+				}
+				if lowered, ok := l.typeCastCallResultValue(point, fact); ok {
+					appendCallResultValues(input.CallResultValues, point, lowered)
 				}
 			}
 		}

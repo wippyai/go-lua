@@ -84,6 +84,22 @@ func (l *lowerer) typeCastCallResultValue(point cfg.Point, fact semantics.CallFa
 	return factflow.NewCallResultValue(0, l.typeIsProofValue(t)), true
 }
 
+func (l *lowerer) typeCastPostconditionRefinementFromWIR(point cfg.Point) (factflow.PostconditionRefinement, bool) {
+	t, argPath, ok := l.directTypeCastCallFromWIR(point)
+	if !ok {
+		return factflow.PostconditionRefinement{}, false
+	}
+	return factflow.NewPostconditionRefinement(argPath, factflow.NewValueConstraint(l.untrustedTypeWitnessValue(t))), true
+}
+
+func (l *lowerer) typeCastCallResultValueFromWIR(point cfg.Point) (factflow.CallResultValue, bool) {
+	t, _, ok := l.directTypeCastCallFromWIR(point)
+	if !ok {
+		return factflow.CallResultValue{}, false
+	}
+	return factflow.NewCallResultValue(0, l.typeIsProofValue(t)), true
+}
+
 func (l *lowerer) directTypeCastCall(fact semantics.CallFact) (typ.Type, path.Path, bool) {
 	call, ok := branchcond.TypeCall(fact.Call)
 	if !ok {
@@ -114,11 +130,20 @@ func (l *lowerer) directTypeCastCallAt(point cfg.Point, fact semantics.CallFact)
 	return t, argPath, true
 }
 
-func (l *lowerer) typeCastCalleeTypeFromWIR(point cfg.Point, fact semantics.CallFact) (typ.Type, bool) {
-	if l == nil || l.wir == nil || l.bindings == nil {
-		return nil, false
+func (l *lowerer) directTypeCastCallFromWIR(point cfg.Point) (typ.Type, path.Path, bool) {
+	t, ok := l.typeCastCalleeTypeFromWIRCall(point)
+	if !ok {
+		return nil, path.Path{}, false
 	}
-	if _, ok := branchcond.TypeCall(fact.Call); !ok {
+	argPath, ok := l.callArgumentPathFromWIR(point, 0)
+	if !ok {
+		return nil, path.Path{}, false
+	}
+	return t, argPath, true
+}
+
+func (l *lowerer) typeCastCalleeTypeFromWIRCall(point cfg.Point) (typ.Type, bool) {
+	if l == nil || l.wir == nil || l.bindings == nil {
 		return nil, false
 	}
 	calleePath, ok := l.callCalleePathFromWIR(point)
@@ -130,6 +155,13 @@ func (l *lowerer) typeCastCalleeTypeFromWIR(point cfg.Point, fact semantics.Call
 		return nil, false
 	}
 	return t, true
+}
+
+func (l *lowerer) typeCastCalleeTypeFromWIR(point cfg.Point, fact semantics.CallFact) (typ.Type, bool) {
+	if _, ok := branchcond.TypeCall(fact.Call); !ok {
+		return nil, false
+	}
+	return l.typeCastCalleeTypeFromWIRCall(point)
 }
 
 func (l *lowerer) typeCastArgumentPathFromWIR(point cfg.Point, fact semantics.CallFact) (path.Path, bool) {
