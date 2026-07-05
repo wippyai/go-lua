@@ -238,7 +238,7 @@ func (b *builder) lowerLocalAssign(s *ast.LocalAssignStmt) {
 	for i := range s.Names {
 		b.curPoint = assignPoints[i]
 		dst := b.localPath(s, i)
-		b.bindInto(dst, values[i])
+		b.bindInto(dst, values[i].withTarget(wir.CallResultTargetLocalAssignment, i))
 		if i < len(s.Types) && s.Types[i] != nil {
 			b.emit(wir.Instruction{
 				Op:    wir.OpClaim,
@@ -262,13 +262,14 @@ func (b *builder) lowerAssign(s *ast.AssignStmt) {
 	values := b.planValues(len(s.Lhs), s.Rhs)
 	for i, target := range s.Lhs {
 		b.curPoint = assignPoints[i]
-		b.lowerAssignTarget(target, values[i])
+		b.lowerAssignTarget(i, target, values[i])
 	}
 }
 
 // lowerAssignTarget writes a pre-planned value into one assignment target,
 // choosing the write op by target shape.
-func (b *builder) lowerAssignTarget(target ast.Expr, v binding) {
+func (b *builder) lowerAssignTarget(index int, target ast.Expr, v binding) {
+	v = v.withTarget(wir.CallResultTargetOrdinaryAssignment, index)
 	switch t := target.(type) {
 	case *ast.IdentExpr:
 		dst, _ := b.targetOperand(t)
@@ -281,7 +282,7 @@ func (b *builder) lowerAssignTarget(target ast.Expr, v binding) {
 				A:   b.bindingOperand(v),
 			})
 			if v.hasCallResult {
-				b.body.SetCallResultTarget(v.callPoint, v.resultIndex, p)
+				b.recordCallResultTargetPath(v, p)
 			}
 			return
 		}
@@ -292,6 +293,9 @@ func (b *builder) lowerAssignTarget(target ast.Expr, v binding) {
 			A:   b.lowerExpr(t.Key),
 			B:   b.bindingOperand(v),
 		})
+		if v.hasCallResult {
+			b.recordCallResultTargetPath(v, path.Path{})
+		}
 	default:
 		dst := b.newTemp()
 		b.bindInto(dst, v)
@@ -320,9 +324,17 @@ type binding struct {
 	hasCallResult bool
 	callPoint     cfg.Point
 	resultIndex   int
+	targetKind    wir.CallResultTargetKind
+	targetIndex   int
 
 	claim     wir.ClaimKind
 	claimType wir.TypeRef
+}
+
+func (v binding) withTarget(kind wir.CallResultTargetKind, index int) binding {
+	v.targetKind = kind
+	v.targetIndex = index
+	return v
 }
 
 // planValues maps n destinations to their source values, preserving Lua tail
@@ -425,7 +437,19 @@ func (b *builder) recordCallResultTarget(dst wir.Operand, v binding) {
 	if !v.hasCallResult || dst.Kind != wir.OperandPath {
 		return
 	}
-	b.body.SetCallResultTarget(v.callPoint, v.resultIndex, b.body.Path(wir.PathRef(dst.Ref)))
+	b.recordCallResultTargetPath(v, b.body.Path(wir.PathRef(dst.Ref)))
+}
+
+func (b *builder) recordCallResultTargetPath(v binding, p path.Path) {
+	if !v.hasCallResult {
+		return
+	}
+	b.body.SetCallResultTarget(v.callPoint, wir.CallResultTarget{
+		Kind:        v.targetKind,
+		Index:       v.targetIndex,
+		ResultIndex: v.resultIndex,
+		Path:        p,
+	})
 }
 
 // bindingOperand reduces a planned value to a single operand (for member/index

@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -26,7 +27,7 @@ func (l *lowerer) callSiteResultTargetsFromWIR(point cfg.Point, targets []semant
 	}
 	for i, lowered := range out {
 		target, ok := l.wir.CallResultTarget(point, lowered.ResultIndex())
-		if !ok || target.Path.IsEmpty() {
+		if !ok {
 			if callResultTargetNeedsWIRPath(lowered) {
 				out[i] = factflow.NewCallResultTarget(
 					lowered.Kind(),
@@ -38,19 +39,43 @@ func (l *lowerer) callSiteResultTargetsFromWIR(point cfg.Point, targets []semant
 			}
 			continue
 		}
-		targetSymbol := lowered.TargetSymbol()
-		if targetSymbol == 0 {
-			targetSymbol = target.Path.Symbol
-		}
-		out[i] = factflow.NewCallResultTarget(
-			lowered.Kind(),
-			lowered.Index(),
-			lowered.ResultIndex(),
-			targetSymbol,
-			target.Path,
-		)
+		out[i] = lowerWIRCallResultTarget(target, lowered)
 	}
 	return out
+}
+
+func lowerWIRCallResultTarget(target wir.CallResultTarget, fallback factflow.CallResultTarget) factflow.CallResultTarget {
+	targetKind := factflow.CallResultTargetUnknown
+	switch target.Kind {
+	case wir.CallResultTargetLocalAssignment:
+		targetKind = factflow.CallResultTargetLocalAssignment
+	case wir.CallResultTargetOrdinaryAssignment:
+		targetKind = factflow.CallResultTargetOrdinaryAssignment
+	case wir.CallResultTargetReturn:
+		targetKind = factflow.CallResultTargetReturn
+	case wir.CallResultTargetExpression:
+		targetKind = factflow.CallResultTargetExpression
+	default:
+		targetKind = fallback.Kind()
+	}
+	targetIndex := target.Index
+	if targetIndex < 0 {
+		targetIndex = fallback.Index()
+	}
+	resultIndex := target.ResultIndex
+	if resultIndex < 0 {
+		resultIndex = fallback.ResultIndex()
+	}
+	targetSymbol := symbol.ID(0)
+	if !target.Path.IsEmpty() {
+		targetSymbol = target.Path.Symbol
+	} else {
+		targetSymbol = fallback.TargetSymbol()
+		if callResultTargetNeedsWIRPath(fallback) {
+			targetSymbol = 0
+		}
+	}
+	return factflow.NewCallResultTarget(targetKind, targetIndex, resultIndex, targetSymbol, target.Path)
 }
 
 func callResultTargetNeedsWIRPath(target factflow.CallResultTarget) bool {

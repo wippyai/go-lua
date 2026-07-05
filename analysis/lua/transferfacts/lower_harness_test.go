@@ -869,7 +869,12 @@ end
 		List:  body.AppendOperands([]wir.Operand{{Kind: wir.OperandPath, Ref: uint32(body.InternPath(eventsPath))}}),
 	})
 	body.SetPointRange(point, start, start+1)
-	body.SetCallResultTarget(point, 0, selectedPath)
+	body.SetCallResultTarget(point, wir.CallResultTarget{
+		Kind:        wir.CallResultTargetLocalAssignment,
+		Index:       0,
+		ResultIndex: 0,
+		Path:        selectedPath,
+	})
 
 	if _, ok := result.CallView(point); ok {
 		t.Fatalf("fixture unexpectedly has semantic call view at point %d", point)

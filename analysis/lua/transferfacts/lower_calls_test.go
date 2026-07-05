@@ -190,7 +190,12 @@ end
 		Results: body.AppendOperands([]wir.Operand{resultTemp}),
 	})
 	body.SetPointRange(callPoint, start, start+1)
-	body.SetCallResultTarget(callPoint, 0, otherPath)
+	body.SetCallResultTarget(callPoint, wir.CallResultTarget{
+		Kind:        wir.CallResultTargetOrdinaryAssignment,
+		Index:       0,
+		ResultIndex: 0,
+		Path:        otherPath,
+	})
 
 	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	site, ok := facts.CallSite(callPoint)
@@ -252,6 +257,52 @@ end
 	}
 }
 
+func TestLowerCallSiteResultTargetShapeComesFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): ()
+    local value = make()
+end
+`, "make")
+	localStmt, ok := fn.Stmts[0].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want local assignment", fn.Stmts[0])
+	}
+	callPoint := requireStmtPoints(t, built, localStmt, 2)[0]
+	makeSym, ok := bindings.GlobalSymbol("make")
+	if !ok {
+		t.Fatal("missing make global symbol")
+	}
+	makePath := path.NewPath(makeSym, "make")
+
+	body := wir.NewBody("synthetic-call-target-shape")
+	resultTemp := wir.Operand{Kind: wir.OperandTemp, Ref: 1}
+	start := body.Emit(wir.Instruction{
+		Op:      wir.OpCall,
+		Point:   callPoint,
+		Call:    wir.CallInfo{Callee: wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(makePath))}},
+		Results: body.AppendOperands([]wir.Operand{resultTemp}),
+	})
+	body.SetPointRange(callPoint, start, start+1)
+	body.SetCallResultTarget(callPoint, wir.CallResultTarget{
+		Kind:        wir.CallResultTargetExpression,
+		Index:       42,
+		ResultIndex: 0,
+	})
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	site, ok := facts.CallSite(callPoint)
+	if !ok {
+		t.Fatalf("missing WIR call site at point %d", callPoint)
+	}
+	targets := site.ResultTargets()
+	if len(targets) != 1 {
+		t.Fatalf("call result targets = %#v, want one", targets)
+	}
+	if targets[0].Kind() != factflow.CallResultTargetExpression || targets[0].Index() != 42 {
+		t.Fatalf("call result target shape = %v/%d, want WIR expression/42", targets[0].Kind(), targets[0].Index())
+	}
+}
+
 func TestLowerCallResultTargetPathAccessorComesFromWIR(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(): ()
@@ -284,7 +335,12 @@ end
 		Call:  wir.CallInfo{Callee: wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(makePath))}},
 	})
 	body.SetPointRange(callPoint, start, start+1)
-	body.SetCallResultTarget(callPoint, 0, otherPath)
+	body.SetCallResultTarget(callPoint, wir.CallResultTarget{
+		Kind:        wir.CallResultTargetOrdinaryAssignment,
+		Index:       0,
+		ResultIndex: 0,
+		Path:        otherPath,
+	})
 
 	got, ok := (&lowerer{wir: body}).callResultTargetPath(callPoint, fact, 0)
 	if !ok || !got.Equal(otherPath) || got.Equal(valuePath) {

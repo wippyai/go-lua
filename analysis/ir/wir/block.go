@@ -56,12 +56,25 @@ type FuncProto struct {
 	Type typ.Type
 }
 
-// CallResultTarget records where a call result is subsequently bound when that
-// target is statically known. It is structural WIR metadata, not a semantic
-// conclusion: lowering records the syntax-level result flow and transfer decides
-// what facts that flow implies.
+// CallResultTargetKind classifies the syntactic consumer of a call result.
+type CallResultTargetKind uint8
+
+const (
+	CallResultTargetUnknown CallResultTargetKind = iota
+	CallResultTargetLocalAssignment
+	CallResultTargetOrdinaryAssignment
+	CallResultTargetReturn
+	CallResultTargetExpression
+)
+
+// CallResultTarget records where a call result is subsequently consumed. It is
+// structural WIR metadata, not a semantic conclusion: lowering records the
+// syntax-level result flow and transfer decides what facts that flow implies.
 type CallResultTarget struct {
-	Path path.Path
+	Kind        CallResultTargetKind
+	Index       int
+	ResultIndex int
+	Path        path.Path
 }
 
 // TableEntry records one statically-addressable table-constructor entry. Suffix
@@ -374,26 +387,55 @@ func (b *Body) Protos() []FuncProto {
 	return b.protos[1:]
 }
 
-// SetCallResultTarget records the statically known path that receives result
-// index from the call/select instruction at point.
-func (b *Body) SetCallResultTarget(point cfg.Point, index int, p path.Path) {
-	if b == nil || index < 0 || p.IsEmpty() {
+// SetCallResultTarget records the syntactic consumer of one result from the
+// call/select instruction at point.
+func (b *Body) SetCallResultTarget(point cfg.Point, target CallResultTarget) {
+	if b == nil || target.ResultIndex < 0 {
 		return
 	}
 	if b.callTargets == nil {
 		b.callTargets = make(map[callResultTargetKey]CallResultTarget)
 	}
-	b.callTargets[callResultTargetKey{point: point, index: index}] = CallResultTarget{Path: p}
+	target.Path = target.Path.Clone()
+	b.callTargets[callResultTargetKey{point: point, index: target.ResultIndex}] = target
 }
 
-// CallResultTarget returns the statically known path receiving a call/select
+// CallResultTarget returns the statically known consumer of a call/select
 // result, if lowering could determine one.
 func (b *Body) CallResultTarget(point cfg.Point, index int) (CallResultTarget, bool) {
 	if b == nil || b.callTargets == nil || index < 0 {
 		return CallResultTarget{}, false
 	}
 	target, ok := b.callTargets[callResultTargetKey{point: point, index: index}]
+	target.Path = target.Path.Clone()
 	return target, ok
+}
+
+// CallResultTargets returns every call/select result target recorded at point,
+// ordered by result index.
+func (b *Body) CallResultTargets(point cfg.Point) []CallResultTarget {
+	if b == nil || b.callTargets == nil {
+		return nil
+	}
+	max := -1
+	for key := range b.callTargets {
+		if key.point == point && key.index > max {
+			max = key.index
+		}
+	}
+	if max < 0 {
+		return nil
+	}
+	out := make([]CallResultTarget, 0, max+1)
+	for i := 0; i <= max; i++ {
+		target, ok := b.callTargets[callResultTargetKey{point: point, index: i}]
+		if !ok {
+			continue
+		}
+		target.Path = target.Path.Clone()
+		out = append(out, target)
+	}
+	return out
 }
 
 // AppendOperands copies ops into the shared pool and returns their range.

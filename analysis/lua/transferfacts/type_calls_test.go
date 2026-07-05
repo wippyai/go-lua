@@ -340,8 +340,18 @@ end
 		Results: body.AppendOperands([]wir.Operand{valueTemp, errTemp}),
 	})
 	body.SetPointRange(callPoint, callStart, callStart+1)
-	body.SetCallResultTarget(callPoint, 0, valuePath)
-	body.SetCallResultTarget(callPoint, 1, errPath)
+	body.SetCallResultTarget(callPoint, wir.CallResultTarget{
+		Kind:        wir.CallResultTargetLocalAssignment,
+		Index:       0,
+		ResultIndex: 0,
+		Path:        valuePath,
+	})
+	body.SetCallResultTarget(callPoint, wir.CallResultTarget{
+		Kind:        wir.CallResultTargetLocalAssignment,
+		Index:       1,
+		ResultIndex: 1,
+		Path:        errPath,
+	})
 	valueAssignStart := body.Emit(wir.Instruction{
 		Op:    wir.OpAssign,
 		Point: valueAssignPoint,
