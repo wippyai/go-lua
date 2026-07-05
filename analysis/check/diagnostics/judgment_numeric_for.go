@@ -3,8 +3,6 @@ package diagnostics
 import (
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
-	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func renderNumericForJudgmentWithPolicy(item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
@@ -15,65 +13,19 @@ func renderNumericForJudgmentWithPolicy(item judgment.Judgment, policy judgment.
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
-	got := item.Actual.ProjectedType
-	if got == nil {
-		return diagnostic.Diagnostic{}, false
-	}
-	role := item.Expected.Label
-	if role == "" {
-		role = item.Subject.Label
-	}
-	if role == "" {
-		role = "operand"
-	}
 	span := diagnosticSpanFromJudgment(item.Spans[0])
-	evidence := []diagnostic.Evidence{
-		{
-			Kind:    diagnostic.EvidenceAbstractFact,
-			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
-			Span:    diagnosticEvidenceSpanOr(item, judgment.EvidenceAbstractFact, span),
-			Message: numericForOperandTypeEvidence(role, got),
-		},
-	}
-	if item.HasEvidence(judgment.EvidenceUserAssertion) {
-		evidence = append(evidence, numericForJudgmentExplicitTopEvidence(item, span)...)
+	presentation, ok := diagnosticProofContext().NumericFor(item, span)
+	if !ok {
+		return diagnostic.Diagnostic{}, false
 	}
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		File:        item.Spans[0].File,
 		Span:        span,
 		Code:        CodeNumericForOperand,
 		Severity:    severity,
-		Message:     numericForOperandMessage(role, got),
-		Explanation: diagnostic.NewExplanation(evidence...),
-		Help:        numericForOperandHelp(role),
-		Labels:      []diagnostic.Label{sourceLabel(span, role)},
+		Message:     presentation.Message,
+		Explanation: diagnostic.NewExplanation(presentation.Evidence...),
+		Help:        presentation.Help,
+		Labels:      presentation.Labels,
 	}), true
-}
-
-func numericForJudgmentExplicitTopEvidence(item judgment.Judgment, span diagnostic.Span) []diagnostic.Evidence {
-	subject := "assigned value"
-	want := item.Expected.Type
-	if want == nil {
-		want = typ.Number
-	}
-	out := diagnostic.AssertionEvidence(span, assertion.Any())
-	if item.HasEvidence(judgment.EvidencePrecisionBoundary) {
-		out = append(out, diagnostic.Evidence{
-			Kind:    diagnostic.EvidencePrecisionBoundary,
-			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidencePrecisionBoundary, diagnostic.TrustUnknown),
-			Reason:  diagnostic.EvidenceReasonExplicitBoundaryValidation,
-			Span:    diagnosticEvidenceSpanOr(item, judgment.EvidencePrecisionBoundary, span),
-			Message: explicitBoundaryProofMessageForSubject(subject, want),
-		})
-	}
-	if item.HasEvidence(judgment.EvidenceMissingProof) {
-		out = append(out, diagnostic.Evidence{
-			Kind:    diagnostic.EvidenceMissingProof,
-			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceMissingProof, diagnostic.TrustUnknown),
-			Reason:  diagnostic.EvidenceReasonBoundaryValidationMissing,
-			Span:    diagnosticEvidenceSpanOr(item, judgment.EvidenceMissingProof, span),
-			Message: missingBoundaryProofMessageForSubject(subject, want),
-		})
-	}
-	return out
 }
