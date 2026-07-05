@@ -404,6 +404,43 @@ func TestImpliedChecksOnEdgePreservesOuterEdgeAndLeafPolarity(t *testing.T) {
 	}
 }
 
+func TestImpliedRelationalOpsOnEdgePreservesRawRelops(t *testing.T) {
+	i := ident("i")
+	xs := ident("xs")
+	j := ident("j")
+	limit := ident("limit")
+	first := &ast.RelationalOpExpr{
+		Operator: "<=",
+		Lhs:      &ast.ArithmeticOpExpr{Operator: "+", Lhs: i, Rhs: number("1")},
+		Rhs:      lenOf(xs),
+	}
+	second := &ast.RelationalOpExpr{Operator: "<", Lhs: j, Rhs: limit}
+	expr := &ast.UnaryNotOpExpr{
+		Expr: &ast.LogicalOpExpr{
+			Operator: "and",
+			Lhs:      first,
+			Rhs:      second,
+		},
+	}
+
+	got := ImpliedRelationalOpsOnEdge(expr, false)
+
+	if len(got) != 2 {
+		t.Fatalf("ImpliedRelationalOpsOnEdge returned %d ops, want 2: %#v", len(got), got)
+	}
+	if got[0].Expr != first || got[1].Expr != second {
+		t.Fatalf("relational expressions = %p/%p, want %p/%p", got[0].Expr, got[1].Expr, first, second)
+	}
+	for idx, implied := range got {
+		if implied.Edge {
+			t.Fatalf("implied relop %d edge = true, want false outer edge", idx)
+		}
+		if !implied.Polarity {
+			t.Fatalf("implied relop %d polarity = false, want true leaf condition", idx)
+		}
+	}
+}
+
 func TestFalsyChecksExtractSupportedDisjuncts(t *testing.T) {
 	pageRoot := ident("page")
 	fieldRoot := ident("page")

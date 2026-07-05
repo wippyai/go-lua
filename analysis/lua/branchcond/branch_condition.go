@@ -59,6 +59,16 @@ type ImpliedCheck struct {
 	Polarity bool
 }
 
+// ImpliedRelationalOp is a raw relational comparison proven by taking a
+// particular branch edge. It is the source-preserving sibling of ImpliedCheck:
+// callers that need the original expression shape, such as difference-logic
+// extraction, use Expr while sharing the same boolean implication traversal.
+type ImpliedRelationalOp struct {
+	Expr     *ast.RelationalOpExpr
+	Edge     bool
+	Polarity bool
+}
+
 func (c Check) LiteralValue() (typ.Type, bool) {
 	if c.Literal != nil {
 		return c.Literal, true
@@ -166,6 +176,13 @@ func ImpliedChecksOnEdge(expr ast.Expr, bindings *bind.Result, edge bool) []Impl
 	return impliedChecks(expr, bindings, edge, edge)
 }
 
+// ImpliedRelationalOpsOnEdge returns relational leaf expressions whose value is
+// known on the requested outer branch edge. Unlike ImpliedChecksOnEdge it does
+// not normalize the comparison; the caller owns interpreting the raw relop.
+func ImpliedRelationalOpsOnEdge(expr ast.Expr, edge bool) []ImpliedRelationalOp {
+	return impliedRelationalOps(expr, edge, edge)
+}
+
 // SufficientChecksOnEdge returns leaf checks that, by themselves, force the
 // requested outer branch edge. For example, any true disjunct is sufficient for
 // an OR true edge, while a true OR edge does not imply that any particular
@@ -268,6 +285,36 @@ func impliedChecks(expr ast.Expr, bindings *bind.Result, polarity bool, edge boo
 	out = append(out, left...)
 	out = append(out, right...)
 	return out
+}
+
+func impliedRelationalOps(expr ast.Expr, polarity bool, edge bool) []ImpliedRelationalOp {
+	switch e := sourceprovenance.AssertionInner(expr).(type) {
+	case *ast.RelationalOpExpr:
+		return []ImpliedRelationalOp{{Expr: e, Edge: edge, Polarity: polarity}}
+	case *ast.UnaryNotOpExpr:
+		return impliedRelationalOps(e.Expr, !polarity, edge)
+	case *ast.LogicalOpExpr:
+		splitOp := "and"
+		if !polarity {
+			splitOp = "or"
+		}
+		if e.Operator != splitOp {
+			return nil
+		}
+		left := impliedRelationalOps(e.Lhs, polarity, edge)
+		right := impliedRelationalOps(e.Rhs, polarity, edge)
+		if len(left) == 0 {
+			return right
+		}
+		if len(right) == 0 {
+			return left
+		}
+		out := make([]ImpliedRelationalOp, 0, len(left)+len(right))
+		out = append(out, left...)
+		out = append(out, right...)
+		return out
+	}
+	return nil
 }
 
 func normalizePathComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {

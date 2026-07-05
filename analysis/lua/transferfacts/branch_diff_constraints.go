@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -16,40 +17,13 @@ import (
 // #xs > 0) are left to the numeric- and length-floor lanes.
 func (l *lowerer) branchDiffConstraints(fact semantics.BranchConditionFact) []factflow.BranchDiffConstraint {
 	var out []factflow.BranchDiffConstraint
-	for _, implied := range impliedRelationalComparisons(fact.Condition, true) {
-		out = append(out, l.diffConstraintsFromComparisonOnEdge(implied.cmp, true, implied.polarity)...)
+	for _, implied := range branchcond.ImpliedRelationalOpsOnEdge(fact.Condition, true) {
+		out = append(out, l.diffConstraintsFromComparisonOnEdge(implied.Expr, implied.Edge, implied.Polarity)...)
 	}
-	for _, implied := range impliedRelationalComparisons(fact.Condition, false) {
-		out = append(out, l.diffConstraintsFromComparisonOnEdge(implied.cmp, false, implied.polarity)...)
+	for _, implied := range branchcond.ImpliedRelationalOpsOnEdge(fact.Condition, false) {
+		out = append(out, l.diffConstraintsFromComparisonOnEdge(implied.Expr, implied.Edge, implied.Polarity)...)
 	}
 	return out
-}
-
-type impliedRelationalComparison struct {
-	cmp      *ast.RelationalOpExpr
-	polarity bool
-}
-
-// impliedRelationalComparisons collects leaf comparisons whose polarity is known
-// for the requested condition polarity. A truthy `and` or falsy `or` proves both
-// operands; `not` flips polarity; other compound shapes prove no leaf relation.
-func impliedRelationalComparisons(expr ast.Expr, polarity bool) []impliedRelationalComparison {
-	switch e := expr.(type) {
-	case *ast.RelationalOpExpr:
-		return []impliedRelationalComparison{{cmp: e, polarity: polarity}}
-	case *ast.UnaryNotOpExpr:
-		return impliedRelationalComparisons(e.Expr, !polarity)
-	case *ast.LogicalOpExpr:
-		splitOp := "and"
-		if !polarity {
-			splitOp = "or"
-		}
-		if e.Operator != splitOp {
-			return nil
-		}
-		return append(impliedRelationalComparisons(e.Lhs, polarity), impliedRelationalComparisons(e.Rhs, polarity)...)
-	}
-	return nil
 }
 
 // linearTerm is coeff*value(path) + offset, or coeff*len(path) + offset when
