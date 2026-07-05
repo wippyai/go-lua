@@ -814,6 +814,37 @@ end
 	}
 }
 
+func TestLowerCallSiteUsesUnknownForMissingTempWIRArgument(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(value: string): ()
+    send(value)
+end
+`, "send")
+	stmt, ok := fn.Stmts[0].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[0])
+	}
+	points := requireStmtPoints(t, built, stmt, 1)
+	body := wir.NewBody("synthetic-missing-temp-call-arg")
+	unsupported := wir.Operand{Kind: wir.OperandTemp, Ref: 99}
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpCall,
+		Point: points[0],
+		List:  body.AppendOperands([]wir.Operand{unsupported}),
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	site, ok := facts.CallSite(points[0])
+	if !ok {
+		t.Fatalf("missing WIR call site at point %d", points[0])
+	}
+	args := site.ArgumentSources()
+	if len(args) != 1 || args[0].Kind != factflow.ValueSourceUnknown || args[0].TargetIndex != 0 {
+		t.Fatalf("WIR call argument sources = %#v, want one unknown source for missing temp operand", args)
+	}
+}
+
 func TestLowerCallSiteDoesNotFallbackToSemanticCalleeWhenWIRDirectCalleeUnsupported(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(value: string): ()
