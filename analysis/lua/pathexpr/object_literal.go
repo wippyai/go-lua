@@ -50,7 +50,7 @@ func objectEntries(table *ast.TableExpr, prefix path.Path) []ObjectEntry {
 		if !ok {
 			continue
 		}
-		suffix = appendSuffix(prefix, suffix)
+		suffix = prefix.AppendPathSuffix(suffix)
 		entries = append(entries, ObjectEntry{
 			Field:  field,
 			Index:  i,
@@ -87,10 +87,4 @@ func lastTableFieldIndex(fields []*ast.Field) int {
 		}
 	}
 	return -1
-}
-
-func appendSuffix(prefix path.Path, suffix path.Path) path.Path {
-	out := prefix.Clone()
-	out.Segments = append(out.Segments, suffix.Segments...)
-	return out
 }

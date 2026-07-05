@@ -170,3 +170,21 @@ func (p Path) AppendSegments(suffix []segment.Segment) Path {
 	next.Segments = append(next.Segments, suffix...)
 	return next
 }
+
+// AppendPathSuffix returns p with suffix's member/index suffix appended. Unlike
+// AppendSegments, a rootless receiver is valid and yields an owned clone of the
+// suffix path; this models object-literal suffix assembly where there is no
+// root identity yet.
+func (p Path) AppendPathSuffix(suffix Path) Path {
+	if p.Root == "" && p.Symbol == 0 && len(p.Segments) == 0 {
+		return suffix.Clone()
+	}
+	if len(suffix.Segments) == 0 {
+		return p.Clone()
+	}
+	next := Path{Root: p.Root, Symbol: p.Symbol, Version: p.Version}
+	next.Segments = make([]segment.Segment, 0, len(p.Segments)+len(suffix.Segments))
+	next.Segments = append(next.Segments, p.Segments...)
+	next.Segments = append(next.Segments, suffix.Segments...)
+	return next
+}

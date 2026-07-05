@@ -229,6 +229,38 @@ func TestPathAppendSegmentsPreservesRootOnlyCloneSemantics(t *testing.T) {
 	}
 }
 
+func TestPathAppendPathSuffixSupportsRootlessPrefix(t *testing.T) {
+	suffix := Path{Segments: []segment.Segment{
+		{Kind: segment.SegmentField, Name: "a"},
+		{Kind: segment.SegmentIndexString, Name: "b"},
+	}}
+
+	got := Path{}.AppendPathSuffix(suffix)
+	if segment.FormatSegments(got.Segments) != `.a["b"]` {
+		t.Fatalf("AppendPathSuffix(rootless) suffix = %q, want .a[\"b\"]", segment.FormatSegments(got.Segments))
+	}
+
+	suffix.Segments[0].Name = "mutated"
+	if segment.FormatSegments(got.Segments) != `.a["b"]` {
+		t.Fatalf("AppendPathSuffix(rootless) returned aliased storage: suffix now %q", segment.FormatSegments(got.Segments))
+	}
+}
+
+func TestPathAppendPathSuffixAppendsOnlySuffixSegments(t *testing.T) {
+	base := NewPath(1, "x").Field("a")
+	suffix := NewPath(2, "ignored").Field("b").IndexInt(3)
+
+	got := base.AppendPathSuffix(suffix)
+	if got.Key() != `sym1.a.b[3]` {
+		t.Fatalf("AppendPathSuffix() key = %q, want sym1.a.b[3]", got.Key())
+	}
+
+	suffix.Segments[0].Name = "mutated"
+	if got.Key() != `sym1.a.b[3]` {
+		t.Fatalf("AppendPathSuffix returned aliased storage: key now %q", got.Key())
+	}
+}
+
 func TestPathPrefixPredicatesUseCanonicalRootIdentity(t *testing.T) {
 	root := NewPath(symbol.ID(10), "old").Field("items")
 	sameSymbolDifferentDisplay := NewPath(symbol.ID(10), "new").Field("items").Field("name")

@@ -503,7 +503,7 @@ func (p *Projection) addObjectLiteralAliases(target path.Path, expr ast.Expr, po
 		if !ok {
 			continue
 		}
-		p.addAlias(appendPathSegments(target, entry.Suffix.Segments), modulePath, point, inherited)
+		p.addAlias(target.AppendPathSuffix(entry.Suffix), modulePath, point, inherited)
 	}
 }
 
@@ -632,10 +632,4 @@ func staticPathSegments(segments []segment.Segment) bool {
 		}
 	}
 	return true
-}
-
-func appendPathSegments(base path.Path, suffix []segment.Segment) path.Path {
-	out := base.Clone()
-	out.Segments = append(out.Segments, suffix...)
-	return out
 }
