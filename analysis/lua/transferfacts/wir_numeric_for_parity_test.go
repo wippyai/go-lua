@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
@@ -51,5 +52,37 @@ end
 	}
 	if compared != 4 {
 		t.Fatalf("compared %d numeric-for points, want init/check for two loops", compared)
+	}
+}
+
+func TestLowerWithWIRNumericForProofsDoesNotFallbackToSidecar(t *testing.T) {
+	_, bindings, built, result := parseSemanticFunction(t, `
+function scan(xs: {string})
+	for i = 1, #xs do
+		local current = xs[i]
+	end
+end
+`)
+	facts := Lower(result, built.Graph, Config{
+		Registry: standard.Registry(),
+		Bindings: bindings,
+		WIR:      wir.NewBody("scan"),
+	})
+
+	var checked int
+	for _, point := range built.Graph.RPO() {
+		if _, ok := result.NumericFor(point); !ok {
+			continue
+		}
+		checked++
+		if got := facts.BranchNumFloorRefinements(point); len(got) != 0 {
+			t.Fatalf("WIR numeric-for num-floor proofs fell back to sidecar at point %d: %#v", point, got)
+		}
+		if got := facts.BranchPathEvidence(point); len(got) != 0 {
+			t.Fatalf("WIR numeric-for path evidence fell back to sidecar at point %d: %#v", point, got)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("fixture did not produce numeric-for points")
 	}
 }

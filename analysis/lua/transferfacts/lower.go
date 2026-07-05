@@ -227,15 +227,20 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			l.addAssertionRefinementsForSource(&input, fact.Source)
 		}
 		if fact, ok := result.NumericFor(point); ok {
-			if lowered, ok := l.numericForBranchNumFloorRefinementFromWIR(point); ok {
-				appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered)
-			} else if lowered, ok := l.numericForBranchNumFloorRefinement(fact); ok {
-				appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered)
-			}
-			if lowered := l.numericForBranchPathEvidenceFromWIR(point); len(lowered) != 0 {
-				appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
-			} else if lowered := l.numericForBranchPathEvidence(fact); len(lowered) != 0 {
-				appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
+			if l.wir != nil {
+				if lowered, ok := l.numericForBranchNumFloorRefinementFromWIR(point); ok {
+					appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered)
+				}
+				if lowered := l.numericForBranchPathEvidenceFromWIR(point); len(lowered) != 0 {
+					appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
+				}
+			} else {
+				if lowered, ok := l.numericForBranchNumFloorRefinement(fact); ok {
+					appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered)
+				}
+				if lowered := l.numericForBranchPathEvidence(fact); len(lowered) != 0 {
+					appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
+				}
 			}
 		}
 	}
