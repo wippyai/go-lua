@@ -156,13 +156,16 @@ type Operand struct {
 
 // PathRef, ConstRef, TypeRef, CheckRef, and FuncRef are 1-based indices into the
 // matching Body intern pool. A zero ref means none (index 0 is a reserved
-// sentinel).
+// sentinel). ExpressionID is an opaque process-local source expression identity
+// used only to join WIR metadata back to factflow expression facts during
+// migration; it is not a serialized AST pointer.
 type (
-	PathRef  uint32
-	ConstRef uint32
-	TypeRef  uint32
-	CheckRef uint32
-	FuncRef  uint32
+	PathRef      uint32
+	ConstRef     uint32
+	TypeRef      uint32
+	CheckRef     uint32
+	FuncRef      uint32
+	ExpressionID uint64
 )
 
 // OperandRange is a [Start, Start+Len) window into Body.operandPool for a
@@ -217,6 +220,7 @@ type Instruction struct {
 	Check    CheckRef  // OpBranch condition descriptor (0 = none)
 	Func     FuncRef   // OpClosure nested proto (0 = none)
 	Call     CallInfo  // OpCall shape
+	ExprID   ExpressionID
 
 	// SelectDefault marks an OpSelect that carries a default (non-blocking) case.
 	SelectDefault bool

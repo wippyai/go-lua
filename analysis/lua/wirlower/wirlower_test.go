@@ -251,6 +251,34 @@ local t = {
 	}
 }
 
+func TestTableConstructorCarriesStableExpressionIdentity(t *testing.T) {
+	body := lowerBody(t, `
+local first = { a = 1 }
+local second = { child = { b = 2 } }
+`)
+	var ids []wir.ExpressionID
+	for i := 0; i < body.Len(); i++ {
+		inst := body.Instr(i)
+		if inst.Op != wir.OpMakeTable {
+			continue
+		}
+		if inst.ExprID == 0 {
+			t.Fatalf("OpMakeTable at instruction %d missing expression identity", i)
+		}
+		ids = append(ids, inst.ExprID)
+	}
+	if len(ids) != 3 {
+		t.Fatalf("table expression ids = %v, want first, nested child, and second", ids)
+	}
+	seen := map[wir.ExpressionID]bool{}
+	for _, id := range ids {
+		if seen[id] {
+			t.Fatalf("duplicate table expression id %d in %v", id, ids)
+		}
+		seen[id] = true
+	}
+}
+
 func suffixPath(segs ...segment.Segment) path.Path {
 	return path.Path{Segments: append([]segment.Segment(nil), segs...)}
 }

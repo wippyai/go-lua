@@ -233,6 +233,21 @@ func (b *Body) BranchChecks(p cfg.Point) []Check {
 	return out
 }
 
+// TableConstructorByExpressionID returns the table-constructor instruction with
+// source expression identity id. It is a migration bridge for facts that remain
+// keyed by expression identity while constructor structure lives in WIR.
+func (b *Body) TableConstructorByExpressionID(id ExpressionID) (Instruction, bool) {
+	if b == nil || id == 0 {
+		return Instruction{}, false
+	}
+	for _, inst := range b.instrs {
+		if inst.Op == OpMakeTable && inst.ExprID == id {
+			return inst, true
+		}
+	}
+	return Instruction{}, false
+}
+
 // Operands returns the operand slice for a variadic range.
 func (b *Body) Operands(r OperandRange) []Operand {
 	if r.Len == 0 {

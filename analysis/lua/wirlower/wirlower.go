@@ -33,6 +33,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/channelruntime"
+	"github.com/wippyai/go-lua/analysis/lua/expressionid"
 	"github.com/wippyai/go-lua/analysis/lua/functiontype"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
@@ -1045,6 +1046,7 @@ func (b *builder) lowerTable(dst wir.Operand, t *ast.TableExpr) {
 		List:         b.body.AppendOperands(ops),
 		TableEntries: b.body.AppendTableEntries(entries),
 		ListSpread:   spread,
+		ExprID:       expressionid.Of(t),
 	})
 }
 

@@ -166,3 +166,22 @@ func TestInstructionWritesAssignmentPoint(t *testing.T) {
 		t.Fatalf("call must not be classified as assignment write by destination slot")
 	}
 }
+
+func TestTableConstructorByExpressionID(t *testing.T) {
+	body := NewBody("tables")
+	first := ExpressionID(101)
+	second := ExpressionID(202)
+	body.Emit(Instruction{Op: OpMakeTable, ExprID: first, Dst: Operand{Kind: OperandTemp, Ref: 1}})
+	body.Emit(Instruction{Op: OpMakeTable, ExprID: second, Dst: Operand{Kind: OperandTemp, Ref: 2}})
+
+	got, ok := body.TableConstructorByExpressionID(second)
+	if !ok || got.ExprID != second || got.Dst.Ref != 2 {
+		t.Fatalf("TableConstructorByExpressionID(second) = %#v/%v", got, ok)
+	}
+	if got, ok := body.TableConstructorByExpressionID(303); ok || got.Op != OpNoop {
+		t.Fatalf("TableConstructorByExpressionID(missing) = %#v/%v, want none", got, ok)
+	}
+	if got, ok := body.TableConstructorByExpressionID(0); ok || got.Op != OpNoop {
+		t.Fatalf("TableConstructorByExpressionID(0) = %#v/%v, want none", got, ok)
+	}
+}
