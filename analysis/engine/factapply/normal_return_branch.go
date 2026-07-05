@@ -1,7 +1,9 @@
 package factapply
 
 import (
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -71,12 +73,24 @@ func applyNormalReturnPathRelationProof(ctx normalReturnApplyContext, out state.
 			Cond: true,
 		},
 	}
-	switch proof.Kind {
-	case pathevidence.BranchProofPathEqual:
-		return applyBranchPathEquality(ctx.typeValues, edgeCtx, ctx.resolver, ctx.projectPath, out, leftPath, rightPath)
-	case pathevidence.BranchProofPathNotEqual:
-		return applyBranchPathInequality(ctx.typeValues, edgeCtx, ctx.resolver, ctx.projectPath, out, leftPath, rightPath)
-	default:
+	relation, ok := normalReturnBranchPathRelation(proof.Kind, leftPath, rightPath)
+	if !ok {
 		return out
+	}
+	return applyBranchPathRelation(ctx.typeValues, edgeCtx, ctx.resolver, ctx.projectPath, out, relation)
+}
+
+func normalReturnBranchPathRelation(
+	kind pathevidence.BranchProofKind,
+	leftPath pathdom.Path,
+	rightPath pathdom.Path,
+) (factflow.BranchPathRelation, bool) {
+	switch kind {
+	case pathevidence.BranchProofPathEqual:
+		return factflow.NewBranchPathEquality(leftPath, rightPath, true, false), true
+	case pathevidence.BranchProofPathNotEqual:
+		return factflow.NewBranchPathInequality(leftPath, rightPath, true, false), true
+	default:
+		return factflow.BranchPathRelation{}, false
 	}
 }

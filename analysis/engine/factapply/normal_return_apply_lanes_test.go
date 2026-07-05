@@ -40,3 +40,22 @@ func TestNormalReturnApplyLanesUseCallBoundaryPathBindings(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalReturnBranchProofsUseBranchPathRelationApply(t *testing.T) {
+	srcBytes, err := os.ReadFile("normal_return_branch.go")
+	if err != nil {
+		t.Fatalf("read normal_return_branch.go: %v", err)
+	}
+	src := string(srcBytes)
+	for _, forbidden := range []string{
+		"applyBranchPathEquality(",
+		"applyBranchPathInequality(",
+	} {
+		if strings.Contains(src, forbidden) {
+			t.Fatalf("normal_return_branch.go contains %q; normal-return branch proofs must flow through applyBranchPathRelation", forbidden)
+		}
+	}
+	if !strings.Contains(src, "applyBranchPathRelation(") {
+		t.Fatal("normal_return_branch.go does not call applyBranchPathRelation")
+	}
+}
