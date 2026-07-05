@@ -113,6 +113,20 @@ end
 	}
 }
 
+func TestLowerTypeIsConditionDoesNotFallbackWhenWIRCallInstructionMissing(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+type Payload = { name: string }
+local value: any = {}
+if Payload:is(value) then local y = value end
+`)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: wir.NewBody("empty")})
+
+	point := requireStmtPoints(t, built, mustIfStmt(t, stmts, 2), 2)[1]
+	if got := facts.BranchRefinements(point); len(got) != 0 {
+		t.Fatalf("WIR mode type-is condition at point %d fell back to semantic call/branch sidecars: %#v", point, got)
+	}
+}
+
 func TestLowerWithWIRCorrelationBranchChecksMatchesSidecarLowering(t *testing.T) {
 	t.Run("protected_call", func(t *testing.T) {
 		stmts, bindings, built, result := parseSemanticChunk(t, `

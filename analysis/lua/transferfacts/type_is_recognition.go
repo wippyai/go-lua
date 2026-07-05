@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
@@ -44,6 +45,11 @@ func (l *lowerer) addTypeIsBranchRefinements(input *factflow.FactsInput, graph c
 		view, ok := result.CallView(callPoint)
 		if !ok {
 			continue
+		}
+		if l.wir != nil {
+			if _, ok := input.CallSites[callPoint]; !ok {
+				continue
+			}
 		}
 		fact, _ := view.Borrowed()
 		t, argPath, ok := l.typeIsCall(fact)
@@ -101,6 +107,9 @@ func (l *lowerer) addTypeIsConditionBranchRefinements(
 		return
 	}
 	for _, branch := range graph.RPO() {
+		if l.wir != nil && !l.wir.HasInstruction(branch, wir.OpBranch) {
+			continue
+		}
 		branchFact, ok := result.BranchCondition(branch)
 		if !ok || branchFact.Stmt != fact.SourceStmt {
 			continue
