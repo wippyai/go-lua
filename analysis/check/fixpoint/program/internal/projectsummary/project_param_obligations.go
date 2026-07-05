@@ -1018,10 +1018,7 @@ func (p paramObligationProjector) callArgumentBindings(site factflow.CallSiteVie
 	}
 	var bindings []pathdom.Path
 	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
-		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-			return true
-		}
-		sourcePath, ok := pathReader.ExpressionPathRef(source.ExprRef)
+		sourcePath, ok := valueSourcePath(p.result, pathReader, source)
 		if !ok || sourcePath.IsEmpty() {
 			return true
 		}
@@ -1047,10 +1044,7 @@ func callSiteBindings(result ResultReader, site factflow.CallSiteView) []pathdom
 		offset = 1
 	}
 	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
-		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-			return true
-		}
-		sourcePath, ok := pathReader.ExpressionPathRef(source.ExprRef)
+		sourcePath, ok := valueSourcePath(result, pathReader, source)
 		if !ok || sourcePath.IsEmpty() {
 			return true
 		}

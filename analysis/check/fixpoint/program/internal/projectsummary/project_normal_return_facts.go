@@ -91,10 +91,7 @@ func dynamicIndexValueSourcePlaceholderPath(
 	if !ok {
 		return path.Path{}, false
 	}
-	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-		return path.Path{}, false
-	}
-	sourcePath, ok := exprPathReader.ExpressionPathRef(source.ExprRef)
+	sourcePath, ok := valueSourcePath(result, exprPathReader, source)
 	if !ok {
 		return path.Path{}, false
 	}
@@ -346,10 +343,7 @@ func dynamicIndexWriteValueBoundaryPath(
 }
 
 func dynamicIndexSourceExpressionPath(pathReader expressionPathRefReader, source factflow.ValueSource) (path.Path, bool) {
-	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-		return path.Path{}, false
-	}
-	sourcePath, ok := pathReader.ExpressionPathRef(source.ExprRef)
+	sourcePath, ok := valueSourcePath(nil, pathReader, source)
 	if !ok || sourcePath.Symbol == 0 {
 		return path.Path{}, false
 	}
@@ -817,10 +811,10 @@ func exitFactReturnValuePaths(result ResultReader) []exitFactReturnPath {
 			continue
 		}
 		for returnIndex, source := range sources {
-			if returnIndex < 0 || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+			if returnIndex < 0 {
 				continue
 			}
-			sourcePath, ok := pathReader.ExpressionPathRef(source.ExprRef)
+			sourcePath, ok := valueSourcePath(result, pathReader, source)
 			if !ok || sourcePath.IsEmpty() {
 				continue
 			}

@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/parse/numparse"
 )
 
@@ -74,22 +75,25 @@ func (l *lowerer) returnOperandValueSourceFromWIR(
 ) (factflow.ValueSource, bool) {
 	switch op.Kind {
 	case wir.OperandPath:
-		if l.keySpace == nil {
-			return factflow.ValueSource{}, false
-		}
 		p := l.wir.Path(wir.PathRef(op.Ref))
 		if len(p.Segments) != 0 {
 			return factflow.ValueSource{}, false
 		}
-		pathKey := l.keySpace.FromPath(p)
-		if pathKey.Kind == 0 {
+		if l.bindings != nil && l.bindings.IsImplicitGlobalSymbol(p.Symbol) {
+			return factflow.ValueSource{}, false
+		}
+		if l.bindings == nil {
+			return factflow.ValueSource{}, false
+		}
+		kind, ok := l.bindings.Kind(p.Symbol)
+		if !ok || kind != symbol.Param {
 			return factflow.ValueSource{}, false
 		}
 		shape, ok := factflow.NewValueSourceShape(final, listSpread && final, false, listSpread && final)
 		if !ok {
 			return factflow.ValueSource{}, false
 		}
-		return mustValueSource(factflow.NewPathValueSource(pathKey, index, index, 0, shape)), true
+		return mustValueSource(factflow.NewPathValueSource(p.Key(), index, index, 0, shape)), true
 	case wir.OperandConst:
 		c := l.wir.Const(wir.ConstRef(op.Ref))
 		if c.Kind == wir.ConstNil {

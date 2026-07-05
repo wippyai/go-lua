@@ -4,7 +4,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -106,7 +105,7 @@ end
 	}
 }
 
-func TestLowerWithWIRReturnSourcesForRootPathWhenKeySpaceProvided(t *testing.T) {
+func TestLowerWithWIRReturnSourcesForRootPath(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(value: string): string
     return value
@@ -118,7 +117,7 @@ end
 	}
 	points := requireStmtPoints(t, built, ret, 1)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, KeySpace: keyspace.New(), WIR: body})
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
@@ -130,10 +129,35 @@ end
 	}
 }
 
-func TestLowerWithWIRReturnSourcesFallsBackForExpressionOperands(t *testing.T) {
+func TestLowerWithWIRReturnSourcesFallsBackForLocalRootPath(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): any
+    local builder = {}
+    return builder
+end
+`)
+	ret, ok := fn.Stmts[1].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[1])
+	}
+	points := requireStmtPoints(t, built, ret, 1)
+	body := wirlower.Lower("f", fn.Stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	returnFact, ok := facts.Return(points[0])
+	if !ok {
+		t.Fatalf("missing return fact at point %d", points[0])
+	}
+	sources := returnFact.Sources()
+	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr {
+		t.Fatalf("return sources = %#v, want semantic expression fallback for local root", sources)
+	}
+}
+
+func TestLowerWithWIRReturnSourcesFallsBackForCompoundExpressionOperands(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(value: string): string
-    return value
+    return value .. "!"
 end
 `)
 	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)

@@ -201,9 +201,18 @@ func (r sourceValueResolver) valueOfSource(
 }
 
 func (r sourceValueResolver) valueOfPathSource(source factflow.ValueSource, in state.State) (product.Value, bool) {
-	pathKey := source.PathKey
-	if pathKey.Kind == keyspace.KindInvalid {
+	if source.PathKey == "" {
 		return product.Value{}, false
+	}
+	if r.keySpace == nil {
+		return product.Value{}, false
+	}
+	pathKey, ok := r.keySpace.FromStateKey(source.PathKey)
+	if !ok {
+		return product.Value{}, false
+	}
+	if value, ok := readLocalPathKeyWithFieldCanonicalAlias(r.registry, r.keySpace, in, pathKey); ok {
+		return value, true
 	}
 	if (pathKey.Kind == keyspace.KindResolverSym || pathKey.Kind == keyspace.KindUnversionedSym) &&
 		pathKey.Segs == 0 && pathKey.Sym != 0 {
@@ -212,11 +221,7 @@ func (r sourceValueResolver) valueOfPathSource(source factflow.ValueSource, in s
 			return value, true
 		}
 	}
-	if r.keySpace == nil {
-		value := in.ReadLocalPathKey(r.registry, pathKey)
-		return value, !product.Equal(r.registry, value, product.Bottom(r.registry))
-	}
-	return readLocalPathKeyWithFieldCanonicalAlias(r.registry, r.keySpace, in, pathKey)
+	return product.Value{}, false
 }
 
 func (r sourceValueResolver) valueOfLiteralSource(source factflow.ValueSource) (product.Value, bool) {

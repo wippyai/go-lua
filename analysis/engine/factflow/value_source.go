@@ -1,7 +1,7 @@
 package factflow
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
@@ -81,7 +81,7 @@ type ValueSource struct {
 	CallPoint    cfg.Point
 	HasCallPoint bool
 
-	PathKey keyspace.Key
+	PathKey pathdom.PathKey
 
 	LiteralKind ValueSourceLiteralKind
 	Bool        bool
@@ -138,7 +138,7 @@ func NewVarargValueSource(expr ExprRef, exprIndex, targetIndex, resultIndex int,
 }
 
 // NewPathValueSource creates a value source backed by a point-local path key.
-func NewPathValueSource(pathKey keyspace.Key, exprIndex, targetIndex, resultIndex int, shape ValueSourceShape) (ValueSource, bool) {
+func NewPathValueSource(pathKey pathdom.PathKey, exprIndex, targetIndex, resultIndex int, shape ValueSourceShape) (ValueSource, bool) {
 	source := valueSourceWithShape(ValueSource{
 		Kind:        ValueSourcePath,
 		PathKey:     pathKey,
@@ -235,20 +235,20 @@ func (s ValueSource) Valid() bool {
 	case ValueSourceUnknown:
 		return !s.HasExpr && s.ExprRef == 0 &&
 			!s.HasCallPoint && s.CallPoint == 0 &&
-			s.PathKey.Kind == keyspace.KindInvalid &&
+			s.PathKey == "" &&
 			s.LiteralKind == ValueSourceLiteralInvalid
 	case ValueSourceExpression:
 		return s.HasExpr && s.ExprRef != 0 &&
 			!s.HasCallPoint && s.CallPoint == 0 &&
-			s.PathKey.Kind == keyspace.KindInvalid &&
+			s.PathKey == "" &&
 			s.LiteralKind == ValueSourceLiteralInvalid
 	case ValueSourceCall:
 		return s.HasCallPoint && s.CallPoint != 0 &&
 			s.ResultIndex >= 0 &&
-			s.PathKey.Kind == keyspace.KindInvalid &&
+			s.PathKey == "" &&
 			s.LiteralKind == ValueSourceLiteralInvalid
 	case ValueSourceVararg:
-		return !s.HasCallPoint && s.CallPoint == 0 && s.PathKey.Kind == keyspace.KindInvalid && s.LiteralKind == ValueSourceLiteralInvalid
+		return !s.HasCallPoint && s.CallPoint == 0 && s.PathKey == "" && s.LiteralKind == ValueSourceLiteralInvalid
 	case ValueSourceNil:
 		return s.ExprIndex == NoValueSourceIndex &&
 			s.ResultIndex == NoValueSourceIndex &&
@@ -256,7 +256,7 @@ func (s ValueSource) Valid() bool {
 			s.ExprRef == 0 &&
 			!s.HasCallPoint &&
 			s.CallPoint == 0 &&
-			s.PathKey.Kind == keyspace.KindInvalid &&
+			s.PathKey == "" &&
 			s.LiteralKind == ValueSourceLiteralInvalid &&
 			!s.Final &&
 			!s.Expanded &&
@@ -265,12 +265,12 @@ func (s ValueSource) Valid() bool {
 	case ValueSourcePath:
 		return !s.HasExpr && s.ExprRef == 0 &&
 			!s.HasCallPoint && s.CallPoint == 0 &&
-			s.PathKey.Kind != keyspace.KindInvalid &&
+			s.PathKey != "" &&
 			s.LiteralKind == ValueSourceLiteralInvalid
 	case ValueSourceLiteral:
 		return !s.HasExpr && s.ExprRef == 0 &&
 			!s.HasCallPoint && s.CallPoint == 0 &&
-			s.PathKey.Kind == keyspace.KindInvalid &&
+			s.PathKey == "" &&
 			s.literalValid()
 	default:
 		return false

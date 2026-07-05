@@ -113,10 +113,7 @@ func TestSourceValuesNilReturnsAbsentPresence(t *testing.T) {
 func TestSourceValuesPathSourceReadsRootSymbolValue(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()
-	pathKey, ok := ks.FromResolverKey(symbol.ID(7), 0, nil)
-	if !ok {
-		t.Fatal("FromResolverKey returned false")
-	}
+	pathKey := path.NewPath(symbol.ID(7), "value").Key()
 	source, ok := NewPathValueSource(pathKey, 0, 0, 0, ValueSourceShape{})
 	if !ok {
 		t.Fatalf("NewPathValueSource returned false")

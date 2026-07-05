@@ -69,12 +69,18 @@ func projectReturnSourceParamAliases(
 	localObjects map[symbol.ID]factflow.ValueSource,
 	active map[factflow.ExprRef]bool,
 ) []summary.ReturnParamPathAlias {
-	if returnIndex < 0 || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+	if returnIndex < 0 {
 		return nil
 	}
-	lit, ok := objectReader.ObjectLiteralExpr(source.ExprRef)
+	var (
+		lit factflow.ObjectLiteral
+		ok  bool
+	)
+	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
+		lit, ok = objectReader.ObjectLiteralExpr(source.ExprRef)
+	}
 	if !ok {
-		if localSource, ok := returnAliasLocalObjectSource(source, pathReader, localObjects); ok {
+		if localSource, ok := returnAliasLocalObjectSource(result, source, pathReader, localObjects); ok {
 			return projectReturnSourceParamAliases(
 				returnIndex,
 				prefix,
@@ -106,20 +112,20 @@ func projectReturnSourceParamAliases(
 		if !ok {
 			continue
 		}
-		if entrySource.Kind == factflow.ValueSourceExpression && entrySource.HasExpr {
-			if sourcePath, ok := pathReader.ExpressionPathRef(entrySource.ExprRef); ok {
-				if placeholder, ok := returnAliasPlaceholderPath(sourcePath, params, result); ok {
-					sourceKey, ok := pathaddr.PlaceholderKeyFromPath(placeholder)
-					if !ok {
-						continue
-					}
-					out = append(out, summary.ReturnParamPathAlias{
-						ReturnIndex: returnIndex,
-						Member:      memberKey,
-						Source:      sourceKey,
-					})
+		if sourcePath, ok := valueSourcePath(result, pathReader, entrySource); ok {
+			if placeholder, ok := returnAliasPlaceholderPath(sourcePath, params, result); ok {
+				sourceKey, ok := pathaddr.PlaceholderKeyFromPath(placeholder)
+				if !ok {
+					continue
 				}
+				out = append(out, summary.ReturnParamPathAlias{
+					ReturnIndex: returnIndex,
+					Member:      memberKey,
+					Source:      sourceKey,
+				})
 			}
+		}
+		if entrySource.Kind == factflow.ValueSourceExpression && entrySource.HasExpr {
 			out = append(out, projectReturnSourceParamAliases(
 				returnIndex,
 				memberSegments,
@@ -201,14 +207,15 @@ func markReturnAliasAssignedLocalSymbol(out map[symbol.ID]struct{}, sym symbol.I
 }
 
 func returnAliasLocalObjectSource(
+	result ResultReader,
 	source factflow.ValueSource,
 	pathReader expressionPathRefReader,
 	localObjects map[symbol.ID]factflow.ValueSource,
 ) (factflow.ValueSource, bool) {
-	if len(localObjects) == 0 || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+	if len(localObjects) == 0 {
 		return factflow.ValueSource{}, false
 	}
-	sourcePath, ok := pathReader.ExpressionPathRef(source.ExprRef)
+	sourcePath, ok := valueSourcePath(result, pathReader, source)
 	if !ok || sourcePath.Symbol == 0 || len(sourcePath.Segments) != 0 {
 		return factflow.ValueSource{}, false
 	}
@@ -230,10 +237,10 @@ func directReturnParamAlias(
 	result ResultReader,
 	pathReader expressionPathRefReader,
 ) (summary.ReturnParamPathAlias, bool) {
-	if returnIndex < 0 || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+	if returnIndex < 0 {
 		return summary.ReturnParamPathAlias{}, false
 	}
-	sourcePath, ok := pathReader.ExpressionPathRef(source.ExprRef)
+	sourcePath, ok := valueSourcePath(result, pathReader, source)
 	if !ok || sourcePath.Symbol == 0 || len(sourcePath.Segments) != 0 {
 		return summary.ReturnParamPathAlias{}, false
 	}
