@@ -120,6 +120,28 @@ func buildCallFact(sourceStmt ast.Stmt, callStmt *ast.FuncCallStmt, context Call
 	return fact
 }
 
+// IsDirectGlobal reports whether the call target is the named global function,
+// without receiver/method sugar. Call consumers should use this instead of
+// re-inspecting CallFact.Func; semantics owns the AST-to-binding identity check.
+func (f CallFact) IsDirectGlobal(bindings *bind.Result, name string) bool {
+	if bindings == nil || f.Call == nil || f.Receiver != nil || f.Method != "" || f.Func == nil {
+		return false
+	}
+	fn, ok := f.Func.(*ast.IdentExpr)
+	return ok && bindings.ResolvesToGlobal(fn, name)
+}
+
+// IsAnyDirectGlobal reports whether the call target is any of the supplied
+// global function names.
+func (f CallFact) IsAnyDirectGlobal(bindings *bind.Result, names ...string) bool {
+	for _, name := range names {
+		if f.IsDirectGlobal(bindings, name) {
+			return true
+		}
+	}
+	return false
+}
+
 func callCalleeSpan(call *ast.FuncCallExpr) SourceSpan {
 	if call == nil {
 		return SourceSpan{}

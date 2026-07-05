@@ -4,7 +4,6 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 func (l *lowerer) assertPostconditionRefinement(fact semantics.CallFact) (factflow.PostconditionRefinement, bool) {
@@ -27,6 +26,5 @@ func (l *lowerer) isDirectGlobalAssertStatementCall(fact semantics.CallFact) boo
 	if fact.Context != semantics.CallContextStatement || fact.Call == nil || fact.Receiver != nil || fact.Method != "" || len(fact.TypeArgs) != 0 {
 		return false
 	}
-	fn, ok := fact.Func.(*ast.IdentExpr)
-	return ok && l.bindings.ResolvesToGlobal(fn, "assert")
+	return fact.IsDirectGlobal(l.bindings, "assert")
 }

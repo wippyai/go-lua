@@ -1812,6 +1812,54 @@ func TestExtractChunkCallFactResolvesMethodPaths(t *testing.T) {
 	}
 }
 
+func TestCallFactIsDirectGlobalUsesBindings(t *testing.T) {
+	stmts, err := parse.ParseString(`
+assert(x)
+local assert = function(v) return v end
+assert(x)
+obj:assert(x)
+`, "call_global_test.lua")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"assert", "x", "obj"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	globalPoint := requireStmtPoints(t, built, stmts[0], 1)[0]
+	globalFact, ok := result.Call(globalPoint)
+	if !ok {
+		t.Fatalf("missing global call fact")
+	}
+	if !globalFact.IsDirectGlobal(bindings, "assert") {
+		t.Fatalf("global assert call was not recognized")
+	}
+	if globalFact.IsDirectGlobal(bindings, "pcall") {
+		t.Fatalf("global assert call recognized as pcall")
+	}
+
+	shadowPoint := requireStmtPoints(t, built, stmts[2], 1)[0]
+	shadowFact, ok := result.Call(shadowPoint)
+	if !ok {
+		t.Fatalf("missing shadowed call fact")
+	}
+	if shadowFact.IsDirectGlobal(bindings, "assert") {
+		t.Fatalf("shadowed local assert recognized as global")
+	}
+
+	methodPoint := requireStmtPoints(t, built, stmts[3], 1)[0]
+	methodFact, ok := result.Call(methodPoint)
+	if !ok {
+		t.Fatalf("missing method call fact")
+	}
+	if methodFact.IsDirectGlobal(bindings, "assert") {
+		t.Fatalf("method call recognized as direct global")
+	}
+}
+
 func TestExtractChunkChannelSelectFacts(t *testing.T) {
 	stmts, err := parse.ParseString(`
 type Event = {kind: string}

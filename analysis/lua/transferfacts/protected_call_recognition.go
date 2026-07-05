@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typecall"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 func (l *lowerer) addProtectedCallBranchRefinements(input *factflow.FactsInput, graph cfg.Graph, result *semantics.Result) {
@@ -77,14 +76,7 @@ func (l *lowerer) protectedCallPayloadType(fact semantics.CallFact) (typ.Type, b
 }
 
 func (l *lowerer) directGlobalProtectedCall(fact semantics.CallFact) bool {
-	if l.bindings == nil || fact.Call == nil || fact.Call.Receiver != nil || fact.Call.Func == nil {
-		return false
-	}
-	fn, ok := fact.Call.Func.(*ast.IdentExpr)
-	if !ok {
-		return false
-	}
-	return l.bindings.ResolvesToGlobal(fn, "pcall") || l.bindings.ResolvesToGlobal(fn, "xpcall")
+	return fact.IsAnyDirectGlobal(l.bindings, "pcall", "xpcall")
 }
 
 func (l *lowerer) protectedCallSuccessEdges(result *semantics.Result, branch cfg.Point, okPath path.Path) []bool {
