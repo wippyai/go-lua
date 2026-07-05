@@ -40,9 +40,8 @@ type assignmentDiagnosticPresentation struct {
 }
 
 type assignmentCallResultPresentation struct {
-	Label    string
-	Got      typ.Type
-	Want     typ.Type
+	Message  string
+	Help     string
 	Evidence []diagnostic.Evidence
 	Labels   []diagnostic.Label
 }
@@ -269,9 +268,8 @@ func (ctx ProofContext) AssignmentCallResult(item judgment.Judgment, detail judg
 		labels = append(labels, sourceLabel(retSpan, labelDeclaredReturn))
 	}
 	return assignmentCallResultPresentation{
-		Label:    label,
-		Got:      got,
-		Want:     want,
+		Message:  fmt.Sprintf("%s is %s, not %s", label, formatType(got), formatType(want)),
+		Help:     callResultAssignmentHelp(got),
 		Evidence: evidence,
 		Labels:   labels,
 	}

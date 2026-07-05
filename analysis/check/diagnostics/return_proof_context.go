@@ -10,21 +10,40 @@ import (
 )
 
 type returnPresentation struct {
-	Subject        string
-	SourceEvidence string
-	Message        string
-	Help           string
-	Evidence       []diagnostic.Evidence
+	Subject  string
+	Message  string
+	Help     string
+	Evidence []diagnostic.Evidence
+	Labels   []diagnostic.Label
 }
 
 func (ProofContext) Return(item judgment.Judgment, label string, sourceName string, got, want typ.Type, primary diagnostic.Span) returnPresentation {
 	subject := returnJudgmentSubject(label, sourceName)
+	declSpan := diagnosticEvidenceSpanOrPrimary(item, judgment.EvidenceUserAssertion)
+	evidence := []diagnostic.Evidence{
+		{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
+			Span:    diagnosticEvidenceSpanOrPrimary(item, judgment.EvidenceAbstractFact),
+			Message: assignmentSourceTypeEvidence(subject, got),
+		},
+		{
+			Kind:    diagnostic.EvidenceUserAssertion,
+			Trust:   diagnostic.TrustClaimed,
+			Span:    declSpan,
+			Message: returnDeclaredTypeEvidence(label, want),
+		},
+	}
+	evidence = append(evidence, returnJudgmentExtraEvidence(item, subject, got, primary)...)
 	return returnPresentation{
-		Subject:        subject,
-		SourceEvidence: assignmentSourceTypeEvidence(subject, got),
-		Message:        returnJudgmentMessage(subject, sourceName, label, got, want, item),
-		Help:           returnJudgmentHelp(sourceName, got, item.ReturnMissingProofMayBeNil(), item.ReturnMissingProofIndexedRead()),
-		Evidence:       returnJudgmentExtraEvidence(item, subject, got, primary),
+		Subject:  subject,
+		Message:  returnJudgmentMessage(subject, sourceName, label, got, want, item),
+		Help:     returnJudgmentHelp(sourceName, got, item.ReturnMissingProofMayBeNil(), item.ReturnMissingProofIndexedRead()),
+		Evidence: evidence,
+		Labels: []diagnostic.Label{
+			sourceLabel(primary, labelReturnedValue),
+			sourceLabel(declSpan, labelDeclaredReturn),
+		},
 	}
 }
 

@@ -60,8 +60,8 @@ func renderCallResultAssignmentJudgment(
 		Span:        callSpan,
 		Code:        CodeDirectCallResultAssignment,
 		Severity:    severity,
-		Message:     fmt.Sprintf("%s is %s, not %s", presentation.Label, formatType(presentation.Got), formatType(presentation.Want)),
-		Help:        callResultAssignmentHelp(presentation.Got),
+		Message:     presentation.Message,
+		Help:        presentation.Help,
 		Explanation: diagnostic.NewExplanation(presentation.Evidence...),
 		Labels:      presentation.Labels,
 	}), true
