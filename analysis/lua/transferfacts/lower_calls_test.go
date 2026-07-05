@@ -514,6 +514,46 @@ end
 	}
 }
 
+func TestLowerWithWIRPublishesCallAndReturnWithoutSemanticSidecars(t *testing.T) {
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function f(payload: { id: string }): string
+    return make(payload.id)
+end
+`, "make")
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
+	}
+	points := requireStmtPoints(t, built, ret, 2)
+	callPoint := points[0]
+	returnPoint := points[1]
+	body := wirlower.Lower("no-sidecars", fn.Stmts, bindings, built)
+
+	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	site, ok := facts.CallSite(callPoint)
+	if !ok {
+		t.Fatalf("missing WIR call site at point %d", callPoint)
+	}
+	if got := site.Context(); got != factflow.CallSiteContextReturnSource {
+		t.Fatalf("WIR call context = %v, want return source", got)
+	}
+	targets := site.ResultTargets()
+	if len(targets) != 1 || targets[0].Kind() != factflow.CallResultTargetReturn || targets[0].Index() != 0 || targets[0].ResultIndex() != 0 {
+		t.Fatalf("return call targets = %#v, want WIR return index 0 result 0", targets)
+	}
+	retFact, ok := facts.Return(returnPoint)
+	if !ok {
+		t.Fatalf("missing WIR return fact at point %d", returnPoint)
+	}
+	sources := retFact.Sources()
+	if len(sources) != 1 {
+		t.Fatalf("return sources = %#v, want one source", sources)
+	}
+	if source := sources[0]; source.Kind != factflow.ValueSourceCall || !source.HasCallPoint || source.CallPoint != callPoint || source.ResultIndex != 0 {
+		t.Fatalf("return source = %#v, want call result from point %d", source, callPoint)
+	}
+}
+
 func TestLowerCallResultTargetPathAccessorComesFromWIR(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(): ()

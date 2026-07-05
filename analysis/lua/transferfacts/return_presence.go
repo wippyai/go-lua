@@ -12,7 +12,7 @@ import (
 )
 
 func (l *lowerer) addReturnPresenceRelations(input *factflow.FactsInput, graph cfg.Graph, result *semantics.Result) {
-	if input == nil || graph == nil || result == nil {
+	if input == nil || graph == nil || (result == nil && (l == nil || l.wir == nil)) {
 		return
 	}
 	points := l.returnFactPoints(graph, result)

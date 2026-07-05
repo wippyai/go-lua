@@ -47,7 +47,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 	if config.Registry == nil {
 		panic("transferfacts: Config.Registry is required")
 	}
-	if result == nil || graph == nil {
+	if graph == nil || (result == nil && config.WIR == nil) {
 		return Lowered{Facts: factflow.NewFacts(factflow.FactsInput{})}
 	}
 	typeResolver := config.TypeResolver
@@ -109,60 +109,62 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		DynamicIndexExpressions:       make(map[factflow.ExprRef]factflow.DynamicIndexExpression),
 	}
 	for _, point := range graph.RPO() {
-		if view, ok := result.LocalAssignmentView(point); ok {
-			fact, _ := view.Borrowed()
-			if l.wir != nil && !l.hasAssignmentWriteFromWIR(point) {
-				// WIR mode must not fall back to semantic assignment facts, but
-				// other WIR-owned facts can share this CFG point.
-			} else if lowered, ok := l.localAssignment(point, fact); ok {
-				input.RootAssignments[point] = lowered
-				l.addLocalConditionAlias(fact.Symbol, lowered.Source())
-				l.addAssignmentAssertionRefinements(&input, point, lowered.TargetPath(), lowered.Source(), fact.Source)
-				l.addObjectLiteral(&input, result, fact.Source)
-				l.addObjectLiteralExpectedType(&input, fact)
-				l.addLocalAliasExposure(&input, point, fact)
-				if fact.Source.Kind == sourceprovenance.SourceExpression {
-					l.addCastExposure(&input, point, fact.Source.Expr)
-				}
-				if declared, ok := l.resolveType(fact.Type); ok {
-					l.addObjectLiteralFieldExposures(&input, result, point, fact.Source, declared)
-				}
-			}
-		}
-		if view, ok := result.OrdinaryAssignmentView(point); ok {
-			fact, _ := view.Borrowed()
-			if l.wir != nil && !l.hasAssignmentWriteFromWIR(point) {
-				// WIR mode must not fall back to semantic assignment facts, but
-				// other WIR-owned facts can share this CFG point.
-			} else if lowered, ok := l.pathAssignment(point, fact); ok {
-				input.PathAssignments[point] = lowered
-				if lowered, ok := l.pathStaticMemberWrite(point, fact); ok {
-					input.PathStaticMemberWrites[point] = lowered
-				}
-				if lowered, ok := l.ordinaryAssignment(point, fact); ok {
+		if result != nil {
+			if view, ok := result.LocalAssignmentView(point); ok {
+				fact, _ := view.Borrowed()
+				if l.wir != nil && !l.hasAssignmentWriteFromWIR(point) {
+					// WIR mode must not fall back to semantic assignment facts, but
+					// other WIR-owned facts can share this CFG point.
+				} else if lowered, ok := l.localAssignment(point, fact); ok {
 					input.RootAssignments[point] = lowered
-				}
-				l.addAssertionRefinementsForLoweredSource(&input, lowered.Source(), fact.Source)
-				l.addObjectLiteral(&input, result, fact.Source)
-				l.addStoreExposure(&input, point, fact)
-			} else if lowered, ok := l.ordinaryAssignment(point, fact); ok {
-				input.RootAssignments[point] = lowered
-				l.addAssignmentAssertionRefinements(&input, point, lowered.TargetPath(), lowered.Source(), fact.Source)
-				l.addObjectLiteral(&input, result, fact.Source)
-				l.addOrdinaryObjectLiteralExpectedType(&input, fact)
-				l.addReassignExposure(&input, point, fact)
-				if declared, ok := l.symbolTypes[fact.Symbol]; ok {
-					l.addObjectLiteralFieldExposures(&input, result, point, fact.Source, declared)
+					l.addLocalConditionAlias(fact.Symbol, lowered.Source())
+					l.addAssignmentAssertionRefinements(&input, point, lowered.TargetPath(), lowered.Source(), fact.Source)
+					l.addObjectLiteral(&input, result, fact.Source)
+					l.addObjectLiteralExpectedType(&input, fact)
+					l.addLocalAliasExposure(&input, point, fact)
+					if fact.Source.Kind == sourceprovenance.SourceExpression {
+						l.addCastExposure(&input, point, fact.Source.Expr)
+					}
+					if declared, ok := l.resolveType(fact.Type); ok {
+						l.addObjectLiteralFieldExposures(&input, result, point, fact.Source, declared)
+					}
 				}
 			}
-			if lowered, ok := l.dynamicIndexWrite(point, fact); ok {
-				input.DynamicIndexWrites[point] = lowered
-				l.addAssertionRefinementsForLoweredSource(&input, lowered.Source(), fact.Source)
-				l.addObjectLiteral(&input, result, fact.Source)
-				l.addDynamicIndexObjectLiteralExpectedTypes(&input, fact)
-			}
-			if lowered, ok := l.pathDescendantInvalidation(fact); ok {
-				input.PathDescendantInvalidations[point] = lowered
+			if view, ok := result.OrdinaryAssignmentView(point); ok {
+				fact, _ := view.Borrowed()
+				if l.wir != nil && !l.hasAssignmentWriteFromWIR(point) {
+					// WIR mode must not fall back to semantic assignment facts, but
+					// other WIR-owned facts can share this CFG point.
+				} else if lowered, ok := l.pathAssignment(point, fact); ok {
+					input.PathAssignments[point] = lowered
+					if lowered, ok := l.pathStaticMemberWrite(point, fact); ok {
+						input.PathStaticMemberWrites[point] = lowered
+					}
+					if lowered, ok := l.ordinaryAssignment(point, fact); ok {
+						input.RootAssignments[point] = lowered
+					}
+					l.addAssertionRefinementsForLoweredSource(&input, lowered.Source(), fact.Source)
+					l.addObjectLiteral(&input, result, fact.Source)
+					l.addStoreExposure(&input, point, fact)
+				} else if lowered, ok := l.ordinaryAssignment(point, fact); ok {
+					input.RootAssignments[point] = lowered
+					l.addAssignmentAssertionRefinements(&input, point, lowered.TargetPath(), lowered.Source(), fact.Source)
+					l.addObjectLiteral(&input, result, fact.Source)
+					l.addOrdinaryObjectLiteralExpectedType(&input, fact)
+					l.addReassignExposure(&input, point, fact)
+					if declared, ok := l.symbolTypes[fact.Symbol]; ok {
+						l.addObjectLiteralFieldExposures(&input, result, point, fact.Source, declared)
+					}
+				}
+				if lowered, ok := l.dynamicIndexWrite(point, fact); ok {
+					input.DynamicIndexWrites[point] = lowered
+					l.addAssertionRefinementsForLoweredSource(&input, lowered.Source(), fact.Source)
+					l.addObjectLiteral(&input, result, fact.Source)
+					l.addDynamicIndexObjectLiteralExpectedTypes(&input, fact)
+				}
+				if lowered, ok := l.pathDescendantInvalidation(fact); ok {
+					input.PathDescendantInvalidations[point] = lowered
+				}
 			}
 		}
 		if l.wir != nil {
@@ -170,28 +172,30 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 				input.Returns[point] = factflow.NewReturn(sources)
 			}
 		}
-		if view, ok := result.ReturnView(point); ok {
-			fact, _ := view.Borrowed()
-			if _, hasReturn := input.Returns[point]; !hasReturn {
-				if l.wir != nil {
-					if _, hasWIRReturn := l.wirReturnInstruction(point); !hasWIRReturn {
-						continue
+		if result != nil {
+			if view, ok := result.ReturnView(point); ok {
+				fact, _ := view.Borrowed()
+				if _, hasReturn := input.Returns[point]; !hasReturn {
+					if l.wir != nil {
+						if _, hasWIRReturn := l.wirReturnInstruction(point); !hasWIRReturn {
+							continue
+						}
+						input.Returns[point] = factflow.NewReturn(l.returnValueSources(fact.Sources, result))
+					} else {
+						input.Returns[point] = factflow.NewReturn(l.returnValueSources(fact.Sources, result))
 					}
-					input.Returns[point] = factflow.NewReturn(l.returnValueSources(fact.Sources, result))
-				} else {
-					input.Returns[point] = factflow.NewReturn(l.returnValueSources(fact.Sources, result))
 				}
-			}
-			if ret, ok := input.Returns[point]; ok {
-				if relations := l.typeIsReturnPresenceRelationsFromSources(ret.Sources(), result, input.CallSites); len(relations) != 0 {
-					appendReturnPresenceRelations(input.ReturnPresenceRelations, point, relations...)
+				if ret, ok := input.Returns[point]; ok {
+					if relations := l.typeIsReturnPresenceRelationsFromSources(ret.Sources(), result, input.CallSites); len(relations) != 0 {
+						appendReturnPresenceRelations(input.ReturnPresenceRelations, point, relations...)
+					}
+					returnSources := ret.Sources()
+					for index, source := range fact.Sources {
+						l.addReturnAssertionRefinements(&input, point, index, valueSourceAt(returnSources, index), source)
+						l.addObjectLiteral(&input, result, source)
+					}
+					l.addReturnObjectLiteralExpectedTypes(&input, result, fact)
 				}
-				returnSources := ret.Sources()
-				for index, source := range fact.Sources {
-					l.addReturnAssertionRefinements(&input, point, index, valueSourceAt(returnSources, index), source)
-					l.addObjectLiteral(&input, result, source)
-				}
-				l.addReturnObjectLiteralExpectedTypes(&input, result, fact)
 			}
 		}
 		if l.wir != nil {
@@ -211,143 +215,147 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 				appendCallResultValues(input.CallResultValues, point, lowered)
 			}
 		}
-		if view, ok := result.CallView(point); ok {
-			fact, _ := view.Borrowed()
-			if l.wir == nil {
-				if lowered := l.channelSelects(point, result); len(lowered) != 0 {
-					input.ChannelSelects[point] = factflow.NewChannelSelectSet(lowered...)
+		if result != nil {
+			if view, ok := result.CallView(point); ok {
+				fact, _ := view.Borrowed()
+				if l.wir == nil {
+					if lowered := l.channelSelects(point, result); len(lowered) != 0 {
+						input.ChannelSelects[point] = factflow.NewChannelSelectSet(lowered...)
+					}
+				}
+				site, hasCallSite := input.CallSites[point]
+				if !hasCallSite {
+					site, hasCallSite = l.callSiteAt(point, fact)
+				}
+				if !hasCallSite {
+					if l.wir != nil {
+						continue
+					}
+				} else {
+					input.CallSites[point] = site
+				}
+				var argumentSources []factflow.ValueSource
+				if hasCallSite {
+					argumentSources = site.ArgumentSources()
+				}
+				for index, source := range fact.ArgumentSources {
+					l.addCallArgumentAssertionRefinements(&input, point, index, valueSourceAt(argumentSources, index), source)
+					l.addObjectLiteral(&input, result, source)
+				}
+				if lowered, ok := l.assertPostconditionRefinement(fact); ok {
+					input.PostconditionRefinements[point] = factflow.NewPostconditionRefinementSet(lowered)
+				}
+				if l.wir == nil {
+					if lowered, ok := l.typeCastPostconditionRefinement(point, fact); ok {
+						appendPostconditionRefinements(input.PostconditionRefinements, point, lowered)
+					}
+					if lowered, ok := l.typeCastCallResultValue(point, fact); ok {
+						appendCallResultValues(input.CallResultValues, point, lowered)
+					}
+					if lowered := l.typeIsCallResultValues(point, fact); len(lowered) != 0 {
+						appendCallResultValues(input.CallResultValues, point, lowered...)
+					}
 				}
 			}
-			site, hasCallSite := input.CallSites[point]
-			if !hasCallSite {
-				site, hasCallSite = l.callSiteAt(point, fact)
-			}
-			if !hasCallSite {
+		}
+		if result != nil {
+			if fact, ok := result.BranchCondition(point); ok {
+				var branchSource factflow.ValueSource
+				var hasBranchSource bool
+				condition := fact.Condition
+				addAssertionRefinements := true
+				hasWIRBranch := false
 				if l.wir != nil {
-					continue
+					hasWIRBranch = l.wir.HasInstruction(point, wir.OpBranch)
+					if check, ok := l.directBranchCheckFromWIR(point); ok {
+						fact.Check = check
+						branchSource, hasBranchSource = l.branchConditionSourceFromWIR(check)
+					} else if !hasWIRBranch {
+						continue
+					} else if !l.hasWIRBranchConditionOperand(point) {
+						fact.Check = branchcond.Check{}
+						condition = nil
+						addAssertionRefinements = false
+					}
 				}
-			} else {
-				input.CallSites[point] = site
-			}
-			var argumentSources []factflow.ValueSource
-			if hasCallSite {
-				argumentSources = site.ArgumentSources()
-			}
-			for index, source := range fact.ArgumentSources {
-				l.addCallArgumentAssertionRefinements(&input, point, index, valueSourceAt(argumentSources, index), source)
-				l.addObjectLiteral(&input, result, source)
-			}
-			if lowered, ok := l.assertPostconditionRefinement(fact); ok {
-				input.PostconditionRefinements[point] = factflow.NewPostconditionRefinementSet(lowered)
-			}
-			if l.wir == nil {
-				if lowered, ok := l.typeCastPostconditionRefinement(point, fact); ok {
-					appendPostconditionRefinements(input.PostconditionRefinements, point, lowered)
+				if fact.Check.Kind != branchcond.CheckNone {
+					if !hasBranchSource {
+						branchSource = l.valueSource(fact.Source)
+					}
+					input.BranchConditionSources[point] = branchSource
 				}
-				if lowered, ok := l.typeCastCallResultValue(point, fact); ok {
-					appendCallResultValues(input.CallResultValues, point, lowered)
+				if reachability, ok := l.branchEdgeReachability(point, condition); ok {
+					input.BranchEdgeReachability[point] = reachability
 				}
-				if lowered := l.typeIsCallResultValues(point, fact); len(lowered) != 0 {
-					appendCallResultValues(input.CallResultValues, point, lowered...)
-				}
-			}
-		}
-		if fact, ok := result.BranchCondition(point); ok {
-			var branchSource factflow.ValueSource
-			var hasBranchSource bool
-			condition := fact.Condition
-			addAssertionRefinements := true
-			hasWIRBranch := false
-			if l.wir != nil {
-				hasWIRBranch = l.wir.HasInstruction(point, wir.OpBranch)
-				if check, ok := l.directBranchCheckFromWIR(point); ok {
-					fact.Check = check
-					branchSource, hasBranchSource = l.branchConditionSourceFromWIR(check)
+				if lowered := l.branchRefinementsFromWIR(point); len(lowered) != 0 {
+					appendBranchRefinement(input.BranchRefinements, point, lowered...)
 				} else if !hasWIRBranch {
-					continue
-				} else if !l.hasWIRBranchConditionOperand(point) {
-					fact.Check = branchcond.Check{}
-					condition = nil
-					addAssertionRefinements = false
+					if lowered := l.branchRefinements(fact.Check, condition); len(lowered) != 0 {
+						appendBranchRefinement(input.BranchRefinements, point, lowered...)
+					}
 				}
-			}
-			if fact.Check.Kind != branchcond.CheckNone {
-				if !hasBranchSource {
-					branchSource = l.valueSource(fact.Source)
-				}
-				input.BranchConditionSources[point] = branchSource
-			}
-			if reachability, ok := l.branchEdgeReachability(point, condition); ok {
-				input.BranchEdgeReachability[point] = reachability
-			}
-			if lowered := l.branchRefinementsFromWIR(point); len(lowered) != 0 {
-				appendBranchRefinement(input.BranchRefinements, point, lowered...)
-			} else if !hasWIRBranch {
-				if lowered := l.branchRefinements(fact.Check, condition); len(lowered) != 0 {
-					appendBranchRefinement(input.BranchRefinements, point, lowered...)
-				}
-			}
-			if lowered := l.branchLenRefinementsFromWIR(point); len(lowered) != 0 {
-				appendBranchLenRefinement(input.BranchRefinements, point, lowered...)
-			} else if !hasWIRBranch {
-				if lowered := l.branchLenRefinements(fact.Check, condition); len(lowered) != 0 {
+				if lowered := l.branchLenRefinementsFromWIR(point); len(lowered) != 0 {
 					appendBranchLenRefinement(input.BranchRefinements, point, lowered...)
+				} else if !hasWIRBranch {
+					if lowered := l.branchLenRefinements(fact.Check, condition); len(lowered) != 0 {
+						appendBranchLenRefinement(input.BranchRefinements, point, lowered...)
+					}
 				}
-			}
-			if lowered := l.branchNumFloorRefinementsFromWIR(point); len(lowered) != 0 {
-				appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered...)
-			} else if !hasWIRBranch {
-				if lowered := l.branchNumFloorRefinements(fact.Check, condition); len(lowered) != 0 {
+				if lowered := l.branchNumFloorRefinementsFromWIR(point); len(lowered) != 0 {
 					appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered...)
+				} else if !hasWIRBranch {
+					if lowered := l.branchNumFloorRefinements(fact.Check, condition); len(lowered) != 0 {
+						appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered...)
+					}
 				}
-			}
-			if hasWIRBranch {
-				if lowered := l.branchDiffConstraintsFromWIR(point); len(lowered) != 0 {
-					appendBranchDiffConstraint(input.BranchRefinements, point, lowered...)
+				if hasWIRBranch {
+					if lowered := l.branchDiffConstraintsFromWIR(point); len(lowered) != 0 {
+						appendBranchDiffConstraint(input.BranchRefinements, point, lowered...)
+					}
+				} else {
+					if lowered := l.branchDiffConstraints(condition); len(lowered) != 0 {
+						appendBranchDiffConstraint(input.BranchRefinements, point, lowered...)
+					}
 				}
-			} else {
-				if lowered := l.branchDiffConstraints(condition); len(lowered) != 0 {
-					appendBranchDiffConstraint(input.BranchRefinements, point, lowered...)
+				if hasWIRBranch {
+					if lowered := l.branchAliasRefinementsFromWIR(point); len(lowered) != 0 {
+						appendBranchRefinement(input.BranchRefinements, point, lowered...)
+					}
+				} else {
+					if lowered := l.branchAliasRefinements(condition); len(lowered) != 0 {
+						appendBranchRefinement(input.BranchRefinements, point, lowered...)
+					}
 				}
-			}
-			if hasWIRBranch {
-				if lowered := l.branchAliasRefinementsFromWIR(point); len(lowered) != 0 {
-					appendBranchRefinement(input.BranchRefinements, point, lowered...)
-				}
-			} else {
-				if lowered := l.branchAliasRefinements(condition); len(lowered) != 0 {
-					appendBranchRefinement(input.BranchRefinements, point, lowered...)
-				}
-			}
-			if lowered, ok := l.branchPathRelationsFromWIR(point); ok {
-				input.BranchPathRelations[point] = lowered
-			} else if !hasWIRBranch {
-				if lowered, ok := l.branchPathRelations(fact.Check, condition); ok {
+				if lowered, ok := l.branchPathRelationsFromWIR(point); ok {
 					input.BranchPathRelations[point] = lowered
+				} else if !hasWIRBranch {
+					if lowered, ok := l.branchPathRelations(fact.Check, condition); ok {
+						input.BranchPathRelations[point] = lowered
+					}
 				}
-			}
-			if hasWIRBranch {
-				if lowered := l.branchPathEvidenceFromWIR(point); len(lowered) != 0 {
-					appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
+				if hasWIRBranch {
+					if lowered := l.branchPathEvidenceFromWIR(point); len(lowered) != 0 {
+						appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
+					}
+				} else {
+					if lowered := l.branchPathEvidence(fact.Check, condition); len(lowered) != 0 {
+						appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
+					}
 				}
-			} else {
-				if lowered := l.branchPathEvidence(fact.Check, condition); len(lowered) != 0 {
-					appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
+				if addAssertionRefinements {
+					l.addAssertionRefinementsForSource(&input, fact.Source)
 				}
-			}
-			if addAssertionRefinements {
-				l.addAssertionRefinementsForSource(&input, fact.Source)
 			}
 		}
-		if fact, ok := result.NumericFor(point); ok {
-			if l.wir != nil {
-				if lowered, ok := l.numericForBranchNumFloorRefinementFromWIR(point); ok {
-					appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered)
-				}
-				if lowered := l.numericForBranchPathEvidenceFromWIR(point); len(lowered) != 0 {
-					appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
-				}
-			} else {
+		if l.wir != nil {
+			if lowered, ok := l.numericForBranchNumFloorRefinementFromWIR(point); ok {
+				appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered)
+			}
+			if lowered := l.numericForBranchPathEvidenceFromWIR(point); len(lowered) != 0 {
+				appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
+			}
+		} else if result != nil {
+			if fact, ok := result.NumericFor(point); ok {
 				if lowered, ok := l.numericForBranchNumFloorRefinement(fact); ok {
 					appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered)
 				}
