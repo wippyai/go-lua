@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/calloutcome"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -133,12 +134,7 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) callpayload
 			out.ParamPathWrites = mutations.Writes
 			out.ParamLengthFloors = lengthFloors
 			out.ParamPathInvalidations = invalidations
-			out.NormalReturnFacts.PathInvalidations = signatureNormalReturnPathInvalidations(invalidations)
-			out.NormalReturnFacts.DynamicIndexFacts = mutations.DynamicIndexFacts
-			out.NormalReturnFacts.EscapeEvents = signatureEscapeEventsForReader(sig, argSources)
-			out.NormalReturnFacts.FrozenTables = signatureFrozenTablesForReader(sig, argSources)
-			out.NormalReturnFacts.StoreRelations = signatureStoreRelationsForReader(sig, argSources)
-			out.NormalReturnFacts.LifecycleFacts = signatureLifecycleFactsForReader(sig, argSources)
+			applySignatureNormalReturnFacts(sig, argSources, invalidations, mutations, &out.NormalReturnFacts)
 		}
 		if sig.Type == nil || len(sig.Type.Returns) == 0 {
 			out.PostReturnAuthority = calloutcome.HasAuthoritativePostReturnEvidence(ctx.Registry, out)
@@ -175,6 +171,85 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) callpayload
 		out.Results = results
 		out.PostReturnAuthority = calloutcome.HasAuthoritativePostReturnEvidence(ctx.Registry, out)
 		return out
+	}
+}
+
+type signatureNormalReturnLaneContext struct {
+	sig           signature.Function
+	args          signatureArgumentReader
+	invalidations []callpayload.CallParamPathInvalidation
+	mutations     signatureParamMutationEffects
+}
+
+type signatureNormalReturnLaneHandler func(signatureNormalReturnLaneContext, *callboundary.NormalReturnFacts)
+
+var signatureNormalReturnLanes = callboundary.BindNormalReturnFactLanes(
+	"signature normal-return",
+	map[callboundary.NormalReturnFactLaneID]signatureNormalReturnLaneHandler{
+		callboundary.LanePathRefinements:          signatureNormalReturnNoop,
+		callboundary.LanePersistentPathWrites:     signatureNormalReturnNoop,
+		callboundary.LanePathStaticMembers:        signatureNormalReturnNoop,
+		callboundary.LanePathPresenceImplications: signatureNormalReturnNoop,
+		callboundary.LanePathInvalidations:        signatureNormalReturnPathInvalidationLane,
+		callboundary.LaneDynamicIndexFacts:        signatureNormalReturnDynamicIndexLane,
+		callboundary.LaneKeyMemberships:           signatureNormalReturnNoop,
+		callboundary.LaneDynamicValueKeys:         signatureNormalReturnNoop,
+		callboundary.LaneDynamicAllValues:         signatureNormalReturnNoop,
+		callboundary.LaneBranchProofs:             signatureNormalReturnNoop,
+		callboundary.LaneChannelSelects:           signatureNormalReturnNoop,
+		callboundary.LaneFrozenTables:             signatureNormalReturnFrozenTableLane,
+		callboundary.LaneEffectDeltas:             signatureNormalReturnNoop,
+		callboundary.LaneEscapeEvents:             signatureNormalReturnEscapeEventLane,
+		callboundary.LaneStoreRelations:           signatureNormalReturnStoreRelationLane,
+		callboundary.LaneLifecycleFacts:           signatureNormalReturnLifecycleLane,
+		callboundary.LaneNumFloors:                signatureNormalReturnNoop,
+		callboundary.LaneRelConstraints:           signatureNormalReturnNoop,
+	},
+	func(handler signatureNormalReturnLaneHandler) bool { return handler != nil },
+)
+
+func signatureNormalReturnNoop(signatureNormalReturnLaneContext, *callboundary.NormalReturnFacts) {
+}
+
+func signatureNormalReturnPathInvalidationLane(ctx signatureNormalReturnLaneContext, out *callboundary.NormalReturnFacts) {
+	out.PathInvalidations = signatureNormalReturnPathInvalidations(ctx.invalidations)
+}
+
+func signatureNormalReturnDynamicIndexLane(ctx signatureNormalReturnLaneContext, out *callboundary.NormalReturnFacts) {
+	out.DynamicIndexFacts = ctx.mutations.DynamicIndexFacts
+}
+
+func signatureNormalReturnFrozenTableLane(ctx signatureNormalReturnLaneContext, out *callboundary.NormalReturnFacts) {
+	out.FrozenTables = signatureFrozenTablesForReader(ctx.sig, ctx.args)
+}
+
+func signatureNormalReturnEscapeEventLane(ctx signatureNormalReturnLaneContext, out *callboundary.NormalReturnFacts) {
+	out.EscapeEvents = signatureEscapeEventsForReader(ctx.sig, ctx.args)
+}
+
+func signatureNormalReturnStoreRelationLane(ctx signatureNormalReturnLaneContext, out *callboundary.NormalReturnFacts) {
+	out.StoreRelations = signatureStoreRelationsForReader(ctx.sig, ctx.args)
+}
+
+func signatureNormalReturnLifecycleLane(ctx signatureNormalReturnLaneContext, out *callboundary.NormalReturnFacts) {
+	out.LifecycleFacts = signatureLifecycleFactsForReader(ctx.sig, ctx.args)
+}
+
+func applySignatureNormalReturnFacts(
+	sig signature.Function,
+	args signatureArgumentReader,
+	invalidations []callpayload.CallParamPathInvalidation,
+	mutations signatureParamMutationEffects,
+	out *callboundary.NormalReturnFacts,
+) {
+	ctx := signatureNormalReturnLaneContext{
+		sig:           sig,
+		args:          args,
+		invalidations: invalidations,
+		mutations:     mutations,
+	}
+	for _, lane := range signatureNormalReturnLanes {
+		lane.Value(ctx, out)
 	}
 }
 

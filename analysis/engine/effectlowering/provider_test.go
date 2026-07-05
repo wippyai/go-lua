@@ -92,6 +92,24 @@ func TestOperationalNormalReturnLanesTrackStorageRegistry(t *testing.T) {
 	}
 }
 
+func TestSignatureNormalReturnLanesTrackStorageRegistry(t *testing.T) {
+	storage := callboundary.NormalReturnFactLanes()
+	if len(signatureNormalReturnLanes) != len(storage) {
+		t.Fatalf("signature lanes = %d, storage lanes = %d", len(signatureNormalReturnLanes), len(storage))
+	}
+	for i, lane := range signatureNormalReturnLanes {
+		if lane.ID != storage[i].ID() {
+			t.Fatalf("lane %d id = %s, want %s", i, lane.ID, storage[i].ID())
+		}
+		if lane.Storage.ID() != storage[i].ID() {
+			t.Fatalf("lane %d storage id = %s, want %s", i, lane.Storage.ID(), storage[i].ID())
+		}
+		if lane.Value == nil {
+			t.Fatalf("lane %s has nil signature handler", lane.ID)
+		}
+	}
+}
+
 type countingSourceValues struct {
 	values map[factflow.ExprRef]product.Value
 	calls  map[factflow.ExprRef]int
