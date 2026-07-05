@@ -116,6 +116,43 @@ end
 	}
 }
 
+func TestLowerAssignmentSegmentedSourcePathComesFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): ()
+    local value = { name = "x" }
+    local other = { name = "y" }
+    local out = value.name
+end
+`)
+	assignStmt := fn.Stmts[2].(*ast.LocalAssignStmt)
+	points := requireStmtPoints(t, built, assignStmt, 1)
+	valuePath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "value").Field("name")
+	otherPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "other").Field("name")
+	outPath := path.NewPath(mustLocalAt(t, bindings, assignStmt, 0), "out")
+	body := wir.NewBody("synthetic-segmented-assign")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpAssign,
+		Point: points[0],
+		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(outPath))},
+		A:     wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))},
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	assign, ok := facts.RootAssignment(points[0])
+	if !ok {
+		t.Fatalf("missing assignment at point %d", points[0])
+	}
+	source := assign.Source()
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		t.Fatalf("assignment source = %#v, want expression-backed WIR path", source)
+	}
+	gotPath, ok := facts.ExpressionPath(source.ExprRef)
+	if !ok || !gotPath.Equal(otherPath) || gotPath.Equal(valuePath) {
+		t.Fatalf("assignment expression path = %v/%v, want WIR path %v not semantic path %v", gotPath, ok, otherPath, valuePath)
+	}
+}
+
 func TestLowerOrdinaryRootWriteSourcePathComesFromWIR(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(): ()

@@ -35,6 +35,22 @@ func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, fallback sourceproven
 	); ok {
 		return source, true
 	}
+	if source, ok := l.pathExpressionSourceFromWIR(
+		"assignment-source",
+		point,
+		op,
+		fallback.ExprIndex,
+		fallback.TargetIndex,
+		fallback.Final,
+		fallback.Expanded,
+		fallback.OpenTail,
+		symbol.Local,
+		symbol.Param,
+		symbol.Global,
+		symbol.Upvalue,
+	); ok {
+		return source, true
+	}
 	if op.Kind != wir.OperandConst && op.Kind != wir.OperandTemp {
 		return factflow.ValueSource{}, false
 	}
