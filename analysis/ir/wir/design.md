@@ -211,10 +211,11 @@ the cfgbuild guard point while retaining the `OpLogical` value form at the
 enclosing expression point. call reaches 100% under the per-point split (one
 `OpCall` per call point).
 
-Branch relation migration: `BranchPathRelations` consumes the WIR branch
-instruction's direct check / implied-check range in WIR mode. If WIR has a branch
-instruction but no relation-producing check metadata, transfer does not fall back
-to semantic compound-condition traversal for that lane.
+Branch lane migration: `BranchRefinements`, length floors, numeric floors, and
+`BranchPathRelations` consume the WIR branch instruction's direct check /
+implied-check range in WIR mode. If WIR has a branch instruction but no
+lane-producing check metadata, transfer does not fall back to semantic
+compound-condition traversal for those lanes.
 
 ## Locked decisions (Stage 4, journal #1392)
 

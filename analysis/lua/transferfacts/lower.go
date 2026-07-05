@@ -228,11 +228,13 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			var hasBranchSource bool
 			condition := fact.Condition
 			addAssertionRefinements := true
+			hasWIRBranch := false
 			if l.wir != nil {
+				hasWIRBranch = l.wir.HasInstruction(point, wir.OpBranch)
 				if check, ok := l.directBranchCheckFromWIR(point); ok {
 					fact.Check = check
 					branchSource, hasBranchSource = l.branchConditionSourceFromWIR(check)
-				} else if !l.wir.HasInstruction(point, wir.OpBranch) {
+				} else if !hasWIRBranch {
 					continue
 				} else if !l.hasWIRBranchConditionOperand(point) {
 					fact.Check = branchcond.Check{}
@@ -249,14 +251,26 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			if reachability, ok := l.branchEdgeReachability(point, condition); ok {
 				input.BranchEdgeReachability[point] = reachability
 			}
-			if lowered := l.branchRefinements(fact.Check, condition); len(lowered) != 0 {
+			if lowered := l.branchRefinementsFromWIR(point); len(lowered) != 0 {
 				appendBranchRefinement(input.BranchRefinements, point, lowered...)
+			} else if !hasWIRBranch {
+				if lowered := l.branchRefinements(fact.Check, condition); len(lowered) != 0 {
+					appendBranchRefinement(input.BranchRefinements, point, lowered...)
+				}
 			}
-			if lowered := l.branchLenRefinements(fact.Check, condition); len(lowered) != 0 {
+			if lowered := l.branchLenRefinementsFromWIR(point); len(lowered) != 0 {
 				appendBranchLenRefinement(input.BranchRefinements, point, lowered...)
+			} else if !hasWIRBranch {
+				if lowered := l.branchLenRefinements(fact.Check, condition); len(lowered) != 0 {
+					appendBranchLenRefinement(input.BranchRefinements, point, lowered...)
+				}
 			}
-			if lowered := l.branchNumFloorRefinements(fact.Check, condition); len(lowered) != 0 {
+			if lowered := l.branchNumFloorRefinementsFromWIR(point); len(lowered) != 0 {
 				appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered...)
+			} else if !hasWIRBranch {
+				if lowered := l.branchNumFloorRefinements(fact.Check, condition); len(lowered) != 0 {
+					appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered...)
+				}
 			}
 			if lowered := l.branchDiffConstraints(condition); len(lowered) != 0 {
 				appendBranchDiffConstraint(input.BranchRefinements, point, lowered...)
@@ -266,12 +280,10 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			}
 			if lowered, ok := l.branchPathRelationsFromWIR(point); ok {
 				input.BranchPathRelations[point] = lowered
-			} else if l.wir != nil && l.wir.HasInstruction(point, wir.OpBranch) {
-				// In WIR mode this lane is owned by the branch instruction's
-				// direct/implied checks. Do not re-walk the semantic condition when
-				// WIR has no relation-producing metadata for this point.
-			} else if lowered, ok := l.branchPathRelations(fact.Check, condition); ok {
-				input.BranchPathRelations[point] = lowered
+			} else if !hasWIRBranch {
+				if lowered, ok := l.branchPathRelations(fact.Check, condition); ok {
+					input.BranchPathRelations[point] = lowered
+				}
 			}
 			if lowered := l.branchPathEvidence(fact.Check, condition); len(lowered) != 0 {
 				appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)

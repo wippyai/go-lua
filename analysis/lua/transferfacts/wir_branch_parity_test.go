@@ -117,6 +117,45 @@ end
 	}
 }
 
+func TestLowerWithWIRCompoundBranchRefinementLanesMatchSidecar(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local x: any = 1
+local i: integer = 1
+local xs: {string} = {}
+if type(x) == "number" and i >= 1 and #xs > 0 then
+    local hit = true
+end
+`, "type")
+	body := wirlower.Lower("chunk", stmts, bindings, built)
+	sidecarFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	var checkedRefinement, checkedLen, checkedNum bool
+	for _, point := range built.Graph.RPO() {
+		if want := sidecarFacts.BranchRefinements(point); len(want) != 0 {
+			checkedRefinement = true
+			if got := wirFacts.BranchRefinements(point); !reflect.DeepEqual(got, want) {
+				t.Fatalf("WIR branch refinements at point %d mismatch\n got: %#v\nwant: %#v", point, got, want)
+			}
+		}
+		if want := sidecarFacts.BranchLenRefinements(point); len(want) != 0 {
+			checkedLen = true
+			if got := wirFacts.BranchLenRefinements(point); !reflect.DeepEqual(got, want) {
+				t.Fatalf("WIR branch len refinements at point %d mismatch\n got: %#v\nwant: %#v", point, got, want)
+			}
+		}
+		if want := sidecarFacts.BranchNumFloorRefinements(point); len(want) != 0 {
+			checkedNum = true
+			if got := wirFacts.BranchNumFloorRefinements(point); !reflect.DeepEqual(got, want) {
+				t.Fatalf("WIR branch num-floor refinements at point %d mismatch\n got: %#v\nwant: %#v", point, got, want)
+			}
+		}
+	}
+	if !checkedRefinement || !checkedLen || !checkedNum {
+		t.Fatalf("test did not exercise all lanes: refinement=%v len=%v num=%v", checkedRefinement, checkedLen, checkedNum)
+	}
+}
+
 func TestLowerWithWIRBranchPathRelationsDoesNotFallbackToSemanticCondition(t *testing.T) {
 	stmts, bindings, built, result := parseSemanticChunk(t, `
 local a, b = {}, {}
@@ -183,6 +222,15 @@ end
 	}
 	if got := facts.BranchRefinements(point); len(got) != 0 {
 		t.Fatalf("WIR mode branch at point %d fell back to semantic refinements: %#v", point, got)
+	}
+	if got := facts.BranchLenRefinements(point); len(got) != 0 {
+		t.Fatalf("WIR mode branch at point %d fell back to semantic len refinements: %#v", point, got)
+	}
+	if got := facts.BranchNumFloorRefinements(point); len(got) != 0 {
+		t.Fatalf("WIR mode branch at point %d fell back to semantic num-floor refinements: %#v", point, got)
+	}
+	if got := facts.BranchPathRelations(point); len(got) != 0 {
+		t.Fatalf("WIR mode branch at point %d fell back to semantic path relations: %#v", point, got)
 	}
 	if got := facts.BranchPathEvidence(point); len(got) != 0 {
 		t.Fatalf("WIR mode branch at point %d fell back to semantic path evidence: %#v", point, got)
