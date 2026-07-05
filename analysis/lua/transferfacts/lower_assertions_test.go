@@ -23,11 +23,69 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
+
+func TestLowerAssignmentClaimsUseWIRClaimSourcesForRootWrites(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(x: any)
+    local local_cast = x as number
+    local local_assert = x!
+    local reassigned: any = nil
+    reassigned = x as string
+end
+`)
+	body := wirlower.Lower("f", fn.Stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	localCastPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
+	localCastSource := mustLocalSource(t, facts, localCastPoint)
+	assertWIRConcreteCastAssertion(t, facts, localCastSource, typ.Number, factflow.ValueSourcePath)
+
+	localAssertPoint := requireStmtPoints(t, built, fn.Stmts[1], 1)[0]
+	localAssertSource := mustLocalSource(t, facts, localAssertPoint)
+	assertWIRAssertion(t, facts, localAssertSource, assertion.NonNil(), factflow.ValueSourcePath)
+
+	reassignPoint := requireStmtPoints(t, built, fn.Stmts[3], 1)[0]
+	reassignFact, ok := facts.OrdinaryAssignment(reassignPoint)
+	if !ok {
+		t.Fatalf("missing ordinary assignment at point %d", reassignPoint)
+	}
+	assertWIRConcreteCastAssertion(t, facts, reassignFact.Source(), typ.String, factflow.ValueSourcePath)
+}
+
+func assertWIRAssertion(t *testing.T, facts factflow.Facts, source factflow.ValueSource, want assertion.Value, wantInnerKind factflow.ValueSourceKind) {
+	t.Helper()
+	claim, ok := facts.ExpressionRefinement(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing assertion for source ref %d", source.ExprRef)
+	}
+	assertClaimRefinementProduct(t, claim.Refinement(), want)
+	inner := claim.Source()
+	if inner.ExprRef != 0 || inner.HasExpr || inner.Kind != wantInnerKind {
+		t.Fatalf("WIR assertion inner source = %#v, outer %#v", inner, source)
+	}
+}
+
+func assertWIRConcreteCastAssertion(t *testing.T, facts factflow.Facts, source factflow.ValueSource, want typ.Type, wantInnerKind factflow.ValueSourceKind) {
+	t.Helper()
+	claim, ok := facts.ExpressionRefinement(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing assertion for source ref %d", source.ExprRef)
+	}
+	if got := claim.Mode(); got != factflow.ExpressionRefinementRuntimeValidation {
+		t.Fatalf("refinement mode = %v, want %v", got, factflow.ExpressionRefinementRuntimeValidation)
+	}
+	assertConcreteCastRefinementProduct(t, claim.Refinement(), want)
+	inner := claim.Source()
+	if inner.ExprRef != 0 || inner.HasExpr || inner.Kind != wantInnerKind {
+		t.Fatalf("WIR assertion inner source = %#v, outer %#v", inner, source)
+	}
+}
 
 func TestLowerClaimsToSidecarsWithoutProofRefinements(t *testing.T) {
 	decl := localAssign([]string{"x"}, number("0"))

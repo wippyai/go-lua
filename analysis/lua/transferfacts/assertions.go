@@ -1,14 +1,110 @@
 package transferfacts
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/castsem"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
+
+func (l *lowerer) addAssignmentAssertionRefinements(input *factflow.FactsInput, point cfg.Point, target path.Path, source sourceprovenance.ASTSource) {
+	if l.addAssignmentAssertionRefinementFromWIRClaim(input, point, target, source) {
+		return
+	}
+	l.addAssertionRefinementsForSource(input, source)
+}
+
+func (l *lowerer) addAssignmentAssertionRefinementFromWIRClaim(input *factflow.FactsInput, point cfg.Point, target path.Path, source sourceprovenance.ASTSource) bool {
+	if input == nil || l == nil || l.wir == nil || target.IsEmpty() || source.Expr == nil {
+		return false
+	}
+	wantClaim, ok := claimKindForAssertionSource(source.Expr)
+	if !ok {
+		return false
+	}
+	outerSource := l.valueSource(source)
+	if !outerSource.HasExpr {
+		return false
+	}
+	for _, inst := range l.wir.PointInstructions(point) {
+		if inst.Op != wir.OpClaim || inst.Claim != wantClaim || !l.wirClaimDstMatchesPath(inst, target) {
+			continue
+		}
+		innerSource, ok := l.claimInnerSourceFromWIR(inst, source)
+		if !ok {
+			return false
+		}
+		refinement, mode, ok := l.claimRefinementFromWIR(inst)
+		if !ok {
+			return false
+		}
+		if input.ExpressionRefinements == nil {
+			input.ExpressionRefinements = make(map[factflow.ExprRef]factflow.ExpressionRefinement)
+		}
+		switch mode {
+		case factflow.ExpressionRefinementRuntimeValidation:
+			input.ExpressionRefinements[outerSource.ExprRef] = factflow.NewExpressionRuntimeValidation(innerSource, refinement)
+		case factflow.ExpressionRefinementDeclaredContract:
+			input.ExpressionRefinements[outerSource.ExprRef] = factflow.NewExpressionDeclaredContract(innerSource, refinement)
+		default:
+			input.ExpressionRefinements[outerSource.ExprRef] = factflow.NewExpressionRefinement(innerSource, refinement)
+		}
+		return true
+	}
+	return false
+}
+
+func claimKindForAssertionSource(expr ast.Expr) (wir.ClaimKind, bool) {
+	switch expr.(type) {
+	case *ast.CastExpr:
+		return wir.ClaimCast, true
+	case *ast.NonNilAssertExpr:
+		return wir.ClaimAssert, true
+	default:
+		return wir.ClaimNone, false
+	}
+}
+
+func (l *lowerer) wirClaimDstMatchesPath(inst wir.Instruction, target path.Path) bool {
+	if inst.Dst.Kind != wir.OperandPath {
+		return false
+	}
+	return l.wir.Path(wir.PathRef(inst.Dst.Ref)).Equal(target)
+}
+
+func (l *lowerer) claimInnerSourceFromWIR(inst wir.Instruction, source sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
+	return l.valueSourceFromWIROperand(
+		inst.A,
+		source.ExprIndex,
+		source.TargetIndex,
+		source.Final,
+		source.Expanded,
+		source.OpenTail,
+		l.callResultValueSourcesByTempFromWIR(),
+	)
+}
+
+func (l *lowerer) claimRefinementFromWIR(inst wir.Instruction) (product.Value, factflow.ExpressionRefinementMode, bool) {
+	switch inst.Claim {
+	case wir.ClaimAssert:
+		return l.assertionRefinement(assertion.NonNil()), factflow.ExpressionRefinementMeet, true
+	case wir.ClaimCast:
+		t := l.wir.Type(inst.Type)
+		if t == nil || typ.IsAny(t) || typ.IsUnknown(t) {
+			return l.assertionRefinement(assertion.Any()), factflow.ExpressionRefinementMeet, true
+		}
+		refinement := product.Set(l.registry, l.valueFromTypeWithWitness(t), assertion.Key, assertion.Of(assertion.TypeClaim, assertion.RuntimeClaim))
+		return refinement, factflow.ExpressionRefinementRuntimeValidation, true
+	default:
+		return product.Value{}, factflow.ExpressionRefinementMeet, false
+	}
+}
 
 func (l *lowerer) addAssertionRefinementsForSource(input *factflow.FactsInput, source sourceprovenance.ASTSource) {
 	if input == nil || source.Expr == nil {

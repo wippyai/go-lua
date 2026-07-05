@@ -108,7 +108,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			fact, _ := view.Borrowed()
 			if lowered, ok := l.localAssignment(point, fact); ok {
 				input.RootAssignments[point] = lowered
-				l.addAssertionRefinementsForSource(&input, fact.Source)
+				l.addAssignmentAssertionRefinements(&input, point, lowered.TargetPath(), fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
 				l.addObjectLiteralExpectedType(&input, fact)
 				l.addLocalAliasExposure(&input, point, fact)
@@ -135,7 +135,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 				l.addStoreExposure(&input, point, fact)
 			} else if lowered, ok := l.ordinaryAssignment(point, fact); ok {
 				input.RootAssignments[point] = lowered
-				l.addAssertionRefinementsForSource(&input, fact.Source)
+				l.addAssignmentAssertionRefinements(&input, point, lowered.TargetPath(), fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
 				l.addOrdinaryObjectLiteralExpectedType(&input, fact)
 				l.addReassignExposure(&input, point, fact)
