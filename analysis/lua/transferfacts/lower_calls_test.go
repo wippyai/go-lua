@@ -534,12 +534,8 @@ end
 		t.Fatalf("missing call site at point %d", points[0])
 	}
 	receiverSource, ok := site.ReceiverSource()
-	if !ok || receiverSource.Kind != factflow.ValueSourceExpression || !receiverSource.HasExpr {
-		t.Fatalf("receiver source = %#v/%v, want expression-backed WIR path", receiverSource, ok)
-	}
-	got, ok := facts.ExpressionPath(receiverSource.ExprRef)
-	if !ok || !got.Equal(otherPath) || got.Equal(objPath) {
-		t.Fatalf("receiver expression path = %v/%v, want WIR path %v not semantic path %v", got, ok, otherPath, objPath)
+	if !ok || receiverSource.Kind != factflow.ValueSourcePath || receiverSource.PathKey != otherPath.Key() {
+		t.Fatalf("receiver source = %#v/%v, want WIR path source %v", receiverSource, ok, otherPath)
 	}
 	receiverPath, ok := site.ReceiverPath()
 	if !ok || !receiverPath.Equal(otherPath) || receiverPath.Equal(objPath) {
@@ -594,12 +590,8 @@ end
 	}
 	site := l.callSiteWithArgumentSourcesAt(points[0], fact, nil)
 	receiverSource, ok := site.ReceiverSource()
-	if !ok || receiverSource.Kind != factflow.ValueSourceExpression || !receiverSource.HasExpr {
-		t.Fatalf("receiver source = %#v/%v, want WIR expression source without semantic receiver source", receiverSource, ok)
-	}
-	got, ok := l.expressionPaths[receiverSource.ExprRef]
-	if !ok || !got.Equal(otherPath) {
-		t.Fatalf("receiver expression path = %v/%v, want WIR path %v", got, ok, otherPath)
+	if !ok || receiverSource.Kind != factflow.ValueSourcePath || receiverSource.PathKey != otherPath.Key() {
+		t.Fatalf("receiver source = %#v/%v, want WIR path source %v without semantic receiver source", receiverSource, ok, otherPath)
 	}
 }
 

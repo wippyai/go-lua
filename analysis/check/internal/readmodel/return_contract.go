@@ -281,7 +281,7 @@ func (r Reader) returnValue(occ body.ReturnValueOccurrence, expectedValue produc
 	if !ok || expected == nil || typ.IsAny(expected) || typ.IsUnknown(expected) || typ.IsNever(expected) || refinement.ContainsFreeTypeParam(expected) {
 		return Return{}, false
 	}
-	value, ok := r.SourceValue(occ.Point, occ.Source)
+	value, ok := r.returnOccurrenceValue(occ)
 	if !ok {
 		return Return{}, false
 	}
@@ -308,6 +308,18 @@ func (r Reader) returnValue(occ body.ReturnValueOccurrence, expectedValue produc
 		IsSubtype:           r.IsSubtype,
 	})
 	return ret, true
+}
+
+func (r Reader) returnOccurrenceValue(occ body.ReturnValueOccurrence) (product.Value, bool) {
+	if r.result == nil {
+		return product.Value{}, false
+	}
+	if occ.HasLowered {
+		if value, ok := r.result.SourceValueForExplanationAtBoundary(occ.Point, occ.Lowered); ok {
+			return value, true
+		}
+	}
+	return r.SourceValue(occ.Point, occ.Source)
 }
 
 func returnExpectedLabel(index int) string {

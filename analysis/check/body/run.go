@@ -168,10 +168,11 @@ func (c *checker) prepare(
 		ExpressionValue: expressionValue,
 		VarargValue:     config.VarargValue,
 	})
-	calleeValue := calleeValueProvider(config.Registry, facts, resolver, sources, config.TypeValues, bindings, typeResolver)
+	refinedSources := sourcevalue.NewExpressionRefinements(facts.ExpressionRefinements()).Bind(config.Registry, sources)
+	calleeValue := calleeValueProvider(config.Registry, facts, resolver, refinedSources, config.TypeValues, bindings, typeResolver)
 	receiverFn := declaredReceiverCallableProvider(facts, bindings, typeResolver)
 	signatureID.indexCallSites(facts)
-	callOutcomeSupplement := preparedCallOutcomeSupplement(config.Registry, config.ModuleExports, signatureID, facts, resolver, sources, config.TypeValues, calleeValue)
+	callOutcomeSupplement := preparedCallOutcomeSupplement(config.Registry, config.ModuleExports, signatureID, facts, resolver, refinedSources, config.TypeValues, calleeValue)
 	entrySeeds := entrySeedPlan(config.Registry, config.TypeValues, bindings, sem.Function(), globals, config.GlobalTypes, config.ModuleExports, typeResolver)
 	return &Static{
 		registry:              config.Registry,

@@ -148,6 +148,13 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 		}
 
 		out := in
+		if sources != nil {
+			if refinedSources == nil || refinedSourceRegistry != ctx.Registry {
+				refinedSources = expressionRefinements.Bind(ctx.Registry, sources)
+				refinedSourceRegistry = ctx.Registry
+			}
+			sources = refinedSources
+		}
 		if nodeHasCallMaterializationFacts(facts, ctx.Point) {
 			out = ensureCallResults().Materialize(ctx.Point, in)
 		}
@@ -173,11 +180,6 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 		if sources == nil {
 			return out
 		}
-		if refinedSources == nil || refinedSourceRegistry != ctx.Registry {
-			refinedSources = expressionRefinements.Bind(ctx.Registry, sources)
-			refinedSourceRegistry = ctx.Registry
-		}
-		sources = refinedSources
 		if fact, ok := facts.DynamicIndexWrite(ctx.Point); ok {
 			out = applyDynamicIndexWrite(ctx, config.Visibility, facts, sources, ensureCallResults().ReadLazy(), in, out, fact)
 		}

@@ -81,11 +81,13 @@ end
 		t.Fatalf("return sources = %#v, want two", sources)
 	}
 	if sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr {
-		t.Fatalf("cast return source = %#v, want outer expression source until claim temps become value sources", sources[0])
+		t.Fatalf("cast return source = %#v, want WIR claim expression source", sources[0])
 	}
 	if sources[1].Kind != factflow.ValueSourceExpression || !sources[1].HasExpr {
-		t.Fatalf("assert return source = %#v, want outer expression source until claim temps become value sources", sources[1])
+		t.Fatalf("assert return source = %#v, want WIR claim expression source", sources[1])
 	}
+	assertWIRClaimSourceHasNoSemanticPath(t, facts, sources[0])
+	assertWIRClaimSourceHasNoSemanticPath(t, facts, sources[1])
 	assertWIRConcreteCastAssertion(t, facts, sources[0], typ.Number, factflow.ValueSourcePath)
 	assertWIRAssertion(t, facts, sources[1], assertion.NonNil(), factflow.ValueSourcePath)
 }
@@ -109,11 +111,13 @@ end
 		t.Fatalf("call argument sources = %#v, want two", args)
 	}
 	if args[0].Kind != factflow.ValueSourceExpression || !args[0].HasExpr {
-		t.Fatalf("cast argument source = %#v, want outer expression source until claim temps become value sources", args[0])
+		t.Fatalf("cast argument source = %#v, want WIR claim expression source", args[0])
 	}
 	if args[1].Kind != factflow.ValueSourceExpression || !args[1].HasExpr {
-		t.Fatalf("assert argument source = %#v, want outer expression source until claim temps become value sources", args[1])
+		t.Fatalf("assert argument source = %#v, want WIR claim expression source", args[1])
 	}
+	assertWIRClaimSourceHasNoSemanticPath(t, facts, args[0])
+	assertWIRClaimSourceHasNoSemanticPath(t, facts, args[1])
 	assertWIRConcreteCastAssertion(t, facts, args[0], typ.Number, factflow.ValueSourcePath)
 	assertWIRAssertion(t, facts, args[1], assertion.NonNil(), factflow.ValueSourcePath)
 }
@@ -191,9 +195,23 @@ end
 	}
 	args := site.ArgumentSources()
 	if len(args) != 1 || args[0].Kind != factflow.ValueSourceExpression || !args[0].HasExpr {
-		t.Fatalf("call argument sources = %#v, want semantic outer expression source", args)
+		t.Fatalf("call argument sources = %#v, want WIR claim expression source", args)
 	}
+	assertWIRClaimSourceHasNoSemanticPath(t, facts, args[0])
 	assertWIRConcreteCastAssertion(t, facts, args[0], typ.Number, factflow.ValueSourcePath)
+	if got := len(facts.ExpressionRefinements()); got != 1 {
+		t.Fatalf("expression refinements = %d, want only the WIR claim source refinement", got)
+	}
+}
+
+func assertWIRClaimSourceHasNoSemanticPath(t *testing.T, facts factflow.Facts, source factflow.ValueSource) {
+	t.Helper()
+	if !source.HasExpr || source.ExprRef == 0 {
+		t.Fatalf("source = %#v, want expression source", source)
+	}
+	if p, ok := facts.ExpressionPath(source.ExprRef); ok {
+		t.Fatalf("WIR claim source ref %d has semantic path %s", source.ExprRef, p.String())
+	}
 }
 
 func assertWIRAssertion(t *testing.T, facts factflow.Facts, source factflow.ValueSource, want assertion.Value, wantInnerKind factflow.ValueSourceKind) {

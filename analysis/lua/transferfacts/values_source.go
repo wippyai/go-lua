@@ -247,11 +247,11 @@ func (l *lowerer) wirTempExpressionValueSource(
 	if op.Kind != wir.OperandTemp || l == nil || l.wir == nil {
 		return factflow.ValueSource{}, false
 	}
-	if seen[op.Ref] {
-		return factflow.ValueSource{}, false
-	}
 	if seen == nil {
 		seen = make(map[uint32]bool)
+	}
+	if seen[op.Ref] {
+		return factflow.ValueSource{}, false
 	}
 	seen[op.Ref] = true
 	defer delete(seen, op.Ref)
@@ -266,9 +266,59 @@ func (l *lowerer) wirTempExpressionValueSource(
 		return l.wirBinaryTempExpressionValueSource(op.Ref, inst, exprIndex, targetIndex, final, expanded, openTail, callResults, seen)
 	case wir.OpUnOp:
 		return l.wirUnaryTempExpressionValueSource(op.Ref, inst, exprIndex, targetIndex, final, expanded, openTail, callResults, seen)
+	case wir.OpClaim:
+		return l.wirClaimTempExpressionValueSource(op.Ref, inst, exprIndex, targetIndex, final, expanded, openTail, callResults, seen)
 	default:
 		return factflow.ValueSource{}, false
 	}
+}
+
+func (l *lowerer) wirClaimTempExpressionValueSource(
+	temp uint32,
+	inst wir.Instruction,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+	callResults map[uint32]wirCallResultSource,
+	seen map[uint32]bool,
+) (factflow.ValueSource, bool) {
+	inner, ok := l.valueSourceFromWIROperandSeen(inst.A, exprIndex, targetIndex, final, expanded, openTail, callResults, seen)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	exprRef, ok := l.exprRef(wirTempExprRefKey{temp: temp})
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, openTail)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	source, ok := factflow.NewExpressionValueSource(exprRef, exprIndex, targetIndex, 0, shape)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	if !l.recordExpressionRefinementFromWIRClaim(source, inner, inst) {
+		return factflow.ValueSource{}, false
+	}
+	l.addWIRClaimExpressionValue(exprRef, inst)
+	return source, true
+}
+
+func (l *lowerer) addWIRClaimExpressionValue(exprRef factflow.ExprRef, inst wir.Instruction) {
+	if exprRef == 0 || inst.Claim != wir.ClaimCast {
+		return
+	}
+	t := l.wir.Type(inst.Type)
+	if t == nil || typ.IsAny(t) || typ.IsUnknown(t) {
+		return
+	}
+	if l.expressionValues == nil {
+		l.expressionValues = make(map[factflow.ExprRef]product.Value)
+	}
+	l.expressionValues[exprRef] = l.valueFromTypeWithWitness(t)
 }
 
 func (l *lowerer) wirBinaryTempExpressionValueSource(

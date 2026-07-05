@@ -57,6 +57,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 	declaredReturnLocalTypes := lowerDeclaredReturnLocalTypes(config.Bindings, graph, result, typeResolver)
 	returnLocalObjectLiteralTypes := lowerReturnLocalObjectLiteralTypes(config.Bindings, graph, result, typeResolver)
 	symbolTypes = mergeSymbolTypes(symbolTypes, declaredReturnLocalTypes)
+	expressionRefinements := make(map[factflow.ExprRef]factflow.ExpressionRefinement)
 	l := lowerer{
 		registry:                      config.Registry,
 		bindings:                      config.Bindings,
@@ -74,6 +75,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		expressionValues:              make(map[factflow.ExprRef]product.Value),
 		expressionOperations:          make(map[factflow.ExprRef]factflow.ExpressionOperation),
 		expressionFunctions:           make(map[factflow.ExprRef]symbol.ID),
+		expressionRefinements:         expressionRefinements,
 		expressionPaths:               make(map[factflow.ExprRef]pathdom.Path),
 		dynamicIndexExpressions:       make(map[factflow.ExprRef]factflow.DynamicIndexExpression),
 		expressionConditions:          make(map[factflow.ExprRef]factflow.ExpressionCondition),
@@ -101,7 +103,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		ExpressionValues:              make(map[factflow.ExprRef]product.Value),
 		ExpressionOperations:          make(map[factflow.ExprRef]factflow.ExpressionOperation),
 		ExpressionFunctions:           make(map[factflow.ExprRef]symbol.ID),
-		ExpressionRefinements:         make(map[factflow.ExprRef]factflow.ExpressionRefinement),
+		ExpressionRefinements:         expressionRefinements,
 		DynamicIndexExpressions:       make(map[factflow.ExprRef]factflow.DynamicIndexExpression),
 	}
 	for _, point := range graph.RPO() {
@@ -112,7 +114,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			}
 			if lowered, ok := l.localAssignment(point, fact); ok {
 				input.RootAssignments[point] = lowered
-				l.addAssignmentAssertionRefinements(&input, point, lowered.TargetPath(), fact.Source)
+				l.addAssignmentAssertionRefinements(&input, point, lowered.TargetPath(), lowered.Source(), fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
 				l.addObjectLiteralExpectedType(&input, fact)
 				l.addLocalAliasExposure(&input, point, fact)
@@ -137,12 +139,12 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 				if lowered, ok := l.ordinaryAssignment(point, fact); ok {
 					input.RootAssignments[point] = lowered
 				}
-				l.addAssertionRefinementsForSource(&input, fact.Source)
+				l.addAssertionRefinementsForLoweredSource(&input, lowered.Source(), fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
 				l.addStoreExposure(&input, point, fact)
 			} else if lowered, ok := l.ordinaryAssignment(point, fact); ok {
 				input.RootAssignments[point] = lowered
-				l.addAssignmentAssertionRefinements(&input, point, lowered.TargetPath(), fact.Source)
+				l.addAssignmentAssertionRefinements(&input, point, lowered.TargetPath(), lowered.Source(), fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
 				l.addOrdinaryObjectLiteralExpectedType(&input, fact)
 				l.addReassignExposure(&input, point, fact)
@@ -152,7 +154,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			}
 			if lowered, ok := l.dynamicIndexWrite(point, fact); ok {
 				input.DynamicIndexWrites[point] = lowered
-				l.addAssertionRefinementsForSource(&input, fact.Source)
+				l.addAssertionRefinementsForLoweredSource(&input, lowered.Source(), fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
 				l.addDynamicIndexObjectLiteralExpectedTypes(&input, fact)
 			}
@@ -177,8 +179,12 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 					appendReturnPresenceRelations(input.ReturnPresenceRelations, point, relations...)
 				}
 			}
+			var returnSources []factflow.ValueSource
+			if ret, ok := input.Returns[point]; ok {
+				returnSources = ret.Sources()
+			}
 			for index, source := range fact.Sources {
-				l.addReturnAssertionRefinements(&input, point, index, source)
+				l.addReturnAssertionRefinements(&input, point, index, valueSourceAt(returnSources, index), source)
 				l.addObjectLiteral(&input, result, source)
 			}
 			l.addReturnObjectLiteralExpectedTypes(&input, result, fact)
@@ -196,8 +202,12 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			} else {
 				input.CallSites[point] = site
 			}
+			var argumentSources []factflow.ValueSource
+			if hasCallSite {
+				argumentSources = site.ArgumentSources()
+			}
 			for index, source := range fact.ArgumentSources {
-				l.addCallArgumentAssertionRefinements(&input, point, index, source)
+				l.addCallArgumentAssertionRefinements(&input, point, index, valueSourceAt(argumentSources, index), source)
 				l.addObjectLiteral(&input, result, source)
 			}
 			if lowered, ok := l.assertPostconditionRefinement(fact); ok {
@@ -326,6 +336,7 @@ type lowerer struct {
 	dynamicIndexExpressions       map[factflow.ExprRef]factflow.DynamicIndexExpression
 	expressionConditions          map[factflow.ExprRef]factflow.ExpressionCondition
 	wirCallResults                map[uint32]wirCallResultSource
+	expressionRefinements         map[factflow.ExprRef]factflow.ExpressionRefinement
 }
 
 func (l *lowerer) valueFromType(t typ.Type) product.Value {
@@ -375,4 +386,11 @@ func (l *lowerer) callPointForExpr(_ int, call *ast.FuncCallExpr) (cfg.Point, bo
 	}
 	point, ok := l.callPoints[call]
 	return point, ok && point != 0
+}
+
+func valueSourceAt(sources []factflow.ValueSource, index int) factflow.ValueSource {
+	if index < 0 || index >= len(sources) {
+		return factflow.ValueSource{}
+	}
+	return sources[index]
 }

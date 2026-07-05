@@ -13,7 +13,10 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func (l *lowerer) addAssignmentAssertionRefinements(input *factflow.FactsInput, point cfg.Point, target path.Path, source sourceprovenance.ASTSource) {
+func (l *lowerer) addAssignmentAssertionRefinements(input *factflow.FactsInput, point cfg.Point, target path.Path, loweredSource factflow.ValueSource, source sourceprovenance.ASTSource) {
+	if expressionSourceHasRefinement(input, loweredSource) {
+		return
+	}
 	if l.addAssignmentAssertionRefinementFromWIRClaim(input, point, target, source) {
 		return
 	}
@@ -45,18 +48,39 @@ func (l *lowerer) addAssignmentAssertionRefinementFromWIRClaim(input *factflow.F
 	return false
 }
 
-func (l *lowerer) addReturnAssertionRefinements(input *factflow.FactsInput, point cfg.Point, index int, source sourceprovenance.ASTSource) {
+func (l *lowerer) addReturnAssertionRefinements(input *factflow.FactsInput, point cfg.Point, index int, loweredSource factflow.ValueSource, source sourceprovenance.ASTSource) {
+	if expressionSourceHasRefinement(input, loweredSource) {
+		return
+	}
 	if l.addReturnAssertionRefinementFromWIRClaim(input, point, index, source) {
 		return
 	}
 	l.addAssertionRefinementsForSource(input, source)
 }
 
-func (l *lowerer) addCallArgumentAssertionRefinements(input *factflow.FactsInput, point cfg.Point, index int, source sourceprovenance.ASTSource) {
+func (l *lowerer) addCallArgumentAssertionRefinements(input *factflow.FactsInput, point cfg.Point, index int, loweredSource factflow.ValueSource, source sourceprovenance.ASTSource) {
+	if expressionSourceHasRefinement(input, loweredSource) {
+		return
+	}
 	if l.addCallArgumentAssertionRefinementFromWIRClaim(input, point, index, source) {
 		return
 	}
 	l.addAssertionRefinementsForSource(input, source)
+}
+
+func (l *lowerer) addAssertionRefinementsForLoweredSource(input *factflow.FactsInput, loweredSource factflow.ValueSource, source sourceprovenance.ASTSource) {
+	if expressionSourceHasRefinement(input, loweredSource) {
+		return
+	}
+	l.addAssertionRefinementsForSource(input, source)
+}
+
+func expressionSourceHasRefinement(input *factflow.FactsInput, source factflow.ValueSource) bool {
+	if input == nil || !source.HasExpr || source.ExprRef == 0 {
+		return false
+	}
+	_, ok := input.ExpressionRefinements[source.ExprRef]
+	return ok
 }
 
 func (l *lowerer) addCallArgumentAssertionRefinementFromWIRClaim(input *factflow.FactsInput, point cfg.Point, index int, source sourceprovenance.ASTSource) bool {
@@ -151,22 +175,45 @@ func (l *lowerer) claimInstructionForOperand(op wir.Operand) (wir.Instruction, b
 }
 
 func (l *lowerer) addExpressionRefinementFromWIRClaim(input *factflow.FactsInput, outerSource, innerSource factflow.ValueSource, inst wir.Instruction) bool {
-	refinement, mode, ok := l.claimRefinementFromWIR(inst)
+	refinement, ok := l.expressionRefinementFromWIRClaim(innerSource, inst)
 	if !ok {
 		return false
 	}
 	if input.ExpressionRefinements == nil {
 		input.ExpressionRefinements = make(map[factflow.ExprRef]factflow.ExpressionRefinement)
 	}
+	input.ExpressionRefinements[outerSource.ExprRef] = refinement
+	return true
+}
+
+func (l *lowerer) recordExpressionRefinementFromWIRClaim(outerSource, innerSource factflow.ValueSource, inst wir.Instruction) bool {
+	if !outerSource.HasExpr || outerSource.ExprRef == 0 {
+		return false
+	}
+	refinement, ok := l.expressionRefinementFromWIRClaim(innerSource, inst)
+	if !ok {
+		return false
+	}
+	if l.expressionRefinements == nil {
+		l.expressionRefinements = make(map[factflow.ExprRef]factflow.ExpressionRefinement)
+	}
+	l.expressionRefinements[outerSource.ExprRef] = refinement
+	return true
+}
+
+func (l *lowerer) expressionRefinementFromWIRClaim(innerSource factflow.ValueSource, inst wir.Instruction) (factflow.ExpressionRefinement, bool) {
+	refinement, mode, ok := l.claimRefinementFromWIR(inst)
+	if !ok {
+		return factflow.ExpressionRefinement{}, false
+	}
 	switch mode {
 	case factflow.ExpressionRefinementRuntimeValidation:
-		input.ExpressionRefinements[outerSource.ExprRef] = factflow.NewExpressionRuntimeValidation(innerSource, refinement)
+		return factflow.NewExpressionRuntimeValidation(innerSource, refinement), true
 	case factflow.ExpressionRefinementDeclaredContract:
-		input.ExpressionRefinements[outerSource.ExprRef] = factflow.NewExpressionDeclaredContract(innerSource, refinement)
+		return factflow.NewExpressionDeclaredContract(innerSource, refinement), true
 	default:
-		input.ExpressionRefinements[outerSource.ExprRef] = factflow.NewExpressionRefinement(innerSource, refinement)
+		return factflow.NewExpressionRefinement(innerSource, refinement), true
 	}
-	return true
 }
 
 func claimKindForAssertionSource(expr ast.Expr) (wir.ClaimKind, bool) {

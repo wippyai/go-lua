@@ -8,14 +8,13 @@ import (
 )
 
 func (l *lowerer) assignmentSource(point cfg.Point, fallback sourceprovenance.ASTSource) factflow.ValueSource {
-	fallbackSource := l.valueSource(fallback)
-	if source, ok := l.assignmentSourceFromWIR(point, fallback, fallbackSource); ok {
+	if source, ok := l.assignmentSourceFromWIR(point, fallback); ok {
 		return source
 	}
-	return fallbackSource
+	return l.valueSource(fallback)
 }
 
-func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, fallback sourceprovenance.ASTSource, fallbackSource factflow.ValueSource) (factflow.ValueSource, bool) {
+func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, fallback sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
 	if l == nil || l.wir == nil {
 		return factflow.ValueSource{}, false
 	}
@@ -50,9 +49,12 @@ func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, fallback sourceproven
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
-	if source.Kind == factflow.ValueSourceCall && fallbackSource.HasExpr {
-		source.ExprRef = fallbackSource.ExprRef
-		source.HasExpr = true
+	if source.Kind == factflow.ValueSourceCall {
+		fallbackSource := l.valueSource(fallback)
+		if fallbackSource.HasExpr {
+			source.ExprRef = fallbackSource.ExprRef
+			source.HasExpr = true
+		}
 	}
 	return source, true
 }

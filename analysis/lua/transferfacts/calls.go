@@ -185,15 +185,13 @@ func (l *lowerer) callReceiverSourceFromWIR(point cfg.Point, shape valueSourceSh
 	if !ok || inst.Call.Method == 0 || inst.Call.Receiver.Kind == wir.OperandNone {
 		return factflow.ValueSource{}, false
 	}
-	if source, ok := l.localRootPathExpressionSourceFromWIR(
-		"call-receiver",
-		point,
+	if source, ok := l.valueSourceFromWIRRootPathOperand(
 		inst.Call.Receiver,
 		shape.exprIndex,
 		shape.targetIndex,
 		shape.final,
-		shape.expanded,
-		shape.openTail,
+		symbol.Local,
+		symbol.Param,
 	); ok {
 		return source, true
 	}
@@ -220,13 +218,13 @@ func (l *lowerer) callArgumentSources(point cfg.Point, fallback []sourceprovenan
 	if len(ops) != len(fallback) {
 		return nil, false
 	}
-	out := l.valueSources(fallback)
+	out := make([]factflow.ValueSource, len(fallback))
 	callResults := l.callResultValueSourcesByTempFromWIR()
 	for i, op := range ops {
 		final := i == len(ops)-1
 		source, ok := l.callArgumentSourceFromWIROperand(point, op, i, i, final, inst.ListSpread && final, callResults)
 		if !ok {
-			continue
+			source = l.valueSource(fallback[i])
 		}
 		out[i] = source
 	}

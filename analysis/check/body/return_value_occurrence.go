@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -15,6 +16,8 @@ type ReturnValueOccurrence struct {
 	Point       cfg.Point
 	Index       int
 	Source      sourceprovenance.ASTSource
+	Lowered     factflow.ValueSource
+	HasLowered  bool
 	SourceLabel string
 	SourceSpan  SourceSpan
 	SourcePath  pathdom.Path
@@ -44,6 +47,10 @@ func (r *Result) ForEachReturnValueOccurrence(visit func(ReturnValueOccurrence) 
 				SourceLabel: returnSourceExprLabel(expr),
 				SourceSpan:  sourceSpanFromAST(ast.SpanOf(expr)),
 			}
+			if lowered, ok := loweredReturnSourceAt(r, point, index); ok {
+				occ.Lowered = lowered
+				occ.HasLowered = true
+			}
 			occ.SourcePath, occ.HasPath = r.returnSourceExprPath(expr)
 			visited = true
 			if !visit(occ) {
@@ -52,6 +59,17 @@ func (r *Result) ForEachReturnValueOccurrence(visit func(ReturnValueOccurrence) 
 		}
 	}
 	return visited
+}
+
+func loweredReturnSourceAt(r *Result, point cfg.Point, index int) (factflow.ValueSource, bool) {
+	if r == nil {
+		return factflow.ValueSource{}, false
+	}
+	sources, ok := r.ReturnValueSources(point)
+	if !ok || index < 0 || index >= len(sources) {
+		return factflow.ValueSource{}, false
+	}
+	return sources[index], true
 }
 
 func (r *Result) returnSourceExprPath(expr ast.Expr) (pathdom.Path, bool) {
