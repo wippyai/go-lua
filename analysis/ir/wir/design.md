@@ -200,12 +200,12 @@ semantics extracts from, it is a true per-point diff, not a cross-CFG multiset:
 for every point carrying a semantics fact (assign / call / branch / return,
 imported read-only), the wir Body must carry an instruction *at that same point*
 whose operand identity (path `Key()`) matches. Last run: 574/574 fixtures, TOTAL
-99.77% — assign 99.97% (2986/2987), call 100% (1714/1714), branch 97.37%
-(407/418), return 100% (186/186). Residuals: the 11 branch misses are the pure
-short-circuit guard points (the `OpLogical` value form leaves the cfgbuild-
-materialized guard branch instruction-less — the intentional D3 pure-case gap);
-the single assign miss is a computed assignment target with no static path. call
-reaches 100% under the per-point split (one `OpCall` per call point).
+99.98% — assign 99.97% (2986/2987), call 100% (1714/1714), branch 100%
+(418/418), return 100% (186/186). Residual: the single assign miss is a computed
+assignment target with no static path. Pure short-circuit guards now carry
+`OpBranch` at the cfgbuild guard point while retaining the `OpLogical` value
+form at the enclosing expression point. call reaches 100% under the per-point
+split (one `OpCall` per call point).
 
 ## Locked decisions (Stage 4, journal #1392)
 
@@ -282,7 +282,7 @@ owner), **D2** (resolver interface + caching + fake), **D3** (purity-split
 logical: pure RHS keeps `OpLogical` on the enclosing point, impure RHS threads the
 result through the cfgbuild short-circuit topology), **D5** (resolved TypeRef).
 Goldens migrated to the shared-graph form; the `WIR_SHADOW` harness is now a
-per-point oracle (99.77% total). Nested functions build their own child graph via
+per-point oracle (99.98% total). Nested functions build their own child graph via
 `cfgbuild.BuildFunction` and lower recursively, exactly as the engine prepares
 protos.
 
@@ -296,8 +296,8 @@ point while target state keys on the assign points; (c) `ResultSpread` /
 `ListSpread` mark the single open multret tail (patched onto the producing
 `OpCall` when it is found in a spread position); (d) the loop-var `OpAssign var =
 _` sites want their element type resolved from the dominating `OpIterate` header;
-(e) the pure-logical guard/eval/join points are instruction-less `noop`s (transfer
-evaluates `OpLogical` on the enclosing point), while the impure form is ordinary
+(e) pure logicals record the cfgbuild guard as `OpBranch` while retaining the
+`OpLogical` value form on the enclosing point; impure logicals use ordinary
 `OpBranch` + `OpAssign` threaded through one temp.
 
 ## Lowering scope (Stage 4 — full dialect)
@@ -312,10 +312,7 @@ RHS, branch topology for effectful RHS), closures and function definitions
 non-nil assert / annotation claims, varargs, multret (call-in-middle vs tail).
 Golden tests in `wirlower/wirlower_test.go` (incl. adversarial multret and the
 effectful-logical branch topology); completeness measured by the per-point
-`WIR_SHADOW` harness (99.77% over 574 fixtures).
+`WIR_SHADOW` harness (99.98% over 574 fixtures).
 
-Residual gaps (explicit): a conservatively pure short-circuit `and`/`or` keeps the
-`OpLogical` value form, so the cfgbuild-materialized guard branch carries no wir
-instruction (≈2.6% branch-category divergence — intentional, see D3); one computed
-assignment target carries no static path and keys as `target`. wir is consumed by
-nothing yet.
+Residual gap (explicit): one computed assignment target carries no static path
+and keys as `target`. wir is consumed by nothing yet.

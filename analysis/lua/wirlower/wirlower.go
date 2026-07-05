@@ -53,16 +53,18 @@ func Lower(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild
 // stay consistent across the whole chunk.
 func lowerInto(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result, resolver *typeresolve.Resolver) *wir.Body {
 	b := &builder{
-		body:        wir.NewBody(name),
-		graph:       built.Graph,
-		meta:        built.Meta,
-		points:      built.StmtPoints,
-		bindings:    bindings,
-		resolver:    resolver,
-		pointInstrs: make(map[cfg.Point][]wir.Instruction),
-		callTemps:   make(map[*ast.FuncCallExpr]*callResult),
-		guardByCond: make(map[ast.Expr]cfg.Point),
-		evalByExpr:  make(map[ast.Expr]cfg.Point),
+		body:                wir.NewBody(name),
+		graph:               built.Graph,
+		meta:                built.Meta,
+		points:              built.StmtPoints,
+		bindings:            bindings,
+		resolver:            resolver,
+		pointInstrs:         make(map[cfg.Point][]wir.Instruction),
+		callTemps:           make(map[*ast.FuncCallExpr]*callResult),
+		guardByCond:         make(map[ast.Expr]cfg.Point),
+		evalByExpr:          make(map[ast.Expr]cfg.Point),
+		logicalGuardEmitted: make(map[*ast.LogicalOpExpr]bool),
+		logicalValues:       make(map[*ast.LogicalOpExpr]wir.Operand),
 	}
 	b.indexShortCircuits()
 
@@ -98,8 +100,10 @@ type builder struct {
 	// guardByCond and evalByExpr index the short-circuit sidecar points cfgbuild
 	// records outside StmtPoints, keyed by the AST identity wirlower matches on
 	// (the guard condition = LogicalOpExpr.Lhs, the eval expr = the RHS).
-	guardByCond map[ast.Expr]cfg.Point
-	evalByExpr  map[ast.Expr]cfg.Point
+	guardByCond         map[ast.Expr]cfg.Point
+	evalByExpr          map[ast.Expr]cfg.Point
+	logicalGuardEmitted map[*ast.LogicalOpExpr]bool
+	logicalValues       map[*ast.LogicalOpExpr]wir.Operand
 }
 
 // callResult records the result temps a pre-lowered call binds together with the
@@ -774,8 +778,13 @@ func (b *builder) lowerExpr(e ast.Expr) wir.Operand {
 		return b.callValue(e)
 	case *ast.LogicalOpExpr:
 		if b.logicalRHSPure(e.Rhs) {
+			if value, ok := b.logicalValues[e]; ok {
+				return value
+			}
 			t := b.newTemp()
+			b.emitLogicalGuard(e)
 			b.emit(wir.Instruction{Op: wir.OpLogical, Dst: t, A: b.lowerExpr(e.Lhs), B: b.lowerExpr(e.Rhs), Operator: logicalOperator(e)})
+			b.logicalValues[e] = t
 			return t
 		}
 		return b.lowerLogicalValue(e)
@@ -850,7 +859,13 @@ func (b *builder) lowerValueList(exprs []ast.Expr) ([]wir.Operand, bool) {
 // already materialized (guard branch + RHS-eval point + join).
 func (b *builder) lowerLogicalInto(dst wir.Operand, e *ast.LogicalOpExpr) {
 	if b.logicalRHSPure(e.Rhs) {
+		b.emitLogicalGuard(e)
+		if value, ok := b.logicalValues[e]; ok {
+			b.emitAssign(dst, value)
+			return
+		}
 		b.emit(wir.Instruction{Op: wir.OpLogical, Dst: dst, A: b.lowerExpr(e.Lhs), B: b.lowerExpr(e.Rhs), Operator: logicalOperator(e)})
+		b.logicalValues[e] = dst
 		return
 	}
 	b.emitAssign(dst, b.lowerLogicalValue(e))
@@ -877,18 +892,42 @@ func (b *builder) lowerLogicalValue(e *ast.LogicalOpExpr) wir.Operand {
 
 	b.curPoint = guard
 	b.emitAssign(result, b.lowerExpr(e.Lhs))
-	check := branchcond.Normalize(e.Lhs, b.bindings)
-	guardInst := wir.Instruction{Op: wir.OpBranch, Check: b.body.InternCheck(lowerCheck(check))}
-	if check.Kind == branchcond.CheckNone {
-		guardInst.A = b.lowerExpr(e.Lhs)
-	}
-	b.emit(guardInst)
+	b.emitLogicalGuardAt(e, guard)
 
 	b.curPoint = anchor
 	b.lowerExprInto(result, e.Rhs)
 
 	b.curPoint = prev
+	b.logicalValues[e] = result
 	return result
+}
+
+func (b *builder) emitLogicalGuard(e *ast.LogicalOpExpr) {
+	if e == nil {
+		return
+	}
+	guard, ok := b.guardByCond[e.Lhs]
+	if !ok {
+		return
+	}
+	prev := b.curPoint
+	b.curPoint = guard
+	b.emitLogicalGuardAt(e, guard)
+	b.curPoint = prev
+}
+
+func (b *builder) emitLogicalGuardAt(e *ast.LogicalOpExpr, guard cfg.Point) {
+	if e == nil || b.logicalGuardEmitted[e] {
+		return
+	}
+	b.logicalGuardEmitted[e] = true
+	check := branchcond.Normalize(e.Lhs, b.bindings)
+	guardInst := wir.Instruction{Op: wir.OpBranch, Check: b.body.InternCheck(lowerCheck(check))}
+	if check.Kind == branchcond.CheckNone {
+		guardInst.A = b.lowerExpr(e.Lhs)
+	}
+	b.curPoint = guard
+	b.emit(guardInst)
 }
 
 // rhsAnchorPoint returns the taken-edge point where a short-circuit right operand

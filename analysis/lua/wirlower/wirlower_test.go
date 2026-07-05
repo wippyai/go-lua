@@ -198,14 +198,14 @@ b7: exit
 			globals: []string{"a", "b", "c"},
 			want: `body main
 b0: entry
-b1: noop
+b1: branch truthy a  then b2 else b3
 b2: noop
 b3: noop
-b4: noop
+b4: %0 = and a b
+    branch cond %0  then b6 else b5
 b5: noop
 b6: noop
-b7: %0 = and a b
-    y = or %0 c
+b7: y = or %0 c
 b8: exit
 `,
 		},

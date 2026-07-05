@@ -25,7 +25,7 @@ type shadowCoverageExpectation struct {
 var expectedShadowCoverage = map[string]shadowCoverageExpectation{
 	"assign": {covered: 2986, total: 2987},
 	"call":   {covered: 1714, total: 1714},
-	"branch": {covered: 407, total: 418},
+	"branch": {covered: 418, total: 418},
 	"return": {covered: 186, total: 186},
 }
 
@@ -38,10 +38,8 @@ var expectedShadowCoverage = map[string]shadowCoverageExpectation{
 // honestly rather than masking them. Better coverage should update the expected
 // frontier intentionally; worse coverage fails immediately.
 //
-// Known residual: a conservatively pure short-circuit `and`/`or` right operand
-// keeps the OpLogical value form on the enclosing statement point, so the guard
-// point cfgbuild materializes (which semantics reconstructs a branch fact for)
-// carries no wir branch. These points surface as the branch-category gap.
+// Known residual: one computed assignment target has no static path identity, so
+// wir records the assignment but cannot match the semantics target key.
 func TestShadowCoverage(t *testing.T) {
 	if os.Getenv("WIR_SHADOW") != "1" {
 		t.Skip("set WIR_SHADOW=1 to run the wir lowering coverage harness")
