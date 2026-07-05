@@ -1860,6 +1860,61 @@ obj:assert(x)
 	}
 }
 
+func TestCallFactGlobalCallPredicates(t *testing.T) {
+	stmts, err := parse.ParseString(`
+assert(x)
+local value = assert(x)
+local ok, result = pcall(run)
+local xok, xresult = xpcall(run, handler)
+local pcall = function(fn) return true, fn() end
+local shadow_ok, shadow_result = pcall(run)
+`, "call_predicates_test.lua")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"assert", "x", "pcall", "xpcall", "run", "handler"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+	callFactForStmt := func(stmt ast.Stmt) CallFact {
+		t.Helper()
+		for _, point := range built.StmtPoints.PointsFor(stmt) {
+			if fact, ok := result.Call(point); ok {
+				return fact
+			}
+		}
+		t.Fatalf("missing call fact for %T", stmt)
+		return CallFact{}
+	}
+
+	assertFact := callFactForStmt(stmts[0])
+	if !assertFact.IsDirectGlobalStatement(bindings, "assert") {
+		t.Fatalf("statement assert was not recognized")
+	}
+
+	assignAssertFact := callFactForStmt(stmts[1])
+	if assignAssertFact.IsDirectGlobalStatement(bindings, "assert") {
+		t.Fatalf("assignment assert recognized as statement assert")
+	}
+
+	pcallFact := callFactForStmt(stmts[2])
+	if !pcallFact.IsProtectedCall(bindings) {
+		t.Fatalf("global pcall was not recognized as protected call")
+	}
+
+	xpcallFact := callFactForStmt(stmts[3])
+	if !xpcallFact.IsProtectedCall(bindings) {
+		t.Fatalf("global xpcall was not recognized as protected call")
+	}
+
+	shadowFact := callFactForStmt(stmts[5])
+	if shadowFact.IsProtectedCall(bindings) {
+		t.Fatalf("shadowed local pcall recognized as protected call")
+	}
+}
+
 func TestExtractChunkChannelSelectFacts(t *testing.T) {
 	stmts, err := parse.ParseString(`
 type Event = {kind: string}

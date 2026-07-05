@@ -23,8 +23,5 @@ func (l *lowerer) assertPostconditionRefinement(fact semantics.CallFact) (factfl
 }
 
 func (l *lowerer) isDirectGlobalAssertStatementCall(fact semantics.CallFact) bool {
-	if fact.Context != semantics.CallContextStatement || fact.Call == nil || fact.Receiver != nil || fact.Method != "" || len(fact.TypeArgs) != 0 {
-		return false
-	}
-	return fact.IsDirectGlobal(l.bindings, "assert")
+	return fact.IsDirectGlobalStatement(l.bindings, "assert")
 }

@@ -60,7 +60,7 @@ func (l *lowerer) addProtectedCallBranchRefinements(input *factflow.FactsInput, 
 }
 
 func (l *lowerer) protectedCallPayloadType(fact semantics.CallFact) (typ.Type, bool) {
-	if !l.directGlobalProtectedCall(fact) || len(fact.Args) == 0 {
+	if !fact.IsProtectedCall(l.bindings) || len(fact.Args) == 0 {
 		return nil, false
 	}
 	callbackType, ok := l.expressionOperandType(fact.Args[0])
@@ -73,10 +73,6 @@ func (l *lowerer) protectedCallPayloadType(fact semantics.CallFact) (typ.Type, b
 		return nil, false
 	}
 	return typecall.CallableReturn(callbackType)
-}
-
-func (l *lowerer) directGlobalProtectedCall(fact semantics.CallFact) bool {
-	return fact.IsAnyDirectGlobal(l.bindings, "pcall", "xpcall")
 }
 
 func (l *lowerer) protectedCallSuccessEdges(result *semantics.Result, branch cfg.Point, okPath path.Path) []bool {

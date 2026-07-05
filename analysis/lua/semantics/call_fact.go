@@ -142,6 +142,17 @@ func (f CallFact) IsAnyDirectGlobal(bindings *bind.Result, names ...string) bool
 	return false
 }
 
+// IsDirectGlobalStatement reports a statement-position call to the named global
+// function with no receiver/method sugar and no type arguments.
+func (f CallFact) IsDirectGlobalStatement(bindings *bind.Result, name string) bool {
+	return f.Context == CallContextStatement && len(f.TypeArgs) == 0 && f.IsDirectGlobal(bindings, name)
+}
+
+// IsProtectedCall reports a direct call to Lua's protected-call primitives.
+func (f CallFact) IsProtectedCall(bindings *bind.Result) bool {
+	return f.IsAnyDirectGlobal(bindings, "pcall", "xpcall")
+}
+
 func callCalleeSpan(call *ast.FuncCallExpr) SourceSpan {
 	if call == nil {
 		return SourceSpan{}
