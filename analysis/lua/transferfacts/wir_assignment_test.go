@@ -145,12 +145,9 @@ end
 		t.Fatalf("missing root assignment at point %d", points[0])
 	}
 	source := assign.Source()
-	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-		t.Fatalf("root assignment source = %#v, want expression-backed WIR path", source)
-	}
-	gotPath, ok := facts.ExpressionPath(source.ExprRef)
-	if !ok || !gotPath.Equal(otherPath) || gotPath.Equal(valuePath) {
-		t.Fatalf("root assignment expression path = %v/%v, want WIR path %v not semantic path %v", gotPath, ok, otherPath, valuePath)
+	assertWIRPathSource(t, source, otherPath)
+	if source.PathKey == valuePath.Key() {
+		t.Fatalf("root assignment source path = %s, want WIR path %s not semantic path %s", source.PathKey, otherPath.Key(), valuePath.Key())
 	}
 }
 
@@ -257,12 +254,9 @@ end
 		t.Fatalf("missing static member write at point %d", points[0])
 	}
 	source := write.Source()
-	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-		t.Fatalf("static member source = %#v, want expression-backed WIR path", source)
-	}
-	gotPath, ok := facts.ExpressionPath(source.ExprRef)
-	if !ok || !gotPath.Equal(otherPath) || gotPath.Equal(valuePath) {
-		t.Fatalf("static member expression path = %v/%v, want WIR path %v not semantic path %v", gotPath, ok, otherPath, valuePath)
+	assertWIRPathSource(t, source, otherPath)
+	if source.PathKey == valuePath.Key() {
+		t.Fatalf("static member source path = %s, want WIR path %s not semantic path %s", source.PathKey, otherPath.Key(), valuePath.Key())
 	}
 }
 
@@ -296,12 +290,9 @@ end
 		t.Fatalf("missing dynamic index write at point %d", points[0])
 	}
 	source := write.Source()
-	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-		t.Fatalf("dynamic value source = %#v, want expression-backed WIR path", source)
-	}
-	gotPath, ok := facts.ExpressionPath(source.ExprRef)
-	if !ok || !gotPath.Equal(otherPath) || gotPath.Equal(valuePath) {
-		t.Fatalf("dynamic value expression path = %v/%v, want WIR path %v not semantic path %v", gotPath, ok, otherPath, valuePath)
+	assertWIRPathSource(t, source, otherPath)
+	if source.PathKey == valuePath.Key() {
+		t.Fatalf("dynamic value source path = %s, want WIR path %s not semantic path %s", source.PathKey, otherPath.Key(), valuePath.Key())
 	}
 	gotValuePath, ok := write.ValuePath()
 	if !ok || !gotValuePath.Equal(otherPath) || gotValuePath.Equal(valuePath) {
@@ -309,41 +300,44 @@ end
 	}
 }
 
-func TestLowerPathAndDynamicAssignmentKeepExpressionSourcesDuringWIRMigration(t *testing.T) {
+func TestLowerPathAndDynamicAssignmentUseWIRPathSources(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(box: any, key: string, value: string)
+    local local_value = value
     box.name = value
     box[key] = value
 end`)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
 	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
-	staticPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
+	localPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
+	localAssign, ok := facts.RootAssignment(localPoint)
+	if !ok {
+		t.Fatalf("missing local assignment at point %d", localPoint)
+	}
+	if source := localAssign.Source(); source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		t.Fatalf("local assignment source = %#v, want expression-backed source while local expression APIs remain live", source)
+	}
+
+	valuePath := path.NewPath(bindings.ParamSlots(fn)[2].Symbol, "value")
+	staticPoint := requireStmtPoints(t, built, fn.Stmts[1], 1)[0]
 	pathAssign, ok := facts.PathAssignment(staticPoint)
 	if !ok {
 		t.Fatalf("missing static path assignment at point %d", staticPoint)
 	}
-	staticSource := pathAssign.Source()
-	if staticSource.Kind != factflow.ValueSourceExpression || !staticSource.HasExpr {
-		t.Fatalf("static path source = %#v, want expression-backed WIR source", staticSource)
-	}
+	assertWIRPathSource(t, pathAssign.Source(), valuePath)
 	staticWrite, ok := facts.PathStaticMemberWrite(staticPoint)
 	if !ok {
 		t.Fatalf("missing static member write at point %d", staticPoint)
 	}
-	if got := staticWrite.Source(); got.Kind != factflow.ValueSourceExpression || !got.HasExpr {
-		t.Fatalf("static member write source = %#v, want expression-backed WIR source", got)
-	}
+	assertWIRPathSource(t, staticWrite.Source(), valuePath)
 
-	dynamicPoint := requireStmtPoints(t, built, fn.Stmts[1], 1)[0]
+	dynamicPoint := requireStmtPoints(t, built, fn.Stmts[2], 1)[0]
 	dynamicWrite, ok := facts.DynamicIndexWrite(dynamicPoint)
 	if !ok {
 		t.Fatalf("missing dynamic index write at point %d", dynamicPoint)
 	}
-	dynamicSource := dynamicWrite.Source()
-	if dynamicSource.Kind != factflow.ValueSourceExpression || !dynamicSource.HasExpr {
-		t.Fatalf("dynamic write source = %#v, want expression-backed WIR source", dynamicSource)
-	}
+	assertWIRPathSource(t, dynamicWrite.Source(), valuePath)
 }
 
 func assertWIRPathSource(t *testing.T, source factflow.ValueSource, want path.Path) {

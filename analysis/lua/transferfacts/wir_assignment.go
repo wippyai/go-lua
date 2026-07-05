@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
 func (l *lowerer) assignmentSource(point cfg.Point, fallback sourceprovenance.ASTSource) factflow.ValueSource {
@@ -57,6 +58,31 @@ func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, fallback sourceproven
 		}
 	}
 	return source, true
+}
+
+func (l *lowerer) ordinaryAssignmentSource(point cfg.Point, fallback sourceprovenance.ASTSource) factflow.ValueSource {
+	if source, ok := l.ordinaryAssignmentSourceFromWIR(point, fallback); ok {
+		return source
+	}
+	return l.assignmentSource(point, fallback)
+}
+
+func (l *lowerer) ordinaryAssignmentSourceFromWIR(point cfg.Point, fallback sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
+	if l == nil || l.wir == nil {
+		return factflow.ValueSource{}, false
+	}
+	op, ok := l.assignmentSourceOperandFromWIR(point)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return l.valueSourceFromWIRRootPathOperand(
+		op,
+		fallback.ExprIndex,
+		fallback.TargetIndex,
+		fallback.Final,
+		symbol.Local,
+		symbol.Param,
+	)
 }
 
 func (l *lowerer) assignmentSourceOperandFromWIR(point cfg.Point) (wir.Operand, bool) {

@@ -279,13 +279,15 @@ func (r *Result) dominatingDeclarationSourceWritePathType(point cfg.Point, p pat
 		return nil, false
 	}
 	declaration, ok := r.DominatingPathRootDeclarationSource(point, p)
-	if !ok || !declaration.Source.HasExpr {
+	if !ok {
 		return nil, false
 	}
-	if t, ok := r.declarationSourceRefinementWritePathType(declaration.Source.ExprRef, p.Segments); ok {
-		return t, true
+	if declaration.Source.HasExpr {
+		if t, ok := r.declarationSourceRefinementWritePathType(declaration.Source.ExprRef, p.Segments); ok {
+			return t, true
+		}
 	}
-	sourcePath, ok := r.ExpressionRefPath(declaration.Source.ExprRef)
+	sourcePath, ok := r.ValueSourcePath(declaration.Source)
 	if !ok || sourcePath.IsEmpty() || sourcePath.Symbol == 0 {
 		return nil, false
 	}

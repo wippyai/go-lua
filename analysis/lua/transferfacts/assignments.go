@@ -358,7 +358,7 @@ func recordWithCallableFieldDepth(t typ.Type, depth int) bool {
 }
 
 func (l *lowerer) ordinaryAssignment(point cfg.Point, fact semantics.OrdinaryAssignmentFact) (factflow.RootAssignment, bool) {
-	source := l.assignmentSource(point, fact.Source)
+	source := l.ordinaryAssignmentSource(point, fact.Source)
 	if !fact.HasSymbol || fact.Symbol == 0 {
 		if targetSymbol, targetPath, ok := l.globalTableFieldRootTarget(fact); ok {
 			return factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, targetSymbol, targetPath, source), true
@@ -464,14 +464,14 @@ func (l *lowerer) pathAssignment(point cfg.Point, fact semantics.OrdinaryAssignm
 	if !fact.HasPath || fact.Path.Symbol == 0 || len(fact.Path.Segments) == 0 {
 		return factflow.PathAssignment{}, false
 	}
-	return factflow.NewPathAssignment(fact.Path, l.assignmentSource(point, fact.Source)), true
+	return factflow.NewPathAssignment(fact.Path, l.ordinaryAssignmentSource(point, fact.Source)), true
 }
 
 func (l *lowerer) pathStaticMemberWrite(point cfg.Point, fact semantics.OrdinaryAssignmentFact) (factflow.PathStaticMemberWrite, bool) {
 	if !fact.HasPath || fact.Path.Symbol == 0 || len(fact.Path.Segments) == 0 {
 		return factflow.PathStaticMemberWrite{}, false
 	}
-	return factflow.NewPathStaticMemberWrite(fact.Path, l.assignmentSource(point, fact.Source)), true
+	return factflow.NewPathStaticMemberWrite(fact.Path, l.ordinaryAssignmentSource(point, fact.Source)), true
 }
 
 func (l *lowerer) dynamicIndexWrite(point cfg.Point, fact semantics.OrdinaryAssignmentFact) (factflow.DynamicIndexWrite, bool) {
@@ -486,7 +486,7 @@ func (l *lowerer) dynamicIndexWrite(point cfg.Point, fact semantics.OrdinaryAssi
 		tablePath = wirTablePath
 	}
 	keySource, readKey := l.dynamicIndexKeySource(point, fact.Target)
-	source := l.assignmentSource(point, fact.Source)
+	source := l.ordinaryAssignmentSource(point, fact.Source)
 	readValue := fact.Source.Kind != sourceprovenance.SourceUnknown
 	write := factflow.NewDynamicIndexWrite(
 		tablePath,

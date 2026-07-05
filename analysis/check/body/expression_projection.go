@@ -231,10 +231,10 @@ func (r *Result) dominatingDeclarationSourcePathType(point cfg.Point, p pathdom.
 		return nil, false
 	}
 	declaration, ok := r.DominatingPathRootDeclarationSource(point, p)
-	if !ok || !declaration.Source.HasExpr {
+	if !ok {
 		return nil, false
 	}
-	sourcePath, ok := r.ExpressionRefPath(declaration.Source.ExprRef)
+	sourcePath, ok := r.ValueSourcePath(declaration.Source)
 	if !ok || sourcePath.IsEmpty() || sourcePath.Symbol == 0 {
 		return nil, false
 	}

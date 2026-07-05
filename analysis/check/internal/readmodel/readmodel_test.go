@@ -1622,6 +1622,59 @@ end
 	}
 }
 
+func TestOrdinaryAssignmentTargetTypeUsesAliasDeclaredContractForDiscriminantWrite(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+
+local function use(result: Result<string>): string
+	local alias = result
+	if result.ok then
+		alias.ok = false
+		return result.value
+	end
+	return ""
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{
+		Check: body.Config{
+			Registry:   reg,
+			Globals:    []string{"pairs", "tostring"},
+			Signatures: signaturelookup.Source{IncludeStdlib: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil || len(root.FunctionResults()) != 1 {
+		t.Fatalf("function results = %#v, want one child", root)
+	}
+	child := root.FunctionResults()[0]
+	reader := New(child)
+	var found bool
+	for _, point := range child.Graph().RPO() {
+		fact, ok := child.OrdinaryAssignment(point)
+		if !ok || body.AssignmentSourceLabel(fact.Target) != "alias.ok" {
+			continue
+		}
+		found = true
+		got, ok := reader.ordinaryAssignmentTargetType(point, fact)
+		if !ok {
+			t.Fatal("ordinaryAssignmentTargetType returned false for alias.ok")
+		}
+		if !subtype.IsSubtype(typ.False, got) {
+			t.Fatalf("target type = %v, want declared discriminant contract accepting false", got)
+		}
+		if strings.Contains(got.String(), "false & true") {
+			t.Fatalf("target type = %v, leaked narrowed branch proof into write contract", got)
+		}
+	}
+	if !found {
+		t.Fatal("missing alias.ok ordinary assignment")
+	}
+}
+
 func TestOrdinaryAssignmentTargetTypeUsesDeclaredRecordForMutableLiteralField(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
