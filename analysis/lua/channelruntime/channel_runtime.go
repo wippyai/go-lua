@@ -52,6 +52,25 @@ func IsReceiveCaseCall(call *ast.FuncCallExpr, bindings *bind.Result) bool {
 	return ok && isChannelType(channelType)
 }
 
+// IsReceiveCaseCandidate reports whether call has the Channel<T>:case_receive()
+// runtime case shape and is not contradicted by a static non-Channel receiver
+// annotation. Module-aware transfer layers may prove the payload type later
+// even when local annotations are unavailable here.
+func IsReceiveCaseCandidate(call *ast.FuncCallExpr, bindings *bind.Result) bool {
+	if !IsReceiveCaseSyntax(call, bindings) {
+		return false
+	}
+	channelPath, ok := pathexpr.Resolve(call.Receiver, bindings)
+	if !ok || channelPath.IsEmpty() {
+		return false
+	}
+	channelType, ok := pathType(bindings, channelPath)
+	if !ok {
+		return true
+	}
+	return isChannelType(channelType)
+}
+
 // IsReceiveCaseSyntax reports whether call has the runtime receive-case shape.
 // It does not prove the receiver is Channel<T>; callers that have a richer
 // module-aware type resolver must perform that proof before publishing payload

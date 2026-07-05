@@ -775,6 +775,29 @@ _G.coroutine = {}
 	}
 }
 
+func TestLowerChannelSelectsUseSemanticFacts(t *testing.T) {
+	_, bindings, built, result := parseSemanticFunction(t, `
+function handle(events_ch: Channel<any>, stop_ch: Channel<any>)
+    local selected = channel.select { events_ch:case_receive(), stop_ch:case_receive() }
+end
+`, "channel")
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+
+	var selects []factflow.ChannelSelect
+	for _, point := range built.Graph.RPO() {
+		if events := facts.ChannelSelects(point); len(events) != 0 {
+			selects = events
+			break
+		}
+	}
+	if len(selects) != 5 {
+		t.Fatalf("channel select events = %#v, want select plus two case/receive pairs", selects)
+	}
+	if selects[0].Kind() != factflow.ChannelSelectSelect || selects[0].HasDefault() {
+		t.Fatalf("select event = %#v", selects[0])
+	}
+}
+
 func TestLowerChannelSelectFacts(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(700)

@@ -147,6 +147,27 @@ local result = ch:case_receive()
 	})
 }
 
+func TestIsReceiveCaseCandidateAllowsUnknownButRejectsKnownNonChannel(t *testing.T) {
+	candidate, bindings := mustReceiveCaseCall(t, `
+local ch
+local result = ch:case_receive()
+`, "ch")
+	if !IsReceiveCaseCandidate(candidate, bindings) {
+		t.Fatalf("IsReceiveCaseCandidate rejected unannotated receive-case syntax")
+	}
+	if IsReceiveCaseCall(candidate, bindings) {
+		t.Fatalf("IsReceiveCaseCall accepted unannotated receiver without Channel proof")
+	}
+
+	nonChannel, nonChannelBindings := mustReceiveCaseCall(t, `
+local obj: {case_receive: () -> string}
+local result = obj:case_receive()
+`, "obj")
+	if IsReceiveCaseCandidate(nonChannel, nonChannelBindings) {
+		t.Fatalf("IsReceiveCaseCandidate accepted statically non-Channel receiver")
+	}
+}
+
 func TestPathTypeAndChannelPayloadTypeFollowAnnotatedPathsAndAliases(t *testing.T) {
 	stmts, bindings := mustParsedChunk(t, `
 type Message = {kind: string}

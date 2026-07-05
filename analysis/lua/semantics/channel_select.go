@@ -94,7 +94,7 @@ func isChannelSelectDefaultEntry(field *ast.Field) bool {
 
 func channelSelectCase(expr ast.Expr, bindings *bind.Result) (ChannelSelectCaseFact, bool) {
 	call, ok := expr.(*ast.FuncCallExpr)
-	if !ok || !channelruntime.IsReceiveCaseCall(call, bindings) {
+	if !ok || !channelruntime.IsReceiveCaseCandidate(call, bindings) {
 		return ChannelSelectCaseFact{}, false
 	}
 	channelPath, ok := pathexpr.Resolve(call.Receiver, bindings)
