@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
+	"github.com/wippyai/go-lua/analysis/lua/expressionid"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
@@ -67,6 +68,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		typeValues:                    config.TypeValues,
 		wir:                           config.WIR,
 		callPoints:                    callPointsByExpr(builtCallFacts(graph, result)),
+		wirCallPoints:                 callPointsByExpressionIDFromWIR(graph, config.WIR),
 		symbolTypes:                   symbolTypes,
 		declaredReturnLocalTypes:      declaredReturnLocalTypes,
 		returnLocalObjectLiteralTypes: returnLocalObjectLiteralTypes,
@@ -389,6 +391,7 @@ type lowerer struct {
 	wirStaticReachable            map[cfg.Point]bool
 	wirReachability               *cfg.Reachability
 	callPoints                    map[*ast.FuncCallExpr]cfg.Point
+	wirCallPoints                 map[wir.ExpressionID]cfg.Point
 	symbolTypes                   map[symbol.ID]typ.Type
 	declaredReturnLocalTypes      map[symbol.ID]typ.Type
 	returnLocalObjectLiteralTypes map[symbol.ID]typ.Type
@@ -427,6 +430,25 @@ func callPointsByExpr(facts map[*ast.FuncCallExpr]cfg.Point) map[*ast.FuncCallEx
 	return out
 }
 
+func callPointsByExpressionIDFromWIR(graph cfg.Graph, body *wir.Body) map[wir.ExpressionID]cfg.Point {
+	if graph == nil || body == nil {
+		return nil
+	}
+	out := make(map[wir.ExpressionID]cfg.Point)
+	for _, point := range graph.RPO() {
+		for _, inst := range body.PointInstructions(point) {
+			if inst.Op != wir.OpCall || inst.ExprID == 0 || point == 0 {
+				continue
+			}
+			out[inst.ExprID] = point
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func builtCallFacts(graph cfg.Graph, result *semantics.Result) map[*ast.FuncCallExpr]cfg.Point {
 	if graph == nil || result == nil {
 		return nil
@@ -447,7 +469,14 @@ func builtCallFacts(graph cfg.Graph, result *semantics.Result) map[*ast.FuncCall
 }
 
 func (l *lowerer) callPointForExpr(_ int, call *ast.FuncCallExpr) (cfg.Point, bool) {
-	if l == nil || call == nil || len(l.callPoints) == 0 {
+	if l == nil || call == nil {
+		return 0, false
+	}
+	if len(l.wirCallPoints) != 0 {
+		point, ok := l.wirCallPoints[wir.ExpressionID(expressionid.Of(call))]
+		return point, ok && point != 0
+	}
+	if len(l.callPoints) == 0 {
 		return 0, false
 	}
 	point, ok := l.callPoints[call]

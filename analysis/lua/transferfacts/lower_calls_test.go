@@ -1626,6 +1626,35 @@ func TestLowerNestedExpressionProducerCallFromWIRIsReadableSlotZero(t *testing.T
 	}
 }
 
+func TestLowerCallPointForExprCanComeOnlyFromWIRExpressionID(t *testing.T) {
+	inner := &ast.FuncCallExpr{Func: ident("g")}
+	outer := &ast.FuncCallExpr{Func: ident("f"), Args: []ast.Expr{inner}}
+	stmt := &ast.FuncCallStmt{Expr: outer}
+	stmts := []ast.Stmt{stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"f", "g"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	body := wirlower.Lower("wir-call-points", stmts, bindings, built)
+	points := requireStmtPoints(t, built, stmt, 2)
+
+	l := lowerer{
+		bindings:             bindings,
+		graph:                built.Graph,
+		graphID:              built.Graph.ID(),
+		wir:                  body,
+		wirCallPoints:        callPointsByExpressionIDFromWIR(built.Graph, body),
+		exprs:                make(map[any]factflow.ExprRef),
+		expressionPaths:      make(map[factflow.ExprRef]path.Path),
+		expressionConditions: make(map[factflow.ExprRef]factflow.ExpressionCondition),
+	}
+	source, ok := l.expressionOperandSource(inner)
+	if !ok {
+		t.Fatalf("expressionOperandSource(inner) returned false")
+	}
+	if source.Kind != factflow.ValueSourceCall || !source.HasCallPoint || source.CallPoint != points[0] {
+		t.Fatalf("inner call source = %#v, want WIR call point %d", source, points[0])
+	}
+}
+
 func TestLowerCallSiteMapsUnknownContextExplicitly(t *testing.T) {
 	l := lowerer{exprs: make(map[any]factflow.ExprRef)}
 	site := l.callSite(semantics.CallFact{
