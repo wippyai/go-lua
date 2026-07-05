@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
@@ -119,19 +118,7 @@ func (l *lowerer) typeCastArgumentPathFromWIR(point cfg.Point, fact semantics.Ca
 	if _, ok := branchcond.TypeCall(fact.Call); !ok {
 		return path.Path{}, false
 	}
-	inst, ok := l.wirCallInstruction(point)
-	if !ok {
-		return path.Path{}, false
-	}
-	args := l.wir.Operands(inst.List)
-	if len(args) == 0 || args[0].Kind != wir.OperandPath {
-		return path.Path{}, false
-	}
-	argPath := l.wir.Path(wir.PathRef(args[0].Ref))
-	if argPath.IsEmpty() {
-		return path.Path{}, false
-	}
-	return argPath, true
+	return l.callArgumentPathFromWIR(point, 0)
 }
 
 func (l *lowerer) typeValueExpr(expr ast.Expr) (typ.Type, bool) {

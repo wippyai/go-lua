@@ -5,7 +5,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -71,16 +70,8 @@ func (l *lowerer) protectedCallPayloadTypeFromWIR(point cfg.Point, fact semantic
 	if l == nil || l.wir == nil || !fact.IsProtectedCall(l.bindings) {
 		return nil, false
 	}
-	inst, ok := l.wirCallInstruction(point)
+	callbackPath, ok := l.callArgumentPathFromWIR(point, 0)
 	if !ok {
-		return nil, false
-	}
-	args := l.wir.Operands(inst.List)
-	if len(args) == 0 || args[0].Kind != wir.OperandPath {
-		return nil, false
-	}
-	callbackPath := l.wir.Path(wir.PathRef(args[0].Ref))
-	if callbackPath.IsEmpty() {
 		return nil, false
 	}
 	callbackType, ok := l.aliasPathType(callbackPath)

@@ -38,19 +38,7 @@ func (l *lowerer) typeIsArgumentPathFromWIR(point cfg.Point, fact semantics.Call
 	if _, _, ok := l.typeIsCall(fact); !ok {
 		return path.Path{}, false
 	}
-	inst, ok := l.wirCallInstruction(point)
-	if !ok {
-		return path.Path{}, false
-	}
-	args := l.wir.Operands(inst.List)
-	if len(args) == 0 || args[0].Kind != wir.OperandPath {
-		return path.Path{}, false
-	}
-	argPath := l.wir.Path(wir.PathRef(args[0].Ref))
-	if argPath.IsEmpty() {
-		return path.Path{}, false
-	}
-	return argPath, true
+	return l.callArgumentPathFromWIR(point, 0)
 }
 
 func (l *lowerer) typeIsCallExpr(call *ast.FuncCallExpr) (typ.Type, path.Path, bool) {

@@ -286,6 +286,25 @@ func (l *lowerer) wirCallInstruction(point cfg.Point) (wir.Instruction, bool) {
 	return wir.Instruction{}, false
 }
 
+func (l *lowerer) callArgumentPathFromWIR(point cfg.Point, index int) (path.Path, bool) {
+	if index < 0 {
+		return path.Path{}, false
+	}
+	inst, ok := l.wirCallInstruction(point)
+	if !ok {
+		return path.Path{}, false
+	}
+	args := l.wir.Operands(inst.List)
+	if index >= len(args) || args[index].Kind != wir.OperandPath {
+		return path.Path{}, false
+	}
+	argPath := l.wir.Path(wir.PathRef(args[index].Ref))
+	if argPath.IsEmpty() {
+		return path.Path{}, false
+	}
+	return argPath, true
+}
+
 func sourceSpans(in []semantics.SourceSpan) []factflow.SourceSpan {
 	if len(in) == 0 {
 		return nil
