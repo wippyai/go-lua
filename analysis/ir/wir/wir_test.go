@@ -73,6 +73,12 @@ func TestBranchChecksExposePointBranchesOnly(t *testing.T) {
 	if missing := b.BranchChecks(exit); len(missing) != 0 {
 		t.Fatalf("BranchChecks(exit) = %#v, want none", missing)
 	}
+	if !b.HasInstruction(p, OpBranch) {
+		t.Fatalf("HasInstruction(point, OpBranch) = false, want true")
+	}
+	if b.HasInstruction(p, OpReturn) {
+		t.Fatalf("HasInstruction(point, OpReturn) = true, want false")
+	}
 
 	var visited int
 	b.ForEachBranchCheck(p, func(Check) bool {

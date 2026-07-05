@@ -117,6 +117,18 @@ func (b *Body) HasPoint(p cfg.Point) bool {
 	return idx >= 0 && idx < len(b.points) && b.points[idx].valid
 }
 
+// HasInstruction reports whether point p carries at least one instruction with
+// opcode op. It is the canonical zero-allocation query for consumers that need
+// point-level topology without inspecting the raw instruction stream.
+func (b *Body) HasInstruction(p cfg.Point, op Op) bool {
+	for _, inst := range b.PointInstructions(p) {
+		if inst.Op == op {
+			return true
+		}
+	}
+	return false
+}
+
 // Path returns the interned path for ref, or the zero Path for a none ref.
 func (b *Body) Path(ref PathRef) path.Path {
 	if ref == 0 || int(ref) >= len(b.paths) {

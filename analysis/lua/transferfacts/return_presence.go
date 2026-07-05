@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/returnpresence"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -14,7 +15,7 @@ func (l *lowerer) addReturnPresenceRelations(input *factflow.FactsInput, graph c
 	if input == nil || graph == nil || result == nil {
 		return
 	}
-	points := returnFactPoints(graph, result)
+	points := l.returnFactPoints(graph, result)
 	arity := l.returnPresenceArity(input, result, points)
 	if arity < 2 {
 		return
@@ -26,7 +27,30 @@ func (l *lowerer) addReturnPresenceRelations(input *factflow.FactsInput, graph c
 	}
 }
 
-func returnFactPoints(graph cfg.Graph, result *semantics.Result) []cfg.Point {
+func (l *lowerer) returnFactPoints(graph cfg.Graph, result *semantics.Result) []cfg.Point {
+	if l.wir != nil {
+		return wirReturnFactPoints(graph, l.wir)
+	}
+	return semanticReturnFactPoints(graph, result)
+}
+
+func wirReturnFactPoints(graph cfg.Graph, body *wir.Body) []cfg.Point {
+	if graph == nil || body == nil {
+		return nil
+	}
+	var points []cfg.Point
+	for _, point := range graph.RPO() {
+		if body.HasInstruction(point, wir.OpReturn) {
+			points = append(points, point)
+		}
+	}
+	return points
+}
+
+func semanticReturnFactPoints(graph cfg.Graph, result *semantics.Result) []cfg.Point {
+	if graph == nil || result == nil {
+		return nil
+	}
 	var points []cfg.Point
 	for _, point := range graph.RPO() {
 		if _, ok := result.ReturnView(point); ok {
