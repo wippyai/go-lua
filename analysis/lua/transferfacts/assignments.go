@@ -495,10 +495,10 @@ func (l *lowerer) dynamicIndexWrite(point cfg.Point, fact semantics.OrdinaryAssi
 		dynamicindex.AdmissionUnknown,
 		dynamicIndexReadbackIntent(readKey, readValue),
 	)
-	if keyPath, ok := l.dynamicIndexKeyPath(fact.Target); ok {
+	if keyPath, ok := l.dynamicIndexKeyPath(point, fact.Target); ok {
 		write = write.WithKeyPath(keyPath)
 	}
-	if valuePath, ok := l.dynamicIndexValuePath(fact.Source); ok {
+	if valuePath, ok := l.dynamicIndexValuePath(point, fact.Source); ok {
 		write = write.WithValuePath(valuePath)
 	}
 	return write, true
@@ -675,7 +675,12 @@ func (l *lowerer) dynamicIndexKeySourceFromAST(target ast.Expr) (factflow.ValueS
 	return l.valueSource(source), true
 }
 
-func (l *lowerer) dynamicIndexKeyPath(target ast.Expr) (path.Path, bool) {
+func (l *lowerer) dynamicIndexKeyPath(point cfg.Point, target ast.Expr) (path.Path, bool) {
+	if p, ok := l.dynamicIndexOperandPathFromWIR(point, func(inst wir.Instruction) wir.Operand {
+		return inst.A
+	}); ok {
+		return p, true
+	}
 	attr, ok := target.(*ast.AttrGetExpr)
 	if !ok || attr.Key == nil {
 		return path.Path{}, false
@@ -683,11 +688,37 @@ func (l *lowerer) dynamicIndexKeyPath(target ast.Expr) (path.Path, bool) {
 	return pathexpr.ResolveAlias(attr.Key, l.bindings)
 }
 
-func (l *lowerer) dynamicIndexValuePath(source sourceprovenance.ASTSource) (path.Path, bool) {
+func (l *lowerer) dynamicIndexValuePath(point cfg.Point, source sourceprovenance.ASTSource) (path.Path, bool) {
+	if p, ok := l.dynamicIndexOperandPathFromWIR(point, func(inst wir.Instruction) wir.Operand {
+		return inst.B
+	}); ok {
+		return p, true
+	}
 	if source.Kind != sourceprovenance.SourceExpression || source.Expr == nil {
 		return path.Path{}, false
 	}
 	return pathexpr.ResolveAlias(source.Expr, l.bindings)
+}
+
+func (l *lowerer) dynamicIndexOperandPathFromWIR(point cfg.Point, selectOperand func(wir.Instruction) wir.Operand) (path.Path, bool) {
+	if l == nil || l.wir == nil {
+		return path.Path{}, false
+	}
+	for _, inst := range l.wir.PointInstructions(point) {
+		if inst.Op != wir.OpDynamicIndexWrite {
+			continue
+		}
+		op := selectOperand(inst)
+		if op.Kind != wir.OperandPath {
+			return path.Path{}, false
+		}
+		p := l.wir.Path(wir.PathRef(op.Ref))
+		if p.Symbol == 0 {
+			return path.Path{}, false
+		}
+		return p.Clone(), true
+	}
+	return path.Path{}, false
 }
 
 func dynamicIndexReadbackIntent(readKey bool, readValue bool) factflow.DynamicIndexReadbackIntent {

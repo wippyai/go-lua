@@ -192,6 +192,10 @@ end
 	if !ok || !gotPath.Equal(otherPath) || gotPath.Equal(valuePath) {
 		t.Fatalf("dynamic key expression path = %v/%v, want WIR path %v not semantic path %v", gotPath, ok, otherPath, valuePath)
 	}
+	gotKeyPath, ok := write.KeyPath()
+	if !ok || !gotKeyPath.Equal(otherPath) || gotKeyPath.Equal(valuePath) {
+		t.Fatalf("dynamic key path = %v/%v, want WIR path %v not semantic path %v", gotKeyPath, ok, otherPath, valuePath)
+	}
 }
 
 func TestLowerDynamicIndexTablePathComesFromWIR(t *testing.T) {
@@ -301,6 +305,10 @@ end
 	gotPath, ok := facts.ExpressionPath(source.ExprRef)
 	if !ok || !gotPath.Equal(otherPath) || gotPath.Equal(valuePath) {
 		t.Fatalf("dynamic value expression path = %v/%v, want WIR path %v not semantic path %v", gotPath, ok, otherPath, valuePath)
+	}
+	gotValuePath, ok := write.ValuePath()
+	if !ok || !gotValuePath.Equal(otherPath) || gotValuePath.Equal(valuePath) {
+		t.Fatalf("dynamic value path = %v/%v, want WIR path %v not semantic path %v", gotValuePath, ok, otherPath, valuePath)
 	}
 }
 
