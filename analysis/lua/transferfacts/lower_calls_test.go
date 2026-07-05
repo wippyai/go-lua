@@ -23,6 +23,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/source"
 )
 
 func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *testing.T) {
@@ -1061,6 +1062,60 @@ end
 	}
 	if !site.Final() || !site.Expanded() || site.Adjusted() || !site.OpenTail() {
 		t.Fatalf("call site flags = final:%v expanded:%v adjusted:%v open:%v, want WIR true/true/false/true", site.Final(), site.Expanded(), site.Adjusted(), site.OpenTail())
+	}
+}
+
+func TestLowerCallSiteMetadataComesFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(value: string): ()
+    send(value)
+end
+`, "send")
+	stmt, ok := fn.Stmts[0].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[0])
+	}
+	point := requireStmtPoints(t, built, stmt, 1)[0]
+	fact, ok := result.Call(point)
+	if !ok {
+		t.Fatalf("missing semantic call at point %d", point)
+	}
+	fact.CallSpan = semantics.SourceSpan{StartLine: 40, StartCol: 1, EndLine: 40, EndCol: 2}
+	fact.CalleeSpan = semantics.SourceSpan{StartLine: 41, StartCol: 1, EndLine: 41, EndCol: 2}
+	fact.ArgumentSpans = []semantics.SourceSpan{{StartLine: 42, StartCol: 1, EndLine: 42, EndCol: 2}}
+	fact.ArgumentLabels = []string{"semantic_value"}
+
+	body := wir.NewBody("synthetic-call-metadata")
+	meta := []wir.CallArgumentMeta{{
+		Span:  source.Span{StartLine: 7, StartCol: 11, EndLine: 7, EndCol: 16},
+		Label: "wir_value",
+	}}
+	start := body.Emit(wir.Instruction{
+		Op:         wir.OpCall,
+		Point:      point,
+		CallSpan:   source.Span{StartLine: 7, StartCol: 5, EndLine: 7, EndCol: 17},
+		CalleeSpan: source.Span{StartLine: 7, StartCol: 5, EndLine: 7, EndCol: 9},
+		CallArgs:   body.AppendCallArgumentMeta(meta),
+	})
+	body.SetPointRange(point, start, start+1)
+
+	l := lowerer{
+		bindings: bindings,
+		wir:      body,
+		exprs:    make(map[any]factflow.ExprRef),
+	}
+	site := l.callSiteWithArgumentSourcesAt(point, fact, nil)
+	if got := site.CallSpan(); got.StartLine != 7 || got.StartCol != 5 || got.EndCol != 17 {
+		t.Fatalf("call span = %#v, want WIR span", got)
+	}
+	if got := site.CalleeSpan(); got.StartLine != 7 || got.StartCol != 5 || got.EndCol != 9 {
+		t.Fatalf("callee span = %#v, want WIR span", got)
+	}
+	if got, ok := site.ArgumentSpanAt(0); !ok || got.StartLine != 7 || got.StartCol != 11 || got.EndCol != 16 {
+		t.Fatalf("argument span = %#v/%v, want WIR argument span", got, ok)
+	}
+	if got, ok := site.ArgumentLabelAt(0); !ok || got != "wir_value" {
+		t.Fatalf("argument label = %q/%v, want WIR label", got, ok)
 	}
 }
 

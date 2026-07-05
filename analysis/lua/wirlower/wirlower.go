@@ -600,6 +600,9 @@ func (b *builder) emitCallAt(point cfg.Point, call *ast.FuncCallExpr, resultCoun
 		CallExpanded: meta.expanded,
 		CallAdjusted: meta.adjusted,
 		CallOpenTail: meta.openTail,
+		CallSpan:     tableEntryValueSpan(call),
+		CalleeSpan:   callCalleeSourceSpan(call),
+		CallArgs:     b.body.AppendCallArgumentMeta(callArgumentMeta(call.Args)),
 	}
 	if call.Method != "" {
 		inst.Call.Method = b.internString(call.Method)
@@ -1231,6 +1234,30 @@ func tableEntryValueSpan(expr ast.Expr) source.Span {
 		span.EndCol = span.StartCol + len(ident.Value)
 	}
 	return span
+}
+
+func callCalleeSourceSpan(call *ast.FuncCallExpr) source.Span {
+	if call == nil {
+		return source.Span{}
+	}
+	if span := tableEntryValueSpan(call.Func); span.Valid() {
+		return span
+	}
+	return tableEntryValueSpan(call.Receiver)
+}
+
+func callArgumentMeta(exprs []ast.Expr) []wir.CallArgumentMeta {
+	if len(exprs) == 0 {
+		return nil
+	}
+	out := make([]wir.CallArgumentMeta, len(exprs))
+	for i, expr := range exprs {
+		out[i] = wir.CallArgumentMeta{
+			Span:  tableEntryValueSpan(expr),
+			Label: tableEntryValueLabel(expr),
+		}
+	}
+	return out
 }
 
 func tableEntryValueLabel(expr ast.Expr) string {

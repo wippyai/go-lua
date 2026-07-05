@@ -265,6 +265,43 @@ local t = {
 	}
 }
 
+func TestCallCarriesSourceMetadata(t *testing.T) {
+	body := lowerBody(t, `
+local value = "x"
+send(value, payload.id)
+`, "send", "payload")
+	var inst wir.Instruction
+	for i := 0; i < body.Len(); i++ {
+		candidate := body.Instr(i)
+		if candidate.Op == wir.OpCall {
+			inst = candidate
+			break
+		}
+	}
+	if inst.Op != wir.OpCall {
+		t.Fatal("missing OpCall")
+	}
+	if !inst.CallSpan.Valid() || inst.CallSpan.StartLine != 3 {
+		t.Fatalf("call span = %#v, want valid line 3 span", inst.CallSpan)
+	}
+	if !inst.CalleeSpan.Valid() || inst.CalleeSpan.StartLine != 3 {
+		t.Fatalf("callee span = %#v, want valid line 3 span", inst.CalleeSpan)
+	}
+	args := body.CallArgumentMeta(inst.CallArgs)
+	if len(args) != 2 {
+		t.Fatalf("call argument metadata = %#v, want 2 entries", args)
+	}
+	if got := args[0].Label; got != "value" {
+		t.Fatalf("arg 0 label = %q, want value", got)
+	}
+	if got := args[1].Label; got != "payload.id" {
+		t.Fatalf("arg 1 label = %q, want payload.id", got)
+	}
+	if !args[0].Span.Valid() || args[0].Span.StartLine != 3 {
+		t.Fatalf("arg 0 span = %#v, want valid line 3 span", args[0].Span)
+	}
+}
+
 func TestDirectTypeValueCallCarriesResolvedType(t *testing.T) {
 	body := lowerBody(t, `
 type Point = { x: number }

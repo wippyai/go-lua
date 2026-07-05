@@ -30,6 +30,7 @@ type Body struct {
 
 	operandPool   []Operand
 	tableEntries  []TableEntry
+	callArgMeta   []CallArgumentMeta
 	impliedChecks []ImpliedCheck
 	branchDiffs   []BranchDiffConstraint
 	callTargets   map[callResultTargetKey]CallResultTarget
@@ -88,8 +89,21 @@ type TableEntry struct {
 	ValueLabel string
 }
 
+// CallArgumentMeta records source-only metadata for a syntactic call argument.
+// It is diagnostic metadata: it never participates in value derivation.
+type CallArgumentMeta struct {
+	Span  source.Span
+	Label string
+}
+
 // TableEntryRange is a [Start, Start+Len) window into Body.tableEntries.
 type TableEntryRange struct {
+	Start uint32
+	Len   uint32
+}
+
+// CallArgumentMetaRange is a [Start, Start+Len) window into Body.callArgMeta.
+type CallArgumentMetaRange struct {
 	Start uint32
 	Len   uint32
 }
@@ -295,6 +309,15 @@ func (b *Body) TableEntries(r TableEntryRange) []TableEntry {
 	return b.tableEntries[r.Start : r.Start+r.Len]
 }
 
+// CallArgumentMeta returns the call-argument metadata slice for a variadic
+// range.
+func (b *Body) CallArgumentMeta(r CallArgumentMetaRange) []CallArgumentMeta {
+	if r.Len == 0 {
+		return nil
+	}
+	return b.callArgMeta[r.Start : r.Start+r.Len]
+}
+
 // ImpliedChecks returns the branch-implied check slice for a variadic range.
 func (b *Body) ImpliedChecks(r ImpliedCheckRange) []ImpliedCheck {
 	if r.Len == 0 {
@@ -457,6 +480,17 @@ func (b *Body) AppendTableEntries(entries []TableEntry) TableEntryRange {
 	start := uint32(len(b.tableEntries))
 	b.tableEntries = append(b.tableEntries, entries...)
 	return TableEntryRange{Start: start, Len: uint32(len(entries))}
+}
+
+// AppendCallArgumentMeta copies metadata into the shared call-argument metadata
+// pool and returns its range.
+func (b *Body) AppendCallArgumentMeta(meta []CallArgumentMeta) CallArgumentMetaRange {
+	if len(meta) == 0 {
+		return CallArgumentMetaRange{}
+	}
+	start := uint32(len(b.callArgMeta))
+	b.callArgMeta = append(b.callArgMeta, meta...)
+	return CallArgumentMetaRange{Start: start, Len: uint32(len(meta))}
 }
 
 // AppendImpliedChecks copies checks into the shared branch-implied-check pool

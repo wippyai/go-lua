@@ -25,8 +25,9 @@ func (l *lowerer) callSite(fact semantics.CallFact) factflow.CallSite {
 func (l *lowerer) callSiteWithArgumentSources(fact semantics.CallFact, argumentSources []factflow.ValueSource) factflow.CallSite {
 	shape := semanticCallSiteShape(fact)
 	flags := semanticCallSiteFlags(fact)
+	metadata := semanticCallSiteMetadata(fact)
 	receiverSource, hasReceiverSource := l.semanticReceiverSource(fact)
-	return l.callSiteWithArgumentSourcesWithShape(fact, argumentSources, shape, flags, receiverSource, hasReceiverSource, l.evidenceCallSiteResultTargets(fact.ResultTargets))
+	return l.callSiteWithArgumentSourcesWithShape(fact, argumentSources, shape, flags, metadata, receiverSource, hasReceiverSource, l.evidenceCallSiteResultTargets(fact.ResultTargets))
 }
 
 func (l *lowerer) callSiteWithArgumentSourcesAt(point cfg.Point, fact semantics.CallFact, argumentSources []factflow.ValueSource) factflow.CallSite {
@@ -38,8 +39,12 @@ func (l *lowerer) callSiteWithArgumentSourcesAt(point cfg.Point, fact semantics.
 	if wirFlags, ok := l.callSiteFlagsFromWIR(point); ok {
 		flags = wirFlags
 	}
+	metadata := semanticCallSiteMetadata(fact)
+	if wirMetadata, ok := l.callSiteMetadataFromWIR(point); ok {
+		metadata = wirMetadata
+	}
 	receiverSource, hasReceiverSource := l.callReceiverSource(point, fact)
-	return l.callSiteWithArgumentSourcesWithShape(fact, argumentSources, shape, flags, receiverSource, hasReceiverSource, l.callSiteResultTargetsFromWIR(point, fact.ResultTargets))
+	return l.callSiteWithArgumentSourcesWithShape(fact, argumentSources, shape, flags, metadata, receiverSource, hasReceiverSource, l.callSiteResultTargetsFromWIR(point, fact.ResultTargets))
 }
 
 type callSiteShape struct {
@@ -68,6 +73,13 @@ type callSiteFlags struct {
 	expanded bool
 	adjusted bool
 	openTail bool
+}
+
+type callSiteMetadata struct {
+	callSpan       factflow.SourceSpan
+	calleeSpan     factflow.SourceSpan
+	argumentSpans  []factflow.SourceSpan
+	argumentLabels []string
 }
 
 func semanticCallSiteShape(fact semantics.CallFact) callSiteShape {
@@ -102,11 +114,21 @@ func semanticCallSiteFlags(fact semantics.CallFact) callSiteFlags {
 	}
 }
 
+func semanticCallSiteMetadata(fact semantics.CallFact) callSiteMetadata {
+	return callSiteMetadata{
+		callSpan:       sourceSpan(fact.CallSpan),
+		calleeSpan:     sourceSpan(fact.CalleeSpan),
+		argumentSpans:  sourceSpans(fact.ArgumentSpans),
+		argumentLabels: append([]string(nil), fact.ArgumentLabels...),
+	}
+}
+
 func (l *lowerer) callSiteWithArgumentSourcesWithShape(
 	fact semantics.CallFact,
 	argumentSources []factflow.ValueSource,
 	shape callSiteShape,
 	flags callSiteFlags,
+	metadata callSiteMetadata,
 	receiverSource factflow.ValueSource,
 	hasReceiverSource bool,
 	resultTargets []factflow.CallResultTarget,
@@ -129,10 +151,10 @@ func (l *lowerer) callSiteWithArgumentSourcesWithShape(
 		ExprIndex:          flags.expr,
 		ConditionNegated:   fact.ConditionNegated,
 		ArgumentSources:    argumentSources,
-		CallSpan:           sourceSpan(fact.CallSpan),
-		CalleeSpan:         sourceSpan(fact.CalleeSpan),
-		ArgumentSpans:      sourceSpans(fact.ArgumentSpans),
-		ArgumentLabels:     append([]string(nil), fact.ArgumentLabels...),
+		CallSpan:           metadata.callSpan,
+		CalleeSpan:         metadata.calleeSpan,
+		ArgumentSpans:      metadata.argumentSpans,
+		ArgumentLabels:     metadata.argumentLabels,
 		TypeArgs:           l.typeRefs(fact.TypeArgs),
 		ResultTargets:      resultTargets,
 		Final:              flags.final,
@@ -140,6 +162,26 @@ func (l *lowerer) callSiteWithArgumentSourcesWithShape(
 		Adjusted:           flags.adjusted,
 		OpenTail:           flags.openTail,
 	})
+}
+
+func (l *lowerer) callSiteMetadataFromWIR(point cfg.Point) (callSiteMetadata, bool) {
+	inst, ok := l.wirCallInstruction(point)
+	if !ok {
+		return callSiteMetadata{}, false
+	}
+	argMeta := l.wir.CallArgumentMeta(inst.CallArgs)
+	spans := make([]factflow.SourceSpan, len(argMeta))
+	labels := make([]string, len(argMeta))
+	for i, meta := range argMeta {
+		spans[i] = sourceSpanFromWIR(meta.Span)
+		labels[i] = meta.Label
+	}
+	return callSiteMetadata{
+		callSpan:       sourceSpanFromWIR(inst.CallSpan),
+		calleeSpan:     sourceSpanFromWIR(inst.CalleeSpan),
+		argumentSpans:  spans,
+		argumentLabels: labels,
+	}, true
 }
 
 func (l *lowerer) callSiteFlagsFromWIR(point cfg.Point) (callSiteFlags, bool) {

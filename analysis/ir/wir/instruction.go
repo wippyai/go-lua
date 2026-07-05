@@ -18,6 +18,7 @@ package wir
 
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/compiler/source"
 )
 
 // Op is the closed instruction opcode set. The type sublanguage costs zero
@@ -253,6 +254,9 @@ type Instruction struct {
 	CallExpanded bool
 	CallAdjusted bool
 	CallOpenTail bool
+	CallSpan     source.Span
+	CalleeSpan   source.Span
+	CallArgs     CallArgumentMetaRange
 
 	// SelectDefault marks an OpSelect that carries a default (non-blocking) case.
 	SelectDefault bool
