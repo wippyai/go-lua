@@ -2,6 +2,7 @@ package transferfacts
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
@@ -90,13 +91,84 @@ func (l *lowerer) callArgumentSources(point cfg.Point, fallback []sourceprovenan
 	callResults := l.callResultValueSourcesByTempFromWIR()
 	for i, op := range ops {
 		final := i == len(ops)-1
-		source, ok := l.valueSourceFromWIROperand(op, i, i, final, inst.ListSpread && final, false, callResults)
+		source, ok := l.callArgumentSourceFromWIROperand(point, op, i, i, final, inst.ListSpread && final, callResults)
 		if !ok {
 			continue
 		}
 		out[i] = source
 	}
 	return out, true
+}
+
+func (l *lowerer) callArgumentSourceFromWIROperand(
+	point cfg.Point,
+	op wir.Operand,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	callResults map[uint32]wirCallResultSource,
+) (factflow.ValueSource, bool) {
+	if source, ok := l.localCallArgumentExpressionSourceFromWIR(point, op, exprIndex, targetIndex, final); ok {
+		return source, true
+	}
+	if source, ok := l.valueSourceFromWIRRootPathOperand(op, exprIndex, targetIndex, final, symbol.Param); ok {
+		return source, true
+	}
+	return l.valueSourceFromWIROperand(op, exprIndex, targetIndex, final, expanded, false, callResults)
+}
+
+type wirPathExprRefKey struct {
+	point       cfg.Point
+	path        path.PathKey
+	exprIndex   int
+	targetIndex int
+	final       bool
+}
+
+func (l *lowerer) localCallArgumentExpressionSourceFromWIR(
+	point cfg.Point,
+	op wir.Operand,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+) (factflow.ValueSource, bool) {
+	if op.Kind != wir.OperandPath || l == nil || l.wir == nil || l.bindings == nil {
+		return factflow.ValueSource{}, false
+	}
+	p := l.wir.Path(wir.PathRef(op.Ref))
+	if len(p.Segments) != 0 || p.Symbol == 0 {
+		return factflow.ValueSource{}, false
+	}
+	kind, ok := l.bindings.Kind(p.Symbol)
+	if !ok || kind != symbol.Local {
+		return factflow.ValueSource{}, false
+	}
+	exprRef, ok := l.exprRef(wirPathExprRefKey{
+		point:       point,
+		path:        p.Key(),
+		exprIndex:   exprIndex,
+		targetIndex: targetIndex,
+		final:       final,
+	})
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	if l.expressionPaths == nil {
+		l.expressionPaths = make(map[factflow.ExprRef]path.Path)
+	}
+	l.expressionPaths[exprRef] = p
+	if t, ok := l.symbolTypes[p.Symbol]; ok {
+		if l.expressionValues == nil {
+			l.expressionValues = make(map[factflow.ExprRef]product.Value)
+		}
+		l.expressionValues[exprRef] = l.valueFromTypeWithWitness(t)
+	}
+	shape, ok := factflow.NewValueSourceShape(final, false, false, false)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return factflow.NewExpressionValueSource(exprRef, exprIndex, targetIndex, 0, shape)
 }
 
 func (l *lowerer) wirCallInstruction(point cfg.Point) (wir.Instruction, bool) {

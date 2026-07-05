@@ -346,7 +346,7 @@ end
 	}
 }
 
-func TestLowerCallSiteKeepsSemanticArgumentSourceForLocalRootPath(t *testing.T) {
+func TestLowerCallSiteUsesWIRArgumentSourceForLocalRootPath(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(): ()
     local value = "x"
@@ -369,8 +369,53 @@ end
 	if !ok {
 		t.Fatalf("missing first argument source")
 	}
-	if arg.Kind != factflow.ValueSourceExpression || !arg.HasExpr {
-		t.Fatalf("local argument source = %#v, want semantic expression fallback", arg)
+	want := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "value").Key()
+	if arg.Kind != factflow.ValueSourceExpression || !arg.HasExpr || arg.PathKey != "" {
+		t.Fatalf("local argument source = %#v, want WIR expression-backed path source", arg)
+	}
+	got, ok := facts.ExpressionPath(arg.ExprRef)
+	if !ok || got.Key() != want {
+		t.Fatalf("local argument expression path = %v/%v, want %q", got, ok, want)
+	}
+}
+
+func TestLowerCallSiteLocalArgumentPathComesFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): ()
+    local value = "x"
+    local other = "y"
+    send(value)
+end
+`, "send")
+	stmt, ok := fn.Stmts[2].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[2])
+	}
+	points := requireStmtPoints(t, built, stmt, 1)
+	valueStmt := fn.Stmts[0].(*ast.LocalAssignStmt)
+	otherStmt := fn.Stmts[1].(*ast.LocalAssignStmt)
+	valuePath := path.NewPath(mustLocalAt(t, bindings, valueStmt, 0), "value")
+	otherPath := path.NewPath(mustLocalAt(t, bindings, otherStmt, 0), "other")
+	body := wir.NewBody("synthetic-call")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpCall,
+		Point: points[0],
+		List:  body.AppendOperands([]wir.Operand{{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))}}),
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	site, ok := facts.CallSite(points[0])
+	if !ok {
+		t.Fatalf("missing call site at point %d", points[0])
+	}
+	arg, ok := site.ArgumentSourceAt(0)
+	if !ok || arg.Kind != factflow.ValueSourceExpression || !arg.HasExpr {
+		t.Fatalf("argument source = %#v/%v, want expression-backed WIR path", arg, ok)
+	}
+	got, ok := facts.ExpressionPath(arg.ExprRef)
+	if !ok || !got.Equal(otherPath) || got.Equal(valuePath) {
+		t.Fatalf("argument expression path = %v/%v, want WIR path %v not semantic path %v", got, ok, otherPath, valuePath)
 	}
 }
 
