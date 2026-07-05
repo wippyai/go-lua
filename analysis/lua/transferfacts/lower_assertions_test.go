@@ -324,6 +324,50 @@ end
 	}
 }
 
+func TestLowerClaimWrappedCallBindingsUseWIRClaims(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+type Message = {topic: string}
+local inbox = make() as Message
+local ready = check()!
+`, "make", "check")
+	body := wirlower.Lower("chunk", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	castLocal := stmts[1].(*ast.LocalAssignStmt)
+	castPoints := requireStmtPoints(t, built, castLocal, 2)
+	castSource := mustLocalSource(t, facts, castPoints[1])
+	if castSource.Kind != factflow.ValueSourceCall || !castSource.HasExpr || !castSource.HasCallPoint || castSource.CallPoint != castPoints[0] {
+		t.Fatalf("cast-wrapped call source = %#v, want call source at point %d", castSource, castPoints[0])
+	}
+	castClaim, ok := facts.ExpressionRefinement(castSource.ExprRef)
+	if !ok {
+		t.Fatalf("missing WIR cast refinement for source ref %d", castSource.ExprRef)
+	}
+	if got := castClaim.Mode(); got != factflow.ExpressionRefinementRuntimeValidation {
+		t.Fatalf("cast refinement mode = %v, want runtime validation", got)
+	}
+	if got := product.Get(standard.Registry(), castClaim.Refinement(), assertion.Key); !got.Has(assertion.RuntimeClaim) || !got.Has(assertion.TypeClaim) {
+		t.Fatalf("cast assertion = %s, want runtime type claim", got)
+	}
+	if inner := castClaim.Source(); inner.Kind != factflow.ValueSourceCall || inner.HasExpr || inner.ExprRef != 0 || inner.CallPoint != castPoints[0] {
+		t.Fatalf("cast refinement source = %#v, want WIR inner call source at point %d", inner, castPoints[0])
+	}
+
+	assertLocal := stmts[2].(*ast.LocalAssignStmt)
+	assertPoints := requireStmtPoints(t, built, assertLocal, 2)
+	assertSource := mustLocalSource(t, facts, assertPoints[1])
+	assertClaim, ok := facts.ExpressionRefinement(assertSource.ExprRef)
+	if !ok {
+		t.Fatalf("missing WIR non-nil refinement for source ref %d", assertSource.ExprRef)
+	}
+	if got := product.Get(standard.Registry(), assertClaim.Refinement(), assertion.Key); !got.Has(assertion.NonNilClaim) {
+		t.Fatalf("non-nil assertion = %s, want non-nil claim", got)
+	}
+	if inner := assertClaim.Source(); inner.Kind != factflow.ValueSourceCall || inner.HasExpr || inner.ExprRef != 0 || inner.CallPoint != assertPoints[0] {
+		t.Fatalf("non-nil refinement source = %#v, want WIR inner call source at point %d", inner, assertPoints[0])
+	}
+}
+
 func assertWIRClaimSourcePath(t *testing.T, facts factflow.Facts, source factflow.ValueSource, want path.Path) {
 	t.Helper()
 	if !source.HasExpr || source.ExprRef == 0 {

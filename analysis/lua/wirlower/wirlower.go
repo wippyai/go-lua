@@ -320,6 +320,9 @@ type binding struct {
 	hasCallResult bool
 	callPoint     cfg.Point
 	resultIndex   int
+
+	claim     wir.ClaimKind
+	claimType wir.TypeRef
 }
 
 // planValues maps n destinations to their source values, preserving Lua tail
@@ -343,7 +346,7 @@ func (b *builder) planValues(n int, exprs []ast.Expr) []binding {
 		if call, ok := tailCall(e); ok {
 			if cr, ok := b.callTemps[call]; ok {
 				for j := last; j < n; j++ {
-					out[j] = tempBinding(cr, j-last)
+					out[j] = b.tempBinding(cr, j-last, e)
 				}
 				return out
 			}
@@ -363,14 +366,28 @@ func (b *builder) planValues(n int, exprs []ast.Expr) []binding {
 
 // tempBinding returns the operand for the k-th result of a pre-lowered call,
 // falling back to the head when the call bound fewer explicit temps than k.
-func tempBinding(cr *callResult, k int) binding {
+func (b *builder) tempBinding(cr *callResult, k int, expr ast.Expr) binding {
 	out := binding{kind: bindOperand, callPoint: cr.point, resultIndex: k, hasCallResult: true}
 	if k < len(cr.temps) {
 		out.op = cr.temps[k]
-		return out
+	} else {
+		out.op = cr.head
 	}
-	out.op = cr.head
+	b.addBindingClaim(&out, expr)
 	return out
+}
+
+func (b *builder) addBindingClaim(out *binding, expr ast.Expr) {
+	if out == nil || expr == nil {
+		return
+	}
+	switch e := expr.(type) {
+	case *ast.CastExpr:
+		out.claim = wir.ClaimCast
+		out.claimType = b.internType(e.Type)
+	case *ast.NonNilAssertExpr:
+		out.claim = wir.ClaimAssert
+	}
 }
 
 // bindInto writes a planned value into a destination that can receive a produced
@@ -382,12 +399,26 @@ func (b *builder) bindInto(dst wir.Operand, v binding) {
 		b.lowerExprInto(dst, v.expr)
 	case bindOperand:
 		b.emitAssign(dst, v.op)
+		b.emitBindingClaim(dst, v)
 		b.recordCallResultTarget(dst, v)
 	case bindVararg:
 		b.emitAssign(dst, wir.Operand{Kind: wir.OperandVararg})
 	default:
 		b.emitAssign(dst, b.constNil())
 	}
+}
+
+func (b *builder) emitBindingClaim(dst wir.Operand, v binding) {
+	if v.claim == wir.ClaimNone {
+		return
+	}
+	b.emit(wir.Instruction{
+		Op:    wir.OpClaim,
+		Dst:   dst,
+		A:     v.op,
+		Claim: v.claim,
+		Type:  v.claimType,
+	})
 }
 
 func (b *builder) recordCallResultTarget(dst wir.Operand, v binding) {

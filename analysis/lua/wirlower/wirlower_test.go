@@ -413,6 +413,30 @@ local second = g(h())
 	}
 }
 
+func TestClaimWrappedCallBindingEmitsClaimAtAssignmentPoint(t *testing.T) {
+	body := lowerBody(t, `
+type Message = {topic: string}
+local inbox = make() as Message
+local ready = check()!
+`, "make", "check")
+	var claims []wir.Instruction
+	for i := 0; i < body.Len(); i++ {
+		inst := body.Instr(i)
+		if inst.Op == wir.OpClaim {
+			claims = append(claims, inst)
+		}
+	}
+	if len(claims) != 2 {
+		t.Fatalf("claims = %#v, want cast and non-nil claims", claims)
+	}
+	if claims[0].Claim != wir.ClaimCast || claims[0].Type == 0 || claims[0].Dst.Kind != wir.OperandPath || claims[0].A.Kind != wir.OperandTemp {
+		t.Fatalf("cast claim = %#v, want path target claiming call result temp with type", claims[0])
+	}
+	if claims[1].Claim != wir.ClaimAssert || claims[1].Type != 0 || claims[1].Dst.Kind != wir.OperandPath || claims[1].A.Kind != wir.OperandTemp {
+		t.Fatalf("non-nil claim = %#v, want path target claiming call result temp without type", claims[1])
+	}
+}
+
 func suffixPath(segs ...segment.Segment) path.Path {
 	return path.Path{Segments: append([]segment.Segment(nil), segs...)}
 }
