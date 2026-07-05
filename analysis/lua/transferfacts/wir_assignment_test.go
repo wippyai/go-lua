@@ -3,11 +3,13 @@ package transferfacts
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/path"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 func TestLowerLocalAssignmentUsesWIRLiteralSources(t *testing.T) {
@@ -16,6 +18,7 @@ function f(value: string, make_value: () -> string)
     local from_param = value
     local from_literal = "ok"
     local from_call = make_value()
+    local from_local = from_literal
 end`)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
 	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
@@ -58,6 +61,58 @@ end`)
 	if callSource.Kind != factflow.ValueSourceCall || !callSource.HasCallPoint || callSource.CallPoint == 0 ||
 		callSource.ResultIndex != 0 || !callSource.HasExpr {
 		t.Fatalf("call assignment source = %#v, want WIR call-result source with preserved expression ref", callSource)
+	}
+
+	localPoint := requireStmtPoints(t, built, fn.Stmts[3], 1)[0]
+	localAssign, ok := facts.RootAssignment(localPoint)
+	if !ok {
+		t.Fatalf("missing local-source assignment at point %d", localPoint)
+	}
+	localSource := localAssign.Source()
+	if localSource.Kind != factflow.ValueSourceExpression || !localSource.HasExpr || localSource.PathKey != "" {
+		t.Fatalf("local assignment source = %#v, want WIR expression-backed path source", localSource)
+	}
+	wantPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "from_literal")
+	gotPath, ok := facts.ExpressionPath(localSource.ExprRef)
+	if !ok || !gotPath.Equal(wantPath) {
+		t.Fatalf("local assignment expression path = %v/%v, want %v", gotPath, ok, wantPath)
+	}
+}
+
+func TestLowerAssignmentLocalSourcePathComesFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): ()
+    local value = "x"
+    local other = "y"
+    local out = value
+end
+`)
+	assignStmt := fn.Stmts[2].(*ast.LocalAssignStmt)
+	points := requireStmtPoints(t, built, assignStmt, 1)
+	valuePath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "value")
+	otherPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "other")
+	outPath := path.NewPath(mustLocalAt(t, bindings, assignStmt, 0), "out")
+	body := wir.NewBody("synthetic-assign")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpAssign,
+		Point: points[0],
+		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(outPath))},
+		A:     wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))},
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	assign, ok := facts.RootAssignment(points[0])
+	if !ok {
+		t.Fatalf("missing assignment at point %d", points[0])
+	}
+	source := assign.Source()
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		t.Fatalf("assignment source = %#v, want expression-backed WIR path", source)
+	}
+	gotPath, ok := facts.ExpressionPath(source.ExprRef)
+	if !ok || !gotPath.Equal(otherPath) || gotPath.Equal(valuePath) {
+		t.Fatalf("assignment expression path = %v/%v, want WIR path %v not semantic path %v", gotPath, ok, otherPath, valuePath)
 	}
 }
 

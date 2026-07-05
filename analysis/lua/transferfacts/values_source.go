@@ -1,6 +1,8 @@
 package transferfacts
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
@@ -85,6 +87,68 @@ func (l *lowerer) returnValueSourceFromWIROperand(
 type wirCallResultSource struct {
 	point       cfg.Point
 	resultIndex int
+}
+
+type wirPathExprRefKey struct {
+	kind        string
+	point       cfg.Point
+	path        path.PathKey
+	exprIndex   int
+	targetIndex int
+	final       bool
+	expanded    bool
+	openTail    bool
+}
+
+func (l *lowerer) localRootPathExpressionSourceFromWIR(
+	kind string,
+	point cfg.Point,
+	op wir.Operand,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+) (factflow.ValueSource, bool) {
+	if op.Kind != wir.OperandPath || l == nil || l.wir == nil || l.bindings == nil {
+		return factflow.ValueSource{}, false
+	}
+	p := l.wir.Path(wir.PathRef(op.Ref))
+	if len(p.Segments) != 0 || p.Symbol == 0 {
+		return factflow.ValueSource{}, false
+	}
+	bindKind, ok := l.bindings.Kind(p.Symbol)
+	if !ok || bindKind != symbol.Local {
+		return factflow.ValueSource{}, false
+	}
+	exprRef, ok := l.exprRef(wirPathExprRefKey{
+		kind:        kind,
+		point:       point,
+		path:        p.Key(),
+		exprIndex:   exprIndex,
+		targetIndex: targetIndex,
+		final:       final,
+		expanded:    expanded,
+		openTail:    openTail,
+	})
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	if l.expressionPaths == nil {
+		l.expressionPaths = make(map[factflow.ExprRef]path.Path)
+	}
+	l.expressionPaths[exprRef] = p
+	if t, ok := l.symbolTypes[p.Symbol]; ok {
+		if l.expressionValues == nil {
+			l.expressionValues = make(map[factflow.ExprRef]product.Value)
+		}
+		l.expressionValues[exprRef] = l.valueFromTypeWithWitness(t)
+	}
+	shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, openTail)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return factflow.NewExpressionValueSource(exprRef, exprIndex, targetIndex, 0, shape)
 }
 
 func (l *lowerer) valueSourceFromWIROperand(
