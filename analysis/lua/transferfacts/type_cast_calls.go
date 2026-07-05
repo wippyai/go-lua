@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
@@ -13,8 +14,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func (l *lowerer) typeCastPostconditionRefinement(fact semantics.CallFact) (factflow.PostconditionRefinement, bool) {
-	t, argPath, ok := l.directTypeCastCall(fact)
+func (l *lowerer) typeCastPostconditionRefinement(point cfg.Point, fact semantics.CallFact) (factflow.PostconditionRefinement, bool) {
+	t, argPath, ok := l.directTypeCastCallAt(point, fact)
 	if !ok {
 		return factflow.PostconditionRefinement{}, false
 	}
@@ -98,6 +99,39 @@ func (l *lowerer) directTypeCastCall(fact semantics.CallFact) (typ.Type, path.Pa
 		return nil, path.Path{}, false
 	}
 	return t, argPath, true
+}
+
+func (l *lowerer) directTypeCastCallAt(point cfg.Point, fact semantics.CallFact) (typ.Type, path.Path, bool) {
+	t, argPath, ok := l.directTypeCastCall(fact)
+	if !ok {
+		return nil, path.Path{}, false
+	}
+	if wirPath, ok := l.typeCastArgumentPathFromWIR(point, fact); ok {
+		argPath = wirPath
+	}
+	return t, argPath, true
+}
+
+func (l *lowerer) typeCastArgumentPathFromWIR(point cfg.Point, fact semantics.CallFact) (path.Path, bool) {
+	if l == nil || l.wir == nil {
+		return path.Path{}, false
+	}
+	if _, ok := branchcond.TypeCall(fact.Call); !ok {
+		return path.Path{}, false
+	}
+	inst, ok := l.wirCallInstruction(point)
+	if !ok {
+		return path.Path{}, false
+	}
+	args := l.wir.Operands(inst.List)
+	if len(args) == 0 || args[0].Kind != wir.OperandPath {
+		return path.Path{}, false
+	}
+	argPath := l.wir.Path(wir.PathRef(args[0].Ref))
+	if argPath.IsEmpty() {
+		return path.Path{}, false
+	}
+	return argPath, true
 }
 
 func (l *lowerer) typeValueExpr(expr ast.Expr) (typ.Type, bool) {

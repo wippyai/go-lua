@@ -83,6 +83,44 @@ local v = number(data)
 	assertTypeIsRuntimeProof(t, reg, results[0].Value(), typ.Number)
 }
 
+func TestLowerPrimitiveTypeCastPostconditionArgumentPathComesFromWIR(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local data: any = 1
+local other: any = 2
+local v = number(data)
+`)
+	dataStmt := mustLocalStmt(t, stmts, 0)
+	otherStmt := mustLocalStmt(t, stmts, 1)
+	castStmt := mustLocalStmt(t, stmts, 2)
+	dataPath := path.NewPath(mustLocalAt(t, bindings, dataStmt, 0), "data")
+	otherPath := path.NewPath(mustLocalAt(t, bindings, otherStmt, 0), "other")
+	castCall := castStmt.Exprs[0].(*ast.FuncCallExpr)
+	callPoint := requireCallPoint(t, built.Graph, result, castCall)
+
+	body := wir.NewBody("primitive-cast-arg-owner")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpCall,
+		Point: callPoint,
+		Call:  wir.CallInfo{Callee: wir.Operand{Kind: wir.OperandTemp, Ref: 99}},
+		List:  body.AppendOperands([]wir.Operand{{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))}}),
+	})
+	body.SetPointRange(callPoint, start, start+1)
+
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	refinements := facts.PostconditionRefinements(callPoint)
+	if len(refinements) != 1 {
+		t.Fatalf("postcondition refinements = %d, want 1: %#v", len(refinements), refinements)
+	}
+	if !refinements[0].TargetPath().Equal(otherPath) || refinements[0].TargetPath().Equal(dataPath) {
+		t.Fatalf("postcondition target = %s, want WIR arg %s not semantic arg %s", refinements[0].TargetPath(), otherPath, dataPath)
+	}
+	got, ok := typevalue.TypeOf(reg, refinementConstraint(t, refinements[0].Value()))
+	if !ok || !typ.TypeEquals(got, typ.Number) {
+		t.Fatalf("postcondition type witness = %v/%v, want number", got, ok)
+	}
+}
+
 func TestLowerPrimitiveTypeCastCallRespectsValueShadow(t *testing.T) {
 	reg := standard.Registry()
 	stmts, bindings, built, result := parseSemanticChunk(t, `
