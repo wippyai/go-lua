@@ -130,7 +130,7 @@ func dynamicIndexWriteKeyStateKeyAt(resolver *visibility.Resolver, point cfg.Poi
 	if !ok {
 		return "", false
 	}
-	return visibility.AddressAt(resolver, point, keyPath).VisibleStateKey()
+	return pathMembershipSourceStateKeyAt(resolver, point, keyPath)
 }
 
 func dynamicIndexWriteKeyPath(resolver *visibility.Resolver, facts factflow.Facts, fact factflow.DynamicIndexWrite) (pathdom.Path, bool) {
@@ -201,7 +201,7 @@ func preserveDynamicIndexAllValueKeyMemberships(
 	if !ok {
 		return out
 	}
-	sourceKey, ok := visibility.AddressAt(resolver, ctx.Point, sourcePath).VisibleStateKey()
+	sourceKey, ok := pathMembershipSourceStateKeyAt(resolver, ctx.Point, sourcePath)
 	if !ok {
 		return out
 	}
@@ -262,7 +262,7 @@ func addPathKeyMembershipFromDynamicWrite(
 	if !ok || keyPath.IsEmpty() || keyPath.Symbol == 0 {
 		return out
 	}
-	keyStateKey, ok := factStateKeyAt(resolver, ctx.Point, keyPath)
+	keyStateKey, ok := pathMembershipSourceStateKeyAt(resolver, ctx.Point, keyPath)
 	if !ok {
 		return out
 	}
@@ -287,7 +287,7 @@ func addDynamicIndexValueKeyMembershipsFromWrite(
 	if !ok {
 		return out
 	}
-	sourceKey, ok := visibility.AddressAt(resolver, ctx.Point, sourcePath).VisibleStateKey()
+	sourceKey, ok := pathMembershipSourceStateKeyAt(resolver, ctx.Point, sourcePath)
 	if !ok {
 		return out
 	}

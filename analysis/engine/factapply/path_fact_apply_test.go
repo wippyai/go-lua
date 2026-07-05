@@ -496,6 +496,48 @@ func TestFactsNodeTransferDynamicIndexReadCarriesValueKeyMembership(t *testing.T
 	}
 }
 
+func TestDynamicIndexValueMembershipFromRootlessPathUsesRootOrVisibleSource(t *testing.T) {
+	point := cfg.Point(402031)
+	valueSym := symbol.ID(402032)
+	containerSym := symbol.ID(402033)
+	tableSym := symbol.ID(402034)
+
+	builder := visibility.NewBuilder()
+	builder.Define(point, valueSym, "value")
+	builder.Define(point, containerSym, "ids")
+	builder.Define(point, tableSym, "registered")
+	resolver := visibility.NewResolver(builder.Build())
+
+	valuePath := pathdom.Path{Symbol: valueSym}
+	containerKey, ok := visibility.AddressAt(resolver, point, pathdom.Path{Symbol: containerSym}).RootOrVisibleKeyspaceKey()
+	if !ok {
+		t.Fatal("container key missing")
+	}
+	tableKey, ok := visibility.AddressAt(resolver, point, pathdom.Path{Symbol: tableSym}).RootOrVisibleStateKey()
+	if !ok {
+		t.Fatal("table key missing")
+	}
+	valueKey, ok := visibility.AddressAt(resolver, point, valuePath).RootOrVisibleStateKey()
+	if !ok {
+		t.Fatal("value key missing")
+	}
+	site := dynamicindex.Site("signature.table_mutator:0:-1")
+	in := state.State{}.AddPathKeyMembership(valueKey, tableKey)
+
+	got := addDynamicIndexValueKeyMembershipsFromPath(
+		transfer.NodeContext{Point: point, Registry: standard.Registry()},
+		resolver,
+		in,
+		valuePath,
+		containerKey,
+		site,
+	)
+	tables := got.DynamicIndexValueKeyMembershipTables(containerKey, site)
+	if len(tables) != 1 || tables[0] != tableKey {
+		t.Fatalf("dynamic value key memberships = %#v, want table %s", tables, tableKey)
+	}
+}
+
 func TestFactsNodeTransferDynamicIndexReadRequiresCommonValueKeyMembership(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(40204)

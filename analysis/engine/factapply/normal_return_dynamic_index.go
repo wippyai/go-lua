@@ -75,7 +75,7 @@ func addDynamicIndexValueKeyMembershipsFromPath(
 	if resolver == nil || sourcePath.IsEmpty() || sourcePath.Symbol == 0 {
 		return out
 	}
-	sourceKey, ok := visibility.AddressAt(resolver, ctx.Point, sourcePath).VisibleStateKey()
+	sourceKey, ok := pathMembershipSourceStateKeyAt(resolver, ctx.Point, sourcePath)
 	if !ok {
 		return out
 	}
@@ -156,7 +156,7 @@ func addNormalReturnDynamicAllValueMembershipsFromPath(
 	if ctx.resolver == nil || valuePath.IsEmpty() || valuePath.Symbol == 0 {
 		return out
 	}
-	sourceKey, ok := visibility.AddressAt(ctx.resolver, ctx.point, valuePath).VisibleStateKey()
+	sourceKey, ok := pathMembershipSourceStateKeyAt(ctx.resolver, ctx.point, valuePath)
 	if !ok {
 		return out
 	}
