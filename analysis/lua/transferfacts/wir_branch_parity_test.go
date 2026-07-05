@@ -437,6 +437,88 @@ if not Payload:is(value) then local y = value end
 `, false)
 }
 
+func TestWIRTypeIsResultCorrelationUsesLoweredCallSiteWithoutSemanticResult(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+type Payload = { name: string }
+local value: any = {}
+local validated, err = Payload:is(value)
+if err then
+	local failed = true
+end
+`)
+	body := wirlower.Lower("chunk", stmts, bindings, built)
+	seed := Lower(result, built.Graph, Config{
+		Registry:     standard.Registry(),
+		Bindings:     bindings,
+		TypeResolver: typeresolve.New(bindings),
+		WIR:          body,
+	})
+
+	var callPoint cfg.Point
+	for _, point := range built.Graph.RPO() {
+		view, ok := result.CallView(point)
+		if !ok {
+			continue
+		}
+		fact, _ := view.Borrowed()
+		if _, _, ok := (&lowerer{bindings: bindings, typeResolver: typeresolve.New(bindings)}).typeIsCall(fact); ok {
+			callPoint = point
+			break
+		}
+	}
+	if callPoint == 0 {
+		t.Fatal("missing type-is call point")
+	}
+	site, ok := seed.CallSite(callPoint)
+	if !ok {
+		t.Fatalf("missing lowered type-is callsite at point %d", callPoint)
+	}
+	assign := stmts[2].(*ast.LocalAssignStmt)
+	validatedPath := path.NewPath(mustLocalAt(t, bindings, assign, 0), "validated")
+	errPath := path.NewPath(mustLocalAt(t, bindings, assign, 1), "err")
+	valueDecl := stmts[1].(*ast.LocalAssignStmt)
+	valuePath := path.NewPath(mustLocalAt(t, bindings, valueDecl, 0), "value")
+	branchPoint := requireWIRBranchPoint(t, built.Graph, body)
+	input := &factflow.FactsInput{
+		CallSites:               map[cfg.Point]factflow.CallSite{callPoint: site},
+		RootAssignments:         make(map[cfg.Point]factflow.RootAssignment),
+		BranchRefinements:       make(map[cfg.Point]factflow.BranchRefinementSet),
+		BranchPresenceRelations: make(map[cfg.Point]factflow.BranchPresenceRelationSet),
+	}
+	for _, point := range built.Graph.RPO() {
+		if assignment, ok := seed.RootAssignment(point); ok {
+			input.RootAssignments[point] = assignment
+		}
+		if refinements := seed.BranchRefinements(point); len(refinements) != 0 {
+			input.BranchRefinements[point] = factflow.NewBranchRefinementSet(refinements...)
+		}
+	}
+	lowered := lowerer{
+		registry:     standard.Registry(),
+		bindings:     bindings,
+		wir:          body,
+		typeResolver: typeresolve.New(bindings),
+	}
+	if typ, arg, ok := lowered.typeIsCallSiteFromWIR(callPoint); !ok {
+		t.Fatalf("typeIsCallSiteFromWIR(%d) failed", callPoint)
+	} else if arg.IsEmpty() || typ == nil {
+		t.Fatalf("typeIsCallSiteFromWIR(%d) = %v, %v", callPoint, typ, arg)
+	}
+
+	lowered.addTypeIsBranchRefinements(input, built.Graph, nil)
+
+	refinement, ok := branchRefinementAt(input.BranchRefinements[branchPoint].Refinements(), valuePath)
+	if !ok {
+		t.Fatalf("missing WIR type-is result correlation refinement at point %d: %#v", branchPoint, input.BranchRefinements[branchPoint])
+	}
+	if _, ok := refinement.ValueForEdge(false); !ok {
+		t.Fatalf("WIR type-is result correlation refinement = %#v, want false edge witness", refinement)
+	}
+	if !hasBranchPresenceRelation(input.BranchPresenceRelations[branchPoint].Relations(), errPath, validatedPath) {
+		t.Fatalf("missing WIR type-is result presence correlation at point %d: %#v", branchPoint, input.BranchPresenceRelations[branchPoint])
+	}
+}
+
 func assertWIRTypeIsConditionBranchRefinementWithoutSemanticResult(t *testing.T, src string, wantEdge bool) {
 	t.Helper()
 	stmts, bindings, built, result := parseSemanticChunk(t, src)
@@ -509,6 +591,15 @@ func requireWIRBranchPoint(t *testing.T, graph cfg.Graph, body *wir.Body) cfg.Po
 	}
 	t.Fatal("missing WIR branch point")
 	return 0
+}
+
+func hasBranchPresenceRelation(relations []factflow.BranchPresenceRelation, trigger, target path.Path) bool {
+	for _, relation := range relations {
+		if relation.TriggerPathRef().Equal(trigger) && relation.TargetPathRef().Equal(target) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestLowerWithWIRCorrelationBranchChecksMatchesSidecarLowering(t *testing.T) {

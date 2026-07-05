@@ -96,7 +96,7 @@ func (l *lowerer) addTypeIsBranchRefinements(input *factflow.FactsInput, graph c
 			if !activeIn[branch] || !graph.IsBranch(branch) {
 				continue
 			}
-			edges := l.typeIsSuccessEdges(input, result, branch, errPath)
+			edges := l.semanticTypeIsSuccessEdges(input, result, branch, errPath)
 			if hasValuePath && len(edges) != 0 {
 				appendBranchPresenceRelations(input.BranchPresenceRelations, branch,
 					factflow.NewBranchPresenceRelation(errPath, presence.Present(), valuePath, presence.Absent()),
@@ -150,7 +150,7 @@ func (l *lowerer) addTypeIsBranchRefinementsFromWIR(input *factflow.FactsInput, 
 			if !activeIn[branch] || !graph.IsBranch(branch) {
 				continue
 			}
-			edges := l.typeIsSuccessEdges(input, nil, branch, errPath)
+			edges := l.wirTypeIsSuccessEdges(input, branch, errPath)
 			if hasValuePath && len(edges) != 0 {
 				appendBranchPresenceRelations(input.BranchPresenceRelations, branch,
 					factflow.NewBranchPresenceRelation(errPath, presence.Present(), valuePath, presence.Absent()),
