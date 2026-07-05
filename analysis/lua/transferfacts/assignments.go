@@ -461,17 +461,49 @@ func (l *lowerer) addAliasExposureToContractType(input *factflow.FactsInput, poi
 }
 
 func (l *lowerer) pathAssignment(point cfg.Point, fact semantics.OrdinaryAssignmentFact) (factflow.PathAssignment, bool) {
-	if !fact.HasPath || fact.Path.Symbol == 0 || len(fact.Path.Segments) == 0 {
+	targetPath, ok := l.staticPathWriteTarget(point, fact)
+	if !ok {
 		return factflow.PathAssignment{}, false
 	}
-	return factflow.NewPathAssignment(fact.Path, l.ordinaryAssignmentSource(point, fact.Source)), true
+	return factflow.NewPathAssignment(targetPath, l.ordinaryAssignmentSource(point, fact.Source)), true
 }
 
 func (l *lowerer) pathStaticMemberWrite(point cfg.Point, fact semantics.OrdinaryAssignmentFact) (factflow.PathStaticMemberWrite, bool) {
-	if !fact.HasPath || fact.Path.Symbol == 0 || len(fact.Path.Segments) == 0 {
+	targetPath, ok := l.staticPathWriteTarget(point, fact)
+	if !ok {
 		return factflow.PathStaticMemberWrite{}, false
 	}
-	return factflow.NewPathStaticMemberWrite(fact.Path, l.ordinaryAssignmentSource(point, fact.Source)), true
+	return factflow.NewPathStaticMemberWrite(targetPath, l.ordinaryAssignmentSource(point, fact.Source)), true
+}
+
+func (l *lowerer) staticPathWriteTarget(point cfg.Point, fact semantics.OrdinaryAssignmentFact) (path.Path, bool) {
+	if l != nil && l.wir != nil {
+		return l.staticPathWriteTargetFromWIR(point)
+	}
+	if !fact.HasPath || fact.Path.Symbol == 0 || len(fact.Path.Segments) == 0 {
+		return path.Path{}, false
+	}
+	return fact.Path, true
+}
+
+func (l *lowerer) staticPathWriteTargetFromWIR(point cfg.Point) (path.Path, bool) {
+	if l == nil || l.wir == nil {
+		return path.Path{}, false
+	}
+	for _, inst := range l.wir.PointInstructions(point) {
+		switch inst.Op {
+		case wir.OpAssign, wir.OpStaticMemberWrite:
+			if inst.Dst.Kind != wir.OperandPath {
+				continue
+			}
+			targetPath := l.wir.Path(wir.PathRef(inst.Dst.Ref))
+			if targetPath.IsEmpty() || targetPath.Symbol == 0 || len(targetPath.Segments) == 0 {
+				continue
+			}
+			return targetPath.Clone(), true
+		}
+	}
+	return path.Path{}, false
 }
 
 func (l *lowerer) dynamicIndexWrite(point cfg.Point, fact semantics.OrdinaryAssignmentFact) (factflow.DynamicIndexWrite, bool) {

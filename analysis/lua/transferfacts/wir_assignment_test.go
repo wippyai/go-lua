@@ -325,10 +325,18 @@ end`)
 	if !ok {
 		t.Fatalf("missing static path assignment at point %d", staticPoint)
 	}
+	boxPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "box")
+	wantTarget := boxPath.Field("name")
+	if got := pathAssign.TargetPathRef(); !got.Equal(wantTarget) {
+		t.Fatalf("path assignment target = %s, want WIR target %s", got.String(), wantTarget.String())
+	}
 	assertWIRPathSource(t, pathAssign.Source(), valuePath)
 	staticWrite, ok := facts.PathStaticMemberWrite(staticPoint)
 	if !ok {
 		t.Fatalf("missing static member write at point %d", staticPoint)
+	}
+	if got := staticWrite.TargetPathRef(); !got.Equal(wantTarget) {
+		t.Fatalf("static member write target = %s, want WIR target %s", got.String(), wantTarget.String())
 	}
 	assertWIRPathSource(t, staticWrite.Source(), valuePath)
 
