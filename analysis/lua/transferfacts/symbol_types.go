@@ -30,7 +30,7 @@ func lowerSymbolTypes(
 	resolver *typeresolve.Resolver,
 	moduleExports importlookup.Source,
 ) map[symbol.ID]typ.Type {
-	if bindings == nil || graph == nil || result == nil {
+	if bindings == nil || graph == nil {
 		return nil
 	}
 	if resolver == nil {
@@ -47,10 +47,18 @@ func lowerSymbolTypes(
 		}
 		out[id] = t
 	}
-	if fn := result.Function(); fn != nil {
+	for _, fn := range bindings.Functions() {
 		for _, slot := range bindings.ParamSlots(fn) {
 			add(slot.Symbol, slot.Type)
 		}
+	}
+	if result == nil {
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+	if fn := result.Function(); fn != nil {
 		for _, capture := range bindings.DirectCaptures(fn) {
 			if capture.Captured == 0 {
 				continue

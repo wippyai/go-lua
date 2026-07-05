@@ -4,12 +4,34 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
+	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
+
+func TestLowerSymbolTypesKeepsParamAnnotationsWithoutSemanticResult(t *testing.T) {
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function handle(ch: Channel<{kind: "event", id: string}>)
+	local selected = channel.select { ch:case_receive() }
+end
+`, "channel")
+	slots := bindings.ParamSlots(fn)
+	if len(slots) != 1 {
+		t.Fatalf("ParamSlots = %#v, want one typed parameter", slots)
+	}
+
+	got := lowerSymbolTypes(bindings, built.Graph, nil, typeresolve.New(bindings), importlookup.Source{})
+	if got == nil {
+		t.Fatal("lowerSymbolTypes returned nil without semantic result")
+	}
+	if gotType, ok := got[slots[0].Symbol]; !ok || gotType == nil {
+		t.Fatalf("symbol type for parameter %d = %v/%v, want annotation", slots[0].Symbol, gotType, ok)
+	}
+}
 
 func TestAccessChainTypeProjectsStaticStringAndIntIndexes(t *testing.T) {
 	element := typetable.NewRecord().

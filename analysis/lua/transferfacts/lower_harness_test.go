@@ -825,6 +825,46 @@ end
 	}
 }
 
+func TestLowerChannelSelectsPublishWithoutSemanticSidecars(t *testing.T) {
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function handle(events_ch: Channel<{kind: "event", id: string}>, stop_ch: Channel<{kind: "stop", reason: string}>)
+    local selected = channel.select { events_ch:case_receive(), stop_ch:case_receive() }
+end
+`, "channel")
+	body := wirlower.Lower("channel-select-no-sidecars", fn.Stmts, bindings, built)
+	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	var selects []factflow.ChannelSelect
+	for _, point := range built.Graph.RPO() {
+		if events := facts.ChannelSelects(point); len(events) != 0 {
+			selects = events
+			break
+		}
+	}
+	if len(selects) != 5 {
+		t.Fatalf("WIR no-sidecar channel select events = %#v, want select plus two case/receive pairs", selects)
+	}
+	if selects[0].Kind() != factflow.ChannelSelectSelect || selects[0].HasDefault() {
+		t.Fatalf("select event = %#v", selects[0])
+	}
+	wantPayloads := []typ.Type{
+		typetable.NewRecord().Field("kind", typ.LiteralString("event")).Field("id", typ.String).Build(),
+		typetable.NewRecord().Field("kind", typ.LiteralString("stop")).Field("reason", typ.String).Build(),
+	}
+	for i, want := range wantPayloads {
+		event := selects[2+i*2]
+		payload, ok := event.PayloadValue()
+		if !ok {
+			t.Fatalf("WIR no-sidecar receive event %d missing payload witness: %#v", i, event)
+		}
+		witness := product.Get(standard.Registry(), payload, typewitness.Key)
+		got, ok := witness.Type()
+		if !ok || !typ.TypeEquals(got, want) {
+			t.Fatalf("WIR no-sidecar receive payload %d = %v/%v, want %v", i, got, ok, want)
+		}
+	}
+}
+
 func TestLowerChannelSelectsInWIRModeDoesNotFallbackToSidecar(t *testing.T) {
 	_, bindings, built, result := parseSemanticFunction(t, `
 function handle(events_ch: Channel<{kind: "event", id: string}>, stop_ch: Channel<{kind: "stop", reason: string}>)
