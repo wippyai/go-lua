@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse/numparse"
 )
 
@@ -331,9 +332,66 @@ func (l *lowerer) wirTempExpressionValueSource(
 		return l.wirClaimTempExpressionValueSource(op.Ref, inst, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
 	case wir.OpClosure:
 		return l.wirClosureTempExpressionValueSource(op.Ref, inst, exprIndex, targetIndex, final, expanded, openTail)
+	case wir.OpMakeTable:
+		return l.wirTableExpressionValueSource(inst, exprIndex, targetIndex, final, expanded, openTail)
 	default:
 		return factflow.ValueSource{}, false
 	}
+}
+
+func (l *lowerer) wirTableExpressionValueSource(
+	inst wir.Instruction,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+) (factflow.ValueSource, bool) {
+	exprRef, ok := l.tableConstructorExprRefFromWIR(inst)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return l.tableExpressionValueSource(exprRef, exprIndex, targetIndex, final, expanded, openTail)
+}
+
+func (l *lowerer) tableConstructorExpressionValueSource(
+	expr ast.Expr,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+) (factflow.ValueSource, bool) {
+	if _, ok := l.tableConstructorExpressionID(expr); !ok {
+		return factflow.ValueSource{}, false
+	}
+	exprRef, ok := l.tableConstructorExprRef(expr)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return l.tableExpressionValueSource(exprRef, exprIndex, targetIndex, final, expanded, openTail)
+}
+
+func (l *lowerer) tableExpressionValueSource(
+	exprRef factflow.ExprRef,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+) (factflow.ValueSource, bool) {
+	value := product.NewWithPresence(l.registry, product.ShapeTop, presence.Present())
+	value = product.Set(l.registry, value, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
+	value = product.Set(l.registry, value, identity.Key, identity.Singleton(identity.LuaTableLiteral(l.graphID, uint64(exprRef))))
+	if l.expressionValues == nil {
+		l.expressionValues = make(map[factflow.ExprRef]product.Value)
+	}
+	l.expressionValues[exprRef] = value
+	shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, openTail)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return factflow.NewExpressionValueSource(exprRef, exprIndex, targetIndex, 0, shape)
 }
 
 func (l *lowerer) wirClosureTempExpressionValueSource(
@@ -862,6 +920,18 @@ func (l *lowerer) expandTypeIsOpenTailReturnSource(source sourceprovenance.ASTSo
 }
 
 func (l *lowerer) valueSource(source sourceprovenance.ASTSource) factflow.ValueSource {
+	if source.Kind == sourceprovenance.SourceExpression {
+		if tableSource, ok := l.tableConstructorExpressionValueSource(
+			source.Expr,
+			source.ExprIndex,
+			source.TargetIndex,
+			source.Final,
+			source.Expanded,
+			source.OpenTail,
+		); ok {
+			return tableSource
+		}
+	}
 	exprRef, hasExpr := l.valueSourceExprRef(source)
 	if hasExpr {
 		l.addExpressionPath(exprRef, source.Expr)

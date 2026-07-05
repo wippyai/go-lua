@@ -19,6 +19,9 @@ func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, fallback sourceproven
 	if l == nil || l.wir == nil {
 		return factflow.ValueSource{}, false
 	}
+	if source, ok := l.tableConstructorAssignmentSourceFromWIR(point, fallback); ok {
+		return source, true
+	}
 	op, ok := l.assignmentSourceOperandFromWIR(point)
 	if !ok {
 		return factflow.ValueSource{}, false
@@ -74,6 +77,23 @@ func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, fallback sourceproven
 		}
 	}
 	return source, true
+}
+
+func (l *lowerer) tableConstructorAssignmentSourceFromWIR(point cfg.Point, fallback sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
+	for _, inst := range l.wir.PointInstructions(point) {
+		if inst.Op != wir.OpMakeTable || inst.Dst.Kind != wir.OperandPath {
+			continue
+		}
+		return l.wirTableExpressionValueSource(
+			inst,
+			fallback.ExprIndex,
+			fallback.TargetIndex,
+			fallback.Final,
+			fallback.Expanded,
+			fallback.OpenTail,
+		)
+	}
+	return factflow.ValueSource{}, false
 }
 
 func (l *lowerer) ordinaryAssignmentSource(point cfg.Point, fallback sourceprovenance.ASTSource) factflow.ValueSource {

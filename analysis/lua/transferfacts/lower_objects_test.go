@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/proof"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -14,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -164,6 +166,115 @@ func TestLowerEmptyObjectLiteralStillPublishesIdentitySidecar(t *testing.T) {
 	wantID := identity.LuaTableLiteral(built.Graph.ID(), uint64(source.ExprRef))
 	if gotID, ok := literal.Identity(); !ok || gotID != wantID {
 		t.Fatalf("literal identity = %v/%v, want %v", gotID, ok, wantID)
+	}
+}
+
+func TestLowerWIRTableConstructorSourceCarriesLiteralIdentity(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local t = { child = { leaf = 1 } }
+`)
+	reg := standard.Registry()
+	body := wirlower.Lower("chunk", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	point := requireStmtPoints(t, built, stmts[0], 1)[0]
+	source := mustLocalSource(t, facts, point)
+	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing object literal sidecar for WIR source ref %d", source.ExprRef)
+	}
+	if entries := literal.Entries(); len(entries) != 2 {
+		t.Fatalf("WIR root literal entries = %#v, want root child and nested leaf", entries)
+	}
+	wantID, ok := literal.Identity()
+	if !ok {
+		t.Fatalf("WIR object literal missing identity")
+	}
+	value, ok := facts.ExpressionValue(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing expression value for WIR table source ref %d", source.ExprRef)
+	}
+	gotID, ok := product.Get(reg, value, identity.Key).ID()
+	if !ok || gotID != wantID {
+		t.Fatalf("WIR table source identity = %v/%v, want object literal identity %v", gotID, ok, wantID)
+	}
+}
+
+func TestLowerWIRObjectLiteralCarriesDeclaredEntryContract(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+type Box = { items: {[string]: string}, label: string }
+local box: Box = { items = {}, label = "" }
+`)
+	body := wirlower.Lower("chunk", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	point := requireStmtPoints(t, built, stmts[1], 1)[0]
+	source := mustLocalSource(t, facts, point)
+	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing WIR object literal for source ref %d", source.ExprRef)
+	}
+	entries := literal.Entries()
+	if len(entries) != 2 {
+		t.Fatalf("WIR literal entries = %#v, want items and label", entries)
+	}
+	expected, ok := entries[0].Expected()
+	if !ok {
+		t.Fatalf("WIR object literal entry %s missing declared contract", entries[0].Suffix().String())
+	}
+	got, ok := typevalue.TypeOf(reg, expected)
+	want := typ.NewMap(typ.String, typ.String)
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("WIR entry expected type = %v/%v, want %v", got, ok, want)
+	}
+	nestedSource := entries[0].Source()
+	nested, ok := facts.ObjectLiteral(nestedSource.ExprRef)
+	if !ok {
+		t.Fatalf("missing nested WIR object literal for entry source ref %d", nestedSource.ExprRef)
+	}
+	nestedExpected, ok := nested.Expected()
+	if !ok {
+		t.Fatalf("nested WIR object literal missing declared contract")
+	}
+	nestedType, ok := typevalue.TypeOf(reg, nestedExpected)
+	if !ok || !typ.TypeEquals(nestedType, want) {
+		t.Fatalf("nested WIR expected type = %v/%v, want %v", nestedType, ok, want)
+	}
+}
+
+func TestLowerWIRContextualObjectLiteralExpressionValueUsesExpectedType(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+type Context = {[string]: any}
+local input: { context: Context? } = { context = nil }
+local user_ctx: Context = input.context or {}
+`)
+	body := wirlower.Lower("chunk", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	point := requireStmtPoints(t, built, stmts[2], 1)[0]
+	source := mustLocalSource(t, facts, point)
+	op, ok := facts.ExpressionOperation(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing logical expression operation for source ref %d", source.ExprRef)
+	}
+	right := op.Right()
+	if right.Kind != factflow.ValueSourceExpression || !right.HasExpr {
+		t.Fatalf("logical fallback source = %#v, want expression source", right)
+	}
+	literal, ok := facts.ObjectLiteral(right.ExprRef)
+	if !ok {
+		t.Fatalf("missing WIR fallback object literal for ref %d", right.ExprRef)
+	}
+	if _, ok := literal.Expected(); !ok {
+		t.Fatalf("WIR fallback object literal missing expected contract")
+	}
+	value, ok := facts.ExpressionValue(right.ExprRef)
+	if !ok {
+		t.Fatalf("missing WIR fallback expression value for ref %d", right.ExprRef)
+	}
+	got, ok := typevalue.TypeOf(reg, value)
+	want := typ.NewMap(typ.String, typ.Any)
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("WIR fallback expression type = %v/%v, want %v", got, ok, want)
 	}
 }
 
