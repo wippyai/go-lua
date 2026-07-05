@@ -38,6 +38,8 @@ const (
 	OpStaticMemberWrite
 	// OpDynamicIndexWrite stores B into Dst[A] where the key A is dynamic.
 	OpDynamicIndexWrite
+	// OpDynamicIndexRead computes Dst = A[B] where the table or key is dynamic.
+	OpDynamicIndexRead
 	// OpMakeTable constructs a table literal into Dst from List entry values.
 	OpMakeTable
 	// OpBinOp computes Dst = A <Operator> B.
@@ -192,7 +194,7 @@ type Instruction struct {
 	Point cfg.Point
 
 	// Dst is the value destination for producing instructions:
-	//   OpAssign/OpBinOp/OpUnOp/OpConcat/OpMakeTable/OpClaim/OpSelect: result
+	//   OpAssign/OpDynamicIndexRead/OpBinOp/OpUnOp/OpConcat/OpMakeTable/OpClaim/OpSelect: result
 	//   OpStaticMemberWrite: the member path written
 	//   OpDynamicIndexWrite: the container path written
 	Dst Operand
@@ -271,7 +273,7 @@ func (i Instruction) AssignmentSourceOperand() (Operand, bool) {
 // CFG point for assignment lowering purposes.
 func (i Instruction) WritesAssignmentPoint() bool {
 	switch i.Op {
-	case OpAssign, OpMakeTable, OpBinOp, OpUnOp, OpConcat, OpClaim, OpSelect, OpLogical, OpClosure:
+	case OpAssign, OpDynamicIndexRead, OpMakeTable, OpBinOp, OpUnOp, OpConcat, OpClaim, OpSelect, OpLogical, OpClosure:
 		return i.Dst.Kind != OperandNone
 	case OpStaticMemberWrite, OpDynamicIndexWrite:
 		return true

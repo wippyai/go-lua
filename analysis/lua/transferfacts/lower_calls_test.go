@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -14,7 +16,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
+	"github.com/wippyai/go-lua/analysis/module/importlookup"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -1018,6 +1023,68 @@ end
 	}
 	if _, ok := site.MethodPath(); ok {
 		t.Fatalf("expression receiver unexpectedly kept semantic method path")
+	}
+}
+
+func TestLowerMethodCallExpressionReceiverSourceDoesNotRequireSemanticReceiverSource(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): string
+    local function make(): {{topic: (self: any) -> string}}
+        return {}
+    end
+    return make()[1]:topic()
+end
+`)
+	var callPoint cfg.Point
+	var fact semantics.CallFact
+	for _, point := range built.Graph.RPO() {
+		candidate, ok := result.Call(point)
+		if ok && candidate.Method == "topic" {
+			callPoint = point
+			fact = candidate
+			break
+		}
+	}
+	if callPoint == 0 {
+		t.Fatalf("missing topic call fact")
+	}
+	fact.HasReceiverSource = false
+	fact.ReceiverSource = sourceprovenance.ASTSource{}
+
+	body := wirlower.Lower("f", fn.Stmts, bindings, built)
+	l := lowerer{
+		bindings:                      bindings,
+		graph:                         built.Graph,
+		graphID:                       built.Graph.ID(),
+		typeResolver:                  typeresolve.New(bindings),
+		typeValues:                    typevalue.NewCache(),
+		wir:                           body,
+		callPoints:                    callPointsByExpr(builtCallFacts(built.Graph, result)),
+		symbolTypes:                   lowerSymbolTypes(bindings, built.Graph, result, typeresolve.New(bindings), importlookup.Source{}),
+		exprs:                         make(map[any]factflow.ExprRef),
+		types:                         make(map[any]factflow.TypeRef),
+		expressionValues:              make(map[factflow.ExprRef]product.Value),
+		expressionOperations:          make(map[factflow.ExprRef]factflow.ExpressionOperation),
+		expressionFunctions:           make(map[factflow.ExprRef]symbol.ID),
+		expressionPaths:               make(map[factflow.ExprRef]path.Path),
+		dynamicIndexExpressions:       make(map[factflow.ExprRef]factflow.DynamicIndexExpression),
+		expressionConditions:          make(map[factflow.ExprRef]factflow.ExpressionCondition),
+		expressionRefinements:         make(map[factflow.ExprRef]factflow.ExpressionRefinement),
+		localConditionAliases:         make(map[symbol.ID]factflow.ExpressionCondition),
+		wirTempDefinitions:            nil,
+		wirTempDefinitionSets:         nil,
+		wirStaticReachable:            nil,
+		wirReachability:               nil,
+		declaredReturnLocalTypes:      nil,
+		returnLocalObjectLiteralTypes: nil,
+	}
+	site := l.callSiteWithArgumentSourcesAt(callPoint, fact, nil)
+	receiverSource, ok := site.ReceiverSource()
+	if !ok || receiverSource.Kind != factflow.ValueSourceExpression || !receiverSource.HasExpr || receiverSource.ExprRef == 0 {
+		t.Fatalf("receiver source = %#v/%v, want WIR expression source without semantic receiver source", receiverSource, ok)
+	}
+	if _, ok := site.ReceiverPath(); ok {
+		t.Fatalf("expression receiver unexpectedly has receiver path")
 	}
 }
 

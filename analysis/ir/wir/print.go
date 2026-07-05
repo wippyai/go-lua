@@ -109,6 +109,8 @@ func (b *Body) spellInstruction(inst Instruction) string {
 		return "store.field " + b.spellOperand(inst.Dst) + " = " + b.spellOperand(inst.A)
 	case OpDynamicIndexWrite:
 		return "store.index " + b.spellOperand(inst.Dst) + "[" + b.spellOperand(inst.A) + "] = " + b.spellOperand(inst.B)
+	case OpDynamicIndexRead:
+		return b.spellOperand(inst.Dst) + " = index " + b.spellOperand(inst.A) + "[" + b.spellOperand(inst.B) + "]"
 	case OpMakeTable:
 		return b.spellOperand(inst.Dst) + " = table [" + b.spellOperandList(inst.List) + "]"
 	case OpBinOp:

@@ -804,7 +804,11 @@ func (b *builder) lowerExprInto(dst wir.Operand, e ast.Expr) {
 	case *ast.IdentExpr:
 		b.emitAssign(dst, b.readOperand(e))
 	case *ast.AttrGetExpr:
-		b.emitAssign(dst, b.readOperand(e))
+		if p, ok := pathexpr.Resolve(e, b.bindings); ok {
+			b.emitAssign(dst, b.pathOperand(p))
+			return
+		}
+		b.emitDynamicIndexRead(dst, e)
 	case *ast.ArithmeticOpExpr:
 		b.emitBinOp(dst, arithOperator(e.Operator), e.Lhs, e.Rhs)
 	case *ast.RelationalOpExpr:
@@ -1244,6 +1248,20 @@ func (b *builder) emitUnOp(dst wir.Operand, op wir.Operator, operand ast.Expr) {
 	b.emit(wir.Instruction{Op: wir.OpUnOp, Dst: dst, A: a, Operator: op})
 }
 
+func (b *builder) emitDynamicIndexRead(dst wir.Operand, attr *ast.AttrGetExpr) {
+	if attr == nil {
+		b.emitAssign(dst, wir.Operand{})
+		return
+	}
+	b.emit(wir.Instruction{
+		Op:     wir.OpDynamicIndexRead,
+		Dst:    dst,
+		A:      b.lowerExpr(attr.Object),
+		B:      b.attrKeyOperand(attr),
+		ExprID: expressionid.Of(attr),
+	})
+}
+
 // readOperand returns the operand for a value read: a path operand when the
 // expression resolves to a static path, else a temp holding an opaque read.
 func (b *builder) readOperand(e ast.Expr) wir.Operand {
@@ -1253,6 +1271,24 @@ func (b *builder) readOperand(e ast.Expr) wir.Operand {
 	t := b.newTemp()
 	b.emit(wir.Instruction{Op: wir.OpAssign, Dst: t, A: wir.Operand{}})
 	return t
+}
+
+func (b *builder) attrKeyOperand(attr *ast.AttrGetExpr) wir.Operand {
+	if attr == nil || attr.Key == nil {
+		return wir.Operand{}
+	}
+	if attr.KeySyntax == ast.AttrKeyDot {
+		if name := ast.KeyName(attr.Key); name != "" {
+			return b.pooledConst(wir.Const{Kind: wir.ConstString, Str: name})
+		}
+	}
+	switch key := attr.Key.(type) {
+	case *ast.StringExpr:
+		return b.constOperand(key)
+	case *ast.NumberExpr:
+		return b.constOperand(key)
+	}
+	return b.lowerExpr(attr.Key)
 }
 
 func (b *builder) calleeOperand(e ast.Expr) wir.Operand {

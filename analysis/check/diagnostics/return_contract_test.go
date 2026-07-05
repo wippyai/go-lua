@@ -329,7 +329,9 @@ because:
   |
   |                           ↓ declared return type
 1 | local function f(v: any): number
-  3. missing proof: returned value 1 (v[1]) is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared return type here
+  3. claimed: user asserted any; not abstract-interpreter proof
+  4. unvalidated value: returned value 1 (v[1]) comes from any/unknown
+  5. missing proof: returned value 1 (v[1]) is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared return type here
 
 help: Guard ` + "`v[1]`" + ` with a nil check, return a default value, or change the return type to accept nil.`
 	if rendered != want {

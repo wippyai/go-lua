@@ -15,6 +15,7 @@ kind. wir does not replace the CFG — topology stays in `analysis/ir/cfg`.
 | `Assign` | Dst, A | copy value A into path/temp Dst |
 | `StaticMemberWrite` | Dst(path), A | `container.field = A` (member path in Dst) |
 | `DynamicIndexWrite` | Dst(container), A(key), B(val) | `container[key] = val` |
+| `DynamicIndexRead` | Dst, A(table), B(key) | `Dst = table[key]` |
 | `MakeTable` | Dst, List(values), Type | table literal into Dst |
 | `BinOp` | Dst, A, B, Operator | `Dst = A op B` |
 | `UnOp` | Dst, A, Operator | `Dst = op A` |
@@ -28,7 +29,7 @@ kind. wir does not replace the CFG — topology stays in `analysis/ir/cfg`.
 | `Logical` | Dst, A, B, Operator{and\|or} | short-circuit and/or (value form) |
 | `Closure` | Dst, Func(proto), List(captures) | function literal + upvalue capture |
 
-18 opcodes. The type sublanguage costs zero instructions: `TypeDefStmt` /
+19 opcodes. The type sublanguage costs zero instructions: `TypeDefStmt` /
 `InterfaceDefStmt` never enter the CFG; type exprs resolve at bind time.
 `branchcond.Check` (closed 14-kind descriptor) is reused verbatim as the direct
 Branch operand. Compound conditions additionally carry an `ImpliedChecks` range:
@@ -113,7 +114,7 @@ Encoding impact, per decision:
 - **Const literals keep raw spelling** so the backend chooses int vs float
   encoding.
 - **Guard-elimination sites** (where JIR judgments authorize dropping a runtime
-  guard): `StaticMemberWrite`/`MakeTable` field access, `DynamicIndexWrite` bounds,
+  guard): `StaticMemberWrite`/`MakeTable` field access, `DynamicIndexRead`/`DynamicIndexWrite` bounds,
   `Call` callee/arg-type guards, and `Claim` (cast/assert narrowings). These
   instructions are where a proven judgment lets codegen emit the unchecked op.
 

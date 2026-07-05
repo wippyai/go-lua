@@ -157,7 +157,7 @@ func wirPointKeys(b *wir.Body, pt cfg.Point) map[string]map[string]bool {
 	for _, inst := range b.PointInstructions(pt) {
 		switch inst.Op {
 		case wir.OpAssign, wir.OpBinOp, wir.OpUnOp, wir.OpConcat, wir.OpMakeTable,
-			wir.OpClaim, wir.OpLogical, wir.OpClosure, wir.OpSelect,
+			wir.OpDynamicIndexRead, wir.OpClaim, wir.OpLogical, wir.OpClosure, wir.OpSelect,
 			wir.OpStaticMemberWrite, wir.OpDynamicIndexWrite:
 			if k, ok := wirDstKey(b, inst.Dst); ok {
 				out["assign"][k] = true

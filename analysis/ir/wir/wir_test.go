@@ -212,7 +212,7 @@ func TestInstructionAssignmentSourceOperand(t *testing.T) {
 func TestInstructionWritesAssignmentPoint(t *testing.T) {
 	dst := Operand{Kind: OperandPath, Ref: 1}
 
-	writes := []Op{OpAssign, OpMakeTable, OpBinOp, OpUnOp, OpConcat, OpClaim, OpSelect, OpLogical, OpClosure}
+	writes := []Op{OpAssign, OpDynamicIndexRead, OpMakeTable, OpBinOp, OpUnOp, OpConcat, OpClaim, OpSelect, OpLogical, OpClosure}
 	for _, op := range writes {
 		if !((Instruction{Op: op, Dst: dst}).WritesAssignmentPoint()) {
 			t.Fatalf("%v with destination must write assignment point", op)

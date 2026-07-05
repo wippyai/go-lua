@@ -328,6 +328,8 @@ func (l *lowerer) wirTempExpressionValueSource(
 	switch inst.Op {
 	case wir.OpAssign:
 		return l.valueSourceFromWIROperandSeen(inst.A, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
+	case wir.OpDynamicIndexRead:
+		return l.wirDynamicIndexReadTempExpressionValueSource(op.Ref, inst, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
 	case wir.OpBinOp, wir.OpLogical, wir.OpConcat:
 		return l.wirBinaryTempExpressionValueSource(op.Ref, inst, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
 	case wir.OpUnOp:
@@ -341,6 +343,92 @@ func (l *lowerer) wirTempExpressionValueSource(
 	default:
 		return factflow.ValueSource{}, false
 	}
+}
+
+func (l *lowerer) wirDynamicIndexReadTempExpressionValueSource(
+	temp uint32,
+	inst wir.Instruction,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+	resultSources map[uint32]wirResultSource,
+	seen map[uint32]bool,
+) (factflow.ValueSource, bool) {
+	tableSource, ok := l.wirDynamicIndexReadOperandSource(inst, inst.A, exprIndex, targetIndex, resultSources, seen)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	keySource, ok := l.wirDynamicIndexReadOperandSource(inst, inst.B, exprIndex, targetIndex, resultSources, seen)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	exprRef, ok := l.exprRef(wirTempExprRefKey{temp: temp})
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	dynamicExpr, ok := l.wirDynamicIndexReadExpression(inst, tableSource, keySource)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	if l.dynamicIndexExpressions == nil {
+		l.dynamicIndexExpressions = make(map[factflow.ExprRef]factflow.DynamicIndexExpression)
+	}
+	l.dynamicIndexExpressions[exprRef] = dynamicExpr
+	shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, openTail)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return factflow.NewExpressionValueSource(exprRef, exprIndex, targetIndex, 0, shape)
+}
+
+func (l *lowerer) wirDynamicIndexReadOperandSource(
+	inst wir.Instruction,
+	op wir.Operand,
+	exprIndex int,
+	targetIndex int,
+	resultSources map[uint32]wirResultSource,
+	seen map[uint32]bool,
+) (factflow.ValueSource, bool) {
+	if source, ok := l.pathExpressionSourceFromWIR(
+		"dynamic-index-read",
+		inst.Point,
+		op,
+		exprIndex,
+		targetIndex,
+		true,
+		false,
+		false,
+		symbol.Local,
+		symbol.Param,
+		symbol.Global,
+		symbol.Upvalue,
+	); ok {
+		return source, true
+	}
+	return l.wirInstructionExpressionOperandValueSource(inst, op, exprIndex, targetIndex, resultSources, seen)
+}
+
+func (l *lowerer) wirDynamicIndexReadExpression(
+	inst wir.Instruction,
+	tableSource factflow.ValueSource,
+	keySource factflow.ValueSource,
+) (factflow.DynamicIndexExpression, bool) {
+	if inst.A.Kind == wir.OperandPath && l != nil && l.wir != nil {
+		tablePath := l.wir.Path(wir.PathRef(inst.A.Ref))
+		if !tablePath.IsEmpty() {
+			expr, ok := factflow.NewDynamicIndexExpression(tablePath, keySource)
+			if !ok {
+				return factflow.DynamicIndexExpression{}, false
+			}
+			if tableSource.Valid() {
+				expr = expr.WithTableSource(tableSource)
+			}
+			return expr, true
+		}
+	}
+	return factflow.NewDynamicIndexExpressionFromSource(tableSource, keySource)
 }
 
 func (l *lowerer) wirTableExpressionValueSource(
