@@ -40,9 +40,18 @@ func wirTempDefinitions(body *wir.Body) map[uint32]wir.Instruction {
 		return nil
 	}
 	defs := make(map[uint32]wir.Instruction)
+	ambiguous := make(map[uint32]bool)
 	for i := 0; i < body.Len(); i++ {
 		inst := body.Instr(i)
 		if inst.Dst.Kind == wir.OperandTemp {
+			if ambiguous[inst.Dst.Ref] {
+				continue
+			}
+			if _, exists := defs[inst.Dst.Ref]; exists {
+				delete(defs, inst.Dst.Ref)
+				ambiguous[inst.Dst.Ref] = true
+				continue
+			}
 			defs[inst.Dst.Ref] = inst
 		}
 	}

@@ -111,10 +111,12 @@ if "" then local e = 1 end
 if not false then local f = 1 end
 if true and false then local g = 1 end
 if false or "fallback" then local h = 1 end
+if false and f() then local h2 = 1 end
+if true or f() then local h3 = 1 end
 if {} then local i = 1 end
 if (function() return 1 end) then local j = 1 end
 if (nil :: any) then local k = 1 end
-`)
+`, "f")
 	body := wirlower.Lower("chunk", stmts, bindings, built)
 	sidecarFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
 	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
@@ -136,8 +138,8 @@ if (nil :: any) then local k = 1 end
 			assertEqualBranchFacts(t, point, "sidecar branch reachability", want, sidecarFacts.BranchEdgeUnreachable(point, cond))
 		}
 	}
-	if checked != 13 {
-		t.Fatalf("checked %d static branch conditions, want 13", checked)
+	if checked != 17 {
+		t.Fatalf("checked %d static branch conditions, want 17", checked)
 	}
 }
 
