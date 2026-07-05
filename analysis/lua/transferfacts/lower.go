@@ -226,12 +226,18 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		if fact, ok := result.BranchCondition(point); ok {
 			var branchSource factflow.ValueSource
 			var hasBranchSource bool
+			condition := fact.Condition
+			addAssertionRefinements := true
 			if l.wir != nil {
 				if check, ok := l.directBranchCheckFromWIR(point); ok {
 					fact.Check = check
 					branchSource, hasBranchSource = l.branchConditionSourceFromWIR(check)
 				} else if !l.wir.HasInstruction(point, wir.OpBranch) {
 					continue
+				} else if !l.hasWIRBranchConditionOperand(point) {
+					fact.Check = branchcond.Check{}
+					condition = nil
+					addAssertionRefinements = false
 				}
 			}
 			if fact.Check.Kind != branchcond.CheckNone {
@@ -240,31 +246,33 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 				}
 				input.BranchConditionSources[point] = branchSource
 			}
-			if reachability, ok := l.branchEdgeReachability(point, fact.Condition); ok {
+			if reachability, ok := l.branchEdgeReachability(point, condition); ok {
 				input.BranchEdgeReachability[point] = reachability
 			}
-			if lowered := l.branchRefinements(fact.Check, fact.Condition); len(lowered) != 0 {
+			if lowered := l.branchRefinements(fact.Check, condition); len(lowered) != 0 {
 				appendBranchRefinement(input.BranchRefinements, point, lowered...)
 			}
-			if lowered := l.branchLenRefinements(fact.Check, fact.Condition); len(lowered) != 0 {
+			if lowered := l.branchLenRefinements(fact.Check, condition); len(lowered) != 0 {
 				appendBranchLenRefinement(input.BranchRefinements, point, lowered...)
 			}
-			if lowered := l.branchNumFloorRefinements(fact.Check, fact.Condition); len(lowered) != 0 {
+			if lowered := l.branchNumFloorRefinements(fact.Check, condition); len(lowered) != 0 {
 				appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered...)
 			}
-			if lowered := l.branchDiffConstraints(fact.Condition); len(lowered) != 0 {
+			if lowered := l.branchDiffConstraints(condition); len(lowered) != 0 {
 				appendBranchDiffConstraint(input.BranchRefinements, point, lowered...)
 			}
-			if lowered := l.branchAliasRefinements(fact.Condition); len(lowered) != 0 {
+			if lowered := l.branchAliasRefinements(condition); len(lowered) != 0 {
 				appendBranchRefinement(input.BranchRefinements, point, lowered...)
 			}
-			if lowered, ok := l.branchPathRelations(fact.Check, fact.Condition); ok {
+			if lowered, ok := l.branchPathRelations(fact.Check, condition); ok {
 				input.BranchPathRelations[point] = lowered
 			}
-			if lowered := l.branchPathEvidence(fact.Check, fact.Condition); len(lowered) != 0 {
+			if lowered := l.branchPathEvidence(fact.Check, condition); len(lowered) != 0 {
 				appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
 			}
-			l.addAssertionRefinementsForSource(&input, fact.Source)
+			if addAssertionRefinements {
+				l.addAssertionRefinementsForSource(&input, fact.Source)
+			}
 		}
 		if fact, ok := result.NumericFor(point); ok {
 			if l.wir != nil {

@@ -113,6 +113,34 @@ end
 	}
 }
 
+func TestLowerBranchDoesNotFallbackWhenWIRBranchCheckIsNone(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(x: string?): ()
+    if x then local y = x end
+end
+`)
+	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
+	body := wir.NewBody("branch")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpBranch,
+		Point: point,
+		Check: body.InternCheck(wir.Check{}),
+	})
+	body.SetPointRange(point, start, start+1)
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	if source, ok := facts.BranchConditionSource(point); ok {
+		t.Fatalf("WIR mode branch at point %d fell back to semantic condition source: %#v", point, source)
+	}
+	if got := facts.BranchRefinements(point); len(got) != 0 {
+		t.Fatalf("WIR mode branch at point %d fell back to semantic refinements: %#v", point, got)
+	}
+	if got := facts.BranchPathEvidence(point); len(got) != 0 {
+		t.Fatalf("WIR mode branch at point %d fell back to semantic path evidence: %#v", point, got)
+	}
+}
+
 func TestLowerTypeIsConditionDoesNotFallbackWhenWIRCallInstructionMissing(t *testing.T) {
 	stmts, bindings, built, result := parseSemanticChunk(t, `
 type Payload = { name: string }
