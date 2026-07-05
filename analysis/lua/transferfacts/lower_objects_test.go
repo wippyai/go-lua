@@ -295,11 +295,18 @@ local t = { leaf = 1 }
 		Point: point,
 		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(target))},
 		List:  body.AppendOperands([]wir.Operand{value}),
-		TableEntries: body.AppendTableEntries([]wir.TableEntry{{
-			Suffix:     fieldSuffix("leaf"),
-			Value:      value,
-			ValueLabel: "from_wir.label",
-		}}),
+		TableEntries: body.AppendTableEntries([]wir.TableEntry{
+			{
+				Suffix:     fieldSuffix("leaf"),
+				Value:      value,
+				ValueLabel: "from_wir.label",
+			},
+			{
+				Suffix:     fieldSuffix("wir_only"),
+				Value:      value,
+				ValueLabel: "from_wir.extra",
+			},
+		}),
 		ExprID: expressionid.Of(table),
 	})
 	body.SetPointRange(point, start, start+1)
@@ -311,8 +318,8 @@ local t = { leaf = 1 }
 		t.Fatalf("missing WIR object literal for source ref %d", source.ExprRef)
 	}
 	entries := literal.Entries()
-	if len(entries) != 1 {
-		t.Fatalf("entries = %#v, want one WIR entry", entries)
+	if len(entries) != 2 {
+		t.Fatalf("entries = %#v, want WIR entries, including the WIR-only entry", entries)
 	}
 	entrySource := entries[0].Source()
 	if entrySource.Kind != factflow.ValueSourceLiteral || entrySource.LiteralKind != factflow.ValueSourceLiteralString || entrySource.String != "from-wir" {
@@ -320,6 +327,12 @@ local t = { leaf = 1 }
 	}
 	if got := entries[0].ValueLabel(); got != "from_wir.label" {
 		t.Fatalf("entry label = %q, want WIR label", got)
+	}
+	if got := entries[1].Suffix(); !reflect.DeepEqual(got, fieldSuffix("wir_only")) {
+		t.Fatalf("second entry suffix = %s, want WIR-only suffix", got.String())
+	}
+	if got := entries[1].ValueLabel(); got != "from_wir.extra" {
+		t.Fatalf("WIR-only entry label = %q, want from_wir.extra", got)
 	}
 }
 

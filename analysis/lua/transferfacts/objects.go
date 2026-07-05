@@ -27,6 +27,22 @@ type wirObjectEntry struct {
 	entry wir.TableEntry
 }
 
+func (l *lowerer) objectLiteralEntriesFromWIR(inst wir.Instruction) []factflow.ObjectEntry {
+	wirEntries := l.wir.TableEntries(inst.TableEntries)
+	entries := make([]factflow.ObjectEntry, 0, len(wirEntries))
+	resultSources := l.resultValueSourcesByTempFromWIR()
+	for _, entry := range wirEntries {
+		source, _ := l.valueSourceFromWIROperand(entry.Value, -1, -1, false, false, false, resultSources)
+		entries = append(entries, factflow.NewObjectEntryWithMetadata(
+			entry.Suffix,
+			source,
+			sourceSpanFromWIR(entry.ValueSpan),
+			entry.ValueLabel,
+		))
+	}
+	return entries
+}
+
 func (l *lowerer) addObjectLiteral(input *factflow.FactsInput, result *semantics.Result, source sourceprovenance.ASTSource) {
 	if source.Kind != sourceprovenance.SourceExpression || source.Expr == nil {
 		return
@@ -48,6 +64,7 @@ func (l *lowerer) addObjectLiteralExpr(input *factflow.FactsInput, result *seman
 			return
 		}
 		lowered := l.objectLiteral(fact).WithIdentity(identity.LuaTableLiteral(l.graphID, uint64(exprRef)))
+		lowered = l.objectLiteralWithExtraWIREntries(lowered, fact.Expr)
 		if expected, ok := l.objectLiteralCastExpectedType(expr); ok {
 			lowered = l.objectLiteralWithExpectedType(lowered, expected)
 		}
@@ -64,6 +81,45 @@ func (l *lowerer) addObjectLiteralExpr(input *factflow.FactsInput, result *seman
 	for _, child := range objectLiteralChildExprs(expr) {
 		l.addObjectLiteralExpr(input, result, child)
 	}
+}
+
+func (l *lowerer) objectLiteralWithExtraWIREntries(lit factflow.ObjectLiteral, expr ast.Expr) factflow.ObjectLiteral {
+	inst, ok := l.tableConstructorInstructionForExpr(expr)
+	if !ok {
+		return lit
+	}
+	existing := make([]path.Path, 0, len(lit.Entries()))
+	for _, entry := range lit.Entries() {
+		existing = append(existing, entry.Suffix())
+	}
+	extras := make([]factflow.ObjectEntry, 0)
+	for _, entry := range l.objectLiteralEntriesFromWIR(inst) {
+		if objectEntrySuffixExists(existing, entry.Suffix()) {
+			continue
+		}
+		extras = append(extras, entry)
+	}
+	if len(extras) == 0 {
+		return lit
+	}
+	entries := append(lit.Entries(), extras...)
+	out := factflow.NewObjectLiteral(entries)
+	if id, ok := lit.Identity(); ok {
+		out = out.WithIdentity(id)
+	}
+	if expected, ok := lit.Expected(); ok {
+		out = out.WithExpected(expected)
+	}
+	return out
+}
+
+func objectEntrySuffixExists(entries []path.Path, suffix path.Path) bool {
+	for _, existing := range entries {
+		if existing.Equal(suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 func objectLiteralFact(result *semantics.Result, expr ast.Expr) (semantics.ObjectLiteralFact, bool) {
@@ -416,6 +472,14 @@ func (l *lowerer) tableConstructorExpressionID(expr ast.Expr) (wir.ExpressionID,
 		return 0, false
 	}
 	return id, true
+}
+
+func (l *lowerer) tableConstructorInstructionForExpr(expr ast.Expr) (wir.Instruction, bool) {
+	id, ok := l.tableConstructorExpressionID(expr)
+	if !ok {
+		return wir.Instruction{}, false
+	}
+	return l.wir.TableConstructorByExpressionID(id)
 }
 
 func (l *lowerer) objectLiteral(fact semantics.ObjectLiteralFact) factflow.ObjectLiteral {
