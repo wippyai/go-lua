@@ -286,7 +286,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 				}
 			}
 			if hasWIRBranch {
-				if lowered := l.branchPathEvidenceFromWIR(point, condition); len(lowered) != 0 {
+				if lowered := l.branchPathEvidenceFromWIR(point); len(lowered) != 0 {
 					appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
 				}
 			} else {

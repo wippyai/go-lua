@@ -215,9 +215,11 @@ Branch lane migration: `BranchRefinements`, length floors, numeric floors,
 `BranchPathRelations`, and check-derived `BranchPathEvidence` consume the WIR
 branch instruction's direct check / implied-check range in WIR mode. If WIR has
 a branch instruction but no lane-producing check metadata, transfer does not
-fall back to semantic compound-condition traversal for those lanes. Special
-predicate evidence such as `table.isfrozen(x)` remains an explicit AST predicate
-path until WIR grows predicate descriptors.
+fall back to semantic compound-condition traversal for those lanes.
+`table.isfrozen(x)` lowers as `CheckFrozenTable`, so frozen-table proof is
+check-derived instead of using a transferfacts AST predicate walker. Difference
+constraints remain the next branch seam and need a WIR linear-term descriptor
+rather than ad hoc AST parsing.
 
 ## Locked decisions (Stage 4, journal #1392)
 

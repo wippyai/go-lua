@@ -26,6 +26,7 @@ const (
 	CheckLenGe
 	CheckIndexInRange
 	CheckNumGe
+	CheckFrozenTable
 )
 
 // Check is the neutral branch-condition descriptor interned by a Body. Lowering

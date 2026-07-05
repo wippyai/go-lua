@@ -7,12 +7,11 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
-	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 func (l *lowerer) branchPathEvidence(check branchcond.Check, condition ast.Expr) []factflow.BranchPathEvidence {
-	out := l.frozenTableBranchEvidence(condition)
+	var out []factflow.BranchPathEvidence
 	if check.Kind != branchcond.CheckNone {
 		out = append(out, l.branchPathEvidenceForCheck(check)...)
 		return out
@@ -23,8 +22,8 @@ func (l *lowerer) branchPathEvidence(check branchcond.Check, condition ast.Expr)
 	return out
 }
 
-func (l *lowerer) branchPathEvidenceFromWIR(point cfg.Point, condition ast.Expr) []factflow.BranchPathEvidence {
-	out := l.frozenTableBranchEvidence(condition)
+func (l *lowerer) branchPathEvidenceFromWIR(point cfg.Point) []factflow.BranchPathEvidence {
+	var out []factflow.BranchPathEvidence
 	l.forEachWIRBranchCheck(point, func(check branchcond.Check) {
 		out = append(out, l.branchPathEvidenceForCheck(check)...)
 	}, func(implied branchcond.ImpliedCheck) {
@@ -125,81 +124,12 @@ func (l *lowerer) branchPathEvidenceForCheckPolarityOnEdge(check branchcond.Chec
 			return nil
 		}
 		return []factflow.BranchPathEvidence{factflow.NewBranchIndexInRangeEvidenceOnEdge(target, other, edge)}
+	case branchcond.CheckFrozenTable:
+		if polarity {
+			return []factflow.BranchPathEvidence{factflow.NewBranchFrozenTableEvidenceOnEdge(target, edge)}
+		}
 	}
 	return nil
-}
-
-func (l *lowerer) frozenTableBranchEvidence(condition ast.Expr) []factflow.BranchPathEvidence {
-	var out []factflow.BranchPathEvidence
-	out = append(out, l.frozenTableBranchEvidenceForCondition(condition, true)...)
-	out = append(out, l.frozenTableBranchEvidenceForCondition(condition, false)...)
-	return out
-}
-
-func (l *lowerer) frozenTableBranchEvidenceForCondition(expr ast.Expr, cond bool) []factflow.BranchPathEvidence {
-	call, negated, ok := branchcond.PredicateCall(expr)
-	if !ok {
-		return l.frozenTableBranchEvidenceForCompoundCondition(expr, cond)
-	}
-	targetPath, ok := l.tableFrozenCallPath(call)
-	if !ok {
-		return nil
-	}
-	if !negated != cond {
-		return nil
-	}
-	return []factflow.BranchPathEvidence{
-		factflow.NewBranchFrozenTableEvidenceOnEdge(targetPath, cond),
-	}
-}
-
-func (l *lowerer) frozenTableBranchEvidenceForCompoundCondition(expr ast.Expr, cond bool) []factflow.BranchPathEvidence {
-	switch expr := expr.(type) {
-	case *ast.UnaryNotOpExpr:
-		return l.frozenTableBranchEvidenceForCondition(expr.Expr, !cond)
-	case *ast.LogicalOpExpr:
-		var out []factflow.BranchPathEvidence
-		switch {
-		case cond && expr.Operator == "and":
-			out = append(out, l.frozenTableBranchEvidenceForCondition(expr.Lhs, true)...)
-			out = append(out, l.frozenTableBranchEvidenceForCondition(expr.Rhs, true)...)
-		case !cond && expr.Operator == "or":
-			out = append(out, l.frozenTableBranchEvidenceForCondition(expr.Lhs, false)...)
-			out = append(out, l.frozenTableBranchEvidenceForCondition(expr.Rhs, false)...)
-		}
-		return out
-	default:
-		return nil
-	}
-}
-
-func (l *lowerer) tableFrozenCallPath(call *ast.FuncCallExpr) (path.Path, bool) {
-	if call == nil || len(call.Args) != 1 || len(call.TypeArgs) != 0 {
-		return path.Path{}, false
-	}
-	switch {
-	case call.Receiver != nil:
-		recv, ok := call.Receiver.(*ast.IdentExpr)
-		if !ok || !l.bindings.ResolvesToGlobal(recv, "table") || call.Method != "isfrozen" {
-			return path.Path{}, false
-		}
-	case call.Func != nil:
-		attr, ok := call.Func.(*ast.AttrGetExpr)
-		if !ok || attr == nil || ast.KeyName(attr.Key) != "isfrozen" || attr.KeySyntax != ast.AttrKeyDot {
-			return path.Path{}, false
-		}
-		recv, ok := attr.Object.(*ast.IdentExpr)
-		if !ok || !l.bindings.ResolvesToGlobal(recv, "table") {
-			return path.Path{}, false
-		}
-	default:
-		return path.Path{}, false
-	}
-	argPath, ok := pathexpr.Resolve(call.Args[0], l.bindings)
-	if !ok || argPath.IsEmpty() {
-		return path.Path{}, false
-	}
-	return argPath, true
 }
 
 func branchTypePresenceEvidenceOnEdge(

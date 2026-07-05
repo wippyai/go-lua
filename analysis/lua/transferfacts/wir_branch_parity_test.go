@@ -27,8 +27,9 @@ function f(x: any, y: string?, i: integer, xs: {string})
     if x == "ready" then local d = 1 end
     if i >= 1 then local e = 1 end
     if i <= #xs then local g = 1 end
+    if table.isfrozen(xs) then local h = 1 end
 end
-`, "type")
+`, "type", "table")
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
 	if body == nil {
 		t.Fatal("wirlower returned nil body")
@@ -43,8 +44,8 @@ end
 		checked++
 		assertWIRBranchCheckContains(t, body, point, fact.Check)
 	}
-	if checked != 6 {
-		t.Fatalf("checked %d direct branch conditions, want 6", checked)
+	if checked != 7 {
+		t.Fatalf("checked %d direct branch conditions, want 7", checked)
 	}
 }
 
@@ -141,6 +142,34 @@ end
 	}
 	if !checked {
 		t.Fatal("test did not exercise branch path evidence")
+	}
+}
+
+func TestLowerWithWIRFrozenTableBranchEvidenceMatchesSidecar(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local t = {}
+local ok = true
+if table.isfrozen(t) and ok then
+    local hit = true
+end
+`, "table")
+	body := wirlower.Lower("chunk", stmts, bindings, built)
+	sidecarFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	var checked bool
+	for _, point := range built.Graph.RPO() {
+		want := sidecarFacts.BranchPathEvidence(point)
+		if len(want) == 0 {
+			continue
+		}
+		checked = true
+		if got := wirFacts.BranchPathEvidence(point); !reflect.DeepEqual(got, want) {
+			t.Fatalf("WIR frozen-table branch path evidence at point %d mismatch\n got: %#v\nwant: %#v", point, got, want)
+		}
+	}
+	if !checked {
+		t.Fatal("test did not exercise frozen-table branch path evidence")
 	}
 }
 

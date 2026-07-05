@@ -46,6 +46,10 @@ func typeIsCall(receiver, arg ast.Expr) *ast.FuncCallExpr {
 	return &ast.FuncCallExpr{Receiver: receiver, Method: "is", Args: []ast.Expr{arg}}
 }
 
+func tableIsFrozenCall(arg ast.Expr) *ast.FuncCallExpr {
+	return &ast.FuncCallExpr{Func: dot(ident("table"), "isfrozen"), Args: []ast.Expr{arg}}
+}
+
 func call(name string) *ast.FuncCallExpr {
 	return &ast.FuncCallExpr{Func: ident(name)}
 }
@@ -342,6 +346,48 @@ func TestTypeIsCallReceiverRecognition(t *testing.T) {
 	}
 	if gotCall, gotReceiver, ok := TypeIsCallReceiver(typeCall(arg)); ok || gotCall != nil || gotReceiver != nil {
 		t.Fatalf("TypeIsCallReceiver(type call) = %p/%p/%v, want nil/nil/false", gotCall, gotReceiver, ok)
+	}
+}
+
+func TestNormalizeFrozenTablePredicate(t *testing.T) {
+	tbl := ident("table")
+	target := ident("target")
+	expr := &ast.FuncCallExpr{Func: dot(tbl, "isfrozen"), Args: []ast.Expr{target}}
+	bindings := bindReturn(expr, "table")
+	targetPath := path.NewPath(mustIdentSymbol(t, bindings, target), "target")
+
+	assertCheck(t, Normalize(expr, bindings), CheckFrozenTable, targetPath, "")
+}
+
+func TestFrozenTablePredicateIgnoresShadowedTable(t *testing.T) {
+	tbl := ident("table")
+	target := ident("target")
+	expr := &ast.FuncCallExpr{Func: dot(tbl, "isfrozen"), Args: []ast.Expr{target}}
+	bindings := bind.BindChunk([]ast.Stmt{
+		localAssign([]string{"table"}, &ast.TableExpr{}),
+		&ast.ReturnStmt{Exprs: []ast.Expr{expr}},
+	}, bind.Options{})
+
+	assertCheckNone(t, Normalize(expr, bindings))
+}
+
+func TestImpliedFrozenTableChecksPreserveEdgeAndPolarity(t *testing.T) {
+	target := ident("target")
+	ok := ident("ok")
+	expr := &ast.LogicalOpExpr{
+		Lhs:      tableIsFrozenCall(target),
+		Operator: "and",
+		Rhs:      ok,
+	}
+	bindings := bindReturn(expr, "table")
+	targetPath := path.NewPath(mustIdentSymbol(t, bindings, target), "target")
+
+	got := ImpliedChecksOnEdge(expr, bindings, true)
+	if len(got) != 2 {
+		t.Fatalf("implied checks = %d, want frozen table + ok truthy: %#v", len(got), got)
+	}
+	if got[0].Check.Kind != CheckFrozenTable || !got[0].Check.Path.Equal(targetPath) || !got[0].Edge || !got[0].Polarity {
+		t.Fatalf("frozen implication = %#v, want true-edge frozen target", got[0])
 	}
 }
 

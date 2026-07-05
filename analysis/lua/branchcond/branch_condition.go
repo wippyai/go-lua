@@ -29,6 +29,7 @@ const (
 	CheckLenGe
 	CheckIndexInRange
 	CheckNumGe
+	CheckFrozenTable
 )
 
 type Check struct {
@@ -137,6 +138,10 @@ func Normalize(expr ast.Expr, bindings *bind.Result) Check {
 		if p, ok := pathexpr.Resolve(expr.Expr, bindings); ok {
 			return Check{Kind: CheckFalsy, Path: p}
 		}
+	case *ast.FuncCallExpr:
+		if p, ok := normalizeFrozenTableCall(expr, bindings); ok {
+			return Check{Kind: CheckFrozenTable, Path: p}
+		}
 	case *ast.RelationalOpExpr:
 		if !isSupportedRelop(expr.Operator) {
 			return Check{}
@@ -172,6 +177,35 @@ func Normalize(expr ast.Expr, bindings *bind.Result) Check {
 	}
 
 	return Check{}
+}
+
+func normalizeFrozenTableCall(call *ast.FuncCallExpr, bindings *bind.Result) (path.Path, bool) {
+	if call == nil || bindings == nil || len(call.Args) != 1 || len(call.TypeArgs) != 0 {
+		return path.Path{}, false
+	}
+	switch {
+	case call.Receiver != nil:
+		recv, ok := call.Receiver.(*ast.IdentExpr)
+		if !ok || !bindings.ResolvesToGlobal(recv, "table") || call.Method != "isfrozen" {
+			return path.Path{}, false
+		}
+	case call.Func != nil:
+		attr, ok := call.Func.(*ast.AttrGetExpr)
+		if !ok || attr == nil || ast.KeyName(attr.Key) != "isfrozen" || attr.KeySyntax != ast.AttrKeyDot {
+			return path.Path{}, false
+		}
+		recv, ok := attr.Object.(*ast.IdentExpr)
+		if !ok || !bindings.ResolvesToGlobal(recv, "table") {
+			return path.Path{}, false
+		}
+	default:
+		return path.Path{}, false
+	}
+	argPath, ok := pathexpr.Resolve(call.Args[0], bindings)
+	if !ok || argPath.IsEmpty() {
+		return path.Path{}, false
+	}
+	return argPath, true
 }
 
 // TruthyChecks returns checks that must all hold when expr is truthy. For
