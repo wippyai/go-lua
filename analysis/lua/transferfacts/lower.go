@@ -107,6 +107,9 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 	for _, point := range graph.RPO() {
 		if view, ok := result.LocalAssignmentView(point); ok {
 			fact, _ := view.Borrowed()
+			if l.wir != nil && !l.hasAssignmentWriteFromWIR(point) {
+				continue
+			}
 			if lowered, ok := l.localAssignment(point, fact); ok {
 				input.RootAssignments[point] = lowered
 				l.addAssignmentAssertionRefinements(&input, point, lowered.TargetPath(), fact.Source)
@@ -123,6 +126,9 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		}
 		if view, ok := result.OrdinaryAssignmentView(point); ok {
 			fact, _ := view.Borrowed()
+			if l.wir != nil && !l.hasAssignmentWriteFromWIR(point) {
+				continue
+			}
 			if lowered, ok := l.pathAssignment(point, fact); ok {
 				input.PathAssignments[point] = lowered
 				if lowered, ok := l.pathStaticMemberWrite(point, fact); ok {

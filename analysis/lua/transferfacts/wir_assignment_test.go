@@ -5,6 +5,7 @@ import (
 
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
@@ -94,5 +95,34 @@ end`)
 	dynamicSource := dynamicWrite.Source()
 	if dynamicSource.Kind != factflow.ValueSourceExpression || !dynamicSource.HasExpr {
 		t.Fatalf("dynamic write source = %#v, want expression-backed source until WIR path proof migration", dynamicSource)
+	}
+}
+
+func TestLowerAssignmentDoesNotFallbackWhenWIRWriteInstructionMissing(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(box: any, key: string, value: string): ()
+    local local_value = value
+    box.name = value
+    box[key] = value
+end
+`)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: wir.NewBody("empty")})
+
+	localPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
+	if _, ok := facts.RootAssignment(localPoint); ok {
+		t.Fatalf("WIR mode local assignment at point %d fell back to semantic sidecar", localPoint)
+	}
+
+	staticPoint := requireStmtPoints(t, built, fn.Stmts[1], 1)[0]
+	if _, ok := facts.PathAssignment(staticPoint); ok {
+		t.Fatalf("WIR mode path assignment at point %d fell back to semantic sidecar", staticPoint)
+	}
+	if _, ok := facts.PathStaticMemberWrite(staticPoint); ok {
+		t.Fatalf("WIR mode static member write at point %d fell back to semantic sidecar", staticPoint)
+	}
+
+	dynamicPoint := requireStmtPoints(t, built, fn.Stmts[2], 1)[0]
+	if _, ok := facts.DynamicIndexWrite(dynamicPoint); ok {
+		t.Fatalf("WIR mode dynamic index write at point %d fell back to semantic sidecar", dynamicPoint)
 	}
 }
