@@ -194,6 +194,40 @@ end
 	}
 }
 
+func TestLowerDynamicIndexTablePathComesFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(box: any, key: string, payload: string): ()
+    local other_box = {}
+    box[key] = payload
+end
+`)
+	assignStmt := fn.Stmts[1].(*ast.AssignStmt)
+	points := requireStmtPoints(t, built, assignStmt, 1)
+	boxPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "box")
+	keyPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "key")
+	payloadPath := path.NewPath(bindings.ParamSlots(fn)[2].Symbol, "payload")
+	otherBoxPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "other_box")
+	body := wir.NewBody("synthetic-dynamic-table")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpDynamicIndexWrite,
+		Point: points[0],
+		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherBoxPath))},
+		A:     wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(keyPath))},
+		B:     wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(payloadPath))},
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	write, ok := facts.DynamicIndexWrite(points[0])
+	if !ok {
+		t.Fatalf("missing dynamic index write at point %d", points[0])
+	}
+	gotPath := write.TablePath()
+	if !gotPath.Equal(otherBoxPath) || gotPath.Equal(boxPath) {
+		t.Fatalf("dynamic table path = %v, want WIR path %v not semantic path %v", gotPath, otherBoxPath, boxPath)
+	}
+}
+
 func TestLowerStaticMemberWriteSourcePathComesFromWIR(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(box: any): ()
@@ -286,14 +320,14 @@ end`)
 	}
 	staticSource := pathAssign.Source()
 	if staticSource.Kind != factflow.ValueSourceExpression || !staticSource.HasExpr {
-		t.Fatalf("static path source = %#v, want expression-backed source until WIR path proof migration", staticSource)
+		t.Fatalf("static path source = %#v, want expression-backed WIR source", staticSource)
 	}
 	staticWrite, ok := facts.PathStaticMemberWrite(staticPoint)
 	if !ok {
 		t.Fatalf("missing static member write at point %d", staticPoint)
 	}
 	if got := staticWrite.Source(); got.Kind != factflow.ValueSourceExpression || !got.HasExpr {
-		t.Fatalf("static member write source = %#v, want expression-backed source until WIR path proof migration", got)
+		t.Fatalf("static member write source = %#v, want expression-backed WIR source", got)
 	}
 
 	dynamicPoint := requireStmtPoints(t, built, fn.Stmts[1], 1)[0]
@@ -303,7 +337,7 @@ end`)
 	}
 	dynamicSource := dynamicWrite.Source()
 	if dynamicSource.Kind != factflow.ValueSourceExpression || !dynamicSource.HasExpr {
-		t.Fatalf("dynamic write source = %#v, want expression-backed source until WIR path proof migration", dynamicSource)
+		t.Fatalf("dynamic write source = %#v, want expression-backed WIR source", dynamicSource)
 	}
 }
 
