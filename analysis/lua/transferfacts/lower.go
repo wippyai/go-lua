@@ -343,7 +343,7 @@ type lowerer struct {
 	expressionPaths               map[factflow.ExprRef]pathdom.Path
 	dynamicIndexExpressions       map[factflow.ExprRef]factflow.DynamicIndexExpression
 	expressionConditions          map[factflow.ExprRef]factflow.ExpressionCondition
-	wirCallResults                map[uint32]wirCallResultSource
+	wirResultSources              map[uint32]wirResultSource
 	expressionRefinements         map[factflow.ExprRef]factflow.ExpressionRefinement
 }
 

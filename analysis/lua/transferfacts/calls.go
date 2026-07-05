@@ -241,7 +241,7 @@ func (l *lowerer) callReceiverSourceFromWIR(point cfg.Point, shape valueSourceSh
 		shape.final,
 		shape.expanded,
 		shape.openTail,
-		l.callResultValueSourcesByTempFromWIR(),
+		l.resultValueSourcesByTempFromWIR(),
 	)
 }
 
@@ -258,10 +258,10 @@ func (l *lowerer) callArgumentSources(point cfg.Point, fallback []sourceprovenan
 		return nil, false
 	}
 	out := make([]factflow.ValueSource, len(fallback))
-	callResults := l.callResultValueSourcesByTempFromWIR()
+	resultSources := l.resultValueSourcesByTempFromWIR()
 	for i, op := range ops {
 		final := i == len(ops)-1
-		source, ok := l.callArgumentSourceFromWIROperand(point, op, i, i, final, inst.ListSpread && final, callResults)
+		source, ok := l.callArgumentSourceFromWIROperand(point, op, i, i, final, inst.ListSpread && final, resultSources)
 		if !ok {
 			if op.Kind != wir.OperandTemp {
 				source = factflow.NewUnknownValueSource(i)
@@ -287,7 +287,7 @@ func (l *lowerer) callArgumentSourceFromWIROperand(
 	targetIndex int,
 	final bool,
 	expanded bool,
-	callResults map[uint32]wirCallResultSource,
+	resultSources map[uint32]wirResultSource,
 ) (factflow.ValueSource, bool) {
 	if source, ok := l.localRootPathExpressionSourceFromWIR("call-arg", point, op, exprIndex, targetIndex, final, false, false); ok {
 		return source, true
@@ -298,7 +298,7 @@ func (l *lowerer) callArgumentSourceFromWIROperand(
 	if source, ok := l.pathExpressionSourceFromWIR("call-arg", point, op, exprIndex, targetIndex, final, false, false, symbol.Local, symbol.Param, symbol.Global, symbol.Upvalue); ok {
 		return source, true
 	}
-	return l.valueSourceFromWIROperand(op, exprIndex, targetIndex, final, expanded, false, callResults)
+	return l.valueSourceFromWIROperand(op, exprIndex, targetIndex, final, expanded, false, resultSources)
 }
 
 func (l *lowerer) wirCallInstruction(point cfg.Point) (wir.Instruction, bool) {

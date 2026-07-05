@@ -48,10 +48,10 @@ func (l *lowerer) returnValueSourcesFromWIR(point cfg.Point) ([]factflow.ValueSo
 	}
 	ops := l.wir.Operands(ret.List)
 	out := make([]factflow.ValueSource, len(ops))
-	callResults := l.callResultValueSourcesByTempFromWIR()
+	resultSources := l.resultValueSourcesByTempFromWIR()
 	for i, op := range ops {
 		final := i == len(ops)-1
-		source, ok := l.returnValueSourceFromWIROperand(point, op, i, i, final, ret.ListSpread && final, ret.ListSpread && final, callResults)
+		source, ok := l.returnValueSourceFromWIROperand(point, op, i, i, final, ret.ListSpread && final, ret.ListSpread && final, resultSources)
 		if !ok {
 			return nil, false
 		}
@@ -80,7 +80,7 @@ func (l *lowerer) returnValueSourceFromWIROperand(
 	final bool,
 	expanded bool,
 	openTail bool,
-	callResults map[uint32]wirCallResultSource,
+	resultSources map[uint32]wirResultSource,
 ) (factflow.ValueSource, bool) {
 	if source, ok := l.valueSourceFromWIRRootPathOperand(op, exprIndex, targetIndex, final, symbol.Local, symbol.Param); ok {
 		return source, true
@@ -88,10 +88,10 @@ func (l *lowerer) returnValueSourceFromWIROperand(
 	if source, ok := l.pathExpressionSourceFromWIR("return", point, op, exprIndex, targetIndex, final, expanded, openTail, symbol.Local, symbol.Param, symbol.Global, symbol.Upvalue); ok {
 		return source, true
 	}
-	return l.valueSourceFromWIROperand(op, exprIndex, targetIndex, final, expanded, openTail, callResults)
+	return l.valueSourceFromWIROperand(op, exprIndex, targetIndex, final, expanded, openTail, resultSources)
 }
 
-type wirCallResultSource struct {
+type wirResultSource struct {
 	point       cfg.Point
 	resultIndex int
 }
@@ -233,9 +233,9 @@ func (l *lowerer) valueSourceFromWIROperand(
 	final bool,
 	expanded bool,
 	openTail bool,
-	callResults map[uint32]wirCallResultSource,
+	resultSources map[uint32]wirResultSource,
 ) (factflow.ValueSource, bool) {
-	return l.valueSourceFromWIROperandSeen(op, exprIndex, targetIndex, final, expanded, openTail, callResults, nil)
+	return l.valueSourceFromWIROperandSeen(op, exprIndex, targetIndex, final, expanded, openTail, resultSources, nil)
 }
 
 func (l *lowerer) valueSourceFromWIROperandSeen(
@@ -245,7 +245,7 @@ func (l *lowerer) valueSourceFromWIROperandSeen(
 	final bool,
 	expanded bool,
 	openTail bool,
-	callResults map[uint32]wirCallResultSource,
+	resultSources map[uint32]wirResultSource,
 	seen map[uint32]bool,
 ) (factflow.ValueSource, bool) {
 	switch op.Kind {
@@ -281,10 +281,10 @@ func (l *lowerer) valueSourceFromWIROperandSeen(
 		}
 		return mustValueSource(factflow.NewVarargValueSource(0, exprIndex, targetIndex, 0, shape)), true
 	case wir.OperandTemp:
-		if source, ok := callResultValueSourceFromWIR(op, exprIndex, targetIndex, final, expanded, openTail, callResults); ok {
+		if source, ok := resultValueSourceFromWIR(op, exprIndex, targetIndex, final, expanded, openTail, resultSources); ok {
 			return source, true
 		}
-		if source, ok := l.wirTempExpressionValueSource(op, exprIndex, targetIndex, final, expanded, openTail, callResults, seen); ok {
+		if source, ok := l.wirTempExpressionValueSource(op, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen); ok {
 			return source, true
 		}
 	}
@@ -302,7 +302,7 @@ func (l *lowerer) wirTempExpressionValueSource(
 	final bool,
 	expanded bool,
 	openTail bool,
-	callResults map[uint32]wirCallResultSource,
+	resultSources map[uint32]wirResultSource,
 	seen map[uint32]bool,
 ) (factflow.ValueSource, bool) {
 	if op.Kind != wir.OperandTemp || l == nil || l.wir == nil {
@@ -322,13 +322,13 @@ func (l *lowerer) wirTempExpressionValueSource(
 	}
 	switch inst.Op {
 	case wir.OpAssign:
-		return l.valueSourceFromWIROperandSeen(inst.A, exprIndex, targetIndex, final, expanded, openTail, callResults, seen)
+		return l.valueSourceFromWIROperandSeen(inst.A, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
 	case wir.OpBinOp, wir.OpLogical, wir.OpConcat:
-		return l.wirBinaryTempExpressionValueSource(op.Ref, inst, exprIndex, targetIndex, final, expanded, openTail, callResults, seen)
+		return l.wirBinaryTempExpressionValueSource(op.Ref, inst, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
 	case wir.OpUnOp:
-		return l.wirUnaryTempExpressionValueSource(op.Ref, inst, exprIndex, targetIndex, final, expanded, openTail, callResults, seen)
+		return l.wirUnaryTempExpressionValueSource(op.Ref, inst, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
 	case wir.OpClaim:
-		return l.wirClaimTempExpressionValueSource(op.Ref, inst, exprIndex, targetIndex, final, expanded, openTail, callResults, seen)
+		return l.wirClaimTempExpressionValueSource(op.Ref, inst, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
 	case wir.OpClosure:
 		return l.wirClosureTempExpressionValueSource(op.Ref, inst, exprIndex, targetIndex, final, expanded, openTail)
 	default:
@@ -385,10 +385,10 @@ func (l *lowerer) wirClaimTempExpressionValueSource(
 	final bool,
 	expanded bool,
 	openTail bool,
-	callResults map[uint32]wirCallResultSource,
+	resultSources map[uint32]wirResultSource,
 	seen map[uint32]bool,
 ) (factflow.ValueSource, bool) {
-	inner, ok := l.wirClaimInnerValueSource(inst, exprIndex, targetIndex, final, expanded, openTail, callResults, seen)
+	inner, ok := l.wirClaimInnerValueSource(inst, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
@@ -419,13 +419,13 @@ func (l *lowerer) wirClaimInnerValueSource(
 	final bool,
 	expanded bool,
 	openTail bool,
-	callResults map[uint32]wirCallResultSource,
+	resultSources map[uint32]wirResultSource,
 	seen map[uint32]bool,
 ) (factflow.ValueSource, bool) {
 	if source, ok := l.valueSourceFromWIRRootPathOperand(inst.A, exprIndex, targetIndex, final, symbol.Local, symbol.Param, symbol.Global, symbol.Upvalue); ok {
 		return source, true
 	}
-	if source, ok := l.valueSourceFromWIROperandSeen(inst.A, exprIndex, targetIndex, final, expanded, openTail, callResults, seen); ok {
+	if source, ok := l.valueSourceFromWIROperandSeen(inst.A, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen); ok {
 		return source, true
 	}
 	return l.pathExpressionSourceFromWIR("claim-inner", inst.Point, inst.A, exprIndex, targetIndex, final, expanded, openTail, symbol.Local, symbol.Param, symbol.Global, symbol.Upvalue)
@@ -467,7 +467,7 @@ func (l *lowerer) wirBinaryTempExpressionValueSource(
 	final bool,
 	expanded bool,
 	openTail bool,
-	callResults map[uint32]wirCallResultSource,
+	resultSources map[uint32]wirResultSource,
 	seen map[uint32]bool,
 ) (factflow.ValueSource, bool) {
 	op, ok := wirExpressionOperator(inst)
@@ -478,11 +478,11 @@ func (l *lowerer) wirBinaryTempExpressionValueSource(
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
-	left, ok := l.wirBinaryExpressionOperandValueSource(inst, leftOp, exprIndex, targetIndex, callResults, seen)
+	left, ok := l.wirBinaryExpressionOperandValueSource(inst, leftOp, exprIndex, targetIndex, resultSources, seen)
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
-	right, ok := l.wirBinaryExpressionOperandValueSource(inst, rightOp, exprIndex, targetIndex, callResults, seen)
+	right, ok := l.wirBinaryExpressionOperandValueSource(inst, rightOp, exprIndex, targetIndex, resultSources, seen)
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
@@ -514,14 +514,14 @@ func (l *lowerer) wirUnaryTempExpressionValueSource(
 	final bool,
 	expanded bool,
 	openTail bool,
-	callResults map[uint32]wirCallResultSource,
+	resultSources map[uint32]wirResultSource,
 	seen map[uint32]bool,
 ) (factflow.ValueSource, bool) {
 	op, ok := wirExpressionOperator(inst)
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
-	operand, ok := l.wirInstructionExpressionOperandValueSource(inst, inst.A, exprIndex, targetIndex, callResults, seen)
+	operand, ok := l.wirInstructionExpressionOperandValueSource(inst, inst.A, exprIndex, targetIndex, resultSources, seen)
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
@@ -637,7 +637,7 @@ func wirLiteralType(c wir.Const) (typ.Type, bool) {
 
 func (l *lowerer) wirExpressionOperandValueSource(
 	op wir.Operand,
-	callResults map[uint32]wirCallResultSource,
+	resultSources map[uint32]wirResultSource,
 	seen map[uint32]bool,
 ) (factflow.ValueSource, bool) {
 	return l.valueSourceFromWIROperandSeen(op,
@@ -646,7 +646,7 @@ func (l *lowerer) wirExpressionOperandValueSource(
 		true,
 		false,
 		false,
-		callResults,
+		resultSources,
 		seen,
 	)
 }
@@ -656,7 +656,7 @@ func (l *lowerer) wirInstructionExpressionOperandValueSource(
 	op wir.Operand,
 	exprIndex int,
 	targetIndex int,
-	callResults map[uint32]wirCallResultSource,
+	resultSources map[uint32]wirResultSource,
 	seen map[uint32]bool,
 ) (factflow.ValueSource, bool) {
 	if inst.Op == wir.OpConcat || (exprIndex == sourceprovenance.NoSourceIndex && targetIndex == sourceprovenance.NoSourceIndex) {
@@ -664,7 +664,7 @@ func (l *lowerer) wirInstructionExpressionOperandValueSource(
 			return source, true
 		}
 	}
-	return l.wirExpressionOperandValueSource(op, callResults, seen)
+	return l.wirExpressionOperandValueSource(op, resultSources, seen)
 }
 
 func (l *lowerer) wirBinaryExpressionOperandValueSource(
@@ -672,10 +672,10 @@ func (l *lowerer) wirBinaryExpressionOperandValueSource(
 	op wir.Operand,
 	exprIndex int,
 	targetIndex int,
-	callResults map[uint32]wirCallResultSource,
+	resultSources map[uint32]wirResultSource,
 	seen map[uint32]bool,
 ) (factflow.ValueSource, bool) {
-	return l.wirInstructionExpressionOperandValueSource(inst, op, exprIndex, targetIndex, callResults, seen)
+	return l.wirInstructionExpressionOperandValueSource(inst, op, exprIndex, targetIndex, resultSources, seen)
 }
 
 func wirBinaryExpressionOperands(body *wir.Body, inst wir.Instruction) (wir.Operand, wir.Operand, bool) {
@@ -787,44 +787,48 @@ func symbolKindAllowed(kind symbol.Kind, allowed []symbol.Kind) bool {
 	return false
 }
 
-func (l *lowerer) callResultValueSourcesByTempFromWIR() map[uint32]wirCallResultSource {
-	if l.wirCallResults != nil {
-		return l.wirCallResults
+func (l *lowerer) resultValueSourcesByTempFromWIR() map[uint32]wirResultSource {
+	if l.wirResultSources != nil {
+		return l.wirResultSources
 	}
-	out := make(map[uint32]wirCallResultSource)
+	out := make(map[uint32]wirResultSource)
 	if l == nil || l.wir == nil {
 		return out
 	}
 	for i := 0; i < l.wir.Len(); i++ {
 		inst := l.wir.Instr(i)
-		if inst.Op != wir.OpCall {
-			continue
-		}
-		results := l.wir.Operands(inst.Results)
-		for resultIndex, result := range results {
-			if result.Kind != wir.OperandTemp {
-				continue
+		switch inst.Op {
+		case wir.OpCall:
+			results := l.wir.Operands(inst.Results)
+			for resultIndex, result := range results {
+				if result.Kind != wir.OperandTemp {
+					continue
+				}
+				out[result.Ref] = wirResultSource{point: inst.Point, resultIndex: resultIndex}
 			}
-			out[result.Ref] = wirCallResultSource{point: inst.Point, resultIndex: resultIndex}
+		case wir.OpSelect:
+			if inst.Dst.Kind == wir.OperandTemp {
+				out[inst.Dst.Ref] = wirResultSource{point: inst.Point, resultIndex: 0}
+			}
 		}
 	}
-	l.wirCallResults = out
+	l.wirResultSources = out
 	return out
 }
 
-func callResultValueSourceFromWIR(
+func resultValueSourceFromWIR(
 	op wir.Operand,
 	exprIndex int,
 	targetIndex int,
 	final bool,
 	expanded bool,
 	openTail bool,
-	callResults map[uint32]wirCallResultSource,
+	resultSources map[uint32]wirResultSource,
 ) (factflow.ValueSource, bool) {
 	if op.Kind != wir.OperandTemp {
 		return factflow.ValueSource{}, false
 	}
-	result, ok := callResults[op.Ref]
+	result, ok := resultSources[op.Ref]
 	if !ok {
 		return factflow.ValueSource{}, false
 	}

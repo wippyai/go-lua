@@ -845,6 +845,45 @@ end
 	}
 }
 
+func TestLowerAssignmentSelectResultSourceComesFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): ()
+    local selected = "fallback"
+end
+`)
+	stmt, ok := fn.Stmts[0].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want local assignment", fn.Stmts[0])
+	}
+	points := requireStmtPoints(t, built, stmt, 1)
+	selectedPath := path.NewPath(mustLocalAt(t, bindings, stmt, 0), "selected")
+	body := wir.NewBody("synthetic-select-result-source")
+	temp := wir.Operand{Kind: wir.OperandTemp, Ref: 1}
+	start := body.Emit(wir.Instruction{
+		Op:            wir.OpSelect,
+		Point:         points[0],
+		Dst:           temp,
+		SelectDefault: true,
+	})
+	body.Emit(wir.Instruction{
+		Op:    wir.OpAssign,
+		Point: points[0],
+		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(selectedPath))},
+		A:     temp,
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	assign, ok := facts.RootAssignment(points[0])
+	if !ok {
+		t.Fatalf("missing assignment at point %d", points[0])
+	}
+	source := assign.Source()
+	if source.Kind != factflow.ValueSourceCall || source.CallPoint != points[0] || !source.HasCallPoint || source.ResultIndex != 0 {
+		t.Fatalf("assignment source = %#v, want WIR select-result source", source)
+	}
+}
+
 func TestLowerCallSiteClosureArgumentFunctionComesFromWIR(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(): ()

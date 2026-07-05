@@ -61,7 +61,7 @@ func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, fallback sourceproven
 		fallback.Final,
 		fallback.Expanded,
 		fallback.OpenTail,
-		l.callResultValueSourcesByTempFromWIR(),
+		l.resultValueSourcesByTempFromWIR(),
 	)
 	if !ok {
 		return factflow.ValueSource{}, false
