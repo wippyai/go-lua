@@ -10,8 +10,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
-func (l *lowerer) callSiteAt(point cfg.Point, fact semantics.CallFact) factflow.CallSite {
-	return l.callSiteWithArgumentSources(fact, l.callArgumentSources(point, fact.ArgumentSources))
+func (l *lowerer) callSiteAt(point cfg.Point, fact semantics.CallFact) (factflow.CallSite, bool) {
+	args, ok := l.callArgumentSources(point, fact.ArgumentSources)
+	if !ok {
+		return factflow.CallSite{}, false
+	}
+	return l.callSiteWithArgumentSources(fact, args), true
 }
 
 func (l *lowerer) callSite(fact semantics.CallFact) factflow.CallSite {
@@ -70,17 +74,17 @@ func (l *lowerer) callSiteWithArgumentSources(fact semantics.CallFact, argumentS
 	})
 }
 
-func (l *lowerer) callArgumentSources(point cfg.Point, fallback []sourceprovenance.ASTSource) []factflow.ValueSource {
+func (l *lowerer) callArgumentSources(point cfg.Point, fallback []sourceprovenance.ASTSource) ([]factflow.ValueSource, bool) {
 	if l == nil || l.wir == nil {
-		return l.valueSources(fallback)
+		return l.valueSources(fallback), true
 	}
 	inst, ok := l.wirCallInstruction(point)
 	if !ok {
-		return l.valueSources(fallback)
+		return nil, false
 	}
 	ops := l.wir.Operands(inst.List)
 	if len(ops) != len(fallback) {
-		return l.valueSources(fallback)
+		return nil, false
 	}
 	out := l.valueSources(fallback)
 	callResults := l.callResultValueSourcesByTempFromWIR()
@@ -92,7 +96,7 @@ func (l *lowerer) callArgumentSources(point cfg.Point, fallback []sourceprovenan
 		}
 		out[i] = source
 	}
-	return out
+	return out, true
 }
 
 func (l *lowerer) wirCallInstruction(point cfg.Point) (wir.Instruction, bool) {

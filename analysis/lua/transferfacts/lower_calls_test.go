@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
@@ -370,6 +371,24 @@ end
 	}
 	if arg.Kind != factflow.ValueSourceExpression || !arg.HasExpr {
 		t.Fatalf("local argument source = %#v, want semantic expression fallback", arg)
+	}
+}
+
+func TestLowerCallSiteDoesNotFallbackWhenWIRCallInstructionMissing(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(value: string): ()
+    send(value)
+end
+`, "send")
+	stmt, ok := fn.Stmts[0].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[0])
+	}
+	points := requireStmtPoints(t, built, stmt, 1)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: wir.NewBody("empty")})
+
+	if _, ok := facts.CallSite(points[0]); ok {
+		t.Fatalf("WIR mode call at point %d fell back to semantic sidecar", points[0])
 	}
 }
 
