@@ -85,7 +85,7 @@ end
 	}
 	points := requireStmtPoints(t, built, ret, 1)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIRScalars: true, WIR: body})
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	returnFact, ok := facts.Return(points[0])
 	if !ok {

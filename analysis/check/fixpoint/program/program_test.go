@@ -183,7 +183,7 @@ func TestRunBoundChunkStatsObservePreparedStaticReuse(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
 local f = function()
-	return 1
+	return {}
 end
 return f()
 `)
@@ -509,12 +509,13 @@ func TestRunBoundChunkUsesSuppliedBindIdentityForLocalCallee(t *testing.T) {
 	reg := standard.Registry()
 	want := product.Top()
 	stmts := parseChunk(t, `
+local x = 0
 local f = function()
-	return 1
+	return x + 1
 end
 return f()
 `)
-	local := stmts[0].(*ast.LocalAssignStmt)
+	local := stmts[1].(*ast.LocalAssignStmt)
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	fTarget := mustBoundLocalAt(t, bindings, local, 0)
 	origin := onlyFunctionOrigin(t, bindings)
@@ -3962,7 +3963,7 @@ methods.stdlib_calls(instance, { "a", "b" })
 func TestRunChunkUsesExactConfiguredRootKey(t *testing.T) {
 	reg := standard.Registry()
 	want := product.Top()
-	stmts := parseChunk(t, "return 1")
+	stmts := parseChunk(t, "return x + 1")
 	rootKey := summary.SummaryKey{
 		Ref:   ref.FuncRef{Kind: ref.KindRoot, ID: 42},
 		Entry: summary.EntryKey{Values: 1, Facts: 2, References: 3},
@@ -3971,6 +3972,7 @@ func TestRunChunkUsesExactConfiguredRootKey(t *testing.T) {
 	result, err := RunChunk(stmts, Config{
 		Check: body.Config{
 			Registry:        reg,
+			Globals:         []string{"x"},
 			ExpressionValue: fixedExpressionValue(want),
 		},
 		RootKey: rootKey,

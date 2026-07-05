@@ -35,10 +35,11 @@ import (
 func TestFromResultProjectsReturnSlotsFromExitState(t *testing.T) {
 	reg, axisKey := projectTestRegistry(t)
 	first := projectValue(reg, axisKey, projectMarkA)
-	stmts := projectParseChunk(t, "return 1, nil")
+	stmts := projectParseChunk(t, "return x + 1, nil")
 
 	result := projectCheckChunk(t, stmts, body.Config{
 		Registry: reg,
+		Globals:  []string{"x"},
 		ExpressionValue: func(_ cfg.Point, _ factflow.ExprRef, source factflow.ValueSource, _ state.State) (product.Value, bool) {
 			switch source.TargetIndex {
 			case 0:
@@ -84,11 +85,11 @@ func TestFromResultReadsJoinedExitReturnSlot(t *testing.T) {
 	joined := projectValue(reg, axisKey, projectMarkTop)
 	values := []product.Value{branchA, branchB}
 	byExpr := make(map[factflow.ExprRef]product.Value)
-	stmts := projectParseChunk(t, "if c then return 1 else return 2 end")
+	stmts := projectParseChunk(t, "if c then return x + 1 else return x + 2 end")
 
 	result := projectCheckChunk(t, stmts, body.Config{
 		Registry: reg,
-		Globals:  []string{"c"},
+		Globals:  []string{"c", "x"},
 		ExpressionValue: func(_ cfg.Point, expr factflow.ExprRef, source factflow.ValueSource, _ state.State) (product.Value, bool) {
 			if source.TargetIndex != 0 {
 				return product.Value{}, false
@@ -177,11 +178,12 @@ func TestFromResultDeclaredReturnDoesNotEraseComputedIdentity(t *testing.T) {
 	numberValue = product.Set(reg, numberValue, identity.Key, identity.Singleton(retID))
 	fn := projectParseFunction(t, `
 function f(): number
-	return 1
+	return x + 1
 end`)
 
 	result := projectCheckFunction(t, fn, body.Config{
 		Registry: reg,
+		Globals:  []string{"x"},
 		ExpressionValue: func(_ cfg.Point, _ factflow.ExprRef, source factflow.ValueSource, _ state.State) (product.Value, bool) {
 			if source.TargetIndex != 0 {
 				return product.Value{}, false
@@ -241,11 +243,12 @@ func TestFromResultDeclaredReturnDoesNotWidenComputedVariantOrigin(t *testing.T)
 	bodyValue := typevalue.WithWitness(reg, typevalue.FromType(reg, msg), msg)
 	fn := projectParseFunction(t, `
 function f(): {kind: "msg", value: string} | {kind: "timer", value: number}
-	return 1
+	return x + 1
 end`)
 
 	result := projectCheckFunction(t, fn, body.Config{
 		Registry: reg,
+		Globals:  []string{"x"},
 		ExpressionValue: func(_ cfg.Point, _ factflow.ExprRef, source factflow.ValueSource, _ state.State) (product.Value, bool) {
 			if source.TargetIndex != 0 {
 				return product.Value{}, false
@@ -270,10 +273,11 @@ func TestFromResultIgnoresDeadReturnFacts(t *testing.T) {
 	dead := projectValue(reg, axisKey, projectMarkB)
 	values := []product.Value{live, dead}
 	var seen int
-	stmts := projectParseChunk(t, "do return 1 end\nreturn 2")
+	stmts := projectParseChunk(t, "do return x + 1 end\nreturn x + 2")
 
 	result := projectCheckChunk(t, stmts, body.Config{
 		Registry: reg,
+		Globals:  []string{"x"},
 		ExpressionValue: func(_ cfg.Point, _ factflow.ExprRef, source factflow.ValueSource, _ state.State) (product.Value, bool) {
 			if source.TargetIndex != 0 || seen >= len(values) {
 				return product.Value{}, false

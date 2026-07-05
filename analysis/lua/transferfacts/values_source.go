@@ -95,9 +95,6 @@ func (l *lowerer) returnOperandValueSourceFromWIR(
 		if c.Kind == wir.ConstNil {
 			return factflow.NewNilValueSource(index), true
 		}
-		if !l.wirScalars {
-			return factflow.ValueSource{}, false
-		}
 		shape, ok := factflow.NewValueSourceShape(final, listSpread && final, false, listSpread && final)
 		if !ok {
 			return factflow.ValueSource{}, false
