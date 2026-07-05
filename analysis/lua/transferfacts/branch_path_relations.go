@@ -20,10 +20,7 @@ func (l *lowerer) branchPathRelations(fact semantics.BranchConditionFact) (factf
 	// polarity is known on one outer branch edge. The opposite edge is ambiguous,
 	// so a decomposed check narrows only on the edge that implies it.
 	var relations []factflow.BranchPathRelation
-	for _, implied := range branchcond.ImpliedChecksOnEdge(fact.Condition, l.bindings, true) {
-		relations = append(relations, checkPathRelationsForImplication(implied)...)
-	}
-	for _, implied := range branchcond.ImpliedChecksOnEdge(fact.Condition, l.bindings, false) {
+	for _, implied := range branchcond.ImpliedChecksOnBothEdges(fact.Condition, l.bindings) {
 		relations = append(relations, checkPathRelationsForImplication(implied)...)
 	}
 	if len(relations) == 0 {

@@ -404,6 +404,31 @@ func TestImpliedChecksOnEdgePreservesOuterEdgeAndLeafPolarity(t *testing.T) {
 	}
 }
 
+func TestImpliedChecksOnBothEdgesKeepsTrueThenFalseOrder(t *testing.T) {
+	x := ident("x")
+	expr := &ast.RelationalOpExpr{
+		Operator: "~=",
+		Lhs:      x,
+		Rhs:      &ast.NilExpr{},
+	}
+	bindings := bindReturn(expr)
+
+	got := ImpliedChecksOnBothEdges(expr, bindings)
+
+	if len(got) != 2 {
+		t.Fatalf("ImpliedChecksOnBothEdges returned %d checks, want true and false edge: %#v", len(got), got)
+	}
+	if !got[0].Edge || !got[0].Polarity {
+		t.Fatalf("first implied check = %#v, want true edge with positive polarity", got[0])
+	}
+	if got[1].Edge || got[1].Polarity {
+		t.Fatalf("second implied check = %#v, want false edge with negative polarity", got[1])
+	}
+	if got[0].Check.Kind != CheckNotNil || got[1].Check.Kind != CheckNotNil {
+		t.Fatalf("check kinds = %v/%v, want CheckNotNil on both edges", got[0].Check.Kind, got[1].Check.Kind)
+	}
+}
+
 func TestImpliedRelationalOpsOnEdgePreservesRawRelops(t *testing.T) {
 	i := ident("i")
 	xs := ident("xs")

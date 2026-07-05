@@ -69,12 +69,7 @@ func (l *lowerer) branchLenRefinements(fact semantics.BranchConditionFact) []fac
 		return nil
 	}
 	var out []factflow.BranchLenRefinement
-	for _, implied := range branchcond.ImpliedChecksOnEdge(fact.Condition, l.bindings, true) {
-		if lowered, ok := l.branchLenRefinementForImplication(implied); ok {
-			out = append(out, lowered)
-		}
-	}
-	for _, implied := range branchcond.ImpliedChecksOnEdge(fact.Condition, l.bindings, false) {
+	for _, implied := range branchcond.ImpliedChecksOnBothEdges(fact.Condition, l.bindings) {
 		if lowered, ok := l.branchLenRefinementForImplication(implied); ok {
 			out = append(out, lowered)
 		}
@@ -119,12 +114,7 @@ func (l *lowerer) branchNumFloorRefinements(fact semantics.BranchConditionFact) 
 		return nil
 	}
 	var out []factflow.BranchNumFloorRefinement
-	for _, implied := range branchcond.ImpliedChecksOnEdge(fact.Condition, l.bindings, true) {
-		if lowered, ok := l.branchNumFloorRefinementForImplication(implied); ok {
-			out = append(out, lowered)
-		}
-	}
-	for _, implied := range branchcond.ImpliedChecksOnEdge(fact.Condition, l.bindings, false) {
+	for _, implied := range branchcond.ImpliedChecksOnBothEdges(fact.Condition, l.bindings) {
 		if lowered, ok := l.branchNumFloorRefinementForImplication(implied); ok {
 			out = append(out, lowered)
 		}
@@ -163,10 +153,7 @@ func (l *lowerer) branchRefinements(fact semantics.BranchConditionFact) []factfl
 		return nil
 	}
 	var out []factflow.BranchRefinement
-	for _, implied := range branchcond.ImpliedChecksOnEdge(fact.Condition, l.bindings, true) {
-		out = append(out, l.branchImplicationRefinements(implied)...)
-	}
-	for _, implied := range branchcond.ImpliedChecksOnEdge(fact.Condition, l.bindings, false) {
+	for _, implied := range branchcond.ImpliedChecksOnBothEdges(fact.Condition, l.bindings) {
 		out = append(out, l.branchImplicationRefinements(implied)...)
 	}
 	return orderRootRefinementsBeforeDescendants(out)

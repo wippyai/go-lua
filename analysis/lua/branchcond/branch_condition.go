@@ -176,6 +176,24 @@ func ImpliedChecksOnEdge(expr ast.Expr, bindings *bind.Result, edge bool) []Impl
 	return impliedChecks(expr, bindings, edge, edge)
 }
 
+// ImpliedChecksOnBothEdges returns all leaf checks implied by either branch
+// edge, in true-edge then false-edge order. It is for fact lanes that publish a
+// single collection carrying edge information on each element.
+func ImpliedChecksOnBothEdges(expr ast.Expr, bindings *bind.Result) []ImpliedCheck {
+	trueEdge := ImpliedChecksOnEdge(expr, bindings, true)
+	falseEdge := ImpliedChecksOnEdge(expr, bindings, false)
+	if len(trueEdge) == 0 {
+		return falseEdge
+	}
+	if len(falseEdge) == 0 {
+		return trueEdge
+	}
+	out := make([]ImpliedCheck, 0, len(trueEdge)+len(falseEdge))
+	out = append(out, trueEdge...)
+	out = append(out, falseEdge...)
+	return out
+}
+
 // ImpliedRelationalOpsOnEdge returns relational leaf expressions whose value is
 // known on the requested outer branch edge. Unlike ImpliedChecksOnEdge it does
 // not normalize the comparison; the caller owns interpreting the raw relop.

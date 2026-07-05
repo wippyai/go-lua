@@ -17,10 +17,7 @@ func (l *lowerer) branchPathEvidence(fact semantics.BranchConditionFact) []factf
 		out = append(out, l.branchPathEvidenceForCheck(fact.Check)...)
 		return out
 	}
-	for _, implied := range branchcond.ImpliedChecksOnEdge(fact.Condition, l.bindings, true) {
-		out = append(out, l.branchPathEvidenceForImplication(implied)...)
-	}
-	for _, implied := range branchcond.ImpliedChecksOnEdge(fact.Condition, l.bindings, false) {
+	for _, implied := range branchcond.ImpliedChecksOnBothEdges(fact.Condition, l.bindings) {
 		out = append(out, l.branchPathEvidenceForImplication(implied)...)
 	}
 	return out
