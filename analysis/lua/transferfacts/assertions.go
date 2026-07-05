@@ -235,14 +235,15 @@ func (l *lowerer) wirClaimDstMatchesPath(inst wir.Instruction, target path.Path)
 }
 
 func (l *lowerer) claimInnerSourceFromWIR(inst wir.Instruction, source sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
-	return l.valueSourceFromWIROperand(
-		inst.A,
+	return l.wirClaimInnerValueSource(
+		inst,
 		source.ExprIndex,
 		source.TargetIndex,
 		source.Final,
 		source.Expanded,
 		source.OpenTail,
 		l.callResultValueSourcesByTempFromWIR(),
+		nil,
 	)
 }
 

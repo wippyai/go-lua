@@ -86,8 +86,9 @@ end
 	if sources[1].Kind != factflow.ValueSourceExpression || !sources[1].HasExpr {
 		t.Fatalf("assert return source = %#v, want WIR claim expression source", sources[1])
 	}
-	assertWIRClaimSourceHasNoSemanticPath(t, facts, sources[0])
-	assertWIRClaimSourceHasNoSemanticPath(t, facts, sources[1])
+	xPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "x")
+	assertWIRClaimSourcePath(t, facts, sources[0], xPath)
+	assertWIRClaimSourcePath(t, facts, sources[1], xPath)
 	assertWIRConcreteCastAssertion(t, facts, sources[0], typ.Number, factflow.ValueSourcePath)
 	assertWIRAssertion(t, facts, sources[1], assertion.NonNil(), factflow.ValueSourcePath)
 }
@@ -116,8 +117,9 @@ end
 	if args[1].Kind != factflow.ValueSourceExpression || !args[1].HasExpr {
 		t.Fatalf("assert argument source = %#v, want WIR claim expression source", args[1])
 	}
-	assertWIRClaimSourceHasNoSemanticPath(t, facts, args[0])
-	assertWIRClaimSourceHasNoSemanticPath(t, facts, args[1])
+	xPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "x")
+	assertWIRClaimSourcePath(t, facts, args[0], xPath)
+	assertWIRClaimSourcePath(t, facts, args[1], xPath)
 	assertWIRConcreteCastAssertion(t, facts, args[0], typ.Number, factflow.ValueSourcePath)
 	assertWIRAssertion(t, facts, args[1], assertion.NonNil(), factflow.ValueSourcePath)
 }
@@ -197,20 +199,139 @@ end
 	if len(args) != 1 || args[0].Kind != factflow.ValueSourceExpression || !args[0].HasExpr {
 		t.Fatalf("call argument sources = %#v, want WIR claim expression source", args)
 	}
-	assertWIRClaimSourceHasNoSemanticPath(t, facts, args[0])
+	assertWIRClaimSourcePath(t, facts, args[0], xPath)
 	assertWIRConcreteCastAssertion(t, facts, args[0], typ.Number, factflow.ValueSourcePath)
 	if got := len(facts.ExpressionRefinements()); got != 1 {
 		t.Fatalf("expression refinements = %d, want only the WIR claim source refinement", got)
 	}
 }
 
-func assertWIRClaimSourceHasNoSemanticPath(t *testing.T, facts factflow.Facts, source factflow.ValueSource) {
+func TestLowerCallArgumentWIRClaimSegmentedInnerPathComesFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): ()
+    local sink = function(value: any) end
+    local value = { name = "x" }
+    local other = { name = "y" }
+    sink(value.name as string)
+end
+`)
+	callStmt, ok := fn.Stmts[3].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[3])
+	}
+	callPoint := requireStmtPoints(t, built, callStmt, 1)[0]
+	sinkPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "sink")
+	valuePath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "value").Field("name")
+	otherPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[2].(*ast.LocalAssignStmt), 0), "other").Field("name")
+
+	body := wir.NewBody("synthetic-segmented-claim-inner")
+	claimTemp := wir.Operand{Kind: wir.OperandTemp, Ref: 1}
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpClaim,
+		Point: callPoint,
+		Dst:   claimTemp,
+		A:     wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))},
+		Claim: wir.ClaimCast,
+		Type:  body.InternType(typ.Number),
+	})
+	body.Emit(wir.Instruction{
+		Op:    wir.OpCall,
+		Point: callPoint,
+		Call:  wir.CallInfo{Callee: wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(sinkPath))}},
+		List:  body.AppendOperands([]wir.Operand{claimTemp}),
+	})
+	body.SetPointRange(callPoint, start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	site, ok := facts.CallSite(callPoint)
+	if !ok {
+		t.Fatalf("missing call site at point %d", callPoint)
+	}
+	args := site.ArgumentSources()
+	if len(args) != 1 || args[0].Kind != factflow.ValueSourceExpression || !args[0].HasExpr {
+		t.Fatalf("call argument sources = %#v, want WIR claim expression source", args)
+	}
+	assertWIRClaimSourcePath(t, facts, args[0], otherPath)
+	claim, ok := facts.ExpressionRefinement(args[0].ExprRef)
+	if !ok {
+		t.Fatalf("missing assertion for source ref %d", args[0].ExprRef)
+	}
+	if got := claim.Mode(); got != factflow.ExpressionRefinementRuntimeValidation {
+		t.Fatalf("refinement mode = %v, want %v", got, factflow.ExpressionRefinementRuntimeValidation)
+	}
+	assertConcreteCastRefinementProduct(t, claim.Refinement(), typ.Number)
+	inner := claim.Source()
+	if inner.Kind != factflow.ValueSourceExpression || !inner.HasExpr {
+		t.Fatalf("WIR claim inner source = %#v, want expression-backed WIR path", inner)
+	}
+	gotPath, ok := facts.ExpressionPath(inner.ExprRef)
+	if !ok || !gotPath.Equal(otherPath) || gotPath.Equal(valuePath) {
+		t.Fatalf("WIR claim inner source path = %v/%v, want WIR path %v not semantic path %v", gotPath, ok, otherPath, valuePath)
+	}
+}
+
+func TestLowerCallArgumentWIRClaimRootLocalInnerStaysPathSource(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): ()
+    local sink = function(value: any) end
+    local suites = {}
+    sink(suites as any)
+end
+`)
+	callStmt, ok := fn.Stmts[2].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[2])
+	}
+	callPoint := requireStmtPoints(t, built, callStmt, 1)[0]
+	sinkPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "sink")
+	suitesPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "suites")
+
+	body := wir.NewBody("synthetic-root-local-claim-inner")
+	claimTemp := wir.Operand{Kind: wir.OperandTemp, Ref: 1}
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpClaim,
+		Point: callPoint,
+		Dst:   claimTemp,
+		A:     wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(suitesPath))},
+		Claim: wir.ClaimCast,
+		Type:  body.InternType(typ.Any),
+	})
+	body.Emit(wir.Instruction{
+		Op:    wir.OpCall,
+		Point: callPoint,
+		Call:  wir.CallInfo{Callee: wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(sinkPath))}},
+		List:  body.AppendOperands([]wir.Operand{claimTemp}),
+	})
+	body.SetPointRange(callPoint, start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	site, ok := facts.CallSite(callPoint)
+	if !ok {
+		t.Fatalf("missing call site at point %d", callPoint)
+	}
+	args := site.ArgumentSources()
+	if len(args) != 1 || args[0].Kind != factflow.ValueSourceExpression || !args[0].HasExpr {
+		t.Fatalf("call argument sources = %#v, want WIR claim expression source", args)
+	}
+	assertWIRClaimSourcePath(t, facts, args[0], suitesPath)
+	claim, ok := facts.ExpressionRefinement(args[0].ExprRef)
+	if !ok {
+		t.Fatalf("missing assertion for source ref %d", args[0].ExprRef)
+	}
+	inner := claim.Source()
+	if inner.Kind != factflow.ValueSourcePath || inner.PathKey != suitesPath.Key() || inner.HasExpr {
+		t.Fatalf("WIR claim inner source = %#v, want root local path source %s", inner, suitesPath.Key())
+	}
+}
+
+func assertWIRClaimSourcePath(t *testing.T, facts factflow.Facts, source factflow.ValueSource, want path.Path) {
 	t.Helper()
 	if !source.HasExpr || source.ExprRef == 0 {
 		t.Fatalf("source = %#v, want expression source", source)
 	}
-	if p, ok := facts.ExpressionPath(source.ExprRef); ok {
-		t.Fatalf("WIR claim source ref %d has semantic path %s", source.ExprRef, p.String())
+	got, ok := facts.ExpressionPath(source.ExprRef)
+	if !ok || !got.Equal(want) {
+		t.Fatalf("WIR claim source ref %d path = %v/%v, want %v", source.ExprRef, got, ok, want)
 	}
 }
 

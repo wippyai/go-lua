@@ -342,7 +342,7 @@ func (l *lowerer) wirClaimTempExpressionValueSource(
 	callResults map[uint32]wirCallResultSource,
 	seen map[uint32]bool,
 ) (factflow.ValueSource, bool) {
-	inner, ok := l.valueSourceFromWIROperandSeen(inst.A, exprIndex, targetIndex, final, expanded, openTail, callResults, seen)
+	inner, ok := l.wirClaimInnerValueSource(inst, exprIndex, targetIndex, final, expanded, openTail, callResults, seen)
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
@@ -358,11 +358,45 @@ func (l *lowerer) wirClaimTempExpressionValueSource(
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
+	l.addWIRClaimExpressionPath(exprRef, inst)
 	if !l.recordExpressionRefinementFromWIRClaim(source, inner, inst) {
 		return factflow.ValueSource{}, false
 	}
 	l.addWIRClaimExpressionValue(exprRef, inst)
 	return source, true
+}
+
+func (l *lowerer) wirClaimInnerValueSource(
+	inst wir.Instruction,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+	callResults map[uint32]wirCallResultSource,
+	seen map[uint32]bool,
+) (factflow.ValueSource, bool) {
+	if source, ok := l.valueSourceFromWIRRootPathOperand(inst.A, exprIndex, targetIndex, final, symbol.Local, symbol.Param, symbol.Global, symbol.Upvalue); ok {
+		return source, true
+	}
+	if source, ok := l.valueSourceFromWIROperandSeen(inst.A, exprIndex, targetIndex, final, expanded, openTail, callResults, seen); ok {
+		return source, true
+	}
+	return l.pathExpressionSourceFromWIR("claim-inner", inst.Point, inst.A, exprIndex, targetIndex, final, expanded, openTail, symbol.Local, symbol.Param, symbol.Global, symbol.Upvalue)
+}
+
+func (l *lowerer) addWIRClaimExpressionPath(exprRef factflow.ExprRef, inst wir.Instruction) {
+	if exprRef == 0 || inst.A.Kind != wir.OperandPath || l == nil || l.wir == nil {
+		return
+	}
+	p := l.wir.Path(wir.PathRef(inst.A.Ref))
+	if p.IsEmpty() {
+		return
+	}
+	if l.expressionPaths == nil {
+		l.expressionPaths = make(map[factflow.ExprRef]path.Path)
+	}
+	l.expressionPaths[exprRef] = p
 }
 
 func (l *lowerer) addWIRClaimExpressionValue(exprRef factflow.ExprRef, inst wir.Instruction) {
