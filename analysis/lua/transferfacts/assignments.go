@@ -358,7 +358,7 @@ func recordWithCallableFieldDepth(t typ.Type, depth int) bool {
 }
 
 func (l *lowerer) ordinaryAssignment(point cfg.Point, fact semantics.OrdinaryAssignmentFact) (factflow.RootAssignment, bool) {
-	source := l.valueSource(fact.Source)
+	source := l.assignmentSource(point, fact.Source)
 	if !fact.HasSymbol || fact.Symbol == 0 {
 		if targetSymbol, targetPath, ok := l.globalTableFieldRootTarget(fact); ok {
 			return factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, targetSymbol, targetPath, source), true

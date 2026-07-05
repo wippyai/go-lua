@@ -116,6 +116,44 @@ end
 	}
 }
 
+func TestLowerOrdinaryRootWriteSourcePathComesFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): ()
+    local out = ""
+    local value = "x"
+    local other = "y"
+    out = value
+end
+`)
+	assignStmt := fn.Stmts[3].(*ast.AssignStmt)
+	points := requireStmtPoints(t, built, assignStmt, 1)
+	outPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "out")
+	valuePath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "value")
+	otherPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[2].(*ast.LocalAssignStmt), 0), "other")
+	body := wir.NewBody("synthetic-root-write-source")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpAssign,
+		Point: points[0],
+		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(outPath))},
+		A:     wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))},
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	assign, ok := facts.RootAssignment(points[0])
+	if !ok {
+		t.Fatalf("missing root assignment at point %d", points[0])
+	}
+	source := assign.Source()
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		t.Fatalf("root assignment source = %#v, want expression-backed WIR path", source)
+	}
+	gotPath, ok := facts.ExpressionPath(source.ExprRef)
+	if !ok || !gotPath.Equal(otherPath) || gotPath.Equal(valuePath) {
+		t.Fatalf("root assignment expression path = %v/%v, want WIR path %v not semantic path %v", gotPath, ok, otherPath, valuePath)
+	}
+}
+
 func TestLowerDynamicIndexKeySourcePathComesFromWIR(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(box: any): ()
