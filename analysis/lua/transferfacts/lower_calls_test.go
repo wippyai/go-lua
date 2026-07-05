@@ -458,6 +458,17 @@ end
 	if !ok || !got.Equal(otherPath) || got.Equal(objPath) {
 		t.Fatalf("receiver expression path = %v/%v, want WIR path %v not semantic path %v", got, ok, otherPath, objPath)
 	}
+	receiverPath, ok := site.ReceiverPath()
+	if !ok || !receiverPath.Equal(otherPath) || receiverPath.Equal(objPath) {
+		t.Fatalf("receiver path = %v/%v, want WIR path %v not semantic path %v", receiverPath, ok, otherPath, objPath)
+	}
+	methodPath, ok := site.MethodPath()
+	if !ok || !methodPath.Equal(otherPath.Field("run")) || methodPath.Equal(objPath.Field("run")) {
+		t.Fatalf("method path = %v/%v, want WIR path %v not semantic path %v", methodPath, ok, otherPath.Field("run"), objPath.Field("run"))
+	}
+	if calleePath := site.CalleePath(); !calleePath.Equal(otherPath.Field("run")) || calleePath.Equal(objPath.Field("run")) {
+		t.Fatalf("callee path = %v, want WIR path %v not semantic path %v", calleePath, otherPath.Field("run"), objPath.Field("run"))
+	}
 }
 
 func TestLowerCallSiteDoesNotFallbackWhenWIRCallInstructionMissing(t *testing.T) {

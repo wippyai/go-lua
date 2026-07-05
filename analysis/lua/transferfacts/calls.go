@@ -23,48 +23,70 @@ func (l *lowerer) callSite(fact semantics.CallFact) factflow.CallSite {
 }
 
 func (l *lowerer) callSiteWithArgumentSources(fact semantics.CallFact, argumentSources []factflow.ValueSource) factflow.CallSite {
+	shape := semanticCallSiteShape(fact)
 	receiverSource, hasReceiverSource := l.semanticReceiverSource(fact)
-	return l.callSiteWithArgumentSourcesWithReceiver(fact, argumentSources, receiverSource, hasReceiverSource)
+	return l.callSiteWithArgumentSourcesWithShape(fact, argumentSources, shape, receiverSource, hasReceiverSource)
 }
 
 func (l *lowerer) callSiteWithArgumentSourcesAt(point cfg.Point, fact semantics.CallFact, argumentSources []factflow.ValueSource) factflow.CallSite {
+	shape := semanticCallSiteShape(fact)
+	if wirShape, ok := l.methodCallShapeFromWIR(point); ok {
+		shape = wirShape
+	}
 	receiverSource, hasReceiverSource := l.callReceiverSource(point, fact)
-	return l.callSiteWithArgumentSourcesWithReceiver(fact, argumentSources, receiverSource, hasReceiverSource)
+	return l.callSiteWithArgumentSourcesWithShape(fact, argumentSources, shape, receiverSource, hasReceiverSource)
 }
 
-func (l *lowerer) callSiteWithArgumentSourcesWithReceiver(
+type callSiteShape struct {
+	calleeSymbol       symbol.ID
+	calleePath         path.Path
+	calleeMemberAccess bool
+	receiverPath       path.Path
+	hasReceiverPath    bool
+	methodPath         path.Path
+	hasMethodPath      bool
+	methodName         string
+}
+
+func semanticCallSiteShape(fact semantics.CallFact) callSiteShape {
+	shape := callSiteShape{}
+	if fact.HasCalleeSymbol {
+		shape.calleeSymbol = fact.CalleeSymbol
+	}
+	if fact.HasCalleePath {
+		shape.calleePath = fact.CalleePath
+	}
+	shape.calleeMemberAccess = fact.CalleeMemberAccess
+	if fact.HasReceiverPath {
+		shape.receiverPath = fact.ReceiverPath
+		shape.hasReceiverPath = true
+	}
+	if fact.HasMethodPath {
+		shape.methodPath = fact.MethodPath
+		shape.hasMethodPath = true
+	}
+	shape.methodName = fact.Method
+	return shape
+}
+
+func (l *lowerer) callSiteWithArgumentSourcesWithShape(
 	fact semantics.CallFact,
 	argumentSources []factflow.ValueSource,
+	shape callSiteShape,
 	receiverSource factflow.ValueSource,
 	hasReceiverSource bool,
 ) factflow.CallSite {
 	exprRef, hasExpr := l.exprRef(fact.Call)
-	calleeSymbol := symbol.ID(0)
-	if fact.HasCalleeSymbol {
-		calleeSymbol = fact.CalleeSymbol
-	}
-	calleePath := path.Path{}
-	if fact.HasCalleePath {
-		calleePath = fact.CalleePath
-	}
-	receiverPath := path.Path{}
-	if fact.HasReceiverPath {
-		receiverPath = fact.ReceiverPath
-	}
-	methodPath := path.Path{}
-	if fact.HasMethodPath {
-		methodPath = fact.MethodPath
-	}
 	return factflow.NewCallSite(factflow.CallSiteConfig{
 		Context:            callSiteContext(fact.Context),
-		CalleeSymbol:       calleeSymbol,
-		CalleePath:         calleePath,
-		CalleeMemberAccess: fact.CalleeMemberAccess,
-		ReceiverPath:       receiverPath,
-		HasReceiverPath:    fact.HasReceiverPath,
-		MethodPath:         methodPath,
-		HasMethodPath:      fact.HasMethodPath,
-		MethodName:         fact.Method,
+		CalleeSymbol:       shape.calleeSymbol,
+		CalleePath:         shape.calleePath,
+		CalleeMemberAccess: shape.calleeMemberAccess,
+		ReceiverPath:       shape.receiverPath,
+		HasReceiverPath:    shape.hasReceiverPath,
+		MethodPath:         shape.methodPath,
+		HasMethodPath:      shape.hasMethodPath,
+		MethodName:         shape.methodName,
 		ReceiverSource:     receiverSource,
 		HasReceiverSource:  hasReceiverSource,
 		ExprRef:            exprRef,
@@ -83,6 +105,31 @@ func (l *lowerer) callSiteWithArgumentSourcesWithReceiver(
 		Adjusted:           fact.Adjusted,
 		OpenTail:           fact.OpenTail,
 	})
+}
+
+func (l *lowerer) methodCallShapeFromWIR(point cfg.Point) (callSiteShape, bool) {
+	inst, ok := l.wirCallInstruction(point)
+	if !ok || inst.Call.Method == 0 || inst.Call.Receiver.Kind != wir.OperandPath {
+		return callSiteShape{}, false
+	}
+	receiverPath := l.wir.Path(wir.PathRef(inst.Call.Receiver.Ref))
+	if receiverPath.Symbol == 0 {
+		return callSiteShape{}, false
+	}
+	method := l.wir.Const(inst.Call.Method)
+	if method.Kind != wir.ConstString || method.Str == "" {
+		return callSiteShape{}, false
+	}
+	methodPath := receiverPath.Field(method.Str)
+	return callSiteShape{
+		calleePath:         methodPath,
+		calleeMemberAccess: true,
+		receiverPath:       receiverPath,
+		hasReceiverPath:    true,
+		methodPath:         methodPath,
+		hasMethodPath:      true,
+		methodName:         method.Str,
+	}, true
 }
 
 func (l *lowerer) semanticReceiverSource(fact semantics.CallFact) (factflow.ValueSource, bool) {
