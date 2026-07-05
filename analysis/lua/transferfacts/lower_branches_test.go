@@ -640,6 +640,93 @@ end
 	}
 }
 
+func TestLowerProtectedCallPayloadTypeComesFromWIRCallbackPath(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local function run_tests(): string
+	return "wrong"
+end
+
+local function other_tests(): number
+	return 1
+end
+
+local ok, result = pcall(run_tests)
+if not ok then
+	return
+end
+`, "pcall")
+
+	runStmt := mustLocalStmt(t, stmts, 0)
+	otherStmt := mustLocalStmt(t, stmts, 1)
+	assign := mustLocalStmt(t, stmts, 2)
+	points := requireStmtPoints(t, built, assign, 3)
+	callPoint, okAssignPoint, payloadAssignPoint := points[0], points[1], points[2]
+	okPath := path.NewPath(mustLocalAt(t, bindings, assign, 0), "ok")
+	payloadPath := path.NewPath(mustLocalAt(t, bindings, assign, 1), "result")
+	runPath := path.NewPath(mustLocalAt(t, bindings, runStmt, 0), "run_tests")
+	otherPath := path.NewPath(mustLocalAt(t, bindings, otherStmt, 0), "other_tests")
+	pcallSym, ok := bindings.GlobalSymbol("pcall")
+	if !ok {
+		t.Fatal("missing pcall global symbol")
+	}
+	pcallPath := path.NewPath(pcallSym, "pcall")
+	ifStmt := mustIfStmt(t, stmts, 3)
+	branchPoint := requireStmtPoints(t, built, ifStmt, 1)[0]
+
+	body := wir.NewBody("pcall-callback-owner")
+	okTemp := wir.Operand{Kind: wir.OperandTemp, Ref: 1}
+	payloadTemp := wir.Operand{Kind: wir.OperandTemp, Ref: 2}
+	callStart := body.Emit(wir.Instruction{
+		Op:      wir.OpCall,
+		Point:   callPoint,
+		Call:    wir.CallInfo{Callee: wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(pcallPath))}},
+		List:    body.AppendOperands([]wir.Operand{{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))}}),
+		Results: body.AppendOperands([]wir.Operand{okTemp, payloadTemp}),
+	})
+	body.SetPointRange(callPoint, callStart, callStart+1)
+	body.SetCallResultTarget(callPoint, 0, okPath)
+	body.SetCallResultTarget(callPoint, 1, payloadPath)
+	okAssignStart := body.Emit(wir.Instruction{
+		Op:    wir.OpAssign,
+		Point: okAssignPoint,
+		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(okPath))},
+		A:     okTemp,
+	})
+	body.SetPointRange(okAssignPoint, okAssignStart, okAssignStart+1)
+	payloadAssignStart := body.Emit(wir.Instruction{
+		Op:    wir.OpAssign,
+		Point: payloadAssignPoint,
+		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(payloadPath))},
+		A:     payloadTemp,
+	})
+	body.SetPointRange(payloadAssignPoint, payloadAssignStart, payloadAssignStart+1)
+	branchStart := body.Emit(wir.Instruction{
+		Op:    wir.OpBranch,
+		Point: branchPoint,
+		Check: body.InternCheck(wir.Check{Kind: wir.CheckFalsy, Path: okPath}),
+	})
+	body.SetPointRange(branchPoint, branchStart, branchStart+1)
+
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	refinement, ok := branchRefinementAt(facts.BranchRefinements(branchPoint), payloadPath)
+	if !ok {
+		t.Fatalf("missing pcall payload refinement at point %d; got %#v", branchPoint, facts.BranchRefinements(branchPoint))
+	}
+	value, ok := refinement.FalseValue()
+	if !ok {
+		t.Fatalf("missing false-edge pcall payload refinement: %#v", refinement)
+	}
+	constraint, ok := value.Constraint()
+	if !ok {
+		t.Fatalf("pcall payload refinement has no constraint: %#v", value)
+	}
+	got, ok := typevalue.TypeOf(reg, constraint)
+	if !ok || !typ.TypeEquals(got, typ.Number) || typ.TypeEquals(got, typ.String) {
+		t.Fatalf("pcall payload refinement type = %v/%v, want WIR callback %v not semantic callback %v; value=%#v", got, ok, otherPath, runPath, constraint)
+	}
+}
+
 func TestLowerProtectedCallSuccessGuardInWIRModeDoesNotFallbackToSidecar(t *testing.T) {
 	reg := standard.Registry()
 	stmts, bindings, built, result := parseSemanticChunk(t, `

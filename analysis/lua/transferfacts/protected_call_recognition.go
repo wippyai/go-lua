@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -21,7 +22,7 @@ func (l *lowerer) addProtectedCallBranchRefinements(input *factflow.FactsInput, 
 			continue
 		}
 		fact, _ := view.Borrowed()
-		payloadType, ok := l.protectedCallPayloadType(fact)
+		payloadType, ok := l.protectedCallPayloadTypeAt(callPoint, fact)
 		if !ok {
 			continue
 		}
@@ -57,6 +58,36 @@ func (l *lowerer) addProtectedCallBranchRefinements(input *factflow.FactsInput, 
 			}
 		}
 	}
+}
+
+func (l *lowerer) protectedCallPayloadTypeAt(point cfg.Point, fact semantics.CallFact) (typ.Type, bool) {
+	if t, ok := l.protectedCallPayloadTypeFromWIR(point, fact); ok {
+		return t, true
+	}
+	return l.protectedCallPayloadType(fact)
+}
+
+func (l *lowerer) protectedCallPayloadTypeFromWIR(point cfg.Point, fact semantics.CallFact) (typ.Type, bool) {
+	if l == nil || l.wir == nil || !fact.IsProtectedCall(l.bindings) {
+		return nil, false
+	}
+	inst, ok := l.wirCallInstruction(point)
+	if !ok {
+		return nil, false
+	}
+	args := l.wir.Operands(inst.List)
+	if len(args) == 0 || args[0].Kind != wir.OperandPath {
+		return nil, false
+	}
+	callbackPath := l.wir.Path(wir.PathRef(args[0].Ref))
+	if callbackPath.IsEmpty() {
+		return nil, false
+	}
+	callbackType, ok := l.aliasPathType(callbackPath)
+	if !ok {
+		return nil, false
+	}
+	return typecall.CallableReturn(callbackType)
 }
 
 func (l *lowerer) protectedCallPayloadType(fact semantics.CallFact) (typ.Type, bool) {
