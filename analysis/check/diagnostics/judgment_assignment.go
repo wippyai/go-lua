@@ -62,7 +62,7 @@ func renderAssignmentJudgmentWithPolicy(item judgment.Judgment, policy judgment.
 		extraEvidence = append([]diagnostic.Evidence{underSuppliedEvidence}, extraEvidence...)
 	}
 	sourceEvidence := assignmentSourceTypeEvidence(evidenceSourceName, got)
-	if indexedReadMissingProofMismatchForSource(evidenceSourceName, extraEvidence) && typ.Nil.Equals(got) && evidenceSourceName != "" && evidenceSourceName != unknownSourceName {
+	if indexedReadMissingProofMismatch(extraEvidence) && typ.Nil.Equals(got) && evidenceSourceName != "" && evidenceSourceName != unknownSourceName {
 		sourceEvidence = evidenceSourceName + " can be nil here"
 	}
 	if hasMissingField {
@@ -381,7 +381,7 @@ func assignmentJudgmentExtraEvidence(item judgment.Judgment, proof judgment.Assi
 	if sourceName != "" && sourceName != unknownSourceName &&
 		typ.Nil.Equals(got) &&
 		proof.MayBeNil &&
-		!assignmentSourceEndsWithIndex(sourceName) {
+		!proof.IndexedRead {
 		out = append(out, assignmentJudgmentNilableAccessEvidence(item)...)
 		out = append(out, assignmentJudgmentSourceContributionEvidence(item)...)
 		out = append(out, assignmentJudgmentCallInvalidationEvidence(item)...)
@@ -398,14 +398,9 @@ func assignmentJudgmentExtraEvidence(item judgment.Judgment, proof judgment.Assi
 	}
 	if sourceName != "" && sourceName != unknownSourceName && proof.MayBeNil {
 		out = append(out, assignmentJudgmentSourceContributionEvidence(item)...)
-		if !proof.IndexedRead {
-			out = append(out, assignmentJudgmentNilableAccessEvidence(item)...)
-		}
+		out = append(out, assignmentJudgmentNilableAccessEvidence(item)...)
 		out = append(out, assignmentJudgmentCallInvalidationEvidence(item)...)
 		if proof.IndexedRead {
-			return appendMissingNilGuardEvidence(out, sourceName, sourceSpan, true)
-		}
-		if assignmentSourceLooksIndexed(sourceName) {
 			return appendMissingNilGuardEvidence(out, sourceName, sourceSpan, true)
 		}
 		return appendMissingNilGuardEvidence(out, sourceName, sourceSpan, false)
@@ -475,13 +470,6 @@ func assignmentHelpForEvidence(sourceName string, got typ.Type, evidence []diagn
 	return assignmentHelp(sourceName, got)
 }
 
-func indexedReadMissingProofMismatchForSource(sourceName string, evidence []diagnostic.Evidence) bool {
-	if !assignmentSourceLooksIndexed(sourceName) && !assignmentSourceEndsWithIndex(sourceName) {
-		return false
-	}
-	return indexedReadMissingProofMismatch(evidence)
-}
-
 func indexedReadMissingProofMismatch(evidence []diagnostic.Evidence) bool {
 	return indexedReadHasMissingProof(evidence)
 }
@@ -501,7 +489,7 @@ func sameRenderedTypeNeedsValidationProof(got, want typ.Type, evidence []diagnos
 }
 
 func appendMissingNilGuardEvidence(items []diagnostic.Evidence, sourceName string, sourceSpan diagnostic.Span, sourceIndexed ...bool) []diagnostic.Evidence {
-	indexed := assignmentSourceLooksIndexed(sourceName, sourceIndexed...)
+	indexed := len(sourceIndexed) > 0 && sourceIndexed[0]
 	if sourceName == "" ||
 		sourceName == unknownSourceName ||
 		evidenceHasKind(items, diagnostic.EvidenceMissingProof) {
@@ -520,22 +508,6 @@ func appendMissingNilGuardEvidence(items []diagnostic.Evidence, sourceName strin
 		Span:    sourceSpan,
 		Message: message,
 	})
-}
-
-func assignmentSourceLooksIndexed(sourceName string, sourceIndexed ...bool) bool {
-	if len(sourceIndexed) > 0 && sourceIndexed[0] {
-		return true
-	}
-	return strings.Contains(sourceName, "[") && strings.Contains(sourceName, "]")
-}
-
-func assignmentSourceEndsWithIndex(sourceName string) bool {
-	if sourceName == "" {
-		return false
-	}
-	close := strings.LastIndex(sourceName, "]")
-	open := strings.LastIndex(sourceName, "[")
-	return close == len(sourceName)-1 && open >= 0 && open < close
 }
 
 func assignmentJudgmentMissingProofMessage(item judgment.Judgment, proof judgment.AssignmentProofSummary, sourceName string, got typ.Type, want typ.Type) string {

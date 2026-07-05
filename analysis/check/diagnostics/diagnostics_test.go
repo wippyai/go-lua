@@ -588,6 +588,8 @@ local source: string = maybe.tags["source"]
 	wantEvidence := []string{
 		`maybe.tags["source"] can be string or nil here`,
 		"source is declared as string",
+		`maybe may be nil before reading .tags`,
+		`maybe.tags may be nil before indexing ["source"]`,
 		`maybe.tags["source"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here`,
 	}
 	if len(evidence) != len(wantEvidence) {
@@ -650,7 +652,9 @@ local source: string = maybe.tags["source"]
 because:
   1. proven: maybe.tags["source"] can be string or nil here
   2. claimed: source is declared as string
-  3. missing proof: maybe.tags["source"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here
+  3. proven: maybe may be nil before reading .tags
+  4. proven: maybe.tags may be nil before indexing ["source"]
+  5. missing proof: maybe.tags["source"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here
 
 help: Guard ` + "`maybe.tags[\"source\"]`" + ` with a nil check, provide a default value, or change the target type to accept nil.`
 	if rendered != want {

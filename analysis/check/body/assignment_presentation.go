@@ -97,6 +97,38 @@ func AssignmentSourceIndexedRead(expr ast.Expr) bool {
 	return ok && attr.KeySyntax == ast.AttrKeyIndex
 }
 
+// AssignmentSourceIndexedReadAt reports whether an assignment source needs an
+// indexed-read validation proof at point. Direct bracket sources count unless
+// the exact slot is already proven present; bracket parents count only when the
+// solved member-read facts show that parent can miss.
+func (r *Result) AssignmentSourceIndexedReadAt(point cfg.Point, expr ast.Expr) bool {
+	if r == nil || expr == nil {
+		return false
+	}
+	if r.assignmentIndexedAccessCanMiss(point, expr, true) {
+		return true
+	}
+	for _, evidence := range r.AssignmentNilableAccessEvidence(point, expr) {
+		if strings.HasPrefix(evidence.Access, "[") {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Result) assignmentIndexedAccessCanMiss(point cfg.Point, expr ast.Expr, sourceRoot bool) bool {
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok || attr == nil {
+		return false
+	}
+	if attr.KeySyntax == ast.AttrKeyIndex &&
+		!r.ExpressionReadProvenPresentBeforeBoundary(point, attr) &&
+		(sourceRoot || r.MemberReadCanMiss(point, attr)) {
+		return true
+	}
+	return r.assignmentIndexedAccessCanMiss(point, attr.Object, false)
+}
+
 func assignmentPathKey(p pathdom.Path, ok bool) string {
 	if !ok || p.IsEmpty() {
 		return ""

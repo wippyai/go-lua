@@ -1166,6 +1166,37 @@ local source: string = maybe.tags["source"]
 	}
 }
 
+func TestForEachAssignmentMarksMemberReadThroughIndexedParent(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Tool = { id: string }
+type Spec = { tools: {Tool} }
+local spec: Spec = { tools = {} }
+local first_tool_id: string = spec.tools[1].id
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	result := checked.RootResult()
+	if result == nil {
+		t.Fatal("RootResult nil")
+	}
+	var got []Assignment
+	New(result).ForEachAssignment(func(assignment Assignment) bool {
+		if assignment.TargetLabel == "first_tool_id" {
+			got = append(got, assignment)
+		}
+		return true
+	})
+	if len(got) != 1 {
+		t.Fatalf("first_tool_id assignments = %#v, want one", got)
+	}
+	if !got[0].SourceIndexedRead {
+		t.Fatalf("SourceIndexedRead = false for %q; member reads through indexed parents must carry indexed-read proof reason", got[0].SourceLabel)
+	}
+}
+
 func TestForEachAssignmentProjectsInvalidatedVariantMemberReadAsNilable(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `

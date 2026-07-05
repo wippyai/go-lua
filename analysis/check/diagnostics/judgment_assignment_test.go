@@ -252,6 +252,30 @@ func TestRenderAssignmentJudgmentNilGuardIsDrivenByEvidence(t *testing.T) {
 	}
 }
 
+func TestRenderAssignmentJudgmentDoesNotInferIndexedReadFromLabel(t *testing.T) {
+	item := assignmentJudgmentFixture(typ.String, typ.String, judgment.VerdictUnknown)
+	item.Actual = item.Actual.WithLabel("cache[key]")
+	item.Evidence[2].Detail = judgment.MayBeNilEvidenceDetail()
+
+	d, ok := renderAssignmentJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
+	if !ok {
+		t.Fatal("renderAssignmentJudgmentWithPolicy returned false")
+	}
+	var missingProof diagnostic.Evidence
+	for _, evidence := range d.Explanation.Evidence() {
+		if evidence.Kind == diagnostic.EvidenceMissingProof {
+			missingProof = evidence
+			break
+		}
+	}
+	if missingProof.Reason == diagnostic.EvidenceReasonIndexReadValidationMissing {
+		t.Fatalf("missing proof reason = %s; indexed-read reason must come from judgment evidence, not label spelling", missingProof.Reason)
+	}
+	if !strings.Contains(missingProof.Message, "no guard on this path proves cache[key] is non-nil") {
+		t.Fatalf("missing proof evidence = %#v, want non-nil guard evidence", missingProof)
+	}
+}
+
 func TestRenderAssignmentJudgmentRefutedOptionalSourceIncludesMissingGuard(t *testing.T) {
 	item := assignmentJudgmentFixture(typ.MaterializeOptional(typ.Number), typ.Number, judgment.VerdictRefuted)
 	item.Actual = item.Actual.WithLabel("h")
