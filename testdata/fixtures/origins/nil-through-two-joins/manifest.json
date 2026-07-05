@@ -1,0 +1,116 @@
+{
+  "description": "A nil-born local passes through two successive if-joins, neither exhaustive, before a method-call use. The witness trace lists both join survivals in origin order: born nil -> survives join #1 -> survives join #2 -> reaches use.",
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 17,
+        "column": 12,
+        "severity": "error",
+        "code": "type.nil.unsafe_use",
+        "message_contains": [
+          "x",
+          "may be nil"
+        ],
+        "min_evidence": 4,
+        "evidence_contains": [
+          "x born nil at main.lua:10",
+          "x survives the if/else join at main.lua:13",
+          "x survives the if/else join at main.lua:16",
+          "x declared with optional type string?"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 10,
+            "column": 11,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "x born nil at main.lua:10",
+              "else branch had no assignment"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 13,
+            "column": 5,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "x survives the if/else join at main.lua:13"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 16,
+            "column": 5,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "x survives the if/else join at main.lua:16"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 10,
+            "column": 14,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "x declared with optional type string?"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.nil.unsafe_use]:",
+          "x:upper()",
+          "because:",
+          "born nil",
+          "survives the if/else join",
+          "reaches use"
+        ],
+        "render_ordered_contains": [
+          "error[type.nil.unsafe_use]: x may be nil at method call",
+          "--> main.lua:17:12",
+          "return x:upper()",
+          "because:",
+          "1. proven: x born nil at main.lua:10 (else branch had no assignment)",
+          "2. proven: x survives the if/else join at main.lua:13 (no else assignment)",
+          "3. proven: x survives the if/else join at main.lua:16 (no else assignment)",
+          "4. proven: x reaches use at main.lua:17 (method call on possibly-nil value)",
+          "help: Guard x against nil before the method call, or assign it on every branch."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:",
+          "internal",
+          "summary",
+          "want "
+        ],
+        "help_contains": [
+          "Guard x against nil before the method call",
+          "assign it on every branch"
+        ],
+        "min_labels": 1,
+        "label_contains": [
+          "possibly-nil value"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 17,
+            "column": 12,
+            "contains": [
+              "possibly-nil value"
+            ]
+          }
+        ]
+      }
+    ],
+    "skip": "pending: origin-chain witness traces (task 13897ee5) not yet rendered"
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}
