@@ -194,6 +194,9 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			if lowered := l.channelSelectsFromWIR(point); len(lowered) != 0 {
 				input.ChannelSelects[point] = factflow.NewChannelSelectSet(lowered...)
 			}
+			if lowered := l.typeIsCallResultValuesFromWIR(point); len(lowered) != 0 {
+				appendCallResultValues(input.CallResultValues, point, lowered...)
+			}
 		}
 		if view, ok := result.CallView(point); ok {
 			fact, _ := view.Borrowed()
@@ -227,8 +230,10 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			if lowered, ok := l.typeCastCallResultValue(point, fact); ok {
 				appendCallResultValues(input.CallResultValues, point, lowered)
 			}
-			if lowered := l.typeIsCallResultValues(point, fact); len(lowered) != 0 {
-				appendCallResultValues(input.CallResultValues, point, lowered...)
+			if l.wir == nil {
+				if lowered := l.typeIsCallResultValues(point, fact); len(lowered) != 0 {
+					appendCallResultValues(input.CallResultValues, point, lowered...)
+				}
 			}
 		}
 		if fact, ok := result.BranchCondition(point); ok {

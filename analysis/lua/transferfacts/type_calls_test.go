@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -532,6 +533,58 @@ return Point:is(data)
 	assertReturnPresenceRelation(t, relations, 1, presence.Absent(), 0, presence.Present())
 }
 
+func TestLowerWithWIRTypeIsCallResultValuesWithoutSemanticCallView(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+type Point = {x: number, y: number}
+local data: any = {}
+local value = nil
+`)
+	assign := mustLocalStmt(t, stmts, 2)
+	callPoint := requireStmtPoints(t, built, assign, 1)[0]
+	if _, ok := result.CallView(callPoint); ok {
+		t.Fatalf("fixture unexpectedly has semantic call view at point %d", callPoint)
+	}
+	typeDecl, ok := bindings.TypeDef(stmts[0].(*ast.TypeDefStmt))
+	if !ok {
+		t.Fatal("missing Point type declaration")
+	}
+	pointType, ok := typeresolve.New(bindings).Decl(typeDecl)
+	if !ok {
+		t.Fatal("failed to resolve Point type")
+	}
+	dataPath := path.NewPath(mustLocalAt(t, bindings, stmts[1].(*ast.LocalAssignStmt), 0), "data")
+	body := wir.NewBody("synthetic-type-is-call")
+	start := body.Emit(wir.Instruction{
+		Op:      wir.OpCall,
+		Point:   callPoint,
+		Type:    body.InternType(pointType),
+		Call:    wir.CallInfo{Receiver: wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(path.NewPath(0, "Point")))}, Method: body.InternConst(wir.Const{Kind: wir.ConstString, Str: "is"})},
+		List:    body.AppendOperands([]wir.Operand{{Kind: wir.OperandPath, Ref: uint32(body.InternPath(dataPath))}}),
+		Results: body.AppendOperands([]wir.Operand{{Kind: wir.OperandTemp, Ref: 1}, {Kind: wir.OperandTemp, Ref: 2}}),
+	})
+	body.SetPointRange(callPoint, start, start+1)
+
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+
+	values := facts.CallResultValues(callPoint)
+	if len(values) != 2 {
+		t.Fatalf("WIR Type:is call result values = %d, want 2: %#v", len(values), values)
+	}
+	first, ok := callResultValueAt(values, 0)
+	if !ok {
+		t.Fatalf("missing WIR Type:is value result: %#v", values)
+	}
+	witness := product.Get(reg, first.Value(), typewitness.Key)
+	got, ok := witness.Type()
+	if !ok || !typ.TypeEquals(got, pointType) {
+		t.Fatalf("WIR Type:is value result witness = %v/%v, want %v", got, ok, pointType)
+	}
+	if _, ok := callResultValueAt(values, 1); !ok {
+		t.Fatalf("missing WIR Type:is error result: %#v", values)
+	}
+}
+
 func TestLowerExplicitErrorReturnsPublishPresenceRelation(t *testing.T) {
 	reg := standard.Registry()
 	_, bindings, built, result := parseSemanticFunction(t, `
@@ -692,4 +745,13 @@ func allReturnPresenceRelations(graph cfg.Graph, facts factflow.Facts) []factflo
 		out = append(out, facts.ReturnPresenceRelations(point)...)
 	}
 	return out
+}
+
+func callResultValueAt(values []factflow.CallResultValue, index int) (factflow.CallResultValue, bool) {
+	for _, value := range values {
+		if value.Index() == index {
+			return value, true
+		}
+	}
+	return factflow.CallResultValue{}, false
 }

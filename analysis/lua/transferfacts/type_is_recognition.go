@@ -389,6 +389,18 @@ func (l *lowerer) typeIsCallResultValues(point cfg.Point, fact semantics.CallFac
 	if !ok {
 		return nil
 	}
+	return l.typeIsCallResultValuesForType(t)
+}
+
+func (l *lowerer) typeIsCallResultValuesFromWIR(point cfg.Point) []factflow.CallResultValue {
+	t, _, ok := l.typeIsCallSiteFromWIR(point)
+	if !ok {
+		return nil
+	}
+	return l.typeIsCallResultValuesForType(t)
+}
+
+func (l *lowerer) typeIsCallResultValuesForType(t typ.Type) []factflow.CallResultValue {
 	value := product.WithPresence(l.registry, l.typeIsProofValue(t), presence.Maybe())
 	return []factflow.CallResultValue{
 		factflow.NewCallResultValue(0, value),
