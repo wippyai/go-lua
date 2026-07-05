@@ -554,6 +554,55 @@ end
 	}
 }
 
+func TestLowerMethodCallReceiverSourceDoesNotRequireSemanticReceiverSource(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): ()
+    local obj = { run = function(self) end }
+    local other = { run = function(self) end }
+    obj:run()
+end
+`)
+	stmt, ok := fn.Stmts[2].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[2])
+	}
+	points := requireStmtPoints(t, built, stmt, 1)
+	fact, ok := result.Call(points[0])
+	if !ok {
+		t.Fatalf("missing semantic call fact at point %d", points[0])
+	}
+	fact.HasReceiverSource = false
+	fact.ReceiverSource = sourceprovenance.ASTSource{}
+
+	otherPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "other")
+	body := wir.NewBody("synthetic-method-receiver-no-sidecar")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpCall,
+		Point: points[0],
+		Call: wir.CallInfo{
+			Method:   body.InternConst(wir.Const{Kind: wir.ConstString, Str: "run"}),
+			Receiver: wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))},
+		},
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	l := lowerer{
+		bindings:        bindings,
+		wir:             body,
+		exprs:           make(map[any]factflow.ExprRef),
+		expressionPaths: make(map[factflow.ExprRef]path.Path),
+	}
+	site := l.callSiteWithArgumentSourcesAt(points[0], fact, nil)
+	receiverSource, ok := site.ReceiverSource()
+	if !ok || receiverSource.Kind != factflow.ValueSourceExpression || !receiverSource.HasExpr {
+		t.Fatalf("receiver source = %#v/%v, want WIR expression source without semantic receiver source", receiverSource, ok)
+	}
+	got, ok := l.expressionPaths[receiverSource.ExprRef]
+	if !ok || !got.Equal(otherPath) {
+		t.Fatalf("receiver expression path = %v/%v, want WIR path %v", got, ok, otherPath)
+	}
+}
+
 func TestLowerCallSiteDoesNotFallbackWhenWIRCallInstructionMissing(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(value: string): ()

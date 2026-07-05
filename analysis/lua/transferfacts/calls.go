@@ -50,6 +50,14 @@ type callSiteShape struct {
 	methodName         string
 }
 
+type valueSourceShape struct {
+	exprIndex   int
+	targetIndex int
+	final       bool
+	expanded    bool
+	openTail    bool
+}
+
 func semanticCallSiteShape(fact semantics.CallFact) callSiteShape {
 	shape := callSiteShape{}
 	if fact.HasCalleeSymbol {
@@ -158,17 +166,21 @@ func (l *lowerer) semanticReceiverSource(fact semantics.CallFact) (factflow.Valu
 }
 
 func (l *lowerer) callReceiverSource(point cfg.Point, fact semantics.CallFact) (factflow.ValueSource, bool) {
+	if source, ok := l.callReceiverSourceFromWIR(point, valueSourceShape{
+		exprIndex:   0,
+		targetIndex: 0,
+		final:       true,
+	}); ok {
+		return source, true
+	}
 	fallback, hasFallback := l.semanticReceiverSource(fact)
 	if !hasFallback {
 		return factflow.ValueSource{}, false
 	}
-	if source, ok := l.callReceiverSourceFromWIR(point, fact.ReceiverSource); ok {
-		return source, true
-	}
 	return fallback, true
 }
 
-func (l *lowerer) callReceiverSourceFromWIR(point cfg.Point, fallback sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
+func (l *lowerer) callReceiverSourceFromWIR(point cfg.Point, shape valueSourceShape) (factflow.ValueSource, bool) {
 	inst, ok := l.wirCallInstruction(point)
 	if !ok || inst.Call.Method == 0 || inst.Call.Receiver.Kind == wir.OperandNone {
 		return factflow.ValueSource{}, false
@@ -177,21 +189,21 @@ func (l *lowerer) callReceiverSourceFromWIR(point cfg.Point, fallback sourceprov
 		"call-receiver",
 		point,
 		inst.Call.Receiver,
-		fallback.ExprIndex,
-		fallback.TargetIndex,
-		fallback.Final,
-		fallback.Expanded,
-		fallback.OpenTail,
+		shape.exprIndex,
+		shape.targetIndex,
+		shape.final,
+		shape.expanded,
+		shape.openTail,
 	); ok {
 		return source, true
 	}
 	return l.valueSourceFromWIROperand(
 		inst.Call.Receiver,
-		fallback.ExprIndex,
-		fallback.TargetIndex,
-		fallback.Final,
-		fallback.Expanded,
-		fallback.OpenTail,
+		shape.exprIndex,
+		shape.targetIndex,
+		shape.final,
+		shape.expanded,
+		shape.openTail,
 		l.callResultValueSourcesByTempFromWIR(),
 	)
 }
