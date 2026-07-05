@@ -531,6 +531,55 @@ func TestImpliedRelationalOpsOnEdgePreservesRawRelops(t *testing.T) {
 	}
 }
 
+func TestBranchDiffConstraintsOnBothEdgesNormalizesLinearTerms(t *testing.T) {
+	i := ident("i")
+	xs := ident("xs")
+	expr := &ast.RelationalOpExpr{
+		Operator: "<=",
+		Lhs:      &ast.ArithmeticOpExpr{Operator: "+", Lhs: i, Rhs: number("1")},
+		Rhs:      lenOf(xs),
+	}
+	bindings := bindReturn(expr)
+	iPath := path.NewPath(mustIdentSymbol(t, bindings, i), "i")
+	xsPath := path.NewPath(mustIdentSymbol(t, bindings, xs), "xs")
+
+	got := BranchDiffConstraintsOnBothEdges(expr, bindings)
+
+	if len(got) != 2 {
+		t.Fatalf("diff constraints = %d, want true-edge relation and false-edge negation: %#v", len(got), got)
+	}
+	if got[0].CoHi != 1 || !got[0].HiPath.Equal(iPath) || got[0].HiIsLen || !got[0].LoPath.Equal(xsPath) || !got[0].LoIsLen || got[0].C != -1 || !got[0].Edge {
+		t.Fatalf("diff constraint = %#v, want i - #xs <= -1 on true edge", got[0])
+	}
+	if got[1].CoHi != 1 || !got[1].HiPath.Equal(xsPath) || !got[1].HiIsLen || !got[1].LoPath.Equal(iPath) || got[1].LoIsLen || got[1].C != 0 || got[1].Edge {
+		t.Fatalf("false-edge diff constraint = %#v, want #xs - i <= 0 on false edge", got[1])
+	}
+}
+
+func TestBranchDiffConstraintsOnBothEdgesNormalizesBoundedSum(t *testing.T) {
+	i := ident("i")
+	j := ident("j")
+	limit := ident("limit")
+	expr := &ast.RelationalOpExpr{
+		Operator: "<",
+		Lhs:      &ast.ArithmeticOpExpr{Operator: "+", Lhs: i, Rhs: j},
+		Rhs:      limit,
+	}
+	bindings := bindReturn(expr)
+	iPath := path.NewPath(mustIdentSymbol(t, bindings, i), "i")
+	jPath := path.NewPath(mustIdentSymbol(t, bindings, j), "j")
+	limitPath := path.NewPath(mustIdentSymbol(t, bindings, limit), "limit")
+
+	got := BranchDiffConstraintsOnBothEdges(expr, bindings)
+
+	if len(got) != 1 {
+		t.Fatalf("sum constraints = %d, want 1: %#v", len(got), got)
+	}
+	if got[0].CoHi != 1 || !got[0].HiPath.Equal(iPath) || got[0].CoHi2 != 1 || !got[0].Hi2Path.Equal(jPath) || !got[0].HasHi2 || !got[0].LoPath.Equal(limitPath) || got[0].C != -1 || !got[0].Edge {
+		t.Fatalf("sum constraint = %#v, want i + j - limit <= -1 on true edge", got[0])
+	}
+}
+
 func TestFalsyChecksExtractSupportedDisjuncts(t *testing.T) {
 	pageRoot := ident("page")
 	fieldRoot := ident("page")

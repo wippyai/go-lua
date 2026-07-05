@@ -31,6 +31,7 @@ type Body struct {
 	operandPool   []Operand
 	tableEntries  []TableEntry
 	impliedChecks []ImpliedCheck
+	branchDiffs   []BranchDiffConstraint
 	callTargets   map[callResultTargetKey]CallResultTarget
 
 	pathIndex  map[path.PathKey]PathRef
@@ -82,6 +83,12 @@ type TableEntryRange struct {
 
 // ImpliedCheckRange is a [Start, Start+Len) window into Body.impliedChecks.
 type ImpliedCheckRange struct {
+	Start uint32
+	Len   uint32
+}
+
+// BranchDiffConstraintRange is a [Start, Start+Len) window into Body.branchDiffs.
+type BranchDiffConstraintRange struct {
 	Start uint32
 	Len   uint32
 }
@@ -283,6 +290,15 @@ func (b *Body) ImpliedChecks(r ImpliedCheckRange) []ImpliedCheck {
 	return b.impliedChecks[r.Start : r.Start+r.Len]
 }
 
+// BranchDiffConstraints returns the branch difference-constraint descriptors
+// for a variadic range.
+func (b *Body) BranchDiffConstraints(r BranchDiffConstraintRange) []BranchDiffConstraint {
+	if r.Len == 0 {
+		return nil
+	}
+	return b.branchDiffs[r.Start : r.Start+r.Len]
+}
+
 // InternPath interns a path and returns its 1-based ref. The empty path is none.
 func (b *Body) InternPath(p path.Path) PathRef {
 	if p.IsEmpty() {
@@ -410,6 +426,17 @@ func (b *Body) AppendImpliedChecks(checks []ImpliedCheck) ImpliedCheckRange {
 	start := uint32(len(b.impliedChecks))
 	b.impliedChecks = append(b.impliedChecks, checks...)
 	return ImpliedCheckRange{Start: start, Len: uint32(len(checks))}
+}
+
+// AppendBranchDiffConstraints copies branch difference-constraint descriptors
+// into the shared branch-diff pool and returns their range.
+func (b *Body) AppendBranchDiffConstraints(diffs []BranchDiffConstraint) BranchDiffConstraintRange {
+	if len(diffs) == 0 {
+		return BranchDiffConstraintRange{}
+	}
+	start := uint32(len(b.branchDiffs))
+	b.branchDiffs = append(b.branchDiffs, diffs...)
+	return BranchDiffConstraintRange{Start: start, Len: uint32(len(diffs))}
 }
 
 // Emit appends an instruction and returns its flat index.

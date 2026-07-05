@@ -272,8 +272,14 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 					appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered...)
 				}
 			}
-			if lowered := l.branchDiffConstraints(condition); len(lowered) != 0 {
-				appendBranchDiffConstraint(input.BranchRefinements, point, lowered...)
+			if hasWIRBranch {
+				if lowered := l.branchDiffConstraintsFromWIR(point); len(lowered) != 0 {
+					appendBranchDiffConstraint(input.BranchRefinements, point, lowered...)
+				}
+			} else {
+				if lowered := l.branchDiffConstraints(condition); len(lowered) != 0 {
+					appendBranchDiffConstraint(input.BranchRefinements, point, lowered...)
+				}
 			}
 			if lowered := l.branchAliasRefinements(condition); len(lowered) != 0 {
 				appendBranchRefinement(input.BranchRefinements, point, lowered...)

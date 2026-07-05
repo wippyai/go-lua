@@ -73,6 +73,7 @@ end
 		assertEqualBranchFacts(t, point, "refinements", sidecarFacts.BranchRefinements(point), wirFacts.BranchRefinements(point))
 		assertEqualBranchFacts(t, point, "len floors", sidecarFacts.BranchLenRefinements(point), wirFacts.BranchLenRefinements(point))
 		assertEqualBranchFacts(t, point, "num floors", sidecarFacts.BranchNumFloorRefinements(point), wirFacts.BranchNumFloorRefinements(point))
+		assertEqualBranchFacts(t, point, "diff constraints", sidecarFacts.BranchDiffConstraints(point), wirFacts.BranchDiffConstraints(point))
 		assertEqualBranchFacts(t, point, "path evidence", sidecarFacts.BranchPathEvidence(point), wirFacts.BranchPathEvidence(point))
 	}
 }
@@ -142,6 +143,33 @@ end
 	}
 	if !checked {
 		t.Fatal("test did not exercise branch path evidence")
+	}
+}
+
+func TestLowerWithWIRBranchDiffConstraintsMatchesSidecar(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local i, j, xs, limit = 1, 1, {}, 10
+if i + 1 <= #xs and i + j < limit then
+    local hit = true
+end
+`)
+	body := wirlower.Lower("chunk", stmts, bindings, built)
+	sidecarFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	var checked bool
+	for _, point := range built.Graph.RPO() {
+		want := sidecarFacts.BranchDiffConstraints(point)
+		if len(want) == 0 {
+			continue
+		}
+		checked = true
+		if got := wirFacts.BranchDiffConstraints(point); !reflect.DeepEqual(got, want) {
+			t.Fatalf("WIR branch diff constraints at point %d mismatch\n got: %#v\nwant: %#v", point, got, want)
+		}
+	}
+	if !checked {
+		t.Fatal("test did not exercise branch diff constraints")
 	}
 }
 
@@ -237,8 +265,38 @@ end
 	if got := wirFacts.BranchPathRelations(point); len(got) != 0 {
 		t.Fatalf("WIR branch path relations fell back to semantic condition: %#v", got)
 	}
+	if got := wirFacts.BranchDiffConstraints(point); len(got) != 0 {
+		t.Fatalf("WIR branch diff constraints fell back to semantic condition: %#v", got)
+	}
 	if got := wirFacts.BranchPathEvidence(point); len(got) != 0 {
 		t.Fatalf("WIR branch path evidence fell back to semantic condition: %#v", got)
+	}
+}
+
+func TestLowerWithWIRBranchDiffConstraintsDoesNotFallbackToSemanticCondition(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local i, xs = 1, {}
+if i + 1 <= #xs then
+    local hit = true
+end
+`)
+	point := requireStmtPoints(t, built, stmts[1], 1)[0]
+	sidecarFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	if got := sidecarFacts.BranchDiffConstraints(point); len(got) == 0 {
+		t.Fatalf("sidecar branch diff constraints = 0, test cannot prove WIR no-fallback")
+	}
+
+	body := wir.NewBody("branch")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpBranch,
+		Point: point,
+		Check: body.InternCheck(wir.Check{}),
+	})
+	body.SetPointRange(point, start, start+1)
+
+	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	if got := wirFacts.BranchDiffConstraints(point); len(got) != 0 {
+		t.Fatalf("WIR branch diff constraints fell back to semantic condition: %#v", got)
 	}
 }
 

@@ -124,6 +124,36 @@ func TestBranchImpliedChecksUseFlatPool(t *testing.T) {
 	}
 }
 
+func TestBranchDiffConstraintsUseFlatPool(t *testing.T) {
+	b := NewBody("branch-diff")
+	p := cfg.Point(4)
+	i := path.Path{Root: "i", Symbol: 1}
+	xs := path.Path{Root: "xs", Symbol: 2}
+	diffs := []BranchDiffConstraint{
+		{CoHi: 1, HiPath: i, LoPath: xs, LoIsLen: true, C: -1, Edge: true},
+	}
+	start := b.Len()
+	b.Emit(Instruction{
+		Op:              OpBranch,
+		Point:           p,
+		Check:           b.InternCheck(Check{}),
+		DiffConstraints: b.AppendBranchDiffConstraints(diffs),
+	})
+	b.SetPointRange(p, start, b.Len())
+
+	insts := b.PointInstructions(p)
+	if len(insts) != 1 {
+		t.Fatalf("point instructions = %d, want 1", len(insts))
+	}
+	got := b.BranchDiffConstraints(insts[0].DiffConstraints)
+	if len(got) != len(diffs) {
+		t.Fatalf("diff constraints = %d, want %d: %#v", len(got), len(diffs), got)
+	}
+	if got[0].CoHi != 1 || !got[0].HiPath.Equal(i) || !got[0].LoPath.Equal(xs) || !got[0].LoIsLen || got[0].C != -1 || !got[0].Edge {
+		t.Fatalf("first diff constraint = %#v, want i - #xs <= -1 on true edge", got[0])
+	}
+}
+
 func TestPrintHandBuiltBody(t *testing.T) {
 	b := NewBody("hand")
 	g := cfg.New()

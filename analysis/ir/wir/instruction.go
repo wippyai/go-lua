@@ -214,6 +214,11 @@ type Instruction struct {
 	// carries edge-specific leaves proven by and/or/not structure.
 	ImpliedChecks ImpliedCheckRange
 
+	// DiffConstraints is the normalized difference-logic descriptor window for
+	// OpBranch conditions. It carries syntax-derived linear relations; transfer
+	// decides the factflow projection.
+	DiffConstraints BranchDiffConstraintRange
+
 	// Results is the variadic destination window (multi-value call results,
 	// for-loop variables).
 	Results OperandRange

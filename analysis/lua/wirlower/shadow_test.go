@@ -23,10 +23,10 @@ type shadowCoverageExpectation struct {
 }
 
 var expectedShadowCoverage = map[string]shadowCoverageExpectation{
-	"assign": {covered: 2987, total: 2987},
-	"call":   {covered: 1714, total: 1714},
-	"branch": {covered: 418, total: 418},
-	"return": {covered: 186, total: 186},
+	"assign": {covered: 3035, total: 3035},
+	"call":   {covered: 1729, total: 1729},
+	"branch": {covered: 420, total: 420},
+	"return": {covered: 202, total: 202},
 }
 
 // TestShadowCoverage is an opt-in (WIR_SHADOW=1) per-point completeness oracle.
@@ -51,8 +51,8 @@ func TestShadowCoverage(t *testing.T) {
 	if len(fixtures) == 0 {
 		t.Fatal("no fixtures found")
 	}
-	if len(fixtures) != 574 {
-		t.Fatalf("fixture corpus drifted: got %d main.lua files, want 574", len(fixtures))
+	if len(fixtures) != 596 {
+		t.Fatalf("fixture corpus drifted: got %d main.lua files, want 596", len(fixtures))
 	}
 
 	categories := []string{"assign", "call", "branch", "return"}

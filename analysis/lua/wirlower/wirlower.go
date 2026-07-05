@@ -597,9 +597,10 @@ func (b *builder) condCallCount(cond ast.Expr) int {
 func (b *builder) emitBranch(cond ast.Expr) {
 	check := branchcond.Normalize(cond, b.bindings)
 	inst := wir.Instruction{
-		Op:            wir.OpBranch,
-		Check:         b.body.InternCheck(lowerCheck(check)),
-		ImpliedChecks: b.body.AppendImpliedChecks(lowerImpliedChecks(branchcond.ImpliedChecksOnBothEdges(cond, b.bindings))),
+		Op:              wir.OpBranch,
+		Check:           b.body.InternCheck(lowerCheck(check)),
+		ImpliedChecks:   b.body.AppendImpliedChecks(lowerImpliedChecks(branchcond.ImpliedChecksOnBothEdges(cond, b.bindings))),
+		DiffConstraints: b.body.AppendBranchDiffConstraints(lowerBranchDiffConstraints(branchcond.BranchDiffConstraintsOnBothEdges(cond, b.bindings))),
 	}
 	if check.Kind == branchcond.CheckNone {
 		inst.A = b.lowerExpr(cond)
@@ -961,9 +962,10 @@ func (b *builder) emitLogicalGuardAt(e *ast.LogicalOpExpr, guard cfg.Point) {
 	b.logicalGuardEmitted[e] = true
 	check := branchcond.Normalize(e.Lhs, b.bindings)
 	guardInst := wir.Instruction{
-		Op:            wir.OpBranch,
-		Check:         b.body.InternCheck(lowerCheck(check)),
-		ImpliedChecks: b.body.AppendImpliedChecks(lowerImpliedChecks(branchcond.ImpliedChecksOnBothEdges(e.Lhs, b.bindings))),
+		Op:              wir.OpBranch,
+		Check:           b.body.InternCheck(lowerCheck(check)),
+		ImpliedChecks:   b.body.AppendImpliedChecks(lowerImpliedChecks(branchcond.ImpliedChecksOnBothEdges(e.Lhs, b.bindings))),
+		DiffConstraints: b.body.AppendBranchDiffConstraints(lowerBranchDiffConstraints(branchcond.BranchDiffConstraintsOnBothEdges(e.Lhs, b.bindings))),
 	}
 	if check.Kind == branchcond.CheckNone {
 		guardInst.A = b.lowerExpr(e.Lhs)
@@ -1424,6 +1426,29 @@ func lowerImpliedChecks(in []branchcond.ImpliedCheck) []wir.ImpliedCheck {
 			Check:    lowerCheck(check.Check),
 			Edge:     check.Edge,
 			Polarity: check.Polarity,
+		})
+	}
+	return out
+}
+
+func lowerBranchDiffConstraints(in []branchcond.BranchDiffConstraint) []wir.BranchDiffConstraint {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]wir.BranchDiffConstraint, 0, len(in))
+	for _, d := range in {
+		out = append(out, wir.BranchDiffConstraint{
+			CoHi:     d.CoHi,
+			HiPath:   d.HiPath,
+			HiIsLen:  d.HiIsLen,
+			CoHi2:    d.CoHi2,
+			Hi2Path:  d.Hi2Path,
+			Hi2IsLen: d.Hi2IsLen,
+			HasHi2:   d.HasHi2,
+			LoPath:   d.LoPath,
+			LoIsLen:  d.LoIsLen,
+			C:        d.C,
+			Edge:     d.Edge,
 		})
 	}
 	return out

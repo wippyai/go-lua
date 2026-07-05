@@ -204,22 +204,23 @@ for every point carrying a semantics fact (assign / call / branch / return,
 imported read-only), the wir Body must carry an instruction *at that same point*
 whose operand identity (path `Key()`) matches. Computed assignment targets with
 no static path/container identity match the semantics `"target"` sentinel only
-when wir still records a write at that same point. Last run: 574/574 fixtures,
-TOTAL 100% — assign 100% (2987/2987), call 100% (1714/1714), branch 100%
-(418/418), return 100% (186/186). Pure short-circuit guards carry `OpBranch` at
+when wir still records a write at that same point. Last run: 596/596 fixtures,
+TOTAL 100% — assign 100% (3035/3035), call 100% (1729/1729), branch 100%
+(420/420), return 100% (202/202). Pure short-circuit guards carry `OpBranch` at
 the cfgbuild guard point while retaining the `OpLogical` value form at the
 enclosing expression point. call reaches 100% under the per-point split (one
 `OpCall` per call point).
 
 Branch lane migration: `BranchRefinements`, length floors, numeric floors,
-`BranchPathRelations`, and check-derived `BranchPathEvidence` consume the WIR
-branch instruction's direct check / implied-check range in WIR mode. If WIR has
-a branch instruction but no lane-producing check metadata, transfer does not
-fall back to semantic compound-condition traversal for those lanes.
+`BranchPathRelations`, difference constraints, and check-derived
+`BranchPathEvidence` consume the WIR branch instruction's direct check /
+implied-check / branch-diff ranges in WIR mode. If WIR has a branch instruction
+but no lane-producing check metadata, transfer does not fall back to semantic
+compound-condition traversal for those lanes.
 `table.isfrozen(x)` lowers as `CheckFrozenTable`, so frozen-table proof is
-check-derived instead of using a transferfacts AST predicate walker. Difference
-constraints remain the next branch seam and need a WIR linear-term descriptor
-rather than ad hoc AST parsing.
+check-derived instead of using a transferfacts AST predicate walker. Linear
+difference constraints lower through `branchcond.BranchDiffConstraint` into WIR
+metadata; transferfacts only projects those descriptors into factflow.
 
 ## Locked decisions (Stage 4, journal #1392)
 
