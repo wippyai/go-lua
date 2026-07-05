@@ -3,14 +3,12 @@ package body
 import (
 	"strconv"
 
+	checkprojection "github.com/wippyai/go-lua/analysis/check/internal/projection"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -43,10 +41,7 @@ func (r *Result) ExpressionTypeBeforeBoundary(point cfg.Point, expr ast.Expr) (t
 	}
 	if p, pathOK := r.ExpressionPath(expr); pathOK && !p.IsEmpty() && p.Symbol != 0 {
 		if declared, declaredOK := r.SymbolDeclaredType(p.Symbol); declaredOK {
-			if len(p.Segments) == 0 {
-				return declared, true
-			}
-			return luatypeprojection.ApplySegments(declared, p.Segments)
+			return checkprojection.DeclaredPathType(declared, p)
 		}
 	}
 	if declared, ok := r.DeclaredExpressionTypeAt(point, expr); ok && declared != nil {
@@ -73,7 +68,7 @@ func (r *Result) memberExpressionTypeBeforeBoundary(point cfg.Point, expr ast.Ex
 	if !ok || key == nil {
 		return nil, false
 	}
-	projected, projectedOK := access.RuntimeIndex(container, key)
+	projected, projectedOK := checkprojection.RuntimeIndex(container, key)
 	if narrowed, narrowedOK := r.discriminantProvenMemberExpressionTypeBeforeBoundary(point, expr); narrowedOK {
 		return narrowed, true
 	}
@@ -115,49 +110,13 @@ func (r *Result) discriminantProvenMemberTypeBeforeBoundary(point cfg.Point, rec
 	if !ok || receiverType == nil {
 		return nil, false
 	}
-	_, cases, ok := variant.OriginCasesOfType(receiverType)
-	if !ok || len(cases) < 2 {
-		return nil, false
-	}
-	requiredIndex := -1
-	var requiredType typ.Type
-	for _, c := range cases {
-		field, fieldOK := TypeField(c.Type, member)
-		if !fieldOK {
-			continue
+	return checkprojection.DiscriminantProvenMemberType(receiverType, receiver, member, func(discriminant pathdom.Path, lit typ.Type) bool {
+		if r.DominatingBranchProvesLiteral(point, discriminant, lit) {
+			return true
 		}
-		if requiredIndex >= 0 {
-			return nil, false
-		}
-		requiredIndex = c.Index
-		requiredType = field
-	}
-	if requiredIndex < 0 || requiredType == nil {
-		return nil, false
-	}
-	domains, ok := variant.LiteralDiscriminantDomainsForCases(cases)
-	if !ok {
-		return nil, false
-	}
-	for _, domain := range domains {
-		discriminant := receiver.AppendSegments(domain.Suffix)
-		for _, c := range cases {
-			if c.Index != requiredIndex {
-				continue
-			}
-			lit, litOK := variant.FieldAtPath(c.Type, domain.Suffix)
-			if !litOK || lit == nil {
-				continue
-			}
-			if r.DominatingBranchProvesLiteral(point, discriminant, lit) {
-				return requiredType, true
-			}
-			if current, currentOK := r.PathLiteralTypeAtBoundary(point, discriminant); currentOK && typ.TypeEquals(current, lit) {
-				return requiredType, true
-			}
-		}
-	}
-	return nil, false
+		current, ok := r.PathLiteralTypeAtBoundary(point, discriminant)
+		return ok && typ.TypeEquals(current, lit)
+	})
 }
 
 // DiscriminantProvenMemberTypeBeforeBoundary returns a member type that is
@@ -182,15 +141,7 @@ func (r *Result) discriminantReceiverTypeBeforeBoundary(point cfg.Point, receive
 	if rootType == nil {
 		return nil, false
 	}
-	current := rootType
-	for _, seg := range receiver.Segments {
-		next, ok := TypeAtSegment(current, seg)
-		if !ok || next == nil {
-			return nil, false
-		}
-		current = next
-	}
-	return current, true
+	return checkprojection.TypeAtPath(rootType, receiver)
 }
 
 // LiteralExpressionType returns the static type of a literal expression.
@@ -224,7 +175,7 @@ func (r *Result) DeclaredExpressionTypeAt(point cfg.Point, expr ast.Expr) (typ.T
 		if name == "" {
 			return nil, false
 		}
-		return access.Field(container, name)
+		return checkprojection.Field(container, name)
 	}
 	key, ok := valueexpr.LiteralType(attr.Key)
 	if !ok {
@@ -233,7 +184,7 @@ func (r *Result) DeclaredExpressionTypeAt(point cfg.Point, expr ast.Expr) (typ.T
 	if !ok || key == nil {
 		return nil, false
 	}
-	return access.RuntimeIndex(container, key)
+	return checkprojection.RuntimeIndex(container, key)
 }
 
 func (r *Result) declaredExpressionType(expr ast.Expr) (typ.Type, bool) {
@@ -272,7 +223,7 @@ func (r *Result) declaredPathType(p pathdom.Path) (typ.Type, bool) {
 	if len(p.Segments) == 0 {
 		return declared, true
 	}
-	return luatypeprojection.ApplySegments(declared, p.Segments)
+	return checkprojection.DeclaredPathType(declared, p)
 }
 
 func (r *Result) dominatingDeclarationSourcePathType(point cfg.Point, p pathdom.Path) (typ.Type, bool) {

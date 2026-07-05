@@ -1,10 +1,10 @@
 package body
 
 import (
+	checkprojection "github.com/wippyai/go-lua/analysis/check/internal/projection"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
-	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/literal"
 	"github.com/wippyai/go-lua/analysis/type/subst"
@@ -16,24 +16,7 @@ import (
 )
 
 func TypeAtSegment(t typ.Type, seg segment.Segment) (typ.Type, bool) {
-	switch seg.Kind {
-	case segment.SegmentField:
-		if field, ok := access.Field(t, seg.Name); ok {
-			return field, true
-		}
-		if access.MissingFieldReadsNil(t) {
-			return typ.Nil, true
-		}
-		return nil, false
-	case segment.SegmentIndexString, segment.SegmentIndexInt:
-		key, ok := luatypeprojection.SegmentKeyType(seg)
-		if !ok {
-			return nil, false
-		}
-		return access.RuntimeIndex(t, key)
-	default:
-		return nil, false
-	}
+	return checkprojection.TypeAtSegment(t, seg)
 }
 
 func ExpectedTypeAtSegments(t typ.Type, segments []segment.Segment) (typ.Type, bool) {
@@ -79,16 +62,16 @@ func ObjectLiteralShapeType(literal ObjectLiteralFact, entryType func(ObjectEntr
 }
 
 func TypeHasField(t typ.Type, name string) bool {
-	_, ok := access.Field(t, name)
+	_, ok := checkprojection.Field(t, name)
 	return ok
 }
 
 func TypeField(t typ.Type, name string) (typ.Type, bool) {
-	return access.Field(t, name)
+	return checkprojection.Field(t, name)
 }
 
 func TypeMissingFieldReadsNil(t typ.Type) bool {
-	return access.MissingFieldReadsNil(t)
+	return checkprojection.MissingFieldReadsNil(t)
 }
 
 func TypeFieldProvablyAbsent(t typ.Type, name string) bool {
