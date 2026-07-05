@@ -39,6 +39,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/source"
 )
@@ -51,6 +52,12 @@ func Lower(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild
 	return LowerWithResolver(name, stmts, bindings, built, typeresolve.New(bindings))
 }
 
+// LowerFunction lowers a bound function body and records function-level syntax
+// metadata such as declared return slots on the returned WIR body.
+func LowerFunction(name string, fn *ast.FunctionExpr, bindings *bind.Result, built *cfgbuild.Result) *wir.Body {
+	return LowerFunctionWithResolver(name, fn, bindings, built, typeresolve.New(bindings))
+}
+
 // LowerWithResolver lowers with the caller's canonical type resolver. This is
 // the production entry point when module/export type refs are in scope; WIR
 // TypeRefs must match the resolver used by transfer facts.
@@ -59,6 +66,22 @@ func LowerWithResolver(name string, stmts []ast.Stmt, bindings *bind.Result, bui
 		resolver = typeresolve.New(bindings)
 	}
 	return lowerInto(name, stmts, bindings, built, resolver)
+}
+
+// LowerFunctionWithResolver is the function-body form of LowerWithResolver. It
+// keeps function-level metadata in WIR instead of requiring later stages to
+// reach back into semantic AST sidecars.
+func LowerFunctionWithResolver(name string, fn *ast.FunctionExpr, bindings *bind.Result, built *cfgbuild.Result, resolver *typeresolve.Resolver) *wir.Body {
+	if resolver == nil {
+		resolver = typeresolve.New(bindings)
+	}
+	var stmts []ast.Stmt
+	if fn != nil {
+		stmts = fn.Stmts
+	}
+	body := lowerInto(name, stmts, bindings, built, resolver)
+	body.SetDeclaredReturnTypes(resolveDeclaredReturns(fn, resolver))
+	return body
 }
 
 // lowerInto lowers one function-scope statement list (a chunk or a nested
@@ -90,6 +113,29 @@ func lowerInto(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgb
 
 	b.flush()
 	return b.body
+}
+
+func resolveDeclaredReturns(fn *ast.FunctionExpr, resolver *typeresolve.Resolver) []typ.Type {
+	if fn == nil {
+		return nil
+	}
+	declared := functiontype.ReturnTypeExprs(fn.ReturnTypes)
+	if len(declared) == 0 {
+		return nil
+	}
+	out := make([]typ.Type, len(declared))
+	if resolver == nil {
+		return out
+	}
+	for i, expr := range declared {
+		if expr == nil {
+			continue
+		}
+		if t, ok := resolver.Type(expr); ok {
+			out[i] = t
+		}
+	}
+	return out
 }
 
 type builder struct {

@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
@@ -299,6 +300,31 @@ send(value, payload.id)
 	}
 	if !args[0].Span.Valid() || args[0].Span.StartLine != 3 {
 		t.Fatalf("arg 0 span = %#v, want valid line 3 span", args[0].Span)
+	}
+}
+
+func TestFunctionBodyCarriesDeclaredReturns(t *testing.T) {
+	stmts, err := parse.ParseString(`
+function f(): (string, number)
+    return "x", 1
+end
+`, "test")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	def, ok := stmts[0].(*ast.FuncDefStmt)
+	if !ok || def.Func == nil {
+		t.Fatalf("stmt = %T, want function definition", stmts[0])
+	}
+	bindings := bind.BindFunction(def.Func, bind.Options{})
+	built := cfgbuild.BuildFunction(def.Func, bindings)
+	body := wirlower.LowerFunction("f", def.Func, bindings, built)
+	if got := body.DeclaredReturnArity(); got != 2 {
+		t.Fatalf("declared return arity = %d, want 2", got)
+	}
+	returns := body.DeclaredReturnTypes()
+	if len(returns) != 2 || !typ.TypeEquals(returns[0], typ.String) || !typ.TypeEquals(returns[1], typ.Number) {
+		t.Fatalf("declared return types = %#v, want string, number", returns)
 	}
 }
 

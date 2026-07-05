@@ -93,7 +93,7 @@ func (c *checker) prepareBoundFunction(fn *ast.FunctionExpr, bindings *bind.Resu
 			return semantics.ExtractFunction(fn, bindings, built)
 		},
 		func(built *cfgbuild.Result, resolver *typeresolve.Resolver) *wir.Body {
-			return wirlower.LowerWithResolver("function", fn.Stmts, bindings, built, resolver)
+			return wirlower.LowerFunctionWithResolver("function", fn, bindings, built, resolver)
 		},
 	)
 }

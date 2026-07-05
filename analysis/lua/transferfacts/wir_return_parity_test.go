@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -41,6 +42,27 @@ end
 			t.Fatalf("return presence at point %d mismatch\n got: %#v\nwant: %#v", point, got, want)
 		}
 	}
+}
+
+func TestLowerWithWIRReturnPresenceArityComesFromWIRDeclaredReturns(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): (string?, string?)
+    return nil
+end
+`)
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
+	}
+	points := requireStmtPoints(t, built, ret, 1)
+	body := wirlower.LowerFunction("f", fn, bindings, built)
+	if got := body.DeclaredReturnArity(); got != 2 {
+		t.Fatalf("WIR declared return arity = %d, want 2", got)
+	}
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	relations := facts.ReturnPresenceRelations(points[0])
+	assertReturnPresenceRelation(t, relations, 0, presence.Absent(), 1, presence.Absent())
+	assertReturnPresenceRelation(t, relations, 1, presence.Absent(), 0, presence.Absent())
 }
 
 func TestLowerWithWIRReturnSourcesForNonExpressionOperands(t *testing.T) {

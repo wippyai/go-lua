@@ -28,6 +28,8 @@ type Body struct {
 	checks []Check
 	protos []FuncProto
 
+	declaredReturns []TypeRef
+
 	operandPool   []Operand
 	tableEntries  []TableEntry
 	callArgMeta   []CallArgumentMeta
@@ -244,6 +246,28 @@ func (b *Body) TypeDisplay(ref TypeRef) string {
 	return b.types[ref].Display
 }
 
+// DeclaredReturnArity returns the syntactic declared return arity for this
+// function body. It is zero for chunks and unannotated functions.
+func (b *Body) DeclaredReturnArity() int {
+	if b == nil {
+		return 0
+	}
+	return len(b.declaredReturns)
+}
+
+// DeclaredReturnTypes returns the resolved declared return types when lowering
+// could resolve them. Unresolved slots are nil but still count toward arity.
+func (b *Body) DeclaredReturnTypes() []typ.Type {
+	if b == nil || len(b.declaredReturns) == 0 {
+		return nil
+	}
+	out := make([]typ.Type, len(b.declaredReturns))
+	for i, ref := range b.declaredReturns {
+		out[i] = b.Type(ref)
+	}
+	return out
+}
+
 // Check returns the interned branch check for ref.
 func (b *Body) Check(ref CheckRef) Check {
 	if ref == 0 || int(ref) >= len(b.checks) {
@@ -377,6 +401,19 @@ func (b *Body) InternType(t typ.Type) TypeRef {
 	b.types = append(b.types, Type{T: t, Display: t.String()})
 	b.typeIndex[h] = ref
 	return ref
+}
+
+// SetDeclaredReturnTypes records resolved declared returns for this function
+// body. Nil entries are preserved as unresolved slots so arity remains
+// authoritative even when a type cannot be resolved.
+func (b *Body) SetDeclaredReturnTypes(types []typ.Type) {
+	if b == nil || len(types) == 0 {
+		return
+	}
+	b.declaredReturns = make([]TypeRef, len(types))
+	for i, t := range types {
+		b.declaredReturns[i] = b.InternType(t)
+	}
 }
 
 // InternCheck appends a branch check and returns its 1-based ref. Checks are not

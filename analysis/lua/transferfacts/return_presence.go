@@ -69,6 +69,12 @@ func (l *lowerer) returnPresenceArity(input *factflow.FactsInput, result *semant
 			}
 		}
 	}
+	if l != nil && l.wir != nil {
+		if n := l.wir.DeclaredReturnArity(); n > arity {
+			arity = n
+		}
+		return arity
+	}
 	if n := len(declaredReturnTypes(result)); n > arity {
 		arity = n
 	}
