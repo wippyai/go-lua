@@ -11,8 +11,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/proof"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
+	"github.com/wippyai/go-lua/analysis/lua/expressionid"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
@@ -275,6 +277,49 @@ local user_ctx: Context = input.context or {}
 	want := typ.NewMap(typ.String, typ.Any)
 	if !ok || !typ.TypeEquals(got, want) {
 		t.Fatalf("WIR fallback expression type = %v/%v, want %v", got, ok, want)
+	}
+}
+
+func TestLowerWIRObjectLiteralEntrySourceComesFromWIR(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local t = { leaf = 1 }
+`)
+	localStmt := stmts[0].(*ast.LocalAssignStmt)
+	table := localStmt.Exprs[0].(*ast.TableExpr)
+	point := requireStmtPoints(t, built, localStmt, 1)[0]
+	target := path.NewPath(mustLocalAt(t, bindings, localStmt, 0), "t")
+	body := wir.NewBody("synthetic-object-entry")
+	value := wir.Operand{Kind: wir.OperandConst, Ref: uint32(body.InternConst(wir.Const{Kind: wir.ConstString, Str: "from-wir"}))}
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpMakeTable,
+		Point: point,
+		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(target))},
+		List:  body.AppendOperands([]wir.Operand{value}),
+		TableEntries: body.AppendTableEntries([]wir.TableEntry{{
+			Suffix:     fieldSuffix("leaf"),
+			Value:      value,
+			ValueLabel: "from_wir.label",
+		}}),
+		ExprID: expressionid.Of(table),
+	})
+	body.SetPointRange(point, start, start+1)
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	source := mustLocalSource(t, facts, point)
+	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing WIR object literal for source ref %d", source.ExprRef)
+	}
+	entries := literal.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("entries = %#v, want one WIR entry", entries)
+	}
+	entrySource := entries[0].Source()
+	if entrySource.Kind != factflow.ValueSourceLiteral || entrySource.LiteralKind != factflow.ValueSourceLiteralString || entrySource.String != "from-wir" {
+		t.Fatalf("entry source = %#v, want WIR string literal", entrySource)
+	}
+	if got := entries[0].ValueLabel(); got != "from_wir.label" {
+		t.Fatalf("entry label = %q, want WIR label", got)
 	}
 }
 

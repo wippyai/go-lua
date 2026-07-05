@@ -169,14 +169,14 @@ b2: exit
 func TestTableConstructorCarriesStaticEntryMetadata(t *testing.T) {
 	body := lowerBody(t, `
 local t = {
-    name = 1,
+    name = payload.id,
     ["key"] = 2,
     [7] = 3,
     4,
     [dynamic] = 5,
     6,
 }
-`, "dynamic")
+`, "dynamic", "payload")
 	var inst wir.Instruction
 	for i := 0; i < body.Len(); i++ {
 		candidate := body.Instr(i)
@@ -206,6 +206,12 @@ local t = {
 	assertEntry(2, suffixPath(segment.Segment{Kind: segment.SegmentIndexInt, Index: 7}))
 	assertEntry(3, suffixPath(segment.Segment{Kind: segment.SegmentIndexInt, Index: 1}))
 	assertEntry(4, suffixPath(segment.Segment{Kind: segment.SegmentIndexInt, Index: 2}))
+	if got := entries[0].ValueLabel; got != "payload.id" {
+		t.Fatalf("entry 0 value label = %q, want payload.id", got)
+	}
+	if !entries[0].ValueSpan.Valid() || entries[0].ValueSpan.StartLine != 3 {
+		t.Fatalf("entry 0 value span = %#v, want valid line 3 span", entries[0].ValueSpan)
+	}
 }
 
 func TestTableConstructorCarriesFlattenedNestedEntryMetadata(t *testing.T) {
@@ -213,11 +219,11 @@ func TestTableConstructorCarriesFlattenedNestedEntryMetadata(t *testing.T) {
 local t = {
     x = 1,
     a = {
-        b = 2,
+        b = payload.child,
         [dynamic] = 3,
     },
 }
-`, "dynamic")
+`, "dynamic", "payload")
 	var root wir.Instruction
 	for i := 0; i < body.Len(); i++ {
 		candidate := body.Instr(i)
@@ -248,6 +254,12 @@ local t = {
 		if entries[i].Value.Kind == wir.OperandNone {
 			t.Fatalf("entry %d missing value operand", i)
 		}
+	}
+	if got := entries[2].ValueLabel; got != "payload.child" {
+		t.Fatalf("flattened nested entry label = %q, want payload.child", got)
+	}
+	if !entries[2].ValueSpan.Valid() || entries[2].ValueSpan.StartLine != 5 {
+		t.Fatalf("flattened nested entry span = %#v, want valid line 5 span", entries[2].ValueSpan)
 	}
 }
 

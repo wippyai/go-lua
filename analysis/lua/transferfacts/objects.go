@@ -1,6 +1,7 @@
 package transferfacts
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -14,10 +15,16 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
+	sourcepos "github.com/wippyai/go-lua/compiler/source"
 )
 
 type wirTableExprRefKey struct {
 	id wir.ExpressionID
+}
+
+type wirObjectEntry struct {
+	point cfg.Point
+	entry wir.TableEntry
 }
 
 func (l *lowerer) addObjectLiteral(input *factflow.FactsInput, result *semantics.Result, source sourceprovenance.ASTSource) {
@@ -418,14 +425,66 @@ func (l *lowerer) objectLiteral(fact semantics.ObjectLiteralFact) factflow.Objec
 		if wirSource, ok := l.tableConstructorEntrySource(entry.Source); ok {
 			source = wirSource
 		}
+		span := sourceSpan(entry.ValueSpan)
+		label := entry.ValueLabel
+		if wirEntry, ok := l.wirObjectEntry(fact.Expr, entry.Suffix); ok {
+			if wirSource, ok := l.wirObjectEntrySource(wirEntry, entry.Source); ok {
+				source = wirSource
+			}
+			if wirEntry.entry.ValueSpan.Valid() {
+				span = sourceSpanFromWIR(wirEntry.entry.ValueSpan)
+			}
+			if wirEntry.entry.ValueLabel != "" {
+				label = wirEntry.entry.ValueLabel
+			}
+		}
 		entries = append(entries, factflow.NewObjectEntryWithMetadata(
 			entry.Suffix,
 			source,
-			sourceSpan(entry.ValueSpan),
-			entry.ValueLabel,
+			span,
+			label,
 		))
 	}
 	return factflow.NewObjectLiteral(entries)
+}
+
+func (l *lowerer) wirObjectEntry(expr ast.Expr, suffix path.Path) (wirObjectEntry, bool) {
+	id, ok := l.tableConstructorExpressionID(expr)
+	if !ok {
+		return wirObjectEntry{}, false
+	}
+	inst, ok := l.wir.TableConstructorByExpressionID(id)
+	if !ok {
+		return wirObjectEntry{}, false
+	}
+	for _, entry := range l.wir.TableEntries(inst.TableEntries) {
+		if entry.Suffix.Equal(suffix) {
+			return wirObjectEntry{point: inst.Point, entry: entry}, true
+		}
+	}
+	return wirObjectEntry{}, false
+}
+
+func (l *lowerer) wirObjectEntrySource(entry wirObjectEntry, fallback sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
+	switch entry.entry.Value.Kind {
+	case wir.OperandConst:
+	case wir.OperandTemp:
+		def, ok := l.wirTempDefs()[entry.entry.Value.Ref]
+		if !ok || def.Op != wir.OpMakeTable {
+			return factflow.ValueSource{}, false
+		}
+	default:
+		return factflow.ValueSource{}, false
+	}
+	return l.valueSourceFromWIROperand(
+		entry.entry.Value,
+		fallback.ExprIndex,
+		fallback.TargetIndex,
+		fallback.Final,
+		fallback.Expanded,
+		fallback.OpenTail,
+		l.resultValueSourcesByTempFromWIR(),
+	)
 }
 
 func (l *lowerer) tableConstructorEntrySource(source sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
@@ -443,6 +502,15 @@ func (l *lowerer) tableConstructorEntrySource(source sourceprovenance.ASTSource)
 }
 
 func sourceSpan(span semantics.SourceSpan) factflow.SourceSpan {
+	return factflow.SourceSpan{
+		StartLine: span.StartLine,
+		StartCol:  span.StartCol,
+		EndLine:   span.EndLine,
+		EndCol:    span.EndCol,
+	}
+}
+
+func sourceSpanFromWIR(span sourcepos.Span) factflow.SourceSpan {
 	return factflow.SourceSpan{
 		StartLine: span.StartLine,
 		StartCol:  span.StartCol,

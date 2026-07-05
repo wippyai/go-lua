@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/compiler/source"
 )
 
 // Body holds the lowered instruction stream for one function together with its
@@ -63,10 +64,13 @@ type CallResultTarget struct {
 
 // TableEntry records one statically-addressable table-constructor entry. Suffix
 // is rootless and relative to the constructed object; Value is the lowered
-// operand written to that suffix.
+// operand written to that suffix. ValueSpan and ValueLabel are syntax metadata
+// for diagnostics; they do not describe or constrain runtime values.
 type TableEntry struct {
-	Suffix path.Path
-	Value  Operand
+	Suffix     path.Path
+	Value      Operand
+	ValueSpan  source.Span
+	ValueLabel string
 }
 
 // TableEntryRange is a [Start, Start+Len) window into Body.tableEntries.

@@ -39,6 +39,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/source"
 )
 
 // Lower lowers a bound statement chunk onto the CFG cfgbuild already built for
@@ -1031,11 +1032,18 @@ func (b *builder) lowerTable(dst wir.Operand, t *ast.TableExpr) {
 		}
 		ops = append(ops, value)
 		if suffix, ok := entryByField[f]; ok {
-			entries = append(entries, wir.TableEntry{Suffix: suffix, Value: value})
+			entries = append(entries, wir.TableEntry{
+				Suffix:     suffix,
+				Value:      value,
+				ValueSpan:  tableEntryValueSpan(f.Value),
+				ValueLabel: tableEntryValueLabel(f.Value),
+			})
 			for _, nested := range b.tableEntriesForProducedOperand(value) {
 				entries = append(entries, wir.TableEntry{
-					Suffix: suffix.AppendPathSuffix(nested.Suffix),
-					Value:  nested.Value,
+					Suffix:     suffix.AppendPathSuffix(nested.Suffix),
+					Value:      nested.Value,
+					ValueSpan:  nested.ValueSpan,
+					ValueLabel: nested.ValueLabel,
 				})
 			}
 		}
@@ -1063,6 +1071,85 @@ func (b *builder) tableEntriesForProducedOperand(op wir.Operand) []wir.TableEntr
 		return b.body.TableEntries(inst.TableEntries)
 	}
 	return nil
+}
+
+func tableEntryValueSpan(expr ast.Expr) source.Span {
+	if expr == nil {
+		return source.Span{}
+	}
+	span := ast.SpanOf(expr)
+	if ident, ok := expr.(*ast.IdentExpr); ok && span.Valid() && span.EndLine == span.StartLine && span.EndCol <= span.StartCol && ident.Value != "" {
+		span.EndCol = span.StartCol + len(ident.Value)
+	}
+	return span
+}
+
+func tableEntryValueLabel(expr ast.Expr) string {
+	switch e := expr.(type) {
+	case *ast.IdentExpr:
+		return e.Value
+	case *ast.AttrGetExpr:
+		object := tableEntryValueLabel(e.Object)
+		key := tableEntryAttrKeyLabel(e)
+		if object == "" || key == "" {
+			return object
+		}
+		return object + key
+	case *ast.CastExpr:
+		return tableEntryValueLabel(e.Expr)
+	case *ast.NonNilAssertExpr:
+		return tableEntryValueLabel(e.Expr)
+	case *ast.FuncCallExpr:
+		if tableEntryUnpackCallLabel(e) {
+			return "unpack(...)"
+		}
+		return ""
+	default:
+		return ""
+	}
+}
+
+func tableEntryAttrKeyLabel(expr *ast.AttrGetExpr) string {
+	if expr == nil {
+		return ""
+	}
+	switch expr.KeySyntax {
+	case ast.AttrKeyDot:
+		if name := ast.KeyName(expr.Key); name != "" {
+			return "." + name
+		}
+	case ast.AttrKeyIndex:
+		switch key := expr.Key.(type) {
+		case *ast.StringExpr:
+			return "[" + strconv.Quote(key.Value) + "]"
+		case *ast.NumberExpr:
+			return "[" + key.Value + "]"
+		case *ast.IdentExpr:
+			return "[" + key.Value + "]"
+		}
+	}
+	if name := ast.KeyName(expr.Key); name != "" {
+		return "." + name
+	}
+	return ""
+}
+
+func tableEntryUnpackCallLabel(call *ast.FuncCallExpr) bool {
+	if call == nil || call.Method != "" || call.Receiver != nil {
+		return false
+	}
+	if ident, ok := call.Func.(*ast.IdentExpr); ok {
+		return ident.Value == "unpack"
+	}
+	attr, ok := call.Func.(*ast.AttrGetExpr)
+	if !ok {
+		return false
+	}
+	obj, ok := attr.Object.(*ast.IdentExpr)
+	if !ok || obj.Value != "table" {
+		return false
+	}
+	return ast.KeyName(attr.Key) == "unpack"
 }
 
 func lastFieldIndex(fields []*ast.Field) int {
