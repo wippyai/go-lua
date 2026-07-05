@@ -74,6 +74,24 @@ func staticName(name string) SignatureNameFunc {
 	}
 }
 
+func TestOperationalNormalReturnLanesTrackStorageRegistry(t *testing.T) {
+	storage := callboundary.NormalReturnFactLanes()
+	if len(operationalNormalReturnLanes) != len(storage) {
+		t.Fatalf("operational lanes = %d, storage lanes = %d", len(operationalNormalReturnLanes), len(storage))
+	}
+	for i, lane := range operationalNormalReturnLanes {
+		if lane.ID != storage[i].ID() {
+			t.Fatalf("lane %d id = %s, want %s", i, lane.ID, storage[i].ID())
+		}
+		if lane.Storage.ID() != storage[i].ID() {
+			t.Fatalf("lane %d storage id = %s, want %s", i, lane.Storage.ID(), storage[i].ID())
+		}
+		if lane.Value == nil {
+			t.Fatalf("lane %s has nil operational handler", lane.ID)
+		}
+	}
+}
+
 type countingSourceValues struct {
 	values map[factflow.ExprRef]product.Value
 	calls  map[factflow.ExprRef]int

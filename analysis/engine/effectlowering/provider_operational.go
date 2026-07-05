@@ -46,22 +46,76 @@ func applyOperationalEffects(ctx transfer.NodeContext, out callpayload.CallOutco
 		return out
 	}
 	out.ReturnPresenceRelations = operationalReturnPresenceRelations(*effects)
-	out.NormalReturnFacts.PathRefinements = operationalPathPresenceRefinements(ctx, *effects)
-	out.NormalReturnFacts.PathRefinements = append(out.NormalReturnFacts.PathRefinements, operationalPathTypeRefinements(ctx, op.typeValues, *effects)...)
-	out.NormalReturnFacts.PathStaticMembers = operationalPathStaticMembers(ctx, op.typeValues, *effects)
-	out.NormalReturnFacts.PathPresenceImplications = operationalPathPresenceImplications(ctx, op.typeValues, *effects)
-	out.NormalReturnFacts.PathInvalidations = operationalPathInvalidations(*effects)
-	out.NormalReturnFacts.BranchProofs = operationalBranchProofs(*effects)
-	out.NormalReturnFacts.DynamicIndexFacts = operationalDynamicIndexFacts(ctx, op)
-	out.NormalReturnFacts.KeyMemberships = operationalKeyMemberships(*effects)
-	out.NormalReturnFacts.DynamicValueKeys = operationalDynamicValueKeys(*effects)
-	out.NormalReturnFacts.FrozenTables = operationalFrozenTables(*effects)
-	out.NormalReturnFacts.EscapeEvents = operationalEscapeEvents(*effects)
-	out.NormalReturnFacts.StoreRelations = operationalStoreRelations(*effects)
-	out.NormalReturnFacts.LifecycleFacts = operationalLifecycleFacts(*effects)
+	applyOperationalNormalReturnFacts(ctx, op, *effects, &out.NormalReturnFacts)
 	out.HeapTableObjects = operationalHeapTableObjects(ctx, op.typeValues, op.keySpace, op.signatureType, *effects)
 	out.Placements = operationalAllocationPlacements(ctx.Point, *effects)
 	return out
+}
+
+type operationalNormalReturnLaneHandler func(transfer.NodeContext, operationalEffectContext, signature.OperationalEffects, *callboundary.NormalReturnFacts)
+
+var operationalNormalReturnLanes = callboundary.BindNormalReturnFactLanes(
+	"operational-effects normal-return",
+	map[callboundary.NormalReturnFactLaneID]operationalNormalReturnLaneHandler{
+		callboundary.LanePathRefinements: func(ctx transfer.NodeContext, op operationalEffectContext, effects signature.OperationalEffects, out *callboundary.NormalReturnFacts) {
+			out.PathRefinements = append(out.PathRefinements, operationalPathPresenceRefinements(ctx, effects)...)
+			out.PathRefinements = append(out.PathRefinements, operationalPathTypeRefinements(ctx, op.typeValues, effects)...)
+		},
+		callboundary.LanePersistentPathWrites: operationalNormalReturnNoop,
+		callboundary.LanePathStaticMembers: func(ctx transfer.NodeContext, op operationalEffectContext, effects signature.OperationalEffects, out *callboundary.NormalReturnFacts) {
+			out.PathStaticMembers = operationalPathStaticMembers(ctx, op.typeValues, effects)
+		},
+		callboundary.LanePathPresenceImplications: func(ctx transfer.NodeContext, op operationalEffectContext, effects signature.OperationalEffects, out *callboundary.NormalReturnFacts) {
+			out.PathPresenceImplications = operationalPathPresenceImplications(ctx, op.typeValues, effects)
+		},
+		callboundary.LanePathInvalidations: func(_ transfer.NodeContext, _ operationalEffectContext, effects signature.OperationalEffects, out *callboundary.NormalReturnFacts) {
+			out.PathInvalidations = operationalPathInvalidations(effects)
+		},
+		callboundary.LaneDynamicIndexFacts: func(ctx transfer.NodeContext, op operationalEffectContext, _ signature.OperationalEffects, out *callboundary.NormalReturnFacts) {
+			out.DynamicIndexFacts = operationalDynamicIndexFacts(ctx, op)
+		},
+		callboundary.LaneKeyMemberships: func(_ transfer.NodeContext, _ operationalEffectContext, effects signature.OperationalEffects, out *callboundary.NormalReturnFacts) {
+			out.KeyMemberships = operationalKeyMemberships(effects)
+		},
+		callboundary.LaneDynamicValueKeys: func(_ transfer.NodeContext, _ operationalEffectContext, effects signature.OperationalEffects, out *callboundary.NormalReturnFacts) {
+			out.DynamicValueKeys = operationalDynamicValueKeys(effects)
+		},
+		callboundary.LaneDynamicAllValues: operationalNormalReturnNoop,
+		callboundary.LaneBranchProofs: func(_ transfer.NodeContext, _ operationalEffectContext, effects signature.OperationalEffects, out *callboundary.NormalReturnFacts) {
+			out.BranchProofs = operationalBranchProofs(effects)
+		},
+		callboundary.LaneChannelSelects: operationalNormalReturnNoop,
+		callboundary.LaneFrozenTables: func(_ transfer.NodeContext, _ operationalEffectContext, effects signature.OperationalEffects, out *callboundary.NormalReturnFacts) {
+			out.FrozenTables = operationalFrozenTables(effects)
+		},
+		callboundary.LaneEffectDeltas: operationalNormalReturnNoop,
+		callboundary.LaneEscapeEvents: func(_ transfer.NodeContext, _ operationalEffectContext, effects signature.OperationalEffects, out *callboundary.NormalReturnFacts) {
+			out.EscapeEvents = operationalEscapeEvents(effects)
+		},
+		callboundary.LaneStoreRelations: func(_ transfer.NodeContext, _ operationalEffectContext, effects signature.OperationalEffects, out *callboundary.NormalReturnFacts) {
+			out.StoreRelations = operationalStoreRelations(effects)
+		},
+		callboundary.LaneLifecycleFacts: func(_ transfer.NodeContext, _ operationalEffectContext, effects signature.OperationalEffects, out *callboundary.NormalReturnFacts) {
+			out.LifecycleFacts = operationalLifecycleFacts(effects)
+		},
+		callboundary.LaneNumFloors:      operationalNormalReturnNoop,
+		callboundary.LaneRelConstraints: operationalNormalReturnNoop,
+	},
+	func(handler operationalNormalReturnLaneHandler) bool { return handler != nil },
+)
+
+func operationalNormalReturnNoop(transfer.NodeContext, operationalEffectContext, signature.OperationalEffects, *callboundary.NormalReturnFacts) {
+}
+
+func applyOperationalNormalReturnFacts(
+	ctx transfer.NodeContext,
+	op operationalEffectContext,
+	effects signature.OperationalEffects,
+	out *callboundary.NormalReturnFacts,
+) {
+	for _, lane := range operationalNormalReturnLanes {
+		lane.Value(ctx, op, effects, out)
+	}
 }
 
 func operationalReturnPresenceRelations(e signature.OperationalEffects) []callpayload.CallReturnPresenceRelation {
