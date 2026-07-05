@@ -298,6 +298,43 @@ end
 	}
 }
 
+func TestLowerDynamicAppendInsideDefaultedIteratorComesFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(bindings: any): ()
+    local normalized: {any} = {}
+    for _, binding in ipairs(bindings or {}) do
+        if type(binding) == "table" then
+            normalized[#normalized + 1] = binding
+        end
+    end
+end
+`)
+	body := wirlower.Lower("f", fn.Stmts, bindings, built)
+	genericFor, ok := fn.Stmts[1].(*ast.GenericForStmt)
+	if !ok {
+		t.Fatalf("statement 1 = %T, want generic for", fn.Stmts[1])
+	}
+	ifStmt, ok := genericFor.Stmts[0].(*ast.IfStmt)
+	if !ok {
+		t.Fatalf("loop body 0 = %T, want if", genericFor.Stmts[0])
+	}
+	assignStmt, ok := ifStmt.Then[0].(*ast.AssignStmt)
+	if !ok {
+		t.Fatalf("if then 0 = %T, want assignment", ifStmt.Then[0])
+	}
+	points := requireStmtPoints(t, built, assignStmt, 1)
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	write, ok := facts.DynamicIndexWrite(points[0])
+	if !ok {
+		t.Fatalf("missing dynamic index write at point %d", points[0])
+	}
+	source := write.Source()
+	if source.Kind != factflow.ValueSourcePath || source.PathKey == "" {
+		t.Fatalf("dynamic append source = %#v, want WIR path source for binding", source)
+	}
+}
+
 func TestLowerDynamicIndexTablePathComesFromWIR(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(box: any, key: string, payload: string): ()

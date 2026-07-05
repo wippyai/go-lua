@@ -319,6 +319,9 @@ func (l *lowerer) wirTempExpressionValueSource(
 	}
 	seen[op.Ref] = true
 	defer delete(seen, op.Ref)
+	if source, ok := l.wirMultiDefTempExpressionValueSource(op.Ref, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen); ok {
+		return source, true
+	}
 	inst, ok := l.wirTempDefs()[op.Ref]
 	if !ok {
 		return factflow.ValueSource{}, false
@@ -343,6 +346,176 @@ func (l *lowerer) wirTempExpressionValueSource(
 	default:
 		return factflow.ValueSource{}, false
 	}
+}
+
+func (l *lowerer) wirMultiDefTempExpressionValueSource(
+	temp uint32,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+	resultSources map[uint32]wirResultSource,
+	seen map[uint32]bool,
+) (factflow.ValueSource, bool) {
+	defs := l.wirTempDefSets()[temp]
+	if len(defs) != 2 || l.graph == nil {
+		return factflow.ValueSource{}, false
+	}
+	leftDef, rhsDef, op, ok := l.wirLogicalTempDefs(defs)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	left, ok := l.wirInstructionExpressionOperandValueSource(leftDef, leftDef.A, exprIndex, targetIndex, resultSources, seen)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	right, ok := l.wirDefinitionValueSource(temp, rhsDef, exprIndex, targetIndex, resultSources, seen)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	exprRef, ok := l.exprRef(wirTempExprRefKey{temp: temp})
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	operation, ok := factflow.NewBinaryExpressionOperation(op, left, right)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	if l.expressionOperations == nil {
+		l.expressionOperations = make(map[factflow.ExprRef]factflow.ExpressionOperation)
+	}
+	l.expressionOperations[exprRef] = operation
+	l.addWIRExpressionOperationValue(exprRef, operation, left, right)
+	shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, openTail)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return factflow.NewExpressionValueSource(exprRef, exprIndex, targetIndex, 0, shape)
+}
+
+func (l *lowerer) wirLogicalTempDefs(defs []wir.Instruction) (wir.Instruction, wir.Instruction, string, bool) {
+	if leftDef, rhsDef, op, ok := l.wirLogicalTempDefsOrdered(defs[0], defs[1]); ok {
+		return leftDef, rhsDef, op, true
+	}
+	return l.wirLogicalTempDefsOrdered(defs[1], defs[0])
+}
+
+func (l *lowerer) wirLogicalTempDefsOrdered(leftDef, rhsDef wir.Instruction) (wir.Instruction, wir.Instruction, string, bool) {
+	if leftDef.Op != wir.OpAssign || !wirInstructionDefinesTemp(rhsDef, leftDef.Dst.Ref) {
+		return wir.Instruction{}, wir.Instruction{}, "", false
+	}
+	branch, ok := l.wirLogicalBranchForLeftDef(leftDef)
+	if !ok {
+		return wir.Instruction{}, wir.Instruction{}, "", false
+	}
+	edge, ok := l.wirEdgeFromBranchToPoint(branch.Point, rhsDef.Point)
+	if !ok {
+		return wir.Instruction{}, wir.Instruction{}, "", false
+	}
+	if edge {
+		return leftDef, rhsDef, "and", true
+	}
+	return leftDef, rhsDef, "or", true
+}
+
+func (l *lowerer) wirDefinitionValueSource(
+	temp uint32,
+	inst wir.Instruction,
+	exprIndex int,
+	targetIndex int,
+	resultSources map[uint32]wirResultSource,
+	seen map[uint32]bool,
+) (factflow.ValueSource, bool) {
+	switch inst.Op {
+	case wir.OpAssign:
+		return l.wirInstructionExpressionOperandValueSource(inst, inst.A, exprIndex, targetIndex, resultSources, seen)
+	case wir.OpDynamicIndexRead:
+		return l.wirDynamicIndexReadTempExpressionValueSource(temp, inst, exprIndex, targetIndex, true, false, false, resultSources, seen)
+	case wir.OpConcat:
+		return l.wirConcatTempExpressionValueSource(temp, inst, exprIndex, targetIndex, true, false, false, resultSources, seen)
+	case wir.OpBinOp, wir.OpLogical:
+		return l.wirBinaryTempExpressionValueSource(temp, inst, exprIndex, targetIndex, true, false, false, resultSources, seen)
+	case wir.OpUnOp:
+		return l.wirUnaryTempExpressionValueSource(temp, inst, exprIndex, targetIndex, true, false, false, resultSources, seen)
+	case wir.OpClaim:
+		return l.wirClaimTempExpressionValueSource(temp, inst, exprIndex, targetIndex, true, false, false, resultSources, seen)
+	case wir.OpClosure:
+		return l.wirClosureTempExpressionValueSource(temp, inst, exprIndex, targetIndex, true, false, false)
+	case wir.OpMakeTable:
+		return l.wirTableExpressionValueSource(inst, exprIndex, targetIndex, true, false, false)
+	default:
+		return factflow.ValueSource{}, false
+	}
+}
+
+func (l *lowerer) wirLogicalBranchForLeftDef(def wir.Instruction) (wir.Instruction, bool) {
+	for _, inst := range l.wir.PointInstructions(def.Point) {
+		if inst.Op != wir.OpBranch {
+			continue
+		}
+		if l.wirBranchReadsOperand(inst, def.A) {
+			return inst, true
+		}
+	}
+	return wir.Instruction{}, false
+}
+
+func (l *lowerer) wirBranchReadsOperand(branch wir.Instruction, op wir.Operand) bool {
+	if branch.A.Kind != wir.OperandNone {
+		return wirOperandEqual(branch.A, op)
+	}
+	if op.Kind != wir.OperandPath || l == nil || l.wir == nil {
+		return false
+	}
+	p := l.wir.Path(wir.PathRef(op.Ref))
+	if p.IsEmpty() {
+		return false
+	}
+	check := l.wir.Check(branch.Check)
+	switch check.Kind {
+	case wir.CheckTruthy, wir.CheckFalsy, wir.CheckNil, wir.CheckNotNil, wir.CheckTypeEqual, wir.CheckTypeNot, wir.CheckLiteralEqual, wir.CheckLiteralNot:
+		return check.Path.Equal(p)
+	default:
+		return false
+	}
+}
+
+func (l *lowerer) wirEdgeFromBranchToPoint(branch, target cfg.Point) (bool, bool) {
+	if l.graph == nil {
+		return false, false
+	}
+	var out bool
+	var have bool
+	if l.wirReachability == nil {
+		l.wirReachability = cfg.NewReachability(l.graph)
+	}
+	for _, succ := range cfg.SuccessorsReadOnly(l.graph, branch) {
+		edge, ok := l.graph.EdgeCond(branch, succ)
+		if !ok {
+			continue
+		}
+		if succ != target && !l.wirReachability.CanReach(succ, target) {
+			continue
+		}
+		if have {
+			return false, false
+		}
+		out = edge
+		have = true
+	}
+	return out, have
+}
+
+func wirOperandEqual(a, b wir.Operand) bool {
+	return a.Kind == b.Kind && a.Ref == b.Ref
+}
+
+func wirInstructionDefinesTemp(inst wir.Instruction, temp uint32) bool {
+	if inst.Dst.Kind == wir.OperandTemp && inst.Dst.Ref == temp {
+		return true
+	}
+	return false
 }
 
 type wirConcatFoldExprRefKey struct {

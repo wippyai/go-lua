@@ -850,6 +850,93 @@ end
 	}
 }
 
+func TestLowerCallSiteUsesUnknownForUnsupportedDefinedTempWIRArgument(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(value: string): ()
+    send(value)
+end
+`, "send")
+	stmt, ok := fn.Stmts[0].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[0])
+	}
+	points := requireStmtPoints(t, built, stmt, 1)
+	valuePath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "value")
+	body := wir.NewBody("synthetic-unsupported-defined-temp-call-arg")
+	temp := wir.Operand{Kind: wir.OperandTemp, Ref: 1}
+	start := body.Emit(wir.Instruction{
+		Op:      wir.OpIterate,
+		Point:   points[0],
+		Iter:    wir.IterGeneric,
+		Results: body.AppendOperands([]wir.Operand{temp}),
+		List:    body.AppendOperands([]wir.Operand{{Kind: wir.OperandNone}}),
+	})
+	body.Emit(wir.Instruction{
+		Op:    wir.OpCall,
+		Point: points[0],
+		List:  body.AppendOperands([]wir.Operand{temp}),
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	site, ok := facts.CallSite(points[0])
+	if !ok {
+		t.Fatalf("missing WIR call site at point %d", points[0])
+	}
+	args := site.ArgumentSources()
+	if len(args) != 1 || args[0].Kind != factflow.ValueSourceUnknown || args[0].TargetIndex != 0 {
+		t.Fatalf("WIR call argument sources = %#v, want unknown without falling back to semantic %s", args, valuePath.Key())
+	}
+	if gotPath, ok := facts.ExpressionPath(args[0].ExprRef); ok && gotPath.Equal(valuePath) {
+		t.Fatalf("WIR call argument fell back to semantic path %v", gotPath)
+	}
+}
+
+func TestLowerCallSiteLogicalFallbackArgumentComesFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(env: {get: fun(string): string?}, config: {DEFAULT_CACHE_ID: string}, store: {get: fun(string): any}): ()
+    store.get(env.get("APP_CACHE") or config.DEFAULT_CACHE_ID)
+end
+`)
+	stmt, ok := fn.Stmts[0].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[0])
+	}
+	points := requireStmtPoints(t, built, stmt, 2)
+	callPoint := points[1]
+	body := wirlower.Lower("f", fn.Stmts, bindings, built)
+	reg := standard.Registry()
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+
+	site, ok := facts.CallSite(callPoint)
+	if !ok {
+		t.Fatalf("missing WIR call site at point %d", callPoint)
+	}
+	args := site.ArgumentSources()
+	if len(args) != 1 || args[0].Kind != factflow.ValueSourceExpression || !args[0].HasExpr {
+		t.Fatalf("WIR logical call argument source = %#v, want expression source", args)
+	}
+	op, ok := facts.ExpressionOperation(args[0].ExprRef)
+	if !ok || op.Kind() != factflow.ExpressionOperationBinary || op.Op() != "or" {
+		t.Fatalf("WIR logical argument operation = %#v/%v, want or", op, ok)
+	}
+	if left := op.Left(); left.Kind != factflow.ValueSourceCall || !left.HasCallPoint {
+		t.Fatalf("WIR logical argument left source = %#v, want env.get call result", left)
+	}
+	right := op.Right()
+	if right.Kind != factflow.ValueSourceExpression || !right.HasExpr {
+		t.Fatalf("WIR logical argument right source = %#v, want path expression", right)
+	}
+	value, ok := facts.ExpressionValue(right.ExprRef)
+	if !ok {
+		t.Fatalf("missing WIR logical argument fallback value for ref %d", right.ExprRef)
+	}
+	got, ok := typevalue.TypeOf(reg, value)
+	if !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("WIR logical argument fallback value type = %v/%v, want string", got, ok)
+	}
+}
+
 func TestLowerAssignmentSelectResultSourceComesFromWIR(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(): ()

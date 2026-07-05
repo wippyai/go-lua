@@ -263,17 +263,7 @@ func (l *lowerer) callArgumentSources(point cfg.Point, fallback []sourceprovenan
 		final := i == len(ops)-1
 		source, ok := l.callArgumentSourceFromWIROperand(point, op, i, i, final, inst.ListSpread && final, resultSources)
 		if !ok {
-			if op.Kind != wir.OperandTemp {
-				source = factflow.NewUnknownValueSource(i)
-				out[i] = source
-				continue
-			}
-			if _, defined := l.wirTempDefs()[op.Ref]; !defined && len(l.wirTempDefSets()[op.Ref]) == 0 {
-				source = factflow.NewUnknownValueSource(i)
-				out[i] = source
-				continue
-			}
-			source = l.valueSource(fallback[i])
+			source = factflow.NewUnknownValueSource(i)
 		}
 		out[i] = source
 	}
