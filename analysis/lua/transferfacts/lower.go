@@ -354,12 +354,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			}
 		}
 		if l.wir != nil {
-			if lowered, ok := l.numericForBranchNumFloorRefinementFromWIR(point); ok {
-				appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered)
-			}
-			if lowered := l.numericForBranchPathEvidenceFromWIR(point); len(lowered) != 0 {
-				appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
-			}
+			l.addNumericForFactsFromWIR(&input, point)
 		} else if result != nil {
 			if fact, ok := result.NumericFor(point); ok {
 				if lowered, ok := l.numericForBranchNumFloorRefinement(fact); ok {
@@ -384,6 +379,18 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 	return Lowered{
 		Facts:       factflow.NewFacts(input),
 		SymbolTypes: copySymbolTypes(symbolTypes),
+	}
+}
+
+func (l *lowerer) addNumericForFactsFromWIR(input *factflow.FactsInput, point cfg.Point) {
+	if l == nil || l.wir == nil || input == nil {
+		return
+	}
+	if lowered, ok := l.numericForBranchNumFloorRefinementFromWIR(point); ok {
+		appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered)
+	}
+	if lowered := l.numericForBranchPathEvidenceFromWIR(point); len(lowered) != 0 {
+		appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
 	}
 }
 

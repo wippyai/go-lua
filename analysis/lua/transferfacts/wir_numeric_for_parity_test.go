@@ -86,3 +86,35 @@ end
 		t.Fatal("fixture did not produce numeric-for points")
 	}
 }
+
+func TestLowerWithWIRNumericForProofsPublishWithoutSemanticSidecars(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function scan(xs: {string})
+	for i = 1, #xs do
+		local current = xs[i]
+	end
+end
+`)
+	body := wirlower.Lower("numeric-for-no-sidecars", fn.Stmts, bindings, built)
+	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	var checked int
+	for _, point := range built.Graph.RPO() {
+		if _, ok := result.NumericFor(point); !ok {
+			continue
+		}
+		if !body.HasInstruction(point, wir.OpIterate) {
+			continue
+		}
+		checked++
+		if got := facts.BranchNumFloorRefinements(point); len(got) == 0 {
+			t.Fatalf("missing WIR numeric-for num-floor proof at point %d without semantic sidecars", point)
+		}
+		if got := facts.BranchPathEvidence(point); len(got) == 0 {
+			t.Fatalf("missing WIR numeric-for path evidence at point %d without semantic sidecars", point)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("fixture did not produce a WIR numeric-for check point")
+	}
+}
