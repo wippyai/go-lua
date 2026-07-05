@@ -57,7 +57,7 @@ func (r Reader) frozenAssignmentMutation(point cfg.Point, fact body.OrdinaryAssi
 	return FrozenTableMutation{
 		Point:              point,
 		Kind:               readapi.FrozenTableMutationAssignment,
-		ContainerLabel:     fact.ContainerPath.String(),
+		ContainerLabel:     r.displayPath(fact.ContainerPath),
 		ContainerKey:       string(fact.ContainerPath.Key()),
 		MutationSpan:       sourceSpanFromBody(mutationSpan),
 		FreezeProofSpan:    frozenSpan,
@@ -87,7 +87,7 @@ func (r Reader) frozenCallMutation(point cfg.Point) (FrozenTableMutation, bool) 
 		return FrozenTableMutation{
 			Point:              point,
 			Kind:               readapi.FrozenTableMutationCall,
-			ContainerLabel:     target.String(),
+			ContainerLabel:     r.displayPath(target),
 			ContainerKey:       string(target.Key()),
 			MutationSpan:       sourceSpanFromFactflow(site.CallSpan()),
 			FreezeProofSpan:    frozenSpan,

@@ -184,7 +184,7 @@ func (r Reader) collectLifecycleTraceSites(graph cfg.Graph) []lifecycleTraceSite
 					Protocol:    string(resource.Protocol),
 					From:        string(fact.From),
 					To:          string(fact.To),
-					TargetLabel: target.String(),
+					TargetLabel: r.displayPath(target),
 					Span:        span,
 				},
 			})

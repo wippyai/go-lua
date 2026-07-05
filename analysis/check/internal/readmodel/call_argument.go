@@ -519,9 +519,7 @@ func (r Reader) callArgumentLabel(site factflow.CallSite, index int, source fact
 	}
 	if r.result != nil {
 		if p, ok := r.valueSourcePath(source); ok && !p.IsEmpty() {
-			display := p.Clone()
-			display.Root = p.DisplayRoot(r.result.SymbolName)
-			return display.String()
+			return r.displayPath(p)
 		}
 	}
 	return ""
