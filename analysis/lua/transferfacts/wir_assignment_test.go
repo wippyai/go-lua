@@ -4,15 +4,17 @@ import (
 	"testing"
 
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestLowerLocalAssignmentUsesWIRLiteralSources(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
-function f(value: string)
+function f(value: string, make_value: () -> string)
     local from_param = value
     local from_literal = "ok"
+    local from_call = make_value()
 end`)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
 	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
@@ -24,7 +26,7 @@ end`)
 	}
 	paramSource := paramAssign.Source()
 	if paramSource.Kind != factflow.ValueSourceExpression || !paramSource.HasExpr {
-		t.Fatalf("param assignment source = %#v, want expression-backed alias source until WIR path proof migration", paramSource)
+		t.Fatalf("param assignment source = %#v, want expression-backed alias source until WIR path mutation proof migration", paramSource)
 	}
 
 	literalPoint := requireStmtPoints(t, built, fn.Stmts[1], 1)[0]
@@ -36,6 +38,25 @@ end`)
 	if literalSource.Kind != factflow.ValueSourceLiteral || literalSource.LiteralKind != factflow.ValueSourceLiteralString ||
 		literalSource.String != "ok" || literalSource.HasExpr {
 		t.Fatalf("literal assignment source = %#v, want WIR string literal", literalSource)
+	}
+
+	callStmtPoints := requireStmtPoints(t, built, fn.Stmts[2], 2)
+	var callAssign factflow.RootAssignment
+	var assignPoint cfg.Point
+	for _, point := range callStmtPoints {
+		if got, ok := facts.RootAssignment(point); ok {
+			callAssign = got
+			assignPoint = point
+			break
+		}
+	}
+	if assignPoint == 0 {
+		t.Fatalf("missing call local assignment in points %v", callStmtPoints)
+	}
+	callSource := callAssign.Source()
+	if callSource.Kind != factflow.ValueSourceCall || !callSource.HasCallPoint || callSource.CallPoint == 0 ||
+		callSource.ResultIndex != 0 || !callSource.HasExpr {
+		t.Fatalf("call assignment source = %#v, want WIR call-result source with preserved expression ref", callSource)
 	}
 }
 

@@ -8,17 +8,14 @@ import (
 )
 
 func (l *lowerer) assignmentSource(point cfg.Point, fallback sourceprovenance.ASTSource) factflow.ValueSource {
-	if source, ok := l.assignmentSourceFromWIR(point, fallback); ok {
-		// Expression sidecars are still live during the WIR migration. Allocate
-		// the fallback source's refs so unrelated sidecar ref identity remains
-		// stable until those lanes are deleted.
-		_ = l.valueSource(fallback)
+	fallbackSource := l.valueSource(fallback)
+	if source, ok := l.assignmentSourceFromWIR(point, fallback, fallbackSource); ok {
 		return source
 	}
-	return l.valueSource(fallback)
+	return fallbackSource
 }
 
-func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, fallback sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
+func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, fallback sourceprovenance.ASTSource, fallbackSource factflow.ValueSource) (factflow.ValueSource, bool) {
 	if l == nil || l.wir == nil {
 		return factflow.ValueSource{}, false
 	}
@@ -26,10 +23,10 @@ func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, fallback sourceproven
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
-	if op.Kind != wir.OperandConst {
+	if op.Kind != wir.OperandConst && op.Kind != wir.OperandTemp {
 		return factflow.ValueSource{}, false
 	}
-	return l.valueSourceFromWIROperand(
+	source, ok := l.valueSourceFromWIROperand(
 		op,
 		fallback.ExprIndex,
 		fallback.TargetIndex,
@@ -38,6 +35,14 @@ func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, fallback sourceproven
 		fallback.OpenTail,
 		l.callResultValueSourcesByTempFromWIR(),
 	)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	if source.Kind == factflow.ValueSourceCall && fallbackSource.HasExpr {
+		source.ExprRef = fallbackSource.ExprRef
+		source.HasExpr = true
+	}
+	return source, true
 }
 
 func (l *lowerer) assignmentSourceOperandFromWIR(point cfg.Point) (wir.Operand, bool) {
