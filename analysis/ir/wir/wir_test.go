@@ -40,6 +40,50 @@ func TestInternPoolsAreOneBasedAndDeduped(t *testing.T) {
 	}
 }
 
+func TestBranchChecksExposePointBranchesOnly(t *testing.T) {
+	b := NewBody("branches")
+	g := cfg.New()
+	entry, exit := g.Entry(), g.Exit()
+	p := g.AddNode(cfg.NodeBranch)
+	g.AddEdge(entry, p, false)
+	g.AddEdge(p, exit, true)
+	g.AddEdge(p, exit, false)
+
+	x := path.Path{Root: "x", Symbol: 1}
+	y := path.Path{Root: "y", Symbol: 2}
+	xCheck := Check{Kind: CheckTruthy, Path: x}
+	yCheck := Check{Kind: CheckNil, Path: y}
+
+	start := b.Len()
+	b.Emit(Instruction{Op: OpNoop, Point: p})
+	b.Emit(Instruction{Op: OpBranch, Point: p, Check: b.InternCheck(xCheck)})
+	b.Emit(Instruction{Op: OpBranch, Point: p, Check: b.InternCheck(yCheck)})
+	b.SetPointRange(p, start, b.Len())
+
+	got := b.BranchChecks(p)
+	if len(got) != 2 {
+		t.Fatalf("BranchChecks returned %d checks, want 2: %#v", len(got), got)
+	}
+	if got[0].Kind != CheckTruthy || !got[0].Path.Equal(x) {
+		t.Fatalf("first check = %#v, want truthy x", got[0])
+	}
+	if got[1].Kind != CheckNil || !got[1].Path.Equal(y) {
+		t.Fatalf("second check = %#v, want nil y", got[1])
+	}
+	if missing := b.BranchChecks(exit); len(missing) != 0 {
+		t.Fatalf("BranchChecks(exit) = %#v, want none", missing)
+	}
+
+	var visited int
+	b.ForEachBranchCheck(p, func(Check) bool {
+		visited++
+		return false
+	})
+	if visited != 1 {
+		t.Fatalf("ForEachBranchCheck visited %d checks after stop, want 1", visited)
+	}
+}
+
 func TestPrintHandBuiltBody(t *testing.T) {
 	b := NewBody("hand")
 	g := cfg.New()

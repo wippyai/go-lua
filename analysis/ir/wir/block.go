@@ -157,6 +157,32 @@ func (b *Body) Check(ref CheckRef) Check {
 	return b.checks[ref]
 }
 
+// ForEachBranchCheck visits the branch checks attached to point p, in
+// instruction order. Consumers that need branch topology should use this view
+// instead of rescanning raw instructions for OpBranch.
+func (b *Body) ForEachBranchCheck(p cfg.Point, fn func(Check) bool) {
+	for _, inst := range b.PointInstructions(p) {
+		if inst.Op != OpBranch {
+			continue
+		}
+		if !fn(b.Check(inst.Check)) {
+			return
+		}
+	}
+}
+
+// BranchChecks returns the branch checks attached to point p, in instruction
+// order. It is a convenience wrapper for tests and one-shot consumers; hot paths
+// should prefer ForEachBranchCheck.
+func (b *Body) BranchChecks(p cfg.Point) []Check {
+	var out []Check
+	b.ForEachBranchCheck(p, func(check Check) bool {
+		out = append(out, check)
+		return true
+	})
+	return out
+}
+
 // Operands returns the operand slice for a variadic range.
 func (b *Body) Operands(r OperandRange) []Operand {
 	if r.Len == 0 {
