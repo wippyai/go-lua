@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
@@ -90,6 +91,7 @@ type Static struct {
 	bindings    *bind.Result
 	cfg         *cfgbuild.Result
 	semantics   *semantics.Result
+	wir         *wir.Body
 	signatures  signaturelookup.Source
 	moduleTypes typelookup.Source
 	moduleLoads importlookup.Source
