@@ -1,0 +1,17 @@
+{
+  "description": "A 3+ frame chain (main -> mid.make -> lib.wrap) allocates a box whose fate is decided two frames up. One call path derives-then-drops (proven-local -> stack); another sends the box only on an input-dependent condition (deferred+promote -> runtime clone at boundary, counted as unknown/no_fact in the aggregate).",
+  "packages": ["process"],
+  "files": ["lib.lua", "mid.lua", "main.lua"],
+  "check": {
+    "placement": {
+      "require_complete": false,
+      "min_stack": 1,
+      "max_unknown": 1,
+      "max_no_fact": 1
+    },
+    "skip": "pending: manifest relational escape/placement lanes + placement-polymorphic summaries (tasks 3eb96899, 150f00f9) not yet landed"
+  },
+  "run": {
+    "skip": "checker-only placement fixture"
+  }
+}
