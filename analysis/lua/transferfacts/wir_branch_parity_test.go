@@ -99,6 +99,27 @@ func TestDirectBranchCheckFromWIRDoesNotRequireSemanticSidecarMatch(t *testing.T
 	}
 }
 
+func TestLowerWithWIRDirectBranchPublishesWithoutSemanticSidecars(t *testing.T) {
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function f(x: string?): ()
+    if x ~= nil then
+        local y = x
+    end
+end
+`)
+	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
+	body := wirlower.Lower("branch-no-sidecars", fn.Stmts, bindings, built)
+
+	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	target := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "x")
+	if _, ok := branchRefinementAt(facts.BranchRefinements(point), target); !ok {
+		t.Fatalf("WIR no-sidecar branch refinements missing %s at point %d: %#v", target, point, facts.BranchRefinements(point))
+	}
+	if got := facts.BranchPathEvidence(point); len(got) == 0 {
+		t.Fatalf("WIR no-sidecar branch path evidence missing at point %d", point)
+	}
+}
+
 func TestLowerWithWIRCompoundBranchPathRelationsMatchSidecar(t *testing.T) {
 	stmts, bindings, built, result := parseSemanticChunk(t, `
 local a, b, c, d = {}, {}, {}, {}

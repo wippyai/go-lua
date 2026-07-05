@@ -258,6 +258,9 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 				}
 			}
 		}
+		if l.wir != nil && result == nil {
+			l.addBranchFactsFromWIR(&input, point)
+		}
 		if result != nil {
 			if fact, ok := result.BranchCondition(point); ok {
 				var branchSource factflow.ValueSource
@@ -378,6 +381,41 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 	return Lowered{
 		Facts:       factflow.NewFacts(input),
 		SymbolTypes: copySymbolTypes(symbolTypes),
+	}
+}
+
+func (l *lowerer) addBranchFactsFromWIR(input *factflow.FactsInput, point cfg.Point) {
+	if l == nil || l.wir == nil || input == nil || !l.wir.HasInstruction(point, wir.OpBranch) {
+		return
+	}
+	if check, ok := l.directBranchCheckFromWIR(point); ok {
+		if source, ok := l.branchConditionSourceFromWIR(check); ok {
+			input.BranchConditionSources[point] = source
+		}
+	}
+	if reachability, ok := l.branchEdgeReachabilityFromWIR(point); ok {
+		input.BranchEdgeReachability[point] = reachability
+	}
+	if lowered := l.branchRefinementsFromWIR(point); len(lowered) != 0 {
+		appendBranchRefinement(input.BranchRefinements, point, lowered...)
+	}
+	if lowered := l.branchLenRefinementsFromWIR(point); len(lowered) != 0 {
+		appendBranchLenRefinement(input.BranchRefinements, point, lowered...)
+	}
+	if lowered := l.branchNumFloorRefinementsFromWIR(point); len(lowered) != 0 {
+		appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered...)
+	}
+	if lowered := l.branchDiffConstraintsFromWIR(point); len(lowered) != 0 {
+		appendBranchDiffConstraint(input.BranchRefinements, point, lowered...)
+	}
+	if lowered := l.branchAliasRefinementsFromWIR(point); len(lowered) != 0 {
+		appendBranchRefinement(input.BranchRefinements, point, lowered...)
+	}
+	if lowered, ok := l.branchPathRelationsFromWIR(point); ok {
+		input.BranchPathRelations[point] = lowered
+	}
+	if lowered := l.branchPathEvidenceFromWIR(point); len(lowered) != 0 {
+		appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
 	}
 }
 
