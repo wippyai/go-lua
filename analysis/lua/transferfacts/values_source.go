@@ -2,6 +2,8 @@ package transferfacts
 
 import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 )
@@ -28,6 +30,105 @@ func (l *lowerer) returnValueSources(sources []sourceprovenance.ASTSource, resul
 		}
 	}
 	return out
+}
+
+func (l *lowerer) returnValueSourcesFromWIR(point cfg.Point) ([]factflow.ValueSource, bool) {
+	if l == nil || l.wir == nil {
+		return nil, false
+	}
+	var ret wir.Instruction
+	for _, inst := range l.wir.PointInstructions(point) {
+		if inst.Op == wir.OpReturn {
+			ret = inst
+			break
+		}
+	}
+	if ret.Op != wir.OpReturn {
+		return nil, false
+	}
+	ops := l.wir.Operands(ret.List)
+	out := make([]factflow.ValueSource, len(ops))
+	callResults := l.callResultValueSourcesByTempFromWIR()
+	for i, op := range ops {
+		source, ok := l.returnOperandValueSourceFromWIR(op, i, i == len(ops)-1, ret.ListSpread, callResults)
+		if !ok {
+			return nil, false
+		}
+		out[i] = source
+	}
+	return out, true
+}
+
+type wirCallResultSource struct {
+	point       cfg.Point
+	resultIndex int
+}
+
+func (l *lowerer) returnOperandValueSourceFromWIR(
+	op wir.Operand,
+	index int,
+	final bool,
+	listSpread bool,
+	callResults map[uint32]wirCallResultSource,
+) (factflow.ValueSource, bool) {
+	switch op.Kind {
+	case wir.OperandConst:
+		c := l.wir.Const(wir.ConstRef(op.Ref))
+		if c.Kind == wir.ConstNil {
+			return factflow.NewNilValueSource(index), true
+		}
+	case wir.OperandVararg:
+		shape, ok := factflow.NewValueSourceShape(final, listSpread && final, false, listSpread && final)
+		if !ok {
+			return factflow.ValueSource{}, false
+		}
+		return mustValueSource(factflow.NewVarargValueSource(0, index, index, 0, shape)), true
+	case wir.OperandTemp:
+		if source, ok := callResultValueSourceFromWIR(op, index, final, listSpread, callResults); ok {
+			return source, true
+		}
+	}
+	return factflow.ValueSource{}, false
+}
+
+func (l *lowerer) callResultValueSourcesByTempFromWIR() map[uint32]wirCallResultSource {
+	out := make(map[uint32]wirCallResultSource)
+	for i := 0; i < l.wir.Len(); i++ {
+		inst := l.wir.Instr(i)
+		if inst.Op != wir.OpCall {
+			continue
+		}
+		results := l.wir.Operands(inst.Results)
+		for resultIndex, result := range results {
+			if result.Kind != wir.OperandTemp {
+				continue
+			}
+			out[result.Ref] = wirCallResultSource{point: inst.Point, resultIndex: resultIndex}
+		}
+	}
+	return out
+}
+
+func callResultValueSourceFromWIR(
+	op wir.Operand,
+	index int,
+	final bool,
+	listSpread bool,
+	callResults map[uint32]wirCallResultSource,
+) (factflow.ValueSource, bool) {
+	if op.Kind != wir.OperandTemp {
+		return factflow.ValueSource{}, false
+	}
+	result, ok := callResults[op.Ref]
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	expanded := listSpread && final
+	shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, expanded)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return mustValueSource(factflow.NewCallValueSource(0, index, index, result.resultIndex, result.point, shape)), true
 }
 
 func (l *lowerer) expandTypeIsOpenTailReturnSource(source sourceprovenance.ASTSource, result *semantics.Result) []sourceprovenance.ASTSource {

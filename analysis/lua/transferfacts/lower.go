@@ -155,7 +155,11 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		}
 		if view, ok := result.ReturnView(point); ok {
 			fact, _ := view.Borrowed()
-			input.Returns[point] = factflow.NewReturn(l.returnValueSources(fact.Sources, result))
+			if sources, ok := l.returnValueSourcesFromWIR(point); ok {
+				input.Returns[point] = factflow.NewReturn(sources)
+			} else {
+				input.Returns[point] = factflow.NewReturn(l.returnValueSources(fact.Sources, result))
+			}
 			if relations := l.typeIsReturnPresenceRelations(fact.Sources, result); len(relations) != 0 {
 				appendReturnPresenceRelations(input.ReturnPresenceRelations, point, relations...)
 			}
