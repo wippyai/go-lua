@@ -27,6 +27,7 @@ type Body struct {
 	protos []FuncProto
 
 	operandPool []Operand
+	callTargets map[callResultTargetKey]CallResultTarget
 
 	pathIndex  map[path.PathKey]PathRef
 	constIndex map[Const]ConstRef
@@ -40,6 +41,19 @@ type FuncProto struct {
 	Name  string
 	Body  *Body
 	Graph *cfg.CFG
+}
+
+// CallResultTarget records where a call result is subsequently bound when that
+// target is statically known. It is structural WIR metadata, not a semantic
+// conclusion: lowering records the syntax-level result flow and transfer decides
+// what facts that flow implies.
+type CallResultTarget struct {
+	Path path.Path
+}
+
+type callResultTargetKey struct {
+	point cfg.Point
+	index int
 }
 
 // pointRange is the instruction window owned by one CFG point.
@@ -276,6 +290,28 @@ func (b *Body) Protos() []FuncProto {
 		return nil
 	}
 	return b.protos[1:]
+}
+
+// SetCallResultTarget records the statically known path that receives result
+// index from the call/select instruction at point.
+func (b *Body) SetCallResultTarget(point cfg.Point, index int, p path.Path) {
+	if b == nil || index < 0 || p.IsEmpty() {
+		return
+	}
+	if b.callTargets == nil {
+		b.callTargets = make(map[callResultTargetKey]CallResultTarget)
+	}
+	b.callTargets[callResultTargetKey{point: point, index: index}] = CallResultTarget{Path: p}
+}
+
+// CallResultTarget returns the statically known path receiving a call/select
+// result, if lowering could determine one.
+func (b *Body) CallResultTarget(point cfg.Point, index int) (CallResultTarget, bool) {
+	if b == nil || b.callTargets == nil || index < 0 {
+		return CallResultTarget{}, false
+	}
+	target, ok := b.callTargets[callResultTargetKey{point: point, index: index}]
+	return target, ok
 }
 
 // AppendOperands copies ops into the shared pool and returns their range.

@@ -266,6 +266,9 @@ func (b *builder) lowerAssignTarget(target ast.Expr, v binding) {
 				Dst: b.pathOperand(p),
 				A:   b.bindingOperand(v),
 			})
+			if v.hasCallResult {
+				b.body.SetCallResultTarget(v.callPoint, v.resultIndex, p)
+			}
 			return
 		}
 		container, _ := pathexpr.ResolveMutationContainer(t, b.bindings)
@@ -299,6 +302,10 @@ type binding struct {
 	kind bindingKind
 	expr ast.Expr
 	op   wir.Operand
+
+	hasCallResult bool
+	callPoint     cfg.Point
+	resultIndex   int
 }
 
 // planValues maps n destinations to their source values, preserving Lua tail
@@ -343,10 +350,13 @@ func (b *builder) planValues(n int, exprs []ast.Expr) []binding {
 // tempBinding returns the operand for the k-th result of a pre-lowered call,
 // falling back to the head when the call bound fewer explicit temps than k.
 func tempBinding(cr *callResult, k int) binding {
+	out := binding{kind: bindOperand, callPoint: cr.point, resultIndex: k, hasCallResult: true}
 	if k < len(cr.temps) {
-		return binding{kind: bindOperand, op: cr.temps[k]}
+		out.op = cr.temps[k]
+		return out
 	}
-	return binding{kind: bindOperand, op: cr.head}
+	out.op = cr.head
+	return out
 }
 
 // bindInto writes a planned value into a destination that can receive a produced
@@ -358,11 +368,19 @@ func (b *builder) bindInto(dst wir.Operand, v binding) {
 		b.lowerExprInto(dst, v.expr)
 	case bindOperand:
 		b.emitAssign(dst, v.op)
+		b.recordCallResultTarget(dst, v)
 	case bindVararg:
 		b.emitAssign(dst, wir.Operand{Kind: wir.OperandVararg})
 	default:
 		b.emitAssign(dst, b.constNil())
 	}
+}
+
+func (b *builder) recordCallResultTarget(dst wir.Operand, v binding) {
+	if !v.hasCallResult || dst.Kind != wir.OperandPath {
+		return
+	}
+	b.body.SetCallResultTarget(v.callPoint, v.resultIndex, b.body.Path(wir.PathRef(dst.Ref)))
 }
 
 // bindingOperand reduces a planned value to a single operand (for member/index
@@ -697,7 +715,7 @@ func (b *builder) maybeLowerSelect(dst wir.Operand, call *ast.FuncCallExpr) bool
 			continue
 		}
 		cc, ok := f.Value.(*ast.FuncCallExpr)
-		if !ok || !channelruntime.IsReceiveCaseCall(cc, b.bindings) {
+		if !ok || !channelruntime.IsReceiveCaseCandidate(cc, b.bindings) {
 			continue
 		}
 		if p, ok := pathexpr.Resolve(cc.Receiver, b.bindings); ok && !p.IsEmpty() {

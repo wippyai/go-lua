@@ -21,6 +21,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
@@ -775,26 +776,103 @@ _G.coroutine = {}
 	}
 }
 
-func TestLowerChannelSelectsUseSemanticFacts(t *testing.T) {
+func TestLowerChannelSelectsUseWIRFacts(t *testing.T) {
 	_, bindings, built, result := parseSemanticFunction(t, `
-function handle(events_ch: Channel<any>, stop_ch: Channel<any>)
+function handle(events_ch: Channel<{kind: "event", id: string}>, stop_ch: Channel<{kind: "stop", reason: string}>)
     local selected = channel.select { events_ch:case_receive(), stop_ch:case_receive() }
 end
 `, "channel")
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	body := wirlower.Lower("handle", result.Function().Stmts, bindings, built)
+	sidecarFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
-	var selects []factflow.ChannelSelect
+	var sidecarSelects []factflow.ChannelSelect
+	var wirSelects []factflow.ChannelSelect
 	for _, point := range built.Graph.RPO() {
-		if events := facts.ChannelSelects(point); len(events) != 0 {
-			selects = events
-			break
+		if events := sidecarFacts.ChannelSelects(point); len(events) != 0 {
+			sidecarSelects = events
+		}
+		if events := wirFacts.ChannelSelects(point); len(events) != 0 {
+			wirSelects = events
 		}
 	}
-	if len(selects) != 5 {
-		t.Fatalf("channel select events = %#v, want select plus two case/receive pairs", selects)
+	if !reflect.DeepEqual(wirSelects, sidecarSelects) {
+		t.Fatalf("WIR channel select events mismatch\n got: %#v\nwant: %#v", wirSelects, sidecarSelects)
 	}
-	if selects[0].Kind() != factflow.ChannelSelectSelect || selects[0].HasDefault() {
-		t.Fatalf("select event = %#v", selects[0])
+	if len(wirSelects) != 5 {
+		t.Fatalf("channel select events = %#v, want select plus two case/receive pairs", wirSelects)
+	}
+	if wirSelects[0].Kind() != factflow.ChannelSelectSelect || wirSelects[0].HasDefault() {
+		t.Fatalf("select event = %#v", wirSelects[0])
+	}
+	wantPayloads := []typ.Type{
+		typetable.NewRecord().Field("kind", typ.LiteralString("event")).Field("id", typ.String).Build(),
+		typetable.NewRecord().Field("kind", typ.LiteralString("stop")).Field("reason", typ.String).Build(),
+	}
+	for i, want := range wantPayloads {
+		event := wirSelects[2+i*2]
+		payload, ok := event.PayloadValue()
+		if !ok {
+			t.Fatalf("WIR receive event %d missing payload witness: %#v", i, event)
+		}
+		witness := product.Get(standard.Registry(), payload, typewitness.Key)
+		got, ok := witness.Type()
+		if !ok || !typ.TypeEquals(got, want) {
+			t.Fatalf("WIR receive event %d payload = %v/%v, want %v", i, got, ok, want)
+		}
+	}
+}
+
+func TestLowerChannelSelectsUseWIRCandidateCasePaths(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function consume(events: Channel<{
+	kind: "stream",
+	router: {
+		selected: {
+			kind: "route_a",
+			ch: Channel<{ kind: "leaf", id: string } | { kind: "control", name: string }>,
+		} | {
+			kind: "route_b",
+			ch: Channel<{ kind: "control", name: string }>,
+		},
+		fallback: Channel<{ kind: "control", name: string }>,
+	},
+}>)
+	local selected = channel.select {
+		events:case_receive(),
+	}
+	if selected.channel == events then
+		local payload = selected.value
+		if payload.kind == "stream" then
+			local route = payload.router.selected
+			if route.kind == "route_a" then
+				local routed = channel.select {
+					route.ch:case_receive(),
+					payload.router.fallback:case_receive(),
+				}
+			end
+		end
+	end
+end
+`, "channel")
+	body := wirlower.Lower("consume", fn.Stmts, bindings, built)
+	sidecarFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	compared := 0
+	for _, point := range built.Graph.RPO() {
+		sidecarSelects := sidecarFacts.ChannelSelects(point)
+		wirSelects := wirFacts.ChannelSelects(point)
+		if len(sidecarSelects) == 0 && len(wirSelects) == 0 {
+			continue
+		}
+		compared++
+		if !reflect.DeepEqual(wirSelects, sidecarSelects) {
+			t.Fatalf("WIR channel select events mismatch at point %d\n got: %#v\nwant: %#v", point, wirSelects, sidecarSelects)
+		}
+	}
+	if compared != 2 {
+		t.Fatalf("compared %d channel-select points, want outer and narrowed nested selects", compared)
 	}
 }
 
