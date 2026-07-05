@@ -196,6 +196,11 @@ func (l *lowerer) callReceiverSource(point cfg.Point, fact semantics.CallFact) (
 	}); ok {
 		return source, true
 	}
+	if l != nil && l.wir != nil {
+		if inst, ok := l.wirCallInstruction(point); ok && inst.Call.Method != 0 && inst.Call.Receiver.Kind != wir.OperandNone {
+			return factflow.NewUnknownValueSource(0), true
+		}
+	}
 	fallback, hasFallback := l.semanticReceiverSource(fact)
 	if !hasFallback {
 		return factflow.ValueSource{}, false

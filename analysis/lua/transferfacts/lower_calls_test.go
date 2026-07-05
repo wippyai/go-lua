@@ -1175,6 +1175,46 @@ end
 	}
 }
 
+func TestLowerMethodCallUsesUnknownForUnsupportedWIRReceiver(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(obj: {run: fun(self: any): ()}): ()
+    obj:run()
+end
+`)
+	stmt, ok := fn.Stmts[0].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[0])
+	}
+	points := requireStmtPoints(t, built, stmt, 1)
+	objPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "obj")
+	body := wir.NewBody("synthetic-unsupported-method-receiver")
+	receiver := wir.Operand{Kind: wir.OperandTemp, Ref: 99}
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpCall,
+		Point: points[0],
+		Call: wir.CallInfo{
+			Method:   body.InternConst(wir.Const{Kind: wir.ConstString, Str: "run"}),
+			Receiver: receiver,
+		},
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	site, ok := facts.CallSite(points[0])
+	if !ok {
+		t.Fatalf("missing WIR call site at point %d", points[0])
+	}
+	receiverSource, ok := site.ReceiverSource()
+	if !ok || receiverSource.Kind != factflow.ValueSourceUnknown {
+		t.Fatalf("receiver source = %#v/%v, want unknown without semantic fallback", receiverSource, ok)
+	}
+	if receiverSource.HasExpr {
+		if gotPath, ok := facts.ExpressionPath(receiverSource.ExprRef); ok && gotPath.Equal(objPath) {
+			t.Fatalf("receiver source fell back to semantic path %v", gotPath)
+		}
+	}
+}
+
 func TestLowerCallSitePreservesMemberAccessEvidence(t *testing.T) {
 	l := lowerer{exprs: make(map[any]factflow.ExprRef)}
 	site := l.callSite(semantics.CallFact{
