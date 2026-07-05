@@ -1,0 +1,10 @@
+{
+  "description": "A Job is freshly constructed and sent with no subsequent mutation and no other alias; the send is Proven ISOLATED with no seal required, P being the construction site (line 7) itself.",
+  "packages": ["channel"],
+  "check": {
+    "skip": "pending: send-safety seal-point judgments (task ad6c114f) not yet emitted"
+  },
+  "run": {
+    "skip": "checker-only send-safety fixture"
+  }
+}

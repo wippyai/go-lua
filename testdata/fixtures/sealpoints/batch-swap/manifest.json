@@ -1,0 +1,10 @@
+{
+  "description": "Double-buffer flush: batch aliases pending, then pending is reassigned to a fresh table which severs aliasing so batch is the sole reference; the send is Proven ISOLATED at the swap point P (line 15, `pending = {}`), where aliasing is severed.",
+  "packages": ["channel"],
+  "check": {
+    "skip": "pending: send-safety seal-point judgments (task ad6c114f) not yet emitted"
+  },
+  "run": {
+    "skip": "checker-only send-safety fixture"
+  }
+}
