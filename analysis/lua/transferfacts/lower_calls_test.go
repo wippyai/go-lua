@@ -206,6 +206,52 @@ end
 	}
 }
 
+func TestLowerCallSiteResultTargetDoesNotFallbackToSemanticPath(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): ()
+    local value = nil
+    value = make()
+end
+`, "make")
+	assignStmt, ok := fn.Stmts[1].(*ast.AssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want assignment", fn.Stmts[1])
+	}
+	callPoint := requireStmtPoints(t, built, assignStmt, 2)[0]
+	valuePath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "value")
+	makeSym, ok := bindings.GlobalSymbol("make")
+	if !ok {
+		t.Fatal("missing make global symbol")
+	}
+	makePath := path.NewPath(makeSym, "make")
+
+	body := wir.NewBody("synthetic-missing-call-target")
+	resultTemp := wir.Operand{Kind: wir.OperandTemp, Ref: 1}
+	start := body.Emit(wir.Instruction{
+		Op:      wir.OpCall,
+		Point:   callPoint,
+		Call:    wir.CallInfo{Callee: wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(makePath))}},
+		Results: body.AppendOperands([]wir.Operand{resultTemp}),
+	})
+	body.SetPointRange(callPoint, start, start+1)
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	site, ok := facts.CallSite(callPoint)
+	if !ok {
+		t.Fatalf("missing WIR call site at point %d", callPoint)
+	}
+	targets := site.ResultTargets()
+	if len(targets) != 1 {
+		t.Fatalf("call result targets = %#v, want one", targets)
+	}
+	if got := targets[0].TargetPath(); !got.IsEmpty() || got.Equal(valuePath) {
+		t.Fatalf("call result target path = %v, want empty WIR target not semantic path %v", got, valuePath)
+	}
+	if targets[0].TargetSymbol() != 0 {
+		t.Fatalf("call result target symbol = %d, want 0 without WIR target", targets[0].TargetSymbol())
+	}
+}
+
 func TestLowerCallResultTargetPathAccessorComesFromWIR(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(): ()
