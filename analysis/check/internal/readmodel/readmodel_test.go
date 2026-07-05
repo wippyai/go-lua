@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
+	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
@@ -2417,6 +2418,37 @@ consume("ok")
 		call.CallSpan.EndLine < call.CalleeSpan.EndLine ||
 		(call.CallSpan.EndLine == call.CalleeSpan.EndLine && call.CallSpan.EndCol < call.CalleeSpan.EndCol) {
 		t.Fatalf("call span %#v does not cover callee span %#v", call.CallSpan, call.CalleeSpan)
+	}
+}
+
+func TestCallArgumentLabelUsesPathBackedSourceWithoutSyntaxLabel(t *testing.T) {
+	reg := standard.Registry()
+	result, err := body.CheckFunction(parseFunction(t, `
+function f(source: {primary: string}): () end
+`), body.Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	fn := result.Function()
+	slots := result.FunctionParamSlots(fn)
+	if len(slots) != 1 {
+		t.Fatalf("param slots = %d, want one", len(slots))
+	}
+	argPath := pathdom.NewPath(slots[0].Symbol, "source").Field("primary")
+	shape, ok := factflow.NewValueSourceShape(true, false, false, false)
+	if !ok {
+		t.Fatal("NewValueSourceShape returned false")
+	}
+	source, ok := factflow.NewPathValueSource(argPath.Key(), 0, 0, 0, shape)
+	if !ok {
+		t.Fatal("NewPathValueSource returned false")
+	}
+	site := factflow.NewCallSite(factflow.CallSiteConfig{
+		ArgumentSources: []factflow.ValueSource{source},
+	})
+	got := New(result).callArgumentLabel(site, 0, source)
+	if got != "source.primary" {
+		t.Fatalf("callArgumentLabel = %q, want source.primary", got)
 	}
 }
 

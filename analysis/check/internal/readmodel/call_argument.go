@@ -517,8 +517,8 @@ func (r Reader) callArgumentLabel(site factflow.CallSite, index int, source fact
 	if label, ok := site.ArgumentLabelAt(index); ok {
 		return label
 	}
-	if r.result != nil && source.HasExpr {
-		if p, ok := r.result.ExpressionPathRef(source.ExprRef); ok && !p.IsEmpty() {
+	if r.result != nil {
+		if p, ok := r.valueSourcePath(source); ok && !p.IsEmpty() {
 			display := p.Clone()
 			display.Root = p.DisplayRoot(r.result.SymbolName)
 			return display.String()
