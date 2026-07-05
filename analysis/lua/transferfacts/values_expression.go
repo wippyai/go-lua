@@ -10,6 +10,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
+	"github.com/wippyai/go-lua/analysis/lua/functiontype"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
@@ -19,7 +20,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/typecall"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -326,85 +326,14 @@ func (l *lowerer) functionIdentity(fn *ast.FunctionExpr) (identity.ID, bool) {
 }
 
 func (l *lowerer) functionExpressionType(fn *ast.FunctionExpr) (typ.Type, bool) {
-	if fn == nil || l == nil || l.bindings == nil {
+	if fn == nil || l == nil {
 		return nil, false
 	}
-	if t, ok := l.contextualReturnFunctionExpressionType(fn); ok {
-		return t, true
+	resolver := l.typeResolver
+	if resolver == nil {
+		resolver = typeresolve.New(l.bindings)
 	}
-	return functionExpressionTypeFromBindings(fn, l.bindings, l.resolveType, l.resolveDecl)
-}
-
-func (l *lowerer) contextualReturnFunctionExpressionType(fn *ast.FunctionExpr) (typ.Type, bool) {
-	parent, ok := l.bindings.ParentFunction(fn)
-	if !ok || parent == nil {
-		return nil, false
-	}
-	idx, ok := returnFunctionExpressionIndex(parent.Stmts, fn)
-	if !ok {
-		return nil, false
-	}
-	declared := transferFunctionReturnTypeExprs(parent.ReturnTypes)
-	if idx >= len(declared) || declared[idx] == nil {
-		return nil, false
-	}
-	t, ok := l.resolveType(declared[idx])
-	if !ok || t == nil {
-		return nil, false
-	}
-	fnType, ok := typecall.ContextualCallable(t)
-	if !ok || fnType == nil {
-		return nil, false
-	}
-	return fnType, true
-}
-
-func returnFunctionExpressionIndex(stmts []ast.Stmt, fn *ast.FunctionExpr) (int, bool) {
-	for _, stmt := range stmts {
-		switch s := stmt.(type) {
-		case *ast.ReturnStmt:
-			for i, expr := range s.Exprs {
-				if expr == ast.Expr(fn) {
-					return i, true
-				}
-			}
-		case *ast.IfStmt:
-			if idx, ok := returnFunctionExpressionIndex(s.Then, fn); ok {
-				return idx, true
-			}
-			if idx, ok := returnFunctionExpressionIndex(s.Else, fn); ok {
-				return idx, true
-			}
-		case *ast.DoBlockStmt:
-			if idx, ok := returnFunctionExpressionIndex(s.Stmts, fn); ok {
-				return idx, true
-			}
-		case *ast.WhileStmt:
-			if idx, ok := returnFunctionExpressionIndex(s.Stmts, fn); ok {
-				return idx, true
-			}
-		case *ast.RepeatStmt:
-			if idx, ok := returnFunctionExpressionIndex(s.Stmts, fn); ok {
-				return idx, true
-			}
-		case *ast.NumberForStmt:
-			if idx, ok := returnFunctionExpressionIndex(s.Stmts, fn); ok {
-				return idx, true
-			}
-		case *ast.GenericForStmt:
-			if idx, ok := returnFunctionExpressionIndex(s.Stmts, fn); ok {
-				return idx, true
-			}
-		}
-	}
-	return 0, false
-}
-
-func typeExprAt(types []ast.TypeExpr, index int) ast.TypeExpr {
-	if index < 0 || index >= len(types) {
-		return nil
-	}
-	return types[index]
+	return functiontype.ValueExpression(fn, l.bindings, resolver)
 }
 
 func (l *lowerer) scalarOperationType(expr ast.Expr) (typ.Type, bool) {

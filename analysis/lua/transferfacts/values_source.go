@@ -2,6 +2,9 @@ package transferfacts
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -326,9 +329,52 @@ func (l *lowerer) wirTempExpressionValueSource(
 		return l.wirUnaryTempExpressionValueSource(op.Ref, inst, exprIndex, targetIndex, final, expanded, openTail, callResults, seen)
 	case wir.OpClaim:
 		return l.wirClaimTempExpressionValueSource(op.Ref, inst, exprIndex, targetIndex, final, expanded, openTail, callResults, seen)
+	case wir.OpClosure:
+		return l.wirClosureTempExpressionValueSource(op.Ref, inst, exprIndex, targetIndex, final, expanded, openTail)
 	default:
 		return factflow.ValueSource{}, false
 	}
+}
+
+func (l *lowerer) wirClosureTempExpressionValueSource(
+	temp uint32,
+	inst wir.Instruction,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+) (factflow.ValueSource, bool) {
+	if l == nil || l.wir == nil || inst.Func == 0 {
+		return factflow.ValueSource{}, false
+	}
+	proto := l.wir.Proto(inst.Func)
+	if proto.Symbol == 0 {
+		return factflow.ValueSource{}, false
+	}
+	exprRef, ok := l.exprRef(wirTempExprRefKey{temp: temp})
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	if l.expressionFunctions == nil {
+		l.expressionFunctions = make(map[factflow.ExprRef]symbol.ID)
+	}
+	l.expressionFunctions[exprRef] = proto.Symbol
+	if l.expressionValues == nil {
+		l.expressionValues = make(map[factflow.ExprRef]product.Value)
+	}
+	value := product.NewWithPresence(l.registry, product.ShapeTop, presence.Present())
+	value = product.Set(l.registry, value, runtimekind.Key, runtimekind.Singleton(runtimekind.Function))
+	if proto.Type != nil {
+		value = l.valueFromTypeWithWitness(proto.Type)
+	}
+	value = product.Set(l.registry, value, identity.Key, identity.Singleton(identity.LuaFunction(uint64(proto.Symbol))))
+	l.expressionValues[exprRef] = value
+	shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, openTail)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return factflow.NewExpressionValueSource(exprRef, exprIndex, targetIndex, 0, shape)
 }
 
 func (l *lowerer) wirClaimTempExpressionValueSource(

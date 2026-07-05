@@ -3,6 +3,7 @@ package wir
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -41,6 +42,14 @@ type FuncProto struct {
 	Name  string
 	Body  *Body
 	Graph *cfg.CFG
+	// Symbol is the binder-owned identity of the function literal this proto
+	// came from. It lets transfer publish expression-function facts from WIR
+	// without reaching back to the AST.
+	Symbol symbol.ID
+	// Type is the resolved function type for the literal. Lowering records the
+	// annotation/binding identity; transfer decides how that type contributes to
+	// value evidence.
+	Type typ.Type
 }
 
 // CallResultTarget records where a call result is subsequently bound when that

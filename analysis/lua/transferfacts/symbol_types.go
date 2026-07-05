@@ -3,6 +3,7 @@ package transferfacts
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/functiontype"
 	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
@@ -211,10 +212,7 @@ func numericForControlExprType(symbolTypes map[symbol.ID]typ.Type, bindings *bin
 }
 
 func functionExpressionType(fn *ast.FunctionExpr, bindings *bind.Result, resolver *typeresolve.Resolver) (typ.Type, bool) {
-	if fn == nil || bindings == nil || resolver == nil {
-		return nil, false
-	}
-	return functionExpressionTypeFromBindings(fn, bindings, resolver.Type, resolver.Decl)
+	return functiontype.Expression(fn, bindings, resolver)
 }
 
 func functionExpressionTypeFromBindings(
@@ -223,88 +221,11 @@ func functionExpressionTypeFromBindings(
 	resolveType func(ast.TypeExpr) (typ.Type, bool),
 	resolveDecl func(bind.TypeDecl) (typ.Type, bool),
 ) (typ.Type, bool) {
-	if fn == nil || bindings == nil || resolveType == nil || resolveDecl == nil {
-		return nil, false
-	}
-	builder := typ.Func()
-	for _, decl := range bindings.FunctionTypeParams(fn) {
-		t, ok := resolveDecl(decl)
-		param, paramOK := t.(*typ.TypeParam)
-		if !ok || !paramOK || param == nil {
-			return nil, false
-		}
-		builder.TypeParamRef(param)
-	}
-	slots := bindings.ParamSlots(fn)
-	if functionHasUntypedRegularParam(slots) {
-		builder.Variadic(typ.Any)
-	} else {
-		builder.ReserveParams(len(slots))
-		for _, slot := range slots {
-			t := typ.Type(nil)
-			if slot.Type != nil {
-				resolved, ok := resolveType(slot.Type)
-				if !ok {
-					return nil, false
-				}
-				t = resolved
-			} else if slot.ImplicitSelf {
-				t = implicitSelfFunctionType(fn, bindings, resolveDecl)
-			} else {
-				t = typ.Any
-			}
-			if slot.Vararg {
-				builder.Variadic(t)
-				continue
-			}
-			builder.Param(slot.Name, t)
-		}
-	}
-	returns := make([]typ.Type, 0, len(fn.ReturnTypes))
-	for _, ret := range transferFunctionReturnTypeExprs(fn.ReturnTypes) {
-		t, ok := resolveType(ret)
-		if !ok {
-			return nil, false
-		}
-		returns = append(returns, t)
-	}
-	if len(returns) != 0 {
-		builder.Returns(returns...)
-	}
-	return builder.Build(), true
-}
-
-func functionHasUntypedRegularParam(slots []bind.ParamSlot) bool {
-	for _, slot := range slots {
-		if slot.Type == nil && !slot.ImplicitSelf {
-			return true
-		}
-	}
-	return false
-}
-
-func implicitSelfFunctionType(fn *ast.FunctionExpr, bindings *bind.Result, resolveDecl func(bind.TypeDecl) (typ.Type, bool)) typ.Type {
-	if bindings == nil || resolveDecl == nil {
-		return typ.Any
-	}
-	decl, ok := bindings.MethodReceiverType(fn)
-	if !ok {
-		return typ.Any
-	}
-	t, ok := resolveDecl(decl)
-	if !ok || t == nil || typ.IsNever(t) {
-		return typ.Any
-	}
-	return t
+	return functiontype.FromBindings(fn, bindings, resolveType, resolveDecl)
 }
 
 func transferFunctionReturnTypeExprs(types []ast.TypeExpr) []ast.TypeExpr {
-	if len(types) == 1 {
-		if tuple, ok := types[0].(*ast.TupleTypeExpr); ok {
-			return append([]ast.TypeExpr(nil), tuple.Elements...)
-		}
-	}
-	return append([]ast.TypeExpr(nil), types...)
+	return functiontype.ReturnTypeExprs(types)
 }
 
 func callFirstReturnType(symbolTypes map[symbol.ID]typ.Type, bindings *bind.Result, expr ast.Expr) (typ.Type, bool) {

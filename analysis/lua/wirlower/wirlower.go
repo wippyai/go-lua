@@ -33,6 +33,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/channelruntime"
+	"github.com/wippyai/go-lua/analysis/lua/functiontype"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
@@ -686,7 +687,9 @@ func (b *builder) emitClosure(dst wir.Operand, fn *ast.FunctionExpr) {
 	var ref wir.FuncRef
 	if childBuilt != nil && childBuilt.Graph != nil {
 		childBody := lowerInto(name, fn.Stmts, b.bindings, childBuilt, b.resolver)
-		ref = b.body.AddProto(wir.FuncProto{Name: name, Body: childBody, Graph: childBuilt.Graph})
+		sym, _ := b.bindings.FunctionSymbol(fn)
+		fnType, _ := functiontype.ValueExpression(fn, b.bindings, b.resolver)
+		ref = b.body.AddProto(wir.FuncProto{Name: name, Body: childBody, Graph: childBuilt.Graph, Symbol: sym, Type: fnType})
 	}
 
 	caps := b.bindings.DirectCaptures(fn)

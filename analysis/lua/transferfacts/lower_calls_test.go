@@ -845,6 +845,73 @@ end
 	}
 }
 
+func TestLowerCallSiteClosureArgumentFunctionComesFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): ()
+    local other = function() end
+    send(function() end)
+end
+`, "send")
+	stmt, ok := fn.Stmts[1].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[1])
+	}
+	callExpr, ok := stmt.Expr.(*ast.FuncCallExpr)
+	if !ok {
+		t.Fatalf("call expr = %T, want function call", stmt.Expr)
+	}
+	callArg, ok := callExpr.Args[0].(*ast.FunctionExpr)
+	if !ok {
+		t.Fatalf("argument = %T, want function expression", callExpr.Args[0])
+	}
+	actualSym, ok := bindings.FunctionSymbol(callArg)
+	if !ok || actualSym == 0 {
+		t.Fatalf("actual argument function symbol = %d/%v", actualSym, ok)
+	}
+	otherAssign, ok := fn.Stmts[0].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want local assignment", fn.Stmts[0])
+	}
+	otherFn, ok := otherAssign.Exprs[0].(*ast.FunctionExpr)
+	if !ok {
+		t.Fatalf("other expr = %T, want function expression", otherAssign.Exprs[0])
+	}
+	otherSym, ok := bindings.FunctionSymbol(otherFn)
+	if !ok || otherSym == 0 || otherSym == actualSym {
+		t.Fatalf("other function symbol = %d/%v, actual=%d", otherSym, ok, actualSym)
+	}
+	points := requireStmtPoints(t, built, stmt, 1)
+	body := wir.NewBody("synthetic-closure-call-arg")
+	closureTemp := wir.Operand{Kind: wir.OperandTemp, Ref: 1}
+	proto := body.AddProto(wir.FuncProto{Name: "other", Symbol: otherSym})
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpClosure,
+		Point: points[0],
+		Dst:   closureTemp,
+		Func:  proto,
+	})
+	body.Emit(wir.Instruction{
+		Op:    wir.OpCall,
+		Point: points[0],
+		List:  body.AppendOperands([]wir.Operand{closureTemp}),
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	site, ok := facts.CallSite(points[0])
+	if !ok {
+		t.Fatalf("missing WIR call site at point %d", points[0])
+	}
+	arg, ok := site.ArgumentSourceAt(0)
+	if !ok || arg.Kind != factflow.ValueSourceExpression || !arg.HasExpr {
+		t.Fatalf("argument source = %#v/%v, want WIR closure expression source", arg, ok)
+	}
+	gotSym, ok := facts.ExpressionFunction(arg.ExprRef)
+	if !ok || gotSym != otherSym || gotSym == actualSym {
+		t.Fatalf("expression function = %d/%v, want WIR proto symbol %d not semantic argument symbol %d", gotSym, ok, otherSym, actualSym)
+	}
+}
+
 func TestLowerCallSiteDoesNotFallbackToSemanticCalleeWhenWIRDirectCalleeUnsupported(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(value: string): ()

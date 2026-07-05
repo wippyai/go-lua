@@ -23,6 +23,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -257,6 +258,45 @@ end
 	want := typ.Func().Param("value", typ.String).Returns(typ.String).Build()
 	if !typ.TypeEquals(got, want) {
 		t.Fatalf("function expression witness = %v, want %v", got, want)
+	}
+}
+
+func TestLowerWIRClosureArgumentCarriesFunctionTypeWitness(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): ()
+    send(function(item: string): number
+        return 1
+    end)
+end
+`, "send")
+	stmt, ok := fn.Stmts[0].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[0])
+	}
+	point := requireStmtPoints(t, built, stmt, 1)[0]
+	reg := standard.Registry()
+	wirBody := wirlower.Lower("closure-arg", fn.Stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: wirBody})
+	site, ok := facts.CallSite(point)
+	if !ok {
+		t.Fatalf("missing call site at point %d", point)
+	}
+	arg, ok := site.ArgumentSourceAt(0)
+	if !ok || arg.Kind != factflow.ValueSourceExpression || !arg.HasExpr {
+		t.Fatalf("argument source = %#v/%v, want closure expression", arg, ok)
+	}
+	value, ok := facts.ExpressionValue(arg.ExprRef)
+	if !ok {
+		t.Fatalf("missing expression value for ref %d", arg.ExprRef)
+	}
+	witness := product.Get(reg, value, typewitness.Key)
+	got, ok := witness.Type()
+	if !ok {
+		t.Fatalf("function argument witness = %#v, want concrete function type", witness)
+	}
+	want := typ.Func().Param("item", typ.String).Returns(typ.Number).Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("function argument witness = %v, want %v", got, want)
 	}
 }
 
