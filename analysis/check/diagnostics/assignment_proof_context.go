@@ -270,7 +270,7 @@ func (ctx ProofContext) AssignmentCallResult(item judgment.Judgment, detail judg
 	}
 	return assignmentCallResultPresentation{
 		Message:  fmt.Sprintf("%s is %s, not %s", label, formatType(got), formatType(want)),
-		Help:     callResultAssignmentHelp(got),
+		Help:     callResultAssignmentHelp(proofView.NeedsNilGuardHelp(got)),
 		Evidence: evidence,
 		Labels:   labels,
 	}
@@ -425,6 +425,9 @@ func (p assignmentProofPresentation) AssignmentMessage(sourceName string, got, w
 	if p.IndexedReadMissingProof && sourceName != "" && sourceName != unknownSourceName {
 		return "cannot assign " + sourceName + " because it may be nil"
 	}
+	if p.NeedsNilGuardHelp(got) && sourceName != "" && sourceName != unknownSourceName {
+		return "cannot assign " + sourceName + " because it may be nil"
+	}
 	if p.sameRenderedTypeNeedsValidationProof(got, want) {
 		subject := boundaryEvidenceSubject(sourceName)
 		return "cannot assign " + sourceName + " because " + subject + " comes from any/unknown; no proof shows it satisfies the declared type"
@@ -433,6 +436,12 @@ func (p assignmentProofPresentation) AssignmentMessage(sourceName string, got, w
 }
 
 func (p assignmentProofPresentation) MemberAssignmentMessage(memberName string, sourceName string, got, want typ.Type, wantDisplay string) string {
+	if p.NeedsNilGuardHelp(got) {
+		if sourceName == "" || sourceName == unknownSourceName {
+			return "cannot assign " + memberName + " because assigned value may be nil"
+		}
+		return "cannot assign " + sourceName + " to " + memberName + " because " + sourceName + " may be nil"
+	}
 	if p.sameRenderedTypeNeedsValidationProof(got, want) {
 		subject := boundaryEvidenceSubject(sourceName)
 		return "cannot assign " + sourceName + " to " + memberName + " because " + subject + " comes from any/unknown; no proof shows it satisfies the declared type"
@@ -441,14 +450,13 @@ func (p assignmentProofPresentation) MemberAssignmentMessage(memberName string, 
 }
 
 func (p assignmentProofPresentation) Help(sourceName string, got typ.Type) string {
-	if p.MissingNilProof &&
+	return assignmentHelp(sourceName, p.NeedsNilGuardHelp(got))
+}
+
+func (p assignmentProofPresentation) NeedsNilGuardHelp(got typ.Type) bool {
+	return p.MissingNilProof &&
 		(!typ.Nil.Equals(got) || p.IndexedReadMissingProof) &&
-		evidenceHasKind(p.Evidence, diagnostic.EvidenceMissingProof) &&
-		sourceName != "" &&
-		sourceName != unknownSourceName {
-		return "Guard `" + sourceName + "` with a nil check, provide a default value, or change the target type to accept nil."
-	}
-	return assignmentHelp(sourceName, got)
+		evidenceHasKind(p.Evidence, diagnostic.EvidenceMissingProof)
 }
 
 func (p assignmentProofPresentation) SourceEvidence(sourceName string, got typ.Type, fallback string) string {

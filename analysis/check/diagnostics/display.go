@@ -261,14 +261,6 @@ func formatType(t typ.Type) string {
 	return display.Type(t)
 }
 
-func valueMayBeNil(t typ.Type) bool {
-	return t != nil && !typ.Nil.Equals(t) && projectionHasNil(t)
-}
-
-func nilSafetyMismatch(got, want typ.Type) bool {
-	return valueMayBeNil(got) && !projectionHasNil(want)
-}
-
 func assignmentSourceTypeEvidence(sourceName string, t typ.Type) string {
 	return display.SourceTypeEvidence(sourceName, t)
 }
@@ -281,31 +273,17 @@ func declaredTypeEvidence(name string, annotation ast.TypeExpr, fallback typ.Typ
 	return display.DeclaredTypeEvidence(name, annotation, fallback)
 }
 
-func argumentTypeMismatchMessage(subject string, arg ast.Expr, got, want typ.Type) string {
-	return display.ArgumentTypeMismatchMessage(subject, arg, got, want)
-}
-
-func argumentTypeMismatchMessageDisplay(subject string, arg ast.Expr, got typ.Type, gotDisplay string, want typ.Type, wantDisplay string) string {
-	return display.ArgumentTypeMismatchMessageDisplay(subject, arg, got, gotDisplay, want, wantDisplay)
-}
-
-func argumentBoundaryProofMessage(subject string, arg ast.Expr, want typ.Type) string {
-	return display.ArgumentBoundaryProofMessage(subject, arg, want)
-}
-
-func argumentTypeMismatchHelp(argName string, got typ.Type) string {
-	return display.ArgumentTypeMismatchHelp("", argName, got)
-}
-
 func argumentTypeMismatchHelpForEvidence(subject string, argName string, got typ.Type, evidence []diagnostic.Evidence) string {
-	if argumentEvidenceNeedsValidationProof(got, evidence) {
+	if evidenceNeedsValidationProof(got, evidence) {
 		return display.ArgumentValidationProofHelp(argName)
 	}
-	return display.ArgumentTypeMismatchHelp(subject, argName, got)
-}
-
-func argumentEvidenceNeedsValidationProof(got typ.Type, evidence []diagnostic.Evidence) bool {
-	return evidenceNeedsValidationProof(got, evidence)
+	if argName != "" && argName != unknownSourceName {
+		return fmt.Sprintf("Pass `%s` as a value compatible with the parameter type, or change the callee signature if that argument is valid.", argName)
+	}
+	if subject != "" {
+		return fmt.Sprintf("Pass a value for %s that satisfies the parameter type, or change the callee signature if that argument is valid.", subject)
+	}
+	return "Pass a value compatible with the parameter type, or change the callee signature if that argument is valid."
 }
 
 func evidenceNeedsValidationProof(got typ.Type, evidence []diagnostic.Evidence) bool {
@@ -321,14 +299,6 @@ func evidenceNeedsValidationProof(got typ.Type, evidence []diagnostic.Evidence) 
 		}
 	}
 	return false
-}
-
-func returnContractMessage(label string, expr ast.Expr, got, want typ.Type) string {
-	return display.ReturnContractMessage(label, expr, got, want)
-}
-
-func returnContractHelp(exprName string, got typ.Type) string {
-	return display.ReturnContractHelp(exprName, got)
 }
 
 func explicitBoundaryProofMessage(want typ.Type) string {
@@ -411,8 +381,8 @@ func memberAssignmentMessageDisplay(memberName string, sourceName string, got, w
 	return display.MemberAssignmentMessageDisplay(memberName, sourceName, got, want, wantDisplay)
 }
 
-func assignmentHelp(sourceName string, got typ.Type) string {
-	return display.AssignmentHelp(sourceName, got)
+func assignmentHelp(sourceName string, missingNilProof bool) string {
+	return display.AssignmentHelp(sourceName, missingNilProof)
 }
 
 func underSuppliedTargetEvidence(name, sourceName string, resultIndex int) string {
@@ -527,8 +497,8 @@ func returnMissingProofMessage(subject string) string {
 	return display.ReturnMissingProofMessage(subject)
 }
 
-func callResultAssignmentHelp(got typ.Type) string {
-	return display.CallResultAssignmentHelp(got)
+func callResultAssignmentHelp(missingNilProof bool) string {
+	return display.CallResultAssignmentHelp(missingNilProof)
 }
 
 func callResultDeclaredReturnEvidence(name, label string, got typ.Type) string {

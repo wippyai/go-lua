@@ -472,34 +472,6 @@ func TestFormatTypeAnnotationTruncatesDeepAnnotations(t *testing.T) {
 	}
 }
 
-func TestArgumentTypeMismatchMessageUsesNilabilityCause(t *testing.T) {
-	got := argumentTypeMismatchMessage("argument 1", &ast.IdentExpr{Value: "last_seen"}, typ.MaterializeOptional(typ.String), typ.String)
-	if !strings.Contains(got, "cannot pass last_seen as argument 1") || !strings.Contains(got, "may be nil") {
-		t.Fatalf("argumentTypeMismatchMessage = %q", got)
-	}
-	got = argumentTypeMismatchMessage("argument 1", &ast.IdentExpr{Value: "candidate"}, typ.String, typ.String)
-	if got != "cannot prove argument 1 (candidate) satisfies parameter type string" {
-		t.Fatalf("argumentTypeMismatchMessage same display = %q", got)
-	}
-}
-
-func TestReturnContractMessageUsesNilabilityCause(t *testing.T) {
-	got := returnContractMessage("returned value 1", &ast.IdentExpr{Value: "cached"}, typ.MaterializeOptional(typ.String), typ.String)
-	if !strings.Contains(got, "cannot return cached as returned value 1") || !strings.Contains(got, "may be nil") {
-		t.Fatalf("returnContractMessage = %q", got)
-	}
-	got = returnContractMessage("returned value 1.session", &ast.IdentExpr{Value: "created_session"}, typ.String, typ.String)
-	if got != "cannot prove returned value 1.session (created_session) satisfies declared return type string" {
-		t.Fatalf("returnContractMessage same display = %q", got)
-	}
-	if got := returnContractHelp("cached", typ.MaterializeOptional(typ.String)); got != "Guard `cached` with a nil check, return a default value, or change the return type to accept nil." {
-		t.Fatalf("returnContractHelp optional = %q", got)
-	}
-	if got := returnContractHelp("", typ.Number); got != "Return a value compatible with the declared return type, or change the return annotation if the returned value is valid." {
-		t.Fatalf("returnContractHelp mismatch = %q", got)
-	}
-}
-
 func TestBoundaryProofMessagesUseCentralTypeDisplay(t *testing.T) {
 	if got := explicitBoundaryProofMessage(typ.String); got != "assigned value comes from any/unknown" {
 		t.Fatalf("explicitBoundaryProofMessage = %q", got)
@@ -562,15 +534,6 @@ func TestDirectCallDisplayMessagesUseCentralTypeDisplay(t *testing.T) {
 	if got := annotatedTypeEvidence("target", typ.Number); got != "target is annotated number" {
 		t.Fatalf("annotatedTypeEvidence = %q", got)
 	}
-	if got := argumentTypeMismatchHelp("payload", typ.Number); got != "Pass `payload` as a value compatible with the parameter type, or change the callee signature if that argument is valid." {
-		t.Fatalf("argumentTypeMismatchHelp mismatch = %q", got)
-	}
-	if got := argumentTypeMismatchHelp("payload", typ.MaterializeOptional(typ.String)); got != "Guard `payload` with a nil check, provide a default argument value, or change the parameter type to accept nil." {
-		t.Fatalf("argumentTypeMismatchHelp optional = %q", got)
-	}
-	if got := argumentTypeMismatchHelp("payload", typ.Any); got != "Validate or narrow `payload` before passing it; any/unknown values do not prove parameter contracts." {
-		t.Fatalf("argumentTypeMismatchHelp any = %q", got)
-	}
 	if got := argumentTypeMismatchHelpForEvidence("argument 1", "payload", typ.String, []diagnostic.Evidence{{
 		Kind:    diagnostic.EvidenceUserAssertion,
 		Reason:  diagnostic.EvidenceReasonUserAssertedAny,
@@ -606,7 +569,7 @@ func TestDirectCallDisplayMessagesUseCentralTypeDisplay(t *testing.T) {
 	}
 }
 
-func TestNilabilityProofMessagesUseCentralDisplay(t *testing.T) {
+func TestOptionalTypeDisplayLeavesNilabilityToProofContext(t *testing.T) {
 	if got := formatType(typ.MaterializeOptional(typ.Unknown)); got != "unknown" {
 		t.Fatalf("formatType optional unknown = %q", got)
 	}
@@ -616,7 +579,7 @@ func TestNilabilityProofMessagesUseCentralDisplay(t *testing.T) {
 	if got := formatType(typ.MaterializeOptional(typ.String)); got != "string?" {
 		t.Fatalf("formatType optional string = %q", got)
 	}
-	if got := assignmentMessage("cache.value", typ.MaterializeOptional(typ.String), typ.String); got != "cannot assign cache.value because it may be nil" {
+	if got := assignmentMessage("cache.value", typ.MaterializeOptional(typ.String), typ.String); got != "cannot assign cache.value because it is string?, not string" {
 		t.Fatalf("assignmentMessage optional = %q", got)
 	}
 	if got := assignmentMessage("cache.value", typ.Number, typ.String); got != "cannot assign cache.value because it is number, not string" {
@@ -637,10 +600,10 @@ func TestNilabilityProofMessagesUseCentralDisplay(t *testing.T) {
 	if got := memberAssignmentMessage("impl.read", unknownSourceName, typ.Number, typ.String); got != "cannot assign impl.read because assigned value is number, not string" {
 		t.Fatalf("memberAssignmentMessage fallback = %q", got)
 	}
-	if got := assignmentHelp("cache.value", typ.MaterializeOptional(typ.String)); got != "Guard `cache.value` with a nil check, provide a default value, or change the target type to accept nil." {
+	if got := assignmentHelp("cache.value", true); got != "Guard `cache.value` with a nil check, provide a default value, or change the target type to accept nil." {
 		t.Fatalf("assignmentHelp optional = %q", got)
 	}
-	if got := assignmentHelp("cache.value", typ.String); got != "Use a value compatible with the expected type, or change the target type if `cache.value` is valid." {
+	if got := assignmentHelp("cache.value", false); got != "Use a value compatible with the expected type, or change the target type if `cache.value` is valid." {
 		t.Fatalf("assignmentHelp mismatch = %q", got)
 	}
 	if got := assignmentTargetTypeEvidence("row[key]", typ.String); got != "assignment target row[key] requires string" {
@@ -709,24 +672,8 @@ func TestNilabilityProofMessagesUseCentralDisplay(t *testing.T) {
 	}
 }
 
-func TestNilabilityMismatchRequiresNonNilContract(t *testing.T) {
-	optionalString := typ.MaterializeOptional(typ.String)
-	optionalNumber := typ.MaterializeOptional(typ.Number)
-
-	if !valueMayBeNil(optionalString) {
-		t.Fatalf("optional string should be treated as possibly nil")
-	}
-	if valueMayBeNil(typ.Nil) {
-		t.Fatalf("literal nil is a value mismatch, not a possibly-nil projection")
-	}
-	if !nilSafetyMismatch(optionalString, typ.String) {
-		t.Fatalf("optional string assigned to string should be a nil-safety mismatch")
-	}
-	if nilSafetyMismatch(optionalString, optionalNumber) {
-		t.Fatalf("optional-to-optional mismatch should remain a type mismatch, not a nil-safety message")
-	}
-
-	msg := assignmentMessage("cache.value", optionalString, optionalNumber)
+func TestAssignmentMessageLeavesNilabilityToProofContext(t *testing.T) {
+	msg := assignmentMessage("cache.value", typ.MaterializeOptional(typ.String), typ.MaterializeOptional(typ.Number))
 	if strings.Contains(msg, "may be nil") || !strings.Contains(msg, "not") {
 		t.Fatalf("optional-to-optional assignment message = %q, want plain type mismatch", msg)
 	}
@@ -746,10 +693,10 @@ func TestReturnProofMessagesUseCentralDisplay(t *testing.T) {
 	if got := returnMissingProofMessage("returned value 1 (raw)"); got != "no proof on this path shows returned value 1 (raw) satisfies the declared return type" {
 		t.Fatalf("returnMissingProofMessage = %q", got)
 	}
-	if got := callResultAssignmentHelp(typ.String); got != "Assign the call result to a compatible target type, or change the callee return type if this result is valid." {
+	if got := callResultAssignmentHelp(false); got != "Assign the call result to a compatible target type, or change the callee return type if this result is valid." {
 		t.Fatalf("callResultAssignmentHelp mismatch = %q", got)
 	}
-	if got := callResultAssignmentHelp(typ.MaterializeOptional(typ.String)); got != "Guard the call result before assigning it, provide a default value, or change the target type to accept nil." {
+	if got := callResultAssignmentHelp(true); got != "Guard the call result before assigning it, provide a default value, or change the target type to accept nil." {
 		t.Fatalf("callResultAssignmentHelp optional = %q", got)
 	}
 	if got := callResultDeclaredReturnEvidence("get", "call result 1", typ.MaterializeOptional(typ.String)); got != "get declares call result 1 as string?" {

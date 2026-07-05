@@ -19,8 +19,8 @@ func (diagnosticDisplay) ReturnMissingProofMessage(subject string) string {
 	return fmt.Sprintf("no proof on this path shows %s satisfies the declared return type", subject)
 }
 
-func (diagnosticDisplay) CallResultAssignmentHelp(got typ.Type) string {
-	if valueMayBeNil(got) {
+func (diagnosticDisplay) CallResultAssignmentHelp(missingNilProof bool) string {
+	if missingNilProof {
 		return "Guard the call result before assigning it, provide a default value, or change the target type to accept nil."
 	}
 	return "Assign the call result to a compatible target type, or change the callee return type if this result is valid."

@@ -38,88 +38,11 @@ func (d diagnosticDisplay) ReassignedCallResultFieldEvidence(rootName, readName 
 	return fmt.Sprintf("%s is reassigned before the read; %s may use that later assignment", rootName, readName)
 }
 
-func (d diagnosticDisplay) ArgumentTypeMismatchMessage(subject string, arg ast.Expr, got, want typ.Type) string {
-	return d.ArgumentTypeMismatchMessageDisplay(subject, arg, got, "", want, "")
-}
-
-func (d diagnosticDisplay) ArgumentTypeMismatchMessageDisplay(subject string, arg ast.Expr, got typ.Type, gotDisplay string, want typ.Type, wantDisplay string) string {
-	argName := exprEvidenceNameOK(arg)
-	if argName != "" && nilSafetyMismatch(got, want) {
-		return fmt.Sprintf("cannot pass %s as %s because it may be nil", argName, subject)
-	}
-	gotText := typeDisplayOr(gotDisplay, d.Type(got))
-	wantText := typeDisplayOr(wantDisplay, d.Type(want))
-	subjectText := diagnosticSubjectWithExpr(subject, arg)
-	if gotText == wantText {
-		return fmt.Sprintf("cannot prove %s satisfies parameter type %s", subjectText, wantText)
-	}
-	return fmt.Sprintf("%s is %s, not %s", subjectText, gotText, wantText)
-}
-
-func (d diagnosticDisplay) ArgumentBoundaryProofMessage(subject string, arg ast.Expr, want typ.Type) string {
-	return fmt.Sprintf("%s comes from any/unknown; no proof shows it is %s", diagnosticSubjectWithExpr(subject, arg), d.Type(want))
-}
-
-func diagnosticSubjectWithExpr(subject string, expr ast.Expr) string {
-	name := exprEvidenceNameOK(expr)
-	if name == "" {
-		return subject
-	}
-	return fmt.Sprintf("%s (%s)", subject, name)
-}
-
-func (diagnosticDisplay) ArgumentTypeMismatchHelp(subject string, argName string, got typ.Type) string {
-	if argName != "" && argName != unknownSourceName && valueMayBeNil(got) {
-		return fmt.Sprintf("Guard `%s` with a nil check, provide a default argument value, or change the parameter type to accept nil.", argName)
-	}
-	if topLikeType(got) {
-		return display.ArgumentValidationProofHelp(argName)
-	}
-	if argName != "" && argName != unknownSourceName {
-		return fmt.Sprintf("Pass `%s` as a value compatible with the parameter type, or change the callee signature if that argument is valid.", argName)
-	}
-	if subject != "" {
-		return fmt.Sprintf("Pass a value for %s that satisfies the parameter type, or change the callee signature if that argument is valid.", subject)
-	}
-	return "Pass a value compatible with the parameter type, or change the callee signature if that argument is valid."
-}
-
 func (diagnosticDisplay) ArgumentValidationProofHelp(argName string) string {
 	if argName != "" && argName != unknownSourceName {
 		return fmt.Sprintf("Validate or narrow `%s` before passing it; any/unknown values do not prove parameter contracts.", argName)
 	}
 	return "Validate or narrow this argument before passing it; any/unknown values do not prove parameter contracts."
-}
-
-func (d diagnosticDisplay) ReturnContractMessage(label string, expr ast.Expr, got, want typ.Type) string {
-	exprName := exprEvidenceNameOK(expr)
-	if nilSafetyMismatch(got, want) {
-		if exprName != "" {
-			return fmt.Sprintf("cannot return %s as %s because it may be nil", exprName, label)
-		}
-		return fmt.Sprintf("cannot return %s because it may be nil", label)
-	}
-	subject := label
-	if exprName != "" {
-		subject = fmt.Sprintf("%s (%s)", label, exprName)
-	}
-	gotText := d.Type(got)
-	wantText := d.Type(want)
-	if gotText == wantText {
-		return fmt.Sprintf("cannot prove %s satisfies declared return type %s", subject, wantText)
-	}
-	return fmt.Sprintf("%s is %s, not %s", subject, gotText, wantText)
-}
-
-func (d diagnosticDisplay) ReturnBoundaryProofMessage(label string, expr ast.Expr, want typ.Type) string {
-	return fmt.Sprintf("%s comes from any/unknown; no proof shows it satisfies declared return type %s", diagnosticSubjectWithExpr(label, expr), d.Type(want))
-}
-
-func (diagnosticDisplay) ReturnContractHelp(exprName string, got typ.Type) string {
-	if exprName != "" && exprName != unknownSourceName && valueMayBeNil(got) {
-		return fmt.Sprintf("Guard `%s` with a nil check, return a default value, or change the return type to accept nil.", exprName)
-	}
-	return "Return a value compatible with the declared return type, or change the return annotation if the returned value is valid."
 }
 
 func (diagnosticDisplay) ExplicitBoundaryProofMessage(_ typ.Type) string {
@@ -226,9 +149,6 @@ func (d diagnosticDisplay) AssignmentMessageDisplay(sourceName string, got, want
 	if wantDisplay == "" {
 		wantDisplay = d.Type(want)
 	}
-	if sourceName != "" && sourceName != unknownSourceName && nilSafetyMismatch(got, want) {
-		return fmt.Sprintf("cannot assign %s because it may be nil", sourceName)
-	}
 	if sourceName != "" && sourceName != unknownSourceName {
 		return fmt.Sprintf("cannot assign %s because it is %s, not %s", sourceName, d.Type(got), wantDisplay)
 	}
@@ -244,19 +164,13 @@ func (d diagnosticDisplay) MemberAssignmentMessageDisplay(memberName string, sou
 		wantDisplay = d.Type(want)
 	}
 	if sourceName == "" || sourceName == unknownSourceName {
-		if nilSafetyMismatch(got, want) {
-			return fmt.Sprintf("cannot assign %s because assigned value may be nil", memberName)
-		}
 		return fmt.Sprintf("cannot assign %s because assigned value is %s, not %s", memberName, d.Type(got), wantDisplay)
-	}
-	if nilSafetyMismatch(got, want) {
-		return fmt.Sprintf("cannot assign %s to %s because %s may be nil", sourceName, memberName, sourceName)
 	}
 	return fmt.Sprintf("cannot assign %s to %s because %s is %s, not %s", sourceName, memberName, sourceName, d.Type(got), wantDisplay)
 }
 
-func (diagnosticDisplay) AssignmentHelp(sourceName string, got typ.Type) string {
-	if sourceName != "" && sourceName != unknownSourceName && valueMayBeNil(got) {
+func (diagnosticDisplay) AssignmentHelp(sourceName string, missingNilProof bool) string {
+	if sourceName != "" && sourceName != unknownSourceName && missingNilProof {
 		return fmt.Sprintf("Guard `%s` with a nil check, provide a default value, or change the target type to accept nil.", sourceName)
 	}
 	if sourceName != "" && sourceName != unknownSourceName {
