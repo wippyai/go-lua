@@ -40,13 +40,17 @@ func (r *Result) valueSourcePath(source factflow.ValueSource) (pathdom.Path, boo
 	if source.Kind != factflow.ValueSourcePath || source.PathKey == "" {
 		return pathdom.Path{}, false
 	}
-	key, ok := r.KeySpace().FromStateKey(source.PathKey)
+	ks := r.KeySpace()
+	if ks == nil {
+		return pathdom.Path{}, false
+	}
+	key, ok := ks.FromStateKey(source.PathKey)
 	if !ok || key.Sym == 0 {
 		return pathdom.Path{}, false
 	}
 	return pathdom.Path{
 		Symbol:   key.Sym,
-		Segments: r.KeySpace().Segments(key),
+		Segments: ks.Segments(key),
 	}, true
 }
 

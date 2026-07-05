@@ -132,7 +132,7 @@ func (r *Result) computeSourceValueForExplanationAtBoundary(point cfg.Point, sou
 		return value, true
 	}
 	if hasState {
-		if declaration, declarationOK := r.rootDeclarationSourceForExpr(point, source.ExprRef); declarationOK {
+		if declaration, declarationOK := r.rootDeclarationSourceForValueSource(point, source); declarationOK {
 			if recoveredValue, ok := r.rootDeclarationValue(declaration, in); ok {
 				return recoveredValue, true
 			}
@@ -1101,4 +1101,22 @@ func (r *Result) rootDeclarationSourceForExpr(point cfg.Point, expr factflow.Exp
 		return factquery.RootDeclarationSource{}, false
 	}
 	return factquery.DominatingRootDeclarationSource(point, exprPath.Symbol, r.facts, graph)
+}
+
+func (r *Result) rootDeclarationSourceForValueSource(point cfg.Point, source factflow.ValueSource) (factquery.RootDeclarationSource, bool) {
+	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
+		return r.rootDeclarationSourceForExpr(point, source.ExprRef)
+	}
+	if r == nil || point == 0 || source.Kind != factflow.ValueSourcePath {
+		return factquery.RootDeclarationSource{}, false
+	}
+	sourcePath, ok := r.ValueSourcePath(source)
+	if !ok || sourcePath.Symbol == 0 || len(sourcePath.Segments) != 0 {
+		return factquery.RootDeclarationSource{}, false
+	}
+	graph := r.Graph()
+	if graph == nil {
+		return factquery.RootDeclarationSource{}, false
+	}
+	return factquery.DominatingRootDeclarationSource(point, sourcePath.Symbol, r.facts, graph)
 }

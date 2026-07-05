@@ -353,6 +353,77 @@ func TestSourceValueAtBoundaryDoesNotUseExplanationRecovery(t *testing.T) {
 	}
 }
 
+func TestSourceValueForExplanationRecoversDeclarationFromPathBackedRootSource(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	decl := graph.AddNode(cfg.NodeAssign)
+	use := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), decl, false)
+	graph.AddEdge(decl, use, false)
+	graph.AddEdge(use, graph.Exit(), false)
+
+	target := symbol.ID(17)
+	declExpr := factflow.ExprRef(31)
+	declSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: declExpr, HasExpr: true}
+	shape, ok := factflow.NewValueSourceShape(true, false, false, false)
+	if !ok {
+		t.Fatal("NewValueSourceShape returned false")
+	}
+	usePath := pathdom.NewPath(target, "x")
+	useSource, ok := factflow.NewPathValueSource(usePath.Key(), 0, 0, 0, shape)
+	if !ok {
+		t.Fatal("NewPathValueSource returned false")
+	}
+
+	weakUse := typevalue.FromType(reg, typ.Any)
+	concreteDeclaration := typevalue.FromType(reg, typ.String)
+	builder := visibility.NewBuilder()
+	builder.Define(use, target, "x")
+	result := &Result{
+		registry:   reg,
+		cfg:        &cfgbuild.Result{Graph: graph},
+		visibility: visibility.NewResolver(builder.Build()),
+		facts: factflow.NewFacts(factflow.FactsInput{
+			RootAssignments: map[cfg.Point]factflow.RootAssignment{
+				decl: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, usePath, declSource),
+			},
+		}),
+		flow: transfer.Result{
+			decl: state.State{},
+			use:  state.State{},
+		},
+		sources: sourceValueFunc(func(_ cfg.Point, source factflow.ValueSource, _ state.State, _ func(cfg.Point) state.State) (product.Value, bool) {
+			switch {
+			case source.Kind == factflow.ValueSourceExpression && source.ExprRef == declExpr:
+				return concreteDeclaration, true
+			case source.Kind == factflow.ValueSourcePath && source.PathKey == usePath.Key():
+				return weakUse, true
+			default:
+				return product.Value{}, false
+			}
+		}),
+	}
+
+	got, ok := result.SourceValueAtBoundary(use, useSource)
+	if !ok {
+		t.Fatal("SourceValueAtBoundary returned !ok")
+	}
+	if product.Equal(reg, got, concreteDeclaration) {
+		t.Fatal("SourceValueAtBoundary recovered declaration value; semantic projection must stay solved-state only")
+	}
+	if !product.Equal(reg, got, weakUse) {
+		t.Fatalf("SourceValueAtBoundary = %v, want weak solved source %v", got, weakUse)
+	}
+
+	recovered, ok := result.SourceValueForExplanationAtBoundary(use, useSource)
+	if !ok {
+		t.Fatal("SourceValueForExplanationAtBoundary returned !ok")
+	}
+	if !product.Equal(reg, recovered, concreteDeclaration) {
+		t.Fatalf("path-backed declaration recovery = %v, want declaration value %v", recovered, concreteDeclaration)
+	}
+}
+
 func TestBoundaryStateKeyIsCanonicalTypedPathVocabulary(t *testing.T) {
 	point := cfg.Point(9)
 	target := symbol.ID(42)
