@@ -15,8 +15,8 @@ import (
 )
 
 func (l *lowerer) channelSelects(point cfg.Point, result *semantics.Result) []factflow.ChannelSelect {
-	if events := l.channelSelectsFromWIR(point); len(events) != 0 {
-		return events
+	if l != nil && l.wir != nil {
+		return l.channelSelectsFromWIR(point)
 	}
 	if fact, ok := result.ChannelSelect(point); ok && fact.ResultTarget.HasPath && !fact.ResultTarget.Path.IsEmpty() {
 		return l.channelSelectEvents(point, fact)

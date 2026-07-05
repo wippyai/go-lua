@@ -22,6 +22,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
+	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
@@ -821,6 +822,33 @@ end
 			t.Fatalf("WIR receive event %d payload = %v/%v, want %v", i, got, ok, want)
 		}
 	}
+}
+
+func TestLowerChannelSelectsInWIRModeDoesNotFallbackToSidecar(t *testing.T) {
+	_, bindings, built, result := parseSemanticFunction(t, `
+function handle(events_ch: Channel<{kind: "event", id: string}>, stop_ch: Channel<{kind: "stop", reason: string}>)
+    local selected = channel.select { events_ch:case_receive(), stop_ch:case_receive() }
+end
+`, "channel")
+	body := wirlower.Lower("handle", result.Function().Stmts, bindings, built)
+	lowered := lowerer{
+		registry:    standard.Registry(),
+		bindings:    bindings,
+		symbolTypes: lowerSymbolTypes(bindings, built.Graph, result, nil, importlookup.Source{}),
+		wir:         body,
+	}
+
+	for _, point := range built.Graph.RPO() {
+		events := lowered.channelSelects(point, nil)
+		if len(events) == 0 {
+			continue
+		}
+		if events[0].Kind() != factflow.ChannelSelectSelect || len(events) != 5 {
+			t.Fatalf("WIR channel select events at %d = %#v", point, events)
+		}
+		return
+	}
+	t.Fatal("missing WIR channel select events")
 }
 
 func TestLowerChannelSelectsUseWIRCandidateCasePaths(t *testing.T) {
