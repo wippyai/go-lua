@@ -613,9 +613,10 @@ func (b *builder) lowerNumberFor(s *ast.NumberForStmt) {
 		list = append(list, b.constNumber("1"))
 	}
 	b.emit(wir.Instruction{
-		Op:   wir.OpIterate,
-		Iter: wir.IterNumeric,
-		List: b.body.AppendOperands(list),
+		Op:      wir.OpIterate,
+		Iter:    wir.IterNumeric,
+		Results: b.body.AppendOperands([]wir.Operand{b.numForOperand(s)}),
+		List:    b.body.AppendOperands(list),
 	})
 	b.lowerStmts(s.Stmts)
 }

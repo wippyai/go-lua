@@ -64,7 +64,7 @@ b6: exit
 b0: entry
 b1: s = 0
 b2: i = _
-b3: iterate.numeric [1, 10, 1]
+b3: i = iterate.numeric [1, 10, 1]
 b4: s = add s i
 b5: noop
 b6: exit
