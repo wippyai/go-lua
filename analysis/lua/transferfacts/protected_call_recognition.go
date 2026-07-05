@@ -57,7 +57,7 @@ func (l *lowerer) addProtectedCallBranchRefinements(input *factflow.FactsInput, 
 			if !activeIn[branch] || !graph.IsBranch(branch) {
 				continue
 			}
-			for _, cond := range l.protectedCallSuccessEdges(result, branch, okPath) {
+			for _, cond := range l.semanticProtectedCallSuccessEdges(result, branch, okPath) {
 				appendBranchRefinement(input.BranchRefinements, branch,
 					branchRefinementOnEdge(payloadPath, factflow.NewValueConstraint(payloadValue), cond),
 				)
@@ -104,7 +104,7 @@ func (l *lowerer) addProtectedCallBranchRefinementsFromWIR(input *factflow.Facts
 			if !activeIn[branch] || !graph.IsBranch(branch) {
 				continue
 			}
-			for _, cond := range l.protectedCallSuccessEdges(nil, branch, okPath) {
+			for _, cond := range l.wirProtectedCallSuccessEdges(branch, okPath) {
 				appendBranchRefinement(input.BranchRefinements, branch,
 					branchRefinementOnEdge(payloadPath, factflow.NewValueConstraint(payloadValue), cond),
 				)
@@ -156,8 +156,17 @@ func (l *lowerer) protectedCallPayloadType(fact semantics.CallFact) (typ.Type, b
 	return typecall.CallableReturn(callbackType)
 }
 
-func (l *lowerer) protectedCallSuccessEdges(result *semantics.Result, branch cfg.Point, okPath path.Path) []bool {
+func (l *lowerer) semanticProtectedCallSuccessEdges(result *semantics.Result, branch cfg.Point, okPath path.Path) []bool {
 	check, ok := l.directBranchCheckAt(branch, result)
+	return protectedCallSuccessEdgesForCheck(check, ok, okPath)
+}
+
+func (l *lowerer) wirProtectedCallSuccessEdges(branch cfg.Point, okPath path.Path) []bool {
+	check, ok := l.directBranchCheckFromWIR(branch)
+	return protectedCallSuccessEdgesForCheck(check, ok, okPath)
+}
+
+func protectedCallSuccessEdgesForCheck(check branchcond.Check, ok bool, okPath path.Path) []bool {
 	if !ok || !check.Path.Equal(okPath) {
 		return nil
 	}
