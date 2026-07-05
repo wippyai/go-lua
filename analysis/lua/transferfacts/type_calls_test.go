@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
+	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -491,6 +492,44 @@ return Point:is(data)
 	if relations := facts.ReturnPresenceRelations(returnPoint); len(relations) != 0 {
 		t.Fatalf("WIR empty return inherited semantic Type:is presence relations: %#v", relations)
 	}
+}
+
+func TestLowerWithWIRTypeIsReturnPresenceUsesCallSiteWithoutSemanticResult(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+type Point = {x: number, y: number}
+local data: any = {}
+return Point:is(data)
+`)
+	ret := stmts[2].(*ast.ReturnStmt)
+	points := requireStmtPoints(t, built, ret, 2)
+	callPoint := points[0]
+	returnPoint := points[1]
+	body := wirlower.Lower("chunk", stmts, bindings, built)
+	seed := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	site, ok := seed.CallSite(callPoint)
+	if !ok {
+		t.Fatalf("missing lowered Type:is callsite at point %d", callPoint)
+	}
+	lowered := lowerer{
+		registry:     reg,
+		bindings:     bindings,
+		wir:          body,
+		typeResolver: typeresolve.New(bindings),
+	}
+	sources, ok := lowered.returnValueSourcesFromWIR(returnPoint)
+	if !ok {
+		t.Fatalf("missing WIR return sources at point %d", returnPoint)
+	}
+
+	relations := lowered.typeIsReturnPresenceRelationsFromSources(
+		sources,
+		nil,
+		map[cfg.Point]factflow.CallSite{callPoint: site},
+	)
+
+	assertReturnPresenceRelation(t, relations, 1, presence.Present(), 0, presence.Absent())
+	assertReturnPresenceRelation(t, relations, 1, presence.Absent(), 0, presence.Present())
 }
 
 func TestLowerExplicitErrorReturnsPublishPresenceRelation(t *testing.T) {

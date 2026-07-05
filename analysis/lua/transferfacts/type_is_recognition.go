@@ -396,8 +396,12 @@ func (l *lowerer) typeIsCallResultValues(point cfg.Point, fact semantics.CallFac
 	}
 }
 
-func (l *lowerer) typeIsReturnPresenceRelationsFromSources(sources []factflow.ValueSource, result *semantics.Result) []factflow.ReturnPresenceRelation {
-	if len(sources) == 0 || result == nil {
+func (l *lowerer) typeIsReturnPresenceRelationsFromSources(
+	sources []factflow.ValueSource,
+	result *semantics.Result,
+	callSites map[cfg.Point]factflow.CallSite,
+) []factflow.ReturnPresenceRelation {
+	if len(sources) == 0 {
 		return nil
 	}
 	var out []factflow.ReturnPresenceRelation
@@ -412,12 +416,7 @@ func (l *lowerer) typeIsReturnPresenceRelationsFromSources(sources []factflow.Va
 		if source.Kind != factflow.ValueSourceCall || !source.HasCallPoint {
 			continue
 		}
-		view, ok := result.CallView(source.CallPoint)
-		if !ok {
-			continue
-		}
-		fact, _ := view.Borrowed()
-		if _, _, ok := l.typeIsCall(fact); !ok {
+		if !l.sourceCallIsTypeIs(source, result, callSites) {
 			continue
 		}
 		if source.OpenTail && source.Expanded {
@@ -450,6 +449,29 @@ func (l *lowerer) typeIsReturnPresenceRelationsFromSources(sources []factflow.Va
 		)
 	}
 	return out
+}
+
+func (l *lowerer) sourceCallIsTypeIs(source factflow.ValueSource, result *semantics.Result, callSites map[cfg.Point]factflow.CallSite) bool {
+	if source.Kind != factflow.ValueSourceCall || !source.HasCallPoint {
+		return false
+	}
+	if l != nil && l.wir != nil {
+		if _, ok := callSites[source.CallPoint]; !ok {
+			return false
+		}
+		_, _, ok := l.typeIsCallSiteFromWIR(source.CallPoint)
+		return ok
+	}
+	if result == nil {
+		return false
+	}
+	view, ok := result.CallView(source.CallPoint)
+	if !ok {
+		return false
+	}
+	fact, _ := view.Borrowed()
+	_, _, ok = l.typeIsCall(fact)
+	return ok
 }
 
 func (l *lowerer) typeWitnessValue(t typ.Type) product.Value {
