@@ -1113,6 +1113,87 @@ func TestSignatureOutcomeProviderLowersTableMutatorValueToElementRefinement(t *t
 	}
 }
 
+func TestSignatureOutcomeProviderLowersTableMutatorFromPathSources(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	listSymbol := symbol.ID(9121)
+	valueSymbol := symbol.ID(9122)
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(call, listSymbol, "items")
+	visibilityBuilder.Define(call, valueSymbol, "id")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	listKey, ok := visibility.AddressAt(resolver, call, path.Path{Symbol: listSymbol}).RootOrVisibleStateKey()
+	if !ok {
+		t.Fatal("missing list key")
+	}
+	valueKey, ok := visibility.AddressAt(resolver, call, path.Path{Symbol: valueSymbol}).RootOrVisibleStateKey()
+	if !ok {
+		t.Fatal("missing value key")
+	}
+	listSource, ok := factflow.NewPathValueSource(listKey.PathKey(), 0, 0, 0, factflow.ValueSourceShape{Final: false})
+	if !ok {
+		t.Fatal("list path source")
+	}
+	valueSource, ok := factflow.NewPathValueSource(valueKey.PathKey(), 1, 1, 0, factflow.ValueSourceShape{Final: true})
+	if !ok {
+		t.Fatal("value path source")
+	}
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context:         factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{listSource, valueSource},
+			}),
+		},
+	})
+	listValue := returnValueFromType(reg, typetable.NewRecord().Build())
+	valueValue := returnValueFromType(reg, typ.String)
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(listSymbol), listValue).
+		WriteValue(reg, key.SymbolValue(valueSymbol), valueValue)
+	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+		Registry: reg,
+		KeySpace: ks,
+	})
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"table.insert": {
+				Effect: effect.Empty.With(
+					mutation.TableMutator{Target: effect.ParamRef{Index: 0}, Value: effect.ParamRef{Index: -1}},
+				),
+			},
+		},
+		NameFor:  staticName("table.insert"),
+		Facts:    facts,
+		Sources:  sources,
+		KeySpace: ks,
+	})
+	site, ok := facts.CallSite(call)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), in, nil)
+
+	if len(got.ParamPathWrites) != 1 || !got.ParamPathWrites[0].Path.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("param path writes = %#v, want one $0 write", got.ParamPathWrites)
+	}
+	if len(got.NormalReturnFacts.DynamicIndexFacts) != 1 {
+		t.Fatalf("dynamic index facts = %#v, want one table-mutator element fact", got.NormalReturnFacts.DynamicIndexFacts)
+	}
+	dynamic := got.NormalReturnFacts.DynamicIndexFacts[0]
+	if !dynamic.ValuePath.Equal(path.NewPlaceholder(1)) {
+		t.Fatalf("dynamic value path = %s, want $1", dynamic.ValuePath)
+	}
+	if valueType, ok := typevalue.TypeOf(reg, dynamic.Value.Value); !ok || !typ.TypeEquals(valueType, typ.String) {
+		t.Fatalf("dynamic value type = %v/%v, want string", valueType, ok)
+	}
+}
+
 func TestSignatureOutcomeProviderReadsTableMutatorEvidenceOncePerLabel(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
