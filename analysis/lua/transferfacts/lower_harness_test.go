@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
@@ -849,6 +850,55 @@ end
 		return
 	}
 	t.Fatal("missing WIR channel select events")
+}
+
+func TestLowerChannelSelectsFromWIRWithoutSemanticCallView(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function handle(events_ch: Channel<{kind: "event", id: string}>)
+    local selected = nil
+end
+`, "channel")
+	stmt := fn.Stmts[0].(*ast.LocalAssignStmt)
+	point := requireStmtPoints(t, built, stmt, 1)[0]
+	eventsPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "events_ch")
+	selectedPath := path.NewPath(mustLocalAt(t, bindings, stmt, 0), "selected")
+	body := wir.NewBody("synthetic-channel-select")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpSelect,
+		Point: point,
+		List:  body.AppendOperands([]wir.Operand{{Kind: wir.OperandPath, Ref: uint32(body.InternPath(eventsPath))}}),
+	})
+	body.SetPointRange(point, start, start+1)
+	body.SetCallResultTarget(point, 0, selectedPath)
+
+	if _, ok := result.CallView(point); ok {
+		t.Fatalf("fixture unexpectedly has semantic call view at point %d", point)
+	}
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	events := facts.ChannelSelects(point)
+	if len(events) != 3 {
+		t.Fatalf("WIR channel select events at point %d = %#v, want select/case/receive without semantic call view", point, events)
+	}
+	if events[0].Kind() != factflow.ChannelSelectSelect {
+		t.Fatalf("select event = %#v", events[0])
+	}
+	if got, ok := events[0].ResultPath(); !ok || !got.Equal(selectedPath) {
+		t.Fatalf("select result path = %v/%v, want %v", got, ok, selectedPath)
+	}
+	if got, ok := events[1].CasePath(); !ok || !got.Equal(eventsPath) {
+		t.Fatalf("case path = %v/%v, want %v", got, ok, eventsPath)
+	}
+	payload, ok := events[2].PayloadValue()
+	if !ok {
+		t.Fatalf("receive event missing payload witness: %#v", events[2])
+	}
+	witness := product.Get(standard.Registry(), payload, typewitness.Key)
+	got, ok := witness.Type()
+	want := typetable.NewRecord().Field("kind", typ.LiteralString("event")).Field("id", typ.String).Build()
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("receive payload = %v/%v, want %v", got, ok, want)
+	}
 }
 
 func TestLowerChannelSelectsUseWIRCandidateCasePaths(t *testing.T) {

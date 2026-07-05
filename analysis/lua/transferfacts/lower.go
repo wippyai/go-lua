@@ -110,9 +110,9 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		if view, ok := result.LocalAssignmentView(point); ok {
 			fact, _ := view.Borrowed()
 			if l.wir != nil && !l.hasAssignmentWriteFromWIR(point) {
-				continue
-			}
-			if lowered, ok := l.localAssignment(point, fact); ok {
+				// WIR mode must not fall back to semantic assignment facts, but
+				// other WIR-owned facts can share this CFG point.
+			} else if lowered, ok := l.localAssignment(point, fact); ok {
 				input.RootAssignments[point] = lowered
 				l.addLocalConditionAlias(fact.Symbol, lowered.Source())
 				l.addAssignmentAssertionRefinements(&input, point, lowered.TargetPath(), lowered.Source(), fact.Source)
@@ -130,9 +130,9 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		if view, ok := result.OrdinaryAssignmentView(point); ok {
 			fact, _ := view.Borrowed()
 			if l.wir != nil && !l.hasAssignmentWriteFromWIR(point) {
-				continue
-			}
-			if lowered, ok := l.pathAssignment(point, fact); ok {
+				// WIR mode must not fall back to semantic assignment facts, but
+				// other WIR-owned facts can share this CFG point.
+			} else if lowered, ok := l.pathAssignment(point, fact); ok {
 				input.PathAssignments[point] = lowered
 				if lowered, ok := l.pathStaticMemberWrite(point, fact); ok {
 					input.PathStaticMemberWrites[point] = lowered
@@ -190,10 +190,17 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			}
 			l.addReturnObjectLiteralExpectedTypes(&input, result, fact)
 		}
+		if l.wir != nil {
+			if lowered := l.channelSelectsFromWIR(point); len(lowered) != 0 {
+				input.ChannelSelects[point] = factflow.NewChannelSelectSet(lowered...)
+			}
+		}
 		if view, ok := result.CallView(point); ok {
 			fact, _ := view.Borrowed()
-			if lowered := l.channelSelects(point, result); len(lowered) != 0 {
-				input.ChannelSelects[point] = factflow.NewChannelSelectSet(lowered...)
+			if l.wir == nil {
+				if lowered := l.channelSelects(point, result); len(lowered) != 0 {
+					input.ChannelSelects[point] = factflow.NewChannelSelectSet(lowered...)
+				}
 			}
 			site, hasCallSite := l.callSiteAt(point, fact)
 			if !hasCallSite {
