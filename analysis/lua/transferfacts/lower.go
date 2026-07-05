@@ -285,8 +285,14 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 					input.BranchPathRelations[point] = lowered
 				}
 			}
-			if lowered := l.branchPathEvidence(fact.Check, condition); len(lowered) != 0 {
-				appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
+			if hasWIRBranch {
+				if lowered := l.branchPathEvidenceFromWIR(point, condition); len(lowered) != 0 {
+					appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
+				}
+			} else {
+				if lowered := l.branchPathEvidence(fact.Check, condition); len(lowered) != 0 {
+					appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
+				}
 			}
 			if addAssertionRefinements {
 				l.addAssertionRefinementsForSource(&input, fact.Source)

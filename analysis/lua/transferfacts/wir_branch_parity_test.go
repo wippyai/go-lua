@@ -117,6 +117,33 @@ end
 	}
 }
 
+func TestLowerWithWIRCompoundBranchPathEvidenceMatchesSidecar(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local a, b, c = {}, {}, nil
+if a == b and c ~= nil then
+    local hit = true
+end
+`)
+	body := wirlower.Lower("chunk", stmts, bindings, built)
+	sidecarFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	var checked bool
+	for _, point := range built.Graph.RPO() {
+		want := sidecarFacts.BranchPathEvidence(point)
+		if len(want) == 0 {
+			continue
+		}
+		checked = true
+		if got := wirFacts.BranchPathEvidence(point); !reflect.DeepEqual(got, want) {
+			t.Fatalf("WIR branch path evidence at point %d mismatch\n got: %#v\nwant: %#v", point, got, want)
+		}
+	}
+	if !checked {
+		t.Fatal("test did not exercise branch path evidence")
+	}
+}
+
 func TestLowerWithWIRCompoundBranchRefinementLanesMatchSidecar(t *testing.T) {
 	stmts, bindings, built, result := parseSemanticChunk(t, `
 local x: any = 1
@@ -180,6 +207,9 @@ end
 	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	if got := wirFacts.BranchPathRelations(point); len(got) != 0 {
 		t.Fatalf("WIR branch path relations fell back to semantic condition: %#v", got)
+	}
+	if got := wirFacts.BranchPathEvidence(point); len(got) != 0 {
+		t.Fatalf("WIR branch path evidence fell back to semantic condition: %#v", got)
 	}
 }
 

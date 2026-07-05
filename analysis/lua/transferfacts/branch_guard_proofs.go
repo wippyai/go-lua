@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -19,6 +20,16 @@ func (l *lowerer) branchPathEvidence(check branchcond.Check, condition ast.Expr)
 	for _, implied := range branchcond.ImpliedChecksOnBothEdges(condition, l.bindings) {
 		out = append(out, l.branchPathEvidenceForImplication(implied)...)
 	}
+	return out
+}
+
+func (l *lowerer) branchPathEvidenceFromWIR(point cfg.Point, condition ast.Expr) []factflow.BranchPathEvidence {
+	out := l.frozenTableBranchEvidence(condition)
+	l.forEachWIRBranchCheck(point, func(check branchcond.Check) {
+		out = append(out, l.branchPathEvidenceForCheck(check)...)
+	}, func(implied branchcond.ImpliedCheck) {
+		out = append(out, l.branchPathEvidenceForImplication(implied)...)
+	})
 	return out
 }
 

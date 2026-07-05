@@ -211,11 +211,13 @@ the cfgbuild guard point while retaining the `OpLogical` value form at the
 enclosing expression point. call reaches 100% under the per-point split (one
 `OpCall` per call point).
 
-Branch lane migration: `BranchRefinements`, length floors, numeric floors, and
-`BranchPathRelations` consume the WIR branch instruction's direct check /
-implied-check range in WIR mode. If WIR has a branch instruction but no
-lane-producing check metadata, transfer does not fall back to semantic
-compound-condition traversal for those lanes.
+Branch lane migration: `BranchRefinements`, length floors, numeric floors,
+`BranchPathRelations`, and check-derived `BranchPathEvidence` consume the WIR
+branch instruction's direct check / implied-check range in WIR mode. If WIR has
+a branch instruction but no lane-producing check metadata, transfer does not
+fall back to semantic compound-condition traversal for those lanes. Special
+predicate evidence such as `table.isfrozen(x)` remains an explicit AST predicate
+path until WIR grows predicate descriptors.
 
 ## Locked decisions (Stage 4, journal #1392)
 
