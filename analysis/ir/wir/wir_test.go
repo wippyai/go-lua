@@ -120,3 +120,49 @@ func TestPrintHandBuiltBody(t *testing.T) {
 		t.Fatalf("print mismatch\n got: %q\nwant: %q", got, want)
 	}
 }
+
+func TestInstructionAssignmentSourceOperand(t *testing.T) {
+	a := Operand{Kind: OperandPath, Ref: 1}
+	b := Operand{Kind: OperandPath, Ref: 2}
+
+	tests := []struct {
+		name string
+		inst Instruction
+		want Operand
+		ok   bool
+	}{
+		{name: "assign", inst: Instruction{Op: OpAssign, A: a}, want: a, ok: true},
+		{name: "static member write", inst: Instruction{Op: OpStaticMemberWrite, A: a}, want: a, ok: true},
+		{name: "dynamic index write", inst: Instruction{Op: OpDynamicIndexWrite, A: a, B: b}, want: b, ok: true},
+		{name: "dynamic index write missing value", inst: Instruction{Op: OpDynamicIndexWrite, A: a}, ok: false},
+		{name: "call", inst: Instruction{Op: OpCall, A: a}, ok: false},
+	}
+	for _, tc := range tests {
+		got, ok := tc.inst.AssignmentSourceOperand()
+		if ok != tc.ok || got != tc.want {
+			t.Fatalf("%s: AssignmentSourceOperand = %#v/%v, want %#v/%v", tc.name, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+func TestInstructionWritesAssignmentPoint(t *testing.T) {
+	dst := Operand{Kind: OperandPath, Ref: 1}
+
+	writes := []Op{OpAssign, OpMakeTable, OpBinOp, OpUnOp, OpConcat, OpClaim, OpSelect, OpLogical, OpClosure}
+	for _, op := range writes {
+		if !((Instruction{Op: op, Dst: dst}).WritesAssignmentPoint()) {
+			t.Fatalf("%v with destination must write assignment point", op)
+		}
+		if (Instruction{Op: op}).WritesAssignmentPoint() {
+			t.Fatalf("%v without destination must not write assignment point", op)
+		}
+	}
+	for _, op := range []Op{OpStaticMemberWrite, OpDynamicIndexWrite} {
+		if !(Instruction{Op: op}).WritesAssignmentPoint() {
+			t.Fatalf("%v must write assignment point", op)
+		}
+	}
+	if (Instruction{Op: OpCall, Dst: dst}).WritesAssignmentPoint() {
+		t.Fatalf("call must not be classified as assignment write by destination slot")
+	}
+}

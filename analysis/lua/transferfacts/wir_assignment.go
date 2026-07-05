@@ -103,15 +103,8 @@ func (l *lowerer) ordinaryAssignmentSourceFromWIR(point cfg.Point, fallback sour
 
 func (l *lowerer) assignmentSourceOperandFromWIR(point cfg.Point) (wir.Operand, bool) {
 	for _, inst := range l.wir.PointInstructions(point) {
-		switch inst.Op {
-		case wir.OpAssign, wir.OpStaticMemberWrite:
-			if inst.A.Kind != wir.OperandNone {
-				return inst.A, true
-			}
-		case wir.OpDynamicIndexWrite:
-			if inst.B.Kind != wir.OperandNone {
-				return inst.B, true
-			}
+		if op, ok := inst.AssignmentSourceOperand(); ok {
+			return op, true
 		}
 	}
 	return wir.Operand{}, false
@@ -122,20 +115,9 @@ func (l *lowerer) hasAssignmentWriteFromWIR(point cfg.Point) bool {
 		return false
 	}
 	for _, inst := range l.wir.PointInstructions(point) {
-		if wirInstructionWritesAssignmentPoint(inst) {
+		if inst.WritesAssignmentPoint() {
 			return true
 		}
 	}
 	return false
-}
-
-func wirInstructionWritesAssignmentPoint(inst wir.Instruction) bool {
-	switch inst.Op {
-	case wir.OpAssign, wir.OpMakeTable, wir.OpBinOp, wir.OpUnOp, wir.OpConcat, wir.OpClaim, wir.OpSelect, wir.OpLogical, wir.OpClosure:
-		return inst.Dst.Kind != wir.OperandNone
-	case wir.OpStaticMemberWrite, wir.OpDynamicIndexWrite:
-		return true
-	default:
-		return false
-	}
 }

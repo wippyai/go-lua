@@ -230,3 +230,34 @@ type Instruction struct {
 	// count is open beyond them.
 	ResultSpread bool
 }
+
+// AssignmentSourceOperand returns the operand whose value is written by an
+// assignment-like instruction. It centralizes the opcode layout so consumers do
+// not need to know that dynamic-index stores write B while direct/static stores
+// write A.
+func (i Instruction) AssignmentSourceOperand() (Operand, bool) {
+	switch i.Op {
+	case OpAssign, OpStaticMemberWrite:
+		if i.A.Kind != OperandNone {
+			return i.A, true
+		}
+	case OpDynamicIndexWrite:
+		if i.B.Kind != OperandNone {
+			return i.B, true
+		}
+	}
+	return Operand{}, false
+}
+
+// WritesAssignmentPoint reports whether the instruction writes a value at its
+// CFG point for assignment lowering purposes.
+func (i Instruction) WritesAssignmentPoint() bool {
+	switch i.Op {
+	case OpAssign, OpMakeTable, OpBinOp, OpUnOp, OpConcat, OpClaim, OpSelect, OpLogical, OpClosure:
+		return i.Dst.Kind != OperandNone
+	case OpStaticMemberWrite, OpDynamicIndexWrite:
+		return true
+	default:
+		return false
+	}
+}
