@@ -7,17 +7,16 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func (l *lowerer) branchPathEvidence(fact semantics.BranchConditionFact) []factflow.BranchPathEvidence {
-	out := l.frozenTableBranchEvidence(fact)
-	if fact.Check.Kind != branchcond.CheckNone {
-		out = append(out, l.branchPathEvidenceForCheck(fact.Check)...)
+func (l *lowerer) branchPathEvidence(check branchcond.Check, condition ast.Expr) []factflow.BranchPathEvidence {
+	out := l.frozenTableBranchEvidence(condition)
+	if check.Kind != branchcond.CheckNone {
+		out = append(out, l.branchPathEvidenceForCheck(check)...)
 		return out
 	}
-	for _, implied := range branchcond.ImpliedChecksOnBothEdges(fact.Condition, l.bindings) {
+	for _, implied := range branchcond.ImpliedChecksOnBothEdges(condition, l.bindings) {
 		out = append(out, l.branchPathEvidenceForImplication(implied)...)
 	}
 	return out
@@ -119,10 +118,10 @@ func (l *lowerer) branchPathEvidenceForCheckPolarityOnEdge(check branchcond.Chec
 	return nil
 }
 
-func (l *lowerer) frozenTableBranchEvidence(fact semantics.BranchConditionFact) []factflow.BranchPathEvidence {
+func (l *lowerer) frozenTableBranchEvidence(condition ast.Expr) []factflow.BranchPathEvidence {
 	var out []factflow.BranchPathEvidence
-	out = append(out, l.frozenTableBranchEvidenceForCondition(fact.Condition, true)...)
-	out = append(out, l.frozenTableBranchEvidenceForCondition(fact.Condition, false)...)
+	out = append(out, l.frozenTableBranchEvidenceForCondition(condition, true)...)
+	out = append(out, l.frozenTableBranchEvidenceForCondition(condition, false)...)
 	return out
 }
 

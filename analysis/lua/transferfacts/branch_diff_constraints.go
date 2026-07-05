@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse/numparse"
 )
@@ -15,12 +14,12 @@ import (
 // on each branch edge: relational comparisons between linear path terms, e.g.
 // i < j, i + 1 <= #xs, and #a == #b. Pure path-vs-constant bounds (i >= 1,
 // #xs > 0) are left to the numeric- and length-floor lanes.
-func (l *lowerer) branchDiffConstraints(fact semantics.BranchConditionFact) []factflow.BranchDiffConstraint {
+func (l *lowerer) branchDiffConstraints(condition ast.Expr) []factflow.BranchDiffConstraint {
 	var out []factflow.BranchDiffConstraint
-	for _, implied := range branchcond.ImpliedRelationalOpsOnEdge(fact.Condition, true) {
+	for _, implied := range branchcond.ImpliedRelationalOpsOnEdge(condition, true) {
 		out = append(out, l.diffConstraintsFromComparisonOnEdge(implied.Expr, implied.Edge, implied.Polarity)...)
 	}
-	for _, implied := range branchcond.ImpliedRelationalOpsOnEdge(fact.Condition, false) {
+	for _, implied := range branchcond.ImpliedRelationalOpsOnEdge(condition, false) {
 		out = append(out, l.diffConstraintsFromComparisonOnEdge(implied.Expr, implied.Edge, implied.Polarity)...)
 	}
 	return out

@@ -3,14 +3,14 @@ package transferfacts
 import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func (l *lowerer) branchPathRelations(fact semantics.BranchConditionFact) (factflow.BranchPathRelationSet, bool) {
+func (l *lowerer) branchPathRelations(check branchcond.Check, condition ast.Expr) (factflow.BranchPathRelationSet, bool) {
 	// A direct relational condition implies the relation on the true edge and
 	// its negation on the false edge.
-	if fact.Check.Kind != branchcond.CheckNone {
-		relations := checkPathRelations(fact.Check, true, true)
+	if check.Kind != branchcond.CheckNone {
+		relations := checkPathRelations(check, true, true)
 		if len(relations) == 0 {
 			return factflow.BranchPathRelationSet{}, false
 		}
@@ -20,7 +20,7 @@ func (l *lowerer) branchPathRelations(fact semantics.BranchConditionFact) (factf
 	// polarity is known on one outer branch edge. The opposite edge is ambiguous,
 	// so a decomposed check narrows only on the edge that implies it.
 	var relations []factflow.BranchPathRelation
-	for _, implied := range branchcond.ImpliedChecksOnBothEdges(fact.Condition, l.bindings) {
+	for _, implied := range branchcond.ImpliedChecksOnBothEdges(condition, l.bindings) {
 		relations = append(relations, checkPathRelationsForImplication(implied)...)
 	}
 	if len(relations) == 0 {

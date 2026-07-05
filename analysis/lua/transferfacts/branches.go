@@ -4,8 +4,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 func (l *lowerer) branchValueRefinementForCheck(check branchcond.Check) (factflow.BranchRefinement, bool) {
@@ -58,18 +58,18 @@ func (l *lowerer) branchValueRefinementForCheck(check branchcond.Check) (factflo
 // length-floor facts on the edge each holds: #xs > 0 raises len(xs) >= 1 on the
 // true edge, while the negated #xs < lo raises it on the false edge. Merges never
 // carry it.
-func (l *lowerer) branchLenRefinements(fact semantics.BranchConditionFact) []factflow.BranchLenRefinement {
-	if fact.Check.Kind == branchcond.CheckLenGe {
-		if lowered, ok := l.branchLenRefinementOnEdge(fact.Check, !fact.Check.Negated); ok {
+func (l *lowerer) branchLenRefinements(check branchcond.Check, condition ast.Expr) []factflow.BranchLenRefinement {
+	if check.Kind == branchcond.CheckLenGe {
+		if lowered, ok := l.branchLenRefinementOnEdge(check, !check.Negated); ok {
 			return []factflow.BranchLenRefinement{lowered}
 		}
 		return nil
 	}
-	if fact.Check.Kind != branchcond.CheckNone {
+	if check.Kind != branchcond.CheckNone {
 		return nil
 	}
 	var out []factflow.BranchLenRefinement
-	for _, implied := range branchcond.ImpliedChecksOnBothEdges(fact.Condition, l.bindings) {
+	for _, implied := range branchcond.ImpliedChecksOnBothEdges(condition, l.bindings) {
 		if lowered, ok := l.branchLenRefinementForImplication(implied); ok {
 			out = append(out, lowered)
 		}
@@ -103,18 +103,18 @@ func (l *lowerer) branchLenRefinementForImplication(implied branchcond.ImpliedCh
 // branchNumFloorRefinements lowers a numeric lower-bound guard such as `i >= 1`
 // (true edge) or the negated `i < 1` (false edge) into a numeric-floor fact, the
 // positive-index half of an array-read in-range proof, on the edge it holds.
-func (l *lowerer) branchNumFloorRefinements(fact semantics.BranchConditionFact) []factflow.BranchNumFloorRefinement {
-	if fact.Check.Kind == branchcond.CheckNumGe {
-		if lowered, ok := l.branchNumFloorRefinementOnEdge(fact.Check, !fact.Check.Negated); ok {
+func (l *lowerer) branchNumFloorRefinements(check branchcond.Check, condition ast.Expr) []factflow.BranchNumFloorRefinement {
+	if check.Kind == branchcond.CheckNumGe {
+		if lowered, ok := l.branchNumFloorRefinementOnEdge(check, !check.Negated); ok {
 			return []factflow.BranchNumFloorRefinement{lowered}
 		}
 		return nil
 	}
-	if fact.Check.Kind != branchcond.CheckNone {
+	if check.Kind != branchcond.CheckNone {
 		return nil
 	}
 	var out []factflow.BranchNumFloorRefinement
-	for _, implied := range branchcond.ImpliedChecksOnBothEdges(fact.Condition, l.bindings) {
+	for _, implied := range branchcond.ImpliedChecksOnBothEdges(condition, l.bindings) {
 		if lowered, ok := l.branchNumFloorRefinementForImplication(implied); ok {
 			out = append(out, lowered)
 		}
@@ -145,15 +145,15 @@ func (l *lowerer) branchNumFloorRefinementForImplication(implied branchcond.Impl
 	return factflow.NewBranchNumFloorRefinementOnEdge(check.Path, check.NumFloor, implied.Edge), true
 }
 
-func (l *lowerer) branchRefinements(fact semantics.BranchConditionFact) []factflow.BranchRefinement {
-	if fact.Check.Kind != branchcond.CheckNone {
-		if lowered := l.branchRefinementsForCheck(fact.Check); len(lowered) != 0 {
+func (l *lowerer) branchRefinements(check branchcond.Check, condition ast.Expr) []factflow.BranchRefinement {
+	if check.Kind != branchcond.CheckNone {
+		if lowered := l.branchRefinementsForCheck(check); len(lowered) != 0 {
 			return lowered
 		}
 		return nil
 	}
 	var out []factflow.BranchRefinement
-	for _, implied := range branchcond.ImpliedChecksOnBothEdges(fact.Condition, l.bindings) {
+	for _, implied := range branchcond.ImpliedChecksOnBothEdges(condition, l.bindings) {
 		out = append(out, l.branchImplicationRefinements(implied)...)
 	}
 	return orderRootRefinementsBeforeDescendants(out)

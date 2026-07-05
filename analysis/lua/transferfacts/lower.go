@@ -203,25 +203,25 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			if reachability, ok := l.branchEdgeReachability(point, fact.Condition); ok {
 				input.BranchEdgeReachability[point] = reachability
 			}
-			if lowered := l.branchRefinements(fact); len(lowered) != 0 {
+			if lowered := l.branchRefinements(fact.Check, fact.Condition); len(lowered) != 0 {
 				appendBranchRefinement(input.BranchRefinements, point, lowered...)
 			}
-			if lowered := l.branchLenRefinements(fact); len(lowered) != 0 {
+			if lowered := l.branchLenRefinements(fact.Check, fact.Condition); len(lowered) != 0 {
 				appendBranchLenRefinement(input.BranchRefinements, point, lowered...)
 			}
-			if lowered := l.branchNumFloorRefinements(fact); len(lowered) != 0 {
+			if lowered := l.branchNumFloorRefinements(fact.Check, fact.Condition); len(lowered) != 0 {
 				appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered...)
 			}
-			if lowered := l.branchDiffConstraints(fact); len(lowered) != 0 {
+			if lowered := l.branchDiffConstraints(fact.Condition); len(lowered) != 0 {
 				appendBranchDiffConstraint(input.BranchRefinements, point, lowered...)
 			}
 			if lowered := l.branchAliasRefinements(fact.Condition); len(lowered) != 0 {
 				appendBranchRefinement(input.BranchRefinements, point, lowered...)
 			}
-			if lowered, ok := l.branchPathRelations(fact); ok {
+			if lowered, ok := l.branchPathRelations(fact.Check, fact.Condition); ok {
 				input.BranchPathRelations[point] = lowered
 			}
-			if lowered := l.branchPathEvidence(fact); len(lowered) != 0 {
+			if lowered := l.branchPathEvidence(fact.Check, fact.Condition); len(lowered) != 0 {
 				appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
 			}
 			l.addAssertionRefinementsForSource(&input, fact.Source)
