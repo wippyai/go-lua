@@ -27,8 +27,9 @@ type Body struct {
 	checks []Check
 	protos []FuncProto
 
-	operandPool []Operand
-	callTargets map[callResultTargetKey]CallResultTarget
+	operandPool  []Operand
+	tableEntries []TableEntry
+	callTargets  map[callResultTargetKey]CallResultTarget
 
 	pathIndex  map[path.PathKey]PathRef
 	constIndex map[Const]ConstRef
@@ -58,6 +59,20 @@ type FuncProto struct {
 // what facts that flow implies.
 type CallResultTarget struct {
 	Path path.Path
+}
+
+// TableEntry records one statically-addressable table-constructor entry. Suffix
+// is rootless and relative to the constructed object; Value is the lowered
+// operand written to that suffix.
+type TableEntry struct {
+	Suffix path.Path
+	Value  Operand
+}
+
+// TableEntryRange is a [Start, Start+Len) window into Body.tableEntries.
+type TableEntryRange struct {
+	Start uint32
+	Len   uint32
 }
 
 type callResultTargetKey struct {
@@ -226,6 +241,14 @@ func (b *Body) Operands(r OperandRange) []Operand {
 	return b.operandPool[r.Start : r.Start+r.Len]
 }
 
+// TableEntries returns the table-entry slice for a variadic range.
+func (b *Body) TableEntries(r TableEntryRange) []TableEntry {
+	if r.Len == 0 {
+		return nil
+	}
+	return b.tableEntries[r.Start : r.Start+r.Len]
+}
+
 // InternPath interns a path and returns its 1-based ref. The empty path is none.
 func (b *Body) InternPath(p path.Path) PathRef {
 	if p.IsEmpty() {
@@ -331,6 +354,17 @@ func (b *Body) AppendOperands(ops []Operand) OperandRange {
 	start := uint32(len(b.operandPool))
 	b.operandPool = append(b.operandPool, ops...)
 	return OperandRange{Start: start, Len: uint32(len(ops))}
+}
+
+// AppendTableEntries copies entries into the shared table-entry pool and returns
+// their range.
+func (b *Body) AppendTableEntries(entries []TableEntry) TableEntryRange {
+	if len(entries) == 0 {
+		return TableEntryRange{}
+	}
+	start := uint32(len(b.tableEntries))
+	b.tableEntries = append(b.tableEntries, entries...)
+	return TableEntryRange{Start: start, Len: uint32(len(entries))}
 }
 
 // Emit appends an instruction and returns its flat index.

@@ -202,6 +202,10 @@ type Instruction struct {
 	// entries, n-ary concat operands, iterator sources, select cases).
 	List OperandRange
 
+	// TableEntries is the statically-addressable constructor entry window for
+	// OpMakeTable. It is analysis metadata; List remains the runtime value list.
+	TableEntries TableEntryRange
+
 	// Results is the variadic destination window (multi-value call results,
 	// for-loop variables).
 	Results OperandRange

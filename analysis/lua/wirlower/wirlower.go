@@ -1003,24 +1003,43 @@ func logicalOperator(e *ast.LogicalOpExpr) wir.Operator {
 
 // lowerTable lowers a table constructor over its array, hash, and trailing
 // spread parts. Every field value becomes a List operand; a final keyless
-// multi-value producer marks the list tail as an open spread. Field keys are
-// structural syntax recovered by transfer from the constructor.
+// multi-value producer marks the list tail as an open spread. Static entry
+// suffixes are carried in WIR as constructor metadata so transfer does not need
+// to rediscover field keys from the AST.
 func (b *builder) lowerTable(dst wir.Operand, t *ast.TableExpr) {
 	last := lastFieldIndex(t.Fields)
 	ops := make([]wir.Operand, 0, len(t.Fields))
+	entryByField := map[*ast.Field]path.Path{}
+	for _, entry := range pathexpr.ObjectEntries(t) {
+		if entry.Field != nil {
+			entryByField[entry.Field] = entry.Suffix
+		}
+	}
+	entries := make([]wir.TableEntry, 0, len(entryByField))
 	spread := false
 	for i, f := range t.Fields {
 		if f == nil || f.Value == nil {
 			continue
 		}
+		var value wir.Operand
 		if i == last && f.Key == nil && ast.CanProduceMultipleValues(f.Value) {
-			ops = append(ops, b.lowerMultiValue(f.Value))
+			value = b.lowerMultiValue(f.Value)
 			spread = true
-			continue
+		} else {
+			value = b.lowerExpr(f.Value)
 		}
-		ops = append(ops, b.lowerExpr(f.Value))
+		ops = append(ops, value)
+		if suffix, ok := entryByField[f]; ok {
+			entries = append(entries, wir.TableEntry{Suffix: suffix, Value: value})
+		}
 	}
-	b.emit(wir.Instruction{Op: wir.OpMakeTable, Dst: dst, List: b.body.AppendOperands(ops), ListSpread: spread})
+	b.emit(wir.Instruction{
+		Op:           wir.OpMakeTable,
+		Dst:          dst,
+		List:         b.body.AppendOperands(ops),
+		TableEntries: b.body.AppendTableEntries(entries),
+		ListSpread:   spread,
+	})
 }
 
 func lastFieldIndex(fields []*ast.Field) int {

@@ -3,6 +3,8 @@ package wirlower_test
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
@@ -27,6 +29,17 @@ func lowerSourceG(t *testing.T, src string, globals ...string) string {
 	built := cfgbuild.BuildChunk(stmts, bindings)
 	body := wirlower.Lower("main", stmts, bindings, built)
 	return wir.Print(body, built.Graph)
+}
+
+func lowerBody(t *testing.T, src string, globals ...string) *wir.Body {
+	t.Helper()
+	stmts, err := parse.ParseString(src, "test")
+	if err != nil {
+		t.Fatalf("parse %q: %v", src, err)
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: globals})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	return wirlower.Lower("main", stmts, bindings, built)
 }
 
 func TestGolden(t *testing.T) {
@@ -151,6 +164,52 @@ b2: exit
 			}
 		})
 	}
+}
+
+func TestTableConstructorCarriesStaticEntryMetadata(t *testing.T) {
+	body := lowerBody(t, `
+local t = {
+    name = 1,
+    ["key"] = 2,
+    [7] = 3,
+    4,
+    [dynamic] = 5,
+    6,
+}
+`, "dynamic")
+	var inst wir.Instruction
+	for i := 0; i < body.Len(); i++ {
+		candidate := body.Instr(i)
+		if candidate.Op == wir.OpMakeTable {
+			inst = candidate
+			break
+		}
+	}
+	if inst.Op != wir.OpMakeTable {
+		t.Fatal("missing OpMakeTable")
+	}
+	entries := body.TableEntries(inst.TableEntries)
+	if len(entries) != 5 {
+		t.Fatalf("table entries = %#v, want 5 static entries", entries)
+	}
+	assertEntry := func(i int, want path.Path) {
+		t.Helper()
+		if !entries[i].Suffix.Equal(want) {
+			t.Fatalf("entry %d suffix = %v, want %v", i, entries[i].Suffix, want)
+		}
+		if entries[i].Value.Kind == wir.OperandNone {
+			t.Fatalf("entry %d missing value operand", i)
+		}
+	}
+	assertEntry(0, suffixPath(segment.Segment{Kind: segment.SegmentField, Name: "name"}))
+	assertEntry(1, suffixPath(segment.Segment{Kind: segment.SegmentIndexString, Name: "key"}))
+	assertEntry(2, suffixPath(segment.Segment{Kind: segment.SegmentIndexInt, Index: 7}))
+	assertEntry(3, suffixPath(segment.Segment{Kind: segment.SegmentIndexInt, Index: 1}))
+	assertEntry(4, suffixPath(segment.Segment{Kind: segment.SegmentIndexInt, Index: 2}))
+}
+
+func suffixPath(segs ...segment.Segment) path.Path {
+	return path.Path{Segments: append([]segment.Segment(nil), segs...)}
 }
 
 // TestGoldenExtended covers the constructs the prototype skipped: control-flow
