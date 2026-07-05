@@ -209,6 +209,11 @@ type Instruction struct {
 	// OpMakeTable. It is analysis metadata; List remains the runtime value list.
 	TableEntries TableEntryRange
 
+	// ImpliedChecks is the normalized leaf-check window for OpBranch compound
+	// conditions. Check carries the direct condition when one exists; this range
+	// carries edge-specific leaves proven by and/or/not structure.
+	ImpliedChecks ImpliedCheckRange
+
 	// Results is the variadic destination window (multi-value call results,
 	// for-loop variables).
 	Results OperandRange

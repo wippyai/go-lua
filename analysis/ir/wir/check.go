@@ -48,6 +48,16 @@ type Check struct {
 	Negated bool
 }
 
+// ImpliedCheck records one normalized leaf check proven on a particular outer
+// branch edge of a compound condition. Edge is the CFG edge carrying the proof;
+// Polarity is the truth value of Check on that edge. It is WIR syntax metadata:
+// transfer decides what factflow relations/refinements the proof implies.
+type ImpliedCheck struct {
+	Check    Check
+	Edge     bool
+	Polarity bool
+}
+
 // LiteralValue returns the literal type a literal-equality check compares
 // against, materializing a string literal from its raw spelling when needed.
 func (c Check) LiteralValue() (typ.Type, bool) {

@@ -42,6 +42,55 @@ func lowerBody(t *testing.T, src string, globals ...string) *wir.Body {
 	return wirlower.Lower("main", stmts, bindings, built)
 }
 
+func TestBranchCarriesImpliedChecks(t *testing.T) {
+	stmts, err := parse.ParseString(`
+local x, y, a, b
+if x == y and a ~= b then
+    local hit = true
+end
+`, "test")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	body := wirlower.Lower("main", stmts, bindings, built)
+
+	var got []wir.ImpliedCheck
+	for i := 0; i < body.Len(); i++ {
+		inst := body.Instr(i)
+		if inst.Op != wir.OpBranch {
+			continue
+		}
+		checks := body.ImpliedChecks(inst.ImpliedChecks)
+		if containsImpliedCheckKind(checks, wir.CheckPathNot) {
+			got = checks
+			break
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("compound branch implied checks = %d, want 2: %#v", len(got), got)
+	}
+	if got[0].Check.Kind != wir.CheckPathEqual || !got[0].Edge || !got[0].Polarity {
+		t.Fatalf("first implied check = %#v, want true-edge path equality", got[0])
+	}
+	if got[1].Check.Kind != wir.CheckPathNot || !got[1].Edge || !got[1].Polarity {
+		t.Fatalf("second implied check = %#v, want true-edge path inequality", got[1])
+	}
+	if got[0].Check.Path.IsEmpty() || got[0].Check.OtherPath.IsEmpty() || got[1].Check.Path.IsEmpty() || got[1].Check.OtherPath.IsEmpty() {
+		t.Fatalf("implied checks lost paths: %#v", got)
+	}
+}
+
+func containsImpliedCheckKind(checks []wir.ImpliedCheck, kind wir.CheckKind) bool {
+	for _, check := range checks {
+		if check.Check.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
 func TestGolden(t *testing.T) {
 	cases := []struct {
 		name string

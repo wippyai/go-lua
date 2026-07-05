@@ -90,6 +90,40 @@ func TestBranchChecksExposePointBranchesOnly(t *testing.T) {
 	}
 }
 
+func TestBranchImpliedChecksUseFlatPool(t *testing.T) {
+	b := NewBody("branch-implied")
+	p := cfg.Point(3)
+	x := path.Path{Root: "x", Symbol: 1}
+	y := path.Path{Root: "y", Symbol: 2}
+	checks := []ImpliedCheck{
+		{Check: Check{Kind: CheckTruthy, Path: x}, Edge: true, Polarity: true},
+		{Check: Check{Kind: CheckNil, Path: y}, Edge: false, Polarity: true},
+	}
+	start := b.Len()
+	b.Emit(Instruction{
+		Op:            OpBranch,
+		Point:         p,
+		Check:         b.InternCheck(Check{}),
+		ImpliedChecks: b.AppendImpliedChecks(checks),
+	})
+	b.SetPointRange(p, start, b.Len())
+
+	insts := b.PointInstructions(p)
+	if len(insts) != 1 {
+		t.Fatalf("point instructions = %d, want 1", len(insts))
+	}
+	got := b.ImpliedChecks(insts[0].ImpliedChecks)
+	if len(got) != len(checks) {
+		t.Fatalf("implied checks = %d, want %d: %#v", len(got), len(checks), got)
+	}
+	if got[0].Check.Kind != CheckTruthy || !got[0].Check.Path.Equal(x) || !got[0].Edge || !got[0].Polarity {
+		t.Fatalf("first implied check = %#v, want truthy x on true edge", got[0])
+	}
+	if got[1].Check.Kind != CheckNil || !got[1].Check.Path.Equal(y) || got[1].Edge || !got[1].Polarity {
+		t.Fatalf("second implied check = %#v, want nil y on false edge", got[1])
+	}
+}
+
 func TestPrintHandBuiltBody(t *testing.T) {
 	b := NewBody("hand")
 	g := cfg.New()

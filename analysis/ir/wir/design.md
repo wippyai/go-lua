@@ -21,7 +21,7 @@ kind. wir does not replace the CFG — topology stays in `analysis/ir/cfg`.
 | `Concat` | Dst, List | flattened n-ary `..` |
 | `Call` | Results, Call{Callee\|Receiver+Method}, List(args), ListSpread, ResultSpread | direct/method call |
 | `Return` | List(values), ListSpread | function return |
-| `Branch` | Check (branchcond.Check), A(when Check=None) | edge selection; topology in CFG |
+| `Branch` | Check (branchcond.Check), ImpliedChecks, A(when Check=None) | edge selection; topology in CFG |
 | `Iterate` | Results(vars), List(sources), Iter{numeric\|generic}, ListSpread | for-loop header |
 | `Claim` | Dst, A, Claim{cast\|assert\|annotation\|asserts}, Type | value-fact assertion |
 | `Select` | Dst, List(cases), SelectDefault | recognized channel select |
@@ -30,8 +30,11 @@ kind. wir does not replace the CFG — topology stays in `analysis/ir/cfg`.
 
 18 opcodes. The type sublanguage costs zero instructions: `TypeDefStmt` /
 `InterfaceDefStmt` never enter the CFG; type exprs resolve at bind time.
-`branchcond.Check` (closed 14-kind descriptor) is reused verbatim as the Branch
-operand — no re-derivation.
+`branchcond.Check` (closed 14-kind descriptor) is reused verbatim as the direct
+Branch operand. Compound conditions additionally carry an `ImpliedChecks` range:
+normalized leaf checks proven on a specific outer edge (`Edge`) with a specific
+leaf polarity (`Polarity`). This keeps `and` / `or` / `not` implication
+structure in WIR so transfer can derive branch facts without re-walking the AST.
 
 ## Operand encoding decision
 
@@ -207,6 +210,11 @@ TOTAL 100% — assign 100% (2987/2987), call 100% (1714/1714), branch 100%
 the cfgbuild guard point while retaining the `OpLogical` value form at the
 enclosing expression point. call reaches 100% under the per-point split (one
 `OpCall` per call point).
+
+Branch relation migration: `BranchPathRelations` consumes the WIR branch
+instruction's direct check / implied-check range in WIR mode. If WIR has a branch
+instruction but no relation-producing check metadata, transfer does not fall back
+to semantic compound-condition traversal for that lane.
 
 ## Locked decisions (Stage 4, journal #1392)
 

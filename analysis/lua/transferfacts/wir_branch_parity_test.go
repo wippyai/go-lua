@@ -96,6 +96,54 @@ func TestDirectBranchCheckFromWIRDoesNotRequireSemanticSidecarMatch(t *testing.T
 	}
 }
 
+func TestLowerWithWIRCompoundBranchPathRelationsMatchSidecar(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local a, b, c, d = {}, {}, {}, {}
+if a == b and c ~= d then
+    local hit = true
+end
+`)
+	body := wirlower.Lower("chunk", stmts, bindings, built)
+	sidecarFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	point := requireStmtPoints(t, built, stmts[1], 1)[0]
+	want := sidecarFacts.BranchPathRelations(point)
+	if len(want) != 2 {
+		t.Fatalf("sidecar branch path relations = %d, want 2: %#v", len(want), want)
+	}
+	if got := wirFacts.BranchPathRelations(point); !reflect.DeepEqual(got, want) {
+		t.Fatalf("WIR compound branch path relations mismatch\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestLowerWithWIRBranchPathRelationsDoesNotFallbackToSemanticCondition(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local a, b = {}, {}
+if a == b then
+    local hit = true
+end
+`)
+	point := requireStmtPoints(t, built, stmts[1], 1)[0]
+	sidecarFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	if got := sidecarFacts.BranchPathRelations(point); len(got) == 0 {
+		t.Fatalf("sidecar branch path relations = 0, test cannot prove WIR no-fallback")
+	}
+
+	body := wir.NewBody("branch")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpBranch,
+		Point: point,
+		Check: body.InternCheck(wir.Check{}),
+	})
+	body.SetPointRange(point, start, start+1)
+
+	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	if got := wirFacts.BranchPathRelations(point); len(got) != 0 {
+		t.Fatalf("WIR branch path relations fell back to semantic condition: %#v", got)
+	}
+}
+
 func TestLowerBranchDoesNotFallbackWhenWIRBranchInstructionMissing(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(x: string?): ()

@@ -596,7 +596,11 @@ func (b *builder) condCallCount(cond ast.Expr) int {
 
 func (b *builder) emitBranch(cond ast.Expr) {
 	check := branchcond.Normalize(cond, b.bindings)
-	inst := wir.Instruction{Op: wir.OpBranch, Check: b.body.InternCheck(lowerCheck(check))}
+	inst := wir.Instruction{
+		Op:            wir.OpBranch,
+		Check:         b.body.InternCheck(lowerCheck(check)),
+		ImpliedChecks: b.body.AppendImpliedChecks(lowerImpliedChecks(branchcond.ImpliedChecksOnBothEdges(cond, b.bindings))),
+	}
 	if check.Kind == branchcond.CheckNone {
 		inst.A = b.lowerExpr(cond)
 	}
@@ -956,7 +960,11 @@ func (b *builder) emitLogicalGuardAt(e *ast.LogicalOpExpr, guard cfg.Point) {
 	}
 	b.logicalGuardEmitted[e] = true
 	check := branchcond.Normalize(e.Lhs, b.bindings)
-	guardInst := wir.Instruction{Op: wir.OpBranch, Check: b.body.InternCheck(lowerCheck(check))}
+	guardInst := wir.Instruction{
+		Op:            wir.OpBranch,
+		Check:         b.body.InternCheck(lowerCheck(check)),
+		ImpliedChecks: b.body.AppendImpliedChecks(lowerImpliedChecks(branchcond.ImpliedChecksOnBothEdges(e.Lhs, b.bindings))),
+	}
 	if check.Kind == branchcond.CheckNone {
 		guardInst.A = b.lowerExpr(e.Lhs)
 	}
@@ -1404,4 +1412,19 @@ func lowerCheck(c branchcond.Check) wir.Check {
 		NumFloor:      c.NumFloor,
 		Negated:       c.Negated,
 	}
+}
+
+func lowerImpliedChecks(in []branchcond.ImpliedCheck) []wir.ImpliedCheck {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]wir.ImpliedCheck, 0, len(in))
+	for _, check := range in {
+		out = append(out, wir.ImpliedCheck{
+			Check:    lowerCheck(check.Check),
+			Edge:     check.Edge,
+			Polarity: check.Polarity,
+		})
+	}
+	return out
 }

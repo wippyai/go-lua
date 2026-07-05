@@ -28,9 +28,10 @@ type Body struct {
 	checks []Check
 	protos []FuncProto
 
-	operandPool  []Operand
-	tableEntries []TableEntry
-	callTargets  map[callResultTargetKey]CallResultTarget
+	operandPool   []Operand
+	tableEntries  []TableEntry
+	impliedChecks []ImpliedCheck
+	callTargets   map[callResultTargetKey]CallResultTarget
 
 	pathIndex  map[path.PathKey]PathRef
 	constIndex map[Const]ConstRef
@@ -75,6 +76,12 @@ type TableEntry struct {
 
 // TableEntryRange is a [Start, Start+Len) window into Body.tableEntries.
 type TableEntryRange struct {
+	Start uint32
+	Len   uint32
+}
+
+// ImpliedCheckRange is a [Start, Start+Len) window into Body.impliedChecks.
+type ImpliedCheckRange struct {
 	Start uint32
 	Len   uint32
 }
@@ -268,6 +275,14 @@ func (b *Body) TableEntries(r TableEntryRange) []TableEntry {
 	return b.tableEntries[r.Start : r.Start+r.Len]
 }
 
+// ImpliedChecks returns the branch-implied check slice for a variadic range.
+func (b *Body) ImpliedChecks(r ImpliedCheckRange) []ImpliedCheck {
+	if r.Len == 0 {
+		return nil
+	}
+	return b.impliedChecks[r.Start : r.Start+r.Len]
+}
+
 // InternPath interns a path and returns its 1-based ref. The empty path is none.
 func (b *Body) InternPath(p path.Path) PathRef {
 	if p.IsEmpty() {
@@ -384,6 +399,17 @@ func (b *Body) AppendTableEntries(entries []TableEntry) TableEntryRange {
 	start := uint32(len(b.tableEntries))
 	b.tableEntries = append(b.tableEntries, entries...)
 	return TableEntryRange{Start: start, Len: uint32(len(entries))}
+}
+
+// AppendImpliedChecks copies checks into the shared branch-implied-check pool
+// and returns their range.
+func (b *Body) AppendImpliedChecks(checks []ImpliedCheck) ImpliedCheckRange {
+	if len(checks) == 0 {
+		return ImpliedCheckRange{}
+	}
+	start := uint32(len(b.impliedChecks))
+	b.impliedChecks = append(b.impliedChecks, checks...)
+	return ImpliedCheckRange{Start: start, Len: uint32(len(checks))}
 }
 
 // Emit appends an instruction and returns its flat index.

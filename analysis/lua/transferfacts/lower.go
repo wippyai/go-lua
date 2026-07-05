@@ -264,7 +264,13 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			if lowered := l.branchAliasRefinements(condition); len(lowered) != 0 {
 				appendBranchRefinement(input.BranchRefinements, point, lowered...)
 			}
-			if lowered, ok := l.branchPathRelations(fact.Check, condition); ok {
+			if lowered, ok := l.branchPathRelationsFromWIR(point); ok {
+				input.BranchPathRelations[point] = lowered
+			} else if l.wir != nil && l.wir.HasInstruction(point, wir.OpBranch) {
+				// In WIR mode this lane is owned by the branch instruction's
+				// direct/implied checks. Do not re-walk the semantic condition when
+				// WIR has no relation-producing metadata for this point.
+			} else if lowered, ok := l.branchPathRelations(fact.Check, condition); ok {
 				input.BranchPathRelations[point] = lowered
 			}
 			if lowered := l.branchPathEvidence(fact.Check, condition); len(lowered) != 0 {
