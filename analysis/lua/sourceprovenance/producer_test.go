@@ -47,6 +47,19 @@ func TestAssertionInnerStopsAtNonAssertion(t *testing.T) {
 	}
 }
 
+func TestHasAssertionWrapperClassifiesOnlyAssertionHeads(t *testing.T) {
+	expr := &ast.IdentExpr{Value: "x"}
+	if HasAssertionWrapper(expr) {
+		t.Fatal("identifier reported as assertion wrapper")
+	}
+	if !HasAssertionWrapper(&ast.CastExpr{Expr: expr, Type: &ast.PrimitiveTypeExpr{Name: "string"}}) {
+		t.Fatal("cast was not reported as assertion wrapper")
+	}
+	if !HasAssertionWrapper(&ast.NonNilAssertExpr{Expr: expr}) {
+		t.Fatal("non-nil assertion was not reported as assertion wrapper")
+	}
+}
+
 func TestProofInnerStopsAtAnyCast(t *testing.T) {
 	expr := &ast.IdentExpr{Value: "x"}
 	wrapped := &ast.NonNilAssertExpr{

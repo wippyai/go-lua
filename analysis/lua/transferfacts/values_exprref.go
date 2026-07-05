@@ -41,20 +41,11 @@ func (l *lowerer) valueSourceExprRef(source sourceprovenance.ASTSource) (factflo
 }
 
 func sourceScopedExprRef(source sourceprovenance.ASTSource) bool {
-	if !isAssertionWrapper(source.Expr) {
+	if !sourceprovenance.HasAssertionWrapper(source.Expr) {
 		return false
 	}
 	switch source.Kind {
 	case sourceprovenance.SourceCall, sourceprovenance.SourceVararg:
-		return true
-	default:
-		return false
-	}
-}
-
-func isAssertionWrapper(expr ast.Expr) bool {
-	switch expr.(type) {
-	case *ast.CastExpr, *ast.NonNilAssertExpr:
 		return true
 	default:
 		return false

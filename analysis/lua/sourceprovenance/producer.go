@@ -143,6 +143,12 @@ func ProofIdent(expr ast.Expr) (*ast.IdentExpr, bool) {
 	return ident, ok && ident != nil
 }
 
+// HasAssertionWrapper reports whether expr starts with a cast or non-nil
+// assertion wrapper whose assertion identity is owned by sourceprovenance.
+func HasAssertionWrapper(expr ast.Expr) bool {
+	return assertionWrapper(expr)
+}
+
 // ConcreteRuntimeCastSource reports whether source is an expression wrapped in
 // a concrete runtime validation cast. Top-like casts such as `:: any` are
 // precision boundaries, not validation.
