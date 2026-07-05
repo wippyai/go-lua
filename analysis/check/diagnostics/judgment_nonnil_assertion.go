@@ -14,22 +14,15 @@ func renderNonNilAssertionJudgmentWithPolicy(item judgment.Judgment, policy judg
 		return diagnostic.Diagnostic{}, false
 	}
 	span := diagnosticSpanFromJudgment(item.Spans[0])
-	name := item.Subject.Label
+	presentation := diagnosticProofContext().NonNilAssertion(item, span)
 	return diagnostic.New(diagnostic.DiagnosticSpec{
-		File:     item.Spans[0].File,
-		Span:     span,
-		Code:     CodeNonNilAssertAlwaysNil,
-		Severity: severity,
-		Message:  nonNilAssertAlwaysNilMessage(name),
-		Labels:   []diagnostic.Label{sourceLabel(span, labelValueAlwaysNil)},
-		Explanation: diagnostic.NewExplanation(
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceAbstractFact,
-				Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
-				Span:    diagnosticEvidenceSpanOr(item, judgment.EvidenceAbstractFact, span),
-				Message: nonNilAssertAlwaysNilEvidence(name),
-			},
-		),
-		Help: nonNilAssertAlwaysNilHelp(name),
+		File:        item.Spans[0].File,
+		Span:        span,
+		Code:        CodeNonNilAssertAlwaysNil,
+		Severity:    severity,
+		Message:     presentation.Message,
+		Labels:      presentation.Labels,
+		Explanation: presentation.Explanation,
+		Help:        presentation.Help,
 	}), true
 }

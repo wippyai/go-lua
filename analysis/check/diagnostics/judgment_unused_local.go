@@ -18,24 +18,15 @@ func renderUnusedLocalJudgmentWithPolicy(item judgment.Judgment, policy judgment
 		return diagnostic.Diagnostic{}, false
 	}
 	span := diagnosticSpanFromJudgment(item.Spans[0])
+	presentation := diagnosticProofContext().UnusedLocal(item, name, span)
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		File:        item.Spans[0].File,
 		Span:        span,
 		Code:        CodeUnusedLocal,
 		Severity:    severity,
-		Message:     unusedLocalMessage(name),
-		Explanation: unusedLocalJudgmentExplanation(item, name),
-		Help:        unusedLocalHelp(),
-		Labels:      []diagnostic.Label{sourceLabel(span, labelUnusedLocal)},
+		Message:     presentation.Message,
+		Explanation: presentation.Explanation,
+		Help:        presentation.Help,
+		Labels:      presentation.Labels,
 	}), true
-}
-
-func unusedLocalJudgmentExplanation(item judgment.Judgment, name string) diagnostic.Explanation {
-	return diagnostic.NewExplanation(
-		diagnostic.Evidence{
-			Kind:    diagnostic.EvidenceAbstractFact,
-			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
-			Message: unusedLocalEvidence(name),
-		},
-	)
 }

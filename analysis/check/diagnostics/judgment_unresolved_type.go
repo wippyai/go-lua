@@ -18,25 +18,15 @@ func renderUnresolvedTypeJudgmentWithPolicy(item judgment.Judgment, policy judgm
 		name = "<missing>"
 	}
 	span := diagnosticSpanFromJudgment(item.Spans[0])
+	presentation := diagnosticProofContext().UnresolvedType(item, name, span)
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		File:        item.Spans[0].File,
 		Span:        span,
 		Code:        CodeUnresolvedTypeReference,
 		Severity:    severity,
-		Message:     unresolvedTypeMessage(name),
-		Explanation: unresolvedTypeJudgmentExplanation(item, name, span),
-		Help:        unresolvedTypeHelp(),
-		Labels:      []diagnostic.Label{sourceLabel(span, labelUnknownType)},
+		Message:     presentation.Message,
+		Explanation: presentation.Explanation,
+		Help:        presentation.Help,
+		Labels:      presentation.Labels,
 	}), true
-}
-
-func unresolvedTypeJudgmentExplanation(item judgment.Judgment, name string, span diagnostic.Span) diagnostic.Explanation {
-	return diagnostic.NewExplanation(
-		diagnostic.Evidence{
-			Kind:    diagnostic.EvidenceAbstractFact,
-			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
-			Span:    span,
-			Message: unresolvedTypeEvidence(name),
-		},
-	)
 }
