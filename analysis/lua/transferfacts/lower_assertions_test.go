@@ -23,9 +23,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -84,6 +86,67 @@ end
 	}
 	assertWIRConcreteCastAssertion(t, facts, sources[0], typ.Number, factflow.ValueSourcePath)
 	assertWIRAssertion(t, facts, sources[1], assertion.NonNil(), factflow.ValueSourcePath)
+}
+
+func TestLowerCallArgumentClaimsUseWIRClaimSources(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(x: any): ()
+    sink(x as number, x!)
+end
+`, "sink")
+	body := wirlower.Lower("f", fn.Stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	callPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
+	site, ok := facts.CallSite(callPoint)
+	if !ok {
+		t.Fatalf("missing call site at point %d", callPoint)
+	}
+	args := site.ArgumentSources()
+	if len(args) != 2 {
+		t.Fatalf("call argument sources = %#v, want two", args)
+	}
+	if args[0].Kind != factflow.ValueSourceExpression || !args[0].HasExpr {
+		t.Fatalf("cast argument source = %#v, want outer expression source until claim temps become value sources", args[0])
+	}
+	if args[1].Kind != factflow.ValueSourceExpression || !args[1].HasExpr {
+		t.Fatalf("assert argument source = %#v, want outer expression source until claim temps become value sources", args[1])
+	}
+	assertWIRConcreteCastAssertion(t, facts, args[0], typ.Number, factflow.ValueSourcePath)
+	assertWIRAssertion(t, facts, args[1], assertion.NonNil(), factflow.ValueSourcePath)
+}
+
+func TestLowerCallArgumentWIRClaimUsesConfiguredTypeResolver(t *testing.T) {
+	messageType := typetable.NewRecord().
+		Field("topic", typ.String).
+		Build()
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(raw: any): ()
+    payload_data(raw as process.Message)
+end
+`, "payload_data")
+	body := wirlower.Lower("f", fn.Stmts, bindings, built)
+	resolver := typeresolve.NewWithExternal(bindings, testExternalTypes{"process.Message": messageType})
+	facts := Lower(result, built.Graph, Config{
+		Registry:     standard.Registry(),
+		Bindings:     bindings,
+		TypeResolver: resolver,
+		WIR:          body,
+	})
+
+	callPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
+	site, ok := facts.CallSite(callPoint)
+	if !ok {
+		t.Fatalf("missing call site at point %d", callPoint)
+	}
+	args := site.ArgumentSources()
+	if len(args) != 1 {
+		t.Fatalf("call argument sources = %#v, want one", args)
+	}
+	if args[0].Kind != factflow.ValueSourceExpression || !args[0].HasExpr {
+		t.Fatalf("cast argument source = %#v, want expression source for validated cast", args[0])
+	}
+	assertWIRConcreteCastAssertion(t, facts, args[0], messageType, factflow.ValueSourcePath)
 }
 
 func assertWIRAssertion(t *testing.T, facts factflow.Facts, source factflow.ValueSource, want assertion.Value, wantInnerKind factflow.ValueSourceKind) {

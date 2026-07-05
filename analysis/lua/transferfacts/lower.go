@@ -175,8 +175,8 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			if lowered := l.channelSelects(point, result); len(lowered) != 0 {
 				input.ChannelSelects[point] = factflow.NewChannelSelectSet(lowered...)
 			}
-			for _, source := range fact.ArgumentSources {
-				l.addAssertionRefinementsForSource(&input, source)
+			for index, source := range fact.ArgumentSources {
+				l.addCallArgumentAssertionRefinements(&input, point, index, source)
 				l.addObjectLiteral(&input, result, source)
 			}
 			if lowered, ok := l.assertPostconditionRefinement(fact); ok {
