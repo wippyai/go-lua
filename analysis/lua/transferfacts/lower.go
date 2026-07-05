@@ -172,8 +172,10 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			} else {
 				input.Returns[point] = factflow.NewReturn(l.returnValueSources(fact.Sources, result))
 			}
-			if relations := l.typeIsReturnPresenceRelations(fact.Sources, result); len(relations) != 0 {
-				appendReturnPresenceRelations(input.ReturnPresenceRelations, point, relations...)
+			if ret, ok := input.Returns[point]; ok {
+				if relations := l.typeIsReturnPresenceRelationsFromSources(ret.Sources(), result); len(relations) != 0 {
+					appendReturnPresenceRelations(input.ReturnPresenceRelations, point, relations...)
+				}
 			}
 			for index, source := range fact.Sources {
 				l.addReturnAssertionRefinements(&input, point, index, source)

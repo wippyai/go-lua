@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -261,6 +262,33 @@ return Point:is(data)
 	relations := facts.ReturnPresenceRelations(returnPoint)
 	assertReturnPresenceRelation(t, relations, 1, presence.Present(), 0, presence.Absent())
 	assertReturnPresenceRelation(t, relations, 1, presence.Absent(), 0, presence.Present())
+}
+
+func TestLowerWithWIRTypeIsReturnPresenceUsesWIRReturnSources(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+type Point = {x: number, y: number}
+local data: any = {}
+return Point:is(data)
+`)
+	ret := stmts[2].(*ast.ReturnStmt)
+	points := requireStmtPoints(t, built, ret, 2)
+	returnPoint := points[1]
+	body := wir.NewBody("synthetic-type-is-empty-return")
+	start := body.Emit(wir.Instruction{Op: wir.OpReturn, Point: returnPoint})
+	body.SetPointRange(returnPoint, start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	returnFact, ok := facts.Return(returnPoint)
+	if !ok {
+		t.Fatalf("missing WIR return fact")
+	}
+	if sources := returnFact.Sources(); len(sources) != 0 {
+		t.Fatalf("WIR return sources = %#v, want empty synthetic return", sources)
+	}
+	if relations := facts.ReturnPresenceRelations(returnPoint); len(relations) != 0 {
+		t.Fatalf("WIR empty return inherited semantic Type:is presence relations: %#v", relations)
+	}
 }
 
 func TestLowerExplicitErrorReturnsPublishPresenceRelation(t *testing.T) {

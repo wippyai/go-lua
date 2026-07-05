@@ -12,7 +12,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
-	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -169,13 +168,20 @@ func (l *lowerer) typeIsCallResultValues(fact semantics.CallFact) []factflow.Cal
 	}
 }
 
-func (l *lowerer) typeIsReturnPresenceRelations(sources []sourceprovenance.ASTSource, result *semantics.Result) []factflow.ReturnPresenceRelation {
+func (l *lowerer) typeIsReturnPresenceRelationsFromSources(sources []factflow.ValueSource, result *semantics.Result) []factflow.ReturnPresenceRelation {
 	if len(sources) == 0 || result == nil {
 		return nil
 	}
 	var out []factflow.ReturnPresenceRelation
+	type resultPair struct {
+		valueTarget int
+		hasValue    bool
+		errorTarget int
+		hasError    bool
+	}
+	pairs := make(map[cfg.Point]resultPair)
 	for _, source := range sources {
-		if source.Kind != sourceprovenance.SourceCall || !source.OpenTail || !source.Expanded || !source.HasCallPoint {
+		if source.Kind != factflow.ValueSourceCall || !source.HasCallPoint {
 			continue
 		}
 		view, ok := result.CallView(source.CallPoint)
@@ -186,11 +192,33 @@ func (l *lowerer) typeIsReturnPresenceRelations(sources []sourceprovenance.ASTSo
 		if _, _, ok := l.typeIsCall(fact); !ok {
 			continue
 		}
-		valueIndex := source.TargetIndex
-		errorIndex := source.TargetIndex + 1
+		if source.OpenTail && source.Expanded {
+			valueIndex := source.TargetIndex
+			errorIndex := source.TargetIndex + 1
+			out = append(out,
+				factflow.NewReturnPresenceRelation(errorIndex, presence.Present(), valueIndex, presence.Absent()),
+				factflow.NewReturnPresenceRelation(errorIndex, presence.Absent(), valueIndex, presence.Present()),
+			)
+			continue
+		}
+		pair := pairs[source.CallPoint]
+		switch source.ResultIndex {
+		case 0:
+			pair.valueTarget = source.TargetIndex
+			pair.hasValue = true
+		case 1:
+			pair.errorTarget = source.TargetIndex
+			pair.hasError = true
+		}
+		pairs[source.CallPoint] = pair
+	}
+	for _, pair := range pairs {
+		if !pair.hasValue || !pair.hasError {
+			continue
+		}
 		out = append(out,
-			factflow.NewReturnPresenceRelation(errorIndex, presence.Present(), valueIndex, presence.Absent()),
-			factflow.NewReturnPresenceRelation(errorIndex, presence.Absent(), valueIndex, presence.Present()),
+			factflow.NewReturnPresenceRelation(pair.errorTarget, presence.Present(), pair.valueTarget, presence.Absent()),
+			factflow.NewReturnPresenceRelation(pair.errorTarget, presence.Absent(), pair.valueTarget, presence.Present()),
 		)
 	}
 	return out
