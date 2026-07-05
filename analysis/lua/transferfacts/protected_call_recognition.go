@@ -12,7 +12,14 @@ import (
 )
 
 func (l *lowerer) addProtectedCallBranchRefinements(input *factflow.FactsInput, graph cfg.Graph, result *semantics.Result) {
-	if input == nil || graph == nil || result == nil {
+	if input == nil || graph == nil {
+		return
+	}
+	if l != nil && l.wir != nil {
+		l.addProtectedCallBranchRefinementsFromWIR(input, graph)
+		return
+	}
+	if result == nil {
 		return
 	}
 	for _, callPoint := range graph.RPO() {
@@ -59,6 +66,53 @@ func (l *lowerer) addProtectedCallBranchRefinements(input *factflow.FactsInput, 
 	}
 }
 
+func (l *lowerer) addProtectedCallBranchRefinementsFromWIR(input *factflow.FactsInput, graph cfg.Graph) {
+	if l == nil || l.wir == nil || input == nil || graph == nil {
+		return
+	}
+	for _, callPoint := range graph.RPO() {
+		site, ok := input.CallSites[callPoint]
+		if !ok {
+			continue
+		}
+		payloadType, ok := l.protectedCallPayloadTypeFromWIRCallSite(callPoint, site)
+		if !ok {
+			continue
+		}
+		okPath, ok := callSiteResultTargetPath(site, 0)
+		if !ok {
+			continue
+		}
+		payloadPath, ok := callSiteResultTargetPath(site, 1)
+		if !ok {
+			continue
+		}
+		targets := resultCorrelationTargets{
+			triggerPath:        okPath,
+			triggerResultIndex: 0,
+			targetPath:         payloadPath,
+			targetResultIndex:  1,
+			hasTargetPath:      true,
+		}
+		establish, ok := resultCorrelationEstablishPoint(input, graph, callPoint, targets)
+		if !ok {
+			continue
+		}
+		activeIn := resultCorrelationActiveIn(input, graph, establish, targets)
+		payloadValue := l.typeWitnessValue(payloadType)
+		for _, branch := range graph.RPO() {
+			if !activeIn[branch] || !graph.IsBranch(branch) {
+				continue
+			}
+			for _, cond := range l.protectedCallSuccessEdges(nil, branch, okPath) {
+				appendBranchRefinement(input.BranchRefinements, branch,
+					branchRefinementOnEdge(payloadPath, factflow.NewValueConstraint(payloadValue), cond),
+				)
+			}
+		}
+	}
+}
+
 func (l *lowerer) protectedCallPayloadTypeAt(point cfg.Point, fact semantics.CallFact) (typ.Type, bool) {
 	if t, ok := l.protectedCallPayloadTypeFromWIR(point, fact); ok {
 		return t, true
@@ -79,6 +133,33 @@ func (l *lowerer) protectedCallPayloadTypeFromWIR(point cfg.Point, fact semantic
 		return nil, false
 	}
 	return typecall.CallableReturn(callbackType)
+}
+
+func (l *lowerer) protectedCallPayloadTypeFromWIRCallSite(point cfg.Point, site factflow.CallSite) (typ.Type, bool) {
+	if l == nil || l.wir == nil || !l.isProtectedCallSite(site) {
+		return nil, false
+	}
+	callbackPath, ok := l.callArgumentPathFromWIR(point, 0)
+	if !ok {
+		return nil, false
+	}
+	callbackType, ok := l.aliasPathType(callbackPath)
+	if !ok {
+		return nil, false
+	}
+	return typecall.CallableReturn(callbackType)
+}
+
+func (l *lowerer) isProtectedCallSite(site factflow.CallSite) bool {
+	return l.isNamedGlobalCallSite(site, "pcall") || l.isNamedGlobalCallSite(site, "xpcall")
+}
+
+func (l *lowerer) isNamedGlobalCallSite(site factflow.CallSite, name string) bool {
+	if l == nil || l.bindings == nil || name == "" {
+		return false
+	}
+	global, ok := l.bindings.GlobalSymbol(name)
+	return ok && site.CalleeSymbol() == global
 }
 
 func (l *lowerer) protectedCallPayloadType(fact semantics.CallFact) (typ.Type, bool) {

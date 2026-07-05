@@ -791,6 +791,67 @@ end
 	}
 }
 
+func TestLowerProtectedCallSuccessGuardUsesWIRCallSiteWithoutSemanticResult(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local function run_tests(): number
+	return 1
+end
+
+local ok, result = pcall(run_tests)
+if not ok then
+	return
+end
+`, "pcall")
+
+	body := wirlower.Lower("chunk", stmts, bindings, built)
+	seed := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	assign := mustLocalStmt(t, stmts, 1)
+	callPoint := requireStmtPoints(t, built, assign, 3)[0]
+	site, ok := seed.CallSite(callPoint)
+	if !ok {
+		t.Fatalf("missing lowered pcall callsite at point %d", callPoint)
+	}
+	payloadPath := path.NewPath(mustLocalAt(t, bindings, assign, 1), "result")
+	ifStmt := mustIfStmt(t, stmts, 2)
+	branchPoint := requireStmtPoints(t, built, ifStmt, 1)[0]
+	input := &factflow.FactsInput{
+		CallSites:         map[cfg.Point]factflow.CallSite{callPoint: site},
+		RootAssignments:   make(map[cfg.Point]factflow.RootAssignment),
+		BranchRefinements: make(map[cfg.Point]factflow.BranchRefinementSet),
+	}
+	for _, point := range built.Graph.RPO() {
+		if assignment, ok := seed.RootAssignment(point); ok {
+			input.RootAssignments[point] = assignment
+		}
+	}
+	lowered := lowerer{
+		registry:    reg,
+		bindings:    bindings,
+		wir:         body,
+		symbolTypes: lowerSymbolTypes(bindings, built.Graph, result, nil, importlookup.Source{}),
+	}
+
+	lowered.addProtectedCallBranchRefinements(input, built.Graph, nil)
+
+	refinement, ok := branchRefinementAt(input.BranchRefinements[branchPoint].Refinements(), payloadPath)
+	if !ok {
+		t.Fatalf("missing WIR pcall payload refinement at point %d; got %#v", branchPoint, input.BranchRefinements[branchPoint])
+	}
+	value, ok := refinement.FalseValue()
+	if !ok {
+		t.Fatalf("missing false-edge WIR pcall payload refinement: %#v", refinement)
+	}
+	constraint, ok := value.Constraint()
+	if !ok {
+		t.Fatalf("WIR pcall payload refinement has no constraint: %#v", value)
+	}
+	got, ok := typevalue.TypeOf(reg, constraint)
+	if !ok || !typ.TypeEquals(got, typ.Number) {
+		t.Fatalf("WIR pcall payload refinement type = %v/%v, want number; value=%#v", got, ok, constraint)
+	}
+}
+
 func TestLowerProtectedCallDoesNotFallbackWhenWIRCallInstructionMissing(t *testing.T) {
 	reg := standard.Registry()
 	stmts, bindings, built, result := parseSemanticChunk(t, `
