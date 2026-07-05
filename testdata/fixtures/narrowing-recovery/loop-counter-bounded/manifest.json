@@ -1,0 +1,9 @@
+{
+  "description": "Numeric for-loop counter widened to [1,+inf) must be re-bounded to [1,10] by a decreasing narrowing pass.",
+  "check": {
+    "skip": "pending: solver narrowing (decreasing) pass (task 7c17de64) not yet implemented"
+  },
+  "run": {
+    "skip": "checker-only narrowing-precision fixture"
+  }
+}
