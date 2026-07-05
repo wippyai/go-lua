@@ -626,15 +626,11 @@ func (l *lowerer) dynamicIndexKeySourceFromWIR(point cfg.Point) (factflow.ValueS
 		if inst.Op != wir.OpDynamicIndexWrite || inst.A.Kind == wir.OperandNone {
 			continue
 		}
-		if source, ok := l.rootPathExpressionSourceFromWIR(
-			"dynamic-index-key",
-			point,
+		if source, ok := l.valueSourceFromWIRRootPathOperand(
 			inst.A,
 			sourceprovenance.NoSourceIndex,
 			sourceprovenance.NoSourceIndex,
 			true,
-			false,
-			false,
 			symbol.Local,
 			symbol.Param,
 		); ok {

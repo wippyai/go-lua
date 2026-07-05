@@ -50,9 +50,5 @@ func (r *Result) AssignmentSourceMatchesDynamicTargetRead(point cfg.Point, fact 
 }
 
 func dynamicIndexWriteKeyPath(r *Result, write factflow.DynamicIndexWrite) (pathdom.Path, bool) {
-	source := write.KeySource()
-	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-		return pathdom.Path{}, false
-	}
-	return r.facts.ExpressionPathRef(source.ExprRef)
+	return r.ValueSourcePath(write.KeySource())
 }

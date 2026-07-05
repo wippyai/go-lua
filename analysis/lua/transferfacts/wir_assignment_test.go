@@ -69,10 +69,10 @@ end`)
 		t.Fatalf("missing local-source assignment at point %d", localPoint)
 	}
 	localSource := localAssign.Source()
+	wantPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "from_literal")
 	if localSource.Kind != factflow.ValueSourceExpression || !localSource.HasExpr || localSource.PathKey != "" {
 		t.Fatalf("local assignment source = %#v, want WIR expression-backed path source", localSource)
 	}
-	wantPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "from_literal")
 	gotPath, ok := facts.ExpressionPath(localSource.ExprRef)
 	if !ok || !gotPath.Equal(wantPath) {
 		t.Fatalf("local assignment expression path = %v/%v, want %v", gotPath, ok, wantPath)
@@ -185,12 +185,9 @@ end
 		t.Fatalf("missing dynamic index write at point %d", points[0])
 	}
 	keySource := write.KeySource()
-	if keySource.Kind != factflow.ValueSourceExpression || !keySource.HasExpr {
-		t.Fatalf("dynamic key source = %#v, want expression-backed WIR path", keySource)
-	}
-	gotPath, ok := facts.ExpressionPath(keySource.ExprRef)
-	if !ok || !gotPath.Equal(otherPath) || gotPath.Equal(valuePath) {
-		t.Fatalf("dynamic key expression path = %v/%v, want WIR path %v not semantic path %v", gotPath, ok, otherPath, valuePath)
+	assertWIRPathSource(t, keySource, otherPath)
+	if keySource.PathKey == valuePath.Key() {
+		t.Fatalf("dynamic key source path = %s, want WIR path %s not semantic path %s", keySource.PathKey, otherPath.Key(), valuePath.Key())
 	}
 	gotKeyPath, ok := write.KeyPath()
 	if !ok || !gotKeyPath.Equal(otherPath) || gotKeyPath.Equal(valuePath) {
@@ -346,6 +343,13 @@ end`)
 	dynamicSource := dynamicWrite.Source()
 	if dynamicSource.Kind != factflow.ValueSourceExpression || !dynamicSource.HasExpr {
 		t.Fatalf("dynamic write source = %#v, want expression-backed WIR source", dynamicSource)
+	}
+}
+
+func assertWIRPathSource(t *testing.T, source factflow.ValueSource, want path.Path) {
+	t.Helper()
+	if source.Kind != factflow.ValueSourcePath || source.PathKey != want.Key() || source.HasExpr || source.ExprRef != 0 {
+		t.Fatalf("source = %#v, want WIR path source %s without expression shim", source, want.Key())
 	}
 }
 
