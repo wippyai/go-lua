@@ -5,10 +5,13 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -104,6 +107,43 @@ end
 	}
 	if sources[2].Kind != factflow.ValueSourceLiteral || sources[2].LiteralKind != factflow.ValueSourceLiteralString || sources[2].String != "ready" {
 		t.Fatalf("string return source = %#v, want ready literal", sources[2])
+	}
+}
+
+func TestLowerWithWIRReturnLogicalDefaultCarriesComputedWitness(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(level: string?): string
+    return level or "info"
+end
+`)
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
+	}
+	points := requireStmtPoints(t, built, ret, 1)
+	body := wirlower.Lower("f", fn.Stmts, bindings, built)
+	reg := standard.Registry()
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+
+	returnFact, ok := facts.Return(points[0])
+	if !ok {
+		t.Fatalf("missing return fact at point %d", points[0])
+	}
+	sources := returnFact.Sources()
+	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr {
+		t.Fatalf("return sources = %#v, want one logical expression source", sources)
+	}
+	value, ok := facts.ExpressionValue(sources[0].ExprRef)
+	if !ok {
+		t.Fatalf("missing WIR logical return expression value for ref %d", sources[0].ExprRef)
+	}
+	got, ok := product.Get(reg, value, typewitness.Key).Type()
+	if !ok {
+		t.Fatalf("logical return witness = %#v, want computed union", product.Get(reg, value, typewitness.Key))
+	}
+	want := typ.String
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("logical return witness = %v, want %v", got, want)
 	}
 }
 

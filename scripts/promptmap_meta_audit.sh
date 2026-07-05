@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="${ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-PROMPTMAP="${PROMPTMAP:-/home/wolfy-j/wippy/promptmap/promptmap}"
+PROMPTMAP="${PROMPTMAP:-${PROMPTMAP:?set PROMPTMAP}}"
 MATRIX="${1:-$ROOT/analysis/architecture/promptmap_meta_audit.csv}"
 SELECTOR="${2:-all}"
 OUTDIR="${OUTDIR:-$ROOT/.promptmap-meta}"

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SEAM_DIR="${WIPPY_GOLUA_SEAM_DIR:-/home/wolfy-j/wippy/wippy-golua-seam}"
-GOLUA_DIR="${GOLUA_DIR:-/home/wolfy-j/wippy/go-lua}"
+SEAM_DIR="${WIPPY_GOLUA_SEAM_DIR:-${WIPPY_ROOT:?set WIPPY_ROOT}/wippy-golua-seam}"
+GOLUA_DIR="${GOLUA_DIR:-${WIPPY_ROOT:?set WIPPY_ROOT}/go-lua}"
 GOCACHE="${GOCACHE:-/tmp/go-build-cache-wippy-golua-seam}"
 LOG="${LOG:-/tmp/wippy-golua-seam-check.log}"
 EXPECT_FAIL="${EXPECT_FAIL:-1}"

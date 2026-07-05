@@ -2,6 +2,8 @@ package transferfacts
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
@@ -12,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -557,12 +560,87 @@ func (l *lowerer) wirBinaryTempExpressionValueSource(
 		l.expressionOperations = make(map[factflow.ExprRef]factflow.ExpressionOperation)
 	}
 	l.expressionOperations[exprRef] = operation
+	l.addWIRExpressionOperationValue(exprRef, operation, left, right)
 	l.addWIRExpressionCondition(exprRef, inst)
 	shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, openTail)
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
 	return factflow.NewExpressionValueSource(exprRef, exprIndex, targetIndex, 0, shape)
+}
+
+func (l *lowerer) addWIRExpressionOperationValue(exprRef factflow.ExprRef, op factflow.ExpressionOperation, left, right factflow.ValueSource) {
+	if exprRef == 0 || l == nil {
+		return
+	}
+	leftValue, ok := l.staticValueSourceValue(left)
+	if !ok {
+		return
+	}
+	rightValue, ok := l.staticValueSourceValue(right)
+	if !ok {
+		return
+	}
+	value, ok := luasourcevalue.ExpressionOperationValue(l.registry, l.typeValues, op, leftValue, rightValue)
+	if !ok {
+		return
+	}
+	if l.expressionValues == nil {
+		l.expressionValues = make(map[factflow.ExprRef]product.Value)
+	}
+	l.expressionValues[exprRef] = value
+}
+
+func (l *lowerer) staticValueSourceValue(source factflow.ValueSource) (product.Value, bool) {
+	switch source.Kind {
+	case factflow.ValueSourceExpression:
+		value, ok := l.expressionValues[source.ExprRef]
+		return value, ok
+	case factflow.ValueSourceLiteral:
+		return l.literalSourceValue(source)
+	case factflow.ValueSourceNil:
+		return l.valueFromTypeWithWitness(typ.Nil), true
+	case factflow.ValueSourcePath:
+		sym, segments, ok := rootSymbolPathKey(source.PathKey)
+		if !ok || len(segments) != 0 {
+			return product.Value{}, false
+		}
+		t, ok := l.staticSymbolType(sym)
+		if !ok || t == nil {
+			return product.Value{}, false
+		}
+		return l.valueFromTypeWithWitness(t), true
+	default:
+		return product.Value{}, false
+	}
+}
+
+func (l *lowerer) staticSymbolType(sym symbol.ID) (typ.Type, bool) {
+	if sym == 0 || l == nil {
+		return nil, false
+	}
+	if t, ok := l.symbolTypes[sym]; ok && t != nil {
+		return t, true
+	}
+	if l.bindings == nil {
+		return nil, false
+	}
+	expr, ok := l.bindings.SymbolTypeAnnotation(sym)
+	if !ok {
+		return nil, false
+	}
+	return l.resolveType(expr)
+}
+
+func rootSymbolPathKey(key path.PathKey) (symbol.ID, []segment.Segment, bool) {
+	if sym, _, suffix, ok := pathaddr.ParseResolverPath(key); ok {
+		segments, segOK := segment.ParseFormattedSegments(suffix)
+		return sym, segments, segOK
+	}
+	if sym, segments, ok := pathaddr.ParseSymbolPathKey(key); ok {
+		return sym, segments, true
+	}
+	return 0, nil, false
 }
 
 func (l *lowerer) wirUnaryTempExpressionValueSource(
