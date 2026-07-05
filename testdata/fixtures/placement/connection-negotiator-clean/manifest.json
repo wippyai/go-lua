@@ -1,0 +1,9 @@
+{
+  "description": "CLEAN: negotiation resolves to one scalar string; the option records are borrowed, nothing is allocated to escape.",
+  "check": {
+    "skip": "pending: field-granular / derivation-sensitive / closure-capture placement precision (task 150f00f9) not yet landed"
+  },
+  "run": {
+    "skip": "checker-only placement fixture"
+  }
+}
