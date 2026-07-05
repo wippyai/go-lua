@@ -51,7 +51,7 @@ func (l *lowerer) addProtectedCallBranchRefinements(input *factflow.FactsInput, 
 			if !activeIn[branch] || !graph.IsBranch(branch) {
 				continue
 			}
-			for _, cond := range protectedCallSuccessEdges(result, branch, okPath) {
+			for _, cond := range l.protectedCallSuccessEdges(result, branch, okPath) {
 				appendBranchRefinement(input.BranchRefinements, branch,
 					branchRefinementOnEdge(payloadPath, factflow.NewValueConstraint(payloadValue), cond),
 				)
@@ -87,12 +87,12 @@ func (l *lowerer) directGlobalProtectedCall(fact semantics.CallFact) bool {
 	return l.bindings.ResolvesToGlobal(fn, "pcall") || l.bindings.ResolvesToGlobal(fn, "xpcall")
 }
 
-func protectedCallSuccessEdges(result *semantics.Result, branch cfg.Point, okPath path.Path) []bool {
-	fact, ok := result.BranchCondition(branch)
-	if !ok || !fact.Check.Path.Equal(okPath) {
+func (l *lowerer) protectedCallSuccessEdges(result *semantics.Result, branch cfg.Point, okPath path.Path) []bool {
+	check, ok := l.directBranchCheckAt(branch, result)
+	if !ok || !check.Path.Equal(okPath) {
 		return nil
 	}
-	switch fact.Check.Kind {
+	switch check.Kind {
 	case branchcond.CheckTruthy:
 		return []bool{true}
 	case branchcond.CheckFalsy:

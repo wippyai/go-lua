@@ -7,7 +7,10 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
+	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
+	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -64,6 +67,47 @@ end
 		assertEqualBranchFacts(t, point, "len floors", sidecarFacts.BranchLenRefinements(point), wirFacts.BranchLenRefinements(point))
 		assertEqualBranchFacts(t, point, "num floors", sidecarFacts.BranchNumFloorRefinements(point), wirFacts.BranchNumFloorRefinements(point))
 		assertEqualBranchFacts(t, point, "path evidence", sidecarFacts.BranchPathEvidence(point), wirFacts.BranchPathEvidence(point))
+	}
+}
+
+func TestLowerWithWIRCorrelationBranchChecksMatchesSidecarLowering(t *testing.T) {
+	t.Run("protected_call", func(t *testing.T) {
+		stmts, bindings, built, result := parseSemanticChunk(t, `
+local function run_tests(): number
+    return 1
+end
+
+local ok, result = pcall(run_tests)
+if not ok then
+    return
+end
+`, "pcall")
+		body := wirlower.Lower("chunk", stmts, bindings, built)
+		assertWIRBranchFactParity(t, built, result, body, bindings)
+	})
+
+	t.Run("type_is", func(t *testing.T) {
+		stmts, bindings, built, result := parseSemanticChunk(t, `
+type Point = {x: number, y: number}
+
+local data: any = {}
+local validated, err = Point:is(data)
+if err then
+    local failed = true
+end
+`)
+		body := wirlower.Lower("chunk", stmts, bindings, built)
+		assertWIRBranchFactParity(t, built, result, body, bindings)
+	})
+}
+
+func assertWIRBranchFactParity(t *testing.T, built *cfgbuild.Result, result *semantics.Result, body *wir.Body, bindings *bind.Result) {
+	t.Helper()
+	sidecarFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	for _, point := range built.Graph.RPO() {
+		assertEqualBranchFacts(t, point, "refinements", sidecarFacts.BranchRefinements(point), wirFacts.BranchRefinements(point))
+		assertEqualBranchFacts(t, point, "presence relations", sidecarFacts.BranchPresenceRelations(point), wirFacts.BranchPresenceRelations(point))
 	}
 }
 

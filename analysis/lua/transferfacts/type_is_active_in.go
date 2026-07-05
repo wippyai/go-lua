@@ -144,11 +144,11 @@ func absentPresenceEdges(input *factflow.FactsInput, branch cfg.Point, target pa
 	return out
 }
 
-func typeIsSuccessEdges(input *factflow.FactsInput, result *semantics.Result, branch cfg.Point, target path.Path) []bool {
+func (l *lowerer) typeIsSuccessEdges(input *factflow.FactsInput, result *semantics.Result, branch cfg.Point, target path.Path) []bool {
 	out := absentPresenceEdges(input, branch, target)
-	if fact, ok := result.BranchCondition(branch); ok &&
-		fact.Check.Kind == branchcond.CheckFalsy &&
-		fact.Check.Path.Equal(target) {
+	if check, ok := l.directBranchCheckAt(branch, result); ok &&
+		check.Kind == branchcond.CheckFalsy &&
+		check.Path.Equal(target) {
 		out = appendBoolIfMissing(out, true)
 	}
 	return out

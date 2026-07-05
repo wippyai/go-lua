@@ -85,7 +85,7 @@ func (l *lowerer) addTypeIsBranchRefinements(input *factflow.FactsInput, graph c
 			if !activeIn[branch] || !graph.IsBranch(branch) {
 				continue
 			}
-			edges := typeIsSuccessEdges(input, result, branch, errPath)
+			edges := l.typeIsSuccessEdges(input, result, branch, errPath)
 			if hasValuePath && len(edges) != 0 {
 				appendBranchPresenceRelations(input.BranchPresenceRelations, branch,
 					factflow.NewBranchPresenceRelation(errPath, presence.Present(), valuePath, presence.Absent()),

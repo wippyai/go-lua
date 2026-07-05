@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
+	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -27,6 +28,33 @@ func (l *lowerer) directBranchCheckFromWIR(point cfg.Point, fallback branchcond.
 		return false
 	})
 	return out, found
+}
+
+func (l *lowerer) directBranchCheckAt(point cfg.Point, result *semantics.Result) (branchcond.Check, bool) {
+	if l.wir != nil {
+		var out branchcond.Check
+		var found bool
+		l.wir.ForEachBranchCheck(point, func(check wir.Check) bool {
+			candidate := branchCheckFromWIR(check)
+			if candidate.Kind == branchcond.CheckNone {
+				return true
+			}
+			out = candidate
+			found = true
+			return false
+		})
+		if found {
+			return out, true
+		}
+	}
+	if result == nil {
+		return branchcond.Check{}, false
+	}
+	fact, ok := result.BranchCondition(point)
+	if !ok || fact.Check.Kind == branchcond.CheckNone {
+		return branchcond.Check{}, false
+	}
+	return fact.Check, true
 }
 
 func branchCheckFromWIR(check wir.Check) branchcond.Check {
