@@ -49,46 +49,38 @@ func (l *lowerer) branchAliasPathEvidence(condition ast.Expr) []factflow.BranchP
 }
 
 func (l *lowerer) branchAliasRefinementsFromWIR(point cfg.Point) []factflow.BranchRefinement {
-	if l == nil || l.wir == nil || len(l.localConditionAliases) == 0 {
-		return nil
-	}
-	var out []factflow.BranchRefinement
-	l.forEachWIRBranchCheck(point, func(check branchcond.Check) {
-		aliased, trueValue, ok := l.wirAliasedExpressionCondition(check)
-		if !ok {
-			return
-		}
-		out = append(out, aliased.BranchRefinementsForValue(trueValue)...)
-	}, func(branchcond.ImpliedCheck) {})
-	return out
+	return collectWIRBranchAliases(l, point, func(aliased factflow.ExpressionCondition, trueValue bool) []factflow.BranchRefinement {
+		return aliased.BranchRefinementsForValue(trueValue)
+	})
 }
 
 func (l *lowerer) branchAliasPathRelationsFromWIR(point cfg.Point) []factflow.BranchPathRelation {
-	if l == nil || l.wir == nil || len(l.localConditionAliases) == 0 {
-		return nil
-	}
-	var out []factflow.BranchPathRelation
-	l.forEachWIRBranchCheck(point, func(check branchcond.Check) {
-		aliased, trueValue, ok := l.wirAliasedExpressionCondition(check)
-		if !ok {
-			return
-		}
-		out = append(out, aliased.BranchPathRelationsForValue(trueValue)...)
-	}, func(branchcond.ImpliedCheck) {})
-	return out
+	return collectWIRBranchAliases(l, point, func(aliased factflow.ExpressionCondition, trueValue bool) []factflow.BranchPathRelation {
+		return aliased.BranchPathRelationsForValue(trueValue)
+	})
 }
 
 func (l *lowerer) branchAliasPathEvidenceFromWIR(point cfg.Point) []factflow.BranchPathEvidence {
+	return collectWIRBranchAliases(l, point, func(aliased factflow.ExpressionCondition, trueValue bool) []factflow.BranchPathEvidence {
+		return aliased.BranchPathEvidenceForValue(trueValue)
+	})
+}
+
+func collectWIRBranchAliases[T any](
+	l *lowerer,
+	point cfg.Point,
+	selector func(factflow.ExpressionCondition, bool) []T,
+) []T {
 	if l == nil || l.wir == nil || len(l.localConditionAliases) == 0 {
 		return nil
 	}
-	var out []factflow.BranchPathEvidence
+	var out []T
 	l.forEachWIRBranchCheck(point, func(check branchcond.Check) {
 		aliased, trueValue, ok := l.wirAliasedExpressionCondition(check)
 		if !ok {
 			return
 		}
-		out = append(out, aliased.BranchPathEvidenceForValue(trueValue)...)
+		out = append(out, selector(aliased, trueValue)...)
 	}, func(branchcond.ImpliedCheck) {})
 	return out
 }
