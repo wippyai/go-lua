@@ -101,7 +101,7 @@ func (l *lowerer) wirCallExprRef(inst wir.Instruction) (factflow.ExprRef, bool) 
 }
 
 func (l *lowerer) callSiteWithArgumentSourcesAt(point cfg.Point, fact semantics.CallFact, argumentSources []factflow.ValueSource) factflow.CallSite {
-	shape := semanticCallSiteShape(fact)
+	shape := callSiteShape{}
 	if wirShape, ok := l.callShapeFromWIR(point); ok {
 		shape = wirShape
 	}
@@ -152,27 +152,6 @@ type callSiteMetadata struct {
 	argumentLabels []string
 }
 
-func semanticCallSiteShape(fact semantics.CallFact) callSiteShape {
-	shape := callSiteShape{}
-	if fact.HasCalleeSymbol {
-		shape.calleeSymbol = fact.CalleeSymbol
-	}
-	if fact.HasCalleePath {
-		shape.calleePath = fact.CalleePath
-	}
-	shape.calleeMemberAccess = fact.CalleeMemberAccess
-	if fact.HasReceiverPath {
-		shape.receiverPath = fact.ReceiverPath
-		shape.hasReceiverPath = true
-	}
-	if fact.HasMethodPath {
-		shape.methodPath = fact.MethodPath
-		shape.hasMethodPath = true
-	}
-	shape.methodName = fact.Method
-	return shape
-}
-
 func (l *lowerer) callSiteWithArgumentSourcesWithShape(
 	fact semantics.CallFact,
 	argumentSources []factflow.ValueSource,
@@ -205,7 +184,6 @@ func (l *lowerer) callSiteWithArgumentSourcesWithShape(
 		CalleeSpan:         metadata.calleeSpan,
 		ArgumentSpans:      metadata.argumentSpans,
 		ArgumentLabels:     metadata.argumentLabels,
-		TypeArgs:           l.typeRefs(fact.TypeArgs),
 		ResultTargets:      resultTargets,
 		Final:              flags.final,
 		Expanded:           flags.expanded,

@@ -365,13 +365,6 @@ end
 		Build()
 	sqlManifest := manifest.New("sql")
 	sqlManifest.SetExport(typetable.NewRecord().Field("get", getType).Build())
-	lowered := LowerWithSidecars(result, built.Graph, Config{
-		Registry:      standard.Registry(),
-		Bindings:      bindings,
-		ModuleExports: importlookup.Source{Manifests: []*manifest.Manifest{sqlManifest}},
-	})
-	assertNeedReleaseImpliesDBValue(t, bindings, built.Graph, lowered.Facts)
-
 	body := wirlower.Lower("run", def.Func.Stmts, bindings, built)
 	wirFacts := Lower(result, built.Graph, Config{
 		Registry:      standard.Registry(),
