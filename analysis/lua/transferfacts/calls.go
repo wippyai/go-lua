@@ -336,11 +336,6 @@ func (l *lowerer) callReceiverSource(point cfg.Point, fact semantics.CallFact) (
 	}); ok {
 		return source, true
 	}
-	if l != nil && l.wir != nil {
-		if inst, ok := l.wirCallInstruction(point); ok && inst.Call.Method != 0 && inst.Call.Receiver.Kind != wir.OperandNone {
-			return factflow.NewUnknownValueSource(0), true
-		}
-	}
 	fallback, hasFallback := l.semanticReceiverSource(fact)
 	if !hasFallback {
 		return factflow.ValueSource{}, false
@@ -379,7 +374,7 @@ func (l *lowerer) callReceiverSourceFromWIR(point cfg.Point, shape valueSourceSh
 	); ok {
 		return source, true
 	}
-	return l.valueSourceFromWIROperand(
+	if source, ok := l.valueSourceFromWIROperand(
 		inst.Call.Receiver,
 		shape.exprIndex,
 		shape.targetIndex,
@@ -387,7 +382,13 @@ func (l *lowerer) callReceiverSourceFromWIR(point cfg.Point, shape valueSourceSh
 		shape.expanded,
 		shape.openTail,
 		l.resultValueSourcesByTempFromWIR(),
-	)
+	); ok {
+		return source, true
+	}
+	if inst.Call.Receiver.Kind != wir.OperandNone {
+		return factflow.NewUnknownValueSource(shape.exprIndex), true
+	}
+	return factflow.ValueSource{}, false
 }
 
 func (l *lowerer) callArgumentSources(point cfg.Point, fallback []sourceprovenance.ASTSource) ([]factflow.ValueSource, bool) {
