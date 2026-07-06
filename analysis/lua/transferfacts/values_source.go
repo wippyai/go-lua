@@ -598,15 +598,53 @@ func (l *lowerer) wirDynamicIndexReadTempExpressionValueSource(
 	resultSources map[uint32]wirResultSource,
 	seen map[uint32]bool,
 ) (factflow.ValueSource, bool) {
+	exprRef, ok := l.exprRef(wirTempExprRefKey{temp: temp})
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return l.wirDynamicIndexReadExpressionValueSourceWithRef(inst, exprRef, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
+}
+
+type wirDynamicIndexReadExprRefKey struct {
+	id wir.ExpressionID
+}
+
+func (l *lowerer) wirDynamicIndexReadExpressionValueSource(
+	inst wir.Instruction,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+	resultSources map[uint32]wirResultSource,
+	seen map[uint32]bool,
+) (factflow.ValueSource, bool) {
+	if inst.ExprID == 0 {
+		return factflow.ValueSource{}, false
+	}
+	exprRef, ok := l.exprRef(wirDynamicIndexReadExprRefKey{id: inst.ExprID})
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return l.wirDynamicIndexReadExpressionValueSourceWithRef(inst, exprRef, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
+}
+
+func (l *lowerer) wirDynamicIndexReadExpressionValueSourceWithRef(
+	inst wir.Instruction,
+	exprRef factflow.ExprRef,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+	resultSources map[uint32]wirResultSource,
+	seen map[uint32]bool,
+) (factflow.ValueSource, bool) {
 	tableSource, ok := l.wirDynamicIndexReadOperandSource(inst, inst.A, exprIndex, targetIndex, resultSources, seen)
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
 	keySource, ok := l.wirDynamicIndexReadOperandSource(inst, inst.B, exprIndex, targetIndex, resultSources, seen)
-	if !ok {
-		return factflow.ValueSource{}, false
-	}
-	exprRef, ok := l.exprRef(wirTempExprRefKey{temp: temp})
 	if !ok {
 		return factflow.ValueSource{}, false
 	}

@@ -505,7 +505,12 @@ func rootAssignmentSourceInstruction(inst wir.Instruction) bool {
 	if _, ok := inst.AssignmentSourceOperand(); ok {
 		return true
 	}
-	return inst.Op == wir.OpMakeTable
+	switch inst.Op {
+	case wir.OpMakeTable, wir.OpDynamicIndexRead:
+		return true
+	default:
+		return false
+	}
 }
 
 func (b *builder) emitBindingClaim(dst wir.Operand, v binding) {

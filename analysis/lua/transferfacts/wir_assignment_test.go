@@ -659,6 +659,49 @@ end`)
 	assertExpressionValue(t, facts, source.ExprRef, presence.Present(), runtimekind.Singleton(runtimekind.Table))
 }
 
+func TestLowerWIRDynamicIndexRootAssignmentPublishesExpressionSourceWithoutSemanticSidecars(t *testing.T) {
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function f(box: {[string]: string}, key: string): ()
+    local out = box[key]
+end`)
+	body := wirlower.Lower("dynamic-index-root-assignment-no-sidecars", fn.Stmts, bindings, built)
+	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	outPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "out")
+	boxPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "box")
+	keyPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "key")
+	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
+	assign, ok := facts.RootAssignment(point)
+	if !ok {
+		t.Fatalf("missing WIR no-sidecar dynamic-index root assignment at point %d", point)
+	}
+	if got := assign.TargetPath(); !got.Equal(outPath) {
+		t.Fatalf("dynamic-index root assignment target = %s, want %s", got.String(), outPath.String())
+	}
+	source := assign.Source()
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		t.Fatalf("dynamic-index root assignment source = %#v, want expression source", source)
+	}
+	if _, ok := facts.ExpressionPath(source.ExprRef); ok {
+		t.Fatalf("dynamic-index root assignment source ref %d unexpectedly has a static path", source.ExprRef)
+	}
+	dynamicExpr, ok := facts.DynamicIndexExpression(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing dynamic-index expression for ref %d", source.ExprRef)
+	}
+	if got := dynamicExpr.TablePath(); !got.Equal(boxPath) {
+		t.Fatalf("dynamic-index table path = %s, want %s", got.String(), boxPath.String())
+	}
+	keySource := dynamicExpr.KeySource()
+	if keySource.Kind != factflow.ValueSourceExpression || !keySource.HasExpr {
+		t.Fatalf("dynamic-index key source = %#v, want expression source", keySource)
+	}
+	gotKeyPath, ok := facts.ExpressionPath(keySource.ExprRef)
+	if !ok || !gotKeyPath.Equal(keyPath) {
+		t.Fatalf("dynamic-index key path = %s/%v, want %s", gotKeyPath.String(), ok, keyPath.String())
+	}
+}
+
 func assertWIRPathSource(t *testing.T, source factflow.ValueSource, want path.Path) {
 	t.Helper()
 	if source.Kind != factflow.ValueSourcePath || source.PathKey != want.Key() || source.HasExpr || source.ExprRef != 0 {
