@@ -517,6 +517,45 @@ end
 	}
 }
 
+func TestBranchEdgeAndImplicationRefinementsShareSingleEdgePlacement(t *testing.T) {
+	lowered := &lowerer{registry: standard.Registry()}
+	target := path.NewPath(symbol.ID(1), "x")
+	check := branchcond.Check{Kind: branchcond.CheckNotNil, Path: target}
+
+	edgeRefinement, ok := lowered.branchEdgeRefinement(check, false)
+	if !ok {
+		t.Fatal("branchEdgeRefinement returned false")
+	}
+	impliedRefinement, ok := lowered.branchImplicationRefinement(branchcond.ImpliedCheck{
+		Check:    check,
+		Polarity: false,
+		Edge:     false,
+	})
+	if !ok {
+		t.Fatal("branchImplicationRefinement returned false")
+	}
+	if !edgeRefinement.TargetPath().Equal(target) || !impliedRefinement.TargetPath().Equal(target) {
+		t.Fatalf("targets = %s / %s, want %s", edgeRefinement.TargetPath(), impliedRefinement.TargetPath(), target)
+	}
+	if _, ok := edgeRefinement.ValueForEdge(true); ok {
+		t.Fatalf("direct refinement unexpectedly populated true edge: %#v", edgeRefinement)
+	}
+	if _, ok := impliedRefinement.ValueForEdge(true); ok {
+		t.Fatalf("implied refinement unexpectedly populated true edge: %#v", impliedRefinement)
+	}
+	directValue, ok := edgeRefinement.ValueForEdge(false)
+	if !ok {
+		t.Fatalf("direct refinement missing false-edge value: %#v", edgeRefinement)
+	}
+	impliedValue, ok := impliedRefinement.ValueForEdge(false)
+	if !ok {
+		t.Fatalf("implied refinement missing false-edge value: %#v", impliedRefinement)
+	}
+	if !directValue.HasPresence(presence.Absent()) || !impliedValue.HasPresence(presence.Absent()) {
+		t.Fatalf("false-edge values differ\n direct: %#v\nimplied: %#v", directValue, impliedValue)
+	}
+}
+
 func hasBranchRefinementValue(refinement factflow.BranchRefinement, edge bool) bool {
 	_, ok := refinement.ValueForEdge(edge)
 	return ok

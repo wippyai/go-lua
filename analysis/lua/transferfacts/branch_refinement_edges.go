@@ -47,14 +47,7 @@ func (l *lowerer) branchEdgeRefinement(check branchcond.Check, cond bool) (factf
 	if !ok {
 		return factflow.BranchRefinement{}, false
 	}
-	value, ok := refinement.ValueForEdge(cond)
-	if !ok {
-		return factflow.BranchRefinement{}, false
-	}
-	if cond {
-		return factflow.NewBranchRefinement(refinement.TargetPath(), value, true, factflow.ValueRefinement{}, false), true
-	}
-	return factflow.NewBranchRefinement(refinement.TargetPath(), factflow.ValueRefinement{}, false, value, true), true
+	return branchRefinementOnSingleEdge(refinement, cond, cond)
 }
 
 func (l *lowerer) branchImplicationRefinement(implied branchcond.ImpliedCheck) (factflow.BranchRefinement, bool) {
@@ -62,11 +55,15 @@ func (l *lowerer) branchImplicationRefinement(implied branchcond.ImpliedCheck) (
 	if !ok {
 		return factflow.BranchRefinement{}, false
 	}
-	value, ok := refinement.ValueForEdge(implied.Polarity)
+	return branchRefinementOnSingleEdge(refinement, implied.Polarity, implied.Edge)
+}
+
+func branchRefinementOnSingleEdge(refinement factflow.BranchRefinement, valueEdge bool, targetEdge bool) (factflow.BranchRefinement, bool) {
+	value, ok := refinement.ValueForEdge(valueEdge)
 	if !ok {
 		return factflow.BranchRefinement{}, false
 	}
-	if implied.Edge {
+	if targetEdge {
 		return factflow.NewBranchRefinement(refinement.TargetPath(), value, true, factflow.ValueRefinement{}, false), true
 	}
 	return factflow.NewBranchRefinement(refinement.TargetPath(), factflow.ValueRefinement{}, false, value, true), true
