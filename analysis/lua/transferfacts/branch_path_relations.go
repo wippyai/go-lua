@@ -64,67 +64,58 @@ func (l *lowerer) branchPathRelations(check branchcond.Check, condition ast.Expr
 // relations apply, so a direct condition narrows both edges while a decomposed
 // conjunct or disjunct narrows only its own edge.
 func checkPathRelations(check branchcond.Check, activeOnTrue, activeOnFalse bool) []factflow.BranchPathRelation {
-	left := check.Path
-	right := check.OtherPath
-	if left.IsEmpty() || right.IsEmpty() {
+	matched, ok := branchPathRelationForCheck(check, true, activeOnTrue, false)
+	if !ok {
 		return nil
 	}
-	switch check.Kind {
-	case branchcond.CheckPathEqual:
-		return []factflow.BranchPathRelation{
-			factflow.NewBranchPathEquality(left, right, activeOnTrue, false),
-			factflow.NewBranchPathInequality(left, right, false, activeOnFalse),
-		}
-	case branchcond.CheckPathNot:
-		return []factflow.BranchPathRelation{
-			factflow.NewBranchPathInequality(left, right, activeOnTrue, false),
-			factflow.NewBranchPathEquality(left, right, false, activeOnFalse),
-		}
-	case branchcond.CheckTypeEqual:
-		return []factflow.BranchPathRelation{
-			factflow.NewBranchPathTypeMatch(left, right, activeOnTrue, false),
-			factflow.NewBranchPathTypeUnmatch(left, right, false, activeOnFalse),
-		}
-	case branchcond.CheckTypeNot:
-		return []factflow.BranchPathRelation{
-			factflow.NewBranchPathTypeUnmatch(left, right, activeOnTrue, false),
-			factflow.NewBranchPathTypeMatch(left, right, false, activeOnFalse),
-		}
-	default:
-		return nil
+	unmatched, ok := branchPathRelationForCheck(check, false, false, activeOnFalse)
+	if !ok {
+		return []factflow.BranchPathRelation{matched}
 	}
+	return []factflow.BranchPathRelation{matched, unmatched}
 }
 
 func checkPathRelationsForImplication(implied branchcond.ImpliedCheck) []factflow.BranchPathRelation {
-	left := implied.Check.Path
-	right := implied.Check.OtherPath
-	if left.IsEmpty() || right.IsEmpty() {
+	relation, ok := branchPathRelationForCheck(implied.Check, implied.Polarity, implied.Edge, !implied.Edge)
+	if !ok {
 		return nil
 	}
-	activeOnTrue := implied.Edge
-	activeOnFalse := !implied.Edge
-	switch implied.Check.Kind {
+	return []factflow.BranchPathRelation{relation}
+}
+
+func branchPathRelationForCheck(
+	check branchcond.Check,
+	matches bool,
+	activeOnTrue bool,
+	activeOnFalse bool,
+) (factflow.BranchPathRelation, bool) {
+	left := check.Path
+	right := check.OtherPath
+	if left.IsEmpty() || right.IsEmpty() {
+		return factflow.BranchPathRelation{}, false
+	}
+	switch check.Kind {
 	case branchcond.CheckPathEqual:
-		if implied.Polarity {
-			return []factflow.BranchPathRelation{factflow.NewBranchPathEquality(left, right, activeOnTrue, activeOnFalse)}
+		if matches {
+			return factflow.NewBranchPathEquality(left, right, activeOnTrue, activeOnFalse), true
 		}
-		return []factflow.BranchPathRelation{factflow.NewBranchPathInequality(left, right, activeOnTrue, activeOnFalse)}
+		return factflow.NewBranchPathInequality(left, right, activeOnTrue, activeOnFalse), true
 	case branchcond.CheckPathNot:
-		if implied.Polarity {
-			return []factflow.BranchPathRelation{factflow.NewBranchPathInequality(left, right, activeOnTrue, activeOnFalse)}
+		if matches {
+			return factflow.NewBranchPathInequality(left, right, activeOnTrue, activeOnFalse), true
 		}
-		return []factflow.BranchPathRelation{factflow.NewBranchPathEquality(left, right, activeOnTrue, activeOnFalse)}
+		return factflow.NewBranchPathEquality(left, right, activeOnTrue, activeOnFalse), true
 	case branchcond.CheckTypeEqual:
-		if implied.Polarity {
-			return []factflow.BranchPathRelation{factflow.NewBranchPathTypeMatch(left, right, activeOnTrue, activeOnFalse)}
+		if matches {
+			return factflow.NewBranchPathTypeMatch(left, right, activeOnTrue, activeOnFalse), true
 		}
-		return []factflow.BranchPathRelation{factflow.NewBranchPathTypeUnmatch(left, right, activeOnTrue, activeOnFalse)}
+		return factflow.NewBranchPathTypeUnmatch(left, right, activeOnTrue, activeOnFalse), true
 	case branchcond.CheckTypeNot:
-		if implied.Polarity {
-			return []factflow.BranchPathRelation{factflow.NewBranchPathTypeUnmatch(left, right, activeOnTrue, activeOnFalse)}
+		if matches {
+			return factflow.NewBranchPathTypeUnmatch(left, right, activeOnTrue, activeOnFalse), true
 		}
-		return []factflow.BranchPathRelation{factflow.NewBranchPathTypeMatch(left, right, activeOnTrue, activeOnFalse)}
+		return factflow.NewBranchPathTypeMatch(left, right, activeOnTrue, activeOnFalse), true
 	default:
-		return nil
+		return factflow.BranchPathRelation{}, false
 	}
 }
