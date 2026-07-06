@@ -13,11 +13,11 @@ import (
 func (l *lowerer) branchPathEvidence(check branchcond.Check, condition ast.Expr) []factflow.BranchPathEvidence {
 	var out []factflow.BranchPathEvidence
 	if check.Kind != branchcond.CheckNone {
-		out = append(out, l.branchPathEvidenceForCheck(check)...)
+		out = append(out, branchPathEvidenceForCheck(check)...)
 		return out
 	}
 	for _, implied := range branchcond.ImpliedChecksOnBothEdges(condition, l.bindings) {
-		out = append(out, l.branchPathEvidenceForImplication(implied)...)
+		out = append(out, branchPathEvidenceForImplication(implied)...)
 	}
 	return out
 }
@@ -25,32 +25,28 @@ func (l *lowerer) branchPathEvidence(check branchcond.Check, condition ast.Expr)
 func (l *lowerer) branchPathEvidenceFromWIR(point cfg.Point) []factflow.BranchPathEvidence {
 	var out []factflow.BranchPathEvidence
 	l.forEachWIRBranchCheck(point, func(check branchcond.Check) {
-		out = append(out, l.branchPathEvidenceForCheck(check)...)
+		out = append(out, branchPathEvidenceForCheck(check)...)
 	}, func(implied branchcond.ImpliedCheck) {
-		out = append(out, l.branchPathEvidenceForImplication(implied)...)
+		out = append(out, branchPathEvidenceForImplication(implied)...)
 	})
 	return out
 }
 
-func (l *lowerer) branchPathEvidenceForCheck(check branchcond.Check) []factflow.BranchPathEvidence {
-	out := l.branchPathEvidenceForDirectCheckOnEdge(check, true)
-	out = append(out, l.branchPathEvidenceForDirectCheckOnEdge(check, false)...)
+func branchPathEvidenceForCheck(check branchcond.Check) []factflow.BranchPathEvidence {
+	out := branchPathEvidenceForDirectCheckOnEdge(check, true)
+	out = append(out, branchPathEvidenceForDirectCheckOnEdge(check, false)...)
 	return out
 }
 
-func (l *lowerer) branchPathEvidenceForDirectCheckOnEdge(check branchcond.Check, cond bool) []factflow.BranchPathEvidence {
-	return l.branchPathEvidenceForCheckPolarityOnEdge(check, cond, cond, true)
+func branchPathEvidenceForDirectCheckOnEdge(check branchcond.Check, cond bool) []factflow.BranchPathEvidence {
+	return branchPathEvidenceForCheckPolarityOnEdge(check, cond, cond, true)
 }
 
-func (l *lowerer) branchPathEvidenceForCheckOnEdge(check branchcond.Check, cond bool) []factflow.BranchPathEvidence {
-	return l.branchPathEvidenceForCheckPolarityOnEdge(check, cond, cond, false)
+func branchPathEvidenceForImplication(implied branchcond.ImpliedCheck) []factflow.BranchPathEvidence {
+	return branchPathEvidenceForCheckPolarityOnEdge(implied.Check, implied.Polarity, implied.Edge, false)
 }
 
-func (l *lowerer) branchPathEvidenceForImplication(implied branchcond.ImpliedCheck) []factflow.BranchPathEvidence {
-	return l.branchPathEvidenceForCheckPolarityOnEdge(implied.Check, implied.Polarity, implied.Edge, false)
-}
-
-func (l *lowerer) branchPathEvidenceForCheckPolarityOnEdge(check branchcond.Check, polarity bool, edge bool, inverseOpposite bool) []factflow.BranchPathEvidence {
+func branchPathEvidenceForCheckPolarityOnEdge(check branchcond.Check, polarity bool, edge bool, inverseOpposite bool) []factflow.BranchPathEvidence {
 	target := check.Path
 	if target.IsEmpty() {
 		return nil
