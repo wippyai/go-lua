@@ -136,15 +136,8 @@ func (l *lowerer) rootPathExpressionSourceFromWIR(
 	openTail bool,
 	allowedKinds ...symbol.Kind,
 ) (factflow.ValueSource, bool) {
-	if op.Kind != wir.OperandPath || l == nil || l.wir == nil || l.bindings == nil {
-		return factflow.ValueSource{}, false
-	}
-	p := l.wir.Path(wir.PathRef(op.Ref))
-	if len(p.Segments) != 0 || p.Symbol == 0 {
-		return factflow.ValueSource{}, false
-	}
-	bindKind, ok := l.bindings.Kind(p.Symbol)
-	if !ok || !symbolKindAllowed(bindKind, allowedKinds) {
+	p, ok := l.wirPathOperand(op, true, allowedKinds...)
+	if !ok {
 		return factflow.ValueSource{}, false
 	}
 	exprRef, ok := l.exprRef(wirPathExprRefKey{
@@ -188,15 +181,8 @@ func (l *lowerer) pathExpressionSourceFromWIR(
 	openTail bool,
 	allowedKinds ...symbol.Kind,
 ) (factflow.ValueSource, bool) {
-	if op.Kind != wir.OperandPath || l == nil || l.wir == nil || l.bindings == nil {
-		return factflow.ValueSource{}, false
-	}
-	p := l.wir.Path(wir.PathRef(op.Ref))
-	if p.IsEmpty() || p.Symbol == 0 {
-		return factflow.ValueSource{}, false
-	}
-	bindKind, ok := l.bindings.Kind(p.Symbol)
-	if !ok || !symbolKindAllowed(bindKind, allowedKinds) {
+	p, ok := l.wirPathOperand(op, false, allowedKinds...)
+	if !ok {
 		return factflow.ValueSource{}, false
 	}
 	exprRef, ok := l.exprRef(wirPathExprRefKey{
@@ -227,6 +213,24 @@ func (l *lowerer) pathExpressionSourceFromWIR(
 		return factflow.ValueSource{}, false
 	}
 	return factflow.NewExpressionValueSource(exprRef, exprIndex, targetIndex, 0, shape)
+}
+
+func (l *lowerer) wirPathOperand(op wir.Operand, rootOnly bool, allowedKinds ...symbol.Kind) (path.Path, bool) {
+	if op.Kind != wir.OperandPath || l == nil || l.wir == nil || l.bindings == nil {
+		return path.Path{}, false
+	}
+	p := l.wir.Path(wir.PathRef(op.Ref))
+	if p.IsEmpty() || p.Symbol == 0 {
+		return path.Path{}, false
+	}
+	if rootOnly && len(p.Segments) != 0 {
+		return path.Path{}, false
+	}
+	bindKind, ok := l.bindings.Kind(p.Symbol)
+	if !ok || !symbolKindAllowed(bindKind, allowedKinds) {
+		return path.Path{}, false
+	}
+	return p, true
 }
 
 func (l *lowerer) valueSourceFromWIROperand(

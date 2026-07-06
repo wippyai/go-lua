@@ -3,8 +3,11 @@ package transferfacts
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/path"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -48,5 +51,35 @@ func TestValueSourceExprRefDistinguishesWrappedVarargSlots(t *testing.T) {
 	}
 	if first.ResultIndex != 0 || second.ResultIndex != 1 || first.TargetIndex != 0 || second.TargetIndex != 1 {
 		t.Fatalf("wrapped vararg slots = %#v / %#v, want slot-specific evidence", first, second)
+	}
+}
+
+func TestWIRPathOperandValidatesRootOnlyAndSymbolKind(t *testing.T) {
+	stmts, bindings, _, _ := parseSemanticChunk(t, `
+local root = { child = 1 }
+local value = root.child
+`)
+	rootStmt := mustLocalStmt(t, stmts, 0)
+	rootPath := path.NewPath(mustLocalAt(t, bindings, rootStmt, 0), "root")
+	childPath := rootPath.Field("child")
+
+	body := wir.NewBody("path-operand-validation")
+	rootOp := wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(rootPath))}
+	childOp := wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(childPath))}
+	l := lowerer{wir: body, bindings: bindings}
+
+	gotRoot, ok := l.wirPathOperand(rootOp, true, symbol.Local)
+	if !ok || !gotRoot.Equal(rootPath) {
+		t.Fatalf("root operand = %s/%v, want %s", gotRoot, ok, rootPath)
+	}
+	gotChild, ok := l.wirPathOperand(childOp, false, symbol.Local)
+	if !ok || !gotChild.Equal(childPath) {
+		t.Fatalf("child operand = %s/%v, want %s", gotChild, ok, childPath)
+	}
+	if got, ok := l.wirPathOperand(childOp, true, symbol.Local); ok {
+		t.Fatalf("root-only child operand = %s/%v, want rejected", got, ok)
+	}
+	if got, ok := l.wirPathOperand(rootOp, true, symbol.Global); ok {
+		t.Fatalf("disallowed local operand = %s/%v, want rejected", got, ok)
 	}
 }
