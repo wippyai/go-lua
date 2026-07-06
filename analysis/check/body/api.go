@@ -173,6 +173,7 @@ type Result struct {
 	bindings              *bind.Result
 	cfg                   *cfgbuild.Result
 	semantics             *semantics.Result
+	wir                   *wir.Body
 	signatures            signaturelookup.Source
 	moduleTypes           typelookup.Source
 	modules               moduleidentity.Projection

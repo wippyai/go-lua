@@ -106,10 +106,10 @@ func (r Reader) channelSelectChainExhaustiveness(
 ) (ChannelSelectExhaustiveness, bool) {
 	handledBySelect := make(map[int]map[int]bool)
 	for _, branch := range chain.Branches {
-		if branch.Fact.Check.Kind != branchcond.CheckPathEqual {
+		if branch.Check.Kind != branchcond.CheckPathEqual {
 			continue
 		}
-		for _, match := range cases.matchesForCheck(branch.Fact.Check) {
+		for _, match := range cases.matchesForCheck(branch.Check) {
 			if match.selectIndex < 0 || match.selectIndex >= len(selects) {
 				continue
 			}

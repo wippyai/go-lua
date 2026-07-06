@@ -254,6 +254,7 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		bindings:              s.bindings,
 		cfg:                   s.cfg,
 		semantics:             s.semantics,
+		wir:                   s.wir,
 		signatures:            s.signatures,
 		moduleTypes:           s.moduleTypes,
 		modules:               s.modules,

@@ -2,16 +2,17 @@ package body
 
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-// IfBranch is one reachable branch condition in an if/elseif chain. It keeps
-// the lowered semantic fact and exposes syntax-derived shape/spans so consumers
-// above body do not inspect IfStmt topology directly.
+// IfBranch is one reachable branch condition in an if/elseif chain. It exposes
+// the canonical lowered check and keeps syntax topology private to body.
 type IfBranch struct {
 	Point         cfg.Point
-	Fact          BranchConditionFact
+	Check         branchcond.Check
 	ConditionSpan SourceSpan
+	ifStmt        *ast.IfStmt
 }
 
 // IfBranchChain is a reachable if/elseif chain headed by Head. Branches are in
@@ -45,23 +46,23 @@ func (r *Result) IfBranchChains() []IfBranchChain {
 	nested := make(map[*ast.IfStmt]struct{})
 	byIf := make(map[*ast.IfStmt]IfBranch, len(branches))
 	for _, branch := range branches {
-		if branch.Fact.If == nil {
+		if branch.ifStmt == nil {
 			continue
 		}
-		byIf[branch.Fact.If] = branch
-		if child := firstElseIf(branch.Fact.If); child != nil {
+		byIf[branch.ifStmt] = branch
+		if child := firstElseIf(branch.ifStmt); child != nil {
 			nested[child] = struct{}{}
 		}
 	}
 	out := make([]IfBranchChain, 0, len(branches))
 	for _, branch := range branches {
-		if branch.Fact.If == nil {
+		if branch.ifStmt == nil {
 			continue
 		}
-		if _, ok := nested[branch.Fact.If]; ok {
+		if _, ok := nested[branch.ifStmt]; ok {
 			continue
 		}
-		chain := ifBranchChainFromHead(branch.Fact.If, byIf)
+		chain := ifBranchChainFromHead(branch.ifStmt, byIf)
 		if len(chain.Branches) == 0 {
 			continue
 		}
@@ -80,10 +81,15 @@ func (r *Result) ifBranches(graph cfg.Graph) []IfBranch {
 		if !ok || fact.If == nil {
 			continue
 		}
+		check, ok := r.BranchConditionCheck(point)
+		if !ok {
+			continue
+		}
 		out = append(out, IfBranch{
 			Point:         point,
-			Fact:          fact,
+			Check:         check,
 			ConditionSpan: sourceSpanFromAST(ast.SpanOf(fact.Condition)),
+			ifStmt:        fact.If,
 		})
 	}
 	return out

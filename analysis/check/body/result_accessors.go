@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
@@ -418,6 +419,55 @@ func (r *Result) BranchCondition(point cfg.Point) (semantics.BranchConditionFact
 		return semantics.BranchConditionFact{}, false
 	}
 	return r.semantics.BranchCondition(point)
+}
+
+// BranchConditionCheck returns the canonical direct branch check for point.
+// WIR owns the normalized predicate when present; semantic facts remain the
+// fallback while syntax-only branch topology is still migrating.
+func (r *Result) BranchConditionCheck(point cfg.Point) (branchcond.Check, bool) {
+	if r == nil {
+		return branchcond.Check{}, false
+	}
+	if check, ok := r.branchConditionCheckFromWIR(point); ok {
+		return check, true
+	}
+	fact, ok := r.BranchCondition(point)
+	if !ok || fact.Check.Kind == branchcond.CheckNone {
+		return branchcond.Check{}, false
+	}
+	return fact.Check, true
+}
+
+func (r *Result) branchConditionCheckFromWIR(point cfg.Point) (branchcond.Check, bool) {
+	if r == nil || r.wir == nil {
+		return branchcond.Check{}, false
+	}
+	var out branchcond.Check
+	var found bool
+	r.wir.ForEachBranchCheck(point, func(check wir.Check) bool {
+		candidate := branchConditionCheckFromWIR(check)
+		if candidate.Kind == branchcond.CheckNone {
+			return true
+		}
+		out = candidate
+		found = true
+		return false
+	})
+	return out, found
+}
+
+func branchConditionCheckFromWIR(check wir.Check) branchcond.Check {
+	return branchcond.Check{
+		Kind:          branchcond.CheckKind(check.Kind),
+		Path:          check.Path,
+		OtherPath:     check.OtherPath,
+		TypeName:      check.TypeName,
+		Literal:       check.Literal,
+		LiteralString: check.LiteralString,
+		LenFloor:      check.LenFloor,
+		NumFloor:      check.NumFloor,
+		Negated:       check.Negated,
+	}
 }
 
 func (r *Result) BranchConditionChecksOnEdge(fact semantics.BranchConditionFact, cond bool) []branchcond.Check {

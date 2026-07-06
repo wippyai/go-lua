@@ -49,10 +49,7 @@ func (r Reader) optionalChain(chain body.IfBranchChain) (OptionalExhaustiveness,
 	consumesValue := false
 	var point cfg.Point
 	for _, branch := range chain.Branches {
-		if branch.Fact.If == nil {
-			return OptionalExhaustiveness{}, false
-		}
-		candidate, ok := r.optionalCandidateForCheck(branch.Point, branch.Fact.Check)
+		candidate, ok := r.optionalCandidateForCheck(branch.Point, branch.Check)
 		if !ok {
 			return OptionalExhaustiveness{}, false
 		}

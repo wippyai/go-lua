@@ -264,10 +264,10 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 				}
 			}
 		}
-		if l.wir != nil && result == nil {
+		if l.wir != nil {
 			l.addBranchFactsFromWIR(&input, point)
 		}
-		if result != nil {
+		if result != nil && l.wir == nil {
 			if fact, ok := result.BranchCondition(point); ok {
 				var branchSource factflow.ValueSource
 				var hasBranchSource bool

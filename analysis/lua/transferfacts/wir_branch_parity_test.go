@@ -68,8 +68,6 @@ end
 	for _, point := range built.Graph.RPO() {
 		if fact, ok := result.BranchCondition(point); ok && fact.Check.Kind == branchcond.CheckTruthy {
 			assertWIRTruthyBranchConditionSource(t, point, wirFacts, fact.Check.Path)
-		} else {
-			assertEqualBranchFacts(t, point, "condition source", branchConditionSourceForCompare(sidecarFacts, point), branchConditionSourceForCompare(wirFacts, point))
 		}
 		assertEqualBranchFacts(t, point, "refinements", sidecarFacts.BranchRefinements(point), wirFacts.BranchRefinements(point))
 		assertEqualBranchFacts(t, point, "len floors", sidecarFacts.BranchLenRefinements(point), wirFacts.BranchLenRefinements(point))
@@ -102,7 +100,7 @@ func TestDirectBranchCheckFromWIRDoesNotRequireSemanticSidecarMatch(t *testing.T
 func TestLowerWithWIRDirectBranchPublishesWithoutSemanticSidecars(t *testing.T) {
 	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(x: string?): ()
-    if x ~= nil then
+    if x then
         local y = x
     end
 end
@@ -119,11 +117,8 @@ end
 	if !ok {
 		t.Fatalf("WIR no-sidecar branch condition source missing at point %d", point)
 	}
-	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr || !source.Final || source.Adjusted || source.Expanded || source.OpenTail {
-		t.Fatalf("WIR no-sidecar branch condition source = %#v, want unadjusted expression source", source)
-	}
-	if got, ok := facts.ExpressionPath(source.ExprRef); !ok || !got.Equal(target) {
-		t.Fatalf("WIR no-sidecar branch condition path = %v/%v, want %v", got, ok, target)
+	if source.Kind != factflow.ValueSourcePath || source.PathKey != target.Key() || !source.Final || source.Adjusted || source.Expanded || source.OpenTail {
+		t.Fatalf("WIR no-sidecar branch condition source = %#v, want path source for %s", source, target)
 	}
 	if got := facts.BranchPathEvidence(point); len(got) == 0 {
 		t.Fatalf("WIR no-sidecar branch path evidence missing at point %d", point)
@@ -514,6 +509,32 @@ end
 	}
 }
 
+func TestLowerWIRRelationalBranchCheckDoesNotUseOperandPathAsConditionSource(t *testing.T) {
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function f(a: {tag: "a"}, b: {tag: "b"}): ()
+    if a == b then local hit = true end
+end
+`)
+	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
+	aPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "a")
+	bPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "b")
+	body := wir.NewBody("branch")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpBranch,
+		Point: point,
+		Check: body.InternCheck(wir.Check{Kind: wir.CheckPathEqual, Path: aPath, OtherPath: bPath}),
+	})
+	body.SetPointRange(point, start, start+1)
+
+	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	if source, ok := facts.BranchConditionSource(point); ok {
+		t.Fatalf("relational WIR branch published operand path as condition source: %#v", source)
+	}
+	if got := facts.BranchPathRelations(point); len(got) == 0 {
+		t.Fatalf("relational WIR branch path relations = 0, want equality/inequality facts")
+	}
+}
+
 func TestLowerTypeIsConditionDoesNotFallbackWhenWIRCallInstructionMissing(t *testing.T) {
 	stmts, bindings, built, result := parseSemanticChunk(t, `
 type Payload = { name: string }
@@ -813,19 +834,6 @@ func assertEqualBranchFacts(t *testing.T, point cfg.Point, label string, want, g
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("%s at point %d mismatch\n got: %#v\nwant: %#v", label, point, got, want)
 	}
-}
-
-type branchConditionSourceCompare struct {
-	source factflow.ValueSource
-	ok     bool
-}
-
-func branchConditionSourceForCompare(facts factflow.Facts, point cfg.Point) branchConditionSourceCompare {
-	source, ok := facts.BranchConditionSource(point)
-	if source.HasExpr {
-		source.ExprRef = 1
-	}
-	return branchConditionSourceCompare{source: source, ok: ok}
 }
 
 func assertWIRTruthyBranchConditionSource(t *testing.T, point cfg.Point, facts factflow.Facts, want path.Path) {

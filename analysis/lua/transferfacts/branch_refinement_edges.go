@@ -13,6 +13,9 @@ func (l *lowerer) branchRefinementsForCheck(check branchcond.Check) []factflow.B
 	out := l.rootRefinementsForBranchRefinement(refinement)
 	out = append(out, l.truthyBooleanRootRefinements(check)...)
 	out = append(out, refinement)
+	if descendant, ok := l.literalDescendantRefinementForCheck(check, refinement); ok {
+		out = append(out, descendant)
+	}
 	return out
 }
 
@@ -67,4 +70,18 @@ func branchRefinementOnSingleEdge(refinement factflow.BranchRefinement, valueEdg
 		return factflow.NewBranchRefinement(refinement.TargetPath(), value, true, factflow.ValueRefinement{}, false), true
 	}
 	return factflow.NewBranchRefinement(refinement.TargetPath(), factflow.ValueRefinement{}, false, value, true), true
+}
+
+func (l *lowerer) literalDescendantRefinementForCheck(check branchcond.Check, refinement factflow.BranchRefinement) (factflow.BranchRefinement, bool) {
+	if check.Kind != branchcond.CheckLiteralEqual && check.Kind != branchcond.CheckLiteralNot {
+		return factflow.BranchRefinement{}, false
+	}
+	if check.Path.IsEmpty() || len(check.Path.Segments) == 0 || refinement.TargetPath().Equal(check.Path) {
+		return factflow.BranchRefinement{}, false
+	}
+	lit, ok := check.LiteralValue()
+	if !ok {
+		return factflow.BranchRefinement{}, false
+	}
+	return l.descendantLiteralRefinement(check.Path, check.Kind, lit)
 }

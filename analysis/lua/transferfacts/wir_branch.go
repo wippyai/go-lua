@@ -1,8 +1,6 @@
 package transferfacts
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
@@ -34,9 +32,6 @@ func (l *lowerer) branchConditionSourceAtWIR(point cfg.Point) (factflow.ValueSou
 		if check.Kind == branchcond.CheckTruthy {
 			return l.branchConditionSourceFromWIR(check)
 		}
-		if !check.Path.IsEmpty() {
-			return l.wirBranchConditionPathSource(point, check.Path)
-		}
 	}
 	for _, inst := range l.wir.PointInstructions(point) {
 		if inst.Op != wir.OpBranch || inst.A.Kind == wir.OperandNone {
@@ -57,35 +52,6 @@ func (l *lowerer) branchConditionSourceAtWIR(point cfg.Point) (factflow.ValueSou
 		return source, ok
 	}
 	return factflow.ValueSource{}, false
-}
-
-func (l *lowerer) wirBranchConditionPathSource(point cfg.Point, p path.Path) (factflow.ValueSource, bool) {
-	exprRef, ok := l.exprRef(wirPathExprRefKey{
-		kind:        "branch-condition",
-		point:       point,
-		path:        p.Key(),
-		exprIndex:   0,
-		targetIndex: sourceprovenance.NoSourceIndex,
-		final:       true,
-	})
-	if !ok {
-		return factflow.ValueSource{}, false
-	}
-	if l.expressionPaths == nil {
-		l.expressionPaths = make(map[factflow.ExprRef]path.Path)
-	}
-	l.expressionPaths[exprRef] = p
-	if witness, ok := l.aliasPathType(p); ok {
-		if l.expressionValues == nil {
-			l.expressionValues = make(map[factflow.ExprRef]product.Value)
-		}
-		l.expressionValues[exprRef] = l.valueFromTypeWithWitness(witness)
-	}
-	shape, ok := factflow.NewValueSourceShape(true, false, false, false)
-	if !ok {
-		return factflow.ValueSource{}, false
-	}
-	return factflow.NewExpressionValueSource(exprRef, 0, sourceprovenance.NoSourceIndex, 0, shape)
 }
 
 func (l *lowerer) directBranchCheckAt(point cfg.Point, result *semantics.Result) (branchcond.Check, bool) {

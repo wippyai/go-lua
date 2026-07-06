@@ -70,6 +70,9 @@ func (l *lowerer) literalBranchRefinement(target path.Path, kind branchcond.Chec
 	if !ok {
 		return l.descendantLiteralRefinement(target, kind, lit)
 	}
+	if impossible, ok := l.impossibleLiteralPathRefinement(target, kind, lit, rootType); ok {
+		return impossible, true
+	}
 	anchorType, anchor, rest, ok := narrowAnchor(rootType, target, lit)
 	if !ok {
 		return l.descendantLiteralRefinement(target, kind, lit)
@@ -111,6 +114,22 @@ func (l *lowerer) literalBranchRefinement(target path.Path, kind branchcond.Chec
 		hasFalse = true
 	}
 	return factflow.NewBranchRefinement(anchor, trueValue, hasTrue, falseValue, hasFalse), true
+}
+
+func (l *lowerer) impossibleLiteralPathRefinement(target path.Path, kind branchcond.CheckKind, lit typ.Type, rootType typ.Type) (factflow.BranchRefinement, bool) {
+	if lit == nil || l.registry == nil {
+		return factflow.BranchRefinement{}, false
+	}
+	fieldType, ok := variant.FieldAtPath(rootType, target.Segments)
+	if !ok || subtype.IsSubtype(lit, fieldType) {
+		return factflow.BranchRefinement{}, false
+	}
+	bottom := factflow.NewValueConstraint(product.Bottom(l.registry))
+	root := target.RootOnly()
+	if kind == branchcond.CheckLiteralNot {
+		return factflow.NewBranchRefinement(root, factflow.ValueRefinement{}, false, bottom, true), true
+	}
+	return factflow.NewBranchRefinement(root, bottom, true, factflow.ValueRefinement{}, false), true
 }
 
 // narrowAnchor finds the location at which a discriminant literal check narrows a

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
@@ -120,6 +121,43 @@ func TestTruthyBooleanRootImplicationUsesPolarityOnOuterEdge(t *testing.T) {
 	got, ok := typevalue.TypeOf(standard.Registry(), constraint)
 	if !ok || !typ.TypeEquals(got, typ.True) {
 		t.Fatalf("false-edge literal = %v/%v, want true", got, ok)
+	}
+}
+
+func TestLiteralBranchRefinementImpossibleStaticFieldBottomsImpossibleEdge(t *testing.T) {
+	reg := standard.Registry()
+	root := typetable.NewRecord().
+		Field("ok", typ.True).
+		Field("value", typ.String).
+		Build()
+	lowered := &lowerer{
+		registry:    reg,
+		symbolTypes: map[symbol.ID]typ.Type{1: root},
+	}
+	target := path.NewPath(symbol.ID(1), "x").Field("ok")
+
+	equal, ok := lowered.literalBranchRefinement(target, branchcond.CheckLiteralEqual, typ.False)
+	if !ok {
+		t.Fatalf("missing impossible equality refinement")
+	}
+	if !equal.TargetPath().Equal(target.RootOnly()) {
+		t.Fatalf("equality target = %s, want root %s", equal.TargetPath(), target.RootOnly())
+	}
+	assertBranchRefinementConstraint(t, reg, equal, true, product.Bottom(reg))
+	if _, hasFalse := equal.ValueForEdge(false); hasFalse {
+		t.Fatalf("equality false edge should not carry a bottom/no-op refinement: %#v", equal)
+	}
+
+	notEqual, ok := lowered.literalBranchRefinement(target, branchcond.CheckLiteralNot, typ.False)
+	if !ok {
+		t.Fatalf("missing impossible inequality refinement")
+	}
+	if !notEqual.TargetPath().Equal(target.RootOnly()) {
+		t.Fatalf("inequality target = %s, want root %s", notEqual.TargetPath(), target.RootOnly())
+	}
+	assertBranchRefinementConstraint(t, reg, notEqual, false, product.Bottom(reg))
+	if _, hasTrue := notEqual.ValueForEdge(true); hasTrue {
+		t.Fatalf("inequality true edge should not carry a bottom/no-op refinement: %#v", notEqual)
 	}
 }
 
@@ -1558,6 +1596,51 @@ func TestLowerLiteralDiscriminantBranchRefinesRootOnBothEdges(t *testing.T) {
 	assertVariantOriginRefinementType(t, "false edge", falseValue, right)
 }
 
+func TestLowerLiteralDiscriminantBranchAlsoPublishesDescendantProof(t *testing.T) {
+	left := typetable.NewRecord().
+		Field("tag", typ.LiteralString("a")).
+		Field("value", typ.String).
+		Build()
+	right := typetable.NewRecord().
+		Field("tag", typ.LiteralString("b")).
+		Field("value", typ.Number).
+		Build()
+	rootType := typeexpr.Union(left, right)
+	root := symbol.ID(802)
+	rootPath := path.NewPath(root, "r")
+	tagPath := rootPath.Field("tag")
+	l := lowerer{
+		registry:    standard.Registry(),
+		symbolTypes: map[symbol.ID]typ.Type{root: rootType},
+	}
+
+	refinements := l.branchRefinementsForCheck(branchcond.Check{
+		Kind:          branchcond.CheckLiteralEqual,
+		Path:          tagPath,
+		Literal:       typ.LiteralString("a"),
+		LiteralString: "a",
+	})
+	if _, ok := branchRefinementAt(refinements, rootPath); !ok {
+		t.Fatalf("missing root variant refinement: %#v", refinements)
+	}
+	descendant, ok := branchRefinementAt(refinements, tagPath)
+	if !ok {
+		t.Fatalf("missing descendant literal refinement: %#v", refinements)
+	}
+	trueValue, ok := descendant.TrueValue()
+	if !ok {
+		t.Fatal("missing true-edge descendant literal refinement")
+	}
+	constraint, ok := trueValue.Constraint()
+	if !ok {
+		t.Fatal("true-edge descendant literal refinement missing constraint")
+	}
+	gotType, ok := typevalue.TypeOf(standard.Registry(), constraint)
+	if !ok || !typ.TypeEquals(gotType, typ.LiteralString("a")) {
+		t.Fatalf("descendant literal type = %v/%v, want \"a\"", gotType, ok)
+	}
+}
+
 func TestLowerOpenScalarDescendantLiteralBranchKeepsPathProof(t *testing.T) {
 	root := symbol.ID(804)
 	rootPath := path.NewPath(root, "cell")
@@ -1764,6 +1847,21 @@ func requireBranchRefinementValueAt(t *testing.T, refinements []factflow.BranchR
 	}
 	t.Fatalf("missing %t-edge refinement for %s in %#v", cond, wantPath, refinements)
 	return factflow.ValueRefinement{}
+}
+
+func assertBranchRefinementConstraint(t *testing.T, reg *axis.Registry, refinement factflow.BranchRefinement, cond bool, want product.Value) {
+	t.Helper()
+	value, ok := refinement.ValueForEdge(cond)
+	if !ok {
+		t.Fatalf("missing %t-edge refinement value in %#v", cond, refinement)
+	}
+	constraint, ok := value.Constraint()
+	if !ok {
+		t.Fatalf("%t-edge refinement has no constraint: %#v", cond, value)
+	}
+	if !product.Equal(reg, constraint, want) {
+		t.Fatalf("%t-edge constraint = %#v, want %#v", cond, constraint, want)
+	}
 }
 
 func assertRootRefinementsBeforeDescendants(t *testing.T, refinements []factflow.BranchRefinement) {

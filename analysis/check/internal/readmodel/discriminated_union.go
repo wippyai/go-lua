@@ -63,7 +63,7 @@ func (r Reader) discriminatedUnionChain(chain body.IfBranchChain) (Discriminated
 	selectedSet := false
 	handled := make(map[int]bool)
 	for _, branch := range chain.Branches {
-		candidate, ok := r.discriminatedUnionCandidateForCheck(branch.Point, branch.Fact.Check)
+		candidate, ok := r.discriminatedUnionCandidateForCheck(branch.Point, branch.Check)
 		if !ok {
 			return DiscriminatedUnionExhaustiveness{}, false
 		}

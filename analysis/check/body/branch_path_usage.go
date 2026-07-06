@@ -10,20 +10,20 @@ import (
 // IfBranchConsumesPath reports whether the branch body reads target before a
 // guard-invalidating write/call makes the proof stale.
 func (r *Result) IfBranchConsumesPath(proofPoint cfg.Point, branch IfBranch, target pathdom.Path) bool {
-	if branch.Fact.If == nil {
+	if branch.ifStmt == nil {
 		return false
 	}
-	consumed, _ := r.statementsConsumePath(proofPoint, branch.Fact.If.Then, target)
+	consumed, _ := r.statementsConsumePath(proofPoint, branch.ifStmt.Then, target)
 	return consumed
 }
 
 // IfBranchTerminates reports whether the branch body definitely stops normal
 // control flow through a return, error(...), or nested terminating block.
 func (r *Result) IfBranchTerminates(branch IfBranch) bool {
-	if branch.Fact.If == nil {
+	if branch.ifStmt == nil {
 		return false
 	}
-	return r.statementsTerminate(branch.Fact.If.Then)
+	return r.statementsTerminate(branch.ifStmt.Then)
 }
 
 func (r *Result) statementsConsumePath(proofPoint cfg.Point, stmts []ast.Stmt, target pathdom.Path) (consumed bool, invalidated bool) {
