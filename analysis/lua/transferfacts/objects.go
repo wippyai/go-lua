@@ -527,17 +527,18 @@ func (l *lowerer) addObjectLiteralFieldExposures(input *factflow.FactsInput, res
 }
 
 func (l *lowerer) tableConstructorExprRef(expr ast.Expr) (factflow.ExprRef, bool) {
-	if id, ok := l.tableConstructorExpressionID(expr); ok {
-		return l.exprRef(wirTableExprRefKey{id: id})
-	}
-	return l.exprRef(expr)
+	return l.exprRef(l.tableConstructorExprRefKey(expr))
 }
 
 func (l *lowerer) existingTableConstructorExprRef(expr ast.Expr) (factflow.ExprRef, bool) {
+	return l.existingExprRef(l.tableConstructorExprRefKey(expr))
+}
+
+func (l *lowerer) tableConstructorExprRefKey(expr ast.Expr) any {
 	if id, ok := l.tableConstructorExpressionID(expr); ok {
-		return l.existingExprRef(wirTableExprRefKey{id: id})
+		return wirTableExprRefKey{id: id}
 	}
-	return l.existingExprRef(expr)
+	return expr
 }
 
 func (l *lowerer) tableConstructorExprRefFromWIR(inst wir.Instruction) (factflow.ExprRef, bool) {
