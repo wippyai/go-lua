@@ -16,10 +16,11 @@ type callArityPresentation struct {
 }
 
 func (ProofContext) DirectCallArity(item judgment.Judgment, primary diagnostic.Span) (callArityPresentation, bool) {
-	detail, ok := directCallArityDetail(item)
-	if !ok {
+	proof := item.CallArityProof()
+	if !proof.Found {
 		return callArityPresentation{}, false
 	}
+	detail := proof.Detail
 	name := item.Subject.Label
 	if name == "" {
 		name = "call target"
@@ -59,16 +60,6 @@ func (ProofContext) DirectCallArity(item judgment.Judgment, primary diagnostic.S
 			},
 		},
 	}, true
-}
-
-func directCallArityDetail(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
-	if evidence, ok := item.FirstEvidenceKindDetail(judgment.EvidenceMissingProof, judgment.EvidenceDetailArityTooFew); ok {
-		return evidence.Detail, true
-	}
-	if evidence, ok := item.FirstEvidenceKindDetail(judgment.EvidenceMissingProof, judgment.EvidenceDetailArityTooMany); ok {
-		return evidence.Detail, true
-	}
-	return judgment.EvidenceDetail{}, false
 }
 
 func directCallArityEvidenceSpan(item judgment.Judgment, kind judgment.EvidenceKind) diagnostic.Span {

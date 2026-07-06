@@ -246,6 +246,40 @@ func TestCallArgumentProofSummaryUsesStructuredEvidence(t *testing.T) {
 	}
 }
 
+func TestCallArityProofSummaryUsesStructuredEvidence(t *testing.T) {
+	tooFew := Judgment{Evidence: EvidenceChain{{
+		Kind:   EvidenceMissingProof,
+		Detail: ArityTooFewEvidenceDetail(3, 1),
+	}}}
+	summary := tooFew.CallArityProof()
+	if !summary.Found ||
+		summary.Detail.Kind != EvidenceDetailArityTooFew ||
+		summary.Detail.ExpectedCount != 3 ||
+		summary.Detail.ActualCount != 1 {
+		t.Fatalf("CallArityProof too-few = %#v, want 3 expected / 1 actual", summary)
+	}
+
+	tooMany := Judgment{Evidence: EvidenceChain{{
+		Kind:   EvidenceMissingProof,
+		Detail: ArityTooManyEvidenceDetail(1, 3),
+	}}}
+	summary = tooMany.CallArityProof()
+	if !summary.Found ||
+		summary.Detail.Kind != EvidenceDetailArityTooMany ||
+		summary.Detail.ExpectedCount != 1 ||
+		summary.Detail.ActualCount != 3 {
+		t.Fatalf("CallArityProof too-many = %#v, want 1 expected / 3 actual", summary)
+	}
+
+	absent := Judgment{Evidence: EvidenceChain{{
+		Kind:   EvidenceUserAssertion,
+		Detail: ArityTooManyEvidenceDetail(1, 3),
+	}}}
+	if got := absent.CallArityProof(); got.Found {
+		t.Fatalf("CallArityProof matched non-missing-proof evidence: %#v", got)
+	}
+}
+
 func TestDefaultRegistryValidatesCallArgumentJudgmentShape(t *testing.T) {
 	j := Judgment{
 		Code:    CodeCallArgType,
