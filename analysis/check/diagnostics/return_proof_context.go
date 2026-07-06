@@ -18,6 +18,7 @@ type returnPresentation struct {
 }
 
 func (ProofContext) Return(item judgment.Judgment, label string, sourceName string, got, want typ.Type, primary diagnostic.Span) returnPresentation {
+	proof := item.ReturnProof()
 	subject := returnJudgmentSubject(label, sourceName)
 	declSpan := diagnosticEvidenceSpanOrPrimary(item, judgment.EvidenceUserAssertion)
 	evidence := []diagnostic.Evidence{
@@ -34,11 +35,11 @@ func (ProofContext) Return(item judgment.Judgment, label string, sourceName stri
 			Message: returnDeclaredTypeEvidence(label, want),
 		},
 	}
-	evidence = append(evidence, returnJudgmentExtraEvidence(item, subject, got, primary)...)
+	evidence = append(evidence, returnJudgmentExtraEvidence(item, proof, subject, got, primary)...)
 	return returnPresentation{
 		Subject:  subject,
-		Message:  returnJudgmentMessage(subject, sourceName, label, got, want, item),
-		Help:     returnJudgmentHelp(sourceName, got, item.ReturnMissingProofMayBeNil(), item.ReturnMissingProofIndexedRead()),
+		Message:  returnJudgmentMessage(subject, sourceName, label, got, want, proof),
+		Help:     returnJudgmentHelp(sourceName, got, proof),
 		Evidence: evidence,
 		Labels: []diagnostic.Label{
 			sourceLabel(primary, labelReturnedValue),
@@ -60,13 +61,11 @@ func returnJudgmentSubject(label, sourceName string) string {
 	return fmt.Sprintf("%s (%s)", label, sourceName)
 }
 
-func returnJudgmentMessage(subject, sourceName, label string, got, want typ.Type, item judgment.Judgment) string {
-	missingNilProof := item.ReturnMissingProofMayBeNil()
-	indexedReadMissingProof := item.ReturnMissingProofIndexedRead()
-	if item.HasEvidence(judgment.EvidencePrecisionBoundary) && !missingNilProof {
+func returnJudgmentMessage(subject, sourceName, label string, got, want typ.Type, proof judgment.ReturnProofSummary) string {
+	if proof.PrecisionBoundary && !proof.MayBeNil {
 		return fmt.Sprintf("%s comes from any/unknown; no proof shows it satisfies declared return type %s", subject, formatType(want))
 	}
-	if missingNilProof && (!typ.Nil.Equals(got) || indexedReadMissingProof) {
+	if proof.MayBeNil && (!typ.Nil.Equals(got) || proof.IndexedRead) {
 		if sourceName != "" && sourceName != label {
 			return fmt.Sprintf("cannot return %s as %s because it may be nil", sourceName, label)
 		}
@@ -83,14 +82,14 @@ func returnJudgmentMessage(subject, sourceName, label string, got, want typ.Type
 	return fmt.Sprintf("%s is %s, not %s", subject, gotText, wantText)
 }
 
-func returnJudgmentHelp(sourceName string, got typ.Type, missingNilProof bool, indexedReadMissingProof bool) string {
-	if sourceName != "" && sourceName != unknownSourceName && missingNilProof && (!typ.Nil.Equals(got) || indexedReadMissingProof) {
+func returnJudgmentHelp(sourceName string, got typ.Type, proof judgment.ReturnProofSummary) string {
+	if sourceName != "" && sourceName != unknownSourceName && proof.MayBeNil && (!typ.Nil.Equals(got) || proof.IndexedRead) {
 		return fmt.Sprintf("Guard `%s` with a nil check, return a default value, or change the return type to accept nil.", sourceName)
 	}
 	return "Return a value compatible with the declared return type, or change the return annotation if the returned value is valid."
 }
 
-func returnJudgmentExtraEvidence(item judgment.Judgment, subject string, got typ.Type, primary diagnostic.Span) []diagnostic.Evidence {
+func returnJudgmentExtraEvidence(item judgment.Judgment, proof judgment.ReturnProofSummary, subject string, got typ.Type, primary diagnostic.Span) []diagnostic.Evidence {
 	var out []diagnostic.Evidence
 	for _, evidence := range item.Evidence {
 		switch evidence.Kind {
@@ -114,13 +113,12 @@ func returnJudgmentExtraEvidence(item judgment.Judgment, subject string, got typ
 			})
 		}
 	}
-	missingNilProof := item.ReturnMissingProofMayBeNil()
-	if !typ.IsAny(got) && !typ.IsUnknown(got) && !item.HasEvidence(judgment.EvidencePrecisionBoundary) && !missingNilProof {
+	if !typ.IsAny(got) && !typ.IsUnknown(got) && !proof.PrecisionBoundary && !proof.MayBeNil {
 		return out
 	}
 	missingReason := diagnostic.EvidenceReasonBoundaryValidationMissing
 	missingMessage := returnMissingProofMessage(subject)
-	if item.ReturnMissingProofIndexedRead() {
+	if proof.IndexedRead {
 		missingReason = diagnostic.EvidenceReasonIndexReadValidationMissing
 		missingMessage = returnIndexedReadProofMessage(subject)
 	}

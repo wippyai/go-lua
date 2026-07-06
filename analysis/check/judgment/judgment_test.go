@@ -410,6 +410,27 @@ func TestNumericForProofSummaryUsesStructuredEvidence(t *testing.T) {
 	}
 }
 
+func TestReturnProofSummaryUsesStructuredEvidence(t *testing.T) {
+	item := Judgment{Evidence: EvidenceChain{
+		{
+			Kind:   EvidenceMissingProof,
+			Detail: IndexedReadMissingProofEvidenceDetail(),
+		},
+		{
+			Kind: EvidencePrecisionBoundary,
+		},
+	}}
+	summary := item.ReturnProof()
+	if !summary.MayBeNil || !summary.IndexedRead || !summary.PrecisionBoundary {
+		t.Fatalf("ReturnProof = %#v, want indexed nil proof and precision boundary", summary)
+	}
+
+	plain := Judgment{Evidence: EvidenceChain{{Kind: EvidenceAbstractFact}}}
+	if got := plain.ReturnProof(); got.MayBeNil || got.IndexedRead || got.PrecisionBoundary {
+		t.Fatalf("ReturnProof = %#v, want no proof categories", got)
+	}
+}
+
 func TestDefaultRegistryValidatesCallArgumentJudgmentShape(t *testing.T) {
 	j := Judgment{
 		Code:    CodeCallArgType,
