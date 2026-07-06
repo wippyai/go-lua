@@ -217,6 +217,32 @@ end
 	}
 }
 
+func TestLowerWithWIRBooleanAliasBranchPathRelationsMatchSidecar(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(a: string?, b: string?)
+    local same = a == b
+    if same then
+        local hit = true
+    end
+    if not same then
+        local miss = true
+    end
+end
+`)
+	body := wirlower.Lower("f", fn.Stmts, bindings, built)
+	sidecarFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	for _, stmt := range []ast.Stmt{fn.Stmts[1], fn.Stmts[2]} {
+		point := requireStmtPoints(t, built, stmt, 1)[0]
+		want := sidecarFacts.BranchPathRelations(point)
+		if len(want) == 0 {
+			t.Fatalf("sidecar alias branch path relations at point %d = 0", point)
+		}
+		assertEqualBranchFacts(t, point, "alias branch path relations", want, wirFacts.BranchPathRelations(point))
+	}
+}
+
 func TestLowerWithWIRFrozenTableBranchEvidenceMatchesSidecar(t *testing.T) {
 	stmts, bindings, built, result := parseSemanticChunk(t, `
 local t = {}
