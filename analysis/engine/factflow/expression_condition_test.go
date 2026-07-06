@@ -53,6 +53,56 @@ func TestExpressionConditionBranchRefinementsForValue(t *testing.T) {
 	}
 }
 
+func TestExpressionConditionBranchPathRelationsForValue(t *testing.T) {
+	left := path.NewPath(symbol.ID(3), "left")
+	right := path.NewPath(symbol.ID(4), "right")
+	other := path.NewPath(symbol.ID(5), "other")
+	condition := NewExpressionCondition(
+		nil,
+		nil,
+		[]PostconditionPathRelation{NewPostconditionPathEquality(left, right)},
+		[]PostconditionPathRelation{NewPostconditionPathEquality(left, other)},
+	)
+
+	direct := condition.BranchPathRelationsForValue(true)
+	if len(direct) != 4 {
+		t.Fatalf("direct relations = %d, want 4: %#v", len(direct), direct)
+	}
+	assertBranchPathRelation(t, direct[0], BranchPathRelationEqual, left, right, true, false)
+	assertBranchPathRelation(t, direct[1], BranchPathRelationNotEqual, left, right, false, true)
+	assertBranchPathRelation(t, direct[2], BranchPathRelationEqual, left, other, false, true)
+	assertBranchPathRelation(t, direct[3], BranchPathRelationNotEqual, left, other, true, false)
+
+	negated := condition.BranchPathRelationsForValue(false)
+	if len(negated) != 4 {
+		t.Fatalf("negated relations = %d, want 4: %#v", len(negated), negated)
+	}
+	assertBranchPathRelation(t, negated[0], BranchPathRelationEqual, left, other, true, false)
+	assertBranchPathRelation(t, negated[1], BranchPathRelationNotEqual, left, other, false, true)
+	assertBranchPathRelation(t, negated[2], BranchPathRelationEqual, left, right, false, true)
+	assertBranchPathRelation(t, negated[3], BranchPathRelationNotEqual, left, right, true, false)
+}
+
+func assertBranchPathRelation(
+	t *testing.T,
+	got BranchPathRelation,
+	wantKind BranchPathRelationKind,
+	wantLeft path.Path,
+	wantRight path.Path,
+	wantTrue bool,
+	wantFalse bool,
+) {
+	t.Helper()
+	if got.Kind() != wantKind {
+		t.Fatalf("relation kind = %v, want %v", got.Kind(), wantKind)
+	}
+	assertPathEqual(t, got.LeftPath(), wantLeft)
+	assertPathEqual(t, got.RightPath(), wantRight)
+	if got.ActiveOnEdge(true) != wantTrue || got.ActiveOnEdge(false) != wantFalse {
+		t.Fatalf("relation edges true/false = %v/%v, want %v/%v", got.ActiveOnEdge(true), got.ActiveOnEdge(false), wantTrue, wantFalse)
+	}
+}
+
 func assertBranchPresence(t *testing.T, label string, got ValueRefinement, want presence.Value) {
 	t.Helper()
 	constraint, ok := got.Constraint()

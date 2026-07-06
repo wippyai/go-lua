@@ -1044,6 +1044,40 @@ end
 	}
 }
 
+func TestLowerBooleanLocalAliasPublishesConditionPathRelations(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(a: string?, b: string?)
+	local same = a == b
+	if same then
+	end
+end
+`)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	aPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "a")
+	bPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "b")
+	ifStmt := fn.Stmts[1].(*ast.IfStmt)
+	point := requireStmtPoints(t, built, ifStmt, 1)[0]
+
+	assertBranchPathEqualityRelation(t, facts, point, aPath, bPath, true, false)
+}
+
+func TestLowerNegatedBooleanLocalAliasInvertsConditionPathRelations(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(a: string?, b: string?)
+	local same = a == b
+	if not same then
+	end
+end
+`)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	aPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "a")
+	bPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "b")
+	ifStmt := fn.Stmts[1].(*ast.IfStmt)
+	point := requireStmtPoints(t, built, ifStmt, 1)[0]
+
+	assertBranchPathEqualityRelation(t, facts, point, aPath, bPath, false, true)
+}
+
 func TestLowerNegatedBooleanLocalAliasInvertsConditionRefinements(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(target: { transform: string? })
@@ -1064,6 +1098,56 @@ end
 	falseValue, ok := refinement.FalseValue()
 	if !ok || !falseValue.HasPresence(presence.Present()) {
 		t.Fatalf("false-edge alias refinement = %#v/%v, want present", falseValue, ok)
+	}
+}
+
+func assertBranchPathEqualityRelation(
+	t *testing.T,
+	facts factflow.Facts,
+	point cfg.Point,
+	wantLeft path.Path,
+	wantRight path.Path,
+	wantTrue bool,
+	wantFalse bool,
+) {
+	t.Helper()
+	if wantRight.Less(wantLeft) {
+		wantLeft, wantRight = wantRight, wantLeft
+	}
+	relations := facts.BranchPathRelations(point)
+	if len(relations) != 2 {
+		t.Fatalf("branch path relations at point %d = %d, want 2: %#v", point, len(relations), relations)
+	}
+	var equality, inequality factflow.BranchPathRelation
+	for _, relation := range relations {
+		switch relation.Kind() {
+		case factflow.BranchPathRelationEqual:
+			equality = relation
+		case factflow.BranchPathRelationNotEqual:
+			inequality = relation
+		default:
+			t.Fatalf("branch path relation kind = %v, want equality or inequality", relation.Kind())
+		}
+	}
+	if equality.Kind() != factflow.BranchPathRelationEqual {
+		t.Fatal("missing equality branch path relation")
+	}
+	if inequality.Kind() != factflow.BranchPathRelationNotEqual {
+		t.Fatal("missing inequality branch path relation")
+	}
+	for _, relation := range []factflow.BranchPathRelation{equality, inequality} {
+		if !relation.LeftPath().Equal(wantLeft) {
+			t.Fatalf("branch path relation left = %#v, want %#v", relation.LeftPath(), wantLeft)
+		}
+		if !relation.RightPath().Equal(wantRight) {
+			t.Fatalf("branch path relation right = %#v, want %#v", relation.RightPath(), wantRight)
+		}
+	}
+	if equality.ActiveOnEdge(true) != wantTrue || equality.ActiveOnEdge(false) != wantFalse {
+		t.Fatalf("equality relation active true/false = %v/%v, want %v/%v", equality.ActiveOnEdge(true), equality.ActiveOnEdge(false), wantTrue, wantFalse)
+	}
+	if inequality.ActiveOnEdge(true) != !wantTrue || inequality.ActiveOnEdge(false) != !wantFalse {
+		t.Fatalf("inequality relation active true/false = %v/%v, want %v/%v", inequality.ActiveOnEdge(true), inequality.ActiveOnEdge(false), !wantTrue, !wantFalse)
 	}
 }
 

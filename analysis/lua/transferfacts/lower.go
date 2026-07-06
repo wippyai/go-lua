@@ -343,6 +343,15 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 					}
 				}
 				if hasWIRBranch {
+					if lowered := l.branchAliasPathRelationsFromWIR(point); len(lowered) != 0 {
+						appendBranchPathRelations(input.BranchPathRelations, point, lowered...)
+					}
+				} else {
+					if lowered := l.branchAliasPathRelations(condition); len(lowered) != 0 {
+						appendBranchPathRelations(input.BranchPathRelations, point, lowered...)
+					}
+				}
+				if hasWIRBranch {
 					if lowered := l.branchPathEvidenceFromWIR(point); len(lowered) != 0 {
 						appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
 					}
@@ -426,6 +435,9 @@ func (l *lowerer) addBranchFactsFromWIR(input *factflow.FactsInput, point cfg.Po
 	}
 	if lowered, ok := l.branchPathRelationsFromWIR(point); ok {
 		input.BranchPathRelations[point] = lowered
+	}
+	if lowered := l.branchAliasPathRelationsFromWIR(point); len(lowered) != 0 {
+		appendBranchPathRelations(input.BranchPathRelations, point, lowered...)
 	}
 	if lowered := l.branchPathEvidenceFromWIR(point); len(lowered) != 0 {
 		appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)

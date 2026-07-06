@@ -63,6 +63,15 @@ func (c ExpressionCondition) BranchRefinementsForValue(trueEdgeValue bool) []Bra
 	return branchRefinementsFromPostconditions(trueFacts.refinements, falseFacts.refinements)
 }
 
+// BranchPathRelationsForValue converts expression-selected path relations into
+// branch-edge path relations when the branch true edge means the expression has
+// the given boolean value.
+func (c ExpressionCondition) BranchPathRelationsForValue(trueEdgeValue bool) []BranchPathRelation {
+	trueFacts := c.FactsForValue(trueEdgeValue)
+	falseFacts := c.FactsForValue(!trueEdgeValue)
+	return branchPathRelationsFromPostconditions(trueFacts.pathRelations, falseFacts.pathRelations)
+}
+
 // IsEmpty reports whether f carries no selected facts.
 func (f ExpressionConditionFacts) IsEmpty() bool {
 	return len(f.refinements) == 0 && len(f.pathRelations) == 0
@@ -137,6 +146,34 @@ type branchRefinementBuilder struct {
 	hasTrue    bool
 	falseValue ValueRefinement
 	hasFalse   bool
+}
+
+func branchPathRelationsFromPostconditions(
+	trueRelations []PostconditionPathRelation,
+	falseRelations []PostconditionPathRelation,
+) []BranchPathRelation {
+	out := make([]BranchPathRelation, 0, 2*(len(trueRelations)+len(falseRelations)))
+	for _, relation := range trueRelations {
+		out = append(out, branchPathRelationsForPostcondition(relation, true)...)
+	}
+	for _, relation := range falseRelations {
+		out = append(out, branchPathRelationsForPostcondition(relation, false)...)
+	}
+	return out
+}
+
+func branchPathRelationsForPostcondition(relation PostconditionPathRelation, edge bool) []BranchPathRelation {
+	switch relation.Kind() {
+	case PostconditionPathRelationEqual:
+		left := relation.LeftPath()
+		right := relation.RightPath()
+		return []BranchPathRelation{
+			NewBranchPathEquality(left, right, edge, !edge),
+			NewBranchPathInequality(left, right, !edge, edge),
+		}
+	default:
+		return nil
+	}
 }
 
 func copyExpressionConditionMap(in map[ExprRef]ExpressionCondition) map[ExprRef]ExpressionCondition {

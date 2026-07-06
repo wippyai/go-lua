@@ -32,6 +32,14 @@ func (l *lowerer) branchAliasRefinements(condition ast.Expr) []factflow.BranchRe
 	return aliased.BranchRefinementsForValue(trueValue)
 }
 
+func (l *lowerer) branchAliasPathRelations(condition ast.Expr) []factflow.BranchPathRelation {
+	aliased, trueValue, ok := l.aliasedExpressionCondition(condition)
+	if !ok {
+		return nil
+	}
+	return aliased.BranchPathRelationsForValue(trueValue)
+}
+
 func (l *lowerer) branchAliasRefinementsFromWIR(point cfg.Point) []factflow.BranchRefinement {
 	if l == nil || l.wir == nil || len(l.localConditionAliases) == 0 {
 		return nil
@@ -43,6 +51,21 @@ func (l *lowerer) branchAliasRefinementsFromWIR(point cfg.Point) []factflow.Bran
 			return
 		}
 		out = append(out, aliased.BranchRefinementsForValue(trueValue)...)
+	}, func(branchcond.ImpliedCheck) {})
+	return out
+}
+
+func (l *lowerer) branchAliasPathRelationsFromWIR(point cfg.Point) []factflow.BranchPathRelation {
+	if l == nil || l.wir == nil || len(l.localConditionAliases) == 0 {
+		return nil
+	}
+	var out []factflow.BranchPathRelation
+	l.forEachWIRBranchCheck(point, func(check branchcond.Check) {
+		aliased, trueValue, ok := l.wirAliasedExpressionCondition(check)
+		if !ok {
+			return
+		}
+		out = append(out, aliased.BranchPathRelationsForValue(trueValue)...)
 	}, func(branchcond.ImpliedCheck) {})
 	return out
 }

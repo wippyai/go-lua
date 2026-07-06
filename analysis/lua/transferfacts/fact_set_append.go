@@ -56,6 +56,15 @@ func appendBranchPathEvidence(out map[cfg.Point]factflow.BranchPathEvidenceSet, 
 	out[point] = factflow.NewBranchPathEvidenceSet(existing...)
 }
 
+func appendBranchPathRelations(out map[cfg.Point]factflow.BranchPathRelationSet, point cfg.Point, relations ...factflow.BranchPathRelation) {
+	if len(relations) == 0 {
+		return
+	}
+	existing := out[point].Relations()
+	existing = append(existing, relations...)
+	out[point] = factflow.NewBranchPathRelationSet(existing...)
+}
+
 func appendBranchPresenceRelations(out map[cfg.Point]factflow.BranchPresenceRelationSet, point cfg.Point, relations ...factflow.BranchPresenceRelation) {
 	if len(relations) == 0 {
 		return
