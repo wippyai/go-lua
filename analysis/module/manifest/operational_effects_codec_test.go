@@ -7,6 +7,9 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 )
 
@@ -53,6 +56,48 @@ func TestOperationalEffectsWireLaneRegistryCoversEveryWireField(t *testing.T) {
 	for field := range wireFields {
 		if _, ok := registered[field]; !ok {
 			t.Fatalf("operationalEffectsWire.%s has no registered wire lane", field)
+		}
+	}
+}
+
+func TestOperationalEffectsWireRefsHaveBoundaryOwners(t *testing.T) {
+	wireFields := make(map[string]struct{})
+	for _, lane := range operationalEffectsWireLanes {
+		wireFields[lane.fieldName] = struct{}{}
+	}
+
+	owners := make(map[string][]string)
+	collect := func(family string, refs []string) {
+		for _, ref := range refs {
+			if ref == "" {
+				t.Fatalf("%s has an empty operational-effects wire reference", family)
+			}
+			if _, ok := wireFields[ref]; !ok {
+				t.Fatalf("%s references missing operational-effects wire lane %q", family, ref)
+			}
+			owners[ref] = append(owners[ref], family)
+		}
+	}
+
+	for _, desc := range callboundary.NormalReturnFactDescriptors() {
+		collect("normal-return:"+string(desc.Kind), desc.WireRef)
+	}
+	for _, desc := range callpayload.CallOutcomeDescriptors() {
+		collect("call-outcome:"+string(desc.Kind), desc.WireRef)
+	}
+	for _, desc := range summary.SummaryFactDescriptors() {
+		collect("summary:"+string(desc.Kind), desc.WireRef)
+	}
+
+	localOnly := map[string]string{
+		"ReturnAllocationTemplates": "allocation templates serialize signature return-shape construction plans, not call-boundary facts",
+	}
+	for field := range wireFields {
+		if len(owners[field]) != 0 {
+			continue
+		}
+		if reason := localOnly[field]; reason == "" {
+			t.Fatalf("operational-effects wire lane %s has no boundary descriptor owner", field)
 		}
 	}
 }
