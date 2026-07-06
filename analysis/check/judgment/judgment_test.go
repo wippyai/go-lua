@@ -280,6 +280,41 @@ func TestCallArityProofSummaryUsesStructuredEvidence(t *testing.T) {
 	}
 }
 
+func TestCallCalleeProofSummaryUsesStructuredEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		detail EvidenceDetail
+	}{
+		{name: "not callable", detail: CalleeNotCallableEvidenceDetail()},
+		{name: "may be nil", detail: CalleeMayBeNilEvidenceDetail(true)},
+		{name: "missing member", detail: MemberMissingEvidenceDetail("send")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			item := Judgment{Evidence: EvidenceChain{{
+				Kind:   EvidenceMissingProof,
+				Detail: tc.detail,
+			}}}
+			summary := item.CallCalleeProof()
+			if !summary.Found || summary.Detail.Kind != tc.detail.Kind {
+				t.Fatalf("CallCalleeProof = %#v, want %v", summary, tc.detail.Kind)
+			}
+			if summary.Detail.Field != tc.detail.Field ||
+				summary.Detail.Callable != tc.detail.Callable ||
+				summary.Detail.MemberAccess != tc.detail.MemberAccess {
+				t.Fatalf("CallCalleeProof detail = %#v, want %#v", summary.Detail, tc.detail)
+			}
+		})
+	}
+
+	absent := Judgment{Evidence: EvidenceChain{{
+		Kind:   EvidenceUserAssertion,
+		Detail: CalleeNotCallableEvidenceDetail(),
+	}}}
+	if got := absent.CallCalleeProof(); got.Found {
+		t.Fatalf("CallCalleeProof matched non-missing-proof evidence: %#v", got)
+	}
+}
+
 func TestDefaultRegistryValidatesCallArgumentJudgmentShape(t *testing.T) {
 	j := Judgment{
 		Code:    CodeCallArgType,

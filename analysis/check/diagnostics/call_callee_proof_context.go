@@ -17,10 +17,11 @@ type callCalleePresentation struct {
 }
 
 func (ProofContext) DirectCallCallee(item judgment.Judgment, primary diagnostic.Span) (callCalleePresentation, bool) {
-	detail, ok := directCallCalleeDetail(item)
-	if !ok {
+	proof := item.CallCalleeProof()
+	if !proof.Found {
 		return callCalleePresentation{}, false
 	}
+	detail := proof.Detail
 	name := item.Subject.Label
 	if name == "" {
 		name = "call target"
@@ -61,19 +62,6 @@ func (ProofContext) DirectCallCallee(item judgment.Judgment, primary diagnostic.
 		Evidence: callCalleeJudgmentEvidence(item, detail, name, primary),
 		Label:    label,
 	}, true
-}
-
-func directCallCalleeDetail(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
-	for _, detail := range []judgment.EvidenceDetailKind{
-		judgment.EvidenceDetailCalleeNotCallable,
-		judgment.EvidenceDetailCalleeMayBeNil,
-		judgment.EvidenceDetailMemberMissing,
-	} {
-		if evidence, ok := item.FirstEvidenceKindDetail(judgment.EvidenceMissingProof, detail); ok {
-			return evidence.Detail, true
-		}
-	}
-	return judgment.EvidenceDetail{}, false
 }
 
 func callCalleeJudgmentEvidence(item judgment.Judgment, detail judgment.EvidenceDetail, name string, primary diagnostic.Span) []diagnostic.Evidence {
