@@ -15,6 +15,7 @@ type numericForPresentation struct {
 }
 
 func (ProofContext) NumericFor(item judgment.Judgment, primary diagnostic.Span) (numericForPresentation, bool) {
+	proof := item.NumericForProof()
 	got := item.Actual.ProjectedType
 	if got == nil {
 		return numericForPresentation{}, false
@@ -34,8 +35,8 @@ func (ProofContext) NumericFor(item judgment.Judgment, primary diagnostic.Span) 
 			Message: numericForOperandTypeEvidence(role, got),
 		},
 	}
-	if item.HasEvidence(judgment.EvidenceUserAssertion) {
-		evidence = append(evidence, numericForExplicitTopEvidence(item, primary)...)
+	if proof.UserAssertion {
+		evidence = append(evidence, numericForExplicitTopEvidence(item, proof, primary)...)
 	}
 	return numericForPresentation{
 		Message:  numericForOperandMessage(role, got),
@@ -45,14 +46,14 @@ func (ProofContext) NumericFor(item judgment.Judgment, primary diagnostic.Span) 
 	}, true
 }
 
-func numericForExplicitTopEvidence(item judgment.Judgment, primary diagnostic.Span) []diagnostic.Evidence {
+func numericForExplicitTopEvidence(item judgment.Judgment, proof judgment.NumericForProofSummary, primary diagnostic.Span) []diagnostic.Evidence {
 	subject := "assigned value"
 	want := item.Expected.Type
 	if want == nil {
 		want = typ.Number
 	}
 	out := diagnostic.AssertionEvidence(primary, assertion.Any())
-	if item.HasEvidence(judgment.EvidencePrecisionBoundary) {
+	if proof.PrecisionBoundary {
 		out = append(out, diagnostic.Evidence{
 			Kind:    diagnostic.EvidencePrecisionBoundary,
 			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidencePrecisionBoundary, diagnostic.TrustUnknown),
@@ -61,7 +62,7 @@ func numericForExplicitTopEvidence(item judgment.Judgment, primary diagnostic.Sp
 			Message: explicitBoundaryProofMessageForSubject(subject, want),
 		})
 	}
-	if item.HasEvidence(judgment.EvidenceMissingProof) {
+	if proof.MissingProof {
 		out = append(out, diagnostic.Evidence{
 			Kind:    diagnostic.EvidenceMissingProof,
 			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceMissingProof, diagnostic.TrustUnknown),

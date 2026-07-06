@@ -392,6 +392,24 @@ func TestLifecycleProofSummaryUsesStructuredEvidence(t *testing.T) {
 	}
 }
 
+func TestNumericForProofSummaryUsesStructuredEvidence(t *testing.T) {
+	item := Judgment{Evidence: EvidenceChain{
+		{Kind: EvidenceAbstractFact},
+		{Kind: EvidenceUserAssertion},
+		{Kind: EvidencePrecisionBoundary},
+		{Kind: EvidenceMissingProof},
+	}}
+	summary := item.NumericForProof()
+	if !summary.UserAssertion || !summary.PrecisionBoundary || !summary.MissingProof {
+		t.Fatalf("NumericForProof = %#v, want explicit-top proof trio", summary)
+	}
+
+	plain := Judgment{Evidence: EvidenceChain{{Kind: EvidenceAbstractFact}}}
+	if got := plain.NumericForProof(); got.UserAssertion || got.PrecisionBoundary || got.MissingProof {
+		t.Fatalf("NumericForProof = %#v, want no optional proof categories", got)
+	}
+}
+
 func TestDefaultRegistryValidatesCallArgumentJudgmentShape(t *testing.T) {
 	j := Judgment{
 		Code:    CodeCallArgType,
