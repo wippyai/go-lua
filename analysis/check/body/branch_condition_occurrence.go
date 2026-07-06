@@ -2,6 +2,7 @@ package body
 
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -9,6 +10,7 @@ import (
 // owned by body. Readmodel consumers interpret the lowered branch check.
 type BranchConditionOccurrence struct {
 	Point         cfg.Point
+	Check         branchcond.Check
 	Fact          BranchConditionFact
 	ConditionSpan SourceSpan
 	StatementSpan SourceSpan
@@ -29,7 +31,11 @@ func (r *Result) ForEachUserVisibleBranchConditionOccurrence(visit func(BranchCo
 		if !ok || !userVisibleBranchKind(fact.Kind) {
 			continue
 		}
-		occ := branchConditionOccurrence(point, fact)
+		check, ok := r.BranchConditionCheck(point)
+		if !ok {
+			continue
+		}
+		occ := branchConditionOccurrence(point, check, fact)
 		visited = true
 		if !visit(occ) {
 			return true
@@ -51,9 +57,10 @@ func (r *Result) BranchConditionSpan(point cfg.Point) (SourceSpan, bool) {
 	return branchConditionSpan(fact), true
 }
 
-func branchConditionOccurrence(point cfg.Point, fact BranchConditionFact) BranchConditionOccurrence {
+func branchConditionOccurrence(point cfg.Point, check branchcond.Check, fact BranchConditionFact) BranchConditionOccurrence {
 	return BranchConditionOccurrence{
 		Point:         point,
+		Check:         check,
 		Fact:          fact,
 		ConditionSpan: branchConditionSpan(fact),
 		StatementSpan: sourceSpanFromAST(ast.SpanOf(fact.Stmt)),

@@ -17,7 +17,7 @@ func (r Reader) ForEachRedundantConditionBranch(visit func(RedundantConditionBra
 	return r.result.ForEachUserVisibleBranchConditionOccurrence(func(occ body.BranchConditionOccurrence) bool {
 		branch := RedundantConditionBranch{
 			Point:         occ.Point,
-			Check:         branchCheckFromLua(occ.Fact.Check),
+			Check:         branchCheckFromLua(occ.Check),
 			ConditionSpan: sourceSpanFromBody(occ.ConditionSpan),
 			StatementSpan: sourceSpanFromBody(occ.StatementSpan),
 		}
