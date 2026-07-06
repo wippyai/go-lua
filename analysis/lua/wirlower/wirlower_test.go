@@ -303,6 +303,39 @@ send(value, payload.id)
 	}
 }
 
+func TestNonFinalAssignmentCallCarriesResultTarget(t *testing.T) {
+	body := lowerBody(t, `
+local a, b, c = make(), pack()
+`, "make", "pack")
+	var calls []wir.Instruction
+	for i := 0; i < body.Len(); i++ {
+		inst := body.Instr(i)
+		if inst.Op == wir.OpCall {
+			calls = append(calls, inst)
+		}
+	}
+	if len(calls) != 2 {
+		t.Fatalf("calls = %#v, want make and pack", calls)
+	}
+	makeTargets := body.CallResultTargets(calls[0].Point)
+	if len(makeTargets) != 1 ||
+		makeTargets[0].Kind != wir.CallResultTargetLocalAssignment ||
+		makeTargets[0].Index != 0 ||
+		makeTargets[0].ResultIndex != 0 {
+		t.Fatalf("make targets = %#v, want local assignment target 0/result 0", makeTargets)
+	}
+	packTargets := body.CallResultTargets(calls[1].Point)
+	if len(packTargets) != 2 ||
+		packTargets[0].Kind != wir.CallResultTargetLocalAssignment ||
+		packTargets[0].Index != 1 ||
+		packTargets[0].ResultIndex != 0 ||
+		packTargets[1].Kind != wir.CallResultTargetLocalAssignment ||
+		packTargets[1].Index != 2 ||
+		packTargets[1].ResultIndex != 1 {
+		t.Fatalf("pack targets = %#v, want local assignment targets 1/result 0 and 2/result 1", packTargets)
+	}
+}
+
 func TestFunctionBodyCarriesDeclaredReturns(t *testing.T) {
 	stmts, err := parse.ParseString(`
 function f(): (string, number)

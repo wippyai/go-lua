@@ -45,7 +45,8 @@ func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *test
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	body := wirlower.Lower("semantic-contexts-through-wir", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	localPoints := requireStmtPoints(t, built, local, 2)
 	localSite, ok := facts.CallSite(localPoints[0])
@@ -1654,7 +1655,8 @@ func TestLowerNestedExpressionProducerCallIsReadableSlotZero(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	body := wirlower.Lower("nested-expression-producer", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	points := requireStmtPoints(t, built, stmt, 2)
 	innerSite, ok := facts.CallSite(points[0])
 	if !ok {
@@ -1786,7 +1788,8 @@ func TestLowerMemberOrdinaryCallTargetStaysCallSiteOnly(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	body := wirlower.Lower("member-ordinary-call-target", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	points := requireStmtPoints(t, built, write, 2)
 	producer, ok := callproducer.FromFacts(facts, points[0])
 	if !ok {

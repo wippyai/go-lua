@@ -395,6 +395,12 @@ func (b *builder) planValues(n int, exprs []ast.Expr) []binding {
 	last := len(exprs) - 1
 	for i := 0; i < n; i++ {
 		if i < last {
+			if call, ok := tailCall(exprs[i]); ok {
+				if cr, ok := b.callTemps[call]; ok {
+					out[i] = b.tempBinding(cr, 0, exprs[i])
+					continue
+				}
+			}
 			out[i] = binding{kind: bindExpr, expr: exprs[i]}
 			continue
 		}

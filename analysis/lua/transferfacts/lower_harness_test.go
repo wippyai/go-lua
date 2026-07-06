@@ -235,7 +235,8 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	body := wirlower.Lower("value-list-metadata", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	localPoints := requireStmtPoints(t, built, local, 5)
@@ -328,10 +329,10 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 		t.Fatalf("missing return fact")
 	}
 	sources := returnFact.Sources()
-	if len(sources) != 2 || sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr || sources[1].Kind != factflow.ValueSourceCall {
+	if len(sources) != 2 || sources[0].Kind != factflow.ValueSourcePath || sources[0].HasExpr || sources[1].Kind != factflow.ValueSourceCall {
 		t.Fatalf("return sources = %#v", sources)
 	}
-	if sources[1].ExprRef == 0 || !sources[1].Expanded || !sources[1].OpenTail || sources[1].CallPoint != returnPoints[0] || !sources[1].HasCallPoint {
+	if sources[1].HasExpr || !sources[1].Expanded || !sources[1].OpenTail || sources[1].CallPoint != returnPoints[0] || !sources[1].HasCallPoint {
 		t.Fatalf("return tail source = %#v", sources[1])
 	}
 }

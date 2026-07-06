@@ -89,7 +89,7 @@ func (l *lowerer) callSiteWithArgumentSourcesAt(point cfg.Point, fact semantics.
 		metadata = wirMetadata
 	}
 	receiverSource, hasReceiverSource := l.callReceiverSource(point, fact)
-	return l.callSiteWithArgumentSourcesWithShape(fact, argumentSources, shape, flags, metadata, receiverSource, hasReceiverSource, l.callSiteResultTargetsFromWIR(point, fact.ResultTargets))
+	return l.callSiteWithArgumentSourcesWithShape(fact, argumentSources, shape, flags, metadata, receiverSource, hasReceiverSource, l.callSiteResultTargetsFromWIR(point))
 }
 
 type callSiteShape struct {
