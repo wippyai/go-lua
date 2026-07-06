@@ -1,5 +1,7 @@
 package factflow
 
+import "github.com/wippyai/go-lua/analysis/domain/path"
+
 // ExpressionCondition describes path facts selected by the boolean value of an
 // expression.
 type ExpressionCondition struct {
@@ -52,6 +54,15 @@ func (c ExpressionCondition) FactsForValue(value bool) ExpressionConditionFacts 
 	return c.falseFacts
 }
 
+// BranchRefinementsForValue converts expression-selected postconditions into
+// branch-edge refinements when the branch true edge means the expression has
+// the given boolean value.
+func (c ExpressionCondition) BranchRefinementsForValue(trueEdgeValue bool) []BranchRefinement {
+	trueFacts := c.FactsForValue(trueEdgeValue)
+	falseFacts := c.FactsForValue(!trueEdgeValue)
+	return branchRefinementsFromPostconditions(trueFacts.refinements, falseFacts.refinements)
+}
+
 // IsEmpty reports whether f carries no selected facts.
 func (f ExpressionConditionFacts) IsEmpty() bool {
 	return len(f.refinements) == 0 && len(f.pathRelations) == 0
@@ -76,6 +87,56 @@ func (c ExpressionCondition) copy() ExpressionCondition {
 
 func (f ExpressionConditionFacts) copy() ExpressionConditionFacts {
 	return NewExpressionConditionFacts(f.refinements, f.pathRelations)
+}
+
+func branchRefinementsFromPostconditions(
+	trueRefinements []PostconditionRefinement,
+	falseRefinements []PostconditionRefinement,
+) []BranchRefinement {
+	byPath := make(map[path.PathKey]*branchRefinementBuilder, len(trueRefinements)+len(falseRefinements))
+	var order []path.PathKey
+	add := func(ref PostconditionRefinement, edge bool) {
+		key := ref.TargetPathRef().Key()
+		builder := byPath[key]
+		if builder == nil {
+			builder = &branchRefinementBuilder{target: ref.TargetPathRef()}
+			byPath[key] = builder
+			order = append(order, key)
+		}
+		if edge {
+			builder.trueValue = ref.Value()
+			builder.hasTrue = true
+		} else {
+			builder.falseValue = ref.Value()
+			builder.hasFalse = true
+		}
+	}
+	for _, ref := range trueRefinements {
+		add(ref, true)
+	}
+	for _, ref := range falseRefinements {
+		add(ref, false)
+	}
+	out := make([]BranchRefinement, 0, len(order))
+	for _, key := range order {
+		builder := byPath[key]
+		out = append(out, NewBranchRefinement(
+			builder.target,
+			builder.trueValue,
+			builder.hasTrue,
+			builder.falseValue,
+			builder.hasFalse,
+		))
+	}
+	return out
+}
+
+type branchRefinementBuilder struct {
+	target     path.Path
+	trueValue  ValueRefinement
+	hasTrue    bool
+	falseValue ValueRefinement
+	hasFalse   bool
 }
 
 func copyExpressionConditionMap(in map[ExprRef]ExpressionCondition) map[ExprRef]ExpressionCondition {

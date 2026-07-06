@@ -1,7 +1,6 @@
 package transferfacts
 
 import (
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
@@ -30,9 +29,7 @@ func (l *lowerer) branchAliasRefinements(condition ast.Expr) []factflow.BranchRe
 	if !ok {
 		return nil
 	}
-	trueFacts := aliased.FactsForValue(trueValue)
-	falseFacts := aliased.FactsForValue(!trueValue)
-	return branchAliasRefinementsFromFacts(trueFacts.Refinements(), falseFacts.Refinements())
+	return aliased.BranchRefinementsForValue(trueValue)
 }
 
 func (l *lowerer) branchAliasRefinementsFromWIR(point cfg.Point) []factflow.BranchRefinement {
@@ -45,9 +42,7 @@ func (l *lowerer) branchAliasRefinementsFromWIR(point cfg.Point) []factflow.Bran
 		if !ok {
 			return
 		}
-		trueFacts := aliased.FactsForValue(trueValue)
-		falseFacts := aliased.FactsForValue(!trueValue)
-		out = append(out, branchAliasRefinementsFromFacts(trueFacts.Refinements(), falseFacts.Refinements())...)
+		out = append(out, aliased.BranchRefinementsForValue(trueValue)...)
 	}, func(branchcond.ImpliedCheck) {})
 	return out
 }
@@ -100,54 +95,4 @@ func (l *lowerer) aliasedExpressionCondition(expr ast.Expr) (factflow.Expression
 	}
 	condition, ok := l.expressionConditions[originRef.ExprRef]
 	return condition, trueValue, ok
-}
-
-func branchAliasRefinementsFromFacts(
-	trueRefinements []factflow.PostconditionRefinement,
-	falseRefinements []factflow.PostconditionRefinement,
-) []factflow.BranchRefinement {
-	byPath := make(map[pathdom.PathKey]*branchAliasRefinementBuilder, len(trueRefinements)+len(falseRefinements))
-	var order []pathdom.PathKey
-	add := func(ref factflow.PostconditionRefinement, edge bool) {
-		key := ref.TargetPath().Key()
-		builder := byPath[key]
-		if builder == nil {
-			builder = &branchAliasRefinementBuilder{target: ref.TargetPath()}
-			byPath[key] = builder
-			order = append(order, key)
-		}
-		if edge {
-			builder.trueValue = ref.Value()
-			builder.hasTrue = true
-		} else {
-			builder.falseValue = ref.Value()
-			builder.hasFalse = true
-		}
-	}
-	for _, ref := range trueRefinements {
-		add(ref, true)
-	}
-	for _, ref := range falseRefinements {
-		add(ref, false)
-	}
-	out := make([]factflow.BranchRefinement, 0, len(order))
-	for _, key := range order {
-		builder := byPath[key]
-		out = append(out, factflow.NewBranchRefinement(
-			builder.target,
-			builder.trueValue,
-			builder.hasTrue,
-			builder.falseValue,
-			builder.hasFalse,
-		))
-	}
-	return out
-}
-
-type branchAliasRefinementBuilder struct {
-	target     pathdom.Path
-	trueValue  factflow.ValueRefinement
-	hasTrue    bool
-	falseValue factflow.ValueRefinement
-	hasFalse   bool
 }
