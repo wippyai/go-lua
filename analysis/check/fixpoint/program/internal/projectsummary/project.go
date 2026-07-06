@@ -42,6 +42,10 @@ type branchConditionReader interface {
 	BranchCondition(cfg.Point) (semantics.BranchConditionFact, bool)
 }
 
+type branchConditionCheckReader interface {
+	BranchConditionCheck(cfg.Point) (branchcond.Check, bool)
+}
+
 type branchSufficientCheckReader interface {
 	BranchConditionSufficientChecksOnEdge(semantics.BranchConditionFact, bool) []branchcond.ImpliedCheck
 }

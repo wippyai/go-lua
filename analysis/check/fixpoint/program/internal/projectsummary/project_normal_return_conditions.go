@@ -9,7 +9,7 @@ import (
 )
 
 func projectNormalReturnParamConditions(reg *axis.Registry, result ResultReader) []summary.ParamCondition {
-	branchReader, ok := result.(branchConditionReader)
+	branchReader, ok := result.(branchConditionCheckReader)
 	if !ok {
 		return nil
 	}
@@ -27,7 +27,7 @@ func projectNormalReturnParamConditions(reg *axis.Registry, result ResultReader)
 	}
 	var out []summary.ParamCondition
 	for _, point := range graph.RPO() {
-		fact, ok := branchReader.BranchCondition(point)
+		check, ok := branchReader.BranchConditionCheck(point)
 		if !ok {
 			continue
 		}
@@ -35,7 +35,7 @@ func projectNormalReturnParamConditions(reg *axis.Registry, result ResultReader)
 		if !ok {
 			continue
 		}
-		paramIndex, condition, ok := normalReturnParamCondition(fact.Check, normalCond, params)
+		paramIndex, condition, ok := normalReturnParamCondition(check, normalCond, params)
 		if !ok {
 			continue
 		}

@@ -8,7 +8,7 @@ import (
 )
 
 func projectNormalReturnParamEqualities(reg *axis.Registry, result ResultReader) []summary.ParamEquality {
-	branchReader, ok := result.(branchConditionReader)
+	branchReader, ok := result.(branchConditionCheckReader)
 	if !ok {
 		return nil
 	}
@@ -26,7 +26,7 @@ func projectNormalReturnParamEqualities(reg *axis.Registry, result ResultReader)
 	}
 	var out []summary.ParamEquality
 	for _, point := range graph.RPO() {
-		fact, ok := branchReader.BranchCondition(point)
+		check, ok := branchReader.BranchConditionCheck(point)
 		if !ok {
 			continue
 		}
@@ -34,7 +34,7 @@ func projectNormalReturnParamEqualities(reg *axis.Registry, result ResultReader)
 		if !ok {
 			continue
 		}
-		equality, ok := normalReturnParamEquality(fact.Check, normalCond, params)
+		equality, ok := normalReturnParamEquality(check, normalCond, params)
 		if !ok {
 			continue
 		}
