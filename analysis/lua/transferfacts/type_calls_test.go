@@ -156,6 +156,11 @@ local v = number(data)
 	if !ok || !typ.TypeEquals(got, typ.Number) {
 		t.Fatalf("postcondition type witness = %v/%v, want number", got, ok)
 	}
+	results := facts.CallResultValues(callPoint)
+	if len(results) != 1 {
+		t.Fatalf("primitive call result values = %d, want 1: %#v", len(results), results)
+	}
+	assertTypeIsRuntimeProof(t, reg, results[0].Value(), typ.Number)
 }
 
 func TestLowerPrimitiveTypeCastFactsFromWIRWithoutSemanticCallView(t *testing.T) {

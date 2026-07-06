@@ -14,11 +14,11 @@ import (
 )
 
 func (l *lowerer) typeCastPostconditionRefinement(point cfg.Point, fact semantics.CallFact) (factflow.PostconditionRefinement, bool) {
-	t, argPath, ok := l.directTypeCastCallAt(point, fact)
+	info, ok := l.directTypeCastCallAt(point, fact)
 	if !ok {
 		return factflow.PostconditionRefinement{}, false
 	}
-	return factflow.NewPostconditionRefinement(argPath, factflow.NewValueConstraint(l.untrustedTypeWitnessValue(t))), true
+	return factflow.NewPostconditionRefinement(info.argPath, factflow.NewValueConstraint(l.untrustedTypeWitnessValue(info.target))), true
 }
 
 // addCastExposure records a covariant exposure for a cast (narrow as W) whose
@@ -77,108 +77,96 @@ func (l *lowerer) aliasPathType(p path.Path) (typ.Type, bool) {
 }
 
 func (l *lowerer) typeCastCallResultValue(point cfg.Point, fact semantics.CallFact) (factflow.CallResultValue, bool) {
-	t, _, ok := l.directTypeCastCallAt(point, fact)
+	info, ok := l.directTypeCastCallAt(point, fact)
 	if !ok {
 		return factflow.CallResultValue{}, false
 	}
-	return factflow.NewCallResultValue(0, l.typeIsProofValue(t)), true
+	return factflow.NewCallResultValue(0, l.typeIsProofValue(info.target)), true
 }
 
 func (l *lowerer) typeCastPostconditionRefinementFromWIR(point cfg.Point) (factflow.PostconditionRefinement, bool) {
-	t, argPath, ok := l.directTypeCastCallFromWIR(point)
+	info, ok := l.directTypeCastCallFromWIR(point)
 	if !ok {
 		return factflow.PostconditionRefinement{}, false
 	}
-	return factflow.NewPostconditionRefinement(argPath, factflow.NewValueConstraint(l.untrustedTypeWitnessValue(t))), true
+	return factflow.NewPostconditionRefinement(info.argPath, factflow.NewValueConstraint(l.untrustedTypeWitnessValue(info.target))), true
 }
 
 func (l *lowerer) typeCastCallResultValueFromWIR(point cfg.Point) (factflow.CallResultValue, bool) {
-	t, _, ok := l.directTypeCastCallFromWIR(point)
+	info, ok := l.directTypeCastCallFromWIR(point)
 	if !ok {
 		return factflow.CallResultValue{}, false
 	}
-	return factflow.NewCallResultValue(0, l.typeIsProofValue(t)), true
+	return factflow.NewCallResultValue(0, l.typeIsProofValue(info.target)), true
 }
 
-func (l *lowerer) directTypeCastCall(fact semantics.CallFact) (typ.Type, path.Path, bool) {
+type directTypeCastInfo struct {
+	target  typ.Type
+	argPath path.Path
+}
+
+func (l *lowerer) directTypeCastCall(fact semantics.CallFact) (directTypeCastInfo, bool) {
 	call, ok := branchcond.TypeCall(fact.Call)
 	if !ok {
-		return nil, path.Path{}, false
+		return directTypeCastInfo{}, false
 	}
 	t, ok := l.typeValueExpr(fact.Func)
 	if !ok {
-		return nil, path.Path{}, false
+		return directTypeCastInfo{}, false
 	}
 	argPath, ok := pathexpr.Resolve(call.Args[0], l.bindings)
 	if !ok || argPath.IsEmpty() {
-		return nil, path.Path{}, false
+		return directTypeCastInfo{}, false
 	}
-	return t, argPath, true
+	return directTypeCastInfo{target: t, argPath: argPath}, true
 }
 
-func (l *lowerer) directTypeCastCallAt(point cfg.Point, fact semantics.CallFact) (typ.Type, path.Path, bool) {
-	t, argPath, ok := l.directTypeCastCall(fact)
+func (l *lowerer) directTypeCastCallAt(point cfg.Point, fact semantics.CallFact) (directTypeCastInfo, bool) {
+	info, ok := l.directTypeCastCall(fact)
 	if !ok {
-		return nil, path.Path{}, false
+		return directTypeCastInfo{}, false
 	}
-	if wirType, ok := l.typeCastCalleeTypeFromWIR(point, fact); ok {
-		t = wirType
+	if t, ok := l.typeCastTargetFromWIR(point); ok {
+		info.target = t
 	}
-	if wirPath, ok := l.typeCastArgumentPathFromWIR(point, fact); ok {
-		argPath = wirPath
+	if argPath, ok := l.callArgumentPathFromWIR(point, 0); ok {
+		info.argPath = argPath
 	}
-	return t, argPath, true
+	return info, true
 }
 
-func (l *lowerer) directTypeCastCallFromWIR(point cfg.Point) (typ.Type, path.Path, bool) {
-	t, ok := l.typeCastCalleeTypeFromWIRCall(point)
+func (l *lowerer) directTypeCastCallFromWIR(point cfg.Point) (directTypeCastInfo, bool) {
+	t, ok := l.typeCastTargetFromWIR(point)
 	if !ok {
-		inst, hasCall := l.wirCallInstruction(point)
-		if !hasCall || inst.Call.Method != 0 || inst.Type == 0 {
-			return nil, path.Path{}, false
-		}
-		t = l.wir.Type(inst.Type)
-		if t == nil {
-			return nil, path.Path{}, false
-		}
+		return directTypeCastInfo{}, false
 	}
 	argPath, ok := l.callArgumentPathFromWIR(point, 0)
 	if !ok {
-		return nil, path.Path{}, false
+		return directTypeCastInfo{}, false
 	}
-	return t, argPath, true
+	return directTypeCastInfo{target: t, argPath: argPath}, true
 }
 
-func (l *lowerer) typeCastCalleeTypeFromWIRCall(point cfg.Point) (typ.Type, bool) {
-	if l == nil || l.wir == nil || l.bindings == nil {
+func (l *lowerer) typeCastTargetFromWIR(point cfg.Point) (typ.Type, bool) {
+	if l == nil || l.wir == nil {
 		return nil, false
 	}
 	calleePath, ok := l.callCalleePathFromWIR(point)
-	if !ok || len(calleePath.Segments) != 0 {
+	if ok && l.bindings != nil && len(calleePath.Segments) == 0 {
+		t, ok := primitiveRuntimeCastType(calleePath.Root)
+		if ok && l.bindings.SymbolResolvesToGlobal(calleePath.Symbol, calleePath.Root) {
+			return t, true
+		}
+	}
+	inst, hasCall := l.wirCallInstruction(point)
+	if !hasCall || inst.Call.Method != 0 || inst.Type == 0 {
 		return nil, false
 	}
-	t, ok := primitiveRuntimeCastType(calleePath.Root)
-	if !ok || !l.bindings.SymbolResolvesToGlobal(calleePath.Symbol, calleePath.Root) {
+	t := l.wir.Type(inst.Type)
+	if t == nil {
 		return nil, false
 	}
 	return t, true
-}
-
-func (l *lowerer) typeCastCalleeTypeFromWIR(point cfg.Point, fact semantics.CallFact) (typ.Type, bool) {
-	if _, ok := branchcond.TypeCall(fact.Call); !ok {
-		return nil, false
-	}
-	return l.typeCastCalleeTypeFromWIRCall(point)
-}
-
-func (l *lowerer) typeCastArgumentPathFromWIR(point cfg.Point, fact semantics.CallFact) (path.Path, bool) {
-	if l == nil || l.wir == nil {
-		return path.Path{}, false
-	}
-	if _, ok := branchcond.TypeCall(fact.Call); !ok {
-		return path.Path{}, false
-	}
-	return l.callArgumentPathFromWIR(point, 0)
 }
 
 func (l *lowerer) typeValueExpr(expr ast.Expr) (typ.Type, bool) {
