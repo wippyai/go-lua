@@ -181,7 +181,8 @@ func TestLowerMemberCallLocalAssignmentUsesCallResultSource(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	body := wirlower.Lower("member-call-local-assignment", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	points := requireStmtPoints(t, built, local, 2)
 	site, ok := facts.CallSite(points[0])
 	if !ok {
@@ -566,7 +567,8 @@ func TestLowerNegatedConditionCallSiteCarriesPolarity(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	body := wirlower.Lower("negated-condition", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	points := requireStmtPoints(t, built, ifStmt, 2)
 	site, ok := facts.CallSite(points[0])
 	if !ok {
@@ -576,7 +578,6 @@ func TestLowerNegatedConditionCallSiteCarriesPolarity(t *testing.T) {
 		t.Fatalf("condition call site = context %v negated=%v, want negated condition", site.Context(), site.ConditionNegated())
 	}
 
-	body := wirlower.Lower("negated-condition", stmts, bindings, built)
 	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	wirSite, ok := wirFacts.CallSite(points[0])
 	if !ok {
@@ -611,7 +612,8 @@ func TestLowerCallSitePreservesPortableCallShapeAndArgumentOverlays(t *testing.T
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	body := wirlower.Lower("portable-call-shape", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	point := requireStmtPoints(t, built, stmt, 1)[0]
@@ -648,7 +650,15 @@ func TestLowerCallSitePreservesPortableCallShapeAndArgumentOverlays(t *testing.T
 	if args[1].Kind != factflow.ValueSourceExpression || !args[1].HasExpr || args[1].ExprRef == 0 || args[1].ExprIndex != 1 || args[1].TargetIndex != 1 || !args[1].Final {
 		t.Fatalf("second arg source = %#v", args[1])
 	}
-	assertLoweredAssertion(t, facts, args[0], concreteCastAssertionForType(typ.Number), factflow.ValueSourceExpression)
+	claim, ok := facts.ExpressionRefinement(args[0].ExprRef)
+	if !ok {
+		t.Fatalf("missing assertion for source ref %d", args[0].ExprRef)
+	}
+	assertClaimRefinementProduct(t, claim.Refinement(), concreteCastAssertionForType(typ.Number))
+	inner := claim.Source()
+	if inner.Kind != factflow.ValueSourcePath || inner.PathKey == "" {
+		t.Fatalf("assertion inner source = %#v, want WIR path source", inner)
+	}
 
 	typeArgs := site.TypeArgs()
 	if len(typeArgs) != 2 || typeArgs[0] == 0 || typeArgs[1] == 0 || typeArgs[0] == typeArgs[1] {
@@ -666,6 +676,36 @@ func TestLowerCallSitePreservesPortableCallShapeAndArgumentOverlays(t *testing.T
 		if _, ok := producerType.MethodByName(method); ok {
 			t.Fatalf("CallProducer unexpectedly exposes broad call-shape method %s", method)
 		}
+	}
+}
+
+func TestLowerCallSiteTypeArgsComeFromWIR(t *testing.T) {
+	call := &ast.FuncCallExpr{
+		Func: ident("send"),
+		Args: []ast.Expr{ident("value")},
+		TypeArgs: []ast.TypeExpr{
+			primitiveType("string"),
+			primitiveType("number"),
+		},
+	}
+	stmt := &ast.FuncCallStmt{Expr: call}
+	stmts := []ast.Stmt{stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"send", "value"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+	body := wirlower.Lower("call-type-args", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	point := requireStmtPoints(t, built, stmt, 1)[0]
+	site, ok := facts.CallSite(point)
+	if !ok {
+		t.Fatalf("missing WIR call site at point %d", point)
+	}
+	typeArgs := site.TypeArgs()
+	if len(typeArgs) != 2 || typeArgs[0] == 0 || typeArgs[1] == 0 || typeArgs[0] == typeArgs[1] {
+		t.Fatalf("call site type args = %#v, want two distinct refs", typeArgs)
 	}
 }
 

@@ -60,12 +60,37 @@ func (l *lowerer) callSiteFromWIR(point cfg.Point) (factflow.CallSite, bool) {
 		CalleeSpan:         metadata.calleeSpan,
 		ArgumentSpans:      metadata.argumentSpans,
 		ArgumentLabels:     metadata.argumentLabels,
+		TypeArgs:           l.typeRefsFromWIR(inst.CallTypeArgs),
 		ResultTargets:      lowerWIRCallResultTargets(l.wir.CallResultTargets(point)),
 		Final:              inst.CallFinal,
 		Expanded:           inst.CallExpanded,
 		Adjusted:           inst.CallAdjusted,
 		OpenTail:           inst.CallOpenTail,
 	}), true
+}
+
+type wirTypeRefKey struct {
+	ref wir.TypeRef
+}
+
+func (l *lowerer) typeRefsFromWIR(r wir.TypeRefRange) []factflow.TypeRef {
+	if l == nil || l.wir == nil || r.Len == 0 {
+		return nil
+	}
+	refs := l.wir.TypeRefs(r)
+	if len(refs) == 0 {
+		return nil
+	}
+	out := make([]factflow.TypeRef, 0, len(refs))
+	for _, ref := range refs {
+		if ref == 0 {
+			continue
+		}
+		if outRef, ok := l.typeRef(wirTypeRefKey{ref: ref}); ok {
+			out = append(out, outRef)
+		}
+	}
+	return out
 }
 
 func (l *lowerer) wirCallExprRef(inst wir.Instruction) (factflow.ExprRef, bool) {
@@ -80,7 +105,7 @@ func (l *lowerer) callSiteWithArgumentSourcesAt(point cfg.Point, fact semantics.
 	if wirShape, ok := l.callShapeFromWIR(point); ok {
 		shape = wirShape
 	}
-	flags := semanticCallSiteFlags(fact)
+	flags := callSiteFlags{}
 	if wirFlags, ok := l.callSiteFlagsFromWIR(point); ok {
 		flags = wirFlags
 	}
@@ -146,17 +171,6 @@ func semanticCallSiteShape(fact semantics.CallFact) callSiteShape {
 	}
 	shape.methodName = fact.Method
 	return shape
-}
-
-func semanticCallSiteFlags(fact semantics.CallFact) callSiteFlags {
-	return callSiteFlags{
-		context:  callSiteContext(fact.Context),
-		expr:     fact.ExprIndex,
-		final:    fact.Final,
-		expanded: fact.Expanded,
-		adjusted: fact.Adjusted,
-		openTail: fact.OpenTail,
-	}
 }
 
 func (l *lowerer) callSiteWithArgumentSourcesWithShape(
@@ -485,25 +499,6 @@ func (l *lowerer) callCalleePathFromWIR(point cfg.Point) (path.Path, bool) {
 		return path.Path{}, false
 	}
 	return calleePath, true
-}
-
-func callSiteContext(kind semantics.CallContextKind) factflow.CallSiteContext {
-	switch kind {
-	case semantics.CallContextStatement:
-		return factflow.CallSiteContextStatement
-	case semantics.CallContextAssignmentSource:
-		return factflow.CallSiteContextAssignmentSource
-	case semantics.CallContextReturnSource:
-		return factflow.CallSiteContextReturnSource
-	case semantics.CallContextIteratorSource:
-		return factflow.CallSiteContextIteratorSource
-	case semantics.CallContextCondition:
-		return factflow.CallSiteContextCondition
-	case semantics.CallContextExpressionProducer:
-		return factflow.CallSiteContextExpressionProducer
-	default:
-		return factflow.CallSiteContextUnknown
-	}
 }
 
 func wirCallSiteContext(kind wir.CallContextKind) factflow.CallSiteContext {

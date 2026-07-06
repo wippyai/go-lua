@@ -385,6 +385,46 @@ local point = Point(raw)
 	}
 }
 
+func TestCallCarriesExplicitTypeArguments(t *testing.T) {
+	call := &ast.FuncCallExpr{
+		Func: ident("send"),
+		Args: []ast.Expr{ident("value")},
+		TypeArgs: []ast.TypeExpr{
+			&ast.PrimitiveTypeExpr{Name: "string"},
+			&ast.PrimitiveTypeExpr{Name: "number"},
+		},
+	}
+	stmts := []ast.Stmt{&ast.FuncCallStmt{Expr: call}}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"send", "value"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	body := wirlower.Lower("main", stmts, bindings, built)
+	var inst wir.Instruction
+	for i := 0; i < body.Len(); i++ {
+		candidate := body.Instr(i)
+		if candidate.Op == wir.OpCall {
+			inst = candidate
+			break
+		}
+	}
+	if inst.Op != wir.OpCall {
+		t.Fatal("missing OpCall")
+	}
+	refs := body.TypeRefs(inst.CallTypeArgs)
+	if len(refs) != 2 {
+		t.Fatalf("call type args = %#v, want two refs", refs)
+	}
+	if got := body.Type(refs[0]); !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("first call type arg = %v, want string", got)
+	}
+	if got := body.Type(refs[1]); !typ.TypeEquals(got, typ.Number) {
+		t.Fatalf("second call type arg = %v, want number", got)
+	}
+}
+
+func ident(name string) *ast.IdentExpr {
+	return &ast.IdentExpr{Value: name}
+}
+
 func TestDirectPrimitiveNameValueShadowDoesNotCarryType(t *testing.T) {
 	body := lowerBody(t, `
 local number = function(value) return value end

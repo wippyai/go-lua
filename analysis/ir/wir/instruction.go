@@ -272,6 +272,7 @@ type Instruction struct {
 	CallSpan             source.Span
 	CalleeSpan           source.Span
 	CallArgs             CallArgumentMetaRange
+	CallTypeArgs         TypeRefRange
 
 	// SelectDefault marks an OpSelect that carries a default (non-blocking) case.
 	SelectDefault bool

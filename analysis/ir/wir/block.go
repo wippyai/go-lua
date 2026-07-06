@@ -31,6 +31,7 @@ type Body struct {
 	declaredReturns []TypeRef
 
 	operandPool   []Operand
+	typeRefPool   []TypeRef
 	tableEntries  []TableEntry
 	callArgMeta   []CallArgumentMeta
 	impliedChecks []ImpliedCheck
@@ -106,6 +107,12 @@ type TableEntryRange struct {
 
 // CallArgumentMetaRange is a [Start, Start+Len) window into Body.callArgMeta.
 type CallArgumentMetaRange struct {
+	Start uint32
+	Len   uint32
+}
+
+// TypeRefRange is a [Start, Start+Len) window into Body.typeRefPool.
+type TypeRefRange struct {
 	Start uint32
 	Len   uint32
 }
@@ -325,6 +332,14 @@ func (b *Body) Operands(r OperandRange) []Operand {
 	return b.operandPool[r.Start : r.Start+r.Len]
 }
 
+// TypeRefs returns the type-ref slice for a variadic range.
+func (b *Body) TypeRefs(r TypeRefRange) []TypeRef {
+	if r.Len == 0 {
+		return nil
+	}
+	return b.typeRefPool[r.Start : r.Start+r.Len]
+}
+
 // TableEntries returns the table-entry slice for a variadic range.
 func (b *Body) TableEntries(r TableEntryRange) []TableEntry {
 	if r.Len == 0 {
@@ -506,6 +521,17 @@ func (b *Body) AppendOperands(ops []Operand) OperandRange {
 	start := uint32(len(b.operandPool))
 	b.operandPool = append(b.operandPool, ops...)
 	return OperandRange{Start: start, Len: uint32(len(ops))}
+}
+
+// AppendTypeRefs copies refs into the shared type-ref pool and returns their
+// range.
+func (b *Body) AppendTypeRefs(refs []TypeRef) TypeRefRange {
+	if len(refs) == 0 {
+		return TypeRefRange{}
+	}
+	start := uint32(len(b.typeRefPool))
+	b.typeRefPool = append(b.typeRefPool, refs...)
+	return TypeRefRange{Start: start, Len: uint32(len(refs))}
 }
 
 // AppendTableEntries copies entries into the shared table-entry pool and returns

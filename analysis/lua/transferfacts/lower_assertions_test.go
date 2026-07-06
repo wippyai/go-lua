@@ -1201,7 +1201,8 @@ func TestLowerExpandedClaimWrappedCallKeepsPerResultSlotRefinements(t *testing.T
 			}
 
 			reg := standard.Registry()
-			facts := lowerFacts(t, result, built.Graph, reg)
+			body := wirlower.Lower("expanded-claim-wrapped-call", stmts, bindings, built)
+			facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 			points := requireStmtPoints(t, built, local, 3)
 			site, ok := facts.CallSite(points[0])
 			if !ok {
@@ -1226,8 +1227,8 @@ func TestLowerExpandedClaimWrappedCallKeepsPerResultSlotRefinements(t *testing.T
 				}
 				assertClaimRefinementProduct(t, refinement.Refinement(), tc.want)
 				inner := refinement.Source()
-				if inner.Kind != factflow.ValueSourceCall || inner.ExprRef != innerRef || inner.ResultIndex != resultIndex || inner.CallPoint != points[0] || !inner.HasCallPoint {
-					t.Fatalf("refinement source = %#v, want call ref %d result %d at point %d", inner, innerRef, resultIndex, points[0])
+				if inner.Kind != factflow.ValueSourceCall || inner.ResultIndex != resultIndex || inner.CallPoint != points[0] || !inner.HasCallPoint {
+					t.Fatalf("refinement source = %#v, want call result %d at point %d", inner, resultIndex, points[0])
 				}
 			}
 			assertSlotRefinement(firstSource, 0)

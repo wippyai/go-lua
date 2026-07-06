@@ -162,6 +162,16 @@ func (b *Body) spellCall(inst Instruction) string {
 	} else {
 		sb.WriteString(b.spellOperand(inst.Call.Callee))
 	}
+	if inst.CallTypeArgs.Len > 0 {
+		sb.WriteByte('<')
+		for i, ref := range b.TypeRefs(inst.CallTypeArgs) {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(b.TypeDisplay(ref))
+		}
+		sb.WriteByte('>')
+	}
 	sb.WriteByte('(')
 	sb.WriteString(b.spellOperandList(inst.List))
 	if inst.ListSpread {

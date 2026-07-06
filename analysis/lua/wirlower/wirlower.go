@@ -708,6 +708,7 @@ func (b *builder) emitCallAt(point cfg.Point, call *ast.FuncCallExpr, resultCoun
 		CallSpan:             tableEntryValueSpan(call),
 		CalleeSpan:           callCalleeSourceSpan(call),
 		CallArgs:             b.body.AppendCallArgumentMeta(callArgumentMeta(call.Args)),
+		CallTypeArgs:         b.body.AppendTypeRefs(b.internTypes(call.TypeArgs)),
 	}
 	if call.Method != "" {
 		inst.Call.Method = b.internString(call.Method)
@@ -1606,6 +1607,19 @@ func (b *builder) internType(t ast.TypeExpr) wir.TypeRef {
 		return 0
 	}
 	return b.body.InternType(resolved)
+}
+
+func (b *builder) internTypes(types []ast.TypeExpr) []wir.TypeRef {
+	if len(types) == 0 {
+		return nil
+	}
+	out := make([]wir.TypeRef, 0, len(types))
+	for _, expr := range types {
+		if ref := b.internType(expr); ref != 0 {
+			out = append(out, ref)
+		}
+	}
+	return out
 }
 
 // targetOperand returns the destination operand for an assignment target and
