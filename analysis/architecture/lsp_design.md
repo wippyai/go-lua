@@ -1,13 +1,13 @@
 # LSP Server Design
 
-Status: design contract for adversarial review. Not yet wired.
+Status: v2 design contract after adversarial review. Not yet wired.
 
 ## Principle
 
 The language server is a **thin projection of solved judgments**, not a second analyzer.
-Every LSP response — diagnostics, hover, code actions, semantic tokens — is a query over
+Every LSP response - diagnostics, hover, code actions, semantic tokens - is a query over
 the same solved state and JIR that the diagnostics renderer and the harness consume.
-There is one checker (judgment_ir principle); the LSP is a transport and an
+There is one checker (judgment_ir principle); the LSP is a transport and a versioned
 incremental-invalidation scheduler around it.
 
 This is the SOTA lever: rust-analyzer and gopls re-implement large parts of their
@@ -15,130 +15,217 @@ compiler's analysis inside the server (their own type inference, name resolution
 flow views) because the batch compiler was never designed to answer editor queries
 incrementally. Here the *checker already produces judgments as data* (verdicts, evidence,
 origins, verified repairs). The server does not re-derive; it schedules solves and reads
-results.
+tagged results.
 
 ## What SOTA means here (and what we skip)
 
 **We match or exceed:**
 - **Judgment-native diagnostics.** Diagnostics are checker verdicts, not a separately
   maintained lint pass. A diagnostic *is* a Refuted/conditional judgment with its origin
-  trace as related-information — richer than a gopls type error, which carries no
+  trace as related-information - richer than a gopls type error, which carries no
   provenance chain.
 - **Verified code actions.** Quick-fixes are *counterfactually verified* repairs (JIR
   `Repair`, task `13897ee5`): the server offers only edits the checker re-proved flip the
   verdict to Proven. rust-analyzer's assists are syntactic and unverified; ours carry a
   proof. No "apply and hope."
-- **Pull-model diagnostics** (LSP 3.17 `textDocument/diagnostic` + workspace pull) so the
-  client drives freshness and the server never pushes stale results across an edit.
+- **Pull-model diagnostics** (LSP 3.17 `textDocument/diagnostic` + workspace pull) where
+  the client observes the server's completed-result cache. Pull never blocks on an
+  in-flight solve and never returns untagged stale diagnostics.
 - **Provenance hover.** Hover surfaces the solved type *and*, on a diagnosed subject, the
   origin trace ("nil born at L6, survives join L9").
 
 **We deliberately skip:**
-- **Whole-workspace live re-index on keystroke.** We invalidate by manifest digest, not
-  by re-solving the world (see incrementality). No global symbol index maintained
-  eagerly.
+- **Whole-workspace live re-index on keystroke.** Keystrokes use per-body input digests
+  and an intra-unit dependency graph. Manifest digests remain save/admission granularity
+  for module-boundary propagation.
 - **Macro/build-system integration, formatting, rename-across-crates.** Out of scope for
   v1; rename is a later item and rides subject refs, not a bespoke index.
 - **Speculative type-inference-on-partial-parse.** On an unparseable buffer we serve the
-  last good solve for unaffected bodies and a parse diagnostic for the broken region; we
-  do not invent a recovery type system.
+  last completed solve for unaffected body digests and a parse diagnostic for the broken
+  region; we do not invent a recovery type system.
 
 ## Architecture
 
-    client ── LSP ──▶ server ──▶ SolveCache ──▶ checker (admission solve)
-                         │            │
-                         │            └── digest-keyed unit results (judgments, JIR, readmodel)
-                         └── projections: diagnostics | hover | code actions | semantic tokens
+    client -- LSP --> server --> SolveScheduler --> checker
+                         |              |
+                         |              +-- BodyInputGraph (versioned intra-unit deps)
+                         |              `-- SolveCache (tagged completed results)
+                         `-- projections: diagnostics | hover | code actions | semantic tokens
 
-The server owns a `SolveCache` keyed by **unit digest**. A unit is a module plus the
-manifest digests of everything it imports. A cache entry holds the unit's solved
-readmodel + judgments + JIR. Projections are pure functions of a cache entry + a span.
+The server owns a `SolveCache` keyed by unit digest and a `BodyInputGraph` keyed by
+document version. A completed cache entry holds the unit's solved readmodel + judgments +
+JIR plus:
 
-## Incrementality: manifest-digest invalidation
+    SolveResultTag {
+        ResultVersion    u64       // monotonically increasing per server
+        DocumentVersion  int       // LSP text document version solved
+        UnitDigest       Digest
+        BodyDigests      map[BodyID]Digest
+        Profile          CompileProfile
+    }
 
-The invalidation question is: *on an edit, which bodies must re-solve?*
+All projections return data tagged with `ResultVersion` and `DocumentVersion`. Untagged
+diagnostics are invalid by design.
 
-1. **Edit lands in file F of unit U.** Recompute F's source digest → U's unit digest.
-2. **Re-solve U** (only U's bodies). U's *exported manifest* is re-derived.
-3. **Compare U's new manifest digest to the cached one:**
-   - **Unchanged** (edit was body-internal, no signature/effect/placement-summary change):
-     no consumer re-solves. This is the common case and the reason manifest digests, not
-     file digests, gate propagation — an editor keystroke inside a function body almost
-     never changes the exported summary.
-   - **Changed:** invalidate every unit whose import set includes U; re-solve them
-     (transitively, by digest closure). Per-consumer placement plans recompute at each
-     consumer's admission from U's summary (journal #1412: library artifact untouched,
-     consumer plans re-derived).
-4. **Body-level granularity within U.** Within a re-solved unit, only bodies whose
-   fact-inputs changed re-run; the solver already memoizes per-body on input facts. A
-   one-line edit re-solves its enclosing body and any body dominated by a changed local
-   summary, not the whole file.
+## Incrementality: body-input and manifest invalidation
 
-This gives near-constant editor latency for the dominant case (body-internal edits) and
-correct, bounded propagation for signature-affecting edits — the incremental contract the
-manifest system was built for (ShapeID/digest pinning), reused rather than re-invented.
+The invalidation question is: *on an edit, which bodies must re-solve now, and which
+consumers must re-solve after save/admission?* v2 splits those concerns.
+
+### Keystroke: per-body input digests
+
+Each body gets a `BodyInputDigest`:
+
+    BodyInputDigest = hash(
+        canonical source bytes for the body,
+        referenced binder set,
+        imported/exported dependency summary digests used by the body,
+        local dependency summary digests for bodies it calls/reads,
+        profile-independent checker options that affect surfaced families
+    )
+
+The **referenced binder set** is the resolved set of locals/upvalues/params/imported
+symbols the body reads or writes, using binder IDs rather than textual names. This catches
+edits like changing a local annotation, capture, import binding, or sibling function that
+changes a body's inputs even when the enclosing file still parses.
+
+The server maintains an intra-unit dependency graph:
+
+    BinderID --> BodyID readers/writers
+    BodyID   --> BodyID dependents through local summary use
+    Import   --> BodyID users of imported summary digest
+
+On `didChange`, the server reparses the edited file, recomputes body source spans and
+referenced binder sets, then recomputes body input digests. Any body whose digest changes
+is dirty; dirty bodies invalidate dependent bodies through the graph until a fixed point.
+Only that dirty closure is scheduled for the next incremental solve. If parsing fails,
+the graph from the last parseable document version remains active outside the broken
+region, and the broken region gets parse diagnostics.
+
+### Save/admission: manifest digests
+
+The canonical manifest digest remains the module-boundary admission key:
+
+1. On save or admission, re-derive the unit's exported manifest.
+2. If the exported manifest digest is unchanged, no importing unit is invalidated.
+3. If it changed, invalidate every unit whose import set includes it and propagate by
+   digest closure.
+
+Manifest digests are correct for save/admission propagation because they describe module
+interfaces and exported summaries. They are too coarse for keystroke latency and are not
+used to decide body-level scheduling inside an open document.
 
 ## What runs on keystroke vs save vs admission
 
 | Trigger | Work | Latency target |
 |---|---|---|
-| **keystroke** (didChange) | reparse edited file; if parse ok, re-solve *edited body only*; publish parse diagnostics immediately, defer full diagnostics to the debounce | interactive (< frame) |
-| **debounce / idle** (~150ms) | re-solve unit U; refresh U's diagnostics, semantic tokens, hovers from the new cache entry; recompute code actions lazily on request | sub-second |
-| **save** (didSave) | re-derive U's exported manifest; if digest changed, invalidate + re-solve the consumer closure; refresh cross-file diagnostics | seconds acceptable |
-| **admission** (the real gate) | full unit solve under the admission profile (`CompileProfileTyped`); this is the authoritative verdict the editor previews. The LSP solve is the *same* solve at a lower profile, so editor and admission never disagree | batch |
+| **keystroke** (`didChange`) | update parse snapshot; recompute edited file body digests and dependency edges; cancel obsolete solve for older document version; schedule dirty body closure | interactive (< frame for scheduling) |
+| **debounce / idle** (server-owned, ~150ms) | single-flight incremental solve for latest document version; publish only when a result completes; refresh diagnostics/tokens/hovers from tagged cache entry | sub-second |
+| **pull diagnostics mid-solve** | return last completed diagnostics tagged with their `resultVersion` and `documentVersion`; ensure a solve is scheduled for the requested version | non-blocking |
+| **save** (`didSave`) | re-derive exported manifest; if digest changed, invalidate + re-solve consumer closure | seconds acceptable |
+| **admission** (the real gate) | full unit solve under the admission profile; authoritative verdict and export | batch |
 
-The invariant: the editor never shows a verdict admission would not. The LSP runs the
-admission checker, just scheduled incrementally and projected per span.
+The scheduler is server-owned: it debounces, cancels obsolete work by document version,
+and enforces single-flight solves per unit. Multiple pulls while a solve is running all
+observe the same last completed result and may attach to the pending result token; they
+do not start parallel solves.
+
+## Pull diagnostics contract
+
+Pull diagnostics are versioned cache reads:
+
+- If the latest requested document version has a completed solve, return those
+  diagnostics with `resultId = ResultVersion` and `documentVersion = requested`.
+- If a newer solve is pending, return the last completed diagnostics for that document
+  with their original `resultId` and `documentVersion`, and schedule/cancel work so the
+  latest version is being solved.
+- If no solve has ever completed for the document, return parse diagnostics if available
+  and an empty checker-diagnostic set tagged as `unsolved` for that document version.
+- Never block a pull request on checker completion.
+- Never serve diagnostics without the solved document version that produced them.
+
+This makes staleness explicit. A client may display older diagnostics, but it can also
+tell that `documentVersion < current buffer version` and render them as pending/refreshing
+according to client policy.
 
 ## Projections
 
-- **Diagnostics (pull).** Filter the cache entry's judgments to `severity != none`, map
-  each to an LSP `Diagnostic` (span, code, message), and attach the origin trace as
-  `relatedInformation` (one entry per trace node, birth → use). Conditional verdicts
-  render as `Hint` severity with the seal/guard site as related info.
-- **Hover.** `readmodel` query at the cursor span → the solved type string; on a subject
-  that carries a judgment, append the verdict + origin trace. No inference on hover — a
-  map lookup into solved state.
+- **Diagnostics (pull).** Filter the tagged cache entry's judgments to
+  `severity != none`, map each to an LSP `Diagnostic` (span, code, message), and attach
+  the origin trace as `relatedInformation` (one entry per trace node, birth -> use).
+  Conditional verdicts render as `Hint` severity with the seal/guard site as related
+  info.
+- **Hover.** Query the solved readmodel for the latest completed result whose
+  `DocumentVersion` is at or before the buffer version. The response includes the result
+  tag; on a subject with a judgment, append the verdict + origin trace.
 - **Code actions.** Read JIR `Repair[]` for judgments overlapping the requested range;
   offer each as a `CodeAction` with its `edit` and, in the title, the verified verdict
   ("Guard x (verified: proven)"). Only `verified_verdict == proven` repairs surface;
   never widening/as-any (task `13897ee5` menu: per-variant constructor / validated wrap /
   runtime-validated claim / guard / seal).
 - **Semantic tokens.** Derived from solved state, not the lexer: a token's modifier set
-  encodes solved facts — e.g. `readonly` for frozen/sealed places, a custom modifier for
-  `deferred`/`shared` placement, `defaultLibrary` for manifest imports. This makes
-  placement class and sealing *visible in the buffer*, which no mainstream server does
-  because they lack a placement lattice to project.
+  can encode solved facts such as sealed/frozen, placement class, or manifest import.
+  Custom token modifiers ship only when the client advertises support for them during
+  capability negotiation. Without that capability, placement/seal facts remain available
+  through hover and diagnostics, not semantic tokens.
 
 ## Memoization strategy
 
-- **Cache key = unit digest** (source digests + imported manifest digests). Entry =
-  {readmodel, judgments, JIR, exported-manifest-digest}. Pure function of the key ⇒ safe
-  to cache indefinitely; evict by LRU under memory budget.
-- **Body-level sub-memo** inside the checker (already present): per-body solve keyed on
-  input facts; unchanged bodies reuse prior cells across a unit re-solve.
-- **Projection memo** is unnecessary — projections are cheap span queries; recompute per
-  request to avoid stale views. The expensive thing (the solve) is what we cache.
+- **Unit cache key = unit digest** for completed admission/save results. Entry =
+  `{readmodel, judgments, JIR, exported-manifest-digest, result tag}`. Pure function of
+  the key => safe to cache indefinitely; evict by LRU under memory budget.
+- **Body sub-cache key = BodyInputDigest** for open-document incremental solves. A body
+  result can be reused only when its body digest and all dependency summary digests match
+  the requested document version's graph.
+- **Invalidation graph cache** is versioned by document version. Graph nodes use binder
+  IDs and body IDs, not `cfg.Point`, so edits that renumber CFG points do not create
+  artificial churn.
+- **Projection memo** is unnecessary. Projections are cheap span queries over tagged
+  solved results; recompute per request to avoid stale views.
 - **Origin materialization is lazy** (evidence-origins design): the cache stores terminal
-  origin ids; hover/code-action requests walk the still-cached arena on demand, so the
-  steady-state cache carries no per-proven-judgment trace cost.
+  origin ids and summary origin slots. Hover/code-action requests walk the cached arena
+  on demand, while proven-judgment traces remain elided unless requested.
+
+## Profile rule
+
+The editor must not claim verdict identity with admission unless it ran the same profile.
+The LSP has two legal modes:
+
+1. **Same-profile mode.** Run the admission profile for all surfaced families. This is
+   authoritative but may be slower.
+2. **Profile-independent mode.** Run a lower-latency profile but surface only judgment
+   families proven profile-independent. Families affected by omitted analyses are hidden
+   or marked unavailable until a same-profile solve completes.
+
+Any diagnostic, hover fact, semantic token modifier, or code action that depends on a
+profile-skewed family is suppressed rather than displayed as if it were admission
+equivalent.
+
+## Changelog v2 - review counters resolved
+
+- **Manifest digest was wrong for keystroke scheduling.** Resolved by adding
+  `BodyInputDigest` and a versioned intra-unit dependency graph.
+- **Body-only correctness was underspecified.** Resolved by including body source bytes,
+  referenced binder set, dependency summary digests, and relevant profile options in the
+  digest.
+- **Pull diagnostics mid-solve were ambiguous.** Resolved with last-completed tagged
+  results, non-blocking pulls, and explicit scheduling/cancellation for the requested
+  document version.
+- **Debounce authority was unclear.** Resolved by making debounce, cancellation, and
+  single-flight solve ownership server responsibilities.
+- **Profile skew invalidated verdict identity.** Resolved with same-profile mode or
+  profile-independent surfaced families only.
+- **Semantic-token custom modifiers needed negotiation.** Resolved by gating custom
+  modifiers behind client capability negotiation and keeping hover as fallback.
 
 ## Open questions for adversarial review
 
-1. **Body-only keystroke solve correctness.** Re-solving only the edited body assumes its
-   input facts are unchanged by the in-progress edit. Is there an edit class (e.g.
-   changing a local's annotation) that silently alters sibling bodies' inputs before
-   save-time manifest comparison catches it? Do we need a body-input digest, not just a
-   manifest digest, for intra-unit propagation?
-2. **Pull vs push under rapid edits.** Pull-model diagnostics let the client coalesce,
-   but a client that pulls aggressively mid-debounce may thrash the solver. Server-side
-   debounce vs client-side coalescing — where does the authority sit?
-3. **Semantic-token placement modifiers** are non-standard; do we ship custom modifiers
-   (requires client capability negotiation) or fold placement into hover only for v1?
-4. **Cross-file trace rendering.** A diagnostic whose origin crosses a module boundary
-   needs the library's seam origin; the consumer cache entry has the seam but not the
-   library's internal arena. Is the seam node sufficient for `relatedInformation`, or does
-   hover-into-library require solving the library on demand?
-5. **Admission/LSP profile skew.** The LSP solves at a lower profile for latency; we claim
-   verdict identity with the admission profile. Is that guaranteed for *all* families, or
-   only the ones whose verdicts are profile-independent (and which families are not)?
+1. **Dependency graph precision.** Which binder and local-summary edges are required for
+   the first useful implementation, and which can be conservatively approximated by
+   invalidating more bodies?
+2. **Partial parse body mapping.** How much of the previous `BodyID` map can be reused
+   when the edited document has syntax errors around a body boundary?
+3. **Result tag shape.** Should `ResultVersion` be a server-local ordinal, a digest of
+   the solved projection, or both for better LSP/client cache behavior?
+4. **Profile-independent family list.** The design requires an audited list before a
+   lower-profile LSP can surface those families. Which families are safe in v1?
