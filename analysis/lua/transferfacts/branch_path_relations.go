@@ -3,7 +3,6 @@ package transferfacts
 import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -13,23 +12,13 @@ func (l *lowerer) branchPathRelationsFromWIR(point cfg.Point) (factflow.BranchPa
 		return factflow.BranchPathRelationSet{}, false
 	}
 	var relations []factflow.BranchPathRelation
-	for _, inst := range l.wir.PointInstructions(point) {
-		if inst.Op != wir.OpBranch {
-			continue
-		}
-		check := branchCheckFromWIR(l.wir.Check(inst.Check))
+	l.forEachWIRBranchCheck(point, func(check branchcond.Check) {
 		if check.Kind != branchcond.CheckNone {
 			relations = append(relations, checkPathRelations(check, true, true)...)
-			continue
 		}
-		for _, implied := range l.wir.ImpliedChecks(inst.ImpliedChecks) {
-			relations = append(relations, checkPathRelationsForImplication(branchcond.ImpliedCheck{
-				Check:    branchCheckFromWIR(implied.Check),
-				Edge:     implied.Edge,
-				Polarity: implied.Polarity,
-			})...)
-		}
-	}
+	}, func(implied branchcond.ImpliedCheck) {
+		relations = append(relations, checkPathRelationsForImplication(implied)...)
+	})
 	if len(relations) == 0 {
 		return factflow.BranchPathRelationSet{}, false
 	}
