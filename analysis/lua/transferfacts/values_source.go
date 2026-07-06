@@ -140,34 +140,11 @@ func (l *lowerer) rootPathExpressionSourceFromWIR(
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
-	exprRef, ok := l.exprRef(wirPathExprRefKey{
-		kind:        kind,
-		point:       point,
-		path:        p.Key(),
-		exprIndex:   exprIndex,
-		targetIndex: targetIndex,
-		final:       final,
-		expanded:    expanded,
-		openTail:    openTail,
-	})
-	if !ok {
-		return factflow.ValueSource{}, false
-	}
-	if l.expressionPaths == nil {
-		l.expressionPaths = make(map[factflow.ExprRef]path.Path)
-	}
-	l.expressionPaths[exprRef] = p
+	var witness typ.Type
 	if t, ok := l.symbolTypes[p.Symbol]; ok {
-		if l.expressionValues == nil {
-			l.expressionValues = make(map[factflow.ExprRef]product.Value)
-		}
-		l.expressionValues[exprRef] = l.valueFromTypeWithWitness(t)
+		witness = t
 	}
-	shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, openTail)
-	if !ok {
-		return factflow.ValueSource{}, false
-	}
-	return factflow.NewExpressionValueSource(exprRef, exprIndex, targetIndex, 0, shape)
+	return l.wirPathExpressionSource(kind, point, p, witness, exprIndex, targetIndex, final, expanded, openTail)
 }
 
 func (l *lowerer) pathExpressionSourceFromWIR(
@@ -185,6 +162,21 @@ func (l *lowerer) pathExpressionSourceFromWIR(
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
+	witness, _ := l.aliasPathType(p)
+	return l.wirPathExpressionSource(kind, point, p, witness, exprIndex, targetIndex, final, expanded, openTail)
+}
+
+func (l *lowerer) wirPathExpressionSource(
+	kind string,
+	point cfg.Point,
+	p path.Path,
+	witness typ.Type,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+) (factflow.ValueSource, bool) {
 	exprRef, ok := l.exprRef(wirPathExprRefKey{
 		kind:        kind,
 		point:       point,
@@ -202,11 +194,11 @@ func (l *lowerer) pathExpressionSourceFromWIR(
 		l.expressionPaths = make(map[factflow.ExprRef]path.Path)
 	}
 	l.expressionPaths[exprRef] = p
-	if t, ok := l.aliasPathType(p); ok {
+	if witness != nil {
 		if l.expressionValues == nil {
 			l.expressionValues = make(map[factflow.ExprRef]product.Value)
 		}
-		l.expressionValues[exprRef] = l.valueFromTypeWithWitness(t)
+		l.expressionValues[exprRef] = l.valueFromTypeWithWitness(witness)
 	}
 	shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, openTail)
 	if !ok {
