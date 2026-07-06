@@ -157,6 +157,35 @@ end
 	assertWIRConcreteCastAssertion(t, facts, args[0], messageType, factflow.ValueSourcePath)
 }
 
+func TestLowerCallArgumentWIRClaimKeepsDisjointRuntimeValidationExpressionSource(t *testing.T) {
+	recordType := typetable.NewRecord().
+		Field("name", typ.String).
+		Build()
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(y: number): ()
+    sink(y as {name: string})
+end
+`, "sink")
+	body := wirlower.Lower("f", fn.Stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	callPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
+	site, ok := facts.CallSite(callPoint)
+	if !ok {
+		t.Fatalf("missing call site at point %d", callPoint)
+	}
+	args := site.ArgumentSources()
+	if len(args) != 1 {
+		t.Fatalf("call argument sources = %#v, want one", args)
+	}
+	if args[0].Kind != factflow.ValueSourceExpression || !args[0].HasExpr {
+		t.Fatalf("cast argument source = %#v, want expression source for validated cast", args[0])
+	}
+	yPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "y")
+	assertWIRClaimSourcePath(t, facts, args[0], yPath)
+	assertWIRConcreteCastAssertion(t, facts, args[0], recordType, factflow.ValueSourcePath)
+}
+
 func TestLowerCallArgumentWIRClaimTypeBeatsSemanticCastType(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(x: any): ()

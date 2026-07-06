@@ -15,8 +15,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekindof"
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/proof"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -26,6 +29,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/access"
@@ -45,6 +49,18 @@ func (r *Result) SourceValueAtBoundary(point cfg.Point, source factflow.ValueSou
 	return r.cachedSourceValue(sourceValueReadBoundary, point, source, func() (product.Value, bool) {
 		return r.computeSourceValueAtBoundary(point, source)
 	})
+}
+
+// SourceHasRuntimeValidation reports whether source is an expression whose
+// lowered refinement is a runtime validation cast/claim. Call-argument
+// readmodels use this to preserve validation expressions before projecting the
+// source to an inner access path.
+func (r *Result) SourceHasRuntimeValidation(source factflow.ValueSource) bool {
+	if r == nil || !source.HasExpr || source.ExprRef == 0 {
+		return false
+	}
+	refinement, ok := r.facts.ExpressionRefinement(source.ExprRef)
+	return ok && refinement.Mode() == factflow.ExpressionRefinementRuntimeValidation
 }
 
 func (r *Result) computeSourceValueAtBoundary(point cfg.Point, source factflow.ValueSource) (product.Value, bool) {
@@ -638,7 +654,30 @@ func (r *Result) PathValueAtBoundary(point cfg.Point, p pathdom.Path) (product.V
 }
 
 func (r *Result) computePathValueAtBoundary(point cfg.Point, p pathdom.Path) (product.Value, bool) {
-	return r.computePathValue(sourceValueReadBoundary, point, p, r.boundaryStateAt)
+	if value, ok := r.computePathValue(sourceValueReadBoundary, point, p, r.boundaryStateAt); ok {
+		if r.pathValueNeedsBoundaryProof(value, p) {
+			if proofValue, ok := r.dominatingBranchRefinementPathValue(point, p); ok {
+				refined := product.Meet(r.registry, value, proofValue)
+				if !product.Equal(r.registry, refined, product.Bottom(r.registry)) {
+					return refined, true
+				}
+			}
+		}
+		return value, true
+	}
+	return r.declaredRootPathValueAtBoundary(point, p)
+}
+
+func (r *Result) pathValueNeedsBoundaryProof(value product.Value, p pathdom.Path) bool {
+	if r == nil || r.registry == nil || r.typeValues == nil || p.IsEmpty() || len(p.Segments) != 0 {
+		return false
+	}
+	t, ok := r.typeValues.TypeOf(r.registry, value)
+	if !ok || t == nil || typ.IsAny(t) || typ.IsUnknown(t) || refinement.ContainsFreeTypeParam(t) {
+		return true
+	}
+	ev := product.Get(r.registry, value, evidence.Key)
+	return ev.IsExplicitTop() || ev.IsGradualTop()
 }
 
 // PathValueBeforeBoundary projects a path from the solved point input, without
@@ -650,7 +689,141 @@ func (r *Result) PathValueBeforeBoundary(point cfg.Point, p pathdom.Path) (produ
 }
 
 func (r *Result) computePathValueBeforeBoundary(point cfg.Point, p pathdom.Path) (product.Value, bool) {
-	return r.computePathValue(sourceValueReadBeforeBoundary, point, p, r.solvedStateAt)
+	if value, ok := r.computePathValue(sourceValueReadBeforeBoundary, point, p, r.solvedStateAt); ok {
+		if r.pathValueNeedsBoundaryProof(value, p) {
+			if proofValue, ok := r.dominatingBranchRefinementPathValue(point, p); ok {
+				refined := product.Meet(r.registry, value, proofValue)
+				if !product.Equal(r.registry, refined, product.Bottom(r.registry)) {
+					return refined, true
+				}
+			}
+		}
+		return value, true
+	}
+	return product.Value{}, false
+}
+
+func (r *Result) declaredRootPathValueAtBoundary(point cfg.Point, p pathdom.Path) (product.Value, bool) {
+	if r == nil || r.registry == nil || r.typeValues == nil || p.IsEmpty() || len(p.Segments) != 0 {
+		return product.Value{}, false
+	}
+	declared, ok := r.DeclaredPathTypeAt(point, p, true)
+	if !ok || declared == nil || typ.IsAny(declared) || typ.IsUnknown(declared) {
+		if value, ok := r.dominatingBranchRefinementPathValue(point, p); ok {
+			return value, true
+		}
+		if runtimeType, ok := r.positiveRuntimeKindGuardType(point, p); ok {
+			return typevalue.WithWitness(r.registry, r.typeValues.FromType(r.registry, runtimeType), runtimeType), true
+		}
+		return product.Value{}, false
+	}
+	if narrowed, ok := r.declaredTypeNarrowedByDominatingTypeGuard(point, p, declared); ok {
+		declared = narrowed
+	}
+	return typevalue.WithWitness(r.registry, r.typeValues.FromType(r.registry, declared), declared), true
+}
+
+// DominatingBranchRefinementValueForPath returns the product-value constraint
+// proven by a dominating active branch-refinement edge for p at point. It is the
+// proof-context query for consumers that need to trust a boundary value because
+// a guard, not an annotation or any-origin, established the runtime shape.
+func (r *Result) DominatingBranchRefinementValueForPath(point cfg.Point, p pathdom.Path) (product.Value, bool) {
+	return r.dominatingBranchRefinementPathValue(point, p)
+}
+
+func (r *Result) dominatingBranchRefinementPathValue(point cfg.Point, p pathdom.Path) (product.Value, bool) {
+	if r == nil || r.Graph() == nil || p.IsEmpty() || point == 0 {
+		return product.Value{}, false
+	}
+	graph := r.Graph()
+	for _, branch := range graph.RPO() {
+		if branch == point {
+			continue
+		}
+		for _, succ := range cfg.SuccessorsReadOnly(graph, branch) {
+			edge, ok := graph.EdgeCond(branch, succ)
+			if !ok || !r.proofEdgeDominatesPoint(graph, branch, succ, point) || r.PathInvalidatedBetween(succ, point, p) {
+				continue
+			}
+			for _, refinement := range r.facts.BranchRefinements(branch) {
+				if !refinement.TargetPathRef().Equal(p) {
+					continue
+				}
+				valueRefinement, ok := refinement.ValueForEdge(edge)
+				if !ok {
+					continue
+				}
+				value, ok := valueRefinement.Constraint()
+				if ok && !product.Equal(r.registry, value, product.Bottom(r.registry)) {
+					return value, true
+				}
+			}
+		}
+	}
+	return product.Value{}, false
+}
+
+func (r *Result) positiveRuntimeKindGuardType(point cfg.Point, p pathdom.Path) (typ.Type, bool) {
+	guard, edge, ok := r.dominatingTypeGuardForPath(point, p)
+	if !ok {
+		return nil, false
+	}
+	tag, positive, ok := runtimeKindGuardTag(guard, edge)
+	if !ok || !positive {
+		return nil, false
+	}
+	value := product.Set(r.registry, product.Top(), runtimekind.Key, runtimekind.Singleton(tag))
+	if tag == runtimekind.Nil {
+		value = product.WithPresence(r.registry, value, presence.Absent())
+	} else {
+		value = product.WithPresence(r.registry, value, presence.Present())
+	}
+	return proof.RuntimeKindType(r.registry, value, product.PresenceOf(value))
+}
+
+func (r *Result) declaredTypeNarrowedByDominatingTypeGuard(point cfg.Point, p pathdom.Path, declared typ.Type) (typ.Type, bool) {
+	guard, edge, ok := r.dominatingTypeGuardForPath(point, p)
+	if !ok {
+		return nil, false
+	}
+	tag, positive, ok := runtimeKindGuardTag(guard, edge)
+	if !ok {
+		return nil, false
+	}
+	kinds := runtimekind.Top().Without(tag)
+	if positive {
+		kinds = runtimekind.Singleton(tag)
+	}
+	narrowed, changed := runtimekindof.RestrictTypeToRuntimeKind(declared, kinds)
+	if !changed || narrowed == nil || typ.IsNever(narrowed) {
+		return nil, false
+	}
+	return narrowed, true
+}
+
+func (r *Result) dominatingTypeGuardForPath(point cfg.Point, p pathdom.Path) (branchcond.Check, bool, bool) {
+	var guard branchcond.Check
+	_, edge, ok := r.DominatingBranchCheckForPath(point, p, func(_ cfg.Point, check branchcond.Check, _ bool) bool {
+		if check.Kind != branchcond.CheckTypeEqual && check.Kind != branchcond.CheckTypeNot {
+			return false
+		}
+		guard = check
+		return true
+	})
+	if !ok || guard.TypeName == "" {
+		return branchcond.Check{}, false, false
+	}
+	return guard, edge, true
+}
+
+func runtimeKindGuardTag(guard branchcond.Check, edge bool) (runtimekind.Tag, bool, bool) {
+	tag, ok := runtimekind.ParseTag(guard.TypeName)
+	if !ok {
+		return runtimekind.Nil, false, false
+	}
+	positive := (guard.Kind == branchcond.CheckTypeEqual && edge) ||
+		(guard.Kind == branchcond.CheckTypeNot && !edge)
+	return tag, positive, true
 }
 
 func (r *Result) computePathValue(

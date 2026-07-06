@@ -1,6 +1,8 @@
 package sourcevalue
 
 import (
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -173,6 +175,9 @@ func (r sourceValueResolver) valueOfSource(
 			value, ok := r.valueOfSource(point, refinement.Source(), in, read, active)
 			delete(active, source.ExprRef)
 			if !ok {
+				if refinement.Mode() == factflow.ExpressionRefinementRuntimeValidation {
+					return applyExpressionRefinement(r.registry, product.Bottom(r.registry), refinement), true
+				}
 				return product.Value{}, false
 			}
 			return applyExpressionRefinement(r.registry, value, refinement), true
@@ -210,7 +215,7 @@ func (r sourceValueResolver) valueOfPathSource(source factflow.ValueSource, in s
 	if r.keySpace == nil {
 		return product.Value{}, false
 	}
-	pathKey, ok := r.keySpace.FromStateKey(source.PathKey)
+	pathKey, ok := r.pathSourceKey(source.PathKey)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -225,6 +230,13 @@ func (r sourceValueResolver) valueOfPathSource(source factflow.ValueSource, in s
 		}
 	}
 	return product.Value{}, false
+}
+
+func (r sourceValueResolver) pathSourceKey(sourceKey pathdom.PathKey) (keyspace.Key, bool) {
+	if sym, segments, ok := pathaddr.ParseSymbolPathKey(sourceKey); ok {
+		return r.keySpace.FromStableSymbol(sym, segments)
+	}
+	return r.keySpace.FromStateKey(sourceKey)
 }
 
 func (r sourceValueResolver) valueOfLiteralSource(source factflow.ValueSource) (product.Value, bool) {
@@ -846,6 +858,9 @@ func (r expressionRefinementSourceValues) valueOfSource(
 		value, ok := r.valueOfSource(point, refinement.Source(), in, read, active)
 		delete(active, source.ExprRef)
 		if !ok {
+			if refinement.Mode() == factflow.ExpressionRefinementRuntimeValidation {
+				return applyExpressionRefinement(r.registry, product.Bottom(r.registry), refinement), true
+			}
 			return product.Value{}, false
 		}
 		return applyExpressionRefinement(r.registry, value, refinement), true

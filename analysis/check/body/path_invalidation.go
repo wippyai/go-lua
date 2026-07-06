@@ -74,6 +74,12 @@ func (r *Result) PathPresenceInvalidatedBetween(from, to cfg.Point, target pathd
 }
 
 func (r *Result) ordinaryAssignmentInvalidatesMemberPathAt(point cfg.Point, fact semantics.OrdinaryAssignmentFact, target pathdom.Path) bool {
+	if len(target.Segments) == 0 {
+		if fact.HasSymbol && target.Symbol != 0 && fact.Symbol == target.Symbol {
+			return true
+		}
+		return fact.HasPath && len(fact.Path.Segments) == 0 && pathHasPrefixStaticEquiv(target, fact.Path)
+	}
 	if fact.HasPath {
 		return pathHasPrefixStaticEquiv(target, fact.Path) ||
 			r.PathsAliasWithSameSuffixAtBoundary(point, fact.Path, target)

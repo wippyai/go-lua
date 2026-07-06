@@ -749,6 +749,92 @@ func TestExpressionRuntimeValidationUsesRefinementWhenOperandDisjoint(t *testing
 	}
 }
 
+func TestExpressionRuntimeValidationUsesRecordRefinementWhenOperandScalar(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(813)
+	innerRef := ExprRef(8130)
+	outerRef := ExprRef(8131)
+	shape, ok := NewValueSourceShape(true, false, false, false)
+	if !ok {
+		t.Fatal("NewValueSourceShape returned false")
+	}
+	source, ok := NewExpressionValueSource(outerRef, 0, 0, 0, shape)
+	if !ok {
+		t.Fatal("NewExpressionValueSource(outer) returned false")
+	}
+	innerSource, ok := NewExpressionValueSource(innerRef, 0, 0, 0, shape)
+	if !ok {
+		t.Fatal("NewExpressionValueSource(inner) returned false")
+	}
+	base := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			innerRef: typevalue.WithWitness(reg, typevalue.FromType(reg, typ.Number), typ.Number),
+		},
+	})
+	recordType := typetable.NewRecord().Field("name", typ.String).Build()
+	refinement := typevalue.WithWitness(reg, typevalue.FromType(reg, recordType), recordType)
+	refinement = product.Set(reg, refinement, assertion.Key, assertion.Of(assertion.TypeClaim, assertion.RuntimeClaim))
+	resolver := WithExpressionRefinements(reg, base, map[ExprRef]ExpressionRefinement{
+		outerRef: NewExpressionRuntimeValidation(
+			innerSource,
+			refinement,
+		),
+	})
+
+	got, ok := resolver.ValueOfSource(point, source, state.State{}, nil)
+	if !ok {
+		t.Fatal("runtime validation source did not resolve")
+	}
+	gotType, ok := typevalue.WitnessOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, recordType) {
+		t.Fatalf("runtime validation type = %v/%v, want %v", gotType, ok, recordType)
+	}
+	if gotClaim := product.Get(reg, got, assertion.Key); !gotClaim.Has(assertion.RuntimeClaim) || !gotClaim.Has(assertion.TypeClaim) {
+		t.Fatalf("runtime validation assertion = %s, want type+runtime", gotClaim)
+	}
+}
+
+func TestExpressionRuntimeValidationUsesRefinementWhenOperandSourceUnavailable(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(814)
+	innerRef := ExprRef(8140)
+	outerRef := ExprRef(8141)
+	shape, ok := NewValueSourceShape(true, false, false, false)
+	if !ok {
+		t.Fatal("NewValueSourceShape returned false")
+	}
+	source, ok := NewExpressionValueSource(outerRef, 0, 0, 0, shape)
+	if !ok {
+		t.Fatal("NewExpressionValueSource(outer) returned false")
+	}
+	innerSource, ok := NewExpressionValueSource(innerRef, 0, 0, 0, shape)
+	if !ok {
+		t.Fatal("NewExpressionValueSource(inner) returned false")
+	}
+	recordType := typetable.NewRecord().Field("name", typ.String).Build()
+	refinement := typevalue.WithWitness(reg, typevalue.FromType(reg, recordType), recordType)
+	refinement = product.Set(reg, refinement, assertion.Key, assertion.Of(assertion.TypeClaim, assertion.RuntimeClaim))
+	resolver := WithExpressionRefinements(reg, NewSourceValues(SourceValuesConfig{Registry: reg}), map[ExprRef]ExpressionRefinement{
+		outerRef: NewExpressionRuntimeValidation(
+			innerSource,
+			refinement,
+		),
+	})
+
+	got, ok := resolver.ValueOfSource(point, source, state.State{}, nil)
+	if !ok {
+		t.Fatal("runtime validation source did not resolve")
+	}
+	gotType, ok := typevalue.WitnessOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, recordType) {
+		t.Fatalf("runtime validation type = %v/%v, want %v", gotType, ok, recordType)
+	}
+	if gotClaim := product.Get(reg, got, assertion.Key); !gotClaim.Has(assertion.RuntimeClaim) || !gotClaim.Has(assertion.TypeClaim) {
+		t.Fatalf("runtime validation assertion = %s, want type+runtime", gotClaim)
+	}
+}
+
 func TestSourceValuesObjectLiteralPrefersViewOverCachedTopOrigin(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(652)

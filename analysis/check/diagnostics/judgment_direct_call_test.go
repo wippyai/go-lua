@@ -525,6 +525,41 @@ need_string(42)`)
 	}
 }
 
+func TestProduceDirectCallArgumentsUsesRootTypeGuardElseMismatch(t *testing.T) {
+	result := runDiagnosticsResult(t, `local function need_number(n: number): number
+    return n
+end
+
+local v: number | string = 5
+if type(v) == "number" then
+    return 0
+else
+    return need_number(v)
+end`)
+
+	argOnly := produceDirectCallArgumentJudgmentDiagnostics(result, "main.lua")
+	if len(argOnly) != 1 || argOnly[0].Code != CodeDirectCallArgType {
+		t.Fatalf("argument-only diagnostics = %#v, want one direct-call argument diagnostic", argOnly)
+	}
+	if !strings.Contains(argOnly[0].Message, "argument 1 (v) is string, not number") {
+		t.Fatalf("argument-only message = %q, want narrowed string mismatch", argOnly[0].Message)
+	}
+
+	all := ProduceWithConfig(result, Config{})
+	var argDiags []diagnostic.Diagnostic
+	for _, diag := range all {
+		if diag.Code == CodeDirectCallArgType {
+			argDiags = append(argDiags, diag)
+		}
+	}
+	if len(argDiags) != 1 {
+		t.Fatalf("all diagnostics = %#v, want one direct-call argument diagnostic", all)
+	}
+	if !strings.Contains(argDiags[0].Message, "argument 1 (v) is string, not number") {
+		t.Fatalf("message = %q, want narrowed string mismatch", argDiags[0].Message)
+	}
+}
+
 func TestProduceDirectCallArgumentsUseJudgmentPolicy(t *testing.T) {
 	result := runDiagnosticsResult(t, `local function need_string(value: string): ()
 end

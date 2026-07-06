@@ -713,7 +713,8 @@ accept(raw)
 	if d := diags[0]; d.Code != CodeDirectCallArgType || !strings.Contains(d.Message, "id") {
 		t.Fatalf("diagnostic = %#v, want direct call mismatch for record id contract", d)
 	}
-	if got := diags[0].Explanation.String(); !strings.Contains(got, "argument 1 (raw) has type any") ||
+	if got := diags[0].Explanation.String(); !strings.Contains(got, "argument 1 (raw) has type {id: string}") ||
+		!strings.Contains(got, "user asserted any") ||
 		!strings.Contains(got, "raw comes from any/unknown") ||
 		!strings.Contains(got, "no proof on this path shows raw satisfies the parameter type") {
 		t.Fatalf("explanation = %q, want explicit-any claim and missing-proof evidence", got)

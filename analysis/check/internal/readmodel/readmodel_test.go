@@ -2798,6 +2798,181 @@ end
 	}
 }
 
+func TestForEachCallArgumentUsesBoundaryRefinedDynamicTypeNameComparison(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type IntCell  = { kind: "number",  raw: number | string | boolean }
+type TextCell = { kind: "string",  raw: number | string | boolean }
+type FlagCell = { kind: "boolean", raw: number | string | boolean }
+type Cell = IntCell | TextCell | FlagCell
+
+local function flip(b: boolean): boolean return not b end
+
+local function render(cell: Cell): string
+    if cell.kind == "number" and type(cell.raw) == cell.kind then
+        return "n"
+    elseif cell.kind == "string" and type(cell.raw) == cell.kind then
+        return cell.raw
+    elseif cell.kind == "boolean" and type(cell.raw) == cell.kind then
+        if flip(cell.raw) then
+            return "t"
+        end
+        return "f"
+    end
+    return "?"
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil || len(root.FunctionResults()) < 2 {
+		t.Fatalf("function results = %#v, want flip and render", root)
+	}
+	var checkedArg bool
+	for _, fnResult := range root.FunctionResults() {
+		reader := New(fnResult)
+		for _, point := range reader.callPoints() {
+			site, ok := fnResult.CallSite(point)
+			if !ok {
+				continue
+			}
+			reader.forEachCallArgument(point, func(arg CallArgument) bool {
+				if arg.Label != "cell.raw" {
+					return true
+				}
+				checkedArg = true
+				if !typ.TypeEquals(arg.TypeWithPresence, typ.Boolean) {
+					t.Fatalf("cell.raw argument type = %v, want boolean from boundary-refined type-name comparison at call %#v", arg.TypeWithPresence, site)
+				}
+				return true
+			})
+		}
+	}
+	if !checkedArg {
+		t.Fatal("did not find flip(cell.raw) argument")
+	}
+}
+
+func TestForEachCallArgumentUsesCompoundTypeGuardedRootFromAnyRead(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Entry = {
+    id: string,
+    data: {[string]: any},
+}
+
+local function qualify_id(entry_id: string, relative_id: string): string
+    return entry_id .. ":" .. relative_id
+end
+
+function build_page(entry: Entry)
+    local raw_data_func = entry.data.data_func
+    if type(raw_data_func) == "string" and raw_data_func ~= "" then
+        return qualify_id(entry.id, raw_data_func)
+    end
+    return ""
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg, Signatures: signaturelookup.Source{IncludeStdlib: true}}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil || len(root.FunctionResults()) < 2 {
+		t.Fatalf("function results = %#v, want qualify_id and build_page", root)
+	}
+	var checkedArg bool
+	var reports []CallArgumentReport
+	for _, fnResult := range root.FunctionResults() {
+		reader := New(fnResult)
+		reader.ForEachCall(func(call CallSite) bool {
+			reports = append(reports, call.Reports...)
+			return true
+		})
+		for _, point := range reader.callPoints() {
+			reader.forEachCallArgument(point, func(arg CallArgument) bool {
+				if arg.Label != "raw_data_func" {
+					return true
+				}
+				checkedArg = true
+				if !typ.TypeEquals(arg.TypeWithPresence, typ.String) {
+					t.Fatalf("raw_data_func argument type = %v, want string from compound type guard", arg.TypeWithPresence)
+				}
+				return true
+			})
+		}
+	}
+	if !checkedArg {
+		t.Fatal("did not find qualify_id raw_data_func argument")
+	}
+	if len(reports) != 0 {
+		t.Fatalf("call reports = %#v, want guarded raw_data_func accepted", reports)
+	}
+}
+
+func TestForEachCallArgumentUsesBoundaryRefinedRootTypeGuardElse(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function need_number(n: number): number
+    return n
+end
+
+local v: number | string = 5
+if type(v) == "number" then
+    return 0
+else
+    return need_number(v)
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatal("missing root result")
+	}
+	var checkedArg bool
+	reader := New(root)
+	for _, point := range reader.callPoints() {
+		reader.forEachCallArgument(point, func(arg CallArgument) bool {
+			if arg.Label != "v" {
+				return true
+			}
+			checkedArg = true
+			if !typ.TypeEquals(arg.TypeWithPresence, typ.String) {
+				site, _ := root.CallSite(point)
+				source, _ := site.ArgumentSourceAt(arg.Index)
+				p, pathOK := reader.callArgumentExpressionPath(source)
+				declared, declaredOK := root.DeclaredPathTypeAt(point, p, pathOK)
+				reduced, reducedOK := reader.RuntimeKindReducedType(arg.Value, declared)
+				t.Fatalf("v argument type = %v, want string from else-edge type guard (source=%#v path=%s pathOK=%v owned=%v declared=%v declaredOK=%v reduced=%v reducedOK=%v)",
+					arg.TypeWithPresence, source, p, pathOK, reader.rootPathArgumentUsesBoundary(point, p), declared, declaredOK, reduced, reducedOK)
+			}
+			return true
+		})
+	}
+	if !checkedArg {
+		t.Fatal("did not find need_number(v) argument")
+	}
+	var reports []CallArgumentReport
+	reader.ForEachCall(func(call CallSite) bool {
+		if call.Point != 0 && !root.PointNormallyReachable(call.Point) {
+			t.Fatalf("call point %d has report candidates but is not normally reachable", call.Point)
+		}
+		reports = append(reports, call.Reports...)
+		return true
+	})
+	if len(reports) != 1 || reports[0].Check.Admissible {
+		t.Fatalf("call reports = %#v, want one non-admissible string-to-number argument report", reports)
+	}
+	if reports[0].Kind != readapi.CallArgumentReportObligation || reports[0].Check.Expected == nil {
+		t.Fatalf("call reports = %#v, want obligation report with expected type", reports)
+	}
+}
+
 func TestForEachCallKeepsDifferentContractAfterInvalidDeclaration(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
@@ -2834,6 +3009,244 @@ end
 	}
 	if !typ.TypeEquals(reports[0].Check.Expected, typ.Integer) {
 		t.Fatalf("expected = %v, want integer", reports[0].Check.Expected)
+	}
+}
+
+func TestForEachCallArgumentUsesDisjointRuntimeValidationCast(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function need_record(value: {name: string}): ()
+end
+
+local function f(y: number): ()
+	need_record(y as {name: string})
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	result := checked.RootResult()
+	if result == nil {
+		t.Fatal("RootResult nil")
+	}
+	want := typetable.NewRecord().
+		Field("name", typ.String).
+		Build()
+	var checkedArg bool
+	var reports []CallArgumentReport
+	for _, fn := range result.FunctionResults() {
+		reader := New(fn)
+		reader.ForEachCall(func(call CallSite) bool {
+			reports = append(reports, call.Reports...)
+			return true
+		})
+		for _, point := range reader.callPoints() {
+			reader.forEachCallArgument(point, func(arg CallArgument) bool {
+				if arg.Label != "y" {
+					return true
+				}
+				checkedArg = true
+				if !typ.TypeEquals(arg.TypeWithPresence, want) {
+					site, _ := fn.CallSite(point)
+					source, sourceOK := site.ArgumentSourceAt(arg.Index)
+					exprPath, exprPathOK := fn.ExpressionPathRef(source.ExprRef)
+					boundaryValue, boundaryOK := fn.SourceValueAtBoundary(point, source)
+					boundaryType, boundaryTypeOK := reader.ValueTypeWithPresence(boundaryValue)
+					t.Fatalf("y cast argument type = %v, want runtime-validated %v (source=%#v sourceOK=%v runtime=%v exprPath=%s exprPathOK=%v boundaryType=%v boundaryOK=%v boundaryTypeOK=%v)",
+						arg.TypeWithPresence, want, source, sourceOK, fn.SourceHasRuntimeValidation(source), exprPath, exprPathOK, boundaryType, boundaryOK, boundaryTypeOK)
+				}
+				return true
+			})
+		}
+	}
+	if !checkedArg {
+		t.Fatal("did not find need_record(y as {name: string}) argument")
+	}
+	if len(reports) != 0 {
+		t.Fatalf("call reports = %#v, want runtime validation cast accepted", reports)
+	}
+}
+
+func TestForEachCallArgumentUsesCapturedEntryLiteralWhenPreCallReadIsTop(t *testing.T) {
+	reg := standard.Registry()
+	contract := manifest.New("contract")
+	contract.DefineFunctionSignature("contract.get", signature.Function{
+		Type: typ.Func().
+			Param("id", typ.String).
+			Returns(typ.Any, typeexpr.Optional(typ.String)).
+			Build(),
+	})
+	stmts := parseChunk(t, `
+local contract = require("contract")
+local CONTRACT_ID = "wippy.llm:usage_tracker"
+
+local function get_usage_tracker()
+    local tracker_contract, err = contract.get(CONTRACT_ID)
+    return tracker_contract
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{Manifests: []*manifest.Manifest{contract}},
+	}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatal("RootResult nil")
+	}
+	var checkedArg bool
+	var reports []CallArgumentReport
+	for _, fn := range root.ReportableFunctionResults() {
+		reader := New(fn)
+		reader.ForEachCall(func(call CallSite) bool {
+			reports = append(reports, call.Reports...)
+			return true
+		})
+		for _, point := range reader.callPoints() {
+			reader.forEachCallArgument(point, func(arg CallArgument) bool {
+				if arg.Label != "CONTRACT_ID" {
+					return true
+				}
+				checkedArg = true
+				if !subtype.IsSubtype(arg.TypeWithPresence, typ.String) {
+					site, _ := fn.CallSite(point)
+					source, sourceOK := site.ArgumentSourceAt(arg.Index)
+					boundaryValue, boundaryOK := fn.SourceValueAtBoundary(point, source)
+					boundaryType, boundaryTypeOK := reader.ValueTypeWithPresence(boundaryValue)
+					beforeValue, beforeOK := fn.SourceValueBeforeBoundary(point, source)
+					beforeType, beforeTypeOK := reader.ValueTypeWithPresence(beforeValue)
+					exprPath, exprPathOK := fn.ExpressionPathRef(source.ExprRef)
+					t.Fatalf("CONTRACT_ID argument type = %v, want string (source=%#v sourceOK=%v exprPath=%s/%v boundary=%v/%v/%v before=%v/%v/%v)",
+						arg.TypeWithPresence, source, sourceOK, exprPath, exprPathOK, boundaryType, boundaryOK, boundaryTypeOK, beforeType, beforeOK, beforeTypeOK)
+				}
+				return true
+			})
+		}
+	}
+	if !checkedArg {
+		t.Fatal("did not find contract.get(CONTRACT_ID) argument")
+	}
+	if len(reports) != 0 {
+		t.Fatalf("call reports = %#v, want captured literal accepted as string", reports)
+	}
+}
+
+func TestForEachCallArgumentUsesNilOrNotTableFallbackJoin(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function consume(value: table): ()
+end
+
+local function normalize(raw: unknown): ()
+    local value = raw
+    if not value or type(value) ~= "table" then
+        value = { run = true }
+    end
+    consume(value)
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatal("RootResult nil")
+	}
+	var checkedArg bool
+	var reports []CallArgumentReport
+	for _, fn := range root.ReportableFunctionResults() {
+		reader := New(fn)
+		reader.ForEachCall(func(call CallSite) bool {
+			reports = append(reports, call.Reports...)
+			return true
+		})
+		for _, point := range reader.callPoints() {
+			reader.forEachCallArgument(point, func(arg CallArgument) bool {
+				if arg.Label != "value" {
+					return true
+				}
+				checkedArg = true
+				if typ.IsAny(arg.TypeWithPresence) || typ.IsUnknown(arg.TypeWithPresence) || !subtype.IsSubtype(arg.TypeWithPresence, typ.BuiltinTableTopMarker()) {
+					site, _ := fn.CallSite(point)
+					source, sourceOK := site.ArgumentSourceAt(arg.Index)
+					boundaryValue, boundaryOK := fn.SourceValueAtBoundary(point, source)
+					boundaryType, boundaryTypeOK := reader.ValueTypeWithPresence(boundaryValue)
+					beforeValue, beforeOK := fn.SourceValueBeforeBoundary(point, source)
+					beforeType, beforeTypeOK := reader.ValueTypeWithPresence(beforeValue)
+					exprPath, exprPathOK := fn.ExpressionPathRef(source.ExprRef)
+					t.Fatalf("value argument type = %v, want table (source=%#v sourceOK=%v exprPath=%s/%v boundary=%v/%v/%v before=%v/%v/%v)",
+						arg.TypeWithPresence, source, sourceOK, exprPath, exprPathOK, boundaryType, boundaryOK, boundaryTypeOK, beforeType, beforeOK, beforeTypeOK)
+				}
+				return true
+			})
+		}
+	}
+	if !checkedArg {
+		t.Fatal("did not find consume(value) argument")
+	}
+	if len(reports) != 0 {
+		t.Fatalf("call reports = %#v, want nil-or-not-table fallback accepted as table", reports)
+	}
+}
+
+func TestForEachCallArgumentUsesNumericForIntegerVariable(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function take_integer(n: integer): ()
+end
+
+local shuffled = {}
+for i = #shuffled, 2, -1 do
+    take_integer(i)
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatal("RootResult nil")
+	}
+	reader := New(root)
+	var checkedArg bool
+	var reports []CallArgumentReport
+	reader.ForEachCall(func(call CallSite) bool {
+		reports = append(reports, call.Reports...)
+		return true
+	})
+	for _, point := range reader.callPoints() {
+		reader.forEachCallArgument(point, func(arg CallArgument) bool {
+			if arg.Label != "i" {
+				return true
+			}
+			checkedArg = true
+			if !subtype.IsSubtype(arg.TypeWithPresence, typ.Integer) {
+				site, _ := root.CallSite(point)
+				source, sourceOK := site.ArgumentSourceAt(arg.Index)
+				boundaryValue, boundaryOK := root.SourceValueAtBoundary(point, source)
+				boundaryType, boundaryTypeOK := reader.ValueTypeWithPresence(boundaryValue)
+				beforeValue, beforeOK := root.SourceValueBeforeBoundary(point, source)
+				beforeType, beforeTypeOK := reader.ValueTypeWithPresence(beforeValue)
+				exprPath, exprPathOK := root.ExpressionPathRef(source.ExprRef)
+				t.Fatalf("i argument type = %v, want integer (source=%#v sourceOK=%v exprPath=%s/%v boundary=%v/%v/%v before=%v/%v/%v)",
+					arg.TypeWithPresence, source, sourceOK, exprPath, exprPathOK, boundaryType, boundaryOK, boundaryTypeOK, beforeType, beforeOK, beforeTypeOK)
+			}
+			return true
+		})
+	}
+	if !checkedArg {
+		t.Fatal("did not find take_integer(i) argument")
+	}
+	if len(reports) != 0 {
+		t.Fatalf("call reports = %#v, want numeric-for integer variable accepted", reports)
 	}
 }
 

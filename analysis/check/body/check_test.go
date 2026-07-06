@@ -293,6 +293,88 @@ end`)
 	}
 }
 
+func TestSourceValueAtBoundaryAppliesDisjointRuntimeValidationCallArgument(t *testing.T) {
+	reg := standard.Registry()
+	result, err := CheckFunction(parseFunction(t, `
+function f(y: number): ()
+	sink(y as {name: string})
+end
+`), Config{Registry: reg, Globals: []string{"sink"}})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	graph := result.Graph()
+	if graph == nil {
+		t.Fatal("missing graph")
+	}
+	want := typetable.NewRecord().Field("name", typ.String).Build()
+	for _, point := range graph.RPO() {
+		site, ok := result.CallSite(point)
+		if !ok {
+			continue
+		}
+		source, ok := site.ArgumentSourceAt(0)
+		if !ok {
+			continue
+		}
+		if !result.SourceHasRuntimeValidation(source) {
+			t.Fatalf("call argument source = %#v, want runtime-validation source", source)
+		}
+		value, ok := result.SourceValueAtBoundary(point, source)
+		if !ok {
+			t.Fatalf("SourceValueAtBoundary returned false for %#v", source)
+		}
+		got, ok := typevalue.WitnessOf(reg, value)
+		if !ok || !typ.TypeEquals(got, want) {
+			t.Fatalf("SourceValueAtBoundary type = %v/%v, want %v", got, ok, want)
+		}
+		return
+	}
+	t.Fatal("missing call site")
+}
+
+func TestSourceValueAtBoundaryAppliesDisjointRuntimeValidationLocalFunctionArgument(t *testing.T) {
+	reg := standard.Registry()
+	result, err := CheckFunction(parseFunction(t, `
+function f(y: number): ()
+	local function need_record(value: {name: string}): ()
+	end
+	need_record(y as {name: string})
+end
+`), Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	graph := result.Graph()
+	if graph == nil {
+		t.Fatal("missing graph")
+	}
+	want := typetable.NewRecord().Field("name", typ.String).Build()
+	for _, point := range graph.RPO() {
+		site, ok := result.CallSite(point)
+		if !ok {
+			continue
+		}
+		source, ok := site.ArgumentSourceAt(0)
+		if !ok {
+			continue
+		}
+		if !result.SourceHasRuntimeValidation(source) {
+			continue
+		}
+		value, ok := result.SourceValueAtBoundary(point, source)
+		if !ok {
+			t.Fatalf("SourceValueAtBoundary returned false for %#v", source)
+		}
+		got, ok := typevalue.WitnessOf(reg, value)
+		if !ok || !typ.TypeEquals(got, want) {
+			t.Fatalf("SourceValueAtBoundary type = %v/%v, want %v", got, ok, want)
+		}
+		return
+	}
+	t.Fatal("missing runtime-validation call argument")
+}
+
 func TestDominatingRuntimeTypeGuardProvesRejectingBranchCannotReach(t *testing.T) {
 	reg := standard.Registry()
 	result, err := CheckChunk(parseChunk(t, `
@@ -3481,6 +3563,29 @@ end`)
 	}
 }
 
+func TestDominatingBranchRefinementForRootSurvivesUnrelatedMemberWrite(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `function f(x: any, box: { value: boolean }): ()
+	if type(x) == "string" then
+		box.value = false
+		local y = x
+	end
+end`)
+	result, err := CheckFunction(fn, Config{Registry: reg, Signatures: signaturelookup.Source{IncludeStdlib: true}})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	point, exprPath := localSourcePath(t, result, "y")
+	value, ok := result.DominatingBranchRefinementValueForPath(point, exprPath)
+	if !ok {
+		t.Fatalf("DominatingBranchRefinementValueForPath(%d, %s) = false, want root type guard proof after unrelated member write", point, exprPath)
+	}
+	got, ok := typevalue.TypeOf(reg, value)
+	if !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("root branch refinement type = %v/%v, want string", got, ok)
+	}
+}
+
 func localSourcePath(t *testing.T, result *Result, name string) (cfg.Point, path.Path) {
 	t.Helper()
 	for _, point := range result.Graph().RPO() {
@@ -3595,6 +3700,58 @@ end
 	}
 	if !checked {
 		t.Fatal("did not find flip call")
+	}
+}
+
+func TestReadBoundaryCompoundTypeGuardNarrowsLocalFromAnyRead(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Entry = {
+    id: string,
+    data: {[string]: any},
+}
+
+local function qualify_id(entry_id: string, relative_id: string): string
+    return entry_id .. ":" .. relative_id
+end
+
+function build_page(entry: Entry)
+    local raw_data_func = entry.data.data_func
+    if type(raw_data_func) == "string" and raw_data_func ~= "" then
+        return qualify_id(entry.id, raw_data_func)
+    end
+    return ""
+end
+`)
+
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	functions := bindings.NestedFunctions(nil)
+	if len(functions) < 2 {
+		t.Fatalf("nested functions = %d, want qualify_id and build_page", len(functions))
+	}
+	result, err := CheckBoundFunction(functions[1], bindings, Config{Registry: reg, Signatures: signaturelookup.Source{IncludeStdlib: true}})
+	if err != nil {
+		t.Fatalf("CheckBoundFunction(build_page): %v", err)
+	}
+	checked := false
+	for _, point := range result.Graph().RPO() {
+		call, ok := result.Call(point)
+		callee, _ := call.Func.(*ast.IdentExpr)
+		if !ok || callee == nil || callee.Value != "qualify_id" || len(call.Args) < 2 {
+			continue
+		}
+		checked = true
+		got, ok := result.ExpressionValueAtBoundary(point, call.Args[1])
+		if !ok {
+			t.Fatalf("qualify_id second argument value not readable at boundary")
+		}
+		gotType, ok := typevalue.TypeOf(reg, got)
+		if !ok || !typ.TypeEquals(gotType, typ.String) {
+			t.Fatalf("qualify_id second argument type = %v/%v, want string", gotType, ok)
+		}
+	}
+	if !checked {
+		t.Fatal("did not find qualify_id call")
 	}
 }
 
