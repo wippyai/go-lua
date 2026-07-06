@@ -507,6 +507,14 @@ end`), body.Config{Registry: reg})
 	got := summaryprojection.FromResult(result)
 
 	projectAssertParamObligationKind(t, reg, got, 1, runtimekind.Singleton(runtimekind.String))
+	if len(got.ParamMemberCallObligations) != 1 {
+		t.Fatalf("member call obligations = %#v, want one client.invoke obligation", got.ParamMemberCallObligations)
+	}
+	if got.ParamMemberCallObligations[0].ReceiverParam != 0 ||
+		got.ParamMemberCallObligations[0].ArgParam != 1 ||
+		got.ParamMemberCallObligations[0].MemberParamIndex != 0 {
+		t.Fatalf("member call obligation = %#v, want client.invoke argument model_id -> member parameter 1", got.ParamMemberCallObligations[0])
+	}
 	if len(got.NormalReturnParams) > 1 && !product.Equal(reg, got.NormalReturnParams[1], product.Top()) {
 		t.Fatalf("normal return param 1 = %#v, want no post-return refinement", got.NormalReturnParams[1])
 	}

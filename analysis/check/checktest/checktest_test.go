@@ -1156,12 +1156,13 @@ func TestCheckAndExportPublishesReturnedTableFunctionMemberParams(t *testing.T) 
 }
 
 func TestRequireCheckAndExportedReturnedTableDottedMemberChecksArgs(t *testing.T) {
-	mod := CheckAndExport(`
+	mod := CheckFileAndExport(`
 		local client = {}
 		function client.invoke(model_id: string, payload: any, options: any)
+			return { ok = true }, nil
 		end
 		return client
-	`, "bedrock_client")
+	`, "bedrock_client", "bedrock_client.lua")
 	if len(mod.Errors) != 0 {
 		t.Fatalf("module errors = %#v, want none", mod.Errors)
 	}
@@ -1179,17 +1180,18 @@ func TestRequireCheckAndExportedReturnedTableDottedMemberChecksArgs(t *testing.T
 }
 
 func TestCheckHelperSummaryObligationChecksImportedMemberForwardedArg(t *testing.T) {
-	mod := CheckAndExport(`
+	mod := CheckFileAndExport(`
 		local client = {}
 		function client.invoke(model_id: string, payload: any, options: any)
+			return { ok = true }, nil
 		end
 		return client
-	`, "bedrock_client")
+	`, "bedrock_client", "bedrock_client.lua")
 	if len(mod.Errors) != 0 {
 		t.Fatalf("module errors = %#v, want none", mod.Errors)
 	}
 
-	result := Check(`
+	result := CheckFile(`
 		local bedrock_client = require("bedrock_client")
 		local function helper(client, model_id)
 			return client.invoke(model_id, {}, {})
@@ -1197,13 +1199,14 @@ func TestCheckHelperSummaryObligationChecksImportedMemberForwardedArg(t *testing
 		local contract_args = nil :: any
 		local model_id = contract_args.model
 		helper(bedrock_client, model_id)
-	`, WithStdlib(), WithModule("bedrock_client", mod))
+	`, "main.lua", WithModule("bedrock_client", mod))
 	if len(result.Diagnostics) != 1 {
 		t.Fatalf("diagnostics = %d, want 1: %#v", len(result.Diagnostics), result.Diagnostics)
 	}
 	if result.Diagnostics[0].Code != diagnostics.CodeDirectCallArgType {
 		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeDirectCallArgType)
 	}
+	requireEvidenceMessage(t, result.Diagnostics[0], "inside helper, argument 1 (model_id) is passed to client.invoke parameter 1, which requires string")
 }
 
 func TestCheckHelperSummaryUsesFieldCarriedImportedProviderMember(t *testing.T) {

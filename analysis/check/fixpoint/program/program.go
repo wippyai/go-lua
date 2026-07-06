@@ -31,6 +31,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -1149,7 +1150,7 @@ func applyProtectedCallArgumentParamEntryState(
 				entry = updated
 			}
 		}
-		if updated, ok := applyCallArgumentPathEntryState(reg, prepass, point, source, slot, entry); ok {
+		if updated, ok := applyCallArgumentPathEntryState(reg, prepass, point, source, slot, nil, entry); ok {
 			entry = updated
 		}
 		seen = true
@@ -1937,6 +1938,7 @@ func applyCallArgumentParamEntryState(
 	}
 	seen := false
 	caller, hasCaller := prepass.StateAtBoundary(point)
+	capturedArgumentRoots := callArgumentCapturedRootSymbols(bindings, prepass, site)
 	nextParam := 0
 	if receiver, ok := callReceiverValue(reg, prepass, point, site); ok {
 		if slot, ok := paramValueSlot(slots, nextParam); ok {
@@ -1998,7 +2000,7 @@ func applyCallArgumentParamEntryState(
 			}
 		}
 		if !rootTopLikeContract {
-			if updated, ok := applyCallArgumentPathEntryState(reg, prepass, point, source, slots[i+nextParam], entry); ok {
+			if updated, ok := applyCallArgumentPathEntryState(reg, prepass, point, source, slots[i+nextParam], capturedArgumentRoots, entry); ok {
 				entry = updated
 			}
 		}
@@ -2006,6 +2008,43 @@ func applyCallArgumentParamEntryState(
 		return true
 	})
 	return entry, seen
+}
+
+func callArgumentCapturedRootSymbols(bindings *bind.Result, prepass *body.Result, site factflow.CallSite) map[symbol.ID]struct{} {
+	if bindings == nil || prepass == nil {
+		return nil
+	}
+	var out map[symbol.ID]struct{}
+	resolver := closureCaptureSeeder{bindings: bindings}
+	site.ForEachArgumentSource(func(_ int, source factflow.ValueSource) bool {
+		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+			return true
+		}
+		fnSym, ok := prepass.ExpressionFunction(source.ExprRef)
+		if !ok || fnSym == 0 {
+			if p, pathOK := prepass.ExpressionPathRef(source.ExprRef); pathOK {
+				fnSym = p.Symbol
+			}
+		}
+		if fnSym == 0 {
+			return true
+		}
+		fn, ok := resolver.functionForCapturedSymbol(fnSym)
+		if !ok || fn == nil {
+			return true
+		}
+		for _, capture := range bindings.DirectCaptures(fn) {
+			if capture.Captured == 0 {
+				continue
+			}
+			if out == nil {
+				out = make(map[symbol.ID]struct{})
+			}
+			out[capture.Captured] = struct{}{}
+		}
+		return true
+	})
+	return out
 }
 
 func writeFiniteParamRootPathValue(reg *axis.Registry, ks *keyspace.KeySpace, entry state.State, slot bind.ParamSlot, value product.Value) state.State {
@@ -2167,6 +2206,7 @@ func applyCallArgumentPathEntryState(
 	point cfg.Point,
 	source factflow.ValueSource,
 	slot bind.ParamSlot,
+	capturedArgumentRoots map[symbol.ID]struct{},
 	entry state.State,
 ) (state.State, bool) {
 	if reg == nil || prepass == nil || slot.Symbol == 0 || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
@@ -2192,8 +2232,20 @@ func applyCallArgumentPathEntryState(
 	}
 	ks := prepass.KeySpace()
 	out := entry
-	edit := out.EditPathEvidence(reg)
 	seen := false
+	if _, captured := capturedArgumentRoots[actualPath.RootOnly().Symbol]; captured {
+		if actualKey, actualOK := ks.FromPathKey(actualRootKey); actualOK {
+			if paramKey, paramOK := ks.FromPathKey(paramRootKey); paramOK && actualKey != paramKey {
+				out = out.AddBranchProof(pathevidence.BranchProof{
+					Kind:  pathevidence.BranchProofPathEqual,
+					Path:  paramKey,
+					Other: actualKey,
+				})
+				seen = true
+			}
+		}
+	}
+	edit := out.EditPathEvidence(reg)
 	bottom := product.Bottom(reg)
 	if snapshot := caller.PathRefinementsSnapshot(ks); !snapshot.Top {
 		for pathKey, value := range snapshot.Refinements {
@@ -3267,8 +3319,7 @@ func overlayMaterializedSummaryProofsForResult(
 		next.ParamObligations = append([]product.Value(nil), projected.ParamObligations...)
 		changed = true
 	}
-	if len(projected.ParamMemberCallObligations) != 0 &&
-		paramMemberCallObligationsSubset(projected.ParamMemberCallObligations, current.ParamMemberCallObligations) &&
+	if paramMemberCallObligationsSubset(projected.ParamMemberCallObligations, current.ParamMemberCallObligations) &&
 		!paramMemberCallObligationsEqual(projected.ParamMemberCallObligations, current.ParamMemberCallObligations) {
 		next.ParamMemberCallObligations = append([]summary.ParamMemberCallObligation(nil), projected.ParamMemberCallObligations...)
 		changed = true

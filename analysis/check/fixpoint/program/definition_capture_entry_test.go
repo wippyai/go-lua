@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
@@ -16,6 +17,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -136,6 +139,234 @@ end
 	if !ok || !subtype.IsSubtype(assignedType, typ.String) {
 		t.Fatalf("assigned frame type = %v/%v, want subtype of string", assignedType, ok)
 	}
+}
+
+func TestDefinitionCaptureEntrySeedsCapturedLiteralString(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local CONTRACT_ID = "wippy.llm:usage_tracker"
+
+local function get_usage_tracker()
+	return CONTRACT_ID
+end
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	keys := collectKeys(bindings, rootKey(summary.SummaryKey{}), reg, nil, body.Config{}.ModuleExports, stmts)
+	prepared, err := prepareBoundChunkBodies(stmts, bindings, body.Config{Registry: reg}, keys)
+	if err != nil {
+		t.Fatalf("prepareBoundChunkBodies: %v", err)
+	}
+	if _, err := collectCallContextKeys(&keys, stmts, bindings, body.Config{Registry: reg}, nil, prepared); err != nil {
+		t.Fatalf("collectCallContextKeys: %v", err)
+	}
+	fn := findLocalFunctionByName(t, bindings, "get_usage_tracker")
+	entry, _ := keyedFunctionEntryForTest(t, keys.functions, fn)
+	var contractID symbol.ID
+	for _, stmt := range stmts {
+		assign, ok := stmt.(*ast.LocalAssignStmt)
+		if !ok || len(assign.Names) == 0 || assign.Names[0] != "CONTRACT_ID" {
+			continue
+		}
+		symbols := bindings.LocalSymbols(assign)
+		if len(symbols) != 0 {
+			contractID = symbols[0]
+		}
+	}
+	if contractID == 0 {
+		t.Fatal("CONTRACT_ID symbol missing")
+	}
+	value := entry.ReadValue(reg, statekey.SymbolValue(contractID))
+	got, ok := typevalue.TypeOf(reg, value)
+	if !ok || !subtype.IsSubtype(got, typ.String) {
+		t.Fatalf("captured CONTRACT_ID type = %v/%v, want string", got, ok)
+	}
+}
+
+func TestRunBoundChunkCapturedLiteralStringFeedsImportedCall(t *testing.T) {
+	reg := standard.Registry()
+	contract := manifest.New("contract")
+	contract.DefineFunctionSignature("contract.get", signature.Function{
+		Type: typ.Func().
+			Param("id", typ.String).
+			Returns(typ.Any, typeexpr.Optional(typ.String)).
+			Build(),
+	})
+	stmts := parseChunk(t, `
+local contract = require("contract")
+local CONTRACT_ID = "wippy.llm:usage_tracker"
+
+local function get_usage_tracker()
+    local tracker_contract, err = contract.get(CONTRACT_ID)
+    return tracker_contract
+end
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result, err := RunBoundChunk(stmts, bindings, Config{Check: body.Config{Registry: reg, Signatures: signaturelookup.Source{Manifests: []*manifest.Manifest{contract}}}})
+	if err != nil {
+		t.Fatalf("RunBoundChunk: %v", err)
+	}
+	fn := findLocalFunctionByName(t, bindings, "get_usage_tracker")
+	child := findMaterializedFunctionResult(t, result.RootResult(), fn)
+	assertCapturedContractIDCallArgumentIsString(t, reg, child)
+	var sawReportable bool
+	for _, reportable := range result.RootResult().ReportableFunctionResults() {
+		if reportable == nil || reportable.Function() != fn {
+			continue
+		}
+		sawReportable = true
+		assertCapturedContractIDCallArgumentIsString(t, reg, reportable)
+	}
+	if !sawReportable {
+		t.Fatal("get_usage_tracker is not reportable")
+	}
+}
+
+func assertCapturedContractIDCallArgumentIsString(t *testing.T, reg *axis.Registry, child *body.Result) {
+	t.Helper()
+	graph := child.Graph()
+	if graph == nil {
+		t.Fatal("missing child graph")
+	}
+	for _, point := range graph.RPO() {
+		site, ok := child.CallSite(point)
+		if !ok {
+			continue
+		}
+		source, ok := site.ArgumentSourceAt(0)
+		if !ok {
+			continue
+		}
+		value, ok := child.SourceValueAtBoundary(point, source)
+		if !ok {
+			t.Fatalf("call argument source value missing for %#v", source)
+		}
+		got, ok := typevalue.TypeOf(reg, value)
+		if !ok || !subtype.IsSubtype(got, typ.String) {
+			t.Fatalf("captured CONTRACT_ID call argument type = %v/%v, want string", got, ok)
+		}
+		return
+	}
+	t.Fatal("missing imported contract.get call")
+}
+
+func TestDefinitionCaptureEntryUsesObjectLiteralFunctionDefinitionBoundary(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Builder = {
+    get_messages: (self: Builder) -> {string},
+}
+
+local function make_builder(input: {string}?)
+    if not input then
+        return nil, "missing input"
+    end
+    local builder: Builder = {
+        get_messages = function(self: Builder): {string}
+            return input
+        end,
+    }
+    return builder, nil
+end
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result, err := RunBoundChunk(stmts, bindings, Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunBoundChunk: %v", err)
+	}
+	var capturedFn *ast.FunctionExpr
+	var inputSym symbol.ID
+	for _, origin := range bindings.FunctionOrigins() {
+		for _, capture := range bindings.DirectCaptures(origin.Func) {
+			if capture.CapturedName != "input" {
+				continue
+			}
+			capturedFn = origin.Func
+			inputSym = capture.Captured
+			break
+		}
+	}
+	if capturedFn == nil || inputSym == 0 {
+		t.Fatal("captured get_messages/input not found")
+	}
+	child := findMaterializedFunctionResult(t, result.RootResult(), capturedFn)
+	entry, ok := child.EntryState()
+	if !ok {
+		t.Fatal("captured get_messages entry state missing")
+	}
+	value := entry.ReadValue(reg, statekey.SymbolValue(inputSym))
+	got, ok := typevalue.TypeOf(reg, value)
+	want := typ.NewArray(typ.String)
+	if !ok || !subtype.IsSubtype(got, want) {
+		t.Fatalf("captured input type = %v/%v, want %v from post-guard object-literal function definition", got, ok, want)
+	}
+}
+
+func TestRunChunkClearsStaleMemberCallObligationAfterCapturedCallbackMutation(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function invoke(provider, mutate, payload)
+    mutate()
+    provider.send(payload)
+end
+
+local p: { send: (number) -> () } = {
+    send = function(v: number): () end,
+}
+
+local function mutate()
+    p.send = function(v: string): () end
+end
+
+invoke(p, mutate, "ok")
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result, err := RunBoundChunk(stmts, bindings, Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := result.RootResult()
+	if root == nil || root.Graph() == nil {
+		t.Fatal("missing root result graph")
+	}
+	for _, point := range root.Graph().RPO() {
+		call, ok := root.Call(point)
+		if !ok {
+			continue
+		}
+		id, ok := call.Func.(*ast.IdentExpr)
+		if !ok || id.Value != "invoke" {
+			continue
+		}
+		site, ok := root.CallSite(point)
+		if !ok {
+			t.Fatalf("CallSite(%d) returned false", point)
+		}
+		pSym := symbol.ID(0)
+		for _, stmt := range stmts {
+			assign, ok := stmt.(*ast.LocalAssignStmt)
+			if !ok {
+				continue
+			}
+			for i, name := range assign.Names {
+				if name == "p" {
+					pSym, _ = bindings.LocalSymbolAt(assign, i)
+				}
+			}
+		}
+		capturedRoots := callArgumentCapturedRootSymbols(bindings, root, site)
+		if _, ok := capturedRoots[pSym]; !ok {
+			t.Fatalf("invoke captured argument roots = %#v, want p symbol %d from mutate callback", capturedRoots, pSym)
+		}
+		outcome, ok := root.CallOutcomeAt(point)
+		if !ok {
+			t.Fatalf("CallOutcomeAt(%d) returned false", point)
+		}
+		if len(outcome.ParamObligations) != 0 {
+			t.Fatalf("invoke outcome ParamObligations = %#v, want none after captured callback invalidates provider.send", outcome.ParamObligations)
+		}
+		return
+	}
+	t.Fatal("invoke(p, mutate, \"ok\") call not found")
 }
 
 func TestRunBoundChunkCapturedTableInsertSurvivesCallContextRefresh(t *testing.T) {

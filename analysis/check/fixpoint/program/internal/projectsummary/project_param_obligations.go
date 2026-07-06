@@ -16,8 +16,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -105,6 +107,14 @@ type pathValueAtBoundaryReader interface {
 
 type pathEquivalentAtBoundaryReader interface {
 	PathsEquivalentAtBoundary(cfg.Point, pathdom.Path, pathdom.Path) bool
+}
+
+type pathKeyAtBoundaryReader interface {
+	PathKeyAtBoundary(cfg.Point, pathdom.Path) (pathdom.PathKey, bool)
+}
+
+type stateAtBoundaryReader interface {
+	StateAtBoundary(cfg.Point) (state.State, bool)
 }
 
 type typeBindingReader interface {
@@ -892,7 +902,9 @@ func (p paramObligationProjector) memberCallObligations(fact semantics.CallFact,
 			continue
 		}
 		memberParamIndex := i + memberOffset
-		if memberParamIndex < len(params) && p.expressionValueSatisfiesType(arg, params[memberParamIndex]) {
+		if memberParamIndex < len(params) &&
+			p.expressionValueSatisfiesType(arg, params[memberParamIndex]) &&
+			p.paramHasDeclaredType(argParam) {
 			continue
 		}
 		out = append(out, summary.ParamMemberCallObligation{
@@ -906,6 +918,22 @@ func (p paramObligationProjector) memberCallObligations(fact semantics.CallFact,
 		})
 	}
 	return out
+}
+
+func (p paramObligationProjector) paramHasDeclaredType(param int) bool {
+	if param < 0 || param >= len(p.params) {
+		return false
+	}
+	sym := p.params[param].Symbol
+	if sym == 0 {
+		return false
+	}
+	annotationReader, ok := p.result.(symbolTypeAnnotationReader)
+	if !ok {
+		return false
+	}
+	_, ok = annotationReader.SymbolTypeAnnotation(sym)
+	return ok
 }
 
 func (p paramObligationProjector) memberCallArgumentSubjectLabel(index int, param pathdom.Path) string {
@@ -999,6 +1027,9 @@ func (p paramObligationProjector) callOutcomeInvalidatesMemberReceiver(site fact
 		appendSubstituted(&targets, callBindings, invalidation.Path)
 	}
 	for _, memberWrite := range outcome.NormalReturnFacts.PathStaticMembers {
+		if !pathStaticMemberHasClearingInvalidation(outcome.NormalReturnFacts.PathInvalidations, memberWrite.Path) {
+			continue
+		}
 		appendSubstituted(&targets, callBindings, memberWrite.Path)
 	}
 	for _, target := range targets {
@@ -1009,6 +1040,36 @@ func (p paramObligationProjector) callOutcomeInvalidatesMemberReceiver(site fact
 		}
 	}
 	return false
+}
+
+func pathStaticMemberHasClearingInvalidation(invalidations []callboundary.PathInvalidationFact, memberPath pathdom.Path) bool {
+	if memberPath.IsEmpty() {
+		return false
+	}
+	for _, invalidation := range invalidations {
+		if !invalidation.ClearTarget {
+			continue
+		}
+		if pathsMatchIgnoringRootVersion(invalidation.Path, memberPath) {
+			return true
+		}
+	}
+	return false
+}
+
+func pathsMatchIgnoringRootVersion(left, right pathdom.Path) bool {
+	if left.Symbol == 0 || right.Symbol == 0 || left.Symbol != right.Symbol {
+		return false
+	}
+	if len(left.Segments) != len(right.Segments) {
+		return false
+	}
+	for i := range left.Segments {
+		if left.Segments[i] != right.Segments[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (p paramObligationProjector) callArgumentBindings(site factflow.CallSiteView) []pathdom.Path {
@@ -1182,6 +1243,9 @@ func (p paramObligationProjector) pathsShareExactIdentity(left, right pathdom.Pa
 	if equivalent, ok := p.result.(pathEquivalentAtBoundaryReader); ok && equivalent.PathsEquivalentAtBoundary(p.point, left, right) {
 		return true
 	}
+	if p.pathsShareBoundaryEquivalence(left, right) {
+		return true
+	}
 	valueReader, ok := p.result.(pathValueAtBoundaryReader)
 	if !ok || p.reg == nil {
 		return false
@@ -1194,6 +1258,92 @@ func (p paramObligationProjector) pathsShareExactIdentity(left, right pathdom.Pa
 	leftID, leftOK := product.Get(p.reg, leftValue, identity.Key).ID()
 	rightID, rightOK := product.Get(p.reg, rightValue, identity.Key).ID()
 	return leftOK && rightOK && leftID != (identity.ID{}) && leftID == rightID
+}
+
+func (p paramObligationProjector) pathsShareBoundaryEquivalence(left, right pathdom.Path) bool {
+	stateReader, stateOK := p.result.(stateAtBoundaryReader)
+	keyReader, keyOK := p.result.(pathKeyAtBoundaryReader)
+	if !stateOK || !keyOK {
+		return false
+	}
+	boundary, ok := stateReader.StateAtBoundary(p.point)
+	if !ok {
+		return false
+	}
+	ks := p.result.KeySpace()
+	if ks == nil {
+		return false
+	}
+	leftCarried := rootlessCarriedPathKey(left)
+	rightCarried := rootlessCarriedPathKey(right)
+	if leftCarried == "" && rightCarried == "" {
+		return false
+	}
+	if !p.pathRootIsParameter(left) && !p.pathRootIsParameter(right) {
+		return false
+	}
+	leftKeys := p.pathBoundaryEquivalenceKeys(keyReader, left, leftCarried)
+	rightKeys := p.pathBoundaryEquivalenceKeys(keyReader, right, rightCarried)
+	for _, leftKey := range leftKeys {
+		if leftKey == "" {
+			continue
+		}
+		for _, rightKey := range rightKeys {
+			if rightKey == "" {
+				continue
+			}
+			if leftKey == rightKey || pathKeyListContains(boundary.EquivalentPathKeys(ks, leftKey), rightKey) {
+				return true
+			}
+			if pathKeyListContains(boundary.EquivalentPathKeys(ks, rightKey), leftKey) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (p paramObligationProjector) pathBoundaryEquivalenceKeys(reader pathKeyAtBoundaryReader, target pathdom.Path, carried pathdom.PathKey) []pathdom.PathKey {
+	var out []pathdom.PathKey
+	if key, ok := reader.PathKeyAtBoundary(p.point, target); ok && key != "" {
+		out = append(out, key)
+	}
+	if carried != "" && !pathKeyListContains(out, carried) {
+		out = append(out, carried)
+	}
+	return out
+}
+
+func rootlessCarriedPathKey(target pathdom.Path) pathdom.PathKey {
+	if target.Root != "" || target.Symbol == 0 || target.Version == 0 {
+		return ""
+	}
+	return target.Key()
+}
+
+func (p paramObligationProjector) pathRootIsParameter(target pathdom.Path) bool {
+	if target.IsEmpty() {
+		return false
+	}
+	root := target.RootOnly()
+	for _, param := range p.params {
+		if param.Symbol != 0 && root.Symbol == param.Symbol {
+			return true
+		}
+		if param.Symbol == 0 && root.Symbol == 0 && param.Root == root.Root {
+			return true
+		}
+	}
+	return false
+}
+
+func pathKeyListContains(keys []pathdom.PathKey, want pathdom.PathKey) bool {
+	for _, key := range keys {
+		if key == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (p paramObligationProjector) addArithmeticObligations(out []product.Value, expr ast.Expr) {

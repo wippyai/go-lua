@@ -308,6 +308,8 @@ func TestCallParamObligationRejectsExplicitAnyStructuralWitness(t *testing.T) {
 			strings.Contains(d.Message, "argument 2") &&
 			strings.Contains(d.Message, "id") {
 			if got := d.Explanation.String(); !strings.Contains(got, "raw comes from any/unknown") ||
+				!strings.Contains(got, "user asserted any; not abstract-interpreter proof") ||
+				!strings.Contains(got, "inside wrap, argument 1 (payload) is passed to sink.send parameter 1, which requires {id: string}") ||
 				!strings.Contains(got, "no proof on this path shows argument 1 (payload) is {id: string}") {
 				t.Fatalf("explanation = %q, want explicit-any claim and missing-proof evidence", got)
 			}
@@ -335,6 +337,8 @@ func TestCallParamObligationRejectsAsAnyCastEscape(t *testing.T) {
 			continue
 		}
 		if !strings.Contains(got, "argument 2 comes from any/unknown") ||
+			!strings.Contains(got, "user asserted any; not abstract-interpreter proof") ||
+			!strings.Contains(got, "inside wrap, argument 1 (payload) is passed to sink.send parameter 1, which requires number") ||
 			!strings.Contains(got, "no proof on this path shows argument 1 (payload) is number") {
 			t.Fatalf("explanation = %q, want explicit-any claim and missing-proof evidence", got)
 		}

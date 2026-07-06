@@ -193,14 +193,79 @@ func definitionEntryPoint(result *body.Result, origin bind.FunctionOrigin) (cfg.
 			if ok && fact.Stmt == origin.Stmt && fact.Index == origin.LocalIndex {
 				return point, true
 			}
+			if ok && fact.Stmt == origin.Stmt && exprsContainFunction(fact.Exprs, origin.Func) {
+				return point, true
+			}
 		case bind.FunctionOriginLiteral:
 			fact, ok := result.OrdinaryAssignment(point)
 			if ok && fact.Value == origin.Func {
 				return point, true
 			}
+			if ok && exprsContainFunction(fact.Rhs, origin.Func) {
+				return point, true
+			}
+			if local, ok := result.LocalAssignment(point); ok && exprsContainFunction(local.Exprs, origin.Func) {
+				return point, true
+			}
 		}
 	}
 	return 0, false
+}
+
+func exprsContainFunction(exprs []ast.Expr, fn *ast.FunctionExpr) bool {
+	for _, expr := range exprs {
+		if exprContainsFunction(expr, fn) {
+			return true
+		}
+	}
+	return false
+}
+
+func exprContainsFunction(expr ast.Expr, fn *ast.FunctionExpr) bool {
+	if expr == nil || fn == nil {
+		return false
+	}
+	switch e := expr.(type) {
+	case *ast.FunctionExpr:
+		return e == fn
+	case *ast.TableExpr:
+		for _, field := range e.Fields {
+			if field == nil {
+				continue
+			}
+			if exprContainsFunction(field.Key, fn) || exprContainsFunction(field.Value, fn) {
+				return true
+			}
+		}
+	case *ast.AttrGetExpr:
+		return exprContainsFunction(e.Object, fn) || exprContainsFunction(e.Key, fn)
+	case *ast.FuncCallExpr:
+		if exprContainsFunction(e.Func, fn) || exprContainsFunction(e.Receiver, fn) {
+			return true
+		}
+		return exprsContainFunction(e.Args, fn)
+	case *ast.LogicalOpExpr:
+		return exprContainsFunction(e.Lhs, fn) || exprContainsFunction(e.Rhs, fn)
+	case *ast.RelationalOpExpr:
+		return exprContainsFunction(e.Lhs, fn) || exprContainsFunction(e.Rhs, fn)
+	case *ast.StringConcatOpExpr:
+		return exprContainsFunction(e.Lhs, fn) || exprContainsFunction(e.Rhs, fn)
+	case *ast.ArithmeticOpExpr:
+		return exprContainsFunction(e.Lhs, fn) || exprContainsFunction(e.Rhs, fn)
+	case *ast.UnaryMinusOpExpr:
+		return exprContainsFunction(e.Expr, fn)
+	case *ast.UnaryNotOpExpr:
+		return exprContainsFunction(e.Expr, fn)
+	case *ast.UnaryLenOpExpr:
+		return exprContainsFunction(e.Expr, fn)
+	case *ast.UnaryBNotOpExpr:
+		return exprContainsFunction(e.Expr, fn)
+	case *ast.CastExpr:
+		return exprContainsFunction(e.Expr, fn)
+	case *ast.NonNilAssertExpr:
+		return exprContainsFunction(e.Expr, fn)
+	}
+	return false
 }
 
 func definitionEntryPointCandidate(origin bind.FunctionOrigin) bool {

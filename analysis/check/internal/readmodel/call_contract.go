@@ -375,6 +375,11 @@ func (r Reader) callParamObligationsAt(point cfg.Point) []callParamObligation {
 
 func appendPreferredCallParamObligation(out []callParamObligation, next callParamObligation) []callParamObligation {
 	if !next.Origin.HasOrigin {
+		for _, existing := range out {
+			if existing.Index == next.Index && existing.Origin.HasOrigin && typ.TypeEquals(existing.Type, next.Type) {
+				return out
+			}
+		}
 		return append(out, next)
 	}
 	for i, existing := range out {

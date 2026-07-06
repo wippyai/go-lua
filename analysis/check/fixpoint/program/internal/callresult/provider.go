@@ -220,6 +220,7 @@ func OutcomeProvider(config ProviderConfig) callpayload.CallOutcomeProvider {
 		}
 		if len(got.ParamMemberCallObligations) != 0 {
 			out.ParamObligations = append(out.ParamObligations, memberCallParamObligations(ctx, site, got, fn, sources, in, read, typeValues)...)
+			out.ParamObligations = append(out.ParamObligations, memberCallParamObligationOriginsFromSummary(ctx.Registry, got, fn)...)
 		}
 		return out
 	}
@@ -1949,6 +1950,38 @@ func memberCallParamObligations(
 		}
 		value := typeWitnessValue(ctx.Registry, typeValues, want)
 		if !summary.UsefulParamObligation(ctx.Registry, value) {
+			continue
+		}
+		out = append(out, callpayload.CallParamObligation{
+			ParamIndex: obligation.ArgParam,
+			Value:      value,
+			Origin: callpayload.CallParamObligationOrigin{
+				HasOrigin:        true,
+				ReceiverParam:    obligation.ReceiverParam,
+				ReceiverPath:     obligation.ReceiverPath,
+				Member:           obligation.Member,
+				ArgParam:         obligation.ArgParam,
+				MemberParamIndex: obligation.MemberParamIndex,
+				SubjectLabel:     memberCallParamSubjectLabel(fn, obligation),
+				ProviderLabel:    memberCallParamProviderLabel(fn, obligation),
+			},
+		})
+	}
+	return out
+}
+
+func memberCallParamObligationOriginsFromSummary(reg *axis.Registry, got summary.Summary, fn *typ.Function) []callpayload.CallParamObligation {
+	if reg == nil || len(got.ParamMemberCallObligations) == 0 || len(got.ParamObligations) == 0 {
+		return nil
+	}
+	var out []callpayload.CallParamObligation
+	for _, obligation := range got.ParamMemberCallObligations {
+		if obligation.ArgParam < 0 || obligation.ArgParam >= len(got.ParamObligations) ||
+			obligation.MemberParamIndex < 0 || !memberaccess.Valid(obligation.Member) {
+			continue
+		}
+		value := got.ParamObligations[obligation.ArgParam]
+		if !summary.UsefulParamObligation(reg, value) {
 			continue
 		}
 		out = append(out, callpayload.CallParamObligation{
