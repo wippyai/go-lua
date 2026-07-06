@@ -25,7 +25,11 @@ func (l *lowerer) valueSourceExprRef(source sourceprovenance.ASTSource) (factflo
 	if !sourceScopedExprRef(source) {
 		return l.exprRef(source.Expr)
 	}
-	return l.exprRef(sourceExprRefKey{
+	return l.exprRef(newSourceExprRefKey(source))
+}
+
+func newSourceExprRefKey(source sourceprovenance.ASTSource) sourceExprRefKey {
+	return sourceExprRefKey{
 		expr:         source.Expr,
 		kind:         source.Kind,
 		exprIndex:    source.ExprIndex,
@@ -37,7 +41,7 @@ func (l *lowerer) valueSourceExprRef(source sourceprovenance.ASTSource) (factflo
 		expanded:     source.Expanded,
 		adjusted:     source.Adjusted,
 		openTail:     source.OpenTail,
-	})
+	}
 }
 
 func sourceScopedExprRef(source sourceprovenance.ASTSource) bool {
