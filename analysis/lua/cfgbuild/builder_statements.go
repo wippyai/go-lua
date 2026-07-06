@@ -67,13 +67,39 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 		return b.buildGoto(state, stmt)
 	case *ast.BreakStmt:
 		return b.buildBreak(state)
-	case *ast.TypeDefStmt, *ast.InterfaceDefStmt:
-		return b.appendNodeForStmt(state, cfg.NodeNoop, stmt)
+	case *ast.TypeDefStmt:
+		return b.buildTypeDef(state, stmt)
+	case *ast.InterfaceDefStmt:
+		return b.buildInterfaceDef(state, stmt)
 	default:
 		// Every statement form is handled above; an unhandled node is a noop in
 		// the control-flow graph rather than a reason to abandon the function.
 		return b.appendNodeForStmt(state, cfg.NodeNoop, stmt)
 	}
+}
+
+func (b *builder) buildTypeDef(state flowState, stmt *ast.TypeDefStmt) flowState {
+	next := b.appendNodeForStmt(state, cfg.NodeNoop, stmt)
+	if next.live {
+		b.meta.SetTypeDefinition(next.current, cfgfacts.TypeDefinitionFact{
+			Kind: cfgfacts.TypeDefinitionAlias,
+			Stmt: stmt,
+			Type: stmt,
+		})
+	}
+	return next
+}
+
+func (b *builder) buildInterfaceDef(state flowState, stmt *ast.InterfaceDefStmt) flowState {
+	next := b.appendNodeForStmt(state, cfg.NodeNoop, stmt)
+	if next.live {
+		b.meta.SetTypeDefinition(next.current, cfgfacts.TypeDefinitionFact{
+			Kind:      cfgfacts.TypeDefinitionInterface,
+			Stmt:      stmt,
+			Interface: stmt,
+		})
+	}
+	return next
 }
 
 // isNoReturnCallStmt reports whether a call statement targets the global `error`,

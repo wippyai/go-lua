@@ -167,14 +167,14 @@ func TestLowerDoesNotLowerDeclarationOrControlSidecars(t *testing.T) {
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	for _, point := range requireStmtPoints(t, built, typeDef, 1) {
-		if fact, ok := result.TypeDefinition(point); !ok || fact.Kind != cfgfacts.TypeDefinitionAlias {
-			t.Fatalf("missing type definition sidecar at point %d: %#v/%v", point, fact, ok)
+		if fact, ok := built.Meta.TypeDefinition(point); !ok || fact.Kind != cfgfacts.TypeDefinitionAlias {
+			t.Fatalf("missing type definition metadata at point %d: %#v/%v", point, fact, ok)
 		}
 		assertNoPointFact(t, facts, point)
 	}
 	for _, point := range requireStmtPoints(t, built, interfaceDef, 1) {
-		if fact, ok := result.TypeDefinition(point); !ok || fact.Kind != cfgfacts.TypeDefinitionInterface {
-			t.Fatalf("missing interface definition sidecar at point %d: %#v/%v", point, fact, ok)
+		if fact, ok := built.Meta.TypeDefinition(point); !ok || fact.Kind != cfgfacts.TypeDefinitionInterface {
+			t.Fatalf("missing interface definition metadata at point %d: %#v/%v", point, fact, ok)
 		}
 		assertNoPointFact(t, facts, point)
 	}

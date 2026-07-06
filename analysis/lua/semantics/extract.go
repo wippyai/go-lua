@@ -109,10 +109,6 @@ func (r *Result) extractStmt(stmt ast.Stmt, bindings *bind.Result, built *cfgbui
 		return r.extractStmts(stmt.Stmts, bindings, built)
 	case *ast.FuncDefStmt:
 		return r.extractFunctionDefinition(stmt, bindings, built.StmtPoints.PointsFor(stmt))
-	case *ast.TypeDefStmt:
-		return r.extractTypeDef(stmt, built.StmtPoints.PointsFor(stmt))
-	case *ast.InterfaceDefStmt:
-		return r.extractInterfaceDef(stmt, built.StmtPoints.PointsFor(stmt))
 	default:
 		return nil
 	}

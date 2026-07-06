@@ -982,7 +982,7 @@ func TestExtractChunkCallReturnBranchAndTypeFacts(t *testing.T) {
 	if node := built.Graph.Node(typePoint); node == nil || node.Kind != cfg.NodeNoop {
 		t.Fatalf("type def cfg node = %#v, want NodeNoop", node)
 	}
-	typeFact, ok := result.TypeDefinition(typePoint)
+	typeFact, ok := built.Meta.TypeDefinition(typePoint)
 	if !ok || typeFact.Kind != cfgfacts.TypeDefinitionAlias || typeFact.Type != typeDef {
 		t.Fatalf("type def fact = %#v, ok=%v", typeFact, ok)
 	}
@@ -990,7 +990,7 @@ func TestExtractChunkCallReturnBranchAndTypeFacts(t *testing.T) {
 	if node := built.Graph.Node(interfacePoint); node == nil || node.Kind != cfg.NodeNoop {
 		t.Fatalf("interface def cfg node = %#v, want NodeNoop", node)
 	}
-	interfaceFact, ok := result.TypeDefinition(interfacePoint)
+	interfaceFact, ok := built.Meta.TypeDefinition(interfacePoint)
 	if !ok || interfaceFact.Kind != cfgfacts.TypeDefinitionInterface || interfaceFact.Interface != interfaceDef {
 		t.Fatalf("interface def fact = %#v, ok=%v", interfaceFact, ok)
 	}
@@ -2431,7 +2431,7 @@ func TestExtractChunkSkipsUnmappedDeclarationFacts(t *testing.T) {
 	if _, ok := result.FunctionDefinition(deadPoint); ok {
 		t.Fatalf("unmapped function definition produced function fact at dead point")
 	}
-	if _, ok := result.TypeDefinition(deadPoint); ok {
+	if _, ok := built.Meta.TypeDefinition(deadPoint); ok {
 		t.Fatalf("unmapped type definition produced type fact at dead point")
 	}
 }
@@ -2479,13 +2479,6 @@ func TestExtractSinglePointMetadataReportsExtraPointMismatch(t *testing.T) {
 					Func: function(nil),
 				}
 				return newResult(nil).extractFunctionDefinition(stmt, nil, []cfg.Point{1, 2})
-			},
-		},
-		{
-			name: "interface definition",
-			err: func() error {
-				stmt := &ast.InterfaceDefStmt{Name: "Shape"}
-				return newResult(nil).extractInterfaceDef(stmt, []cfg.Point{1, 2})
 			},
 		},
 	}

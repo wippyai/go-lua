@@ -485,10 +485,10 @@ func (r *Result) BranchConditionSufficientChecksOnEdge(fact semantics.BranchCond
 }
 
 func (r *Result) TypeDefinition(point cfg.Point) (cfgfacts.TypeDefinitionFact, bool) {
-	if r == nil || r.semantics == nil {
+	if r == nil || r.cfg == nil {
 		return cfgfacts.TypeDefinitionFact{}, false
 	}
-	return r.semantics.TypeDefinition(point)
+	return r.cfg.Meta.TypeDefinition(point)
 }
 
 func (r *Result) FunctionDefinition(point cfg.Point) (cfgfacts.FunctionDefinitionFact, bool) {

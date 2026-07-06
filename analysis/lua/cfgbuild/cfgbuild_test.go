@@ -424,6 +424,14 @@ func TestBuildChunkStatementPointMappingForLinearStatements(t *testing.T) {
 	requirePointKind(t, graph, ifacePoints[0], cfg.NodeNoop)
 	requirePointKind(t, graph, callPoints[0], cfg.NodeCall)
 	requirePointKind(t, graph, returnPoints[0], cfg.NodeReturn)
+	typeFact, ok := result.Meta.TypeDefinition(typePoints[0])
+	if !ok || typeFact.Kind != cfgfacts.TypeDefinitionAlias || typeFact.Stmt != typeDef || typeFact.Type != typeDef {
+		t.Fatalf("type definition metadata = %#v/%v", typeFact, ok)
+	}
+	ifaceFact, ok := result.Meta.TypeDefinition(ifacePoints[0])
+	if !ok || ifaceFact.Kind != cfgfacts.TypeDefinitionInterface || ifaceFact.Stmt != ifaceDef || ifaceFact.Interface != ifaceDef {
+		t.Fatalf("interface definition metadata = %#v/%v", ifaceFact, ok)
+	}
 
 	for i, tt := range []struct {
 		point cfg.Point

@@ -9,36 +9,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func (r *Result) extractTypeDef(stmt *ast.TypeDefStmt, points []cfg.Point) error {
-	if len(points) == 0 {
-		return nil
-	}
-	if len(points) != 1 {
-		return ErrPointMismatch
-	}
-	r.meta.SetTypeDefinition(points[0], cfgfacts.TypeDefinitionFact{
-		Kind: cfgfacts.TypeDefinitionAlias,
-		Stmt: stmt,
-		Type: stmt,
-	})
-	return nil
-}
-
-func (r *Result) extractInterfaceDef(stmt *ast.InterfaceDefStmt, points []cfg.Point) error {
-	if len(points) == 0 {
-		return nil
-	}
-	if len(points) != 1 {
-		return ErrPointMismatch
-	}
-	r.meta.SetTypeDefinition(points[0], cfgfacts.TypeDefinitionFact{
-		Kind:      cfgfacts.TypeDefinitionInterface,
-		Stmt:      stmt,
-		Interface: stmt,
-	})
-	return nil
-}
-
 func (r *Result) extractFunctionDefinition(stmt *ast.FuncDefStmt, bindings *bind.Result, points []cfg.Point) error {
 	if len(points) == 0 {
 		return nil
