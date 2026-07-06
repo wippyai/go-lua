@@ -57,7 +57,10 @@ func (l *lowerer) returnValueSourcesFromWIR(point cfg.Point) ([]factflow.ValueSo
 		final := i == len(ops)-1
 		source, ok := l.returnValueSourceFromWIROperand(point, op, i, i, final, ret.ListSpread && final, ret.ListSpread && final, resultSources)
 		if !ok {
-			return nil, false
+			if op.Kind != wir.OperandNone {
+				return nil, false
+			}
+			source = factflow.NewUnknownValueSource(i)
 		}
 		out[i] = source
 	}

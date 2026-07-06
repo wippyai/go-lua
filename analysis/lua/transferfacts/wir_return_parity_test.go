@@ -476,6 +476,36 @@ end
 	}
 }
 
+func TestLowerWithWIRReturnMalformedOperandDoesNotFallbackToSemanticSource(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(value: string): string
+    return value
+end
+`)
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
+	}
+	point := requireStmtPoints(t, built, ret, 1)[0]
+	body := wir.NewBody("malformed-return-source")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpReturn,
+		Point: point,
+		List:  body.AppendOperands([]wir.Operand{{Kind: wir.OperandNone}}),
+	})
+	body.SetPointRange(point, start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	retFact, ok := facts.Return(point)
+	if !ok {
+		t.Fatalf("missing WIR-owned return at point %d", point)
+	}
+	sources := retFact.Sources()
+	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceUnknown {
+		t.Fatalf("return sources = %#v, want unknown instead of semantic fallback", sources)
+	}
+}
+
 func TestLowerWithWIRReturnPublishesWithoutSemanticReturnView(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(): string

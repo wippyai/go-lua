@@ -773,6 +773,35 @@ end
 	}
 }
 
+func TestLowerAssignmentMalformedWIRSourceDoesNotFallbackToSemanticSource(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(value: string): ()
+    local out = value
+end
+`)
+	assignStmt := fn.Stmts[0].(*ast.LocalAssignStmt)
+	point := requireStmtPoints(t, built, assignStmt, 1)[0]
+	outPath := path.NewPath(mustLocalAt(t, bindings, assignStmt, 0), "out")
+	body := wir.NewBody("malformed-assignment-source")
+	start := body.Emit(wir.Instruction{
+		Op:     wir.OpAssign,
+		Point:  point,
+		Assign: wir.AssignLocalDeclaration,
+		Dst:    wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(outPath))},
+	})
+	body.SetPointRange(point, start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	assign, ok := facts.RootAssignment(point)
+	if !ok {
+		t.Fatalf("missing WIR-owned assignment at point %d", point)
+	}
+	source := assign.Source()
+	if source.Kind != factflow.ValueSourceUnknown {
+		t.Fatalf("assignment source = %#v, want unknown instead of semantic fallback", source)
+	}
+}
+
 func TestAssignmentCallResultExprRefComesFromWIRCallIdentity(t *testing.T) {
 	body := wir.NewBody("call-result-expr")
 	callPoint := cfg.Point(10)
