@@ -49,7 +49,7 @@ func TestLowerIdentifierNilTruthyFalsyBranches(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, nilRead), "x")
 	nilPoint := requireStmtPoints(t, built, nilStmt, 1)[0]
 	notNilPoint := requireStmtPoints(t, built, notNilStmt, 1)[0]
@@ -76,6 +76,22 @@ func parseChunk(t *testing.T, src string) []ast.Stmt {
 	return stmts
 }
 
+func lowerFunctionFactsWithWIR(t *testing.T, name string, result *semantics.Result, built *cfgbuild.Result, bindings *bind.Result, reg *axis.Registry) factflow.Facts {
+	t.Helper()
+	fn := result.Function()
+	if fn == nil {
+		t.Fatal("semantic result is not a function")
+	}
+	body := wirlower.LowerFunction(name, fn, bindings, built)
+	return Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+}
+
+func lowerChunkFactsWithWIR(t *testing.T, name string, stmts []ast.Stmt, result *semantics.Result, built *cfgbuild.Result, bindings *bind.Result, reg *axis.Registry) factflow.Facts {
+	t.Helper()
+	body := wirlower.Lower(name, stmts, bindings, built)
+	return Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+}
+
 func TestLowerBooleanRootTruthyFalsyBranchesPublishLiteralRefinements(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(b: boolean)
@@ -83,7 +99,7 @@ function f(b: boolean)
 	if not b then local y = 1 end
 end
 `)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
 	truthyStmt := fn.Stmts[0].(*ast.IfStmt)
 	falsyStmt := fn.Stmts[1].(*ast.IfStmt)
 	bPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "b")
@@ -179,7 +195,7 @@ function f(
     end
 end
 `)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
 	var found bool
 	for _, point := range built.Graph.RPO() {
 		for _, implication := range facts.PathValuePresenceImplications(point) {
@@ -223,7 +239,7 @@ function f(
     end
 end
 `)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
 	var found bool
 	for _, point := range built.Graph.RPO() {
 		for _, implication := range facts.PathValuePresenceImplications(point) {
@@ -277,7 +293,7 @@ function f(
     end
 end
 `)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
 	var found bool
 	for _, point := range built.Graph.RPO() {
 		for _, implication := range facts.PathValuePresenceImplications(point) {
@@ -451,7 +467,7 @@ function f(
     end
 end
 `)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
 	assertUseTemplateFalseImpliesExecutorPresent(t, bindings, built, facts)
 }
 
@@ -552,7 +568,7 @@ function f(kind: string?)
 	return nil
 end
 `)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
 	var directFalsyPoint cfg.Point
 	var compoundPoint cfg.Point
 	for _, point := range built.Graph.RPO() {
@@ -654,7 +670,7 @@ func TestLowerMemberPathBranchRefinement(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
 	wantPath := path.NewPath(mustIdentSymbol(t, bindings, rootRead), "t").Field("child")
 	assertLoweredBranchValuePresence(t, facts, requireStmtPoints(t, built, memberStmt, 1)[0], wantPath, presence.Present(), true, presence.Absent(), true)
 }
@@ -671,7 +687,7 @@ func TestLowerMemberPathTruthyBranchEvidence(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
 	wantPath := path.NewPath(mustIdentSymbol(t, bindings, rootRead), "t").Field("child")
 	point := requireStmtPoints(t, built, memberStmt, 1)[0]
 	assertLoweredBranchValuePresence(t, facts, point, wantPath, presence.Present(), true, presence.Absent(), true)
@@ -695,7 +711,7 @@ func TestLowerTypeGuardBranchPathEvidence(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, typeRead), "x")
 	assertLoweredBranchPresenceProof(t, facts, point, xPath, presence.Present(), true, false)
@@ -708,7 +724,7 @@ if data_func and data_func ~= "" then
 end
 `, "raw")
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
 	dataFunc := mustLocalAt(t, bindings, mustLocalStmt(t, stmts, 0), 0)
 	ifStmt := mustIfStmt(t, stmts, 1)
 	assertLoweredBranchValuePresence(
@@ -728,7 +744,7 @@ if not page or not page.data_func or page.data_func == "" then
 end
 `, "input")
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
 	page := mustLocalAt(t, bindings, mustLocalStmt(t, stmts, 0), 0)
 	ifStmt := mustIfStmt(t, stmts, 1)
 	point := requireStmtPoints(t, built, ifStmt, 1)[0]
@@ -764,7 +780,7 @@ if not ok then
 end
 `, "pcall")
 
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, reg)
 	assign := mustLocalStmt(t, stmts, 1)
 	payloadPath := path.NewPath(mustLocalAt(t, bindings, assign, 1), "result")
 	ifStmt := mustIfStmt(t, stmts, 2)
@@ -1008,7 +1024,7 @@ function f(xs: {number}, i: number)
 	end
 end
 `)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
 	xs := bindings.ParamSlots(fn)[0].Symbol
 	i := bindings.ParamSlots(fn)[1].Symbol
 	xsPath := path.NewPath(xs, "xs")
@@ -1052,7 +1068,7 @@ function f(parts: {string})
 	end
 end
 `)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
 	parts := bindings.ParamSlots(fn)[0].Symbol
 	partsPath := path.NewPath(parts, "parts")
 	ifStmt := fn.Stmts[0].(*ast.IfStmt)
@@ -1073,7 +1089,7 @@ function f(x: string?, y: string?)
 	end
 end
 `)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
 	xPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "x")
 	yPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "y")
 	ifStmt := fn.Stmts[0].(*ast.IfStmt)
@@ -1097,7 +1113,7 @@ function f(x: string?, y: string?)
 	local ok = not (x == nil and y == nil)
 end
 `)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
 	xPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "x")
 	yPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "y")
 	local := mustLocalStmt(t, fn.Stmts, 0)
@@ -1135,7 +1151,7 @@ function f(target: { transform: string? })
 	end
 end
 `)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
 	targetPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "target").Field("transform")
 	ifStmt := fn.Stmts[1].(*ast.IfStmt)
 	point := requireStmtPoints(t, built, ifStmt, 1)[0]
@@ -1158,7 +1174,7 @@ function f(a: string?, b: string?)
 	end
 end
 `)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
 	aPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "a")
 	bPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "b")
 	ifStmt := fn.Stmts[1].(*ast.IfStmt)
@@ -1175,7 +1191,7 @@ function f(a: string?, b: string?)
 	end
 end
 `)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
 	aPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "a")
 	bPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "b")
 	ifStmt := fn.Stmts[1].(*ast.IfStmt)
@@ -1192,7 +1208,7 @@ function f(a: string?, b: string?)
 	end
 end
 `)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
 	aPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "a")
 	bPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "b")
 	ifStmt := fn.Stmts[1].(*ast.IfStmt)
@@ -1209,7 +1225,7 @@ function f(a: string?, b: string?)
 	end
 end
 `)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
 	aPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "a")
 	bPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "b")
 	ifStmt := fn.Stmts[1].(*ast.IfStmt)
@@ -1226,7 +1242,7 @@ function f(target: { transform: string? })
 	end
 end
 `)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
 	targetPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "target").Field("transform")
 	ifStmt := fn.Stmts[1].(*ast.IfStmt)
 	point := requireStmtPoints(t, built, ifStmt, 1)[0]
@@ -1348,7 +1364,7 @@ function f(page: { data_func: string? }?)
 end
 `)
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
 	page := bindings.ParamSlots(fn)[0].Symbol
 	ifStmt := fn.Stmts[0].(*ast.IfStmt)
 	point := requireStmtPoints(t, built, ifStmt, 1)[0]
@@ -1414,7 +1430,7 @@ local t = {}
 if table.isfrozen(t) then
 end
 `, "table")
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, reg)
 	ifStmt := mustIfStmt(t, stmts, 1)
 	branchPoint := requireStmtPoints(t, built, ifStmt, 2)[1]
 	target := path.NewPath(mustLocalAt(t, bindings, mustLocalStmt(t, stmts, 0), 0), "t")
@@ -1443,7 +1459,7 @@ local t = {}
 if not table.isfrozen(t) then
 end
 `, "table")
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, reg)
 	ifStmt := mustIfStmt(t, stmts, 1)
 	branchPoint := requireStmtPoints(t, built, ifStmt, 2)[1]
 	target := path.NewPath(mustLocalAt(t, bindings, mustLocalStmt(t, stmts, 0), 0), "t")
@@ -1473,7 +1489,7 @@ local ok: boolean = true
 if table.isfrozen(t) and ok then
 end
 `, "table")
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, reg)
 	ifStmt := mustIfStmt(t, stmts, 2)
 	branchPoint := requireStmtPoints(t, built, ifStmt, 2)[1]
 	target := path.NewPath(mustLocalAt(t, bindings, mustLocalStmt(t, stmts, 0), 0), "t")
@@ -1508,7 +1524,7 @@ local t = {}
 if table.isfrozen(t) then
 end
 `, "table")
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, reg)
 	ifStmt := mustIfStmt(t, stmts, 2)
 	branchPoint := requireStmtPoints(t, built, ifStmt, 2)[1]
 	branchFact, _ := result.BranchCondition(branchPoint)
@@ -1524,7 +1540,7 @@ function f(page: { data_func: string?, url: string? } | { other: string })
 	end
 end
 `)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
 	page := bindings.ParamSlots(fn)[0].Symbol
 	rootPath := path.NewPath(page, "page")
 	dataPath := rootPath.Field("data_func")
@@ -1789,7 +1805,7 @@ func TestLowerPathEqualityBranchRelation(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, eqStmt, 1)[0]
 	assertLoweredBranchPathEquality(
 		t,
@@ -1818,7 +1834,7 @@ end
 	if err != nil {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
 	secondIf := stmts[2].(*ast.IfStmt)
 	point := requireStmtPoints(t, built, secondIf, 1)[0]
 	relations := facts.BranchPathRelations(point)
@@ -1910,7 +1926,7 @@ func TestLowerPathInequalityBranchRelation(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, neqStmt, 1)[0]
 	assertLoweredBranchPathEquality(
 		t,
@@ -1939,7 +1955,7 @@ func TestLowerTypeGuardTableEqualityBranchRefinement(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
 	assertLoweredBranchValueRefinement(t, facts, point, xPath,
@@ -1972,7 +1988,7 @@ func TestLowerTypeGuardFunctionInequalityBranchRefinement(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
 	assertLoweredBranchValueRefinement(t, facts, point, xPath,
@@ -2011,7 +2027,7 @@ func TestLowerTypeGuardNilBranchRefinements(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, eqRead), "x")
 	nilValue := valueRefinementExpectation{
 		presence:       presence.Absent(),
@@ -2113,7 +2129,7 @@ func TestLowerTypeGuardReversedOperandsBranchRefinement(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
 	assertLoweredBranchValueRefinement(t, facts, point, xPath,
@@ -2145,7 +2161,7 @@ func TestLowerSkipsUnknownTypeGuardBranchRefinements(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	if len(facts.BranchRefinements(point)) != 0 {
 		t.Fatalf("unknown type guard branch point %d lowered as branch refinement", point)

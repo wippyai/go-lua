@@ -10,7 +10,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
-	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/expressionid"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
@@ -264,42 +263,6 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		}
 		if l.wir != nil {
 			l.addBranchFactsFromWIR(&input, point)
-		}
-		if result != nil && l.wir == nil {
-			if fact, ok := result.BranchCondition(point); ok {
-				condition := fact.Condition
-				if fact.Check.Kind != branchcond.CheckNone {
-					input.BranchConditionSources[point] = l.valueSource(fact.Source)
-				}
-				if lowered := l.branchRefinements(fact.Check, condition); len(lowered) != 0 {
-					appendBranchRefinement(input.BranchRefinements, point, lowered...)
-				}
-				if lowered := l.branchLenRefinements(fact.Check, condition); len(lowered) != 0 {
-					appendBranchLenRefinement(input.BranchRefinements, point, lowered...)
-				}
-				if lowered := l.branchNumFloorRefinements(fact.Check, condition); len(lowered) != 0 {
-					appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered...)
-				}
-				if lowered := l.branchDiffConstraints(condition); len(lowered) != 0 {
-					appendBranchDiffConstraint(input.BranchRefinements, point, lowered...)
-				}
-				if lowered := l.branchAliasRefinements(condition); len(lowered) != 0 {
-					appendBranchRefinement(input.BranchRefinements, point, lowered...)
-				}
-				if lowered, ok := l.branchPathRelations(fact.Check, condition); ok {
-					input.BranchPathRelations[point] = lowered
-				}
-				if lowered := l.branchAliasPathRelations(condition); len(lowered) != 0 {
-					appendBranchPathRelations(input.BranchPathRelations, point, lowered...)
-				}
-				if lowered := l.branchPathEvidence(fact.Check, condition); len(lowered) != 0 {
-					appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
-				}
-				if lowered := l.branchAliasPathEvidence(condition); len(lowered) != 0 {
-					appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
-				}
-				l.addAssertionRefinementsForSource(&input, fact.Source)
-			}
 		}
 		if l.wir != nil {
 			l.addNumericForFactsFromWIR(&input, point)

@@ -73,7 +73,8 @@ func TestLowerPrimitiveTypeCastCallPublishesResultEvidence(t *testing.T) {
 local data: any = 1
 local v = number(data)
 `)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	body := wirlower.Lower("type-is-error-nil", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	castStmt := mustLocalStmt(t, stmts, 1)
 	castCall := castStmt.Exprs[0].(*ast.FuncCallExpr)
 	callPoint := requireCallPoint(t, built.Graph, result, castCall)
@@ -279,7 +280,8 @@ local _, err = Point:is(data)
 if err == nil then
 end
 `)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	body := wirlower.Lower("type-is-error-nil", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	dataStmt := mustLocalStmt(t, stmts, 1)
 	ifStmt := mustIfStmt(t, stmts, 3)
 	dataPath := path.NewPath(mustLocalAt(t, bindings, dataStmt, 0), "data")
