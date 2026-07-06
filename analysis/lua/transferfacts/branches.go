@@ -5,6 +5,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -61,41 +62,18 @@ func (l *lowerer) branchValueRefinementForCheck(check branchcond.Check) (factflo
 // true edge, while the negated #xs < lo raises it on the false edge. Merges never
 // carry it.
 func (l *lowerer) branchLenRefinements(check branchcond.Check, condition ast.Expr) []factflow.BranchLenRefinement {
-	if check.Kind == branchcond.CheckLenGe {
-		if lowered, ok := l.branchLenRefinementOnEdge(check, !check.Negated); ok {
-			return []factflow.BranchLenRefinement{lowered}
-		}
-		return nil
-	}
-	if check.Kind != branchcond.CheckNone {
-		return nil
-	}
-	var out []factflow.BranchLenRefinement
-	for _, implied := range branchcond.ImpliedChecksOnBothEdges(condition, l.bindings) {
-		if lowered, ok := l.branchLenRefinementForImplication(implied); ok {
-			out = append(out, lowered)
-		}
-	}
-	return out
+	return branchFloorRefinements(check, condition, l.bindings, branchLenRefinementForCheck, branchLenRefinementForImplication)
 }
 
 func (l *lowerer) branchLenRefinementsFromWIR(point cfg.Point) []factflow.BranchLenRefinement {
-	var out []factflow.BranchLenRefinement
-	l.forEachWIRBranchCheck(point, func(check branchcond.Check) {
-		if check.Kind == branchcond.CheckLenGe {
-			if lowered, ok := l.branchLenRefinementOnEdge(check, !check.Negated); ok {
-				out = append(out, lowered)
-			}
-		}
-	}, func(implied branchcond.ImpliedCheck) {
-		if lowered, ok := l.branchLenRefinementForImplication(implied); ok {
-			out = append(out, lowered)
-		}
-	})
-	return out
+	return branchFloorRefinementsFromWIR(l, point, branchLenRefinementForCheck, branchLenRefinementForImplication)
 }
 
-func (l *lowerer) branchLenRefinementOnEdge(check branchcond.Check, edge bool) (factflow.BranchLenRefinement, bool) {
+func branchLenRefinementForCheck(check branchcond.Check) (factflow.BranchLenRefinement, bool) {
+	return branchLenRefinementOnEdge(check, !check.Negated)
+}
+
+func branchLenRefinementOnEdge(check branchcond.Check, edge bool) (factflow.BranchLenRefinement, bool) {
 	if check.Kind != branchcond.CheckLenGe || check.Path.IsEmpty() || check.LenFloor <= 0 {
 		return factflow.BranchLenRefinement{}, false
 	}
@@ -107,7 +85,7 @@ func (l *lowerer) branchLenRefinementOnEdge(check branchcond.Check, edge bool) (
 	return factflow.NewBranchLenRefinementOnEdge(check.Path, check.LenFloor, edge), true
 }
 
-func (l *lowerer) branchLenRefinementForImplication(implied branchcond.ImpliedCheck) (factflow.BranchLenRefinement, bool) {
+func branchLenRefinementForImplication(implied branchcond.ImpliedCheck) (factflow.BranchLenRefinement, bool) {
 	check := implied.Check
 	if check.Kind != branchcond.CheckLenGe || check.Path.IsEmpty() || check.LenFloor <= 0 {
 		return factflow.BranchLenRefinement{}, false
@@ -122,41 +100,18 @@ func (l *lowerer) branchLenRefinementForImplication(implied branchcond.ImpliedCh
 // (true edge) or the negated `i < 1` (false edge) into a numeric-floor fact, the
 // positive-index half of an array-read in-range proof, on the edge it holds.
 func (l *lowerer) branchNumFloorRefinements(check branchcond.Check, condition ast.Expr) []factflow.BranchNumFloorRefinement {
-	if check.Kind == branchcond.CheckNumGe {
-		if lowered, ok := l.branchNumFloorRefinementOnEdge(check, !check.Negated); ok {
-			return []factflow.BranchNumFloorRefinement{lowered}
-		}
-		return nil
-	}
-	if check.Kind != branchcond.CheckNone {
-		return nil
-	}
-	var out []factflow.BranchNumFloorRefinement
-	for _, implied := range branchcond.ImpliedChecksOnBothEdges(condition, l.bindings) {
-		if lowered, ok := l.branchNumFloorRefinementForImplication(implied); ok {
-			out = append(out, lowered)
-		}
-	}
-	return out
+	return branchFloorRefinements(check, condition, l.bindings, branchNumFloorRefinementForCheck, branchNumFloorRefinementForImplication)
 }
 
 func (l *lowerer) branchNumFloorRefinementsFromWIR(point cfg.Point) []factflow.BranchNumFloorRefinement {
-	var out []factflow.BranchNumFloorRefinement
-	l.forEachWIRBranchCheck(point, func(check branchcond.Check) {
-		if check.Kind == branchcond.CheckNumGe {
-			if lowered, ok := l.branchNumFloorRefinementOnEdge(check, !check.Negated); ok {
-				out = append(out, lowered)
-			}
-		}
-	}, func(implied branchcond.ImpliedCheck) {
-		if lowered, ok := l.branchNumFloorRefinementForImplication(implied); ok {
-			out = append(out, lowered)
-		}
-	})
-	return out
+	return branchFloorRefinementsFromWIR(l, point, branchNumFloorRefinementForCheck, branchNumFloorRefinementForImplication)
 }
 
-func (l *lowerer) branchNumFloorRefinementOnEdge(check branchcond.Check, edge bool) (factflow.BranchNumFloorRefinement, bool) {
+func branchNumFloorRefinementForCheck(check branchcond.Check) (factflow.BranchNumFloorRefinement, bool) {
+	return branchNumFloorRefinementOnEdge(check, !check.Negated)
+}
+
+func branchNumFloorRefinementOnEdge(check branchcond.Check, edge bool) (factflow.BranchNumFloorRefinement, bool) {
 	if check.Kind != branchcond.CheckNumGe || check.Path.IsEmpty() || check.NumFloor < 0 {
 		return factflow.BranchNumFloorRefinement{}, false
 	}
@@ -168,7 +123,7 @@ func (l *lowerer) branchNumFloorRefinementOnEdge(check branchcond.Check, edge bo
 	return factflow.NewBranchNumFloorRefinementOnEdge(check.Path, check.NumFloor, edge), true
 }
 
-func (l *lowerer) branchNumFloorRefinementForImplication(implied branchcond.ImpliedCheck) (factflow.BranchNumFloorRefinement, bool) {
+func branchNumFloorRefinementForImplication(implied branchcond.ImpliedCheck) (factflow.BranchNumFloorRefinement, bool) {
 	check := implied.Check
 	if check.Kind != branchcond.CheckNumGe || check.Path.IsEmpty() || check.NumFloor < 0 {
 		return factflow.BranchNumFloorRefinement{}, false
@@ -177,6 +132,47 @@ func (l *lowerer) branchNumFloorRefinementForImplication(implied branchcond.Impl
 		return factflow.BranchNumFloorRefinement{}, false
 	}
 	return factflow.NewBranchNumFloorRefinementOnEdge(check.Path, check.NumFloor, implied.Edge), true
+}
+
+func branchFloorRefinements[T any](
+	check branchcond.Check,
+	condition ast.Expr,
+	bindings *bind.Result,
+	direct func(branchcond.Check) (T, bool),
+	implied func(branchcond.ImpliedCheck) (T, bool),
+) []T {
+	if check.Kind != branchcond.CheckNone {
+		if lowered, ok := direct(check); ok {
+			return []T{lowered}
+		}
+		return nil
+	}
+	var out []T
+	for _, implication := range branchcond.ImpliedChecksOnBothEdges(condition, bindings) {
+		if lowered, ok := implied(implication); ok {
+			out = append(out, lowered)
+		}
+	}
+	return out
+}
+
+func branchFloorRefinementsFromWIR[T any](
+	l *lowerer,
+	point cfg.Point,
+	direct func(branchcond.Check) (T, bool),
+	implied func(branchcond.ImpliedCheck) (T, bool),
+) []T {
+	var out []T
+	l.forEachWIRBranchCheck(point, func(check branchcond.Check) {
+		if lowered, ok := direct(check); ok {
+			out = append(out, lowered)
+		}
+	}, func(implication branchcond.ImpliedCheck) {
+		if lowered, ok := implied(implication); ok {
+			out = append(out, lowered)
+		}
+	})
+	return out
 }
 
 func (l *lowerer) branchRefinements(check branchcond.Check, condition ast.Expr) []factflow.BranchRefinement {
