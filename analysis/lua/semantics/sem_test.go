@@ -760,7 +760,7 @@ func TestExtractChunkFunctionDefinitionFactPreservesIdentity(t *testing.T) {
 	}
 
 	points := requireStmtPoints(t, built, stmt, 1)
-	fact, ok := result.FunctionDefinition(points[0])
+	fact, ok := built.Meta.FunctionDefinition(points[0])
 	if !ok {
 		t.Fatalf("missing function definition fact")
 	}
@@ -786,38 +786,6 @@ func TestExtractChunkFunctionDefinitionFactPreservesIdentity(t *testing.T) {
 	}
 	if !assign.HasPath || !assign.Path.Equal(wantPath) {
 		t.Fatalf("function definition assignment path = %v/%v, want %v", assign.Path, assign.HasPath, wantPath)
-	}
-}
-
-func TestExtractChunkFunctionDefinitionWithNilBindingsHasNoTargetSymbol(t *testing.T) {
-	target := ident("f")
-	fn := function(nil)
-	stmt := &ast.FuncDefStmt{
-		Name: &ast.FuncName{Func: target},
-		Func: fn,
-	}
-	stmts := []ast.Stmt{stmt}
-	bindings := bind.BindChunk(stmts, bind.Options{})
-	built := cfgbuild.BuildChunk(stmts, bindings)
-
-	result, err := ExtractChunk(stmts, nil, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	points := requireStmtPoints(t, built, stmt, 1)
-	fact, ok := result.FunctionDefinition(points[0])
-	if !ok {
-		t.Fatalf("missing function definition fact")
-	}
-	if fact.Stmt != stmt || fact.Name != stmt.Name || fact.Func != fn {
-		t.Fatalf("function definition fact = %#v", fact)
-	}
-	if fact.TargetSymbol != 0 || fact.HasTargetSymbol {
-		t.Fatalf("function definition target = %d/%v, want 0/false", fact.TargetSymbol, fact.HasTargetSymbol)
-	}
-	if fact.HasTargetPath || !fact.TargetPath.IsEmpty() {
-		t.Fatalf("function definition target path = %v/%v, want empty/false", fact.TargetPath, fact.HasTargetPath)
 	}
 }
 
@@ -864,7 +832,7 @@ func TestExtractChunkMemberFunctionDefinitionFactPublishesPathAssignment(t *test
 			if err != nil {
 				t.Fatalf("ExtractChunk: %v", err)
 			}
-			fact, ok := result.FunctionDefinition(points[0])
+			fact, ok := built.Meta.FunctionDefinition(points[0])
 			if !ok {
 				t.Fatalf("missing function definition fact")
 			}
@@ -2288,7 +2256,7 @@ func TestExtractChunkNumericForFactsUseStmtPointsAndPreserveIdentity(t *testing.
 		points[1]: cfgfacts.NumericForRoleCheck,
 	}
 	for _, point := range points {
-		fact, ok := result.NumericFor(point)
+		fact, ok := built.Meta.NumericFor(point)
 		if !ok {
 			t.Fatalf("missing numeric for fact at point %d", point)
 		}
@@ -2423,12 +2391,12 @@ func TestExtractChunkSkipsUnmappedDeclarationFacts(t *testing.T) {
 		t.Fatalf("dead interface definition mapped to points %v", got)
 	}
 
-	result, err := ExtractChunk(stmts, bindings, built)
+	_, err := ExtractChunk(stmts, bindings, built)
 	if err != nil {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 	deadPoint := cfg.Point(9999)
-	if _, ok := result.FunctionDefinition(deadPoint); ok {
+	if _, ok := built.Meta.FunctionDefinition(deadPoint); ok {
 		t.Fatalf("unmapped function definition produced function fact at dead point")
 	}
 	if _, ok := built.Meta.TypeDefinition(deadPoint); ok {
@@ -2466,7 +2434,7 @@ func TestExtractReportsPointMismatch(t *testing.T) {
 	}
 }
 
-func TestExtractSinglePointMetadataReportsExtraPointMismatch(t *testing.T) {
+func TestExtractFunctionDefinitionAssignmentReportsExtraPointMismatch(t *testing.T) {
 	tests := []struct {
 		name string
 		err  func() error
@@ -2478,7 +2446,7 @@ func TestExtractSinglePointMetadataReportsExtraPointMismatch(t *testing.T) {
 					Name: &ast.FuncName{Func: ident("f")},
 					Func: function(nil),
 				}
-				return newResult(nil).extractFunctionDefinition(stmt, nil, []cfg.Point{1, 2})
+				return newResult(nil).extractFunctionDefinitionAssignment(stmt, nil, []cfg.Point{1, 2})
 			},
 		},
 	}

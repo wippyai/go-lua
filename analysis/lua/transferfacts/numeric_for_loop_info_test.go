@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 )
 
 func TestNumericForLoopInfoFromFact(t *testing.T) {
@@ -33,8 +32,8 @@ func TestNumericForLoopInfoFromFact(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			fn, bindings, built, result := parseSemanticFunction(t, tc.src)
-			fact := firstNumericForCheckFact(t, built, result)
+			fn, bindings, built, _ := parseSemanticFunction(t, tc.src)
+			fact := firstNumericForCheckFact(t, built)
 			iPath := path.NewPath(fact.Symbol, "i")
 			wantArray := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "xs")
 			info, ok := numericForLoopInfoFromFact(fact, bindings)
@@ -60,10 +59,10 @@ func TestNumericForLoopInfoFromFact(t *testing.T) {
 	}
 }
 
-func firstNumericForCheckFact(t *testing.T, built *cfgbuild.Result, result *semantics.Result) cfgfacts.NumericForFact {
+func firstNumericForCheckFact(t *testing.T, built *cfgbuild.Result) cfgfacts.NumericForFact {
 	t.Helper()
 	for _, point := range built.Graph.RPO() {
-		fact, ok := result.NumericFor(point)
+		fact, ok := built.Meta.NumericFor(point)
 		if ok && fact.Role == cfgfacts.NumericForRoleCheck {
 			return fact
 		}

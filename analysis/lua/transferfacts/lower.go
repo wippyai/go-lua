@@ -312,7 +312,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		if l.wir != nil {
 			l.addNumericForFactsFromWIR(&input, point)
 		} else {
-			if fact, ok := numericForFactAt(l.metadata, result, point); ok {
+			if fact, ok := numericForFactAt(l.metadata, point); ok {
 				if lowered, ok := l.numericForBranchNumFloorRefinement(fact); ok {
 					appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered)
 				}

@@ -72,7 +72,7 @@ func lowerSymbolTypes(
 		}
 	}
 	for _, point := range graph.RPO() {
-		fact, ok := functionDefinitionFactAt(meta, result, point)
+		fact, ok := functionDefinitionFactAt(meta, point)
 		if !ok || !fact.HasTargetSymbol || fact.TargetSymbol == 0 || fact.Func == nil {
 			continue
 		}
@@ -108,7 +108,7 @@ func lowerSymbolTypes(
 	// type proven by the control operands. Lua uses an integer loop when init,
 	// limit, and step are all integers; otherwise the variable is numeric.
 	for _, point := range graph.RPO() {
-		fact, ok := numericForFactAt(meta, result, point)
+		fact, ok := numericForFactAt(meta, point)
 		if !ok || !fact.HasSymbol || fact.Symbol == 0 {
 			continue
 		}
@@ -169,24 +169,12 @@ func lowerSymbolTypes(
 	return out
 }
 
-func functionDefinitionFactAt(meta cfgfacts.Metadata, result *semantics.Result, point cfg.Point) (cfgfacts.FunctionDefinitionFact, bool) {
-	if fact, ok := meta.FunctionDefinition(point); ok {
-		return fact, true
-	}
-	if result == nil {
-		return cfgfacts.FunctionDefinitionFact{}, false
-	}
-	return result.FunctionDefinition(point)
+func functionDefinitionFactAt(meta cfgfacts.Metadata, point cfg.Point) (cfgfacts.FunctionDefinitionFact, bool) {
+	return meta.FunctionDefinition(point)
 }
 
-func numericForFactAt(meta cfgfacts.Metadata, result *semantics.Result, point cfg.Point) (cfgfacts.NumericForFact, bool) {
-	if fact, ok := meta.NumericFor(point); ok {
-		return fact, true
-	}
-	if result == nil {
-		return cfgfacts.NumericForFact{}, false
-	}
-	return result.NumericFor(point)
+func numericForFactAt(meta cfgfacts.Metadata, point cfg.Point) (cfgfacts.NumericForFact, bool) {
+	return meta.NumericFor(point)
 }
 
 func numericForSymbolType(symbolTypes map[symbol.ID]typ.Type, bindings *bind.Result, init, limit, step ast.Expr) typ.Type {

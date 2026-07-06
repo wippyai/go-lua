@@ -98,7 +98,7 @@ func (r *Result) extractStmt(stmt ast.Stmt, bindings *bind.Result, built *cfgbui
 		}
 		return r.extractBranch(stmt, BranchRepeat, stmt.Condition, bindings, built.StmtPoints.PointsFor(stmt))
 	case *ast.NumberForStmt:
-		if err := r.extractNumberFor(stmt, bindings, built.StmtPoints.PointsFor(stmt)); err != nil {
+		if err := r.extractNumberForCalls(stmt, bindings, built.StmtPoints.PointsFor(stmt)); err != nil {
 			return err
 		}
 		return r.extractStmts(stmt.Stmts, bindings, built)
@@ -108,7 +108,7 @@ func (r *Result) extractStmt(stmt ast.Stmt, bindings *bind.Result, built *cfgbui
 		}
 		return r.extractStmts(stmt.Stmts, bindings, built)
 	case *ast.FuncDefStmt:
-		return r.extractFunctionDefinition(stmt, bindings, built.StmtPoints.PointsFor(stmt))
+		return r.extractFunctionDefinitionAssignment(stmt, bindings, built.StmtPoints.PointsFor(stmt))
 	default:
 		return nil
 	}

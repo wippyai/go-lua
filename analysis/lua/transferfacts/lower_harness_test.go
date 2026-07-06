@@ -179,16 +179,16 @@ func TestLowerDoesNotLowerDeclarationOrControlSidecars(t *testing.T) {
 		assertNoPointFact(t, facts, point)
 	}
 	for _, point := range requireStmtPoints(t, built, funcDef, 1) {
-		if _, ok := result.FunctionDefinition(point); !ok {
-			t.Fatalf("missing function definition sidecar at point %d", point)
+		if _, ok := built.Meta.FunctionDefinition(point); !ok {
+			t.Fatalf("missing function definition metadata at point %d", point)
 		}
 		if fact, ok := facts.RootAssignment(point); !ok || fact.Kind() != factflow.RootAssignmentOrdinaryRootWrite {
 			t.Fatalf("missing function definition root assignment at point %d: %#v/%v", point, fact, ok)
 		}
 	}
 	for _, point := range requireStmtPoints(t, built, numericFor, 2) {
-		if _, ok := result.NumericFor(point); !ok {
-			t.Fatalf("missing numeric-for sidecar at point %d", point)
+		if _, ok := built.Meta.NumericFor(point); !ok {
+			t.Fatalf("missing numeric-for metadata at point %d", point)
 		}
 		assertNoPointFact(t, facts, point)
 	}

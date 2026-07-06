@@ -21,13 +21,13 @@ function scan(xs: {string})
 end
 `)
 	body := wirlower.Lower("scan", fn.Stmts, bindings, built)
-	sidecarFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	sidecarFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, Metadata: built.Meta})
 	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	direct := lowerer{bindings: bindings, wir: body}
 
 	compared := 0
 	for _, point := range built.Graph.RPO() {
-		fact, ok := result.NumericFor(point)
+		fact, ok := built.Meta.NumericFor(point)
 		if !ok {
 			continue
 		}
@@ -71,7 +71,7 @@ end
 
 	var checked int
 	for _, point := range built.Graph.RPO() {
-		if _, ok := result.NumericFor(point); !ok {
+		if _, ok := built.Meta.NumericFor(point); !ok {
 			continue
 		}
 		checked++
@@ -88,7 +88,7 @@ end
 }
 
 func TestLowerWithWIRNumericForProofsPublishWithoutSemanticSidecars(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function scan(xs: {string})
 	for i = 1, #xs do
 		local current = xs[i]
@@ -100,7 +100,7 @@ end
 
 	var checked int
 	for _, point := range built.Graph.RPO() {
-		if _, ok := result.NumericFor(point); !ok {
+		if _, ok := built.Meta.NumericFor(point); !ok {
 			continue
 		}
 		if !body.HasInstruction(point, wir.OpIterate) {

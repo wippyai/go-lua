@@ -3,13 +3,12 @@ package semantics
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
-	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func (r *Result) extractFunctionDefinition(stmt *ast.FuncDefStmt, bindings *bind.Result, points []cfg.Point) error {
+func (r *Result) extractFunctionDefinitionAssignment(stmt *ast.FuncDefStmt, bindings *bind.Result, points []cfg.Point) error {
 	if len(points) == 0 {
 		return nil
 	}
@@ -24,15 +23,6 @@ func (r *Result) extractFunctionDefinition(stmt *ast.FuncDefStmt, bindings *bind
 	if hasTargetPath && targetPath.IsEmpty() {
 		hasTargetPath = false
 	}
-	r.meta.SetFunctionDefinition(points[0], cfgfacts.FunctionDefinitionFact{
-		Stmt:            stmt,
-		Name:            stmt.Name,
-		Func:            stmt.Func,
-		TargetSymbol:    id,
-		HasTargetSymbol: hasSymbol,
-		TargetPath:      targetPath,
-		HasTargetPath:   hasTargetPath,
-	})
 	if hasTargetPath && stmt.Func != nil {
 		container := targetPath.Parent()
 		r.setOrdinaryAssignment(points[0], OrdinaryAssignmentFact{
@@ -60,7 +50,7 @@ func functionDefinitionTargetExpr(stmt *ast.FuncDefStmt) ast.Expr {
 	return stmt.Name.Func
 }
 
-func (r *Result) extractNumberFor(stmt *ast.NumberForStmt, bindings *bind.Result, points []cfg.Point) error {
+func (r *Result) extractNumberForCalls(stmt *ast.NumberForStmt, bindings *bind.Result, points []cfg.Point) error {
 	if len(points) == 0 {
 		return nil
 	}
@@ -75,25 +65,6 @@ func (r *Result) extractNumberFor(stmt *ast.NumberForStmt, bindings *bind.Result
 	for i, call := range calls {
 		r.setCall(points[i], buildCallFact(stmt, nil, CallContextExpressionProducer, nil, call.index, call.call, bindings, nil, resolver))
 	}
-	id, hasSymbol := symbol.ID(0), false
-	if bindings != nil {
-		id, hasSymbol = bindings.NumForSymbol(stmt)
-	}
-	fact := cfgfacts.NumericForFact{
-		Stmt:      stmt,
-		Name:      stmt.Name,
-		Init:      stmt.Init,
-		Limit:     stmt.Limit,
-		Step:      stmt.Step,
-		Symbol:    id,
-		HasSymbol: hasSymbol && id != 0,
-	}
-	initFact := fact
-	initFact.Role = cfgfacts.NumericForRoleInit
-	checkFact := fact
-	checkFact.Role = cfgfacts.NumericForRoleCheck
-	r.meta.SetNumericFor(points[len(calls)], initFact)
-	r.meta.SetNumericFor(points[len(calls)+1], checkFact)
 	return nil
 }
 
