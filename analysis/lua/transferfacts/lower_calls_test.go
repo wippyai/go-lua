@@ -554,51 +554,6 @@ end
 	}
 }
 
-func TestLowerCallResultTargetPathAccessorComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
-function f(): ()
-    local value = nil
-    local other = nil
-    value = make()
-end
-`, "make")
-	assignStmt, ok := fn.Stmts[2].(*ast.AssignStmt)
-	if !ok {
-		t.Fatalf("stmt = %T, want assignment", fn.Stmts[2])
-	}
-	callPoint := requireStmtPoints(t, built, assignStmt, 2)[0]
-	valuePath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "value")
-	otherPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "other")
-	makeSym, ok := bindings.GlobalSymbol("make")
-	if !ok {
-		t.Fatal("missing make global symbol")
-	}
-	makePath := path.NewPath(makeSym, "make")
-	fact, ok := result.Call(callPoint)
-	if !ok {
-		t.Fatalf("missing call fact at point %d", callPoint)
-	}
-
-	body := wir.NewBody("target-accessor")
-	start := body.Emit(wir.Instruction{
-		Op:    wir.OpCall,
-		Point: callPoint,
-		Call:  wir.CallInfo{Callee: wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(makePath))}},
-	})
-	body.SetPointRange(callPoint, start, start+1)
-	body.SetCallResultTarget(callPoint, wir.CallResultTarget{
-		Kind:        wir.CallResultTargetOrdinaryAssignment,
-		Index:       0,
-		ResultIndex: 0,
-		Path:        otherPath,
-	})
-
-	got, ok := (&lowerer{wir: body}).callResultTargetPath(callPoint, fact, 0)
-	if !ok || !got.Equal(otherPath) || got.Equal(valuePath) {
-		t.Fatalf("call result target path = %v/%v, want WIR path %v not semantic path %v", got, ok, otherPath, valuePath)
-	}
-}
-
 func TestLowerNegatedConditionCallSiteCarriesPolarity(t *testing.T) {
 	readyCall := &ast.FuncCallExpr{Func: ident("ready")}
 	ifStmt := &ast.IfStmt{Condition: &ast.UnaryNotOpExpr{Expr: readyCall}}

@@ -59,20 +59,6 @@ func lowerWIRCallResultTarget(target wir.CallResultTarget) factflow.CallResultTa
 	return factflow.NewCallResultTarget(targetKind, targetIndex, resultIndex, targetSymbol, target.Path)
 }
 
-func (l *lowerer) callResultTargetPath(point cfg.Point, fact semantics.CallFact, resultIndex int) (path.Path, bool) {
-	for _, target := range l.callSiteResultTargetsFromWIR(point, fact.ResultTargets) {
-		if target.ResultIndex() != resultIndex {
-			continue
-		}
-		targetPath := target.TargetPath()
-		if targetPath.IsEmpty() {
-			continue
-		}
-		return targetPath, true
-	}
-	return path.Path{}, false
-}
-
 func lowerCallResultTarget(target semantics.CallResultTarget) factflow.CallResultTarget {
 	targetKind := factflow.CallResultTargetUnknown
 	switch target.Kind {
