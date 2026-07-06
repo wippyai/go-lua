@@ -112,6 +112,9 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		l.addObjectLiteralsFromWIR(&input)
 	}
 	for _, point := range graph.RPO() {
+		if l.wir != nil && result == nil {
+			l.addAssignmentWritesFromWIR(&input, point)
+		}
 		if result != nil {
 			if view, ok := result.LocalAssignmentView(point); ok {
 				fact, _ := view.Borrowed()

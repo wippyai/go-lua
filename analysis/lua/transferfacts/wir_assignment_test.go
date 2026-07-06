@@ -551,6 +551,50 @@ end`)
 	assertWIRPathSource(t, dynamicWrite.Source(), valuePath)
 }
 
+func TestLowerWIRPathAndDynamicWritesPublishWithoutSemanticSidecars(t *testing.T) {
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function f(box: any, key: string, value: string)
+    box.name = value
+    box[key] = value
+end`)
+	body := wirlower.Lower("assignment-no-sidecars", fn.Stmts, bindings, built)
+	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	boxPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "box")
+	valuePath := path.NewPath(bindings.ParamSlots(fn)[2].Symbol, "value")
+	staticPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
+	wantStaticTarget := boxPath.Field("name")
+	pathAssign, ok := facts.PathAssignment(staticPoint)
+	if !ok {
+		t.Fatalf("missing WIR no-sidecar static path assignment at point %d", staticPoint)
+	}
+	if got := pathAssign.TargetPathRef(); !got.Equal(wantStaticTarget) {
+		t.Fatalf("path assignment target = %s, want %s", got.String(), wantStaticTarget.String())
+	}
+	assertWIRPathSource(t, pathAssign.Source(), valuePath)
+	staticWrite, ok := facts.PathStaticMemberWrite(staticPoint)
+	if !ok {
+		t.Fatalf("missing WIR no-sidecar static member write at point %d", staticPoint)
+	}
+	if got := staticWrite.TargetPathRef(); !got.Equal(wantStaticTarget) {
+		t.Fatalf("static member write target = %s, want %s", got.String(), wantStaticTarget.String())
+	}
+
+	dynamicPoint := requireStmtPoints(t, built, fn.Stmts[1], 1)[0]
+	dynamicWrite, ok := facts.DynamicIndexWrite(dynamicPoint)
+	if !ok {
+		t.Fatalf("missing WIR no-sidecar dynamic index write at point %d", dynamicPoint)
+	}
+	assertWIRPathSource(t, dynamicWrite.Source(), valuePath)
+	invalidation, ok := facts.PathDescendantInvalidation(dynamicPoint)
+	if !ok {
+		t.Fatalf("missing WIR no-sidecar dynamic index invalidation at point %d", dynamicPoint)
+	}
+	if got := invalidation.ContainerPathRef(); !got.Equal(boxPath) {
+		t.Fatalf("dynamic invalidation container = %s, want %s", got.String(), boxPath.String())
+	}
+}
+
 func assertWIRPathSource(t *testing.T, source factflow.ValueSource, want path.Path) {
 	t.Helper()
 	if source.Kind != factflow.ValueSourcePath || source.PathKey != want.Key() || source.HasExpr || source.ExprRef != 0 {
