@@ -964,7 +964,7 @@ end
 		symbolTypes: lowerSymbolTypes(bindings, built.Graph, built.Meta, result, nil, importlookup.Source{}),
 	}
 
-	lowered.addProtectedCallBranchRefinements(input, built.Graph, nil)
+	lowered.addProtectedCallBranchRefinements(input, built.Graph)
 
 	refinement, ok := branchRefinementAt(input.BranchRefinements[branchPoint].Refinements(), payloadPath)
 	if !ok {

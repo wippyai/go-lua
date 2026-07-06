@@ -269,7 +269,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		}
 	}
 	l.addTypeIsBranchRefinements(&input, graph, result)
-	l.addProtectedCallBranchRefinements(&input, graph, result)
+	l.addProtectedCallBranchRefinements(&input, graph)
 	l.addReturnPresenceRelations(&input, graph)
 	l.addConditionalAssignmentImplications(&input, graph)
 	input.ExpressionValues = l.expressionValues
