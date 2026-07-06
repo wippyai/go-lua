@@ -34,24 +34,7 @@ func (r *Result) valueSourcePath(source factflow.ValueSource) (pathdom.Path, boo
 	if r == nil {
 		return pathdom.Path{}, false
 	}
-	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
-		return r.ExpressionPathRef(source.ExprRef)
-	}
-	if source.Kind != factflow.ValueSourcePath || source.PathKey == "" {
-		return pathdom.Path{}, false
-	}
-	ks := r.KeySpace()
-	if ks == nil {
-		return pathdom.Path{}, false
-	}
-	key, ok := ks.FromStateKey(source.PathKey)
-	if !ok || key.Sym == 0 {
-		return pathdom.Path{}, false
-	}
-	return pathdom.Path{
-		Symbol:   key.Sym,
-		Segments: ks.Segments(key),
-	}, true
+	return valueSourcePath(r.facts, r.visibility, source)
 }
 
 // ValueSourcePath resolves a factflow value source to its canonical static
