@@ -303,15 +303,6 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		}
 		if l.wir != nil {
 			l.addNumericForFactsFromWIR(&input, point)
-		} else {
-			if fact, ok := numericForFactAt(l.metadata, point); ok {
-				if lowered, ok := l.numericForBranchNumFloorRefinement(fact); ok {
-					appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered)
-				}
-				if lowered := l.numericForBranchPathEvidence(fact); len(lowered) != 0 {
-					appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
-				}
-			}
 		}
 	}
 	l.addTypeIsBranchRefinements(&input, graph, result)

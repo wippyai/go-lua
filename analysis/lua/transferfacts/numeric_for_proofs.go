@@ -5,26 +5,12 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
-	"github.com/wippyai/go-lua/analysis/lua/bind"
-	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
-	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
-	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse/numparse"
 )
 
 // numericForBranchPathEvidence lowers `for i = init, #xs do` into the same
 // true-edge proof as an explicit `i <= #xs` guard. Consumers still need a
 // separate positive floor for i before they can remove array-read nil.
-func (l *lowerer) numericForBranchPathEvidence(fact cfgfacts.NumericForFact) []factflow.BranchPathEvidence {
-	info, ok := numericForLoopInfoFromFact(fact, l.bindings)
-	if !ok || !info.hasArrayPath {
-		return nil
-	}
-	return []factflow.BranchPathEvidence{
-		factflow.NewBranchIndexInRangeEvidenceOnEdge(info.indexPath, info.arrayPath, true),
-	}
-}
-
 func (l *lowerer) numericForBranchPathEvidenceFromWIR(point cfg.Point) []factflow.BranchPathEvidence {
 	info, ok := l.numericForLoopInfoFromWIR(point)
 	if !ok || !info.hasArrayPath {
@@ -33,14 +19,6 @@ func (l *lowerer) numericForBranchPathEvidenceFromWIR(point cfg.Point) []factflo
 	return []factflow.BranchPathEvidence{
 		factflow.NewBranchIndexInRangeEvidenceOnEdge(info.indexPath, info.arrayPath, true),
 	}
-}
-
-func (l *lowerer) numericForBranchNumFloorRefinement(fact cfgfacts.NumericForFact) (factflow.BranchNumFloorRefinement, bool) {
-	info, ok := numericForLoopInfoFromFact(fact, l.bindings)
-	if !ok || !info.hasIndexFloor {
-		return factflow.BranchNumFloorRefinement{}, false
-	}
-	return factflow.NewBranchNumFloorRefinement(info.indexPath, info.indexFloor), true
 }
 
 func (l *lowerer) numericForBranchNumFloorRefinementFromWIR(point cfg.Point) (factflow.BranchNumFloorRefinement, bool) {
@@ -184,84 +162,4 @@ type numericForLoopInfo struct {
 
 	indexFloor    int64
 	hasIndexFloor bool
-}
-
-func numericForLoopInfoFromFact(fact cfgfacts.NumericForFact, bindings *bind.Result) (numericForLoopInfo, bool) {
-	if fact.Role != cfgfacts.NumericForRoleCheck || !fact.HasSymbol || fact.Symbol == 0 {
-		return numericForLoopInfo{}, false
-	}
-	info := numericForLoopInfo{indexPath: pathdom.NewPath(fact.Symbol, fact.Name)}
-	direction, ok := numericForStepDirection(fact.Step)
-	if !ok {
-		return info, true
-	}
-	var arrayExpr ast.Expr
-	var floorExpr ast.Expr
-	if direction > 0 {
-		arrayExpr = fact.Limit
-		floorExpr = fact.Init
-	} else {
-		arrayExpr = fact.Init
-		floorExpr = fact.Limit
-	}
-	if arrayPath, ok := numericForLengthExprPath(arrayExpr, bindings); ok {
-		info.arrayPath = arrayPath
-		info.hasArrayPath = true
-	}
-	if floor, ok := numericForPositiveFloor(floorExpr); ok {
-		info.indexFloor = floor
-		info.hasIndexFloor = true
-	}
-	return info, true
-}
-
-func numericForLengthExprPath(expr ast.Expr, bindings *bind.Result) (pathdom.Path, bool) {
-	lenOp, ok := expr.(*ast.UnaryLenOpExpr)
-	if !ok {
-		return pathdom.Path{}, false
-	}
-	return pathexpr.Resolve(lenOp.Expr, bindings)
-}
-
-func numericForPositiveFloor(expr ast.Expr) (int64, bool) {
-	value, ok := numericForIntegralLiteral(expr)
-	if !ok || value < 1 {
-		return 0, false
-	}
-	return value, true
-}
-
-func numericForStepDirection(expr ast.Expr) (int, bool) {
-	if expr == nil {
-		return 1, true
-	}
-	value, ok := numericForIntegralLiteral(expr)
-	if !ok {
-		return 0, false
-	}
-	if value < 0 {
-		return -1, true
-	}
-	if value > 0 {
-		return 1, true
-	}
-	return 0, false
-}
-
-func numericForIntegralLiteral(expr ast.Expr) (int64, bool) {
-	if expr == nil {
-		return 0, false
-	}
-	switch e := expr.(type) {
-	case *ast.NumberExpr:
-		return numparse.ParseIntegralLiteral(e.Value)
-	case *ast.UnaryMinusOpExpr:
-		value, ok := numericForIntegralLiteral(e.Expr)
-		if !ok {
-			return 0, false
-		}
-		return -value, true
-	default:
-		return 0, false
-	}
 }

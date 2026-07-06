@@ -1,7 +1,6 @@
 package transferfacts
 
 import (
-	"reflect"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/ir/wir"
@@ -9,8 +8,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
-func TestLowerWithWIRNumericForProofsMatchSidecarLowering(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+func TestLowerWithWIRNumericForProofsPublishForBothLoopDirections(t *testing.T) {
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function scan(xs: {string})
 	for i = 1, #xs do
 		local current = xs[i]
@@ -21,37 +20,23 @@ function scan(xs: {string})
 end
 `)
 	body := wirlower.Lower("scan", fn.Stmts, bindings, built)
-	sidecarFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, Metadata: built.Meta})
-	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
-	direct := lowerer{bindings: bindings, wir: body}
+	wirFacts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	compared := 0
 	for _, point := range built.Graph.RPO() {
-		fact, ok := built.Meta.NumericFor(point)
-		if !ok {
+		if !body.HasInstruction(point, wir.OpIterate) {
 			continue
 		}
 		compared++
-		if got, gotOK := direct.numericForBranchNumFloorRefinementFromWIR(point); gotOK {
-			want, wantOK := direct.numericForBranchNumFloorRefinement(fact)
-			if !wantOK || !reflect.DeepEqual(got, want) {
-				t.Fatalf("direct WIR numeric-for num-floor proof at point %d mismatch\n got: %#v\nwant: %#v", point, got, want)
-			}
-		} else if _, wantOK := direct.numericForBranchNumFloorRefinement(fact); wantOK {
-			t.Fatalf("direct WIR numeric-for num-floor proof at point %d missing", point)
+		if got := wirFacts.BranchNumFloorRefinements(point); len(got) == 0 {
+			t.Fatalf("missing WIR numeric-for num-floor proof at point %d", point)
 		}
-		if got, want := direct.numericForBranchPathEvidenceFromWIR(point), direct.numericForBranchPathEvidence(fact); !reflect.DeepEqual(got, want) {
-			t.Fatalf("direct WIR numeric-for path evidence at point %d mismatch\n got: %#v\nwant: %#v", point, got, want)
-		}
-		if got, want := wirFacts.BranchNumFloorRefinements(point), sidecarFacts.BranchNumFloorRefinements(point); !reflect.DeepEqual(got, want) {
-			t.Fatalf("numeric-for num-floor proofs at point %d mismatch\n got: %#v\nwant: %#v", point, got, want)
-		}
-		if got, want := wirFacts.BranchPathEvidence(point), sidecarFacts.BranchPathEvidence(point); !reflect.DeepEqual(got, want) {
-			t.Fatalf("numeric-for path evidence at point %d mismatch\n got: %#v\nwant: %#v", point, got, want)
+		if got := wirFacts.BranchPathEvidence(point); len(got) == 0 {
+			t.Fatalf("missing WIR numeric-for path evidence at point %d", point)
 		}
 	}
-	if compared != 4 {
-		t.Fatalf("compared %d numeric-for points, want init/check for two loops", compared)
+	if compared != 2 {
+		t.Fatalf("checked %d WIR numeric-for iterate points, want two loops", compared)
 	}
 }
 
