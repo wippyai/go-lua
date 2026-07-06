@@ -75,13 +75,13 @@ func (r *Result) DominatingBranchCheckForPath(
 		if branch == point {
 			continue
 		}
-		fact, ok := r.BranchCondition(branch)
-		if !ok || !fact.Check.Path.Equal(p) {
+		check, ok := r.BranchConditionCheck(branch)
+		if !ok || !check.Path.Equal(p) {
 			continue
 		}
 		for _, succ := range cfg.SuccessorsReadOnly(graph, branch) {
 			cond, ok := graph.EdgeCond(branch, succ)
-			if !ok || !accepts(branch, fact.Check, cond) {
+			if !ok || !accepts(branch, check, cond) {
 				continue
 			}
 			if !r.proofEdgeDominatesPoint(graph, branch, succ, point) {
@@ -112,8 +112,8 @@ func (r *Result) DominatingLiteralBranchForPath(point cfg.Point, p pathdom.Path)
 		if branch == point {
 			continue
 		}
-		fact, ok := r.BranchCondition(branch)
-		if !ok || !r.branchCheckPathMatchesAt(point, fact.Check.Path, p) {
+		check, ok := r.BranchConditionCheck(branch)
+		if !ok || !r.branchCheckPathMatchesAt(point, check.Path, p) {
 			continue
 		}
 		for _, succ := range cfg.SuccessorsReadOnly(graph, branch) {
@@ -121,7 +121,7 @@ func (r *Result) DominatingLiteralBranchForPath(point cfg.Point, p pathdom.Path)
 			if !ok {
 				continue
 			}
-			proven, ok := literalProofFromBranchCheck(fact.Check, cond)
+			proven, ok := literalProofFromBranchCheck(check, cond)
 			if !ok {
 				continue
 			}
@@ -129,7 +129,7 @@ func (r *Result) DominatingLiteralBranchForPath(point cfg.Point, p pathdom.Path)
 				continue
 			}
 			if !r.PathInvalidatedBetween(succ, point, p) &&
-				(fact.Check.Path.Equal(p) || !r.PathInvalidatedBetween(succ, point, fact.Check.Path)) {
+				(check.Path.Equal(p) || !r.PathInvalidatedBetween(succ, point, check.Path)) {
 				return proven, branch, true
 			}
 		}

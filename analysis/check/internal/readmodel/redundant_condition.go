@@ -39,13 +39,13 @@ func (r Reader) DominatingTruthyBranchForPath(point cfg.Point, check readapi.Bra
 	if !ok {
 		return DominatingBranchProof{}, false
 	}
-	fact, ok := r.result.BranchCondition(branch)
+	prior, ok := r.result.BranchConditionCheck(branch)
 	if !ok {
 		return DominatingBranchProof{}, false
 	}
 	return DominatingBranchProof{
 		Point: branch,
-		Check: branchCheckFromLua(fact.Check),
+		Check: branchCheckFromLua(prior),
 		Span:  r.branchConditionSpan(branch),
 	}, true
 }
@@ -66,13 +66,13 @@ func (r Reader) DominatingBranchCheckForPath(
 	if !ok {
 		return DominatingBranchProof{}, false
 	}
-	fact, ok := r.result.BranchCondition(branch)
+	prior, ok := r.result.BranchConditionCheck(branch)
 	if !ok {
 		return DominatingBranchProof{}, false
 	}
 	return DominatingBranchProof{
 		Point: branch,
-		Check: branchCheckFromLua(fact.Check),
+		Check: branchCheckFromLua(prior),
 		Edge:  edge,
 		Span:  r.branchConditionSpan(branch),
 	}, true

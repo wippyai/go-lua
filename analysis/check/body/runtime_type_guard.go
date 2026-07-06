@@ -100,15 +100,15 @@ func (r *Result) DominatingRuntimeTypeGuardProves(point cfg.Point, p pathdom.Pat
 		if branch == point || !r.PointDominates(branch, point) {
 			continue
 		}
-		fact, ok := r.BranchCondition(branch)
-		if !ok || !fact.Check.Path.Equal(p) {
+		check, ok := r.BranchConditionCheck(branch)
+		if !ok || !check.Path.Equal(p) {
 			continue
 		}
-		rejectCond, ok := runtimeTypeGuardRejectCond(fact.Check.Kind)
+		rejectCond, ok := runtimeTypeGuardRejectCond(check.Kind)
 		if !ok {
 			continue
 		}
-		if !RuntimeTypeGuardProves(fact.Check.TypeName, want) {
+		if !RuntimeTypeGuardProves(check.TypeName, want) {
 			continue
 		}
 		for _, succ := range cfg.SuccessorsReadOnly(graph, branch) {
