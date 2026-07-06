@@ -115,6 +115,16 @@ end
 	if _, ok := branchRefinementAt(facts.BranchRefinements(point), target); !ok {
 		t.Fatalf("WIR no-sidecar branch refinements missing %s at point %d: %#v", target, point, facts.BranchRefinements(point))
 	}
+	source, ok := facts.BranchConditionSource(point)
+	if !ok {
+		t.Fatalf("WIR no-sidecar branch condition source missing at point %d", point)
+	}
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr || !source.Final || source.Adjusted || source.Expanded || source.OpenTail {
+		t.Fatalf("WIR no-sidecar branch condition source = %#v, want unadjusted expression source", source)
+	}
+	if got, ok := facts.ExpressionPath(source.ExprRef); !ok || !got.Equal(target) {
+		t.Fatalf("WIR no-sidecar branch condition path = %v/%v, want %v", got, ok, target)
+	}
 	if got := facts.BranchPathEvidence(point); len(got) == 0 {
 		t.Fatalf("WIR no-sidecar branch path evidence missing at point %d", point)
 	}

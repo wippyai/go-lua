@@ -419,10 +419,8 @@ func (l *lowerer) addBranchFactsFromWIR(input *factflow.FactsInput, point cfg.Po
 	if l == nil || l.wir == nil || input == nil || !l.wir.HasInstruction(point, wir.OpBranch) {
 		return
 	}
-	if check, ok := l.directBranchCheckFromWIR(point); ok {
-		if source, ok := l.branchConditionSourceFromWIR(check); ok {
-			input.BranchConditionSources[point] = source
-		}
+	if source, ok := l.branchConditionSourceAtWIR(point); ok {
+		input.BranchConditionSources[point] = source
 	}
 	if reachability, ok := l.branchEdgeReachabilityFromWIR(point); ok {
 		input.BranchEdgeReachability[point] = reachability
