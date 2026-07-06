@@ -47,6 +47,15 @@ func (l *lowerer) rootAssignmentValueSourceFromWIR(point cfg.Point, inst wir.Ins
 		return l.assignmentValueSourceFromWIROperand(point, sourceOp)
 	}
 	switch inst.Op {
+	case wir.OpClosure:
+		return l.wirClosureExpressionValueSource(
+			inst,
+			sourceprovenance.NoSourceIndex,
+			0,
+			true,
+			false,
+			false,
+		)
 	case wir.OpDynamicIndexRead:
 		return l.wirDynamicIndexReadExpressionValueSource(
 			inst,

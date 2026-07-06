@@ -506,7 +506,7 @@ func rootAssignmentSourceInstruction(inst wir.Instruction) bool {
 		return true
 	}
 	switch inst.Op {
-	case wir.OpMakeTable, wir.OpDynamicIndexRead:
+	case wir.OpMakeTable, wir.OpDynamicIndexRead, wir.OpClosure:
 		return true
 	default:
 		return false
@@ -941,10 +941,11 @@ func (b *builder) emitClosure(dst wir.Operand, fn *ast.FunctionExpr) {
 		ops = append(ops, b.pathOperand(path.NewPath(c.Captured, c.CapturedName)))
 	}
 	b.emit(wir.Instruction{
-		Op:   wir.OpClosure,
-		Dst:  dst,
-		Func: ref,
-		List: b.body.AppendOperands(ops),
+		Op:     wir.OpClosure,
+		Dst:    dst,
+		Func:   ref,
+		List:   b.body.AppendOperands(ops),
+		ExprID: expressionid.Of(fn),
 	})
 }
 

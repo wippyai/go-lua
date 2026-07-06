@@ -702,6 +702,41 @@ end`)
 	}
 }
 
+func TestLowerWIRClosureRootAssignmentPublishesExpressionSourceWithoutSemanticSidecars(t *testing.T) {
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function f(): ()
+    local out = function(): string
+        return "ok"
+    end
+end`)
+	body := wirlower.Lower("closure-root-assignment-no-sidecars", fn.Stmts, bindings, built)
+	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	stmt := fn.Stmts[0].(*ast.LocalAssignStmt)
+	outPath := path.NewPath(mustLocalAt(t, bindings, stmt, 0), "out")
+	point := requireStmtPoints(t, built, stmt, 1)[0]
+	assign, ok := facts.RootAssignment(point)
+	if !ok {
+		t.Fatalf("missing WIR no-sidecar closure root assignment at point %d", point)
+	}
+	if got := assign.TargetPath(); !got.Equal(outPath) {
+		t.Fatalf("closure root assignment target = %s, want %s", got.String(), outPath.String())
+	}
+	source := assign.Source()
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		t.Fatalf("closure root assignment source = %#v, want expression source", source)
+	}
+	wantFn, ok := bindings.FunctionSymbol(stmt.Exprs[0].(*ast.FunctionExpr))
+	if !ok {
+		t.Fatal("missing function symbol for closure expression")
+	}
+	gotFn, ok := facts.ExpressionFunction(source.ExprRef)
+	if !ok || gotFn != wantFn {
+		t.Fatalf("closure expression function = %v/%v, want %v", gotFn, ok, wantFn)
+	}
+	assertExpressionValue(t, facts, source.ExprRef, presence.Present(), runtimekind.Singleton(runtimekind.Function))
+}
+
 func assertWIRPathSource(t *testing.T, source factflow.ValueSource, want path.Path) {
 	t.Helper()
 	if source.Kind != factflow.ValueSourcePath || source.PathKey != want.Key() || source.HasExpr || source.ExprRef != 0 {

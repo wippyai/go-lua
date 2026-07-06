@@ -775,15 +775,49 @@ func (l *lowerer) wirClosureTempExpressionValueSource(
 	expanded bool,
 	openTail bool,
 ) (factflow.ValueSource, bool) {
+	exprRef, ok := l.exprRef(wirTempExprRefKey{temp: temp})
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return l.wirClosureExpressionValueSourceWithRef(inst, exprRef, exprIndex, targetIndex, final, expanded, openTail)
+}
+
+type wirClosureExprRefKey struct {
+	id wir.ExpressionID
+}
+
+func (l *lowerer) wirClosureExpressionValueSource(
+	inst wir.Instruction,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+) (factflow.ValueSource, bool) {
+	if inst.ExprID == 0 {
+		return factflow.ValueSource{}, false
+	}
+	exprRef, ok := l.exprRef(wirClosureExprRefKey{id: inst.ExprID})
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return l.wirClosureExpressionValueSourceWithRef(inst, exprRef, exprIndex, targetIndex, final, expanded, openTail)
+}
+
+func (l *lowerer) wirClosureExpressionValueSourceWithRef(
+	inst wir.Instruction,
+	exprRef factflow.ExprRef,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+) (factflow.ValueSource, bool) {
 	if l == nil || l.wir == nil || inst.Func == 0 {
 		return factflow.ValueSource{}, false
 	}
 	proto := l.wir.Proto(inst.Func)
 	if proto.Symbol == 0 {
-		return factflow.ValueSource{}, false
-	}
-	exprRef, ok := l.exprRef(wirTempExprRefKey{temp: temp})
-	if !ok {
 		return factflow.ValueSource{}, false
 	}
 	if l.expressionFunctions == nil {
