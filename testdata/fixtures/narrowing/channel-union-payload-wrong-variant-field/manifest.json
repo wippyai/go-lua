@@ -17,11 +17,45 @@
         "evidence_contains": [
           "event.reason reads member \"reason\""
         ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 14,
+            "column": 36,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "event.reason reads member \"reason\" from receiver type {kind: \"ready\", payload: {id: string}}"
+            ]
+          }
+        ],
         "help_contains": [
           "Narrow the receiver before reading `reason`"
         ],
+        "render_ordered_contains": [
+          "error[type.member.missing]: {kind: \"ready\", payload: {id: string}} has no member \"reason\"",
+          "--> main.lua:14:36",
+          "local reason: string = event.reason",
+          "because:",
+          "proven: event.reason reads member \"reason\" from receiver type {kind: \"ready\", payload: {id: string}}",
+          "help: Narrow the receiver before reading `reason`, or add `reason` to every reachable receiver shape."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:"
+        ],
         "label_contains": [
           "member read"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 14,
+            "column": 36,
+            "contains": [
+              "member read"
+            ]
+          }
         ],
         "render_contains": [
           "error[type.member.missing]",

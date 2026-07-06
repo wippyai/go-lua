@@ -130,6 +130,30 @@ end
 	}
 }
 
+func TestLowerWithWIRLiteralDiscriminantPublishesWithoutSemanticSidecars(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(r: {tag: "a", value: string} | {tag: "b", value: number}): ()
+    if r.tag == "a" then
+        local hit = r.value
+    else
+        local miss = r.value
+    end
+end
+`)
+	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
+	body := wirlower.Lower("literal-discriminant-no-sidecars", fn.Stmts, bindings, built)
+
+	sidecarFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	wirFacts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	want := sidecarFacts.BranchRefinements(point)
+	if len(want) == 0 {
+		t.Fatalf("sidecar branch refinements missing at point %d", point)
+	}
+	if got := wirFacts.BranchRefinements(point); !reflect.DeepEqual(got, want) {
+		t.Fatalf("WIR no-sidecar literal discriminant refinements mismatch at point %d\n got: %#v\nwant: %#v", point, got, want)
+	}
+}
+
 func TestLowerWithWIRCompoundBranchPathRelationsMatchSidecar(t *testing.T) {
 	stmts, bindings, built, result := parseSemanticChunk(t, `
 local a, b, c, d = {}, {}, {}, {}

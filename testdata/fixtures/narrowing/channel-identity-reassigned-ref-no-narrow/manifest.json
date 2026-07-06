@@ -18,11 +18,50 @@
         "evidence_contains": [
           "id"
         ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 13,
+            "column": 34,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "result.value.id reads member \"id\" from receiver type {kind: \"tick\", elapsed: number}"
+            ]
+          }
+        ],
         "help_contains": [
-          "Check that the value has this member"
+          "Narrow the receiver before reading `id`"
+        ],
+        "render_contains": [
+          "error[type.member.missing]: {kind: \"tick\", elapsed: number} has no member \"id\"",
+          "result.value.id",
+          "because:"
+        ],
+        "render_ordered_contains": [
+          "error[type.member.missing]: {kind: \"tick\", elapsed: number} has no member \"id\"",
+          "--> main.lua:13:34",
+          "local id: string = result.value.id",
+          "because:",
+          "proven: result.value.id reads member \"id\" from receiver type {kind: \"tick\", elapsed: number}",
+          "help: Narrow the receiver before reading `id`, or add `id` to every reachable receiver shape."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:"
         ],
         "label_contains": [
-          "member access"
+          "member read"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 13,
+            "column": 34,
+            "contains": [
+              "member read"
+            ]
+          }
         ]
       }
     ]
