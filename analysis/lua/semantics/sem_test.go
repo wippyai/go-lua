@@ -898,66 +898,6 @@ func TestExtractChunkMemberFunctionDefinitionFactPublishesPathAssignment(t *test
 	}
 }
 
-func TestExtractChunkLabelFactPreservesIdentity(t *testing.T) {
-	label := &ast.LabelStmt{Name: "again"}
-	stmts := []ast.Stmt{label}
-	bindings := bind.BindChunk(stmts, bind.Options{})
-	built := cfgbuild.BuildChunk(stmts, bindings)
-
-	result, err := ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	point := requireStmtPoints(t, built, label, 1)[0]
-	fact, ok := result.Label(point)
-	if !ok {
-		t.Fatalf("missing label fact")
-	}
-	if fact.Stmt != label || fact.Name != "again" {
-		t.Fatalf("label fact = %#v", fact)
-	}
-	if _, ok := result.LocalAssignment(point); ok {
-		t.Fatalf("label point produced local assignment fact")
-	}
-	if _, ok := result.OrdinaryAssignment(point); ok {
-		t.Fatalf("label point produced ordinary assignment fact")
-	}
-	if _, ok := result.FunctionDefinition(point); ok {
-		t.Fatalf("label point produced function definition fact")
-	}
-}
-
-func TestExtractChunkGotoFactPreservesIdentity(t *testing.T) {
-	jump := &ast.GotoStmt{Label: "again"}
-	stmts := []ast.Stmt{jump}
-	bindings := bind.BindChunk(stmts, bind.Options{})
-	built := cfgbuild.BuildChunk(stmts, bindings)
-
-	result, err := ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	point := requireStmtPoints(t, built, jump, 1)[0]
-	fact, ok := result.Goto(point)
-	if !ok {
-		t.Fatalf("missing goto fact")
-	}
-	if fact.Stmt != jump || fact.Label != "again" {
-		t.Fatalf("goto fact = %#v", fact)
-	}
-	if _, ok := result.Label(point); ok {
-		t.Fatalf("goto point produced label fact")
-	}
-	if _, ok := result.LocalAssignment(point); ok {
-		t.Fatalf("goto point produced local assignment fact")
-	}
-	if _, ok := result.OrdinaryAssignment(point); ok {
-		t.Fatalf("goto point produced ordinary assignment fact")
-	}
-}
-
 func TestExtractChunkCallReturnBranchAndTypeFacts(t *testing.T) {
 	decl := localAssign([]string{"x"}, number("1"))
 	printIdent := ident("print")
@@ -2496,50 +2436,6 @@ func TestExtractChunkSkipsUnmappedDeclarationFacts(t *testing.T) {
 	}
 }
 
-func TestExtractChunkSkipsUnmappedLabel(t *testing.T) {
-	ret := &ast.ReturnStmt{}
-	deadLabel := &ast.LabelStmt{Name: "dead"}
-	stmts := []ast.Stmt{ret, deadLabel}
-	bindings := bind.BindChunk(stmts, bind.Options{})
-	built := cfgbuild.BuildChunk(stmts, bindings)
-	if built == nil {
-		t.Fatalf("BuildChunk returned nil")
-	}
-	if got := built.StmtPoints.PointsFor(deadLabel); len(got) != 0 {
-		t.Fatalf("dead label mapped to points %v", got)
-	}
-
-	result, err := ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-	if _, ok := result.Label(cfg.Point(9999)); ok {
-		t.Fatalf("unmapped label produced label fact at dead point")
-	}
-}
-
-func TestExtractChunkSkipsUnmappedGoto(t *testing.T) {
-	ret := &ast.ReturnStmt{}
-	deadGoto := &ast.GotoStmt{Label: "dead"}
-	stmts := []ast.Stmt{ret, deadGoto}
-	bindings := bind.BindChunk(stmts, bind.Options{})
-	built := cfgbuild.BuildChunk(stmts, bindings)
-	if built == nil {
-		t.Fatalf("BuildChunk returned nil")
-	}
-	if got := built.StmtPoints.PointsFor(deadGoto); len(got) != 0 {
-		t.Fatalf("dead goto mapped to points %v", got)
-	}
-
-	result, err := ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-	if _, ok := result.Goto(cfg.Point(9999)); ok {
-		t.Fatalf("unmapped goto produced goto fact at dead point")
-	}
-}
-
 func TestExtractReportsMissingCFG(t *testing.T) {
 	if _, err := ExtractChunk(nil, nil, nil); !errors.Is(err, ErrNoCFG) {
 		t.Fatalf("ExtractChunk(nil) = %v, want ErrNoCFG", err)
@@ -2583,20 +2479,6 @@ func TestExtractSinglePointMetadataReportsExtraPointMismatch(t *testing.T) {
 					Func: function(nil),
 				}
 				return newResult(nil).extractFunctionDefinition(stmt, nil, []cfg.Point{1, 2})
-			},
-		},
-		{
-			name: "label",
-			err: func() error {
-				stmt := &ast.LabelStmt{Name: "again"}
-				return newResult(nil).extractLabel(stmt, []cfg.Point{1, 2})
-			},
-		},
-		{
-			name: "goto",
-			err: func() error {
-				stmt := &ast.GotoStmt{Label: "again"}
-				return newResult(nil).extractGoto(stmt, []cfg.Point{1, 2})
 			},
 		},
 		{

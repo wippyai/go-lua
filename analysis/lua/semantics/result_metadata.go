@@ -25,17 +25,3 @@ func (r *Result) NumericFor(point cfg.Point) (cfgfacts.NumericForFact, bool) {
 	}
 	return r.meta.NumericFor(point)
 }
-
-func (r *Result) Label(point cfg.Point) (cfgfacts.LabelFact, bool) {
-	if r == nil {
-		return cfgfacts.LabelFact{}, false
-	}
-	return r.meta.Label(point)
-}
-
-func (r *Result) Goto(point cfg.Point) (cfgfacts.GotoFact, bool) {
-	if r == nil {
-		return cfgfacts.GotoFact{}, false
-	}
-	return r.meta.Goto(point)
-}

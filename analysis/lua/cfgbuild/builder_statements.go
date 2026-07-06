@@ -134,6 +134,10 @@ func (b *builder) buildLabel(state flowState, stmt *ast.LabelStmt) flowState {
 		b.labels = make(map[string]cfg.Point)
 	}
 	b.labels[stmt.Name] = point
+	b.meta.SetLabel(point, cfgfacts.LabelFact{
+		Stmt: stmt,
+		Name: stmt.Name,
+	})
 	return flowState{current: point, live: true}
 }
 
@@ -142,6 +146,10 @@ func (b *builder) buildGoto(state flowState, stmt *ast.GotoStmt) flowState {
 	if !gotoState.live {
 		return flowState{current: state.current}
 	}
+	b.meta.SetGoto(gotoState.current, cfgfacts.GotoFact{
+		Stmt:  stmt,
+		Label: stmt.Label,
+	})
 	if target, ok := b.labels[stmt.Label]; ok {
 		b.graph.AddEdge(gotoState.current, target, false)
 	} else {

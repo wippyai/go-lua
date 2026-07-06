@@ -160,31 +160,3 @@ func (r *Result) extractGenericFor(stmt *ast.GenericForStmt, bindings *bind.Resu
 	}
 	return nil
 }
-
-func (r *Result) extractLabel(stmt *ast.LabelStmt, points []cfg.Point) error {
-	if len(points) == 0 {
-		return nil
-	}
-	if len(points) != 1 {
-		return ErrPointMismatch
-	}
-	r.meta.SetLabel(points[0], cfgfacts.LabelFact{
-		Stmt: stmt,
-		Name: stmt.Name,
-	})
-	return nil
-}
-
-func (r *Result) extractGoto(stmt *ast.GotoStmt, points []cfg.Point) error {
-	if len(points) == 0 {
-		return nil
-	}
-	if len(points) != 1 {
-		return ErrPointMismatch
-	}
-	r.meta.SetGoto(points[0], cfgfacts.GotoFact{
-		Stmt:  stmt,
-		Label: stmt.Label,
-	})
-	return nil
-}
