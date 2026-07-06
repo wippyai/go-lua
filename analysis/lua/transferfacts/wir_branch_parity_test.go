@@ -778,8 +778,7 @@ if (function() return 1 end) then local j = 1 end
 if (nil :: any) then local k = 1 end
 `, "f")
 	body := wirlower.Lower("chunk", stmts, bindings, built)
-	sidecarFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
-	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	wirFacts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	var checked int
 	for _, point := range built.Graph.RPO() {
@@ -787,35 +786,18 @@ if (nil :: any) then local k = 1 end
 		if !ok {
 			continue
 		}
-		sidecarReachability, ok := semanticBranchEdgeReachability(fact.Condition)
+		truthy, ok := branchcond.StaticLuaTruthiness(fact.Condition)
 		if !ok {
 			continue
 		}
 		checked++
 		for _, cond := range []bool{false, true} {
-			want := sidecarReachability.EdgeUnreachable(cond)
+			want := factflow.NewBranchEdgeReachability(!truthy, truthy).EdgeUnreachable(cond)
 			assertEqualBranchFacts(t, point, "branch reachability", want, wirFacts.BranchEdgeUnreachable(point, cond))
-			assertEqualBranchFacts(t, point, "sidecar branch reachability", want, sidecarFacts.BranchEdgeUnreachable(point, cond))
 		}
 	}
 	if checked != 17 {
 		t.Fatalf("checked %d static branch conditions, want 17", checked)
-	}
-}
-
-func TestWIRBranchReachabilityDoesNotFallbackToSidecarTruthiness(t *testing.T) {
-	point := cfg.Point(1)
-	body := wir.NewBody("branch")
-	start := body.Emit(wir.Instruction{
-		Op:    wir.OpBranch,
-		Point: point,
-		Check: body.InternCheck(wir.Check{}),
-	})
-	body.SetPointRange(point, start, start+1)
-
-	lowered := lowerer{wir: body}
-	if got, ok := lowered.branchEdgeReachability(point, &ast.TrueExpr{}); ok {
-		t.Fatalf("WIR branch reachability fell back to sidecar truthiness: %#v", got)
 	}
 }
 

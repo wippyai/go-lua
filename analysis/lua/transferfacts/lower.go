@@ -271,9 +271,6 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 				if fact.Check.Kind != branchcond.CheckNone {
 					input.BranchConditionSources[point] = l.valueSource(fact.Source)
 				}
-				if reachability, ok := l.branchEdgeReachability(point, condition); ok {
-					input.BranchEdgeReachability[point] = reachability
-				}
 				if lowered := l.branchRefinements(fact.Check, condition); len(lowered) != 0 {
 					appendBranchRefinement(input.BranchRefinements, point, lowered...)
 				}

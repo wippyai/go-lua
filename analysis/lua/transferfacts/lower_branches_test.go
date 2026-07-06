@@ -496,12 +496,13 @@ func TestLowerStaticTruthinessMarksImpossibleBranchEdges(t *testing.T) {
 			stmts := []ast.Stmt{tc.stmt}
 			bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"dynamic"}})
 			built := cfgbuild.BuildChunk(stmts, bindings)
-			result, err := semantics.ExtractChunk(stmts, bindings, built)
+			_, err := semantics.ExtractChunk(stmts, bindings, built)
 			if err != nil {
 				t.Fatalf("ExtractChunk: %v", err)
 			}
 
-			facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+			body := wirlower.Lower("static-truthiness", stmts, bindings, built)
+			facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 			point := requireStmtPoints(t, built, tc.stmt, 1)[0]
 			if got := facts.BranchEdgeUnreachable(point, true); got != tc.wantTrueBlocked {
 				t.Fatalf("true-edge unreachable = %v, want %v", got, tc.wantTrueBlocked)
