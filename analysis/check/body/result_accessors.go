@@ -336,6 +336,13 @@ func (r *Result) CallSiteView(point cfg.Point) (factflow.CallSiteView, bool) {
 	return r.facts.CallSiteView(point)
 }
 
+func (r *Result) ChannelSelects(point cfg.Point) []factflow.ChannelSelect {
+	if r == nil {
+		return nil
+	}
+	return r.facts.ChannelSelects(point)
+}
+
 func (r *Result) DynamicIndexWrite(point cfg.Point) (factflow.DynamicIndexWrite, bool) {
 	if r == nil {
 		return factflow.DynamicIndexWrite{}, false

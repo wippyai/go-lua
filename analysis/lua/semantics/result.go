@@ -1,10 +1,7 @@
 package semantics
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -17,7 +14,6 @@ type Result struct {
 	returns               map[cfg.Point]*ReturnFact
 	objectLiterals        map[ast.Expr]ObjectLiteralFact
 	branches              map[cfg.Point]BranchConditionFact
-	meta                  cfgfacts.Metadata
 }
 
 func newResult(fn *ast.FunctionExpr) *Result {
@@ -201,37 +197,6 @@ func (r *Result) ObjectLiteral(expr ast.Expr) (ObjectLiteralFact, bool) {
 		return ObjectLiteralFact{}, false
 	}
 	return copyObjectLiteralFact(fact), true
-}
-
-func (r *Result) ChannelSelect(point cfg.Point) (ChannelSelectFact, bool) {
-	if r == nil {
-		return ChannelSelectFact{}, false
-	}
-	fact, ok := r.calls[point]
-	if !ok || fact == nil || !fact.HasChannelSelect {
-		return ChannelSelectFact{}, false
-	}
-	return copyChannelSelectFact(fact.ChannelSelect), true
-}
-
-func (r *Result) ChannelSelects() []ChannelSelectFact {
-	if r == nil {
-		return nil
-	}
-	var points []cfg.Point
-	for point, fact := range r.calls {
-		if fact != nil && fact.HasChannelSelect {
-			points = append(points, point)
-		}
-	}
-	sort.Slice(points, func(i, j int) bool {
-		return points[i] < points[j]
-	})
-	out := make([]ChannelSelectFact, 0, len(points))
-	for _, point := range points {
-		out = append(out, copyChannelSelectFact(r.calls[point].ChannelSelect))
-	}
-	return out
 }
 
 func (r *Result) setCall(point cfg.Point, fact CallFact) {

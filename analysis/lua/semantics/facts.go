@@ -120,9 +120,6 @@ type CallFact struct {
 
 	CalleeSymbol    symbol.ID
 	HasCalleeSymbol bool
-
-	ChannelSelect    ChannelSelectFact
-	HasChannelSelect bool
 }
 
 type ReturnFact struct {
@@ -155,19 +152,6 @@ type SourceSpan struct {
 	StartCol  int
 	EndLine   int
 	EndCol    int
-}
-
-type ChannelSelectFact struct {
-	Call         *ast.FuncCallExpr
-	ResultTarget CallResultTarget
-	Cases        []ChannelSelectCaseFact
-	HasDefault   bool
-}
-
-type ChannelSelectCaseFact struct {
-	CaseCall       *ast.FuncCallExpr
-	ChannelPath    path.Path
-	HasChannelPath bool
 }
 
 type BranchConditionFact struct {

@@ -15,7 +15,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
@@ -26,7 +25,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
-	"github.com/wippyai/go-lua/analysis/type/ambient"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -781,25 +779,17 @@ _G.coroutine = {}
 func TestLowerChannelSelectsUseWIRFacts(t *testing.T) {
 	_, bindings, built, result := parseSemanticFunction(t, `
 function handle(events_ch: Channel<{kind: "event", id: string}>, stop_ch: Channel<{kind: "stop", reason: string}>)
-    local selected = channel.select { events_ch:case_receive(), stop_ch:case_receive() }
+	local selected = channel.select { events_ch:case_receive(), stop_ch:case_receive() }
 end
 `, "channel")
 	body := wirlower.Lower("handle", result.Function().Stmts, bindings, built)
-	sidecarFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
 	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
-	var sidecarSelects []factflow.ChannelSelect
 	var wirSelects []factflow.ChannelSelect
 	for _, point := range built.Graph.RPO() {
-		if events := sidecarFacts.ChannelSelects(point); len(events) != 0 {
-			sidecarSelects = events
-		}
 		if events := wirFacts.ChannelSelects(point); len(events) != 0 {
 			wirSelects = events
 		}
-	}
-	if !reflect.DeepEqual(wirSelects, sidecarSelects) {
-		t.Fatalf("WIR channel select events mismatch\n got: %#v\nwant: %#v", wirSelects, sidecarSelects)
 	}
 	if len(wirSelects) != 5 {
 		t.Fatalf("channel select events = %#v, want select plus two case/receive pairs", wirSelects)
@@ -880,7 +870,7 @@ end
 	}
 
 	for _, point := range built.Graph.RPO() {
-		events := lowered.channelSelects(point, nil)
+		events := lowered.channelSelects(point)
 		if len(events) == 0 {
 			continue
 		}
@@ -982,96 +972,53 @@ function consume(events: Channel<{
 end
 `, "channel")
 	body := wirlower.Lower("consume", fn.Stmts, bindings, built)
-	sidecarFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
 	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
-	compared := 0
+	var selectGroups [][]factflow.ChannelSelect
 	for _, point := range built.Graph.RPO() {
-		sidecarSelects := sidecarFacts.ChannelSelects(point)
 		wirSelects := wirFacts.ChannelSelects(point)
-		if len(sidecarSelects) == 0 && len(wirSelects) == 0 {
-			continue
-		}
-		compared++
-		if !reflect.DeepEqual(wirSelects, sidecarSelects) {
-			t.Fatalf("WIR channel select events mismatch at point %d\n got: %#v\nwant: %#v", point, wirSelects, sidecarSelects)
+		if len(wirSelects) != 0 {
+			selectGroups = append(selectGroups, wirSelects)
 		}
 	}
-	if compared != 2 {
-		t.Fatalf("compared %d channel-select points, want outer and narrowed nested selects", compared)
+	if len(selectGroups) != 2 {
+		t.Fatalf("found %d channel-select points, want outer and narrowed nested selects", len(selectGroups))
 	}
-}
-
-func TestLowerChannelSelectFacts(t *testing.T) {
-	reg := standard.Registry()
-	point := cfg.Point(700)
-	resultPath := path.NewPath(symbol.ID(701), "result")
-	wantCases := []path.Path{
-		path.NewPath(symbol.ID(702), "events_ch"),
-		path.NewPath(symbol.ID(703), "stop_ch"),
+	var sawOuter, sawNested bool
+	for _, events := range selectGroups {
+		switch len(events) {
+		case 3:
+			sawOuter = true
+			if events[0].Kind() != factflow.ChannelSelectSelect || events[0].HasDefault() {
+				t.Fatalf("outer select event = %#v", events[0])
+			}
+			if events[1].Kind() != factflow.ChannelSelectCase || events[2].Kind() != factflow.ChannelSelectReceive {
+				t.Fatalf("outer select events = %#v", events)
+			}
+		case 5:
+			sawNested = true
+			if events[0].Kind() != factflow.ChannelSelectSelect || events[0].HasDefault() {
+				t.Fatalf("nested select event = %#v", events[0])
+			}
+			for i := 0; i < 2; i++ {
+				caseEvent := events[1+i*2]
+				receiveEvent := events[2+i*2]
+				if caseEvent.Kind() != factflow.ChannelSelectCase || receiveEvent.Kind() != factflow.ChannelSelectReceive {
+					t.Fatalf("nested case/receive pair %d = %#v / %#v", i, caseEvent, receiveEvent)
+				}
+				if _, ok := caseEvent.CasePath(); !ok {
+					t.Fatalf("nested case %d missing candidate path: %#v", i, caseEvent)
+				}
+				if _, ok := receiveEvent.CasePath(); !ok {
+					t.Fatalf("nested receive %d missing candidate path: %#v", i, receiveEvent)
+				}
+			}
+		default:
+			t.Fatalf("unexpected channel-select event group = %#v", events)
+		}
 	}
-	payloadTypes := []typ.Type{
-		typetable.NewRecord().Field("kind", typ.String).Build(),
-		typetable.NewRecord().Field("reason", typ.String).Build(),
-	}
-	channelGeneric := ambient.ChannelGeneric()
-	events := (&lowerer{
-		registry: reg,
-		symbolTypes: map[symbol.ID]typ.Type{
-			wantCases[0].Symbol: typ.Instantiate(channelGeneric, payloadTypes[0]),
-			wantCases[1].Symbol: typ.Instantiate(channelGeneric, payloadTypes[1]),
-		},
-	}).channelSelectEvents(point, semantics.ChannelSelectFact{
-		ResultTarget: semantics.CallResultTarget{
-			Kind:        semantics.CallResultTargetLocalAssignment,
-			Path:        resultPath,
-			HasPath:     true,
-			ResultIndex: 0,
-		},
-		Cases: []semantics.ChannelSelectCaseFact{
-			{ChannelPath: wantCases[0], HasChannelPath: true},
-			{ChannelPath: wantCases[1], HasChannelPath: true},
-		},
-	})
-	if len(events) != 5 {
-		t.Fatalf("channel select events = %#v, want select plus two case/receive pairs", events)
-	}
-	if events[0].Kind() != factflow.ChannelSelectSelect || events[0].SelectID() == "" || events[0].Index() != 0 {
-		t.Fatalf("select event = %#v", events[0])
-	}
-	if got, ok := events[0].ResultPath(); !ok || !got.Equal(resultPath) {
-		t.Fatalf("select result path = %v/%v, want %v", got, ok, resultPath)
-	}
-	for i, wantCase := range wantCases {
-		caseEvent := events[1+i*2]
-		receiveEvent := events[2+i*2]
-		if caseEvent.SelectID() != events[0].SelectID() || receiveEvent.SelectID() != events[0].SelectID() {
-			t.Fatalf("case %d select IDs = %q/%q, want %q", i, caseEvent.SelectID(), receiveEvent.SelectID(), events[0].SelectID())
-		}
-		if caseEvent.Kind() != factflow.ChannelSelectCase || caseEvent.Index() != i {
-			t.Fatalf("case event %d = %#v", i, caseEvent)
-		}
-		if got, ok := caseEvent.CasePath(); !ok || !got.Equal(wantCase) {
-			t.Fatalf("case path %d = %v/%v, want %v", i, got, ok, wantCase)
-		}
-		if receiveEvent.Kind() != factflow.ChannelSelectReceive || receiveEvent.Index() != i {
-			t.Fatalf("receive event %d = %#v", i, receiveEvent)
-		}
-		if got, ok := receiveEvent.ResultPath(); !ok || !got.Equal(resultPath) {
-			t.Fatalf("receive result path %d = %v/%v, want %v", i, got, ok, resultPath)
-		}
-		if got, ok := receiveEvent.CasePath(); !ok || !got.Equal(wantCase) {
-			t.Fatalf("receive case path %d = %v/%v, want %v", i, got, ok, wantCase)
-		}
-		payload, ok := receiveEvent.PayloadValue()
-		if !ok {
-			t.Fatalf("receive event %d missing payload value", i)
-		}
-		witness := product.Get(reg, payload, typewitness.Key)
-		payloadType, ok := witness.Type()
-		if !ok || !typ.TypeEquals(payloadType, payloadTypes[i]) {
-			t.Fatalf("receive payload type %d = %v/%v, want %v", i, payloadType, ok, payloadTypes[i])
-		}
+	if !sawOuter || !sawNested {
+		t.Fatalf("saw outer=%v nested=%v, want both", sawOuter, sawNested)
 	}
 }
 
@@ -1112,54 +1059,5 @@ func TestLowerOrdinaryRootTableConstructorReassignmentKeepsRuntimeValue(t *testi
 	}
 	if _, ok := fact.DeclaredValue(); ok {
 		t.Fatalf("ordinary reassignment carries declared value; fresh table value must survive")
-	}
-}
-
-func TestLowerChannelSelectFactsPreserveDuplicateCasePaths(t *testing.T) {
-	reg := standard.Registry()
-	point := cfg.Point(701)
-	resultPath := path.NewPath(symbol.ID(711), "result")
-	eventsPath := path.NewPath(symbol.ID(712), "events_ch")
-	stopPath := path.NewPath(symbol.ID(713), "stop_ch")
-	eventPayload := typetable.NewRecord().Field("kind", typ.String).Build()
-	stopPayload := typetable.NewRecord().Field("reason", typ.String).Build()
-	channelGeneric := ambient.ChannelGeneric()
-	events := (&lowerer{
-		registry: reg,
-		symbolTypes: map[symbol.ID]typ.Type{
-			eventsPath.Symbol: typ.Instantiate(channelGeneric, eventPayload),
-			stopPath.Symbol:   typ.Instantiate(channelGeneric, stopPayload),
-		},
-	}).channelSelectEvents(point, semantics.ChannelSelectFact{
-		ResultTarget: semantics.CallResultTarget{
-			Kind:        semantics.CallResultTargetLocalAssignment,
-			Path:        resultPath,
-			HasPath:     true,
-			ResultIndex: 0,
-		},
-		Cases: []semantics.ChannelSelectCaseFact{
-			{ChannelPath: eventsPath, HasChannelPath: true},
-			{ChannelPath: eventsPath, HasChannelPath: true},
-			{ChannelPath: stopPath, HasChannelPath: true},
-		},
-	})
-	if len(events) != 7 {
-		t.Fatalf("channel select events = %#v, want select plus three case/receive pairs", events)
-	}
-	for i, wantCase := range []path.Path{eventsPath, eventsPath, stopPath} {
-		caseEvent := events[1+i*2]
-		receiveEvent := events[2+i*2]
-		if caseEvent.Kind() != factflow.ChannelSelectCase || caseEvent.Index() != i {
-			t.Fatalf("case event %d = %#v", i, caseEvent)
-		}
-		if got, ok := caseEvent.CasePath(); !ok || !got.Equal(wantCase) {
-			t.Fatalf("case path %d = %v/%v, want %v", i, got, ok, wantCase)
-		}
-		if receiveEvent.Kind() != factflow.ChannelSelectReceive || receiveEvent.Index() != i {
-			t.Fatalf("receive event %d = %#v", i, receiveEvent)
-		}
-		if got, ok := receiveEvent.CasePath(); !ok || !got.Equal(wantCase) {
-			t.Fatalf("receive case path %d = %v/%v, want %v", i, got, ok, wantCase)
-		}
 	}
 }

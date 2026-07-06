@@ -8,20 +8,13 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func (l *lowerer) channelSelects(point cfg.Point, result *semantics.Result) []factflow.ChannelSelect {
-	if l != nil && l.wir != nil {
-		return l.channelSelectsFromWIR(point)
-	}
-	if fact, ok := result.ChannelSelect(point); ok && fact.ResultTarget.HasPath && !fact.ResultTarget.Path.IsEmpty() {
-		return l.channelSelectEvents(point, fact)
-	}
-	return nil
+func (l *lowerer) channelSelects(point cfg.Point) []factflow.ChannelSelect {
+	return l.channelSelectsFromWIR(point)
 }
 
 func (l *lowerer) channelSelectsFromWIR(point cfg.Point) []factflow.ChannelSelect {
@@ -68,22 +61,6 @@ func (l *lowerer) channelSelectEventsFromWIR(point cfg.Point, inst wir.Instructi
 		}
 		payloadValue, hasPayloadValue := l.channelSelectPayloadValue(casePath)
 		events = appendChannelSelectCaseEvents(events, selectID, target.Path, i, casePath, payloadValue, hasPayloadValue)
-	}
-	return events
-}
-
-func (l *lowerer) channelSelectEvents(point cfg.Point, fact semantics.ChannelSelectFact) []factflow.ChannelSelect {
-	if !fact.ResultTarget.HasPath || fact.ResultTarget.Path.IsEmpty() {
-		return nil
-	}
-	selectID := factflow.ChannelSelectID("lua.channel_select@" + strconv.Itoa(int(point)))
-	events := channelSelectStart(selectID, fact.ResultTarget.Path, fact.ResultTarget.ResultIndex, fact.HasDefault)
-	for i, c := range fact.Cases {
-		if !c.HasChannelPath || c.ChannelPath.IsEmpty() {
-			continue
-		}
-		payloadValue, hasPayloadValue := l.channelSelectPayloadValue(c.ChannelPath)
-		events = appendChannelSelectCaseEvents(events, selectID, fact.ResultTarget.Path, i, c.ChannelPath, payloadValue, hasPayloadValue)
 	}
 	return events
 }

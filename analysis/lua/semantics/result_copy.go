@@ -56,7 +56,6 @@ func copyCallFact(fact CallFact) CallFact {
 	fact.ReceiverPath = fact.ReceiverPath.Clone()
 	fact.MethodPath = fact.MethodPath.Clone()
 	fact.ResultTargets = copyResultTargets(fact.ResultTargets)
-	fact.ChannelSelect = copyChannelSelectFact(fact.ChannelSelect)
 	return fact
 }
 
@@ -88,24 +87,6 @@ func copyObjectEntries(in []ObjectEntryFact) []ObjectEntryFact {
 	for i := range in {
 		out[i] = in[i]
 		out[i].Suffix = in[i].Suffix.Clone()
-	}
-	return out
-}
-
-func copyChannelSelectFact(fact ChannelSelectFact) ChannelSelectFact {
-	fact.ResultTarget = copyResultTarget(fact.ResultTarget)
-	fact.Cases = copyChannelSelectCases(fact.Cases)
-	return fact
-}
-
-func copyChannelSelectCases(in []ChannelSelectCaseFact) []ChannelSelectCaseFact {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]ChannelSelectCaseFact, len(in))
-	for i := range in {
-		out[i] = in[i]
-		out[i].ChannelPath = in[i].ChannelPath.Clone()
 	}
 	return out
 }

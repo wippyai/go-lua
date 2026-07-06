@@ -113,10 +113,6 @@ func buildCallFact(sourceStmt ast.Stmt, callStmt *ast.FuncCallStmt, context Call
 		CalleeSymbol:       calleeSymbol,
 		HasCalleeSymbol:    hasCalleeSymbol,
 	}
-	if selectFact, ok := channelSelectFact(fact, bindings); ok {
-		fact.ChannelSelect = selectFact
-		fact.HasChannelSelect = true
-	}
 	return fact
 }
 

@@ -3,6 +3,7 @@ package readmodel
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/type/channelselect"
@@ -68,31 +69,59 @@ func (r Reader) channelSelectInfos(graph cfg.Graph) []readmodelSelectInfo {
 		if !r.result.PointNormallyReachable(point) {
 			continue
 		}
-		call, ok := r.result.Call(point)
-		if !ok || !call.HasChannelSelect || !call.ChannelSelect.ResultTarget.HasPath {
+		out = append(out, r.channelSelectInfosAt(point)...)
+	}
+	return out
+}
+
+func (r Reader) channelSelectInfosAt(point cfg.Point) []readmodelSelectInfo {
+	events := r.result.ChannelSelects(point)
+	if len(events) == 0 {
+		return nil
+	}
+	byID := make(map[factflow.ChannelSelectID]*readmodelSelectInfo)
+	var order []factflow.ChannelSelectID
+	for _, event := range events {
+		id := event.SelectID()
+		if id == "" {
 			continue
 		}
-		selectFact := call.ChannelSelect
-		if selectFact.ResultTarget.Path.IsEmpty() || len(selectFact.Cases) == 0 {
-			continue
+		info := byID[id]
+		if info == nil {
+			info = &readmodelSelectInfo{point: point}
+			byID[id] = info
+			order = append(order, id)
 		}
-		info := readmodelSelectInfo{point: point, result: selectFact.ResultTarget.Path, hasDefault: selectFact.HasDefault}
-		for _, c := range selectFact.Cases {
-			if !c.HasChannelPath || c.ChannelPath.IsEmpty() {
+		switch event.Kind() {
+		case factflow.ChannelSelectSelect:
+			resultPath, ok := event.ResultPath()
+			if !ok || resultPath.IsEmpty() {
 				continue
 			}
-			name := c.ChannelPath.DisplayRoot(r.result.SymbolName)
+			info.result = resultPath
+			info.hasDefault = event.HasDefault()
+		case factflow.ChannelSelectCase:
+			casePath, ok := event.CasePath()
+			if !ok || casePath.IsEmpty() {
+				continue
+			}
+			name := casePath.DisplayRoot(r.result.SymbolName)
 			if name == "" {
-				name = c.ChannelPath.String()
+				name = casePath.String()
 			}
 			info.cases = append(info.cases, readmodelSelectCase{
-				path: c.ChannelPath,
+				path: casePath,
 				name: name,
 			})
 		}
-		if len(info.cases) > 0 {
-			out = append(out, info)
+	}
+	out := make([]readmodelSelectInfo, 0, len(order))
+	for _, id := range order {
+		info := byID[id]
+		if info == nil || info.result.IsEmpty() || len(info.cases) == 0 {
+			continue
 		}
+		out = append(out, *info)
 	}
 	return out
 }
