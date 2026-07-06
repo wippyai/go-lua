@@ -16,63 +16,39 @@ import (
 // true-edge proof as an explicit `i <= #xs` guard. Consumers still need a
 // separate positive floor for i before they can remove array-read nil.
 func (l *lowerer) numericForBranchPathEvidence(fact cfgfacts.NumericForFact) []factflow.BranchPathEvidence {
-	if fact.Role != cfgfacts.NumericForRoleCheck || !fact.HasSymbol || fact.Symbol == 0 {
+	info, ok := numericForLoopInfoFromFact(fact, l.bindings)
+	if !ok || !info.hasArrayPath {
 		return nil
 	}
-	arrayPath, ok := numericForInRangeArrayPath(fact, l.bindings)
-	if !ok {
-		return nil
-	}
-	indexPath := pathdom.NewPath(fact.Symbol, fact.Name)
 	return []factflow.BranchPathEvidence{
-		factflow.NewBranchIndexInRangeEvidenceOnEdge(indexPath, arrayPath, true),
+		factflow.NewBranchIndexInRangeEvidenceOnEdge(info.indexPath, info.arrayPath, true),
 	}
 }
 
 func (l *lowerer) numericForBranchPathEvidenceFromWIR(point cfg.Point) []factflow.BranchPathEvidence {
-	header, ok := l.numericForHeaderFromWIR(point)
-	if !ok {
-		return nil
-	}
-	indexPath, ok := l.numericForIndexPathFromWIR(header)
-	if !ok {
-		return nil
-	}
-	arrayPath, ok := l.numericForInRangeArrayPathFromWIR(header)
-	if !ok {
+	info, ok := l.numericForLoopInfoFromWIR(point)
+	if !ok || !info.hasArrayPath {
 		return nil
 	}
 	return []factflow.BranchPathEvidence{
-		factflow.NewBranchIndexInRangeEvidenceOnEdge(indexPath, arrayPath, true),
+		factflow.NewBranchIndexInRangeEvidenceOnEdge(info.indexPath, info.arrayPath, true),
 	}
 }
 
 func (l *lowerer) numericForBranchNumFloorRefinement(fact cfgfacts.NumericForFact) (factflow.BranchNumFloorRefinement, bool) {
-	if fact.Role != cfgfacts.NumericForRoleCheck || !fact.HasSymbol || fact.Symbol == 0 {
+	info, ok := numericForLoopInfoFromFact(fact, l.bindings)
+	if !ok || !info.hasIndexFloor {
 		return factflow.BranchNumFloorRefinement{}, false
 	}
-	floor, ok := numericForIndexFloor(fact)
-	if !ok {
-		return factflow.BranchNumFloorRefinement{}, false
-	}
-	indexPath := pathdom.NewPath(fact.Symbol, fact.Name)
-	return factflow.NewBranchNumFloorRefinement(indexPath, floor), true
+	return factflow.NewBranchNumFloorRefinement(info.indexPath, info.indexFloor), true
 }
 
 func (l *lowerer) numericForBranchNumFloorRefinementFromWIR(point cfg.Point) (factflow.BranchNumFloorRefinement, bool) {
-	header, ok := l.numericForHeaderFromWIR(point)
-	if !ok {
+	info, ok := l.numericForLoopInfoFromWIR(point)
+	if !ok || !info.hasIndexFloor {
 		return factflow.BranchNumFloorRefinement{}, false
 	}
-	indexPath, ok := l.numericForIndexPathFromWIR(header)
-	if !ok {
-		return factflow.BranchNumFloorRefinement{}, false
-	}
-	floor, ok := l.numericForIndexFloorFromWIR(header)
-	if !ok {
-		return factflow.BranchNumFloorRefinement{}, false
-	}
-	return factflow.NewBranchNumFloorRefinement(indexPath, floor), true
+	return factflow.NewBranchNumFloorRefinement(info.indexPath, info.indexFloor), true
 }
 
 func (l *lowerer) numericForHeaderFromWIR(point cfg.Point) (wir.Instruction, bool) {
@@ -99,34 +75,42 @@ func (l *lowerer) numericForIndexPathFromWIR(header wir.Instruction) (pathdom.Pa
 	return indexPath, true
 }
 
-func (l *lowerer) numericForInRangeArrayPathFromWIR(header wir.Instruction) (pathdom.Path, bool) {
+func (l *lowerer) numericForLoopInfoFromWIR(point cfg.Point) (numericForLoopInfo, bool) {
+	header, ok := l.numericForHeaderFromWIR(point)
+	if !ok {
+		return numericForLoopInfo{}, false
+	}
+	indexPath, ok := l.numericForIndexPathFromWIR(header)
+	if !ok {
+		return numericForLoopInfo{}, false
+	}
+	info := numericForLoopInfo{indexPath: indexPath}
 	bounds := l.wir.Operands(header.List)
 	if len(bounds) < 2 {
-		return pathdom.Path{}, false
+		return info, true
 	}
 	direction, ok := l.numericForStepDirectionFromWIR(bounds)
 	if !ok {
-		return pathdom.Path{}, false
+		return info, true
 	}
+	var arrayOperand wir.Operand
+	var floorOperand wir.Operand
 	if direction > 0 {
-		return l.numericForLengthOperandPathFromWIR(bounds[1])
+		arrayOperand = bounds[1]
+		floorOperand = bounds[0]
+	} else {
+		arrayOperand = bounds[0]
+		floorOperand = bounds[1]
 	}
-	return l.numericForLengthOperandPathFromWIR(bounds[0])
-}
-
-func (l *lowerer) numericForIndexFloorFromWIR(header wir.Instruction) (int64, bool) {
-	bounds := l.wir.Operands(header.List)
-	if len(bounds) < 2 {
-		return 0, false
+	if arrayPath, ok := l.numericForLengthOperandPathFromWIR(arrayOperand); ok {
+		info.arrayPath = arrayPath
+		info.hasArrayPath = true
 	}
-	direction, ok := l.numericForStepDirectionFromWIR(bounds)
-	if !ok {
-		return 0, false
+	if floor, ok := l.numericForPositiveFloorFromWIR(floorOperand); ok {
+		info.indexFloor = floor
+		info.hasIndexFloor = true
 	}
-	if direction > 0 {
-		return l.numericForPositiveFloorFromWIR(bounds[0])
-	}
-	return l.numericForPositiveFloorFromWIR(bounds[1])
+	return info, true
 }
 
 func (l *lowerer) numericForStepDirectionFromWIR(bounds []wir.Operand) (int, bool) {
@@ -192,15 +176,43 @@ func (l *lowerer) numericForLengthOperandPathFromWIR(op wir.Operand) (pathdom.Pa
 	return arrayPath, true
 }
 
-func numericForInRangeArrayPath(fact cfgfacts.NumericForFact, bindings *bind.Result) (pathdom.Path, bool) {
+type numericForLoopInfo struct {
+	indexPath pathdom.Path
+
+	arrayPath    pathdom.Path
+	hasArrayPath bool
+
+	indexFloor    int64
+	hasIndexFloor bool
+}
+
+func numericForLoopInfoFromFact(fact cfgfacts.NumericForFact, bindings *bind.Result) (numericForLoopInfo, bool) {
+	if fact.Role != cfgfacts.NumericForRoleCheck || !fact.HasSymbol || fact.Symbol == 0 {
+		return numericForLoopInfo{}, false
+	}
+	info := numericForLoopInfo{indexPath: pathdom.NewPath(fact.Symbol, fact.Name)}
 	direction, ok := numericForStepDirection(fact.Step)
 	if !ok {
-		return pathdom.Path{}, false
+		return info, true
 	}
+	var arrayExpr ast.Expr
+	var floorExpr ast.Expr
 	if direction > 0 {
-		return numericForLengthExprPath(fact.Limit, bindings)
+		arrayExpr = fact.Limit
+		floorExpr = fact.Init
+	} else {
+		arrayExpr = fact.Init
+		floorExpr = fact.Limit
 	}
-	return numericForLengthExprPath(fact.Init, bindings)
+	if arrayPath, ok := numericForLengthExprPath(arrayExpr, bindings); ok {
+		info.arrayPath = arrayPath
+		info.hasArrayPath = true
+	}
+	if floor, ok := numericForPositiveFloor(floorExpr); ok {
+		info.indexFloor = floor
+		info.hasIndexFloor = true
+	}
+	return info, true
 }
 
 func numericForLengthExprPath(expr ast.Expr, bindings *bind.Result) (pathdom.Path, bool) {
@@ -209,17 +221,6 @@ func numericForLengthExprPath(expr ast.Expr, bindings *bind.Result) (pathdom.Pat
 		return pathdom.Path{}, false
 	}
 	return pathexpr.Resolve(lenOp.Expr, bindings)
-}
-
-func numericForIndexFloor(fact cfgfacts.NumericForFact) (int64, bool) {
-	direction, ok := numericForStepDirection(fact.Step)
-	if !ok {
-		return 0, false
-	}
-	if direction > 0 {
-		return numericForPositiveFloor(fact.Init)
-	}
-	return numericForPositiveFloor(fact.Limit)
 }
 
 func numericForPositiveFloor(expr ast.Expr) (int64, bool) {
