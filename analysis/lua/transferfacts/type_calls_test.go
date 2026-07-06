@@ -408,7 +408,8 @@ local raw: any = {}
 local validated, err = errors.AppError:is(raw)
 `, "require")
 	resolver := typeresolve.NewWithExternal(bindings, testExternalTypes{"errors.AppError": appError})
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, TypeResolver: resolver})
+	body := wirlower.Lower("imported-type-is", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, TypeResolver: resolver, WIR: body})
 	castStmt := mustLocalStmt(t, stmts, 2)
 	castCall := castStmt.Exprs[0].(*ast.FuncCallExpr)
 	callPoint := requireCallPoint(t, built.Graph, result, castCall)
@@ -554,7 +555,8 @@ type Point = {x: number, y: number}
 local data: any = {}
 return Point:is(data)
 `)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	body := wirlower.Lower("type-is-open-tail", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	ret := stmts[2].(*ast.ReturnStmt)
 	points := requireStmtPoints(t, built, ret, 2)
 	callPoint := points[0]
@@ -569,8 +571,8 @@ return Point:is(data)
 		t.Fatalf("missing lowered return fact")
 	}
 	sources := returnFact.Sources()
-	if len(sources) != 2 || sources[0].ResultIndex != 0 || sources[1].ResultIndex != 1 {
-		t.Fatalf("return sources = %#v, want expanded Type:is result slots", sources)
+	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceCall || !sources[0].OpenTail || !sources[0].Expanded || sources[0].TargetIndex != 0 || sources[0].ResultIndex != 0 {
+		t.Fatalf("return sources = %#v, want one expanded open-tail Type:is call source", sources)
 	}
 	relations := facts.ReturnPresenceRelations(returnPoint)
 	assertReturnPresenceRelation(t, relations, 1, presence.Present(), 0, presence.Absent())
@@ -634,7 +636,6 @@ return Point:is(data)
 
 	relations := lowered.typeIsReturnPresenceRelationsFromSources(
 		sources,
-		nil,
 		map[cfg.Point]factflow.CallSite{callPoint: site},
 	)
 

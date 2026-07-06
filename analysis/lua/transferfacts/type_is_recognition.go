@@ -250,14 +250,6 @@ func (l *lowerer) typeIsExpressionConditionRefinement(expr ast.Expr) (factflow.P
 	), !negated, true
 }
 
-func (l *lowerer) typeIsCallResultValues(point cfg.Point, fact semantics.CallFact) []factflow.CallResultValue {
-	t, _, ok := l.typeIsCall(fact)
-	if !ok {
-		return nil
-	}
-	return l.typeIsCallResultValuesForType(t)
-}
-
 func (l *lowerer) typeIsCallResultValuesFromWIR(point cfg.Point) []factflow.CallResultValue {
 	t, _, ok := l.typeIsCallSiteFromWIR(point)
 	if !ok {
@@ -276,16 +268,12 @@ func (l *lowerer) typeIsCallResultValuesForType(t typ.Type) []factflow.CallResul
 
 func (l *lowerer) typeIsReturnPresenceRelationsFromSources(
 	sources []factflow.ValueSource,
-	result *semantics.Result,
 	callSites map[cfg.Point]factflow.CallSite,
 ) []factflow.ReturnPresenceRelation {
 	if len(sources) == 0 {
 		return nil
 	}
-	isTypeIsCall := l.semanticSourceCallIsTypeIs(result)
-	if l != nil && l.wir != nil {
-		isTypeIsCall = l.wirSourceCallIsTypeIs(callSites)
-	}
+	isTypeIsCall := l.wirSourceCallIsTypeIs(callSites)
 	var out []factflow.ReturnPresenceRelation
 	type resultPair struct {
 		valueTarget int
@@ -342,21 +330,6 @@ func (l *lowerer) wirSourceCallIsTypeIs(callSites map[cfg.Point]factflow.CallSit
 			return false
 		}
 		_, _, ok := l.typeIsCallSiteFromWIR(source.CallPoint)
-		return ok
-	}
-}
-
-func (l *lowerer) semanticSourceCallIsTypeIs(result *semantics.Result) func(factflow.ValueSource) bool {
-	return func(source factflow.ValueSource) bool {
-		if source.Kind != factflow.ValueSourceCall || !source.HasCallPoint || result == nil {
-			return false
-		}
-		view, ok := result.CallView(source.CallPoint)
-		if !ok {
-			return false
-		}
-		fact, _ := view.Borrowed()
-		_, _, ok = l.typeIsCall(fact)
 		return ok
 	}
 }

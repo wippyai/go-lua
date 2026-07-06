@@ -194,7 +194,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 					}
 				}
 				if ret, ok := input.Returns[point]; ok {
-					if relations := l.typeIsReturnPresenceRelationsFromSources(ret.Sources(), result, input.CallSites); len(relations) != 0 {
+					if relations := l.typeIsReturnPresenceRelationsFromSources(ret.Sources(), input.CallSites); len(relations) != 0 {
 						appendReturnPresenceRelations(input.ReturnPresenceRelations, point, relations...)
 					}
 					returnSources := ret.Sources()
@@ -247,11 +247,6 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 				}
 				if lowered, ok := l.assertPostconditionRefinement(fact); ok {
 					input.PostconditionRefinements[point] = factflow.NewPostconditionRefinementSet(lowered)
-				}
-				if l.wir == nil {
-					if lowered := l.typeIsCallResultValues(point, fact); len(lowered) != 0 {
-						appendCallResultValues(input.CallResultValues, point, lowered...)
-					}
 				}
 			}
 		}
