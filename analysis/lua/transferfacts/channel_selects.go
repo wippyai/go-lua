@@ -57,16 +57,7 @@ func (l *lowerer) channelSelectEventsFromWIR(point cfg.Point, inst wir.Instructi
 		return nil
 	}
 	selectID := factflow.ChannelSelectID("lua.channel_select@" + strconv.Itoa(int(point)))
-	events := []factflow.ChannelSelect{
-		factflow.NewChannelSelect(factflow.ChannelSelectConfig{
-			SelectID:      selectID,
-			Kind:          factflow.ChannelSelectSelect,
-			ResultPath:    target.Path,
-			HasResultPath: true,
-			Index:         target.ResultIndex,
-			HasDefault:    inst.SelectDefault,
-		}),
-	}
+	events := channelSelectStart(selectID, target.Path, target.ResultIndex, inst.SelectDefault)
 	for i, op := range l.wir.Operands(inst.List) {
 		if op.Kind != wir.OperandPath {
 			continue
@@ -76,26 +67,7 @@ func (l *lowerer) channelSelectEventsFromWIR(point cfg.Point, inst wir.Instructi
 			continue
 		}
 		payloadValue, hasPayloadValue := l.channelSelectPayloadValue(casePath)
-		events = append(events,
-			factflow.NewChannelSelect(factflow.ChannelSelectConfig{
-				SelectID:    selectID,
-				Kind:        factflow.ChannelSelectCase,
-				CasePath:    casePath,
-				HasCasePath: true,
-				Index:       i,
-			}),
-			factflow.NewChannelSelect(factflow.ChannelSelectConfig{
-				SelectID:        selectID,
-				Kind:            factflow.ChannelSelectReceive,
-				ResultPath:      target.Path,
-				HasResultPath:   true,
-				CasePath:        casePath,
-				HasCasePath:     true,
-				PayloadValue:    payloadValue,
-				HasPayloadValue: hasPayloadValue,
-				Index:           i,
-			}),
-		)
+		events = appendChannelSelectCaseEvents(events, selectID, target.Path, i, casePath, payloadValue, hasPayloadValue)
 	}
 	return events
 }
@@ -105,43 +77,71 @@ func (l *lowerer) channelSelectEvents(point cfg.Point, fact semantics.ChannelSel
 		return nil
 	}
 	selectID := factflow.ChannelSelectID("lua.channel_select@" + strconv.Itoa(int(point)))
-	events := []factflow.ChannelSelect{
-		factflow.NewChannelSelect(factflow.ChannelSelectConfig{
-			SelectID:      selectID,
-			Kind:          factflow.ChannelSelectSelect,
-			ResultPath:    fact.ResultTarget.Path,
-			HasResultPath: true,
-			Index:         fact.ResultTarget.ResultIndex,
-			HasDefault:    fact.HasDefault,
-		}),
-	}
+	events := channelSelectStart(selectID, fact.ResultTarget.Path, fact.ResultTarget.ResultIndex, fact.HasDefault)
 	for i, c := range fact.Cases {
 		if !c.HasChannelPath || c.ChannelPath.IsEmpty() {
 			continue
 		}
 		payloadValue, hasPayloadValue := l.channelSelectPayloadValue(c.ChannelPath)
-		events = append(events,
-			factflow.NewChannelSelect(factflow.ChannelSelectConfig{
-				SelectID:    selectID,
-				Kind:        factflow.ChannelSelectCase,
-				CasePath:    c.ChannelPath,
-				HasCasePath: true,
-				Index:       i,
-			}),
-			factflow.NewChannelSelect(factflow.ChannelSelectConfig{
-				SelectID:        selectID,
-				Kind:            factflow.ChannelSelectReceive,
-				ResultPath:      fact.ResultTarget.Path,
-				HasResultPath:   true,
-				CasePath:        c.ChannelPath,
-				HasCasePath:     true,
-				PayloadValue:    payloadValue,
-				HasPayloadValue: hasPayloadValue,
-				Index:           i,
-			}),
-		)
+		events = appendChannelSelectCaseEvents(events, selectID, fact.ResultTarget.Path, i, c.ChannelPath, payloadValue, hasPayloadValue)
 	}
 	return events
+}
+
+func channelSelectStart(
+	selectID factflow.ChannelSelectID,
+	resultPath pathdom.Path,
+	resultIndex int,
+	hasDefault bool,
+) []factflow.ChannelSelect {
+	if resultPath.IsEmpty() {
+		return nil
+	}
+	events := []factflow.ChannelSelect{
+		factflow.NewChannelSelect(factflow.ChannelSelectConfig{
+			SelectID:      selectID,
+			Kind:          factflow.ChannelSelectSelect,
+			ResultPath:    resultPath,
+			HasResultPath: true,
+			Index:         resultIndex,
+			HasDefault:    hasDefault,
+		}),
+	}
+	return events
+}
+
+func appendChannelSelectCaseEvents(
+	events []factflow.ChannelSelect,
+	selectID factflow.ChannelSelectID,
+	resultPath pathdom.Path,
+	index int,
+	casePath pathdom.Path,
+	payloadValue product.Value,
+	hasPayloadValue bool,
+) []factflow.ChannelSelect {
+	if casePath.IsEmpty() {
+		return events
+	}
+	return append(events,
+		factflow.NewChannelSelect(factflow.ChannelSelectConfig{
+			SelectID:    selectID,
+			Kind:        factflow.ChannelSelectCase,
+			CasePath:    casePath,
+			HasCasePath: true,
+			Index:       index,
+		}),
+		factflow.NewChannelSelect(factflow.ChannelSelectConfig{
+			SelectID:        selectID,
+			Kind:            factflow.ChannelSelectReceive,
+			ResultPath:      resultPath,
+			HasResultPath:   true,
+			CasePath:        casePath,
+			HasCasePath:     true,
+			PayloadValue:    payloadValue,
+			HasPayloadValue: hasPayloadValue,
+			Index:           index,
+		}),
+	)
 }
 
 func (l *lowerer) channelSelectPayloadValue(channelPath pathdom.Path) (product.Value, bool) {
