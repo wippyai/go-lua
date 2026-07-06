@@ -269,109 +269,41 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		}
 		if result != nil && l.wir == nil {
 			if fact, ok := result.BranchCondition(point); ok {
-				var branchSource factflow.ValueSource
-				var hasBranchSource bool
 				condition := fact.Condition
-				addAssertionRefinements := true
-				hasWIRBranch := false
-				if l.wir != nil {
-					hasWIRBranch = l.wir.HasInstruction(point, wir.OpBranch)
-					if check, ok := l.directBranchCheckFromWIR(point); ok {
-						fact.Check = check
-						branchSource, hasBranchSource = l.branchConditionSourceFromWIR(check)
-					} else if !hasWIRBranch {
-						continue
-					} else if !l.hasWIRBranchConditionOperand(point) {
-						fact.Check = branchcond.Check{}
-						condition = nil
-						addAssertionRefinements = false
-					}
-				}
 				if fact.Check.Kind != branchcond.CheckNone {
-					if !hasBranchSource {
-						branchSource = l.valueSource(fact.Source)
-					}
-					input.BranchConditionSources[point] = branchSource
+					input.BranchConditionSources[point] = l.valueSource(fact.Source)
 				}
 				if reachability, ok := l.branchEdgeReachability(point, condition); ok {
 					input.BranchEdgeReachability[point] = reachability
 				}
-				if lowered := l.branchRefinementsFromWIR(point); len(lowered) != 0 {
+				if lowered := l.branchRefinements(fact.Check, condition); len(lowered) != 0 {
 					appendBranchRefinement(input.BranchRefinements, point, lowered...)
-				} else if !hasWIRBranch {
-					if lowered := l.branchRefinements(fact.Check, condition); len(lowered) != 0 {
-						appendBranchRefinement(input.BranchRefinements, point, lowered...)
-					}
 				}
-				if lowered := l.branchLenRefinementsFromWIR(point); len(lowered) != 0 {
+				if lowered := l.branchLenRefinements(fact.Check, condition); len(lowered) != 0 {
 					appendBranchLenRefinement(input.BranchRefinements, point, lowered...)
-				} else if !hasWIRBranch {
-					if lowered := l.branchLenRefinements(fact.Check, condition); len(lowered) != 0 {
-						appendBranchLenRefinement(input.BranchRefinements, point, lowered...)
-					}
 				}
-				if lowered := l.branchNumFloorRefinementsFromWIR(point); len(lowered) != 0 {
+				if lowered := l.branchNumFloorRefinements(fact.Check, condition); len(lowered) != 0 {
 					appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered...)
-				} else if !hasWIRBranch {
-					if lowered := l.branchNumFloorRefinements(fact.Check, condition); len(lowered) != 0 {
-						appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered...)
-					}
 				}
-				if hasWIRBranch {
-					if lowered := l.branchDiffConstraintsFromWIR(point); len(lowered) != 0 {
-						appendBranchDiffConstraint(input.BranchRefinements, point, lowered...)
-					}
-				} else {
-					if lowered := l.branchDiffConstraints(condition); len(lowered) != 0 {
-						appendBranchDiffConstraint(input.BranchRefinements, point, lowered...)
-					}
+				if lowered := l.branchDiffConstraints(condition); len(lowered) != 0 {
+					appendBranchDiffConstraint(input.BranchRefinements, point, lowered...)
 				}
-				if hasWIRBranch {
-					if lowered := l.branchAliasRefinementsFromWIR(point); len(lowered) != 0 {
-						appendBranchRefinement(input.BranchRefinements, point, lowered...)
-					}
-				} else {
-					if lowered := l.branchAliasRefinements(condition); len(lowered) != 0 {
-						appendBranchRefinement(input.BranchRefinements, point, lowered...)
-					}
+				if lowered := l.branchAliasRefinements(condition); len(lowered) != 0 {
+					appendBranchRefinement(input.BranchRefinements, point, lowered...)
 				}
-				if lowered, ok := l.branchPathRelationsFromWIR(point); ok {
+				if lowered, ok := l.branchPathRelations(fact.Check, condition); ok {
 					input.BranchPathRelations[point] = lowered
-				} else if !hasWIRBranch {
-					if lowered, ok := l.branchPathRelations(fact.Check, condition); ok {
-						input.BranchPathRelations[point] = lowered
-					}
 				}
-				if hasWIRBranch {
-					if lowered := l.branchAliasPathRelationsFromWIR(point); len(lowered) != 0 {
-						appendBranchPathRelations(input.BranchPathRelations, point, lowered...)
-					}
-				} else {
-					if lowered := l.branchAliasPathRelations(condition); len(lowered) != 0 {
-						appendBranchPathRelations(input.BranchPathRelations, point, lowered...)
-					}
+				if lowered := l.branchAliasPathRelations(condition); len(lowered) != 0 {
+					appendBranchPathRelations(input.BranchPathRelations, point, lowered...)
 				}
-				if hasWIRBranch {
-					if lowered := l.branchPathEvidenceFromWIR(point); len(lowered) != 0 {
-						appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
-					}
-				} else {
-					if lowered := l.branchPathEvidence(fact.Check, condition); len(lowered) != 0 {
-						appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
-					}
+				if lowered := l.branchPathEvidence(fact.Check, condition); len(lowered) != 0 {
+					appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
 				}
-				if hasWIRBranch {
-					if lowered := l.branchAliasPathEvidenceFromWIR(point); len(lowered) != 0 {
-						appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
-					}
-				} else {
-					if lowered := l.branchAliasPathEvidence(condition); len(lowered) != 0 {
-						appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
-					}
+				if lowered := l.branchAliasPathEvidence(condition); len(lowered) != 0 {
+					appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
 				}
-				if addAssertionRefinements {
-					l.addAssertionRefinementsForSource(&input, fact.Source)
-				}
+				l.addAssertionRefinementsForSource(&input, fact.Source)
 			}
 		}
 		if l.wir != nil {
