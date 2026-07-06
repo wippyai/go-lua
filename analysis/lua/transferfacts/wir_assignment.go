@@ -6,6 +6,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/lua/expressionid"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -197,8 +198,10 @@ func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, fallback sourceproven
 	if l == nil || l.wir == nil {
 		return factflow.ValueSource{}, false
 	}
-	if source, ok := l.tableConstructorAssignmentSourceFromWIR(point, fallback); ok {
-		return source, true
+	for _, inst := range l.wir.PointInstructions(point) {
+		if source, ok := l.assignmentProducerSourceFromWIR(inst, fallback); ok {
+			return source, true
+		}
 	}
 	op, ok := l.assignmentSourceOperandFromWIR(point)
 	if !ok {
@@ -259,6 +262,45 @@ func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, fallback sourceproven
 	return source, true
 }
 
+func (l *lowerer) assignmentProducerSourceFromWIR(inst wir.Instruction, fallback sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
+	if !assignmentProducerMatchesSource(inst, fallback) {
+		return factflow.ValueSource{}, false
+	}
+	switch inst.Op {
+	case wir.OpClosure:
+		return l.wirClosureExpressionValueSource(
+			inst,
+			fallback.ExprIndex,
+			fallback.TargetIndex,
+			fallback.Final,
+			fallback.Expanded,
+			fallback.OpenTail,
+		)
+	case wir.OpMakeTable:
+		return l.wirTableExpressionValueSource(
+			inst,
+			fallback.ExprIndex,
+			fallback.TargetIndex,
+			fallback.Final,
+			fallback.Expanded,
+			fallback.OpenTail,
+		)
+	default:
+		return factflow.ValueSource{}, false
+	}
+}
+
+func assignmentProducerMatchesSource(inst wir.Instruction, fallback sourceprovenance.ASTSource) bool {
+	if inst.ExprID == 0 || fallback.Expr == nil {
+		return false
+	}
+	expr := fallback.Expr
+	if inner, ok := sourceprovenance.ProofInner(expr); ok {
+		expr = inner
+	}
+	return inst.ExprID == expressionid.Of(expr)
+}
+
 func (l *lowerer) addWIRCallResultExprRef(source *factflow.ValueSource, op wir.Operand, fallback sourceprovenance.ASTSource, resultSources map[uint32]wirResultSource) {
 	if l == nil || source == nil || op.Kind != wir.OperandTemp {
 		return
@@ -276,23 +318,6 @@ func (l *lowerer) addWIRCallResultExprRef(source *factflow.ValueSource, op wir.O
 	}
 	source.ExprRef = exprRef
 	source.HasExpr = true
-}
-
-func (l *lowerer) tableConstructorAssignmentSourceFromWIR(point cfg.Point, fallback sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
-	for _, inst := range l.wir.PointInstructions(point) {
-		if inst.Op != wir.OpMakeTable || inst.Dst.Kind != wir.OperandPath {
-			continue
-		}
-		return l.wirTableExpressionValueSource(
-			inst,
-			fallback.ExprIndex,
-			fallback.TargetIndex,
-			fallback.Final,
-			fallback.Expanded,
-			fallback.OpenTail,
-		)
-	}
-	return factflow.ValueSource{}, false
 }
 
 func (l *lowerer) ordinaryAssignmentSource(point cfg.Point, fallback sourceprovenance.ASTSource) factflow.ValueSource {

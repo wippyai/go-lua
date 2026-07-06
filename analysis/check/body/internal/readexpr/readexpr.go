@@ -738,6 +738,9 @@ type dynamicIndexTerm struct {
 }
 
 func dynamicIndexIntegerTerm(config Config, source factflow.ValueSource) (dynamicIndexTerm, bool) {
+	if p, ok := dynamicIndexSourcePath(source); ok {
+		return dynamicIndexTerm{Path: p, Coeff: 1}, true
+	}
 	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
 		return dynamicIndexTerm{}, false
 	}
@@ -764,6 +767,25 @@ func dynamicIndexIntegerTerm(config Config, source factflow.ValueSource) (dynami
 	default:
 		return dynamicIndexTerm{}, false
 	}
+}
+
+func dynamicIndexSourcePath(source factflow.ValueSource) (pathdom.Path, bool) {
+	if source.Kind != factflow.ValueSourcePath || source.PathKey == "" {
+		return pathdom.Path{}, false
+	}
+	if p, ok := pathaddr.LocalPathFromKey(source.PathKey); ok {
+		return p, true
+	}
+	if sym, _, suffix, ok := pathaddr.ParseResolverPath(source.PathKey); ok && suffix == "" {
+		return pathdom.Path{Symbol: sym}, true
+	}
+	if stable, ok := pathaddr.StableFromKey(source.PathKey); ok {
+		return stable.Path()
+	}
+	if sym, segments, ok := pathaddr.ParseSymbolPathKey(source.PathKey); ok {
+		return pathdom.Path{Symbol: sym, Segments: segments}, true
+	}
+	return pathdom.Path{}, false
 }
 
 func dynamicIndexTermScaled(config Config, constSource, termSource factflow.ValueSource) (dynamicIndexTerm, bool) {
@@ -794,6 +816,9 @@ func dynamicIndexTermPlusConstant(config Config, termSource, constSource factflo
 }
 
 func dynamicIndexIntegerConstant(config Config, source factflow.ValueSource) (int64, bool) {
+	if source.Kind == factflow.ValueSourceLiteral && source.LiteralKind == factflow.ValueSourceLiteralInteger {
+		return source.Int, true
+	}
 	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
 		return 0, false
 	}

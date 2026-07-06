@@ -276,6 +276,41 @@ func TestDynamicIndexProviderUsesExactLiteralKeyFactWhenPathMembershipVersionDif
 	}
 }
 
+func TestDynamicIndexIntegerTermAcceptsDirectPathAndLiteralSources(t *testing.T) {
+	indexPath := path.NewPath(symbol.ID(501), "i")
+	shape, ok := factflow.NewValueSourceShape(true, false, false, false)
+	if !ok {
+		t.Fatal("NewValueSourceShape returned false")
+	}
+	pathSource, ok := factflow.NewPathValueSource(indexPath.Key(), factflow.NoValueSourceIndex, factflow.NoValueSourceIndex, 0, shape)
+	if !ok {
+		t.Fatal("NewPathValueSource returned false")
+	}
+	literalSource, ok := factflow.NewIntegerLiteralValueSource(1, factflow.NoValueSourceIndex, factflow.NoValueSourceIndex, 0, shape)
+	if !ok {
+		t.Fatal("NewIntegerLiteralValueSource returned false")
+	}
+	exprSource, ok := factflow.NewExpressionValueSource(99, factflow.NoValueSourceIndex, factflow.NoValueSourceIndex, 0, shape)
+	if !ok {
+		t.Fatal("NewExpressionValueSource returned false")
+	}
+	op, ok := factflow.NewBinaryExpressionOperation("+", pathSource, literalSource)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation returned false")
+	}
+	facts := factflow.NewFacts(factflow.FactsInput{
+		ExpressionOperations: map[factflow.ExprRef]factflow.ExpressionOperation{99: op},
+	})
+
+	term, ok := dynamicIndexIntegerTerm(Config{Facts: facts}, exprSource)
+	if !ok {
+		t.Fatal("dynamicIndexIntegerTerm returned false")
+	}
+	if !term.Path.Equal(indexPath) || term.Coeff != 1 || term.Offset != 1 {
+		t.Fatalf("term = %#v, want %s + 1", term, indexPath.String())
+	}
+}
+
 func TestProjectRootStaticMemberOverlayUsesCurrentChildPathValue(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(211)
