@@ -54,10 +54,7 @@ func (l *lowerer) branchConditionSourceAtWIR(point cfg.Point) (factflow.ValueSou
 	return factflow.ValueSource{}, false
 }
 
-func (l *lowerer) directBranchCheckAt(point cfg.Point, result *semantics.Result) (branchcond.Check, bool) {
-	if check, ok := l.firstDirectBranchCheckFromWIR(point); ok {
-		return check, true
-	}
+func (l *lowerer) semanticDirectBranchCheckAt(point cfg.Point, result *semantics.Result) (branchcond.Check, bool) {
 	if l != nil && l.wir != nil {
 		return branchcond.Check{}, false
 	}

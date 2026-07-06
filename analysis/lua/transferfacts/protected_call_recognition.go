@@ -157,7 +157,7 @@ func (l *lowerer) protectedCallPayloadType(fact semantics.CallFact) (typ.Type, b
 }
 
 func (l *lowerer) semanticProtectedCallSuccessEdges(result *semantics.Result, branch cfg.Point, okPath path.Path) []bool {
-	check, ok := l.directBranchCheckAt(branch, result)
+	check, ok := l.semanticDirectBranchCheckAt(branch, result)
 	return protectedCallSuccessEdgesForCheck(check, ok, okPath)
 }
 
