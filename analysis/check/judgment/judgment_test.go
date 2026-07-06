@@ -315,6 +315,50 @@ func TestCallCalleeProofSummaryUsesStructuredEvidence(t *testing.T) {
 	}
 }
 
+func TestMemberReadProofSummaryUsesStructuredEvidence(t *testing.T) {
+	item := Judgment{Evidence: EvidenceChain{
+		{
+			Kind:   EvidenceAbstractFact,
+			Detail: MemberMissingEvidenceDetail("send"),
+		},
+		{
+			Kind:   EvidenceMissingProof,
+			Detail: MemberMissingEvidenceDetail("send"),
+		},
+	}}
+	summary := item.MemberReadProof()
+	if !summary.Found || summary.Detail.Kind != EvidenceDetailMemberMissing || summary.Detail.Field != "send" {
+		t.Fatalf("MemberReadProof = %#v, want missing send member", summary)
+	}
+
+	absent := Judgment{Evidence: EvidenceChain{{
+		Kind:   EvidenceAbstractFact,
+		Detail: MemberMissingEvidenceDetail("send"),
+	}}}
+	if got := absent.MemberReadProof(); got.Found {
+		t.Fatalf("MemberReadProof matched abstract fact without missing proof: %#v", got)
+	}
+}
+
+func TestConcatOperandProofSummaryUsesStructuredEvidence(t *testing.T) {
+	item := Judgment{Evidence: EvidenceChain{{
+		Kind:   EvidenceAbstractFact,
+		Detail: EvidenceDetail{Kind: EvidenceDetailConcatOperand, Field: "right"},
+	}}}
+	summary := item.ConcatOperandProof()
+	if !summary.Found || summary.Detail.Kind != EvidenceDetailConcatOperand || summary.Detail.Field != "right" {
+		t.Fatalf("ConcatOperandProof = %#v, want right operand", summary)
+	}
+
+	absent := Judgment{Evidence: EvidenceChain{{
+		Kind:   EvidenceMissingProof,
+		Detail: EvidenceDetail{Kind: EvidenceDetailConcatOperand, Field: "right"},
+	}}}
+	if got := absent.ConcatOperandProof(); got.Found {
+		t.Fatalf("ConcatOperandProof matched missing proof instead of abstract fact: %#v", got)
+	}
+}
+
 func TestDefaultRegistryValidatesCallArgumentJudgmentShape(t *testing.T) {
 	j := Judgment{
 		Code:    CodeCallArgType,

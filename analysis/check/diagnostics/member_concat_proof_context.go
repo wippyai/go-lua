@@ -22,10 +22,11 @@ type concatOperandPresentation struct {
 }
 
 func (ProofContext) MemberRead(item judgment.Judgment, primary diagnostic.Span) (memberReadPresentation, bool) {
-	detail, ok := memberReadDetail(item)
-	if !ok {
+	proof := item.MemberReadProof()
+	if !proof.Found {
 		return memberReadPresentation{}, false
 	}
+	detail := proof.Detail
 	readPath := item.Subject.Label
 	if readPath == "" {
 		readPath = "member read"
@@ -46,20 +47,12 @@ func (ProofContext) MemberRead(item judgment.Judgment, primary diagnostic.Span) 
 	}, true
 }
 
-func memberReadDetail(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
-	for _, evidence := range item.Evidence {
-		if evidence.Detail.Kind == judgment.EvidenceDetailMemberMissing && evidence.Detail.Field != "" {
-			return evidence.Detail, true
-		}
-	}
-	return judgment.EvidenceDetail{}, false
-}
-
 func (ProofContext) ConcatOperand(item judgment.Judgment, primary diagnostic.Span) (concatOperandPresentation, bool) {
-	detail, ok := concatOperandDetail(item)
-	if !ok {
+	proof := item.ConcatOperandProof()
+	if !proof.Found {
 		return concatOperandPresentation{}, false
 	}
+	detail := proof.Detail
 	operandName := item.Subject.Label
 	got := item.Actual.ProjectedType
 	return concatOperandPresentation{
@@ -76,15 +69,6 @@ func (ProofContext) ConcatOperand(item judgment.Judgment, primary diagnostic.Spa
 			},
 		},
 	}, true
-}
-
-func concatOperandDetail(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
-	for _, evidence := range item.Evidence {
-		if evidence.Detail.Kind == judgment.EvidenceDetailConcatOperand && evidence.Detail.Field != "" {
-			return evidence.Detail, true
-		}
-	}
-	return judgment.EvidenceDetail{}, false
 }
 
 func concatOperandEvidenceReason(got typ.Type) diagnostic.EvidenceReason {
