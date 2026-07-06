@@ -1061,6 +1061,23 @@ end
 	assertBranchPathEqualityRelation(t, facts, point, aPath, bPath, true, false)
 }
 
+func TestLowerBooleanLocalAliasPublishesConditionPathEvidence(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(a: string?, b: string?)
+	local same = a == b
+	if same then
+	end
+end
+`)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	aPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "a")
+	bPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "b")
+	ifStmt := fn.Stmts[1].(*ast.IfStmt)
+	point := requireStmtPoints(t, built, ifStmt, 1)[0]
+
+	assertBranchPathEqualityEvidence(t, facts, point, aPath, bPath, true, false)
+}
+
 func TestLowerNegatedBooleanLocalAliasInvertsConditionPathRelations(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(a: string?, b: string?)
@@ -1076,6 +1093,23 @@ end
 	point := requireStmtPoints(t, built, ifStmt, 1)[0]
 
 	assertBranchPathEqualityRelation(t, facts, point, aPath, bPath, false, true)
+}
+
+func TestLowerNegatedBooleanLocalAliasInvertsConditionPathEvidence(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(a: string?, b: string?)
+	local same = a == b
+	if not same then
+	end
+end
+`)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	aPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "a")
+	bPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "b")
+	ifStmt := fn.Stmts[1].(*ast.IfStmt)
+	point := requireStmtPoints(t, built, ifStmt, 1)[0]
+
+	assertBranchPathEqualityEvidence(t, facts, point, aPath, bPath, false, true)
 }
 
 func TestLowerNegatedBooleanLocalAliasInvertsConditionRefinements(t *testing.T) {
@@ -1149,6 +1183,55 @@ func assertBranchPathEqualityRelation(
 	if inequality.ActiveOnEdge(true) != !wantTrue || inequality.ActiveOnEdge(false) != !wantFalse {
 		t.Fatalf("inequality relation active true/false = %v/%v, want %v/%v", inequality.ActiveOnEdge(true), inequality.ActiveOnEdge(false), !wantTrue, !wantFalse)
 	}
+}
+
+func assertBranchPathEqualityEvidence(
+	t *testing.T,
+	facts factflow.Facts,
+	point cfg.Point,
+	wantLeft path.Path,
+	wantRight path.Path,
+	wantTrue bool,
+	wantFalse bool,
+) {
+	t.Helper()
+	if wantRight.Less(wantLeft) {
+		wantLeft, wantRight = wantRight, wantLeft
+	}
+	proofs := facts.BranchPathEvidence(point)
+	var equality, inequality factflow.BranchPathEvidence
+	for _, proof := range proofs {
+		switch proof.Kind() {
+		case factflow.BranchPathEvidenceEqual:
+			if branchPathEvidenceMatchesPaths(proof, wantLeft, wantRight) {
+				equality = proof
+			}
+		case factflow.BranchPathEvidenceNotEqual:
+			if branchPathEvidenceMatchesPaths(proof, wantLeft, wantRight) {
+				inequality = proof
+			}
+		}
+	}
+	if equality.Kind() != factflow.BranchPathEvidenceEqual {
+		t.Fatalf("missing equality branch path evidence for %s == %s; got %#v", wantLeft, wantRight, proofs)
+	}
+	if inequality.Kind() != factflow.BranchPathEvidenceNotEqual {
+		t.Fatalf("missing inequality branch path evidence for %s ~= %s; got %#v", wantLeft, wantRight, proofs)
+	}
+	if equality.ActiveOnEdge(true) != wantTrue || equality.ActiveOnEdge(false) != wantFalse {
+		t.Fatalf("equality evidence active true/false = %v/%v, want %v/%v", equality.ActiveOnEdge(true), equality.ActiveOnEdge(false), wantTrue, wantFalse)
+	}
+	if inequality.ActiveOnEdge(true) != !wantTrue || inequality.ActiveOnEdge(false) != !wantFalse {
+		t.Fatalf("inequality evidence active true/false = %v/%v, want %v/%v", inequality.ActiveOnEdge(true), inequality.ActiveOnEdge(false), !wantTrue, !wantFalse)
+	}
+}
+
+func branchPathEvidenceMatchesPaths(proof factflow.BranchPathEvidence, wantLeft path.Path, wantRight path.Path) bool {
+	if !proof.Path().Equal(wantLeft) {
+		return false
+	}
+	other, ok := proof.OtherPath()
+	return ok && other.Equal(wantRight)
 }
 
 func TestLowerTypedOptionalMemberBranchPublishesStaticRuntimeKind(t *testing.T) {

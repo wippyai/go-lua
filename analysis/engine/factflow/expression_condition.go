@@ -72,6 +72,15 @@ func (c ExpressionCondition) BranchPathRelationsForValue(trueEdgeValue bool) []B
 	return branchPathRelationsFromPostconditions(trueFacts.pathRelations, falseFacts.pathRelations)
 }
 
+// BranchPathEvidenceForValue converts expression-selected path relations into
+// branch-edge path evidence when the branch true edge means the expression has
+// the given boolean value.
+func (c ExpressionCondition) BranchPathEvidenceForValue(trueEdgeValue bool) []BranchPathEvidence {
+	trueFacts := c.FactsForValue(trueEdgeValue)
+	falseFacts := c.FactsForValue(!trueEdgeValue)
+	return branchPathEvidenceFromPostconditions(trueFacts.pathRelations, falseFacts.pathRelations)
+}
+
 // IsEmpty reports whether f carries no selected facts.
 func (f ExpressionConditionFacts) IsEmpty() bool {
 	return len(f.refinements) == 0 && len(f.pathRelations) == 0
@@ -170,6 +179,34 @@ func branchPathRelationsForPostcondition(relation PostconditionPathRelation, edg
 		return []BranchPathRelation{
 			NewBranchPathEquality(left, right, edge, !edge),
 			NewBranchPathInequality(left, right, !edge, edge),
+		}
+	default:
+		return nil
+	}
+}
+
+func branchPathEvidenceFromPostconditions(
+	trueRelations []PostconditionPathRelation,
+	falseRelations []PostconditionPathRelation,
+) []BranchPathEvidence {
+	out := make([]BranchPathEvidence, 0, 2*(len(trueRelations)+len(falseRelations)))
+	for _, relation := range trueRelations {
+		out = append(out, branchPathEvidenceForPostcondition(relation, true)...)
+	}
+	for _, relation := range falseRelations {
+		out = append(out, branchPathEvidenceForPostcondition(relation, false)...)
+	}
+	return out
+}
+
+func branchPathEvidenceForPostcondition(relation PostconditionPathRelation, edge bool) []BranchPathEvidence {
+	switch relation.Kind() {
+	case PostconditionPathRelationEqual:
+		left := relation.LeftPath()
+		right := relation.RightPath()
+		return []BranchPathEvidence{
+			NewBranchPathEqualityEvidenceOnEdge(left, right, edge),
+			NewBranchPathInequalityEvidenceOnEdge(left, right, !edge),
 		}
 	default:
 		return nil

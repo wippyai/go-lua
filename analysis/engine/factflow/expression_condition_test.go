@@ -83,6 +83,31 @@ func TestExpressionConditionBranchPathRelationsForValue(t *testing.T) {
 	assertBranchPathRelation(t, negated[3], BranchPathRelationNotEqual, left, right, true, false)
 }
 
+func TestExpressionConditionBranchPathEvidenceForValue(t *testing.T) {
+	left := path.NewPath(symbol.ID(6), "left")
+	right := path.NewPath(symbol.ID(7), "right")
+	condition := NewExpressionCondition(
+		nil,
+		nil,
+		[]PostconditionPathRelation{NewPostconditionPathEquality(left, right)},
+		nil,
+	)
+
+	direct := condition.BranchPathEvidenceForValue(true)
+	if len(direct) != 2 {
+		t.Fatalf("direct evidence = %d, want 2: %#v", len(direct), direct)
+	}
+	assertBranchPathEvidence(t, direct[0], BranchPathEvidenceEqual, left, right, true, false)
+	assertBranchPathEvidence(t, direct[1], BranchPathEvidenceNotEqual, left, right, false, true)
+
+	negated := condition.BranchPathEvidenceForValue(false)
+	if len(negated) != 2 {
+		t.Fatalf("negated evidence = %d, want 2: %#v", len(negated), negated)
+	}
+	assertBranchPathEvidence(t, negated[0], BranchPathEvidenceEqual, left, right, false, true)
+	assertBranchPathEvidence(t, negated[1], BranchPathEvidenceNotEqual, left, right, true, false)
+}
+
 func assertBranchPathRelation(
 	t *testing.T,
 	got BranchPathRelation,
@@ -100,6 +125,30 @@ func assertBranchPathRelation(
 	assertPathEqual(t, got.RightPath(), wantRight)
 	if got.ActiveOnEdge(true) != wantTrue || got.ActiveOnEdge(false) != wantFalse {
 		t.Fatalf("relation edges true/false = %v/%v, want %v/%v", got.ActiveOnEdge(true), got.ActiveOnEdge(false), wantTrue, wantFalse)
+	}
+}
+
+func assertBranchPathEvidence(
+	t *testing.T,
+	got BranchPathEvidence,
+	wantKind BranchPathEvidenceKind,
+	wantLeft path.Path,
+	wantRight path.Path,
+	wantTrue bool,
+	wantFalse bool,
+) {
+	t.Helper()
+	if got.Kind() != wantKind {
+		t.Fatalf("evidence kind = %v, want %v", got.Kind(), wantKind)
+	}
+	assertPathEqual(t, got.Path(), wantLeft)
+	other, ok := got.OtherPath()
+	if !ok {
+		t.Fatalf("evidence other path missing for %#v", got)
+	}
+	assertPathEqual(t, other, wantRight)
+	if got.ActiveOnEdge(true) != wantTrue || got.ActiveOnEdge(false) != wantFalse {
+		t.Fatalf("evidence edges true/false = %v/%v, want %v/%v", got.ActiveOnEdge(true), got.ActiveOnEdge(false), wantTrue, wantFalse)
 	}
 }
 
