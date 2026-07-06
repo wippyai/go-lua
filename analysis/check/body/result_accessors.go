@@ -470,16 +470,6 @@ func branchConditionCheckFromWIR(check wir.Check) branchcond.Check {
 	}
 }
 
-func (r *Result) BranchConditionChecksOnEdge(fact semantics.BranchConditionFact, cond bool) []branchcond.Check {
-	if r == nil || r.bindings == nil || fact.Condition == nil {
-		return nil
-	}
-	if cond {
-		return branchcond.TruthyChecks(fact.Condition, r.bindings)
-	}
-	return branchcond.FalsyChecks(fact.Condition, r.bindings)
-}
-
 func (r *Result) ExpressionImpliedChecksOnEdge(expr ast.Expr, cond bool) []branchcond.ImpliedCheck {
 	if r == nil || r.bindings == nil || expr == nil {
 		return nil
