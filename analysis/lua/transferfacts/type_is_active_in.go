@@ -7,7 +7,6 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 )
 
 type resultCorrelationTargets struct {
@@ -140,16 +139,6 @@ func absentPresenceEdges(input *factflow.FactsInput, branch cfg.Point, target pa
 				out = appendAbsentPresenceEdges(out, fact)
 			}
 		}
-	}
-	return out
-}
-
-func (l *lowerer) semanticTypeIsSuccessEdges(input *factflow.FactsInput, result *semantics.Result, branch cfg.Point, target path.Path) []bool {
-	out := absentPresenceEdges(input, branch, target)
-	if check, ok := l.semanticDirectBranchCheckAt(branch, result); ok &&
-		check.Kind == branchcond.CheckFalsy &&
-		check.Path.Equal(target) {
-		out = appendBoolIfMissing(out, true)
 	}
 	return out
 }

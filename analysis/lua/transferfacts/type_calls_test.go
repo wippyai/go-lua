@@ -487,11 +487,11 @@ local data: any = {}
 if Point:is(data) then
 end
 `)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	body := wirlower.Lower("type-is-condition", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	dataStmt := mustLocalStmt(t, stmts, 1)
-	ifStmt := mustIfStmt(t, stmts, 2)
 	dataPath := path.NewPath(mustLocalAt(t, bindings, dataStmt, 0), "data")
-	branchPoint := requireStmtPoints(t, built, ifStmt, 2)[1]
+	branchPoint := requireWIRBranchPoint(t, built.Graph, body)
 
 	refinements := facts.BranchRefinements(branchPoint)
 	var found bool
@@ -519,11 +519,11 @@ local data: any = {}
 if not Point:is(data) then
 end
 `)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	body := wirlower.Lower("type-is-negated-condition", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	dataStmt := mustLocalStmt(t, stmts, 1)
-	ifStmt := mustIfStmt(t, stmts, 2)
 	dataPath := path.NewPath(mustLocalAt(t, bindings, dataStmt, 0), "data")
-	branchPoint := requireStmtPoints(t, built, ifStmt, 2)[1]
+	branchPoint := requireWIRBranchPoint(t, built.Graph, body)
 
 	refinements := facts.BranchRefinements(branchPoint)
 	var found bool

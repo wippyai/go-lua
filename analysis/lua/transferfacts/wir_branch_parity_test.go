@@ -584,7 +584,7 @@ end
 		t.Fatalf("typeIsCallSiteFromWIR(%d) = %v, %v", callPoint, typ, arg)
 	}
 
-	lowered.addTypeIsBranchRefinements(input, built.Graph, nil)
+	lowered.addTypeIsBranchRefinements(input, built.Graph)
 
 	refinement, ok := branchRefinementAt(input.BranchRefinements[branchPoint].Refinements(), valuePath)
 	if !ok {
@@ -650,7 +650,7 @@ func assertWIRTypeIsConditionBranchRefinementWithoutSemanticResult(t *testing.T,
 		t.Fatalf("typeIsCallSiteFromWIR(%d) = %v, %v", callPoint, typ, arg)
 	}
 
-	lowered.addTypeIsBranchRefinements(input, built.Graph, nil)
+	lowered.addTypeIsBranchRefinements(input, built.Graph)
 
 	refinement, ok := branchRefinementAt(input.BranchRefinements[branchPoint].Refinements(), valuePath)
 	if !ok {

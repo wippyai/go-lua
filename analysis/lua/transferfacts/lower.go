@@ -268,7 +268,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			l.addNumericForFactsFromWIR(&input, point)
 		}
 	}
-	l.addTypeIsBranchRefinements(&input, graph, result)
+	l.addTypeIsBranchRefinements(&input, graph)
 	l.addProtectedCallBranchRefinements(&input, graph)
 	l.addReturnPresenceRelations(&input, graph)
 	l.addConditionalAssignmentImplications(&input, graph)
