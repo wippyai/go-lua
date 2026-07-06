@@ -249,12 +249,6 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 					input.PostconditionRefinements[point] = factflow.NewPostconditionRefinementSet(lowered)
 				}
 				if l.wir == nil {
-					if lowered, ok := l.typeCastPostconditionRefinement(point, fact); ok {
-						appendPostconditionRefinements(input.PostconditionRefinements, point, lowered)
-					}
-					if lowered, ok := l.typeCastCallResultValue(point, fact); ok {
-						appendCallResultValues(input.CallResultValues, point, lowered)
-					}
 					if lowered := l.typeIsCallResultValues(point, fact); len(lowered) != 0 {
 						appendCallResultValues(input.CallResultValues, point, lowered...)
 					}

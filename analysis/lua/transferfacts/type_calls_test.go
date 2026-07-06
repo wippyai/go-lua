@@ -41,7 +41,8 @@ type Point = {x: number, y: number}
 local data: any = {}
 local v = Point(data)
 `)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	body := wirlower.Lower("type-cast-call", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	dataStmt := mustLocalStmt(t, stmts, 1)
 	castStmt := mustLocalStmt(t, stmts, 2)
 	dataPath := path.NewPath(mustLocalAt(t, bindings, dataStmt, 0), "data")

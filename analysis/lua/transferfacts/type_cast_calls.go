@@ -4,22 +4,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
-
-func (l *lowerer) typeCastPostconditionRefinement(point cfg.Point, fact semantics.CallFact) (factflow.PostconditionRefinement, bool) {
-	info, ok := l.directTypeCastCallAt(point, fact)
-	if !ok {
-		return factflow.PostconditionRefinement{}, false
-	}
-	return factflow.NewPostconditionRefinement(info.argPath, factflow.NewValueConstraint(l.untrustedTypeWitnessValue(info.target))), true
-}
 
 // addCastExposure records a covariant exposure for a cast (narrow as W) whose
 // target type strictly widens the operand object. The cast value conforms at the
@@ -76,14 +66,6 @@ func (l *lowerer) aliasPathType(p path.Path) (typ.Type, bool) {
 	return projected, true
 }
 
-func (l *lowerer) typeCastCallResultValue(point cfg.Point, fact semantics.CallFact) (factflow.CallResultValue, bool) {
-	info, ok := l.directTypeCastCallAt(point, fact)
-	if !ok {
-		return factflow.CallResultValue{}, false
-	}
-	return factflow.NewCallResultValue(0, l.typeIsProofValue(info.target)), true
-}
-
 func (l *lowerer) typeCastPostconditionRefinementFromWIR(point cfg.Point) (factflow.PostconditionRefinement, bool) {
 	info, ok := l.directTypeCastCallFromWIR(point)
 	if !ok {
@@ -103,36 +85,6 @@ func (l *lowerer) typeCastCallResultValueFromWIR(point cfg.Point) (factflow.Call
 type directTypeCastInfo struct {
 	target  typ.Type
 	argPath path.Path
-}
-
-func (l *lowerer) directTypeCastCall(fact semantics.CallFact) (directTypeCastInfo, bool) {
-	call, ok := branchcond.TypeCall(fact.Call)
-	if !ok {
-		return directTypeCastInfo{}, false
-	}
-	t, ok := l.typeValueExpr(fact.Func)
-	if !ok {
-		return directTypeCastInfo{}, false
-	}
-	argPath, ok := pathexpr.Resolve(call.Args[0], l.bindings)
-	if !ok || argPath.IsEmpty() {
-		return directTypeCastInfo{}, false
-	}
-	return directTypeCastInfo{target: t, argPath: argPath}, true
-}
-
-func (l *lowerer) directTypeCastCallAt(point cfg.Point, fact semantics.CallFact) (directTypeCastInfo, bool) {
-	info, ok := l.directTypeCastCall(fact)
-	if !ok {
-		return directTypeCastInfo{}, false
-	}
-	if t, ok := l.typeCastTargetFromWIR(point); ok {
-		info.target = t
-	}
-	if argPath, ok := l.callArgumentPathFromWIR(point, 0); ok {
-		info.argPath = argPath
-	}
-	return info, true
 }
 
 func (l *lowerer) directTypeCastCallFromWIR(point cfg.Point) (directTypeCastInfo, bool) {
