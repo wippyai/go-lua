@@ -24,12 +24,60 @@ end
 		t.Fatalf("ParamSlots = %#v, want one typed parameter", slots)
 	}
 
-	got := lowerSymbolTypes(bindings, built.Graph, nil, typeresolve.New(bindings), importlookup.Source{})
+	got := lowerSymbolTypes(bindings, built.Graph, built.Meta, nil, typeresolve.New(bindings), importlookup.Source{})
 	if got == nil {
 		t.Fatal("lowerSymbolTypes returned nil without semantic result")
 	}
 	if gotType, ok := got[slots[0].Symbol]; !ok || gotType == nil {
 		t.Fatalf("symbol type for parameter %d = %v/%v, want annotation", slots[0].Symbol, gotType, ok)
+	}
+}
+
+func TestLowerSymbolTypesReadsCfgMetadataWithoutSemanticResult(t *testing.T) {
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
+function build(value: string): number
+	return 1
+end
+
+for i = 1, 3 do
+end
+`, "build")
+	if len(stmts) != 2 {
+		t.Fatalf("parsed %d statements, want function and numeric for", len(stmts))
+	}
+	funcDef, ok := stmts[0].(*ast.FuncDefStmt)
+	if !ok {
+		t.Fatalf("statement 0 = %T, want function definition", stmts[0])
+	}
+	numberFor, ok := stmts[1].(*ast.NumberForStmt)
+	if !ok {
+		t.Fatalf("statement 1 = %T, want numeric for", stmts[1])
+	}
+	funcSym, ok := bindings.FuncDefTargetSymbol(funcDef)
+	if !ok || funcSym == 0 {
+		t.Fatalf("FuncDefTargetSymbol = %d/%v, want symbol", funcSym, ok)
+	}
+	loopSym, ok := bindings.NumForSymbol(numberFor)
+	if !ok || loopSym == 0 {
+		t.Fatalf("NumForSymbol = %d/%v, want symbol", loopSym, ok)
+	}
+
+	got := lowerSymbolTypes(bindings, built.Graph, built.Meta, nil, typeresolve.New(bindings), importlookup.Source{})
+	if got == nil {
+		t.Fatal("lowerSymbolTypes returned nil without semantic result")
+	}
+	fnType, ok := got[funcSym].(*typ.Function)
+	if !ok || fnType == nil {
+		t.Fatalf("function symbol type = %T %[1]v/%v, want function type", got[funcSym], ok)
+	}
+	if len(fnType.Params) != 1 || !typ.TypeEquals(fnType.Params[0].Type, typ.String) {
+		t.Fatalf("function params = %#v, want one string parameter", fnType.Params)
+	}
+	if len(fnType.Returns) != 1 || !typ.TypeEquals(fnType.Returns[0], typ.Number) {
+		t.Fatalf("function returns = %#v, want number", fnType.Returns)
+	}
+	if gotType, ok := got[loopSym]; !ok || !typ.TypeEquals(gotType, typ.Integer) {
+		t.Fatalf("numeric-for symbol type = %v/%v, want integer", gotType, ok)
 	}
 }
 

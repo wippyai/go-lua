@@ -944,7 +944,7 @@ end
 		registry:    reg,
 		bindings:    bindings,
 		wir:         body,
-		symbolTypes: lowerSymbolTypes(bindings, built.Graph, result, nil, importlookup.Source{}),
+		symbolTypes: lowerSymbolTypes(bindings, built.Graph, built.Meta, result, nil, importlookup.Source{}),
 	}
 
 	lowered.addProtectedCallBranchRefinements(input, built.Graph, nil)

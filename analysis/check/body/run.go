@@ -114,6 +114,7 @@ func (c *checker) prepare(
 		TypeResolver:  typeResolver,
 		TypeValues:    config.TypeValues,
 		ModuleExports: config.ModuleExports,
+		Metadata:      built.Meta,
 		WIR:           wirBody,
 	})
 	facts := lowered.Facts

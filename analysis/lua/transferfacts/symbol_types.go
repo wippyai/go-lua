@@ -3,6 +3,7 @@ package transferfacts
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/functiontype"
 	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
@@ -26,6 +27,7 @@ import (
 func lowerSymbolTypes(
 	bindings *bind.Result,
 	graph cfg.Graph,
+	meta cfgfacts.Metadata,
 	result *semantics.Result,
 	resolver *typeresolve.Resolver,
 	moduleExports importlookup.Source,
@@ -52,29 +54,25 @@ func lowerSymbolTypes(
 			add(slot.Symbol, slot.Type)
 		}
 	}
-	if result == nil {
-		if len(out) == 0 {
-			return nil
-		}
-		return out
-	}
-	if fn := result.Function(); fn != nil {
-		for _, capture := range bindings.DirectCaptures(fn) {
-			if capture.Captured == 0 {
-				continue
-			}
-			if _, present := out[capture.Captured]; present {
-				continue
-			}
-			if modulePath, ok := moduleidentity.LocalRequireModulePath(bindings, capture.Captured); ok {
-				if t, ok := moduleExports.LookupExport(modulePath); ok {
-					out[capture.Captured] = t
+	if result != nil {
+		if fn := result.Function(); fn != nil {
+			for _, capture := range bindings.DirectCaptures(fn) {
+				if capture.Captured == 0 {
+					continue
+				}
+				if _, present := out[capture.Captured]; present {
+					continue
+				}
+				if modulePath, ok := moduleidentity.LocalRequireModulePath(bindings, capture.Captured); ok {
+					if t, ok := moduleExports.LookupExport(modulePath); ok {
+						out[capture.Captured] = t
+					}
 				}
 			}
 		}
 	}
 	for _, point := range graph.RPO() {
-		fact, ok := result.FunctionDefinition(point)
+		fact, ok := functionDefinitionFactAt(meta, result, point)
 		if !ok || !fact.HasTargetSymbol || fact.TargetSymbol == 0 || fact.Func == nil {
 			continue
 		}
@@ -93,22 +91,24 @@ func lowerSymbolTypes(
 			out[origin.TargetSymbol] = t
 		}
 	}
-	for _, point := range graph.RPO() {
-		view, ok := result.LocalAssignmentView(point)
-		if !ok {
-			continue
+	if result != nil {
+		for _, point := range graph.RPO() {
+			view, ok := result.LocalAssignmentView(point)
+			if !ok {
+				continue
+			}
+			fact, ok := view.Borrowed()
+			if !ok || !fact.HasSymbol {
+				continue
+			}
+			add(fact.Symbol, fact.Type)
 		}
-		fact, ok := view.Borrowed()
-		if !ok || !fact.HasSymbol {
-			continue
-		}
-		add(fact.Symbol, fact.Type)
 	}
 	// A numeric-for control variable has no annotation, so record the strongest
 	// type proven by the control operands. Lua uses an integer loop when init,
 	// limit, and step are all integers; otherwise the variable is numeric.
 	for _, point := range graph.RPO() {
-		fact, ok := result.NumericFor(point)
+		fact, ok := numericForFactAt(meta, result, point)
 		if !ok || !fact.HasSymbol || fact.Symbol == 0 {
 			continue
 		}
@@ -116,6 +116,12 @@ func lowerSymbolTypes(
 			continue
 		}
 		out[fact.Symbol] = numericForSymbolType(out, bindings, fact.Init, fact.Limit, fact.Step)
+	}
+	if result == nil {
+		if len(out) == 0 {
+			return nil
+		}
+		return out
 	}
 	// Resolve un-annotated `local x = <access-chain>` locals whose initializer is
 	// a static field/index chain rooted at an already-typed symbol. The chain's
@@ -161,6 +167,26 @@ func lowerSymbolTypes(
 		return nil
 	}
 	return out
+}
+
+func functionDefinitionFactAt(meta cfgfacts.Metadata, result *semantics.Result, point cfg.Point) (cfgfacts.FunctionDefinitionFact, bool) {
+	if fact, ok := meta.FunctionDefinition(point); ok {
+		return fact, true
+	}
+	if result == nil {
+		return cfgfacts.FunctionDefinitionFact{}, false
+	}
+	return result.FunctionDefinition(point)
+}
+
+func numericForFactAt(meta cfgfacts.Metadata, result *semantics.Result, point cfg.Point) (cfgfacts.NumericForFact, bool) {
+	if fact, ok := meta.NumericFor(point); ok {
+		return fact, true
+	}
+	if result == nil {
+		return cfgfacts.NumericForFact{}, false
+	}
+	return result.NumericFor(point)
 }
 
 func numericForSymbolType(symbolTypes map[symbol.ID]typ.Type, bindings *bind.Result, init, limit, step ast.Expr) typ.Type {

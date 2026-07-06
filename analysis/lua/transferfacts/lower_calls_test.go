@@ -1615,7 +1615,7 @@ end
 		typeValues:                    typevalue.NewCache(),
 		wir:                           body,
 		callPoints:                    callPointsByExpr(builtCallFacts(built.Graph, result)),
-		symbolTypes:                   lowerSymbolTypes(bindings, built.Graph, result, typeresolve.New(bindings), importlookup.Source{}),
+		symbolTypes:                   lowerSymbolTypes(bindings, built.Graph, built.Meta, result, typeresolve.New(bindings), importlookup.Source{}),
 		exprs:                         make(map[any]factflow.ExprRef),
 		types:                         make(map[any]factflow.TypeRef),
 		expressionValues:              make(map[factflow.ExprRef]product.Value),

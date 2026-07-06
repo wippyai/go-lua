@@ -875,7 +875,7 @@ end
 	lowered := lowerer{
 		registry:    standard.Registry(),
 		bindings:    bindings,
-		symbolTypes: lowerSymbolTypes(bindings, built.Graph, result, nil, importlookup.Source{}),
+		symbolTypes: lowerSymbolTypes(bindings, built.Graph, built.Meta, result, nil, importlookup.Source{}),
 		wir:         body,
 	}
 

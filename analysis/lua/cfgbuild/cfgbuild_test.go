@@ -477,6 +477,16 @@ func TestBuildChunkSimpleFunctionDefinitionCreatesAssignment(t *testing.T) {
 	if fact.Target != targetID {
 		t.Fatalf("function definition target = %d, want %d", fact.Target, targetID)
 	}
+	defFact, ok := result.Meta.FunctionDefinition(points[0])
+	if !ok {
+		t.Fatalf("missing function definition metadata")
+	}
+	if defFact.Stmt != stmt || defFact.Name != stmt.Name || defFact.Func != stmt.Func {
+		t.Fatalf("function definition metadata = %#v", defFact)
+	}
+	if defFact.TargetSymbol != targetID || !defFact.HasTargetSymbol {
+		t.Fatalf("function definition metadata target = %d/%v, want %d/true", defFact.TargetSymbol, defFact.HasTargetSymbol, targetID)
+	}
 	requireEdge(t, graph, graph.Entry(), points[0], false)
 	requireEdge(t, graph, points[0], graph.Exit(), false)
 }
@@ -1470,6 +1480,14 @@ func TestBuildChunkNumberForCreatesLoopTopologyAndMetadata(t *testing.T) {
 	assignFact, ok := result.Meta.Assignment(initAssign)
 	if !ok || assignFact.Target != loopID {
 		t.Fatalf("numeric for init assignment = %#v, ok=%v, want target %d", assignFact, ok, loopID)
+	}
+	initFact, ok := result.Meta.NumericFor(initAssign)
+	if !ok || initFact.Role != cfgfacts.NumericForRoleInit || initFact.Stmt != loop || initFact.Symbol != loopID || !initFact.HasSymbol {
+		t.Fatalf("numeric for init metadata = %#v/%v, want init role and symbol %d", initFact, ok, loopID)
+	}
+	checkFact, ok := result.Meta.NumericFor(branch)
+	if !ok || checkFact.Role != cfgfacts.NumericForRoleCheck || checkFact.Stmt != loop || checkFact.Symbol != loopID || !checkFact.HasSymbol {
+		t.Fatalf("numeric for check metadata = %#v/%v, want check role and symbol %d", checkFact, ok, loopID)
 	}
 	loopFact, ok := result.Meta.Loop(branch)
 	if !ok {

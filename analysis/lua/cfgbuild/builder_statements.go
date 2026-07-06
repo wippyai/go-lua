@@ -140,7 +140,22 @@ func (b *builder) buildFuncDef(state flowState, stmt *ast.FuncDefStmt) flowState
 	// tracked symbol; it still defines a value at this point, so emit the
 	// assignment with id == 0 rather than abandoning the function.
 	target, _ := pathexpr.ResolveFuncName(stmt.Name, b.bindings)
-	return b.appendAssign(state, target.Symbol, stmt)
+	next := b.appendAssign(state, target.Symbol, stmt)
+	if next.live {
+		id, hasSymbol := b.bindings.FuncDefTargetSymbol(stmt)
+		targetPath := target
+		hasTargetPath := !targetPath.IsEmpty()
+		b.meta.SetFunctionDefinition(next.current, cfgfacts.FunctionDefinitionFact{
+			Stmt:            stmt,
+			Name:            stmt.Name,
+			Func:            stmt.Func,
+			TargetSymbol:    id,
+			HasTargetSymbol: hasSymbol,
+			TargetPath:      targetPath,
+			HasTargetPath:   hasTargetPath,
+		})
+	}
+	return next
 }
 
 func (b *builder) buildLabel(state flowState, stmt *ast.LabelStmt) flowState {
@@ -261,12 +276,27 @@ func (b *builder) buildRepeat(state flowState, stmt *ast.RepeatStmt) flowState {
 
 func (b *builder) buildNumberFor(state flowState, stmt *ast.NumberForStmt) flowState {
 	state = b.appendValueListCalls(state, stmt, numericForBounds(stmt))
-	id, _ := b.bindings.NumForSymbol(stmt)
+	id, hasSymbol := b.bindings.NumForSymbol(stmt)
 
 	state = b.appendAssign(state, id, stmt)
 	preheader := state.current
 	branch := b.appendBranch(state, stmt)
 	join := b.graph.AddNode(cfg.NodeJoin)
+	numericFact := cfgfacts.NumericForFact{
+		Stmt:      stmt,
+		Name:      stmt.Name,
+		Init:      stmt.Init,
+		Limit:     stmt.Limit,
+		Step:      stmt.Step,
+		Symbol:    id,
+		HasSymbol: hasSymbol && id != 0,
+	}
+	initFact := numericFact
+	initFact.Role = cfgfacts.NumericForRoleInit
+	b.meta.SetNumericFor(preheader, initFact)
+	checkFact := numericFact
+	checkFact.Role = cfgfacts.NumericForRoleCheck
+	b.meta.SetNumericFor(branch.current, checkFact)
 
 	b.meta.SetLoop(branch.current, cfgfacts.LoopFact{
 		Kind:                 cfgfacts.LoopKindNumericFor,

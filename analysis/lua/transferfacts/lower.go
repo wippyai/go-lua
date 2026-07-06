@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
+	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/expressionid"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
@@ -31,6 +32,7 @@ type Config struct {
 	TypeResolver  *typeresolve.Resolver
 	TypeValues    *typevalue.Cache
 	ModuleExports importlookup.Source
+	Metadata      cfgfacts.Metadata
 	WIR           *wir.Body
 }
 
@@ -54,7 +56,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 	if typeResolver == nil {
 		typeResolver = typeresolve.New(config.Bindings)
 	}
-	symbolTypes := lowerSymbolTypes(config.Bindings, graph, result, typeResolver, config.ModuleExports)
+	symbolTypes := lowerSymbolTypes(config.Bindings, graph, config.Metadata, result, typeResolver, config.ModuleExports)
 	declaredReturnLocalTypes := lowerDeclaredReturnLocalTypes(config.Bindings, graph, result, typeResolver)
 	returnLocalObjectLiteralTypes := lowerReturnLocalObjectLiteralTypes(config.Bindings, graph, result, typeResolver)
 	symbolTypes = mergeSymbolTypes(symbolTypes, declaredReturnLocalTypes)
@@ -66,6 +68,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		graphID:                       graph.ID(),
 		typeResolver:                  typeResolver,
 		typeValues:                    config.TypeValues,
+		metadata:                      config.Metadata,
 		wir:                           config.WIR,
 		callPoints:                    semanticCallPointsByExpr(graph, result, config.WIR),
 		wirCallPoints:                 callPointsByExpressionIDFromWIR(graph, config.WIR),
@@ -308,8 +311,8 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		}
 		if l.wir != nil {
 			l.addNumericForFactsFromWIR(&input, point)
-		} else if result != nil {
-			if fact, ok := result.NumericFor(point); ok {
+		} else {
+			if fact, ok := numericForFactAt(l.metadata, result, point); ok {
 				if lowered, ok := l.numericForBranchNumFloorRefinement(fact); ok {
 					appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered)
 				}
@@ -404,6 +407,7 @@ type lowerer struct {
 	graphID                       uint64
 	typeResolver                  *typeresolve.Resolver
 	typeValues                    *typevalue.Cache
+	metadata                      cfgfacts.Metadata
 	wir                           *wir.Body
 	wirTempDefinitions            map[uint32]wir.Instruction
 	wirTempDefinitionSets         map[uint32][]wir.Instruction

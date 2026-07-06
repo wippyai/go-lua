@@ -492,17 +492,17 @@ func (r *Result) TypeDefinition(point cfg.Point) (cfgfacts.TypeDefinitionFact, b
 }
 
 func (r *Result) FunctionDefinition(point cfg.Point) (cfgfacts.FunctionDefinitionFact, bool) {
-	if r == nil || r.semantics == nil {
+	if r == nil || r.cfg == nil {
 		return cfgfacts.FunctionDefinitionFact{}, false
 	}
-	return r.semantics.FunctionDefinition(point)
+	return r.cfg.Meta.FunctionDefinition(point)
 }
 
 func (r *Result) NumericFor(point cfg.Point) (cfgfacts.NumericForFact, bool) {
-	if r == nil || r.semantics == nil {
+	if r == nil || r.cfg == nil {
 		return cfgfacts.NumericForFact{}, false
 	}
-	return r.semantics.NumericFor(point)
+	return r.cfg.Meta.NumericFor(point)
 }
 
 func (r *Result) GenericFor(point cfg.Point) (cfgfacts.GenericForFact, bool) {
