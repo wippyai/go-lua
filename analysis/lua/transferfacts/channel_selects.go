@@ -13,10 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func (l *lowerer) channelSelects(point cfg.Point) []factflow.ChannelSelect {
-	return l.channelSelectsFromWIR(point)
-}
-
 func (l *lowerer) channelSelectsFromWIR(point cfg.Point) []factflow.ChannelSelect {
 	if l == nil || l.wir == nil {
 		return nil

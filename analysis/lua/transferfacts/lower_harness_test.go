@@ -870,7 +870,7 @@ end
 	}
 
 	for _, point := range built.Graph.RPO() {
-		events := lowered.channelSelects(point)
+		events := lowered.channelSelectsFromWIR(point)
 		if len(events) == 0 {
 			continue
 		}
