@@ -119,15 +119,6 @@ type valueSourceShape struct {
 	openTail    bool
 }
 
-type callSiteFlags struct {
-	context  factflow.CallSiteContext
-	expr     int
-	final    bool
-	expanded bool
-	adjusted bool
-	openTail bool
-}
-
 type callSiteMetadata struct {
 	callSpan       factflow.SourceSpan
 	calleeSpan     factflow.SourceSpan
@@ -162,21 +153,6 @@ func (l *lowerer) callSiteMetadataFromWIR(point cfg.Point) (callSiteMetadata, bo
 		calleeSpan:     sourceSpanFromWIR(inst.CalleeSpan),
 		argumentSpans:  spans,
 		argumentLabels: labels,
-	}, true
-}
-
-func (l *lowerer) callSiteFlagsFromWIR(point cfg.Point) (callSiteFlags, bool) {
-	inst, ok := l.wirCallInstruction(point)
-	if !ok || inst.CallContext == wir.CallContextUnknown {
-		return callSiteFlags{}, false
-	}
-	return callSiteFlags{
-		context:  wirCallSiteContext(inst.CallContext),
-		expr:     inst.CallExpr,
-		final:    inst.CallFinal,
-		expanded: inst.CallExpanded,
-		adjusted: inst.CallAdjusted,
-		openTail: inst.CallOpenTail,
 	}, true
 }
 

@@ -2,17 +2,9 @@ package transferfacts
 
 import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
-
-func (l *lowerer) callSiteResultTargetsFromWIR(point cfg.Point) []factflow.CallResultTarget {
-	if l != nil && l.wir != nil {
-		return lowerWIRCallResultTargets(l.wir.CallResultTargets(point))
-	}
-	return nil
-}
 
 func lowerWIRCallResultTargets(targets []wir.CallResultTarget) []factflow.CallResultTarget {
 	if len(targets) == 0 {
