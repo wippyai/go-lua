@@ -16,7 +16,6 @@ func ExtractChunk(stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Resul
 		return nil, err
 	}
 	r.extractShortCircuitGuards(bindings, built)
-	r.extractExpressionEvaluations(built)
 	return r, nil
 }
 
@@ -31,7 +30,6 @@ func ExtractFunction(fn *ast.FunctionExpr, bindings *bind.Result, built *cfgbuil
 		}
 	}
 	r.extractShortCircuitGuards(bindings, built)
-	r.extractExpressionEvaluations(built)
 	return r, nil
 }
 
@@ -55,19 +53,6 @@ func (r *Result) extractShortCircuitGuards(bindings *bind.Result, built *cfgbuil
 			Source:    conditionValueSource(guard.Condition, nil),
 			Check:     branchcond.Normalize(guard.Condition, bindings),
 		}
-	}
-}
-
-func (r *Result) extractExpressionEvaluations(built *cfgbuild.Result) {
-	if r == nil || built == nil {
-		return
-	}
-	for _, point := range built.Graph.RPO() {
-		eval, ok := built.Meta.ExpressionEvaluation(point)
-		if !ok || eval.Expr == nil {
-			continue
-		}
-		r.meta.SetExpressionEvaluation(point, eval)
 	}
 }
 

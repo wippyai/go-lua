@@ -513,10 +513,10 @@ func (r *Result) GenericFor(point cfg.Point) (cfgfacts.GenericForFact, bool) {
 }
 
 func (r *Result) ExpressionEvaluation(point cfg.Point) (cfgfacts.ExpressionEvaluationFact, bool) {
-	if r == nil || r.semantics == nil {
+	if r == nil || r.cfg == nil {
 		return cfgfacts.ExpressionEvaluationFact{}, false
 	}
-	return r.semantics.ExpressionEvaluation(point)
+	return r.cfg.Meta.ExpressionEvaluation(point)
 }
 
 func (r *Result) Function() *ast.FunctionExpr {
