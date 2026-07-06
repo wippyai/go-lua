@@ -695,14 +695,15 @@ local value = nil
 
 func TestLowerExplicitErrorReturnsPublishPresenceRelation(t *testing.T) {
 	reg := standard.Registry()
-	_, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, result := parseSemanticFunction(t, `
 function process(x: number): (number?, string?)
 	if x < 0 then
 		return nil, "negative"
 	end
 	return x * 2, nil
 end`)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	body := wirlower.LowerFunction("process", fn, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 
 	relations := allReturnPresenceRelations(built.Graph, facts)
 	assertReturnPresenceRelation(t, relations, 1, presence.Present(), 0, presence.Absent())
@@ -711,11 +712,12 @@ end`)
 
 func TestLowerReturnPresenceUnknownSourceBlocksMustRelation(t *testing.T) {
 	reg := standard.Registry()
-	_, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, result := parseSemanticFunction(t, `
 function process(value: number?): (number?, string?)
 	return value, nil
 end`)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	body := wirlower.LowerFunction("process", fn, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 
 	relations := allReturnPresenceRelations(built.Graph, facts)
 	assertNoReturnPresenceRelation(t, relations, 1, presence.Absent(), 0, presence.Present())

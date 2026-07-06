@@ -1,7 +1,6 @@
 package transferfacts
 
 import (
-	"reflect"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
@@ -17,7 +16,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func TestLowerWithWIRReturnPointsMatchesSidecarReturnPresence(t *testing.T) {
+func TestLowerWithWIRReturnPointsPublishReturnPresence(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(ok: boolean): (string?, string?)
     if ok then
@@ -27,20 +26,18 @@ function f(ok: boolean): (string?, string?)
 end
 `)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	sidecarFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
 	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
-	sidecarPoints := semanticReturnFactPoints(built.Graph, result)
 	wirPoints := wirReturnFactPoints(built.Graph, body)
-	if !reflect.DeepEqual(wirPoints, sidecarPoints) {
-		t.Fatalf("return points mismatch\n got: %#v\nwant: %#v", wirPoints, sidecarPoints)
+	if len(wirPoints) != 2 {
+		t.Fatalf("WIR return points = %#v, want two returns", wirPoints)
 	}
-	for _, point := range built.Graph.RPO() {
-		got := wirFacts.ReturnPresenceRelations(point)
-		want := sidecarFacts.ReturnPresenceRelations(point)
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("return presence at point %d mismatch\n got: %#v\nwant: %#v", point, got, want)
-		}
+	for _, point := range wirPoints {
+		relations := wirFacts.ReturnPresenceRelations(point)
+		assertReturnPresenceRelation(t, relations, 0, presence.Present(), 1, presence.Absent())
+		assertReturnPresenceRelation(t, relations, 0, presence.Absent(), 1, presence.Present())
+		assertReturnPresenceRelation(t, relations, 1, presence.Present(), 0, presence.Absent())
+		assertReturnPresenceRelation(t, relations, 1, presence.Absent(), 0, presence.Present())
 	}
 }
 

@@ -11,12 +11,12 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func (l *lowerer) addReturnPresenceRelations(input *factflow.FactsInput, graph cfg.Graph, result *semantics.Result) {
-	if input == nil || graph == nil || (result == nil && (l == nil || l.wir == nil)) {
+func (l *lowerer) addReturnPresenceRelations(input *factflow.FactsInput, graph cfg.Graph) {
+	if input == nil || graph == nil || l == nil || l.wir == nil {
 		return
 	}
-	points := l.returnFactPoints(graph, result)
-	arity := l.returnPresenceArity(input, result, points)
+	points := wirReturnFactPoints(graph, l.wir)
+	arity := l.returnPresenceArity(input, points)
 	if arity < 2 {
 		return
 	}
@@ -25,13 +25,6 @@ func (l *lowerer) addReturnPresenceRelations(input *factflow.FactsInput, graph c
 			appendReturnPresenceRelations(input.ReturnPresenceRelations, point, relations...)
 		}
 	}
-}
-
-func (l *lowerer) returnFactPoints(graph cfg.Graph, result *semantics.Result) []cfg.Point {
-	if l.wir != nil {
-		return wirReturnFactPoints(graph, l.wir)
-	}
-	return semanticReturnFactPoints(graph, result)
 }
 
 func wirReturnFactPoints(graph cfg.Graph, body *wir.Body) []cfg.Point {
@@ -47,20 +40,7 @@ func wirReturnFactPoints(graph cfg.Graph, body *wir.Body) []cfg.Point {
 	return points
 }
 
-func semanticReturnFactPoints(graph cfg.Graph, result *semantics.Result) []cfg.Point {
-	if graph == nil || result == nil {
-		return nil
-	}
-	var points []cfg.Point
-	for _, point := range graph.RPO() {
-		if _, ok := result.ReturnView(point); ok {
-			points = append(points, point)
-		}
-	}
-	return points
-}
-
-func (l *lowerer) returnPresenceArity(input *factflow.FactsInput, result *semantics.Result, points []cfg.Point) int {
+func (l *lowerer) returnPresenceArity(input *factflow.FactsInput, points []cfg.Point) int {
 	arity := 0
 	for _, point := range points {
 		if fact, ok := input.Returns[point]; ok {
@@ -74,9 +54,6 @@ func (l *lowerer) returnPresenceArity(input *factflow.FactsInput, result *semant
 			arity = n
 		}
 		return arity
-	}
-	if n := len(declaredReturnTypes(result)); n > arity {
-		arity = n
 	}
 	return arity
 }
