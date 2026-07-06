@@ -466,7 +466,10 @@ func (l *lowerer) typeWitnessValue(t typ.Type) product.Value {
 }
 
 func (l *lowerer) typeIsProofValue(t typ.Type) product.Value {
-	value := l.typeWitnessValue(t)
+	return l.runtimeAssertionValue(l.typeWitnessValue(t))
+}
+
+func (l *lowerer) runtimeAssertionValue(value product.Value) product.Value {
 	return product.Set(l.registry, value, assertion.Key, assertion.Runtime())
 }
 

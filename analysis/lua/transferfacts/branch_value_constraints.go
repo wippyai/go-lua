@@ -2,7 +2,6 @@ package transferfacts
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -19,7 +18,7 @@ func (l *lowerer) typeBranchRefinement(target path.Path, kind branchcond.CheckKi
 	}
 	matched := typenarrow.MatchRefinement(l.registry, tag)
 	unmatched := typenarrow.UnmatchRefinement(l.registry, tag)
-	runtimeProof := product.Set(l.registry, product.Top(), assertion.Key, assertion.Runtime())
+	runtimeProof := l.runtimeAssertionValue(product.Top())
 	matched = matched.WithConstraint(l.registry, runtimeProof)
 	unmatched = unmatched.WithConstraint(l.registry, runtimeProof)
 	if kind == branchcond.CheckTypeNot {
