@@ -95,6 +95,34 @@ end
 	assertBranchLiteralType(t, facts, falsyPoint, bPath, false, typ.True)
 }
 
+func TestTruthyBooleanRootImplicationUsesPolarityOnOuterEdge(t *testing.T) {
+	lowered := &lowerer{
+		registry:    standard.Registry(),
+		symbolTypes: map[symbol.ID]typ.Type{1: typ.Boolean},
+	}
+	target := path.NewPath(symbol.ID(1), "b")
+	refinements := lowered.truthyBooleanRootRefinementForImplication(
+		branchcond.Check{Kind: branchcond.CheckFalsy, Path: target},
+		false,
+		false,
+	)
+	if len(refinements) != 1 {
+		t.Fatalf("refinements = %#v, want one", refinements)
+	}
+	value, ok := refinements[0].ValueForEdge(false)
+	if !ok {
+		t.Fatalf("refinement missing false-edge value: %#v", refinements[0])
+	}
+	constraint, ok := value.Constraint()
+	if !ok {
+		t.Fatalf("false-edge value missing constraint: %#v", value)
+	}
+	got, ok := typevalue.TypeOf(standard.Registry(), constraint)
+	if !ok || !typ.TypeEquals(got, typ.True) {
+		t.Fatalf("false-edge literal = %v/%v, want true", got, ok)
+	}
+}
+
 func TestLowerConditionalAssignmentPublishesValuePresenceImplicationAtMerge(t *testing.T) {
 	_, bindings, built, result := parseSemanticFunction(t, `
 function f(

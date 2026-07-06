@@ -45,21 +45,12 @@ func (l *lowerer) rootRefinementsForBranchRefinement(refinement factflow.BranchR
 
 func (l *lowerer) truthyBooleanRootRefinements(check branchcond.Check) []factflow.BranchRefinement {
 	switch check.Kind {
-	case branchcond.CheckTruthy:
+	case branchcond.CheckTruthy, branchcond.CheckFalsy:
 		var out []factflow.BranchRefinement
-		if root, ok := l.truthyBooleanRootLiteralRefinement(check.Path, typ.LiteralBool(true), true); ok {
+		if root, ok := l.truthyBooleanRootRefinementForPolarity(check, true, true); ok {
 			out = append(out, root)
 		}
-		if root, ok := l.truthyBooleanRootLiteralRefinement(check.Path, typ.LiteralBool(false), false); ok {
-			out = append(out, root)
-		}
-		return out
-	case branchcond.CheckFalsy:
-		var out []factflow.BranchRefinement
-		if root, ok := l.truthyBooleanRootLiteralRefinement(check.Path, typ.LiteralBool(false), true); ok {
-			out = append(out, root)
-		}
-		if root, ok := l.truthyBooleanRootLiteralRefinement(check.Path, typ.LiteralBool(true), false); ok {
+		if root, ok := l.truthyBooleanRootRefinementForPolarity(check, false, false); ok {
 			out = append(out, root)
 		}
 		return out
@@ -70,25 +61,9 @@ func (l *lowerer) truthyBooleanRootRefinements(check branchcond.Check) []factflo
 
 func (l *lowerer) truthyBooleanRootRefinementOnEdge(check branchcond.Check, cond bool) []factflow.BranchRefinement {
 	switch check.Kind {
-	case branchcond.CheckTruthy:
-		if cond {
-			if root, ok := l.truthyBooleanRootLiteralRefinement(check.Path, typ.LiteralBool(true), true); ok {
-				return []factflow.BranchRefinement{root}
-			}
-		} else {
-			if root, ok := l.truthyBooleanRootLiteralRefinement(check.Path, typ.LiteralBool(false), false); ok {
-				return []factflow.BranchRefinement{root}
-			}
-		}
-	case branchcond.CheckFalsy:
-		if cond {
-			if root, ok := l.truthyBooleanRootLiteralRefinement(check.Path, typ.LiteralBool(false), true); ok {
-				return []factflow.BranchRefinement{root}
-			}
-		} else {
-			if root, ok := l.truthyBooleanRootLiteralRefinement(check.Path, typ.LiteralBool(true), false); ok {
-				return []factflow.BranchRefinement{root}
-			}
+	case branchcond.CheckTruthy, branchcond.CheckFalsy:
+		if root, ok := l.truthyBooleanRootRefinementForPolarity(check, cond, cond); ok {
+			return []factflow.BranchRefinement{root}
 		}
 	}
 	return nil
@@ -96,28 +71,31 @@ func (l *lowerer) truthyBooleanRootRefinementOnEdge(check branchcond.Check, cond
 
 func (l *lowerer) truthyBooleanRootRefinementForImplication(check branchcond.Check, polarity bool, edge bool) []factflow.BranchRefinement {
 	switch check.Kind {
-	case branchcond.CheckTruthy:
-		if polarity {
-			if root, ok := l.truthyBooleanRootLiteralRefinement(check.Path, typ.LiteralBool(true), edge); ok {
-				return []factflow.BranchRefinement{root}
-			}
-		} else {
-			if root, ok := l.truthyBooleanRootLiteralRefinement(check.Path, typ.LiteralBool(false), edge); ok {
-				return []factflow.BranchRefinement{root}
-			}
-		}
-	case branchcond.CheckFalsy:
-		if polarity {
-			if root, ok := l.truthyBooleanRootLiteralRefinement(check.Path, typ.LiteralBool(false), edge); ok {
-				return []factflow.BranchRefinement{root}
-			}
-		} else {
-			if root, ok := l.truthyBooleanRootLiteralRefinement(check.Path, typ.LiteralBool(true), edge); ok {
-				return []factflow.BranchRefinement{root}
-			}
+	case branchcond.CheckTruthy, branchcond.CheckFalsy:
+		if root, ok := l.truthyBooleanRootRefinementForPolarity(check, polarity, edge); ok {
+			return []factflow.BranchRefinement{root}
 		}
 	}
 	return nil
+}
+
+func (l *lowerer) truthyBooleanRootRefinementForPolarity(check branchcond.Check, polarity bool, edge bool) (factflow.BranchRefinement, bool) {
+	lit, ok := truthyBooleanRootLiteralForPolarity(check.Kind, polarity)
+	if !ok {
+		return factflow.BranchRefinement{}, false
+	}
+	return l.truthyBooleanRootLiteralRefinement(check.Path, lit, edge)
+}
+
+func truthyBooleanRootLiteralForPolarity(kind branchcond.CheckKind, polarity bool) (typ.Type, bool) {
+	switch kind {
+	case branchcond.CheckTruthy:
+		return typ.LiteralBool(polarity), true
+	case branchcond.CheckFalsy:
+		return typ.LiteralBool(!polarity), true
+	default:
+		return nil, false
+	}
 }
 
 func (l *lowerer) truthyBooleanRootLiteralRefinement(target path.Path, lit typ.Type, cond bool) (factflow.BranchRefinement, bool) {
