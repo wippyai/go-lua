@@ -255,7 +255,7 @@ type Instruction struct {
 	Claim    ClaimKind // OpClaim family
 	Assign   AssignKind
 	Type     TypeRef  // OpClaim target, OpMakeTable declared type, OpCall type receiver (0 = none)
-	Check    CheckRef // OpBranch condition descriptor (0 = none)
+	Check    CheckRef // OpBranch condition / OpCall assertion descriptor (0 = none)
 	Func     FuncRef  // OpClosure nested proto (0 = none)
 	Call     CallInfo // OpCall shape
 	ExprID   ExpressionID

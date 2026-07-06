@@ -1,6 +1,7 @@
 package wirlower_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
@@ -570,6 +571,46 @@ local ready = check()!
 	}
 	if claims[1].Claim != wir.ClaimAssert || claims[1].Type != 0 || claims[1].Dst.Kind != wir.OperandPath || claims[1].A.Kind != wir.OperandTemp {
 		t.Fatalf("non-nil claim = %#v, want path target claiming call result temp without type", claims[1])
+	}
+}
+
+func TestDirectGlobalAssertCallCarriesNormalizedCheck(t *testing.T) {
+	src := `
+local x = nil
+assert(x ~= nil)
+`
+	body := lowerBody(t, src, "assert")
+	var checks []wir.Check
+	for i := 0; i < body.Len(); i++ {
+		inst := body.Instr(i)
+		if inst.Op != wir.OpCall || inst.Check == 0 {
+			continue
+		}
+		checks = append(checks, body.Check(inst.Check))
+	}
+	if len(checks) != 1 {
+		t.Fatalf("assert checks = %#v, want one normalized check", checks)
+	}
+	if checks[0].Kind != wir.CheckNotNil || checks[0].Path.Root != "x" {
+		t.Fatalf("assert check = %#v, want x ~= nil", checks[0])
+	}
+	printed := lowerSourceG(t, src, "assert")
+	if !strings.Contains(printed, "check[notnil x]") {
+		t.Fatalf("printed WIR missing assert check metadata:\n%s", printed)
+	}
+}
+
+func TestShadowedAssertCallDoesNotCarryNormalizedCheck(t *testing.T) {
+	body := lowerBody(t, `
+local x = nil
+local assert = other
+assert(x)
+`, "assert", "other")
+	for i := 0; i < body.Len(); i++ {
+		inst := body.Instr(i)
+		if inst.Op == wir.OpCall && inst.Check != 0 {
+			t.Fatalf("shadowed assert call carried check: %#v", inst)
+		}
 	}
 }
 

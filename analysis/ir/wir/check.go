@@ -5,7 +5,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-// CheckKind tags the normalized branch-condition descriptor stored on OpBranch.
+// CheckKind tags a normalized condition descriptor stored on branch and
+// assertion-call instructions.
 // It is the in-IR projection of a condition already normalized by lowering; the
 // IR concludes nothing from it, it only carries the descriptor for the transfer
 // interpreter and the textual printer.
@@ -29,7 +30,7 @@ const (
 	CheckFrozenTable
 )
 
-// Check is the neutral branch-condition descriptor interned by a Body. Lowering
+// Check is the neutral condition descriptor interned by a Body. Lowering
 // produces it from syntax; the IR stores and prints it and never derives values
 // from it. Fields carry only path and type identities, both of which live below
 // the IR layer, so the descriptor stays free of any syntax dependency.

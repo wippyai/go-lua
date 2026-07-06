@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
@@ -109,6 +110,44 @@ func TestLowerAssertPostconditionRequiresDirectGlobalStatementCall(t *testing.T)
 			t.Fatalf("postcondition refinements at point %d = %#v, want none", point, got)
 		}
 	}
+}
+
+func TestLowerAssertPostconditionComesFromWIRInWIRMode(t *testing.T) {
+	xDecl := localAssign([]string{"x"}, &ast.NilExpr{})
+	yDecl := localAssign([]string{"y"}, &ast.NilExpr{})
+	xRead := ident("x")
+	stmt := assertStmt(xRead)
+	stmts := []ast.Stmt{xDecl, yDecl, stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"assert"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+	point := requireStmtPoints(t, built, stmt, 1)[0]
+	assertSym, ok := bindings.GlobalSymbol("assert")
+	if !ok {
+		t.Fatal("missing assert global symbol")
+	}
+	yPath := path.NewPath(mustLocalAt(t, bindings, yDecl, 0), "y")
+
+	body := wir.NewBody("assert-postcondition-wir")
+	start := body.Emit(wir.Instruction{
+		Op:          wir.OpCall,
+		Point:       point,
+		CallContext: wir.CallContextStatement,
+		Call: wir.CallInfo{
+			Callee: wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(path.NewPath(assertSym, "assert")))},
+		},
+		Check: body.InternCheck(wir.Check{Kind: wir.CheckTruthy, Path: yPath}),
+	})
+	body.SetPointRange(point, start, start+1)
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	assertLoweredPostconditionRefinement(t, facts, point, yPath, valueRefinementExpectation{
+		presence:    presence.Present(),
+		hasPresence: true,
+	})
 }
 
 func assertStmt(cond ast.Expr) *ast.FuncCallStmt {

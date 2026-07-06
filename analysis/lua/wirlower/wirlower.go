@@ -724,9 +724,28 @@ func (b *builder) emitCallAt(point cfg.Point, call *ast.FuncCallExpr, resultCoun
 			inst.Type = calleeType
 		}
 	}
+	if check, ok := b.assertCallCheck(call, meta); ok {
+		inst.Check = b.body.InternCheck(lowerCheck(check))
+	}
 	cr.index = len(b.pointInstrs[point])
 	b.emit(inst)
 	b.recordContextCallResultTarget(point, resultCount, meta)
+}
+
+func (b *builder) assertCallCheck(call *ast.FuncCallExpr, meta callMetadata) (branchcond.Check, bool) {
+	if b == nil || b.bindings == nil || call == nil || meta.context != wir.CallContextStatement ||
+		call.Method != "" || len(call.Args) == 0 {
+		return branchcond.Check{}, false
+	}
+	callee, ok := call.Func.(*ast.IdentExpr)
+	if !ok || !b.bindings.ResolvesToGlobal(callee, "assert") {
+		return branchcond.Check{}, false
+	}
+	check := branchcond.Normalize(call.Args[0], b.bindings)
+	if check.Kind == branchcond.CheckNone {
+		return branchcond.Check{}, false
+	}
+	return check, true
 }
 
 func (b *builder) recordContextCallResultTarget(point cfg.Point, resultCount int, meta callMetadata) {

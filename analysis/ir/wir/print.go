@@ -181,6 +181,11 @@ func (b *Body) spellCall(inst Instruction) string {
 	if inst.ResultSpread {
 		sb.WriteString(" multret")
 	}
+	if inst.Check != 0 {
+		sb.WriteString(" check[")
+		sb.WriteString(b.spellCheck(inst))
+		sb.WriteByte(']')
+	}
 	return sb.String()
 }
 

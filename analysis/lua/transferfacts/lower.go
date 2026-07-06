@@ -219,6 +219,9 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			if lowered, ok := l.typeCastPostconditionRefinementFromWIR(point); ok {
 				appendPostconditionRefinements(input.PostconditionRefinements, point, lowered)
 			}
+			if lowered, ok := l.assertPostconditionRefinementFromWIR(point); ok {
+				appendPostconditionRefinements(input.PostconditionRefinements, point, lowered)
+			}
 			if lowered, ok := l.typeCastCallResultValueFromWIR(point); ok {
 				appendCallResultValues(input.CallResultValues, point, lowered)
 			}
@@ -245,8 +248,10 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 					l.addCallArgumentAssertionRefinements(&input, point, index, valueSourceAt(argumentSources, index), source)
 					l.addObjectLiteral(&input, result, source)
 				}
-				if lowered, ok := l.assertPostconditionRefinement(fact); ok {
-					input.PostconditionRefinements[point] = factflow.NewPostconditionRefinementSet(lowered)
+				if l.wir == nil {
+					if lowered, ok := l.assertPostconditionRefinement(fact); ok {
+						input.PostconditionRefinements[point] = factflow.NewPostconditionRefinementSet(lowered)
+					}
 				}
 			}
 		}

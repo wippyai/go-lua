@@ -2,6 +2,8 @@ package transferfacts
 
 import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 )
@@ -24,4 +26,29 @@ func (l *lowerer) assertPostconditionRefinement(fact semantics.CallFact) (factfl
 
 func (l *lowerer) isDirectGlobalAssertStatementCall(fact semantics.CallFact) bool {
 	return fact.IsDirectGlobalStatement(l.bindings, "assert")
+}
+
+func (l *lowerer) assertPostconditionRefinementFromWIR(point cfg.Point) (factflow.PostconditionRefinement, bool) {
+	inst, ok := l.wirCallInstruction(point)
+	if !ok || inst.CallContext != wir.CallContextStatement || inst.Check == 0 || !l.isDirectGlobalAssertWIRCall(inst) {
+		return factflow.PostconditionRefinement{}, false
+	}
+	check := branchCheckFromWIR(l.wir.Check(inst.Check))
+	branchRefinement, ok := l.branchValueRefinementForCheck(check)
+	if !ok {
+		return factflow.PostconditionRefinement{}, false
+	}
+	value, ok := branchRefinement.TrueValue()
+	if !ok {
+		return factflow.PostconditionRefinement{}, false
+	}
+	return factflow.NewPostconditionRefinement(branchRefinement.TargetPath(), value), true
+}
+
+func (l *lowerer) isDirectGlobalAssertWIRCall(inst wir.Instruction) bool {
+	if l == nil || l.wir == nil || l.bindings == nil || inst.Call.Method != 0 || inst.Call.Callee.Kind != wir.OperandPath {
+		return false
+	}
+	calleePath := l.wir.Path(wir.PathRef(inst.Call.Callee.Ref))
+	return l.bindings.SymbolResolvesToGlobal(calleePath.Symbol, "assert")
 }
