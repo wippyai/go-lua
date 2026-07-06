@@ -2,6 +2,7 @@ package transferfacts
 
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/functiontype"
@@ -162,6 +163,47 @@ func lowerSymbolTypes(
 		if t, ok := accessChainType(out, bindings, fact.Expr); ok {
 			out[fact.Symbol] = t
 		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func lowerSymbolTypesFromWIR(body *wir.Body) map[symbol.ID]typ.Type {
+	if body == nil {
+		return nil
+	}
+	out := make(map[symbol.ID]typ.Type)
+	for i := 0; i < body.Len(); i++ {
+		inst := body.Instr(i)
+		if inst.Type == 0 {
+			continue
+		}
+		switch inst.Op {
+		case wir.OpClaim:
+			if inst.Claim != wir.ClaimAnnotation {
+				continue
+			}
+		case wir.OpMakeTable:
+			if inst.Assign != wir.AssignLocalDeclaration {
+				continue
+			}
+		default:
+			continue
+		}
+		if inst.Dst.Kind != wir.OperandPath {
+			continue
+		}
+		p := body.Path(wir.PathRef(inst.Dst.Ref))
+		if p.IsEmpty() || p.Symbol == 0 || len(p.Segments) != 0 {
+			continue
+		}
+		t := body.Type(inst.Type)
+		if t == nil {
+			continue
+		}
+		out[p.Symbol] = t
 	}
 	if len(out) == 0 {
 		return nil

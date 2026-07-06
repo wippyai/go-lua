@@ -544,6 +544,30 @@ func (l *lowerer) addObjectLiteralFieldExposures(input *factflow.FactsInput, res
 	}
 }
 
+func (l *lowerer) addObjectLiteralFieldExposuresFromWIR(input *factflow.FactsInput, point cfg.Point, inst wir.Instruction, declared typ.Type) {
+	if input == nil || inst.Op != wir.OpMakeTable || declared == nil {
+		return
+	}
+	if typ.IsAny(declared) || typ.IsUnknown(declared) {
+		return
+	}
+	exprRef, ok := l.tableConstructorExprRefFromWIR(inst)
+	if !ok {
+		return
+	}
+	lit, ok := input.ObjectLiterals[exprRef]
+	if !ok {
+		return
+	}
+	for _, entry := range lit.Entries() {
+		slotType, ok := luatypeprojection.ApplySegments(declared, entry.Suffix().Segments)
+		if !ok || slotType == nil {
+			continue
+		}
+		l.addAliasExposureValueSourceToContractType(input, point, entry.Source(), slotType)
+	}
+}
+
 func (l *lowerer) tableConstructorExprRef(expr ast.Expr) (factflow.ExprRef, bool) {
 	return l.exprRef(l.tableConstructorExprRefKey(expr))
 }

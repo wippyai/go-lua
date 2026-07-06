@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/normalize"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -451,6 +452,35 @@ local user_ctx: Context = input.context or {}
 	want := typ.NewMap(typ.String, typ.Any)
 	if !ok || !typ.TypeEquals(got, want) {
 		t.Fatalf("WIR fallback expression type = %v/%v, want %v", got, ok, want)
+	}
+}
+
+func TestLowerWIRObjectLiteralFieldExposureWithoutSemanticResult(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
+type Wide = { x: number | string }
+local narrow: { x: number } = { x = 1 }
+local holder: { ref: Wide } = { ref = narrow }
+`)
+	body := wirlower.Lower("chunk-no-sidecars", stmts, bindings, built)
+	facts := Lower(nil, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	holderStmt, ok := stmts[2].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want holder local assignment", stmts[2])
+	}
+	point := requireStmtPoints(t, built, holderStmt, 1)[0]
+	exposures := facts.CovariantExposures(point)
+	if len(exposures) != 1 {
+		t.Fatalf("WIR field exposures = %#v, want one exposure without semantic sidecars", exposures)
+	}
+	wantPath := path.NewPath(mustLocalAt(t, bindings, stmts[1].(*ast.LocalAssignStmt), 0), "narrow")
+	if got := exposures[0].SourcePath(); !got.Equal(wantPath) {
+		t.Fatalf("WIR field exposure source = %v, want %v", got, wantPath)
+	}
+	gotType, ok := typevalue.TypeOf(reg, exposures[0].WideValue())
+	wantType := typetable.NewRecord().Field("x", normalize.UnionForEvidence(typ.Number, typ.String)).Build()
+	if !ok || !typ.TypeEquals(gotType, wantType) {
+		t.Fatalf("WIR field exposure type = %v/%v, want %v", gotType, ok, wantType)
 	}
 }
 

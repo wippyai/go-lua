@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/expressionid"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func (l *lowerer) addAssignmentWritesFromWIR(input *factflow.FactsInput, point cfg.Point) {
@@ -40,17 +41,31 @@ func (l *lowerer) addRootAssignmentFromWIR(input *factflow.FactsInput, point cfg
 	if !ok {
 		return
 	}
+	assignment := factflow.NewRootAssignment(kind, target.Symbol, target, source)
 	if kind == factflow.RootAssignmentLocalDeclaration {
 		if declared, ok := l.declaredReturnLocalContractForSymbol(target.Symbol); ok {
-			input.RootAssignments[point] = factflow.NewRootAssignmentWithDeclaredContractValue(kind, target.Symbol, target, source, l.valueFromTypeWithWitness(declared))
-			return
-		}
-		if declared, ok := l.returnLocalObjectLiteralContractForSymbol(target.Symbol); ok && recordWithCallableField(declared) {
-			input.RootAssignments[point] = factflow.NewRootAssignmentWithDeclaredContractValue(kind, target.Symbol, target, source, l.valueFromTypeWithWitness(declared))
-			return
+			assignment = factflow.NewRootAssignmentWithDeclaredContractValue(kind, target.Symbol, target, source, l.valueFromTypeWithWitness(declared))
+		} else if declared, ok := l.returnLocalObjectLiteralContractForSymbol(target.Symbol); ok && recordWithCallableField(declared) {
+			assignment = factflow.NewRootAssignmentWithDeclaredContractValue(kind, target.Symbol, target, source, l.valueFromTypeWithWitness(declared))
 		}
 	}
-	input.RootAssignments[point] = factflow.NewRootAssignment(kind, target.Symbol, target, source)
+	input.RootAssignments[point] = assignment
+	if declared, ok := l.wirAssignmentDeclaredObjectType(inst, target.Symbol); ok {
+		l.addObjectLiteralFieldExposuresFromWIR(input, point, inst, declared)
+	}
+}
+
+func (l *lowerer) wirAssignmentDeclaredObjectType(inst wir.Instruction, target symbol.ID) (typ.Type, bool) {
+	if l == nil {
+		return nil, false
+	}
+	if l.wir != nil && inst.Type != 0 {
+		if declared := l.wir.Type(inst.Type); declared != nil {
+			return declared, true
+		}
+	}
+	declared, ok := l.symbolTypes[target]
+	return declared, ok && declared != nil
 }
 
 func (l *lowerer) rootAssignmentValueSourceFromWIR(point cfg.Point, inst wir.Instruction) (factflow.ValueSource, bool) {

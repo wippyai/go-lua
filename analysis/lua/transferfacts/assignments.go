@@ -468,6 +468,48 @@ func (l *lowerer) addAliasExposureToContractType(input *factflow.FactsInput, poi
 	l.addCovariantExposureType(input, point, sourcePath, contract)
 }
 
+func (l *lowerer) addAliasExposureValueSourceToContractType(input *factflow.FactsInput, point cfg.Point, source factflow.ValueSource, contract typ.Type) {
+	sourcePath, sourceType, ok := l.aliasValueSource(source)
+	if !ok {
+		return
+	}
+	if contract == nil || typ.IsAny(contract) || typ.IsUnknown(contract) {
+		return
+	}
+	contract = exposureContractElement(sourceType, contract)
+	if !aliasStrictlyWidens(sourceType, contract) {
+		return
+	}
+	l.addCovariantExposureType(input, point, sourcePath, contract)
+}
+
+func (l *lowerer) aliasValueSource(source factflow.ValueSource) (path.Path, typ.Type, bool) {
+	if l == nil {
+		return path.Path{}, nil, false
+	}
+	var sourcePath path.Path
+	var ok bool
+	switch source.Kind {
+	case factflow.ValueSourcePath:
+		sourcePath, ok = pathFromRootSymbolKey(source.PathKey)
+	case factflow.ValueSourceExpression:
+		if !source.HasExpr || l.expressionPaths == nil {
+			return path.Path{}, nil, false
+		}
+		sourcePath, ok = l.expressionPaths[source.ExprRef]
+	default:
+		return path.Path{}, nil, false
+	}
+	if !ok || sourcePath.Symbol == 0 {
+		return path.Path{}, nil, false
+	}
+	sourceType, ok := l.aliasPathType(sourcePath)
+	if !ok {
+		return path.Path{}, nil, false
+	}
+	return sourcePath, sourceType, true
+}
+
 func (l *lowerer) pathAssignment(point cfg.Point, fact semantics.OrdinaryAssignmentFact) (factflow.PathAssignment, bool) {
 	targetPath, ok := l.staticPathWriteTarget(point, fact)
 	if !ok {
