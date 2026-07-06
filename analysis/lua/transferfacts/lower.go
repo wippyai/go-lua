@@ -56,8 +56,15 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		typeResolver = typeresolve.New(config.Bindings)
 	}
 	symbolTypes := lowerSymbolTypes(config.Bindings, graph, config.Metadata, result, typeResolver, config.ModuleExports)
-	declaredReturnLocalTypes := lowerDeclaredReturnLocalTypes(config.Bindings, graph, result, typeResolver)
-	returnLocalObjectLiteralTypes := lowerReturnLocalObjectLiteralTypes(config.Bindings, graph, result, typeResolver)
+	var declaredReturnLocalTypes map[symbol.ID]typ.Type
+	var returnLocalObjectLiteralTypes map[symbol.ID]typ.Type
+	if config.WIR != nil {
+		declaredReturnLocalTypes = lowerDeclaredReturnLocalTypesFromWIR(config.Bindings, graph, config.WIR)
+		returnLocalObjectLiteralTypes = lowerReturnLocalObjectLiteralTypesFromWIR(config.Bindings, graph, config.WIR)
+	} else {
+		declaredReturnLocalTypes = lowerDeclaredReturnLocalTypes(config.Bindings, graph, result, typeResolver)
+		returnLocalObjectLiteralTypes = lowerReturnLocalObjectLiteralTypes(config.Bindings, graph, result, typeResolver)
+	}
 	symbolTypes = mergeSymbolTypes(symbolTypes, declaredReturnLocalTypes)
 	expressionRefinements := make(map[factflow.ExprRef]factflow.ExpressionRefinement)
 	l := lowerer{

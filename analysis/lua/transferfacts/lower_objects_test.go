@@ -506,6 +506,71 @@ end
 	}
 }
 
+func TestLowerWithWIRDeclaredReturnAccumulatorWithoutSemanticResult(t *testing.T) {
+	reg := standard.Registry()
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function make(): {items: {[string]: string}}
+    local out = {}
+    return out
+end
+`)
+	body := wirlower.LowerFunction("make", fn, bindings, built)
+
+	facts := Lower(nil, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	localStmt, ok := fn.Stmts[0].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want local assignment", fn.Stmts[0])
+	}
+	point := requireStmtPoints(t, built, localStmt, 1)[0]
+	localFact, ok := facts.LocalAssignment(point)
+	if !ok {
+		t.Fatalf("missing root assignment at point %d", point)
+	}
+	if !localFact.DeclaredValueContracts() {
+		t.Fatalf("WIR returned local should carry declared return contract without semantic sidecars")
+	}
+	declared, ok := localFact.DeclaredValue()
+	if !ok {
+		t.Fatalf("missing declared return value")
+	}
+	gotType, ok := typevalue.TypeOf(reg, declared)
+	want := typetable.NewRecord().
+		Field("items", typetable.NewMap(typ.String, typ.String)).
+		Build()
+	if !ok || !typ.TypeEquals(gotType, want) {
+		t.Fatalf("WIR declared return local type = %v/%v, want %v", gotType, ok, want)
+	}
+}
+
+func TestLowerWithWIRDeclaredReturnAccumulatorRejectsMixedSymbolsWithoutSemanticResult(t *testing.T) {
+	reg := standard.Registry()
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function make(flag: boolean): {any}
+    local out = {}
+    local other = {}
+    if flag then
+        return out
+    end
+    return other
+end
+`)
+	body := wirlower.LowerFunction("make", fn, bindings, built)
+
+	facts := Lower(nil, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	localStmt, ok := fn.Stmts[0].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want local assignment", fn.Stmts[0])
+	}
+	point := requireStmtPoints(t, built, localStmt, 1)[0]
+	localFact, ok := facts.LocalAssignment(point)
+	if !ok {
+		t.Fatalf("missing root assignment at point %d", point)
+	}
+	if declared, ok := localFact.DeclaredValue(); ok {
+		t.Fatalf("WIR mixed return symbols should not infer accumulator contract: %v", declared)
+	}
+}
+
 func TestLowerSetmetatableReturnLocalCarriesNonNilDeclaredContract(t *testing.T) {
 	reg := standard.Registry()
 	fn, bindings, built, result := parseSemanticFunction(t, `
@@ -540,6 +605,44 @@ end
 	want := typetable.NewRecord().Field("run", typ.Func().Param("self", typ.Any).Build()).Build()
 	if !ok || !typ.TypeEquals(gotType, want) {
 		t.Fatalf("declared return local type = %v/%v, want %v", gotType, ok, want)
+	}
+}
+
+func TestLowerWithWIRSetmetatableReturnLocalWithoutSemanticResult(t *testing.T) {
+	reg := standard.Registry()
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function make(): {run: (self: any) -> ()}?
+    local mt = {}
+    local instance = {}
+    if false then
+        return nil
+    end
+    return setmetatable(instance, mt), nil
+end
+`)
+	body := wirlower.LowerFunction("make", fn, bindings, built)
+
+	facts := Lower(nil, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	localStmt, ok := fn.Stmts[1].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want instance local assignment", fn.Stmts[1])
+	}
+	point := requireStmtPoints(t, built, localStmt, 1)[0]
+	localFact, ok := facts.LocalAssignment(point)
+	if !ok {
+		t.Fatalf("missing instance local assignment at point %d", point)
+	}
+	if !localFact.DeclaredValueContracts() {
+		t.Fatalf("WIR setmetatable-returned local should carry declared return contract without semantic sidecars")
+	}
+	declared, ok := localFact.DeclaredValue()
+	if !ok {
+		t.Fatalf("missing declared return value")
+	}
+	gotType, ok := typevalue.TypeOf(reg, declared)
+	want := typetable.NewRecord().Field("run", typ.Func().Param("self", typ.Any).Build()).Build()
+	if !ok || !typ.TypeEquals(gotType, want) {
+		t.Fatalf("WIR setmetatable return local type = %v/%v, want %v", gotType, ok, want)
 	}
 }
 

@@ -309,7 +309,11 @@ func (l *lowerer) declaredReturnLocalContract(fact semantics.LocalAssignmentFact
 	if !returnLocalInitializerCandidate(fact) {
 		return nil, false
 	}
-	t, ok := l.declaredReturnLocalTypes[fact.Symbol]
+	return l.declaredReturnLocalContractForSymbol(fact.Symbol)
+}
+
+func (l *lowerer) declaredReturnLocalContractForSymbol(id symbol.ID) (typ.Type, bool) {
+	t, ok := l.declaredReturnLocalTypes[id]
 	if !ok || !declaredReturnLocalContractType(t) {
 		return nil, false
 	}
@@ -320,7 +324,11 @@ func (l *lowerer) returnLocalObjectLiteralContract(fact semantics.LocalAssignmen
 	if !returnLocalInitializerCandidate(fact) {
 		return nil, false
 	}
-	t, ok := l.returnLocalObjectLiteralTypes[fact.Symbol]
+	return l.returnLocalObjectLiteralContractForSymbol(fact.Symbol)
+}
+
+func (l *lowerer) returnLocalObjectLiteralContractForSymbol(id symbol.ID) (typ.Type, bool) {
+	t, ok := l.returnLocalObjectLiteralTypes[id]
 	if !ok || !declaredReturnLocalContractType(t) {
 		return nil, false
 	}
