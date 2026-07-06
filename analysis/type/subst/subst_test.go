@@ -105,6 +105,58 @@ func TestSubstitute(t *testing.T) {
 			t.Error("return type should be substituted")
 		}
 	})
+
+	t.Run("does not corrupt nested generic binder through instantiated result", func(t *testing.T) {
+		outer := typ.NewTypeParam("T", nil)
+		resultParam := typ.NewTypeParam("U", nil)
+		resultGeneric := typ.NewGeneric("Result", []*typ.TypeParam{resultParam}, typetable.NewRecord().
+			Field("ok", typ.Boolean).
+			Field("value", resultParam).
+			Build())
+		callbackParam := typ.NewTypeParam("U", nil)
+		callback := typ.Func().
+			TypeParamRef(callbackParam).
+			Param("input", outer).
+			Returns(typ.Instantiate(resultGeneric, callbackParam)).
+			Build()
+		rec := typetable.NewRecord().
+			Field("payload", outer).
+			Field("callback", callback).
+			Build()
+
+		result := Substitute(rec, map[string]typ.Type{"T": typ.String})
+		resultRec, ok := result.(*typ.Record)
+		if !ok {
+			t.Fatalf("result = %T %[1]v, want record", result)
+		}
+		if field := resultRec.GetField("payload"); field == nil || field.Type != typ.String {
+			t.Fatalf("payload field = %v, want string", field)
+		}
+		callbackField := resultRec.GetField("callback")
+		if callbackField == nil {
+			t.Fatal("missing callback field")
+		}
+		resultCallback, ok := callbackField.Type.(*typ.Function)
+		if !ok {
+			t.Fatalf("callback field = %T %[1]v, want function", callbackField.Type)
+		}
+		if len(resultCallback.TypeParams) != 1 || resultCallback.TypeParams[0] != callbackParam {
+			t.Fatalf("callback binder changed/captured: %#v, want original U binder", resultCallback.TypeParams)
+		}
+		if resultCallback.Params[0].Type != typ.String {
+			t.Fatalf("callback input = %v, want substituted outer string", resultCallback.Params[0].Type)
+		}
+		callbackReturn, ok := resultCallback.Returns[0].(*typ.Instantiated)
+		if !ok {
+			t.Fatalf("callback return = %T %[1]v, want Result<U>", resultCallback.Returns[0])
+		}
+		if callbackReturn.Generic != resultGeneric {
+			t.Fatalf("callback return generic = %v, want Result", callbackReturn.Generic)
+		}
+		if len(callbackReturn.TypeArgs) != 1 || callbackReturn.TypeArgs[0] != callbackParam {
+			t.Fatalf("callback return args = %#v, want owned U binder", callbackReturn.TypeArgs)
+		}
+	})
 }
 
 func TestParams(t *testing.T) {
