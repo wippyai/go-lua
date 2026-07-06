@@ -189,6 +189,61 @@ func TestParams(t *testing.T) {
 			t.Fatalf("nested same-name binder was captured: got %v, want original nested function", callback.Type)
 		}
 	})
+
+	t.Run("rewrites free outer param inside nested generic without capturing owned binder", func(t *testing.T) {
+		outer := typ.NewTypeParam("T", nil)
+		inner := typ.NewTypeParam("U", outer)
+		resultGeneric := typ.NewGeneric("Result", []*typ.TypeParam{inner}, typetable.NewRecord().
+			Field("value", inner).
+			Field("outer", outer).
+			Build())
+		container := typetable.NewRecord().
+			Field("payload", outer).
+			Field("result", resultGeneric).
+			Build()
+
+		result := Params(container, []*typ.TypeParam{outer}, []typ.Type{typ.String})
+		resultRec, ok := result.(*typ.Record)
+		if !ok {
+			t.Fatalf("result should be record, got %T", result)
+		}
+		if field := resultRec.GetField("payload"); field == nil || field.Type != typ.String {
+			t.Fatalf("payload field = %v, want string", field)
+		}
+		resultField := resultRec.GetField("result")
+		if resultField == nil {
+			t.Fatal("missing result field")
+		}
+		gotGeneric, ok := resultField.Type.(*typ.Generic)
+		if !ok {
+			t.Fatalf("result field = %T %[1]v, want Result generic", resultField.Type)
+		}
+		if len(gotGeneric.TypeParams) != 1 {
+			t.Fatalf("Result type params = %#v, want one owned binder", gotGeneric.TypeParams)
+		}
+		gotInner := gotGeneric.TypeParams[0]
+		if gotInner == outer {
+			t.Fatalf("nested generic binder was captured by outer binder")
+		}
+		if gotInner.Name != "U" {
+			t.Fatalf("nested generic binder name = %q, want U", gotInner.Name)
+		}
+		if gotInner.Constraint != typ.String {
+			t.Fatalf("nested generic binder constraint = %v, want rewritten outer string", gotInner.Constraint)
+		}
+		body, ok := gotGeneric.Body.(*typ.Record)
+		if !ok {
+			t.Fatalf("Result body = %T %[1]v, want record", gotGeneric.Body)
+		}
+		valueField := body.GetField("value")
+		if valueField == nil || valueField.Type != gotInner {
+			t.Fatalf("Result.value = %v, want owned binder %v", valueField, gotInner)
+		}
+		outerField := body.GetField("outer")
+		if outerField == nil || outerField.Type != typ.String {
+			t.Fatalf("Result.outer = %v, want rewritten outer string", outerField)
+		}
+	})
 }
 
 func TestSelf(t *testing.T) {
