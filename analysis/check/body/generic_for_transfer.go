@@ -23,7 +23,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
@@ -37,7 +36,7 @@ import (
 
 func genericForNodeTransfer(
 	base transfer.NodeTransfer,
-	sem *semantics.Result,
+	meta cfgfacts.Metadata,
 	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
 	symbolTypes map[symbol.ID]typ.Type,
@@ -57,10 +56,10 @@ func genericForNodeTransfer(
 		if base != nil {
 			out = base(ctx, in)
 		}
-		if sem == nil || sources == nil || signatureID == nil {
+		if sources == nil || signatureID == nil {
 			return out
 		}
-		fact, ok := sem.GenericFor(ctx.Point)
+		fact, ok := meta.GenericFor(ctx.Point)
 		if !ok || fact.Role != cfgfacts.GenericForRoleVariable || !fact.HasSymbols ||
 			fact.VariableIndex < 0 || fact.VariableIndex >= len(fact.Symbols) {
 			return out

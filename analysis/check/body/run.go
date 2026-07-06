@@ -130,7 +130,7 @@ func (c *checker) prepare(
 	}
 	resolver := config.Visibility
 	if resolver == nil {
-		resolver = defaultVisibilityResolver(bindings, built, sem, facts)
+		resolver = defaultVisibilityResolver(bindings, built, facts)
 	}
 	userExpressionValue := config.ExpressionValue
 	expressionValue := userExpressionValue
@@ -227,7 +227,7 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		WIR:                    s.wir,
 		WIRAssignmentTarget:    config.WIRAssignmentTarget,
 	})
-	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.semantics, s.facts, s.sources, s.symbolTypes, s.signatures, s.signatureID, s.typeNS, typeValues, callOutcome, s.visibility.KeySpace(), s.visibility)
+	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.cfg.Meta, s.facts, s.sources, s.symbolTypes, s.signatures, s.signatureID, s.typeNS, typeValues, callOutcome, s.visibility.KeySpace(), s.visibility)
 	edgeTransfer := factapply.NewFactsEdgeTransfer(factapply.FactsEdgeTransferConfig{
 		Facts:       s.facts,
 		Sources:     s.sources,

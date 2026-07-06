@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -255,10 +256,28 @@ func (b *builder) buildNumberFor(state flowState, stmt *ast.NumberForStmt) flowS
 
 func (b *builder) buildGenericFor(state flowState, stmt *ast.GenericForStmt) flowState {
 	ids := b.bindings.GenericForSymbols(stmt)
+	beforeCalls := b.graph.RPO()
 	state = b.appendValueListCalls(state, stmt, stmt.Exprs)
+	calls, callsOK := b.valueListCalls(stmt.Exprs)
+	callPoints := newCallPoints(b.graph, beforeCalls)
+	resolver := callPointResolver(calls, callPoints)
 	branch := b.appendBranch(state, stmt)
 	join := b.graph.AddNode(cfg.NodeJoin)
 
+	genericFact := cfgfacts.GenericForFact{
+		Stmt:          stmt,
+		Names:         append([]string(nil), stmt.Names...),
+		Exprs:         append([]ast.Expr(nil), stmt.Exprs...),
+		Symbols:       append([]symbol.ID(nil), ids...),
+		HasSymbols:    completeSymbols(ids, len(stmt.Names)),
+		VariableIndex: cfgfacts.NoGenericForVariableIndex,
+	}
+	if callsOK && len(callPoints) == len(calls) {
+		genericFact.Sources = sourceprovenance.ValueListSources(stmt.Exprs, false, resolver)
+	}
+	checkFact := genericFact
+	checkFact.Role = cfgfacts.GenericForRoleCheck
+	b.meta.SetGenericFor(branch.current, checkFact)
 	b.meta.SetLoop(branch.current, cfgfacts.LoopFact{
 		Kind:                 cfgfacts.LoopKindGenericFor,
 		Vars:                 ids,
@@ -276,6 +295,10 @@ func (b *builder) buildGenericFor(state flowState, stmt *ast.GenericForStmt) flo
 			id = ids[i]
 		}
 		iterState = b.appendAssign(iterState, id, stmt)
+		varFact := genericFact
+		varFact.Role = cfgfacts.GenericForRoleVariable
+		varFact.VariableIndex = i
+		b.meta.SetGenericFor(iterState.current, varFact)
 	}
 
 	b.breakTargets = append(b.breakTargets, join)
@@ -287,6 +310,18 @@ func (b *builder) buildGenericFor(state flowState, stmt *ast.GenericForStmt) flo
 		b.connect(body, branch.current)
 	}
 	return flowState{current: join, live: true}
+}
+
+func completeSymbols(symbols []symbol.ID, want int) bool {
+	if len(symbols) != want {
+		return false
+	}
+	for _, id := range symbols {
+		if id == 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // numericForBounds returns the numeric-for control expressions in Lua

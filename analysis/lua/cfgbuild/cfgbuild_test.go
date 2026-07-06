@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
@@ -1150,6 +1151,23 @@ func TestBuildChunkGenericForIteratorCallsPrecedeLoopCheck(t *testing.T) {
 	if !ok || assignFact.Target != mustGenericForAt(t, bindings, loop, 0) {
 		t.Fatalf("generic for variable assignment = %#v, ok=%v", assignFact, ok)
 	}
+	checkFact, ok := result.Meta.GenericFor(branch)
+	if !ok || checkFact.Role != cfgfacts.GenericForRoleCheck {
+		t.Fatalf("generic for check fact = %#v, ok=%v", checkFact, ok)
+	}
+	if len(checkFact.Sources) != 2 {
+		t.Fatalf("generic for sources = %#v, want iterator and state sources", checkFact.Sources)
+	}
+	if checkFact.Sources[0].Kind != sourceprovenance.SourceCall || checkFact.Sources[0].CallPoint != firstCall {
+		t.Fatalf("iterator source = %#v, want call point %d", checkFact.Sources[0], firstCall)
+	}
+	if checkFact.Sources[1].Kind != sourceprovenance.SourceCall || checkFact.Sources[1].CallPoint != secondCall {
+		t.Fatalf("state source = %#v, want call point %d", checkFact.Sources[1], secondCall)
+	}
+	varFact, ok := result.Meta.GenericFor(kAssign)
+	if !ok || varFact.Role != cfgfacts.GenericForRoleVariable || varFact.VariableIndex != 0 {
+		t.Fatalf("generic for variable fact = %#v, ok=%v", varFact, ok)
+	}
 	join := firstJoin(t, graph)
 	requireEdge(t, graph, graph.Entry(), firstCall, false)
 	requireEdge(t, graph, branch, kAssign, true)
@@ -1532,6 +1550,17 @@ func TestBuildChunkGenericForCreatesLoopTopologyAndMetadata(t *testing.T) {
 	}
 	if loopFact.HasPreheader {
 		t.Fatalf("generic for preheader = %d/%v, want none", loopFact.Preheader, loopFact.HasPreheader)
+	}
+	checkFact, ok := result.Meta.GenericFor(branch)
+	if !ok || checkFact.Role != cfgfacts.GenericForRoleCheck || checkFact.VariableIndex != cfgfacts.NoGenericForVariableIndex {
+		t.Fatalf("generic for check fact = %#v, ok=%v", checkFact, ok)
+	}
+	for i, point := range []cfg.Point{kAssign, vAssign} {
+		fact, ok := result.Meta.GenericFor(point)
+		if !ok || fact.Role != cfgfacts.GenericForRoleVariable || fact.VariableIndex != i || len(fact.Symbols) != 2 ||
+			fact.Symbols[0] != kID || fact.Symbols[1] != vID || !fact.HasSymbols {
+			t.Fatalf("generic for variable fact %d = %#v, ok=%v", i, fact, ok)
+		}
 	}
 
 	join := firstJoin(t, graph)

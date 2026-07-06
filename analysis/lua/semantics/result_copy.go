@@ -2,7 +2,6 @@ package semantics
 
 import (
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
-	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -31,27 +30,6 @@ func copyStrings(in []string) []string {
 	out := make([]string, len(in))
 	copy(out, in)
 	return out
-}
-
-func copySymbols(in []symbol.ID) []symbol.ID {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]symbol.ID, len(in))
-	copy(out, in)
-	return out
-}
-
-func completeSymbols(symbols []symbol.ID, want int) bool {
-	if len(symbols) != want {
-		return false
-	}
-	for _, id := range symbols {
-		if id == 0 {
-			return false
-		}
-	}
-	return true
 }
 
 func copyLocalAssignmentFact(fact LocalAssignmentFact) LocalAssignmentFact {

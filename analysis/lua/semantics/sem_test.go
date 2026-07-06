@@ -1497,7 +1497,7 @@ func TestExtractChunkConditionAndIteratorCallFactsUseDeferredContexts(t *testing
 		t.Fatalf("iterator source result targets = %#v, want none", stateFact.ResultTargets)
 	}
 
-	genericFact, ok := result.GenericFor(loopPoints[2])
+	genericFact, ok := built.Meta.GenericFor(loopPoints[2])
 	if !ok {
 		t.Fatalf("missing generic for check fact")
 	}
@@ -1511,7 +1511,7 @@ func TestExtractChunkConditionAndIteratorCallFactsUseDeferredContexts(t *testing
 		t.Fatalf("final generic source = %#v", genericFact.Sources[1])
 	}
 	genericFact.Sources[0].Kind = sourceprovenance.SourceNil
-	genericAgain, _ := result.GenericFor(loopPoints[2])
+	genericAgain, _ := built.Meta.GenericFor(loopPoints[2])
 	if genericAgain.Sources[0].Kind != sourceprovenance.SourceCall {
 		t.Fatalf("GenericFor exposed mutable sources slice")
 	}
@@ -1670,7 +1670,7 @@ func TestExtractChunkAssertionWrappedCallProducersKeepOuterSources(t *testing.T)
 	if !ok || iterCallFact.Call != iterCall || iterCallFact.Context != CallContextIteratorSource {
 		t.Fatalf("iterator call = %#v, ok=%v", iterCallFact, ok)
 	}
-	genericFact, ok := result.GenericFor(loopPoints[1])
+	genericFact, ok := built.Meta.GenericFor(loopPoints[1])
 	if !ok || len(genericFact.Sources) != 1 || genericFact.Sources[0].Kind != sourceprovenance.SourceCall || genericFact.Sources[0].Expr != iterCast || genericFact.Sources[0].CallPoint != loopPoints[0] || !genericFact.Sources[0].HasCallPoint {
 		t.Fatalf("generic sources = %#v, ok=%v", genericFact.Sources, ok)
 	}
@@ -2401,7 +2401,7 @@ func TestExtractChunkGenericForFactsUseStmtPointsAndPreserveIdentity(t *testing.
 		points[2]: 1,
 	}
 	for _, point := range points {
-		fact, ok := result.GenericFor(point)
+		fact, ok := built.Meta.GenericFor(point)
 		if !ok {
 			t.Fatalf("missing generic for fact at point %d", point)
 		}
@@ -2425,11 +2425,11 @@ func TestExtractChunkGenericForFactsUseStmtPointsAndPreserveIdentity(t *testing.
 		}
 	}
 
-	firstFact, _ := result.GenericFor(points[0])
+	firstFact, _ := built.Meta.GenericFor(points[0])
 	firstFact.Names[0] = "mutated"
 	firstFact.Exprs[0] = ident("mutated")
 	firstFact.Symbols[0] = 0
-	again, _ := result.GenericFor(points[0])
+	again, _ := built.Meta.GenericFor(points[0])
 	if again.Names[0] != "k" || again.Exprs[0] != iter || again.Symbols[0] != kID {
 		t.Fatalf("GenericFor exposed mutable slices")
 	}

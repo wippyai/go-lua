@@ -46,6 +46,27 @@ func firstNewCallPoint(graph cfg.Graph, before []cfg.Point) cfg.Point {
 	return 0
 }
 
+func newCallPoints(graph cfg.Graph, before []cfg.Point) []cfg.Point {
+	if graph == nil {
+		return nil
+	}
+	seen := make(map[cfg.Point]struct{}, len(before))
+	for _, point := range before {
+		seen[point] = struct{}{}
+	}
+	var out []cfg.Point
+	for _, point := range graph.RPO() {
+		if _, ok := seen[point]; ok {
+			continue
+		}
+		node := graph.Node(point)
+		if node != nil && node.Kind == cfg.NodeCall {
+			out = append(out, point)
+		}
+	}
+	return out
+}
+
 func (b *builder) valueListCalls(exprs []ast.Expr) ([]callorder.Occurrence, bool) {
 	return callorder.ValueList(exprs, b.callOrderOptions())
 }
@@ -62,6 +83,28 @@ func (b *builder) callOrderOptions() callorder.Options {
 	options := callorder.LuaOptions(b.bindings)
 	options.AllowShortCircuitCalls = true
 	return options
+}
+
+func callPointResolver(calls []callorder.Occurrence, points []cfg.Point) sourceprovenance.CallPointResolver {
+	if len(calls) == 0 || len(points) == 0 {
+		return nil
+	}
+	callPoints := make(map[*ast.FuncCallExpr]cfg.Point, len(calls))
+	exprPoints := make(map[int]cfg.Point, len(calls))
+	for i, call := range calls {
+		if i >= len(points) {
+			break
+		}
+		callPoints[call.Call] = points[i]
+		exprPoints[call.ExprIndex] = points[i]
+	}
+	return func(exprIndex int, call *ast.FuncCallExpr) (cfg.Point, bool) {
+		if point, ok := callPoints[call]; ok {
+			return point, true
+		}
+		point, ok := exprPoints[exprIndex]
+		return point, ok
+	}
 }
 
 func (b *builder) appendValueExprCalls(state flowState, stmt ast.Stmt, expr ast.Expr) flowState {

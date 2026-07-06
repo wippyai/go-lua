@@ -26,13 +26,6 @@ func (r *Result) NumericFor(point cfg.Point) (cfgfacts.NumericForFact, bool) {
 	return r.meta.NumericFor(point)
 }
 
-func (r *Result) GenericFor(point cfg.Point) (cfgfacts.GenericForFact, bool) {
-	if r == nil {
-		return cfgfacts.GenericForFact{}, false
-	}
-	return r.meta.GenericFor(point)
-}
-
 func (r *Result) Label(point cfg.Point) (cfgfacts.LabelFact, bool) {
 	if r == nil {
 		return cfgfacts.LabelFact{}, false

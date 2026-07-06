@@ -193,8 +193,8 @@ func TestLowerDoesNotLowerDeclarationOrControlSidecars(t *testing.T) {
 		assertNoPointFact(t, facts, point)
 	}
 	for _, point := range requireStmtPoints(t, built, genericFor, 2) {
-		if _, ok := result.GenericFor(point); !ok {
-			t.Fatalf("missing generic-for sidecar at point %d", point)
+		if _, ok := built.Meta.GenericFor(point); !ok {
+			t.Fatalf("missing generic-for metadata at point %d", point)
 		}
 		assertNoPointFact(t, facts, point)
 	}

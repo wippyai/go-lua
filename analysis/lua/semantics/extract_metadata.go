@@ -158,28 +158,6 @@ func (r *Result) extractGenericFor(stmt *ast.GenericForStmt, bindings *bind.Resu
 		}
 		r.setCall(points[i], buildCallFact(stmt, nil, context, exprs, call.index, call.call, bindings, nil, resolver))
 	}
-	var symbols []symbol.ID
-	if bindings != nil {
-		symbols = bindings.GenericForSymbols(stmt)
-	}
-	fact := cfgfacts.GenericForFact{
-		Stmt:          stmt,
-		Names:         copyStrings(stmt.Names),
-		Exprs:         copyExprs(stmt.Exprs),
-		Sources:       copyValueSources(iteratorValueSources(stmt.Exprs, resolver)),
-		Symbols:       copySymbols(symbols),
-		HasSymbols:    completeSymbols(symbols, len(stmt.Names)),
-		VariableIndex: cfgfacts.NoGenericForVariableIndex,
-	}
-	checkFact := fact
-	checkFact.Role = cfgfacts.GenericForRoleCheck
-	r.meta.SetGenericFor(points[len(calls)], checkFact)
-	for i, point := range points[len(calls)+1 : len(calls)+1+len(stmt.Names)] {
-		varFact := fact
-		varFact.Role = cfgfacts.GenericForRoleVariable
-		varFact.VariableIndex = i
-		r.meta.SetGenericFor(point, varFact)
-	}
 	return nil
 }
 
