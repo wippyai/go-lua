@@ -1,6 +1,7 @@
 package transferfacts
 
 import (
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
@@ -34,23 +35,23 @@ func branchDiffConstraintsFromWIRDescriptors(in []wir.BranchDiffConstraint) []fa
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]branchcond.BranchDiffConstraint, 0, len(in))
+	out := make([]factflow.BranchDiffConstraint, 0, len(in))
 	for _, d := range in {
-		out = append(out, branchcond.BranchDiffConstraint{
-			CoHi:     d.CoHi,
-			HiPath:   d.HiPath,
-			HiIsLen:  d.HiIsLen,
-			CoHi2:    d.CoHi2,
-			Hi2Path:  d.Hi2Path,
-			Hi2IsLen: d.Hi2IsLen,
-			HasHi2:   d.HasHi2,
-			LoPath:   d.LoPath,
-			LoIsLen:  d.LoIsLen,
-			C:        d.C,
-			Edge:     d.Edge,
-		})
+		out = append(out, newBranchDiffConstraintOnEdge(
+			d.CoHi,
+			d.HiPath,
+			d.HiIsLen,
+			d.CoHi2,
+			d.Hi2Path,
+			d.Hi2IsLen,
+			d.HasHi2,
+			d.LoPath,
+			d.LoIsLen,
+			d.C,
+			d.Edge,
+		))
 	}
-	return branchDiffConstraintsFromDescriptors(out)
+	return out
 }
 
 func branchDiffConstraintsFromDescriptors(in []branchcond.BranchDiffConstraint) []factflow.BranchDiffConstraint {
@@ -59,13 +60,14 @@ func branchDiffConstraintsFromDescriptors(in []branchcond.BranchDiffConstraint) 
 	}
 	out := make([]factflow.BranchDiffConstraint, 0, len(in))
 	for _, d := range in {
-		out = append(out, factflow.NewBranchScaledConstraintOnEdge(
+		out = append(out, newBranchDiffConstraintOnEdge(
 			d.CoHi,
 			d.HiPath,
 			d.HiIsLen,
 			d.CoHi2,
 			d.Hi2Path,
 			d.Hi2IsLen,
+			d.HasHi2,
 			d.LoPath,
 			d.LoIsLen,
 			d.C,
@@ -73,4 +75,36 @@ func branchDiffConstraintsFromDescriptors(in []branchcond.BranchDiffConstraint) 
 		))
 	}
 	return out
+}
+
+func newBranchDiffConstraintOnEdge(
+	coHi int64,
+	hiPath pathdom.Path,
+	hiIsLen bool,
+	coHi2 int64,
+	hi2Path pathdom.Path,
+	hi2IsLen bool,
+	hasHi2 bool,
+	loPath pathdom.Path,
+	loIsLen bool,
+	c int64,
+	edge bool,
+) factflow.BranchDiffConstraint {
+	if !hasHi2 {
+		coHi2 = 0
+		hi2Path = pathdom.Path{}
+		hi2IsLen = false
+	}
+	return factflow.NewBranchScaledConstraintOnEdge(
+		coHi,
+		hiPath,
+		hiIsLen,
+		coHi2,
+		hi2Path,
+		hi2IsLen,
+		loPath,
+		loIsLen,
+		c,
+		edge,
+	)
 }
