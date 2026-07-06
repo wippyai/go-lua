@@ -4,14 +4,19 @@ package judgment
 // argument proof evidence. It centralizes the mapping from low-level evidence
 // details to argument proof categories.
 type CallArgumentProofSummary struct {
-	MayBeNil              bool
-	PrecisionBoundary     bool
-	GenericConflict       bool
-	GenericParam          string
-	GenericFunction       string
-	CallParamObligation   bool
-	CallParamSubjectLabel string
-	CallParamDetail       EvidenceDetail
+	MayBeNil                    bool
+	PrecisionBoundary           bool
+	GenericConflict             bool
+	GenericParam                string
+	GenericFunction             string
+	MissingRequiredField        string
+	MissingRequiredMethod       bool
+	MissingRequiredMethodDetail EvidenceDetail
+	MethodTypeMismatch          bool
+	MethodTypeMismatchDetail    EvidenceDetail
+	CallParamObligation         bool
+	CallParamSubjectLabel       string
+	CallParamDetail             EvidenceDetail
 }
 
 // Renderable reports whether a call-argument judgment should produce a
@@ -31,6 +36,17 @@ func (j Judgment) CallArgumentProof() CallArgumentProofSummary {
 		out.GenericConflict = true
 		out.GenericParam = evidence.Detail.Param
 		out.GenericFunction = evidence.Detail.FunctionName
+	}
+	if evidence, ok := j.FirstEvidenceKindDetail(EvidenceMissingProof, EvidenceDetailMissingRequiredField); ok {
+		out.MissingRequiredField = evidence.Detail.Field
+	}
+	if evidence, ok := j.FirstEvidenceKindDetail(EvidenceMissingProof, EvidenceDetailMissingRequiredMethod); ok && evidence.Detail.Field != "" {
+		out.MissingRequiredMethod = true
+		out.MissingRequiredMethodDetail = evidence.Detail
+	}
+	if evidence, ok := j.FirstEvidenceKindDetail(EvidenceMissingProof, EvidenceDetailMethodTypeMismatch); ok && evidence.Detail.Field != "" {
+		out.MethodTypeMismatch = true
+		out.MethodTypeMismatchDetail = evidence.Detail
 	}
 	if evidence, ok := j.FirstEvidenceKindDetail(EvidenceUserAssertion, EvidenceDetailCallParamObligation); ok {
 		out.CallParamObligation = true

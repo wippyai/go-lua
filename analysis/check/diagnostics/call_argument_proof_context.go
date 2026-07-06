@@ -33,10 +33,12 @@ func (ProofContext) DirectCallArgument(item judgment.Judgment, primary diagnosti
 	display := diagnosticDisplay{}
 	message := directCallArgumentJudgmentMessage(display, item, proof, wording, got, want)
 	help := directCallArgumentJudgmentHelp(display, proof, wording)
-	if detail, ok := directCallArgumentMissingRequiredMethod(item); ok {
+	if proof.MissingRequiredMethod {
+		detail := proof.MissingRequiredMethodDetail
 		message = argumentMissingRequiredMethodMessage(wording.Role, want, detail.Field)
 	}
-	if detail, ok := directCallArgumentMethodTypeMismatch(item); ok {
+	if proof.MethodTypeMismatch {
+		detail := proof.MethodTypeMismatchDetail
 		message = argumentMethodTypeMismatchMessage(wording.Role, want, detail.Field, detail.ActualType, detail.FieldType)
 	}
 	return callArgumentPresentation{
@@ -176,11 +178,13 @@ func directCallArgumentJudgmentEvidence(display diagnosticDisplay, item judgment
 	missingProof := fmt.Sprintf("no proof on this path shows %s satisfies the parameter type", wording.MissingName)
 	if proof.MayBeNil && wording.SourceName != "" {
 		missingProof = missingNonNilGuardHereMessage(wording.SourceName)
-	} else if field, ok := directCallArgumentMissingRequiredField(item); ok {
-		missingProof = display.MissingRequiredFieldEvidence(field)
-	} else if detail, ok := directCallArgumentMissingRequiredMethod(item); ok {
+	} else if proof.MissingRequiredField != "" {
+		missingProof = display.MissingRequiredFieldEvidence(proof.MissingRequiredField)
+	} else if proof.MissingRequiredMethod {
+		detail := proof.MissingRequiredMethodDetail
 		missingProof = missingRequiredMethodTypeEvidence(want, typ.Method{Name: detail.Field, Type: functionTypeOrNil(detail.FieldType)})
-	} else if detail, ok := directCallArgumentMethodTypeMismatch(item); ok {
+	} else if proof.MethodTypeMismatch {
+		detail := proof.MethodTypeMismatchDetail
 		missingProof = methodTypeMismatchEvidence(want, detail.Field, detail.ActualType, detail.FieldType)
 	} else if proof.CallParamObligation {
 		missingProof = fmt.Sprintf("no proof on this path shows %s is %s", directCallArgumentSourceEvidenceLabel(proof, wording.MissingName), display.Type(want))
@@ -190,7 +194,7 @@ func directCallArgumentJudgmentEvidence(display diagnosticDisplay, item judgment
 		missingProofReason = diagnostic.EvidenceReasonBoundaryValidationMissing
 	}
 	missingProofTrust := diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceMissingProof, missingProofTrustFromJudgment(item.Verdict))
-	if _, ok := directCallArgumentMissingRequiredMethod(item); ok {
+	if proof.MissingRequiredMethod {
 		missingProofTrust = diagnostic.TrustUnknown
 	}
 	if proof.CallParamObligation {
@@ -354,27 +358,6 @@ func directCallArgumentJudgmentEvidenceSpans(item judgment.Judgment, kind judgme
 		spans = append(spans, diagnosticSpanFromJudgment(evidence.Span))
 	}
 	return spans
-}
-
-func directCallArgumentMissingRequiredField(item judgment.Judgment) (string, bool) {
-	if evidence, ok := item.FirstEvidenceKindDetail(judgment.EvidenceMissingProof, judgment.EvidenceDetailMissingRequiredField); ok && evidence.Detail.Field != "" {
-		return evidence.Detail.Field, true
-	}
-	return "", false
-}
-
-func directCallArgumentMissingRequiredMethod(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
-	if evidence, ok := item.FirstEvidenceKindDetail(judgment.EvidenceMissingProof, judgment.EvidenceDetailMissingRequiredMethod); ok && evidence.Detail.Field != "" {
-		return evidence.Detail, true
-	}
-	return judgment.EvidenceDetail{}, false
-}
-
-func directCallArgumentMethodTypeMismatch(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
-	if evidence, ok := item.FirstEvidenceKindDetail(judgment.EvidenceMissingProof, judgment.EvidenceDetailMethodTypeMismatch); ok && evidence.Detail.Field != "" {
-		return evidence.Detail, true
-	}
-	return judgment.EvidenceDetail{}, false
 }
 
 func genericParamName(name string) string {

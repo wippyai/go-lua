@@ -198,6 +198,18 @@ func TestCallArgumentProofSummaryUsesStructuredEvidence(t *testing.T) {
 				Detail: GenericConflictEvidenceDetail("T"),
 			},
 			{
+				Kind:   EvidenceMissingProof,
+				Detail: MissingRequiredFieldEvidenceDetail("id"),
+			},
+			{
+				Kind:   EvidenceMissingProof,
+				Detail: MissingRequiredMethodTypeEvidenceDetail("save", nil),
+			},
+			{
+				Kind:   EvidenceMissingProof,
+				Detail: MethodTypeMismatchEvidenceDetail("load", nil, nil),
+			},
+			{
 				Kind: EvidenceUserAssertion,
 				Detail: CallParamObligationEvidenceDetail(
 					"listen",
@@ -216,10 +228,15 @@ func TestCallArgumentProofSummaryUsesStructuredEvidence(t *testing.T) {
 	if !summary.MayBeNil ||
 		!summary.GenericConflict ||
 		summary.GenericParam != "T" ||
+		summary.MissingRequiredField != "id" ||
+		!summary.MissingRequiredMethod ||
+		summary.MissingRequiredMethodDetail.Field != "save" ||
+		!summary.MethodTypeMismatch ||
+		summary.MethodTypeMismatchDetail.Field != "load" ||
 		!summary.CallParamObligation ||
 		summary.CallParamSubjectLabel != "payload" ||
 		!summary.PrecisionBoundary {
-		t.Fatalf("CallArgumentProof = %#v, want nil/generic/call-param/precision summary", summary)
+		t.Fatalf("CallArgumentProof = %#v, want nil/generic/structure/call-param/precision summary", summary)
 	}
 	if !summary.Renderable(VerdictUnknown) {
 		t.Fatalf("CallArgumentProof.Renderable(unknown) = false, want true for precision boundary")
