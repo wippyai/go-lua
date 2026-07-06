@@ -491,6 +491,53 @@ end
 	}
 }
 
+func TestLowerWIRCallArgumentObjectLiteralPublishesWithoutSemanticResult(t *testing.T) {
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function f(): ()
+    sink({ id = "alpha", nested = { count = 1 } })
+end
+`, "sink")
+	stmt, ok := fn.Stmts[0].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call", fn.Stmts[0])
+	}
+	body := wirlower.Lower("call-arg-object-literal-no-semantics", fn.Stmts, bindings, built)
+	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	var site factflow.CallSite
+	var callPoint cfg.Point
+	for _, point := range built.StmtPoints.PointsFor(stmt) {
+		if got, ok := facts.CallSite(point); ok {
+			site, callPoint = got, point
+			break
+		}
+	}
+	if callPoint == 0 {
+		t.Fatalf("missing WIR call site for points %v without semantic CallView", built.StmtPoints.PointsFor(stmt))
+	}
+	arg, ok := site.ArgumentSourceAt(0)
+	if !ok || arg.Kind != factflow.ValueSourceExpression || !arg.HasExpr {
+		t.Fatalf("call argument source = %#v/%v, want expression source", arg, ok)
+	}
+	literal, ok := facts.ObjectLiteral(arg.ExprRef)
+	if !ok {
+		t.Fatalf("missing object literal for WIR call argument expr %d without semantic ObjectLiteral sidecar", arg.ExprRef)
+	}
+	if _, ok := literal.Identity(); !ok {
+		t.Fatalf("WIR call argument object literal missing identity: %#v", literal)
+	}
+	if len(literal.Entries()) != 3 {
+		t.Fatalf("WIR call argument object literal entries = %#v, want id, nested, and nested.count", literal.Entries())
+	}
+	for _, entry := range literal.Entries() {
+		source := entry.Source()
+		if source.HasExpr && (source.Final || source.Adjusted || source.Expanded || source.OpenTail) {
+			t.Fatalf("WIR object-entry source shape = final:%v adjusted:%v expanded:%v openTail:%v, want ordinary expression source for %v",
+				source.Final, source.Adjusted, source.Expanded, source.OpenTail, entry.Suffix())
+		}
+	}
+}
+
 func TestLowerReturnCallResultTargetComesFromWIR(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(): string

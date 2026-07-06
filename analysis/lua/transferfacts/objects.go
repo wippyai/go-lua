@@ -45,21 +45,14 @@ func (l *lowerer) objectLiteralEntriesFromWIR(inst wir.Instruction) []factflow.O
 }
 
 func (l *lowerer) objectEntryValueSourceFromWIR(point cfg.Point, op wir.Operand, resultSources map[uint32]wirResultSource) (factflow.ValueSource, bool) {
-	if source, ok := l.pathExpressionSourceFromWIR(
-		"object-entry",
-		point,
-		op,
-		-1,
-		-1,
-		true,
-		false,
-		false,
-		symbol.Local,
-		symbol.Param,
-		symbol.Global,
-		symbol.Upvalue,
-	); ok {
-		return source, true
+	if p, ok := l.wirPathOperand(op, false, symbol.Local, symbol.Param, symbol.Global, symbol.Upvalue); ok {
+		witness, _ := l.aliasPathType(p)
+		return l.wirPathExpressionSourceWithShape("object-entry", point, p, witness, -1, -1, false, false, false, false)
+	}
+	if op.Kind == wir.OperandTemp {
+		if inst, ok := l.wirTempDefs()[op.Ref]; ok && inst.Op == wir.OpMakeTable {
+			return l.wirTableExpressionValueSourceWithShape(inst, -1, -1, false, false, false, false)
+		}
 	}
 	return l.valueSourceFromWIROperand(op, -1, -1, false, false, false, resultSources)
 }

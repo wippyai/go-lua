@@ -177,6 +177,21 @@ func (l *lowerer) wirPathExpressionSource(
 	expanded bool,
 	openTail bool,
 ) (factflow.ValueSource, bool) {
+	return l.wirPathExpressionSourceWithShape(kind, point, p, witness, exprIndex, targetIndex, final, expanded, !expanded, openTail)
+}
+
+func (l *lowerer) wirPathExpressionSourceWithShape(
+	kind string,
+	point cfg.Point,
+	p path.Path,
+	witness typ.Type,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	adjusted bool,
+	openTail bool,
+) (factflow.ValueSource, bool) {
 	exprRef, ok := l.exprRef(wirPathExprRefKey{
 		kind:        kind,
 		point:       point,
@@ -200,7 +215,7 @@ func (l *lowerer) wirPathExpressionSource(
 		}
 		l.expressionValues[exprRef] = l.valueFromTypeWithWitness(witness)
 	}
-	shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, openTail)
+	shape, ok := factflow.NewValueSourceShape(final, expanded, adjusted, openTail)
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
@@ -777,11 +792,23 @@ func (l *lowerer) wirTableExpressionValueSource(
 	expanded bool,
 	openTail bool,
 ) (factflow.ValueSource, bool) {
+	return l.wirTableExpressionValueSourceWithShape(inst, exprIndex, targetIndex, final, expanded, !expanded, openTail)
+}
+
+func (l *lowerer) wirTableExpressionValueSourceWithShape(
+	inst wir.Instruction,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	adjusted bool,
+	openTail bool,
+) (factflow.ValueSource, bool) {
 	exprRef, ok := l.tableConstructorExprRefFromWIR(inst)
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
-	return l.tableExpressionValueSource(exprRef, exprIndex, targetIndex, final, expanded, openTail)
+	return l.tableExpressionValueSourceWithShape(exprRef, exprIndex, targetIndex, final, expanded, adjusted, openTail)
 }
 
 func (l *lowerer) tableConstructorExpressionValueSource(
@@ -810,6 +837,18 @@ func (l *lowerer) tableExpressionValueSource(
 	expanded bool,
 	openTail bool,
 ) (factflow.ValueSource, bool) {
+	return l.tableExpressionValueSourceWithShape(exprRef, exprIndex, targetIndex, final, expanded, !expanded, openTail)
+}
+
+func (l *lowerer) tableExpressionValueSourceWithShape(
+	exprRef factflow.ExprRef,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	adjusted bool,
+	openTail bool,
+) (factflow.ValueSource, bool) {
 	value := product.NewWithPresence(l.registry, product.ShapeTop, presence.Present())
 	value = product.Set(l.registry, value, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
 	value = product.Set(l.registry, value, identity.Key, identity.Singleton(identity.LuaTableLiteral(l.graphID, uint64(exprRef))))
@@ -819,7 +858,7 @@ func (l *lowerer) tableExpressionValueSource(
 	if _, exists := l.expressionValues[exprRef]; !exists {
 		l.expressionValues[exprRef] = value
 	}
-	shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, openTail)
+	shape, ok := factflow.NewValueSourceShape(final, expanded, adjusted, openTail)
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
