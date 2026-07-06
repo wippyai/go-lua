@@ -359,6 +359,39 @@ func TestConcatOperandProofSummaryUsesStructuredEvidence(t *testing.T) {
 	}
 }
 
+func TestLifecycleProofSummaryUsesStructuredEvidence(t *testing.T) {
+	item := Judgment{Evidence: EvidenceChain{{
+		Kind: EvidenceMissingProof,
+		Detail: EvidenceDetail{
+			Kind:         EvidenceDetailLifecycleMissingProof,
+			Resource:     "tx",
+			Protocol:     "transaction",
+			CurrentState: "open",
+			FinalState:   "closed",
+		},
+	}}}
+	summary := item.LifecycleProof()
+	if !summary.Found ||
+		summary.Detail.Kind != EvidenceDetailLifecycleMissingProof ||
+		summary.Detail.Resource != "tx" ||
+		summary.Detail.Protocol != "transaction" ||
+		summary.Detail.CurrentState != "open" ||
+		summary.Detail.FinalState != "closed" {
+		t.Fatalf("LifecycleProof = %#v, want tx transaction obligation", summary)
+	}
+
+	absent := Judgment{Evidence: EvidenceChain{{
+		Kind: EvidenceAbstractFact,
+		Detail: EvidenceDetail{
+			Kind:     EvidenceDetailLifecycleMissingProof,
+			Resource: "tx",
+		},
+	}}}
+	if got := absent.LifecycleProof(); got.Found {
+		t.Fatalf("LifecycleProof matched non-missing-proof evidence: %#v", got)
+	}
+}
+
 func TestDefaultRegistryValidatesCallArgumentJudgmentShape(t *testing.T) {
 	j := Judgment{
 		Code:    CodeCallArgType,

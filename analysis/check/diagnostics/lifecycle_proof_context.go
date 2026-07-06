@@ -17,10 +17,11 @@ type lifecyclePresentation struct {
 }
 
 func (ProofContext) Lifecycle(item judgment.Judgment) (lifecyclePresentation, bool) {
-	detail, ok := lifecycleMissingProofDetail(item)
-	if !ok {
+	proof := item.LifecycleProof()
+	if !proof.Found {
 		return lifecyclePresentation{}, false
 	}
+	detail := proof.Detail
 	resourceName := detail.Resource
 	if resourceName == "" {
 		resourceName = item.Subject.Label
@@ -38,15 +39,6 @@ func (ProofContext) Lifecycle(item judgment.Judgment) (lifecyclePresentation, bo
 		Evidence: evidence,
 		Labels:   labels,
 	}, true
-}
-
-func lifecycleMissingProofDetail(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
-	for _, evidence := range item.Evidence {
-		if evidence.Kind == judgment.EvidenceMissingProof && evidence.Detail.Kind == judgment.EvidenceDetailLifecycleMissingProof {
-			return evidence.Detail, true
-		}
-	}
-	return judgment.EvidenceDetail{}, false
 }
 
 func lifecycleEvidence(item judgment.Judgment, report lifecycleResourceReport) ([]diagnostic.Evidence, []diagnostic.Label, diagnostic.Span) {
