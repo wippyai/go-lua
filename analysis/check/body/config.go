@@ -5,12 +5,11 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -23,8 +22,7 @@ func copyConfig(config Config) Config {
 		}
 		config.GlobalTypes = globalTypes
 	}
-	config.StateLanes = state.CloneLanes(config.StateLanes)
-	config.ClosedDynamicAllValues = append([]factapply.ClosedDynamicAllValueInvariant(nil), config.ClosedDynamicAllValues...)
+	copyPerSolveConfigAxes(&config, config)
 	config.Signatures.Manifests = append([]*manifest.Manifest(nil), config.Signatures.Manifests...)
 	config.ModuleExports.Manifests = append([]*manifest.Manifest(nil), config.ModuleExports.Manifests...)
 	config.ModuleTypes.Manifests = append([]*manifest.Manifest(nil), config.ModuleTypes.Manifests...)
@@ -35,27 +33,20 @@ func copyConfig(config Config) Config {
 		}
 		config.ExpressionValues = values
 	}
+	if len(config.MethodReceiverTypes) != 0 {
+		receivers := make(map[symbol.ID]typ.Type, len(config.MethodReceiverTypes))
+		for id, t := range config.MethodReceiverTypes {
+			receivers[id] = t
+		}
+		config.MethodReceiverTypes = receivers
+	}
 	return config
 }
 
 // SolveConfig returns the per-solve view of config. This is the single owner for
 // moving full-check configuration axes into a prepared-body solve.
 func (config Config) SolveConfig() SolveConfig {
-	return SolveConfig{
-		EntryState:                   config.EntryState,
-		Initial:                      config.Initial,
-		TypeValues:                   config.TypeValues,
-		ClosedDynamicAllValues:       append([]factapply.ClosedDynamicAllValueInvariant(nil), config.ClosedDynamicAllValues...),
-		StateLanes:                   state.CloneLanes(config.StateLanes),
-		CallOutcome:                  config.CallOutcome,
-		CallOutcomeFactory:           config.CallOutcomeFactory,
-		SignatureArgumentType:        config.SignatureArgumentType,
-		SignatureArgumentTypeFactory: config.SignatureArgumentTypeFactory,
-		WIRAssignmentTarget:          config.WIRAssignmentTarget,
-		WidenAt:                      config.WidenAt,
-		WidenDelay:                   config.WidenDelay,
-		Stats:                        config.Stats,
-	}
+	return solveConfigFromConfig(config)
 }
 
 func mergeExpressionValues(base, override map[factflow.ExprRef]product.Value) map[factflow.ExprRef]product.Value {

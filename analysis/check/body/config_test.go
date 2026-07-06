@@ -102,13 +102,46 @@ func TestConfigSolveConfigOwnsPerSolveAxes(t *testing.T) {
 	}
 }
 
-func TestSolveConfigAxesAreConfigBacked(t *testing.T) {
+func TestSolveConfigAxesAreDescriptorBacked(t *testing.T) {
 	configType := reflect.TypeOf(Config{})
 	solveType := reflect.TypeOf(SolveConfig{})
+	if len(perSolveConfigAxes) != solveType.NumField() {
+		t.Fatalf("per-solve config axis descriptors = %d, want SolveConfig fields = %d", len(perSolveConfigAxes), solveType.NumField())
+	}
 	for i := 0; i < solveType.NumField(); i++ {
 		field := solveType.Field(i)
-		if _, ok := configType.FieldByName(field.Name); !ok {
+		axis := perSolveConfigAxes[i]
+		if axis.fieldName != field.Name {
+			t.Fatalf("per-solve config axis[%d] = %s, want SolveConfig field %s", i, axis.fieldName, field.Name)
+		}
+		configField, ok := configType.FieldByName(field.Name)
+		if !ok {
 			t.Fatalf("SolveConfig field %s has no Config owner; add it to Config or document why it is solve-only", field.Name)
 		}
+		if !configField.Type.AssignableTo(field.Type) {
+			t.Fatalf("SolveConfig field %s type = %s, want assignable from Config type %s", field.Name, field.Type, configField.Type)
+		}
+	}
+}
+
+func TestCopyConfigClonesPerSolveMutableAxes(t *testing.T) {
+	invariant := factapply.ClosedDynamicAllValueInvariant{
+		Container: pathdom.NewPath(1, "container"),
+		Table:     pathdom.NewPath(2, "table"),
+	}
+	config := Config{
+		StateLanes:             []state.LaneID{state.LaneValues, state.LaneFrozenTables},
+		ClosedDynamicAllValues: []factapply.ClosedDynamicAllValueInvariant{invariant},
+	}
+
+	copied := copyConfig(config)
+	config.StateLanes[0] = state.LaneFrozenTables
+	config.ClosedDynamicAllValues[0] = factapply.ClosedDynamicAllValueInvariant{}
+
+	if got := copied.StateLanes[0]; got != state.LaneValues {
+		t.Fatalf("copyConfig StateLanes aliased caller slice: got %q", got)
+	}
+	if got := copied.ClosedDynamicAllValues[0].Container.String(); got != invariant.Container.String() {
+		t.Fatalf("copyConfig ClosedDynamicAllValues aliased caller slice: got %q", got)
 	}
 }
