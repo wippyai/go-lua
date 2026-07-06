@@ -595,6 +595,139 @@ func TestExpressionConditionRefinesShortCircuitRightOperandState(t *testing.T) {
 	}
 }
 
+func TestExpressionConditionForShortCircuitRightOperandSkipsDescendantRefinements(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(6606)
+	guardExpr := ExprRef(66060)
+	valueExpr := ExprRef(66061)
+	opExpr := ExprRef(66062)
+	valueSym := symbol.ID(6606)
+	rootPath := path.Path{Symbol: valueSym}
+	descendantPath := rootPath.Field("child")
+	guardSource := ValueSource{Kind: ValueSourceExpression, ExprRef: guardExpr, HasExpr: true}
+	valueSource := ValueSource{Kind: ValueSourceExpression, ExprRef: valueExpr, HasExpr: true}
+	opSource := ValueSource{Kind: ValueSourceExpression, ExprRef: opExpr, HasExpr: true}
+	op, ok := NewBinaryExpressionOperation("and", guardSource, valueSource)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation returned false")
+	}
+	anyValue := product.NewWithPresence(reg, product.ShapeTop, presence.Maybe())
+	anyValue = product.Set(reg, anyValue, evidence.Key, evidence.ExplicitTop())
+	anyValue = product.Set(reg, anyValue, assertion.Key, assertion.Any())
+	anyValue = typevalue.WithWitness(reg, anyValue, typ.Any)
+	boolValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.Boolean), typ.Boolean)
+	stringValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			guardExpr: boolValue,
+			valueExpr: anyValue,
+		},
+		ExpressionPaths: map[ExprRef]struct{}{
+			valueExpr: {},
+		},
+		ExpressionOps: map[ExprRef]ExpressionOperation{
+			opExpr: op,
+		},
+		ExpressionConditions: map[ExprRef]ExpressionCondition{
+			guardExpr: NewExpressionCondition(
+				[]PostconditionRefinement{
+					NewPostconditionRefinement(rootPath, NewValueConstraint(stringValue)),
+					NewPostconditionRefinement(descendantPath, NewValueConstraint(stringValue)),
+				},
+				nil,
+				nil,
+				nil,
+			),
+		},
+		ExpressionCondition: func(_ cfg.Point, in state.State, facts ExpressionConditionFacts) state.State {
+			refinements := facts.Refinements()
+			if len(refinements) != 1 || !refinements[0].TargetPathRef().Equal(rootPath) {
+				t.Fatalf("RHS condition refinements = %#v, want root-only refinement", refinements)
+			}
+			return in.WriteValue(reg, key.SymbolValue(valueSym), stringValue)
+		},
+		ExpressionValue: func(_ cfg.Point, expr ExprRef, _ ValueSource, in state.State) (product.Value, bool) {
+			if expr == valueExpr {
+				return in.ReadValue(reg, key.SymbolValue(valueSym)), true
+			}
+			return product.Value{}, false
+		},
+		ExpressionOp: func(got ExpressionOperation, _ product.Value, right product.Value) (product.Value, bool) {
+			if got.Op() != "and" {
+				return product.Value{}, false
+			}
+			rightType, ok := typevalue.WitnessOf(reg, right)
+			if !ok || !typ.TypeEquals(rightType, typ.String) {
+				t.Fatalf("right operand type = %v/%v, want string", rightType, ok)
+			}
+			return right, true
+		},
+	})
+	got, ok := resolver.ValueOfSource(point, opSource, state.State{}.WriteValue(reg, key.SymbolValue(valueSym), anyValue), nil)
+	if !ok {
+		t.Fatal("operation source did not resolve")
+	}
+	gotType, ok := typevalue.WitnessOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("operation result type = %v/%v, want string", gotType, ok)
+	}
+}
+
+func TestFlowExpressionRecoveryPreservesActiveExpressionContext(t *testing.T) {
+	reg := standard.Registry()
+	outerExpr := ExprRef(66070)
+	pathBackedExpr := ExprRef(66071)
+	outerSource := ValueSource{Kind: ValueSourceExpression, ExprRef: outerExpr, HasExpr: true}
+	pathBackedSource := ValueSource{Kind: ValueSourceExpression, ExprRef: pathBackedExpr, HasExpr: true}
+	literalSource, ok := NewIntegerLiteralValueSource(1, 0, 0, 0, ValueSourceShape{Final: true})
+	if !ok {
+		t.Fatal("NewIntegerLiteralValueSource returned false")
+	}
+	outerOp, ok := NewBinaryExpressionOperation("+", pathBackedSource, literalSource)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation(outer) returned false")
+	}
+	pathBackedOp, ok := NewBinaryExpressionOperation("+", outerSource, literalSource)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation(path-backed) returned false")
+	}
+	cachedTop := product.Set(reg, product.Top(), evidence.Key, evidence.ExplicitTop())
+	want := presentValue(reg)
+	var evaluated int
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			pathBackedExpr: cachedTop,
+		},
+		ExpressionPaths: map[ExprRef]struct{}{
+			pathBackedExpr: {},
+		},
+		ExpressionOps: map[ExprRef]ExpressionOperation{
+			outerExpr:      outerOp,
+			pathBackedExpr: pathBackedOp,
+		},
+		ExpressionOp: func(got ExpressionOperation, _ product.Value, _ product.Value) (product.Value, bool) {
+			evaluated++
+			if got.Left().ExprRef != pathBackedExpr {
+				t.Fatalf("evaluated cyclic path-backed op; active expression context was not preserved")
+			}
+			return want, true
+		},
+	})
+
+	got, ok := resolver.ValueOfSource(cfg.Point(6607), outerSource, state.State{}, nil)
+	if !ok {
+		t.Fatal("outer operation source did not resolve")
+	}
+	if evaluated != 1 {
+		t.Fatalf("expression operations evaluated %d times, want 1", evaluated)
+	}
+	if !product.Equal(reg, got, want) {
+		t.Fatalf("value = %s, want %s", formatValue(reg, got), formatValue(reg, want))
+	}
+}
+
 func TestNestedLogicalConditionDerivesFallbackStateWhenInnerRHSIsTruthy(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(661)

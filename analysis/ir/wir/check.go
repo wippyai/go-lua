@@ -5,8 +5,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-// CheckKind tags a normalized condition descriptor stored on branch and
-// assertion-call instructions.
+// CheckKind tags a normalized condition descriptor stored on branch,
+// assertion-call, and boolean-producing expression instructions.
 // It is the in-IR projection of a condition already normalized by lowering; the
 // IR concludes nothing from it, it only carries the descriptor for the transfer
 // interpreter and the textual printer.

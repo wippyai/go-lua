@@ -279,11 +279,15 @@ func (r sourceValueResolver) valueOfExpression(
 	if value, ok := r.valueOfDynamicIndexExpression(point, source.ExprRef, in, read, nil); ok {
 		return value, true
 	}
+	_, hasOperation := r.expressionOps[source.ExprRef]
+	if hasCached && !pathBacked && !hasOperation && !hasTopOrigin(r.registry, cached) {
+		return cached, true
+	}
 	if value, ok := r.valueOfExpressionOperation(point, source.ExprRef, in, read, active); ok {
 		return value, true
 	}
 	if hasCached && !pathBacked && hasTopOrigin(r.registry, cached) {
-		if flowValue, ok := r.flowExpressionValue(point, source, in, read); ok && recoverableConcreteType(r.registry, r.typeValues, flowValue) {
+		if flowValue, ok := r.flowExpressionValue(point, source, in, read, active); ok && recoverableConcreteType(r.registry, r.typeValues, flowValue) {
 			return flowValue, true
 		}
 		return cached, true
@@ -299,7 +303,7 @@ func (r sourceValueResolver) valueOfExpression(
 	// must refine, not replace, a more precise cached declaration such as
 	// nil|string|map narrowed by type(x) == "table".
 	if pathBacked && hasCached {
-		if flowValue, ok := r.flowExpressionValue(point, source, in, read); ok {
+		if flowValue, ok := r.flowExpressionValue(point, source, in, read, active); ok {
 			if (carriesType(r.registry, r.typeValues, flowValue) && (!hasTopOrigin(r.registry, flowValue) || cachedAllowsRuntimeKindOverride(r.registry, r.typeValues, cached))) ||
 				(carriesRuntimeKindEvidence(r.registry, flowValue) && cachedAllowsRuntimeKindOverride(r.registry, r.typeValues, cached)) {
 				return flowValue, true
@@ -319,7 +323,7 @@ func (r sourceValueResolver) valueOfExpression(
 		}
 		return cached, true
 	}
-	return r.flowExpressionValue(point, source, in, read)
+	return r.flowExpressionValue(point, source, in, read, active)
 }
 
 func hasTopOrigin(reg *axis.Registry, value product.Value) bool {
@@ -440,8 +444,9 @@ func (r sourceValueResolver) flowExpressionValue(
 	source factflow.ValueSource,
 	in state.State,
 	read func(cfg.Point) state.State,
+	active map[factflow.ExprRef]bool,
 ) (product.Value, bool) {
-	if value, ok := r.valueOfExpressionOperation(point, source.ExprRef, in, read, nil); ok {
+	if value, ok := r.valueOfExpressionOperation(point, source.ExprRef, in, read, active); ok {
 		return value, true
 	}
 	if r.expressionValue == nil {
@@ -547,10 +552,27 @@ func (r sourceValueResolver) logicalRightOperandState(
 	if left.Kind != factflow.ValueSourceExpression || !left.HasExpr {
 		return in
 	}
-	if next, ok := r.expressionConditionState(point, left.ExprRef, conditionValue, in, read, active); ok {
+	if next, ok := r.logicalRightExpressionConditionState(point, left.ExprRef, conditionValue, in, read, active); ok {
 		return next
 	}
 	return in
+}
+
+func (r sourceValueResolver) logicalRightExpressionConditionState(
+	point cfg.Point,
+	expr factflow.ExprRef,
+	value bool,
+	in state.State,
+	read func(cfg.Point) state.State,
+	active map[factflow.ExprRef]bool,
+) (state.State, bool) {
+	if condition, ok := r.expressionConditions[expr]; ok {
+		facts := rootOnlyExpressionConditionFacts(condition.FactsForValue(value))
+		if !facts.IsEmpty() {
+			return r.expressionCondition(point, in, facts), true
+		}
+	}
+	return r.derivedLogicalExpressionConditionState(point, expr, value, in, read, active)
 }
 
 func (r sourceValueResolver) expressionConditionState(
@@ -568,6 +590,21 @@ func (r sourceValueResolver) expressionConditionState(
 		}
 	}
 	return r.derivedLogicalExpressionConditionState(point, expr, value, in, read, active)
+}
+
+func rootOnlyExpressionConditionFacts(facts factflow.ExpressionConditionFacts) factflow.ExpressionConditionFacts {
+	refinements := facts.Refinements()
+	if len(refinements) == 0 {
+		return facts
+	}
+	kept := refinements[:0]
+	for _, refinement := range refinements {
+		if len(refinement.TargetPathRef().Segments) != 0 {
+			continue
+		}
+		kept = append(kept, refinement)
+	}
+	return factflow.NewExpressionConditionFacts(kept, facts.PathRelations())
 }
 
 func (r sourceValueResolver) derivedLogicalExpressionConditionState(

@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -164,6 +165,39 @@ end
 	want := typ.String
 	if !typ.TypeEquals(got, want) {
 		t.Fatalf("logical return witness = %v, want %v", got, want)
+	}
+}
+
+func TestLowerWithWIRNestedLogicalReturnCarriesComputedStringWitness(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function label(success: boolean, value: any): string
+    return success and "ok" or (type(value) == "string" and ("value:" .. value) or "failed")
+end
+`, "type")
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
+	}
+	points := requireStmtPoints(t, built, ret, 1)
+	body := wirlower.Lower("nested-logical-return", fn.Stmts, bindings, built)
+	reg := standard.Registry()
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+
+	returnFact, ok := facts.Return(points[0])
+	if !ok {
+		t.Fatalf("missing return fact at point %d", points[0])
+	}
+	sources := returnFact.Sources()
+	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr {
+		t.Fatalf("return sources = %#v, want one logical expression source\nWIR:\n%s", sources, wir.Print(body, built.Graph))
+	}
+	value, ok := facts.ExpressionValue(sources[0].ExprRef)
+	if !ok {
+		t.Fatalf("missing nested logical return expression value for ref %d\nWIR:\n%s", sources[0].ExprRef, wir.Print(body, built.Graph))
+	}
+	got, ok := product.Get(reg, value, typewitness.Key).Type()
+	if !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("nested logical return witness = %v/%v, want string; value=%#v\nWIR:\n%s", got, ok, value, wir.Print(body, built.Graph))
 	}
 }
 
@@ -501,6 +535,165 @@ end
 	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceUnknown {
 		t.Fatalf("return sources = %#v, want unknown instead of semantic fallback", sources)
 	}
+}
+
+func TestLowerWithWIRReturnMissingTempDoesNotFallbackToSemanticSource(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(value: string): string
+    return value
+end
+`)
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
+	}
+	point := requireStmtPoints(t, built, ret, 1)[0]
+	body := wir.NewBody("missing-temp-return-source")
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpReturn,
+		Point: point,
+		List:  body.AppendOperands([]wir.Operand{{Kind: wir.OperandTemp, Ref: 999}}),
+	})
+	body.SetPointRange(point, start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	retFact, ok := facts.Return(point)
+	if !ok {
+		t.Fatalf("missing WIR-owned return at point %d", point)
+	}
+	sources := retFact.Sources()
+	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceUnknown {
+		t.Fatalf("return sources = %#v, want unknown instead of semantic fallback", sources)
+	}
+}
+
+func TestLowerWithWIRReturnedTypePredicateCarriesExpressionCondition(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(value)
+    return type(value) == "number"
+end
+`, "type")
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
+	}
+	point := requireStmtPoints(t, built, ret, 1)[0]
+	body := wirlower.Lower("returned-type-predicate", fn.Stmts, bindings, built)
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	retFact, ok := facts.Return(point)
+	if !ok {
+		t.Fatalf("missing WIR-owned return at point %d", point)
+	}
+	sources := retFact.Sources()
+	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr {
+		t.Fatalf("return sources = %#v, want expression source\nWIR:\n%s", sources, wir.Print(body, built.Graph))
+	}
+	condition, ok := facts.ExpressionCondition(sources[0].ExprRef)
+	if !ok {
+		t.Fatalf("missing expression condition for returned predicate ref %d", sources[0].ExprRef)
+	}
+	valuePath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "value")
+	trueFacts := condition.FactsForValue(true)
+	for _, refinement := range trueFacts.Refinements() {
+		if !refinement.TargetPath().Equal(valuePath) {
+			continue
+		}
+		assertValueRefinement(t, "returned type predicate true refinement", refinement.Value(), valueRefinementExpectation{
+			presence:       presence.Present(),
+			hasPresence:    true,
+			runtimeKind:    runtimekind.Singleton(runtimekind.Number),
+			hasRuntimeKind: true,
+		})
+		return
+	}
+	t.Fatalf("missing true-value type refinement for %s; got %#v", valuePath, trueFacts.Refinements())
+}
+
+func TestLowerWithWIRReturnedConjunctionCarriesLeftExpressionCondition(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(value)
+    return type(value) == "number" and value > 0
+end
+`, "type")
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
+	}
+	point := requireStmtPoints(t, built, ret, 1)[0]
+	body := wirlower.Lower("returned-conjunction-predicate", fn.Stmts, bindings, built)
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	retFact, ok := facts.Return(point)
+	if !ok {
+		t.Fatalf("missing WIR-owned return at point %d", point)
+	}
+	sources := retFact.Sources()
+	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr {
+		t.Fatalf("return sources = %#v, want expression source\nWIR:\n%s", sources, wir.Print(body, built.Graph))
+	}
+	condition, ok := facts.ExpressionCondition(sources[0].ExprRef)
+	if !ok {
+		t.Fatalf("missing expression condition for returned conjunction ref %d\nWIR:\n%s", sources[0].ExprRef, wir.Print(body, built.Graph))
+	}
+	valuePath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "value")
+	trueFacts := condition.FactsForValue(true)
+	for _, refinement := range trueFacts.Refinements() {
+		if !refinement.TargetPath().Equal(valuePath) {
+			continue
+		}
+		assertValueRefinement(t, "returned conjunction true refinement", refinement.Value(), valueRefinementExpectation{
+			presence:       presence.Present(),
+			hasPresence:    true,
+			runtimeKind:    runtimekind.Singleton(runtimekind.Number),
+			hasRuntimeKind: true,
+		})
+		return
+	}
+	t.Fatalf("missing true-value type refinement for %s; got %#v\nWIR:\n%s", valuePath, trueFacts.Refinements(), wir.Print(body, built.Graph))
+}
+
+func TestLowerWithWIRReturnedNestedPathConjunctionCarriesRootPresence(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(entry: {id: string, meta: {type: string?}?}?): boolean?
+    return entry and entry.meta and entry.meta.type == "agent.gen1"
+end
+`)
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
+	}
+	point := requireStmtPoints(t, built, ret, 1)[0]
+	body := wirlower.Lower("returned-nested-path-conjunction", fn.Stmts, bindings, built)
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	retFact, ok := facts.Return(point)
+	if !ok {
+		t.Fatalf("missing WIR-owned return at point %d", point)
+	}
+	sources := retFact.Sources()
+	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr {
+		t.Fatalf("return sources = %#v, want expression source\nWIR:\n%s", sources, wir.Print(body, built.Graph))
+	}
+	condition, ok := facts.ExpressionCondition(sources[0].ExprRef)
+	if !ok {
+		t.Fatalf("missing expression condition for returned nested path conjunction ref %d\nWIR:\n%s", sources[0].ExprRef, wir.Print(body, built.Graph))
+	}
+	entryPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "entry")
+	trueFacts := condition.FactsForValue(true)
+	for _, refinement := range trueFacts.Refinements() {
+		if !refinement.TargetPath().Equal(entryPath) {
+			continue
+		}
+		assertValueRefinement(t, "returned nested path conjunction root presence", refinement.Value(), valueRefinementExpectation{
+			presence:       presence.Present(),
+			hasPresence:    true,
+			runtimeKind:    runtimekind.Singleton(runtimekind.Table),
+			hasRuntimeKind: true,
+		})
+		return
+	}
+	t.Fatalf("missing true-value presence refinement for %s; got %#v\nWIR:\n%s", entryPath, trueFacts.Refinements(), wir.Print(body, built.Graph))
 }
 
 func TestLowerWithWIRReturnPublishesWithoutSemanticReturnView(t *testing.T) {

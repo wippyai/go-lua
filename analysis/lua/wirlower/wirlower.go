@@ -1036,7 +1036,7 @@ func (b *builder) lowerExprInto(dst wir.Operand, e ast.Expr) {
 	case *ast.ArithmeticOpExpr:
 		b.emitBinOp(dst, arithOperator(e.Operator), e.Lhs, e.Rhs)
 	case *ast.RelationalOpExpr:
-		b.emitBinOp(dst, relOperator(e.Operator), e.Lhs, e.Rhs)
+		b.emitRelOp(dst, e)
 	case *ast.StringConcatOpExpr:
 		ops := b.flattenConcat(e)
 		b.emit(wir.Instruction{Op: wir.OpConcat, Dst: dst, List: b.body.AppendOperands(ops)})
@@ -1489,6 +1489,20 @@ func (b *builder) emitBinOp(dst wir.Operand, op wir.Operator, lhs, rhs ast.Expr)
 	a := b.lowerExpr(lhs)
 	c := b.lowerExpr(rhs)
 	b.emit(wir.Instruction{Op: wir.OpBinOp, Dst: dst, A: a, B: c, Operator: op})
+}
+
+func (b *builder) emitRelOp(dst wir.Operand, expr *ast.RelationalOpExpr) {
+	if expr == nil {
+		b.emitBinOp(dst, wir.BinEq, nil, nil)
+		return
+	}
+	a := b.lowerExpr(expr.Lhs)
+	c := b.lowerExpr(expr.Rhs)
+	inst := wir.Instruction{Op: wir.OpBinOp, Dst: dst, A: a, B: c, Operator: relOperator(expr.Operator)}
+	if check := branchcond.Normalize(expr, b.bindings); check.Kind != branchcond.CheckNone {
+		inst.Check = b.body.InternCheck(lowerCheck(check))
+	}
+	b.emit(inst)
 }
 
 func (b *builder) emitUnOp(dst wir.Operand, op wir.Operator, operand ast.Expr) {

@@ -114,7 +114,11 @@ func (b *Body) spellInstruction(inst Instruction) string {
 	case OpMakeTable:
 		return b.spellOperand(inst.Dst) + " = table [" + b.spellOperandList(inst.List) + "]"
 	case OpBinOp:
-		return b.spellOperand(inst.Dst) + " = " + operatorMnemonic(inst.Operator) + " " + b.spellOperand(inst.A) + " " + b.spellOperand(inst.B)
+		s := b.spellOperand(inst.Dst) + " = " + operatorMnemonic(inst.Operator) + " " + b.spellOperand(inst.A) + " " + b.spellOperand(inst.B)
+		if inst.Check != 0 {
+			s += " check[" + b.spellCheck(inst) + "]"
+		}
+		return s
 	case OpUnOp:
 		return b.spellOperand(inst.Dst) + " = " + operatorMnemonic(inst.Operator) + " " + b.spellOperand(inst.A)
 	case OpConcat:
