@@ -84,7 +84,7 @@ func (l *lowerer) callSiteWithArgumentSourcesAt(point cfg.Point, fact semantics.
 	if wirFlags, ok := l.callSiteFlagsFromWIR(point); ok {
 		flags = wirFlags
 	}
-	metadata := semanticCallSiteMetadata(fact)
+	metadata := callSiteMetadata{}
 	if wirMetadata, ok := l.callSiteMetadataFromWIR(point); ok {
 		metadata = wirMetadata
 	}
@@ -156,15 +156,6 @@ func semanticCallSiteFlags(fact semantics.CallFact) callSiteFlags {
 		expanded: fact.Expanded,
 		adjusted: fact.Adjusted,
 		openTail: fact.OpenTail,
-	}
-}
-
-func semanticCallSiteMetadata(fact semantics.CallFact) callSiteMetadata {
-	return callSiteMetadata{
-		callSpan:       sourceSpan(fact.CallSpan),
-		calleeSpan:     sourceSpan(fact.CalleeSpan),
-		argumentSpans:  sourceSpans(fact.ArgumentSpans),
-		argumentLabels: append([]string(nil), fact.ArgumentLabels...),
 	}
 }
 
@@ -494,22 +485,6 @@ func (l *lowerer) callCalleePathFromWIR(point cfg.Point) (path.Path, bool) {
 		return path.Path{}, false
 	}
 	return calleePath, true
-}
-
-func sourceSpans(in []semantics.SourceSpan) []factflow.SourceSpan {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]factflow.SourceSpan, len(in))
-	for i, span := range in {
-		out[i] = factflow.SourceSpan{
-			StartLine: span.StartLine,
-			StartCol:  span.StartCol,
-			EndLine:   span.EndLine,
-			EndCol:    span.EndCol,
-		}
-	}
-	return out
 }
 
 func callSiteContext(kind semantics.CallContextKind) factflow.CallSiteContext {
