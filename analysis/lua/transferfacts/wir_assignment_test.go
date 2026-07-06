@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
@@ -628,6 +630,33 @@ end`)
 	if got := ordinaryAssign.TargetPath(); !got.Equal(outPath) {
 		t.Fatalf("ordinary root assignment target = %s, want %s", got.String(), outPath.String())
 	}
+}
+
+func TestLowerWIRTableRootAssignmentPublishesExpressionSourceWithoutSemanticSidecars(t *testing.T) {
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function f(value: string): ()
+    local out = { name = value }
+end`)
+	body := wirlower.Lower("table-root-assignment-no-sidecars", fn.Stmts, bindings, built)
+	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	outPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "out")
+	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
+	assign, ok := facts.RootAssignment(point)
+	if !ok {
+		t.Fatalf("missing WIR no-sidecar table root assignment at point %d", point)
+	}
+	if got := assign.Kind(); got != factflow.RootAssignmentLocalDeclaration {
+		t.Fatalf("table root assignment kind = %v, want local declaration", got)
+	}
+	if got := assign.TargetPath(); !got.Equal(outPath) {
+		t.Fatalf("table root assignment target = %s, want %s", got.String(), outPath.String())
+	}
+	source := assign.Source()
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		t.Fatalf("table root assignment source = %#v, want expression source", source)
+	}
+	assertExpressionValue(t, facts, source.ExprRef, presence.Present(), runtimekind.Singleton(runtimekind.Table))
 }
 
 func assertWIRPathSource(t *testing.T, source factflow.ValueSource, want path.Path) {

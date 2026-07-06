@@ -35,15 +35,30 @@ func (l *lowerer) addRootAssignmentFromWIR(input *factflow.FactsInput, point cfg
 	if !ok || len(target.Segments) != 0 {
 		return
 	}
-	sourceOp, ok := inst.AssignmentSourceOperand()
-	if !ok {
-		return
-	}
-	source, ok := l.assignmentValueSourceFromWIROperand(point, sourceOp)
+	source, ok := l.rootAssignmentValueSourceFromWIR(point, inst)
 	if !ok {
 		return
 	}
 	input.RootAssignments[point] = factflow.NewRootAssignment(kind, target.Symbol, target, source)
+}
+
+func (l *lowerer) rootAssignmentValueSourceFromWIR(point cfg.Point, inst wir.Instruction) (factflow.ValueSource, bool) {
+	if sourceOp, ok := inst.AssignmentSourceOperand(); ok {
+		return l.assignmentValueSourceFromWIROperand(point, sourceOp)
+	}
+	switch inst.Op {
+	case wir.OpMakeTable:
+		return l.wirTableExpressionValueSource(
+			inst,
+			sourceprovenance.NoSourceIndex,
+			0,
+			true,
+			false,
+			false,
+		)
+	default:
+		return factflow.ValueSource{}, false
+	}
 }
 
 func rootAssignmentKindFromWIR(kind wir.AssignKind) (factflow.RootAssignmentKind, bool) {

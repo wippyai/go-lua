@@ -494,11 +494,18 @@ func (b *builder) markRootAssignKind(point cfg.Point, start int, dst wir.Operand
 	}
 	insts := b.pointInstrs[point]
 	for i := start; i < len(insts); i++ {
-		if _, ok := insts[i].AssignmentSourceOperand(); ok && insts[i].Dst == dst && insts[i].WritesAssignmentPoint() {
+		if rootAssignmentSourceInstruction(insts[i]) && insts[i].Dst == dst && insts[i].WritesAssignmentPoint() {
 			insts[i].Assign = kind
 		}
 	}
 	b.pointInstrs[point] = insts
+}
+
+func rootAssignmentSourceInstruction(inst wir.Instruction) bool {
+	if _, ok := inst.AssignmentSourceOperand(); ok {
+		return true
+	}
+	return inst.Op == wir.OpMakeTable
 }
 
 func (b *builder) emitBindingClaim(dst wir.Operand, v binding) {
