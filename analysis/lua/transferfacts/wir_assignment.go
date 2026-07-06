@@ -20,7 +20,40 @@ func (l *lowerer) addAssignmentWritesFromWIR(input *factflow.FactsInput, point c
 			l.addStaticMemberWriteFromWIR(input, point, inst)
 		case wir.OpDynamicIndexWrite:
 			l.addDynamicIndexWriteFromWIR(input, point, inst)
+		default:
+			l.addRootAssignmentFromWIR(input, point, inst)
 		}
+	}
+}
+
+func (l *lowerer) addRootAssignmentFromWIR(input *factflow.FactsInput, point cfg.Point, inst wir.Instruction) {
+	kind, ok := rootAssignmentKindFromWIR(inst.Assign)
+	if !ok {
+		return
+	}
+	target, ok := l.wirAssignmentPath(inst.Dst)
+	if !ok || len(target.Segments) != 0 {
+		return
+	}
+	sourceOp, ok := inst.AssignmentSourceOperand()
+	if !ok {
+		return
+	}
+	source, ok := l.assignmentValueSourceFromWIROperand(point, sourceOp)
+	if !ok {
+		return
+	}
+	input.RootAssignments[point] = factflow.NewRootAssignment(kind, target.Symbol, target, source)
+}
+
+func rootAssignmentKindFromWIR(kind wir.AssignKind) (factflow.RootAssignmentKind, bool) {
+	switch kind {
+	case wir.AssignLocalDeclaration:
+		return factflow.RootAssignmentLocalDeclaration, true
+	case wir.AssignOrdinaryRootWrite:
+		return factflow.RootAssignmentOrdinaryRootWrite, true
+	default:
+		return 0, false
 	}
 }
 

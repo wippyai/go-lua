@@ -132,6 +132,17 @@ const (
 	ClaimAssertsPredicate
 )
 
+// AssignKind records the syntactic origin of a root-path write. It is not a
+// value fact; transfer uses it to preserve the declaration-vs-reassignment
+// distinction without consulting assignment sidecars.
+type AssignKind uint8
+
+const (
+	AssignNone AssignKind = iota
+	AssignLocalDeclaration
+	AssignOrdinaryRootWrite
+)
+
 // OperandKind tags an operand's referenced pool. The zero value OperandNone is
 // an absent operand.
 type OperandKind uint8
@@ -242,10 +253,11 @@ type Instruction struct {
 	Operator Operator  // OpBinOp / OpUnOp / OpLogical selector
 	Iter     IterKind  // OpIterate numeric/generic
 	Claim    ClaimKind // OpClaim family
-	Type     TypeRef   // OpClaim target, OpMakeTable declared type, OpCall type receiver (0 = none)
-	Check    CheckRef  // OpBranch condition descriptor (0 = none)
-	Func     FuncRef   // OpClosure nested proto (0 = none)
-	Call     CallInfo  // OpCall shape
+	Assign   AssignKind
+	Type     TypeRef  // OpClaim target, OpMakeTable declared type, OpCall type receiver (0 = none)
+	Check    CheckRef // OpBranch condition descriptor (0 = none)
+	Func     FuncRef  // OpClosure nested proto (0 = none)
+	Call     CallInfo // OpCall shape
 	ExprID   ExpressionID
 
 	CallContext  CallContextKind

@@ -452,6 +452,9 @@ func (b *builder) addBindingClaim(out *binding, expr ast.Expr) {
 // instruction directly (a path or temp), keeping the compact `dst = op a b` form
 // for compound expressions.
 func (b *builder) bindInto(dst wir.Operand, v binding) {
+	point := b.curPoint
+	start := len(b.pointInstrs[point])
+	assignKind := b.rootAssignKind(dst, v)
 	switch v.kind {
 	case bindExpr:
 		b.lowerExprInto(dst, v.expr)
@@ -464,6 +467,38 @@ func (b *builder) bindInto(dst wir.Operand, v binding) {
 	default:
 		b.emitAssign(dst, b.constNil())
 	}
+	b.markRootAssignKind(point, start, dst, assignKind)
+}
+
+func (b *builder) rootAssignKind(dst wir.Operand, v binding) wir.AssignKind {
+	if dst.Kind != wir.OperandPath || b == nil || b.body == nil {
+		return wir.AssignNone
+	}
+	p := b.body.Path(wir.PathRef(dst.Ref))
+	if p.IsEmpty() || len(p.Segments) != 0 {
+		return wir.AssignNone
+	}
+	switch v.targetKind {
+	case wir.CallResultTargetLocalAssignment:
+		return wir.AssignLocalDeclaration
+	case wir.CallResultTargetOrdinaryAssignment:
+		return wir.AssignOrdinaryRootWrite
+	default:
+		return wir.AssignNone
+	}
+}
+
+func (b *builder) markRootAssignKind(point cfg.Point, start int, dst wir.Operand, kind wir.AssignKind) {
+	if kind == wir.AssignNone || dst.Kind != wir.OperandPath {
+		return
+	}
+	insts := b.pointInstrs[point]
+	for i := start; i < len(insts); i++ {
+		if _, ok := insts[i].AssignmentSourceOperand(); ok && insts[i].Dst == dst && insts[i].WritesAssignmentPoint() {
+			insts[i].Assign = kind
+		}
+	}
+	b.pointInstrs[point] = insts
 }
 
 func (b *builder) emitBindingClaim(dst wir.Operand, v binding) {

@@ -595,6 +595,41 @@ end`)
 	}
 }
 
+func TestLowerWIRRootAssignmentsPublishKindWithoutSemanticSidecars(t *testing.T) {
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function f(value: string): ()
+    local out = value
+    out = "updated"
+end`)
+	body := wirlower.Lower("root-assignment-no-sidecars", fn.Stmts, bindings, built)
+	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	outPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "out")
+	localPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
+	localAssign, ok := facts.RootAssignment(localPoint)
+	if !ok {
+		t.Fatalf("missing WIR no-sidecar local root assignment at point %d", localPoint)
+	}
+	if got := localAssign.Kind(); got != factflow.RootAssignmentLocalDeclaration {
+		t.Fatalf("local root assignment kind = %v, want local declaration", got)
+	}
+	if got := localAssign.TargetPath(); !got.Equal(outPath) {
+		t.Fatalf("local root assignment target = %s, want %s", got.String(), outPath.String())
+	}
+
+	ordinaryPoint := requireStmtPoints(t, built, fn.Stmts[1], 1)[0]
+	ordinaryAssign, ok := facts.RootAssignment(ordinaryPoint)
+	if !ok {
+		t.Fatalf("missing WIR no-sidecar ordinary root assignment at point %d", ordinaryPoint)
+	}
+	if got := ordinaryAssign.Kind(); got != factflow.RootAssignmentOrdinaryRootWrite {
+		t.Fatalf("ordinary root assignment kind = %v, want ordinary root write", got)
+	}
+	if got := ordinaryAssign.TargetPath(); !got.Equal(outPath) {
+		t.Fatalf("ordinary root assignment target = %s, want %s", got.String(), outPath.String())
+	}
+}
+
 func assertWIRPathSource(t *testing.T, source factflow.ValueSource, want path.Path) {
 	t.Helper()
 	if source.Kind != factflow.ValueSourcePath || source.PathKey != want.Key() || source.HasExpr || source.ExprRef != 0 {
