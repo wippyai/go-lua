@@ -60,7 +60,7 @@ func diagnosticProofContext() ProofContext {
 }
 
 func (ctx ProofContext) AssignmentDiagnostic(item judgment.Judgment, target string, sourceName string, got, want typ.Type, sourceSpan diagnostic.Span, expectedDisplay string) assignmentDiagnosticPresentation {
-	underSuppliedDetail, underSupplied := assignmentJudgmentUnderSuppliedCallResultDetail(item)
+	underSuppliedDetail, underSupplied := item.AssignmentUnderSuppliedCallResultDetail()
 	declSpan := diagnosticEvidenceSpanOrPrimary(item, judgment.EvidenceUserAssertion)
 	evidenceSourceName := sourceName
 	if evidenceSourceName == "" {
@@ -279,7 +279,7 @@ func (ctx ProofContext) AssignmentCallResult(item judgment.Judgment, detail judg
 }
 
 func (ctx ProofContext) AssignmentCallResultForItem(item judgment.Judgment, got, want typ.Type, callSpan diagnostic.Span) (assignmentCallResultPresentation, bool) {
-	detail, ok := assignmentJudgmentCallResultDetail(item)
+	detail, ok := item.AssignmentCallResultDetail()
 	if !ok || detail.UnderSupplied || !assignmentJudgmentHasCallResultReturnSpan(item) {
 		return assignmentCallResultPresentation{}, false
 	}
@@ -322,19 +322,11 @@ func (ProofContext) OptionalAssignmentTarget(item judgment.Judgment, targetSpan 
 	}
 }
 
-func assignmentJudgmentCallResultDetail(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
-	return item.AssignmentCallResultDetail()
-}
-
 func callResultSubject(index int) string {
 	if index >= 0 {
 		return fmt.Sprintf("call result %d", index+1)
 	}
 	return "call result"
-}
-
-func assignmentJudgmentUnderSuppliedCallResultDetail(item judgment.Judgment) (judgment.EvidenceDetail, bool) {
-	return item.AssignmentUnderSuppliedCallResultDetail()
 }
 
 func assignmentJudgmentCallResultReturnSpan(item judgment.Judgment) (diagnostic.Span, bool) {
