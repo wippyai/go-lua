@@ -1,0 +1,33 @@
+{
+  "description": "Channel identity narrowing must not reuse an alias after that local is reassigned to another channel.",
+  "packages": ["channel"],
+  "check": {
+    "skip": "pending: channel identity alias invalidation after local reassignment",
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 13,
+        "column": 34,
+        "severity": "error",
+        "code": "type.member.missing",
+        "message_contains": [
+          "has no member",
+          "id"
+        ],
+        "min_evidence": 1,
+        "evidence_contains": [
+          "id"
+        ],
+        "help_contains": [
+          "Check that the value has this member"
+        ],
+        "label_contains": [
+          "member access"
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "checker-only pending channel identity alias invalidation fixture"
+  }
+}

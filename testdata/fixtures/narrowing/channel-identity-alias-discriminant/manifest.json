@@ -1,0 +1,4 @@
+{
+  "description": "Channel identity narrowing survives a local alias of the selected channel reference.",
+  "packages": ["channel"]
+}

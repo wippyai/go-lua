@@ -1,0 +1,4 @@
+{
+  "description": "Real channel.select over two typed channels narrows selected.value to the matching channel payload in each branch.",
+  "packages": ["channel"]
+}

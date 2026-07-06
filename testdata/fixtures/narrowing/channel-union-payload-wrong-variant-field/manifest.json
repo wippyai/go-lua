@@ -1,0 +1,34 @@
+{
+  "description": "After channel identity and kind-tag guards, reading a field from the wrong payload variant remains an error.",
+  "packages": ["channel"],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 14,
+        "column": 36,
+        "severity": "error",
+        "code": "type.member.missing",
+        "message_contains": [
+          "has no member",
+          "reason"
+        ],
+        "min_evidence": 1,
+        "evidence_contains": [
+          "event.reason reads member \"reason\""
+        ],
+        "help_contains": [
+          "Narrow the receiver before reading `reason`"
+        ],
+        "label_contains": [
+          "member read"
+        ],
+        "render_contains": [
+          "error[type.member.missing]",
+          "event.reason",
+          "has no member \"reason\""
+        ]
+      }
+    ]
+  }
+}
