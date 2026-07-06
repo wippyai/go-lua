@@ -16,6 +16,7 @@ type ProofContext struct{}
 type assignmentProofPresentation struct {
 	Evidence                []diagnostic.Evidence
 	DynamicTarget           bool
+	MissingProof            bool
 	MissingNilProof         bool
 	PrecisionBoundary       bool
 	IndexedReadMissingProof bool
@@ -153,9 +154,10 @@ func (ProofContext) AssignmentProof(item judgment.Judgment, sourceName string, g
 	return assignmentProofPresentation{
 		Evidence:                evidence,
 		DynamicTarget:           proof.DynamicTarget,
+		MissingProof:            proof.MissingProof,
 		MissingNilProof:         proof.MayBeNil,
 		PrecisionBoundary:       proof.PrecisionBoundary,
-		IndexedReadMissingProof: indexedReadHasMissingProof(evidence),
+		IndexedReadMissingProof: proof.IndexedRead,
 	}
 }
 
@@ -456,7 +458,7 @@ func (p assignmentProofPresentation) Help(sourceName string, got typ.Type) strin
 func (p assignmentProofPresentation) NeedsNilGuardHelp(got typ.Type) bool {
 	return p.MissingNilProof &&
 		(!typ.Nil.Equals(got) || p.IndexedReadMissingProof) &&
-		evidenceHasKind(p.Evidence, diagnostic.EvidenceMissingProof)
+		p.MissingProof
 }
 
 func (p assignmentProofPresentation) SourceEvidence(sourceName string, got typ.Type, fallback string) string {
@@ -467,7 +469,7 @@ func (p assignmentProofPresentation) SourceEvidence(sourceName string, got typ.T
 }
 
 func (p assignmentProofPresentation) sameRenderedTypeNeedsValidationProof(got, want typ.Type) bool {
-	return typ.TypeEquals(got, want) && evidenceHasKind(p.Evidence, diagnostic.EvidencePrecisionBoundary)
+	return typ.TypeEquals(got, want) && p.PrecisionBoundary
 }
 
 func assignmentProofEvidence(item judgment.Judgment, proof judgment.AssignmentProofSummary, sourceName string, got, want typ.Type, sourceSpan diagnostic.Span) []diagnostic.Evidence {
@@ -538,16 +540,6 @@ func assignmentProofEvidence(item judgment.Judgment, proof judgment.AssignmentPr
 func evidenceHasKind(items []diagnostic.Evidence, kind diagnostic.EvidenceKind) bool {
 	for _, item := range items {
 		if item.Kind == kind {
-			return true
-		}
-	}
-	return false
-}
-
-func indexedReadHasMissingProof(items []diagnostic.Evidence) bool {
-	for _, item := range items {
-		if item.Kind == diagnostic.EvidenceMissingProof &&
-			item.Reason == diagnostic.EvidenceReasonIndexReadValidationMissing {
 			return true
 		}
 	}

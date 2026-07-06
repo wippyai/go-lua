@@ -5,6 +5,7 @@ package judgment
 // user-visible proof categories, so renderers do not independently interpret
 // the judgment evidence chain.
 type AssignmentProofSummary struct {
+	MissingProof      bool
 	MayBeNil          bool
 	IndexedRead       bool
 	CallResult        bool
@@ -45,6 +46,7 @@ func (s AssignmentProofSummary) BoundaryProofMissing() bool {
 // assignment judgment.
 func (j Judgment) AssignmentProof() AssignmentProofSummary {
 	return AssignmentProofSummary{
+		MissingProof:      j.HasEvidence(EvidenceMissingProof),
 		MayBeNil:          j.AssignmentMissingProofMayBeNil(),
 		IndexedRead:       j.AssignmentMissingProofIndexedRead(),
 		CallResult:        j.HasEvidenceDetail(EvidenceDetailCallResultAssignment),

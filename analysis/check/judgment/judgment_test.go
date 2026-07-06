@@ -169,12 +169,13 @@ func TestAssignmentProofQueriesUseStructuredEvidence(t *testing.T) {
 		t.Fatal("AssignmentMissingProofIndexedRead = false, want true")
 	}
 	summary := j.AssignmentProof()
-	if !summary.IndexedRead ||
+	if !summary.MissingProof ||
+		!summary.IndexedRead ||
 		!summary.MayBeNil ||
 		!summary.CallInvalidated ||
 		!summary.DynamicTarget ||
 		!summary.CallResult {
-		t.Fatalf("AssignmentProof = %#v, want indexed/nil/invalidation/dynamic/call-result summary", summary)
+		t.Fatalf("AssignmentProof = %#v, want missing/indexed/nil/invalidation/dynamic/call-result summary", summary)
 	}
 	if summary.Reason() != AssignmentProofReasonIndexedRead {
 		t.Fatalf("AssignmentProof.Reason = %v, want indexed read", summary.Reason())
