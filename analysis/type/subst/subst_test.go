@@ -244,6 +244,69 @@ func TestParams(t *testing.T) {
 			t.Fatalf("Result.outer = %v, want rewritten outer string", outerField)
 		}
 	})
+
+	t.Run("expands wrapper without corrupting instantiated result binder", func(t *testing.T) {
+		outer := typ.NewTypeParam("T", nil)
+		resultParam := typ.NewTypeParam("U", nil)
+		resultGeneric := typ.NewGeneric("Result", []*typ.TypeParam{resultParam}, typetable.NewRecord().
+			Field("ok", typ.Boolean).
+			Field("value", resultParam).
+			Build())
+		callbackParam := typ.NewTypeParam("U", nil)
+		callback := typ.Func().
+			TypeParamRef(callbackParam).
+			Param("input", outer).
+			Returns(typ.Instantiate(resultGeneric, callbackParam)).
+			Build()
+		wrapper := typ.NewGeneric("Wrapper", []*typ.TypeParam{outer}, typetable.NewRecord().
+			Field("payload", outer).
+			Field("callback", callback).
+			Field("result", typ.Instantiate(resultGeneric, outer)).
+			Build())
+
+		expanded := ExpandInstantiated(typ.Instantiate(wrapper, typ.String))
+		expandedRecord, ok := expanded.(*typ.Record)
+		if !ok {
+			t.Fatalf("expanded = %T %[1]v, want record", expanded)
+		}
+		if field := expandedRecord.GetField("payload"); field == nil || field.Type != typ.String {
+			t.Fatalf("payload field = %v, want string", field)
+		}
+		callbackField := expandedRecord.GetField("callback")
+		if callbackField == nil {
+			t.Fatal("missing callback field")
+		}
+		expandedCallback, ok := callbackField.Type.(*typ.Function)
+		if !ok {
+			t.Fatalf("callback field = %T %[1]v, want function", callbackField.Type)
+		}
+		if len(expandedCallback.TypeParams) != 1 || expandedCallback.TypeParams[0] != callbackParam {
+			t.Fatalf("callback binder changed/captured: %#v, want original U binder", expandedCallback.TypeParams)
+		}
+		if expandedCallback.Params[0].Type != typ.String {
+			t.Fatalf("callback input = %v, want substituted outer string", expandedCallback.Params[0].Type)
+		}
+		callbackReturn, ok := expandedCallback.Returns[0].(*typ.Record)
+		if !ok {
+			t.Fatalf("callback return = %T %[1]v, want expanded Result<U> record", expandedCallback.Returns[0])
+		}
+		callbackValue := callbackReturn.GetField("value")
+		if callbackValue == nil || callbackValue.Type != callbackParam {
+			t.Fatalf("callback return value = %v, want callback U binder", callbackValue)
+		}
+		resultField := expandedRecord.GetField("result")
+		if resultField == nil {
+			t.Fatal("missing result field")
+		}
+		resultRecord, ok := resultField.Type.(*typ.Record)
+		if !ok {
+			t.Fatalf("result field = %T %[1]v, want expanded Result<string> record", resultField.Type)
+		}
+		resultValue := resultRecord.GetField("value")
+		if resultValue == nil || resultValue.Type != typ.String {
+			t.Fatalf("result field value = %v, want string", resultValue)
+		}
+	})
 }
 
 func TestSelf(t *testing.T) {

@@ -635,6 +635,64 @@ func TestRewrite_GenericDescentRewritesOuterParamWithoutCapturingNestedBinder(t 
 	}
 }
 
+func TestRewrite_GenericDescentPreservesInstantiatedResultOwnedBinder(t *testing.T) {
+	outer := typ.NewTypeParam("T", nil)
+	resultParam := typ.NewTypeParam("U", nil)
+	result := typ.NewGeneric("Result", []*typ.TypeParam{resultParam}, newRecord().
+		Field("ok", typ.Boolean).
+		Field("value", resultParam).
+		Build())
+	callbackParam := typ.NewTypeParam("U", nil)
+	callback := typ.Func().
+		TypeParamRef(callbackParam).
+		Param("input", outer).
+		Returns(typ.Instantiate(result, callbackParam)).
+		Build()
+	container := newRecord().
+		Field("source", outer).
+		Field("callback", callback).
+		Build()
+
+	got := Rewrite(container, func(node typ.Type) (typ.Type, bool) {
+		if node == outer {
+			return typ.String, true
+		}
+		return nil, false
+	})
+	body, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("rewrite result = %T, want record", got)
+	}
+	source := body.GetField("source")
+	if source == nil || source.Type != typ.String {
+		t.Fatalf("source field = %v, want substituted string", source)
+	}
+	callbackField := body.GetField("callback")
+	if callbackField == nil {
+		t.Fatal("missing callback field")
+	}
+	gotCallback, ok := callbackField.Type.(*typ.Function)
+	if !ok {
+		t.Fatalf("callback field = %T %[1]v, want function", callbackField.Type)
+	}
+	if len(gotCallback.TypeParams) != 1 || gotCallback.TypeParams[0] != callbackParam {
+		t.Fatalf("callback binder changed/captured: %#v, want original U binder", gotCallback.TypeParams)
+	}
+	if gotCallback.Params[0].Type != typ.String {
+		t.Fatalf("callback input = %v, want substituted outer string", gotCallback.Params[0].Type)
+	}
+	gotReturn, ok := gotCallback.Returns[0].(*typ.Instantiated)
+	if !ok {
+		t.Fatalf("callback return = %T %[1]v, want Result<U>", gotCallback.Returns[0])
+	}
+	if gotReturn.Generic != result {
+		t.Fatalf("callback return generic = %v, want Result", gotReturn.Generic)
+	}
+	if len(gotReturn.TypeArgs) != 1 || gotReturn.TypeArgs[0] != callbackParam {
+		t.Fatalf("callback return args = %#v, want owned U binder", gotReturn.TypeArgs)
+	}
+}
+
 func TestRewrite_FunctionDescentDoesNotCaptureNestedSameNameBinder(t *testing.T) {
 	outer := typ.NewTypeParam("T", nil)
 	inner := typ.NewTypeParam("T", nil)
