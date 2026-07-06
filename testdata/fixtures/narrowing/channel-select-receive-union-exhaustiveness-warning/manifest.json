@@ -1,0 +1,44 @@
+{
+  "description": "A channel.select receive handler that narrows to a union payload must still report a missing payload variant in the nested handler chain.",
+  "packages": ["channel"],
+  "check": {
+    "diagnostic_rules": [
+      {
+        "code": "lint.union.exhaustiveness",
+        "enabled": true,
+        "severity": "warning"
+      }
+    ],
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 15,
+        "column": 12,
+        "severity": "warning",
+        "code": "lint.union.exhaustiveness",
+        "message_contains": [
+          "discriminated union handling is not exhaustive",
+          "event.kind == \"canceled\""
+        ],
+        "min_evidence": 5,
+        "evidence_contains": [
+          "branch chain checks discriminant `event.kind`",
+          "handled cases: `event.kind == \"failed\"`, `event.kind == \"ready\"`",
+          "missing cases: `event.kind == \"canceled\"`",
+          "no default branch handles the remaining union cases"
+        ],
+        "help_contains": [
+          "Handle each missing case"
+        ],
+        "label_contains": [
+          "union case check"
+        ],
+        "render_contains": [
+          "warning[lint.union.exhaustiveness]",
+          "event.kind == \"canceled\"",
+          "if event.kind == \"ready\" then"
+        ]
+      }
+    ]
+  }
+}
