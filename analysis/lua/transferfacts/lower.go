@@ -252,7 +252,9 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 					argumentSources = site.ArgumentSources()
 				}
 				for index, source := range fact.ArgumentSources {
-					l.addCallArgumentAssertionRefinements(&input, point, index, valueSourceAt(argumentSources, index), source)
+					if l.wir == nil {
+						l.addCallArgumentAssertionRefinements(&input, point, index, valueSourceAt(argumentSources, index), source)
+					}
 					l.addObjectLiteral(&input, result, source)
 				}
 				if l.wir == nil {
