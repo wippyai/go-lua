@@ -42,7 +42,7 @@ func (l *lowerer) branchConditionSourceAtWIR(point cfg.Point) (factflow.ValueSou
 		if inst.Op != wir.OpBranch || inst.A.Kind == wir.OperandNone {
 			continue
 		}
-		return l.valueSourceFromWIROperand(
+		source, ok := l.valueSourceFromWIROperand(
 			inst.A,
 			0,
 			sourceprovenance.NoSourceIndex,
@@ -51,6 +51,10 @@ func (l *lowerer) branchConditionSourceAtWIR(point cfg.Point) (factflow.ValueSou
 			false,
 			l.resultValueSourcesByTempFromWIR(),
 		)
+		if ok {
+			source.Adjusted = false
+		}
+		return source, ok
 	}
 	return factflow.ValueSource{}, false
 }

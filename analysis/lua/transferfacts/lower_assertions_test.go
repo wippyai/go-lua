@@ -605,6 +605,31 @@ if x :: number then end
 	}
 }
 
+func TestLowerWIRClaimConditionPublishesRefinementWithoutSemanticSidecar(t *testing.T) {
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
+local x: any = 0
+if x as number then end
+`)
+	body := wirlower.Lower("claim-condition-no-sidecar", stmts, bindings, built)
+	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	point := requireStmtPoints(t, built, stmts[1], 1)[0]
+	if got := facts.BranchRefinements(point); len(got) != 0 {
+		t.Fatalf("WIR claim condition emitted branch refinements at point %d: %#v", point, got)
+	}
+	source, ok := facts.BranchConditionSource(point)
+	if !ok {
+		t.Fatalf("WIR claim condition missing condition source at point %d", point)
+	}
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		t.Fatalf("WIR claim condition source = %#v, want expression-backed source", source)
+	}
+	if source.Adjusted {
+		t.Fatalf("WIR claim condition source = %#v, want unadjusted branch-condition source", source)
+	}
+	assertWIRConcreteCastAssertion(t, facts, source, typ.Number, factflow.ValueSourcePath)
+}
+
 func TestLowerParsedAnyClaimCastsMarkUntrustedTop(t *testing.T) {
 	stmts, _, built, result := parseSemanticChunk(t, `
 local x = 0
