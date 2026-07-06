@@ -693,6 +693,69 @@ func TestRewrite_GenericDescentPreservesInstantiatedResultOwnedBinder(t *testing
 	}
 }
 
+func TestRewrite_InstantiatedGenericPreservesOwnedSameNameBinder(t *testing.T) {
+	outer := typ.NewTypeParam("T", nil)
+	resultParam := typ.NewTypeParam("T", nil)
+	result := typ.NewGeneric("Result", []*typ.TypeParam{resultParam}, newRecord().
+		Field("ok", typ.Boolean).
+		Field("value", resultParam).
+		Build())
+	callbackParam := typ.NewTypeParam("U", nil)
+	callback := typ.Func().
+		TypeParamRef(callbackParam).
+		Param("input", outer).
+		Returns(typ.Instantiate(result, callbackParam)).
+		Build()
+	container := newRecord().
+		Field("source", outer).
+		Field("callback", callback).
+		Build()
+
+	got := Rewrite(container, func(node typ.Type) (typ.Type, bool) {
+		if tp, ok := node.(*typ.TypeParam); ok && tp.Name == "T" {
+			return typ.String, true
+		}
+		return nil, false
+	})
+	body, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("rewrite result = %T, want record", got)
+	}
+	source := body.GetField("source")
+	if source == nil || source.Type != typ.String {
+		t.Fatalf("source field = %v, want substituted string", source)
+	}
+	callbackField := body.GetField("callback")
+	if callbackField == nil {
+		t.Fatal("missing callback field")
+	}
+	gotCallback, ok := callbackField.Type.(*typ.Function)
+	if !ok {
+		t.Fatalf("callback field = %T %[1]v, want function", callbackField.Type)
+	}
+	gotReturn, ok := gotCallback.Returns[0].(*typ.Instantiated)
+	if !ok {
+		t.Fatalf("callback return = %T %[1]v, want Result<U>", gotCallback.Returns[0])
+	}
+	if gotReturn.Generic != result {
+		t.Fatalf("callback return generic = %v, want original Result", gotReturn.Generic)
+	}
+	if len(result.TypeParams) != 1 || result.TypeParams[0] != resultParam {
+		t.Fatalf("Result binder changed/captured: %#v, want original same-name binder", result.TypeParams)
+	}
+	resultBody, ok := result.Body.(*typ.Record)
+	if !ok {
+		t.Fatalf("Result body = %T, want record", result.Body)
+	}
+	value := resultBody.GetField("value")
+	if value == nil || value.Type != resultParam {
+		t.Fatalf("Result.value = %v, want original same-name binder", value)
+	}
+	if len(gotReturn.TypeArgs) != 1 || gotReturn.TypeArgs[0] != callbackParam {
+		t.Fatalf("callback return args = %#v, want callback U binder", gotReturn.TypeArgs)
+	}
+}
+
 func TestRewrite_GenericDescentRewritesOwnedBinderConstraintAndReturnUseTogether(t *testing.T) {
 	outer := typ.NewTypeParam("T", nil)
 	resultParam := typ.NewTypeParam("U", nil)
