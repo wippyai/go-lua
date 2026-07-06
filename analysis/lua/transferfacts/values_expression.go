@@ -147,6 +147,9 @@ func (l *lowerer) addExpressionValue(ref factflow.ExprRef, expr ast.Expr) {
 	if l.expressionValues == nil {
 		l.expressionValues = make(map[factflow.ExprRef]product.Value)
 	}
+	if _, exists := l.expressionValues[ref]; exists {
+		return
+	}
 	l.expressionValues[ref] = value
 }
 

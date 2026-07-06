@@ -267,6 +267,32 @@ local t = {
 	}
 }
 
+func TestTableConstructorCarriesDeclaredType(t *testing.T) {
+	body := lowerBody(t, `
+type Context = {[string]: any}
+local ctx: Context = {}
+`)
+	var inst wir.Instruction
+	for i := 0; i < body.Len(); i++ {
+		candidate := body.Instr(i)
+		if candidate.Op == wir.OpMakeTable {
+			inst = candidate
+			break
+		}
+	}
+	if inst.Op != wir.OpMakeTable {
+		t.Fatal("missing OpMakeTable")
+	}
+	if inst.Type == 0 {
+		t.Fatal("OpMakeTable missing declared type")
+	}
+	got := body.Type(inst.Type)
+	want := typ.NewMap(typ.String, typ.Any)
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("OpMakeTable declared type = %v, want %v", got, want)
+	}
+}
+
 func TestCallCarriesSourceMetadata(t *testing.T) {
 	body := lowerBody(t, `
 local value = "x"

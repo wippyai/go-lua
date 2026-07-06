@@ -816,7 +816,9 @@ func (l *lowerer) tableExpressionValueSource(
 	if l.expressionValues == nil {
 		l.expressionValues = make(map[factflow.ExprRef]product.Value)
 	}
-	l.expressionValues[exprRef] = value
+	if _, exists := l.expressionValues[exprRef]; !exists {
+		l.expressionValues[exprRef] = value
+	}
 	shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, openTail)
 	if !ok {
 		return factflow.ValueSource{}, false

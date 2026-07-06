@@ -284,14 +284,19 @@ func (b *builder) lowerLocalAssign(s *ast.LocalAssignStmt) {
 	for i := range s.Names {
 		b.curPoint = assignPoints[i]
 		dst := b.localPath(s, i)
-		b.bindInto(dst, values[i].withTarget(wir.CallResultTargetLocalAssignment, i))
+		var declared wir.TypeRef
 		if i < len(s.Types) && s.Types[i] != nil {
+			declared = b.internType(s.Types[i])
+			values[i] = values[i].withContextType(declared)
+		}
+		b.bindInto(dst, values[i].withTarget(wir.CallResultTargetLocalAssignment, i))
+		if declared != 0 {
 			b.emit(wir.Instruction{
 				Op:    wir.OpClaim,
 				Dst:   dst,
 				A:     dst,
 				Claim: wir.ClaimAnnotation,
-				Type:  b.internType(s.Types[i]),
+				Type:  declared,
 			})
 		}
 	}
@@ -375,11 +380,18 @@ type binding struct {
 
 	claim     wir.ClaimKind
 	claimType wir.TypeRef
+
+	contextType wir.TypeRef
 }
 
 func (v binding) withTarget(kind wir.CallResultTargetKind, index int) binding {
 	v.targetKind = kind
 	v.targetIndex = index
+	return v
+}
+
+func (v binding) withContextType(t wir.TypeRef) binding {
+	v.contextType = t
 	return v
 }
 
@@ -464,6 +476,7 @@ func (b *builder) bindInto(dst wir.Operand, v binding) {
 	switch v.kind {
 	case bindExpr:
 		b.lowerExprInto(dst, v.expr)
+		b.attachContextTypeToConstructors(point, start, v.expr, v.contextType)
 	case bindOperand:
 		b.emitAssign(dst, v.op)
 		b.emitBindingClaim(dst, v)
@@ -474,6 +487,46 @@ func (b *builder) bindInto(dst wir.Operand, v binding) {
 		b.emitAssign(dst, b.constNil())
 	}
 	b.markRootAssignKind(point, start, dst, assignKind)
+}
+
+func (b *builder) attachContextTypeToConstructors(point cfg.Point, start int, expr ast.Expr, typeref wir.TypeRef) {
+	if typeref == 0 || expr == nil {
+		return
+	}
+	inner := sourceprovenance.AssertionInner(expr)
+	switch e := inner.(type) {
+	case *ast.TableExpr:
+		b.setTableConstructorType(point, start, expressionid.Of(e), typeref)
+	case *ast.LogicalOpExpr:
+		if !b.logicalRHSPure(e.Rhs) {
+			if guard, hasGuard := b.guardByCond[e.Lhs]; hasGuard {
+				b.attachContextTypeToConstructors(guard, 0, e.Lhs, typeref)
+			}
+			if anchor, hasAnchor := b.rhsAnchorPoint(e.Rhs); hasAnchor {
+				b.attachContextTypeToConstructors(anchor, 0, e.Rhs, typeref)
+			}
+			return
+		}
+		b.attachContextTypeToConstructors(point, start, e.Lhs, typeref)
+		b.attachContextTypeToConstructors(point, start, e.Rhs, typeref)
+	case *ast.CastExpr:
+		b.attachContextTypeToConstructors(point, start, e.Expr, typeref)
+	case *ast.NonNilAssertExpr:
+		b.attachContextTypeToConstructors(point, start, e.Expr, typeref)
+	}
+}
+
+func (b *builder) setTableConstructorType(point cfg.Point, start int, id wir.ExpressionID, typeref wir.TypeRef) {
+	if id == 0 || typeref == 0 {
+		return
+	}
+	insts := b.pointInstrs[point]
+	for i := start; i < len(insts); i++ {
+		if insts[i].Op == wir.OpMakeTable && insts[i].ExprID == id {
+			insts[i].Type = typeref
+		}
+	}
+	b.pointInstrs[point] = insts
 }
 
 func (b *builder) rootAssignKind(dst wir.Operand, v binding) wir.AssignKind {

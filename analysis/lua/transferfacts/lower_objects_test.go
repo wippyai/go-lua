@@ -338,6 +338,48 @@ local box: Box = { items = {}, label = "" }
 	}
 }
 
+func TestLowerWIRObjectLiteralCarriesDeclaredEntryContractWithoutSemanticResult(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
+type Box = { items: {[string]: string}, label: string }
+local box: Box = { items = {}, label = "" }
+`)
+	body := wirlower.Lower("chunk-no-sidecars", stmts, bindings, built)
+	facts := Lower(nil, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	point := requireStmtPoints(t, built, stmts[1], 1)[0]
+	source := mustLocalSource(t, facts, point)
+	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing WIR object literal for source ref %d", source.ExprRef)
+	}
+	entries := literal.Entries()
+	if len(entries) != 2 {
+		t.Fatalf("WIR literal entries = %#v, want items and label", entries)
+	}
+	expected, ok := entries[0].Expected()
+	if !ok {
+		t.Fatalf("WIR object literal entry %s missing declared contract without semantic sidecars", entries[0].Suffix().String())
+	}
+	got, ok := typevalue.TypeOf(reg, expected)
+	want := typ.NewMap(typ.String, typ.String)
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("WIR entry expected type = %v/%v, want %v", got, ok, want)
+	}
+	nestedSource := entries[0].Source()
+	nested, ok := facts.ObjectLiteral(nestedSource.ExprRef)
+	if !ok {
+		t.Fatalf("missing nested WIR object literal for entry source ref %d", nestedSource.ExprRef)
+	}
+	nestedExpected, ok := nested.Expected()
+	if !ok {
+		t.Fatalf("nested WIR object literal missing declared contract without semantic sidecars")
+	}
+	nestedType, ok := typevalue.TypeOf(reg, nestedExpected)
+	if !ok || !typ.TypeEquals(nestedType, want) {
+		t.Fatalf("nested WIR expected type = %v/%v, want %v", nestedType, ok, want)
+	}
+}
+
 func TestLowerWIRContextualObjectLiteralExpressionValueUsesExpectedType(t *testing.T) {
 	reg := standard.Registry()
 	stmts, bindings, built, result := parseSemanticChunk(t, `
@@ -363,6 +405,43 @@ local user_ctx: Context = input.context or {}
 	}
 	if _, ok := literal.Expected(); !ok {
 		t.Fatalf("WIR fallback object literal missing expected contract")
+	}
+	value, ok := facts.ExpressionValue(right.ExprRef)
+	if !ok {
+		t.Fatalf("missing WIR fallback expression value for ref %d", right.ExprRef)
+	}
+	got, ok := typevalue.TypeOf(reg, value)
+	want := typ.NewMap(typ.String, typ.Any)
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("WIR fallback expression type = %v/%v, want %v", got, ok, want)
+	}
+}
+
+func TestLowerWIRContextualObjectLiteralExpressionValueUsesExpectedTypeWithoutSemanticResult(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
+type Context = {[string]: any}
+local input: { context: Context? } = { context = nil }
+local user_ctx: Context = input.context or {}
+`)
+	body := wirlower.Lower("chunk-no-sidecars", stmts, bindings, built)
+	facts := Lower(nil, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	point := requireStmtPoints(t, built, stmts[2], 1)[0]
+	source := mustLocalSource(t, facts, point)
+	op, ok := facts.ExpressionOperation(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing logical expression operation for source ref %d", source.ExprRef)
+	}
+	right := op.Right()
+	if right.Kind != factflow.ValueSourceExpression || !right.HasExpr {
+		t.Fatalf("logical fallback source = %#v, want expression source", right)
+	}
+	literal, ok := facts.ObjectLiteral(right.ExprRef)
+	if !ok {
+		t.Fatalf("missing WIR fallback object literal for ref %d", right.ExprRef)
+	}
+	if _, ok := literal.Expected(); !ok {
+		t.Fatalf("WIR fallback object literal missing expected contract without semantic sidecars")
 	}
 	value, ok := facts.ExpressionValue(right.ExprRef)
 	if !ok {

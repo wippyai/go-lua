@@ -117,7 +117,7 @@ func (l *lowerer) addObjectLiteralFromWIR(input *factflow.FactsInput, inst wir.I
 	}
 	lowered := factflow.NewObjectLiteral(l.objectLiteralEntriesFromWIR(inst)).
 		WithIdentity(identity.LuaTableLiteral(l.graphID, uint64(exprRef)))
-	if expected, ok := l.objectLiteralCastExpectedType(expr); ok {
+	if expected, ok := l.wirObjectLiteralExpectedType(inst, expr); ok {
 		lowered = l.objectLiteralWithExpectedType(lowered, expected)
 	}
 	if input.ObjectLiterals == nil {
@@ -125,6 +125,10 @@ func (l *lowerer) addObjectLiteralFromWIR(input *factflow.FactsInput, inst wir.I
 	}
 	input.ObjectLiterals[exprRef] = lowered
 	l.addNestedObjectLiteralsFromWIR(input, inst)
+	if expected, ok := l.wirObjectLiteralExpectedType(inst, expr); ok {
+		l.setObjectLiteralExpectedExpressionValue(exprRef, lowered, expected)
+		l.addNestedObjectLiteralExpectedTypes(input, lowered, expected)
+	}
 }
 
 func (l *lowerer) addObjectLiteralsFromWIR(input *factflow.FactsInput) {
@@ -260,6 +264,20 @@ func (l *lowerer) objectLiteralCastExpectedType(expr ast.Expr) (typ.Type, bool) 
 	}
 	expected, ok := l.resolveType(cast.Type)
 	if !ok || expected == nil || !luatypeprojection.ReachesTableContract(expected) {
+		return nil, false
+	}
+	return expected, true
+}
+
+func (l *lowerer) wirObjectLiteralExpectedType(inst wir.Instruction, expr ast.Expr) (typ.Type, bool) {
+	if expected, ok := l.objectLiteralCastExpectedType(expr); ok {
+		return expected, true
+	}
+	if l == nil || l.wir == nil || inst.Type == 0 {
+		return nil, false
+	}
+	expected := l.wir.Type(inst.Type)
+	if expected == nil || !luatypeprojection.ReachesTableContract(expected) {
 		return nil, false
 	}
 	return expected, true
