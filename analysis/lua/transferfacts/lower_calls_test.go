@@ -15,7 +15,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
-	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
@@ -1041,7 +1040,7 @@ end
 }
 
 func TestLowerMethodCallReceiverSourceDoesNotRequireSemanticReceiverSource(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): ()
     local obj = { run = function(self) end }
     local other = { run = function(self) end }
@@ -1053,12 +1052,6 @@ end
 		t.Fatalf("stmt = %T, want call statement", fn.Stmts[2])
 	}
 	points := requireStmtPoints(t, built, stmt, 1)
-	fact, ok := result.Call(points[0])
-	if !ok {
-		t.Fatalf("missing semantic call fact at point %d", points[0])
-	}
-	fact.HasReceiverSource = false
-	fact.ReceiverSource = sourceprovenance.ASTSource{}
 
 	otherPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "other")
 	body := wir.NewBody("synthetic-method-receiver-no-sidecar")
@@ -1078,7 +1071,10 @@ end
 		exprs:           make(map[any]factflow.ExprRef),
 		expressionPaths: make(map[factflow.ExprRef]path.Path),
 	}
-	site := l.callSiteWithArgumentSourcesAt(points[0], fact, nil)
+	site, ok := l.callSiteFromWIR(points[0])
+	if !ok {
+		t.Fatalf("missing WIR call site at point %d", points[0])
+	}
 	receiverSource, ok := site.ReceiverSource()
 	if !ok || receiverSource.Kind != factflow.ValueSourcePath || receiverSource.PathKey != otherPath.Key() {
 		t.Fatalf("receiver source = %#v/%v, want WIR path source %v without semantic receiver source", receiverSource, ok, otherPath)
@@ -1145,7 +1141,10 @@ end
 		wir:      body,
 		exprs:    make(map[any]factflow.ExprRef),
 	}
-	site := l.callSiteWithArgumentSourcesAt(point, fact, nil)
+	site, ok := l.callSiteFromWIR(point)
+	if !ok {
+		t.Fatalf("missing WIR call site at point %d", point)
+	}
 	if site.Context() != factflow.CallSiteContextReturnSource || site.ExprIndex() != 9 {
 		t.Fatalf("call site context/index = %v/%d, want WIR return-source/9", site.Context(), site.ExprIndex())
 	}
@@ -1165,14 +1164,9 @@ end
 		t.Fatalf("stmt = %T, want call statement", fn.Stmts[0])
 	}
 	point := requireStmtPoints(t, built, stmt, 1)[0]
-	fact, ok := result.Call(point)
-	if !ok {
+	if _, ok := result.Call(point); !ok {
 		t.Fatalf("missing semantic call at point %d", point)
 	}
-	fact.CallSpan = semantics.SourceSpan{StartLine: 40, StartCol: 1, EndLine: 40, EndCol: 2}
-	fact.CalleeSpan = semantics.SourceSpan{StartLine: 41, StartCol: 1, EndLine: 41, EndCol: 2}
-	fact.ArgumentSpans = []semantics.SourceSpan{{StartLine: 42, StartCol: 1, EndLine: 42, EndCol: 2}}
-	fact.ArgumentLabels = []string{"semantic_value"}
 
 	body := wir.NewBody("synthetic-call-metadata")
 	meta := []wir.CallArgumentMeta{{
@@ -1193,7 +1187,10 @@ end
 		wir:      body,
 		exprs:    make(map[any]factflow.ExprRef),
 	}
-	site := l.callSiteWithArgumentSourcesAt(point, fact, nil)
+	site, ok := l.callSiteFromWIR(point)
+	if !ok {
+		t.Fatalf("missing WIR call site at point %d", point)
+	}
 	if got := site.CallSpan(); got.StartLine != 7 || got.StartCol != 5 || got.EndCol != 17 {
 		t.Fatalf("call span = %#v, want WIR span", got)
 	}
@@ -1543,20 +1540,16 @@ function f(): string
 end
 `)
 	var callPoint cfg.Point
-	var fact semantics.CallFact
 	for _, point := range built.Graph.RPO() {
 		candidate, ok := result.Call(point)
 		if ok && candidate.Method == "topic" {
 			callPoint = point
-			fact = candidate
 			break
 		}
 	}
 	if callPoint == 0 {
 		t.Fatalf("missing topic call fact")
 	}
-	fact.HasReceiverSource = false
-	fact.ReceiverSource = sourceprovenance.ASTSource{}
 
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
 	l := lowerer{
@@ -1585,7 +1578,10 @@ end
 		declaredReturnLocalTypes:      nil,
 		returnLocalObjectLiteralTypes: nil,
 	}
-	site := l.callSiteWithArgumentSourcesAt(callPoint, fact, nil)
+	site, ok := l.callSiteFromWIR(callPoint)
+	if !ok {
+		t.Fatalf("missing WIR call site at point %d", callPoint)
+	}
 	receiverSource, ok := site.ReceiverSource()
 	if !ok || receiverSource.Kind != factflow.ValueSourceExpression || !receiverSource.HasExpr || receiverSource.ExprRef == 0 {
 		t.Fatalf("receiver source = %#v/%v, want WIR expression source without semantic receiver source", receiverSource, ok)

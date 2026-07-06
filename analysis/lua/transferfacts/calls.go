@@ -15,7 +15,7 @@ func (l *lowerer) callSiteAt(point cfg.Point, fact semantics.CallFact) (factflow
 	if !ok {
 		return factflow.CallSite{}, false
 	}
-	return l.callSiteWithArgumentSourcesAt(point, fact, args), true
+	return l.semanticCallSite(fact, args), true
 }
 
 func (l *lowerer) callSiteFromWIR(point cfg.Point) (factflow.CallSite, bool) {
@@ -100,23 +100,6 @@ func (l *lowerer) wirCallExprRef(inst wir.Instruction) (factflow.ExprRef, bool) 
 	return l.exprRef(wirCallExprRefKey{id: inst.ExprID})
 }
 
-func (l *lowerer) callSiteWithArgumentSourcesAt(point cfg.Point, fact semantics.CallFact, argumentSources []factflow.ValueSource) factflow.CallSite {
-	shape := callSiteShape{}
-	if wirShape, ok := l.callShapeFromWIR(point); ok {
-		shape = wirShape
-	}
-	flags := callSiteFlags{}
-	if wirFlags, ok := l.callSiteFlagsFromWIR(point); ok {
-		flags = wirFlags
-	}
-	metadata := callSiteMetadata{}
-	if wirMetadata, ok := l.callSiteMetadataFromWIR(point); ok {
-		metadata = wirMetadata
-	}
-	receiverSource, hasReceiverSource := l.callReceiverSource(point, fact)
-	return l.callSiteWithArgumentSourcesWithShape(fact, argumentSources, shape, flags, metadata, receiverSource, hasReceiverSource, l.callSiteResultTargetsFromWIR(point))
-}
-
 type callSiteShape struct {
 	calleeSymbol       symbol.ID
 	calleePath         path.Path
@@ -152,43 +135,13 @@ type callSiteMetadata struct {
 	argumentLabels []string
 }
 
-func (l *lowerer) callSiteWithArgumentSourcesWithShape(
-	fact semantics.CallFact,
-	argumentSources []factflow.ValueSource,
-	shape callSiteShape,
-	flags callSiteFlags,
-	metadata callSiteMetadata,
-	receiverSource factflow.ValueSource,
-	hasReceiverSource bool,
-	resultTargets []factflow.CallResultTarget,
-) factflow.CallSite {
+func (l *lowerer) semanticCallSite(fact semantics.CallFact, argumentSources []factflow.ValueSource) factflow.CallSite {
 	exprRef, hasExpr := l.exprRef(fact.Call)
 	return factflow.NewCallSite(factflow.CallSiteConfig{
-		Context:            flags.context,
-		CalleeSymbol:       shape.calleeSymbol,
-		CalleePath:         shape.calleePath,
-		CalleeMemberAccess: shape.calleeMemberAccess,
-		ReceiverPath:       shape.receiverPath,
-		HasReceiverPath:    shape.hasReceiverPath,
-		MethodPath:         shape.methodPath,
-		HasMethodPath:      shape.hasMethodPath,
-		MethodName:         shape.methodName,
-		ReceiverSource:     receiverSource,
-		HasReceiverSource:  hasReceiverSource,
-		ExprRef:            exprRef,
-		HasExpr:            hasExpr,
-		ExprIndex:          flags.expr,
-		ConditionNegated:   fact.ConditionNegated,
-		ArgumentSources:    argumentSources,
-		CallSpan:           metadata.callSpan,
-		CalleeSpan:         metadata.calleeSpan,
-		ArgumentSpans:      metadata.argumentSpans,
-		ArgumentLabels:     metadata.argumentLabels,
-		ResultTargets:      resultTargets,
-		Final:              flags.final,
-		Expanded:           flags.expanded,
-		Adjusted:           flags.adjusted,
-		OpenTail:           flags.openTail,
+		ExprRef:          exprRef,
+		HasExpr:          hasExpr,
+		ConditionNegated: fact.ConditionNegated,
+		ArgumentSources:  argumentSources,
 	})
 }
 
@@ -290,17 +243,6 @@ func (l *lowerer) directCallShapeFromWIR(point cfg.Point) (callSiteShape, bool) 
 		calleePath:         calleePath,
 		calleeMemberAccess: len(calleePath.Segments) > 0,
 	}, true
-}
-
-func (l *lowerer) callReceiverSource(point cfg.Point, fact semantics.CallFact) (factflow.ValueSource, bool) {
-	if source, ok := l.callReceiverSourceFromWIR(point, valueSourceShape{
-		exprIndex:   0,
-		targetIndex: 0,
-		final:       true,
-	}); ok {
-		return source, true
-	}
-	return factflow.ValueSource{}, false
 }
 
 func (l *lowerer) callReceiverSourceFromWIR(point cfg.Point, shape valueSourceShape) (factflow.ValueSource, bool) {
