@@ -668,50 +668,6 @@ func TestLowerCallSitePreservesPortableCallShapeAndArgumentOverlays(t *testing.T
 	}
 }
 
-func TestLowerCallSiteUsesSemanticArgumentSources(t *testing.T) {
-	inner := &ast.FuncCallExpr{Func: ident("g")}
-	wrapped := &ast.CastExpr{
-		Expr:   inner,
-		Type:   primitiveType("number"),
-		Syntax: ast.CastSyntaxAs,
-	}
-	outer := &ast.FuncCallExpr{
-		Func: ident("f"),
-		Args: []ast.Expr{wrapped},
-	}
-	innerPoint := cfg.Point(42)
-	l := lowerer{
-		exprs: make(map[any]factflow.ExprRef),
-	}
-	semanticSource := sourceprovenance.SourceForExpr(wrapped, 0, 0, 0, true, false, func(exprIndex int, call *ast.FuncCallExpr) (cfg.Point, bool) {
-		return innerPoint, exprIndex == 0 && call == inner
-	})
-	site := l.callSite(semantics.CallFact{
-		Context:         semantics.CallContextStatement,
-		Call:            outer,
-		Args:            []ast.Expr{ident("not_semantic_source")},
-		ArgumentSources: []sourceprovenance.ASTSource{semanticSource},
-		ArgumentSpans: []semantics.SourceSpan{
-			{StartLine: 7, StartCol: 2, EndLine: 7, EndCol: 18},
-		},
-		ArgumentLabels: []string{"wrapped_call"},
-	})
-	args := site.ArgumentSources()
-	if len(args) != 1 {
-		t.Fatalf("argument sources = %#v, want one arg", args)
-	}
-	arg := args[0]
-	if arg.Kind != factflow.ValueSourceCall || !arg.HasCallPoint || arg.CallPoint != innerPoint {
-		t.Fatalf("nested call arg source = %#v, want call point %d", arg, innerPoint)
-	}
-	if span, ok := site.ArgumentSpanAt(0); !ok || span.StartLine != 7 || span.EndCol != 18 {
-		t.Fatalf("argument span = %#v/%v, want lowered semantic span", span, ok)
-	}
-	if label, ok := site.ArgumentLabelAt(0); !ok || label != "wrapped_call" {
-		t.Fatalf("argument label = %q/%v, want wrapped_call/true", label, ok)
-	}
-}
-
 func TestLowerCallSiteUsesWIRArgumentSourcesForLiteralAndCallOperands(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(value: string): ()
@@ -1638,20 +1594,6 @@ end
 	}
 }
 
-func TestLowerCallSitePreservesMemberAccessEvidence(t *testing.T) {
-	l := lowerer{exprs: make(map[any]factflow.ExprRef)}
-	site := l.callSite(semantics.CallFact{
-		Context:            semantics.CallContextStatement,
-		Call:               &ast.FuncCallExpr{Func: ident("make")},
-		CalleePath:         path.Path{Root: "api"}.Field("make"),
-		HasCalleePath:      true,
-		CalleeMemberAccess: true,
-	})
-	if !site.CalleeMemberAccess() {
-		t.Fatalf("lowered call site dropped member-access evidence")
-	}
-}
-
 func TestLowerIteratorCallSitePreservesArgumentPath(t *testing.T) {
 	stmts, bindings, built, result := parseSemanticChunk(t, `
 local state = {
@@ -1828,20 +1770,6 @@ func TestLowerCallPointForExprIgnoresSemanticMapInWIRMode(t *testing.T) {
 	}
 	if point, ok := l.callPointForExpr(0, call); ok || point != 0 {
 		t.Fatalf("WIR callPointForExpr fell back to semantic map: %d/%v", point, ok)
-	}
-}
-
-func TestLowerCallSiteMapsUnknownContextExplicitly(t *testing.T) {
-	l := lowerer{exprs: make(map[any]factflow.ExprRef)}
-	site := l.callSite(semantics.CallFact{
-		Context: semantics.CallContextUnknown,
-		Call:    &ast.FuncCallExpr{Func: ident("mystery")},
-	})
-	if site.Context() != factflow.CallSiteContextUnknown {
-		t.Fatalf("unknown semantic call context lowered as %v", site.Context())
-	}
-	if expr, ok := site.Expr(); !ok || expr == 0 {
-		t.Fatalf("unknown call-site expr = %d/%v, want explicit expr ref", expr, ok)
 	}
 }
 

@@ -75,18 +75,6 @@ func (l *lowerer) wirCallExprRef(inst wir.Instruction) (factflow.ExprRef, bool) 
 	return l.exprRef(wirCallExprRefKey{id: inst.ExprID})
 }
 
-func (l *lowerer) callSite(fact semantics.CallFact) factflow.CallSite {
-	return l.callSiteWithArgumentSources(fact, l.valueSources(fact.ArgumentSources))
-}
-
-func (l *lowerer) callSiteWithArgumentSources(fact semantics.CallFact, argumentSources []factflow.ValueSource) factflow.CallSite {
-	shape := semanticCallSiteShape(fact)
-	flags := semanticCallSiteFlags(fact)
-	metadata := semanticCallSiteMetadata(fact)
-	receiverSource, hasReceiverSource := l.semanticReceiverSource(fact)
-	return l.callSiteWithArgumentSourcesWithShape(fact, argumentSources, shape, flags, metadata, receiverSource, hasReceiverSource, l.evidenceCallSiteResultTargets(fact.ResultTargets))
-}
-
 func (l *lowerer) callSiteWithArgumentSourcesAt(point cfg.Point, fact semantics.CallFact, argumentSources []factflow.ValueSource) factflow.CallSite {
 	shape := semanticCallSiteShape(fact)
 	if wirShape, ok := l.callShapeFromWIR(point); ok {
