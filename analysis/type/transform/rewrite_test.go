@@ -574,6 +574,67 @@ func TestRewrite_GenericDescentDoesNotCaptureNestedSameNameBinder(t *testing.T) 
 	}
 }
 
+func TestRewrite_GenericDescentRewritesOuterParamWithoutCapturingNestedBinder(t *testing.T) {
+	outer := typ.NewTypeParam("T", nil)
+	inner := typ.NewTypeParam("U", outer)
+	innerResult := typ.NewGeneric("Result", []*typ.TypeParam{inner}, newRecord().
+		Field("value", inner).
+		Field("outer", outer).
+		Build())
+	outerRecord := newRecord().
+		Field("payload", outer).
+		Field("result", innerResult).
+		Build()
+
+	got := Rewrite(outerRecord, func(node typ.Type) (typ.Type, bool) {
+		if node == outer {
+			return typ.String, true
+		}
+		return nil, false
+	})
+	body, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("rewrite result = %T, want record", got)
+	}
+	payloadField := body.GetField("payload")
+	if payloadField == nil || payloadField.Type != typ.String {
+		t.Fatalf("payload field = %v, want substituted string", payloadField)
+	}
+	resultField := body.GetField("result")
+	if resultField == nil {
+		t.Fatal("missing result field")
+	}
+	gotInner, ok := resultField.Type.(*typ.Generic)
+	if !ok {
+		t.Fatalf("result field = %T %[1]v, want Result generic", resultField.Type)
+	}
+	if len(gotInner.TypeParams) != 1 {
+		t.Fatalf("Result type params = %#v, want one owned binder", gotInner.TypeParams)
+	}
+	gotInnerParam := gotInner.TypeParams[0]
+	if gotInnerParam == outer {
+		t.Fatal("nested generic binder was captured by outer binder")
+	}
+	if gotInnerParam.Name != "U" {
+		t.Fatalf("nested generic binder name = %q, want U", gotInnerParam.Name)
+	}
+	if gotInnerParam.Constraint != typ.String {
+		t.Fatalf("nested generic binder constraint = %v, want substituted outer string", gotInnerParam.Constraint)
+	}
+	gotInnerBody, ok := gotInner.Body.(*typ.Record)
+	if !ok {
+		t.Fatalf("inner body = %T, want record", gotInner.Body)
+	}
+	valueField := gotInnerBody.GetField("value")
+	if valueField == nil || valueField.Type != gotInnerParam {
+		t.Fatalf("Result.value = %v, want owned binder %v", valueField, gotInnerParam)
+	}
+	outerField := gotInnerBody.GetField("outer")
+	if outerField == nil || outerField.Type != typ.String {
+		t.Fatalf("Result.outer = %v, want substituted outer string", outerField)
+	}
+}
+
 func TestRewrite_FunctionDescentDoesNotCaptureNestedSameNameBinder(t *testing.T) {
 	outer := typ.NewTypeParam("T", nil)
 	inner := typ.NewTypeParam("T", nil)
