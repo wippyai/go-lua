@@ -314,13 +314,6 @@ func (l *lowerer) directCallShapeFromWIR(point cfg.Point) (callSiteShape, bool) 
 	}, true
 }
 
-func (l *lowerer) semanticReceiverSource(fact semantics.CallFact) (factflow.ValueSource, bool) {
-	if !fact.HasReceiverSource {
-		return factflow.ValueSource{}, false
-	}
-	return l.valueSource(fact.ReceiverSource), true
-}
-
 func (l *lowerer) callReceiverSource(point cfg.Point, fact semantics.CallFact) (factflow.ValueSource, bool) {
 	if source, ok := l.callReceiverSourceFromWIR(point, valueSourceShape{
 		exprIndex:   0,
@@ -329,11 +322,7 @@ func (l *lowerer) callReceiverSource(point cfg.Point, fact semantics.CallFact) (
 	}); ok {
 		return source, true
 	}
-	fallback, hasFallback := l.semanticReceiverSource(fact)
-	if !hasFallback {
-		return factflow.ValueSource{}, false
-	}
-	return fallback, true
+	return factflow.ValueSource{}, false
 }
 
 func (l *lowerer) callReceiverSourceFromWIR(point cfg.Point, shape valueSourceShape) (factflow.ValueSource, bool) {
