@@ -6,6 +6,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -39,13 +40,24 @@ func (r *Result) ForEachReturnValueOccurrence(visit func(ReturnValueOccurrence) 
 		if !ok {
 			continue
 		}
+		meta := r.returnValueMetadata(point)
 		for index, expr := range fact.Exprs {
+			label := returnSourceExprLabel(expr)
+			span := sourceSpanFromAST(ast.SpanOf(expr))
+			if index < len(meta) {
+				if meta[index].Label != "" {
+					label = meta[index].Label
+				}
+				if metaSpan := sourceSpanFromWIR(meta[index].Span); sourceSpanValid(metaSpan) {
+					span = metaSpan
+				}
+			}
 			occ := ReturnValueOccurrence{
 				Point:       point,
 				Index:       index,
 				Source:      returnSourceAt(fact, index),
-				SourceLabel: returnSourceExprLabel(expr),
-				SourceSpan:  sourceSpanFromAST(ast.SpanOf(expr)),
+				SourceLabel: label,
+				SourceSpan:  span,
 			}
 			if lowered, ok := loweredReturnSourceAt(r, point, index); ok {
 				occ.Lowered = lowered
@@ -59,6 +71,18 @@ func (r *Result) ForEachReturnValueOccurrence(visit func(ReturnValueOccurrence) 
 		}
 	}
 	return visited
+}
+
+func (r *Result) returnValueMetadata(point cfg.Point) []wir.ReturnValueMeta {
+	if r == nil || r.wir == nil {
+		return nil
+	}
+	for _, inst := range r.wir.PointInstructions(point) {
+		if inst.Op == wir.OpReturn {
+			return r.wir.ReturnValueMeta(inst.ReturnValues)
+		}
+	}
+	return nil
 }
 
 func loweredReturnSourceAt(r *Result, point cfg.Point, index int) (factflow.ValueSource, bool) {
@@ -81,6 +105,15 @@ func (r *Result) returnSourceExprPath(expr ast.Expr) (pathdom.Path, bool) {
 		return pathdom.Path{}, false
 	}
 	return r.ExpressionPath(inner)
+}
+
+func sourceSpanFromWIR(span wir.Span) SourceSpan {
+	return SourceSpan{
+		StartLine: span.StartLine,
+		StartCol:  span.StartCol,
+		EndLine:   span.EndLine,
+		EndCol:    span.EndCol,
+	}
 }
 
 func returnSourceAt(fact ReturnFact, index int) sourceprovenance.ASTSource {

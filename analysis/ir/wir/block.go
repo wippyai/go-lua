@@ -34,6 +34,7 @@ type Body struct {
 	tableEntries  []TableEntry
 	segments      []segment.Segment
 	callArgMeta   []CallArgumentMeta
+	returnMeta    []ReturnValueMeta
 	impliedChecks []ImpliedCheck
 	branchDiffs   []BranchDiffConstraint
 	callTargets   map[callResultTargetKey]CallResultTarget
@@ -101,6 +102,15 @@ type CallArgumentMeta struct {
 	Label string
 }
 
+// ReturnValueMeta records source-only metadata for a syntactic return value.
+// It never participates in value derivation; transfer owns return facts and
+// body/readmodel use this only for labels and spans while the semantic sidecar
+// is retired.
+type ReturnValueMeta struct {
+	Span  Span
+	Label string
+}
+
 // TableEntryRange is a [Start, Start+Len) window into Body.tableEntries.
 type TableEntryRange struct {
 	Start uint32
@@ -109,6 +119,12 @@ type TableEntryRange struct {
 
 // CallArgumentMetaRange is a [Start, Start+Len) window into Body.callArgMeta.
 type CallArgumentMetaRange struct {
+	Start uint32
+	Len   uint32
+}
+
+// ReturnValueMetaRange is a [Start, Start+Len) window into Body.returnMeta.
+type ReturnValueMetaRange struct {
 	Start uint32
 	Len   uint32
 }
@@ -365,6 +381,14 @@ func (b *Body) CallArgumentMeta(r CallArgumentMetaRange) []CallArgumentMeta {
 	return b.callArgMeta[r.Start : r.Start+r.Len]
 }
 
+// ReturnValueMeta returns the return-value metadata slice for a variadic range.
+func (b *Body) ReturnValueMeta(r ReturnValueMetaRange) []ReturnValueMeta {
+	if r.Len == 0 {
+		return nil
+	}
+	return b.returnMeta[r.Start : r.Start+r.Len]
+}
+
 // ImpliedChecks returns the branch-implied check slice for a variadic range.
 func (b *Body) ImpliedChecks(r ImpliedCheckRange) []ImpliedCheck {
 	if r.Len == 0 {
@@ -580,6 +604,17 @@ func (b *Body) AppendCallArgumentMeta(meta []CallArgumentMeta) CallArgumentMetaR
 	start := uint32(len(b.callArgMeta))
 	b.callArgMeta = append(b.callArgMeta, meta...)
 	return CallArgumentMetaRange{Start: start, Len: uint32(len(meta))}
+}
+
+// AppendReturnValueMeta copies metadata into the shared return-value metadata
+// pool and returns its range.
+func (b *Body) AppendReturnValueMeta(meta []ReturnValueMeta) ReturnValueMetaRange {
+	if len(meta) == 0 {
+		return ReturnValueMetaRange{}
+	}
+	start := uint32(len(b.returnMeta))
+	b.returnMeta = append(b.returnMeta, meta...)
+	return ReturnValueMetaRange{Start: start, Len: uint32(len(meta))}
 }
 
 // AppendImpliedChecks copies checks into the shared branch-implied-check pool

@@ -19,7 +19,7 @@ func (r *Result) ReturnPoints() []cfg.Point {
 	points := graph.RPO()
 	out := make([]cfg.Point, 0, len(points))
 	for _, point := range points {
-		if _, ok := r.ReturnFact(point); ok {
+		if _, ok := r.facts.Return(point); ok {
 			out = append(out, point)
 		}
 	}

@@ -914,9 +914,10 @@ func (b *builder) lowerReturn(s *ast.ReturnStmt) {
 	b.curPoint = pts[nCalls]
 	ops, spread := b.lowerValueList(s.Exprs)
 	b.emit(wir.Instruction{
-		Op:         wir.OpReturn,
-		List:       b.body.AppendOperands(ops),
-		ListSpread: spread,
+		Op:           wir.OpReturn,
+		List:         b.body.AppendOperands(ops),
+		ReturnValues: b.body.AppendReturnValueMeta(returnValueMeta(s.Exprs)),
+		ListSpread:   spread,
 	})
 }
 
@@ -1511,6 +1512,20 @@ func callArgumentMeta(exprs []ast.Expr) []wir.CallArgumentMeta {
 	out := make([]wir.CallArgumentMeta, len(exprs))
 	for i, expr := range exprs {
 		out[i] = wir.CallArgumentMeta{
+			Span:  tableEntryValueSpan(expr),
+			Label: tableEntryValueLabel(expr),
+		}
+	}
+	return out
+}
+
+func returnValueMeta(exprs []ast.Expr) []wir.ReturnValueMeta {
+	if len(exprs) == 0 {
+		return nil
+	}
+	out := make([]wir.ReturnValueMeta, len(exprs))
+	for i, expr := range exprs {
+		out[i] = wir.ReturnValueMeta{
 			Span:  tableEntryValueSpan(expr),
 			Label: tableEntryValueLabel(expr),
 		}

@@ -330,6 +330,37 @@ send(value, payload.id)
 	}
 }
 
+func TestReturnCarriesSourceMetadata(t *testing.T) {
+	body := lowerBody(t, `
+local value = "x"
+return value, payload.id
+`, "payload")
+	var inst wir.Instruction
+	for i := 0; i < body.Len(); i++ {
+		candidate := body.Instr(i)
+		if candidate.Op == wir.OpReturn {
+			inst = candidate
+			break
+		}
+	}
+	if inst.Op != wir.OpReturn {
+		t.Fatal("missing OpReturn")
+	}
+	meta := body.ReturnValueMeta(inst.ReturnValues)
+	if len(meta) != 2 {
+		t.Fatalf("return metadata = %#v, want 2 entries", meta)
+	}
+	if got := meta[0].Label; got != "value" {
+		t.Fatalf("return 0 label = %q, want value", got)
+	}
+	if got := meta[1].Label; got != "payload.id" {
+		t.Fatalf("return 1 label = %q, want payload.id", got)
+	}
+	if !meta[0].Span.Valid() || meta[0].Span.StartLine != 3 {
+		t.Fatalf("return 0 span = %#v, want valid line 3 span", meta[0].Span)
+	}
+}
+
 func TestNonFinalAssignmentCallCarriesResultTarget(t *testing.T) {
 	body := lowerBody(t, `
 local a, b, c = make(), pack()
