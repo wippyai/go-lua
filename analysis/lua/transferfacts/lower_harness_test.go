@@ -425,7 +425,8 @@ end
 local root = make()["root"]
 `)
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	body := wirlower.Lower("dynamic-index-unnameable-table-source", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	var rootSource factflow.ValueSource
 	for _, point := range built.StmtPoints.PointsFor(stmts[1]) {
 		fact, ok := facts.LocalAssignment(point)
@@ -456,8 +457,11 @@ local root = make()["root"]
 		t.Fatalf("dynamic call-result table source = %#v, want call source", tableSource)
 	}
 	keySource := dynamicExpr.KeySource()
-	if keySource.Kind != factflow.ValueSourceExpression || !keySource.HasExpr {
-		t.Fatalf("dynamic call-result key source = %#v, want expression", keySource)
+	if keySource.Kind != factflow.ValueSourceLiteral ||
+		keySource.LiteralKind != factflow.ValueSourceLiteralString ||
+		keySource.String != "root" ||
+		keySource.HasExpr {
+		t.Fatalf("dynamic call-result key source = %#v, want WIR string literal", keySource)
 	}
 }
 

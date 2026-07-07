@@ -11,14 +11,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
-	"github.com/wippyai/go-lua/analysis/lua/expressionid"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 // Lower converts Lua semantic facts into the generic transfer fact DTOs consumed
@@ -70,7 +68,6 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		returnLocalObjectLiteralTypes = lowerReturnLocalObjectLiteralTypesFromWIR(config.Bindings, graph, config.WIR)
 	}
 	symbolTypes = mergeSymbolTypes(symbolTypes, declaredReturnLocalTypes)
-	explicitTopLocalTypes := lowerExplicitTopLocalTypes(result, graph, typeResolver)
 	expressionRefinements := make(map[factflow.ExprRef]factflow.ExpressionRefinement)
 	l := lowerer{
 		registry:                      config.Registry,
@@ -81,10 +78,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		typeValues:                    config.TypeValues,
 		metadata:                      config.Metadata,
 		wir:                           config.WIR,
-		callPoints:                    semanticCallPointsByExpr(graph, result, config.WIR),
-		wirCallPoints:                 callPointsByExpressionIDFromWIR(graph, config.WIR),
 		symbolTypes:                   symbolTypes,
-		explicitTopLocalTypes:         explicitTopLocalTypes,
 		declaredReturnLocalTypes:      declaredReturnLocalTypes,
 		returnLocalObjectLiteralTypes: returnLocalObjectLiteralTypes,
 		exprs:                         make(map[any]factflow.ExprRef),
@@ -327,32 +321,6 @@ func copySymbolTypes(in map[symbol.ID]typ.Type) map[symbol.ID]typ.Type {
 	return out
 }
 
-func lowerExplicitTopLocalTypes(result *semantics.Result, graph cfg.Graph, resolver *typeresolve.Resolver) map[symbol.ID]typ.Type {
-	if result == nil || graph == nil || resolver == nil {
-		return nil
-	}
-	var out map[symbol.ID]typ.Type
-	for _, point := range graph.RPO() {
-		view, ok := result.LocalAssignmentView(point)
-		if !ok {
-			continue
-		}
-		fact, _ := view.Borrowed()
-		if fact.Symbol == 0 || fact.Type == nil {
-			continue
-		}
-		declared, ok := resolver.Type(fact.Type)
-		if !ok || declared == nil || (!typ.IsAny(declared) && !typ.IsUnknown(declared)) {
-			continue
-		}
-		if out == nil {
-			out = make(map[symbol.ID]typ.Type, 1)
-		}
-		out[fact.Symbol] = declared
-	}
-	return out
-}
-
 type lowerer struct {
 	registry                      *axis.Registry
 	bindings                      *bind.Result
@@ -366,10 +334,7 @@ type lowerer struct {
 	wirTempDefinitionSets         map[uint32][]wir.Instruction
 	wirStaticReachable            map[cfg.Point]bool
 	wirReachability               *cfg.Reachability
-	callPoints                    map[*ast.FuncCallExpr]cfg.Point
-	wirCallPoints                 map[wir.ExpressionID]cfg.Point
 	symbolTypes                   map[symbol.ID]typ.Type
-	explicitTopLocalTypes         map[symbol.ID]typ.Type
 	declaredReturnLocalTypes      map[symbol.ID]typ.Type
 	returnLocalObjectLiteralTypes map[symbol.ID]typ.Type
 	exprs                         map[any]factflow.ExprRef
@@ -391,80 +356,6 @@ func (l *lowerer) valueFromType(t typ.Type) product.Value {
 
 func (l *lowerer) valueFromTypeWithWitness(t typ.Type) product.Value {
 	return l.typeValues.FromTypeWithWitness(l.registry, t)
-}
-
-func semanticCallPointsByExpr(graph cfg.Graph, result *semantics.Result, body *wir.Body) map[*ast.FuncCallExpr]cfg.Point {
-	if body != nil {
-		return nil
-	}
-	return callPointsByExpr(builtCallFacts(graph, result))
-}
-
-func callPointsByExpr(facts map[*ast.FuncCallExpr]cfg.Point) map[*ast.FuncCallExpr]cfg.Point {
-	if len(facts) == 0 {
-		return nil
-	}
-	out := make(map[*ast.FuncCallExpr]cfg.Point, len(facts))
-	for call, point := range facts {
-		if call == nil || point == 0 {
-			continue
-		}
-		out[call] = point
-	}
-	return out
-}
-
-func callPointsByExpressionIDFromWIR(graph cfg.Graph, body *wir.Body) map[wir.ExpressionID]cfg.Point {
-	if graph == nil || body == nil {
-		return nil
-	}
-	out := make(map[wir.ExpressionID]cfg.Point)
-	for _, point := range graph.RPO() {
-		for _, inst := range body.PointInstructions(point) {
-			if inst.Op != wir.OpCall || inst.ExprID == 0 || point == 0 {
-				continue
-			}
-			out[inst.ExprID] = point
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func builtCallFacts(graph cfg.Graph, result *semantics.Result) map[*ast.FuncCallExpr]cfg.Point {
-	if graph == nil || result == nil {
-		return nil
-	}
-	out := make(map[*ast.FuncCallExpr]cfg.Point)
-	for _, point := range graph.RPO() {
-		view, ok := result.CallView(point)
-		if !ok {
-			continue
-		}
-		fact, ok := view.Borrowed()
-		if !ok || fact.Call == nil {
-			continue
-		}
-		out[fact.Call] = point
-	}
-	return out
-}
-
-func (l *lowerer) callPointForExpr(_ int, call *ast.FuncCallExpr) (cfg.Point, bool) {
-	if l == nil || call == nil {
-		return 0, false
-	}
-	if l.wir != nil {
-		point, ok := l.wirCallPoints[wir.ExpressionID(expressionid.Of(call))]
-		return point, ok && point != 0
-	}
-	if len(l.callPoints) == 0 {
-		return 0, false
-	}
-	point, ok := l.callPoints[call]
-	return point, ok && point != 0
 }
 
 func valueSourceAt(sources []factflow.ValueSource, index int) factflow.ValueSource {

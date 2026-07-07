@@ -1916,7 +1916,6 @@ end
 		typeResolver:                  typeresolve.New(bindings),
 		typeValues:                    typevalue.NewCache(),
 		wir:                           body,
-		callPoints:                    callPointsByExpr(builtCallFacts(built.Graph, result)),
 		symbolTypes:                   lowerSymbolTypes(bindings, built.Graph, built.Meta, result, typeresolve.New(bindings), importlookup.Source{}, nil),
 		exprs:                         make(map[any]factflow.ExprRef),
 		types:                         make(map[any]factflow.TypeRef),
@@ -2119,46 +2118,6 @@ func TestLowerNestedExpressionProducerCallFromWIRIsReadableSlotZero(t *testing.T
 	}
 	if _, ok := callproducer.FromFacts(facts, points[1]); ok {
 		t.Fatalf("outer WIR statement call unexpectedly lowered as producer")
-	}
-}
-
-func TestLowerCallPointForExprCanComeOnlyFromWIRExpressionID(t *testing.T) {
-	inner := &ast.FuncCallExpr{Func: ident("g")}
-	outer := &ast.FuncCallExpr{Func: ident("f"), Args: []ast.Expr{inner}}
-	stmt := &ast.FuncCallStmt{Expr: outer}
-	stmts := []ast.Stmt{stmt}
-	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"f", "g"}})
-	built := cfgbuild.BuildChunk(stmts, bindings)
-	body := wirlower.Lower("wir-call-points", stmts, bindings, built)
-	points := requireStmtPoints(t, built, stmt, 2)
-
-	l := lowerer{
-		bindings:             bindings,
-		graph:                built.Graph,
-		graphID:              built.Graph.ID(),
-		wir:                  body,
-		wirCallPoints:        callPointsByExpressionIDFromWIR(built.Graph, body),
-		exprs:                make(map[any]factflow.ExprRef),
-		expressionPaths:      make(map[factflow.ExprRef]path.Path),
-		expressionConditions: make(map[factflow.ExprRef]factflow.ExpressionCondition),
-	}
-	source, ok := l.expressionOperandSource(inner)
-	if !ok {
-		t.Fatalf("expressionOperandSource(inner) returned false")
-	}
-	if source.Kind != factflow.ValueSourceCall || !source.HasCallPoint || source.CallPoint != points[0] {
-		t.Fatalf("inner call source = %#v, want WIR call point %d", source, points[0])
-	}
-}
-
-func TestLowerCallPointForExprIgnoresSemanticMapInWIRMode(t *testing.T) {
-	call := &ast.FuncCallExpr{Func: ident("g")}
-	l := lowerer{
-		wir:        wir.NewBody("empty"),
-		callPoints: map[*ast.FuncCallExpr]cfg.Point{call: cfg.Point(99)},
-	}
-	if point, ok := l.callPointForExpr(0, call); ok || point != 0 {
-		t.Fatalf("WIR callPointForExpr fell back to semantic map: %d/%v", point, ok)
 	}
 }
 

@@ -216,7 +216,7 @@ func (l *lowerer) expressionOperandSource(expr ast.Expr) (factflow.ValueSource, 
 	if expr == nil {
 		return factflow.ValueSource{}, false
 	}
-	source := sourceprovenance.SourceForExpr(expr, sourceprovenance.NoSourceIndex, sourceprovenance.NoSourceIndex, 0, true, false, l.callPointForExpr)
+	source := sourceprovenance.SourceForExpr(expr, sourceprovenance.NoSourceIndex, sourceprovenance.NoSourceIndex, 0, true, false, nil)
 	return l.valueSource(source), true
 }
 

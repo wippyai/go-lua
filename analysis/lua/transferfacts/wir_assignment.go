@@ -94,8 +94,6 @@ func (l *lowerer) addRootAssignmentFromWIR(input *factflow.FactsInput, point cfg
 	if kind == factflow.RootAssignmentLocalDeclaration {
 		if declared, ok := l.wirExplicitTopDeclaredContract(inst); ok {
 			assignment = factflow.NewRootAssignmentWithDeclaredContractValue(kind, target.Symbol, target, source, l.declaredTypeClaimValue(declared))
-		} else if declared, ok := l.wirSymbolExplicitTopDeclaredContract(target.Symbol); ok {
-			assignment = factflow.NewRootAssignmentWithDeclaredContractValue(kind, target.Symbol, target, source, l.declaredTypeClaimValue(declared))
 		} else if declared, ok := l.wirInstructionDeclaredType(inst); ok {
 			assignment = factflow.NewRootAssignmentWithDeclaredContractValue(kind, target.Symbol, target, source, l.declaredTypeClaimValue(declared))
 		} else if declared, ok := l.wirSymbolDeclaredContract(target.Symbol, source); ok {
@@ -245,17 +243,6 @@ func (l *lowerer) wirExplicitTopDeclaredContract(inst wir.Instruction) (typ.Type
 	}
 	declared := l.wir.Type(inst.Type)
 	if declared == nil || (!typ.IsAny(declared) && !typ.IsUnknown(declared)) {
-		return nil, false
-	}
-	return declared, true
-}
-
-func (l *lowerer) wirSymbolExplicitTopDeclaredContract(target symbol.ID) (typ.Type, bool) {
-	if l == nil || target == 0 {
-		return nil, false
-	}
-	declared, ok := l.explicitTopLocalTypes[target]
-	if !ok || declared == nil {
 		return nil, false
 	}
 	return declared, true
