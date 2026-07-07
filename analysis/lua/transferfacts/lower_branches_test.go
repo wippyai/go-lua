@@ -375,6 +375,53 @@ end
 	assertNeedReleaseImpliesDBValue(t, bindings, built.Graph, wirFacts)
 }
 
+func TestLowerConditionalAssignmentUsesCapturedRequireExportReturnWithoutSemanticResult(t *testing.T) {
+	stmts := parseChunk(t, `
+local sql = require("sql")
+
+function run(options: { db: any?, database_id: string? }): ()
+    local db: any
+    local db_err: any
+    local need_release = false
+    if options.db then
+        db = options.db
+    else
+        db, db_err = sql.get(tostring(options.database_id))
+        if db_err then
+            return
+        end
+        need_release = true
+    end
+    if need_release then
+        db:release()
+    end
+end
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	def, ok := stmts[1].(*ast.FuncDefStmt)
+	if !ok || def.Func == nil {
+		t.Fatalf("stmt[1] = %T, want function definition", stmts[1])
+	}
+	built := cfgbuild.BuildFunction(def.Func, bindings)
+	dbType := typetable.NewRecord().
+		Field("release", typ.Func().Param("self", typ.Self).Build()).
+		Build()
+	getType := typ.Func().
+		Param("name", typ.String).
+		Returns(typeexpr.Optional(dbType), typeexpr.Optional(typ.String)).
+		Build()
+	sqlManifest := manifest.New("sql")
+	sqlManifest.SetExport(typetable.NewRecord().Field("get", getType).Build())
+	body := wirlower.Lower("run-no-sidecars", def.Func.Stmts, bindings, built)
+	wirFacts := Lower(nil, built.Graph, Config{
+		Registry:      standard.Registry(),
+		Bindings:      bindings,
+		ModuleExports: importlookup.Source{Manifests: []*manifest.Manifest{sqlManifest}},
+		WIR:           body,
+	})
+	assertNeedReleaseImpliesDBValue(t, bindings, built.Graph, wirFacts)
+}
+
 func TestConditionalAssignmentCallSourceValueUsesLoweredCallSite(t *testing.T) {
 	reg := standard.Registry()
 	callPoint := cfg.Point(1200)

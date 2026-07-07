@@ -7,8 +7,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
+	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
+	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -108,12 +111,97 @@ func TestLowerSymbolTypesFromWIRSeedsLocalCallResultTypes(t *testing.T) {
 		Path:        localPath,
 	})
 
-	got := lowerSymbolTypesFromWIR(body)
+	got := lowerSymbolTypesFromWIR(body, nil, importlookup.Source{})
 	if got == nil {
 		t.Fatal("lowerSymbolTypesFromWIR returned nil")
 	}
 	if gotType, ok := got[localPath.Symbol]; !ok || !typ.TypeEquals(gotType, resultType) {
 		t.Fatalf("call result symbol type = %v/%v, want %v", gotType, ok, resultType)
+	}
+}
+
+func TestLowerSymbolTypesFromWIRUsesRequireExportForMemberCallResultWithoutSemanticResult(t *testing.T) {
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
+local discovery = require("discovery")
+local suite_names = discovery.sorted_keys({})
+`)
+	body := wirlower.Lower("require-member-call-result-symbol-type", stmts, bindings, built)
+	suiteNames, ok := bindings.LocalSymbolAt(stmts[1].(*ast.LocalAssignStmt), 0)
+	if !ok || suiteNames == 0 {
+		t.Fatalf("suite_names symbol = %d/%v, want local symbol", suiteNames, ok)
+	}
+	keysType := typ.NewArray(typ.String)
+	discoveryManifest := manifest.New("discovery")
+	discoveryManifest.SetExport(typetable.NewRecord().
+		Field("sorted_keys", typ.Func().
+			Param("t", typetable.NewMap(typ.String, typ.Any)).
+			Returns(keysType).
+			Build()).
+		Build())
+
+	got := lowerSymbolTypesFromWIR(body, bindings, importlookup.Source{Manifests: []*manifest.Manifest{discoveryManifest}})
+	if got == nil {
+		t.Fatal("lowerSymbolTypesFromWIR returned nil")
+	}
+	if gotType, ok := got[suiteNames]; !ok || !typ.TypeEquals(gotType, keysType) {
+		t.Fatalf("suite_names type = %v/%v, want %v", gotType, ok, keysType)
+	}
+}
+
+func TestLowerSymbolTypesFromWIRDoesNotUseCapturedRequireExportAfterRootWrite(t *testing.T) {
+	stmts := parseChunk(t, `
+local discovery = require("discovery")
+
+function run(): ()
+    discovery = {}
+    local suite_names = discovery.sorted_keys({})
+end
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	def := stmts[1].(*ast.FuncDefStmt)
+	built := cfgbuild.BuildFunction(def.Func, bindings)
+	body := wirlower.Lower("captured-require-root-write", def.Func.Stmts, bindings, built)
+	suiteNames, ok := bindings.LocalSymbolAt(def.Func.Stmts[1].(*ast.LocalAssignStmt), 0)
+	if !ok || suiteNames == 0 {
+		t.Fatalf("suite_names symbol = %d/%v, want local symbol", suiteNames, ok)
+	}
+	discoveryManifest := manifest.New("discovery")
+	discoveryManifest.SetExport(typetable.NewRecord().
+		Field("sorted_keys", typ.Func().
+			Param("t", typetable.NewMap(typ.String, typ.Any)).
+			Returns(typ.NewArray(typ.String)).
+			Build()).
+		Build())
+
+	got := lowerSymbolTypesFromWIR(body, bindings, importlookup.Source{Manifests: []*manifest.Manifest{discoveryManifest}})
+	if gotType, ok := got[suiteNames]; ok {
+		t.Fatalf("suite_names type = %v, want no manifest-derived call result after discovery root write", gotType)
+	}
+}
+
+func TestLowerSymbolTypesFromWIRCopiesStaticSourcePathTypeWithoutSemanticResult(t *testing.T) {
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
+local source: { retry: { max_attempts: number }? } = { retry = { max_attempts = 3 } }
+local options = source
+`)
+	body := wirlower.Lower("static-source-path-local-copy", stmts, bindings, built)
+	sourceSym, ok := bindings.LocalSymbolAt(stmts[0].(*ast.LocalAssignStmt), 0)
+	if !ok || sourceSym == 0 {
+		t.Fatalf("source symbol = %d/%v, want local symbol", sourceSym, ok)
+	}
+	optionsSym, ok := bindings.LocalSymbolAt(stmts[1].(*ast.LocalAssignStmt), 0)
+	if !ok || optionsSym == 0 {
+		t.Fatalf("options symbol = %d/%v, want local symbol", optionsSym, ok)
+	}
+
+	got := lowerSymbolTypesFromWIR(body, bindings, importlookup.Source{})
+	sourceType, hasSource := got[sourceSym]
+	optionsType, hasOptions := got[optionsSym]
+	if !hasSource || sourceType == nil {
+		t.Fatalf("source type = %v/%v, want annotated source type", sourceType, hasSource)
+	}
+	if !hasOptions || !typ.TypeEquals(optionsType, sourceType) {
+		t.Fatalf("options type = %v/%v, want copied source type %v", optionsType, hasOptions, sourceType)
 	}
 }
 

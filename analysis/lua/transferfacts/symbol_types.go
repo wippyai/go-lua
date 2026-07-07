@@ -201,11 +201,12 @@ func metatableMethodSelfType(bindings *bind.Result, fn *ast.FunctionExpr, method
 	return t, t != nil
 }
 
-func lowerSymbolTypesFromWIR(body *wir.Body) map[symbol.ID]typ.Type {
+func lowerSymbolTypesFromWIR(body *wir.Body, bindings *bind.Result, moduleExports importlookup.Source) map[symbol.ID]typ.Type {
 	if body == nil {
 		return nil
 	}
 	out := make(map[symbol.ID]typ.Type)
+	addWIRRequireExportSymbolTypes(out, body, bindings, moduleExports)
 	tempDefs := wirTempDefinitions(body)
 	for i := 0; i < body.Len(); i++ {
 		inst := body.Instr(i)
@@ -215,6 +216,10 @@ func lowerSymbolTypesFromWIR(body *wir.Body) map[symbol.ID]typ.Type {
 				continue
 			}
 		case wir.OpMakeTable:
+			if inst.Assign != wir.AssignLocalDeclaration {
+				continue
+			}
+		case wir.OpAssign:
 			if inst.Assign != wir.AssignLocalDeclaration {
 				continue
 			}
@@ -232,6 +237,16 @@ func lowerSymbolTypesFromWIR(body *wir.Body) map[symbol.ID]typ.Type {
 			continue
 		}
 		t := body.Type(inst.Type)
+		if t == nil && inst.Op == wir.OpAssign && inst.Assign == wir.AssignLocalDeclaration {
+			if source, ok := inst.AssignmentSourceOperand(); ok && source.Kind == wir.OperandPath {
+				if inferred, ok := wirPathTypeFromSymbols(out, body.Path(wir.PathRef(source.Ref))); ok &&
+					inferred != nil &&
+					!typ.IsAny(inferred) &&
+					!typ.IsUnknown(inferred) {
+					t = inferred
+				}
+			}
+		}
 		if t == nil && inst.Op == wir.OpMakeTable {
 			t, _ = wirObjectLiteralTypeFromSymbols(out, body, tempDefs, inst, nil)
 		}
@@ -239,6 +254,105 @@ func lowerSymbolTypesFromWIR(body *wir.Body) map[symbol.ID]typ.Type {
 			continue
 		}
 		out[p.Symbol] = t
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func addWIRRequireExportSymbolTypes(out map[symbol.ID]typ.Type, body *wir.Body, bindings *bind.Result, moduleExports importlookup.Source) {
+	if out == nil || body == nil || bindings == nil {
+		return
+	}
+	written := wirRootAssignmentSymbols(body)
+	for id := range wirReferencedRootSymbols(body) {
+		if _, exists := out[id]; exists || written[id] {
+			continue
+		}
+		modulePath, ok := moduleidentity.LocalRequireModulePath(bindings, id)
+		if !ok {
+			continue
+		}
+		if t, ok := moduleExports.LookupExport(modulePath); ok {
+			out[id] = t
+		}
+	}
+	for i := 0; i < body.Len(); i++ {
+		inst := body.Instr(i)
+		if inst.Op != wir.OpCall {
+			continue
+		}
+		for _, target := range body.CallResultTargets(inst.Point) {
+			if target.Kind != wir.CallResultTargetLocalAssignment ||
+				target.Path.Symbol == 0 ||
+				len(target.Path.Segments) != 0 ||
+				target.ResultIndex != 0 {
+				continue
+			}
+			if _, exists := out[target.Path.Symbol]; exists {
+				continue
+			}
+			modulePath, ok := moduleidentity.LocalRequireModulePath(bindings, target.Path.Symbol)
+			if !ok {
+				continue
+			}
+			if t, ok := moduleExports.LookupExport(modulePath); ok {
+				out[target.Path.Symbol] = t
+			}
+		}
+	}
+}
+
+func wirReferencedRootSymbols(body *wir.Body) map[symbol.ID]bool {
+	if body == nil {
+		return nil
+	}
+	out := make(map[symbol.ID]bool)
+	addOperandRootSymbol := func(op wir.Operand) {
+		if op.Kind != wir.OperandPath {
+			return
+		}
+		p := body.Path(wir.PathRef(op.Ref))
+		if p.Symbol != 0 {
+			out[p.Symbol] = true
+		}
+	}
+	addOperandRangeRootSymbols := func(r wir.OperandRange) {
+		for _, op := range body.Operands(r) {
+			addOperandRootSymbol(op)
+		}
+	}
+	for i := 0; i < body.Len(); i++ {
+		inst := body.Instr(i)
+		addOperandRootSymbol(inst.Dst)
+		addOperandRootSymbol(inst.A)
+		addOperandRootSymbol(inst.B)
+		addOperandRootSymbol(inst.Call.Callee)
+		addOperandRootSymbol(inst.Call.Receiver)
+		addOperandRangeRootSymbols(inst.List)
+		addOperandRangeRootSymbols(inst.Results)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func wirRootAssignmentSymbols(body *wir.Body) map[symbol.ID]bool {
+	if body == nil {
+		return nil
+	}
+	out := make(map[symbol.ID]bool)
+	for i := 0; i < body.Len(); i++ {
+		inst := body.Instr(i)
+		if inst.Assign == wir.AssignNone || inst.Dst.Kind != wir.OperandPath {
+			continue
+		}
+		p := body.Path(wir.PathRef(inst.Dst.Ref))
+		if p.Symbol != 0 && len(p.Segments) == 0 {
+			out[p.Symbol] = true
+		}
 	}
 	if len(out) == 0 {
 		return nil
@@ -358,10 +472,13 @@ func wirConstructorKeysFromSuffix(suffix path.Path) ([]typetable.ConstructorKey,
 }
 
 func addWIRCallResultSymbolTypes(out map[symbol.ID]typ.Type, body *wir.Body, inst wir.Instruction) {
-	if out == nil || body == nil || inst.Op != wir.OpCall || inst.Type == 0 {
+	if out == nil || body == nil || inst.Op != wir.OpCall {
 		return
 	}
 	fn, ok := callableFromWIRCallType(body, inst)
+	if !ok && inst.Type == 0 {
+		fn, ok = callableFromWIRCallPathType(out, body, inst)
+	}
 	if !ok || fn == nil || len(fn.TypeParams) != 0 {
 		return
 	}
@@ -376,6 +493,19 @@ func addWIRCallResultSymbolTypes(out map[symbol.ID]typ.Type, body *wir.Body, ins
 		}
 		out[target.Path.Symbol] = fn.Returns[target.ResultIndex]
 	}
+}
+
+func callableFromWIRCallPathType(symbolTypes map[symbol.ID]typ.Type, body *wir.Body, inst wir.Instruction) (*typ.Function, bool) {
+	if body == nil || inst.Op != wir.OpCall || inst.Call.Callee.Kind != wir.OperandPath {
+		return nil, false
+	}
+	p := body.Path(wir.PathRef(inst.Call.Callee.Ref))
+	t, ok := wirPathTypeFromSymbols(symbolTypes, p)
+	if !ok {
+		return nil, false
+	}
+	fn, ok := t.(*typ.Function)
+	return fn, ok && fn != nil
 }
 
 func callableFromWIRCallType(body *wir.Body, inst wir.Instruction) (*typ.Function, bool) {

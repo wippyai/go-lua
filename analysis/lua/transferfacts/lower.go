@@ -61,7 +61,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 	}
 	symbolTypes := lowerSymbolTypes(config.Bindings, graph, config.Metadata, result, typeResolver, config.ModuleExports, config.MethodReceiverTypes)
 	if config.WIR != nil {
-		symbolTypes = mergeSymbolTypes(symbolTypes, lowerSymbolTypesFromWIR(config.WIR))
+		symbolTypes = mergeSymbolTypes(symbolTypes, lowerSymbolTypesFromWIR(config.WIR, config.Bindings, config.ModuleExports))
 	}
 	var declaredReturnLocalTypes map[symbol.ID]typ.Type
 	var returnLocalObjectLiteralTypes map[symbol.ID]typ.Type
