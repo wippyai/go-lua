@@ -197,15 +197,9 @@ func TestLowerDoesNotLowerDeclarationOrControlSidecars(t *testing.T) {
 		assertNoPointFact(t, facts, point)
 	}
 	for _, point := range requireStmtPoints(t, built, label, 1) {
-		if _, ok := built.Meta.Label(point); !ok {
-			t.Fatalf("missing label metadata at point %d", point)
-		}
 		assertNoPointFact(t, facts, point)
 	}
 	for _, point := range requireStmtPoints(t, built, gotoStmt, 1) {
-		if _, ok := built.Meta.Goto(point); !ok {
-			t.Fatalf("missing goto metadata at point %d", point)
-		}
 		assertNoPointFact(t, facts, point)
 	}
 }

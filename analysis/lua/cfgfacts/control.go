@@ -77,15 +77,3 @@ type GenericForFact struct {
 
 	VariableIndex int
 }
-
-// LabelFact describes a label point.
-type LabelFact struct {
-	Stmt *ast.LabelStmt
-	Name string
-}
-
-// GotoFact describes a goto point.
-type GotoFact struct {
-	Stmt  *ast.GotoStmt
-	Label string
-}

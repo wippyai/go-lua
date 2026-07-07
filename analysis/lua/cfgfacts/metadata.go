@@ -14,8 +14,6 @@ type Metadata struct {
 	functionDefs    map[cfg.Point]FunctionDefinitionFact
 	numericFors     map[cfg.Point]NumericForFact
 	genericFors     map[cfg.Point]GenericForFact
-	labels          map[cfg.Point]LabelFact
-	gotos           map[cfg.Point]GotoFact
 	shortCircuits   map[cfg.Point]ShortCircuitGuardFact
 	exprEvaluations map[cfg.Point]ExpressionEvaluationFact
 }
@@ -106,18 +104,6 @@ func (m *Metadata) SetGenericFor(point cfg.Point, fact GenericForFact) {
 	m.genericFors[point] = copyGenericForFact(fact)
 }
 
-func (m Metadata) Label(point cfg.Point) (LabelFact, bool) {
-	fact, ok := m.labels[point]
-	return fact, ok
-}
-
-func (m *Metadata) SetLabel(point cfg.Point, fact LabelFact) {
-	if m.labels == nil {
-		m.labels = make(map[cfg.Point]LabelFact)
-	}
-	m.labels[point] = fact
-}
-
 func (m Metadata) ShortCircuitGuard(point cfg.Point) (ShortCircuitGuardFact, bool) {
 	fact, ok := m.shortCircuits[point]
 	return fact, ok
@@ -154,16 +140,4 @@ func (m Metadata) ShortCircuitGuardPoints() []cfg.Point {
 	}
 	sort.Slice(points, func(i, j int) bool { return points[i] < points[j] })
 	return points
-}
-
-func (m Metadata) Goto(point cfg.Point) (GotoFact, bool) {
-	fact, ok := m.gotos[point]
-	return fact, ok
-}
-
-func (m *Metadata) SetGoto(point cfg.Point, fact GotoFact) {
-	if m.gotos == nil {
-		m.gotos = make(map[cfg.Point]GotoFact)
-	}
-	m.gotos[point] = fact
 }

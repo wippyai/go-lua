@@ -568,13 +568,6 @@ func TestBuildChunkLabelCreatesStructuralPoint(t *testing.T) {
 	labelPoint := requireStmtPoints(t, result, label, 1)[0]
 	afterPoint := requireStmtPoints(t, result, after, 1)[0]
 	requirePointKind(t, graph, labelPoint, cfg.NodeNoop)
-	labelFact, ok := result.Meta.Label(labelPoint)
-	if !ok {
-		t.Fatalf("missing label metadata at point %d", labelPoint)
-	}
-	if labelFact.Stmt != label || labelFact.Name != "again" {
-		t.Fatalf("label metadata = %#v", labelFact)
-	}
 	if _, ok := result.Meta.Assignment(labelPoint); ok {
 		t.Fatalf("label point produced assignment metadata")
 	}
@@ -614,13 +607,6 @@ func TestBuildChunkBackwardGotoConnectsToExistingLabelAndKillsFallthrough(t *tes
 	gotoPoint := requireStmtPoints(t, result, jump, 1)[0]
 	requirePointKind(t, graph, labelPoint, cfg.NodeNoop)
 	requirePointKind(t, graph, gotoPoint, cfg.NodeNoop)
-	gotoFact, ok := result.Meta.Goto(gotoPoint)
-	if !ok {
-		t.Fatalf("missing goto metadata at point %d", gotoPoint)
-	}
-	if gotoFact.Stmt != jump || gotoFact.Label != "again" {
-		t.Fatalf("goto metadata = %#v", gotoFact)
-	}
 	requireEdge(t, graph, graph.Entry(), labelPoint, false)
 	requireEdge(t, graph, labelPoint, gotoPoint, false)
 	requireEdge(t, graph, gotoPoint, labelPoint, false)
@@ -645,13 +631,6 @@ func TestBuildChunkForwardGotoOverReturnRevivesTargetLabel(t *testing.T) {
 	gotoPoint := requireStmtPoints(t, result, jump, 1)[0]
 	labelPoint := requireStmtPoints(t, result, label, 1)[0]
 	afterPoint := requireStmtPoints(t, result, after, 1)[0]
-	gotoFact, ok := result.Meta.Goto(gotoPoint)
-	if !ok {
-		t.Fatalf("missing forward goto metadata at point %d", gotoPoint)
-	}
-	if gotoFact.Stmt != jump || gotoFact.Label != "target" {
-		t.Fatalf("forward goto metadata = %#v", gotoFact)
-	}
 	requireEdge(t, graph, graph.Entry(), gotoPoint, false)
 	requireEdge(t, graph, gotoPoint, labelPoint, false)
 	requireEdge(t, graph, labelPoint, afterPoint, false)
@@ -696,13 +675,6 @@ func TestBuildChunkGotoMissingBuildsOpenPointAndKillsFallthrough(t *testing.T) {
 
 	gotoPoint := requireStmtPoints(t, result, jump, 1)[0]
 	requirePointKind(t, graph, gotoPoint, cfg.NodeNoop)
-	gotoFact, ok := result.Meta.Goto(gotoPoint)
-	if !ok {
-		t.Fatalf("missing unresolved goto metadata at point %d", gotoPoint)
-	}
-	if gotoFact.Stmt != jump || gotoFact.Label != "missing" {
-		t.Fatalf("unresolved goto metadata = %#v", gotoFact)
-	}
 	requireEdge(t, graph, graph.Entry(), gotoPoint, false)
 	if succs := graph.Successors(gotoPoint); len(succs) != 0 {
 		t.Fatalf("undefined goto successors = %v, want none", succs)
