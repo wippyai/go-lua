@@ -193,6 +193,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		if l.wir != nil {
 			if sources, ok := l.returnValueSourcesFromWIR(point); ok {
 				input.Returns[point] = factflow.NewReturn(sources)
+				l.addReturnObjectLiteralExpectedTypesFromWIR(&input, sources)
 			}
 		}
 		if result != nil {
@@ -212,9 +213,13 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 					returnSources := ret.Sources()
 					for index, source := range fact.Sources {
 						l.addReturnAssertionRefinements(&input, point, index, valueSourceAt(returnSources, index), source)
-						l.addObjectLiteral(&input, result, source)
+						if l.wir == nil {
+							l.addObjectLiteral(&input, result, source)
+						}
 					}
-					l.addReturnObjectLiteralExpectedTypes(&input, result, fact)
+					if l.wir == nil {
+						l.addReturnObjectLiteralExpectedTypes(&input, result, fact)
+					}
 				}
 			}
 		}

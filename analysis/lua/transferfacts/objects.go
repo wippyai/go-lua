@@ -484,10 +484,34 @@ func (l *lowerer) addReturnObjectLiteralExpectedTypes(input *factflow.FactsInput
 	}
 }
 
-func (l *lowerer) resolvedReturnObjectLiteralExpectedTypes(result *semantics.Result) []typ.Type {
-	if l != nil && l.wir != nil {
-		return l.wir.DeclaredReturnTypes()
+func (l *lowerer) addReturnObjectLiteralExpectedTypesFromWIR(input *factflow.FactsInput, sources []factflow.ValueSource) {
+	if l == nil || l.wir == nil || input == nil {
+		return
 	}
+	declared := l.wir.DeclaredReturnTypes()
+	if len(declared) == 0 {
+		return
+	}
+	for i, source := range sources {
+		if i >= len(declared) ||
+			declared[i] == nil ||
+			!source.HasExpr ||
+			source.ExprRef == 0 ||
+			!luatypeprojection.ReachesTableContract(declared[i]) {
+			continue
+		}
+		lit, ok := input.ObjectLiterals[source.ExprRef]
+		if !ok {
+			continue
+		}
+		updated := l.objectLiteralWithExpectedType(lit, declared[i])
+		input.ObjectLiterals[source.ExprRef] = updated
+		l.setObjectLiteralExpectedExpressionValue(source.ExprRef, updated, declared[i])
+		l.addNestedObjectLiteralExpectedTypes(input, updated, declared[i])
+	}
+}
+
+func (l *lowerer) resolvedReturnObjectLiteralExpectedTypes(result *semantics.Result) []typ.Type {
 	declared := declaredReturnTypes(result)
 	if len(declared) == 0 {
 		return nil

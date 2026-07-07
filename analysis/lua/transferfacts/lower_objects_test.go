@@ -1265,7 +1265,50 @@ end`)
 	}
 	expected, ok := literal.Expected()
 	if !ok {
-		t.Fatalf("missing WIR-owned expected contract on returned object literal")
+		t.Fatalf("missing WIR-owned expected contract on returned object literal; return sources=%#v literals=%#v declared=%#v\nWIR:\n%s", sources, facts.ObjectLiterals(), body.DeclaredReturnTypes(), wir.Print(body, built.Graph))
+	}
+	got, ok := typevalue.TypeOf(reg, expected)
+	want := typetable.NewRecord().
+		Field("state", typetable.NewRecord().
+			Field("processed", typetable.NewMap(typ.String, typ.String)).
+			Build()).
+		Build()
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("WIR returned literal expected = %v/%v, want %v", got, ok, want)
+	}
+}
+
+func TestLowerWithWIRReturnedObjectLiteralExpectedContractWithoutSemanticResult(t *testing.T) {
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function new_actor(): { state: { processed: {[string]: string} } }
+	return { state = { processed = {} } }
+end`)
+	body := wirlower.LowerFunction("new_actor", fn, bindings, built)
+
+	reg := standard.Registry()
+	facts := Lower(nil, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
+	}
+	var returnFact factflow.Return
+	for _, point := range requireStmtPoints(t, built, ret, 1) {
+		if fact, ok := facts.Return(point); ok {
+			returnFact = fact
+			break
+		}
+	}
+	sources := returnFact.Sources()
+	if len(sources) != 1 || !sources[0].HasExpr {
+		t.Fatalf("return sources = %#v, want one expression source", sources)
+	}
+	literal, ok := facts.ObjectLiteral(sources[0].ExprRef)
+	if !ok {
+		t.Fatalf("missing returned object literal for ref %d", sources[0].ExprRef)
+	}
+	expected, ok := literal.Expected()
+	if !ok {
+		t.Fatalf("missing WIR-owned expected contract on returned object literal without semantic result; return sources=%#v literals=%#v declared=%#v\nWIR:\n%s", sources, facts.ObjectLiterals(), body.DeclaredReturnTypes(), wir.Print(body, built.Graph))
 	}
 	got, ok := typevalue.TypeOf(reg, expected)
 	want := typetable.NewRecord().
