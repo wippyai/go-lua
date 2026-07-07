@@ -1622,11 +1622,6 @@ func (r *Result) CallOutcomeForExpr(call *ast.FuncCallExpr) (factflow.CallSite, 
 	return site, outcome, true
 }
 
-// CallExprPoint returns the CFG point for a syntactic call expression.
-func (r *Result) CallExprPoint(call *ast.FuncCallExpr) (cfg.Point, bool) {
-	return r.callExprPoint(call)
-}
-
 func (r *Result) callExprPoint(call *ast.FuncCallExpr) (cfg.Point, bool) {
 	if r == nil || r.semantics == nil {
 		return 0, false

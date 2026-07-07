@@ -3,7 +3,6 @@ package body
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -239,13 +238,6 @@ func (r *Result) ReturnFact(point cfg.Point) (semantics.ReturnFact, bool) {
 		return semantics.ReturnFact{}, false
 	}
 	return r.semantics.Return(point)
-}
-
-func (r *Result) ReturnFactView(point cfg.Point) (semantics.ReturnFactView, bool) {
-	if r == nil || r.semantics == nil {
-		return semantics.ReturnFactView{}, false
-	}
-	return r.semantics.ReturnView(point)
 }
 
 func (r *Result) LocalAssignment(point cfg.Point) (semantics.LocalAssignmentFact, bool) {
@@ -789,19 +781,6 @@ func (r *Result) ExpressionSignatureAt(point cfg.Point, expr ast.Expr) (signatur
 	return r.PathSignatureAt(point, p)
 }
 
-// ExpressionSignatureTypeAt resolves an expression to the read-only function
-// type of a known imported or explicit global signature at point.
-func (r *Result) ExpressionSignatureTypeAt(point cfg.Point, expr ast.Expr) (*typ.Function, bool) {
-	if r == nil || expr == nil {
-		return nil, false
-	}
-	p, ok := r.ExpressionPath(expr)
-	if !ok {
-		return nil, false
-	}
-	return r.PathSignatureTypeAt(point, p)
-}
-
 // ExpressionSignatureNameAt resolves an expression to the stable signature name
 // used for imported or explicit global function lookups at point.
 func (r *Result) ExpressionSignatureNameAt(point cfg.Point, expr ast.Expr) (string, bool) {
@@ -851,18 +830,6 @@ func (r *Result) PathSignatureTypeAt(point cfg.Point, p path.Path) (*typ.Functio
 
 func (r *Result) CallSignature(site factflow.CallSite) (signature.Function, bool) {
 	name, ok := r.CallSignatureName(site)
-	if !ok {
-		return signature.Function{}, false
-	}
-	return r.signatures.Lookup(name)
-}
-
-// CallSignatureAt resolves the known signature for a call site at its CFG
-// point. Prefer this over CallSignature when the point is already available:
-// dynamic global replacement is point-sensitive, while the indexed form is only
-// a compatibility surface for callers that have lost the CFG point.
-func (r *Result) CallSignatureAt(point cfg.Point, site factflow.CallSite) (signature.Function, bool) {
-	name, ok := r.CallSignatureNameAt(point, site)
 	if !ok {
 		return signature.Function{}, false
 	}
@@ -966,34 +933,6 @@ func (r *Result) LocalOrigin(id symbol.ID) (bind.LocalOrigin, bool) {
 	return r.bindings.LocalOrigin(id)
 }
 
-func (r *Result) SymbolHasRead(id symbol.ID) bool {
-	if r == nil || r.bindings == nil {
-		return false
-	}
-	return r.bindings.HasRead(id)
-}
-
-func (r *Result) SymbolReadIdents(id symbol.ID) []*ast.IdentExpr {
-	if r == nil || r.bindings == nil {
-		return nil
-	}
-	return r.bindings.ReadIdents(id)
-}
-
-func (r *Result) SymbolHasWrite(id symbol.ID) bool {
-	if r == nil || r.bindings == nil {
-		return false
-	}
-	return r.bindings.HasWrite(id)
-}
-
-func (r *Result) SymbolWriteIdents(id symbol.ID) []*ast.IdentExpr {
-	if r == nil || r.bindings == nil {
-		return nil
-	}
-	return r.bindings.WriteIdents(id)
-}
-
 func (r *Result) IsImplicitGlobalUse(ident *ast.IdentExpr) bool {
 	if r == nil || r.bindings == nil {
 		return false
@@ -1053,19 +992,4 @@ func (r *Result) TypeDefParams(stmt *ast.TypeDefStmt) []bind.TypeDecl {
 		return nil
 	}
 	return r.bindings.TypeDefParams(stmt)
-}
-
-func (r *Result) SymbolValueAt(point cfg.Point, id symbol.ID) (product.Value, bool) {
-	if r == nil || id == 0 {
-		return product.Value{}, false
-	}
-	st, ok := r.StateAt(point)
-	if !ok {
-		return product.Value{}, false
-	}
-	value := st.ReadValue(r.registry, statekey.SymbolValue(id))
-	if product.Equal(r.registry, value, product.Bottom(r.registry)) {
-		return product.Value{}, false
-	}
-	return value, true
 }
