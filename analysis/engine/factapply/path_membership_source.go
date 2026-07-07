@@ -8,16 +8,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
-func pathMembershipSourceStateKeyAt(resolver *visibility.Resolver, point cfg.Point, p pathdom.Path) (pathaddr.StateKey, bool) {
-	if resolver == nil || p.IsEmpty() {
-		return "", false
-	}
-	if substitutedRootPath(p) {
-		return visibility.AddressAt(resolver, point, p).RootOrVisibleStateKey()
-	}
-	return visibility.AddressAt(resolver, point, p).VisibleStateKey()
-}
-
 func pathMembershipSourceTablesAt(st state.State, resolver *visibility.Resolver, point cfg.Point, p pathdom.Path) []pathaddr.StateKey {
 	var out []pathaddr.StateKey
 	for _, sourceKey := range pathMembershipSourceStateKeysAt(resolver, point, p) {

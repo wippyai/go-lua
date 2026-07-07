@@ -128,11 +128,6 @@ type BranchNumFloorRefinement struct {
 	cond       bool
 }
 
-// NewBranchLenRefinement creates a true-edge length-floor fact for arrayPath.
-func NewBranchLenRefinement(arrayPath path.Path, lo int64) BranchLenRefinement {
-	return NewBranchLenRefinementOnEdge(arrayPath, lo, true)
-}
-
 // NewBranchLenRefinementOnEdge creates a length-floor fact for arrayPath that
 // holds on the given branch edge.
 func NewBranchLenRefinementOnEdge(arrayPath path.Path, lo int64, cond bool) BranchLenRefinement {
@@ -206,30 +201,6 @@ type BranchDiffConstraint struct {
 	loIsLength  bool
 	c           int64
 	cond        bool
-}
-
-// NewBranchDiffConstraint creates a true-edge two-term difference-logic fact.
-func NewBranchDiffConstraint(hiPath path.Path, hiIsLength bool, loPath path.Path, loIsLength bool, c int64) BranchDiffConstraint {
-	return NewBranchDiffConstraintOnEdge(hiPath, hiIsLength, loPath, loIsLength, c, true)
-}
-
-// NewBranchDiffConstraintOnEdge creates a two-term difference-logic fact for a
-// specific branch edge.
-func NewBranchDiffConstraintOnEdge(hiPath path.Path, hiIsLength bool, loPath path.Path, loIsLength bool, c int64, cond bool) BranchDiffConstraint {
-	return BranchDiffConstraint{coHi: 1, hiPath: hiPath.Clone(), hiIsLength: hiIsLength, loPath: loPath.Clone(), loIsLength: loIsLength, c: c, cond: cond}
-}
-
-// NewBranchSumConstraint creates a true-edge bounded three-term fact:
-// term(hi) + term(hi2) - term(lo) <= c.
-func NewBranchSumConstraint(hiPath path.Path, hiIsLength bool, hi2Path path.Path, hi2IsLength bool, loPath path.Path, loIsLength bool, c int64) BranchDiffConstraint {
-	return NewBranchScaledConstraint(1, hiPath, hiIsLength, 1, hi2Path, hi2IsLength, loPath, loIsLength, c)
-}
-
-// NewBranchScaledConstraint creates a true-edge bounded affine fact:
-// coHi*term(hi) + coHi2*term(hi2) - term(lo) <= c. An empty hi2Path drops the
-// second positive term, giving coHi*term(hi) - term(lo) <= c.
-func NewBranchScaledConstraint(coHi int64, hiPath path.Path, hiIsLength bool, coHi2 int64, hi2Path path.Path, hi2IsLength bool, loPath path.Path, loIsLength bool, c int64) BranchDiffConstraint {
-	return NewBranchScaledConstraintOnEdge(coHi, hiPath, hiIsLength, coHi2, hi2Path, hi2IsLength, loPath, loIsLength, c, true)
 }
 
 // NewBranchScaledConstraintOnEdge creates a bounded affine fact for a specific

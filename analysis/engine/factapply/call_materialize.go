@@ -88,11 +88,6 @@ func (r *lazyCallResultReader) ensure() {
 	r.initialized = true
 }
 
-func (r *lazyCallResultReader) Read() func(cfg.Point) state.State {
-	r.ensure()
-	return r.read
-}
-
 // ReadLazy returns a read function that initializes call-result materialization
 // only if the caller actually reads through it. Most non-call value sources never
 // read another point, so they should not allocate the materialization cache just

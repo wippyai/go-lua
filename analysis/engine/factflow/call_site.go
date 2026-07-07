@@ -135,9 +135,6 @@ type CallSiteView struct {
 	site CallSite
 }
 
-// NewCallSiteView wraps an owned call site in a read-only view.
-func NewCallSiteView(site CallSite) CallSiteView { return CallSiteView{site: site} }
-
 // View returns a read-only view of the owned call site.
 func (c CallSite) View() CallSiteView { return CallSiteView{site: c} }
 

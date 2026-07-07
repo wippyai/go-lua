@@ -160,10 +160,6 @@ func invalidateStateKeySubtree(s state.State, ks *keyspace.KeySpace, stateKey pa
 	return s.InvalidatePathKeySubtree(ks, stateKey.PathKey())
 }
 
-func invalidateStateKeySubtreePreservingDynamicValueKeyMemberships(s state.State, ks *keyspace.KeySpace, stateKey pathaddr.StateKey) (state.State, bool) {
-	return s.InvalidatePathKeySubtreePreservingDynamicValueKeyMemberships(ks, stateKey.PathKey())
-}
-
 func invalidateStateKeyDescendants(s state.State, ks *keyspace.KeySpace, stateKey pathaddr.StateKey) (state.State, bool) {
 	return s.InvalidatePathKeyDescendants(ks, stateKey.PathKey())
 }

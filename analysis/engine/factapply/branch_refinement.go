@@ -399,21 +399,6 @@ func runtimeKindConstraintProvesScalarValue(reg *axis.Registry, constraint produ
 	return true
 }
 
-func runtimeKindConstraintProvesTableValue(reg *axis.Registry, constraint product.Value) bool {
-	if reg == nil {
-		return false
-	}
-	if _, ok := reg.LookupErased(runtimekind.Key.ID()); !ok {
-		return false
-	}
-	kinds := product.Get(reg, constraint, runtimekind.Key)
-	if !runtimekind.Equal(kinds, runtimekind.Singleton(runtimekind.Table)) {
-		return false
-	}
-	witness, ok := typevalue.WitnessOf(reg, constraint)
-	return ok && typetable.IsBuiltinTopMarker(witness)
-}
-
 func literalConstraintProvesScalarValue(reg *axis.Registry, constraint product.Value) bool {
 	lit, ok := literalConstraintType(reg, constraint)
 	if !ok {
