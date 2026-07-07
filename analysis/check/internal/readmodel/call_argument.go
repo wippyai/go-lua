@@ -2,17 +2,16 @@ package readmodel
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/check/internal/sourcebridge"
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/branchcond"
-	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -40,7 +39,7 @@ func (r Reader) callArgumentMismatchSubjectPlan(point cfg.Point, arg CallArgumen
 		Argument: arg,
 		Expected: want,
 	}
-	if callArgumentExpectedHasObjectEntries(want) {
+	if readapi.CallArgumentExpectedTypeHasObjectEntries(want) {
 		for _, entry := range lit.Entries() {
 			suffix := entry.Suffix()
 			expected, ok := body.ExpectedTypeAtSegments(want, suffix.Segments)
@@ -62,6 +61,7 @@ func (r Reader) callArgumentMismatchSubjectPlan(point cfg.Point, arg CallArgumen
 					ValueHash:            r.ValueHash(value),
 					TypeWithPresence:     got,
 					UntrustedTopOrigin:   r.ValueHasUntrustedTopOrigin(value),
+					ExpandedSource:       entry.Source().Expanded,
 					CallerOwnedParameter: arg.CallerOwnedParameter,
 					FunctionType:         arg.FunctionType,
 					Span:                 sourceSpanFromFactflow(entry.ValueSpan()),
@@ -76,11 +76,7 @@ func (r Reader) callArgumentMismatchSubjectPlan(point cfg.Point, arg CallArgumen
 	if field, ok := body.MissingRequiredRecordField(want, func(name string) bool {
 		for _, entry := range lit.Entries() {
 			suffix := entry.Suffix()
-			if len(suffix.Segments) != 1 {
-				continue
-			}
-			seg := suffix.Segments[0]
-			if seg.Kind == segment.SegmentField && seg.Name == name {
+			if field, ok := segment.DirectFieldName(suffix.Segments); ok && field == name {
 				return true
 			}
 		}
@@ -100,20 +96,6 @@ func (r Reader) callArgumentMismatchSubjectPlan(point cfg.Point, arg CallArgumen
 		}
 	}
 	return plan, true
-}
-
-func callArgumentExpectedHasObjectEntries(t typ.Type) bool {
-	switch tt := unwrap.Optional(t).(type) {
-	case *typ.Record, *typ.Array, *typ.Map, *typ.ReadonlyMap, *typ.Tuple:
-		return true
-	case *typ.Union:
-		for _, member := range tt.Members {
-			if callArgumentExpectedHasObjectEntries(member) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // checkCallArgument returns the complete solved proof result for one argument
@@ -185,6 +167,10 @@ func (r Reader) callArgumentReports(point cfg.Point, contract callContract, hasC
 		}
 		origin := obligation.Origin
 		if !origin.HasOrigin {
+			if r.result != nil && r.result.HasBodyOwnedParamObligations() &&
+				!callArgumentIndexHasUntrustedTop(args, obligation.Index) {
+				continue
+			}
 			site, _ := r.result.CallSite(point)
 			origin = readapi.CallArgumentObligationOrigin{
 				HasOrigin:    true,
@@ -195,14 +181,24 @@ func (r Reader) callArgumentReports(point cfg.Point, contract callContract, hasC
 		plan.OutcomeParams = append(plan.OutcomeParams, readapi.IndexedCallArgumentObligation{
 			Index: obligation.Index,
 			Obligation: CallArgumentObligation{
-				Type:          obligation.Type,
-				ExpectedLabel: CallContractSource{}.ParameterLabel(obligation.Index),
-				ExpectedSpan:  callArgumentSpanByIndex(args, obligation.Index),
-				Origin:        origin,
+				Type:             obligation.Type,
+				ExpectedLabel:    CallContractSource{}.ParameterLabel(obligation.Index),
+				ExpectedSpan:     callArgumentSpanByIndex(args, obligation.Index),
+				Origin:           origin,
+				SignatureSurface: obligation.SignatureSurface,
 			},
 		})
 	}
 	return readapi.PlanCallArgumentReports(plan)
+}
+
+func callArgumentIndexHasUntrustedTop(args []CallArgument, index int) bool {
+	for _, arg := range args {
+		if arg.Index == index {
+			return arg.UntrustedTopOrigin
+		}
+	}
+	return false
 }
 
 func callArgumentSpanByIndex(args []CallArgument, index int) SourceSpan {
@@ -265,6 +261,11 @@ func (r Reader) callArgument(point cfg.Point, site factflow.CallSite, index int,
 	got, _ := r.ValueTypeWithPresence(value)
 	if reduced, ok := r.callArgumentRuntimeKindReducedType(point, source, value); ok {
 		got = reduced
+		if !r.ValueHasUntrustedTopOrigin(value) {
+			if reducedValue, valueOK := r.valueFromType(reduced); valueOK {
+				value = reducedValue
+			}
+		}
 	}
 	arg := CallArgument{
 		Index:                index,
@@ -273,6 +274,8 @@ func (r Reader) callArgument(point cfg.Point, site factflow.CallSite, index int,
 		TypeWithPresence:     got,
 		UntrustedTopOrigin:   r.ValueHasUntrustedTopOrigin(value),
 		ExplicitTopOrigin:    r.ValueHasExplicitTopOrigin(value),
+		RuntimeValidated:     r.callArgumentRuntimeValidated(source, value),
+		ExpandedSource:       source.Expanded,
 		CallerOwnedParameter: r.callerOwnedParameterArgument(point, source),
 		Span:                 callArgumentSpan(site, index),
 		Label:                r.callArgumentLabel(site, index, source),
@@ -283,6 +286,7 @@ func (r Reader) callArgument(point cfg.Point, site factflow.CallSite, index int,
 		arg.ProofCandidateType, _ = r.ValueTypeWithPresence(candidate)
 		arg.ProofCandidateTop = r.ValueHasUntrustedTopOrigin(candidate)
 		arg.ProofCandidateExplicitTop = r.ValueHasExplicitTopOrigin(candidate)
+		arg.ProofCandidateRuntime = r.callArgumentRuntimeValidated(source, candidate)
 		arg.HasProofCandidate = true
 	}
 	if fn, ok := r.contextualFunctionArgumentType(point, source); ok {
@@ -301,6 +305,24 @@ func (r Reader) callArgument(point cfg.Point, site factflow.CallSite, index int,
 	return arg
 }
 
+func (r Reader) callArgumentRuntimeValidated(source factflow.ValueSource, value product.Value) bool {
+	if r.result != nil && r.result.SourceHasRuntimeValidation(source) {
+		return true
+	}
+	return r.ValueHasRuntimeValidationProof(value)
+}
+
+func (r Reader) valueFromType(t typ.Type) (product.Value, bool) {
+	if r.result == nil || r.typeValues == nil || t == nil {
+		return product.Value{}, false
+	}
+	reg := r.result.Registry()
+	if reg == nil {
+		return product.Value{}, false
+	}
+	return typevalue.WithWitness(reg, r.typeValues.FromType(reg, t), t), true
+}
+
 func (r Reader) callArgumentRuntimeKindReducedType(point cfg.Point, source factflow.ValueSource, value product.Value) (typ.Type, bool) {
 	if r.result == nil {
 		return nil, false
@@ -309,10 +331,10 @@ func (r Reader) callArgumentRuntimeKindReducedType(point cfg.Point, source factf
 		return nil, false
 	}
 	p, ok := r.callArgumentExpressionPath(source)
-	if !ok || !r.rootPathArgumentUsesBoundary(point, p) {
+	if !ok || !r.pathHasPositiveRuntimeTypeGuard(point, p) {
 		return nil, false
 	}
-	declared, ok := r.result.DeclaredPathTypeAt(point, p, true)
+	declared, ok := r.explicitTopDeclaredPathTypeAt(p)
 	if !ok || declared == nil {
 		return nil, false
 	}
@@ -345,6 +367,7 @@ func (r Reader) admissibleCallArgumentProofCandidate(arg CallArgument, want typ.
 	arg.TypeWithPresence = arg.ProofCandidateType
 	arg.UntrustedTopOrigin = arg.ProofCandidateTop
 	arg.ExplicitTopOrigin = arg.ProofCandidateExplicitTop
+	arg.RuntimeValidated = arg.ProofCandidateRuntime
 	arg.Mismatch = CallArgumentMismatch{}
 	return arg, true
 }
@@ -474,27 +497,75 @@ func (r Reader) unknownArgumentValue() (product.Value, bool) {
 }
 
 func (r Reader) callArgumentValue(point cfg.Point, source factflow.ValueSource) (product.Value, bool) {
+	value, ok := r.callArgumentSelectedValue(point, source)
+	if !ok {
+		return product.Value{}, false
+	}
+	if p, pathOK := r.callArgumentSourcePath(source); pathOK {
+		value = r.callArgumentDeclaredTopValue(point, source, p, value)
+	}
+	return value, true
+}
+
+func (r Reader) callArgumentSelectedValue(point cfg.Point, source factflow.ValueSource) (product.Value, bool) {
 	if r.result == nil {
 		return product.Value{}, false
 	}
-	if r.result.SourceHasRuntimeValidation(source) {
+	if r.sourceHasRuntimeValidationAuthority(point, source) {
 		if value, ok := r.result.SourceValueAtBoundary(point, source); ok {
+			if before, beforeOK := r.result.SourceValueBeforeBoundary(point, source); beforeOK &&
+				!r.callArgumentRuntimeValidationCanAdoptBoundary(before, value) {
+				return before, true
+			}
 			return value, true
 		}
 	}
-	if value, ok := r.trustedReadableSourceValueBeforeBoundary(point, source); ok {
+	if p, ok := r.callArgumentExpressionPath(source); ok && r.rootPathArgumentUsesBoundary(point, p) {
+		if value, valueOK := r.callArgumentSharperBoundaryValue(point, source, p); valueOK {
+			return r.callArgumentDeclaredTopValue(point, source, p, value), true
+		}
+	}
+	if p, ok := r.valueSourcePath(source); ok && r.rootPathArgumentUsesBoundary(point, p) {
+		if value, valueOK := r.callArgumentSharperBoundaryValue(point, source, p); valueOK {
+			return r.callArgumentDeclaredTopValue(point, source, p, value), true
+		}
+	}
+	if value, ok := r.callArgumentSharperSourceBoundaryValue(point, source); ok {
 		return value, true
 	}
 	if p, ok := r.callArgumentExpressionPath(source); ok {
 		return r.callArgumentPathValue(point, source, p)
 	}
+	if p, ok := r.valueSourcePath(source); ok && !p.IsEmpty() {
+		return r.callArgumentPathValue(point, source, p)
+	}
+	if value, ok := r.trustedReadableSourceValueBeforeBoundary(point, source); ok {
+		return value, true
+	}
 	if source.Kind == factflow.ValueSourceCall {
 		return r.result.SourceValueAtBoundary(point, source)
+	}
+	if p, ok := r.callArgumentExpressionPath(source); ok {
+		if value, valueOK := r.declaredTopArgumentValue(point, source, p); valueOK {
+			return value, true
+		}
+	}
+	if p, ok := r.valueSourcePath(source); ok && !p.IsEmpty() {
+		if value, valueOK := r.declaredTopArgumentValue(point, source, p); valueOK {
+			return value, true
+		}
 	}
 	if value, ok := r.result.SourceValueBeforeBoundary(point, source); ok {
 		return value, true
 	}
 	return r.result.SourceValueAtBoundary(point, source)
+}
+
+func (r Reader) callArgumentSourcePath(source factflow.ValueSource) (path.Path, bool) {
+	if p, ok := r.callArgumentExpressionPath(source); ok {
+		return p, true
+	}
+	return r.valueSourcePath(source)
 }
 
 func (r Reader) callArgumentExpressionPath(source factflow.ValueSource) (path.Path, bool) {
@@ -508,29 +579,36 @@ func (r Reader) callArgumentExpressionPath(source factflow.ValueSource) (path.Pa
 func (r Reader) callArgumentPathValue(point cfg.Point, source factflow.ValueSource, p path.Path) (product.Value, bool) {
 	if len(p.Segments) > 0 {
 		if value, ok := r.result.PathValueAtBoundary(point, p); ok {
-			return value, true
+			return r.callArgumentDeclaredTopValue(point, source, p, value), true
 		}
 	}
 	if r.rootPathArgumentUsesBoundary(point, p) {
+		if value, ok := r.callArgumentSharperBoundaryValue(point, source, p); ok {
+			return r.callArgumentDeclaredTopValue(point, source, p, value), true
+		}
 		if value, ok := r.result.PathValueBeforeBoundary(point, p); ok {
 			if r.valueHasReadableType(value) {
-				return value, true
+				return r.callArgumentDeclaredTopValue(point, source, p, value), true
 			}
 			if declared, ok := r.declaredRootArgumentValue(point, p); ok {
 				return declared, true
 			}
-			return value, true
+			return r.callArgumentDeclaredTopValue(point, source, p, value), true
 		}
 		if value, ok := r.result.PathValueAtBoundary(point, p); ok {
-			return value, true
+			return r.callArgumentDeclaredTopValue(point, source, p, value), true
 		}
 		if value, ok := r.result.SourceValueAtBoundary(point, source); ok {
-			return value, true
+			return r.callArgumentDeclaredTopValue(point, source, p, value), true
 		}
 	}
 	if source.Adjusted || source.Expanded {
 		if r.rootPathArgumentUsesBoundary(point, p) {
 			if value, ok := r.trustedReadableSourceValueAtBoundary(point, source); ok {
+				if before, beforeOK := r.result.SourceValueBeforeBoundary(point, source); beforeOK &&
+					!r.callArgumentBoundaryCanRefine(before, value) {
+					return product.Value{}, false
+				}
 				return value, true
 			}
 		}
@@ -542,16 +620,96 @@ func (r Reader) callArgumentPathValue(point cfg.Point, source factflow.ValueSour
 		if value, ok := r.result.SourceValueBeforeBoundary(point, source); ok {
 			if !r.valueHasReadableType(value) {
 				if boundary, boundaryOK := r.trustedReadableSourceValueAtBoundary(point, source); boundaryOK {
-					return boundary, true
+					return r.callArgumentDeclaredTopValue(point, source, p, boundary), true
 				}
 			}
-			return value, true
+			return r.callArgumentDeclaredTopValue(point, source, p, value), true
 		}
 		if value, ok := r.result.PathValueAtBoundary(point, p); ok {
-			return value, true
+			return r.callArgumentDeclaredTopValue(point, source, p, value), true
 		}
 	}
 	return product.Value{}, false
+}
+
+func (r Reader) callArgumentSharperSourceBoundaryValue(point cfg.Point, source factflow.ValueSource) (product.Value, bool) {
+	if r.result == nil {
+		return product.Value{}, false
+	}
+	boundary, ok := r.result.SourceValueAtBoundary(point, source)
+	if !ok {
+		return product.Value{}, false
+	}
+	before, beforeOK := r.result.SourceValueBeforeBoundary(point, source)
+	if !beforeOK {
+		if r.sourceHasDeclaredTopRoot(point, source) {
+			return product.Value{}, false
+		}
+		if source.Adjusted || source.Expanded || r.sourceHasRuntimeValidationAuthority(point, source) {
+			return boundary, true
+		}
+		return product.Value{}, false
+	}
+	if presence.Equal(product.PresenceOf(boundary), presence.Present()) &&
+		!presence.Equal(product.PresenceOf(before), presence.Present()) {
+		if r.callArgumentPresenceOnlyRefinement(before, boundary) &&
+			r.callArgumentSourceBoundaryHasRuntimeOrTypeProof(point, source) {
+			return boundary, true
+		}
+	}
+	beforeType, beforeTypeOK := r.ValueTypeWithPresence(before)
+	boundaryType, boundaryTypeOK := r.ValueTypeWithPresence(boundary)
+	if beforeTypeOK && boundaryTypeOK && body.TypeMayBeNilMismatch(beforeType, boundaryType) {
+		if r.sourceHasRuntimeValidationAuthority(point, source) ||
+			(r.callArgumentNilabilityOnlyRefinement(beforeType, boundaryType) &&
+				r.callArgumentSourceBoundaryHasRuntimeOrTypeProof(point, source)) {
+			return boundary, true
+		}
+	}
+	return product.Value{}, false
+}
+
+func (r Reader) callArgumentSourceBoundaryHasRuntimeOrTypeProof(point cfg.Point, source factflow.ValueSource) bool {
+	if r.sourceHasRuntimeValidationAuthority(point, source) {
+		return true
+	}
+	p, ok := r.callArgumentSourcePath(source)
+	return ok && r.callArgumentBoundaryHasRuntimeOrTypeProof(point, source, p)
+}
+
+func (r Reader) callArgumentNilabilityOnlyRefinement(beforeType, boundaryType typ.Type) bool {
+	return r.result != nil && r.result.CallArgumentNilabilityOnlyRefinement(beforeType, boundaryType)
+}
+
+func (r Reader) callArgumentPresenceOnlyRefinement(before, boundary product.Value) bool {
+	beforeType, beforeOK := r.ValueTypeWithPresence(before)
+	boundaryType, boundaryOK := r.ValueTypeWithPresence(boundary)
+	if !beforeOK || !boundaryOK {
+		return true
+	}
+	return r.callArgumentNilabilityOnlyRefinement(beforeType, boundaryType)
+}
+
+func (r Reader) callArgumentRuntimeValidationCanAdoptBoundary(before, boundary product.Value) bool {
+	return r.result == nil || r.result.CallArgumentRuntimeValidationCanAdoptBoundary(before, boundary)
+}
+
+func (r Reader) sourceHasDeclaredTopRoot(point cfg.Point, source factflow.ValueSource) bool {
+	var p path.Path
+	var ok bool
+	if p, ok = r.callArgumentExpressionPath(source); !ok {
+		p, ok = r.valueSourcePath(source)
+	}
+	if !ok || p.IsEmpty() || len(p.Segments) != 0 {
+		return false
+	}
+	declared, declaredOK := r.explicitTopDeclaredPathTypeAt(p)
+	base := unwrap.Optional(declared)
+	return declaredOK && base != nil && (typ.IsAny(base) || typ.IsUnknown(base))
+}
+
+func (r Reader) sourceHasRuntimeValidationAuthority(_ cfg.Point, source factflow.ValueSource) bool {
+	return r.result != nil && r.result.SourceHasRuntimeValidation(source)
 }
 
 func (r Reader) trustedReadableSourceValueAtBoundary(point cfg.Point, source factflow.ValueSource) (product.Value, bool) {
@@ -592,146 +750,88 @@ func (r Reader) declaredRootArgumentValue(point cfg.Point, p path.Path) (product
 }
 
 func (r Reader) rootPathArgumentUsesBoundary(point cfg.Point, p path.Path) bool {
+	return r.result != nil && r.result.RootPathArgumentUsesBoundary(point, p)
+}
+
+func (r Reader) callArgumentSharperBoundaryValue(point cfg.Point, source factflow.ValueSource, p path.Path) (product.Value, bool) {
 	if r.result == nil || p.IsEmpty() || len(p.Segments) != 0 {
-		return false
+		return product.Value{}, false
 	}
-	if declared, ok := r.result.DeclaredPathTypeAt(point, p, true); ok && declared != nil &&
-		!typ.IsAny(declared) && !typ.IsUnknown(declared) {
-		return true
+	boundary, ok := r.readablePathValueAtBoundary(point, p)
+	if !ok {
+		return product.Value{}, false
 	}
-	if _, _, ok := r.result.DominatingBranchCheckForPath(point, p, func(_ cfg.Point, check branchcond.Check, _ bool) bool {
-		return check.Kind != branchcond.CheckNone
-	}); ok {
-		return true
+	before, beforeOK := r.result.PathValueBeforeBoundary(point, p)
+	if !beforeOK {
+		if sourceBefore, sourceBeforeOK := r.result.SourceValueBeforeBoundary(point, source); sourceBeforeOK &&
+			!r.callArgumentBoundaryRefinementAccepted(point, source, p, sourceBefore, boundary) {
+			return product.Value{}, false
+		}
+		return boundary, true
 	}
-	if _, ok := r.result.DominatingTruthyBranchForPath(point, p); ok {
-		return true
+	if sourceBefore, sourceBeforeOK := r.result.SourceValueBeforeBoundary(point, source); sourceBeforeOK &&
+		!r.callArgumentBoundaryRefinementAccepted(point, source, p, sourceBefore, boundary) {
+		return product.Value{}, false
 	}
-	if value, ok := r.result.DominatingBranchRefinementValueForPath(point, p); ok && r.valueHasReadableType(value) {
-		return true
+	if !r.callArgumentBoundaryRefinementAccepted(point, source, p, before, boundary) {
+		return product.Value{}, false
 	}
-	return r.rootPathHasTrustedDominatingAssignmentSource(point, p) ||
-		r.rootPathHasTrustedDeclarationSource(point, p) ||
-		r.rootPathHasTrustedNumericForVariable(point, p) ||
-		r.rootPathHasTrustedCurrentValue(point, p) ||
-		r.rootPathHasTrustedEntryValue(p) ||
-		r.rootPathHasTrustedGenericForVariable(point, p)
+	return boundary, true
+}
+
+func (r Reader) callArgumentBoundaryRefinementAccepted(point cfg.Point, source factflow.ValueSource, p path.Path, before, boundary product.Value) bool {
+	hasProof := r.callArgumentBoundaryHasRuntimeOrTypeProof(point, source, p)
+	return r.result != nil && r.result.CallArgumentBoundaryRefinementAccepted(before, boundary, hasProof)
+}
+
+func (r Reader) callArgumentBoundaryHasRuntimeOrTypeProof(point cfg.Point, source factflow.ValueSource, p path.Path) bool {
+	return r.sourceHasRuntimeValidationAuthority(point, source) ||
+		r.pathHasRuntimeProof(point, p) ||
+		r.rootPathHasDominatingRuntimeValidationAssignment(point, p) ||
+		r.rootPathHasTrustedDominatingAssignmentSource(point, p)
+}
+
+func (r Reader) callArgumentBoundaryCanRefine(before, boundary product.Value) bool {
+	return r.result != nil && r.result.CallArgumentBoundaryCanRefine(before, boundary)
+}
+
+func (r Reader) readablePathValueAtBoundary(point cfg.Point, p path.Path) (product.Value, bool) {
+	value, ok := r.result.PathValueAtBoundary(point, p)
+	if ok {
+		return value, true
+	}
+	if p.Symbol != 0 && p.Version != 0 {
+		stable := p
+		stable.Version = 0
+		if value, ok := r.result.PathValueAtBoundary(point, stable); ok {
+			return value, true
+		}
+	}
+	return product.Value{}, false
 }
 
 func (r Reader) rootPathHasTrustedDominatingAssignmentSource(point cfg.Point, p path.Path) bool {
-	if r.result == nil || p.IsEmpty() || p.Symbol == 0 || len(p.Segments) != 0 || r.result.Graph() == nil {
-		return false
-	}
-	var source factflow.ValueSource
-	var sourcePoint cfg.Point
-	found := false
-	for _, candidate := range r.result.Graph().RPO() {
-		if candidate == point || !r.result.PointDominates(candidate, point) {
-			continue
-		}
-		candidateSource, ok := r.rootPathAssignmentSourceAt(candidate, p)
-		if !ok {
-			continue
-		}
-		if !found || r.result.PointDominates(sourcePoint, candidate) {
-			source = candidateSource
-			sourcePoint = candidate
-			found = true
-		}
-	}
-	if !found {
-		return false
-	}
-	value, ok := r.result.SourceValueAtBoundary(sourcePoint, source)
-	return ok && r.valueHasReadableType(value) && !r.ValueHasUntrustedTopOrigin(value)
+	return r.result != nil && r.result.RootPathHasTrustedDominatingAssignmentSource(point, p)
 }
 
-func (r Reader) rootPathAssignmentSourceAt(point cfg.Point, p path.Path) (factflow.ValueSource, bool) {
-	if local, ok := r.result.LocalAssignment(point); ok && local.HasSymbol && local.Symbol == p.Symbol {
-		return sourcebridge.ValueSourceFromASTSource(local.Source)
-	}
-	ordinary, ok := r.result.OrdinaryAssignment(point)
-	if !ok || !ordinary.HasSymbol || ordinary.Symbol != p.Symbol || (ordinary.HasPath && len(ordinary.Path.Segments) != 0) {
-		return factflow.ValueSource{}, false
-	}
-	return sourcebridge.ValueSourceFromASTSource(ordinary.Source)
-}
-
-func (r Reader) rootPathHasTrustedDeclarationSource(point cfg.Point, p path.Path) bool {
+func (r Reader) rootPathHasTrustedBoundaryValue(point cfg.Point, p path.Path) bool {
 	if r.result == nil || p.IsEmpty() || len(p.Segments) != 0 {
 		return false
 	}
-	declaration, ok := r.result.DominatingPathRootDeclarationSource(point, p)
-	if !ok {
-		return false
-	}
-	value, ok := r.result.SourceValueAtBoundary(declaration.Point, declaration.Source)
+	value, ok := r.result.PathValueAtBoundary(point, p)
 	return ok && r.valueHasReadableType(value) && !r.ValueHasUntrustedTopOrigin(value)
-}
-
-func (r Reader) rootPathHasTrustedCurrentValue(point cfg.Point, p path.Path) bool {
-	if r.result == nil || p.IsEmpty() || len(p.Segments) != 0 {
-		return false
-	}
-	if value, ok := r.result.PathValueBeforeBoundary(point, p); ok &&
-		r.valueHasReadableType(value) && !r.ValueHasUntrustedTopOrigin(value) {
-		return true
-	}
-	if value, ok := r.result.PathValueAtBoundary(point, p); ok &&
-		r.valueHasReadableType(value) && !r.ValueHasUntrustedTopOrigin(value) {
-		return true
-	}
-	return false
 }
 
 func (r Reader) rootPathHasTrustedNumericForVariable(point cfg.Point, p path.Path) bool {
-	if r.result == nil || p.IsEmpty() || p.Symbol == 0 || len(p.Segments) != 0 || r.result.Graph() == nil {
-		return false
-	}
-	for _, candidate := range r.result.Graph().RPO() {
-		fact, ok := r.result.NumericFor(candidate)
-		if !ok || !fact.HasSymbol || fact.Symbol != p.Symbol {
-			continue
-		}
-		value, ok := r.result.PathValueBeforeBoundary(point, p)
-		return ok && r.valueHasReadableType(value)
-	}
-	return false
+	return r.result != nil && r.result.RootPathHasTrustedNumericForVariable(point, p)
 }
 
 func (r Reader) rootPathHasTrustedEntryValue(p path.Path) bool {
-	if r.result == nil || p.IsEmpty() || p.Symbol == 0 || len(p.Segments) != 0 {
-		return false
-	}
-	entry, ok := r.result.EntryState()
-	if !ok {
-		return false
-	}
-	value := entry.ReadValue(r.result.Registry(), statekey.SymbolValue(p.Symbol))
-	return r.valueHasReadableType(value) && !r.ValueHasUntrustedTopOrigin(value)
+	return r.result != nil && r.result.RootPathHasTrustedEntryValue(p)
 }
 
 func (r Reader) rootPathHasTrustedGenericForVariable(point cfg.Point, p path.Path) bool {
-	if r.result == nil || p.IsEmpty() || p.Symbol == 0 || len(p.Segments) != 0 || r.result.Graph() == nil {
-		return false
-	}
-	for _, candidate := range r.result.Graph().RPO() {
-		if candidate == point || !r.result.PointDominates(candidate, point) {
-			continue
-		}
-		fact, ok := r.result.GenericFor(candidate)
-		if !ok || fact.Role != cfgfacts.GenericForRoleVariable || !fact.HasSymbols {
-			continue
-		}
-		for _, sym := range fact.Symbols {
-			if sym != p.Symbol {
-				continue
-			}
-			value, ok := r.result.PathValueAtBoundary(point, p)
-			return ok && r.valueHasReadableType(value) && !r.ValueHasUntrustedTopOrigin(value)
-		}
-	}
-	return false
+	return r.result != nil && r.result.RootPathHasTrustedGenericForVariable(point, p)
 }
 
 func (r Reader) callArgumentBoundaryCandidate(point cfg.Point, source factflow.ValueSource, current product.Value) (product.Value, bool) {
@@ -751,6 +851,9 @@ func (r Reader) callArgumentBoundaryCandidate(point cfg.Point, source factflow.V
 	if currentTypeOK && candidateTypeOK && readapi.TypeMayBeNilMismatch(currentType, candidateType) {
 		return product.Value{}, false
 	}
+	if !r.callArgumentBoundaryCanRefine(current, value) {
+		return product.Value{}, false
+	}
 	if r.valueHasReadableType(value) && r.ValueHash(value) != r.ValueHash(current) {
 		return value, true
 	}
@@ -762,6 +865,110 @@ func (r Reader) objectEntryValue(point cfg.Point, entry factflow.ObjectEntry) (p
 		return value, true
 	}
 	return r.unknownArgumentValue()
+}
+
+func (r Reader) declaredTopArgumentValue(point cfg.Point, source factflow.ValueSource, p path.Path) (product.Value, bool) {
+	if r.result == nil || r.typeValues == nil || p.IsEmpty() || len(p.Segments) != 0 {
+		return product.Value{}, false
+	}
+	if r.pathHasPositiveRuntimeTypeGuard(point, p) ||
+		r.rootPathHasDominatingRuntimeValidationAssignment(point, p) {
+		return product.Value{}, false
+	}
+	declared, ok := r.explicitTopDeclaredPathTypeAt(p)
+	base := unwrap.Optional(declared)
+	if !ok || base == nil || (!typ.IsAny(base) && !typ.IsUnknown(base)) {
+		return product.Value{}, false
+	}
+	reg := r.result.Registry()
+	if reg == nil {
+		return product.Value{}, false
+	}
+	value := typevalue.WithWitness(reg, r.typeValues.FromType(reg, declared), declared)
+	value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
+	return product.Set(reg, value, assertion.Key, assertion.Any()), true
+}
+
+func (r Reader) rootPathHasDominatingRuntimeValidationAssignment(point cfg.Point, p path.Path) bool {
+	return r.result != nil && r.result.RootPathHasDominatingRuntimeValidationAssignment(point, p)
+}
+
+func (r Reader) callArgumentDeclaredTopValue(point cfg.Point, source factflow.ValueSource, p path.Path, value product.Value) product.Value {
+	if r.result == nil || r.ValueHasUntrustedTopOrigin(value) {
+		return value
+	}
+	if r.sourceHasRuntimeValidationAuthority(point, source) || p.IsEmpty() {
+		return value
+	}
+	if r.pathHasRuntimeProof(point, p) || r.rootPathHasDominatingRuntimeValidationAssignment(point, p) {
+		return value
+	}
+	if declaredValue, declarationSource, ok := r.untrustedRootDeclarationValue(point, p); ok &&
+		r.untrustedDeclarationStillDescribesValue(declaredValue, value, declarationSource) {
+		return declaredValue
+	}
+	declared, ok := r.explicitTopDeclaredPathTypeAt(p)
+	base := unwrap.Optional(declared)
+	if !ok || base == nil || (!typ.IsAny(base) && !typ.IsUnknown(base)) {
+		return value
+	}
+	reg := r.result.Registry()
+	if reg == nil || r.typeValues == nil {
+		return value
+	}
+	value = typevalue.WithWitness(reg, r.typeValues.FromType(reg, declared), declared)
+	value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
+	return product.Set(reg, value, assertion.Key, assertion.Any())
+}
+
+func (r Reader) pathHasRuntimeProof(point cfg.Point, p path.Path) bool {
+	return r.result != nil && r.result.PathHasRuntimeProof(point, p)
+}
+
+func (r Reader) untrustedRootDeclarationValue(point cfg.Point, p path.Path) (product.Value, factflow.ValueSource, bool) {
+	if r.result == nil || p.IsEmpty() || p.Symbol == 0 || len(p.Segments) != 0 {
+		return product.Value{}, factflow.ValueSource{}, false
+	}
+	declaration, ok := r.result.DominatingPathRootDeclarationSource(point, p)
+	if !ok {
+		return product.Value{}, factflow.ValueSource{}, false
+	}
+	value, ok := r.result.SourceValueAtBoundary(declaration.Point, declaration.Source)
+	if !ok || !r.ValueHasUntrustedTopOrigin(value) {
+		return product.Value{}, factflow.ValueSource{}, false
+	}
+	return value, declaration.Source, true
+}
+
+func (r Reader) untrustedDeclarationStillDescribesValue(declared, current product.Value, source factflow.ValueSource) bool {
+	declaredType, declaredOK := r.ValueTypeWithPresence(declared)
+	currentType, currentOK := r.ValueTypeWithPresence(current)
+	if !declaredOK || !currentOK {
+		return false
+	}
+	if typ.TypeEquals(declaredType, currentType) {
+		return true
+	}
+	if (typ.IsAny(declaredType) || typ.IsUnknown(declaredType)) && source.HasExpr && source.ExprRef != 0 {
+		_, operationOK := r.result.ExpressionOperationRef(source.ExprRef)
+		return operationOK
+	}
+	return false
+}
+
+func (r Reader) explicitTopDeclaredPathTypeAt(p path.Path) (typ.Type, bool) {
+	if r.result == nil {
+		return nil, false
+	}
+	return r.result.ExplicitTopDeclaredPathType(p)
+}
+
+func (r Reader) pathHasPositiveRuntimeTypeGuard(point cfg.Point, p path.Path) bool {
+	return r.result != nil && r.result.PathHasPositiveRuntimeTypeGuard(point, p)
+}
+
+func (r Reader) pathHasRuntimeTypeGuard(point cfg.Point, p path.Path) bool {
+	return r.result != nil && r.result.PathHasRuntimeTypeGuard(point, p)
 }
 
 func callArgumentSpan(site factflow.CallSite, index int) SourceSpan {

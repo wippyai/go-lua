@@ -7,6 +7,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
@@ -19,7 +21,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
@@ -27,8 +28,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
-	"github.com/wippyai/go-lua/analysis/type/channelselect"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/projection"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -56,50 +57,6 @@ func TestValueTypeWitnessPresentProjectsConcreteType(t *testing.T) {
 		t.Fatalf("ValueType returned false")
 	}
 	assertSameType(t, got, typ.String)
-}
-
-func TestChannelSelectCaseIndexPreservesDuplicateAndReversedMatches(t *testing.T) {
-	selected := pathdom.Path{Root: "selected"}
-	result := selected.Field("result")
-	resultChannel := result.Field(channelselect.ResultChannelField)
-	primary := pathdom.Path{Root: "primary"}
-	timers := pathdom.Path{Root: "timers"}
-	otherResult := pathdom.Path{Root: "other"}.Field("result")
-
-	index := newReadmodelChannelSelectCaseIndex([]readmodelSelectInfo{
-		{
-			result: result,
-			cases: []readmodelSelectCase{
-				{path: primary, name: "primary receive"},
-				{path: primary, name: "primary send"},
-				{path: timers, name: "timers"},
-			},
-		},
-		{
-			result: otherResult,
-			cases:  []readmodelSelectCase{{path: primary, name: "later primary"}},
-		},
-	})
-
-	matches := index.matchesForCheck(branchcond.Check{
-		Kind:      branchcond.CheckPathEqual,
-		Path:      primary,
-		OtherPath: resultChannel,
-	})
-	if len(matches) != 2 ||
-		matches[0].selectIndex != 0 || matches[0].caseIndex != 0 ||
-		matches[1].selectIndex != 0 || matches[1].caseIndex != 1 {
-		t.Fatalf("reversed primary matches = %#v, want first select duplicate cases [0 1]", matches)
-	}
-
-	matches = index.matchesForCheck(branchcond.Check{
-		Kind:      branchcond.CheckPathEqual,
-		Path:      resultChannel,
-		OtherPath: timers,
-	})
-	if len(matches) != 1 || matches[0].selectIndex != 0 || matches[0].caseIndex != 2 {
-		t.Fatalf("direct timers matches = %#v, want select 0 case [2]", matches)
-	}
 }
 
 func TestForEachUnresolvedValueReferenceReportsImplicitGlobalReads(t *testing.T) {
@@ -213,7 +170,10 @@ func TestSourceValueReadsAnyAssertionClaimFromLocalAssignmentSource(t *testing.T
 	stmts := parseChunk(t, `
 local request = ({id = "r1", retries = 2} :: any)
 `)
-	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{
+		Registry: reg,
+		Globals:  []string{"value"},
+	}})
 	if err != nil {
 		t.Fatalf("RunChunk: %v", err)
 	}
@@ -233,8 +193,12 @@ local request = ({id = "r1", retries = 2} :: any)
 		t.Fatalf("SourceValue did not preserve assertion.Any: %v", value)
 	}
 	got, ok := reader.SourceType(point, fact.Source)
-	if !ok || !typ.IsAny(got) {
-		t.Fatalf("SourceType = %v/%v, want any", got, ok)
+	want := typetable.NewRecord().
+		Field("id", typ.LiteralString("r1")).
+		Field("retries", typ.LiteralInt(2)).
+		Build()
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("SourceType = %v/%v, want %v", got, ok, want)
 	}
 }
 
@@ -530,6 +494,47 @@ local p: Point = {id = raw}
 	}
 }
 
+func TestForEachAssignmentReportsExplicitAnyFieldThroughIPairs(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local raw: any = nil
+local pages = {
+	{ id = raw, route = "/ok" },
+}
+local accessible: {[string]: string} = {}
+for _, page in ipairs(pages) do
+	accessible[page.route] = page.id
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatal("RootResult nil")
+	}
+	var got []Assignment
+	New(root).ForEachAssignment(func(assignment Assignment) bool {
+		if assignment.TargetLabel == "accessible" && assignment.SourceLabel == "page.id" {
+			got = append(got, assignment)
+		}
+		return true
+	})
+	if len(got) != 1 {
+		t.Fatalf("assignments = %#v, want explicit-any map write rejected", got)
+	}
+	if got[0].Check.Admissible {
+		t.Fatalf("assignment check is admissible, want explicit any field rejected for map value contract")
+	}
+	if !got[0].UntrustedTopOrigin {
+		t.Fatalf("assignment did not preserve explicit any origin through ipairs")
+	}
+}
+
 func TestForEachAssignmentReportsOrdinaryObjectLiteralExplicitAnyMember(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
@@ -581,7 +586,10 @@ end
 cache_decision(store, "present", { kind = "allow", reason = "ok" })
 local missing: Decision = store.cached["missing"]
 `)
-	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{
+		Registry: reg,
+		Globals:  []string{"value"},
+	}})
 	if err != nil {
 		t.Fatalf("RunChunk: %v", err)
 	}
@@ -756,6 +764,65 @@ end
 	}
 }
 
+func TestForEachAssignmentKeepsNonDominatingWrapperReturnMemberNilable(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function run(flag: boolean)
+	local M = {
+		dep = {
+			get = function()
+				return nil
+			end,
+		},
+	}
+
+	function M.run()
+		return M.dep.get()
+	end
+
+	if flag then
+		M.dep = {
+			get = function()
+				return { answer = "ok" }
+			end,
+		}
+	end
+
+	local res = M.run()
+	local answer: string = res.answer
+	return answer
+end
+
+return run
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatal("RootResult missing")
+	}
+	var got []Assignment
+	for _, fn := range root.FunctionResults() {
+		New(fn).ForEachAssignment(func(assignment Assignment) bool {
+			if assignment.TargetLabel == "answer" {
+				got = append(got, assignment)
+			}
+			return true
+		})
+	}
+	if len(got) != 1 {
+		t.Fatalf("answer assignments = %#v, want one wrapper return member assignment", got)
+	}
+	if got[0].Check.Admissible {
+		t.Fatalf("assignment check is admissible with source=%v expected=%v, want non-dominating wrapper return member to require nil proof", got[0].TypeWithPresence, got[0].Expected)
+	}
+	if !typevalue.TypeIncludesNil(got[0].TypeWithPresence) {
+		t.Fatalf("source type = %v, want nilable wrapper return member", got[0].TypeWithPresence)
+	}
+}
+
 func TestForEachAssignmentMarksCallResultSourceReturnSpan(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
@@ -891,8 +958,8 @@ local req: { id: string }, label: string = pair(raw)
 		}
 		return true
 	})
-	if !req.CallResult.Present || req.CallResult.ResultIndex != 0 || req.CallResult.ReturnSpan.StartLine != 0 {
-		t.Fatalf("req call result source = %#v, want present result 0 without declared return span", req.CallResult)
+	if !req.CallResult.Present || req.CallResult.ResultIndex != 0 || req.CallResult.ReturnSpan.StartLine != 1 || req.CallResult.ReturnSpan.StartCol != 32 {
+		t.Fatalf("req call result source = %#v, want present result 0 with declared return span", req.CallResult)
 	}
 }
 
@@ -963,6 +1030,37 @@ end
 	}
 	if ret := returns[0]; !ret.Check.Admissible {
 		t.Fatalf("return check = %#v, want runtime-validated call producer accepted", ret.Check)
+	}
+}
+
+func TestForEachReturnAcceptsRuntimeCastOnIndexedRead(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Item = {description: string}
+type Context = {items: {Item}}
+
+local function f(context: Context): Item
+	return context.items[#context.items] :: Item
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil || len(root.FunctionResults()) != 1 {
+		t.Fatalf("root/functions = %#v, want one function result", root)
+	}
+	var returns []Return
+	New(root.FunctionResults()[0]).ForEachReturn(func(ret Return) bool {
+		returns = append(returns, ret)
+		return true
+	})
+	if len(returns) != 1 {
+		t.Fatalf("returns = %#v, want one return projection", returns)
+	}
+	if ret := returns[0]; !ret.Check.Admissible {
+		t.Fatalf("return check = %#v type=%v, want runtime-validated indexed read accepted", ret.Check, ret.TypeWithPresence)
 	}
 }
 
@@ -1044,6 +1142,78 @@ end
 	}
 	if ret.Check.Admissible {
 		t.Fatalf("check = %#v, want missing proof", ret.Check)
+	}
+}
+
+func TestForEachReturnAcceptsNestedClosureLogicalBooleanWithCapturedLocals(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local output = {}
+output.TYPE = { ERROR = "error" }
+
+type ErrorInfo = { type: string, message: string, code: any? }
+type OutputChunk = { type: string, error: ErrorInfo? }
+type Streamer = {
+	send_error: (self: Streamer, type: string, message: string, code: any?) -> boolean,
+}
+
+function output.error(err_type: string, message: string, code: any?): OutputChunk
+	return {
+		type = output.TYPE.ERROR,
+		error = { type = err_type, message = message, code = code },
+	}
+end
+
+function output.streamer(pid: string, topic: string): Streamer
+	local streamer = {}
+	local target_pid = tostring(pid)
+	local target_topic = tostring(topic)
+	streamer.send_error = function(self: Streamer, err_type: string, message: string, code: any?): boolean
+		local chunk: OutputChunk = output.error(err_type, message, code)
+		return chunk.type == output.TYPE.ERROR and target_pid ~= "" and target_topic ~= ""
+	end
+	return streamer :: Streamer
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatal("missing root result")
+	}
+	var returns []Return
+	var visit func(*body.Result)
+	visit = func(result *body.Result) {
+		for _, child := range result.FunctionResults() {
+			New(child).ForEachReturn(func(ret Return) bool {
+				returns = append(returns, ret)
+				return true
+			})
+			visit(child)
+		}
+	}
+	visit(root)
+	if len(returns) != 1 {
+		var booleanReturns []Return
+		for _, ret := range returns {
+			if typ.TypeEquals(ret.Expected, typ.Boolean) {
+				booleanReturns = append(booleanReturns, ret)
+			}
+		}
+		returns = booleanReturns
+	}
+	if len(returns) != 1 {
+		t.Fatalf("returns = %d, want nested send_error boolean return: %#v", len(returns), returns)
+	}
+	ret := returns[0]
+	if !ret.Check.Admissible {
+		t.Fatalf("return check = %#v type=%v untrusted=%v explicit=%v, want admissible boolean proof",
+			ret.Check, ret.TypeWithPresence, ret.UntrustedTopOrigin, ret.ExplicitTopOrigin)
 	}
 }
 
@@ -1931,6 +2101,56 @@ end
 	}
 }
 
+func TestOrdinaryAssignmentTargetTypeUsesDeclaredMapForDynamicWrite(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local headers: {[string]: string} = {
+	["content-type"] = "application/json",
+	["accept"] = "application/json",
+}
+
+local header_name = "x-custom"
+headers[tostring(header_name)] = tostring(42)
+`)
+	checked, err := program.RunChunk(stmts, program.Config{
+		Check: body.Config{
+			Registry:   reg,
+			Signatures: signaturelookup.Source{IncludeStdlib: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatal("missing root result")
+	}
+	reader := New(root)
+	var found bool
+	var labels []string
+	for _, point := range root.Graph().RPO() {
+		fact, ok := root.OrdinaryAssignment(point)
+		if !ok {
+			continue
+		}
+		labels = append(labels, body.AssignmentSourceLabel(fact.Target))
+		if body.AssignmentSourceLabel(fact.Target) != "headers" {
+			continue
+		}
+		found = true
+		got, ok := reader.ordinaryAssignmentTargetType(point, fact)
+		if !ok {
+			t.Fatal("ordinaryAssignmentTargetType returned false for declared map dynamic write")
+		}
+		if !typ.TypeEquals(got, typ.String) {
+			t.Fatalf("target type = %v, want declared map value type string", got)
+		}
+	}
+	if !found {
+		t.Fatalf("missing headers ordinary assignment; labels=%v", labels)
+	}
+}
+
 func TestForEachAssignmentUsesLocalFunctionInsertedArrayReturnSlot(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
@@ -2736,7 +2956,8 @@ end
 		t.Fatalf("CheckFunction: %v", err)
 	}
 	var reports []CallArgumentReport
-	New(result).ForEachCall(func(call CallSite) bool {
+	reader := New(result)
+	reader.ForEachCall(func(call CallSite) bool {
 		reports = append(reports, call.Reports...)
 		return true
 	})
@@ -2748,6 +2969,466 @@ end
 	}
 	if !reports[0].Argument.UntrustedTopOrigin {
 		t.Fatalf("argument = %#v, want untrusted-top origin preserved", reports[0].Argument)
+	}
+}
+
+func TestForEachCallReportsLocalFunctionUntrustedOrDefaultArgument(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function needs_string(value: string): ()
+end
+
+local function from_untrusted(raw: any): ()
+	local selected = raw or "fallback"
+	needs_string(selected)
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	result := checked.RootResult()
+	if result == nil {
+		t.Fatal("RootResult nil")
+	}
+	var reports []CallArgumentReport
+	for _, fn := range result.FunctionResults() {
+		reader := New(fn)
+		reader.ForEachCall(func(call CallSite) bool {
+			reports = append(reports, call.Reports...)
+			return true
+		})
+	}
+	if len(reports) != 1 {
+		t.Fatalf("argument reports = %#v, want one local-function untrusted or-default argument report", reports)
+	}
+	if reports[0].Check.Admissible {
+		t.Fatalf("argument report is admissible with arg=%#v, want missing proof for untrusted or-default", reports[0].Argument)
+	}
+}
+
+func TestForEachReturnReportsRootLiteralArrayReadWithoutLengthProof(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function bad(): number
+	local xs: {number} = {}
+	return xs[1]
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatal("RootResult nil")
+	}
+	var returns []Return
+	for _, fn := range root.FunctionResults() {
+		New(fn).ForEachReturn(func(ret Return) bool {
+			returns = append(returns, ret)
+			return true
+		})
+	}
+	if len(returns) != 1 {
+		t.Fatalf("returns = %#v, want one nilable indexed return", returns)
+	}
+	if returns[0].Check.Admissible || returns[0].Check.Mismatch.Kind != readapi.ReturnMismatchMayBeNil || !returns[0].SourceIndexedRead {
+		t.Fatalf("return = %#v, want non-admissible indexed read may-be-nil mismatch", returns[0])
+	}
+}
+
+func TestForEachCallReportsBroadNumberTupleIndexMayBeNil(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local frames = {"a", "b", "c"}
+
+local function need_string(value: string): ()
+end
+
+local function spinner(index: number): ()
+	local frame = frames[((index - 1) % #frames) + 1]
+	need_string(frame)
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatal("RootResult nil")
+	}
+	var reports []CallArgumentReport
+	for _, fn := range root.FunctionResults() {
+		New(fn).ForEachCall(func(call CallSite) bool {
+			reports = append(reports, call.Reports...)
+			return true
+		})
+	}
+	if len(reports) != 1 {
+		t.Fatalf("argument reports = %#v, want one nilable indexed argument report", reports)
+	}
+	if reports[0].Check.Admissible {
+		t.Fatalf("argument report is admissible with arg=%#v, want broad number tuple index to remain nilable", reports[0].Argument)
+	}
+	if !typevalue.TypeIncludesNil(reports[0].Argument.TypeWithPresence) {
+		t.Fatalf("argument type = %v, want nilable indexed read", reports[0].Argument.TypeWithPresence)
+	}
+}
+
+func TestForEachCallReportsTruthyUntypedArgumentAsUnknown(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function apply_limit(limit: number): ()
+end
+
+local function list(limit)
+	if limit then
+		apply_limit(limit)
+	end
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatal("RootResult nil")
+	}
+	var reports []CallArgumentReport
+	for _, fn := range root.FunctionResults() {
+		New(fn).ForEachCall(func(call CallSite) bool {
+			reports = append(reports, call.Reports...)
+			return true
+		})
+	}
+	if len(reports) != 1 {
+		t.Fatalf("argument reports = %#v, want one untyped truthy argument report", reports)
+	}
+	if reports[0].Check.Admissible {
+		t.Fatalf("argument report is admissible with arg=%#v, want truthy untyped value rejected for number", reports[0].Argument)
+	}
+	if !typ.IsAny(reports[0].Argument.TypeWithPresence) && !typ.IsUnknown(reports[0].Argument.TypeWithPresence) {
+		t.Fatalf("argument type = %v, want any/unknown after truthy guard, not number", reports[0].Argument.TypeWithPresence)
+	}
+}
+
+func TestForEachCallReportsOptionalTableInsertElement(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Item = {description: string}
+type Context = {items: {Item}}
+
+local function f(context: Context, maybe_item: Item?): ()
+	table.insert(context.items, maybe_item)
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil || len(root.FunctionResults()) != 1 {
+		t.Fatalf("function results = %#v, want one function", root)
+	}
+	var reports []CallArgumentReport
+	New(root.FunctionResults()[0]).ForEachCall(func(call CallSite) bool {
+		reports = append(reports, call.Reports...)
+		return true
+	})
+	if len(reports) != 1 {
+		t.Fatalf("argument reports = %#v, want optional table.insert element report", reports)
+	}
+	if reports[0].Argument.Label != "maybe_item" || reports[0].Check.Admissible {
+		t.Fatalf("report = %#v, want non-admissible maybe_item insert", reports[0])
+	}
+	if !typevalue.TypeIncludesNil(reports[0].Argument.TypeWithPresence) {
+		t.Fatalf("argument type = %v, want optional inserted value", reports[0].Argument.TypeWithPresence)
+	}
+}
+
+func TestForEachCallReportsObjectLiteralExplicitAnyMemberAsTop(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Point = { id: string }
+local function take(p: Point): () end
+local raw: any = nil
+take({ id = raw })
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	result := checked.RootResult()
+	if result == nil {
+		t.Fatal("RootResult nil")
+	}
+	var reports []CallArgumentReport
+	New(result).ForEachCall(func(call CallSite) bool {
+		reports = append(reports, call.Reports...)
+		return true
+	})
+	if len(reports) != 1 {
+		t.Fatalf("argument reports = %#v, want one explicit-any member report", reports)
+	}
+	arg := reports[0].Check.Argument
+	if arg.Label != "argument 1.id (raw)" {
+		t.Fatalf("argument label = %q, want object-literal member", arg.Label)
+	}
+	if !arg.UntrustedTopOrigin {
+		t.Fatalf("argument = %#v, want untrusted top origin", arg)
+	}
+	if got := reports[0].Check.EffectiveActualType(); !typ.TypeEquals(got, typ.Any) {
+		t.Fatalf("effective actual type = %v, want any; argument=%#v", got, arg)
+	}
+}
+
+func TestForEachCallRejectsExplicitAnyForLocalFunctionRecordParam(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Payload = { id: string, count: number }
+local raw: any = { id = "cfg", count = 2 }
+local function consume(payload: Payload): number
+	return payload.count + 1
+end
+local count = consume(raw)
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	result := checked.RootResult()
+	if result == nil {
+		t.Fatal("RootResult nil")
+	}
+	var reports []CallArgumentReport
+	New(result).ForEachCall(func(call CallSite) bool {
+		reports = append(reports, call.Reports...)
+		return true
+	})
+	if len(reports) != 1 {
+		t.Fatalf("argument reports = %#v, want explicit-any local function argument report", reports)
+	}
+	if reports[0].Check.Admissible {
+		t.Fatalf("argument report is admissible with arg=%#v, want explicit any to require proof", reports[0].Argument)
+	}
+	if !reports[0].Argument.UntrustedTopOrigin {
+		t.Fatalf("argument = %#v, want explicit top origin", reports[0].Argument)
+	}
+}
+
+func TestForEachCallRejectsCapturedLocalFunctionOptionalAnyParam(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function need(id: string): () end
+local function f(raw: any?): ()
+	need(raw)
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	var reports []CallArgumentReport
+	var calls int
+	var args []CallArgument
+	for _, fn := range checked.RootResult().FunctionResults() {
+		reader := New(fn)
+		reader.ForEachCall(func(call CallSite) bool {
+			calls++
+			reader.forEachCallArgument(call.Point, func(arg CallArgument) bool {
+				args = append(args, arg)
+				return true
+			})
+			reports = append(reports, call.Reports...)
+			return true
+		})
+	}
+	if len(reports) != 1 {
+		t.Fatalf("calls=%d args=%#v argument reports = %#v, want untrusted optional-any local function argument report", calls, args, reports)
+	}
+	arg := reports[0].Check.Argument
+	if reports[0].Check.Admissible || !arg.UntrustedTopOrigin {
+		t.Fatalf("argument report = %#v, want non-admissible untrusted optional-any", reports[0])
+	}
+}
+
+func TestForEachCallTableRuntimeGuardDoesNotProveStringKeyMap(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function need_context(context: {[string]: any}?): ()
+end
+
+local function process(inputs: any): ()
+	local input_context = nil
+	if inputs.context then
+		local context_content = inputs.context.content
+		if type(context_content) ~= "table" then
+			return
+		end
+		input_context = context_content
+	end
+	need_context(input_context)
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	var reports []CallArgumentReport
+	for _, fn := range checked.RootResult().FunctionResults() {
+		New(fn).ForEachCall(func(call CallSite) bool {
+			reports = append(reports, call.Reports...)
+			return true
+		})
+	}
+	if len(reports) != 1 {
+		t.Fatalf("argument reports = %#v, want one table-vs-map report", reports)
+	}
+	check := reports[0].Check
+	wantActual := typ.MaterializeOptional(typetable.BuiltinTopMarker())
+	if !typ.TypeEquals(check.Argument.TypeWithPresence, wantActual) {
+		t.Fatalf("argument type = %v, want %v; check=%#v", check.Argument.TypeWithPresence, wantActual, check)
+	}
+	if check.Admissible || !check.ProvenMismatch {
+		t.Fatalf("argument check = %#v, want proven table-vs-map mismatch", check)
+	}
+}
+
+func TestForEachCallRejectsDeclaredAnyRootArgument(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function need_string(value: string): () end
+local raw: any = 1
+need_string(raw)
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	var reports []CallArgumentReport
+	reader := New(checked.RootResult())
+	reader.ForEachCall(func(call CallSite) bool {
+		reports = append(reports, call.Reports...)
+		return true
+	})
+	if len(reports) != 1 {
+		t.Fatalf("reports = %#v, want one declared-any argument report", reports)
+	}
+	arg := reports[0].Check.Argument
+	if !arg.UntrustedTopOrigin || !arg.ExplicitTopOrigin {
+		t.Fatalf("argument origins = untrusted:%v explicit:%v type:%v, want declared any boundary",
+			arg.UntrustedTopOrigin, arg.ExplicitTopOrigin, arg.TypeWithPresence)
+	}
+}
+
+func TestForEachCallReportsObjectLiteralLogicalAnyFallbackMemberAsTop(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type TestEntry = {
+	id: string,
+	name: string,
+}
+
+local function collect(entries: any): ()
+	local tests: {TestEntry} = {}
+	for i, entry in ipairs(entries) do
+		local meta = entry.meta or {}
+		local display_name = meta.name or ("Unnamed test " .. i)
+		table.insert(tests, {
+			id = entry.id :: string,
+			name = display_name,
+		})
+	end
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	result := checked.RootResult()
+	if result == nil || len(result.FunctionResults()) != 1 {
+		t.Fatalf("function results = %#v, want one", result)
+	}
+	var reports []CallArgumentReport
+	New(result.FunctionResults()[0]).ForEachCall(func(call CallSite) bool {
+		reports = append(reports, call.Reports...)
+		return true
+	})
+	if len(reports) != 1 {
+		t.Fatalf("argument reports = %#v, want one untrusted logical fallback member report", reports)
+	}
+	arg := reports[0].Check.Argument
+	if arg.Label != "argument 2.name (display_name)" {
+		t.Fatalf("argument label = %q, want object-literal member", arg.Label)
+	}
+	if !arg.UntrustedTopOrigin {
+		t.Fatalf("argument = %#v, want untrusted top origin", arg)
+	}
+	if reports[0].Check.Admissible {
+		t.Fatalf("argument report is admissible with arg=%#v, want missing proof", arg)
+	}
+}
+
+func TestForEachCallKeepsTruthyAnyFieldUntrustedAfterRuntimeKindReduction(t *testing.T) {
+	reg := standard.Registry()
+	m := manifest.New("test")
+	m.DefineFunctionSignature("need_string", signature.Function{
+		Type: typ.Func().Param("value", typ.String).Build(),
+	})
+	stmts := parseChunk(t, `
+local function collect(parsed: any): ()
+	if type(parsed._images) == "table" then
+		for _, img in ipairs(parsed._images) do
+			if type(img) == "table" and img.url then
+				need_string(img.url)
+			end
+		end
+	end
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{
+		Registry: reg,
+		Globals:  []string{"type", "ipairs", "need_string"},
+		Signatures: signaturelookup.Source{
+			IncludeStdlib: true,
+			Manifests:     []*manifest.Manifest{m},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatal("RootResult nil")
+	}
+	var reports []CallArgumentReport
+	for _, result := range root.FunctionResults() {
+		New(result).ForEachCall(func(call CallSite) bool {
+			reports = append(reports, call.Reports...)
+			return true
+		})
+	}
+	if len(reports) != 1 {
+		t.Fatalf("argument reports = %#v, want one untrusted img.url argument report", reports)
+	}
+	arg := reports[0].Argument
+	if reports[0].Check.Admissible {
+		t.Fatalf("argument report is admissible with arg=%#v, want missing proof for untrusted img.url", arg)
+	}
+	if !arg.UntrustedTopOrigin {
+		t.Fatalf("argument = %#v, want untrusted-top origin preserved after runtime-kind reduction", arg)
+	}
+	if !typ.IsAny(arg.TypeWithPresence) {
+		t.Fatalf("argument type = %v, want any with untrusted proof origin after truthy field guard", arg.TypeWithPresence)
 	}
 }
 
@@ -2855,6 +3536,58 @@ end
 	}
 }
 
+func TestForEachCallArgumentUsesReturnSlotPresenceGuardForRootArgument(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Event = { id: string }
+local function map_receive<T>(ch: Channel<T>, fn: (T) -> string): string
+	local value, ok = ch:receive()
+	if ok then
+		return fn(value)
+	end
+	return "closed"
+end
+local M = {}
+function M.read_event(ch: Channel<Event>): string
+	return map_receive(ch, function(event: Event): string
+		return event.id
+	end)
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatal("RootResult nil")
+	}
+	var sawCallback bool
+	for _, fnResult := range root.FunctionResults() {
+		reader := New(fnResult)
+		reader.ForEachCall(func(call CallSite) bool {
+			for _, point := range reader.callPoints() {
+				site, ok := fnResult.CallSite(point)
+				if ok && fnResult.SymbolName(site.CalleeSymbol()) == "fn" && call.Point == point {
+					sawCallback = true
+				}
+			}
+			for _, report := range call.Reports {
+				if report.Kind == readapi.CallArgumentReportObligation && report.Argument.Label == "value" {
+					t.Fatalf("fn(value) reports argument error after ok guard: %#v", report)
+				}
+			}
+			return true
+		})
+	}
+	if !sawCallback {
+		t.Fatal("fn(value) callback call not found")
+	}
+}
+
 func TestForEachCallArgumentUsesCompoundTypeGuardedRootFromAnyRead(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
@@ -2919,11 +3652,12 @@ local function need_number(n: number): number
     return n
 end
 
-local v: number | string = 5
-if type(v) == "number" then
-    return 0
-else
-    return need_number(v)
+local function f(v: number | string): number
+    if type(v) == "number" then
+        return 0
+    else
+        return need_number(v)
+    end
 end
 `)
 	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
@@ -2931,11 +3665,78 @@ end
 		t.Fatalf("RunChunk: %v", err)
 	}
 	root := checked.RootResult()
-	if root == nil {
-		t.Fatal("missing root result")
+	if root == nil || len(root.FunctionResults()) < 2 {
+		t.Fatalf("function results = %#v, want need_number and f", root)
 	}
 	var checkedArg bool
+	var reports []CallArgumentReport
+	for _, result := range root.FunctionResults() {
+		reader := New(result)
+		for _, point := range reader.callPoints() {
+			reader.forEachCallArgument(point, func(arg CallArgument) bool {
+				if arg.Label != "v" {
+					return true
+				}
+				checkedArg = true
+				if !typ.TypeEquals(arg.TypeWithPresence, typ.String) {
+					site, _ := result.CallSite(point)
+					source, _ := site.ArgumentSourceAt(arg.Index)
+					p, pathOK := reader.callArgumentExpressionPath(source)
+					declared, declaredOK := result.DeclaredPathTypeAt(point, p, pathOK)
+					reduced, reducedOK := reader.RuntimeKindReducedType(arg.Value, declared)
+					t.Fatalf("v argument type = %v, want string from else-edge type guard (source=%#v path=%s pathOK=%v owned=%v declared=%v declaredOK=%v reduced=%v reducedOK=%v)",
+						arg.TypeWithPresence, source, p, pathOK, reader.rootPathArgumentUsesBoundary(point, p), declared, declaredOK, reduced, reducedOK)
+				}
+				return true
+			})
+		}
+		reader.ForEachCall(func(call CallSite) bool {
+			if call.Point != 0 && !result.PointNormallyReachable(call.Point) {
+				t.Fatalf("call point %d has report candidates but is not normally reachable", call.Point)
+			}
+			reports = append(reports, call.Reports...)
+			return true
+		})
+	}
+	if !checkedArg {
+		t.Fatal("did not find need_number(v) argument")
+	}
+	if len(reports) != 1 || reports[0].Check.Admissible {
+		t.Fatalf("call reports = %#v, want one non-admissible string-to-number argument report", reports)
+	}
+	if reports[0].Kind != readapi.CallArgumentReportObligation || reports[0].Check.Expected == nil {
+		t.Fatalf("call reports = %#v, want obligation report with expected type", reports)
+	}
+}
+
+func TestForEachCallArgumentUsesBoundaryRefinedRootLocalTypeGuardElse(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function need_number(n: number): number
+    return n
+end
+
+local v: number | string = value
+if type(v) == "number" then
+    return 0
+else
+    return need_number(v)
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{
+		Registry: reg,
+		Globals:  []string{"value"},
+	}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatal("root result is nil")
+	}
 	reader := New(root)
+	var checkedArg bool
+	var reports []CallArgumentReport
 	for _, point := range reader.callPoints() {
 		reader.forEachCallArgument(point, func(arg CallArgument) bool {
 			if arg.Label != "v" {
@@ -2948,28 +3749,40 @@ end
 				p, pathOK := reader.callArgumentExpressionPath(source)
 				declared, declaredOK := root.DeclaredPathTypeAt(point, p, pathOK)
 				reduced, reducedOK := reader.RuntimeKindReducedType(arg.Value, declared)
-				t.Fatalf("v argument type = %v, want string from else-edge type guard (source=%#v path=%s pathOK=%v owned=%v declared=%v declaredOK=%v reduced=%v reducedOK=%v)",
-					arg.TypeWithPresence, source, p, pathOK, reader.rootPathArgumentUsesBoundary(point, p), declared, declaredOK, reduced, reducedOK)
+				pathBefore, _ := root.PathValueBeforeBoundary(point, p)
+				pathBoundary, _ := root.PathValueAtBoundary(point, p)
+				sourceBefore, _ := root.SourceValueBeforeBoundary(point, source)
+				sourceBoundary, _ := root.SourceValueAtBoundary(point, source)
+				sharp, sharpOK := reader.callArgumentSharperBoundaryValue(point, source, p)
+				pathBeforeType, pathBeforeTypeOK := reader.ValueTypeWithPresence(pathBefore)
+				pathBoundaryType, pathBoundaryTypeOK := reader.ValueTypeWithPresence(pathBoundary)
+				sourceBeforeType, sourceBeforeTypeOK := reader.ValueTypeWithPresence(sourceBefore)
+				sourceBoundaryType, sourceBoundaryTypeOK := reader.ValueTypeWithPresence(sourceBoundary)
+				sharpType, _ := reader.ValueTypeWithPresence(sharp)
+				t.Fatalf("v argument type = %v, want string from top-level else-edge type guard (source=%#v path=%s pathOK=%v owned=%v runtimeProof=%v declared=%v declaredOK=%v reduced=%v reducedOK=%v pathBefore=%v/%v pathBoundary=%v/%v sourceBefore=%v/%v sourceBoundary=%v/%v sharp=%v sharpOK=%v sourceCan=%v pathCan=%v sourceNilOnly=%v pathNilOnly=%v sourceTop=%v pathTop=%v)",
+					arg.TypeWithPresence, source, p, pathOK, reader.rootPathArgumentUsesBoundary(point, p), reader.pathHasRuntimeProof(point, p), declared, declaredOK, reduced, reducedOK, pathBeforeType, pathBeforeTypeOK, pathBoundaryType, pathBoundaryTypeOK, sourceBeforeType, sourceBeforeTypeOK, sourceBoundaryType, sourceBoundaryTypeOK, sharpType, sharpOK,
+					reader.callArgumentBoundaryCanRefine(sourceBefore, pathBoundary),
+					reader.callArgumentBoundaryCanRefine(pathBefore, pathBoundary),
+					root.CallArgumentBoundaryNarrowsOnlyNilability(sourceBefore, pathBoundary),
+					root.CallArgumentBoundaryNarrowsOnlyNilability(pathBefore, pathBoundary),
+					root.CallArgumentBoundaryConcretizesTop(sourceBefore, pathBoundary),
+					root.CallArgumentBoundaryConcretizesTop(pathBefore, pathBoundary))
 			}
 			return true
 		})
 	}
-	if !checkedArg {
-		t.Fatal("did not find need_number(v) argument")
-	}
-	var reports []CallArgumentReport
 	reader.ForEachCall(func(call CallSite) bool {
-		if call.Point != 0 && !root.PointNormallyReachable(call.Point) {
-			t.Fatalf("call point %d has report candidates but is not normally reachable", call.Point)
-		}
 		reports = append(reports, call.Reports...)
 		return true
 	})
+	if !checkedArg {
+		t.Fatal("did not find need_number(v) argument")
+	}
 	if len(reports) != 1 || reports[0].Check.Admissible {
 		t.Fatalf("call reports = %#v, want one non-admissible string-to-number argument report", reports)
 	}
-	if reports[0].Kind != readapi.CallArgumentReportObligation || reports[0].Check.Expected == nil {
-		t.Fatalf("call reports = %#v, want obligation report with expected type", reports)
+	if !typ.TypeEquals(reports[0].Check.Argument.TypeWithPresence, typ.String) {
+		t.Fatalf("report argument type = %v, want string from top-level else-edge type guard", reports[0].Check.Argument.TypeWithPresence)
 	}
 }
 
@@ -3357,6 +4170,37 @@ end
 	}
 }
 
+func TestForEachCallReportsOptionalNonCallableMemberType(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Client = {invoke: number}
+function f(c: Client?)
+	c.invoke()
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	result := checked.RootResult()
+	if result == nil || len(result.FunctionResults()) != 1 {
+		t.Fatalf("function results = %#v, want one", result)
+	}
+	var reports []CallCalleeReport
+	New(result.FunctionResults()[0]).ForEachCall(func(call CallSite) bool {
+		if call.Callee.Kind != readapi.CallCalleeReportNone {
+			reports = append(reports, call.Callee)
+		}
+		return true
+	})
+	if len(reports) != 1 {
+		t.Fatalf("callee reports = %#v, want one", reports)
+	}
+	if reports[0].Kind != readapi.CallCalleeReportNotCallable || !reports[0].MemberAccess || !typ.TypeEquals(reports[0].Type, typ.Number) {
+		t.Fatalf("callee report = %#v, want non-callable member number", reports[0])
+	}
+}
+
 func TestForEachCallReportsAnyMemberCalleeNeedsCallableProof(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
@@ -3531,6 +4375,108 @@ end
 	}
 	if reports[0].Kind != readapi.CallCalleeReportMayBeNil || !reports[0].MemberAccess || reports[0].Callable {
 		t.Fatalf("callee report = %#v, want optional receiver member report", reports[0])
+	}
+}
+
+func TestForEachCallReportsOptionalReceiverAfterReverseMapPrimaryDelete(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type ChannelInfo = {
+	handler: (any) -> any,
+}
+
+local registered_channels: {[string]: ChannelInfo} = {}
+local channel_to_id: {[any]: string} = {}
+
+local function register_channel(chan: any, handler: (any) -> any): ()
+	local channel_id = tostring(chan)
+	registered_channels[channel_id] = { handler = handler }
+	channel_to_id[chan] = channel_id
+end
+
+local function dispatch(chan: any): any
+	register_channel(chan, function(value) return value end)
+	local channel_id = channel_to_id[chan]
+	if channel_id then
+		registered_channels[channel_id] = nil
+		local stale_id = channel_to_id[chan]
+		if stale_id then
+			local channel_info = registered_channels[stale_id]
+			return channel_info.handler(chan)
+		end
+	end
+	return nil
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg, Signatures: signaturelookup.Source{IncludeStdlib: true}}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	result := checked.RootResult()
+	if result == nil {
+		t.Fatalf("root result is nil")
+	}
+	var reports []CallCalleeReport
+	for _, fn := range result.FunctionResults() {
+		New(fn).ForEachCall(func(call CallSite) bool {
+			if call.Callee.Kind != readapi.CallCalleeReportNone {
+				reports = append(reports, call.Callee)
+			}
+			return true
+		})
+	}
+	if len(reports) != 1 {
+		t.Fatalf("callee reports = %#v, want optional receiver report", reports)
+	}
+	if reports[0].Kind != readapi.CallCalleeReportMayBeNil || !reports[0].MemberAccess || reports[0].Callable {
+		t.Fatalf("callee report = %#v, want optional receiver member report", reports[0])
+	}
+}
+
+func TestForEachCallAcceptsReverseMapValueAsTrustedArgumentProof(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type ChannelInfo = {
+	chan: any,
+	handler: (any, any, boolean, string) -> any,
+}
+
+local registered_channels: {[string]: ChannelInfo} = {}
+local channel_to_id: {[any]: string} = {}
+
+local function register_channel(chan: any, handler: (any, any, boolean, string) -> any): ()
+	local channel_id = tostring(chan)
+	registered_channels[channel_id] = { chan = chan, handler = handler }
+	channel_to_id[chan] = channel_id
+end
+
+local function dispatch(result: { channel: any, value: any, ok: boolean }, state: any): any
+	register_channel(result.channel, function(inner_state, value, ok, id) return value end)
+	local channel_id = channel_to_id[result.channel]
+	if channel_id then
+		local channel_info = registered_channels[channel_id]
+		return channel_info.handler(state, result.value, result.ok, channel_id)
+	end
+	return nil
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg, Signatures: signaturelookup.Source{IncludeStdlib: true}}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	result := checked.RootResult()
+	if result == nil {
+		t.Fatalf("root result is nil")
+	}
+	var reports []CallArgumentReport
+	for _, fn := range result.FunctionResults() {
+		New(fn).ForEachCall(func(call CallSite) bool {
+			reports = append(reports, call.Reports...)
+			return true
+		})
+	}
+	if len(reports) != 0 {
+		t.Fatalf("argument reports = %#v, want reverse-map value to prove handler arguments", reports)
 	}
 }
 
@@ -3848,6 +4794,142 @@ end
 	})
 }
 
+func TestForEachCallParamObligationExpectedTypeUsesContractProjection(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function id<T>(x: T): T
+	return x
+end
+
+local function f(): ()
+	local raw = ({ id = "ok" } :: any)
+	id(raw)
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	result := checked.RootResult()
+	if result == nil || len(result.FunctionResults()) != 2 {
+		t.Fatalf("function results = %#v, want id and f bodies", result)
+	}
+	var found bool
+	New(result.FunctionResults()[1]).ForEachCall(func(call CallSite) bool {
+		for _, report := range call.Reports {
+			if report.Kind != readapi.CallArgumentReportObligation {
+				continue
+			}
+			found = true
+			if typevalue.TypeIncludesNil(report.Check.Expected) {
+				t.Fatalf("expected obligation type = %v, actual=%v, value presence=%s, want pure contract without value-presence nilability", report.Check.Expected, report.Check.Argument.TypeWithPresence, product.PresenceOf(report.Check.Argument.Value))
+			}
+		}
+		return true
+	})
+	if !found {
+		t.Fatal("missing call argument obligation for id(raw)")
+	}
+}
+
+func TestForEachCallParamObligationOriginUsesOwningFunctionName(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function invoke(provider: any, payload)
+	provider[1](payload)
+end
+
+local p: { [1]: (number) -> () } = {
+	[1] = function(v: number): () end,
+}
+
+invoke(p, "bad")
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatal("RootResult nil")
+	}
+	var found bool
+	results := append([]*body.Result{root}, root.FunctionResults()...)
+	for _, fn := range results {
+		New(fn).ForEachCall(func(call CallSite) bool {
+			for _, report := range call.Reports {
+				if report.Kind != readapi.CallArgumentReportObligation {
+					continue
+				}
+				origin := report.Check.ExpectedOrigin
+				if !origin.HasOrigin {
+					continue
+				}
+				found = true
+				if origin.FunctionName != "invoke" ||
+					origin.SubjectLabel != "argument 1 (payload)" ||
+					origin.ProviderLabel != "provider[1]" ||
+					origin.MemberParamNumber != 1 {
+					t.Fatalf("origin = %#v, want invoke payload -> provider[1] parameter 1", origin)
+				}
+			}
+			return true
+		})
+	}
+	if !found {
+		t.Fatal("missing member call parameter obligation origin")
+	}
+}
+
+func TestForEachCallReportsProjectedParamObligationForExplicitAnyCaller(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function accept(req: { id: string }): ()
+end
+
+local function forward(payload)
+	accept(payload)
+end
+
+local function entry(raw: any): ()
+	forward(raw)
+end
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatal("RootResult nil")
+	}
+	var found bool
+	for _, fn := range root.FunctionResults() {
+		New(fn).ForEachCall(func(call CallSite) bool {
+			for _, report := range call.Reports {
+				if report.Kind != readapi.CallArgumentReportObligation {
+					continue
+				}
+				if report.Argument.Label != "raw" {
+					continue
+				}
+				found = true
+				if report.Check.Admissible {
+					t.Fatalf("report = %#v, want explicit-any raw rejected by projected obligation", report)
+				}
+				if !report.Argument.UntrustedTopOrigin || !report.Argument.ExplicitTopOrigin {
+					t.Fatalf("argument origin = untrusted:%v explicit:%v type:%v, want explicit any",
+						report.Argument.UntrustedTopOrigin, report.Argument.ExplicitTopOrigin, report.Argument.TypeWithPresence)
+				}
+			}
+			return true
+		})
+	}
+	if !found {
+		t.Fatal("missing projected obligation report for forward(raw)")
+	}
+}
+
 func TestForEachCallReportsDirectCalleeCallableMismatches(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
@@ -3870,8 +4952,8 @@ maybe()
 	if len(reports) != 2 {
 		t.Fatalf("callee reports = %d, want two: %#v", len(reports), reports)
 	}
-	if reports[0].Kind != readapi.CallCalleeReportNotCallable || reports[0].CallableName != "x" || !typ.TypeEquals(reports[0].Type, typ.Number) {
-		t.Fatalf("first callee report = %#v, want x not-callable number", reports[0])
+	if reports[0].Kind != readapi.CallCalleeReportNotCallable || reports[0].CallableName != "x" || !typ.TypeEquals(reports[0].Type, typ.LiteralInt(42)) {
+		t.Fatalf("first callee report = %#v, want x not-callable literal 42", reports[0])
 	}
 	if reports[0].Span.StartLine == 0 {
 		t.Fatalf("first callee span = %#v, want source anchor", reports[0].Span)
@@ -3963,6 +5045,80 @@ end
 	}
 	if reader.ValueProofAdmissible(value, typ.NewArray(typ.String)) {
 		t.Fatalf("SourceValue proof accepted table runtime kind as array shape")
+	}
+}
+
+func TestCallArgumentUsesTrustedNarrowedAssignmentAlias(t *testing.T) {
+	reg := standard.Registry()
+	appError := typetable.NewRecord().
+		Field("code", typ.String).
+		Field("message", typ.String).
+		Build()
+	success := typetable.NewRecord().
+		Field("ok", typ.True).
+		Field("value", typ.String).
+		Build()
+	failure := typetable.NewRecord().
+		Field("ok", typ.False).
+		Field("error", appError).
+		Build()
+	resultType := typeexpr.Union(success, failure)
+	validatorManifest := manifest.New("validator")
+	validatorManifest.SetExport(typetable.NewRecord().
+		Field("validate_name", typ.Func().Param("input", typ.String).Returns(resultType).Build()).
+		Build())
+	validatorManifest.DefineFunctionSignature("validator.validate_name", signature.Function{
+		Type: typ.Func().Param("input", typ.String).Returns(resultType).Build(),
+		Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.ConditionalType{
+			Source:     effect.ParamRef{Index: 0},
+			Projection: projection.Projection{Steps: []projection.Step(nil)},
+			When:       typ.LiteralString(""),
+			Then:       failure,
+		}}),
+	})
+	errorsManifest := manifest.New("errors")
+	errorsManifest.SetExport(typetable.NewRecord().
+		Field("wrap", typ.Func().Param("err", appError).Param("context", typ.String).Returns(appError).Build()).
+		Build())
+	stmts := parseChunk(t, `
+local errors = require("errors")
+local validator = require("validator")
+local result = validator.validate_name("Alice")
+if result.ok then
+    local name = result.value
+else
+    local err = result.error
+    local wrapped = errors.wrap(err, "registration")
+end
+`)
+	result, err := body.CheckChunk(stmts, body.Config{
+		Registry: reg,
+		ModuleExports: importlookup.Source{
+			Manifests: []*manifest.Manifest{errorsManifest, validatorManifest},
+		},
+		Signatures: signaturelookup.Source{
+			Manifests: []*manifest.Manifest{validatorManifest},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	reader := New(result)
+	var seen bool
+	for _, point := range result.Graph().RPO() {
+		reader.forEachCallArgument(point, func(arg CallArgument) bool {
+			if arg.Label != "err" {
+				return true
+			}
+			seen = true
+			if !typ.TypeEquals(arg.TypeWithPresence, appError) {
+				t.Fatalf("err call argument type = %v, want AppError", arg.TypeWithPresence)
+			}
+			return true
+		})
+	}
+	if !seen {
+		t.Fatal("did not find err call argument")
 	}
 }
 

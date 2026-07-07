@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/lua/exprdisplay"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -111,7 +112,7 @@ func formatTypeAnnotationDepth(expr ast.TypeExpr, depth int) (string, bool) {
 		}
 		return "asserts " + e.ParamName + " is " + narrow, true
 	case *ast.TypeOfExpr:
-		name := exprEvidenceNameOK(e.Expr)
+		name := exprdisplay.NameOK(e.Expr)
 		if name == "" {
 			name = "..."
 		}

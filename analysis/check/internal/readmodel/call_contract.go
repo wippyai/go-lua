@@ -30,9 +30,10 @@ type callContract struct {
 }
 
 type callParamObligation struct {
-	Index  int
-	Type   typ.Type
-	Origin readapi.CallArgumentObligationOrigin
+	Index            int
+	Type             typ.Type
+	Origin           readapi.CallArgumentObligationOrigin
+	SignatureSurface bool
 }
 
 // callContractAt resolves the canonical callable contract for the call at
@@ -48,9 +49,9 @@ func (r Reader) callContractAt(point cfg.Point) (callContract, bool) {
 	if callContract, ok := r.declaredLocalCallContract(point, site); ok {
 		return callContract, true
 	}
-	if fn, ok := r.result.CallSignatureType(site); ok {
+	if fn, ok := r.result.CallSignatureTypeAt(point, site); ok {
 		instantiated, violations, conflicts := r.instantiateCallFunctionType(point, site, fn)
-		name, _ := r.result.CallSignatureName(site)
+		name, _ := r.result.CallSignatureNameAt(point, site)
 		return callContract{
 			Contract:                    callcontract.BindReceiver(contract.FromFunctionType(instantiated), r.callReceiverTypeOrNil(point, site), callReceiverSupplied(site)),
 			Source:                      CallContractSource{Kind: CallContractSourceImportedSignature, Name: name},
@@ -171,28 +172,12 @@ func (r Reader) callContractSourceName(site factflow.CallSite) string {
 }
 
 func (r Reader) instantiateCallFunctionType(point cfg.Point, site factflow.CallSite, fn *typ.Function) (*typ.Function, []callcontract.ArgumentConstraintViolation, []CallGenericInferenceConflict) {
-	if r.result == nil || fn == nil || len(fn.TypeParams) == 0 {
+	if r.result == nil || fn == nil {
 		return fn, nil, nil
 	}
-	args := make([]typ.Type, site.ArgumentSourceCount())
-	site.ForEachArgumentSource(func(index int, source factflow.ValueSource) bool {
-		if fn, ok := r.contextualFunctionArgumentType(point, source); ok {
-			args[index] = fn
-			return true
-		}
-		if value, ok := r.callArgumentValue(point, source); ok {
-			if t, ok := r.ValueTypeWithPresence(value); ok {
-				args[index] = t
-			}
-		}
-		return true
-	})
-	instantiated, violations, trace := callcontract.InstantiateGenericCallWithTrace(fn, args)
-	conflicts := r.genericInferenceConflicts(point, trace)
-	if instantiated == nil {
-		return fn, violations, conflicts
-	}
-	return instantiated, violations, conflicts
+	instantiated := r.result.InstantiateCallFunctionType(point, site, fn)
+	conflicts := r.genericInferenceConflicts(point, instantiated.GenericTrace)
+	return instantiated.Type, instantiated.GenericConstraintViolations, conflicts
 }
 
 func (r Reader) genericInferenceConflicts(point cfg.Point, trace callcontract.GenericCallTrace) []CallGenericInferenceConflict {
@@ -359,14 +344,15 @@ func (r Reader) callParamObligationsAt(point cfg.Point) []callParamObligation {
 	}
 	out := make([]callParamObligation, 0, len(outcome.ParamObligations))
 	for _, obligation := range outcome.ParamObligations {
-		t, ok := r.ValueTypeWithPresence(obligation.Value)
+		t, ok := r.ValueStructuralType(obligation.Value)
 		if !ok || !readapi.CallArgumentObligationTypeReportable(t) {
 			continue
 		}
 		next := callParamObligation{
-			Index:  obligation.ParamIndex,
-			Type:   t,
-			Origin: r.callParamObligationOrigin(point, obligation),
+			Index:            obligation.ParamIndex,
+			Type:             t,
+			Origin:           r.callParamObligationOrigin(point, obligation),
+			SignatureSurface: obligation.SignatureSurface,
 		}
 		out = appendPreferredCallParamObligation(out, next)
 	}
@@ -397,13 +383,43 @@ func (r Reader) callParamObligationOrigin(point cfg.Point, obligation callpayloa
 		return readapi.CallArgumentObligationOrigin{}
 	}
 	site, _ := r.result.CallSite(point)
+	functionName := r.currentFunctionSourceName()
+	if functionName == "" {
+		functionName = r.callContractSourceName(site)
+	}
 	return readapi.CallArgumentObligationOrigin{
 		HasOrigin:         true,
-		FunctionName:      r.callContractSourceName(site),
+		FunctionName:      functionName,
 		SubjectLabel:      callParamObligationSubjectLabel(obligation.Origin),
 		ProviderLabel:     callParamObligationProviderLabel(obligation.Origin),
 		MemberParamNumber: obligation.Origin.MemberParamIndex + 1,
 	}
+}
+
+func (r Reader) currentFunctionSourceName() string {
+	if r.result == nil {
+		return ""
+	}
+	fn := r.result.Function()
+	if fn == nil {
+		return ""
+	}
+	origin, ok := r.result.FunctionOrigin(fn)
+	if !ok {
+		return ""
+	}
+	if origin.HasTargetSymbol {
+		if name := r.result.SymbolName(origin.TargetSymbol); name != "" {
+			return name
+		}
+	}
+	if origin.Method != "" {
+		return origin.Method
+	}
+	if origin.Symbol != 0 {
+		return r.result.SymbolName(origin.Symbol)
+	}
+	return ""
 }
 
 func callParamObligationSubjectLabel(origin callpayload.CallParamObligationOrigin) string {

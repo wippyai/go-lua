@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/lua/exprdisplay"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -228,8 +229,8 @@ func TestExprEvidenceNamePreservesReadablePaths(t *testing.T) {
 		},
 		Method: "refresh",
 	}
-	if got := exprEvidenceNameOK(expr); got != "client.session:refresh(...)" {
-		t.Fatalf("exprEvidenceNameOK = %q, want readable receiver call path", got)
+	if got := exprdisplay.NameOK(expr); got != "client.session:refresh(...)" {
+		t.Fatalf("exprdisplay.NameOK = %q, want readable receiver call path", got)
 	}
 }
 
@@ -238,11 +239,11 @@ func TestExprEvidenceNameFallsBackAtAdversarialDepth(t *testing.T) {
 	for i := 0; i < typ.DefaultRecursionDepth+8; i++ {
 		expr = &ast.NonNilAssertExpr{Expr: expr}
 	}
-	if got := exprEvidenceNameOK(expr); got != "" {
-		t.Fatalf("exprEvidenceNameOK = %q, want bounded empty result", got)
+	if got := exprdisplay.NameOK(expr); got != "" {
+		t.Fatalf("exprdisplay.NameOK = %q, want bounded empty result", got)
 	}
-	if got := exprEvidenceName(expr); got != unknownSourceName {
-		t.Fatalf("exprEvidenceName = %q, want safe fallback %q", got, unknownSourceName)
+	if got := exprdisplay.Name(expr, unknownSourceName); got != unknownSourceName {
+		t.Fatalf("exprdisplay.Name = %q, want safe fallback %q", got, unknownSourceName)
 	}
 }
 
