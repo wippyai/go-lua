@@ -1596,6 +1596,40 @@ state.active_sessions[session_id] = {
 	}
 }
 
+func TestLowerWIROrdinaryAssignmentObjectLiteralExpectedContractWithoutSemanticResult(t *testing.T) {
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
+type Payload = { name: string, count: number }
+local payload: Payload = { name = "", count = 0 }
+payload = { name = "next", count = 1 }
+`)
+	body := wirlower.Lower("ordinary-object-expected-no-sidecars", stmts, bindings, built)
+	reg := standard.Registry()
+	facts := Lower(nil, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+
+	point := requireStmtPoints(t, built, stmts[2], 1)[0]
+	assign, ok := facts.RootAssignment(point)
+	if !ok {
+		t.Fatalf("missing WIR ordinary assignment at point %d without semantic sidecars", point)
+	}
+	source := assign.Source()
+	lit, ok := facts.ObjectLiteral(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing WIR ordinary assignment object literal for ref %d", source.ExprRef)
+	}
+	expected, ok := lit.Expected()
+	if !ok {
+		t.Fatalf("WIR ordinary assignment object literal missing expected type without semantic sidecars")
+	}
+	got, ok := typevalue.TypeOf(reg, expected)
+	want := typetable.NewRecord().
+		Field("name", typ.String).
+		Field("count", typ.Number).
+		Build()
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("ordinary assignment expected type = %v/%v, want %v", got, ok, want)
+	}
+}
+
 func TestLowerNestedObjectLiteralEntriesUnderAssignmentExprRef(t *testing.T) {
 	rootLeaf := number("1")
 	nestedLeaf := number("2")

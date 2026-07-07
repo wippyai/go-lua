@@ -110,9 +110,18 @@ func (l *lowerer) addRootAssignmentFromWIR(input *factflow.FactsInput, point cfg
 	}
 	input.RootAssignments[point] = assignment
 	l.addRootAssignmentExposureFromWIR(input, point, assignment)
-	if declared, ok := l.wirAssignmentDeclaredObjectType(inst, target.Symbol); ok {
+	l.addRootAssignmentObjectLiteralExpectedTypeFromWIR(input, assignment)
+	if declared, ok := l.wirAssignmentObjectLiteralExpectedType(inst, target.Symbol); ok {
 		l.addObjectLiteralFieldExposuresFromWIR(input, point, inst, declared)
 	}
+}
+
+func (l *lowerer) addRootAssignmentObjectLiteralExpectedTypeFromWIR(input *factflow.FactsInput, assignment factflow.RootAssignment) {
+	expected, ok := l.symbolTypes[assignment.TargetSymbol()]
+	if !ok {
+		return
+	}
+	l.addObjectLiteralExpectedTypeFromValueSource(input, assignment.Source(), expected)
 }
 
 func (l *lowerer) addRootAssignmentExposureFromWIR(input *factflow.FactsInput, point cfg.Point, assignment factflow.RootAssignment) {
@@ -169,6 +178,19 @@ func (l *lowerer) wirAssignmentDeclaredObjectType(inst wir.Instruction, target s
 	}
 	declared, ok := l.symbolTypes[target]
 	return declared, ok && declared != nil && luatypeprojection.ReachesTableContract(declared) && !reachesArray(declared) && !recordWithCallableField(declared)
+}
+
+func (l *lowerer) wirAssignmentObjectLiteralExpectedType(inst wir.Instruction, target symbol.ID) (typ.Type, bool) {
+	if l == nil {
+		return nil, false
+	}
+	if l.wir != nil && inst.Type != 0 {
+		if declared := l.wir.Type(inst.Type); declared != nil {
+			return declared, luatypeprojection.ReachesTableContract(declared)
+		}
+	}
+	declared, ok := l.symbolTypes[target]
+	return declared, ok && declared != nil && luatypeprojection.ReachesTableContract(declared)
 }
 
 func (l *lowerer) declaredTypeClaimValue(t typ.Type) product.Value {
@@ -413,8 +435,21 @@ func (l *lowerer) addDynamicIndexWriteFromWIR(input *factflow.FactsInput, point 
 		write = write.WithValuePath(valuePath)
 	}
 	input.DynamicIndexWrites[point] = write
+	l.addDynamicIndexObjectLiteralExpectedTypeFromWIR(input, write)
 	input.PathDescendantInvalidations[point] = factflow.NewPathDescendantInvalidation(tablePath).
 		WithDynamicTarget(tablePath, keySource, l.wir.Segments(inst.DynamicSuffix))
+}
+
+func (l *lowerer) addDynamicIndexObjectLiteralExpectedTypeFromWIR(input *factflow.FactsInput, write factflow.DynamicIndexWrite) {
+	container, ok := l.aliasPathType(write.TablePathRef())
+	if !ok {
+		return
+	}
+	expected, ok := dynamicIndexMapValueType(container, 0)
+	if !ok {
+		return
+	}
+	l.addObjectLiteralExpectedTypeFromValueSource(input, write.Source(), expected)
 }
 
 func (l *lowerer) wirAssignmentPath(op wir.Operand) (path.Path, bool) {
@@ -510,21 +545,21 @@ func (l *lowerer) addWIRCallResultExprRefFromID(source *factflow.ValueSource, op
 	source.HasExpr = true
 }
 
-func (l *lowerer) assignmentSource(point cfg.Point, fallback sourceprovenance.ASTSource) factflow.ValueSource {
-	if source, ok := l.assignmentSourceFromWIR(point, fallback); ok {
+func (l *lowerer) assignmentSource(point cfg.Point, astSource sourceprovenance.ASTSource) factflow.ValueSource {
+	if source, ok := l.assignmentSourceFromWIR(point, astSource); ok {
 		return source
 	}
 	if l != nil && l.wir != nil {
-		return factflow.NewUnknownValueSource(fallback.TargetIndex)
+		return factflow.NewUnknownValueSource(astSource.TargetIndex)
 	}
-	return l.valueSource(fallback)
+	return l.valueSource(astSource)
 }
 
-func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, fallback sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
+func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, astSource sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
 	if l == nil || l.wir == nil {
 		return factflow.ValueSource{}, false
 	}
-	shape := valueSourceShapeFromASTSource(fallback)
+	shape := valueSourceShapeFromASTSource(astSource)
 	for _, inst := range l.wir.PointInstructions(point) {
 		if source, ok := l.assignmentProducerSourceFromWIR(inst, shape); ok {
 			return source, true
@@ -577,7 +612,7 @@ func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, fallback sourceproven
 		return factflow.ValueSource{}, false
 	}
 	if source.Kind == factflow.ValueSourceCall {
-		l.addWIRCallResultExprRef(&source, op, fallback)
+		l.addWIRCallResultExprRef(&source, op, astSource)
 	}
 	return source, true
 }
@@ -624,11 +659,11 @@ func valueSourceShapeFromASTSource(source sourceprovenance.ASTSource) valueSourc
 	}
 }
 
-func (l *lowerer) addWIRCallResultExprRef(source *factflow.ValueSource, op wir.Operand, fallback sourceprovenance.ASTSource) {
+func (l *lowerer) addWIRCallResultExprRef(source *factflow.ValueSource, op wir.Operand, astSource sourceprovenance.ASTSource) {
 	if l == nil || source == nil || op.Kind != wir.OperandTemp {
 		return
 	}
-	if _, ok := claimKindForAssertionSource(fallback.Expr); ok {
+	if _, ok := claimKindForAssertionSource(astSource.Expr); ok {
 		return
 	}
 	result, ok := l.resultValueSourcesByTempFromWIR()[op.Ref]
@@ -643,14 +678,14 @@ func (l *lowerer) addWIRCallResultExprRef(source *factflow.ValueSource, op wir.O
 	source.HasExpr = true
 }
 
-func (l *lowerer) ordinaryAssignmentSource(point cfg.Point, fallback sourceprovenance.ASTSource) factflow.ValueSource {
-	if source, ok := l.ordinaryAssignmentSourceFromWIR(point, fallback); ok {
+func (l *lowerer) ordinaryAssignmentSource(point cfg.Point, astSource sourceprovenance.ASTSource) factflow.ValueSource {
+	if source, ok := l.ordinaryAssignmentSourceFromWIR(point, astSource); ok {
 		return source
 	}
-	return l.assignmentSource(point, fallback)
+	return l.assignmentSource(point, astSource)
 }
 
-func (l *lowerer) ordinaryAssignmentSourceFromWIR(point cfg.Point, fallback sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
+func (l *lowerer) ordinaryAssignmentSourceFromWIR(point cfg.Point, astSource sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
 	if l == nil || l.wir == nil {
 		return factflow.ValueSource{}, false
 	}
@@ -660,9 +695,9 @@ func (l *lowerer) ordinaryAssignmentSourceFromWIR(point cfg.Point, fallback sour
 	}
 	return l.valueSourceFromWIRRootPathOperand(
 		op,
-		fallback.ExprIndex,
-		fallback.TargetIndex,
-		fallback.Final,
+		astSource.ExprIndex,
+		astSource.TargetIndex,
+		astSource.Final,
 		symbol.Local,
 		symbol.Param,
 	)

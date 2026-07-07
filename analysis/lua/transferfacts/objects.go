@@ -511,6 +511,24 @@ func (l *lowerer) addReturnObjectLiteralExpectedTypesFromWIR(input *factflow.Fac
 	}
 }
 
+func (l *lowerer) addObjectLiteralExpectedTypeFromValueSource(input *factflow.FactsInput, source factflow.ValueSource, expected typ.Type) {
+	if input == nil ||
+		expected == nil ||
+		!source.HasExpr ||
+		source.ExprRef == 0 ||
+		!luatypeprojection.ReachesTableContract(expected) {
+		return
+	}
+	lit, ok := input.ObjectLiterals[source.ExprRef]
+	if !ok {
+		return
+	}
+	updated := l.objectLiteralWithExpectedType(lit, expected)
+	input.ObjectLiterals[source.ExprRef] = updated
+	l.setObjectLiteralExpectedExpressionValue(source.ExprRef, updated, expected)
+	l.addNestedObjectLiteralExpectedTypes(input, updated, expected)
+}
+
 func (l *lowerer) resolvedReturnObjectLiteralExpectedTypes(result *semantics.Result) []typ.Type {
 	declared := declaredReturnTypes(result)
 	if len(declared) == 0 {

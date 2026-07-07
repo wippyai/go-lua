@@ -137,7 +137,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			if view, ok := result.LocalAssignmentView(point); ok {
 				fact, _ := view.Borrowed()
 				if l.wir != nil {
-					l.addLocalAssignmentSidecarsForWIR(&input, point, result, fact)
+					l.addLocalAssignmentSidecarsForWIR(&input, point, fact)
 				} else if lowered, ok := l.localAssignment(point, fact); ok {
 					input.RootAssignments[point] = lowered
 					l.addLocalConditionAlias(fact.Symbol, lowered.Source())
@@ -156,7 +156,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			if view, ok := result.OrdinaryAssignmentView(point); ok {
 				fact, _ := view.Borrowed()
 				if l.wir != nil {
-					l.addOrdinaryAssignmentSidecarsForWIR(&input, point, result, fact)
+					l.addOrdinaryAssignmentSidecarsForWIR(&input, point, fact)
 				} else if lowered, ok := l.pathAssignment(point, fact); ok {
 					input.PathAssignments[point] = lowered
 					if lowered, ok := l.pathStaticMemberWrite(point, fact); ok {
@@ -292,41 +292,21 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 	}
 }
 
-func (l *lowerer) addLocalAssignmentSidecarsForWIR(input *factflow.FactsInput, point cfg.Point, result *semantics.Result, fact semantics.LocalAssignmentFact) {
+func (l *lowerer) addLocalAssignmentSidecarsForWIR(input *factflow.FactsInput, point cfg.Point, fact semantics.LocalAssignmentFact) {
 	lowered, ok := input.RootAssignments[point]
 	if !ok || lowered.TargetSymbol() != fact.Symbol {
 		return
 	}
 	l.addLocalConditionAlias(fact.Symbol, lowered.Source())
-	l.addObjectLiteralExpectedType(input, fact)
 	if fact.Source.Kind == sourceprovenance.SourceExpression {
 		l.addCastExposure(input, point, fact.Source.Expr)
 	}
-	if declared, ok := l.resolveType(fact.Type); ok {
-		l.addObjectLiteralFieldExposures(input, result, point, fact.Source, declared)
-	}
 }
 
-func (l *lowerer) addOrdinaryAssignmentSidecarsForWIR(input *factflow.FactsInput, point cfg.Point, result *semantics.Result, fact semantics.OrdinaryAssignmentFact) {
-	if lowered, ok := input.RootAssignments[point]; ok && l.rootAssignmentMatchesSemanticOrdinaryTarget(lowered, fact) {
-		l.addOrdinaryObjectLiteralExpectedType(input, fact)
-		if declared, ok := l.symbolTypes[fact.Symbol]; ok {
-			l.addObjectLiteralFieldExposures(input, result, point, fact.Source, declared)
-		}
-	}
+func (l *lowerer) addOrdinaryAssignmentSidecarsForWIR(input *factflow.FactsInput, point cfg.Point, fact semantics.OrdinaryAssignmentFact) {
 	if _, ok := input.DynamicIndexWrites[point]; ok {
 		l.addDynamicIndexObjectLiteralExpectedTypes(input, fact)
 	}
-}
-
-func (l *lowerer) rootAssignmentMatchesSemanticOrdinaryTarget(lowered factflow.RootAssignment, fact semantics.OrdinaryAssignmentFact) bool {
-	if fact.HasSymbol && fact.Symbol != 0 {
-		return lowered.TargetSymbol() == fact.Symbol
-	}
-	if fact.HasPath && !fact.Path.IsEmpty() {
-		return lowered.TargetPath().Equal(fact.Path)
-	}
-	return false
 }
 
 func (l *lowerer) addNumericForFactsFromWIR(input *factflow.FactsInput, point cfg.Point) {
