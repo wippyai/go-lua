@@ -210,6 +210,101 @@ func (r *Result) RootPathArgumentUsesBoundary(point cfg.Point, p pathdom.Path) b
 		r.RootPathHasTrustedGenericForVariable(point, p)
 }
 
+// CallerOwnedParameterSource reports whether a call argument source is derived
+// from a caller-owned parameter. The proof may follow expression operations,
+// dynamic-index table sources, and dominating root declarations, so it lives on
+// body.Result instead of readmodel projection code.
+func (r *Result) CallerOwnedParameterSource(point cfg.Point, source factflow.ValueSource) bool {
+	return r.callerOwnedParameterSource(point, source, nil)
+}
+
+func (r *Result) callerOwnedParameterSource(point cfg.Point, source factflow.ValueSource, active map[factflow.ExprRef]struct{}) bool {
+	if r == nil {
+		return false
+	}
+	if p, ok := r.callArgumentSourcePath(source); ok {
+		if r.callerOwnedParameterPath(p) {
+			return true
+		}
+		if r.callerOwnedParameterDeclarationSource(point, p, active) {
+			return true
+		}
+	}
+	if !source.HasExpr || source.ExprRef == 0 {
+		return false
+	}
+	if active == nil {
+		active = make(map[factflow.ExprRef]struct{}, 1)
+	}
+	if _, seen := active[source.ExprRef]; seen {
+		return false
+	}
+	active[source.ExprRef] = struct{}{}
+	op, ok := r.ExpressionOperationRef(source.ExprRef)
+	if ok {
+		if r.callerOwnedParameterSource(point, op.Left(), active) {
+			return true
+		}
+		if op.Kind() == factflow.ExpressionOperationBinary && r.callerOwnedParameterSource(point, op.Right(), active) {
+			return true
+		}
+	}
+	if dyn, ok := r.DynamicIndexExpressionRef(source.ExprRef); ok {
+		if tableSource, ok := dyn.TableSource(); ok && r.callerOwnedParameterSource(point, tableSource, active) {
+			return true
+		}
+		if tablePath := dyn.TablePathRef(); !tablePath.IsEmpty() {
+			if r.callerOwnedParameterPath(tablePath) || r.callerOwnedParameterDeclarationSource(point, tablePath, active) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (r *Result) callArgumentSourcePath(source factflow.ValueSource) (pathdom.Path, bool) {
+	p, ok := r.ValueSourcePath(source)
+	if ok && !p.IsEmpty() {
+		return p, true
+	}
+	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
+		return r.ExpressionRefPath(source.ExprRef)
+	}
+	return pathdom.Path{}, false
+}
+
+func (r *Result) callerOwnedParameterDeclarationSource(point cfg.Point, p pathdom.Path, active map[factflow.ExprRef]struct{}) bool {
+	if p.IsEmpty() || p.Symbol == 0 || point == 0 || r == nil || r.Graph() == nil {
+		return false
+	}
+	declaration, ok := r.DominatingPathRootDeclarationSource(point, p)
+	if !ok || !declaration.Source.HasExpr {
+		return false
+	}
+	return r.callerOwnedParameterSource(declaration.Point, declaration.Source, active)
+}
+
+func (r *Result) callerOwnedParameterPath(p pathdom.Path) bool {
+	if p.Symbol == 0 || r == nil {
+		return false
+	}
+	fn := r.Function()
+	if fn == nil {
+		return false
+	}
+	for _, slot := range r.FunctionParamSlots(fn) {
+		if slot.Symbol != p.Symbol {
+			continue
+		}
+		if !r.SymbolHasTypeAnnotation(slot.Symbol) {
+			return true
+		}
+		t, ok := r.SymbolDeclaredType(slot.Symbol)
+		return ok && obligationTypeContainsFreeTypeParam(t)
+	}
+	return false
+}
+
 // PathHasRuntimeProof reports whether p has body-owned runtime/type evidence
 // strong enough to let a call-argument boundary value replace an explicit-top
 // declaration.
