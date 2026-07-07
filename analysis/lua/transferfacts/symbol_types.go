@@ -10,7 +10,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/functiontype"
 	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeoperator"
 	"github.com/wippyai/go-lua/analysis/lua/typeprojection"
@@ -31,7 +30,6 @@ func lowerSymbolTypes(
 	bindings *bind.Result,
 	graph cfg.Graph,
 	meta cfgfacts.Metadata,
-	result *semantics.Result,
 	resolver *typeresolve.Resolver,
 	moduleExports importlookup.Source,
 	methodReceiverTypes map[symbol.ID]typ.Type,
@@ -70,23 +68,6 @@ func lowerSymbolTypes(
 			}
 		}
 	}
-	if result != nil {
-		if fn := result.Function(); fn != nil {
-			for _, capture := range bindings.DirectCaptures(fn) {
-				if capture.Captured == 0 {
-					continue
-				}
-				if _, present := out[capture.Captured]; present {
-					continue
-				}
-				if modulePath, ok := moduleidentity.LocalRequireModulePath(bindings, capture.Captured); ok {
-					if t, ok := moduleExports.LookupExport(modulePath); ok {
-						out[capture.Captured] = t
-					}
-				}
-			}
-		}
-	}
 	for _, point := range graph.RPO() {
 		fact, ok := functionDefinitionFactAt(meta, point)
 		if !ok || !fact.HasTargetSymbol || fact.TargetSymbol == 0 || fact.Func == nil {
@@ -107,19 +88,6 @@ func lowerSymbolTypes(
 			out[origin.TargetSymbol] = t
 		}
 	}
-	if result != nil {
-		for _, point := range graph.RPO() {
-			view, ok := result.LocalAssignmentView(point)
-			if !ok {
-				continue
-			}
-			fact, ok := view.Borrowed()
-			if !ok || !fact.HasSymbol {
-				continue
-			}
-			add(fact.Symbol, fact.Type)
-		}
-	}
 	// A numeric-for control variable has no annotation, so record the strongest
 	// type proven by the control operands. Lua uses an integer loop when init,
 	// limit, and step are all integers; otherwise the variable is numeric.
@@ -132,52 +100,6 @@ func lowerSymbolTypes(
 			continue
 		}
 		out[fact.Symbol] = numericForSymbolType(out, bindings, fact.Init, fact.Limit, fact.Step)
-	}
-	if result == nil {
-		if len(out) == 0 {
-			return nil
-		}
-		return out
-	}
-	// Resolve un-annotated `local x = <access-chain>` locals whose initializer is
-	// a static field/index chain rooted at an already-typed symbol. The chain's
-	// element type is the local's checked type, used as the contextual record for
-	// object literals later assigned to that local.
-	for _, point := range graph.RPO() {
-		view, ok := result.LocalAssignmentView(point)
-		if !ok {
-			continue
-		}
-		fact, ok := view.Borrowed()
-		if !ok || !fact.HasSymbol || fact.Symbol == 0 || fact.Type != nil || fact.Expr == nil {
-			continue
-		}
-		if _, present := out[fact.Symbol]; present {
-			continue
-		}
-		if modulePath, ok := moduleidentity.LocalRequireModulePath(bindings, fact.Symbol); ok {
-			if t, ok := moduleExports.LookupExport(modulePath); ok {
-				out[fact.Symbol] = t
-				continue
-			}
-		}
-		if fn, ok := fact.Expr.(*ast.FunctionExpr); ok {
-			if t, ok := functionExpressionType(fn, bindings, resolver); ok {
-				out[fact.Symbol] = t
-				continue
-			}
-		}
-		if t, ok := callFirstReturnType(out, bindings, fact.Expr); ok {
-			out[fact.Symbol] = t
-			continue
-		}
-		if t, ok := objectLiteralTypeFromSymbols(out, bindings, resolver, fact.Expr); ok {
-			out[fact.Symbol] = t
-			continue
-		}
-		if t, ok := accessChainType(out, bindings, fact.Expr); ok {
-			out[fact.Symbol] = t
-		}
 	}
 	if len(out) == 0 {
 		return nil

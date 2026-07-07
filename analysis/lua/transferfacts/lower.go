@@ -57,7 +57,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 	if typeResolver == nil {
 		typeResolver = typeresolve.New(config.Bindings)
 	}
-	symbolTypes := lowerSymbolTypes(config.Bindings, graph, config.Metadata, result, typeResolver, config.ModuleExports, config.MethodReceiverTypes)
+	symbolTypes := lowerSymbolTypes(config.Bindings, graph, config.Metadata, typeResolver, config.ModuleExports, config.MethodReceiverTypes)
 	if config.WIR != nil {
 		symbolTypes = mergeSymbolTypes(symbolTypes, lowerSymbolTypesFromWIR(config.WIR, config.Bindings, config.ModuleExports))
 	}

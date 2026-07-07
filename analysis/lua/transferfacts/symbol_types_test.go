@@ -30,7 +30,7 @@ end
 		t.Fatalf("ParamSlots = %#v, want one typed parameter", slots)
 	}
 
-	got := lowerSymbolTypes(bindings, built.Graph, built.Meta, nil, typeresolve.New(bindings), importlookup.Source{}, nil)
+	got := lowerSymbolTypes(bindings, built.Graph, built.Meta, typeresolve.New(bindings), importlookup.Source{}, nil)
 	if got == nil {
 		t.Fatal("lowerSymbolTypes returned nil without semantic result")
 	}
@@ -68,7 +68,7 @@ end
 		t.Fatalf("NumForSymbol = %d/%v, want symbol", loopSym, ok)
 	}
 
-	got := lowerSymbolTypes(bindings, built.Graph, built.Meta, nil, typeresolve.New(bindings), importlookup.Source{}, nil)
+	got := lowerSymbolTypes(bindings, built.Graph, built.Meta, typeresolve.New(bindings), importlookup.Source{}, nil)
 	if got == nil {
 		t.Fatal("lowerSymbolTypes returned nil without semantic result")
 	}

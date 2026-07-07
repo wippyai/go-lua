@@ -996,7 +996,8 @@ function setup(): ()
     }
 end
 `)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	body := wirlower.Lower("optional-object-literal-expected-root", fn.Stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 
 	assignStmt, ok := fn.Stmts[1].(*ast.AssignStmt)
 	if !ok {
@@ -1038,29 +1039,6 @@ func TestLowerLogicalOperandObjectLiteralPublishesSidecar(t *testing.T) {
 		}
 	}
 	t.Fatalf("object literals = %#v, want sidecar for table constructor nested under logical expression", facts.ObjectLiterals())
-}
-
-func TestLowerDynamicIndexLogicalDefaultObjectLiteralCarriesSlotContract(t *testing.T) {
-	_, bindings, built, result := parseSemanticChunk(t, `
-local suites: {[string]: any[]} = {}
-local suite = "alpha"
-suites[suite] = suites[suite] or {}
-`)
-	reg := standard.Registry()
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
-	want := typ.NewArray(typ.Any)
-
-	for _, literal := range facts.ObjectLiterals() {
-		expected, ok := literal.Expected()
-		if !ok {
-			continue
-		}
-		got, ok := typevalue.TypeOf(reg, expected)
-		if ok && typ.TypeEquals(got, want) {
-			return
-		}
-	}
-	t.Fatalf("object literals = %#v, want logical default constructor to carry dynamic slot contract %v", facts.ObjectLiterals(), want)
 }
 
 func TestLowerWithWIRDynamicIndexLogicalDefaultObjectLiteralCarriesSlotContract(t *testing.T) {
@@ -1552,52 +1530,6 @@ local state = {
 	want := typetable.NewMap(typ.String, typ.String)
 	if !ok || !typ.TypeEquals(got, want) {
 		t.Fatalf("casted field expected type = %v/%v, want %v", got, ok, want)
-	}
-}
-
-func TestLowerDynamicIndexObjectLiteralCarriesExpectedAnyFieldType(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
-type ActiveSession = {
-    pid: any,
-    created_at: number,
-    terminating: boolean,
-}
-local state = {
-    active_sessions = {} :: {[string]: ActiveSession},
-}
-local session_id = "s1"
-state.active_sessions[session_id] = {
-    pid = "pid",
-    created_at = 1,
-    terminating = false,
-}
-`)
-	reg := standard.Registry()
-	typeValues := typevalue.NewCache()
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, TypeValues: typeValues})
-
-	assignPoint := requireStmtPoints(t, built, stmts[3], 1)[0]
-	write, ok := facts.DynamicIndexWrite(assignPoint)
-	if !ok {
-		t.Fatalf("missing dynamic-index write")
-	}
-	source := write.Source()
-	lit, ok := facts.ObjectLiteral(source.ExprRef)
-	if !ok {
-		t.Fatalf("missing dynamic-index value object literal for ref %d", source.ExprRef)
-	}
-	expected, ok := lit.Expected()
-	if !ok {
-		t.Fatalf("dynamic-index value literal has no expected type")
-	}
-	got, ok := typeValues.TypeOf(reg, expected)
-	want := typetable.NewRecord().
-		Field("pid", typ.Any).
-		Field("created_at", typ.Number).
-		Field("terminating", typ.Boolean).
-		Build()
-	if !ok || !typ.TypeEquals(got, want) {
-		t.Fatalf("dynamic-index value expected type = %v/%v, want %v", got, ok, want)
 	}
 }
 

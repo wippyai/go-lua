@@ -1916,7 +1916,7 @@ end
 		typeResolver:                  typeresolve.New(bindings),
 		typeValues:                    typevalue.NewCache(),
 		wir:                           body,
-		symbolTypes:                   lowerSymbolTypes(bindings, built.Graph, built.Meta, result, typeresolve.New(bindings), importlookup.Source{}, nil),
+		symbolTypes:                   lowerSymbolTypes(bindings, built.Graph, built.Meta, typeresolve.New(bindings), importlookup.Source{}, nil),
 		exprs:                         make(map[any]factflow.ExprRef),
 		types:                         make(map[any]factflow.TypeRef),
 		expressionValues:              make(map[factflow.ExprRef]product.Value),

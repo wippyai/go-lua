@@ -1003,7 +1003,7 @@ end
 		registry:    reg,
 		bindings:    bindings,
 		wir:         body,
-		symbolTypes: lowerSymbolTypes(bindings, built.Graph, built.Meta, result, nil, importlookup.Source{}, nil),
+		symbolTypes: lowerSymbolTypes(bindings, built.Graph, built.Meta, nil, importlookup.Source{}, nil),
 	}
 
 	lowered.addProtectedCallBranchRefinements(input, built.Graph)
