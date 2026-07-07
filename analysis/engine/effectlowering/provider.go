@@ -335,18 +335,6 @@ func receiverTypeForMethodSite(ctx transfer.NodeContext, site factflow.CallSiteV
 	return receiverTypeFromValue(ctx.Registry, value)
 }
 
-func receiverMethodSignatureNameFromValue(reg *axis.Registry, value product.Value, method string) (string, typ.Type, bool) {
-	receiverType, ok := receiverTypeFromValue(reg, value)
-	if !ok {
-		return "", nil, false
-	}
-	iface, ok := receiverSignatureInterface(receiverType)
-	if !ok {
-		return "", nil, false
-	}
-	return iface.Name + "." + method, receiverType, true
-}
-
 func receiverTypeFromValue(reg *axis.Registry, value product.Value) (typ.Type, bool) {
 	receiverType, ok := typevalue.TypeOf(reg, value)
 	if !ok || receiverType == nil || typ.IsAny(receiverType) || typ.IsUnknown(receiverType) || typ.IsNever(receiverType) {

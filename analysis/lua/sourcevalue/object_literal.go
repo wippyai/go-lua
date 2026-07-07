@@ -378,10 +378,6 @@ func ObjectLiteralEntryHasUntrustedTopOrigin(reg *axis.Registry, value product.V
 	return ev.IsGradualTop() || ev.IsExplicitTop()
 }
 
-func ExpectedEntryAdmissible(reg *axis.Registry, value, expected product.Value) bool {
-	return ExpectedEntryAdmissibleCached(reg, nil, value, expected)
-}
-
 func ExpectedEntryAdmissibleCached(reg *axis.Registry, typeValues *typevalue.Cache, value, expected product.Value) bool {
 	expectedType, hasExpected := typeValues.TypeOf(reg, expected)
 	if !hasExpected || expectedType == nil {

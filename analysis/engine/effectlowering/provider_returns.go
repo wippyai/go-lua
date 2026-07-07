@@ -254,10 +254,6 @@ func returnValueFromTypeCached(reg *axis.Registry, typeValues *typevalue.Cache, 
 	return returnValueFromType(reg, t)
 }
 
-func returnValueFromSignatureType(reg *axis.Registry, fn *typ.Function, t typ.Type) product.Value {
-	return returnValueFromType(reg, closeUninferredSignatureTypeParams(fn, t))
-}
-
 func returnValueFromSignatureTypeCached(reg *axis.Registry, typeValues *typevalue.Cache, fn *typ.Function, t typ.Type) product.Value {
 	return returnValueFromTypeCached(reg, typeValues, closeUninferredSignatureTypeParams(fn, t))
 }

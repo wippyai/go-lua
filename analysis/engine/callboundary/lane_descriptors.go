@@ -35,15 +35,6 @@ type BoundaryFactDescriptor[Ops any] struct {
 // significant: it is the canonical operation order every family driver walks.
 type BoundaryFactTable[Ops any] []BoundaryFactDescriptor[Ops]
 
-// Kinds returns the descriptor kinds in table order.
-func (t BoundaryFactTable[Ops]) Kinds() []BoundaryFactKind {
-	out := make([]BoundaryFactKind, len(t))
-	for i, d := range t {
-		out[i] = d.Kind
-	}
-	return out
-}
-
 // Validate panics when the table has an empty or duplicate kind. Families call
 // it once at package init so a malformed descriptor table fails loudly rather
 // than silently dropping or double-owning a lane.

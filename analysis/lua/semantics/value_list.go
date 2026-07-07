@@ -83,10 +83,6 @@ func returnValueSources(exprs []ast.Expr, resolver sourceprovenance.CallPointRes
 	return sourceprovenance.ValueListSources(exprs, true, resolver)
 }
 
-func iteratorValueSources(exprs []ast.Expr, resolver sourceprovenance.CallPointResolver) []sourceprovenance.ASTSource {
-	return sourceprovenance.ValueListSources(exprs, false, resolver)
-}
-
 func argumentValueSources(exprs []ast.Expr, resolver sourceprovenance.CallPointResolver) []sourceprovenance.ASTSource {
 	return sourceprovenance.ValueListSources(exprs, false, resolver)
 }

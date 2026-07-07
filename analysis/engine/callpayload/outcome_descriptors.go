@@ -20,9 +20,6 @@ type CallOutcomeLaneOps struct {
 // evidence.
 func (o CallOutcomeLaneOps) PostReturn() bool { return o.postReturn }
 
-// Has reports whether the outcome carries evidence in this lane.
-func (o CallOutcomeLaneOps) Has(o2 CallOutcome) bool { return o.has(o2) }
-
 func callOutcomeLaneDescriptor(fieldName string, wireRef []string, postReturn bool, has func(CallOutcome) bool) callboundary.BoundaryFactDescriptor[CallOutcomeLaneOps] {
 	return callboundary.BoundaryFactDescriptor[CallOutcomeLaneOps]{
 		Kind:    callboundary.BoundaryFactKind(fieldName),

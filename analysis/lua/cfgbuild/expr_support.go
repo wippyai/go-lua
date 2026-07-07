@@ -71,14 +71,6 @@ func (b *builder) valueListCalls(exprs []ast.Expr) ([]callorder.Occurrence, bool
 	return callorder.ValueList(exprs, b.callOrderOptions())
 }
 
-func (b *builder) exprCalls(expr ast.Expr) ([]callorder.Occurrence, bool) {
-	return callorder.Expr(expr, b.callOrderOptions())
-}
-
-func (b *builder) conditionExprCalls(expr ast.Expr) ([]callorder.Occurrence, bool) {
-	return callorder.Expr(expr, b.callOrderOptions())
-}
-
 func (b *builder) callOrderOptions() callorder.Options {
 	options := callorder.LuaOptions(b.bindings)
 	options.AllowShortCircuitCalls = true
