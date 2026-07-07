@@ -218,14 +218,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			if view, ok := result.CallView(point); ok {
 				fact, _ := view.Borrowed()
 				site, hasCallSite := input.CallSites[point]
-				if !hasCallSite && l.wir == nil {
-					site, hasCallSite = l.callSiteAt(fact)
-				}
-				if !hasCallSite {
-					if l.wir != nil {
-						continue
-					}
-				} else {
+				if hasCallSite {
 					input.CallSites[point] = site
 				}
 				var argumentSources []factflow.ValueSource

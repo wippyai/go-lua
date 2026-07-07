@@ -22,17 +22,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/parse/numparse"
 )
 
-func (l *lowerer) valueSources(sources []sourceprovenance.ASTSource) []factflow.ValueSource {
-	if len(sources) == 0 {
-		return nil
-	}
-	out := make([]factflow.ValueSource, len(sources))
-	for i := range sources {
-		out[i] = l.valueSource(sources[i])
-	}
-	return out
-}
-
 func (l *lowerer) returnValueSourcesFromWIR(point cfg.Point) ([]factflow.ValueSource, bool) {
 	ret, ok := l.wirReturnInstruction(point)
 	if !ok {

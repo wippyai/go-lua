@@ -5,13 +5,8 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
-
-func (l *lowerer) callSiteAt(fact semantics.CallFact) (factflow.CallSite, bool) {
-	return l.semanticCallSite(fact, l.valueSources(fact.ArgumentSources)), true
-}
 
 func (l *lowerer) callSiteFromWIR(point cfg.Point) (factflow.CallSite, bool) {
 	inst, ok := l.wirCallInstruction(point)
@@ -119,16 +114,6 @@ type callSiteMetadata struct {
 	calleeSpan     factflow.SourceSpan
 	argumentSpans  []factflow.SourceSpan
 	argumentLabels []string
-}
-
-func (l *lowerer) semanticCallSite(fact semantics.CallFact, argumentSources []factflow.ValueSource) factflow.CallSite {
-	exprRef, hasExpr := l.exprRef(fact.Call)
-	return factflow.NewCallSite(factflow.CallSiteConfig{
-		ExprRef:          exprRef,
-		HasExpr:          hasExpr,
-		ConditionNegated: fact.ConditionNegated,
-		ArgumentSources:  argumentSources,
-	})
 }
 
 func (l *lowerer) callSiteMetadataFromWIR(point cfg.Point) (callSiteMetadata, bool) {

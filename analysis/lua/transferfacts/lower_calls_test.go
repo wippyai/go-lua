@@ -15,7 +15,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
-	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
@@ -1998,7 +1997,8 @@ local state = {
 for id, session_info in pairs(state.active_sessions) do
 end
 `, "pairs")
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	body := wirlower.Lower("iterator-call-site", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	genericFor, ok := stmts[1].(*ast.GenericForStmt)
 	if !ok {
@@ -2021,13 +2021,6 @@ end
 	}
 	stateSym := mustLocalAt(t, bindings, stmts[0].(*ast.LocalAssignStmt), 0)
 	want := path.NewPath(stateSym, "state").Field("active_sessions")
-	semanticFact, ok := result.Call(points[0])
-	if !ok || len(semanticFact.ArgumentSources) != 1 {
-		t.Fatalf("semantic iterator call fact = %#v/%v", semanticFact, ok)
-	}
-	if got, ok := pathexpr.Resolve(semanticFact.ArgumentSources[0].Expr, bindings); !ok || !got.Equal(want) {
-		t.Fatalf("semantic iterator argument path = %v/%v, want %v", got, ok, want)
-	}
 	got, ok := facts.ExpressionPath(arg.ExprRef)
 	if !ok {
 		t.Fatalf("missing expression path for iterator argument ref %d", arg.ExprRef)
