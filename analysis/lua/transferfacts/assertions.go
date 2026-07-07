@@ -17,38 +17,10 @@ func (l *lowerer) addAssignmentAssertionRefinements(input *factflow.FactsInput, 
 	if expressionSourceHasRefinement(input, loweredSource) {
 		return
 	}
-	if l.addAssignmentAssertionRefinementFromWIRClaim(input, point, target, source) {
-		return
-	}
 	if l != nil && l.wir != nil {
 		return
 	}
 	l.addAssertionRefinementsForSource(input, source)
-}
-
-func (l *lowerer) addAssignmentAssertionRefinementFromWIRClaim(input *factflow.FactsInput, point cfg.Point, target path.Path, source sourceprovenance.ASTSource) bool {
-	if input == nil || l == nil || l.wir == nil || target.IsEmpty() || source.Expr == nil {
-		return false
-	}
-	wantClaim, ok := claimKindForAssertionSource(source.Expr)
-	if !ok {
-		return false
-	}
-	outerSource := l.valueSource(source)
-	if !outerSource.HasExpr {
-		return false
-	}
-	for _, inst := range l.wir.PointInstructions(point) {
-		if inst.Op != wir.OpClaim || inst.Claim != wantClaim || !l.wirClaimDstMatchesPath(inst, target) {
-			continue
-		}
-		innerSource, ok := l.claimInnerSourceFromWIR(inst, source)
-		if !ok {
-			return false
-		}
-		return l.addExpressionRefinementFromWIRClaim(input, outerSource, innerSource, inst)
-	}
-	return false
 }
 
 func (l *lowerer) addReturnAssertionRefinements(input *factflow.FactsInput, point cfg.Point, index int, loweredSource factflow.ValueSource, source sourceprovenance.ASTSource) {
@@ -63,9 +35,6 @@ func (l *lowerer) addReturnAssertionRefinements(input *factflow.FactsInput, poin
 
 func (l *lowerer) addCallArgumentAssertionRefinements(input *factflow.FactsInput, point cfg.Point, index int, loweredSource factflow.ValueSource, source sourceprovenance.ASTSource) {
 	if expressionSourceHasRefinement(input, loweredSource) {
-		return
-	}
-	if l.addCallArgumentAssertionRefinementFromWIRClaim(input, point, index, source) {
 		return
 	}
 	if l != nil && l.wir != nil {
@@ -90,68 +59,6 @@ func expressionSourceHasRefinement(input *factflow.FactsInput, source factflow.V
 	}
 	_, ok := input.ExpressionRefinements[source.ExprRef]
 	return ok
-}
-
-func (l *lowerer) addCallArgumentAssertionRefinementFromWIRClaim(input *factflow.FactsInput, point cfg.Point, index int, source sourceprovenance.ASTSource) bool {
-	if input == nil || l == nil || l.wir == nil || source.Expr == nil || index < 0 {
-		return false
-	}
-	wantClaim, ok := claimKindForAssertionSource(source.Expr)
-	if !ok {
-		return false
-	}
-	outerSource := l.valueSource(source)
-	if !outerSource.HasExpr {
-		return false
-	}
-	inst, ok := l.callArgumentClaimInstructionFromWIR(point, index, wantClaim)
-	if !ok {
-		return false
-	}
-	innerSource, ok := l.claimInnerSourceFromWIR(inst, source)
-	if !ok {
-		return false
-	}
-	return l.addExpressionRefinementFromWIRClaim(input, outerSource, innerSource, inst)
-}
-
-func (l *lowerer) callArgumentClaimInstructionFromWIR(point cfg.Point, index int, claim wir.ClaimKind) (wir.Instruction, bool) {
-	call, ok := l.wirCallInstruction(point)
-	if !ok {
-		return wir.Instruction{}, false
-	}
-	ops := l.wir.Operands(call.List)
-	if index >= len(ops) {
-		return wir.Instruction{}, false
-	}
-	def, ok := l.claimInstructionForOperand(ops[index])
-	if !ok || def.Claim != claim {
-		return wir.Instruction{}, false
-	}
-	return def, true
-}
-
-func (l *lowerer) claimInstructionForOperand(op wir.Operand) (wir.Instruction, bool) {
-	if op.Kind != wir.OperandTemp {
-		return wir.Instruction{}, false
-	}
-	inst, ok := l.wirTempDefs()[op.Ref]
-	if !ok || inst.Op != wir.OpClaim {
-		return wir.Instruction{}, false
-	}
-	return inst, true
-}
-
-func (l *lowerer) addExpressionRefinementFromWIRClaim(input *factflow.FactsInput, outerSource, innerSource factflow.ValueSource, inst wir.Instruction) bool {
-	refinement, ok := l.expressionRefinementFromWIRClaim(innerSource, inst)
-	if !ok {
-		return false
-	}
-	if input.ExpressionRefinements == nil {
-		input.ExpressionRefinements = make(map[factflow.ExprRef]factflow.ExpressionRefinement)
-	}
-	input.ExpressionRefinements[outerSource.ExprRef] = refinement
-	return true
 }
 
 func (l *lowerer) recordExpressionRefinementFromWIRClaim(outerSource, innerSource factflow.ValueSource, inst wir.Instruction) bool {
@@ -193,13 +100,6 @@ func claimKindForAssertionSource(expr ast.Expr) (wir.ClaimKind, bool) {
 	default:
 		return wir.ClaimNone, false
 	}
-}
-
-func (l *lowerer) wirClaimDstMatchesPath(inst wir.Instruction, target path.Path) bool {
-	if inst.Dst.Kind != wir.OperandPath {
-		return false
-	}
-	return l.wir.Path(wir.PathRef(inst.Dst.Ref)).Equal(target)
 }
 
 func (l *lowerer) claimInnerSourceFromWIR(inst wir.Instruction, source sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
