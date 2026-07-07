@@ -63,7 +63,6 @@ var perSolveConfigAxes = func() []configAxisDescriptor {
 		configAxis("CallOutcomeFactory"),
 		configAxis("SignatureArgumentType"),
 		configAxis("SignatureArgumentTypeFactory"),
-		configAxis("WIRAssignmentTarget"),
 		configAxis("WidenAt"),
 		configAxis("WidenDelay"),
 		configAxis("Stats"),

@@ -16,7 +16,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -53,8 +52,6 @@ type FactsNodeTransferConfig struct {
 	CovariantWiden         CovariantWiden
 	TypeValues             *typevalue.Cache
 	ClosedDynamicAllValues []ClosedDynamicAllValueInvariant
-	WIR                    *wir.Body
-	WIRAssignmentTarget    WIRAssignmentTargetIssueReporter
 }
 
 // FactsEdgeTransferConfig configures the generic edge fact applicator.
@@ -129,7 +126,6 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 	callOutcomeCache := &callOutcomeTraversalCache{}
 	var refinedSourceRegistry *axis.Registry
 	var refinedSources sourcevalue.SourceValues
-	wirTargets := newWIRAssignmentTargetShadow(config.WIR, config.Visibility, config.WIRAssignmentTarget)
 	return func(ctx transfer.NodeContext, in state.State) state.State {
 		facts := config.Facts
 		sources := config.Sources
@@ -196,9 +192,6 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 			}
 		}
 		if fact, ok := facts.PathAssignment(ctx.Point); ok {
-			if wirTargets != nil {
-				wirTargets.CheckPathWrite(ctx.Point, fact.TargetPathRef())
-			}
 			var applied bool
 			out, applied = applyPathAssignment(ctx, config.Visibility, facts, sources, ensureCallResults().ReadLazy(), in, out, fact)
 			if applied {

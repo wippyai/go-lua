@@ -265,8 +265,6 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		CovariantWiden:         luaCovariantWiden,
 		TypeValues:             typeValues,
 		ClosedDynamicAllValues: config.ClosedDynamicAllValues,
-		WIR:                    s.wir,
-		WIRAssignmentTarget:    config.WIRAssignmentTarget,
 	})
 	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.cfg.Meta, s.facts, s.sources, s.symbolTypes, s.signatures, s.signatureID, s.typeNS, typeValues, callOutcome, s.visibility.KeySpace(), s.visibility, func(expr ast.Expr) (pathdom.Path, bool) {
 		return pathexpr.Resolve(expr, s.bindings)

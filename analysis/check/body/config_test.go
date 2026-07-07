@@ -39,8 +39,6 @@ func TestConfigSolveConfigOwnsPerSolveAxes(t *testing.T) {
 	signatureArgumentTypeFactory := func(CallOutcomeContext) SignatureArgumentTypeFunc {
 		return signatureArgumentType
 	}
-	wirAssignmentTarget := func(factapply.WIRAssignmentTargetIssue) {}
-
 	config := Config{
 		EntryState: entryState,
 		Initial: func(cfg.Point) (state.State, bool) {
@@ -53,7 +51,6 @@ func TestConfigSolveConfigOwnsPerSolveAxes(t *testing.T) {
 		CallOutcomeFactory:           callOutcomeFactory,
 		SignatureArgumentType:        signatureArgumentType,
 		SignatureArgumentTypeFactory: signatureArgumentTypeFactory,
-		WIRAssignmentTarget:          wirAssignmentTarget,
 		WidenAt: func(cfg.Point) bool {
 			return true
 		},
@@ -78,9 +75,6 @@ func TestConfigSolveConfigOwnsPerSolveAxes(t *testing.T) {
 	}
 	if solve.CallOutcome == nil || solve.CallOutcomeFactory == nil || solve.SignatureArgumentType == nil || solve.SignatureArgumentTypeFactory == nil {
 		t.Fatal("SolveConfig dropped a provider axis")
-	}
-	if solve.WIRAssignmentTarget == nil {
-		t.Fatal("SolveConfig did not carry WIRAssignmentTarget")
 	}
 	if solve.WidenAt == nil || !solve.WidenAt(0) {
 		t.Fatal("SolveConfig did not carry WidenAt")
