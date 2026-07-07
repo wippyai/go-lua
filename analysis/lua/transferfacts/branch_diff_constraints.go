@@ -37,7 +37,7 @@ func branchDiffConstraintsFromWIRDescriptors(in []wir.BranchDiffConstraint) []fa
 	}
 	out := make([]factflow.BranchDiffConstraint, 0, len(in))
 	for _, d := range in {
-		out = append(out, newBranchDiffConstraintFromDescriptor(branchDiffDescriptorFromWIR(d)))
+		out = append(out, branchDiffConstraintFromWIR(d))
 	}
 	return out
 }
@@ -48,73 +48,46 @@ func branchDiffConstraintsFromDescriptors(in []branchcond.BranchDiffConstraint) 
 	}
 	out := make([]factflow.BranchDiffConstraint, 0, len(in))
 	for _, d := range in {
-		out = append(out, newBranchDiffConstraintFromDescriptor(branchDiffDescriptorFromBranchCond(d)))
+		out = append(out, branchDiffConstraintFromBranchCond(d))
 	}
 	return out
 }
 
-type branchDiffConstraintDescriptor struct {
-	coHi     int64
-	hiPath   pathdom.Path
-	hiIsLen  bool
-	coHi2    int64
-	hi2Path  pathdom.Path
-	hi2IsLen bool
-	hasHi2   bool
-	loPath   pathdom.Path
-	loIsLen  bool
-	c        int64
-	edge     bool
-}
-
-func branchDiffDescriptorFromWIR(d wir.BranchDiffConstraint) branchDiffConstraintDescriptor {
-	return branchDiffConstraintDescriptor{
-		coHi:     d.CoHi,
-		hiPath:   d.HiPath,
-		hiIsLen:  d.HiIsLen,
-		coHi2:    d.CoHi2,
-		hi2Path:  d.Hi2Path,
-		hi2IsLen: d.Hi2IsLen,
-		hasHi2:   d.HasHi2,
-		loPath:   d.LoPath,
-		loIsLen:  d.LoIsLen,
-		c:        d.C,
-		edge:     d.Edge,
-	}
-}
-
-func branchDiffDescriptorFromBranchCond(d branchcond.BranchDiffConstraint) branchDiffConstraintDescriptor {
-	return branchDiffConstraintDescriptor{
-		coHi:     d.CoHi,
-		hiPath:   d.HiPath,
-		hiIsLen:  d.HiIsLen,
-		coHi2:    d.CoHi2,
-		hi2Path:  d.Hi2Path,
-		hi2IsLen: d.Hi2IsLen,
-		hasHi2:   d.HasHi2,
-		loPath:   d.LoPath,
-		loIsLen:  d.LoIsLen,
-		c:        d.C,
-		edge:     d.Edge,
-	}
-}
-
-func newBranchDiffConstraintFromDescriptor(d branchDiffConstraintDescriptor) factflow.BranchDiffConstraint {
-	if !d.hasHi2 {
-		d.coHi2 = 0
-		d.hi2Path = pathdom.Path{}
-		d.hi2IsLen = false
-	}
+func branchDiffConstraintFromWIR(d wir.BranchDiffConstraint) factflow.BranchDiffConstraint {
+	coHi2, hi2Path, hi2IsLen := branchDiffSecondUpperBound(d.HasHi2, d.CoHi2, d.Hi2Path, d.Hi2IsLen)
 	return factflow.NewBranchScaledConstraintOnEdge(
-		d.coHi,
-		d.hiPath,
-		d.hiIsLen,
-		d.coHi2,
-		d.hi2Path,
-		d.hi2IsLen,
-		d.loPath,
-		d.loIsLen,
-		d.c,
-		d.edge,
+		d.CoHi,
+		d.HiPath,
+		d.HiIsLen,
+		coHi2,
+		hi2Path,
+		hi2IsLen,
+		d.LoPath,
+		d.LoIsLen,
+		d.C,
+		d.Edge,
 	)
+}
+
+func branchDiffConstraintFromBranchCond(d branchcond.BranchDiffConstraint) factflow.BranchDiffConstraint {
+	coHi2, hi2Path, hi2IsLen := branchDiffSecondUpperBound(d.HasHi2, d.CoHi2, d.Hi2Path, d.Hi2IsLen)
+	return factflow.NewBranchScaledConstraintOnEdge(
+		d.CoHi,
+		d.HiPath,
+		d.HiIsLen,
+		coHi2,
+		hi2Path,
+		hi2IsLen,
+		d.LoPath,
+		d.LoIsLen,
+		d.C,
+		d.Edge,
+	)
+}
+
+func branchDiffSecondUpperBound(has bool, co int64, p pathdom.Path, isLen bool) (int64, pathdom.Path, bool) {
+	if !has {
+		return 0, pathdom.Path{}, false
+	}
+	return co, p, isLen
 }
