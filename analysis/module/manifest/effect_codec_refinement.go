@@ -8,27 +8,14 @@ import (
 )
 
 func encodeEffectRefinement(refinement postcondition.Refinement) (*effectRefinementWire, error) {
-	if refinement == nil {
-		return nil, fmt.Errorf("manifest: missing effect refinement")
-	}
-	switch r := refinement.(type) {
-	case postcondition.Present:
-		return &effectRefinementWire{Kind: r.Kind()}, nil
-	case *postcondition.Present:
-		if r == nil {
+	normalized, ok := postcondition.NormalizeRefinement(refinement)
+	if !ok {
+		if postcondition.RefinementIsNil(refinement) {
 			return nil, fmt.Errorf("manifest: missing effect refinement")
 		}
-		return encodeEffectRefinement(*r)
-	case postcondition.Absent:
-		return &effectRefinementWire{Kind: r.Kind()}, nil
-	case *postcondition.Absent:
-		if r == nil {
-			return nil, fmt.Errorf("manifest: missing effect refinement")
-		}
-		return encodeEffectRefinement(*r)
-	default:
 		return nil, fmt.Errorf("manifest: unsupported effect refinement %T", refinement)
 	}
+	return &effectRefinementWire{Kind: normalized.Kind()}, nil
 }
 
 func decodeEffectRefinement(w *effectRefinementWire) (postcondition.Refinement, error) {

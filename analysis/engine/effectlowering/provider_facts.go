@@ -427,19 +427,15 @@ func signaturePostconditionValue(ctx transfer.NodeContext, refinement postcondit
 	if ctx.Registry == nil {
 		return product.Value{}, false
 	}
-	switch r := refinement.(type) {
+	normalized, ok := postcondition.NormalizeRefinement(refinement)
+	if !ok {
+		return product.Value{}, false
+	}
+	switch normalized.(type) {
 	case postcondition.Present:
 		return product.NewWithPresence(ctx.Registry, product.ShapeTop, presence.Present()), true
-	case *postcondition.Present:
-		if r != nil {
-			return product.NewWithPresence(ctx.Registry, product.ShapeTop, presence.Present()), true
-		}
 	case postcondition.Absent:
 		return product.Absent(ctx.Registry), true
-	case *postcondition.Absent:
-		if r != nil {
-			return product.Absent(ctx.Registry), true
-		}
 	}
 	return product.Value{}, false
 }

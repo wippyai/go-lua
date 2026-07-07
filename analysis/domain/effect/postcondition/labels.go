@@ -27,6 +27,45 @@ type Refinement interface {
 	Hash() uint64
 }
 
+// NormalizeRefinement returns the canonical value form for a refinement. It is
+// the ownership boundary for pointer/value refinement spellings used by
+// manifests and effect lowering; callers should not duplicate type switches for
+// the concrete refinement variants.
+func NormalizeRefinement(refinement Refinement) (Refinement, bool) {
+	switch r := refinement.(type) {
+	case Present:
+		return r, true
+	case *Present:
+		if r != nil {
+			return Present{}, true
+		}
+	case Absent:
+		return r, true
+	case *Absent:
+		if r != nil {
+			return Absent{}, true
+		}
+	}
+	return nil, false
+}
+
+// RefinementIsNil reports whether refinement is nil, including supported typed
+// nil pointer spellings. Unsupported non-nil refinements return false so callers
+// can keep distinct "missing" and "unsupported" diagnostics.
+func RefinementIsNil(refinement Refinement) bool {
+	if refinement == nil {
+		return true
+	}
+	switch r := refinement.(type) {
+	case *Present:
+		return r == nil
+	case *Absent:
+		return r == nil
+	default:
+		return false
+	}
+}
+
 // Present refines the target argument to be present after normal return.
 type Present struct{}
 

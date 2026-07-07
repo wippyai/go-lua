@@ -89,6 +89,59 @@ func TestPresentEqualsHashAndString(t *testing.T) {
 	}
 }
 
+func TestNormalizeRefinementCanonicalizesSupportedPointerAndValueForms(t *testing.T) {
+	cases := []struct {
+		name string
+		in   Refinement
+		want Refinement
+		ok   bool
+	}{
+		{name: "present value", in: Present{}, want: Present{}, ok: true},
+		{name: "present pointer", in: &Present{}, want: Present{}, ok: true},
+		{name: "absent value", in: Absent{}, want: Absent{}, ok: true},
+		{name: "absent pointer", in: &Absent{}, want: Absent{}, ok: true},
+		{name: "nil", in: nil, ok: false},
+	}
+	for _, tc := range cases {
+		got, ok := NormalizeRefinement(tc.in)
+		if ok != tc.ok {
+			t.Fatalf("%s: ok = %v, want %v", tc.name, ok, tc.ok)
+		}
+		if !tc.ok {
+			continue
+		}
+		if !got.Equals(tc.want) {
+			t.Fatalf("%s: got %T/%v, want %T/%v", tc.name, got, got, tc.want, tc.want)
+		}
+	}
+
+	var nilPresent *Present
+	if got, ok := NormalizeRefinement(nilPresent); ok || got != nil {
+		t.Fatalf("nil *Present normalized to %T/%v, want none", got, got)
+	}
+	var nilAbsent *Absent
+	if got, ok := NormalizeRefinement(nilAbsent); ok || got != nil {
+		t.Fatalf("nil *Absent normalized to %T/%v, want none", got, got)
+	}
+}
+
+func TestRefinementIsNilIncludesSupportedTypedNilPointers(t *testing.T) {
+	if !RefinementIsNil(nil) {
+		t.Fatal("nil refinement was not nil")
+	}
+	var nilPresent *Present
+	if !RefinementIsNil(nilPresent) {
+		t.Fatal("nil *Present was not nil")
+	}
+	var nilAbsent *Absent
+	if !RefinementIsNil(nilAbsent) {
+		t.Fatal("nil *Absent was not nil")
+	}
+	if RefinementIsNil(Present{}) || RefinementIsNil(&Present{}) || RefinementIsNil(Absent{}) || RefinementIsNil(&Absent{}) {
+		t.Fatal("non-nil supported refinements reported nil")
+	}
+}
+
 func TestAbsentEqualsHashAndString(t *testing.T) {
 	absent := Absent{}
 	if absent.Kind() != AbsentKind {
