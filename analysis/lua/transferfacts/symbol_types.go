@@ -1,6 +1,8 @@
 package transferfacts
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -204,14 +206,12 @@ func lowerSymbolTypesFromWIR(body *wir.Body) map[symbol.ID]typ.Type {
 		return nil
 	}
 	out := make(map[symbol.ID]typ.Type)
+	tempDefs := wirTempDefinitions(body)
 	for i := 0; i < body.Len(); i++ {
 		inst := body.Instr(i)
-		if inst.Type == 0 {
-			continue
-		}
 		switch inst.Op {
 		case wir.OpClaim:
-			if inst.Claim != wir.ClaimAnnotation {
+			if inst.Type == 0 || inst.Claim != wir.ClaimAnnotation {
 				continue
 			}
 		case wir.OpMakeTable:
@@ -232,6 +232,9 @@ func lowerSymbolTypesFromWIR(body *wir.Body) map[symbol.ID]typ.Type {
 			continue
 		}
 		t := body.Type(inst.Type)
+		if t == nil && inst.Op == wir.OpMakeTable {
+			t, _ = wirObjectLiteralTypeFromSymbols(out, body, tempDefs, inst, nil)
+		}
 		if t == nil {
 			continue
 		}
@@ -241,6 +244,117 @@ func lowerSymbolTypesFromWIR(body *wir.Body) map[symbol.ID]typ.Type {
 		return nil
 	}
 	return out
+}
+
+func wirObjectLiteralTypeFromSymbols(
+	symbolTypes map[symbol.ID]typ.Type,
+	body *wir.Body,
+	tempDefs map[uint32]wir.Instruction,
+	inst wir.Instruction,
+	seen map[uint32]bool,
+) (typ.Type, bool) {
+	if body == nil || inst.Op != wir.OpMakeTable {
+		return nil, false
+	}
+	if inst.Type != 0 {
+		t := body.Type(inst.Type)
+		return t, t != nil
+	}
+	builder := typetable.NewConstructorBuilder()
+	anySeen := false
+	for _, entry := range body.TableEntries(inst.TableEntries) {
+		keys, ok := wirConstructorKeysFromSuffix(entry.Suffix)
+		if !ok {
+			continue
+		}
+		valueType, ok := wirConstructorValueTypeFromSymbols(symbolTypes, body, tempDefs, entry.Value, seen)
+		if !ok || valueType == nil {
+			continue
+		}
+		if !builder.Add(keys, valueType) {
+			return nil, false
+		}
+		anySeen = true
+	}
+	if !anySeen {
+		return nil, false
+	}
+	return builder.Build()
+}
+
+func wirConstructorValueTypeFromSymbols(
+	symbolTypes map[symbol.ID]typ.Type,
+	body *wir.Body,
+	tempDefs map[uint32]wir.Instruction,
+	op wir.Operand,
+	seen map[uint32]bool,
+) (typ.Type, bool) {
+	if body == nil {
+		return nil, false
+	}
+	switch op.Kind {
+	case wir.OperandPath:
+		return wirPathTypeFromSymbols(symbolTypes, body.Path(wir.PathRef(op.Ref)))
+	case wir.OperandTemp:
+		if seen == nil {
+			seen = make(map[uint32]bool)
+		}
+		if seen[op.Ref] {
+			return nil, false
+		}
+		def, ok := tempDefs[op.Ref]
+		if !ok {
+			return nil, false
+		}
+		seen[op.Ref] = true
+		defer delete(seen, op.Ref)
+		if def.Type != 0 {
+			if t := body.Type(def.Type); t != nil {
+				return t, true
+			}
+		}
+		switch def.Op {
+		case wir.OpAssign:
+			return wirConstructorValueTypeFromSymbols(symbolTypes, body, tempDefs, def.A, seen)
+		case wir.OpMakeTable:
+			return wirObjectLiteralTypeFromSymbols(symbolTypes, body, tempDefs, def, seen)
+		}
+	}
+	return nil, false
+}
+
+func wirPathTypeFromSymbols(symbolTypes map[symbol.ID]typ.Type, p path.Path) (typ.Type, bool) {
+	if p.IsEmpty() || p.Symbol == 0 {
+		return nil, false
+	}
+	rootType, ok := symbolTypes[p.Symbol]
+	if !ok || rootType == nil {
+		return nil, false
+	}
+	if len(p.Segments) == 0 {
+		return rootType, true
+	}
+	return typeprojection.ApplySegments(rootType, p.Segments)
+}
+
+func wirConstructorKeysFromSuffix(suffix path.Path) ([]typetable.ConstructorKey, bool) {
+	if len(suffix.Segments) == 0 {
+		return nil, false
+	}
+	keys := make([]typetable.ConstructorKey, 0, len(suffix.Segments))
+	for _, seg := range suffix.Segments {
+		switch seg.Kind {
+		case segment.SegmentField:
+			keys = append(keys, typetable.ConstructorKey{Kind: typetable.ConstructorField, Name: seg.Name})
+		case segment.SegmentIndexString:
+			keys = append(keys, typetable.ConstructorKey{Kind: typetable.ConstructorStringIndex, Name: seg.Name})
+		case segment.SegmentIndexInt:
+			keys = append(keys, typetable.ConstructorKey{Kind: typetable.ConstructorIntIndex, Index: int64(seg.Index)})
+		default:
+			return nil, false
+		}
+	}
+	return keys, true
 }
 
 func addWIRCallResultSymbolTypes(out map[symbol.ID]typ.Type, body *wir.Body, inst wir.Instruction) {

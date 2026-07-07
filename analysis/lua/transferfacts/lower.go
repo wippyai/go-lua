@@ -155,37 +155,37 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			}
 			if view, ok := result.OrdinaryAssignmentView(point); ok {
 				fact, _ := view.Borrowed()
-				if l.wir != nil {
-					l.addOrdinaryAssignmentSidecarsForWIR(&input, point, fact)
-				} else if lowered, ok := l.pathAssignment(point, fact); ok {
-					input.PathAssignments[point] = lowered
-					if lowered, ok := l.pathStaticMemberWrite(point, fact); ok {
-						input.PathStaticMemberWrites[point] = lowered
-					}
-					if lowered, ok := l.ordinaryAssignment(point, fact); ok {
-						input.RootAssignments[point] = lowered
-					}
-					l.addAssertionRefinementsForLoweredSource(&input, lowered.Source(), fact.Source)
-					l.addObjectLiteral(&input, result, fact.Source)
-					l.addStoreExposure(&input, point, fact)
-				} else if lowered, ok := l.ordinaryAssignment(point, fact); ok {
-					input.RootAssignments[point] = lowered
-					l.addAssignmentAssertionRefinements(&input, point, lowered.TargetPath(), lowered.Source(), fact.Source)
-					l.addObjectLiteral(&input, result, fact.Source)
-					l.addOrdinaryObjectLiteralExpectedType(&input, fact)
-					l.addReassignExposure(&input, point, fact)
-					if declared, ok := l.symbolTypes[fact.Symbol]; ok {
-						l.addObjectLiteralFieldExposures(&input, result, point, fact.Source, declared)
-					}
-				} else {
-					if lowered, ok := l.dynamicIndexWrite(point, fact); ok {
-						input.DynamicIndexWrites[point] = lowered
+				if l.wir == nil {
+					if lowered, ok := l.pathAssignment(point, fact); ok {
+						input.PathAssignments[point] = lowered
+						if lowered, ok := l.pathStaticMemberWrite(point, fact); ok {
+							input.PathStaticMemberWrites[point] = lowered
+						}
+						if lowered, ok := l.ordinaryAssignment(point, fact); ok {
+							input.RootAssignments[point] = lowered
+						}
 						l.addAssertionRefinementsForLoweredSource(&input, lowered.Source(), fact.Source)
 						l.addObjectLiteral(&input, result, fact.Source)
-						l.addDynamicIndexObjectLiteralExpectedTypes(&input, fact)
-					}
-					if lowered, ok := l.pathDescendantInvalidation(fact); ok {
-						input.PathDescendantInvalidations[point] = lowered
+						l.addStoreExposure(&input, point, fact)
+					} else if lowered, ok := l.ordinaryAssignment(point, fact); ok {
+						input.RootAssignments[point] = lowered
+						l.addAssignmentAssertionRefinements(&input, point, lowered.TargetPath(), lowered.Source(), fact.Source)
+						l.addObjectLiteral(&input, result, fact.Source)
+						l.addOrdinaryObjectLiteralExpectedType(&input, fact)
+						l.addReassignExposure(&input, point, fact)
+						if declared, ok := l.symbolTypes[fact.Symbol]; ok {
+							l.addObjectLiteralFieldExposures(&input, result, point, fact.Source, declared)
+						}
+					} else {
+						if lowered, ok := l.dynamicIndexWrite(point, fact); ok {
+							input.DynamicIndexWrites[point] = lowered
+							l.addAssertionRefinementsForLoweredSource(&input, lowered.Source(), fact.Source)
+							l.addObjectLiteral(&input, result, fact.Source)
+							l.addDynamicIndexObjectLiteralExpectedTypes(&input, fact)
+						}
+						if lowered, ok := l.pathDescendantInvalidation(fact); ok {
+							input.PathDescendantInvalidations[point] = lowered
+						}
 					}
 				}
 			}
@@ -289,12 +289,6 @@ func (l *lowerer) addTypeIsReturnPresenceRelationsFromSources(input *factflow.Fa
 	}
 	if relations := l.typeIsReturnPresenceRelationsFromSources(sources, input.CallSites); len(relations) != 0 {
 		appendReturnPresenceRelations(input.ReturnPresenceRelations, point, relations...)
-	}
-}
-
-func (l *lowerer) addOrdinaryAssignmentSidecarsForWIR(input *factflow.FactsInput, point cfg.Point, fact semantics.OrdinaryAssignmentFact) {
-	if _, ok := input.DynamicIndexWrites[point]; ok {
-		l.addDynamicIndexObjectLiteralExpectedTypes(input, fact)
 	}
 }
 

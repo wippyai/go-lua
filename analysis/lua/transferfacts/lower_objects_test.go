@@ -1596,6 +1596,54 @@ state.active_sessions[session_id] = {
 	}
 }
 
+func TestLowerWIRDynamicIndexObjectLiteralExpectedContractWithoutSemanticResult(t *testing.T) {
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
+type ActiveSession = {
+    pid: any,
+    created_at: number,
+    terminating: boolean,
+}
+local state = {
+    active_sessions = {} :: {[string]: ActiveSession},
+}
+local session_id = "s1"
+state.active_sessions[session_id] = {
+    pid = "pid",
+    created_at = 1,
+    terminating = false,
+}
+`)
+	body := wirlower.Lower("dynamic-index-object-expected-no-sidecars", stmts, bindings, built)
+	reg := standard.Registry()
+	typeValues := typevalue.NewCache()
+	lowered := LowerWithSidecars(nil, built.Graph, Config{Registry: reg, Bindings: bindings, TypeValues: typeValues, WIR: body})
+	facts := lowered.Facts
+
+	assignPoint := requireStmtPoints(t, built, stmts[3], 1)[0]
+	write, ok := facts.DynamicIndexWrite(assignPoint)
+	if !ok {
+		t.Fatalf("missing WIR dynamic-index write without semantic result")
+	}
+	source := write.Source()
+	lit, ok := facts.ObjectLiteral(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing WIR dynamic-index value object literal for ref %d", source.ExprRef)
+	}
+	expected, ok := lit.Expected()
+	if !ok {
+		t.Fatalf("WIR dynamic-index value literal has no expected type without semantic result\nWIR:\n%s", wir.Print(body, built.Graph))
+	}
+	got, ok := typeValues.TypeOf(reg, expected)
+	want := typetable.NewRecord().
+		Field("pid", typ.Any).
+		Field("created_at", typ.Number).
+		Field("terminating", typ.Boolean).
+		Build()
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("WIR dynamic-index value expected type = %v/%v, want %v", got, ok, want)
+	}
+}
+
 func TestLowerWIROrdinaryAssignmentObjectLiteralExpectedContractWithoutSemanticResult(t *testing.T) {
 	stmts, bindings, built, _ := parseSemanticChunk(t, `
 type Payload = { name: string, count: number }
