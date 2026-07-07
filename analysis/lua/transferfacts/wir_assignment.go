@@ -8,7 +8,6 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
-	"github.com/wippyai/go-lua/analysis/lua/expressionid"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -497,8 +496,9 @@ func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, fallback sourceproven
 	if l == nil || l.wir == nil {
 		return factflow.ValueSource{}, false
 	}
+	shape := valueSourceShapeFromASTSource(fallback)
 	for _, inst := range l.wir.PointInstructions(point) {
-		if source, ok := l.assignmentProducerSourceFromWIR(inst, fallback); ok {
+		if source, ok := l.assignmentProducerSourceFromWIR(inst, shape); ok {
 			return source, true
 		}
 	}
@@ -510,11 +510,11 @@ func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, fallback sourceproven
 		"assignment-source",
 		point,
 		op,
-		fallback.ExprIndex,
-		fallback.TargetIndex,
-		fallback.Final,
-		fallback.Expanded,
-		fallback.OpenTail,
+		shape.exprIndex,
+		shape.targetIndex,
+		shape.final,
+		shape.expanded,
+		shape.openTail,
 	); ok {
 		return source, true
 	}
@@ -522,11 +522,11 @@ func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, fallback sourceproven
 		"assignment-source",
 		point,
 		op,
-		fallback.ExprIndex,
-		fallback.TargetIndex,
-		fallback.Final,
-		fallback.Expanded,
-		fallback.OpenTail,
+		shape.exprIndex,
+		shape.targetIndex,
+		shape.final,
+		shape.expanded,
+		shape.openTail,
 		symbol.Local,
 		symbol.Param,
 		symbol.Global,
@@ -539,11 +539,11 @@ func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, fallback sourceproven
 	}
 	source, ok := l.valueSourceFromWIROperand(
 		op,
-		fallback.ExprIndex,
-		fallback.TargetIndex,
-		fallback.Final,
-		fallback.Expanded,
-		fallback.OpenTail,
+		shape.exprIndex,
+		shape.targetIndex,
+		shape.final,
+		shape.expanded,
+		shape.openTail,
 	)
 	if !ok {
 		return factflow.ValueSource{}, false
@@ -554,43 +554,46 @@ func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, fallback sourceproven
 	return source, true
 }
 
-func (l *lowerer) assignmentProducerSourceFromWIR(inst wir.Instruction, fallback sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
-	if !assignmentProducerMatchesSource(inst, fallback) {
+func (l *lowerer) assignmentProducerSourceFromWIR(inst wir.Instruction, shape valueSourceShape) (factflow.ValueSource, bool) {
+	if !assignmentProducerOwnsAssignment(inst) {
 		return factflow.ValueSource{}, false
 	}
 	switch inst.Op {
 	case wir.OpClosure:
 		return l.wirClosureExpressionValueSource(
 			inst,
-			fallback.ExprIndex,
-			fallback.TargetIndex,
-			fallback.Final,
-			fallback.Expanded,
-			fallback.OpenTail,
+			shape.exprIndex,
+			shape.targetIndex,
+			shape.final,
+			shape.expanded,
+			shape.openTail,
 		)
 	case wir.OpMakeTable:
 		return l.wirTableExpressionValueSource(
 			inst,
-			fallback.ExprIndex,
-			fallback.TargetIndex,
-			fallback.Final,
-			fallback.Expanded,
-			fallback.OpenTail,
+			shape.exprIndex,
+			shape.targetIndex,
+			shape.final,
+			shape.expanded,
+			shape.openTail,
 		)
 	default:
 		return factflow.ValueSource{}, false
 	}
 }
 
-func assignmentProducerMatchesSource(inst wir.Instruction, fallback sourceprovenance.ASTSource) bool {
-	if inst.ExprID == 0 || fallback.Expr == nil {
-		return false
+func assignmentProducerOwnsAssignment(inst wir.Instruction) bool {
+	return inst.Assign != wir.AssignNone && inst.WritesAssignmentPoint()
+}
+
+func valueSourceShapeFromASTSource(source sourceprovenance.ASTSource) valueSourceShape {
+	return valueSourceShape{
+		exprIndex:   source.ExprIndex,
+		targetIndex: source.TargetIndex,
+		final:       source.Final,
+		expanded:    source.Expanded,
+		openTail:    source.OpenTail,
 	}
-	expr := fallback.Expr
-	if inner, ok := sourceprovenance.ProofInner(expr); ok {
-		expr = inner
-	}
-	return inst.ExprID == expressionid.Of(expr)
 }
 
 func (l *lowerer) addWIRCallResultExprRef(source *factflow.ValueSource, op wir.Operand, fallback sourceprovenance.ASTSource) {
