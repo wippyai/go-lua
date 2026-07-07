@@ -25,6 +25,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -60,6 +61,28 @@ end
 		t.Fatalf("missing ordinary assignment at point %d", reassignPoint)
 	}
 	assertWIRConcreteCastAssertion(t, facts, reassignFact.Source(), typ.String, factflow.ValueSourcePath)
+}
+
+func TestWIRAssertionRefinementsDoNotFallbackToASTClaimWhenWIRClaimMissing(t *testing.T) {
+	cast := &ast.CastExpr{
+		Expr:   ident("x"),
+		Type:   primitiveType("number"),
+		Syntax: ast.CastSyntaxAs,
+	}
+	source := sourceprovenance.SourceForExpr(cast, 0, 0, 0, true, false, nil)
+	l := lowerer{
+		registry: standard.Registry(),
+		wir:      wir.NewBody("missing-claim"),
+		exprs:    make(map[any]factflow.ExprRef),
+	}
+	lowered := l.valueSource(source)
+	input := factflow.FactsInput{ExpressionRefinements: make(map[factflow.ExprRef]factflow.ExpressionRefinement)}
+
+	l.addAssignmentAssertionRefinements(&input, cfg.Point(1), path.NewPath(1, "x"), lowered, source)
+
+	if got := input.ExpressionRefinements; len(got) != 0 {
+		t.Fatalf("WIR mode assertion refinements fell back to AST claim: %#v", got)
+	}
 }
 
 func TestLowerReturnClaimsUseWIRClaimSources(t *testing.T) {

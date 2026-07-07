@@ -20,6 +20,9 @@ func (l *lowerer) addAssignmentAssertionRefinements(input *factflow.FactsInput, 
 	if l.addAssignmentAssertionRefinementFromWIRClaim(input, point, target, source) {
 		return
 	}
+	if l != nil && l.wir != nil {
+		return
+	}
 	l.addAssertionRefinementsForSource(input, source)
 }
 
@@ -55,6 +58,9 @@ func (l *lowerer) addReturnAssertionRefinements(input *factflow.FactsInput, poin
 	if l.addReturnAssertionRefinementFromWIRClaim(input, point, index, source) {
 		return
 	}
+	if l != nil && l.wir != nil {
+		return
+	}
 	l.addAssertionRefinementsForSource(input, source)
 }
 
@@ -65,11 +71,17 @@ func (l *lowerer) addCallArgumentAssertionRefinements(input *factflow.FactsInput
 	if l.addCallArgumentAssertionRefinementFromWIRClaim(input, point, index, source) {
 		return
 	}
+	if l != nil && l.wir != nil {
+		return
+	}
 	l.addAssertionRefinementsForSource(input, source)
 }
 
 func (l *lowerer) addAssertionRefinementsForLoweredSource(input *factflow.FactsInput, loweredSource factflow.ValueSource, source sourceprovenance.ASTSource) {
 	if expressionSourceHasRefinement(input, loweredSource) {
+		return
+	}
+	if l != nil && l.wir != nil {
 		return
 	}
 	l.addAssertionRefinementsForSource(input, source)
