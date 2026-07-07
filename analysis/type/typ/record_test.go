@@ -42,10 +42,6 @@ func (b *testRecordBuilder) StaticStringIndex(name string, t Type) *testRecordBu
 	return b.AddStaticMember(StaticMember{Kind: StaticMemberStringIndex, Name: name, Type: t})
 }
 
-func (b *testRecordBuilder) StaticIntIndex(index int64, t Type) *testRecordBuilder {
-	return b.AddStaticMember(StaticMember{Kind: StaticMemberIntIndex, Index: index, Type: t})
-}
-
 func (b *testRecordBuilder) Metatable(t Type) *testRecordBuilder {
 	b.parts.Metatable = t
 	return b

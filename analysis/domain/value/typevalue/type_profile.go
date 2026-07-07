@@ -67,10 +67,6 @@ func runtimeTypeProfileForType(t typ.Type, cache *Cache) RuntimeTypeProfile {
 	}
 }
 
-func containsUnknownType(t typ.Type) bool {
-	return containsUnknownTypeCached(nil, t)
-}
-
 func containsUnknownTypeCached(cache *Cache, t typ.Type) bool {
 	if cache == nil || t == nil {
 		result, _ := containsUnknownTypeScan(t)

@@ -137,11 +137,6 @@ func (s Source) Signatures() map[string]signature.Function {
 	return out
 }
 
-// StdlibSignatures returns cloned standard-library signatures.
-func StdlibSignatures() map[string]signature.Function {
-	return stdlib.Signatures()
-}
-
 // StdlibSignatureNames returns the standard-library function names without
 // materializing cloned signatures.
 func StdlibSignatureNames() []string {

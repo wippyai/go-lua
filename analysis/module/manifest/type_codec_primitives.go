@@ -109,10 +109,6 @@ func encodeTypeList(types []typ.Type) ([]*typeWire, error) {
 	return out, nil
 }
 
-func decodeTypeList(nodes []*typeWire) ([]typ.Type, error) {
-	return decodeTypeListInEnv(nodes, nil)
-}
-
 func decodeTypeListInEnv(nodes []*typeWire, env *typeDecodeEnv) ([]typ.Type, error) {
 	if len(nodes) == 0 {
 		return nil, nil
@@ -206,10 +202,6 @@ func encodeRecord(r *typ.Record) (*typeWire, error) {
 		return nil, err
 	}
 	return out, nil
-}
-
-func decodeRecord(w *typeWire) (typ.Type, error) {
-	return decodeRecordInEnv(w, nil)
 }
 
 func decodeRecordInEnv(w *typeWire, env *typeDecodeEnv) (typ.Type, error) {

@@ -100,16 +100,6 @@ func (a Stable) Path() (pathdom.Path, bool) {
 	return pathdom.Path{Root: root, Segments: segments}, true
 }
 
-// RootIdentity returns the structured root identity.
-func (a Stable) RootIdentity() Root {
-	return a.root
-}
-
-// Symbol returns the root symbol when this is a symbol address.
-func (a Stable) Symbol() (symbol.ID, bool) {
-	return a.root.Symbol()
-}
-
 // Root returns the root name when this is a named-root address.
 func (a Stable) Root() (string, bool) {
 	return a.root.Name()
@@ -118,11 +108,6 @@ func (a Stable) Root() (string, bool) {
 // Segments returns a defensive copy of the address suffix.
 func (a Stable) Segments() []segment.Segment {
 	return a.suffix.Segments()
-}
-
-// Suffix returns the structured path suffix.
-func (a Stable) Suffix() Suffix {
-	return a.suffix
 }
 
 // Append returns the descendant address reached by appending segments.

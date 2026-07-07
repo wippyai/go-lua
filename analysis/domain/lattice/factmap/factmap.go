@@ -109,19 +109,6 @@ func (m Map[K, F, V]) normalize(in []F, clone bool) []F {
 	return m.sorted(merged)
 }
 
-// Clone returns a deep copy of in honoring the CloneFact hook, without
-// renormalizing.
-func (m Map[K, F, V]) Clone(in []F) []F {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]F, len(in))
-	for i, fact := range in {
-		out[i] = m.cloneOne(fact)
-	}
-	return out
-}
-
 // Equal reports whether a and b have the same canonical form.
 func (m Map[K, F, V]) Equal(a, b []F) bool {
 	if len(a) == len(b) {

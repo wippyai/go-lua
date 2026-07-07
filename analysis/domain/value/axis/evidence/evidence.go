@@ -117,11 +117,6 @@ func (v Value) WithOrigin(origin Origin) Value {
 	return v
 }
 
-// WithOrigin is the package-level form of Value.WithOrigin.
-func WithOrigin(v Value, origin Origin) Value {
-	return v.WithOrigin(origin)
-}
-
 // Origins returns a deterministic defensive copy of the bounded origin set.
 func (v Value) Origins() []Origin {
 	return v.origins.slice()

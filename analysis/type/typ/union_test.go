@@ -23,22 +23,6 @@ func (c *countingHashType) Equals(other Type) bool {
 	return ok && c.name == o.name && c.hash == o.hash
 }
 
-func requireUnionMembers(t *testing.T, got Type, wants ...Type) {
-	t.Helper()
-	union, ok := got.(*Union)
-	if !ok {
-		t.Fatalf("got %T %[1]v, want union", got)
-	}
-	if len(union.Members) != len(wants) {
-		t.Fatalf("union members = %v, want %v", union.Members, wants)
-	}
-	for _, want := range wants {
-		if !union.Contains(want) {
-			t.Fatalf("union members = %v, missing %v", union.Members, want)
-		}
-	}
-}
-
 func TestMaterializeUnionCardinalityCollapse(t *testing.T) {
 	if got := MaterializeUnion(nil); got != Never {
 		t.Fatalf("MaterializeUnion(nil) = %v, want never", got)

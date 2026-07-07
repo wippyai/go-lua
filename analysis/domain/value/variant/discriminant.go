@@ -23,16 +23,6 @@ type LiteralDiscriminantDomain struct {
 	Cases  []LiteralDiscriminantCase
 }
 
-// LiteralDiscriminantDomains returns every shared literal-valued discriminant
-// suffix for t's finite variant-origin family.
-func LiteralDiscriminantDomains(t typ.Type) ([]LiteralDiscriminantDomain, bool) {
-	_, cases, ok := OriginCasesOfType(t)
-	if !ok || len(cases) < 2 {
-		return nil, false
-	}
-	return LiteralDiscriminantDomainsForCases(cases)
-}
-
 // LiteralDiscriminantDomainsForCases returns shared literal-valued
 // discriminant suffixes for an already materialized origin-case set.
 func LiteralDiscriminantDomainsForCases(cases []OriginCase) ([]LiteralDiscriminantDomain, bool) {

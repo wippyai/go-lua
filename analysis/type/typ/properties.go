@@ -24,12 +24,6 @@ func typePropertiesOfFields(fields []Field) typeProperties {
 	return props
 }
 
-func typePropertiesOfStaticMembers(members []StaticMember) typeProperties {
-	var props typeProperties
-	props.includeStaticMembers(members)
-	return props
-}
-
 func typePropertiesOfMethods(methods []Method) typeProperties {
 	var props typeProperties
 	props.includeMethods(methods)
@@ -39,12 +33,6 @@ func typePropertiesOfMethods(methods []Method) typeProperties {
 func typePropertiesOfUnionMembers(types []Type) typeProperties {
 	var props typeProperties
 	props.includeUnionMembers(types)
-	return props
-}
-
-func typePropertiesOfParams(params []Param) typeProperties {
-	var props typeProperties
-	props.includeParams(params)
 	return props
 }
 

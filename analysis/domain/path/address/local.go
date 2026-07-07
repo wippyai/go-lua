@@ -21,11 +21,6 @@ func LocalOfPath(path pathdom.Path) (Local, bool) {
 	return Local{path: clonePath(path)}, true
 }
 
-// Path returns a defensive copy of the underlying path.
-func (a Local) Path() pathdom.Path {
-	return clonePath(a.path)
-}
-
 // Key returns the version-sensitive point-local map key.
 func (a Local) Key() pathdom.PathKey {
 	return a.LocalKey().PathKey()

@@ -44,9 +44,6 @@ func (s Suffix) Segments() []segment.Segment {
 	return cloneSegments(s.segments)
 }
 
-// Len returns the number of member/index steps in the suffix.
-func (s Suffix) Len() int { return len(s.segments) }
-
 // Parent returns the suffix without its last step.
 func (s Suffix) Parent() (Suffix, bool) {
 	if len(s.segments) == 0 {
@@ -107,16 +104,6 @@ func RelativeStaticMemberSuffixKey(segments []segment.Segment) (SuffixKey, bool)
 		return "", false
 	}
 	return SuffixKey(segment.FormatSegments(segments)), true
-}
-
-// FieldCanonicalRelativeStaticMemberSuffixKey returns the equivalent rootless
-// suffix key with static string indexes rewritten to field spelling.
-func FieldCanonicalRelativeStaticMemberSuffixKey(segments []segment.Segment) (SuffixKey, bool) {
-	canonical, changed := FieldCanonicalSegments(segments)
-	if !changed {
-		return "", false
-	}
-	return RelativeStaticMemberSuffixKey(canonical)
 }
 
 // SuffixKeyFromPathKey validates and narrows key to the rootless static-member

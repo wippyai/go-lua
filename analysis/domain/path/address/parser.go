@@ -36,15 +36,6 @@ func LocalPathFromKey(key pathdom.PathKey) (pathdom.Path, bool) {
 	}, true
 }
 
-// LocalKeyFromPathKey validates and narrows a PathKey to the point-local
-// resolver key space used by flow-state facts.
-func LocalKeyFromPathKey(key pathdom.PathKey) (LocalKey, bool) {
-	if _, version, _, ok := parseResolverRootSuffix(key); !ok || version <= 0 {
-		return "", false
-	}
-	return LocalKey(key), true
-}
-
 // LocalKeyForVersion formats a point-local key for an explicit SSA version.
 func LocalKeyForVersion(sym symbol.ID, version int, segments []segment.Segment) (LocalKey, bool) {
 	if sym == 0 || version <= 0 {

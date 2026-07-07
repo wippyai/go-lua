@@ -20,14 +20,6 @@ type buildEntry[T any] struct {
 	ready chan struct{}
 }
 
-// Get returns the cached value for reg, building and publishing one when absent.
-// Concurrent misses for the same registry share a single in-flight build.
-func (c *Cache[T]) Get(reg *axis.Registry, build func() T) T {
-	return c.get(reg, func(*axis.Registry) T {
-		return build()
-	})
-}
-
 // GetFor returns the cached value for reg, passing reg to build only on cache
 // miss. It lets hot callers avoid allocating a closure just to close over the
 // registry key.
