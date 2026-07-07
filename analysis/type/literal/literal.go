@@ -51,6 +51,16 @@ func PrimitiveBase(lit *typ.Literal) typ.Type {
 	}
 }
 
+// IntegerValue extracts the exact integer carried by an integer literal type.
+func IntegerValue(t typ.Type) (int64, bool) {
+	lit, ok := t.(*typ.Literal)
+	if !ok || lit.Base != kind.Integer {
+		return 0, false
+	}
+	value, ok := lit.Value.(int64)
+	return value, ok
+}
+
 // FamilyBase returns the primitive family that can represent t.
 //
 // It accepts literal types, primitive boolean/integer/number/string types, and

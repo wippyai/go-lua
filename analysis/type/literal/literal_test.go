@@ -62,6 +62,19 @@ func TestPrimitiveBase(t *testing.T) {
 	}
 }
 
+func TestIntegerValue(t *testing.T) {
+	got, ok := IntegerValue(typ.LiteralInt(42))
+	if !ok || got != 42 {
+		t.Fatalf("IntegerValue(integer literal) = %d/%v, want 42/true", got, ok)
+	}
+	if got, ok := IntegerValue(typ.LiteralNumber(42)); ok || got != 0 {
+		t.Fatalf("IntegerValue(number literal) = %d/%v, want 0/false", got, ok)
+	}
+	if got, ok := IntegerValue(typ.Integer); ok || got != 0 {
+		t.Fatalf("IntegerValue(integer type) = %d/%v, want 0/false", got, ok)
+	}
+}
+
 func TestFamilyBaseLiteralUnion(t *testing.T) {
 	u := typeexpr.Union(typ.LiteralInt(1), typ.LiteralNumber(2.5))
 
