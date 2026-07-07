@@ -10,14 +10,17 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
+	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse/numparse"
 )
@@ -285,6 +288,24 @@ func (l *lowerer) valueSourceFromWIROperandSeen(
 		}
 	}
 	return factflow.ValueSource{}, false
+}
+
+func (l *lowerer) addWIRCallResultExpressionValue(source factflow.ValueSource) {
+	if l == nil || l.registry == nil || source.Kind != factflow.ValueSourceCall || !source.HasExpr || source.ExprRef == 0 || !source.HasCallPoint {
+		return
+	}
+	site, ok := l.callSiteFromWIR(source.CallPoint)
+	if !ok {
+		return
+	}
+	t, ok := l.callSiteReturnTypeAt(source.CallPoint, site, source.ResultIndex)
+	if !ok || t == nil || typ.IsAny(t) || typ.IsUnknown(t) {
+		return
+	}
+	if l.expressionValues == nil {
+		l.expressionValues = make(map[factflow.ExprRef]product.Value)
+	}
+	l.expressionValues[source.ExprRef] = l.valueFromTypeWithWitness(t)
 }
 
 type wirTempExprRefKey struct {
@@ -745,6 +766,89 @@ type wirDynamicIndexReadExprRefKey struct {
 	id wir.ExpressionID
 }
 
+type wirAssignmentExprRefKey struct {
+	id wir.ExpressionID
+}
+
+func (l *lowerer) wirAssignmentExpressionValueSource(
+	inst wir.Instruction,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+	seen map[uint32]bool,
+) (factflow.ValueSource, bool) {
+	if l == nil || inst.ExprID == 0 || inst.Op == wir.OpAssign {
+		return factflow.ValueSource{}, false
+	}
+	exprRef, ok := l.exprRef(wirAssignmentExprRefKey{id: inst.ExprID})
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	if source, ok := l.wirAssignmentExpressionValueSourceWithRef(inst, exprRef, exprIndex, targetIndex, final, expanded, openTail, seen); ok {
+		return source, true
+	}
+	return factflow.ValueSource{}, false
+}
+
+func (l *lowerer) wirAssignmentExpressionValueSourceWithRef(
+	inst wir.Instruction,
+	exprRef factflow.ExprRef,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+	seen map[uint32]bool,
+) (factflow.ValueSource, bool) {
+	if exprRef == 0 {
+		return factflow.ValueSource{}, false
+	}
+	switch inst.Op {
+	case wir.OpDynamicIndexRead:
+		return l.wirDynamicIndexReadExpressionValueSourceWithRef(inst, exprRef, exprIndex, targetIndex, final, expanded, openTail, seen)
+	case wir.OpClaim:
+		return l.wirClaimTempExpressionValueSourceWithRef(inst, exprRef, exprIndex, targetIndex, final, expanded, openTail, seen)
+	}
+	if inst.A.Kind == wir.OperandTemp {
+		def, ok := l.wirTempDefs()[inst.A.Ref]
+		if !ok {
+			return factflow.ValueSource{}, false
+		}
+		return l.wirDefinitionValueSourceWithRef(inst.A.Ref, def, exprRef, exprIndex, targetIndex, seen)
+	}
+	if inst.A.Kind == wir.OperandConst {
+		if value, ok := l.wirConstValue(inst.A); ok {
+			if l.expressionValues == nil {
+				l.expressionValues = make(map[factflow.ExprRef]product.Value)
+			}
+			l.expressionValues[exprRef] = value
+		}
+		shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, openTail)
+		if !ok {
+			return factflow.ValueSource{}, false
+		}
+		return mustValueSource(factflow.NewExpressionValueSource(exprRef, exprIndex, targetIndex, 0, shape)).WithSourcePoint(inst.Point), true
+	}
+	return factflow.ValueSource{}, false
+}
+
+func (l *lowerer) wirConstValue(op wir.Operand) (product.Value, bool) {
+	if l == nil || l.wir == nil || op.Kind != wir.OperandConst {
+		return product.Value{}, false
+	}
+	c := l.wir.Const(wir.ConstRef(op.Ref))
+	if c.Kind == wir.ConstNil {
+		return l.valueFromTypeWithWitness(typ.Nil), true
+	}
+	t, ok := wirLiteralType(c)
+	if !ok {
+		return product.Value{}, false
+	}
+	return l.valueFromTypeWithWitness(t), true
+}
+
 func (l *lowerer) wirDynamicIndexReadExpressionValueSource(
 	inst wir.Instruction,
 	exprIndex int,
@@ -790,11 +894,77 @@ func (l *lowerer) wirDynamicIndexReadExpressionValueSourceWithRef(
 		l.dynamicIndexExpressions = make(map[factflow.ExprRef]factflow.DynamicIndexExpression)
 	}
 	l.dynamicIndexExpressions[exprRef] = dynamicExpr
+	l.addWIRDynamicIndexReadExpressionValue(exprRef, inst, tableSource)
 	shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, openTail)
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
 	return factflow.NewExpressionValueSource(exprRef, exprIndex, targetIndex, 0, shape)
+}
+
+func (l *lowerer) addWIRDynamicIndexReadExpressionValue(exprRef factflow.ExprRef, inst wir.Instruction, tableSource factflow.ValueSource) {
+	if l == nil || exprRef == 0 {
+		return
+	}
+	container, ok := l.dynamicIndexReadContainerType(inst, tableSource)
+	if !ok {
+		return
+	}
+	valueType, ok := l.dynamicIndexReadValueType(inst, container)
+	if !ok {
+		return
+	}
+	if l.expressionValues == nil {
+		l.expressionValues = make(map[factflow.ExprRef]product.Value)
+	}
+	l.expressionValues[exprRef] = l.valueFromTypeWithWitness(valueType)
+}
+
+func (l *lowerer) dynamicIndexReadContainerType(inst wir.Instruction, tableSource factflow.ValueSource) (typ.Type, bool) {
+	if tableSource.HasExpr && l.expressionValues != nil {
+		if value, ok := l.expressionValues[tableSource.ExprRef]; ok {
+			if t, ok := typevalue.TypeOf(l.registry, value); ok {
+				return t, true
+			}
+		}
+	}
+	if inst.A.Kind != wir.OperandPath {
+		return nil, false
+	}
+	tablePath, ok := l.wirAssignmentPath(inst.A)
+	if !ok {
+		return nil, false
+	}
+	return l.aliasPathType(tablePath)
+}
+
+func (l *lowerer) dynamicIndexReadValueType(inst wir.Instruction, container typ.Type) (typ.Type, bool) {
+	if seg, ok := l.dynamicIndexReadKeySegment(inst.B); ok {
+		if projected, ok := luatypeprojection.ApplySegments(container, []segment.Segment{seg}); ok {
+			return projected, true
+		}
+	}
+	valueType, ok := dynamicIndexMapValueType(container, 0)
+	if !ok {
+		return nil, false
+	}
+	return typeexpr.Optional(valueType), true
+}
+
+func (l *lowerer) dynamicIndexReadKeySegment(op wir.Operand) (segment.Segment, bool) {
+	if l == nil || l.wir == nil || op.Kind != wir.OperandConst {
+		return segment.Segment{}, false
+	}
+	c := l.wir.Const(wir.ConstRef(op.Ref))
+	switch c.Kind {
+	case wir.ConstString:
+		return segment.Segment{Kind: segment.SegmentIndexString, Name: c.Str}, true
+	case wir.ConstNumber:
+		if i, ok := numparse.ParseIntegerLiteral(c.Number); ok {
+			return segment.Segment{Kind: segment.SegmentIndexInt, Index: int(i)}, true
+		}
+	}
+	return segment.Segment{}, false
 }
 
 func (l *lowerer) wirDynamicIndexReadOperandSource(
@@ -820,7 +990,13 @@ func (l *lowerer) wirDynamicIndexReadOperandSource(
 	); ok {
 		return source, true
 	}
-	return l.wirInstructionExpressionOperandValueSource(inst, op, exprIndex, targetIndex, seen)
+	source, ok := l.wirInstructionExpressionOperandValueSource(inst, op, exprIndex, targetIndex, seen)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	l.addWIRCallResultExprRefFromID(&source, op)
+	l.addWIRCallResultExpressionValue(source)
+	return source, true
 }
 
 func (l *lowerer) wirDynamicIndexReadExpression(

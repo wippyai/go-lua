@@ -321,7 +321,7 @@ func TestLowerAnnotatedObjectLiteralUsesDeclaredOverlay(t *testing.T) {
 type Box = { items: {[string]: {id: string}}, count: number }
 local box: Box = { items = {}, count = 0 }
 `)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	facts := lowerChunkFactsWithWIR(t, "annotated-object-literal-overlay", stmts, result, built, bindings, reg)
 	point := requireStmtPoints(t, built, stmts[1], 1)[0]
 	fact, ok := facts.RootAssignment(point)
 	if !ok {
@@ -352,7 +352,7 @@ end
 `)
 	body := fn.Stmts
 	point := requireStmtPoints(t, built, body[0], 1)[0]
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	facts := lowerFunctionFactsWithWIR(t, "returned-annotated-object-literal-overlay", result, built, bindings, reg)
 	fact, ok := facts.RootAssignment(point)
 	if !ok {
 		t.Fatalf("missing root assignment at point %d", point)
@@ -1396,7 +1396,7 @@ func TestLowerAnyCastObjectLiteralPublishesClaimNotEntries(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "any-cast-object-literal-claim", stmts, result, built, bindings, standard.Registry())
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	point := requireStmtPoints(t, built, local, 1)[0]

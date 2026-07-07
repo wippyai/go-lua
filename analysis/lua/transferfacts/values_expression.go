@@ -89,6 +89,27 @@ func (l *lowerer) dynamicIndexExpression(expr ast.Expr) (factflow.DynamicIndexEx
 	return factflow.DynamicIndexExpression{}, false
 }
 
+func (l *lowerer) dynamicIndexKeySourceFromAST(attr *ast.AttrGetExpr) (factflow.ValueSource, bool) {
+	if attr == nil || attr.Key == nil || sourceprovenance.CanProduceMultipleValues(attr.Key) {
+		return factflow.NewUnknownValueSource(factflow.NoValueSourceIndex), false
+	}
+	shape, ok := sourceprovenance.NewSourceShape(true, false, false, false)
+	if !ok {
+		panic("transferfacts: invalid dynamic index key source shape")
+	}
+	source, ok := sourceprovenance.NewExpressionSource(
+		attr.Key,
+		sourceprovenance.NoSourceIndex,
+		sourceprovenance.NoSourceIndex,
+		0,
+		shape,
+	)
+	if !ok {
+		return factflow.NewUnknownValueSource(factflow.NoValueSourceIndex), false
+	}
+	return l.valueSource(source), true
+}
+
 func (l *lowerer) addExpressionCondition(ref factflow.ExprRef, expr ast.Expr) {
 	if ref == 0 || expr == nil || l.bindings == nil {
 		return

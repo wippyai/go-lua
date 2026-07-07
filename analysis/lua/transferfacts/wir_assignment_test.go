@@ -83,6 +83,29 @@ end`)
 	assertWIRPathSource(t, localSource, wantPath)
 }
 
+func TestLowerAnnotatedScalarLiteralAssignmentKeepsLiteralSource(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f()
+    local x: string | number = 42
+end`)
+	body := wirlower.Lower("f", fn.Stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
+	assign, ok := facts.RootAssignment(point)
+	if !ok {
+		t.Fatalf("missing annotated literal local assignment at point %d", point)
+	}
+	source := assign.Source()
+	if source.Kind != factflow.ValueSourceLiteral || source.LiteralKind != factflow.ValueSourceLiteralInteger ||
+		source.Int != 42 {
+		t.Fatalf("annotated literal source = %#v, want WIR integer literal", source)
+	}
+	if assign.DeclaredValueContracts() || assign.DeclaredValueOverlays() {
+		t.Fatalf("annotated scalar literal assignment declared contract/overlay = %v/%v, want source precision preserved", assign.DeclaredValueContracts(), assign.DeclaredValueOverlays())
+	}
+}
+
 func TestLowerWIRRootFunctionDefinitionPublishesFunctionIdentityWithoutSemanticSidecars(t *testing.T) {
 	stmts, bindings, built, _ := parseSemanticChunk(t, `
 function run()

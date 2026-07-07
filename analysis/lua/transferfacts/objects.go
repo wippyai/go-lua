@@ -162,6 +162,8 @@ func dynamicIndexMapValueType(container typ.Type, depth int) (typ.Type, bool) {
 		return nil, false
 	}
 	switch t := unwrap.Alias(container).(type) {
+	case *typ.Optional:
+		return dynamicIndexMapValueType(t.Inner, depth+1)
 	case *typ.Map:
 		return t.Value, t.Value != nil
 	case *typ.ReadonlyMap:

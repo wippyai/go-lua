@@ -54,13 +54,26 @@ func TestLowerLiteralExpressionValues(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
-	nilSource := mustLocalSource(t, facts, requireStmtPoints(t, built, nilLocal, 1)[0])
-	numberSource := mustLocalSource(t, facts, requireStmtPoints(t, built, numberLocal, 1)[0])
+	body := wirlower.Lower("literal-expression-values", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	nilAssign, ok := facts.LocalAssignment(requireStmtPoints(t, built, nilLocal, 1)[0])
+	if !ok {
+		t.Fatalf("missing nil local assignment")
+	}
+	nilSource := nilAssign.Source()
+	numberAssign, ok := facts.LocalAssignment(requireStmtPoints(t, built, numberLocal, 1)[0])
+	if !ok {
+		t.Fatalf("missing number local assignment")
+	}
+	numberSource := numberAssign.Source()
 	tableSource := mustLocalSource(t, facts, requireStmtPoints(t, built, tableLocal, 1)[0])
 
-	assertExpressionValue(t, facts, nilSource.ExprRef, presence.Absent(), runtimekind.Singleton(runtimekind.Nil))
-	assertExpressionValue(t, facts, numberSource.ExprRef, presence.Present(), runtimekind.Singleton(runtimekind.Number))
+	if nilSource.Kind != factflow.ValueSourceNil {
+		t.Fatalf("nil local source = %#v, want nil source", nilSource)
+	}
+	if numberSource.Kind != factflow.ValueSourceLiteral || numberSource.LiteralKind != factflow.ValueSourceLiteralInteger || numberSource.Int != 7 {
+		t.Fatalf("number local source = %#v, want integer literal 7", numberSource)
+	}
 	assertExpressionValue(t, facts, tableSource.ExprRef, presence.Present(), runtimekind.Singleton(runtimekind.Table))
 }
 
@@ -303,13 +316,11 @@ func TestLowerDynamicIndexReadExpressionValueUsesRuntimeIndexType(t *testing.T) 
 local users: {[string]: {id: string}} = {}
 local id: string = "u1"
 local user = users[id]
+local maybe_users: {[string]: {id: string}}? = users
+local maybe_user = maybe_users[id]
 `)
 	reg := standard.Registry()
-	facts := Lower(result, built.Graph, Config{
-		Registry:     reg,
-		Bindings:     bindings,
-		TypeResolver: nil,
-	})
+	facts := lowerChunkFactsWithWIR(t, "dynamic-index-read-expression-value", stmts, result, built, bindings, reg)
 	local := mustLocalStmt(t, stmts, 2)
 	point := requireStmtPoints(t, built, local, 1)[0]
 	source := mustLocalSource(t, facts, point)
@@ -325,6 +336,50 @@ local user = users[id]
 	if !ok || !typ.TypeEquals(got, want) {
 		t.Fatalf("dynamic index read type = %v/%v, want %v", got, ok, want)
 	}
+
+	optionalLocal := mustLocalStmt(t, stmts, 4)
+	optionalPoint := requireStmtPoints(t, built, optionalLocal, 1)[0]
+	optionalSource := mustLocalSource(t, facts, optionalPoint)
+	optionalValue, ok := facts.ExpressionValue(optionalSource.ExprRef)
+	if !ok {
+		t.Fatalf("missing expression value for optional dynamic index ref %d", optionalSource.ExprRef)
+	}
+	optionalGot, ok := typevalue.TypeOf(reg, optionalValue)
+	if !ok || !typ.TypeEquals(optionalGot, want) {
+		t.Fatalf("optional dynamic index read type = %v/%v, want %v", optionalGot, ok, want)
+	}
+}
+
+func TestLowerChainedDynamicIndexReadExpressionValueProjectsMemberThenIndex(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local function meta(): {tags: {[string]: string}?}
+    return { tags = { source = "fixture" } }
+end
+	local source = meta().tags["source"]
+`)
+	reg := standard.Registry()
+	facts := lowerChunkFactsWithWIR(t, "chained-dynamic-index-read-expression-value", stmts, result, built, bindings, reg)
+	local := mustLocalStmt(t, stmts, 1)
+	var point cfg.Point
+	for _, candidate := range requireStmtPoints(t, built, local, 2) {
+		if _, ok := facts.RootAssignment(candidate); ok {
+			point = candidate
+			break
+		}
+	}
+	if point == 0 {
+		t.Fatalf("missing root assignment for chained dynamic index local")
+	}
+	source := mustLocalSource(t, facts, point)
+	value, ok := facts.ExpressionValue(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing expression value for chained dynamic index ref %d", source.ExprRef)
+	}
+	got, ok := typevalue.TypeOf(reg, value)
+	want := typeexpr.Optional(typ.String)
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("chained dynamic index read type = %v/%v, want %v", got, ok, want)
+	}
 }
 
 func TestLowerLogicalExpressionValueUsesDeclaredMemberPathTypes(t *testing.T) {
@@ -337,7 +392,7 @@ local target_topic: string = "topic"
 local ok = chunk.type == "error" and target_pid ~= "" and target_topic ~= ""
 `)
 	reg := standard.Registry()
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	facts := lowerChunkFactsWithWIR(t, "logical-expression-declared-member-path", stmts, result, built, bindings, reg)
 	local := mustLocalStmt(t, stmts, 4)
 	point := requireStmtPoints(t, built, local, 1)[0]
 	source := mustLocalSource(t, facts, point)
@@ -358,7 +413,7 @@ local cb = function(item)
 end
 `)
 	reg := standard.Registry()
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	facts := lowerChunkFactsWithWIR(t, "unannotated-function-expression", stmts, result, built, bindings, reg)
 	point := requireStmtPoints(t, built, stmts[0], 1)[0]
 	source := mustLocalSource(t, facts, point)
 	value, ok := facts.ExpressionValue(source.ExprRef)
@@ -422,7 +477,7 @@ end
 				t.Fatalf("statement = %T, want function definition", stmts[1])
 			}
 			reg := standard.Registry()
-			facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+			facts := lowerChunkFactsWithWIR(t, "member-function-definition", stmts, result, built, bindings, reg)
 
 			point := requireStmtPoints(t, built, def, 1)[0]
 			wantPath := path.NewPath(mustLocalAt(t, bindings, decl, 0), tt.rootName).Field(tt.field)
@@ -481,7 +536,7 @@ end
 		t.Fatalf("statement = %T, want function definition", stmts[0])
 	}
 	reg := standard.Registry()
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	facts := lowerChunkFactsWithWIR(t, "root-function-definition", stmts, result, built, bindings, reg)
 
 	point := requireStmtPoints(t, built, def, 1)[0]
 	rootFact, ok := facts.RootAssignment(point)

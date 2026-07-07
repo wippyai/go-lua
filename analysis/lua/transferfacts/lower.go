@@ -12,7 +12,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
-	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -123,50 +122,6 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 	for _, point := range graph.RPO() {
 		if l.wir != nil {
 			l.addAssignmentWritesFromWIR(&input, point)
-		}
-		if result != nil {
-			if view, ok := result.LocalAssignmentView(point); ok {
-				fact, _ := view.Borrowed()
-				if l.wir == nil {
-					if lowered, ok := l.localAssignment(point, fact); ok {
-						input.RootAssignments[point] = lowered
-						l.addLocalConditionAlias(fact.Symbol, lowered.Source())
-						l.addAssignmentAssertionRefinements(&input, point, lowered.TargetPath(), lowered.Source(), fact.Source)
-						l.addLocalAliasExposure(&input, point, fact)
-						if fact.Source.Kind == sourceprovenance.SourceExpression {
-							l.addCastExposure(&input, point, fact.Source.Expr)
-						}
-					}
-				}
-			}
-			if view, ok := result.OrdinaryAssignmentView(point); ok {
-				fact, _ := view.Borrowed()
-				if l.wir == nil {
-					if lowered, ok := l.pathAssignment(point, fact); ok {
-						input.PathAssignments[point] = lowered
-						if lowered, ok := l.pathStaticMemberWrite(point, fact); ok {
-							input.PathStaticMemberWrites[point] = lowered
-						}
-						if lowered, ok := l.ordinaryAssignment(point, fact); ok {
-							input.RootAssignments[point] = lowered
-						}
-						l.addAssertionRefinementsForLoweredSource(&input, lowered.Source(), fact.Source)
-						l.addStoreExposure(&input, point, fact)
-					} else if lowered, ok := l.ordinaryAssignment(point, fact); ok {
-						input.RootAssignments[point] = lowered
-						l.addAssignmentAssertionRefinements(&input, point, lowered.TargetPath(), lowered.Source(), fact.Source)
-						l.addReassignExposure(&input, point, fact)
-					} else {
-						if lowered, ok := l.dynamicIndexWrite(point, fact); ok {
-							input.DynamicIndexWrites[point] = lowered
-							l.addAssertionRefinementsForLoweredSource(&input, lowered.Source(), fact.Source)
-						}
-						if lowered, ok := l.pathDescendantInvalidation(fact); ok {
-							input.PathDescendantInvalidations[point] = lowered
-						}
-					}
-				}
-			}
 		}
 		if l.wir != nil {
 			if sources, ok := l.returnValueSourcesFromWIR(point); ok {

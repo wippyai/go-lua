@@ -1172,6 +1172,9 @@ func applyExpressionRefinement(reg *axis.Registry, value product.Value, refineme
 		}
 		validated := refinement.Refinement()
 		validatedClaim := product.Get(reg, validated, assertion.Key)
+		if existingClaim := product.Get(reg, merged, assertion.Key); existingClaim.Has(assertion.NonNilClaim) {
+			validatedClaim = assertion.Combine(validatedClaim, assertion.NonNil())
+		}
 		if !validatedClaim.IsTop() {
 			merged = product.Set(reg, merged, assertion.Key, validatedClaim)
 		}

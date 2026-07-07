@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
@@ -539,15 +540,15 @@ func TestLowerClaimsToSidecarsWithoutProofRefinements(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "claim-sidecars", stmts, result, built, bindings, standard.Registry())
 	points := requireStmtPoints(t, built, local, 3)
 	typeSource := mustLocalSource(t, facts, points[0])
 	anySource := mustLocalSource(t, facts, points[1])
 	nonNilSource := mustLocalSource(t, facts, points[2])
 
-	assertLoweredConcreteCastAssertion(t, facts, typeSource, typ.Number, factflow.ValueSourceExpression)
-	assertLoweredAssertion(t, facts, anySource, assertion.Any(), factflow.ValueSourceExpression)
-	assertLoweredAssertion(t, facts, nonNilSource, assertion.NonNil(), factflow.ValueSourceExpression)
+	assertWIRConcreteCastAssertion(t, facts, typeSource, typ.Number, factflow.ValueSourcePath)
+	assertWIRAssertion(t, facts, anySource, assertion.Any(), factflow.ValueSourcePath)
+	assertWIRAssertion(t, facts, nonNilSource, assertion.NonNil(), factflow.ValueSourcePath)
 	if len(facts.BranchRefinements(points[2])) != 0 {
 		t.Fatalf("x! assignment produced branch/presence refinement")
 	}
@@ -572,7 +573,7 @@ func TestLowerClaimsPreserveCastSyntaxVariantsWithoutProofRefinements(t *testing
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "claim-syntax-variants", stmts, result, built, bindings, standard.Registry())
 	points := requireStmtPoints(t, built, local, 4)
 	cases := []struct {
 		name  string
@@ -590,7 +591,7 @@ func TestLowerClaimsPreserveCastSyntaxVariantsWithoutProofRefinements(t *testing
 		t.Run(tc.name, func(t *testing.T) {
 			source := mustLocalSource(t, facts, tc.point)
 			if tc.typ != nil {
-				assertLoweredConcreteCastAssertion(t, facts, source, tc.typ, factflow.ValueSourceExpression)
+				assertWIRConcreteCastAssertion(t, facts, source, tc.typ, factflow.ValueSourcePath)
 				refinement, ok := facts.ExpressionRefinement(source.ExprRef)
 				if !ok {
 					t.Fatalf("missing assertion for source ref %d", source.ExprRef)
@@ -599,19 +600,19 @@ func TestLowerClaimsPreserveCastSyntaxVariantsWithoutProofRefinements(t *testing
 					t.Fatalf("refinement mode = %v, want %v", got, factflow.ExpressionRefinementRuntimeValidation)
 				}
 			} else {
-				assertLoweredAssertion(t, facts, source, tc.want, factflow.ValueSourceExpression)
+				assertWIRAssertion(t, facts, source, tc.want, factflow.ValueSourcePath)
 			}
 		})
 	}
 }
 
 func TestLowerParsedCastClaimsOnlyProduceClaimRefinements(t *testing.T) {
-	stmts, _, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, result := parseSemanticChunk(t, `
 local x = 0
 local a, b, c, d = x as number, x :: number, x as any, x :: any
 `)
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "parsed-cast-claims", stmts, result, built, bindings, standard.Registry())
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	local := mustLocalStmt(t, stmts, 1)
@@ -632,9 +633,9 @@ local a, b, c, d = x as number, x :: number, x as any, x :: any
 		t.Run(tc.name, func(t *testing.T) {
 			source := mustLocalSource(t, facts, tc.point)
 			if tc.typ != nil {
-				assertLoweredConcreteCastAssertion(t, facts, source, tc.typ, factflow.ValueSourceExpression)
+				assertWIRConcreteCastAssertion(t, facts, source, tc.typ, factflow.ValueSourcePath)
 			} else {
-				assertLoweredAssertion(t, facts, source, tc.want, factflow.ValueSourceExpression)
+				assertWIRAssertion(t, facts, source, tc.want, factflow.ValueSourcePath)
 			}
 		})
 	}
@@ -653,7 +654,7 @@ local payload = raw :: Payload
 `)
 
 	reg := standard.Registry()
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	facts := lowerChunkFactsWithWIR(t, "structural-cast-claim", stmts, result, built, bindings, reg)
 	local := mustLocalStmt(t, stmts, 2)
 	source := mustLocalSource(t, facts, requireStmtPoints(t, built, local, 1)[0])
 	claim, ok := facts.ExpressionRefinement(source.ExprRef)
@@ -673,13 +674,13 @@ local payload = raw :: Payload
 }
 
 func TestLowerClaimConditionsDoNotCreateBranchRefinements(t *testing.T) {
-	stmts, _, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, result := parseSemanticChunk(t, `
 local x = 0
 if x as number then end
 if x :: number then end
 `)
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "claim-conditions", stmts, result, built, bindings, standard.Registry())
 	cases := []struct {
 		name   string
 		index  int
@@ -745,17 +746,16 @@ if x as number then end
 }
 
 func TestLowerParsedAnyClaimCastsMarkUntrustedTop(t *testing.T) {
-	stmts, _, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, result := parseSemanticChunk(t, `
 local x = 0
 local a, b, c, d = x as any, x :: any, x as unknown, x :: unknown
 `)
 
 	reg := standard.Registry()
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "parsed-any-claims", stmts, result, built, bindings, standard.Registry())
 	local := mustLocalStmt(t, stmts, 1)
 	points := requireStmtPoints(t, built, local, 4)
 	base := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
-	inputValues := make(map[factflow.ExprRef]product.Value)
 	for _, point := range points {
 		source := mustLocalSource(t, facts, point)
 		refinement, ok := facts.ExpressionRefinement(source.ExprRef)
@@ -768,18 +768,19 @@ local a, b, c, d = x as any, x :: any, x as unknown, x :: unknown
 		if got := product.Get(reg, refinement.Refinement(), evidence.Key); !evidence.Equal(got, evidence.ExplicitTop()) {
 			t.Fatalf("refinement evidence = %s, want explicit-top", got)
 		}
-		inputValues[refinement.Source().ExprRef] = base
 	}
+	xSym := mustLocalAt(t, bindings, mustLocalStmt(t, stmts, 0), 0)
+	input := state.State{}.WriteValue(reg, key.SymbolValue(xSym), base)
 
 	factApply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 		Facts: facts,
 		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
-			Registry:         reg,
-			ExpressionValues: inputValues,
+			Registry: reg,
+			KeySpace: keyspace.New(),
 		}),
 	})
 	for _, point := range points {
-		out := factApply(transfer.NodeContext{Registry: reg, Point: point}, state.State{})
+		out := factApply(transfer.NodeContext{Registry: reg, Point: point}, input)
 		fact, ok := facts.LocalAssignment(point)
 		if !ok {
 			t.Fatalf("missing local assignment at point %d", point)
@@ -852,7 +853,7 @@ func TestLowerNestedClaimsPreserveOuterIdentityAndInnerFlow(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "nested-claims", stmts, result, built, bindings, standard.Registry())
 	source := mustLocalSource(t, facts, requireStmtPoints(t, built, local, 1)[0])
 	outer, ok := facts.ExpressionRefinement(source.ExprRef)
 	if !ok {
@@ -895,9 +896,9 @@ func TestLowerClaimRefinementsApplyIndicatorsWithoutMutatingBaseValues(t *testin
 	if err != nil {
 		t.Fatalf("RegistryWithAxes error = %v", err)
 	}
-	facts := lowerFacts(t, result, built.Graph, reg)
+	facts := lowerChunkFactsWithWIR(t, "claim-refinement-indicators", stmts, result, built, bindings, reg)
 	points := requireStmtPoints(t, built, local, 3)
-	inputValues := make(map[factflow.ExprRef]product.Value)
+	xSym := mustLocalAt(t, bindings, decl, 0)
 	type sourceCase struct {
 		name              string
 		point             cfg.Point
@@ -940,18 +941,16 @@ func TestLowerClaimRefinementsApplyIndicatorsWithoutMutatingBaseValues(t *testin
 	}
 	for i := range cases {
 		source := mustLocalSource(t, facts, cases[i].point)
-		refinement, ok := facts.ExpressionRefinement(source.ExprRef)
-		if !ok {
+		if _, ok := facts.ExpressionRefinement(source.ExprRef); !ok {
 			t.Fatalf("%s refinement missing", cases[i].name)
 		}
-		inputValues[refinement.Source().ExprRef] = cases[i].base
 	}
 
 	factApply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 		Facts: facts,
 		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
-			Registry:         reg,
-			ExpressionValues: inputValues,
+			Registry: reg,
+			KeySpace: keyspace.New(),
 		}),
 	})
 	for _, tc := range cases {
@@ -964,7 +963,8 @@ func TestLowerClaimRefinementsApplyIndicatorsWithoutMutatingBaseValues(t *testin
 					t.Fatalf("base input runtime kind = %s, want %s", got, tc.wantRuntimeKind)
 				}
 			}
-			out := factApply(transfer.NodeContext{Registry: reg, Point: tc.point}, state.State{})
+			input := state.State{}.WriteValue(reg, key.SymbolValue(xSym), tc.base)
+			out := factApply(transfer.NodeContext{Registry: reg, Point: tc.point}, input)
 			fact, ok := facts.LocalAssignment(tc.point)
 			if !ok {
 				t.Fatalf("missing local assignment at point %d", tc.point)
@@ -1024,29 +1024,28 @@ func TestLowerNestedClaimRefinementsApplyCombinedIndicators(t *testing.T) {
 	}
 
 	reg := standard.Registry()
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "nested-claim-indicators", stmts, result, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, local, 1)[0]
 	source := mustLocalSource(t, facts, point)
 	outer, ok := facts.ExpressionRefinement(source.ExprRef)
 	if !ok {
 		t.Fatalf("missing outer assertion refinement")
 	}
-	inner, ok := facts.ExpressionRefinement(outer.Source().ExprRef)
-	if !ok {
+	if _, ok := facts.ExpressionRefinement(outer.Source().ExprRef); !ok {
 		t.Fatalf("missing inner assertion refinement")
 	}
-	base := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	base := product.NewWithPresence(reg, product.ShapeTop, presence.Maybe())
+	xSym := mustLocalAt(t, bindings, decl, 0)
 	factApply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 		Facts: facts,
 		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
 			Registry: reg,
-			ExpressionValues: map[factflow.ExprRef]product.Value{
-				inner.Source().ExprRef: base,
-			},
+			KeySpace: keyspace.New(),
 		}),
 	})
 
-	out := factApply(transfer.NodeContext{Registry: reg, Point: point}, state.State{})
+	input := state.State{}.WriteValue(reg, key.SymbolValue(xSym), base)
+	out := factApply(transfer.NodeContext{Registry: reg, Point: point}, input)
 	fact, ok := facts.LocalAssignment(point)
 	if !ok {
 		t.Fatalf("missing local assignment at point %d", point)
@@ -1062,16 +1061,15 @@ func TestLowerNestedClaimRefinementsApplyCombinedIndicators(t *testing.T) {
 }
 
 func TestLowerNestedAnyClaimRefinementsKeepUntrustedTop(t *testing.T) {
-	stmts, _, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, result := parseSemanticChunk(t, `
 local x = 0
 local a, b = (x as any) as number, (x :: any) :: number
 `)
 
 	reg := standard.Registry()
-	facts := lowerFacts(t, result, built.Graph, reg)
+	facts := lowerChunkFactsWithWIR(t, "nested-any-claim-indicators", stmts, result, built, bindings, reg)
 	local := mustLocalStmt(t, stmts, 1)
 	points := requireStmtPoints(t, built, local, 2)
-	inputValues := make(map[factflow.ExprRef]product.Value)
 	for _, point := range points {
 		source := mustLocalSource(t, facts, point)
 		outer, ok := facts.ExpressionRefinement(source.ExprRef)
@@ -1090,18 +1088,19 @@ local a, b = (x as any) as number, (x :: any) :: number
 		if got := product.Get(reg, innerRefinement.Refinement(), evidence.Key); !evidence.Equal(got, evidence.ExplicitTop()) {
 			t.Fatalf("inner evidence = %s, want explicit-top", got)
 		}
-		inputValues[innerRefinement.Source().ExprRef] = product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	}
 
 	factApply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 		Facts: facts,
 		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
-			Registry:         reg,
-			ExpressionValues: inputValues,
+			Registry: reg,
+			KeySpace: keyspace.New(),
 		}),
 	})
+	xSym := mustLocalAt(t, bindings, mustLocalStmt(t, stmts, 0), 0)
+	input := state.State{}.WriteValue(reg, key.SymbolValue(xSym), product.NewWithPresence(reg, product.ShapeTop, presence.Present()))
 	for _, point := range points {
-		out := factApply(transfer.NodeContext{Registry: reg, Point: point}, state.State{})
+		out := factApply(transfer.NodeContext{Registry: reg, Point: point}, input)
 		fact, ok := facts.LocalAssignment(point)
 		if !ok {
 			t.Fatalf("missing local assignment at point %d", point)
@@ -1125,13 +1124,13 @@ local a, b = (x as any) as number, (x :: any) :: number
 }
 
 func TestLowerColonCastRuntimeValidationClearsStaleAnyEvidence(t *testing.T) {
-	stmts, _, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, result := parseSemanticChunk(t, `
 local x: any = 1
 local a = x :: string
 `)
 
 	reg := standard.Registry()
-	facts := lowerFacts(t, result, built.Graph, reg)
+	facts := lowerChunkFactsWithWIR(t, "colon-cast-clears-any", stmts, result, built, bindings, reg)
 	local := mustLocalStmt(t, stmts, 1)
 	point := requireStmtPoints(t, built, local, 1)[0]
 	source := mustLocalSource(t, facts, point)
@@ -1398,7 +1397,7 @@ func TestLowerConcreteCastWrappedAnyCallPublishesRuntimeWitness(t *testing.T) {
 	}
 
 	reg := standard.Registry()
-	facts := lowerFacts(t, result, built.Graph, reg)
+	facts := lowerChunkFactsWithWIR(t, "concrete-cast-wrapped-any-call", stmts, result, built, bindings, reg)
 	points := requireStmtPoints(t, built, local, 2)
 	source := mustLocalSource(t, facts, points[1])
 	refinement, ok := facts.ExpressionRefinement(source.ExprRef)

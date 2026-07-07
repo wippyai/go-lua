@@ -98,6 +98,14 @@ func (l *lowerer) addRootAssignmentFromWIR(input *factflow.FactsInput, point cfg
 			assignment = factflow.NewRootAssignmentWithDeclaredContractValue(kind, target.Symbol, target, source, l.declaredTypeClaimValue(declared))
 		} else if declared, ok := l.wirSymbolDeclaredContract(target.Symbol, source); ok {
 			assignment = factflow.NewRootAssignmentWithDeclaredContractValue(kind, target.Symbol, target, source, l.declaredTypeClaimValue(declared))
+		} else if inst.Type != 0 {
+			if declared, ok := l.wirAssignmentDeclaredObjectType(inst, target.Symbol); ok {
+				assignment = factflow.NewRootAssignmentWithDeclaredOverlayValue(kind, target.Symbol, target, source, l.declaredTypeClaimValue(declared))
+			}
+		}
+		if assignment.DeclaredValueContracts() || assignment.DeclaredValueOverlays() {
+			// The explicit annotation branches above have already selected the
+			// assignment contract form.
 		} else if declared, ok := l.declaredReturnLocalContractForSymbol(target.Symbol); ok {
 			assignment = factflow.NewRootAssignmentWithDeclaredContractValue(kind, target.Symbol, target, source, l.declaredTypeClaimValue(declared))
 		} else if declared, ok := l.returnLocalObjectLiteralContractForSymbol(target.Symbol); ok && recordWithCallableField(declared) {
@@ -176,6 +184,12 @@ func (l *lowerer) wirInstructionDeclaredType(inst wir.Instruction) (typ.Type, bo
 	if inst.Op == wir.OpClaim {
 		return nil, false
 	}
+	if inst.Op == wir.OpAssign && inst.A.Kind == wir.OperandPath {
+		return nil, false
+	}
+	if inst.Op == wir.OpAssign && inst.A.Kind == wir.OperandConst {
+		return nil, false
+	}
 	declared := l.wir.Type(inst.Type)
 	if inst.Op == wir.OpMakeTable &&
 		declared != nil &&
@@ -249,6 +263,17 @@ func (l *lowerer) wirExplicitTopDeclaredContract(inst wir.Instruction) (typ.Type
 }
 
 func (l *lowerer) rootAssignmentValueSourceFromWIR(point cfg.Point, inst wir.Instruction) (factflow.ValueSource, bool) {
+	if source, ok := l.wirAssignmentExpressionValueSource(
+		inst,
+		sourceprovenance.NoSourceIndex,
+		0,
+		true,
+		false,
+		false,
+		nil,
+	); ok {
+		return source, true
+	}
 	if sourceOp, ok := inst.AssignmentSourceOperand(); ok {
 		return l.assignmentValueSourceFromWIROperand(point, sourceOp)
 	}
@@ -451,16 +476,36 @@ func (l *lowerer) addDynamicIndexWriteFromWIR(input *factflow.FactsInput, point 
 		dynamicindex.AdmissionUnknown,
 		dynamicIndexReadbackIntent(readKey, true),
 	)
-	if keyPath, ok := l.wirAssignmentPath(inst.A); ok {
+	if keyPath, ok := l.wirAssignmentSourcePath(inst.A); ok {
 		write = write.WithKeyPath(keyPath)
 	}
-	if valuePath, ok := l.wirAssignmentPath(inst.B); ok {
+	if valuePath, ok := l.wirAssignmentSourcePath(inst.B); ok {
 		write = write.WithValuePath(valuePath)
 	}
 	input.DynamicIndexWrites[point] = write
 	l.addDynamicIndexObjectLiteralExpectedTypeFromWIR(input, write)
 	input.PathDescendantInvalidations[point] = factflow.NewPathDescendantInvalidation(tablePath).
 		WithDynamicTarget(tablePath, keySource, l.wir.Segments(inst.DynamicSuffix))
+}
+
+func (l *lowerer) wirAssignmentSourcePath(op wir.Operand) (path.Path, bool) {
+	if p, ok := l.wirAssignmentPath(op); ok {
+		return p, true
+	}
+	if l == nil || l.wir == nil || op.Kind != wir.OperandTemp {
+		return path.Path{}, false
+	}
+	def, ok := l.wirTempDefs()[op.Ref]
+	if !ok || def.Op != wir.OpClaim {
+		return path.Path{}, false
+	}
+	if def.Claim == wir.ClaimCast && def.Type != 0 {
+		t := l.wir.Type(def.Type)
+		if t == nil || typ.IsAny(t) || typ.IsUnknown(t) {
+			return path.Path{}, false
+		}
+	}
+	return l.wirAssignmentSourcePath(def.A)
 }
 
 func (l *lowerer) addDynamicIndexObjectLiteralExpectedTypeFromWIR(input *factflow.FactsInput, write factflow.DynamicIndexWrite) {

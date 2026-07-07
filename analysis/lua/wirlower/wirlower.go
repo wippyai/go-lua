@@ -487,6 +487,7 @@ func (b *builder) bindInto(dst wir.Operand, v binding) {
 	case bindExpr:
 		b.lowerExprInto(dst, v.expr)
 		b.attachContextTypeToConstructors(point, start, v.expr, v.contextType)
+		b.markAssignmentContextType(point, start, dst, v.contextType)
 	case bindOperand:
 		b.emitAssign(dst, v.op)
 		b.emitBindingClaim(dst, v)
@@ -609,6 +610,19 @@ func (b *builder) markRootAssignKind(point cfg.Point, start int, dst wir.Operand
 	for i := start; i < len(insts); i++ {
 		if rootAssignmentSourceInstruction(insts[i]) && insts[i].Dst == dst && insts[i].WritesAssignmentPoint() {
 			insts[i].Assign = kind
+		}
+	}
+	b.pointInstrs[point] = insts
+}
+
+func (b *builder) markAssignmentContextType(point cfg.Point, start int, dst wir.Operand, typeref wir.TypeRef) {
+	if typeref == 0 || dst.Kind == wir.OperandNone {
+		return
+	}
+	insts := b.pointInstrs[point]
+	for i := start; i < len(insts); i++ {
+		if rootAssignmentSourceInstruction(insts[i]) && insts[i].Dst == dst && insts[i].WritesAssignmentPoint() && insts[i].Type == 0 {
+			insts[i].Type = typeref
 		}
 	}
 	b.pointInstrs[point] = insts
@@ -1139,12 +1153,12 @@ func (b *builder) maybeLowerSelect(dst wir.Operand, call *ast.FuncCallExpr) bool
 func (b *builder) lowerExprInto(dst wir.Operand, e ast.Expr) {
 	switch e := e.(type) {
 	case *ast.NilExpr, *ast.TrueExpr, *ast.FalseExpr, *ast.NumberExpr, *ast.StringExpr:
-		b.emitAssign(dst, b.constOperand(e))
+		b.emit(wir.Instruction{Op: wir.OpAssign, Dst: dst, A: b.constOperand(e), ExprID: expressionid.Of(e)})
 	case *ast.IdentExpr:
-		b.emitAssign(dst, b.readOperand(e))
+		b.emit(wir.Instruction{Op: wir.OpAssign, Dst: dst, A: b.readOperand(e), ExprID: expressionid.Of(e)})
 	case *ast.AttrGetExpr:
 		if p, ok := pathexpr.Resolve(e, b.bindings); ok {
-			b.emitAssign(dst, b.pathOperand(p))
+			b.emit(wir.Instruction{Op: wir.OpAssign, Dst: dst, A: b.pathOperand(p), ExprID: expressionid.Of(e)})
 			return
 		}
 		b.emitDynamicIndexRead(dst, e)
@@ -1166,9 +1180,9 @@ func (b *builder) lowerExprInto(dst wir.Operand, e ast.Expr) {
 	case *ast.FuncCallExpr:
 		b.emitAssign(dst, b.callValue(e))
 	case *ast.CastExpr:
-		b.emit(wir.Instruction{Op: wir.OpClaim, Dst: dst, A: b.lowerExpr(e.Expr), Claim: wir.ClaimCast, Type: b.internType(e.Type)})
+		b.emit(wir.Instruction{Op: wir.OpClaim, Dst: dst, A: b.lowerExpr(e.Expr), Claim: wir.ClaimCast, Type: b.internType(e.Type), ExprID: expressionid.Of(e)})
 	case *ast.NonNilAssertExpr:
-		b.emit(wir.Instruction{Op: wir.OpClaim, Dst: dst, A: b.lowerExpr(e.Expr), Claim: wir.ClaimAssert})
+		b.emit(wir.Instruction{Op: wir.OpClaim, Dst: dst, A: b.lowerExpr(e.Expr), Claim: wir.ClaimAssert, ExprID: expressionid.Of(e)})
 	case *ast.LogicalOpExpr:
 		b.lowerLogicalInto(dst, e)
 	case *ast.FunctionExpr:

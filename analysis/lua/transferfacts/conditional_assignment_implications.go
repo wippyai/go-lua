@@ -630,15 +630,31 @@ func usefulConditionalAssignmentValue(reg *axis.Registry, value product.Value) b
 }
 
 func (l *lowerer) callSiteFirstReturnType(site factflow.CallSite) (typ.Type, bool) {
+	return l.callSiteReturnType(site, 0)
+}
+
+func (l *lowerer) callSiteReturnType(site factflow.CallSite, index int) (typ.Type, bool) {
+	return l.callSiteReturnTypeAt(0, site, index)
+}
+
+func (l *lowerer) callSiteReturnTypeAt(point cfg.Point, site factflow.CallSite, index int) (typ.Type, bool) {
+	if l != nil && l.wir != nil && point != 0 {
+		if inst, ok := l.wirCallInstruction(point); ok && inst.Call.Method == 0 && inst.Type != 0 {
+			if callable, ok := typecall.Callable(l.wir.Type(inst.Type)); ok && callable != nil &&
+				index >= 0 && index < len(callable.Returns) && callable.Returns[index] != nil {
+				return callable.Returns[index], true
+			}
+		}
+	}
 	calleeType, ok := l.callSiteCalleeType(site)
 	if !ok {
 		return nil, false
 	}
 	callable, ok := typecall.Callable(calleeType)
-	if !ok || callable == nil || len(callable.Returns) == 0 || callable.Returns[0] == nil {
+	if !ok || callable == nil || index < 0 || index >= len(callable.Returns) || callable.Returns[index] == nil {
 		return nil, false
 	}
-	return callable.Returns[0], true
+	return callable.Returns[index], true
 }
 
 func (l *lowerer) callSiteCalleeType(site factflow.CallSite) (typ.Type, bool) {
