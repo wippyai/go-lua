@@ -1892,20 +1892,6 @@ func requireMemberCallDiagnosticWithEvidence(t *testing.T, result Result, want d
 	t.Fatalf("diagnostic evidence = %#v, want path/type member-call evidence (%s)", diag.Explanation.Evidence(), context)
 }
 
-func requireDirectCallResultDiagnosticWithEvidence(t *testing.T, result Result, context string) {
-	t.Helper()
-	if len(result.Diagnostics) != 1 {
-		t.Fatalf("diagnostics = %d, want one direct-call result diagnostic (%s): %#v", len(result.Diagnostics), context, result.Diagnostics)
-	}
-	diag := result.Diagnostics[0]
-	if diag.Code != diagnostics.CodeDirectCallResultAssignment {
-		t.Fatalf("diagnostic code = %s, want %s (%s): %#v", diag.Code, diagnostics.CodeDirectCallResultAssignment, context, diag)
-	}
-	if len(diag.Explanation.Evidence()) < 2 {
-		t.Fatalf("diagnostic evidence = %#v, want direct-call result evidence chain (%s)", diag.Explanation.Evidence(), context)
-	}
-}
-
 func requireEvidenceMessage(t *testing.T, diag diagnostic.Diagnostic, want string) {
 	t.Helper()
 	for _, evidence := range diag.Explanation.Evidence() {

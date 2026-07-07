@@ -348,26 +348,26 @@ func diagnosticLabelMessages(labels []diagnostic.Label) []string {
 	return out
 }
 
-func requireStringContainsAll(t *testing.T, label, got string, wants []string) {
-	t.Helper()
-	if missing := missingStringFragments(label, got, wants); len(missing) > 0 {
-		t.Fatalf("%s = %q, %s", label, got, strings.Join(missing, "; "))
-	}
-}
-
-func requireStringsContainAll(t *testing.T, label string, got []string, wants []string) {
-	t.Helper()
-	if missing := missingStringSliceFragments(label, got, wants); len(missing) > 0 {
-		t.Fatalf("%s = %#v, %s", label, got, strings.Join(missing, "; "))
-	}
-}
-
 func missingStringFragments(label, got string, wants []string) []string {
 	var missing []string
 	for _, want := range wants {
 		if !strings.Contains(got, want) {
 			missing = append(missing, fmt.Sprintf("%s missing fragment %q", label, want))
 		}
+	}
+	return missing
+}
+
+func missingStringFragmentsInOrder(label, got string, wants []string) []string {
+	offset := 0
+	var missing []string
+	for _, want := range wants {
+		index := strings.Index(got[offset:], want)
+		if index < 0 {
+			missing = append(missing, fmt.Sprintf("%s missing ordered fragment %q after byte offset %d", label, want, offset))
+			break
+		}
+		offset += index + len(want)
 	}
 	return missing
 }
@@ -387,34 +387,6 @@ func missingStringSliceFragments(label string, got []string, wants []string) []s
 		}
 	}
 	return missing
-}
-
-func requireStringContainsInOrder(t *testing.T, label, got string, wants []string) {
-	t.Helper()
-	if missing := missingStringFragmentsInOrder(label, got, wants); len(missing) > 0 {
-		t.Fatalf("%s = %q, %s", label, got, strings.Join(missing, "; "))
-	}
-}
-
-func missingStringFragmentsInOrder(label, got string, wants []string) []string {
-	offset := 0
-	var missing []string
-	for _, want := range wants {
-		index := strings.Index(got[offset:], want)
-		if index < 0 {
-			missing = append(missing, fmt.Sprintf("%s missing ordered fragment %q after byte offset %d", label, want, offset))
-			break
-		}
-		offset += index + len(want)
-	}
-	return missing
-}
-
-func requireStringsContainInOrder(t *testing.T, label string, got []string, wants []string) {
-	t.Helper()
-	if missing := missingStringSliceFragmentsInOrder(label, got, wants); len(missing) > 0 {
-		t.Fatalf("%s = %#v, %s", label, got, strings.Join(missing, "; "))
-	}
 }
 
 func missingStringSliceFragmentsInOrder(label string, got []string, wants []string) []string {

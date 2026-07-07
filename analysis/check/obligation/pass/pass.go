@@ -38,13 +38,6 @@ func New(producers ...Producer) Pass {
 	}
 }
 
-// WithRegistry returns p configured with registry. A zero registry is not
-// special; callers should pass judgment.DefaultRegistry when they want defaults.
-func (p Pass) WithRegistry(registry judgment.Registry) Pass {
-	p.registry = registry
-	return p
-}
-
 // Run emits all valid judgments. Invalid records are dropped at the boundary so
 // producer mistakes do not enter rendering, deduplication, or policy as if they
 // were valid facts.

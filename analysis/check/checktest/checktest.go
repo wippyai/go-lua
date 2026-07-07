@@ -12,8 +12,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
 	"github.com/wippyai/go-lua/analysis/check/exportmanifest"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
-	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
-	obligationpass "github.com/wippyai/go-lua/analysis/check/obligation/pass"
 	"github.com/wippyai/go-lua/analysis/check/placementplan"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
@@ -99,12 +97,6 @@ func WithDiagnosticPolicy(policy diagnostic.Policy) Option {
 	}
 }
 
-func WithDiagnosticsConfig(selected diagnostics.Config) Option {
-	return func(c *config) {
-		c.diagnosticsConfig = selected
-	}
-}
-
 func WithDiagnosticRule(code diagnostic.Code, rule diagnostic.Rule) Option {
 	return func(c *config) {
 		if c.diagnosticPolicy.Rules == nil {
@@ -184,23 +176,6 @@ func (r Result) RootResult() *body.Result {
 // use readmodel.Reader over each returned body.
 func (r Result) BodyResults() []*body.Result {
 	return collectBodyResults(r.RootResult())
-}
-
-// BodyResults returns the solved module body and all materialized nested
-// function bodies captured when the module was exported.
-func (m *ModuleResult) BodyResults() []*body.Result {
-	if m == nil || len(m.bodies) == 0 {
-		return nil
-	}
-	return append([]*body.Result(nil), m.bodies...)
-}
-
-func ObligationContextForBody(functionKey, sourceFile string, result *body.Result) obligationpass.Context {
-	return obligationpass.Context{
-		FunctionKey: functionKey,
-		SourceFile:  sourceFile,
-		Reader:      readmodel.New(result),
-	}
 }
 
 func collectBodyResults(root *body.Result) []*body.Result {
