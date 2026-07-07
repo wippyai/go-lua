@@ -90,6 +90,12 @@ func (l *lowerer) addObjectLiteralExpr(input *factflow.FactsInput, result *seman
 	if expr == nil {
 		return
 	}
+	if l != nil && l.wir != nil {
+		if inst, ok := l.tableConstructorInstructionForExpr(expr); ok {
+			l.addObjectLiteralFromWIR(input, inst, expr)
+			return
+		}
+	}
 	if result == nil {
 		if inst, ok := l.tableConstructorInstructionForExpr(expr); ok {
 			l.addObjectLiteralFromWIR(input, inst, expr)
