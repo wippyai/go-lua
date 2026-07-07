@@ -1377,11 +1377,12 @@ func CallArgumentObligationTypeReportable(t typ.Type) bool {
 // argument. Internal readmodels compute raw proof facts; public readmodel owns
 // how those facts become report-facing admissibility and mismatch verdicts.
 type CallArgumentProofPlan struct {
-	Argument            CallArgument
-	Expected            typ.Type
-	ValueAdmissible     bool
-	ValueProvenMismatch bool
-	IsSubtype           func(typ.Type, typ.Type) bool
+	Argument                    CallArgument
+	ValueAdmissible             bool
+	ValueProvenMismatch         bool
+	FunctionTypeAdmissible      bool
+	TrustedActualProvenMismatch bool
+	FunctionTypeProvenMismatch  bool
 }
 
 // CallArgumentProofAdmissible reports whether an argument is proven admissible
@@ -1394,7 +1395,7 @@ func CallArgumentProofAdmissible(plan CallArgumentProofPlan) bool {
 	if plan.Argument.UntrustedTopOrigin && !plan.Argument.RuntimeValidated {
 		return false
 	}
-	return plan.Argument.FunctionType != nil && plan.isSubtype(plan.Argument.FunctionType, plan.Expected)
+	return plan.FunctionTypeAdmissible
 }
 
 // CallArgumentWitnessProvenMismatch reports whether an argument has a concrete
@@ -1405,37 +1406,10 @@ func CallArgumentWitnessProvenMismatch(plan CallArgumentProofPlan) bool {
 	if plan.ValueProvenMismatch {
 		return true
 	}
-	if plan.hasTrustedSolvedActual() {
-		return !plan.isSubtype(plan.Argument.TypeWithPresence, plan.Expected)
+	if plan.TrustedActualProvenMismatch {
+		return true
 	}
-	if plan.Argument.FunctionType == nil || plan.Expected == nil || typ.IsAny(plan.Expected) || typ.IsUnknown(plan.Expected) {
-		return false
-	}
-	return !plan.isSubtype(plan.Argument.FunctionType, plan.Expected)
-}
-
-func (plan CallArgumentProofPlan) hasTrustedSolvedActual() bool {
-	if plan.Argument.UntrustedTopOrigin ||
-		typ.TypeEquals(plan.Argument.TypeWithPresence, nil) ||
-		typ.TypeEquals(plan.Expected, nil) ||
-		plan.IsSubtype == nil {
-		return false
-	}
-	if typ.IsAny(plan.Argument.TypeWithPresence) ||
-		typ.IsUnknown(plan.Argument.TypeWithPresence) ||
-		typ.IsNever(plan.Argument.TypeWithPresence) ||
-		typ.IsAny(plan.Expected) ||
-		typ.IsUnknown(plan.Expected) {
-		return false
-	}
-	return true
-}
-
-func (plan CallArgumentProofPlan) isSubtype(sub, super typ.Type) bool {
-	if plan.IsSubtype == nil || sub == nil || super == nil {
-		return false
-	}
-	return plan.IsSubtype(sub, super)
+	return plan.FunctionTypeProvenMismatch
 }
 
 // CallArgumentCheck is the solved proof result for one argument against one
@@ -1482,15 +1456,17 @@ func (check CallArgumentCheck) MissingProofRefuted() bool {
 // public readmodel owns nested-subject selection, nil mismatch classification,
 // expected-label adjustment, and final proof verdict assembly.
 type CallArgumentCheckPlan struct {
-	Argument            CallArgument
-	Expected            typ.Type
-	ExpectedLabel       string
-	ExpectedSpan        SourceSpan
-	ExpectedOrigin      CallArgumentObligationOrigin
-	ValueAdmissible     bool
-	ValueProvenMismatch bool
-	IsSubtype           func(typ.Type, typ.Type) bool
-	SubjectPlan         *CallArgumentMismatchSubjectPlan
+	Argument                    CallArgument
+	Expected                    typ.Type
+	ExpectedLabel               string
+	ExpectedSpan                SourceSpan
+	ExpectedOrigin              CallArgumentObligationOrigin
+	ValueAdmissible             bool
+	ValueProvenMismatch         bool
+	FunctionTypeAdmissible      bool
+	TrustedActualProvenMismatch bool
+	FunctionTypeProvenMismatch  bool
+	SubjectPlan                 *CallArgumentMismatchSubjectPlan
 }
 
 // PlanCallArgumentCheck returns the complete solved proof result for one
@@ -1516,16 +1492,15 @@ func PlanCallArgumentCheck(plan CallArgumentCheckPlan) CallArgumentCheck {
 		ExpectedSpan:   plan.ExpectedSpan,
 		ExpectedOrigin: plan.ExpectedOrigin,
 		Admissible: CallArgumentProofAdmissible(CallArgumentProofPlan{
-			Argument:        arg,
-			Expected:        want,
-			ValueAdmissible: plan.ValueAdmissible,
-			IsSubtype:       plan.IsSubtype,
+			Argument:               arg,
+			ValueAdmissible:        plan.ValueAdmissible,
+			FunctionTypeAdmissible: plan.FunctionTypeAdmissible,
 		}),
 		ProvenMismatch: CallArgumentWitnessProvenMismatch(CallArgumentProofPlan{
-			Argument:            arg,
-			Expected:            want,
-			ValueProvenMismatch: plan.ValueProvenMismatch,
-			IsSubtype:           plan.IsSubtype,
+			Argument:                    arg,
+			ValueProvenMismatch:         plan.ValueProvenMismatch,
+			TrustedActualProvenMismatch: plan.TrustedActualProvenMismatch,
+			FunctionTypeProvenMismatch:  plan.FunctionTypeProvenMismatch,
 		}),
 	}
 }

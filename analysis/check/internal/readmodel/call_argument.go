@@ -110,16 +110,30 @@ func (r Reader) checkCallArgument(point cfg.Point, arg CallArgument, want typ.Ty
 		subjectPlan = &plan
 	}
 	plan := readapi.CallArgumentCheckPlan{
-		Argument:            arg,
-		Expected:            want,
-		ExpectedLabel:       expectedLabel,
-		ExpectedSpan:        expectedSpan,
-		ValueAdmissible:     r.ValueProofAdmissible(arg.Value, want),
-		ValueProvenMismatch: r.ValueWitnessProvenMismatch(arg.Value, want),
-		IsSubtype:           r.IsSubtype,
-		SubjectPlan:         subjectPlan,
+		Argument:                    arg,
+		Expected:                    want,
+		ExpectedLabel:               expectedLabel,
+		ExpectedSpan:                expectedSpan,
+		ValueAdmissible:             r.ValueProofAdmissible(arg.Value, want),
+		ValueProvenMismatch:         r.ValueWitnessProvenMismatch(arg.Value, want),
+		FunctionTypeAdmissible:      r.callArgumentFunctionTypeAdmissible(arg.FunctionType, want),
+		TrustedActualProvenMismatch: r.callArgumentSolvedTypeProvenMismatch(arg.TypeWithPresence, want, arg.UntrustedTopOrigin),
+		FunctionTypeProvenMismatch:  r.callArgumentFunctionTypeProvenMismatch(arg.FunctionType, want),
+		SubjectPlan:                 subjectPlan,
 	}
 	return readapi.PlanCallArgumentCheck(plan)
+}
+
+func (r Reader) callArgumentFunctionTypeAdmissible(fn *typ.Function, expected typ.Type) bool {
+	return r.result != nil && r.result.CallArgumentFunctionTypeAdmissible(fn, expected)
+}
+
+func (r Reader) callArgumentSolvedTypeProvenMismatch(actual, expected typ.Type, untrustedTopOrigin bool) bool {
+	return r.result != nil && r.result.CallArgumentSolvedTypeProvenMismatch(actual, expected, untrustedTopOrigin)
+}
+
+func (r Reader) callArgumentFunctionTypeProvenMismatch(fn *typ.Function, expected typ.Type) bool {
+	return r.result != nil && r.result.CallArgumentFunctionTypeProvenMismatch(fn, expected)
 }
 
 func (r Reader) callArgumentReports(point cfg.Point, contract callContract, hasContract bool, args []CallArgument, params []callParamObligation) []CallArgumentReport {

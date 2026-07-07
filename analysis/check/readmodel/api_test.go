@@ -31,9 +31,6 @@ func TestPlanCallArgumentCheckRequiresValueProofForSolvedSubtype(t *testing.T) {
 			TypeWithPresence: typeexpr.Optional(typ.String),
 		},
 		Expected: typeexpr.Optional(typ.String),
-		IsSubtype: func(sub, super typ.Type) bool {
-			return typ.TypeEquals(sub, super)
-		},
 	})
 	if check.Admissible {
 		t.Fatalf("call argument check = %#v, want solved subtype alone to stay inadmissible without value proof", check)
@@ -49,10 +46,8 @@ func TestPlanCallArgumentCheckDoesNotTrustUntrustedTopSubtype(t *testing.T) {
 			TypeWithPresence:   typ.String,
 			UntrustedTopOrigin: true,
 		},
-		Expected: typ.String,
-		IsSubtype: func(sub, super typ.Type) bool {
-			return true
-		},
+		Expected:               typ.String,
+		FunctionTypeAdmissible: true,
 	})
 	if check.Admissible {
 		t.Fatalf("call argument check = %#v, want untrusted-top argument to require proof", check)
@@ -974,29 +969,21 @@ func TestCallArgumentObligationTypeReportable(t *testing.T) {
 func TestCallArgumentProofAdmissible(t *testing.T) {
 	fn := typ.Func().Returns(typ.String).Build()
 	arg := CallArgument{FunctionType: fn}
-	isSubtype := func(sub, super typ.Type) bool {
-		return typ.TypeEquals(sub, fn) && typ.TypeEquals(super, fn)
-	}
 
 	if !CallArgumentProofAdmissible(CallArgumentProofPlan{
 		Argument:        CallArgument{},
-		Expected:        typ.String,
 		ValueAdmissible: true,
-		IsSubtype:       isSubtype,
 	}) {
 		t.Fatal("value proof admissibility should make the argument admissible")
 	}
 	if !CallArgumentProofAdmissible(CallArgumentProofPlan{
-		Argument:  arg,
-		Expected:  fn,
-		IsSubtype: isSubtype,
+		Argument:               arg,
+		FunctionTypeAdmissible: true,
 	}) {
 		t.Fatal("contextual function type should make the argument admissible when it is a subtype")
 	}
 	if CallArgumentProofAdmissible(CallArgumentProofPlan{
-		Argument:  arg,
-		Expected:  typ.String,
-		IsSubtype: isSubtype,
+		Argument: arg,
 	}) {
 		t.Fatal("contextual function type should not be admissible against an unrelated expected type")
 	}
@@ -1005,50 +992,36 @@ func TestCallArgumentProofAdmissible(t *testing.T) {
 func TestCallArgumentWitnessProvenMismatch(t *testing.T) {
 	fn := typ.Func().Returns(typ.String).Build()
 	arg := CallArgument{FunctionType: fn}
-	isSubtype := func(sub, super typ.Type) bool {
-		return typ.TypeEquals(sub, fn) && typ.TypeEquals(super, fn)
-	}
 
 	if !CallArgumentWitnessProvenMismatch(CallArgumentProofPlan{
 		Argument:            CallArgument{},
-		Expected:            typ.String,
 		ValueProvenMismatch: true,
-		IsSubtype:           isSubtype,
 	}) {
 		t.Fatal("value witness mismatch should make the argument a proven mismatch")
 	}
 	if !CallArgumentWitnessProvenMismatch(CallArgumentProofPlan{
-		Argument:  arg,
-		Expected:  typ.String,
-		IsSubtype: isSubtype,
+		Argument:                   arg,
+		FunctionTypeProvenMismatch: true,
 	}) {
 		t.Fatal("contextual function type should be a proven mismatch when it rejects the expected type")
 	}
 	if CallArgumentWitnessProvenMismatch(CallArgumentProofPlan{
-		Argument:  arg,
-		Expected:  fn,
-		IsSubtype: isSubtype,
+		Argument: arg,
 	}) {
 		t.Fatal("contextual function type should not be a mismatch when it satisfies the expected type")
 	}
 	if CallArgumentWitnessProvenMismatch(CallArgumentProofPlan{
-		Argument:  arg,
-		Expected:  typ.Any,
-		IsSubtype: isSubtype,
+		Argument: arg,
 	}) {
 		t.Fatal("any expected type should not produce a contextual function mismatch")
 	}
 	if CallArgumentWitnessProvenMismatch(CallArgumentProofPlan{
-		Argument:  arg,
-		Expected:  typ.Unknown,
-		IsSubtype: isSubtype,
+		Argument: arg,
 	}) {
 		t.Fatal("unknown expected type should not produce a contextual function mismatch")
 	}
 	if CallArgumentWitnessProvenMismatch(CallArgumentProofPlan{
-		Argument:  arg,
-		Expected:  nil,
-		IsSubtype: isSubtype,
+		Argument: arg,
 	}) {
 		t.Fatal("nil expected type should not produce a contextual function mismatch")
 	}

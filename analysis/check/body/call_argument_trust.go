@@ -282,6 +282,38 @@ func (r *Result) callArgumentValueHasReadableType(value product.Value) bool {
 	return ok && t != nil && !typ.IsAny(t) && !typ.IsUnknown(t) && !typ.IsNever(t)
 }
 
+// CallArgumentFunctionTypeAdmissible reports whether a contextual function
+// argument can satisfy the expected parameter type. It keeps subtype ownership
+// inside the solved body instead of exposing a callback to readmodel planners.
+func (r *Result) CallArgumentFunctionTypeAdmissible(fn *typ.Function, expected typ.Type) bool {
+	return r != nil && fn != nil && expected != nil && r.IsSubtype(fn, expected)
+}
+
+// CallArgumentSolvedTypeProvenMismatch reports whether a trusted solved
+// argument type contradicts the expected parameter type.
+func (r *Result) CallArgumentSolvedTypeProvenMismatch(actual, expected typ.Type, untrustedTopOrigin bool) bool {
+	if r == nil || untrustedTopOrigin || actual == nil || expected == nil {
+		return false
+	}
+	if typ.IsAny(actual) ||
+		typ.IsUnknown(actual) ||
+		typ.IsNever(actual) ||
+		typ.IsAny(expected) ||
+		typ.IsUnknown(expected) {
+		return false
+	}
+	return !r.IsSubtype(actual, expected)
+}
+
+// CallArgumentFunctionTypeProvenMismatch reports whether a contextual function
+// argument concretely rejects the expected parameter type.
+func (r *Result) CallArgumentFunctionTypeProvenMismatch(fn *typ.Function, expected typ.Type) bool {
+	if r == nil || fn == nil || expected == nil || typ.IsAny(expected) || typ.IsUnknown(expected) {
+		return false
+	}
+	return !r.IsSubtype(fn, expected)
+}
+
 // CallArgumentNilabilityOnlyRefinement reports whether two projected types
 // differ only by nilability. It is body-owned because it relies on the canonical
 // proof-domain non-nil projection and subtype relation.
