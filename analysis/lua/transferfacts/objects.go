@@ -647,6 +647,13 @@ func (l *lowerer) tableConstructorInstructionForExpr(expr ast.Expr) (wir.Instruc
 }
 
 func (l *lowerer) objectLiteral(fact semantics.ObjectLiteralFact) factflow.ObjectLiteral {
+	if l != nil && l.wir != nil {
+		return l.objectLiteralFromWIRFact(fact)
+	}
+	return l.objectLiteralFromSemanticFact(fact)
+}
+
+func (l *lowerer) objectLiteralFromWIRFact(fact semantics.ObjectLiteralFact) factflow.ObjectLiteral {
 	entries := make([]factflow.ObjectEntry, 0, len(fact.Entries))
 	for _, entry := range fact.Entries {
 		span := sourceSpan(entry.ValueSpan)
@@ -670,24 +677,25 @@ func (l *lowerer) objectLiteral(fact semantics.ObjectLiteralFact) factflow.Objec
 			))
 			continue
 		}
-		if l != nil && l.wir != nil {
-			entries = append(entries, factflow.NewObjectEntryWithMetadata(
-				entry.Suffix,
-				factflow.NewUnknownValueSource(factflow.NoValueSourceIndex),
-				span,
-				label,
-			))
-			continue
-		}
+		entries = append(entries, factflow.NewObjectEntryWithMetadata(
+			entry.Suffix,
+			factflow.NewUnknownValueSource(factflow.NoValueSourceIndex),
+			span,
+			label,
+		))
+	}
+	return factflow.NewObjectLiteral(entries)
+}
+
+func (l *lowerer) objectLiteralFromSemanticFact(fact semantics.ObjectLiteralFact) factflow.ObjectLiteral {
+	entries := make([]factflow.ObjectEntry, 0, len(fact.Entries))
+	for _, entry := range fact.Entries {
 		source := l.valueSource(entry.Source)
-		if wirSource, ok := l.tableConstructorEntrySource(entry.Source); ok {
-			source = wirSource
-		}
 		entries = append(entries, factflow.NewObjectEntryWithMetadata(
 			entry.Suffix,
 			source,
-			span,
-			label,
+			sourceSpan(entry.ValueSpan),
+			entry.ValueLabel,
 		))
 	}
 	return factflow.NewObjectLiteral(entries)
@@ -712,20 +720,6 @@ func (l *lowerer) wirObjectEntry(expr ast.Expr, suffix path.Path) (wirObjectEntr
 
 func (l *lowerer) wirObjectEntrySource(entry wirObjectEntry) (factflow.ValueSource, bool) {
 	return l.objectEntryValueSourceFromWIR(entry.point, entry.entry.Value)
-}
-
-func (l *lowerer) tableConstructorEntrySource(source sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
-	if source.Kind != sourceprovenance.SourceExpression || source.Expr == nil {
-		return factflow.ValueSource{}, false
-	}
-	return l.tableConstructorExpressionValueSource(
-		source.Expr,
-		source.ExprIndex,
-		source.TargetIndex,
-		source.Final,
-		source.Expanded,
-		source.OpenTail,
-	)
 }
 
 func sourceSpan(span semantics.SourceSpan) factflow.SourceSpan {
