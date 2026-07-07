@@ -242,8 +242,8 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			if view, ok := result.CallView(point); ok {
 				fact, _ := view.Borrowed()
 				site, hasCallSite := input.CallSites[point]
-				if !hasCallSite {
-					site, hasCallSite = l.callSiteAt(point, fact)
+				if !hasCallSite && l.wir == nil {
+					site, hasCallSite = l.callSiteAt(fact)
 				}
 				if !hasCallSite {
 					if l.wir != nil {

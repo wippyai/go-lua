@@ -6,16 +6,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
-	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
-func (l *lowerer) callSiteAt(point cfg.Point, fact semantics.CallFact) (factflow.CallSite, bool) {
-	args, ok := l.callArgumentSources(point, fact.ArgumentSources)
-	if !ok {
-		return factflow.CallSite{}, false
-	}
-	return l.semanticCallSite(fact, args), true
+func (l *lowerer) callSiteAt(fact semantics.CallFact) (factflow.CallSite, bool) {
+	return l.semanticCallSite(fact, l.valueSources(fact.ArgumentSources)), true
 }
 
 func (l *lowerer) callSiteFromWIR(point cfg.Point) (factflow.CallSite, bool) {
@@ -266,33 +261,6 @@ func (l *lowerer) callReceiverSourceFromWIR(point cfg.Point, shape valueSourceSh
 		return factflow.NewUnknownValueSource(shape.exprIndex), true
 	}
 	return factflow.ValueSource{}, false
-}
-
-func (l *lowerer) callArgumentSources(point cfg.Point, fallback []sourceprovenance.ASTSource) ([]factflow.ValueSource, bool) {
-	if l == nil || l.wir == nil {
-		return l.valueSources(fallback), true
-	}
-	if len(fallback) == 0 {
-		return l.callArgumentSourcesFromWIR(point)
-	}
-	inst, ok := l.wirCallInstruction(point)
-	if !ok {
-		return nil, false
-	}
-	ops := l.wir.Operands(inst.List)
-	if len(ops) != len(fallback) {
-		return nil, false
-	}
-	out := make([]factflow.ValueSource, len(fallback))
-	for i, op := range ops {
-		final := i == len(ops)-1
-		source, ok := l.callArgumentSourceFromWIROperand(point, op, i, i, final, inst.ListSpread && final)
-		if !ok {
-			source = factflow.NewUnknownValueSource(i)
-		}
-		out[i] = source
-	}
-	return out, true
 }
 
 func (l *lowerer) callArgumentSourcesFromWIR(point cfg.Point) ([]factflow.ValueSource, bool) {
