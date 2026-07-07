@@ -299,7 +299,6 @@ func (l *lowerer) addLocalAssignmentSidecarsForWIR(input *factflow.FactsInput, p
 	}
 	l.addLocalConditionAlias(fact.Symbol, lowered.Source())
 	l.addAssignmentAssertionRefinements(input, point, lowered.TargetPath(), lowered.Source(), fact.Source)
-	l.addObjectLiteral(input, result, fact.Source)
 	l.addObjectLiteralExpectedType(input, fact)
 	l.addLocalAliasExposure(input, point, fact)
 	if fact.Source.Kind == sourceprovenance.SourceExpression {
@@ -313,12 +312,10 @@ func (l *lowerer) addLocalAssignmentSidecarsForWIR(input *factflow.FactsInput, p
 func (l *lowerer) addOrdinaryAssignmentSidecarsForWIR(input *factflow.FactsInput, point cfg.Point, result *semantics.Result, fact semantics.OrdinaryAssignmentFact) {
 	if lowered, ok := input.PathAssignments[point]; ok {
 		l.addAssertionRefinementsForLoweredSource(input, lowered.Source(), fact.Source)
-		l.addObjectLiteral(input, result, fact.Source)
 		l.addStoreExposure(input, point, fact)
 	}
 	if lowered, ok := input.RootAssignments[point]; ok && l.rootAssignmentMatchesSemanticOrdinaryTarget(lowered, fact) {
 		l.addAssignmentAssertionRefinements(input, point, lowered.TargetPath(), lowered.Source(), fact.Source)
-		l.addObjectLiteral(input, result, fact.Source)
 		l.addOrdinaryObjectLiteralExpectedType(input, fact)
 		l.addReassignExposure(input, point, fact)
 		if declared, ok := l.symbolTypes[fact.Symbol]; ok {
@@ -327,7 +324,6 @@ func (l *lowerer) addOrdinaryAssignmentSidecarsForWIR(input *factflow.FactsInput
 	}
 	if lowered, ok := input.DynamicIndexWrites[point]; ok {
 		l.addAssertionRefinementsForLoweredSource(input, lowered.Source(), fact.Source)
-		l.addObjectLiteral(input, result, fact.Source)
 		l.addDynamicIndexObjectLiteralExpectedTypes(input, fact)
 	}
 }
