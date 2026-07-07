@@ -656,6 +656,51 @@ local t = { leaf = 1 }
 	}
 }
 
+func TestLowerWIRObjectLiteralUnsupportedEntryDoesNotFallbackToSemanticSource(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local t = { leaf = value }
+`, "value")
+	localStmt := stmts[0].(*ast.LocalAssignStmt)
+	table := localStmt.Exprs[0].(*ast.TableExpr)
+	point := requireStmtPoints(t, built, localStmt, 1)[0]
+	target := path.NewPath(mustLocalAt(t, bindings, localStmt, 0), "t")
+	body := wir.NewBody("unsupported-object-entry")
+	typeRef := body.InternType(typ.String)
+	start := body.Emit(wir.Instruction{
+		Op:     wir.OpMakeTable,
+		Point:  point,
+		Dst:    wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(target))},
+		Assign: wir.AssignLocalDeclaration,
+		TableEntries: body.AppendTableEntries([]wir.TableEntry{
+			{
+				Suffix:     fieldSuffix("leaf"),
+				Value:      wir.Operand{Kind: wir.OperandType, Ref: uint32(typeRef)},
+				ValueLabel: "from_wir.unsupported",
+			},
+		}),
+		ExprID: expressionid.Of(table),
+	})
+	body.SetPointRange(point, start, start+1)
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	source := mustLocalSource(t, facts, point)
+	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing WIR object literal for source ref %d", source.ExprRef)
+	}
+	entries := literal.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("entries = %#v, want WIR entry", entries)
+	}
+	entrySource := entries[0].Source()
+	if entrySource.Kind != factflow.ValueSourceUnknown || entrySource.HasExpr {
+		t.Fatalf("entry source = %#v, want unknown without semantic expression fallback", entrySource)
+	}
+	if got := entries[0].ValueLabel(); got != "from_wir.unsupported" {
+		t.Fatalf("entry label = %q, want WIR label", got)
+	}
+}
+
 func TestLowerDeclaredReturnAccumulatorCarriesExpectedContract(t *testing.T) {
 	reg := standard.Registry()
 	fn, bindings, built, result := parseSemanticFunction(t, `

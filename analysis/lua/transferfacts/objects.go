@@ -32,7 +32,10 @@ func (l *lowerer) objectLiteralEntriesFromWIR(inst wir.Instruction) []factflow.O
 	entries := make([]factflow.ObjectEntry, 0, len(wirEntries))
 	resultSources := l.resultValueSourcesByTempFromWIR()
 	for _, entry := range wirEntries {
-		source, _ := l.objectEntryValueSourceFromWIR(inst.Point, entry.Value, resultSources)
+		source, ok := l.objectEntryValueSourceFromWIR(inst.Point, entry.Value, resultSources)
+		if !ok {
+			source = factflow.NewUnknownValueSource(factflow.NoValueSourceIndex)
+		}
 		entries = append(entries, factflow.NewObjectEntryWithMetadata(
 			entry.Suffix,
 			source,
@@ -650,6 +653,7 @@ func (l *lowerer) objectLiteral(fact semantics.ObjectLiteralFact) factflow.Objec
 		span := sourceSpan(entry.ValueSpan)
 		label := entry.ValueLabel
 		if wirEntry, ok := l.wirObjectEntry(fact.Expr, entry.Suffix); ok {
+			source = factflow.NewUnknownValueSource(entry.Source.TargetIndex)
 			if wirSource, ok := l.wirObjectEntrySource(wirEntry, entry.Source); ok {
 				source = wirSource
 			}
@@ -688,25 +692,7 @@ func (l *lowerer) wirObjectEntry(expr ast.Expr, suffix path.Path) (wirObjectEntr
 }
 
 func (l *lowerer) wirObjectEntrySource(entry wirObjectEntry, fallback sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
-	switch entry.entry.Value.Kind {
-	case wir.OperandConst:
-	case wir.OperandTemp:
-		def, ok := l.wirTempDefs()[entry.entry.Value.Ref]
-		if !ok || def.Op != wir.OpMakeTable {
-			return factflow.ValueSource{}, false
-		}
-	default:
-		return factflow.ValueSource{}, false
-	}
-	return l.valueSourceFromWIROperand(
-		entry.entry.Value,
-		fallback.ExprIndex,
-		fallback.TargetIndex,
-		fallback.Final,
-		fallback.Expanded,
-		fallback.OpenTail,
-		l.resultValueSourcesByTempFromWIR(),
-	)
+	return l.objectEntryValueSourceFromWIR(entry.point, entry.entry.Value, l.resultValueSourcesByTempFromWIR())
 }
 
 func (l *lowerer) tableConstructorEntrySource(source sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
