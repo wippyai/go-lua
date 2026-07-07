@@ -14,7 +14,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -30,19 +29,6 @@ func (l *lowerer) valueSources(sources []sourceprovenance.ASTSource) []factflow.
 	out := make([]factflow.ValueSource, len(sources))
 	for i := range sources {
 		out[i] = l.valueSource(sources[i])
-	}
-	return out
-}
-
-func (l *lowerer) returnValueSources(sources []sourceprovenance.ASTSource, result *semantics.Result) []factflow.ValueSource {
-	if len(sources) == 0 {
-		return nil
-	}
-	out := make([]factflow.ValueSource, 0, len(sources))
-	for _, source := range sources {
-		for _, expanded := range l.expandTypeIsOpenTailReturnSource(source, result) {
-			out = append(out, l.valueSource(expanded))
-		}
 	}
 	return out
 }
@@ -1928,28 +1914,6 @@ func resultValueSourceFromWIR(
 		targetIndex = result.targetIndex
 	}
 	return mustValueSource(factflow.NewCallValueSource(0, exprIndex, targetIndex, result.resultIndex, result.point, shape)), true
-}
-
-func (l *lowerer) expandTypeIsOpenTailReturnSource(source sourceprovenance.ASTSource, result *semantics.Result) []sourceprovenance.ASTSource {
-	if source.Kind != sourceprovenance.SourceCall || !source.OpenTail || !source.Expanded ||
-		!source.HasCallPoint || result == nil {
-		return []sourceprovenance.ASTSource{source}
-	}
-	view, ok := result.CallView(source.CallPoint)
-	if !ok {
-		return []sourceprovenance.ASTSource{source}
-	}
-	fact, _ := view.Borrowed()
-	if _, _, ok := l.typeIsCall(fact); !ok {
-		return []sourceprovenance.ASTSource{source}
-	}
-	value := source
-	value.OpenTail = false
-	errorSource := source
-	errorSource.TargetIndex = source.TargetIndex + 1
-	errorSource.ResultIndex = source.ResultIndex + 1
-	errorSource.OpenTail = false
-	return []sourceprovenance.ASTSource{value, errorSource}
 }
 
 func (l *lowerer) valueSource(source sourceprovenance.ASTSource) factflow.ValueSource {

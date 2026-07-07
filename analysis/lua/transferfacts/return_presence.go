@@ -7,8 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 func (l *lowerer) addReturnPresenceRelations(input *factflow.FactsInput, graph cfg.Graph) {
@@ -56,22 +54,6 @@ func (l *lowerer) returnPresenceArity(input *factflow.FactsInput, points []cfg.P
 		return arity
 	}
 	return arity
-}
-
-func declaredReturnTypes(result *semantics.Result) []ast.TypeExpr {
-	if result == nil {
-		return nil
-	}
-	fn := result.Function()
-	if fn == nil || len(fn.ReturnTypes) == 0 {
-		return nil
-	}
-	if len(fn.ReturnTypes) == 1 {
-		if tuple, ok := fn.ReturnTypes[0].(*ast.TupleTypeExpr); ok {
-			return append([]ast.TypeExpr(nil), tuple.Elements...)
-		}
-	}
-	return append([]ast.TypeExpr(nil), fn.ReturnTypes...)
 }
 
 func (l *lowerer) inferReturnSourcePresenceRelations(

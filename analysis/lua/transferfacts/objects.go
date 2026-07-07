@@ -498,20 +498,6 @@ func (l *lowerer) addObjectLiteralExpectedTypeFromValueSource(input *factflow.Fa
 	l.addNestedObjectLiteralExpectedTypes(input, updated, expected)
 }
 
-func (l *lowerer) resolvedReturnObjectLiteralExpectedTypes(result *semantics.Result) []typ.Type {
-	declared := declaredReturnTypes(result)
-	if len(declared) == 0 {
-		return nil
-	}
-	out := make([]typ.Type, len(declared))
-	for i, decl := range declared {
-		if t, ok := l.resolveType(decl); ok {
-			out[i] = t
-		}
-	}
-	return out
-}
-
 // addObjectLiteralFieldExposures records covariant exposures for object-literal
 // entries that store an aliased narrow object into a declared container slot
 // (holder = {ref = narrow}, sink = {narrow}) whose declared slot type strictly
