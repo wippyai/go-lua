@@ -428,20 +428,13 @@ func (r *Result) BranchCondition(point cfg.Point) (semantics.BranchConditionFact
 }
 
 // BranchConditionCheck returns the canonical direct branch check for point.
-// WIR owns the normalized predicate when present; semantic facts remain the
-// fallback while syntax-only branch topology is still migrating.
+// WIR owns normalized branch predicates; callers that need expression-level
+// implication checks should query expression facts instead of semantic sidecars.
 func (r *Result) BranchConditionCheck(point cfg.Point) (branchcond.Check, bool) {
 	if r == nil {
 		return branchcond.Check{}, false
 	}
-	if check, ok := r.branchConditionCheckFromWIR(point); ok {
-		return check, true
-	}
-	fact, ok := r.BranchCondition(point)
-	if !ok || fact.Check.Kind == branchcond.CheckNone {
-		return branchcond.Check{}, false
-	}
-	return fact.Check, true
+	return r.branchConditionCheckFromWIR(point)
 }
 
 func (r *Result) branchConditionCheckFromWIR(point cfg.Point) (branchcond.Check, bool) {
