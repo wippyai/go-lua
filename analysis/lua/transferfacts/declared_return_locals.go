@@ -4,8 +4,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
-	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
@@ -252,14 +250,6 @@ func declaredReturnLocalContractType(t typ.Type) bool {
 		return false
 	}
 	return luatypeprojection.ReachesTableContract(t)
-}
-
-func returnLocalInitializerCandidate(fact semantics.LocalAssignmentFact) bool {
-	return fact.HasSymbol &&
-		fact.Symbol != 0 &&
-		fact.Type == nil &&
-		fact.Source.Kind == sourceprovenance.SourceExpression &&
-		tableConstructorExpr(fact.Expr)
 }
 
 func mergeSymbolTypes(base, extra map[symbol.ID]typ.Type) map[symbol.ID]typ.Type {

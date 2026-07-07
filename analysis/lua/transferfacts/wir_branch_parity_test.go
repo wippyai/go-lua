@@ -543,7 +543,7 @@ if not Payload:is(value) then local y = value end
 }
 
 func TestWIRTypeIsResultCorrelationUsesLoweredCallSiteWithoutSemanticResult(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 type Payload = { name: string }
 local value: any = {}
 local validated, err = Payload:is(value)
@@ -552,6 +552,12 @@ if err then
 end
 `)
 	body := wirlower.Lower("chunk", stmts, bindings, built)
+	lowered := lowerer{
+		registry:     standard.Registry(),
+		bindings:     bindings,
+		wir:          body,
+		typeResolver: typeresolve.New(bindings),
+	}
 	seed := Lower(built.Graph, Config{
 		Registry:     standard.Registry(),
 		Bindings:     bindings,
@@ -559,21 +565,7 @@ end
 		WIR:          body,
 	})
 
-	var callPoint cfg.Point
-	for _, point := range built.Graph.RPO() {
-		view, ok := result.CallView(point)
-		if !ok {
-			continue
-		}
-		fact, _ := view.Borrowed()
-		if _, _, ok := (&lowerer{bindings: bindings, typeResolver: typeresolve.New(bindings)}).typeIsCall(fact); ok {
-			callPoint = point
-			break
-		}
-	}
-	if callPoint == 0 {
-		t.Fatal("missing type-is call point")
-	}
+	callPoint := requireWIRTypeIsCallPoint(t, built.Graph, &lowered)
 	site, ok := seed.CallSite(callPoint)
 	if !ok {
 		t.Fatalf("missing lowered type-is callsite at point %d", callPoint)
@@ -598,12 +590,6 @@ end
 			input.BranchRefinements[point] = factflow.NewBranchRefinementSet(refinements...)
 		}
 	}
-	lowered := lowerer{
-		registry:     standard.Registry(),
-		bindings:     bindings,
-		wir:          body,
-		typeResolver: typeresolve.New(bindings),
-	}
 	if typ, arg, ok := lowered.typeIsCallSiteFromWIR(callPoint); !ok {
 		t.Fatalf("typeIsCallSiteFromWIR(%d) failed", callPoint)
 	} else if arg.IsEmpty() || typ == nil {
@@ -626,8 +612,14 @@ end
 
 func assertWIRTypeIsConditionBranchRefinementWithoutSemanticResult(t *testing.T, src string, wantEdge bool) {
 	t.Helper()
-	stmts, bindings, built, result := parseSemanticChunk(t, src)
+	stmts, bindings, built, _ := parseSemanticChunk(t, src)
 	body := wirlower.Lower("chunk", stmts, bindings, built)
+	lowered := lowerer{
+		registry:     standard.Registry(),
+		bindings:     bindings,
+		wir:          body,
+		typeResolver: typeresolve.New(bindings),
+	}
 	seed := Lower(built.Graph, Config{
 		Registry:     standard.Registry(),
 		Bindings:     bindings,
@@ -635,21 +627,7 @@ func assertWIRTypeIsConditionBranchRefinementWithoutSemanticResult(t *testing.T,
 		WIR:          body,
 	})
 
-	var callPoint cfg.Point
-	for _, point := range built.Graph.RPO() {
-		view, ok := result.CallView(point)
-		if !ok {
-			continue
-		}
-		fact, _ := view.Borrowed()
-		if _, _, ok := (&lowerer{bindings: bindings, typeResolver: typeresolve.New(bindings)}).typeIsCall(fact); ok {
-			callPoint = point
-			break
-		}
-	}
-	if callPoint == 0 {
-		t.Fatal("missing type-is call point")
-	}
+	callPoint := requireWIRTypeIsCallPoint(t, built.Graph, &lowered)
 	site, ok := seed.CallSite(callPoint)
 	if !ok {
 		t.Fatalf("missing lowered callsite at type-is call point %d", callPoint)
@@ -663,12 +641,6 @@ func assertWIRTypeIsConditionBranchRefinementWithoutSemanticResult(t *testing.T,
 	input := &factflow.FactsInput{
 		CallSites:         map[cfg.Point]factflow.CallSite{callPoint: site},
 		BranchRefinements: make(map[cfg.Point]factflow.BranchRefinementSet),
-	}
-	lowered := lowerer{
-		registry:     standard.Registry(),
-		bindings:     bindings,
-		wir:          body,
-		typeResolver: typeresolve.New(bindings),
 	}
 	if typ, arg, ok := lowered.typeIsCallSiteFromWIR(callPoint); !ok {
 		t.Fatalf("typeIsCallSiteFromWIR(%d) failed", callPoint)
@@ -695,6 +667,17 @@ func requireWIRBranchPoint(t *testing.T, graph cfg.Graph, body *wir.Body) cfg.Po
 		}
 	}
 	t.Fatal("missing WIR branch point")
+	return 0
+}
+
+func requireWIRTypeIsCallPoint(t *testing.T, graph cfg.Graph, lowered *lowerer) cfg.Point {
+	t.Helper()
+	for _, point := range graph.RPO() {
+		if _, _, ok := lowered.typeIsCallSiteFromWIR(point); ok {
+			return point
+		}
+	}
+	t.Fatal("missing WIR type-is call point")
 	return 0
 }
 

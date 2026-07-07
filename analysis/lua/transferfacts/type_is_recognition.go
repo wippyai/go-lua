@@ -12,14 +12,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
-
-func (l *lowerer) typeIsCall(fact semantics.CallFact) (typ.Type, path.Path, bool) {
-	return l.typeIsCallExpr(fact.Call)
-}
 
 func typeRefPartsFromWIRPath(p path.Path) ([]string, bool) {
 	if p.Root == "" {
