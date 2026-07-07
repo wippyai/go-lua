@@ -26,7 +26,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
-	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -62,28 +61,6 @@ end
 		t.Fatalf("missing ordinary assignment at point %d", reassignPoint)
 	}
 	assertWIRConcreteCastAssertion(t, facts, reassignFact.Source(), typ.String, factflow.ValueSourcePath)
-}
-
-func TestWIRAssertionRefinementsDoNotFallbackToASTClaimWhenWIRClaimMissing(t *testing.T) {
-	cast := &ast.CastExpr{
-		Expr:   ident("x"),
-		Type:   primitiveType("number"),
-		Syntax: ast.CastSyntaxAs,
-	}
-	source := sourceprovenance.SourceForExpr(cast, 0, 0, 0, true, false, nil)
-	l := lowerer{
-		registry: standard.Registry(),
-		wir:      wir.NewBody("missing-claim"),
-		exprs:    make(map[any]factflow.ExprRef),
-	}
-	lowered := l.valueSource(source)
-	input := factflow.FactsInput{ExpressionRefinements: make(map[factflow.ExprRef]factflow.ExpressionRefinement)}
-
-	l.addAssignmentAssertionRefinements(&input, cfg.Point(1), path.NewPath(1, "x"), lowered, source)
-
-	if got := input.ExpressionRefinements; len(got) != 0 {
-		t.Fatalf("WIR mode assertion refinements fell back to AST claim: %#v", got)
-	}
 }
 
 func TestLowerReturnClaimsUseWIRClaimSources(t *testing.T) {
@@ -673,53 +650,6 @@ local payload = raw :: Payload
 	}
 }
 
-func TestLowerClaimConditionsDoNotCreateBranchRefinements(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
-local x = 0
-if x as number then end
-if x :: number then end
-`)
-
-	facts := lowerChunkFactsWithWIR(t, "claim-conditions", stmts, result, built, bindings, standard.Registry())
-	cases := []struct {
-		name   string
-		index  int
-		syntax ast.CastSyntax
-	}{
-		{name: "as condition", index: 1, syntax: ast.CastSyntaxAs},
-		{name: "colon condition", index: 2, syntax: ast.CastSyntaxColonColon},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			stmt := mustIfStmt(t, stmts, tc.index)
-			point := requireStmtPoints(t, built, stmt, 1)[0]
-			if len(facts.BranchRefinements(point)) != 0 {
-				t.Fatalf("%s emitted branch refinement at point %d", tc.name, point)
-			}
-
-			branch, ok := result.BranchCondition(point)
-			if !ok {
-				t.Fatalf("missing branch condition at point %d", point)
-			}
-			cast, ok := branch.Source.Expr.(*ast.CastExpr)
-			if !ok {
-				t.Fatalf("branch source expr = %T, want *ast.CastExpr", branch.Source.Expr)
-			}
-			if cast.Syntax != tc.syntax {
-				t.Fatalf("cast syntax = %v, want %v", cast.Syntax, tc.syntax)
-			}
-
-			branchLowerer := lowerer{registry: standard.Registry(), exprs: make(map[any]factflow.ExprRef)}
-			branchInput := factflow.FactsInput{ExpressionRefinements: make(map[factflow.ExprRef]factflow.ExpressionRefinement)}
-			branchLowerer.addAssertionRefinementsForSource(&branchInput, branch.Source)
-			branchFacts := factflow.NewFacts(branchInput)
-			branchSource := branchLowerer.valueSource(branch.Source)
-			assertLoweredAssertion(t, branchFacts, branchSource, concreteCastAssertionForType(typ.Number), factflow.ValueSourceExpression)
-		})
-	}
-}
-
 func TestLowerWIRClaimConditionPublishesRefinementWithoutSemanticSidecar(t *testing.T) {
 	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local x: any = 0
@@ -1192,13 +1122,8 @@ func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 	if built == nil {
 		t.Fatal("BuildChunk returned nil")
 	}
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
 	body := wirlower.Lower("wrapped-claim-return", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	localPoints := requireStmtPoints(t, built, local, 2)
 	site, ok := facts.CallSite(localPoints[0])
 	if !ok {
@@ -1246,19 +1171,21 @@ func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 	}
 
 	ifPoints := requireStmtPoints(t, built, ifStmt, 2)
-	branch, ok := result.BranchCondition(ifPoints[1])
+	conditionSource, ok := facts.BranchConditionSource(ifPoints[1])
 	if !ok {
-		t.Fatal("missing wrapped condition branch fact")
+		t.Fatal("missing wrapped condition source")
 	}
-	branchLowerer := lowerer{registry: standard.Registry(), exprs: make(map[any]factflow.ExprRef)}
-	branchInput := factflow.FactsInput{ExpressionRefinements: make(map[factflow.ExprRef]factflow.ExpressionRefinement)}
-	branchLowerer.addAssertionRefinementsForSource(&branchInput, branch.Source)
-	branchFacts := factflow.NewFacts(branchInput)
-	branchSource := branchLowerer.valueSource(branch.Source)
-	if branchSource.Kind != factflow.ValueSourceCall || branchSource.CallPoint != ifPoints[0] || !branchSource.HasCallPoint {
-		t.Fatalf("wrapped condition source = %#v", branchSource)
+	if conditionSource.Kind != factflow.ValueSourceExpression || !conditionSource.HasExpr {
+		t.Fatalf("wrapped condition source = %#v, want expression source", conditionSource)
 	}
-	assertLoweredAssertion(t, branchFacts, branchSource, concreteCastAssertionForType(typ.Number), factflow.ValueSourceCall)
+	conditionClaim, ok := facts.ExpressionRefinement(conditionSource.ExprRef)
+	if !ok {
+		t.Fatalf("missing wrapped condition assertion for ref %d", conditionSource.ExprRef)
+	}
+	conditionInner := conditionClaim.Source()
+	if conditionInner.Kind != factflow.ValueSourceCall || conditionInner.CallPoint != ifPoints[0] || !conditionInner.HasCallPoint {
+		t.Fatalf("condition assertion inner source = %#v, want call source at point %d", conditionInner, ifPoints[0])
+	}
 }
 
 func TestLowerExpandedClaimWrappedCallKeepsPerResultSlotRefinements(t *testing.T) {

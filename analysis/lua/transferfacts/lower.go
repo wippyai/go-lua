@@ -150,24 +150,6 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 				appendCallResultValues(input.CallResultValues, point, lowered)
 			}
 		}
-		if result != nil {
-			if view, ok := result.CallView(point); ok {
-				fact, _ := view.Borrowed()
-				site, hasCallSite := input.CallSites[point]
-				if hasCallSite {
-					input.CallSites[point] = site
-				}
-				var argumentSources []factflow.ValueSource
-				if hasCallSite {
-					argumentSources = site.ArgumentSources()
-				}
-				for index, source := range fact.ArgumentSources {
-					if l.wir == nil {
-						l.addCallArgumentAssertionRefinements(&input, point, index, valueSourceAt(argumentSources, index), source)
-					}
-				}
-			}
-		}
 		if l.wir != nil {
 			l.addBranchFactsFromWIR(&input, point)
 		}
