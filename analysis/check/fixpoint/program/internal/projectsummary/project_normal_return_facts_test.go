@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
@@ -497,6 +498,118 @@ func TestFromResultProjectsAssignmentBasedParameterInvalidationWithoutExitState(
 	assertPathInvalidation(t, got.PathInvalidations, pathdom.NewPlaceholder(0))
 	assertStructuralPreservingPathInvalidation(t, got.PathInvalidations, pathdom.NewPlaceholder(0))
 	assertNonClearingPathInvalidation(t, got.PathInvalidations, pathdom.NewPlaceholder(0))
+}
+
+func TestFromResultProjectsReturnArithmeticObligationFromValueSource(t *testing.T) {
+	reg := standard.Registry()
+	param := symbol.ID(92501)
+	graph := cfg.New()
+	ret := graph.AddNode(cfg.NodeReturn)
+	graph.AddEdge(graph.Entry(), ret, false)
+	graph.AddEdge(ret, graph.Exit(), false)
+	shape, ok := factflow.NewValueSourceShape(true, false, false, false)
+	if !ok {
+		t.Fatal("NewValueSourceShape returned false")
+	}
+	returnSource, ok := factflow.NewExpressionValueSource(factflow.ExprRef(1), 0, factflow.NoValueSourceIndex, 0, shape)
+	if !ok {
+		t.Fatal("NewExpressionValueSource(return) returned false")
+	}
+	leftSource, ok := factflow.NewExpressionValueSource(factflow.ExprRef(2), 0, factflow.NoValueSourceIndex, 0, shape)
+	if !ok {
+		t.Fatal("NewExpressionValueSource(left) returned false")
+	}
+	rightSource, ok := factflow.NewIntegerLiteralValueSource(2, 1, factflow.NoValueSourceIndex, 0, shape)
+	if !ok {
+		t.Fatal("NewIntegerLiteralValueSource returned false")
+	}
+	op, ok := factflow.NewBinaryExpressionOperation("*", leftSource, rightSource)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation returned false")
+	}
+	paramValue := typevalue.NewCache().FromTypeWithWitness(reg, typ.String)
+	paramState := state.Domain(reg).Bottom().WriteValue(reg, key.SymbolValue(param), paramValue)
+	stub := normalReturnFactProjectResultStub{
+		reg:           reg,
+		graph:         graph,
+		exit:          paramState,
+		slots:         []key.Value{key.SymbolValue(param)},
+		returnPoints:  []cfg.Point{ret},
+		entryState:    paramState,
+		hasEntryState: true,
+		statesAt: map[cfg.Point]state.State{
+			ret: paramState,
+		},
+		returnSources: map[cfg.Point][]factflow.ValueSource{
+			ret: {returnSource},
+		},
+		exprPaths: map[factflow.ExprRef]pathdom.Path{
+			factflow.ExprRef(2): {Symbol: param},
+		},
+		exprOps: map[factflow.ExprRef]factflow.ExpressionOperation{
+			factflow.ExprRef(1): op,
+		},
+	}
+
+	got := FromResult(stub)
+
+	if len(got.ParamObligations) != 1 {
+		t.Fatalf("param obligations = %#v, want one number obligation", got.ParamObligations)
+	}
+	if kind := product.Get(reg, got.ParamObligations[0], runtimekind.Key); !runtimekind.Equal(kind, runtimekind.Singleton(runtimekind.Number)) {
+		t.Fatalf("param obligation runtime kind = %s, want number", kind)
+	}
+}
+
+func TestFromResultReturnArithmeticSourceCycleTerminates(t *testing.T) {
+	reg := standard.Registry()
+	param := symbol.ID(92502)
+	graph := cfg.New()
+	ret := graph.AddNode(cfg.NodeReturn)
+	graph.AddEdge(graph.Entry(), ret, false)
+	graph.AddEdge(ret, graph.Exit(), false)
+	shape, ok := factflow.NewValueSourceShape(true, false, false, false)
+	if !ok {
+		t.Fatal("NewValueSourceShape returned false")
+	}
+	selfSource, ok := factflow.NewExpressionValueSource(factflow.ExprRef(1), 0, factflow.NoValueSourceIndex, 0, shape)
+	if !ok {
+		t.Fatal("NewExpressionValueSource(self) returned false")
+	}
+	literalSource, ok := factflow.NewIntegerLiteralValueSource(1, 1, factflow.NoValueSourceIndex, 0, shape)
+	if !ok {
+		t.Fatal("NewIntegerLiteralValueSource returned false")
+	}
+	op, ok := factflow.NewBinaryExpressionOperation("+", selfSource, literalSource)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation returned false")
+	}
+	paramValue := typevalue.NewCache().FromTypeWithWitness(reg, typ.String)
+	paramState := state.Domain(reg).Bottom().WriteValue(reg, key.SymbolValue(param), paramValue)
+	stub := normalReturnFactProjectResultStub{
+		reg:           reg,
+		graph:         graph,
+		exit:          paramState,
+		slots:         []key.Value{key.SymbolValue(param)},
+		returnPoints:  []cfg.Point{ret},
+		entryState:    paramState,
+		hasEntryState: true,
+		statesAt: map[cfg.Point]state.State{
+			ret: paramState,
+		},
+		returnSources: map[cfg.Point][]factflow.ValueSource{
+			ret: {selfSource},
+		},
+		exprOps: map[factflow.ExprRef]factflow.ExpressionOperation{
+			factflow.ExprRef(1): op,
+		},
+	}
+
+	got := FromResult(stub)
+
+	if len(got.ParamObligations) != 0 {
+		t.Fatalf("param obligations = %#v, want none for cyclic source without parameter evidence", got.ParamObligations)
+	}
 }
 
 func TestFromResultProjectsDynamicContainerAssignmentAsStructuralPreservingInvalidation(t *testing.T) {
@@ -1084,6 +1197,10 @@ type normalReturnFactProjectResultStub struct {
 	returnPoints  []cfg.Point
 	returnSources map[cfg.Point][]factflow.ValueSource
 	exprPaths     map[factflow.ExprRef]pathdom.Path
+	exprOps       map[factflow.ExprRef]factflow.ExpressionOperation
+	entryState    state.State
+	hasEntryState bool
+	statesAt      map[cfg.Point]state.State
 	edgeReach     map[[2]cfg.Point]bool
 }
 
@@ -1206,6 +1323,21 @@ func (r normalReturnFactProjectResultStub) Graph() cfg.Graph { return r.graph }
 
 func (r normalReturnFactProjectResultStub) ExitState() (state.State, bool) { return r.exit, true }
 
+func (r normalReturnFactProjectResultStub) EntryState() (state.State, bool) {
+	if !r.hasEntryState {
+		return state.State{}, false
+	}
+	return r.entryState, true
+}
+
+func (r normalReturnFactProjectResultStub) StateAt(point cfg.Point) (state.State, bool) {
+	if len(r.statesAt) == 0 {
+		return state.State{}, false
+	}
+	stateAt, ok := r.statesAt[point]
+	return stateAt, ok
+}
+
 func (r normalReturnFactProjectResultStub) EdgeCanCompleteNormally(from, to cfg.Point) bool {
 	if r.edgeReach == nil {
 		return true
@@ -1239,6 +1371,11 @@ func (r normalReturnFactProjectResultStub) ReturnValueSources(point cfg.Point) (
 func (r normalReturnFactProjectResultStub) ExpressionPathRef(ref factflow.ExprRef) (pathdom.Path, bool) {
 	p, ok := r.exprPaths[ref]
 	return p, ok
+}
+
+func (r normalReturnFactProjectResultStub) ExpressionOperationRef(ref factflow.ExprRef) (factflow.ExpressionOperation, bool) {
+	op, ok := r.exprOps[ref]
+	return op, ok
 }
 
 func (r normalReturnFactProjectResultStub) ParameterValueSlots() []key.Value {

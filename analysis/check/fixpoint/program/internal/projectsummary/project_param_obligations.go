@@ -57,14 +57,6 @@ type callOutcomeAtReader interface {
 	CallOutcomeAt(cfg.Point) (callpayload.CallOutcome, bool)
 }
 
-type returnFactReader interface {
-	ReturnFact(cfg.Point) (semantics.ReturnFact, bool)
-}
-
-type returnFactViewReader interface {
-	ReturnFactView(cfg.Point) (semantics.ReturnFactView, bool)
-}
-
 type localAssignmentReader interface {
 	LocalAssignment(cfg.Point) (semantics.LocalAssignmentFact, bool)
 }
@@ -91,6 +83,14 @@ type callSignatureViewReader interface {
 
 type expressionPathReader interface {
 	ExpressionPath(ast.Expr) (pathdom.Path, bool)
+}
+
+type expressionOperationRefReader interface {
+	ExpressionOperationRef(factflow.ExprRef) (factflow.ExpressionOperation, bool)
+}
+
+type sourceValueAtBoundaryReader interface {
+	SourceValueAtBoundary(cfg.Point, factflow.ValueSource) (product.Value, bool)
 }
 
 type symbolTypeAnnotationReader interface {
@@ -155,9 +155,11 @@ func projectParamObligations(reg *axis.Registry, result ResultReader, cache *par
 				ctx.addArithmeticObligations(out, arg)
 			}
 		}
-		if fact, ok := returnFactAt(result, point); ok {
-			for _, expr := range fact.Exprs {
-				ctx.addArithmeticObligations(out, expr)
+		if sourceReader, ok := result.(returnValueSourceReader); ok {
+			if sources, sourcesOK := sourceReader.ReturnValueSources(point); sourcesOK {
+				for _, source := range sources {
+					ctx.addArithmeticObligationsFromSource(out, source)
+				}
 			}
 		}
 		if fact, ok := localAssignmentFactAt(result, point); ok {
@@ -326,20 +328,6 @@ func callFactAt(result ResultReader, point cfg.Point) (semantics.CallFact, bool)
 		return reader.Call(point)
 	}
 	return semantics.CallFact{}, false
-}
-
-func returnFactAt(result ResultReader, point cfg.Point) (semantics.ReturnFact, bool) {
-	if reader, ok := result.(returnFactViewReader); ok {
-		view, ok := reader.ReturnFactView(point)
-		if !ok {
-			return semantics.ReturnFact{}, false
-		}
-		return view.Borrowed()
-	}
-	if reader, ok := result.(returnFactReader); ok {
-		return reader.ReturnFact(point)
-	}
-	return semantics.ReturnFact{}, false
 }
 
 func localAssignmentFactAt(result ResultReader, point cfg.Point) (semantics.LocalAssignmentFact, bool) {
@@ -1408,6 +1396,79 @@ func (p paramObligationProjector) addArithmeticOperand(out []product.Value, expr
 	p.addTypedExpressionObligation(out, expr, typ.Number, 0)
 }
 
+func (p paramObligationProjector) addArithmeticObligationsFromSource(out []product.Value, source factflow.ValueSource) {
+	p.addArithmeticObligationsFromSourceSeen(out, source, nil)
+}
+
+func (p paramObligationProjector) addArithmeticObligationsFromSourceSeen(
+	out []product.Value,
+	source factflow.ValueSource,
+	seen map[factflow.ExprRef]struct{},
+) {
+	if !source.HasExpr {
+		return
+	}
+	if _, ok := seen[source.ExprRef]; ok {
+		return
+	}
+	if seen == nil {
+		seen = make(map[factflow.ExprRef]struct{}, 1)
+	}
+	seen[source.ExprRef] = struct{}{}
+	reader, ok := p.result.(expressionOperationRefReader)
+	if !ok {
+		return
+	}
+	op, ok := reader.ExpressionOperationRef(source.ExprRef)
+	if !ok {
+		return
+	}
+	p.addArithmeticOperationObligationsSeen(out, op, seen)
+}
+
+func (p paramObligationProjector) addArithmeticOperationObligations(out []product.Value, op factflow.ExpressionOperation) {
+	p.addArithmeticOperationObligationsSeen(out, op, nil)
+}
+
+func (p paramObligationProjector) addArithmeticOperationObligationsSeen(
+	out []product.Value,
+	op factflow.ExpressionOperation,
+	seen map[factflow.ExprRef]struct{},
+) {
+	switch op.Kind() {
+	case factflow.ExpressionOperationBinary:
+		left, right := op.Left(), op.Right()
+		switch op.Op() {
+		case "+", "-", "*", "/", "//", "%", "^", "&", "|", "~", "<<", ">>":
+			p.addArithmeticOperandSourceSeen(out, left, seen)
+			p.addArithmeticOperandSourceSeen(out, right, seen)
+		}
+		p.addArithmeticObligationsFromSourceSeen(out, left, seen)
+		p.addArithmeticObligationsFromSourceSeen(out, right, seen)
+	case factflow.ExpressionOperationUnary:
+		operand := op.Left()
+		switch op.Op() {
+		case "-", "~":
+			p.addArithmeticOperandSourceSeen(out, operand, seen)
+		case "#":
+			p.addLengthOperandSourceObligation(out, operand)
+		}
+		p.addArithmeticObligationsFromSourceSeen(out, operand, seen)
+	}
+}
+
+func (p paramObligationProjector) addArithmeticOperandSource(out []product.Value, source factflow.ValueSource) {
+	p.addArithmeticOperandSourceSeen(out, source, nil)
+}
+
+func (p paramObligationProjector) addArithmeticOperandSourceSeen(
+	out []product.Value,
+	source factflow.ValueSource,
+	seen map[factflow.ExprRef]struct{},
+) {
+	p.addTypedValueSourceObligationSeen(out, source, typ.Number, 0, seen)
+}
+
 func (p paramObligationProjector) addLengthOperandObligation(out []product.Value, expr ast.Expr) {
 	if expr == nil {
 		return
@@ -1430,6 +1491,111 @@ func (p paramObligationProjector) addLengthOperandObligation(out []product.Value
 		return
 	}
 	p.add(out, param, value)
+}
+
+func (p paramObligationProjector) addLengthOperandSourceObligation(out []product.Value, source factflow.ValueSource) {
+	pathReader, ok := p.result.(expressionPathRefReader)
+	if !ok {
+		return
+	}
+	sourcePath, ok := valueSourcePath(p.result, pathReader, source)
+	if !ok {
+		return
+	}
+	param, suffix, ok := p.unconditionalReceiverParamPath(sourcePath)
+	if !ok {
+		return
+	}
+	want := lengthOperandObligationTypeAtSuffix(suffix)
+	value, ok := obligationValueFromType(p.reg, want)
+	if !ok {
+		return
+	}
+	p.add(out, param, value)
+}
+
+func (p paramObligationProjector) addTypedValueSourceObligation(out []product.Value, source factflow.ValueSource, want typ.Type, depth int) {
+	p.addTypedValueSourceObligationSeen(out, source, want, depth, nil)
+}
+
+func (p paramObligationProjector) addTypedValueSourceObligationSeen(
+	out []product.Value,
+	source factflow.ValueSource,
+	want typ.Type,
+	depth int,
+	seen map[factflow.ExprRef]struct{},
+) {
+	if depth > typ.DefaultRecursionDepth || want == nil {
+		return
+	}
+	if p.sourceValueSatisfiesType(source, want) {
+		return
+	}
+	if value, ok := obligationValueFromType(p.reg, want); ok {
+		if param, ok := p.unconditionalSourceParamIndex(source); ok {
+			p.add(out, param, value)
+			return
+		}
+		if param, suffix, ok := p.sourceParamSuffix(source); ok {
+			if suffixedValue, valueOK := obligationValueFromType(p.reg, obligationTypeAtSuffix(want, suffix)); valueOK {
+				p.add(out, param, suffixedValue)
+				return
+			}
+		}
+	}
+	p.addArithmeticObligationsFromSourceSeen(out, source, seen)
+}
+
+func (p paramObligationProjector) sourceValueSatisfiesType(source factflow.ValueSource, want typ.Type) bool {
+	if want == nil || p.reg == nil {
+		return false
+	}
+	if valueReader, ok := p.result.(sourceValueAtBoundaryReader); ok {
+		if value, valueOK := valueReader.SourceValueAtBoundary(p.point, source); valueOK {
+			return p.valueSatisfiesType(value, want)
+		}
+	}
+	pathReader, ok := p.result.(expressionPathRefReader)
+	if !ok {
+		return false
+	}
+	valueReader, ok := p.result.(pathValueAtBoundaryReader)
+	if !ok {
+		return false
+	}
+	sourcePath, ok := valueSourcePath(p.result, pathReader, source)
+	if !ok || sourcePath.IsEmpty() {
+		return false
+	}
+	value, ok := valueReader.PathValueAtBoundary(p.point, sourcePath)
+	if !ok {
+		return false
+	}
+	return p.valueSatisfiesType(value, want)
+}
+
+func (p paramObligationProjector) unconditionalSourceParamIndex(source factflow.ValueSource) (int, bool) {
+	pathReader, ok := p.result.(expressionPathRefReader)
+	if !ok {
+		return 0, false
+	}
+	sourcePath, ok := valueSourcePath(p.result, pathReader, source)
+	if !ok {
+		return 0, false
+	}
+	return p.unconditionalPathParamIndex(sourcePath)
+}
+
+func (p paramObligationProjector) sourceParamSuffix(source factflow.ValueSource) (int, []segment.Segment, bool) {
+	pathReader, ok := p.result.(expressionPathRefReader)
+	if !ok {
+		return 0, nil, false
+	}
+	sourcePath, ok := valueSourcePath(p.result, pathReader, source)
+	if !ok {
+		return 0, nil, false
+	}
+	return p.unconditionalReceiverParamPath(sourcePath)
 }
 
 func lengthOperandObligationTypeAtSuffix(suffix []segment.Segment) typ.Type {
