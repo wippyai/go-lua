@@ -712,7 +712,6 @@ func (l *lowerer) dynamicIndexKeySourceFromWIR(point cfg.Point) (factflow.ValueS
 			true,
 			false,
 			false,
-			l.resultValueSourcesByTempFromWIR(),
 		)
 	}
 	return factflow.ValueSource{}, false

@@ -30,9 +30,8 @@ type wirObjectEntry struct {
 func (l *lowerer) objectLiteralEntriesFromWIR(inst wir.Instruction) []factflow.ObjectEntry {
 	wirEntries := l.wir.TableEntries(inst.TableEntries)
 	entries := make([]factflow.ObjectEntry, 0, len(wirEntries))
-	resultSources := l.resultValueSourcesByTempFromWIR()
 	for _, entry := range wirEntries {
-		source, ok := l.objectEntryValueSourceFromWIR(inst.Point, entry.Value, resultSources)
+		source, ok := l.objectEntryValueSourceFromWIR(inst.Point, entry.Value)
 		if !ok {
 			source = factflow.NewUnknownValueSource(factflow.NoValueSourceIndex)
 		}
@@ -54,7 +53,6 @@ func (l *lowerer) objectLiteralListElementSourceFromWIR(inst wir.Instruction) (f
 	if len(ops) == 0 {
 		return factflow.ValueSource{}, false
 	}
-	resultSources := l.resultValueSourcesByTempFromWIR()
 	return l.valueSourceFromWIROperand(
 		ops[len(ops)-1],
 		len(ops)-1,
@@ -62,11 +60,10 @@ func (l *lowerer) objectLiteralListElementSourceFromWIR(inst wir.Instruction) (f
 		true,
 		true,
 		true,
-		resultSources,
 	)
 }
 
-func (l *lowerer) objectEntryValueSourceFromWIR(point cfg.Point, op wir.Operand, resultSources map[uint32]wirResultSource) (factflow.ValueSource, bool) {
+func (l *lowerer) objectEntryValueSourceFromWIR(point cfg.Point, op wir.Operand) (factflow.ValueSource, bool) {
 	if p, ok := l.wirPathOperand(op, false, symbol.Local, symbol.Param, symbol.Global, symbol.Upvalue); ok {
 		witness, _ := l.aliasPathType(p)
 		return l.wirPathExpressionSourceWithShape("object-entry", point, p, witness, -1, -1, false, false, false, false)
@@ -76,7 +73,7 @@ func (l *lowerer) objectEntryValueSourceFromWIR(point cfg.Point, op wir.Operand,
 			return l.wirTableExpressionValueSourceWithShape(inst, -1, -1, false, false, false, false)
 		}
 	}
-	return l.valueSourceFromWIROperand(op, -1, -1, false, false, false, resultSources)
+	return l.valueSourceFromWIROperand(op, -1, -1, false, false, false)
 }
 
 func (l *lowerer) addObjectLiteral(input *factflow.FactsInput, result *semantics.Result, source sourceprovenance.ASTSource) {
@@ -698,7 +695,7 @@ func (l *lowerer) wirObjectEntry(expr ast.Expr, suffix path.Path) (wirObjectEntr
 }
 
 func (l *lowerer) wirObjectEntrySource(entry wirObjectEntry, fallback sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
-	return l.objectEntryValueSourceFromWIR(entry.point, entry.entry.Value, l.resultValueSourcesByTempFromWIR())
+	return l.objectEntryValueSourceFromWIR(entry.point, entry.entry.Value)
 }
 
 func (l *lowerer) tableConstructorEntrySource(source sourceprovenance.ASTSource) (factflow.ValueSource, bool) {

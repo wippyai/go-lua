@@ -43,7 +43,6 @@ func (l *lowerer) branchConditionSourceAtWIR(point cfg.Point) (factflow.ValueSou
 			true,
 			false,
 			false,
-			l.resultValueSourcesByTempFromWIR(),
 		)
 		if ok {
 			source.Adjusted = false

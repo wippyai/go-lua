@@ -242,7 +242,6 @@ func (l *lowerer) claimInnerSourceFromWIR(inst wir.Instruction, source sourcepro
 		source.Final,
 		source.Expanded,
 		source.OpenTail,
-		l.resultValueSourcesByTempFromWIR(),
 		nil,
 	)
 }

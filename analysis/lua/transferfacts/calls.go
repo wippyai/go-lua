@@ -259,7 +259,6 @@ func (l *lowerer) callReceiverSourceFromWIR(point cfg.Point, shape valueSourceSh
 		shape.final,
 		shape.expanded,
 		shape.openTail,
-		l.resultValueSourcesByTempFromWIR(),
 	); ok {
 		return source, true
 	}
@@ -285,10 +284,9 @@ func (l *lowerer) callArgumentSources(point cfg.Point, fallback []sourceprovenan
 		return nil, false
 	}
 	out := make([]factflow.ValueSource, len(fallback))
-	resultSources := l.resultValueSourcesByTempFromWIR()
 	for i, op := range ops {
 		final := i == len(ops)-1
-		source, ok := l.callArgumentSourceFromWIROperand(point, op, i, i, final, inst.ListSpread && final, resultSources)
+		source, ok := l.callArgumentSourceFromWIROperand(point, op, i, i, final, inst.ListSpread && final)
 		if !ok {
 			source = factflow.NewUnknownValueSource(i)
 		}
@@ -310,10 +308,9 @@ func (l *lowerer) callArgumentSourcesFromWIR(point cfg.Point) ([]factflow.ValueS
 		return nil, true
 	}
 	out := make([]factflow.ValueSource, len(ops))
-	resultSources := l.resultValueSourcesByTempFromWIR()
 	for i, op := range ops {
 		final := i == len(ops)-1
-		source, ok := l.callArgumentSourceFromWIROperand(point, op, i, i, final, inst.ListSpread && final, resultSources)
+		source, ok := l.callArgumentSourceFromWIROperand(point, op, i, i, final, inst.ListSpread && final)
 		if !ok {
 			source = factflow.NewUnknownValueSource(i)
 		}
@@ -329,7 +326,6 @@ func (l *lowerer) callArgumentSourceFromWIROperand(
 	targetIndex int,
 	final bool,
 	expanded bool,
-	resultSources map[uint32]wirResultSource,
 ) (factflow.ValueSource, bool) {
 	if source, ok := l.localRootPathExpressionSourceFromWIR("call-arg", point, op, exprIndex, targetIndex, final, false, false); ok {
 		return source, true
@@ -340,7 +336,7 @@ func (l *lowerer) callArgumentSourceFromWIROperand(
 	if source, ok := l.pathExpressionSourceFromWIR("call-arg", point, op, exprIndex, targetIndex, final, false, false, symbol.Local, symbol.Param, symbol.Global, symbol.Upvalue); ok {
 		return source, true
 	}
-	return l.valueSourceFromWIROperand(op, exprIndex, targetIndex, final, expanded, false, resultSources)
+	return l.valueSourceFromWIROperand(op, exprIndex, targetIndex, final, expanded, false)
 }
 
 func (l *lowerer) wirCallInstruction(point cfg.Point) (wir.Instruction, bool) {
