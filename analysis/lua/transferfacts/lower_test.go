@@ -71,7 +71,8 @@ local level: Level? = nil
 local selected = level or "info"
 `)
 	reg := standard.Registry()
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	body := wirlower.Lower("logical-default-expression", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	selected, ok := stmts[2].(*ast.LocalAssignStmt)
 	if !ok {
 		t.Fatalf("stmt = %T, want selected local assignment", stmts[2])
@@ -112,7 +113,8 @@ end`, "tostring")
 		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
 	}
 
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	body := wirlower.Lower("return-concat-operation", fn.Stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	returnPoints := requireStmtPoints(t, built, ret, 2)
 	returnFact, ok := facts.Return(returnPoints[1])
 	if !ok {
@@ -130,15 +132,8 @@ end`, "tostring")
 		t.Fatalf("operation = %v %q, want binary concat", op.Kind(), op.Op())
 	}
 	right := op.Right()
-	if right.Kind != factflow.ValueSourceExpression || !right.HasExpr {
-		t.Fatalf("operation right source = %#v, want nested expression", right)
-	}
-	nested, ok := facts.ExpressionOperation(right.ExprRef)
-	if !ok {
-		t.Fatalf("missing nested operation for expr ref %d", right.ExprRef)
-	}
-	if nested.Right().Kind != factflow.ValueSourceCall || nested.Right().CallPoint != returnPoints[0] || !nested.Right().HasCallPoint {
-		t.Fatalf("nested operation right source = %#v, want nested tostring call at point %d", nested.Right(), returnPoints[0])
+	if right.Kind != factflow.ValueSourceCall || right.CallPoint != returnPoints[0] || !right.HasCallPoint {
+		t.Fatalf("operation right source = %#v, want tostring call at point %d", right, returnPoints[0])
 	}
 }
 
@@ -153,7 +148,8 @@ end`)
 		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
 	}
 
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	body := wirlower.Lower("return-length-comparison", fn.Stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	returnPoints := requireStmtPoints(t, built, ret, 1)
 	returnFact, ok := facts.Return(returnPoints[0])
 	if !ok {
@@ -181,8 +177,8 @@ end`)
 	if nested.Kind() != factflow.ExpressionOperationUnary || nested.Op() != "#" {
 		t.Fatalf("nested operation = %v %q, want unary length", nested.Kind(), nested.Op())
 	}
-	if nested.Left().Kind != factflow.ValueSourceExpression || !nested.Left().HasExpr {
-		t.Fatalf("nested operand source = %#v, want path-backed expression", nested.Left())
+	if nested.Left().Kind != factflow.ValueSourcePath || nested.Left().PathKey == "" {
+		t.Fatalf("nested operand source = %#v, want direct path source", nested.Left())
 	}
 }
 
@@ -193,7 +189,8 @@ local cb = function(item: string): number
 end
 `)
 	reg := standard.Registry()
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	body := wirlower.Lower("annotated-function-expression", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, stmts[0], 1)[0]
 	source := mustLocalSource(t, facts, point)
 	value, ok := facts.ExpressionValue(source.ExprRef)
@@ -232,7 +229,8 @@ function make(): ((value: string) -> string) | false
 end
 `)
 	reg := standard.Registry()
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	body := wirlower.LowerFunction("make", fn, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
 	if !ok {
 		t.Fatalf("stmt = %T, want return", fn.Stmts[0])

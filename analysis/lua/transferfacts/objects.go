@@ -453,37 +453,6 @@ func (l *lowerer) existingExprRef(expr any) (factflow.ExprRef, bool) {
 	return ref, ok
 }
 
-func (l *lowerer) addReturnObjectLiteralExpectedTypes(input *factflow.FactsInput, result *semantics.Result, fact semantics.ReturnFact) {
-	if input == nil || result == nil {
-		return
-	}
-	declared := l.resolvedReturnObjectLiteralExpectedTypes(result)
-	if len(declared) == 0 || len(fact.Sources) == 0 {
-		return
-	}
-	for i, source := range fact.Sources {
-		if i >= len(declared) || source.Kind != sourceprovenance.SourceExpression || !tableConstructorExpr(source.Expr) {
-			continue
-		}
-		declaredType := declared[i]
-		if !luatypeprojection.ReachesTableContract(declaredType) {
-			continue
-		}
-		exprRef, hasExpr := l.tableConstructorExprRef(source.Expr)
-		if !hasExpr {
-			continue
-		}
-		lit, ok := input.ObjectLiterals[exprRef]
-		if !ok {
-			continue
-		}
-		updated := l.objectLiteralWithExpectedType(lit, declaredType)
-		input.ObjectLiterals[exprRef] = updated
-		l.setObjectLiteralExpectedExpressionValue(exprRef, updated, declaredType)
-		l.addNestedObjectLiteralExpectedTypes(input, updated, declaredType)
-	}
-}
-
 func (l *lowerer) addReturnObjectLiteralExpectedTypesFromWIR(input *factflow.FactsInput, sources []factflow.ValueSource) {
 	if l == nil || l.wir == nil || input == nil {
 		return

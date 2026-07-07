@@ -1198,7 +1198,8 @@ func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	body := wirlower.Lower("wrapped-claim-return", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	localPoints := requireStmtPoints(t, built, local, 2)
 	site, ok := facts.CallSite(localPoints[0])
 	if !ok {
@@ -1220,8 +1221,8 @@ func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 		t.Fatalf("outer assertion = %s, want %s", refinementAssertion(t, claim), want)
 	}
 	innerSource := claim.Source()
-	if innerSource.Kind != factflow.ValueSourceCall || innerSource.ExprRef != innerRef || innerSource.CallPoint != localPoints[0] || !innerSource.HasCallPoint {
-		t.Fatalf("assertion inner source = %#v, want call source ref %d at point %d", innerSource, innerRef, localPoints[0])
+	if innerSource.Kind != factflow.ValueSourceCall || innerSource.CallPoint != localPoints[0] || !innerSource.HasCallPoint {
+		t.Fatalf("assertion inner source = %#v, want call source at point %d", innerSource, localPoints[0])
 	}
 
 	returnPoints := requireStmtPoints(t, built, ret, 2)
@@ -1230,10 +1231,20 @@ func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 		t.Fatal("missing wrapped return fact")
 	}
 	returnSources := returnFact.Sources()
-	if len(returnSources) != 1 || returnSources[0].Kind != factflow.ValueSourceCall || returnSources[0].CallPoint != returnPoints[0] || !returnSources[0].HasCallPoint {
-		t.Fatalf("wrapped return source = %#v", returnSources)
+	if len(returnSources) != 1 || returnSources[0].Kind != factflow.ValueSourceExpression || !returnSources[0].HasExpr {
+		t.Fatalf("wrapped return source = %#v, want cast expression source", returnSources)
 	}
-	assertLoweredAssertion(t, facts, returnSources[0], concreteCastAssertionForType(typ.Number), factflow.ValueSourceCall)
+	returnClaim, ok := facts.ExpressionRefinement(returnSources[0].ExprRef)
+	if !ok {
+		t.Fatalf("missing wrapped return assertion for ref %d", returnSources[0].ExprRef)
+	}
+	if want := concreteCastAssertionForType(typ.String); !assertion.Equal(refinementAssertion(t, returnClaim), want) {
+		t.Fatalf("return assertion = %s, want %s", refinementAssertion(t, returnClaim), want)
+	}
+	returnInner := returnClaim.Source()
+	if returnInner.Kind != factflow.ValueSourceCall || returnInner.CallPoint != returnPoints[0] || !returnInner.HasCallPoint {
+		t.Fatalf("return assertion inner source = %#v, want call source at point %d", returnInner, returnPoints[0])
+	}
 
 	ifPoints := requireStmtPoints(t, built, ifStmt, 2)
 	branch, ok := result.BranchCondition(ifPoints[1])

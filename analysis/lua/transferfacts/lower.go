@@ -68,9 +68,6 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 	if config.WIR != nil {
 		declaredReturnLocalTypes = lowerDeclaredReturnLocalTypesFromWIR(config.Bindings, graph, config.WIR)
 		returnLocalObjectLiteralTypes = lowerReturnLocalObjectLiteralTypesFromWIR(config.Bindings, graph, config.WIR)
-	} else {
-		declaredReturnLocalTypes = lowerDeclaredReturnLocalTypes(config.Bindings, graph, result, typeResolver)
-		returnLocalObjectLiteralTypes = lowerReturnLocalObjectLiteralTypes(config.Bindings, graph, result, typeResolver)
 	}
 	symbolTypes = mergeSymbolTypes(symbolTypes, declaredReturnLocalTypes)
 	explicitTopLocalTypes := lowerExplicitTopLocalTypes(result, graph, typeResolver)
@@ -195,23 +192,6 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 				input.Returns[point] = factflow.NewReturn(sources)
 				l.addReturnObjectLiteralExpectedTypesFromWIR(&input, sources)
 				l.addTypeIsReturnPresenceRelationsFromSources(&input, point, sources)
-			}
-		}
-		if result != nil && l.wir == nil {
-			if view, ok := result.ReturnView(point); ok {
-				fact, _ := view.Borrowed()
-				if _, hasReturn := input.Returns[point]; !hasReturn {
-					input.Returns[point] = factflow.NewReturn(l.returnValueSources(fact.Sources, result))
-				}
-				if ret, ok := input.Returns[point]; ok {
-					l.addTypeIsReturnPresenceRelationsFromSources(&input, point, ret.Sources())
-					returnSources := ret.Sources()
-					for index, source := range fact.Sources {
-						l.addReturnAssertionRefinements(&input, point, index, valueSourceAt(returnSources, index), source)
-						l.addObjectLiteral(&input, result, source)
-					}
-					l.addReturnObjectLiteralExpectedTypes(&input, result, fact)
-				}
 			}
 		}
 		if l.wir != nil {

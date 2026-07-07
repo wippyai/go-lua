@@ -754,7 +754,8 @@ function make(raw: any): {any}
 end
 `)
 
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	body := wirlower.LowerFunction("make", fn, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	localStmt, ok := fn.Stmts[0].(*ast.LocalAssignStmt)
 	if !ok {
 		t.Fatalf("stmt = %T, want local assignment", fn.Stmts[0])
@@ -802,7 +803,8 @@ function make(flag: boolean): {any}
 end
 `)
 
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	body := wirlower.LowerFunction("make", fn, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	localStmt, ok := fn.Stmts[0].(*ast.LocalAssignStmt)
 	if !ok {
 		t.Fatalf("stmt = %T, want local assignment", fn.Stmts[0])
@@ -895,7 +897,8 @@ function make(): {run: (self: any) -> ()}?
 end
 `)
 
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	body := wirlower.LowerFunction("make", fn, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	localStmt, ok := fn.Stmts[1].(*ast.LocalAssignStmt)
 	if !ok {
 		t.Fatalf("stmt = %T, want instance local assignment", fn.Stmts[1])
@@ -1157,7 +1160,8 @@ function new_actor(): { state: { processed: {[string]: string} } }
 	return { state = { processed = {} } }
 end`)
 	reg := standard.Registry()
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	body := wirlower.LowerFunction("new_actor", fn, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
 	if !ok {
 		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
@@ -1334,7 +1338,8 @@ function output_error(err_type: string, message: string, code: any?): { type: st
 	}
 end`)
 	reg := standard.Registry()
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	body := wirlower.LowerFunction("new_error", fn, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
 	if !ok {
 		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
