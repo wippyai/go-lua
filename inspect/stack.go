@@ -105,9 +105,12 @@ func GetStackFrame(l *lua.LState, level int) (StackFrame, bool) {
 		return StackFrame{}, false
 	}
 
-	// Spawn debug info with function info
-	funcTable := l.NewTable()
-	if _, err := l.GetInfo("nSluf", ar, funcTable); err != nil {
+	// GetInfo with the "f" flag returns the frame's *LFunction as its first
+	// return value (it does not store it in a table). Capture it here so the
+	// Go-function name resolution and the upvalue walk below use the real
+	// function rather than reading a never-populated table key.
+	fnVal, err := l.GetInfo("nSluf", ar, nil)
+	if err != nil {
 		return StackFrame{}, false
 	}
 
@@ -121,18 +124,16 @@ func GetStackFrame(l *lua.LState, level int) (StackFrame, bool) {
 
 	// If no name is provided and this is a Go function, try to determine the name
 	if frame.Name == "" && (frame.FuncType == "Go" || frame.FuncType == "C") {
-		// Spawn the actual function from the debug info table
-		fn := funcTable.RawGet(lua.LString("f"))
-		if luaFn, ok := fn.(*lua.LFunction); ok {
+		if luaFn, ok := fnVal.(*lua.LFunction); ok {
 			// Iterate over globals and see if any key maps to this function
 			globals := l.Get(lua.GlobalsIndex).(*lua.LTable)
 			globals.ForEach(func(key, value lua.LValue) {
 				if globalFn, ok := value.(*lua.LFunction); ok && globalFn == luaFn {
-					// Use the global key as the function name.
 					frame.Name = key.String()
 				}
 			})
 		}
+
 		// Fallback if no match was found.
 		if frame.Name == "" {
 			frame.Name = fmt.Sprintf("<go function at %s:%d>", frame.Source, frame.CurrentLine)
@@ -145,19 +146,19 @@ func GetStackFrame(l *lua.LState, level int) (StackFrame, bool) {
 		if name == "" {
 			break
 		}
+
 		frame.Locals = append(frame.Locals, Local{name, value})
 	}
 
 	// Only get upvalues for Lua functions
-	if fn := funcTable.RawGet(lua.LString("f")); fn != lua.LNil {
-		if luaFn, ok := fn.(*lua.LFunction); ok {
-			for i := 1; ; i++ {
-				name, value := l.GetUpvalue(luaFn, i)
-				if name == "" {
-					break
-				}
-				frame.Upvalues = append(frame.Upvalues, Upvalue{name, value})
+	if luaFn, ok := fnVal.(*lua.LFunction); ok && !luaFn.IsG {
+		for i := 1; ; i++ {
+			name, value := l.GetUpvalue(luaFn, i)
+			if name == "" {
+				break
 			}
+
+			frame.Upvalues = append(frame.Upvalues, Upvalue{name, value})
 		}
 	}
 
