@@ -67,7 +67,7 @@ func parseLinearTerm(expr ast.Expr, bindings *bind.Result) (LinearTerm, bool) {
 		}
 		return LinearTerm{Offset: -inner.Offset}, true
 	case *ast.UnaryLenOpExpr:
-		p, ok := pathexpr.Resolve(e.Expr, bindings)
+		p, ok := pathexpr.ResolveLengthOperand(e, bindings)
 		if !ok || p.IsEmpty() {
 			return LinearTerm{}, false
 		}

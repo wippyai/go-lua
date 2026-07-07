@@ -19,6 +19,18 @@ func Resolve(expr ast.Expr, bindings *bind.Result) (path.Path, bool) {
 	return ViewOf(expr, bindings).SyntaxPath()
 }
 
+// ResolveLengthOperand extracts the syntax path addressed by a unary length
+// expression (`#path`). The length operator is expression syntax, but the
+// decision about which operand path it denotes belongs with path-expression
+// identity, not each numeric consumer that happens to parse `#`.
+func ResolveLengthOperand(expr ast.Expr, bindings *bind.Result) (path.Path, bool) {
+	lenOp, ok := expr.(*ast.UnaryLenOpExpr)
+	if !ok {
+		return path.Path{}, false
+	}
+	return ViewOf(lenOp.Expr, bindings).SyntaxPath()
+}
+
 // View carries the path identities available for a source expression. Different
 // consumers need different identities: branch and assignment logic asks what
 // syntax was written, while call-boundary evidence asks which runtime location

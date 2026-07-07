@@ -677,11 +677,7 @@ func indexLenBoundOperands(indexExpr ast.Expr, op string, lenExpr ast.Expr, bind
 	if !ok || indexPath.IsEmpty() {
 		return path.Path{}, path.Path{}, false, false
 	}
-	lenOp, ok := lenExpr.(*ast.UnaryLenOpExpr)
-	if !ok {
-		return path.Path{}, path.Path{}, false, false
-	}
-	arrayPath, ok := pathexpr.Resolve(lenOp.Expr, bindings)
+	arrayPath, ok := pathexpr.ResolveLengthOperand(lenExpr, bindings)
 	if !ok || arrayPath.IsEmpty() {
 		return path.Path{}, path.Path{}, false, false
 	}
@@ -691,11 +687,7 @@ func indexLenBoundOperands(indexExpr ast.Expr, op string, lenExpr ast.Expr, bind
 // lengthFloorOperands matches `#array <op> const` and returns the array path and
 // the proven floor on its length when op establishes a positive lower bound.
 func lengthFloorOperands(lenExpr ast.Expr, op string, constExpr ast.Expr, bindings *bind.Result) (path.Path, int64, bool, bool) {
-	lenOp, ok := lenExpr.(*ast.UnaryLenOpExpr)
-	if !ok {
-		return path.Path{}, 0, false, false
-	}
-	arrayPath, ok := pathexpr.Resolve(lenOp.Expr, bindings)
+	arrayPath, ok := pathexpr.ResolveLengthOperand(lenExpr, bindings)
 	if !ok || arrayPath.IsEmpty() {
 		return path.Path{}, 0, false, false
 	}

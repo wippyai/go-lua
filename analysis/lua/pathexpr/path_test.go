@@ -110,6 +110,25 @@ func assertAliasRejected(t *testing.T, expr ast.Expr, bindings *bind.Result) {
 	}
 }
 
+func assertLengthOperandResolved(t *testing.T, expr ast.Expr, bindings *bind.Result, want path.Path) {
+	t.Helper()
+	got, ok := ResolveLengthOperand(expr, bindings)
+	if !ok {
+		t.Fatalf("ResolveLengthOperand(%T) rejected length path", expr)
+	}
+	if got.Root != want.Root || got.Symbol != want.Symbol || !reflect.DeepEqual(got.Segments, want.Segments) {
+		t.Fatalf("ResolveLengthOperand() = %#v, want %#v", got, want)
+	}
+}
+
+func assertLengthOperandRejected(t *testing.T, expr ast.Expr, bindings *bind.Result) {
+	t.Helper()
+	got, ok := ResolveLengthOperand(expr, bindings)
+	if ok || !got.IsEmpty() {
+		t.Fatalf("ResolveLengthOperand() = %#v/%v, want empty/false", got, ok)
+	}
+}
+
 func assertMutationContainer(t *testing.T, expr ast.Expr, bindings *bind.Result, want path.Path) {
 	t.Helper()
 	got, ok := ResolveMutationContainer(expr, bindings)
@@ -215,6 +234,30 @@ func TestResolveAliasPrimitiveUnknownCastRejectsProofPath(t *testing.T) {
 
 	assertRejected(t, expr, bindings)
 	assertAliasRejected(t, expr, bindings)
+}
+
+func TestResolveLengthOperandUsesSyntaxPath(t *testing.T) {
+	root := ident("items")
+	expr := &ast.UnaryLenOpExpr{Expr: dot(root, "children")}
+	bindings := bindReturn(expr)
+	sym := mustResolvedRoot(t, bindings, root)
+
+	assertLengthOperandResolved(t, expr, bindings, path.NewPath(sym, "items").Field("children"))
+}
+
+func TestResolveLengthOperandDoesNotCrossProofBoundary(t *testing.T) {
+	root := ident("items")
+	expr := &ast.UnaryLenOpExpr{Expr: cast(root, primitiveType("table"))}
+	bindings := bindReturn(expr)
+
+	assertLengthOperandRejected(t, expr, bindings)
+}
+
+func TestResolveLengthOperandRejectsNonLengthExpression(t *testing.T) {
+	root := ident("items")
+	bindings := bindReturn(root)
+
+	assertLengthOperandRejected(t, root, bindings)
 }
 
 func TestResolveUnresolvedIdent(t *testing.T) {
