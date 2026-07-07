@@ -645,6 +645,24 @@ return Point:is(data)
 	assertReturnPresenceRelation(t, relations, 1, presence.Absent(), 0, presence.Present())
 }
 
+func TestLowerWithWIRTypeIsReturnPresencePublishesWithoutSemanticReturnView(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
+type Point = {x: number, y: number}
+local data: any = {}
+return Point:is(data)
+`)
+	ret := stmts[2].(*ast.ReturnStmt)
+	returnPoint := requireStmtPoints(t, built, ret, 2)[1]
+	body := wirlower.Lower("chunk-type-is-return-no-sidecars", stmts, bindings, built)
+
+	facts := Lower(nil, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	relations := facts.ReturnPresenceRelations(returnPoint)
+
+	assertReturnPresenceRelation(t, relations, 1, presence.Present(), 0, presence.Absent())
+	assertReturnPresenceRelation(t, relations, 1, presence.Absent(), 0, presence.Present())
+}
+
 func TestLowerWithWIRTypeIsCallResultValuesWithoutSemanticCallView(t *testing.T) {
 	reg := standard.Registry()
 	stmts, bindings, built, result := parseSemanticChunk(t, `

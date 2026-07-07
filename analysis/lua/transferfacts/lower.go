@@ -194,32 +194,23 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			if sources, ok := l.returnValueSourcesFromWIR(point); ok {
 				input.Returns[point] = factflow.NewReturn(sources)
 				l.addReturnObjectLiteralExpectedTypesFromWIR(&input, sources)
+				l.addTypeIsReturnPresenceRelationsFromSources(&input, point, sources)
 			}
 		}
-		if result != nil {
+		if result != nil && l.wir == nil {
 			if view, ok := result.ReturnView(point); ok {
 				fact, _ := view.Borrowed()
 				if _, hasReturn := input.Returns[point]; !hasReturn {
-					if l.wir != nil {
-						continue
-					} else {
-						input.Returns[point] = factflow.NewReturn(l.returnValueSources(fact.Sources, result))
-					}
+					input.Returns[point] = factflow.NewReturn(l.returnValueSources(fact.Sources, result))
 				}
 				if ret, ok := input.Returns[point]; ok {
-					if relations := l.typeIsReturnPresenceRelationsFromSources(ret.Sources(), input.CallSites); len(relations) != 0 {
-						appendReturnPresenceRelations(input.ReturnPresenceRelations, point, relations...)
-					}
+					l.addTypeIsReturnPresenceRelationsFromSources(&input, point, ret.Sources())
 					returnSources := ret.Sources()
 					for index, source := range fact.Sources {
 						l.addReturnAssertionRefinements(&input, point, index, valueSourceAt(returnSources, index), source)
-						if l.wir == nil {
-							l.addObjectLiteral(&input, result, source)
-						}
+						l.addObjectLiteral(&input, result, source)
 					}
-					if l.wir == nil {
-						l.addReturnObjectLiteralExpectedTypes(&input, result, fact)
-					}
+					l.addReturnObjectLiteralExpectedTypes(&input, result, fact)
 				}
 			}
 		}
@@ -289,6 +280,15 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 	return Lowered{
 		Facts:       factflow.NewFacts(input),
 		SymbolTypes: copySymbolTypes(symbolTypes),
+	}
+}
+
+func (l *lowerer) addTypeIsReturnPresenceRelationsFromSources(input *factflow.FactsInput, point cfg.Point, sources []factflow.ValueSource) {
+	if input == nil {
+		return
+	}
+	if relations := l.typeIsReturnPresenceRelationsFromSources(sources, input.CallSites); len(relations) != 0 {
+		appendReturnPresenceRelations(input.ReturnPresenceRelations, point, relations...)
 	}
 }
 
