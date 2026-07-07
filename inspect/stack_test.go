@@ -250,3 +250,43 @@ func makeInspectFunc(key string) lua.LGFunction {
 		return 0
 	}
 }
+
+// TestGetStackFrameCapturesUpvalues guards against a regression where
+// GetStackFrame discarded the function returned by GetInfo("...f...") and read
+// a never-populated table key instead, so upvalues were never reported.
+func TestGetStackFrameCapturesUpvalues(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+
+	L.SetGlobal("inspect_up", L.NewFunction(func(L *lua.LState) int {
+		trace := GetStackTrace(L)
+		L.SetField(L.Get(lua.RegistryIndex).(*lua.LTable), "up_trace", lua.LString(trace.String()))
+		return 0
+	}))
+
+	if err := L.DoString(`
+		local function make_outer()
+			local captured = "upvalue-payload"
+			local function inner()
+				captured = captured .. "."
+				inspect_up()
+				return captured
+			end
+			inner()
+		end
+		make_outer()
+	`); err != nil {
+		t.Fatalf("Failed to run script: %v", err)
+	}
+
+	registry := L.Get(lua.RegistryIndex).(*lua.LTable)
+	traceStr := registry.RawGetString("up_trace").String()
+
+	if !strings.Contains(traceStr, "Upvalues:") {
+		t.Errorf("trace must include an Upvalues section;\ngot:\n%s", traceStr)
+	}
+
+	if !strings.Contains(traceStr, "captured = upvalue-payload") {
+		t.Errorf("trace must list the captured upvalue;\ngot:\n%s", traceStr)
+	}
+}
