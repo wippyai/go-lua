@@ -109,11 +109,19 @@ func (l *lowerer) addRootAssignmentFromWIR(input *factflow.FactsInput, point cfg
 		}
 	}
 	input.RootAssignments[point] = assignment
+	l.addRootAssignmentConditionAliasFromWIR(assignment)
 	l.addRootAssignmentExposureFromWIR(input, point, assignment)
 	l.addRootAssignmentObjectLiteralExpectedTypeFromWIR(input, assignment)
 	if declared, ok := l.wirAssignmentObjectLiteralExpectedType(inst, target.Symbol); ok {
 		l.addObjectLiteralFieldExposuresFromWIR(input, point, inst, declared)
 	}
+}
+
+func (l *lowerer) addRootAssignmentConditionAliasFromWIR(assignment factflow.RootAssignment) {
+	if assignment.Kind() != factflow.RootAssignmentLocalDeclaration {
+		return
+	}
+	l.addLocalConditionAlias(assignment.TargetSymbol(), assignment.Source())
 }
 
 func (l *lowerer) addRootAssignmentObjectLiteralExpectedTypeFromWIR(input *factflow.FactsInput, assignment factflow.RootAssignment) {

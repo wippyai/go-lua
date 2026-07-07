@@ -332,6 +332,32 @@ end
 	}
 }
 
+func TestLowerWithWIRBooleanAliasBranchesWithoutSemanticLocalAssignmentView(t *testing.T) {
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function f(target: { transform: string? })
+    local has_transform = target.transform ~= nil
+    if has_transform then
+        local a = true
+    end
+    if not has_transform then
+        local b = true
+    end
+end
+`)
+	body := wirlower.Lower("alias-branches-no-sidecars", fn.Stmts, bindings, built)
+	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	for _, stmt := range []ast.Stmt{fn.Stmts[1], fn.Stmts[2]} {
+		point := requireStmtPoints(t, built, stmt, 1)[0]
+		if got := facts.BranchRefinements(point); len(got) == 0 {
+			t.Fatalf("WIR alias branch refinements missing at point %d without semantic local assignment view", point)
+		}
+		if got := facts.BranchPathEvidence(point); len(got) == 0 {
+			t.Fatalf("WIR alias branch path evidence missing at point %d without semantic local assignment view", point)
+		}
+	}
+}
+
 func TestLowerWithWIRBooleanAliasBranchDoesNotFallbackToSemanticCondition(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(target: { transform: string? })

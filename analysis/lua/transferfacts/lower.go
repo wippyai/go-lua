@@ -297,7 +297,6 @@ func (l *lowerer) addLocalAssignmentSidecarsForWIR(input *factflow.FactsInput, p
 	if !ok || lowered.TargetSymbol() != fact.Symbol {
 		return
 	}
-	l.addLocalConditionAlias(fact.Symbol, lowered.Source())
 	if fact.Source.Kind == sourceprovenance.SourceExpression {
 		l.addCastExposure(input, point, fact.Source.Expr)
 	}
