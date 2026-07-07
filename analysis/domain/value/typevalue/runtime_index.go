@@ -32,8 +32,5 @@ func runtimeIndex(reg *axis.Registry, tableValue, keyValue product.Value, cache 
 	if !ok || projected == nil {
 		return product.Value{}, false
 	}
-	if cache != nil {
-		return WithWitness(reg, cache.FromType(reg, projected), projected), true
-	}
-	return WithWitness(reg, FromType(reg, projected), projected), true
+	return WithWitness(reg, cache.FromType(reg, projected), projected), true
 }
