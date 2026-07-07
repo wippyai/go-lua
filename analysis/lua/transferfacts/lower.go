@@ -262,11 +262,6 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 						l.addObjectLiteral(&input, result, source)
 					}
 				}
-				if l.wir == nil {
-					if lowered, ok := l.assertPostconditionRefinement(fact); ok {
-						input.PostconditionRefinements[point] = factflow.NewPostconditionRefinementSet(lowered)
-					}
-				}
 			}
 		}
 		if l.wir != nil {

@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -28,7 +29,8 @@ func TestLowerDirectAssertTruthyPostcondition(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	body := wirlower.Lower("assert-postcondition", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, stmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
 	assertLoweredPostconditionRefinement(t, facts, point, xPath, valueRefinementExpectation{
@@ -49,7 +51,8 @@ func TestLowerDirectAssertNotNilPostcondition(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	body := wirlower.Lower("assert-postcondition", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, stmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
 	assertLoweredPostconditionRefinement(t, facts, point, xPath, valueRefinementExpectation{
@@ -74,7 +77,8 @@ func TestLowerDirectAssertTypeEqualPostcondition(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	body := wirlower.Lower("assert-postcondition", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, stmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
 	assertLoweredPostconditionRefinement(t, facts, point, xPath, valueRefinementExpectation{
@@ -103,7 +107,8 @@ func TestLowerAssertPostconditionRequiresDirectGlobalStatementCall(t *testing.T)
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	body := wirlower.Lower("assert-postcondition", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	for _, stmt := range []ast.Stmt{shadowedAssert, receiverCall} {
 		point := requireStmtPoints(t, built, stmt, 1)[0]
 		if got := facts.PostconditionRefinements(point); len(got) != 0 {
