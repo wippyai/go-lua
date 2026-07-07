@@ -116,6 +116,37 @@ end
 	assertWIRAssertion(t, facts, sources[1], assertion.NonNil(), factflow.ValueSourcePath)
 }
 
+func TestLowerReturnClaimsUseWIRClaimSourcesWithoutSemanticResult(t *testing.T) {
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function f(x: any): (number, any)
+    return x as number, x!
+end
+`)
+	body := wirlower.Lower("f-no-return-sidecars", fn.Stmts, bindings, built)
+	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	returnPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
+	ret, ok := facts.Return(returnPoint)
+	if !ok {
+		t.Fatalf("missing return at point %d without semantic ReturnView", returnPoint)
+	}
+	sources := ret.Sources()
+	if len(sources) != 2 {
+		t.Fatalf("return sources = %#v, want two", sources)
+	}
+	if sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr {
+		t.Fatalf("cast return source = %#v, want WIR claim expression source", sources[0])
+	}
+	if sources[1].Kind != factflow.ValueSourceExpression || !sources[1].HasExpr {
+		t.Fatalf("assert return source = %#v, want WIR claim expression source", sources[1])
+	}
+	xPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "x")
+	assertWIRClaimSourcePath(t, facts, sources[0], xPath)
+	assertWIRClaimSourcePath(t, facts, sources[1], xPath)
+	assertWIRConcreteCastAssertion(t, facts, sources[0], typ.Number, factflow.ValueSourcePath)
+	assertWIRAssertion(t, facts, sources[1], assertion.NonNil(), factflow.ValueSourcePath)
+}
+
 func TestLowerCallArgumentClaimsUseWIRClaimSources(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(x: any): ()

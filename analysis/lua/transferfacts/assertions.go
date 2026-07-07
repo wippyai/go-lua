@@ -55,9 +55,6 @@ func (l *lowerer) addReturnAssertionRefinements(input *factflow.FactsInput, poin
 	if expressionSourceHasRefinement(input, loweredSource) {
 		return
 	}
-	if l.addReturnAssertionRefinementFromWIRClaim(input, point, index, source) {
-		return
-	}
 	if l != nil && l.wir != nil {
 		return
 	}
@@ -132,47 +129,6 @@ func (l *lowerer) callArgumentClaimInstructionFromWIR(point cfg.Point, index int
 		return wir.Instruction{}, false
 	}
 	return def, true
-}
-
-func (l *lowerer) addReturnAssertionRefinementFromWIRClaim(input *factflow.FactsInput, point cfg.Point, index int, source sourceprovenance.ASTSource) bool {
-	if input == nil || l == nil || l.wir == nil || source.Expr == nil || index < 0 {
-		return false
-	}
-	wantClaim, ok := claimKindForAssertionSource(source.Expr)
-	if !ok {
-		return false
-	}
-	outerSource := l.valueSource(source)
-	if !outerSource.HasExpr {
-		return false
-	}
-	inst, ok := l.returnClaimInstructionFromWIR(point, index, wantClaim)
-	if !ok {
-		return false
-	}
-	innerSource, ok := l.claimInnerSourceFromWIR(inst, source)
-	if !ok {
-		return false
-	}
-	return l.addExpressionRefinementFromWIRClaim(input, outerSource, innerSource, inst)
-}
-
-func (l *lowerer) returnClaimInstructionFromWIR(point cfg.Point, index int, claim wir.ClaimKind) (wir.Instruction, bool) {
-	for _, inst := range l.wir.PointInstructions(point) {
-		if inst.Op != wir.OpReturn {
-			continue
-		}
-		ops := l.wir.Operands(inst.List)
-		if index >= len(ops) {
-			return wir.Instruction{}, false
-		}
-		def, ok := l.claimInstructionForOperand(ops[index])
-		if !ok || def.Claim != claim {
-			return wir.Instruction{}, false
-		}
-		return def, true
-	}
-	return wir.Instruction{}, false
 }
 
 func (l *lowerer) claimInstructionForOperand(op wir.Operand) (wir.Instruction, bool) {
