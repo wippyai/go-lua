@@ -109,9 +109,21 @@ func (l *lowerer) addRootAssignmentFromWIR(input *factflow.FactsInput, point cfg
 		}
 	}
 	input.RootAssignments[point] = assignment
+	l.addRootAssignmentExposureFromWIR(input, point, assignment)
 	if declared, ok := l.wirAssignmentDeclaredObjectType(inst, target.Symbol); ok {
 		l.addObjectLiteralFieldExposuresFromWIR(input, point, inst, declared)
 	}
+}
+
+func (l *lowerer) addRootAssignmentExposureFromWIR(input *factflow.FactsInput, point cfg.Point, assignment factflow.RootAssignment) {
+	if assignment.Kind() != factflow.RootAssignmentLocalDeclaration && assignment.Kind() != factflow.RootAssignmentOrdinaryRootWrite {
+		return
+	}
+	contract, ok := l.symbolTypes[assignment.TargetSymbol()]
+	if !ok {
+		return
+	}
+	l.addAliasExposureValueSourceToContractType(input, point, assignment.Source(), contract)
 }
 
 func (l *lowerer) wirInstructionDeclaredType(inst wir.Instruction) (typ.Type, bool) {
@@ -353,9 +365,25 @@ func (l *lowerer) addStaticMemberWriteFromWIR(input *factflow.FactsInput, point 
 	}
 	input.PathAssignments[point] = factflow.NewPathAssignment(target, source)
 	input.PathStaticMemberWrites[point] = factflow.NewPathStaticMemberWrite(target, source)
+	l.addPathStoreExposureFromWIR(input, point, target, source)
 	if targetSymbol, targetPath, ok := l.globalTableFieldRootTargetPath(target); ok {
 		input.RootAssignments[point] = factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, targetSymbol, targetPath, source)
 	}
+}
+
+func (l *lowerer) addPathStoreExposureFromWIR(input *factflow.FactsInput, point cfg.Point, target path.Path, source factflow.ValueSource) {
+	if target.Symbol == 0 || len(target.Segments) == 0 {
+		return
+	}
+	containerType, ok := l.symbolTypes[target.Symbol]
+	if !ok {
+		return
+	}
+	slotType, ok := luatypeprojection.ApplySegments(containerType, target.Segments)
+	if !ok || slotType == nil {
+		return
+	}
+	l.addAliasExposureValueSourceToContractType(input, point, source, slotType)
 }
 
 func (l *lowerer) addDynamicIndexWriteFromWIR(input *factflow.FactsInput, point cfg.Point, inst wir.Instruction) {

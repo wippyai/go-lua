@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -763,6 +764,75 @@ end`)
 	}
 	if got := invalidation.ContainerPathRef(); !got.Equal(boxPath) {
 		t.Fatalf("dynamic invalidation container = %s, want %s", got.String(), boxPath.String())
+	}
+}
+
+func TestLowerWIRLocalAliasExposureWithoutSemanticSidecars(t *testing.T) {
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function f(narrow: {number})
+    local wide: {number | string} = narrow
+end`)
+	body := wirlower.Lower("local-alias-exposure-no-sidecars", fn.Stmts, bindings, built)
+	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
+	exposures := facts.CovariantExposures(point)
+	if len(exposures) != 1 {
+		t.Fatalf("WIR local alias exposures = %#v, want one without semantic sidecars", exposures)
+	}
+	wantPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "narrow")
+	if got := exposures[0].SourcePath(); !got.Equal(wantPath) {
+		t.Fatalf("WIR local alias exposure source = %v, want %v", got, wantPath)
+	}
+	assertExposureType(t, exposures[0], typ.NewArray(normalize.UnionForEvidence(typ.Number, typ.String)))
+}
+
+func TestLowerWIRRootReassignExposureWithoutSemanticSidecars(t *testing.T) {
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function f(narrow: {number})
+    local wide: {number | string} = {}
+    wide = narrow
+end`)
+	body := wirlower.Lower("root-reassign-exposure-no-sidecars", fn.Stmts, bindings, built)
+	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	point := requireStmtPoints(t, built, fn.Stmts[1], 1)[0]
+	exposures := facts.CovariantExposures(point)
+	if len(exposures) != 1 {
+		t.Fatalf("WIR root reassign exposures = %#v, want one without semantic sidecars", exposures)
+	}
+	wantPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "narrow")
+	if got := exposures[0].SourcePath(); !got.Equal(wantPath) {
+		t.Fatalf("WIR root reassign exposure source = %v, want %v", got, wantPath)
+	}
+	assertExposureType(t, exposures[0], typ.NewArray(normalize.UnionForEvidence(typ.Number, typ.String)))
+}
+
+func TestLowerWIRPathStoreExposureWithoutSemanticSidecars(t *testing.T) {
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function f(narrow: {number}, holder: { slot: {number | string} })
+    holder.slot = narrow
+end`)
+	body := wirlower.Lower("path-store-exposure-no-sidecars", fn.Stmts, bindings, built)
+	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
+	exposures := facts.CovariantExposures(point)
+	if len(exposures) != 1 {
+		t.Fatalf("WIR path store exposures = %#v, want one without semantic sidecars", exposures)
+	}
+	wantPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "narrow")
+	if got := exposures[0].SourcePath(); !got.Equal(wantPath) {
+		t.Fatalf("WIR path store exposure source = %v, want %v", got, wantPath)
+	}
+	assertExposureType(t, exposures[0], typ.NewArray(normalize.UnionForEvidence(typ.Number, typ.String)))
+}
+
+func assertExposureType(t *testing.T, exposure factflow.CovariantExposure, want typ.Type) {
+	t.Helper()
+	got, ok := typevalue.TypeOf(standard.Registry(), exposure.WideValue())
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("exposure type = %v/%v, want %v", got, ok, want)
 	}
 }
 
