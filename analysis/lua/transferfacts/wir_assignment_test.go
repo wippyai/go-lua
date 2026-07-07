@@ -15,6 +15,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/lua/expressionid"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -1128,6 +1129,56 @@ func TestAssignmentCallResultExprRefComesFromWIRCallIdentity(t *testing.T) {
 	if source.Kind != factflow.ValueSourceCall || !source.HasCallPoint || source.CallPoint != callPoint ||
 		source.ResultIndex != 0 || !source.HasExpr || source.ExprRef == 0 {
 		t.Fatalf("assignment source = %#v, want WIR call result with WIR-derived expression ref", source)
+	}
+}
+
+func TestAssignmentCallResultExprRefDoesNotFallbackToSemanticExpression(t *testing.T) {
+	fn, _, _, _ := parseSemanticFunction(t, `
+function f(make_value: () -> string): ()
+    local out = make_value()
+end
+`)
+	assignStmt := fn.Stmts[0].(*ast.LocalAssignStmt)
+	callExpr := assignStmt.Exprs[0]
+	body := wir.NewBody("call-result-expr-no-semantic-fallback")
+	callPoint := cfg.Point(10)
+	assignPoint := cfg.Point(11)
+	callResult := wir.Operand{Kind: wir.OperandTemp, Ref: 1}
+	callStart := body.Emit(wir.Instruction{
+		Op:      wir.OpCall,
+		Point:   callPoint,
+		Results: body.AppendOperands([]wir.Operand{callResult}),
+		ExprID:  expressionid.Of(callExpr),
+	})
+	body.SetPointRange(callPoint, callStart, body.Len())
+	assignStart := body.Emit(wir.Instruction{
+		Op:    wir.OpAssign,
+		Point: assignPoint,
+		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(path.NewPath(1, "target")))},
+		A:     callResult,
+	})
+	body.SetPointRange(assignPoint, assignStart, body.Len())
+
+	l := lowerer{
+		registry:             standard.Registry(),
+		wir:                  body,
+		exprs:                make(map[any]factflow.ExprRef),
+		expressionValues:     make(map[factflow.ExprRef]product.Value),
+		expressionOperations: make(map[factflow.ExprRef]factflow.ExpressionOperation),
+		expressionPaths:      make(map[factflow.ExprRef]path.Path),
+		expressionConditions: make(map[factflow.ExprRef]factflow.ExpressionCondition),
+	}
+	fallbackRef, _ := l.exprRef(callExpr)
+	source, ok := l.assignmentSourceFromWIR(assignPoint, sourceprovenance.ASTSource{
+		Kind:  sourceprovenance.SourceExpression,
+		Expr:  callExpr,
+		Final: true,
+	})
+	if !ok {
+		t.Fatal("assignmentSourceFromWIR returned false")
+	}
+	if source.Kind != factflow.ValueSourceCall || !source.HasExpr || source.ExprRef == fallbackRef {
+		t.Fatalf("assignment source = %#v, fallback ref %d; want WIR call identity ref", source, fallbackRef)
 	}
 }
 

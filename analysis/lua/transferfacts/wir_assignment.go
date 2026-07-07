@@ -559,11 +559,6 @@ func (l *lowerer) assignmentSourceFromWIR(point cfg.Point, fallback sourceproven
 		return factflow.ValueSource{}, false
 	}
 	if source.Kind == factflow.ValueSourceCall {
-		if fallbackSource := l.valueSource(fallback); fallbackSource.HasExpr {
-			source.ExprRef = fallbackSource.ExprRef
-			source.HasExpr = true
-			return source, true
-		}
 		l.addWIRCallResultExprRef(&source, op, fallback, resultSources)
 	}
 	return source, true
