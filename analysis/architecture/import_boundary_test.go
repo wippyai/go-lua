@@ -736,7 +736,7 @@ func TestPublicReadmodelOwnsCallOutcomeParamObligationReportability(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(ownerContent, []byte("func CallArgumentObligationTypeReportable")) {
+	if !bytes.Contains(ownerContent, []byte("func ObligationTypeReportable")) {
 		t.Fatalf("%s does not contain call-outcome parameter obligation reportability owner marker", owner)
 	}
 

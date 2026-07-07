@@ -595,15 +595,15 @@ func TestPlanCallArgumentReportsSkipsSignatureSurfaceAfterAdmissibleExplicitPara
 	}
 }
 
-func TestCallArgumentObligationTypeReportableTreatsOptionalGradualAsInternal(t *testing.T) {
-	if CallArgumentObligationTypeReportable(typ.MaterializeOptional(typ.Any)) {
+func TestObligationTypeReportableTreatsOptionalGradualAsInternal(t *testing.T) {
+	if ObligationTypeReportable(typ.MaterializeOptional(typ.Any)) {
 		t.Fatal("any? should be an internal gradual obligation, not a reportable contract")
 	}
-	if CallArgumentObligationTypeReportable(typ.MaterializeOptional(typ.Unknown)) {
+	if ObligationTypeReportable(typ.MaterializeOptional(typ.Unknown)) {
 		t.Fatal("unknown? should be an internal gradual obligation, not a reportable contract")
 	}
 	recordWithAnyField := typetable.NewRecord().Field("id", typ.Any).Build()
-	if !CallArgumentObligationTypeReportable(recordWithAnyField) {
+	if !ObligationTypeReportable(recordWithAnyField) {
 		t.Fatal("structured contracts containing any should remain reportable for their shape")
 	}
 }
@@ -948,20 +948,20 @@ func TestPlanCallArgumentMismatchSubjectNoSelection(t *testing.T) {
 	}
 }
 
-func TestCallArgumentObligationTypeReportable(t *testing.T) {
-	if !CallArgumentObligationTypeReportable(typ.String) {
+func TestObligationTypeReportable(t *testing.T) {
+	if !ObligationTypeReportable(typ.String) {
 		t.Fatal("concrete string obligation type should be reportable")
 	}
-	if CallArgumentObligationTypeReportable(nil) {
+	if ObligationTypeReportable(nil) {
 		t.Fatal("nil obligation type should not be reportable")
 	}
-	if CallArgumentObligationTypeReportable(typ.Any) {
+	if ObligationTypeReportable(typ.Any) {
 		t.Fatal("any obligation type should not be reportable")
 	}
-	if CallArgumentObligationTypeReportable(typ.Unknown) {
+	if ObligationTypeReportable(typ.Unknown) {
 		t.Fatal("unknown obligation type should not be reportable")
 	}
-	if CallArgumentObligationTypeReportable(typ.NewTypeParam("T", nil)) {
+	if ObligationTypeReportable(typ.NewTypeParam("T", nil)) {
 		t.Fatal("free type-parameter obligation type should not be reportable")
 	}
 }

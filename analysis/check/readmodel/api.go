@@ -1366,12 +1366,6 @@ func TypeMayBeNilMismatch(got, want typ.Type) bool {
 	return got != nil && want != nil && typevalue.TypeIncludesNil(got) && !typevalue.TypeIncludesNil(want)
 }
 
-// CallArgumentObligationTypeReportable is a compatibility alias for direct-call
-// migration code that has not yet folded onto the generic obligation query.
-func CallArgumentObligationTypeReportable(t typ.Type) bool {
-	return ObligationTypeReportable(t)
-}
-
 // CallArgumentProofPlan carries the already-solved proof inputs needed to
 // combine value-domain proof and contextual function-type proof for one
 // argument. Internal readmodels compute raw proof facts; public readmodel owns
@@ -1572,7 +1566,7 @@ func PlanCallArgumentReports(plan CallArgumentReportPlan) []CallArgumentReport {
 	}
 
 	for _, indexed := range plan.GenericConstraints {
-		if _, seen := reported[indexed.Index]; seen || !CallArgumentObligationTypeReportable(indexed.Obligation.Type) {
+		if _, seen := reported[indexed.Index]; seen || !ObligationTypeReportable(indexed.Obligation.Type) {
 			continue
 		}
 		arg, ok := argsByIndex[indexed.Index]
@@ -1609,7 +1603,7 @@ func (plan CallArgumentReportPlan) appendObligations(
 	skipSignatureAdmitted map[int]struct{},
 ) []CallArgumentReport {
 	for _, indexed := range obligations {
-		if _, seen := reported[indexed.Index]; seen || !CallArgumentObligationTypeReportable(indexed.Obligation.Type) {
+		if _, seen := reported[indexed.Index]; seen || !ObligationTypeReportable(indexed.Obligation.Type) {
 			continue
 		}
 		if indexed.Obligation.SignatureSurface && skipSignatureAdmitted != nil {
