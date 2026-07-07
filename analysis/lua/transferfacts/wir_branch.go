@@ -70,18 +70,6 @@ func (l *lowerer) firstDirectBranchCheckFromWIR(point cfg.Point) (branchcond.Che
 	return out, found
 }
 
-func (l *lowerer) hasWIRBranchConditionOperand(point cfg.Point) bool {
-	if l == nil || l.wir == nil {
-		return false
-	}
-	for _, inst := range l.wir.PointInstructions(point) {
-		if inst.Op == wir.OpBranch && inst.A.Kind != wir.OperandNone {
-			return true
-		}
-	}
-	return false
-}
-
 func branchCheckFromWIR(check wir.Check) branchcond.Check {
 	return branchcond.Check{
 		Kind:          branchcond.CheckKind(check.Kind),

@@ -8,7 +8,6 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/typenarrow"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
-	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func (l *lowerer) typeBranchRefinement(target path.Path, kind branchcond.CheckKind, typeName string) (factflow.BranchRefinement, bool) {
@@ -37,9 +36,4 @@ func (l *lowerer) falsyAbsentRefinement() factflow.ValueRefinement {
 
 func (l *lowerer) presenceConstraint(value presence.Value) product.Value {
 	return product.NewWithPresence(l.registry, product.ShapeTop, value)
-}
-
-func (l *lowerer) boolLiteralRefinement(value bool) factflow.ValueRefinement {
-	lit := typ.LiteralBool(value)
-	return factflow.NewValueConstraint(l.valueFromTypeWithWitness(lit))
 }

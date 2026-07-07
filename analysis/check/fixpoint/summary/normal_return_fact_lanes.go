@@ -16,18 +16,6 @@ type normalReturnSummaryLane struct {
 	widen          func(*axis.Registry, *callboundary.NormalReturnFacts, *callboundary.NormalReturnFacts, *callboundary.NormalReturnFacts)
 }
 
-func normalReturnSummarySliceLane[T any](
-	get func(*callboundary.NormalReturnFacts) *[]T,
-	normalize func(*axis.Registry, []T) []T,
-	clone func([]T) []T,
-	equal func(*axis.Registry, []T, []T) bool,
-	lessOrEq func(*axis.Registry, []T, []T) bool,
-	join func(*axis.Registry, []T, []T) []T,
-	widen func(*axis.Registry, []T, []T) []T,
-) normalReturnSummaryLane {
-	return normalReturnSummarySliceLaneOwned(get, normalize, normalize, clone, equal, lessOrEq, join, widen)
-}
-
 func normalReturnSummarySliceLaneOwned[T any](
 	get func(*callboundary.NormalReturnFacts) *[]T,
 	normalize func(*axis.Registry, []T) []T,
@@ -79,25 +67,6 @@ func normalReturnSummaryLaneNoRegOwned[T any](
 	return normalReturnSummarySliceLaneOwned(get,
 		func(_ *axis.Registry, in []T) []T { return normalize(in) },
 		func(_ *axis.Registry, in []T) []T { return normalizeOwned(in) },
-		clone,
-		func(_ *axis.Registry, a, b []T) bool { return equal(a, b) },
-		func(_ *axis.Registry, a, b []T) bool { return lessOrEq(a, b) },
-		func(_ *axis.Registry, a, b []T) []T { return join(a, b) },
-		func(_ *axis.Registry, a, b []T) []T { return widen(a, b) },
-	)
-}
-
-func normalReturnSummaryLaneNoReg[T any](
-	get func(*callboundary.NormalReturnFacts) *[]T,
-	normalize func([]T) []T,
-	clone func([]T) []T,
-	equal func([]T, []T) bool,
-	lessOrEq func([]T, []T) bool,
-	join func([]T, []T) []T,
-	widen func([]T, []T) []T,
-) normalReturnSummaryLane {
-	return normalReturnSummarySliceLane(get,
-		func(_ *axis.Registry, in []T) []T { return normalize(in) },
 		clone,
 		func(_ *axis.Registry, a, b []T) bool { return equal(a, b) },
 		func(_ *axis.Registry, a, b []T) bool { return lessOrEq(a, b) },

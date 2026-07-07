@@ -42,10 +42,6 @@ func conditionPathProofEvidence(path, state string) string {
 	return display.ConditionPathProofEvidence(path, state)
 }
 
-func conditionTypeProofEvidence(path, runtimeType string) string {
-	return display.ConditionTypeProofEvidence(path, runtimeType)
-}
-
 func redundantConditionMessage(always bool) string {
 	return display.RedundantConditionMessage(always)
 }
@@ -265,10 +261,6 @@ func assignmentSourceTypeEvidence(sourceName string, t typ.Type) string {
 	return display.SourceTypeEvidence(sourceName, t)
 }
 
-func assignmentSourceTypeEvidenceDisplay(sourceName string, t typ.Type, displayType string) string {
-	return display.SourceTypeEvidenceDisplay(sourceName, t, displayType)
-}
-
 func declaredTypeEvidence(name string, annotation ast.TypeExpr, fallback typ.Type) string {
 	return display.DeclaredTypeEvidence(name, annotation, fallback)
 }
@@ -429,10 +421,6 @@ func missingRequiredMethodMessage(contract typ.Type, method string) string {
 	return display.MissingRequiredMethodMessage(contract, method)
 }
 
-func missingRequiredMethodEvidence(contract typ.Type, method string) string {
-	return display.MissingRequiredMethodEvidence(contract, method)
-}
-
 func missingRequiredMethodTypeEvidence(contract typ.Type, method typ.Method) string {
 	return display.MissingRequiredMethodTypeEvidence(contract, method)
 }
@@ -551,10 +539,6 @@ func callParameterCountEvidence(name string, want int) string {
 
 func callParameterTypeEvidence(name string, index int, suffix string, want typ.Type) string {
 	return display.CallParameterTypeEvidence(name, index, suffix, want)
-}
-
-func callParameterTypeEvidenceDisplay(name string, index int, suffix string, want typ.Type, displayType string) string {
-	return display.CallParameterTypeEvidenceDisplay(name, index, suffix, want, displayType)
 }
 
 func callParamObligationEvidence(name string, subject string, want typ.Type) string {

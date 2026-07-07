@@ -249,14 +249,6 @@ func (idx *contextIndex) FunctionExpressionKeysForOwner(owner summary.SummaryKey
 	return out
 }
 
-func (k *programKeys) mergeContextForKey(reg *axis.Registry, key summary.SummaryKey, fn *ast.FunctionExpr, entryKeys *keyspace.KeySpace, entry state.State) bool {
-	if k == nil {
-		return false
-	}
-	entry, entryKeys = k.seedMetatableMethodContextEntry(reg, fn, entry, entryKeys)
-	return k.contexts.mergeContextForKey(reg, key, fn, entryKeys, entry)
-}
-
 func (k *programKeys) refreshContextForKey(reg *axis.Registry, key summary.SummaryKey, fn *ast.FunctionExpr, entryKeys *keyspace.KeySpace, entry state.State) bool {
 	if k == nil {
 		return false

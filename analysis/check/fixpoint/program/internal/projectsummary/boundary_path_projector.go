@@ -98,14 +98,6 @@ func (p boundaryPathProjector) KeyspaceStatePath(stateKey keyspace.Key) (path.Pa
 	return p.statePathFromKey(stateKey)
 }
 
-func (p boundaryPathProjector) PathKeyStatePath(pathKey path.PathKey) (path.Path, bool) {
-	stateKey, ok := pathaddr.StateKeyFromPathKey(pathKey)
-	if !ok {
-		return path.Path{}, false
-	}
-	return p.StatePath(stateKey)
-}
-
 func (p boundaryPathProjector) RelConstraintFact(constraint state.RelConstraint) (callboundary.RelConstraintFact, bool) {
 	a, ok := p.relConstraintOperand(constraint.A)
 	if !ok {

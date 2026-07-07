@@ -2,36 +2,7 @@ package diagnostics
 
 import (
 	"strings"
-
-	"github.com/wippyai/go-lua/analysis/type/typ"
 )
-
-func dispatchKeyName(table, key string) string {
-	if identifierName(key) {
-		return table + "." + key
-	}
-	return table + "[" + formatType(typ.LiteralString(key)) + "]"
-}
-
-func registrationCaseName(registry, key string) string {
-	return dispatchKeyName(registry, key)
-}
-
-func identifierName(s string) bool {
-	if s == "" {
-		return false
-	}
-	if !((s[0] >= 'A' && s[0] <= 'Z') || (s[0] >= 'a' && s[0] <= 'z') || s[0] == '_') {
-		return false
-	}
-	for i := 1; i < len(s); i++ {
-		ch := s[i]
-		if !((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_') {
-			return false
-		}
-	}
-	return true
-}
 
 func discriminantCaseList(cases []string) string {
 	return strings.Join(codeNames(cases), ", ")

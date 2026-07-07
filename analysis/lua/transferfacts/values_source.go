@@ -447,20 +447,6 @@ func (l *lowerer) wirLogicalTempDefsOrdered(leftDef, rhsDef wir.Instruction) (wi
 	return leftDef, rhsDef, "or", true
 }
 
-func (l *lowerer) wirDefinitionValueSource(
-	temp uint32,
-	inst wir.Instruction,
-	exprIndex int,
-	targetIndex int,
-	seen map[uint32]bool,
-) (factflow.ValueSource, bool) {
-	exprRef, ok := l.exprRef(wirTempExprRefKey{temp: temp})
-	if !ok {
-		return factflow.ValueSource{}, false
-	}
-	return l.wirDefinitionValueSourceWithRef(temp, inst, exprRef, exprIndex, targetIndex, seen)
-}
-
 func (l *lowerer) wirDefinitionValueSourceWithRef(
 	temp uint32,
 	inst wir.Instruction,
@@ -1397,23 +1383,6 @@ func (l *lowerer) staticValueSourceValue(source factflow.ValueSource) (product.V
 	default:
 		return product.Value{}, false
 	}
-}
-
-func (l *lowerer) staticSymbolType(sym symbol.ID) (typ.Type, bool) {
-	if sym == 0 || l == nil {
-		return nil, false
-	}
-	if t, ok := l.symbolTypes[sym]; ok && t != nil {
-		return t, true
-	}
-	if l.bindings == nil {
-		return nil, false
-	}
-	expr, ok := l.bindings.SymbolTypeAnnotation(sym)
-	if !ok {
-		return nil, false
-	}
-	return l.resolveType(expr)
 }
 
 func rootSymbolPathKey(key path.PathKey) (symbol.ID, []segment.Segment, bool) {

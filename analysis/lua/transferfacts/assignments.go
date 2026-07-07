@@ -312,15 +312,6 @@ func tableConstructorExpr(expr ast.Expr) bool {
 	return ok
 }
 
-func emptyTableConstructorExpr(expr ast.Expr) bool {
-	inner, ok := sourceprovenance.ProofInner(expr)
-	if !ok {
-		return false
-	}
-	table, ok := inner.(*ast.TableExpr)
-	return ok && len(table.Fields) == 0
-}
-
 func (l *lowerer) declaredReturnLocalContract(fact semantics.LocalAssignmentFact) (typ.Type, bool) {
 	if !returnLocalInitializerCandidate(fact) {
 		return nil, false

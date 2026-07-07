@@ -44,10 +44,6 @@ func sourceSpansFromBody(spans []body.SourceSpan) []SourceSpan {
 	return out
 }
 
-func sourceSpanValid(span SourceSpan) bool {
-	return span.StartLine > 0 && span.StartCol > 0
-}
-
 func normalizedEndCol(startLine, startCol, endLine, endCol int) int {
 	if endLine == startLine && endCol <= startCol {
 		return startCol + 1

@@ -5,17 +5,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
-	"github.com/wippyai/go-lua/analysis/lua/branchcond"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
-
-// branchDiffConstraints extracts difference-logic facts from normalized
-// branch-condition descriptors proven on each edge. Syntax recognition belongs
-// to branchcond/wirlower; this layer only projects neutral descriptors into the
-// factflow lane.
-func (l *lowerer) branchDiffConstraints(condition ast.Expr) []factflow.BranchDiffConstraint {
-	return branchDiffConstraintsFromDescriptors(branchcond.BranchDiffConstraintsOnBothEdges(condition, l.bindings))
-}
 
 func (l *lowerer) branchDiffConstraintsFromWIR(point cfg.Point) []factflow.BranchDiffConstraint {
 	if l == nil || l.wir == nil {
@@ -42,34 +32,7 @@ func branchDiffConstraintsFromWIRDescriptors(in []wir.BranchDiffConstraint) []fa
 	return out
 }
 
-func branchDiffConstraintsFromDescriptors(in []branchcond.BranchDiffConstraint) []factflow.BranchDiffConstraint {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]factflow.BranchDiffConstraint, 0, len(in))
-	for _, d := range in {
-		out = append(out, branchDiffConstraintFromBranchCond(d))
-	}
-	return out
-}
-
 func branchDiffConstraintFromWIR(d wir.BranchDiffConstraint) factflow.BranchDiffConstraint {
-	coHi2, hi2Path, hi2IsLen := branchDiffSecondUpperBound(d.HasHi2, d.CoHi2, d.Hi2Path, d.Hi2IsLen)
-	return factflow.NewBranchScaledConstraintOnEdge(
-		d.CoHi,
-		d.HiPath,
-		d.HiIsLen,
-		coHi2,
-		hi2Path,
-		hi2IsLen,
-		d.LoPath,
-		d.LoIsLen,
-		d.C,
-		d.Edge,
-	)
-}
-
-func branchDiffConstraintFromBranchCond(d branchcond.BranchDiffConstraint) factflow.BranchDiffConstraint {
 	coHi2, hi2Path, hi2IsLen := branchDiffSecondUpperBound(d.HasHi2, d.CoHi2, d.Hi2Path, d.Hi2IsLen)
 	return factflow.NewBranchScaledConstraintOnEdge(
 		d.CoHi,

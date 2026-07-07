@@ -158,10 +158,6 @@ func (r *signatureIdentityResolver) nameForIndexedIteratorCallSiteView(site fact
 	return r.implicitBuiltinIteratorName(site.CalleeSymbol(), site.CalleePathRef())
 }
 
-func (r *signatureIdentityResolver) pointForSite(site factflow.CallSite) (cfg.Point, bool) {
-	return r.pointForSiteView(site.View())
-}
-
 func (r *signatureIdentityResolver) pointForSiteView(site factflow.CallSiteView) (cfg.Point, bool) {
 	if r == nil || len(r.callPoints) == 0 {
 		return 0, false

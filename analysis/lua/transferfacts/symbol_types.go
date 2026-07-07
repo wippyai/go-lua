@@ -348,19 +348,6 @@ func functionExpressionType(fn *ast.FunctionExpr, bindings *bind.Result, resolve
 	return functiontype.Expression(fn, bindings, resolver)
 }
 
-func functionExpressionTypeFromBindings(
-	fn *ast.FunctionExpr,
-	bindings *bind.Result,
-	resolveType func(ast.TypeExpr) (typ.Type, bool),
-	resolveDecl func(bind.TypeDecl) (typ.Type, bool),
-) (typ.Type, bool) {
-	return functiontype.FromBindings(fn, bindings, resolveType, resolveDecl)
-}
-
-func transferFunctionReturnTypeExprs(types []ast.TypeExpr) []ast.TypeExpr {
-	return functiontype.ReturnTypeExprs(types)
-}
-
 func callFirstReturnType(symbolTypes map[symbol.ID]typ.Type, bindings *bind.Result, expr ast.Expr) (typ.Type, bool) {
 	call, ok := expr.(*ast.FuncCallExpr)
 	if !ok || call == nil {

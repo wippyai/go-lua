@@ -32,10 +32,6 @@ func hasUsefulEnd(span diagnostic.Span) bool {
 	return span.EndLine == span.StartLine && span.EndCol > span.StartCol
 }
 
-func sameStart(a, b diagnostic.Span) bool {
-	return a.StartLine == b.StartLine && a.StartCol == b.StartCol
-}
-
 func requiredFieldPath(targetName, fieldName string) string {
 	if fieldName == "" {
 		return targetName

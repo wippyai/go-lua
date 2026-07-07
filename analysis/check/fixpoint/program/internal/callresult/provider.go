@@ -1057,34 +1057,6 @@ func unknownResultSlots(reg *axis.Registry, site factflow.CallSiteView) []callpa
 	return out
 }
 
-func summaryKeyForCall(
-	ctx transfer.NodeContext,
-	site factflow.CallSiteView,
-	in state.State,
-	read func(cfg.Point) state.State,
-	contextKeyFor KeyFunc,
-	keyFor KeyFunc,
-	calleeValue CalleeValueFunc,
-	functionIDs map[identity.ID]summary.SummaryKey,
-	pathKeys map[factflow.CalleePathKey]summary.SummaryKey,
-) (summary.SummaryKey, bool) {
-	if contextKeyFor != nil {
-		if key, ok := contextKeyFor(ctx, site); ok {
-			return key, true
-		}
-	}
-	if id, hasID := currentCalleeIdentity(ctx, site, in, read, calleeValue); hasID {
-		key, ok := functionIDs[id]
-		return key, ok
-	}
-	if keyFor != nil {
-		if key, ok := keyFor(ctx, site); ok {
-			return key, true
-		}
-	}
-	return summaryKeyForDefinitionPath(ctx, site, in, read, calleeValue, pathKeys)
-}
-
 // summaryKeyForDefinitionPath resolves a member-call callee to its summary by the
 // callee's syntactic definition path. It is the sound fallback for a callee value
 // rehydrated across a closure boundary, where the function value carries no
@@ -1638,14 +1610,6 @@ func declaredMemberAcceptsCurrent(typeValues *typevalue.Cache, current, declared
 		return typeValues.IsSubtype(current, declared)
 	}
 	return typevalue.NewCache().IsSubtype(current, declared)
-}
-
-func declaredReturnRecord(t typ.Type) (*typ.Record, bool) {
-	if optional, ok := t.(*typ.Optional); ok {
-		t = optional.Inner
-	}
-	record, ok := t.(*typ.Record)
-	return record, ok
 }
 
 func declaredTypeContainsBoundaryTop(t typ.Type) bool {
@@ -2298,13 +2262,6 @@ func unaliasType(t typ.Type) typ.Type {
 		}
 		t = alias.UnaliasedTarget()
 	}
-}
-
-func functionTypeParamObligations(reg *axis.Registry, typeValues *typevalue.Cache, argCount int, fn *typ.Function) []callpayload.CallParamObligation {
-	if reg == nil || fn == nil || len(fn.Params) == 0 {
-		return nil
-	}
-	return functionTypeParamObligationsFrom(reg, typeValues, argCount, fn, 0)
 }
 
 func functionTypeParamObligationsForSite(

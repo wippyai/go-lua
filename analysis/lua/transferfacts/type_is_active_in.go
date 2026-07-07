@@ -98,10 +98,6 @@ func resultCorrelationActiveIn(input *factflow.FactsInput, graph cfg.Graph, esta
 	return activeIn
 }
 
-func typeIsRelationKilledAt(input *factflow.FactsInput, point cfg.Point, targets typeIsTargets) bool {
-	return resultCorrelationKilledAt(input, point, typeIsResultCorrelationTargets(targets))
-}
-
 func resultCorrelationKilledAt(input *factflow.FactsInput, point cfg.Point, targets resultCorrelationTargets) bool {
 	if assignment, ok := input.RootAssignments[point]; ok && resultCorrelationKillsPath(assignment.TargetPath(), targets) {
 		return true
@@ -110,10 +106,6 @@ func resultCorrelationKilledAt(input *factflow.FactsInput, point cfg.Point, targ
 		return true
 	}
 	return false
-}
-
-func typeIsKillsPath(candidate path.Path, targets typeIsTargets) bool {
-	return resultCorrelationKillsPath(candidate, typeIsResultCorrelationTargets(targets))
 }
 
 func resultCorrelationKillsPath(candidate path.Path, targets resultCorrelationTargets) bool {

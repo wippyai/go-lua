@@ -82,10 +82,6 @@ func (diagnosticDisplay) ConditionPathProofEvidence(path, state string) string {
 	return fmt.Sprintf("prior guard established %s is %s", path, state)
 }
 
-func (diagnosticDisplay) ConditionTypeProofEvidence(path, runtimeType string) string {
-	return fmt.Sprintf("prior guard established type(%s) is %q", path, runtimeType)
-}
-
 func (diagnosticDisplay) ConditionStabilityEvidence(path string) string {
 	return fmt.Sprintf("%s is unchanged between the prior guard and this check", path)
 }

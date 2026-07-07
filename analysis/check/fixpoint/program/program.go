@@ -2713,23 +2713,6 @@ func cloneCheckConfig(config body.Config) body.Config {
 	return config
 }
 
-func materializeChunk(
-	prepared preparedBodies,
-	bindings *bind.Result,
-	config body.Config,
-	stats *Stats,
-	summaries summary.Reader,
-	contextKeyFor callresult.KeyFunc,
-	keyFor callresult.KeyFunc,
-	keys programKeys,
-) (*body.Result, error) {
-	materialized, err := materializeChunkWithResultKeys(prepared, bindings, config, stats, summaries, contextKeyFor, keyFor, keys, nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	return materialized.root, nil
-}
-
 type materializedProgram struct {
 	root        *body.Result
 	resultKey   map[*body.Result]summary.SummaryKey
@@ -3230,24 +3213,6 @@ func materializeChunkWithResultKeys(
 		return materializedProgram{}, err
 	}
 	return materializedProgram{root: root, resultKey: resultKeys, projections: projections, keys: keys}, nil
-}
-
-func materializeFunction(
-	fn *ast.FunctionExpr,
-	prepared preparedBodies,
-	bindings *bind.Result,
-	config body.Config,
-	stats *Stats,
-	summaries summary.Reader,
-	contextKeyFor callresult.KeyFunc,
-	keyFor callresult.KeyFunc,
-	keys programKeys,
-) (*body.Result, error) {
-	materialized, err := materializeFunctionWithResultKeys(fn, prepared, bindings, config, stats, summaries, contextKeyFor, keyFor, keys, nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	return materialized.root, nil
 }
 
 func materializeFunctionWithResultKeys(
@@ -4746,13 +4711,6 @@ func lowerFunctionOriginType(origin bind.FunctionOrigin, bindings *bind.Result, 
 		}
 	}
 	return lowerFunctionExprType(origin.Func, bindings, external)
-}
-
-func functionTypeExprAt(types []ast.TypeExpr, index int) ast.TypeExpr {
-	if index < 0 || index >= len(types) {
-		return nil
-	}
-	return types[index]
 }
 
 func functionReturnTypeExprs(types []ast.TypeExpr) []ast.TypeExpr {

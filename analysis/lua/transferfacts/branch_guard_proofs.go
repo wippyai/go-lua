@@ -7,20 +7,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
-
-func (l *lowerer) branchPathEvidence(check branchcond.Check, condition ast.Expr) []factflow.BranchPathEvidence {
-	var out []factflow.BranchPathEvidence
-	if check.Kind != branchcond.CheckNone {
-		out = append(out, branchPathEvidenceForCheck(check)...)
-		return out
-	}
-	for _, implied := range branchcond.ImpliedChecksOnBothEdges(condition, l.bindings) {
-		out = append(out, branchPathEvidenceForImplication(implied)...)
-	}
-	return out
-}
 
 func (l *lowerer) branchPathEvidenceFromWIR(point cfg.Point) []factflow.BranchPathEvidence {
 	var out []factflow.BranchPathEvidence

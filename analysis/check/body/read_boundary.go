@@ -847,21 +847,6 @@ func (r *Result) nilableRootDescendantPathValueAtBoundary(point cfg.Point, p pat
 	return projected, true
 }
 
-func (r *Result) recoveredDescendantPathValueAtBoundary(point cfg.Point, p pathdom.Path, current product.Value) (product.Value, bool) {
-	if r == nil || len(p.Segments) == 0 {
-		return product.Value{}, false
-	}
-	rootValue, ok := r.recoveredRootPathValueAtBoundary(point, p.RootOnly(), product.Top())
-	if !ok {
-		return product.Value{}, false
-	}
-	projected, ok := luaProjectValue(r.registry, r.typeValues)(rootValue, p.Segments)
-	if !ok || !r.recoveredRootPathValueShouldReplace(current, projected) {
-		return product.Value{}, false
-	}
-	return projected, true
-}
-
 func (r *Result) dominatingLocalAssignmentRootPathValueAtBoundary(point cfg.Point, p pathdom.Path, current product.Value) (product.Value, bool) {
 	if r == nil || len(p.Segments) != 0 {
 		return product.Value{}, false

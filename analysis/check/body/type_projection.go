@@ -15,10 +15,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
-func TypeAtSegment(t typ.Type, seg segment.Segment) (typ.Type, bool) {
-	return checkprojection.TypeAtSegment(t, seg)
-}
-
 func ExpectedTypeAtSegments(t typ.Type, segments []segment.Segment) (typ.Type, bool) {
 	return luatypeprojection.ExpectedTypeAtSegments(t, segments)
 }

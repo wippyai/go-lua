@@ -4,11 +4,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
-	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -277,55 +274,6 @@ func definitionEntryPointCandidate(origin bind.FunctionOrigin) bool {
 	default:
 		return false
 	}
-}
-
-func applyCapturedUpvaluePathEntryState(
-	reg *axis.Registry,
-	ks *keyspace.KeySpace,
-	bindings *bind.Result,
-	fn *ast.FunctionExpr,
-	caller state.State,
-	entry state.State,
-) (state.State, bool) {
-	if reg == nil || ks == nil || bindings == nil || fn == nil {
-		return entry, false
-	}
-	captures := bindings.DirectCaptures(fn)
-	if len(captures) == 0 {
-		return entry, false
-	}
-	bottom := product.Bottom(reg)
-	out := entry
-	edit := out.EditPathEvidence(reg)
-	seen := false
-
-	if snapshot := caller.PathRefinementsSnapshot(ks); !snapshot.Top {
-		for pathKey, value := range snapshot.Refinements {
-			if pathKey == "" || product.Equal(reg, value, bottom) {
-				continue
-			}
-			rebased, ok := rebaseCapturedPathKey(pathKey, captures)
-			if !ok {
-				continue
-			}
-			edit.WritePathKey(ks, rebased, value)
-			seen = true
-		}
-	}
-	if snapshot := caller.PathStaticMembersSnapshot(ks); !snapshot.Bottom && !snapshot.Top {
-		for pathKey, value := range snapshot.Members {
-			if pathKey == "" || product.Equal(reg, value, bottom) {
-				continue
-			}
-			rebased, ok := rebaseCapturedPathKey(pathKey, captures)
-			if !ok {
-				continue
-			}
-			edit.WritePathStaticMember(ks, rebased, value)
-			seen = true
-		}
-	}
-	return edit.DoneOn(out), seen
 }
 
 func rebaseCapturedPathKey(pathKey pathdom.PathKey, captures []bind.Capture) (pathdom.PathKey, bool) {

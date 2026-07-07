@@ -50,22 +50,6 @@ func projectNormalReturnParamConditions(reg *axis.Registry, result ResultReader)
 	return out
 }
 
-func normalReturnBranchCondition(
-	reg *axis.Registry,
-	result ResultReader,
-	graph cfg.Graph,
-	point cfg.Point,
-) (bool, bool) {
-	if reg == nil || graph == nil || !graph.IsBranch(point) {
-		return false, false
-	}
-	reachability, ok := newNormalReturnReachability(reg, result, graph)
-	if !ok {
-		return false, false
-	}
-	return normalReturnBranchConditionWithReachability(graph, reachability, point)
-}
-
 func normalReturnBranchConditionWithReachability(
 	graph cfg.Graph,
 	reachability normalReturnReachability,

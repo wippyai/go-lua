@@ -37,13 +37,6 @@ func (d diagnosticDisplay) CallResultDeclaredReturnEvidence(name, label string, 
 	return fmt.Sprintf("%s declares %s as %s", name, label, d.Type(got))
 }
 
-func (diagnosticDisplay) CallResultMissingNonNilProofMessage(label string) string {
-	if label == "" {
-		label = "call result"
-	}
-	return fmt.Sprintf("no guard on this path proves %s is non-nil before assignment", label)
-}
-
 func (diagnosticDisplay) PossiblyNilCallTargetMessage(name string) string {
 	return fmt.Sprintf("cannot call %s because it may be nil", name)
 }

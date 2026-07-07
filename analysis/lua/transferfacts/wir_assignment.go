@@ -648,15 +648,3 @@ func (l *lowerer) assignmentSourceOperandFromWIR(point cfg.Point) (wir.Operand, 
 	}
 	return wir.Operand{}, false
 }
-
-func (l *lowerer) hasAssignmentWriteFromWIR(point cfg.Point) bool {
-	if l == nil || l.wir == nil {
-		return false
-	}
-	for _, inst := range l.wir.PointInstructions(point) {
-		if inst.WritesAssignmentPoint() {
-			return true
-		}
-	}
-	return false
-}

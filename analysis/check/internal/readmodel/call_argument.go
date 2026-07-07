@@ -749,26 +749,6 @@ func (r Reader) rootPathHasTrustedDominatingAssignmentSource(point cfg.Point, p 
 	return r.result != nil && r.result.RootPathHasTrustedDominatingAssignmentSource(point, p)
 }
 
-func (r Reader) rootPathHasTrustedBoundaryValue(point cfg.Point, p path.Path) bool {
-	if r.result == nil || p.IsEmpty() || len(p.Segments) != 0 {
-		return false
-	}
-	value, ok := r.result.PathValueAtBoundary(point, p)
-	return ok && r.valueHasReadableType(value) && !r.ValueHasUntrustedTopOrigin(value)
-}
-
-func (r Reader) rootPathHasTrustedNumericForVariable(point cfg.Point, p path.Path) bool {
-	return r.result != nil && r.result.RootPathHasTrustedNumericForVariable(point, p)
-}
-
-func (r Reader) rootPathHasTrustedEntryValue(p path.Path) bool {
-	return r.result != nil && r.result.RootPathHasTrustedEntryValue(p)
-}
-
-func (r Reader) rootPathHasTrustedGenericForVariable(point cfg.Point, p path.Path) bool {
-	return r.result != nil && r.result.RootPathHasTrustedGenericForVariable(point, p)
-}
-
 func (r Reader) callArgumentBoundaryCandidate(point cfg.Point, source factflow.ValueSource, current product.Value) (product.Value, bool) {
 	p, ok := r.valueSourcePath(source)
 	if !ok || p.IsEmpty() {
@@ -900,10 +880,6 @@ func (r Reader) explicitTopDeclaredPathTypeAt(p path.Path) (typ.Type, bool) {
 
 func (r Reader) pathHasPositiveRuntimeTypeGuard(point cfg.Point, p path.Path) bool {
 	return r.result != nil && r.result.PathHasPositiveRuntimeTypeGuard(point, p)
-}
-
-func (r Reader) pathHasRuntimeTypeGuard(point cfg.Point, p path.Path) bool {
-	return r.result != nil && r.result.PathHasRuntimeTypeGuard(point, p)
 }
 
 func callArgumentSpan(site factflow.CallSite, index int) SourceSpan {
