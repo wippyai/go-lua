@@ -405,27 +405,93 @@ func baseXPCall(L *LState) int {
 	fn := L.CheckFunction(1)
 	errfunc := L.CheckFunction(2)
 
-	// Mark the xpcall frame as protected for error handling
+	// Mark the xpcall frame as protected. handleProtectedError (in threadRun)
+	// honors this for errors that surface after a yield inside a coroutine.
+	// The inline recover below is the boundary for synchronous errors and is
+	// the only recover layer present under a direct DoString/PCall call, which
+	// is why xpcall previously leaked its error in non-coroutine contexts.
 	L.currentFrame.Protected = true
 	L.setFrameExt(L.currentFrame).ErrFunc = errfunc
 
 	top := L.GetTop()
+	sp := L.stack.Sp()
 	L.Push(fn)
+	base := L.reg.Top() - 1 // nargs == 0 for xpcall's protected call
 
-	// Use CallK with continuation for yield-transparent xpcall
-	L.CallK(0, MultRet, xpcallContinuation, top)
+	var errValue LValue
+	func() {
+		defer func() {
+			if rcv := recover(); rcv != nil {
+				errValue = errorObjectFromRecover(rcv)
+			}
+		}()
+		L.CallK(0, MultRet, xpcallContinuation, top)
+	}()
 
-	// Check for yield before any cleanup
+	// Check for yield before any cleanup.
 	if L.yieldState != yieldNone {
 		return -1
 	}
 
+	// Clear the protected marker and errfunc binding regardless of outcome.
 	L.currentFrame.Protected = false
 	if ext := L.getFrameExt(L.currentFrame); ext != nil {
 		ext.ErrFunc = nil
 	}
+
+	if errValue != nil {
+		// Invoke the handler BEFORE resetting the stack, while the errored
+		// frames are still on L.stack. This matches standard Lua semantics so
+		// the handler can inspect the throw site (debug.getlocal,
+		// debug.traceback, etc.). PCall's own errfunc path does the same.
+		handled := invokeErrorHandler(L, errfunc, errValue, sp, base)
+
+		L.stack.SetSp(sp)
+		L.currentFrame = L.stack.Last()
+		L.reg.SetTop(base)
+		L.Push(LFalse)
+		L.Push(handled)
+		return 2
+	}
+
 	L.Insert(LTrue, top+1)
 	return L.GetTop() - top
+}
+
+// errorObjectFromRecover extracts the Lua value carried by a recovered panic.
+// Lua errors panic with *ApiError; anything else is stringified.
+func errorObjectFromRecover(rcv any) LValue {
+	if aerr, ok := rcv.(*ApiError); ok {
+		return aerr.Object
+	}
+
+	return LString(fmt.Sprint(rcv))
+}
+
+// invokeErrorHandler calls the xpcall error handler with the caught error
+// value while the throw-site frames are still on the stack. If the handler
+// itself raises, its error value is surfaced instead of the original. sp/base
+// are the pre-xpcall-call snapshots used to reset on handler failure.
+func invokeErrorHandler(L *LState, errfunc *LFunction, errValue LValue, sp, base int) LValue {
+	L.Push(errfunc)
+	L.Push(errValue)
+
+	var handled LValue = errValue
+	func() {
+		defer func() {
+			if rcv := recover(); rcv != nil {
+				L.stack.SetSp(sp)
+				L.currentFrame = L.stack.Last()
+				L.reg.SetTop(base)
+				handled = errorObjectFromRecover(rcv)
+			}
+		}()
+
+		L.Call(1, 1)
+		handled = L.Get(-1)
+	}()
+
+	return handled
 }
 
 /* }}} */
