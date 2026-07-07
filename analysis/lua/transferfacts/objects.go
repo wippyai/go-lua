@@ -649,15 +649,11 @@ func (l *lowerer) tableConstructorInstructionForExpr(expr ast.Expr) (wir.Instruc
 func (l *lowerer) objectLiteral(fact semantics.ObjectLiteralFact) factflow.ObjectLiteral {
 	entries := make([]factflow.ObjectEntry, 0, len(fact.Entries))
 	for _, entry := range fact.Entries {
-		source := l.valueSource(entry.Source)
-		if wirSource, ok := l.tableConstructorEntrySource(entry.Source); ok {
-			source = wirSource
-		}
 		span := sourceSpan(entry.ValueSpan)
 		label := entry.ValueLabel
 		if wirEntry, ok := l.wirObjectEntry(fact.Expr, entry.Suffix); ok {
-			source = factflow.NewUnknownValueSource(entry.Source.TargetIndex)
-			if wirSource, ok := l.wirObjectEntrySource(wirEntry, entry.Source); ok {
+			source := factflow.NewUnknownValueSource(factflow.NoValueSourceIndex)
+			if wirSource, ok := l.wirObjectEntrySource(wirEntry); ok {
 				source = wirSource
 			}
 			if wirEntry.entry.ValueSpan.Valid() {
@@ -666,6 +662,26 @@ func (l *lowerer) objectLiteral(fact semantics.ObjectLiteralFact) factflow.Objec
 			if wirEntry.entry.ValueLabel != "" {
 				label = wirEntry.entry.ValueLabel
 			}
+			entries = append(entries, factflow.NewObjectEntryWithMetadata(
+				entry.Suffix,
+				source,
+				span,
+				label,
+			))
+			continue
+		}
+		if l != nil && l.wir != nil {
+			entries = append(entries, factflow.NewObjectEntryWithMetadata(
+				entry.Suffix,
+				factflow.NewUnknownValueSource(factflow.NoValueSourceIndex),
+				span,
+				label,
+			))
+			continue
+		}
+		source := l.valueSource(entry.Source)
+		if wirSource, ok := l.tableConstructorEntrySource(entry.Source); ok {
+			source = wirSource
 		}
 		entries = append(entries, factflow.NewObjectEntryWithMetadata(
 			entry.Suffix,
@@ -694,7 +710,7 @@ func (l *lowerer) wirObjectEntry(expr ast.Expr, suffix path.Path) (wirObjectEntr
 	return wirObjectEntry{}, false
 }
 
-func (l *lowerer) wirObjectEntrySource(entry wirObjectEntry, fallback sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
+func (l *lowerer) wirObjectEntrySource(entry wirObjectEntry) (factflow.ValueSource, bool) {
 	return l.objectEntryValueSourceFromWIR(entry.point, entry.entry.Value)
 }
 

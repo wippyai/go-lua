@@ -53,6 +53,34 @@ func TestLowerObjectLiteralEntryCarriesSyntaxFreeMetadata(t *testing.T) {
 	}
 }
 
+func TestObjectLiteralInWIRModeDoesNotFallbackToSemanticEntrySource(t *testing.T) {
+	value := ident("value")
+	source := sourceprovenance.SourceForExpr(value, 0, 0, 0, true, false, nil)
+	l := lowerer{
+		registry: standard.Registry(),
+		wir:      wir.NewBody("missing-object-entry"),
+		exprs:    make(map[any]factflow.ExprRef),
+	}
+
+	lowered := l.objectLiteral(semantics.ObjectLiteralFact{
+		Expr: &ast.TableExpr{},
+		Entries: []semantics.ObjectEntryFact{
+			{
+				Suffix: fieldSuffix("id"),
+				Source: source,
+			},
+		},
+	})
+
+	entries := lowered.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("entries = %#v, want one", entries)
+	}
+	if got := entries[0].Source(); got.Kind != factflow.ValueSourceUnknown || got.HasExpr {
+		t.Fatalf("WIR-mode object entry source = %#v, want unknown without semantic fallback", got)
+	}
+}
+
 func TestLowerObjectLiteralEntryLabelsAttributeValue(t *testing.T) {
 	table := &ast.TableExpr{Fields: []*ast.Field{
 		{Key: stringLit("id"), KeySyntax: ast.AttrKeyDot, Value: objectAttrGet(ident("payload"), "id")},
