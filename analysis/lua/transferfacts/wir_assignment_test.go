@@ -1055,6 +1055,48 @@ end
 	}
 }
 
+func TestAssignmentSourceUnsupportedWIROperandDoesNotFallbackToSemanticSource(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(value: string): ()
+    local out = value
+end
+`)
+	assignStmt := fn.Stmts[0].(*ast.LocalAssignStmt)
+	point := requireStmtPoints(t, built, assignStmt, 1)[0]
+	factView, ok := result.LocalAssignmentView(point)
+	if !ok {
+		t.Fatalf("missing local assignment view at point %d", point)
+	}
+	fact, _ := factView.Borrowed()
+	outPath := path.NewPath(mustLocalAt(t, bindings, assignStmt, 0), "out")
+	body := wir.NewBody("unsupported-assignment-source")
+	typeRef := body.InternType(typ.String)
+	start := body.Emit(wir.Instruction{
+		Op:     wir.OpAssign,
+		Point:  point,
+		Assign: wir.AssignLocalDeclaration,
+		Dst:    wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(outPath))},
+		A:      wir.Operand{Kind: wir.OperandType, Ref: uint32(typeRef)},
+	})
+	body.SetPointRange(point, start, body.Len())
+
+	l := lowerer{
+		registry:             standard.Registry(),
+		bindings:             bindings,
+		wir:                  body,
+		exprs:                make(map[any]factflow.ExprRef),
+		types:                make(map[any]factflow.TypeRef),
+		expressionValues:     make(map[factflow.ExprRef]product.Value),
+		expressionOperations: make(map[factflow.ExprRef]factflow.ExpressionOperation),
+		expressionPaths:      make(map[factflow.ExprRef]path.Path),
+		expressionConditions: make(map[factflow.ExprRef]factflow.ExpressionCondition),
+	}
+	source := l.assignmentSource(point, fact.Source)
+	if source.Kind != factflow.ValueSourceUnknown || source.HasExpr {
+		t.Fatalf("assignment source = %#v, want unknown without semantic expression fallback", source)
+	}
+}
+
 func TestAssignmentCallResultExprRefComesFromWIRCallIdentity(t *testing.T) {
 	body := wir.NewBody("call-result-expr")
 	callPoint := cfg.Point(10)

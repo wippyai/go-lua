@@ -495,7 +495,7 @@ func (l *lowerer) assignmentSource(point cfg.Point, fallback sourceprovenance.AS
 	if source, ok := l.assignmentSourceFromWIR(point, fallback); ok {
 		return source
 	}
-	if l.hasMalformedSimpleWIRAssignmentSource(point) {
+	if l != nil && l.wir != nil {
 		return factflow.NewUnknownValueSource(fallback.TargetIndex)
 	}
 	return l.valueSource(fallback)
@@ -659,21 +659,6 @@ func (l *lowerer) assignmentSourceOperandFromWIR(point cfg.Point) (wir.Operand, 
 		}
 	}
 	return wir.Operand{}, false
-}
-
-func (l *lowerer) hasMalformedSimpleWIRAssignmentSource(point cfg.Point) bool {
-	if l == nil || l.wir == nil {
-		return false
-	}
-	for _, inst := range l.wir.PointInstructions(point) {
-		if inst.Op != wir.OpAssign {
-			continue
-		}
-		if _, ok := inst.AssignmentSourceOperand(); !ok {
-			return true
-		}
-	}
-	return false
 }
 
 func (l *lowerer) hasAssignmentWriteFromWIR(point cfg.Point) bool {
