@@ -83,13 +83,13 @@ func lowerFunctionFactsWithWIR(t *testing.T, name string, result *semantics.Resu
 		t.Fatal("semantic result is not a function")
 	}
 	body := wirlower.LowerFunction(name, fn, bindings, built)
-	return Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	return Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 }
 
 func lowerChunkFactsWithWIR(t *testing.T, name string, stmts []ast.Stmt, result *semantics.Result, built *cfgbuild.Result, bindings *bind.Result, reg *axis.Registry) factflow.Facts {
 	t.Helper()
 	body := wirlower.Lower(name, stmts, bindings, built)
-	return Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	return Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 }
 
 func TestLowerBooleanRootTruthyFalsyBranchesPublishLiteralRefinements(t *testing.T) {
@@ -352,10 +352,6 @@ end
 		t.Fatalf("stmt[1] = %T, want function definition", stmts[1])
 	}
 	built := cfgbuild.BuildFunction(def.Func, bindings)
-	result, err := semantics.ExtractFunction(def.Func, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractFunction: %v", err)
-	}
 	dbType := typetable.NewRecord().
 		Field("release", typ.Func().Param("self", typ.Self).Build()).
 		Build()
@@ -366,7 +362,7 @@ end
 	sqlManifest := manifest.New("sql")
 	sqlManifest.SetExport(typetable.NewRecord().Field("get", getType).Build())
 	body := wirlower.Lower("run", def.Func.Stmts, bindings, built)
-	wirFacts := Lower(result, built.Graph, Config{
+	wirFacts := Lower(built.Graph, Config{
 		Registry:      standard.Registry(),
 		Bindings:      bindings,
 		ModuleExports: importlookup.Source{Manifests: []*manifest.Manifest{sqlManifest}},
@@ -413,7 +409,7 @@ end
 	sqlManifest := manifest.New("sql")
 	sqlManifest.SetExport(typetable.NewRecord().Field("get", getType).Build())
 	body := wirlower.Lower("run-no-sidecars", def.Func.Stmts, bindings, built)
-	wirFacts := Lower(nil, built.Graph, Config{
+	wirFacts := Lower(built.Graph, Config{
 		Registry:      standard.Registry(),
 		Bindings:      bindings,
 		ModuleExports: importlookup.Source{Manifests: []*manifest.Manifest{sqlManifest}},
@@ -558,7 +554,7 @@ func TestLowerStaticTruthinessMarksImpossibleBranchEdges(t *testing.T) {
 			}
 
 			body := wirlower.Lower("static-truthiness", stmts, bindings, built)
-			facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+			facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 			point := requireStmtPoints(t, built, tc.stmt, 1)[0]
 			if got := facts.BranchEdgeUnreachable(point, true); got != tc.wantTrueBlocked {
 				t.Fatalf("true-edge unreachable = %v, want %v", got, tc.wantTrueBlocked)
@@ -845,7 +841,7 @@ end
 
 func TestLowerProtectedCallPayloadTypeComesFromWIRCallbackPath(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local function run_tests(): string
 	return "wrong"
 end
@@ -923,7 +919,7 @@ end
 	})
 	body.SetPointRange(branchPoint, branchStart, branchStart+1)
 
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	refinement, ok := branchRefinementAt(facts.BranchRefinements(branchPoint), payloadPath)
 	if !ok {
 		t.Fatalf("missing pcall payload refinement at point %d; got %#v", branchPoint, facts.BranchRefinements(branchPoint))
@@ -944,7 +940,7 @@ end
 
 func TestLowerProtectedCallSuccessGuardInWIRModeDoesNotFallbackToSidecar(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local function run_tests(): number
 	return 1
 end
@@ -955,7 +951,7 @@ if not ok then
 end
 `, "pcall")
 
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: wir.NewBody("empty")})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: wir.NewBody("empty")})
 	assign := mustLocalStmt(t, stmts, 1)
 	payloadPath := path.NewPath(mustLocalAt(t, bindings, assign, 1), "result")
 	ifStmt := mustIfStmt(t, stmts, 2)
@@ -967,7 +963,7 @@ end
 
 func TestLowerProtectedCallSuccessGuardUsesWIRCallSiteWithoutSemanticResult(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local function run_tests(): number
 	return 1
 end
@@ -979,7 +975,7 @@ end
 `, "pcall")
 
 	body := wirlower.Lower("chunk", stmts, bindings, built)
-	seed := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	seed := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	assign := mustLocalStmt(t, stmts, 1)
 	callPoint := requireStmtPoints(t, built, assign, 3)[0]
 	site, ok := seed.CallSite(callPoint)
@@ -1028,7 +1024,7 @@ end
 
 func TestLowerProtectedCallDoesNotFallbackWhenWIRCallInstructionMissing(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local function run_tests(): number
 	return 1
 end
@@ -1053,7 +1049,7 @@ end
 	})
 	body.SetPointRange(point, start, start+1)
 
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	if refinement, ok := branchRefinementAt(facts.BranchRefinements(point), payloadPath); ok {
 		t.Fatalf("WIR mode protected-call refinement used semantic call at point %d without WIR call instruction: %#v", point, refinement)
 	}
@@ -1718,7 +1714,7 @@ func TestLowerImportedCallResultTruthyDiscriminantPublishesRootRefinement(t *tes
 	validatorManifest.SetExport(typetable.NewRecord().
 		Field("validate_name", typ.Func().Param("input", typ.String).Returns(resultType).Build()).
 		Build())
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local validator = require("validator")
 local result = validator.validate_name("Alice")
 if result.ok then
@@ -1728,7 +1724,7 @@ else
 end
 `)
 	body := wirlower.Lower("imported-result-branch", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{
+	facts := Lower(built.Graph, Config{
 		Registry:      standard.Registry(),
 		Bindings:      bindings,
 		ModuleExports: importlookup.Source{Manifests: []*manifest.Manifest{validatorManifest}},

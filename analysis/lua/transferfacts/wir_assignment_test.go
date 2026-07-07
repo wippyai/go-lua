@@ -23,7 +23,7 @@ import (
 )
 
 func TestLowerLocalAssignmentUsesWIRLiteralSources(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(value: string, make_value: () -> string)
     local from_param = value
     local from_literal = "ok"
@@ -31,7 +31,7 @@ function f(value: string, make_value: () -> string)
     local from_local = from_literal
 end`)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	paramPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	paramAssign, ok := facts.RootAssignment(paramPoint)
@@ -82,12 +82,12 @@ end`)
 }
 
 func TestLowerAnnotatedScalarLiteralAssignmentKeepsLiteralSource(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f()
     local x: string | number = 42
 end`)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	assign, ok := facts.RootAssignment(point)
@@ -113,7 +113,7 @@ end
 	def := stmts[0].(*ast.FuncDefStmt)
 	body := wirlower.Lower("root-function-definition-no-sidecars", stmts, bindings, built)
 	reg := standard.Registry()
-	facts := Lower(nil, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 
 	point := requireStmtPoints(t, built, def, 1)[0]
 	assign, ok := facts.RootAssignment(point)
@@ -146,13 +146,13 @@ end
 }
 
 func TestLowerLocalAssignmentNaryConcatPublishesStringExpressionSource(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): ()
 	local label = "suite" .. "/" .. "name"
 end`)
 	body := wirlower.Lower("nary-concat-assignment", fn.Stmts, bindings, built)
 	reg := standard.Registry()
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 
 	var assignment factflow.RootAssignment
 	assignPoint := cfg.Point(0)
@@ -185,11 +185,11 @@ end`)
 }
 
 func TestLowerWIRAnyClaimLocalAssignmentDoesNotCreateDeclaredContract(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local raw = ({ kind = "task", route_id = "start" } :: any)
 `)
 	body := wirlower.Lower("any-claim-local", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	point := requireStmtPoints(t, built, stmts[0], 1)[0]
 	assignment, ok := facts.RootAssignment(point)
@@ -209,12 +209,12 @@ local raw = ({ kind = "task", route_id = "start" } :: any)
 }
 
 func TestLowerWIRAnnotatedLocalFromUnresolvedCallCarriesDeclaredContract(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local x: string | number = produce()
 `, "produce")
 	body := wirlower.Lower("annotated-local-unresolved-call", stmts, bindings, built)
 	reg := standard.Registry()
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 
 	var assignment factflow.RootAssignment
 	found := false
@@ -243,7 +243,7 @@ local x: string | number = produce()
 }
 
 func TestLowerAssignmentLocalSourcePathComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): ()
     local value = "x"
     local other = "y"
@@ -265,7 +265,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	assign, ok := facts.RootAssignment(points[0])
 	if !ok {
 		t.Fatalf("missing assignment at point %d", points[0])
@@ -278,7 +278,7 @@ end
 }
 
 func TestLowerAssignmentLocalTargetComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): ()
     local value = "x"
     local other = "y"
@@ -300,7 +300,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	assign, ok := facts.RootAssignment(points[0])
 	if !ok {
 		t.Fatalf("missing assignment at point %d", points[0])
@@ -311,7 +311,7 @@ end
 }
 
 func TestLowerAssignmentSegmentedSourcePathComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): ()
     local value = { name = "x" }
     local other = { name = "y" }
@@ -333,7 +333,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	assign, ok := facts.RootAssignment(points[0])
 	if !ok {
 		t.Fatalf("missing assignment at point %d", points[0])
@@ -349,7 +349,7 @@ end
 }
 
 func TestLowerOrdinaryRootWriteSourcePathComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): ()
     local out = ""
     local value = "x"
@@ -372,7 +372,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	assign, ok := facts.RootAssignment(points[0])
 	if !ok {
 		t.Fatalf("missing root assignment at point %d", points[0])
@@ -385,7 +385,7 @@ end
 }
 
 func TestLowerDynamicIndexKeySourcePathComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(box: any): ()
     local value = "x"
     local other = "y"
@@ -409,7 +409,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	write, ok := facts.DynamicIndexWrite(points[0])
 	if !ok {
 		t.Fatalf("missing dynamic index write at point %d", points[0])
@@ -426,7 +426,7 @@ end
 }
 
 func TestLowerDynamicIndexMissingWIRKeyDoesNotFallbackToASTKey(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(box: any, key: string, payload: string): ()
     box[key] = payload
 end
@@ -445,7 +445,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	write, ok := facts.DynamicIndexWrite(points[0])
 	if !ok {
 		t.Fatalf("missing dynamic index write at point %d", points[0])
@@ -460,7 +460,7 @@ end
 }
 
 func TestLowerDynamicAppendKeySourceComesFromWIRExpression(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(binding: any): ()
     local normalized: {any} = {}
     normalized[#normalized + 1] = binding
@@ -470,7 +470,7 @@ end
 	assignStmt := fn.Stmts[1].(*ast.AssignStmt)
 	points := requireStmtPoints(t, built, assignStmt, 1)
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	write, ok := facts.DynamicIndexWrite(points[0])
 	if !ok {
 		t.Fatalf("missing dynamic index write at point %d", points[0])
@@ -494,7 +494,7 @@ end
 }
 
 func TestLowerDynamicAppendInsideDefaultedIteratorComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(bindings: any): ()
     local normalized: {any} = {}
     for _, binding in ipairs(bindings or {}) do
@@ -519,7 +519,7 @@ end
 	}
 	points := requireStmtPoints(t, built, assignStmt, 1)
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	write, ok := facts.DynamicIndexWrite(points[0])
 	if !ok {
 		t.Fatalf("missing dynamic index write at point %d", points[0])
@@ -531,7 +531,7 @@ end
 }
 
 func TestLowerDynamicIndexTablePathComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(box: any, key: string, payload: string): ()
     local other_box = {}
     box[key] = payload
@@ -553,7 +553,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	write, ok := facts.DynamicIndexWrite(points[0])
 	if !ok {
 		t.Fatalf("missing dynamic index write at point %d", points[0])
@@ -565,7 +565,7 @@ end
 }
 
 func TestLowerDynamicIndexWriteDoesNotFallbackToASTTargetInWIRMode(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(box: any, key: string, payload: string): ()
     box[key] = payload
 end
@@ -583,14 +583,14 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	if _, ok := facts.DynamicIndexWrite(points[0]); ok {
 		t.Fatalf("WIR mode dynamic index write at point %d fell back to AST target", points[0])
 	}
 }
 
 func TestLowerStaticMemberWriteSourcePathComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(box: any): ()
     local value = "x"
     local other = "y"
@@ -611,7 +611,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	write, ok := facts.PathStaticMemberWrite(points[0])
 	if !ok {
 		t.Fatalf("missing static member write at point %d", points[0])
@@ -624,7 +624,7 @@ end
 }
 
 func TestLowerDynamicIndexValueSourcePathComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(box: any, key: string): ()
     local value = "x"
     local other = "y"
@@ -647,7 +647,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	write, ok := facts.DynamicIndexWrite(points[0])
 	if !ok {
 		t.Fatalf("missing dynamic index write at point %d", points[0])
@@ -664,7 +664,7 @@ end
 }
 
 func TestLowerDynamicIndexNonPathWIRValueDoesNotFallbackToASTValuePath(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(box: any, key: string): ()
     local payload = "x"
     box[key] = payload
@@ -685,7 +685,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	write, ok := facts.DynamicIndexWrite(points[0])
 	if !ok {
 		t.Fatalf("missing dynamic index write at point %d", points[0])
@@ -699,14 +699,14 @@ end
 }
 
 func TestLowerPathAndDynamicAssignmentUseWIRPathSources(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(box: any, key: string, value: string)
     local local_value = value
     box.name = value
     box[key] = value
 end`)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	localPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	localAssign, ok := facts.RootAssignment(localPoint)
@@ -751,7 +751,7 @@ function f(box: any, key: string, value: string)
     box[key] = value
 end`)
 	body := wirlower.Lower("assignment-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	boxPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "box")
 	valuePath := path.NewPath(bindings.ParamSlots(fn)[2].Symbol, "value")
@@ -794,7 +794,7 @@ function f(narrow: {number})
     local wide: {number | string} = narrow
 end`)
 	body := wirlower.Lower("local-alias-exposure-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	exposures := facts.CovariantExposures(point)
@@ -815,7 +815,7 @@ function f(narrow: {number})
     wide = narrow
 end`)
 	body := wirlower.Lower("root-reassign-exposure-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	point := requireStmtPoints(t, built, fn.Stmts[1], 1)[0]
 	exposures := facts.CovariantExposures(point)
@@ -835,7 +835,7 @@ function f(narrow: {number}, holder: { slot: {number | string} })
     holder.slot = narrow
 end`)
 	body := wirlower.Lower("path-store-exposure-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	exposures := facts.CovariantExposures(point)
@@ -855,7 +855,7 @@ function f(narrow: {number})
     local widened = narrow as {number | string}
 end`)
 	body := wirlower.Lower("cast-exposure-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	exposures := facts.CovariantExposures(point)
@@ -883,7 +883,7 @@ function f(slots: {[string]: { value: string }}, key: string, value: string)
     slots[key].value = value
 end`)
 	body := wirlower.Lower("nested-dynamic-write", fn.Stmts, bindings, built)
-	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	slotsPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "slots")
@@ -925,7 +925,7 @@ function f(value: string): ()
     out = "updated"
 end`)
 	body := wirlower.Lower("root-assignment-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	outPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "out")
 	localPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
@@ -959,7 +959,7 @@ function f(value: string): ()
     local out = { name = value }
 end`)
 	body := wirlower.Lower("table-root-assignment-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	outPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "out")
 	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
@@ -986,7 +986,7 @@ function f(box: {[string]: string}, key: string): ()
     local out = box[key]
 end`)
 	body := wirlower.Lower("dynamic-index-root-assignment-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	outPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "out")
 	boxPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "box")
@@ -1024,7 +1024,7 @@ end`)
 }
 
 func TestLowerWIRGlobalTableFieldAssignmentAlsoWritesCanonicalGlobalRoot(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local captured_fn
 
 _G.coroutine = {
@@ -1036,7 +1036,7 @@ _G.coroutine = {
 coroutine.spawn(function() end)
 `, "_G", "coroutine")
 	body := wirlower.Lower("global-table-canonical-root", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	point := requireStmtPoints(t, built, stmts[1], 1)[0]
 	rootFact, ok := facts.RootAssignment(point)
@@ -1075,7 +1075,7 @@ function f(): ()
     end
 end`)
 	body := wirlower.Lower("closure-root-assignment-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	stmt := fn.Stmts[0].(*ast.LocalAssignStmt)
 	outPath := path.NewPath(mustLocalAt(t, bindings, stmt, 0), "out")
@@ -1110,14 +1110,14 @@ func assertWIRPathSource(t *testing.T, source factflow.ValueSource, want path.Pa
 }
 
 func TestLowerAssignmentDoesNotFallbackWhenWIRWriteInstructionMissing(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(box: any, key: string, value: string): ()
     local local_value = value
     box.name = value
     box[key] = value
 end
 `)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: wir.NewBody("empty")})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: wir.NewBody("empty")})
 
 	localPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	if _, ok := facts.RootAssignment(localPoint); ok {
@@ -1139,7 +1139,7 @@ end
 }
 
 func TestLowerAssignmentMalformedWIRSourceDoesNotFallbackToSemanticSource(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(value: string): ()
     local out = value
 end
@@ -1156,7 +1156,7 @@ end
 	})
 	body.SetPointRange(point, start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	assign, ok := facts.RootAssignment(point)
 	if !ok {
 		t.Fatalf("missing WIR-owned assignment at point %d", point)
@@ -1168,7 +1168,7 @@ end
 }
 
 func TestLowerLocalAssignmentLogicalFallbackSourceComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function collect(entries: {{ id: string, meta: { name: string? } }}): ()
 	for i, entry in ipairs(entries) do
 		local meta = entry.meta
@@ -1176,7 +1176,7 @@ function collect(entries: {{ id: string, meta: { name: string? } }}): ()
 	end
 end`, "ipairs")
 	body := wirlower.Lower("logical-fallback-assignment", fn.Stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	loop := fn.Stmts[0].(*ast.GenericForStmt)
 	displayName := loop.Stmts[1].(*ast.LocalAssignStmt)

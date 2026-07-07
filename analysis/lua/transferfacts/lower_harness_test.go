@@ -27,7 +27,7 @@ import (
 )
 
 func TestLowerPanicsWithoutRegistry(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, "local x = 1")
+	stmts, bindings, built, _ := parseSemanticChunk(t, "local x = 1")
 	_ = stmts
 	_ = bindings
 	_ = built
@@ -38,7 +38,7 @@ func TestLowerPanicsWithoutRegistry(t *testing.T) {
 		}
 	}()
 
-	_ = Lower(result, built.Graph, Config{})
+	_ = Lower(built.Graph, Config{})
 }
 
 func TestLowerPanicsWithoutRegistryOnEmptyInputs(t *testing.T) {
@@ -48,7 +48,7 @@ func TestLowerPanicsWithoutRegistryOnEmptyInputs(t *testing.T) {
 		}
 	}()
 
-	_ = Lower(nil, nil, Config{})
+	_ = Lower(nil, Config{})
 }
 
 func TestLowerAnnotatedLiteralLocalPreservesLiteralValue(t *testing.T) {
@@ -206,13 +206,13 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 	stmts := []ast.Stmt{local, write, ret}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make", "pack", "put", "tail"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	_, err := semantics.ExtractChunk(stmts, bindings, built)
 	if err != nil {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
 	body := wirlower.Lower("value-list-metadata", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	localPoints := requireStmtPoints(t, built, local, 5)
@@ -400,7 +400,7 @@ local frame = term.spinner_frames[i]
 }
 
 func TestLowerDynamicIndexExpressionCarriesUnnameableTableSource(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local function make()
     return {["root"] = {id = "root"}}
 end
@@ -408,7 +408,7 @@ local root = make()["root"]
 `)
 
 	body := wirlower.Lower("dynamic-index-unnameable-table-source", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	var rootSource factflow.ValueSource
 	for _, point := range built.StmtPoints.PointsFor(stmts[1]) {
 		fact, ok := facts.LocalAssignment(point)
@@ -763,7 +763,7 @@ function handle(events_ch: Channel<{kind: "event", id: string}>, stop_ch: Channe
 end
 `, "channel")
 	body := wirlower.Lower("handle", result.Function().Stmts, bindings, built)
-	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	var wirSelects []factflow.ChannelSelect
 	for _, point := range built.Graph.RPO() {
@@ -802,7 +802,7 @@ function handle(events_ch: Channel<{kind: "event", id: string}>, stop_ch: Channe
 end
 `, "channel")
 	body := wirlower.Lower("channel-select-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	var selects []factflow.ChannelSelect
 	for _, point := range built.Graph.RPO() {
@@ -889,7 +889,7 @@ end
 	if _, ok := result.CallView(point); ok {
 		t.Fatalf("fixture unexpectedly has semantic call view at point %d", point)
 	}
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	events := facts.ChannelSelects(point)
 	if len(events) != 3 {
@@ -920,7 +920,7 @@ end
 }
 
 func TestLowerChannelSelectsUseWIRCandidateCasePaths(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function consume(events: Channel<{
 	kind: "stream",
 	router: {
@@ -952,7 +952,7 @@ function consume(events: Channel<{
 end
 `, "channel")
 	body := wirlower.Lower("consume", fn.Stmts, bindings, built)
-	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	var selectGroups [][]factflow.ChannelSelect
 	for _, point := range built.Graph.RPO() {

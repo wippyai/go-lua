@@ -1,4 +1,4 @@
-// Package transferfacts lowers Lua semantic sidecars into generic transfer facts.
+// Package transferfacts lowers WIR descriptors into generic transfer facts.
 package transferfacts
 
 import (
@@ -11,17 +11,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-// Lower converts Lua semantic facts into the generic transfer fact DTOs consumed
-// by the engine. It intentionally lowers only syntax facts already represented
-// by factflow.Facts; higher semantic layers add branch, iterator, interproc,
-// and diagnostic facts separately.
+// Lower converts WIR descriptors into the generic transfer fact DTOs consumed by
+// the engine. Higher semantic layers add interproc and diagnostic facts
+// separately.
 type Config struct {
 	Registry      *axis.Registry
 	Bindings      *bind.Result
@@ -41,15 +39,15 @@ type Lowered struct {
 	SymbolTypes map[symbol.ID]typ.Type
 }
 
-func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Facts {
-	return LowerWithSidecars(result, graph, config).Facts
+func Lower(graph cfg.Graph, config Config) factflow.Facts {
+	return LowerWithSidecars(graph, config).Facts
 }
 
-func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config) Lowered {
+func LowerWithSidecars(graph cfg.Graph, config Config) Lowered {
 	if config.Registry == nil {
 		panic("transferfacts: Config.Registry is required")
 	}
-	if graph == nil || (result == nil && config.WIR == nil) {
+	if graph == nil || config.WIR == nil {
 		return Lowered{Facts: factflow.NewFacts(factflow.FactsInput{})}
 	}
 	typeResolver := config.TypeResolver

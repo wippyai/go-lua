@@ -22,7 +22,7 @@ function scan(xs: {string})
 end
 `)
 	body := wirlower.Lower("scan", fn.Stmts, bindings, built)
-	wirFacts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	compared := 0
 	for _, point := range built.Graph.RPO() {
@@ -43,14 +43,14 @@ end
 }
 
 func TestLowerWithWIRNumericForProofsDoesNotFallbackToSidecar(t *testing.T) {
-	_, bindings, built, result := parseSemanticFunction(t, `
+	_, bindings, built, _ := parseSemanticFunction(t, `
 function scan(xs: {string})
 	for i = 1, #xs do
 		local current = xs[i]
 	end
 end
 `)
-	facts := Lower(result, built.Graph, Config{
+	facts := Lower(built.Graph, Config{
 		Registry: standard.Registry(),
 		Bindings: bindings,
 		WIR:      wir.NewBody("scan"),
@@ -83,7 +83,7 @@ function scan(xs: {string})
 end
 `)
 	body := wirlower.Lower("numeric-for-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	var checked int
 	for _, point := range built.Graph.RPO() {
@@ -115,7 +115,7 @@ function scan()
 end
 `)
 	body := wirlower.Lower("numeric-for-variable", fn.Stmts, bindings, built)
-	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	for _, point := range built.Graph.RPO() {
 		fact, ok := built.Meta.NumericFor(point)

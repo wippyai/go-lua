@@ -18,7 +18,7 @@ import (
 )
 
 func TestLowerWithWIRReturnPointsPublishReturnPresence(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(ok: boolean): (string?, string?)
     if ok then
         return "value", nil
@@ -27,7 +27,7 @@ function f(ok: boolean): (string?, string?)
 end
 `)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	wirPoints := wirReturnFactPoints(built.Graph, body)
 	if len(wirPoints) != 2 {
@@ -43,7 +43,7 @@ end
 }
 
 func TestLowerWithWIRReturnPresenceArityComesFromWIRDeclaredReturns(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): (string?, string?)
     return nil
 end
@@ -57,14 +57,14 @@ end
 	if got := body.DeclaredReturnArity(); got != 2 {
 		t.Fatalf("WIR declared return arity = %d, want 2", got)
 	}
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	relations := facts.ReturnPresenceRelations(points[0])
 	assertReturnPresenceRelation(t, relations, 0, presence.Absent(), 1, presence.Absent())
 	assertReturnPresenceRelation(t, relations, 1, presence.Absent(), 0, presence.Absent())
 }
 
 func TestLowerWithWIRReturnSourcesForNonExpressionOperands(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(...): (nil, any, any)
     return nil, produce(), ...
 end
@@ -75,7 +75,7 @@ end
 	}
 	points := requireStmtPoints(t, built, ret, 2)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	returnFact, ok := facts.Return(points[1])
 	if !ok {
@@ -99,7 +99,7 @@ end
 }
 
 func TestLowerWithWIRReturnSourcesForScalarLiterals(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): (boolean, number, string)
     return false, 42, "ready"
 end
@@ -110,7 +110,7 @@ end
 	}
 	points := requireStmtPoints(t, built, ret, 1)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
@@ -132,7 +132,7 @@ end
 }
 
 func TestLowerWithWIRReturnLogicalDefaultCarriesComputedWitness(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(level: string?): string
     return level or "info"
 end
@@ -144,7 +144,7 @@ end
 	points := requireStmtPoints(t, built, ret, 1)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
 	reg := standard.Registry()
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
@@ -169,7 +169,7 @@ end
 }
 
 func TestLowerWithWIRNestedLogicalReturnCarriesComputedStringWitness(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function label(success: boolean, value: any): string
     return success and "ok" or (type(value) == "string" and ("value:" .. value) or "failed")
 end
@@ -181,7 +181,7 @@ end
 	points := requireStmtPoints(t, built, ret, 1)
 	body := wirlower.Lower("nested-logical-return", fn.Stmts, bindings, built)
 	reg := standard.Registry()
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
@@ -202,7 +202,7 @@ end
 }
 
 func TestLowerWithWIRNegatedNilLogicalReturnCarriesComputedStringWitness(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function label(value: string?): string
     return not (value == nil) and ("value:" .. value) or ""
 end
@@ -214,7 +214,7 @@ end
 	points := requireStmtPoints(t, built, ret, 1)
 	body := wirlower.Lower("negated-nil-logical-return", fn.Stmts, bindings, built)
 	reg := standard.Registry()
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
@@ -235,7 +235,7 @@ end
 }
 
 func TestLowerWithWIRReturnSourcesForRootPath(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(value: string): string
     return value
 end
@@ -246,7 +246,7 @@ end
 	}
 	points := requireStmtPoints(t, built, ret, 1)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
@@ -259,7 +259,7 @@ end
 }
 
 func TestLowerWithWIRReturnSourcesForSegmentedPath(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): string
     local value = { name = "x" }
     local other = { name = "y" }
@@ -281,7 +281,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
 		t.Fatalf("missing return fact at point %d", points[0])
@@ -297,7 +297,7 @@ end
 }
 
 func TestLowerWithWIRReturnSourcesUseLocalRootPath(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): any
     local builder = {}
     return builder
@@ -309,7 +309,7 @@ end
 	}
 	points := requireStmtPoints(t, built, ret, 1)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
@@ -322,7 +322,7 @@ end
 }
 
 func TestLowerWithWIRReturnSourcesUsesTempExpressionOperands(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(value: string): string
     return value .. "!"
 end
@@ -333,7 +333,7 @@ end
 	}
 	points := requireStmtPoints(t, built, ret, 1)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
@@ -353,7 +353,7 @@ end
 }
 
 func TestLowerWithWIRReturnSourcesDerivesTempExpressionFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(value: string): string
     return value .. "!"
 end
@@ -371,7 +371,7 @@ end
 	body.Emit(wir.Instruction{Op: wir.OpReturn, Point: points[0], List: body.AppendOperands([]wir.Operand{temp})})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
 		t.Fatalf("missing return fact at point %d", points[0])
@@ -393,7 +393,7 @@ end
 }
 
 func TestLowerWithWIRNaryConcatReturnCarriesProjectedStringValue(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(req: {method: string, path: string}): string
     return "Not found: " .. req.method .. " " .. req.path
 end
@@ -405,7 +405,7 @@ end
 	points := requireStmtPoints(t, built, ret, 1)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
 	reg := standard.Registry()
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
@@ -426,7 +426,7 @@ end
 }
 
 func TestLowerWithWIRUnaryLengthReturnCarriesProjectedIntegerValue(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(req: {items: {string}}, other: {items: {number}}): integer
     return #req.items
 end
@@ -444,7 +444,7 @@ end
 	body.Emit(wir.Instruction{Op: wir.OpReturn, Point: points[0], List: body.AppendOperands([]wir.Operand{temp})})
 	body.SetPointRange(points[0], start, body.Len())
 	reg := standard.Registry()
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
@@ -477,7 +477,7 @@ end
 }
 
 func TestLowerWithWIRReturnTempExpressionUsesSegmentedPathOperand(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): string
     local value = { name = "x" }
     local other = { name = "y" }
@@ -499,7 +499,7 @@ end
 	body.Emit(wir.Instruction{Op: wir.OpReturn, Point: points[0], List: body.AppendOperands([]wir.Operand{temp})})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
 		t.Fatalf("missing return fact at point %d", points[0])
@@ -523,7 +523,7 @@ end
 }
 
 func TestLowerWithWIRReturnSourcesDoesNotFallbackWhenReturnInstructionMissing(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(value: string): string
     return value
 end
@@ -533,7 +533,7 @@ end
 		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
 	}
 	points := requireStmtPoints(t, built, ret, 1)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: wir.NewBody("empty")})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: wir.NewBody("empty")})
 
 	if _, ok := facts.Return(points[0]); ok {
 		t.Fatalf("WIR mode return at point %d fell back to semantic sidecar", points[0])
@@ -541,7 +541,7 @@ end
 }
 
 func TestLowerWithWIRReturnMalformedOperandDoesNotFallbackToSemanticSource(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(value: string): string
     return value
 end
@@ -559,7 +559,7 @@ end
 	})
 	body.SetPointRange(point, start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	retFact, ok := facts.Return(point)
 	if !ok {
 		t.Fatalf("missing WIR-owned return at point %d", point)
@@ -571,7 +571,7 @@ end
 }
 
 func TestLowerWithWIRReturnMissingTempDoesNotFallbackToSemanticSource(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(value: string): string
     return value
 end
@@ -589,7 +589,7 @@ end
 	})
 	body.SetPointRange(point, start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	retFact, ok := facts.Return(point)
 	if !ok {
 		t.Fatalf("missing WIR-owned return at point %d", point)
@@ -601,7 +601,7 @@ end
 }
 
 func TestLowerWithWIRReturnedTypePredicateCarriesExpressionCondition(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(value)
     return type(value) == "number"
 end
@@ -613,7 +613,7 @@ end
 	point := requireStmtPoints(t, built, ret, 1)[0]
 	body := wirlower.Lower("returned-type-predicate", fn.Stmts, bindings, built)
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	retFact, ok := facts.Return(point)
 	if !ok {
 		t.Fatalf("missing WIR-owned return at point %d", point)
@@ -644,7 +644,7 @@ end
 }
 
 func TestLowerWithWIRReturnedConjunctionCarriesLeftExpressionCondition(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(value)
     return type(value) == "number" and value > 0
 end
@@ -656,7 +656,7 @@ end
 	point := requireStmtPoints(t, built, ret, 1)[0]
 	body := wirlower.Lower("returned-conjunction-predicate", fn.Stmts, bindings, built)
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	retFact, ok := facts.Return(point)
 	if !ok {
 		t.Fatalf("missing WIR-owned return at point %d", point)
@@ -687,7 +687,7 @@ end
 }
 
 func TestLowerWithWIRReturnedNestedPathConjunctionCarriesRootPresence(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(entry: {id: string, meta: {type: string?}?}?): boolean?
     return entry and entry.meta and entry.meta.type == "agent.gen1"
 end
@@ -699,7 +699,7 @@ end
 	point := requireStmtPoints(t, built, ret, 1)[0]
 	body := wirlower.Lower("returned-nested-path-conjunction", fn.Stmts, bindings, built)
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	retFact, ok := facts.Return(point)
 	if !ok {
 		t.Fatalf("missing WIR-owned return at point %d", point)
@@ -751,7 +751,7 @@ end
 	})
 	body.SetPointRange(point, start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	returnFact, ok := facts.Return(point)
 	if !ok {
 		t.Fatalf("missing WIR-owned return at point %d without semantic ReturnView", point)

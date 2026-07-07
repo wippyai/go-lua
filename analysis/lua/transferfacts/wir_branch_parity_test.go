@@ -63,7 +63,7 @@ function f(x: any, y: string?, i: integer, xs: {string})
 	end
 `, "type")
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	var checkedRefinement, checkedLen, checkedNum, checkedEvidence bool
 	for _, point := range built.Graph.RPO() {
@@ -112,7 +112,7 @@ end
 	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	body := wirlower.Lower("branch-no-sidecars", fn.Stmts, bindings, built)
 
-	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	target := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "x")
 	if _, ok := branchRefinementAt(facts.BranchRefinements(point), target); !ok {
 		t.Fatalf("WIR no-sidecar branch refinements missing %s at point %d: %#v", target, point, facts.BranchRefinements(point))
@@ -142,21 +142,21 @@ end
 	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	body := wirlower.Lower("literal-discriminant-no-sidecars", fn.Stmts, bindings, built)
 
-	wirFacts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	if got := wirFacts.BranchRefinements(point); len(got) == 0 {
 		t.Fatalf("WIR no-sidecar literal discriminant refinements missing at point %d", point)
 	}
 }
 
 func TestLowerWithWIRCompoundBranchPathRelationsMatchSidecar(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local a, b, c, d = {}, {}, {}, {}
 if a == b and c ~= d then
     local hit = true
 end
 `)
 	body := wirlower.Lower("chunk", stmts, bindings, built)
-	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	point := requireStmtPoints(t, built, stmts[1], 1)[0]
 	if got := wirFacts.BranchPathRelations(point); len(got) != 2 {
@@ -165,14 +165,14 @@ end
 }
 
 func TestLowerWithWIRCompoundBranchPathEvidencePublishesFacts(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local a, b, c = {}, {}, nil
 if a == b and c ~= nil then
     local hit = true
 end
 `)
 	body := wirlower.Lower("chunk", stmts, bindings, built)
-	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	var checked bool
 	for _, point := range built.Graph.RPO() {
@@ -188,14 +188,14 @@ end
 }
 
 func TestLowerWithWIRBranchDiffConstraintsPublishFacts(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local i, j, xs, limit = 1, 1, {}, 10
 if i + 1 <= #xs and i + j < limit then
     local hit = true
 end
 `)
 	body := wirlower.Lower("chunk", stmts, bindings, built)
-	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	var checked bool
 	for _, point := range built.Graph.RPO() {
@@ -211,7 +211,7 @@ end
 }
 
 func TestLowerWithWIRBooleanAliasBranchRefinementsMatchSidecar(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(target: { transform: string? })
     local has_transform = target.transform ~= nil
     if has_transform then
@@ -223,7 +223,7 @@ function f(target: { transform: string? })
 end
 `)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	for _, stmt := range []ast.Stmt{fn.Stmts[1], fn.Stmts[2]} {
 		point := requireStmtPoints(t, built, stmt, 1)[0]
@@ -234,7 +234,7 @@ end
 }
 
 func TestLowerWithWIRBooleanAliasBranchPathRelationsMatchSidecar(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(a: string?, b: string?)
     local same = a == b
     if same then
@@ -246,7 +246,7 @@ function f(a: string?, b: string?)
 end
 `)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	for _, stmt := range []ast.Stmt{fn.Stmts[1], fn.Stmts[2]} {
 		point := requireStmtPoints(t, built, stmt, 1)[0]
@@ -257,7 +257,7 @@ end
 }
 
 func TestLowerWithWIRBooleanAliasBranchPathEvidenceMatchSidecar(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(a: string?, b: string?)
     local same = a == b
     if same then
@@ -269,7 +269,7 @@ function f(a: string?, b: string?)
 end
 `)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	for _, stmt := range []ast.Stmt{fn.Stmts[1], fn.Stmts[2]} {
 		point := requireStmtPoints(t, built, stmt, 1)[0]
@@ -280,7 +280,7 @@ end
 }
 
 func TestLowerWithWIRFrozenTableBranchEvidencePublishesFacts(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local t = {}
 local ok = true
 if table.isfrozen(t) and ok then
@@ -288,7 +288,7 @@ if table.isfrozen(t) and ok then
 end
 `, "table")
 	body := wirlower.Lower("chunk", stmts, bindings, built)
-	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	var checked bool
 	for _, point := range built.Graph.RPO() {
@@ -304,7 +304,7 @@ end
 }
 
 func TestLowerWithWIRCompoundBranchRefinementLanesMatchSidecar(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local x: any = 1
 local i: integer = 1
 local xs: {string} = {}
@@ -313,7 +313,7 @@ if type(x) == "number" and i >= 1 and #xs > 0 then
 end
 `, "type")
 	body := wirlower.Lower("chunk", stmts, bindings, built)
-	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	var checkedRefinement, checkedLen, checkedNum bool
 	for _, point := range built.Graph.RPO() {
@@ -345,7 +345,7 @@ function f(target: { transform: string? })
 end
 `)
 	body := wirlower.Lower("alias-branches-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	for _, stmt := range []ast.Stmt{fn.Stmts[1], fn.Stmts[2]} {
 		point := requireStmtPoints(t, built, stmt, 1)[0]
@@ -359,7 +359,7 @@ end
 }
 
 func TestLowerWithWIRBooleanAliasBranchDoesNotFallbackToSemanticCondition(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(target: { transform: string? })
     local has_transform = target.transform ~= nil
     if has_transform then
@@ -376,14 +376,14 @@ end
 	})
 	body.SetPointRange(point, start, start+1)
 
-	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	if got := wirFacts.BranchRefinements(point); len(got) != 0 {
 		t.Fatalf("WIR alias branch refinements fell back to semantic condition: %#v", got)
 	}
 }
 
 func TestLowerWithWIRBranchPathRelationsDoesNotFallbackToSemanticCondition(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local a, b = {}, {}
 if a == b then
     local hit = true
@@ -398,7 +398,7 @@ end
 	})
 	body.SetPointRange(point, start, start+1)
 
-	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	if got := wirFacts.BranchPathRelations(point); len(got) != 0 {
 		t.Fatalf("WIR branch path relations fell back to semantic condition: %#v", got)
 	}
@@ -411,7 +411,7 @@ end
 }
 
 func TestLowerWithWIRBranchDiffConstraintsDoesNotFallbackToSemanticCondition(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local i, xs = 1, {}
 if i + 1 <= #xs then
     local hit = true
@@ -426,19 +426,19 @@ end
 	})
 	body.SetPointRange(point, start, start+1)
 
-	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	if got := wirFacts.BranchDiffConstraints(point); len(got) != 0 {
 		t.Fatalf("WIR branch diff constraints fell back to semantic condition: %#v", got)
 	}
 }
 
 func TestLowerBranchDoesNotFallbackWhenWIRBranchInstructionMissing(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(x: string?): ()
     if x then local y = x end
 end
 `)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: wir.NewBody("empty")})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: wir.NewBody("empty")})
 
 	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	if source, ok := facts.BranchConditionSource(point); ok {
@@ -450,7 +450,7 @@ end
 }
 
 func TestLowerBranchDoesNotFallbackWhenWIRBranchCheckIsNone(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(x: string?): ()
     if x then local y = x end
 end
@@ -464,7 +464,7 @@ end
 	})
 	body.SetPointRange(point, start, start+1)
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	if source, ok := facts.BranchConditionSource(point); ok {
 		t.Fatalf("WIR mode branch at point %d fell back to semantic condition source: %#v", point, source)
@@ -503,7 +503,7 @@ end
 	})
 	body.SetPointRange(point, start, start+1)
 
-	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	if source, ok := facts.BranchConditionSource(point); ok {
 		t.Fatalf("relational WIR branch published operand path as condition source: %#v", source)
 	}
@@ -513,12 +513,12 @@ end
 }
 
 func TestLowerTypeIsConditionDoesNotFallbackWhenWIRCallInstructionMissing(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 type Payload = { name: string }
 local value: any = {}
 if Payload:is(value) then local y = value end
 `)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: wir.NewBody("empty")})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: wir.NewBody("empty")})
 
 	point := requireStmtPoints(t, built, mustIfStmt(t, stmts, 2), 2)[1]
 	if got := facts.BranchRefinements(point); len(got) != 0 {
@@ -552,7 +552,7 @@ if err then
 end
 `)
 	body := wirlower.Lower("chunk", stmts, bindings, built)
-	seed := Lower(result, built.Graph, Config{
+	seed := Lower(built.Graph, Config{
 		Registry:     standard.Registry(),
 		Bindings:     bindings,
 		TypeResolver: typeresolve.New(bindings),
@@ -628,7 +628,7 @@ func assertWIRTypeIsConditionBranchRefinementWithoutSemanticResult(t *testing.T,
 	t.Helper()
 	stmts, bindings, built, result := parseSemanticChunk(t, src)
 	body := wirlower.Lower("chunk", stmts, bindings, built)
-	seed := Lower(result, built.Graph, Config{
+	seed := Lower(built.Graph, Config{
 		Registry:     standard.Registry(),
 		Bindings:     bindings,
 		TypeResolver: typeresolve.New(bindings),
@@ -755,7 +755,7 @@ if (function() return 1 end) then local j = 1 end
 if (nil :: any) then local k = 1 end
 `, "f")
 	body := wirlower.Lower("chunk", stmts, bindings, built)
-	wirFacts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	var checked int
 	for _, point := range built.Graph.RPO() {
@@ -780,7 +780,7 @@ if (nil :: any) then local k = 1 end
 
 func assertWIRBranchFactParity(t *testing.T, built *cfgbuild.Result, result *semantics.Result, body *wir.Body, bindings *bind.Result) {
 	t.Helper()
-	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	var checked bool
 	for _, point := range built.Graph.RPO() {
 		if len(wirFacts.BranchRefinements(point)) != 0 || len(wirFacts.BranchPresenceRelations(point)) != 0 {

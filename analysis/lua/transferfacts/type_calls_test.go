@@ -42,7 +42,7 @@ local data: any = {}
 local v = Point(data)
 `)
 	body := wirlower.Lower("type-cast-call", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	dataStmt := mustLocalStmt(t, stmts, 1)
 	castStmt := mustLocalStmt(t, stmts, 2)
 	dataPath := path.NewPath(mustLocalAt(t, bindings, dataStmt, 0), "data")
@@ -75,7 +75,7 @@ local data: any = 1
 local v = number(data)
 `)
 	body := wirlower.Lower("type-is-error-nil", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	castStmt := mustLocalStmt(t, stmts, 1)
 	castCall := castStmt.Exprs[0].(*ast.FuncCallExpr)
 	callPoint := requireCallPoint(t, built.Graph, result, castCall)
@@ -113,7 +113,7 @@ local v = number(data)
 	})
 	body.SetPointRange(callPoint, start, start+1)
 
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	results := facts.CallResultValues(callPoint)
 	if len(results) != 1 {
 		t.Fatalf("primitive call result values = %d, want 1: %#v", len(results), results)
@@ -146,7 +146,7 @@ local v = number(data)
 	})
 	body.SetPointRange(callPoint, start, start+1)
 
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	refinements := facts.PostconditionRefinements(callPoint)
 	if len(refinements) != 1 {
 		t.Fatalf("postcondition refinements = %d, want 1: %#v", len(refinements), refinements)
@@ -193,7 +193,7 @@ local v = 0
 	})
 	body.SetPointRange(point, start, start+1)
 
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	refinements := facts.PostconditionRefinements(point)
 	if len(refinements) != 1 {
 		t.Fatalf("WIR primitive cast postconditions = %d, want 1: %#v", len(refinements), refinements)
@@ -239,7 +239,7 @@ local v = 0
 	})
 	body.SetPointRange(point, start, start+1)
 
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	refinements := facts.PostconditionRefinements(point)
 	if len(refinements) != 1 {
 		t.Fatalf("WIR type-value cast postconditions = %d, want 1: %#v", len(refinements), refinements)
@@ -262,7 +262,7 @@ local number = function(value) return value end
 local data: any = 1
 local v = number(data)
 `)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings})
 	castStmt := mustLocalStmt(t, stmts, 2)
 	castCall := castStmt.Exprs[0].(*ast.FuncCallExpr)
 	callPoint := requireCallPoint(t, built.Graph, result, castCall)
@@ -274,7 +274,7 @@ local v = number(data)
 
 func TestLowerTypeIsErrorNilBranchPublishesArgumentEvidence(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 type Point = {x: number, y: number}
 local data: any = {}
 local _, err = Point:is(data)
@@ -282,7 +282,7 @@ if err == nil then
 end
 `)
 	body := wirlower.Lower("type-is-error-nil", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	dataStmt := mustLocalStmt(t, stmts, 1)
 	ifStmt := mustIfStmt(t, stmts, 3)
 	dataPath := path.NewPath(mustLocalAt(t, bindings, dataStmt, 0), "data")
@@ -308,7 +308,7 @@ end
 
 func TestLowerTypeIsBranchArgumentPathComesFromWIR(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 type Point = {x: number, y: number}
 local data: any = {}
 local other: any = {}
@@ -383,7 +383,7 @@ end
 	})
 	body.SetPointRange(branchPoint, branchStart, branchStart+1)
 
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	refinement, ok := branchRefinementAt(facts.BranchRefinements(branchPoint), otherPath)
 	if !ok {
 		t.Fatalf("missing WIR-arg Point refinement for %s at branch %d; got %#v", otherPath, branchPoint, facts.BranchRefinements(branchPoint))
@@ -411,7 +411,7 @@ local validated, err = errors.AppError:is(raw)
 `, "require")
 	resolver := typeresolve.NewWithExternal(bindings, testExternalTypes{"errors.AppError": appError})
 	body := wirlower.Lower("imported-type-is", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, TypeResolver: resolver, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, TypeResolver: resolver, WIR: body})
 	castStmt := mustLocalStmt(t, stmts, 2)
 	castCall := castStmt.Exprs[0].(*ast.FuncCallExpr)
 	callPoint := requireCallPoint(t, built.Graph, result, castCall)
@@ -471,7 +471,7 @@ local validated, err = errors.AppError:is(raw)
 		"errors.AppError":   appError,
 		"errors.OtherError": otherError,
 	})
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, TypeResolver: resolver, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, TypeResolver: resolver, WIR: body})
 	values := facts.CallResultValues(callPoint)
 	if len(values) != 2 {
 		t.Fatalf("imported Type:is call result values = %d, want 2: %#v", len(values), values)
@@ -485,14 +485,14 @@ local validated, err = errors.AppError:is(raw)
 
 func TestLowerTypeIsDirectConditionPublishesArgumentEvidence(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 type Point = {x: number, y: number}
 local data: any = {}
 if Point:is(data) then
 end
 `)
 	body := wirlower.Lower("type-is-condition", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	dataStmt := mustLocalStmt(t, stmts, 1)
 	dataPath := path.NewPath(mustLocalAt(t, bindings, dataStmt, 0), "data")
 	branchPoint := requireWIRBranchPoint(t, built.Graph, body)
@@ -517,14 +517,14 @@ end
 
 func TestLowerTypeIsNegatedConditionPublishesInvertedArgumentEvidence(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 type Point = {x: number, y: number}
 local data: any = {}
 if not Point:is(data) then
 end
 `)
 	body := wirlower.Lower("type-is-negated-condition", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	dataStmt := mustLocalStmt(t, stmts, 1)
 	dataPath := path.NewPath(mustLocalAt(t, bindings, dataStmt, 0), "data")
 	branchPoint := requireWIRBranchPoint(t, built.Graph, body)
@@ -552,13 +552,13 @@ end
 
 func TestLowerTypeIsOpenTailReturnPublishesSlotsAndPresenceRelation(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 type Point = {x: number, y: number}
 local data: any = {}
 return Point:is(data)
 `)
 	body := wirlower.Lower("type-is-open-tail", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	ret := stmts[2].(*ast.ReturnStmt)
 	points := requireStmtPoints(t, built, ret, 2)
 	callPoint := points[0]
@@ -583,7 +583,7 @@ return Point:is(data)
 
 func TestLowerWithWIRTypeIsReturnPresenceUsesWIRReturnSources(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 type Point = {x: number, y: number}
 local data: any = {}
 return Point:is(data)
@@ -595,7 +595,7 @@ return Point:is(data)
 	start := body.Emit(wir.Instruction{Op: wir.OpReturn, Point: returnPoint})
 	body.SetPointRange(returnPoint, start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	returnFact, ok := facts.Return(returnPoint)
 	if !ok {
 		t.Fatalf("missing WIR return fact")
@@ -610,7 +610,7 @@ return Point:is(data)
 
 func TestLowerWithWIRTypeIsReturnPresenceUsesCallSiteWithoutSemanticResult(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 type Point = {x: number, y: number}
 local data: any = {}
 return Point:is(data)
@@ -620,7 +620,7 @@ return Point:is(data)
 	callPoint := points[0]
 	returnPoint := points[1]
 	body := wirlower.Lower("chunk", stmts, bindings, built)
-	seed := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	seed := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	site, ok := seed.CallSite(callPoint)
 	if !ok {
 		t.Fatalf("missing lowered Type:is callsite at point %d", callPoint)
@@ -656,7 +656,7 @@ return Point:is(data)
 	returnPoint := requireStmtPoints(t, built, ret, 2)[1]
 	body := wirlower.Lower("chunk-type-is-return-no-sidecars", stmts, bindings, built)
 
-	facts := Lower(nil, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	relations := facts.ReturnPresenceRelations(returnPoint)
 
 	assertReturnPresenceRelation(t, relations, 1, presence.Present(), 0, presence.Absent())
@@ -695,7 +695,7 @@ local value = nil
 	})
 	body.SetPointRange(callPoint, start, start+1)
 
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 
 	values := facts.CallResultValues(callPoint)
 	if len(values) != 2 {
@@ -717,7 +717,7 @@ local value = nil
 
 func TestLowerExplicitErrorReturnsPublishPresenceRelation(t *testing.T) {
 	reg := standard.Registry()
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function process(x: number): (number?, string?)
 	if x < 0 then
 		return nil, "negative"
@@ -725,7 +725,7 @@ function process(x: number): (number?, string?)
 	return x * 2, nil
 end`)
 	body := wirlower.LowerFunction("process", fn, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 
 	relations := allReturnPresenceRelations(built.Graph, facts)
 	assertReturnPresenceRelation(t, relations, 1, presence.Present(), 0, presence.Absent())
@@ -734,12 +734,12 @@ end`)
 
 func TestLowerReturnPresenceUnknownSourceBlocksMustRelation(t *testing.T) {
 	reg := standard.Registry()
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function process(value: number?): (number?, string?)
 	return value, nil
 end`)
 	body := wirlower.LowerFunction("process", fn, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 
 	relations := allReturnPresenceRelations(built.Graph, facts)
 	assertNoReturnPresenceRelation(t, relations, 1, presence.Absent(), 0, presence.Present())
@@ -753,7 +753,7 @@ local Point = function(value) return value end
 local data: any = {}
 local v = Point(data)
 `)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings})
 	castStmt := mustLocalStmt(t, stmts, 3)
 	castCall := castStmt.Exprs[0].(*ast.FuncCallExpr)
 	callPoint := requireCallPoint(t, built.Graph, result, castCall)

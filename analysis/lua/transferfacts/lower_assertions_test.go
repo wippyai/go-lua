@@ -36,7 +36,7 @@ import (
 )
 
 func TestLowerAssignmentClaimsUseWIRClaimSourcesForRootWrites(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(x: any)
     local local_cast = x as number
     local local_assert = x!
@@ -45,7 +45,7 @@ function f(x: any)
 end
 `)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	localCastPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	localCastSource := mustLocalSource(t, facts, localCastPoint)
@@ -64,13 +64,13 @@ end
 }
 
 func TestLowerReturnClaimsUseWIRClaimSources(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(x: any): (number, any)
     return x as number, x!
 end
 `)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	returnPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	ret, ok := facts.Return(returnPoint)
@@ -101,7 +101,7 @@ function f(x: any): (number, any)
 end
 `)
 	body := wirlower.Lower("f-no-return-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	returnPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	ret, ok := facts.Return(returnPoint)
@@ -126,13 +126,13 @@ end
 }
 
 func TestLowerCallArgumentClaimsUseWIRClaimSources(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(x: any): ()
     sink(x as number, x!)
 end
 `, "sink")
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	callPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	site, ok := facts.CallSite(callPoint)
@@ -163,7 +163,7 @@ function f(x: any): ()
 end
 `, "sink")
 	body := wirlower.Lower("f-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	callPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	site, ok := facts.CallSite(callPoint)
@@ -191,14 +191,14 @@ func TestLowerCallArgumentWIRClaimUsesConfiguredTypeResolver(t *testing.T) {
 	messageType := typetable.NewRecord().
 		Field("topic", typ.String).
 		Build()
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(raw: any): ()
     payload_data(raw as process.Message)
 end
 `, "payload_data")
 	resolver := typeresolve.NewWithExternal(bindings, testExternalTypes{"process.Message": messageType})
 	body := wirlower.LowerWithResolver("f", fn.Stmts, bindings, built, resolver)
-	facts := Lower(result, built.Graph, Config{
+	facts := Lower(built.Graph, Config{
 		Registry:     standard.Registry(),
 		Bindings:     bindings,
 		TypeResolver: resolver,
@@ -224,13 +224,13 @@ func TestLowerCallArgumentWIRClaimKeepsDisjointRuntimeValidationExpressionSource
 	recordType := typetable.NewRecord().
 		Field("name", typ.String).
 		Build()
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(y: number): ()
     sink(y as {name: string})
 end
 `, "sink")
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	callPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	site, ok := facts.CallSite(callPoint)
@@ -250,7 +250,7 @@ end
 }
 
 func TestLowerCallArgumentWIRClaimTypeBeatsSemanticCastType(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(x: any): ()
     local sink = function(value: any) end
     sink(x as string)
@@ -282,7 +282,7 @@ end
 	})
 	body.SetPointRange(callPoint, start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	site, ok := facts.CallSite(callPoint)
 	if !ok {
 		t.Fatalf("missing call site at point %d", callPoint)
@@ -299,7 +299,7 @@ end
 }
 
 func TestLowerCallArgumentWIRClaimSegmentedInnerPathComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): ()
     local sink = function(value: any) end
     local value = { name = "x" }
@@ -334,7 +334,7 @@ end
 	})
 	body.SetPointRange(callPoint, start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	site, ok := facts.CallSite(callPoint)
 	if !ok {
 		t.Fatalf("missing call site at point %d", callPoint)
@@ -363,7 +363,7 @@ end
 }
 
 func TestLowerCallArgumentWIRClaimRootLocalInnerStaysPathSource(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): ()
     local sink = function(value: any) end
     local suites = {}
@@ -396,7 +396,7 @@ end
 	})
 	body.SetPointRange(callPoint, start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	site, ok := facts.CallSite(callPoint)
 	if !ok {
 		t.Fatalf("missing call site at point %d", callPoint)
@@ -417,13 +417,13 @@ end
 }
 
 func TestLowerClaimWrappedCallBindingsUseWIRClaims(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 type Message = {topic: string}
 local inbox = make() as Message
 local ready = check()!
 `, "make", "check")
 	body := wirlower.Lower("chunk", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	castLocal := stmts[1].(*ast.LocalAssignStmt)
 	castPoints := requireStmtPoints(t, built, castLocal, 2)
@@ -656,7 +656,7 @@ local x: any = 0
 if x as number then end
 `)
 	body := wirlower.Lower("claim-condition-no-sidecar", stmts, bindings, built)
-	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	point := requireStmtPoints(t, built, stmts[1], 1)[0]
 	if got := facts.BranchRefinements(point); len(got) != 0 {
@@ -1123,7 +1123,7 @@ func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 		t.Fatal("BuildChunk returned nil")
 	}
 	body := wirlower.Lower("wrapped-claim-return", stmts, bindings, built)
-	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	localPoints := requireStmtPoints(t, built, local, 2)
 	site, ok := facts.CallSite(localPoints[0])
 	if !ok {
@@ -1217,14 +1217,10 @@ func TestLowerExpandedClaimWrappedCallKeepsPerResultSlotRefinements(t *testing.T
 			stmts := []ast.Stmt{local}
 			bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make"}})
 			built := cfgbuild.BuildChunk(stmts, bindings)
-			result, err := semantics.ExtractChunk(stmts, bindings, built)
-			if err != nil {
-				t.Fatalf("ExtractChunk: %v", err)
-			}
 
 			reg := standard.Registry()
 			body := wirlower.Lower("expanded-claim-wrapped-call", stmts, bindings, built)
-			facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+			facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 			points := requireStmtPoints(t, built, local, 3)
 			site, ok := facts.CallSite(points[0])
 			if !ok {

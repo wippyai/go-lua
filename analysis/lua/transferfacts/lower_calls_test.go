@@ -42,13 +42,9 @@ func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *test
 	stmts := []ast.Stmt{local, printStmt, ifStmt, genericFor, ret}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make", "print", "ready", "iter", "tail"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
 
 	body := wirlower.Lower("semantic-contexts-through-wir", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	localPoints := requireStmtPoints(t, built, local, 2)
 	localSite, ok := facts.CallSite(localPoints[0])
@@ -142,12 +138,8 @@ func TestLowerCallSiteContextFlagsFromWIRLowerer(t *testing.T) {
 	stmts := []ast.Stmt{local, printStmt, ifStmt, genericFor, ret}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make", "print", "ready", "iter", "tail"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
 	body := wirlower.Lower("contexts", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	assertSite := func(label string, point cfg.Point, context factflow.CallSiteContext, exprIndex int, final, expanded, adjusted, openTail bool) {
 		t.Helper()
@@ -178,13 +170,9 @@ func TestLowerMemberCallLocalAssignmentUsesCallResultSource(t *testing.T) {
 	stmts := []ast.Stmt{local}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"builder"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
 
 	body := wirlower.Lower("member-call-local-assignment", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	points := requireStmtPoints(t, built, local, 2)
 	site, ok := facts.CallSite(points[0])
 	if !ok {
@@ -207,7 +195,7 @@ func TestLowerMemberCallLocalAssignmentUsesCallResultSource(t *testing.T) {
 }
 
 func TestLowerCallSiteResultTargetPathComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): ()
     local value = nil
     local other = nil
@@ -244,7 +232,7 @@ end
 		Path:        otherPath,
 	})
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	site, ok := facts.CallSite(callPoint)
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", callPoint)
@@ -259,7 +247,7 @@ end
 }
 
 func TestLowerCallSiteResultTargetDoesNotFallbackToSemanticPath(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): ()
     local value = nil
     value = make()
@@ -287,7 +275,7 @@ end
 	})
 	body.SetPointRange(callPoint, start, start+1)
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	site, ok := facts.CallSite(callPoint)
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", callPoint)
@@ -299,7 +287,7 @@ end
 }
 
 func TestLowerCallSiteResultTargetShapeComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): ()
     local value = make()
 end
@@ -330,7 +318,7 @@ end
 		ResultIndex: 0,
 	})
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	site, ok := facts.CallSite(callPoint)
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", callPoint)
@@ -383,7 +371,7 @@ end
 		ResultIndex: 0,
 	})
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	site, ok := facts.CallSite(callPoint)
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", callPoint)
@@ -448,7 +436,7 @@ end
 		ResultIndex: 0,
 	})
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	site, ok := facts.CallSite(point)
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d without semantic CallView", point)
@@ -505,7 +493,7 @@ end
 		t.Fatalf("stmt = %T, want call", fn.Stmts[0])
 	}
 	body := wirlower.Lower("call-arg-object-literal-no-semantics", fn.Stmts, bindings, built)
-	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	var site factflow.CallSite
 	var callPoint cfg.Point
@@ -566,17 +554,13 @@ end
 	if built == nil {
 		t.Fatal("BuildFunction returned nil")
 	}
-	result, err := semantics.ExtractFunction(def.Func, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractFunction: %v", err)
-	}
 	stmt, ok := def.Func.Stmts[len(def.Func.Stmts)-1].(*ast.FuncCallStmt)
 	if !ok {
 		t.Fatalf("stmt = %T, want call", def.Func.Stmts[len(def.Func.Stmts)-1])
 	}
 	body := wirlower.Lower("call-arg-object-literal-path-entries", def.Func.Stmts, bindings, built)
 	reg := standard.Registry()
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 
 	var site factflow.CallSite
 	var callPoint cfg.Point
@@ -663,10 +647,6 @@ end
 	if built == nil {
 		t.Fatal("BuildFunction returned nil")
 	}
-	result, err := semantics.ExtractFunction(def.Func, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractFunction: %v", err)
-	}
 	stmt, ok := def.Func.Stmts[0].(*ast.FuncCallStmt)
 	if !ok {
 		t.Fatalf("stmt = %T, want call", def.Func.Stmts[0])
@@ -674,7 +654,7 @@ end
 	body := wirlower.Lower("call-arg-object-literal-metatable-self", def.Func.Stmts, bindings, built)
 	reg := standard.Registry()
 	nodeInstance := typetable.NewRecord().Field("node_id", typ.String).Build()
-	facts := Lower(result, built.Graph, Config{
+	facts := Lower(built.Graph, Config{
 		Registry:            reg,
 		Bindings:            bindings,
 		WIR:                 body,
@@ -770,10 +750,6 @@ end
 	if built == nil {
 		t.Fatal("BuildFunction returned nil")
 	}
-	result, err := semantics.ExtractFunction(routeDef.Func, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractFunction: %v", err)
-	}
 	loop := routeDef.Func.Stmts[0].(*ast.GenericForStmt)
 	stmt := loop.Stmts[0].(*ast.FuncCallStmt)
 	body := wirlower.Lower("call-arg-object-literal-generic-for", routeDef.Func.Stmts, bindings, built)
@@ -782,7 +758,7 @@ end
 		Field("node_id", typ.String).
 		Field("targets", typ.NewArray(typetable.NewRecord().Field("node_id", typ.MaterializeOptional(typ.String)).Build())).
 		Build()
-	facts := Lower(result, built.Graph, Config{
+	facts := Lower(built.Graph, Config{
 		Registry:            reg,
 		Bindings:            bindings,
 		WIR:                 body,
@@ -819,7 +795,7 @@ end
 }
 
 func TestLowerReturnCallResultTargetComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): string
     return make()
 end
@@ -831,7 +807,7 @@ end
 	callPoint := requireStmtPoints(t, built, ret, 2)[0]
 	body := wirlower.Lower("return-target", fn.Stmts, bindings, built)
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	site, ok := facts.CallSite(callPoint)
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", callPoint)
@@ -857,7 +833,7 @@ end
 	returnPoint := points[1]
 	body := wirlower.Lower("no-sidecars", fn.Stmts, bindings, built)
 
-	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	site, ok := facts.CallSite(callPoint)
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", callPoint)
@@ -888,13 +864,9 @@ func TestLowerNegatedConditionCallSiteCarriesPolarity(t *testing.T) {
 	stmts := []ast.Stmt{ifStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"ready"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
 
 	body := wirlower.Lower("negated-condition", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	points := requireStmtPoints(t, built, ifStmt, 2)
 	site, ok := facts.CallSite(points[0])
 	if !ok {
@@ -904,7 +876,7 @@ func TestLowerNegatedConditionCallSiteCarriesPolarity(t *testing.T) {
 		t.Fatalf("condition call site = context %v negated=%v, want negated condition", site.Context(), site.ConditionNegated())
 	}
 
-	wirFacts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	wirSite, ok := wirFacts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing WIR condition call site")
@@ -933,13 +905,9 @@ func TestLowerCallSitePreservesPortableCallShapeAndArgumentOverlays(t *testing.T
 	stmts := []ast.Stmt{stmt}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"obj", "arg", "other"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
 
 	body := wirlower.Lower("portable-call-shape", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	point := requireStmtPoints(t, built, stmt, 1)[0]
@@ -1018,12 +986,8 @@ func TestLowerCallSiteTypeArgsComeFromWIR(t *testing.T) {
 	stmts := []ast.Stmt{stmt}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"send", "value"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
 	body := wirlower.Lower("call-type-args", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, stmt, 1)[0]
 	site, ok := facts.CallSite(point)
 	if !ok {
@@ -1036,7 +1000,7 @@ func TestLowerCallSiteTypeArgsComeFromWIR(t *testing.T) {
 }
 
 func TestLowerCallSiteUsesWIRArgumentSourcesForLiteralAndCallOperands(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(value: string): ()
     send(value, "ok", 3, nil, true, produce())
 end
@@ -1047,7 +1011,7 @@ end
 	}
 	points := requireStmtPoints(t, built, stmt, 2)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	site, ok := facts.CallSite(points[1])
 	if !ok {
@@ -1080,7 +1044,7 @@ end
 }
 
 func TestLowerCallSiteUsesWIRArgumentSourceForLocalRootPath(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): ()
     local value = "x"
     send(value)
@@ -1092,7 +1056,7 @@ end
 	}
 	points := requireStmtPoints(t, built, stmt, 1)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	site, ok := facts.CallSite(points[0])
 	if !ok {
@@ -1113,7 +1077,7 @@ end
 }
 
 func TestLowerAssignmentCallSiteKeepsArgumentSourcesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(raw: any): ()
     local function consume(payload: {id: string}): ()
     end
@@ -1126,7 +1090,7 @@ end
 	}
 	points := requireStmtPoints(t, built, local, 2)
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	site, ok := facts.CallSite(points[0])
 	if !ok {
@@ -1142,7 +1106,7 @@ end
 }
 
 func TestLowerCallSiteLocalArgumentPathComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): ()
     local value = "x"
     local other = "y"
@@ -1166,7 +1130,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing call site at point %d", points[0])
@@ -1182,7 +1146,7 @@ end
 }
 
 func TestLowerCallSiteSegmentedArgumentPathComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): ()
     local value = { name = "x" }
     local other = { name = "y" }
@@ -1204,7 +1168,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing call site at point %d", points[0])
@@ -1220,7 +1184,7 @@ end
 }
 
 func TestLowerDirectRootCallShapeComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): ()
     local callee = function() end
     local other = function() end
@@ -1244,7 +1208,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing call site at point %d", points[0])
@@ -1261,7 +1225,7 @@ end
 }
 
 func TestLowerDirectMemberCallShapeComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): ()
     local obj = { run = function() end }
     local other = { run = function() end }
@@ -1285,7 +1249,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing call site at point %d", points[0])
@@ -1303,7 +1267,7 @@ end
 }
 
 func TestLowerMethodCallReceiverSourcePathComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): ()
     local obj = { run = function(self) end }
     local other = { run = function(self) end }
@@ -1328,7 +1292,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing call site at point %d", points[0])
@@ -1351,7 +1315,7 @@ end
 }
 
 func TestLowerMethodCallSegmentedReceiverSourcePathComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): ()
     local obj = { child = { run = function(self) end } }
     local other = { child = { run = function(self) end } }
@@ -1376,7 +1340,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing call site at point %d", points[0])
@@ -1438,7 +1402,7 @@ end
 }
 
 func TestLowerCallSiteDoesNotFallbackWhenWIRCallInstructionMissing(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(value: string): ()
     send(value)
 end
@@ -1448,7 +1412,7 @@ end
 		t.Fatalf("stmt = %T, want call statement", fn.Stmts[0])
 	}
 	points := requireStmtPoints(t, built, stmt, 1)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: wir.NewBody("empty")})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: wir.NewBody("empty")})
 
 	if _, ok := facts.CallSite(points[0]); ok {
 		t.Fatalf("WIR mode call at point %d fell back to semantic sidecar", points[0])
@@ -1562,7 +1526,7 @@ end
 }
 
 func TestLowerCallSiteUsesUnknownForUnsupportedDirectWIRArgument(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(value: string): ()
     send(value)
 end
@@ -1581,7 +1545,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", points[0])
@@ -1593,7 +1557,7 @@ end
 }
 
 func TestLowerCallSiteUsesUnknownForMissingTempWIRArgument(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(value: string): ()
     send(value)
 end
@@ -1612,7 +1576,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", points[0])
@@ -1624,7 +1588,7 @@ end
 }
 
 func TestLowerCallSiteUsesUnknownForUnsupportedDefinedTempWIRArgument(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(value: string): ()
     send(value)
 end
@@ -1651,7 +1615,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", points[0])
@@ -1666,7 +1630,7 @@ end
 }
 
 func TestLowerCallSiteLogicalFallbackArgumentComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(env: {get: fun(string): string?}, config: {DEFAULT_CACHE_ID: string}, store: {get: fun(string): any}): ()
     store.get(env.get("APP_CACHE") or config.DEFAULT_CACHE_ID)
 end
@@ -1679,7 +1643,7 @@ end
 	callPoint := points[1]
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
 	reg := standard.Registry()
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 
 	site, ok := facts.CallSite(callPoint)
 	if !ok {
@@ -1711,7 +1675,7 @@ end
 }
 
 func TestLowerAssignmentSelectResultSourceComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): ()
     local selected = "fallback"
 end
@@ -1739,7 +1703,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	assign, ok := facts.RootAssignment(points[0])
 	if !ok {
 		t.Fatalf("missing assignment at point %d", points[0])
@@ -1751,7 +1715,7 @@ end
 }
 
 func TestLowerCallSiteClosureArgumentFunctionComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): ()
     local other = function() end
     send(function() end)
@@ -1802,7 +1766,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", points[0])
@@ -1818,7 +1782,7 @@ end
 }
 
 func TestLowerCallSiteDoesNotFallbackToSemanticCalleeWhenWIRDirectCalleeUnsupported(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(value: string): ()
     send(value)
 end
@@ -1838,7 +1802,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", points[0])
@@ -1849,7 +1813,7 @@ end
 }
 
 func TestLowerMethodCallNameComesFromWIRForExpressionReceiver(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(obj: any): ()
     obj:run()
 end
@@ -1871,7 +1835,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", points[0])
@@ -1948,7 +1912,7 @@ end
 }
 
 func TestLowerMethodCallUsesUnknownForUnsupportedWIRReceiver(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(obj: {run: fun(self: any): ()}): ()
     obj:run()
 end
@@ -1971,7 +1935,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", points[0])
@@ -1988,7 +1952,7 @@ end
 }
 
 func TestLowerIteratorCallSitePreservesArgumentPath(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local state = {
     active_sessions = {},
 }
@@ -1997,7 +1961,7 @@ for id, session_info in pairs(state.active_sessions) do
 end
 `, "pairs")
 	body := wirlower.Lower("iterator-call-site", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	genericFor, ok := stmts[1].(*ast.GenericForStmt)
 	if !ok {
@@ -2036,13 +2000,13 @@ func TestLowerNestedExpressionProducerCallIsReadableSlotZero(t *testing.T) {
 	stmts := []ast.Stmt{stmt}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"f", "g"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	_, err := semantics.ExtractChunk(stmts, bindings, built)
 	if err != nil {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
 	body := wirlower.Lower("nested-expression-producer", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	points := requireStmtPoints(t, built, stmt, 2)
 	innerSite, ok := facts.CallSite(points[0])
 	if !ok {
@@ -2082,13 +2046,13 @@ func TestLowerNestedExpressionProducerCallFromWIRIsReadableSlotZero(t *testing.T
 	stmts := []ast.Stmt{stmt}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"f", "g"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	_, err := semantics.ExtractChunk(stmts, bindings, built)
 	if err != nil {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
 	body := wirlower.Lower("nested-call-producer", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	points := requireStmtPoints(t, built, stmt, 2)
 	innerSite, ok := facts.CallSite(points[0])
 	if !ok {
@@ -2129,13 +2093,13 @@ func TestLowerMemberOrdinaryCallTargetStaysCallSiteOnly(t *testing.T) {
 	stmts := []ast.Stmt{decl, write}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"f"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	_, err := semantics.ExtractChunk(stmts, bindings, built)
 	if err != nil {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
 	body := wirlower.Lower("member-ordinary-call-target", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	points := requireStmtPoints(t, built, write, 2)
 	producer, ok := callproducer.FromFacts(facts, points[0])
 	if !ok {

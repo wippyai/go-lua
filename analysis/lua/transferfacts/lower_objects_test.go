@@ -34,13 +34,13 @@ func TestLowerObjectLiteralEntryLabelsAttributeValue(t *testing.T) {
 	stmts := []ast.Stmt{local}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	_, err := semantics.ExtractChunk(stmts, bindings, built)
 	if err != nil {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
 	body := wirlower.Lower("object-entry-label", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, local, 1)[0]
 	localFact, ok := facts.LocalAssignment(point)
 	if !ok {
@@ -80,13 +80,13 @@ func TestLowerObjectLiteralSidecarUsesAssignmentExprRef(t *testing.T) {
 	stmts := []ast.Stmt{local}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	_, err := semantics.ExtractChunk(stmts, bindings, built)
 	if err != nil {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
 	body := wirlower.Lower("object-sidecar-expr-ref", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	point := requireStmtPoints(t, built, local, 1)[0]
@@ -120,13 +120,13 @@ func TestLowerEmptyObjectLiteralStillPublishesIdentitySidecar(t *testing.T) {
 	stmts := []ast.Stmt{local}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	_, err := semantics.ExtractChunk(stmts, bindings, built)
 	if err != nil {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
 	body := wirlower.Lower("empty-object-identity", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, local, 1)[0]
 	localFact, ok := facts.LocalAssignment(point)
 	if !ok {
@@ -147,12 +147,12 @@ func TestLowerEmptyObjectLiteralStillPublishesIdentitySidecar(t *testing.T) {
 }
 
 func TestLowerWIRTableConstructorSourceCarriesLiteralIdentity(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local t = { child = { leaf = 1 } }
 `)
 	reg := standard.Registry()
 	body := wirlower.Lower("chunk", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, stmts[0], 1)[0]
 	source := mustLocalSource(t, facts, point)
 	literal, ok := facts.ObjectLiteral(source.ExprRef)
@@ -191,7 +191,7 @@ local t = { child = { leaf = payload.id } }
 	body := wirlower.Lower("chunk-no-sidecars", stmts, bindings, built)
 	_ = tableExpr
 
-	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	literals := facts.ObjectLiterals()
 	if len(literals) < 2 {
 		t.Fatalf("public WIR no-sidecar object literals = %#v, want root and nested constructors", literals)
@@ -211,12 +211,12 @@ local t = { child = { leaf = payload.id } }
 
 func TestLowerWIRObjectLiteralCarriesDeclaredEntryContract(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 type Box = { items: {[string]: string}, label: string }
 local box: Box = { items = {}, label = "" }
 `)
 	body := wirlower.Lower("chunk", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, stmts[1], 1)[0]
 	source := mustLocalSource(t, facts, point)
 	literal, ok := facts.ObjectLiteral(source.ExprRef)
@@ -253,12 +253,12 @@ local box: Box = { items = {}, label = "" }
 
 func TestLowerWIRAnnotatedObjectLiteralUsesDeclaredOverlay(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 type Box = { items: {[string]: {id: string}}, count: number }
 local box: Box = { items = {}, count = 0 }
 `)
 	body := wirlower.Lower("chunk", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, stmts[1], 1)[0]
 	fact, ok := facts.RootAssignment(point)
 	if !ok {
@@ -292,12 +292,12 @@ local box: Box = { items = {}, count = 0 }
 
 func TestLowerWIRAnnotatedArrayTableLiteralCarriesDeclaredContractClaim(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 type SystemMessage = { role: "system" }
 local final_messages: {SystemMessage} = {}
 `)
 	body := wirlower.Lower("chunk", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, stmts[1], 1)[0]
 	fact, ok := facts.RootAssignment(point)
 	if !ok {
@@ -372,7 +372,7 @@ type Box = { items: {[string]: string}, label: string }
 local box: Box = { items = {}, label = "" }
 `)
 	body := wirlower.Lower("chunk-no-sidecars", stmts, bindings, built)
-	facts := Lower(nil, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, stmts[1], 1)[0]
 	source := mustLocalSource(t, facts, point)
 	literal, ok := facts.ObjectLiteral(source.ExprRef)
@@ -409,13 +409,13 @@ local box: Box = { items = {}, label = "" }
 
 func TestLowerWIRContextualObjectLiteralExpressionValueUsesExpectedType(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 type Context = {[string]: any}
 local input: { context: Context? } = { context = nil }
 local user_ctx: Context = input.context or {}
 `)
 	body := wirlower.Lower("chunk", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, stmts[2], 1)[0]
 	source := mustLocalSource(t, facts, point)
 	op, ok := facts.ExpressionOperation(source.ExprRef)
@@ -452,7 +452,7 @@ local input: { context: Context? } = { context = nil }
 local user_ctx: Context = input.context or {}
 `)
 	body := wirlower.Lower("chunk-no-sidecars", stmts, bindings, built)
-	facts := Lower(nil, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, stmts[2], 1)[0]
 	source := mustLocalSource(t, facts, point)
 	op, ok := facts.ExpressionOperation(source.ExprRef)
@@ -489,7 +489,7 @@ local narrow: { x: number } = { x = 1 }
 local holder: { ref: Wide } = { ref = narrow }
 `)
 	body := wirlower.Lower("chunk-no-sidecars", stmts, bindings, built)
-	facts := Lower(nil, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	holderStmt, ok := stmts[2].(*ast.LocalAssignStmt)
 	if !ok {
 		t.Fatalf("stmt = %T, want holder local assignment", stmts[2])
@@ -511,7 +511,7 @@ local holder: { ref: Wide } = { ref = narrow }
 }
 
 func TestLowerWIRObjectLiteralEntrySourceComesFromWIR(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local t = { leaf = 1 }
 `)
 	localStmt := stmts[0].(*ast.LocalAssignStmt)
@@ -542,7 +542,7 @@ local t = { leaf = 1 }
 	})
 	body.SetPointRange(point, start, start+1)
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	source := mustLocalSource(t, facts, point)
 	literal, ok := facts.ObjectLiteral(source.ExprRef)
 	if !ok {
@@ -568,7 +568,7 @@ local t = { leaf = 1 }
 }
 
 func TestLowerWIRObjectLiteralUnsupportedEntryDoesNotFallbackToSemanticSource(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local t = { leaf = value }
 `, "value")
 	localStmt := stmts[0].(*ast.LocalAssignStmt)
@@ -593,7 +593,7 @@ local t = { leaf = value }
 	})
 	body.SetPointRange(point, start, start+1)
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	source := mustLocalSource(t, facts, point)
 	literal, ok := facts.ObjectLiteral(source.ExprRef)
 	if !ok {
@@ -613,7 +613,7 @@ local t = { leaf = value }
 }
 
 func TestLowerWIRObjectLiteralDoesNotKeepSemanticOnlyEntries(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local t = { leaf = 1, semantic_only = value }
 `, "value")
 	localStmt := stmts[0].(*ast.LocalAssignStmt)
@@ -638,7 +638,7 @@ local t = { leaf = 1, semantic_only = value }
 	})
 	body.SetPointRange(point, start, start+1)
 
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	source := mustLocalSource(t, facts, point)
 	literal, ok := facts.ObjectLiteral(source.ExprRef)
 	if !ok {
@@ -655,7 +655,7 @@ local t = { leaf = 1, semantic_only = value }
 
 func TestLowerDeclaredReturnAccumulatorCarriesExpectedContract(t *testing.T) {
 	reg := standard.Registry()
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function make(raw: any): {any}
     local out = {}
     if raw == nil then
@@ -666,7 +666,7 @@ end
 `)
 
 	body := wirlower.LowerFunction("make", fn, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	localStmt, ok := fn.Stmts[0].(*ast.LocalAssignStmt)
 	if !ok {
 		t.Fatalf("stmt = %T, want local assignment", fn.Stmts[0])
@@ -703,7 +703,7 @@ end
 
 func TestLowerDeclaredReturnAccumulatorRejectsMixedReturnSymbols(t *testing.T) {
 	reg := standard.Registry()
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function make(flag: boolean): {any}
     local out = {}
     local other = {}
@@ -715,7 +715,7 @@ end
 `)
 
 	body := wirlower.LowerFunction("make", fn, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	localStmt, ok := fn.Stmts[0].(*ast.LocalAssignStmt)
 	if !ok {
 		t.Fatalf("stmt = %T, want local assignment", fn.Stmts[0])
@@ -740,7 +740,7 @@ end
 `)
 	body := wirlower.LowerFunction("make", fn, bindings, built)
 
-	facts := Lower(nil, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	localStmt, ok := fn.Stmts[0].(*ast.LocalAssignStmt)
 	if !ok {
 		t.Fatalf("stmt = %T, want local assignment", fn.Stmts[0])
@@ -780,7 +780,7 @@ end
 `)
 	body := wirlower.LowerFunction("make", fn, bindings, built)
 
-	facts := Lower(nil, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	localStmt, ok := fn.Stmts[0].(*ast.LocalAssignStmt)
 	if !ok {
 		t.Fatalf("stmt = %T, want local assignment", fn.Stmts[0])
@@ -797,7 +797,7 @@ end
 
 func TestLowerSetmetatableReturnLocalCarriesNonNilDeclaredContract(t *testing.T) {
 	reg := standard.Registry()
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function make(): {run: (self: any) -> ()}?
     local mt = {}
     local instance = {}
@@ -809,7 +809,7 @@ end
 `)
 
 	body := wirlower.LowerFunction("make", fn, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	localStmt, ok := fn.Stmts[1].(*ast.LocalAssignStmt)
 	if !ok {
 		t.Fatalf("stmt = %T, want instance local assignment", fn.Stmts[1])
@@ -847,7 +847,7 @@ end
 `)
 	body := wirlower.LowerFunction("make", fn, bindings, built)
 
-	facts := Lower(nil, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	localStmt, ok := fn.Stmts[1].(*ast.LocalAssignStmt)
 	if !ok {
 		t.Fatalf("stmt = %T, want instance local assignment", fn.Stmts[1])
@@ -872,10 +872,10 @@ end
 }
 
 func TestLowerAnnotatedEmptyMapObjectLiteralCarriesExpectedContract(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `local t: {[string]: string} = {}`)
+	stmts, bindings, built, _ := parseSemanticChunk(t, `local t: {[string]: string} = {}`)
 	reg := standard.Registry()
 	body := wirlower.Lower("annotated-empty-map", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, stmts[0], 1)[0]
 	localFact, ok := facts.LocalAssignment(point)
 	if !ok {
@@ -898,7 +898,7 @@ func TestLowerAnnotatedEmptyMapObjectLiteralCarriesExpectedContract(t *testing.T
 
 func TestLowerOrdinaryOptionalObjectLiteralExpectedRootIsPresent(t *testing.T) {
 	reg := standard.Registry()
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function setup(): ()
     local runtime: { apply: (string) -> string }?
     runtime = {
@@ -909,7 +909,7 @@ function setup(): ()
 end
 `)
 	body := wirlower.Lower("optional-object-literal-expected-root", fn.Stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 
 	assignStmt, ok := fn.Stmts[1].(*ast.AssignStmt)
 	if !ok {
@@ -941,10 +941,10 @@ end
 }
 
 func TestLowerLogicalOperandObjectLiteralPublishesSidecar(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `local value = true and {}`)
+	stmts, bindings, built, _ := parseSemanticChunk(t, `local value = true and {}`)
 	reg := standard.Registry()
 	body := wirlower.Lower("logical-object-operand", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 
 	for _, literal := range facts.ObjectLiterals() {
 		if _, ok := literal.Identity(); ok {
@@ -955,14 +955,14 @@ func TestLowerLogicalOperandObjectLiteralPublishesSidecar(t *testing.T) {
 }
 
 func TestLowerWithWIRDynamicIndexLogicalDefaultObjectLiteralCarriesSlotContract(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local suites: {[string]: any[]} = {}
 local suite = "alpha"
 suites[suite] = suites[suite] or {}
 `)
 	body := wirlower.Lower("dynamic-default", stmts, bindings, built)
 	reg := standard.Registry()
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	want := typ.NewArray(typ.Any)
 
 	foundExpected := false
@@ -1013,7 +1013,7 @@ suites[suite] = suites[suite] or {}
 }
 
 func TestLowerAnnotatedLogicalFallbackObjectLiteralCarriesDeclaredContract(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 type Payload = {
     tool_calls: {string},
 }
@@ -1024,7 +1024,7 @@ local current: Payload = payload or {
 `)
 	reg := standard.Registry()
 	body := wirlower.Lower("annotated-logical-fallback", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	want := typ.NewArray(typ.String)
 
 	for _, literal := range facts.ObjectLiterals() {
@@ -1047,13 +1047,13 @@ local current: Payload = payload or {
 }
 
 func TestLowerReturnedObjectLiteralCarriesExpectedEntryContracts(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function new_actor(): { state: { processed: {[string]: string} } }
 	return { state = { processed = {} } }
 end`)
 	reg := standard.Registry()
 	body := wirlower.LowerFunction("new_actor", fn, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
 	if !ok {
 		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
@@ -1108,13 +1108,13 @@ end`)
 }
 
 func TestLowerObjectLiteralCarriesOpenListElementSourceFromVararg(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function collect(...: number)
 	local values = {...}
 end`)
 	localStmt := fn.Stmts[0].(*ast.LocalAssignStmt)
 	body := wirlower.LowerFunction("collect", fn, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, localStmt, 1)[0]
 	source := mustLocalSource(t, facts, point)
 	literal, ok := facts.ObjectLiteral(source.ExprRef)
@@ -1131,7 +1131,7 @@ end`)
 }
 
 func TestLowerWithWIRReturnedObjectLiteralExpectedContractComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function new_actor(): { state: { processed: {[string]: string} } }
 	return { state = { processed = {} } }
 end`)
@@ -1139,7 +1139,7 @@ end`)
 	fn.ReturnTypes = nil
 
 	reg := standard.Registry()
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
 	if !ok {
 		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
@@ -1182,7 +1182,7 @@ end`)
 	body := wirlower.LowerFunction("new_actor", fn, bindings, built)
 
 	reg := standard.Registry()
-	facts := Lower(nil, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
 	if !ok {
 		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
@@ -1218,7 +1218,7 @@ end`)
 }
 
 func TestLowerReturnedNestedObjectLiteralCarriesExpectedEntryContracts(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function output_error(err_type: string, message: string, code: any?): { type: string, error: { type: string, message: string, code: any? }? }
 	return {
 		type = "error",
@@ -1231,7 +1231,7 @@ function output_error(err_type: string, message: string, code: any?): { type: st
 end`)
 	reg := standard.Registry()
 	body := wirlower.LowerFunction("new_error", fn, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
 	if !ok {
 		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
@@ -1324,9 +1324,9 @@ end`)
 }
 
 func TestLowerExplicitAnyObjectLiteralDeclarationUsesDeclaredContract(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `local raw: any = { id = "cfg" }`)
+	stmts, bindings, built, _ := parseSemanticChunk(t, `local raw: any = { id = "cfg" }`)
 	body := wirlower.Lower("explicit-any-object-literal", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, stmts[0], 1)[0]
 	fact, ok := facts.RootAssignment(point)
 	if !ok {
@@ -1351,13 +1351,13 @@ func TestLowerObjectLiteralEntryCallSourcePointsAtNestedProducer(t *testing.T) {
 	stmts := []ast.Stmt{local}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	_, err := semantics.ExtractChunk(stmts, bindings, built)
 	if err != nil {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
 	body := wirlower.Lower("object-entry-call-source", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	points := requireStmtPoints(t, built, local, 2)
 	localFact, ok := facts.LocalAssignment(points[1])
 	if !ok {
@@ -1412,14 +1412,14 @@ func TestLowerAnyCastObjectLiteralPublishesClaimNotEntries(t *testing.T) {
 }
 
 func TestLowerTypedCastObjectLiteralCarriesExpectedType(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local state = {
     active_sessions = {} :: {[string]: string},
 }
 `)
 	reg := standard.Registry()
 	body := wirlower.Lower("typed-cast-object-literal", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 
 	point := requireStmtPoints(t, built, stmts[0], 1)[0]
 	localFact, ok := facts.LocalAssignment(point)
@@ -1476,7 +1476,7 @@ state.active_sessions[session_id] = {
 	body := wirlower.Lower("dynamic-index-object-expected-no-sidecars", stmts, bindings, built)
 	reg := standard.Registry()
 	typeValues := typevalue.NewCache()
-	lowered := LowerWithSidecars(nil, built.Graph, Config{Registry: reg, Bindings: bindings, TypeValues: typeValues, WIR: body})
+	lowered := LowerWithSidecars(built.Graph, Config{Registry: reg, Bindings: bindings, TypeValues: typeValues, WIR: body})
 	facts := lowered.Facts
 
 	assignPoint := requireStmtPoints(t, built, stmts[3], 1)[0]
@@ -1512,7 +1512,7 @@ payload = { name = "next", count = 1 }
 `)
 	body := wirlower.Lower("ordinary-object-expected-no-sidecars", stmts, bindings, built)
 	reg := standard.Registry()
-	facts := Lower(nil, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 
 	point := requireStmtPoints(t, built, stmts[2], 1)[0]
 	assign, ok := facts.RootAssignment(point)
@@ -1554,13 +1554,13 @@ func TestLowerNestedObjectLiteralEntriesUnderAssignmentExprRef(t *testing.T) {
 	stmts := []ast.Stmt{local}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	_, err := semantics.ExtractChunk(stmts, bindings, built)
 	if err != nil {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
 	body := wirlower.Lower("nested-object-literal-entries", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	point := requireStmtPoints(t, built, local, 1)[0]

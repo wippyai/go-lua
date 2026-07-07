@@ -39,7 +39,7 @@ func lowerFacts(t *testing.T, result *semantics.Result, graph cfg.Graph, reg *ax
 	if reg == nil {
 		t.Fatal("lowerFacts requires a registry")
 	}
-	return Lower(result, graph, Config{Registry: reg})
+	return Lower(graph, Config{Registry: reg})
 }
 
 func TestLowerLiteralExpressionValues(t *testing.T) {
@@ -49,13 +49,13 @@ func TestLowerLiteralExpressionValues(t *testing.T) {
 	stmts := []ast.Stmt{nilLocal, numberLocal, tableLocal}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	_, err := semantics.ExtractChunk(stmts, bindings, built)
 	if err != nil {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
 	body := wirlower.Lower("literal-expression-values", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	nilAssign, ok := facts.LocalAssignment(requireStmtPoints(t, built, nilLocal, 1)[0])
 	if !ok {
 		t.Fatalf("missing nil local assignment")
@@ -78,14 +78,14 @@ func TestLowerLiteralExpressionValues(t *testing.T) {
 }
 
 func TestLowerLogicalDefaultExpressionValueKeepsComputedWitness(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 type Level = "debug" | "info"
 local level: Level? = nil
 local selected = level or "info"
 `)
 	reg := standard.Registry()
 	body := wirlower.Lower("logical-default-expression", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	selected, ok := stmts[2].(*ast.LocalAssignStmt)
 	if !ok {
 		t.Fatalf("stmt = %T, want selected local assignment", stmts[2])
@@ -117,7 +117,7 @@ local selected = level or "info"
 
 func TestLowerReturnExpressionOperationUsesNestedCallSource(t *testing.T) {
 	reg := standard.Registry()
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(user)
 	return user.id .. ":" .. tostring(user.retries)
 end`, "tostring")
@@ -127,7 +127,7 @@ end`, "tostring")
 	}
 
 	body := wirlower.Lower("return-concat-operation", fn.Stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	returnPoints := requireStmtPoints(t, built, ret, 2)
 	returnFact, ok := facts.Return(returnPoints[1])
 	if !ok {
@@ -152,7 +152,7 @@ end`, "tostring")
 
 func TestLowerReturnLengthComparisonUsesNestedUnarySource(t *testing.T) {
 	reg := standard.Registry()
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(bindings)
 	return #bindings > 0
 end`)
@@ -162,7 +162,7 @@ end`)
 	}
 
 	body := wirlower.Lower("return-length-comparison", fn.Stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	returnPoints := requireStmtPoints(t, built, ret, 1)
 	returnFact, ok := facts.Return(returnPoints[0])
 	if !ok {
@@ -196,14 +196,14 @@ end`)
 }
 
 func TestLowerAnnotatedFunctionExpressionValueWitness(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 local cb = function(item: string): number
     return 1
 end
 `)
 	reg := standard.Registry()
 	body := wirlower.Lower("annotated-function-expression", stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, stmts[0], 1)[0]
 	source := mustLocalSource(t, facts, point)
 	value, ok := facts.ExpressionValue(source.ExprRef)
@@ -234,7 +234,7 @@ end
 }
 
 func TestLowerReturnedFunctionExpressionUsesUniqueCallableReturnArm(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function make(): ((value: string) -> string) | false
     return function(value)
         return value
@@ -243,7 +243,7 @@ end
 `)
 	reg := standard.Registry()
 	body := wirlower.LowerFunction("make", fn, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
 	if !ok {
 		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
@@ -273,7 +273,7 @@ end
 }
 
 func TestLowerWIRClosureArgumentCarriesFunctionTypeWitness(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): ()
     send(function(item: string): number
         return 1
@@ -287,7 +287,7 @@ end
 	point := requireStmtPoints(t, built, stmt, 1)[0]
 	reg := standard.Registry()
 	wirBody := wirlower.Lower("closure-arg", fn.Stmts, bindings, built)
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: wirBody})
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: wirBody})
 	site, ok := facts.CallSite(point)
 	if !ok {
 		t.Fatalf("missing call site at point %d", point)
