@@ -306,14 +306,11 @@ func rootReturnType(result *body.Result) (typ.Type, bool) {
 	}
 	var candidates []typ.Type
 	for _, point := range result.ReturnPoints() {
-		fact, ok := result.ReturnFact(point)
-		if !ok {
+		sources, ok := result.ReturnValueSources(point)
+		if !ok || len(sources) == 0 {
 			continue
 		}
-		if len(fact.Sources) == 0 {
-			continue
-		}
-		t, ok := sourceType(result, point, fact.Sources[0])
+		t, ok := sourceTypeFromValueSource(result, point, sources[0])
 		if !ok {
 			continue
 		}

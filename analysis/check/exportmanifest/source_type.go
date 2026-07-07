@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
@@ -56,6 +57,47 @@ func sourceType(result *body.Result, point cfg.Point, source sourceprovenance.AS
 		return nil, false
 	}
 	return exportValueType(result, value)
+}
+
+func sourceTypeFromValueSource(result *body.Result, point cfg.Point, source factflow.ValueSource) (typ.Type, bool) {
+	return sourceTypeFromValueSourceDepth(result, point, source, 0)
+}
+
+func sourceTypeFromValueSourceDepth(result *body.Result, point cfg.Point, source factflow.ValueSource, depth int) (typ.Type, bool) {
+	if result == nil || depth > typ.DefaultRecursionDepth {
+		return nil, false
+	}
+	if literal, ok := result.ObjectLiteralViewForSource(source); ok {
+		if t, ok := objectLiteralViewType(result, point, literal, depth+1); ok {
+			return t, true
+		}
+	}
+	if p, ok := result.ValueSourcePath(source); ok {
+		if t, ok := pathExportRecordType(result, point, p); ok {
+			return t, true
+		}
+	}
+	value, ok := result.SourceValueForExplanationAtBoundary(point, source)
+	if !ok {
+		return nil, false
+	}
+	return exportValueType(result, value)
+}
+
+func objectLiteralViewType(result *body.Result, point cfg.Point, literal factflow.ObjectLiteralView, depth int) (typ.Type, bool) {
+	if result == nil || literal.EntryCount() == 0 || depth > typ.DefaultRecursionDepth {
+		return nil, false
+	}
+	projected := make([]objectEntry, 0, literal.EntryCount())
+	literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
+		t, ok := sourceTypeFromValueSourceDepth(result, point, entry.Source(), depth+1)
+		if !ok {
+			t = typ.Unknown
+		}
+		projected = append(projected, objectEntry{suffix: entry.SuffixSegments(), t: t})
+		return true
+	})
+	return objectEntriesType(result, point, nil, projected)
 }
 
 func exprType(result *body.Result, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
