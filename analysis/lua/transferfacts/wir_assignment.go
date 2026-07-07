@@ -109,12 +109,40 @@ func (l *lowerer) addRootAssignmentFromWIR(input *factflow.FactsInput, point cfg
 		}
 	}
 	input.RootAssignments[point] = assignment
+	l.addCastExposureFromWIR(input, point, inst)
 	l.addRootAssignmentConditionAliasFromWIR(assignment)
 	l.addRootAssignmentExposureFromWIR(input, point, assignment)
 	l.addRootAssignmentObjectLiteralExpectedTypeFromWIR(input, assignment)
 	if declared, ok := l.wirAssignmentObjectLiteralExpectedType(inst, target.Symbol); ok {
 		l.addObjectLiteralFieldExposuresFromWIR(input, point, inst, declared)
 	}
+}
+
+func (l *lowerer) addCastExposureFromWIR(input *factflow.FactsInput, point cfg.Point, inst wir.Instruction) {
+	if l == nil || l.wir == nil || input == nil || inst.Op != wir.OpClaim || inst.Claim != wir.ClaimCast || inst.Type == 0 {
+		return
+	}
+	operandPath, ok := l.wirOperandPath(inst.A)
+	if !ok || operandPath.Symbol == 0 {
+		return
+	}
+	target := l.wir.Type(inst.Type)
+	if target == nil || typ.IsAny(target) || typ.IsUnknown(target) {
+		return
+	}
+	sourceType, ok := l.aliasPathType(operandPath)
+	if !ok || !aliasStrictlyWidens(sourceType, target) {
+		return
+	}
+	l.addCovariantExposureType(input, point, operandPath, target)
+}
+
+func (l *lowerer) wirOperandPath(op wir.Operand) (path.Path, bool) {
+	if l == nil || l.wir == nil || op.Kind != wir.OperandPath {
+		return path.Path{}, false
+	}
+	p := l.wir.Path(wir.PathRef(op.Ref))
+	return p, !p.IsEmpty()
 }
 
 func (l *lowerer) addRootAssignmentConditionAliasFromWIR(assignment factflow.RootAssignment) {

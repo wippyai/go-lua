@@ -136,20 +136,20 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		if result != nil {
 			if view, ok := result.LocalAssignmentView(point); ok {
 				fact, _ := view.Borrowed()
-				if l.wir != nil {
-					l.addLocalAssignmentSidecarsForWIR(&input, point, fact)
-				} else if lowered, ok := l.localAssignment(point, fact); ok {
-					input.RootAssignments[point] = lowered
-					l.addLocalConditionAlias(fact.Symbol, lowered.Source())
-					l.addAssignmentAssertionRefinements(&input, point, lowered.TargetPath(), lowered.Source(), fact.Source)
-					l.addObjectLiteral(&input, result, fact.Source)
-					l.addObjectLiteralExpectedType(&input, fact)
-					l.addLocalAliasExposure(&input, point, fact)
-					if fact.Source.Kind == sourceprovenance.SourceExpression {
-						l.addCastExposure(&input, point, fact.Source.Expr)
-					}
-					if declared, ok := l.resolveType(fact.Type); ok {
-						l.addObjectLiteralFieldExposures(&input, result, point, fact.Source, declared)
+				if l.wir == nil {
+					if lowered, ok := l.localAssignment(point, fact); ok {
+						input.RootAssignments[point] = lowered
+						l.addLocalConditionAlias(fact.Symbol, lowered.Source())
+						l.addAssignmentAssertionRefinements(&input, point, lowered.TargetPath(), lowered.Source(), fact.Source)
+						l.addObjectLiteral(&input, result, fact.Source)
+						l.addObjectLiteralExpectedType(&input, fact)
+						l.addLocalAliasExposure(&input, point, fact)
+						if fact.Source.Kind == sourceprovenance.SourceExpression {
+							l.addCastExposure(&input, point, fact.Source.Expr)
+						}
+						if declared, ok := l.resolveType(fact.Type); ok {
+							l.addObjectLiteralFieldExposures(&input, result, point, fact.Source, declared)
+						}
 					}
 				}
 			}
@@ -289,16 +289,6 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 	return Lowered{
 		Facts:       factflow.NewFacts(input),
 		SymbolTypes: copySymbolTypes(symbolTypes),
-	}
-}
-
-func (l *lowerer) addLocalAssignmentSidecarsForWIR(input *factflow.FactsInput, point cfg.Point, fact semantics.LocalAssignmentFact) {
-	lowered, ok := input.RootAssignments[point]
-	if !ok || lowered.TargetSymbol() != fact.Symbol {
-		return
-	}
-	if fact.Source.Kind == sourceprovenance.SourceExpression {
-		l.addCastExposure(input, point, fact.Source.Expr)
 	}
 }
 

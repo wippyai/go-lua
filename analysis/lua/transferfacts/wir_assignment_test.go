@@ -828,6 +828,26 @@ end`)
 	assertExposureType(t, exposures[0], typ.NewArray(normalize.UnionForEvidence(typ.Number, typ.String)))
 }
 
+func TestLowerWIRCastExposureWithoutSemanticLocalAssignmentView(t *testing.T) {
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function f(narrow: {number})
+    local widened = narrow as {number | string}
+end`)
+	body := wirlower.Lower("cast-exposure-no-sidecars", fn.Stmts, bindings, built)
+	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
+	exposures := facts.CovariantExposures(point)
+	if len(exposures) != 1 {
+		t.Fatalf("WIR cast exposures = %#v, want one without semantic local assignment view", exposures)
+	}
+	wantPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "narrow")
+	if got := exposures[0].SourcePath(); !got.Equal(wantPath) {
+		t.Fatalf("WIR cast exposure source = %v, want %v", got, wantPath)
+	}
+	assertExposureType(t, exposures[0], typ.NewArray(normalize.UnionForEvidence(typ.Number, typ.String)))
+}
+
 func assertExposureType(t *testing.T, exposure factflow.CovariantExposure, want typ.Type) {
 	t.Helper()
 	got, ok := typevalue.TypeOf(standard.Registry(), exposure.WideValue())
