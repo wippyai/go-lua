@@ -16,7 +16,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
@@ -233,23 +232,23 @@ func (r *Result) EntryState() (state.State, bool) {
 	return r.StateAt(graph.Entry())
 }
 
-func (r *Result) ReturnFact(point cfg.Point) (semantics.ReturnFact, bool) {
+func (r *Result) ReturnFact(point cfg.Point) (ReturnFact, bool) {
 	if r == nil || r.semantics == nil {
-		return semantics.ReturnFact{}, false
+		return ReturnFact{}, false
 	}
 	return r.semantics.Return(point)
 }
 
-func (r *Result) LocalAssignment(point cfg.Point) (semantics.LocalAssignmentFact, bool) {
+func (r *Result) LocalAssignment(point cfg.Point) (LocalAssignmentFact, bool) {
 	if r == nil || r.semantics == nil {
-		return semantics.LocalAssignmentFact{}, false
+		return LocalAssignmentFact{}, false
 	}
 	return r.semantics.LocalAssignment(point)
 }
 
-func (r *Result) LocalAssignmentView(point cfg.Point) (semantics.LocalAssignmentFactView, bool) {
+func (r *Result) LocalAssignmentView(point cfg.Point) (LocalAssignmentFactView, bool) {
 	if r == nil || r.semantics == nil {
-		return semantics.LocalAssignmentFactView{}, false
+		return LocalAssignmentFactView{}, false
 	}
 	return r.semantics.LocalAssignmentView(point)
 }
@@ -279,9 +278,9 @@ func (r *Result) RequireAliasModulePath(name string) (string, bool) {
 	return r.modules.ModulePathForAlias(name)
 }
 
-func (r *Result) ObjectLiteral(expr ast.Expr) (semantics.ObjectLiteralFact, bool) {
+func (r *Result) ObjectLiteral(expr ast.Expr) (ObjectLiteralFact, bool) {
 	if r == nil || r.semantics == nil {
-		return semantics.ObjectLiteralFact{}, false
+		return ObjectLiteralFact{}, false
 	}
 	return r.semantics.ObjectLiteral(expr)
 }
@@ -293,30 +292,30 @@ func (r *Result) ObjectLiteralViewForSource(source factflow.ValueSource) (factfl
 	return r.facts.ObjectLiteralView(source.ExprRef)
 }
 
-func (r *Result) OrdinaryAssignment(point cfg.Point) (semantics.OrdinaryAssignmentFact, bool) {
+func (r *Result) OrdinaryAssignment(point cfg.Point) (OrdinaryAssignmentFact, bool) {
 	if r == nil || r.semantics == nil {
-		return semantics.OrdinaryAssignmentFact{}, false
+		return OrdinaryAssignmentFact{}, false
 	}
 	return r.semantics.OrdinaryAssignment(point)
 }
 
-func (r *Result) OrdinaryAssignmentView(point cfg.Point) (semantics.OrdinaryAssignmentFactView, bool) {
+func (r *Result) OrdinaryAssignmentView(point cfg.Point) (OrdinaryAssignmentFactView, bool) {
 	if r == nil || r.semantics == nil {
-		return semantics.OrdinaryAssignmentFactView{}, false
+		return OrdinaryAssignmentFactView{}, false
 	}
 	return r.semantics.OrdinaryAssignmentView(point)
 }
 
-func (r *Result) Call(point cfg.Point) (semantics.CallFact, bool) {
+func (r *Result) Call(point cfg.Point) (CallFact, bool) {
 	if r == nil || r.semantics == nil {
-		return semantics.CallFact{}, false
+		return CallFact{}, false
 	}
 	return r.semantics.Call(point)
 }
 
-func (r *Result) CallView(point cfg.Point) (semantics.CallFactView, bool) {
+func (r *Result) CallView(point cfg.Point) (CallFactView, bool) {
 	if r == nil || r.semantics == nil {
-		return semantics.CallFactView{}, false
+		return CallFactView{}, false
 	}
 	return r.semantics.CallView(point)
 }
@@ -420,9 +419,9 @@ func (r *Result) NoNormalReturn(point cfg.Point) bool {
 	return r.facts.NoNormalReturn(point)
 }
 
-func (r *Result) BranchCondition(point cfg.Point) (semantics.BranchConditionFact, bool) {
+func (r *Result) BranchCondition(point cfg.Point) (BranchConditionFact, bool) {
 	if r == nil || r.semantics == nil {
-		return semantics.BranchConditionFact{}, false
+		return BranchConditionFact{}, false
 	}
 	return r.semantics.BranchCondition(point)
 }
@@ -476,7 +475,7 @@ func (r *Result) ExpressionImpliedChecksOnEdge(expr ast.Expr, cond bool) []branc
 	return branchcond.ImpliedChecksOnEdge(expr, r.bindings, cond)
 }
 
-func (r *Result) BranchConditionSufficientChecksOnEdge(fact semantics.BranchConditionFact, cond bool) []branchcond.ImpliedCheck {
+func (r *Result) BranchConditionSufficientChecksOnEdge(fact BranchConditionFact, cond bool) []branchcond.ImpliedCheck {
 	if r == nil || r.bindings == nil || fact.Condition == nil {
 		return nil
 	}

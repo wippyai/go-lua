@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 )
 
 // CallPathInvalidation is a concrete path invalidation caused by a call after
@@ -188,7 +187,7 @@ func (r *Result) CallSiteHasExactEmptyGuardInvalidationSummary(site factflow.Cal
 	return ok && sig.OperationalEffects == nil && sig.Effect.Pure()
 }
 
-func (r *Result) callFactReferencesTrackedPath(site factflow.CallSite, fact semantics.CallFact, target pathdom.Path) bool {
+func (r *Result) callFactReferencesTrackedPath(site factflow.CallSite, fact CallFact, target pathdom.Path) bool {
 	if receiver, ok := site.ReceiverPath(); ok && target.Overlaps(receiver) {
 		return true
 	}

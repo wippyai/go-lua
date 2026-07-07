@@ -8,11 +8,14 @@ import "github.com/wippyai/go-lua/analysis/lua/semantics"
 type BranchKind = semantics.BranchKind
 type BranchConditionFact = semantics.BranchConditionFact
 type LocalAssignmentFact = semantics.LocalAssignmentFact
+type LocalAssignmentFactView = semantics.LocalAssignmentFactView
 type OrdinaryAssignmentFact = semantics.OrdinaryAssignmentFact
+type OrdinaryAssignmentFactView = semantics.OrdinaryAssignmentFactView
 type ReturnFact = semantics.ReturnFact
 type ObjectLiteralFact = semantics.ObjectLiteralFact
 type ObjectEntryFact = semantics.ObjectEntryFact
 type CallFact = semantics.CallFact
+type CallFactView = semantics.CallFactView
 type SourceSpan = semantics.SourceSpan
 
 const (

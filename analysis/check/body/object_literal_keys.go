@@ -3,7 +3,6 @@ package body
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -11,7 +10,7 @@ import (
 // literal or of a nested object literal at suffix. Array/int entries are ignored
 // because they do not contribute to string-key dispatch domains; dynamic or
 // invalid field keys make the key set unknown.
-func (r *Result) ObjectLiteralStaticStringKeysAtPath(fact semantics.ObjectLiteralFact, suffix []segment.Segment) (map[string]bool, ast.Span, bool) {
+func (r *Result) ObjectLiteralStaticStringKeysAtPath(fact ObjectLiteralFact, suffix []segment.Segment) (map[string]bool, ast.Span, bool) {
 	if len(suffix) != 0 {
 		nested, ok := r.nestedObjectLiteralFact(fact, suffix)
 		if !ok {
@@ -26,9 +25,9 @@ func (r *Result) ObjectLiteralStaticStringKeysAtPath(fact semantics.ObjectLitera
 	return keys, ast.SpanOf(fact.Table), true
 }
 
-func (r *Result) nestedObjectLiteralFact(fact semantics.ObjectLiteralFact, suffix []segment.Segment) (semantics.ObjectLiteralFact, bool) {
+func (r *Result) nestedObjectLiteralFact(fact ObjectLiteralFact, suffix []segment.Segment) (ObjectLiteralFact, bool) {
 	if r == nil || len(suffix) == 0 {
-		return semantics.ObjectLiteralFact{}, false
+		return ObjectLiteralFact{}, false
 	}
 	for _, entry := range fact.Entries {
 		if !sameSegments(entry.Suffix.Segments, suffix) {
@@ -37,10 +36,10 @@ func (r *Result) nestedObjectLiteralFact(fact semantics.ObjectLiteralFact, suffi
 		nested, ok := r.ObjectLiteral(entry.Value)
 		return nested, ok
 	}
-	return semantics.ObjectLiteralFact{}, false
+	return ObjectLiteralFact{}, false
 }
 
-func staticStringKeysOfObjectLiteral(fact semantics.ObjectLiteralFact) (map[string]bool, bool) {
+func staticStringKeysOfObjectLiteral(fact ObjectLiteralFact) (map[string]bool, bool) {
 	if fact.Table == nil {
 		return nil, false
 	}

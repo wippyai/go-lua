@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 )
@@ -111,7 +110,7 @@ func (r *Result) PathPresenceInvalidatedBetween(from, to cfg.Point, target pathd
 	return false
 }
 
-func (r *Result) ordinaryAssignmentInvalidatesMemberPathAt(point cfg.Point, fact semantics.OrdinaryAssignmentFact, target pathdom.Path) bool {
+func (r *Result) ordinaryAssignmentInvalidatesMemberPathAt(point cfg.Point, fact OrdinaryAssignmentFact, target pathdom.Path) bool {
 	if len(target.Segments) == 0 {
 		if fact.HasSymbol && target.Symbol != 0 && fact.Symbol == target.Symbol {
 			return true

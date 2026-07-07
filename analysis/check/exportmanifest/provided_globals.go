@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -232,7 +231,7 @@ func (f *providedGlobalForwarding) collect(m *manifest.Manifest) {
 	}
 }
 
-func (f *providedGlobalForwarding) localCalleeAndArgs(result *body.Result, call semantics.CallFact) (*ast.FunctionExpr, []ast.Expr, bool) {
+func (f *providedGlobalForwarding) localCalleeAndArgs(result *body.Result, call body.CallFact) (*ast.FunctionExpr, []ast.Expr, bool) {
 	if f == nil {
 		return nil, nil, false
 	}
@@ -283,7 +282,7 @@ func (f *providedGlobalForwarding) exprIsWatchedCallback(result *body.Result, ex
 	return ok
 }
 
-func providerGlobalsForCall(result *body.Result, point cfg.Point, site factflow.CallSite, call semantics.CallFact) (*manifest.Manifest, []string, []ast.Expr) {
+func providerGlobalsForCall(result *body.Result, point cfg.Point, site factflow.CallSite, call body.CallFact) (*manifest.Manifest, []string, []ast.Expr) {
 	name, ok := result.CallSignatureName(site)
 	if ok {
 		if provider, globals := providerGlobalsForSignatureName(result, name); len(globals) != 0 {
@@ -314,7 +313,7 @@ func providerGlobalsForSignatureName(result *body.Result, name string) (*manifes
 	return nil, nil
 }
 
-func isBareGlobalCall(result *body.Result, call semantics.CallFact, name string) bool {
+func isBareGlobalCall(result *body.Result, call body.CallFact, name string) bool {
 	ident, ok := call.Func.(*ast.IdentExpr)
 	return ok && result.IdentResolvesToGlobal(ident, name)
 }

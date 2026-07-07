@@ -12,7 +12,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
@@ -135,14 +134,14 @@ func addOrdinaryAssignmentMembers(
 	}
 }
 
-func ordinaryAssignmentMemberType(result *body.Result, point cfg.Point, root pathdom.Path, fact semantics.OrdinaryAssignmentFact) (typ.Type, bool) {
+func ordinaryAssignmentMemberType(result *body.Result, point cfg.Point, root pathdom.Path, fact body.OrdinaryAssignmentFact) (typ.Type, bool) {
 	if t, ok, resolved := ordinaryAssignmentRHSMemberType(result, point, root, fact); ok || resolved {
 		return t, ok
 	}
 	return ordinaryAssignmentDestinationMemberType(result, point, fact.Path)
 }
 
-func ordinaryAssignmentRHSMemberType(result *body.Result, point cfg.Point, root pathdom.Path, fact semantics.OrdinaryAssignmentFact) (typ.Type, bool, bool) {
+func ordinaryAssignmentRHSMemberType(result *body.Result, point cfg.Point, root pathdom.Path, fact body.OrdinaryAssignmentFact) (typ.Type, bool, bool) {
 	expr := ordinaryAssignmentRHSExpr(fact)
 	if expr != nil {
 		if t, ok := ordinaryAssignmentRHSPathType(result, point, root, fact, expr); ok {
@@ -174,7 +173,7 @@ func ordinaryAssignmentRHSMemberType(result *body.Result, point cfg.Point, root 
 	return nil, false, resolved
 }
 
-func ordinaryAssignmentRHSValue(result *body.Result, point cfg.Point, fact semantics.OrdinaryAssignmentFact) (product.Value, bool) {
+func ordinaryAssignmentRHSValue(result *body.Result, point cfg.Point, fact body.OrdinaryAssignmentFact) (product.Value, bool) {
 	if fact.Source.Kind == sourceprovenance.SourceExpression {
 		expr := ordinaryAssignmentRHSExpr(fact)
 		if expr == nil {
@@ -189,14 +188,14 @@ func ordinaryAssignmentRHSValue(result *body.Result, point cfg.Point, fact seman
 	return result.SourceValueForExplanationAtBoundary(point, valueSource)
 }
 
-func ordinaryAssignmentRHSExpr(fact semantics.OrdinaryAssignmentFact) ast.Expr {
+func ordinaryAssignmentRHSExpr(fact body.OrdinaryAssignmentFact) ast.Expr {
 	if fact.Source.Expr != nil {
 		return fact.Source.Expr
 	}
 	return fact.Value
 }
 
-func ordinaryAssignmentRHSPathType(result *body.Result, point cfg.Point, root pathdom.Path, fact semantics.OrdinaryAssignmentFact, expr ast.Expr) (typ.Type, bool) {
+func ordinaryAssignmentRHSPathType(result *body.Result, point cfg.Point, root pathdom.Path, fact body.OrdinaryAssignmentFact, expr ast.Expr) (typ.Type, bool) {
 	p, ok := result.ExpressionPath(expr)
 	if !ok || p.IsEmpty() || p.Equal(root) {
 		return nil, false
@@ -259,7 +258,7 @@ func addObjectLiteralEntries(
 	result *body.Result,
 	point cfg.Point,
 	root pathdom.Path,
-	entries []semantics.ObjectEntryFact,
+	entries []body.ObjectEntryFact,
 	members *objectMemberMaps,
 ) {
 	for _, entry := range entries {
@@ -377,7 +376,7 @@ func directMemberSegment(prefix, target []segment.Segment) (segment.Segment, boo
 	return target[len(prefix)], true
 }
 
-func objectLiteralType(result *body.Result, point cfg.Point, entries []semantics.ObjectEntryFact) (typ.Type, bool) {
+func objectLiteralType(result *body.Result, point cfg.Point, entries []body.ObjectEntryFact) (typ.Type, bool) {
 	if len(entries) == 0 {
 		return nil, false
 	}
@@ -388,7 +387,7 @@ func objectLiteralType(result *body.Result, point cfg.Point, entries []semantics
 	return objectEntriesType(result, point, nil, projected)
 }
 
-func objectEntryFactType(result *body.Result, point cfg.Point, entry semantics.ObjectEntryFact) typ.Type {
+func objectEntryFactType(result *body.Result, point cfg.Point, entry body.ObjectEntryFact) typ.Type {
 	if t, ok := exprType(result, point, entry.Value); ok {
 		return t
 	}

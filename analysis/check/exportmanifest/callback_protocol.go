@@ -5,7 +5,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -278,7 +277,7 @@ func callbackProtocolReplayOrders(results []*body.Result) [][]string {
 	return out
 }
 
-func callbackProtocolCallSlot(result *body.Result, call semantics.CallFact) (string, bool) {
+func callbackProtocolCallSlot(result *body.Result, call body.CallFact) (string, bool) {
 	if (isBareGlobalCall(result, call, "pcall") || isBareGlobalCall(result, call, "xpcall")) && len(call.Args) != 0 {
 		if p, ok := result.ExpressionPath(call.Args[0]); ok {
 			return callbackProtocolSlotFromSegments(p.Segments)
