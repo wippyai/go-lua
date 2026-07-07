@@ -898,8 +898,11 @@ func assertLoweredObjectEntry(t *testing.T, entry factflow.ObjectEntry, wantSuff
 		t.Fatalf("entry suffix = %#v, want %#v", entry.Suffix(), wantSuffix)
 	}
 	source := entry.Source()
-	if source.Kind != wantKind || !source.HasExpr || source.ExprRef == 0 {
-		t.Fatalf("entry source = %#v, want kind %v with expr ref", source, wantKind)
+	if source.Kind != wantKind {
+		t.Fatalf("entry source = %#v, want kind %v", source, wantKind)
+	}
+	if wantKind == factflow.ValueSourceExpression && (!source.HasExpr || source.ExprRef == 0) {
+		t.Fatalf("entry source = %#v, want expression with expr ref", source)
 	}
 }
 

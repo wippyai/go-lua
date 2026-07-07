@@ -17,7 +17,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/expressionid"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
-	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
@@ -26,32 +25,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
-
-func TestLowerObjectLiteralEntryCarriesSyntaxFreeMetadata(t *testing.T) {
-	entrySource := sourceprovenance.ASTSource{Kind: sourceprovenance.SourceNil}
-	span := semantics.SourceSpan{StartLine: 3, StartCol: 4, EndLine: 3, EndCol: 9}
-	l := lowerer{}
-	lowered := l.objectLiteral(semantics.ObjectLiteralFact{
-		Entries: []semantics.ObjectEntryFact{
-			{
-				Suffix:     fieldSuffix("id"),
-				Source:     entrySource,
-				ValueSpan:  span,
-				ValueLabel: "payload.id",
-			},
-		},
-	})
-	entries := lowered.Entries()
-	if len(entries) != 1 {
-		t.Fatalf("entries = %#v, want one", entries)
-	}
-	if got := entries[0].ValueSpan(); got.StartLine != 3 || got.EndCol != 9 {
-		t.Fatalf("entry span = %#v, want lowered span", got)
-	}
-	if got := entries[0].ValueLabel(); got != "payload.id" {
-		t.Fatalf("entry label = %q, want payload.id", got)
-	}
-}
 
 func TestLowerObjectLiteralEntryLabelsAttributeValue(t *testing.T) {
 	table := &ast.TableExpr{Fields: []*ast.Field{
@@ -66,7 +39,8 @@ func TestLowerObjectLiteralEntryLabelsAttributeValue(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	body := wirlower.Lower("object-entry-label", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, local, 1)[0]
 	localFact, ok := facts.LocalAssignment(point)
 	if !ok {
@@ -111,7 +85,8 @@ func TestLowerObjectLiteralSidecarUsesAssignmentExprRef(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	body := wirlower.Lower("object-sidecar-expr-ref", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	point := requireStmtPoints(t, built, local, 1)[0]
@@ -131,11 +106,8 @@ func TestLowerObjectLiteralSidecarUsesAssignmentExprRef(t *testing.T) {
 	if len(entries) != 2 {
 		t.Fatalf("literal entries = %#v, want two static entries", entries)
 	}
-	assertLoweredObjectEntry(t, entries[0], fieldSuffix("leaf"), factflow.ValueSourceExpression)
-	assertLoweredObjectEntry(t, entries[1], stringSuffix("key"), factflow.ValueSourceExpression)
-	if entries[0].Source().ExprRef == source.ExprRef || entries[1].Source().ExprRef == source.ExprRef {
-		t.Fatalf("entry source expr refs reused table expr ref: source=%#v entries=%#v", source, entries)
-	}
+	assertLoweredObjectEntry(t, entries[0], fieldSuffix("leaf"), factflow.ValueSourceLiteral)
+	assertLoweredObjectEntry(t, entries[1], stringSuffix("key"), factflow.ValueSourceLiteral)
 	wantID := identity.LuaTableLiteral(built.Graph.ID(), uint64(source.ExprRef))
 	if gotID, ok := literal.Identity(); !ok || gotID != wantID {
 		t.Fatalf("literal identity = %v/%v, want %v", gotID, ok, wantID)
@@ -153,7 +125,8 @@ func TestLowerEmptyObjectLiteralStillPublishesIdentitySidecar(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	body := wirlower.Lower("empty-object-identity", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, local, 1)[0]
 	localFact, ok := facts.LocalAssignment(point)
 	if !ok {
@@ -200,68 +173,6 @@ local t = { child = { leaf = 1 } }
 	gotID, ok := product.Get(reg, value, identity.Key).ID()
 	if !ok || gotID != wantID {
 		t.Fatalf("WIR table source identity = %v/%v, want object literal identity %v", gotID, ok, wantID)
-	}
-}
-
-func TestLowerWIRObjectLiteralPublishesWithoutSemanticObjectLiteralFact(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
-local t = { child = { leaf = payload.id } }
-`, "payload")
-	local, ok := stmts[0].(*ast.LocalAssignStmt)
-	if !ok {
-		t.Fatalf("stmt = %T, want local assignment", stmts[0])
-	}
-	tableExpr, ok := local.Exprs[0].(*ast.TableExpr)
-	if !ok {
-		t.Fatalf("expr = %T, want table constructor", local.Exprs[0])
-	}
-	body := wirlower.Lower("chunk", stmts, bindings, built)
-	reg := standard.Registry()
-	input := factflow.FactsInput{ObjectLiterals: make(map[factflow.ExprRef]factflow.ObjectLiteral)}
-	l := lowerer{
-		registry: reg,
-		bindings: bindings,
-		graph:    built.Graph,
-		graphID:  built.Graph.ID(),
-		wir:      body,
-		exprs:    make(map[any]factflow.ExprRef),
-	}
-	l.addObjectLiteralExpr(&input, nil, tableExpr)
-	facts := factflow.NewFacts(input)
-
-	rootRef, ok := l.tableConstructorExprRef(tableExpr)
-	if !ok {
-		t.Fatal("missing WIR table expression ref")
-	}
-	literal, ok := facts.ObjectLiteral(rootRef)
-	if !ok {
-		t.Fatalf("missing WIR object literal for root ref %d without semantic fact", rootRef)
-	}
-	if got := len(literal.Entries()); got != 2 {
-		t.Fatalf("root WIR entries = %#v, want flattened child and child.leaf", literal.Entries())
-	}
-	if gotID, ok := literal.Identity(); !ok || gotID != identity.LuaTableLiteral(built.Graph.ID(), uint64(rootRef)) {
-		t.Fatalf("root WIR identity = %v/%v, want graph/ref identity", gotID, ok)
-	}
-	var nestedRef factflow.ExprRef
-	for _, entry := range literal.Entries() {
-		if !reflect.DeepEqual(entry.Suffix(), fieldChainSuffix("child")) {
-			continue
-		}
-		source := entry.Source()
-		if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
-			nestedRef = source.ExprRef
-		}
-	}
-	if nestedRef == 0 {
-		t.Fatalf("root WIR entries = %#v, want child expression source", literal.Entries())
-	}
-	nested, ok := facts.ObjectLiteral(nestedRef)
-	if !ok {
-		t.Fatalf("missing nested WIR object literal for ref %d without semantic fact", nestedRef)
-	}
-	if entries := nested.Entries(); len(entries) != 1 || entries[0].ValueLabel() != "payload.id" {
-		t.Fatalf("nested WIR entries = %#v, want payload.id leaf", entries)
 	}
 }
 
@@ -961,9 +872,10 @@ end
 }
 
 func TestLowerAnnotatedEmptyMapObjectLiteralCarriesExpectedContract(t *testing.T) {
-	stmts, _, built, result := parseSemanticChunk(t, `local t: {[string]: string} = {}`)
+	stmts, bindings, built, result := parseSemanticChunk(t, `local t: {[string]: string} = {}`)
 	reg := standard.Registry()
-	facts := lowerFacts(t, result, built.Graph, reg)
+	body := wirlower.Lower("annotated-empty-map", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, stmts[0], 1)[0]
 	localFact, ok := facts.LocalAssignment(point)
 	if !ok {
@@ -1029,9 +941,10 @@ end
 }
 
 func TestLowerLogicalOperandObjectLiteralPublishesSidecar(t *testing.T) {
-	_, _, built, result := parseSemanticChunk(t, `local value = true and {}`)
+	stmts, bindings, built, result := parseSemanticChunk(t, `local value = true and {}`)
 	reg := standard.Registry()
-	facts := lowerFacts(t, result, built.Graph, reg)
+	body := wirlower.Lower("logical-object-operand", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 
 	for _, literal := range facts.ObjectLiterals() {
 		if _, ok := literal.Identity(); ok {
@@ -1100,7 +1013,7 @@ suites[suite] = suites[suite] or {}
 }
 
 func TestLowerAnnotatedLogicalFallbackObjectLiteralCarriesDeclaredContract(t *testing.T) {
-	_, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, result := parseSemanticChunk(t, `
 type Payload = {
     tool_calls: {string},
 }
@@ -1110,7 +1023,8 @@ local current: Payload = payload or {
 }
 `)
 	reg := standard.Registry()
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	body := wirlower.Lower("annotated-logical-fallback", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	want := typ.NewArray(typ.String)
 
 	for _, literal := range facts.ObjectLiterals() {
@@ -1410,8 +1324,9 @@ end`)
 }
 
 func TestLowerExplicitAnyObjectLiteralDeclarationUsesDeclaredContract(t *testing.T) {
-	stmts, _, built, result := parseSemanticChunk(t, `local raw: any = { id = "cfg" }`)
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	stmts, bindings, built, result := parseSemanticChunk(t, `local raw: any = { id = "cfg" }`)
+	body := wirlower.Lower("explicit-any-object-literal", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, stmts[0], 1)[0]
 	fact, ok := facts.RootAssignment(point)
 	if !ok {
@@ -1441,7 +1356,8 @@ func TestLowerObjectLiteralEntryCallSourcePointsAtNestedProducer(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	body := wirlower.Lower("object-entry-call-source", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	points := requireStmtPoints(t, built, local, 2)
 	localFact, ok := facts.LocalAssignment(points[1])
 	if !ok {
@@ -1502,7 +1418,8 @@ local state = {
 }
 `)
 	reg := standard.Registry()
-	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	body := wirlower.Lower("typed-cast-object-literal", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 
 	point := requireStmtPoints(t, built, stmts[0], 1)[0]
 	localFact, ok := facts.LocalAssignment(point)
@@ -1517,20 +1434,26 @@ local state = {
 	if len(entries) != 1 {
 		t.Fatalf("root literal entries = %#v, want one", entries)
 	}
-	castSource := entries[0].Source()
-	castLiteral, ok := facts.ObjectLiteral(castSource.ExprRef)
-	if !ok {
-		t.Fatalf("missing casted field object literal sidecar for ref %d", castSource.ExprRef)
-	}
-	expected, ok := castLiteral.Expected()
-	if !ok {
-		t.Fatalf("casted field literal has no expected type")
-	}
-	got, ok := typevalue.TypeOf(reg, expected)
 	want := typetable.NewMap(typ.String, typ.String)
-	if !ok || !typ.TypeEquals(got, want) {
-		t.Fatalf("casted field expected type = %v/%v, want %v", got, ok, want)
+	for _, literal := range facts.ObjectLiterals() {
+		if expected, ok := literal.Expected(); ok {
+			got, ok := typevalue.TypeOf(reg, expected)
+			if ok && typ.TypeEquals(got, want) {
+				return
+			}
+		}
+		for _, entry := range literal.Entries() {
+			expected, ok := entry.Expected()
+			if !ok {
+				continue
+			}
+			got, ok := typevalue.TypeOf(reg, expected)
+			if ok && typ.TypeEquals(got, want) {
+				return
+			}
+		}
 	}
+	t.Fatalf("object literals = %#v, want casted field expected type %v", facts.ObjectLiterals(), want)
 }
 
 func TestLowerWIRDynamicIndexObjectLiteralExpectedContractWithoutSemanticResult(t *testing.T) {
@@ -1636,7 +1559,8 @@ func TestLowerNestedObjectLiteralEntriesUnderAssignmentExprRef(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	body := wirlower.Lower("nested-object-literal-entries", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	point := requireStmtPoints(t, built, local, 1)[0]
@@ -1653,9 +1577,9 @@ func TestLowerNestedObjectLiteralEntriesUnderAssignmentExprRef(t *testing.T) {
 	if len(entries) != 3 {
 		t.Fatalf("literal entries = %#v, want root, nested root, and nested leaf", entries)
 	}
-	assertLoweredObjectEntry(t, entries[0], fieldSuffix("x"), factflow.ValueSourceExpression)
+	assertLoweredObjectEntry(t, entries[0], fieldSuffix("x"), factflow.ValueSourceLiteral)
 	assertLoweredObjectEntry(t, entries[1], fieldSuffix("a"), factflow.ValueSourceExpression)
-	assertLoweredObjectEntry(t, entries[2], fieldChainSuffix("a", "b"), factflow.ValueSourceExpression)
+	assertLoweredObjectEntry(t, entries[2], fieldChainSuffix("a", "b"), factflow.ValueSourceLiteral)
 	nestedSource := entries[1].Source()
 	nestedLiteral, ok := facts.ObjectLiteral(nestedSource.ExprRef)
 	if !ok {
@@ -1664,7 +1588,7 @@ func TestLowerNestedObjectLiteralEntriesUnderAssignmentExprRef(t *testing.T) {
 	if got := len(nestedLiteral.Entries()); got != 1 {
 		t.Fatalf("nested literal entries = %d, want one static entry", got)
 	}
-	assertLoweredObjectEntry(t, nestedLiteral.Entries()[0], fieldSuffix("b"), factflow.ValueSourceExpression)
+	assertLoweredObjectEntry(t, nestedLiteral.Entries()[0], fieldSuffix("b"), factflow.ValueSourceLiteral)
 	wantID := identity.LuaTableLiteral(built.Graph.ID(), uint64(nestedSource.ExprRef))
 	if gotID, ok := nestedLiteral.Identity(); !ok || gotID != wantID {
 		t.Fatalf("nested literal identity = %v/%v, want %v", gotID, ok, wantID)

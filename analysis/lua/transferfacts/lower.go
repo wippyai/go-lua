@@ -132,14 +132,9 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 						input.RootAssignments[point] = lowered
 						l.addLocalConditionAlias(fact.Symbol, lowered.Source())
 						l.addAssignmentAssertionRefinements(&input, point, lowered.TargetPath(), lowered.Source(), fact.Source)
-						l.addObjectLiteral(&input, result, fact.Source)
-						l.addObjectLiteralExpectedType(&input, fact)
 						l.addLocalAliasExposure(&input, point, fact)
 						if fact.Source.Kind == sourceprovenance.SourceExpression {
 							l.addCastExposure(&input, point, fact.Source.Expr)
-						}
-						if declared, ok := l.resolveType(fact.Type); ok {
-							l.addObjectLiteralFieldExposures(&input, result, point, fact.Source, declared)
 						}
 					}
 				}
@@ -156,23 +151,15 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 							input.RootAssignments[point] = lowered
 						}
 						l.addAssertionRefinementsForLoweredSource(&input, lowered.Source(), fact.Source)
-						l.addObjectLiteral(&input, result, fact.Source)
 						l.addStoreExposure(&input, point, fact)
 					} else if lowered, ok := l.ordinaryAssignment(point, fact); ok {
 						input.RootAssignments[point] = lowered
 						l.addAssignmentAssertionRefinements(&input, point, lowered.TargetPath(), lowered.Source(), fact.Source)
-						l.addObjectLiteral(&input, result, fact.Source)
-						l.addOrdinaryObjectLiteralExpectedType(&input, fact)
 						l.addReassignExposure(&input, point, fact)
-						if declared, ok := l.symbolTypes[fact.Symbol]; ok {
-							l.addObjectLiteralFieldExposures(&input, result, point, fact.Source, declared)
-						}
 					} else {
 						if lowered, ok := l.dynamicIndexWrite(point, fact); ok {
 							input.DynamicIndexWrites[point] = lowered
 							l.addAssertionRefinementsForLoweredSource(&input, lowered.Source(), fact.Source)
-							l.addObjectLiteral(&input, result, fact.Source)
-							l.addDynamicIndexObjectLiteralExpectedTypes(&input, fact)
 						}
 						if lowered, ok := l.pathDescendantInvalidation(fact); ok {
 							input.PathDescendantInvalidations[point] = lowered
@@ -222,7 +209,6 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 				for index, source := range fact.ArgumentSources {
 					if l.wir == nil {
 						l.addCallArgumentAssertionRefinements(&input, point, index, valueSourceAt(argumentSources, index), source)
-						l.addObjectLiteral(&input, result, source)
 					}
 				}
 			}

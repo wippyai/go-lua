@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/expressionid"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -75,54 +74,6 @@ func (l *lowerer) objectEntryValueSourceFromWIR(point cfg.Point, op wir.Operand)
 	return l.valueSourceFromWIROperand(op, -1, -1, false, false, false)
 }
 
-func (l *lowerer) addObjectLiteral(input *factflow.FactsInput, result *semantics.Result, source sourceprovenance.ASTSource) {
-	if source.Kind != sourceprovenance.SourceExpression || source.Expr == nil {
-		return
-	}
-	l.addObjectLiteralExpr(input, result, source.Expr)
-}
-
-func (l *lowerer) addObjectLiteralExpr(input *factflow.FactsInput, result *semantics.Result, expr ast.Expr) {
-	if expr == nil {
-		return
-	}
-	if l != nil && l.wir != nil {
-		if inst, ok := l.tableConstructorInstructionForExpr(expr); ok {
-			l.addObjectLiteralFromWIR(input, inst, expr)
-		}
-		for _, child := range objectLiteralChildExprs(expr) {
-			l.addObjectLiteralExpr(input, nil, child)
-		}
-		return
-	}
-	if result == nil {
-		return
-	}
-	fact, ok := objectLiteralFact(result, expr)
-	if ok {
-		exprRef, hasExpr := l.tableConstructorExprRef(fact.Expr)
-		if !hasExpr {
-			return
-		}
-		lowered := l.objectLiteral(fact).WithIdentity(identity.LuaTableLiteral(l.graphID, uint64(exprRef)))
-		if expected, ok := l.objectLiteralCastExpectedType(expr); ok {
-			lowered = l.objectLiteralWithExpectedType(lowered, expected)
-		}
-		if input.ObjectLiterals == nil {
-			input.ObjectLiterals = make(map[factflow.ExprRef]factflow.ObjectLiteral)
-		}
-		input.ObjectLiterals[exprRef] = lowered
-		for _, entry := range fact.Entries {
-			l.addAssertionRefinementsForSource(input, entry.Source)
-			l.addObjectLiteral(input, result, entry.Source)
-		}
-		return
-	}
-	for _, child := range objectLiteralChildExprs(expr) {
-		l.addObjectLiteralExpr(input, result, child)
-	}
-}
-
 func (l *lowerer) addObjectLiteralFromWIR(input *factflow.FactsInput, inst wir.Instruction, expr ast.Expr) {
 	if input == nil || inst.Op != wir.OpMakeTable {
 		return
@@ -180,63 +131,6 @@ func (l *lowerer) addNestedObjectLiteralsFromWIR(input *factflow.FactsInput, ins
 	}
 }
 
-func objectLiteralFact(result *semantics.Result, expr ast.Expr) (semantics.ObjectLiteralFact, bool) {
-	if result == nil || expr == nil {
-		return semantics.ObjectLiteralFact{}, false
-	}
-	if fact, ok := result.ObjectLiteral(expr); ok {
-		return fact, true
-	}
-	inner, ok := sourceprovenance.ProofInner(expr)
-	if !ok || inner == expr {
-		return semantics.ObjectLiteralFact{}, false
-	}
-	return result.ObjectLiteral(inner)
-}
-
-func objectLiteralChildExprs(expr ast.Expr) []ast.Expr {
-	switch e := expr.(type) {
-	case *ast.LogicalOpExpr:
-		return []ast.Expr{e.Lhs, e.Rhs}
-	case *ast.RelationalOpExpr:
-		return []ast.Expr{e.Lhs, e.Rhs}
-	case *ast.StringConcatOpExpr:
-		return []ast.Expr{e.Lhs, e.Rhs}
-	case *ast.ArithmeticOpExpr:
-		return []ast.Expr{e.Lhs, e.Rhs}
-	case *ast.UnaryMinusOpExpr:
-		return []ast.Expr{e.Expr}
-	case *ast.UnaryNotOpExpr:
-		return []ast.Expr{e.Expr}
-	case *ast.UnaryLenOpExpr:
-		return []ast.Expr{e.Expr}
-	case *ast.UnaryBNotOpExpr:
-		return []ast.Expr{e.Expr}
-	case *ast.CastExpr:
-		return []ast.Expr{e.Expr}
-	case *ast.NonNilAssertExpr:
-		return []ast.Expr{e.Expr}
-	case *ast.AttrGetExpr:
-		return []ast.Expr{e.Object, e.Key}
-	case *ast.FuncCallExpr:
-		out := make([]ast.Expr, 0, 2+len(e.Args))
-		out = append(out, e.Func, e.Receiver)
-		out = append(out, e.Args...)
-		return out
-	case *ast.TableExpr:
-		out := make([]ast.Expr, 0, len(e.Fields)*2)
-		for _, field := range e.Fields {
-			if field == nil {
-				continue
-			}
-			out = append(out, field.Key, field.Value)
-		}
-		return out
-	default:
-		return nil
-	}
-}
-
 func (l *lowerer) objectLiteralCastExpectedType(expr ast.Expr) (typ.Type, bool) {
 	cast, ok := expr.(*ast.CastExpr)
 	if !ok || !tableConstructorExpr(cast.Expr) {
@@ -261,92 +155,6 @@ func (l *lowerer) wirObjectLiteralExpectedType(inst wir.Instruction, expr ast.Ex
 		return nil, false
 	}
 	return expected, true
-}
-
-// addObjectLiteralExpectedType attaches the declared record type of an annotated
-// local to the object literal sidecar at its constructor source, so the body
-// evaluator can fill literal fields that are otherwise untypeable from that
-// record. It only fires when the declared type resolves to a record (directly or
-// through Alias/Recursive/Instantiated wrappers).
-func (l *lowerer) addObjectLiteralExpectedType(input *factflow.FactsInput, fact semantics.LocalAssignmentFact) {
-	if fact.Source.Kind != sourceprovenance.SourceExpression {
-		return
-	}
-	declared, ok := l.localObjectLiteralExpectedType(fact)
-	if !ok || !luatypeprojection.ReachesTableContract(declared) {
-		return
-	}
-	l.addResultObjectLiteralExpectedTypes(input, fact.Source.Expr, declared)
-}
-
-func (l *lowerer) localObjectLiteralExpectedType(fact semantics.LocalAssignmentFact) (typ.Type, bool) {
-	if fact.Type != nil {
-		return l.resolveType(fact.Type)
-	}
-	return l.returnLocalObjectLiteralContract(fact)
-}
-
-// addOrdinaryObjectLiteralExpectedType attaches the declared record type of an
-// assignment target to the object literal sidecar when an annotated local is
-// re-assigned a table constructor (target = {...}). The declared symbol type is
-// the checked contract for the local, so the literal's fields adopt that record's
-// field types rather than their narrow inferred literal types.
-func (l *lowerer) addOrdinaryObjectLiteralExpectedType(input *factflow.FactsInput, fact semantics.OrdinaryAssignmentFact) {
-	if !fact.HasSymbol || fact.Symbol == 0 {
-		return
-	}
-	if fact.Source.Kind != sourceprovenance.SourceExpression {
-		return
-	}
-	if !tableConstructorExpr(fact.Source.Expr) {
-		return
-	}
-	declared, ok := l.symbolTypes[fact.Symbol]
-	if !ok || declared == nil || !luatypeprojection.ReachesTableContract(declared) {
-		return
-	}
-	exprRef, hasExpr := l.tableConstructorExprRef(fact.Source.Expr)
-	if !hasExpr {
-		return
-	}
-	if input.ObjectLiterals == nil {
-		return
-	}
-	lit, ok := input.ObjectLiterals[exprRef]
-	if !ok {
-		return
-	}
-	input.ObjectLiterals[exprRef] = l.objectLiteralWithExpectedType(lit, declared)
-}
-
-func (l *lowerer) addDynamicIndexObjectLiteralExpectedTypes(input *factflow.FactsInput, fact semantics.OrdinaryAssignmentFact) {
-	if fact.Source.Kind != sourceprovenance.SourceExpression || fact.Source.Expr == nil {
-		return
-	}
-	expected, ok := l.dynamicIndexWriteValueType(fact)
-	if !ok || !luatypeprojection.ReachesTableContract(expected) {
-		return
-	}
-	l.addResultObjectLiteralExpectedTypes(input, fact.Source.Expr, expected)
-}
-
-func (l *lowerer) dynamicIndexWriteValueType(fact semantics.OrdinaryAssignmentFact) (typ.Type, bool) {
-	expected, ok := l.indexExpressionType(fact.Target)
-	if ok && expected != nil {
-		if unwrapped := unwrap.Optional(expected); unwrapped != nil {
-			expected = unwrapped
-		}
-		return expected, expected != nil
-	}
-	tablePath, ok := l.directDynamicIndexWriteTablePath(fact.Target)
-	if !ok {
-		return nil, false
-	}
-	container, ok := l.aliasPathType(tablePath)
-	if !ok {
-		return nil, false
-	}
-	return dynamicIndexMapValueType(container, 0)
 }
 
 func dynamicIndexMapValueType(container typ.Type, depth int) (typ.Type, bool) {
@@ -375,34 +183,6 @@ func dynamicIndexMapValueType(container typ.Type, depth int) (typ.Type, bool) {
 		return normalize.UnionForEvidence(values...), len(values) != 0
 	default:
 		return nil, false
-	}
-}
-
-func (l *lowerer) addResultObjectLiteralExpectedTypes(input *factflow.FactsInput, expr ast.Expr, expected typ.Type) {
-	if input == nil || input.ObjectLiterals == nil || expr == nil || expected == nil {
-		return
-	}
-	switch e := expr.(type) {
-	case *ast.TableExpr:
-		ref, ok := l.existingTableConstructorExprRef(e)
-		if !ok {
-			return
-		}
-		lit, ok := input.ObjectLiterals[ref]
-		if !ok {
-			return
-		}
-		updated := l.objectLiteralWithExpectedType(lit, expected)
-		input.ObjectLiterals[ref] = updated
-		l.setObjectLiteralExpectedExpressionValue(ref, updated, expected)
-		l.addNestedObjectLiteralExpectedTypes(input, lit, expected)
-	case *ast.LogicalOpExpr:
-		l.addResultObjectLiteralExpectedTypes(input, e.Lhs, expected)
-		l.addResultObjectLiteralExpectedTypes(input, e.Rhs, expected)
-	case *ast.CastExpr:
-		l.addResultObjectLiteralExpectedTypes(input, e.Expr, expected)
-	case *ast.NonNilAssertExpr:
-		l.addResultObjectLiteralExpectedTypes(input, e.Expr, expected)
 	}
 }
 
@@ -498,32 +278,6 @@ func (l *lowerer) addObjectLiteralExpectedTypeFromValueSource(input *factflow.Fa
 	l.addNestedObjectLiteralExpectedTypes(input, updated, expected)
 }
 
-// addObjectLiteralFieldExposures records covariant exposures for object-literal
-// entries that store an aliased narrow object into a declared container slot
-// (holder = {ref = narrow}, sink = {narrow}) whose declared slot type strictly
-// widens the stored object. The container retains the stored object at the slot,
-// so a write through the wider slot view can launder a wide value back into the
-// source object; the source object is widened to the slot's declared contract.
-func (l *lowerer) addObjectLiteralFieldExposures(input *factflow.FactsInput, result *semantics.Result, point cfg.Point, source sourceprovenance.ASTSource, declared typ.Type) {
-	if source.Kind != sourceprovenance.SourceExpression || declared == nil {
-		return
-	}
-	if typ.IsAny(declared) || typ.IsUnknown(declared) {
-		return
-	}
-	fact, ok := result.ObjectLiteral(source.Expr)
-	if !ok {
-		return
-	}
-	for _, entry := range fact.Entries {
-		slotType, ok := luatypeprojection.ApplySegments(declared, entry.Suffix.Segments)
-		if !ok || slotType == nil {
-			continue
-		}
-		l.addAliasExposureToContractType(input, point, entry.Source, slotType)
-	}
-}
-
 func (l *lowerer) addObjectLiteralFieldExposuresFromWIR(input *factflow.FactsInput, point cfg.Point, inst wir.Instruction, declared typ.Type) {
 	if input == nil || inst.Op != wir.OpMakeTable || declared == nil {
 		return
@@ -594,29 +348,6 @@ func (l *lowerer) tableConstructorInstructionForExpr(expr ast.Expr) (wir.Instruc
 		return wir.Instruction{}, false
 	}
 	return l.wir.TableConstructorByExpressionID(id)
-}
-
-func (l *lowerer) objectLiteral(fact semantics.ObjectLiteralFact) factflow.ObjectLiteral {
-	entries := make([]factflow.ObjectEntry, 0, len(fact.Entries))
-	for _, entry := range fact.Entries {
-		source := l.valueSource(entry.Source)
-		entries = append(entries, factflow.NewObjectEntryWithMetadata(
-			entry.Suffix,
-			source,
-			sourceSpan(entry.ValueSpan),
-			entry.ValueLabel,
-		))
-	}
-	return factflow.NewObjectLiteral(entries)
-}
-
-func sourceSpan(span semantics.SourceSpan) factflow.SourceSpan {
-	return factflow.SourceSpan{
-		StartLine: span.StartLine,
-		StartCol:  span.StartCol,
-		EndLine:   span.EndLine,
-		EndCol:    span.EndCol,
-	}
 }
 
 func sourceSpanFromWIR(span wir.Span) factflow.SourceSpan {
