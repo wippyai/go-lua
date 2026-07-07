@@ -1,7 +1,6 @@
 package transferfacts
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -90,13 +89,13 @@ func (l *lowerer) addObjectLiteralExpr(input *factflow.FactsInput, result *seman
 	if l != nil && l.wir != nil {
 		if inst, ok := l.tableConstructorInstructionForExpr(expr); ok {
 			l.addObjectLiteralFromWIR(input, inst, expr)
-			return
 		}
+		for _, child := range objectLiteralChildExprs(expr) {
+			l.addObjectLiteralExpr(input, nil, child)
+		}
+		return
 	}
 	if result == nil {
-		if inst, ok := l.tableConstructorInstructionForExpr(expr); ok {
-			l.addObjectLiteralFromWIR(input, inst, expr)
-		}
 		return
 	}
 	fact, ok := objectLiteralFact(result, expr)
@@ -106,7 +105,6 @@ func (l *lowerer) addObjectLiteralExpr(input *factflow.FactsInput, result *seman
 			return
 		}
 		lowered := l.objectLiteral(fact).WithIdentity(identity.LuaTableLiteral(l.graphID, uint64(exprRef)))
-		lowered = l.objectLiteralWithExtraWIREntries(lowered, fact.Expr)
 		if expected, ok := l.objectLiteralCastExpectedType(expr); ok {
 			lowered = l.objectLiteralWithExpectedType(lowered, expected)
 		}
@@ -180,51 +178,6 @@ func (l *lowerer) addNestedObjectLiteralsFromWIR(input *factflow.FactsInput, ins
 		}
 		l.addObjectLiteralFromWIR(input, nested, nil)
 	}
-}
-
-func (l *lowerer) objectLiteralWithExtraWIREntries(lit factflow.ObjectLiteral, expr ast.Expr) factflow.ObjectLiteral {
-	inst, ok := l.tableConstructorInstructionForExpr(expr)
-	if !ok {
-		return lit
-	}
-	if source, ok := l.objectLiteralListElementSourceFromWIR(inst); ok {
-		lit = lit.WithListElementSource(source)
-	}
-	existing := make([]path.Path, 0, len(lit.Entries()))
-	for _, entry := range lit.Entries() {
-		existing = append(existing, entry.Suffix())
-	}
-	extras := make([]factflow.ObjectEntry, 0)
-	for _, entry := range l.objectLiteralEntriesFromWIR(inst) {
-		if objectEntrySuffixExists(existing, entry.Suffix()) {
-			continue
-		}
-		extras = append(extras, entry)
-	}
-	if len(extras) == 0 {
-		return lit
-	}
-	entries := append(lit.Entries(), extras...)
-	out := factflow.NewObjectLiteral(entries)
-	if source, ok := lit.ListElementSource(); ok {
-		out = out.WithListElementSource(source)
-	}
-	if id, ok := lit.Identity(); ok {
-		out = out.WithIdentity(id)
-	}
-	if expected, ok := lit.Expected(); ok {
-		out = out.WithExpected(expected)
-	}
-	return out
-}
-
-func objectEntrySuffixExists(entries []path.Path, suffix path.Path) bool {
-	for _, existing := range entries {
-		if existing.Equal(suffix) {
-			return true
-		}
-	}
-	return false
 }
 
 func objectLiteralFact(result *semantics.Result, expr ast.Expr) (semantics.ObjectLiteralFact, bool) {
@@ -647,47 +600,6 @@ func (l *lowerer) tableConstructorInstructionForExpr(expr ast.Expr) (wir.Instruc
 }
 
 func (l *lowerer) objectLiteral(fact semantics.ObjectLiteralFact) factflow.ObjectLiteral {
-	if l != nil && l.wir != nil {
-		return l.objectLiteralFromWIRFact(fact)
-	}
-	return l.objectLiteralFromSemanticFact(fact)
-}
-
-func (l *lowerer) objectLiteralFromWIRFact(fact semantics.ObjectLiteralFact) factflow.ObjectLiteral {
-	entries := make([]factflow.ObjectEntry, 0, len(fact.Entries))
-	for _, entry := range fact.Entries {
-		span := sourceSpan(entry.ValueSpan)
-		label := entry.ValueLabel
-		if wirEntry, ok := l.wirObjectEntry(fact.Expr, entry.Suffix); ok {
-			source := factflow.NewUnknownValueSource(factflow.NoValueSourceIndex)
-			if wirSource, ok := l.wirObjectEntrySource(wirEntry); ok {
-				source = wirSource
-			}
-			if wirEntry.entry.ValueSpan.Valid() {
-				span = sourceSpanFromWIR(wirEntry.entry.ValueSpan)
-			}
-			if wirEntry.entry.ValueLabel != "" {
-				label = wirEntry.entry.ValueLabel
-			}
-			entries = append(entries, factflow.NewObjectEntryWithMetadata(
-				entry.Suffix,
-				source,
-				span,
-				label,
-			))
-			continue
-		}
-		entries = append(entries, factflow.NewObjectEntryWithMetadata(
-			entry.Suffix,
-			factflow.NewUnknownValueSource(factflow.NoValueSourceIndex),
-			span,
-			label,
-		))
-	}
-	return factflow.NewObjectLiteral(entries)
-}
-
-func (l *lowerer) objectLiteralFromSemanticFact(fact semantics.ObjectLiteralFact) factflow.ObjectLiteral {
 	entries := make([]factflow.ObjectEntry, 0, len(fact.Entries))
 	for _, entry := range fact.Entries {
 		source := l.valueSource(entry.Source)
@@ -699,27 +611,6 @@ func (l *lowerer) objectLiteralFromSemanticFact(fact semantics.ObjectLiteralFact
 		))
 	}
 	return factflow.NewObjectLiteral(entries)
-}
-
-func (l *lowerer) wirObjectEntry(expr ast.Expr, suffix path.Path) (wirObjectEntry, bool) {
-	id, ok := l.tableConstructorExpressionID(expr)
-	if !ok {
-		return wirObjectEntry{}, false
-	}
-	inst, ok := l.wir.TableConstructorByExpressionID(id)
-	if !ok {
-		return wirObjectEntry{}, false
-	}
-	for _, entry := range l.wir.TableEntries(inst.TableEntries) {
-		if entry.Suffix.Equal(suffix) {
-			return wirObjectEntry{point: inst.Point, entry: entry}, true
-		}
-	}
-	return wirObjectEntry{}, false
-}
-
-func (l *lowerer) wirObjectEntrySource(entry wirObjectEntry) (factflow.ValueSource, bool) {
-	return l.objectEntryValueSourceFromWIR(entry.point, entry.entry.Value)
 }
 
 func sourceSpan(span semantics.SourceSpan) factflow.SourceSpan {
