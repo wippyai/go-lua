@@ -2,6 +2,7 @@ package body
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/internal/projection"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/proof"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -22,6 +23,19 @@ func (r *Result) ValueType(value product.Value) (typ.Type, bool) {
 	return r.proofReader().ValueType(value)
 }
 
+// ValueStructuralType reconstructs the presence-aware structural type witnessed
+// by value through the proof-domain projection.
+func (r *Result) ValueStructuralType(value product.Value) (typ.Type, bool) {
+	if r == nil {
+		return nil, false
+	}
+	return r.proofReader().ValueStructuralType(value)
+}
+
+func (r *Result) ValueHasReadableConcreteWitness(value product.Value) bool {
+	return r != nil && r.proofReader().ValueHasReadableConcreteWitness(value)
+}
+
 // RuntimeKindReducedType narrows declared by value's runtime-kind axis: the
 // alternatives whose runtime kind the axis excludes are dropped. This reports
 // the type a value actually holds on a path that a type() guard has narrowed.
@@ -38,6 +52,10 @@ func (r *Result) ValueHasUntrustedTopOrigin(value product.Value) bool {
 
 func (r *Result) ValueHasExplicitTopOrigin(value product.Value) bool {
 	return r != nil && r.proofReader().ValueHasExplicitTopOrigin(value)
+}
+
+func (r *Result) ValueHasRuntimeValidationProof(value product.Value) bool {
+	return r != nil && r.Registry() != nil && product.Get(r.Registry(), value, assertion.Key).Has(assertion.RuntimeClaim)
 }
 
 func (r *Result) ValueTypeWithPresence(value product.Value) (typ.Type, bool) {

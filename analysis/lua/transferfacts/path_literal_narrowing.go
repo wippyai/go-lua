@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func (l *lowerer) rootLiteralRefinement(target path.Path, lit typ.Type, cond bool) (factflow.BranchRefinement, bool) {
@@ -114,6 +115,34 @@ func (l *lowerer) literalBranchRefinement(target path.Path, kind branchcond.Chec
 		hasFalse = true
 	}
 	return factflow.NewBranchRefinement(anchor, trueValue, hasTrue, falseValue, hasFalse), true
+}
+
+func (l *lowerer) booleanTruthinessLiteralRefinement(target path.Path, falsy bool) (factflow.BranchRefinement, bool) {
+	if target.Symbol == 0 || !l.pathTypeIsBooleanLike(target) {
+		return factflow.BranchRefinement{}, false
+	}
+	kind := branchcond.CheckLiteralEqual
+	if falsy {
+		kind = branchcond.CheckLiteralNot
+	}
+	return l.literalBranchRefinement(target, kind, typ.True)
+}
+
+func (l *lowerer) pathTypeIsBooleanLike(target path.Path) bool {
+	rootType, ok := l.symbolTypes[target.Symbol]
+	if !ok {
+		return false
+	}
+	targetType := rootType
+	if len(target.Segments) != 0 {
+		var found bool
+		targetType, found = variant.FieldAtPath(rootType, target.Segments)
+		if !found {
+			return false
+		}
+	}
+	booleanLike := typeexpr.Union(typ.True, typ.False, typ.Nil)
+	return subtype.IsSubtype(typ.True, targetType) && subtype.IsSubtype(targetType, booleanLike)
 }
 
 func (l *lowerer) impossibleLiteralPathRefinement(target path.Path, kind branchcond.CheckKind, lit typ.Type, rootType typ.Type) (factflow.BranchRefinement, bool) {

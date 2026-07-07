@@ -24,6 +24,9 @@ func (Returns) Produce(ctx Context) []judgment.Judgment {
 		if ret.Check.Admissible || ret.Expected == nil || ret.HasUnownedTopActual() {
 			return true
 		}
+		if ret.BodyParamObligationCascade() {
+			return true
+		}
 		out = append(out, returnJudgment(ctx, functionKey, ret))
 		return true
 	})

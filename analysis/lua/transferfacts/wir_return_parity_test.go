@@ -201,6 +201,39 @@ end
 	}
 }
 
+func TestLowerWithWIRNegatedNilLogicalReturnCarriesComputedStringWitness(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function label(value: string?): string
+    return not (value == nil) and ("value:" .. value) or ""
+end
+`)
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
+	}
+	points := requireStmtPoints(t, built, ret, 1)
+	body := wirlower.Lower("negated-nil-logical-return", fn.Stmts, bindings, built)
+	reg := standard.Registry()
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+
+	returnFact, ok := facts.Return(points[0])
+	if !ok {
+		t.Fatalf("missing return fact at point %d", points[0])
+	}
+	sources := returnFact.Sources()
+	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr {
+		t.Fatalf("return sources = %#v, want one logical expression source\nWIR:\n%s", sources, wir.Print(body, built.Graph))
+	}
+	value, ok := facts.ExpressionValue(sources[0].ExprRef)
+	if !ok {
+		t.Fatalf("missing negated nil logical return expression value for ref %d\nWIR:\n%s", sources[0].ExprRef, wir.Print(body, built.Graph))
+	}
+	got, ok := product.Get(reg, value, typewitness.Key).Type()
+	if !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("negated nil logical return witness = %v/%v, want string; value=%#v\nWIR:\n%s", got, ok, value, wir.Print(body, built.Graph))
+	}
+}
+
 func TestLowerWithWIRReturnSourcesForRootPath(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(value: string): string

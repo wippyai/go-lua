@@ -357,6 +357,66 @@ func TestFactsNodeTransferNilDynamicIndexWriteDoesNotProveKeyMembership(t *testi
 	}
 }
 
+func TestFactsNodeTransferKnownNilDynamicIndexWritePublishesStaticMember(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(402012)
+	table := symbol.ID(402013)
+	keySymbol := symbol.ID(402014)
+	tablePath := pathdom.NewPath(table, "box")
+	keyPath := pathdom.NewPath(keySymbol, "key")
+	memberPath := tablePath.IndexStr("value")
+	keySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(402014), HasExpr: true}
+	nilSource := factflow.NewNilValueSource(0)
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, table, "box")
+	visibilityBuilder.Define(point, keySymbol, "key")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	memberKey := resolver.KeyAt(point, memberPath)
+	if memberKey == "" {
+		t.Fatal("missing member key")
+	}
+	tableStateKey, tableOK := resolver.StateKeyAt(point, tablePath)
+	keyStateKey, keyOK := resolver.StateKeyAt(point, keyPath)
+	if !tableOK || !keyOK {
+		t.Fatal("missing state keys")
+	}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			DynamicIndexWrites: map[cfg.Point]factflow.DynamicIndexWrite{
+				point: factflow.NewDynamicIndexWrite(
+					tablePath,
+					keySource,
+					nilSource,
+					dynamicindex.AdmissionAdmitted,
+					factflow.DynamicIndexReadbackKeyAndValue,
+				),
+			},
+			ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+				keySource.ExprRef: keyPath,
+			},
+		}),
+		Sources: &recordingSourceValues{
+			values: map[factflow.ValueSource]product.Value{
+				keySource: typevalue.WithWitness(reg, typevalue.FromType(reg, typ.LiteralString("value")), typ.LiteralString("value")),
+				nilSource: typevalue.Nil(reg),
+			},
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	gotMember, ok := got.ReadPathStaticMember(resolver.KeySpace(), memberKey)
+	if !ok || !product.Equal(reg, gotMember, typevalue.Nil(reg)) {
+		t.Fatalf("static member = %v/%v, want exact nil for known dynamic write", gotMember, ok)
+	}
+	if got.HasPathKeyMembership(keyStateKey, tableStateKey) {
+		t.Fatalf("key memberships = %#v, want nil write not to prove key present", got.KeyMembershipsSnapshot())
+	}
+}
+
 func TestFactsNodeTransferDynamicIndexReadCarriesAllValueKeyMembership(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(40202)
@@ -494,6 +554,97 @@ func TestFactsNodeTransferDynamicIndexReadCarriesValueKeyMembership(t *testing.T
 
 	if !got.HasPathKeyMembership(targetStateKey, registeredStateKey) {
 		t.Fatalf("key memberships = %#v, want %s from channel_to_id read known as key of %s", got.KeyMembershipsSnapshot(), targetStateKey, registeredStateKey)
+	}
+}
+
+func TestFactsNodeTransferDynamicIndexReadCarriesValueKeyMembershipWithoutConcreteReadValue(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(402031)
+	target := symbol.ID(402031)
+	channelToID := symbol.ID(402041)
+	registered := symbol.ID(402051)
+	resultChannel := symbol.ID(402061)
+	targetPath := pathdom.NewPath(target, "channel_id")
+	channelToIDPath := pathdom.NewPath(channelToID, "channel_to_id")
+	registeredPath := pathdom.NewPath(registered, "registered_channels")
+	resultChannelPath := pathdom.NewPath(resultChannel, "result_channel")
+	sourceExpr := factflow.ExprRef(402031)
+	keyExpr := factflow.ExprRef(402061)
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: sourceExpr, HasExpr: true}
+	keySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: keyExpr, HasExpr: true}
+	value := presentValue(reg)
+
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "channel_id")
+	visibilityBuilder.Define(point, channelToID, "channel_to_id")
+	visibilityBuilder.Define(point, registered, "registered_channels")
+	visibilityBuilder.Define(point, resultChannel, "result_channel")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	channelToIDStateKey, ok := resolver.StateKeyAt(point, channelToIDPath)
+	if !ok {
+		t.Fatalf("missing channel_to_id state key")
+	}
+	registeredStateKey, ok := resolver.StateKeyAt(point, registeredPath)
+	if !ok {
+		t.Fatalf("missing registered_channels state key")
+	}
+	targetStateKey, ok := resolver.StateKeyAt(point, targetPath)
+	if !ok {
+		t.Fatalf("missing target state key")
+	}
+	resultChannelStateKey, ok := resolver.StateKeyAt(point, resultChannelPath)
+	if !ok {
+		t.Fatalf("missing result_channel state key")
+	}
+	channelToIDKey, ok := resolver.KeySpace().InternStateKey(channelToIDStateKey)
+	if !ok {
+		t.Fatalf("missing channel_to_id key")
+	}
+	site := dynamicindex.Site("actor.register_channel")
+	in := state.State{}.
+		WriteDynamicIndexFact(reg, dynamicindex.Key{Table: channelToIDKey, Site: site}, dynamicindex.NewFact(reg, dynamicindex.FactConfig{
+			Value:     value,
+			HasValue:  true,
+			Admission: dynamicindex.AdmissionAdmitted,
+		})).
+		AddDynamicIndexValueKeyMembership(channelToIDKey, site, registeredStateKey)
+	dyn, ok := factflow.NewDynamicIndexExpression(channelToIDPath, keySource)
+	if !ok {
+		t.Fatal("NewDynamicIndexExpression returned false")
+	}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			RootAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, targetPath, source),
+			},
+			DynamicIndexExpressions: map[factflow.ExprRef]factflow.DynamicIndexExpression{
+				sourceExpr: dyn,
+			},
+			ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+				keyExpr: resultChannelPath,
+			},
+		}),
+		Sources:    &recordingSourceValues{},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, in)
+
+	if !got.HasPathKeyMembership(targetStateKey, registeredStateKey) {
+		t.Fatalf("key memberships = %#v, want %s from channel_to_id read known as key of %s even when the read value is unknown", got.KeyMembershipsSnapshot(), targetStateKey, registeredStateKey)
+	}
+	origins := got.DynamicIndexReadOriginsForValue(targetStateKey)
+	foundOrigin := false
+	for _, origin := range origins {
+		if origin.Container == channelToIDKey && origin.Key == resultChannelStateKey {
+			foundOrigin = true
+			break
+		}
+	}
+	if !foundOrigin {
+		t.Fatalf("dynamic read origins = %#v, want channel_to_id[result_channel] origin", origins)
 	}
 }
 

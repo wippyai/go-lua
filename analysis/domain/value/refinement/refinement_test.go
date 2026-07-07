@@ -130,6 +130,18 @@ func TestMergeDeclaredContractAdoptsDeclaredEvidenceForUnknownValue(t *testing.T
 	}
 }
 
+func TestMergeDeclaredContractCarriesExplicitTopEvidenceOntoNilSource(t *testing.T) {
+	reg := standard.Registry()
+	value := typevalue.FromType(reg, typ.Nil)
+	declared := typevalue.FromType(reg, typ.Any)
+
+	got := MergeDeclaredContract(reg, value, declared)
+
+	if gotEvidence := product.Get(reg, got, evidence.Key); !evidence.Equal(gotEvidence, evidence.ExplicitTop()) {
+		t.Fatalf("merged evidence = %s, want explicit-top from declared any contract", gotEvidence)
+	}
+}
+
 func TestMergeDeclaredContractClearsStaleAnyEvidenceAfterScalarRuntimeProof(t *testing.T) {
 	reg := standard.Registry()
 	value := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
@@ -186,6 +198,25 @@ func TestDeclaredContractAlreadySatisfiedRejectsMissingPresence(t *testing.T) {
 
 	if DeclaredContractAlreadySatisfied(reg, value, declared) {
 		t.Fatalf("present value should not already satisfy optional declared presence")
+	}
+}
+
+func TestDeclaredContractAlreadySatisfiedPreservingPresenceAcceptsPresenceOnlyMismatch(t *testing.T) {
+	reg := standard.Registry()
+	node := typ.NewRecursivePlaceholder("TreeNode")
+	node.SetBody(typetable.NewRecord().
+		Field("label", typ.String).
+		Field("children", typ.NewArray(node)).
+		OptField("parent", node).
+		Build())
+	value := typevalue.WithWitness(reg, typevalue.FromType(reg, node), node)
+	declared := typevalue.WithWitness(reg, typevalue.FromType(reg, typeexpr.Optional(node)), typeexpr.Optional(node))
+
+	if !DeclaredContractAlreadySatisfiedPreservingPresence(reg, value, declared) {
+		t.Fatalf("preserving-presence contract should accept optional declaration when non-presence facts are already satisfied")
+	}
+	if DeclaredContractAlreadySatisfied(reg, value, declared) {
+		t.Fatalf("full declared contract should still reject the presence mismatch")
 	}
 }
 

@@ -110,6 +110,31 @@ func (r *Result) FunctionOrigin(fn *ast.FunctionExpr) (FunctionOrigin, bool) {
 	return origin, ok && origin.Func != nil
 }
 
+// MethodOriginReceiverSymbol returns the root value symbol that owns a colon
+// method definition, such as methods in `function methods:f(...)`.
+func (r *Result) MethodOriginReceiverSymbol(origin FunctionOrigin) (symbol.ID, bool) {
+	if r == nil || origin.Kind != FunctionOriginMethod {
+		return 0, false
+	}
+	stmt, ok := origin.Stmt.(*ast.FuncDefStmt)
+	if !ok || stmt == nil || stmt.Name == nil || stmt.Name.Method == "" {
+		return 0, false
+	}
+	return r.receiverRootSymbol(stmt.Name.Receiver)
+}
+
+func (r *Result) receiverRootSymbol(expr ast.Expr) (symbol.ID, bool) {
+	switch e := expr.(type) {
+	case *ast.IdentExpr:
+		id, ok := r.SymbolOf(e)
+		return id, ok && id != 0
+	case *ast.AttrGetExpr:
+		return r.receiverRootSymbol(e.Object)
+	default:
+		return 0, false
+	}
+}
+
 // ParentFunction returns the direct lexical parent of fn, if fn is known.
 func (r *Result) ParentFunction(fn *ast.FunctionExpr) (*ast.FunctionExpr, bool) {
 	origin, ok := r.FunctionOrigin(fn)

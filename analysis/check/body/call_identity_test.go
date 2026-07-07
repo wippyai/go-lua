@@ -129,6 +129,41 @@ func TestCallSignatureTypeUsesImplicitStdlibMemberIdentity(t *testing.T) {
 	}
 }
 
+func TestCallSignatureDoesNotUseImplicitStdlibMemberAfterGlobalTableOverride(t *testing.T) {
+	result, err := CheckChunk(parseChunk(t, `
+		_G.coroutine = {
+			spawn = function(fn: () -> ())
+				return true
+			end,
+		}
+		coroutine.spawn(function() end)
+	`), Config{
+		Registry:   standard.Registry(),
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	found := false
+	for _, point := range result.Graph().RPO() {
+		site, ok := result.CallSite(point)
+		if !ok || site.CalleePathRef().String() != "coroutine.spawn" {
+			continue
+		}
+		found = true
+		if name, ok := result.CallSignatureNameAt(point, site); ok {
+			t.Fatalf("signature name = %q, want none after _G.coroutine override", name)
+		}
+		if fn, ok := result.CallSignatureTypeAt(point, site); ok {
+			t.Fatalf("signature type = %v, want none after _G.coroutine override", fn)
+		}
+	}
+	if !found {
+		t.Fatal("missing coroutine.spawn call site")
+	}
+}
+
 func TestCallSignatureDoesNotUseManifestForUnresolvedImplicitGlobal(t *testing.T) {
 	m := manifest.New("ambient")
 	m.DefineFunctionSignature("imported", signature.Function{

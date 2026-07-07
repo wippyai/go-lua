@@ -5,7 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 )
 
-func renderAssignmentJudgmentWithPolicy(item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
+func renderAssignmentJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
 	if item.Code != judgment.CodeAssignment || item.Subject.Kind != judgment.SubjectPath || len(item.Spans) == 0 {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -24,7 +24,7 @@ func renderAssignmentJudgmentWithPolicy(item judgment.Judgment, policy judgment.
 		target = "value"
 	}
 	sourceName := item.Actual.Label
-	proofContext := diagnosticProofContext()
+	proofContext := ctx.proof
 	if presentation, ok := proofContext.AssignmentCallResultForItem(item, got, want, span); ok {
 		return diagnostic.New(diagnostic.DiagnosticSpec{
 			Span:        span,
@@ -49,7 +49,7 @@ func renderAssignmentJudgmentWithPolicy(item judgment.Judgment, policy judgment.
 	}), true
 }
 
-func renderOptionalAssignmentTargetJudgmentWithPolicy(item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
+func renderOptionalAssignmentTargetJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
 	if item.Code != judgment.CodeAssignmentTarget || item.Subject.Kind != judgment.SubjectPath || len(item.Spans) == 0 {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -58,7 +58,7 @@ func renderOptionalAssignmentTargetJudgmentWithPolicy(item judgment.Judgment, po
 		return diagnostic.Diagnostic{}, false
 	}
 	targetSpan := diagnosticSpanFromJudgment(item.Spans[0])
-	presentation := diagnosticProofContext().OptionalAssignmentTarget(item, targetSpan)
+	presentation := ctx.proof.OptionalAssignmentTarget(item, targetSpan)
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		Span:        targetSpan,
 		Code:        CodeOptionalAssignmentTarget,

@@ -101,6 +101,12 @@ func provePresentNonNil(reg *axis.Registry, value product.Value) product.Value {
 }
 
 func expressionOperationType(reg *axis.Registry, typeValues *typevalue.Cache, op factflow.ExpressionOperation, left product.Value, right product.Value) (typ.Type, bool) {
+	if op.Kind() == factflow.ExpressionOperationBinary && (op.Op() == "==" || op.Op() == "~=") {
+		return typ.Boolean, true
+	}
+	if op.Kind() == factflow.ExpressionOperationUnary && op.Op() == "not" {
+		return typ.Boolean, true
+	}
 	leftType, ok := operationOperandType(reg, typeValues, left)
 	if !ok {
 		return nil, false

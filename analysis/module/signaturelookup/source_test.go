@@ -105,7 +105,7 @@ func TestLookupDerivesManifestInterfaceMethodTypeWithoutErrorType(t *testing.T) 
 
 func TestLookupManifestOverridesStdlib(t *testing.T) {
 	want := testSignature("override", returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})
-	m := manifest.New("example/module")
+	m := manifest.New("")
 	m.DefineFunctionSignature(stdlib.Require, want)
 	src := Source{Manifests: []*manifest.Manifest{m}, IncludeStdlib: true}
 
@@ -115,6 +115,29 @@ func TestLookupManifestOverridesStdlib(t *testing.T) {
 	}
 	if !want.Equals(got) {
 		t.Fatalf("Lookup(%q) = %v, want manifest override %v", stdlib.Require, got, want)
+	}
+}
+
+func TestLookupModuleLocalBareStdlibNameDoesNotOverrideStdlibGlobal(t *testing.T) {
+	local := testSignature("channel_select", returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: effect.ParamRef{Index: 0}}})
+	m := manifest.New("channel")
+	m.DefineFunctionSignature("select", local)
+	src := Source{Manifests: []*manifest.Manifest{m}, IncludeStdlib: true}
+
+	global, ok := src.Lookup("select")
+	if !ok {
+		t.Fatal("Lookup(select) missing")
+	}
+	if local.Equals(global) {
+		t.Fatalf("Lookup(select) used module-local channel.select signature for bare stdlib global")
+	}
+
+	qualified, ok := src.Lookup("channel.select")
+	if !ok {
+		t.Fatal("Lookup(channel.select) missing")
+	}
+	if !local.Equals(qualified) {
+		t.Fatalf("Lookup(channel.select) = %v, want module-local %v", qualified, local)
 	}
 }
 
@@ -217,8 +240,9 @@ func TestSignaturesReturnsClonesAndRespectsPrecedence(t *testing.T) {
 	wantShared := testSignature("second", returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: effect.ParamRef{Index: 0}}})
 	wantRequire := testSignature("require_override", returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})
 	second.DefineFunctionSignature("shared", wantShared)
-	second.DefineFunctionSignature(stdlib.Require, wantRequire)
-	src := Source{Manifests: []*manifest.Manifest{first, second}, IncludeStdlib: true}
+	global := manifest.New("")
+	global.DefineFunctionSignature(stdlib.Require, wantRequire)
+	src := Source{Manifests: []*manifest.Manifest{first, second, global}, IncludeStdlib: true}
 
 	all := src.Signatures()
 	if got := all["shared"]; !wantShared.Equals(got) {
@@ -241,6 +265,25 @@ func TestSignaturesReturnsClonesAndRespectsPrecedence(t *testing.T) {
 	}
 	if len(again["shared"].Effect.Labels) == 0 {
 		t.Fatal("Signatures returned aliased effect labels")
+	}
+}
+
+func TestSignaturesDoesNotPublishModuleLocalBareStdlibNameAsGlobal(t *testing.T) {
+	local := testSignature("channel_select", returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: effect.ParamRef{Index: 0}}})
+	m := manifest.New("channel")
+	m.DefineFunctionSignature("select", local)
+	src := Source{Manifests: []*manifest.Manifest{m}, IncludeStdlib: true}
+
+	all := src.Signatures()
+	global, ok := all["select"]
+	if !ok {
+		t.Fatal("Signatures() missing stdlib select")
+	}
+	if local.Equals(global) {
+		t.Fatalf("Signatures()[select] used module-local channel.select signature for bare stdlib global")
+	}
+	if qualified, ok := all["channel.select"]; ok {
+		t.Fatalf("Signatures() published synthesized qualified local %v; bulk map should expose stored global names only", qualified)
 	}
 }
 

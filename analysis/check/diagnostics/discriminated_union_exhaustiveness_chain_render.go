@@ -5,7 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 )
 
-func renderDiscriminatedUnionJudgmentWithPolicy(item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
+func renderDiscriminatedUnionJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
 	if item.Code != judgment.CodeDiscriminatedUnion || item.Subject.Kind != judgment.SubjectExpression || len(item.Spans) == 0 {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -14,7 +14,7 @@ func renderDiscriminatedUnionJudgmentWithPolicy(item judgment.Judgment, policy j
 		return diagnostic.Diagnostic{}, false
 	}
 	span := diagnosticSpanFromJudgment(item.Spans[0])
-	presentation, ok := diagnosticProofContext().DiscriminatedUnion(item, span)
+	presentation, ok := ctx.proof.DiscriminatedUnion(item, span)
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}

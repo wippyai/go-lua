@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
@@ -38,6 +39,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
+	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
@@ -62,6 +64,45 @@ func TestProgramProductionUsesPreparedBodyAPI(t *testing.T) {
 	}
 	if strings.Contains(string(src), "body.CheckBound") {
 		t.Fatalf("program.go uses body.CheckBound*, want prepared statics with SolvePrepared")
+	}
+}
+
+func TestMaterializedSummaryProofChangesIncludeCovariantExposureLanes(t *testing.T) {
+	reg := standard.Registry()
+	key := summary.DefaultSummaryKey(ref.FromSymbol(1))
+	alias, ok := pathaddr.PlaceholderKeyFromPathKey(path.PathKey("$0"))
+	if !ok {
+		t.Fatal("placeholder key failed")
+	}
+	rootAlias, ok := pathaddr.RootPlaceholderKeyForIndex(0)
+	if !ok {
+		t.Fatal("root placeholder key failed")
+	}
+	contract := typevalue.WithWitness(reg, typevalue.FromType(reg, typetable.NewRecord().Field("x", typ.String).Build()), typetable.NewRecord().Field("x", typ.String).Build())
+
+	before := summary.NewSnapshotOwnedNormalized(reg, summary.EntrySummary{Key: key, Summary: summary.Summary{}})
+	afterAlias := summary.NewSnapshotOwnedNormalized(reg, summary.EntrySummary{Key: key, Summary: summary.Summary{
+		ReturnParamPathAliases: []summary.ReturnParamPathAlias{{ReturnIndex: 0, Source: alias, Member: ".ref"}},
+	}})
+	if !materializedCoreProofChangesAffectMaterialization(reg, before, afterAlias) {
+		t.Fatal("return-param alias summary change did not request rematerialization")
+	}
+
+	afterSink := summary.NewSnapshotOwnedNormalized(reg, summary.EntrySummary{Key: key, Summary: summary.Summary{
+		ParamSinkExposures: []summary.ParamSinkExposure{{Source: rootAlias, Contract: contract}},
+	}})
+	if !materializedCoreProofChangesAffectMaterialization(reg, before, afterSink) {
+		t.Fatal("param-sink exposure summary change did not request rematerialization")
+	}
+
+	storeBefore := summary.NewSnapshotOwnedNormalized(reg, summary.EntrySummary{Key: key, Summary: summary.Summary{}})
+	storeAfter := summary.NewSnapshotOwnedNormalized(reg, summary.EntrySummary{Key: key, Summary: summary.Summary{
+		NormalReturnFacts: callboundary.NormalReturnFacts{
+			StoreRelations: []callboundary.StoreRelationFact{{Source: path.NewPlaceholder(0), Into: path.NewPlaceholder(1).Field("ref")}},
+		},
+	}})
+	if !materializedNormalReturnFactChanges(reg, storeBefore, storeAfter) {
+		t.Fatal("store-relation summary change did not request rematerialization")
 	}
 }
 
@@ -294,6 +335,9 @@ func TestResultSummaryProjectionReadsCurrentResultAndClonesSummary(t *testing.T)
 	if !ok || len(first.Returns) == 0 {
 		t.Fatalf("first projected summary = %#v/%v, want return slot", first, ok)
 	}
+	if len(cache.entries) != 1 {
+		t.Fatalf("projection cache entries = %d, want 1", len(cache.entries))
+	}
 	want := first.Returns[0]
 	first.Returns[0] = product.Top()
 
@@ -301,8 +345,42 @@ func TestResultSummaryProjectionReadsCurrentResultAndClonesSummary(t *testing.T)
 	if !ok || len(second.Returns) == 0 {
 		t.Fatalf("second projected summary = %#v/%v, want return slot", second, ok)
 	}
+	if len(cache.entries) != 1 {
+		t.Fatalf("projection cache entries after repeat = %d, want 1", len(cache.entries))
+	}
 	if !product.Equal(reg, second.Returns[0], want) {
 		t.Fatalf("cached projected return = %#v, want original %#v", second.Returns[0], want)
+	}
+
+	cache.invalidate(root)
+	if len(cache.entries) != 0 {
+		t.Fatalf("projection cache entries after invalidate = %d, want 0", len(cache.entries))
+	}
+}
+
+func TestInstallMaterializedFunctionValueTypeSkipsProjectionWhenUnchangedSummaryExists(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `return "ok"`)
+	result, err := RunChunk(stmts, Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := result.RootResult()
+	if root == nil {
+		t.Fatal("RootResult missing")
+	}
+	key := summary.DefaultSummaryKey(ref.Root())
+	base := summary.NewSnapshot(reg, summary.EntrySummary{
+		Key:     key,
+		Summary: summary.Summary{},
+	})
+	projections := newResultSummaryProjectionCache()
+	cache := newMaterializedSummaryCache(reg, base, projections)
+
+	installMaterializedFunctionValueType(cache, key, root, body.FunctionValueTypes{})
+
+	if len(projections.entries) != 0 {
+		t.Fatalf("unchanged existing summary forced projection cache entries = %d, want 0", len(projections.entries))
 	}
 }
 
@@ -422,6 +500,50 @@ func TestMaterializedSolveCacheReusesOnlyWhenTrackedSummaryDepsEqual(t *testing.
 	}
 	if secondSnapshot.publicReads != 0 || secondSnapshot.ownedReads == 0 {
 		t.Fatalf("changed summary dependency reads = public:%d owned:%d, want owned-only dependency reads", secondSnapshot.publicReads, secondSnapshot.ownedReads)
+	}
+}
+
+func TestMaterializedSolveCacheInvalidatesZeroDepSolveWhenSummaryUniverseChanges(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `local out = 1`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	prepared, err := body.PrepareBoundChunk(stmts, bindings, body.Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("PrepareBoundChunk: %v", err)
+	}
+	owner := summary.DefaultSummaryKey(ref.Root())
+	dep := summary.DefaultSummaryKey(ref.FromSymbol(symbol.ID(88421)))
+	emptySnapshot := summary.NewSnapshot(reg)
+	changedSnapshot := summary.NewSnapshot(reg, summary.EntrySummary{
+		Key:     dep,
+		Summary: summary.Summary{Returns: []product.Value{typevalue.FromType(reg, typ.String)}},
+	})
+	cache := newMaterializedSolveCache(reg)
+	solves := 0
+	build := func(_ summary.Reader) body.Config {
+		return body.Config{Registry: reg}
+	}
+
+	first, firstSolved, err := solveMaterializedPrepared(cache, prepared, owner, 7, materializedSolveEntryState{}, emptySnapshot, build, &solves)
+	if err != nil {
+		t.Fatalf("first solveMaterializedPrepared: %v", err)
+	}
+	if !firstSolved {
+		t.Fatal("first solveMaterializedPrepared reported cache hit")
+	}
+	again, againSolved, err := solveMaterializedPrepared(cache, prepared, owner, 7, materializedSolveEntryState{}, emptySnapshot, build, &solves)
+	if err != nil {
+		t.Fatalf("second solveMaterializedPrepared: %v", err)
+	}
+	if again != first || againSolved || solves != 1 {
+		t.Fatalf("same-universe cache hit = same:%v solved:%v solves:%d, want same result, no solve, one solve total", again == first, againSolved, solves)
+	}
+	changed, changedSolved, err := solveMaterializedPrepared(cache, prepared, owner, 7, materializedSolveEntryState{}, changedSnapshot, build, &solves)
+	if err != nil {
+		t.Fatalf("changed solveMaterializedPrepared: %v", err)
+	}
+	if changed == first || !changedSolved || solves != 2 {
+		t.Fatalf("changed-universe cache miss = same:%v solved:%v solves:%d, want new result, solve, two solves total", changed == first, changedSolved, solves)
 	}
 }
 
@@ -2006,6 +2128,55 @@ return mapped
 	t.Fatalf("callback call argument result.value not found")
 }
 
+func TestInstantiateSignatureTypeForContextKeepsGenericConstraintOnInvalidCall(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type HasId = { id: string }
+local function need_id<T: HasId>(x: T): string
+	return x.id
+end
+return need_id({ name = "no-id-here" })
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	keys := collectKeys(bindings, summary.DefaultSummaryKey(ref.Root()), reg, nil, body.Config{}.ModuleExports, stmts)
+	var needIDType *typ.Function
+	for _, origin := range bindings.FunctionOrigins() {
+		if origin.Func == nil || len(bindings.FunctionTypeParams(origin.Func)) != 1 {
+			continue
+		}
+		slots := bindings.ParamSlots(origin.Func)
+		if len(slots) == 0 || slots[0].Name != "x" {
+			continue
+		}
+		key, ok := keys.functionKeys[origin.Symbol]
+		if !ok {
+			t.Fatalf("need_id summary key missing")
+		}
+		needIDType = keys.functionTypes[key]
+		break
+	}
+	if needIDType == nil || len(needIDType.Params) != 1 {
+		t.Fatalf("need_id function type = %v, want one param", needIDType)
+	}
+	result, err := RunChunk(stmts, Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := result.RootResult()
+	callPoint := requireCallByCalleeName(t, root, "need_id")
+	site, ok := root.CallSite(callPoint)
+	if !ok {
+		t.Fatalf("need_id call site missing")
+	}
+	contextualFn := instantiateSignatureTypeForContext(reg, root, callPoint, site, needIDType, &keys)
+	if contextualFn == nil || len(contextualFn.Params) != 1 {
+		t.Fatalf("contextual need_id type = %v, want one param", contextualFn)
+	}
+	if !refinement.ContainsFreeTypeParam(contextualFn.Params[0].Type) {
+		t.Fatalf("contextual need_id param = %v, want original constrained type param after invalid call", contextualFn.Params[0].Type)
+	}
+}
+
 func TestRunChunkContextParamUsesInstantiatedGenericContractForFalseEdge(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
@@ -2540,8 +2711,9 @@ local a = actor.new({}, {
 
 captured_fn()
 `)
-	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"coroutine"}})
-	result, err := RunBoundChunk(stmts, bindings, Config{Check: body.Config{Registry: reg, Globals: []string{"coroutine"}}})
+	globals := []string{"_G", "coroutine"}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: globals})
+	result, err := RunBoundChunk(stmts, bindings, Config{Check: body.Config{Registry: reg, Globals: globals}})
 	if err != nil {
 		t.Fatalf("RunChunk: %v", err)
 	}
@@ -3046,6 +3218,188 @@ end
 	}
 }
 
+func TestCollectMetatableMethodReceiverForOptionObjectLiteralSelf(t *testing.T) {
+	stmts := parseChunk(t, `
+local methods = {}
+local mt = { __index = methods }
+
+type RouteTarget = {
+    node_id: string?,
+}
+
+type NodeInstance = {
+    node_id: string,
+    targets: {RouteTarget},
+}
+
+local function new_node()
+    local instance: NodeInstance = { node_id = "n1", targets = {} }
+    return setmetatable(instance, mt), nil
+end
+
+function methods:data(data_type: string, content: unknown, options: {node_id: string?}?): (NodeInstance, string?)
+    return self, nil
+end
+
+function methods:route(content: unknown): ()
+    for _, target in ipairs(self.targets) do
+        self:data("output", content, {
+            node_id = target.node_id or self.node_id,
+        })
+    end
+end
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"setmetatable"}})
+	receivers := metatableMethodReceiverTypes(bindings, nil, body.Config{}.ModuleExports, stmts)
+	methods := mustBoundLocalAt(t, bindings, stmts[0].(*ast.LocalAssignStmt), 0)
+	got, ok := receivers[methods]
+	if !ok {
+		t.Fatal("missing metatable method receiver")
+	}
+	if projected, ok := luatypeprojection.ApplySegments(got, []segment.Segment{{Kind: segment.SegmentField, Name: "node_id"}}); !ok || !subtype.IsSubtype(projected, typ.String) {
+		t.Fatalf("receiver node_id = %v/%v from %v, want string", projected, ok, got)
+	}
+	result, err := RunChunk(stmts, Config{
+		Check: body.Config{
+			Registry: standard.Registry(),
+			Globals:  []string{"setmetatable"},
+			Signatures: signaturelookup.Source{
+				IncludeStdlib: true,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := result.RootResult()
+	if root == nil {
+		t.Fatal("RootResult missing")
+	}
+	selfType, ok := methodImplicitSelfEntryType(t, root, "route")
+	if !ok {
+		t.Fatal("route self entry type missing")
+	}
+	if projected, ok := luatypeprojection.ApplySegments(selfType, []segment.Segment{{Kind: segment.SegmentField, Name: "node_id"}}); !ok || !subtype.IsSubtype(projected, typ.String) {
+		t.Fatalf("route self node_id = %v/%v from %v, want string", projected, ok, selfType)
+	}
+	targetType, ok := methodGenericForVariableType(t, root, "route", 1)
+	if !ok {
+		t.Fatal("route target loop variable type missing")
+	}
+	wantTarget := typetable.NewRecord().Field("node_id", typ.MaterializeOptional(typ.String)).Build()
+	if !subtype.IsSubtype(targetType, wantTarget) {
+		t.Fatalf("route target loop variable type = %v, want subtype of %v", targetType, wantTarget)
+	}
+	argType, ok := methodCallArgumentType(t, root, "route", "data", 2)
+	if !ok {
+		t.Fatal("route data argument 3 type missing")
+	}
+	wantArg := typetable.NewRecord().Field("node_id", typ.String).Build()
+	if !subtype.IsSubtype(argType, wantArg) {
+		t.Fatalf("route data argument 3 type = %v, want subtype of %v; node_id entry source: %s", argType, wantArg, methodCallObjectEntrySourceSummary(t, root, "route", "data", 2, "node_id"))
+	}
+}
+
+func methodCallArgumentType(t *testing.T, root *body.Result, ownerMethod, calleeMethod string, index int) (typ.Type, bool) {
+	t.Helper()
+	for _, child := range root.FunctionResults() {
+		fn := child.Function()
+		origin, ok := root.FunctionOrigin(fn)
+		if !ok || origin.Kind != bind.FunctionOriginMethod || origin.Method != ownerMethod {
+			continue
+		}
+		graph := child.Graph()
+		if graph == nil {
+			t.Fatalf("method %s graph missing", ownerMethod)
+		}
+		for _, point := range graph.RPO() {
+			site, ok := child.CallSite(point)
+			if !ok || site.MethodName() != calleeMethod {
+				continue
+			}
+			source, ok := site.ArgumentSourceAt(index)
+			if !ok {
+				t.Fatalf("method %s call %s argument %d missing", ownerMethod, calleeMethod, index)
+			}
+			value, ok := child.SourceValueAtBoundary(point, source)
+			if !ok {
+				return nil, false
+			}
+			return typevalue.TypeOf(child.Registry(), value)
+		}
+	}
+	return nil, false
+}
+
+func methodCallObjectEntrySourceSummary(t *testing.T, root *body.Result, ownerMethod, calleeMethod string, index int, field string) string {
+	t.Helper()
+	for _, child := range root.FunctionResults() {
+		fn := child.Function()
+		origin, ok := root.FunctionOrigin(fn)
+		if !ok || origin.Kind != bind.FunctionOriginMethod || origin.Method != ownerMethod {
+			continue
+		}
+		for _, point := range child.Graph().RPO() {
+			site, ok := child.CallSite(point)
+			if !ok || site.MethodName() != calleeMethod {
+				continue
+			}
+			source, ok := site.ArgumentSourceAt(index)
+			if !ok || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+				return fmt.Sprintf("argument source %#v", source)
+			}
+			lit, ok := child.ObjectLiteralExpr(source.ExprRef)
+			if !ok {
+				return fmt.Sprintf("argument expr %d has no object literal", source.ExprRef)
+			}
+			var seen []string
+			for _, entry := range lit.Entries() {
+				seen = append(seen, entry.Suffix().String())
+				if !entrySuffixField(entry.Suffix(), field) {
+					continue
+				}
+				entrySource := entry.Source()
+				op, opOK := child.ExpressionOperationRef(entrySource.ExprRef)
+				path, pathOK := child.ValueSourcePath(entrySource)
+				return fmt.Sprintf("%#v op=%#v/%v path=%v/%v", entrySource, op, opOK, path, pathOK)
+			}
+			return fmt.Sprintf("node_id entry not found; entries=%v", seen)
+		}
+	}
+	return "call not found"
+}
+
+func entrySuffixField(p path.Path, field string) bool {
+	if len(p.Segments) == 0 {
+		return false
+	}
+	seg := p.Segments[len(p.Segments)-1]
+	return seg.Kind == segment.SegmentField && seg.Name == field
+}
+
+func methodGenericForVariableType(t *testing.T, root *body.Result, method string, variableIndex int) (typ.Type, bool) {
+	t.Helper()
+	for _, child := range root.FunctionResults() {
+		fn := child.Function()
+		origin, ok := root.FunctionOrigin(fn)
+		if !ok || origin.Kind != bind.FunctionOriginMethod || origin.Method != method {
+			continue
+		}
+		for _, point := range child.Graph().RPO() {
+			fact, ok := child.GenericFor(point)
+			if !ok || !fact.HasSymbols || fact.VariableIndex != variableIndex || variableIndex < 0 || variableIndex >= len(fact.Symbols) {
+				continue
+			}
+			value, ok := child.SymbolValueAtBoundary(point, fact.Symbols[variableIndex])
+			if !ok {
+				return nil, false
+			}
+			return typevalue.TypeOf(child.Registry(), value)
+		}
+	}
+	return nil, false
+}
+
 func TestRunChunkBooleanModeLoopReceiverPresentAtMethodCall(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
@@ -3192,6 +3546,142 @@ end
 	}
 	if !found {
 		t.Fatal("map_receive ch entry slot not found")
+	}
+}
+
+func TestRunChunkNestedGenericChannelReceiveKeepsPayloadPresenceCondition(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Event = { id: string }
+local function map_receive<T>(ch: Channel<T>, fn: (T) -> string): string
+	local value, ok = ch:receive()
+	if ok then
+		return fn(value)
+	end
+	return "closed"
+end
+local M = {}
+function M.read_event(ch: Channel<Event>): string
+	return map_receive(ch, function(event: Event): string
+		return event.id
+	end)
+end
+`)
+
+	result, err := RunChunk(stmts, Config{Check: body.Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := result.RootResult()
+	if root == nil {
+		t.Fatal("RootResult missing")
+	}
+	for _, child := range root.FunctionResults() {
+		fn := child.Function()
+		if fn == nil || len(fn.TypeParams) != 1 {
+			continue
+		}
+		for _, point := range child.Graph().RPO() {
+			fact, ok := child.Call(point)
+			if !ok || fact.Method != "receive" {
+				continue
+			}
+			outcome, ok := child.CallOutcomeAt(point)
+			if !ok {
+				t.Fatalf("receive CallOutcomeAt(%d) missing", point)
+			}
+			var foundPayload bool
+			for _, result := range outcome.Results {
+				if result.Index != 0 {
+					continue
+				}
+				got, ok := typevalue.TypeOf(reg, result.Value)
+				if !ok || got == nil || typ.IsAny(got) || typ.IsUnknown(got) {
+					t.Fatalf("receive payload result = %v/%v, want T witness", got, ok)
+				}
+				foundPayload = true
+			}
+			if !foundPayload {
+				t.Fatalf("receive outcome results = %#v, want payload slot", outcome.Results)
+			}
+			for _, refinement := range outcome.ReturnConditionSlots {
+				if refinement.ReturnIndex == 1 && refinement.ReturnValue && refinement.TargetIndex == 0 &&
+					presence.Equal(product.PresenceOf(refinement.Value), presence.Present()) {
+					return
+				}
+			}
+			t.Fatalf("receive return condition slots = %#v, want ok=true => payload present", outcome.ReturnConditionSlots)
+		}
+	}
+	t.Fatal("generic map_receive receive call not found")
+}
+
+func TestRunChunkNestedGenericChannelReceivePresenceReachesCallbackArgument(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Event = { id: string }
+local function map_receive<T>(ch: Channel<T>, fn: (T) -> string): string
+	local value, ok = ch:receive()
+	if ok then
+		return fn(value)
+	end
+	return "closed"
+end
+local M = {}
+function M.read_event(ch: Channel<Event>): string
+	return map_receive(ch, function(event: Event): string
+		return event.id
+	end)
+end
+`)
+
+	result, err := RunChunk(stmts, Config{Check: body.Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := result.RootResult()
+	if root == nil {
+		t.Fatal("RootResult missing")
+	}
+	var sawCallback bool
+	for _, mapReceive := range root.FunctionResults() {
+		if mapReceive == nil || mapReceive.Graph() == nil {
+			continue
+		}
+		var valuePath path.Path
+		for _, point := range mapReceive.Graph().RPO() {
+			fact, ok := mapReceive.LocalAssignment(point)
+			if ok && fact.Name == "value" && fact.HasSymbol && fact.Symbol != 0 {
+				valuePath = path.NewPath(fact.Symbol, "value")
+				break
+			}
+		}
+		if valuePath.IsEmpty() {
+			continue
+		}
+		for _, point := range mapReceive.Graph().RPO() {
+			site, ok := mapReceive.CallSite(point)
+			if !ok || mapReceive.SymbolName(site.CalleeSymbol()) != "fn" {
+				continue
+			}
+			sawCallback = true
+			value, ok := mapReceive.PathValueAtBoundary(point, valuePath)
+			if !ok {
+				t.Fatalf("value boundary value missing at callback point %d", point)
+			}
+			if got := product.PresenceOf(value); !presence.Equal(got, presence.Present()) {
+				t.Fatalf("value presence at callback point %d = %s (%#v), want present", point, got, value)
+			}
+		}
+	}
+	if !sawCallback {
+		t.Fatal("fn(value) callback call not found")
 	}
 }
 

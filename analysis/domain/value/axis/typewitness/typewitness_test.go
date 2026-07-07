@@ -226,6 +226,41 @@ func TestWidenPreservesStableRecordShape(t *testing.T) {
 	}
 }
 
+func TestWidenPreservesArrayAccumulatorGrowth(t *testing.T) {
+	empty := typetable.NewRecord().Build()
+	next := typ.NewArray(typ.LiteralString("id"))
+
+	got := Widen(Of(empty), Of(next))
+	gotType, ok := got.Type()
+	want := typ.NewArray(typ.String)
+	if !ok || !typ.TypeEquals(gotType, want) {
+		t.Fatalf("Widen(empty table,array literal) = %v/%v, want %v", gotType, ok, want)
+	}
+}
+
+func TestJoinTreatsEmptyRecordAsArrayMember(t *testing.T) {
+	empty := typetable.NewRecord().Build()
+	array := typ.NewArray(typ.String)
+
+	got := Join(Of(empty), Of(array))
+	gotType, ok := got.Type()
+	if !ok || !typ.TypeEquals(gotType, array) {
+		t.Fatalf("Join(empty table,array) = %v/%v, want %v", gotType, ok, array)
+	}
+}
+
+func TestWidenPreservesArrayElementGrowth(t *testing.T) {
+	prev := typ.NewArray(typ.LiteralString("a"))
+	next := typ.NewArray(typ.LiteralString("b"))
+
+	got := Widen(Of(prev), Of(next))
+	gotType, ok := got.Type()
+	want := typ.NewArray(typ.String)
+	if !ok || !typ.TypeEquals(gotType, want) {
+		t.Fatalf("Widen(array literals) = %v/%v, want %v", gotType, ok, want)
+	}
+}
+
 func TestWidenStableRecordShapeKeepsUnchangedFields(t *testing.T) {
 	prev := typetable.NewRecord().
 		Field("node_order", typ.NewArray(typ.String)).

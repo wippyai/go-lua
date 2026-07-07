@@ -693,6 +693,75 @@ func TestRewrite_GenericDescentPreservesInstantiatedResultOwnedBinder(t *testing
 	}
 }
 
+func TestRewrite_OuterSubstitutionDoesNotCorruptInnerGenericResultBinder(t *testing.T) {
+	outer := typ.NewTypeParam("T", nil)
+	resultParam := typ.NewTypeParam("U", nil)
+	result := typ.NewGeneric("Result", []*typ.TypeParam{resultParam}, newRecord().
+		Field("ok", typ.Boolean).
+		Field("value", resultParam).
+		Build())
+	mapperParam := typ.NewTypeParam("U", nil)
+	mapper := typ.Func().
+		TypeParamRef(mapperParam).
+		Param("payload", outer).
+		Returns(typ.Instantiate(result, mapperParam)).
+		Build()
+	container := newRecord().
+		Field("input", outer).
+		Field("mapper", mapper).
+		Build()
+
+	got := Rewrite(container, func(node typ.Type) (typ.Type, bool) {
+		if tp, ok := node.(*typ.TypeParam); ok && tp.Name == "T" {
+			return typ.String, true
+		}
+		return nil, false
+	})
+	body, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("rewrite result = %T, want record", got)
+	}
+	input := body.GetField("input")
+	if input == nil || input.Type != typ.String {
+		t.Fatalf("input field = %v, want substituted string", input)
+	}
+	mapperField := body.GetField("mapper")
+	if mapperField == nil {
+		t.Fatal("missing mapper field")
+	}
+	gotMapper, ok := mapperField.Type.(*typ.Function)
+	if !ok {
+		t.Fatalf("mapper field = %T %[1]v, want function", mapperField.Type)
+	}
+	if len(gotMapper.TypeParams) != 1 || gotMapper.TypeParams[0] != mapperParam {
+		t.Fatalf("mapper binder changed/captured: %#v, want original U binder", gotMapper.TypeParams)
+	}
+	if gotMapper.Params[0].Type != typ.String {
+		t.Fatalf("mapper payload = %v, want substituted outer string", gotMapper.Params[0].Type)
+	}
+	gotReturn, ok := gotMapper.Returns[0].(*typ.Instantiated)
+	if !ok {
+		t.Fatalf("mapper return = %T %[1]v, want Result<U>", gotMapper.Returns[0])
+	}
+	if gotReturn.Generic != result {
+		t.Fatalf("mapper return generic = %v, want original Result generic", gotReturn.Generic)
+	}
+	if len(gotReturn.TypeArgs) != 1 || gotReturn.TypeArgs[0] != mapperParam {
+		t.Fatalf("mapper return args = %#v, want mapper U binder", gotReturn.TypeArgs)
+	}
+	if len(result.TypeParams) != 1 || result.TypeParams[0] != resultParam {
+		t.Fatalf("Result binder changed/captured: %#v, want original Result<U> binder", result.TypeParams)
+	}
+	resultBody, ok := result.Body.(*typ.Record)
+	if !ok {
+		t.Fatalf("Result body = %T, want record", result.Body)
+	}
+	value := resultBody.GetField("value")
+	if value == nil || value.Type != resultParam {
+		t.Fatalf("Result.value = %v, want original Result<U> binder", value)
+	}
+}
+
 func TestRewrite_InstantiatedGenericPreservesOwnedSameNameBinder(t *testing.T) {
 	outer := typ.NewTypeParam("T", nil)
 	resultParam := typ.NewTypeParam("T", nil)

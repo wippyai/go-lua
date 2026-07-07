@@ -5,7 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 )
 
-func renderRegistrationJudgmentWithPolicy(item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
+func renderRegistrationJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
 	if item.Code != judgment.CodeRegistration || item.Subject.Kind != judgment.SubjectExpression || len(item.Spans) == 0 {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -14,7 +14,7 @@ func renderRegistrationJudgmentWithPolicy(item judgment.Judgment, policy judgmen
 		return diagnostic.Diagnostic{}, false
 	}
 	primary := diagnosticSpanFromJudgment(item.Spans[0])
-	presentation, ok := diagnosticProofContext().Registration(item, primary)
+	presentation, ok := ctx.proof.Registration(item, primary)
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}

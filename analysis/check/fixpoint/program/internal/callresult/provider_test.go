@@ -1250,6 +1250,99 @@ func TestOutcomeProviderSpecializesGenericReturnFromArgument(t *testing.T) {
 	}
 }
 
+func TestOutcomeProviderSpecializesGenericReduceReturnFromInitialAccumulator(t *testing.T) {
+	reg := standard.Registry()
+	callee := symbol.ID(2147)
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 2148})
+	itemParam := typ.NewTypeParam("T", nil)
+	accParam := typ.NewTypeParam("A", nil)
+	reducer := typ.NewGeneric("Reducer", []*typ.TypeParam{itemParam, accParam},
+		typ.Func().Param("acc", accParam).Param("item", itemParam).Returns(accParam).Build())
+	fn := typ.Func().
+		TypeParamRef(itemParam).
+		TypeParamRef(accParam).
+		Param("arr", typ.NewArray(itemParam)).
+		Param("fn", typ.Instantiate(reducer, itemParam, accParam)).
+		Param("initial", accParam).
+		Returns(accParam).
+		Build()
+	bodyReturn := providerValueForType(reg, typeexpr.Optional(accParam))
+	callback := typ.Func().Param("acc", typ.Number).Param("item", typ.String).Returns(typ.Number).Build()
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{
+			Key:     key,
+			Summary: summary.Summary{Returns: []product.Value{bodyReturn}},
+		}),
+		KeyFor:        ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
+		FunctionTypes: map[summary.SummaryKey]*typ.Function{key: fn},
+		Sources: providerSourceValues(reg, map[factflow.ExprRef]product.Value{
+			1: providerValueForType(reg, typ.NewArray(typ.String)),
+			2: providerValueForType(reg, callback),
+			3: providerValueForType(reg, typ.LiteralInt(0)),
+		}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: callee,
+		ArgumentSources: []factflow.ValueSource{
+			providerExpressionSource(t, 1, 0),
+			providerExpressionSource(t, 2, 1),
+			providerExpressionSource(t, 3, 2),
+		},
+	}).View(), state.State{}, nil)
+
+	assertCallOutcomeResultType(t, reg, got.Results, typ.Number)
+	if gotPresence := product.PresenceOf(got.Results[0].Value); !presence.Equal(gotPresence, presence.Present()) {
+		t.Fatalf("reduce result presence = %s, want present from instantiated accumulator contract", gotPresence)
+	}
+}
+
+func TestOutcomeProviderSpecializesGenericFindReturnToOptionalElement(t *testing.T) {
+	reg := standard.Registry()
+	callee := symbol.ID(2149)
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 2150})
+	itemParam := typ.NewTypeParam("T", nil)
+	predicate := typ.NewGeneric("Predicate", []*typ.TypeParam{itemParam},
+		typ.Func().Param("item", itemParam).Returns(typ.Boolean).Build())
+	fn := typ.Func().
+		TypeParamRef(itemParam).
+		Param("arr", typ.NewArray(itemParam)).
+		Param("pred", typ.Instantiate(predicate, itemParam)).
+		Returns(typeexpr.Optional(itemParam)).
+		Build()
+	user := typetable.NewRecord().
+		Field("name", typ.String).
+		Field("age", typ.Number).
+		Build()
+	bodyReturn := providerValueForType(reg, typeexpr.Optional(itemParam))
+	callback := typ.Func().Param("item", user).Returns(typ.Boolean).Build()
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{
+			Key:     key,
+			Summary: summary.Summary{Returns: []product.Value{bodyReturn}},
+		}),
+		KeyFor:        ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
+		FunctionTypes: map[summary.SummaryKey]*typ.Function{key: fn},
+		Sources: providerSourceValues(reg, map[factflow.ExprRef]product.Value{
+			1: providerValueForType(reg, typ.NewArray(user)),
+			2: providerValueForType(reg, callback),
+		}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: callee,
+		ArgumentSources: []factflow.ValueSource{
+			providerExpressionSource(t, 1, 0),
+			providerExpressionSource(t, 2, 1),
+		},
+	}).View(), state.State{}, nil)
+
+	assertCallOutcomeResultType(t, reg, got.Results, typeexpr.Optional(user))
+	if gotPresence := product.PresenceOf(got.Results[0].Value); !presence.Equal(gotPresence, presence.Maybe()) {
+		t.Fatalf("find result presence = %s, want maybe for optional element", gotPresence)
+	}
+}
+
 func TestOutcomeProviderPreparedSummaryCacheKeepsGenericCallsContextual(t *testing.T) {
 	reg := standard.Registry()
 	callee := symbol.ID(219)
@@ -1587,6 +1680,42 @@ func TestOutcomeProviderRefinesMatchedSummaryResultFromCurrentCallableType(t *te
 	}
 	if !got.PostReturnAuthority {
 		t.Fatalf("PostReturnAuthority = false, want summary return-condition authority preserved")
+	}
+}
+
+func TestOutcomeProviderKeepsFreeReceiverTypeParamReturnFromCurrentCallable(t *testing.T) {
+	reg := standard.Registry()
+	callee := symbol.ID(756)
+	payload := typ.NewTypeParam("T", nil)
+	callableType := typ.Func().Returns(payload, typ.Boolean).Build()
+	callableValue := typevalue.WithWitness(reg, typevalue.FromType(reg, callableType), callableType)
+	provider := OutcomeProvider(ProviderConfig{
+		CalleeValue: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) (product.Value, bool) {
+			return callableValue, true
+		},
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: callee,
+		MethodName:   "receive",
+	}).View(), state.State{}, nil)
+
+	if len(got.Results) != 2 || got.Results[0].Index != 0 || got.Results[1].Index != 1 {
+		t.Fatalf("callable free-param result = %#v, want slots 0 and 1", got.Results)
+	}
+	gotType, ok := typevalue.WitnessOf(reg, got.Results[0].Value)
+	if !ok || !typ.TypeEquals(gotType, payload) {
+		t.Fatalf("callable free-param result type = %v/%v, want T witness", gotType, ok)
+	}
+	if len(got.ReturnConditionSlots) != 1 ||
+		got.ReturnConditionSlots[0].ReturnIndex != 1 ||
+		!got.ReturnConditionSlots[0].ReturnValue ||
+		got.ReturnConditionSlots[0].TargetIndex != 0 {
+		t.Fatalf("return condition slots = %#v, want ok=true -> slot 0 present", got.ReturnConditionSlots)
+	}
+	slotType, ok := typevalue.WitnessOf(reg, got.ReturnConditionSlots[0].Value)
+	if !ok || !typ.TypeEquals(slotType, payload) || !presence.Equal(product.PresenceOf(got.ReturnConditionSlots[0].Value), presence.Present()) {
+		t.Fatalf("return condition slot value type/presence = %v/%v %s, want present T", slotType, ok, product.PresenceOf(got.ReturnConditionSlots[0].Value))
 	}
 }
 

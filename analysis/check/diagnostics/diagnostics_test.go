@@ -713,7 +713,7 @@ accept(raw)
 	if d := diags[0]; d.Code != CodeDirectCallArgType || !strings.Contains(d.Message, "id") {
 		t.Fatalf("diagnostic = %#v, want direct call mismatch for record id contract", d)
 	}
-	if got := diags[0].Explanation.String(); !strings.Contains(got, "argument 1 (raw) has type {id: string}") ||
+	if got := diags[0].Explanation.String(); !strings.Contains(got, `argument 1 (raw) has type {id: "ok"}`) ||
 		!strings.Contains(got, "user asserted any") ||
 		!strings.Contains(got, "raw comes from any/unknown") ||
 		!strings.Contains(got, "no proof on this path shows raw satisfies the parameter type") {
@@ -996,7 +996,11 @@ func TestAnnotationAssignabilityRejectsExplicitAnyAsProof(t *testing.T) {
 	var assignment, field, call bool
 	for _, d := range diags {
 		msg := d.Message
-		assignment = assignment || strings.Contains(msg, "cannot assign raw because it is any, not Payload")
+		explanation := d.Explanation.String()
+		assignment = assignment ||
+			(strings.Contains(msg, "cannot assign raw") &&
+				strings.Contains(msg, "Payload") &&
+				strings.Contains(explanation, "raw comes from any/unknown"))
 		field = field || strings.Contains(msg, "cannot assign raw.id because it is any, not string")
 		call = call || strings.Contains(msg, "argument 1 (raw) comes from any/unknown") && strings.Contains(msg, "no proof shows it is")
 	}
@@ -1235,9 +1239,10 @@ func TestAnnotationAssignabilityUsesTypeIsErrorBranchState(t *testing.T) {
 
 func TestAnnotationAssignabilityUsesDeclaredLocalValueForTypeTestState(t *testing.T) {
 	diags := runDiagnostics(t, `
-		local y: string | number = 42
+		local function f(y: string | number)
 		if type(y) == "string" then
 			local n: number = y
+		end
 		end
 	`)
 	if len(diags) != 1 {

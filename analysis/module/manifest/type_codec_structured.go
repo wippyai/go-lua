@@ -37,16 +37,23 @@ func encodeFunction(f *typ.Function) (*typeWire, error) {
 }
 
 func decodeFunction(w *typeWire) (typ.Type, error) {
+	return decodeFunctionInEnv(w, nil)
+}
+
+func decodeFunctionInEnv(w *typeWire, env *typeDecodeEnv) (typ.Type, error) {
 	b := typ.Func()
+	var typeParams []*typ.TypeParam
 	for _, p := range w.TypeParams {
-		decoded, err := decodeTypeParamWire(p)
+		decoded, err := decodeTypeParamWireInEnv(p, env)
 		if err != nil {
 			return nil, err
 		}
+		typeParams = append(typeParams, decoded)
 		b.TypeParamRef(decoded)
 	}
+	bodyEnv := env.withParams(typeParams)
 	for _, p := range w.Params {
-		t, err := decodeType(p.Type)
+		t, err := decodeTypeInEnv(p.Type, bodyEnv)
 		if err != nil {
 			return nil, err
 		}
@@ -57,13 +64,13 @@ func decodeFunction(w *typeWire) (typ.Type, error) {
 		}
 	}
 	if w.Variadic != nil {
-		v, err := decodeType(w.Variadic)
+		v, err := decodeTypeInEnv(w.Variadic, bodyEnv)
 		if err != nil {
 			return nil, err
 		}
 		b.Variadic(v)
 	}
-	returns, err := decodeTypeList(w.Returns)
+	returns, err := decodeTypeListInEnv(w.Returns, bodyEnv)
 	if err != nil {
 		return nil, err
 	}
@@ -88,9 +95,13 @@ func encodeInterface(i *typ.Interface) (*typeWire, error) {
 }
 
 func decodeInterface(w *typeWire) (typ.Type, error) {
+	return decodeInterfaceInEnv(w, nil)
+}
+
+func decodeInterfaceInEnv(w *typeWire, env *typeDecodeEnv) (typ.Type, error) {
 	methods := make([]typ.Method, 0, len(w.Methods))
 	for _, method := range w.Methods {
-		t, err := decodeType(method.Type)
+		t, err := decodeTypeInEnv(method.Type, env)
 		if err != nil {
 			return nil, err
 		}
@@ -121,15 +132,19 @@ func encodeGeneric(g *typ.Generic) (*typeWire, error) {
 }
 
 func decodeGeneric(w *typeWire) (typ.Type, error) {
+	return decodeGenericInEnv(w, nil)
+}
+
+func decodeGenericInEnv(w *typeWire, env *typeDecodeEnv) (typ.Type, error) {
 	params := make([]*typ.TypeParam, 0, len(w.TypeParams))
 	for _, p := range w.TypeParams {
-		decoded, err := decodeTypeParamWire(p)
+		decoded, err := decodeTypeParamWireInEnv(p, env)
 		if err != nil {
 			return nil, err
 		}
 		params = append(params, decoded)
 	}
-	body, err := decodeType(w.Body)
+	body, err := decodeTypeInEnv(w.Body, env.withParams(params))
 	if err != nil {
 		return nil, err
 	}
@@ -145,10 +160,18 @@ func encodeTypeParam(t *typ.TypeParam) (*typeWire, error) {
 }
 
 func decodeTypeParam(w *typeWire) (typ.Type, error) {
+	return decodeTypeParamInEnv(w, nil)
+}
+
+func decodeTypeParamInEnv(w *typeWire, env *typeDecodeEnv) (typ.Type, error) {
 	if len(w.TypeParams) != 1 {
 		return nil, fmt.Errorf("typeparam payload has %d params", len(w.TypeParams))
 	}
-	return decodeTypeParamWire(w.TypeParams[0])
+	param := w.TypeParams[0]
+	if envParam, ok := env.lookup(param.Name); ok {
+		return envParam, nil
+	}
+	return decodeTypeParamWireInEnv(param, env)
 }
 
 func encodeTypeParamWire(p *typ.TypeParam) (typeParamWire, error) {
@@ -163,7 +186,11 @@ func encodeTypeParamWire(p *typ.TypeParam) (typeParamWire, error) {
 }
 
 func decodeTypeParamWire(w typeParamWire) (*typ.TypeParam, error) {
-	constraint, err := decodeType(w.Constraint)
+	return decodeTypeParamWireInEnv(w, nil)
+}
+
+func decodeTypeParamWireInEnv(w typeParamWire, env *typeDecodeEnv) (*typ.TypeParam, error) {
+	constraint, err := decodeTypeInEnv(w.Constraint, env)
 	if err != nil {
 		return nil, err
 	}

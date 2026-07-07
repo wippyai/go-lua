@@ -166,14 +166,7 @@ func (r Reader) discriminatedUnionRootType(point cfg.Point, root path.Path) (typ
 	if root.Symbol == 0 {
 		return nil, false
 	}
-	if annotated, ok := r.result.SymbolDeclaredType(root.Symbol); ok {
-		return r.result.TransparentComparableType(annotated), true
-	}
-	value, ok := r.result.SymbolValueAtBoundary(point, root.Symbol)
-	if !ok {
-		return nil, false
-	}
-	return r.FullVariantOriginType(value)
+	return r.result.DeclaredOrVariantOriginPathTypeAt(point, root)
 }
 
 func discriminatedUnionCheckLiteral(check branchcond.Check) (typ.Type, bool, bool) {

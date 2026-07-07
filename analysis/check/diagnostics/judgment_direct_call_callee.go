@@ -5,7 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 )
 
-func renderCallCalleeJudgmentWithPolicy(item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
+func renderCallCalleeJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
 	if item.Code != judgment.CodeCallCallee || item.Subject.Kind != judgment.SubjectCallExpression || len(item.Spans) == 0 {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -14,7 +14,7 @@ func renderCallCalleeJudgmentWithPolicy(item judgment.Judgment, policy judgment.
 		return diagnostic.Diagnostic{}, false
 	}
 	span := diagnosticSpanFromJudgment(item.Spans[0])
-	presentation, ok := diagnosticProofContext().DirectCallCallee(item, span)
+	presentation, ok := ctx.proof.DirectCallCallee(item, span)
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}

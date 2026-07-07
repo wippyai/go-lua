@@ -240,6 +240,11 @@ func applyValueRefinementAtWithoutImplicationsCached(
 			out = invalidateRootDescendantsAt(resolver, point, out, targetPath)
 		}
 		out = out.UpdateValue(reg, key.SymbolValue(targetPath.Symbol), func(value product.Value) product.Value {
+			if product.Equal(reg, value, product.Bottom(reg)) {
+				if constraint, ok := refinement.Constraint(); ok {
+					return constraint
+				}
+			}
 			return refineProductValue(reg, value, refinement)
 		})
 		return preserve.Restore(out)
@@ -359,10 +364,14 @@ func refineProductValue(reg *axis.Registry, value product.Value, refinement fact
 		return value
 	}
 	refined := valuerefine.MeetConstraint(reg, value, constraint)
-	if constraintProvesScalarValue(reg, constraint) {
+	if constraintProvesRuntimeCheckedValue(reg, constraint) {
 		refined = product.Set(reg, refined, evidence.Key, evidence.Top())
 	}
 	return refined
+}
+
+func constraintProvesRuntimeCheckedValue(reg *axis.Registry, constraint product.Value) bool {
+	return constraintProvesScalarValue(reg, constraint)
 }
 
 func constraintProvesScalarValue(reg *axis.Registry, constraint product.Value) bool {
@@ -388,6 +397,21 @@ func runtimeKindConstraintProvesScalarValue(reg *axis.Registry, constraint produ
 		}
 	}
 	return true
+}
+
+func runtimeKindConstraintProvesTableValue(reg *axis.Registry, constraint product.Value) bool {
+	if reg == nil {
+		return false
+	}
+	if _, ok := reg.LookupErased(runtimekind.Key.ID()); !ok {
+		return false
+	}
+	kinds := product.Get(reg, constraint, runtimekind.Key)
+	if !runtimekind.Equal(kinds, runtimekind.Singleton(runtimekind.Table)) {
+		return false
+	}
+	witness, ok := typevalue.WitnessOf(reg, constraint)
+	return ok && typetable.IsBuiltinTopMarker(witness)
 }
 
 func literalConstraintProvesScalarValue(reg *axis.Registry, constraint product.Value) bool {
@@ -439,7 +463,7 @@ func inheritUntrustedRootEvidenceForDescendantRefinement(
 	if !ok || targetPath.Symbol == 0 || len(targetPath.Segments) == 0 {
 		return refinement
 	}
-	if constraintProvesScalarValue(reg, constraint) {
+	if constraintProvesRuntimeCheckedValue(reg, constraint) {
 		return refinement
 	}
 	if current, ok := resolvePathValueAtCached(typeValues, reg, resolver, point, out, targetPath, projectPath); ok {
@@ -715,10 +739,14 @@ func narrowRootByPathLiteralMatch(
 	}
 	constraint := typeValues.FromTypeWithWitness(reg, narrowedType)
 	constraint = product.Set(reg, constraint, variantorigin.Key, variantorigin.Of(family, cases))
+	refinedRoot := refineProductValue(reg, rootValue, factflow.NewValueConstraint(constraint))
+	if product.Equal(reg, refinedRoot, product.Bottom(reg)) {
+		return unreachableState(reg), true
+	}
 	rootPath := targetPath.RootOnly()
 	preserve := descendantFactsCompatibleWithNarrowedRoot(reg, typeValues, resolver, projectPath, point, out, rootPath, narrowedType)
 	out = invalidateRootDescendantsAt(resolver, point, out, rootPath)
-	out = out.WriteValue(reg, key.SymbolValue(targetPath.Symbol), refineProductValue(reg, rootValue, factflow.NewValueConstraint(constraint)))
+	out = out.WriteValue(reg, key.SymbolValue(targetPath.Symbol), refinedRoot)
 	return preserve.Restore(out), true
 }
 

@@ -225,6 +225,30 @@ func assignmentJudgment(ctx Context, functionKey string, assignment readmodel.As
 	if assignment.ExpectedSource == readmodel.AssignmentExpectedDynamicTarget {
 		evidence[1].Detail = judgment.DynamicAssignmentTargetEvidenceDetail(assignment.TargetLabel)
 	}
+	if assignment.ParentContext.SourceLabel != "" && assignment.ParentContext.SourceType != nil {
+		evidence = append(evidence, judgment.Evidence{
+			Kind:   judgment.EvidenceAbstractFact,
+			Trust:  judgment.EvidenceTrustProven,
+			Detail: judgment.AssignmentParentActualEvidenceDetail(assignment.ParentContext.SourceLabel, assignment.ParentContext.SourceType),
+			Origin: judgment.OriginRef{
+				Point: assignment.Point,
+				Key:   "assignment:parent-actual",
+			},
+			Span: spanFromReadModel(ctx.SourceFile, assignment.ParentContext.SourceSpan),
+		})
+	}
+	if assignment.ParentContext.TargetLabel != "" && assignment.ParentContext.Expected != nil {
+		evidence = append(evidence, judgment.Evidence{
+			Kind:   judgment.EvidenceUserAssertion,
+			Trust:  judgment.EvidenceTrustClaimed,
+			Detail: judgment.AssignmentParentExpectedEvidenceDetail(assignment.ParentContext.TargetLabel, assignment.ParentContext.Expected),
+			Origin: judgment.OriginRef{
+				Point: assignment.Point,
+				Key:   "assignment:parent-expected",
+			},
+			Span: spanFromReadModel(ctx.SourceFile, assignment.ParentContext.DeclarationSpan),
+		})
+	}
 	if assignment.ExplicitTopOrigin {
 		sourceLabel := assignment.SourceLabel
 		if sourceLabel == "" {

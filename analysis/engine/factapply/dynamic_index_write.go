@@ -52,6 +52,7 @@ func applyDynamicIndexWrite(
 	out = preserveDynamicIndexAllValueKeyMemberships(ctx, resolver, facts, in, out, fact, value, tableKey, allValueTables)
 	out = restorePendingDynamicAllValuesFromReverseDelete(ctx, resolver, facts, out, fact, value, tableKey)
 	out = addKnownDynamicIndexWriteEquality(ctx, resolver, facts, out, fact, value)
+	out = addKnownDynamicIndexWriteStaticMember(ctx, resolver, out, fact, value)
 	return writeHeapTableDynamicIndexFact(ctx, resolver, out, tablePath, key, value)
 }
 
@@ -313,6 +314,38 @@ func addKnownDynamicIndexWriteEquality(
 		return out
 	}
 	return addPathEqualityProofFromSource(resolver, facts, ctx.Point, out, fact.TablePathRef().IndexStr(name), fact.Source())
+}
+
+func addKnownDynamicIndexWriteStaticMember(
+	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
+	out state.State,
+	fact factflow.DynamicIndexWrite,
+	value dynamicindex.Fact,
+) state.State {
+	if resolver == nil || product.Equal(ctx.Registry, value.Value, product.Bottom(ctx.Registry)) {
+		return out
+	}
+	name, ok := staticStringKey(ctx.Registry, value.KeyValue)
+	if !ok {
+		return out
+	}
+	targetPath := fact.TablePathRef().IndexStr(name)
+	targetKey := factPathKeyAt(resolver, ctx.Point, targetPath)
+	if targetKey == "" {
+		return out
+	}
+	ks := resolver.KeySpace()
+	localKey, ok := ks.FromPathKey(targetKey)
+	if !ok {
+		return out
+	}
+	edit := out.Edit(ctx.Registry)
+	edit.WriteLocalPathStaticMember(localKey, value.Value)
+	if canonical, ok := ks.FieldCanonical(localKey); ok {
+		edit.WriteLocalPathStaticMember(canonical, value.Value)
+	}
+	return edit.Done()
 }
 
 func writeHeapTableDynamicIndexFact(

@@ -1,6 +1,7 @@
 package checktest
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
@@ -441,19 +442,27 @@ func TestRequireCheckNestedFactoryDIDropsStaleBranchButKeepsSiblingEvidence(t *t
 		local bad: number = root.api.backup.meta()
 	`
 	result := Check(src, WithStdlib(), WithModule("provider", mod))
-	if len(result.Diagnostics) != 2 {
+	if len(result.Diagnostics) != 1 {
 		debug := "<no checked result>"
 		if result.checked != nil && result.checked.RootResult() != nil {
 			debug = callOutcomeDebug(result.checked.RootResult())
 		}
-		t.Fatalf("diagnostics = %d, want replacement assignment plus nested factory DI diagnostic: %#v\ncalls: %s", len(result.Diagnostics), result.Diagnostics, debug)
+		t.Fatalf("diagnostics = %d, want only sibling nested factory DI diagnostic: %#v\ncalls: %s", len(result.Diagnostics), result.Diagnostics, debug)
 	}
-	requireEvidenceMessage(t, result.Diagnostics[0], "replacement has type {meta: fun() -> number}")
-	requireEvidenceMessage(t, result.Diagnostics[0], "root.api.primary is declared as {meta: fun() -> {name: string}}")
+	debug := "<no checked result>"
+	if result.checked != nil && result.checked.RootResult() != nil {
+		debug = callOutcomeDebug(result.checked.RootResult())
+	}
+	if !strings.Contains(debug, "callee=root.api.primary.meta") || !strings.Contains(debug, "results=[0:number]") {
+		t.Fatalf("primary replacement did not update call evidence: %s", debug)
+	}
+	if !strings.Contains(debug, "callee=root.api.backup.meta") || !strings.Contains(debug, "results=[0:{name: string}]") {
+		t.Fatalf("sibling backup did not retain imported member evidence: %s", debug)
+	}
 	requireDiagnostic(t, result, diagnosticExpectation{
 		Code:            diagnostics.CodeAssignmentType,
 		Severity:        diagnostic.SeverityError,
-		DiagnosticCount: 2,
+		DiagnosticCount: 1,
 		Line:            23,
 		Column:          23,
 		Span:            diagnostic.Span{StartLine: 23, StartCol: 23, EndLine: 23, EndCol: 42},
@@ -487,9 +496,9 @@ func TestRequireCheckNestedFactoryDIDropsStaleBranchButKeepsSiblingEvidence(t *t
 			"^~",
 		},
 	})
-	requireAssignmentDiagnosticWithEvidence(t, Result{Diagnostics: []diagnostic.Diagnostic{result.Diagnostics[1]}}, "nested factory DI keeps sibling imported member evidence")
-	requireEvidenceMessage(t, result.Diagnostics[1], "root.api.backup.meta(...) has type {name: string}")
-	requireEvidenceMessage(t, result.Diagnostics[1], "bad is declared as number")
+	requireAssignmentDiagnosticWithEvidence(t, Result{Diagnostics: []diagnostic.Diagnostic{result.Diagnostics[0]}}, "nested factory DI keeps sibling imported member evidence")
+	requireEvidenceMessage(t, result.Diagnostics[0], "root.api.backup.meta(...) has type {name: string}")
+	requireEvidenceMessage(t, result.Diagnostics[0], "bad is declared as number")
 }
 
 func TestRequireCheckInjectedHelperReturnKeepsImportedMemberResultType(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -15,6 +16,23 @@ func valueSourcePath(facts factflow.Facts, resolver *visibility.Resolver, source
 	}
 	if source.Kind != factflow.ValueSourcePath || source.PathKey == "" || resolver == nil {
 		return pathdom.Path{}, false
+	}
+	if sym, version, suffix, ok := pathaddr.ParseResolverPath(source.PathKey); ok {
+		segments, segOK := segment.InternFormattedSegments(suffix)
+		if !segOK {
+			return pathdom.Path{}, false
+		}
+		return pathdom.Path{
+			Symbol:   sym,
+			Version:  version,
+			Segments: segments,
+		}, true
+	}
+	if sym, segments, ok := pathaddr.ParseSymbolPathKey(source.PathKey); ok {
+		return pathdom.Path{
+			Symbol:   sym,
+			Segments: segments,
+		}, true
 	}
 	ks := resolver.KeySpace()
 	if ks == nil {

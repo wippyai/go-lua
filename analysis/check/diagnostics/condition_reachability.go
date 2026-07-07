@@ -5,7 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 )
 
-func renderRedundantConditionJudgmentWithPolicy(item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
+func renderRedundantConditionJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
 	if item.Code != judgment.CodeRedundantCondition || item.Subject.Kind != judgment.SubjectExpression || len(item.Spans) == 0 {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -14,7 +14,7 @@ func renderRedundantConditionJudgmentWithPolicy(item judgment.Judgment, policy j
 		return diagnostic.Diagnostic{}, false
 	}
 	span := diagnosticSpanFromJudgment(item.Spans[0])
-	presentation := diagnosticProofContext().RedundantCondition(item, span)
+	presentation := ctx.proof.RedundantCondition(item, span)
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		Span:        span,
 		Code:        CodeRedundantCondition,

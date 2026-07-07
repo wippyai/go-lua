@@ -67,3 +67,30 @@ end
 		t.Fatalf("assignment severity = %s, want error", assignment.Severity)
 	}
 }
+
+func TestCovariantAliasMismatchIsOwnedByLocalAssignment(t *testing.T) {
+	result := Check(`
+local function f(): number
+    local narrow: {x: number} = {x = 1}
+    local wide: {x: number | string} = narrow
+    local function leak() wide.x = "boom" end
+    leak()
+    local n: number = narrow.x
+    return n
+end
+`)
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeAssignmentType,
+		DiagnosticCount: 1,
+		MessageContains: []string{
+			"narrow.x",
+			"number | string",
+			"number",
+		},
+	})
+	for _, diag := range result.Diagnostics {
+		if diag.Code == diagnostics.CodeReturnContractType {
+			t.Fatalf("diagnostics = %#v, want local assignment to own the mismatch without return cascade", result.Diagnostics)
+		}
+	}
+}

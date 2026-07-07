@@ -71,21 +71,17 @@ func runtimeTableGuardProves(want typ.Type) bool {
 }
 
 func runtimeTableMapGuardProves(key, value typ.Type) bool {
-	if !runtimeTableMapKeyAdmitted(key) || !topLikeType(value) {
+	if !runtimeTableMapKeyAdmitted(key) || !typ.IsTopLike(value) {
 		return false
 	}
 	return true
 }
 
 func runtimeTableMapKeyAdmitted(key typ.Type) bool {
-	return topLikeType(key) ||
+	return typ.IsTopLike(key) ||
 		typ.TypeEquals(key, typ.String) ||
 		typ.TypeEquals(key, typ.Number) ||
 		typ.TypeEquals(key, typ.Integer)
-}
-
-func topLikeType(t typ.Type) bool {
-	return typ.IsAny(t) || typ.IsUnknown(t)
 }
 
 // DominatingRuntimeTypeGuardProves reports whether a dominating runtime

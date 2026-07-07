@@ -33,6 +33,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
+	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
@@ -41,6 +42,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
+	"github.com/wippyai/go-lua/analysis/type/projection"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -646,6 +648,9 @@ end
 	if !foundInvalidation {
 		t.Fatalf("nested dynamic write did not publish descendant invalidation for slots")
 	}
+	if result.ExpressionReadProvenPresentBeforeBoundary(point, expr) {
+		t.Fatalf("stale dynamic path read is proven present after invalidating write")
+	}
 	if boundary, ok := result.boundaryStateAt(point); ok {
 		for _, p := range []path.Path{stalePath.Parent().Parent(), stalePath.Parent(), stalePath} {
 			if key := result.visibility.KeyAt(point, p); key != "" {
@@ -889,6 +894,70 @@ end`)
 	}
 	if !result.CallMayInvalidateTrackedPathBetween(result.Graph().Entry(), point, recordPath) {
 		t.Fatalf("CallMayInvalidateTrackedPathBetween(entry, %d, %s) = false, want reachable unknown call invalidation", point, recordPath)
+	}
+}
+
+func TestDeclaredOrVariantOriginPathTypeAtProjectsDeclaredPath(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function inspect(record: {value: {id: string}}): ()
+	local after = record.value.id
+end`)
+
+	result, err := CheckFunction(fn, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	point, expr := requireLocalAssignmentExprByName(t, result, "after")
+	p, ok := result.ExpressionPath(expr)
+	if !ok {
+		t.Fatal("after expression path not found")
+	}
+	got, ok := result.DeclaredOrVariantOriginPathTypeAt(point, p)
+	if !ok {
+		t.Fatalf("DeclaredOrVariantOriginPathTypeAt(%s) returned false", p)
+	}
+	if !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("DeclaredOrVariantOriginPathTypeAt(%s) = %v, want string", p, got)
+	}
+}
+
+func TestDominatingAliasDeclaredOrVariantOriginPathTypeAtProjectsSourceSuffix(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function inspect(source: {maybe: string?}): ()
+	local alias = source
+	if alias.maybe then
+		local value = alias.maybe
+	end
+end`)
+
+	result, err := CheckFunction(fn, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	point, expr := requireLocalAssignmentExprByName(t, result, "value")
+	p, ok := result.ExpressionPath(expr)
+	if !ok {
+		t.Fatal("value expression path not found")
+	}
+	if direct, ok := result.DeclaredOrVariantOriginPathTypeAt(point, p); ok {
+		t.Fatalf("DeclaredOrVariantOriginPathTypeAt(%s) = %v, want alias source required", p, direct)
+	}
+	got, ok := result.DominatingAliasDeclaredOrVariantOriginPathTypeAt(point, p)
+	if !ok {
+		t.Fatalf("DominatingAliasDeclaredOrVariantOriginPathTypeAt(%s) returned false", p)
+	}
+	want := typ.MaterializeOptional(typ.String)
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("DominatingAliasDeclaredOrVariantOriginPathTypeAt(%s) = %v, want %v", p, got, want)
+	}
+	got, ok = result.OptionalExhaustivenessPathTypeAt(point, p)
+	if !ok {
+		t.Fatalf("OptionalExhaustivenessPathTypeAt(%s) returned false", p)
+	}
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("OptionalExhaustivenessPathTypeAt(%s) = %v, want %v", p, got, want)
 	}
 }
 
@@ -1268,6 +1337,9 @@ end`)
 	if !result.SourceReadProvenPresentBeforeBoundary(returnPoint, sources[0]) {
 		t.Fatalf("SourceReadProvenPresentBeforeBoundary(%#v) = false, want true", sources[0])
 	}
+	if !result.ExpressionReadProvenPresentBeforeBoundary(returnPoint, returned) {
+		t.Fatalf("ExpressionReadProvenPresentBeforeBoundary(parts[#parts]) = false, want true")
+	}
 	value, ok := result.SourceValueAtBoundary(returnPoint, sources[0])
 	if !ok {
 		t.Fatal("SourceValueAtBoundary(parts[#parts]) returned false")
@@ -1332,6 +1404,46 @@ end`)
 	}
 	if result.IndexReadSafeForExpressionAtBoundary(point, indexed.Key, arrayPath) {
 		t.Fatalf("modulo length index read %s[%s] marked safe without integer numerator proof", arrayPath, indexed.Key)
+	}
+	value, ok := result.ExpressionValueBeforeBoundary(point, expr)
+	if !ok {
+		t.Fatal("ExpressionValueBeforeBoundary(frame) returned false")
+	}
+	gotType, ok := typevalue.TypeOf(reg, value)
+	if !ok || !typevalue.TypeIncludesNil(gotType) {
+		t.Fatalf("ExpressionValueBeforeBoundary(frame) = %v/%v, want nilable broad-number modulo read", gotType, ok)
+	}
+	fact, ok := result.LocalAssignment(point)
+	if !ok {
+		t.Fatal("LocalAssignment(frame) returned false")
+	}
+	sourceValue, ok := result.LocalAssignmentSourceValueAtBoundary(point, fact.Source)
+	if !ok {
+		t.Fatal("LocalAssignmentSourceValueAtBoundary(frame) returned false")
+	}
+	sourceType, ok := typevalue.TypeOf(reg, sourceValue)
+	if !ok || !typevalue.TypeIncludesNil(sourceType) {
+		t.Fatalf("LocalAssignmentSourceValueAtBoundary(frame) = %v/%v, want nilable broad-number modulo read", sourceType, ok)
+	}
+	if !fact.HasSymbol {
+		t.Fatal("LocalAssignment(frame) has no symbol")
+	}
+	framePath := path.Path{Symbol: fact.Symbol}
+	pathValue, ok := result.PathValueBeforeBoundary(point, framePath)
+	if !ok {
+		t.Fatal("PathValueBeforeBoundary(frame) returned false")
+	}
+	pathType, ok := typevalue.TypeOf(reg, pathValue)
+	if !ok || !typevalue.TypeIncludesNil(pathType) {
+		t.Fatalf("PathValueBeforeBoundary(frame) = %v/%v, want nilable broad-number modulo read", pathType, ok)
+	}
+	pathBoundaryValue, ok := result.PathValueAtBoundary(point, framePath)
+	if !ok {
+		t.Fatal("PathValueAtBoundary(frame) returned false")
+	}
+	pathBoundaryType, ok := typevalue.TypeOf(reg, pathBoundaryValue)
+	if !ok || !typevalue.TypeIncludesNil(pathBoundaryType) {
+		t.Fatalf("PathValueAtBoundary(frame) = %v/%v, want nilable broad-number modulo read", pathBoundaryType, ok)
 	}
 }
 
@@ -1484,6 +1596,194 @@ end`)
 	}
 	assertPresence(t, reg, value, presence.Present())
 	assertRuntimeKind(t, reg, value, runtimekind.Singleton(runtimekind.String))
+}
+
+func TestCheckFunctionReturnSlotUsesGuardedAnyFieldLocalAliasTableProof(t *testing.T) {
+	reg := standard.Registry()
+	result, err := CheckFunction(parseFunction(t, `
+function select_bindings(bindings: any): table
+	if type(bindings) ~= "table" then
+		return {}
+	end
+	if type(bindings.checkpoint) == "table" then
+		local selected = bindings.checkpoint
+		return selected
+	end
+	return {}
+end`), Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	point, expr := requireLocalAssignmentExprByName(t, result, "selected")
+	selectedValue, ok := result.ExpressionValueBeforeBoundary(point, expr)
+	if !ok {
+		t.Fatal("ExpressionValueBeforeBoundary(selected) returned false")
+	}
+	selectedType, selectedOK := typevalue.TypeOf(reg, selectedValue)
+	if !selectedOK || !typ.TypeEquals(selectedType, typetable.BuiltinTopMarker()) {
+		t.Fatalf("selected source type = %v/%v kind=%s evidence=%s, want table marker",
+			selectedType, selectedOK,
+			product.Get(reg, selectedValue, runtimekind.Key),
+			product.Get(reg, selectedValue, evidence.Key))
+	}
+	exit, ok := result.ExitState()
+	if !ok {
+		t.Fatal("missing exit state")
+	}
+	got := exit.ReadReturnSlot(reg, 0)
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !subtype.IsSubtype(gotType, typetable.BuiltinTopMarker()) {
+		t.Fatalf("return slot type = %v/%v, kind=%s evidence=%s presence=%s, want table marker",
+			gotType, ok,
+			product.Get(reg, got, runtimekind.Key),
+			product.Get(reg, got, evidence.Key),
+			product.PresenceOf(got))
+	}
+	if gotEvidence := product.Get(reg, got, evidence.Key); gotEvidence.IsExplicitTop() || gotEvidence.IsGradualTop() {
+		t.Fatalf("return slot evidence = %s, want runtime table proof without stale top origin", gotEvidence)
+	}
+}
+
+func TestCheckFunctionReturnSourceLogicalComparisonChainKeepsBooleanProof(t *testing.T) {
+	reg := standard.Registry()
+	result, err := CheckFunction(parseFunction(t, `
+function send(chunk: {type: string}, pid: string, topic: string): boolean
+	local target_pid = tostring(pid)
+	local target_topic = tostring(topic)
+	return chunk.type == "error" and target_pid ~= "" and target_topic ~= ""
+end`), Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	var returnPoint cfg.Point
+	var sources []factflow.ValueSource
+	for _, point := range result.Graph().RPO() {
+		if _, ok := result.ReturnFact(point); !ok {
+			continue
+		}
+		var sourcesOK bool
+		sources, sourcesOK = result.ReturnValueSources(point)
+		if sourcesOK && len(sources) == 1 {
+			returnPoint = point
+			break
+		}
+	}
+	if returnPoint == 0 {
+		t.Fatal("missing single-source return")
+	}
+	value, ok := result.SourceValueAtBoundary(returnPoint, sources[0])
+	if !ok {
+		t.Fatalf("SourceValueAtBoundary returned false for return source %#v", sources[0])
+	}
+	got, ok := typevalue.TypeOf(reg, value)
+	if !ok || !typ.TypeEquals(got, typ.Boolean) {
+		t.Fatalf("return source type = %v/%v kind=%s evidence=%s, want boolean",
+			got, ok,
+			product.Get(reg, value, runtimekind.Key),
+			product.Get(reg, value, evidence.Key))
+	}
+}
+
+func TestCheckFunctionConstructorWithAnyMemberLogicalReturnKeepsBooleanProof(t *testing.T) {
+	reg := standard.Registry()
+	result, err := CheckFunction(parseFunction(t, `
+function send(pid: string, topic: string, err_type: string, message: string, code: any?): boolean
+	local function make_error(t: string, m: string, c: any?): {type: string, error: {type: string, message: string, code: any?}?}
+		return {
+			type = "error",
+			error = { type = t, message = m, code = c },
+		}
+	end
+	local target_pid = tostring(pid)
+	local target_topic = tostring(topic)
+	local chunk: {type: string, error: {type: string, message: string, code: any?}?} = make_error(err_type, message, code)
+	return chunk.type == "error" and target_pid ~= "" and target_topic ~= ""
+end`), Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	for _, point := range result.Graph().RPO() {
+		fact, ok := result.ReturnFact(point)
+		if !ok || len(fact.Exprs) != 1 {
+			continue
+		}
+		if _, ok := fact.Exprs[0].(*ast.LogicalOpExpr); !ok {
+			continue
+		}
+		sources, ok := result.ReturnValueSources(point)
+		if !ok || len(sources) != 1 {
+			t.Fatalf("return sources at %d = %#v/%v, want one source", point, sources, ok)
+		}
+		value, ok := result.SourceValueAtBoundary(point, sources[0])
+		if !ok {
+			t.Fatalf("SourceValueAtBoundary returned false for return source %#v", sources[0])
+		}
+		got, ok := typevalue.TypeOf(reg, value)
+		if !ok || !typ.TypeEquals(got, typ.Boolean) {
+			t.Fatalf("constructor return source type = %v/%v kind=%s evidence=%s, want boolean",
+				got, ok,
+				product.Get(reg, value, runtimekind.Key),
+				product.Get(reg, value, evidence.Key))
+		}
+		return
+	}
+	t.Fatal("logical return not found")
+}
+
+func TestCheckFunctionMemberConstructorWithAnyMemberLogicalReturnKeepsBooleanProof(t *testing.T) {
+	reg := standard.Registry()
+	result, err := CheckFunction(parseFunction(t, `
+function send(pid: string, topic: string, err_type: string, message: string, code: any?): boolean
+	local output = {}
+	output.error = function(t: string, m: string, c: any?): {type: string, error: {type: string, message: string, code: any?}?}
+		return {
+			type = "error",
+			error = { type = t, message = m, code = c },
+		}
+	end
+	local target_pid = tostring(pid)
+	local target_topic = tostring(topic)
+	local chunk: {type: string, error: {type: string, message: string, code: any?}?} = output.error(err_type, message, code)
+	return chunk.type == "error" and target_pid ~= "" and target_topic ~= ""
+end`), Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	for _, point := range result.Graph().RPO() {
+		fact, ok := result.ReturnFact(point)
+		if !ok || len(fact.Exprs) != 1 {
+			continue
+		}
+		if _, ok := fact.Exprs[0].(*ast.LogicalOpExpr); !ok {
+			continue
+		}
+		sources, ok := result.ReturnValueSources(point)
+		if !ok || len(sources) != 1 {
+			t.Fatalf("return sources at %d = %#v/%v, want one source", point, sources, ok)
+		}
+		value, ok := result.SourceValueAtBoundary(point, sources[0])
+		if !ok {
+			t.Fatalf("SourceValueAtBoundary returned false for return source %#v", sources[0])
+		}
+		got, ok := typevalue.TypeOf(reg, value)
+		if !ok || !typ.TypeEquals(got, typ.Boolean) {
+			t.Fatalf("member constructor return source type = %v/%v kind=%s evidence=%s, want boolean",
+				got, ok,
+				product.Get(reg, value, runtimekind.Key),
+				product.Get(reg, value, evidence.Key))
+		}
+		return
+	}
+	t.Fatal("logical return not found")
 }
 
 func TestCheckFunctionNumericForLengthLimitCarriesRangeAndPositiveProofs(t *testing.T) {
@@ -1669,6 +1969,75 @@ end`)
 	}
 }
 
+func TestCheckFunctionWhileGuardedRecursiveFieldConcatUsesBoundaryPresence(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Route = {
+	label: string,
+	next: Route?,
+}
+
+function labels(route: Route): string
+	local current = route
+	local last_label = current.label
+	while current.next do
+		current = current.next
+		last_label = current.label
+	end
+	return "label:" .. last_label
+end`)
+
+	result, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	var got []ConcatOperandOccurrence
+	result.ForEachConcatOperandOccurrence(func(occ ConcatOperandOccurrence) bool {
+		got = append(got, occ)
+		return true
+	})
+	if len(got) != 0 {
+		t.Fatalf("concat nil-risk occurrences = %#v, want none for loop-guarded route label", got)
+	}
+}
+
+func TestPathProvenPresentBeforeBoundaryMatchesSurvivingLoopGuardAcrossLocalVersions(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function labels(route: any): ()
+	local current = route
+	while current.next do
+		current = current.next
+	end
+end`)
+
+	result, err := CheckFunction(fn, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	for _, point := range result.Graph().RPO() {
+		fact, ok := result.OrdinaryAssignment(point)
+		if !ok {
+			continue
+		}
+		if !fact.HasPath || fact.Path.Root != "current" {
+			continue
+		}
+		valuePath, ok := result.ExpressionPath(fact.Value)
+		if !ok {
+			t.Fatalf("current reassignment value path missing for %T", fact.Value)
+		}
+		if len(valuePath.Segments) != 1 || valuePath.Segments[0].Name != "next" {
+			continue
+		}
+		if !result.PathProvenPresentBeforeBoundary(point, valuePath) {
+			t.Fatalf("PathProvenPresentBeforeBoundary(%d, %s) = false, want loop guard proof", point, valuePath.String())
+		}
+		return
+	}
+	t.Fatal("missing current = current.next assignment")
+}
+
 func TestCheckChunkFlatDiscriminantDoesNotHideConcatNilRiskInDynamicMemberAssignment(t *testing.T) {
 	reg := standard.Registry()
 	fn := parseFunction(t, `
@@ -1804,6 +2173,55 @@ end`)
 	}
 }
 
+func TestCheckFunctionReturnSlotPreservesUnannotatedInsertedArrayAccumulator(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function group_by_suite(entries: {{id: string}})
+	local no_suite = {}
+	for _, entry in ipairs(entries) do
+		table.insert(no_suite, entry)
+	end
+	return no_suite
+end`)
+
+	result, err := CheckFunction(fn, Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	want := typ.NewArray(typetable.NewRecord().Field("id", typ.String).Build())
+	for _, point := range result.ReturnPoints() {
+		fact, ok := result.ReturnFact(point)
+		if !ok || len(fact.Exprs) == 0 {
+			continue
+		}
+		p, ok := result.ExpressionPath(fact.Exprs[0])
+		if !ok {
+			t.Fatalf("returned expression has no path")
+		}
+		value, ok := result.PathValueAtBoundary(point, p)
+		if !ok {
+			t.Fatalf("PathValueAtBoundary(%s) returned false", p.String())
+		}
+		got, ok := typevalue.TypeOf(reg, value)
+		if !ok || !typ.TypeEquals(got, want) {
+			t.Fatalf("returned path type = %v/%v, want %v", got, ok, want)
+		}
+		exit, ok := result.ExitState()
+		if !ok {
+			t.Fatalf("missing exit state")
+		}
+		got, ok = typevalue.TypeOf(reg, exit.ReadReturnSlot(reg, 0))
+		if !ok || !typ.TypeEquals(got, want) {
+			t.Fatalf("return slot type = %v/%v, want %v", got, ok, want)
+		}
+		return
+	}
+	t.Fatal("return point not found")
+}
+
 func TestCheckFunctionReturnSlotEvaluatesRuntimeKindLengthComparison(t *testing.T) {
 	reg := standard.Registry()
 	fn := parseFunction(t, `
@@ -1856,6 +2274,69 @@ end`)
 	exprType, ok := typevalue.TypeOf(reg, exprValue)
 	if !ok || !typ.TypeEquals(exprType, typ.Boolean) {
 		t.Fatalf("final return expression type = %v/%v, want boolean", exprType, ok)
+	}
+}
+
+func TestCheckFunctionReturnSlotPreservesRootReassignmentFromTypeGuardedField(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function f(bindings: any): table
+	if type(bindings) ~= "table" then
+		return {}
+	end
+	if type(bindings.checkpoint) == "table" then
+		bindings = bindings.checkpoint
+	end
+	return bindings
+end`)
+
+	result, err := CheckFunction(fn, Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	var assignmentSourceChecked bool
+	for _, point := range result.Graph().RPO() {
+		root, rootOK := result.RootAssignment(point)
+		if !rootOK || root.Kind() != factflow.RootAssignmentOrdinaryRootWrite {
+			continue
+		}
+		value, valueOK := result.SourceValueBeforeBoundary(point, root.Source())
+		valueType, typeOK := typevalue.TypeOf(reg, value)
+		if valueOK && typeOK && subtype.IsSubtype(valueType, typetable.BuiltinTopMarker()) {
+			assignmentSourceChecked = true
+			break
+		}
+	}
+	if !assignmentSourceChecked {
+		t.Fatalf("guarded field assignment source was not proven table")
+	}
+	var returnExprChecked bool
+	for _, point := range result.ReturnPoints() {
+		fact, ok := result.ReturnFact(point)
+		if !ok || len(fact.Exprs) == 0 {
+			continue
+		}
+		value, valueOK := result.ExpressionValueAtBoundary(point, fact.Exprs[0])
+		valueType, typeOK := typevalue.TypeOf(reg, value)
+		exprPath, pathOK := result.ExpressionPath(fact.Exprs[0])
+		if valueOK && typeOK && pathOK && exprPath.Root == "bindings" && subtype.IsSubtype(valueType, typetable.BuiltinTopMarker()) {
+			returnExprChecked = true
+			break
+		}
+	}
+	if !returnExprChecked {
+		t.Fatalf("guarded field return expression was not proven table")
+	}
+	exit, ok := result.ExitState()
+	if !ok {
+		t.Fatalf("missing exit state")
+	}
+	got, ok := typevalue.TypeOf(reg, exit.ReadReturnSlot(reg, 0))
+	if !ok || !subtype.IsSubtype(got, typetable.BuiltinTopMarker()) {
+		t.Fatalf("return slot type = %v/%v, want table marker", got, ok)
 	}
 }
 
@@ -2175,6 +2656,60 @@ end`)
 	}
 }
 
+func TestCheckFunctionReturnObjectLiteralKeepsGuardedMapRouteLabelPresent(t *testing.T) {
+	reg := standard.Registry()
+	chunk := parseChunk(t, `
+type Route = { label: string, next: Route? }
+type Actor = { routes: {[string]: Route} }
+type Result = { ok: true, value: string } | { ok: false, error: string }
+
+function describe(actor: Actor, route_id: string, owner: string?): Result
+	local route = actor.routes[route_id]
+	if not route then
+		return {ok = false, error = route_id}
+	end
+	local current = route
+	local last_label = current.label
+	while current.next do
+		current = current.next
+		last_label = current.label
+	end
+	if owner then
+		return {ok = true, value = "id:" .. last_label .. ":" .. owner}
+	end
+	return {ok = true, value = "id:" .. last_label}
+end`)
+
+	result, err := CheckChunk(chunk, Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	for _, point := range result.ReturnPoints() {
+		fact, ok := result.ReturnFact(point)
+		if !ok || len(fact.Exprs) != 1 {
+			continue
+		}
+		table, ok := fact.Exprs[0].(*ast.TableExpr)
+		if !ok || table == nil {
+			continue
+		}
+		value, ok := result.ExpressionValueAtBoundary(point, table)
+		if !ok {
+			t.Fatalf("return literal at point %d has no boundary value", point)
+		}
+		got, ok := typevalue.TypeOf(reg, value)
+		if !ok {
+			t.Fatalf("return literal at point %d has no type", point)
+		}
+		if strings.Contains(got.String(), "value: string?") {
+			t.Fatalf("return literal type = %v, want guarded map route label preserved as present string", got)
+		}
+	}
+}
+
 func TestCheckFunctionReturnObjectLiteralKeepsSharedGuardAcrossDiscriminantBranches(t *testing.T) {
 	reg := standard.Registry()
 	fn := parseFunction(t, `
@@ -2443,11 +2978,84 @@ end`)
 	}
 }
 
-func TestCheckChunkSeedsDeclaredLocalValueWhenLiteralSourceUnresolved(t *testing.T) {
+func TestSolvePreparedReturnSlotPreservesAnnotatedArrayWithPreciseIteratorSource(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function group_by_suite(entries)
+	local suites: {[string]: any[]} = {}
+	local no_suite: any[] = {}
+	for _, entry in ipairs(entries) do
+		table.insert(no_suite, entry)
+	end
+	return suites, no_suite
+end`)
+	bindings := bind.BindFunction(fn, bind.Options{Globals: []string{"ipairs", "table"}})
+	prepared, err := PrepareBoundFunction(fn, bindings, Config{
+		Registry:   reg,
+		Globals:    []string{"ipairs", "table"},
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("PrepareBoundFunction: %v", err)
+	}
+	entries := mustParamSlot(t, bindings, fn, 0)
+	entryType := typetable.NewRecord().
+		Field("id", typ.String).
+		Field("meta", typ.NewMap(typ.String, typ.Any)).
+		Build()
+	entry := state.State{}.WriteValue(
+		reg,
+		key.SymbolValue(entries.Symbol),
+		typevalue.WithWitness(reg, typevalue.FromType(reg, typ.NewArray(entryType)), typ.NewArray(entryType)),
+	)
+
+	result, err := SolvePrepared(prepared, SolveConfig{EntryState: entry})
+	if err != nil {
+		t.Fatalf("SolvePrepared: %v", err)
+	}
+	exit, ok := result.ExitState()
+	if !ok {
+		t.Fatalf("missing exit state")
+	}
+	got, ok := typevalue.TypeOf(reg, exit.ReadReturnSlot(reg, 1))
+	if !ok || !typ.TypeEquals(got, typ.NewArray(typ.Any)) {
+		t.Fatalf("return slot 2 type = %v/%v, want declared any[] despite precise inserted entries", got, ok)
+	}
+}
+
+func TestCheckChunkNarrowsDeclaredLocalLiteralInitializer(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `local x: string | number = 42`)
 
 	result, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	stmt := stmts[0].(*ast.LocalAssignStmt)
+	x := mustLocalAt(t, result, stmt, 0)
+	assign := requireLocalAssignmentPoint(t, result, stmt, 0)
+	succs := result.Graph().Successors(assign)
+	if len(succs) != 1 {
+		t.Fatalf("assignment successors = %v, want one successor", succs)
+	}
+	after, ok := result.StateAt(succs[0])
+	if !ok {
+		t.Fatalf("missing state after local assignment")
+	}
+	got := after.ReadValue(reg, key.SymbolValue(x))
+	if product.Equal(reg, got, product.Bottom(reg)) {
+		t.Fatalf("symbol value is bottom after annotated local assignment")
+	}
+	assertPresence(t, reg, got, presence.Present())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.Number))
+}
+
+func TestCheckChunkSeedsDeclaredLocalValueWhenSourceUnresolved(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `local x: string | number = produce()`)
+
+	result, err := CheckChunk(stmts, Config{Registry: reg, Globals: []string{"produce"}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
@@ -3328,6 +3936,36 @@ func TestReadBoundaryNestedLogicalTypeGuardReturnIsString(t *testing.T) {
 	fn := parseFunction(t, `
 function label(success: boolean, value: any): string
 	return success and "ok" or (type(value) == "string" and ("value:" .. value) or "failed")
+end
+`)
+	result, err := CheckFunction(fn, Config{Registry: reg, Signatures: signaturelookup.Source{IncludeStdlib: true}})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	returnPoints := result.ReturnPoints()
+	if len(returnPoints) != 1 {
+		t.Fatalf("return points = %v, want one", returnPoints)
+	}
+	returnFact, ok := result.ReturnFact(returnPoints[0])
+	if !ok || len(returnFact.Exprs) != 1 {
+		t.Fatalf("return fact = %#v/%v, want one expression", returnFact, ok)
+	}
+	value, ok := result.ExpressionValueAtBoundary(returnPoints[0], returnFact.Exprs[0])
+	if !ok {
+		t.Fatal("ExpressionValueAtBoundary(return expression) returned false")
+	}
+	got, ok := typevalue.TypeOf(reg, value)
+	if !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("return expression type = %v/%v evidence=%s presence=%s, want string",
+			got, ok, product.Get(reg, value, evidence.Key), product.PresenceOf(value))
+	}
+}
+
+func TestReadBoundaryNegatedNilGuardedLogicalReturnIsString(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function label(value: string?): string
+	return not (value == nil) and ("value:" .. value) or ""
 end
 `)
 	result, err := CheckFunction(fn, Config{Registry: reg, Signatures: signaturelookup.Source{IncludeStdlib: true}})
@@ -4245,6 +4883,210 @@ end
 	t.Fatal("success return point not found")
 }
 
+func TestReadBoundaryNegatedDiscriminantEarlyReturnCarriesSuccessVariant(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+type User = { id: string, email: string }
+function get_email(r: Result<User>): string
+	if not r.ok then
+		return ""
+	end
+	local value = r.value
+	local email: string = value.email
+	return email
+end
+`)
+
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	functions := bindings.NestedFunctions(nil)
+	if len(functions) != 1 {
+		t.Fatalf("nested functions = %d, want 1", len(functions))
+	}
+	result, err := CheckBoundFunction(functions[0], bindings, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckBoundFunction: %v", err)
+	}
+
+	paramSlots := bindings.ParamSlots(functions[0])
+	if len(paramSlots) != 1 {
+		t.Fatalf("params = %d, want one", len(paramSlots))
+	}
+	valuePoint, valueExpr := requireLocalAssignmentExprByName(t, result, "value")
+	rootValue, ok := result.PathValueAtBoundary(valuePoint, path.NewPath(paramSlots[0].Symbol, "r"))
+	if !ok {
+		t.Fatal("PathValueAtBoundary(r) returned false")
+	}
+	if origin := product.Get(reg, rootValue, variantorigin.Key); origin.IsBottom() || origin.IsTop() {
+		t.Fatalf("r variant origin at value assignment = %v, want success variant", origin)
+	}
+	rootBefore, ok := result.PathValueBeforeBoundary(valuePoint, path.NewPath(paramSlots[0].Symbol, "r"))
+	if !ok {
+		t.Fatal("PathValueBeforeBoundary(r) returned false")
+	}
+	if origin := product.Get(reg, rootBefore, variantorigin.Key); origin.IsBottom() || origin.IsTop() {
+		t.Fatalf("r variant origin before value assignment = %v, want success variant", origin)
+	}
+	aliasValue, ok := result.ExpressionValueAtBoundary(valuePoint, valueExpr)
+	if !ok {
+		t.Fatal("ExpressionValueAtBoundary(r.value) returned false")
+	}
+	aliasType, ok := typevalue.TypeOf(reg, aliasValue)
+	if !ok || !typ.TypeEquals(aliasType, typetable.NewRecord().Field("id", typ.String).Field("email", typ.String).Build()) {
+		t.Fatalf("r.value type = %v/%v, want User", aliasType, ok)
+	}
+
+	point, expr := requireLocalAssignmentExprByName(t, result, "email")
+	valueAssignment, ok := result.LocalAssignment(valuePoint)
+	if !ok || !valueAssignment.HasSymbol {
+		t.Fatal("local assignment for value missing symbol")
+	}
+	valueRoot, ok := result.PathValueAtBoundary(point, path.NewPath(valueAssignment.Symbol, "value"))
+	if !ok {
+		t.Fatal("PathValueAtBoundary(value) returned false")
+	}
+	valueRootType, ok := typevalue.TypeOf(reg, valueRoot)
+	if !ok || !typ.TypeEquals(valueRootType, typetable.NewRecord().Field("id", typ.String).Field("email", typ.String).Build()) {
+		t.Fatalf("value root type at email assignment = %v/%v, want User", valueRootType, ok)
+	}
+	value, ok := result.ExpressionValueAtBoundary(point, expr)
+	if !ok {
+		t.Fatal("ExpressionValueAtBoundary(value.email) returned false")
+	}
+	got, ok := typevalue.TypeOf(reg, value)
+	if !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("value.email type = %v/%v, want string", got, ok)
+	}
+	if gotPresence := product.PresenceOf(value); !presence.Equal(gotPresence, presence.Present()) {
+		t.Fatalf("value.email presence = %s, want present in %v", gotPresence, value)
+	}
+}
+
+func TestReadBoundaryImportedResultElseErrorAliasIsNarrowed(t *testing.T) {
+	reg := standard.Registry()
+	appError := typetable.NewRecord().
+		Field("code", typ.String).
+		Field("message", typ.String).
+		Build()
+	success := typetable.NewRecord().
+		Field("ok", typ.True).
+		Field("value", typ.String).
+		Build()
+	failure := typetable.NewRecord().
+		Field("ok", typ.False).
+		Field("error", appError).
+		Build()
+	resultType := typeexpr.Union(success, failure)
+	validatorManifest := manifest.New("validator")
+	validatorManifest.SetExport(typetable.NewRecord().
+		Field("validate_name", typ.Func().Param("input", typ.String).Returns(resultType).Build()).
+		Build())
+	validatorManifest.DefineFunctionSignature("validator.validate_name", signature.Function{
+		Type: typ.Func().Param("input", typ.String).Returns(resultType).Build(),
+		Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.ConditionalType{
+			Source:     effect.ParamRef{Index: 0},
+			Projection: projection.Projection{Steps: []projection.Step(nil)},
+			When:       typ.LiteralString(""),
+			Then:       failure,
+		}}),
+	})
+	stmts := parseChunk(t, `
+local validator = require("validator")
+local result = validator.validate_name("Alice")
+if result.ok then
+    local name = result.value
+else
+    local err = result.error
+end
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result, err := CheckBoundChunk(stmts, bindings, Config{
+		Registry: reg,
+		ModuleExports: importlookup.Source{
+			Manifests: []*manifest.Manifest{validatorManifest},
+		},
+		Signatures: signaturelookup.Source{
+			Manifests: []*manifest.Manifest{validatorManifest},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CheckBoundChunk: %v", err)
+	}
+	point, expr := requireLocalAssignmentExprByName(t, result, "err")
+	value, ok := result.ExpressionValueAtBoundary(point, expr)
+	if !ok {
+		t.Fatal("ExpressionValueAtBoundary(result.error) returned false")
+	}
+	got, ok := typevalue.TypeOf(reg, value)
+	if !ok || !typ.TypeEquals(got, appError) {
+		t.Fatalf("result.error type = %v/%v, want AppError", got, ok)
+	}
+}
+
+func TestReadBoundaryReturnedNestedObjectUsesAliasRefinedEntryShape(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Response = { status: integer, body: string, headers: {[string]: string} }
+type ResponseResult = { ok: true, value: Response } | { ok: false, error: string }
+type Decorator = (string) -> string
+
+local function build(handler: () -> ResponseResult, decorator: Decorator): ResponseResult
+	local response_result = handler()
+	if not response_result.ok then
+		return response_result
+	end
+	local response = response_result.value
+	return {
+		ok = true,
+		value = {
+			status = response.status,
+			body = decorator(response.body),
+			headers = response.headers,
+		},
+	}
+end
+`)
+
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	functions := bindings.NestedFunctions(nil)
+	if len(functions) != 1 {
+		t.Fatalf("nested functions = %d, want one", len(functions))
+	}
+	result, err := CheckBoundFunction(functions[0], bindings, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckBoundFunction: %v", err)
+	}
+
+	responseType := typetable.NewRecord().
+		Field("status", typ.Integer).
+		Field("body", typ.String).
+		Field("headers", typetable.NewMap(typ.String, typ.String)).
+		Build()
+	want := typetable.NewRecord().
+		Field("ok", typ.LiteralBool(true)).
+		Field("value", responseType).
+		Build()
+	for _, point := range result.ReturnPoints() {
+		fact, ok := result.ReturnFact(point)
+		if !ok || len(fact.Exprs) != 1 {
+			continue
+		}
+		if _, ok := fact.Exprs[0].(*ast.TableExpr); !ok {
+			continue
+		}
+		value, ok := result.ExpressionValueAtBoundary(point, fact.Exprs[0])
+		if !ok {
+			t.Fatalf("ExpressionValueAtBoundary returned false for returned object expression")
+		}
+		got, ok := typevalue.TypeOf(reg, value)
+		if !ok || !typ.TypeEquals(got, want) {
+			t.Fatalf("returned object type = %v/%v, want %v", got, ok, want)
+		}
+		return
+	}
+	t.Fatal("object return point not found")
+}
+
 func TestReadBoundaryGenericResultFalseEdgeProjectsErrorPresent(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
@@ -4467,8 +5309,7 @@ func TestCheckChunkSourceValueAtBoundaryPreservesUserExpressionValue(t *testing.
 }
 
 func TestCheckBoundFunctionUsesSuppliedBindingIdentity(t *testing.T) {
-	reg, markKey := testRegistry(t)
-	want := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), markKey, markLow)
+	reg := standard.Registry()
 	stmts := parseChunk(t, `
 local captured = 1
 function f()
@@ -4498,9 +5339,6 @@ end`)
 
 	config := Config{
 		Registry: reg,
-		ExpressionValue: func(_ cfg.Point, _ factflow.ExprRef, _ factflow.ValueSource, _ state.State) (product.Value, bool) {
-			return want, true
-		},
 	}
 	result, err := CheckBoundFunction(def.Func, bindings, config)
 	if err != nil {
@@ -4509,11 +5347,15 @@ end`)
 	if got := mustLocalAt(t, result, valueDecl, 0); got != suppliedLocal {
 		t.Fatalf("bound result local = %d, want supplied binding local %d", got, suppliedLocal)
 	}
-	exit, ok := result.ExitState()
+	point := requireLocalAssignmentPoint(t, result, valueDecl, 0)
+	lowered, ok := result.facts.LocalAssignment(point)
 	if !ok {
-		t.Fatalf("missing exit state")
+		t.Fatalf("missing lowered local assignment at point %d", point)
 	}
-	assertProductEqual(t, reg, exit.ReadValue(reg, key.SymbolValue(suppliedLocal)), want)
+	sourcePath, ok := result.ValueSourcePath(lowered.Source())
+	if !ok || sourcePath.Symbol != captured {
+		t.Fatalf("local value source path = %#v/%v, want captured symbol %d", sourcePath, ok, captured)
+	}
 
 	independent, err := CheckFunction(def.Func, config)
 	if err != nil {

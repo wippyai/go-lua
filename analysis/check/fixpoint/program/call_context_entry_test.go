@@ -128,6 +128,21 @@ func TestCallContextParamEntryValueKeepsContractForIncompatibleActual(t *testing
 	}
 }
 
+func TestParamContractEntryValueUsesConstrainedTypeParamBound(t *testing.T) {
+	reg := standard.Registry()
+	constraint := typetable.NewRecord().Field("id", typ.String).Build()
+	param := typ.NewTypeParam("T", constraint)
+
+	got, ok := paramContractEntryValue(reg, param)
+	if !ok {
+		t.Fatal("paramContractEntryValue(constrained T) returned !ok")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, constraint) {
+		t.Fatalf("context param type = %v/%v, want constraint %v", gotType, ok, constraint)
+	}
+}
+
 func TestSeedEntryCallableHeapObjectsForValueKeepsCallbacksDropsDataMembers(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()

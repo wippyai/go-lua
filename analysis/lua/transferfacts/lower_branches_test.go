@@ -854,17 +854,19 @@ end
 		Path:        payloadPath,
 	})
 	okAssignStart := body.Emit(wir.Instruction{
-		Op:    wir.OpAssign,
-		Point: okAssignPoint,
-		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(okPath))},
-		A:     okTemp,
+		Op:     wir.OpAssign,
+		Point:  okAssignPoint,
+		Dst:    wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(okPath))},
+		A:      okTemp,
+		Assign: wir.AssignLocalDeclaration,
 	})
 	body.SetPointRange(okAssignPoint, okAssignStart, okAssignStart+1)
 	payloadAssignStart := body.Emit(wir.Instruction{
-		Op:    wir.OpAssign,
-		Point: payloadAssignPoint,
-		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(payloadPath))},
-		A:     payloadTemp,
+		Op:     wir.OpAssign,
+		Point:  payloadAssignPoint,
+		Dst:    wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(payloadPath))},
+		A:      payloadTemp,
+		Assign: wir.AssignLocalDeclaration,
 	})
 	body.SetPointRange(payloadAssignPoint, payloadAssignStart, payloadAssignStart+1)
 	branchStart := body.Emit(wir.Instruction{
@@ -954,7 +956,7 @@ end
 		registry:    reg,
 		bindings:    bindings,
 		wir:         body,
-		symbolTypes: lowerSymbolTypes(bindings, built.Graph, built.Meta, result, nil, importlookup.Source{}),
+		symbolTypes: lowerSymbolTypes(bindings, built.Graph, built.Meta, result, nil, importlookup.Source{}, nil),
 	}
 
 	lowered.addProtectedCallBranchRefinements(input, built.Graph)
@@ -1649,6 +1651,71 @@ func TestLowerLiteralDiscriminantBranchAlsoPublishesDescendantProof(t *testing.T
 	if !ok || !typ.TypeEquals(gotType, typ.LiteralString("a")) {
 		t.Fatalf("descendant literal type = %v/%v, want \"a\"", gotType, ok)
 	}
+}
+
+func TestLowerImportedCallResultTruthyDiscriminantPublishesRootRefinement(t *testing.T) {
+	appError := typetable.NewRecord().
+		Field("code", typ.String).
+		Field("message", typ.String).
+		Build()
+	success := typetable.NewRecord().
+		Field("ok", typ.True).
+		Field("value", typ.String).
+		Build()
+	failure := typetable.NewRecord().
+		Field("ok", typ.False).
+		Field("error", appError).
+		Build()
+	resultType := typeexpr.Union(success, failure)
+	validatorManifest := manifest.New("validator")
+	validatorManifest.SetExport(typetable.NewRecord().
+		Field("validate_name", typ.Func().Param("input", typ.String).Returns(resultType).Build()).
+		Build())
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local validator = require("validator")
+local result = validator.validate_name("Alice")
+if result.ok then
+    local name = result.value
+else
+    local err = result.error
+end
+`)
+	body := wirlower.Lower("imported-result-branch", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{
+		Registry:      standard.Registry(),
+		Bindings:      bindings,
+		ModuleExports: importlookup.Source{Manifests: []*manifest.Manifest{validatorManifest}},
+		WIR:           body,
+	})
+	ifStmt, ok := stmts[2].(*ast.IfStmt)
+	if !ok {
+		t.Fatalf("statement 2 = %T, want if", stmts[2])
+	}
+	points := built.StmtPoints.PointsFor(ifStmt)
+	if len(points) == 0 {
+		t.Fatalf("if points = %v, want branch point", points)
+	}
+	resultStmt := stmts[1].(*ast.LocalAssignStmt)
+	resultSym := mustLocalAt(t, bindings, resultStmt, 0)
+	resultPath := path.NewPath(resultSym, "result")
+	var falseValue factflow.ValueRefinement
+	var found bool
+	for _, refinement := range facts.BranchRefinements(points[0]) {
+		if !refinement.TargetPath().Equal(resultPath) {
+			continue
+		}
+		value, ok := refinement.FalseValue()
+		if !ok {
+			continue
+		}
+		falseValue = value
+		found = true
+		break
+	}
+	if !found {
+		t.Fatalf("missing false-edge failure variant refinement for imported result; got %#v", facts.BranchRefinements(points[0]))
+	}
+	assertVariantOriginRefinementType(t, "false edge", falseValue, failure)
 }
 
 func TestLowerOpenScalarDescendantLiteralBranchKeepsPathProof(t *testing.T) {

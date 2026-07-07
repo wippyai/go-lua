@@ -6,14 +6,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // ForEachAssignment visits annotated local assignments in deterministic RPO
@@ -91,7 +92,7 @@ func (r Reader) forEachLocalAssignment(point cfg.Point, fact body.LocalAssignmen
 		return true
 	}
 	presentation := body.LocalAssignmentPresentationFor(fact)
-	t, _ := r.assignmentSourceTypeForPresenceProof(point, r.result.AssignmentSourceReadProvenPresent(point, fact.Expr), value)
+	t, _ := r.assignmentSourceTypeForPresenceProof(point, r.result.AssignmentSourceReadProvenPresent(point, fact.Expr), fact.Source, value)
 	missingField, missingFieldOK := assignmentMissingRequired(point, r, fact, expected)
 	if missingFieldOK {
 		if shape, shapeOK := r.assignmentObjectLiteralShapeType(point, fact); shapeOK {
@@ -119,6 +120,7 @@ func (r Reader) forEachLocalAssignment(point cfg.Point, fact body.LocalAssignmen
 		CallResult:         r.assignmentCallResultSource(fact.Source),
 		UntrustedTopOrigin: r.ValueHasUntrustedTopOrigin(value),
 		ExplicitTopOrigin:  r.ValueHasExplicitTopOrigin(value),
+		RuntimeValidated:   r.ValueHasRuntimeValidationProof(value),
 	}
 	var missingFieldType typ.Type
 	if missingFieldOK {
@@ -129,6 +131,7 @@ func (r Reader) forEachLocalAssignment(point cfg.Point, fact body.LocalAssignmen
 		Assignment:               assignment,
 		ValueAdmissible:          r.ValueProofAdmissible(value, expected),
 		ValueProvenMismatch:      r.ValueWitnessProvenMismatch(value, expected),
+		MayBeNil:                 assignmentTopLikeNilableAccess(assignment.TypeWithPresence, assignment.NilableAccesses),
 		MissingRequiredField:     missingField,
 		MissingRequiredFieldType: missingFieldType,
 		IsSubtype:                r.IsSubtype,
@@ -152,9 +155,29 @@ func (r Reader) forEachLocalAssignment(point cfg.Point, fact body.LocalAssignmen
 func (r Reader) localAssignmentSourceValue(point cfg.Point, fact body.LocalAssignmentFact) (product.Value, bool) {
 	var value product.Value
 	var ok bool
-	value, ok = r.SourceValue(point, fact.Source)
+	explanation, explanationOK := r.result.LocalAssignmentSourceValueForExplanationAtBoundary(point, fact.Source)
+	lowered, loweredOK := r.result.LocalAssignmentSourceValueAtBoundary(point, fact.Source)
+	generic, genericOK := r.SourceValue(point, fact.Source)
+	switch {
+	case loweredOK && genericOK:
+		value = r.result.PreferredLocalAssignmentSourceValue(lowered, generic)
+		ok = true
+	case loweredOK:
+		value, ok = lowered, true
+	case genericOK:
+		value, ok = generic, true
+	}
 	if ok {
-		return r.result.WithMemberReadNilWitness(point, fact.Expr, value), true
+		if explanationOK && r.result.ExplanationValueShouldReplaceAssignmentSource(value, explanation) {
+			value = explanation
+		}
+		value = r.result.WithMemberReadNilWitness(point, fact.Expr, value)
+		return r.assignmentDeclaredTopValue(point, fact.Source, value), true
+	}
+	if explanationOK {
+		value = explanation
+		value = r.result.WithMemberReadNilWitness(point, fact.Expr, value)
+		return r.assignmentDeclaredTopValue(point, fact.Source, value), true
 	}
 	if r.callResultSourceUnderSupplied(fact.Source) {
 		if reg := r.result.Registry(); reg != nil {
@@ -163,19 +186,22 @@ func (r Reader) localAssignmentSourceValue(point cfg.Point, fact body.LocalAssig
 	}
 	if fact.Source.Kind == sourceprovenance.SourceExpression && fact.Expr != nil {
 		if value, ok = r.result.ExpressionValueBeforeBoundary(point, fact.Expr); ok {
-			return r.result.WithMemberReadNilWitness(point, fact.Expr, value), true
+			value = r.result.WithMemberReadNilWitness(point, fact.Expr, value)
+			return r.assignmentDeclaredTopValue(point, fact.Source, value), true
 		}
 	}
 	if !ok {
 		if fact.Expr != nil {
 			value, ok = r.result.ExpressionValueBeforeBoundary(point, fact.Expr)
 			if ok {
-				return r.result.WithMemberReadNilWitness(point, fact.Expr, value), true
+				value = r.result.WithMemberReadNilWitness(point, fact.Expr, value)
+				return r.assignmentDeclaredTopValue(point, fact.Source, value), true
 			}
 		}
 		return product.Value{}, false
 	}
-	return r.result.WithMemberReadNilWitness(point, fact.Expr, value), true
+	value = r.result.WithMemberReadNilWitness(point, fact.Expr, value)
+	return r.assignmentDeclaredTopValue(point, fact.Source, value), true
 }
 
 func assignmentNilableAccessEvidenceFromBody(evidence []body.NilableAccessEvidence) []readapi.NilableAccessEvidence {
@@ -233,7 +259,7 @@ func (r Reader) forEachOrdinaryAssignment(point cfg.Point, fact body.OrdinaryAss
 	if !ok {
 		return true
 	}
-	expected := r.ordinaryWritableTargetType(target.Type, target.TargetValue, target.HasValue, target.Declared)
+	expected := r.result.OrdinaryWritableTargetType(target.Type, target.TargetValue, target.HasValue, target.Declared)
 	if !readapi.ObligationTypeReportable(expected) {
 		return true
 	}
@@ -253,7 +279,10 @@ func (r Reader) forEachOrdinaryAssignment(point cfg.Point, fact body.OrdinaryAss
 			return visit(entry)
 		}
 	}
-	t, _ := r.assignmentSourceTypeForPresenceProof(point, r.result.AssignmentSourceReadProvenPresent(point, fact.Value), value)
+	t, _ := r.assignmentSourceTypeForPresenceProof(point, r.result.AssignmentSourceReadProvenPresent(point, fact.Value), fact.Source, value)
+	if ordinaryDynamicNilDeletionAccepted(presentation.DynamicTarget, target.NilDeletionAllowed, t, r.ValueHasUntrustedTopOrigin(value)) {
+		return true
+	}
 	if r.inferredReplacementAccepted(point, target, expected, t) {
 		return true
 	}
@@ -276,11 +305,13 @@ func (r Reader) forEachOrdinaryAssignment(point cfg.Point, fact body.OrdinaryAss
 		CallInvalidations:  assignmentCallInvalidationsFromBody(r.result.AssignmentCallInvalidations(point, fact.Value)),
 		UntrustedTopOrigin: r.ValueHasUntrustedTopOrigin(value),
 		ExplicitTopOrigin:  r.ValueHasExplicitTopOrigin(value),
+		RuntimeValidated:   r.ValueHasRuntimeValidationProof(value),
 	}
 	assignment.Check = readapi.PlanAssignmentCheck(readapi.AssignmentCheckPlan{
 		Assignment:          assignment,
-		ValueAdmissible:     r.ValueProofAdmissible(value, expected) || r.result.AssignmentSourceMatchesDynamicTargetRead(point, fact),
+		ValueAdmissible:     r.ValueProofAdmissible(value, expected) || r.dynamicTargetReadProofAdmissible(point, fact, value),
 		ValueProvenMismatch: r.ValueWitnessProvenMismatch(value, expected),
+		MayBeNil:            assignmentTopLikeNilableAccess(assignment.TypeWithPresence, assignment.NilableAccesses),
 		IsSubtype:           r.IsSubtype,
 	})
 	if assignment.Check.Admissible {
@@ -290,6 +321,14 @@ func (r Reader) forEachOrdinaryAssignment(point cfg.Point, fact body.OrdinaryAss
 	return visit(assignment)
 }
 
+func assignmentTopLikeNilableAccess(t typ.Type, accesses []readapi.NilableAccessEvidence) bool {
+	return len(accesses) != 0 && (t == nil || typ.IsAny(t) || typ.IsUnknown(t))
+}
+
+func (r Reader) dynamicTargetReadProofAdmissible(point cfg.Point, fact body.OrdinaryAssignmentFact, value product.Value) bool {
+	return !r.ValueHasUntrustedTopOrigin(value) && r.result.AssignmentSourceMatchesDynamicTargetRead(point, fact)
+}
+
 func ordinaryAssignmentExpectedSource(dynamic bool) readapi.AssignmentExpectedSource {
 	if dynamic {
 		return readapi.AssignmentExpectedDynamicTarget
@@ -297,10 +336,15 @@ func ordinaryAssignmentExpectedSource(dynamic bool) readapi.AssignmentExpectedSo
 	return readapi.AssignmentExpectedDeclared
 }
 
+func ordinaryDynamicNilDeletionAccepted(dynamicTarget bool, allowed bool, actual typ.Type, untrustedTopOrigin bool) bool {
+	return dynamicTarget && allowed && !untrustedTopOrigin && actual != nil && typ.TypeEquals(actual, typ.Nil)
+}
+
 func (r Reader) ordinaryAssignmentSourceValue(point cfg.Point, fact body.OrdinaryAssignmentFact) (product.Value, bool) {
 	if fact.Source.Kind == sourceprovenance.SourceExpression && fact.Value != nil {
 		if value, ok := r.result.ExpressionValueBeforeBoundary(point, fact.Value); ok {
-			return r.result.WithMemberReadNilWitness(point, fact.Value, value), true
+			value = r.result.WithMemberReadNilWitness(point, fact.Value, value)
+			return r.assignmentDeclaredTopValue(point, fact.Source, value), true
 		}
 	}
 	if t, ok := body.LiteralExpressionType(fact.Value); ok && r.result != nil && r.result.Registry() != nil {
@@ -308,14 +352,39 @@ func (r Reader) ordinaryAssignmentSourceValue(point cfg.Point, fact body.Ordinar
 		return typevalue.WithWitness(r.result.Registry(), base, t), true
 	}
 	if value, ok := r.SourceValue(point, fact.Source); ok {
-		return r.result.WithMemberReadNilWitness(point, fact.Value, value), true
+		value = r.result.WithMemberReadNilWitness(point, fact.Value, value)
+		return r.assignmentDeclaredTopValue(point, fact.Source, value), true
 	}
 	if fact.Value != nil {
 		if value, ok := r.result.ExpressionValueBeforeBoundary(point, fact.Value); ok {
-			return r.result.WithMemberReadNilWitness(point, fact.Value, value), true
+			value = r.result.WithMemberReadNilWitness(point, fact.Value, value)
+			return r.assignmentDeclaredTopValue(point, fact.Source, value), true
 		}
 	}
 	return product.Value{}, false
+}
+
+func (r Reader) assignmentDeclaredTopValue(point cfg.Point, source sourceprovenance.ASTSource, value product.Value) product.Value {
+	expr := source.Expr
+	if r.result == nil || expr == nil || sourceprovenance.ConcreteRuntimeCastSource(source) || r.ValueHasUntrustedTopOrigin(value) {
+		return value
+	}
+	if r.ValueHasRuntimeValidationProof(value) {
+		return value
+	}
+	p, ok := r.result.ExpressionPath(expr)
+	if !ok || p.IsEmpty() {
+		return value
+	}
+	if r.pathHasPositiveRuntimeTypeGuard(point, p) {
+		return value
+	}
+	declared, ok := r.result.DeclaredPathTypeAt(point, p, true)
+	if !ok || declared == nil || !typ.IsAny(declared) {
+		return value
+	}
+	value = product.Set(r.result.Registry(), value, evidence.Key, evidence.ExplicitTop())
+	return product.Set(r.result.Registry(), value, assertion.Key, assertion.Any())
 }
 
 func (r Reader) assignmentSourceType(point cfg.Point, value product.Value) (typ.Type, bool) {
@@ -325,15 +394,33 @@ func (r Reader) assignmentSourceType(point cfg.Point, value product.Value) (typ.
 	return r.ValueTypeWithPresence(value)
 }
 
-func (r Reader) assignmentSourceTypeForPresenceProof(point cfg.Point, provenPresent bool, value product.Value) (typ.Type, bool) {
+func (r Reader) assignmentSourceTypeForPresenceProof(point cfg.Point, provenPresent bool, source sourceprovenance.ASTSource, value product.Value) (typ.Type, bool) {
+	expr := source.Expr
 	t, ok := r.assignmentSourceType(point, value)
-	if !ok || t == nil || !provenPresent {
+	if (!ok || t == nil || typ.IsAny(t) || typ.IsUnknown(t)) && r.result != nil && expr != nil {
+		if declared, declaredOK := r.result.DeclaredExpressionTypeAt(point, expr); declaredOK &&
+			declared != nil &&
+			!typ.IsAny(declared) &&
+			!typ.IsUnknown(declared) {
+			t = declared
+			ok = true
+		}
+	}
+	if !ok || t == nil || !provenPresent ||
+		(!presence.Equal(product.PresenceOf(value), presence.Present()) && !r.assignmentSourceIsIndexedReadAt(point, source)) {
 		return t, ok
 	}
 	if withoutNil := body.ProjectionWithoutNil(t); withoutNil != nil && !typ.IsNever(withoutNil) {
 		return withoutNil, true
 	}
 	return t, true
+}
+
+func (r Reader) assignmentSourceIsIndexedReadAt(point cfg.Point, source sourceprovenance.ASTSource) bool {
+	return source.Kind == sourceprovenance.SourceExpression &&
+		source.Expr != nil &&
+		r.result != nil &&
+		r.result.AssignmentSourceIndexedReadAt(point, source.Expr)
 }
 
 func assignmentTargetKey(fact body.LocalAssignmentFact) string {
@@ -368,84 +455,9 @@ func (r Reader) ordinaryAssignmentTargetType(point cfg.Point, fact body.Ordinary
 	if !ok {
 		return nil, false
 	}
-	return r.ordinaryWritableTargetType(target.Type, target.TargetValue, target.HasValue, target.Declared), true
-}
-
-func (r Reader) ordinaryWritableTargetType(current typ.Type, targetValue product.Value, hasValue bool, declared bool) typ.Type {
-	if current == nil {
-		return nil
-	}
-	if hasValue {
-		if family, familyOK := r.FullVariantOriginType(targetValue); familyOK && family != nil && r.IsSubtype(current, family) {
-			return family
-		}
-	}
-	if !declared {
-		if base, ok := body.TypeFamilyBase(current); ok && base != nil {
-			return base
-		}
-	}
-	return current
+	return r.result.OrdinaryWritableTargetType(target.Type, target.TargetValue, target.HasValue, target.Declared), true
 }
 
 func (r Reader) inferredReplacementAccepted(point cfg.Point, target body.OrdinaryAssignmentTargetType, expected, actual typ.Type) bool {
-	if expected == nil || actual == nil {
-		return false
-	}
-	if target.Declared {
-		return false
-	}
-	if typ.TypeEquals(actual, typ.Nil) {
-		return true
-	}
-	if inferredNumericReplacementAccepted(expected, actual) {
-		return true
-	}
-	if _, ok := unwrap.Annotated(expected).(*typ.Function); ok {
-		_, actualOK := unwrap.Annotated(actual).(*typ.Function)
-		return actualOK
-	}
-	if _, ok := unwrap.Annotated(expected).(*typ.Record); ok {
-		localExclusive := target.HasValue && r.result != nil && r.result.ValueHasLocalExclusiveExactIdentity(point, target.TargetValue)
-		return inferredRecordReplacementAccepted(actual, localExclusive)
-	}
-	return false
-}
-
-func inferredNumericReplacementAccepted(expected, actual typ.Type) bool {
-	return typ.TypeEquals(unwrap.Annotated(expected), typ.Integer) && typ.TypeEquals(unwrap.Annotated(actual), typ.Number)
-}
-
-func inferredRecordReplacementAccepted(actual typ.Type, localExclusive bool) bool {
-	ok, hasBroadTable, hasConcreteRecord := inferredRecordReplacementSurface(actual)
-	return ok && (hasBroadTable || (localExclusive && hasConcreteRecord))
-}
-
-func inferredRecordReplacementSurface(actual typ.Type) (ok bool, hasBroadTable bool, hasConcreteRecord bool) {
-	switch t := unwrap.Annotated(actual).(type) {
-	case *typ.Record:
-		return true, false, true
-	case *typ.Optional:
-		return false, false, false
-	case *typ.Union:
-		if len(t.Members) == 0 {
-			return false, false, false
-		}
-		hasBroadTable := false
-		hasConcreteRecord := false
-		for _, member := range t.Members {
-			ok, broad, record := inferredRecordReplacementSurface(member)
-			if !ok {
-				return false, false, false
-			}
-			hasBroadTable = hasBroadTable || broad
-			hasConcreteRecord = hasConcreteRecord || record
-		}
-		return true, hasBroadTable, hasConcreteRecord
-	default:
-		if typetable.IsBuiltinTopMarker(t) {
-			return true, true, false
-		}
-		return false, false, false
-	}
+	return r.result.InferredReplacementAccepted(point, target, expected, actual)
 }

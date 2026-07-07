@@ -1,61 +1,6 @@
 {
-  "description": "Negative type narrowing produces an ideal diagnostic. On the else edge of type(v) == \"number\", v is narrowed to exactly string (the complement), so need_number(v) is a definitive error reported as 'v is string, not number' with the narrowed type in the evidence -- not the declared number | string.",
+  "description": "A literal number makes the else edge of type(v) == \"number\" unreachable, so the dead call does not produce a diagnostic.",
   "check": {
-    "diagnostics": [
-      {
-        "file": "main.lua",
-        "line": 9,
-        "column": 24,
-        "severity": "error",
-        "code": "type.call.direct.argument_type",
-        "message_contains": ["argument 1 (v) is string", "not number"],
-        "min_evidence": 2,
-        "evidence_contains": [
-          "argument 1 (v) has type string",
-          "need_number parameter 1 expects number"
-        ],
-        "evidence": [
-          {
-            "file": "main.lua",
-            "line": 9,
-            "column": 24,
-            "kind": "abstract fact",
-            "trust": "proven",
-            "contains": ["argument 1 (v) has type string"]
-          },
-          {
-            "kind": "user assertion",
-            "trust": "claimed",
-            "contains": ["need_number parameter 1 expects number"]
-          }
-        ],
-        "render_contains": [
-          "error[type.call.direct.argument_type]: argument 1 (v) is string, not number",
-          "need_number(v)",
-          "because:",
-          "compatible with the parameter type"
-        ],
-        "render_ordered_contains": [
-          "error[type.call.direct.argument_type]: argument 1 (v) is string, not number",
-          "--> main.lua:9:24",
-          "need_number(v)",
-          "because:",
-          "proven: argument 1 (v) has type string",
-          "claimed: need_number parameter 1 expects number"
-        ],
-        "render_not_contains": ["^~", "has type number | string"],
-        "help_contains": ["compatible with the parameter type"],
-        "min_labels": 1,
-        "label_contains": ["argument value"],
-        "labels": [
-          {
-            "file": "main.lua",
-            "line": 9,
-            "column": 24,
-            "contains": ["argument value"]
-          }
-        ]
-      }
-    ]
+    "diagnostics": []
   }
 }

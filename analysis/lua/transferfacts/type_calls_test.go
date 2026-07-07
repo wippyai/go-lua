@@ -361,17 +361,19 @@ end
 		Path:        errPath,
 	})
 	valueAssignStart := body.Emit(wir.Instruction{
-		Op:    wir.OpAssign,
-		Point: valueAssignPoint,
-		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(valuePath))},
-		A:     valueTemp,
+		Op:     wir.OpAssign,
+		Point:  valueAssignPoint,
+		Dst:    wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(valuePath))},
+		A:      valueTemp,
+		Assign: wir.AssignLocalDeclaration,
 	})
 	body.SetPointRange(valueAssignPoint, valueAssignStart, valueAssignStart+1)
 	errAssignStart := body.Emit(wir.Instruction{
-		Op:    wir.OpAssign,
-		Point: errAssignPoint,
-		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(errPath))},
-		A:     errTemp,
+		Op:     wir.OpAssign,
+		Point:  errAssignPoint,
+		Dst:    wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(errPath))},
+		A:      errTemp,
+		Assign: wir.AssignLocalDeclaration,
 	})
 	body.SetPointRange(errAssignPoint, errAssignStart, errAssignStart+1)
 	branchStart := body.Emit(wir.Instruction{

@@ -302,7 +302,7 @@ func TestAssignmentReportsDynamicIndexWriteInvalidatedGuardWithEvidence(t *testi
 	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
 		t.Fatalf("diagnostic = %#v, want assignment error", d)
 	}
-	if !strings.Contains(d.Message, "cannot assign box.value") || !strings.Contains(d.Message, "is nil") {
+	if !strings.Contains(d.Message, "cannot assign box.value") || !strings.Contains(d.Message, "is nil, not string") {
 		t.Fatalf("message = %q, want string assignment mismatch", d.Message)
 	}
 	assertAssignmentPathEvidence(t, d,
@@ -505,7 +505,7 @@ func TestAssignmentReportsSummaryPathInvalidatedGuardWithEvidence(t *testing.T) 
 	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
 		t.Fatalf("diagnostic = %#v, want assignment error", d)
 	}
-	if !strings.Contains(d.Message, "cannot assign box.value") || !strings.Contains(d.Message, "is nil") {
+	if !strings.Contains(d.Message, "cannot assign box.value") || !strings.Contains(d.Message, "is nil, not string") {
 		t.Fatalf("message = %q, want path-specific optional assignment mismatch", d.Message)
 	}
 	evidence := d.Explanation.Evidence()

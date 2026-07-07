@@ -2,6 +2,7 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 )
@@ -43,6 +44,12 @@ func callSourcePath(facts factflow.Facts, resolver *visibility.Resolver, source 
 	}
 	if source.Kind != factflow.ValueSourcePath || source.PathKey == "" || resolver == nil {
 		return pathdom.Path{}, false
+	}
+	if sym, segments, ok := pathaddr.ParseSymbolPathKey(source.PathKey); ok {
+		return pathdom.Path{
+			Symbol:   sym,
+			Segments: segments,
+		}, true
 	}
 	ks := resolver.KeySpace()
 	if ks == nil {

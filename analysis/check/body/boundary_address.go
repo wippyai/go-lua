@@ -27,6 +27,14 @@ func (r *Result) boundaryAddressContext(point cfg.Point) (boundaryAddressContext
 	return boundaryAddressContext{result: r, point: point, state: in, hasState: hasState}, true
 }
 
+func (r *Result) beforeBoundaryAddressContext(point cfg.Point) (boundaryAddressContext, bool) {
+	if r == nil || r.visibility == nil {
+		return boundaryAddressContext{}, false
+	}
+	in, hasState := r.solvedStateAt(point)
+	return boundaryAddressContext{result: r, point: point, state: in, hasState: hasState}, true
+}
+
 func (r *Result) callEntryAddressContext(point cfg.Point) (boundaryAddressContext, bool) {
 	if r == nil || r.visibility == nil {
 		return boundaryAddressContext{}, false

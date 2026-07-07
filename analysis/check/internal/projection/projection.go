@@ -57,6 +57,9 @@ func WithStaticMemberWitness(reg *axis.Registry, value product.Value, members []
 			return value
 		}
 		witness = merged
+		if typ.SameNodeOrRecursiveIdentityEqual(existing, witness) {
+			return value
+		}
 	}
 	return typevalue.WithWitness(reg, value, witness)
 }
@@ -65,6 +68,9 @@ func WithStaticMemberWitness(reg *axis.Registry, value product.Value, members []
 // the declared value's presence. Use this when the declared contract is the
 // authoritative return slot.
 func WithDeclaredContract(reg *axis.Registry, value product.Value, declared product.Value) product.Value {
+	if refinement.DeclaredContractAlreadySatisfied(reg, value, declared) {
+		return product.WithPresence(reg, value, product.PresenceOf(declared))
+	}
 	return product.WithPresence(reg, refinement.MergeDeclaredContract(reg, value, declared), product.PresenceOf(declared))
 }
 
@@ -72,6 +78,9 @@ func WithDeclaredContract(reg *axis.Registry, value product.Value, declared prod
 // contract while preserving the original value presence. Use this when a source
 // expression supplied the slot and the declaration should refine only type facts.
 func WithDeclaredContractPreservingPresence(reg *axis.Registry, value product.Value, declared product.Value) product.Value {
+	if refinement.DeclaredContractAlreadySatisfiedPreservingPresence(reg, value, declared) {
+		return value
+	}
 	return product.WithPresence(reg, WithDeclaredContract(reg, value, declared), product.PresenceOf(value))
 }
 

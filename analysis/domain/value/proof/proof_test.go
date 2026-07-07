@@ -87,6 +87,21 @@ func TestValueProofAdmissibleRejectsRuntimeTableKindForOptionalFieldRecord(t *te
 	}
 }
 
+func TestValueProofAdmissibleRejectsBuiltinTableTopAsMapOrArrayProof(t *testing.T) {
+	reg := registry()
+	value := typevalue.NewCache().FromTypeWithWitness(reg, typetable.BuiltinTopMarker())
+	proofs := New(reg, typevalue.NewCache())
+
+	for _, want := range []typ.Type{
+		typetable.NewMap(typ.String, typ.Any),
+		typ.NewArray(typ.String),
+	} {
+		if proofs.ValueProofAdmissible(value, want) {
+			t.Fatalf("builtin table top should not satisfy shaped table contract %s", want)
+		}
+	}
+}
+
 func TestValueProofAdmissibleAcceptsRuntimeProof(t *testing.T) {
 	reg := registry()
 	value := typevalue.NewCache().FromTypeWithWitness(reg, typ.String)
@@ -195,6 +210,45 @@ func TestValueTypeWithPresenceKeepsNilInMaybeValues(t *testing.T) {
 	}
 	if got.String() != "string?" {
 		t.Fatalf("type = %s, want string?", got)
+	}
+}
+
+func TestValueStructuralTypeProjectsWitnessShape(t *testing.T) {
+	reg := registry()
+	cache := typevalue.NewCache()
+	record := typetable.NewRecord().Field("id", typ.String).Build()
+	value := cache.FromTypeWithWitness(reg, record)
+
+	got, ok := New(reg, cache).ValueStructuralType(value)
+	if !ok {
+		t.Fatalf("ValueStructuralType returned false")
+	}
+	if !typ.TypeEquals(got, record) {
+		t.Fatalf("ValueStructuralType = %s, want %s", got, record)
+	}
+}
+
+func TestValueHasReadableConcreteWitness(t *testing.T) {
+	reg := registry()
+	cache := typevalue.NewCache()
+	proofs := New(reg, cache)
+	for _, tc := range []struct {
+		name string
+		t    typ.Type
+		want bool
+	}{
+		{name: "string", t: typ.String, want: true},
+		{name: "record", t: typetable.NewRecord().Field("id", typ.String).Build(), want: true},
+		{name: "any", t: typ.Any},
+		{name: "unknown", t: typ.Unknown},
+		{name: "nil", t: typ.Nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			value := cache.FromTypeWithWitness(reg, tc.t)
+			if got := proofs.ValueHasReadableConcreteWitness(value); got != tc.want {
+				t.Fatalf("ValueHasReadableConcreteWitness(%s) = %v, want %v", tc.t, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -314,6 +368,35 @@ func TestVariantOriginTypeAndFullFamilyProjection(t *testing.T) {
 	}
 	if _, ok := proofs.VariantOriginType(product.Bottom(reg)); ok {
 		t.Fatalf("VariantOriginType(bottom) returned true")
+	}
+}
+
+func TestOptionalProjectionPredicates(t *testing.T) {
+	tests := []struct {
+		name           string
+		in             typ.Type
+		wantValue      bool
+		wantTruthSplit bool
+	}{
+		{name: "nil", in: nil, wantValue: false, wantTruthSplit: false},
+		{name: "any", in: typ.Any, wantValue: false, wantTruthSplit: false},
+		{name: "unknown", in: typ.Unknown, wantValue: false, wantTruthSplit: false},
+		{name: "never", in: typ.Never, wantValue: false, wantTruthSplit: false},
+		{name: "plain string", in: typ.String, wantValue: false, wantTruthSplit: false},
+		{name: "optional string", in: typ.MaterializeOptional(typ.String), wantValue: true, wantTruthSplit: true},
+		{name: "optional false", in: typ.MaterializeOptional(typ.False), wantValue: true, wantTruthSplit: false},
+		{name: "optional boolean", in: typ.MaterializeOptional(typ.Boolean), wantValue: true, wantTruthSplit: false},
+		{name: "optional never", in: typ.MaterializeOptional(typ.Never), wantValue: false, wantTruthSplit: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := OptionalTypeHasConcreteValue(tc.in); got != tc.wantValue {
+				t.Fatalf("OptionalTypeHasConcreteValue(%v) = %v, want %v", tc.in, got, tc.wantValue)
+			}
+			if got := OptionalTruthinessPartitionsNilValue(tc.in); got != tc.wantTruthSplit {
+				t.Fatalf("OptionalTruthinessPartitionsNilValue(%v) = %v, want %v", tc.in, got, tc.wantTruthSplit)
+			}
+		})
 	}
 }
 

@@ -32,6 +32,7 @@ func lowerSymbolTypes(
 	result *semantics.Result,
 	resolver *typeresolve.Resolver,
 	moduleExports importlookup.Source,
+	methodReceiverTypes map[symbol.ID]typ.Type,
 ) map[symbol.ID]typ.Type {
 	if bindings == nil || graph == nil {
 		return nil
@@ -53,6 +54,18 @@ func lowerSymbolTypes(
 	for _, fn := range bindings.Functions() {
 		for _, slot := range bindings.ParamSlots(fn) {
 			add(slot.Symbol, slot.Type)
+			if slot.ImplicitSelf && slot.Type == nil {
+				if decl, ok := bindings.MethodReceiverType(fn); ok {
+					if t, ok := resolver.Decl(decl); ok {
+						out[slot.Symbol] = t
+						continue
+					}
+				}
+				if t, ok := metatableMethodSelfType(bindings, fn, methodReceiverTypes); ok {
+					out[slot.Symbol] = t
+					continue
+				}
+			}
 		}
 	}
 	if result != nil {
@@ -170,6 +183,22 @@ func lowerSymbolTypes(
 	return out
 }
 
+func metatableMethodSelfType(bindings *bind.Result, fn *ast.FunctionExpr, methodReceiverTypes map[symbol.ID]typ.Type) (typ.Type, bool) {
+	if len(methodReceiverTypes) == 0 || bindings == nil || fn == nil {
+		return nil, false
+	}
+	origin, ok := bindings.FunctionOrigin(fn)
+	if !ok || origin.Kind != bind.FunctionOriginMethod {
+		return nil, false
+	}
+	table, ok := bindings.MethodOriginReceiverSymbol(origin)
+	if !ok || table == 0 {
+		return nil, false
+	}
+	t := methodReceiverTypes[table]
+	return t, t != nil
+}
+
 func lowerSymbolTypesFromWIR(body *wir.Body) map[symbol.ID]typ.Type {
 	if body == nil {
 		return nil
@@ -189,6 +218,9 @@ func lowerSymbolTypesFromWIR(body *wir.Body) map[symbol.ID]typ.Type {
 			if inst.Assign != wir.AssignLocalDeclaration {
 				continue
 			}
+		case wir.OpCall:
+			addWIRCallResultSymbolTypes(out, body, inst)
+			continue
 		default:
 			continue
 		}
@@ -209,6 +241,43 @@ func lowerSymbolTypesFromWIR(body *wir.Body) map[symbol.ID]typ.Type {
 		return nil
 	}
 	return out
+}
+
+func addWIRCallResultSymbolTypes(out map[symbol.ID]typ.Type, body *wir.Body, inst wir.Instruction) {
+	if out == nil || body == nil || inst.Op != wir.OpCall || inst.Type == 0 {
+		return
+	}
+	fn, ok := callableFromWIRCallType(body, inst)
+	if !ok || fn == nil || len(fn.TypeParams) != 0 {
+		return
+	}
+	for _, target := range body.CallResultTargets(inst.Point) {
+		if target.Kind != wir.CallResultTargetLocalAssignment ||
+			target.Path.Symbol == 0 ||
+			len(target.Path.Segments) != 0 ||
+			target.ResultIndex < 0 ||
+			target.ResultIndex >= len(fn.Returns) ||
+			fn.Returns[target.ResultIndex] == nil {
+			continue
+		}
+		out[target.Path.Symbol] = fn.Returns[target.ResultIndex]
+	}
+}
+
+func callableFromWIRCallType(body *wir.Body, inst wir.Instruction) (*typ.Function, bool) {
+	t := body.Type(inst.Type)
+	if t == nil {
+		return nil, false
+	}
+	if inst.Call.Method != 0 {
+		method := body.Const(inst.Call.Method)
+		if method.Kind != wir.ConstString || method.Str == "" {
+			return nil, false
+		}
+		fn, _, ok := typecall.MemberCallable(t, method.Str)
+		return fn, ok
+	}
+	return typecall.Callable(t)
 }
 
 func functionDefinitionFactAt(meta cfgfacts.Metadata, point cfg.Point) (cfgfacts.FunctionDefinitionFact, bool) {

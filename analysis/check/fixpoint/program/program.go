@@ -41,6 +41,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -297,7 +298,7 @@ func (p preparedBodies) function(fn *ast.FunctionExpr) *body.Static {
 }
 
 func prepareBoundChunkBodies(stmts []ast.Stmt, bindings *bind.Result, config body.Config, keys programKeys) (preparedBodies, error) {
-	root, err := body.PrepareBoundChunk(stmts, bindings, cloneCheckConfig(config))
+	root, err := body.PrepareBoundChunk(stmts, bindings, staticPrepareConfig(config, keys))
 	if err != nil {
 		return preparedBodies{}, err
 	}
@@ -305,7 +306,7 @@ func prepareBoundChunkBodies(stmts []ast.Stmt, bindings *bind.Result, config bod
 		root:      root,
 		functions: make(map[*ast.FunctionExpr]*body.Static, len(keys.functions)),
 	}
-	if err := prepareFunctionStatics(prepared.functions, keys.functions, bindings, config); err != nil {
+	if err := prepareFunctionStatics(prepared.functions, keys.functions, bindings, config, keys); err != nil {
 		return preparedBodies{}, err
 	}
 	return prepared, nil
@@ -315,37 +316,43 @@ func prepareBoundFunctionBodies(rootFn *ast.FunctionExpr, bindings *bind.Result,
 	prepared := preparedBodies{
 		functions: make(map[*ast.FunctionExpr]*body.Static, 1+len(keys.functions)),
 	}
-	if err := prepareFunctionStatic(prepared.functions, rootFn, bindings, config); err != nil {
+	if err := prepareFunctionStatic(prepared.functions, rootFn, bindings, config, keys); err != nil {
 		return preparedBodies{}, err
 	}
-	if err := prepareFunctionStatics(prepared.functions, keys.functions, bindings, config); err != nil {
+	if err := prepareFunctionStatics(prepared.functions, keys.functions, bindings, config, keys); err != nil {
 		return preparedBodies{}, err
 	}
 	return prepared, nil
 }
 
-func prepareFunctionStatics(out map[*ast.FunctionExpr]*body.Static, functions []keyedFunction, bindings *bind.Result, config body.Config) error {
+func prepareFunctionStatics(out map[*ast.FunctionExpr]*body.Static, functions []keyedFunction, bindings *bind.Result, config body.Config, keys programKeys) error {
 	for _, fn := range functions {
-		if err := prepareFunctionStatic(out, fn.funcExpr, bindings, config); err != nil {
+		if err := prepareFunctionStatic(out, fn.funcExpr, bindings, config, keys); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func prepareFunctionStatic(out map[*ast.FunctionExpr]*body.Static, fn *ast.FunctionExpr, bindings *bind.Result, config body.Config) error {
+func prepareFunctionStatic(out map[*ast.FunctionExpr]*body.Static, fn *ast.FunctionExpr, bindings *bind.Result, config body.Config, keys programKeys) error {
 	if fn == nil {
 		return nil
 	}
 	if _, ok := out[fn]; ok {
 		return nil
 	}
-	prepared, err := body.PrepareBoundFunction(fn, bindings, cloneCheckConfig(config))
+	prepared, err := body.PrepareBoundFunction(fn, bindings, staticPrepareConfig(config, keys))
 	if err != nil {
 		return err
 	}
 	out[fn] = prepared
 	return nil
+}
+
+func staticPrepareConfig(config body.Config, keys programKeys) body.Config {
+	out := cloneCheckConfig(config)
+	out.MethodReceiverTypes = keys.metatableMethodReceivers
+	return out
 }
 
 func solvePrepared(prepared *body.Static, config body.Config) (*body.Result, error) {
@@ -679,7 +686,12 @@ func collectKeys(bindings *bind.Result, root summary.SummaryKey, reg *axis.Regis
 		if origin.HasTargetSymbol && origin.TargetSymbol != 0 && functionTargetCanUseDirectSymbolKey(bindings, origin.TargetSymbol) {
 			out.targetKeys[origin.TargetSymbol] = key
 		}
-		if targetPath, ok := pathTargets[origin.Func]; ok && (!origin.HasTargetSymbol || functionTargetCanUseStaticPathKey(bindings, origin.TargetSymbol)) {
+		targetPath, hasTargetPath := pathTargets[origin.Func]
+		if !hasTargetPath && origin.HasTargetSymbol && origin.TargetSymbol != 0 {
+			targetPath = path.NewPath(origin.TargetSymbol, bindings.Name(origin.TargetSymbol))
+			hasTargetPath = true
+		}
+		if hasTargetPath && (!origin.HasTargetSymbol || functionTargetCanUseStaticPathKey(bindings, origin.TargetSymbol)) {
 			pathKey, ok := factflow.CalleePathKeyFromPath(targetPath)
 			if !ok {
 				continue
@@ -1279,7 +1291,7 @@ func callbackContextCallableType(reg *axis.Registry, prepass *body.Result, point
 	if reg == nil || prepass == nil {
 		return callbackContextCallable{}
 	}
-	if fn, ok := prepass.CallSignatureType(site); ok {
+	if fn, ok := prepass.CallSignatureTypeAt(point, site); ok {
 		return callbackContextCallable{
 			fn: instantiateSignatureTypeForContext(reg, prepass, point, site, fn, keys),
 		}
@@ -1397,8 +1409,8 @@ func instantiateSignatureTypeForContext(
 	if !ok {
 		return fn
 	}
-	instantiated, _ := typecall.InstantiateGenericCall(fn, args)
-	if instantiated == nil {
+	instantiated, violations := typecall.InstantiateGenericCall(fn, args)
+	if instantiated == nil || len(violations) != 0 {
 		return fn
 	}
 	return instantiated
@@ -1416,6 +1428,11 @@ func contextualCallArgumentTypes(reg *axis.Registry, prepass *body.Result, point
 	seen := false
 	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
 		if t, ok := contextualFunctionExpressionArgumentType(prepass, keys, source); ok {
+			args[i] = t
+			seen = true
+			return true
+		}
+		if t, ok := prepass.SignatureArgumentTypeAtBoundary(point, source); ok && usableContextualArgumentType(t) {
 			args[i] = t
 			seen = true
 			return true
@@ -1443,6 +1460,15 @@ func contextualCallArgumentTypes(reg *axis.Registry, prepass *body.Result, point
 	return args, seen
 }
 
+func usableContextualArgumentType(t typ.Type) bool {
+	return t != nil &&
+		!typ.IsAny(t) &&
+		!typ.IsUnknown(t) &&
+		!typ.IsNever(t) &&
+		!inspect.ContainsUnknown(t) &&
+		!refinement.ContainsFreeTypeParam(t)
+}
+
 func contextualFunctionExpressionArgumentType(prepass *body.Result, keys *programKeys, source factflow.ValueSource) (typ.Type, bool) {
 	if prepass == nil || keys == nil || !source.HasExpr {
 		return nil, false
@@ -1454,7 +1480,7 @@ func contextualFunctionExpressionArgumentType(prepass *body.Result, keys *progra
 	key, ok := keys.functionKeys[functionSymbol]
 	if ok {
 		fn := keys.functionTypes[key]
-		if fn != nil && !typ.IsAny(fn) && !typ.IsUnknown(fn) && !typ.IsNever(fn) {
+		if usableContextualFunctionExpressionType(fn) {
 			return fn, true
 		}
 	}
@@ -1466,10 +1492,20 @@ func contextualFunctionExpressionArgumentType(prepass *body.Result, keys *progra
 		return nil, false
 	}
 	fn, ok := lowerFunctionExprType(fnExpr, keys.bindings, prepass.ModuleTypes())
-	if fn == nil || typ.IsAny(fn) || typ.IsUnknown(fn) || typ.IsNever(fn) {
+	if !usableContextualFunctionExpressionType(fn) {
 		return nil, false
 	}
 	return fn, true
+}
+
+func usableContextualFunctionExpressionType(fn *typ.Function) bool {
+	return fn != nil &&
+		!typ.IsAny(fn) &&
+		!typ.IsUnknown(fn) &&
+		!typ.IsNever(fn) &&
+		!typ.ContainsAny(fn) &&
+		!inspect.ContainsUnknown(fn) &&
+		!refinement.ContainsFreeTypeParam(fn)
 }
 
 func contextualObjectLiteralArgumentType(reg *axis.Registry, prepass *body.Result, point cfg.Point, source factflow.ValueSource) (typ.Type, bool) {
@@ -1668,7 +1704,7 @@ func (s *closureCaptureSeeder) apply(
 	}
 	s.seenFns[fn] = struct{}{}
 	seen := false
-	for _, capture := range s.bindings.DirectCaptures(fn) {
+	for _, capture := range s.entryCaptures(fn) {
 		if capture.Captured == 0 {
 			continue
 		}
@@ -1712,6 +1748,59 @@ func (s *closureCaptureSeeder) apply(
 		seen = true
 	}
 	return entry, seen
+}
+
+func (s *closureCaptureSeeder) entryCaptures(fn *ast.FunctionExpr) []bind.Capture {
+	if s == nil || s.bindings == nil || fn == nil {
+		return nil
+	}
+	out := append([]bind.Capture(nil), s.bindings.DirectCaptures(fn)...)
+	seen := make(map[symbol.ID]struct{}, len(out))
+	for _, capture := range out {
+		if capture.Captured != 0 {
+			seen[capture.Captured] = struct{}{}
+		}
+	}
+	for _, origin := range s.bindings.FunctionOrigins() {
+		if origin.Func == nil || origin.Func == fn || !functionOriginDescendsFrom(s.bindings, origin.Func, fn) {
+			continue
+		}
+		for _, capture := range s.bindings.DirectCaptures(origin.Func) {
+			if capture.Captured == 0 {
+				continue
+			}
+			if owner, ok := s.bindings.DeclaringFunction(capture.Captured); ok && owner == fn {
+				continue
+			}
+			if _, ok := seen[capture.Captured]; ok {
+				continue
+			}
+			seen[capture.Captured] = struct{}{}
+			out = append(out, capture)
+		}
+	}
+	return out
+}
+
+func functionEntryCaptureCount(bindings *bind.Result, fn *ast.FunctionExpr) int {
+	seeder := &closureCaptureSeeder{bindings: bindings}
+	return len(seeder.entryCaptures(fn))
+}
+
+func functionOriginDescendsFrom(bindings *bind.Result, fn, ancestor *ast.FunctionExpr) bool {
+	if bindings == nil || fn == nil {
+		return false
+	}
+	for {
+		parent, ok := bindings.ParentFunction(fn)
+		if !ok || parent == nil {
+			return ancestor == nil
+		}
+		if parent == ancestor {
+			return true
+		}
+		fn = parent
+	}
 }
 
 func (s *closureCaptureSeeder) capturedValue(sym symbol.ID, slot statekey.Value) product.Value {
@@ -2128,6 +2217,12 @@ func contextualParamEntryValue(reg *axis.Registry, fn *typ.Function, index int) 
 func paramContractEntryValue(reg *axis.Registry, t typ.Type) (product.Value, bool) {
 	if reg == nil || t == nil {
 		return product.Value{}, false
+	}
+	if param, ok := typ.UnwrapTransparentWrappers(t).(*typ.TypeParam); ok {
+		if param.Constraint == nil {
+			return product.Value{}, false
+		}
+		t = param.Constraint
 	}
 	if rootTopLikeAnnotationType(t) {
 		value := typevalue.WithWitness(reg, typevalue.FromType(reg, t), t)
@@ -2609,6 +2704,7 @@ func checkConfigWithSummaries(
 func cloneCheckConfig(config body.Config) body.Config {
 	config.Globals = slices.Clone(config.Globals)
 	config.ExpressionValues = maps.Clone(config.ExpressionValues)
+	config.MethodReceiverTypes = maps.Clone(config.MethodReceiverTypes)
 	config.StateLanes = state.CloneLanes(config.StateLanes)
 	config.ClosedDynamicAllValues = slices.Clone(config.ClosedDynamicAllValues)
 	config.Signatures.Manifests = slices.Clone(config.Signatures.Manifests)
@@ -2627,7 +2723,7 @@ func materializeChunk(
 	keyFor callresult.KeyFunc,
 	keys programKeys,
 ) (*body.Result, error) {
-	materialized, err := materializeChunkWithResultKeys(prepared, bindings, config, stats, summaries, contextKeyFor, keyFor, keys, nil)
+	materialized, err := materializeChunkWithResultKeys(prepared, bindings, config, stats, summaries, contextKeyFor, keyFor, keys, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2641,17 +2737,39 @@ type materializedProgram struct {
 	keys        programKeys
 }
 
-type resultSummaryProjectionCache struct{}
+type resultSummaryProjectionCache struct {
+	entries map[*body.Result]summary.Summary
+}
 
 func newResultSummaryProjectionCache() *resultSummaryProjectionCache {
 	return &resultSummaryProjectionCache{}
+}
+
+func (c *resultSummaryProjectionCache) invalidate(result *body.Result) {
+	if c == nil || result == nil || len(c.entries) == 0 {
+		return
+	}
+	delete(c.entries, result)
 }
 
 func (c *resultSummaryProjectionCache) project(result *body.Result) (summary.Summary, bool) {
 	if result == nil {
 		return summary.Summary{}, false
 	}
-	return summaryprojection.FromResult(result), true
+	if c == nil {
+		return summaryprojection.FromResult(result), true
+	}
+	if len(c.entries) != 0 {
+		if got, ok := c.entries[result]; ok {
+			return got.Clone(), true
+		}
+	}
+	projected := summaryprojection.FromResult(result)
+	if c.entries == nil {
+		c.entries = make(map[*body.Result]summary.Summary)
+	}
+	c.entries[result] = projected
+	return projected.Clone(), true
 }
 
 type materializedSolveCache struct {
@@ -2668,6 +2786,11 @@ type materializedSolveCacheEntry struct {
 	shape uint64
 	entry materializedSolveEntryState
 	deps  map[summary.SummaryKey]trackedSummaryRead
+	// noDepUniverse pins solves with zero tracked summary reads to the summary
+	// universe they observed. A later materialization pass can make a callee
+	// summary nameable even though the first solve had no dependency to track.
+	noDepUniverseKnown bool
+	noDepUniverse      []summary.EntrySummary
 
 	result *body.Result
 }
@@ -2792,7 +2915,7 @@ func solveMaterializedPrepared(
 	if err != nil {
 		return nil, true, err
 	}
-	cache.write(prepared, owner, shape, entry, tracked.deps, result)
+	cache.write(prepared, owner, shape, entry, summaries, tracked.deps, result)
 	return result, true, nil
 }
 
@@ -2812,6 +2935,15 @@ func (c *materializedSolveCache) read(
 	}
 	if !materializedSolveEntryStatesEqual(c.reg, cached.entry, entry) {
 		return nil, false
+	}
+	if len(cached.deps) == 0 {
+		if !cached.noDepUniverseKnown {
+			return nil, false
+		}
+		current, ok := materializedSummaryUniverse(summaries)
+		if !ok || !summaryEntryUniversesEqual(c.reg, cached.noDepUniverse, current) {
+			return nil, false
+		}
 	}
 	for key, dep := range cached.deps {
 		got, gotOK := readOwnedNormalizedSummary(c.reg, summaries, key)
@@ -2847,6 +2979,7 @@ func (c *materializedSolveCache) write(
 	owner summary.SummaryKey,
 	shape uint64,
 	entry materializedSolveEntryState,
+	summaries summary.Reader,
 	deps map[summary.SummaryKey]trackedSummaryRead,
 	result *body.Result,
 ) {
@@ -2856,12 +2989,46 @@ func (c *materializedSolveCache) write(
 	if c.entries == nil {
 		c.entries = make(map[materializedSolveCacheKey]materializedSolveCacheEntry)
 	}
-	c.entries[materializedSolveCacheKey{prepared: prepared, owner: owner}] = materializedSolveCacheEntry{
-		shape:  shape,
-		entry:  entry,
-		deps:   cloneTrackedSummaryReads(deps),
-		result: result,
+	var noDepUniverse []summary.EntrySummary
+	noDepUniverseKnown := false
+	if len(deps) == 0 {
+		noDepUniverse, noDepUniverseKnown = materializedSummaryUniverse(summaries)
 	}
+	c.entries[materializedSolveCacheKey{prepared: prepared, owner: owner}] = materializedSolveCacheEntry{
+		shape:              shape,
+		entry:              entry,
+		deps:               cloneTrackedSummaryReads(deps),
+		noDepUniverseKnown: noDepUniverseKnown,
+		noDepUniverse:      noDepUniverse,
+		result:             result,
+	}
+}
+
+func materializedSummaryUniverse(reader summary.Reader) ([]summary.EntrySummary, bool) {
+	entriesReader, ok := reader.(interface{ EntriesOwnedNormalized() []summary.EntrySummary })
+	if !ok {
+		return nil, false
+	}
+	entries := entriesReader.EntriesOwnedNormalized()
+	if len(entries) == 0 {
+		return nil, true
+	}
+	return slices.Clone(entries), true
+}
+
+func summaryEntryUniversesEqual(reg *axis.Registry, left, right []summary.EntrySummary) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i].Key != right[i].Key {
+			return false
+		}
+		if !summary.EqualNormalized(reg, left[i].Summary, right[i].Summary) {
+			return false
+		}
+	}
+	return true
 }
 
 func materializedSolveEntryFor(prepared *body.Static, fn keyedFunction) materializedSolveEntryState {
@@ -2957,6 +3124,42 @@ func (c *materializedSummaryCache) readOwned(key summary.SummaryKey) (summary.Su
 	return c.ReadOwnedNormalized(key)
 }
 
+func (c *materializedSummaryCache) EntriesOwnedNormalized() []summary.EntrySummary {
+	if c == nil {
+		return nil
+	}
+	byKey := make(map[summary.SummaryKey]summary.Summary)
+	if entries, ok := c.base.(interface{ EntriesOwnedNormalized() []summary.EntrySummary }); ok {
+		for _, entry := range entries.EntriesOwnedNormalized() {
+			byKey[entry.Key] = entry.Summary
+		}
+	}
+	for key, got := range c.entries {
+		byKey[key] = got
+	}
+	if len(byKey) == 0 {
+		return nil
+	}
+	keys := make([]summary.SummaryKey, 0, len(byKey))
+	for key := range byKey {
+		keys = append(keys, key)
+	}
+	slices.SortFunc(keys, func(a, b summary.SummaryKey) int {
+		if a.Less(b) {
+			return -1
+		}
+		if b.Less(a) {
+			return 1
+		}
+		return 0
+	})
+	out := make([]summary.EntrySummary, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, summary.EntrySummary{Key: key, Summary: byKey[key]})
+	}
+	return out
+}
+
 func (c *materializedSummaryCache) write(key summary.SummaryKey, sum summary.Summary) {
 	if c == nil || c.reg == nil {
 		return
@@ -2999,6 +3202,7 @@ func materializeChunkWithResultKeys(
 	keyFor callresult.KeyFunc,
 	keys programKeys,
 	solveCache *materializedSolveCache,
+	projections *resultSummaryProjectionCache,
 ) (materializedProgram, error) {
 	indexBase := summaryIndexBase(keys)
 	shape := materializedProgramShapeDigest(keys)
@@ -3018,7 +3222,9 @@ func materializeChunkWithResultKeys(
 		return materializedProgram{}, err
 	}
 	resultKeys := map[*body.Result]summary.SummaryKey{root: keys.rootKey}
-	projections := newResultSummaryProjectionCache()
+	if projections == nil {
+		projections = newResultSummaryProjectionCache()
+	}
 	root, keys, err = materializeFunctionTree(root, nil, prepared, bindings, config, stats, summaries, contextKeyFor, keyFor, keys, resultKeys, projections, solveCache)
 	if err != nil {
 		return materializedProgram{}, err
@@ -3037,7 +3243,7 @@ func materializeFunction(
 	keyFor callresult.KeyFunc,
 	keys programKeys,
 ) (*body.Result, error) {
-	materialized, err := materializeFunctionWithResultKeys(fn, prepared, bindings, config, stats, summaries, contextKeyFor, keyFor, keys, nil)
+	materialized, err := materializeFunctionWithResultKeys(fn, prepared, bindings, config, stats, summaries, contextKeyFor, keyFor, keys, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3055,6 +3261,7 @@ func materializeFunctionWithResultKeys(
 	keyFor callresult.KeyFunc,
 	keys programKeys,
 	solveCache *materializedSolveCache,
+	projections *resultSummaryProjectionCache,
 ) (materializedProgram, error) {
 	indexBase := summaryIndexBase(keys)
 	shape := materializedProgramShapeDigest(keys)
@@ -3075,7 +3282,9 @@ func materializeFunctionWithResultKeys(
 		return materializedProgram{}, err
 	}
 	resultKeys := map[*body.Result]summary.SummaryKey{root: keys.rootKey}
-	projections := newResultSummaryProjectionCache()
+	if projections == nil {
+		projections = newResultSummaryProjectionCache()
+	}
 	root, keys, err = materializeFunctionTree(root, fn, prepared, bindings, config, stats, summaries, contextKeyFor, keyFor, keys, resultKeys, projections, solveCache)
 	if err != nil {
 		return materializedProgram{}, err
@@ -3094,7 +3303,8 @@ func materializeChunkWithReturnPresenceProofs(
 	keys programKeys,
 ) (*body.Result, summary.Snapshot, error) {
 	solveCache := newMaterializedSolveCache(config.Registry)
-	materialized, err := materializeChunkWithResultKeys(prepared, bindings, config, stats, initial, contextKeyFor, keyFor, keys, solveCache)
+	projections := newResultSummaryProjectionCache()
+	materialized, err := materializeChunkWithResultKeys(prepared, bindings, config, stats, initial, contextKeyFor, keyFor, keys, solveCache, projections)
 	if err != nil {
 		return nil, summary.Snapshot{}, err
 	}
@@ -3103,7 +3313,7 @@ func materializeChunkWithReturnPresenceProofs(
 		initial,
 		materialized,
 		func(next summary.Snapshot, materializedKeys programKeys) (materializedProgram, error) {
-			return materializeChunkWithResultKeys(prepared, bindings, config, stats, next, contextKeyFor, keyFor, materializedKeys, solveCache)
+			return materializeChunkWithResultKeys(prepared, bindings, config, stats, next, contextKeyFor, keyFor, materializedKeys, solveCache, projections)
 		},
 	)
 }
@@ -3120,7 +3330,8 @@ func materializeFunctionWithReturnPresenceProofs(
 	keys programKeys,
 ) (*body.Result, summary.Snapshot, error) {
 	solveCache := newMaterializedSolveCache(config.Registry)
-	materialized, err := materializeFunctionWithResultKeys(fn, prepared, bindings, config, stats, initial, contextKeyFor, keyFor, keys, solveCache)
+	projections := newResultSummaryProjectionCache()
+	materialized, err := materializeFunctionWithResultKeys(fn, prepared, bindings, config, stats, initial, contextKeyFor, keyFor, keys, solveCache, projections)
 	if err != nil {
 		return nil, summary.Snapshot{}, err
 	}
@@ -3129,7 +3340,7 @@ func materializeFunctionWithReturnPresenceProofs(
 		initial,
 		materialized,
 		func(next summary.Snapshot, materializedKeys programKeys) (materializedProgram, error) {
-			return materializeFunctionWithResultKeys(fn, prepared, bindings, config, stats, next, contextKeyFor, keyFor, materializedKeys, solveCache)
+			return materializeFunctionWithResultKeys(fn, prepared, bindings, config, stats, next, contextKeyFor, keyFor, materializedKeys, solveCache, projections)
 		},
 	)
 }
@@ -3144,21 +3355,17 @@ func refineMaterializedSummaryProofs(
 		return materialized.root, initial, nil
 	}
 	current := initial
-	valueSlotRematerialized := false
-	normalFactRematerialized := false
 	for {
 		next, changed := snapshotWithMaterializedSummaryProofs(reg, current, materialized)
 		if !changed || rematerialize == nil {
 			return materialized.root, next, nil
 		}
 		needsRematerialize := materializedCoreProofChangesAffectMaterialization(reg, current, next)
-		if !needsRematerialize && !normalFactRematerialized && materializedNormalReturnFactChanges(reg, current, next) {
+		if !needsRematerialize && materializedNormalReturnFactChanges(reg, current, next) {
 			needsRematerialize = true
-			normalFactRematerialized = true
 		}
-		if !needsRematerialize && !valueSlotRematerialized && materializedValueSlotChanges(reg, current, next) {
+		if !needsRematerialize && materializedValueSlotChanges(reg, current, next) {
 			needsRematerialize = true
-			valueSlotRematerialized = true
 		}
 		if !needsRematerialize {
 			return materialized.root, next, nil
@@ -3205,6 +3412,14 @@ func materializedCoreProofChangesAffectMaterialization(reg *axis.Registry, befor
 		next := entry.Summary
 		if !paramObligationsEqual(reg, prev.ParamObligations, next.ParamObligations) ||
 			!paramMemberCallObligationsEqual(prev.ParamMemberCallObligations, next.ParamMemberCallObligations) ||
+			!summaryLaneEqualNormalized(reg,
+				summary.Summary{ReturnParamPathAliases: prev.ReturnParamPathAliases},
+				summary.Summary{ReturnParamPathAliases: next.ReturnParamPathAliases},
+			) ||
+			!summaryLaneEqualNormalized(reg,
+				summary.Summary{ParamSinkExposures: prev.ParamSinkExposures},
+				summary.Summary{ParamSinkExposures: next.ParamSinkExposures},
+			) ||
 			!returnPresenceRelationsEqual(prev.ReturnPresenceRelations, next.ReturnPresenceRelations) ||
 			!returnConditionSlotRefinementsEqual(reg, prev.ReturnConditionSlotRefinements, next.ReturnConditionSlotRefinements) {
 			return true
@@ -3249,7 +3464,15 @@ func summaryEntriesByKey(snapshot summary.Snapshot) map[summary.SummaryKey]summa
 
 func normalReturnFactsMaterializationEqual(reg *axis.Registry, a, b callboundary.NormalReturnFacts) bool {
 	return pathValueFactsEqual(reg, a.PersistentPathWrites, b.PersistentPathWrites) &&
-		pathStaticMemberFactsEqual(reg, a.PathStaticMembers, b.PathStaticMembers)
+		pathStaticMemberFactsEqual(reg, a.PathStaticMembers, b.PathStaticMembers) &&
+		summaryLaneEqualNormalized(reg,
+			summary.Summary{NormalReturnFacts: callboundary.NormalReturnFacts{StoreRelations: a.StoreRelations}},
+			summary.Summary{NormalReturnFacts: callboundary.NormalReturnFacts{StoreRelations: b.StoreRelations}},
+		)
+}
+
+func summaryLaneEqualNormalized(reg *axis.Registry, a, b summary.Summary) bool {
+	return summary.EqualNormalized(reg, summary.Normalize(reg, a), summary.Normalize(reg, b))
 }
 
 func pathValueFactsEqual(reg *axis.Registry, a, b []callboundary.PathValueFact) bool {
@@ -3324,6 +3547,22 @@ func overlayMaterializedSummaryProofsForResult(
 		next.ParamMemberCallObligations = append([]summary.ParamMemberCallObligation(nil), projected.ParamMemberCallObligations...)
 		changed = true
 	}
+	if aliases, ok := overlayMaterializedMustSummaryLane(
+		reg,
+		summary.Summary{ReturnParamPathAliases: current.ReturnParamPathAliases},
+		summary.Summary{ReturnParamPathAliases: projected.ReturnParamPathAliases},
+	); ok {
+		next.ReturnParamPathAliases = aliases.ReturnParamPathAliases
+		changed = true
+	}
+	if sinkExposures, ok := overlayMaterializedMaySummaryLane(
+		reg,
+		summary.Summary{ParamSinkExposures: current.ParamSinkExposures},
+		summary.Summary{ParamSinkExposures: projected.ParamSinkExposures},
+	); ok {
+		next.ParamSinkExposures = sinkExposures.ParamSinkExposures
+		changed = true
+	}
 	if writes, ok := overlayMaterializedPersistentPathWrites(
 		reg,
 		current.NormalReturnFacts.PersistentPathWrites,
@@ -3338,6 +3577,14 @@ func overlayMaterializedSummaryProofsForResult(
 		projected.NormalReturnFacts.PathStaticMembers,
 	); ok {
 		next.NormalReturnFacts.PathStaticMembers = members
+		changed = true
+	}
+	if storeRelations, ok := overlayMaterializedMustSummaryLane(
+		reg,
+		summary.Summary{NormalReturnFacts: callboundary.NormalReturnFacts{StoreRelations: current.NormalReturnFacts.StoreRelations}},
+		summary.Summary{NormalReturnFacts: callboundary.NormalReturnFacts{StoreRelations: projected.NormalReturnFacts.StoreRelations}},
+	); ok {
+		next.NormalReturnFacts.StoreRelations = storeRelations.NormalReturnFacts.StoreRelations
 		changed = true
 	}
 	if relations, ok := overlayMaterializedReturnPresenceRelations(reg, current.ReturnPresenceRelations, projected.ReturnPresenceRelations); ok {
@@ -3357,6 +3604,31 @@ func overlayMaterializedSummaryProofsForResult(
 	}
 	entries[key] = next
 	return true
+}
+
+func overlayMaterializedMustSummaryLane(reg *axis.Registry, current, projected summary.Summary) (summary.Summary, bool) {
+	current = summary.Normalize(reg, current)
+	projected = summary.Normalize(reg, projected)
+	if summary.EqualNormalized(reg, current, projected) {
+		return current, false
+	}
+	if !summary.LessOrEq(reg, projected, current) {
+		return current, false
+	}
+	return projected, true
+}
+
+func overlayMaterializedMaySummaryLane(reg *axis.Registry, current, projected summary.Summary) (summary.Summary, bool) {
+	current = summary.Normalize(reg, current)
+	projected = summary.Normalize(reg, projected)
+	if summary.EqualNormalized(reg, projected, summary.Summary{}) {
+		return current, false
+	}
+	combined := summary.Join(reg, current, projected)
+	if summary.EqualNormalized(reg, current, combined) {
+		return current, false
+	}
+	return combined, true
 }
 
 func overlayMaterializedPersistentPathWrites(
@@ -3774,8 +4046,7 @@ func materializeFunctionTree(
 		if err != nil {
 			return nil, keys, err
 		}
-		body.WithOwnedFunctionValueTypes(result, funcTypes)
-		cache.writeResult(origin.key, result)
+		installMaterializedFunctionValueType(cache, origin.key, result, funcTypes)
 		applyDefinitionCaptureEntryStatesFromResult(&keys, origin.funcExpr, result, config.Registry)
 		if resultKeys != nil {
 			resultKeys[result] = origin.key
@@ -3858,34 +4129,74 @@ func installMaterializedFunctionValueTypes(
 	contextResults map[summary.SummaryKey]*body.Result,
 ) {
 	if root != nil {
-		body.WithOwnedFunctionValueTypes(root, funcTypes)
-		if cache != nil {
-			cache.writeResult(keys.rootKey, root)
-		}
+		installMaterializedFunctionValueType(cache, keys.rootKey, root, funcTypes)
 	}
 	for fn, result := range baseResults {
 		if result == nil {
-			continue
-		}
-		body.WithOwnedFunctionValueTypes(result, funcTypes)
-		if cache == nil {
 			continue
 		}
 		key, ok := keys.summaryKeyForFunction(fn)
 		if !ok {
 			continue
 		}
-		cache.writeResult(key, result)
+		installMaterializedFunctionValueType(cache, key, result, funcTypes)
 	}
 	for key, result := range contextResults {
 		if result == nil {
 			continue
 		}
+		installMaterializedFunctionValueType(cache, key, result, funcTypes)
+	}
+}
+
+func installMaterializedFunctionValueType(
+	cache *materializedSummaryCache,
+	key summary.SummaryKey,
+	result *body.Result,
+	funcTypes body.FunctionValueTypes,
+) {
+	if result == nil {
+		return
+	}
+	markBodyOwnedParamObligations(cache, key, result)
+	changed := false
+	if !result.HasFunctionValueTypes(funcTypes) {
+		if cache != nil && cache.projections != nil {
+			cache.projections.invalidate(result)
+		}
 		body.WithOwnedFunctionValueTypes(result, funcTypes)
-		if cache != nil {
-			cache.writeResult(key, result)
+		changed = true
+	}
+	if cache != nil {
+		if !changed {
+			if _, ok := cache.readOwned(key); ok {
+				markBodyOwnedParamObligations(cache, key, result)
+				return
+			}
+		}
+		cache.writeResult(key, result)
+		markBodyOwnedParamObligations(cache, key, result)
+	}
+}
+
+func markBodyOwnedParamObligations(cache *materializedSummaryCache, key summary.SummaryKey, result *body.Result) {
+	if cache == nil || result == nil {
+		return
+	}
+	sum, ok := cache.readOwned(key)
+	if !ok {
+		return
+	}
+	body.WithBodyOwnedParamObligations(result, summaryHasUsefulParamObligation(cache.reg, sum))
+}
+
+func summaryHasUsefulParamObligation(reg *axis.Registry, sum summary.Summary) bool {
+	for _, value := range sum.ParamObligations {
+		if summary.UsefulParamObligation(reg, value) {
+			return true
 		}
 	}
+	return false
 }
 
 func materializeDiscoveredContexts(

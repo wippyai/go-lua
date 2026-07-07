@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
@@ -59,6 +60,42 @@ func TestFactsEdgeTransferAppliesNilRefinementsOnRootValue(t *testing.T) {
 
 	assertValue(t, reg, got[thenPoint], key.SymbolValue(target), absentValue(reg))
 	assertValue(t, reg, got[elsePoint], key.SymbolValue(target), presentValue(reg))
+}
+
+func TestFactsEdgeTransferWritesRootConstraintWhenRootValueAbsent(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	target := symbol.ID(1301)
+	tableValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typetable.BuiltinTopMarker()), typetable.BuiltinTopMarker())
+	got := transfer.Run(transfer.Config{
+		Graph:    graph,
+		Registry: reg,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						factflow.NewBranchRefinement(pathdom.NewPath(target, "bindings"), factflow.NewValueConstraint(tableValue), true, factflow.ValueRefinement{}, false),
+					),
+				},
+			}),
+		}),
+	})
+
+	gotValue := got[thenPoint].ReadValue(reg, key.SymbolValue(target))
+	gotType, ok := typevalue.TypeOf(reg, gotValue)
+	if !ok || !typ.TypeEquals(gotType, typetable.BuiltinTopMarker()) {
+		t.Fatalf("then root type = %v/%v, want table constraint written from branch proof", gotType, ok)
+	}
+	assertValue(t, reg, got[elsePoint], key.SymbolValue(target), product.Bottom(reg))
 }
 
 func TestFactsEdgeTransferContradictoryBranchRefinementKillsEdge(t *testing.T) {
@@ -954,7 +991,7 @@ func TestFactsEdgeTransferScalarChildRuntimeGuardClearsExplicitAnyEvidence(t *te
 	assertPathValue(t, reg, ks, got[elsePoint], kindKey, taintedChild)
 }
 
-func TestFactsEdgeTransferTableChildRuntimeGuardInheritsExplicitAnyRootEvidence(t *testing.T) {
+func TestFactsEdgeTransferTableChildRuntimeGuardPreservesExplicitAnyRootEvidence(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
 	branch := graph.AddNode(cfg.NodeBranch)
@@ -996,7 +1033,7 @@ func TestFactsEdgeTransferTableChildRuntimeGuardInheritsExplicitAnyRootEvidence(
 	gotChild := got[thenPoint].ReadPathKey(reg, ks, itemsKey)
 	assertRuntimeKind(t, reg, gotChild, runtimekind.Singleton(runtimekind.Table))
 	if gotEvidence := product.Get(reg, gotChild, evidence.Key); !evidence.Equal(gotEvidence, evidence.ExplicitTop()) {
-		t.Fatalf("then child evidence = %s in %s, want explicit top inherited from root", gotEvidence, formatValue(reg, gotChild))
+		t.Fatalf("then child evidence = %s in %s, want explicit-any origin preserved for broad table guard", gotEvidence, formatValue(reg, gotChild))
 	}
 	assertPathValue(t, reg, ks, got[elsePoint], itemsKey, child)
 }
@@ -1530,6 +1567,81 @@ func TestFactsEdgeTransferDescendantLiteralRefinesExactPathWithoutVariantOrigin(
 
 	assertPathValue(t, reg, ks, got[thenPoint], kindKey, typeValue(reg, lit))
 	assertPathValue(t, reg, ks, got[elsePoint], kindKey, product.Bottom(reg))
+}
+
+func TestFactsEdgeTransferDescendantLiteralContradictionMakesEdgeUnreachable(t *testing.T) {
+	reg := standard.Registry()
+	typeValues := typevalue.NewCache()
+	aCase := typetable.NewRecord().
+		Field("tag", typ.LiteralString("a")).
+		Field("value", typ.String).
+		Build()
+	bCase := typetable.NewRecord().
+		Field("tag", typ.LiteralString("b")).
+		Field("value", typ.Number).
+		Build()
+	union := typeexpr.Union(aCase, bCase)
+	family, _, ok := variant.OriginOfType(union)
+	if !ok {
+		t.Fatal("union has no variant origin")
+	}
+	aOriginCase := mustOriginCaseIndex(t, family, aCase)
+
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	target := symbol.ID(335)
+	rootPath := pathdom.NewPath(target, "r")
+	tagPath := rootPath.Field("tag")
+	valuePath := rootPath.Field("value")
+	visibilityBuilder := visibility.NewBuilder()
+	version := visibilityBuilder.Define(branch, target, "r")
+	visibilityBuilder.SetVisible(thenPoint, target, version)
+	visibilityBuilder.SetVisible(elsePoint, target, version)
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	valueKey := resolver.KeyForVersion(target, version.ID, valuePath.Segments)
+	aValue := product.Set(
+		reg,
+		typeValues.FromTypeWithWitness(reg, aCase),
+		variantorigin.Key,
+		variantorigin.Singleton(family, aOriginCase),
+	)
+	initial := state.State{}.
+		WriteValue(reg, key.SymbolValue(target), aValue).
+		WritePathKey(reg, ks, valueKey, typeValues.FromTypeWithWitness(reg, typ.LiteralString("x")))
+	litA := typeValues.FromTypeWithWitness(reg, typ.LiteralString("a"))
+	notA := factflow.NewNegatedLiteralConstraint(litA)
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						factflow.NewBranchRefinement(tagPath, factflow.NewValueConstraint(litA), true, notA, true),
+					),
+				},
+			}),
+			Visibility:  resolver,
+			ProjectPath: testLuaPathTypeProjector,
+			TypeValues:  typeValues,
+		}),
+	})
+
+	assertVariantOriginType(t, reg, got[thenPoint], target, union, aCase)
+	if !stateIsBottom(reg, got[elsePoint]) {
+		t.Fatalf("else state = %v, want unreachable because proven a-tag value cannot satisfy tag ~= \"a\"", got[elsePoint])
+	}
 }
 
 func TestFactsEdgeTransferPresentAliasLiteralRefinesOptionalUnionDescendant(t *testing.T) {

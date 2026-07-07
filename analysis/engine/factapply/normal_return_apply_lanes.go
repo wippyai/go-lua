@@ -21,6 +21,7 @@ const (
 	normalReturnApplyBeforeParamFacts normalReturnApplyPhase = iota
 	normalReturnApplyAfterParamFacts
 	normalReturnApplyAfterParamRelations
+	normalReturnApplyFinalWrites
 )
 
 type normalReturnApplyContext struct {
@@ -91,7 +92,7 @@ var normalReturnApplyLanes = buildNormalReturnApplyLanes(map[callboundary.Normal
 		apply: applyNormalReturnPathInvalidations,
 	},
 	callboundary.LanePersistentPathWrites: {
-		phase: normalReturnApplyAfterParamFacts,
+		phase: normalReturnApplyFinalWrites,
 		apply: applyNormalReturnPersistentPathWrites,
 	},
 	callboundary.LanePathStaticMembers: {
@@ -221,6 +222,10 @@ func applyNormalReturnPersistentPathWrites(ctx normalReturnApplyContext, out sta
 	for _, fact := range ctx.normalFacts.PersistentPathWrites {
 		targetPath, ok := ctx.substitute(fact.Path)
 		if !ok {
+			continue
+		}
+		if callboundary.IsConcreteSymbolPath(fact.Path) && len(targetPath.Segments) == 0 {
+			out = writeRootSymbol(ctx.node, ctx.resolver, out, targetPath.Symbol, targetPath, fact.Value)
 			continue
 		}
 		out = applyValueWriteAt(ctx.node.Registry, ctx.resolver, ctx.point, out, targetPath, fact.Value)

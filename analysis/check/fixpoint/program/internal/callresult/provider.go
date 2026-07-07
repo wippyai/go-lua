@@ -108,7 +108,7 @@ func OutcomeProvider(config ProviderConfig) callpayload.CallOutcomeProvider {
 	}
 	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
 		if summaries == nil {
-			return callpayload.CallOutcome{}
+			return refineOutcomeResultsFromCurrentCallable(ctx, site, sources, in, read, calleeValue, receiverCallable, typeValues, callpayload.CallOutcome{})
 		}
 		var got summary.Summary
 		var fn *typ.Function
@@ -161,6 +161,9 @@ func OutcomeProvider(config ProviderConfig) callpayload.CallOutcomeProvider {
 		if joined, joinedOK := joinedSummaryForDefinitionPath(ctx, site, in, read, calleeValue, summaries, &preparedSummaries, pathMultiKeys, functionTypes, facts, functionKeys, functionExpressionKeys, sources, typeValues); joinedOK {
 			got = joined
 		} else {
+			if out := refineOutcomeResultsFromCurrentCallable(ctx, site, sources, in, read, calleeValue, receiverCallable, typeValues, callpayload.CallOutcome{}); !out.Empty() {
+				return out
+			}
 			if out, ok := unresolvedFunctionCallOutcome(ctx, site, in, read, calleeValue); ok {
 				return refineOutcomeResultsFromCurrentCallable(ctx, site, sources, in, read, calleeValue, receiverCallable, typeValues, out)
 			}
@@ -881,7 +884,7 @@ func refineOutcomeResultsFromCurrentCallable(
 	}
 	results := make([]callpayload.CallResult, 0, len(fn.Returns))
 	for i, ret := range fn.Returns {
-		if ret == nil || typ.IsAny(ret) || typ.IsUnknown(ret) || refinement.ContainsFreeTypeParam(ret) {
+		if ret == nil || typ.IsAny(ret) || typ.IsUnknown(ret) {
 			continue
 		}
 		results = append(results, callpayload.CallResult{
@@ -892,7 +895,31 @@ func refineOutcomeResultsFromCurrentCallable(
 	if len(results) == 0 {
 		return out
 	}
-	return calloutcome.MergeSupplemental(ctx.Registry, out, callpayload.CallOutcome{Results: results})
+	supplemental := callpayload.CallOutcome{Results: results}
+	supplemental.ReturnConditionSlots = channelReceiveReturnConditionSlots(ctx.Registry, typeValues, site, fn)
+	return calloutcome.MergeSupplemental(ctx.Registry, out, supplemental)
+}
+
+func channelReceiveReturnConditionSlots(
+	reg *axis.Registry,
+	typeValues *typevalue.Cache,
+	site factflow.CallSiteView,
+	fn *typ.Function,
+) []callpayload.CallReturnConditionSlotRefinement {
+	if reg == nil || site.MethodName() != "receive" || fn == nil || len(fn.Returns) < 2 {
+		return nil
+	}
+	payload := fn.Returns[0]
+	okType := fn.Returns[1]
+	if payload == nil || okType == nil || !typ.IsBooleanType(okType) {
+		return nil
+	}
+	return []callpayload.CallReturnConditionSlotRefinement{{
+		ReturnIndex: 1,
+		ReturnValue: true,
+		TargetIndex: 0,
+		Value:       product.WithPresence(reg, typeWitnessValue(reg, typeValues, payload), presence.Present()),
+	}}
 }
 
 func summaryParamObligationOffset(
@@ -2365,8 +2392,9 @@ func functionTypeParamObligationsFrom(reg *axis.Registry, typeValues *typevalue.
 			continue
 		}
 		out = append(out, callpayload.CallParamObligation{
-			ParamIndex: i,
-			Value:      value,
+			ParamIndex:       i,
+			Value:            value,
+			SignatureSurface: true,
 		})
 	}
 	return out

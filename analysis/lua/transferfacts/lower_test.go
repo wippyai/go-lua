@@ -329,6 +329,30 @@ local user = users[id]
 	}
 }
 
+func TestLowerLogicalExpressionValueUsesDeclaredMemberPathTypes(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+type Chunk = { type: string }
+
+local chunk: Chunk = { type = "error" }
+local target_pid: string = "pid"
+local target_topic: string = "topic"
+local ok = chunk.type == "error" and target_pid ~= "" and target_topic ~= ""
+`)
+	reg := standard.Registry()
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	local := mustLocalStmt(t, stmts, 4)
+	point := requireStmtPoints(t, built, local, 1)[0]
+	source := mustLocalSource(t, facts, point)
+	value, ok := facts.ExpressionValue(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing expression value for logical ref %d", source.ExprRef)
+	}
+	got, ok := typevalue.TypeOf(reg, value)
+	if !ok || !typ.TypeEquals(got, typ.Boolean) {
+		t.Fatalf("logical expression type = %v/%v, want boolean", got, ok)
+	}
+}
+
 func TestLowerUnannotatedFunctionExpressionValueCarriesIdentity(t *testing.T) {
 	stmts, bindings, built, result := parseSemanticChunk(t, `
 local cb = function(item)

@@ -2,6 +2,7 @@ package readmodel
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 )
 
@@ -17,6 +18,12 @@ func (r Reader) valueSourcePath(source factflow.ValueSource) (path.Path, bool) {
 	}
 	if source.Kind != factflow.ValueSourcePath || source.PathKey == "" {
 		return path.Path{}, false
+	}
+	if sym, segments, ok := pathaddr.ParseSymbolPathKey(source.PathKey); ok {
+		return path.Path{
+			Symbol:   sym,
+			Segments: segments,
+		}, true
 	}
 	ks := r.result.KeySpace()
 	if ks == nil {

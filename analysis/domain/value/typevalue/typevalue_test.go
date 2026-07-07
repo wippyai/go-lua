@@ -90,6 +90,33 @@ func TestTypeValuePredicatesUseSubtypeWitnesses(t *testing.T) {
 	}
 }
 
+func TestRuntimeIndexUsesUnknownKeyFallbackForTypedMaps(t *testing.T) {
+	reg := standard.Registry()
+	cache := NewCache()
+	mapType := typetable.NewMap(typ.String, typ.Number)
+	tableValue := cache.FromTypeWithWitness(reg, mapType)
+	keyValue := product.Top()
+	want := typeexpr.Optional(typ.Number)
+
+	got, ok := RuntimeIndex(reg, tableValue, keyValue)
+	if !ok {
+		t.Fatal("RuntimeIndex(typed map, top key) returned !ok")
+	}
+	gotType, ok := TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, want) {
+		t.Fatalf("RuntimeIndex(typed map, top key) type = %v/%v, want %v", gotType, ok, want)
+	}
+
+	got, ok = cache.RuntimeIndex(reg, tableValue, keyValue)
+	if !ok {
+		t.Fatal("cached RuntimeIndex(typed map, top key) returned !ok")
+	}
+	gotType, ok = cache.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, want) {
+		t.Fatalf("cached RuntimeIndex(typed map, top key) type = %v/%v, want %v", gotType, ok, want)
+	}
+}
+
 func TestDefinitelyNonEmptyIndexContainer(t *testing.T) {
 	nonEmpty := typ.NewTuple(typ.String)
 	aliased := typ.NewAlias("NonEmptyTuple", nonEmpty)
@@ -157,6 +184,43 @@ func TestCacheReusesEquivalentWitnessValuesByShape(t *testing.T) {
 	}
 	if len(cache.witnessesByShape) != 1 {
 		t.Fatalf("witness shape cache entries = %d, want 1", len(cache.witnessesByShape))
+	}
+}
+
+func TestRuntimeTypeProfileOfCachesClosedRecursiveUnknownScan(t *testing.T) {
+	reg := standard.Registry()
+	cache := NewCache()
+
+	tree := typ.NewRecursivePlaceholder("Tree")
+	node := typ.NewRecursivePlaceholder("TreeNode")
+	tree.SetBody(typetable.NewRecord().
+		Field("root", typ.MaterializeOptional(node)).
+		Build())
+	node.SetBody(typetable.NewRecord().
+		Field("label", typ.String).
+		Field("owner", tree).
+		Field("children", typ.NewArray(node)).
+		Field("parent", typ.MaterializeOptional(node)).
+		Build())
+
+	value := cache.FromTypeWithWitness(reg, node)
+	for i := 0; i < 64; i++ {
+		profile, ok := RuntimeTypeProfileOf(reg, cache, value)
+		if !ok {
+			t.Fatal("RuntimeTypeProfileOf returned !ok for recursive witness")
+		}
+		if profile.TopLevelGradual || profile.ContainsGradual {
+			t.Fatalf("profile = %+v, want no gradual type in closed recursive graph", profile)
+		}
+		if !profile.HasRuntimeKind || !runtimekind.Equal(profile.RuntimeKind, runtimekind.Singleton(runtimekind.Table)) {
+			t.Fatalf("profile runtime kind = %+v/%v, want table", profile.RuntimeKind, profile.HasRuntimeKind)
+		}
+	}
+	if len(cache.typeProfiles) == 0 {
+		t.Fatal("RuntimeTypeProfileOf did not populate the value profile cache")
+	}
+	if len(cache.unknownTypes) == 0 {
+		t.Fatal("RuntimeTypeProfileOf did not populate the recursive unknown-type cache")
 	}
 }
 
@@ -287,18 +351,21 @@ func TestFromTypeMarksUnknownAndAnyAsExplicitTop(t *testing.T) {
 	reg := standard.Registry()
 
 	for _, tt := range []struct {
-		name string
-		typ  typ.Type
+		name     string
+		typ      typ.Type
+		presence presence.Value
 	}{
-		{name: "unknown", typ: typ.Unknown},
-		{name: "any", typ: typ.Any},
+		{name: "unknown", typ: typ.Unknown, presence: presence.Top()},
+		{name: "any", typ: typ.Any, presence: presence.Top()},
+		{name: "optional unknown", typ: typ.MaterializeOptional(typ.Unknown), presence: presence.Maybe()},
+		{name: "optional any", typ: typ.MaterializeOptional(typ.Any), presence: presence.Maybe()},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			got := FromType(reg, tt.typ)
 			if gotEvidence := product.Get(reg, got, evidence.Key); !evidence.Equal(gotEvidence, evidence.ExplicitTop()) {
 				t.Fatalf("FromType(%s) evidence = %s, want explicit-top", tt.typ, gotEvidence)
 			}
-			assertPresence(t, got, presence.Top())
+			assertPresence(t, got, tt.presence)
 			assertRuntimeKind(t, reg, got, runtimekind.Top())
 		})
 	}
@@ -605,6 +672,59 @@ func TestCacheReusesAcyclicStructuralTypeValues(t *testing.T) {
 	}
 }
 
+func TestCacheReusesSameRecursiveShapeTypeValues(t *testing.T) {
+	reg := standard.Registry()
+	cache := NewCache()
+	left := typ.NewRecursive("TreeNode", func(self typ.Type) typ.Type {
+		return typetable.NewRecord().
+			Field("label", typ.String).
+			Field("children", typ.NewArray(self)).
+			OptField("parent", self).
+			Build()
+	})
+	right := typ.NewRecursive("TreeNode", func(self typ.Type) typ.Type {
+		return typetable.NewRecord().
+			Field("label", typ.String).
+			Field("children", typ.NewArray(self)).
+			OptField("parent", self).
+			Build()
+	})
+	if left == right {
+		t.Fatal("test requires independently rebuilt recursive aliases")
+	}
+
+	leftValue := cache.FromTypeWithWitness(reg, left)
+	rightValue := cache.FromTypeWithWitness(reg, right)
+	if !product.Equal(reg, leftValue, rightValue) {
+		t.Fatalf("recursive structural cache witness mismatch")
+	}
+	if got := len(cache.witnessesByShape); got != 1 {
+		t.Fatalf("witness shape bucket count = %d, want 1", got)
+	}
+	for _, entries := range cache.witnessesByShape {
+		if got := len(entries); got != 1 {
+			t.Fatalf("witness shape bucket entries = %d, want 1", got)
+		}
+	}
+}
+
+func TestCacheKeepsDifferentRecursiveNamesDistinct(t *testing.T) {
+	reg := standard.Registry()
+	cache := NewCache()
+	left := typ.NewRecursive("TreeNode", func(self typ.Type) typ.Type {
+		return typetable.NewRecord().OptField("next", self).Build()
+	})
+	right := typ.NewRecursive("ListNode", func(self typ.Type) typ.Type {
+		return typetable.NewRecord().OptField("next", self).Build()
+	})
+
+	leftValue := cache.FromTypeWithWitness(reg, left)
+	rightValue := cache.FromTypeWithWitness(reg, right)
+	if product.Equal(reg, leftValue, rightValue) {
+		t.Fatalf("recursive cache collapsed differently named aliases")
+	}
+}
+
 func TestWithWitnessPreservesExistingStructuralWitness(t *testing.T) {
 	reg := standard.Registry()
 	left := typetable.NewRecord().
@@ -622,6 +742,45 @@ func TestWithWitnessPreservesExistingStructuralWitness(t *testing.T) {
 
 	if got != value {
 		t.Fatalf("WithWitness rebuilt value for equivalent witness: got %v want original %v", got, value)
+	}
+}
+
+func TestWithWitnessPreservesSameRecursiveIdentityWitness(t *testing.T) {
+	reg := standard.Registry()
+	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typetable.NewRecord().OptField("next", self).Build()
+	})
+	left := typetable.NewRecord().Field("next", node).Build()
+	right := typetable.NewRecord().Field("next", node).Build()
+	value := WithWitness(reg, FromType(reg, left), left)
+
+	got := WithWitness(reg, value, right)
+
+	if got != value {
+		t.Fatalf("WithWitness rebuilt same-recursive-identity witness: got %v want original %v", got, value)
+	}
+}
+
+func TestWithWitnessKeepsDistinctRecursiveIdentityWitnessesDistinct(t *testing.T) {
+	reg := standard.Registry()
+	leftNode := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typetable.NewRecord().OptField("next", self).Build()
+	})
+	rightNode := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typetable.NewRecord().OptField("next", self).Build()
+	})
+	left := typetable.NewRecord().Field("next", leftNode).Build()
+	right := typetable.NewRecord().Field("next", rightNode).Build()
+	value := WithWitness(reg, FromType(reg, left), left)
+
+	got := WithWitness(reg, value, right)
+
+	if got == value {
+		t.Fatalf("WithWitness collapsed distinct recursive identities")
+	}
+	gotType, ok := TypeOf(reg, got)
+	if !ok || gotType != right {
+		t.Fatalf("WithWitness distinct recursive identity type = %v/%v, want %v", gotType, ok, right)
 	}
 }
 

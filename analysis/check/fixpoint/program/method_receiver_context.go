@@ -1252,15 +1252,10 @@ func metatableIndexTable(bindings *bind.Result, expr ast.Expr) (symbol.ID, bool)
 }
 
 func methodFunctionTableSymbol(bindings *bind.Result, origin bind.FunctionOrigin) (symbol.ID, bool) {
-	stmt, ok := origin.Stmt.(*ast.FuncDefStmt)
-	if !ok || stmt == nil || stmt.Name == nil || stmt.Name.Method == "" {
+	if bindings == nil {
 		return 0, false
 	}
-	p, ok := pathexpr.ResolveFuncName(stmt.Name, bindings)
-	if !ok || p.Symbol == 0 || len(p.Segments) == 0 {
-		return 0, false
-	}
-	return p.Symbol, true
+	return bindings.MethodOriginReceiverSymbol(origin)
 }
 
 func implicitSelfParamSeed(reg *axis.Registry, bindings *bind.Result, fn *ast.FunctionExpr, t typ.Type) (paramSeed, bool) {

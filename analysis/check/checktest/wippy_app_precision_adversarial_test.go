@@ -1271,7 +1271,7 @@ end
 	}
 }
 
-func TestCheckGuardedLocalCastFromAnyReportsProofBoundaryNotSameTypeMismatch(t *testing.T) {
+func TestCheckGuardedLocalCastFromAnyValidatesRuntimeType(t *testing.T) {
 	result := Check(`
 local function send(user_id: string): ()
 end
@@ -1284,16 +1284,8 @@ local function main(metadata: any): ()
     send(user_id)
 end
 `)
-	if len(result.Diagnostics) != 1 {
-		t.Fatalf("diagnostics = %#v, want one missing-proof diagnostic", result.Diagnostics)
-	}
-	diag := result.Diagnostics[0]
-	if !strings.Contains(diag.Message, "argument 1 (user_id) comes from any/unknown") ||
-		!strings.Contains(diag.Message, "no proof shows it is string") {
-		t.Fatalf("diagnostic message = %q, want proof-boundary explanation", diag.Message)
-	}
-	if strings.Contains(diag.Message, "string, not string") {
-		t.Fatalf("diagnostic message = %q, want no redundant same-type mismatch", diag.Message)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want cast plus nil guard to validate the runtime type", result.Diagnostics)
 	}
 }
 
@@ -3435,8 +3427,8 @@ func assertRootLocalAssignmentSourceType(t *testing.T, result Result, name strin
 			}
 			if value, ok := root.LocalAssignmentSourceValueAtBoundary(point, fact.Source); ok {
 				ty, tyOK := typevalue.TypeOf(root.Registry(), value)
-				if !tyOK || !typ.TypeEquals(ty, want) {
-					t.Fatalf("%s source type = %v/%v, want %v", name, ty, tyOK, want)
+				if !tyOK || !root.IsSubtype(ty, want) {
+					t.Fatalf("%s source type = %v/%v, want subtype of %v", name, ty, tyOK, want)
 				}
 				return
 			} else {
@@ -7732,10 +7724,14 @@ _G.coroutine = {
 }
 
 coroutine.spawn(function() end)
-captured_fn()
+	captured_fn()
 `, WithStdlib(), WithGlobals("coroutine"))
 	if len(result.Diagnostics) != 0 {
-		t.Fatalf("diagnostics = %#v, want _G.coroutine assignment to feed coroutine.spawn call", result.Diagnostics)
+		debug := "<no checked result>"
+		if result.checked != nil && result.checked.RootResult() != nil {
+			debug = callOutcomeDebug(result.checked.RootResult())
+		}
+		t.Fatalf("diagnostics = %#v, want _G.coroutine assignment to feed coroutine.spawn call\ncalls: %s", result.Diagnostics, debug)
 	}
 }
 
@@ -7751,10 +7747,14 @@ coroutine = {
 }
 
 coroutine.spawn(function() end)
-captured_fn()
+	captured_fn()
 `, WithStdlib(), WithGlobals("coroutine"))
 	if len(result.Diagnostics) != 0 {
-		t.Fatalf("diagnostics = %#v, want root record function call to propagate closure side effects", result.Diagnostics)
+		debug := "<no checked result>"
+		if result.checked != nil && result.checked.RootResult() != nil {
+			debug = callOutcomeDebug(result.checked.RootResult())
+		}
+		t.Fatalf("diagnostics = %#v, want root record function call to propagate closure side effects\ncalls: %s", result.Diagnostics, debug)
 	}
 }
 

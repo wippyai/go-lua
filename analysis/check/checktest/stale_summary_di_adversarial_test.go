@@ -551,7 +551,7 @@ invoke(p, mutate, "ok")
 	requireEvidenceMessage(t, diag, "inside invoke, argument 1 (payload) is passed to provider.send parameter 1, which requires number")
 }
 
-func TestMemberCallObligationSuppressesExplicitAnyProviderEvidence(t *testing.T) {
+func TestMemberCallObligationReportsExplicitAnyProviderConcreteMismatch(t *testing.T) {
 	result := Check(`
 local function invoke(provider, payload)
     provider.send(payload)
@@ -560,9 +560,9 @@ end
 local provider = ({ send = function(v: number): () end } :: any)
 invoke(provider, "ok")
 `)
-	if len(result.Diagnostics) != 0 {
-		t.Fatalf("diagnostics = %#v, want none because explicit any provider has no stable structural validation", result.Diagnostics)
-	}
+	diag := requireDiagnosticCodeWithEvidence(t, result, diagnostics.CodeDirectCallArgType, "inside invoke, argument 1 (payload) is passed to provider.send parameter 1, which requires number")
+	requireEvidenceMessage(t, diag, "argument 1 (payload) has literal value \"ok\"")
+	requireEvidenceMessage(t, diag, "no proof on this path shows argument 1 (payload) is number")
 }
 
 func TestMemberCallObligationReportsNestedDIProviderMemberMismatch(t *testing.T) {

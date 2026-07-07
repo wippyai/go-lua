@@ -5,8 +5,15 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/engine/calloutcome"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
@@ -22,16 +29,40 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
+	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/transferfacts"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
+	typerefinement "github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typecall"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
+
+func functionVarargValueProvider(reg *axis.Registry, fn *ast.FunctionExpr, bindings *bind.Result) sourcevalue.VarargValueProvider {
+	if reg == nil || fn == nil || bindings == nil {
+		return nil
+	}
+	vararg, ok := bindings.VarargSymbol(fn)
+	if !ok || vararg == 0 {
+		return nil
+	}
+	slot := statekey.SymbolValue(vararg)
+	if slot == 0 {
+		return nil
+	}
+	return func(_ cfg.Point, _ factflow.ValueSource, in state.State, _ func(cfg.Point) state.State) (product.Value, bool) {
+		value := in.ReadValue(reg, slot)
+		if product.Equal(reg, value, product.Bottom(reg)) {
+			return product.Value{}, false
+		}
+		return value, true
+	}
+}
 
 func (c *checker) prepareChunk(stmts []ast.Stmt) (*Static, error) {
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: configGlobals(c.config)})
@@ -116,9 +147,11 @@ func (c *checker) prepare(
 		ModuleExports: config.ModuleExports,
 		Metadata:      built.Meta,
 		WIR:           wirBody,
+
+		MethodReceiverTypes: config.MethodReceiverTypes,
 	})
 	facts := lowered.Facts
-	signatureID := newSignatureIdentityResolver(bindings, built.Graph, modules, config.Signatures)
+	signatureID := newSignatureIdentityResolver(bindings, built.Graph, facts, modules, config.Signatures)
 	signatureNameForCall := signatureID.nameForCall
 	if hasSignatures(config.Signatures) {
 		facts = effectlowering.WithSignatureNoNormalReturns(effectlowering.SignatureNoNormalReturnConfig{
@@ -139,7 +172,7 @@ func (c *checker) prepare(
 		expressionValue = readexpr.Provider(readexpr.Config{
 			Registry:        config.Registry,
 			Facts:           facts,
-			Visibility:      resolver.Before(),
+			Visibility:      resolver,
 			TypeValues:      config.TypeValues,
 			ProofVisibility: resolver,
 		})
@@ -151,10 +184,16 @@ func (c *checker) prepare(
 		expressionPaths = exprRefSet(facts.ExpressionPaths())
 		expressionPaths = addDynamicIndexExprRefs(expressionPaths, facts.DynamicIndexExpressions())
 	}
+	varargValue := config.VarargValue
+	if varargValue == nil {
+		varargValue = functionVarargValueProvider(config.Registry, sem.Function(), bindings)
+	}
 	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
 		Registry:              config.Registry,
 		TypeValues:            config.TypeValues,
 		KeySpace:              resolver.KeySpace(),
+		Visibility:            resolver,
+		ProjectPathValue:      luaProjectValue(config.Registry, config.TypeValues),
 		ExpressionValues:      expressionValues,
 		ExpressionPaths:       expressionPaths,
 		ObjectLiteralView:     facts.ObjectLiteralView,
@@ -166,9 +205,10 @@ func (c *checker) prepare(
 		ExpressionCondition: func(point cfg.Point, in state.State, selected factflow.ExpressionConditionFacts) state.State {
 			return factapply.ApplyExpressionConditionFacts(config.Registry, resolver, luaPathTypeProjector, point, in, selected)
 		},
+		StaticScalarKey:       luaStaticScalarKeySegment(config.Registry, config.TypeValues),
 		ExpressionValue:       expressionValue,
 		PreferExpressionValue: userExpressionValue != nil,
-		VarargValue:           config.VarargValue,
+		VarargValue:           varargValue,
 	})
 	refinedSources := sourcevalue.NewExpressionRefinements(facts.ExpressionRefinements()).Bind(config.Registry, sources)
 	calleeValue := calleeValueProvider(config.Registry, facts, resolver, refinedSources, config.TypeValues, bindings, typeResolver)
@@ -228,7 +268,9 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		WIR:                    s.wir,
 		WIRAssignmentTarget:    config.WIRAssignmentTarget,
 	})
-	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.cfg.Meta, s.facts, s.sources, s.symbolTypes, s.signatures, s.signatureID, s.typeNS, typeValues, callOutcome, s.visibility.KeySpace(), s.visibility)
+	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.cfg.Meta, s.facts, s.sources, s.symbolTypes, s.signatures, s.signatureID, s.typeNS, typeValues, callOutcome, s.visibility.KeySpace(), s.visibility, func(expr ast.Expr) (pathdom.Path, bool) {
+		return pathexpr.Resolve(expr, s.bindings)
+	})
 	edgeTransfer := factapply.NewFactsEdgeTransfer(factapply.FactsEdgeTransferConfig{
 		Facts:       s.facts,
 		Sources:     s.sources,
@@ -250,7 +292,7 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		Stats:        transferStats(config.Stats),
 	})
 	flow = s.finalizeReturnSlotHeapWitnesses(flow, typeValues)
-	return &Result{
+	result := &Result{
 		registry:              s.registry,
 		bindings:              s.bindings,
 		cfg:                   s.cfg,
@@ -275,6 +317,92 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		typeValues:            typeValues,
 		stateLanes:            append([]state.LaneID(nil), config.StateLanes...),
 		queries:               newResultQueryCache(s.facts),
+	}
+	result.finalizeReturnSlotsFromBoundaryValues()
+	return result
+}
+
+func (r *Result) finalizeReturnSlotsFromBoundaryValues() {
+	if r == nil || r.registry == nil || r.flow == nil {
+		return
+	}
+	graph := r.Graph()
+	if graph == nil {
+		return
+	}
+	exit := graph.Exit()
+	exitState, ok := r.flow[exit]
+	if !ok {
+		return
+	}
+	domain := product.Domain(r.registry)
+	joined := map[int]product.Value{}
+	seen := map[int]bool{}
+	for _, point := range r.ReturnPoints() {
+		if !r.PointReachable(point) {
+			continue
+		}
+		sources, ok := r.ReturnValueSources(point)
+		if !ok {
+			continue
+		}
+		for i, source := range sources {
+			index := source.TargetIndex
+			if index < 0 {
+				index = i
+			}
+			value, valueOK := r.SourceValueAtBoundary(point, source)
+			if !valueOK || !returnSlotBoundaryValueAdmissible(r.registry, value) {
+				value = product.Top()
+			}
+			if !seen[index] {
+				joined[index] = value
+				seen[index] = true
+				continue
+			}
+			joined[index] = domain.Join(joined[index], value)
+		}
+	}
+	for index, value := range joined {
+		if product.Equal(r.registry, value, product.Bottom(r.registry)) {
+			continue
+		}
+		exitState = exitState.WriteReturnSlot(r.registry, index, value)
+	}
+	r.flow[exit] = exitState
+}
+
+func returnSlotBoundaryValueAdmissible(reg *axis.Registry, value product.Value) bool {
+	if reg == nil {
+		return false
+	}
+	claim := product.Get(reg, value, assertion.Key)
+	if claim.Has(assertion.AnyClaim) && !claim.Has(assertion.RuntimeClaim) {
+		t, ok := typevalue.TypeOf(reg, value)
+		return ok && returnSlotStructuredType(t)
+	}
+	if claim.Has(assertion.TypeClaim) && !claim.Has(assertion.RuntimeClaim) {
+		t, ok := typevalue.TypeOf(reg, value)
+		return ok && returnSlotStructuredType(t)
+	}
+	return true
+}
+
+func returnSlotStructuredType(t typ.Type) bool {
+	switch v := unwrap.Annotated(t).(type) {
+	case *typ.Array, *typ.Map, *typ.ReadonlyMap, *typ.Tuple, *typ.Record, *typ.Function, *typ.Interface:
+		return true
+	case *typ.Optional:
+		return returnSlotStructuredType(v.Inner)
+	case *typ.Union:
+		for _, member := range v.Members {
+			if !returnSlotStructuredType(member) {
+				return false
+			}
+		}
+		return len(v.Members) != 0
+	default:
+		return false
 	}
 }
 
@@ -303,6 +431,9 @@ func (s *Static) finalizeReturnSlotHeapWitnesses(flow transfer.Result, typeValue
 	}
 	for index := range slots {
 		value := exitState.ReadReturnSlot(s.registry, index)
+		if t, ok := typevalue.TypeOf(s.registry, value); ok && t != nil && typerefinement.ContainsBoundaryTop(t) {
+			continue
+		}
 		projected, ok := sourceprojection.HeapObjectContainerType(s.registry, typeValues, exitState, value)
 		if !ok {
 			continue
@@ -479,4 +610,70 @@ func preparedCallOutcomeSupplement(
 
 func luaPathTypeProjector(root typ.Type, p pathdom.Path) (typ.Type, bool) {
 	return luatypeprojection.ApplySegments(root, p.Segments)
+}
+
+func luaProjectSegments(root typ.Type, segments []segment.Segment) (typ.Type, bool) {
+	return luatypeprojection.ApplySegments(root, segments)
+}
+
+func luaProjectValue(reg *axis.Registry, typeValues *typevalue.Cache) func(product.Value, []segment.Segment) (product.Value, bool) {
+	return func(root product.Value, segments []segment.Segment) (product.Value, bool) {
+		if reg == nil || typeValues == nil {
+			return product.Value{}, false
+		}
+		if origin := product.Get(reg, root, variantorigin.Key); !origin.IsBottom() && !origin.IsTop() {
+			if rootType, ok := typeValues.TypeFromVariantOrigin(origin.Family(), origin.CasesRef()); ok {
+				if value, ok := luaProjectValueFromType(reg, typeValues, rootType, segments); ok {
+					if family, cases, ok := variant.ProjectOrigin(origin.Family(), origin.CasesRef(), segments); ok {
+						value = product.Set(reg, value, variantorigin.Key, variantorigin.Of(family, cases))
+					}
+					return value, true
+				}
+			}
+		}
+		rootType, ok := typeValues.TypeOf(reg, root)
+		if !ok || rootType == nil || typ.IsAny(rootType) || typ.IsUnknown(rootType) {
+			return product.Value{}, false
+		}
+		return luaProjectValueFromType(reg, typeValues, rootType, segments)
+	}
+}
+
+func luaStaticScalarKeySegment(reg *axis.Registry, typeValues *typevalue.Cache) sourcevalue.StaticScalarKeySegment {
+	return func(value product.Value) (segment.Segment, bool) {
+		if reg == nil || typeValues == nil {
+			return segment.Segment{}, false
+		}
+		t, ok := typeValues.TypeOf(reg, value)
+		if !ok {
+			return segment.Segment{}, false
+		}
+		lit, ok := unwrap.Alias(t).(*typ.Literal)
+		if !ok {
+			return segment.Segment{}, false
+		}
+		switch v := lit.Value.(type) {
+		case string:
+			return segment.Segment{Kind: segment.SegmentIndexString, Name: v}, true
+		case int64:
+			if int64(int(v)) != v {
+				return segment.Segment{}, false
+			}
+			return segment.Segment{Kind: segment.SegmentIndexInt, Index: int(v)}, true
+		default:
+			return segment.Segment{}, false
+		}
+	}
+}
+
+func luaProjectValueFromType(reg *axis.Registry, typeValues *typevalue.Cache, rootType typ.Type, segments []segment.Segment) (product.Value, bool) {
+	projected, ok := luaProjectSegments(rootType, segments)
+	if !ok || projected == nil {
+		return product.Value{}, false
+	}
+	value := typevalue.WithWitness(reg, typeValues.FromType(reg, projected), projected)
+	if !typevalue.ProjectionHasNil(projected) {
+		value = product.WithPresence(reg, value, presence.Present())
+	}
+	return value, true
 }

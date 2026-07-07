@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/check/readmodel"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -54,7 +55,7 @@ func (d diagnosticDisplay) PossiblyNilCalleeTypeEvidence(name string, calleeType
 	if callable {
 		return fmt.Sprintf("%s has a callable type, but may also be nil", name)
 	}
-	if present := projectionWithoutNil(calleeType); present != nil && !typ.IsNever(present) {
+	if present := readmodel.ProjectionWithoutNil(calleeType); present != nil && !typ.IsNever(present) {
 		return fmt.Sprintf("%s can be %s or nil at the call", name, d.Type(present))
 	}
 	return fmt.Sprintf("%s can be nil at the call", name)

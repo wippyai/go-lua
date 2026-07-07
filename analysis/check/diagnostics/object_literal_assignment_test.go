@@ -67,6 +67,8 @@ func TestAnnotationAssignabilityRejectsObjectLiteralExplicitAnyMember(t *testing
 		evidence: []diagnosticEvidenceWant{
 			{kind: diagnostic.EvidenceAbstractFact, trust: diagnostic.TrustProven, message: "raw has type any", span: diagnostic.Span{StartLine: 3, StartCol: 24, EndLine: 3, EndCol: 26}},
 			{kind: diagnostic.EvidenceUserAssertion, trust: diagnostic.TrustClaimed, message: "p.id is declared as string", span: diagnostic.Span{StartLine: 3, StartCol: 10, EndLine: 3, EndCol: 14}},
+			{kind: diagnostic.EvidenceAbstractFact, trust: diagnostic.TrustProven, message: "assigned value has type {id: nil}", span: diagnostic.Span{StartLine: 3, StartCol: 18, EndLine: 3, EndCol: 27}},
+			{kind: diagnostic.EvidenceUserAssertion, trust: diagnostic.TrustClaimed, message: "p is declared as {id: string}", span: diagnostic.Span{StartLine: 3, StartCol: 10, EndLine: 3, EndCol: 14}},
 			{kind: diagnostic.EvidenceUserAssertion, trust: diagnostic.TrustClaimed, reason: diagnostic.EvidenceReasonUserAssertedAny, message: "user asserted any; not abstract-interpreter proof", span: diagnostic.Span{StartLine: 3, StartCol: 24, EndLine: 3, EndCol: 26}},
 			{kind: diagnostic.EvidencePrecisionBoundary, trust: diagnostic.TrustUnknown, reason: diagnostic.EvidenceReasonExplicitBoundaryValidation, message: "raw comes from any/unknown", span: diagnostic.Span{StartLine: 3, StartCol: 24, EndLine: 3, EndCol: 26}},
 			{kind: diagnostic.EvidenceMissingProof, trust: diagnostic.TrustUnknown, reason: diagnostic.EvidenceReasonBoundaryValidationMissing, message: "no proof on this path shows raw is string", span: diagnostic.Span{StartLine: 3, StartCol: 24, EndLine: 3, EndCol: 26}},
@@ -80,9 +82,11 @@ func TestAnnotationAssignabilityRejectsObjectLiteralExplicitAnyMember(t *testing
 			"3 | local p: Point = {id = raw}",
 			"1. proven: raw has type any",
 			"2. claimed: p.id is declared as string",
-			"3. claimed: user asserted any; not abstract-interpreter proof",
-			"4. unvalidated value: raw comes from any/unknown",
-			"5. missing proof: no proof on this path shows raw is string",
+			"3. proven: assigned value has type {id: nil}",
+			"4. claimed: p is declared as {id: string}",
+			"5. claimed: user asserted any; not abstract-interpreter proof",
+			"6. unvalidated value: raw comes from any/unknown",
+			"7. missing proof: no proof on this path shows raw is string",
 			"help: Use a value compatible with the expected type, or change the target type if `raw` is valid.",
 		},
 	})

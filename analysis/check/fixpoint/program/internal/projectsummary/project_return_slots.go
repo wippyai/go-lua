@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -28,9 +29,53 @@ func projectReturnSlots(
 ) []product.Value {
 	fallback := projectReturnSlotsFromExit(reg, result, exit, arity, declared)
 	if returns, ok := projectReturnSlotsFromSources(reg, result, exit, arity, fallback); ok {
+		if !returnSlotsHaveExportableEvidence(reg, returns) {
+			return nil
+		}
 		return returns
 	}
+	if !returnSlotsHaveExportableEvidence(reg, fallback) {
+		return nil
+	}
 	return fallback
+}
+
+func returnSlotsHaveExportableEvidence(reg *axis.Registry, returns []product.Value) bool {
+	for _, value := range returns {
+		if returnSlotHasExportableEvidence(reg, value) {
+			return true
+		}
+	}
+	return false
+}
+
+func returnSlotHasExportableEvidence(reg *axis.Registry, value product.Value) bool {
+	if reg == nil || product.Equal(reg, value, product.Bottom(reg)) {
+		return false
+	}
+	if _, ok := product.Get(reg, value, identity.Key).ID(); ok {
+		return true
+	}
+	if witness, ok := typevalue.WitnessOf(reg, value); ok {
+		return witness != nil && !typ.IsUnknown(witness)
+	}
+	t, ok := typevalue.TypeOf(reg, value)
+	if !ok || t == nil {
+		return !returnSlotOnlyCarriesTopOrigin(reg, value)
+	}
+	return !typ.IsUnknown(t)
+}
+
+func returnSlotOnlyCarriesTopOrigin(reg *axis.Registry, value product.Value) bool {
+	if reg == nil {
+		return false
+	}
+	ev := product.Get(reg, value, evidence.Key)
+	if !ev.IsExplicitTop() && !ev.IsGradualTop() {
+		return false
+	}
+	topOnly := product.Set(reg, product.Top(), evidence.Key, ev)
+	return product.Equal(reg, value, topOnly)
 }
 
 func projectReturnSlotsFromExit(

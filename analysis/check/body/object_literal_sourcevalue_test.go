@@ -78,6 +78,49 @@ func TestObjectLiteralViewEvaluatorUsesExpectedTypeForEmptyConstructor(t *testin
 	}
 }
 
+func TestObjectLiteralViewEvaluatorChildEntriesRefineOverlappingParent(t *testing.T) {
+	reg := standard.Registry()
+	parentSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(1004), HasExpr: true}
+	statusSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(1005), HasExpr: true}
+	headersSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(1006), HasExpr: true}
+	parentType := typetable.NewRecord().
+		Field("status", typ.MaterializeOptional(typ.Integer)).
+		Field("headers", typ.MaterializeOptional(typetable.NewMap(typ.String, typ.String))).
+		Build()
+	headersType := typetable.NewMap(typ.String, typ.String)
+	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
+		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("value"), parentSource),
+		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("value").Field("status"), statusSource),
+		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("value").Field("headers"), headersSource),
+	})
+
+	got, ok := objectLiteralViewEvaluator(reg, nil)(lit.View(), factflow.ValueSourceResolverFunc(func(source factflow.ValueSource) (product.Value, bool) {
+		switch source.ExprRef {
+		case parentSource.ExprRef:
+			return typevalue.WithWitness(reg, typevalue.FromType(reg, parentType), parentType), true
+		case statusSource.ExprRef:
+			return typevalue.WithWitness(reg, typevalue.FromType(reg, typ.Integer), typ.Integer), true
+		case headersSource.ExprRef:
+			return typevalue.WithWitness(reg, typevalue.FromType(reg, headersType), headersType), true
+		default:
+			return product.Value{}, false
+		}
+	}))
+	if !ok {
+		t.Fatal("objectLiteralViewEvaluator returned false")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	want := typetable.NewRecord().
+		Field("value", typetable.NewRecord().
+			Field("status", typ.Integer).
+			Field("headers", headersType).
+			Build()).
+		Build()
+	if !ok || !typ.TypeEquals(gotType, want) {
+		t.Fatalf("object literal type = %v/%v, want %v", gotType, ok, want)
+	}
+}
+
 func TestExpressionOperationEvaluatorUsesLuaOperationSemantics(t *testing.T) {
 	reg := standard.Registry()
 	source := factflow.NewNilValueSource(0)

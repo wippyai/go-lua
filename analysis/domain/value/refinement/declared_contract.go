@@ -44,6 +44,22 @@ func DeclaredContractAlreadySatisfied(reg *axis.Registry, value, declared produc
 	return true
 }
 
+// DeclaredContractAlreadySatisfiedPreservingPresence reports whether applying a
+// declared contract only for non-presence facts would leave value unchanged.
+// Callers that intentionally preserve the source expression's presence should
+// use this instead of the full contract predicate, otherwise an optional
+// declaration can force a recursive witness merge that is later undone.
+func DeclaredContractAlreadySatisfiedPreservingPresence(reg *axis.Registry, value, declared product.Value) bool {
+	if _, ok := typevalue.DeclaredTypeFactsPresenceOnly(reg, value, declared); !ok {
+		return false
+	}
+	if origin, ok := declaredOriginForValue(reg, value, declared); ok &&
+		!variantorigin.Equal(product.Get(reg, value, variantorigin.Key), origin) {
+		return false
+	}
+	return true
+}
+
 func declaredOriginForValue(reg *axis.Registry, value, declared product.Value) (variantorigin.Value, bool) {
 	declaredOrigin := product.Get(reg, declared, variantorigin.Key)
 	if declaredOrigin.IsBottom() || declaredOrigin.IsTop() {

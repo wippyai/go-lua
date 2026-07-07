@@ -9,20 +9,24 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	enginevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
+	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/ambient"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/source"
 )
 
 func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *testing.T) {
@@ -430,11 +434,11 @@ end
 		CallContext: wir.CallContextAssignmentSource,
 		CallExpr:    3,
 		CallFinal:   true,
-		CallSpan:    source.Span{StartLine: 9, StartCol: 3, EndLine: 9, EndCol: 24},
-		CalleeSpan:  source.Span{StartLine: 9, StartCol: 3, EndLine: 9, EndCol: 7},
+		CallSpan:    wir.Span{StartLine: 9, StartCol: 3, EndLine: 9, EndCol: 24},
+		CalleeSpan:  wir.Span{StartLine: 9, StartCol: 3, EndLine: 9, EndCol: 7},
 		CallArgs: body.AppendCallArgumentMeta([]wir.CallArgumentMeta{
-			{Span: source.Span{StartLine: 9, StartCol: 8, EndLine: 9, EndCol: 18}, Label: "payload.id"},
-			{Span: source.Span{StartLine: 9, StartCol: 20, EndLine: 9, EndCol: 24}, Label: "\"tag\""},
+			{Span: wir.Span{StartLine: 9, StartCol: 8, EndLine: 9, EndCol: 18}, Label: "payload.id"},
+			{Span: wir.Span{StartLine: 9, StartCol: 20, EndLine: 9, EndCol: 24}, Label: "\"tag\""},
 		}),
 		ExprID: 99,
 	})
@@ -535,6 +539,283 @@ end
 			t.Fatalf("WIR object-entry source shape = final:%v adjusted:%v expanded:%v openTail:%v, want ordinary expression source for %v",
 				source.Final, source.Adjusted, source.Expanded, source.OpenTail, entry.Suffix())
 		}
+	}
+}
+
+func TestLowerWIRCallArgumentObjectLiteralPathEntriesProjectWithoutSemanticHook(t *testing.T) {
+	stmts, bindings, _, _ := parseSemanticChunk(t, `
+type Methods = { node_id: string }
+function Methods:f(source: { primary: Channel<{ id: string }>, alias: string? }): ()
+    local function decode_event(raw: any): { id: string }
+        return { id = tostring(raw) }
+    end
+    local function listen<T>(topic: string, options: { channel: Channel<T>, decode: (any) -> T }): Channel<T>
+        return options.channel
+    end
+    listen("events", {
+        channel = source.primary,
+        decode = decode_event,
+        node_id = source.alias or self.node_id,
+    })
+end
+`)
+	def, ok := stmts[1].(*ast.FuncDefStmt)
+	if !ok || def.Func == nil {
+		t.Fatalf("stmt = %T, want method definition", stmts[1])
+	}
+	built := cfgbuild.BuildFunction(def.Func, bindings)
+	if built == nil {
+		t.Fatal("BuildFunction returned nil")
+	}
+	result, err := semantics.ExtractFunction(def.Func, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractFunction: %v", err)
+	}
+	stmt, ok := def.Func.Stmts[len(def.Func.Stmts)-1].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call", def.Func.Stmts[len(def.Func.Stmts)-1])
+	}
+	body := wirlower.Lower("call-arg-object-literal-path-entries", def.Func.Stmts, bindings, built)
+	reg := standard.Registry()
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+
+	var site factflow.CallSite
+	var callPoint cfg.Point
+	for _, point := range built.StmtPoints.PointsFor(stmt) {
+		if got, ok := facts.CallSite(point); ok {
+			site, callPoint = got, point
+			break
+		}
+	}
+	if callPoint == 0 {
+		t.Fatalf("missing WIR call site for points %v", built.StmtPoints.PointsFor(stmt))
+	}
+	arg, ok := site.ArgumentSourceAt(1)
+	if !ok || arg.Kind != factflow.ValueSourceExpression || !arg.HasExpr {
+		t.Fatalf("call argument source = %#v/%v, want object-literal expression source", arg, ok)
+	}
+	if _, ok := facts.ObjectLiteral(arg.ExprRef); !ok {
+		t.Fatalf("missing object literal for WIR call argument expr %d with semantic result present", arg.ExprRef)
+	}
+	typeValues := typevalue.NewCache()
+	sources := enginevalue.NewSourceValues(enginevalue.SourceValuesConfig{
+		Registry:          reg,
+		TypeValues:        typeValues,
+		ExpressionValues:  facts.ExpressionValues(),
+		ObjectLiteralView: facts.ObjectLiteralView,
+		ObjectLiteralFromView: func(lit factflow.ObjectLiteralView, resolver factflow.ValueSourceResolver) (product.Value, bool) {
+			return luasourcevalue.ObjectLiteralValueFromViewCached(reg, typeValues, lit, resolver)
+		},
+		ExpressionOps: facts.ExpressionOperations(),
+		ExpressionOp: func(op factflow.ExpressionOperation, left product.Value, right product.Value) (product.Value, bool) {
+			return luasourcevalue.ExpressionOperationValue(reg, typeValues, op, left, right)
+		},
+	})
+	value, ok := sources.ValueOfSource(callPoint, arg, state.State{}, nil)
+	if !ok {
+		t.Fatalf("call argument object literal source did not resolve")
+	}
+	got, ok := typeValues.TypeOf(reg, value)
+	if !ok {
+		t.Fatalf("call argument object literal value = %#v, want projectable record type", value)
+	}
+	event := typetable.NewRecord().Field("id", typ.String).Build()
+	want := typetable.NewRecord().
+		Field("channel", typ.Instantiate(ambient.ChannelGeneric(), event)).
+		Field("decode", typ.Func().Param("raw", typ.Any).Returns(event).Build()).
+		Field("node_id", typ.String).
+		Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("call argument object literal type = %v, want channel/decode record", got)
+	}
+}
+
+func TestLowerWIRCallArgumentObjectLiteralUsesMetatableMethodReceiverType(t *testing.T) {
+	stmts, bindings, _, _ := parseSemanticChunk(t, `
+local methods = {}
+local mt = { __index = methods }
+
+type NodeInstance = {
+    node_id: string,
+}
+
+local function listen(options: { node_id: string? }): ()
+end
+
+function methods:route(target: { node_id: string? }): ()
+    listen({
+        node_id = target.node_id or self.node_id,
+    })
+end
+`)
+	methodsStmt, ok := stmts[0].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want methods local assignment", stmts[0])
+	}
+	methodSymbols := bindings.LocalSymbols(methodsStmt)
+	if len(methodSymbols) == 0 || methodSymbols[0] == 0 {
+		t.Fatal("missing methods symbol")
+	}
+	def, ok := stmts[4].(*ast.FuncDefStmt)
+	if !ok || def.Func == nil {
+		t.Fatalf("stmt = %T, want method definition", stmts[4])
+	}
+	built := cfgbuild.BuildFunction(def.Func, bindings)
+	if built == nil {
+		t.Fatal("BuildFunction returned nil")
+	}
+	result, err := semantics.ExtractFunction(def.Func, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractFunction: %v", err)
+	}
+	stmt, ok := def.Func.Stmts[0].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call", def.Func.Stmts[0])
+	}
+	body := wirlower.Lower("call-arg-object-literal-metatable-self", def.Func.Stmts, bindings, built)
+	reg := standard.Registry()
+	nodeInstance := typetable.NewRecord().Field("node_id", typ.String).Build()
+	facts := Lower(result, built.Graph, Config{
+		Registry:            reg,
+		Bindings:            bindings,
+		WIR:                 body,
+		MethodReceiverTypes: map[symbol.ID]typ.Type{methodSymbols[0]: nodeInstance},
+	})
+
+	var site factflow.CallSite
+	var callPoint cfg.Point
+	for _, point := range built.StmtPoints.PointsFor(stmt) {
+		if got, ok := facts.CallSite(point); ok {
+			site, callPoint = got, point
+			break
+		}
+	}
+	if callPoint == 0 {
+		t.Fatalf("missing WIR call site for points %v", built.StmtPoints.PointsFor(stmt))
+	}
+	arg, ok := site.ArgumentSourceAt(0)
+	if !ok || arg.Kind != factflow.ValueSourceExpression || !arg.HasExpr {
+		t.Fatalf("call argument source = %#v/%v, want object-literal expression source", arg, ok)
+	}
+	typeValues := typevalue.NewCache()
+	sources := enginevalue.NewSourceValues(enginevalue.SourceValuesConfig{
+		Registry:          reg,
+		TypeValues:        typeValues,
+		ExpressionValues:  facts.ExpressionValues(),
+		ObjectLiteralView: facts.ObjectLiteralView,
+		ObjectLiteralFromView: func(lit factflow.ObjectLiteralView, resolver factflow.ValueSourceResolver) (product.Value, bool) {
+			return luasourcevalue.ObjectLiteralValueFromViewCached(reg, typeValues, lit, resolver)
+		},
+		ExpressionOps: facts.ExpressionOperations(),
+		ExpressionOp: func(op factflow.ExpressionOperation, left product.Value, right product.Value) (product.Value, bool) {
+			return luasourcevalue.ExpressionOperationValue(reg, typeValues, op, left, right)
+		},
+	})
+	value, ok := sources.ValueOfSource(callPoint, arg, state.State{}, nil)
+	if !ok {
+		t.Fatalf("call argument object literal source did not resolve")
+	}
+	got, ok := typeValues.TypeOf(reg, value)
+	if !ok {
+		t.Fatalf("call argument object literal value = %#v, want projectable record type", value)
+	}
+	want := typetable.NewRecord().Field("node_id", typ.String).Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("call argument object literal type = %v, want node_id string", got)
+	}
+}
+
+func TestLowerWIRCallArgumentObjectLiteralInsideGenericForPublishesEntries(t *testing.T) {
+	stmts, bindings, _, _ := parseSemanticChunk(t, `
+local methods = {}
+local mt = { __index = methods }
+
+type RouteTarget = {
+    node_id: string?,
+}
+
+type NodeInstance = {
+    node_id: string,
+    targets: {RouteTarget},
+}
+
+function methods:data(data_type: string, content: unknown, options: { node_id: string?}?): (NodeInstance, string?)
+    return self, nil
+end
+
+function methods:route(content: unknown): ()
+    for _, target in ipairs(self.targets) do
+        self:data("output", content, {
+            node_id = target.node_id or self.node_id,
+        })
+    end
+end
+`)
+	methodsStmt, ok := stmts[0].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want methods local assignment", stmts[0])
+	}
+	methodSymbols := bindings.LocalSymbols(methodsStmt)
+	if len(methodSymbols) == 0 || methodSymbols[0] == 0 {
+		t.Fatal("missing methods symbol")
+	}
+	def, ok := stmts[4].(*ast.FuncDefStmt)
+	if !ok || def.Func == nil {
+		t.Fatalf("stmt = %T, want method definition", stmts[4])
+	}
+	routeDef, ok := stmts[5].(*ast.FuncDefStmt)
+	if !ok || routeDef.Func == nil {
+		t.Fatalf("stmt = %T, want route method definition", stmts[5])
+	}
+	built := cfgbuild.BuildFunction(routeDef.Func, bindings)
+	if built == nil {
+		t.Fatal("BuildFunction returned nil")
+	}
+	result, err := semantics.ExtractFunction(routeDef.Func, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractFunction: %v", err)
+	}
+	loop := routeDef.Func.Stmts[0].(*ast.GenericForStmt)
+	stmt := loop.Stmts[0].(*ast.FuncCallStmt)
+	body := wirlower.Lower("call-arg-object-literal-generic-for", routeDef.Func.Stmts, bindings, built)
+	reg := standard.Registry()
+	nodeInstance := typetable.NewRecord().
+		Field("node_id", typ.String).
+		Field("targets", typ.NewArray(typetable.NewRecord().Field("node_id", typ.MaterializeOptional(typ.String)).Build())).
+		Build()
+	facts := Lower(result, built.Graph, Config{
+		Registry:            reg,
+		Bindings:            bindings,
+		WIR:                 body,
+		MethodReceiverTypes: map[symbol.ID]typ.Type{methodSymbols[0]: nodeInstance},
+	})
+
+	var site factflow.CallSite
+	var callPoint cfg.Point
+	for _, point := range built.StmtPoints.PointsFor(stmt) {
+		if got, ok := facts.CallSite(point); ok {
+			site, callPoint = got, point
+			break
+		}
+	}
+	if callPoint == 0 {
+		t.Fatalf("missing WIR call site for points %v", built.StmtPoints.PointsFor(stmt))
+	}
+	arg, ok := site.ArgumentSourceAt(2)
+	if !ok || arg.Kind != factflow.ValueSourceExpression || !arg.HasExpr {
+		t.Fatalf("call argument source = %#v/%v, want object-literal expression source", arg, ok)
+	}
+	lit, ok := facts.ObjectLiteral(arg.ExprRef)
+	if !ok {
+		t.Fatalf("missing object literal for WIR call argument expr %d", arg.ExprRef)
+	}
+	if got := len(lit.Entries()); got != 1 {
+		t.Fatalf("call argument object literal entries = %#v, want node_id entry", lit.Entries())
+	}
+	entry := lit.Entries()[0]
+	source := entry.Source()
+	if source.Kind == factflow.ValueSourceUnknown {
+		t.Fatalf("call argument object literal entry source is none for entry %#v", entry)
 	}
 }
 
@@ -829,6 +1110,35 @@ end
 	got, ok := facts.ExpressionPath(arg.ExprRef)
 	if !ok || got.Key() != want {
 		t.Fatalf("local argument expression path = %v/%v, want %q", got, ok, want)
+	}
+}
+
+func TestLowerAssignmentCallSiteKeepsArgumentSourcesFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(raw: any): ()
+    local function consume(payload: {id: string}): ()
+    end
+    local count = consume(raw)
+end
+`, "consume")
+	local, ok := fn.Stmts[1].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want local assignment", fn.Stmts[1])
+	}
+	points := requireStmtPoints(t, built, local, 2)
+	body := wirlower.Lower("f", fn.Stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	site, ok := facts.CallSite(points[0])
+	if !ok {
+		t.Fatalf("missing assignment call site at point %d", points[0])
+	}
+	arg, ok := site.ArgumentSourceAt(0)
+	if !ok {
+		t.Fatalf("assignment call argument sources = %#v, want raw argument", site.ArgumentSources())
+	}
+	if arg.Kind != factflow.ValueSourcePath || arg.PathKey == "" {
+		t.Fatalf("assignment call argument source = %#v, want WIR raw path source", arg)
 	}
 }
 
@@ -1217,14 +1527,14 @@ end
 
 	body := wir.NewBody("synthetic-call-metadata")
 	meta := []wir.CallArgumentMeta{{
-		Span:  source.Span{StartLine: 7, StartCol: 11, EndLine: 7, EndCol: 16},
+		Span:  wir.Span{StartLine: 7, StartCol: 11, EndLine: 7, EndCol: 16},
 		Label: "wir_value",
 	}}
 	start := body.Emit(wir.Instruction{
 		Op:         wir.OpCall,
 		Point:      point,
-		CallSpan:   source.Span{StartLine: 7, StartCol: 5, EndLine: 7, EndCol: 17},
-		CalleeSpan: source.Span{StartLine: 7, StartCol: 5, EndLine: 7, EndCol: 9},
+		CallSpan:   wir.Span{StartLine: 7, StartCol: 5, EndLine: 7, EndCol: 17},
+		CalleeSpan: wir.Span{StartLine: 7, StartCol: 5, EndLine: 7, EndCol: 9},
 		CallArgs:   body.AppendCallArgumentMeta(meta),
 	})
 	body.SetPointRange(point, start, start+1)
@@ -1422,10 +1732,11 @@ end
 		SelectDefault: true,
 	})
 	body.Emit(wir.Instruction{
-		Op:    wir.OpAssign,
-		Point: points[0],
-		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(selectedPath))},
-		A:     temp,
+		Op:     wir.OpAssign,
+		Point:  points[0],
+		Dst:    wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(selectedPath))},
+		A:      temp,
+		Assign: wir.AssignLocalDeclaration,
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
@@ -1478,7 +1789,7 @@ end
 	points := requireStmtPoints(t, built, stmt, 1)
 	body := wir.NewBody("synthetic-closure-call-arg")
 	closureTemp := wir.Operand{Kind: wir.OperandTemp, Ref: 1}
-	proto := body.AddProto(wir.FuncProto{Name: "other", Symbol: otherSym})
+	proto := body.AddProto(wir.FuncProto{Name: "other", Symbol: wir.FunctionSymbolID(otherSym)})
 	start := body.Emit(wir.Instruction{
 		Op:    wir.OpClosure,
 		Point: points[0],
@@ -1607,7 +1918,7 @@ end
 		typeValues:                    typevalue.NewCache(),
 		wir:                           body,
 		callPoints:                    callPointsByExpr(builtCallFacts(built.Graph, result)),
-		symbolTypes:                   lowerSymbolTypes(bindings, built.Graph, built.Meta, result, typeresolve.New(bindings), importlookup.Source{}),
+		symbolTypes:                   lowerSymbolTypes(bindings, built.Graph, built.Meta, result, typeresolve.New(bindings), importlookup.Source{}, nil),
 		exprs:                         make(map[any]factflow.ExprRef),
 		types:                         make(map[any]factflow.TypeRef),
 		expressionValues:              make(map[factflow.ExprRef]product.Value),

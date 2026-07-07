@@ -127,6 +127,20 @@ func TestApplySegmentsMixedTraversal(t *testing.T) {
 	assertProjectionType(t, got, typeexpr.Optional(typ.String))
 }
 
+func TestApplySegmentsOptionalReceiverProjectsNil(t *testing.T) {
+	source := typeexpr.Optional(typetable.NewRecord().
+		Field("answer", typ.LiteralString("ok")).
+		Build())
+
+	got, ok := ApplySegments(source, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "answer"},
+	})
+	if !ok {
+		t.Fatal("ApplySegments optional receiver failed")
+	}
+	assertProjectionType(t, got, typeexpr.Optional(typ.LiteralString("ok")))
+}
+
 func TestApplySegmentsFieldSyntaxReadsMapValue(t *testing.T) {
 	slot := typetable.NewRecord().
 		Field("value", typetable.NewRecord().Field("path", typ.String).Build()).
@@ -267,7 +281,7 @@ func TestDynamicWriteValueTypeUsesMapContractDirectly(t *testing.T) {
 	if !ok {
 		t.Fatal("DynamicWriteValueType map write failed")
 	}
-	assertProjectionType(t, got, typeexpr.Optional(typ.Number))
+	assertProjectionType(t, got, typ.Number)
 }
 
 func TestApplyConstructorSegmentsTreatsNonLeafPrefixesAsPresent(t *testing.T) {
@@ -338,6 +352,33 @@ func TestExpectedConstructorEntryTypePreservesDeclaredNilableFieldPayload(t *tes
 		t.Fatal("ExpectedConstructorEntryType optional field failed")
 	}
 	assertProjectionType(t, got, typeexpr.Optional(typ.String))
+}
+
+func TestExpectedConstructorEntryTypeSkipsUnionMembersWithoutExplicitEntry(t *testing.T) {
+	response := typetable.NewRecord().
+		Field("status", typ.Integer).
+		Field("body", typ.String).
+		Field("headers", typetable.NewMap(typ.String, typ.String)).
+		Build()
+	success := typetable.NewRecord().
+		Field("ok", typ.True).
+		Field("value", response).
+		Build()
+	failure := typetable.NewRecord().
+		Field("ok", typ.False).
+		Field("error", typ.String).
+		Build()
+	source := typeexpr.Union(success, failure)
+
+	got, ok := ExpectedConstructorEntryType(source, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "value"},
+		{Kind: segment.SegmentField, Name: "headers"},
+	})
+	if !ok {
+		t.Fatal("ExpectedConstructorEntryType union member explicit entry failed")
+	}
+	want := typetable.NewMap(typ.String, typ.String)
+	assertProjectionType(t, got, want)
 }
 
 func TestPresentConstructorRootUnwrapsOptionalTableContract(t *testing.T) {

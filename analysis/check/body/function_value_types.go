@@ -1,8 +1,10 @@
 package body
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -62,6 +64,29 @@ func WithOwnedFunctionValueTypes(result *Result, types FunctionValueTypes) *Resu
 	return result
 }
 
+// HasFunctionValueTypes reports whether result already carries types. It lets
+// fixed-point materialization avoid rewriting summaries when the converged
+// function projection did not change.
+func (r *Result) HasFunctionValueTypes(types FunctionValueTypes) bool {
+	if r == nil {
+		return false
+	}
+	return FunctionValueTypesEqual(r.registry, r.funcTypes, types)
+}
+
+// FunctionValueTypesEqual reports structural equality for the installed
+// function-value projection. Map order is irrelevant; context order remains
+// significant because context slices are generated in deterministic discovery
+// order and later entries can be shadowed by earlier matching entries.
+func FunctionValueTypesEqual(reg *axis.Registry, a, b FunctionValueTypes) bool {
+	byIdentity := functionTypeMapsEqual(a.ByIdentity, b.ByIdentity)
+	byPath := functionTypeMapsEqual(a.ByPath, b.ByPath)
+	paramSpans := sourceSpanMapsEqual(a.ParamSpansByPath, b.ParamSpansByPath)
+	returnSpans := sourceSpanMapsEqual(a.ReturnSpansByPath, b.ReturnSpansByPath)
+	contexts := functionValueContextMapsEqual(reg, a.ContextsByIdentity, b.ContextsByIdentity)
+	return byIdentity && byPath && paramSpans && returnSpans && contexts
+}
+
 // FunctionValueTypeAtBoundary resolves expr's current callable value type at
 // point. Runtime identity wins over syntactic path so reassigned function fields
 // use the currently visible value rather than an older path definition.
@@ -78,7 +103,7 @@ func (r *Result) FunctionValueTypeAtBoundary(point cfg.Point, expr ast.Expr) (*t
 		if fn, ok := r.functionTypeForValue(current, hasCurrent, value); ok {
 			return fn, true
 		}
-		if !valueHasCallableType(r.registry, r.typeValues, value) {
+		if valueProvesNonCallable(r.registry, r.typeValues, value) {
 			return nil, false
 		}
 	}
@@ -313,16 +338,78 @@ func (r *Result) FunctionValueTypeForCallSiteAtBoundary(point cfg.Point, site fa
 		if site.CalleeMemberAccess() && callable && fn != nil {
 			return fn, true
 		}
-		if !callable {
+		if !callable && valueProvesNonCallable(r.registry, r.typeValues, value) {
+			return nil, false
+		}
+	}
+	if len(p.Segments) > 0 {
+		if root, ok := r.currentRootValueForCallableFallback(point, p); ok && valueProvesNonTable(r.registry, r.typeValues, root) {
 			return nil, false
 		}
 	}
 	return r.FunctionValueTypeForCalleePath(site.View().CalleePathKey())
 }
 
+func (r *Result) currentRootValueForCallableFallback(point cfg.Point, p pathdom.Path) (product.Value, bool) {
+	if root, ok := r.PathValueAtBoundary(point, p.RootOnly()); ok &&
+		!product.Equal(r.registry, root, product.Bottom(r.registry)) &&
+		!product.Equal(r.registry, root, product.Top()) {
+		return root, true
+	}
+	if p.Symbol == 0 || r == nil || r.registry == nil {
+		return product.Value{}, false
+	}
+	st, ok := r.StateAt(point)
+	if !ok {
+		return product.Value{}, false
+	}
+	root := st.ReadValue(r.registry, statekey.SymbolValue(p.Symbol))
+	if product.Equal(r.registry, root, product.Bottom(r.registry)) {
+		return product.Value{}, false
+	}
+	return root, true
+}
+
 func valueHasCallableType(reg *axis.Registry, typeValues *typevalue.Cache, value product.Value) bool {
 	_, ok := callableTypeFromValue(reg, typeValues, value)
 	return ok
+}
+
+func valueProvesNonCallable(reg *axis.Registry, typeValues *typevalue.Cache, value product.Value) bool {
+	if reg == nil {
+		return false
+	}
+	kinds := product.Get(reg, value, runtimekind.Key)
+	if !kinds.IsBottom() && !kinds.IsTop() && !kinds.Contains(runtimekind.Function) {
+		return true
+	}
+	if typeValues == nil {
+		return false
+	}
+	t, ok := typeValues.TypeOf(reg, value)
+	if !ok || t == nil || typ.IsAny(t) || typ.IsUnknown(t) {
+		return false
+	}
+	_, callable := typecall.Callable(t)
+	return !callable
+}
+
+func valueProvesNonTable(reg *axis.Registry, typeValues *typevalue.Cache, value product.Value) bool {
+	if reg == nil {
+		return false
+	}
+	kinds := product.Get(reg, value, runtimekind.Key)
+	if !kinds.IsBottom() && !kinds.IsTop() && !kinds.Contains(runtimekind.Table) {
+		return true
+	}
+	if typeValues == nil {
+		return false
+	}
+	t, ok := typeValues.TypeOf(reg, value)
+	if !ok || t == nil || typ.IsAny(t) || typ.IsUnknown(t) {
+		return false
+	}
+	return !staticMemberReadRuntimeTableMayMatch(t)
 }
 
 func callableTypeFromValue(reg *axis.Registry, typeValues *typevalue.Cache, value product.Value) (*typ.Function, bool) {
@@ -503,4 +590,91 @@ func cloneFunctionValueTypes(in FunctionValueTypes) FunctionValueTypes {
 		}
 	}
 	return out
+}
+
+type functionTypeMapKey interface {
+	identity.ID | factflow.CalleePathKey
+}
+
+func functionTypeMapsEqual[K functionTypeMapKey](a, b map[K]*typ.Function) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for key, left := range a {
+		right, ok := b[key]
+		if !ok || !functionTypesEqual(left, right) {
+			return false
+		}
+	}
+	return true
+}
+
+func functionTypesEqual(a, b *typ.Function) bool {
+	if a == b {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.Equals(b)
+}
+
+func sourceSpanMapsEqual[K comparable](a, b map[K][]factflow.SourceSpan) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for key, left := range a {
+		right, ok := b[key]
+		if !ok || !sourceSpansEqual(left, right) {
+			return false
+		}
+	}
+	return true
+}
+
+func sourceSpansEqual(a, b []factflow.SourceSpan) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func functionValueContextMapsEqual(reg *axis.Registry, a, b map[identity.ID][]FunctionValueContext) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for id, left := range a {
+		right, ok := b[id]
+		if !ok || !functionValueContextsEqual(reg, left, right) {
+			return false
+		}
+	}
+	return true
+}
+
+func functionValueContextsEqual(reg *axis.Registry, a, b []FunctionValueContext) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	domain := state.Domain(reg)
+	for i := range a {
+		if !functionValueContextEntryEqual(domain, a[i], b[i]) ||
+			!functionTypesEqual(a[i].Type, b[i].Type) {
+			return false
+		}
+	}
+	return true
+}
+
+func functionValueContextEntryEqual(domain lattice.Lattice[state.State], a, b FunctionValueContext) bool {
+	left := a.Entry
+	if a.EntryKeys != b.EntryKeys {
+		left = left.RekeyPathEvidence(a.EntryKeys, b.EntryKeys)
+	}
+	return domain.Equal(left, b.Entry)
 }

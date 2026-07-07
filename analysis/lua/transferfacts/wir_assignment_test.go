@@ -1,17 +1,24 @@
 package transferfacts
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -31,10 +38,8 @@ end`)
 	if !ok {
 		t.Fatalf("missing param local assignment at point %d", paramPoint)
 	}
-	paramSource := paramAssign.Source()
-	if paramSource.Kind != factflow.ValueSourceExpression || !paramSource.HasExpr {
-		t.Fatalf("param assignment source = %#v, want expression-backed alias source until WIR path mutation proof migration", paramSource)
-	}
+	paramPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "value")
+	assertWIRPathSource(t, paramAssign.Source(), paramPath)
 
 	literalPoint := requireStmtPoints(t, built, fn.Stmts[1], 1)[0]
 	literalAssign, ok := facts.RootAssignment(literalPoint)
@@ -73,12 +78,144 @@ end`)
 	}
 	localSource := localAssign.Source()
 	wantPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "from_literal")
-	if localSource.Kind != factflow.ValueSourceExpression || !localSource.HasExpr || localSource.PathKey != "" {
-		t.Fatalf("local assignment source = %#v, want WIR expression-backed path source", localSource)
+	assertWIRPathSource(t, localSource, wantPath)
+}
+
+func TestLowerWIRRootFunctionDefinitionPublishesFunctionIdentityWithoutSemanticSidecars(t *testing.T) {
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
+function run()
+    return 1
+end
+`)
+	def := stmts[0].(*ast.FuncDefStmt)
+	body := wirlower.Lower("root-function-definition-no-sidecars", stmts, bindings, built)
+	reg := standard.Registry()
+	facts := Lower(nil, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+
+	point := requireStmtPoints(t, built, def, 1)[0]
+	assign, ok := facts.RootAssignment(point)
+	if !ok {
+		t.Fatalf("missing WIR root function-definition assignment at point %d", point)
 	}
-	gotPath, ok := facts.ExpressionPath(localSource.ExprRef)
-	if !ok || !gotPath.Equal(wantPath) {
-		t.Fatalf("local assignment expression path = %v/%v, want %v", gotPath, ok, wantPath)
+	if got := assign.Kind(); got != factflow.RootAssignmentOrdinaryRootWrite {
+		t.Fatalf("root function assignment kind = %v, want ordinary root write", got)
+	}
+	source := assign.Source()
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		t.Fatalf("root function source = %#v, want expression source", source)
+	}
+	wantFn, ok := bindings.FunctionSymbol(def.Func)
+	if !ok {
+		t.Fatal("missing function symbol for root function definition")
+	}
+	gotFn, ok := facts.ExpressionFunction(source.ExprRef)
+	if !ok || gotFn != wantFn {
+		t.Fatalf("root function expression function = %v/%v, want %v", gotFn, ok, wantFn)
+	}
+	value, ok := facts.ExpressionValue(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing root function expression value for ref %d", source.ExprRef)
+	}
+	gotID, ok := product.Get(reg, value, identity.Key).ID()
+	if !ok || gotID != identity.LuaFunction(uint64(wantFn)) {
+		t.Fatalf("root function expression identity = %v/%v, want %v", gotID, ok, identity.LuaFunction(uint64(wantFn)))
+	}
+}
+
+func TestLowerLocalAssignmentNaryConcatPublishesStringExpressionSource(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): ()
+	local label = "suite" .. "/" .. "name"
+end`)
+	body := wirlower.Lower("nary-concat-assignment", fn.Stmts, bindings, built)
+	reg := standard.Registry()
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+
+	var assignment factflow.RootAssignment
+	assignPoint := cfg.Point(0)
+	for _, point := range built.Graph.RPO() {
+		if got, ok := facts.RootAssignment(point); ok {
+			assignment = got
+			assignPoint = point
+			break
+		}
+	}
+	if assignPoint == 0 {
+		t.Fatalf("missing label assignment in points %v\nWIR:\n%s", built.StmtPoints.PointsFor(fn.Stmts[0]), wir.Print(body, built.Graph))
+	}
+	source := assignment.Source()
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		t.Fatalf("label assignment source = %#v, want expression source\nWIR:\n%s", source, wir.Print(body, built.Graph))
+	}
+	op, ok := facts.ExpressionOperation(source.ExprRef)
+	if !ok || op.Kind() != factflow.ExpressionOperationBinary || op.Op() != ".." {
+		t.Fatalf("label assignment operation = %#v/%v, want concat\nWIR:\n%s", op, ok, wir.Print(body, built.Graph))
+	}
+	value, ok := facts.ExpressionValue(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing label assignment expression value for ref %d\nWIR:\n%s", source.ExprRef, wir.Print(body, built.Graph))
+	}
+	got, ok := typevalue.TypeOf(reg, value)
+	if !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("label assignment expression value type = %v/%v, want string\nWIR:\n%s", got, ok, wir.Print(body, built.Graph))
+	}
+}
+
+func TestLowerWIRAnyClaimLocalAssignmentDoesNotCreateDeclaredContract(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local raw = ({ kind = "task", route_id = "start" } :: any)
+`)
+	body := wirlower.Lower("any-claim-local", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	point := requireStmtPoints(t, built, stmts[0], 1)[0]
+	assignment, ok := facts.RootAssignment(point)
+	if !ok {
+		t.Fatalf("missing root assignment at point %d", point)
+	}
+	if assignment.DeclaredValueContracts() {
+		t.Fatalf("any claim assignment carried declared contract")
+	}
+	source := assignment.Source()
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		t.Fatalf("assignment source = %#v, want expression source with claim refinement", source)
+	}
+	if _, ok := facts.ExpressionRefinement(source.ExprRef); !ok {
+		t.Fatalf("missing claim refinement for source ref %d", source.ExprRef)
+	}
+}
+
+func TestLowerWIRAnnotatedLocalFromUnresolvedCallCarriesDeclaredContract(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local x: string | number = produce()
+`, "produce")
+	body := wirlower.Lower("annotated-local-unresolved-call", stmts, bindings, built)
+	reg := standard.Registry()
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+
+	var assignment factflow.RootAssignment
+	found := false
+	for _, point := range built.StmtPoints.PointsFor(stmts[0]) {
+		if got, ok := facts.RootAssignment(point); ok {
+			assignment = got
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("missing root assignment for points %v", built.StmtPoints.PointsFor(stmts[0]))
+	}
+	declared, ok := assignment.DeclaredValue()
+	if !ok || !assignment.DeclaredValueContracts() {
+		t.Fatalf("assignment declared contract = %v/%v; want contract", ok, assignment.DeclaredValueContracts())
+	}
+	got, ok := typevalue.TypeOf(reg, declared)
+	want := typ.MaterializeUnion([]typ.Type{typ.Number, typ.String})
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("declared contract type = %v/%v, want %v", got, ok, want)
+	}
+	if gotClaim := product.Get(reg, declared, assertion.Key); !gotClaim.Has(assertion.TypeClaim) {
+		t.Fatalf("declared contract assertion = %s, want type claim", gotClaim)
 	}
 }
 
@@ -97,10 +234,11 @@ end
 	outPath := path.NewPath(mustLocalAt(t, bindings, assignStmt, 0), "out")
 	body := wir.NewBody("synthetic-assign")
 	start := body.Emit(wir.Instruction{
-		Op:    wir.OpAssign,
-		Point: points[0],
-		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(outPath))},
-		A:     wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))},
+		Op:     wir.OpAssign,
+		Point:  points[0],
+		Dst:    wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(outPath))},
+		A:      wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))},
+		Assign: wir.AssignLocalDeclaration,
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
@@ -110,12 +248,42 @@ end
 		t.Fatalf("missing assignment at point %d", points[0])
 	}
 	source := assign.Source()
-	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-		t.Fatalf("assignment source = %#v, want expression-backed WIR path", source)
+	assertWIRPathSource(t, source, otherPath)
+	if source.PathKey == valuePath.Key() {
+		t.Fatalf("assignment source path = %s, want WIR path %s not semantic path %s", source.PathKey, otherPath.Key(), valuePath.Key())
 	}
-	gotPath, ok := facts.ExpressionPath(source.ExprRef)
-	if !ok || !gotPath.Equal(otherPath) || gotPath.Equal(valuePath) {
-		t.Fatalf("assignment expression path = %v/%v, want WIR path %v not semantic path %v", gotPath, ok, otherPath, valuePath)
+}
+
+func TestLowerAssignmentLocalTargetComesFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(): ()
+    local value = "x"
+    local other = "y"
+    local out = value
+end
+`)
+	assignStmt := fn.Stmts[2].(*ast.LocalAssignStmt)
+	points := requireStmtPoints(t, built, assignStmt, 1)
+	valuePath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "value")
+	semanticOutPath := path.NewPath(mustLocalAt(t, bindings, assignStmt, 0), "out")
+	wirTargetPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "other")
+	body := wir.NewBody("synthetic-local-target")
+	start := body.Emit(wir.Instruction{
+		Op:     wir.OpAssign,
+		Point:  points[0],
+		Dst:    wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(wirTargetPath))},
+		A:      wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(valuePath))},
+		Assign: wir.AssignLocalDeclaration,
+	})
+	body.SetPointRange(points[0], start, body.Len())
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	assign, ok := facts.RootAssignment(points[0])
+	if !ok {
+		t.Fatalf("missing assignment at point %d", points[0])
+	}
+	if got := assign.TargetPath(); !got.Equal(wirTargetPath) || got.Equal(semanticOutPath) {
+		t.Fatalf("assignment target = %s, want WIR target %s not semantic target %s", got, wirTargetPath, semanticOutPath)
 	}
 }
 
@@ -134,10 +302,11 @@ end
 	outPath := path.NewPath(mustLocalAt(t, bindings, assignStmt, 0), "out")
 	body := wir.NewBody("synthetic-segmented-assign")
 	start := body.Emit(wir.Instruction{
-		Op:    wir.OpAssign,
-		Point: points[0],
-		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(outPath))},
-		A:     wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))},
+		Op:     wir.OpAssign,
+		Point:  points[0],
+		Dst:    wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(outPath))},
+		A:      wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))},
+		Assign: wir.AssignLocalDeclaration,
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
@@ -172,10 +341,11 @@ end
 	otherPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[2].(*ast.LocalAssignStmt), 0), "other")
 	body := wir.NewBody("synthetic-root-write-source")
 	start := body.Emit(wir.Instruction{
-		Op:    wir.OpAssign,
-		Point: points[0],
-		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(outPath))},
-		A:     wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))},
+		Op:     wir.OpAssign,
+		Point:  points[0],
+		Dst:    wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(outPath))},
+		A:      wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))},
+		Assign: wir.AssignOrdinaryRootWrite,
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
@@ -520,11 +690,9 @@ end`)
 	if !ok {
 		t.Fatalf("missing local assignment at point %d", localPoint)
 	}
-	if source := localAssign.Source(); source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-		t.Fatalf("local assignment source = %#v, want expression-backed source while local expression APIs remain live", source)
-	}
-
 	valuePath := path.NewPath(bindings.ParamSlots(fn)[2].Symbol, "value")
+	assertWIRPathSource(t, localAssign.Source(), valuePath)
+
 	staticPoint := requireStmtPoints(t, built, fn.Stmts[1], 1)[0]
 	pathAssign, ok := facts.PathAssignment(staticPoint)
 	if !ok {
@@ -594,6 +762,47 @@ end`)
 	}
 	if got := invalidation.ContainerPathRef(); !got.Equal(boxPath) {
 		t.Fatalf("dynamic invalidation container = %s, want %s", got.String(), boxPath.String())
+	}
+}
+
+func TestLowerWIRNestedDynamicWriteCarriesDynamicKeyAndSuffix(t *testing.T) {
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function f(slots: {[string]: { value: string }}, key: string, value: string)
+    slots[key].value = value
+end`)
+	body := wirlower.Lower("nested-dynamic-write", fn.Stmts, bindings, built)
+	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
+	slotsPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "slots")
+	keyPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "key")
+	valuePath := path.NewPath(bindings.ParamSlots(fn)[2].Symbol, "value")
+
+	write, ok := facts.DynamicIndexWrite(point)
+	if !ok {
+		t.Fatalf("missing nested dynamic write at point %d", point)
+	}
+	if got := write.TablePathRef(); !got.Equal(slotsPath) {
+		t.Fatalf("dynamic write table = %s, want %s", got, slotsPath)
+	}
+	assertWIRPathSource(t, write.KeySource(), keyPath)
+	assertWIRPathSource(t, write.Source(), valuePath)
+
+	invalidation, ok := facts.PathDescendantInvalidation(point)
+	if !ok {
+		t.Fatalf("missing nested dynamic write invalidation at point %d", point)
+	}
+	table, keySource, suffix, ok := invalidation.DynamicTarget()
+	if !ok {
+		t.Fatal("nested dynamic write invalidation missing dynamic target")
+	}
+	if !table.Equal(slotsPath) {
+		t.Fatalf("dynamic invalidation table = %s, want %s", table, slotsPath)
+	}
+	assertWIRPathSource(t, keySource, keyPath)
+	wantSuffix := []segment.Segment{{Kind: segment.SegmentField, Name: "value"}}
+	if !reflect.DeepEqual(suffix, wantSuffix) {
+		t.Fatalf("dynamic invalidation suffix = %#v, want %#v", suffix, wantSuffix)
 	}
 }
 
@@ -699,6 +908,50 @@ end`)
 	gotKeyPath, ok := facts.ExpressionPath(keySource.ExprRef)
 	if !ok || !gotKeyPath.Equal(keyPath) {
 		t.Fatalf("dynamic-index key path = %s/%v, want %s", gotKeyPath.String(), ok, keyPath.String())
+	}
+}
+
+func TestLowerWIRGlobalTableFieldAssignmentAlsoWritesCanonicalGlobalRoot(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local captured_fn
+
+_G.coroutine = {
+    spawn = function(fn: () -> ())
+        captured_fn = fn
+        return true
+    end,
+}
+coroutine.spawn(function() end)
+`, "_G", "coroutine")
+	body := wirlower.Lower("global-table-canonical-root", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	point := requireStmtPoints(t, built, stmts[1], 1)[0]
+	rootFact, ok := facts.RootAssignment(point)
+	if !ok {
+		t.Fatalf("missing WIR canonical global root assignment")
+	}
+	coroutineSym, ok := bindings.GlobalSymbol("coroutine")
+	if !ok {
+		t.Fatalf("missing coroutine global symbol")
+	}
+	if rootFact.TargetSymbol() != coroutineSym {
+		t.Fatalf("root target = %d, want coroutine symbol %d", rootFact.TargetSymbol(), coroutineSym)
+	}
+	if !rootFact.TargetPath().Equal(path.NewPath(coroutineSym, "coroutine")) {
+		t.Fatalf("root target path = %v", rootFact.TargetPath())
+	}
+
+	gSym, ok := bindings.GlobalSymbol("_G")
+	if !ok {
+		t.Fatalf("missing _G global symbol")
+	}
+	pathFact, ok := facts.PathAssignment(point)
+	if !ok {
+		t.Fatalf("missing WIR _G member path assignment")
+	}
+	if !pathFact.TargetPath().Equal(path.NewPath(gSym, "_G").Field("coroutine")) {
+		t.Fatalf("path assignment target = %v", pathFact.TargetPath())
 	}
 }
 
@@ -833,5 +1086,36 @@ func TestAssignmentCallResultExprRefComesFromWIRCallIdentity(t *testing.T) {
 	if source.Kind != factflow.ValueSourceCall || !source.HasCallPoint || source.CallPoint != callPoint ||
 		source.ResultIndex != 0 || !source.HasExpr || source.ExprRef == 0 {
 		t.Fatalf("assignment source = %#v, want WIR call result with WIR-derived expression ref", source)
+	}
+}
+
+func TestLowerLocalAssignmentLogicalFallbackSourceComesFromWIR(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function collect(entries: {{ id: string, meta: { name: string? } }}): ()
+	for i, entry in ipairs(entries) do
+		local meta = entry.meta
+		local display_name = meta.name or ("Unnamed test " .. i)
+	end
+end`, "ipairs")
+	body := wirlower.Lower("logical-fallback-assignment", fn.Stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	loop := fn.Stmts[0].(*ast.GenericForStmt)
+	displayName := loop.Stmts[1].(*ast.LocalAssignStmt)
+	var source factflow.ValueSource
+	for _, point := range built.StmtPoints.PointsFor(displayName) {
+		assignment, ok := facts.RootAssignment(point)
+		if !ok {
+			continue
+		}
+		source = assignment.Source()
+		break
+	}
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		t.Fatalf("display_name assignment source = %#v, want logical expression source\nWIR:\n%s", source, wir.Print(body, built.Graph))
+	}
+	op, ok := facts.ExpressionOperation(source.ExprRef)
+	if !ok || op.Kind() != factflow.ExpressionOperationBinary || op.Op() != "or" {
+		t.Fatalf("display_name operation = %#v/%v, want logical or\nWIR:\n%s", op, ok, wir.Print(body, built.Graph))
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -37,22 +38,34 @@ func applyRootAssignmentFact(
 ) (state.State, bool) {
 	declared, hasDeclared := fact.DeclaredValue()
 	out, targetPath, sourceValue, hasSourceValue, applied := applyRootAssignment(ctx, resolver, facts, sources, read, in, out, fact.TargetSymbol(), fact.TargetPathRef(), fact.Source(), declared, hasDeclared, fact.DeclaredValueContracts(), fact.DeclaredValueOverlays())
-	if applied {
-		// The source path-equality proof is suppressed inside the shared helper for a
-		// covariant record exposure of this source: the alias is typed wider than its
-		// source, so the equality would couple them through reference-equality member
-		// congruence and let a write through the wide alias reset the narrow source to
-		// Top. The eager source widen (the covariant exposure applied at the end of the
-		// node transfer) establishes the sound widened source field type instead. An
-		// array exposure keeps the equality for its read-back diagnostics.
-		out = addPathEqualityProofFromSource(resolver, facts, ctx.Point, out, targetPath, fact.Source())
-		out = addPathEqualityProofFromDynamicIndexSource(ctx, resolver, facts, sources, read, in, out, targetPath, fact.Source())
-		out = addPathKeyMembershipsFromDynamicIndexSource(ctx, resolver, facts, out, targetPath, fact.Source())
-		out = applyRootAssignmentNumFloor(ctx, resolver, facts, in, out, targetPath, fact.Source())
-		out = applyObjectLiteralEntriesWithKnownSourceValue(ctx, resolver, facts, sources, read, in, out, targetPath, fact.Source(), sourceValue, hasSourceValue, typeValues)
-		out = applyClosedDynamicAllValueRootAssignment(ctx, resolver, facts, sources, read, in, out, targetPath, fact.Source(), closedDynamicAllValues)
+	if !applied {
+		if evidenceTarget, ok := rootAssignmentEvidenceTargetPath(fact.TargetSymbol(), fact.TargetPathRef()); ok {
+			out = addPathKeyMembershipsFromDynamicIndexSource(ctx, resolver, facts, out, evidenceTarget, fact.Source())
+		}
+		return out, false
 	}
+	// The source path-equality proof is suppressed inside the shared helper for a
+	// covariant record exposure of this source: the alias is typed wider than its
+	// source, so the equality would couple them through reference-equality member
+	// congruence and let a write through the wide alias reset the narrow source to
+	// Top. The eager source widen (the covariant exposure applied at the end of the
+	// node transfer) establishes the sound widened source field type instead. An
+	// array exposure keeps the equality for its read-back diagnostics.
+	out = addPathEqualityProofFromSource(resolver, facts, ctx.Point, out, targetPath, fact.Source())
+	out = addPathEqualityProofFromDynamicIndexSource(ctx, resolver, facts, sources, read, in, out, targetPath, fact.Source())
+	out = addPathKeyMembershipsFromDynamicIndexSource(ctx, resolver, facts, out, targetPath, fact.Source())
+	out = applyRootAssignmentNumFloor(ctx, resolver, facts, in, out, targetPath, fact.Source())
+	out = applyObjectLiteralEntriesWithKnownSourceValue(ctx, resolver, facts, sources, read, in, out, targetPath, fact.Source(), sourceValue, hasSourceValue, typeValues)
+	out = applyClosedDynamicAllValueRootAssignment(ctx, resolver, facts, sources, read, in, out, targetPath, fact.Source(), closedDynamicAllValues)
 	return out, applied
+}
+
+func rootAssignmentEvidenceTargetPath(target symbol.ID, targetPath pathdom.Path) (pathdom.Path, bool) {
+	root, ok := rootAssignmentTarget(target, targetPath)
+	if !ok {
+		return pathdom.Path{}, false
+	}
+	return rootAssignmentPath(root, targetPath), true
 }
 
 func applyRootAssignment(
@@ -75,16 +88,24 @@ func applyRootAssignment(
 	if !ok {
 		return out, pathdom.Path{}, product.Value{}, false, false
 	}
+	if hasDeclared && declaredContracts {
+		declared = declaredContractWithSourceRuntimeIdentity(ctx, facts, sources, read, in, out, source, declared)
+		targetPath = rootAssignmentPath(root, targetPath)
+		return writeRootSymbol(ctx, resolver, out, root, targetPath, declared), targetPath, declared, false, true
+	}
 	var value product.Value
 	hasSourceValue := false
-	if hasDeclared && declaredContracts {
-		value = declared
-	} else if sourceValue, ok := sources.ValueOfSource(ctx.Point, source, in, readWithCurrentPointState(ctx.Point, read, out)); ok {
+	if sourceValue, ok := sources.ValueOfSource(ctx.Point, source, in, readWithCurrentPointState(ctx.Point, read, out)); ok && !product.Equal(ctx.Registry, sourceValue, product.Bottom(ctx.Registry)) {
 		value = sourceValue
 		hasSourceValue = true
 		value = refineRootAssignmentDynamicIndexValue(ctx, resolver, facts, sources, read, in, value, source)
+		value = refineRootAssignmentPathPresenceValue(ctx, resolver, facts, in, value, source)
 		if hasDeclared && declaredOverlays {
 			value = valueref.MergeDeclaredContract(ctx.Registry, value, declared)
+			if declaredClaim := product.Get(ctx.Registry, declared, assertion.Key); !declaredClaim.IsBottom() && !declaredClaim.IsTop() {
+				currentClaim := product.Get(ctx.Registry, value, assertion.Key)
+				value = product.Set(ctx.Registry, value, assertion.Key, assertion.Combine(currentClaim, declaredClaim))
+			}
 			if declaredPresence := product.PresenceOf(declared); !declaredPresence.IsBottom() && !declaredPresence.IsTop() {
 				value = product.WithPresence(ctx.Registry, value, declaredPresence)
 			}
@@ -97,6 +118,33 @@ func applyRootAssignment(
 	}
 	targetPath = rootAssignmentPath(root, targetPath)
 	return writeRootSymbol(ctx, resolver, out, root, targetPath, value), targetPath, value, hasSourceValue, true
+}
+
+func declaredContractWithSourceRuntimeIdentity(
+	ctx transfer.NodeContext,
+	facts factflow.Facts,
+	sources sourcevalue.SourceValues,
+	read func(cfg.Point) state.State,
+	in state.State,
+	out state.State,
+	source factflow.ValueSource,
+	declared product.Value,
+) product.Value {
+	if ctx.Registry == nil || sources == nil || !source.HasExpr {
+		return declared
+	}
+	if _, ok := facts.ObjectLiteralView(source.ExprRef); !ok {
+		return declared
+	}
+	sourceValue, ok := sources.ValueOfSource(ctx.Point, source, in, readWithCurrentPointState(ctx.Point, read, out))
+	if !ok {
+		return declared
+	}
+	id, ok := product.Get(ctx.Registry, sourceValue, identity.Key).ID()
+	if !ok || id == (identity.ID{}) {
+		return declared
+	}
+	return product.Set(ctx.Registry, declared, identity.Key, identity.Singleton(id))
 }
 
 func refineRootAssignmentDynamicIndexValue(
@@ -120,6 +168,61 @@ func refineRootAssignmentDynamicIndexValue(
 		return value
 	}
 	return sourcevalue.WithoutNilRuntimeKind(ctx.Registry, product.WithPresence(ctx.Registry, value, presence.Present()))
+}
+
+func refineRootAssignmentPathPresenceValue(
+	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
+	facts factflow.Facts,
+	in state.State,
+	value product.Value,
+	source factflow.ValueSource,
+) product.Value {
+	if resolver == nil || resolver.KeySpace() == nil {
+		return value
+	}
+	sourcePath, ok := sourcePathFromValueSource(resolver, facts, source)
+	if !ok || sourcePath.IsEmpty() {
+		return value
+	}
+	sourceKey, ok := visibility.AddressAt(resolver, ctx.Point, sourcePath).VisibleLocalKeyspaceKey()
+	if !ok || sourceKey.Kind == keyspace.KindInvalid {
+		return value
+	}
+	snapshot := in.BranchProofsSnapshot(resolver.KeySpace())
+	if snapshot.Bottom || snapshot.Top || len(snapshot.Proofs) == 0 {
+		return value
+	}
+	for _, proof := range snapshot.Proofs {
+		if proof.Kind != pathevidence.BranchProofPathPresence ||
+			!presence.Equal(proof.Presence, presence.Present()) {
+			continue
+		}
+		if rootAssignmentPresenceProofMatchesKey(resolver.KeySpace(), proof.Path, sourceKey) {
+			return sourcevalue.WithoutNilRuntimeKind(ctx.Registry, product.WithPresence(ctx.Registry, value, presence.Present()))
+		}
+	}
+	return value
+}
+
+func rootAssignmentPresenceProofMatchesKey(ks *keyspace.KeySpace, proof, candidate keyspace.Key) bool {
+	if proof == candidate {
+		return true
+	}
+	if ks == nil ||
+		proof.Kind != keyspace.KindResolverSym ||
+		candidate.Kind != keyspace.KindResolverSym ||
+		proof.Sym == 0 ||
+		proof.Sym != candidate.Sym {
+		return false
+	}
+	proofSegments, proofOK := ks.SegmentsView(proof)
+	candidateSegments, candidateOK := ks.SegmentsView(candidate)
+	if !proofOK || !candidateOK || len(proofSegments) != len(candidateSegments) {
+		return false
+	}
+	return pathaddr.SegmentsHasPrefix(proofSegments, candidateSegments) &&
+		pathaddr.SegmentsHasPrefix(candidateSegments, proofSegments)
 }
 
 func dynamicIndexModuloLengthKeyInRange(
@@ -475,7 +578,7 @@ func addPathKeyMembershipsFromDynamicIndexSource(
 		return out
 	}
 	var readKey pathaddr.StateKey
-	if keyPath, keyOK := dynamicIndexExpressionKeyPath(facts, dyn); keyOK {
+	if keyPath, keyOK := dynamicIndexExpressionKeyPath(resolver, facts, dyn); keyOK {
 		readKey, _ = visibility.AddressAt(resolver, ctx.Point, keyPath).VisibleStateKey()
 	}
 	forEachDynamicIndexTableKeyAt(resolver, ctx.Point, dyn.TablePathRef(), func(containerKey keyspace.Key) bool {
@@ -490,12 +593,8 @@ func addPathKeyMembershipsFromDynamicIndexSource(
 	return out
 }
 
-func dynamicIndexExpressionKeyPath(facts factflow.Facts, dyn factflow.DynamicIndexExpression) (pathdom.Path, bool) {
-	source := dyn.KeySource()
-	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-		return pathdom.Path{}, false
-	}
-	p, ok := facts.ExpressionPathRef(source.ExprRef)
+func dynamicIndexExpressionKeyPath(resolver *visibility.Resolver, facts factflow.Facts, dyn factflow.DynamicIndexExpression) (pathdom.Path, bool) {
+	p, ok := sourcePathFromValueSource(resolver, facts, dyn.KeySource())
 	if !ok || p.IsEmpty() || p.Symbol == 0 {
 		return pathdom.Path{}, false
 	}

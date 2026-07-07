@@ -14,7 +14,7 @@ import (
 func TestRenderAssignmentJudgmentConcreteMismatch(t *testing.T) {
 	item := assignmentJudgmentFixture(typ.String, typ.Number, judgment.VerdictRefuted)
 
-	d, ok := renderAssignmentJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
+	d, ok := renderAssignmentJudgmentWithPolicy(newJudgmentRenderContext(), item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
 	if !ok {
 		t.Fatal("renderAssignmentJudgmentWithPolicy returned false")
 	}
@@ -41,7 +41,7 @@ func TestRenderAssignmentJudgmentMessageUsesDeclaredAliasLabel(t *testing.T) {
 	item.Actual = item.Actual.WithLabel("M.run")
 	item.Expected = item.Expected.WithLabel("fun() -> Res")
 
-	d, ok := renderAssignmentJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
+	d, ok := renderAssignmentJudgmentWithPolicy(newJudgmentRenderContext(), item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
 	if !ok {
 		t.Fatal("renderAssignmentJudgmentWithPolicy returned false")
 	}
@@ -200,7 +200,7 @@ func TestRenderAssignmentJudgmentUnknownIncludesMissingProof(t *testing.T) {
 	item := assignmentJudgmentFixture(typ.Any, typ.String, judgment.VerdictUnknown)
 	item.Actual = item.Actual.WithLabel("raw")
 
-	d, ok := renderAssignmentJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
+	d, ok := renderAssignmentJudgmentWithPolicy(newJudgmentRenderContext(), item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
 	if !ok {
 		t.Fatal("renderAssignmentJudgmentWithPolicy returned false")
 	}
@@ -220,7 +220,7 @@ func TestRenderAssignmentJudgmentOptionalSourceUsesNilHelp(t *testing.T) {
 	item.Actual = item.Actual.WithLabel("n")
 	item.Evidence[2].Detail = judgment.MayBeNilEvidenceDetail()
 
-	d, ok := renderAssignmentJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
+	d, ok := renderAssignmentJudgmentWithPolicy(newJudgmentRenderContext(), item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
 	if !ok {
 		t.Fatal("renderAssignmentJudgmentWithPolicy returned false")
 	}
@@ -240,7 +240,7 @@ func TestRenderAssignmentJudgmentNilGuardIsDrivenByEvidence(t *testing.T) {
 	item.Actual = item.Actual.WithLabel("n")
 	item.Evidence[2].Detail = judgment.MayBeNilEvidenceDetail()
 
-	d, ok := renderAssignmentJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
+	d, ok := renderAssignmentJudgmentWithPolicy(newJudgmentRenderContext(), item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
 	if !ok {
 		t.Fatal("renderAssignmentJudgmentWithPolicy returned false")
 	}
@@ -257,7 +257,7 @@ func TestRenderAssignmentJudgmentDoesNotInferIndexedReadFromLabel(t *testing.T) 
 	item.Actual = item.Actual.WithLabel("cache[key]")
 	item.Evidence[2].Detail = judgment.MayBeNilEvidenceDetail()
 
-	d, ok := renderAssignmentJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
+	d, ok := renderAssignmentJudgmentWithPolicy(newJudgmentRenderContext(), item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
 	if !ok {
 		t.Fatal("renderAssignmentJudgmentWithPolicy returned false")
 	}
@@ -282,7 +282,7 @@ func TestRenderAssignmentJudgmentRefutedOptionalSourceIncludesMissingGuard(t *te
 	item.Evidence[2].Trust = judgment.EvidenceTrustRefuted
 	item.Evidence[2].Detail = judgment.MayBeNilEvidenceDetail()
 
-	d, ok := renderAssignmentJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
+	d, ok := renderAssignmentJudgmentWithPolicy(newJudgmentRenderContext(), item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
 	if !ok {
 		t.Fatal("renderAssignmentJudgmentWithPolicy returned false")
 	}
@@ -302,7 +302,7 @@ func TestRenderAssignmentJudgmentPrecisionBoundaryIncludesBoundaryEvidence(t *te
 		Trust: judgment.EvidenceTrustUnknown,
 	})
 
-	d, ok := renderAssignmentJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
+	d, ok := renderAssignmentJudgmentWithPolicy(newJudgmentRenderContext(), item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
 	if !ok {
 		t.Fatal("renderAssignmentJudgmentWithPolicy returned false")
 	}
@@ -321,7 +321,7 @@ func TestRenderAssignmentJudgmentExactNilDoesNotSayMayBeNil(t *testing.T) {
 	item := assignmentJudgmentFixture(typ.Nil, typ.String, judgment.VerdictRefuted)
 	item.Actual = item.Actual.WithLabel("n")
 
-	d, ok := renderAssignmentJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
+	d, ok := renderAssignmentJudgmentWithPolicy(newJudgmentRenderContext(), item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
 	if !ok {
 		t.Fatal("renderAssignmentJudgmentWithPolicy returned false")
 	}
@@ -341,7 +341,7 @@ func TestRenderAssignmentJudgmentMissingRequiredField(t *testing.T) {
 	item.Expected = item.Expected.WithLabel("Point")
 	item.Evidence[2].Detail = judgment.MissingRequiredFieldTypeEvidenceDetail("y", typ.Number)
 
-	d, ok := renderAssignmentJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
+	d, ok := renderAssignmentJudgmentWithPolicy(newJudgmentRenderContext(), item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
 	if !ok {
 		t.Fatal("renderAssignmentJudgmentWithPolicy returned false")
 	}

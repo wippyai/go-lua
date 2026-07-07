@@ -163,6 +163,65 @@ func TestOriginCasesExposeReadOnlyFiniteFamilyCases(t *testing.T) {
 	}
 }
 
+func TestSingleCaseWithField(t *testing.T) {
+	left := typetable.NewRecord().
+		Field("kind", typ.LiteralString("left")).
+		Field("value", typ.String).
+		Build()
+	right := typetable.NewRecord().
+		Field("kind", typ.LiteralString("right")).
+		Field("error", typ.String).
+		Build()
+	_, cases, ok := OriginCasesOfType(typeexpr.Union(left, right))
+	if !ok {
+		t.Fatal("OriginCasesOfType returned !ok")
+	}
+	if got, ok := SingleCaseWithField(cases, "value"); !ok || !originCaseIndexHasType(cases, got, left) {
+		t.Fatalf("SingleCaseWithField(value) = %d/%v, want left case", got, ok)
+	}
+	if _, ok := SingleCaseWithField(cases, "missing"); ok {
+		t.Fatal("SingleCaseWithField(missing) returned ok, want false")
+	}
+	if _, ok := SingleCaseWithField(cases, "kind"); ok {
+		t.Fatal("SingleCaseWithField(kind) returned ok for ambiguous field, want false")
+	}
+}
+
+func TestSingleCaseWithPath(t *testing.T) {
+	withPayload := typetable.NewRecord().
+		Field("kind", typ.LiteralString("payload")).
+		Field("payload", typetable.NewRecord().
+			Field("id", typ.String).
+			Build()).
+		Build()
+	withoutPayload := typetable.NewRecord().
+		Field("kind", typ.LiteralString("empty")).
+		Build()
+	_, cases, ok := OriginCasesOfType(typeexpr.Union(withPayload, withoutPayload))
+	if !ok {
+		t.Fatal("OriginCasesOfType returned !ok")
+	}
+	suffix := []segment.Segment{
+		{Kind: segment.SegmentField, Name: "payload"},
+		{Kind: segment.SegmentField, Name: "id"},
+	}
+	if got, ok := SingleCaseWithPath(cases, suffix); !ok || !originCaseIndexHasType(cases, got, withPayload) {
+		t.Fatalf("SingleCaseWithPath(payload.id) = %d/%v, want payload case", got, ok)
+	}
+	if _, ok := SingleCaseWithPath(cases, nil); ok {
+		t.Fatal("SingleCaseWithPath(nil) returned ok, want false")
+	}
+}
+
+func originCaseIndexHasType(cases []OriginCase, index int, want typ.Type) bool {
+	for _, c := range cases {
+		if c.Index == index {
+			return typ.TypeEquals(c.Type, want)
+		}
+	}
+	return false
+}
+
 func TestNarrowByPathLiteralNarrowsNilBearingUnion(t *testing.T) {
 	// A flattened optional discriminated union (nil | A | B) — as produced when a
 	// guarded optional surfaces with nil as a union member rather than an

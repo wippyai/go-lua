@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/factquery"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -17,15 +18,19 @@ import (
 type signatureIdentityResolver struct {
 	bindings            *bind.Result
 	graph               cfg.Graph
+	facts               factflow.Facts
 	imports             moduleidentity.Projection
 	implicitStdlibNames map[string]struct{}
 	callPoints          map[factflow.ExprRef]cfg.Point
+	rootQuery           factquery.RootDeclarationQuery
+	rootQueryReady      bool
 }
 
-func newSignatureIdentityResolver(bindings *bind.Result, graph cfg.Graph, modules moduleidentity.Projection, signatures signaturelookup.Source) *signatureIdentityResolver {
+func newSignatureIdentityResolver(bindings *bind.Result, graph cfg.Graph, facts factflow.Facts, modules moduleidentity.Projection, signatures signaturelookup.Source) *signatureIdentityResolver {
 	return &signatureIdentityResolver{
 		bindings:            bindings,
 		graph:               graph,
+		facts:               facts,
 		imports:             modules,
 		implicitStdlibNames: implicitStdlibSignatureNames(signatures),
 	}
@@ -56,6 +61,9 @@ func (r *signatureIdentityResolver) indexCallSites(facts factflow.Facts) {
 		if !ok {
 			continue
 		}
+		if expr == 0 {
+			continue
+		}
 		if r.callPoints == nil {
 			r.callPoints = make(map[factflow.ExprRef]cfg.Point)
 		}
@@ -75,6 +83,9 @@ func (r *signatureIdentityResolver) nameForCallee(ctx transfer.NodeContext, call
 	if r == nil {
 		return "", false
 	}
+	if r.rootReplacedAt(ctx.Point, callee, calleePath) {
+		return "", false
+	}
 	if name, ok := r.stableCalleeName(callee, calleePath); ok {
 		return name, true
 	}
@@ -82,6 +93,32 @@ func (r *signatureIdentityResolver) nameForCallee(ctx transfer.NodeContext, call
 		return name, true
 	}
 	return r.implicitGlobalCalleeName(callee, calleePath)
+}
+
+func (r *signatureIdentityResolver) rootReplacedAt(point cfg.Point, callee symbol.ID, calleePath path.Path) bool {
+	if r == nil {
+		return false
+	}
+	root := callee
+	if calleePath.Symbol != 0 {
+		root = calleePath.Symbol
+	}
+	if root == 0 {
+		return false
+	}
+	_, ok := r.rootDeclarationQuery().DominatingOrdinaryRootWrite(point, root)
+	return ok
+}
+
+func (r *signatureIdentityResolver) rootDeclarationQuery() factquery.RootDeclarationQuery {
+	if r == nil {
+		return factquery.RootDeclarationQuery{}
+	}
+	if !r.rootQueryReady {
+		r.rootQuery = factquery.NewRootDeclarationQuery(r.facts, r.graph)
+		r.rootQueryReady = true
+	}
+	return r.rootQuery
 }
 
 func (r *signatureIdentityResolver) nameForSite(site factflow.CallSite) (string, bool) {

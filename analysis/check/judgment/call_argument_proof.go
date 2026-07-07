@@ -5,7 +5,9 @@ package judgment
 // details to argument proof categories.
 type CallArgumentProofSummary struct {
 	MayBeNil                    bool
+	MayBeNilFromExpandedSource  bool
 	PrecisionBoundary           bool
+	UserAssertedTop             bool
 	GenericConflict             bool
 	GenericParam                string
 	GenericFunction             string
@@ -31,11 +33,15 @@ func (j Judgment) CallArgumentProof() CallArgumentProofSummary {
 	out := CallArgumentProofSummary{
 		MayBeNil:          j.HasEvidenceKindDetail(EvidenceMissingProof, EvidenceDetailMayBeNil),
 		PrecisionBoundary: j.HasEvidence(EvidencePrecisionBoundary),
+		UserAssertedTop:   j.HasEvidenceKindDetail(EvidenceUserAssertion, EvidenceDetailUserAssertedAny),
 	}
 	if evidence, ok := j.FirstEvidenceKindDetail(EvidenceMissingProof, EvidenceDetailGenericConflict); ok {
 		out.GenericConflict = true
 		out.GenericParam = evidence.Detail.Param
 		out.GenericFunction = evidence.Detail.FunctionName
+	}
+	if evidence, ok := j.FirstEvidenceKindDetail(EvidenceMissingProof, EvidenceDetailMayBeNil); ok {
+		out.MayBeNilFromExpandedSource = evidence.Detail.ExpandedSource
 	}
 	if evidence, ok := j.FirstEvidenceKindDetail(EvidenceMissingProof, EvidenceDetailMissingRequiredField); ok {
 		out.MissingRequiredField = evidence.Detail.Field

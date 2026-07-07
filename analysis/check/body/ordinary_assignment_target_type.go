@@ -18,10 +18,11 @@ import (
 // target value separately so readmodel can apply diagnostic-only widening
 // without importing AST.
 type OrdinaryAssignmentTargetType struct {
-	Type        typ.Type
-	TargetValue product.Value
-	HasValue    bool
-	Declared    bool
+	Type               typ.Type
+	TargetValue        product.Value
+	HasValue           bool
+	Declared           bool
+	NilDeletionAllowed bool
 }
 
 func (r *Result) OrdinaryAssignmentTargetTypeAt(point cfg.Point, fact OrdinaryAssignmentFact) (OrdinaryAssignmentTargetType, bool) {
@@ -48,6 +49,7 @@ func (r *Result) OrdinaryAssignmentTargetTypeAt(point cfg.Point, fact OrdinaryAs
 		}
 	}
 	var projected typ.Type
+	nilDeletionAllowed := false
 	if seg, ok := staticAssignmentWriteSegment(attr); ok {
 		writeContainer := staticAssignmentWriteContainer(container, declaredContainer, hasDeclaredContainer)
 		t, ok := luatypeprojection.ApplyWriteSegments(writeContainer, []segment.Segment{seg})
@@ -72,9 +74,12 @@ func (r *Result) OrdinaryAssignmentTargetTypeAt(point cfg.Point, fact OrdinaryAs
 			}
 			return OrdinaryAssignmentTargetType{}, false
 		}
-		t, ok := luatypeprojection.DynamicWriteValueType(container, keyType)
+		writeContainer := staticAssignmentWriteContainer(container, declaredContainer, hasDeclaredContainer)
+		t, ok := luatypeprojection.DynamicWriteValueType(writeContainer, keyType)
+		nilDeletionAllowed = ok && luatypeprojection.DynamicWriteNilDeletionAllowed(writeContainer, keyType)
 		if !ok && hasDeclaredContainer && declaredContainer != nil && !typ.TypeEquals(container, declaredContainer) {
 			t, ok = luatypeprojection.DynamicWriteValueType(declaredContainer, keyType)
+			nilDeletionAllowed = ok && luatypeprojection.DynamicWriteNilDeletionAllowed(declaredContainer, keyType)
 		}
 		if !ok {
 			if hasDeclared {
@@ -96,7 +101,8 @@ func (r *Result) OrdinaryAssignmentTargetTypeAt(point cfg.Point, fact OrdinaryAs
 		return OrdinaryAssignmentTargetType{}, false
 	}
 	out := r.ordinaryAssignmentTargetTypeResult(point, fact.Target, projected)
-	out.Declared = hasHardDeclared || hasSyntaxDeclared
+	out.Declared = hasHardDeclared || hasSyntaxDeclared || hasDeclaredContainer
+	out.NilDeletionAllowed = nilDeletionAllowed
 	return out, true
 }
 
@@ -216,6 +222,11 @@ func (r *Result) dynamicWriteKeyType(point cfg.Point) (typ.Type, bool) {
 	write, ok := r.DynamicIndexWrite(point)
 	if !ok {
 		return nil, false
+	}
+	if keyPath, pathOK := r.ValueSourcePath(write.KeySource()); pathOK {
+		if declared, declaredOK := r.DeclaredPathTypeAt(point, keyPath, true); declaredOK && declared != nil {
+			return declared, true
+		}
 	}
 	value, ok := r.SourceValueBeforeBoundary(point, write.KeySource())
 	if !ok {

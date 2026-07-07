@@ -33,6 +33,10 @@ type Config struct {
 	ModuleExports importlookup.Source
 	Metadata      cfgfacts.Metadata
 	WIR           *wir.Body
+
+	// MethodReceiverTypes maps method-table receiver symbols to the proven
+	// runtime self type inferred from metatable construction patterns.
+	MethodReceiverTypes map[symbol.ID]typ.Type
 }
 
 type Lowered struct {
@@ -55,7 +59,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 	if typeResolver == nil {
 		typeResolver = typeresolve.New(config.Bindings)
 	}
-	symbolTypes := lowerSymbolTypes(config.Bindings, graph, config.Metadata, result, typeResolver, config.ModuleExports)
+	symbolTypes := lowerSymbolTypes(config.Bindings, graph, config.Metadata, result, typeResolver, config.ModuleExports, config.MethodReceiverTypes)
 	if config.WIR != nil {
 		symbolTypes = mergeSymbolTypes(symbolTypes, lowerSymbolTypesFromWIR(config.WIR))
 	}
@@ -69,6 +73,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		returnLocalObjectLiteralTypes = lowerReturnLocalObjectLiteralTypes(config.Bindings, graph, result, typeResolver)
 	}
 	symbolTypes = mergeSymbolTypes(symbolTypes, declaredReturnLocalTypes)
+	explicitTopLocalTypes := lowerExplicitTopLocalTypes(result, graph, typeResolver)
 	expressionRefinements := make(map[factflow.ExprRef]factflow.ExpressionRefinement)
 	l := lowerer{
 		registry:                      config.Registry,
@@ -82,6 +87,7 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		callPoints:                    semanticCallPointsByExpr(graph, result, config.WIR),
 		wirCallPoints:                 callPointsByExpressionIDFromWIR(graph, config.WIR),
 		symbolTypes:                   symbolTypes,
+		explicitTopLocalTypes:         explicitTopLocalTypes,
 		declaredReturnLocalTypes:      declaredReturnLocalTypes,
 		returnLocalObjectLiteralTypes: returnLocalObjectLiteralTypes,
 		exprs:                         make(map[any]factflow.ExprRef),
@@ -120,19 +126,18 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		ExpressionRefinements:         expressionRefinements,
 		DynamicIndexExpressions:       make(map[factflow.ExprRef]factflow.DynamicIndexExpression),
 	}
-	if l.wir != nil && result == nil {
+	if l.wir != nil {
 		l.addObjectLiteralsFromWIR(&input)
 	}
 	for _, point := range graph.RPO() {
-		if l.wir != nil && result == nil {
+		if l.wir != nil {
 			l.addAssignmentWritesFromWIR(&input, point)
 		}
 		if result != nil {
 			if view, ok := result.LocalAssignmentView(point); ok {
 				fact, _ := view.Borrowed()
-				if l.wir != nil && !l.hasAssignmentWriteFromWIR(point) {
-					// WIR mode must not fall back to semantic assignment facts, but
-					// other WIR-owned facts can share this CFG point.
+				if l.wir != nil {
+					l.addLocalAssignmentSidecarsForWIR(&input, point, result, fact)
 				} else if lowered, ok := l.localAssignment(point, fact); ok {
 					input.RootAssignments[point] = lowered
 					l.addLocalConditionAlias(fact.Symbol, lowered.Source())
@@ -150,9 +155,8 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 			}
 			if view, ok := result.OrdinaryAssignmentView(point); ok {
 				fact, _ := view.Borrowed()
-				if l.wir != nil && !l.hasAssignmentWriteFromWIR(point) {
-					// WIR mode must not fall back to semantic assignment facts, but
-					// other WIR-owned facts can share this CFG point.
+				if l.wir != nil {
+					l.addOrdinaryAssignmentSidecarsForWIR(&input, point, result, fact)
 				} else if lowered, ok := l.pathAssignment(point, fact); ok {
 					input.PathAssignments[point] = lowered
 					if lowered, ok := l.pathStaticMemberWrite(point, fact); ok {
@@ -173,15 +177,16 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 					if declared, ok := l.symbolTypes[fact.Symbol]; ok {
 						l.addObjectLiteralFieldExposures(&input, result, point, fact.Source, declared)
 					}
-				}
-				if lowered, ok := l.dynamicIndexWrite(point, fact); ok {
-					input.DynamicIndexWrites[point] = lowered
-					l.addAssertionRefinementsForLoweredSource(&input, lowered.Source(), fact.Source)
-					l.addObjectLiteral(&input, result, fact.Source)
-					l.addDynamicIndexObjectLiteralExpectedTypes(&input, fact)
-				}
-				if lowered, ok := l.pathDescendantInvalidation(fact); ok {
-					input.PathDescendantInvalidations[point] = lowered
+				} else {
+					if lowered, ok := l.dynamicIndexWrite(point, fact); ok {
+						input.DynamicIndexWrites[point] = lowered
+						l.addAssertionRefinementsForLoweredSource(&input, lowered.Source(), fact.Source)
+						l.addObjectLiteral(&input, result, fact.Source)
+						l.addDynamicIndexObjectLiteralExpectedTypes(&input, fact)
+					}
+					if lowered, ok := l.pathDescendantInvalidation(fact); ok {
+						input.PathDescendantInvalidations[point] = lowered
+					}
 				}
 			}
 		}
@@ -254,8 +259,8 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 				for index, source := range fact.ArgumentSources {
 					if l.wir == nil {
 						l.addCallArgumentAssertionRefinements(&input, point, index, valueSourceAt(argumentSources, index), source)
+						l.addObjectLiteral(&input, result, source)
 					}
-					l.addObjectLiteral(&input, result, source)
 				}
 				if l.wir == nil {
 					if lowered, ok := l.assertPostconditionRefinement(fact); ok {
@@ -285,6 +290,56 @@ func LowerWithSidecars(result *semantics.Result, graph cfg.Graph, config Config)
 		Facts:       factflow.NewFacts(input),
 		SymbolTypes: copySymbolTypes(symbolTypes),
 	}
+}
+
+func (l *lowerer) addLocalAssignmentSidecarsForWIR(input *factflow.FactsInput, point cfg.Point, result *semantics.Result, fact semantics.LocalAssignmentFact) {
+	lowered, ok := input.RootAssignments[point]
+	if !ok || lowered.TargetSymbol() != fact.Symbol {
+		return
+	}
+	l.addLocalConditionAlias(fact.Symbol, lowered.Source())
+	l.addAssignmentAssertionRefinements(input, point, lowered.TargetPath(), lowered.Source(), fact.Source)
+	l.addObjectLiteral(input, result, fact.Source)
+	l.addObjectLiteralExpectedType(input, fact)
+	l.addLocalAliasExposure(input, point, fact)
+	if fact.Source.Kind == sourceprovenance.SourceExpression {
+		l.addCastExposure(input, point, fact.Source.Expr)
+	}
+	if declared, ok := l.resolveType(fact.Type); ok {
+		l.addObjectLiteralFieldExposures(input, result, point, fact.Source, declared)
+	}
+}
+
+func (l *lowerer) addOrdinaryAssignmentSidecarsForWIR(input *factflow.FactsInput, point cfg.Point, result *semantics.Result, fact semantics.OrdinaryAssignmentFact) {
+	if lowered, ok := input.PathAssignments[point]; ok {
+		l.addAssertionRefinementsForLoweredSource(input, lowered.Source(), fact.Source)
+		l.addObjectLiteral(input, result, fact.Source)
+		l.addStoreExposure(input, point, fact)
+	}
+	if lowered, ok := input.RootAssignments[point]; ok && l.rootAssignmentMatchesSemanticOrdinaryTarget(lowered, fact) {
+		l.addAssignmentAssertionRefinements(input, point, lowered.TargetPath(), lowered.Source(), fact.Source)
+		l.addObjectLiteral(input, result, fact.Source)
+		l.addOrdinaryObjectLiteralExpectedType(input, fact)
+		l.addReassignExposure(input, point, fact)
+		if declared, ok := l.symbolTypes[fact.Symbol]; ok {
+			l.addObjectLiteralFieldExposures(input, result, point, fact.Source, declared)
+		}
+	}
+	if lowered, ok := input.DynamicIndexWrites[point]; ok {
+		l.addAssertionRefinementsForLoweredSource(input, lowered.Source(), fact.Source)
+		l.addObjectLiteral(input, result, fact.Source)
+		l.addDynamicIndexObjectLiteralExpectedTypes(input, fact)
+	}
+}
+
+func (l *lowerer) rootAssignmentMatchesSemanticOrdinaryTarget(lowered factflow.RootAssignment, fact semantics.OrdinaryAssignmentFact) bool {
+	if fact.HasSymbol && fact.Symbol != 0 {
+		return lowered.TargetSymbol() == fact.Symbol
+	}
+	if fact.HasPath && !fact.Path.IsEmpty() {
+		return lowered.TargetPath().Equal(fact.Path)
+	}
+	return false
 }
 
 func (l *lowerer) addNumericForFactsFromWIR(input *factflow.FactsInput, point cfg.Point) {
@@ -349,6 +404,32 @@ func copySymbolTypes(in map[symbol.ID]typ.Type) map[symbol.ID]typ.Type {
 	return out
 }
 
+func lowerExplicitTopLocalTypes(result *semantics.Result, graph cfg.Graph, resolver *typeresolve.Resolver) map[symbol.ID]typ.Type {
+	if result == nil || graph == nil || resolver == nil {
+		return nil
+	}
+	var out map[symbol.ID]typ.Type
+	for _, point := range graph.RPO() {
+		view, ok := result.LocalAssignmentView(point)
+		if !ok {
+			continue
+		}
+		fact, _ := view.Borrowed()
+		if fact.Symbol == 0 || fact.Type == nil {
+			continue
+		}
+		declared, ok := resolver.Type(fact.Type)
+		if !ok || declared == nil || (!typ.IsAny(declared) && !typ.IsUnknown(declared)) {
+			continue
+		}
+		if out == nil {
+			out = make(map[symbol.ID]typ.Type, 1)
+		}
+		out[fact.Symbol] = declared
+	}
+	return out
+}
+
 type lowerer struct {
 	registry                      *axis.Registry
 	bindings                      *bind.Result
@@ -365,6 +446,7 @@ type lowerer struct {
 	callPoints                    map[*ast.FuncCallExpr]cfg.Point
 	wirCallPoints                 map[wir.ExpressionID]cfg.Point
 	symbolTypes                   map[symbol.ID]typ.Type
+	explicitTopLocalTypes         map[symbol.ID]typ.Type
 	declaredReturnLocalTypes      map[symbol.ID]typ.Type
 	returnLocalObjectLiteralTypes map[symbol.ID]typ.Type
 	exprs                         map[any]factflow.ExprRef

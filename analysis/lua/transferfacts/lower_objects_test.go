@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/proof"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
@@ -339,6 +340,120 @@ local box: Box = { items = {}, label = "" }
 	}
 }
 
+func TestLowerWIRAnnotatedObjectLiteralUsesDeclaredOverlay(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+type Box = { items: {[string]: {id: string}}, count: number }
+local box: Box = { items = {}, count = 0 }
+`)
+	body := wirlower.Lower("chunk", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	point := requireStmtPoints(t, built, stmts[1], 1)[0]
+	fact, ok := facts.RootAssignment(point)
+	if !ok {
+		t.Fatalf("missing root assignment at point %d", point)
+	}
+	if fact.DeclaredValueContracts() {
+		t.Fatalf("annotated object literal root assignment used declared replacement contract; want overlay preserving literal identity")
+	}
+	if !fact.DeclaredValueOverlays() {
+		t.Fatalf("annotated object literal root assignment missing declared overlay")
+	}
+	declared, ok := fact.DeclaredValue()
+	if !ok {
+		t.Fatalf("annotated object literal root assignment missing declared value")
+	}
+	if got := product.Get(reg, declared, assertion.Key); !got.Has(assertion.TypeClaim) {
+		t.Fatalf("declared overlay assertion = %s, want type claim", got)
+	}
+	source := fact.Source()
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		t.Fatalf("annotated object literal source = %#v, want expression source", source)
+	}
+	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing object literal for source ref %d", source.ExprRef)
+	}
+	if id, ok := literal.Identity(); !ok || id == (identity.ID{}) {
+		t.Fatalf("object literal identity = %s/%v, want stable table identity", id, ok)
+	}
+}
+
+func TestLowerWIRAnnotatedArrayTableLiteralCarriesDeclaredContractClaim(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+type SystemMessage = { role: "system" }
+local final_messages: {SystemMessage} = {}
+`)
+	body := wirlower.Lower("chunk", stmts, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	point := requireStmtPoints(t, built, stmts[1], 1)[0]
+	fact, ok := facts.RootAssignment(point)
+	if !ok {
+		t.Fatalf("missing root assignment at point %d", point)
+	}
+	if !fact.DeclaredValueContracts() {
+		t.Fatalf("annotated array table literal used overlay/no contract; want declared contract")
+	}
+	declared, ok := fact.DeclaredValue()
+	if !ok {
+		t.Fatalf("annotated array table literal root assignment missing declared value")
+	}
+	if got := product.Get(reg, declared, assertion.Key); !got.Has(assertion.TypeClaim) {
+		t.Fatalf("declared contract assertion = %s, want type claim", got)
+	}
+}
+
+func TestLowerAnnotatedObjectLiteralUsesDeclaredOverlay(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+type Box = { items: {[string]: {id: string}}, count: number }
+local box: Box = { items = {}, count = 0 }
+`)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	point := requireStmtPoints(t, built, stmts[1], 1)[0]
+	fact, ok := facts.RootAssignment(point)
+	if !ok {
+		t.Fatalf("missing root assignment at point %d", point)
+	}
+	if fact.DeclaredValueContracts() {
+		t.Fatalf("annotated object literal root assignment used declared replacement contract; want overlay preserving literal identity")
+	}
+	if !fact.DeclaredValueOverlays() {
+		t.Fatalf("annotated object literal root assignment missing declared overlay")
+	}
+	declared, ok := fact.DeclaredValue()
+	if !ok {
+		t.Fatalf("annotated object literal root assignment missing declared value")
+	}
+	if got := product.Get(reg, declared, assertion.Key); !got.Has(assertion.TypeClaim) {
+		t.Fatalf("declared overlay assertion = %s, want type claim", got)
+	}
+}
+
+func TestLowerReturnedAnnotatedObjectLiteralUsesDeclaredOverlay(t *testing.T) {
+	reg := standard.Registry()
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function build(): {items: {[string]: {id: string}}, count: number}
+	local batch: {items: {[string]: {id: string}}, count: number} = {items = {}, count = 0}
+	return batch
+end
+`)
+	body := fn.Stmts
+	point := requireStmtPoints(t, built, body[0], 1)[0]
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	fact, ok := facts.RootAssignment(point)
+	if !ok {
+		t.Fatalf("missing root assignment at point %d", point)
+	}
+	if fact.DeclaredValueContracts() {
+		t.Fatalf("returned annotated object literal used declared replacement contract; want overlay preserving literal identity")
+	}
+	if !fact.DeclaredValueOverlays() {
+		t.Fatalf("returned annotated object literal missing declared overlay")
+	}
+}
+
 func TestLowerWIRObjectLiteralCarriesDeclaredEntryContractWithoutSemanticResult(t *testing.T) {
 	reg := standard.Registry()
 	stmts, bindings, built, _ := parseSemanticChunk(t, `
@@ -495,10 +610,11 @@ local t = { leaf = 1 }
 	body := wir.NewBody("synthetic-object-entry")
 	value := wir.Operand{Kind: wir.OperandConst, Ref: uint32(body.InternConst(wir.Const{Kind: wir.ConstString, Str: "from-wir"}))}
 	start := body.Emit(wir.Instruction{
-		Op:    wir.OpMakeTable,
-		Point: point,
-		Dst:   wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(target))},
-		List:  body.AppendOperands([]wir.Operand{value}),
+		Op:     wir.OpMakeTable,
+		Point:  point,
+		Dst:    wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(target))},
+		List:   body.AppendOperands([]wir.Operand{value}),
+		Assign: wir.AssignLocalDeclaration,
 		TableEntries: body.AppendTableEntries([]wir.TableEntry{
 			{
 				Suffix:     fieldSuffix("leaf"),
@@ -858,6 +974,64 @@ suites[suite] = suites[suite] or {}
 	t.Fatalf("object literals = %#v, want logical default constructor to carry dynamic slot contract %v", facts.ObjectLiterals(), want)
 }
 
+func TestLowerWithWIRDynamicIndexLogicalDefaultObjectLiteralCarriesSlotContract(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local suites: {[string]: any[]} = {}
+local suite = "alpha"
+suites[suite] = suites[suite] or {}
+`)
+	body := wirlower.Lower("dynamic-default", stmts, bindings, built)
+	reg := standard.Registry()
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	want := typ.NewArray(typ.Any)
+
+	foundExpected := false
+	for _, literal := range facts.ObjectLiterals() {
+		expected, ok := literal.Expected()
+		if !ok {
+			continue
+		}
+		got, ok := typevalue.TypeOf(reg, expected)
+		if ok && typ.TypeEquals(got, want) {
+			foundExpected = true
+			break
+		}
+	}
+	if !foundExpected {
+		t.Fatalf("object literals = %#v, want WIR logical default constructor to carry dynamic slot contract %v", facts.ObjectLiterals(), want)
+	}
+	assignPoint := cfg.Point(0)
+	for _, point := range cfg.RPOReadOnly(built.Graph) {
+		for _, inst := range body.PointInstructions(point) {
+			if inst.Op == wir.OpDynamicIndexWrite {
+				assignPoint = point
+				break
+			}
+		}
+		if assignPoint != 0 {
+			break
+		}
+	}
+	if assignPoint == 0 {
+		t.Fatalf("missing WIR dynamic-index write\nWIR:\n%s", wir.Print(body, built.Graph))
+	}
+	write, ok := facts.DynamicIndexWrite(assignPoint)
+	if !ok {
+		t.Fatalf("missing dynamic-index write fact at WIR point %d\nWIR:\n%s", assignPoint, wir.Print(body, built.Graph))
+	}
+	source := write.Source()
+	if !source.HasExpr {
+		t.Fatalf("dynamic-index write source = %#v, want logical expression source", source)
+	}
+	op, ok := facts.ExpressionOperation(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing logical expression operation for source ref %d", source.ExprRef)
+	}
+	if op.Kind() != factflow.ExpressionOperationBinary || op.Op() != "or" {
+		t.Fatalf("logical expression operation = %#v, want binary or", op)
+	}
+}
+
 func TestLowerAnnotatedLogicalFallbackObjectLiteralCarriesDeclaredContract(t *testing.T) {
 	_, bindings, built, result := parseSemanticChunk(t, `
 type Payload = {
@@ -951,6 +1125,29 @@ end`)
 	}
 }
 
+func TestLowerObjectLiteralCarriesOpenListElementSourceFromVararg(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function collect(...: number)
+	local values = {...}
+end`)
+	localStmt := fn.Stmts[0].(*ast.LocalAssignStmt)
+	body := wirlower.LowerFunction("collect", fn, bindings, built)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	point := requireStmtPoints(t, built, localStmt, 1)[0]
+	source := mustLocalSource(t, facts, point)
+	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing object literal for vararg table source %#v", source)
+	}
+	element, ok := literal.ListElementSource()
+	if !ok {
+		t.Fatalf("missing list element source on vararg table literal %#v", literal)
+	}
+	if element.Kind != factflow.ValueSourceVararg || !element.Final || !element.Expanded || !element.OpenTail {
+		t.Fatalf("list element source = %#v, want open expanded vararg", element)
+	}
+}
+
 func TestLowerWithWIRReturnedObjectLiteralExpectedContractComesFromWIR(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function new_actor(): { state: { processed: {[string]: string} } }
@@ -1027,6 +1224,48 @@ end`)
 	literal, ok := facts.ObjectLiteral(sources[0].ExprRef)
 	if !ok {
 		t.Fatalf("missing returned object literal sidecar for ref %d", sources[0].ExprRef)
+	}
+	rootValue, ok := facts.ExpressionValue(sources[0].ExprRef)
+	if !ok {
+		t.Fatalf("missing returned object literal expression value for ref %d", sources[0].ExprRef)
+	}
+	rootType, ok := typevalue.TypeOf(reg, rootValue)
+	wantRoot := typetable.NewRecord().
+		Field("type", typ.String).
+		Field("error", typeexpr.Optional(typetable.NewRecord().
+			Field("type", typ.String).
+			Field("message", typ.String).
+			Field("code", typ.MaterializeOptional(typ.Any)).
+			Build())).
+		Build()
+	if !ok || !typ.TypeEquals(rootType, wantRoot) {
+		t.Fatalf("returned object literal expression type = %v/%v, want %v", rootType, ok, wantRoot)
+	}
+	var nestedErrorRef factflow.ExprRef
+	for _, entry := range literal.Entries() {
+		if !reflect.DeepEqual(entry.Suffix(), fieldChainSuffix("error")) {
+			continue
+		}
+		source := entry.Source()
+		if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
+			nestedErrorRef = source.ExprRef
+		}
+	}
+	if nestedErrorRef == 0 {
+		t.Fatalf("returned literal entries = %#v, want nested error source", literal.Entries())
+	}
+	nestedValue, ok := facts.ExpressionValue(nestedErrorRef)
+	if !ok {
+		t.Fatalf("missing nested returned object literal expression value for ref %d", nestedErrorRef)
+	}
+	nestedType, ok := typevalue.TypeOf(reg, nestedValue)
+	wantNested := typetable.NewRecord().
+		Field("type", typ.String).
+		Field("message", typ.String).
+		Field("code", typ.MaterializeOptional(typ.Any)).
+		Build()
+	if !ok || !typ.TypeEquals(nestedType, wantNested) {
+		t.Fatalf("nested returned object literal expression type = %v/%v, want %v", nestedType, ok, wantNested)
 	}
 	want := map[string]struct {
 		path path.Path

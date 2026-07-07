@@ -5,7 +5,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 )
 
-type judgmentDiagnosticRenderer func(judgment.Judgment, judgment.Policy, judgment.StrictnessMode) (diagnostic.Diagnostic, bool)
+type judgmentRenderContext struct {
+	proof ProofContext
+}
+
+func newJudgmentRenderContext() judgmentRenderContext {
+	return judgmentRenderContext{proof: NewProofContext()}
+}
+
+type judgmentDiagnosticRenderer func(judgmentRenderContext, judgment.Judgment, judgment.Policy, judgment.StrictnessMode) (diagnostic.Diagnostic, bool)
 
 var judgmentDiagnosticRenderers = map[judgment.Code]judgmentDiagnosticRenderer{
 	judgment.CodeCallArgType:        renderDirectCallArgumentJudgmentWithPolicy,
@@ -34,6 +42,10 @@ var judgmentDiagnosticRenderers = map[judgment.Code]judgmentDiagnosticRenderer{
 }
 
 func renderJudgmentDiagnostics(items []judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) []diagnostic.Diagnostic {
+	return newJudgmentRenderContext().render(items, policy, mode)
+}
+
+func (ctx judgmentRenderContext) render(items []judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) []diagnostic.Diagnostic {
 	if len(items) == 0 {
 		return nil
 	}
@@ -44,7 +56,7 @@ func renderJudgmentDiagnostics(items []judgment.Judgment, policy judgment.Policy
 		if !ok {
 			continue
 		}
-		if d, ok := render(item, policy, mode); ok {
+		if d, ok := render(ctx, item, policy, mode); ok {
 			out = append(out, d)
 		}
 	}

@@ -25,6 +25,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/projection"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typecall"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
@@ -168,6 +169,52 @@ func TestManifestRoundTripNormalizesMapKeysOnDecode(t *testing.T) {
 	}
 	if !typ.TypeEquals(readonly.Key, typ.String) {
 		t.Fatalf("Readonly key = %v, want string", readonly.Key)
+	}
+}
+
+func TestManifestRoundTripPreservesGenericCallbackAliasInference(t *testing.T) {
+	aliasParam := typ.NewTypeParam("T", nil)
+	predicate := typ.NewGeneric("Predicate", []*typ.TypeParam{aliasParam},
+		typ.Func().Param("item", aliasParam).Returns(typ.Boolean).Build())
+	fnParam := typ.NewTypeParam("T", nil)
+	fn := typ.Func().
+		TypeParamRef(fnParam).
+		Param("items", typ.NewArray(fnParam)).
+		Param("pred", typ.Instantiate(predicate, fnParam)).
+		Returns(typeexpr.Optional(fnParam)).
+		Build()
+	m := New("iter")
+	m.FunctionSignatures["iter.find"] = signature.Function{Type: fn}
+
+	data, err := Encode(m)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	got, err := Decode(data)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	sig, ok := got.FunctionSignatures["iter.find"]
+	if !ok {
+		t.Fatalf("missing iter.find signature: %#v", got.FunctionSignatures)
+	}
+	user := typetable.NewRecord().
+		Field("name", typ.String).
+		Field("age", typ.Number).
+		Build()
+	callback := typ.Func().
+		Param("user", user).
+		Returns(typ.Boolean).
+		Build()
+	instantiated, violations, bindings := typecall.InstantiateGenericCallWithBindings(sig.Type, []typ.Type{typ.NewArray(user), callback})
+	if len(violations) != 0 {
+		t.Fatalf("violations = %#v, want none", violations)
+	}
+	if len(bindings) != 1 || !typ.TypeEquals(bindings[0].Type, user) {
+		t.Fatalf("bindings = %#v, want T=%v", bindings, user)
+	}
+	if len(instantiated.Returns) != 1 || !typ.TypeEquals(instantiated.Returns[0], typeexpr.Optional(user)) {
+		t.Fatalf("returns = %v, want %v", instantiated.Returns, typeexpr.Optional(user))
 	}
 }
 

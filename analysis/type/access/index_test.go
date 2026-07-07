@@ -108,6 +108,37 @@ func TestIndexRecordMapComponentRequiresStrictKeyAdmission(t *testing.T) {
 	}
 }
 
+func TestRuntimeIndexMapAllowsOverlappingKey(t *testing.T) {
+	m := typetable.NewMap(typ.LiteralString("raw"), typ.Number)
+
+	got, ok := RuntimeIndex(m, typ.String)
+	if !ok {
+		t.Fatal("RuntimeIndex(literal-key map, broad string key) failed")
+	}
+	assertType(t, got, typeexpr.Optional(typ.Number))
+
+	anyMap := typetable.NewMap(typ.Any, typ.String)
+	got, ok = RuntimeIndex(anyMap, typ.Any)
+	if !ok {
+		t.Fatal("RuntimeIndex(any-key map, any key) failed")
+	}
+	assertType(t, got, typeexpr.Optional(typ.String))
+
+	anyRecordMap := typetable.NewRecord().MapComponent(typ.Any, typ.String).Build()
+	got, ok = RuntimeIndex(anyRecordMap, typ.Any)
+	if !ok {
+		t.Fatal("RuntimeIndex(any-key record map, any key) failed")
+	}
+	assertType(t, got, typeexpr.Optional(typ.String))
+
+	stringMap := typetable.NewMap(typ.String, typ.Number)
+	got, ok = RuntimeIndex(stringMap, typeexpr.Optional(typ.String))
+	if !ok {
+		t.Fatal("RuntimeIndex(string map, optional string key) failed")
+	}
+	assertType(t, got, typeexpr.Optional(typ.Number))
+}
+
 func TestIndexMapReadonlyMapCompatibleKeys(t *testing.T) {
 	m := typetable.NewMap(typ.String, typ.Number)
 

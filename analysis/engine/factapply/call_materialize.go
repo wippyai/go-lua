@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -300,18 +301,27 @@ func applyReturn(
 	var edit state.ValueEdit
 	editing := false
 	var returnSlots []int
+	var declaredReturnSources map[int]struct{}
 	for i, source := range fact.Sources() {
 		targetIndex := source.TargetIndex
 		if targetIndex < 0 {
 			targetIndex = i
 		}
+		hasDeclaredContract := returnSourceHasDeclaredContract(facts, source)
 		value, ok := returnSourceValue(ctx, facts, sources, read, in, out, source, resolver, projectPath, typeValues)
 		if !ok {
 			value = product.Top()
 		} else {
 			out, _ = materializeObjectLiteralHeapCachedWithKnownSourceValue(ctx, resolver, facts, sources, read, in, out, source, value, true, typeValues)
-			if projected, projectedOK := sourceprojection.HeapObjectContainerType(ctx.Registry, typeValues, out, value); projectedOK {
-				value = typevalue.WithWitness(ctx.Registry, value, projected)
+			if !hasDeclaredContract && returnSlotAllowsHeapContainerProjection(ctx.Registry, typeValues, value) {
+				if projected, projectedOK := sourceprojection.HeapObjectContainerType(ctx.Registry, typeValues, out, value); projectedOK {
+					value = typevalue.WithWitness(ctx.Registry, value, projected)
+				}
+			} else {
+				if declaredReturnSources == nil {
+					declaredReturnSources = make(map[int]struct{}, 1)
+				}
+				declaredReturnSources[targetIndex] = struct{}{}
 			}
 		}
 		if !editing {
@@ -326,7 +336,13 @@ func applyReturn(
 	}
 	out = edit.DoneOn(out)
 	for _, index := range returnSlots {
+		if _, declared := declaredReturnSources[index]; declared {
+			continue
+		}
 		value := out.ReadReturnSlot(ctx.Registry, index)
+		if !returnSlotAllowsHeapContainerProjection(ctx.Registry, typeValues, value) {
+			continue
+		}
 		projected, ok := sourceprojection.HeapObjectContainerType(ctx.Registry, typeValues, out, value)
 		if !ok {
 			continue
@@ -334,6 +350,25 @@ func applyReturn(
 		out = out.WriteReturnSlot(ctx.Registry, index, typevalue.WithWitness(ctx.Registry, value, projected))
 	}
 	return out
+}
+
+func returnSourceHasDeclaredContract(facts factflow.Facts, source factflow.ValueSource) bool {
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		return false
+	}
+	refinement, ok := facts.ExpressionRefinement(source.ExprRef)
+	return ok && refinement.Mode() == factflow.ExpressionRefinementDeclaredContract
+}
+
+func returnSlotAllowsHeapContainerProjection(reg *axis.Registry, typeValues *typevalue.Cache, value product.Value) bool {
+	if reg == nil || typeValues == nil {
+		return true
+	}
+	t, ok := typeValues.TypeOf(reg, value)
+	if !ok || t == nil {
+		return true
+	}
+	return !inspect.ContainsAny(t) && !inspect.ContainsUnknown(t)
 }
 
 func returnSourceValue(
@@ -356,6 +391,11 @@ func returnSourceValue(
 		}
 		if sourcePath, ok := facts.ExpressionPathRef(source.ExprRef); ok {
 			if pathValue, ok := resolvePathValueAtCached(typeValues, ctx.Registry, resolver, ctx.Point, out, sourcePath, projectPath); ok {
+				if cached, cachedOK := facts.ExpressionValue(source.ExprRef); cachedOK {
+					if preserved, preserveOK := sourcevalue.PreservePathBackedGradualContract(ctx.Registry, typeValues, cached, pathValue.value); preserveOK {
+						return preserved, true
+					}
+				}
 				return pathValue.value, true
 			}
 		}

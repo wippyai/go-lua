@@ -117,7 +117,43 @@ func encodeType(t typ.Type) (*typeWire, error) {
 	}
 }
 
+type typeDecodeEnv struct {
+	parent *typeDecodeEnv
+	params map[string]*typ.TypeParam
+}
+
+func (e *typeDecodeEnv) lookup(name string) (*typ.TypeParam, bool) {
+	for cur := e; cur != nil; cur = cur.parent {
+		if cur.params == nil {
+			continue
+		}
+		param, ok := cur.params[name]
+		if ok {
+			return param, true
+		}
+	}
+	return nil, false
+}
+
+func (e *typeDecodeEnv) withParams(params []*typ.TypeParam) *typeDecodeEnv {
+	if len(params) == 0 {
+		return e
+	}
+	child := &typeDecodeEnv{parent: e, params: make(map[string]*typ.TypeParam, len(params))}
+	for _, param := range params {
+		if param == nil || param.Name == "" {
+			continue
+		}
+		child.params[param.Name] = param
+	}
+	return child
+}
+
 func decodeType(w *typeWire) (typ.Type, error) {
+	return decodeTypeInEnv(w, nil)
+}
+
+func decodeTypeInEnv(w *typeWire, env *typeDecodeEnv) (typ.Type, error) {
 	if w == nil {
 		return nil, nil
 	}
@@ -144,7 +180,7 @@ func decodeType(w *typeWire) (typ.Type, error) {
 	case "literal":
 		return decodeLiteral(w)
 	case "annotated":
-		inner, err := decodeType(w.Element)
+		inner, err := decodeTypeInEnv(w.Element, env)
 		if err != nil {
 			return nil, err
 		}
@@ -154,33 +190,33 @@ func decodeType(w *typeWire) (typ.Type, error) {
 		}
 		return typ.NewAnnotated(inner, annotations), nil
 	case "optional":
-		inner, err := decodeType(w.Element)
+		inner, err := decodeTypeInEnv(w.Element, env)
 		if err != nil {
 			return nil, err
 		}
 		return typeexpr.Optional(inner), nil
 	case "union":
-		members, err := decodeTypeList(w.Members)
+		members, err := decodeTypeListInEnv(w.Members, env)
 		if err != nil {
 			return nil, err
 		}
 		return typeexpr.Union(members...), nil
 	case "intersection":
-		members, err := decodeTypeList(w.Members)
+		members, err := decodeTypeListInEnv(w.Members, env)
 		if err != nil {
 			return nil, err
 		}
 		return typeexpr.Intersection(members...), nil
 	case "tuple":
-		elements, err := decodeTypeList(w.Elements)
+		elements, err := decodeTypeListInEnv(w.Elements, env)
 		if err != nil {
 			return nil, err
 		}
 		return typ.NewTuple(elements...), nil
 	case "function":
-		return decodeFunction(w)
+		return decodeFunctionInEnv(w, env)
 	case "array":
-		elem, err := decodeType(w.Element)
+		elem, err := decodeTypeInEnv(w.Element, env)
 		if err != nil {
 			return nil, err
 		}
@@ -192,11 +228,11 @@ func decodeType(w *typeWire) (typ.Type, error) {
 		if w.Value == nil {
 			return nil, fmt.Errorf("map value missing type")
 		}
-		key, err := decodeType(w.Key)
+		key, err := decodeTypeInEnv(w.Key, env)
 		if err != nil {
 			return nil, err
 		}
-		value, err := decodeType(w.Value)
+		value, err := decodeTypeInEnv(w.Value, env)
 		if err != nil {
 			return nil, err
 		}
@@ -208,29 +244,29 @@ func decodeType(w *typeWire) (typ.Type, error) {
 		if w.Value == nil {
 			return nil, fmt.Errorf("readonly map value missing type")
 		}
-		key, err := decodeType(w.Key)
+		key, err := decodeTypeInEnv(w.Key, env)
 		if err != nil {
 			return nil, err
 		}
-		value, err := decodeType(w.Value)
+		value, err := decodeTypeInEnv(w.Value, env)
 		if err != nil {
 			return nil, err
 		}
 		return typetable.NewReadonlyMap(key, value), nil
 	case "record":
-		return decodeRecord(w)
+		return decodeRecordInEnv(w, env)
 	case "interface":
-		return decodeInterface(w)
+		return decodeInterfaceInEnv(w, env)
 	case "alias":
-		target, err := decodeType(w.Target)
+		target, err := decodeTypeInEnv(w.Target, env)
 		if err != nil {
 			return nil, err
 		}
 		return typ.NewAlias(w.Name, target), nil
 	case "generic":
-		return decodeGeneric(w)
+		return decodeGenericInEnv(w, env)
 	case "instantiated":
-		generic, err := decodeType(w.Generic)
+		generic, err := decodeTypeInEnv(w.Generic, env)
 		if err != nil {
 			return nil, err
 		}
@@ -238,7 +274,7 @@ func decodeType(w *typeWire) (typ.Type, error) {
 		if !ok {
 			return nil, fmt.Errorf("instantiated generic payload is %T", generic)
 		}
-		args, err := decodeTypeList(w.TypeArgs)
+		args, err := decodeTypeListInEnv(w.TypeArgs, env)
 		if err != nil {
 			return nil, err
 		}
@@ -246,13 +282,13 @@ func decodeType(w *typeWire) (typ.Type, error) {
 	case "ref":
 		return typ.NewRef(w.Module, w.Name), nil
 	case "meta":
-		of, err := decodeType(w.Of)
+		of, err := decodeTypeInEnv(w.Of, env)
 		if err != nil {
 			return nil, err
 		}
 		return typ.NewMeta(of), nil
 	case "typeparam":
-		return decodeTypeParam(w)
+		return decodeTypeParamInEnv(w, env)
 	default:
 		return nil, fmt.Errorf("unknown type kind %q", w.Kind)
 	}

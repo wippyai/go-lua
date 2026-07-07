@@ -2,68 +2,26 @@ package readmodel
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/check/internal/sourcebridge"
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
-	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func assignmentMissingRequired(point cfg.Point, r Reader, fact body.LocalAssignmentFact, expected typ.Type) (string, bool) {
-	literal, ok := r.assignmentObjectLiteral(point, fact)
-	if !ok {
-		return "", false
-	}
-	return body.MissingRequiredRecordField(expected, func(name string) bool {
-		for _, entry := range literal.Entries {
-			if len(entry.Suffix.Segments) != 1 {
-				continue
-			}
-			seg := entry.Suffix.Segments[0]
-			if seg.Kind == segment.SegmentField && seg.Name == name {
-				return true
-			}
-		}
-		return false
-	})
-}
-
-func (r Reader) assignmentObjectLiteral(point cfg.Point, fact body.LocalAssignmentFact) (body.ObjectLiteralFact, bool) {
-	literal, ok := r.result.ObjectLiteral(fact.Source.Expr)
-	if !ok {
-		literal, ok = r.result.ObjectLiteral(fact.Expr)
-	}
-	return literal, ok
+	return r.result.AssignmentObjectLiteralMissingRequired(point, fact, expected)
 }
 
 func (r Reader) assignmentObjectLiteralShapeType(point cfg.Point, fact body.LocalAssignmentFact) (typ.Type, bool) {
-	literal, ok := r.assignmentObjectLiteral(point, fact)
-	if !ok {
-		return nil, false
-	}
-	return body.ObjectLiteralShapeType(literal, func(entry body.ObjectEntryFact) (typ.Type, bool) {
-		value, valueOK := r.assignmentObjectLiteralEntryValue(point, entry)
-		t, ok := r.assignmentObjectLiteralEntryType(point, entry, value, valueOK)
-		if !ok || t == nil {
-			return nil, false
-		}
-		return t, true
-	})
+	return r.result.AssignmentObjectLiteralShapeType(point, fact)
 }
 
 func (r Reader) assignmentObjectLiteralEntry(point cfg.Point, fact body.LocalAssignmentFact, expected typ.Type) (Assignment, bool) {
-	literal, ok := r.assignmentObjectLiteral(point, fact)
+	proof, ok := r.result.LocalAssignmentObjectLiteralEntryProof(point, fact, expected)
 	if !ok {
 		return Assignment{}, false
 	}
-	presentation := body.LocalAssignmentPresentationFor(fact)
-	return r.assignmentObjectLiteralEntryCandidate(point, literal, expected, assignmentObjectEntryTarget{
-		Label:          fact.Name,
-		Key:            assignmentTargetKey(fact),
-		ExpectedSpan:   sourceSpanFromBody(presentation.DeclarationSpan),
-		ExpectedSource: readapi.AssignmentExpectedDeclared,
-	})
+	return r.assignmentFromObjectLiteralProof(proof, readapi.AssignmentExpectedDeclared), true
 }
 
 type assignmentObjectEntryTarget struct {
@@ -71,103 +29,73 @@ type assignmentObjectEntryTarget struct {
 	Key            string
 	ExpectedSpan   SourceSpan
 	ExpectedSource readapi.AssignmentExpectedSource
+	ParentContext  readapi.AssignmentParentContext
 }
 
 func (r Reader) assignmentObjectLiteralEntryCandidate(point cfg.Point, literal body.ObjectLiteralFact, expected typ.Type, target assignmentObjectEntryTarget) (Assignment, bool) {
-	for _, entry := range literal.Entries {
-		entryExpected, ok := body.ExpectedConstructorEntryType(expected, entry.Suffix.Segments)
-		if !ok || !readapi.ObligationTypeReportable(entryExpected) {
-			continue
-		}
-		value, valueOK := r.assignmentObjectLiteralEntryValue(point, entry)
-		t, typeOK := r.assignmentObjectLiteralEntryType(point, entry, value, valueOK)
-		if !typeOK {
-			continue
-		}
-		untrustedTopOrigin := valueOK && r.ValueHasUntrustedTopOrigin(value)
-		explicitTopOrigin := valueOK && r.ValueHasExplicitTopOrigin(value)
-		valueAdmissible := valueOK && r.ValueProofAdmissible(value, entryExpected)
-		valueProvenMismatch := valueOK && r.ValueWitnessProvenMismatch(value, entryExpected)
-		if t == nil || valueAdmissible || (r.IsSubtype(t, entryExpected) && !untrustedTopOrigin) {
-			continue
-		}
-		targetLabel := target.Label + segment.FormatSegments(entry.Suffix.Segments)
-		sourceLabel := entry.ValueLabel
-		if sourceLabel == "" {
-			sourceLabel = body.AssignmentSourceLabel(entry.Value)
-		}
-		if sourceLabel == "" {
-			sourceLabel = targetLabel
-		}
-		assignment := Assignment{
-			Point:              point,
-			TargetLabel:        targetLabel,
-			SourceLabel:        sourceLabel,
-			TargetKey:          target.Key + ":" + segment.FormatSegments(entry.Suffix.Segments),
-			Value:              value,
-			ValueHash:          assignmentValueHash(r, value, valueOK),
-			TypeWithPresence:   t,
-			Expected:           entryExpected,
-			ExpectedSource:     target.ExpectedSource,
-			SourceSpan:         sourceSpanFromBody(entry.ValueSpan),
-			DeclarationSpan:    target.ExpectedSpan,
-			UntrustedTopOrigin: untrustedTopOrigin,
-			ExplicitTopOrigin:  explicitTopOrigin,
-		}
-		assignment.Check = readapi.PlanAssignmentCheck(readapi.AssignmentCheckPlan{
-			Assignment:          assignment,
-			ValueAdmissible:     valueAdmissible,
-			ValueProvenMismatch: valueProvenMismatch,
-			IsSubtype:           r.IsSubtype,
-		})
-		return assignment, true
-	}
-	return Assignment{}, false
-}
-
-func (r Reader) assignmentObjectLiteralEntryType(point cfg.Point, entry body.ObjectEntryFact, value product.Value, valueOK bool) (typ.Type, bool) {
-	if t, ok := body.LiteralExpressionType(entry.Value); ok {
-		return t, true
-	}
-	if r.result != nil && entry.Value != nil {
-		if t, ok := r.result.ExpressionTypeBeforeBoundary(point, entry.Value); ok && t != nil {
-			return t, true
-		}
-	}
-	if !valueOK {
-		return nil, false
-	}
-	if t, ok := r.result.ObjectLiteralEntryType(value); ok {
-		return t, true
-	}
-	if !r.result.ObjectLiteralEntryHasUntrustedTopOrigin(value) {
-		return nil, false
-	}
-	if projected, ok := r.ValueTypeWithPresence(value); ok && projected != nil {
-		return projected, true
-	}
-	return typ.Unknown, true
-}
-
-func (r Reader) assignmentObjectLiteralEntryValue(point cfg.Point, entry body.ObjectEntryFact) (product.Value, bool) {
-	if r.result == nil {
-		return product.Value{}, false
-	}
-	if entry.Value != nil {
-		if value, ok := r.result.ExpressionValueBeforeBoundary(point, entry.Value); ok {
-			return r.result.WithMemberReadNilWitness(point, entry.Value, value), true
-		}
-	}
-	value, ok := r.SourceValue(point, entry.Source)
-	if loweredSource, loweredOK := sourcebridge.ValueSourceFromASTSource(entry.Source); loweredOK {
-		if before, beforeOK := r.result.SourceValueBeforeBoundary(point, loweredSource); beforeOK {
-			value, ok = before, true
-		}
-	}
+	proof, ok := r.result.ObjectLiteralAssignmentEntryProof(point, literal, expected, body.ObjectLiteralAssignmentTarget{
+		Label:        target.Label,
+		Key:          target.Key,
+		ExpectedSpan: sourceSpanToBody(target.ExpectedSpan),
+		ParentContext: body.ObjectLiteralAssignmentParentContext{
+			SourceLabel:     target.ParentContext.SourceLabel,
+			TargetLabel:     target.ParentContext.TargetLabel,
+			SourceType:      target.ParentContext.SourceType,
+			Expected:        target.ParentContext.Expected,
+			SourceSpan:      sourceSpanToBody(target.ParentContext.SourceSpan),
+			DeclarationSpan: sourceSpanToBody(target.ParentContext.DeclarationSpan),
+		},
+	})
 	if !ok {
-		return product.Value{}, false
+		return Assignment{}, false
 	}
-	return value, true
+	return r.assignmentFromObjectLiteralProof(proof, target.ExpectedSource), true
+}
+
+func (r Reader) assignmentFromObjectLiteralProof(proof body.ObjectLiteralAssignmentEntryProof, expectedSource readapi.AssignmentExpectedSource) Assignment {
+	assignment := Assignment{
+		Point:              proof.Point,
+		TargetLabel:        proof.TargetLabel,
+		SourceLabel:        proof.SourceLabel,
+		TargetKey:          proof.TargetKey,
+		Value:              proof.Value,
+		ValueHash:          assignmentValueHash(r, proof.Value, proof.ValueOK),
+		TypeWithPresence:   proof.TypeWithPresence,
+		Expected:           proof.Expected,
+		ExpectedSource:     expectedSource,
+		SourceSpan:         sourceSpanFromBody(proof.SourceSpan),
+		DeclarationSpan:    sourceSpanFromBody(proof.DeclarationSpan),
+		ParentContext:      assignmentParentContextFromBody(proof.ParentContext),
+		UntrustedTopOrigin: proof.UntrustedTopOrigin,
+		ExplicitTopOrigin:  proof.ExplicitTopOrigin,
+		RuntimeValidated:   proof.RuntimeValidated,
+	}
+	assignment.Check = readapi.PlanAssignmentCheck(readapi.AssignmentCheckPlan{
+		Assignment:          assignment,
+		ValueAdmissible:     proof.ValueAdmissible,
+		ValueProvenMismatch: proof.ProvenMismatch,
+	})
+	return assignment
+}
+
+func assignmentParentContextFromBody(ctx body.ObjectLiteralAssignmentParentContext) readapi.AssignmentParentContext {
+	return readapi.AssignmentParentContext{
+		SourceLabel:     ctx.SourceLabel,
+		TargetLabel:     ctx.TargetLabel,
+		SourceType:      ctx.SourceType,
+		Expected:        ctx.Expected,
+		SourceSpan:      sourceSpanFromBody(ctx.SourceSpan),
+		DeclarationSpan: sourceSpanFromBody(ctx.DeclarationSpan),
+	}
+}
+
+func sourceSpanToBody(span SourceSpan) body.SourceSpan {
+	return body.SourceSpan{
+		StartLine: span.StartLine,
+		StartCol:  span.StartCol,
+		EndLine:   span.EndLine,
+		EndCol:    span.EndCol,
+	}
 }
 
 func assignmentValueHash(r Reader, value product.Value, ok bool) uint64 {

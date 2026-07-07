@@ -121,6 +121,16 @@ func (ks *KeySpace) segLen(id SegmentsID) int {
 	return len(ks.segments(id))
 }
 
+// SegmentLen returns the number of static-member segments in k. It is the
+// keyspace-owned measure used by finite alias-closure algorithms; callers
+// should prefer it over copying Segments only to count them.
+func (ks *KeySpace) SegmentLen(k Key) (int, bool) {
+	if ks == nil || !ks.validKey(k) {
+		return 0, false
+	}
+	return ks.segLen(k.Segs), true
+}
+
 func (ks *KeySpace) segmentsTail(id SegmentsID, from int) []segment.Segment {
 	segs := ks.segments(id)
 	if from >= len(segs) {

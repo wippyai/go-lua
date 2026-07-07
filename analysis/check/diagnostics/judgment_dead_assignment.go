@@ -5,7 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 )
 
-func renderDeadAssignmentJudgmentWithPolicy(item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
+func renderDeadAssignmentJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
 	if item.Code != judgment.CodeDeadAssignment || item.Subject.Kind != judgment.SubjectPath || len(item.Spans) == 0 {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -18,7 +18,7 @@ func renderDeadAssignmentJudgmentWithPolicy(item judgment.Judgment, policy judgm
 		return diagnostic.Diagnostic{}, false
 	}
 	span := diagnosticSpanFromJudgment(item.Spans[0])
-	presentation := diagnosticProofContext().DeadAssignment(item, span, name)
+	presentation := ctx.proof.DeadAssignment(item, span, name)
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		File:        item.Spans[0].File,
 		Span:        span,

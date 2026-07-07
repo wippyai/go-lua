@@ -36,6 +36,7 @@ func TestLowerLayerImportBoundaries(t *testing.T) {
 				modulePath + "/analysis/check",
 				modulePath + "/compiler/ast",
 				modulePath + "/compiler/parse",
+				modulePath + "/compiler/source",
 			},
 		},
 		{
@@ -270,6 +271,24 @@ func TestLowLevelLeafImportBoundaries(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestWIRImportBoundaries(t *testing.T) {
+	for _, dep := range productionImports(t, modulePath+"/analysis/ir/wir") {
+		for _, banned := range []string{
+			modulePath + "/analysis/symbol",
+			modulePath + "/analysis/lua",
+			modulePath + "/analysis/check",
+			modulePath + "/compiler/ast",
+			modulePath + "/compiler/parse",
+			modulePath + "/compiler/source",
+			"go/ast",
+		} {
+			if forbiddenImport(dep, banned, false) {
+				t.Fatalf("wir imports forbidden dependency %q", dep)
+			}
+		}
 	}
 }
 

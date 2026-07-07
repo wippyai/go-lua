@@ -1,6 +1,7 @@
 package typeprojection
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
@@ -14,6 +15,13 @@ import (
 // so the admissible value must satisfy the meet of every possible slot type.
 func DynamicWriteValueType(t typ.Type, key typ.Type) (typ.Type, bool) {
 	return dynamicWriteValueType(t, key, 0)
+}
+
+// DynamicWriteNilDeletionAllowed reports whether assigning nil through a
+// dynamic index is a deletion operation for every possible matching slot.
+func DynamicWriteNilDeletionAllowed(t typ.Type, key typ.Type) bool {
+	allowed, ok := dynamicWriteNilDeletionAllowed(t, key, 0)
+	return ok && allowed
 }
 
 func dynamicWriteValueType(t typ.Type, key typ.Type, depth int) (typ.Type, bool) {
@@ -43,23 +51,72 @@ func dynamicWriteValueType(t typ.Type, key typ.Type, depth int) (typ.Type, bool)
 		return dynamicWriteMeet(members)
 	case *typ.Record:
 		if tt.HasMapComponent() && tt.MapValue != nil {
-			return normalize.Optional(tt.MapValue), true
+			return tt.MapValue, true
 		}
 		return closedRecordDynamicWriteValueType(tt, key, depth+1)
 	case *typ.Map:
 		if tt.Value != nil {
-			return normalize.Optional(tt.Value), true
+			return tt.Value, true
 		}
 	case *typ.ReadonlyMap:
 		if tt.Value != nil {
-			return normalize.Optional(tt.Value), true
+			return tt.Value, true
 		}
 	case *typ.Array:
 		if tt.Element != nil {
-			return normalize.Optional(tt.Element), true
+			return tt.Element, true
 		}
 	}
 	return nil, false
+}
+
+func dynamicWriteNilDeletionAllowed(t typ.Type, key typ.Type, depth int) (bool, bool) {
+	if t == nil || depth > typ.DefaultRecursionDepth {
+		return false, false
+	}
+	switch tt := transparentWriteType(t).(type) {
+	case *typ.Optional:
+		return dynamicWriteNilDeletionAllowed(tt.Inner, key, depth+1)
+	case *typ.Union:
+		saw := false
+		for _, member := range tt.Members {
+			allowed, ok := dynamicWriteNilDeletionAllowed(member, key, depth+1)
+			if !ok {
+				continue
+			}
+			saw = true
+			if !allowed {
+				return false, true
+			}
+		}
+		return true, saw
+	case *typ.Intersection:
+		saw := false
+		for _, member := range tt.Members {
+			allowed, ok := dynamicWriteNilDeletionAllowed(member, key, depth+1)
+			if !ok {
+				continue
+			}
+			saw = true
+			if !allowed {
+				return false, true
+			}
+		}
+		return true, saw
+	case *typ.Record:
+		if tt.HasMapComponent() && tt.MapValue != nil {
+			return true, true
+		}
+		value, ok := closedRecordDynamicWriteValueType(tt, key, depth+1)
+		return ok && typevalue.TypeIncludesNil(value), ok
+	case *typ.Map:
+		return tt.Value != nil, tt.Value != nil
+	case *typ.ReadonlyMap:
+		return tt.Value != nil, tt.Value != nil
+	case *typ.Array:
+		return tt.Element != nil, tt.Element != nil
+	}
+	return false, false
 }
 
 func closedRecordDynamicWriteValueType(record *typ.Record, key typ.Type, depth int) (typ.Type, bool) {

@@ -5,7 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 )
 
-func renderConcatOperandJudgmentWithPolicy(item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
+func renderConcatOperandJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
 	if item.Code != judgment.CodeConcatOperand || item.Subject.Kind != judgment.SubjectExpression || len(item.Spans) == 0 {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -14,7 +14,7 @@ func renderConcatOperandJudgmentWithPolicy(item judgment.Judgment, policy judgme
 		return diagnostic.Diagnostic{}, false
 	}
 	operandSpan := diagnosticSpanFromJudgment(item.Spans[0])
-	presentation, ok := diagnosticProofContext().ConcatOperand(item, operandSpan)
+	presentation, ok := ctx.proof.ConcatOperand(item, operandSpan)
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}

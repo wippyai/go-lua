@@ -1170,6 +1170,36 @@ func TestInstantiateGenericCallPreservesUninferredTypeParam(t *testing.T) {
 	assertType(t, got.Returns[0], typ.Instantiate(result, fnParam))
 }
 
+func TestInstantiateGenericCallInfersThroughGenericCallbackAlias(t *testing.T) {
+	aliasParam := typ.NewTypeParam("T", nil)
+	predicate := typ.NewGeneric("Predicate", []*typ.TypeParam{aliasParam},
+		typ.Func().Param("item", aliasParam).Returns(typ.Boolean).Build())
+	fnParam := typ.NewTypeParam("T", nil)
+	user := typetable.NewRecord().
+		Field("name", typ.String).
+		Field("age", typ.Number).
+		Build()
+	fn := typ.Func().
+		TypeParamRef(fnParam).
+		Param("items", typ.NewArray(fnParam)).
+		Param("pred", typ.Instantiate(predicate, fnParam)).
+		Returns(typeexpr.Optional(fnParam)).
+		Build()
+	callback := typ.Func().
+		Param("user", user).
+		Returns(typ.Boolean).
+		Build()
+
+	got, violations, bindings := InstantiateGenericCallWithBindings(fn, []typ.Type{typ.NewArray(user), callback})
+	if len(violations) != 0 {
+		t.Fatalf("violations = %#v, want none", violations)
+	}
+	if len(bindings) != 1 || bindings[0].Param != fnParam || !typ.TypeEquals(bindings[0].Type, user) {
+		t.Fatalf("bindings = %#v, want T=%v", bindings, user)
+	}
+	assertType(t, got.Returns[0], typeexpr.Optional(user))
+}
+
 func resultGeneric() *typ.Generic {
 	resultParam := typ.NewTypeParam("T", nil)
 	return typ.NewGeneric("Result", []*typ.TypeParam{resultParam},

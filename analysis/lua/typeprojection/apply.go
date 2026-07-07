@@ -81,6 +81,13 @@ func readSegmentType(current typ.Type, seg segment.Segment, depth int) (typ.Type
 	if current == nil || depth > typ.DefaultRecursionDepth {
 		return nil, false
 	}
+	if optional, ok := unwrap.Annotated(current).(*typ.Optional); ok {
+		projected, ok := readSegmentType(optional.Inner, seg, depth+1)
+		if !ok {
+			return typ.Nil, true
+		}
+		return normalize.UnionForEvidence(projected, typ.Nil), true
+	}
 	if union, ok := unwrap.Annotated(current).(*typ.Union); ok {
 		members := make([]typ.Type, 0, len(union.Members)+1)
 		missing := false
@@ -348,21 +355,18 @@ func constructorUnionEntryType(u *typ.Union, segments []segment.Segment, depth i
 	if u == nil || len(u.Members) == 0 {
 		return nil, false
 	}
-	var out typ.Type
+	members := make([]typ.Type, 0, len(u.Members))
 	for _, member := range u.Members {
 		next, ok := expectedConstructorEntryType(member, segments, depth+1)
 		if !ok || next == nil {
-			return nil, false
-		}
-		if out == nil {
-			out = next
 			continue
 		}
-		if !typ.TypeEquals(out, next) {
-			return nil, false
-		}
+		members = append(members, next)
 	}
-	return out, out != nil
+	if len(members) == 0 {
+		return nil, false
+	}
+	return normalize.UnionForEvidence(members...), true
 }
 
 // SegmentKeyType returns the literal Lua key type for a static path segment.

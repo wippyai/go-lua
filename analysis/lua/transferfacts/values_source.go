@@ -4,9 +4,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -98,6 +100,11 @@ func (l *lowerer) returnValueSourceFromWIROperand(
 type wirResultSource struct {
 	point       cfg.Point
 	resultIndex int
+	targetIndex int
+	final       bool
+	expanded    bool
+	adjusted    bool
+	openTail    bool
 	exprID      wir.ExpressionID
 }
 
@@ -219,7 +226,11 @@ func (l *lowerer) wirPathExpressionSourceWithShape(
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
-	return factflow.NewExpressionValueSource(exprRef, exprIndex, targetIndex, 0, shape)
+	source, ok := factflow.NewExpressionValueSource(exprRef, exprIndex, targetIndex, 0, shape)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return source.WithSourcePoint(point), true
 }
 
 func (l *lowerer) wirPathOperand(op wir.Operand, rootOnly bool, allowedKinds ...symbol.Kind) (path.Path, bool) {
@@ -309,6 +320,11 @@ type wirTempExprRefKey struct {
 	temp uint32
 }
 
+type wirTempDefinitionExprRefKey struct {
+	temp  uint32
+	point cfg.Point
+}
+
 func (l *lowerer) wirTempExpressionValueSource(
 	op wir.Operand,
 	exprIndex int,
@@ -381,7 +397,11 @@ func (l *lowerer) wirMultiDefTempExpressionValueSource(
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
-	right, ok := l.wirDefinitionValueSource(temp, rhsDef, exprIndex, targetIndex, resultSources, seen)
+	rightRef, ok := l.exprRef(wirTempDefinitionExprRefKey{temp: temp, point: rhsDef.Point})
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	right, ok := l.wirDefinitionValueSourceWithRef(temp, rhsDef, rightRef, exprIndex, targetIndex, resultSources, seen)
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
@@ -441,23 +461,39 @@ func (l *lowerer) wirDefinitionValueSource(
 	resultSources map[uint32]wirResultSource,
 	seen map[uint32]bool,
 ) (factflow.ValueSource, bool) {
+	exprRef, ok := l.exprRef(wirTempExprRefKey{temp: temp})
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return l.wirDefinitionValueSourceWithRef(temp, inst, exprRef, exprIndex, targetIndex, resultSources, seen)
+}
+
+func (l *lowerer) wirDefinitionValueSourceWithRef(
+	temp uint32,
+	inst wir.Instruction,
+	exprRef factflow.ExprRef,
+	exprIndex int,
+	targetIndex int,
+	resultSources map[uint32]wirResultSource,
+	seen map[uint32]bool,
+) (factflow.ValueSource, bool) {
 	switch inst.Op {
 	case wir.OpAssign:
 		return l.wirInstructionExpressionOperandValueSource(inst, inst.A, exprIndex, targetIndex, resultSources, seen)
 	case wir.OpDynamicIndexRead:
-		return l.wirDynamicIndexReadTempExpressionValueSource(temp, inst, exprIndex, targetIndex, true, false, false, resultSources, seen)
+		return l.wirDynamicIndexReadExpressionValueSourceWithRef(inst, exprRef, exprIndex, targetIndex, true, false, false, resultSources, seen)
 	case wir.OpConcat:
-		return l.wirConcatTempExpressionValueSource(temp, inst, exprIndex, targetIndex, true, false, false, resultSources, seen)
+		return l.wirConcatTempExpressionValueSourceWithRef(temp, inst, exprRef, exprIndex, targetIndex, true, false, false, resultSources, seen)
 	case wir.OpBinOp, wir.OpLogical:
-		return l.wirBinaryTempExpressionValueSource(temp, inst, exprIndex, targetIndex, true, false, false, resultSources, seen)
+		return l.wirBinaryTempExpressionValueSourceWithRef(temp, inst, exprRef, exprIndex, targetIndex, true, false, false, resultSources, seen)
 	case wir.OpUnOp:
-		return l.wirUnaryTempExpressionValueSource(temp, inst, exprIndex, targetIndex, true, false, false, resultSources, seen)
+		return l.wirUnaryTempExpressionValueSourceWithRef(inst, exprRef, exprIndex, targetIndex, true, false, false, resultSources, seen)
 	case wir.OpClaim:
-		return l.wirClaimTempExpressionValueSource(temp, inst, exprIndex, targetIndex, true, false, false, resultSources, seen)
+		return l.wirClaimTempExpressionValueSourceWithRef(inst, exprRef, exprIndex, targetIndex, true, false, false, resultSources, seen)
 	case wir.OpClosure:
-		return l.wirClosureTempExpressionValueSource(temp, inst, exprIndex, targetIndex, true, false, false)
+		return l.wirClosureExpressionValueSourceWithRef(inst, exprRef, exprIndex, targetIndex, true, false, false)
 	case wir.OpMakeTable:
-		return l.wirTableExpressionValueSource(inst, exprIndex, targetIndex, true, false, false)
+		return l.wirTableExpressionValueSourceWithShape(inst, exprIndex, targetIndex, true, false, false, false)
 	default:
 		return factflow.ValueSource{}, false
 	}
@@ -508,9 +544,27 @@ func (l *lowerer) wirBranchReadsOperand(branch wir.Instruction, op wir.Operand) 
 }
 
 func (l *lowerer) wirTempsHaveEquivalentAssignDefs(left, right uint32) bool {
+	return l.wirTempsHaveEquivalentDefs(left, right, nil)
+}
+
+type wirTempEquivalencePair struct {
+	left  uint32
+	right uint32
+}
+
+func (l *lowerer) wirTempsHaveEquivalentDefs(left, right uint32, seen map[wirTempEquivalencePair]bool) bool {
 	if l == nil || left == right {
 		return left == right
 	}
+	pair := wirTempEquivalencePair{left: left, right: right}
+	if seen[pair] {
+		return true
+	}
+	if seen == nil {
+		seen = make(map[wirTempEquivalencePair]bool, 1)
+	}
+	seen[pair] = true
+	defer delete(seen, pair)
 	leftDefs := l.wirTempDefSets()[left]
 	rightDefs := l.wirTempDefSets()[right]
 	if len(leftDefs) == 0 || len(leftDefs) != len(rightDefs) {
@@ -518,12 +572,9 @@ func (l *lowerer) wirTempsHaveEquivalentAssignDefs(left, right uint32) bool {
 	}
 	used := make([]bool, len(rightDefs))
 	for _, leftDef := range leftDefs {
-		if leftDef.Op != wir.OpAssign {
-			return false
-		}
 		found := false
 		for i, rightDef := range rightDefs {
-			if used[i] || rightDef.Op != wir.OpAssign || leftDef.Point != rightDef.Point || !wirOperandEqual(leftDef.A, rightDef.A) {
+			if used[i] || !l.wirInstructionsHaveEquivalentValue(leftDef, rightDef, seen) {
 				continue
 			}
 			used[i] = true
@@ -537,12 +588,58 @@ func (l *lowerer) wirTempsHaveEquivalentAssignDefs(left, right uint32) bool {
 	return true
 }
 
+func (l *lowerer) wirInstructionsHaveEquivalentValue(left, right wir.Instruction, seen map[wirTempEquivalencePair]bool) bool {
+	if left.Point != right.Point || left.Op != right.Op {
+		return false
+	}
+	switch left.Op {
+	case wir.OpAssign:
+		return l.wirOperandsHaveEquivalentValue(left.A, right.A, seen)
+	case wir.OpBinOp, wir.OpLogical:
+		return left.Operator == right.Operator &&
+			l.wirOperandsHaveEquivalentValue(left.A, right.A, seen) &&
+			l.wirOperandsHaveEquivalentValue(left.B, right.B, seen)
+	case wir.OpUnOp:
+		return left.Operator == right.Operator &&
+			l.wirOperandsHaveEquivalentValue(left.A, right.A, seen)
+	default:
+		return false
+	}
+}
+
+func (l *lowerer) wirOperandsHaveEquivalentValue(left, right wir.Operand, seen map[wirTempEquivalencePair]bool) bool {
+	if wirOperandEqual(left, right) {
+		return true
+	}
+	if left.Kind != wir.OperandTemp || right.Kind != wir.OperandTemp {
+		return false
+	}
+	return l.wirTempsHaveEquivalentDefs(left.Ref, right.Ref, seen)
+}
+
 func (l *lowerer) wirEdgeFromBranchToPoint(branch, target cfg.Point) (bool, bool) {
 	if l.graph == nil {
 		return false, false
 	}
 	var out bool
 	var have bool
+	for _, succ := range cfg.SuccessorsReadOnly(l.graph, branch) {
+		if succ != target {
+			continue
+		}
+		edge, ok := l.graph.EdgeCond(branch, succ)
+		if !ok {
+			continue
+		}
+		if have {
+			return false, false
+		}
+		out = edge
+		have = true
+	}
+	if have {
+		return out, true
+	}
 	if l.wirReachability == nil {
 		l.wirReachability = cfg.NewReachability(l.graph)
 	}
@@ -607,9 +704,28 @@ func (l *lowerer) wirConcatTempExpressionValueSource(
 	resultSources map[uint32]wirResultSource,
 	seen map[uint32]bool,
 ) (factflow.ValueSource, bool) {
+	exprRef, ok := l.exprRef(wirTempExprRefKey{temp: temp})
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return l.wirConcatTempExpressionValueSourceWithRef(temp, inst, exprRef, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
+}
+
+func (l *lowerer) wirConcatTempExpressionValueSourceWithRef(
+	temp uint32,
+	inst wir.Instruction,
+	exprRef factflow.ExprRef,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+	resultSources map[uint32]wirResultSource,
+	seen map[uint32]bool,
+) (factflow.ValueSource, bool) {
 	ops := wirConcatOperands(l.wir, inst)
 	if len(ops) == 2 {
-		return l.wirBinaryTempExpressionValueSource(temp, inst, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
+		return l.wirBinaryTempExpressionValueSourceWithRef(temp, inst, exprRef, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
 	}
 	if len(ops) < 2 {
 		return factflow.ValueSource{}, false
@@ -622,14 +738,11 @@ func (l *lowerer) wirConcatTempExpressionValueSource(
 		}
 		sources[i] = source
 	}
-	finalRef, ok := l.exprRef(wirTempExprRefKey{temp: temp})
-	if !ok {
-		return factflow.ValueSource{}, false
-	}
 	foldSource := sources[0]
 	for i := 1; i < len(sources); i++ {
-		ref := finalRef
+		ref := exprRef
 		if i != len(sources)-1 {
+			var ok bool
 			ref, ok = l.exprRef(wirConcatFoldExprRefKey{temp: temp, index: i})
 			if !ok {
 				return factflow.ValueSource{}, false
@@ -657,7 +770,7 @@ func (l *lowerer) wirConcatTempExpressionValueSource(
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
-	return factflow.NewExpressionValueSource(finalRef, exprIndex, targetIndex, 0, shape)
+	return factflow.NewExpressionValueSource(exprRef, exprIndex, targetIndex, 0, shape)
 }
 
 func (l *lowerer) wirDynamicIndexReadTempExpressionValueSource(
@@ -922,7 +1035,7 @@ func (l *lowerer) wirClosureExpressionValueSourceWithRef(
 	if l.expressionFunctions == nil {
 		l.expressionFunctions = make(map[factflow.ExprRef]symbol.ID)
 	}
-	l.expressionFunctions[exprRef] = proto.Symbol
+	l.expressionFunctions[exprRef] = symbol.ID(proto.Symbol)
 	if l.expressionValues == nil {
 		l.expressionValues = make(map[factflow.ExprRef]product.Value)
 	}
@@ -951,11 +1064,25 @@ func (l *lowerer) wirClaimTempExpressionValueSource(
 	resultSources map[uint32]wirResultSource,
 	seen map[uint32]bool,
 ) (factflow.ValueSource, bool) {
-	inner, ok := l.wirClaimInnerValueSource(inst, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
+	exprRef, ok := l.exprRef(wirTempExprRefKey{temp: temp})
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
-	exprRef, ok := l.exprRef(wirTempExprRefKey{temp: temp})
+	return l.wirClaimTempExpressionValueSourceWithRef(inst, exprRef, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
+}
+
+func (l *lowerer) wirClaimTempExpressionValueSourceWithRef(
+	inst wir.Instruction,
+	exprRef factflow.ExprRef,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+	resultSources map[uint32]wirResultSource,
+	seen map[uint32]bool,
+) (factflow.ValueSource, bool) {
+	inner, ok := l.wirClaimInnerValueSource(inst, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
@@ -1033,6 +1160,25 @@ func (l *lowerer) wirBinaryTempExpressionValueSource(
 	resultSources map[uint32]wirResultSource,
 	seen map[uint32]bool,
 ) (factflow.ValueSource, bool) {
+	exprRef, ok := l.exprRef(wirTempExprRefKey{temp: temp})
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return l.wirBinaryTempExpressionValueSourceWithRef(temp, inst, exprRef, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
+}
+
+func (l *lowerer) wirBinaryTempExpressionValueSourceWithRef(
+	temp uint32,
+	inst wir.Instruction,
+	exprRef factflow.ExprRef,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+	resultSources map[uint32]wirResultSource,
+	seen map[uint32]bool,
+) (factflow.ValueSource, bool) {
 	op, ok := wirExpressionOperator(inst)
 	if !ok {
 		return l.wirCheckTempExpressionValueSource(temp, inst, exprIndex, targetIndex, final, expanded, openTail)
@@ -1048,10 +1194,6 @@ func (l *lowerer) wirBinaryTempExpressionValueSource(
 	right, ok := l.wirBinaryExpressionOperandValueSource(inst, rightOp, exprIndex, targetIndex, resultSources, seen)
 	if !ok {
 		return l.wirCheckTempExpressionValueSource(temp, inst, exprIndex, targetIndex, final, expanded, openTail)
-	}
-	exprRef, ok := l.exprRef(wirTempExprRefKey{temp: temp})
-	if !ok {
-		return factflow.ValueSource{}, false
 	}
 	operation, ok := factflow.NewBinaryExpressionOperation(op, left, right)
 	if !ok {
@@ -1208,12 +1350,27 @@ func (l *lowerer) staticValueSourceValueWithRefinementsSeen(source factflow.Valu
 				}
 				value, ok := luasourcevalue.ExpressionOperationValue(l.registry, l.typeValues, op, leftValue, rightValue)
 				if ok {
+					if cached, cachedOK := l.expressionValues[source.ExprRef]; cachedOK && expressionValueHasTypeWitness(l.registry, cached) && !expressionValueHasTypeWitness(l.registry, value) {
+						return cached, true
+					}
 					return value, true
 				}
 			}
 		}
 	}
 	return l.staticValueSourceValue(source)
+}
+
+func expressionValueHasTypeWitness(reg *axis.Registry, value product.Value) bool {
+	if reg == nil {
+		return false
+	}
+	witness := product.Get(reg, value, typewitness.Key)
+	if witness.IsTop() || witness.IsBottom() {
+		return false
+	}
+	_, ok := witness.Type()
+	return ok
 }
 
 func pathKeyMatchesPath(key path.PathKey, p path.Path) bool {
@@ -1247,11 +1404,11 @@ func (l *lowerer) staticValueSourceValue(source factflow.ValueSource) (product.V
 	case factflow.ValueSourceNil:
 		return l.valueFromTypeWithWitness(typ.Nil), true
 	case factflow.ValueSourcePath:
-		sym, segments, ok := rootSymbolPathKey(source.PathKey)
-		if !ok || len(segments) != 0 {
+		p, ok := pathFromRootSymbolKey(source.PathKey)
+		if !ok {
 			return product.Value{}, false
 		}
-		t, ok := l.staticSymbolType(sym)
+		t, ok := l.aliasPathType(p)
 		if !ok || t == nil {
 			return product.Value{}, false
 		}
@@ -1300,15 +1457,29 @@ func (l *lowerer) wirUnaryTempExpressionValueSource(
 	resultSources map[uint32]wirResultSource,
 	seen map[uint32]bool,
 ) (factflow.ValueSource, bool) {
+	exprRef, ok := l.exprRef(wirTempExprRefKey{temp: temp})
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	return l.wirUnaryTempExpressionValueSourceWithRef(inst, exprRef, exprIndex, targetIndex, final, expanded, openTail, resultSources, seen)
+}
+
+func (l *lowerer) wirUnaryTempExpressionValueSourceWithRef(
+	inst wir.Instruction,
+	exprRef factflow.ExprRef,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+	resultSources map[uint32]wirResultSource,
+	seen map[uint32]bool,
+) (factflow.ValueSource, bool) {
 	op, ok := wirExpressionOperator(inst)
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
 	operand, ok := l.wirInstructionExpressionOperandValueSource(inst, inst.A, exprIndex, targetIndex, resultSources, seen)
-	if !ok {
-		return factflow.ValueSource{}, false
-	}
-	exprRef, ok := l.exprRef(wirTempExprRefKey{temp: temp})
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
@@ -1321,11 +1492,37 @@ func (l *lowerer) wirUnaryTempExpressionValueSource(
 	}
 	l.expressionOperations[exprRef] = operation
 	l.addWIRExpressionOperationValue(exprRef, operation, operand, factflow.ValueSource{})
+	l.addWIRUnaryExpressionCondition(exprRef, op, operand)
 	shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, openTail)
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
 	return factflow.NewExpressionValueSource(exprRef, exprIndex, targetIndex, 0, shape)
+}
+
+func (l *lowerer) addWIRUnaryExpressionCondition(exprRef factflow.ExprRef, op string, operand factflow.ValueSource) {
+	if exprRef == 0 || op != "not" || l == nil {
+		return
+	}
+	condition, ok := l.sourceTruthinessCondition(operand)
+	if !ok || condition.IsEmpty() {
+		return
+	}
+	trueFacts := condition.FactsForValue(false)
+	falseFacts := condition.FactsForValue(true)
+	inverted := factflow.NewExpressionCondition(
+		trueFacts.Refinements(),
+		falseFacts.Refinements(),
+		trueFacts.PathRelations(),
+		falseFacts.PathRelations(),
+	)
+	if inverted.IsEmpty() {
+		return
+	}
+	if l.expressionConditions == nil {
+		l.expressionConditions = make(map[factflow.ExprRef]factflow.ExpressionCondition)
+	}
+	l.expressionConditions[exprRef] = inverted
 }
 
 func (l *lowerer) addWIRExpressionCondition(exprRef factflow.ExprRef, inst wir.Instruction) {
@@ -1339,8 +1536,8 @@ func (l *lowerer) addWIRExpressionCondition(exprRef factflow.ExprRef, inst wir.I
 	condition := factflow.NewExpressionCondition(
 		postconditionRefinementsFromBranchEdge(l.branchEdgeRefinements(check, true), true),
 		postconditionRefinementsFromBranchEdge(l.branchEdgeRefinements(check, false), false),
-		nil,
-		nil,
+		postconditionPathRelationsFromCheck(check, true),
+		postconditionPathRelationsFromCheck(check, false),
 	)
 	if condition.IsEmpty() {
 		return
@@ -1349,6 +1546,17 @@ func (l *lowerer) addWIRExpressionCondition(exprRef factflow.ExprRef, inst wir.I
 		l.expressionConditions = make(map[factflow.ExprRef]factflow.ExpressionCondition)
 	}
 	l.expressionConditions[exprRef] = condition
+}
+
+func postconditionPathRelationsFromCheck(check branchcond.Check, trueValue bool) []factflow.PostconditionPathRelation {
+	var out []factflow.PostconditionPathRelation
+	for _, relation := range checkPathRelations(check, true, true) {
+		if relation.Kind() != factflow.BranchPathRelationEqual || !relation.ActiveOnEdge(trueValue) {
+			continue
+		}
+		out = append(out, factflow.NewPostconditionPathEquality(relation.LeftPath(), relation.RightPath()))
+	}
+	return out
 }
 
 func (l *lowerer) addWIRLogicalExpressionCondition(exprRef factflow.ExprRef, op string, left, right factflow.ValueSource) {
@@ -1694,16 +1902,46 @@ func (l *lowerer) resultValueSourcesByTempFromWIR() map[uint32]wirResultSource {
 				if result.Kind != wir.OperandTemp {
 					continue
 				}
-				out[result.Ref] = wirResultSource{point: inst.Point, resultIndex: resultIndex, exprID: inst.ExprID}
+				out[result.Ref] = wirResultSource{
+					point:       inst.Point,
+					resultIndex: resultIndex,
+					targetIndex: wirCallResultTargetIndex(l.wir, inst.Point, resultIndex),
+					final:       inst.CallFinal,
+					expanded:    inst.CallExpanded,
+					adjusted:    inst.CallAdjusted,
+					openTail:    inst.CallOpenTail,
+					exprID:      inst.ExprID,
+				}
 			}
 		case wir.OpSelect:
 			if inst.Dst.Kind == wir.OperandTemp {
-				out[inst.Dst.Ref] = wirResultSource{point: inst.Point, resultIndex: 0, exprID: inst.ExprID}
+				out[inst.Dst.Ref] = wirResultSource{
+					point:       inst.Point,
+					resultIndex: 0,
+					targetIndex: wirCallResultTargetIndex(l.wir, inst.Point, 0),
+					final:       true,
+					expanded:    false,
+					adjusted:    false,
+					openTail:    false,
+					exprID:      inst.ExprID,
+				}
 			}
 		}
 	}
 	l.wirResultSources = out
 	return out
+}
+
+func wirCallResultTargetIndex(body *wir.Body, point cfg.Point, resultIndex int) int {
+	if body == nil {
+		return factflow.NoValueSourceIndex
+	}
+	for _, target := range body.CallResultTargets(point) {
+		if target.ResultIndex == resultIndex {
+			return target.Index
+		}
+	}
+	return factflow.NoValueSourceIndex
 }
 
 type wirCallExprRefKey struct {
@@ -1726,9 +1964,27 @@ func resultValueSourceFromWIR(
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
-	shape, ok := factflow.NewValueSourceShape(final, expanded, !expanded, openTail)
+	if exprIndex == factflow.NoValueSourceIndex {
+		final = result.final
+		expanded = result.expanded
+		openTail = result.openTail
+		if result.targetIndex != factflow.NoValueSourceIndex {
+			targetIndex = result.targetIndex
+		}
+	}
+	adjusted := !expanded
+	if exprIndex == factflow.NoValueSourceIndex {
+		adjusted = result.adjusted
+	}
+	shape, ok := factflow.NewValueSourceShape(final, expanded, adjusted, openTail)
 	if !ok {
 		return factflow.ValueSource{}, false
+	}
+	if exprIndex == factflow.NoValueSourceIndex && result.targetIndex != factflow.NoValueSourceIndex {
+		exprIndex = result.targetIndex
+	}
+	if targetIndex == factflow.NoValueSourceIndex && result.targetIndex != factflow.NoValueSourceIndex {
+		targetIndex = result.targetIndex
 	}
 	return mustValueSource(factflow.NewCallValueSource(0, exprIndex, targetIndex, result.resultIndex, result.point, shape)), true
 }

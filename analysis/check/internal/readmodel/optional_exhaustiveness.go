@@ -4,10 +4,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
 	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
-	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 type OptionalExhaustiveness = readapi.OptionalExhaustiveness
@@ -84,8 +82,8 @@ func (r Reader) optionalCandidateForCheck(point cfg.Point, check branchcond.Chec
 	if check.Path.IsEmpty() {
 		return optionalBranchCandidate{}, false
 	}
-	t, ok := r.optionalPathType(point, check.Path)
-	if !ok || !optionalTypeHasValue(t) {
+	t, ok := r.result.OptionalExhaustivenessPathTypeAt(point, check.Path)
+	if !ok || !readapi.OptionalTypeHasConcreteValue(t) {
 		return optionalBranchCandidate{}, false
 	}
 	switch check.Kind {
@@ -94,89 +92,13 @@ func (r Reader) optionalCandidateForCheck(point cfg.Point, check branchcond.Chec
 	case branchcond.CheckNotNil:
 		return optionalBranchCandidate{target: check.Path, handlesValue: true}, true
 	case branchcond.CheckTruthy:
-		if optionalTruthyPartitionsNilValue(t) {
+		if readapi.OptionalTruthinessPartitionsNilValue(t) {
 			return optionalBranchCandidate{target: check.Path, handlesValue: true}, true
 		}
 	case branchcond.CheckFalsy:
-		if optionalTruthyPartitionsNilValue(t) {
+		if readapi.OptionalTruthinessPartitionsNilValue(t) {
 			return optionalBranchCandidate{target: check.Path, handlesNil: true}, true
 		}
 	}
 	return optionalBranchCandidate{}, false
-}
-
-func (r Reader) optionalPathType(point cfg.Point, target path.Path) (typ.Type, bool) {
-	direct, directOK := r.optionalDirectPathType(point, target)
-	if directOK && optionalTypeHasValue(direct) {
-		return direct, true
-	}
-	if t, ok := r.optionalDominatingAliasSourceType(point, target); ok {
-		return t, true
-	}
-	return direct, directOK
-}
-
-func (r Reader) optionalDirectPathType(point cfg.Point, target path.Path) (typ.Type, bool) {
-	if target.Symbol == 0 {
-		return nil, false
-	}
-	root := target.RootOnly()
-	t, ok := r.discriminatedUnionRootType(point, root)
-	if !ok || t == nil {
-		return nil, false
-	}
-	for _, seg := range target.Segments {
-		next, ok := body.TypeAtSegment(t, seg)
-		if !ok {
-			return nil, false
-		}
-		t = next
-	}
-	return t, true
-}
-
-func (r Reader) optionalDominatingAliasSourceType(point cfg.Point, target path.Path) (typ.Type, bool) {
-	if target.Symbol == 0 {
-		return nil, false
-	}
-	fact, _, ok := r.result.DominatingRootLocalAssignment(point, target.Symbol)
-	if !ok || fact.Expr == nil || fact.Type != nil {
-		return nil, false
-	}
-	source, ok := r.result.ExpressionPath(fact.Expr)
-	if !ok || source.IsEmpty() {
-		return nil, false
-	}
-	return r.optionalDirectPathType(point, source.AppendSegments(target.Segments))
-}
-
-func optionalTypeHasValue(t typ.Type) bool {
-	if t == nil || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) || !typevalue.ProjectionHasNil(t) {
-		return false
-	}
-	value := readmodelProjectionWithoutNil(t)
-	return value != nil && !typ.IsNever(value)
-}
-
-func optionalTruthyPartitionsNilValue(t typ.Type) bool {
-	value := readmodelProjectionWithoutNil(t)
-	return value != nil && !typ.IsNever(value) && !optionalTypeAdmitsFalse(value)
-}
-
-func optionalTypeAdmitsFalse(t typ.Type) bool {
-	switch v := t.(type) {
-	case nil:
-		return false
-	case *typ.Alias:
-		return optionalTypeAdmitsFalse(v.UnaliasedTarget())
-	case *typ.Union:
-		for _, member := range v.Members {
-			if optionalTypeAdmitsFalse(member) {
-				return true
-			}
-		}
-		return false
-	default:
-		return typ.TypeEquals(t, typ.Boolean) || typ.TypeEquals(t, typ.False)
-	}
 }

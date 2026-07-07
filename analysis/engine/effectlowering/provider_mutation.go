@@ -110,7 +110,22 @@ func tableMutatorParamObligation(ctx transfer.NodeContext, typeValues *typevalue
 	return callpayload.CallParamObligation{
 		ParamIndex: evidence.valueIndex,
 		Value:      returnValueFromTypeCached(ctx.Registry, typeValues, element),
+		Origin:     tableMutatorValueObligationOrigin(evidence),
 	}, true
+}
+
+func tableMutatorValueObligationOrigin(evidence tableMutatorEvidence) callpayload.CallParamObligationOrigin {
+	return callpayload.CallParamObligationOrigin{
+		HasOrigin:     true,
+		ReceiverParam: evidence.targetIndex,
+		ArgParam:      evidence.valueIndex,
+		SubjectLabel:  callArgumentLabel(evidence.valueIndex),
+		ProviderLabel: callArgumentLabel(evidence.targetIndex) + " element",
+	}
+}
+
+func callArgumentLabel(index int) string {
+	return "argument " + strconv.Itoa(index+1)
 }
 
 func tableMutatorDynamicIndexFact(mutator mutation.TableMutator, evidence tableMutatorEvidence) (callboundary.DynamicIndexFact, bool) {
@@ -241,6 +256,7 @@ func tableMutatorConcreteType(t typ.Type, ok bool) bool {
 		!typ.IsAny(t) &&
 		!typ.IsUnknown(t) &&
 		!typ.IsNever(t) &&
+		!typ.IsBuiltinTableTopMarker(t) &&
 		!refinement.ContainsFreeTypeParam(t)
 }
 

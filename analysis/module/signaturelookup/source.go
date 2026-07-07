@@ -41,6 +41,12 @@ func (s Source) Lookup(name string) (signature.Function, bool) {
 	if name == "" {
 		return signature.Function{}, false
 	}
+	if s.IncludeStdlib && isBareStdlibName(name) {
+		if sig, ok := lookupGlobalManifestSignature(s.Manifests, name); ok {
+			return sig.Clone(), true
+		}
+		return stdlib.Lookup(name)
+	}
 	for i := len(s.Manifests) - 1; i >= 0; i-- {
 		m := s.Manifests[i]
 		if m == nil {
@@ -52,6 +58,27 @@ func (s Source) Lookup(name string) (signature.Function, bool) {
 	}
 	if s.IncludeStdlib {
 		return stdlib.Lookup(name)
+	}
+	return signature.Function{}, false
+}
+
+func isBareStdlibName(name string) bool {
+	if name == "" || strings.ContainsAny(name, ".[") {
+		return false
+	}
+	_, ok := stdlib.Lookup(name)
+	return ok
+}
+
+func lookupGlobalManifestSignature(manifests []*manifest.Manifest, name string) (signature.Function, bool) {
+	for i := len(manifests) - 1; i >= 0; i-- {
+		m := manifests[i]
+		if m == nil || m.Path != "" {
+			continue
+		}
+		if sig, ok := m.FunctionSignatures[name]; ok {
+			return sig, true
+		}
 	}
 	return signature.Function{}, false
 }
@@ -101,6 +128,9 @@ func (s Source) Signatures() map[string]signature.Function {
 			continue
 		}
 		for name, sig := range m.FunctionSignatures {
+			if s.IncludeStdlib && m.Path != "" && isBareStdlibName(name) {
+				continue
+			}
 			out[name] = sig.Clone()
 		}
 	}

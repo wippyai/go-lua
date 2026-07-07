@@ -5,7 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 )
 
-func renderReturnJudgmentWithPolicy(item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
+func renderReturnJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
 	if item.Code != judgment.CodeReturn || item.Subject.Kind != judgment.SubjectReturnValue || len(item.Spans) == 0 {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -24,7 +24,7 @@ func renderReturnJudgmentWithPolicy(item judgment.Judgment, policy judgment.Poli
 		label = "returned value"
 	}
 	sourceName := item.Actual.Label
-	presentation := diagnosticProofContext().Return(item, label, sourceName, got, want, span)
+	presentation := ctx.proof.Return(item, label, sourceName, got, want, span)
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		File:        item.Spans[0].File,
 		Span:        span,

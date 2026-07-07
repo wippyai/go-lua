@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typecall"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -130,10 +131,11 @@ type DominatingBranchProof struct {
 }
 
 type obligationActualPolicy struct {
-	TypeWithPresence   typ.Type
-	Expected           typ.Type
-	UntrustedTopOrigin bool
-	ProvenMismatch     bool
+	TypeWithPresence    typ.Type
+	Expected            typ.Type
+	UntrustedTopOrigin  bool
+	ProvenMismatch      bool
+	ShowUntrustedActual bool
 }
 
 func (p obligationActualPolicy) ActualTypeKnown() bool {
@@ -145,12 +147,36 @@ func (p obligationActualPolicy) EffectiveActualType() typ.Type {
 	if typ.TypeEquals(actual, nil) {
 		actual = typ.Unknown
 	}
-	if !p.ProvenMismatch &&
-		p.UntrustedTopOrigin &&
-		(typ.IsAny(actual) || typ.IsUnknown(actual) || typ.TypeEquals(actual, p.Expected)) {
+	if p.UntrustedTopOrigin && !p.showConcreteUntrustedActual(actual) {
 		return typ.Any
 	}
 	return actual
+}
+
+func (p obligationActualPolicy) showConcreteUntrustedActual(actual typ.Type) bool {
+	if typ.IsAny(actual) || typ.IsUnknown(actual) {
+		return false
+	}
+	if typ.TypeEquals(actual, typ.Nil) {
+		return false
+	}
+	if p.ShowUntrustedActual {
+		return true
+	}
+	if typetable.IsBuiltinTopMarker(actual) {
+		return true
+	}
+	if !p.ShowUntrustedActual &&
+		!typ.TypeEquals(p.Expected, nil) &&
+		subtype.IsSubtype(actual, p.Expected) {
+		return false
+	}
+	switch unwrap.Alias(unwrap.Annotations(actual)).(type) {
+	case *typ.Record, *typ.Array, *typ.Tuple, *typ.Map, *typ.ReadonlyMap:
+		return true
+	default:
+		return false
+	}
 }
 
 func (p obligationActualPolicy) MissingProofRefuted() bool {
@@ -179,9 +205,23 @@ type Assignment struct {
 	SourceContributors []AssignmentSourceContribution
 	CallInvalidations  []AssignmentCallInvalidation
 	CallResult         CallResultAssignmentSource
+	ParentContext      AssignmentParentContext
 	UntrustedTopOrigin bool
 	ExplicitTopOrigin  bool
+	RuntimeValidated   bool
 	Check              AssignmentCheck
+}
+
+// AssignmentParentContext records the parent object obligation that produced a
+// projected member assignment. A renderer can explain both the focused member
+// failure and the enclosing assignment without re-reading syntax.
+type AssignmentParentContext struct {
+	SourceLabel     string
+	TargetLabel     string
+	SourceType      typ.Type
+	Expected        typ.Type
+	SourceSpan      SourceSpan
+	DeclarationSpan SourceSpan
 }
 
 // ActualTypeKnown reports whether the solved assignment source carried a
@@ -274,6 +314,7 @@ type AssignmentCheckPlan struct {
 	Assignment                Assignment
 	ValueAdmissible           bool
 	ValueProvenMismatch       bool
+	MayBeNil                  bool
 	MissingRequiredField      string
 	MissingRequiredFieldType  typ.Type
 	MissingRequiredMethod     string
@@ -320,20 +361,21 @@ type OptionalAssignmentTarget struct {
 // Return is the solved read model for one returned expression checked against
 // an explicit function return annotation.
 type Return struct {
-	Point              cfg.Point
-	Index              int
-	Value              product.Value
-	ValueHash          uint64
-	TypeWithPresence   typ.Type
-	Expected           typ.Type
-	ExpectedLabel      string
-	SourceLabel        string
-	SourceIndexedRead  bool
-	SourceSpan         SourceSpan
-	DeclarationSpan    SourceSpan
-	UntrustedTopOrigin bool
-	ExplicitTopOrigin  bool
-	Check              ReturnCheck
+	Point               cfg.Point
+	Index               int
+	Value               product.Value
+	ValueHash           uint64
+	TypeWithPresence    typ.Type
+	Expected            typ.Type
+	ExpectedLabel       string
+	SourceLabel         string
+	SourceIndexedRead   bool
+	SourceSpan          SourceSpan
+	DeclarationSpan     SourceSpan
+	UntrustedTopOrigin  bool
+	ExplicitTopOrigin   bool
+	BodyParamObligation bool
+	Check               ReturnCheck
 }
 
 // HasUnownedTopActual reports whether the return source is only absent,
@@ -368,12 +410,27 @@ func (ret Return) MissingProofRefuted() bool {
 	return ret.actualPolicy().MissingProofRefuted()
 }
 
+// BodyParamObligationCascade reports whether this return mismatch is the
+// internal top/unknown value produced by a body-owned parameter precondition.
+// The call-boundary argument obligation owns the user-facing diagnostic for
+// that precondition.
+func (ret Return) BodyParamObligationCascade() bool {
+	if !ret.BodyParamObligation || (!ret.UntrustedTopOrigin && !ret.ExplicitTopOrigin) {
+		return false
+	}
+	return typ.TypeEquals(ret.TypeWithPresence, nil) ||
+		typ.TypeEquals(ret.TypeWithPresence, typ.Nil) ||
+		typ.IsAny(ret.TypeWithPresence) ||
+		typ.IsUnknown(ret.TypeWithPresence)
+}
+
 func (ret Return) actualPolicy() obligationActualPolicy {
 	return obligationActualPolicy{
-		TypeWithPresence:   ret.TypeWithPresence,
-		Expected:           ret.Expected,
-		UntrustedTopOrigin: ret.UntrustedTopOrigin,
-		ProvenMismatch:     ret.Check.ProvenMismatch,
+		TypeWithPresence:    ret.TypeWithPresence,
+		Expected:            ret.Expected,
+		UntrustedTopOrigin:  ret.UntrustedTopOrigin,
+		ProvenMismatch:      ret.Check.ProvenMismatch,
+		ShowUntrustedActual: true,
 	}
 }
 
@@ -472,6 +529,35 @@ func ProjectionHasNil(t typ.Type) bool {
 // ProjectionWithoutNil returns the display projection with nil removed.
 func ProjectionWithoutNil(t typ.Type) typ.Type {
 	return proof.ProjectionWithoutNil(t)
+}
+
+// OptionalTypeHasConcreteValue reports whether t is a concrete optional-like
+// projection with both a nil arm and a non-never value arm. Gradual and unknown
+// projections are intentionally inconclusive.
+func OptionalTypeHasConcreteValue(t typ.Type) bool {
+	return proof.OptionalTypeHasConcreteValue(t)
+}
+
+// OptionalTruthinessPartitionsNilValue reports whether truthiness checks can
+// split an optional-like type into nil and value cases. If the value arm may be
+// false, truthiness cannot prove the nil arm was handled.
+func OptionalTruthinessPartitionsNilValue(t typ.Type) bool {
+	return proof.OptionalTruthinessPartitionsNilValue(t)
+}
+
+// NonNilProjectionProvesMismatch reports whether the non-nil arm of got still
+// fails the expected contract. Renderers use this presentation helper to choose
+// nilability wording without owning subtype/projection proof logic.
+func NonNilProjectionProvesMismatch(got, want typ.Type) bool {
+	if got == nil || want == nil {
+		return false
+	}
+	present := ProjectionWithoutNil(got)
+	if present == nil || typ.TypeEquals(present, got) ||
+		typ.IsAny(present) || typ.IsUnknown(present) || typ.IsNever(present) {
+		return false
+	}
+	return !subtype.IsSubtype(present, want)
 }
 
 // NumericForOperand is the solved read model for one numeric-for operand
@@ -828,7 +914,7 @@ func PlanAssignmentCheck(plan AssignmentCheckPlan) AssignmentCheck {
 			Type:       plan.MethodMismatchExpected,
 			ActualType: plan.MethodMismatchActual,
 		}
-	} else if AssignmentMayBeNilMismatch(assignment.TypeWithPresence, assignment.Expected) {
+	} else if plan.MayBeNil || AssignmentMayBeNilMismatch(assignment.TypeWithPresence, assignment.Expected) {
 		mismatch = AssignmentMismatch{Kind: AssignmentMismatchMayBeNil}
 	}
 	return AssignmentCheck{
@@ -841,7 +927,7 @@ func PlanAssignmentCheck(plan AssignmentCheckPlan) AssignmentCheck {
 }
 
 func (plan AssignmentCheckPlan) assignmentProvenMismatch() bool {
-	if plan.ValueProvenMismatch || plan.MissingRequiredField != "" || plan.MissingRequiredMethod != "" || plan.MethodMismatchName != "" {
+	if plan.ValueProvenMismatch || plan.MayBeNil || plan.MissingRequiredField != "" || plan.MissingRequiredMethod != "" || plan.MethodMismatchName != "" {
 		return true
 	}
 	if typ.TypeEquals(plan.Assignment.TypeWithPresence, nil) ||
@@ -862,7 +948,7 @@ func (plan AssignmentCheckPlan) assignmentProofAdmissible() bool {
 	if plan.MissingRequiredField != "" || plan.MissingRequiredMethod != "" || plan.MethodMismatchName != "" {
 		return false
 	}
-	if plan.Assignment.UntrustedTopOrigin && typ.TypeEquals(plan.Assignment.TypeWithPresence, nil) {
+	if plan.Assignment.UntrustedTopOrigin && !plan.Assignment.RuntimeValidated {
 		return false
 	}
 	if plan.ValueAdmissible {
@@ -1010,6 +1096,7 @@ type CallCalleeReportPlan struct {
 	Type                         typ.Type
 	Callable                     bool
 	MemberAccess                 bool
+	NilableReceiver              bool
 	ImpreciseMemberRequiresProof bool
 	Span                         SourceSpan
 	CallSpan                     SourceSpan
@@ -1030,7 +1117,7 @@ func PlanCallCalleeReport(plan CallCalleeReportPlan) CallCalleeReport {
 		name = "call target"
 	}
 	span := sourceSpanOr(plan.Span, plan.CallSpan)
-	if typevalue.TypeIncludesNil(plan.Type) {
+	if typevalue.TypeIncludesNil(plan.Type) && (plan.Callable || plan.NilableReceiver) {
 		return CallCalleeReport{
 			Kind:         CallCalleeReportMayBeNil,
 			CallableName: name,
@@ -1093,12 +1180,15 @@ type CallArgument struct {
 	TypeWithPresence          typ.Type
 	UntrustedTopOrigin        bool
 	ExplicitTopOrigin         bool
+	RuntimeValidated          bool
 	ProofCandidateValue       product.Value
 	ProofCandidateHash        uint64
 	ProofCandidateType        typ.Type
 	ProofCandidateTop         bool
 	ProofCandidateExplicitTop bool
+	ProofCandidateRuntime     bool
 	HasProofCandidate         bool
+	ExpandedSource            bool
 	CallerOwnedParameter      bool
 	FunctionType              *typ.Function
 	Span                      SourceSpan
@@ -1214,6 +1304,24 @@ func CallArgumentMayBeNilMismatch(got, want typ.Type) bool {
 	return TypeMayBeNilMismatch(got, want)
 }
 
+// CallArgumentExpectedTypeHasObjectEntries reports whether an expected type can
+// use object-literal member diagnostics instead of reporting only the whole
+// argument. Interface-only obligations intentionally stay whole-object so their
+// method evidence remains visible.
+func CallArgumentExpectedTypeHasObjectEntries(t typ.Type) bool {
+	switch tt := unwrap.Optional(t).(type) {
+	case *typ.Record, *typ.Array, *typ.Map, *typ.ReadonlyMap, *typ.Tuple:
+		return true
+	case *typ.Union:
+		for _, member := range tt.Members {
+			if CallArgumentExpectedTypeHasObjectEntries(member) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ObligationTypeReportable reports whether an expected type is precise enough
 // to emit as a user-facing obligation. Gradual, unknown, and still-generic
 // obligations are internal evidence, not standalone reports.
@@ -1227,11 +1335,15 @@ func ObligationTypeReportable(t typ.Type) bool {
 }
 
 // ObligationTypeContainsFreeTypeParam reports whether an obligation type still
-// depends on an uninstantiated type parameter. Internal readmodels should use
-// this instead of reaching into the type-refinement package for reportability
-// decisions.
+// depends on an uninstantiated type parameter. It also checks the non-nil
+// projection of optional types so nilability wrappers do not hide a free
+// parameter from reportability decisions.
 func ObligationTypeContainsFreeTypeParam(t typ.Type) bool {
-	return refinement.ContainsFreeTypeParam(t)
+	if refinement.ContainsFreeTypeParam(t) {
+		return true
+	}
+	nonNil := ProjectionWithoutNil(t)
+	return nonNil != nil && !typ.TypeEquals(nonNil, t) && refinement.ContainsFreeTypeParam(nonNil)
 }
 
 // ObligationTypeIsGradual reports whether an obligation type is gradual/top-like
@@ -1279,6 +1391,9 @@ func CallArgumentProofAdmissible(plan CallArgumentProofPlan) bool {
 	if plan.ValueAdmissible {
 		return true
 	}
+	if plan.Argument.UntrustedTopOrigin && !plan.Argument.RuntimeValidated {
+		return false
+	}
 	return plan.Argument.FunctionType != nil && plan.isSubtype(plan.Argument.FunctionType, plan.Expected)
 }
 
@@ -1290,10 +1405,30 @@ func CallArgumentWitnessProvenMismatch(plan CallArgumentProofPlan) bool {
 	if plan.ValueProvenMismatch {
 		return true
 	}
+	if plan.hasTrustedSolvedActual() {
+		return !plan.isSubtype(plan.Argument.TypeWithPresence, plan.Expected)
+	}
 	if plan.Argument.FunctionType == nil || plan.Expected == nil || typ.IsAny(plan.Expected) || typ.IsUnknown(plan.Expected) {
 		return false
 	}
 	return !plan.isSubtype(plan.Argument.FunctionType, plan.Expected)
+}
+
+func (plan CallArgumentProofPlan) hasTrustedSolvedActual() bool {
+	if plan.Argument.UntrustedTopOrigin ||
+		typ.TypeEquals(plan.Argument.TypeWithPresence, nil) ||
+		typ.TypeEquals(plan.Expected, nil) ||
+		plan.IsSubtype == nil {
+		return false
+	}
+	if typ.IsAny(plan.Argument.TypeWithPresence) ||
+		typ.IsUnknown(plan.Argument.TypeWithPresence) ||
+		typ.IsNever(plan.Argument.TypeWithPresence) ||
+		typ.IsAny(plan.Expected) ||
+		typ.IsUnknown(plan.Expected) {
+		return false
+	}
+	return true
 }
 
 func (plan CallArgumentProofPlan) isSubtype(sub, super typ.Type) bool {
@@ -1320,6 +1455,20 @@ type CallArgumentCheck struct {
 // type witness at the call boundary.
 func (check CallArgumentCheck) ActualTypeKnown() bool {
 	return check.Argument.TypeWithPresence != nil
+}
+
+// EffectiveActualType returns the type the obligation layer should attach to
+// the call-argument judgment. It mirrors assignment/return proof policy:
+// untrusted top-origin values remain visibly any when they have no concrete
+// structural candidate.
+func (check CallArgumentCheck) EffectiveActualType() typ.Type {
+	return obligationActualPolicy{
+		TypeWithPresence:    check.Argument.TypeWithPresence,
+		Expected:            check.Expected,
+		UntrustedTopOrigin:  check.Argument.UntrustedTopOrigin,
+		ProvenMismatch:      check.ProvenMismatch,
+		ShowUntrustedActual: true,
+	}.EffectiveActualType()
 }
 
 // MissingProofRefuted reports whether the failed call-argument obligation is a
@@ -1469,8 +1618,9 @@ func PlanCallArgumentReports(plan CallArgumentReportPlan) []CallArgumentReport {
 		reported[indexed.Index] = struct{}{}
 	}
 
-	out = plan.appendObligations(out, reported, argsByIndex, plan.ExplicitParams, false)
-	out = plan.appendObligations(out, reported, argsByIndex, plan.OutcomeParams, true)
+	admittedExplicit := make(map[int]struct{})
+	out = plan.appendObligations(out, reported, argsByIndex, plan.ExplicitParams, false, admittedExplicit, nil)
+	out = plan.appendObligations(out, reported, argsByIndex, plan.OutcomeParams, true, nil, admittedExplicit)
 	return out
 }
 
@@ -1480,10 +1630,17 @@ func (plan CallArgumentReportPlan) appendObligations(
 	argsByIndex map[int]CallArgument,
 	obligations []IndexedCallArgumentObligation,
 	reserveAdmissible bool,
+	markAdmissible map[int]struct{},
+	skipSignatureAdmitted map[int]struct{},
 ) []CallArgumentReport {
 	for _, indexed := range obligations {
 		if _, seen := reported[indexed.Index]; seen || !CallArgumentObligationTypeReportable(indexed.Obligation.Type) {
 			continue
+		}
+		if indexed.Obligation.SignatureSurface && skipSignatureAdmitted != nil {
+			if _, admitted := skipSignatureAdmitted[indexed.Index]; admitted {
+				continue
+			}
 		}
 		arg, ok := argsByIndex[indexed.Index]
 		if !ok {
@@ -1491,6 +1648,9 @@ func (plan CallArgumentReportPlan) appendObligations(
 		}
 		check := plan.check(arg, indexed.Obligation)
 		if check.Admissible {
+			if markAdmissible != nil {
+				markAdmissible[indexed.Index] = struct{}{}
+			}
 			if reserveAdmissible {
 				reported[indexed.Index] = struct{}{}
 			}
@@ -1582,10 +1742,11 @@ func (s CallContractSource) ResultSpan(index int) SourceSpan {
 // CallArgumentObligation is one expected type for one call argument in an
 // already-planned report.
 type CallArgumentObligation struct {
-	Type          typ.Type
-	ExpectedLabel string
-	ExpectedSpan  SourceSpan
-	Origin        CallArgumentObligationOrigin
+	Type             typ.Type
+	ExpectedLabel    string
+	ExpectedSpan     SourceSpan
+	Origin           CallArgumentObligationOrigin
+	SignatureSurface bool
 }
 
 // CallArgumentObligationOrigin records why a projected call-site obligation

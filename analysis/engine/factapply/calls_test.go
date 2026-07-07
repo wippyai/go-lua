@@ -11,13 +11,16 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -140,6 +143,74 @@ func TestFactsNodeTransferReturnPathSourceUsesExpressionDeclaredContract(t *test
 	slot := got[graph.Exit()].ReadReturnSlot(reg, 0)
 	if gotType, ok := typevalue.TypeOf(reg, slot); !ok || !typ.TypeEquals(gotType, typ.String) {
 		t.Fatalf("return slot type = %v/%v, want string", gotType, ok)
+	}
+}
+
+func TestFactsNodeTransferReturnDeclaredPathSourceBlocksHeapContainerReprojection(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	ret := graph.AddNode(cfg.NodeReturn)
+	graph.AddEdge(graph.Entry(), ret, false)
+	graph.AddEdge(ret, graph.Exit(), false)
+
+	inner := factflow.ExprRef(121)
+	outer := factflow.ExprRef(122)
+	value := symbol.ID(711)
+	tableID := identity.ID{Kind: "test.table", Site: "return-declared", Index: 1}
+	declaredType := typ.NewArray(typ.Any)
+	declared := typevalue.WithWitness(reg, typevalue.FromType(reg, declaredType), declaredType)
+	recordType := typetable.NewRecord().Field("id", typ.String).Build()
+	tableValue := product.Set(reg, typevalue.FromType(reg, declaredType), identity.Key, identity.Singleton(tableID))
+	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[factflow.ExprRef]product.Value{
+			inner: tableValue,
+		},
+	})
+	heap := heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+		Root: tableValue,
+		DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
+			{Table: keyspace.Key{Kind: keyspace.KindNamed, Root: 1}, Site: "insert"}: dynamicindex.NewFact(reg, dynamicindex.FactConfig{
+				KeyValue:    typevalue.WithWitness(reg, typevalue.FromType(reg, typ.Integer), typ.Integer),
+				HasKeyValue: true,
+				Value:       typevalue.WithWitness(reg, typevalue.FromType(reg, recordType), recordType),
+				HasValue:    true,
+				Admission:   dynamicindex.AdmissionAdmitted,
+			}),
+		},
+	})
+
+	got := transfer.Run(transfer.Config{
+		Graph:    graph,
+		Registry: reg,
+		EntryState: state.State{}.
+			WriteValue(reg, key.SymbolValue(value), tableValue).
+			WriteHeapTableObject(reg, tableID, heap),
+		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				Returns: map[cfg.Point]factflow.Return{
+					ret: factflow.NewReturn([]factflow.ValueSource{
+						{Kind: factflow.ValueSourceExpression, ExprRef: outer, HasExpr: true},
+					}),
+				},
+				ExpressionPaths: map[factflow.ExprRef]path.Path{
+					outer: {Symbol: value},
+				},
+				ExpressionRefinements: map[factflow.ExprRef]factflow.ExpressionRefinement{
+					outer: factflow.NewExpressionDeclaredContract(
+						factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: inner, HasExpr: true},
+						declared,
+					),
+				},
+			}),
+			Sources: sources,
+		}),
+	})
+
+	slot := got[graph.Exit()].ReadReturnSlot(reg, 0)
+	gotType, ok := typevalue.TypeOf(reg, slot)
+	if !ok || !typ.TypeEquals(gotType, declaredType) {
+		t.Fatalf("return slot type = %v/%v, want declared %v instead of heap-projected %v[]", gotType, ok, declaredType, recordType)
 	}
 }
 

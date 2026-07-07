@@ -44,6 +44,9 @@ func (r *Result) CallMayInvalidateTrackedPath(point cfg.Point, target pathdom.Pa
 		}
 		return true
 	}
+	if r.CallOutcomeHasCovariantExposureForTarget(site, outcome, target) {
+		return true
+	}
 	if !r.CallOutcomeHasExactGuardInvalidationSummary(site, outcome, true) {
 		return true
 	}
@@ -107,6 +110,9 @@ func (r *Result) CallMayInvalidateGuardFact(point cfg.Point, target pathdom.Path
 		}
 		return !receiverRootGuardFactSurvivesOpenMethodCall(site, target)
 	}
+	if r.CallOutcomeHasCovariantExposureForTarget(site, outcome, target) {
+		return true
+	}
 	if !r.CallOutcomeHasExactGuardInvalidationSummary(site, outcome, false) {
 		return !receiverRootGuardFactSurvivesOpenMethodCall(site, target)
 	}
@@ -148,6 +154,28 @@ func callInvalidationPathClearsGuardFact(invalidated, target pathdom.Path) bool 
 		return target.HasStrictPrefix(invalidated)
 	}
 	return target.HasPrefix(invalidated)
+}
+
+// CallOutcomeHasCovariantExposureForTarget reports whether outcome exposes a
+// caller argument through a wider mutable view overlapping target. Such an
+// exposure invalidates recovered path evidence: even without a direct write
+// summary, the caller cannot keep using a dominating narrow declaration or
+// guard as proof for the exposed object.
+func (r *Result) CallOutcomeHasCovariantExposureForTarget(site factflow.CallSite, outcome callpayload.CallOutcome, target pathdom.Path) bool {
+	if r == nil || target.IsEmpty() || len(outcome.ParamExposures) == 0 {
+		return false
+	}
+	bindings := r.callGuardArgumentBindings(site)
+	for _, exposure := range outcome.ParamExposures {
+		exposed, ok := exposure.Source.Substitute(bindings)
+		if !ok || exposed.IsEmpty() {
+			continue
+		}
+		if target.Overlaps(exposed) || exposed.Overlaps(target) {
+			return true
+		}
+	}
+	return false
 }
 
 // CallSiteHasExactEmptyGuardInvalidationSummary reports whether a call site has

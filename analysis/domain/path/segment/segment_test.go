@@ -47,6 +47,24 @@ func TestFormattedLenAndWriterMatchFormatSegments(t *testing.T) {
 	}
 }
 
+func TestDirectFieldName(t *testing.T) {
+	if got, ok := DirectFieldName([]Segment{{Kind: SegmentField, Name: "id"}}); !ok || got != "id" {
+		t.Fatalf("DirectFieldName(field) = %q/%v, want id/true", got, ok)
+	}
+	if _, ok := DirectFieldName(nil); ok {
+		t.Fatal("DirectFieldName(nil) returned ok")
+	}
+	if _, ok := DirectFieldName([]Segment{{Kind: SegmentField, Name: "a"}, {Kind: SegmentField, Name: "b"}}); ok {
+		t.Fatal("DirectFieldName(two fields) returned ok")
+	}
+	if _, ok := DirectFieldName([]Segment{{Kind: SegmentIndexString, Name: "id"}}); ok {
+		t.Fatal("DirectFieldName(string index) returned ok")
+	}
+	if _, ok := DirectFieldName([]Segment{{Kind: SegmentIndexInt, Index: 1}}); ok {
+		t.Fatal("DirectFieldName(integer index) returned ok")
+	}
+}
+
 func TestFormatSegmentsAllocatesOnlyResultString(t *testing.T) {
 	segs := []Segment{
 		{Kind: SegmentField, Name: "meta"},

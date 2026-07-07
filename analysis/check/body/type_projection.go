@@ -31,6 +31,10 @@ func MissingRequiredRecordField(t typ.Type, hasField func(string) bool) (string,
 	return luatypeprojection.MissingRequiredRecordField(t, hasField)
 }
 
+func ExpectedObjectLiteralRecordCached(typeValues *typevalue.Cache, expected typ.Type, fieldType func(string) (typ.Type, bool)) (*typ.Record, bool) {
+	return luatypeprojection.ExpectedObjectLiteralRecordCached(typeValues, expected, fieldType)
+}
+
 func ConstructorPathFromSegments(segments []segment.Segment) ([]typetable.ConstructorKey, bool) {
 	return luatypeprojection.ConstructorPathFromSegments(segments)
 }

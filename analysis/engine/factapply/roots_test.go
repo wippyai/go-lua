@@ -5,10 +5,12 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -84,6 +86,69 @@ func TestFactsNodeTransferAppliesOrdinaryAssignmentThroughResolver(t *testing.T)
 
 	assertValue(t, reg, got[graph.Exit()], key.SymbolValue(target), assigned)
 	assertResolverCall(t, resolver, assign, source)
+}
+
+func TestRootAssignmentRefinesGuardedStaticPathSourcePresence(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+
+	sourceExpr := factflow.ExprRef(120)
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: sourceExpr, HasExpr: true}
+	target := symbol.ID(1201)
+	current := symbol.ID(1202)
+	currentPath := path.NewPath(current, "current")
+	sourcePath := currentPath.Field("next")
+	sourceValue := product.Join(reg, typevalue.FromType(reg, typ.String), nilSourceValue(reg))
+	resolverValues := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{source: sourceValue},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(assign, target, "current")
+	visibilityBuilder.Define(assign, current, "current")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	sourceKey, ok := visibility.AddressAt(resolver, assign, sourcePath).VisibleLocalKeyspaceKey()
+	if !ok {
+		t.Fatal("missing source path key")
+	}
+	in := state.State{}.AddBranchProof(pathevidence.BranchProof{
+		Kind:     pathevidence.BranchProofPathPresence,
+		Path:     sourceKey,
+		Presence: presence.Present(),
+	})
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			RootAssignments: map[cfg.Point]factflow.RootAssignment{
+				assign: factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, target, path.NewPath(target, "current"), source),
+			},
+			ExpressionPaths: map[factflow.ExprRef]path.Path{
+				sourceExpr: sourcePath,
+			},
+		}),
+		Sources:    resolverValues,
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Graph:    graph,
+		Registry: reg,
+		Point:    assign,
+		Node:     graph.Node(assign),
+	}, in)
+
+	written := got.ReadValue(reg, key.SymbolValue(target))
+	if gotPresence := product.PresenceOf(written); !presence.Equal(gotPresence, presence.Present()) {
+		t.Fatalf("written presence = %s in %s, want present", gotPresence, formatValue(reg, written))
+	}
+	writtenType, ok := typevalue.TypeOf(reg, written)
+	if !ok {
+		t.Fatalf("written value has no projected type: %s", formatValue(reg, written))
+	}
+	if typevalue.ProjectionHasNil(writtenType) {
+		t.Fatalf("written value type = %s, want nil removed", writtenType)
+	}
+	assertResolverCall(t, resolverValues, assign, source)
 }
 
 func TestFactsNodeTransferFreshContainerRootSeedsClosedDynamicAllValueInvariant(t *testing.T) {
@@ -393,6 +458,50 @@ func TestFactsNodeTransferRootAssignmentUsesDeclaredContractBeforeSource(t *test
 	assertRuntimeKind(t, reg, got[graph.Exit()].ReadValue(reg, key.SymbolValue(target)), runtimekind.Singleton(runtimekind.String))
 }
 
+func TestFactsNodeTransferDeclaredContractPreservesObjectLiteralIdentity(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(121), HasExpr: true}
+	target := symbol.ID(121)
+	tableID := identity.ID{Kind: "test.table", Site: "declared-contract", Index: 1}
+	sourceType := typetable.NewRecord().Build()
+	declaredType := typetable.NewRecord().Field("items", typetable.NewMap(typ.String, typ.String)).Build()
+	assigned := product.Set(reg, typevalue.WithWitness(reg, typevalue.FromType(reg, sourceType), sourceType), identity.Key, identity.Singleton(tableID))
+	declared := typevalue.WithWitness(reg, typevalue.FromType(reg, declaredType), declaredType)
+	resolver := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{source: assigned},
+	}
+
+	got := transfer.Run(transfer.Config{
+		Graph:    graph,
+		Registry: reg,
+		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				RootAssignments: map[cfg.Point]factflow.RootAssignment{
+					assign: factflow.NewRootAssignmentWithDeclaredContractValue(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "local"), source, declared),
+				},
+				ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
+					source.ExprRef: factflow.NewObjectLiteral(nil),
+				},
+			}),
+			Sources: resolver,
+		}),
+	})
+
+	written := got[graph.Exit()].ReadValue(reg, key.SymbolValue(target))
+	writtenType, ok := typevalue.TypeOf(reg, written)
+	if !ok || !typ.TypeEquals(writtenType, declaredType) {
+		t.Fatalf("written type = %v/%v, want declared contract %v", writtenType, ok, declaredType)
+	}
+	if gotID, ok := identityvalue.ExactID(reg, written); !ok || gotID != tableID {
+		t.Fatalf("written identity = %v/%v, want source table identity %v", gotID, ok, tableID)
+	}
+}
+
 func TestFactsNodeTransferRootAssignmentUsesSourceBeforeFallbackDeclaredValue(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
@@ -423,6 +532,38 @@ func TestFactsNodeTransferRootAssignmentUsesSourceBeforeFallbackDeclaredValue(t 
 
 	assertValue(t, reg, got[graph.Exit()], key.SymbolValue(target), assigned)
 	assertRuntimeKind(t, reg, got[graph.Exit()].ReadValue(reg, key.SymbolValue(target)), runtimekind.Singleton(runtimekind.Number))
+	assertResolverCall(t, resolver, assign, source)
+}
+
+func TestFactsNodeTransferRootAssignmentUsesFallbackDeclaredValueWhenSourceIsBottom(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+
+	source := factflow.ValueSource{Kind: factflow.ValueSourceCall, ExprRef: factflow.ExprRef(14), HasExpr: true}
+	target := symbol.ID(105)
+	declared := product.Set(reg, presentValue(reg), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	resolver := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{source: product.Bottom(reg)},
+	}
+
+	got := transfer.Run(transfer.Config{
+		Graph:    graph,
+		Registry: reg,
+		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				RootAssignments: map[cfg.Point]factflow.RootAssignment{
+					assign: factflow.NewRootAssignmentWithDeclaredValue(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "local"), source, declared),
+				},
+			}),
+			Sources: resolver,
+		}),
+	})
+
+	assertValue(t, reg, got[graph.Exit()], key.SymbolValue(target), declared)
+	assertRuntimeKind(t, reg, got[graph.Exit()].ReadValue(reg, key.SymbolValue(target)), runtimekind.Singleton(runtimekind.String))
 	assertResolverCall(t, resolver, assign, source)
 }
 
@@ -499,6 +640,46 @@ func TestFactsNodeTransferRootAssignmentOverlaysDeclaredContractOnSource(t *test
 		t.Fatalf("written type = %v/%v, want declared contract %v", writtenType, ok, declaredType)
 	}
 	assertResolverCall(t, resolver, assign, source)
+}
+
+func TestFactsNodeTransferRootAssignmentOverlayCarriesDeclaredTypeClaim(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(114), HasExpr: true}
+	target := symbol.ID(115)
+	tableID := identity.ID{Kind: "test.table", Site: "declared-overlay-claim", Index: 1}
+	sourceType := typetable.NewRecord().Build()
+	declaredType := typ.NewArray(typetable.NewRecord().Field("role", typ.LiteralString("system")).Build())
+	assigned := product.Set(reg, typevalue.WithWitness(reg, typevalue.FromType(reg, sourceType), sourceType), identity.Key, identity.Singleton(tableID))
+	declared := product.Set(reg, typevalue.WithWitness(reg, typevalue.FromType(reg, declaredType), declaredType), assertion.Key, assertion.Type())
+	resolver := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{source: assigned},
+	}
+
+	got := transfer.Run(transfer.Config{
+		Graph:    graph,
+		Registry: reg,
+		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				RootAssignments: map[cfg.Point]factflow.RootAssignment{
+					assign: factflow.NewRootAssignmentWithDeclaredOverlayValue(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "local"), source, declared),
+				},
+			}),
+			Sources: resolver,
+		}),
+	})
+
+	written := got[graph.Exit()].ReadValue(reg, key.SymbolValue(target))
+	if gotID, ok := identityvalue.ExactID(reg, written); !ok || gotID != tableID {
+		t.Fatalf("written identity = %v/%v, want preserved exact table identity %v", gotID, ok, tableID)
+	}
+	if gotClaim := product.Get(reg, written, assertion.Key); !gotClaim.Has(assertion.TypeClaim) {
+		t.Fatalf("written assertion = %s, want declared type claim", gotClaim)
+	}
 }
 
 func TestFactsNodeTransferRootAssignmentOverlayAdoptsDeclaredPresenceAndKeepsEvidence(t *testing.T) {

@@ -301,6 +301,57 @@ end
 	}
 }
 
+func TestDefinitionCaptureEntryUsesMemberAssignmentFunctionDefinitionBoundary(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Streamer = {
+    send_error: (self: Streamer, chunk: {type: string}) -> boolean,
+}
+
+local function make_streamer(pid: string): Streamer
+    local streamer = {}
+    local target_pid = tostring(pid)
+    streamer.send_error = function(self: Streamer, chunk: {type: string}): boolean
+        return chunk.type == "error" and target_pid ~= ""
+    end
+    return streamer :: Streamer
+end
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"tostring"}})
+	result, err := RunBoundChunk(stmts, bindings, Config{Check: body.Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	}})
+	if err != nil {
+		t.Fatalf("RunBoundChunk: %v", err)
+	}
+	var capturedFn *ast.FunctionExpr
+	var targetPID symbol.ID
+	for _, origin := range bindings.FunctionOrigins() {
+		for _, capture := range bindings.DirectCaptures(origin.Func) {
+			if capture.CapturedName != "target_pid" {
+				continue
+			}
+			capturedFn = origin.Func
+			targetPID = capture.Captured
+			break
+		}
+	}
+	if capturedFn == nil || targetPID == 0 {
+		t.Fatal("captured send_error/target_pid not found")
+	}
+	child := findMaterializedFunctionResult(t, result.RootResult(), capturedFn)
+	entry, ok := child.EntryState()
+	if !ok {
+		t.Fatal("captured send_error entry state missing")
+	}
+	value := entry.ReadValue(reg, statekey.SymbolValue(targetPID))
+	got, ok := typevalue.TypeOf(reg, value)
+	if !ok || !subtype.IsSubtype(got, typ.String) {
+		t.Fatalf("captured target_pid type = %v/%v, want string from member-assignment function definition", got, ok)
+	}
+}
+
 func TestRunChunkClearsStaleMemberCallObligationAfterCapturedCallbackMutation(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
@@ -367,6 +418,42 @@ invoke(p, mutate, "ok")
 		return
 	}
 	t.Fatal("invoke(p, mutate, \"ok\") call not found")
+}
+
+func TestRunChunkCapturedLocalFunctionFeedsCallSignature(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function need(id: string): () end
+local function invoke(raw: any?): ()
+	need(raw)
+end
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result, err := RunBoundChunk(stmts, bindings, Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunBoundChunk: %v", err)
+	}
+	invoke := findLocalFunctionByName(t, bindings, "invoke")
+	child := findMaterializedFunctionResult(t, result.RootResult(), invoke)
+	graph := child.Graph()
+	if graph == nil {
+		t.Fatal("missing child graph")
+	}
+	for _, point := range graph.RPO() {
+		site, ok := child.CallSite(point)
+		if !ok {
+			continue
+		}
+		fn, ok := child.FunctionValueTypeForCallSiteAtBoundary(point, site)
+		if !ok || fn == nil {
+			t.Fatalf("captured local function signature missing at call point %v", point)
+		}
+		if len(fn.Params) != 1 || !typ.TypeEquals(fn.Params[0].Type, typ.String) {
+			t.Fatalf("captured local function type = %v, want one string parameter", fn)
+		}
+		return
+	}
+	t.Fatal("missing need(raw) call")
 }
 
 func TestRunBoundChunkCapturedTableInsertSurvivesCallContextRefresh(t *testing.T) {
@@ -677,6 +764,50 @@ end
 	wantDecorator := typeexpr.Optional(typ.Func().Param("value", typ.String).Returns(typ.String).Build())
 	if !ok || !typ.TypeEquals(decoratorType, wantDecorator) {
 		t.Fatalf("captured decorator type = %v/%v, want %v", decoratorType, ok, wantDecorator)
+	}
+}
+
+func TestRunBoundChunkReturnedNestedClosureCapturesGrandparentLocal(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local value = "ok"
+local make_get = function()
+	return function(): string
+		return value
+	end
+end
+return make_get()()
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	var returned *ast.FunctionExpr
+	var valueSym symbol.ID
+	for _, origin := range bindings.FunctionOrigins() {
+		if origin.Kind != bind.FunctionOriginLiteral || origin.Parent == nil {
+			continue
+		}
+		for _, capture := range bindings.DirectCaptures(origin.Func) {
+			if capture.CapturedName == "value" {
+				returned = origin.Func
+				valueSym = capture.Captured
+			}
+		}
+	}
+	if returned == nil || valueSym == 0 {
+		t.Fatalf("returned closure capture not found")
+	}
+	result, err := RunBoundChunk(stmts, bindings, Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunBoundChunk: %v", err)
+	}
+	returnedResult := findMaterializedFunctionResult(t, result.RootResult(), returned)
+	entry, ok := returnedResult.EntryState()
+	if !ok {
+		t.Fatal("returned anonymous function entry state missing")
+	}
+	value := entry.ReadValue(reg, statekey.SymbolValue(valueSym))
+	got, ok := typevalue.TypeOf(reg, value)
+	if !ok || !subtype.IsSubtype(got, typ.String) {
+		t.Fatalf("captured value type = %v/%v, want string", got, ok)
 	}
 }
 

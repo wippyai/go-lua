@@ -45,6 +45,27 @@ func SameNodeOrAcyclicEqual(a, b Type) bool {
 	return sameNodeOrAcyclicEqual(a, b)
 }
 
+// SameNodeOrRecursiveIdentityEqual reports equality suitable for preserving an
+// existing recursive-containing wrapper during no-op rewrites. Distinct
+// recursive identity graphs are never collapsed even when their unfolded
+// structure is equal.
+func SameNodeOrRecursiveIdentityEqual(a, b Type) bool {
+	if sameNodeOrAcyclicEqual(a, b) {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	if knownContainsRecursive(a) || knownContainsRecursive(b) ||
+		knownContainsOpenRecursive(a) || knownContainsOpenRecursive(b) {
+		if !sameRecursiveIdentityGraph(a, b) {
+			return false
+		}
+		return typeEquals(a, b)
+	}
+	return false
+}
+
 // sameNodeOrAcyclicEqual reports the identity-or-acyclic-equality fast path.
 // It is intentionally narrower than TypeEquals: recursive product-family
 // equivalence is a domain relation, and callers that need that must use the

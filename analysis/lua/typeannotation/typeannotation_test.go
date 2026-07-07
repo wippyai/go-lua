@@ -310,11 +310,21 @@ func TestTypeUnsupportedAdvancedExpressions(t *testing.T) {
 			Else:    &ast.PrimitiveTypeExpr{Name: "boolean"},
 		},
 		&ast.AssertsTypeExpr{ParamName: "x", NarrowTo: &ast.PrimitiveTypeExpr{Name: "string"}},
-		&ast.ArrayTypeExpr{Element: &ast.PrimitiveTypeExpr{Name: "string"}, Readonly: true},
 	}
 	for _, expr := range exprs {
 		if got, ok := Type(expr, nil); ok {
 			t.Fatalf("Type(%T) = %v, true; want nil, false", expr, got)
 		}
+	}
+}
+
+func TestTypeReadonlyArrayExpression(t *testing.T) {
+	got, ok := Type(&ast.ArrayTypeExpr{Element: &ast.PrimitiveTypeExpr{Name: "number"}, Readonly: true}, nil)
+	if !ok {
+		t.Fatal("Type(readonly array) returned false")
+	}
+	want := luatable.NewReadonlyMap(typ.Integer, typ.Number)
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("readonly array type = %v, want %v", got, want)
 	}
 }

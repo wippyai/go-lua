@@ -30,12 +30,18 @@ func (l *lowerer) branchValueRefinementForCheck(check branchcond.Check) (factflo
 			l.presenceRefinement(presence.Absent()), true,
 		), true
 	case branchcond.CheckTruthy:
+		if narrowed, ok := l.booleanTruthinessLiteralRefinement(target, false); ok {
+			return narrowed, true
+		}
 		return factflow.NewBranchRefinement(
 			target,
 			l.typedPresenceRefinement(target, presence.Present()), true,
 			l.falsyAbsentRefinement(), true,
 		), true
 	case branchcond.CheckFalsy:
+		if narrowed, ok := l.booleanTruthinessLiteralRefinement(target, true); ok {
+			return narrowed, true
+		}
 		return factflow.NewBranchRefinement(
 			target,
 			l.falsyAbsentRefinement(), true,

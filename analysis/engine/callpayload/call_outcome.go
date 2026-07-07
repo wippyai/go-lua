@@ -199,9 +199,10 @@ type CallParamExposure struct {
 // argument. It is diagnostic evidence only and is not applied as a normal-return
 // refinement to caller state.
 type CallParamObligation struct {
-	ParamIndex int
-	Value      product.Value
-	Origin     CallParamObligationOrigin
+	ParamIndex       int
+	Value            product.Value
+	Origin           CallParamObligationOrigin
+	SignatureSurface bool
 }
 
 // CallPathObligation records a pre-call value constraint for a caller-visible

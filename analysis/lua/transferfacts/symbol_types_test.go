@@ -3,6 +3,9 @@ package transferfacts
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
@@ -24,7 +27,7 @@ end
 		t.Fatalf("ParamSlots = %#v, want one typed parameter", slots)
 	}
 
-	got := lowerSymbolTypes(bindings, built.Graph, built.Meta, nil, typeresolve.New(bindings), importlookup.Source{})
+	got := lowerSymbolTypes(bindings, built.Graph, built.Meta, nil, typeresolve.New(bindings), importlookup.Source{}, nil)
 	if got == nil {
 		t.Fatal("lowerSymbolTypes returned nil without semantic result")
 	}
@@ -62,7 +65,7 @@ end
 		t.Fatalf("NumForSymbol = %d/%v, want symbol", loopSym, ok)
 	}
 
-	got := lowerSymbolTypes(bindings, built.Graph, built.Meta, nil, typeresolve.New(bindings), importlookup.Source{})
+	got := lowerSymbolTypes(bindings, built.Graph, built.Meta, nil, typeresolve.New(bindings), importlookup.Source{}, nil)
 	if got == nil {
 		t.Fatal("lowerSymbolTypes returned nil without semantic result")
 	}
@@ -78,6 +81,39 @@ end
 	}
 	if gotType, ok := got[loopSym]; !ok || !typ.TypeEquals(gotType, typ.Integer) {
 		t.Fatalf("numeric-for symbol type = %v/%v, want integer", gotType, ok)
+	}
+}
+
+func TestLowerSymbolTypesFromWIRSeedsLocalCallResultTypes(t *testing.T) {
+	body := wir.NewBody("call-result-symbol-types")
+	callPoint := cfg.Point(10)
+	localPath := path.NewPath(symbol.ID(42), "result")
+	resultType := typetable.NewRecord().
+		Field("ok", typ.Boolean).
+		Field("value", typ.String).
+		Build()
+	calleeType := typ.Func().Returns(resultType).Build()
+	resultTemp := wir.Operand{Kind: wir.OperandTemp, Ref: 1}
+	start := body.Emit(wir.Instruction{
+		Op:      wir.OpCall,
+		Point:   callPoint,
+		Type:    body.InternType(calleeType),
+		Results: body.AppendOperands([]wir.Operand{resultTemp}),
+	})
+	body.SetPointRange(callPoint, start, body.Len())
+	body.SetCallResultTarget(callPoint, wir.CallResultTarget{
+		Kind:        wir.CallResultTargetLocalAssignment,
+		Index:       0,
+		ResultIndex: 0,
+		Path:        localPath,
+	})
+
+	got := lowerSymbolTypesFromWIR(body)
+	if got == nil {
+		t.Fatal("lowerSymbolTypesFromWIR returned nil")
+	}
+	if gotType, ok := got[localPath.Symbol]; !ok || !typ.TypeEquals(gotType, resultType) {
+		t.Fatalf("call result symbol type = %v/%v, want %v", gotType, ok, resultType)
 	}
 }
 

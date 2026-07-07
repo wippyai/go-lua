@@ -30,7 +30,7 @@ func (CallArguments) Produce(ctx Context) []judgment.Judgment {
 			case readmodel.CallArgumentReportGenericConflict:
 				out = append(out, genericInferenceConflictJudgment(ctx, functionKey, point, report.Argument, report.Conflict))
 			case readmodel.CallArgumentReportObligation:
-				if ctx.SuppressCallerOwnedParameters && report.Argument.CallerOwnedParameter {
+				if ctx.SuppressCallerOwnedParameters && report.Argument.CallerOwnedParameter && !report.Check.Argument.UntrustedTopOrigin {
 					continue
 				}
 				obligation := report.Obligation
@@ -124,7 +124,7 @@ func callArgumentJudgment(
 	if check.ProvenMismatch {
 		verdict = judgment.VerdictRefuted
 	}
-	actual := arg.TypeWithPresence
+	actual := check.EffectiveActualType()
 	actualTrust := judgment.EvidenceTrustUnknown
 	if check.ActualTypeKnown() {
 		actualTrust = judgment.EvidenceTrustProven
@@ -143,6 +143,7 @@ func callArgumentJudgment(
 		missingProofDetail = judgment.MethodTypeMismatchEvidenceDetail(arg.Mismatch.Field, arg.Mismatch.ActualType, arg.Mismatch.Type)
 	case readmodel.CallArgumentMismatchMayBeNil:
 		missingProofDetail = judgment.MayBeNilEvidenceDetail()
+		missingProofDetail.ExpandedSource = arg.ExpandedSource
 	}
 	evidence := judgment.EvidenceChain{
 		{

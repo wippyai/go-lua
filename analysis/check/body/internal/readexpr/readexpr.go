@@ -380,7 +380,11 @@ func dynamicIndexExpressionKeyValueActive(
 			return product.Value{}, false
 		}
 		if p, ok := config.Facts.ExpressionPathRef(source.ExprRef); ok {
-			return Project(config, point, p, in)
+			if value, ok := Project(config, point, p, in); ok {
+				return value, true
+			}
+			value, ok := config.Facts.ExpressionValue(source.ExprRef)
+			return value, ok
 		}
 		if value, ok := dynamicIndexExpressionOperationValue(config, point, source.ExprRef, in, active); ok {
 			return value, true
@@ -390,6 +394,12 @@ func dynamicIndexExpressionKeyValueActive(
 		}
 		value, ok := config.Facts.ExpressionValue(source.ExprRef)
 		return value, ok
+	case factflow.ValueSourcePath:
+		p, ok := dynamicIndexSourcePath(config, source)
+		if !ok {
+			return product.Value{}, false
+		}
+		return Project(config, point, p, in)
 	case factflow.ValueSourceNil:
 		return typevalue.Nil(config.Registry), true
 	default:
@@ -482,7 +492,6 @@ func dynamicIndexExpressionValueActive(
 			}
 			if value, ok := config.TypeValues.RuntimeIndex(reg, tableValue, keyValue); ok {
 				value = sourcevalue.InheritTopOriginEvidence(reg, value, tableValue)
-				value = sourcevalue.InheritTopOriginEvidence(reg, value, keyValue)
 				if dynamicIndexKeyMembershipProvesRead(config, point, dyn, in) ||
 					dynamicIndexInBoundsProvesRead(config, point, dyn, in) {
 					value = sourcevalue.WithoutNilRuntimeKind(reg, product.WithPresence(reg, value, presence.Present()))
@@ -637,7 +646,7 @@ func dynamicIndexModuloLengthProvesRead(
 	if !dynamicIndexArrayLengthKnownAtLeastOne(config, point, arrayPath, in, resolver) {
 		return false
 	}
-	return dynamicIndexSourceHasIntegerType(config, point, op.Left(), in)
+	return dynamicIndexModuloDividendHasIntegerSource(config, point, op.Left(), in)
 }
 
 func dynamicIndexArrayLengthKnownAtLeastOne(config Config, point cfg.Point, arrayPath pathdom.Path, in state.State, resolver *visibility.Resolver) bool {
@@ -653,6 +662,15 @@ func dynamicIndexArrayLengthKnownAtLeastOne(config Config, point cfg.Point, arra
 	}
 	tableType, ok := config.TypeValues.TypeOf(config.Registry, tableValue)
 	return ok && staticallyNonEmptySequenceType(tableType, 0)
+}
+
+func dynamicIndexModuloDividendHasIntegerSource(config Config, point cfg.Point, source factflow.ValueSource, in state.State) bool {
+	term, ok := dynamicIndexIntegerTerm(config, source)
+	if ok && !term.Path.IsEmpty() {
+		value, valueOK := Project(config, point, term.Path, in)
+		return valueOK && typevalue.HasIntegerType(config.Registry, value)
+	}
+	return dynamicIndexSourceHasIntegerType(config, point, source, in)
 }
 
 func dynamicIndexSourceHasIntegerType(config Config, point cfg.Point, source factflow.ValueSource, in state.State) bool {
@@ -738,7 +756,7 @@ type dynamicIndexTerm struct {
 }
 
 func dynamicIndexIntegerTerm(config Config, source factflow.ValueSource) (dynamicIndexTerm, bool) {
-	if p, ok := dynamicIndexSourcePath(source); ok {
+	if p, ok := dynamicIndexSourcePath(config, source); ok {
 		return dynamicIndexTerm{Path: p, Coeff: 1}, true
 	}
 	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
@@ -769,7 +787,7 @@ func dynamicIndexIntegerTerm(config Config, source factflow.ValueSource) (dynami
 	}
 }
 
-func dynamicIndexSourcePath(source factflow.ValueSource) (pathdom.Path, bool) {
+func dynamicIndexSourcePath(config Config, source factflow.ValueSource) (pathdom.Path, bool) {
 	if source.Kind != factflow.ValueSourcePath || source.PathKey == "" {
 		return pathdom.Path{}, false
 	}
@@ -784,6 +802,12 @@ func dynamicIndexSourcePath(source factflow.ValueSource) (pathdom.Path, bool) {
 	}
 	if sym, segments, ok := pathaddr.ParseSymbolPathKey(source.PathKey); ok {
 		return pathdom.Path{Symbol: sym, Segments: segments}, true
+	}
+	if config.Visibility != nil && config.Visibility.KeySpace() != nil {
+		key, ok := config.Visibility.KeySpace().FromStateKey(source.PathKey)
+		if ok && key.Sym != 0 {
+			return pathdom.Path{Symbol: key.Sym, Segments: config.Visibility.KeySpace().Segments(key)}, true
+		}
 	}
 	return pathdom.Path{}, false
 }
@@ -1235,12 +1259,16 @@ func project(config Config, point cfg.Point, p pathdom.Path, in state.State, ove
 
 	exactPresent := product.Value{}
 	hasExactPresent := false
-	if exact, ok := sourcevalue.ExactPathValue(reg, config.Visibility, point, p, in); ok {
+	if exact, ok := exactPathValue(config, point, p, in); ok {
 		switch gotPresence := product.PresenceOf(exact); {
 		case presence.Equal(gotPresence, presence.Present()):
 			exactPresent = sourcevalue.WithoutNilRuntimeKind(reg, product.WithPresence(reg, exact, presence.Present()))
 			hasExactPresent = true
+			originProjected, hasOriginProjected := projectCurrentVariantOrigin(config, point, p, in)
 			if identityvalue.HasExact(reg, exactPresent) {
+				if hasOriginProjected {
+					return rememberProjection(config, memoKey, mergeOriginProjectedWithExact(reg, originProjected, exactPresent, true), true)
+				}
 				if projected, ok, _ := projectFromStructuralEvidence(config, point, p, in); ok {
 					if merged := product.Meet(reg, projected, exactPresent); !product.Equal(reg, merged, product.Bottom(reg)) {
 						return rememberProjection(config, memoKey, merged, true)
@@ -1267,12 +1295,9 @@ func project(config Config, point cfg.Point, p pathdom.Path, in state.State, ove
 
 	originProjected := product.Value{}
 	hasOriginProjected := false
-	if !hasExactPresent || exactPresentOnlyPresence {
-		if projected, ok := projectFromVariantOrigin(config, point, p, in); ok {
-			originProjected = projected
-			hasOriginProjected = true
-			originProjected = refineProjectionWithCurrentRootType(config, point, p, in, originProjected)
-		}
+	if projected, ok := projectCurrentVariantOrigin(config, point, p, in); ok {
+		originProjected = projected
+		hasOriginProjected = true
 	}
 
 	if hasExactPresent {
@@ -1286,6 +1311,9 @@ func project(config Config, point cfg.Point, p pathdom.Path, in state.State, ove
 			projected = mergeStructuralAndOriginProjection(reg, projected, originProjected)
 		}
 		if hasExactPresent {
+			if hasOriginProjected {
+				return rememberProjection(config, memoKey, mergeOriginProjectedWithExact(reg, projected, exactPresent, true), true)
+			}
 			return rememberProjection(config, memoKey, mergeProjectedWithExact(reg, projected, exactPresent, true), true)
 		}
 		return rememberProjection(config, memoKey, dropInBoundsIndexNil(config, point, p, in, projected), true)
@@ -1297,6 +1325,9 @@ func project(config Config, point cfg.Point, p pathdom.Path, in state.State, ove
 			projected = mergeStructuralAndOriginProjection(reg, projected, originProjected)
 		}
 		if hasExactPresent {
+			if hasOriginProjected {
+				return rememberProjection(config, memoKey, mergeOriginProjectedWithExact(reg, projected, exactPresent, true), true)
+			}
 			return rememberProjection(config, memoKey, mergeProjectedWithExact(reg, projected, exactPresent, true), true)
 		}
 		return rememberProjection(config, memoKey, dropInBoundsIndexNil(config, point, p, in, projected), true)
@@ -1308,7 +1339,7 @@ func project(config Config, point cfg.Point, p pathdom.Path, in state.State, ove
 		return rememberProjection(config, memoKey, exactPresent, true)
 	}
 	if hasOriginProjected {
-		return rememberProjection(config, memoKey, mergeProjectedWithExact(reg, originProjected, exactPresent, hasExactPresent), true)
+		return rememberProjection(config, memoKey, mergeOriginProjectedWithExact(reg, originProjected, exactPresent, hasExactPresent), true)
 	}
 
 	value, hasUnknownIndexValue := unknownIndexReadValue(config, p.Segments[len(p.Segments)-1])
@@ -1321,8 +1352,40 @@ func project(config Config, point cfg.Point, p pathdom.Path, in state.State, ove
 	return rememberProjection(config, memoKey, dropInBoundsIndexNil(config, point, p, in, value), true)
 }
 
+func projectCurrentVariantOrigin(config Config, point cfg.Point, p pathdom.Path, in state.State) (product.Value, bool) {
+	projected, ok := projectFromVariantOrigin(config, point, p, in)
+	if !ok {
+		return product.Value{}, false
+	}
+	return refineProjectionWithCurrentRootType(config, point, p, in, projected), true
+}
+
+func exactPathValue(config Config, point cfg.Point, p pathdom.Path, in state.State) (product.Value, bool) {
+	if exact, ok := sourcevalue.ExactPathValue(config.Registry, config.Visibility, point, p, in); ok {
+		return exact, true
+	}
+	if config.ProofVisibility == nil || config.ProofVisibility == config.Visibility {
+		return product.Value{}, false
+	}
+	proofState := in
+	if config.ProofState != nil {
+		if st, ok := config.ProofState(point); ok {
+			proofState = st
+		}
+	}
+	return sourcevalue.ExactPathValue(config.Registry, config.ProofVisibility, point, p, proofState)
+}
+
 func inheritParentTopOriginForExact(reg *axis.Registry, exact, parent product.Value) product.Value {
+	if exactHasConcreteNonTopProof(reg, exact) {
+		return exact
+	}
 	return sourcevalue.InheritTopOriginEvidence(reg, exact, parent)
+}
+
+func exactHasConcreteNonTopProof(reg *axis.Registry, value product.Value) bool {
+	t, ok := typevalue.TypeOf(reg, value)
+	return ok && t != nil && !typ.IsAny(t) && !typ.IsUnknown(t)
 }
 
 func currentValueHasType(reg *axis.Registry, typeValues *typevalue.Cache, value product.Value) bool {
@@ -1409,6 +1472,16 @@ func mergeProjectedWithExact(reg *axis.Registry, projected, exact product.Value,
 		return merged
 	}
 	return exact
+}
+
+func mergeOriginProjectedWithExact(reg *axis.Registry, projected, exact product.Value, hasExact bool) product.Value {
+	if !hasExact {
+		return projected
+	}
+	if merged := valuerefine.MeetConstraint(reg, exact, projected); !product.Equal(reg, merged, product.Bottom(reg)) {
+		return merged
+	}
+	return projected
 }
 
 func exactValueOnlyProvesPresence(reg *axis.Registry, value product.Value) bool {
@@ -2206,12 +2279,21 @@ func projectFinalStaticMember(config Config, point cfg.Point, p pathdom.Path, in
 }
 
 func mergeFinalStaticMemberWithCurrentParent(config Config, p pathdom.Path, parentValue product.Value, value product.Value) product.Value {
-	if len(p.Segments) == 0 || identityvalue.HasExact(config.Registry, parentValue) {
+	if len(p.Segments) == 0 {
 		return value
 	}
 	current, ok := projectFromValueEvidence(config, parentValue, p.Segments[len(p.Segments)-1:])
-	if !ok || product.LessOrEq(config.Registry, current, value) {
+	if !ok {
 		return value
+	}
+	if product.LessOrEq(config.Registry, current, value) {
+		return current
+	}
+	if product.LessOrEq(config.Registry, value, current) {
+		return value
+	}
+	if merged := valuerefine.MeetConstraint(config.Registry, value, current); !product.Equal(config.Registry, merged, product.Bottom(config.Registry)) {
+		return merged
 	}
 	return current
 }

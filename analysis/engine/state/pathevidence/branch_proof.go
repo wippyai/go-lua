@@ -75,6 +75,7 @@ func (l Lane) EquivalentPathKeys(ks *keyspace.KeySpace, pathKey pathdom.PathKey)
 	}
 	seen := map[pathdom.PathKey]struct{}{pathKey: {}}
 	queue := []keyspace.Key{start}
+	segmentLimit := equivalentPathExpansionSegmentLimit(ks, start, l.proofs)
 	var out []pathdom.PathKey
 	for len(queue) != 0 {
 		current := queue[0]
@@ -84,6 +85,9 @@ func (l Lane) EquivalentPathKeys(ks *keyspace.KeySpace, pathKey pathdom.PathKey)
 				continue
 			}
 			for _, next := range equivalentPathKeysForProof(ks, current, proof) {
+				if exceedsEquivalentPathSegmentLimit(ks, next, segmentLimit) {
+					continue
+				}
 				spelling := ks.Format(next)
 				if _, ok := seen[spelling]; ok {
 					continue
@@ -96,6 +100,39 @@ func (l Lane) EquivalentPathKeys(ks *keyspace.KeySpace, pathKey pathdom.PathKey)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
+}
+
+func equivalentPathExpansionSegmentLimit(
+	ks *keyspace.KeySpace,
+	start keyspace.Key,
+	proofs map[BranchProof]struct{},
+) int {
+	limit, ok := ks.SegmentLen(start)
+	if !ok {
+		return 0
+	}
+	for proof := range proofs {
+		if proof.Kind != BranchProofPathEqual {
+			continue
+		}
+		limit += positiveSegmentDelta(ks, proof.Path, proof.Other)
+		limit += positiveSegmentDelta(ks, proof.Other, proof.Path)
+	}
+	return limit
+}
+
+func positiveSegmentDelta(ks *keyspace.KeySpace, from, to keyspace.Key) int {
+	fromLen, fromOK := ks.SegmentLen(from)
+	toLen, toOK := ks.SegmentLen(to)
+	if !fromOK || !toOK || toLen <= fromLen {
+		return 0
+	}
+	return toLen - fromLen
+}
+
+func exceedsEquivalentPathSegmentLimit(ks *keyspace.KeySpace, key keyspace.Key, limit int) bool {
+	segments, ok := ks.SegmentLen(key)
+	return !ok || segments > limit
 }
 
 // EquivalentRootKeys returns root-symbol keys proven equal to pathKey by exact

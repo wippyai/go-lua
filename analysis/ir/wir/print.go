@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
@@ -108,7 +109,11 @@ func (b *Body) spellInstruction(inst Instruction) string {
 	case OpStaticMemberWrite:
 		return "store.field " + b.spellOperand(inst.Dst) + " = " + b.spellOperand(inst.A)
 	case OpDynamicIndexWrite:
-		return "store.index " + b.spellOperand(inst.Dst) + "[" + b.spellOperand(inst.A) + "] = " + b.spellOperand(inst.B)
+		s := "store.index " + b.spellOperand(inst.Dst) + "[" + b.spellOperand(inst.A) + "]"
+		if suffix := b.Segments(inst.DynamicSuffix); len(suffix) != 0 {
+			s += segment.FormatSegments(suffix)
+		}
+		return s + " = " + b.spellOperand(inst.B)
 	case OpDynamicIndexRead:
 		return b.spellOperand(inst.Dst) + " = index " + b.spellOperand(inst.A) + "[" + b.spellOperand(inst.B) + "]"
 	case OpMakeTable:
@@ -330,8 +335,8 @@ func typeCheckOperand(c Check) string {
 }
 
 func literalCheckOperand(c Check) string {
-	if lit, ok := c.LiteralValue(); ok && lit != nil {
-		return lit.String()
+	if c.Literal != nil {
+		return c.Literal.String()
 	}
 	if c.LiteralString != "" {
 		return strconv.Quote(c.LiteralString)

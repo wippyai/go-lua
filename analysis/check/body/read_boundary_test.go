@@ -19,6 +19,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -64,6 +66,22 @@ func TestSourceValueAtBoundaryCachesSolvedReadModelProjection(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("source resolver calls = %d, want 1", calls)
+	}
+}
+
+func TestValueSourcePathParsesUnversionedStructuralSymbolKey(t *testing.T) {
+	p := pathdom.NewPath(symbol.ID(40), "bindings").Field("checkpoint")
+	shape, ok := factflow.NewValueSourceShape(true, false, false, false)
+	if !ok {
+		t.Fatal("NewValueSourceShape returned false")
+	}
+	source, ok := factflow.NewPathValueSource(p.Key(), 0, 0, 0, shape)
+	if !ok {
+		t.Fatal("NewPathValueSource returned false")
+	}
+	got, ok := valueSourcePath(factflow.NewFacts(factflow.FactsInput{}), visibility.NewResolver(visibility.NewBuilder().Build()), source)
+	if !ok || got.Symbol != p.Symbol || got.Version != 0 || !got.EqualIgnoringVersion(p) {
+		t.Fatalf("valueSourcePath(%q) = %s/%v, want symbol-rooted %s", source.PathKey, got.String(), ok, p.String())
 	}
 }
 
@@ -134,6 +152,43 @@ func TestPathValueAtBoundaryCachesSolvedReadModelProjection(t *testing.T) {
 	if !product.Equal(reg, first, second) || !product.Equal(reg, first, want) {
 		t.Fatalf("cached path values = %v then %v, want %v", first, second, want)
 	}
+}
+
+func TestPathValueAtBoundaryUsesDominatingTypeGuardAfterRootReassignmentMerge(t *testing.T) {
+	reg := standard.Registry()
+	result, err := CheckFunction(parseFunction(t, `
+function f(bindings: any): table
+	if type(bindings) ~= "table" then
+		return {}
+	end
+	if type(bindings.checkpoint) == "table" then
+		bindings = bindings.checkpoint
+	end
+	return bindings
+end`), Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	for _, point := range result.ReturnPoints() {
+		fact, ok := result.ReturnFact(point)
+		if !ok || len(fact.Exprs) != 1 {
+			continue
+		}
+		p, ok := result.ExpressionPath(fact.Exprs[0])
+		if !ok || p.Root != "bindings" {
+			continue
+		}
+		value, ok := result.PathValueAtBoundary(point, p)
+		if !ok {
+			t.Fatalf("PathValueAtBoundary(%s) returned false", p.String())
+		}
+		got, ok := typevalue.TypeOf(reg, value)
+		if !ok || !subtype.IsSubtype(got, typetable.BuiltinTopMarker()) {
+			t.Fatalf("PathValueAtBoundary(%s) type = %v/%v, want table", p.String(), got, ok)
+		}
+		return
+	}
+	t.Fatal("path-backed return bindings not found")
 }
 
 func TestDistinctPathsShareExactIdentityAtBoundary(t *testing.T) {

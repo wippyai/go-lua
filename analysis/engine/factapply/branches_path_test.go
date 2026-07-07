@@ -171,6 +171,53 @@ func TestFactsEdgeTransferPathComparisonNarrowsParentVariantOrigin(t *testing.T)
 	assertPathValue(t, reg, ks, got[elsePoint], staleValueKey, product.Bottom(reg))
 }
 
+func TestResolvePathValuePrefersVariantOriginOverBroadStructuralUnion(t *testing.T) {
+	reg := standard.Registry()
+	typeValues := typevalue.NewCache()
+	response := typetable.NewRecord().
+		Field("status", typ.Integer).
+		Field("body", typ.String).
+		Field("headers", typetable.NewMap(typ.String, typ.String)).
+		Build()
+	success := typetable.NewRecord().
+		Field("ok", typ.True).
+		Field("value", response).
+		Build()
+	failure := typetable.NewRecord().
+		Field("ok", typ.False).
+		Field("error", typ.String).
+		Build()
+	union := typeexpr.Union(success, failure)
+	family, _, ok := variant.OriginOfType(union)
+	if !ok {
+		t.Fatal("result union has no variant origin")
+	}
+	successCase := mustOriginCaseIndex(t, family, success)
+
+	point := cfg.Point(1)
+	resultSym := symbol.ID(901)
+	resultPath := pathdom.NewPath(resultSym, "result")
+	valuePath := resultPath.Field("value")
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, resultSym, "result")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	root := typeValues.FromTypeWithWitness(reg, union)
+	root = product.Set(reg, root, variantorigin.Key, variantorigin.Singleton(family, successCase))
+	st := state.State{}.WriteValue(reg, key.SymbolValue(resultSym), root)
+
+	got, ok := resolvePathValueAtCached(typeValues, reg, resolver, point, st, valuePath, testLuaPathTypeProjector)
+	if !ok {
+		t.Fatal("resolvePathValueAtCached(result.value) returned false")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got.value)
+	if !ok || !typ.TypeEquals(gotType, response) {
+		t.Fatalf("result.value type = %v/%v, want narrowed success response %v", gotType, ok, response)
+	}
+	if gotPresence := product.PresenceOf(got.value); !presence.Equal(gotPresence, presence.Present()) {
+		t.Fatalf("result.value presence = %s, want present in %s", gotPresence, formatValue(reg, got.value))
+	}
+}
+
 func TestFactsEdgeTransferPathComparisonDerivesConstraintOriginFromWitness(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()

@@ -120,10 +120,12 @@ func (e ObjectEntry) copy() ObjectEntry {
 
 // ObjectLiteral describes static entries associated with an expression.
 type ObjectLiteral struct {
-	entries     []ObjectEntry
-	expected    product.Value
-	hasExpected bool
-	identity    identity.ID
+	entries              []ObjectEntry
+	listElementSource    ValueSource
+	hasListElementSource bool
+	expected             product.Value
+	hasExpected          bool
+	identity             identity.ID
 }
 
 // ObjectLiteralView provides read-only access to object literal entries without
@@ -159,19 +161,23 @@ func (v ObjectLiteralView) ForEachEntry(fn func(ObjectEntryView) bool) {
 	}
 }
 
+// ListElementSource returns the value source for elements produced by an open
+// list tail such as `{...}`. Unlike static entries, this proves the type of any
+// yielded list element without proving that a particular numeric index exists.
+func (v ObjectLiteralView) ListElementSource() (ValueSource, bool) {
+	return v.literal.ListElementSource()
+}
+
 // Expected returns the declared contextual type value carried by this literal,
 // if one was provided by lowering.
 func (v ObjectLiteralView) Expected() (product.Value, bool) {
-	return v.literal.expected, v.literal.hasExpected
+	return v.literal.Expected()
 }
 
 // Identity returns the stable literal identity attached during lowering, if
 // this literal has one.
 func (v ObjectLiteralView) Identity() (identity.ID, bool) {
-	if v.literal.identity == (identity.ID{}) {
-		return identity.ID{}, false
-	}
-	return v.literal.identity, true
+	return v.literal.Identity()
 }
 
 // Expected returns the declared contextual type value the literal is assigned to,
@@ -184,6 +190,19 @@ func (l ObjectLiteral) Identity() (identity.ID, bool) {
 		return identity.ID{}, false
 	}
 	return l.identity, true
+}
+
+func (l ObjectLiteral) ListElementSource() (ValueSource, bool) {
+	return l.listElementSource, l.hasListElementSource
+}
+
+// WithListElementSource returns a copy carrying the source of elements yielded
+// by an open list tail in the table constructor.
+func (l ObjectLiteral) WithListElementSource(source ValueSource) ObjectLiteral {
+	out := l.copy()
+	out.listElementSource = source
+	out.hasListElementSource = true
+	return out
 }
 
 // WithExpected returns a copy carrying the declared contextual type value.

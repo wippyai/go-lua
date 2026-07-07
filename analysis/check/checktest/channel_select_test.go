@@ -418,6 +418,35 @@ help: Add an elseif branch for each missing case, or add a default branch when a
 	assertRenderedEqual(t, rendered, want)
 }
 
+func TestChannelSelectExhaustivenessHonorsPriorTerminalGuard(t *testing.T) {
+	result := Check(`
+type Event = { id: string }
+type Timer = { elapsed: number }
+type Stop = { reason: string }
+function consume(primary: Channel<Event>, timers: Channel<Timer>, stops: Channel<Stop>)
+    local selected = channel.select {
+        primary:case_receive(),
+        timers:case_receive(),
+        stops:case_receive(),
+    }
+    if selected.channel == stops then
+        error("stop")
+    end
+
+    if selected.channel == primary then
+        return selected.value.id
+    elseif selected.channel == timers then
+        return tostring(selected.value.elapsed)
+    end
+    return ""
+end
+`, WithStdlib(), WithManifest("channel", ChannelManifest()), WithGlobals("channel"))
+
+	if hasChannelSelectExhaustivenessWarning(result.Diagnostics) {
+		t.Fatalf("diagnostics = %#v, want no channel select exhaustiveness warning after prior terminal guard handles stops", result.Diagnostics)
+	}
+}
+
 func TestChannelSelectExhaustivenessAcceptsExhaustiveChain(t *testing.T) {
 	result := Check(`
 type Event = { id: string }

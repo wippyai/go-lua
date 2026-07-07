@@ -110,12 +110,16 @@ func encodeTypeList(types []typ.Type) ([]*typeWire, error) {
 }
 
 func decodeTypeList(nodes []*typeWire) ([]typ.Type, error) {
+	return decodeTypeListInEnv(nodes, nil)
+}
+
+func decodeTypeListInEnv(nodes []*typeWire, env *typeDecodeEnv) ([]typ.Type, error) {
 	if len(nodes) == 0 {
 		return nil, nil
 	}
 	out := make([]typ.Type, 0, len(nodes))
 	for _, node := range nodes {
-		decoded, err := decodeType(node)
+		decoded, err := decodeTypeInEnv(node, env)
 		if err != nil {
 			return nil, err
 		}
@@ -205,9 +209,13 @@ func encodeRecord(r *typ.Record) (*typeWire, error) {
 }
 
 func decodeRecord(w *typeWire) (typ.Type, error) {
+	return decodeRecordInEnv(w, nil)
+}
+
+func decodeRecordInEnv(w *typeWire, env *typeDecodeEnv) (typ.Type, error) {
 	b := typetable.NewRecord().SetOpen(w.Open)
 	for _, field := range w.Fields {
-		t, err := decodeType(field.Type)
+		t, err := decodeTypeInEnv(field.Type, env)
 		if err != nil {
 			return nil, err
 		}
@@ -223,7 +231,7 @@ func decodeRecord(w *typeWire) (typ.Type, error) {
 		}
 	}
 	for _, member := range w.StaticMembers {
-		t, err := decodeType(member.Type)
+		t, err := decodeTypeInEnv(member.Type, env)
 		if err != nil {
 			return nil, err
 		}
@@ -249,7 +257,7 @@ func decodeRecord(w *typeWire) (typ.Type, error) {
 		})
 	}
 	if w.Metatable != nil {
-		mt, err := decodeType(w.Metatable)
+		mt, err := decodeTypeInEnv(w.Metatable, env)
 		if err != nil {
 			return nil, err
 		}
@@ -262,11 +270,11 @@ func decodeRecord(w *typeWire) (typ.Type, error) {
 		if w.MapValue == nil {
 			return nil, fmt.Errorf("record map value missing type")
 		}
-		key, err := decodeType(w.MapKey)
+		key, err := decodeTypeInEnv(w.MapKey, env)
 		if err != nil {
 			return nil, err
 		}
-		value, err := decodeType(w.MapValue)
+		value, err := decodeTypeInEnv(w.MapValue, env)
 		if err != nil {
 			return nil, err
 		}

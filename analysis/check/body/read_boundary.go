@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/constraint/solver"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -35,6 +36,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -74,15 +77,31 @@ func (r *Result) computeSourceValueAtBoundary(point cfg.Point, source factflow.V
 	if state.IsBottom(r.registry, in) {
 		return product.Value{}, false
 	}
-	sources := r.boundarySources(sourceValueReadBoundary)
-	if sources == nil {
-		return product.Value{}, false
-	}
-	value, ok := sources.ValueOfSource(point, source, in, r.boundaryRead)
+	value, ok := r.sourceValueAtPoint(sourceValueReadBoundary, point, source, in, r.boundaryRead)
 	if !ok || product.Equal(r.registry, value, product.Bottom(r.registry)) {
 		return product.Value{}, false
 	}
 	return value, true
+}
+
+func (r *Result) returnObjectLiteralSourceValueAtBoundary(point cfg.Point, source factflow.ValueSource) (product.Value, bool) {
+	literal, ok := r.ObjectLiteralViewForSource(source)
+	if !ok {
+		return product.Value{}, false
+	}
+	return objectLiteralValueFromView(r.registry, r.typeValues, literal, factflow.ValueSourceResolverFunc(func(entrySource factflow.ValueSource) (product.Value, bool) {
+		if entrySource == source {
+			return product.Value{}, false
+		}
+		sourceValue, sourceOK := r.SourceValueAtBoundary(point, entrySource)
+		if entryPath, pathOK := r.valueSourcePath(entrySource); pathOK {
+			if pathValue, valueOK := r.PathValueAtBoundary(point, entryPath); valueOK &&
+				(!sourceOK || r.recoveredRootPathValueShouldReplace(sourceValue, pathValue)) {
+				return pathValue, true
+			}
+		}
+		return sourceValue, sourceOK
+	}))
 }
 
 func readableConcreteType(reg *axis.Registry, typeValues *typevalue.Cache, value product.Value) bool {
@@ -149,7 +168,12 @@ func (r *Result) computeSourceValueForExplanationAtBoundary(point cfg.Point, sou
 	}
 	if hasState {
 		if declaration, declarationOK := r.rootDeclarationSourceForValueSource(point, source); declarationOK {
-			if recoveredValue, ok := r.rootDeclarationValue(declaration, in); ok {
+			if recoveredValue, ok := r.rootDeclarationExplanationValue(declaration, in); ok {
+				return recoveredValue, true
+			}
+		}
+		if sourcePath, pathOK := r.valueSourcePath(source); pathOK && len(sourcePath.Segments) != 0 {
+			if recoveredValue, ok := r.rootDeclarationPathValue(point, sourcePath, in); ok {
 				return recoveredValue, true
 			}
 		}
@@ -186,6 +210,9 @@ func (r *Result) OrdinaryAssignmentSourceValueForExplanationAtBoundary(point cfg
 // ExpressionValueAtBoundary projects a Lua expression's product value at the
 // diagnostic read boundary for point.
 func (r *Result) ExpressionValueAtBoundary(point cfg.Point, expr ast.Expr) (product.Value, bool) {
+	if r.expressionIsUnresolvedGenericForVariableSource(point, expr) {
+		return product.Value{}, false
+	}
 	p, ok := r.ExpressionPath(expr)
 	if ok {
 		if value, ok := r.PathValueAtBoundary(point, p); ok {
@@ -195,10 +222,33 @@ func (r *Result) ExpressionValueAtBoundary(point cfg.Point, expr ast.Expr) (prod
 	if value, ok := r.attributeExpressionValueBeforeBoundary(point, expr); ok {
 		return value, true
 	}
+	if value, ok := r.operatorExpressionValueBeforeBoundary(point, expr); ok {
+		return value, true
+	}
 	if value, ok := r.returnExpressionValueAtBoundary(point, expr); ok {
 		return value, true
 	}
 	return r.expressionAssignmentSourceValueAtBoundary(point, expr, r.SourceValueAtBoundary)
+}
+
+func (r *Result) expressionIsUnresolvedGenericForVariableSource(point cfg.Point, expr ast.Expr) bool {
+	if r == nil || expr == nil {
+		return false
+	}
+	lowered, ok := r.facts.LocalAssignment(point)
+	if !ok || !r.unresolvedGenericForVariableSource(point, lowered.Source()) {
+		return false
+	}
+	exprPath, ok := r.ExpressionPath(expr)
+	if !ok {
+		return false
+	}
+	sourcePath, ok := r.ValueSourcePath(lowered.Source())
+	if !ok || !exprPath.Equal(sourcePath) {
+		return false
+	}
+	_, ok = r.SourceValueAtBoundary(point, lowered.Source())
+	return !ok
 }
 
 // ExpressionValueBeforeBoundary projects a Lua expression's product value at
@@ -213,6 +263,9 @@ func (r *Result) ExpressionValueBeforeBoundary(point cfg.Point, expr ast.Expr) (
 		}
 	}
 	if value, ok := r.attributeExpressionValueBeforeBoundary(point, expr); ok {
+		return value, true
+	}
+	if value, ok := r.operatorExpressionValueBeforeBoundary(point, expr); ok {
 		return value, true
 	}
 	return r.expressionAssignmentSourceValueAtBoundary(point, expr, r.SourceValueBeforeBoundary)
@@ -252,7 +305,7 @@ func (r *Result) ExpressionReadProvenPresentBeforeBoundary(point cfg.Point, expr
 		return true
 	}
 	if value, ok := r.ExpressionValueBeforeBoundary(point, expr); ok &&
-		presence.Equal(product.PresenceOf(value), presence.Present()) {
+		valueProvesReadPresent(r.registry, value) {
 		return true
 	}
 	if r.requiredMemberReadProvenPresentBeforeBoundary(point, expr) {
@@ -271,7 +324,24 @@ func (r *Result) ExpressionReadProvenPresentBeforeBoundary(point cfg.Point, expr
 			return r.SourceReadProvenPresentBeforeBoundary(point, lowered.Source())
 		}
 	}
+	if fact, ok := r.ReturnFact(point); ok {
+		for i, returned := range fact.Exprs {
+			if returned != expr {
+				continue
+			}
+			sources, ok := r.ReturnValueSources(point)
+			return ok && i < len(sources) && r.SourceReadProvenPresentBeforeBoundary(point, sources[i])
+		}
+	}
 	return false
+}
+
+func valueProvesReadPresent(reg *axis.Registry, value product.Value) bool {
+	if reg == nil || !presence.Equal(product.PresenceOf(value), presence.Present()) {
+		return false
+	}
+	ev := product.Get(reg, value, evidence.Key)
+	return !ev.IsExplicitTop() && !ev.IsGradualTop()
 }
 
 func (r *Result) requiredPathDescendantProvenPresentBeforeBoundary(point cfg.Point, p pathdom.Path) bool {
@@ -348,7 +418,7 @@ func (r *Result) requiredMemberReadProvenPresentBeforeBoundary(point cfg.Point, 
 		return false
 	}
 	container, ok := r.ExpressionTypeBeforeBoundary(point, attr.Object)
-	if !ok || container == nil {
+	if !ok || container == nil || typ.IsAny(container) || typ.IsUnknown(container) {
 		container, ok = r.DeclaredExpressionTypeAt(point, attr.Object)
 	}
 	if !ok || container == nil {
@@ -401,7 +471,7 @@ func (r *Result) PathProvenPresentBeforeBoundary(point cfg.Point, p pathdom.Path
 	if snapshot.Bottom || snapshot.Top || len(snapshot.Proofs) == 0 {
 		return false
 	}
-	addresses, ok := r.boundaryAddressContext(point)
+	addresses, ok := r.beforeBoundaryAddressContext(point)
 	if !ok {
 		return false
 	}
@@ -411,18 +481,48 @@ func (r *Result) PathProvenPresentBeforeBoundary(point cfg.Point, p pathdom.Path
 		if !ok {
 			return true
 		}
+		keys := []keyspace.Key{key}
+		for _, equivalent := range in.EquivalentPathKeys(ks, ks.Format(key)) {
+			equivalentKey, ok := ks.FromStateKey(equivalent)
+			if ok {
+				keys = append(keys, equivalentKey)
+			}
+		}
 		for _, proof := range snapshot.Proofs {
 			if proof.Kind != pathevidence.BranchProofPathPresence ||
-				proof.Path != key ||
 				!presence.Equal(proof.Presence, presence.Present()) {
 				continue
 			}
-			found = true
-			return false
+			for _, candidate := range keys {
+				if branchPresenceProofMatchesKey(ks, proof.Path, candidate) {
+					found = true
+					return false
+				}
+			}
 		}
 		return true
 	})
 	return found
+}
+
+func branchPresenceProofMatchesKey(ks *keyspace.KeySpace, proof, candidate keyspace.Key) bool {
+	if proof == candidate {
+		return true
+	}
+	if ks == nil ||
+		proof.Kind != keyspace.KindResolverSym ||
+		candidate.Kind != keyspace.KindResolverSym ||
+		proof.Sym == 0 ||
+		proof.Sym != candidate.Sym {
+		return false
+	}
+	proofSegments, proofOK := ks.SegmentsView(proof)
+	candidateSegments, candidateOK := ks.SegmentsView(candidate)
+	if !proofOK || !candidateOK || len(proofSegments) != len(candidateSegments) {
+		return false
+	}
+	return pathaddr.SegmentsHasPrefix(proofSegments, candidateSegments) &&
+		pathaddr.SegmentsHasPrefix(candidateSegments, proofSegments)
 }
 
 func (r *Result) attributeExpressionValueBeforeBoundary(point cfg.Point, expr ast.Expr) (product.Value, bool) {
@@ -466,6 +566,10 @@ func (r *Result) attributeExpressionValueBeforeBoundary(point cfg.Point, expr as
 			}
 			projected = typ.Nil
 		}
+	}
+	if typevalue.TypeIncludesNil(objectType) &&
+		!r.ExpressionReadProvenPresentBeforeBoundary(point, attr.Object) {
+		projected = typ.MaterializeOptional(projected)
 	}
 	value := typevalue.WithWitness(r.registry, r.typeValues.FromType(r.registry, projected), projected)
 	value = enginesourcevalue.InheritTopOriginEvidence(r.registry, value, object)
@@ -573,6 +677,14 @@ func (r *Result) returnExpressionValueAtBoundary(point cfg.Point, expr ast.Expr)
 		if returned != expr {
 			continue
 		}
+		if lowered, ok := r.facts.Return(point); ok {
+			sources := lowered.Sources()
+			if i < len(sources) {
+				if sourceValue, sourceOK := r.returnObjectLiteralSourceValueAtBoundary(point, sources[i]); sourceOK {
+					return sourceValue, true
+				}
+			}
+		}
 		in, ok := r.boundaryStateAt(point)
 		if !ok {
 			return product.Value{}, false
@@ -655,6 +767,18 @@ func (r *Result) PathValueAtBoundary(point cfg.Point, p pathdom.Path) (product.V
 
 func (r *Result) computePathValueAtBoundary(point cfg.Point, p pathdom.Path) (product.Value, bool) {
 	if value, ok := r.computePathValue(sourceValueReadBoundary, point, p, r.boundaryStateAt); ok {
+		if recovered, recoveredOK := r.dominatingLocalAssignmentRootPathValueAtBoundary(point, p, value); recoveredOK {
+			value = recovered
+		}
+		if recovered, recoveredOK := r.dominatingLocalAssignmentDescendantPathValueAtBoundary(point, p, value); recoveredOK {
+			value = recovered
+		}
+		if recovered, recoveredOK := r.nilableRootDescendantPathValueAtBoundary(point, p); recoveredOK {
+			value = recovered
+		}
+		if r.pathReadProvenPresentBeforeBoundary(point, p) {
+			value = enginesourcevalue.WithoutNilRuntimeKind(r.registry, product.WithPresence(r.registry, value, presence.Present()))
+		}
 		if r.pathValueNeedsBoundaryProof(value, p) {
 			if proofValue, ok := r.dominatingBranchRefinementPathValue(point, p); ok {
 				refined := product.Meet(r.registry, value, proofValue)
@@ -665,7 +789,262 @@ func (r *Result) computePathValueAtBoundary(point cfg.Point, p pathdom.Path) (pr
 		}
 		return value, true
 	}
+	if recovered, recoveredOK := r.recoveredRootPathValueAtBoundary(point, p, product.Top()); recoveredOK {
+		return recovered, true
+	}
 	return r.declaredRootPathValueAtBoundary(point, p)
+}
+
+func (r *Result) pathReadProvenPresentBeforeBoundary(point cfg.Point, p pathdom.Path) bool {
+	return r != nil &&
+		!p.IsEmpty() &&
+		staticFieldStringPath(p) &&
+		(r.requiredPathDescendantProvenPresentBeforeBoundary(point, p) ||
+			r.DominatingRequiredMemberReadProvesPathPresent(point, p))
+}
+
+func staticFieldStringPath(p pathdom.Path) bool {
+	if len(p.Segments) == 0 {
+		return false
+	}
+	for _, seg := range p.Segments {
+		switch seg.Kind {
+		case segment.SegmentField, segment.SegmentIndexString:
+			continue
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func (r *Result) nilableRootDescendantPathValueAtBoundary(point cfg.Point, p pathdom.Path) (product.Value, bool) {
+	if r == nil || len(p.Segments) == 0 {
+		return product.Value{}, false
+	}
+	root := p.RootOnly()
+	if r.PathProvenPresentBeforeBoundary(point, root) || r.DominatingRequiredMemberReadProvesPathPresent(point, root) {
+		return product.Value{}, false
+	}
+	rootValue, ok := r.computePathValue(sourceValueReadBoundary, point, root, r.boundaryStateAt)
+	if ok {
+		if recovered, recoveredOK := r.dominatingLocalAssignmentRootPathValueAtBoundary(point, root, rootValue); recoveredOK {
+			rootValue = recovered
+		}
+	} else if recovered, recoveredOK := r.recoveredRootPathValueAtBoundary(point, root, product.Top()); recoveredOK {
+		rootValue, ok = recovered, true
+	}
+	if !ok || product.DefinitelyPresent(rootValue) {
+		return product.Value{}, false
+	}
+	projected, ok := luaProjectValue(r.registry, r.typeValues)(rootValue, p.Segments)
+	if !ok {
+		return product.Value{}, false
+	}
+	if product.DefinitelyPresent(projected) {
+		projected = product.WithPresence(r.registry, projected, presence.Maybe())
+	}
+	return projected, true
+}
+
+func (r *Result) recoveredDescendantPathValueAtBoundary(point cfg.Point, p pathdom.Path, current product.Value) (product.Value, bool) {
+	if r == nil || len(p.Segments) == 0 {
+		return product.Value{}, false
+	}
+	rootValue, ok := r.recoveredRootPathValueAtBoundary(point, p.RootOnly(), product.Top())
+	if !ok {
+		return product.Value{}, false
+	}
+	projected, ok := luaProjectValue(r.registry, r.typeValues)(rootValue, p.Segments)
+	if !ok || !r.recoveredRootPathValueShouldReplace(current, projected) {
+		return product.Value{}, false
+	}
+	return projected, true
+}
+
+func (r *Result) dominatingLocalAssignmentRootPathValueAtBoundary(point cfg.Point, p pathdom.Path, current product.Value) (product.Value, bool) {
+	if r == nil || len(p.Segments) != 0 {
+		return product.Value{}, false
+	}
+	if _, assignPoint, ok := r.DominatingRootLocalAssignment(point, p.Symbol); ok {
+		if r.pathShapeInvalidatedAfterAssignment(assignPoint, point, p) {
+			return product.Value{}, false
+		}
+		lowered, loweredOK := r.LoweredLocalAssignment(assignPoint)
+		if loweredOK {
+			recovered, recoveredOK := r.SourceValueAtBoundary(assignPoint, lowered.Source())
+			if recoveredOK && r.sourceValueHasSpecificType(recovered) && r.recoveredRootPathValueShouldReplace(current, recovered) {
+				return recovered, true
+			}
+		}
+	}
+	return product.Value{}, false
+}
+
+func (r *Result) dominatingLocalAssignmentDescendantPathValueAtBoundary(point cfg.Point, p pathdom.Path, current product.Value) (product.Value, bool) {
+	if r == nil || len(p.Segments) == 0 {
+		return product.Value{}, false
+	}
+	if _, assignPoint, ok := r.DominatingRootLocalAssignment(point, p.Symbol); !ok || r.pathShapeInvalidatedAfterAssignment(assignPoint, point, p) {
+		return product.Value{}, false
+	}
+	rootValue, ok := r.dominatingLocalAssignmentRootPathValueAtBoundary(point, p.RootOnly(), product.Top())
+	if !ok {
+		return product.Value{}, false
+	}
+	projected, ok := luaProjectValue(r.registry, r.typeValues)(rootValue, p.Segments)
+	if !ok || !r.recoveredRootPathValueShouldReplace(current, projected) {
+		return product.Value{}, false
+	}
+	return projected, true
+}
+
+func (r *Result) pathShapeInvalidatedAfterAssignment(assignPoint, point cfg.Point, p pathdom.Path) bool {
+	if r == nil || p.IsEmpty() || assignPoint == point {
+		return false
+	}
+	graph := r.Graph()
+	if graph == nil {
+		return false
+	}
+	for _, candidate := range graph.RPO() {
+		if candidate == assignPoint || candidate == point {
+			continue
+		}
+		if !r.PointCanReach(assignPoint, candidate) || !r.PointCanReach(candidate, point) {
+			continue
+		}
+		if invalidation, ok := r.PathDescendantInvalidation(candidate); ok && r.descendantInvalidationMayTouchRecoveredPath(candidate, invalidation, p) {
+			return true
+		}
+		if fact, ok := r.OrdinaryAssignment(candidate); ok {
+			if fact.HasSymbol && fact.Symbol == p.Symbol {
+				return true
+			}
+			if fact.HasPath && r.assignmentPathMayTouchRecoveredPath(candidate, fact.Path, p) {
+				return true
+			}
+		}
+		if r.CallMayInvalidateTrackedPath(candidate, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Result) descendantInvalidationMayTouchRecoveredPath(point cfg.Point, invalidation factflow.PathDescendantInvalidation, target pathdom.Path) bool {
+	container := invalidation.ContainerPath()
+	if len(target.Segments) == 0 {
+		return pathHasPrefixStaticEquiv(container, target)
+	}
+	if r.pathMayAliasRecoveredPrefixAtBoundary(point, target, container) {
+		return true
+	}
+	tablePath, keySource, suffix, ok := invalidation.DynamicTarget()
+	if !ok {
+		return false
+	}
+	keyValue, keyOK := r.SourceValueAtBoundary(point, keySource)
+	member, memberOK := staticStringSegmentFromValue(r.registry, r.typeValues, keyValue)
+	if !keyOK || !memberOK {
+		return false
+	}
+	precise := tablePath.Append(member).AppendSegments(suffix)
+	return r.pathMayAliasRecoveredPrefixAtBoundary(point, target, precise)
+}
+
+func (r *Result) assignmentPathMayTouchRecoveredPath(point cfg.Point, assigned, target pathdom.Path) bool {
+	if len(target.Segments) == 0 {
+		return pathHasPrefixStaticEquiv(assigned, target)
+	}
+	return r.pathMayAliasRecoveredPrefixAtBoundary(point, target, assigned)
+}
+
+func (r *Result) pathMayAliasRecoveredPrefixAtBoundary(point cfg.Point, target, mutated pathdom.Path) bool {
+	if r == nil || target.IsEmpty() || mutated.IsEmpty() {
+		return false
+	}
+	for prefixLen := 0; prefixLen <= len(target.Segments); prefixLen++ {
+		prefix := pathPrefix(target, prefixLen)
+		if prefix.Equal(mutated) ||
+			r.PathsEquivalentAtBoundary(point, prefix, mutated) ||
+			r.dominatingAliasPathAtBoundary(point, prefix, mutated) ||
+			r.dominatingAliasPathAtBoundary(point, mutated, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func staticStringSegmentFromValue(reg *axis.Registry, typeValues *typevalue.Cache, value product.Value) (segment.Segment, bool) {
+	t, ok := typeValues.TypeOf(reg, value)
+	if !ok {
+		return segment.Segment{}, false
+	}
+	lit, ok := t.(*typ.Literal)
+	if !ok || lit.Base != kind.String {
+		return segment.Segment{}, false
+	}
+	name, ok := lit.Value.(string)
+	if !ok {
+		return segment.Segment{}, false
+	}
+	return segment.Segment{Kind: segment.SegmentField, Name: name}, true
+}
+
+func (r *Result) recoveredRootPathValueAtBoundary(point cfg.Point, p pathdom.Path, current product.Value) (product.Value, bool) {
+	if r == nil || len(p.Segments) != 0 {
+		return product.Value{}, false
+	}
+	if _, assignPoint, ok := r.DominatingRootLocalAssignment(point, p.Symbol); ok {
+		lowered, loweredOK := r.LoweredLocalAssignment(assignPoint)
+		if loweredOK {
+			recovered, recoveredOK := r.SourceValueAtBoundary(assignPoint, lowered.Source())
+			if recoveredOK && r.sourceValueHasSpecificType(recovered) && r.recoveredRootPathValueShouldReplace(current, recovered) {
+				return recovered, true
+			}
+		}
+	}
+	declaration, ok := r.DominatingPathRootDeclarationSource(point, p)
+	if !ok {
+		return product.Value{}, false
+	}
+	recovered, ok := r.rootDeclarationValue(declaration, r.boundaryRead(point))
+	if !ok || !r.recoveredRootPathValueShouldReplace(current, recovered) {
+		return product.Value{}, false
+	}
+	return recovered, true
+}
+
+func (r *Result) recoveredRootPathValueShouldReplace(current, recovered product.Value) bool {
+	if r == nil || r.registry == nil || !recoveredRootPathValueCompatible(r.registry, current, recovered) {
+		return false
+	}
+	if !r.sourceValueHasSpecificType(current) {
+		return true
+	}
+	if product.LessOrEq(r.registry, recovered, current) && !product.LessOrEq(r.registry, current, recovered) {
+		return true
+	}
+	currentType, currentOK := r.typeValues.TypeOf(r.registry, current)
+	recoveredType, recoveredOK := r.typeValues.TypeOf(r.registry, recovered)
+	if currentOK && recoveredOK &&
+		subtype.IsSubtype(recoveredType, currentType) &&
+		!subtype.IsSubtype(currentType, recoveredType) {
+		return true
+	}
+	return false
+}
+
+func recoveredRootPathValueCompatible(reg *axis.Registry, current, recovered product.Value) bool {
+	if reg == nil || product.Equal(reg, current, product.Bottom(reg)) || product.Equal(reg, current, product.Top()) {
+		return true
+	}
+	currentPresence := product.PresenceOf(current)
+	if presence.Equal(currentPresence, presence.Present()) && !presence.Equal(product.PresenceOf(recovered), presence.Present()) {
+		return false
+	}
+	return true
 }
 
 func (r *Result) pathValueNeedsBoundaryProof(value product.Value, p pathdom.Path) bool {
@@ -690,6 +1069,15 @@ func (r *Result) PathValueBeforeBoundary(point cfg.Point, p pathdom.Path) (produ
 
 func (r *Result) computePathValueBeforeBoundary(point cfg.Point, p pathdom.Path) (product.Value, bool) {
 	if value, ok := r.computePathValue(sourceValueReadBeforeBoundary, point, p, r.solvedStateAt); ok {
+		if recovered, recoveredOK := r.dominatingLocalAssignmentRootPathValueAtBoundary(point, p, value); recoveredOK {
+			value = recovered
+		}
+		if recovered, recoveredOK := r.dominatingLocalAssignmentDescendantPathValueAtBoundary(point, p, value); recoveredOK {
+			value = recovered
+		}
+		if r.pathReadProvenPresentBeforeBoundary(point, p) {
+			value = enginesourcevalue.WithoutNilRuntimeKind(r.registry, product.WithPresence(r.registry, value, presence.Present()))
+		}
 		if r.pathValueNeedsBoundaryProof(value, p) {
 			if proofValue, ok := r.dominatingBranchRefinementPathValue(point, p); ok {
 				refined := product.Meet(r.registry, value, proofValue)
@@ -699,6 +1087,9 @@ func (r *Result) computePathValueBeforeBoundary(point cfg.Point, p pathdom.Path)
 			}
 		}
 		return value, true
+	}
+	if recovered, recoveredOK := r.recoveredRootPathValueAtBoundary(point, p, product.Top()); recoveredOK {
+		return recovered, true
 	}
 	return product.Value{}, false
 }
@@ -710,6 +1101,14 @@ func (r *Result) declaredRootPathValueAtBoundary(point cfg.Point, p pathdom.Path
 	declared, ok := r.DeclaredPathTypeAt(point, p, true)
 	if !ok || declared == nil || typ.IsAny(declared) || typ.IsUnknown(declared) {
 		if value, ok := r.dominatingBranchRefinementPathValue(point, p); ok {
+			if recovered, recoveredOK := r.recoveredRootPathValueAtBoundary(point, p, value); recoveredOK {
+				return recovered, true
+			}
+			if r.broadRuntimeTableProof(value) {
+				if root, rootOK := r.rootPathValueAtBoundary(point, p); rootOK {
+					value = enginesourcevalue.InheritTopOriginEvidence(r.registry, value, root)
+				}
+			}
 			return value, true
 		}
 		if runtimeType, ok := r.positiveRuntimeKindGuardType(point, p); ok {
@@ -721,6 +1120,28 @@ func (r *Result) declaredRootPathValueAtBoundary(point cfg.Point, p pathdom.Path
 		declared = narrowed
 	}
 	return typevalue.WithWitness(r.registry, r.typeValues.FromType(r.registry, declared), declared), true
+}
+
+func (r *Result) broadRuntimeTableProof(value product.Value) bool {
+	if r == nil || r.registry == nil || r.typeValues == nil {
+		return false
+	}
+	if !runtimekind.Equal(product.Get(r.registry, value, runtimekind.Key), runtimekind.Singleton(runtimekind.Table)) {
+		return false
+	}
+	t, ok := r.typeValues.TypeOf(r.registry, value)
+	return !ok || t == nil || typetable.IsBuiltinTopMarker(t)
+}
+
+func (r *Result) rootPathValueAtBoundary(point cfg.Point, p pathdom.Path) (product.Value, bool) {
+	if r == nil || p.IsEmpty() || p.Symbol == 0 {
+		return product.Value{}, false
+	}
+	in, ok := r.boundaryStateAt(point)
+	if !ok {
+		return product.Value{}, false
+	}
+	return in.ReadValue(r.registry, key.SymbolValue(p.Symbol)), true
 }
 
 // DominatingBranchRefinementValueForPath returns the product-value constraint
@@ -742,7 +1163,7 @@ func (r *Result) dominatingBranchRefinementPathValue(point cfg.Point, p pathdom.
 		}
 		for _, succ := range cfg.SuccessorsReadOnly(graph, branch) {
 			edge, ok := graph.EdgeCond(branch, succ)
-			if !ok || !r.proofEdgeDominatesPoint(graph, branch, succ, point) || r.PathInvalidatedBetween(succ, point, p) {
+			if !ok || !r.proofEdgeDominatesPoint(graph, branch, succ, point) {
 				continue
 			}
 			for _, refinement := range r.facts.BranchRefinements(branch) {
@@ -755,6 +1176,9 @@ func (r *Result) dominatingBranchRefinementPathValue(point cfg.Point, p pathdom.
 				}
 				value, ok := valueRefinement.Constraint()
 				if ok && !product.Equal(r.registry, value, product.Bottom(r.registry)) {
+					if r.PathRefinementInvalidatedBetween(succ, point, p, value) {
+						continue
+					}
 					return value, true
 				}
 			}
@@ -1174,7 +1598,7 @@ func (r *Result) callExprSignatureResultValue(point cfg.Point, resultIndex int) 
 	if !ok {
 		return product.Value{}, false
 	}
-	if fn, ok := r.CallSignatureType(site); ok {
+	if fn, ok := r.CallSignatureTypeAt(point, site); ok {
 		return r.functionReturnValue(fn, resultIndex)
 	}
 	if fn, ok := r.FunctionValueTypeForCallSiteAtBoundary(point, site); ok {
@@ -1259,6 +1683,48 @@ func (r *Result) rootDeclarationValue(declaration factquery.RootDeclarationSourc
 		}
 	}
 	return product.Value{}, false
+}
+
+func (r *Result) rootDeclarationExplanationValue(declaration factquery.RootDeclarationSource, fallbackState state.State) (product.Value, bool) {
+	if r == nil || r.registry == nil || declaration.Symbol == 0 {
+		return product.Value{}, false
+	}
+	declState, ok := r.boundaryStateAt(declaration.Point)
+	if !ok {
+		declState = fallbackState
+	}
+	v := declState.ReadValue(r.registry, key.SymbolValue(declaration.Symbol))
+	if r.sourceValueHasSpecificType(v) {
+		return v, true
+	}
+	if declaration.Source.Kind == 0 {
+		return product.Value{}, false
+	}
+	if recoveredValue, ok := r.sourceValueAtPoint(sourceValueReadExplanationBoundary, declaration.Point, declaration.Source, declState, r.boundaryRead); ok {
+		if r.sourceValueHasSpecificType(recoveredValue) {
+			return recoveredValue, true
+		}
+	}
+	return product.Value{}, false
+}
+
+func (r *Result) rootDeclarationPathValue(point cfg.Point, p pathdom.Path, fallbackState state.State) (product.Value, bool) {
+	if r == nil || p.IsEmpty() {
+		return product.Value{}, false
+	}
+	declaration, ok := r.DominatingPathRootDeclarationSource(point, p)
+	if !ok {
+		return product.Value{}, false
+	}
+	rootValue, ok := r.rootDeclarationExplanationValue(declaration, fallbackState)
+	if !ok || len(p.Segments) == 0 {
+		return rootValue, ok
+	}
+	projected, ok := luaProjectValue(r.registry, r.typeValues)(rootValue, p.Segments)
+	if !ok {
+		return product.Value{}, false
+	}
+	return enginesourcevalue.InheritTopOriginEvidence(r.registry, projected, rootValue), true
 }
 
 func (r *Result) rootDeclarationSourceForExpr(point cfg.Point, expr factflow.ExprRef) (factquery.RootDeclarationSource, bool) {

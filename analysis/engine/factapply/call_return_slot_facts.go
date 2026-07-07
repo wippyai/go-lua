@@ -2,6 +2,7 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
@@ -36,6 +37,7 @@ func applyCallOutcomeReturnSlotFactsAfterRootAssignment(
 	callCtx := callContextAt(ctx, callPoint, read)
 	outcome := outcomeProvider(callCtx, site, in, read)
 	normalFacts := normalReturnFactsForReturnSlots(outcome.NormalReturnFacts, slots)
+	normalFacts = dropReturnSlotDescendantsBelowMaybeAbsentResults(normalFacts, slots, outcome.Results)
 	if normalFacts.Empty() {
 		return out
 	}
@@ -96,5 +98,34 @@ func normalReturnFactsForReturnSlots(facts callboundary.NormalReturnFacts, slots
 	}
 	return facts.FilterPaths(func(p pathdom.Path) bool {
 		return callboundary.PathRootedInReturnSlots(p, slots)
+	})
+}
+
+func dropReturnSlotDescendantsBelowMaybeAbsentResults(facts callboundary.NormalReturnFacts, slots map[int]struct{}, results []callpayload.CallResult) callboundary.NormalReturnFacts {
+	if facts.Empty() || len(slots) == 0 || len(results) == 0 {
+		return facts
+	}
+	maybeAbsent := make(map[int]struct{}, len(slots))
+	for _, result := range results {
+		if _, used := slots[result.Index]; !used {
+			continue
+		}
+		if !product.DefinitelyPresent(result.Value) {
+			maybeAbsent[result.Index] = struct{}{}
+		}
+	}
+	if len(maybeAbsent) == 0 {
+		return facts
+	}
+	return facts.DropFactsTouchingPaths(func(p pathdom.Path) bool {
+		if len(p.Segments) == 0 {
+			return false
+		}
+		index, indexed := callboundary.ReturnSlotIndex(p)
+		if !indexed {
+			return false
+		}
+		_, ok := maybeAbsent[index]
+		return ok
 	})
 }

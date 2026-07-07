@@ -114,6 +114,28 @@ add(1, "wrong")`, "test.lua").RootResult()
 	}
 }
 
+func TestCallArgumentsRejectsUntrustedOptionalAnyForLocalFunctionContract(t *testing.T) {
+	checked := testutil.CheckFile(`local function need(id: string): () end
+
+local function f(raw: any?): ()
+    need(raw)
+end`, "test.lua")
+	var got []judgment.Judgment
+	for _, fn := range checked.BodyResults() {
+		got = append(got, obligationpass.New(obligationpass.CallArguments{}).Run(obligationpass.Context{
+			FunctionKey: "fixture:f",
+			SourceFile:  "test.lua",
+			Reader:      readmodel.New(fn),
+		})...)
+	}
+	if len(got) != 1 {
+		t.Fatalf("judgments = %d, want 1: %#v", len(got), got)
+	}
+	if got[0].Verdict != judgment.VerdictUnknown || !hasEvidenceKind(got[0], judgment.EvidencePrecisionBoundary) {
+		t.Fatalf("judgment = %#v, want unknown precision-boundary local function argument", got[0])
+	}
+}
+
 func TestCallArgumentsLabelsNamedArgument(t *testing.T) {
 	result := testutil.CheckFile(`local function need_string(value: string): () end
 local raw: any = 1
@@ -329,6 +351,48 @@ scale(m)`, "test.lua").RootResult()
 	}
 	if got[0].Spans[0].StartLine != 5 || got[0].Spans[0].StartCol != 7 || got[0].Spans[0].EndCol != 8 {
 		t.Fatalf("span = %#v, want m identifier on line 5", got[0].Spans[0])
+	}
+}
+
+func TestCallArgumentsReportsTableInsertAccumulatorElementObligation(t *testing.T) {
+	result := testutil.CheckFile(`type SystemMessage = { role: "system" }
+
+local function build_messages(): ()
+    local final_messages: {SystemMessage} = {}
+    table.insert(final_messages, { role = "cache_marker" })
+end`, "test.lua", testutil.WithStdlib()).RootResult()
+	if result == nil {
+		t.Fatal("RootResult nil")
+	}
+	if len(result.FunctionResults()) != 1 {
+		t.Fatalf("function results = %d, want build_messages body", len(result.FunctionResults()))
+	}
+	fn := result.FunctionResults()[0]
+	hasOutcomeObligation := false
+	for _, point := range fn.Graph().RPO() {
+		outcome, ok := fn.CallOutcomeAt(point)
+		if ok && len(outcome.ParamObligations) != 0 {
+			hasOutcomeObligation = true
+			break
+		}
+	}
+	if !hasOutcomeObligation {
+		t.Fatalf("table.insert call outcome has no param obligation")
+	}
+
+	got := obligationpass.New(obligationpass.CallArguments{}).Run(obligationpass.Context{
+		FunctionKey: "fixture:table-insert-accumulator",
+		SourceFile:  "test.lua",
+		Reader:      readmodel.New(fn),
+	})
+	if len(got) != 1 {
+		t.Fatalf("judgments = %d, want inserted element mismatch: %#v", len(got), got)
+	}
+	if got[0].Subject.Kind != judgment.SubjectCallArgument || got[0].Subject.Label != "argument 2.role" {
+		t.Fatalf("subject = %#v, want argument 2.role", got[0].Subject)
+	}
+	if got[0].Expected.Key != judgment.NewTypeRef(typ.LiteralString("system")).Key {
+		t.Fatalf("expected = %q, want literal system", got[0].Expected.Key)
 	}
 }
 
@@ -642,6 +706,24 @@ func TestCallArgumentsKeepsUntrustedAnyUnknown(t *testing.T) {
 	}
 }
 
+func TestCallArgumentsReportsUntrustedOptionalAny(t *testing.T) {
+	result := checkFunction(t, `function f(raw: any?) need_string(raw) end`, stringSignatureManifest())
+
+	got := obligationpass.New(obligationpass.CallArguments{}).Run(obligationpass.Context{
+		FunctionKey: "fixture:f",
+		Reader:      readmodel.New(result),
+	})
+	if len(got) != 1 {
+		t.Fatalf("judgments = %d, want 1: %#v", len(got), got)
+	}
+	if got[0].Verdict != judgment.VerdictUnknown {
+		t.Fatalf("verdict = %v, want unknown untrusted boundary evidence", got[0].Verdict)
+	}
+	if !hasEvidenceKind(got[0], judgment.EvidencePrecisionBoundary) {
+		t.Fatalf("evidence = %#v, want untrusted precision-boundary evidence", got[0].Evidence)
+	}
+}
+
 func TestCallArgumentsKeepsExplicitAnyAssertionEvidence(t *testing.T) {
 	result := checkFunction(t, `function f() local raw = (nil :: any) need_string(raw) end`, stringSignatureManifest())
 
@@ -657,6 +739,57 @@ func TestCallArgumentsKeepsExplicitAnyAssertionEvidence(t *testing.T) {
 	}
 	if !hasEvidenceDetail(got[0], judgment.EvidenceDetailUserAssertedAny) {
 		t.Fatalf("evidence = %#v, want explicit-any user assertion evidence", got[0].Evidence)
+	}
+}
+
+func TestCallArgumentsRejectsExplicitAnyForLocalFunctionContract(t *testing.T) {
+	result := testutil.CheckFile(`type Payload = { id: string, count: number }
+	local raw: any = { id = "cfg", count = 2 }
+	local function consume(payload: Payload): number
+		return payload.count + 1
+	end
+	local count = consume(raw)`, "test.lua").RootResult()
+	if result == nil {
+		t.Fatal("RootResult nil")
+	}
+
+	got := obligationpass.New(obligationpass.CallArguments{}).Run(obligationpass.Context{
+		FunctionKey: "fixture:f",
+		Reader:      readmodel.New(result),
+	})
+	if len(got) != 1 {
+		t.Fatalf("judgments = %d, want explicit-any local contract argument: %#v", len(got), got)
+	}
+	if got[0].Verdict != judgment.VerdictUnknown ||
+		!hasEvidenceKind(got[0], judgment.EvidencePrecisionBoundary) ||
+		!hasEvidenceDetail(got[0], judgment.EvidenceDetailUserAssertedAny) {
+		t.Fatalf("judgment = %#v, want unknown precision-boundary explicit-any argument", got[0])
+	}
+}
+
+func TestCallArgumentsDisplaysExplicitAnyStructuralCandidate(t *testing.T) {
+	m := manifest.New("test")
+	m.DefineFunctionSignature("need_string", signature.Function{
+		Type: typ.Func().Param("req", typetable.NewRecord().Field("id", typ.String).Build()).Build(),
+	})
+	result := checkFunction(t, `function f()
+	local raw = ({ id = "ok" } :: any)
+	need_string(raw)
+end`, m)
+
+	got := obligationpass.New(obligationpass.CallArguments{}).Run(obligationpass.Context{
+		FunctionKey: "fixture:f",
+		Reader:      readmodel.New(result),
+	})
+	if len(got) != 1 {
+		t.Fatalf("judgments = %d, want 1: %#v", len(got), got)
+	}
+	if got[0].Actual.ProjectedType == nil || got[0].Actual.ProjectedType.String() != `{id: "ok"}` {
+		t.Fatalf(`actual type = %v, want structural candidate {id: "ok"}`, got[0].Actual.ProjectedType)
+	}
+	if !hasEvidenceKind(got[0], judgment.EvidencePrecisionBoundary) ||
+		!hasEvidenceDetail(got[0], judgment.EvidenceDetailUserAssertedAny) {
+		t.Fatalf("evidence = %#v, want explicit-any boundary evidence", got[0].Evidence)
 	}
 }
 

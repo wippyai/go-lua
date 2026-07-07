@@ -41,7 +41,7 @@ func (r *Result) WithMemberReadNilWitness(point cfg.Point, expr ast.Expr, value 
 			declared != nil &&
 			!typ.IsAny(declared) &&
 			!typ.IsUnknown(declared) {
-			value = typevalue.WithWitness(r.Registry(), value, declared)
+			value = typevalue.FromType(r.Registry(), declared)
 			if typevalue.TypeIncludesNil(declared) {
 				return product.WithPresence(r.Registry(), value, presence.Maybe())
 			}
@@ -59,6 +59,9 @@ func (r *Result) WithMemberReadNilWitness(point cfg.Point, expr ast.Expr, value 
 
 func (r *Result) memberReadValueAlreadyProvenPresent(point cfg.Point, expr ast.Expr, value product.Value) bool {
 	if r == nil || r.Registry() == nil || !presence.Equal(product.PresenceOf(value), presence.Present()) {
+		return false
+	}
+	if r.memberReadReceiverMayBeNil(point, expr) {
 		return false
 	}
 	p, ok := r.ExpressionPath(expr)
@@ -83,6 +86,8 @@ func (r *Result) MemberReadCanMissOrDeclaredNilable(point cfg.Point, expr ast.Ex
 	}
 	if current, ok := r.ExpressionTypeBeforeBoundary(point, expr); ok &&
 		current != nil &&
+		!typ.IsAny(current) &&
+		!typ.IsUnknown(current) &&
 		!typevalue.TypeIncludesNil(current) {
 		return false
 	}
@@ -96,6 +101,13 @@ func (r *Result) MemberReadCanMiss(point cfg.Point, expr ast.Expr) bool {
 	attr, ok := expr.(*ast.AttrGetExpr)
 	if !ok || attr.Object == nil || attr.Key == nil {
 		return false
+	}
+	if receiverValue, valueOK := r.ExpressionValueBeforeBoundary(point, attr.Object); valueOK {
+		if receiverType, typeOK := r.ValueTypeWithPresence(receiverValue); typeOK &&
+			typevalue.TypeIncludesNil(receiverType) &&
+			!r.ExpressionReadProvenPresentBeforeBoundary(point, attr.Object) {
+			return true
+		}
 	}
 	container, ok := r.ExpressionTypeBeforeBoundary(point, attr.Object)
 	if !ok {
@@ -133,6 +145,9 @@ func (r *Result) memberReadHasExactPathProof(point cfg.Point, expr ast.Expr) boo
 	if r == nil {
 		return false
 	}
+	if r.memberReadReceiverMayBeNil(point, expr) {
+		return false
+	}
 	p, ok := r.ExpressionPath(expr)
 	if !ok || p.IsEmpty() || p.Symbol == 0 || len(p.Segments) == 0 {
 		return false
@@ -142,6 +157,33 @@ func (r *Result) memberReadHasExactPathProof(point cfg.Point, expr ast.Expr) boo
 		return false
 	}
 	return readCanonicalPathStaticMember(st, r.KeySpace(), p.Key())
+}
+
+func (r *Result) memberReadReceiverMayBeNil(point cfg.Point, expr ast.Expr) bool {
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok || attr.Object == nil || r.ExpressionReadProvenPresentBeforeBoundary(point, attr.Object) {
+		return false
+	}
+	if receiverValue, valueOK := r.ExpressionValueBeforeBoundary(point, attr.Object); valueOK {
+		if receiverType, typeOK := r.ValueTypeWithPresence(receiverValue); typeOK &&
+			typevalue.TypeIncludesNil(receiverType) {
+			return true
+		}
+	}
+	if receiver, receiverOK := r.ExpressionTypeBeforeBoundary(point, attr.Object); receiverOK &&
+		typevalue.TypeIncludesNil(receiver) {
+		return true
+	}
+	receiverPath, pathOK := r.ExpressionPath(attr.Object)
+	if !pathOK || receiverPath.IsEmpty() {
+		return false
+	}
+	receiverValue, valueOK := r.PathValueBeforeBoundary(point, receiverPath)
+	if !valueOK {
+		return false
+	}
+	receiverType, typeOK := r.ValueTypeWithPresence(receiverValue)
+	return typeOK && typevalue.TypeIncludesNil(receiverType)
 }
 
 func (r *Result) memberReadHasExactHeapProof(point cfg.Point, expr ast.Expr) bool {

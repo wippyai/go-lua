@@ -1,6 +1,7 @@
 package projectsummary_test
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -8,6 +9,7 @@ import (
 	summaryprojection "github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/projectsummary"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -22,6 +24,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
@@ -226,6 +229,93 @@ end`)
 	id, ok := product.Get(reg, got.Returns[0], identity.Key).ID()
 	if !ok || id != retID {
 		t.Fatalf("return identity = %v/%v, want %s", id, ok, retID)
+	}
+}
+
+func TestFromResultPreservesLoopBuiltReturnedTableIdentity(t *testing.T) {
+	reg := standard.Registry()
+	fn := projectParseFunction(t, `
+function build(ids: {string}): {items: {[string]: {id: string}}, count: number}
+	local batch: {items: {[string]: {id: string}}, count: number} = {items = {}, count = 0}
+	for _, id in ipairs(ids) do
+		batch.count = batch.count + 1
+		local item: {id: string} = {id = id}
+		batch.items[id] = item
+	end
+	return batch
+end`)
+
+	result := projectCheckFunction(t, fn, body.Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	batchSymbol := symbol.ID(0)
+	for _, point := range result.Graph().RPO() {
+		fact, ok := result.LocalAssignment(point)
+		if !ok || fact.Name != "batch" || !fact.HasSymbol {
+			continue
+		}
+		batchSymbol = fact.Symbol
+		sourceValue, sourceOK := result.LocalAssignmentSourceValueAtBoundary(point, fact.Source)
+		if !sourceOK {
+			t.Fatalf("batch declaration source value missing at point %d", point)
+		}
+		if sourceID, sourceIDOK := product.Get(reg, sourceValue, identity.Key).ID(); !sourceIDOK || sourceID == (identity.ID{}) {
+			t.Fatalf("batch declaration source identity = %v/%v, want table literal identity", sourceID, sourceIDOK)
+		}
+		break
+	}
+	if batchSymbol == 0 {
+		t.Fatalf("missing batch local assignment")
+	}
+	got := summaryprojection.FromResult(result)
+
+	if len(got.Returns) != 1 {
+		t.Fatalf("returns = %d, want 1", len(got.Returns))
+	}
+	id, ok := product.Get(reg, got.Returns[0], identity.Key).ID()
+	if !ok || id == (identity.ID{}) {
+		sourceDebug := "no return source"
+		if points := result.ReturnPoints(); len(points) == 1 {
+			if sources, sourcesOK := result.ReturnValueSources(points[0]); sourcesOK && len(sources) == 1 {
+				if sourcePath, pathOK := result.ValueSourcePath(sources[0]); pathOK {
+					sourceDebug = sourcePath.String()
+					if exit, exitOK := result.ExitState(); exitOK && sourcePath.Symbol != 0 {
+						exitID, exitIDOK := product.Get(reg, exit.ReadValue(reg, statekey.SymbolValue(sourcePath.Symbol)), identity.Key).ID()
+						sourceDebug += " exitID=" + exitID.String() + "/" + strconv.FormatBool(exitIDOK)
+					}
+				}
+			}
+		}
+		t.Fatalf("return identity = %v/%v, want returned batch table identity; source=%s\nidentity trace:\n%s", id, ok, sourceDebug, projectIdentityTrace(reg, result, batchSymbol))
+	}
+	if len(got.HeapTableObjects) == 0 {
+		t.Fatalf("heap objects missing from summary for returned identity %s", id)
+	}
+	if _, ok := got.HeapTableObjects[id]; !ok {
+		t.Fatalf("heap objects = %#v, want returned batch identity %s", got.HeapTableObjects, id)
+	}
+}
+
+func TestFromResultPreservesAnnotatedReturnedTableIdentity(t *testing.T) {
+	reg := standard.Registry()
+	fn := projectParseFunction(t, `
+function build(): {items: {[string]: {id: string}}, count: number}
+	local batch: {items: {[string]: {id: string}}, count: number} = {items = {}, count = 0}
+	return batch
+end`)
+
+	result := projectCheckFunction(t, fn, body.Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	got := summaryprojection.FromResult(result)
+
+	if len(got.Returns) != 1 {
+		t.Fatalf("returns = %d, want 1", len(got.Returns))
+	}
+	if id, ok := product.Get(reg, got.Returns[0], identity.Key).ID(); !ok || id == (identity.ID{}) {
+		t.Fatalf("return identity = %v/%v, want returned annotated table identity", id, ok)
 	}
 }
 
@@ -1324,6 +1414,51 @@ func projectAssertValue(t *testing.T, reg *axis.Registry, got, want product.Valu
 	if !product.Equal(reg, got, want) {
 		t.Fatalf("value = %v, want %v", got, want)
 	}
+}
+
+func projectIdentityTrace(reg *axis.Registry, result *body.Result, target symbol.ID) string {
+	if reg == nil || result == nil || target == 0 || result.Graph() == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, point := range result.Graph().RPO() {
+		st, ok := result.StateAt(point)
+		if !ok {
+			continue
+		}
+		idValue := product.Get(reg, st.ReadValue(reg, statekey.SymbolValue(target)), identity.Key)
+		b.WriteString(strconv.Itoa(int(point)))
+		b.WriteString(": ")
+		b.WriteString(idValue.String())
+		if fact, ok := result.LocalAssignment(point); ok {
+			b.WriteString(" local ")
+			b.WriteString(fact.Name)
+		}
+		if fact, ok := result.OrdinaryAssignment(point); ok {
+			b.WriteString(" assign")
+			if fact.HasPath {
+				b.WriteString(" ")
+				b.WriteString(fact.Path.String())
+			}
+		}
+		if fact, ok := result.LoweredLocalAssignment(point); ok {
+			b.WriteString(" lowered-local ")
+			b.WriteString(projectRootAssignmentDebug(fact))
+		}
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+func projectRootAssignmentDebug(fact factflow.RootAssignment) string {
+	flags := ""
+	switch {
+	case fact.DeclaredValueContracts():
+		flags = " contract"
+	case fact.DeclaredValueOverlays():
+		flags = " overlay"
+	}
+	return fact.TargetPathRef().String() + " source=" + strconv.Itoa(int(fact.Source().Kind)) + flags
 }
 
 func projectAssertParamObligationKind(

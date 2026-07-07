@@ -37,7 +37,7 @@ func TestRenderReturnJudgmentConcreteMismatch(t *testing.T) {
 		Spans: []judgment.SpanRef{{StartLine: 1, StartCol: 29, EndLine: 1, EndCol: 34}},
 	}
 
-	d, ok := renderReturnJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
+	d, ok := renderReturnJudgmentWithPolicy(newJudgmentRenderContext(), item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
 	if !ok {
 		t.Fatal("renderReturnJudgmentWithPolicy returned false")
 	}
@@ -86,7 +86,7 @@ func TestRenderReturnJudgmentNilGuardIsDrivenByEvidence(t *testing.T) {
 		Spans: []judgment.SpanRef{{StartLine: 2, StartCol: 9, EndLine: 2, EndCol: 14}},
 	}
 
-	d, ok := renderReturnJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
+	d, ok := renderReturnJudgmentWithPolicy(newJudgmentRenderContext(), item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
 	if !ok {
 		t.Fatal("renderReturnJudgmentWithPolicy returned false")
 	}

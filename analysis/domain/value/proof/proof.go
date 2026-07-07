@@ -36,6 +36,28 @@ func (r Reader) ValueType(value product.Value) (typ.Type, bool) {
 	return ConcreteBoundaryType(r.reg, r.typeCache, value)
 }
 
+// ValueStructuralType reconstructs the presence-aware structural type witnessed
+// by value. This is the canonical proof-domain projection for callers that need
+// table shape evidence instead of a declared contract.
+func (r Reader) ValueStructuralType(value product.Value) (typ.Type, bool) {
+	if r.reg == nil {
+		return nil, false
+	}
+	return typevalue.StructuralTypeOf(r.reg, r.typeCache, value, typevalue.StructuralTypeOptions{ApplyPresence: true})
+}
+
+// ValueHasReadableConcreteWitness reports whether value carries an explicit
+// witness type worth showing as concrete evidence. Top-like witnesses and a
+// bare nil witness are not enough; callers should treat those as unknown or
+// nilability evidence instead of a precise source type.
+func (r Reader) ValueHasReadableConcreteWitness(value product.Value) bool {
+	if r.reg == nil {
+		return false
+	}
+	t, ok := typevalue.TypeOf(r.reg, value)
+	return ok && !typ.IsAny(t) && !typ.IsUnknown(t) && !typ.TypeEquals(t, typ.Nil)
+}
+
 // RuntimeKindReducedType narrows declared by value's runtime-kind axis: the
 // alternatives whose runtime kind the axis excludes are dropped. This reports
 // the type a value actually holds on a path that a type() guard has narrowed
@@ -647,4 +669,26 @@ func refineTypeByRuntimeKindSetDepth(t typ.Type, kinds runtimekind.Value, keepNi
 
 func ProjectionWithoutNil(t typ.Type) typ.Type {
 	return typetable.PresentReadonlyEntryValue(t)
+}
+
+// OptionalTypeHasConcreteValue reports whether t is a concrete optional-like
+// projection with both a nil arm and a non-never value arm. Gradual and unknown
+// projections are intentionally inconclusive.
+func OptionalTypeHasConcreteValue(t typ.Type) bool {
+	if t == nil || typ.IsTopLike(t) || typ.IsNever(t) || !typevalue.ProjectionHasNil(t) {
+		return false
+	}
+	value := ProjectionWithoutNil(t)
+	return value != nil && !typ.IsNever(value)
+}
+
+// OptionalTruthinessPartitionsNilValue reports whether truthiness checks can
+// split an optional-like type into nil and value cases. If the value arm may be
+// false, truthiness cannot prove the nil arm was handled.
+func OptionalTruthinessPartitionsNilValue(t typ.Type) bool {
+	if !OptionalTypeHasConcreteValue(t) {
+		return false
+	}
+	value := ProjectionWithoutNil(t)
+	return value != nil && !typ.IsNever(value) && !typ.AdmitsFalse(value)
 }

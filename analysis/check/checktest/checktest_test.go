@@ -94,7 +94,7 @@ x()`)
 	if result.Diagnostics[0].Code != diagnostics.CodeDirectCallNotCallable {
 		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeDirectCallNotCallable)
 	}
-	if !strings.Contains(result.Diagnostics[0].Message, "x is number, not callable") {
+	if !strings.Contains(result.Diagnostics[0].Message, "x is 1, not callable") {
 		t.Fatalf("message = %q, want judgment-rendered callee mismatch", result.Diagnostics[0].Message)
 	}
 }
@@ -3029,6 +3029,23 @@ func callOutcomeDebug(root *body.Result) string {
 			if escapeText == "" {
 				escapeText = "none"
 			}
+			writeText := ""
+			for i, write := range outcome.NormalReturnFacts.PersistentPathWrites {
+				if writeText != "" {
+					writeText += ","
+				}
+				valueText := ""
+				if id, ok := valueIdentity(root.Registry(), write.Value); ok {
+					valueText += ":" + id.String()
+				}
+				if t, ok := typevalue.TypeOf(root.Registry(), write.Value); ok {
+					valueText += ":" + t.String()
+				}
+				writeText += fmt.Sprintf("%d:%s%s", i, write.Path.String(), valueText)
+			}
+			if writeText == "" {
+				writeText = "none"
+			}
 			resultIDs := ""
 			for i, result := range outcome.Results {
 				resultText := fmt.Sprintf("%d", i)
@@ -3046,13 +3063,23 @@ func callOutcomeDebug(root *body.Result) string {
 			if resultIDs == "" {
 				resultIDs = "none"
 			}
-			outcomeText = fmt.Sprintf("escapes=[%s] heap=%d results=[%s]", escapeText, len(outcome.HeapTableObjects), resultIDs)
+			outcomeText = fmt.Sprintf("escapes=[%s] writes=[%s] heap=%d results=[%s]", escapeText, writeText, len(outcome.HeapTableObjects), resultIDs)
 		}
 		stateText := "no-boundary-state"
 		if st, ok := root.StateAtBoundary(point); ok {
 			placements := st.PlacementsSnapshot()
 			escapes := st.EscapeEventsSnapshot()
 			stateText = fmt.Sprintf("statePlacements=%d stateEscapes=%d", len(placements.Placements), len(escapes.Facts))
+		}
+		calleeValue := "calleeValue=none"
+		if value, ok := root.PathValueAtBoundary(point, site.CalleePathRef()); ok {
+			calleeValue = "calleeValue=yes"
+			if id, ok := valueIdentity(root.Registry(), value); ok {
+				calleeValue += ":" + id.String()
+			}
+			if t, ok := typevalue.TypeOf(root.Registry(), value); ok {
+				calleeValue += ":" + t.String()
+			}
 		}
 		paths := ""
 		sources := ""
@@ -3103,6 +3130,7 @@ func callOutcomeDebug(root *body.Result) string {
 		if callee == "" {
 			callee = "no-callee-path"
 		}
+		callee += fmt.Sprintf("#sym%d", site.CalleePathRef().Symbol)
 		receiver := "no-receiver"
 		if receiverPath, ok := site.ReceiverPath(); ok {
 			receiver = receiverPath.String()
@@ -3123,7 +3151,7 @@ func callOutcomeDebug(root *body.Result) string {
 		if out != "" {
 			out += "; "
 		}
-		out += fmt.Sprintf("p%d %s %s %s callee=%s receiver=%s method=%s sources=[%s] args=[%s]", point, signatureText, outcomeText, stateText, callee, receiver, method, sources, paths)
+		out += fmt.Sprintf("p%d %s %s %s %s callee=%s receiver=%s method=%s sources=[%s] args=[%s]", point, signatureText, outcomeText, stateText, calleeValue, callee, receiver, method, sources, paths)
 	}
 	if out == "" {
 		return "<no calls>"

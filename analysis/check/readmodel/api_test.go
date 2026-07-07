@@ -25,6 +25,40 @@ func TestPlanAssignmentCheckHonorsTrustedValueProofBeforePlainSubtype(t *testing
 	}
 }
 
+func TestPlanCallArgumentCheckRequiresValueProofForSolvedSubtype(t *testing.T) {
+	check := PlanCallArgumentCheck(CallArgumentCheckPlan{
+		Argument: CallArgument{
+			TypeWithPresence: typeexpr.Optional(typ.String),
+		},
+		Expected: typeexpr.Optional(typ.String),
+		IsSubtype: func(sub, super typ.Type) bool {
+			return typ.TypeEquals(sub, super)
+		},
+	})
+	if check.Admissible {
+		t.Fatalf("call argument check = %#v, want solved subtype alone to stay inadmissible without value proof", check)
+	}
+	if check.ProvenMismatch {
+		t.Fatalf("call argument check = %#v, want no proven mismatch for matching solved subtype", check)
+	}
+}
+
+func TestPlanCallArgumentCheckDoesNotTrustUntrustedTopSubtype(t *testing.T) {
+	check := PlanCallArgumentCheck(CallArgumentCheckPlan{
+		Argument: CallArgument{
+			TypeWithPresence:   typ.String,
+			UntrustedTopOrigin: true,
+		},
+		Expected: typ.String,
+		IsSubtype: func(sub, super typ.Type) bool {
+			return true
+		},
+	})
+	if check.Admissible {
+		t.Fatalf("call argument check = %#v, want untrusted-top argument to require proof", check)
+	}
+}
+
 func TestNumericForDefinitelyNotNumberClassifiesSolvedOperandTypes(t *testing.T) {
 	cases := []struct {
 		name string
@@ -49,6 +83,24 @@ func TestNumericForDefinitelyNotNumberClassifiesSolvedOperandTypes(t *testing.T)
 	}
 }
 
+func TestCallArgumentExpectedTypeHasObjectEntries(t *testing.T) {
+	reader := typ.NewInterface("Reader", []typ.Method{
+		{Name: "read", Type: typ.Func().Param("self", typ.Self).Returns(typ.String).Build()},
+	})
+	if CallArgumentExpectedTypeHasObjectEntries(reader) {
+		t.Fatal("interface expected type must keep the whole object literal as the mismatch subject")
+	}
+	if !CallArgumentExpectedTypeHasObjectEntries(typetable.NewRecord().Field("name", typ.String).Build()) {
+		t.Fatal("record expected type should allow object-entry mismatch subjects")
+	}
+	if !CallArgumentExpectedTypeHasObjectEntries(typeexpr.Optional(typ.NewArray(typ.String))) {
+		t.Fatal("optional array expected type should allow object-entry mismatch subjects")
+	}
+	if !CallArgumentExpectedTypeHasObjectEntries(typeexpr.Union(reader, typetable.NewMap(typ.String, typ.Number))) {
+		t.Fatal("union with an object-entry arm should allow object-entry mismatch subjects")
+	}
+}
+
 func TestNonNilAssertionOperandNilOnlyClassifiesSolvedOperandTypes(t *testing.T) {
 	cases := []struct {
 		name string
@@ -67,6 +119,27 @@ func TestNonNilAssertionOperandNilOnlyClassifiesSolvedOperandTypes(t *testing.T)
 		t.Run(tc.name, func(t *testing.T) {
 			if got := NonNilAssertionOperandNilOnly(tc.t); got != tc.want {
 				t.Fatalf("NonNilAssertionOperandNilOnly(%v) = %v, want %v", tc.t, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestObligationTypeContainsFreeTypeParamSeesOptionalValueArm(t *testing.T) {
+	tp := typ.NewTypeParam("T", nil)
+	cases := []struct {
+		name string
+		in   typ.Type
+		want bool
+	}{
+		{name: "closed", in: typ.String, want: false},
+		{name: "free", in: tp, want: true},
+		{name: "optional free", in: typeexpr.Optional(tp), want: true},
+		{name: "optional closed", in: typeexpr.Optional(typ.String), want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ObligationTypeContainsFreeTypeParam(tc.in); got != tc.want {
+				t.Fatalf("ObligationTypeContainsFreeTypeParam(%v) = %v, want %v", tc.in, got, tc.want)
 			}
 		})
 	}
@@ -114,6 +187,24 @@ func TestReturnEffectiveActualTypeAndProofPolicy(t *testing.T) {
 	explicitAny := Return{TypeWithPresence: typ.Any, ExplicitTopOrigin: true}
 	if explicitAny.HasUnownedTopActual() {
 		t.Fatal("explicit any return was classified as unowned top")
+	}
+
+	cascade := Return{
+		TypeWithPresence:    typ.Any,
+		ExplicitTopOrigin:   true,
+		BodyParamObligation: true,
+	}
+	if !cascade.BodyParamObligationCascade() {
+		t.Fatal("body-owned param obligation top return was not classified as a cascade")
+	}
+
+	concreteCascade := Return{
+		TypeWithPresence:    typ.String,
+		ExplicitTopOrigin:   true,
+		BodyParamObligation: true,
+	}
+	if concreteCascade.BodyParamObligationCascade() {
+		t.Fatal("concrete body-owned return mismatch was classified as a top cascade")
 	}
 }
 
@@ -164,6 +255,18 @@ func TestAssignmentEffectiveActualTypeAndProofPolicy(t *testing.T) {
 	if !typ.TypeEquals(explicitAny.EffectiveActualType(), typ.Any) {
 		t.Fatalf("explicit any effective actual = %v, want any", explicitAny.EffectiveActualType())
 	}
+
+	untrustedRecord := Assignment{
+		TypeWithPresence:   typetable.NewRecord().Field("owner", typ.LiteralString("ops")).Field("retry", typ.LiteralInt(3)).Build(),
+		Expected:           typetable.NewMap(typ.String, typ.String),
+		UntrustedTopOrigin: true,
+	}
+	if !typ.TypeEquals(untrustedRecord.EffectiveActualType(), untrustedRecord.TypeWithPresence) {
+		t.Fatalf("untrusted structural actual = %v, want %v", untrustedRecord.EffectiveActualType(), untrustedRecord.TypeWithPresence)
+	}
+	if untrustedRecord.MissingProofRefuted() {
+		t.Fatal("untrusted structural assignment refuted missing proof; want precision boundary")
+	}
 }
 
 func TestCallArgumentCheckActualTypeAndProofPolicy(t *testing.T) {
@@ -186,6 +289,32 @@ func TestCallArgumentCheckActualTypeAndProofPolicy(t *testing.T) {
 	}
 	if !concrete.MissingProofRefuted() {
 		t.Fatal("concrete call argument mismatch did not refute missing proof")
+	}
+
+	untrustedRecord := CallArgumentCheck{
+		Argument: CallArgument{
+			TypeWithPresence:   typetable.NewRecord().Field("id", typ.LiteralString("ok")).Build(),
+			UntrustedTopOrigin: true,
+		},
+		Expected: typetable.NewRecord().Field("id", typ.String).Build(),
+	}
+	wantRecord := typetable.NewRecord().Field("id", typ.LiteralString("ok")).Build()
+	if !typ.TypeEquals(untrustedRecord.EffectiveActualType(), wantRecord) {
+		t.Fatalf("untrusted record effective actual = %v, want structural candidate %v", untrustedRecord.EffectiveActualType(), wantRecord)
+	}
+	if untrustedRecord.MissingProofRefuted() {
+		t.Fatal("untrusted record call argument refuted missing proof; want precision boundary")
+	}
+
+	untrustedNil := CallArgumentCheck{
+		Argument: CallArgument{
+			TypeWithPresence:   typ.Nil,
+			UntrustedTopOrigin: true,
+		},
+		Expected: typ.String,
+	}
+	if !typ.TypeEquals(untrustedNil.EffectiveActualType(), typ.Any) {
+		t.Fatalf("untrusted nil effective actual = %v, want any", untrustedNil.EffectiveActualType())
 	}
 }
 
@@ -449,6 +578,28 @@ func TestPlanCallArgumentReportsKeepsStricterOutcomeAfterAdmissibleExplicitParam
 	}
 }
 
+func TestPlanCallArgumentReportsSkipsSignatureSurfaceAfterAdmissibleExplicitParam(t *testing.T) {
+	reports := PlanCallArgumentReports(CallArgumentReportPlan{
+		Args: []CallArgument{{Index: 0, TypeWithPresence: typeexpr.Optional(typ.String)}},
+		ExplicitParams: []IndexedCallArgumentObligation{
+			{Index: 0, Obligation: CallArgumentObligation{Type: typeexpr.Optional(typ.String), ExpectedLabel: "declared optional"}},
+		},
+		OutcomeParams: []IndexedCallArgumentObligation{
+			{Index: 0, Obligation: CallArgumentObligation{Type: typ.String, ExpectedLabel: "narrowed signature view", SignatureSurface: true}},
+		},
+		Check: func(arg CallArgument, obligation CallArgumentObligation) CallArgumentCheck {
+			return CallArgumentCheck{
+				Argument:   arg,
+				Expected:   obligation.Type,
+				Admissible: obligation.ExpectedLabel == "declared optional",
+			}
+		},
+	})
+	if len(reports) != 0 {
+		t.Fatalf("PlanCallArgumentReports produced %#v, want signature-surface cascade suppressed", reports)
+	}
+}
+
 func TestCallArgumentObligationTypeReportableTreatsOptionalGradualAsInternal(t *testing.T) {
 	if CallArgumentObligationTypeReportable(typ.MaterializeOptional(typ.Any)) {
 		t.Fatal("any? should be an internal gradual obligation, not a reportable contract")
@@ -663,6 +814,22 @@ func TestPlanCallCalleeReport(t *testing.T) {
 				Type:         typ.MaterializeOptional(typ.Func().Build()),
 				Callable:     true,
 				Span:         SourceSpan{StartLine: 11},
+			},
+		},
+		{
+			name: "optional non-callable member reports not callable",
+			plan: CallCalleeReportPlan{
+				CallableName: "pkg.run",
+				Type:         typ.MaterializeOptional(typ.Number),
+				MemberAccess: true,
+				Span:         SourceSpan{StartLine: 12},
+			},
+			want: CallCalleeReport{
+				Kind:         CallCalleeReportNotCallable,
+				CallableName: "pkg.run",
+				Type:         typ.MaterializeOptional(typ.Number),
+				MemberAccess: true,
+				Span:         SourceSpan{StartLine: 12},
 			},
 		},
 	}

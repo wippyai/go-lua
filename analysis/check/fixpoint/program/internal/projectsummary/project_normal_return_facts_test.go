@@ -620,6 +620,39 @@ func TestFromResultProjectsCapturedRootReassignmentPersistentWrite(t *testing.T)
 	assertPathValueFact(t, reg, got.PersistentPathWrites, pathdom.NewPath(captured, ""), portableBoundaryValue(reg, value))
 }
 
+func TestFromResultProjectsLoweredCapturedRootReassignmentPersistentWrite(t *testing.T) {
+	reg := standard.Registry()
+	captured := symbol.ID(9270)
+	fn := &ast.FunctionExpr{}
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+	value := presentProduct(reg)
+	source := factflow.ValueSource{Kind: factflow.ValueSourceUnknown}
+	stub := normalReturnFactProjectAssignmentStub{
+		normalReturnFactProjectResultStub: normalReturnFactProjectResultStub{
+			reg:   reg,
+			graph: graph,
+			exit:  state.State{},
+		},
+		fn: fn,
+		captures: []bind.Capture{{
+			Captured:     captured,
+			CapturedName: "captured",
+		}},
+		rootAssignments: map[cfg.Point]factflow.RootAssignment{
+			assign: factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, captured, pathdom.NewPath(captured, "captured"), source),
+		},
+		sourceValues: map[cfg.Point]product.Value{
+			assign: value,
+		},
+	}
+
+	got := FromResult(stub).NormalReturnFacts
+	assertPathValueFact(t, reg, got.PersistentPathWrites, pathdom.NewPath(captured, ""), portableBoundaryValue(reg, value))
+}
+
 func TestFromResultProjectsCapturedRootReassignmentPersistentWriteFromPresentSource(t *testing.T) {
 	reg := standard.Registry()
 	captured := symbol.ID(9271)
@@ -1057,7 +1090,9 @@ type normalReturnFactProjectResultStub struct {
 type normalReturnFactProjectAssignmentStub struct {
 	normalReturnFactProjectResultStub
 	assignments      map[cfg.Point]semantics.OrdinaryAssignmentFact
+	rootAssignments  map[cfg.Point]factflow.RootAssignment
 	exprValuesBefore map[cfg.Point]product.Value
+	sourceValues     map[cfg.Point]product.Value
 	fn               *ast.FunctionExpr
 	captures         []bind.Capture
 	kinds            map[symbol.ID]symbol.Kind
@@ -1103,8 +1138,18 @@ func (r normalReturnFactProjectAssignmentStub) OrdinaryAssignment(point cfg.Poin
 	return fact, ok
 }
 
+func (r normalReturnFactProjectAssignmentStub) RootAssignment(point cfg.Point) (factflow.RootAssignment, bool) {
+	fact, ok := r.rootAssignments[point]
+	return fact, ok
+}
+
 func (r normalReturnFactProjectAssignmentStub) ExpressionValueBeforeBoundary(point cfg.Point, _ ast.Expr) (product.Value, bool) {
 	value, ok := r.exprValuesBefore[point]
+	return value, ok
+}
+
+func (r normalReturnFactProjectAssignmentStub) SourceValueAtBoundary(point cfg.Point, _ factflow.ValueSource) (product.Value, bool) {
+	value, ok := r.sourceValues[point]
 	return value, ok
 }
 

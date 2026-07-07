@@ -573,6 +573,31 @@ func TestProjectExactPresentChildInheritsExplicitTopEvidenceFromRoot(t *testing.
 	}
 }
 
+func TestProjectConcreteExactChildDoesNotInheritExplicitTopEvidenceFromRoot(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(10)
+	rawSym := symbol.ID(20)
+	resolver := testResolver(point, rawSym, "raw")
+	rootPath := path.NewPath(rawSym, "raw")
+	readPath := rootPath.Field("id")
+	childKey := resolver.KeyAt(point, readPath)
+	rootValue := typevalue.FromType(reg, typ.Any)
+	childValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(rawSym), rootValue).
+		WritePathKey(reg, resolver.KeySpace(), childKey, childValue)
+
+	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
+	if !ok {
+		t.Fatalf("Project returned false")
+	}
+	assertPresence(t, reg, got, presence.Present())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+	if gotEvidence := product.Get(reg, got, evidence.Key); !evidence.Equal(gotEvidence, evidence.Top()) {
+		t.Fatalf("raw.id evidence = %s, want no inherited explicit-top evidence", gotEvidence)
+	}
+}
+
 func TestProjectExactAbsentReturnsNil(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(2)

@@ -22,6 +22,8 @@ type Cache struct {
 	witnesses        map[typeValueCacheKey]product.Value
 	valuesByShape    map[typeValueShapeKey][]cachedTypeValue
 	witnessesByShape map[typeValueShapeKey][]cachedTypeValue
+	typeProfiles     map[typeProfileCacheKey]cachedTypeProfile
+	unknownTypes     map[typ.Type]cachedContainsUnknown
 }
 
 type typeValueCacheKey struct {
@@ -37,6 +39,21 @@ type typeValueShapeKey struct {
 type cachedTypeValue struct {
 	typ   typ.Type
 	value product.Value
+}
+
+type typeProfileCacheKey struct {
+	reg   *axis.Registry
+	value product.Value
+}
+
+type cachedTypeProfile struct {
+	profile RuntimeTypeProfile
+	ok      bool
+}
+
+type cachedContainsUnknown struct {
+	value bool
+	open  bool
 }
 
 func NewCache() *Cache {
@@ -118,7 +135,7 @@ func (c *Cache) cachedByShape(reg *axis.Registry, t typ.Type, cache map[typeValu
 	key := typeValueShapeKey{reg: reg, hash: typ.EqualityHash(t)}
 	entries := cache[key]
 	for i := range entries {
-		if !typ.SameNodeOrAcyclicEqual(entries[i].typ, t) {
+		if !cachedTypeShapeEqual(entries[i].typ, t) {
 			continue
 		}
 		if !c.cachedProductActive(reg, entries[i].value) {
@@ -146,7 +163,7 @@ func (c *Cache) rememberTypeValue(
 	}
 	entries := (*shape)[key]
 	for i := range entries {
-		if typ.SameNodeOrAcyclicEqual(entries[i].typ, t) {
+		if cachedTypeShapeEqual(entries[i].typ, t) {
 			entries[i].typ = t
 			entries[i].value = value
 			(*shape)[key] = entries
@@ -154,6 +171,13 @@ func (c *Cache) rememberTypeValue(
 		}
 	}
 	(*shape)[key] = append(entries, cachedTypeValue{typ: t, value: value})
+}
+
+func cachedTypeShapeEqual(a, b typ.Type) bool {
+	if typ.SameNodeOrAcyclicEqual(a, b) {
+		return true
+	}
+	return typ.TypeEquals(a, b)
 }
 
 func (c *Cache) rememberExactValue(cache *map[typeValueCacheKey]product.Value, key typeValueCacheKey, value product.Value) {

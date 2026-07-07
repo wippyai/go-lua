@@ -70,7 +70,7 @@ func TestRenderDirectCallArityJudgmentTooFew(t *testing.T) {
 	item := directCallArityJudgmentFixture(judgment.ArityTooFewEvidenceDetail(2, 1), []judgment.SpanRef{
 		{File: "main.lua", StartLine: 4, StartCol: 1, EndLine: 4, EndCol: 7},
 	})
-	d, ok := renderCallArityJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
+	d, ok := renderCallArityJudgmentWithPolicy(newJudgmentRenderContext(), item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
 	if !ok {
 		t.Fatal("renderCallArityJudgmentWithPolicy returned false")
 	}
@@ -124,13 +124,13 @@ maybe()`)
 	if len(diags) != 2 {
 		t.Fatalf("diagnostics = %d, want two callee diagnostics: %#v", len(diags), diags)
 	}
-	if diags[0].Code != CodeDirectCallNotCallable || !strings.Contains(diags[0].Message, "x is number, not callable") {
+	if diags[0].Code != CodeDirectCallNotCallable || !strings.Contains(diags[0].Message, "x is 42, not callable") {
 		t.Fatalf("first diagnostic = %#v, want non-callable x", diags[0])
 	}
 	if !diagnosticHasLabel(diags[0], labelCallTarget) {
 		t.Fatalf("first labels = %#v, want call target", diags[0].Labels)
 	}
-	if !diagnosticEvidenceContains(diags[0].Explanation.Evidence(), "x has type number") ||
+	if !diagnosticEvidenceContains(diags[0].Explanation.Evidence(), "x has literal value 42") ||
 		!diagnosticEvidenceContains(diags[0].Explanation.Evidence(), "no proof on this path shows x is callable") {
 		t.Fatalf("first evidence = %#v, want type and callable-proof chain", diags[0].Explanation.Evidence())
 	}
@@ -174,7 +174,7 @@ end`)
 func TestRenderDirectCallCalleeJudgmentUsesLenientPolicySeverity(t *testing.T) {
 	item := directCallCalleeJudgmentFixture(judgment.CalleeMayBeNilEvidenceDetail(true), typ.MaterializeOptional(typ.Func().Returns(typ.String).Build()))
 
-	d, ok := renderCallCalleeJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessLenient)
+	d, ok := renderCallCalleeJudgmentWithPolicy(newJudgmentRenderContext(), item, judgment.DefaultPolicy(), judgment.StrictnessLenient)
 	if !ok {
 		t.Fatal("renderCallCalleeJudgmentWithPolicy returned false")
 	}
@@ -188,7 +188,7 @@ func TestRenderDirectCallArityJudgmentTooManyUsesExtraArgumentSpan(t *testing.T)
 		{File: "main.lua", StartLine: 4, StartCol: 1, EndLine: 4, EndCol: 13},
 		{File: "main.lua", StartLine: 4, StartCol: 11, EndLine: 4, EndCol: 12},
 	})
-	d, ok := renderCallArityJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
+	d, ok := renderCallArityJudgmentWithPolicy(newJudgmentRenderContext(), item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
 	if !ok {
 		t.Fatal("renderCallArityJudgmentWithPolicy returned false")
 	}
@@ -310,6 +310,43 @@ func TestRenderDirectCallArgumentJudgmentBoundaryWordingRequiresEvidence(t *test
 	}
 	if !diagnosticEvidenceContains(diag.Explanation.Evidence(), "raw comes from any/unknown") {
 		t.Fatalf("evidence = %#v, want boundary evidence", diag.Explanation.Evidence())
+	}
+}
+
+func TestRenderDirectCallArgumentJudgmentNilabilityPrecedesBoundaryWording(t *testing.T) {
+	item := judgment.Judgment{
+		Code: judgment.CodeCallArgType,
+		Subject: judgment.SubjectRef{
+			FunctionKey: "fixture",
+			Kind:        judgment.SubjectCallArgument,
+			Key:         "call:1:arg:0",
+			Label:       "argument 1 (raw)",
+		},
+		Expected: judgment.NewTypeRef(typ.String),
+		Actual:   judgment.NewValueRef(1, typ.Any),
+		Verdict:  judgment.VerdictUnknown,
+		Evidence: judgment.EvidenceChain{
+			{Kind: judgment.EvidenceAbstractFact, Trust: judgment.EvidenceTrustUnknown},
+			{Kind: judgment.EvidenceUserAssertion, Trust: judgment.EvidenceTrustClaimed},
+			{Kind: judgment.EvidenceMissingProof, Trust: judgment.EvidenceTrustUnknown, Detail: judgment.EvidenceDetail{Kind: judgment.EvidenceDetailMayBeNil, ExpandedSource: true}},
+			{Kind: judgment.EvidencePrecisionBoundary, Trust: judgment.EvidenceTrustUnknown},
+		},
+		Spans: []judgment.SpanRef{{File: "main.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 4}},
+	}
+
+	diag, ok := renderDirectCallArgumentJudgment(item)
+	if !ok {
+		t.Fatal("renderDirectCallArgumentJudgment did not render nilable boundary mismatch")
+	}
+	if !strings.Contains(diag.Message, "cannot pass raw as argument 1 because it may be nil") {
+		t.Fatalf("message = %q, want nilability as primary cause", diag.Message)
+	}
+	evidence := diag.Explanation.Evidence()
+	if !diagnosticEvidenceContains(evidence, "raw comes from any/unknown") {
+		t.Fatalf("evidence = %#v, want boundary evidence preserved", evidence)
+	}
+	if !diagnosticEvidenceContains(evidence, "no guard on this path proves raw is non-nil") {
+		t.Fatalf("evidence = %#v, want nil guard evidence", evidence)
 	}
 }
 
@@ -530,12 +567,13 @@ func TestProduceDirectCallArgumentsUsesRootTypeGuardElseMismatch(t *testing.T) {
     return n
 end
 
-local v: number | string = 5
+local v: number | string = value
 if type(v) == "number" then
     return 0
 else
     return need_number(v)
-end`)
+end
+`)
 
 	argOnly := produceDirectCallArgumentJudgmentDiagnostics(result, "main.lua")
 	if len(argOnly) != 1 || argOnly[0].Code != CodeDirectCallArgType {
@@ -633,7 +671,7 @@ need_pair(42, "wrong")`)
 		if diag.Code == CodeDirectCallTooFewArgs && !strings.Contains(diag.Message, "need_string expects 1 argument, got 0") {
 			t.Fatalf("arity message = %q, want judgment-rendered arity", diag.Message)
 		}
-		if diag.Code == CodeDirectCallNotCallable && !strings.Contains(diag.Message, "x is number, not callable") {
+		if diag.Code == CodeDirectCallNotCallable && !strings.Contains(diag.Message, "x is 42, not callable") {
 			t.Fatalf("callee message = %q, want judgment-rendered callee", diag.Message)
 		}
 		if diag.Code == CodeDirectCallArgType && diag.Span.StartLine == 10 {

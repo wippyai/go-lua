@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -39,17 +40,34 @@ func (r Reader) callCalleeReport(point cfg.Point, site factflow.CallSite) CallCa
 	}
 	if memberAccess && hasMemberPath {
 		if receiverType, ok := r.memberReceiverNilableAtCall(point, site); ok {
+			calleeType := receiverType
+			callable := false
+			nilableReceiver := true
+			if site.MethodName() == "" {
+				if memberType, ok := memberTypeFromReceiver(receiverType, member); ok {
+					if calleeTypeCallableIgnoringNil(memberType) {
+						callable = false
+					} else {
+						calleeType = memberType
+						nilableReceiver = false
+					}
+				}
+			}
 			return readapi.PlanCallCalleeReport(readapi.CallCalleeReportPlan{
-				CallableName: r.callContractSourceName(site),
-				Type:         receiverType,
-				Callable:     false,
-				MemberAccess: true,
-				Span:         sourceSpanFromFactflow(site.CalleeSpan()),
-				CallSpan:     sourceSpanFromFactflow(site.CallSpan()),
+				CallableName:    r.callContractSourceName(site),
+				Type:            calleeType,
+				Callable:        callable,
+				MemberAccess:    true,
+				NilableReceiver: nilableReceiver,
+				Span:            sourceSpanFromFactflow(site.CalleeSpan()),
+				CallSpan:        sourceSpanFromFactflow(site.CallSpan()),
 			})
 		}
 		if report, ok := r.missingMemberCalleeReport(point, site, receiverPath, member); ok {
 			return report
+		}
+		if r.memberMissingOwnedByMemberProducer(point, receiverPath, member) {
+			return CallCalleeReport{}
 		}
 		if r.memberCalleeCallableFromDiscriminantProof(point, site) {
 			return CallCalleeReport{}
@@ -178,6 +196,19 @@ func (r Reader) missingMemberCalleeReport(point cfg.Point, site factflow.CallSit
 	}, true
 }
 
+func (r Reader) memberMissingOwnedByMemberProducer(point cfg.Point, receiverPath path.Path, member segment.Segment) bool {
+	receiverType, ok := r.memberReceiverPathType(point, receiverPath)
+	if !ok || receiverType == nil || typ.IsAny(receiverType) || typ.IsUnknown(receiverType) || typ.IsNever(receiverType) {
+		return false
+	}
+	if typevalue.TypeIncludesNil(receiverType) {
+		return false
+	}
+	_, status, ok := callcontract.MemberCall(receiverType, member)
+	return ok && status == callcontract.MemberCallMissing &&
+		!r.reportMissingMemberShape(point, receiverPath, member, receiverType)
+}
+
 func (r Reader) reportMissingMemberShape(point cfg.Point, receiver path.Path, member segment.Segment, receiverType typ.Type) bool {
 	if member.Kind == segment.SegmentIndexInt {
 		return true
@@ -229,12 +260,13 @@ func (r Reader) expressionReceiverMethodCalleeReport(point cfg.Point, site factf
 		return CallCalleeReport{}, false
 	}
 	return readapi.PlanCallCalleeReport(readapi.CallCalleeReportPlan{
-		CallableName: r.callContractSourceName(site),
-		Type:         receiver,
-		Callable:     false,
-		MemberAccess: true,
-		Span:         sourceSpanFromFactflow(site.CalleeSpan()),
-		CallSpan:     sourceSpanFromFactflow(site.CallSpan()),
+		CallableName:    r.callContractSourceName(site),
+		Type:            receiver,
+		Callable:        false,
+		MemberAccess:    true,
+		NilableReceiver: true,
+		Span:            sourceSpanFromFactflow(site.CalleeSpan()),
+		CallSpan:        sourceSpanFromFactflow(site.CallSpan()),
 	}), true
 }
 
@@ -250,6 +282,28 @@ func (r Reader) memberReceiverNilableAtCall(point cfg.Point, site factflow.CallS
 		return nil, false
 	}
 	return receiver, true
+}
+
+func memberTypeFromReceiver(receiver typ.Type, member segment.Segment) (typ.Type, bool) {
+	key, ok := memberIndexType(member)
+	if !ok {
+		return nil, false
+	}
+	return access.Index(body.TypeWithoutOptionalNil(receiver), key)
+}
+
+func memberIndexType(member segment.Segment) (typ.Type, bool) {
+	switch member.Kind {
+	case segment.SegmentField, segment.SegmentIndexString:
+		if member.Name == "" {
+			return nil, false
+		}
+		return typ.LiteralString(member.Name), true
+	case segment.SegmentIndexInt:
+		return typ.LiteralInt(int64(member.Index)), true
+	default:
+		return nil, false
+	}
 }
 
 func calleeTypeCallable(t typ.Type) bool {
@@ -348,19 +402,37 @@ func (r Reader) callReceiverType(point cfg.Point, site factflow.CallSite) (typ.T
 }
 
 func (r Reader) memberReceiverPathType(point cfg.Point, p path.Path) (typ.Type, bool) {
-	if value, ok := r.result.PathValueBeforeBoundary(point, p); ok {
+	if receiver, ok := r.memberReceiverTypeFromValue(point, p, func() (product.Value, bool) {
+		return r.result.PathValueBeforeBoundary(point, p)
+	}); ok {
+		return receiver, true
+	}
+	if receiver, ok := r.memberReceiverTypeFromValue(point, p, func() (product.Value, bool) {
+		return r.result.PathValueAtBoundary(point, p)
+	}); ok {
+		return receiver, true
+	}
+	return r.declaredReceiverPathType(p)
+}
+
+func (r Reader) memberReceiverTypeFromValue(point cfg.Point, p path.Path, read func() (product.Value, bool)) (typ.Type, bool) {
+	if read == nil {
+		return nil, false
+	}
+	if value, ok := read(); ok {
 		if receiver, ok := r.ValueTypeWithPresence(value); ok && callcontract.ReceiverTypeUsable(receiver) {
 			if typevalue.TypeIncludesNil(receiver) && r.result.DominatingRequiredMemberReadProvesPathPresent(point, p) {
 				receiver = body.TypeWithoutOptionalNil(receiver)
 			}
 			if declared, declaredOK := r.declaredReceiverPathType(p); declaredOK &&
+				r.result.SymbolHasTypeAnnotation(p.Symbol) &&
 				preferDeclaredReceiverType(receiver, declared) {
 				return declared, true
 			}
 			return receiver, true
 		}
 	}
-	return r.declaredReceiverPathType(p)
+	return nil, false
 }
 
 func (r Reader) declaredReceiverPathType(p path.Path) (typ.Type, bool) {

@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/type/access"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // RuntimeIndex projects a dynamic-index read from the type witnesses carried
@@ -21,8 +22,11 @@ func (c *Cache) RuntimeIndex(reg *axis.Registry, tableValue, keyValue product.Va
 func runtimeIndex(reg *axis.Registry, tableValue, keyValue product.Value, cache *Cache) (product.Value, bool) {
 	tableType, tableOK := cache.TypeOf(reg, tableValue)
 	keyType, keyOK := cache.TypeOf(reg, keyValue)
-	if !tableOK || !keyOK || tableType == nil || keyType == nil {
+	if !tableOK || tableType == nil {
 		return product.Value{}, false
+	}
+	if !keyOK || keyType == nil {
+		keyType = typ.Unknown
 	}
 	projected, ok := access.RuntimeIndex(tableType, keyType)
 	if !ok || projected == nil {

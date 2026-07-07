@@ -99,6 +99,9 @@ func directCallArgumentSourceName(label string) string {
 }
 
 func directCallArgumentJudgmentMessage(display diagnosticDisplay, item judgment.Judgment, proof judgment.CallArgumentProofSummary, wording directCallArgumentWording, got, want typ.Type) string {
+	if callArgumentNilabilityShouldLead(proof, wording) {
+		return fmt.Sprintf("cannot pass %s as %s because it may be nil", wording.SourceName, wording.Role)
+	}
 	if proof.PrecisionBoundary {
 		return fmt.Sprintf("%s comes from any/unknown; no proof shows it is %s", wording.Subject, display.Type(want))
 	}
@@ -107,12 +110,6 @@ func directCallArgumentJudgmentMessage(display diagnosticDisplay, item judgment.
 	}
 	if want == nil {
 		return fmt.Sprintf("cannot prove %s satisfies parameter type unknown", wording.Subject)
-	}
-	if proof.MayBeNil {
-		if wording.SourceName != "" {
-			return fmt.Sprintf("cannot pass %s as %s because it may be nil", wording.SourceName, wording.Role)
-		}
-		return fmt.Sprintf("cannot pass %s because it may be nil", wording.Subject)
 	}
 	if proof.GenericConflict {
 		labels := directCallArgumentJudgmentEvidenceLabels(item, judgment.EvidenceAbstractFact)
@@ -153,11 +150,11 @@ func directCallArgumentTupleValueText(display diagnosticDisplay, got, want typ.T
 }
 
 func directCallArgumentJudgmentHelp(display diagnosticDisplay, proof judgment.CallArgumentProofSummary, wording directCallArgumentWording) string {
-	if proof.MayBeNil && wording.SourceName != "" {
-		return fmt.Sprintf("Guard `%s` with a nil check, provide a default argument value, or change the parameter type to accept nil.", wording.SourceName)
-	}
 	if proof.GenericConflict {
 		return directCallArgumentGenericConflictHelp(genericParamName(proof.GenericParam))
+	}
+	if callArgumentNilabilityShouldLead(proof, wording) {
+		return fmt.Sprintf("Guard `%s` with a nil check, provide a default argument value, or change the parameter type to accept nil.", wording.SourceName)
 	}
 	if proof.PrecisionBoundary {
 		return display.ArgumentValidationProofHelp(wording.SourceName)
@@ -171,13 +168,22 @@ func directCallArgumentJudgmentHelp(display diagnosticDisplay, proof judgment.Ca
 func directCallArgumentJudgmentEvidence(display diagnosticDisplay, item judgment.Judgment, proof judgment.CallArgumentProofSummary, wording directCallArgumentWording, primary diagnostic.Span) []diagnostic.Evidence {
 	got := item.Actual.ProjectedType
 	want := item.Expected.Type
+	if proof.PrecisionBoundary && (got == nil || typ.IsAny(got) || typ.IsUnknown(got)) {
+		got = typ.Any
+	}
 	if proof.GenericConflict {
 		return directCallArgumentGenericConflictEvidence(display, item, wording, primary, genericParamName(proof.GenericParam), got, want)
 	}
 	expectedLabel := directCallArgumentExpectedLabel(item, wording.Subject)
 	missingProof := fmt.Sprintf("no proof on this path shows %s satisfies the parameter type", wording.MissingName)
-	if proof.MayBeNil && wording.SourceName != "" {
+	if proof.CallParamObligation {
+		missingProof = fmt.Sprintf("no proof on this path shows %s is %s", directCallArgumentSourceEvidenceLabel(proof, wording.MissingName), display.Type(want))
+	} else if callArgumentNilabilityShouldLead(proof, wording) {
 		missingProof = missingNonNilGuardHereMessage(wording.SourceName)
+	} else if proof.PrecisionBoundary {
+		// Precision-boundary evidence is the primary reason when an explicit
+		// any/unknown value reaches a contract. Nilability may also be visible,
+		// but it is not a validation proof for the parameter type.
 	} else if proof.MissingRequiredField != "" {
 		missingProof = display.MissingRequiredFieldEvidence(proof.MissingRequiredField)
 	} else if proof.MissingRequiredMethod {
@@ -186,11 +192,9 @@ func directCallArgumentJudgmentEvidence(display diagnosticDisplay, item judgment
 	} else if proof.MethodTypeMismatch {
 		detail := proof.MethodTypeMismatchDetail
 		missingProof = methodTypeMismatchEvidence(want, detail.Field, detail.ActualType, detail.FieldType)
-	} else if proof.CallParamObligation {
-		missingProof = fmt.Sprintf("no proof on this path shows %s is %s", directCallArgumentSourceEvidenceLabel(proof, wording.MissingName), display.Type(want))
 	}
 	missingProofReason := diagnostic.EvidenceReasonUnspecified
-	if proof.PrecisionBoundary {
+	if proof.PrecisionBoundary && !callArgumentNilabilityShouldLead(proof, wording) {
 		missingProofReason = diagnostic.EvidenceReasonBoundaryValidationMissing
 	}
 	missingProofTrust := diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceMissingProof, missingProofTrustFromJudgment(item.Verdict))
@@ -242,6 +246,12 @@ func directCallArgumentJudgmentEvidence(display diagnosticDisplay, item judgment
 		Message: missingProof,
 	})
 	return evidence
+}
+
+func callArgumentNilabilityShouldLead(proof judgment.CallArgumentProofSummary, wording directCallArgumentWording) bool {
+	return proof.MayBeNil &&
+		wording.SourceName != "" &&
+		(!proof.PrecisionBoundary || proof.MayBeNilFromExpandedSource)
 }
 
 func directCallArgumentUserAssertionEvidence(item judgment.Judgment) []diagnostic.Evidence {

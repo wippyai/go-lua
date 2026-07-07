@@ -166,6 +166,8 @@ const (
 	EvidenceDetailCallParamObligation
 	EvidenceDetailAssignmentSourceContribution
 	EvidenceDetailAssignmentCallInvalidation
+	EvidenceDetailAssignmentParentActual
+	EvidenceDetailAssignmentParentExpected
 	EvidenceDetailDynamicAssignmentTarget
 	EvidenceDetailUserAssertedAny
 	EvidenceDetailCallResultAssignment
@@ -211,30 +213,31 @@ const (
 
 // EvidenceDetail carries renderer-independent detail for one evidence node.
 type EvidenceDetail struct {
-	Kind          EvidenceDetailKind
-	Field         string
-	FieldType     typ.Type
-	ActualType    typ.Type
-	Param         string
-	Callable      bool
-	MemberAccess  bool
-	ExpectedCount int
-	ActualCount   int
-	FunctionName  string
-	SubjectLabel  string
-	ProviderLabel string
-	MemberParam   int
-	ResultIndex   int
-	UnderSupplied bool
-	Resource      string
-	Protocol      string
-	CurrentState  string
-	FromState     string
-	ToState       string
-	FinalState    string
-	CaseList      string
-	Message       string
-	Always        bool
+	Kind           EvidenceDetailKind
+	Field          string
+	FieldType      typ.Type
+	ActualType     typ.Type
+	Param          string
+	Callable       bool
+	MemberAccess   bool
+	ExpectedCount  int
+	ActualCount    int
+	FunctionName   string
+	SubjectLabel   string
+	ProviderLabel  string
+	MemberParam    int
+	ResultIndex    int
+	UnderSupplied  bool
+	ExpandedSource bool
+	Resource       string
+	Protocol       string
+	CurrentState   string
+	FromState      string
+	ToState        string
+	FinalState     string
+	CaseList       string
+	Message        string
+	Always         bool
 }
 
 func RedundantConditionCheckEvidenceDetail(message string, always bool) EvidenceDetail {
@@ -442,6 +445,26 @@ func AssignmentCallInvalidationEvidenceDetail(callLabel, invalidatedLabel, readL
 		ProviderLabel: callLabel,
 		Field:         invalidatedLabel,
 		SubjectLabel:  readLabel,
+	}
+}
+
+// AssignmentParentActualEvidenceDetail records the source object that produced
+// a projected member-assignment obligation.
+func AssignmentParentActualEvidenceDetail(label string, t typ.Type) EvidenceDetail {
+	return EvidenceDetail{
+		Kind:         EvidenceDetailAssignmentParentActual,
+		SubjectLabel: label,
+		FieldType:    t,
+	}
+}
+
+// AssignmentParentExpectedEvidenceDetail records the enclosing declared target
+// type for a projected member-assignment obligation.
+func AssignmentParentExpectedEvidenceDetail(label string, t typ.Type) EvidenceDetail {
+	return EvidenceDetail{
+		Kind:         EvidenceDetailAssignmentParentExpected,
+		SubjectLabel: label,
+		FieldType:    t,
 	}
 }
 

@@ -54,6 +54,7 @@ type Config struct {
 	Signatures                   signaturelookup.Source
 	ModuleExports                importlookup.Source
 	ModuleTypes                  typelookup.Source
+	MethodReceiverTypes          map[symbol.ID]typ.Type
 
 	Visibility *visibility.Resolver
 
@@ -195,6 +196,7 @@ type Result struct {
 	stateLanes            []state.LaneID
 	functions             []*Result
 	callContext           bool
+	bodyParamObligations  bool
 	funcTypes             FunctionValueTypes
 	callExprPts           map[*ast.FuncCallExpr]cfg.Point
 

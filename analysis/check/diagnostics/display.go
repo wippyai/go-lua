@@ -287,7 +287,7 @@ func argumentTypeMismatchHelpForEvidence(subject string, argName string, got typ
 }
 
 func evidenceNeedsValidationProof(got typ.Type, evidence []diagnostic.Evidence) bool {
-	if topLikeType(got) {
+	if typ.AbsentOrTopLike(got) {
 		return true
 	}
 	for _, item := range evidence {

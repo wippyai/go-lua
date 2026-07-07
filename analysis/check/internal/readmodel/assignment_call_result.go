@@ -37,6 +37,7 @@ func (r Reader) assignmentCallResultSource(source sourceprovenance.ASTSource) re
 			Present:      true,
 			CallableName: name,
 			ResultIndex:  source.ResultIndex,
+			ReturnSpan:   contract.Source.ResultSpan(source.ResultIndex),
 		}
 	}
 	return readapi.CallResultAssignmentSource{

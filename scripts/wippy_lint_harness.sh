@@ -15,6 +15,8 @@ WIPPY_BIN="${WIPPY_BIN:-$OUT_DIR/wippy}"
 GOCACHE="${GOCACHE:-/tmp/go-build-cache-wippy-golua}"
 GOMODCACHE="${GOMODCACHE:-/tmp/go-mod-cache-wippy-golua}"
 LINT_TIMEOUT="${LINT_TIMEOUT:-180s}"
+LINT_RSS_LIMIT_MB="${LINT_RSS_LIMIT_MB:-6144}"
+LINT_RSS_POLL_SECONDS="${LINT_RSS_POLL_SECONDS:-1}"
 LINT_SAMPLE_LIMIT="${LINT_SAMPLE_LIMIT:-3}"
 LINT_EXTRA_FLAGS="${LINT_EXTRA_FLAGS:-}"
 LINT_NAMESPACE_MODE="${LINT_NAMESPACE_MODE:-auto}"
@@ -213,6 +215,82 @@ run_timeout() {
 	fi
 }
 
+lint_timeout_seconds() {
+	case "$LINT_TIMEOUT" in
+		"")
+			printf '0\n'
+			;;
+		*s)
+			printf '%s\n' "${LINT_TIMEOUT%s}"
+			;;
+		*m)
+			printf '%s\n' "$(( ${LINT_TIMEOUT%m} * 60 ))"
+			;;
+		*h)
+			printf '%s\n' "$(( ${LINT_TIMEOUT%h} * 3600 ))"
+			;;
+		*[!0-9]*)
+			printf '0\n'
+			;;
+		*)
+			printf '%s\n' "$LINT_TIMEOUT"
+			;;
+	esac
+}
+
+run_lint_to_log() {
+	local target="$1"
+	local raw_log="$2"
+	local lock_file="$3"
+	shift 3
+	local -a flags=("$@")
+	local rss_limit_kb=$((LINT_RSS_LIMIT_MB * 1024))
+	local tmp_log="${raw_log}.tmp"
+	local pid
+	local cmd_status
+	local timeout_seconds
+	local start_seconds
+
+	timeout_seconds="$(lint_timeout_seconds)"
+	start_seconds="$SECONDS"
+
+	(
+		cd "$target" || exit 2
+		if [[ -n "$lock_file" ]]; then
+			exec "$WIPPY_BIN" lint --cache-reset --json "${flags[@]}" --lock-file "$lock_file"
+		fi
+		exec "$WIPPY_BIN" lint --cache-reset --json "${flags[@]}"
+	) >"$tmp_log" 2>&1 &
+	pid=$!
+
+	while kill -0 "$pid" 2>/dev/null; do
+		if [[ "$timeout_seconds" -gt 0 && $((SECONDS - start_seconds)) -ge "$timeout_seconds" ]]; then
+			printf '\nlint killed: timeout=%s elapsed=%ss\n' "$LINT_TIMEOUT" "$((SECONDS - start_seconds))" >>"$tmp_log"
+			kill "$pid" 2>/dev/null || true
+			wait "$pid" 2>/dev/null || true
+			tr -d '\r' <"$tmp_log" >"$raw_log"
+			return 124
+		fi
+		if [[ "$LINT_RSS_LIMIT_MB" -gt 0 ]]; then
+			local rss
+			rss="$(ps -o rss= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
+			if [[ -n "$rss" && "$rss" -gt "$rss_limit_kb" ]]; then
+				printf '\nlint killed: rss=%sKB exceeded limit=%sMB\n' "$rss" "$LINT_RSS_LIMIT_MB" >>"$tmp_log"
+				kill "$pid" 2>/dev/null || true
+				wait "$pid" 2>/dev/null || true
+				tr -d '\r' <"$tmp_log" >"$raw_log"
+				return 124
+			fi
+		fi
+		sleep "$LINT_RSS_POLL_SECONDS"
+	done
+
+	wait "$pid"
+	cmd_status=$?
+	tr -d '\r' <"$tmp_log" >"$raw_log"
+	return "$cmd_status"
+}
+
 [[ -d "$GO_LUA_DIR" ]] || die "missing go-lua directory: $GO_LUA_DIR"
 [[ -d "$WIPPY_DIR" ]] || die "missing Wippy directory: $WIPPY_DIR"
 
@@ -220,7 +298,7 @@ section "harness"
 printf 'go-lua: %s\n' "$GO_LUA_DIR"
 printf 'wippy:  %s\n' "$WIPPY_DIR"
 printf 'out:    %s\n' "$OUT_DIR"
-printf 'limits: timeout=%s GOMEMLIMIT=%s GOGC=%s strict=%s install=%s ns=%s\n' "$LINT_TIMEOUT" "$GOMEMLIMIT" "$GOGC" "$STRICT" "$RUN_WIPPY_INSTALL" "$LINT_NAMESPACE_MODE"
+printf 'limits: timeout=%s rss=%sMB GOMEMLIMIT=%s GOGC=%s strict=%s install=%s ns=%s\n' "$LINT_TIMEOUT" "$LINT_RSS_LIMIT_MB" "$GOMEMLIMIT" "$GOGC" "$STRICT" "$RUN_WIPPY_INSTALL" "$LINT_NAMESPACE_MODE"
 
 if [[ "$REQUIRE_LOCAL_REPLACE" == "1" ]]; then
 	replace_line="replace github.com/wippyai/go-lua => $GO_LUA_DIR"
@@ -302,15 +380,10 @@ for spec in "${TARGET_SPECS[@]}"; do
 	fi
 
 	set +e
-	if [[ -n "$lock_file" ]]; then
-		raw="$(cd "$target" && run_timeout "$WIPPY_BIN" lint --cache-reset --json "${extra_flags[@]}" --lock-file "$lock_file" 2>&1 | tr -d '\r')"
-	else
-		raw="$(cd "$target" && run_timeout "$WIPPY_BIN" lint --cache-reset --json "${extra_flags[@]}" 2>&1 | tr -d '\r')"
-	fi
+	run_lint_to_log "$target" "$raw_log" "$lock_file" "${extra_flags[@]}"
 	cmd_status=$?
 	set -e
 
-	printf '%s\n' "$raw" >"$raw_log"
 	extract_json_line "$raw_log" >"$json_log" || true
 
 	errors="$(json_count "$json_log" error_count || true)"

@@ -16,7 +16,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
-	sourcepos "github.com/wippyai/go-lua/compiler/source"
 )
 
 type wirTableExprRefKey struct {
@@ -42,6 +41,26 @@ func (l *lowerer) objectLiteralEntriesFromWIR(inst wir.Instruction) []factflow.O
 		))
 	}
 	return entries
+}
+
+func (l *lowerer) objectLiteralListElementSourceFromWIR(inst wir.Instruction) (factflow.ValueSource, bool) {
+	if !inst.ListSpread || l == nil || l.wir == nil {
+		return factflow.ValueSource{}, false
+	}
+	ops := l.wir.Operands(inst.List)
+	if len(ops) == 0 {
+		return factflow.ValueSource{}, false
+	}
+	resultSources := l.resultValueSourcesByTempFromWIR()
+	return l.valueSourceFromWIROperand(
+		ops[len(ops)-1],
+		len(ops)-1,
+		factflow.NoValueSourceIndex,
+		true,
+		true,
+		true,
+		resultSources,
+	)
 }
 
 func (l *lowerer) objectEntryValueSourceFromWIR(point cfg.Point, op wir.Operand, resultSources map[uint32]wirResultSource) (factflow.ValueSource, bool) {
@@ -110,6 +129,9 @@ func (l *lowerer) addObjectLiteralFromWIR(input *factflow.FactsInput, inst wir.I
 	}
 	lowered := factflow.NewObjectLiteral(l.objectLiteralEntriesFromWIR(inst)).
 		WithIdentity(identity.LuaTableLiteral(l.graphID, uint64(exprRef)))
+	if source, ok := l.objectLiteralListElementSourceFromWIR(inst); ok {
+		lowered = lowered.WithListElementSource(source)
+	}
 	if expected, ok := l.wirObjectLiteralExpectedType(inst, expr); ok {
 		lowered = l.objectLiteralWithExpectedType(lowered, expected)
 	}
@@ -159,6 +181,9 @@ func (l *lowerer) objectLiteralWithExtraWIREntries(lit factflow.ObjectLiteral, e
 	if !ok {
 		return lit
 	}
+	if source, ok := l.objectLiteralListElementSourceFromWIR(inst); ok {
+		lit = lit.WithListElementSource(source)
+	}
 	existing := make([]path.Path, 0, len(lit.Entries()))
 	for _, entry := range lit.Entries() {
 		existing = append(existing, entry.Suffix())
@@ -175,6 +200,9 @@ func (l *lowerer) objectLiteralWithExtraWIREntries(lit factflow.ObjectLiteral, e
 	}
 	entries := append(lit.Entries(), extras...)
 	out := factflow.NewObjectLiteral(entries)
+	if source, ok := lit.ListElementSource(); ok {
+		out = out.WithListElementSource(source)
+	}
 	if id, ok := lit.Identity(); ok {
 		out = out.WithIdentity(id)
 	}
@@ -433,7 +461,7 @@ func (l *lowerer) addNestedObjectLiteralExpectedTypes(input *factflow.FactsInput
 		if !ok {
 			continue
 		}
-		projected, ok := luatypeprojection.ApplyConstructorSegments(rootType, entry.Suffix().Segments)
+		projected, ok := luatypeprojection.ExpectedConstructorEntryType(rootType, entry.Suffix().Segments)
 		if !ok || projected == nil || !luatypeprojection.ReachesTableContract(projected) {
 			continue
 		}
@@ -490,7 +518,10 @@ func (l *lowerer) addReturnObjectLiteralExpectedTypes(input *factflow.FactsInput
 		if !ok {
 			continue
 		}
-		input.ObjectLiterals[exprRef] = l.objectLiteralWithExpectedType(lit, declaredType)
+		updated := l.objectLiteralWithExpectedType(lit, declaredType)
+		input.ObjectLiterals[exprRef] = updated
+		l.setObjectLiteralExpectedExpressionValue(exprRef, updated, declaredType)
+		l.addNestedObjectLiteralExpectedTypes(input, updated, declaredType)
 	}
 }
 
@@ -701,7 +732,7 @@ func sourceSpan(span semantics.SourceSpan) factflow.SourceSpan {
 	}
 }
 
-func sourceSpanFromWIR(span sourcepos.Span) factflow.SourceSpan {
+func sourceSpanFromWIR(span wir.Span) factflow.SourceSpan {
 	return factflow.SourceSpan{
 		StartLine: span.StartLine,
 		StartCol:  span.StartCol,
@@ -715,7 +746,7 @@ func (l *lowerer) objectLiteralWithExpectedType(lit factflow.ObjectLiteral, decl
 	root := l.valueFromTypeWithWitness(rootType)
 	entries := lit.Entries()
 	for i, entry := range entries {
-		projected, ok := luatypeprojection.ApplyConstructorSegments(rootType, entry.Suffix().Segments)
+		projected, ok := luatypeprojection.ExpectedConstructorEntryType(rootType, entry.Suffix().Segments)
 		if !ok || projected == nil {
 			continue
 		}

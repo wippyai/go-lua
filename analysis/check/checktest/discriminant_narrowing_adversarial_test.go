@@ -40,17 +40,69 @@ end
 	}
 }
 
+func TestNestedDiscriminantGuardNarrowsAliasPayload(t *testing.T) {
+	result := Check(`
+type FileSlot = { kind: "file", path: string }
+type TimerSlot = { kind: "timer", seconds: number }
+type Slot = { value: FileSlot | TimerSlot }
+
+local slot: Slot = { value = { kind = "file", path = "/tmp/active" } }
+local alias = slot
+
+if alias.value.kind == "file" then
+    local path: string = alias.value.path
+    alias.value = { kind = "timer", seconds = 5 }
+    local stale_path: string = slot.value.path
+end
+`)
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeMissingMember,
+		DiagnosticCount: 1,
+		Line:            12,
+		MessageContains: []string{"has no member \"path\""},
+	})
+}
+
+func TestStaticMapEntryAliasKeepsNestedDiscriminantGuard(t *testing.T) {
+	result := Check(`
+type FileSlot = { kind: "file", path: string }
+type TimerSlot = { kind: "timer", seconds: number }
+type Slot = { value: FileSlot | TimerSlot }
+type Slots = {[string]: Slot}
+
+local slots: Slots = {
+    active = {
+        value = { kind = "file", path = "/tmp/active" },
+    },
+}
+local alias = slots.active
+
+if alias.value.kind == "file" then
+    local before: string = alias.value.path
+    alias.value = { kind = "timer", seconds = 5 }
+    local stale_path: string = slots.active.value.path
+end
+`)
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeMissingMember,
+		DiagnosticCount: 1,
+		Line:            17,
+		MessageContains: []string{"has no member \"path\""},
+	})
+}
+
 func TestTypeGuardElseNarrowsCallArgument(t *testing.T) {
 	result := Check(`
 local function need_string(s: string): string
     return s
 end
 
-local v: number | string = 5
-if type(v) == "number" then
-    return ""
-else
-    return need_string(v)
+local function f(v: number | string): string
+    if type(v) == "number" then
+        return ""
+    else
+        return need_string(v)
+    end
 end
 `)
 	if len(result.Diagnostics) != 0 {
@@ -64,18 +116,19 @@ local function need_number(n: number): number
     return n
 end
 
-local v: number | string = 5
-if type(v) == "number" then
-    return 0
-else
-    return need_number(v)
+local function f(v: number | string): number
+    if type(v) == "number" then
+        return 0
+    else
+        return need_number(v)
+    end
 end
 `)
 	requireDiagnostic(t, result, diagnosticExpectation{
 		Code:            diagnostics.CodeDirectCallArgType,
 		DiagnosticCount: 1,
 		Line:            10,
-		Column:          24,
+		Column:          28,
 		MessageContains: []string{"argument 1 (v) is string", "not number"},
 		EvidenceMin:     2,
 		EvidenceContains: []string{

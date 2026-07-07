@@ -1,6 +1,7 @@
 package checktest
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
@@ -12,6 +13,22 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
+
+func hasDiagnosticContaining(diagnostics []diagnostic.Diagnostic, parts ...string) bool {
+	for _, diag := range diagnostics {
+		ok := true
+		for _, part := range parts {
+			if !strings.Contains(diag.Message, part) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
+}
 
 func TestCheckExportedNestedConstantTableSurvivesRequire(t *testing.T) {
 	consts := CheckAndExport(`
@@ -71,6 +88,194 @@ end
 `, WithStdlib())
 	if len(result.Diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want none for type-guarded local copy", result.Diagnostics)
+	}
+}
+
+func TestCheckImportedWebsocketChannelSelectPreservesMessageDataAssertion(t *testing.T) {
+	messageType := typetable.NewRecord().
+		Field("type", typ.String).
+		Field("data", typeexpr.Optional(typ.String)).
+		Build()
+	clientType := typ.NewInterface("websocket.Client", []typ.Method{
+		{Name: "send", Type: typ.Func().Param("self", typ.Self).Param("message", typ.String).Build()},
+		{Name: "channel", Type: typ.Func().Param("self", typ.Self).Returns(typ.Instantiate(ambient.ChannelGeneric(), messageType)).Build()},
+	})
+	websocket := manifest.New("websocket")
+	websocket.DefineType("Client", clientType)
+	websocket.SetExport(typetable.NewRecord().
+		Field("connect", typ.Func().Param("url", typ.String).Returns(clientType, typeexpr.Optional(typ.Any)).Build()).
+		Build())
+
+	result := Check(`
+local websocket = require("websocket")
+local channel = require("channel")
+
+local json = {}
+function json.decode(src: string): any
+    return {}
+end
+
+local function consume(deadline: unknown): ()
+    local client, err = websocket.connect("ws://localhost")
+    if err then
+        return
+    end
+    local ch = client:channel()
+    local result = channel.select {
+        ch:case_receive(),
+        deadline:case_receive(),
+    }
+    if result.channel == deadline then
+        return
+    end
+    local msg = result.value
+    json.decode(msg.data!)
+end
+`, WithStdlib(), WithManifest("channel", ChannelManifest()), WithManifest("websocket", websocket), WithGlobals("channel"))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want imported websocket channel payload to preserve Message.data through select and ! assertion", result.Diagnostics)
+	}
+}
+
+func TestCheckTypedStringMapReadWithAnyKeyKeepsValueTypeAfterNilGuard(t *testing.T) {
+	result := Check(`
+type CaseStats = {
+    passed: number,
+    failed: number,
+    skipped: number,
+}
+
+local function summarize(case_stats: {[string]: CaseStats}, entry: any): CaseStats
+    local suite_stats: CaseStats = { passed = 0, failed = 0, skipped = 0 }
+    local cs = case_stats[entry.id]
+    if cs then
+        suite_stats.passed = suite_stats.passed + cs.passed
+        suite_stats.failed = suite_stats.failed + cs.failed
+        suite_stats.skipped = suite_stats.skipped + cs.skipped
+    end
+    return suite_stats
+end
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want typed map value to survive dynamic any key after nil guard", result.Diagnostics)
+	}
+}
+
+func TestCheckTypedStringMapReadWithCastedAnyKeyKeepsValueTypeAfterNilGuard(t *testing.T) {
+	result := Check(`
+type CaseStats = {
+    passed: number,
+    failed: number,
+    skipped: number,
+}
+
+type TestEntry = {
+    id: string,
+}
+
+local function summarize(case_stats: {[string]: CaseStats}, entries: {TestEntry}): CaseStats
+    local suite_stats: CaseStats = { passed = 0, failed = 0, skipped = 0 }
+    for _, entry in ipairs(entries) do
+        local cs = case_stats[(entry :: any).id]
+        if cs then
+            suite_stats.passed = suite_stats.passed + cs.passed
+            suite_stats.failed = suite_stats.failed + cs.failed
+            suite_stats.skipped = suite_stats.skipped + cs.skipped
+        end
+    end
+    return suite_stats
+end
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want typed map value to survive casted dynamic any key after nil guard", result.Diagnostics)
+	}
+}
+
+func TestCheckCapturedTypedStringMapReadKeepsValueTypeAfterClosureWrites(t *testing.T) {
+	result := Check(`
+type CaseStats = {
+    passed: number,
+    failed: number,
+    skipped: number,
+}
+
+type TestEntry = {
+    id: string,
+}
+
+local coroutine = {}
+function coroutine.spawn(fn: () -> ()): () end
+
+local function summarize(entries: {TestEntry}): CaseStats
+    local case_stats: {[string]: CaseStats} = {}
+    coroutine.spawn(function()
+        local ref_id = "case"
+        if ref_id ~= "" and not case_stats[ref_id] then
+            case_stats[ref_id] = { passed = 0, failed = 0, skipped = 0 }
+        end
+        local cs = case_stats[ref_id]
+        if cs then
+            cs.passed = cs.passed + 1
+        end
+    end)
+
+    local suite_stats: CaseStats = { passed = 0, failed = 0, skipped = 0 }
+    for _, entry in ipairs(entries) do
+        local cs = case_stats[(entry :: any).id]
+        if cs then
+            suite_stats.passed = suite_stats.passed + cs.passed
+            suite_stats.failed = suite_stats.failed + cs.failed
+            suite_stats.skipped = suite_stats.skipped + cs.skipped
+        end
+    end
+    return suite_stats
+end
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want captured typed map value to survive closure writes and dynamic key guard", result.Diagnostics)
+	}
+}
+
+func TestCheckTypedArrayInsertObjectLiteralRejectsAnyFieldContract(t *testing.T) {
+	result := Check(`
+type CaseStats = {
+    passed: number,
+    failed: number,
+    skipped: number,
+}
+
+type TestEntry = {
+    id: string,
+}
+
+type SuiteGroup = {
+    name: string,
+    tests: {any},
+}
+
+local function summarize(suites: any, names: {string}): CaseStats
+    local ordered: {SuiteGroup} = {}
+    for _, name in ipairs(names) do
+        table.insert(ordered, { name = name, tests = suites[name] })
+    end
+
+    local case_stats: {[string]: CaseStats} = {}
+    local suite_stats: CaseStats = { passed = 0, failed = 0, skipped = 0 }
+    for _, suite in ipairs(ordered) do
+        for _, entry in ipairs(suite.tests) do
+            local cs = case_stats[(entry :: any).id]
+            if cs then
+                suite_stats.passed = suite_stats.passed + cs.passed
+                suite_stats.failed = suite_stats.failed + cs.failed
+                suite_stats.skipped = suite_stats.skipped + cs.skipped
+            end
+        end
+    end
+    return suite_stats
+end
+`, WithStdlib())
+	if !hasDiagnosticContaining(result.Diagnostics, "suites[name]", "no proof shows it is any[]") {
+		t.Fatalf("diagnostics = %#v, want any field rejected before entering SuiteGroup.tests array contract", result.Diagnostics)
 	}
 }
 
@@ -139,6 +344,113 @@ end
 `, WithStdlib(), WithModule("assert2", assertMod))
 	if len(result.Diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want imported runtime assertion to refine result.err even when result root is any", result.Diagnostics)
+	}
+}
+
+func TestCheckImportedTypeAssertRefinesMemberPathFromCallResultAny(t *testing.T) {
+	assertMod := CheckAndExport(`
+local M = {}
+
+function M.is_string(value, msg)
+    if type(value) ~= "string" then
+        error(msg or "expected string", 2)
+    end
+    return value
+end
+
+function M.not_nil(value, msg)
+    if value == nil then
+        error(msg or "expected value", 2)
+    end
+    return value
+end
+
+return M
+`, "assert2", WithStdlib())
+	if len(assertMod.Errors) != 0 {
+		t.Fatalf("assert module diagnostics = %#v, want clean helper export", assertMod.Errors)
+	}
+
+	result := Check(`
+local assert = require("assert2")
+
+local funcs = {}
+function funcs.new(): any
+    return {
+        call = function(self): (any, string?)
+            return { err = "not allowed" }, nil
+        end,
+    }
+end
+
+local function check(): boolean
+    local result, call_err = funcs.new():call()
+    assert.not_nil(result, "result")
+    assert.is_string(result.err, "error must be string, got " .. type(result.err))
+    local hit = string.find(result.err, "not allowed", 1, true)
+        or string.find(result.err, "network", 1, true)
+    return hit ~= nil
+end
+`, WithStdlib(), WithModule("assert2", assertMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want imported runtime assertion to refine call-result member path", result.Diagnostics)
+	}
+}
+
+func TestCheckImportedEqualityAssertOnTypeCallRefinesMemberPath(t *testing.T) {
+	assertMod := CheckAndExport(`
+local M = {}
+
+function M.eq(actual, expected, msg)
+    if actual ~= expected then
+        error(msg or "not equal", 2)
+    end
+end
+
+function M.not_nil(value, msg)
+    if value == nil then
+        error(msg or "expected value", 2)
+    end
+    return value
+end
+
+return M
+`, "assert2", WithStdlib())
+	if len(assertMod.Errors) != 0 {
+		t.Fatalf("assert module diagnostics = %#v, want clean helper export", assertMod.Errors)
+	}
+
+	registryMod := CheckAndExport(`
+local M = {}
+
+function M.get(id: string): (any, string?)
+    return { id = id }, nil
+end
+
+function M.parse_id(id: string): {ns: string, name: string}
+    return { ns = "app.lib", name = id }
+end
+
+return M
+`, "registry", WithStdlib())
+	if len(registryMod.Errors) != 0 {
+		t.Fatalf("registry module diagnostics = %#v, want clean helper export", registryMod.Errors)
+	}
+
+	result := Check(`
+local assert = require("assert2")
+local registry = require("registry")
+
+local function check(): string
+    local entry, err = registry.get("app.lib:assert")
+    assert.not_nil(entry, "entry")
+    assert.eq(type(entry.id), "string", "id is string")
+    local id = registry.parse_id(entry.id)
+    return id.ns
+end
+`, WithStdlib(), WithModule("assert2", assertMod), WithModule("registry", registryMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want equality assertion on type(entry.id) to refine entry.id to string", result.Diagnostics)
 	}
 }
 
@@ -792,6 +1104,46 @@ end
 `, WithStdlib())
 	if len(result.Diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want separate __index methods table to surface data on implicit self", result.Diagnostics)
+	}
+}
+
+func TestCheckSeparateMetatableIndexMethodSelfFlowsThroughOptionObjectLiteral(t *testing.T) {
+	result := Check(`
+local methods = {}
+local mt = { __index = methods }
+
+type RouteTarget = {
+    node_id: string?,
+}
+
+type DataOptions = {
+    node_id: string?,
+}
+
+type NodeInstance = {
+    node_id: string,
+    targets: {RouteTarget},
+}
+
+local function new_node()
+    local instance: NodeInstance = { node_id = "n1", targets = {} }
+    return setmetatable(instance, mt), nil
+end
+
+function methods:data(data_type: string, content: unknown, options: DataOptions?): (NodeInstance, string?)
+    return self, nil
+end
+
+function methods:route(content: unknown): ()
+    for _, target in ipairs(self.targets) do
+        self:data("output", content, {
+            node_id = target.node_id or self.node_id,
+        })
+    end
+end
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want metatable self node_id to type option object literal", result.Diagnostics)
 	}
 }
 
@@ -2471,6 +2823,36 @@ end
 `, WithStdlib())
 	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDirectCallArgType) {
 		t.Fatalf("diagnostics = %#v, want length expression to prove integer capacity", result.Diagnostics)
+	}
+}
+
+func TestCheckImportedEqTypeTableNarrowsLengthOperand(t *testing.T) {
+	testMod := CheckAndExport(`
+local M = {}
+
+function M.eq(actual, expected, msg)
+    if actual ~= expected then
+        error(msg or "assertion failed", 2)
+    end
+end
+
+return M
+`, "test", WithStdlib())
+	if len(testMod.Errors) != 0 {
+		t.Fatalf("test module diagnostics = %#v, want none", testMod.Errors)
+	}
+
+	result := Check(`
+local test = require("test")
+
+local values: {string}? = { "alpha", "beta" }
+test.eq(type(values), "table", "values should be a table")
+
+local count: number = #values
+local first: string = values[1]
+`, WithStdlib(), WithModule("test", testMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want imported eq table proof to narrow length and index reads", result.Diagnostics)
 	}
 }
 
@@ -5075,5 +5457,140 @@ end
 `, WithStdlib(), WithManifest("contract", contract))
 	if len(result.Diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want module-local literal string constant to satisfy imported string parameter", result.Diagnostics)
+	}
+}
+
+func TestCheckReadonlyArrayIndexSatisfiesOptionalReturn(t *testing.T) {
+	result := Check(`
+local function get_first(arr: readonly {number}): number?
+    return arr[1]
+end
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want readonly array index to project as optional element type", result.Diagnostics)
+	}
+}
+
+func TestCheckTypedVarargArrayIPairsKeepsElementType(t *testing.T) {
+	result := Check(`
+local function sum(...: number): number
+    local total: number = 0
+    for _, v in ipairs({...}) do
+        total = total + v
+    end
+    return total
+end
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want ipairs over typed vararg array literal to keep vararg element type", result.Diagnostics)
+	}
+}
+
+func TestCheckStdlibSelectCountIgnoresImportedChannelSelectSignature(t *testing.T) {
+	channelMod := manifest.New("channel")
+	channelMod.SetExport(typetable.NewRecord().
+		Field("select", typ.Func().
+			Param("cases", typ.NewArray(typ.Any)).
+			OptParam("default", typ.Boolean).
+			Returns(typ.Any).
+			Build()).
+		Build())
+	channelMod.DefineFunctionSignature("select", signature.Function{
+		Type: typ.Func().
+			Param("cases", typ.NewArray(typ.Any)).
+			OptParam("default", typ.Boolean).
+			Returns(typ.Any).
+			Build(),
+	})
+
+	result := Check(`
+local channel = require("channel")
+
+local function count(...: any): number
+    return select("#", ...)
+end
+`, WithStdlib(), WithManifest("channel", channelMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want bare stdlib select count to ignore module-scoped channel.select signature", result.Diagnostics)
+	}
+}
+
+func TestCheckLocalIteratorFunctionCarriesYieldedRecordType(t *testing.T) {
+	result := Check(`
+type Entry = { name: string, type: string }
+
+local function readdir(path: string): (fun(state: any): Entry?, any)
+    local entries: {Entry} = {
+        { name = path, type = "file" },
+    }
+    local i = 0
+    return function(state: any): Entry?
+        i = i + 1
+        return entries[i]
+    end, nil
+end
+
+local function collect(path: string): {[string]: string}
+    local iter, state = readdir(path)
+    local out: {[string]: string} = {}
+    for entry in iter, state do
+        out[entry.name] = entry.type
+    end
+    return out
+end
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want local iterator function to carry yielded record type into generic-for body", result.Diagnostics)
+	}
+}
+
+func TestCheckImportedMethodIteratorFunctionCarriesYieldedRecordType(t *testing.T) {
+	fsMod := manifest.New("fs")
+	entryType := typetable.NewRecord().
+		Field("name", typ.String).
+		Field("type", typ.String).
+		Build()
+	iterType := typ.Func().
+		Param("state", typ.Any).
+		Returns(typeexpr.Optional(entryType)).
+		Build()
+	fsType := typ.NewInterface("fs.FS", []typ.Method{
+		{Name: "readdir", Type: typ.Func().
+			Param("self", typ.Self).
+			Param("path", typ.String).
+			Returns(iterType, typ.Any).
+			Build()},
+	})
+	fsMod.SetExport(typetable.NewRecord().
+		Field("get", typ.Func().
+			Param("name", typ.String).
+			Returns(fsType, typeexpr.Optional(typ.String)).
+			Build()).
+		Build())
+	fsMod.DefineFunctionSignature("fs.get", signature.Function{
+		Type: typ.Func().
+			Param("name", typ.String).
+			Returns(fsType, typeexpr.Optional(typ.String)).
+			Build(),
+	})
+
+	result := Check(`
+local fs = require("fs")
+
+local function collect(): {[string]: string}
+    local vol, err = fs.get("tmp")
+    if err then
+        return {}
+    end
+    local iter, state = vol:readdir("/")
+    local out: {[string]: string} = {}
+    for entry in iter, state do
+        out[entry.name] = entry.type
+    end
+    return out
+end
+`, WithStdlib(), WithManifest("fs", fsMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want imported method iterator to carry yielded record type into generic-for body", result.Diagnostics)
 	}
 }

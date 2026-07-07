@@ -4,15 +4,19 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factquery"
+	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -42,7 +46,16 @@ end`)
 		t.Fatalf("CheckChunk: %v", err)
 	}
 
-	loop := stmts[3].(*ast.GenericForStmt)
+	var loop *ast.GenericForStmt
+	for _, stmt := range stmts {
+		if candidate, ok := stmt.(*ast.GenericForStmt); ok {
+			loop = candidate
+			break
+		}
+	}
+	if loop == nil {
+		t.Fatal("generic-for statement not found")
+	}
 	local := loop.Stmts[0].(*ast.LocalAssignStmt)
 	point := requireLocalAssignmentPoint(t, result, local, 0)
 	got, ok := result.ExpressionValueAtBoundary(point, local.Exprs[0])
@@ -51,6 +64,38 @@ end`)
 	}
 	if gotEvidence := product.Get(reg, got, evidence.Key); !evidence.Equal(gotEvidence, evidence.ExplicitTop()) {
 		t.Fatalf("page.id evidence = %s, want %s", gotEvidence, evidence.ExplicitTop())
+	}
+}
+
+func TestGenericForIPairsElementCarriesObjectLiteralAnyFieldBeforeOrdinaryAssignment(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local raw: any = nil
+local pages = {
+	{ id = raw, route = "/ok" },
+}
+local accessible: {[string]: string} = {}
+for _, page in ipairs(pages) do
+	accessible[page.route] = page.id
+end`)
+
+	result, err := CheckChunk(stmts, Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	loop := stmts[3].(*ast.GenericForStmt)
+	assign := loop.Stmts[0].(*ast.AssignStmt)
+	point := requireOrdinaryAssignmentPoint(t, result, assign, 0)
+	got, ok := result.ExpressionValueBeforeBoundary(point, assign.Rhs[0])
+	if !ok {
+		t.Fatal("ExpressionValueBeforeBoundary(page.id) returned false")
+	}
+	if gotEvidence := product.Get(reg, got, evidence.Key); !evidence.Equal(gotEvidence, evidence.ExplicitTop()) {
+		t.Fatalf("page.id evidence before assignment = %s, want %s", gotEvidence, evidence.ExplicitTop())
 	}
 }
 
@@ -231,6 +276,75 @@ end`)
 	assertExpressionTypeAtBoundary(t, reg, result, local, typ.NewTypeParam("T", nil))
 }
 
+func TestGenericForIPairsUsesEntryStateRootTypeForSegmentedSource(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function route(self)
+	for _, target in ipairs(self.targets) do
+		local id = target.node_id
+	end
+end`)
+	bindings := bind.BindFunction(fn, bind.Options{Globals: []string{"ipairs"}})
+	prepared, err := PrepareBoundFunction(fn, bindings, Config{
+		Registry:   reg,
+		Globals:    []string{"ipairs"},
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("PrepareBoundFunction: %v", err)
+	}
+	self := mustParamSlot(t, bindings, fn, 0)
+	targetType := typetable.NewRecord().Field("node_id", typ.String).Build()
+	selfType := typetable.NewRecord().
+		Field("targets", typ.NewArray(targetType)).
+		Build()
+	entry := state.State{}.WriteValue(reg, statekey.SymbolValue(self.Symbol), typevalue.WithWitness(reg, typevalue.FromType(reg, selfType), selfType))
+
+	result, err := SolvePrepared(prepared, SolveConfig{EntryState: entry})
+	if err != nil {
+		t.Fatalf("SolvePrepared: %v", err)
+	}
+
+	loop := fn.Stmts[0].(*ast.GenericForStmt)
+	local := loop.Stmts[0].(*ast.LocalAssignStmt)
+	assertExpressionTypeAtBoundary(t, reg, result, local, typ.String)
+}
+
+func TestGenericForIPairsOptionalFieldFallbackIsString(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function collect(entries: {{ id: string, meta: { name: string? } }}): ()
+	for i, entry in ipairs(entries) do
+		local meta = entry.meta
+		local display_name = meta.name or ("Unnamed test " .. i)
+		local sink: string = display_name
+	end
+end`)
+	bindings := bind.BindFunction(fn, bind.Options{Globals: []string{"ipairs"}})
+	result, err := CheckBoundFunction(fn, bindings, Config{
+		Registry:   reg,
+		Globals:    []string{"ipairs"},
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckBoundFunction: %v", err)
+	}
+
+	loop := fn.Stmts[0].(*ast.GenericForStmt)
+	local := loop.Stmts[1].(*ast.LocalAssignStmt)
+	sink := loop.Stmts[2].(*ast.LocalAssignStmt)
+	point := requireLocalAssignmentPoint(t, result, sink, 0)
+	displayName := mustLocalAt(t, result, local, 0)
+	got, ok := result.SymbolValueAtBoundary(point, displayName)
+	if !ok {
+		t.Fatal("display_name symbol value missing before sink assignment")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("display_name type = %v/%v, want string", gotType, ok)
+	}
+}
+
 // TestGenericForLoopVarNegatedDiscriminantEdgeNarrowsRoot proves the else edge of
 // a discriminant equality guard narrows an un-annotated generic-for loop variable
 // to the complementary variant. The else-branch read item.payment_id must project
@@ -259,7 +373,16 @@ end`)
 		t.Fatalf("CheckChunk: %v", err)
 	}
 
-	loop := stmts[4].(*ast.GenericForStmt)
+	var loop *ast.GenericForStmt
+	for _, stmt := range stmts {
+		if candidate, ok := stmt.(*ast.GenericForStmt); ok {
+			loop = candidate
+			break
+		}
+	}
+	if loop == nil {
+		t.Fatal("generic-for statement not found")
+	}
 	ifStmt := loop.Stmts[0].(*ast.IfStmt)
 	elseLocal := ifStmt.Else[0].(*ast.LocalAssignStmt)
 	point := requireLocalAssignmentPoint(t, result, elseLocal, 0)
@@ -600,6 +723,94 @@ end`)
 	loop := stmts[3].(*ast.GenericForStmt)
 	local := loop.Stmts[0].(*ast.LocalAssignStmt)
 	assertExpressionTypeAtBoundary(t, reg, result, local, typ.String)
+}
+
+func TestGenericForIPairsTableInsertObjectLiteralKeepsConstructedSiblingField(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local entries = {}
+local failures = {}
+
+for _, entry in ipairs(entries) do
+	local label = "suite" .. "/" .. "name"
+	table.insert(failures, { label = label, error = entry.error })
+end
+
+for _, f in ipairs(failures) do
+	local label = f.label
+end`)
+
+	result, err := CheckChunk(stmts, Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	loop := stmts[3].(*ast.GenericForStmt)
+	local := loop.Stmts[0].(*ast.LocalAssignStmt)
+	point := requireLocalAssignmentPoint(t, result, local, 0)
+	value, ok := result.ExpressionValueAtBoundary(point, local.Exprs[0])
+	if !ok {
+		t.Fatal("ExpressionValueAtBoundary(f.label) returned false")
+	}
+	gotType, typeOK := result.ValueTypeWithPresence(value)
+	if !typeOK || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("f.label type = %v/%v, want string; evidence=%s runtime=%s presence=%s",
+			gotType, typeOK,
+			product.Get(reg, value, evidence.Key),
+			product.Get(reg, value, runtimekind.Key),
+			product.PresenceOf(value))
+	}
+	if gotEvidence := product.Get(reg, value, evidence.Key); !evidence.Equal(gotEvidence, evidence.Top()) {
+		t.Fatalf("f.label evidence = %s, want no untrusted top-origin evidence", gotEvidence)
+	}
+}
+
+func TestGenericForTableInsertSeesAnnotatedAccumulatorClaim(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type TestEntry = { id: string, name: string }
+local entries: any = nil
+local tests: {TestEntry} = {}
+
+for i, entry in ipairs(entries) do
+	local display_name = entry.meta.name or ("Unnamed test " .. i)
+	table.insert(tests, {
+		id = entry.id :: string,
+		name = display_name,
+	})
+end`)
+
+	result, err := CheckChunk(stmts, Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	testsSymbol := mustLocalAt(t, result, stmts[2].(*ast.LocalAssignStmt), 0)
+	loop := stmts[3].(*ast.GenericForStmt)
+	callStmt := loop.Stmts[1].(*ast.FuncCallStmt)
+	var callPoint cfg.Point
+	for _, point := range result.cfg.StmtPoints.PointsFor(callStmt) {
+		if _, ok := result.facts.CallSite(point); ok {
+			callPoint = point
+			break
+		}
+	}
+	if callPoint == 0 {
+		t.Fatalf("missing table.insert call point for %v", result.cfg.StmtPoints.PointsFor(callStmt))
+	}
+	value, ok := result.PathValueBeforeBoundary(callPoint, pathdom.NewPath(testsSymbol, "tests"))
+	if !ok {
+		t.Fatalf("PathValueBeforeBoundary(tests) returned false")
+	}
+	if got := product.Get(reg, value, assertion.Key); !got.Has(assertion.TypeClaim) {
+		t.Fatalf("tests assertion at table.insert = %s, want declared type claim; value=%v", got, value)
+	}
 }
 
 func TestGenericForIPairsCarriesTableInsertKeyMembershipAfterCollectorLoop(t *testing.T) {

@@ -2,7 +2,10 @@
 package pathexpr
 
 import (
+	"strconv"
+
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -79,6 +82,88 @@ func ResolveMutationContainer(expr ast.Expr, bindings *bind.Result) (path.Path, 
 		return path.Path{}, false
 	}
 	return resolveMutationContainer(attr, bindings)
+}
+
+// DynamicMutationTarget describes a mutation rooted at a dynamic-index write.
+// Table is the nearest statically known table, Key is the dynamic key expression
+// evaluated against that table, and Suffix is any static member path after the
+// dynamic index (for example t[k].value carries suffix .value).
+type DynamicMutationTarget struct {
+	Table  path.Path
+	Key    ast.Expr
+	Suffix []segment.Segment
+}
+
+// ResolveDynamicMutationTarget decomposes an unresolved assignment target such
+// as t[k] or t[k].field into the static table, dynamic key expression, and
+// trailing static suffix. This is the canonical syntax-only decomposition used
+// before transfer decides what the key/value prove.
+func ResolveDynamicMutationTarget(expr ast.Expr, bindings *bind.Result) (DynamicMutationTarget, bool) {
+	var suffix []segment.Segment
+	for {
+		attr, ok := expr.(*ast.AttrGetExpr)
+		if !ok {
+			return DynamicMutationTarget{}, false
+		}
+		if attr.KeySyntax == ast.AttrKeyIndex {
+			switch attr.Key.(type) {
+			case *ast.StringExpr, *ast.NumberExpr:
+			default:
+				table, ok := Resolve(attr.Object, bindings)
+				if !ok || table.Symbol == 0 {
+					return DynamicMutationTarget{}, false
+				}
+				return DynamicMutationTarget{
+					Table:  table,
+					Key:    attr.Key,
+					Suffix: append([]segment.Segment(nil), suffix...),
+				}, true
+			}
+		}
+		seg, ok := StaticAttrSegment(attr)
+		if !ok {
+			return DynamicMutationTarget{}, false
+		}
+		suffix = append([]segment.Segment{seg}, suffix...)
+		expr = attr.Object
+	}
+}
+
+// StaticAttrSegment resolves one syntactically static member/index access step.
+func StaticAttrSegment(attr *ast.AttrGetExpr) (segment.Segment, bool) {
+	if attr == nil || attr.Key == nil {
+		return segment.Segment{}, false
+	}
+	switch key := attr.Key.(type) {
+	case *ast.StringExpr:
+		switch attr.KeySyntax {
+		case ast.AttrKeyDot:
+			if key.Value == "" {
+				return segment.Segment{}, false
+			}
+			return segment.Segment{Kind: segment.SegmentField, Name: key.Value}, true
+		case ast.AttrKeyIndex:
+			return segment.Segment{Kind: segment.SegmentIndexString, Name: key.Value}, true
+		default:
+			return segment.Segment{Kind: segment.SegmentField, Name: key.Value}, key.Value != ""
+		}
+	case *ast.NumberExpr:
+		index, ok := parseStaticIndex(key.Value)
+		if !ok {
+			return segment.Segment{}, false
+		}
+		return segment.Segment{Kind: segment.SegmentIndexInt, Index: index}, true
+	default:
+		return segment.Segment{}, false
+	}
+}
+
+func parseStaticIndex(raw string) (int, bool) {
+	if raw == "" {
+		return 0, false
+	}
+	index, err := strconv.Atoi(raw)
+	return index, err == nil && index >= 0
 }
 
 func resolveMutationContainer(expr *ast.AttrGetExpr, bindings *bind.Result) (path.Path, bool) {

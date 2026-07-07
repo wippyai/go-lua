@@ -5,7 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 )
 
-func renderUnusedLocalJudgmentWithPolicy(item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
+func renderUnusedLocalJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
 	if item.Code != judgment.CodeUnusedLocal || item.Subject.Kind != judgment.SubjectPath || len(item.Spans) == 0 {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -18,7 +18,7 @@ func renderUnusedLocalJudgmentWithPolicy(item judgment.Judgment, policy judgment
 		return diagnostic.Diagnostic{}, false
 	}
 	span := diagnosticSpanFromJudgment(item.Spans[0])
-	presentation := diagnosticProofContext().UnusedLocal(item, name, span)
+	presentation := ctx.proof.UnusedLocal(item, name, span)
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		File:        item.Spans[0].File,
 		Span:        span,

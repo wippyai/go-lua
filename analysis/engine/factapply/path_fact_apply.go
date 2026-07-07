@@ -353,6 +353,12 @@ func sourcePathFromValueSource(
 	if source.Kind != factflow.ValueSourcePath || source.PathKey == "" || resolver == nil || resolver.KeySpace() == nil {
 		return pathdom.Path{}, false
 	}
+	if sym, segments, ok := pathaddr.ParseSymbolPathKey(source.PathKey); ok {
+		return pathdom.Path{
+			Symbol:   sym,
+			Segments: segments,
+		}, true
+	}
 	key, ok := resolver.KeySpace().FromStateKey(source.PathKey)
 	if !ok || key.Sym == 0 {
 		return pathdom.Path{}, false

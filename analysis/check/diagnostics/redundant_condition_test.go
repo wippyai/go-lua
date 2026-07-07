@@ -566,7 +566,7 @@ f("ok")
 	if d := diags[0]; d.Code != CodeRedundantCondition || !strings.Contains(d.Message, "always false") {
 		t.Fatalf("first diagnostic = %#v, want redundant-condition warning", d)
 	}
-	if d := diags[1]; d.Code != CodeDirectCallNotCallable || !strings.Contains(d.Message, "f is number, not callable") {
+	if d := diags[1]; d.Code != CodeDirectCallNotCallable || !strings.Contains(d.Message, "f is 1, not callable") {
 		t.Fatalf("second diagnostic = %#v, want not-callable error for later call", d)
 	}
 }

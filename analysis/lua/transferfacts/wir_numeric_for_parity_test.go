@@ -3,9 +3,11 @@ package transferfacts
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestLowerWithWIRNumericForProofsPublishForBothLoopDirections(t *testing.T) {
@@ -102,4 +104,40 @@ end
 	if checked == 0 {
 		t.Fatal("fixture did not produce a WIR numeric-for check point")
 	}
+}
+
+func TestLowerWithWIRNumericForPublishesLoopVariableRootAssignmentWithoutSemanticSidecars(t *testing.T) {
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function scan()
+	for i = 1, 10 do
+		local index = i
+	end
+end
+`)
+	body := wirlower.Lower("numeric-for-variable", fn.Stmts, bindings, built)
+	facts := Lower(nil, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	for _, point := range built.Graph.RPO() {
+		fact, ok := built.Meta.NumericFor(point)
+		if !ok || !body.HasInstruction(point, wir.OpIterate) {
+			continue
+		}
+		root, rootOK := facts.RootAssignment(point)
+		if !rootOK {
+			t.Fatalf("numeric-for point %d has no root assignment", point)
+		}
+		if root.TargetSymbol() != fact.Symbol {
+			t.Fatalf("numeric-for root target = %v, want loop symbol %v", root.TargetSymbol(), fact.Symbol)
+		}
+		declared, declaredOK := root.DeclaredValue()
+		if !declaredOK || !root.DeclaredValueContracts() {
+			t.Fatalf("numeric-for root assignment has declared=%v contract=%v", declaredOK, root.DeclaredValueContracts())
+		}
+		got, ok := typevalue.TypeOf(standard.Registry(), declared)
+		if !ok || !typ.TypeEquals(got, typ.Integer) {
+			t.Fatalf("numeric-for declared value type = %v/%v, want integer", got, ok)
+		}
+		return
+	}
+	t.Fatal("fixture did not produce a WIR numeric-for point")
 }

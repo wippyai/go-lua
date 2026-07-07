@@ -109,6 +109,48 @@ func TestFactsNodeTransferObjectLiteralRootAssignmentsWriteStaticEntries(t *test
 	}
 }
 
+func TestFactsNodeTransferObjectLiteralEntryPreservesExplicitTopNilEvidence(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(64)
+	target := symbol.ID(124)
+	objectSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(64), HasExpr: true}
+	entrySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(65), HasExpr: true}
+	rootValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(testTableLiteralID(objectSource.ExprRef)))
+	entryValue := product.Set(reg, absentValue(reg), evidence.Key, evidence.ExplicitTop())
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{
+			objectSource: rootValue,
+			entrySource:  entryValue,
+		},
+	}
+	input := factflow.FactsInput{
+		RootAssignments: map[cfg.Point]factflow.RootAssignment{
+			point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "obj"), objectSource),
+		},
+		ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
+			objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
+				factflow.NewObjectEntry(fieldSuffix("leaf"), entrySource),
+			}).WithIdentity(testTableLiteralID(objectSource.ExprRef)),
+		},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "obj")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts:      factflow.NewFacts(input),
+		Sources:    sources,
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	assertPathValue(t, reg, ks, got, path.PathKey("sym124@1.leaf"), entryValue)
+	assertHeapStaticMember(t, reg, ks, got, objectSource.ExprRef, ".leaf", entryValue)
+}
+
 func TestFactsNodeTransferObjectLiteralHeapRootUsesResolvedTypedSourceValue(t *testing.T) {
 	reg := standard.Registry()
 	typeValues := typevalue.NewCache()

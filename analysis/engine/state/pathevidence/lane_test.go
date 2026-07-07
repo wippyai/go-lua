@@ -303,6 +303,34 @@ func TestEquivalentPathKeysStopsCyclicDescendantAliasExpansion(t *testing.T) {
 	}
 }
 
+func TestEquivalentPathKeysBoundsMutualDescendantAliasExpansion(t *testing.T) {
+	ks := keyspace.New()
+	l, _ := (Lane{}).AddBranchProof(BranchProof{
+		Kind:  BranchProofPathEqual,
+		Path:  mustStateKey(t, ks, "sym10@1"),
+		Other: mustStateKey(t, ks, "sym20@1.child"),
+	})
+	l, _ = l.AddBranchProof(BranchProof{
+		Kind:  BranchProofPathEqual,
+		Path:  mustStateKey(t, ks, "sym20@1"),
+		Other: mustStateKey(t, ks, "sym10@1.child"),
+	})
+
+	got := l.EquivalentPathKeys(ks, pathdom.PathKey("sym10@1.label"))
+	want := []pathdom.PathKey{
+		pathdom.PathKey("sym10@1.child.child.label"),
+		pathdom.PathKey("sym20@1.child.label"),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("EquivalentPathKeys len = %d (%#v), want %d (%#v)", len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("EquivalentPathKeys[%d] = %s, want %s", i, got[i], want[i])
+		}
+	}
+}
+
 func TestEquivalentRootKeysFollowExactEndpointChainOnly(t *testing.T) {
 	ks := keyspace.New()
 	l, _ := (Lane{}).AddBranchProof(BranchProof{

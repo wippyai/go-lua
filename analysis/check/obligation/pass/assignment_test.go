@@ -164,6 +164,30 @@ end`, "test.lua")
 	}
 }
 
+func TestReturnsCarriesCastIndexedReadOptionalProjection(t *testing.T) {
+	checked := testutil.CheckFile(`local function f(v: any): number
+	return (v :: {number})[1]
+end`, "test.lua")
+
+	var got []judgment.Judgment
+	for _, result := range checked.BodyResults() {
+		got = append(got, obligationpass.New(obligationpass.Returns{}).Run(obligationpass.Context{
+			FunctionKey: "fixture:return",
+			SourceFile:  "test.lua",
+			Reader:      readmodel.New(result),
+		})...)
+	}
+	if len(got) != 1 {
+		t.Fatalf("judgments = %d, want 1: %#v", len(got), got)
+	}
+	if got[0].Actual.ProjectedType == nil || !typevalue.TypeIncludesNil(got[0].Actual.ProjectedType) {
+		t.Fatalf("actual type = %s, want optional indexed-read projection", got[0].Actual.ProjectedType)
+	}
+	if !hasMissingProofDetail(got[0], judgment.EvidenceDetailIndexedReadMissingProof) {
+		t.Fatalf("evidence = %#v, want indexed-read missing-proof detail", got[0].Evidence)
+	}
+}
+
 func TestReturnsSkipsPlainUnknownWithoutBoundary(t *testing.T) {
 	stmts, err := parse.ParseString(strings.TrimSpace(`local function f(x): string
     return x.id
@@ -186,6 +210,42 @@ end`), "test.lua")
 	})
 	if len(got) != 0 {
 		t.Fatalf("judgments = %#v, want none for plain unknown without boundary", got)
+	}
+}
+
+func TestReturnsSkipsTopCascadeOwnedByBodyParamObligation(t *testing.T) {
+	stmts, err := parse.ParseString(strings.TrimSpace(`local function scale(x: number | string): number
+    return x * 2
+end
+scale("not-number")`), "test.lua")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: standard.Registry()}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := checked.RootResult()
+	if root == nil {
+		t.Fatal("RootResult nil")
+	}
+	var base *body.Result
+	for _, fn := range root.FunctionResults() {
+		if fn != nil && !fn.IsCallContextResult() {
+			base = fn
+			break
+		}
+	}
+	if base == nil {
+		t.Fatalf("function results = %#v, want base function result", root.FunctionResults())
+	}
+	got := obligationpass.New(obligationpass.Returns{}).Run(obligationpass.Context{
+		FunctionKey: "fixture:return",
+		SourceFile:  "test.lua",
+		Reader:      readmodel.New(base),
+	})
+	if len(got) != 0 {
+		t.Fatalf("judgments = %#v, want body-param obligation to own top return cascade", got)
 	}
 }
 
@@ -640,6 +700,32 @@ local missing_status: string = lookup_record("msg-1").last_status`, "test.lua")
 	}
 	if !hasMayBeNilAccessEvidence(got[0], "lookup_record(...)", ".last_status") {
 		t.Fatalf("evidence = %#v, want call-result receiver nilability before field read", got[0].Evidence)
+	}
+}
+
+func TestAssignmentsCarriesDynamicInvalidationMayBeNilEvidence(t *testing.T) {
+	checked := testutil.CheckFile(`type Box = {
+	value: string?,
+}
+
+local box: Box = {value = "ready"}
+local alias = box
+local key = "value"
+
+if box.value then
+	alias[key] = nil
+	local after: string = box.value
+end`, "test.lua")
+
+	got := assignmentJudgmentsForAllBodies(checked)
+	if len(got) != 1 {
+		t.Fatalf("judgments = %d, want 1 invalidated guarded read: %#v", len(got), got)
+	}
+	if got[0].Subject.Label != "after" || got[0].Actual.Label != "box.value" {
+		t.Fatalf("labels = subject %q actual %q, want after/box.value", got[0].Subject.Label, got[0].Actual.Label)
+	}
+	if !hasMissingProofDetail(got[0], judgment.EvidenceDetailMayBeNil) {
+		t.Fatalf("evidence = %#v, want may-be-nil missing-proof detail", got[0].Evidence)
 	}
 }
 

@@ -77,8 +77,10 @@ const (
 
 // Value carries exact type evidence proven by runtime type witnesses.
 type Value struct {
-	state state
-	t     typ.Type
+	state       state
+	t           typ.Type
+	recursiveOK bool
+	recursive   typ.RecursiveIdentitySignature
 }
 
 func Bottom() Value { return Value{state: bottom} }
@@ -111,7 +113,14 @@ func Of(t typ.Type) Value {
 		}
 		t = canonical
 	}
-	return Value{state: concrete, t: t}
+	value := Value{state: concrete, t: t}
+	if typ.ContainsRecursive(t) {
+		if sig, ok := typ.RecursiveIdentitySignatureOf(t); ok {
+			value.recursiveOK = true
+			value.recursive = sig
+		}
+	}
+	return value
 }
 
 func openInstantiatedWitnessAllowed(t typ.Type) bool {
@@ -187,6 +196,9 @@ func Widen(prev, next Value) Value {
 	if family, ok := widenedPrimitiveFamily(prev.t, next.t); ok {
 		return Of(family)
 	}
+	if widened, ok := widenedStableSequence(prev.t, next.t); ok {
+		return Of(widened)
+	}
 	if widened, ok := widenedStableRecord(prev.t, next.t); ok {
 		return Of(widened)
 	}
@@ -200,6 +212,62 @@ func widenedPrimitiveFamily(a, b typ.Type) (typ.Type, bool) {
 		return nil, false
 	}
 	return typelit.MergeFamilyBases(aBase, bBase)
+}
+
+func widenedStableSequence(a, b typ.Type) (typ.Type, bool) {
+	if element, ok := widenedArrayElement(a, b); ok {
+		return typ.NewArray(element), true
+	}
+	if element, ok := widenedArrayElement(b, a); ok {
+		return typ.NewArray(element), true
+	}
+	return nil, false
+}
+
+func widenedArrayElement(arrayLike, other typ.Type) (typ.Type, bool) {
+	array, ok := unwrap.Annotated(arrayLike).(*typ.Array)
+	if !ok {
+		return nil, false
+	}
+	switch t := unwrap.Annotated(other).(type) {
+	case *typ.Array:
+		return widenRecordMemberType(array.Element, t.Element)
+	case *typ.Tuple:
+		return widenedArrayTupleElement(array.Element, t.Elements)
+	case *typ.Record:
+		if emptyStableRecord(t) {
+			return widenedPrimitiveOrSelf(array.Element), true
+		}
+	}
+	return nil, false
+}
+
+func widenedArrayTupleElement(element typ.Type, tuple []typ.Type) (typ.Type, bool) {
+	out := widenedPrimitiveOrSelf(element)
+	for _, tupleElement := range tuple {
+		var ok bool
+		out, ok = widenRecordMemberType(out, tupleElement)
+		if !ok {
+			return nil, false
+		}
+	}
+	return out, true
+}
+
+func widenedPrimitiveOrSelf(t typ.Type) typ.Type {
+	if base, ok := typelit.FamilyBase(t); ok {
+		return base
+	}
+	return t
+}
+
+func emptyStableRecord(r *typ.Record) bool {
+	return r != nil &&
+		len(r.Fields) == 0 &&
+		len(r.StaticMembers) == 0 &&
+		r.Metatable == nil &&
+		!r.Open &&
+		!r.HasMapComponent()
 }
 
 func widenedStableRecord(a, b typ.Type) (typ.Type, bool) {
@@ -418,6 +486,9 @@ func scalarLeq(a, b typ.Type) bool {
 	if typ.TypeEquals(a, b) {
 		return true
 	}
+	if emptyRecordArrayLeq(a, b) {
+		return true
+	}
 	if opt, ok := unwrap.Annotated(b).(*typ.Optional); ok {
 		return typ.TypeEquals(a, typ.Nil) || scalarLeq(a, opt.Inner)
 	}
@@ -425,6 +496,15 @@ func scalarLeq(a, b typ.Type) bool {
 		return true
 	}
 	return false
+}
+
+func emptyRecordArrayLeq(a, b typ.Type) bool {
+	record, recordOK := unwrap.Annotated(a).(*typ.Record)
+	if !recordOK || !emptyStableRecord(record) {
+		return false
+	}
+	_, arrayOK := unwrap.Annotated(b).(*typ.Array)
+	return arrayOK
 }
 
 // alternativeLeqType reports whether a single alternative is contained in some
@@ -469,12 +549,25 @@ func Equal(a, b Value) bool {
 	if a.state != concrete {
 		return true
 	}
-	return typ.SameNodeOrAcyclicEqual(a.t, b.t)
+	if a.recursiveOK && b.recursiveOK {
+		if !a.recursive.Equal(b.recursive) {
+			return false
+		}
+		return typ.TypeEquals(a.t, b.t)
+	}
+	return typ.SameNodeOrRecursiveIdentityEqual(a.t, b.t)
 }
 
 func (v Value) Hash() uint64 {
 	h := internal.MixHash(internal.FnvString("typewitness"), uint64(v.state))
 	if v.state == concrete && v.t != nil {
+		if v.recursiveOK {
+			h = internal.MixHash(h, internal.FnvString("recursive.identity"))
+			h = internal.MixHash(h, uint64(v.recursive.SmallLen))
+			for i := 0; i < v.recursive.SmallLen; i++ {
+				h = internal.MixHash(h, v.recursive.Small[i])
+			}
+		}
 		h = internal.MixHash(h, typ.EqualityHash(v.t))
 	}
 	return h

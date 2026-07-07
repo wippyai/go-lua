@@ -37,6 +37,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/functiontype"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -337,12 +338,21 @@ func (b *builder) lowerAssignTarget(index int, target ast.Expr, v binding) {
 			}
 			return
 		}
-		container, _ := pathexpr.ResolveMutationContainer(t, b.bindings)
+		target, ok := pathexpr.ResolveDynamicMutationTarget(t, b.bindings)
+		if !ok {
+			container, _ := pathexpr.ResolveMutationContainer(t, b.bindings)
+			target.Table = container
+			target.Key = t.Key
+		}
+		if context := b.dynamicIndexWriteContextType(target); context != 0 {
+			v = v.withContextType(context)
+		}
 		b.emit(wir.Instruction{
-			Op:  wir.OpDynamicIndexWrite,
-			Dst: b.pathOperand(container),
-			A:   b.lowerExpr(t.Key),
-			B:   b.bindingOperand(v),
+			Op:            wir.OpDynamicIndexWrite,
+			Dst:           b.pathOperand(target.Table),
+			A:             b.lowerExpr(target.Key),
+			B:             b.bindingOperand(v),
+			DynamicSuffix: b.body.AppendSegments(target.Suffix),
 		})
 		if v.hasCallResult {
 			b.recordCallResultTargetPath(v, path.Path{})
@@ -529,6 +539,50 @@ func (b *builder) setTableConstructorType(point cfg.Point, start int, id wir.Exp
 	b.pointInstrs[point] = insts
 }
 
+func (b *builder) dynamicIndexWriteContextType(target pathexpr.DynamicMutationTarget) wir.TypeRef {
+	container, ok := b.declaredPathType(target.Table)
+	if !ok {
+		return 0
+	}
+	value, ok := luatypeprojection.DynamicWriteValueType(container, b.dynamicIndexKeyType(target.Key))
+	if !ok || value == nil {
+		return 0
+	}
+	if len(target.Suffix) != 0 {
+		projected, ok := luatypeprojection.ApplyWriteSegments(value, target.Suffix)
+		if !ok || projected == nil {
+			return 0
+		}
+		value = projected
+	}
+	return b.body.InternType(value)
+}
+
+func (b *builder) declaredPathType(p path.Path) (typ.Type, bool) {
+	if b == nil || b.bindings == nil || b.resolver == nil || p.Symbol == 0 {
+		return nil, false
+	}
+	decl, ok := b.bindings.SymbolTypeAnnotation(p.Symbol)
+	if !ok || decl == nil {
+		return nil, false
+	}
+	root, ok := b.resolver.Type(decl)
+	if !ok || root == nil {
+		return nil, false
+	}
+	if len(p.Segments) == 0 {
+		return root, true
+	}
+	return luatypeprojection.ApplySegments(root, p.Segments)
+}
+
+func (b *builder) dynamicIndexKeyType(expr ast.Expr) typ.Type {
+	if key, ok := valueexpr.LiteralType(expr); ok {
+		return key
+	}
+	return nil
+}
+
 func (b *builder) rootAssignKind(dst wir.Operand, v binding) wir.AssignKind {
 	if dst.Kind != wir.OperandPath || b == nil || b.body == nil {
 		return wir.AssignNone
@@ -565,7 +619,7 @@ func rootAssignmentSourceInstruction(inst wir.Instruction) bool {
 		return true
 	}
 	switch inst.Op {
-	case wir.OpMakeTable, wir.OpDynamicIndexRead, wir.OpClosure:
+	case wir.OpDynamicIndexRead, wir.OpMakeTable, wir.OpBinOp, wir.OpUnOp, wir.OpConcat, wir.OpClaim, wir.OpSelect, wir.OpLogical, wir.OpClosure:
 		return true
 	default:
 		return false
@@ -609,7 +663,11 @@ func (b *builder) recordCallResultTargetPath(v binding, p path.Path) {
 func (b *builder) bindingOperand(v binding) wir.Operand {
 	switch v.kind {
 	case bindExpr:
-		return b.lowerExpr(v.expr)
+		point := b.curPoint
+		start := len(b.pointInstrs[point])
+		op := b.lowerExpr(v.expr)
+		b.attachContextTypeToConstructors(point, start, v.expr, v.contextType)
+		return op
 	case bindOperand:
 		return v.op
 	case bindVararg:
@@ -989,7 +1047,10 @@ func (b *builder) lowerFuncDef(s *ast.FuncDefStmt) {
 	b.curPoint = pts[0]
 	p, ok := pathexpr.ResolveFuncName(s.Name, b.bindings)
 	if ok && len(p.Segments) == 0 {
-		b.emitClosure(b.pathOperand(p), s.Func)
+		dst := b.pathOperand(p)
+		start := len(b.pointInstrs[b.curPoint])
+		b.emitClosure(dst, s.Func)
+		b.markRootAssignKind(b.curPoint, start, dst, wir.AssignOrdinaryRootWrite)
 		return
 	}
 	tmp := b.newTemp()
@@ -1011,7 +1072,7 @@ func (b *builder) emitClosure(dst wir.Operand, fn *ast.FunctionExpr) {
 		childBody := lowerInto(name, fn.Stmts, b.bindings, childBuilt, b.resolver)
 		sym, _ := b.bindings.FunctionSymbol(fn)
 		fnType, _ := functiontype.ValueExpression(fn, b.bindings, b.resolver)
-		ref = b.body.AddProto(wir.FuncProto{Name: name, Body: childBody, Graph: childBuilt.Graph, Symbol: sym, Type: fnType})
+		ref = b.body.AddProto(wir.FuncProto{Name: name, Body: childBody, Graph: childBuilt.Graph, Symbol: wir.FunctionSymbolID(sym), Type: fnType})
 	}
 
 	caps := b.bindings.DirectCaptures(fn)
@@ -1251,8 +1312,9 @@ func (b *builder) lowerLogicalValue(e *ast.LogicalOpExpr) wir.Operand {
 	prev := b.curPoint
 
 	b.curPoint = guard
-	b.emitAssign(result, b.lowerExpr(e.Lhs))
-	b.emitLogicalGuardAt(e, guard)
+	left := b.lowerExpr(e.Lhs)
+	b.emitAssign(result, left)
+	b.emitLogicalGuardAtOperand(e, guard, left)
 
 	b.curPoint = anchor
 	b.lowerExprInto(result, e.Rhs)
@@ -1277,6 +1339,10 @@ func (b *builder) emitLogicalGuard(e *ast.LogicalOpExpr) {
 }
 
 func (b *builder) emitLogicalGuardAt(e *ast.LogicalOpExpr, guard cfg.Point) {
+	b.emitLogicalGuardAtOperand(e, guard, wir.Operand{})
+}
+
+func (b *builder) emitLogicalGuardAtOperand(e *ast.LogicalOpExpr, guard cfg.Point, operand wir.Operand) {
 	if e == nil || b.logicalGuardEmitted[e] {
 		return
 	}
@@ -1289,7 +1355,11 @@ func (b *builder) emitLogicalGuardAt(e *ast.LogicalOpExpr, guard cfg.Point) {
 		DiffConstraints: b.body.AppendBranchDiffConstraints(lowerBranchDiffConstraints(branchcond.BranchDiffConstraintsOnBothEdges(e.Lhs, b.bindings))),
 	}
 	if check.Kind == branchcond.CheckNone {
-		guardInst.A = b.lowerExpr(e.Lhs)
+		if operand.Kind != wir.OperandNone {
+			guardInst.A = operand
+		} else {
+			guardInst.A = b.lowerExpr(e.Lhs)
+		}
 	}
 	b.curPoint = guard
 	b.emit(guardInst)
@@ -1404,25 +1474,34 @@ func (b *builder) tableEntriesForProducedOperand(op wir.Operand) []wir.TableEntr
 	return nil
 }
 
-func tableEntryValueSpan(expr ast.Expr) source.Span {
+func tableEntryValueSpan(expr ast.Expr) wir.Span {
 	if expr == nil {
-		return source.Span{}
+		return wir.Span{}
 	}
 	span := ast.SpanOf(expr)
 	if ident, ok := expr.(*ast.IdentExpr); ok && span.Valid() && span.EndLine == span.StartLine && span.EndCol <= span.StartCol && ident.Value != "" {
 		span.EndCol = span.StartCol + len(ident.Value)
 	}
-	return span
+	return wirSpanFromSource(span)
 }
 
-func callCalleeSourceSpan(call *ast.FuncCallExpr) source.Span {
+func callCalleeSourceSpan(call *ast.FuncCallExpr) wir.Span {
 	if call == nil {
-		return source.Span{}
+		return wir.Span{}
 	}
 	if span := tableEntryValueSpan(call.Func); span.Valid() {
 		return span
 	}
 	return tableEntryValueSpan(call.Receiver)
+}
+
+func wirSpanFromSource(span source.Span) wir.Span {
+	return wir.Span{
+		StartLine: span.StartLine,
+		StartCol:  span.StartCol,
+		EndLine:   span.EndLine,
+		EndCol:    span.EndCol,
+	}
 }
 
 func callArgumentMeta(exprs []ast.Expr) []wir.CallArgumentMeta {

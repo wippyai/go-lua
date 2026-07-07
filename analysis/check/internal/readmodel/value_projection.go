@@ -2,6 +2,7 @@ package readmodel
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/internal/sourcebridge"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
@@ -79,6 +80,13 @@ func (r Reader) valueHasReadableType(value product.Value) bool {
 	return ok && t != nil && !typ.IsAny(t) && !typ.IsUnknown(t) && !typ.IsNever(t)
 }
 
+func (r Reader) ValueHasReadableConcreteWitness(value product.Value) bool {
+	if r.result == nil {
+		return false
+	}
+	return r.result.ValueHasReadableConcreteWitness(value)
+}
+
 func (r Reader) SourceType(point cfg.Point, source sourceprovenance.ASTSource) (typ.Type, bool) {
 	value, ok := r.SourceValue(point, source)
 	if !ok {
@@ -92,6 +100,13 @@ func (r Reader) ValueType(value product.Value) (typ.Type, bool) {
 		return nil, false
 	}
 	return r.result.ValueType(value)
+}
+
+func (r Reader) ValueStructuralType(value product.Value) (typ.Type, bool) {
+	if r.result == nil {
+		return nil, false
+	}
+	return r.result.ValueStructuralType(value)
 }
 
 // RuntimeKindReducedType narrows declared by value's runtime-kind axis: the
@@ -118,6 +133,13 @@ func (r Reader) ValueHasExplicitTopOrigin(value product.Value) bool {
 		return false
 	}
 	return r.result.ValueHasExplicitTopOrigin(value)
+}
+
+func (r Reader) ValueHasRuntimeValidationProof(value product.Value) bool {
+	if r.result == nil || r.result.Registry() == nil {
+		return false
+	}
+	return product.Get(r.result.Registry(), value, assertion.Key).Has(assertion.RuntimeClaim)
 }
 
 func (r Reader) ValueTypeWithPresence(value product.Value) (typ.Type, bool) {

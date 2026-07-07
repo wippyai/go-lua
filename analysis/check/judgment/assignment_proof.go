@@ -155,6 +155,18 @@ func (j Judgment) AssignmentSourceContributionEvidence() EvidenceChain {
 	return j.EvidenceKindDetails(EvidenceAbstractFact, EvidenceDetailAssignmentSourceContribution)
 }
 
+// AssignmentParentActualEvidence returns the enclosing source object facts for
+// a projected member assignment.
+func (j Judgment) AssignmentParentActualEvidence() EvidenceChain {
+	return j.EvidenceKindDetails(EvidenceAbstractFact, EvidenceDetailAssignmentParentActual)
+}
+
+// AssignmentParentExpectedEvidence returns the enclosing declared target facts
+// for a projected member assignment.
+func (j Judgment) AssignmentParentExpectedEvidence() EvidenceChain {
+	return j.EvidenceKindDetails(EvidenceUserAssertion, EvidenceDetailAssignmentParentExpected)
+}
+
 // AssignmentCallInvalidationEvidence returns facts describing calls that may
 // have invalidated the source proof before the assignment read.
 func (j Judgment) AssignmentCallInvalidationEvidence() EvidenceChain {

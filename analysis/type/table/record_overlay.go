@@ -25,6 +25,9 @@ func overlayRecordMemberType(existing, replacement typ.Type, depth int) typ.Type
 	if existing == nil || replacement == nil || depth > typ.DefaultRecursionDepth {
 		return replacement
 	}
+	if typ.SameNodeOrRecursiveIdentityEqual(existing, replacement) {
+		return existing
+	}
 	if emptyRecordWitness(replacement) && declaredContainerType(existing) {
 		return existing
 	}
@@ -110,7 +113,7 @@ func overlayRecordMembers(existingRecord, overlayRecord *typ.Record, depth int) 
 		MapValue:      mapValue,
 		Open:          existingRecord.Open || overlayRecord.Open,
 	})
-	if typ.SameNodeOrAcyclicEqual(existingRecord, rebuilt) {
+	if typ.SameNodeOrRecursiveIdentityEqual(existingRecord, rebuilt) {
 		return existingRecord
 	}
 	return rebuilt

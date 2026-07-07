@@ -7,7 +7,11 @@ import (
 
 func indexInMap(keyDomain typ.Type, value typ.Type, key typ.Type, depth int, mode indexMode) fieldResult {
 	return indexByKeyVariants(key, depth, mode, true, func(key typ.Type) fieldResult {
-		if !typetable.MapComponentKeyAdmitsType(keyDomain, key) {
+		ok := typetable.MapComponentKeyAdmitsType(keyDomain, key)
+		if !ok && mode == indexRuntime {
+			ok = typetable.MapComponentKeyMayOverlapType(keyDomain, key)
+		}
+		if !ok {
 			return fieldResult{}
 		}
 		if value == nil {

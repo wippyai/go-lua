@@ -24,7 +24,7 @@ maybe()`)
 	if len(got) != 2 {
 		t.Fatalf("judgments = %d, want two callee judgments: %#v", len(got), got)
 	}
-	assertCalleeJudgment(t, got[0], judgment.EvidenceDetailCalleeNotCallable, "x", typ.Number, judgment.VerdictRefuted)
+	assertCalleeJudgment(t, got[0], judgment.EvidenceDetailCalleeNotCallable, "x", typ.LiteralInt(42), judgment.VerdictRefuted)
 	assertCalleeJudgment(t, got[1], judgment.EvidenceDetailCalleeMayBeNil, "maybe", nil, judgment.VerdictUnknown)
 	if !strings.HasPrefix(got[0].Subject.StableKey(), "fixture:callee|call|call:") || !strings.HasSuffix(got[0].Subject.StableKey(), ":callee") {
 		t.Fatalf("first stable key = %q, want callee call subject", got[0].Subject.StableKey())

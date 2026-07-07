@@ -20,25 +20,26 @@ local req: { id: string } = id(raw)
 `, "\n")
 	result := Check(src)
 	diag := requireDiagnostic(t, result, diagnosticExpectation{
-		Code:            diagnostics.CodeAssignmentType,
+		Code:            diagnostics.CodeDirectCallArgType,
 		Severity:        diagnostic.SeverityError,
 		DiagnosticCount: 1,
 		Line:            6,
-		Column:          29,
+		Column:          32,
 		MessageContains: []string{
-			"id(...)",
-			"may be nil",
+			"raw",
+			"any/unknown",
+			"{id: \"ok\"}",
 		},
 		EvidenceChain: []diagnosticEvidenceExpectation{
 			{
 				Kind:            diagnostic.EvidenceAbstractFact,
 				Trust:           diagnostic.TrustProven,
-				MessageContains: []string{"id(...) can be T or nil here"},
+				MessageContains: []string{"argument 1 (raw) has type {id: \"ok\"}"},
 			},
 			{
 				Kind:            diagnostic.EvidenceUserAssertion,
 				Trust:           diagnostic.TrustClaimed,
-				MessageContains: []string{"req is declared as {id: string}"},
+				MessageContains: []string{"id parameter 1 expects {id: \"ok\"}"},
 			},
 			{
 				Kind:            diagnostic.EvidenceUserAssertion,
@@ -48,49 +49,51 @@ local req: { id: string } = id(raw)
 			{
 				Kind:            diagnostic.EvidencePrecisionBoundary,
 				Trust:           diagnostic.TrustUnknown,
-				MessageContains: []string{"id(...) comes from any/unknown"},
+				MessageContains: []string{"raw comes from any/unknown"},
 			},
 			{
 				Kind:            diagnostic.EvidenceMissingProof,
 				Trust:           diagnostic.TrustUnknown,
-				MessageContains: []string{"no guard on this path proves id(...) is non-nil"},
+				MessageContains: []string{"no proof on this path shows raw satisfies the parameter type"},
 			},
 		},
-		LabelContains: []string{"declared type", "assigned value"},
-		HelpContains:  []string{"Guard `id(...)`"},
+		LabelContains: []string{"argument value"},
+		HelpContains:  []string{"Validate or narrow `raw`"},
 		Sources:       diagnostic.SourceMap{"test.lua": src},
 		RenderOrderedContains: []string{
-			`error[type.assignment]: cannot assign id(...) because it may be nil`,
-			`  |            ↓ declared type`,
+			`error[type.call.direct.argument_type]: argument 1 (raw) comes from any/unknown; no proof shows it is {id: "ok"}`,
 			`6 | local req: { id: string } = id(raw)`,
-			`  |                             ↑ assigned value`,
-			`1. proven: id(...) can be T or nil here`,
-			`2. claimed: req is declared as {id: string}`,
+			`  |                                ↑ argument value`,
+			`1. proven: argument 1 (raw) has type {id: "ok"}`,
+			`2. claimed: id parameter 1 expects {id: "ok"}`,
 			`3. claimed: user asserted any; not abstract-interpreter proof`,
-			`4. unvalidated value: id(...) comes from any/unknown`,
-			`5. missing proof: no guard on this path proves id(...) is non-nil`,
-			"help: Guard `id(...)`",
+			`4. unvalidated value: raw comes from any/unknown`,
+			`5. missing proof: no proof on this path shows raw satisfies the parameter type`,
+			"help: Validate or narrow `raw`",
 		},
 	})
 	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
 		Sources:             diagnostic.SourceMap{"test.lua": src},
 		ShowSourceLabelRows: true,
 	})
-	want := `error[type.assignment]: cannot assign id(...) because it may be nil
- --> test.lua:6:29
+	want := `error[type.call.direct.argument_type]: argument 1 (raw) comes from any/unknown; no proof shows it is {id: "ok"}
+ --> test.lua:6:32
   |
-  |            ↓ declared type
 6 | local req: { id: string } = id(raw)
-  |                             ↑ assigned value
+  |                                ↑ argument value
 
 because:
-  1. proven: id(...) can be T or nil here
-  2. claimed: req is declared as {id: string}
+  1. proven: argument 1 (raw) has type {id: "ok"}
+  2. claimed: id parameter 1 expects {id: "ok"}
+ --> test.lua:1:25
+  |
+1 | local function id<T>(x: T): T
+  |                         ^
   3. claimed: user asserted any; not abstract-interpreter proof
-  4. unvalidated value: id(...) comes from any/unknown
-  5. missing proof: no guard on this path proves id(...) is non-nil
+  4. unvalidated value: raw comes from any/unknown
+  5. missing proof: no proof on this path shows raw satisfies the parameter type
 
-help: Guard ` + "`id(...)`" + ` with a nil check, provide a default value, or change the target type to accept nil.`
+help: Validate or narrow ` + "`raw`" + ` before passing it; any/unknown values do not prove parameter contracts.`
 	assertRenderedEqual(t, rendered, want)
 }
 
@@ -123,7 +126,7 @@ accept(id(raw))
   |        ↑ argument value
 
 because:
-  1. proven: argument 1 can be T or nil here
+  1. proven: argument 1 can be {id: "ok"} or nil here
   2. claimed: accept parameter 1 expects {id: string}
  --> test.lua:5:28
   |
@@ -168,30 +171,22 @@ end
 		Line:            4,
 		MessageContains: []string{
 			"raw.id",
-			"any",
+			"1",
 			"not string",
 		},
 	})
 }
 
-func TestLiteralChildGuardDoesNotLaunderExplicitAnySibling(t *testing.T) {
+func TestExplicitAnyLocalLiteralSiblingKeepsConstructionProof(t *testing.T) {
 	result := Check(`
 local raw = ({ kind = "task", route_id = "start" } :: any)
 if raw.kind == "task" then
     local route_id: string = raw.route_id
 end
 `)
-	requireDiagnostic(t, result, diagnosticExpectation{
-		Code:            diagnostics.CodeAssignmentType,
-		Severity:        diagnostic.SeverityError,
-		DiagnosticCount: 1,
-		Line:            4,
-		MessageContains: []string{
-			"raw.route_id",
-			"any",
-			"not string",
-		},
-	})
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want local literal construction proof to keep route_id string despite :: any", result.Diagnostics)
+	}
 }
 
 func TestLiteralChildGuardDoesNotLaunderAnnotatedAnySibling(t *testing.T) {
@@ -453,8 +448,9 @@ local function forward(payload)
     accept(payload)
 end
 
-local raw = ({ id = "ok" } :: any)
-	forward(raw)
+local function entry(raw: any): ()
+    forward(raw)
+end
 `)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallArgType)
 	requireEvidenceMessage(t, diag, "inside forward, argument 1 must satisfy {id: string}")
@@ -496,13 +492,13 @@ local req: { id: string }, label: string = pair(raw)
 	if len(result.Diagnostics) != 1 {
 		t.Fatalf("diagnostics = %#v, want exactly one diagnostic for first return slot", result.Diagnostics)
 	}
-	diag := requireDiagnosticCode(t, result, diagnostics.CodeAssignmentType)
-	if !strings.Contains(diag.Message, "pair(...)") || strings.Contains(diag.Message, "label") {
-		t.Fatalf("message = %q, want first result slot only", diag.Message)
+	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallArgType)
+	if !strings.Contains(diag.Message, "raw") || strings.Contains(diag.Message, "label") {
+		t.Fatalf("message = %q, want raw argument only", diag.Message)
 	}
 	if got := diag.Explanation.String(); !strings.Contains(got, "user asserted any") ||
-		!strings.Contains(got, "pair(...) comes from any/unknown") ||
-		!strings.Contains(got, "no guard on this path proves pair(...) is non-nil") {
+		!strings.Contains(got, "raw comes from any/unknown") ||
+		!strings.Contains(got, "no proof on this path shows raw satisfies the parameter type") {
 		t.Fatalf("explanation = %q, want explicit-any claim and missing-proof evidence", got)
 	}
 }

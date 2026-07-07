@@ -5,8 +5,12 @@ import (
 
 	checkprojection "github.com/wippyai/go-lua/analysis/check/internal/projection"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/proof"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/branchcond"
+	"github.com/wippyai/go-lua/analysis/lua/typeoperator"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -28,6 +32,15 @@ func (r *Result) ExpressionTypeBeforeBoundary(point cfg.Point, expr ast.Expr) (t
 		if t, typeOK := r.ValueTypeWithPresence(value); typeOK && t != nil {
 			if narrowed, narrowedOK := r.discriminantProvenMemberExpressionTypeBeforeBoundary(point, expr); narrowedOK {
 				return narrowed, true
+			}
+			if typevalue.TypeIncludesNil(t) && r.ExpressionReadProvenPresentBeforeBoundary(point, expr) {
+				if member, memberOK := r.memberExpressionTypeBeforeBoundary(point, expr); memberOK &&
+					member != nil &&
+					!typ.IsAny(member) &&
+					!typ.IsUnknown(member) &&
+					!typevalue.TypeIncludesNil(member) {
+					return member, true
+				}
 			}
 			return t, true
 		}
@@ -75,6 +88,55 @@ func (r *Result) memberExpressionTypeBeforeBoundary(point cfg.Point, expr ast.Ex
 	return projected, projectedOK
 }
 
+func (r *Result) operatorExpressionValueBeforeBoundary(point cfg.Point, expr ast.Expr) (product.Value, bool) {
+	t, ok := r.operatorExpressionTypeBeforeBoundary(point, expr)
+	if !ok || t == nil || typ.IsAny(t) || typ.IsUnknown(t) {
+		return product.Value{}, false
+	}
+	return typevalue.WithWitness(r.registry, r.typeValues.FromType(r.registry, t), t), true
+}
+
+func (r *Result) operatorExpressionTypeBeforeBoundary(point cfg.Point, expr ast.Expr) (typ.Type, bool) {
+	if r == nil || expr == nil {
+		return nil, false
+	}
+	switch e := expr.(type) {
+	case *ast.RelationalOpExpr:
+		left, leftOK := r.ExpressionTypeBeforeBoundary(point, e.Lhs)
+		right, rightOK := r.ExpressionTypeBeforeBoundary(point, e.Rhs)
+		if !leftOK || !rightOK {
+			return nil, false
+		}
+		return typeoperator.BinaryOp(left, e.Operator, right)
+	case *ast.LogicalOpExpr:
+		left, leftOK := r.ExpressionTypeBeforeBoundary(point, e.Lhs)
+		right, rightOK := r.ExpressionTypeBeforeBoundary(point, e.Rhs)
+		if !leftOK || !rightOK {
+			return nil, false
+		}
+		return typeoperator.BinaryOp(left, e.Operator, right)
+	case *ast.UnaryNotOpExpr:
+		operand, ok := r.ExpressionTypeBeforeBoundary(point, e.Expr)
+		if !ok {
+			return nil, false
+		}
+		return typeoperator.UnaryOp("not", operand)
+	case *ast.UnaryLenOpExpr:
+		operand, ok := r.ExpressionTypeBeforeBoundary(point, e.Expr)
+		if !ok {
+			return nil, false
+		}
+		if r.ExpressionReadProvenPresentBeforeBoundary(point, e.Expr) {
+			if withoutNil := ProjectionWithoutNil(operand); withoutNil != nil && !typ.IsNever(withoutNil) {
+				operand = withoutNil
+			}
+		}
+		return typeoperator.UnaryOp("#", operand)
+	default:
+		return nil, false
+	}
+}
+
 func (r *Result) discriminantProvenMemberExpressionTypeBeforeBoundary(point cfg.Point, expr ast.Expr) (typ.Type, bool) {
 	attr, ok := expr.(*ast.AttrGetExpr)
 	if !ok {
@@ -114,9 +176,31 @@ func (r *Result) discriminantProvenMemberTypeBeforeBoundary(point cfg.Point, rec
 		if r.DominatingBranchProvesLiteral(point, discriminant, lit) {
 			return true
 		}
+		if r.dominatingBooleanBranchProvesLiteral(point, discriminant, lit) {
+			return true
+		}
 		current, ok := r.PathLiteralTypeAtBoundary(point, discriminant)
 		return ok && typ.TypeEquals(current, lit)
 	})
+}
+
+func (r *Result) dominatingBooleanBranchProvesLiteral(point cfg.Point, p pathdom.Path, lit typ.Type) bool {
+	wantTrue := typ.TypeEquals(lit, typ.True)
+	wantFalse := typ.TypeEquals(lit, typ.False)
+	if !wantTrue && !wantFalse {
+		return false
+	}
+	_, _, ok := r.DominatingBranchCheckForPath(point, p, func(_ cfg.Point, check branchcond.Check, cond bool) bool {
+		switch check.Kind {
+		case branchcond.CheckTruthy:
+			return (cond && wantTrue) || (!cond && wantFalse)
+		case branchcond.CheckFalsy:
+			return (cond && wantFalse) || (!cond && wantTrue)
+		default:
+			return false
+		}
+	})
+	return ok
 }
 
 // DiscriminantProvenMemberTypeBeforeBoundary returns a member type that is
@@ -127,21 +211,71 @@ func (r *Result) DiscriminantProvenMemberTypeBeforeBoundary(point cfg.Point, rec
 }
 
 func (r *Result) discriminantReceiverTypeBeforeBoundary(point cfg.Point, receiver pathdom.Path) (typ.Type, bool) {
-	root := receiver.RootOnly()
+	return r.declaredVariantOrWitnessPathTypeAt(point, receiver, true)
+}
+
+// DeclaredOrVariantOriginPathTypeAt resolves p from a declared root type or,
+// when no declaration exists, from the root value's full variant-origin family.
+// It is the body-owned path type projection used by post-solve readmodels that
+// need the broad discriminated shape without re-walking type segments locally.
+func (r *Result) DeclaredOrVariantOriginPathTypeAt(point cfg.Point, p pathdom.Path) (typ.Type, bool) {
+	return r.declaredVariantOrWitnessPathTypeAt(point, p, false)
+}
+
+// DominatingAliasDeclaredOrVariantOriginPathTypeAt resolves target through a
+// dominating root alias assignment, then applies DeclaredOrVariantOriginPathTypeAt
+// to the aliased source path plus target's suffix. It centralizes the
+// dominance/source-path recovery needed by post-solve readmodels.
+func (r *Result) DominatingAliasDeclaredOrVariantOriginPathTypeAt(point cfg.Point, target pathdom.Path) (typ.Type, bool) {
+	if r == nil || target.IsEmpty() || target.Symbol == 0 {
+		return nil, false
+	}
+	fact, _, ok := r.DominatingRootLocalAssignment(point, target.Symbol)
+	if !ok || fact.Expr == nil || fact.Type != nil {
+		return nil, false
+	}
+	source, ok := r.ExpressionPath(fact.Expr)
+	if !ok || source.IsEmpty() {
+		return nil, false
+	}
+	return r.DeclaredOrVariantOriginPathTypeAt(point, source.AppendSegments(target.Segments))
+}
+
+// OptionalExhaustivenessPathTypeAt resolves the broad type used to classify an
+// optional branch target. Direct declared/variant-origin optional facts win;
+// otherwise a dominating alias assignment may explain the target's suffix.
+func (r *Result) OptionalExhaustivenessPathTypeAt(point cfg.Point, target pathdom.Path) (typ.Type, bool) {
+	direct, directOK := r.DeclaredOrVariantOriginPathTypeAt(point, target)
+	if directOK && proof.OptionalTypeHasConcreteValue(direct) {
+		return direct, true
+	}
+	if alias, aliasOK := r.DominatingAliasDeclaredOrVariantOriginPathTypeAt(point, target); aliasOK {
+		return alias, true
+	}
+	return direct, directOK
+}
+
+func (r *Result) declaredVariantOrWitnessPathTypeAt(point cfg.Point, p pathdom.Path, allowWitness bool) (typ.Type, bool) {
+	if r == nil || p.IsEmpty() || p.Symbol == 0 {
+		return nil, false
+	}
+	root := p.RootOnly()
 	var rootType typ.Type
 	if annotated, ok := r.SymbolDeclaredType(root.Symbol); ok {
 		rootType = r.TransparentComparableType(annotated)
 	} else if value, ok := r.SymbolValueAtBoundary(point, root.Symbol); ok {
 		if full, fullOK := r.FullVariantOriginType(value); fullOK {
 			rootType = full
-		} else if witnessed, witnessedOK := typevalue.TypeOf(r.registry, value); witnessedOK {
-			rootType = witnessed
+		} else if allowWitness {
+			if witnessed, witnessedOK := typevalue.TypeOf(r.registry, value); witnessedOK {
+				rootType = witnessed
+			}
 		}
 	}
 	if rootType == nil {
 		return nil, false
 	}
-	return checkprojection.TypeAtPath(rootType, receiver)
+	return checkprojection.TypeAtPath(rootType, p)
 }
 
 // LiteralExpressionType returns the static type of a literal expression.
@@ -152,6 +286,9 @@ func LiteralExpressionType(expr ast.Expr) (typ.Type, bool) {
 // DeclaredExpressionTypeAt resolves expr through declared annotation types and
 // dominating declaration sources visible at point.
 func (r *Result) DeclaredExpressionTypeAt(point cfg.Point, expr ast.Expr) (typ.Type, bool) {
+	if cast, ok := expr.(*ast.CastExpr); ok && cast != nil && cast.Type != nil && r != nil && r.TypeResolver() != nil {
+		return r.TypeResolver().Type(cast.Type)
+	}
 	if t, ok := r.declaredExpressionType(expr); ok {
 		return t, true
 	}

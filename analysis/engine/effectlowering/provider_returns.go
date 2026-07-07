@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typecall"
 )
 
 // ReturnTypeOps carries caller-owned type operations needed by return
@@ -299,7 +300,7 @@ func instantiateSignatureForCall(
 		(sources == nil && argumentType == nil) {
 		return sig
 	}
-	args, ok := signatureCallArgumentTypes(ctx, sources, expressionRefinements, argumentType, argSources, in, read)
+	args, ok := signatureCallArgumentTypes(ctx, sources, expressionRefinements, argumentType, sig.Type, argSources, in, read)
 	if !ok {
 		return sig
 	}
@@ -308,6 +309,7 @@ func instantiateSignatureForCall(
 		return sig
 	}
 	sig.Type = instantiated.Type
+	sig.Effect = signature.SubstituteEffectTypes(sig.Effect, instantiated.TypeParams, instantiated.TypeArgs)
 	sig.OperationalEffects = signature.SubstituteOperationalTypes(sig.OperationalEffects, instantiated.TypeParams, instantiated.TypeArgs)
 	return sig
 }
@@ -317,6 +319,7 @@ func signatureCallArgumentTypes(
 	sources sourcevalue.SourceValues,
 	expressionRefinements sourcevalue.ExpressionRefinements,
 	argumentType SignatureArgumentTypeFunc,
+	fn *typ.Function,
 	argSources signatureArgumentReader,
 	in state.State,
 	read func(cfg.Point) state.State,
@@ -329,7 +332,8 @@ func signatureCallArgumentTypes(
 	args := make([]typ.Type, count)
 	seen := false
 	argSources.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
-		t, ok := signatureCallArgumentType(ctx, source, in, read, argumentType, resolver)
+		formal, _ := callParamType(fn, i)
+		t, ok := signatureCallArgumentType(ctx, source, formal, in, read, argumentType, resolver)
 		if !ok {
 			return true
 		}
@@ -343,6 +347,7 @@ func signatureCallArgumentTypes(
 func signatureCallArgumentType(
 	ctx transfer.NodeContext,
 	source factflow.ValueSource,
+	formal typ.Type,
 	in state.State,
 	read func(cfg.Point) state.State,
 	argumentType SignatureArgumentTypeFunc,
@@ -350,6 +355,9 @@ func signatureCallArgumentType(
 ) (typ.Type, bool) {
 	if argumentType != nil {
 		if t, ok := argumentType(ctx, source, in, read); ok {
+			if source.HasExpr {
+				t = contextualFunctionExpressionSignatureType(t, formal)
+			}
 			return t, true
 		}
 	}
@@ -361,6 +369,52 @@ func signatureCallArgumentType(
 		return nil, false
 	}
 	return typevalue.TypeOf(ctx.Registry, value)
+}
+
+func contextualFunctionExpressionSignatureType(actual typ.Type, formal typ.Type) typ.Type {
+	actualFn, actualOK := typecall.ContextualCallable(actual)
+	formalFn, formalOK := typecall.ContextualCallable(formal)
+	if !actualOK || !formalOK || actualFn == nil || formalFn == nil || len(actualFn.Returns) == 0 {
+		return actual
+	}
+	params := make([]typ.Param, len(actualFn.Params))
+	for i, param := range actualFn.Params {
+		paramType := param.Type
+		if contextualFunctionParamNeedsFormal(paramType) && i < len(formalFn.Params) {
+			paramType = formalFn.Params[i].Type
+		}
+		params[i] = typ.Param{Name: param.Name, Type: paramType, Optional: param.Optional}
+	}
+	var variadic typ.Type
+	if actualFn.Variadic != nil {
+		variadic = actualFn.Variadic
+		if contextualFunctionParamNeedsFormal(variadic) && formalFn.Variadic != nil {
+			variadic = formalFn.Variadic
+		}
+	}
+	return typ.RebuildFunction(typ.FunctionParts{
+		TypeParams: actualFn.TypeParams,
+		Params:     params,
+		Variadic:   variadic,
+		Returns:    actualFn.Returns,
+	})
+}
+
+func contextualFunctionParamNeedsFormal(t typ.Type) bool {
+	return t == nil || typ.TypeEquals(t, typ.Unknown) || typ.TypeEquals(t, typ.Any)
+}
+
+func callParamType(fn *typ.Function, index int) (typ.Type, bool) {
+	if fn == nil || index < 0 {
+		return nil, false
+	}
+	if index < len(fn.Params) {
+		return fn.Params[index].Type, true
+	}
+	if fn.Variadic != nil {
+		return fn.Variadic, true
+	}
+	return nil, false
 }
 
 func activeReturnTransform(sig signature.Function, index int) (returns.ReturnType, bool) {

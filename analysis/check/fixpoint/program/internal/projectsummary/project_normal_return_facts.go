@@ -378,7 +378,8 @@ func segmentsEqual(a, b []segment.Segment) bool {
 }
 
 func projectAssignmentPathInvalidations(result ResultReader, params []path.Path) []callboundary.PathInvalidationFact {
-	if !hasOrdinaryAssignmentFactReader(result) {
+	rootReader, hasRootAssignments := result.(rootAssignmentReader)
+	if !hasOrdinaryAssignmentFactReader(result) && !hasRootAssignments {
 		return nil
 	}
 	graph := result.Graph()
@@ -399,11 +400,7 @@ func projectAssignmentPathInvalidations(result ResultReader, params []path.Path)
 		if noNormal != nil && noNormal.NoNormalReturn(point) {
 			continue
 		}
-		fact, ok := ordinaryAssignmentFactAt(result, point)
-		if !ok {
-			continue
-		}
-		target, preserveStructuralWitness, clearTarget, ok := assignmentInvalidationPath(fact, kindReader, captured)
+		target, preserveStructuralWitness, clearTarget, ok := assignmentInvalidationPathAt(result, rootReader, point, kindReader, captured)
 		if !ok {
 			continue
 		}
@@ -421,10 +418,12 @@ func projectAssignmentPathInvalidations(result ResultReader, params []path.Path)
 }
 
 func projectAssignmentPersistentPathWrites(reg *axis.Registry, result ResultReader, exit state.State) []callboundary.PathValueFact {
-	if reg == nil || !hasOrdinaryAssignmentFactReader(result) {
+	rootReader, hasRootAssignments := result.(rootAssignmentReader)
+	if reg == nil || (!hasOrdinaryAssignmentFactReader(result) && !hasRootAssignments) {
 		return nil
 	}
 	valueReader, _ := result.(expressionValueBeforeReader)
+	sourceValueReader, _ := result.(returnSourceValueReader)
 	graph := result.Graph()
 	if graph == nil {
 		return nil
@@ -444,17 +443,9 @@ func projectAssignmentPersistentPathWrites(reg *axis.Registry, result ResultRead
 		if noNormal != nil && noNormal.NoNormalReturn(point) {
 			continue
 		}
-		fact, ok := ordinaryAssignmentFactAt(result, point)
+		target, value, ok := assignmentPersistentWriteAt(reg, result, rootReader, valueReader, sourceValueReader, exit, point, kindReader, captured)
 		if !ok {
 			continue
-		}
-		target, ok := assignmentPersistentValuePath(fact, kindReader, captured)
-		if !ok {
-			continue
-		}
-		value, ok := persistentAssignmentSourceValue(reg, valueReader, point, fact)
-		if !ok {
-			value = exit.ReadValue(reg, key.SymbolValue(target.Symbol))
 		}
 		if product.Equal(reg, value, bottom) {
 			continue
@@ -465,6 +456,73 @@ func projectAssignmentPersistentPathWrites(reg *axis.Registry, result ResultRead
 		})
 	}
 	return out
+}
+
+func assignmentInvalidationPathAt(
+	result ResultReader,
+	rootReader rootAssignmentReader,
+	point cfg.Point,
+	kindReader symbolKindReader,
+	captured map[symbol.ID]struct{},
+) (path.Path, bool, bool, bool) {
+	if fact, ok := ordinaryAssignmentFactAt(result, point); ok {
+		return assignmentInvalidationPath(fact, kindReader, captured)
+	}
+	if rootReader == nil {
+		return path.Path{}, false, false, false
+	}
+	assignment, ok := rootReader.RootAssignment(point)
+	if !ok || assignment.Kind() != factflow.RootAssignmentOrdinaryRootWrite {
+		return path.Path{}, false, false, false
+	}
+	target := assignment.TargetPath()
+	if target.Symbol == 0 || len(target.Segments) != 0 || !persistentSinkSymbol(kindReader, captured, target.Symbol) {
+		return path.Path{}, false, false, false
+	}
+	return path.NewPath(target.Symbol, ""), false, false, true
+}
+
+func assignmentPersistentWriteAt(
+	reg *axis.Registry,
+	result ResultReader,
+	rootReader rootAssignmentReader,
+	valueReader expressionValueBeforeReader,
+	sourceValueReader returnSourceValueReader,
+	exit state.State,
+	point cfg.Point,
+	kindReader symbolKindReader,
+	captured map[symbol.ID]struct{},
+) (path.Path, product.Value, bool) {
+	if fact, ok := ordinaryAssignmentFactAt(result, point); ok {
+		target, ok := assignmentPersistentValuePath(fact, kindReader, captured)
+		if !ok {
+			return path.Path{}, product.Value{}, false
+		}
+		value, ok := persistentAssignmentSourceValue(reg, valueReader, point, fact)
+		if !ok {
+			value = exit.ReadValue(reg, key.SymbolValue(target.Symbol))
+		}
+		return target, value, true
+	}
+	if rootReader == nil {
+		return path.Path{}, product.Value{}, false
+	}
+	assignment, ok := rootReader.RootAssignment(point)
+	if !ok || assignment.Kind() != factflow.RootAssignmentOrdinaryRootWrite {
+		return path.Path{}, product.Value{}, false
+	}
+	target := assignment.TargetPath()
+	if target.Symbol == 0 || len(target.Segments) != 0 || !persistentSinkSymbol(kindReader, captured, target.Symbol) {
+		return path.Path{}, product.Value{}, false
+	}
+	value := product.Value{}
+	if sourceValueReader != nil {
+		value, ok = sourceValueReader.SourceValueAtBoundary(point, assignment.Source())
+	}
+	if !ok {
+		value = exit.ReadValue(reg, key.SymbolValue(target.Symbol))
+	}
+	return path.NewPath(target.Symbol, ""), value, true
 }
 
 func persistentAssignmentSourceValue(reg *axis.Registry, reader expressionValueBeforeReader, point cfg.Point, fact semantics.OrdinaryAssignmentFact) (product.Value, bool) {

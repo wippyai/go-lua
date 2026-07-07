@@ -343,6 +343,44 @@ func testReturnTypeOps() ReturnTypeOps {
 	}
 }
 
+func TestContextualFunctionExpressionKeepsConcreteCallbackParams(t *testing.T) {
+	outer := typ.NewTypeParam("T", nil)
+	predicate := typ.NewGeneric("Predicate", []*typ.TypeParam{outer},
+		typ.Func().Param("item", outer).Returns(typ.Boolean).Build())
+	fnParam := typ.NewTypeParam("T", nil)
+	user := typetable.NewRecord().
+		Field("name", typ.String).
+		Field("age", typ.Number).
+		Build()
+	actual := typ.Func().
+		Param("user", user).
+		Returns(typ.Boolean).
+		Build()
+
+	got := contextualFunctionExpressionSignatureType(actual, typ.Instantiate(predicate, fnParam))
+	fn, ok := got.(*typ.Function)
+	if !ok || len(fn.Params) != 1 || !typ.TypeEquals(fn.Params[0].Type, user) {
+		t.Fatalf("contextual callback type = %v, want concrete user param preserved", got)
+	}
+}
+
+func TestContextualFunctionExpressionFillsUnknownCallbackParams(t *testing.T) {
+	outer := typ.NewTypeParam("T", nil)
+	predicate := typ.NewGeneric("Predicate", []*typ.TypeParam{outer},
+		typ.Func().Param("item", outer).Returns(typ.Boolean).Build())
+	fnParam := typ.NewTypeParam("T", nil)
+	actual := typ.Func().
+		Param("item", typ.Unknown).
+		Returns(typ.Boolean).
+		Build()
+
+	got := contextualFunctionExpressionSignatureType(actual, typ.Instantiate(predicate, fnParam))
+	fn, ok := got.(*typ.Function)
+	if !ok || len(fn.Params) != 1 || fn.Params[0].Type != fnParam {
+		t.Fatalf("contextual callback type = %v, want formal type parameter fill", got)
+	}
+}
+
 func testCallableReturn(t typ.Type) (typ.Type, bool) {
 	fn, ok := unwrap.Alias(t).(*typ.Function)
 	if !ok || fn == nil || len(fn.Returns) == 0 || fn.Returns[0] == nil {
@@ -1302,6 +1340,10 @@ func TestSignatureOutcomeProviderLowersTableMutatorElementTypeToValueObligation(
 	if len(got.ParamObligations) != 1 || got.ParamObligations[0].ParamIndex != 1 {
 		t.Fatalf("param obligations = %#v, want one obligation for inserted value argument", got.ParamObligations)
 	}
+	if origin := got.ParamObligations[0].Origin; !origin.HasOrigin ||
+		origin.SubjectLabel != "argument 2" || origin.ProviderLabel != "argument 1 element" {
+		t.Fatalf("param obligation origin = %#v, want inserted value constrained by table element", origin)
+	}
 	obligationType, ok := typevalue.TypeOf(reg, got.ParamObligations[0].Value)
 	if !ok || !typ.TypeEquals(obligationType, typ.String) {
 		t.Fatalf("obligation type = %v/%v, want string", obligationType, ok)
@@ -1651,6 +1693,76 @@ func TestSignatureOutcomeProviderTableMutatorUsesSignatureArgumentTypeForInserte
 	dynamicValueType, ok := typevalue.TypeOf(reg, got.NormalReturnFacts.DynamicIndexFacts[0].Value.Value)
 	if !ok || !typ.TypeEquals(dynamicValueType, insertedType) {
 		t.Fatalf("dynamic value type = %v/%v, want %v", dynamicValueType, ok, insertedType)
+	}
+}
+
+func TestSignatureOutcomeProviderTableMutatorRefinesBuiltinTableTargetFromArgumentType(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	listExpr := factflow.ExprRef(91644)
+	valueExpr := factflow.ExprRef(91645)
+	listSymbol := symbol.ID(91646)
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: listExpr, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: valueExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]path.Path{
+			listExpr: path.NewPath(listSymbol, "items"),
+		},
+	})
+	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[factflow.ExprRef]product.Value{
+			listExpr:  returnValueFromType(reg, typ.BuiltinTableTopMarker()),
+			valueExpr: returnValueFromType(reg, typ.String),
+		},
+	})
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"table.insert": {
+				Effect: effect.Empty.With(
+					mutation.TableMutator{Target: effect.ParamRef{Index: 0}, Value: effect.ParamRef{Index: -1}},
+				),
+			},
+		},
+		NameFor: staticName("table.insert"),
+		Facts:   facts,
+		Sources: sources,
+		ArgumentType: func(_ transfer.NodeContext, source factflow.ValueSource, _ state.State, _ func(cfg.Point) state.State) (typ.Type, bool) {
+			switch source.ExprRef {
+			case listExpr:
+				return typetable.NewRecord().Build(), true
+			case valueExpr:
+				return typ.String, true
+			default:
+				return nil, false
+			}
+		},
+	})
+	site, ok := facts.CallSite(call)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+
+	if len(got.ParamPathWrites) != 1 ||
+		!got.ParamPathWrites[0].Path.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("param path writes = %#v, want one $0 write", got.ParamPathWrites)
+	}
+	refinedType, ok := typevalue.TypeOf(reg, got.ParamPathWrites[0].Value)
+	want := typ.NewArray(typ.String)
+	if !ok || !typ.TypeEquals(refinedType, want) {
+		t.Fatalf("refined list type = %v/%v, want %v", refinedType, ok, want)
 	}
 }
 
@@ -3621,6 +3733,111 @@ func TestSignatureOutcomeProviderOptionalElementOfArrayKeepsMaybePresence(t *tes
 	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.String))
 	if gotPresence := product.PresenceOf(got[0].Value); !presence.Equal(gotPresence, presence.Top()) {
 		t.Fatalf("presence = %s, want maybe/top", gotPresence)
+	}
+}
+
+func TestSignatureOutcomeProviderInstantiatesGenericOptionalElementReturn(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(111)
+	itemParam := typ.NewTypeParam("T", nil)
+	predicate := typ.NewGeneric("Predicate", []*typ.TypeParam{itemParam},
+		typ.Func().Param("item", itemParam).Returns(typ.Boolean).Build())
+	user := typetable.NewRecord().
+		Field("name", typ.String).
+		Field("age", typ.Number).
+		Build()
+	usersRef := factflow.ExprRef(1111)
+	predRef := factflow.ExprRef(1112)
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"find": {
+				Type: typ.Func().
+					TypeParamRef(itemParam).
+					Param("arr", typ.NewArray(itemParam)).
+					Param("pred", typ.Instantiate(predicate, itemParam)).
+					Returns(typeexpr.Optional(itemParam)).
+					Build(),
+				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.OptionalElementOf{Source: effect.ParamRef{Index: 0}}}),
+			},
+		},
+		NameFor:       staticName("find"),
+		ReturnTypeOps: testReturnTypeOps(),
+		Facts: signatureOutcomeProviderFacts(point, []factflow.ValueSource{
+			{Kind: factflow.ValueSourceExpression, ExprRef: usersRef, HasExpr: true},
+			{Kind: factflow.ValueSourceExpression, ExprRef: predRef, HasExpr: true},
+		}),
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+			Registry: reg,
+			ExpressionValues: map[factflow.ExprRef]product.Value{
+				usersRef: typevalue.WithWitness(reg, typevalue.FromType(reg, typ.NewArray(user)), typ.NewArray(user)),
+				predRef: typevalue.WithWitness(reg, typevalue.FromType(reg,
+					typ.Func().Param("item", user).Returns(typ.Boolean).Build()),
+					typ.Func().Param("item", user).Returns(typ.Boolean).Build()),
+			},
+		}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
+
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got), got)
+	}
+	assertTypeWitness(t, reg, got[0].Value, user)
+	if gotPresence := product.PresenceOf(got[0].Value); !presence.Equal(gotPresence, presence.Top()) {
+		t.Fatalf("presence = %s, want maybe/top", gotPresence)
+	}
+}
+
+func TestSignatureOutcomeProviderInstantiatesGenericSameAsAccumulatorReturn(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(112)
+	itemParam := typ.NewTypeParam("T", nil)
+	accParam := typ.NewTypeParam("A", nil)
+	reducer := typ.NewGeneric("Reducer", []*typ.TypeParam{itemParam, accParam},
+		typ.Func().Param("acc", accParam).Param("item", itemParam).Returns(accParam).Build())
+	itemsRef := factflow.ExprRef(1121)
+	fnRef := factflow.ExprRef(1122)
+	initialRef := factflow.ExprRef(1123)
+	numberReducer := typ.Func().Param("acc", typ.Number).Param("item", typ.String).Returns(typ.Number).Build()
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"reduce": {
+				Type: typ.Func().
+					TypeParamRef(itemParam).
+					TypeParamRef(accParam).
+					Param("arr", typ.NewArray(itemParam)).
+					Param("fn", typ.Instantiate(reducer, itemParam, accParam)).
+					Param("initial", accParam).
+					Returns(accParam).
+					Build(),
+				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: effect.ParamRef{Index: 2}}}),
+			},
+		},
+		NameFor:       staticName("reduce"),
+		ReturnTypeOps: testReturnTypeOps(),
+		Facts: signatureOutcomeProviderFacts(point, []factflow.ValueSource{
+			{Kind: factflow.ValueSourceExpression, ExprRef: itemsRef, HasExpr: true},
+			{Kind: factflow.ValueSourceExpression, ExprRef: fnRef, HasExpr: true},
+			{Kind: factflow.ValueSourceExpression, ExprRef: initialRef, HasExpr: true},
+		}),
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+			Registry: reg,
+			ExpressionValues: map[factflow.ExprRef]product.Value{
+				itemsRef:   typevalue.WithWitness(reg, typevalue.FromType(reg, typ.NewArray(typ.String)), typ.NewArray(typ.String)),
+				fnRef:      typevalue.WithWitness(reg, typevalue.FromType(reg, numberReducer), numberReducer),
+				initialRef: typevalue.WithWitness(reg, typevalue.FromType(reg, typ.Number), typ.Number),
+			},
+		}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
+
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got), got)
+	}
+	assertTypeWitness(t, reg, got[0].Value, typ.Number)
+	if gotPresence := product.PresenceOf(got[0].Value); !presence.Equal(gotPresence, presence.Present()) {
+		t.Fatalf("presence = %s, want present", gotPresence)
 	}
 }
 

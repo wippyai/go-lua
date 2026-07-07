@@ -100,7 +100,7 @@ func (diagnosticDisplay) MissingMemberHelp(member string) string {
 }
 
 func (d diagnosticDisplay) MemberNotCallableMessage(memberPath string, receiver, memberType typ.Type, member string) string {
-	if topLikeType(memberType) {
+	if typ.AbsentOrTopLike(memberType) {
 		if memberPath != "" && memberPath != "receiver" {
 			return fmt.Sprintf("%s comes from any/unknown; no proof shows it is callable", memberPath)
 		}
@@ -124,7 +124,7 @@ func (diagnosticDisplay) MemberNotCallableHelp(memberPath string) string {
 }
 
 func (d diagnosticDisplay) DirectNotCallableMessage(name string, calleeType typ.Type) string {
-	if topLikeType(calleeType) {
+	if typ.AbsentOrTopLike(calleeType) {
 		return fmt.Sprintf("%s comes from any/unknown; no proof shows it is callable", name)
 	}
 	return fmt.Sprintf("%s is %s, not callable", name, d.Type(calleeType))

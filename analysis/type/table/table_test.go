@@ -323,6 +323,49 @@ func TestOverlayRecordMembersNoOpPreservesExistingNode(t *testing.T) {
 	}
 }
 
+func TestOverlayRecordMembersNoOpPreservesSameRecursiveIdentityWrapper(t *testing.T) {
+	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return NewRecord().OptField("next", self).Build()
+	})
+	existing := NewRecord().Field("next", node).Build()
+	overlay := NewRecord().Field("next", node).Build()
+
+	got, ok := OverlayRecordMembers(existing, overlay)
+	if !ok {
+		t.Fatal("OverlayRecordMembers did not accept records")
+	}
+	if got != existing {
+		t.Fatalf("recursive no-op overlay returned %p, want existing node %p", got, existing)
+	}
+}
+
+func TestOverlayRecordMembersKeepsDistinctRecursiveFamiliesDistinct(t *testing.T) {
+	left := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return NewRecord().OptField("next", self).Build()
+	})
+	right := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return NewRecord().OptField("next", self).Build()
+	})
+	existing := NewRecord().Field("next", left).Build()
+	overlay := NewRecord().Field("next", right).Build()
+
+	got, ok := OverlayRecordMembers(existing, overlay)
+	if !ok {
+		t.Fatal("OverlayRecordMembers did not accept records")
+	}
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("overlay result = %T, want record", got)
+	}
+	next := rec.GetField("next")
+	if next == nil {
+		t.Fatal("next field missing")
+	}
+	if next.Type != right {
+		t.Fatalf("overlay collapsed distinct recursive family: got %v, want %v", next.Type, right)
+	}
+}
+
 func TestRecordConstructionSplitsNilableOptionalPayloads(t *testing.T) {
 	assertField := func(t *testing.T, rec *typ.Record, name string, want typ.Type) {
 		t.Helper()

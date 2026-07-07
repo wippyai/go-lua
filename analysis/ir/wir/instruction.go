@@ -16,10 +16,7 @@
 // range rather than per-instruction slices.
 package wir
 
-import (
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/compiler/source"
-)
+import "github.com/wippyai/go-lua/analysis/ir/cfg"
 
 // Op is the closed instruction opcode set. The type sublanguage costs zero
 // instructions: type declarations resolve at bind/signature time and never
@@ -236,6 +233,10 @@ type Instruction struct {
 	// OpMakeTable. It is analysis metadata; List remains the runtime value list.
 	TableEntries TableEntryRange
 
+	// DynamicSuffix carries static member/index segments after the dynamic key
+	// for OpDynamicIndexWrite targets such as t[k].field.
+	DynamicSuffix SegmentRange
+
 	// ImpliedChecks is the normalized leaf-check window for OpBranch compound
 	// conditions. Check carries the direct condition when one exists; this range
 	// carries edge-specific leaves proven by and/or/not structure.
@@ -269,8 +270,8 @@ type Instruction struct {
 	// CallConditionNegated is true when a condition call is the operand of unary
 	// `not`, so the CFG true edge corresponds to the call's falsy result.
 	CallConditionNegated bool
-	CallSpan             source.Span
-	CalleeSpan           source.Span
+	CallSpan             Span
+	CalleeSpan           Span
 	CallArgs             CallArgumentMetaRange
 	CallTypeArgs         TypeRefRange
 

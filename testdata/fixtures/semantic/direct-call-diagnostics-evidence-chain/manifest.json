@@ -164,7 +164,7 @@
         ],
         "min_evidence": 1,
         "evidence_contains": [
-          "target has type number"
+          "target has literal value 1"
         ],
         "evidence": [
           {
@@ -174,22 +174,22 @@
             "kind": "abstract fact",
             "trust": "proven",
             "contains": [
-              "target has type number"
+              "target has literal value 1"
             ]
           }
         ],
         "render_contains": [
-          "error[type.call.direct.not_callable]: target is number, not callable",
+          "error[type.call.direct.not_callable]: target is 1, not callable",
           "target()",
           "because:",
           "replace `target` with a callable expression"
         ],
         "render_ordered_contains": [
-          "error[type.call.direct.not_callable]: target is number, not callable",
+          "error[type.call.direct.not_callable]: target is 1, not callable",
           "--> main.lua:9:1",
           "target()",
           "because:",
-          "1. proven: target has type number",
+          "1. proven: target has literal value 1",
           "help: Call a function value, or replace `target` with a callable expression before this call."
         ],
         "render_not_contains": [

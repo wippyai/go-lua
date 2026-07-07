@@ -28,6 +28,20 @@ type Segment struct {
 	Index int
 }
 
+// DirectFieldName reports whether segs is exactly one dot-field segment and
+// returns that field name. It centralizes the common "plain object field"
+// suffix check used by object-literal projections.
+func DirectFieldName(segs []Segment) (string, bool) {
+	if len(segs) != 1 {
+		return "", false
+	}
+	seg := segs[0]
+	if seg.Kind != SegmentField {
+		return "", false
+	}
+	return seg.Name, true
+}
+
 // FormatSegments converts path segments to a canonical suffix string.
 // This is the single canonical implementation for segment serialization.
 // Format: .field for SegmentField, ["key"] for SegmentIndexString, [123] for SegmentIndexInt.

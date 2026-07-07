@@ -74,6 +74,9 @@ type ValueSource struct {
 	ExprRef ExprRef
 	HasExpr bool
 
+	SourcePoint    cfg.Point
+	HasSourcePoint bool
+
 	ExprIndex   int
 	TargetIndex int
 	ResultIndex int
@@ -106,6 +109,16 @@ func NewExpressionValueSource(expr ExprRef, exprIndex, targetIndex, resultIndex 
 		ResultIndex: resultIndex,
 	}, shape)
 	return source, source.Valid()
+}
+
+// WithSourcePoint records the CFG point that produced an expression-backed
+// source. Consumers that resolve a source after later side effects can use this
+// point to read the value under the same solved facts that held when the
+// expression was evaluated.
+func (s ValueSource) WithSourcePoint(point cfg.Point) ValueSource {
+	s.SourcePoint = point
+	s.HasSourcePoint = point != 0
+	return s
 }
 
 // NewCallValueSource creates a value source backed by a call result.
@@ -228,7 +241,7 @@ func (s ValueSource) Valid() bool {
 	if !s.shape().Valid() {
 		return false
 	}
-	if !s.exprFlagsValid() || !s.callFlagsValid() {
+	if !s.exprFlagsValid() || !s.callFlagsValid() || !s.sourcePointFlagsValid() {
 		return false
 	}
 	switch s.Kind {
@@ -315,6 +328,10 @@ func (s ValueSource) exprFlagsValid() bool {
 
 func (s ValueSource) callFlagsValid() bool {
 	return s.HasCallPoint == (s.CallPoint != 0)
+}
+
+func (s ValueSource) sourcePointFlagsValid() bool {
+	return s.HasSourcePoint == (s.SourcePoint != 0)
 }
 
 func copyValueSources(in []ValueSource) []ValueSource {

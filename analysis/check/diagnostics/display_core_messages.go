@@ -3,6 +3,7 @@ package diagnostics
 import (
 	"fmt"
 
+	"github.com/wippyai/go-lua/analysis/check/readmodel"
 	typeformat "github.com/wippyai/go-lua/analysis/type/format"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -11,8 +12,8 @@ func (diagnosticDisplay) Type(t typ.Type) string {
 	if t == nil {
 		return "unknown"
 	}
-	if projectionHasNil(t) {
-		if present := projectionWithoutNil(t); present != nil && !typ.IsNever(present) && topLikeType(present) {
+	if readmodel.ProjectionHasNil(t) {
+		if present := readmodel.ProjectionWithoutNil(t); present != nil && !typ.IsNever(present) && typ.AbsentOrTopLike(present) {
 			return typeformat.Short(present)
 		}
 	}
@@ -31,8 +32,8 @@ func (d diagnosticDisplay) SourceTypeEvidence(sourceName string, t typ.Type) str
 }
 
 func (d diagnosticDisplay) SourceTypeEvidenceDisplay(sourceName string, t typ.Type, displayType string) string {
-	if sourceName != "" && sourceName != unknownSourceName && t != nil && !typ.Nil.Equals(t) && projectionHasNil(t) {
-		if present := projectionWithoutNil(t); present != nil && !typ.IsNever(present) {
+	if sourceName != "" && sourceName != unknownSourceName && t != nil && !typ.Nil.Equals(t) && readmodel.ProjectionHasNil(t) {
+		if present := readmodel.ProjectionWithoutNil(t); present != nil && !typ.IsNever(present) {
 			rendered := displayTypeWithoutNil(displayType)
 			if rendered == "" {
 				rendered = d.Type(present)

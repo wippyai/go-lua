@@ -44,6 +44,14 @@ func LocalAssignmentPresentationFor(fact LocalAssignmentFact) LocalAssignmentPre
 	}
 }
 
+// AssignmentTargetKey returns a stable key for a local assignment target.
+func AssignmentTargetKey(fact LocalAssignmentFact) string {
+	if fact.HasSymbol && fact.Symbol != 0 {
+		return "sym:" + strconv.FormatUint(uint64(fact.Symbol), 10)
+	}
+	return "local:" + fact.Name + ":" + strconv.Itoa(fact.Index)
+}
+
 // OrdinaryAssignmentPresentationFor returns syntax-owned display data for an
 // ordinary assignment fact.
 func OrdinaryAssignmentPresentationFor(fact OrdinaryAssignmentFact) OrdinaryAssignmentPresentation {

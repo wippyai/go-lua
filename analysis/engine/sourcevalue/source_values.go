@@ -4,6 +4,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
@@ -17,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
@@ -41,15 +43,21 @@ type ObjectLiteralViewEvaluator func(lit factflow.ObjectLiteralView, resolver fa
 // optional because the generic transfer engine cannot infer vararg shape.
 type VarargValueProvider func(point cfg.Point, source factflow.ValueSource, in state.State, read func(cfg.Point) state.State) (product.Value, bool)
 
+// StaticScalarKeySegment maps a language-level scalar key value into the
+// canonical path segment used by static member projections.
+type StaticScalarKeySegment func(value product.Value) (segment.Segment, bool)
+
 // ExpressionConditionStateRefiner applies the path facts selected by a
 // short-circuit condition to the temporary state used for the right operand.
 type ExpressionConditionStateRefiner func(point cfg.Point, in state.State, facts factflow.ExpressionConditionFacts) state.State
 
 // SourceValuesConfig configures the generic ValueSource resolver.
 type SourceValuesConfig struct {
-	Registry   *axis.Registry
-	TypeValues *typevalue.Cache
-	KeySpace   *keyspace.KeySpace
+	Registry         *axis.Registry
+	TypeValues       *typevalue.Cache
+	KeySpace         *keyspace.KeySpace
+	Visibility       *visibility.Resolver
+	ProjectPathValue func(root product.Value, segments []segment.Segment) (product.Value, bool)
 
 	ExpressionValues map[factflow.ExprRef]product.Value
 	// ExpressionPaths identifies the expressions whose value is an access path
@@ -65,6 +73,7 @@ type SourceValuesConfig struct {
 	DynamicIndexExprs     map[factflow.ExprRef]factflow.DynamicIndexExpression
 	ExpressionOp          ExpressionOperationEvaluator
 	ExpressionCondition   ExpressionConditionStateRefiner
+	StaticScalarKey       StaticScalarKeySegment
 	ExpressionValue       ExpressionValueProvider
 	PreferExpressionValue bool
 	VarargValue           VarargValueProvider
@@ -81,6 +90,8 @@ func NewSourceValues(config SourceValuesConfig) SourceValues {
 		registry:              registry,
 		typeValues:            config.TypeValues,
 		keySpace:              config.KeySpace,
+		visibility:            config.Visibility,
+		projectPathValue:      config.ProjectPathValue,
 		expressionValues:      copyExpressionValues(config.ExpressionValues),
 		pathBacked:            copyExprRefSet(config.ExpressionPaths),
 		objectLiteralView:     config.ObjectLiteralView,
@@ -90,6 +101,7 @@ func NewSourceValues(config SourceValuesConfig) SourceValues {
 		dynamicIndexExprs:     copyDynamicIndexExpressions(config.DynamicIndexExprs),
 		expressionOp:          config.ExpressionOp,
 		expressionCondition:   config.ExpressionCondition,
+		staticScalarKey:       config.StaticScalarKey,
 		expressionValue:       config.ExpressionValue,
 		preferExpressionValue: config.PreferExpressionValue,
 		varargValue:           config.VarargValue,
@@ -117,9 +129,11 @@ func WithExpressionValue(base SourceValues, provider ExpressionValueProvider) So
 }
 
 type sourceValueResolver struct {
-	registry   *axis.Registry
-	typeValues *typevalue.Cache
-	keySpace   *keyspace.KeySpace
+	registry         *axis.Registry
+	typeValues       *typevalue.Cache
+	keySpace         *keyspace.KeySpace
+	visibility       *visibility.Resolver
+	projectPathValue func(root product.Value, segments []segment.Segment) (product.Value, bool)
 
 	expressionValues      map[factflow.ExprRef]product.Value
 	pathBacked            map[factflow.ExprRef]struct{}
@@ -131,6 +145,7 @@ type sourceValueResolver struct {
 	dynamicIndexExprs     map[factflow.ExprRef]factflow.DynamicIndexExpression
 	expressionOp          ExpressionOperationEvaluator
 	expressionCondition   ExpressionConditionStateRefiner
+	staticScalarKey       StaticScalarKeySegment
 	expressionValue       ExpressionValueProvider
 	preferExpressionValue bool
 	varargValue           VarargValueProvider
@@ -200,7 +215,7 @@ func (r sourceValueResolver) valueOfSource(
 		}
 		return r.varargValue(point, source, in, read)
 	case factflow.ValueSourcePath:
-		return r.valueOfPathSource(source, in)
+		return r.valueOfPathSource(point, source, in)
 	case factflow.ValueSourceLiteral:
 		return r.valueOfLiteralSource(source)
 	default:
@@ -208,7 +223,7 @@ func (r sourceValueResolver) valueOfSource(
 	}
 }
 
-func (r sourceValueResolver) valueOfPathSource(source factflow.ValueSource, in state.State) (product.Value, bool) {
+func (r sourceValueResolver) valueOfPathSource(point cfg.Point, source factflow.ValueSource, in state.State) (product.Value, bool) {
 	if source.PathKey == "" {
 		return product.Value{}, false
 	}
@@ -219,8 +234,30 @@ func (r sourceValueResolver) valueOfPathSource(source factflow.ValueSource, in s
 	if !ok {
 		return product.Value{}, false
 	}
+	if r.visibility != nil {
+		if sourcePath, ok := r.pathSourcePath(source.PathKey); ok {
+			if value, ok := ReadPathValue(r.registry, r.visibility, point, sourcePath, in); ok {
+				if len(sourcePath.Segments) != 0 {
+					if projected, projectedOK := r.projectPathSourceFromRoot(pathKey, in); projectedOK {
+						return mergePathSourceExactWithRootProjection(r.registry, value, projected), true
+					}
+				}
+				return value, true
+			}
+		}
+	}
 	if value, ok := readLocalPathKeyWithFieldCanonicalAlias(r.registry, r.keySpace, in, pathKey); ok {
+		if len(r.keySpace.Segments(pathKey)) != 0 {
+			if projected, projectedOK := r.projectPathSourceFromRoot(pathKey, in); projectedOK {
+				return mergePathSourceExactWithRootProjection(r.registry, value, projected), true
+			}
+		}
 		return value, true
+	}
+	if len(r.keySpace.Segments(pathKey)) != 0 {
+		if value, ok := r.projectPathSourceFromRoot(pathKey, in); ok {
+			return value, true
+		}
 	}
 	if (pathKey.Kind == keyspace.KindResolverSym || pathKey.Kind == keyspace.KindUnversionedSym) &&
 		pathKey.Segs == 0 && pathKey.Sym != 0 {
@@ -232,11 +269,46 @@ func (r sourceValueResolver) valueOfPathSource(source factflow.ValueSource, in s
 	return product.Value{}, false
 }
 
+func mergePathSourceExactWithRootProjection(reg *axis.Registry, exact, projected product.Value) product.Value {
+	switch {
+	case product.LessOrEq(reg, projected, exact):
+		return projected
+	case product.LessOrEq(reg, exact, projected):
+		return exact
+	}
+	if merged := valueref.MeetConstraint(reg, exact, projected); !product.Equal(reg, merged, product.Bottom(reg)) {
+		return merged
+	}
+	return exact
+}
+
+func (r sourceValueResolver) projectPathSourceFromRoot(pathKey keyspace.Key, in state.State) (product.Value, bool) {
+	if r.projectPathValue == nil || pathKey.Sym == 0 {
+		return product.Value{}, false
+	}
+	rootValue := in.ReadValue(r.registry, key.SymbolValue(pathKey.Sym))
+	if product.Equal(r.registry, rootValue, product.Bottom(r.registry)) {
+		return product.Value{}, false
+	}
+	return r.projectPathValue(rootValue, r.keySpace.Segments(pathKey))
+}
+
 func (r sourceValueResolver) pathSourceKey(sourceKey pathdom.PathKey) (keyspace.Key, bool) {
 	if sym, segments, ok := pathaddr.ParseSymbolPathKey(sourceKey); ok {
 		return r.keySpace.FromStableSymbol(sym, segments)
 	}
 	return r.keySpace.FromStateKey(sourceKey)
+}
+
+func (r sourceValueResolver) pathSourcePath(sourceKey pathdom.PathKey) (pathdom.Path, bool) {
+	if sym, segments, ok := pathaddr.ParseSymbolPathKey(sourceKey); ok {
+		return pathdom.Path{Symbol: sym, Segments: segments}, true
+	}
+	key, ok := r.keySpace.FromStateKey(sourceKey)
+	if !ok || key.Sym == 0 {
+		return pathdom.Path{}, false
+	}
+	return pathdom.Path{Symbol: key.Sym, Segments: r.keySpace.Segments(key)}, true
 }
 
 func (r sourceValueResolver) valueOfLiteralSource(source factflow.ValueSource) (product.Value, bool) {
@@ -280,11 +352,13 @@ func (r sourceValueResolver) valueOfExpression(
 		return value, true
 	}
 	_, hasOperation := r.expressionOps[source.ExprRef]
+	if hasOperation && !pathBacked {
+		if value, ok := r.valueOfExpressionOperation(point, source.ExprRef, in, read, active); ok {
+			return value, true
+		}
+	}
 	if hasCached && !pathBacked && !hasOperation && !hasTopOrigin(r.registry, cached) {
 		return cached, true
-	}
-	if value, ok := r.valueOfExpressionOperation(point, source.ExprRef, in, read, active); ok {
-		return value, true
 	}
 	if hasCached && !pathBacked && hasTopOrigin(r.registry, cached) {
 		if flowValue, ok := r.flowExpressionValue(point, source, in, read, active); ok && recoverableConcreteType(r.registry, r.typeValues, flowValue) {
@@ -303,9 +377,12 @@ func (r sourceValueResolver) valueOfExpression(
 	// must refine, not replace, a more precise cached declaration such as
 	// nil|string|map narrowed by type(x) == "table".
 	if pathBacked && hasCached {
-		if flowValue, ok := r.flowExpressionValue(point, source, in, read, active); ok {
+		if flowValue, ok := r.pathBackedExpressionValue(point, source, in, read); ok {
 			if (carriesType(r.registry, r.typeValues, flowValue) && (!hasTopOrigin(r.registry, flowValue) || cachedAllowsRuntimeKindOverride(r.registry, r.typeValues, cached))) ||
 				(carriesRuntimeKindEvidence(r.registry, flowValue) && cachedAllowsRuntimeKindOverride(r.registry, r.typeValues, cached)) {
+				if preserved, preserveOK := PreservePathBackedGradualContract(r.registry, r.typeValues, cached, flowValue); preserveOK {
+					return preserved, true
+				}
 				return flowValue, true
 			}
 			if refined, refinedOK := refineCachedByIdentity(r.registry, r.typeValues, cached, flowValue); refinedOK {
@@ -324,6 +401,23 @@ func (r sourceValueResolver) valueOfExpression(
 		return cached, true
 	}
 	return r.flowExpressionValue(point, source, in, read, active)
+}
+
+func (r sourceValueResolver) pathBackedExpressionValue(
+	point cfg.Point,
+	source factflow.ValueSource,
+	in state.State,
+	read func(cfg.Point) state.State,
+) (product.Value, bool) {
+	if r.expressionValue == nil {
+		return product.Value{}, false
+	}
+	if source.HasSourcePoint && source.SourcePoint != 0 && source.SourcePoint != point && read != nil {
+		if sourceState := read(source.SourcePoint); !state.IsBottom(r.registry, sourceState) {
+			return r.expressionValue(source.SourcePoint, source.ExprRef, source, sourceState)
+		}
+	}
+	return r.expressionValue(point, source.ExprRef, source, in)
 }
 
 func hasTopOrigin(reg *axis.Registry, value product.Value) bool {
@@ -418,6 +512,54 @@ func cachedAllowsRuntimeKindOverride(reg *axis.Registry, typeValues *typevalue.C
 		return true
 	}
 	return !typeValues.HasConcreteType(reg, cached)
+}
+
+// PreservePathBackedGradualContract keeps a structured gradual path contract
+// such as any[] or {[string]: unknown} from being replaced by a more precise
+// flow reconstruction. Flow evidence may still contribute identity and presence.
+func PreservePathBackedGradualContract(
+	reg *axis.Registry,
+	typeValues *typevalue.Cache,
+	cached product.Value,
+	flow product.Value,
+) (product.Value, bool) {
+	if !pathBackedGradualContractKeepsCachedType(reg, typeValues, cached, flow) {
+		return product.Value{}, false
+	}
+	if refined, refinedOK := refineCachedByIdentity(reg, typeValues, cached, flow); refinedOK {
+		return refined, true
+	}
+	if withPresence, presenceOK := product.WithCompatiblePresenceFrom(reg, cached, flow); presenceOK {
+		return withPresence, true
+	}
+	return cached, true
+}
+
+func pathBackedGradualContractKeepsCachedType(
+	reg *axis.Registry,
+	typeValues *typevalue.Cache,
+	cached product.Value,
+	flow product.Value,
+) bool {
+	if reg == nil {
+		return false
+	}
+	cachedType, cachedOK := typevalue.RuntimeTypeProfileOf(reg, typeValues, cached)
+	if !cachedOK || cachedType.TopLevelGradual || !cachedType.ContainsGradual {
+		return false
+	}
+	origin := product.Get(reg, flow, variantorigin.Key)
+	if !origin.IsBottom() && !origin.IsTop() {
+		return false
+	}
+	flowType, flowOK := typevalue.RuntimeTypeProfileOf(reg, typeValues, flow)
+	if !flowOK || flowType.ContainsGradual {
+		return false
+	}
+	if !cachedType.HasRuntimeKind || !flowType.HasRuntimeKind {
+		return false
+	}
+	return !runtimekind.Intersect(cachedType.RuntimeKind, flowType.RuntimeKind).IsBottom()
 }
 
 func refineCachedByRuntimeKind(
@@ -714,27 +856,72 @@ func (r sourceValueResolver) valueOfDynamicIndexExpression(
 	if active[expr] {
 		return product.Value{}, false
 	}
-	tableSource, ok := dyn.TableSource()
-	if !ok {
-		return product.Value{}, false
-	}
+	tableSource, hasTableSource := dyn.TableSource()
 	if active == nil {
 		active = make(map[factflow.ExprRef]bool, 1)
 	}
 	active[expr] = true
-	tableValue, tableOK := r.valueOfOperationSource(point, tableSource, in, read, active)
 	keyValue, keyOK := r.valueOfOperationSource(point, dyn.KeySource(), in, read, active)
+	if keyOK {
+		if value, ok := r.valueOfStaticDynamicIndexPath(point, dyn, keyValue, in); ok {
+			delete(active, expr)
+			return value, true
+		}
+	}
+	var tableValue product.Value
+	tableOK := false
+	if hasTableSource {
+		tableValue, tableOK = r.valueOfOperationSource(point, tableSource, in, read, active)
+	} else if r.visibility != nil {
+		tableValue, tableOK = ReadPathValue(r.registry, r.visibility, point, dyn.TablePathRef(), in)
+	}
 	delete(active, expr)
 	if !tableOK || !keyOK {
 		return product.Value{}, false
+	}
+	if value, ok := r.projectStaticDynamicIndexFromTable(tableValue, keyValue); ok {
+		return value, true
 	}
 	value, ok := r.typeValues.RuntimeIndex(r.registry, tableValue, keyValue)
 	if !ok {
 		return product.Value{}, false
 	}
 	value = InheritTopOriginEvidence(r.registry, value, tableValue)
-	value = InheritTopOriginEvidence(r.registry, value, keyValue)
 	return value, true
+}
+
+func (r sourceValueResolver) valueOfStaticDynamicIndexPath(
+	point cfg.Point,
+	dyn factflow.DynamicIndexExpression,
+	keyValue product.Value,
+	in state.State,
+) (product.Value, bool) {
+	if r.visibility == nil {
+		return product.Value{}, false
+	}
+	seg, ok := r.staticScalarKeySegment(keyValue)
+	if !ok {
+		return product.Value{}, false
+	}
+	return ReadPathValue(r.registry, r.visibility, point, dyn.TablePathRef().Append(seg), in)
+}
+
+func (r sourceValueResolver) projectStaticDynamicIndexFromTable(tableValue, keyValue product.Value) (product.Value, bool) {
+	if r.projectPathValue == nil {
+		return product.Value{}, false
+	}
+	seg, ok := r.staticScalarKeySegment(keyValue)
+	if !ok {
+		return product.Value{}, false
+	}
+	return r.projectPathValue(tableValue, []segment.Segment{seg})
+}
+
+func (r sourceValueResolver) staticScalarKeySegment(value product.Value) (segment.Segment, bool) {
+	if r.staticScalarKey == nil {
+		return segment.Segment{}, false
+	}
+	return r.staticScalarKey(value)
 }
 
 func (r sourceValueResolver) valueOfCall(source factflow.ValueSource, read func(cfg.Point) state.State) (product.Value, bool) {

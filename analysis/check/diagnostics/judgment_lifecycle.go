@@ -5,7 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 )
 
-func renderLifecycleJudgmentWithPolicy(item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
+func renderLifecycleJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
 	if item.Code != judgment.CodeLifecycle || item.Subject.Kind != judgment.SubjectPath {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -13,7 +13,7 @@ func renderLifecycleJudgmentWithPolicy(item judgment.Judgment, policy judgment.P
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
-	presentation, ok := diagnosticProofContext().Lifecycle(item)
+	presentation, ok := ctx.proof.Lifecycle(item)
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}

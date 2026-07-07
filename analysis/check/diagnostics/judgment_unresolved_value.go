@@ -5,7 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 )
 
-func renderUnresolvedValueJudgmentWithPolicy(item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
+func renderUnresolvedValueJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
 	if item.Code != judgment.CodeUnresolvedValue || item.Subject.Kind != judgment.SubjectPath || len(item.Spans) == 0 {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -18,7 +18,7 @@ func renderUnresolvedValueJudgmentWithPolicy(item judgment.Judgment, policy judg
 		name = "<missing>"
 	}
 	span := diagnosticSpanFromJudgment(item.Spans[0])
-	presentation := diagnosticProofContext().UnresolvedValue(item, name, span)
+	presentation := ctx.proof.UnresolvedValue(item, name, span)
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		File:        item.Spans[0].File,
 		Span:        span,

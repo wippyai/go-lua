@@ -1,8 +1,6 @@
 package transferfacts
 
 import (
-	"strconv"
-
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -35,15 +33,33 @@ func (l *lowerer) localAssignment(point cfg.Point, fact semantics.LocalAssignmen
 		}
 	}
 	if declared, ok := l.declaredReturnLocalContract(fact); ok {
-		return factflow.NewRootAssignmentWithDeclaredContractValue(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source, l.valueFromTypeWithWitness(declared)), true
+		return factflow.NewRootAssignmentWithDeclaredContractValue(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source, l.declaredTypeClaimValue(declared)), true
 	}
 	if declared, ok := l.returnLocalObjectLiteralContract(fact); ok && recordWithCallableField(declared) {
-		return factflow.NewRootAssignmentWithDeclaredContractValue(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source, l.valueFromTypeWithWitness(declared)), true
+		return factflow.NewRootAssignmentWithDeclaredContractValue(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source, l.declaredTypeClaimValue(declared)), true
+	}
+	if declared, ok := l.localObjectLiteralDeclaredOverlay(fact); ok {
+		return factflow.NewRootAssignmentWithDeclaredOverlayValue(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source, l.declaredTypeClaimValue(declared)), true
 	}
 	if declared, ok := l.localCastContract(fact.Expr); ok {
 		return factflow.NewRootAssignmentWithDeclaredOverlayValue(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source, declared), true
 	}
 	return factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source), true
+}
+
+func (l *lowerer) localObjectLiteralDeclaredOverlay(fact semantics.LocalAssignmentFact) (typ.Type, bool) {
+	if fact.Type == nil || !localAssignmentSourceTableConstructor(fact) {
+		return nil, false
+	}
+	t, ok := l.resolveType(fact.Type)
+	if !ok || t == nil || typ.IsAny(t) || typ.IsUnknown(t) || !luatypeprojection.ReachesTableContract(t) || reachesArray(t) || recordWithCallableField(t) {
+		return nil, false
+	}
+	return t, true
+}
+
+func localAssignmentSourceTableConstructor(fact semantics.LocalAssignmentFact) bool {
+	return fact.Source.Kind == sourceprovenance.SourceExpression && tableConstructorExpr(fact.Source.Expr)
 }
 
 // addLocalAliasExposure records a covariant exposure for a local declaration that
@@ -652,49 +668,13 @@ func (l *lowerer) dynamicInvalidationTarget(target ast.Expr) (path.Path, factflo
 				return tablePath, keySource, suffix, true
 			}
 		}
-		seg, ok := staticAttrSegment(attr)
+		seg, ok := pathexpr.StaticAttrSegment(attr)
 		if !ok {
 			return path.Path{}, factflow.ValueSource{}, nil, false
 		}
 		suffix = append([]segment.Segment{seg}, suffix...)
 		target = attr.Object
 	}
-}
-
-func staticAttrSegment(attr *ast.AttrGetExpr) (segment.Segment, bool) {
-	if attr == nil || attr.Key == nil {
-		return segment.Segment{}, false
-	}
-	switch key := attr.Key.(type) {
-	case *ast.StringExpr:
-		switch attr.KeySyntax {
-		case ast.AttrKeyDot:
-			if key.Value == "" {
-				return segment.Segment{}, false
-			}
-			return segment.Segment{Kind: segment.SegmentField, Name: key.Value}, true
-		case ast.AttrKeyIndex:
-			return segment.Segment{Kind: segment.SegmentIndexString, Name: key.Value}, true
-		default:
-			return segment.Segment{Kind: segment.SegmentField, Name: key.Value}, key.Value != ""
-		}
-	case *ast.NumberExpr:
-		index, ok := parseStaticIndex(key.Value)
-		if !ok {
-			return segment.Segment{}, false
-		}
-		return segment.Segment{Kind: segment.SegmentIndexInt, Index: index}, true
-	default:
-		return segment.Segment{}, false
-	}
-}
-
-func parseStaticIndex(raw string) (int, bool) {
-	if raw == "" {
-		return 0, false
-	}
-	index, err := strconv.Atoi(raw)
-	return index, err == nil && index >= 0
 }
 
 func (l *lowerer) dynamicIndexKeySource(point cfg.Point, target ast.Expr) (factflow.ValueSource, bool) {
@@ -833,7 +813,7 @@ func (l *lowerer) declaredValue(expr ast.TypeExpr) (product.Value, bool) {
 	if !ok {
 		return product.Value{}, false
 	}
-	return l.valueFromTypeWithWitness(t), true
+	return l.declaredTypeClaimValue(t), true
 }
 
 func (l *lowerer) localCastContract(expr ast.Expr) (product.Value, bool) {

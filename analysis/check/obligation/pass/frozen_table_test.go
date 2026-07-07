@@ -32,6 +32,34 @@ cfg.name = "staging"`, "test.lua", testutil.WithStdlib())
 	}
 }
 
+func TestFrozenTableMutationsRefutesTypedAssignmentAfterFreeze(t *testing.T) {
+	checked := testutil.CheckFile(`type Config = { name: string, child: { tag: string } }
+local cfg: Config = { name = "prod", child = { tag = "old" } }
+table.freeze(cfg)
+cfg.name = "staging"`, "test.lua", testutil.WithStdlib())
+
+	got := frozenTableJudgmentsForAllBodies(checked)
+	if len(got) != 1 {
+		t.Fatalf("frozen-table judgments = %d, want 1: %#v", len(got), got)
+	}
+	if got[0].Subject.Label != "cfg" {
+		t.Fatalf("subject label = %q, want cfg", got[0].Subject.Label)
+	}
+}
+
+func TestFrozenTableMutationsRefutesIsFrozenBranchAssignment(t *testing.T) {
+	checked := testutil.CheckFile(`type Config = { name: string }
+local cfg: Config = { name = "prod" }
+if table.isfrozen(cfg) then
+	cfg.name = "staging"
+end`, "test.lua", testutil.WithStdlib())
+
+	got := frozenTableJudgmentsForAllBodies(checked)
+	if len(got) != 1 {
+		t.Fatalf("frozen-table judgments = %d, want 1: %#v", len(got), got)
+	}
+}
+
 func TestFrozenTableMutationsRefutesMutatingCallAfterFreeze(t *testing.T) {
 	checked := testutil.CheckFile(`local items = { "a" }
 table.freeze(items)

@@ -59,15 +59,3 @@ type ImpliedCheck struct {
 	Edge     bool
 	Polarity bool
 }
-
-// LiteralValue returns the literal type a literal-equality check compares
-// against, materializing a string literal from its raw spelling when needed.
-func (c Check) LiteralValue() (typ.Type, bool) {
-	if c.Literal != nil {
-		return c.Literal, true
-	}
-	if c.Kind == CheckLiteralEqual || c.Kind == CheckLiteralNot {
-		return typ.LiteralString(c.LiteralString), true
-	}
-	return nil, false
-}

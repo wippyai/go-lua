@@ -290,6 +290,75 @@ func TestWithOwnedFunctionValueTypesReusesCallerOwnedProjection(t *testing.T) {
 	}
 }
 
+func TestFunctionValueTypesEqualComparesProjectionStructurally(t *testing.T) {
+	reg := standard.Registry()
+	id := identity.LuaFunction(981)
+	pathKey := factflow.CalleePathKey("sym981.fn")
+	fn := typ.Func().Param("name", typ.String).Returns(typ.Number).Build()
+	otherFn := typ.Func().Param("name", typ.String).Returns(typ.Number).Build()
+	leftKeys := keyspace.New()
+	rightKeys := keyspace.New()
+	if _, ok := leftKeys.FromPathKey(path.PathKey("sym981@1.decoy")); !ok {
+		t.Fatal("left decoy path key did not parse")
+	}
+	contextPath := path.PathKey("sym981@1.ctx")
+	contextValue := typevalue.LiteralString(reg, "ready")
+	leftEntry := state.State{}.
+		WriteValue(reg, statekey.ReturnSlot(0), product.Top()).
+		WritePathKey(reg, leftKeys, contextPath, contextValue)
+	rightEntry := state.State{}.
+		WriteValue(reg, statekey.ReturnSlot(0), product.Top()).
+		WritePathKey(reg, rightKeys, contextPath, contextValue)
+	left := FunctionValueTypes{
+		ByIdentity: map[identity.ID]*typ.Function{id: fn},
+		ByPath:     map[factflow.CalleePathKey]*typ.Function{pathKey: fn},
+		ParamSpansByPath: map[factflow.CalleePathKey][]factflow.SourceSpan{
+			pathKey: {{StartLine: 1, StartCol: 2, EndLine: 1, EndCol: 6}},
+		},
+		ContextsByIdentity: map[identity.ID][]FunctionValueContext{
+			id: {{Entry: leftEntry, EntryKeys: leftKeys, Type: fn}},
+		},
+	}
+	right := FunctionValueTypes{
+		ByIdentity: map[identity.ID]*typ.Function{id: otherFn},
+		ByPath:     map[factflow.CalleePathKey]*typ.Function{pathKey: otherFn},
+		ParamSpansByPath: map[factflow.CalleePathKey][]factflow.SourceSpan{
+			pathKey: {{StartLine: 1, StartCol: 2, EndLine: 1, EndCol: 6}},
+		},
+		ContextsByIdentity: map[identity.ID][]FunctionValueContext{
+			id: {{Entry: rightEntry, EntryKeys: rightKeys, Type: otherFn}},
+		},
+	}
+
+	if !FunctionValueTypesEqual(reg, left, right) {
+		t.Fatalf("FunctionValueTypesEqual rejected structurally equal projection")
+	}
+
+	right.ParamSpansByPath[pathKey] = []factflow.SourceSpan{{StartLine: 9}}
+	if FunctionValueTypesEqual(reg, left, right) {
+		t.Fatalf("FunctionValueTypesEqual accepted changed span projection")
+	}
+}
+
+func TestResultHasFunctionValueTypesUsesStructuralEquality(t *testing.T) {
+	result := &Result{registry: standard.Registry()}
+	installed := FunctionValueTypes{
+		ByIdentity: map[identity.ID]*typ.Function{
+			identity.LuaFunction(982): typ.Func().Returns(typ.String).Build(),
+		},
+	}
+	equivalent := FunctionValueTypes{
+		ByIdentity: map[identity.ID]*typ.Function{
+			identity.LuaFunction(982): typ.Func().Returns(typ.String).Build(),
+		},
+	}
+	WithOwnedFunctionValueTypes(result, installed)
+
+	if !result.HasFunctionValueTypes(equivalent) {
+		t.Fatalf("HasFunctionValueTypes rejected structurally equal projection")
+	}
+}
+
 func TestFunctionValueTypeForCallSiteAtBoundaryUsesCurrentPathValue(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(810)
@@ -322,6 +391,38 @@ func TestFunctionValueTypeForCallSiteAtBoundaryUsesCurrentPathValue(t *testing.T
 	if !ok || got != currentFn {
 		t.Fatalf("FunctionValueTypeForCallSiteAtBoundary = %v/%v, want current identity function", got, ok)
 	}
+}
+
+func TestFunctionValueTypeForCallSiteAtBoundaryUsesGlobalTableOverridePathValue(t *testing.T) {
+	reg := standard.Registry()
+	result, err := CheckChunk(parseChunk(t, `
+local captured_fn
+
+_G.coroutine = {
+    spawn = function(fn: () -> ())
+        captured_fn = fn
+        return true
+    end,
+}
+
+coroutine.spawn(function() end)
+`), Config{Registry: reg, Globals: []string{"coroutine"}})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	for _, point := range result.Graph().RPO() {
+		site, ok := result.CallSite(point)
+		if !ok || site.CalleePathRef().String() != "coroutine.spawn" {
+			continue
+		}
+		fn, ok := result.FunctionValueTypeForCallSiteAtBoundary(point, site)
+		if !ok || fn == nil || len(fn.Params) != 1 {
+			t.Fatalf("FunctionValueTypeForCallSiteAtBoundary = %v/%v, want one-parameter override function", fn, ok)
+		}
+		return
+	}
+	t.Fatal("missing coroutine.spawn call site")
 }
 
 func TestFunctionValueTypeForCallSiteAtBoundaryRejectsStalePathWhenCurrentValueIsNotCallable(t *testing.T) {

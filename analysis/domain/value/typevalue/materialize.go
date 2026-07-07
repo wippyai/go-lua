@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // FromType materializes sound point-local value evidence from a type.
@@ -19,7 +20,8 @@ func FromType(reg *axis.Registry, t typ.Type) product.Value {
 // fromType materializes sound point-local value evidence from a type.
 func fromType(reg *axis.Registry, t typ.Type, cache *Cache) product.Value {
 	ed := product.Edit(reg, product.Top())
-	if typ.IsAny(t) || typ.IsUnknown(t) {
+	base := unwrap.Optional(t)
+	if typ.IsAny(base) || typ.IsUnknown(base) {
 		product.EditSet(&ed, evidence.Key, evidence.ExplicitTop())
 	}
 	if p, ok := presenceFromType(t); ok {
@@ -124,7 +126,12 @@ func MergeDeclaredTypeFacts(reg *axis.Registry, value, declared product.Value) p
 	}
 	declaredEvidence := product.Get(reg, declared, evidence.Key)
 	if !evidence.Equal(declaredEvidence, evidence.Top()) {
-		product.EditSet(&ed, evidence.Key, evidence.Join(product.Get(reg, value, evidence.Key), declaredEvidence))
+		valueEvidence := product.Get(reg, value, evidence.Key)
+		if evidence.Equal(valueEvidence, evidence.Top()) {
+			product.EditSet(&ed, evidence.Key, declaredEvidence)
+		} else {
+			product.EditSet(&ed, evidence.Key, evidence.Join(valueEvidence, declaredEvidence))
+		}
 	}
 	return ed.Done()
 }

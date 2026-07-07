@@ -2,10 +2,9 @@ package wir
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/compiler/source"
 )
 
 // Body holds the lowered instruction stream for one function together with its
@@ -33,6 +32,7 @@ type Body struct {
 	operandPool   []Operand
 	typeRefPool   []TypeRef
 	tableEntries  []TableEntry
+	segments      []segment.Segment
 	callArgMeta   []CallArgumentMeta
 	impliedChecks []ImpliedCheck
 	branchDiffs   []BranchDiffConstraint
@@ -46,6 +46,8 @@ type Body struct {
 // FuncProto is a nested function lowered as its own Body and CFG. A parent
 // OpClosure references it by FuncRef; the child owns its own topology exactly
 // like a top-level function.
+type FunctionSymbolID uint64
+
 type FuncProto struct {
 	Name  string
 	Body  *Body
@@ -53,7 +55,7 @@ type FuncProto struct {
 	// Symbol is the binder-owned identity of the function literal this proto
 	// came from. It lets transfer publish expression-function facts from WIR
 	// without reaching back to the AST.
-	Symbol symbol.ID
+	Symbol FunctionSymbolID
 	// Type is the resolved function type for the literal. Lowering records the
 	// annotation/binding identity; transfer decides how that type contributes to
 	// value evidence.
@@ -88,14 +90,14 @@ type CallResultTarget struct {
 type TableEntry struct {
 	Suffix     path.Path
 	Value      Operand
-	ValueSpan  source.Span
+	ValueSpan  Span
 	ValueLabel string
 }
 
 // CallArgumentMeta records source-only metadata for a syntactic call argument.
 // It is diagnostic metadata: it never participates in value derivation.
 type CallArgumentMeta struct {
-	Span  source.Span
+	Span  Span
 	Label string
 }
 
@@ -125,6 +127,12 @@ type ImpliedCheckRange struct {
 
 // BranchDiffConstraintRange is a [Start, Start+Len) window into Body.branchDiffs.
 type BranchDiffConstraintRange struct {
+	Start uint32
+	Len   uint32
+}
+
+// SegmentRange is a [Start, Start+Len) window into Body.segments.
+type SegmentRange struct {
 	Start uint32
 	Len   uint32
 }
@@ -372,6 +380,24 @@ func (b *Body) BranchDiffConstraints(r BranchDiffConstraintRange) []BranchDiffCo
 		return nil
 	}
 	return b.branchDiffs[r.Start : r.Start+r.Len]
+}
+
+// Segments returns the static suffix slice for a variadic segment range.
+func (b *Body) Segments(r SegmentRange) []segment.Segment {
+	if r.Len == 0 {
+		return nil
+	}
+	return b.segments[r.Start : r.Start+r.Len]
+}
+
+// AppendSegments stores a static suffix segment window in the body.
+func (b *Body) AppendSegments(segments []segment.Segment) SegmentRange {
+	if len(segments) == 0 {
+		return SegmentRange{}
+	}
+	start := uint32(len(b.segments))
+	b.segments = append(b.segments, segments...)
+	return SegmentRange{Start: start, Len: uint32(len(segments))}
 }
 
 // InternPath interns a path and returns its 1-based ref. The empty path is none.

@@ -22,6 +22,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	. "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -128,6 +129,207 @@ func TestSourceValuesPathSourceReadsRootSymbolValue(t *testing.T) {
 	}
 	if kind := product.Get(reg, got, runtimekind.Key); !runtimekind.Equal(kind, runtimekind.Singleton(runtimekind.String)) {
 		t.Fatalf("path source runtime kind = %s, want string", kind)
+	}
+}
+
+func TestSourceValuesPathSourceUsesPointVisibleVersionedPathProof(t *testing.T) {
+	reg := standard.Registry()
+	target := symbol.ID(7)
+	point := cfg.Point(42)
+	p := path.NewPath(target, "bindings").Field("checkpoint")
+	source, ok := NewPathValueSource(p.Key(), 0, 0, 0, ValueSourceShape{})
+	if !ok {
+		t.Fatalf("NewPathValueSource returned false")
+	}
+	builder := visibility.NewBuilder()
+	version := builder.Define(point, target, "bindings")
+	resolver := visibility.NewResolver(builder.Build())
+	pathKey := resolver.KeyForVersion(target, version.ID, p.Segments)
+	want := typevalue.WithWitness(reg, product.Top(), typetable.BuiltinTopMarker())
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(target), product.Set(reg, product.Top(), evidence.Key, evidence.ExplicitTop())).
+		WritePathKey(reg, resolver.KeySpace(), pathKey, want)
+	sources := NewSourceValues(SourceValuesConfig{
+		Registry:   reg,
+		KeySpace:   resolver.KeySpace(),
+		Visibility: resolver,
+	})
+
+	got, ok := sources.ValueOfSource(point, source, in, nil)
+	if !ok {
+		t.Fatal("path source did not resolve")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok {
+		t.Fatalf("path source type missing, want point-visible table proof")
+	}
+	gotKinds, ok := typevalue.RuntimeKindFromType(gotType)
+	if !ok || !gotKinds.Contains(runtimekind.Table) {
+		t.Fatalf("path source type = %v, want point-visible table proof", gotType)
+	}
+	if gotEvidence := product.Get(reg, got, evidence.Key); gotEvidence.IsExplicitTop() {
+		t.Fatalf("path source evidence = %s, want visible path proof not root any evidence", gotEvidence)
+	}
+}
+
+func TestSourceValuesPathSourceProjectsSegmentedPathFromRootType(t *testing.T) {
+	reg := standard.Registry()
+	typeValues := typevalue.NewCache()
+	ks := keyspace.New()
+	p := path.NewPath(symbol.ID(7), "self").Field("node_id")
+	source, ok := NewPathValueSource(p.Key(), 0, 0, 0, ValueSourceShape{})
+	if !ok {
+		t.Fatalf("NewPathValueSource returned false")
+	}
+	rootType := typetable.NewRecord().Field("node_id", typ.String).Build()
+	rootValue := typevalue.WithWitness(reg, typeValues.FromType(reg, rootType), rootType)
+	in := state.State{}.WriteValue(reg, key.SymbolValue(symbol.ID(7)), rootValue)
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry:         reg,
+		TypeValues:       typeValues,
+		KeySpace:         ks,
+		ProjectPathValue: testSegmentValueProjector(reg, typeValues),
+	})
+
+	got, ok := resolver.ValueOfSource(cfg.Point(1), source, in, nil)
+	if !ok {
+		t.Fatal("segmented path source did not resolve")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("segmented path source type = %v/%v, want string", gotType, ok)
+	}
+}
+
+func TestSourceValuesDynamicIndexReadUsesStaticPathValue(t *testing.T) {
+	reg := standard.Registry()
+	typeValues := typevalue.NewCache()
+	point := cfg.Point(21)
+	root := symbol.ID(21)
+	rootPath := path.NewPath(root, "bindings")
+	memberPath := rootPath.Field("checkpoint")
+	keySource, ok := NewStringLiteralValueSource("checkpoint", 0, 0, 0, ValueSourceShape{})
+	if !ok {
+		t.Fatal("NewStringLiteralValueSource returned false")
+	}
+	dyn, ok := NewDynamicIndexExpression(rootPath, keySource)
+	if !ok {
+		t.Fatal("NewDynamicIndexExpression returned false")
+	}
+	expr := ExprRef(21)
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: expr, HasExpr: true}
+	tableValue := typevalue.WithWitness(reg, typeValues.FromType(reg, typetable.BuiltinTopMarker()), typetable.BuiltinTopMarker())
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, root, "bindings")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	memberKey, ok := visibility.AddressAt(resolver, point, memberPath).VisibleLocalKeyspaceKey()
+	if !ok {
+		t.Fatal("missing member key")
+	}
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(root), product.Set(reg, product.Top(), evidence.Key, evidence.ExplicitTop())).
+		WritePathKey(reg, resolver.KeySpace(), resolver.KeySpace().Format(memberKey), tableValue)
+	values := NewSourceValues(SourceValuesConfig{
+		Registry:          reg,
+		TypeValues:        typeValues,
+		KeySpace:          resolver.KeySpace(),
+		Visibility:        resolver,
+		DynamicIndexExprs: map[ExprRef]DynamicIndexExpression{expr: dyn},
+		StaticScalarKey:   testStaticScalarKeySegment(reg, typeValues),
+	})
+
+	got, ok := values.ValueOfSource(point, source, in, nil)
+	if !ok {
+		t.Fatal("dynamic index source did not resolve")
+	}
+	gotType, ok := typeValues.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typetable.BuiltinTopMarker()) {
+		t.Fatalf("dynamic index type = %v/%v, want table marker", gotType, ok)
+	}
+}
+
+func TestSourceValuesLogicalOperationProjectsPathOperandsFromRootTypes(t *testing.T) {
+	reg := standard.Registry()
+	typeValues := typevalue.NewCache()
+	ks := keyspace.New()
+	target := symbol.ID(7)
+	self := symbol.ID(8)
+	targetPath := path.NewPath(target, "target").Field("node_id")
+	selfPath := path.NewPath(self, "self").Field("node_id")
+	left, ok := NewPathValueSource(targetPath.Key(), 0, 0, 0, ValueSourceShape{})
+	if !ok {
+		t.Fatalf("left path source")
+	}
+	right, ok := NewPathValueSource(selfPath.Key(), 0, 0, 0, ValueSourceShape{})
+	if !ok {
+		t.Fatalf("right path source")
+	}
+	op, ok := NewBinaryExpressionOperation("or", left, right)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation returned false")
+	}
+	expr := ExprRef(22)
+	targetType := typetable.NewRecord().Field("node_id", typ.MaterializeOptional(typ.String)).Build()
+	selfType := typetable.NewRecord().Field("node_id", typ.String).Build()
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(target), typevalue.WithWitness(reg, typeValues.FromType(reg, targetType), targetType)).
+		WriteValue(reg, key.SymbolValue(self), typevalue.WithWitness(reg, typeValues.FromType(reg, selfType), selfType))
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry:      reg,
+		TypeValues:    typeValues,
+		KeySpace:      ks,
+		ExpressionOps: map[ExprRef]ExpressionOperation{expr: op},
+		ExpressionOp: func(op ExpressionOperation, left product.Value, right product.Value) (product.Value, bool) {
+			leftType, leftOK := typeValues.TypeOf(reg, left)
+			rightType, rightOK := typeValues.TypeOf(reg, right)
+			if !leftOK || !typ.TypeEquals(leftType, typ.MaterializeOptional(typ.String)) {
+				t.Fatalf("left operand type = %v/%v, want string?", leftType, leftOK)
+			}
+			if !rightOK || !typ.TypeEquals(rightType, typ.String) {
+				t.Fatalf("right operand type = %v/%v, want string", rightType, rightOK)
+			}
+			return typevalue.WithWitness(reg, typeValues.FromType(reg, typ.String), typ.String), true
+		},
+		ProjectPathValue: testSegmentValueProjector(reg, typeValues),
+	})
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: expr, HasExpr: true}
+
+	got, ok := resolver.ValueOfSource(cfg.Point(1), source, in, nil)
+	if !ok {
+		t.Fatal("logical expression source did not resolve")
+	}
+	gotType, ok := typeValues.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("logical expression type = %v/%v, want string", gotType, ok)
+	}
+}
+
+func testSegmentProjector(root typ.Type, segments []segment.Segment) (typ.Type, bool) {
+	if len(segments) != 1 || segments[0].Kind != segment.SegmentField || segments[0].Name != "node_id" {
+		return nil, false
+	}
+	record, ok := root.(*typ.Record)
+	if !ok {
+		return nil, false
+	}
+	field := record.GetField("node_id")
+	if field == nil {
+		return nil, false
+	}
+	return field.Type, true
+}
+
+func testSegmentValueProjector(reg *axis.Registry, typeValues *typevalue.Cache) func(product.Value, []segment.Segment) (product.Value, bool) {
+	return func(root product.Value, segments []segment.Segment) (product.Value, bool) {
+		rootType, ok := typeValues.TypeOf(reg, root)
+		if !ok {
+			return product.Value{}, false
+		}
+		projected, ok := testSegmentProjector(rootType, segments)
+		if !ok {
+			return product.Value{}, false
+		}
+		return typevalue.WithWitness(reg, typeValues.FromType(reg, projected), projected), true
 	}
 }
 
@@ -1090,6 +1292,58 @@ func TestSourceValuesPathBackedExpressionNarrowsMaybeCachedPresenceByFlow(t *tes
 	}
 }
 
+func TestSourceValuesPathBackedExpressionPrefersFlowOverStaleOperation(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(6603)
+	expr := ExprRef(6603)
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: expr, HasExpr: true}
+	literalSource, ok := NewIntegerLiteralValueSource(1, 0, 0, 0, ValueSourceShape{Final: true})
+	if !ok {
+		t.Fatal("NewIntegerLiteralValueSource returned false")
+	}
+	op, ok := NewUnaryExpressionOperation("stale-member-read", literalSource)
+	if !ok {
+		t.Fatal("NewUnaryExpressionOperation returned false")
+	}
+	record := typetable.NewRecord().
+		Field("id", typ.String).
+		Field("email", typ.String).
+		Build()
+	cachedType := typeexpr.Optional(record)
+	cached := typevalue.WithWitness(reg, typevalue.FromType(reg, cachedType), cachedType)
+	flow := typevalue.WithWitness(reg, typevalue.FromType(reg, record), record)
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			expr: cached,
+		},
+		ExpressionPaths: map[ExprRef]struct{}{
+			expr: {},
+		},
+		ExpressionOps: map[ExprRef]ExpressionOperation{
+			expr: op,
+		},
+		ExpressionValue: func(gotPoint cfg.Point, gotExpr ExprRef, gotSource ValueSource, in state.State) (product.Value, bool) {
+			if gotPoint != point || gotExpr != expr || gotSource.ExprRef != expr {
+				return product.Value{}, false
+			}
+			return flow, true
+		},
+		ExpressionOp: func(got ExpressionOperation, left product.Value, right product.Value) (product.Value, bool) {
+			return cached, true
+		},
+	})
+
+	got, ok := resolver.ValueOfSource(point, source, state.State{}, nil)
+	if !ok {
+		t.Fatal("path-backed expression did not resolve")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, record) {
+		t.Fatalf("path-backed type = %v/%v, want flow type %v", gotType, ok, record)
+	}
+}
+
 func TestSourceValuesExpressionAndVarargProvidersAreGenericHooks(t *testing.T) {
 	reg := standard.Registry()
 	exprValue := presentValue(reg)
@@ -1248,6 +1502,41 @@ func TestSourceValuesPathBackedRuntimeKindDoesNotReplacePreciseCachedType(t *tes
 	gotType, ok := typevalue.TypeOf(reg, got)
 	if !ok || !typ.TypeEquals(gotType, typ.String) {
 		t.Fatalf("path-backed cached type = %v/%v, want string", gotType, ok)
+	}
+}
+
+func TestSourceValuesPathBackedAnyArrayKeepsCachedContractOverFlowTableWitness(t *testing.T) {
+	reg := standard.Registry()
+	expr := ExprRef(56030)
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: expr, HasExpr: true}
+	cachedType := typ.NewArray(typ.Any)
+	cached := typevalue.WithWitness(reg, typevalue.FromType(reg, cachedType), cachedType)
+	recordType := typetable.NewRecord().Field("id", typ.String).Build()
+	flowType := typ.NewArray(recordType)
+	flow := typevalue.WithWitness(reg, typevalue.FromType(reg, flowType), flowType)
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			expr: cached,
+		},
+		ExpressionPaths: map[ExprRef]struct{}{
+			expr: {},
+		},
+		ExpressionValue: func(point cfg.Point, got ExprRef, source ValueSource, in state.State) (product.Value, bool) {
+			if point != cfg.Point(56030) || got != expr || source.ExprRef != expr {
+				return product.Value{}, false
+			}
+			return flow, true
+		},
+	})
+
+	got, ok := resolver.ValueOfSource(cfg.Point(56030), source, state.State{}, nil)
+	if !ok {
+		t.Fatal("path-backed expression did not resolve")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, cachedType) {
+		t.Fatalf("path-backed cached type = %v/%v, want declared %v instead of flow %v", gotType, ok, cachedType, flowType)
 	}
 }
 
@@ -1437,6 +1726,64 @@ func TestSourceValuesPreservesExplicitAnyRefinementOverRecoveredProviderValue(t 
 	}
 	if ev := product.Get(reg, got, evidence.Key); !ev.IsExplicitTop() {
 		t.Fatalf("evidence = %s, want explicit top preserved", ev)
+	}
+}
+
+func TestExpressionRefinementSourceValuesAnyClaimPreservesPresentInnerValue(t *testing.T) {
+	reg := standard.Registry()
+	inner := ExprRef(5901)
+	outer := ExprRef(5902)
+	innerValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
+	refinement := product.Set(reg, typevalue.FromType(reg, typ.Any), assertion.Key, assertion.Any())
+	base := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			inner: innerValue,
+		},
+	})
+	resolver := WithExpressionRefinements(reg, base, map[ExprRef]ExpressionRefinement{
+		outer: NewExpressionRefinement(
+			ValueSource{Kind: ValueSourceExpression, ExprRef: inner, HasExpr: true},
+			refinement,
+		),
+	})
+
+	got, ok := resolver.ValueOfSource(cfg.Point(59), ValueSource{Kind: ValueSourceExpression, ExprRef: outer, HasExpr: true}, state.State{}, nil)
+	if !ok {
+		t.Fatal("any-claim source did not resolve")
+	}
+	if gotPresence := product.PresenceOf(got); !presence.Equal(gotPresence, presence.Present()) {
+		t.Fatalf("presence = %s, want explicit any claim to preserve present inner value", gotPresence)
+	}
+	if gotAssertion := product.Get(reg, got, assertion.Key); !gotAssertion.Has(assertion.AnyClaim) {
+		t.Fatalf("assertion = %s, want any claim", gotAssertion)
+	}
+	if gotEvidence := product.Get(reg, got, evidence.Key); !gotEvidence.IsExplicitTop() {
+		t.Fatalf("evidence = %s, want explicit top", gotEvidence)
+	}
+}
+
+func testStaticScalarKeySegment(reg *axis.Registry, typeValues *typevalue.Cache) StaticScalarKeySegment {
+	return func(value product.Value) (segment.Segment, bool) {
+		t, ok := typeValues.TypeOf(reg, value)
+		if !ok {
+			return segment.Segment{}, false
+		}
+		lit, ok := t.(*typ.Literal)
+		if !ok {
+			return segment.Segment{}, false
+		}
+		switch v := lit.Value.(type) {
+		case string:
+			return segment.Segment{Kind: segment.SegmentIndexString, Name: v}, true
+		case int64:
+			if int64(int(v)) != v {
+				return segment.Segment{}, false
+			}
+			return segment.Segment{Kind: segment.SegmentIndexInt, Index: int(v)}, true
+		default:
+			return segment.Segment{}, false
+		}
 	}
 }
 
@@ -2021,6 +2368,7 @@ func TestNumFloorForSourceDerivesExactIntegerPathAndBinaryFloors(t *testing.T) {
 	pathKey := pathValue.Key()
 	exactSource := ValueSource{Kind: ValueSourceExpression, ExprRef: exactExpr, HasExpr: true}
 	pathSource := ValueSource{Kind: ValueSourceExpression, ExprRef: pathExpr, HasExpr: true}
+	directPathSource := ValueSource{Kind: ValueSourcePath, PathKey: pathKey}
 	sumSource := ValueSource{Kind: ValueSourceExpression, ExprRef: sumExpr, HasExpr: true}
 	missingSource := ValueSource{Kind: ValueSourceExpression, ExprRef: missingExpr, HasExpr: true}
 	literalSource, ok := NewIntegerLiteralValueSource(11, 0, 0, 0, ValueSourceShape{Final: true})
@@ -2063,6 +2411,7 @@ func TestNumFloorForSourceDerivesExactIntegerPathAndBinaryFloors(t *testing.T) {
 		{name: "exact integer", source: exactSource, want: 7, ok: true},
 		{name: "literal integer source", source: literalSource, want: 11, ok: true},
 		{name: "path floor", source: pathSource, want: 3, ok: true},
+		{name: "direct path floor", source: directPathSource, want: 3, ok: true},
 		{name: "binary plus constant", source: sumSource, want: 4, ok: true},
 		{name: "missing unresolved", source: missingSource, ok: false},
 	}

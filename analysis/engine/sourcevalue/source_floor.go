@@ -3,6 +3,8 @@ package sourcevalue
 import (
 	"math"
 
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -35,6 +37,9 @@ func numFloorForSource(
 	if floor, ok := exactIntegerSource(reg, facts, source); ok {
 		return floor, true
 	}
+	if floor, ok := pathSourceNumFloor(resolver, point, in, source); ok {
+		return floor, true
+	}
 	if resolver == nil || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
 		return 0, false
 	}
@@ -59,6 +64,29 @@ func numFloorForSource(
 	active[source.ExprRef] = true
 	defer delete(active, source.ExprRef)
 	return numFloorForOperation(reg, resolver, point, facts, in, op, active)
+}
+
+func pathSourceNumFloor(
+	resolver visibility.PathKeyResolver,
+	point cfg.Point,
+	in state.State,
+	source factflow.ValueSource,
+) (int64, bool) {
+	if resolver == nil || source.Kind != factflow.ValueSourcePath || source.PathKey == "" {
+		return 0, false
+	}
+	if stateKey, ok := pathaddr.StateKeyFromPathKey(source.PathKey); ok {
+		return in.ReadNumFloor(resolver.KeySpace(), stateKey)
+	}
+	if sym, segments, ok := pathaddr.ParseSymbolPathKey(source.PathKey); ok {
+		p := pathdom.Path{Symbol: sym, Segments: segments}
+		stateKey, keyOK := visibility.AddressAt(resolver, point, p).RootOrVisibleStateKey()
+		if !keyOK {
+			return 0, false
+		}
+		return in.ReadNumFloor(resolver.KeySpace(), stateKey)
+	}
+	return 0, false
 }
 
 func numFloorForOperation(

@@ -455,6 +455,18 @@ func (r *Result) concatOperandProvenPresentBySolvedValue(point cfg.Point, operan
 	if attr, ok := operand.(*ast.AttrGetExpr); ok && attr.KeySyntax == ast.AttrKeyIndex {
 		return r.ExpressionReadProvenPresentBeforeBoundary(point, operand)
 	}
+	if value, ok := r.ExpressionValueAtBoundary(point, operand); ok {
+		p := product.PresenceOf(value)
+		if presence.Equal(p, presence.Present()) {
+			return true
+		}
+		if presence.Equal(p, presence.Absent()) {
+			return false
+		}
+		if t, ok := r.ValueTypeWithPresence(value); ok && typ.Nil.Equals(t) {
+			return false
+		}
+	}
 	value, ok := r.ExpressionValueBeforeBoundary(point, operand)
 	if !ok {
 		return false

@@ -120,6 +120,91 @@ end
 	}
 }
 
+func TestCollectKeysIndexesLocalFunctionDeclarationPath(t *testing.T) {
+	stmts, err := parse.ParseString(`
+local function need(id: string): () end
+local function invoke(raw: any?): ()
+	need(raw)
+end
+`, "functiontarget_test.lua")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	var target symbol.ID
+	for _, origin := range bindings.FunctionOrigins() {
+		if origin.HasTargetSymbol && bindings.Name(origin.TargetSymbol) == "need" {
+			target = origin.TargetSymbol
+			break
+		}
+	}
+	if target == 0 {
+		t.Fatalf("need target symbol missing: %#v", bindings.FunctionOrigins())
+	}
+	calleeKey, ok := factflow.CalleePathKeyFromPath(path.NewPath(target, "need"))
+	if !ok {
+		t.Fatal("CalleePathKeyFromPath failed")
+	}
+	keys := collectKeys(bindings, rootKey(summary.SummaryKey{}), standard.Registry(), nil, body.Config{}.ModuleExports, stmts)
+	if _, ok := keys.pathKeys[calleeKey]; !ok {
+		t.Fatalf("path key %s missing from collectKeys", calleeKey.String())
+	}
+	fnType := functionValueDeclaredType(keys, keys.pathKeys[calleeKey], nil)
+	if fnType == nil || len(fnType.Params) != 1 || !typ.TypeEquals(fnType.Params[0].Type, typ.String) {
+		t.Fatalf("functionValueDeclaredType = %#v, want one string parameter", fnType)
+	}
+}
+
+func TestCollectKeysRemovesBranchReassignedFunctionFieldPath(t *testing.T) {
+	stmts, err := parse.ParseString(`
+local function run(flag)
+	local M = {
+		dep = {
+			get = function()
+				return nil
+			end,
+		},
+	}
+	if flag then
+		M.dep = {
+			get = function()
+				return { answer = "ok" }
+			end,
+		}
+	end
+	return M.dep.get()
+end
+`, "functiontarget_test.lua")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	keys := collectKeys(bindings, rootKey(summary.SummaryKey{}), standard.Registry(), nil, body.Config{}.ModuleExports, stmts)
+	var depSym symbol.ID
+	for _, origin := range bindings.FunctionOrigins() {
+		if origin.Func == nil {
+			continue
+		}
+		if target, ok := collectFunctionPathTargets(bindings, stmts)[origin.Func]; ok && target.String() == "M.dep.get" {
+			depSym = target.Symbol
+			break
+		}
+	}
+	if depSym == 0 {
+		t.Fatal("test setup did not collect M.dep.get target")
+	}
+	calleeKey, ok := factflow.CalleePathKeyFromPath(path.NewPath(depSym, "M").Field("dep").Field("get"))
+	if !ok {
+		t.Fatal("CalleePathKeyFromPath failed")
+	}
+	if key, ok := keys.pathKeys[calleeKey]; ok {
+		t.Fatalf("path key for branch-reassigned M.dep.get = %v, want ambiguous path removed", key)
+	}
+	if got := keys.pathMultiKeys[calleeKey]; len(got) < 2 {
+		t.Fatalf("path multi keys = %#v, want both branch alternatives recorded", got)
+	}
+}
+
 func TestCollectScansFunctionOriginsBodies(t *testing.T) {
 	innerFn := &ast.FunctionExpr{}
 	outerFn := &ast.FunctionExpr{

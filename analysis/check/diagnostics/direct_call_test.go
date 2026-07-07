@@ -22,10 +22,10 @@ func TestDirectCallReportsNonCallableTarget(t *testing.T) {
 	if d.Code != CodeDirectCallNotCallable || d.Severity != diagnostic.SeverityError {
 		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
 	}
-	if !strings.Contains(d.Message, "not callable") || !strings.Contains(d.Message, "number") {
+	if !strings.Contains(d.Message, "not callable") || !strings.Contains(d.Message, "42") {
 		t.Fatalf("message = %q", d.Message)
 	}
-	if !diagnosticEvidenceContains(d.Explanation.Evidence(), "x has type number") {
+	if !diagnosticEvidenceContains(d.Explanation.Evidence(), "x has literal value 42") {
 		t.Fatalf("explanation evidence = %#v, want callee type evidence", d.Explanation.Evidence())
 	}
 	if !diagnosticHasLabel(d, labelCallTarget) {

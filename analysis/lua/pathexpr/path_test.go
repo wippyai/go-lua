@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -248,6 +249,29 @@ func TestResolveMutationContainerUsesNearestStaticAncestor(t *testing.T) {
 	assertMutationContainer(t, directDynamic, bindings, path.NewPath(sym, "obj").Field("items"))
 	assertMutationContainer(t, nestedDynamic, bindings, path.NewPath(sym, "obj").Field("items"))
 	assertMutationContainer(t, deepNestedDynamic, bindings, path.NewPath(sym, "obj").Field("items"))
+}
+
+func TestResolveDynamicMutationTargetCarriesTrailingStaticSuffix(t *testing.T) {
+	root := ident("slots")
+	key := ident("key")
+	targetExpr := dot(dynamicIndex(root, key), "value")
+	bindings := bindReturn(targetExpr)
+	sym := mustResolvedRoot(t, bindings, root)
+
+	target, ok := ResolveDynamicMutationTarget(targetExpr, bindings)
+	if !ok {
+		t.Fatal("ResolveDynamicMutationTarget rejected nested dynamic target")
+	}
+	if !target.Table.Equal(path.NewPath(sym, "slots")) {
+		t.Fatalf("target table = %#v, want slots root", target.Table)
+	}
+	if target.Key != key {
+		t.Fatalf("target key = %#v, want original key expr", target.Key)
+	}
+	wantSuffix := []segment.Segment{{Kind: segment.SegmentField, Name: "value"}}
+	if !reflect.DeepEqual(target.Suffix, wantSuffix) {
+		t.Fatalf("target suffix = %#v, want %#v", target.Suffix, wantSuffix)
+	}
 }
 
 func TestResolveNilBinding(t *testing.T) {

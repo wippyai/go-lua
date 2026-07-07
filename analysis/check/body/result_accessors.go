@@ -269,6 +269,13 @@ func (r *Result) LoweredLocalAssignment(point cfg.Point) (factflow.RootAssignmen
 	return r.facts.LocalAssignment(point)
 }
 
+func (r *Result) RootAssignment(point cfg.Point) (factflow.RootAssignment, bool) {
+	if r == nil {
+		return factflow.RootAssignment{}, false
+	}
+	return r.facts.RootAssignment(point)
+}
+
 // RequireAliasModulePath resolves a local require-binding alias to the module
 // path it imports. A statement such as local store_mod = require("store") binds
 // the alias store_mod to module path store, so a qualified type reference
@@ -669,6 +676,26 @@ func (r *Result) IsCallContextResult() bool {
 	return r != nil && r.callContext
 }
 
+// HasBodyOwnedParamObligations reports whether this function body's solved
+// summary contains parameter preconditions inferred from how the body uses its
+// own parameters. Such preconditions are enforced at call boundaries, so
+// top/unknown values derived solely from them should not also become return
+// contract diagnostics inside the body.
+func (r *Result) HasBodyOwnedParamObligations() bool {
+	return r != nil && r.bodyParamObligations
+}
+
+// WithBodyOwnedParamObligations records whether result's summary contains
+// body-owned parameter preconditions. Program-level summary materialization
+// owns this metadata; diagnostics only read it through the read model.
+func WithBodyOwnedParamObligations(result *Result, has bool) *Result {
+	if result == nil {
+		return nil
+	}
+	result.bodyParamObligations = has
+	return result
+}
+
 func (r *Result) DirectCaptures(fn *ast.FunctionExpr) []bind.Capture {
 	if r == nil || r.bindings == nil || fn == nil {
 		return nil
@@ -830,12 +857,35 @@ func (r *Result) CallSignature(site factflow.CallSite) (signature.Function, bool
 	return r.signatures.Lookup(name)
 }
 
+// CallSignatureAt resolves the known signature for a call site at its CFG
+// point. Prefer this over CallSignature when the point is already available:
+// dynamic global replacement is point-sensitive, while the indexed form is only
+// a compatibility surface for callers that have lost the CFG point.
+func (r *Result) CallSignatureAt(point cfg.Point, site factflow.CallSite) (signature.Function, bool) {
+	name, ok := r.CallSignatureNameAt(point, site)
+	if !ok {
+		return signature.Function{}, false
+	}
+	return r.signatures.Lookup(name)
+}
+
 // CallSignatureType resolves a call site to the read-only function type of its
 // known signature. It avoids cloning signature carriers for callers that only
 // need the type; CallSignature retains the defensive-copy API for effect-aware
 // consumers.
 func (r *Result) CallSignatureType(site factflow.CallSite) (*typ.Function, bool) {
 	name, ok := r.CallSignatureName(site)
+	if !ok {
+		return nil, false
+	}
+	return r.SignatureType(name)
+}
+
+// CallSignatureTypeAt resolves the known function type for a call site at its
+// CFG point. This is the canonical solver/readmodel query when point-sensitive
+// facts, such as ambient global replacement, can affect signature identity.
+func (r *Result) CallSignatureTypeAt(point cfg.Point, site factflow.CallSite) (*typ.Function, bool) {
+	name, ok := r.CallSignatureNameAt(point, site)
 	if !ok {
 		return nil, false
 	}
@@ -877,6 +927,22 @@ func (r *Result) CallSignatureName(site factflow.CallSite) (string, bool) {
 		return "", false
 	}
 	return r.signatureID.nameForSite(site)
+}
+
+// CallSignatureNameAt resolves the signature name for a call at its CFG point.
+func (r *Result) CallSignatureNameAt(point cfg.Point, site factflow.CallSite) (string, bool) {
+	if r == nil || r.signatureID == nil {
+		return "", false
+	}
+	graph := r.Graph()
+	ctx := transfer.NodeContext{
+		Graph: graph,
+		Point: point,
+	}
+	if graph != nil {
+		ctx.Node = graph.Node(point)
+	}
+	return r.signatureID.nameForCallSiteView(ctx, site.View())
 }
 
 func (r *Result) ExpressionCondition(ref factflow.ExprRef) (factflow.ExpressionCondition, bool) {

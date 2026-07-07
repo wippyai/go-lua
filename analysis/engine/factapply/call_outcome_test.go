@@ -593,6 +593,66 @@ func TestFactsNodeTransferCallOutcomeAppliesReturnSlotDynamicKeyMemberships(t *t
 	}
 }
 
+func TestApplyCallOutcomeReturnSlotFactsDropsDescendantsBelowMaybeAbsentResult(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(6321)
+	result := symbol.ID(6321)
+	callExpr := factflow.ExprRef(6321)
+	resultPath := pathdom.NewPath(result, "res")
+	callSource := factflow.ValueSource{Kind: factflow.ValueSourceCall, ExprRef: callExpr, HasExpr: true, HasCallPoint: true, CallPoint: point, ResultIndex: 0}
+	present := presentValue(reg)
+	builder := visibility.NewBuilder()
+	builder.Define(point, result, "res")
+	resolver := visibility.NewResolver(builder.Build())
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextAssignmentSource,
+				ResultTargets: []factflow.CallResultTarget{
+					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, result, resultPath),
+				},
+			}),
+		},
+		RootAssignments: map[cfg.Point]factflow.RootAssignment{
+			point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, result, resultPath, callSource),
+		},
+	})
+	outcome := callpayload.CallOutcome{
+		Results: []callpayload.CallResult{{
+			Index: 0,
+			Value: product.WithPresence(reg, present, presence.Maybe()),
+		}},
+		NormalReturnFacts: callboundary.NormalReturnFacts{
+			PathStaticMembers: []callboundary.PathStaticMemberFact{{
+				Path:  pathdom.Path{Root: "ret[0]"}.Field("answer"),
+				Value: present,
+			}},
+		},
+	}
+
+	got := applyCallOutcomeReturnSlotFactsAfterRootAssignment(
+		transfer.NodeContext{Registry: reg, Point: point},
+		facts,
+		func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return outcome
+		},
+		resolver,
+		testLuaPathTypeProjector,
+		nil,
+		typevalue.NewCache(),
+		func(cfg.Point) state.State { return state.State{} },
+		state.State{},
+		state.State{},
+		resultPath,
+		callSource,
+	)
+
+	staticKey := resolver.KeyAt(point, resultPath.Field("answer"))
+	if gotValue, ok := got.ReadPathStaticMember(resolver.KeySpace(), staticKey); ok {
+		t.Fatalf("return-slot descendant static member = %s, want absent because result root may be nil", formatValue(reg, gotValue))
+	}
+}
+
 func TestFactsNodeTransferCallOutcomeAppliesReturnSlotPathLanes(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(633)
@@ -1318,6 +1378,43 @@ func TestFactsNodeTransferCallOutcomePersistentPathWriteUpdatesRoot(t *testing.T
 
 	if gotValue := got.ReadValue(reg, key.SymbolValue(captured)); !product.Equal(reg, gotValue, value) {
 		t.Fatalf("captured root value = %s, want %s", formatValue(reg, gotValue), formatValue(reg, value))
+	}
+}
+
+func TestFactsNodeTransferCallOutcomePersistentRootWriteWinsOverSameOutcomeInvalidation(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(636)
+	captured := symbol.ID(636)
+	capturedPath := pathdom.NewPath(captured, "captured")
+	value := typevalue.FromType(reg, typ.Func().Build())
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			CallSites: map[cfg.Point]factflow.CallSite{
+				point: factflow.NewCallSite(factflow.CallSiteConfig{
+					Context: factflow.CallSiteContextStatement,
+				}),
+			},
+		}),
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					PathInvalidations: []callboundary.PathInvalidationFact{
+						{Path: capturedPath},
+					},
+					PersistentPathWrites: []callboundary.PathValueFact{
+						{Path: capturedPath, Value: value},
+					},
+				},
+			}
+		},
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	if gotValue := got.ReadValue(reg, key.SymbolValue(captured)); !product.Equal(reg, gotValue, value) {
+		t.Fatalf("captured root value = %s, want persistent write %s after same-outcome invalidation", formatValue(reg, gotValue), formatValue(reg, value))
 	}
 }
 
@@ -2478,6 +2575,69 @@ func TestFactsNodeTransferCallOutcomeEscapePromotesPossibleDynamicValueWithoutPr
 			Root: itemValue,
 		})).
 		WritePathKey(reg, ks, resolver.KeyAt(point, itemsPath), presentValue(reg)))
+
+	if gotPlacement := got.ReadPlacement(itemID); gotPlacement != placement.SharedHeap {
+		t.Fatalf("placement[%v] = %s, want %s", itemID, gotPlacement, placement.SharedHeap)
+	}
+}
+
+func TestFactsNodeTransferCallOutcomeEscapeBindsSparseThirdArgumentDynamicPath(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(70815)
+	items := symbol.ID(70815)
+	argExpr := factflow.ExprRef(70815)
+	itemsPath := pathdom.NewPath(items, "items")
+	itemPath := itemsPath.IndexStr("route-1")
+	itemID := identity.ID{Kind: "lua.table", Site: "escape-placement-sparse", Index: 31}
+	itemsValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(identity.ID{Kind: "lua.table", Site: "escape-placement-sparse", Index: 30}))
+	itemValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(itemID))
+	builder := visibility.NewBuilder()
+	builder.Define(point, items, "items")
+	resolver := visibility.NewResolver(builder.Build())
+	itemsKey, ok := factKeyspaceKeyAt(resolver, point, itemsPath)
+	if !ok {
+		t.Fatal("missing items state key")
+	}
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			CallSites: map[cfg.Point]factflow.CallSite{
+				point: factflow.NewCallSite(factflow.CallSiteConfig{
+					Context: factflow.CallSiteContextStatement,
+					ArgumentSources: []factflow.ValueSource{
+						{Kind: factflow.ValueSourceUnknown},
+						{Kind: factflow.ValueSourceUnknown},
+						{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+					},
+				}),
+			},
+			ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+				argExpr: itemPath,
+			},
+		}),
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					EscapeEvents: []callboundary.EscapeEventFact{
+						{Target: pathdom.NewPlaceholder(2), Kind: callboundary.EscapeEventSend, Recursive: true},
+					},
+				},
+			}
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.
+		WriteValue(reg, key.SymbolValue(items), itemsValue).
+		WriteDynamicIndexFact(reg, dynamicindex.Key{Table: itemsKey, Site: "maybe-dynamic"}, dynamicindex.Fact{
+			KeyPresence: presence.Present(),
+			KeyValue:    typeValue(reg, typ.String),
+			Value:       itemValue,
+			Admission:   dynamicindex.AdmissionAdmitted,
+		}).
+		WriteHeapTableObject(reg, itemID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root: itemValue,
+		})))
 
 	if gotPlacement := got.ReadPlacement(itemID); gotPlacement != placement.SharedHeap {
 		t.Fatalf("placement[%v] = %s, want %s", itemID, gotPlacement, placement.SharedHeap)

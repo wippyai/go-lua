@@ -238,6 +238,94 @@ end
 	}
 }
 
+func TestCrossModuleCallbackBuiltMapEntryRepeatedDeepFieldReadKeepsGuardProof(t *testing.T) {
+	protocolMod := CheckAndExport(`
+type Meta = {
+    route: string,
+    shard: string,
+}
+
+type Child = {
+    id: string,
+    meta: Meta,
+}
+
+type Item = {
+    id: string,
+    tags: {[string]: string},
+    child: Child,
+}
+
+type Batch = {
+    items: {[string]: Item},
+    count: number,
+}
+
+local M = {}
+M.Meta = Meta
+M.Child = Child
+M.Item = Item
+M.Batch = Batch
+return M
+`, "protocol")
+	if len(protocolMod.Errors) != 0 {
+		t.Fatalf("protocol diagnostics = %#v, want none", protocolMod.Errors)
+	}
+	builderMod := CheckAndExport(`
+local protocol = require("protocol")
+
+local M = {}
+
+function M.build(ids: {string}, fill: (protocol.Item, string, number) -> ()): protocol.Batch
+    local batch: protocol.Batch = {items = {}, count = 0}
+    for _, id in ipairs(ids) do
+        batch.count = batch.count + 1
+        local item: protocol.Item = {
+            id = id,
+            tags = {},
+            child = {
+                id = id,
+                meta = {route = "", shard = ""},
+            },
+        }
+        fill(item, id, batch.count)
+        batch.items[id] = item
+    end
+    return batch
+end
+
+return M
+`, "builder", WithModule("protocol", protocolMod))
+	if len(builderMod.Errors) != 0 {
+		t.Fatalf("builder diagnostics = %#v, want none", builderMod.Errors)
+	}
+
+	result := Check(`
+local builder = require("builder")
+
+local batch = builder.build({"route-1", "route-2"}, function(item, id: string, index: number)
+    item.child.meta.route = id
+end)
+
+if batch.items["route-1"] then
+    local route: string = batch.items["route-1"].child.meta.route
+    local bad_route: number = batch.items["route-1"].child.meta.route
+    print(route)
+end
+`, WithModule("builder", builderMod))
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, route source = %s, bad source = %s, want only string-not-number",
+			result.Diagnostics,
+			localAssignmentSourceDebugAtLine(t, result, 9),
+			localAssignmentSourceDebugAtLine(t, result, 10),
+		)
+	}
+	message := result.Diagnostics[0].Message
+	if !strings.Contains(message, "string") || !strings.Contains(message, "not number") || strings.Contains(message, "may be nil") {
+		t.Fatalf("diagnostic message = %q, want string-not-number without nilability", message)
+	}
+}
+
 func localAssignmentSourceDebugAtLine(t *testing.T, result Result, line int) string {
 	t.Helper()
 	if result.checked == nil || result.checked.RootResult() == nil || result.checked.RootResult().Graph() == nil {

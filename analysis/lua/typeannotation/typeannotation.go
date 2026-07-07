@@ -96,9 +96,6 @@ func primitive(expr *ast.PrimitiveTypeExpr, resolver Resolver) (typ.Type, bool) 
 }
 
 func array(expr *ast.ArrayTypeExpr, resolver Resolver) (typ.Type, bool) {
-	if expr.Readonly {
-		return nil, false
-	}
 	elem, ok := Type(expr.Element, resolver)
 	if !ok {
 		return nil, false
@@ -112,6 +109,9 @@ func array(expr *ast.ArrayTypeExpr, resolver Resolver) (typ.Type, bool) {
 		return nil, false
 	}
 	elem = typ.NewAnnotated(elem, elemAnns)
+	if expr.Readonly {
+		return typ.NewAnnotated(luatable.NewReadonlyMap(typ.Integer, elem), arrAnns), true
+	}
 	return typ.NewAnnotated(typ.NewArray(elem), arrAnns), true
 }
 

@@ -60,6 +60,53 @@ func TestCheckAndExportPublishesErrorReturnFromImportedGenericResultField(t *tes
 	}
 }
 
+func TestImportedResultElseErrorAliasSatisfiesCallee(t *testing.T) {
+	errorsMod := CheckFileAndExport(`
+type AppError = { code: string, message: string }
+local errors = {}
+errors.AppError = AppError
+function errors.wrap(err: AppError, context: string): AppError
+    return { code = err.code, message = context .. err.message }
+end
+return errors
+`, "errors", "errors.lua")
+	if len(errorsMod.Errors) != 0 {
+		t.Fatalf("errors module errors = %#v, want none", errorsMod.Errors)
+	}
+
+	validatorMod := CheckFileAndExport(`
+local errors = require("errors")
+type ValidationResult = { ok: true, value: string } | { ok: false, error: errors.AppError }
+local validator = {}
+function validator.validate_name(input: string): ValidationResult
+    if input == "" then
+        return { ok = false, error = { code = "EMPTY", message = "empty" } }
+    end
+    return { ok = true, value = input }
+end
+return validator
+`, "validator", "validator.lua", WithStdlib(), WithModule("errors", errorsMod))
+	if len(validatorMod.Errors) != 0 {
+		t.Fatalf("validator module errors = %#v, want none", validatorMod.Errors)
+	}
+
+	result := CheckFile(`
+local errors = require("errors")
+local validator = require("validator")
+
+local result = validator.validate_name("Alice")
+if result.ok then
+    local name: string = result.value
+else
+    local err = result.error
+    local wrapped = errors.wrap(err, "registration")
+end
+`, "main.lua", WithStdlib(), WithModule("errors", errorsMod), WithModule("validator", validatorMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want imported result else error alias to satisfy AppError parameter", result.Diagnostics)
+	}
+}
+
 func TestCheckAndExportConsumesErrorReturnFromImportedGenericResultField(t *testing.T) {
 	resultMod := CheckFileAndExport(`
 		type Result<T> = { ok: true, value: T } | { ok: false, error: string }
@@ -287,6 +334,69 @@ func TestRequireCheckAndExportedGenericMemberSignatureInstantiatesReturn(t *test
 	}
 }
 
+func TestRequireCheckAndExportedGenericIteratorAliasesInstantiateReturns(t *testing.T) {
+	iterMod := CheckFileAndExport(`
+type Predicate<T> = (item: T) -> boolean
+type Reducer<T, A> = (acc: A, item: T) -> A
+
+local M = {}
+
+function M.reduce<T, A>(arr: {T}, fn: Reducer<T, A>, initial: A): A
+    local acc = initial
+    for _, item in ipairs(arr) do
+        acc = fn(acc, item)
+    end
+    return acc
+end
+
+function M.find<T>(arr: {T}, pred: Predicate<T>): T?
+    for _, item in ipairs(arr) do
+        if pred(item) then
+            return item
+        end
+    end
+    return nil
+end
+
+return M
+`, "iter", "iter.lua", WithStdlib())
+	if len(iterMod.Errors) != 0 {
+		t.Fatalf("iter diagnostics = %#v, want none", iterMod.Errors)
+	}
+	if sig, ok := iterMod.Manifest.FunctionSignatures["iter.reduce"]; !ok || sig.Type == nil || len(sig.Type.TypeParams) != 2 {
+		t.Fatalf("iter.reduce signature = %#v/%v; signatures = %#v", sig.Type, ok, iterMod.Manifest.FunctionSignatures)
+	}
+	if sig, ok := iterMod.Manifest.FunctionSignatures["iter.find"]; !ok || sig.Type == nil || len(sig.Type.TypeParams) != 1 {
+		t.Fatalf("iter.find signature = %#v/%v; signatures = %#v", sig.Type, ok, iterMod.Manifest.FunctionSignatures)
+	}
+
+	checked := CheckFile(`
+local iter = require("iter")
+
+type User = {name: string, age: number}
+
+local users: {User} = {
+    {name = "Ada", age = 42},
+}
+
+local first = iter.find(users, function(user: User): boolean
+    return user.age > 18
+end)
+
+if first then
+    local name: string = first.name
+    local age: number = first.age
+end
+
+local total: number = iter.reduce(users, function(acc: number, user: User): number
+    return acc + user.age
+end, 0)
+	`, "main.lua", WithStdlib(), WithModule("iter", iterMod))
+	if len(checked.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want imported generic iterator aliases to instantiate returns", checked.Diagnostics)
+	}
+}
+
 func TestRequireCheckAndExportedGenericMemberSignatureInstantiatesImportedCallbackReturn(t *testing.T) {
 	protocolMod := CheckAndExport(`
 		type User = { id: string, retries: number }
@@ -374,13 +484,13 @@ func TestRequireCheckAndExportedGenericMemberSignatureSeedsUnannotatedCallbackPa
 		Line:            11,
 		Column:          29,
 		Span:            diagnostic.Span{StartLine: 11, StartCol: 29, EndLine: 11, EndCol: 40},
-		MessageContains: []string{"mapped.value", `"u1"`, "not number"},
+		MessageContains: []string{"mapped.value", "string", "not number"},
 		EvidenceMin:     2,
 		EvidenceChain: []diagnosticEvidenceExpectation{
 			{
 				Kind:            diagnostic.EvidenceAbstractFact,
 				Trust:           diagnostic.TrustProven,
-				MessageContains: []string{"mapped.value", `"u1"`},
+				MessageContains: []string{"mapped.value", "string"},
 			},
 			{
 				Kind:            diagnostic.EvidenceUserAssertion,
@@ -393,13 +503,13 @@ func TestRequireCheckAndExportedGenericMemberSignatureSeedsUnannotatedCallbackPa
 		HelpContains:  []string{"Use a value compatible", "change the target type", "`mapped.value` is valid"},
 		Sources:       diagnostic.SourceMap{"test.lua": src},
 		RenderOrderedContains: []string{
-			"error[type.assignment]: cannot assign mapped.value because it is \"u1\", not number",
+			`error[type.assignment]: cannot assign mapped.value because it is string, not number`,
 			"test.lua:11:29",
 			"↓ declared type",
 			"11 |             local wrong_id: number = mapped.value",
 			"↑ assigned value",
 			"because:",
-			"proven: mapped.value has literal value \"u1\"",
+			"proven: mapped.value has type string",
 			"claimed: wrong_id is declared as number",
 			"help: Use a value compatible with the expected type",
 		},

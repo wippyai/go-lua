@@ -24,10 +24,10 @@ func firstDirectCallContractJudgmentPerCall(groups ...[]judgment.Judgment) []jud
 }
 
 func renderDirectCallArgumentJudgment(item judgment.Judgment) (diagnostic.Diagnostic, bool) {
-	return renderDirectCallArgumentJudgmentWithPolicy(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
+	return renderDirectCallArgumentJudgmentWithPolicy(newJudgmentRenderContext(), item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
 }
 
-func renderDirectCallArgumentJudgmentWithPolicy(item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
+func renderDirectCallArgumentJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
 	if item.Code != judgment.CodeCallArgType || item.Subject.Kind != judgment.SubjectCallArgument || len(item.Spans) == 0 {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -36,7 +36,7 @@ func renderDirectCallArgumentJudgmentWithPolicy(item judgment.Judgment, policy j
 		return diagnostic.Diagnostic{}, false
 	}
 	span := diagnosticSpanFromJudgment(item.Spans[0])
-	presentation, ok := diagnosticProofContext().DirectCallArgument(item, span)
+	presentation, ok := ctx.proof.DirectCallArgument(item, span)
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}

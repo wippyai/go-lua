@@ -53,6 +53,36 @@ func OriginCases(familyID uint64) ([]OriginCase, bool) {
 	return publicOriginCases(family.cases), true
 }
 
+// SingleCaseWithField returns the index of the only origin case whose type has
+// field as a static field/member. It reports false when no case has the field or
+// more than one case has it.
+func SingleCaseWithField(cases []OriginCase, field string) (int, bool) {
+	if field == "" {
+		return 0, false
+	}
+	return SingleCaseWithPath(cases, []segment.Segment{{Kind: segment.SegmentField, Name: field}})
+}
+
+// SingleCaseWithPath returns the index of the only origin case whose type admits
+// suffix as a static path. It reports false when no case admits the suffix or
+// more than one case admits it.
+func SingleCaseWithPath(cases []OriginCase, suffix []segment.Segment) (int, bool) {
+	if len(cases) == 0 || len(suffix) == 0 {
+		return 0, false
+	}
+	required := -1
+	for _, c := range cases {
+		if _, ok := FieldAtPath(c.Type, suffix); !ok {
+			continue
+		}
+		if required >= 0 {
+			return 0, false
+		}
+		required = c.Index
+	}
+	return required, required >= 0
+}
+
 func publicOriginCases(cases []originCase) []OriginCase {
 	if len(cases) == 0 {
 		return nil

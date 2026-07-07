@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestExpressionOperationLogicalPreservesTopOriginEvidence(t *testing.T) {
@@ -65,6 +66,47 @@ func TestExpressionOperationEqualityOfExactLiteralsReturnsBooleanLiteral(t *test
 	assertLiteralBool("equal other", got, ok, typ.False)
 	got, ok = ExpressionOperationValue(reg, nil, ne, left, other)
 	assertLiteralBool("not equal other", got, ok, typ.True)
+}
+
+func TestExpressionOperationEqualityWithUnreadableOperandStillReturnsBoolean(t *testing.T) {
+	reg := standard.Registry()
+	source := factflow.NewNilValueSource(0)
+	op, ok := factflow.NewBinaryExpressionOperation("==", source, source)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation returned false")
+	}
+	left := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	right := product.Top()
+
+	got, ok := ExpressionOperationValue(reg, nil, op, left, right)
+	if !ok {
+		t.Fatal("ExpressionOperationValue returned false")
+	}
+	gotType, typeOK := typevalue.TypeOf(reg, got)
+	if !typeOK || !typ.TypeEquals(gotType, typ.Boolean) {
+		t.Fatalf("equality type = %v/%v, want boolean", gotType, typeOK)
+	}
+	if gotEvidence := product.Get(reg, got, evidence.Key); gotEvidence.IsExplicitTop() || gotEvidence.IsGradualTop() {
+		t.Fatalf("equality evidence = %s, want operator proof not top-origin", gotEvidence)
+	}
+}
+
+func TestExpressionOperationNotWithUnreadableOperandStillReturnsBoolean(t *testing.T) {
+	reg := standard.Registry()
+	source := factflow.NewNilValueSource(0)
+	op, ok := factflow.NewUnaryExpressionOperation("not", source)
+	if !ok {
+		t.Fatal("NewUnaryExpressionOperation returned false")
+	}
+
+	got, ok := ExpressionOperationValue(reg, nil, op, product.Top(), product.Value{})
+	if !ok {
+		t.Fatal("ExpressionOperationValue returned false")
+	}
+	gotType, typeOK := typevalue.TypeOf(reg, got)
+	if !typeOK || !typ.TypeEquals(gotType, typ.Boolean) {
+		t.Fatalf("not type = %v/%v, want boolean", gotType, typeOK)
+	}
 }
 
 func TestExpressionOperationOrWithPresentFallbackProvesNonNilWithoutLaunderingUnknown(t *testing.T) {
@@ -152,6 +194,39 @@ func TestExpressionOperationGuardedScalarOrNilKeepsValidatedOptionalType(t *test
 	}
 	if gotEvidence := product.Get(reg, got, evidence.Key); gotEvidence.IsExplicitTop() || gotEvidence.IsGradualTop() {
 		t.Fatalf("guarded fallback evidence = %s, want concrete proof", gotEvidence)
+	}
+}
+
+func TestExpressionOperationLogicalOrOfFalseOrStringWithStringKeepsStringWitness(t *testing.T) {
+	reg := standard.Registry()
+	source := factflow.NewNilValueSource(0)
+	op, ok := factflow.NewBinaryExpressionOperation("or", source, source)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation(or) returned false")
+	}
+	leftType := typeexpr.Union(typ.False, typ.LiteralString("ok"))
+	left := typevalue.WithWitness(reg, typevalue.FromType(reg, leftType), leftType)
+	right := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+
+	got, ok := ExpressionOperationValue(reg, nil, op, left, right)
+	if !ok {
+		t.Fatal("ExpressionOperationValue returned false")
+	}
+	gotType, ok := typevalue.WitnessOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("logical fallback witness = %v/%v, want string", gotType, ok)
+	}
+
+	cache := typevalue.NewCache()
+	left = cache.FromTypeWithWitness(reg, leftType)
+	right = cache.FromTypeWithWitness(reg, typ.String)
+	got, ok = ExpressionOperationValue(reg, cache, op, left, right)
+	if !ok {
+		t.Fatal("cached ExpressionOperationValue returned false")
+	}
+	gotType, ok = typevalue.WitnessOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("cached logical fallback witness = %v/%v, want string", gotType, ok)
 	}
 }
 

@@ -65,6 +65,23 @@ func TestWithStaticMemberWitnessPreservesExistingMembers(t *testing.T) {
 	}
 }
 
+func TestWithStaticMemberWitnessSkipsAlreadyPresentWitness(t *testing.T) {
+	reg := standard.Registry()
+	rootType := typetable.NewRecord().Field("id", typ.String).Build()
+	root := typevalue.WithWitness(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), rootType)
+	member := typevalue.FromType(reg, typ.String)
+
+	got := WithStaticMemberWitness(reg, root, []StaticMemberValue{
+		{Suffix: []segment.Segment{{Kind: segment.SegmentField, Name: "id"}}, Value: member},
+	}, func(value product.Value) (typ.Type, bool) {
+		return typevalue.TypeOf(reg, value)
+	})
+
+	if !product.Equal(reg, got, root) {
+		t.Fatalf("already present witness changed value: got %#v want %#v", got, root)
+	}
+}
+
 func TestWithDeclaredContractPreservingPresenceKeepsSourcePresence(t *testing.T) {
 	reg := standard.Registry()
 	value := product.WithPresence(reg, typevalue.FromType(reg, typ.String), presence.Maybe())
@@ -78,6 +95,18 @@ func TestWithDeclaredContractPreservingPresenceKeepsSourcePresence(t *testing.T)
 	gotType, ok := typevalue.TypeOf(reg, got)
 	if !ok || !typ.TypeEquals(gotType, typ.MaterializeOptional(typ.String)) {
 		t.Fatalf("type = %v/%v, want optional string from source presence", gotType, ok)
+	}
+}
+
+func TestWithDeclaredContractPreservingPresenceSkipsSatisfiedContract(t *testing.T) {
+	reg := standard.Registry()
+	value := product.WithPresence(reg, typevalue.FromType(reg, typ.String), presence.Maybe())
+	declared := typevalue.FromType(reg, typ.String)
+
+	got := WithDeclaredContractPreservingPresence(reg, value, declared)
+
+	if !product.Equal(reg, got, value) {
+		t.Fatalf("satisfied declared contract changed value: got %#v want %#v", got, value)
 	}
 }
 

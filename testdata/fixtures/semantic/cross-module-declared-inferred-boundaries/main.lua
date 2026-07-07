@@ -36,9 +36,9 @@ if decoded.ok then
         print(accepted_id .. ":" .. tostring(accepted_attempt))
     end
 
-    local wrong_decision: protocol.Decision = { -- expect-error
+    local wrong_decision: protocol.Decision = {
         id = id,
-        attempt = "two",
+        attempt = "two", -- expect-error
     }
 end
 

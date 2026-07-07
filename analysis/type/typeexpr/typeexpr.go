@@ -145,4 +145,3 @@ func materializedMembers(raw []typ.Type, materialized typ.Type) []typ.Type {
 	}
 	return []typ.Type{materialized}
 }
-

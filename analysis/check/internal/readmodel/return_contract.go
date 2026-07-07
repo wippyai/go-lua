@@ -5,13 +5,19 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // ForEachReturn visits returned expressions with explicit declared return
@@ -65,12 +71,13 @@ func (r Reader) returnObjectLiteralEntry(occ body.ReturnValueOccurrence, expecte
 		return Return{}, false
 	}
 	rootValue, rootValueOK := r.SourceValue(occ.Point, source)
+	objectExpected := r.semanticObjectLiteralExpectedType(occ.Point, literal, expected)
 	for _, entry := range literal.Entries {
-		entryExpected, ok := body.ExpectedTypeAtSegments(expected, entry.Suffix.Segments)
+		entryExpected, ok := body.ExpectedTypeAtSegments(objectExpected, entry.Suffix.Segments)
 		if !ok || !readapi.ObligationTypeReportable(entryExpected) {
 			continue
 		}
-		value, ok := r.SourceValue(occ.Point, entry.Source)
+		value, ok := r.objectLiteralEntryValue(occ.Point, occ.SourcePath, entry)
 		if !ok {
 			continue
 		}
@@ -85,19 +92,20 @@ func (r Reader) returnObjectLiteralEntry(occ body.ReturnValueOccurrence, expecte
 			sourceLabel = label
 		}
 		ret := Return{
-			Point:              occ.Point,
-			Index:              occ.Index,
-			Value:              value,
-			ValueHash:          r.ValueHash(value),
-			TypeWithPresence:   actual,
-			Expected:           entryExpected,
-			ExpectedLabel:      label,
-			SourceLabel:        sourceLabel,
-			SourceIndexedRead:  returnSourceIndexedRead(entry.Source),
-			SourceSpan:         sourceSpanFromBody(entry.ValueSpan),
-			DeclarationSpan:    readmodelSourceSpanAt(expectedSpans, occ.Index),
-			UntrustedTopOrigin: untrustedTopOrigin,
-			ExplicitTopOrigin:  r.ValueHasExplicitTopOrigin(value),
+			Point:               occ.Point,
+			Index:               occ.Index,
+			Value:               value,
+			ValueHash:           r.ValueHash(value),
+			TypeWithPresence:    actual,
+			Expected:            entryExpected,
+			ExpectedLabel:       label,
+			SourceLabel:         sourceLabel,
+			SourceIndexedRead:   returnSourceIndexedRead(entry.Source),
+			SourceSpan:          sourceSpanFromBody(entry.ValueSpan),
+			DeclarationSpan:     readmodelSourceSpanAt(expectedSpans, occ.Index),
+			UntrustedTopOrigin:  untrustedTopOrigin,
+			ExplicitTopOrigin:   r.ValueHasExplicitTopOrigin(value),
+			BodyParamObligation: r.result.HasBodyOwnedParamObligations(),
 		}
 		ret.Check = readapi.PlanReturnCheck(readapi.ReturnCheckPlan{
 			Return:              ret,
@@ -108,7 +116,17 @@ func (r Reader) returnObjectLiteralEntry(occ body.ReturnValueOccurrence, expecte
 		return ret, true
 	}
 	if rootValueOK {
-		return r.returnSemanticObjectLiteralMissingRequired(occ.Point, occ.Index, literal, rootValue, expected, sourceSpanFromBody(occ.SourceSpan), expectedSpans)
+		if rootActual, actualOK := r.ValueTypeWithPresence(rootValue); actualOK && rootActual != nil &&
+			r.IsSubtype(rootActual, expected) &&
+			r.ValueProofAdmissible(rootValue, expected) &&
+			r.returnRootPathHasRequiredStaticMembers(occ.Point, occ.SourcePath, expected) &&
+			!r.ValueHasUntrustedTopOrigin(rootValue) {
+			return r.returnObjectLiteralSuccess(occ.Point, occ.Index, rootValue, rootActual, expected, sourceSpanFromBody(occ.SourceSpan), expectedSpans), true
+		}
+		if ret, ok := r.returnSemanticObjectLiteralMissingRequired(occ.Point, occ.Index, literal, rootValue, objectExpected, sourceSpanFromBody(occ.SourceSpan), expectedSpans); ok {
+			return ret, true
+		}
+		return r.returnObjectLiteralSuccess(occ.Point, occ.Index, rootValue, objectExpected, expected, sourceSpanFromBody(occ.SourceSpan), expectedSpans), true
 	}
 	return Return{}, false
 }
@@ -118,11 +136,17 @@ func (r Reader) returnDeclaredObjectLiteralEntry(occ body.ReturnValueOccurrence,
 	if r.result == nil || source.Kind != sourceprovenance.SourceExpression || source.Expr == nil {
 		return Return{}, false
 	}
-	if !occ.HasPath || occ.SourcePath.IsEmpty() || occ.SourcePath.Symbol == 0 {
+	if !occ.HasPath || occ.SourcePath.IsEmpty() || occ.SourcePath.Symbol == 0 || len(occ.SourcePath.Segments) != 0 {
+		return Return{}, false
+	}
+	if kind, ok := r.result.SymbolKind(occ.SourcePath.Symbol); ok && kind == symbol.Param {
 		return Return{}, false
 	}
 	declaration, ok := r.result.DominatingPathRootDeclarationSource(occ.Point, occ.SourcePath)
 	if !ok {
+		return Return{}, false
+	}
+	if declarationPath, ok := r.result.ValueSourcePath(declaration.Source); ok && declarationPath.Symbol != occ.SourcePath.Symbol {
 		return Return{}, false
 	}
 	literal, ok := r.result.ObjectLiteralViewForSource(declaration.Source)
@@ -136,6 +160,7 @@ func (r Reader) returnDeclaredObjectLiteralEntry(occ body.ReturnValueOccurrence,
 		literal,
 		rootValue,
 		rootValueOK,
+		occ.SourcePath,
 		sourceSpanFromBody(occ.SourceSpan),
 		expectedValue,
 		expectedSpans,
@@ -143,19 +168,46 @@ func (r Reader) returnDeclaredObjectLiteralEntry(occ body.ReturnValueOccurrence,
 	)
 }
 
-func (r Reader) returnLoweredObjectLiteralEntry(point cfg.Point, index int, literal factflow.ObjectLiteralView, rootValue product.Value, rootValueOK bool, sourceSpan SourceSpan, expectedValue product.Value, expectedSpans []SourceSpan, reportMissingRequired bool) (Return, bool) {
+func (r Reader) objectLiteralEntryValue(point cfg.Point, rootPath pathdom.Path, entry body.ObjectEntryFact) (product.Value, bool) {
+	if value, ok := r.objectEntryStaticMemberValue(point, rootPath, entry.Suffix.Segments); ok {
+		return value, true
+	}
+	return r.SourceValue(point, entry.Source)
+}
+
+func (r Reader) objectEntryStaticMemberValue(point cfg.Point, rootPath pathdom.Path, suffix []segment.Segment) (product.Value, bool) {
+	if r.result == nil || rootPath.IsEmpty() || len(suffix) == 0 {
+		return product.Value{}, false
+	}
+	memberPath := rootPath.AppendSegments(suffix)
+	if memberPath.IsEmpty() {
+		return product.Value{}, false
+	}
+	st, ok := r.result.StateAtBoundary(point)
+	if !ok {
+		return product.Value{}, false
+	}
+	ks := r.result.KeySpace()
+	if ks == nil {
+		return product.Value{}, false
+	}
+	return st.ReadPathStaticMember(ks, memberPath.Key())
+}
+
+func (r Reader) returnLoweredObjectLiteralEntry(point cfg.Point, index int, literal factflow.ObjectLiteralView, rootValue product.Value, rootValueOK bool, rootPath pathdom.Path, sourceSpan SourceSpan, expectedValue product.Value, expectedSpans []SourceSpan, reportMissingRequired bool) (Return, bool) {
 	expected, ok := r.ValueTypeWithPresence(expectedValue)
 	if !ok || expected == nil || typ.IsAny(expected) || typ.IsUnknown(expected) || typ.IsNever(expected) || refinement.ContainsFreeTypeParam(expected) {
 		return Return{}, false
 	}
+	objectExpected := r.loweredObjectLiteralExpectedType(point, literal, expected)
 	var out Return
 	found := false
 	literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
-		entryExpected, ok := body.ExpectedTypeAtSegments(expected, entry.SuffixSegmentsView())
+		entryExpected, ok := body.ExpectedTypeAtSegments(objectExpected, entry.SuffixSegmentsView())
 		if !ok || !readapi.ObligationTypeReportable(entryExpected) {
 			return true
 		}
-		value, ok := r.result.SourceValueForExplanationAtBoundary(point, entry.Source())
+		value, ok := r.loweredObjectEntryValue(point, rootPath, entry)
 		if !ok {
 			return true
 		}
@@ -170,19 +222,20 @@ func (r Reader) returnLoweredObjectLiteralEntry(point cfg.Point, index int, lite
 			sourceLabel = label
 		}
 		out = Return{
-			Point:              point,
-			Index:              index,
-			Value:              value,
-			ValueHash:          r.ValueHash(value),
-			TypeWithPresence:   actual,
-			Expected:           entryExpected,
-			ExpectedLabel:      label,
-			SourceLabel:        sourceLabel,
-			SourceIndexedRead:  false,
-			SourceSpan:         sourceSpanFromFactflow(entry.ValueSpan()),
-			DeclarationSpan:    readmodelSourceSpanAt(expectedSpans, index),
-			UntrustedTopOrigin: untrustedTopOrigin,
-			ExplicitTopOrigin:  r.ValueHasExplicitTopOrigin(value),
+			Point:               point,
+			Index:               index,
+			Value:               value,
+			ValueHash:           r.ValueHash(value),
+			TypeWithPresence:    actual,
+			Expected:            entryExpected,
+			ExpectedLabel:       label,
+			SourceLabel:         sourceLabel,
+			SourceIndexedRead:   false,
+			SourceSpan:          sourceSpanFromFactflow(entry.ValueSpan()),
+			DeclarationSpan:     readmodelSourceSpanAt(expectedSpans, index),
+			UntrustedTopOrigin:  untrustedTopOrigin,
+			ExplicitTopOrigin:   r.ValueHasExplicitTopOrigin(value),
+			BodyParamObligation: r.result.HasBodyOwnedParamObligations(),
 		}
 		out.Check = readapi.PlanReturnCheck(readapi.ReturnCheckPlan{
 			Return:              out,
@@ -197,19 +250,117 @@ func (r Reader) returnLoweredObjectLiteralEntry(point cfg.Point, index int, lite
 		return out, true
 	}
 	if rootValueOK && reportMissingRequired {
-		return r.returnLoweredObjectLiteralMissingRequired(point, index, literal, rootValue, expected, sourceSpan, expectedSpans)
+		if rootActual, actualOK := r.ValueTypeWithPresence(rootValue); actualOK && rootActual != nil &&
+			r.IsSubtype(rootActual, expected) &&
+			r.ValueProofAdmissible(rootValue, expected) &&
+			r.returnRootPathHasRequiredStaticMembers(point, rootPath, expected) &&
+			!r.ValueHasUntrustedTopOrigin(rootValue) {
+			return r.returnObjectLiteralSuccess(point, index, rootValue, rootActual, expected, sourceSpan, expectedSpans), true
+		}
+		if ret, ok := r.returnLoweredObjectLiteralMissingRequired(point, index, literal, rootValue, objectExpected, sourceSpan, expectedSpans); ok {
+			return ret, true
+		}
+		return r.returnObjectLiteralSuccess(point, index, rootValue, objectExpected, expected, sourceSpan, expectedSpans), true
 	}
 	return Return{}, false
+}
+
+func (r Reader) semanticObjectLiteralExpectedType(point cfg.Point, literal body.ObjectLiteralFact, expected typ.Type) typ.Type {
+	if selected, ok := body.ExpectedObjectLiteralRecordCached(r.result.TypeValues(), expected, func(name string) (typ.Type, bool) {
+		for _, entry := range literal.Entries {
+			if field, ok := segment.DirectFieldName(entry.Suffix.Segments); !ok || field != name {
+				continue
+			}
+			value, ok := r.SourceValue(point, entry.Source)
+			if !ok {
+				return nil, false
+			}
+			return r.ValueTypeWithPresence(value)
+		}
+		return nil, false
+	}); ok {
+		return selected
+	}
+	return expected
+}
+
+func (r Reader) loweredObjectLiteralExpectedType(point cfg.Point, literal factflow.ObjectLiteralView, expected typ.Type) typ.Type {
+	if selected, ok := body.ExpectedObjectLiteralRecordCached(r.result.TypeValues(), expected, func(name string) (typ.Type, bool) {
+		var out typ.Type
+		literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
+			if out != nil {
+				return false
+			}
+			segments := entry.SuffixSegmentsView()
+			if field, ok := segment.DirectFieldName(segments); !ok || field != name {
+				return true
+			}
+			value, ok := r.result.SourceValueForExplanationAtBoundary(point, entry.Source())
+			if !ok {
+				return false
+			}
+			out, _ = r.ValueTypeWithPresence(value)
+			return false
+		})
+		return out, out != nil
+	}); ok {
+		return selected
+	}
+	return expected
+}
+
+func (r Reader) loweredObjectEntryValue(point cfg.Point, rootPath pathdom.Path, entry factflow.ObjectEntryView) (product.Value, bool) {
+	if value, ok := r.loweredObjectEntryStaticMemberValue(point, rootPath, entry.SuffixSegmentsView()); ok {
+		return value, true
+	}
+	return r.result.SourceValueForExplanationAtBoundary(point, entry.Source())
+}
+
+func (r Reader) loweredObjectEntryStaticMemberValue(point cfg.Point, rootPath pathdom.Path, suffix []segment.Segment) (product.Value, bool) {
+	if r.result == nil || rootPath.IsEmpty() || len(suffix) == 0 {
+		return product.Value{}, false
+	}
+	memberPath := rootPath.AppendSegments(suffix)
+	if memberPath.IsEmpty() {
+		return product.Value{}, false
+	}
+	st, ok := r.result.StateAtBoundary(point)
+	if !ok {
+		return product.Value{}, false
+	}
+	ks := r.result.KeySpace()
+	if ks == nil {
+		return product.Value{}, false
+	}
+	return st.ReadPathStaticMember(ks, memberPath.Key())
+}
+
+func (r Reader) returnObjectLiteralSuccess(point cfg.Point, index int, rootValue product.Value, actual typ.Type, expected typ.Type, sourceSpan SourceSpan, expectedSpans []SourceSpan) Return {
+	ret := Return{
+		Point:               point,
+		Index:               index,
+		Value:               rootValue,
+		ValueHash:           r.ValueHash(rootValue),
+		TypeWithPresence:    actual,
+		Expected:            expected,
+		ExpectedLabel:       returnExpectedLabel(index),
+		SourceLabel:         returnExpectedLabel(index),
+		SourceSpan:          sourceSpan,
+		DeclarationSpan:     readmodelSourceSpanAt(expectedSpans, index),
+		BodyParamObligation: r.result.HasBodyOwnedParamObligations(),
+	}
+	ret.Check = readapi.PlanReturnCheck(readapi.ReturnCheckPlan{
+		Return:          ret,
+		ValueAdmissible: true,
+		IsSubtype:       r.IsSubtype,
+	})
+	return ret
 }
 
 func (r Reader) returnSemanticObjectLiteralMissingRequired(point cfg.Point, index int, literal body.ObjectLiteralFact, rootValue product.Value, expected typ.Type, sourceSpan SourceSpan, expectedSpans []SourceSpan) (Return, bool) {
 	field, ok := body.MissingRequiredRecordField(expected, func(name string) bool {
 		for _, entry := range literal.Entries {
-			if len(entry.Suffix.Segments) != 1 {
-				continue
-			}
-			seg := entry.Suffix.Segments[0]
-			if seg.Kind == segment.SegmentField && seg.Name == name {
+			if field, ok := segment.DirectFieldName(entry.Suffix.Segments); ok && field == name {
 				return true
 			}
 		}
@@ -226,11 +377,7 @@ func (r Reader) returnLoweredObjectLiteralMissingRequired(point cfg.Point, index
 		has := false
 		literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
 			segments := entry.SuffixSegmentsView()
-			if len(segments) != 1 {
-				return true
-			}
-			seg := segments[0]
-			if seg.Kind == segment.SegmentField && seg.Name == name {
+			if field, ok := segment.DirectFieldName(segments); ok && field == name {
 				has = true
 				return false
 			}
@@ -255,17 +402,18 @@ func (r Reader) returnMissingRequiredField(point cfg.Point, index int, rootValue
 	}
 	label := returnExpectedLabel(index) + "." + field
 	ret := Return{
-		Point:             point,
-		Index:             index,
-		Value:             rootValue,
-		ValueHash:         r.ValueHash(rootValue),
-		TypeWithPresence:  actual,
-		Expected:          fieldType,
-		ExpectedLabel:     label,
-		SourceLabel:       returnExpectedLabel(index),
-		SourceIndexedRead: false,
-		SourceSpan:        sourceSpan,
-		DeclarationSpan:   readmodelSourceSpanAt(expectedSpans, index),
+		Point:               point,
+		Index:               index,
+		Value:               rootValue,
+		ValueHash:           r.ValueHash(rootValue),
+		TypeWithPresence:    actual,
+		Expected:            fieldType,
+		ExpectedLabel:       label,
+		SourceLabel:         returnExpectedLabel(index),
+		SourceIndexedRead:   false,
+		SourceSpan:          sourceSpan,
+		DeclarationSpan:     readmodelSourceSpanAt(expectedSpans, index),
+		BodyParamObligation: r.result.HasBodyOwnedParamObligations(),
 	}
 	ret.Check = readapi.PlanReturnCheck(readapi.ReturnCheckPlan{
 		Return:                   ret,
@@ -274,6 +422,47 @@ func (r Reader) returnMissingRequiredField(point cfg.Point, index int, rootValue
 		IsSubtype:                r.IsSubtype,
 	})
 	return ret, true
+}
+
+func (r Reader) returnRootPathHasRequiredStaticMembers(point cfg.Point, rootPath pathdom.Path, expected typ.Type) bool {
+	if r.result == nil || rootPath.IsEmpty() || expected == nil {
+		return false
+	}
+	st, ok := r.result.StateAtBoundary(point)
+	if !ok {
+		return false
+	}
+	ks := r.result.KeySpace()
+	if ks == nil {
+		return false
+	}
+	_, missing := body.MissingRequiredRecordField(expected, func(name string) bool {
+		memberPath := rootPath.Append(segment.Segment{Kind: segment.SegmentField, Name: name})
+		return r.returnRootPathHasRequiredMemberProof(point, st, ks, memberPath, expected, name)
+	})
+	return !missing
+}
+
+func (r Reader) returnRootPathHasRequiredMemberProof(point cfg.Point, st state.State, ks *keyspace.KeySpace, memberPath pathdom.Path, expected typ.Type, name string) bool {
+	if memberPath.IsEmpty() {
+		return false
+	}
+	if _, ok := st.ReadPathStaticMember(ks, memberPath.Key()); ok {
+		return true
+	}
+	fieldType, ok := body.ExpectedTypeAtSegments(expected, []segment.Segment{{Kind: segment.SegmentField, Name: name}})
+	if !ok || fieldType == nil {
+		return false
+	}
+	if _, ok := unwrap.Annotated(fieldType).(*typ.Function); !ok {
+		return false
+	}
+	key, ok := factflow.CalleePathKeyFromPath(memberPath)
+	if !ok {
+		return false
+	}
+	fn, ok := r.result.FunctionValueTypeForCalleePath(key)
+	return ok && fn != nil && r.IsSubtype(fn, fieldType)
 }
 
 func (r Reader) returnValue(occ body.ReturnValueOccurrence, expectedValue product.Value, expectedSpans []SourceSpan) (Return, bool) {
@@ -285,21 +474,25 @@ func (r Reader) returnValue(occ body.ReturnValueOccurrence, expectedValue produc
 	if !ok {
 		return Return{}, false
 	}
-	actual, _ := r.ValueTypeWithPresence(value)
+	actual, _ := r.returnActualType(occ, value)
+	if projected, projectedOK := r.returnObjectLiteralProjectedActualType(occ, actual, expected); projectedOK {
+		actual = projected
+	}
 	ret := Return{
-		Point:              occ.Point,
-		Index:              occ.Index,
-		Value:              value,
-		ValueHash:          r.ValueHash(value),
-		TypeWithPresence:   actual,
-		Expected:           expected,
-		ExpectedLabel:      returnExpectedLabel(occ.Index),
-		SourceLabel:        occ.SourceLabel,
-		SourceIndexedRead:  returnSourceIndexedRead(occ.Source),
-		SourceSpan:         sourceSpanFromBody(occ.SourceSpan),
-		DeclarationSpan:    readmodelSourceSpanAt(expectedSpans, occ.Index),
-		UntrustedTopOrigin: r.ValueHasUntrustedTopOrigin(value),
-		ExplicitTopOrigin:  r.ValueHasExplicitTopOrigin(value),
+		Point:               occ.Point,
+		Index:               occ.Index,
+		Value:               value,
+		ValueHash:           r.ValueHash(value),
+		TypeWithPresence:    actual,
+		Expected:            expected,
+		ExpectedLabel:       returnExpectedLabel(occ.Index),
+		SourceLabel:         occ.SourceLabel,
+		SourceIndexedRead:   r.returnSourceIndexedReadAt(occ),
+		SourceSpan:          sourceSpanFromBody(occ.SourceSpan),
+		DeclarationSpan:     readmodelSourceSpanAt(expectedSpans, occ.Index),
+		UntrustedTopOrigin:  r.ValueHasUntrustedTopOrigin(value),
+		ExplicitTopOrigin:   r.ValueHasExplicitTopOrigin(value),
+		BodyParamObligation: r.result.HasBodyOwnedParamObligations(),
 	}
 	ret.Check = readapi.PlanReturnCheck(readapi.ReturnCheckPlan{
 		Return:              ret,
@@ -310,16 +503,92 @@ func (r Reader) returnValue(occ body.ReturnValueOccurrence, expectedValue produc
 	return ret, true
 }
 
+func (r Reader) returnObjectLiteralProjectedActualType(occ body.ReturnValueOccurrence, actual typ.Type, expected typ.Type) (typ.Type, bool) {
+	if r.result == nil ||
+		occ.Source.Kind != sourceprovenance.SourceExpression ||
+		occ.Source.Expr == nil ||
+		expected == nil {
+		return nil, false
+	}
+	if _, ok := r.result.ObjectLiteral(occ.Source.Expr); !ok {
+		return nil, false
+	}
+	if actual != nil && r.IsSubtype(actual, expected) {
+		return nil, false
+	}
+	projected, ok := r.result.ExpressionTypeBeforeBoundary(occ.Point, occ.Source.Expr)
+	if !ok || projected == nil || typ.IsAny(projected) || typ.IsUnknown(projected) || typ.IsNever(projected) {
+		return nil, false
+	}
+	if !r.IsSubtype(projected, expected) {
+		return nil, false
+	}
+	return projected, true
+}
+
+func (r Reader) returnActualType(occ body.ReturnValueOccurrence, value product.Value) (typ.Type, bool) {
+	actual, ok := r.ValueTypeWithPresence(value)
+	if ok && actual != nil && !typ.IsAny(actual) && !typ.IsUnknown(actual) {
+		return actual, true
+	}
+	if r.result == nil || occ.Source.Kind != sourceprovenance.SourceExpression || occ.Source.Expr == nil {
+		return actual, ok
+	}
+	if projected, projectedOK := r.result.ExpressionTypeBeforeBoundary(occ.Point, occ.Source.Expr); projectedOK &&
+		projected != nil &&
+		!typ.IsAny(projected) &&
+		!typ.IsUnknown(projected) {
+		return projected, true
+	}
+	declared, declaredOK := r.result.DeclaredExpressionTypeAt(occ.Point, occ.Source.Expr)
+	if !declaredOK || declared == nil || typ.IsAny(declared) || typ.IsUnknown(declared) {
+		return actual, ok
+	}
+	return declared, true
+}
+
 func (r Reader) returnOccurrenceValue(occ body.ReturnValueOccurrence) (product.Value, bool) {
 	if r.result == nil {
 		return product.Value{}, false
 	}
 	if occ.HasLowered {
-		if value, ok := r.result.SourceValueForExplanationAtBoundary(occ.Point, occ.Lowered); ok {
-			return value, true
+		if value, ok := r.result.SourceValueForExplanationAtBoundary(occ.Point, occ.Lowered); ok &&
+			r.returnLoweredSourceValueCanReplaceSlot(value) {
+			return r.returnSourceValueWithNilWitness(occ, value), true
 		}
 	}
-	return r.SourceValue(occ.Point, occ.Source)
+	if occ.Source.Kind == sourceprovenance.SourceExpression && occ.Source.Expr != nil {
+		if value, ok := r.result.ExpressionValueAtBoundary(occ.Point, occ.Source.Expr); ok {
+			return r.returnSourceValueWithNilWitness(occ, value), true
+		}
+	}
+	if occ.HasLowered {
+		if value, ok := r.result.SourceValueForExplanationAtBoundary(occ.Point, occ.Lowered); ok {
+			return r.returnSourceValueWithNilWitness(occ, value), true
+		}
+	}
+	value, ok := r.SourceValue(occ.Point, occ.Source)
+	if !ok {
+		return product.Value{}, false
+	}
+	return r.returnSourceValueWithNilWitness(occ, value), true
+}
+
+func (r Reader) returnLoweredSourceValueCanReplaceSlot(value product.Value) bool {
+	return r.valueHasReadableType(value) && !r.ValueHasUntrustedTopOrigin(value)
+}
+
+func (r Reader) returnSourceValueWithNilWitness(occ body.ReturnValueOccurrence, value product.Value) product.Value {
+	if r.result == nil || occ.Source.Kind != sourceprovenance.SourceExpression || occ.Source.Expr == nil {
+		return value
+	}
+	if sourceprovenance.ConcreteRuntimeCastSource(occ.Source) {
+		return value
+	}
+	if r.returnSourceIndexedReadAt(occ) && r.result.Registry() != nil {
+		value = product.WithPresence(r.result.Registry(), value, presence.Maybe())
+	}
+	return r.result.WithMemberReadNilWitness(occ.Point, occ.Source.Expr, value)
 }
 
 func returnExpectedLabel(index int) string {
@@ -331,6 +600,18 @@ func readmodelSourceSpanAt(spans []SourceSpan, index int) SourceSpan {
 		return SourceSpan{}
 	}
 	return spans[index]
+}
+
+func (r Reader) returnSourceIndexedReadAt(occ body.ReturnValueOccurrence) bool {
+	if r.result == nil || occ.Source.Kind != sourceprovenance.SourceExpression || occ.Source.Expr == nil {
+		return false
+	}
+	if r.result.AssignmentSourceIndexedReadAt(occ.Point, occ.Source.Expr) {
+		return true
+	}
+	inner, ok := sourceprovenance.ProofInner(occ.Source.Expr)
+	return ok && inner != nil && inner != occ.Source.Expr &&
+		r.result.AssignmentSourceIndexedReadAt(occ.Point, inner)
 }
 
 func returnSourceIndexedRead(source sourceprovenance.ASTSource) bool {
