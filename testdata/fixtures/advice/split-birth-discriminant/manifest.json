@@ -1,0 +1,46 @@
+{
+  "description": "Advice should report split-born discriminants only when a locally born record tag is written apart from payload fields and used downstream as a discriminant.",
+  "check": {
+    "diagnostic_rules": [
+      {
+        "code": "advice.split_birth_discriminant",
+        "enabled": true,
+        "severity": "hint"
+      }
+    ],
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 6,
+        "column": 1,
+        "severity": "hint",
+        "code": "advice.split_birth_discriminant",
+        "message_contains": [
+          "split.kind is assigned apart from its payload"
+        ],
+        "min_evidence": 4,
+        "evidence_contains": [
+          "split is born as a table here",
+          "split.kind is assigned literal \"ok\" here",
+          "split.value is assigned separately",
+          "split.kind is used as a discriminant here"
+        ],
+        "render_contains": [
+          "hint[advice.split_birth_discriminant]",
+          "split.kind is assigned apart from its payload"
+        ],
+        "help_contains": [
+          "Construct the variant in one table literal"
+        ],
+        "label_contains": [
+          "tag write",
+          "payload write",
+          "discriminant use"
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}
