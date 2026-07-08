@@ -66,30 +66,6 @@ func pathStaticMemberMap(reg *axis.Registry) factmap.Map[pathValueFactKey, callb
 	}
 }
 
-func normalizePathValueFacts(reg *axis.Registry, in []callboundary.PathValueFact) []callboundary.PathValueFact {
-	return pathValueMap(reg).Normalize(in)
-}
-
-func normalizePathValueFactsOwned(reg *axis.Registry, in []callboundary.PathValueFact) []callboundary.PathValueFact {
-	return pathValueMap(reg).NormalizeOwned(in)
-}
-
-func normalizePersistentPathWrites(reg *axis.Registry, in []callboundary.PathValueFact) []callboundary.PathValueFact {
-	return persistentPathWriteMap(reg).Normalize(in)
-}
-
-func normalizePersistentPathWritesOwned(reg *axis.Registry, in []callboundary.PathValueFact) []callboundary.PathValueFact {
-	return persistentPathWriteMap(reg).NormalizeOwned(in)
-}
-
-func normalizePathStaticMemberFacts(reg *axis.Registry, in []callboundary.PathStaticMemberFact) []callboundary.PathStaticMemberFact {
-	return pathStaticMemberMap(reg).Normalize(in)
-}
-
-func normalizePathStaticMemberFactsOwned(reg *axis.Registry, in []callboundary.PathStaticMemberFact) []callboundary.PathStaticMemberFact {
-	return pathStaticMemberMap(reg).NormalizeOwned(in)
-}
-
 func clonePathValueFacts(in []callboundary.PathValueFact) []callboundary.PathValueFact {
 	if len(in) == 0 {
 		return nil
@@ -112,52 +88,4 @@ func clonePathStaticMemberFacts(in []callboundary.PathStaticMemberFact) []callbo
 		out[i] = fact
 	}
 	return out
-}
-
-func pathValueFactsEqual(reg *axis.Registry, a, b []callboundary.PathValueFact) bool {
-	return pathValueMap(reg).Equal(a, b)
-}
-
-func persistentPathWritesEqual(reg *axis.Registry, a, b []callboundary.PathValueFact) bool {
-	return persistentPathWriteMap(reg).Equal(a, b)
-}
-
-func pathStaticMemberFactsEqual(reg *axis.Registry, a, b []callboundary.PathStaticMemberFact) bool {
-	return pathStaticMemberMap(reg).Equal(a, b)
-}
-
-func pathValueFactsLessOrEq(reg *axis.Registry, a, b []callboundary.PathValueFact) bool {
-	return pathValueMap(reg).LessOrEq(a, b)
-}
-
-func persistentPathWritesLessOrEq(reg *axis.Registry, a, b []callboundary.PathValueFact) bool {
-	return persistentPathWriteMap(reg).LessOrEq(a, b)
-}
-
-func pathStaticMemberFactsLessOrEq(reg *axis.Registry, a, b []callboundary.PathStaticMemberFact) bool {
-	return pathStaticMemberMap(reg).LessOrEq(a, b)
-}
-
-func joinPathValueFacts(reg *axis.Registry, a, b []callboundary.PathValueFact) []callboundary.PathValueFact {
-	return pathValueMap(reg).Join(a, b)
-}
-
-func joinPersistentPathWrites(reg *axis.Registry, a, b []callboundary.PathValueFact) []callboundary.PathValueFact {
-	return persistentPathWriteMap(reg).Join(a, b)
-}
-
-func widenPathValueFacts(reg *axis.Registry, prev, next []callboundary.PathValueFact) []callboundary.PathValueFact {
-	return pathValueMap(reg).Widen(prev, next)
-}
-
-func widenPersistentPathWrites(reg *axis.Registry, prev, next []callboundary.PathValueFact) []callboundary.PathValueFact {
-	return persistentPathWriteMap(reg).Widen(prev, next)
-}
-
-func joinPathStaticMemberFacts(reg *axis.Registry, a, b []callboundary.PathStaticMemberFact) []callboundary.PathStaticMemberFact {
-	return pathStaticMemberMap(reg).Join(a, b)
-}
-
-func widenPathStaticMemberFacts(reg *axis.Registry, prev, next []callboundary.PathStaticMemberFact) []callboundary.PathStaticMemberFact {
-	return pathStaticMemberMap(reg).Widen(prev, next)
 }

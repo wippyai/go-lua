@@ -36,14 +36,6 @@ func dynamicIndexMap(reg *axis.Registry) factmap.Map[dynamicIndexFactKey, callbo
 	}
 }
 
-func normalizeDynamicIndexFacts(reg *axis.Registry, in []callboundary.DynamicIndexFact) []callboundary.DynamicIndexFact {
-	return dynamicIndexMap(reg).Normalize(in)
-}
-
-func normalizeDynamicIndexFactsOwned(reg *axis.Registry, in []callboundary.DynamicIndexFact) []callboundary.DynamicIndexFact {
-	return dynamicIndexMap(reg).NormalizeOwned(in)
-}
-
 func cloneDynamicIndexFacts(in []callboundary.DynamicIndexFact) []callboundary.DynamicIndexFact {
 	if len(in) == 0 {
 		return nil
@@ -56,22 +48,6 @@ func cloneDynamicIndexFacts(in []callboundary.DynamicIndexFact) []callboundary.D
 		out[i] = fact
 	}
 	return out
-}
-
-func dynamicIndexFactsEqual(reg *axis.Registry, a, b []callboundary.DynamicIndexFact) bool {
-	return dynamicIndexMap(reg).Equal(a, b)
-}
-
-func dynamicIndexFactsLessOrEq(reg *axis.Registry, a, b []callboundary.DynamicIndexFact) bool {
-	return dynamicIndexMap(reg).LessOrEq(a, b)
-}
-
-func joinDynamicIndexFacts(reg *axis.Registry, a, b []callboundary.DynamicIndexFact) []callboundary.DynamicIndexFact {
-	return dynamicIndexMap(reg).Join(a, b)
-}
-
-func widenDynamicIndexFacts(reg *axis.Registry, prev, next []callboundary.DynamicIndexFact) []callboundary.DynamicIndexFact {
-	return dynamicIndexMap(reg).Widen(prev, next)
 }
 
 func dynamicIndexFactEqual(reg *axis.Registry, a, b callboundary.DynamicIndexFact) bool {

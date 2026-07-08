@@ -29,14 +29,6 @@ func effectDeltaMap(reg *axis.Registry) factmap.Map[effectDeltaFactKey, callboun
 	}
 }
 
-func normalizeEffectDeltas(reg *axis.Registry, in []callboundary.EffectDelta) []callboundary.EffectDelta {
-	return effectDeltaMap(reg).Normalize(in)
-}
-
-func normalizeEffectDeltasOwned(reg *axis.Registry, in []callboundary.EffectDelta) []callboundary.EffectDelta {
-	return effectDeltaMap(reg).NormalizeOwned(in)
-}
-
 func cloneEffectDeltas(in []callboundary.EffectDelta) []callboundary.EffectDelta {
 	if len(in) == 0 {
 		return nil
@@ -47,22 +39,6 @@ func cloneEffectDeltas(in []callboundary.EffectDelta) []callboundary.EffectDelta
 		out[i] = delta
 	}
 	return out
-}
-
-func effectDeltasEqual(reg *axis.Registry, a, b []callboundary.EffectDelta) bool {
-	return effectDeltaMap(reg).Equal(a, b)
-}
-
-func effectDeltasLessOrEq(reg *axis.Registry, a, b []callboundary.EffectDelta) bool {
-	return effectDeltaMap(reg).LessOrEq(a, b)
-}
-
-func joinEffectDeltas(reg *axis.Registry, a, b []callboundary.EffectDelta) []callboundary.EffectDelta {
-	return effectDeltaMap(reg).Join(a, b)
-}
-
-func widenEffectDeltas(reg *axis.Registry, prev, next []callboundary.EffectDelta) []callboundary.EffectDelta {
-	return effectDeltaMap(reg).Widen(prev, next)
 }
 
 func effectDeltaEqual(reg *axis.Registry, a, b callboundary.EffectDelta) bool {
