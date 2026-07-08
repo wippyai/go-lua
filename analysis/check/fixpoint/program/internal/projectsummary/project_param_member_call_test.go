@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -13,10 +14,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 type memberCallSiteOnlyResult struct {
@@ -31,6 +34,8 @@ type memberCallSiteOnlyResult struct {
 
 	returnPoints  []cfg.Point
 	returnSources map[cfg.Point][]factflow.ValueSource
+	fn            *ast.FunctionExpr
+	captures      []bind.Capture
 }
 
 func (r memberCallSiteOnlyResult) Registry() *axis.Registry { return standard.Registry() }
@@ -67,6 +72,15 @@ func (r memberCallSiteOnlyResult) ReturnValueSources(point cfg.Point) ([]factflo
 }
 func (r memberCallSiteOnlyResult) ExpressionPathRef(factflow.ExprRef) (pathdom.Path, bool) {
 	return pathdom.Path{}, false
+}
+func (r memberCallSiteOnlyResult) Function() *ast.FunctionExpr {
+	return r.fn
+}
+func (r memberCallSiteOnlyResult) DirectCaptures(fn *ast.FunctionExpr) []bind.Capture {
+	if fn == nil || fn != r.fn || len(r.captures) == 0 {
+		return nil
+	}
+	return append([]bind.Capture(nil), r.captures...)
 }
 
 func TestParamMemberCallObligationsUseCallSiteSourcesWithoutSemanticCallFact(t *testing.T) {
@@ -218,5 +232,53 @@ func TestParamObligationsUseCallOutcomeSourcesWithoutSemanticCallFact(t *testing
 	gotType, ok := typevalue.TypeOf(reg, got[1])
 	if !ok || !subtype.IsSubtype(gotType, typ.String) {
 		t.Fatalf("payload obligation type = %v/%v, want string", gotType, ok)
+	}
+}
+
+func TestCapturedPathObligationsUseCallSiteSourcesWithoutSemanticCallFact(t *testing.T) {
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, true)
+	graph.AddEdge(call, graph.Exit(), true)
+
+	captured := symbol.ID(3)
+	source, ok := factflow.NewPathValueSource(pathdom.NewPath(captured, "captured").Key(), 0, 0, 0, factflow.ValueSourceShape{Final: true, Adjusted: true})
+	if !ok {
+		t.Fatal("NewPathValueSource failed")
+	}
+	reg := standard.Registry()
+	value, ok := obligationValueFromType(reg, typ.String)
+	if !ok {
+		t.Fatal("obligationValueFromType(string) failed")
+	}
+	fn := &ast.FunctionExpr{}
+	result := memberCallSiteOnlyResult{
+		graph: graph,
+		point: call,
+		site: factflow.NewCallSite(factflow.CallSiteConfig{
+			CalleeSymbol:    symbol.ID(1),
+			ArgumentSources: []factflow.ValueSource{source},
+		}).View(),
+		ks: keyspace.New(),
+		outcome: callpayload.CallOutcome{
+			ParamObligations: []callpayload.CallParamObligation{
+				{ParamIndex: 0, Value: value},
+			},
+		},
+		hasOutcome: true,
+		fn:         fn,
+		captures:   []bind.Capture{{Captured: captured, CapturedName: "captured"}},
+	}
+
+	got := projectCapturedPathObligations(reg, result, nil)
+	if len(got) != 1 {
+		t.Fatalf("captured obligations = %#v, want one from call-site argument source", got)
+	}
+	if want := pathaddr.SymbolStableKey(captured, nil); got[0].Path != want {
+		t.Fatalf("captured path = %q, want %q", got[0].Path, want)
+	}
+	gotType, ok := typevalue.TypeOf(reg, got[0].Value)
+	if !ok || !subtype.IsSubtype(gotType, typ.String) {
+		t.Fatalf("captured obligation type = %v/%v, want string", gotType, ok)
 	}
 }

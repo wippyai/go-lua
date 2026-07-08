@@ -37,14 +37,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-type callReader interface {
-	Call(cfg.Point) (semantics.CallFact, bool)
-}
-
-type callViewReader interface {
-	CallView(cfg.Point) (semantics.CallFactView, bool)
-}
-
 type callSiteReader interface {
 	CallSite(cfg.Point) (factflow.CallSite, bool)
 }
@@ -219,14 +211,6 @@ func hasCallSiteView(result ResultReader) bool {
 	return ok
 }
 
-func hasCallFactReader(result ResultReader) bool {
-	if _, ok := result.(callViewReader); ok {
-		return true
-	}
-	_, ok := result.(callReader)
-	return ok
-}
-
 func hasOrdinaryAssignmentFactReader(result ResultReader) bool {
 	if _, ok := result.(ordinaryAssignmentViewReader); ok {
 		return true
@@ -282,7 +266,7 @@ func projectParamMemberReturnSlots(reg *axis.Registry, result ResultReader, cach
 }
 
 func projectCapturedPathObligations(reg *axis.Registry, result ResultReader, cache *paramObligationProjectorCache) []summary.CapturedPathObligation {
-	if reg == nil || !hasCallFactReader(result) {
+	if reg == nil || !hasCallSiteView(result) {
 		return nil
 	}
 	graph := result.Graph()
@@ -301,32 +285,14 @@ func projectCapturedPathObligations(reg *axis.Registry, result ResultReader, cac
 	var out []summary.CapturedPathObligation
 	for _, point := range graph.RPO() {
 		ctx.point = point
-		fact, ok := callFactAt(result, point)
-		if !ok {
-			continue
-		}
 		site, ok := callSiteViewAt(result, point)
 		if !ok {
 			continue
 		}
-		ctx.addCapturedCallOutcomeObligations(&out, fact, site, captured)
-		ctx.addCapturedTypedCallObligations(&out, fact, site, captured)
+		ctx.addCapturedCallOutcomeObligations(&out, site, captured)
+		ctx.addCapturedTypedCallObligations(&out, site, captured)
 	}
 	return out
-}
-
-func callFactAt(result ResultReader, point cfg.Point) (semantics.CallFact, bool) {
-	if reader, ok := result.(callViewReader); ok {
-		view, ok := reader.CallView(point)
-		if !ok {
-			return semantics.CallFact{}, false
-		}
-		return view.Borrowed()
-	}
-	if reader, ok := result.(callReader); ok {
-		return reader.Call(point)
-	}
-	return semantics.CallFact{}, false
 }
 
 func localAssignmentFactAt(result ResultReader, point cfg.Point) (semantics.LocalAssignmentFact, bool) {
@@ -485,11 +451,11 @@ func (p paramObligationProjector) addCallOutcomeObligations(out []product.Value,
 	}
 }
 
-func (p paramObligationProjector) addCapturedCallOutcomeObligations(out *[]summary.CapturedPathObligation, fact semantics.CallFact, site factflow.CallSiteView, captured map[symbol.ID]struct{}) {
-	if p.selfCall(fact) {
+func (p paramObligationProjector) addCapturedCallOutcomeObligations(out *[]summary.CapturedPathObligation, site factflow.CallSiteView, captured map[symbol.ID]struct{}) {
+	if p.selfCallSymbol(site.CalleeSymbol()) {
 		return
 	}
-	if receiver, member, ok := memberCallReceiverForSite(fact, site); ok && !p.memberCallReceiverStable(receiver, member) {
+	if receiver, member, ok := memberCallReceiverFromSite(site); ok && !p.memberCallReceiverStable(receiver, member) {
 		return
 	}
 	reader, ok := p.result.(callOutcomeAtReader)
@@ -501,21 +467,15 @@ func (p paramObligationProjector) addCapturedCallOutcomeObligations(out *[]summa
 		return
 	}
 	for _, obligation := range outcome.ParamObligations {
-		if obligation.ParamIndex < 0 || obligation.ParamIndex >= len(fact.Args) {
+		source, sourceOK := site.ArgumentSourceAt(obligation.ParamIndex)
+		if obligation.ParamIndex < 0 || !sourceOK {
 			continue
 		}
-		p.addCapturedExpressionValueObligation(out, fact.Args[obligation.ParamIndex], obligation.Value, captured, 0)
+		p.addCapturedSourceValueObligation(out, source, obligation.Value, captured, 0)
 	}
 	for _, obligation := range outcome.PathObligations {
 		p.addCapturedPathValueObligation(out, obligation.Path, obligation.Value, captured, 0)
 	}
-}
-
-func (p paramObligationProjector) selfCall(fact semantics.CallFact) bool {
-	if !fact.HasCalleeSymbol || fact.CalleeSymbol == 0 {
-		return false
-	}
-	return p.selfCallSymbol(fact.CalleeSymbol)
 }
 
 func (p paramObligationProjector) selfCallSymbol(callee symbol.ID) bool {
@@ -555,17 +515,17 @@ func (p paramObligationProjector) addTypedCallObligations(out []product.Value, s
 	})
 }
 
-func (p paramObligationProjector) addCapturedTypedCallObligations(out *[]summary.CapturedPathObligation, fact semantics.CallFact, site factflow.CallSiteView, captured map[symbol.ID]struct{}) {
-	params := p.callParamTypes(fact, site)
+func (p paramObligationProjector) addCapturedTypedCallObligations(out *[]summary.CapturedPathObligation, site factflow.CallSiteView, captured map[symbol.ID]struct{}) {
+	params := p.callParamTypesForSite(site)
 	if len(params) == 0 {
 		return
 	}
-	for i, want := range params {
-		if i >= len(fact.Args) {
-			break
+	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
+		if i < len(params) {
+			p.addCapturedTypedValueSourceObligation(out, source, params[i], captured, 0, nil)
 		}
-		p.addCapturedTypedExpressionObligation(out, fact.Args[i], want, captured, 0)
-	}
+		return true
+	})
 }
 
 func (p paramObligationProjector) addTypedExpressionObligation(out []product.Value, expr ast.Expr, want typ.Type, depth int) {
@@ -700,6 +660,65 @@ func (p paramObligationProjector) addCapturedTypedExpressionObligation(out *[]su
 	}
 }
 
+func (p paramObligationProjector) addCapturedTypedValueSourceObligation(
+	out *[]summary.CapturedPathObligation,
+	source factflow.ValueSource,
+	want typ.Type,
+	captured map[symbol.ID]struct{},
+	depth int,
+	seen map[factflow.ExprRef]struct{},
+) {
+	if depth > typ.DefaultRecursionDepth || want == nil {
+		return
+	}
+	if value, ok := obligationValueFromType(p.reg, want); ok {
+		p.addCapturedSourceValueObligation(out, source, value, captured, depth+1)
+	}
+	if sourcePath, ok := p.valueSourcePath(source); ok {
+		if sourceExpr, sourceOK := p.stableLocalPathSourceExpr(sourcePath); sourceOK {
+			p.addCapturedTypedExpressionObligation(out, sourceExpr, want, captured, depth+1)
+			return
+		}
+	}
+	if !source.HasExpr {
+		return
+	}
+	if _, ok := seen[source.ExprRef]; ok {
+		return
+	}
+	if seen == nil {
+		seen = make(map[factflow.ExprRef]struct{}, 1)
+	}
+	seen[source.ExprRef] = struct{}{}
+	reader, ok := p.result.(expressionOperationRefReader)
+	if !ok {
+		return
+	}
+	op, ok := reader.ExpressionOperationRef(source.ExprRef)
+	if !ok || op.Kind() != factflow.ExpressionOperationBinary || op.Op() != ".." || !concatResultSatisfies(want) {
+		return
+	}
+	p.addCapturedConcatOperandSourceObligation(out, op.Left(), captured, depth+1, seen)
+	p.addCapturedConcatOperandSourceObligation(out, op.Right(), captured, depth+1, seen)
+}
+
+func (p paramObligationProjector) addCapturedSourceValueObligation(
+	out *[]summary.CapturedPathObligation,
+	source factflow.ValueSource,
+	value product.Value,
+	captured map[symbol.ID]struct{},
+	depth int,
+) {
+	if depth > typ.DefaultRecursionDepth {
+		return
+	}
+	sourcePath, ok := p.valueSourcePath(source)
+	if !ok {
+		return
+	}
+	p.addCapturedPathValueObligation(out, sourcePath, value, captured, depth+1)
+}
+
 func (p paramObligationProjector) addCapturedExpressionValueObligation(out *[]summary.CapturedPathObligation, expr ast.Expr, value product.Value, captured map[symbol.ID]struct{}, depth int) {
 	if expr == nil || depth > typ.DefaultRecursionDepth {
 		return
@@ -736,6 +755,26 @@ func (p paramObligationProjector) addCapturedConcatOperandObligation(out *[]summ
 		return
 	}
 	p.addCapturedTypedExpressionObligation(out, expr, concatOperandObligationType(), captured, depth+1)
+}
+
+func (p paramObligationProjector) addCapturedConcatOperandSourceObligation(
+	out *[]summary.CapturedPathObligation,
+	source factflow.ValueSource,
+	captured map[symbol.ID]struct{},
+	depth int,
+	seen map[factflow.ExprRef]struct{},
+) {
+	if source.HasExpr {
+		if reader, ok := p.result.(expressionOperationRefReader); ok {
+			if op, opOK := reader.ExpressionOperationRef(source.ExprRef); opOK &&
+				op.Kind() == factflow.ExpressionOperationBinary &&
+				op.Op() == ".." {
+				p.addCapturedTypedValueSourceObligation(out, source, typ.String, captured, depth+1, seen)
+				return
+			}
+		}
+	}
+	p.addCapturedTypedValueSourceObligation(out, source, concatOperandObligationType(), captured, depth+1, seen)
 }
 
 func (p paramObligationProjector) stableCapturedPathKey(path pathdom.Path, captured map[symbol.ID]struct{}) (pathaddr.StableKey, bool) {
@@ -788,10 +827,6 @@ func concatResultSatisfies(want typ.Type) bool {
 
 func concatOperandObligationType() typ.Type {
 	return normalize.UnionForEvidence(typ.String, typ.Number)
-}
-
-func (p paramObligationProjector) callParamTypes(fact semantics.CallFact, site factflow.CallSiteView) []typ.Type {
-	return p.callParamTypesForSiteWithReceiver(site, fact.Receiver != nil && fact.Method != "")
 }
 
 func (p paramObligationProjector) callParamTypesForSite(site factflow.CallSiteView) []typ.Type {
@@ -1874,30 +1909,6 @@ func pathRootEqual(a, b pathdom.Path) bool {
 		return a.Symbol == b.Symbol && a.Version == b.Version
 	}
 	return a.Root == b.Root
-}
-
-func memberCallReceiver(fact semantics.CallFact) (pathdom.Path, segment.Segment, bool) {
-	if fact.HasReceiverPath && fact.Method != "" {
-		return fact.ReceiverPath, segment.Segment{Kind: segment.SegmentField, Name: fact.Method}, true
-	}
-	if !fact.HasCalleePath || len(fact.CalleePath.Segments) == 0 {
-		return pathdom.Path{}, segment.Segment{}, false
-	}
-	last := fact.CalleePath.Segments[len(fact.CalleePath.Segments)-1]
-	switch last.Kind {
-	case segment.SegmentField, segment.SegmentIndexString, segment.SegmentIndexInt:
-		receiver := fact.CalleePath.Parent()
-		return receiver, last, !receiver.IsEmpty() && memberaccess.Valid(last)
-	default:
-		return pathdom.Path{}, segment.Segment{}, false
-	}
-}
-
-func memberCallReceiverForSite(fact semantics.CallFact, site factflow.CallSiteView) (pathdom.Path, segment.Segment, bool) {
-	if receiver, member, ok := memberCallReceiver(fact); ok {
-		return receiver, member, true
-	}
-	return memberCallReceiverFromSite(site)
 }
 
 func memberCallReceiverFromSite(site factflow.CallSiteView) (pathdom.Path, segment.Segment, bool) {
