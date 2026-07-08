@@ -1508,8 +1508,7 @@ func (r *Result) UninitializedLocalDeclarationValueAtBoundary(point cfg.Point, i
 	if !ok {
 		return product.Value{}, false
 	}
-	fact, ok := r.LocalAssignment(declaration.Point)
-	if !ok || !fact.HasSymbol || fact.Symbol != id || fact.Expr != nil || fact.Source.Kind != sourceprovenance.SourceNil {
+	if declaration.Symbol != id || declaration.Source.Kind != factflow.ValueSourceNil {
 		return product.Value{}, false
 	}
 	return typevalue.Nil(r.registry), true
