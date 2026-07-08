@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -114,7 +115,7 @@ func (r *Result) objectLiteralEntryType(value product.Value, valueOK bool) (typ.
 		return nil, false
 	}
 	if r != nil {
-		if t, ok := r.ObjectLiteralEntryType(value); ok {
+		if t, ok := luasourcevalue.ObjectLiteralEntryType(r.Registry(), r.typeValues, value); ok {
 			return t, true
 		}
 		if !r.ValueHasUntrustedTopOrigin(value) {
