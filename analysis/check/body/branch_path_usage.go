@@ -227,14 +227,18 @@ func (r *Result) callInvalidatesPath(proofPoint cfg.Point, call *ast.FuncCallExp
 	if call == nil || target.IsEmpty() {
 		return false
 	}
-	site, outcome, ok := r.CallOutcomeForExpr(call)
+	point, ok := r.callExprPoint(call)
+	if !ok {
+		return false
+	}
+	outcome, ok := r.CallOutcomeAt(point)
 	if !ok || !CallOutcomeHasExplicitGuardInvalidation(outcome) {
 		return false
 	}
 	if CallOutcomeHasGlobalGuardInvalidation(outcome) {
 		return true
 	}
-	invalidated, ok := r.CallOutcomeGuardInvalidationPaths(site, outcome)
+	invalidated, ok := r.callOutcomeGuardInvalidationPathsAt(point, outcome)
 	if !ok {
 		return true
 	}

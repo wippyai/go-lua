@@ -1609,28 +1609,6 @@ func (r *Result) functionReturnValue(fn *typ.Function, resultIndex int) (product
 	return typevalue.WithWitness(r.registry, r.typeValues.FromType(r.registry, t), t), true
 }
 
-// CallOutcomeForExpr returns the lowered call site and computed call outcome for
-// a source call expression. Diagnostic producers use it when an AST-local scan
-// needs to honor the same mutation/invalidation facts as boundary reads.
-func (r *Result) CallOutcomeForExpr(call *ast.FuncCallExpr) (factflow.CallSite, callpayload.CallOutcome, bool) {
-	if r == nil || call == nil {
-		return factflow.CallSite{}, callpayload.CallOutcome{}, false
-	}
-	point, ok := r.callExprPoint(call)
-	if !ok {
-		return factflow.CallSite{}, callpayload.CallOutcome{}, false
-	}
-	site, ok := r.CallSite(point)
-	if !ok {
-		return factflow.CallSite{}, callpayload.CallOutcome{}, false
-	}
-	outcome, ok := r.CallOutcomeAt(point)
-	if !ok {
-		return factflow.CallSite{}, callpayload.CallOutcome{}, false
-	}
-	return site, outcome, true
-}
-
 func (r *Result) callExprPoint(call *ast.FuncCallExpr) (cfg.Point, bool) {
 	if r == nil {
 		return 0, false

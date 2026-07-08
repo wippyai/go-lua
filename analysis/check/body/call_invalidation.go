@@ -163,15 +163,15 @@ func (r *Result) callOutcomeHasCovariantExposureForTargetAt(point cfg.Point, out
 	if !ok {
 		return false
 	}
-	return r.CallOutcomeHasCovariantExposureForTarget(site, outcome, target)
+	return r.callOutcomeHasCovariantExposureForTarget(site, outcome, target)
 }
 
-// CallOutcomeHasCovariantExposureForTarget reports whether outcome exposes a
+// callOutcomeHasCovariantExposureForTarget reports whether outcome exposes a
 // caller argument through a wider mutable view overlapping target. Such an
 // exposure invalidates recovered path evidence: even without a direct write
 // summary, the caller cannot keep using a dominating narrow declaration or
 // guard as proof for the exposed object.
-func (r *Result) CallOutcomeHasCovariantExposureForTarget(site factflow.CallSite, outcome callpayload.CallOutcome, target pathdom.Path) bool {
+func (r *Result) callOutcomeHasCovariantExposureForTarget(site factflow.CallSite, outcome callpayload.CallOutcome, target pathdom.Path) bool {
 	if r == nil || target.IsEmpty() || len(outcome.ParamExposures) == 0 {
 		return false
 	}
@@ -188,9 +188,9 @@ func (r *Result) CallOutcomeHasCovariantExposureForTarget(site factflow.CallSite
 	return false
 }
 
-// CallSiteHasExactEmptyGuardInvalidationSummary reports whether a call site has
+// callSiteHasExactEmptyGuardInvalidationSummary reports whether a call site has
 // a declared pure signature with no operational invalidations.
-func (r *Result) CallSiteHasExactEmptyGuardInvalidationSummary(site factflow.CallSite) bool {
+func (r *Result) callSiteHasExactEmptyGuardInvalidationSummary(site factflow.CallSite) bool {
 	if r == nil {
 		return false
 	}
@@ -200,7 +200,7 @@ func (r *Result) CallSiteHasExactEmptyGuardInvalidationSummary(site factflow.Cal
 
 func (r *Result) callSiteHasExactEmptyGuardInvalidationSummaryAt(point cfg.Point) bool {
 	site, ok := r.CallSite(point)
-	return ok && r.CallSiteHasExactEmptyGuardInvalidationSummary(site)
+	return ok && r.callSiteHasExactEmptyGuardInvalidationSummary(site)
 }
 
 func (r *Result) callSiteReferencesTrackedPathAt(point cfg.Point, target pathdom.Path) bool {
@@ -229,13 +229,13 @@ func (r *Result) callSiteReferencesTrackedPath(site factflow.CallSite, target pa
 
 func (r *Result) callOutcomeHasExactGuardInvalidationSummaryAt(point cfg.Point, outcome callpayload.CallOutcome, trustResolvedSummaryAuthority bool) bool {
 	site, ok := r.CallSite(point)
-	return ok && r.CallOutcomeHasExactGuardInvalidationSummary(site, outcome, trustResolvedSummaryAuthority)
+	return ok && r.callOutcomeHasExactGuardInvalidationSummary(site, outcome, trustResolvedSummaryAuthority)
 }
 
-// CallOutcomeHasExactGuardInvalidationSummary reports whether outcome carries
+// callOutcomeHasExactGuardInvalidationSummary reports whether outcome carries
 // enough effect authority to decide path invalidation precisely for a referenced
 // receiver or argument.
-func (r *Result) CallOutcomeHasExactGuardInvalidationSummary(site factflow.CallSite, outcome callpayload.CallOutcome, trustResolvedSummaryAuthority bool) bool {
+func (r *Result) callOutcomeHasExactGuardInvalidationSummary(site factflow.CallSite, outcome callpayload.CallOutcome, trustResolvedSummaryAuthority bool) bool {
 	sig, hasSignature := r.CallSignature(site)
 	hasOperationalEffects := hasSignature &&
 		sig.OperationalEffects != nil &&
@@ -289,12 +289,12 @@ func (r *Result) callOutcomeGuardInvalidationPathsAt(point cfg.Point, outcome ca
 	if !ok {
 		return nil, false
 	}
-	return r.CallOutcomeGuardInvalidationPaths(site, outcome)
+	return r.callOutcomeGuardInvalidationPaths(site, outcome)
 }
 
-// CallOutcomeGuardInvalidationPaths substitutes the invalidation paths carried
+// callOutcomeGuardInvalidationPaths substitutes the invalidation paths carried
 // by outcome onto the caller's argument/receiver paths.
-func (r *Result) CallOutcomeGuardInvalidationPaths(site factflow.CallSite, outcome callpayload.CallOutcome) ([]CallPathInvalidation, bool) {
+func (r *Result) callOutcomeGuardInvalidationPaths(site factflow.CallSite, outcome callpayload.CallOutcome) ([]CallPathInvalidation, bool) {
 	paramBindings := r.callGuardArgumentBindings(site)
 	callBindings := r.callGuardCallBindings(site)
 	var out []CallPathInvalidation
