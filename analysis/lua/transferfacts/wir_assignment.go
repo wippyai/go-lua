@@ -114,6 +114,9 @@ func (l *lowerer) addRootAssignmentFromWIR(input *factflow.FactsInput, point cfg
 			assignment = factflow.NewRootAssignmentWithDeclaredOverlayValue(kind, target.Symbol, target, source, l.declaredTypeClaimValue(declared))
 		}
 	}
+	if inst.TargetSpan.Valid() {
+		assignment = assignment.WithTargetSpan(sourceSpanFromWIR(inst.TargetSpan))
+	}
 	input.RootAssignments[point] = assignment
 	l.addCastExposureFromWIR(input, point, inst)
 	l.addRootAssignmentConditionAliasFromWIR(assignment)
@@ -433,11 +436,19 @@ func (l *lowerer) addStaticMemberWriteFromWIR(input *factflow.FactsInput, point 
 	if !ok {
 		return
 	}
-	input.PathAssignments[point] = factflow.NewPathAssignment(target, source)
+	assignment := factflow.NewPathAssignment(target, source)
+	if inst.TargetSpan.Valid() {
+		assignment = assignment.WithTargetSpan(sourceSpanFromWIR(inst.TargetSpan))
+	}
+	input.PathAssignments[point] = assignment
 	input.PathStaticMemberWrites[point] = factflow.NewPathStaticMemberWrite(target, source)
 	l.addPathStoreExposureFromWIR(input, point, target, source)
 	if targetSymbol, targetPath, ok := l.globalTableFieldRootTargetPath(target); ok {
-		input.RootAssignments[point] = factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, targetSymbol, targetPath, source)
+		rootAssignment := factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, targetSymbol, targetPath, source)
+		if inst.TargetSpan.Valid() {
+			rootAssignment = rootAssignment.WithTargetSpan(sourceSpanFromWIR(inst.TargetSpan))
+		}
+		input.RootAssignments[point] = rootAssignment
 	}
 }
 

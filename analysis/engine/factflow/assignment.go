@@ -19,10 +19,12 @@ const (
 
 // RootAssignment describes a root-symbol write at a CFG point.
 type RootAssignment struct {
-	kind         RootAssignmentKind
-	targetSymbol symbol.ID
-	targetPath   path.Path
-	source       ValueSource
+	kind          RootAssignmentKind
+	targetSymbol  symbol.ID
+	targetPath    path.Path
+	source        ValueSource
+	targetSpan    SourceSpan
+	hasTargetSpan bool
 
 	declaredValue          product.Value
 	hasDeclaredValue       bool
@@ -82,6 +84,18 @@ func (a RootAssignment) TargetPathRef() path.Path { return a.targetPath }
 // Source returns the value assigned to the target.
 func (a RootAssignment) Source() ValueSource { return a.source }
 
+// TargetSpan returns the lowered source range for the assignment target.
+func (a RootAssignment) TargetSpan() (SourceSpan, bool) {
+	return a.targetSpan, a.hasTargetSpan
+}
+
+// WithTargetSpan returns a copy carrying target-location display metadata.
+func (a RootAssignment) WithTargetSpan(span SourceSpan) RootAssignment {
+	a.targetSpan = span
+	a.hasTargetSpan = sourceSpanValid(span)
+	return a
+}
+
 // DeclaredValue returns conservative declared type evidence to write when
 // Source has no value evidence.
 func (a RootAssignment) DeclaredValue() (product.Value, bool) {
@@ -107,8 +121,10 @@ func (a RootAssignment) copy() RootAssignment {
 
 // PathAssignment describes a member/path refinement write at a CFG point.
 type PathAssignment struct {
-	targetPath path.Path
-	source     ValueSource
+	targetPath    path.Path
+	source        ValueSource
+	targetSpan    SourceSpan
+	hasTargetSpan bool
 }
 
 // NewPathAssignment creates a member/path assignment fact.
@@ -129,9 +145,25 @@ func (a PathAssignment) TargetPathRef() path.Path { return a.targetPath }
 // Source returns the value assigned to the target path.
 func (a PathAssignment) Source() ValueSource { return a.source }
 
+// TargetSpan returns the lowered source range for the assignment target.
+func (a PathAssignment) TargetSpan() (SourceSpan, bool) {
+	return a.targetSpan, a.hasTargetSpan
+}
+
+// WithTargetSpan returns a copy carrying target-location display metadata.
+func (a PathAssignment) WithTargetSpan(span SourceSpan) PathAssignment {
+	a.targetSpan = span
+	a.hasTargetSpan = sourceSpanValid(span)
+	return a
+}
+
 func (a PathAssignment) copy() PathAssignment {
 	a.targetPath = a.targetPath.Clone()
 	return a
+}
+
+func sourceSpanValid(span SourceSpan) bool {
+	return span.StartLine > 0 && span.StartCol > 0 && span.EndLine > 0 && span.EndCol > 0
 }
 
 // PathDescendantInvalidation describes a write through an unresolved descendant

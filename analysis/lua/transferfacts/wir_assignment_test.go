@@ -939,6 +939,8 @@ end`)
 	if got := localAssign.TargetPath(); !got.Equal(outPath) {
 		t.Fatalf("local root assignment target = %s, want %s", got.String(), outPath.String())
 	}
+	localSpan, localSpanOK := localAssign.TargetSpan()
+	assertTargetSpan(t, localSpan, localSpanOK, "local root assignment")
 
 	ordinaryPoint := requireStmtPoints(t, built, fn.Stmts[1], 1)[0]
 	ordinaryAssign, ok := facts.RootAssignment(ordinaryPoint)
@@ -951,6 +953,8 @@ end`)
 	if got := ordinaryAssign.TargetPath(); !got.Equal(outPath) {
 		t.Fatalf("ordinary root assignment target = %s, want %s", got.String(), outPath.String())
 	}
+	ordinarySpan, ordinarySpanOK := ordinaryAssign.TargetSpan()
+	assertTargetSpan(t, ordinarySpan, ordinarySpanOK, "ordinary root assignment")
 }
 
 func TestLowerWIRTableRootAssignmentPublishesExpressionSourceWithoutSemanticSidecars(t *testing.T) {
@@ -1064,6 +1068,21 @@ coroutine.spawn(function() end)
 	}
 	if !pathFact.TargetPath().Equal(path.NewPath(gSym, "_G").Field("coroutine")) {
 		t.Fatalf("path assignment target = %v", pathFact.TargetPath())
+	}
+	pathSpan, pathSpanOK := pathFact.TargetSpan()
+	assertTargetSpan(t, pathSpan, pathSpanOK, "global path assignment")
+}
+
+func assertTargetSpan(t *testing.T, span factflow.SourceSpan, ok bool, label string) {
+	t.Helper()
+	if !ok {
+		t.Fatalf("%s missing target span", label)
+	}
+	if span.StartLine <= 0 || span.StartCol <= 0 || span.EndLine <= 0 || span.EndCol <= 0 {
+		t.Fatalf("%s target span = %#v, want concrete source range", label, span)
+	}
+	if span.EndLine == span.StartLine && span.EndCol <= span.StartCol {
+		t.Fatalf("%s target span = %#v, want non-empty source range", label, span)
 	}
 }
 

@@ -281,6 +281,11 @@ type Instruction struct {
 	// rather than a child operand span.
 	ExprSpan Span
 
+	// TargetSpan is source-only metadata for the assignment target written by this
+	// instruction. It lets post-solve diagnostics render write locations from WIR
+	// facts without retaining assignment AST sidecars.
+	TargetSpan Span
+
 	// SelectDefault marks an OpSelect that carries a default (non-blocking) case.
 	SelectDefault bool
 

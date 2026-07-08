@@ -291,6 +291,7 @@ func (b *builder) lowerLocalAssign(s *ast.LocalAssignStmt) {
 			values[i] = values[i].withContextType(declared)
 		}
 		b.bindInto(dst, values[i].withTarget(wir.CallResultTargetLocalAssignment, i))
+		b.markAssignmentTargetSpan(b.curPoint, 0, dst, localNameSpan(s, i))
 		if declared != 0 {
 			b.emit(wir.Instruction{
 				Op:    wir.OpClaim,
@@ -326,12 +327,14 @@ func (b *builder) lowerAssignTarget(index int, target ast.Expr, v binding) {
 	case *ast.IdentExpr:
 		dst, _ := b.targetOperand(t)
 		b.bindInto(dst, v)
+		b.markAssignmentTargetSpan(b.curPoint, 0, dst, tableEntryValueSpan(t))
 	case *ast.AttrGetExpr:
 		if p, ok := pathexpr.Resolve(t, b.bindings); ok {
 			b.emit(wir.Instruction{
-				Op:  wir.OpStaticMemberWrite,
-				Dst: b.pathOperand(p),
-				A:   b.bindingOperand(v),
+				Op:         wir.OpStaticMemberWrite,
+				Dst:        b.pathOperand(p),
+				A:          b.bindingOperand(v),
+				TargetSpan: tableEntryValueSpan(t),
 			})
 			if v.hasCallResult {
 				b.recordCallResultTargetPath(v, p)
@@ -353,6 +356,7 @@ func (b *builder) lowerAssignTarget(index int, target ast.Expr, v binding) {
 			A:             b.lowerExpr(target.Key),
 			B:             b.bindingOperand(v),
 			DynamicSuffix: b.body.AppendSegments(target.Suffix),
+			TargetSpan:    tableEntryValueSpan(t),
 		})
 		if v.hasCallResult {
 			b.recordCallResultTargetPath(v, path.Path{})
@@ -623,6 +627,19 @@ func (b *builder) markAssignmentContextType(point cfg.Point, start int, dst wir.
 	for i := start; i < len(insts); i++ {
 		if rootAssignmentSourceInstruction(insts[i]) && insts[i].Dst == dst && insts[i].WritesAssignmentPoint() && insts[i].Type == 0 {
 			insts[i].Type = typeref
+		}
+	}
+	b.pointInstrs[point] = insts
+}
+
+func (b *builder) markAssignmentTargetSpan(point cfg.Point, start int, dst wir.Operand, span wir.Span) {
+	if !span.Valid() || dst.Kind == wir.OperandNone {
+		return
+	}
+	insts := b.pointInstrs[point]
+	for i := start; i < len(insts); i++ {
+		if rootAssignmentSourceInstruction(insts[i]) && insts[i].Dst == dst && insts[i].WritesAssignmentPoint() && !insts[i].TargetSpan.Valid() {
+			insts[i].TargetSpan = span
 		}
 	}
 	b.pointInstrs[point] = insts
@@ -1499,6 +1516,25 @@ func tableEntryValueSpan(expr ast.Expr) wir.Span {
 		span.EndCol = span.StartCol + len(ident.Value)
 	}
 	return wirSpanFromSource(span)
+}
+
+func localNameSpan(stmt *ast.LocalAssignStmt, index int) wir.Span {
+	if stmt == nil || index < 0 || index >= len(stmt.Names) {
+		return wir.Span{}
+	}
+	if index < len(stmt.NamePositions) {
+		pos := stmt.NamePositions[index]
+		if pos.Line > 0 && pos.Column > 0 {
+			name := stmt.Names[index]
+			return wir.Span{
+				StartLine: pos.Line,
+				StartCol:  pos.Column,
+				EndLine:   pos.Line,
+				EndCol:    pos.Column + len(name),
+			}
+		}
+	}
+	return wirSpanFromSource(ast.SpanOf(stmt))
 }
 
 func callCalleeSourceSpan(call *ast.FuncCallExpr) wir.Span {

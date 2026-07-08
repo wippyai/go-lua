@@ -91,12 +91,12 @@ func (r Reader) registrationCalls() ([]registrationReadCall, []openRegistrationM
 	for _, point := range cfg.RPOReadOnly(r.result.Graph()) {
 		call, ok := r.result.Call(point)
 		if !ok || call.Call == nil {
-			if assignment, ok := r.result.OrdinaryAssignment(point); ok {
-				if reg, ok := r.registrationAssignment(assignment, point); ok {
+			if write, ok := r.result.LoweredAssignmentWrite(point); ok {
+				if reg, ok := r.registrationAssignment(write, point); ok {
 					registrations = append(registrations, reg)
 					continue
 				}
-				if mutation, ok := r.openRegistrationAssignment(point, assignment); ok {
+				if mutation, ok := r.openRegistrationAssignment(point, write); ok {
 					mutation.point = point
 					open = append(open, mutation)
 				}
@@ -124,45 +124,45 @@ func (r Reader) registrationCalls() ([]registrationReadCall, []openRegistrationM
 	return registrations, open
 }
 
-func (r Reader) registrationAssignment(fact body.OrdinaryAssignmentFact, point cfg.Point) (registrationReadCall, bool) {
-	target, ok := r.result.StaticStringAssignmentTarget(point, fact)
-	if !ok || !r.result.AssignmentValueProvenFunctionAtBoundary(point, fact) {
+func (r Reader) registrationAssignment(write body.LoweredAssignmentWrite, point cfg.Point) (registrationReadCall, bool) {
+	target, ok := write.StaticStringTarget()
+	if !ok || !r.result.AssignmentSourceProvenFunctionAtBoundary(point, write.Source) {
 		return registrationReadCall{}, false
 	}
 	return registrationReadCall{
 		point:    point,
 		registry: target.Container,
 		key:      target.Key,
-		span:     sourceSpanFromBody(target.Span),
+		span:     sourceSpanFromBody(writeSpanOrTarget(target, write)),
 	}, true
 }
 
-func (r Reader) openRegistrationAssignment(point cfg.Point, fact body.OrdinaryAssignmentFact) (openRegistrationMutation, bool) {
-	if target, ok := r.result.StaticStringAssignmentTarget(point, fact); ok {
+func (r Reader) openRegistrationAssignment(point cfg.Point, write body.LoweredAssignmentWrite) (openRegistrationMutation, bool) {
+	if target, ok := write.StaticStringTarget(); ok {
 		return openRegistrationMutation{
 			path:           target.Container,
 			registry:       target.Container,
 			key:            target.Key,
 			hasKey:         true,
 			aliasSensitive: true,
-			mayRegister:    r.result.AssignmentValueMayBeFunctionBeforeBoundary(point, fact),
+			mayRegister:    r.result.AssignmentSourceMayBeFunctionBeforeBoundary(point, write.Source),
 		}, true
 	}
-	if fact.HasPath && fact.Path.Symbol != 0 {
+	if !write.Target.IsEmpty() && write.Target.Symbol != 0 {
 		mutation := openRegistrationMutation{
-			path:           fact.Path,
+			path:           write.Target,
 			aliasSensitive: true,
-			mayRegister:    r.result.AssignmentValueMayBeFunctionBeforeBoundary(point, fact),
+			mayRegister:    r.result.AssignmentSourceMayBeFunctionBeforeBoundary(point, write.Source),
 		}
-		if key, ok := fact.Path.DirectFieldName(); ok {
-			mutation.registry = path.Path{Root: fact.Path.Root, Symbol: fact.Path.Symbol, Version: fact.Path.Version}
+		if key, ok := write.Target.DirectFieldName(); ok {
+			mutation.registry = path.Path{Root: write.Target.Root, Symbol: write.Target.Symbol, Version: write.Target.Version}
 			mutation.key = key
 			mutation.hasKey = true
 			return mutation, true
 		}
-		if seg, ok := fact.Path.LastSegment(); ok {
+		if seg, ok := write.Target.LastSegment(); ok {
 			if key, keyOK := registrationSegmentStringKey(seg); keyOK {
-				mutation.registry = fact.Path.Parent()
+				mutation.registry = write.Target.Parent()
 				mutation.key = key
 				mutation.hasKey = true
 				return mutation, true
@@ -171,13 +171,14 @@ func (r Reader) openRegistrationAssignment(point cfg.Point, fact body.OrdinaryAs
 		mutation.opensAll = true
 		return mutation, true
 	}
-	if fact.HasContainerPath && fact.ContainerPath.Symbol != 0 {
-		return openRegistrationMutation{path: fact.ContainerPath, opensAll: true, aliasSensitive: true, mayRegister: true}, true
-	}
-	if fact.HasSymbol && fact.Symbol != 0 {
-		return openRegistrationMutation{path: path.Path{Symbol: fact.Symbol}, opensAll: true, mayRegister: true}, true
-	}
 	return openRegistrationMutation{}, false
+}
+
+func writeSpanOrTarget(target body.StaticStringAssignmentTarget, write body.LoweredAssignmentWrite) body.SourceSpan {
+	if write.HasSpan {
+		return write.Span
+	}
+	return target.Span
 }
 
 func (r Reader) registrationCall(shape body.RegistryKeyCallShape, point cfg.Point) (registrationReadCall, bool) {
