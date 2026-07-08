@@ -57,6 +57,7 @@ func applyRootAssignmentFact(
 	out = addPathKeyMembershipsFromDynamicIndexSource(ctx, resolver, facts, out, targetPath, fact.Source())
 	out = applyRootAssignmentNumFloor(ctx, resolver, facts, in, out, targetPath, fact.Source())
 	out = applyRootAssignmentNumCeil(ctx, resolver, facts, in, out, targetPath, fact.Source())
+	out = applyUserLatticeAssignment(ctx, resolver, facts, in, out, targetPath, fact.Source())
 	out = applyRootAssignmentLenFloorFromValue(ctx, resolver, typeValues, out, targetPath, sourceValue, hasSourceValue)
 	out = applyObjectLiteralEntriesWithKnownSourceValue(ctx, resolver, facts, sources, read, in, out, targetPath, fact.Source(), sourceValue, hasSourceValue, typeValues)
 	out = applyClosedDynamicAllValueRootAssignment(ctx, resolver, facts, sources, read, in, out, targetPath, fact.Source(), closedDynamicAllValues)

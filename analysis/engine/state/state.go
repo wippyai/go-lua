@@ -39,6 +39,7 @@ type State struct {
 	numFloors         numFloorLane
 	numCeils          numCeilLane
 	diffRelations     diffRelationLane
+	userLattices      userLatticeLane
 }
 
 // Snapshot returns a point-in-time state value. State lanes are persistent by

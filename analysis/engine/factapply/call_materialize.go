@@ -197,6 +197,7 @@ func materializeCallOutcome(
 		out = materializeObjectLiteralHeap(ctx, resolver, facts, sources, read, in, out, source, typeValues)
 		return true
 	})
+	out = out.ApplyUserCallBoundary(ctx.Registry)
 	hasProducer := callproducer.Has(facts, ctx.Point)
 	var outcome callpayload.CallOutcome
 	hasOutcome := false

@@ -1972,6 +1972,7 @@ func TestEngineStateCompositionImportBoundaries(t *testing.T) {
 		modulePath+"/analysis/engine/state/numbound",
 		modulePath+"/analysis/engine/state/numceil",
 		modulePath+"/analysis/engine/state/pathevidence",
+		modulePath+"/analysis/engine/state/userlattice",
 	)
 	for _, imp := range productionImports(t, modulePath+"/analysis/engine/state") {
 		if strings.HasPrefix(imp, modulePath+"/analysis/engine/") {
@@ -1999,6 +2000,7 @@ func TestEngineStateLeafDirectImportBoundaries(t *testing.T) {
 		),
 		modulePath + "/analysis/engine/state/numceil":      {},
 		modulePath + "/analysis/engine/state/pathevidence": {},
+		modulePath + "/analysis/engine/state/userlattice":  {},
 	}
 
 	for leaf, allowed := range leafAllowed {

@@ -488,5 +488,8 @@ func (s State) RekeyPathEvidence(from, to *keyspace.KeySpace) State {
 	if s.laneEnabled(laneHeapTableIdentityBit) {
 		out.heapTableIdentity = s.heapTableIdentity.rekey(from, to)
 	}
+	if s.laneEnabled(laneUserLatticesBit) {
+		out.userLattices = s.userLattices.rekey(from, to)
+	}
 	return out
 }

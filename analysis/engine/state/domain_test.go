@@ -245,6 +245,7 @@ func TestDefaultLanesExposeEveryStateAxis(t *testing.T) {
 		LaneNumFloors,
 		LaneNumCeils,
 		LaneDiffRelations,
+		LaneUserLattices,
 	}
 
 	if got := DefaultLanes(); !reflect.DeepEqual(got, expected) {

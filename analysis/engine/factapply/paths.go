@@ -53,6 +53,7 @@ func applyPathAssignment(
 	}
 	written = copySourcePathStaticMemberDescendantsAt(resolver, facts, ctx.Point, written, targetPath, source)
 	written = addPathEqualityProofFromSource(resolver, facts, ctx.Point, written, targetPath, source)
+	written = applyUserLatticeAssignment(ctx, resolver, facts, in, written, targetPath, source)
 	return written, true
 }
 

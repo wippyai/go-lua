@@ -8,6 +8,8 @@ type Registry struct {
 	order        []ErasedSpec
 	reducers     []Reducer
 	reducerReads [][]string
+	extensions   map[string]map[string]Extension
+	extensionSeq map[string][]Extension
 	frozen       bool
 }
 
@@ -41,6 +43,29 @@ func (v ReducersView) At(i int) Reducer {
 // ReadsAt returns the axis ids the i-th reducer depends on.
 func (v ReducersView) ReadsAt(i int) []string {
 	return v.reads[i]
+}
+
+// Extension is an immutable descriptor registered alongside value-product axes.
+// Extensions live in their own kind/id namespace and are ignored by product
+// value operations. Engine layers use them to hang verified descriptor tables
+// off the same frozen registry instance that already keys domain caches.
+type Extension interface {
+	ExtensionKind() string
+	ExtensionID() string
+}
+
+// ExtensionsView is a read-only, allocation-free view of registry extensions
+// for one kind.
+type ExtensionsView struct {
+	extensions []Extension
+}
+
+func (v ExtensionsView) Len() int {
+	return len(v.extensions)
+}
+
+func (v ExtensionsView) At(i int) Extension {
+	return v.extensions[i]
 }
 
 func NewRegistry() *Registry {
@@ -93,12 +118,62 @@ func (r *Registry) RegisterErased(spec ErasedSpec) error {
 	return nil
 }
 
+// RegisterExtension adds a non-product descriptor to the registry.
+func (r *Registry) RegisterExtension(ext Extension) error {
+	if r == nil {
+		return fmt.Errorf("axis: nil registry")
+	}
+	if ext == nil {
+		return fmt.Errorf("axis: nil extension")
+	}
+	if r.frozen {
+		return fmt.Errorf("axis: registry is frozen")
+	}
+	kind := ext.ExtensionKind()
+	if kind == "" {
+		return fmt.Errorf("axis: extension has empty kind")
+	}
+	id := ext.ExtensionID()
+	if id == "" {
+		return fmt.Errorf("axis: extension %q has empty id", kind)
+	}
+	if r.extensions == nil {
+		r.extensions = make(map[string]map[string]Extension)
+	}
+	byID := r.extensions[kind]
+	if byID == nil {
+		byID = make(map[string]Extension)
+		r.extensions[kind] = byID
+	}
+	if _, exists := byID[id]; exists {
+		return fmt.Errorf("axis: duplicate extension %q/%q", kind, id)
+	}
+	byID[id] = ext
+	if r.extensionSeq == nil {
+		r.extensionSeq = make(map[string][]Extension)
+	}
+	r.extensionSeq[kind] = append(r.extensionSeq[kind], ext)
+	return nil
+}
+
 func (r *Registry) LookupErased(id string) (ErasedSpec, bool) {
 	if r == nil {
 		return nil, false
 	}
 	spec, ok := r.specs[id]
 	return spec, ok
+}
+
+func (r *Registry) LookupExtension(kind, id string) (Extension, bool) {
+	if r == nil || r.extensions == nil {
+		return nil, false
+	}
+	byID := r.extensions[kind]
+	if byID == nil {
+		return nil, false
+	}
+	ext, ok := byID[id]
+	return ext, ok
 }
 
 func (r *Registry) Specs() []ErasedSpec {
@@ -115,6 +190,22 @@ func (r *Registry) SpecsView() SpecsView {
 		return SpecsView{}
 	}
 	return SpecsView{specs: r.order}
+}
+
+func (r *Registry) Extensions(kind string) []Extension {
+	if r == nil || len(r.extensionSeq[kind]) == 0 {
+		return nil
+	}
+	out := make([]Extension, len(r.extensionSeq[kind]))
+	copy(out, r.extensionSeq[kind])
+	return out
+}
+
+func (r *Registry) ExtensionsView(kind string) ExtensionsView {
+	if r == nil {
+		return ExtensionsView{}
+	}
+	return ExtensionsView{extensions: r.extensionSeq[kind]}
 }
 
 func (r *Registry) Reducers() []Reducer {
