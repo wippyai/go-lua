@@ -168,15 +168,7 @@ func reachesArrayDepth(t typ.Type, depth int) bool {
 }
 
 func (l *lowerer) declaredReturnLocalContractForSymbol(id symbol.ID) (typ.Type, bool) {
-	t, ok := l.declaredReturnLocalTypes[id]
-	if !ok || !declaredReturnLocalContractType(t) {
-		return nil, false
-	}
-	return t, true
-}
-
-func (l *lowerer) returnLocalObjectLiteralContractForSymbol(id symbol.ID) (typ.Type, bool) {
-	t, ok := l.returnLocalObjectLiteralTypes[id]
+	t, ok := l.returnLocalTypes[id]
 	if !ok || !declaredReturnLocalContractType(t) {
 		return nil, false
 	}

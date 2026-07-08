@@ -99,8 +99,6 @@ func (l *lowerer) addRootAssignmentFromWIR(input *factflow.FactsInput, point cfg
 			// assignment contract form.
 		} else if declared, ok := l.declaredReturnLocalContractForSymbol(target.Symbol); ok {
 			assignment = factflow.NewRootAssignmentWithDeclaredContractValue(kind, target.Symbol, target, source, l.declaredTypeClaimValue(declared))
-		} else if declared, ok := l.returnLocalObjectLiteralContractForSymbol(target.Symbol); ok && recordWithCallableField(declared) {
-			assignment = factflow.NewRootAssignmentWithDeclaredContractValue(kind, target.Symbol, target, source, l.declaredTypeClaimValue(declared))
 		} else if declared, ok := l.wirAssignmentDeclaredObjectType(inst, target.Symbol); ok {
 			assignment = factflow.NewRootAssignmentWithDeclaredOverlayValue(kind, target.Symbol, target, source, l.declaredTypeClaimValue(declared))
 		}

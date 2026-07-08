@@ -11,14 +11,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
-func lowerDeclaredReturnLocalTypesFromWIR(bindings *bind.Result, graph cfg.Graph, body *wir.Body) map[symbol.ID]typ.Type {
-	return lowerReturnLocalTypesFromWIR(bindings, graph, body)
-}
-
-func lowerReturnLocalObjectLiteralTypesFromWIR(bindings *bind.Result, graph cfg.Graph, body *wir.Body) map[symbol.ID]typ.Type {
-	return lowerReturnLocalTypesFromWIR(bindings, graph, body)
-}
-
 func lowerReturnLocalTypesFromWIR(bindings *bind.Result, graph cfg.Graph, body *wir.Body) map[symbol.ID]typ.Type {
 	if graph == nil || body == nil {
 		return nil

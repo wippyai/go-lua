@@ -54,30 +54,28 @@ func LowerDetailed(graph cfg.Graph, config Config) Lowered {
 	}
 	symbolTypes := lowerSymbolTypes(config.Bindings, typeResolver, config.MethodReceiverTypes)
 	symbolTypes = mergeSymbolTypes(symbolTypes, lowerSymbolTypesFromWIR(config.WIR, config.Bindings, config.ModuleExports))
-	declaredReturnLocalTypes := lowerDeclaredReturnLocalTypesFromWIR(config.Bindings, graph, config.WIR)
-	returnLocalObjectLiteralTypes := lowerReturnLocalObjectLiteralTypesFromWIR(config.Bindings, graph, config.WIR)
-	symbolTypes = mergeSymbolTypes(symbolTypes, declaredReturnLocalTypes)
+	returnLocalTypes := lowerReturnLocalTypesFromWIR(config.Bindings, graph, config.WIR)
+	symbolTypes = mergeSymbolTypes(symbolTypes, returnLocalTypes)
 	expressionRefinements := make(map[factflow.ExprRef]factflow.ExpressionRefinement)
 	l := lowerer{
-		registry:                      config.Registry,
-		bindings:                      config.Bindings,
-		graph:                         graph,
-		graphID:                       graph.ID(),
-		typeResolver:                  typeResolver,
-		typeValues:                    config.TypeValues,
-		wir:                           config.WIR,
-		symbolTypes:                   symbolTypes,
-		declaredReturnLocalTypes:      declaredReturnLocalTypes,
-		returnLocalObjectLiteralTypes: returnLocalObjectLiteralTypes,
-		exprs:                         make(map[any]factflow.ExprRef),
-		types:                         make(map[any]factflow.TypeRef),
-		expressionValues:              make(map[factflow.ExprRef]product.Value),
-		expressionOperations:          make(map[factflow.ExprRef]factflow.ExpressionOperation),
-		expressionFunctions:           make(map[factflow.ExprRef]symbol.ID),
-		expressionRefinements:         expressionRefinements,
-		expressionPaths:               make(map[factflow.ExprRef]pathdom.Path),
-		dynamicIndexExpressions:       make(map[factflow.ExprRef]factflow.DynamicIndexExpression),
-		expressionConditions:          make(map[factflow.ExprRef]factflow.ExpressionCondition),
+		registry:                config.Registry,
+		bindings:                config.Bindings,
+		graph:                   graph,
+		graphID:                 graph.ID(),
+		typeResolver:            typeResolver,
+		typeValues:              config.TypeValues,
+		wir:                     config.WIR,
+		symbolTypes:             symbolTypes,
+		returnLocalTypes:        returnLocalTypes,
+		exprs:                   make(map[any]factflow.ExprRef),
+		types:                   make(map[any]factflow.TypeRef),
+		expressionValues:        make(map[factflow.ExprRef]product.Value),
+		expressionOperations:    make(map[factflow.ExprRef]factflow.ExpressionOperation),
+		expressionFunctions:     make(map[factflow.ExprRef]symbol.ID),
+		expressionRefinements:   expressionRefinements,
+		expressionPaths:         make(map[factflow.ExprRef]pathdom.Path),
+		dynamicIndexExpressions: make(map[factflow.ExprRef]factflow.DynamicIndexExpression),
+		expressionConditions:    make(map[factflow.ExprRef]factflow.ExpressionCondition),
 	}
 	input := factflow.FactsInput{
 		RootAssignments:               make(map[cfg.Point]factflow.RootAssignment),
@@ -226,31 +224,30 @@ func copySymbolTypes(in map[symbol.ID]typ.Type) map[symbol.ID]typ.Type {
 }
 
 type lowerer struct {
-	registry                      *axis.Registry
-	bindings                      *bind.Result
-	graph                         cfg.Graph
-	graphID                       uint64
-	typeResolver                  *typeresolve.Resolver
-	typeValues                    *typevalue.Cache
-	wir                           *wir.Body
-	wirTempDefinitions            map[uint32]wir.Instruction
-	wirTempDefinitionSets         map[uint32][]wir.Instruction
-	wirStaticReachable            map[cfg.Point]bool
-	wirReachability               *cfg.Reachability
-	symbolTypes                   map[symbol.ID]typ.Type
-	declaredReturnLocalTypes      map[symbol.ID]typ.Type
-	returnLocalObjectLiteralTypes map[symbol.ID]typ.Type
-	exprs                         map[any]factflow.ExprRef
-	types                         map[any]factflow.TypeRef
-	expressionValues              map[factflow.ExprRef]product.Value
-	expressionOperations          map[factflow.ExprRef]factflow.ExpressionOperation
-	expressionFunctions           map[factflow.ExprRef]symbol.ID
-	expressionPaths               map[factflow.ExprRef]pathdom.Path
-	dynamicIndexExpressions       map[factflow.ExprRef]factflow.DynamicIndexExpression
-	expressionConditions          map[factflow.ExprRef]factflow.ExpressionCondition
-	wirResultSources              map[uint32]wirResultSource
-	expressionRefinements         map[factflow.ExprRef]factflow.ExpressionRefinement
-	localConditionAliases         map[symbol.ID]factflow.ExpressionCondition
+	registry                *axis.Registry
+	bindings                *bind.Result
+	graph                   cfg.Graph
+	graphID                 uint64
+	typeResolver            *typeresolve.Resolver
+	typeValues              *typevalue.Cache
+	wir                     *wir.Body
+	wirTempDefinitions      map[uint32]wir.Instruction
+	wirTempDefinitionSets   map[uint32][]wir.Instruction
+	wirStaticReachable      map[cfg.Point]bool
+	wirReachability         *cfg.Reachability
+	symbolTypes             map[symbol.ID]typ.Type
+	returnLocalTypes        map[symbol.ID]typ.Type
+	exprs                   map[any]factflow.ExprRef
+	types                   map[any]factflow.TypeRef
+	expressionValues        map[factflow.ExprRef]product.Value
+	expressionOperations    map[factflow.ExprRef]factflow.ExpressionOperation
+	expressionFunctions     map[factflow.ExprRef]symbol.ID
+	expressionPaths         map[factflow.ExprRef]pathdom.Path
+	dynamicIndexExpressions map[factflow.ExprRef]factflow.DynamicIndexExpression
+	expressionConditions    map[factflow.ExprRef]factflow.ExpressionCondition
+	wirResultSources        map[uint32]wirResultSource
+	expressionRefinements   map[factflow.ExprRef]factflow.ExpressionRefinement
+	localConditionAliases   map[symbol.ID]factflow.ExpressionCondition
 }
 
 func (l *lowerer) valueFromType(t typ.Type) product.Value {
