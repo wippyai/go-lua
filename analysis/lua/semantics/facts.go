@@ -31,42 +31,6 @@ const (
 
 const NoCallResultIndex = -1
 
-type LocalAssignmentFact struct {
-	Stmt  *ast.LocalAssignStmt
-	Index int
-
-	Name   string
-	Type   ast.TypeExpr
-	Expr   ast.Expr
-	Source sourceprovenance.ASTSource
-
-	Symbol    symbol.ID
-	HasSymbol bool
-
-	Exprs []ast.Expr
-	Types []ast.TypeExpr
-}
-
-type OrdinaryAssignmentFact struct {
-	Stmt  *ast.AssignStmt
-	Index int
-
-	Target ast.Expr
-	Value  ast.Expr
-	Source sourceprovenance.ASTSource
-
-	Symbol    symbol.ID
-	HasSymbol bool
-	Path      path.Path
-	HasPath   bool
-
-	ContainerPath    path.Path
-	HasContainerPath bool
-
-	Lhs []ast.Expr
-	Rhs []ast.Expr
-}
-
 type CallFact struct {
 	Stmt       *ast.FuncCallStmt
 	SourceStmt ast.Stmt

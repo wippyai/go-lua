@@ -96,11 +96,11 @@ func TestShadowCoverage(t *testing.T) {
 		branchKeys := sourceBranchKeys(stmts, bindings, built)
 		for _, pt := range built.Graph.RPO() {
 			keys := wirPointKeys(body, pt)
-			if f, ok := sem.LocalAssignment(pt); ok {
-				scorePoint(total, covered, gapSamples, "assign", keys, semLocalAssignKey(f))
+			if f, ok := built.Assignments.Local(pt); ok {
+				scorePoint(total, covered, gapSamples, "assign", keys, sourceLocalAssignKey(f))
 			}
-			if f, ok := sem.OrdinaryAssignment(pt); ok {
-				scorePoint(total, covered, gapSamples, "assign", keys, semOrdinaryAssignKey(f))
+			if f, ok := built.Assignments.Ordinary(pt); ok {
+				scorePoint(total, covered, gapSamples, "assign", keys, sourceOrdinaryAssignKey(f))
 			}
 			if f, ok := sem.Call(pt); ok {
 				scorePoint(total, covered, gapSamples, "call", keys, semCallKey(f))
@@ -232,14 +232,14 @@ func pct(n, d int) string {
 	return strconv.FormatFloat(100*float64(n)/float64(d), 'f', 2, 64) + "%"
 }
 
-func semLocalAssignKey(f semantics.LocalAssignmentFact) string {
+func sourceLocalAssignKey(f cfgbuild.LocalAssignment) string {
 	if f.HasSymbol {
 		return string(path.NewPath(f.Symbol, f.Name).Key())
 	}
 	return "name:" + f.Name
 }
 
-func semOrdinaryAssignKey(f semantics.OrdinaryAssignmentFact) string {
+func sourceOrdinaryAssignKey(f cfgbuild.OrdinaryAssignment) string {
 	switch {
 	case f.HasPath:
 		return string(f.Path.Key())

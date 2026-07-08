@@ -737,7 +737,7 @@ local a, b, c, d = x as any, x :: any, x as unknown, x :: unknown
 }
 
 func TestExtractedCastValueSourcesPreserveParsedSyntax(t *testing.T) {
-	stmts, _, built, result := parseSemanticChunk(t, `
+	stmts, _, built, _ := parseSemanticChunk(t, `
 local x = 0
 local a, b = x as number, x :: any
 `)
@@ -754,7 +754,7 @@ local a, b = x as number, x :: any
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			fact, ok := result.LocalAssignment(tc.point)
+			fact, ok := built.Assignments.Local(tc.point)
 			if !ok {
 				t.Fatalf("missing local assignment at point %d", tc.point)
 			}

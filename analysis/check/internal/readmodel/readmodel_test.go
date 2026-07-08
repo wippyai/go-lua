@@ -21,7 +21,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
@@ -5169,7 +5168,7 @@ func assertSameType(t *testing.T, got, want typ.Type) {
 	}
 }
 
-func requireLocalAssignment(t *testing.T, result *body.Result, stmt *ast.LocalAssignStmt, index int) (cfg.Point, semantics.LocalAssignmentFact) {
+func requireLocalAssignment(t *testing.T, result *body.Result, stmt *ast.LocalAssignStmt, index int) (cfg.Point, body.LocalAssignmentFact) {
 	t.Helper()
 	graph := result.Graph()
 	if graph == nil {
@@ -5182,10 +5181,10 @@ func requireLocalAssignment(t *testing.T, result *body.Result, stmt *ast.LocalAs
 		}
 	}
 	t.Fatalf("missing local assignment for stmt %p index %d", stmt, index)
-	return 0, semantics.LocalAssignmentFact{}
+	return 0, body.LocalAssignmentFact{}
 }
 
-func requireLocalAssignmentByName(t *testing.T, result *body.Result, name string) (cfg.Point, semantics.LocalAssignmentFact) {
+func requireLocalAssignmentByName(t *testing.T, result *body.Result, name string) (cfg.Point, body.LocalAssignmentFact) {
 	t.Helper()
 	graph := result.Graph()
 	if graph == nil {
@@ -5198,7 +5197,7 @@ func requireLocalAssignmentByName(t *testing.T, result *body.Result, name string
 		}
 	}
 	t.Fatalf("missing local assignment named %q", name)
-	return 0, semantics.LocalAssignmentFact{}
+	return 0, body.LocalAssignmentFact{}
 }
 
 func parseChunk(t *testing.T, src string) []ast.Stmt {

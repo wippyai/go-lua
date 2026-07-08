@@ -383,7 +383,7 @@ end
 	}
 }
 
-func TestLowerWithWIRBooleanAliasBranchesWithoutSemanticLocalAssignmentView(t *testing.T) {
+func TestLowerWithWIRBooleanAliasBranchesWithoutSourceAssignmentView(t *testing.T) {
 	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(target: { transform: string? })
     local has_transform = target.transform ~= nil

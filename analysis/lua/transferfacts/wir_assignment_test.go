@@ -855,7 +855,7 @@ end`)
 	assertExposureType(t, exposures[0], typ.NewArray(normalize.UnionForEvidence(typ.Number, typ.String)))
 }
 
-func TestLowerWIRCastExposureWithoutSemanticLocalAssignmentView(t *testing.T) {
+func TestLowerWIRCastExposureWithoutSourceAssignmentView(t *testing.T) {
 	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(narrow: {number})
     local widened = narrow as {number | string}

@@ -128,17 +128,75 @@ func (b *builder) isNoReturnCallStmt(expr ast.Expr) bool {
 }
 
 func (b *builder) buildAssign(state flowState, stmt *ast.AssignStmt) flowState {
+	beforeCalls := b.graph.RPO()
 	state = b.appendValueListCalls(state, stmt, stmt.Rhs)
-	for range stmt.Lhs {
+	calls, callsOK := b.valueListCalls(stmt.Rhs)
+	callPoints := newCallPoints(b.graph, beforeCalls)
+	resolver := callPointResolver(calls, callPoints)
+	sources := []sourceprovenance.ASTSource(nil)
+	if callsOK && len(callPoints) == len(calls) {
+		sources = sourceprovenance.AssignmentSources(stmt.Rhs, len(stmt.Lhs), resolver)
+	}
+	lhs := copyExprs(stmt.Lhs)
+	rhs := copyExprs(stmt.Rhs)
+	for i, target := range stmt.Lhs {
 		state = b.appendAssign(state, stmt)
+		if state.live {
+			id, hasSymbol := symbol.ID(0), false
+			if ident, ok := target.(*ast.IdentExpr); ok {
+				id, hasSymbol = b.bindings.SymbolOf(ident)
+			}
+			targetPath, hasPath := pathexpr.Resolve(target, b.bindings)
+			containerPath, hasContainerPath := pathexpr.ResolveMutationContainer(target, b.bindings)
+			b.assignments.SetOrdinary(state.current, OrdinaryAssignment{
+				Stmt:             stmt,
+				Index:            i,
+				Target:           target,
+				Value:            exprAt(stmt.Rhs, i),
+				Source:           exprSourceAt(sources, i),
+				Symbol:           id,
+				HasSymbol:        hasSymbol && id != 0,
+				Path:             targetPath,
+				HasPath:          hasPath,
+				ContainerPath:    containerPath,
+				HasContainerPath: hasContainerPath,
+				Lhs:              lhs,
+				Rhs:              rhs,
+			})
+		}
 	}
 	return state
 }
 
 func (b *builder) buildLocalAssign(state flowState, stmt *ast.LocalAssignStmt) flowState {
+	beforeCalls := b.graph.RPO()
 	state = b.appendValueListCalls(state, stmt, stmt.Exprs)
-	for range b.bindings.LocalSymbols(stmt) {
+	calls, callsOK := b.valueListCalls(stmt.Exprs)
+	callPoints := newCallPoints(b.graph, beforeCalls)
+	resolver := callPointResolver(calls, callPoints)
+	sources := []sourceprovenance.ASTSource(nil)
+	if callsOK && len(callPoints) == len(calls) {
+		sources = sourceprovenance.AssignmentSources(stmt.Exprs, len(stmt.Names), resolver)
+	}
+	exprs := copyExprs(stmt.Exprs)
+	types := copyTypeExprs(stmt.Types)
+	for i, name := range stmt.Names {
 		state = b.appendAssign(state, stmt)
+		if state.live {
+			id, hasSymbol := b.bindings.LocalSymbolAt(stmt, i)
+			b.assignments.SetLocal(state.current, LocalAssignment{
+				Stmt:      stmt,
+				Index:     i,
+				Name:      name,
+				Type:      typeAt(stmt.Types, i),
+				Expr:      exprAt(stmt.Exprs, i),
+				Source:    exprSourceAt(sources, i),
+				Symbol:    id,
+				HasSymbol: hasSymbol && id != 0,
+				Exprs:     exprs,
+				Types:     types,
+			})
+		}
 	}
 	return state
 }
@@ -162,8 +220,38 @@ func (b *builder) buildFuncDef(state flowState, stmt *ast.FuncDefStmt) flowState
 			TargetPath:      targetPath,
 			HasTargetPath:   hasTargetPath,
 		})
+		if hasTargetPath && stmt.Func != nil {
+			container := targetPath.Parent()
+			b.assignments.SetOrdinary(next.current, OrdinaryAssignment{
+				Index:            0,
+				Target:           functionDefinitionTargetExpr(stmt),
+				Value:            stmt.Func,
+				Source:           exprSourceAt(sourceprovenance.AssignmentSources([]ast.Expr{stmt.Func}, 1, nil), 0),
+				Symbol:           id,
+				HasSymbol:        hasSymbol && id != 0,
+				Path:             targetPath,
+				HasPath:          true,
+				ContainerPath:    container,
+				HasContainerPath: !container.IsEmpty(),
+				Rhs:              []ast.Expr{stmt.Func},
+			})
+		}
 	}
 	return next
+}
+
+func exprSourceAt(sources []sourceprovenance.ASTSource, index int) sourceprovenance.ASTSource {
+	if index < 0 || index >= len(sources) {
+		return sourceprovenance.ASTSource{}
+	}
+	return sources[index]
+}
+
+func functionDefinitionTargetExpr(stmt *ast.FuncDefStmt) ast.Expr {
+	if stmt == nil || stmt.Name == nil || stmt.Name.Method != "" {
+		return nil
+	}
+	return stmt.Name.Func
 }
 
 func (b *builder) buildLabel(state flowState, stmt *ast.LabelStmt) flowState {

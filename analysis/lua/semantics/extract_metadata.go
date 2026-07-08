@@ -3,8 +3,6 @@ package semantics
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
-	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
-	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -15,39 +13,7 @@ func (r *Result) extractFunctionDefinitionAssignment(stmt *ast.FuncDefStmt, bind
 	if len(points) != 1 {
 		return ErrPointMismatch
 	}
-	id, hasSymbol := symbol.ID(0), false
-	if bindings != nil {
-		id, hasSymbol = bindings.FuncDefTargetSymbol(stmt)
-	}
-	targetPath, hasTargetPath := pathexpr.ResolveFuncName(stmt.Name, bindings)
-	if hasTargetPath && targetPath.IsEmpty() {
-		hasTargetPath = false
-	}
-	if hasTargetPath && stmt.Func != nil {
-		container := targetPath.Parent()
-		r.setOrdinaryAssignment(points[0], OrdinaryAssignmentFact{
-			Stmt:             nil,
-			Index:            0,
-			Target:           functionDefinitionTargetExpr(stmt),
-			Value:            stmt.Func,
-			Source:           assignmentValueSource([]ast.Expr{stmt.Func}, 0, nil),
-			Symbol:           id,
-			HasSymbol:        hasSymbol && id != 0,
-			Path:             targetPath,
-			HasPath:          true,
-			ContainerPath:    container,
-			HasContainerPath: !container.IsEmpty(),
-			Rhs:              []ast.Expr{stmt.Func},
-		})
-	}
 	return nil
-}
-
-func functionDefinitionTargetExpr(stmt *ast.FuncDefStmt) ast.Expr {
-	if stmt == nil || stmt.Name == nil || stmt.Name.Method != "" {
-		return nil
-	}
-	return stmt.Name.Func
 }
 
 func (r *Result) extractNumberForCalls(stmt *ast.NumberForStmt, bindings *bind.Result, points []cfg.Point) error {

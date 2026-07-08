@@ -32,20 +32,6 @@ func copyStrings(in []string) []string {
 	return out
 }
 
-func copyLocalAssignmentFact(fact LocalAssignmentFact) LocalAssignmentFact {
-	fact.Exprs = copyExprs(fact.Exprs)
-	fact.Types = copyTypeExprs(fact.Types)
-	return fact
-}
-
-func copyOrdinaryAssignmentFact(fact OrdinaryAssignmentFact) OrdinaryAssignmentFact {
-	fact.Path = fact.Path.Clone()
-	fact.ContainerPath = fact.ContainerPath.Clone()
-	fact.Lhs = copyExprs(fact.Lhs)
-	fact.Rhs = copyExprs(fact.Rhs)
-	return fact
-}
-
 func copyCallFact(fact CallFact) CallFact {
 	fact.Args = copyExprs(fact.Args)
 	fact.TypeArgs = copyTypeExprs(fact.TypeArgs)

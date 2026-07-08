@@ -148,13 +148,13 @@ func TestExtractChunkAssignmentsUseStmtPointsAndPreserveIdentity(t *testing.T) {
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
 
-	result, err := ExtractChunk(stmts, bindings, built)
+	_, err := ExtractChunk(stmts, bindings, built)
 	if err != nil {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
 	localPoints := requireStmtPoints(t, built, local, 2)
-	first, ok := result.LocalAssignment(localPoints[0])
+	first, ok := built.Assignments.Local(localPoints[0])
 	if !ok {
 		t.Fatalf("missing first local assignment")
 	}
@@ -164,39 +164,18 @@ func TestExtractChunkAssignmentsUseStmtPointsAndPreserveIdentity(t *testing.T) {
 	if first.Symbol != mustLocalAt(t, bindings, local, 0) || !first.HasSymbol {
 		t.Fatalf("first local symbol = %d/%v", first.Symbol, first.HasSymbol)
 	}
-	second, ok := result.LocalAssignment(localPoints[1])
+	second, ok := built.Assignments.Local(localPoints[1])
 	if !ok || second.Stmt != local || second.Index != 1 || second.Name != "b" || second.Expr != local.Exprs[1] {
 		t.Fatalf("second local fact = %#v, ok=%v", second, ok)
 	}
 	second.Exprs[0] = ident("mutated")
-	again, _ := result.LocalAssignment(localPoints[1])
+	again, _ := built.Assignments.Local(localPoints[1])
 	if again.Exprs[0] != local.Exprs[0] {
 		t.Fatalf("LocalAssignment exposed mutable expr slice")
 	}
-	localView, ok := result.LocalAssignmentView(localPoints[1])
-	if !ok {
-		t.Fatalf("missing local assignment view")
-	}
-	borrowedLocal, ok := localView.Borrowed()
-	if !ok || borrowedLocal.Expr != local.Exprs[1] || borrowedLocal.Exprs[0] != local.Exprs[0] {
-		t.Fatalf("borrowed local assignment = %#v, ok=%v", borrowedLocal, ok)
-	}
-	localAllocs := testing.AllocsPerRun(1000, func() {
-		view, ok := result.LocalAssignmentView(localPoints[1])
-		if !ok {
-			t.Fatalf("missing local assignment view")
-		}
-		borrowed, ok := view.Borrowed()
-		if !ok || borrowed.Expr == nil {
-			t.Fatalf("borrowed local assignment = %#v, ok=%v", borrowed, ok)
-		}
-	})
-	if localAllocs != 0 {
-		t.Fatalf("LocalAssignmentView allocations/run = %.1f, want zero", localAllocs)
-	}
 
 	writePoints := requireStmtPoints(t, built, write, 2)
-	firstWrite, ok := result.OrdinaryAssignment(writePoints[0])
+	firstWrite, ok := built.Assignments.Ordinary(writePoints[0])
 	if !ok {
 		t.Fatalf("missing first ordinary assignment")
 	}
@@ -209,30 +188,9 @@ func TestExtractChunkAssignmentsUseStmtPointsAndPreserveIdentity(t *testing.T) {
 	if !firstWrite.HasPath || !firstWrite.Path.Equal(path.NewPath(firstWrite.Symbol, "a")) {
 		t.Fatalf("first ordinary path = %v/%v, want root a", firstWrite.Path, firstWrite.HasPath)
 	}
-	secondWrite, ok := result.OrdinaryAssignment(writePoints[1])
+	secondWrite, ok := built.Assignments.Ordinary(writePoints[1])
 	if !ok || secondWrite.Target != bWrite {
 		t.Fatalf("second ordinary assignment = %#v, ok=%v", secondWrite, ok)
-	}
-	ordinaryView, ok := result.OrdinaryAssignmentView(writePoints[1])
-	if !ok {
-		t.Fatalf("missing ordinary assignment view")
-	}
-	borrowedOrdinary, ok := ordinaryView.Borrowed()
-	if !ok || borrowedOrdinary.Target != bWrite || borrowedOrdinary.Rhs[0] != write.Rhs[0] {
-		t.Fatalf("borrowed ordinary assignment = %#v, ok=%v", borrowedOrdinary, ok)
-	}
-	ordinaryAllocs := testing.AllocsPerRun(1000, func() {
-		view, ok := result.OrdinaryAssignmentView(writePoints[1])
-		if !ok {
-			t.Fatalf("missing ordinary assignment view")
-		}
-		borrowed, ok := view.Borrowed()
-		if !ok || borrowed.Value == nil {
-			t.Fatalf("borrowed ordinary assignment = %#v, ok=%v", borrowed, ok)
-		}
-	})
-	if ordinaryAllocs != 0 {
-		t.Fatalf("OrdinaryAssignmentView allocations/run = %.1f, want zero", ordinaryAllocs)
 	}
 }
 
@@ -254,20 +212,20 @@ func TestExtractChunkOrdinaryAssignmentsResolveStaticMemberPaths(t *testing.T) {
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
 
-	result, err := ExtractChunk(stmts, bindings, built)
+	_, err := ExtractChunk(stmts, bindings, built)
 	if err != nil {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
 	tSym := mustLocalAt(t, bindings, local, 0)
-	dotFact, ok := result.OrdinaryAssignment(requireStmtPoints(t, built, dotWrite, 1)[0])
+	dotFact, ok := built.Assignments.Ordinary(requireStmtPoints(t, built, dotWrite, 1)[0])
 	if !ok {
 		t.Fatalf("missing dot assignment")
 	}
 	if !dotFact.HasPath || !dotFact.Path.Equal(path.NewPath(tSym, "t").Field("x")) {
 		t.Fatalf("dot path = %v/%v, want t.x", dotFact.Path, dotFact.HasPath)
 	}
-	indexFact, ok := result.OrdinaryAssignment(requireStmtPoints(t, built, indexWrite, 1)[0])
+	indexFact, ok := built.Assignments.Ordinary(requireStmtPoints(t, built, indexWrite, 1)[0])
 	if !ok {
 		t.Fatalf("missing static index assignment")
 	}
@@ -275,11 +233,11 @@ func TestExtractChunkOrdinaryAssignmentsResolveStaticMemberPaths(t *testing.T) {
 		t.Fatalf("static index path = %v/%v, want t[\"x\"]", indexFact.Path, indexFact.HasPath)
 	}
 	indexFact.Path.Segments[0].Name = "mutated"
-	again, _ := result.OrdinaryAssignment(requireStmtPoints(t, built, indexWrite, 1)[0])
+	again, _ := built.Assignments.Ordinary(requireStmtPoints(t, built, indexWrite, 1)[0])
 	if !again.Path.Equal(path.NewPath(tSym, "t").IndexStr("x")) {
 		t.Fatalf("ordinary assignment exposed mutable path: %v", again.Path)
 	}
-	dynamicFact, ok := result.OrdinaryAssignment(requireStmtPoints(t, built, dynamicWrite, 1)[0])
+	dynamicFact, ok := built.Assignments.Ordinary(requireStmtPoints(t, built, dynamicWrite, 1)[0])
 	if !ok {
 		t.Fatalf("missing dynamic index assignment")
 	}
@@ -290,11 +248,11 @@ func TestExtractChunkOrdinaryAssignmentsResolveStaticMemberPaths(t *testing.T) {
 		t.Fatalf("dynamic index container path = %v/%v, want t", dynamicFact.ContainerPath, dynamicFact.HasContainerPath)
 	}
 	dynamicFact.ContainerPath.Symbol = 999
-	dynamicAgain, _ := result.OrdinaryAssignment(requireStmtPoints(t, built, dynamicWrite, 1)[0])
+	dynamicAgain, _ := built.Assignments.Ordinary(requireStmtPoints(t, built, dynamicWrite, 1)[0])
 	if !dynamicAgain.ContainerPath.Equal(path.NewPath(tSym, "t")) {
 		t.Fatalf("ordinary assignment exposed mutable container path: %v", dynamicAgain.ContainerPath)
 	}
-	nestedDynamicFact, ok := result.OrdinaryAssignment(requireStmtPoints(t, built, nestedDynamicWrite, 1)[0])
+	nestedDynamicFact, ok := built.Assignments.Ordinary(requireStmtPoints(t, built, nestedDynamicWrite, 1)[0])
 	if !ok {
 		t.Fatalf("missing nested dynamic index assignment")
 	}
@@ -407,7 +365,7 @@ func TestExtractChunkFunctionDefinitionFactPreservesIdentity(t *testing.T) {
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
 
-	result, err := ExtractChunk(stmts, bindings, built)
+	_, err := ExtractChunk(stmts, bindings, built)
 	if err != nil {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
@@ -427,7 +385,7 @@ func TestExtractChunkFunctionDefinitionFactPreservesIdentity(t *testing.T) {
 	if !fact.HasTargetPath || !fact.TargetPath.Equal(wantPath) {
 		t.Fatalf("function definition target path = %v/%v, want %v", fact.TargetPath, fact.HasTargetPath, wantPath)
 	}
-	assign, ok := result.OrdinaryAssignment(points[0])
+	assign, ok := built.Assignments.Ordinary(points[0])
 	if !ok {
 		t.Fatalf("missing function definition ordinary assignment fact")
 	}
@@ -481,7 +439,7 @@ func TestExtractChunkMemberFunctionDefinitionFactPublishesPathAssignment(t *test
 				t.Fatalf("member function point kind = %#v, want assign", node)
 			}
 
-			result, err := ExtractChunk(stmts, bindings, built)
+			_, err := ExtractChunk(stmts, bindings, built)
 			if err != nil {
 				t.Fatalf("ExtractChunk: %v", err)
 			}
@@ -499,7 +457,7 @@ func TestExtractChunkMemberFunctionDefinitionFactPublishesPathAssignment(t *test
 			if !fact.HasTargetPath || !fact.TargetPath.Equal(wantPath) {
 				t.Fatalf("member function target path = %v/%v, want %v", fact.TargetPath, fact.HasTargetPath, wantPath)
 			}
-			assign, ok := result.OrdinaryAssignment(points[0])
+			assign, ok := built.Assignments.Ordinary(points[0])
 			if !ok {
 				t.Fatalf("missing member function ordinary assignment fact")
 			}
@@ -708,18 +666,18 @@ func TestExtractChunkAssignmentAndReturnCallFactsUseLuaListRules(t *testing.T) {
 		t.Fatalf("pack result targets = %#v", packFact.ResultTargets)
 	}
 
-	aFact, ok := result.LocalAssignment(localPoints[2])
+	aFact, ok := built.Assignments.Local(localPoints[2])
 	if !ok {
 		t.Fatalf("missing local a fact")
 	}
 	if aFact.Source.Kind != sourceprovenance.SourceCall || aFact.Source.Expr != makeCall || aFact.Source.ExprIndex != 0 || aFact.Source.ResultIndex != 0 || !aFact.Source.Adjusted || aFact.Source.CallPoint != localPoints[0] || !aFact.Source.HasCallPoint {
 		t.Fatalf("a source = %#v", aFact.Source)
 	}
-	bFact, ok := result.LocalAssignment(localPoints[3])
+	bFact, ok := built.Assignments.Local(localPoints[3])
 	if !ok {
 		t.Fatalf("missing local b fact")
 	}
-	cFact, ok := result.LocalAssignment(localPoints[4])
+	cFact, ok := built.Assignments.Local(localPoints[4])
 	if !ok {
 		t.Fatalf("missing local c fact")
 	}
@@ -793,7 +751,7 @@ func TestExtractChunkValueShortCircuitAssignmentCallFacts(t *testing.T) {
 	if len(orCallFact.ResultTargets) != 1 || orCallFact.ResultTargets[0].Kind != CallResultTargetExpression || orCallFact.ResultTargets[0].ResultIndex != 0 {
 		t.Fatalf("or call result targets = %#v", orCallFact.ResultTargets)
 	}
-	orAssign, ok := result.LocalAssignment(orPoints[1])
+	orAssign, ok := built.Assignments.Local(orPoints[1])
 	if !ok || orAssign.Source.Kind != sourceprovenance.SourceExpression || orAssign.Source.Expr != orExpr {
 		t.Fatalf("or assignment source = %#v, ok=%v", orAssign.Source, ok)
 	}
@@ -806,7 +764,7 @@ func TestExtractChunkValueShortCircuitAssignmentCallFacts(t *testing.T) {
 	if len(andCallFact.ResultTargets) != 1 || andCallFact.ResultTargets[0].Kind != CallResultTargetExpression || andCallFact.ResultTargets[0].ResultIndex != 0 {
 		t.Fatalf("and call result targets = %#v", andCallFact.ResultTargets)
 	}
-	andAssign, ok := result.LocalAssignment(andPoints[1])
+	andAssign, ok := built.Assignments.Local(andPoints[1])
 	if !ok || andAssign.Source.Kind != sourceprovenance.SourceExpression || andAssign.Source.Expr != andExpr {
 		t.Fatalf("and assignment source = %#v, ok=%v", andAssign.Source, ok)
 	}
@@ -879,7 +837,7 @@ func TestExtractChunkMemberReadCallReceiverIsExpressionProducer(t *testing.T) {
 	if len(callFact.ResultTargets) != 1 || callFact.ResultTargets[0].Kind != CallResultTargetExpression || callFact.ResultTargets[0].ResultIndex != 0 {
 		t.Fatalf("lookup result targets = %#v, want expression slot 0", callFact.ResultTargets)
 	}
-	assign, ok := result.LocalAssignment(points[1])
+	assign, ok := built.Assignments.Local(points[1])
 	if !ok || assign.Expr != memberRead {
 		t.Fatalf("assignment = %#v, ok=%v", assign, ok)
 	}
@@ -1129,10 +1087,10 @@ func TestExtractChunkAssertionWrappedCallProducersKeepOuterSources(t *testing.T)
 	}
 
 	localCastPoints := requireStmtPoints(t, built, localCast, 2)
-	assertWrappedCallSource(t, result, localCastPoints[0], localCastPoints[1], localCast, fooCall, fooCast)
+	assertWrappedCallSource(t, result, built, localCastPoints[0], localCastPoints[1], localCast, fooCall, fooCast)
 
 	localNonNilPoints := requireStmtPoints(t, built, localNonNil, 2)
-	assertWrappedCallSource(t, result, localNonNilPoints[0], localNonNilPoints[1], localNonNil, mustCall, mustAssert)
+	assertWrappedCallSource(t, result, built, localNonNilPoints[0], localNonNilPoints[1], localNonNil, mustCall, mustAssert)
 
 	returnPoints := requireStmtPoints(t, built, ret, 2)
 	returnCall, ok := result.Call(returnPoints[0])
@@ -1160,13 +1118,13 @@ func TestExtractChunkAssertionWrappedCallProducersKeepOuterSources(t *testing.T)
 	}
 }
 
-func assertWrappedCallSource(t *testing.T, result *Result, callPoint, assignPoint cfg.Point, stmt *ast.LocalAssignStmt, innerCall *ast.FuncCallExpr, outerExpr ast.Expr) {
+func assertWrappedCallSource(t *testing.T, result *Result, built *cfgbuild.Result, callPoint, assignPoint cfg.Point, stmt *ast.LocalAssignStmt, innerCall *ast.FuncCallExpr, outerExpr ast.Expr) {
 	t.Helper()
 	callFact, ok := result.Call(callPoint)
 	if !ok || callFact.Call != innerCall || callFact.Context != CallContextAssignmentSource || callFact.SourceStmt != stmt {
 		t.Fatalf("call fact = %#v, ok=%v", callFact, ok)
 	}
-	assignFact, ok := result.LocalAssignment(assignPoint)
+	assignFact, ok := built.Assignments.Local(assignPoint)
 	if !ok || assignFact.Source.Kind != sourceprovenance.SourceCall || assignFact.Source.Expr != outerExpr || assignFact.Source.CallPoint != callPoint || !assignFact.Source.HasCallPoint {
 		t.Fatalf("assignment source = %#v, ok=%v", assignFact.Source, ok)
 	}
@@ -1198,11 +1156,11 @@ func TestExtractChunkAssignmentValueSourcesHandleAdjustRetNilFillAndVararg(t *te
 	if len(callFact.ResultTargets) != 1 || callFact.ResultTargets[0].Kind != CallResultTargetOrdinaryAssignment || callFact.ResultTargets[0].Index != 0 || callFact.ResultTargets[0].ResultIndex != 0 {
 		t.Fatalf("adjusted call targets = %#v", callFact.ResultTargets)
 	}
-	first, ok := result.OrdinaryAssignment(adjustedPoints[1])
+	first, ok := built.Assignments.Ordinary(adjustedPoints[1])
 	if !ok {
 		t.Fatalf("missing first adjusted assignment")
 	}
-	second, ok := result.OrdinaryAssignment(adjustedPoints[2])
+	second, ok := built.Assignments.Ordinary(adjustedPoints[2])
 	if !ok {
 		t.Fatalf("missing second adjusted assignment")
 	}
@@ -1214,11 +1172,11 @@ func TestExtractChunkAssignmentValueSourcesHandleAdjustRetNilFillAndVararg(t *te
 	}
 
 	varargPoints := requireStmtPoints(t, built, varargAssign, 3)
-	qFact, ok := result.OrdinaryAssignment(varargPoints[1])
+	qFact, ok := built.Assignments.Ordinary(varargPoints[1])
 	if !ok {
 		t.Fatalf("missing q assignment")
 	}
-	rFact, ok := result.OrdinaryAssignment(varargPoints[2])
+	rFact, ok := built.Assignments.Ordinary(varargPoints[2])
 	if !ok {
 		t.Fatalf("missing r assignment")
 	}
@@ -1453,7 +1411,7 @@ func TestExtractChunkNumericForFactsUseStmtPointsAndPreserveIdentity(t *testing.
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
 
-	result, err := ExtractChunk(stmts, bindings, built)
+	_, err := ExtractChunk(stmts, bindings, built)
 	if err != nil {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
@@ -1484,7 +1442,7 @@ func TestExtractChunkNumericForFactsUseStmtPointsAndPreserveIdentity(t *testing.
 	}
 
 	bodyPoint := requireStmtPoints(t, built, bodyLocal, 1)[0]
-	if _, ok := result.LocalAssignment(bodyPoint); !ok {
+	if _, ok := built.Assignments.Local(bodyPoint); !ok {
 		t.Fatalf("missing numeric for body local assignment fact")
 	}
 }
@@ -1502,7 +1460,7 @@ func TestExtractChunkGenericForFactsUseStmtPointsAndPreserveIdentity(t *testing.
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"iter", "state"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
 
-	result, err := ExtractChunk(stmts, bindings, built)
+	_, err := ExtractChunk(stmts, bindings, built)
 	if err != nil {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
@@ -1555,7 +1513,7 @@ func TestExtractChunkGenericForFactsUseStmtPointsAndPreserveIdentity(t *testing.
 	}
 
 	bodyPoint := requireStmtPoints(t, built, bodyLocal, 1)[0]
-	if _, ok := result.LocalAssignment(bodyPoint); !ok {
+	if _, ok := built.Assignments.Local(bodyPoint); !ok {
 		t.Fatalf("missing generic for body local assignment fact")
 	}
 }
