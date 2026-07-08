@@ -1,13 +1,13 @@
-target	errors	warnings	hints	status	json
-wippy-golua-seam/tests/app	13	1	0	ERRORS	/tmp/wippy-golua-lint-harness/stage2-after-numeric/01-home_wolfy-j_wippy_wippy-golua-seam_tests_app.json
-session	10	0	0	ERRORS	/tmp/wippy-golua-lint-harness/stage2-after-numeric/02-home_wolfy-j_wippy_session.json
-framework/src/test	6	0	0	ERRORS	/tmp/wippy-golua-lint-harness/stage2-after-numeric/03-home_wolfy-j_wippy_framework_src_test.json
-framework/src/actor/test	0	0	0	OK	/tmp/wippy-golua-lint-harness/stage2-after-numeric/04-home_wolfy-j_wippy_framework_src_actor_test.json
-framework/src/agent/src	15	0	0	ERRORS	/tmp/wippy-golua-lint-harness/stage2-after-numeric/05-home_wolfy-j_wippy_framework_src_agent_src.json
-framework/src/bootloader	3	0	0	ERRORS	/tmp/wippy-golua-lint-harness/stage2-after-numeric/06-home_wolfy-j_wippy_framework_src_bootloader.json
-docker-demo	0	0	0	OK	/tmp/wippy-golua-lint-harness/stage2-after-numeric/07-home_wolfy-j_wippy_docker-demo.json
-framework/src/llm/src	15	1	0	ERRORS	/tmp/wippy-golua-lint-harness/stage2-after-numeric/08-home_wolfy-j_wippy_framework_src_llm_src.json
-framework/src/llm/test	0	0	0	OK	/tmp/wippy-golua-lint-harness/stage2-after-numeric/09-home_wolfy-j_wippy_framework_src_llm_test.json
-framework/src/migration	6	0	0	ERRORS	/tmp/wippy-golua-lint-harness/stage2-after-numeric/10-home_wolfy-j_wippy_framework_src_migration.json
-framework/src/views	9	0	0	ERRORS	/tmp/wippy-golua-lint-harness/stage2-after-numeric/11-home_wolfy-j_wippy_framework_src_views.json
-framework/src/relay/test	0	0	0	OK	/tmp/wippy-golua-lint-harness/stage2-after-numeric/12-home_wolfy-j_wippy_framework_src_relay_test.json
+target	errors	warnings	hints	status
+wippy-golua-seam/tests/app	13	1	0	ERRORS
+session	10	0	0	ERRORS
+framework/src/test	6	0	0	ERRORS
+framework/src/actor/test	0	0	0	OK
+framework/src/agent/src	15	0	0	ERRORS
+framework/src/bootloader	3	0	0	ERRORS
+docker-demo	0	0	0	OK
+framework/src/llm/src	15	1	0	ERRORS
+framework/src/llm/test	0	0	0	OK
+framework/src/migration	6	0	0	ERRORS
+framework/src/views	9	0	0	ERRORS
+framework/src/relay/test	0	0	0	OK
