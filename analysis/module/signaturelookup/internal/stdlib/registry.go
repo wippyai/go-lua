@@ -447,7 +447,8 @@ var registry = map[string]signature.Function{
 		Param("co", typ.Any).
 		Variadic(typ.Any).
 		Returns(typ.Boolean, typ.Any).
-		Build()),
+		Build(),
+		ownership.Send{FromParam: 1}),
 	"coroutine.running": sig(typ.Func().
 		Returns(typ.Any, typ.Boolean).
 		Build()),
@@ -462,7 +463,8 @@ var registry = map[string]signature.Function{
 	"coroutine.yield": sig(typ.Func().
 		Variadic(typ.Any).
 		Returns(typ.Any).
-		Build()),
+		Build(),
+		ownership.Send{FromParam: 0}),
 
 	// os library.
 	"os.clock": sig(typ.Func().Returns(typ.Number).Build()),
