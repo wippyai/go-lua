@@ -471,6 +471,63 @@ func TestFromResultProjectsReturnParamLiteralCasesFromBranchFacts(t *testing.T) 
 	}
 }
 
+func TestFromResultProjectsComplementReturnParamLiteralCasesFromFiniteDomain(t *testing.T) {
+	reg := standard.Registry()
+	status := symbol.ID(929)
+	graph, branch, ret, _ := normalReturnBranchGraph(t, false)
+	shape, ok := factflow.NewValueSourceShape(true, false, false, false)
+	if !ok {
+		t.Fatal("NewValueSourceShape returned false")
+	}
+	returnSource, ok := factflow.NewExpressionValueSource(factflow.ExprRef(929), 0, factflow.NoValueSourceIndex, 0, shape)
+	if !ok {
+		t.Fatal("NewExpressionValueSource(return) returned false")
+	}
+	cache := typevalue.NewCache()
+	paramPath := pathdom.NewPath(status, "")
+	when := cache.FromTypeWithWitness(reg, typ.LiteralString("num"))
+	domain := cache.FromTypeWithWitness(reg, typeexpr.Union(typ.LiteralString("num"), typ.LiteralString("str")))
+	value := cache.FromTypeWithWitness(reg, typ.String)
+	stub := normalReturnFactProjectResultStub{
+		reg:          reg,
+		graph:        graph,
+		slots:        []key.Value{key.SymbolValue(status)},
+		returnPoints: []cfg.Point{ret},
+		returnSources: map[cfg.Point][]factflow.ValueSource{
+			ret: {returnSource},
+		},
+		returnSourceValues: map[cfg.Point]map[factflow.ValueSource]product.Value{
+			ret: {returnSource: value},
+		},
+		pathBoundaryValues: map[cfg.Point]map[pathdom.PathKey]product.Value{
+			branch: {paramPath.Key(): domain},
+		},
+		statesAt: map[cfg.Point]state.State{
+			ret:          presentState(reg, status),
+			graph.Exit(): presentState(reg, status),
+		},
+		branchSufficientLiteralCases: map[cfg.Point][]factflow.BranchSufficientLiteralCase{
+			branch: {
+				factflow.NewBranchSufficientLiteralCase(paramPath, when, true),
+			},
+		},
+	}
+
+	got := FromResult(stub).ReturnParamLiteralCases
+	if len(got) != 1 {
+		t.Fatalf("ReturnParamLiteralCases = %#v, want one complement case", got)
+	}
+	if got[0].ParamIndex != 0 || len(got[0].ParamSuffix) != 0 {
+		t.Fatalf("ReturnParamLiteralCases[0] parameter = %#v, want $0", got[0])
+	}
+	if !typ.TypeEquals(got[0].When, typ.LiteralString("str")) {
+		t.Fatalf("ReturnParamLiteralCases[0].When = %s, want \"str\"", got[0].When)
+	}
+	if got[0].ReturnIndex != 0 || !product.Equal(reg, got[0].Value, value) {
+		t.Fatalf("ReturnParamLiteralCases[0] return = %#v, want return[0] value", got[0])
+	}
+}
+
 func TestFromResultProjectsReturnedDynamicKeyMembershipFacts(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()
@@ -1406,6 +1463,7 @@ type normalReturnFactProjectResultStub struct {
 	branchRelations              map[cfg.Point][]factflow.BranchPathRelation
 	branchSufficientLiteralCases map[cfg.Point][]factflow.BranchSufficientLiteralCase
 	returnSourceValues           map[cfg.Point]map[factflow.ValueSource]product.Value
+	pathBoundaryValues           map[cfg.Point]map[pathdom.PathKey]product.Value
 }
 
 type normalReturnFactProjectAssignmentStub struct {
@@ -1582,6 +1640,15 @@ func (r normalReturnFactProjectResultStub) SourceValueAtBoundary(point cfg.Point
 		return product.Value{}, false
 	}
 	value, ok := values[source]
+	return value, ok
+}
+
+func (r normalReturnFactProjectResultStub) PathValueAtBoundary(point cfg.Point, p pathdom.Path) (product.Value, bool) {
+	values, ok := r.pathBoundaryValues[point]
+	if !ok {
+		return product.Value{}, false
+	}
+	value, ok := values[p.Key()]
 	return value, ok
 }
 

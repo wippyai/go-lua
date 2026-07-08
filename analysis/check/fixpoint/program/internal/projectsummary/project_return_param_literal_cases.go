@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func projectReturnParamLiteralCases(
@@ -78,17 +79,117 @@ func returnPointParamLiteralCases(
 			if !ok || !dom.PointDominates(succ, point) || !dominance.PostDominates(postdom, point, succ) {
 				continue
 			}
-			for _, literalCase := range sufficient.BranchSufficientLiteralCases(branch) {
-				if literalCase.Edge() != edge {
+			branchCases := sufficient.BranchSufficientLiteralCases(branch)
+			for _, literalCase := range branchCases {
+				if literalCase.Edge() == edge {
+					if candidate, ok := returnParamLiteralCaseFromFact(reg, literalCase, params); ok {
+						out = append(out, candidate)
+					}
 					continue
 				}
-				if candidate, ok := returnParamLiteralCaseFromFact(reg, literalCase, params); ok {
-					out = append(out, candidate)
-				}
+				candidates := complementaryReturnParamLiteralCasesFromFact(
+					reg,
+					result,
+					branch,
+					literalCase,
+					branchCases,
+					params,
+				)
+				out = append(out, candidates...)
 			}
 		}
 	}
 	return out
+}
+
+func complementaryReturnParamLiteralCasesFromFact(
+	reg *axis.Registry,
+	result ResultReader,
+	branch cfg.Point,
+	literalCase factflow.BranchSufficientLiteralCase,
+	branchCases []factflow.BranchSufficientLiteralCase,
+	params []pathdom.Path,
+) []summary.ReturnParamLiteralCase {
+	if !singleSufficientLiteralCaseForPath(branchCases, literalCase.TargetPathRef()) {
+		return nil
+	}
+	valueReader, ok := result.(pathValueAtBoundaryReader)
+	if !ok {
+		return nil
+	}
+	value, ok := valueReader.PathValueAtBoundary(branch, literalCase.TargetPathRef())
+	if !ok {
+		return nil
+	}
+	domain, ok := typevalue.TypeOf(reg, value)
+	if !ok {
+		return nil
+	}
+	domainLiterals := finiteLiteralDomain(domain)
+	if len(domainLiterals) == 0 {
+		return nil
+	}
+	excluded, ok := typevalue.TypeOf(reg, literalCase.LiteralValue())
+	if !ok {
+		return nil
+	}
+	paramIndex, suffix, ok := paramPathSuffix(literalCase.TargetPathRef(), params)
+	if !ok {
+		return nil
+	}
+	var out []summary.ReturnParamLiteralCase
+	for _, lit := range domainLiterals {
+		if typ.TypeEquals(lit, excluded) {
+			continue
+		}
+		out = append(out, summary.ReturnParamLiteralCase{
+			ParamIndex:  paramIndex,
+			ParamSuffix: append([]segment.Segment(nil), suffix...),
+			When:        lit,
+		})
+	}
+	return out
+}
+
+func singleSufficientLiteralCaseForPath(
+	cases []factflow.BranchSufficientLiteralCase,
+	target pathdom.Path,
+) bool {
+	if target.IsEmpty() {
+		return false
+	}
+	count := 0
+	for _, candidate := range cases {
+		if candidate.TargetPathRef().Equal(target) {
+			count++
+			if count > 1 {
+				return false
+			}
+		}
+	}
+	return count == 1
+}
+
+func finiteLiteralDomain(t typ.Type) []typ.Type {
+	if t == nil {
+		return nil
+	}
+	switch tt := typ.UnwrapTransparentWrappers(t).(type) {
+	case *typ.Literal:
+		return []typ.Type{tt}
+	case *typ.Union:
+		out := make([]typ.Type, 0, len(tt.Members))
+		for _, member := range tt.Members {
+			lit, ok := typ.UnwrapTransparentWrappers(member).(*typ.Literal)
+			if !ok {
+				return nil
+			}
+			out = append(out, lit)
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func returnParamLiteralCaseFromFact(
