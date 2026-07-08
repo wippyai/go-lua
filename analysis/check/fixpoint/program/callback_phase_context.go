@@ -113,7 +113,7 @@ func (t *callbackPhaseTracker) observeRegistration(point cfg.Point, site factflo
 	if t == nil {
 		return
 	}
-	name, ok := t.prepass.CallSignatureNameAt(point, site)
+	name, ok := t.prepass.CallSignatureNameAtPoint(point)
 	if !ok {
 		return
 	}
@@ -138,7 +138,7 @@ func (t *callbackPhaseTracker) collectInvocationContext(point cfg.Point, site fa
 	if t == nil {
 		return nil, false
 	}
-	name, ok := t.prepass.CallSignatureNameAt(point, site)
+	name, ok := t.prepass.CallSignatureNameAtPoint(point)
 	if !ok {
 		return nil, false
 	}

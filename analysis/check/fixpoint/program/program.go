@@ -1291,7 +1291,7 @@ func callbackContextCallableType(reg *axis.Registry, prepass *body.Result, point
 	if reg == nil || prepass == nil {
 		return callbackContextCallable{}
 	}
-	if fn, ok := prepass.CallSignatureTypeAt(point, site); ok {
+	if fn, ok := prepass.CallSignatureTypeAtPoint(point); ok {
 		return callbackContextCallable{
 			fn: instantiateSignatureTypeForContext(reg, prepass, point, site, fn, keys),
 		}

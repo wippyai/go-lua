@@ -786,11 +786,7 @@ func (r *Result) CallSignature(site factflow.CallSite) (signature.Function, bool
 }
 
 func (r *Result) CallSignatureAtPoint(point cfg.Point) (signature.Function, bool) {
-	site, ok := r.CallSite(point)
-	if !ok {
-		return signature.Function{}, false
-	}
-	name, ok := r.CallSignatureNameAt(point, site)
+	name, ok := r.CallSignatureNameAtPoint(point)
 	if !ok {
 		return signature.Function{}, false
 	}
@@ -809,23 +805,12 @@ func (r *Result) CallSignatureType(site factflow.CallSite) (*typ.Function, bool)
 	return r.SignatureType(name)
 }
 
-// CallSignatureTypeAt resolves the known function type for a call site at its
-// CFG point. This is the canonical solver/readmodel query when point-sensitive
-// facts, such as ambient global replacement, can affect signature identity.
-func (r *Result) CallSignatureTypeAt(point cfg.Point, site factflow.CallSite) (*typ.Function, bool) {
-	name, ok := r.CallSignatureNameAt(point, site)
+func (r *Result) CallSignatureTypeAtPoint(point cfg.Point) (*typ.Function, bool) {
+	name, ok := r.CallSignatureNameAtPoint(point)
 	if !ok {
 		return nil, false
 	}
 	return r.SignatureType(name)
-}
-
-func (r *Result) CallSignatureTypeAtPoint(point cfg.Point) (*typ.Function, bool) {
-	site, ok := r.CallSite(point)
-	if !ok {
-		return nil, false
-	}
-	return r.CallSignatureTypeAt(point, site)
 }
 
 // CallSiteViewSignatureType resolves a read-only call-site view to the read-only
@@ -865,9 +850,12 @@ func (r *Result) CallSignatureName(site factflow.CallSite) (string, bool) {
 	return r.signatureID.nameForSite(site)
 }
 
-// CallSignatureNameAt resolves the signature name for a call at its CFG point.
-func (r *Result) CallSignatureNameAt(point cfg.Point, site factflow.CallSite) (string, bool) {
+func (r *Result) CallSignatureNameAtPoint(point cfg.Point) (string, bool) {
 	if r == nil || r.signatureID == nil {
+		return "", false
+	}
+	site, ok := r.CallSite(point)
+	if !ok {
 		return "", false
 	}
 	graph := r.Graph()

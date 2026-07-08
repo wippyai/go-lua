@@ -152,10 +152,10 @@ func TestCallSignatureDoesNotUseImplicitStdlibMemberAfterGlobalTableOverride(t *
 			continue
 		}
 		found = true
-		if name, ok := result.CallSignatureNameAt(point, site); ok {
+		if name, ok := result.CallSignatureNameAtPoint(point); ok {
 			t.Fatalf("signature name = %q, want none after _G.coroutine override", name)
 		}
-		if fn, ok := result.CallSignatureTypeAt(point, site); ok {
+		if fn, ok := result.CallSignatureTypeAtPoint(point); ok {
 			t.Fatalf("signature type = %v, want none after _G.coroutine override", fn)
 		}
 	}

@@ -49,9 +49,9 @@ func (r Reader) callContractAt(point cfg.Point) (callContract, bool) {
 	if callContract, ok := r.declaredLocalCallContract(point, site); ok {
 		return callContract, true
 	}
-	if fn, ok := r.result.CallSignatureTypeAt(point, site); ok {
+	if fn, ok := r.result.CallSignatureTypeAtPoint(point); ok {
 		instantiated, violations, conflicts := r.instantiateCallFunctionType(point, site, fn)
-		name, _ := r.result.CallSignatureNameAt(point, site)
+		name, _ := r.result.CallSignatureNameAtPoint(point)
 		return callContract{
 			Contract:                    callcontract.BindReceiver(contract.FromFunctionType(instantiated), r.callReceiverTypeOrNil(point, site), callReceiverSupplied(site)),
 			Source:                      CallContractSource{Kind: CallContractSourceImportedSignature, Name: name},
