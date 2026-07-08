@@ -38,6 +38,14 @@ type rootAssignmentReader interface {
 	RootAssignment(cfg.Point) (factflow.RootAssignment, bool)
 }
 
+type pathAssignmentReader interface {
+	PathAssignment(cfg.Point) (factflow.PathAssignment, bool)
+}
+
+type pathDescendantInvalidationReader interface {
+	PathDescendantInvalidation(cfg.Point) (factflow.PathDescendantInvalidation, bool)
+}
+
 type stateAtReader interface {
 	StateAt(cfg.Point) (state.State, bool)
 }

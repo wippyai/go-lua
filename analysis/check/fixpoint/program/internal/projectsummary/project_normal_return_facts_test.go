@@ -500,6 +500,58 @@ func TestFromResultProjectsAssignmentBasedParameterInvalidationWithoutExitState(
 	assertNonClearingPathInvalidation(t, got.PathInvalidations, pathdom.NewPlaceholder(0))
 }
 
+func TestFromResultProjectsPathFactParameterInvalidationWithoutSemanticAssignment(t *testing.T) {
+	reg := standard.Registry()
+	param := symbol.ID(92503)
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+	stub := normalReturnFactProjectAssignmentStub{
+		normalReturnFactProjectResultStub: normalReturnFactProjectResultStub{
+			reg:   reg,
+			graph: graph,
+			exit:  state.State{},
+			slots: []key.Value{key.SymbolValue(param)},
+		},
+		pathAssignments: map[cfg.Point]factflow.PathAssignment{
+			assign: factflow.NewPathAssignment(pathdom.NewPath(param, "").Field("metadata"), factflow.NewUnknownValueSource(factflow.NoValueSourceIndex)),
+		},
+	}
+
+	got := FromResult(stub).NormalReturnFacts
+	want := pathdom.NewPlaceholder(0).Field("metadata")
+	assertPathInvalidation(t, got.PathInvalidations, want)
+	assertStructuralPreservingPathInvalidation(t, got.PathInvalidations, want)
+	assertClearingPathInvalidation(t, got.PathInvalidations, want)
+}
+
+func TestFromResultProjectsDescendantInvalidationWithoutSemanticAssignment(t *testing.T) {
+	reg := standard.Registry()
+	param := symbol.ID(92504)
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+	stub := normalReturnFactProjectAssignmentStub{
+		normalReturnFactProjectResultStub: normalReturnFactProjectResultStub{
+			reg:   reg,
+			graph: graph,
+			exit:  state.State{},
+			slots: []key.Value{key.SymbolValue(param)},
+		},
+		pathInvalidations: map[cfg.Point]factflow.PathDescendantInvalidation{
+			assign: factflow.NewPathDescendantInvalidation(pathdom.NewPath(param, "").Field("metadata")),
+		},
+	}
+
+	got := FromResult(stub).NormalReturnFacts
+	want := pathdom.NewPlaceholder(0).Field("metadata")
+	assertPathInvalidation(t, got.PathInvalidations, want)
+	assertStructuralPreservingPathInvalidation(t, got.PathInvalidations, want)
+	assertNonClearingPathInvalidation(t, got.PathInvalidations, want)
+}
+
 func TestFromResultProjectsReturnArithmeticObligationFromValueSource(t *testing.T) {
 	reg := standard.Registry()
 	param := symbol.ID(92501)
@@ -926,6 +978,45 @@ func TestFromResultProjectsExitStoreRelations(t *testing.T) {
 	}
 }
 
+func TestFromResultProjectsAssignmentStoreRelationFromPathFactWithoutSemanticAssignment(t *testing.T) {
+	reg := standard.Registry()
+	param0 := symbol.ID(9411)
+	param1 := symbol.ID(9412)
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+	shape, ok := factflow.NewValueSourceShape(true, false, false, false)
+	if !ok {
+		t.Fatal("NewValueSourceShape returned false")
+	}
+	source, ok := factflow.NewExpressionValueSource(factflow.ExprRef(1), 0, factflow.NoValueSourceIndex, 0, shape)
+	if !ok {
+		t.Fatal("NewExpressionValueSource returned false")
+	}
+	stub := normalReturnFactProjectAssignmentStub{
+		normalReturnFactProjectResultStub: normalReturnFactProjectResultStub{
+			reg:   reg,
+			graph: graph,
+			exit:  state.State{},
+			slots: []key.Value{key.SymbolValue(param0), key.SymbolValue(param1)},
+			exprPaths: map[factflow.ExprRef]pathdom.Path{
+				factflow.ExprRef(1): pathdom.NewPath(param0, ""),
+			},
+		},
+		pathAssignments: map[cfg.Point]factflow.PathAssignment{
+			assign: factflow.NewPathAssignment(pathdom.NewPath(param1, "").Field("container"), source),
+		},
+	}
+
+	got := FromResult(stub).NormalReturnFacts
+	if len(got.StoreRelations) != 1 ||
+		!got.StoreRelations[0].Source.Equal(pathdom.NewPlaceholder(0)) ||
+		!got.StoreRelations[0].Into.Equal(pathdom.NewPlaceholder(1).Field("container")) {
+		t.Fatalf("StoreRelations = %#v, want assignment store relation projected from path fact", got.StoreRelations)
+	}
+}
+
 func TestFromResultDoesNotProjectBranchLocalStoreRelations(t *testing.T) {
 	reg := standard.Registry()
 	stateDomain := state.Domain(reg)
@@ -1206,13 +1297,15 @@ type normalReturnFactProjectResultStub struct {
 
 type normalReturnFactProjectAssignmentStub struct {
 	normalReturnFactProjectResultStub
-	assignments      map[cfg.Point]semantics.OrdinaryAssignmentFact
-	rootAssignments  map[cfg.Point]factflow.RootAssignment
-	exprValuesBefore map[cfg.Point]product.Value
-	sourceValues     map[cfg.Point]product.Value
-	fn               *ast.FunctionExpr
-	captures         []bind.Capture
-	kinds            map[symbol.ID]symbol.Kind
+	assignments       map[cfg.Point]semantics.OrdinaryAssignmentFact
+	rootAssignments   map[cfg.Point]factflow.RootAssignment
+	pathAssignments   map[cfg.Point]factflow.PathAssignment
+	pathInvalidations map[cfg.Point]factflow.PathDescendantInvalidation
+	exprValuesBefore  map[cfg.Point]product.Value
+	sourceValues      map[cfg.Point]product.Value
+	fn                *ast.FunctionExpr
+	captures          []bind.Capture
+	kinds             map[symbol.ID]symbol.Kind
 }
 
 type normalReturnFactProjectCallStub struct {
@@ -1257,6 +1350,16 @@ func (r normalReturnFactProjectAssignmentStub) OrdinaryAssignment(point cfg.Poin
 
 func (r normalReturnFactProjectAssignmentStub) RootAssignment(point cfg.Point) (factflow.RootAssignment, bool) {
 	fact, ok := r.rootAssignments[point]
+	return fact, ok
+}
+
+func (r normalReturnFactProjectAssignmentStub) PathAssignment(point cfg.Point) (factflow.PathAssignment, bool) {
+	fact, ok := r.pathAssignments[point]
+	return fact, ok
+}
+
+func (r normalReturnFactProjectAssignmentStub) PathDescendantInvalidation(point cfg.Point) (factflow.PathDescendantInvalidation, bool) {
+	fact, ok := r.pathInvalidations[point]
 	return fact, ok
 }
 

@@ -64,14 +64,6 @@ type expressionOperationRefReader interface {
 	ExpressionOperationRef(factflow.ExprRef) (factflow.ExpressionOperation, bool)
 }
 
-type pathAssignmentReader interface {
-	PathAssignment(cfg.Point) (factflow.PathAssignment, bool)
-}
-
-type pathDescendantInvalidationReader interface {
-	PathDescendantInvalidation(cfg.Point) (factflow.PathDescendantInvalidation, bool)
-}
-
 type sourceValueAtBoundaryReader interface {
 	SourceValueAtBoundary(cfg.Point, factflow.ValueSource) (product.Value, bool)
 }

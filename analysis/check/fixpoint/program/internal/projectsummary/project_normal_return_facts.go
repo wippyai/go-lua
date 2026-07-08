@@ -379,7 +379,9 @@ func segmentsEqual(a, b []segment.Segment) bool {
 
 func projectAssignmentPathInvalidations(result ResultReader, params []path.Path) []callboundary.PathInvalidationFact {
 	rootReader, hasRootAssignments := result.(rootAssignmentReader)
-	if !hasOrdinaryAssignmentFactReader(result) && !hasRootAssignments {
+	_, hasPathAssignments := result.(pathAssignmentReader)
+	_, hasPathInvalidations := result.(pathDescendantInvalidationReader)
+	if !hasOrdinaryAssignmentFactReader(result) && !hasRootAssignments && !hasPathAssignments && !hasPathInvalidations {
 		return nil
 	}
 	graph := result.Graph()
@@ -465,6 +467,18 @@ func assignmentInvalidationPathAt(
 	kindReader symbolKindReader,
 	captured map[symbol.ID]struct{},
 ) (path.Path, bool, bool, bool) {
+	if assignment, ok := pathAssignmentAt(result, point); ok {
+		target := assignment.TargetPath()
+		if !target.IsEmpty() && target.Symbol != 0 && len(target.Segments) != 0 {
+			return target, true, true, true
+		}
+	}
+	if invalidation, ok := pathDescendantInvalidationAt(result, point); ok {
+		target := invalidation.ContainerPath()
+		if !target.IsEmpty() {
+			return target, true, false, true
+		}
+	}
 	if fact, ok := ordinaryAssignmentFactAt(result, point); ok {
 		return assignmentInvalidationPath(fact, kindReader, captured)
 	}
@@ -563,11 +577,13 @@ func assignmentValueWithPresence(reg *axis.Registry, value product.Value, p pres
 // the destination parameter's member segments so the call-boundary lowering can
 // project the destination slot type.
 func projectAssignmentStoreRelations(result ResultReader, params []path.Path) []callboundary.StoreRelationFact {
-	if !hasOrdinaryAssignmentFactReader(result) {
+	_, hasPathAssignments := result.(pathAssignmentReader)
+	if !hasOrdinaryAssignmentFactReader(result) && !hasPathAssignments {
 		return nil
 	}
 	pathReader, ok := result.(expressionPathReader)
-	if !ok {
+	refPathReader, hasRefPathReader := result.(expressionPathRefReader)
+	if !ok && !hasRefPathReader {
 		return nil
 	}
 	graph := result.Graph()
@@ -579,6 +595,15 @@ func projectAssignmentStoreRelations(result ResultReader, params []path.Path) []
 	for _, point := range graph.RPO() {
 		if noNormal != nil && noNormal.NoNormalReturn(point) {
 			continue
+		}
+		if assignment, ok := pathAssignmentAt(result, point); ok {
+			into, ok := parameterPlaceholderPath(assignment.TargetPath(), params)
+			if ok && len(into.Segments) != 0 {
+				if source, ok := assignmentValueSourceParameterPlaceholder(assignment.Source(), refPathReader, params); ok {
+					out = append(out, callboundary.StoreRelationFact{Source: source, Into: into})
+					continue
+				}
+			}
 		}
 		fact, ok := ordinaryAssignmentFactAt(result, point)
 		if !ok || !fact.HasPath || fact.Path.Symbol == 0 || len(fact.Path.Segments) == 0 {
@@ -595,6 +620,25 @@ func projectAssignmentStoreRelations(result ResultReader, params []path.Path) []
 		out = append(out, callboundary.StoreRelationFact{Source: source, Into: into})
 	}
 	return out
+}
+
+func assignmentValueSourceParameterPlaceholder(
+	source factflow.ValueSource,
+	pathReader expressionPathRefReader,
+	params []path.Path,
+) (path.Path, bool) {
+	if pathReader == nil || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		return path.Path{}, false
+	}
+	sourcePath, ok := pathReader.ExpressionPathRef(source.ExprRef)
+	if !ok || sourcePath.Symbol == 0 || len(sourcePath.Segments) != 0 {
+		return path.Path{}, false
+	}
+	placeholder, ok := parameterPlaceholderPath(sourcePath, params)
+	if !ok || len(placeholder.Segments) != 0 {
+		return path.Path{}, false
+	}
+	return placeholder, true
 }
 
 // assignmentSourceParameterPlaceholder resolves an ordinary assignment's source
