@@ -2,8 +2,6 @@ package cfgbuild
 
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
-	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -21,12 +19,8 @@ func (b *builder) appendNodeForStmt(state flowState, kind cfg.NodeKind, stmt ast
 	return flowState{current: point, live: true}
 }
 
-func (b *builder) appendAssign(state flowState, target symbol.ID, stmt ast.Stmt) flowState {
-	next := b.appendNodeForStmt(state, cfg.NodeAssign, stmt)
-	if next.live {
-		b.meta.SetAssignment(next.current, cfgfacts.AssignmentFact{Target: target})
-	}
-	return next
+func (b *builder) appendAssign(state flowState, stmt ast.Stmt) flowState {
+	return b.appendNodeForStmt(state, cfg.NodeAssign, stmt)
 }
 
 func (b *builder) appendCall(state flowState, stmt ast.Stmt) flowState {

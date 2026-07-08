@@ -8,7 +8,6 @@ import (
 
 // Metadata stores Lua sidecar facts keyed by CFG point.
 type Metadata struct {
-	assignments     map[cfg.Point]AssignmentFact
 	loops           map[cfg.Point]LoopFact
 	typeDefinitions map[cfg.Point]TypeDefinitionFact
 	functionDefs    map[cfg.Point]FunctionDefinitionFact
@@ -16,18 +15,6 @@ type Metadata struct {
 	genericFors     map[cfg.Point]GenericForFact
 	shortCircuits   map[cfg.Point]ShortCircuitGuardFact
 	exprEvaluations map[cfg.Point]ExpressionEvaluationFact
-}
-
-func (m Metadata) Assignment(point cfg.Point) (AssignmentFact, bool) {
-	fact, ok := m.assignments[point]
-	return fact, ok
-}
-
-func (m *Metadata) SetAssignment(point cfg.Point, fact AssignmentFact) {
-	if m.assignments == nil {
-		m.assignments = make(map[cfg.Point]AssignmentFact)
-	}
-	m.assignments[point] = fact
 }
 
 func (m Metadata) Loop(point cfg.Point) (LoopFact, bool) {

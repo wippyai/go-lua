@@ -116,21 +116,16 @@ func (b *builder) isNoReturnCallStmt(expr ast.Expr) bool {
 
 func (b *builder) buildAssign(state flowState, stmt *ast.AssignStmt) flowState {
 	state = b.appendValueListCalls(state, stmt, stmt.Rhs)
-	for _, lhs := range stmt.Lhs {
-		// A target whose root is not a tracked symbol (computed prefix such as
-		// make().field or ({}).x) carries no local version; it is still a
-		// statement point so the assignment and the rest of the function are
-		// analyzed. id == 0 marks the absent symbol.
-		id, _ := b.assignmentRootSymbol(lhs)
-		state = b.appendAssign(state, id, stmt)
+	for range stmt.Lhs {
+		state = b.appendAssign(state, stmt)
 	}
 	return state
 }
 
 func (b *builder) buildLocalAssign(state flowState, stmt *ast.LocalAssignStmt) flowState {
 	state = b.appendValueListCalls(state, stmt, stmt.Exprs)
-	for _, id := range b.bindings.LocalSymbols(stmt) {
-		state = b.appendAssign(state, id, stmt)
+	for range b.bindings.LocalSymbols(stmt) {
+		state = b.appendAssign(state, stmt)
 	}
 	return state
 }
@@ -140,7 +135,7 @@ func (b *builder) buildFuncDef(state flowState, stmt *ast.FuncDefStmt) flowState
 	// tracked symbol; it still defines a value at this point, so emit the
 	// assignment with id == 0 rather than abandoning the function.
 	target, _ := pathexpr.ResolveFuncName(stmt.Name, b.bindings)
-	next := b.appendAssign(state, target.Symbol, stmt)
+	next := b.appendAssign(state, stmt)
 	if next.live {
 		id, hasSymbol := b.bindings.FuncDefTargetSymbol(stmt)
 		targetPath := target
@@ -270,7 +265,7 @@ func (b *builder) buildNumberFor(state flowState, stmt *ast.NumberForStmt) flowS
 	state = b.appendValueListCalls(state, stmt, numericForBounds(stmt))
 	id, hasSymbol := b.bindings.NumForSymbol(stmt)
 
-	state = b.appendAssign(state, id, stmt)
+	state = b.appendAssign(state, stmt)
 	preheader := state.current
 	branch := b.appendBranch(state, stmt)
 	join := b.graph.AddNode(cfg.NodeJoin)
@@ -346,11 +341,7 @@ func (b *builder) buildGenericFor(state flowState, stmt *ast.GenericForStmt) flo
 	// One variable point per loop name (id == 0 when the binder produced no
 	// symbol) so the point count always matches semantics extraction.
 	for i := range stmt.Names {
-		id := symbol.ID(0)
-		if i < len(ids) {
-			id = ids[i]
-		}
-		iterState = b.appendAssign(iterState, id, stmt)
+		iterState = b.appendAssign(iterState, stmt)
 		varFact := genericFact
 		varFact.Role = cfgfacts.GenericForRoleVariable
 		varFact.VariableIndex = i

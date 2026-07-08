@@ -40,8 +40,8 @@ func BuildFunction(fn *ast.FunctionExpr, bindings *bind.Result) *Result {
 
 	state := liveAt(graph.Entry())
 	if fn != nil {
-		for _, id := range bindings.ParamSymbols(fn) {
-			state = b.appendAssign(state, id, nil)
+		for range bindings.ParamSymbols(fn) {
+			state = b.appendAssign(state, nil)
 		}
 		state = b.buildStmts(state, fn.Stmts)
 	}
