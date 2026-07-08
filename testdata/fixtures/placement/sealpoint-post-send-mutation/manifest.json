@@ -1,0 +1,26 @@
+{
+  "description": "A table mutated after a send remains pinned as a shared transfer rather than a local placement.",
+  "packages": ["process"],
+  "check": {
+    "placement": {
+      "require_complete": true,
+      "min_shared_heap": 2,
+      "max_stack": 0,
+      "max_owned_heap": 0,
+      "max_shared_heap": 2,
+      "min_shared_depth": 2,
+      "min_seal_before_share": 2,
+      "min_shared_heap_kind": {
+        "lua.table": 2
+      },
+      "max_shared_heap_kind": {
+        "lua.table": 2
+      },
+      "max_no_fact": 0,
+      "max_unknown": 0
+    }
+  },
+  "run": {
+    "skip": "checker-only placement fixture"
+  }
+}
