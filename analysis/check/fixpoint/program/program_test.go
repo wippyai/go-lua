@@ -70,11 +70,11 @@ func TestProgramProductionUsesPreparedBodyAPI(t *testing.T) {
 func TestMaterializedSummaryProofChangesIncludeCovariantExposureLanes(t *testing.T) {
 	reg := standard.Registry()
 	key := summary.DefaultSummaryKey(ref.FromSymbol(1))
-	alias, ok := pathaddr.PlaceholderKeyFromPathKey(path.PathKey("$0"))
+	alias, ok := pathaddr.PlaceholderKeyFromPath(path.NewPlaceholder(0))
 	if !ok {
 		t.Fatal("placeholder key failed")
 	}
-	rootAlias, ok := pathaddr.RootPlaceholderKeyForIndex(0)
+	rootAlias, ok := pathaddr.RootPlaceholderKeyFromPath(path.NewPlaceholder(0))
 	if !ok {
 		t.Fatal("root placeholder key failed")
 	}

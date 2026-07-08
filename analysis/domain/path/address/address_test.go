@@ -568,17 +568,17 @@ func TestStateKeyFromPathKeyDocumentsStateGrammar(t *testing.T) {
 }
 
 func TestRootPlaceholderKeyRejectsMemberPaths(t *testing.T) {
-	placeholder, ok := PlaceholderKeyFromPathKey(pathdom.PathKey("$2.child"))
+	placeholder, ok := PlaceholderKeyFromPath(pathdom.NewPlaceholder(2).Field("child"))
 	if !ok || placeholder.PathKey() != pathdom.PathKey("$2.child") {
-		t.Fatalf("PlaceholderKeyFromPathKey($2.child) = %q/%v, want accepted", placeholder.PathKey(), ok)
+		t.Fatalf("PlaceholderKeyFromPath($2.child) = %q/%v, want accepted", placeholder.PathKey(), ok)
 	}
 	if _, ok := placeholder.RootPlaceholderIndex(); ok {
 		t.Fatalf("member PlaceholderKey RootPlaceholderIndex() accepted a member path")
 	}
 
-	got, ok := RootPlaceholderKeyForIndex(2)
+	got, ok := RootPlaceholderKeyFromPath(pathdom.NewPlaceholder(2))
 	if !ok || got.PathKey() != pathdom.PathKey("$2") {
-		t.Fatalf("RootPlaceholderKeyForIndex(2) = %q/%v, want $2/true", got.PathKey(), ok)
+		t.Fatalf("RootPlaceholderKeyFromPath($2) = %q/%v, want $2/true", got.PathKey(), ok)
 	}
 	index, ok := got.PlaceholderIndex()
 	if !ok || index != 2 {
@@ -595,8 +595,8 @@ func TestRootPlaceholderKeyRejectsMemberPaths(t *testing.T) {
 		pathdom.PathKey("ret[1]"),
 		pathdom.PathKey(".member"),
 	} {
-		if got, ok := RootPlaceholderKeyFromPathKey(key); ok || got.PathKey() != "" {
-			t.Fatalf("RootPlaceholderKeyFromPathKey(%q) = %q/%v, want rejected", key, got.PathKey(), ok)
+		if got := RootPlaceholderKey(key); got.Valid() {
+			t.Fatalf("RootPlaceholderKey(%q).Valid() = true, want rejected", key)
 		}
 	}
 }

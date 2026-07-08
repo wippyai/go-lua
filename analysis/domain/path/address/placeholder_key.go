@@ -15,7 +15,7 @@ func (k PlaceholderKey) String() string { return string(k) }
 
 // Valid reports whether k is a non-empty placeholder path key.
 func (k PlaceholderKey) Valid() bool {
-	_, ok := PlaceholderKeyFromPathKey(k.PathKey())
+	_, ok := PlaceholderPathFromKey(k.PathKey())
 	return ok
 }
 
@@ -45,18 +45,6 @@ func PlaceholderKeyFromPath(path pathdom.Path) (PlaceholderKey, bool) {
 	return PlaceholderKey(path.Key()), true
 }
 
-// PlaceholderKeyFromPathKey validates and narrows key to the placeholder path
-// grammar.
-func PlaceholderKeyFromPathKey(key pathdom.PathKey) (PlaceholderKey, bool) {
-	if key == "" {
-		return "", false
-	}
-	if _, ok := PlaceholderPathFromKey(key); !ok {
-		return "", false
-	}
-	return PlaceholderKey(key), true
-}
-
 // RootPlaceholderKey is the typed string carrier for a whole parameter
 // placeholder such as $0. It deliberately rejects member suffixes: facts that
 // carry this key apply to the parameter object itself, not one of its fields.
@@ -69,8 +57,8 @@ func (k RootPlaceholderKey) String() string { return string(k) }
 
 // Valid reports whether k is a non-empty root placeholder key with no suffix.
 func (k RootPlaceholderKey) Valid() bool {
-	_, ok := RootPlaceholderKeyFromPathKey(k.PathKey())
-	return ok
+	path, ok := PlaceholderPathFromKey(k.PathKey())
+	return ok && len(path.Segments) == 0
 }
 
 // PlaceholderIndex returns the parameter index encoded by k.
@@ -85,22 +73,4 @@ func RootPlaceholderKeyFromPath(path pathdom.Path) (RootPlaceholderKey, bool) {
 		return "", false
 	}
 	return RootPlaceholderKey(path.Key()), true
-}
-
-// RootPlaceholderKeyForIndex formats a root placeholder key for index.
-func RootPlaceholderKeyForIndex(index int) (RootPlaceholderKey, bool) {
-	return RootPlaceholderKeyFromPath(pathdom.NewPlaceholder(index))
-}
-
-// RootPlaceholderKeyFromPathKey validates and narrows key to the root
-// placeholder grammar.
-func RootPlaceholderKeyFromPathKey(key pathdom.PathKey) (RootPlaceholderKey, bool) {
-	placeholder, ok := PlaceholderKeyFromPathKey(key)
-	if !ok {
-		return "", false
-	}
-	if _, ok := placeholder.RootPlaceholderIndex(); !ok {
-		return "", false
-	}
-	return RootPlaceholderKey(key), true
 }

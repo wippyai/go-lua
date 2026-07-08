@@ -727,7 +727,7 @@ func TestOutcomeProviderMaterializesReturnParamPathAliases(t *testing.T) {
 	if !ok {
 		t.Fatal("backup suffix key failed")
 	}
-	aliasSource, ok := pathaddr.PlaceholderKeyFromPathKey(path.PathKey("$0.backup"))
+	aliasSource, ok := pathaddr.PlaceholderKeyFromPath(path.NewPlaceholder(0).Field("backup"))
 	if !ok {
 		t.Fatal("alias source key failed")
 	}

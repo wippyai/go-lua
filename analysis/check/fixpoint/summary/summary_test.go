@@ -711,8 +711,8 @@ func TestParamMemberSummaryFactsAcceptExactBracketMembers(t *testing.T) {
 
 func TestReturnParamPathAliasesAreMustFacts(t *testing.T) {
 	reg := standard.Registry()
-	apiSource := mustPlaceholderKey(t, path.PathKey("$0.registry"))
-	backupSource := mustPlaceholderKey(t, path.PathKey("$0.registry.backup"))
+	apiSource := mustPlaceholderKey(t, path.NewPlaceholder(0).Field("registry"))
+	backupSource := mustPlaceholderKey(t, path.NewPlaceholder(0).Field("registry").Field("backup"))
 	apiAlias := ReturnParamPathAlias{
 		ReturnIndex: 0,
 		Member:      ".api",
@@ -736,7 +736,7 @@ func TestReturnParamPathAliasesAreMustFacts(t *testing.T) {
 	normalized := Normalize(reg, Summary{
 		Returns: []product.Value{product.Top()},
 		ReturnParamPathAliases: []ReturnParamPathAlias{
-			{ReturnIndex: -1, Member: ".ignored", Source: mustPlaceholderKey(t, path.PathKey("$0"))},
+			{ReturnIndex: -1, Member: ".ignored", Source: mustPlaceholderKey(t, path.NewPlaceholder(0))},
 			apiAlias,
 			apiAlias,
 			backupAlias,
@@ -771,24 +771,24 @@ func TestReturnParamPathAliasesAreMustFacts(t *testing.T) {
 	}
 }
 
-func mustPlaceholderKey(t *testing.T, key path.PathKey) pathaddr.PlaceholderKey {
+func mustPlaceholderKey(t *testing.T, p path.Path) pathaddr.PlaceholderKey {
 	t.Helper()
-	got, ok := pathaddr.PlaceholderKeyFromPathKey(key)
+	got, ok := pathaddr.PlaceholderKeyFromPath(p)
 	if !ok {
-		t.Fatalf("PlaceholderKeyFromPathKey(%q) failed", key)
+		t.Fatalf("PlaceholderKeyFromPath(%q) failed", p.String())
 	}
 	return got
 }
 
 func TestParamSinkExposuresAreRootPlaceholderMayFacts(t *testing.T) {
 	reg := standard.Registry()
-	source0, ok := pathaddr.RootPlaceholderKeyForIndex(0)
+	source0, ok := pathaddr.RootPlaceholderKeyFromPath(path.NewPlaceholder(0))
 	if !ok {
-		t.Fatal("RootPlaceholderKeyForIndex(0) failed")
+		t.Fatal("RootPlaceholderKeyFromPath($0) failed")
 	}
-	source1, ok := pathaddr.RootPlaceholderKeyForIndex(1)
+	source1, ok := pathaddr.RootPlaceholderKeyFromPath(path.NewPlaceholder(1))
 	if !ok {
-		t.Fatal("RootPlaceholderKeyForIndex(1) failed")
+		t.Fatal("RootPlaceholderKeyFromPath($1) failed")
 	}
 	present := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	absent := product.Absent(reg)
