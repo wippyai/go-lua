@@ -1332,23 +1332,11 @@ func TestBuildChunkNumberForCreatesLoopTopologyAndMetadata(t *testing.T) {
 	}
 	graph := result.Graph
 
-	loopID, ok := bindings.NumForSymbol(loop)
-	if !ok {
-		t.Fatalf("missing numeric for symbol")
-	}
 	points := requireStmtPoints(t, result, loop, 2)
 	initAssign, branch := points[0], points[1]
 	requirePointKind(t, graph, initAssign, cfg.NodeAssign)
 	requirePointKind(t, graph, branch, cfg.NodeBranch)
 
-	initFact, ok := result.NumericFors.Get(initAssign)
-	if !ok || initFact.Role != NumericForRoleInit || initFact.Stmt != loop || initFact.Symbol != loopID || !initFact.HasSymbol {
-		t.Fatalf("numeric for init metadata = %#v/%v, want init role and symbol %d", initFact, ok, loopID)
-	}
-	checkFact, ok := result.NumericFors.Get(branch)
-	if !ok || checkFact.Role != NumericForRoleCheck || checkFact.Stmt != loop || checkFact.Symbol != loopID || !checkFact.HasSymbol {
-		t.Fatalf("numeric for check metadata = %#v/%v, want check role and symbol %d", checkFact, ok, loopID)
-	}
 	join := firstJoin(t, graph)
 	bodyAssign := requireStmtPoints(t, result, bodyStmt, 1)[0]
 	afterAssign := requireStmtPoints(t, result, afterStmt, 1)[0]

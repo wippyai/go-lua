@@ -3,7 +3,6 @@ package body
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/castsem"
-	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -32,7 +31,7 @@ func (r *Result) ForEachNumericForOperandOccurrence(visit func(NumericForOperand
 			continue
 		}
 		fact, ok := r.NumericFor(point)
-		if !ok || fact.Role != cfgbuild.NumericForRoleInit {
+		if !ok || fact.Role != NumericForRoleInit {
 			continue
 		}
 		operands := []struct {

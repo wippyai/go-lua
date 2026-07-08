@@ -171,9 +171,6 @@ func TestLowerDoesNotLowerDeclarationOrControlSidecars(t *testing.T) {
 		}
 	}
 	for _, point := range requireStmtPoints(t, built, numericFor, 2) {
-		if _, ok := built.NumericFors.Get(point); !ok {
-			t.Fatalf("missing numeric-for metadata at point %d", point)
-		}
 		if _, ok := facts.RootAssignment(point); !ok {
 			assertNoPointFact(t, facts, point)
 		}

@@ -3071,6 +3071,42 @@ end
 	}
 }
 
+func TestNumericForFactsAreBodySourceProjection(t *testing.T) {
+	stmts := parseChunk(t, `
+for i = 1, 10, 2 do
+	local index = i
+end
+`)
+	loop, ok := stmts[0].(*ast.NumberForStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want numeric for", stmts[0])
+	}
+	result, err := CheckChunk(stmts, Config{Registry: standard.Registry()})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	loopID, ok := result.bindings.NumForSymbol(loop)
+	if !ok || loopID == 0 {
+		t.Fatalf("missing numeric for symbol")
+	}
+	points := result.cfg.StmtPoints.PointsFor(loop)
+	if len(points) != 2 {
+		t.Fatalf("numeric-for points = %v, want init and check", points)
+	}
+	initFact, ok := result.NumericFor(points[0])
+	if !ok || initFact.Role != NumericForRoleInit || initFact.Stmt != loop ||
+		initFact.Symbol != loopID || !initFact.HasSymbol ||
+		initFact.Init != loop.Init || initFact.Limit != loop.Limit || initFact.Step != loop.Step {
+		t.Fatalf("numeric for init projection = %#v/%v, want init role and source operands", initFact, ok)
+	}
+	checkFact, ok := result.NumericFor(points[1])
+	if !ok || checkFact.Role != NumericForRoleCheck || checkFact.Stmt != loop ||
+		checkFact.Symbol != loopID || !checkFact.HasSymbol ||
+		checkFact.Init != loop.Init || checkFact.Limit != loop.Limit || checkFact.Step != loop.Step {
+		t.Fatalf("numeric for check projection = %#v/%v, want check role and source operands", checkFact, ok)
+	}
+}
+
 func TestNumericForFloatControlBindsNumberLoopVariable(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `

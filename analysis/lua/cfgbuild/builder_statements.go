@@ -446,27 +446,10 @@ func (b *builder) buildNumberFor(state flowState, stmt *ast.NumberForStmt) flowS
 	beforeCalls := b.graph.RPO()
 	state = b.appendValueListCalls(state, stmt, numericForBounds(stmt))
 	b.recordNumericForCalls(stmt, beforeCalls)
-	id, hasSymbol := b.bindings.NumForSymbol(stmt)
 
 	state = b.appendAssign(state, stmt)
-	preheader := state.current
 	branch := b.appendBranch(state, stmt)
 	join := b.graph.AddNode(cfg.NodeJoin)
-	numericFact := NumericFor{
-		Stmt:      stmt,
-		Name:      stmt.Name,
-		Init:      stmt.Init,
-		Limit:     stmt.Limit,
-		Step:      stmt.Step,
-		Symbol:    id,
-		HasSymbol: hasSymbol && id != 0,
-	}
-	initFact := numericFact
-	initFact.Role = NumericForRoleInit
-	b.numericFors.Set(preheader, initFact)
-	checkFact := numericFact
-	checkFact.Role = NumericForRoleCheck
-	b.numericFors.Set(branch.current, checkFact)
 
 	b.graph.AddEdge(branch.current, join, false)
 	b.breakTargets = append(b.breakTargets, join)

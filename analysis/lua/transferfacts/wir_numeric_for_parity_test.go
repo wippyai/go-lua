@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 func TestLowerWithWIRNumericForProofsPublishForBothLoopDirections(t *testing.T) {
@@ -43,34 +44,26 @@ end
 }
 
 func TestLowerWithWIRNumericForProofsDoesNotFallbackToSidecar(t *testing.T) {
-	_, bindings, built := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function scan(xs: {string})
 	for i = 1, #xs do
 		local current = xs[i]
 	end
 end
 `)
+	loop := requireNumericForStmt(t, fn, 0)
+	checkPoint := requireBranchPointForStmt(t, built, loop)
 	facts := Lower(built.Graph, Config{
 		Registry: standard.Registry(),
 		Bindings: bindings,
 		WIR:      wir.NewBody("scan"),
 	})
 
-	var checked int
-	for _, point := range built.Graph.RPO() {
-		if _, ok := built.NumericFors.Get(point); !ok {
-			continue
-		}
-		checked++
-		if got := facts.BranchNumFloorRefinements(point); len(got) != 0 {
-			t.Fatalf("WIR numeric-for num-floor proofs fell back to sidecar at point %d: %#v", point, got)
-		}
-		if got := facts.BranchPathEvidence(point); len(got) != 0 {
-			t.Fatalf("WIR numeric-for path evidence fell back to sidecar at point %d: %#v", point, got)
-		}
+	if got := facts.BranchNumFloorRefinements(checkPoint); len(got) != 0 {
+		t.Fatalf("WIR numeric-for num-floor proofs fell back to sidecar at point %d: %#v", checkPoint, got)
 	}
-	if checked == 0 {
-		t.Fatal("fixture did not produce numeric-for points")
+	if got := facts.BranchPathEvidence(checkPoint); len(got) != 0 {
+		t.Fatalf("WIR numeric-for path evidence fell back to sidecar at point %d: %#v", checkPoint, got)
 	}
 }
 
@@ -87,9 +80,6 @@ end
 
 	var checked int
 	for _, point := range built.Graph.RPO() {
-		if _, ok := built.NumericFors.Get(point); !ok {
-			continue
-		}
 		if !body.HasInstruction(point, wir.OpIterate) {
 			continue
 		}
@@ -116,18 +106,22 @@ end
 `)
 	body := wirlower.Lower("numeric-for-variable", fn.Stmts, bindings, built)
 	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	loop := requireNumericForStmt(t, fn, 0)
+	wantSymbol, ok := bindings.NumForSymbol(loop)
+	if !ok || wantSymbol == 0 {
+		t.Fatalf("missing numeric-for symbol")
+	}
 
 	for _, point := range built.Graph.RPO() {
-		fact, ok := built.NumericFors.Get(point)
-		if !ok || !body.HasInstruction(point, wir.OpIterate) {
+		if !body.HasInstruction(point, wir.OpIterate) {
 			continue
 		}
 		root, rootOK := facts.RootAssignment(point)
 		if !rootOK {
 			t.Fatalf("numeric-for point %d has no root assignment", point)
 		}
-		if root.TargetSymbol() != fact.Symbol {
-			t.Fatalf("numeric-for root target = %v, want loop symbol %v", root.TargetSymbol(), fact.Symbol)
+		if root.TargetSymbol() != wantSymbol {
+			t.Fatalf("numeric-for root target = %v, want loop symbol %v", root.TargetSymbol(), wantSymbol)
 		}
 		declared, declaredOK := root.DeclaredValue()
 		if !declaredOK || !root.DeclaredValueContracts() {
@@ -157,7 +151,7 @@ end
 	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	for _, point := range built.Graph.RPO() {
-		if _, ok := built.NumericFors.Get(point); !ok || !body.HasInstruction(point, wir.OpIterate) {
+		if !body.HasInstruction(point, wir.OpIterate) {
 			continue
 		}
 		root, rootOK := facts.RootAssignment(point)
@@ -175,4 +169,16 @@ end
 		return
 	}
 	t.Fatal("fixture did not produce a WIR numeric-for point")
+}
+
+func requireNumericForStmt(t *testing.T, fn *ast.FunctionExpr, index int) *ast.NumberForStmt {
+	t.Helper()
+	if fn == nil || index < 0 || index >= len(fn.Stmts) {
+		t.Fatalf("numeric-for stmt index %d out of range", index)
+	}
+	loop, ok := fn.Stmts[index].(*ast.NumberForStmt)
+	if !ok {
+		t.Fatalf("stmt %d = %T, want numeric for", index, fn.Stmts[index])
+	}
+	return loop
 }

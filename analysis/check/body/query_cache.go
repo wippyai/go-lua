@@ -36,6 +36,8 @@ type resultQueryCache struct {
 	branchSitesOK       bool
 	returnFacts         map[cfg.Point]ReturnFact
 	returnFactsOK       bool
+	numericForFacts     map[cfg.Point]NumericForFact
+	numericForFactsOK   bool
 }
 
 const resultQueryInline = 4
@@ -66,6 +68,8 @@ func (c *resultQueryCache) reset() {
 	c.branchSitesOK = false
 	c.returnFacts = nil
 	c.returnFactsOK = false
+	c.numericForFacts = nil
+	c.numericForFactsOK = false
 }
 
 type sourceValueReadMode uint8
