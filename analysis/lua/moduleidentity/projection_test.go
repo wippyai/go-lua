@@ -171,7 +171,7 @@ func TestProjectionResolvesCapturedAliasOfExplicitGlobalModuleRoot(t *testing.T)
 		t.Fatal("BuildFunction returned nil")
 	}
 	body := wirlower.LowerFunction("make", def.Func, bindings, built)
-	facts := transferfacts.Lower(built.Graph, transferfacts.Config{Registry: standard.Registry(), WIR: body})
+	facts := transferfacts.LowerDetailed(built.Graph, transferfacts.Config{Registry: standard.Registry(), WIR: body}).Facts
 	projection := moduleidentity.NewFromFacts(bindings, built.Graph, moduleIdentityTestFacts{facts: facts}, def.Func)
 
 	got := onlySignatureName(t, projection, built.Graph, facts)
@@ -198,7 +198,7 @@ func TestProjectionKeepsCapturedRequireModuleRootAlias(t *testing.T) {
 		t.Fatal("BuildFunction returned nil")
 	}
 	body := wirlower.LowerFunction("decode", def.Func, bindings, built)
-	facts := transferfacts.Lower(built.Graph, transferfacts.Config{Registry: standard.Registry(), WIR: body})
+	facts := transferfacts.LowerDetailed(built.Graph, transferfacts.Config{Registry: standard.Registry(), WIR: body}).Facts
 	projection := moduleidentity.NewFromFacts(bindings, built.Graph, moduleIdentityTestFacts{facts: facts}, def.Func)
 
 	got := onlySignatureName(t, projection, built.Graph, facts)
@@ -390,7 +390,7 @@ func buildProjectionWithGlobals(t *testing.T, src string, globals []string) (mod
 		t.Fatalf("BuildChunk returned nil")
 	}
 	body := wirlower.Lower("chunk", stmts, bindings, built)
-	facts := transferfacts.Lower(built.Graph, transferfacts.Config{Registry: standard.Registry(), WIR: body})
+	facts := transferfacts.LowerDetailed(built.Graph, transferfacts.Config{Registry: standard.Registry(), WIR: body}).Facts
 	return moduleidentity.NewFromFacts(bindings, built.Graph, moduleIdentityTestFacts{facts: facts}, nil), built.Graph, facts
 }
 
@@ -403,7 +403,7 @@ func buildProjectionPair(t *testing.T, src string) (moduleidentity.Projection, m
 		t.Fatalf("BuildChunk returned nil")
 	}
 	body := wirlower.Lower("chunk", stmts, bindings, built)
-	facts := transferfacts.Lower(built.Graph, transferfacts.Config{Registry: standard.Registry(), WIR: body})
+	facts := transferfacts.LowerDetailed(built.Graph, transferfacts.Config{Registry: standard.Registry(), WIR: body}).Facts
 	return moduleidentity.NewFromFacts(bindings, built.Graph, moduleIdentityTestFacts{facts: facts}, nil),
 		moduleidentity.NewFromWIR(bindings, built.Graph, body, nil),
 		built.Graph,

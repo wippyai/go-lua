@@ -37,10 +37,6 @@ type Lowered struct {
 	SymbolTypes map[symbol.ID]typ.Type
 }
 
-func Lower(graph cfg.Graph, config Config) factflow.Facts {
-	return LowerDetailed(graph, config).Facts
-}
-
 func LowerDetailed(graph cfg.Graph, config Config) Lowered {
 	if config.Registry == nil {
 		panic("transferfacts: Config.Registry is required")

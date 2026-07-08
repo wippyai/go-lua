@@ -43,7 +43,7 @@ func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *test
 	built := cfgbuild.BuildChunk(stmts, bindings)
 
 	body := wirlower.Lower("semantic-contexts-through-wir", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 
 	localPoints := requireStmtPoints(t, built, local, 2)
 	localSite, ok := facts.CallSite(localPoints[0])
@@ -132,13 +132,14 @@ func TestLowerCallSiteNoNormalReturnPredicatePublishesFact(t *testing.T) {
 	body := wirlower.Lower("no-normal-return-call", stmts, bindings, built)
 	callPoint := requireStmtPoints(t, built, printStmt, 1)[0]
 
-	facts := Lower(built.Graph, Config{
+	facts := LowerDetailed(built.Graph, Config{
 		Registry: standard.Registry(),
 		WIR:      body,
 		NoNormalReturnCall: func(point cfg.Point, site factflow.CallSiteView) bool {
 			return point == callPoint && site.Context() == factflow.CallSiteContextStatement
 		},
-	})
+	}).Facts
+
 	if !facts.NoNormalReturn(callPoint) {
 		t.Fatalf("NoNormalReturn(%d) = false, want true", callPoint)
 	}
@@ -159,7 +160,7 @@ func TestLowerCallSiteContextFlagsFromWIRLowerer(t *testing.T) {
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make", "print", "ready", "iter", "tail"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
 	body := wirlower.Lower("contexts", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 
 	assertSite := func(label string, point cfg.Point, context factflow.CallSiteContext, exprIndex int, final, expanded, adjusted, openTail bool) {
 		t.Helper()
@@ -192,7 +193,7 @@ func TestLowerMemberCallLocalAssignmentUsesCallResultSource(t *testing.T) {
 	built := cfgbuild.BuildChunk(stmts, bindings)
 
 	body := wirlower.Lower("member-call-local-assignment", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	points := requireStmtPoints(t, built, local, 2)
 	site, ok := facts.CallSite(points[0])
 	if !ok {
@@ -252,7 +253,7 @@ end
 		Path:        otherPath,
 	})
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	site, ok := facts.CallSite(callPoint)
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", callPoint)
@@ -295,7 +296,7 @@ end
 	})
 	body.SetPointRange(callPoint, start, start+1)
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	site, ok := facts.CallSite(callPoint)
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", callPoint)
@@ -338,7 +339,7 @@ end
 		ResultIndex: 0,
 	})
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	site, ok := facts.CallSite(callPoint)
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", callPoint)
@@ -384,7 +385,7 @@ end
 		ResultIndex: 0,
 	})
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	site, ok := facts.CallSite(callPoint)
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", callPoint)
@@ -447,7 +448,7 @@ end
 		ResultIndex: 0,
 	})
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	site, ok := facts.CallSite(point)
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d without semantic CallView", point)
@@ -504,7 +505,7 @@ end
 		t.Fatalf("stmt = %T, want call", fn.Stmts[0])
 	}
 	body := wirlower.LowerFunction("call-arg-object-literal-no-semantics", fn, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 
 	var site factflow.CallSite
 	var callPoint cfg.Point
@@ -571,7 +572,7 @@ end
 	}
 	body := wirlower.LowerFunction("call-arg-object-literal-path-entries", def.Func, bindings, built)
 	reg := standard.Registry()
-	facts := Lower(built.Graph, Config{Registry: reg, WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 
 	var site factflow.CallSite
 	var callPoint cfg.Point
@@ -667,7 +668,7 @@ end
 	body := wirlower.LowerFunctionWithOptions("call-arg-object-literal-metatable-self", def.Func, bindings, built, wirlower.Options{
 		MethodReceiverTypes: map[symbol.ID]typ.Type{methodSymbols[0]: nodeInstance},
 	})
-	facts := Lower(built.Graph, Config{Registry: reg, WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 
 	var site factflow.CallSite
 	var callPoint cfg.Point
@@ -768,7 +769,7 @@ end
 	body := wirlower.LowerFunctionWithOptions("call-arg-object-literal-generic-for", routeDef.Func, bindings, built, wirlower.Options{
 		MethodReceiverTypes: map[symbol.ID]typ.Type{methodSymbols[0]: nodeInstance},
 	})
-	facts := Lower(built.Graph, Config{Registry: reg, WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 
 	var site factflow.CallSite
 	var callPoint cfg.Point
@@ -812,7 +813,7 @@ end
 	callPoint := requireStmtPoints(t, built, ret, 2)[0]
 	body := wirlower.LowerFunction("return-target", fn, bindings, built)
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	site, ok := facts.CallSite(callPoint)
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", callPoint)
@@ -838,7 +839,7 @@ end
 	returnPoint := points[1]
 	body := wirlower.LowerFunction("no-sidecars", fn, bindings, built)
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	site, ok := facts.CallSite(callPoint)
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", callPoint)
@@ -871,7 +872,7 @@ func TestLowerNegatedConditionCallSiteCarriesPolarity(t *testing.T) {
 	built := cfgbuild.BuildChunk(stmts, bindings)
 
 	body := wirlower.Lower("negated-condition", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	points := requireStmtPoints(t, built, ifStmt, 2)
 	site, ok := facts.CallSite(points[0])
 	if !ok {
@@ -881,7 +882,7 @@ func TestLowerNegatedConditionCallSiteCarriesPolarity(t *testing.T) {
 		t.Fatalf("condition call site = context %v negated=%v, want negated condition", site.Context(), site.ConditionNegated())
 	}
 
-	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	wirFacts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	wirSite, ok := wirFacts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing WIR condition call site")
@@ -912,7 +913,7 @@ func TestLowerCallSitePreservesPortableCallShapeAndArgumentOverlays(t *testing.T
 	built := cfgbuild.BuildChunk(stmts, bindings)
 
 	body := wirlower.Lower("portable-call-shape", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	point := requireStmtPoints(t, built, stmt, 1)[0]
@@ -992,7 +993,7 @@ func TestLowerCallSiteTypeArgsComeFromWIR(t *testing.T) {
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"send", "value"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
 	body := wirlower.Lower("call-type-args", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	point := requireStmtPoints(t, built, stmt, 1)[0]
 	site, ok := facts.CallSite(point)
 	if !ok {
@@ -1016,7 +1017,7 @@ end
 	}
 	points := requireStmtPoints(t, built, stmt, 2)
 	body := wirlower.LowerFunction("f", fn, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 
 	site, ok := facts.CallSite(points[1])
 	if !ok {
@@ -1061,7 +1062,7 @@ end
 	}
 	points := requireStmtPoints(t, built, stmt, 1)
 	body := wirlower.LowerFunction("f", fn, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 
 	site, ok := facts.CallSite(points[0])
 	if !ok {
@@ -1095,7 +1096,7 @@ end
 	}
 	points := requireStmtPoints(t, built, local, 2)
 	body := wirlower.LowerFunction("f", fn, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 
 	site, ok := facts.CallSite(points[0])
 	if !ok {
@@ -1136,7 +1137,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing call site at point %d", points[0])
@@ -1175,7 +1176,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing call site at point %d", points[0])
@@ -1215,7 +1216,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing call site at point %d", points[0])
@@ -1256,7 +1257,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing call site at point %d", points[0])
@@ -1300,7 +1301,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing call site at point %d", points[0])
@@ -1349,7 +1350,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing call site at point %d", points[0])
@@ -1421,7 +1422,7 @@ end
 		t.Fatalf("stmt = %T, want call statement", fn.Stmts[0])
 	}
 	points := requireStmtPoints(t, built, stmt, 1)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: wir.NewBody("empty")})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: wir.NewBody("empty")}).Facts
 
 	if _, ok := facts.CallSite(points[0]); ok {
 		t.Fatalf("WIR mode call at point %d fell back to semantic sidecar", points[0])
@@ -1542,7 +1543,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", points[0])
@@ -1573,7 +1574,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", points[0])
@@ -1612,7 +1613,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", points[0])
@@ -1640,7 +1641,7 @@ end
 	callPoint := points[1]
 	body := wirlower.LowerFunction("f", fn, bindings, built)
 	reg := standard.Registry()
-	facts := Lower(built.Graph, Config{Registry: reg, WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 
 	site, ok := facts.CallSite(callPoint)
 	if !ok {
@@ -1700,7 +1701,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	assign, ok := facts.RootAssignment(points[0])
 	if !ok {
 		t.Fatalf("missing assignment at point %d", points[0])
@@ -1763,7 +1764,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", points[0])
@@ -1799,7 +1800,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", points[0])
@@ -1832,7 +1833,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", points[0])
@@ -1931,7 +1932,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	site, ok := facts.CallSite(points[0])
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", points[0])
@@ -1957,7 +1958,7 @@ for id, session_info in pairs(state.active_sessions) do
 end
 `, "pairs")
 	body := wirlower.Lower("iterator-call-site", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 
 	genericFor, ok := stmts[1].(*ast.GenericForStmt)
 	if !ok {
@@ -1997,7 +1998,7 @@ func TestLowerNestedExpressionProducerCallIsReadableSlotZero(t *testing.T) {
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"f", "g"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
 	body := wirlower.Lower("nested-expression-producer", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	points := requireStmtPoints(t, built, stmt, 2)
 	innerSite, ok := facts.CallSite(points[0])
 	if !ok {
@@ -2038,7 +2039,7 @@ func TestLowerNestedExpressionProducerCallFromWIRIsReadableSlotZero(t *testing.T
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"f", "g"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
 	body := wirlower.Lower("nested-call-producer", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	points := requireStmtPoints(t, built, stmt, 2)
 	innerSite, ok := facts.CallSite(points[0])
 	if !ok {
@@ -2080,7 +2081,7 @@ func TestLowerMemberOrdinaryCallTargetStaysCallSiteOnly(t *testing.T) {
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"f"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
 	body := wirlower.Lower("member-ordinary-call-target", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	points := requireStmtPoints(t, built, write, 2)
 	producer, ok := callproducer.FromFacts(facts, points[0])
 	if !ok {

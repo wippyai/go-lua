@@ -23,7 +23,7 @@ function scan(xs: {string})
 end
 `)
 	body := wirlower.LowerFunction("scan", fn, bindings, built)
-	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	wirFacts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 
 	compared := 0
 	for _, point := range built.Graph.RPO() {
@@ -53,10 +53,10 @@ end
 `)
 	loop := requireNumericForStmt(t, fn, 0)
 	checkPoint := requireBranchPointForStmt(t, built, loop)
-	facts := Lower(built.Graph, Config{
+	facts := LowerDetailed(built.Graph, Config{
 		Registry: standard.Registry(),
 		WIR:      wir.NewBody("scan"),
-	})
+	}).Facts
 
 	if got := facts.BranchNumFloorRefinements(checkPoint); len(got) != 0 {
 		t.Fatalf("WIR numeric-for num-floor proofs fell back to sidecar at point %d: %#v", checkPoint, got)
@@ -75,7 +75,7 @@ function scan(xs: {string})
 end
 `)
 	body := wirlower.LowerFunction("numeric-for-no-sidecars", fn, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 
 	var checked int
 	for _, point := range built.Graph.RPO() {
@@ -104,7 +104,7 @@ function scan()
 end
 `)
 	body := wirlower.LowerFunction("numeric-for-variable", fn, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	loop := requireNumericForStmt(t, fn, 0)
 	wantSymbol, ok := bindings.NumForSymbol(loop)
 	if !ok || wantSymbol == 0 {
@@ -147,7 +147,7 @@ function scan()
 end
 `)
 	body := wirlower.LowerFunction("numeric-for-typed-bound-paths", fn, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 
 	for _, point := range built.Graph.RPO() {
 		if !body.HasInstruction(point, wir.OpIterate) {

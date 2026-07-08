@@ -38,7 +38,7 @@ func TestLowerPanicsWithoutRegistry(t *testing.T) {
 		}
 	}()
 
-	_ = Lower(built.Graph, Config{})
+	_ = LowerDetailed(built.Graph, Config{}).Facts
 }
 
 func TestLowerPanicsWithoutRegistryOnEmptyInputs(t *testing.T) {
@@ -48,7 +48,7 @@ func TestLowerPanicsWithoutRegistryOnEmptyInputs(t *testing.T) {
 		}
 	}()
 
-	_ = Lower(nil, Config{})
+	_ = LowerDetailed(nil, Config{}).Facts
 }
 
 func TestLowerPanicsWithoutWIR(t *testing.T) {
@@ -58,7 +58,7 @@ func TestLowerPanicsWithoutWIR(t *testing.T) {
 		}
 	}()
 
-	_ = Lower(nil, Config{Registry: standard.Registry()})
+	_ = LowerDetailed(nil, Config{Registry: standard.Registry()}).Facts
 }
 
 func TestLowerAnnotatedLiteralLocalPreservesLiteralValue(t *testing.T) {
@@ -210,7 +210,7 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make", "pack", "put", "tail"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
 	body := wirlower.Lower("value-list-metadata", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	localPoints := requireStmtPoints(t, built, local, 5)
@@ -406,7 +406,7 @@ local root = make()["root"]
 `)
 
 	body := wirlower.Lower("dynamic-index-unnameable-table-source", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	var rootSource factflow.ValueSource
 	for _, point := range built.StmtPoints.PointsFor(stmts[1]) {
 		fact, ok := facts.LocalAssignment(point)
@@ -751,7 +751,7 @@ function handle(events_ch: Channel<{kind: "event", id: string}>, stop_ch: Channe
 end
 `, "channel")
 	body := wirlower.LowerFunction("handle", fn, bindings, built)
-	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	wirFacts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 
 	var wirSelects []factflow.ChannelSelect
 	for _, point := range built.Graph.RPO() {
@@ -790,7 +790,7 @@ function handle(events_ch: Channel<{kind: "event", id: string}>, stop_ch: Channe
 end
 `, "channel")
 	body := wirlower.LowerFunction("channel-select-no-sidecars", fn, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 
 	var selects []factflow.ChannelSelect
 	for _, point := range built.Graph.RPO() {
@@ -876,7 +876,7 @@ end
 		Path:        selectedPath,
 	})
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 
 	events := facts.ChannelSelects(point)
 	if len(events) != 3 {
@@ -939,7 +939,7 @@ function consume(events: Channel<{
 end
 `, "channel")
 	body := wirlower.LowerFunction("consume", fn, bindings, built)
-	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	wirFacts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 
 	var selectGroups [][]factflow.ChannelSelect
 	for _, point := range built.Graph.RPO() {

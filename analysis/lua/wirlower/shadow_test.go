@@ -87,10 +87,10 @@ func TestShadowCoverage(t *testing.T) {
 			skippedExtract++
 			continue
 		}
-		facts := transferfacts.Lower(built.Graph, transferfacts.Config{
+		facts := transferfacts.LowerDetailed(built.Graph, transferfacts.Config{
 			Registry: standard.Registry(),
 			WIR:      body,
-		})
+		}).Facts
 		processed++
 
 		branchKeys := sourceBranchKeys(stmts, bindings, built)

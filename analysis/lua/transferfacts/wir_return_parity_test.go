@@ -28,7 +28,7 @@ function f(ok: boolean): (string?, string?)
 end
 `)
 	body := wirlower.LowerFunction("f", fn, bindings, built)
-	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	wirFacts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 
 	wirPoints := wirReturnFactPoints(built.Graph, body)
 	if len(wirPoints) != 2 {
@@ -58,7 +58,7 @@ end
 	if got := body.DeclaredReturnArity(); got != 2 {
 		t.Fatalf("WIR declared return arity = %d, want 2", got)
 	}
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	relations := facts.ReturnPresenceRelations(points[0])
 	assertReturnPresenceRelation(t, relations, 0, presence.Absent(), 1, presence.Absent())
 	assertReturnPresenceRelation(t, relations, 1, presence.Absent(), 0, presence.Absent())
@@ -76,7 +76,7 @@ end
 	}
 	points := requireStmtPoints(t, built, ret, 2)
 	body := wirlower.LowerFunction("f", fn, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 
 	returnFact, ok := facts.Return(points[1])
 	if !ok {
@@ -111,7 +111,7 @@ end
 	}
 	points := requireStmtPoints(t, built, ret, 1)
 	body := wirlower.LowerFunction("f", fn, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
@@ -145,7 +145,7 @@ end
 	points := requireStmtPoints(t, built, ret, 1)
 	body := wirlower.LowerFunction("f", fn, bindings, built)
 	reg := standard.Registry()
-	facts := Lower(built.Graph, Config{Registry: reg, WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
@@ -182,7 +182,7 @@ end
 	points := requireStmtPoints(t, built, ret, 1)
 	body := wirlower.LowerFunction("nested-logical-return", fn, bindings, built)
 	reg := standard.Registry()
-	facts := Lower(built.Graph, Config{Registry: reg, WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
@@ -215,7 +215,7 @@ end
 	points := requireStmtPoints(t, built, ret, 1)
 	body := wirlower.LowerFunction("negated-nil-logical-return", fn, bindings, built)
 	reg := standard.Registry()
-	facts := Lower(built.Graph, Config{Registry: reg, WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
@@ -247,7 +247,7 @@ end
 	}
 	points := requireStmtPoints(t, built, ret, 1)
 	body := wirlower.LowerFunction("f", fn, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
@@ -283,7 +283,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
 		t.Fatalf("missing return fact at point %d", points[0])
@@ -311,7 +311,7 @@ end
 	}
 	points := requireStmtPoints(t, built, ret, 1)
 	body := wirlower.LowerFunction("f", fn, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
@@ -335,7 +335,7 @@ end
 	}
 	points := requireStmtPoints(t, built, ret, 1)
 	body := wirlower.LowerFunction("f", fn, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
@@ -373,7 +373,7 @@ end
 	body.Emit(wir.Instruction{Op: wir.OpReturn, Point: points[0], List: body.AppendOperands([]wir.Operand{temp})})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
 		t.Fatalf("missing return fact at point %d", points[0])
@@ -407,7 +407,7 @@ end
 	points := requireStmtPoints(t, built, ret, 1)
 	body := wirlower.LowerFunction("f", fn, bindings, built)
 	reg := standard.Registry()
-	facts := Lower(built.Graph, Config{Registry: reg, WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
@@ -448,7 +448,7 @@ end
 	body.Emit(wir.Instruction{Op: wir.OpReturn, Point: points[0], List: body.AppendOperands([]wir.Operand{temp})})
 	body.SetPointRange(points[0], start, body.Len())
 	reg := standard.Registry()
-	facts := Lower(built.Graph, Config{Registry: reg, WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
@@ -504,7 +504,7 @@ end
 	body.Emit(wir.Instruction{Op: wir.OpReturn, Point: points[0], List: body.AppendOperands([]wir.Operand{temp})})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
 		t.Fatalf("missing return fact at point %d", points[0])
@@ -538,7 +538,7 @@ end
 		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
 	}
 	points := requireStmtPoints(t, built, ret, 1)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: wir.NewBody("empty")})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: wir.NewBody("empty")}).Facts
 
 	if _, ok := facts.Return(points[0]); ok {
 		t.Fatalf("WIR mode return at point %d fell back to semantic sidecar", points[0])
@@ -564,7 +564,7 @@ end
 	})
 	body.SetPointRange(point, start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	retFact, ok := facts.Return(point)
 	if !ok {
 		t.Fatalf("missing WIR-owned return at point %d", point)
@@ -594,7 +594,7 @@ end
 	})
 	body.SetPointRange(point, start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	retFact, ok := facts.Return(point)
 	if !ok {
 		t.Fatalf("missing WIR-owned return at point %d", point)
@@ -618,7 +618,7 @@ end
 	point := requireStmtPoints(t, built, ret, 1)[0]
 	body := wirlower.LowerFunction("returned-type-predicate", fn, bindings, built)
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	retFact, ok := facts.Return(point)
 	if !ok {
 		t.Fatalf("missing WIR-owned return at point %d", point)
@@ -661,7 +661,7 @@ end
 	point := requireStmtPoints(t, built, ret, 1)[0]
 	body := wirlower.LowerFunction("returned-conjunction-predicate", fn, bindings, built)
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	retFact, ok := facts.Return(point)
 	if !ok {
 		t.Fatalf("missing WIR-owned return at point %d", point)
@@ -704,7 +704,7 @@ end
 	point := requireStmtPoints(t, built, ret, 1)[0]
 	body := wirlower.LowerFunction("returned-nested-path-conjunction", fn, bindings, built)
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	retFact, ok := facts.Return(point)
 	if !ok {
 		t.Fatalf("missing WIR-owned return at point %d", point)
@@ -753,7 +753,7 @@ end
 	})
 	body.SetPointRange(point, start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	returnFact, ok := facts.Return(point)
 	if !ok {
 		t.Fatalf("missing WIR-owned return at point %d without source return metadata", point)

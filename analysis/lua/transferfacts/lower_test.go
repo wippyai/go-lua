@@ -43,7 +43,7 @@ func TestLowerLiteralExpressionValues(t *testing.T) {
 	built := cfgbuild.BuildChunk(stmts, bindings)
 
 	body := wirlower.Lower("literal-expression-values", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	nilAssign, ok := facts.LocalAssignment(requireStmtPoints(t, built, nilLocal, 1)[0])
 	if !ok {
 		t.Fatalf("missing nil local assignment")
@@ -73,7 +73,7 @@ local selected = level or "info"
 `)
 	reg := standard.Registry()
 	body := wirlower.Lower("logical-default-expression", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: reg, WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 	selected, ok := stmts[2].(*ast.LocalAssignStmt)
 	if !ok {
 		t.Fatalf("stmt = %T, want selected local assignment", stmts[2])
@@ -115,7 +115,7 @@ end`, "tostring")
 	}
 
 	body := wirlower.LowerFunction("return-concat-operation", fn, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: reg, WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 	returnPoints := requireStmtPoints(t, built, ret, 2)
 	returnFact, ok := facts.Return(returnPoints[1])
 	if !ok {
@@ -150,7 +150,7 @@ end`)
 	}
 
 	body := wirlower.LowerFunction("return-length-comparison", fn, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: reg, WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 	returnPoints := requireStmtPoints(t, built, ret, 1)
 	returnFact, ok := facts.Return(returnPoints[0])
 	if !ok {
@@ -191,7 +191,7 @@ end
 `)
 	reg := standard.Registry()
 	body := wirlower.Lower("annotated-function-expression", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: reg, WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 	point := requireStmtPoints(t, built, stmts[0], 1)[0]
 	source := mustLocalSource(t, facts, point)
 	value, ok := facts.ExpressionValue(source.ExprRef)
@@ -231,7 +231,7 @@ end
 `)
 	reg := standard.Registry()
 	body := wirlower.LowerFunction("make", fn, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: reg, WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
 	if !ok {
 		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
@@ -275,7 +275,7 @@ end
 	point := requireStmtPoints(t, built, stmt, 1)[0]
 	reg := standard.Registry()
 	wirBody := wirlower.LowerFunction("closure-arg", fn, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: reg, WIR: wirBody})
+	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: wirBody}).Facts
 	site, ok := facts.CallSite(point)
 	if !ok {
 		t.Fatalf("missing call site at point %d", point)

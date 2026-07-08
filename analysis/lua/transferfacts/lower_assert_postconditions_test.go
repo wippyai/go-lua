@@ -28,7 +28,7 @@ func TestLowerDirectAssertTruthyPostcondition(t *testing.T) {
 	built := cfgbuild.BuildChunk(stmts, bindings)
 
 	body := wirlower.Lower("assert-postcondition", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	point := requireStmtPoints(t, built, stmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
 	assertLoweredPostconditionRefinement(t, facts, point, xPath, valueRefinementExpectation{
@@ -46,7 +46,7 @@ func TestLowerDirectAssertNotNilPostcondition(t *testing.T) {
 	built := cfgbuild.BuildChunk(stmts, bindings)
 
 	body := wirlower.Lower("assert-postcondition", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	point := requireStmtPoints(t, built, stmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
 	assertLoweredPostconditionRefinement(t, facts, point, xPath, valueRefinementExpectation{
@@ -68,7 +68,7 @@ func TestLowerDirectAssertTypeEqualPostcondition(t *testing.T) {
 	built := cfgbuild.BuildChunk(stmts, bindings)
 
 	body := wirlower.Lower("assert-postcondition", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	point := requireStmtPoints(t, built, stmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
 	assertLoweredPostconditionRefinement(t, facts, point, xPath, valueRefinementExpectation{
@@ -94,7 +94,7 @@ func TestLowerAssertPostconditionRequiresDirectGlobalStatementCall(t *testing.T)
 	built := cfgbuild.BuildChunk(stmts, bindings)
 
 	body := wirlower.Lower("assert-postcondition", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	for _, stmt := range []ast.Stmt{shadowedAssert, receiverCall} {
 		point := requireStmtPoints(t, built, stmt, 1)[0]
 		if got := facts.PostconditionRefinements(point); len(got) != 0 {
@@ -132,7 +132,7 @@ func TestLowerAssertPostconditionComesFromWIRInWIRMode(t *testing.T) {
 	})
 	body.SetPointRange(point, start, start+1)
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	assertLoweredPostconditionRefinement(t, facts, point, yPath, valueRefinementExpectation{
 		presence:    presence.Present(),
 		hasPresence: true,

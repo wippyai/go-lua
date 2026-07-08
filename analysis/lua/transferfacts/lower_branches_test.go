@@ -76,13 +76,13 @@ func lowerFunctionFactsWithWIR(t *testing.T, name string, fn *ast.FunctionExpr, 
 		t.Fatal("function is nil")
 	}
 	body := wirlower.LowerFunction(name, fn, bindings, built)
-	return Lower(built.Graph, Config{Registry: reg, WIR: body})
+	return LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 }
 
 func lowerChunkFactsWithWIR(t *testing.T, name string, stmts []ast.Stmt, built *cfgbuild.Result, bindings *bind.Result, reg *axis.Registry) factflow.Facts {
 	t.Helper()
 	body := wirlower.Lower(name, stmts, bindings, built)
-	return Lower(built.Graph, Config{Registry: reg, WIR: body})
+	return LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 }
 
 func TestLowerBooleanRootTruthyFalsyBranchesPublishLiteralRefinements(t *testing.T) {
@@ -355,11 +355,12 @@ end
 	sqlManifest := manifest.New("sql")
 	sqlManifest.SetExport(typetable.NewRecord().Field("get", getType).Build())
 	body := wirlower.LowerFunction("run", def.Func, bindings, built)
-	wirFacts := Lower(built.Graph, Config{
+	wirFacts := LowerDetailed(built.Graph, Config{
 		Registry:      standard.Registry(),
 		ModuleExports: importlookup.Source{Manifests: []*manifest.Manifest{sqlManifest}},
 		WIR:           body,
-	})
+	}).Facts
+
 	assertNeedReleaseImpliesDBValue(t, bindings, built.Graph, wirFacts)
 }
 
@@ -401,11 +402,12 @@ end
 	sqlManifest := manifest.New("sql")
 	sqlManifest.SetExport(typetable.NewRecord().Field("get", getType).Build())
 	body := wirlower.LowerFunction("run-no-sidecars", def.Func, bindings, built)
-	wirFacts := Lower(built.Graph, Config{
+	wirFacts := LowerDetailed(built.Graph, Config{
 		Registry:      standard.Registry(),
 		ModuleExports: importlookup.Source{Manifests: []*manifest.Manifest{sqlManifest}},
 		WIR:           body,
-	})
+	}).Facts
+
 	assertNeedReleaseImpliesDBValue(t, bindings, built.Graph, wirFacts)
 }
 
@@ -540,7 +542,7 @@ func TestLowerStaticTruthinessMarksImpossibleBranchEdges(t *testing.T) {
 			bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"dynamic"}})
 			built := cfgbuild.BuildChunk(stmts, bindings)
 			body := wirlower.Lower("static-truthiness", stmts, bindings, built)
-			facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+			facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 			point := requireStmtPoints(t, built, tc.stmt, 1)[0]
 			if got := facts.BranchEdgeUnreachable(point, true); got != tc.wantTrueBlocked {
 				t.Fatalf("true-edge unreachable = %v, want %v", got, tc.wantTrueBlocked)
@@ -591,7 +593,7 @@ function f(kind: string?)
 end
 `)
 	wirBody := wirlower.LowerFunction("branch", fn, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: wirBody})
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: wirBody}).Facts
 	var directFalsyPoint cfg.Point
 	compoundPoint := requireBranchPointForStmt(t, built, fn.Stmts[0])
 	for _, point := range built.Graph.RPO() {
@@ -890,7 +892,7 @@ end
 	})
 	body.SetPointRange(branchPoint, branchStart, branchStart+1)
 
-	facts := Lower(built.Graph, Config{Registry: reg, WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 	refinement, ok := branchRefinementAt(facts.BranchRefinements(branchPoint), payloadPath)
 	if !ok {
 		t.Fatalf("missing pcall payload refinement at point %d; got %#v", branchPoint, facts.BranchRefinements(branchPoint))
@@ -922,7 +924,7 @@ if not ok then
 end
 `, "pcall")
 
-	facts := Lower(built.Graph, Config{Registry: reg, WIR: wir.NewBody("empty")})
+	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: wir.NewBody("empty")}).Facts
 	assign := mustLocalStmt(t, stmts, 1)
 	payloadPath := path.NewPath(mustLocalAt(t, bindings, assign, 1), "result")
 	ifStmt := mustIfStmt(t, stmts, 2)
@@ -946,7 +948,7 @@ end
 `, "pcall")
 
 	body := wirlower.Lower("chunk", stmts, bindings, built)
-	seed := Lower(built.Graph, Config{Registry: reg, WIR: body})
+	seed := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 	assign := mustLocalStmt(t, stmts, 1)
 	callPoint := requireStmtPoints(t, built, assign, 3)[0]
 	site, ok := seed.CallSite(callPoint)
@@ -1019,7 +1021,7 @@ end
 	})
 	body.SetPointRange(point, start, start+1)
 
-	facts := Lower(built.Graph, Config{Registry: reg, WIR: body})
+	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 	if refinement, ok := branchRefinementAt(facts.BranchRefinements(point), payloadPath); ok {
 		t.Fatalf("WIR mode protected-call refinement used semantic call at point %d without WIR call instruction: %#v", point, refinement)
 	}
@@ -1690,11 +1692,12 @@ else
 end
 `)
 	body := wirlower.Lower("imported-result-branch", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{
+	facts := LowerDetailed(built.Graph, Config{
 		Registry:      standard.Registry(),
 		ModuleExports: importlookup.Source{Manifests: []*manifest.Manifest{validatorManifest}},
 		WIR:           body,
-	})
+	}).Facts
+
 	ifStmt, ok := stmts[2].(*ast.IfStmt)
 	if !ok {
 		t.Fatalf("statement 2 = %T, want if", stmts[2])

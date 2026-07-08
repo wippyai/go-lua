@@ -249,11 +249,10 @@ journal decision.
   cfgbuild already produced; the state-equality oracle is per-point on that
   shared graph. See "Same-CFG point mapping" below.
 - **D2 — operand vs state-cell identity.** wir operands stay source path refs
-  (the `PathKey` pool). Transfer-time address resolution runs through a cached
-  `AddressResolver` keyed `(point, operand, mode)` producing `keyspace.Key` state
-  keys. Operand identity is deliberately not state-cell identity. Interface +
-  fake live in `resolver.go`; the production binding to `visibility.Resolver` is
-  factapply's, not wir's.
+  (the `PathKey` pool). Operand identity is deliberately not state-cell identity:
+  transfer and fact application resolve state cells at use sites through the
+  existing visibility address helpers. wir owns only the closed operand
+  descriptor, not an address-resolver API.
 - **D3 — logical purity split.** See the short-circuit section above.
 - **D5 — resolved type refs.** `Type` interns the resolved `typ.Type` by
   `typ.EqualityHash`; the display spelling is `t.String()`, kept only for
@@ -296,30 +295,29 @@ pre-existing points rather than allocating its own:
   point identity; **no cfgbuild change is required.** D1a is a large but fully
   in-lane rewrite, not a cfgbuild handoff.
 
-## Operand address resolution (D2)
+## Operand address use (D2)
 
-`resolver.go` defines `AddressResolver.Resolve(point, op, mode) -> (keyspace.Key,
-bool)` with the four access modes `ReadBefore` / `WriteLocal` / `RootOrVisible` /
-`Evidence`. Resolution is a pure function of `(point, op, mode)` for a fixed
-Body; `CachingResolver` memoizes it. The real implementation (factapply, later
-step) closes over the Body to decode an operand's interned path and delegates to
-`visibility.Resolver`; wir ships only the contract and a test fake.
+WIR records path operands as source identity only. Consumers that need state
+cells decode the interned path through `Body.Path` and then use
+`visibility.AddressAt` in the consumer's own context. This keeps WIR below engine
+state identity and avoids a WIR-owned resolver contract.
 
 ## Skeleton step 2 status
 
 Landed in wir/wirlower lanes: **D1a** (same-CFG `Lower(name, stmts, bindings,
 *cfgbuild.Result) *wir.Body` keyed on the shared graph's points; the self-CFG
 `Chunk`/`lowerBody` path and the `Result{Body,Graph}` pair are deleted — one
-owner), **D2** (resolver interface + caching + fake), **D3** (purity-split
-logical: pure RHS keeps `OpLogical` on the enclosing point, impure RHS threads the
-result through the cfgbuild short-circuit topology), **D5** (resolved TypeRef).
+owner), **D2** (path operands remain source identity; state-cell addressing stays
+below WIR), **D3** (purity-split logical: pure RHS keeps `OpLogical` on the
+enclosing point, impure RHS threads the result through the cfgbuild short-circuit
+topology), **D5** (resolved TypeRef).
 Goldens migrated to the shared-graph form; the `WIR_SHADOW` harness is now a
 per-point oracle (100% total). Nested functions build their own child graph via
 `cfgbuild.BuildFunction` and lower recursively, exactly as the engine prepares
 protos.
 
-What **factapply step 3** (the dispatch skeleton, not this lane) will need from
-this shape: (a) it reads instructions off the shared graph via
+The transfer/fact-application consumers read instructions off this shape as
+follows: (a) instructions are read from the shared graph via
 `Body.PointInstructions(point)` — every point either carries a window or is a
 structural `noop`; (b) the multret contract is split — an `OpCall` binds its
 result temps in `Results` at the call point and per-target `OpAssign temp ->
@@ -348,5 +346,5 @@ effectful-logical branch topology); completeness measured by the per-point
 
 Residual gap: none in the per-point shadow categories. The only non-structural
 match is the explicit `"target"` sentinel for computed assignment targets with no
-static path/container identity; the point must still carry a wir write. wir is
-consumed by nothing yet.
+static path/container identity; the point must still carry a wir write. WIR is
+consumed by transferfacts.
