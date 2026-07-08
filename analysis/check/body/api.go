@@ -93,6 +93,7 @@ type Static struct {
 	cfg                   *cfgbuild.Result
 	semantics             *semantics.Result
 	wir                   *wir.Body
+	sourceStmts           []ast.Stmt
 	signatures            signaturelookup.Source
 	moduleTypes           typelookup.Source
 	moduleLoads           importlookup.Source
@@ -173,6 +174,7 @@ type Result struct {
 	cfg                   *cfgbuild.Result
 	semantics             *semantics.Result
 	wir                   *wir.Body
+	sourceStmts           []ast.Stmt
 	signatures            signaturelookup.Source
 	moduleTypes           typelookup.Source
 	modules               moduleidentity.Projection

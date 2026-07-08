@@ -406,10 +406,18 @@ func (r *Result) NoNormalReturn(point cfg.Point) bool {
 }
 
 func (r *Result) BranchCondition(point cfg.Point) (BranchConditionFact, bool) {
-	if r == nil || r.semantics == nil {
+	if r == nil {
 		return BranchConditionFact{}, false
 	}
-	return r.semantics.BranchCondition(point)
+	site, ok := r.branchSite(point)
+	if !ok {
+		return BranchConditionFact{}, false
+	}
+	check, ok := r.BranchConditionCheck(point)
+	if !ok {
+		return BranchConditionFact{}, false
+	}
+	return branchConditionFactFromSite(site, check), true
 }
 
 // BranchConditionCheck returns the canonical direct branch check for point.

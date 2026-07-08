@@ -32,6 +32,8 @@ type resultQueryCache struct {
 	readContexts        [sourceValueReadModeCount]readexpr.Context
 	sourceResolvers     [sourceValueReadModeCount]sourcevalue.SourceValues
 	callOutcomeCapacity int
+	branchSites         map[cfg.Point]branchSite
+	branchSitesOK       bool
 }
 
 const resultQueryInline = 4
@@ -58,6 +60,8 @@ func (c *resultQueryCache) reset() {
 	c.immediateDominators = nil
 	c.readContexts = [sourceValueReadModeCount]readexpr.Context{}
 	c.sourceResolvers = [sourceValueReadModeCount]sourcevalue.SourceValues{}
+	c.branchSites = nil
+	c.branchSitesOK = false
 }
 
 type sourceValueReadMode uint8

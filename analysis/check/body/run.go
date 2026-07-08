@@ -71,6 +71,7 @@ func (c *checker) prepareChunk(stmts []ast.Stmt) (*Static, error) {
 
 func (c *checker) prepareBoundChunk(stmts []ast.Stmt, bindings *bind.Result) (*Static, error) {
 	return c.prepareBound(bindings, "chunk",
+		stmts,
 		func() { c.config.Stats.StaticChunkPrepares++ },
 		func() *cfgbuild.Result { return cfgbuild.BuildChunk(stmts, bindings) },
 		func(built *cfgbuild.Result) (*semantics.Result, error) {
@@ -91,6 +92,7 @@ func (c *checker) prepareBoundChunk(stmts []ast.Stmt, bindings *bind.Result) (*S
 func (c *checker) prepareBound(
 	bindings *bind.Result,
 	what string,
+	sourceStmts []ast.Stmt,
 	incStat func(),
 	build func() *cfgbuild.Result,
 	extract func(*cfgbuild.Result) (*semantics.Result, error),
@@ -111,7 +113,7 @@ func (c *checker) prepareBound(
 	moduleTypes := newRequireAliasTypeResolver(requireAliases(), c.config.ModuleTypes)
 	typeResolver := typeresolve.NewWithExternal(bindings, moduleTypes)
 	wirBody := lowerWIR(built, typeResolver)
-	return c.prepare(bindings, built, sem, wirBody, typeResolver), nil
+	return c.prepare(bindings, built, sem, wirBody, typeResolver, sourceStmts), nil
 }
 
 func (c *checker) prepareFunction(fn *ast.FunctionExpr) (*Static, error) {
@@ -119,8 +121,16 @@ func (c *checker) prepareFunction(fn *ast.FunctionExpr) (*Static, error) {
 	return c.prepareBoundFunction(fn, bindings)
 }
 
+func functionSourceStmts(fn *ast.FunctionExpr) []ast.Stmt {
+	if fn == nil {
+		return nil
+	}
+	return fn.Stmts
+}
+
 func (c *checker) prepareBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result) (*Static, error) {
 	return c.prepareBound(bindings, "function",
+		functionSourceStmts(fn),
 		func() { c.config.Stats.StaticFunctionPrepares++ },
 		func() *cfgbuild.Result { return cfgbuild.BuildFunction(fn, bindings) },
 		func(built *cfgbuild.Result) (*semantics.Result, error) {
@@ -141,6 +151,7 @@ func (c *checker) prepare(
 	sem *semantics.Result,
 	wirBody *wir.Body,
 	typeResolver *typeresolve.Resolver,
+	sourceStmts []ast.Stmt,
 ) *Static {
 	config := c.config
 	globals := configGlobals(config)
@@ -228,6 +239,7 @@ func (c *checker) prepare(
 		cfg:                   built,
 		semantics:             sem,
 		wir:                   wirBody,
+		sourceStmts:           append([]ast.Stmt(nil), sourceStmts...),
 		signatures:            config.Signatures,
 		moduleTypes:           config.ModuleTypes,
 		moduleLoads:           config.ModuleExports,
@@ -302,6 +314,7 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		cfg:                   s.cfg,
 		semantics:             s.semantics,
 		wir:                   s.wir,
+		sourceStmts:           append([]ast.Stmt(nil), s.sourceStmts...),
 		signatures:            s.signatures,
 		moduleTypes:           s.moduleTypes,
 		modules:               s.modules,
