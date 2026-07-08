@@ -6,26 +6,10 @@ import (
 
 // Metadata stores Lua sidecar facts keyed by CFG point.
 type Metadata struct {
-	loops           map[cfg.Point]LoopFact
 	typeDefinitions map[cfg.Point]TypeDefinitionFact
 	functionDefs    map[cfg.Point]FunctionDefinitionFact
 	numericFors     map[cfg.Point]NumericForFact
 	genericFors     map[cfg.Point]GenericForFact
-}
-
-func (m Metadata) Loop(point cfg.Point) (LoopFact, bool) {
-	fact, ok := m.loops[point]
-	if !ok {
-		return LoopFact{}, false
-	}
-	return copyLoopFact(fact), true
-}
-
-func (m *Metadata) SetLoop(point cfg.Point, fact LoopFact) {
-	if m.loops == nil {
-		m.loops = make(map[cfg.Point]LoopFact)
-	}
-	m.loops[point] = copyLoopFact(fact)
 }
 
 func (m Metadata) TypeDefinition(point cfg.Point) (TypeDefinitionFact, bool) {

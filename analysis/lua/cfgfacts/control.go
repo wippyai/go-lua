@@ -1,32 +1,10 @@
 package cfgfacts
 
 import (
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
-
-// LoopKind identifies the structural loop form associated with a CFG point.
-type LoopKind uint8
-
-// Loop kind constants represent recognizable loop shapes.
-const (
-	LoopKindUnknown LoopKind = iota
-	LoopKindConditional
-	LoopKindNumericFor
-	LoopKindGenericFor
-)
-
-// LoopFact describes loop structure associated with a CFG point.
-type LoopFact struct {
-	Kind                 LoopKind
-	Vars                 []symbol.ID
-	Locals               []symbol.ID
-	DirectModifiedOuters []symbol.ID
-	Preheader            cfg.Point
-	HasPreheader         bool
-}
 
 // NumericForRole identifies the structural numeric-for position at a CFG point.
 type NumericForRole uint8
