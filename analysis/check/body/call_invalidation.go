@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 )
 
 // CallPathInvalidation is a concrete path invalidation caused by a call after
@@ -188,19 +189,9 @@ func (r *Result) callOutcomeHasCovariantExposureForTarget(site factflow.CallSite
 	return false
 }
 
-// callSiteHasExactEmptyGuardInvalidationSummary reports whether a call site has
-// a declared pure signature with no operational invalidations.
-func (r *Result) callSiteHasExactEmptyGuardInvalidationSummary(site factflow.CallSite) bool {
-	if r == nil {
-		return false
-	}
-	sig, ok := r.CallSignature(site)
-	return ok && sig.OperationalEffects == nil && sig.Effect.Pure()
-}
-
 func (r *Result) callSiteHasExactEmptyGuardInvalidationSummaryAt(point cfg.Point) bool {
-	site, ok := r.CallSite(point)
-	return ok && r.callSiteHasExactEmptyGuardInvalidationSummary(site)
+	sig, ok := r.CallSignatureAtPoint(point)
+	return ok && sig.OperationalEffects == nil && sig.Effect.Pure()
 }
 
 func (r *Result) callSiteReferencesTrackedPathAt(point cfg.Point, target pathdom.Path) bool {
@@ -229,14 +220,19 @@ func (r *Result) callSiteReferencesTrackedPath(site factflow.CallSite, target pa
 
 func (r *Result) callOutcomeHasExactGuardInvalidationSummaryAt(point cfg.Point, outcome callpayload.CallOutcome, trustResolvedSummaryAuthority bool) bool {
 	site, ok := r.CallSite(point)
-	return ok && r.callOutcomeHasExactGuardInvalidationSummary(site, outcome, trustResolvedSummaryAuthority)
+	var sig signature.Function
+	hasSignature := false
+	if resolved, resolvedOK := r.CallSignatureAtPoint(point); resolvedOK {
+		sig = resolved
+		hasSignature = true
+	}
+	return ok && r.callOutcomeHasExactGuardInvalidationSummary(site, outcome, trustResolvedSummaryAuthority, sig, hasSignature)
 }
 
 // callOutcomeHasExactGuardInvalidationSummary reports whether outcome carries
 // enough effect authority to decide path invalidation precisely for a referenced
 // receiver or argument.
-func (r *Result) callOutcomeHasExactGuardInvalidationSummary(site factflow.CallSite, outcome callpayload.CallOutcome, trustResolvedSummaryAuthority bool) bool {
-	sig, hasSignature := r.CallSignature(site)
+func (r *Result) callOutcomeHasExactGuardInvalidationSummary(site factflow.CallSite, outcome callpayload.CallOutcome, trustResolvedSummaryAuthority bool, sig signature.Function, hasSignature bool) bool {
 	hasOperationalEffects := hasSignature &&
 		sig.OperationalEffects != nil &&
 		!sig.OperationalEffects.IsEmpty()

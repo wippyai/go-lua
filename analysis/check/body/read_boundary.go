@@ -1588,14 +1588,10 @@ func (r *Result) CallExprResultValue(call *ast.FuncCallExpr, resultIndex int) (p
 }
 
 func (r *Result) callExprSignatureResultValue(point cfg.Point, resultIndex int) (product.Value, bool) {
-	site, ok := r.CallSite(point)
-	if !ok {
-		return product.Value{}, false
-	}
-	if fn, ok := r.CallSignatureTypeAt(point, site); ok {
+	if fn, ok := r.CallSignatureTypeAtPoint(point); ok {
 		return r.functionReturnValue(fn, resultIndex)
 	}
-	if fn, ok := r.FunctionValueTypeForCallSiteAtBoundary(point, site); ok {
+	if fn, ok := r.FunctionValueTypeForCallPointAtBoundary(point); ok {
 		return r.functionReturnValue(fn, resultIndex)
 	}
 	return product.Value{}, false

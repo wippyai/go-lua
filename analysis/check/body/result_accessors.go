@@ -780,6 +780,18 @@ func (r *Result) CallSignature(site factflow.CallSite) (signature.Function, bool
 	return r.signatures.Lookup(name)
 }
 
+func (r *Result) CallSignatureAtPoint(point cfg.Point) (signature.Function, bool) {
+	site, ok := r.CallSite(point)
+	if !ok {
+		return signature.Function{}, false
+	}
+	name, ok := r.CallSignatureNameAt(point, site)
+	if !ok {
+		return signature.Function{}, false
+	}
+	return r.signatures.Lookup(name)
+}
+
 // CallSignatureType resolves a call site to the read-only function type of its
 // known signature. It avoids cloning signature carriers for callers that only
 // need the type; CallSignature retains the defensive-copy API for effect-aware
@@ -801,6 +813,14 @@ func (r *Result) CallSignatureTypeAt(point cfg.Point, site factflow.CallSite) (*
 		return nil, false
 	}
 	return r.SignatureType(name)
+}
+
+func (r *Result) CallSignatureTypeAtPoint(point cfg.Point) (*typ.Function, bool) {
+	site, ok := r.CallSite(point)
+	if !ok {
+		return nil, false
+	}
+	return r.CallSignatureTypeAt(point, site)
 }
 
 // CallSiteViewSignatureType resolves a read-only call-site view to the read-only

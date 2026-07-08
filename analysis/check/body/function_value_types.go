@@ -376,6 +376,14 @@ func (r *Result) FunctionValueTypeForCallSiteAtBoundary(point cfg.Point, site fa
 	return r.FunctionValueTypeForCalleePath(site.View().CalleePathKey())
 }
 
+func (r *Result) FunctionValueTypeForCallPointAtBoundary(point cfg.Point) (*typ.Function, bool) {
+	site, ok := r.CallSite(point)
+	if !ok {
+		return nil, false
+	}
+	return r.FunctionValueTypeForCallSiteAtBoundary(point, site)
+}
+
 func (r *Result) currentRootValueForCallableFallback(point cfg.Point, p pathdom.Path) (product.Value, bool) {
 	if root, ok := r.PathValueAtBoundary(point, p.RootOnly()); ok &&
 		!product.Equal(r.registry, root, product.Bottom(r.registry)) &&
