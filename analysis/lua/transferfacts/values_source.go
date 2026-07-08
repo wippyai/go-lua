@@ -2081,50 +2081,6 @@ func resultValueSourceFromWIR(
 	return mustValueSource(factflow.NewCallValueSource(0, exprIndex, targetIndex, result.resultIndex, result.point, shape)), true
 }
 
-func (l *lowerer) valueSource(source sourceprovenance.ASTSource) factflow.ValueSource {
-	if source.Kind == sourceprovenance.SourceExpression {
-		if tableSource, ok := l.tableConstructorExpressionValueSource(
-			source.Expr,
-			source.ExprIndex,
-			source.TargetIndex,
-			source.Final,
-			source.Expanded,
-			source.OpenTail,
-		); ok {
-			return tableSource
-		}
-	}
-	exprRef, hasExpr := l.valueSourceExprRef(source)
-	if hasExpr {
-		l.addExpressionPath(exprRef, source.Expr)
-		l.addExpressionCondition(exprRef, source.Expr)
-		if source.Kind == sourceprovenance.SourceExpression {
-			l.addExpressionValue(exprRef, source.Expr)
-		}
-	}
-	shape, ok := factflow.NewValueSourceShape(source.Final, source.Expanded, source.Adjusted, source.OpenTail)
-	if !ok {
-		panic("transferfacts: invalid value source shape")
-	}
-	switch source.Kind {
-	case sourceprovenance.SourceExpression:
-		return mustValueSource(factflow.NewExpressionValueSource(exprRef, source.ExprIndex, source.TargetIndex, source.ResultIndex, shape))
-	case sourceprovenance.SourceCall:
-		if !source.HasCallPoint {
-			return factflow.NewUnknownValueSource(source.TargetIndex)
-		}
-		return mustValueSource(factflow.NewCallValueSource(exprRef, source.ExprIndex, source.TargetIndex, source.ResultIndex, source.CallPoint, shape))
-	case sourceprovenance.SourceVararg:
-		return mustValueSource(factflow.NewVarargValueSource(exprRef, source.ExprIndex, source.TargetIndex, source.ResultIndex, shape))
-	case sourceprovenance.SourceNil:
-		return factflow.NewNilValueSource(source.TargetIndex)
-	case sourceprovenance.SourceUnknown:
-		return factflow.NewUnknownValueSource(source.TargetIndex)
-	default:
-		panic("transferfacts: unknown value source kind")
-	}
-}
-
 func mustValueSource(source factflow.ValueSource, ok bool) factflow.ValueSource {
 	if !ok {
 		panic("transferfacts: invalid value source")
