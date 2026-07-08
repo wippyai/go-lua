@@ -84,6 +84,9 @@ func (l *lowerer) addObjectLiteralFromWIR(input *factflow.FactsInput, inst wir.I
 	}
 	lowered := factflow.NewObjectLiteral(l.objectLiteralEntriesFromWIR(inst)).
 		WithIdentity(identity.LuaTableLiteral(l.graphID, uint64(exprRef)))
+	if inst.ExprSpan.Valid() {
+		lowered = lowered.WithSpan(sourceSpanFromWIR(inst.ExprSpan))
+	}
 	if source, ok := l.objectLiteralListElementSourceFromWIR(inst); ok {
 		lowered = lowered.WithListElementSource(source)
 	}

@@ -276,6 +276,11 @@ type Instruction struct {
 	CallTypeArgs         TypeRefRange
 	ReturnValues         ReturnValueMetaRange
 
+	// ExprSpan is source-only metadata for the expression lowered by this
+	// instruction when downstream diagnostics need the whole expression range
+	// rather than a child operand span.
+	ExprSpan Span
+
 	// SelectDefault marks an OpSelect that carries a default (non-blocking) case.
 	SelectDefault bool
 

@@ -121,6 +121,8 @@ func (e ObjectEntry) copy() ObjectEntry {
 // ObjectLiteral describes static entries associated with an expression.
 type ObjectLiteral struct {
 	entries              []ObjectEntry
+	span                 SourceSpan
+	hasSpan              bool
 	listElementSource    ValueSource
 	hasListElementSource bool
 	expected             product.Value
@@ -180,6 +182,16 @@ func (v ObjectLiteralView) Identity() (identity.ID, bool) {
 	return v.literal.Identity()
 }
 
+// Span returns the source range of the whole object literal when lowering
+// provided it.
+func (v ObjectLiteralView) Span() (SourceSpan, bool) {
+	return v.literal.Span()
+}
+
+// Span returns the source range of the whole object literal when lowering
+// provided it.
+func (l ObjectLiteral) Span() (SourceSpan, bool) { return l.span, l.hasSpan }
+
 // Expected returns the declared contextual type value the literal is assigned to,
 // carried as a type-witness value so the factflow layer stays type-agnostic. The
 // boolean reports whether a contextual record target is known for this literal.
@@ -217,6 +229,14 @@ func (l ObjectLiteral) WithExpected(value product.Value) ObjectLiteral {
 func (l ObjectLiteral) WithIdentity(id identity.ID) ObjectLiteral {
 	out := l.copy()
 	out.identity = id
+	return out
+}
+
+// WithSpan returns a copy carrying the whole object-literal source range.
+func (l ObjectLiteral) WithSpan(span SourceSpan) ObjectLiteral {
+	out := l.copy()
+	out.span = span
+	out.hasSpan = true
 	return out
 }
 

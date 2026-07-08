@@ -2,10 +2,8 @@ package body
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/domain/value/proof"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
-	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -43,38 +41,50 @@ func (r *Result) AssignmentSourceContributions(point cfg.Point, expr ast.Expr) [
 		if candidate == point {
 			break
 		}
-		fact, ok := r.OrdinaryAssignment(candidate)
-		if !ok || !fact.HasSymbol || fact.Symbol != readPath.Symbol {
+		fact, ok := r.RootAssignment(candidate)
+		if !ok ||
+			fact.Kind() != factflow.RootAssignmentOrdinaryRootWrite ||
+			fact.TargetSymbol() != readPath.Symbol ||
+			len(fact.TargetPathRef().Segments) != 0 {
 			continue
 		}
-		if fact.HasPath && len(fact.Path.Segments) != 0 {
-			continue
-		}
-		table, ok := sourceprovenance.ProofInner(fact.Value)
+		literal, ok := r.ObjectLiteralViewForSource(fact.Source())
 		if !ok {
 			continue
 		}
-		lit, ok := table.(*ast.TableExpr)
-		if !ok {
-			continue
-		}
-		for _, entry := range lit.Fields {
-			if entry == nil || ast.KeyName(entry.Key) != field || entry.Value == nil {
-				continue
+		literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
+			if assignmentObjectEntryFieldName(entry) != field {
+				return true
 			}
-			t, ok := r.assignmentExpressionValueTypeAtBoundary(candidate, entry.Value)
+			t, ok := r.assignmentSourceContributionEntryType(candidate, entry)
 			if !ok {
-				continue
+				return true
+			}
+			span := sourceSpanFromFactflow(entry.ValueSpan())
+			if literalSpan, ok := literal.Span(); ok {
+				span = sourceSpanFromFactflow(literalSpan)
 			}
 			out = append(out, AssignmentSourceContribution{
 				RootLabel: rootLabel,
 				ReadLabel: readLabel,
 				Type:      t,
-				Span:      sourceSpanFromAST(ast.SpanOf(fact.Value)),
+				Span:      span,
 			})
-		}
+			return true
+		})
 	}
 	return out
+}
+
+func assignmentObjectEntryFieldName(entry factflow.ObjectEntryView) string {
+	if entry.SuffixSegmentCount() != 1 {
+		return ""
+	}
+	seg, ok := entry.SuffixSegmentAt(0)
+	if !ok {
+		return ""
+	}
+	return assignmentStaticMemberSegmentName(seg)
 }
 
 func assignmentStaticMemberSegmentName(seg segment.Segment) string {
@@ -93,13 +103,10 @@ func assignmentSourceRootLabel(expr ast.Expr) string {
 	return AssignmentSourceLabel(expr)
 }
 
-func (r *Result) assignmentExpressionValueTypeAtBoundary(point cfg.Point, expr ast.Expr) (typ.Type, bool) {
-	if t, ok := valueexpr.LiteralType(expr); ok {
-		return t, true
-	}
-	value, ok := r.ExpressionValueAtBoundary(point, expr)
+func (r *Result) assignmentSourceContributionEntryType(point cfg.Point, entry factflow.ObjectEntryView) (typ.Type, bool) {
+	value, ok := r.SourceValueAtBoundary(point, entry.Source())
 	if !ok {
 		return nil, false
 	}
-	return proof.New(r.registry, r.typeValues).ValueType(value)
+	return r.ValueType(value)
 }

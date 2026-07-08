@@ -1471,6 +1471,7 @@ func (b *builder) lowerTable(dst wir.Operand, t *ast.TableExpr) {
 		TableEntries: b.body.AppendTableEntries(entries),
 		ListSpread:   spread,
 		ExprID:       expressionid.Of(t),
+		ExprSpan:     tableEntryValueSpan(t),
 	})
 }
 
