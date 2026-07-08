@@ -10,9 +10,6 @@ import (
 	"github.com/wippyai/go-lua/validate"
 )
 
-// ValidatorFunc validates an LValue against an annotation argument.
-type ValidatorFunc func(val LValue, arg any) *validate.Error
-
 // ValidationContext wraps validate.Registry for LValue validation.
 type ValidationContext struct {
 	registry *validate.Registry
@@ -26,17 +23,6 @@ func NewValidationContext() *ValidationContext {
 // DefaultValidationContext returns context with built-in validators.
 func DefaultValidationContext() *ValidationContext {
 	return &ValidationContext{registry: validate.Default}
-}
-
-// RegisterValidator adds a validator that works with LValue.
-func (vc *ValidationContext) RegisterValidator(name string, fn ValidatorFunc) {
-	vc.registry.RegisterValidator(name, func(val any, arg any) *validate.Error {
-		lv, ok := val.(LValue)
-		if !ok {
-			return nil
-		}
-		return fn(lv, arg)
-	})
 }
 
 // Validate checks value against type with annotations.

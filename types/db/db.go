@@ -21,13 +21,6 @@ func (db *DB) Connect(path string, m *manifest.Manifest) {
 	db.imports[path] = m
 }
 
-func (db *DB) Manifest(path string) *manifest.Manifest {
-	if db == nil || db.imports == nil {
-		return nil
-	}
-	return db.imports[path]
-}
-
 func (db *DB) Imports() map[string]*manifest.Manifest {
 	if db == nil || len(db.imports) == 0 {
 		return nil
