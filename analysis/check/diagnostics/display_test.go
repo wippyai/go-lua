@@ -118,24 +118,24 @@ func TestRedundantConditionMessagesUseCentralDisplay(t *testing.T) {
 }
 
 func TestDiagnosticProducerMessagesUseCentralDisplay(t *testing.T) {
-	if got := unresolvedTypeMessage("protocol.Policy"); got != "unknown type protocol.Policy" {
-		t.Fatalf("unresolvedTypeMessage = %q", got)
+	if got := display.UnresolvedTypeMessage("protocol.Policy"); got != "unknown type protocol.Policy" {
+		t.Fatalf("display.UnresolvedTypeMessage = %q", got)
 	}
-	if got := unresolvedTypeEvidence("protocol.Policy"); got != "no type named protocol.Policy is declared in this scope, a parent scope, or an imported module" {
-		t.Fatalf("unresolvedTypeEvidence = %q", got)
+	if got := display.UnresolvedTypeEvidence("protocol.Policy"); got != "no type named protocol.Policy is declared in this scope, a parent scope, or an imported module" {
+		t.Fatalf("display.UnresolvedTypeEvidence = %q", got)
 	}
-	if got := unresolvedTypeHelp(); got != "Declare the type in scope, import the module that exports it, or use the fully qualified exported type name." {
-		t.Fatalf("unresolvedTypeHelp = %q", got)
+	if got := display.UnresolvedTypeHelp(); got != "Declare the type in scope, import the module that exports it, or use the fully qualified exported type name." {
+		t.Fatalf("display.UnresolvedTypeHelp = %q", got)
 	}
 
-	if got := unresolvedValueMessage("provider"); got != "unknown value provider" {
-		t.Fatalf("unresolvedValueMessage = %q", got)
+	if got := display.UnresolvedValueMessage("provider"); got != "unknown value provider" {
+		t.Fatalf("display.UnresolvedValueMessage = %q", got)
 	}
-	if got := unresolvedValueEvidence("provider"); got != "no value named provider is declared, predeclared, imported, or configured global in this scope" {
-		t.Fatalf("unresolvedValueEvidence = %q", got)
+	if got := display.UnresolvedValueEvidence("provider"); got != "no value named provider is declared, predeclared, imported, or configured global in this scope" {
+		t.Fatalf("display.UnresolvedValueEvidence = %q", got)
 	}
-	if got := unresolvedValueHelp(); got != "Declare the value, import it through require, or add it to the configured globals when it is intentionally ambient." {
-		t.Fatalf("unresolvedValueHelp = %q", got)
+	if got := display.UnresolvedValueHelp(); got != "Declare the value, import it through require, or add it to the configured globals when it is intentionally ambient." {
+		t.Fatalf("display.UnresolvedValueHelp = %q", got)
 	}
 
 	if got := display.ChannelSelectExhaustivenessMessage("cases", "ready, failed"); got != "channel select is not exhaustive; missing cases: ready, failed" {
@@ -188,14 +188,14 @@ func TestDiagnosticProducerMessagesUseCentralDisplay(t *testing.T) {
 		t.Fatalf("display.FrozenTableCallHelp = %q", got)
 	}
 
-	if got := unusedLocalMessage("tmp"); got != `local "tmp" is never read` {
-		t.Fatalf("unusedLocalMessage = %q", got)
+	if got := display.UnusedLocalMessage("tmp"); got != `local "tmp" is never read` {
+		t.Fatalf("display.UnusedLocalMessage = %q", got)
 	}
-	if got := unusedLocalEvidence("tmp"); got != `no read of local "tmp" was found in this scope` {
-		t.Fatalf("unusedLocalEvidence = %q", got)
+	if got := display.UnusedLocalEvidence("tmp"); got != `no read of local "tmp" was found in this scope` {
+		t.Fatalf("display.UnusedLocalEvidence = %q", got)
 	}
-	if got := unusedLocalHelp(); got != "Remove it, use it, or rename it with a leading _ when intentionally unused." {
-		t.Fatalf("unusedLocalHelp = %q", got)
+	if got := display.UnusedLocalHelp(); got != "Remove it, use it, or rename it with a leading _ when intentionally unused." {
+		t.Fatalf("display.UnusedLocalHelp = %q", got)
 	}
 }
 
@@ -778,31 +778,31 @@ func TestCallArityMessagesUseCentralDisplay(t *testing.T) {
 }
 
 func TestNumericForMessagesUseCentralDisplay(t *testing.T) {
-	if got := numericForOperandMessage("initial value", typ.String); got != "numeric for initial value must be number, got string" {
-		t.Fatalf("numericForOperandMessage = %q", got)
+	if got := display.NumericForOperandMessage("initial value", typ.String); got != "numeric for initial value must be number, got string" {
+		t.Fatalf("display.NumericForOperandMessage = %q", got)
 	}
-	if got := numericForOperandTypeEvidence("limit", typ.String); got != "limit has type string" {
-		t.Fatalf("numericForOperandTypeEvidence = %q", got)
+	if got := display.NumericForOperandTypeEvidence("limit", typ.String); got != "limit has type string" {
+		t.Fatalf("display.NumericForOperandTypeEvidence = %q", got)
 	}
-	if got := numericForOperandHelp("step"); got != "Use a number for the numeric for step, or convert it before the loop." {
-		t.Fatalf("numericForOperandHelp = %q", got)
+	if got := display.NumericForOperandHelp("step"); got != "Use a number for the numeric for step, or convert it before the loop." {
+		t.Fatalf("display.NumericForOperandHelp = %q", got)
 	}
 }
 
 func TestConcatOperandMessagesUseCentralDisplay(t *testing.T) {
-	if got := concatOperandMessage("right"); got != "right operand of `..` may be nil" {
-		t.Fatalf("concatOperandMessage = %q", got)
+	if got := display.ConcatOperandMessage("right"); got != "right operand of `..` may be nil" {
+		t.Fatalf("display.ConcatOperandMessage = %q", got)
 	}
-	if got := concatOperandTypeEvidence("right", "maybe", typ.MaterializeOptional(typ.String)); got != "right operand `maybe` can be string or nil here" {
-		t.Fatalf("concatOperandTypeEvidence named = %q", got)
+	if got := display.ConcatOperandTypeEvidence("right", "maybe", typ.MaterializeOptional(typ.String)); got != "right operand `maybe` can be string or nil here" {
+		t.Fatalf("display.ConcatOperandTypeEvidence named = %q", got)
 	}
-	if got := concatOperandTypeEvidence("left", "", typ.MaterializeOptional(typ.Number)); got != "left operand can be number or nil here" {
-		t.Fatalf("concatOperandTypeEvidence anonymous = %q", got)
+	if got := display.ConcatOperandTypeEvidence("left", "", typ.MaterializeOptional(typ.Number)); got != "left operand can be number or nil here" {
+		t.Fatalf("display.ConcatOperandTypeEvidence anonymous = %q", got)
 	}
-	if got := concatOperandHelp("maybe"); got != "Guard `maybe` or provide a default string before using `..`." {
-		t.Fatalf("concatOperandHelp named = %q", got)
+	if got := display.ConcatOperandHelp("maybe"); got != "Guard `maybe` or provide a default string before using `..`." {
+		t.Fatalf("display.ConcatOperandHelp named = %q", got)
 	}
-	if got := concatOperandHelp(""); got != "Guard the value or provide a default string before using `..`." {
-		t.Fatalf("concatOperandHelp anonymous = %q", got)
+	if got := display.ConcatOperandHelp(""); got != "Guard the value or provide a default string before using `..`." {
+		t.Fatalf("display.ConcatOperandHelp anonymous = %q", got)
 	}
 }

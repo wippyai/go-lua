@@ -32,15 +32,15 @@ func (ProofContext) NumericFor(item judgment.Judgment, primary diagnostic.Span) 
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
 			Span:    diagnosticEvidenceSpanOr(item, judgment.EvidenceAbstractFact, primary),
-			Message: numericForOperandTypeEvidence(role, got),
+			Message: display.NumericForOperandTypeEvidence(role, got),
 		},
 	}
 	if proof.UserAssertion {
 		evidence = append(evidence, numericForExplicitTopEvidence(item, proof, primary)...)
 	}
 	return numericForPresentation{
-		Message:  numericForOperandMessage(role, got),
-		Help:     numericForOperandHelp(role),
+		Message:  display.NumericForOperandMessage(role, got),
+		Help:     display.NumericForOperandHelp(role),
 		Evidence: evidence,
 		Labels:   []diagnostic.Label{sourceLabel(primary, role)},
 	}, true

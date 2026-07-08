@@ -15,15 +15,15 @@ type simpleJudgmentPresentation struct {
 func (ProofContext) NonNilAssertion(item judgment.Judgment, primary diagnostic.Span) simpleJudgmentPresentation {
 	name := item.Subject.Label
 	return simpleJudgmentPresentation{
-		Message: nonNilAssertAlwaysNilMessage(name),
-		Help:    nonNilAssertAlwaysNilHelp(name),
+		Message: display.NonNilAssertAlwaysNilMessage(name),
+		Help:    display.NonNilAssertAlwaysNilHelp(name),
 		Labels:  []diagnostic.Label{sourceLabel(primary, labelValueAlwaysNil)},
 		Explanation: diagnostic.NewExplanation(
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
 				Span:    diagnosticEvidenceSpanOr(item, judgment.EvidenceAbstractFact, primary),
-				Message: nonNilAssertAlwaysNilEvidence(name),
+				Message: display.NonNilAssertAlwaysNilEvidence(name),
 			},
 		),
 	}
@@ -31,14 +31,14 @@ func (ProofContext) NonNilAssertion(item judgment.Judgment, primary diagnostic.S
 
 func (ProofContext) UnusedLocal(item judgment.Judgment, name string, primary diagnostic.Span) simpleJudgmentPresentation {
 	return simpleJudgmentPresentation{
-		Message: unusedLocalMessage(name),
-		Help:    unusedLocalHelp(),
+		Message: display.UnusedLocalMessage(name),
+		Help:    display.UnusedLocalHelp(),
 		Labels:  []diagnostic.Label{sourceLabel(primary, labelUnusedLocal)},
 		Explanation: diagnostic.NewExplanation(
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
-				Message: unusedLocalEvidence(name),
+				Message: display.UnusedLocalEvidence(name),
 			},
 		),
 	}
@@ -46,15 +46,15 @@ func (ProofContext) UnusedLocal(item judgment.Judgment, name string, primary dia
 
 func (ProofContext) UnresolvedType(item judgment.Judgment, name string, primary diagnostic.Span) simpleJudgmentPresentation {
 	return simpleJudgmentPresentation{
-		Message: unresolvedTypeMessage(name),
-		Help:    unresolvedTypeHelp(),
+		Message: display.UnresolvedTypeMessage(name),
+		Help:    display.UnresolvedTypeHelp(),
 		Labels:  []diagnostic.Label{sourceLabel(primary, labelUnknownType)},
 		Explanation: diagnostic.NewExplanation(
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
 				Span:    primary,
-				Message: unresolvedTypeEvidence(name),
+				Message: display.UnresolvedTypeEvidence(name),
 			},
 		),
 	}
@@ -62,15 +62,15 @@ func (ProofContext) UnresolvedType(item judgment.Judgment, name string, primary 
 
 func (ProofContext) UnresolvedValue(item judgment.Judgment, name string, primary diagnostic.Span) simpleJudgmentPresentation {
 	return simpleJudgmentPresentation{
-		Message: unresolvedValueMessage(name),
-		Help:    unresolvedValueHelp(),
+		Message: display.UnresolvedValueMessage(name),
+		Help:    display.UnresolvedValueHelp(),
 		Labels:  []diagnostic.Label{sourceLabel(primary, labelUnknownValue)},
 		Explanation: diagnostic.NewExplanation(
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
 				Span:    primary,
-				Message: unresolvedValueEvidence(name),
+				Message: display.UnresolvedValueEvidence(name),
 			},
 		),
 	}

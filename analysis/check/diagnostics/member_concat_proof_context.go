@@ -56,8 +56,8 @@ func (ProofContext) ConcatOperand(item judgment.Judgment, primary diagnostic.Spa
 	operandName := item.Subject.Label
 	got := item.Actual.ProjectedType
 	return concatOperandPresentation{
-		Message: concatOperandMessage(detail.Field),
-		Help:    concatOperandHelp(operandName),
+		Message: display.ConcatOperandMessage(detail.Field),
+		Help:    display.ConcatOperandHelp(operandName),
 		Labels:  []diagnostic.Label{sourceLabel(primary, labelValueMayBeNil)},
 		Evidence: []diagnostic.Evidence{
 			{
@@ -65,7 +65,7 @@ func (ProofContext) ConcatOperand(item judgment.Judgment, primary diagnostic.Spa
 				Trust:   diagnostic.TrustProven,
 				Reason:  concatOperandEvidenceReason(got),
 				Span:    primary,
-				Message: concatOperandTypeEvidence(detail.Field, operandName, got),
+				Message: display.ConcatOperandTypeEvidence(detail.Field, operandName, got),
 			},
 		},
 	}, true
