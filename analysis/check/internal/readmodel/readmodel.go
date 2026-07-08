@@ -17,6 +17,7 @@ type SourceSpan = readapi.SourceSpan
 type CallSite = readapi.CallSite
 type CallArgument = readapi.CallArgument
 type SendSafety = readapi.SendSafety
+type SendSafetyVerdict = readapi.SendSafetyVerdict
 type CallArgumentMismatch = readapi.CallArgumentMismatch
 type CallArgumentCheck = readapi.CallArgumentCheck
 type OptionalAssignmentTarget = readapi.OptionalAssignmentTarget
