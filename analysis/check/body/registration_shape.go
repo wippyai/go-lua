@@ -23,12 +23,14 @@ type StaticStringAssignmentTarget struct {
 // write. It carries only canonical target/source evidence and optional display
 // metadata, so readmodels do not need semantic assignment sidecars.
 type LoweredAssignmentWrite struct {
-	Target       pathdom.Path
-	Container    pathdom.Path
-	Source       factflow.ValueSource
-	Span         SourceSpan
-	HasContainer bool
-	HasSpan      bool
+	Target           pathdom.Path
+	Container        pathdom.Path
+	Source           factflow.ValueSource
+	Span             SourceSpan
+	ContainerSpan    SourceSpan
+	HasContainer     bool
+	HasSpan          bool
+	HasContainerSpan bool
 }
 
 // LoweredAssignmentWrite returns the factflow assignment write at point.
@@ -46,12 +48,22 @@ func (r *Result) LoweredAssignmentWrite(point cfg.Point) (LoweredAssignmentWrite
 		container := write.TablePathRef()
 		target := container
 		if key, keyOK := r.StaticStringValueSourceAtBoundary(point, write.KeySource()); keyOK {
-			target = target.Append(segment.Segment{Kind: segment.SegmentField, Name: key})
+			target = target.Append(segment.Segment{Kind: segment.SegmentIndexString, Name: key})
+		}
+		if invalidation, ok := r.PathDescendantInvalidation(point); ok {
+			table, _, suffix, dynamicOK := invalidation.DynamicTargetRef()
+			if dynamicOK && table.Equal(container) {
+				target = target.AppendSegments(suffix)
+			}
 		}
 		out := LoweredAssignmentWrite{Target: target, Container: container, Source: write.Source(), HasContainer: !container.IsEmpty()}
 		if span, ok := write.TargetSpan(); ok {
 			out.Span = sourceSpanFromFactflow(span)
 			out.HasSpan = true
+		}
+		if span, ok := write.ContainerSpan(); ok {
+			out.ContainerSpan = sourceSpanFromFactflow(span)
+			out.HasContainerSpan = true
 		}
 		return out, true
 	}
@@ -80,6 +92,10 @@ func loweredAssignmentWriteFromPath(fact factflow.PathAssignment) LoweredAssignm
 	if span, ok := fact.TargetSpan(); ok {
 		out.Span = sourceSpanFromFactflow(span)
 		out.HasSpan = true
+	}
+	if span, ok := fact.ContainerSpan(); ok {
+		out.ContainerSpan = sourceSpanFromFactflow(span)
+		out.HasContainerSpan = true
 	}
 	return out
 }

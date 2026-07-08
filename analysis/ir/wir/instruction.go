@@ -286,6 +286,11 @@ type Instruction struct {
 	// facts without retaining assignment AST sidecars.
 	TargetSpan Span
 
+	// ContainerSpan is source-only metadata for the container being assigned
+	// through by member/index writes. It lets diagnostics point at the nil-risk
+	// receiver separately from the full assignment target.
+	ContainerSpan Span
+
 	// SelectDefault marks an OpSelect that carries a default (non-blocking) case.
 	SelectDefault bool
 

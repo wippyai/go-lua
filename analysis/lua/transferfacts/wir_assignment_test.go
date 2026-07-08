@@ -765,6 +765,8 @@ end`)
 		t.Fatalf("path assignment target = %s, want %s", got.String(), wantStaticTarget.String())
 	}
 	assertWIRPathSource(t, pathAssign.Source(), valuePath)
+	staticContainerSpan, staticContainerSpanOK := pathAssign.ContainerSpan()
+	assertTargetSpan(t, staticContainerSpan, staticContainerSpanOK, "static member write container")
 	staticWrite, ok := facts.PathStaticMemberWrite(staticPoint)
 	if !ok {
 		t.Fatalf("missing WIR no-sidecar static member write at point %d", staticPoint)
@@ -781,6 +783,8 @@ end`)
 	assertWIRPathSource(t, dynamicWrite.Source(), valuePath)
 	dynamicSpan, dynamicSpanOK := dynamicWrite.TargetSpan()
 	assertTargetSpan(t, dynamicSpan, dynamicSpanOK, "dynamic index write")
+	dynamicContainerSpan, dynamicContainerSpanOK := dynamicWrite.ContainerSpan()
+	assertTargetSpan(t, dynamicContainerSpan, dynamicContainerSpanOK, "dynamic index write container")
 	invalidation, ok := facts.PathDescendantInvalidation(dynamicPoint)
 	if !ok {
 		t.Fatalf("missing WIR no-sidecar dynamic index invalidation at point %d", dynamicPoint)

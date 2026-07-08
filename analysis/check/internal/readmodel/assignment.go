@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
@@ -50,22 +51,104 @@ func (r Reader) ForEachOptionalAssignmentTarget(visit func(OptionalAssignmentTar
 		return false
 	}
 	visited := false
-	return r.result.ForEachOptionalAssignmentTargetOccurrence(func(fact body.OrdinaryAssignmentFact, occ body.OptionalAssignmentTargetOccurrence) bool {
-		target := OptionalAssignmentTarget{
-			Point:          occ.Point,
-			ContainerLabel: occ.ContainerLabel,
-			TargetLabel:    occ.TargetLabel,
-			TargetKey:      r.assignmentTargetKeyForOrdinary(occ.Point, fact) + ":optional-target",
-			ContainerType:  occ.ContainerType,
-			ContainerSpan:  sourceSpanFromBody(occ.ContainerSpan),
-			TargetSpan:     sourceSpanFromBody(occ.TargetSpan),
+	for _, point := range r.result.Graph().RPO() {
+		if !r.result.PointNormallyReachable(point) {
+			continue
+		}
+		write, ok := r.result.LoweredAssignmentWrite(point)
+		if !ok {
+			continue
+		}
+		target, ok := r.optionalAssignmentTarget(point, write)
+		if !ok {
+			continue
 		}
 		visited = true
 		if !visit(target) {
 			return true
 		}
-		return true
-	}) || visited
+	}
+	return visited
+}
+
+func (r Reader) optionalAssignmentTarget(point cfg.Point, write body.LoweredAssignmentWrite) (OptionalAssignmentTarget, bool) {
+	if write.Target.IsEmpty() {
+		return OptionalAssignmentTarget{}, false
+	}
+	container, containerType, ok := r.optionalAssignmentContainer(point, write)
+	if !ok {
+		return OptionalAssignmentTarget{}, false
+	}
+	return OptionalAssignmentTarget{
+		Point:          point,
+		ContainerLabel: r.displayPath(container),
+		TargetLabel:    r.displayPathCanonical(write.Target),
+		TargetKey:      "path:" + string(write.Target.Key()) + ":optional-target",
+		ContainerType:  containerType,
+		ContainerSpan:  sourceSpanFromBody(write.ContainerSpan),
+		TargetSpan:     sourceSpanFromBody(write.Span),
+	}, true
+}
+
+func (r Reader) optionalAssignmentContainer(point cfg.Point, write body.LoweredAssignmentWrite) (bodyPath pathdom.Path, containerType typ.Type, ok bool) {
+	candidates := optionalAssignmentContainerCandidates(write)
+	for _, candidate := range candidates {
+		t, typeOK := r.optionalAssignmentContainerType(point, candidate)
+		if typeOK {
+			return candidate, t, true
+		}
+	}
+	return pathdom.Path{}, nil, false
+}
+
+func optionalAssignmentContainerCandidates(write body.LoweredAssignmentWrite) []pathdom.Path {
+	var out []pathdom.Path
+	add := func(candidate pathdom.Path) {
+		if candidate.IsEmpty() {
+			return
+		}
+		for _, existing := range out {
+			if existing.Equal(candidate) {
+				return
+			}
+		}
+		out = append(out, candidate)
+	}
+	if write.HasContainer {
+		add(write.Container)
+	}
+	for i := len(write.Target.Segments) - 1; i >= 0; i-- {
+		prefix := write.Target.RootOnly().AppendSegments(write.Target.Segments[:i])
+		add(prefix)
+	}
+	return out
+}
+
+func (r Reader) optionalAssignmentContainerType(point cfg.Point, container pathdom.Path) (typ.Type, bool) {
+	value, valueOK := r.result.PathValueBeforeBoundary(point, container)
+	if valueOK && presence.Equal(product.PresenceOf(value), presence.Present()) {
+		return nil, false
+	}
+	var containerType typ.Type
+	var ok bool
+	if valueOK {
+		containerType, ok = r.ValueTypeWithPresence(value)
+	}
+	if !ok || containerType == nil {
+		containerType, ok = r.result.DeclaredPathTypeAt(point, container, true)
+	}
+	if !ok || containerType == nil ||
+		typ.IsAny(containerType) ||
+		typ.IsUnknown(containerType) ||
+		typ.IsNever(containerType) ||
+		!typevalue.ProjectionHasNil(containerType) {
+		return nil, false
+	}
+	if r.result.PathProvenPresentBeforeBoundary(point, container) ||
+		r.result.DominatingRequiredMemberReadProvesPathPresent(point, container) {
+		return nil, false
+	}
+	return containerType, true
 }
 
 func (r Reader) forEachLocalAssignment(point cfg.Point, fact body.LocalAssignmentFact, visit func(Assignment) bool, visited *bool) bool {

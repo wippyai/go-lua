@@ -27,12 +27,14 @@ type DynamicIndexWrite struct {
 	keySource ValueSource
 	source    ValueSource
 
-	admission      dynamicindex.Admission
-	readbackIntent DynamicIndexReadbackIntent
-	targetSpan     SourceSpan
-	hasTargetSpan  bool
-	hasKeyPath     bool
-	hasValuePath   bool
+	admission        dynamicindex.Admission
+	readbackIntent   DynamicIndexReadbackIntent
+	targetSpan       SourceSpan
+	containerSpan    SourceSpan
+	hasTargetSpan    bool
+	hasContainerSpan bool
+	hasKeyPath       bool
+	hasValuePath     bool
 }
 
 // NewDynamicIndexWrite creates a dynamic-index write event.
@@ -135,6 +137,19 @@ func (w DynamicIndexWrite) TargetSpan() (SourceSpan, bool) {
 func (w DynamicIndexWrite) WithTargetSpan(span SourceSpan) DynamicIndexWrite {
 	w.targetSpan = span
 	w.hasTargetSpan = sourceSpanValid(span)
+	return w
+}
+
+// ContainerSpan returns the lowered source range for the dynamic-index
+// assignment container.
+func (w DynamicIndexWrite) ContainerSpan() (SourceSpan, bool) {
+	return w.containerSpan, w.hasContainerSpan
+}
+
+// WithContainerSpan returns a copy carrying container-location display metadata.
+func (w DynamicIndexWrite) WithContainerSpan(span SourceSpan) DynamicIndexWrite {
+	w.containerSpan = span
+	w.hasContainerSpan = sourceSpanValid(span)
 	return w
 }
 

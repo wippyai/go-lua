@@ -440,6 +440,9 @@ func (l *lowerer) addStaticMemberWriteFromWIR(input *factflow.FactsInput, point 
 	if inst.TargetSpan.Valid() {
 		assignment = assignment.WithTargetSpan(sourceSpanFromWIR(inst.TargetSpan))
 	}
+	if inst.ContainerSpan.Valid() {
+		assignment = assignment.WithContainerSpan(sourceSpanFromWIR(inst.ContainerSpan))
+	}
 	input.PathAssignments[point] = assignment
 	input.PathStaticMemberWrites[point] = factflow.NewPathStaticMemberWrite(target, source)
 	l.addPathStoreExposureFromWIR(input, point, target, source)
@@ -489,6 +492,9 @@ func (l *lowerer) addDynamicIndexWriteFromWIR(input *factflow.FactsInput, point 
 	)
 	if inst.TargetSpan.Valid() {
 		write = write.WithTargetSpan(sourceSpanFromWIR(inst.TargetSpan))
+	}
+	if inst.ContainerSpan.Valid() {
+		write = write.WithContainerSpan(sourceSpanFromWIR(inst.ContainerSpan))
 	}
 	if keyPath, ok := l.wirAssignmentSourcePath(inst.A); ok {
 		write = write.WithKeyPath(keyPath)

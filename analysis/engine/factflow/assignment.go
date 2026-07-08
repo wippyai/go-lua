@@ -121,10 +121,12 @@ func (a RootAssignment) copy() RootAssignment {
 
 // PathAssignment describes a member/path refinement write at a CFG point.
 type PathAssignment struct {
-	targetPath    path.Path
-	source        ValueSource
-	targetSpan    SourceSpan
-	hasTargetSpan bool
+	targetPath       path.Path
+	source           ValueSource
+	targetSpan       SourceSpan
+	containerSpan    SourceSpan
+	hasTargetSpan    bool
+	hasContainerSpan bool
 }
 
 // NewPathAssignment creates a member/path assignment fact.
@@ -154,6 +156,18 @@ func (a PathAssignment) TargetSpan() (SourceSpan, bool) {
 func (a PathAssignment) WithTargetSpan(span SourceSpan) PathAssignment {
 	a.targetSpan = span
 	a.hasTargetSpan = sourceSpanValid(span)
+	return a
+}
+
+// ContainerSpan returns the lowered source range for the assignment container.
+func (a PathAssignment) ContainerSpan() (SourceSpan, bool) {
+	return a.containerSpan, a.hasContainerSpan
+}
+
+// WithContainerSpan returns a copy carrying container-location display metadata.
+func (a PathAssignment) WithContainerSpan(span SourceSpan) PathAssignment {
+	a.containerSpan = span
+	a.hasContainerSpan = sourceSpanValid(span)
 	return a
 }
 

@@ -331,10 +331,11 @@ func (b *builder) lowerAssignTarget(index int, target ast.Expr, v binding) {
 	case *ast.AttrGetExpr:
 		if p, ok := pathexpr.Resolve(t, b.bindings); ok {
 			b.emit(wir.Instruction{
-				Op:         wir.OpStaticMemberWrite,
-				Dst:        b.pathOperand(p),
-				A:          b.bindingOperand(v),
-				TargetSpan: tableEntryValueSpan(t),
+				Op:            wir.OpStaticMemberWrite,
+				Dst:           b.pathOperand(p),
+				A:             b.bindingOperand(v),
+				TargetSpan:    tableEntryValueSpan(t),
+				ContainerSpan: assignmentTargetContainerSpan(t),
 			})
 			if v.hasCallResult {
 				b.recordCallResultTargetPath(v, p)
@@ -357,6 +358,7 @@ func (b *builder) lowerAssignTarget(index int, target ast.Expr, v binding) {
 			B:             b.bindingOperand(v),
 			DynamicSuffix: b.body.AppendSegments(target.Suffix),
 			TargetSpan:    tableEntryValueSpan(t),
+			ContainerSpan: assignmentTargetContainerSpan(t),
 		})
 		if v.hasCallResult {
 			b.recordCallResultTargetPath(v, path.Path{})
@@ -1553,6 +1555,28 @@ func wirSpanFromSource(span source.Span) wir.Span {
 		StartCol:  span.StartCol,
 		EndLine:   span.EndLine,
 		EndCol:    span.EndCol,
+	}
+}
+
+func assignmentTargetContainerSpan(target *ast.AttrGetExpr) wir.Span {
+	container := assignmentTargetContainerExpr(target)
+	if container == nil {
+		return wir.Span{}
+	}
+	return tableEntryValueSpan(container)
+}
+
+func assignmentTargetContainerExpr(target *ast.AttrGetExpr) ast.Expr {
+	if target == nil || target.Object == nil {
+		return nil
+	}
+	object := target.Object
+	for {
+		next, ok := object.(*ast.AttrGetExpr)
+		if !ok || next.KeySyntax != ast.AttrKeyIndex || next.Object == nil {
+			return object
+		}
+		object = next.Object
 	}
 }
 
