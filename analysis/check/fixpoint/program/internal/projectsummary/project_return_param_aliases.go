@@ -179,18 +179,24 @@ func returnAliasLocalObjectSources(result ResultReader, objectReader objectLiter
 }
 
 func returnAliasReassignedLocalSymbols(result ResultReader, graph cfg.Graph) map[symbol.ID]struct{} {
-	if graph == nil || !hasOrdinaryAssignmentFactReader(result) {
+	if graph == nil {
 		return nil
 	}
 	var out map[symbol.ID]struct{}
 	for _, point := range graph.RPO() {
-		fact, ok := ordinaryAssignmentFactAt(result, point)
-		if !ok {
-			continue
+		if assignment, ok := ordinaryRootAssignmentAt(result, point); ok {
+			target := assignment.TargetPath()
+			out = markReturnAliasAssignedLocalSymbol(out, assignment.TargetSymbol(), assignment.TargetSymbol() != 0)
+			out = markReturnAliasAssignedLocalSymbol(out, target.Symbol, !target.IsEmpty())
 		}
-		out = markReturnAliasAssignedLocalSymbol(out, fact.Symbol, fact.HasSymbol)
-		out = markReturnAliasAssignedLocalSymbol(out, fact.Path.Symbol, fact.HasPath)
-		out = markReturnAliasAssignedLocalSymbol(out, fact.ContainerPath.Symbol, fact.HasContainerPath)
+		if assignment, ok := pathAssignmentAt(result, point); ok {
+			target := assignment.TargetPath()
+			out = markReturnAliasAssignedLocalSymbol(out, target.Symbol, !target.IsEmpty())
+		}
+		if invalidation, ok := pathDescendantInvalidationAt(result, point); ok {
+			target := invalidation.ContainerPath()
+			out = markReturnAliasAssignedLocalSymbol(out, target.Symbol, !target.IsEmpty())
+		}
 	}
 	return out
 }
