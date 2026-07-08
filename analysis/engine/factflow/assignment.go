@@ -291,20 +291,6 @@ func copyPathDescendantInvalidationMap(in map[cfg.Point]PathDescendantInvalidati
 	return out
 }
 
-func mergePathDescendantInvalidationMap(a, b map[cfg.Point]PathDescendantInvalidation) map[cfg.Point]PathDescendantInvalidation {
-	out := copyPathDescendantInvalidationMap(a)
-	if len(out) == 0 {
-		out = make(map[cfg.Point]PathDescendantInvalidation, len(b))
-	}
-	for point, fact := range b {
-		if existing, ok := out[point]; ok && !existing.ContainerPath().Equal(fact.ContainerPath()) {
-			continue
-		}
-		out[point] = fact.copy()
-	}
-	return out
-}
-
 func copyPathAssignmentMap(in map[cfg.Point]PathAssignment) map[cfg.Point]PathAssignment {
 	if len(in) == 0 {
 		return nil

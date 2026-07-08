@@ -138,44 +138,6 @@ func copyPostconditionPathRelationMap(in map[cfg.Point]PostconditionPathRelation
 	return out
 }
 
-func mergePostconditionRefinementMap(
-	base map[cfg.Point]PostconditionRefinementSet,
-	add map[cfg.Point]PostconditionRefinementSet,
-) map[cfg.Point]PostconditionRefinementSet {
-	return mergePostconditionMap(base, add, copyPostconditionRefinementMap,
-		PostconditionRefinementSet.Refinements, NewPostconditionRefinementSet)
-}
-
-func mergePostconditionPathRelationMap(
-	base map[cfg.Point]PostconditionPathRelationSet,
-	add map[cfg.Point]PostconditionPathRelationSet,
-) map[cfg.Point]PostconditionPathRelationSet {
-	return mergePostconditionMap(base, add, copyPostconditionPathRelationMap,
-		PostconditionPathRelationSet.Relations, NewPostconditionPathRelationSet)
-}
-
-// mergePostconditionMap appends each point's add-set elements onto a copy of the
-// base map's per-point set, rebuilding each set with construct.
-func mergePostconditionMap[S any, E any](
-	base, add map[cfg.Point]S,
-	copyMap func(map[cfg.Point]S) map[cfg.Point]S,
-	elems func(S) []E,
-	construct func(...E) S,
-) map[cfg.Point]S {
-	out := copyMap(base)
-	if len(add) == 0 {
-		return out
-	}
-	if out == nil {
-		out = make(map[cfg.Point]S, len(add))
-	}
-	for point, set := range add {
-		merged := append(elems(out[point]), elems(set)...)
-		out[point] = construct(merged...)
-	}
-	return out
-}
-
 func copyPostconditionRefinementSlice(in []PostconditionRefinement) []PostconditionRefinement {
 	if len(in) == 0 {
 		return nil

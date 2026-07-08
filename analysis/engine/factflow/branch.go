@@ -397,29 +397,6 @@ func copyBranchRefinementSetMap(in map[cfg.Point]BranchRefinementSet) map[cfg.Po
 	return out
 }
 
-func mergeBranchRefinementSetMap(
-	base map[cfg.Point]BranchRefinementSet,
-	add map[cfg.Point]BranchRefinementSet,
-) map[cfg.Point]BranchRefinementSet {
-	out := copyBranchRefinementSetMap(base)
-	if len(add) == 0 {
-		return out
-	}
-	if out == nil {
-		out = make(map[cfg.Point]BranchRefinementSet, len(add))
-	}
-	for point, set := range add {
-		existing := out[point]
-		refinements := existing.Refinements()
-		refinements = append(refinements, set.Refinements()...)
-		merged := NewBranchRefinementSet(refinements...)
-		lenFloors := append(existing.LenRefinements(), set.LenRefinements()...)
-		numFloors := append(existing.NumFloorRefinements(), set.NumFloorRefinements()...)
-		out[point] = merged.WithLenRefinements(lenFloors...).WithNumFloorRefinements(numFloors...)
-	}
-	return out
-}
-
 func copyBranchRefinementSlice(in []BranchRefinement) []BranchRefinement {
 	if len(in) == 0 {
 		return nil

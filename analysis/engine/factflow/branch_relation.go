@@ -88,22 +88,6 @@ func copyBranchPresenceRelationMap(in map[cfg.Point]BranchPresenceRelationSet) m
 	return out
 }
 
-func mergeBranchPresenceRelationMap(
-	base map[cfg.Point]BranchPresenceRelationSet,
-	added map[cfg.Point]BranchPresenceRelationSet,
-) map[cfg.Point]BranchPresenceRelationSet {
-	if len(base) == 0 {
-		return copyBranchPresenceRelationMap(added)
-	}
-	out := copyBranchPresenceRelationMap(base)
-	for point, set := range added {
-		relations := out[point].Relations()
-		relations = append(relations, set.Relations()...)
-		out[point] = NewBranchPresenceRelationSet(relations...)
-	}
-	return out
-}
-
 func copyBranchPresenceRelationSlice(in []BranchPresenceRelation) []BranchPresenceRelation {
 	if len(in) == 0 {
 		return nil

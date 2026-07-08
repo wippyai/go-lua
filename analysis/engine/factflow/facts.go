@@ -111,46 +111,6 @@ func NewFacts(input FactsInput) Facts {
 	}
 }
 
-// WithBranchPresenceRelations returns f plus the supplied branch-triggered
-// presence relations.
-func (f Facts) WithBranchPresenceRelations(relations map[cfg.Point]BranchPresenceRelationSet) Facts {
-	if len(relations) == 0 {
-		return f
-	}
-	f.branchPresenceRelations = mergeBranchPresenceRelationMap(f.branchPresenceRelations, relations)
-	return f
-}
-
-// WithBranchRefinements returns f plus the supplied branch-edge value
-// refinements.
-func (f Facts) WithBranchRefinements(refinements map[cfg.Point]BranchRefinementSet) Facts {
-	if len(refinements) == 0 {
-		return f
-	}
-	f.branchRefinements = mergeBranchRefinementSetMap(f.branchRefinements, refinements)
-	return f
-}
-
-// WithPostconditionRefinements returns f plus the supplied node-local normal
-// return refinements.
-func (f Facts) WithPostconditionRefinements(refinements map[cfg.Point]PostconditionRefinementSet) Facts {
-	if len(refinements) == 0 {
-		return f
-	}
-	f.postconditionRefinements = mergePostconditionRefinementMap(f.postconditionRefinements, refinements)
-	return f
-}
-
-// WithPostconditionPathRelations returns f plus the supplied node-local normal
-// return path relations.
-func (f Facts) WithPostconditionPathRelations(relations map[cfg.Point]PostconditionPathRelationSet) Facts {
-	if len(relations) == 0 {
-		return f
-	}
-	f.postconditionPathRelations = mergePostconditionPathRelationMap(f.postconditionPathRelations, relations)
-	return f
-}
-
 // WithNoNormalReturns returns f plus the supplied points that cannot complete
 // normally.
 func (f Facts) WithNoNormalReturns(points map[cfg.Point]struct{}) Facts {
@@ -158,18 +118,6 @@ func (f Facts) WithNoNormalReturns(points map[cfg.Point]struct{}) Facts {
 		return f
 	}
 	f.noNormalReturns = mergeNoNormalReturnMap(f.noNormalReturns, points)
-	return f
-}
-
-// WithPathDescendantInvalidations returns f plus descendant invalidations for
-// statically known container paths. Factflow currently stores at most one such
-// invalidation per point; when two different paths collide, the existing path is
-// retained instead of inventing unsafe precision.
-func (f Facts) WithPathDescendantInvalidations(invalidations map[cfg.Point]PathDescendantInvalidation) Facts {
-	if len(invalidations) == 0 {
-		return f
-	}
-	f.pathDescendantInvalidations = mergePathDescendantInvalidationMap(f.pathDescendantInvalidations, invalidations)
 	return f
 }
 
