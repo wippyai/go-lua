@@ -216,7 +216,7 @@ func (l *lowerer) wirAssignmentDeclaredObjectType(inst wir.Instruction, target s
 	if l == nil {
 		return nil, false
 	}
-	if l.wir != nil && inst.Type != 0 {
+	if inst.Type != 0 {
 		if declared := l.wir.Type(inst.Type); declared != nil {
 			return declared, luatypeprojection.ReachesTableContract(declared) && !reachesArray(declared) && !recordWithCallableField(declared)
 		}
@@ -229,7 +229,7 @@ func (l *lowerer) wirAssignmentObjectLiteralExpectedType(inst wir.Instruction, t
 	if l == nil {
 		return nil, false
 	}
-	if l.wir != nil && inst.Type != 0 {
+	if inst.Type != 0 {
 		if declared := l.wir.Type(inst.Type); declared != nil {
 			return declared, luatypeprojection.ReachesTableContract(declared)
 		}

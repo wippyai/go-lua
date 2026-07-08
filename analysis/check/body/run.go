@@ -142,7 +142,7 @@ func (c *checker) prepare(
 ) *Static {
 	config := c.config
 	globals := configGlobals(config)
-	lowered := transferfacts.LowerWithSidecars(built.Graph, transferfacts.Config{
+	lowered := transferfacts.LowerDetailed(built.Graph, transferfacts.Config{
 		Registry:      config.Registry,
 		Bindings:      bindings,
 		TypeResolver:  typeResolver,

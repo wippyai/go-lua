@@ -1567,7 +1567,7 @@ state.active_sessions[session_id] = {
 	body := wirlower.Lower("dynamic-index-object-expected-no-sidecars", stmts, bindings, built)
 	reg := standard.Registry()
 	typeValues := typevalue.NewCache()
-	lowered := LowerWithSidecars(built.Graph, Config{Registry: reg, Bindings: bindings, TypeValues: typeValues, WIR: body})
+	lowered := LowerDetailed(built.Graph, Config{Registry: reg, Bindings: bindings, TypeValues: typeValues, WIR: body})
 	facts := lowered.Facts
 
 	assignPoint := requireStmtPoints(t, built, stmts[3], 1)[0]

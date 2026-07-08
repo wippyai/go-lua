@@ -38,10 +38,10 @@ type Lowered struct {
 }
 
 func Lower(graph cfg.Graph, config Config) factflow.Facts {
-	return LowerWithSidecars(graph, config).Facts
+	return LowerDetailed(graph, config).Facts
 }
 
-func LowerWithSidecars(graph cfg.Graph, config Config) Lowered {
+func LowerDetailed(graph cfg.Graph, config Config) Lowered {
 	if config.Registry == nil {
 		panic("transferfacts: Config.Registry is required")
 	}
@@ -53,15 +53,9 @@ func LowerWithSidecars(graph cfg.Graph, config Config) Lowered {
 		typeResolver = typeresolve.New(config.Bindings)
 	}
 	symbolTypes := lowerSymbolTypes(config.Bindings, typeResolver, config.MethodReceiverTypes)
-	if config.WIR != nil {
-		symbolTypes = mergeSymbolTypes(symbolTypes, lowerSymbolTypesFromWIR(config.WIR, config.Bindings, config.ModuleExports))
-	}
-	var declaredReturnLocalTypes map[symbol.ID]typ.Type
-	var returnLocalObjectLiteralTypes map[symbol.ID]typ.Type
-	if config.WIR != nil {
-		declaredReturnLocalTypes = lowerDeclaredReturnLocalTypesFromWIR(config.Bindings, graph, config.WIR)
-		returnLocalObjectLiteralTypes = lowerReturnLocalObjectLiteralTypesFromWIR(config.Bindings, graph, config.WIR)
-	}
+	symbolTypes = mergeSymbolTypes(symbolTypes, lowerSymbolTypesFromWIR(config.WIR, config.Bindings, config.ModuleExports))
+	declaredReturnLocalTypes := lowerDeclaredReturnLocalTypesFromWIR(config.Bindings, graph, config.WIR)
+	returnLocalObjectLiteralTypes := lowerReturnLocalObjectLiteralTypesFromWIR(config.Bindings, graph, config.WIR)
 	symbolTypes = mergeSymbolTypes(symbolTypes, declaredReturnLocalTypes)
 	expressionRefinements := make(map[factflow.ExprRef]factflow.ExpressionRefinement)
 	l := lowerer{
@@ -112,46 +106,34 @@ func LowerWithSidecars(graph cfg.Graph, config Config) Lowered {
 		ExpressionRefinements:         expressionRefinements,
 		DynamicIndexExpressions:       make(map[factflow.ExprRef]factflow.DynamicIndexExpression),
 	}
-	if l.wir != nil {
-		l.addObjectLiteralsFromWIR(&input)
-	}
+	l.addObjectLiteralsFromWIR(&input)
 	for _, point := range graph.RPO() {
-		if l.wir != nil {
-			l.addAssignmentWritesFromWIR(&input, point)
+		l.addAssignmentWritesFromWIR(&input, point)
+		if sources, ok := l.returnValueSourcesFromWIR(point); ok {
+			input.Returns[point] = factflow.NewReturn(sources)
+			l.addReturnObjectLiteralExpectedTypesFromWIR(&input, sources)
+			l.addTypeIsReturnPresenceRelationsFromSources(&input, point, sources)
 		}
-		if l.wir != nil {
-			if sources, ok := l.returnValueSourcesFromWIR(point); ok {
-				input.Returns[point] = factflow.NewReturn(sources)
-				l.addReturnObjectLiteralExpectedTypesFromWIR(&input, sources)
-				l.addTypeIsReturnPresenceRelationsFromSources(&input, point, sources)
-			}
+		if lowered := l.channelSelectsFromWIR(point); len(lowered) != 0 {
+			input.ChannelSelects[point] = factflow.NewChannelSelectSet(lowered...)
 		}
-		if l.wir != nil {
-			if lowered := l.channelSelectsFromWIR(point); len(lowered) != 0 {
-				input.ChannelSelects[point] = factflow.NewChannelSelectSet(lowered...)
-			}
-			if site, ok := l.callSiteFromWIR(point); ok {
-				input.CallSites[point] = site
-			}
-			if lowered := l.typeIsCallResultValuesFromWIR(point); len(lowered) != 0 {
-				appendCallResultValues(input.CallResultValues, point, lowered...)
-			}
-			if lowered, ok := l.typeCastPostconditionRefinementFromWIR(point); ok {
-				appendPostconditionRefinements(input.PostconditionRefinements, point, lowered)
-			}
-			if lowered, ok := l.assertPostconditionRefinementFromWIR(point); ok {
-				appendPostconditionRefinements(input.PostconditionRefinements, point, lowered)
-			}
-			if lowered, ok := l.typeCastCallResultValueFromWIR(point); ok {
-				appendCallResultValues(input.CallResultValues, point, lowered)
-			}
+		if site, ok := l.callSiteFromWIR(point); ok {
+			input.CallSites[point] = site
 		}
-		if l.wir != nil {
-			l.addBranchFactsFromWIR(&input, point)
+		if lowered := l.typeIsCallResultValuesFromWIR(point); len(lowered) != 0 {
+			appendCallResultValues(input.CallResultValues, point, lowered...)
 		}
-		if l.wir != nil {
-			l.addNumericForFactsFromWIR(&input, point)
+		if lowered, ok := l.typeCastPostconditionRefinementFromWIR(point); ok {
+			appendPostconditionRefinements(input.PostconditionRefinements, point, lowered)
 		}
+		if lowered, ok := l.assertPostconditionRefinementFromWIR(point); ok {
+			appendPostconditionRefinements(input.PostconditionRefinements, point, lowered)
+		}
+		if lowered, ok := l.typeCastCallResultValueFromWIR(point); ok {
+			appendCallResultValues(input.CallResultValues, point, lowered)
+		}
+		l.addBranchFactsFromWIR(&input, point)
+		l.addNumericForFactsFromWIR(&input, point)
 	}
 	l.addTypeIsBranchRefinements(&input, graph)
 	l.addProtectedCallBranchRefinements(&input, graph)
