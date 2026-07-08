@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -57,8 +56,8 @@ type branchPathRelationReader interface {
 	BranchPathRelations(cfg.Point) []factflow.BranchPathRelation
 }
 
-type branchSufficientCheckReader interface {
-	BranchConditionSufficientChecksOnEdge(cfg.Point, bool) []branchcond.ImpliedCheck
+type branchSufficientLiteralCaseReader interface {
+	BranchSufficientLiteralCases(cfg.Point) []factflow.BranchSufficientLiteralCase
 }
 
 type pointDominatorReader interface {

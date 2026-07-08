@@ -22,6 +22,7 @@ type FactsInput struct {
 	BranchPresenceRelations       map[cfg.Point]BranchPresenceRelationSet
 	BranchPathRelations           map[cfg.Point]BranchPathRelationSet
 	BranchPathEvidence            map[cfg.Point]BranchPathEvidenceSet
+	BranchSufficientLiteralCases  map[cfg.Point]BranchSufficientLiteralCaseSet
 	PathValuePresenceImplications map[cfg.Point]PathValuePresenceImplicationSet
 	ChannelSelects                map[cfg.Point]ChannelSelectSet
 	PostconditionRefinements      map[cfg.Point]PostconditionRefinementSet
@@ -55,6 +56,7 @@ type Facts struct {
 	branchPresenceRelations       map[cfg.Point]BranchPresenceRelationSet
 	branchPathRelations           map[cfg.Point]BranchPathRelationSet
 	branchPathEvidence            map[cfg.Point]BranchPathEvidenceSet
+	branchSufficientLiteralCases  map[cfg.Point]BranchSufficientLiteralCaseSet
 	pathValuePresenceImplications map[cfg.Point]PathValuePresenceImplicationSet
 	channelSelects                map[cfg.Point]ChannelSelectSet
 	postconditionRefinements      map[cfg.Point]PostconditionRefinementSet
@@ -89,6 +91,7 @@ func NewFacts(input FactsInput) Facts {
 		branchPresenceRelations:       copyBranchPresenceRelationMap(input.BranchPresenceRelations),
 		branchPathRelations:           copyBranchPathRelationMap(input.BranchPathRelations),
 		branchPathEvidence:            copyBranchPathEvidenceMap(input.BranchPathEvidence),
+		branchSufficientLiteralCases:  copyBranchSufficientLiteralCaseMap(input.BranchSufficientLiteralCases),
 		pathValuePresenceImplications: copyPathValuePresenceImplicationMap(input.PathValuePresenceImplications),
 		channelSelects:                copyChannelSelectMap(input.ChannelSelects),
 		postconditionRefinements:      copyPostconditionRefinementMap(input.PostconditionRefinements),
@@ -320,6 +323,15 @@ func (f Facts) BranchPathRelations(point cfg.Point) []BranchPathRelation {
 func (f Facts) BranchPathEvidence(point cfg.Point) []BranchPathEvidence {
 	if set, ok := f.branchPathEvidence[point]; ok {
 		return set.Evidence()
+	}
+	return nil
+}
+
+// BranchSufficientLiteralCases returns branch-edge literal cases where proving
+// the path has the literal value is sufficient to take that branch edge.
+func (f Facts) BranchSufficientLiteralCases(point cfg.Point) []BranchSufficientLiteralCase {
+	if set, ok := f.branchSufficientLiteralCases[point]; ok {
+		return set.Cases()
 	}
 	return nil
 }

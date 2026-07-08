@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	path "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
@@ -194,6 +195,46 @@ end
 	}
 	if !checked {
 		t.Fatal("WIR branch path evidence was not produced")
+	}
+}
+
+func TestLowerWithWIRCompoundBranchPublishesSufficientLiteralCases(t *testing.T) {
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
+local status = "ready"
+if status == "ready" or status == "done" then
+    local hit = true
+end
+`)
+	reg := standard.Registry()
+	body := wirlower.Lower("chunk", stmts, bindings, built)
+	wirFacts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+
+	point := requireStmtPoints(t, built, stmts[1], 1)[0]
+	got := wirFacts.BranchSufficientLiteralCases(point)
+	if len(got) != 2 {
+		t.Fatalf("BranchSufficientLiteralCases = %#v, want ready/done cases", got)
+	}
+	statusPath := path.NewPath(mustLocalAt(t, bindings, stmts[0].(*ast.LocalAssignStmt), 0), "status")
+	seen := map[string]bool{}
+	for _, c := range got {
+		if !c.TargetPath().Equal(statusPath) || !c.Edge() {
+			t.Fatalf("sufficient case = path %s edge %v, want %s true", c.TargetPath(), c.Edge(), statusPath)
+		}
+		lit, ok := typevalue.TypeOf(reg, c.LiteralValue())
+		if !ok {
+			t.Fatalf("sufficient case literal value has no type: %#v", c.LiteralValue())
+		}
+		switch {
+		case typ.TypeEquals(lit, typ.LiteralString("ready")):
+			seen["ready"] = true
+		case typ.TypeEquals(lit, typ.LiteralString("done")):
+			seen["done"] = true
+		default:
+			t.Fatalf("unexpected sufficient literal type %s", lit)
+		}
+	}
+	if !seen["ready"] || !seen["done"] {
+		t.Fatalf("sufficient literals = %#v, want ready and done", seen)
 	}
 }
 

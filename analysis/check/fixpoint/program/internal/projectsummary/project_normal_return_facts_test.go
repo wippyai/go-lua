@@ -26,6 +26,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -417,6 +418,57 @@ func TestProjectNormalReturnParamEqualitiesUseBranchPathRelations(t *testing.T) 
 	got := projectNormalReturnParamEqualities(reg, stub)
 	if len(got) != 1 || got[0].Left != 0 || got[0].Right != 1 {
 		t.Fatalf("projectNormalReturnParamEqualities = %#v, want parameter equality from branch relation", got)
+	}
+}
+
+func TestFromResultProjectsReturnParamLiteralCasesFromBranchFacts(t *testing.T) {
+	reg := standard.Registry()
+	status := symbol.ID(928)
+	graph, branch, ret, _ := normalReturnBranchGraph(t, true)
+	shape, ok := factflow.NewValueSourceShape(true, false, false, false)
+	if !ok {
+		t.Fatal("NewValueSourceShape returned false")
+	}
+	returnSource, ok := factflow.NewExpressionValueSource(factflow.ExprRef(928), 0, factflow.NoValueSourceIndex, 0, shape)
+	if !ok {
+		t.Fatal("NewExpressionValueSource(return) returned false")
+	}
+	when := typevalue.NewCache().FromTypeWithWitness(reg, typ.LiteralString("ready"))
+	value := typevalue.NewCache().FromTypeWithWitness(reg, typ.String)
+	stub := normalReturnFactProjectResultStub{
+		reg:          reg,
+		graph:        graph,
+		slots:        []key.Value{key.SymbolValue(status)},
+		returnPoints: []cfg.Point{ret},
+		returnSources: map[cfg.Point][]factflow.ValueSource{
+			ret: {returnSource},
+		},
+		returnSourceValues: map[cfg.Point]map[factflow.ValueSource]product.Value{
+			ret: {returnSource: value},
+		},
+		statesAt: map[cfg.Point]state.State{
+			ret:          presentState(reg, status),
+			graph.Exit(): presentState(reg, status),
+		},
+		branchSufficientLiteralCases: map[cfg.Point][]factflow.BranchSufficientLiteralCase{
+			branch: {
+				factflow.NewBranchSufficientLiteralCase(pathdom.NewPath(status, "").Field("kind"), when, true),
+			},
+		},
+	}
+
+	got := FromResult(stub).ReturnParamLiteralCases
+	if len(got) != 1 {
+		t.Fatalf("ReturnParamLiteralCases = %#v, want one case", got)
+	}
+	if got[0].ParamIndex != 0 || len(got[0].ParamSuffix) != 1 || got[0].ParamSuffix[0].Name != "kind" {
+		t.Fatalf("ReturnParamLiteralCases[0] parameter = %#v, want $0.kind", got[0])
+	}
+	if !typ.TypeEquals(got[0].When, typ.LiteralString("ready")) {
+		t.Fatalf("ReturnParamLiteralCases[0].When = %s, want \"ready\"", got[0].When)
+	}
+	if got[0].ReturnIndex != 0 || !product.Equal(reg, got[0].Value, value) {
+		t.Fatalf("ReturnParamLiteralCases[0] return = %#v, want return[0] value", got[0])
 	}
 }
 
@@ -1337,22 +1389,24 @@ func TestFromResultProjectsGuardedCallOutcomePersistentPathWritesWhenBypassEdgeU
 }
 
 type normalReturnFactProjectResultStub struct {
-	reg             *axis.Registry
-	graph           cfg.Graph
-	exit            state.State
-	slots           []key.Value
-	keys            *keyspace.KeySpace
-	reassigned      map[key.Value]struct{}
-	returnPoints    []cfg.Point
-	returnSources   map[cfg.Point][]factflow.ValueSource
-	exprPaths       map[factflow.ExprRef]pathdom.Path
-	exprOps         map[factflow.ExprRef]factflow.ExpressionOperation
-	entryState      state.State
-	hasEntryState   bool
-	statesAt        map[cfg.Point]state.State
-	edgeReach       map[[2]cfg.Point]bool
-	branchEvidence  map[cfg.Point][]factflow.BranchPathEvidence
-	branchRelations map[cfg.Point][]factflow.BranchPathRelation
+	reg                          *axis.Registry
+	graph                        cfg.Graph
+	exit                         state.State
+	slots                        []key.Value
+	keys                         *keyspace.KeySpace
+	reassigned                   map[key.Value]struct{}
+	returnPoints                 []cfg.Point
+	returnSources                map[cfg.Point][]factflow.ValueSource
+	exprPaths                    map[factflow.ExprRef]pathdom.Path
+	exprOps                      map[factflow.ExprRef]factflow.ExpressionOperation
+	entryState                   state.State
+	hasEntryState                bool
+	statesAt                     map[cfg.Point]state.State
+	edgeReach                    map[[2]cfg.Point]bool
+	branchEvidence               map[cfg.Point][]factflow.BranchPathEvidence
+	branchRelations              map[cfg.Point][]factflow.BranchPathRelation
+	branchSufficientLiteralCases map[cfg.Point][]factflow.BranchSufficientLiteralCase
+	returnSourceValues           map[cfg.Point]map[factflow.ValueSource]product.Value
 }
 
 type normalReturnFactProjectAssignmentStub struct {
@@ -1513,6 +1567,35 @@ func (r normalReturnFactProjectResultStub) BranchPathRelations(point cfg.Point) 
 	copyOut := make([]factflow.BranchPathRelation, len(out))
 	copy(copyOut, out)
 	return copyOut
+}
+
+func (r normalReturnFactProjectResultStub) BranchSufficientLiteralCases(point cfg.Point) []factflow.BranchSufficientLiteralCase {
+	if len(r.branchSufficientLiteralCases) == 0 {
+		return nil
+	}
+	out := r.branchSufficientLiteralCases[point]
+	if len(out) == 0 {
+		return nil
+	}
+	copyOut := make([]factflow.BranchSufficientLiteralCase, len(out))
+	copy(copyOut, out)
+	return copyOut
+}
+
+func (r normalReturnFactProjectResultStub) SourceValueAtBoundary(point cfg.Point, source factflow.ValueSource) (product.Value, bool) {
+	values, ok := r.returnSourceValues[point]
+	if !ok {
+		return product.Value{}, false
+	}
+	value, ok := values[source]
+	return value, ok
+}
+
+func (r normalReturnFactProjectResultStub) PointDominates(dominator, point cfg.Point) bool {
+	if r.graph == nil {
+		return false
+	}
+	return dominance.ComputeImmediateDominatorInfo(r.graph).Dominates(dominator, point)
 }
 
 func (r normalReturnFactProjectResultStub) EdgeCanCompleteNormally(from, to cfg.Point) bool {

@@ -412,6 +412,13 @@ func (r *Result) BranchPathRelations(point cfg.Point) []factflow.BranchPathRelat
 	return r.facts.BranchPathRelations(point)
 }
 
+func (r *Result) BranchSufficientLiteralCases(point cfg.Point) []factflow.BranchSufficientLiteralCase {
+	if r == nil {
+		return nil
+	}
+	return r.facts.BranchSufficientLiteralCases(point)
+}
+
 func (r *Result) NoNormalReturn(point cfg.Point) bool {
 	if r == nil {
 		return false

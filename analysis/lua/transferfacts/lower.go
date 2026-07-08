@@ -100,6 +100,7 @@ func LowerWithSidecars(graph cfg.Graph, config Config) Lowered {
 		BranchPresenceRelations:       make(map[cfg.Point]factflow.BranchPresenceRelationSet),
 		BranchPathRelations:           make(map[cfg.Point]factflow.BranchPathRelationSet),
 		BranchPathEvidence:            make(map[cfg.Point]factflow.BranchPathEvidenceSet),
+		BranchSufficientLiteralCases:  make(map[cfg.Point]factflow.BranchSufficientLiteralCaseSet),
 		PathValuePresenceImplications: make(map[cfg.Point]factflow.PathValuePresenceImplicationSet),
 		ChannelSelects:                make(map[cfg.Point]factflow.ChannelSelectSet),
 		PostconditionRefinements:      make(map[cfg.Point]factflow.PostconditionRefinementSet),
@@ -225,6 +226,9 @@ func (l *lowerer) addBranchFactsFromWIR(input *factflow.FactsInput, point cfg.Po
 	}
 	if lowered := l.branchPathEvidenceFromWIR(point); len(lowered) != 0 {
 		appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
+	}
+	if lowered := l.branchSufficientLiteralCasesFromWIR(point); len(lowered) != 0 {
+		appendBranchSufficientLiteralCases(input.BranchSufficientLiteralCases, point, lowered...)
 	}
 	if lowered := l.branchAliasPathEvidenceFromWIR(point); len(lowered) != 0 {
 		appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)

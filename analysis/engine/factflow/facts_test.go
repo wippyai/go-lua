@@ -114,6 +114,22 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	branchSetRefinements[0] = NewBranchRefinement(path.NewPath(symbol.ID(18), "mutated"), trueRefinement, true, falseRefinement, true)
 	assertPathEqual(t, branchSet.Refinements()[0].TargetPath(), path.NewPath(symbol.ID(15), "value").Field("ready"))
 
+	sufficientTarget := path.NewPath(symbol.ID(18), "case").Field("kind")
+	sufficientLiteral := NewBranchSufficientLiteralCase(sufficientTarget, presenceConstraint(presence.Present()), true)
+	assertPathEqual(t, sufficientLiteral.TargetPath(), path.NewPath(symbol.ID(18), "case").Field("kind"))
+	assertPathEqual(t, sufficientLiteral.TargetPathRef(), path.NewPath(symbol.ID(18), "case").Field("kind"))
+	if !sufficientLiteral.Edge() {
+		t.Fatalf("sufficient literal edge = false, want true")
+	}
+	sufficientCases := NewBranchSufficientLiteralCaseSet(sufficientLiteral).Cases()
+	if len(sufficientCases) != 1 {
+		t.Fatalf("sufficient literal cases len = %d, want 1", len(sufficientCases))
+	}
+	sufficientTarget.Segments[0].Name = "changed"
+	assertPathEqual(t, sufficientLiteral.TargetPath(), path.NewPath(symbol.ID(18), "case").Field("kind"))
+	sufficientCases[0].targetPath.Segments[0].Name = "changed-again"
+	assertPathEqual(t, NewBranchSufficientLiteralCaseSet(sufficientLiteral).Cases()[0].TargetPath(), path.NewPath(symbol.ID(18), "case").Field("kind"))
+
 	relationTrigger := path.NewPath(symbol.ID(19), "err")
 	relationTarget := path.NewPath(symbol.ID(20), "value")
 	relation := NewBranchPresenceRelation(relationTrigger, presence.Present(), relationTarget, presence.Absent())
@@ -533,6 +549,11 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 				),
 			),
 		},
+		BranchSufficientLiteralCases: map[cfg.Point]BranchSufficientLiteralCaseSet{
+			point: NewBranchSufficientLiteralCaseSet(
+				NewBranchSufficientLiteralCase(path.NewPath(symbol.ID(68), "case").Field("kind"), presenceConstraint(presence.Present()), true),
+			),
+		},
 		PostconditionRefinements: map[cfg.Point]PostconditionRefinementSet{
 			point: NewPostconditionRefinementSet(
 				NewPostconditionRefinement(
@@ -625,6 +646,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	input.BranchPathEvidence[point] = NewBranchPathEvidenceSet(
 		NewBranchPathEqualityEvidence(path.NewPath(symbol.ID(68), "changed"), path.NewPath(symbol.ID(69), "changed")),
 	)
+	input.BranchSufficientLiteralCases[point] = NewBranchSufficientLiteralCaseSet(
+		NewBranchSufficientLiteralCase(path.NewPath(symbol.ID(72), "changed"), presenceConstraint(presence.Absent()), false),
+	)
 	input.PostconditionRefinements[point] = NewPostconditionRefinementSet(
 		NewPostconditionRefinement(
 			path.NewPath(symbol.ID(64), "changed"),
@@ -661,6 +685,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	}
 	if got := facts.BranchPathRelations(missing); len(got) != 0 {
 		t.Fatalf("missing branch path relations = %#v, want empty", got)
+	}
+	if got := facts.BranchSufficientLiteralCases(missing); len(got) != 0 {
+		t.Fatalf("missing branch sufficient literal cases = %#v, want empty", got)
 	}
 	if got := facts.PostconditionRefinements(missing); len(got) != 0 {
 		t.Fatalf("missing postcondition refinements = %#v, want empty", got)
@@ -832,6 +859,18 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	if branchEvidenceAllocs != 0 {
 		t.Fatalf("ForEachBranchPathEvidence allocations/run = %.1f, want zero", branchEvidenceAllocs)
 	}
+
+	sufficientCases := facts.BranchSufficientLiteralCases(point)
+	if len(sufficientCases) != 1 {
+		t.Fatalf("branch sufficient literal cases len = %d, want 1", len(sufficientCases))
+	}
+	assertPathEqual(t, sufficientCases[0].TargetPath(), path.NewPath(symbol.ID(68), "case").Field("kind"))
+	if !sufficientCases[0].Edge() {
+		t.Fatalf("branch sufficient literal case edge = false, want true")
+	}
+	sufficientCases[0].targetPath.Root = "mutated"
+	sufficientAgain := facts.BranchSufficientLiteralCases(point)
+	assertPathEqual(t, sufficientAgain[0].TargetPath(), path.NewPath(symbol.ID(68), "case").Field("kind"))
 
 	postconditions := facts.PostconditionRefinements(point)
 	if len(postconditions) != 1 {
