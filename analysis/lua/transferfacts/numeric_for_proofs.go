@@ -5,7 +5,6 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
-	"github.com/wippyai/go-lua/compiler/parse/numparse"
 )
 
 // numericForBranchPathEvidence lowers `for i = init, #xs do` into the same
@@ -117,26 +116,10 @@ func (l *lowerer) numericForPositiveFloorFromWIR(op wir.Operand) (int64, bool) {
 }
 
 func (l *lowerer) numericForIntegralLiteralFromWIR(op wir.Operand) (int64, bool) {
-	switch op.Kind {
-	case wir.OperandConst:
-		c := l.wir.Const(wir.ConstRef(op.Ref))
-		if c.Kind != wir.ConstNumber {
-			return 0, false
-		}
-		return numparse.ParseIntegralLiteral(c.Number)
-	case wir.OperandTemp:
-		inst, ok := l.wirTempDefs()[op.Ref]
-		if !ok || inst.Op != wir.OpUnOp || inst.Operator != wir.UnNeg {
-			return 0, false
-		}
-		value, ok := l.numericForIntegralLiteralFromWIR(inst.A)
-		if !ok {
-			return 0, false
-		}
-		return -value, true
-	default:
+	if l == nil || l.wir == nil {
 		return 0, false
 	}
+	return numericForIntegralLiteralFromWIR(l.wir, l.wirTempDefs(), op)
 }
 
 func (l *lowerer) numericForLengthOperandPathFromWIR(op wir.Operand) (pathdom.Path, bool) {

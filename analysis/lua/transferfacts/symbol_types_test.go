@@ -39,7 +39,7 @@ end
 	}
 }
 
-func TestLowerSymbolTypesReadsCfgMetadataWithoutSemanticResult(t *testing.T) {
+func TestLowerSymbolTypesReadsFunctionCfgMetadataWithoutSemanticResult(t *testing.T) {
 	stmts, bindings, built, _ := parseSemanticChunk(t, `
 function build(value: string): number
 	return 1
@@ -82,7 +82,9 @@ end
 	if len(fnType.Returns) != 1 || !typ.TypeEquals(fnType.Returns[0], typ.Number) {
 		t.Fatalf("function returns = %#v, want number", fnType.Returns)
 	}
-	if gotType, ok := got[loopSym]; !ok || !typ.TypeEquals(gotType, typ.Integer) {
+	wirBody := wirlower.Lower("numeric-for-symbol-types", stmts, bindings, built)
+	wirTypes := lowerSymbolTypesFromWIR(wirBody, bindings, importlookup.Source{})
+	if gotType, ok := wirTypes[loopSym]; !ok || !typ.TypeEquals(gotType, typ.Integer) {
 		t.Fatalf("numeric-for symbol type = %v/%v, want integer", gotType, ok)
 	}
 }

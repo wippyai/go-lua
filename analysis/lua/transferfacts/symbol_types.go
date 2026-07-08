@@ -10,8 +10,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/functiontype"
 	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
-	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
-	"github.com/wippyai/go-lua/analysis/lua/typeoperator"
 	"github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
@@ -19,7 +17,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/kind"
-	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typecall"
@@ -88,19 +85,6 @@ func lowerSymbolTypes(
 			out[origin.TargetSymbol] = t
 		}
 	}
-	// A numeric-for control variable has no annotation, so record the strongest
-	// type proven by the control operands. Lua uses an integer loop when init,
-	// limit, and step are all integers; otherwise the variable is numeric.
-	for _, point := range graph.RPO() {
-		fact, ok := numericForFactAt(meta, point)
-		if !ok || !fact.HasSymbol || fact.Symbol == 0 {
-			continue
-		}
-		if _, present := out[fact.Symbol]; present {
-			continue
-		}
-		out[fact.Symbol] = numericForSymbolType(out, bindings, fact.Init, fact.Limit, fact.Step)
-	}
 	if len(out) == 0 {
 		return nil
 	}
@@ -148,6 +132,9 @@ func lowerSymbolTypesFromWIR(body *wir.Body, bindings *bind.Result, moduleExport
 		case wir.OpCall:
 			addWIRCallResultSymbolTypes(out, body, inst)
 			continue
+		case wir.OpIterate:
+			addWIRNumericForSymbolType(out, body, tempDefs, inst)
+			continue
 		default:
 			continue
 		}
@@ -181,6 +168,26 @@ func lowerSymbolTypesFromWIR(body *wir.Body, bindings *bind.Result, moduleExport
 		return nil
 	}
 	return out
+}
+
+func addWIRNumericForSymbolType(out map[symbol.ID]typ.Type, body *wir.Body, tempDefs map[uint32]wir.Instruction, inst wir.Instruction) {
+	if out == nil || body == nil || inst.Op != wir.OpIterate || inst.Iter != wir.IterNumeric {
+		return
+	}
+	results := body.Operands(inst.Results)
+	if len(results) == 0 || results[0].Kind != wir.OperandPath {
+		return
+	}
+	p := body.Path(wir.PathRef(results[0].Ref))
+	if p.IsEmpty() || p.Symbol == 0 || len(p.Segments) != 0 {
+		return
+	}
+	if _, exists := out[p.Symbol]; exists {
+		return
+	}
+	if t := numericForLoopVariableTypeFromWIR(body, out, tempDefs, inst); t != nil {
+		out[p.Symbol] = t
+	}
 }
 
 func addWIRRequireExportSymbolTypes(out map[symbol.ID]typ.Type, body *wir.Body, bindings *bind.Result, moduleExports importlookup.Source) {
@@ -448,66 +455,6 @@ func callableFromWIRCallType(body *wir.Body, inst wir.Instruction) (*typ.Functio
 
 func functionDefinitionFactAt(meta cfgfacts.Metadata, point cfg.Point) (cfgfacts.FunctionDefinitionFact, bool) {
 	return meta.FunctionDefinition(point)
-}
-
-func numericForFactAt(meta cfgfacts.Metadata, point cfg.Point) (cfgfacts.NumericForFact, bool) {
-	return meta.NumericFor(point)
-}
-
-func numericForSymbolType(symbolTypes map[symbol.ID]typ.Type, bindings *bind.Result, init, limit, step ast.Expr) typ.Type {
-	if numericForControlExprIsInteger(symbolTypes, bindings, init) &&
-		numericForControlExprIsInteger(symbolTypes, bindings, limit) &&
-		numericForControlExprIsInteger(symbolTypes, bindings, step) {
-		return typ.Integer
-	}
-	return typ.Number
-}
-
-func numericForControlExprIsInteger(symbolTypes map[symbol.ID]typ.Type, bindings *bind.Result, expr ast.Expr) bool {
-	if expr == nil {
-		return true
-	}
-	t, ok := numericForControlExprType(symbolTypes, bindings, expr)
-	return ok && t != nil && !typ.IsAny(t) && !typ.IsUnknown(t) && subtype.IsSubtype(t, typ.Integer)
-}
-
-func numericForControlExprType(symbolTypes map[symbol.ID]typ.Type, bindings *bind.Result, expr ast.Expr) (typ.Type, bool) {
-	inner, ok := sourceprovenance.ProofInner(expr)
-	if !ok {
-		return nil, false
-	}
-	switch e := inner.(type) {
-	case *ast.NumberExpr, *ast.StringExpr, *ast.TrueExpr, *ast.FalseExpr, *ast.NilExpr:
-		return valueexpr.LiteralType(e)
-	case *ast.UnaryMinusOpExpr:
-		operand, ok := numericForControlExprType(symbolTypes, bindings, e.Expr)
-		if !ok {
-			return nil, false
-		}
-		return typeoperator.UnaryOp("-", operand)
-	case *ast.UnaryLenOpExpr:
-		operand, ok := numericForControlExprType(symbolTypes, bindings, e.Expr)
-		if !ok {
-			return typ.Integer, true
-		}
-		return typeoperator.UnaryOp("#", operand)
-	case *ast.ArithmeticOpExpr:
-		left, ok := numericForControlExprType(symbolTypes, bindings, e.Lhs)
-		if !ok {
-			return nil, false
-		}
-		right, ok := numericForControlExprType(symbolTypes, bindings, e.Rhs)
-		if !ok {
-			return nil, false
-		}
-		return typeoperator.BinaryOp(left, e.Operator, right)
-	case *ast.IdentExpr, *ast.AttrGetExpr:
-		return expressionTypeFromSymbols(symbolTypes, bindings, e)
-	case *ast.FuncCallExpr:
-		return callFirstReturnType(symbolTypes, bindings, e)
-	default:
-		return nil, false
-	}
 }
 
 func functionExpressionType(fn *ast.FunctionExpr, bindings *bind.Result, resolver *typeresolve.Resolver) (typ.Type, bool) {

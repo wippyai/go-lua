@@ -62,19 +62,10 @@ func (l *lowerer) addNumericForRootAssignmentFromWIR(input *factflow.FactsInput,
 }
 
 func (l *lowerer) numericForLoopVariableTypeFromWIR(inst wir.Instruction) typ.Type {
-	if l == nil || l.wir == nil || inst.Iter != wir.IterNumeric {
+	if l == nil || l.wir == nil {
 		return nil
 	}
-	bounds := l.wir.Operands(inst.List)
-	if len(bounds) == 0 {
-		return typ.Number
-	}
-	for _, bound := range bounds {
-		if _, ok := l.numericForIntegralLiteralFromWIR(bound); !ok {
-			return typ.Number
-		}
-	}
-	return typ.Integer
+	return numericForLoopVariableTypeFromWIR(l.wir, l.symbolTypes, l.wirTempDefs(), inst)
 }
 
 func (l *lowerer) addRootAssignmentFromWIR(input *factflow.FactsInput, point cfg.Point, inst wir.Instruction) {

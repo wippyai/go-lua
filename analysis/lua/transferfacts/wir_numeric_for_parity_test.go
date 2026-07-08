@@ -141,3 +141,38 @@ end
 	}
 	t.Fatal("fixture did not produce a WIR numeric-for point")
 }
+
+func TestLowerWithWIRNumericForUsesTypedBoundPathsForLoopVariableType(t *testing.T) {
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function scan()
+	local first: integer = 1
+	local last: integer = 10
+	local step: integer = 1
+	for i = first, last, step do
+		local index = i
+	end
+end
+`)
+	body := wirlower.Lower("numeric-for-typed-bound-paths", fn.Stmts, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+
+	for _, point := range built.Graph.RPO() {
+		if _, ok := built.Meta.NumericFor(point); !ok || !body.HasInstruction(point, wir.OpIterate) {
+			continue
+		}
+		root, rootOK := facts.RootAssignment(point)
+		if !rootOK {
+			t.Fatalf("numeric-for point %d has no root assignment", point)
+		}
+		declared, declaredOK := root.DeclaredValue()
+		if !declaredOK || !root.DeclaredValueContracts() {
+			t.Fatalf("numeric-for typed-bound root assignment has declared=%v contract=%v", declaredOK, root.DeclaredValueContracts())
+		}
+		got, ok := typevalue.TypeOf(standard.Registry(), declared)
+		if !ok || !typ.TypeEquals(got, typ.Integer) {
+			t.Fatalf("numeric-for typed-bound declared value type = %v/%v, want integer", got, ok)
+		}
+		return
+	}
+	t.Fatal("fixture did not produce a WIR numeric-for point")
+}
