@@ -1,6 +1,7 @@
 package projectsummary
 
 import (
+	fixpointsummary "github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/check/internal/projection"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -130,7 +131,7 @@ func projectReturnSlotsFromSources(
 			if i < len(slots.declared) {
 				value = mergeDeclaredReturnSourceValue(reg, slots, value, i)
 			}
-			returns[i] = product.Join(reg, returns[i], value)
+			returns[i] = fixpointsummary.JoinReturnValue(reg, returns[i], value)
 		}
 	}
 	return returns, true

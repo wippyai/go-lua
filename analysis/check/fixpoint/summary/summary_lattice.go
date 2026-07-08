@@ -188,9 +188,18 @@ func Join(reg *axis.Registry, a, b Summary) Summary {
 	return NormalizeOwned(reg, out)
 }
 
-func joinReturnValue(reg *axis.Registry, left, right product.Value) product.Value {
+// JoinReturnValue joins one function-summary return slot, preserving bounded
+// tagged-record alternatives before falling back to the ordinary product join.
+func JoinReturnValue(reg *axis.Registry, left, right product.Value) product.Value {
 	joined := product.Join(reg, left, right)
+	if tagged, ok := joinedTaggedReturnValue(reg, joined, left, right); ok {
+		return tagged
+	}
 	return preserveJoinedReturnTypeWitness(reg, joined, left, right)
+}
+
+func joinReturnValue(reg *axis.Registry, left, right product.Value) product.Value {
+	return JoinReturnValue(reg, left, right)
 }
 
 func widenReturnValue(reg *axis.Registry, prev, next product.Value) product.Value {
@@ -203,14 +212,19 @@ func widenReturnValue(reg *axis.Registry, prev, next product.Value) product.Valu
 
 func boundedJoinedReturnValue(reg *axis.Registry, prev, next product.Value) (product.Value, bool) {
 	joined := product.Join(reg, prev, next)
+	taggedJoin := false
+	if tagged, ok := joinedTaggedReturnValue(reg, joined, prev, next); ok {
+		joined = tagged
+		taggedJoin = true
+	}
 	if product.Equal(reg, joined, product.Top()) {
 		return product.Value{}, false
 	}
 	t, ok := typevalue.TypeOf(reg, joined)
-	if !ok || returnTypeAlternativeCount(t) > 8 {
+	if !ok || returnTypeAlternativeCount(t) > maxReturnTypeAlternativeCount {
 		return product.Value{}, false
 	}
-	if !product.LessOrEq(reg, prev, joined) || !product.LessOrEq(reg, next, joined) {
+	if !taggedJoin && (!product.LessOrEq(reg, prev, joined) || !product.LessOrEq(reg, next, joined)) {
 		return product.Value{}, false
 	}
 	return joined, true
