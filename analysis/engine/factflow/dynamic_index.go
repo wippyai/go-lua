@@ -3,7 +3,6 @@ package factflow
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 // DynamicIndexReadbackIntent describes which dynamic-index evidence a later
@@ -166,15 +165,4 @@ func (w DynamicIndexWrite) copy() DynamicIndexWrite {
 	w.keyPath = w.keyPath.Clone()
 	w.valuePath = w.valuePath.Clone()
 	return w
-}
-
-func copyDynamicIndexWriteMap(in map[cfg.Point]DynamicIndexWrite) map[cfg.Point]DynamicIndexWrite {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[cfg.Point]DynamicIndexWrite, len(in))
-	for point, fact := range in {
-		out[point] = fact.copy()
-	}
-	return out
 }

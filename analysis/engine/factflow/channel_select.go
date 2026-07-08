@@ -3,7 +3,6 @@ package factflow
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 // ChannelSelectID identifies one select operation in factflow event space.
@@ -130,17 +129,6 @@ func (s ChannelSelectSet) Events() []ChannelSelect {
 
 func (s ChannelSelectSet) copy() ChannelSelectSet {
 	return ChannelSelectSet{events: copyChannelSelectSlice(s.events)}
-}
-
-func copyChannelSelectMap(in map[cfg.Point]ChannelSelectSet) map[cfg.Point]ChannelSelectSet {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[cfg.Point]ChannelSelectSet, len(in))
-	for point, set := range in {
-		out[point] = set.copy()
-	}
-	return out
 }
 
 func copyChannelSelectSlice(in []ChannelSelect) []ChannelSelect {

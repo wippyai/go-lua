@@ -3,7 +3,6 @@ package factflow
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 // BranchPathEvidenceKind identifies branch/postcondition path evidence that may be
@@ -207,17 +206,6 @@ func (s BranchPathEvidenceSet) ForEachEvidence(fn func(BranchPathEvidence) bool)
 
 func (s BranchPathEvidenceSet) copy() BranchPathEvidenceSet {
 	return BranchPathEvidenceSet{evidence: copyBranchPathEvidenceSlice(s.evidence)}
-}
-
-func copyBranchPathEvidenceMap(in map[cfg.Point]BranchPathEvidenceSet) map[cfg.Point]BranchPathEvidenceSet {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[cfg.Point]BranchPathEvidenceSet, len(in))
-	for point, set := range in {
-		out[point] = set.copy()
-	}
-	return out
 }
 
 func copyBranchPathEvidenceSlice(in []BranchPathEvidence) []BranchPathEvidence {

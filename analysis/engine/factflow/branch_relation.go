@@ -3,7 +3,6 @@ package factflow
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 // BranchPresenceRelation describes one branch-triggered presence implication:
@@ -75,17 +74,6 @@ func (s BranchPresenceRelationSet) Relations() []BranchPresenceRelation {
 
 func (s BranchPresenceRelationSet) copy() BranchPresenceRelationSet {
 	return BranchPresenceRelationSet{relations: copyBranchPresenceRelationSlice(s.relations)}
-}
-
-func copyBranchPresenceRelationMap(in map[cfg.Point]BranchPresenceRelationSet) map[cfg.Point]BranchPresenceRelationSet {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[cfg.Point]BranchPresenceRelationSet, len(in))
-	for point, set := range in {
-		out[point] = set.copy()
-	}
-	return out
 }
 
 func copyBranchPresenceRelationSlice(in []BranchPresenceRelation) []BranchPresenceRelation {

@@ -1,14 +1,23 @@
 package factflow
 
-import "github.com/wippyai/go-lua/analysis/domain/path"
-
-func copyExpressionPathMap(in map[ExprRef]path.Path) map[ExprRef]path.Path {
+func copyMap[K comparable, V any](in map[K]V) map[K]V {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make(map[ExprRef]path.Path, len(in))
-	for expr, p := range in {
-		out[expr] = p.Clone()
+	out := make(map[K]V, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
+func copyValueMap[K comparable, V any](in map[K]V, copyValue func(V) V) map[K]V {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[K]V, len(in))
+	for key, value := range in {
+		out[key] = copyValue(value)
 	}
 	return out
 }

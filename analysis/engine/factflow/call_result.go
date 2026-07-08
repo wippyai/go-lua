@@ -2,7 +2,6 @@ package factflow
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 // CallResultValue describes a fixed product value for one call return slot.
@@ -52,17 +51,6 @@ func (s CallResultValueSet) ForEachValue(fn func(CallResultValue) bool) {
 
 func (s CallResultValueSet) copy() CallResultValueSet {
 	return CallResultValueSet{values: copyCallResultValueSlice(s.values)}
-}
-
-func copyCallResultValueMap(in map[cfg.Point]CallResultValueSet) map[cfg.Point]CallResultValueSet {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[cfg.Point]CallResultValueSet, len(in))
-	for point, set := range in {
-		out[point] = set.copy()
-	}
-	return out
 }
 
 func copyCallResultValueSlice(in []CallResultValue) []CallResultValue {

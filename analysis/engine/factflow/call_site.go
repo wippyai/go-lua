@@ -367,14 +367,3 @@ func callSiteMemberAccessPath(c CallSite) (path.Path, segment.Segment, bool) {
 		return path.Path{}, segment.Segment{}, false
 	}
 }
-
-func copyCallSiteMap(in map[cfg.Point]CallSite) map[cfg.Point]CallSite {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[cfg.Point]CallSite, len(in))
-	for point, fact := range in {
-		out[point] = fact.copy()
-	}
-	return out
-}

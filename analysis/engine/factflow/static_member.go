@@ -2,7 +2,6 @@ package factflow
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 // PathStaticMemberWrite describes a structural/static-member proof write at a
@@ -34,15 +33,4 @@ func (w PathStaticMemberWrite) Source() ValueSource { return w.source }
 func (w PathStaticMemberWrite) copy() PathStaticMemberWrite {
 	w.targetPath = w.targetPath.Clone()
 	return w
-}
-
-func copyPathStaticMemberWriteMap(in map[cfg.Point]PathStaticMemberWrite) map[cfg.Point]PathStaticMemberWrite {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[cfg.Point]PathStaticMemberWrite, len(in))
-	for point, fact := range in {
-		out[point] = fact.copy()
-	}
-	return out
 }

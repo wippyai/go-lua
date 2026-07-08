@@ -212,14 +212,3 @@ func branchPathEvidenceForPostcondition(relation PostconditionPathRelation, edge
 		return nil
 	}
 }
-
-func copyExpressionConditionMap(in map[ExprRef]ExpressionCondition) map[ExprRef]ExpressionCondition {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[ExprRef]ExpressionCondition, len(in))
-	for ref, condition := range in {
-		out[ref] = condition.copy()
-	}
-	return out
-}

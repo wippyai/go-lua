@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 // PathValuePresenceImplication publishes a persistent implication at a CFG
@@ -112,17 +111,6 @@ func (s PathValuePresenceImplicationSet) Implications() []PathValuePresenceImpli
 
 func (s PathValuePresenceImplicationSet) copy() PathValuePresenceImplicationSet {
 	return PathValuePresenceImplicationSet{implications: copyPathValuePresenceImplicationSlice(s.implications)}
-}
-
-func copyPathValuePresenceImplicationMap(in map[cfg.Point]PathValuePresenceImplicationSet) map[cfg.Point]PathValuePresenceImplicationSet {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[cfg.Point]PathValuePresenceImplicationSet, len(in))
-	for point, set := range in {
-		out[point] = set.copy()
-	}
-	return out
 }
 
 func copyPathValuePresenceImplicationSlice(in []PathValuePresenceImplication) []PathValuePresenceImplication {

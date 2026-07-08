@@ -2,7 +2,6 @@ package factflow
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 // PostconditionRefinement describes a value refinement that holds after a node
@@ -114,28 +113,6 @@ func (s PostconditionPathRelationSet) Relations() []PostconditionPathRelation {
 
 func (s PostconditionPathRelationSet) copy() PostconditionPathRelationSet {
 	return PostconditionPathRelationSet{relations: copyPostconditionPathRelationSlice(s.relations)}
-}
-
-func copyPostconditionRefinementMap(in map[cfg.Point]PostconditionRefinementSet) map[cfg.Point]PostconditionRefinementSet {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[cfg.Point]PostconditionRefinementSet, len(in))
-	for point, set := range in {
-		out[point] = set.copy()
-	}
-	return out
-}
-
-func copyPostconditionPathRelationMap(in map[cfg.Point]PostconditionPathRelationSet) map[cfg.Point]PostconditionPathRelationSet {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[cfg.Point]PostconditionPathRelationSet, len(in))
-	for point, set := range in {
-		out[point] = set.copy()
-	}
-	return out
 }
 
 func copyPostconditionRefinementSlice(in []PostconditionRefinement) []PostconditionRefinement {

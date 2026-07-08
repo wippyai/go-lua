@@ -58,14 +58,3 @@ func (r ExpressionRefinement) Refinement() product.Value { return r.refinement }
 func (r ExpressionRefinement) Mode() ExpressionRefinementMode { return r.mode }
 
 func (r ExpressionRefinement) copy() ExpressionRefinement { return r }
-
-func copyExpressionRefinementMap(in map[ExprRef]ExpressionRefinement) map[ExprRef]ExpressionRefinement {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[ExprRef]ExpressionRefinement, len(in))
-	for expr, fact := range in {
-		out[expr] = fact.copy()
-	}
-	return out
-}

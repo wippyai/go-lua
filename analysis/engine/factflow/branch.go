@@ -5,7 +5,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 // ValueRefinement describes one conjunctive product-value constraint. The
@@ -382,17 +381,6 @@ func copyBranchNumFloorRefinementSlice(in []BranchNumFloorRefinement) []BranchNu
 	out := make([]BranchNumFloorRefinement, len(in))
 	for i, fact := range in {
 		out[i] = fact.copy()
-	}
-	return out
-}
-
-func copyBranchRefinementSetMap(in map[cfg.Point]BranchRefinementSet) map[cfg.Point]BranchRefinementSet {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[cfg.Point]BranchRefinementSet, len(in))
-	for point, set := range in {
-		out[point] = set.copy()
 	}
 	return out
 }

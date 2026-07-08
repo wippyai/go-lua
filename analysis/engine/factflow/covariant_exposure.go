@@ -3,7 +3,6 @@ package factflow
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 // CovariantExposure records that a tracked object reachable at a source path is
@@ -63,17 +62,13 @@ func (e CovariantExposure) copy() CovariantExposure {
 	return e
 }
 
-func copyCovariantExposureMap(in map[cfg.Point][]CovariantExposure) map[cfg.Point][]CovariantExposure {
+func copyCovariantExposureSlice(in []CovariantExposure) []CovariantExposure {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make(map[cfg.Point][]CovariantExposure, len(in))
-	for point, exposures := range in {
-		copied := make([]CovariantExposure, len(exposures))
-		for i := range exposures {
-			copied[i] = exposures[i].copy()
-		}
-		out[point] = copied
+	out := make([]CovariantExposure, len(in))
+	for i := range in {
+		out[i] = in[i].copy()
 	}
 	return out
 }

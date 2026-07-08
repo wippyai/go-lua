@@ -282,14 +282,3 @@ func copyObjectEntries(in []ObjectEntry) []ObjectEntry {
 	}
 	return out
 }
-
-func copyObjectLiteralMap(in map[ExprRef]ObjectLiteral) map[ExprRef]ObjectLiteral {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[ExprRef]ObjectLiteral, len(in))
-	for expr, fact := range in {
-		out[expr] = fact.copy()
-	}
-	return out
-}

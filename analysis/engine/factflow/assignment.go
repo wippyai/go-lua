@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
@@ -267,37 +266,4 @@ func (i PathDescendantInvalidation) copy() PathDescendantInvalidation {
 	i.dynamicTarget.tablePath = i.dynamicTarget.tablePath.Clone()
 	i.dynamicTarget.suffix = append([]segment.Segment(nil), i.dynamicTarget.suffix...)
 	return i
-}
-
-func copyRootAssignmentMap(in map[cfg.Point]RootAssignment) map[cfg.Point]RootAssignment {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[cfg.Point]RootAssignment, len(in))
-	for point, fact := range in {
-		out[point] = fact.copy()
-	}
-	return out
-}
-
-func copyPathDescendantInvalidationMap(in map[cfg.Point]PathDescendantInvalidation) map[cfg.Point]PathDescendantInvalidation {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[cfg.Point]PathDescendantInvalidation, len(in))
-	for point, fact := range in {
-		out[point] = fact.copy()
-	}
-	return out
-}
-
-func copyPathAssignmentMap(in map[cfg.Point]PathAssignment) map[cfg.Point]PathAssignment {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[cfg.Point]PathAssignment, len(in))
-	for point, fact := range in {
-		out[point] = fact.copy()
-	}
-	return out
 }

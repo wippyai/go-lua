@@ -3,7 +3,6 @@ package factflow
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 // BranchSufficientLiteralCase records that a path holding LiteralValue is
@@ -54,17 +53,6 @@ func (s BranchSufficientLiteralCaseSet) Cases() []BranchSufficientLiteralCase {
 
 func (s BranchSufficientLiteralCaseSet) copy() BranchSufficientLiteralCaseSet {
 	return BranchSufficientLiteralCaseSet{cases: copyBranchSufficientLiteralCaseSlice(s.cases)}
-}
-
-func copyBranchSufficientLiteralCaseMap(in map[cfg.Point]BranchSufficientLiteralCaseSet) map[cfg.Point]BranchSufficientLiteralCaseSet {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[cfg.Point]BranchSufficientLiteralCaseSet, len(in))
-	for point, set := range in {
-		out[point] = set.copy()
-	}
-	return out
 }
 
 func copyBranchSufficientLiteralCaseSlice(in []BranchSufficientLiteralCase) []BranchSufficientLiteralCase {

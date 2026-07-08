@@ -2,7 +2,6 @@ package factflow
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 // ReturnPresenceRelation describes one return-slot presence implication at a
@@ -57,17 +56,6 @@ func (s ReturnPresenceRelationSet) Relations() []ReturnPresenceRelation {
 
 func (s ReturnPresenceRelationSet) copy() ReturnPresenceRelationSet {
 	return ReturnPresenceRelationSet{relations: copyReturnPresenceRelationSlice(s.relations)}
-}
-
-func copyReturnPresenceRelationMap(in map[cfg.Point]ReturnPresenceRelationSet) map[cfg.Point]ReturnPresenceRelationSet {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[cfg.Point]ReturnPresenceRelationSet, len(in))
-	for point, set := range in {
-		out[point] = set.copy()
-	}
-	return out
 }
 
 func copyReturnPresenceRelationSlice(in []ReturnPresenceRelation) []ReturnPresenceRelation {

@@ -78,36 +78,36 @@ type Facts struct {
 // NewFacts copies the supplied point-keyed facts into an immutable snapshot.
 func NewFacts(input FactsInput) Facts {
 	return Facts{
-		rootAssignments:               copyRootAssignmentMap(input.RootAssignments),
-		pathAssignments:               copyPathAssignmentMap(input.PathAssignments),
-		pathStaticMemberWrites:        copyPathStaticMemberWriteMap(input.PathStaticMemberWrites),
-		dynamicIndexWrites:            copyDynamicIndexWriteMap(input.DynamicIndexWrites),
-		pathDescendantInvalidations:   copyPathDescendantInvalidationMap(input.PathDescendantInvalidations),
-		covariantExposures:            copyCovariantExposureMap(input.CovariantExposures),
-		noNormalReturns:               copyNoNormalReturnMap(input.NoNormalReturns),
-		branchEdgeReachability:        copyBranchEdgeReachabilityMap(input.BranchEdgeReachability),
-		branchConditionSources:        copyBranchConditionSourceMap(input.BranchConditionSources),
-		branchRefinements:             copyBranchRefinementSetMap(input.BranchRefinements),
-		branchPresenceRelations:       copyBranchPresenceRelationMap(input.BranchPresenceRelations),
-		branchPathRelations:           copyBranchPathRelationMap(input.BranchPathRelations),
-		branchPathEvidence:            copyBranchPathEvidenceMap(input.BranchPathEvidence),
-		branchSufficientLiteralCases:  copyBranchSufficientLiteralCaseMap(input.BranchSufficientLiteralCases),
-		pathValuePresenceImplications: copyPathValuePresenceImplicationMap(input.PathValuePresenceImplications),
-		channelSelects:                copyChannelSelectMap(input.ChannelSelects),
-		postconditionRefinements:      copyPostconditionRefinementMap(input.PostconditionRefinements),
-		postconditionPathRelations:    copyPostconditionPathRelationMap(input.PostconditionPathRelations),
-		callResultValues:              copyCallResultValueMap(input.CallResultValues),
-		returnPresenceRelations:       copyReturnPresenceRelationMap(input.ReturnPresenceRelations),
-		returns:                       copyReturnMap(input.Returns),
-		callSites:                     copyCallSiteMap(input.CallSites),
-		objectLiterals:                copyObjectLiteralMap(input.ObjectLiterals),
-		expressionValues:              copyExpressionValueMap(input.ExpressionValues),
+		rootAssignments:               copyValueMap(input.RootAssignments, RootAssignment.copy),
+		pathAssignments:               copyValueMap(input.PathAssignments, PathAssignment.copy),
+		pathStaticMemberWrites:        copyValueMap(input.PathStaticMemberWrites, PathStaticMemberWrite.copy),
+		dynamicIndexWrites:            copyValueMap(input.DynamicIndexWrites, DynamicIndexWrite.copy),
+		pathDescendantInvalidations:   copyValueMap(input.PathDescendantInvalidations, PathDescendantInvalidation.copy),
+		covariantExposures:            copyValueMap(input.CovariantExposures, copyCovariantExposureSlice),
+		noNormalReturns:               copyMap(input.NoNormalReturns),
+		branchEdgeReachability:        copyMap(input.BranchEdgeReachability),
+		branchConditionSources:        copyMap(input.BranchConditionSources),
+		branchRefinements:             copyValueMap(input.BranchRefinements, BranchRefinementSet.copy),
+		branchPresenceRelations:       copyValueMap(input.BranchPresenceRelations, BranchPresenceRelationSet.copy),
+		branchPathRelations:           copyValueMap(input.BranchPathRelations, BranchPathRelationSet.copy),
+		branchPathEvidence:            copyValueMap(input.BranchPathEvidence, BranchPathEvidenceSet.copy),
+		branchSufficientLiteralCases:  copyValueMap(input.BranchSufficientLiteralCases, BranchSufficientLiteralCaseSet.copy),
+		pathValuePresenceImplications: copyValueMap(input.PathValuePresenceImplications, PathValuePresenceImplicationSet.copy),
+		channelSelects:                copyValueMap(input.ChannelSelects, ChannelSelectSet.copy),
+		postconditionRefinements:      copyValueMap(input.PostconditionRefinements, PostconditionRefinementSet.copy),
+		postconditionPathRelations:    copyValueMap(input.PostconditionPathRelations, PostconditionPathRelationSet.copy),
+		callResultValues:              copyValueMap(input.CallResultValues, CallResultValueSet.copy),
+		returnPresenceRelations:       copyValueMap(input.ReturnPresenceRelations, ReturnPresenceRelationSet.copy),
+		returns:                       copyValueMap(input.Returns, Return.copy),
+		callSites:                     copyValueMap(input.CallSites, CallSite.copy),
+		objectLiterals:                copyValueMap(input.ObjectLiterals, ObjectLiteral.copy),
+		expressionValues:              copyMap(input.ExpressionValues),
 		expressionOperations:          copyExpressionOperationMap(input.ExpressionOperations),
 		expressionFunctions:           copyExpressionFunctionMap(input.ExpressionFunctions),
-		expressionRefinements:         copyExpressionRefinementMap(input.ExpressionRefinements),
-		expressionPaths:               copyExpressionPathMap(input.ExpressionPaths),
+		expressionRefinements:         copyValueMap(input.ExpressionRefinements, ExpressionRefinement.copy),
+		expressionPaths:               copyValueMap(input.ExpressionPaths, pathdom.Path.Clone),
 		dynamicIndexExpressions:       copyDynamicIndexExpressionMap(input.DynamicIndexExpressions),
-		expressionConditions:          copyExpressionConditionMap(input.ExpressionConditions),
+		expressionConditions:          copyValueMap(input.ExpressionConditions, ExpressionCondition.copy),
 	}
 }
 
@@ -557,28 +557,6 @@ func (f Facts) ForEachExpressionCondition(fn func(ExprRef, ExpressionCondition) 
 			return
 		}
 	}
-}
-
-func copyNoNormalReturnMap(in map[cfg.Point]struct{}) map[cfg.Point]struct{} {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[cfg.Point]struct{}, len(in))
-	for point := range in {
-		out[point] = struct{}{}
-	}
-	return out
-}
-
-func copyExpressionValueMap(in map[ExprRef]product.Value) map[ExprRef]product.Value {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[ExprRef]product.Value, len(in))
-	for ref, value := range in {
-		out[ref] = value
-	}
-	return out
 }
 
 func copyExpressionFunctionMap(in map[ExprRef]symbol.ID) map[ExprRef]symbol.ID {

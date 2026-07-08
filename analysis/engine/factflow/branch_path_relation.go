@@ -2,7 +2,6 @@ package factflow
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 // BranchPathRelationKind identifies the relation enforced on selected branch
@@ -141,17 +140,6 @@ func (s BranchPathRelationSet) Relations() []BranchPathRelation {
 
 func (s BranchPathRelationSet) copy() BranchPathRelationSet {
 	return BranchPathRelationSet{relations: copyBranchPathRelationSlice(s.relations)}
-}
-
-func copyBranchPathRelationMap(in map[cfg.Point]BranchPathRelationSet) map[cfg.Point]BranchPathRelationSet {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[cfg.Point]BranchPathRelationSet, len(in))
-	for point, set := range in {
-		out[point] = set.copy()
-	}
-	return out
 }
 
 func copyBranchPathRelationSlice(in []BranchPathRelation) []BranchPathRelation {
