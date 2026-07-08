@@ -257,10 +257,3 @@ func (l *lowerer) valueFromType(t typ.Type) product.Value {
 func (l *lowerer) valueFromTypeWithWitness(t typ.Type) product.Value {
 	return l.typeValues.FromTypeWithWitness(l.registry, t)
 }
-
-func valueSourceAt(sources []factflow.ValueSource, index int) factflow.ValueSource {
-	if index < 0 || index >= len(sources) {
-		return factflow.ValueSource{}
-	}
-	return sources[index]
-}

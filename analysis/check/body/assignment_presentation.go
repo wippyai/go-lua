@@ -98,13 +98,6 @@ func (r *Result) AssignmentSourceReadProvenPresent(point cfg.Point, expr ast.Exp
 	return r.ExpressionReadProvenPresentBeforeBoundary(point, expr)
 }
 
-// AssignmentSourceIndexedRead reports whether an assignment source is a bracket
-// member read, which can miss even when the container is present.
-func AssignmentSourceIndexedRead(expr ast.Expr) bool {
-	attr, ok := expr.(*ast.AttrGetExpr)
-	return ok && attr.KeySyntax == ast.AttrKeyIndex
-}
-
 // AssignmentSourceIndexedReadAt reports whether an assignment source needs an
 // indexed-read validation proof at point. Direct bracket sources count unless
 // the exact slot is already proven present; bracket parents count only when the

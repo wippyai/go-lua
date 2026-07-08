@@ -598,19 +598,6 @@ func assertLoweredAssertion(t *testing.T, facts factflow.Facts, source factflow.
 	}
 }
 
-func assertLoweredConcreteCastAssertion(t *testing.T, facts factflow.Facts, source factflow.ValueSource, want typ.Type, wantInnerKind factflow.ValueSourceKind) {
-	t.Helper()
-	claim, ok := facts.ExpressionRefinement(source.ExprRef)
-	if !ok {
-		t.Fatalf("missing assertion for source ref %d", source.ExprRef)
-	}
-	assertConcreteCastRefinementProduct(t, claim.Refinement(), want)
-	inner := claim.Source()
-	if inner.ExprRef == 0 || inner.ExprRef == source.ExprRef || inner.Kind != wantInnerKind {
-		t.Fatalf("assertion inner source = %#v, outer %#v", inner, source)
-	}
-}
-
 func refinementAssertion(t *testing.T, refinement factflow.ExpressionRefinement) assertion.Value {
 	t.Helper()
 	return product.Get(standard.Registry(), refinement.Refinement(), assertion.Key)
