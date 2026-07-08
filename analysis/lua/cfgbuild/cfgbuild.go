@@ -16,6 +16,7 @@ type Result struct {
 	GenericFors   GenericFors
 	Returns       Returns
 	Assignments   Assignments
+	Calls         Calls
 }
 
 // StmtPoints maps AST statements to the CFG points emitted for them.
@@ -50,7 +51,7 @@ func BuildFunction(fn *ast.FunctionExpr, bindings *bind.Result) *Result {
 		state = b.buildStmts(state, fn.Stmts)
 	}
 	b.connect(state, graph.Exit())
-	return &Result{Graph: graph, StmtPoints: StmtPoints{points: b.stmtPoints}, Declarations: b.declarations, ShortCircuits: b.shortCircuits, NumericFors: b.numericFors, GenericFors: b.genericFors, Returns: b.returns, Assignments: b.assignments}
+	return &Result{Graph: graph, StmtPoints: StmtPoints{points: b.stmtPoints}, Declarations: b.declarations, ShortCircuits: b.shortCircuits, NumericFors: b.numericFors, GenericFors: b.genericFors, Returns: b.returns, Assignments: b.assignments, Calls: b.calls}
 }
 
 // BuildChunk builds a minimal CFG for a chunk-level statement list using
@@ -65,7 +66,7 @@ func BuildChunk(stmts []ast.Stmt, bindings *bind.Result) *Result {
 
 	state := b.buildStmts(liveAt(graph.Entry()), stmts)
 	b.connect(state, graph.Exit())
-	return &Result{Graph: graph, StmtPoints: StmtPoints{points: b.stmtPoints}, Declarations: b.declarations, ShortCircuits: b.shortCircuits, NumericFors: b.numericFors, GenericFors: b.genericFors, Returns: b.returns, Assignments: b.assignments}
+	return &Result{Graph: graph, StmtPoints: StmtPoints{points: b.stmtPoints}, Declarations: b.declarations, ShortCircuits: b.shortCircuits, NumericFors: b.numericFors, GenericFors: b.genericFors, Returns: b.returns, Assignments: b.assignments, Calls: b.calls}
 }
 
 type builder struct {
@@ -76,6 +77,7 @@ type builder struct {
 	genericFors   GenericFors
 	returns       Returns
 	assignments   Assignments
+	calls         Calls
 	stmtPoints    map[ast.Stmt][]cfg.Point
 	labels        map[string]cfg.Point
 	pendingGotos  map[string][]cfg.Point

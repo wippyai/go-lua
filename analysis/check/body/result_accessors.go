@@ -293,17 +293,17 @@ func (r *Result) OrdinaryAssignment(point cfg.Point) (OrdinaryAssignmentFact, bo
 }
 
 func (r *Result) Call(point cfg.Point) (CallFact, bool) {
-	if r == nil || r.semantics == nil {
+	if r == nil || r.cfg == nil {
 		return CallFact{}, false
 	}
-	return r.semantics.Call(point)
+	return r.cfg.Calls.Get(point)
 }
 
 func (r *Result) CallView(point cfg.Point) (CallFactView, bool) {
-	if r == nil || r.semantics == nil {
+	if r == nil || r.cfg == nil {
 		return CallFactView{}, false
 	}
-	return r.semantics.CallView(point)
+	return r.cfg.Calls.View(point)
 }
 
 func (r *Result) CallSite(point cfg.Point) (factflow.CallSite, bool) {

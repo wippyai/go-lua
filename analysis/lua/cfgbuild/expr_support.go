@@ -70,10 +70,22 @@ func (b *builder) valueListCalls(exprs []ast.Expr) ([]callorder.Occurrence, bool
 	return callorder.ValueList(exprs, b.callOrderOptions())
 }
 
+func (b *builder) exprCalls(expr ast.Expr) ([]callorder.Occurrence, bool) {
+	return callorder.Expr(expr, b.callOrderOptions())
+}
+
 func (b *builder) callOrderOptions() callorder.Options {
 	options := callorder.LuaOptions(b.bindings)
 	options.AllowShortCircuitCalls = true
 	return options
+}
+
+func topLevelValueListCall(exprs []ast.Expr, call callorder.Occurrence) bool {
+	if call.ExprIndex < 0 || call.ExprIndex >= len(exprs) {
+		return false
+	}
+	top, ok := sourceprovenance.Call(exprs[call.ExprIndex])
+	return ok && top == call.Call
 }
 
 func callPointResolver(calls []callorder.Occurrence, points []cfg.Point) sourceprovenance.CallPointResolver {

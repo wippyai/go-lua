@@ -2,7 +2,6 @@ package body
 
 import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 )
 
 // Semantic fact aliases define the check/body boundary for facts produced by
@@ -11,6 +10,6 @@ import (
 type LocalAssignmentFact = cfgbuild.LocalAssignment
 type OrdinaryAssignmentFact = cfgbuild.OrdinaryAssignment
 type ReturnFact = cfgbuild.Return
-type CallFact = semantics.CallFact
-type CallFactView = semantics.CallFactView
-type SourceSpan = semantics.SourceSpan
+type CallFact = cfgbuild.Call
+type CallFactView = cfgbuild.CallView
+type SourceSpan = cfgbuild.SourceSpan
