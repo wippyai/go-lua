@@ -283,6 +283,83 @@ func TestProjectionInvalidatesReassignedRequireRoot(t *testing.T) {
 	}
 }
 
+func TestProjectionWIRFactsParity(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{
+			name: "require member",
+			src: `
+				local json = require("json")
+				local value = json.decode("{}")
+			`,
+			want: "json.decode",
+		},
+		{
+			name: "root alias static int member",
+			src: `
+				local runtime = require("runtime")
+				local alias = runtime
+				local value = alias[1]("payload")
+			`,
+			want: "runtime[1]",
+		},
+		{
+			name: "local signature alias",
+			src: `
+				local runtime = require("runtime")
+				local store = runtime.store
+				store({})
+			`,
+			want: "runtime.store",
+		},
+		{
+			name: "assigned member signature alias",
+			src: `
+				local runtime = require("runtime")
+				local provider = {}
+				provider.store = runtime.store
+				provider.store({})
+			`,
+			want: "runtime.store",
+		},
+		{
+			name: "reassigned alias invalidated",
+			src: `
+				local runtime = require("runtime")
+				local store = runtime.store
+				store = function() end
+				store({})
+			`,
+			want: "",
+		},
+		{
+			name: "object literal alias",
+			src: `
+				local runtime = require("runtime")
+				local provider = { store = runtime.store }
+				provider.store({})
+			`,
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			oldProjection, wirProjection, graph, facts := buildProjectionPair(t, tc.src)
+			oldName := onlySignatureName(t, oldProjection, graph, facts)
+			got := onlySignatureName(t, wirProjection, graph, facts)
+			if oldName != tc.want {
+				t.Fatalf("factflow oracle = %q, want %q", oldName, tc.want)
+			}
+			if got != oldName {
+				t.Fatalf("WIR projection = %q, want factflow parity %q", got, oldName)
+			}
+		})
+	}
+}
+
 func onlySignatureName(t *testing.T, projection moduleidentity.Projection, graph cfg.Graph, facts factflow.Facts) string {
 	t.Helper()
 	var got string
@@ -315,6 +392,22 @@ func buildProjectionWithGlobals(t *testing.T, src string, globals []string) (mod
 	body := wirlower.Lower("chunk", stmts, bindings, built)
 	facts := transferfacts.Lower(built.Graph, transferfacts.Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	return moduleidentity.NewFromFacts(bindings, built.Graph, moduleIdentityTestFacts{facts: facts}, nil), built.Graph, facts
+}
+
+func buildProjectionPair(t *testing.T, src string) (moduleidentity.Projection, moduleidentity.Projection, cfg.Graph, factflow.Facts) {
+	t.Helper()
+	stmts := parseChunk(t, src)
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"require"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	if built == nil || built.Graph == nil {
+		t.Fatalf("BuildChunk returned nil")
+	}
+	body := wirlower.Lower("chunk", stmts, bindings, built)
+	facts := transferfacts.Lower(built.Graph, transferfacts.Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	return moduleidentity.NewFromFacts(bindings, built.Graph, moduleIdentityTestFacts{facts: facts}, nil),
+		moduleidentity.NewFromWIR(bindings, built.Graph, body, nil),
+		built.Graph,
+		facts
 }
 
 type moduleIdentityTestFacts struct {

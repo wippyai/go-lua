@@ -157,7 +157,7 @@ func (c *checker) prepare(
 	assignments := assignmentFactsFromSource(bindings, built, sourceStmts)
 	declarations := declarationFactsFromSource(bindings, built, sourceStmts)
 	genericFors := genericForFactsFromSource(bindings, built, sourceStmts)
-	modules := moduleidentity.NewFromFacts(bindings, built.Graph, moduleIdentityFacts{facts: facts}, fn)
+	modules := moduleidentity.NewFromWIR(bindings, built.Graph, wirBody, fn)
 	signatureID := newSignatureIdentityResolver(bindings, built.Graph, facts, modules, config.Signatures)
 	signatureNameForCall := signatureID.nameForCall
 	if hasSignatures(config.Signatures) {
