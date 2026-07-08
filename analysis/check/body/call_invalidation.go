@@ -30,10 +30,7 @@ func (r *Result) CallMayInvalidateTrackedPath(point cfg.Point, target pathdom.Pa
 	}
 	outcome, hasOutcome := r.CallOutcomeAt(point)
 	if !hasOutcome {
-		if r.callSiteHasExactEmptyGuardInvalidationSummaryAt(point) {
-			return false
-		}
-		return true
+		return !r.callSiteHasExactEmptyGuardInvalidationSummaryAt(point)
 	}
 	if r.callOutcomeHasCovariantExposureForTargetAt(point, outcome, target) {
 		return true
@@ -212,10 +209,7 @@ func (r *Result) callSiteReferencesTrackedPath(site factflow.CallSite, target pa
 		}
 		return true
 	})
-	if found {
-		return true
-	}
-	return false
+	return found
 }
 
 func (r *Result) callOutcomeHasExactGuardInvalidationSummaryAt(point cfg.Point, outcome callpayload.CallOutcome, trustResolvedSummaryAuthority bool) bool {

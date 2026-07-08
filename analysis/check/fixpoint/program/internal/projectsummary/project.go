@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 type ResultReader interface {
@@ -78,14 +77,6 @@ type returnTypeValueReader interface {
 
 type returnValueSourceReader interface {
 	ReturnValueSources(cfg.Point) ([]factflow.ValueSource, bool)
-}
-
-type expressionValueReader interface {
-	ExpressionValueAtBoundary(cfg.Point, ast.Expr) (product.Value, bool)
-}
-
-type expressionValueBeforeReader interface {
-	ExpressionValueBeforeBoundary(cfg.Point, ast.Expr) (product.Value, bool)
 }
 
 type returnPresenceRelationReader interface {

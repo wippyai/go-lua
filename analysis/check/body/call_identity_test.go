@@ -3,7 +3,6 @@ package body
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
@@ -554,15 +553,6 @@ func onlyCallSignature(t *testing.T, result *Result) (signature.Function, bool) 
 		return signature.Function{}, false
 	}
 	return result.CallSignatureAtPoint(point)
-}
-
-func onlyCallSite(t *testing.T, result *Result) (factflow.CallSite, bool) {
-	t.Helper()
-	point, ok := onlySignatureCallPoint(t, result)
-	if !ok {
-		return factflow.CallSite{}, false
-	}
-	return result.CallSite(point)
 }
 
 func onlySignatureCallPoint(t *testing.T, result *Result) (cfg.Point, bool) {

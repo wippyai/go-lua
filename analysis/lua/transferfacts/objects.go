@@ -16,11 +16,6 @@ type wirTableExprRefKey struct {
 	id wir.ExpressionID
 }
 
-type wirObjectEntry struct {
-	point cfg.Point
-	entry wir.TableEntry
-}
-
 func (l *lowerer) objectLiteralEntriesFromWIR(inst wir.Instruction) []factflow.ObjectEntry {
 	wirEntries := l.wir.TableEntries(inst.TableEntries)
 	entries := make([]factflow.ObjectEntry, 0, len(wirEntries))

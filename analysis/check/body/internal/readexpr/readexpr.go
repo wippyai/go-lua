@@ -177,7 +177,7 @@ func (f projectionFrame) equal(other projectionFrame) bool {
 }
 
 func (f projectionFrame) mapKey() projectionFrameMapKey {
-	return projectionFrameMapKey{point: f.point, path: f.path}
+	return projectionFrameMapKey(f)
 }
 
 type projectionMemoEntry struct {
@@ -277,7 +277,7 @@ func (k projectionMemoKey) equal(other projectionMemoKey) bool {
 }
 
 func (k projectionMemoKey) mapKey() projectionMemoMapKey {
-	return projectionMemoMapKey{point: k.point, path: k.path, overlayRoot: k.overlayRoot}
+	return projectionMemoMapKey(k)
 }
 
 func (m *projectionMemo) reset() {

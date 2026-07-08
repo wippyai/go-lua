@@ -3529,7 +3529,6 @@ func TestFactsNodeTransferCallOutcomeReturnPresenceInvalidatesOnResultPathWrite(
 	err := symbol.ID(647)
 	valuePath := pathdom.NewPath(value, "value")
 	errPath := pathdom.NewPath(err, "err")
-	facts := callOutcomePersistentPresenceFacts(reg, call, assignValue, assignErr, refineErr, value, err, valuePath, errPath, false)
 	rootAssignments := map[cfg.Point]factflow.RootAssignment{
 		assignValue: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, value, valuePath, factflow.ValueSource{
 			Kind:         factflow.ValueSourceCall,
@@ -3547,7 +3546,7 @@ func TestFactsNodeTransferCallOutcomeReturnPresenceInvalidatesOnResultPathWrite(
 		}),
 		reassignErr: factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, err, errPath, factflow.NewNilValueSource(0)),
 	}
-	facts = factflow.NewFacts(factflow.FactsInput{
+	facts := factflow.NewFacts(factflow.FactsInput{
 		CallSites:                callOutcomePersistentPresenceCallSites(call, value, err, valuePath, errPath),
 		RootAssignments:          rootAssignments,
 		PostconditionRefinements: callOutcomePersistentPresenceRefinements(reg, refineErr, errPath),

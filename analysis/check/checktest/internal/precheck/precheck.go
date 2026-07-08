@@ -174,9 +174,7 @@ func (s *structuralScanner) handleLabel(stmt *ast.LabelStmt, scope *controlScope
 	if scope.pending == nil {
 		return
 	}
-	if _, ok := scope.pending[stmt.Name]; ok {
-		delete(scope.pending, stmt.Name)
-	}
+	delete(scope.pending, stmt.Name)
 }
 
 func (s *structuralScanner) handleGoto(stmt *ast.GotoStmt, scope *controlScope) {

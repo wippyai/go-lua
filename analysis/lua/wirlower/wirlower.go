@@ -61,11 +61,6 @@ func Lower(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild
 	return LowerWithResolver(name, stmts, bindings, built, typeresolve.New(bindings))
 }
 
-// LowerWithOptions lowers a chunk with additional WIR metadata inputs.
-func LowerWithOptions(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result, options Options) *wir.Body {
-	return LowerWithResolverAndOptions(name, stmts, bindings, built, typeresolve.New(bindings), options)
-}
-
 // LowerFunction lowers a bound function body and records function-level syntax
 // metadata such as declared return slots on the returned WIR body.
 func LowerFunction(name string, fn *ast.FunctionExpr, bindings *bind.Result, built *cfgbuild.Result) *wir.Body {

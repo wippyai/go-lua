@@ -314,10 +314,7 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 				return true
 			}
 			out = applyBranchPathEvidence(config.TypeValues, ctx, config.Visibility, config.ProjectPath, out, proof)
-			if stateIsBottom(ctx.Registry, out) {
-				return false
-			}
-			return true
+			return !stateIsBottom(ctx.Registry, out)
 		})
 		if stateIsBottom(ctx.Registry, out) {
 			return out

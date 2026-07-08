@@ -131,7 +131,7 @@ func (r *Result) MemberReadCanMiss(point cfg.Point, expr ast.Expr) bool {
 	} else {
 		key, ok = r.ExpressionTypeBeforeBoundary(point, attr.Key)
 		if !ok {
-			key, ok = LiteralExpressionType(attr.Key)
+			key, _ = LiteralExpressionType(attr.Key)
 		}
 	}
 	if key == nil {

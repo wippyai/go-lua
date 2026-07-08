@@ -75,12 +75,11 @@ func genericForNodeTransfer(
 				out = out.ClearKeyMembershipsForPath(targetKey)
 			}
 		}
-		boundSources := sources
 		if refinedSources == nil || refinedSourceRegistry != ctx.Registry {
 			refinedSources = expressionRefinements.Bind(ctx.Registry, sources)
 			refinedSourceRegistry = ctx.Registry
 		}
-		boundSources = refinedSources
+		boundSources := refinedSources
 		if value, ok := genericForVariableValue(ctx, typeValues, fact, facts, boundSources, symbolTypes, signatures, signatureID, typeResolver, callOutcome, ks, resolver, sourcePath, in); ok {
 			out = out.WriteValue(ctx.Registry, key.SymbolValue(target), value)
 		}

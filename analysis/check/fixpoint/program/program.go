@@ -1491,7 +1491,7 @@ func contextualFunctionExpressionArgumentType(prepass *body.Result, keys *progra
 	if !ok || fnExpr == nil {
 		return nil, false
 	}
-	fn, ok := lowerFunctionExprType(fnExpr, keys.bindings, prepass.ModuleTypes())
+	fn, _ := lowerFunctionExprType(fnExpr, keys.bindings, prepass.ModuleTypes())
 	if !usableContextualFunctionExpressionType(fn) {
 		return nil, false
 	}
@@ -1805,7 +1805,7 @@ func functionOriginDescendsFrom(bindings *bind.Result, fn, ancestor *ast.Functio
 
 func (s *closureCaptureSeeder) capturedValue(sym symbol.ID, slot statekey.Value) product.Value {
 	value := s.caller.ReadValue(s.reg, slot)
-	if s != nil && s.readCaptured != nil {
+	if s.readCaptured != nil {
 		if solved, ok := s.readCaptured(sym); ok && contextEntryValueUseful(s.reg, solved) {
 			return preciseCapturedValue(s.reg, value, solved)
 		}
