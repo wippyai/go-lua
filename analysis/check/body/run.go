@@ -155,6 +155,7 @@ func (c *checker) prepare(
 		MethodReceiverTypes: config.MethodReceiverTypes,
 	})
 	facts := lowered.Facts
+	genericFors := genericForFactsFromSource(bindings, built, sourceStmts)
 	modules := moduleidentity.NewFromFacts(bindings, built.Graph, moduleIdentityFacts{facts: facts}, fn)
 	signatureID := newSignatureIdentityResolver(bindings, built.Graph, facts, modules, config.Signatures)
 	signatureNameForCall := signatureID.nameForCall
@@ -169,7 +170,7 @@ func (c *checker) prepare(
 	}
 	resolver := config.Visibility
 	if resolver == nil {
-		resolver = defaultVisibilityResolver(bindings, built, facts)
+		resolver = defaultVisibilityResolver(bindings, built, facts, genericFors)
 	}
 	userExpressionValue := config.ExpressionValue
 	expressionValue := userExpressionValue
@@ -237,6 +238,7 @@ func (c *checker) prepare(
 		signatureID:           signatureID,
 		facts:                 facts,
 		symbolTypes:           lowered.SymbolTypes,
+		genericFors:           genericFors,
 		visibility:            resolver,
 		sources:               sources,
 		customExpressionValue: userExpressionValue != nil,
@@ -272,7 +274,7 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		TypeValues:             typeValues,
 		ClosedDynamicAllValues: config.ClosedDynamicAllValues,
 	})
-	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.cfg.GenericFors, s.facts, s.sources, s.symbolTypes, s.signatures, s.signatureID, s.typeNS, typeValues, callOutcome, s.visibility.KeySpace(), s.visibility, func(expr ast.Expr) (pathdom.Path, bool) {
+	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.genericFors, s.facts, s.sources, s.symbolTypes, s.signatures, s.signatureID, s.typeNS, typeValues, callOutcome, s.visibility.KeySpace(), s.visibility, func(expr ast.Expr) (pathdom.Path, bool) {
 		return pathexpr.Resolve(expr, s.bindings)
 	})
 	edgeTransfer := factapply.NewFactsEdgeTransfer(factapply.FactsEdgeTransferConfig{
@@ -309,6 +311,7 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		signatureID:           s.signatureID,
 		facts:                 s.facts,
 		symbolTypes:           s.symbolTypes,
+		genericFors:           s.genericFors,
 		exprRefinements:       sourcevalue.NewExpressionRefinements(s.facts.ExpressionRefinements()),
 		typeNS:                s.typeNS,
 		flow:                  flow,

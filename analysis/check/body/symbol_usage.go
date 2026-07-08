@@ -227,7 +227,7 @@ func (r *Result) ReachableSymbolReads() SymbolReadSets {
 			collector.expr(fact.Limit)
 			collector.expr(fact.Step)
 		}
-		if fact, ok := r.GenericFor(point); ok && fact.Role == cfgbuild.GenericForRoleCheck {
+		if fact, ok := r.GenericFor(point); ok && fact.Role == GenericForRoleCheck {
 			collector.exprs(fact.Exprs)
 		}
 		if fact, ok := r.TypeDefinition(point); ok {

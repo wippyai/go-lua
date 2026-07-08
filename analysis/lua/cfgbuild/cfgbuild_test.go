@@ -5,7 +5,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
-	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
@@ -1063,24 +1062,6 @@ func TestBuildChunkGenericForIteratorCallsPrecedeLoopCheck(t *testing.T) {
 	}
 
 	requirePointKind(t, graph, kAssign, cfg.NodeAssign)
-	_ = mustGenericForAt(t, bindings, loop, 0)
-	checkFact, ok := result.GenericFors.Get(branch)
-	if !ok || checkFact.Role != GenericForRoleCheck {
-		t.Fatalf("generic for check fact = %#v, ok=%v", checkFact, ok)
-	}
-	if len(checkFact.Sources) != 2 {
-		t.Fatalf("generic for sources = %#v, want iterator and state sources", checkFact.Sources)
-	}
-	if checkFact.Sources[0].Kind != sourceprovenance.SourceCall || checkFact.Sources[0].CallPoint != firstCall {
-		t.Fatalf("iterator source = %#v, want call point %d", checkFact.Sources[0], firstCall)
-	}
-	if checkFact.Sources[1].Kind != sourceprovenance.SourceCall || checkFact.Sources[1].CallPoint != secondCall {
-		t.Fatalf("state source = %#v, want call point %d", checkFact.Sources[1], secondCall)
-	}
-	varFact, ok := result.GenericFors.Get(kAssign)
-	if !ok || varFact.Role != GenericForRoleVariable || varFact.VariableIndex != 0 {
-		t.Fatalf("generic for variable fact = %#v, ok=%v", varFact, ok)
-	}
 	join := firstJoin(t, graph)
 	requireEdge(t, graph, graph.Entry(), firstCall, false)
 	requireEdge(t, graph, branch, kAssign, true)
@@ -1399,25 +1380,11 @@ func TestBuildChunkGenericForCreatesLoopTopologyAndMetadata(t *testing.T) {
 	}
 	graph := result.Graph
 
-	kID := mustGenericForAt(t, bindings, loop, 0)
-	vID := mustGenericForAt(t, bindings, loop, 1)
 	points := requireStmtPoints(t, result, loop, 3)
 	branch, kAssign, vAssign := points[0], points[1], points[2]
 	requirePointKind(t, graph, branch, cfg.NodeBranch)
 	requirePointKind(t, graph, kAssign, cfg.NodeAssign)
 	requirePointKind(t, graph, vAssign, cfg.NodeAssign)
-
-	checkFact, ok := result.GenericFors.Get(branch)
-	if !ok || checkFact.Role != GenericForRoleCheck || checkFact.VariableIndex != NoGenericForVariableIndex {
-		t.Fatalf("generic for check fact = %#v, ok=%v", checkFact, ok)
-	}
-	for i, point := range []cfg.Point{kAssign, vAssign} {
-		fact, ok := result.GenericFors.Get(point)
-		if !ok || fact.Role != GenericForRoleVariable || fact.VariableIndex != i || len(fact.Symbols) != 2 ||
-			fact.Symbols[0] != kID || fact.Symbols[1] != vID || !fact.HasSymbols {
-			t.Fatalf("generic for variable fact %d = %#v, ok=%v", i, fact, ok)
-		}
-	}
 
 	join := firstJoin(t, graph)
 	bodyAssign := requireStmtPoints(t, result, bodyStmt, 1)[0]

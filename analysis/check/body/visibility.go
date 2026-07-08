@@ -9,12 +9,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/visibilityfacts"
 )
 
-func defaultVisibilityResolver(bindings *bind.Result, built *cfgbuild.Result, facts factflow.Facts) *visibility.Resolver {
+func defaultVisibilityResolver(bindings *bind.Result, built *cfgbuild.Result, facts factflow.Facts, genericFors map[cfg.Point]GenericForFact) *visibility.Resolver {
 	var graph cfg.Graph
-	var genericFors cfgbuild.GenericFors
 	if built != nil {
 		graph = built.Graph
-		genericFors = built.GenericFors
 	}
 	defs := visibilityfacts.Definitions(bindings, graph, facts)
 	defs = append(defs, genericForVariableDefinitions(bindings, graph, genericFors)...)
@@ -24,14 +22,14 @@ func defaultVisibilityResolver(bindings *bind.Result, built *cfgbuild.Result, fa
 	}))
 }
 
-func genericForVariableDefinitions(bindings *bind.Result, graph cfg.Graph, genericFors cfgbuild.GenericFors) []visibility.Definition {
+func genericForVariableDefinitions(bindings *bind.Result, graph cfg.Graph, genericFors map[cfg.Point]GenericForFact) []visibility.Definition {
 	if bindings == nil || graph == nil {
 		return nil
 	}
 	var defs []visibility.Definition
 	for _, point := range graph.RPO() {
-		fact, ok := genericFors.Get(point)
-		if !ok || fact.Role != cfgbuild.GenericForRoleVariable || !fact.HasSymbols ||
+		fact, ok := genericFors[point]
+		if !ok || fact.Role != GenericForRoleVariable || !fact.HasSymbols ||
 			fact.VariableIndex < 0 || fact.VariableIndex >= len(fact.Symbols) {
 			continue
 		}

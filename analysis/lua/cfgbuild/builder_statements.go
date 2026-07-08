@@ -464,7 +464,6 @@ func (b *builder) buildNumberFor(state flowState, stmt *ast.NumberForStmt) flowS
 }
 
 func (b *builder) buildGenericFor(state flowState, stmt *ast.GenericForStmt) flowState {
-	ids := b.bindings.GenericForSymbols(stmt)
 	beforeCalls := b.graph.RPO()
 	state = b.appendValueListCalls(state, stmt, stmt.Exprs)
 	calls, callsOK := b.valueListCalls(stmt.Exprs)
@@ -473,16 +472,7 @@ func (b *builder) buildGenericFor(state flowState, stmt *ast.GenericForStmt) flo
 	branch := b.appendBranch(state, stmt)
 	join := b.graph.AddNode(cfg.NodeJoin)
 
-	genericFact := GenericFor{
-		Stmt:          stmt,
-		Names:         append([]string(nil), stmt.Names...),
-		Exprs:         append([]ast.Expr(nil), stmt.Exprs...),
-		Symbols:       append([]symbol.ID(nil), ids...),
-		HasSymbols:    completeSymbols(ids, len(stmt.Names)),
-		VariableIndex: NoGenericForVariableIndex,
-	}
 	if callsOK && len(callPoints) == len(calls) {
-		genericFact.Sources = sourceprovenance.ValueListSources(stmt.Exprs, false, resolver)
 		for i, call := range calls {
 			context, exprs := CallContextExpressionProducer, []ast.Expr(nil)
 			if topLevelValueListCall(stmt.Exprs, call) {
@@ -491,20 +481,12 @@ func (b *builder) buildGenericFor(state flowState, stmt *ast.GenericForStmt) flo
 			b.calls.Set(callPoints[i], b.buildCallFact(stmt, nil, context, exprs, call.ExprIndex, call.Call, nil, resolver))
 		}
 	}
-	checkFact := genericFact
-	checkFact.Role = GenericForRoleCheck
-	b.genericFors.Set(branch.current, checkFact)
 	b.graph.AddEdge(branch.current, join, false)
 
 	iterState := branchPath(branch.current, true)
-	// One variable point per loop name (id == 0 when the binder produced no
-	// symbol) so the point count always matches semantics extraction.
-	for i := range stmt.Names {
+	// One variable point per loop name so point count matches semantics extraction.
+	for range stmt.Names {
 		iterState = b.appendAssign(iterState, stmt)
-		varFact := genericFact
-		varFact.Role = GenericForRoleVariable
-		varFact.VariableIndex = i
-		b.genericFors.Set(iterState.current, varFact)
 	}
 
 	b.breakTargets = append(b.breakTargets, join)
@@ -516,18 +498,6 @@ func (b *builder) buildGenericFor(state flowState, stmt *ast.GenericForStmt) flo
 		b.connect(body, branch.current)
 	}
 	return flowState{current: join, live: true}
-}
-
-func completeSymbols(symbols []symbol.ID, want int) bool {
-	if len(symbols) != want {
-		return false
-	}
-	for _, id := range symbols {
-		if id == 0 {
-			return false
-		}
-	}
-	return true
 }
 
 // numericForBounds returns the numeric-for control expressions in Lua

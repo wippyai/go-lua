@@ -17,12 +17,61 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
+
+func TestGenericForFactsAreBodySourceProjection(t *testing.T) {
+	fn := parseFunction(t, `
+function f()
+	for k in iter(), state() do
+		local seen = k
+	end
+end
+`)
+	result, err := CheckFunction(fn, Config{
+		Registry: standard.Registry(),
+		Globals:  []string{"iter", "state"},
+	})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	loop := fn.Stmts[0].(*ast.GenericForStmt)
+	points := result.cfg.StmtPoints.PointsFor(loop)
+	if len(points) != 4 {
+		t.Fatalf("generic-for points = %v, want two calls, check, variable", points)
+	}
+	firstCall, secondCall, branch, kAssign := points[0], points[1], points[2], points[3]
+	if node := result.Graph().Node(firstCall); node == nil || node.Kind != cfg.NodeCall {
+		t.Fatalf("first point = %#v, want call", node)
+	}
+	if node := result.Graph().Node(secondCall); node == nil || node.Kind != cfg.NodeCall {
+		t.Fatalf("second point = %#v, want call", node)
+	}
+	checkFact, ok := result.GenericFor(branch)
+	if !ok || checkFact.Role != GenericForRoleCheck || checkFact.VariableIndex != NoGenericForVariableIndex {
+		t.Fatalf("generic-for check projection = %#v/%v", checkFact, ok)
+	}
+	if len(checkFact.Sources) != 2 {
+		t.Fatalf("generic-for sources = %#v, want iterator and state sources", checkFact.Sources)
+	}
+	if checkFact.Sources[0].Kind != sourceprovenance.SourceCall || checkFact.Sources[0].CallPoint != firstCall {
+		t.Fatalf("iterator source = %#v, want call point %d", checkFact.Sources[0], firstCall)
+	}
+	if checkFact.Sources[1].Kind != sourceprovenance.SourceCall || checkFact.Sources[1].CallPoint != secondCall {
+		t.Fatalf("state source = %#v, want call point %d", checkFact.Sources[1], secondCall)
+	}
+	symbols := result.bindings.GenericForSymbols(loop)
+	varFact, ok := result.GenericFor(kAssign)
+	if !ok || varFact.Role != GenericForRoleVariable || varFact.VariableIndex != 0 ||
+		len(varFact.Symbols) != 1 || len(symbols) != 1 || varFact.Symbols[0] != symbols[0] || !varFact.HasSymbols {
+		t.Fatalf("generic-for variable projection = %#v/%v, symbols=%v", varFact, ok, symbols)
+	}
+}
 
 func TestGenericForIPairsElementCarriesObjectLiteralAnyField(t *testing.T) {
 	reg := standard.Registry()

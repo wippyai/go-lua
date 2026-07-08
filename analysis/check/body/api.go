@@ -102,6 +102,7 @@ type Static struct {
 	signatureID           *signatureIdentityResolver
 	facts                 factflow.Facts
 	symbolTypes           map[symbol.ID]typ.Type
+	genericFors           map[cfg.Point]GenericForFact
 	visibility            *visibility.Resolver
 	sources               sourcevalue.SourceValues
 	customExpressionValue bool
@@ -180,6 +181,7 @@ type Result struct {
 	signatureID           *signatureIdentityResolver
 	facts                 factflow.Facts
 	symbolTypes           map[symbol.ID]typ.Type
+	genericFors           map[cfg.Point]GenericForFact
 	exprRefinements       sourcevalue.ExpressionRefinements
 	typeNS                *typeresolve.Resolver
 	flow                  transfer.Result

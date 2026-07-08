@@ -510,11 +510,15 @@ func (r *Result) NumericFor(point cfg.Point) (NumericForFact, bool) {
 	return fact, ok
 }
 
-func (r *Result) GenericFor(point cfg.Point) (cfgbuild.GenericFor, bool) {
-	if r == nil || r.cfg == nil {
-		return cfgbuild.GenericFor{}, false
+func (r *Result) GenericFor(point cfg.Point) (GenericForFact, bool) {
+	if r == nil {
+		return GenericForFact{}, false
 	}
-	return r.cfg.GenericFors.Get(point)
+	fact, ok := r.genericFors[point]
+	if !ok {
+		return GenericForFact{}, false
+	}
+	return fact.copy(), true
 }
 
 func (r *Result) ExpressionEvaluation(point cfg.Point) (cfgbuild.ExpressionEvaluation, bool) {

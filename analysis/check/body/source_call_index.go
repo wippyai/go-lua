@@ -2,7 +2,9 @@ package body
 
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/callorder"
+	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -63,7 +65,7 @@ func (r *Result) computeSourceCallExprPoints() map[*ast.FuncCallExpr]cfg.Point {
 }
 
 func (r *Result) addValueListSourceCalls(out map[*ast.FuncCallExpr]cfg.Point, stmt ast.Stmt, exprs []ast.Expr) {
-	calls, ok := callorder.ValueList(exprs, r.sourceCallOrderOptions())
+	calls, ok := callorder.ValueList(exprs, sourceCallOrderOptions(r.bindings))
 	if !ok {
 		return
 	}
@@ -71,7 +73,7 @@ func (r *Result) addValueListSourceCalls(out map[*ast.FuncCallExpr]cfg.Point, st
 }
 
 func (r *Result) addExprSourceCalls(out map[*ast.FuncCallExpr]cfg.Point, stmt ast.Stmt, expr ast.Expr) {
-	calls, ok := callorder.Expr(expr, r.sourceCallOrderOptions())
+	calls, ok := callorder.Expr(expr, sourceCallOrderOptions(r.bindings))
 	if !ok {
 		return
 	}
@@ -82,7 +84,7 @@ func (r *Result) addSourceCalls(out map[*ast.FuncCallExpr]cfg.Point, stmt ast.St
 	if len(calls) == 0 {
 		return
 	}
-	points := r.sourceCallPointsForStmt(stmt)
+	points := sourceCallPointsForStmt(r.cfg, stmt)
 	if len(points) != len(calls) {
 		return
 	}
@@ -93,13 +95,13 @@ func (r *Result) addSourceCalls(out map[*ast.FuncCallExpr]cfg.Point, stmt ast.St
 	}
 }
 
-func (r *Result) sourceCallPointsForStmt(stmt ast.Stmt) []cfg.Point {
-	if r == nil || r.cfg == nil || r.cfg.Graph == nil || stmt == nil {
+func sourceCallPointsForStmt(built *cfgbuild.Result, stmt ast.Stmt) []cfg.Point {
+	if built == nil || built.Graph == nil || stmt == nil {
 		return nil
 	}
 	var out []cfg.Point
-	for _, point := range r.cfg.StmtPoints.PointsFor(stmt) {
-		node := r.cfg.Graph.Node(point)
+	for _, point := range built.StmtPoints.PointsFor(stmt) {
+		node := built.Graph.Node(point)
 		if node != nil && node.Kind == cfg.NodeCall {
 			out = append(out, point)
 		}
@@ -107,8 +109,8 @@ func (r *Result) sourceCallPointsForStmt(stmt ast.Stmt) []cfg.Point {
 	return out
 }
 
-func (r *Result) sourceCallOrderOptions() callorder.Options {
-	options := callorder.LuaOptions(r.bindings)
+func sourceCallOrderOptions(bindings *bind.Result) callorder.Options {
+	options := callorder.LuaOptions(bindings)
 	options.AllowShortCircuitCalls = true
 	return options
 }

@@ -176,9 +176,6 @@ func TestLowerDoesNotLowerDeclarationOrControlSidecars(t *testing.T) {
 		}
 	}
 	for _, point := range requireStmtPoints(t, built, genericFor, 2) {
-		if _, ok := built.GenericFors.Get(point); !ok {
-			t.Fatalf("missing generic-for metadata at point %d", point)
-		}
 		assertNoPointFact(t, facts, point)
 	}
 	for _, point := range requireStmtPoints(t, built, label, 1) {
