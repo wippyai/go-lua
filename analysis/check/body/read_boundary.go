@@ -851,17 +851,13 @@ func (r *Result) dominatingLocalAssignmentRootPathValueAtBoundary(point cfg.Poin
 	if r == nil || len(p.Segments) != 0 {
 		return product.Value{}, false
 	}
-	if _, assignPoint, ok := r.DominatingRootLocalAssignment(point, p.Symbol); ok {
-		if r.pathShapeInvalidatedAfterAssignment(assignPoint, point, p) {
-			return product.Value{}, false
-		}
-		lowered, loweredOK := r.LoweredLocalAssignment(assignPoint)
-		if loweredOK {
-			recovered, recoveredOK := r.SourceValueAtBoundary(assignPoint, lowered.Source())
-			if recoveredOK && r.sourceValueHasSpecificType(recovered) && r.recoveredRootPathValueShouldReplace(current, recovered) {
-				return recovered, true
-			}
-		}
+	declaration, ok := r.DominatingPathRootDeclarationSource(point, p)
+	if !ok || r.pathShapeInvalidatedAfterAssignment(declaration.Point, point, p) {
+		return product.Value{}, false
+	}
+	recovered, recoveredOK := r.SourceValueAtBoundary(declaration.Point, declaration.Source)
+	if recoveredOK && r.sourceValueHasSpecificType(recovered) && r.recoveredRootPathValueShouldReplace(current, recovered) {
+		return recovered, true
 	}
 	return product.Value{}, false
 }
@@ -870,7 +866,8 @@ func (r *Result) dominatingLocalAssignmentDescendantPathValueAtBoundary(point cf
 	if r == nil || len(p.Segments) == 0 {
 		return product.Value{}, false
 	}
-	if _, assignPoint, ok := r.DominatingRootLocalAssignment(point, p.Symbol); !ok || r.pathShapeInvalidatedAfterAssignment(assignPoint, point, p) {
+	declaration, ok := r.DominatingPathRootDeclarationSource(point, p.RootOnly())
+	if !ok || r.pathShapeInvalidatedAfterAssignment(declaration.Point, point, p) {
 		return product.Value{}, false
 	}
 	rootValue, ok := r.dominatingLocalAssignmentRootPathValueAtBoundary(point, p.RootOnly(), product.Top())
@@ -986,24 +983,19 @@ func (r *Result) recoveredRootPathValueAtBoundary(point cfg.Point, p pathdom.Pat
 	if r == nil || len(p.Segments) != 0 {
 		return product.Value{}, false
 	}
-	if _, assignPoint, ok := r.DominatingRootLocalAssignment(point, p.Symbol); ok {
-		lowered, loweredOK := r.LoweredLocalAssignment(assignPoint)
-		if loweredOK {
-			recovered, recoveredOK := r.SourceValueAtBoundary(assignPoint, lowered.Source())
-			if recoveredOK && r.sourceValueHasSpecificType(recovered) && r.recoveredRootPathValueShouldReplace(current, recovered) {
-				return recovered, true
-			}
-		}
-	}
 	declaration, ok := r.DominatingPathRootDeclarationSource(point, p)
 	if !ok {
 		return product.Value{}, false
 	}
-	recovered, ok := r.rootDeclarationValue(declaration, r.boundaryRead(point))
-	if !ok || !r.recoveredRootPathValueShouldReplace(current, recovered) {
+	recovered, recoveredOK := r.SourceValueAtBoundary(declaration.Point, declaration.Source)
+	if recoveredOK && r.sourceValueHasSpecificType(recovered) && r.recoveredRootPathValueShouldReplace(current, recovered) {
+		return recovered, true
+	}
+	rootRecovered, ok := r.rootDeclarationValue(declaration, r.boundaryRead(point))
+	if !ok || !r.recoveredRootPathValueShouldReplace(current, rootRecovered) {
 		return product.Value{}, false
 	}
-	return recovered, true
+	return rootRecovered, true
 }
 
 func (r *Result) recoveredRootPathValueShouldReplace(current, recovered product.Value) bool {
@@ -1365,11 +1357,11 @@ func (r *Result) dominatingAliasPathAtBoundary(point cfg.Point, alias, target pa
 	if r == nil || alias.Symbol == 0 || target.Symbol == 0 {
 		return false
 	}
-	fact, _, ok := r.DominatingRootLocalAssignment(point, alias.Symbol)
-	if !ok || fact.Expr == nil {
+	declaration, ok := r.DominatingPathRootDeclarationSource(point, alias.RootOnly())
+	if !ok {
 		return false
 	}
-	source, ok := r.ExpressionPath(fact.Expr)
+	source, ok := r.ValueSourcePath(declaration.Source)
 	if !ok || source.IsEmpty() {
 		return false
 	}
