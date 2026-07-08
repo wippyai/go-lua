@@ -729,8 +729,8 @@ end
 	t.Fatalf("missing true-value presence refinement for %s; got %#v\nWIR:\n%s", entryPath, trueFacts.Refinements(), wir.Print(body, built.Graph))
 }
 
-func TestLowerWithWIRReturnPublishesWithoutSemanticReturnView(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+func TestLowerWithWIRReturnPublishesWithoutSourceReturnMetadata(t *testing.T) {
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(): string
     local value = "semantic assignment point"
     return value
@@ -739,8 +739,8 @@ end
 	local := fn.Stmts[0].(*ast.LocalAssignStmt)
 	points := requireStmtPoints(t, built, local, 1)
 	point := points[0]
-	if _, ok := result.ReturnView(point); ok {
-		t.Fatalf("point %d unexpectedly has semantic return view", point)
+	if _, ok := built.Returns.Get(point); ok {
+		t.Fatalf("point %d unexpectedly has source return metadata", point)
 	}
 
 	body := wir.NewBody("synthetic-return-on-non-return-point")
@@ -754,7 +754,7 @@ end
 	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	returnFact, ok := facts.Return(point)
 	if !ok {
-		t.Fatalf("missing WIR-owned return at point %d without semantic ReturnView", point)
+		t.Fatalf("missing WIR-owned return at point %d without source return metadata", point)
 	}
 	sources := returnFact.Sources()
 	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceLiteral ||

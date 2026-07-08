@@ -106,7 +106,7 @@ end
 	returnPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	ret, ok := facts.Return(returnPoint)
 	if !ok {
-		t.Fatalf("missing return at point %d without semantic ReturnView", returnPoint)
+		t.Fatalf("missing return at point %d without source return metadata", returnPoint)
 	}
 	sources := ret.Sources()
 	if len(sources) != 2 {

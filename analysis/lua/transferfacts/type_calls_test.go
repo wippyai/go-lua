@@ -645,7 +645,7 @@ return Point:is(data)
 	assertReturnPresenceRelation(t, relations, 1, presence.Absent(), 0, presence.Present())
 }
 
-func TestLowerWithWIRTypeIsReturnPresencePublishesWithoutSemanticReturnView(t *testing.T) {
+func TestLowerWithWIRTypeIsReturnPresencePublishesWithoutSourceReturnMetadata(t *testing.T) {
 	reg := standard.Registry()
 	stmts, bindings, built, _ := parseSemanticChunk(t, `
 type Point = {x: number, y: number}

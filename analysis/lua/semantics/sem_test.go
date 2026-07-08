@@ -601,35 +601,14 @@ func TestExtractChunkCallReturnBranchAndTypeFacts(t *testing.T) {
 	}
 
 	returnPoint := requireStmtPoints(t, built, ret, 1)[0]
-	returnFact, ok := result.Return(returnPoint)
+	returnFact, ok := built.Returns.Get(returnPoint)
 	if !ok || returnFact.Stmt != ret || len(returnFact.Exprs) != 1 || returnFact.Exprs[0] != retExpr {
 		t.Fatalf("return fact = %#v, ok=%v", returnFact, ok)
 	}
 	returnFact.Exprs[0] = ident("mutated")
-	returnAgain, _ := result.Return(returnPoint)
+	returnAgain, _ := built.Returns.Get(returnPoint)
 	if returnAgain.Exprs[0] != retExpr {
 		t.Fatalf("Return exposed mutable expr slice")
-	}
-	returnView, ok := result.ReturnView(returnPoint)
-	if !ok {
-		t.Fatalf("missing return view")
-	}
-	borrowedReturn, ok := returnView.Borrowed()
-	if !ok || borrowedReturn.Exprs[0] != retExpr {
-		t.Fatalf("borrowed return fact = %#v, ok=%v", borrowedReturn, ok)
-	}
-	returnAllocs := testing.AllocsPerRun(1000, func() {
-		view, ok := result.ReturnView(returnPoint)
-		if !ok {
-			t.Fatalf("missing return view")
-		}
-		borrowed, ok := view.Borrowed()
-		if !ok || len(borrowed.Exprs) == 0 {
-			t.Fatalf("borrowed return fact = %#v, ok=%v", borrowed, ok)
-		}
-	})
-	if returnAllocs != 0 {
-		t.Fatalf("ReturnView allocations/run = %.1f, want zero", returnAllocs)
 	}
 }
 
@@ -762,7 +741,7 @@ func TestExtractChunkAssignmentAndReturnCallFactsUseLuaListRules(t *testing.T) {
 	if len(tailFact.ResultTargets) != 1 || tailFact.ResultTargets[0].Kind != CallResultTargetReturn || tailFact.ResultTargets[0].Index != 1 || tailFact.ResultTargets[0].ResultIndex != 0 || !tailFact.ResultTargets[0].OpenTail {
 		t.Fatalf("tail result targets = %#v", tailFact.ResultTargets)
 	}
-	returnFact, ok := result.Return(returnPoints[1])
+	returnFact, ok := built.Returns.Get(returnPoints[1])
 	if !ok {
 		t.Fatalf("missing return fact")
 	}
@@ -773,7 +752,7 @@ func TestExtractChunkAssignmentAndReturnCallFactsUseLuaListRules(t *testing.T) {
 		t.Fatalf("return tail source = %#v", returnFact.Sources[1])
 	}
 	returnFact.Sources[1].Kind = sourceprovenance.SourceNil
-	returnAgain, _ := result.Return(returnPoints[1])
+	returnAgain, _ := built.Returns.Get(returnPoints[1])
 	if returnAgain.Sources[1].Kind != sourceprovenance.SourceCall {
 		t.Fatalf("Return exposed mutable sources slice")
 	}
@@ -1160,7 +1139,7 @@ func TestExtractChunkAssertionWrappedCallProducersKeepOuterSources(t *testing.T)
 	if !ok || returnCall.Call != barCall || returnCall.ExprIndex != 0 || returnCall.Context != CallContextReturnSource {
 		t.Fatalf("return call = %#v, ok=%v", returnCall, ok)
 	}
-	returnFact, ok := result.Return(returnPoints[1])
+	returnFact, ok := built.Returns.Get(returnPoints[1])
 	if !ok || len(returnFact.Sources) != 1 || returnFact.Sources[0].Kind != sourceprovenance.SourceCall || returnFact.Sources[0].Expr != barCast || returnFact.Sources[0].CallPoint != returnPoints[0] || !returnFact.Sources[0].HasCallPoint {
 		t.Fatalf("return sources = %#v, ok=%v", returnFact.Sources, ok)
 	}
@@ -1251,7 +1230,7 @@ func TestExtractChunkAssignmentValueSourcesHandleAdjustRetNilFillAndVararg(t *te
 	}
 
 	returnPoint := requireStmtPoints(t, built, varargReturn, 1)[0]
-	returnFact, ok := result.Return(returnPoint)
+	returnFact, ok := built.Returns.Get(returnPoint)
 	if !ok {
 		t.Fatalf("missing vararg return fact")
 	}
@@ -1595,7 +1574,7 @@ func TestExtractFunctionRecordsFunctionIdentity(t *testing.T) {
 		t.Fatalf("function identity = %p, want %p", result.Function(), fn)
 	}
 	retPoint := requireStmtPoints(t, built, ret, 1)[0]
-	if _, ok := result.Return(retPoint); !ok {
+	if _, ok := built.Returns.Get(retPoint); !ok {
 		t.Fatalf("missing function return fact")
 	}
 }

@@ -233,10 +233,10 @@ func (r *Result) EntryState() (state.State, bool) {
 }
 
 func (r *Result) ReturnFact(point cfg.Point) (ReturnFact, bool) {
-	if r == nil || r.semantics == nil {
+	if r == nil || r.cfg == nil {
 		return ReturnFact{}, false
 	}
-	return r.semantics.Return(point)
+	return r.cfg.Returns.Get(point)
 }
 
 func (r *Result) LocalAssignment(point cfg.Point) (LocalAssignmentFact, bool) {

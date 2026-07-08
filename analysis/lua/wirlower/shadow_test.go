@@ -105,7 +105,7 @@ func TestShadowCoverage(t *testing.T) {
 			if f, ok := sem.Call(pt); ok {
 				scorePoint(total, covered, gapSamples, "call", keys, semCallKey(f))
 			}
-			if _, ok := sem.Return(pt); ok {
+			if _, ok := built.Returns.Get(pt); ok {
 				scorePoint(total, covered, gapSamples, "return", keys, "return")
 			}
 			if branchKey := branchKeys[pt]; branchKey != "" {

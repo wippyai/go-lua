@@ -11,7 +11,6 @@ type Result struct {
 	localDeclarationFacts map[cfg.Point]*LocalAssignmentFact
 	assignmentFacts       map[cfg.Point]*OrdinaryAssignmentFact
 	calls                 map[cfg.Point]*CallFact
-	returns               map[cfg.Point]*ReturnFact
 }
 
 func newResult(fn *ast.FunctionExpr) *Result {
@@ -20,7 +19,6 @@ func newResult(fn *ast.FunctionExpr) *Result {
 		localDeclarationFacts: make(map[cfg.Point]*LocalAssignmentFact),
 		assignmentFacts:       make(map[cfg.Point]*OrdinaryAssignmentFact),
 		calls:                 make(map[cfg.Point]*CallFact),
-		returns:               make(map[cfg.Point]*ReturnFact),
 	}
 }
 
@@ -147,43 +145,6 @@ func (r *Result) CallView(point cfg.Point) (CallFactView, bool) {
 	return CallFactView{fact: fact}, true
 }
 
-func (r *Result) Return(point cfg.Point) (ReturnFact, bool) {
-	if r == nil {
-		return ReturnFact{}, false
-	}
-	fact, ok := r.returns[point]
-	if !ok || fact == nil {
-		return ReturnFact{}, false
-	}
-	return copyReturnFact(*fact), true
-}
-
-// ReturnFactView is a read-only borrowed view of a return fact owned by Result.
-type ReturnFactView struct {
-	fact *ReturnFact
-}
-
-// Borrowed returns the return fact without defensive copies. Callers that need
-// ownership must use Result.Return.
-func (v ReturnFactView) Borrowed() (ReturnFact, bool) {
-	if v.fact == nil {
-		return ReturnFact{}, false
-	}
-	return *v.fact, true
-}
-
-// ReturnView returns a borrowed read-only return fact view at point.
-func (r *Result) ReturnView(point cfg.Point) (ReturnFactView, bool) {
-	if r == nil {
-		return ReturnFactView{}, false
-	}
-	fact, ok := r.returns[point]
-	if !ok || fact == nil {
-		return ReturnFactView{}, false
-	}
-	return ReturnFactView{fact: fact}, true
-}
-
 func (r *Result) setCall(point cfg.Point, fact CallFact) {
 	if r == nil || point == 0 {
 		return
@@ -203,11 +164,4 @@ func (r *Result) setOrdinaryAssignment(point cfg.Point, fact OrdinaryAssignmentF
 		return
 	}
 	r.assignmentFacts[point] = &fact
-}
-
-func (r *Result) setReturn(point cfg.Point, fact ReturnFact) {
-	if r == nil || point == 0 {
-		return
-	}
-	r.returns[point] = &fact
 }

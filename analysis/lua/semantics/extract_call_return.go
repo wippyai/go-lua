@@ -53,11 +53,5 @@ func (r *Result) extractReturn(stmt *ast.ReturnStmt, bindings *bind.Result, poin
 		}
 		r.setCall(points[i], buildCallFact(stmt, nil, context, exprs, call.index, call.call, bindings, nil, resolver))
 	}
-	returnPoint := points[len(calls)]
-	r.setReturn(returnPoint, ReturnFact{
-		Stmt:    stmt,
-		Exprs:   copyExprs(stmt.Exprs),
-		Sources: returnValueSources(stmt.Exprs, resolver),
-	})
 	return nil
 }

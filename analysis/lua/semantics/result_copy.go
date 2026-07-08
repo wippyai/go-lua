@@ -68,12 +68,6 @@ func copySourceSpans(in []SourceSpan) []SourceSpan {
 	return out
 }
 
-func copyReturnFact(fact ReturnFact) ReturnFact {
-	fact.Exprs = copyExprs(fact.Exprs)
-	fact.Sources = copyValueSources(fact.Sources)
-	return fact
-}
-
 func copyValueSources(in []sourceprovenance.ASTSource) []sourceprovenance.ASTSource {
 	if len(in) == 0 {
 		return nil

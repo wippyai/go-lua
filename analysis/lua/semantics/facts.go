@@ -111,12 +111,6 @@ type CallFact struct {
 	HasCalleeSymbol bool
 }
 
-type ReturnFact struct {
-	Stmt    *ast.ReturnStmt
-	Exprs   []ast.Expr
-	Sources []sourceprovenance.ASTSource
-}
-
 // SourceSpan is a syntax-free source range carried by semantic facts for
 // downstream consumers that must not inspect AST nodes.
 type SourceSpan struct {

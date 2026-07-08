@@ -79,10 +79,6 @@ func assignmentValueSource(exprs []ast.Expr, targetIndex int, resolver sourcepro
 	return sourceprovenance.AssignmentSources(exprs, targetIndex+1, resolver)[targetIndex]
 }
 
-func returnValueSources(exprs []ast.Expr, resolver sourceprovenance.CallPointResolver) []sourceprovenance.ASTSource {
-	return sourceprovenance.ValueListSources(exprs, true, resolver)
-}
-
 func argumentValueSources(exprs []ast.Expr, resolver sourceprovenance.CallPointResolver) []sourceprovenance.ASTSource {
 	return sourceprovenance.ValueListSources(exprs, false, resolver)
 }

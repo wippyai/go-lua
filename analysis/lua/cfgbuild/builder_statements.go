@@ -42,8 +42,22 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 		}
 		return state
 	case *ast.ReturnStmt:
+		beforeCalls := b.graph.RPO()
 		state = b.appendValueListCalls(state, stmt, stmt.Exprs)
+		calls, callsOK := b.valueListCalls(stmt.Exprs)
+		callPoints := newCallPoints(b.graph, beforeCalls)
+		resolver := callPointResolver(calls, callPoints)
 		state = b.appendNodeForStmt(state, cfg.NodeReturn, stmt)
+		if state.live {
+			fact := Return{
+				Stmt:  stmt,
+				Exprs: append([]ast.Expr(nil), stmt.Exprs...),
+			}
+			if callsOK && len(callPoints) == len(calls) {
+				fact.Sources = sourceprovenance.ValueListSources(stmt.Exprs, true, resolver)
+			}
+			b.returns.Set(state.current, fact)
+		}
 		b.graph.AddEdge(state.current, b.graph.Exit(), false)
 		return flowState{current: state.current}
 	case *ast.DoBlockStmt:
