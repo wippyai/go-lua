@@ -4651,7 +4651,7 @@ func TestSupplementalResultsKeepsPrimarySlotsAndFillsMissingSignatureSlots(t *te
 		NameFor: staticName("f"),
 	})
 
-	got := calloutcome.WithSupplemental(primary, signatures)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
+	got := calloutcome.ComposeSupplemental(primary, signatures)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
 
 	if len(got) != 2 {
 		t.Fatalf("got %d results, want 2: %#v", len(got), got)
@@ -4695,7 +4695,7 @@ func TestSupplementalResultsKeepsPrimarySlotOverSignatureSameAs(t *testing.T) {
 		}),
 	})
 
-	got := calloutcome.WithSupplemental(primary, signatures)(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
+	got := calloutcome.ComposeSupplemental(primary, signatures)(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
 
 	assertCallOutcomeResults(t, reg, got, []product.Value{primaryValue})
 }

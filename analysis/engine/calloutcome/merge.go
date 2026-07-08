@@ -18,17 +18,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-// WithSupplemental composes two call outcome providers. Result slots and
-// post-return state facts are accumulated only until a provider declares
-// post-return authority for the call. Pre-call diagnostic obligations are
-// accumulated.
-func WithSupplemental(primary, supplemental callpayload.CallOutcomeProvider) callpayload.CallOutcomeProvider {
-	return ComposeSupplemental(primary, supplemental)
-}
-
 // ComposeSupplemental returns one canonical provider that evaluates every
 // non-nil provider in order and merges their outcomes with the same authority
-// law as WithSupplemental. It is the preferred assembly point for production
+// law. It is the preferred assembly point for production
 // call-boundary providers because it avoids nested wrapper chains.
 func ComposeSupplemental(providers ...callpayload.CallOutcomeProvider) callpayload.CallOutcomeProvider {
 	providers = compactProviders(providers)
@@ -59,7 +51,7 @@ func compactProviders(providers []callpayload.CallOutcomeProvider) []callpayload
 
 // MergeSupplemental merges one already-computed supplemental outcome into an
 // already-computed primary outcome using the same authority semantics as
-// WithSupplemental. It is for providers that derive a local supplemental payload
+// ComposeSupplemental. It is for providers that derive a local supplemental payload
 // while adapting another source of call evidence.
 func MergeSupplemental(reg *axis.Registry, primary, supplemental callpayload.CallOutcome) callpayload.CallOutcome {
 	out := withSupplementalResultSlots(reg, primary, supplemental.Results)

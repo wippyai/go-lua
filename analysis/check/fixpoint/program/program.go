@@ -2666,7 +2666,7 @@ func checkConfigWithSummaries(
 		if baseFactory == nil {
 			return primary
 		}
-		return calloutcome.WithSupplemental(primary, baseFactory(ctx))
+		return calloutcome.ComposeSupplemental(primary, baseFactory(ctx))
 	}
 	out.SignatureArgumentTypeFactory = func(ctx body.CallOutcomeContext) body.SignatureArgumentTypeFunc {
 		provider := body.SignatureArgumentTypeFunc(callresult.SummaryArgumentTypeProvider(callresult.ProviderConfig{
