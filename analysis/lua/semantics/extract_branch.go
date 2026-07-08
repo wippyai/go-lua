@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func (r *Result) extractBranch(stmt ast.Stmt, kind BranchKind, condition ast.Expr, bindings *bind.Result, points []cfg.Point) error {
+func (r *Result) extractBranch(stmt ast.Stmt, condition ast.Expr, bindings *bind.Result, points []cfg.Point) error {
 	if len(points) == 0 {
 		return nil
 	}
@@ -31,23 +31,6 @@ func (r *Result) extractBranch(stmt ast.Stmt, kind BranchKind, condition ast.Exp
 		fact.ConditionNegated = callConditionNegated
 		r.setCall(points[i], fact)
 	}
-	branchPoint := points[len(calls)]
-	fact := BranchConditionFact{
-		Kind:      kind,
-		Stmt:      stmt,
-		Condition: condition,
-		Source:    conditionValueSource(condition, resolver),
-		Check:     branchcond.Normalize(condition, bindings),
-	}
-	switch stmt := stmt.(type) {
-	case *ast.IfStmt:
-		fact.If = stmt
-	case *ast.WhileStmt:
-		fact.While = stmt
-	case *ast.RepeatStmt:
-		fact.Repeat = stmt
-	}
-	r.branches[branchPoint] = fact
 	return nil
 }
 

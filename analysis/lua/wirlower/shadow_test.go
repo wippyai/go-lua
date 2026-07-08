@@ -11,9 +11,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
@@ -91,6 +93,7 @@ func TestShadowCoverage(t *testing.T) {
 		}
 		processed++
 
+		branchKeys := sourceBranchKeys(stmts, bindings, built)
 		for _, pt := range built.Graph.RPO() {
 			keys := wirPointKeys(body, pt)
 			if f, ok := sem.LocalAssignment(pt); ok {
@@ -105,8 +108,8 @@ func TestShadowCoverage(t *testing.T) {
 			if _, ok := sem.Return(pt); ok {
 				scorePoint(total, covered, gapSamples, "return", keys, "return")
 			}
-			if f, ok := sem.BranchCondition(pt); ok {
-				scorePoint(total, covered, gapSamples, "branch", keys, semBranchKey(f))
+			if branchKey := branchKeys[pt]; branchKey != "" {
+				scorePoint(total, covered, gapSamples, "branch", keys, branchKey)
 			}
 		}
 	}
@@ -262,8 +265,60 @@ func semCallKey(f semantics.CallFact) string {
 	return "callexpr"
 }
 
-func semBranchKey(f semantics.BranchConditionFact) string {
-	return string(f.Check.Path.Key()) + "|" + strconv.Itoa(int(f.Check.Kind))
+func sourceBranchKeys(stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result) map[cfg.Point]string {
+	if built == nil || built.Graph == nil {
+		return nil
+	}
+	out := map[cfg.Point]string{}
+	var walk func([]ast.Stmt)
+	walk = func(stmts []ast.Stmt) {
+		for _, stmt := range stmts {
+			switch stmt := stmt.(type) {
+			case *ast.IfStmt:
+				addSourceBranchKey(out, bindings, built, stmt, stmt.Condition)
+				walk(stmt.Then)
+				walk(stmt.Else)
+			case *ast.WhileStmt:
+				addSourceBranchKey(out, bindings, built, stmt, stmt.Condition)
+				walk(stmt.Stmts)
+			case *ast.RepeatStmt:
+				walk(stmt.Stmts)
+				addSourceBranchKey(out, bindings, built, stmt, stmt.Condition)
+			case *ast.DoBlockStmt:
+				walk(stmt.Stmts)
+			case *ast.NumberForStmt:
+				walk(stmt.Stmts)
+			case *ast.GenericForStmt:
+				walk(stmt.Stmts)
+			}
+		}
+	}
+	walk(stmts)
+	for _, point := range built.Meta.ShortCircuitGuardPoints() {
+		guard, ok := built.Meta.ShortCircuitGuard(point)
+		if !ok || guard.Condition == nil || !built.Graph.IsBranch(point) {
+			continue
+		}
+		out[point] = branchCheckKey(branchcond.Normalize(guard.Condition, bindings))
+	}
+	return out
+}
+
+func addSourceBranchKey(out map[cfg.Point]string, bindings *bind.Result, built *cfgbuild.Result, stmt ast.Stmt, condition ast.Expr) {
+	if condition == nil {
+		return
+	}
+	points := built.StmtPoints.PointsFor(stmt)
+	for i := len(points) - 1; i >= 0; i-- {
+		if built.Graph.IsBranch(points[i]) {
+			out[points[i]] = branchCheckKey(branchcond.Normalize(condition, bindings))
+			return
+		}
+	}
+}
+
+func branchCheckKey(check branchcond.Check) string {
+	return string(check.Path.Key()) + "|" + strconv.Itoa(int(check.Kind))
 }
 
 // repoRoot ascends from the test working directory to the module root.

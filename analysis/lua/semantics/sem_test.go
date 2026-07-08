@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
-	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/callorder"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
@@ -585,22 +584,6 @@ func TestExtractChunkCallReturnBranchAndTypeFacts(t *testing.T) {
 		t.Fatalf("CallView allocations/run = %.1f, want zero", allocs)
 	}
 
-	for _, tt := range []struct {
-		stmt ast.Stmt
-		kind BranchKind
-		cond ast.Expr
-	}{
-		{ifStmt, BranchIf, xCond},
-		{whileStmt, BranchWhile, whileStmt.Condition},
-		{repeatStmt, BranchRepeat, repeatStmt.Condition},
-	} {
-		points := requireStmtPoints(t, built, tt.stmt, 1)
-		fact, ok := result.BranchCondition(points[0])
-		if !ok || fact.Kind != tt.kind || fact.Stmt != tt.stmt || fact.Condition != tt.cond {
-			t.Fatalf("branch fact for %T = %#v, ok=%v", tt.stmt, fact, ok)
-		}
-	}
-
 	typePoint := requireStmtPoints(t, built, typeDef, 1)[0]
 	if node := built.Graph.Node(typePoint); node == nil || node.Kind != cfg.NodeNoop {
 		t.Fatalf("type def cfg node = %#v, want NodeNoop", node)
@@ -989,17 +972,6 @@ func TestExtractChunkConditionAndIteratorCallFactsUseDeferredContexts(t *testing
 	if len(conditionCall.ResultTargets) != 0 {
 		t.Fatalf("condition result targets = %#v, want none", conditionCall.ResultTargets)
 	}
-	branchFact, ok := result.BranchCondition(ifPoints[1])
-	if !ok {
-		t.Fatalf("missing condition branch fact")
-	}
-	if branchFact.Source.Kind != sourceprovenance.SourceCall || branchFact.Source.Expr != readyCall || branchFact.Source.CallPoint != ifPoints[0] || !branchFact.Source.HasCallPoint {
-		t.Fatalf("condition source = %#v", branchFact.Source)
-	}
-	if branchFact.Source.TargetIndex != sourceprovenance.NoSourceIndex || !branchFact.Source.Adjusted || branchFact.Source.Expanded {
-		t.Fatalf("condition source flags = %#v", branchFact.Source)
-	}
-
 	canAccessCall := &ast.FuncCallExpr{Func: ident("can_access"), Args: []ast.Expr{ident("page")}}
 	guardCondition := &ast.LogicalOpExpr{
 		Operator: "and",
@@ -1026,10 +998,6 @@ func TestExtractChunkConditionAndIteratorCallFactsUseDeferredContexts(t *testing
 	if guardCall.Context != CallContextExpressionProducer || guardCall.Call != canAccessCall {
 		t.Fatalf("nested condition call fact = %#v", guardCall)
 	}
-	if _, ok := guardResult.BranchCondition(guardPoints[1]); !ok {
-		t.Fatalf("missing nested condition branch fact")
-	}
-
 	loopPoints := requireStmtPoints(t, built, loop, 4)
 	iterFact, ok := result.Call(loopPoints[0])
 	if !ok {
@@ -1148,18 +1116,6 @@ func TestExtractChunkConditionPredicateCallPreservesNestedCallEvidence(t *testin
 		t.Fatalf("condition nested argument source = %#v", argSource)
 	}
 
-	branchFact, ok := result.BranchCondition(points[2])
-	if !ok {
-		t.Fatalf("missing branch condition fact")
-	}
-	if branchFact.Source.Kind != sourceprovenance.SourceCall ||
-		branchFact.Source.Expr != authorizeCall ||
-		branchFact.Source.CallPoint != points[1] ||
-		!branchFact.Source.HasCallPoint ||
-		branchFact.Source.TargetIndex != sourceprovenance.NoSourceIndex ||
-		!branchFact.Source.Adjusted {
-		t.Fatalf("branch predicate source = %#v", branchFact.Source)
-	}
 }
 
 func TestExtractChunkAssertionWrappedCallProducersKeepOuterSources(t *testing.T) {
@@ -1215,11 +1171,6 @@ func TestExtractChunkAssertionWrappedCallProducersKeepOuterSources(t *testing.T)
 	if !ok || conditionCall.Call != readyCall || conditionCall.Context != CallContextCondition {
 		t.Fatalf("condition call = %#v, ok=%v", conditionCall, ok)
 	}
-	branchFact, ok := result.BranchCondition(ifPoints[1])
-	if !ok || branchFact.Source.Kind != sourceprovenance.SourceCall || branchFact.Source.Expr != readyCast || branchFact.Source.CallPoint != ifPoints[0] || !branchFact.Source.HasCallPoint {
-		t.Fatalf("branch source = %#v, ok=%v", branchFact.Source, ok)
-	}
-
 	loopPoints := requireStmtPoints(t, built, loop, 3)
 	iterCallFact, ok := result.Call(loopPoints[0])
 	if !ok || iterCallFact.Call != iterCall || iterCallFact.Context != CallContextIteratorSource {
@@ -1505,186 +1456,6 @@ local a, b = make()
 	}
 	if missing, ok := fact.ResultTargetPath(3); ok || !missing.IsEmpty() {
 		t.Fatalf("ResultTargetPath(3) = %#v/%v, want empty/false", missing, ok)
-	}
-}
-
-func TestExtractChunkBranchConditionChecksResolvePaths(t *testing.T) {
-	tests := []struct {
-		name     string
-		expr     func(*ast.IdentExpr) ast.Expr
-		want     branchcond.CheckKind
-		wantPath func(symbol.ID) path.Path
-		typeName string
-	}{
-		{
-			name: "truthy path",
-			expr: func(root *ast.IdentExpr) ast.Expr {
-				return dot(root, "ready")
-			},
-			want: branchcond.CheckTruthy,
-			wantPath: func(root symbol.ID) path.Path {
-				return path.NewPath(root, "obj").Field("ready")
-			},
-		},
-		{
-			name: "falsy not path",
-			expr: func(root *ast.IdentExpr) ast.Expr {
-				return &ast.UnaryNotOpExpr{Expr: stringIndex(root, "missing")}
-			},
-			want: branchcond.CheckFalsy,
-			wantPath: func(root symbol.ID) path.Path {
-				return path.NewPath(root, "obj").IndexStr("missing")
-			},
-		},
-		{
-			name: "nil equal path",
-			expr: func(root *ast.IdentExpr) ast.Expr {
-				return &ast.RelationalOpExpr{Operator: "==", Lhs: dot(root, "child"), Rhs: &ast.NilExpr{}}
-			},
-			want: branchcond.CheckNil,
-			wantPath: func(root symbol.ID) path.Path {
-				return path.NewPath(root, "obj").Field("child")
-			},
-		},
-		{
-			name: "nil not equal reversed path",
-			expr: func(root *ast.IdentExpr) ast.Expr {
-				return &ast.RelationalOpExpr{Operator: "~=", Lhs: &ast.NilExpr{}, Rhs: intIndex(root, "1")}
-			},
-			want: branchcond.CheckNotNil,
-			wantPath: func(root symbol.ID) path.Path {
-				return path.NewPath(root, "obj").IndexInt(1)
-			},
-		},
-		{
-			name: "type equal path",
-			expr: func(root *ast.IdentExpr) ast.Expr {
-				return &ast.RelationalOpExpr{Operator: "==", Lhs: typeCall(dot(root, "kind")), Rhs: stringLit("table")}
-			},
-			want: branchcond.CheckTypeEqual,
-			wantPath: func(root symbol.ID) path.Path {
-				return path.NewPath(root, "obj").Field("kind")
-			},
-			typeName: "table",
-		},
-		{
-			name: "type not equal reversed path",
-			expr: func(root *ast.IdentExpr) ast.Expr {
-				return &ast.RelationalOpExpr{Operator: "~=", Lhs: stringLit("number"), Rhs: typeCall(stringIndex(root, "value"))}
-			},
-			want: branchcond.CheckTypeNot,
-			wantPath: func(root symbol.ID) path.Path {
-				return path.NewPath(root, "obj").IndexStr("value")
-			},
-			typeName: "number",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			decl := localAssign([]string{"obj"}, &ast.TableExpr{})
-			root := ident("obj")
-			cond := tt.expr(root)
-			stmt := &ast.IfStmt{Condition: cond}
-			stmts := []ast.Stmt{decl, stmt}
-			bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type"}})
-			built := cfgbuild.BuildChunk(stmts, bindings)
-			if built == nil {
-				t.Fatalf("BuildChunk returned nil")
-			}
-
-			result, err := ExtractChunk(stmts, bindings, built)
-			if err != nil {
-				t.Fatalf("ExtractChunk: %v", err)
-			}
-
-			point := requireStmtPoints(t, built, stmt, 1)[0]
-			fact, ok := result.BranchCondition(point)
-			if !ok {
-				t.Fatalf("missing branch condition fact")
-			}
-			if fact.Kind != BranchIf || fact.Condition != cond {
-				t.Fatalf("branch identity = %#v", fact)
-			}
-			check := fact.Check
-			if check.Kind != tt.want {
-				t.Fatalf("check kind = %v, want %v", check.Kind, tt.want)
-			}
-			if check.TypeName != tt.typeName {
-				t.Fatalf("type name = %q, want %q", check.TypeName, tt.typeName)
-			}
-			wantPath := tt.wantPath(mustIdentSymbol(t, bindings, root))
-			if !check.Path.Equal(wantPath) {
-				t.Fatalf("check path = %#v, want %#v", check.Path, wantPath)
-			}
-		})
-	}
-}
-
-func TestBranchConditionCheckPathIsCopied(t *testing.T) {
-	decl := localAssign([]string{"obj"}, &ast.TableExpr{})
-	root := ident("obj")
-	cond := dot(root, "ready")
-	stmt := &ast.IfStmt{Condition: cond}
-	stmts := []ast.Stmt{decl, stmt}
-	bindings := bind.BindChunk(stmts, bind.Options{})
-	built := cfgbuild.BuildChunk(stmts, bindings)
-	if built == nil {
-		t.Fatalf("BuildChunk returned nil")
-	}
-	result, err := ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	point := requireStmtPoints(t, built, stmt, 1)[0]
-	fact, ok := result.BranchCondition(point)
-	if !ok {
-		t.Fatalf("missing branch condition fact")
-	}
-	if len(fact.Check.Path.Segments) != 1 {
-		t.Fatalf("path segments = %#v, want one segment", fact.Check.Path.Segments)
-	}
-	fact.Check.Path.Segments[0].Name = "mutated"
-
-	again, _ := result.BranchCondition(point)
-	wantPath := path.NewPath(mustIdentSymbol(t, bindings, root), "obj").Field("ready")
-	if !again.Check.Path.Equal(wantPath) {
-		t.Fatalf("BranchCondition exposed mutable path segments: %#v", again.Check.Path)
-	}
-}
-
-func TestBranchConditionCheckOtherPathIsCopied(t *testing.T) {
-	decl := localAssign([]string{"obj", "other"}, &ast.TableExpr{}, &ast.TableExpr{})
-	root := ident("obj")
-	other := ident("other")
-	cond := &ast.RelationalOpExpr{Operator: "==", Lhs: dot(root, "ready"), Rhs: dot(other, "ready")}
-	stmt := &ast.IfStmt{Condition: cond}
-	stmts := []ast.Stmt{decl, stmt}
-	bindings := bind.BindChunk(stmts, bind.Options{})
-	built := cfgbuild.BuildChunk(stmts, bindings)
-	if built == nil {
-		t.Fatalf("BuildChunk returned nil")
-	}
-	result, err := ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	point := requireStmtPoints(t, built, stmt, 1)[0]
-	fact, ok := result.BranchCondition(point)
-	if !ok {
-		t.Fatalf("missing branch condition fact")
-	}
-	if len(fact.Check.OtherPath.Segments) != 1 {
-		t.Fatalf("other path segments = %#v, want one segment", fact.Check.OtherPath.Segments)
-	}
-	original := fact.Check.OtherPath.Clone()
-	fact.Check.OtherPath.Segments[0].Name = "mutated"
-
-	again, _ := result.BranchCondition(point)
-	if !again.Check.OtherPath.Equal(original) {
-		t.Fatalf("BranchCondition exposed mutable other path segments: %#v", again.Check.OtherPath)
 	}
 }
 

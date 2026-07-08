@@ -2,20 +2,9 @@ package semantics
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
-)
-
-type BranchKind uint8
-
-const (
-	BranchUnknown BranchKind = iota
-	BranchIf
-	BranchWhile
-	BranchRepeat
-	BranchShortCircuit
 )
 
 type CallContextKind uint8
@@ -135,18 +124,6 @@ type SourceSpan struct {
 	StartCol  int
 	EndLine   int
 	EndCol    int
-}
-
-type BranchConditionFact struct {
-	Kind BranchKind
-
-	Stmt      ast.Stmt
-	If        *ast.IfStmt
-	While     *ast.WhileStmt
-	Repeat    *ast.RepeatStmt
-	Condition ast.Expr
-	Source    sourceprovenance.ASTSource
-	Check     branchcond.Check
 }
 
 type CallResultTarget struct {

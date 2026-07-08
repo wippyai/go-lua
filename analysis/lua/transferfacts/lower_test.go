@@ -1174,6 +1174,21 @@ func requireStmtPoints(t *testing.T, built *cfgbuild.Result, stmt ast.Stmt, want
 	return points
 }
 
+func requireBranchPointForStmt(t *testing.T, built *cfgbuild.Result, stmt ast.Stmt) cfg.Point {
+	t.Helper()
+	if built == nil || built.Graph == nil {
+		t.Fatalf("missing CFG build result")
+	}
+	points := built.StmtPoints.PointsFor(stmt)
+	for i := len(points) - 1; i >= 0; i-- {
+		if built.Graph.IsBranch(points[i]) {
+			return points[i]
+		}
+	}
+	t.Fatalf("points for %T = %v contain no branch point", stmt, points)
+	return 0
+}
+
 func assertNoPointFact(t *testing.T, facts factflow.Facts, point cfg.Point) {
 	t.Helper()
 	if _, ok := facts.LocalAssignment(point); ok {

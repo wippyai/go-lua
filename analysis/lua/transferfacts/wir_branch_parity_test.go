@@ -11,7 +11,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -20,7 +19,7 @@ import (
 )
 
 func TestWIRBranchChecksMatchSemanticDirectBranchChecks(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(x: any, y: string?, i: integer, xs: {string})
     if x then local a = 1 end
     if y == nil then local b = 1 end
@@ -37,13 +36,18 @@ end
 	}
 
 	var checked int
-	for _, point := range built.Graph.RPO() {
-		fact, ok := result.BranchCondition(point)
-		if !ok || fact.Check.Kind == branchcond.CheckNone {
+	for _, stmt := range fn.Stmts {
+		ifStmt, ok := stmt.(*ast.IfStmt)
+		if !ok {
+			continue
+		}
+		point := requireBranchPointForStmt(t, built, ifStmt)
+		check := branchcond.Normalize(ifStmt.Condition, bindings)
+		if check.Kind == branchcond.CheckNone {
 			continue
 		}
 		checked++
-		assertWIRBranchCheckContains(t, body, point, fact.Check)
+		assertWIRBranchCheckContains(t, body, point, check)
 	}
 	if checked != 7 {
 		t.Fatalf("checked %d direct branch conditions, want 7", checked)
@@ -51,7 +55,7 @@ end
 }
 
 func TestLowerWithWIRDirectBranchChecksPublishFactLanes(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(x: any, y: string?, i: integer, xs: {string})
     if x then local a = 1 end
     if y == nil then local b = 1 end
@@ -66,9 +70,15 @@ function f(x: any, y: string?, i: integer, xs: {string})
 	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	var checkedRefinement, checkedLen, checkedNum, checkedEvidence bool
-	for _, point := range built.Graph.RPO() {
-		if fact, ok := result.BranchCondition(point); ok && fact.Check.Kind == branchcond.CheckTruthy {
-			assertWIRTruthyBranchConditionSource(t, point, wirFacts, fact.Check.Path)
+	for _, stmt := range fn.Stmts {
+		ifStmt, ok := stmt.(*ast.IfStmt)
+		if !ok {
+			continue
+		}
+		point := requireBranchPointForStmt(t, built, ifStmt)
+		check := branchcond.Normalize(ifStmt.Condition, bindings)
+		if check.Kind == branchcond.CheckTruthy {
+			assertWIRTruthyBranchConditionSource(t, point, wirFacts, check.Path)
 		}
 		checkedRefinement = checkedRefinement || len(wirFacts.BranchRefinements(point)) != 0
 		checkedLen = checkedLen || len(wirFacts.BranchLenRefinements(point)) != 0
@@ -692,7 +702,7 @@ func hasBranchPresenceRelation(relations []factflow.BranchPresenceRelation, trig
 
 func TestLowerWithWIRCorrelationBranchChecksPublishFacts(t *testing.T) {
 	t.Run("protected_call", func(t *testing.T) {
-		stmts, bindings, built, result := parseSemanticChunk(t, `
+		stmts, bindings, built, _ := parseSemanticChunk(t, `
 local function run_tests(): number
     return 1
 end
@@ -703,11 +713,11 @@ if not ok then
 end
 `, "pcall")
 		body := wirlower.Lower("chunk", stmts, bindings, built)
-		assertWIRBranchFactParity(t, built, result, body, bindings)
+		assertWIRBranchFactParity(t, built, body, bindings)
 	})
 
 	t.Run("type_is", func(t *testing.T) {
-		stmts, bindings, built, result := parseSemanticChunk(t, `
+		stmts, bindings, built, _ := parseSemanticChunk(t, `
 type Point = {x: number, y: number}
 
 local data: any = {}
@@ -717,12 +727,12 @@ if err then
 end
 `)
 		body := wirlower.Lower("chunk", stmts, bindings, built)
-		assertWIRBranchFactParity(t, built, result, body, bindings)
+		assertWIRBranchFactParity(t, built, body, bindings)
 	})
 }
 
 func TestLowerWithWIRBranchReachabilityPublishesStaticEdges(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built, _ := parseSemanticChunk(t, `
 if nil then local a = 1 end
 if false then local b = 1 end
 if true then local c = 1 end
@@ -741,12 +751,8 @@ if (nil :: any) then local k = 1 end
 	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	var checked int
-	for _, point := range built.Graph.RPO() {
-		fact, ok := result.BranchCondition(point)
-		if !ok {
-			continue
-		}
-		truthy, ok := branchcond.StaticLuaTruthiness(fact.Condition)
+	for point, condition := range branchConditionExprsByPoint(t, built, stmts) {
+		truthy, ok := branchcond.StaticLuaTruthiness(condition)
 		if !ok {
 			continue
 		}
@@ -761,7 +767,7 @@ if (nil :: any) then local k = 1 end
 	}
 }
 
-func assertWIRBranchFactParity(t *testing.T, built *cfgbuild.Result, result *semantics.Result, body *wir.Body, bindings *bind.Result) {
+func assertWIRBranchFactParity(t *testing.T, built *cfgbuild.Result, body *wir.Body, bindings *bind.Result) {
 	t.Helper()
 	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	var checked bool
@@ -773,6 +779,43 @@ func assertWIRBranchFactParity(t *testing.T, built *cfgbuild.Result, result *sem
 	if !checked {
 		t.Fatal("WIR correlation branch facts were not produced")
 	}
+}
+
+func branchConditionExprsByPoint(t *testing.T, built *cfgbuild.Result, stmts []ast.Stmt) map[cfg.Point]ast.Expr {
+	t.Helper()
+	out := map[cfg.Point]ast.Expr{}
+	var walk func([]ast.Stmt)
+	walk = func(stmts []ast.Stmt) {
+		for _, stmt := range stmts {
+			switch stmt := stmt.(type) {
+			case *ast.IfStmt:
+				out[requireBranchPointForStmt(t, built, stmt)] = stmt.Condition
+				walk(stmt.Then)
+				walk(stmt.Else)
+			case *ast.WhileStmt:
+				out[requireBranchPointForStmt(t, built, stmt)] = stmt.Condition
+				walk(stmt.Stmts)
+			case *ast.RepeatStmt:
+				walk(stmt.Stmts)
+				out[requireBranchPointForStmt(t, built, stmt)] = stmt.Condition
+			case *ast.DoBlockStmt:
+				walk(stmt.Stmts)
+			case *ast.NumberForStmt:
+				walk(stmt.Stmts)
+			case *ast.GenericForStmt:
+				walk(stmt.Stmts)
+			}
+		}
+	}
+	walk(stmts)
+	for _, point := range built.Meta.ShortCircuitGuardPoints() {
+		guard, ok := built.Meta.ShortCircuitGuard(point)
+		if !ok || guard.Condition == nil {
+			continue
+		}
+		out[point] = guard.Condition
+	}
+	return out
 }
 
 func assertEqualBranchFacts(t *testing.T, point cfg.Point, label string, want, got any) {

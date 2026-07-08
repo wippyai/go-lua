@@ -596,7 +596,7 @@ func assertUseTemplateFalseImpliesExecutorPresent(t *testing.T, bindings *bind.R
 }
 
 func TestLowerCompoundOrLiteralImplicationsStayOnProvenOuterEdges(t *testing.T) {
-	_, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built, _ := parseSemanticFunction(t, `
 function f(kind: string?)
 	if not kind or kind == "auto" or kind == "any" or kind == "" then
 		return { mode = "AUTO" }
@@ -604,28 +604,21 @@ function f(kind: string?)
 	return nil
 end
 `)
-	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
+	wirBody := wirlower.LowerFunction("branch", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: wirBody})
 	var directFalsyPoint cfg.Point
-	var compoundPoint cfg.Point
+	compoundPoint := requireBranchPointForStmt(t, built, fn.Stmts[0])
 	for _, point := range built.Graph.RPO() {
-		fact, ok := result.BranchCondition(point)
+		check, ok := (&lowerer{wir: wirBody}).directBranchCheckFromWIR(point)
 		if !ok {
 			continue
 		}
-		if fact.Check.Kind == branchcond.CheckFalsy {
+		if check.Kind == branchcond.CheckFalsy {
 			directFalsyPoint = point
-		}
-		if fact.Check.Kind == branchcond.CheckNone {
-			if _, ok := fact.Condition.(*ast.LogicalOpExpr); ok && compoundPoint == 0 {
-				compoundPoint = point
-			}
 		}
 	}
 	if directFalsyPoint == 0 {
 		t.Fatal("missing direct `not kind` branch point")
-	}
-	if compoundPoint == 0 {
-		t.Fatal("missing compound `or` branch point")
 	}
 	assertTruthyEvidenceOpposite(t, facts, directFalsyPoint, true)
 	assertTruthyEvidenceOpposite(t, facts, compoundPoint, false)
@@ -1068,8 +1061,7 @@ end
 	xsPath := path.NewPath(xs, "xs")
 	iPath := path.NewPath(i, "i")
 	ifStmt := fn.Stmts[0].(*ast.IfStmt)
-	point := requireStmtPoints(t, built, ifStmt, 1)[0]
-	branchFact, _ := result.BranchCondition(point)
+	point := requireBranchPointForStmt(t, built, ifStmt)
 
 	foundFloor := false
 	for _, floor := range facts.BranchNumFloorRefinements(point) {
@@ -1079,8 +1071,8 @@ end
 		}
 	}
 	if !foundFloor {
-		t.Fatalf("missing false-edge i >= 1 floor; got %#v; branch check=%#v condition=%T %#v",
-			facts.BranchNumFloorRefinements(point), branchFact.Check, branchFact.Condition, branchFact.Condition)
+		t.Fatalf("missing false-edge i >= 1 floor; got %#v; condition=%T %#v",
+			facts.BranchNumFloorRefinements(point), ifStmt.Condition, ifStmt.Condition)
 	}
 
 	foundRange := false
@@ -1472,11 +1464,10 @@ end
 	ifStmt := mustIfStmt(t, stmts, 1)
 	branchPoint := requireStmtPoints(t, built, ifStmt, 2)[1]
 	target := path.NewPath(mustLocalAt(t, bindings, mustLocalStmt(t, stmts, 0), 0), "t")
-	branchFact, _ := result.BranchCondition(branchPoint)
 
 	proofs := facts.BranchPathEvidence(branchPoint)
 	if len(proofs) != 1 {
-		t.Fatalf("branch path evidence = %#v, want 1 frozen-table proof; condition=%T %#v", proofs, branchFact.Condition, branchFact.Condition)
+		t.Fatalf("branch path evidence = %#v, want 1 frozen-table proof; condition=%T %#v", proofs, ifStmt.Condition, ifStmt.Condition)
 	}
 	proof := proofs[0]
 	if proof.Kind() != factflow.BranchPathEvidenceFrozenTable {
@@ -1501,11 +1492,10 @@ end
 	ifStmt := mustIfStmt(t, stmts, 1)
 	branchPoint := requireStmtPoints(t, built, ifStmt, 2)[1]
 	target := path.NewPath(mustLocalAt(t, bindings, mustLocalStmt(t, stmts, 0), 0), "t")
-	branchFact, _ := result.BranchCondition(branchPoint)
 
 	proofs := facts.BranchPathEvidence(branchPoint)
 	if len(proofs) != 1 {
-		t.Fatalf("branch path evidence = %#v, want 1 frozen-table proof; condition=%T %#v", proofs, branchFact.Condition, branchFact.Condition)
+		t.Fatalf("branch path evidence = %#v, want 1 frozen-table proof; condition=%T %#v", proofs, ifStmt.Condition, ifStmt.Condition)
 	}
 	proof := proofs[0]
 	if proof.Kind() != factflow.BranchPathEvidenceFrozenTable {
@@ -1565,9 +1555,8 @@ end
 	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, reg)
 	ifStmt := mustIfStmt(t, stmts, 2)
 	branchPoint := requireStmtPoints(t, built, ifStmt, 2)[1]
-	branchFact, _ := result.BranchCondition(branchPoint)
 	if got := facts.BranchPathEvidence(branchPoint); len(got) != 0 {
-		t.Fatalf("branch path evidence = %#v, want none for shadowed table; condition=%T %#v", got, branchFact.Condition, branchFact.Condition)
+		t.Fatalf("branch path evidence = %#v, want none for shadowed table; condition=%T %#v", got, ifStmt.Condition, ifStmt.Condition)
 	}
 }
 

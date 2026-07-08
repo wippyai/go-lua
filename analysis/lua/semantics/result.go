@@ -12,7 +12,6 @@ type Result struct {
 	assignmentFacts       map[cfg.Point]*OrdinaryAssignmentFact
 	calls                 map[cfg.Point]*CallFact
 	returns               map[cfg.Point]*ReturnFact
-	branches              map[cfg.Point]BranchConditionFact
 }
 
 func newResult(fn *ast.FunctionExpr) *Result {
@@ -22,7 +21,6 @@ func newResult(fn *ast.FunctionExpr) *Result {
 		assignmentFacts:       make(map[cfg.Point]*OrdinaryAssignmentFact),
 		calls:                 make(map[cfg.Point]*CallFact),
 		returns:               make(map[cfg.Point]*ReturnFact),
-		branches:              make(map[cfg.Point]BranchConditionFact),
 	}
 }
 
@@ -212,15 +210,4 @@ func (r *Result) setReturn(point cfg.Point, fact ReturnFact) {
 		return
 	}
 	r.returns[point] = &fact
-}
-
-func (r *Result) BranchCondition(point cfg.Point) (BranchConditionFact, bool) {
-	if r == nil {
-		return BranchConditionFact{}, false
-	}
-	fact, ok := r.branches[point]
-	if !ok {
-		return BranchConditionFact{}, false
-	}
-	return copyBranchConditionFact(fact), true
 }

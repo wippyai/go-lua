@@ -1195,6 +1195,129 @@ end`)
 	}
 }
 
+func TestBranchConditionChecksResolvePathsFromBodySites(t *testing.T) {
+	tests := []struct {
+		name     string
+		src      string
+		want     branchcond.CheckKind
+		wantPath func(symbol.ID) path.Path
+		typeName string
+	}{
+		{
+			name: "truthy path",
+			src:  "local obj = {}\nif obj.ready then end",
+			want: branchcond.CheckTruthy,
+			wantPath: func(root symbol.ID) path.Path {
+				return path.NewPath(root, "obj").Field("ready")
+			},
+		},
+		{
+			name: "falsy not path",
+			src:  "local obj = {}\nif not obj[\"missing\"] then end",
+			want: branchcond.CheckFalsy,
+			wantPath: func(root symbol.ID) path.Path {
+				return path.NewPath(root, "obj").IndexStr("missing")
+			},
+		},
+		{
+			name: "nil equal path",
+			src:  "local obj = {}\nif obj.child == nil then end",
+			want: branchcond.CheckNil,
+			wantPath: func(root symbol.ID) path.Path {
+				return path.NewPath(root, "obj").Field("child")
+			},
+		},
+		{
+			name: "nil not equal reversed path",
+			src:  "local obj = {}\nif nil ~= obj[1] then end",
+			want: branchcond.CheckNotNil,
+			wantPath: func(root symbol.ID) path.Path {
+				return path.NewPath(root, "obj").IndexInt(1)
+			},
+		},
+		{
+			name: "type equal path",
+			src:  "local obj = {}\nif type(obj.kind) == \"table\" then end",
+			want: branchcond.CheckTypeEqual,
+			wantPath: func(root symbol.ID) path.Path {
+				return path.NewPath(root, "obj").Field("kind")
+			},
+			typeName: "table",
+		},
+		{
+			name: "type not equal reversed path",
+			src:  "local obj = {}\nif \"number\" ~= type(obj[\"value\"]) then end",
+			want: branchcond.CheckTypeNot,
+			wantPath: func(root symbol.ID) path.Path {
+				return path.NewPath(root, "obj").IndexStr("value")
+			},
+			typeName: "number",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmts := parseChunk(t, tt.src)
+			result, err := CheckChunk(stmts, Config{Registry: standard.Registry(), Globals: []string{"type"}})
+			if err != nil {
+				t.Fatalf("CheckChunk: %v", err)
+			}
+			decl := stmts[0].(*ast.LocalAssignStmt)
+			ifStmt := stmts[1].(*ast.IfStmt)
+			point := requireBranchPointForStmt(t, result, ifStmt)
+			fact, ok := result.BranchCondition(point)
+			if !ok {
+				t.Fatalf("missing branch condition fact")
+			}
+			if fact.Kind != BranchIf || fact.Stmt != ifStmt || fact.Condition != ifStmt.Condition {
+				t.Fatalf("branch identity = %#v", fact)
+			}
+			if fact.Check.Kind != tt.want {
+				t.Fatalf("check kind = %v, want %v", fact.Check.Kind, tt.want)
+			}
+			if fact.Check.TypeName != tt.typeName {
+				t.Fatalf("type name = %q, want %q", fact.Check.TypeName, tt.typeName)
+			}
+			wantPath := tt.wantPath(mustLocalAt(t, result, decl, 0))
+			if !fact.Check.Path.Equal(wantPath) {
+				t.Fatalf("check path = %#v, want %#v", fact.Check.Path, wantPath)
+			}
+		})
+	}
+}
+
+func TestBranchConditionCheckPathsAreCopied(t *testing.T) {
+	stmts := parseChunk(t, "local obj, other = {}, {}\nif obj.ready == other.ready then end")
+	result, err := CheckChunk(stmts, Config{Registry: standard.Registry()})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	ifStmt := stmts[1].(*ast.IfStmt)
+	point := requireBranchPointForStmt(t, result, ifStmt)
+	fact, ok := result.BranchCondition(point)
+	if !ok {
+		t.Fatalf("missing branch condition fact")
+	}
+	if len(fact.Check.Path.Segments) != 1 || len(fact.Check.OtherPath.Segments) != 1 {
+		t.Fatalf("check paths = %#v / %#v, want one segment each", fact.Check.Path, fact.Check.OtherPath)
+	}
+	wantPath := fact.Check.Path.Clone()
+	wantOtherPath := fact.Check.OtherPath.Clone()
+	fact.Check.Path.Segments[0].Name = "mutated"
+	fact.Check.OtherPath.Segments[0].Name = "mutated"
+
+	again, ok := result.BranchCondition(point)
+	if !ok {
+		t.Fatalf("missing branch condition fact on second read")
+	}
+	if !again.Check.Path.Equal(wantPath) {
+		t.Fatalf("BranchCondition exposed mutable path segments: %#v", again.Check.Path)
+	}
+	if !again.Check.OtherPath.Equal(wantOtherPath) {
+		t.Fatalf("BranchCondition exposed mutable other path segments: %#v", again.Check.OtherPath)
+	}
+}
+
 func assertSourceLiteralInt(t *testing.T, reg *axis.Registry, facts factflow.Facts, source factflow.ValueSource, want int64) {
 	t.Helper()
 	switch source.Kind {
@@ -5555,6 +5678,21 @@ func requireCheckStmtPoint(t *testing.T, built *cfgbuild.Result, stmt ast.Stmt) 
 		t.Fatalf("stmt points = %v, want one point", points)
 	}
 	return points[0]
+}
+
+func requireBranchPointForStmt(t *testing.T, result *Result, stmt ast.Stmt) cfg.Point {
+	t.Helper()
+	if result == nil || result.cfg == nil || result.Graph() == nil {
+		t.Fatalf("missing result CFG")
+	}
+	points := result.cfg.StmtPoints.PointsFor(stmt)
+	for i := len(points) - 1; i >= 0; i-- {
+		if result.Graph().IsBranch(points[i]) {
+			return points[i]
+		}
+	}
+	t.Fatalf("stmt points %v contain no branch point", points)
+	return 0
 }
 
 func requireLocalAssignmentPoint(t *testing.T, result *Result, stmt *ast.LocalAssignStmt, index int) cfg.Point {
