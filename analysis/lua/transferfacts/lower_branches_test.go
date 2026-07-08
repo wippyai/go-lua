@@ -867,6 +867,12 @@ end
 	branchPoint := requireStmtPoints(t, built, ifStmt, 1)[0]
 
 	body := wir.NewBody("pcall-callback-owner")
+	otherProto := body.AddProto(wir.FuncProto{Name: "other_tests", Type: typ.Func().Returns(typ.Number).Build()})
+	body.Emit(wir.Instruction{
+		Op:   wir.OpClosure,
+		Dst:  wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(otherPath))},
+		Func: otherProto,
+	})
 	okTemp := wir.Operand{Kind: wir.OperandTemp, Ref: 1}
 	payloadTemp := wir.Operand{Kind: wir.OperandTemp, Ref: 2}
 	callStart := body.Emit(wir.Instruction{
@@ -992,7 +998,7 @@ end
 		registry:    reg,
 		bindings:    bindings,
 		wir:         body,
-		symbolTypes: lowerSymbolTypes(bindings, built.Graph, built.Meta, nil, importlookup.Source{}, nil),
+		symbolTypes: mergeSymbolTypes(lowerSymbolTypes(bindings, nil, nil), lowerSymbolTypesFromWIR(body, bindings, importlookup.Source{})),
 	}
 
 	lowered.addProtectedCallBranchRefinements(input, built.Graph)

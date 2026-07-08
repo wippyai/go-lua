@@ -19,7 +19,6 @@ import (
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
-	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
@@ -1880,7 +1879,7 @@ end
 		typeResolver:                  typeresolve.New(bindings),
 		typeValues:                    typevalue.NewCache(),
 		wir:                           body,
-		symbolTypes:                   lowerSymbolTypes(bindings, built.Graph, built.Meta, typeresolve.New(bindings), importlookup.Source{}, nil),
+		symbolTypes:                   lowerSymbolTypes(bindings, typeresolve.New(bindings), nil),
 		exprs:                         make(map[any]factflow.ExprRef),
 		types:                         make(map[any]factflow.TypeRef),
 		expressionValues:              make(map[factflow.ExprRef]product.Value),

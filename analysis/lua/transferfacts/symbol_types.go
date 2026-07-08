@@ -3,11 +3,8 @@ package transferfacts
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
-	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
-	"github.com/wippyai/go-lua/analysis/lua/functiontype"
 	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/typeprojection"
@@ -25,13 +22,10 @@ import (
 
 func lowerSymbolTypes(
 	bindings *bind.Result,
-	graph cfg.Graph,
-	meta cfgfacts.Metadata,
 	resolver *typeresolve.Resolver,
-	moduleExports importlookup.Source,
 	methodReceiverTypes map[symbol.ID]typ.Type,
 ) map[symbol.ID]typ.Type {
-	if bindings == nil || graph == nil {
+	if bindings == nil {
 		return nil
 	}
 	if resolver == nil {
@@ -65,26 +59,6 @@ func lowerSymbolTypes(
 			}
 		}
 	}
-	for _, point := range graph.RPO() {
-		fact, ok := functionDefinitionFactAt(meta, point)
-		if !ok || !fact.HasTargetSymbol || fact.TargetSymbol == 0 || fact.Func == nil {
-			continue
-		}
-		if t, ok := functionExpressionType(fact.Func, bindings, resolver); ok {
-			out[fact.TargetSymbol] = t
-		}
-	}
-	for _, origin := range bindings.FunctionOrigins() {
-		if !origin.HasTargetSymbol || origin.TargetSymbol == 0 || origin.Func == nil {
-			continue
-		}
-		if _, present := out[origin.TargetSymbol]; present {
-			continue
-		}
-		if t, ok := functionExpressionType(origin.Func, bindings, resolver); ok {
-			out[origin.TargetSymbol] = t
-		}
-	}
 	if len(out) == 0 {
 		return nil
 	}
@@ -113,6 +87,7 @@ func lowerSymbolTypesFromWIR(body *wir.Body, bindings *bind.Result, moduleExport
 	}
 	out := make(map[symbol.ID]typ.Type)
 	addWIRRequireExportSymbolTypes(out, body, bindings, moduleExports)
+	addWIRRootTypes(out, body)
 	tempDefs := wirTempDefinitions(body)
 	for i := 0; i < body.Len(); i++ {
 		inst := body.Instr(i)
@@ -131,6 +106,9 @@ func lowerSymbolTypesFromWIR(body *wir.Body, bindings *bind.Result, moduleExport
 			}
 		case wir.OpCall:
 			addWIRCallResultSymbolTypes(out, body, inst)
+			continue
+		case wir.OpClosure:
+			addWIRClosureSymbolType(out, body, inst)
 			continue
 		case wir.OpIterate:
 			addWIRNumericForSymbolType(out, body, tempDefs, inst)
@@ -168,6 +146,41 @@ func lowerSymbolTypesFromWIR(body *wir.Body, bindings *bind.Result, moduleExport
 		return nil
 	}
 	return out
+}
+
+func addWIRRootTypes(out map[symbol.ID]typ.Type, body *wir.Body) {
+	if out == nil || body == nil {
+		return
+	}
+	for _, root := range body.RootTypes() {
+		if root.Path.IsEmpty() || root.Path.Symbol == 0 || len(root.Path.Segments) != 0 {
+			continue
+		}
+		if _, exists := out[root.Path.Symbol]; exists {
+			continue
+		}
+		if t := body.Type(root.Type); t != nil {
+			out[root.Path.Symbol] = t
+		}
+	}
+}
+
+func addWIRClosureSymbolType(out map[symbol.ID]typ.Type, body *wir.Body, inst wir.Instruction) {
+	if out == nil || body == nil || inst.Op != wir.OpClosure || inst.Dst.Kind != wir.OperandPath {
+		return
+	}
+	p := body.Path(wir.PathRef(inst.Dst.Ref))
+	if p.IsEmpty() || p.Symbol == 0 || len(p.Segments) != 0 {
+		return
+	}
+	if _, exists := out[p.Symbol]; exists {
+		return
+	}
+	proto := body.Proto(inst.Func)
+	if proto.Type == nil {
+		return
+	}
+	out[p.Symbol] = proto.Type
 }
 
 func addWIRNumericForSymbolType(out map[symbol.ID]typ.Type, body *wir.Body, tempDefs map[uint32]wir.Instruction, inst wir.Instruction) {
@@ -451,48 +464,6 @@ func callableFromWIRCallType(body *wir.Body, inst wir.Instruction) (*typ.Functio
 		return fn, ok
 	}
 	return typecall.Callable(t)
-}
-
-func functionDefinitionFactAt(meta cfgfacts.Metadata, point cfg.Point) (cfgfacts.FunctionDefinitionFact, bool) {
-	return meta.FunctionDefinition(point)
-}
-
-func functionExpressionType(fn *ast.FunctionExpr, bindings *bind.Result, resolver *typeresolve.Resolver) (typ.Type, bool) {
-	return functiontype.Expression(fn, bindings, resolver)
-}
-
-func callFirstReturnType(symbolTypes map[symbol.ID]typ.Type, bindings *bind.Result, expr ast.Expr) (typ.Type, bool) {
-	call, ok := expr.(*ast.FuncCallExpr)
-	if !ok || call == nil {
-		return nil, false
-	}
-	if call.Method != "" && call.Receiver != nil {
-		receiver, ok := expressionTypeFromSymbols(symbolTypes, bindings, call.Receiver)
-		if !ok {
-			return nil, false
-		}
-		fn, _, ok := typecall.MemberCallable(receiver, call.Method)
-		if !ok {
-			return nil, false
-		}
-		return nonGenericFunctionFirstReturn(fn)
-	}
-	callee, ok := expressionTypeFromSymbols(symbolTypes, bindings, call.Func)
-	if !ok {
-		return nil, false
-	}
-	fn, ok := typecall.Callable(callee)
-	if !ok {
-		return nil, false
-	}
-	return nonGenericFunctionFirstReturn(fn)
-}
-
-func nonGenericFunctionFirstReturn(fn *typ.Function) (typ.Type, bool) {
-	if fn == nil || len(fn.TypeParams) != 0 || len(fn.Returns) == 0 || fn.Returns[0] == nil {
-		return nil, false
-	}
-	return fn.Returns[0], true
 }
 
 func expressionTypeFromSymbols(symbolTypes map[symbol.ID]typ.Type, bindings *bind.Result, expr ast.Expr) (typ.Type, bool) {

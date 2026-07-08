@@ -19,7 +19,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
-	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -859,7 +858,7 @@ end
 	lowered := lowerer{
 		registry:    standard.Registry(),
 		bindings:    bindings,
-		symbolTypes: lowerSymbolTypes(bindings, built.Graph, built.Meta, nil, importlookup.Source{}, nil),
+		symbolTypes: lowerSymbolTypes(bindings, nil, nil),
 		wir:         body,
 	}
 

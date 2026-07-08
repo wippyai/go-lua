@@ -35,13 +35,15 @@ type Body struct {
 	segments      []segment.Segment
 	callArgMeta   []CallArgumentMeta
 	returnMeta    []ReturnValueMeta
+	rootTypes     []RootType
 	impliedChecks []ImpliedCheck
 	branchDiffs   []BranchDiffConstraint
 	callTargets   map[callResultTargetKey]CallResultTarget
 
-	pathIndex  map[path.PathKey]PathRef
-	constIndex map[Const]ConstRef
-	typeIndex  map[uint64]TypeRef
+	pathIndex     map[path.PathKey]PathRef
+	constIndex    map[Const]ConstRef
+	typeIndex     map[uint64]TypeRef
+	rootTypeIndex map[path.PathKey]int
 }
 
 // FuncProto is a nested function lowered as its own Body and CFG. A parent
@@ -195,18 +197,27 @@ type Type struct {
 	Display string
 }
 
+// RootType records a resolved type for a root path that is referenced by this
+// body but whose declaration may live outside this body's instruction stream.
+// Lowering records the type identity; transfer decides how to use it.
+type RootType struct {
+	Path path.Path
+	Type TypeRef
+}
+
 // NewBody creates an empty Body with reserved index-0 sentinels in each pool.
 func NewBody(name string) *Body {
 	b := &Body{
-		Name:       name,
-		paths:      make([]path.Path, 1),
-		consts:     make([]Const, 1),
-		types:      make([]Type, 1),
-		checks:     make([]Check, 1),
-		protos:     make([]FuncProto, 1),
-		pathIndex:  make(map[path.PathKey]PathRef),
-		constIndex: make(map[Const]ConstRef),
-		typeIndex:  make(map[uint64]TypeRef),
+		Name:          name,
+		paths:         make([]path.Path, 1),
+		consts:        make([]Const, 1),
+		types:         make([]Type, 1),
+		checks:        make([]Check, 1),
+		protos:        make([]FuncProto, 1),
+		pathIndex:     make(map[path.PathKey]PathRef),
+		constIndex:    make(map[Const]ConstRef),
+		typeIndex:     make(map[uint64]TypeRef),
+		rootTypeIndex: make(map[path.PathKey]int),
 	}
 	return b
 }
@@ -275,6 +286,33 @@ func (b *Body) TypeDisplay(ref TypeRef) string {
 		return ""
 	}
 	return b.types[ref].Display
+}
+
+// SetRootType records a resolved type for a root path used by this body.
+func (b *Body) SetRootType(p path.Path, t typ.Type) {
+	if b == nil || p.IsEmpty() || p.Symbol == 0 || len(p.Segments) != 0 || t == nil {
+		return
+	}
+	ref := b.InternType(t)
+	entry := RootType{Path: p, Type: ref}
+	key := p.Key()
+	if idx, ok := b.rootTypeIndex[key]; ok {
+		b.rootTypes[idx] = entry
+		return
+	}
+	b.rootTypeIndex[key] = len(b.rootTypes)
+	b.rootTypes = append(b.rootTypes, entry)
+}
+
+// RootTypes returns resolved root-path types recorded for external declarations
+// referenced by this body.
+func (b *Body) RootTypes() []RootType {
+	if b == nil || len(b.rootTypes) == 0 {
+		return nil
+	}
+	out := make([]RootType, len(b.rootTypes))
+	copy(out, b.rootTypes)
+	return out
 }
 
 // DeclaredReturnArity returns the syntactic declared return arity for this

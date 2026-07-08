@@ -82,7 +82,27 @@ func LowerFunctionWithResolver(name string, fn *ast.FunctionExpr, bindings *bind
 	}
 	body := lowerInto(name, stmts, bindings, built, resolver)
 	body.SetDeclaredReturnTypes(resolveDeclaredReturns(fn, resolver))
+	recordExternalFunctionRootTypes(body, fn, bindings, resolver)
 	return body
+}
+
+func recordExternalFunctionRootTypes(body *wir.Body, fn *ast.FunctionExpr, bindings *bind.Result, resolver *typeresolve.Resolver) {
+	if body == nil || fn == nil || bindings == nil {
+		return
+	}
+	for _, origin := range bindings.FunctionOrigins() {
+		if !origin.HasTargetSymbol || origin.TargetSymbol == 0 || origin.Func == nil {
+			continue
+		}
+		if declaring, ok := bindings.DeclaringFunction(origin.TargetSymbol); ok && declaring == fn {
+			continue
+		}
+		t, ok := functiontype.ValueExpression(origin.Func, bindings, resolver)
+		if !ok || t == nil {
+			continue
+		}
+		body.SetRootType(path.NewPath(origin.TargetSymbol, bindings.Name(origin.TargetSymbol)), t)
+	}
 }
 
 // lowerInto lowers one function-scope statement list (a chunk or a nested

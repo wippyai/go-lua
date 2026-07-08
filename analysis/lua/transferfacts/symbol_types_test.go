@@ -20,7 +20,7 @@ import (
 )
 
 func TestLowerSymbolTypesKeepsParamAnnotationsWithoutSemanticResult(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, _, _ := parseSemanticFunction(t, `
 function handle(ch: Channel<{kind: "event", id: string}>)
 	local selected = channel.select { ch:case_receive() }
 end
@@ -30,7 +30,7 @@ end
 		t.Fatalf("ParamSlots = %#v, want one typed parameter", slots)
 	}
 
-	got := lowerSymbolTypes(bindings, built.Graph, built.Meta, typeresolve.New(bindings), importlookup.Source{}, nil)
+	got := lowerSymbolTypes(bindings, typeresolve.New(bindings), nil)
 	if got == nil {
 		t.Fatal("lowerSymbolTypes returned nil without semantic result")
 	}
@@ -39,7 +39,7 @@ end
 	}
 }
 
-func TestLowerSymbolTypesReadsFunctionCfgMetadataWithoutSemanticResult(t *testing.T) {
+func TestLowerSymbolTypesReadsFunctionAndNumericForFromWIRWithoutSemanticResult(t *testing.T) {
 	stmts, bindings, built, _ := parseSemanticChunk(t, `
 function build(value: string): number
 	return 1
@@ -68,13 +68,14 @@ end
 		t.Fatalf("NumForSymbol = %d/%v, want symbol", loopSym, ok)
 	}
 
-	got := lowerSymbolTypes(bindings, built.Graph, built.Meta, typeresolve.New(bindings), importlookup.Source{}, nil)
-	if got == nil {
-		t.Fatal("lowerSymbolTypes returned nil without semantic result")
+	wirBody := wirlower.Lower("function-and-numeric-for-symbol-types", stmts, bindings, built)
+	wirTypes := lowerSymbolTypesFromWIR(wirBody, bindings, importlookup.Source{})
+	if wirTypes == nil {
+		t.Fatal("lowerSymbolTypesFromWIR returned nil")
 	}
-	fnType, ok := got[funcSym].(*typ.Function)
+	fnType, ok := wirTypes[funcSym].(*typ.Function)
 	if !ok || fnType == nil {
-		t.Fatalf("function symbol type = %T %[1]v/%v, want function type", got[funcSym], ok)
+		t.Fatalf("WIR function symbol type = %T %[1]v/%v, want function type", wirTypes[funcSym], ok)
 	}
 	if len(fnType.Params) != 1 || !typ.TypeEquals(fnType.Params[0].Type, typ.String) {
 		t.Fatalf("function params = %#v, want one string parameter", fnType.Params)
@@ -82,10 +83,37 @@ end
 	if len(fnType.Returns) != 1 || !typ.TypeEquals(fnType.Returns[0], typ.Number) {
 		t.Fatalf("function returns = %#v, want number", fnType.Returns)
 	}
-	wirBody := wirlower.Lower("numeric-for-symbol-types", stmts, bindings, built)
-	wirTypes := lowerSymbolTypesFromWIR(wirBody, bindings, importlookup.Source{})
 	if gotType, ok := wirTypes[loopSym]; !ok || !typ.TypeEquals(gotType, typ.Integer) {
 		t.Fatalf("numeric-for symbol type = %v/%v, want integer", gotType, ok)
+	}
+}
+
+func TestLowerSymbolTypesFromWIRSeedsCapturedFunctionRootTypes(t *testing.T) {
+	stmts, bindings, _, _ := parseSemanticChunk(t, `
+local function make_status(): number
+	return 1
+end
+
+local function run(): number
+	return make_status()
+end
+`)
+	if len(stmts) != 2 {
+		t.Fatalf("parsed %d statements, want two local functions", len(stmts))
+	}
+	makeStmt := mustLocalStmt(t, stmts, 0)
+	runStmt := mustLocalStmt(t, stmts, 1)
+	makePath := path.NewPath(mustLocalAt(t, bindings, makeStmt, 0), "make_status")
+	runFn, ok := runStmt.Exprs[0].(*ast.FunctionExpr)
+	if !ok || runFn == nil {
+		t.Fatalf("run expression = %T, want function", runStmt.Exprs[0])
+	}
+	runBuilt := cfgbuild.BuildFunction(runFn, bindings)
+	body := wirlower.LowerFunction("run", runFn, bindings, runBuilt)
+	got := lowerSymbolTypesFromWIR(body, bindings, importlookup.Source{})
+	fnType, ok := got[makePath.Symbol].(*typ.Function)
+	if !ok || fnType == nil || len(fnType.Returns) != 1 || !typ.TypeEquals(fnType.Returns[0], typ.Number) {
+		t.Fatalf("captured function root type = %T %[1]v/%v, want () -> number", got[makePath.Symbol], ok)
 	}
 }
 
