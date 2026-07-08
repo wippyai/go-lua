@@ -139,7 +139,7 @@ func (r Reader) localFunctionReturnTypeSpans(site factflow.CallSite) []SourceSpa
 	}
 	spans := r.result.FunctionReturnTypeSpansForTargetPath(site.CalleePathRef())
 	if len(spans) == 0 {
-		return sourceSpansFromBody(r.result.FallbackFunctionReturnTypeSpans(site))
+		return nil
 	}
 	out := make([]SourceSpan, len(spans))
 	for i, span := range spans {

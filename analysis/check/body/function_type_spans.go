@@ -1,7 +1,6 @@
 package body
 
 import (
-	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -16,21 +15,4 @@ func FunctionReturnTypeSpans(fn *ast.FunctionExpr) []SourceSpan {
 		out[i] = sourceSpanFromAST(ast.SpanOf(ret))
 	}
 	return out
-}
-
-// FallbackFunctionReturnTypeSpans returns local function return spans for a
-// callsite when no precomputed function-return span fact exists.
-func (r *Result) FallbackFunctionReturnTypeSpans(site factflow.CallSite) []SourceSpan {
-	if r == nil {
-		return nil
-	}
-	if fn, ok := r.FunctionBySymbol(site.CalleeSymbol()); ok && fn != nil {
-		return FunctionReturnTypeSpans(fn)
-	}
-	if callee := site.CalleePathRef(); callee.Symbol != 0 {
-		if fn, ok := r.FunctionBySymbol(callee.Symbol); ok && fn != nil {
-			return FunctionReturnTypeSpans(fn)
-		}
-	}
-	return nil
 }

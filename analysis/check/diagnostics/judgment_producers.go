@@ -82,7 +82,7 @@ func (c producerContext) produceJudgments(result *body.Result, producers ...pass
 
 func (c producerContext) produceJudgmentsWithParent(result, parent *body.Result, producers ...pass.Producer) []diagnostic.Diagnostic {
 	items := pass.New(producers...).Run(pass.Context{
-		Reader: internalreadmodel.NewWithParent(result, parent),
+		Reader: internalreadmodel.NewWithParents(result, parent),
 	})
 	return renderJudgmentDiagnostics(items, c.judgmentPolicy, c.judgmentStrictness)
 }

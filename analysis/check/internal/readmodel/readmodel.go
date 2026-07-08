@@ -56,10 +56,6 @@ func New(result *body.Result) Reader {
 	return Reader{result: result, typeValues: result.TypeValues()}
 }
 
-func NewWithParent(result, parent *body.Result) Reader {
-	return NewWithParents(result, parent)
-}
-
 func NewWithParents(result *body.Result, parents ...*body.Result) Reader {
 	r := New(result)
 	for _, parent := range parents {

@@ -1533,7 +1533,7 @@ func TestDiagnosticQueryHasPositiveProjectionOwner(t *testing.T) {
 		"func reachableJudgmentContext",
 		"func reachableCallJudgmentContext",
 		"readmodel.NewWithParents(result, parents...)",
-		"internalreadmodel.NewWithParent(result, parent)",
+		"internalreadmodel.NewWithParents(result, parent)",
 	} {
 		if !bytes.Contains(content, []byte(want)) {
 			t.Fatalf("%s does not contain judgment producer owner marker %q", owner, want)
