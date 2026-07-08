@@ -1997,7 +1997,7 @@ func TestFactsEdgeTransferAppliesGenericProductConstraintAxis(t *testing.T) {
 	target := symbol.ID(312)
 	initialValue := wideningValue(reg, wideningExactMax)
 	constraint := product.Set(reg, product.Top(), wideningKey, wideningOne)
-	trueRefinement := factflow.NewValueRefinement().WithConstraint(reg, constraint)
+	trueRefinement := factflow.NewValueConstraint(constraint)
 	initial := state.State{}.WriteValue(reg, key.SymbolValue(target), initialValue)
 	got := transfer.Run(transfer.Config{
 		Graph:      graph,

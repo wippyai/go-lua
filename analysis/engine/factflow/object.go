@@ -23,22 +23,16 @@ type ObjectEntryView struct {
 	entry ObjectEntry
 }
 
-// NewObjectEntry creates a static object-entry descriptor.
-func NewObjectEntry(suffix path.Path, source ValueSource) ObjectEntry {
-	return ObjectEntry{
-		suffix: suffix.Clone(),
-		source: source,
-	}
-}
-
 // NewObjectEntryWithMetadata creates a static object-entry descriptor with
 // optional display metadata. The metadata remains syntax-free so downstream
 // obligation readers do not need AST access for member-level diagnostics.
 func NewObjectEntryWithMetadata(suffix path.Path, source ValueSource, valueSpan SourceSpan, valueLabel string) ObjectEntry {
-	entry := NewObjectEntry(suffix, source)
-	entry.valueSpan = valueSpan
-	entry.valueLabel = valueLabel
-	return entry
+	return ObjectEntry{
+		suffix:     suffix.Clone(),
+		source:     source,
+		valueSpan:  valueSpan,
+		valueLabel: valueLabel,
+	}
 }
 
 // Suffix returns the relative static suffix under the constructed object.

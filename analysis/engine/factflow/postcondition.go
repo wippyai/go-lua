@@ -34,12 +34,6 @@ type PostconditionPathRelation struct {
 	rightPath path.Path
 }
 
-// PostconditionPathRelationSet groups node-local postcondition path relations
-// emitted at the same CFG point.
-type PostconditionPathRelationSet struct {
-	relations []PostconditionPathRelation
-}
-
 // NewPostconditionRefinement creates a node-local postcondition refinement.
 func NewPostconditionRefinement(targetPath path.Path, value ValueRefinement) PostconditionRefinement {
 	return PostconditionRefinement{
@@ -60,11 +54,6 @@ func NewPostconditionPathEquality(leftPath path.Path, rightPath path.Path) Postc
 		leftPath:  leftPath.Clone(),
 		rightPath: rightPath.Clone(),
 	}
-}
-
-// NewPostconditionPathRelationSet creates a path relation set.
-func NewPostconditionPathRelationSet(relations ...PostconditionPathRelation) PostconditionPathRelationSet {
-	return PostconditionPathRelationSet{relations: copyPostconditionPathRelationSlice(relations)}
 }
 
 // TargetPath returns the refined path.
@@ -104,15 +93,6 @@ func (r PostconditionPathRelation) copy() PostconditionPathRelation {
 	r.leftPath = r.leftPath.Clone()
 	r.rightPath = r.rightPath.Clone()
 	return r
-}
-
-// Relations returns the postcondition path relations in deterministic order.
-func (s PostconditionPathRelationSet) Relations() []PostconditionPathRelation {
-	return copyPostconditionPathRelationSlice(s.relations)
-}
-
-func (s PostconditionPathRelationSet) copy() PostconditionPathRelationSet {
-	return PostconditionPathRelationSet{relations: copyPostconditionPathRelationSlice(s.relations)}
 }
 
 func copyPostconditionRefinementSlice(in []PostconditionRefinement) []PostconditionRefinement {

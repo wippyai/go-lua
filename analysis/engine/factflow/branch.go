@@ -27,11 +27,6 @@ type ValueRefinement struct {
 	falsyAbsent bool
 }
 
-// NewValueRefinement creates an empty value refinement.
-func NewValueRefinement() ValueRefinement {
-	return ValueRefinement{}
-}
-
 // NewValueConstraint creates a value refinement from an already-built product
 // constraint.
 func NewValueConstraint(constraint product.Value) ValueRefinement {

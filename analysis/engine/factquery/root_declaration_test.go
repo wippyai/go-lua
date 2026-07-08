@@ -50,7 +50,7 @@ func TestDominatingRootDeclarationSourceCarriesDeclaredValue(t *testing.T) {
 
 	got, ok := DominatingRootDeclarationSource(use, target, factflow.NewFacts(factflow.FactsInput{
 		RootAssignments: map[cfg.Point]factflow.RootAssignment{
-			decl: factflow.NewRootAssignmentWithDeclaredValue(
+			decl: factflow.NewRootAssignmentWithDeclaredContractValue(
 				factflow.RootAssignmentLocalDeclaration,
 				target,
 				pathdom.NewPath(target, "value"),

@@ -261,7 +261,7 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 
 	entries := []ObjectEntry{entry}
 	literal := NewObjectLiteral(entries)
-	entries[0] = NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "other"}}}, callSource)
+	entries[0] = NewObjectEntryWithMetadata(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "other"}}}, callSource, SourceSpan{}, "")
 	gotEntry, ok := literal.View().EntryAt(0)
 	if !ok || literal.View().EntryCount() != 1 || gotEntry.Source() != source {
 		t.Fatalf("object literal entries = %#v, want copied entry", gotEntry)
@@ -626,7 +626,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		},
 		ObjectLiterals: map[ExprRef]ObjectLiteral{
 			ExprRef(1): NewObjectLiteral([]ObjectEntry{
-				NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}}, source),
+				NewObjectEntryWithMetadata(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}}, source, SourceSpan{}, ""),
 			}),
 		},
 		ExpressionValues: map[ExprRef]product.Value{
@@ -691,7 +691,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	input.Returns[point] = NewReturn([]ValueSource{NewNilValueSource(0)})
 	input.CallSites[point] = NewCallSite(CallSiteConfig{Context: CallSiteContextStatement})
 	input.ObjectLiterals[ExprRef(1)] = NewObjectLiteral([]ObjectEntry{
-		NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "changed"}}}, callSource),
+		NewObjectEntryWithMetadata(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "changed"}}}, callSource, SourceSpan{}, ""),
 	})
 	input.ExpressionValues[ExprRef(3)] = product.Set(standard.Registry(), product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
 	input.ExpressionRefinements[ExprRef(4)] = NewExpressionRefinement(callSource, runtimeKindConstraint(runtimekind.Singleton(runtimekind.Function)))
@@ -1287,8 +1287,7 @@ func valueRefinementWithPresence(value presence.Value) ValueRefinement {
 
 func valueRefinementWithPresenceRuntime(p presence.Value, kind runtimekind.Value) ValueRefinement {
 	reg := standard.Registry()
-	return NewValueRefinement().
-		WithConstraint(reg, presenceConstraint(p)).
+	return NewValueConstraint(presenceConstraint(p)).
 		WithConstraint(reg, runtimeKindConstraint(kind))
 }
 

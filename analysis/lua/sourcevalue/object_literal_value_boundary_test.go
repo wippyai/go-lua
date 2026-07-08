@@ -19,7 +19,7 @@ func TestObjectLiteralViewEvaluatorMarksConstructedValueFresh(t *testing.T) {
 	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(1001), HasExpr: true}
 	litID := identity.LuaTableLiteral(7001, 1001)
 	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
-		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("id"), source),
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).Field("id"), source, factflow.SourceSpan{}, ""),
 	}).WithIdentity(litID)
 
 	got, ok := ObjectLiteralValueFromViewCached(reg, nil, lit.View(), factflow.ValueSourceResolverFunc(func(factflow.ValueSource) (product.Value, bool) {
@@ -89,9 +89,9 @@ func TestObjectLiteralViewEvaluatorChildEntriesRefineOverlappingParent(t *testin
 		Build()
 	headersType := typetable.NewMap(typ.String, typ.String)
 	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
-		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("value"), parentSource),
-		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("value").Field("status"), statusSource),
-		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("value").Field("headers"), headersSource),
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).Field("value"), parentSource, factflow.SourceSpan{}, ""),
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).Field("value").Field("status"), statusSource, factflow.SourceSpan{}, ""),
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).Field("value").Field("headers"), headersSource, factflow.SourceSpan{}, ""),
 	})
 
 	got, ok := ObjectLiteralValueFromViewCached(reg, nil, lit.View(), factflow.ValueSourceResolverFunc(func(source factflow.ValueSource) (product.Value, bool) {

@@ -118,8 +118,8 @@ func TestNeedsBoundaryNodeOutputCoversNodeTransferFactLanes(t *testing.T) {
 		},
 		{
 			name: "postcondition path relation",
-			input: factflow.FactsInput{PostconditionPathRelations: map[cfg.Point]factflow.PostconditionPathRelationSet{
-				point: factflow.NewPostconditionPathRelationSet(factflow.NewPostconditionPathEquality(rootPath, memberPath)),
+			input: factflow.FactsInput{PostconditionPathRelations: map[cfg.Point][]factflow.PostconditionPathRelation{
+				point: {factflow.NewPostconditionPathEquality(rootPath, memberPath)},
 			}},
 		},
 	}

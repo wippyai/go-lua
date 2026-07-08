@@ -31,8 +31,8 @@ func TestObjectLiteralTypeSeparatesDotFieldAndBracketStringMember(t *testing.T) 
 	fieldSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(1101), HasExpr: true}
 	indexSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(1102), HasExpr: true}
 	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
-		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("id"), fieldSource),
-		factflow.NewObjectEntry(path.NewPlaceholder(0).IndexStr("id"), indexSource),
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).Field("id"), fieldSource, factflow.SourceSpan{}, ""),
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).IndexStr("id"), indexSource, factflow.SourceSpan{}, ""),
 	})
 
 	values := map[factflow.ValueSource]product.Value{
@@ -102,7 +102,7 @@ func TestObjectLiteralTypeUsesEntryExpectedContractWhenNestedSourceUnresolved(t 
 	reg := standard.Registry()
 	typeValues := typevalue.NewCache()
 	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(1201), HasExpr: true}
-	entry := factflow.NewObjectEntry(path.NewPlaceholder(0).Field("error").Field("type"), source).
+	entry := factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).Field("error").Field("type"), source, factflow.SourceSpan{}, "").
 		WithExpected(typeValues.FromTypeWithWitness(reg, typ.String))
 	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{entry})
 
@@ -134,7 +134,7 @@ func TestObjectLiteralTypeBracketStringDiscriminantDoesNotSelectDotFieldUnionArm
 		Build()
 	expected := typeexpr.Union(start, stop)
 	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
-		factflow.NewObjectEntry(path.NewPlaceholder(0).IndexStr("kind"), kindSource),
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).IndexStr("kind"), kindSource, factflow.SourceSpan{}, ""),
 	}).WithExpected(typevalue.WithWitness(reg, typevalue.FromType(reg, expected), expected))
 
 	got, ok := ObjectLiteralType(reg, lit, factflow.ValueSourceResolverFunc(func(source factflow.ValueSource) (product.Value, bool) {
@@ -174,8 +174,8 @@ func TestObjectLiteralTypeResolvesEachEntryOnceWhenSelectingExpectedUnionArm(t *
 		Build()
 	expected := typeexpr.Union(start, stop)
 	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
-		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("kind"), kindSource),
-		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("payload"), payloadSource),
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).Field("kind"), kindSource, factflow.SourceSpan{}, ""),
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).Field("payload"), payloadSource, factflow.SourceSpan{}, ""),
 	}).WithExpected(typevalue.WithWitness(reg, typevalue.FromType(reg, expected), expected))
 	values := map[factflow.ValueSource]product.Value{
 		kindSource:    typevalue.WithWitness(reg, typevalue.FromType(reg, typ.LiteralString("stop")), typ.LiteralString("stop")),
@@ -218,9 +218,9 @@ func TestObjectLiteralTypeSelectedUnionArmOverridesBroadEntryExpectedFallback(t 
 		Build()
 	expected := typeexpr.Union(success, failure)
 	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
-		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("ok"), okSource).
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).Field("ok"), okSource, factflow.SourceSpan{}, "").
 			WithExpected(typeValues.FromTypeWithWitness(reg, typeexpr.Union(typ.False, typ.True))),
-		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("value"), valueSource).
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).Field("value"), valueSource, factflow.SourceSpan{}, "").
 			WithExpected(typeValues.FromTypeWithWitness(reg, typeexpr.Optional(typ.String))),
 	}).WithExpected(typeValues.FromTypeWithWitness(reg, expected))
 
@@ -255,8 +255,8 @@ func TestObjectLiteralTypeSelectedUnionArmKeepsNestedEntryExpectedFallback(t *te
 		Build()
 	expected := typeexpr.Union(success, failure)
 	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
-		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("ok"), okSource),
-		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("error").Field("message"), messageSource).
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).Field("ok"), okSource, factflow.SourceSpan{}, ""),
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).Field("error").Field("message"), messageSource, factflow.SourceSpan{}, "").
 			WithExpected(typeValues.FromTypeWithWitness(reg, typ.String)),
 	}).WithExpected(typeValues.FromTypeWithWitness(reg, expected))
 
@@ -285,8 +285,8 @@ func TestObjectLiteralTypeAdoptsExpectedRecordFieldAndStaticStringMemberBySegmen
 		StaticStringIndex("member", typ.Boolean).
 		Build()
 	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
-		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("field"), fieldSource),
-		factflow.NewObjectEntry(path.NewPlaceholder(0).IndexStr("member"), indexSource),
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).Field("field"), fieldSource, factflow.SourceSpan{}, ""),
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).IndexStr("member"), indexSource, factflow.SourceSpan{}, ""),
 	}).WithExpected(typevalue.WithWitness(reg, typevalue.FromType(reg, expected), expected))
 
 	got, ok := ObjectLiteralType(reg, lit, factflow.ValueSourceResolverFunc(func(factflow.ValueSource) (product.Value, bool) {
@@ -311,9 +311,9 @@ func TestObjectLiteralValueExpectedAnyFieldDoesNotTaintWholeRecord(t *testing.T)
 		Field("created_at", typ.Number).
 		Build()
 	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
-		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("pid"), pidSource).
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).Field("pid"), pidSource, factflow.SourceSpan{}, "").
 			WithExpected(typeValues.FromTypeWithWitness(reg, typ.Any)),
-		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("created_at"), createdSource).
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).Field("created_at"), createdSource, factflow.SourceSpan{}, "").
 			WithExpected(typeValues.FromTypeWithWitness(reg, typ.Number)),
 	}).WithExpected(typeValues.FromTypeWithWitness(reg, expected))
 
@@ -357,8 +357,8 @@ func TestObjectLiteralTypePreservesNestedWitnessShape(t *testing.T) {
 	payloadSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(401), HasExpr: true}
 	handlerSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(402), HasExpr: true}
 	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
-		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("traits").Field("payload"), payloadSource),
-		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("traits").Field("handler"), handlerSource),
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).Field("traits").Field("payload"), payloadSource, factflow.SourceSpan{}, ""),
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).Field("traits").Field("handler"), handlerSource, factflow.SourceSpan{}, ""),
 	})
 
 	values := map[factflow.ValueSource]product.Value{
@@ -398,7 +398,7 @@ func TestObjectLiteralTypePreservesTopOriginEntryPresenceWithoutConcreteProof(t 
 			reg := standard.Registry()
 			idSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(701), HasExpr: true}
 			lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
-				factflow.NewObjectEntry(path.NewPlaceholder(0).Field("id"), idSource),
+				factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).Field("id"), idSource, factflow.SourceSpan{}, ""),
 			})
 			values := map[factflow.ValueSource]product.Value{
 				idSource: product.Set(reg, product.Top(), evidence.Key, tt.evidence),
@@ -424,7 +424,7 @@ func TestObjectLiteralTypePreservesResolvedUntypedEntryPresence(t *testing.T) {
 	reg := standard.Registry()
 	contentSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(721), HasExpr: true}
 	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
-		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("content"), contentSource),
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).Field("content"), contentSource, factflow.SourceSpan{}, ""),
 	})
 
 	got, ok := ObjectLiteralType(reg, lit, factflow.ValueSourceResolverFunc(func(source factflow.ValueSource) (product.Value, bool) {
@@ -449,7 +449,7 @@ func TestObjectLiteralTypeDoesNotAdoptExpectedFieldForTopOriginEntry(t *testing.
 	idSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(711), HasExpr: true}
 	expected := typetable.NewRecord().Field("id", typ.String).Build()
 	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
-		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("id"), idSource),
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).Field("id"), idSource, factflow.SourceSpan{}, ""),
 	}).WithExpected(typevalue.WithWitness(reg, typevalue.FromType(reg, expected), expected))
 
 	got, ok := ObjectLiteralType(reg, lit, factflow.ValueSourceResolverFunc(func(source factflow.ValueSource) (product.Value, bool) {
@@ -476,8 +476,8 @@ func TestObjectLiteralTypeKeepsProvenSiblingWhenNestedEntryUnresolved(t *testing
 	channelSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(901), HasExpr: true}
 	witnessSource := factflow.ValueSource{Kind: factflow.ValueSourceCall, ExprRef: factflow.ExprRef(902), HasExpr: true}
 	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
-		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("channel"), channelSource),
-		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("schema").Field("witness"), witnessSource),
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).Field("channel"), channelSource, factflow.SourceSpan{}, ""),
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).Field("schema").Field("witness"), witnessSource, factflow.SourceSpan{}, ""),
 	})
 
 	got, ok := ObjectLiteralType(reg, lit, factflow.ValueSourceResolverFunc(func(source factflow.ValueSource) (product.Value, bool) {
@@ -506,9 +506,9 @@ func TestObjectLiteralTypeBuildsNestedSequenceWithTopOriginField(t *testing.T) {
 	idSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(802), HasExpr: true}
 	routeSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(803), HasExpr: true}
 	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
-		factflow.NewObjectEntry(path.NewPlaceholder(0).IndexInt(1), pageSource),
-		factflow.NewObjectEntry(path.NewPlaceholder(0).IndexInt(1).Field("id"), idSource),
-		factflow.NewObjectEntry(path.NewPlaceholder(0).IndexInt(1).Field("route"), routeSource),
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).IndexInt(1), pageSource, factflow.SourceSpan{}, ""),
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).IndexInt(1).Field("id"), idSource, factflow.SourceSpan{}, ""),
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).IndexInt(1).Field("route"), routeSource, factflow.SourceSpan{}, ""),
 	})
 
 	pageType := typetable.NewRecord().Field("id", typ.Any).Field("route", typ.String).Build()
@@ -539,8 +539,8 @@ func TestObjectLiteralTypePreservesPureSequenceAsTuple(t *testing.T) {
 	firstSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(501), HasExpr: true}
 	secondSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(502), HasExpr: true}
 	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
-		factflow.NewObjectEntry(path.NewPlaceholder(0).IndexInt(1), firstSource),
-		factflow.NewObjectEntry(path.NewPlaceholder(0).IndexInt(2), secondSource),
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).IndexInt(1), firstSource, factflow.SourceSpan{}, ""),
+		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).IndexInt(2), secondSource, factflow.SourceSpan{}, ""),
 	})
 
 	values := map[factflow.ValueSource]product.Value{

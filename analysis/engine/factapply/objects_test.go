@@ -78,7 +78,7 @@ func TestFactsNodeTransferObjectLiteralRootAssignmentsWriteStaticEntries(t *test
 			input := tc.fact(point, target, objectSource)
 			input.ObjectLiterals = map[factflow.ExprRef]factflow.ObjectLiteral{
 				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
-					factflow.NewObjectEntry(fieldSuffix("leaf"), entrySource),
+					factflow.NewObjectEntryWithMetadata(fieldSuffix("leaf"), entrySource, factflow.SourceSpan{}, ""),
 				}).WithIdentity(testTableLiteralID(objectSource.ExprRef)),
 			}
 			visibilityBuilder := visibility.NewBuilder()
@@ -129,7 +129,7 @@ func TestFactsNodeTransferObjectLiteralEntryPreservesExplicitTopNilEvidence(t *t
 		},
 		ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
 			objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
-				factflow.NewObjectEntry(fieldSuffix("leaf"), entrySource),
+				factflow.NewObjectEntryWithMetadata(fieldSuffix("leaf"), entrySource, factflow.SourceSpan{}, ""),
 			}).WithIdentity(testTableLiteralID(objectSource.ExprRef)),
 		},
 	}
@@ -175,7 +175,7 @@ func TestFactsNodeTransferObjectLiteralHeapRootUsesResolvedTypedSourceValue(t *t
 		},
 		ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
 			objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
-				factflow.NewObjectEntry(fieldSuffix("leaf"), entrySource),
+				factflow.NewObjectEntryWithMetadata(fieldSuffix("leaf"), entrySource, factflow.SourceSpan{}, ""),
 			}).WithIdentity(testTableLiteralID(objectSource.ExprRef)),
 		},
 	}
@@ -232,7 +232,7 @@ func TestFactsNodeTransferObjectLiteralEntriesUsePreWriteInputState(t *testing.T
 			},
 			ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
 				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
-					factflow.NewObjectEntry(fieldSuffix("old"), entrySource),
+					factflow.NewObjectEntryWithMetadata(fieldSuffix("old"), entrySource, factflow.SourceSpan{}, ""),
 				}),
 			},
 		}),
@@ -272,7 +272,7 @@ func TestFactsNodeTransferObjectLiteralMissingVisibilitySkipsEntriesKeepsRoot(t 
 			},
 			ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
 				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
-					factflow.NewObjectEntry(fieldSuffix("leaf"), entrySource),
+					factflow.NewObjectEntryWithMetadata(fieldSuffix("leaf"), entrySource, factflow.SourceSpan{}, ""),
 				}).WithIdentity(testTableLiteralID(objectSource.ExprRef)),
 			},
 		}),
@@ -321,7 +321,7 @@ func TestFactsNodeTransferObjectLiteralPathAssignmentWritesStaticEntries(t *test
 			},
 			ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
 				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
-					factflow.NewObjectEntry(fieldSuffix("leaf"), entrySource),
+					factflow.NewObjectEntryWithMetadata(fieldSuffix("leaf"), entrySource, factflow.SourceSpan{}, ""),
 				}).WithIdentity(testTableLiteralID(objectSource.ExprRef)),
 			},
 		}),
@@ -355,7 +355,7 @@ func TestFactsNodeTransferObjectLiteralEntryExpectedContractPreservesIdentity(t 
 	entryValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(entryID))
 	entryType := typetable.NewMap(typ.String, typ.String)
 	entryExpected := typevalue.WithWitness(reg, typevalue.FromType(reg, entryType), entryType)
-	entry := factflow.NewObjectEntry(fieldSuffix("processed"), entrySource).WithExpected(entryExpected)
+	entry := factflow.NewObjectEntryWithMetadata(fieldSuffix("processed"), entrySource, factflow.SourceSpan{}, "").WithExpected(entryExpected)
 	sources := &recordingSourceValues{
 		values: map[factflow.ValueSource]product.Value{
 			objectSource: rootValue,
@@ -416,7 +416,7 @@ func TestFactsNodeTransferObjectLiteralEntryExpectedContractDoesNotEraseIncompat
 	expectedType := typ.Func().Param("self", typ.Any).Returns(typ.String).Build()
 	entryValue := product.Set(reg, typevalue.WithWitness(reg, typevalue.FromType(reg, actualType), actualType), identity.Key, identity.Singleton(entryID))
 	entryExpected := typevalue.WithWitness(reg, typevalue.FromType(reg, expectedType), expectedType)
-	entry := factflow.NewObjectEntry(fieldSuffix("read"), entrySource).WithExpected(entryExpected)
+	entry := factflow.NewObjectEntryWithMetadata(fieldSuffix("read"), entrySource, factflow.SourceSpan{}, "").WithExpected(entryExpected)
 	sources := &recordingSourceValues{
 		values: map[factflow.ValueSource]product.Value{
 			objectSource: rootValue,
@@ -487,16 +487,16 @@ func TestFactsNodeTransferObjectLiteralWritesNestedHeapObjects(t *testing.T) {
 			},
 			ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
 				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
-					factflow.NewObjectEntry(fieldSuffix("child"), nestedSource),
-					factflow.NewObjectEntry(path.Path{
+					factflow.NewObjectEntryWithMetadata(fieldSuffix("child"), nestedSource, factflow.SourceSpan{}, ""),
+					factflow.NewObjectEntryWithMetadata(path.Path{
 						Segments: []segment.Segment{
 							{Kind: segment.SegmentField, Name: "child"},
 							{Kind: segment.SegmentField, Name: "id"},
 						},
-					}, leafSource),
+					}, leafSource, factflow.SourceSpan{}, ""),
 				}).WithIdentity(testTableLiteralID(objectSource.ExprRef)),
 				nestedSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
-					factflow.NewObjectEntry(fieldSuffix("id"), leafSource),
+					factflow.NewObjectEntryWithMetadata(fieldSuffix("id"), leafSource, factflow.SourceSpan{}, ""),
 				}).WithIdentity(testTableLiteralID(nestedSource.ExprRef)),
 			},
 		}),
@@ -541,7 +541,7 @@ func TestFactsNodeTransferObjectLiteralPlacementDoesNotDemotePromotedIdentity(t 
 			},
 			ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
 				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
-					factflow.NewObjectEntry(fieldSuffix("leaf"), entrySource),
+					factflow.NewObjectEntryWithMetadata(fieldSuffix("leaf"), entrySource, factflow.SourceSpan{}, ""),
 				}),
 			},
 		}),
@@ -579,7 +579,7 @@ func TestFactsNodeTransferReturnObjectLiteralWritesHeapObject(t *testing.T) {
 			},
 			ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
 				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
-					factflow.NewObjectEntry(fieldSuffix("leaf"), entrySource),
+					factflow.NewObjectEntryWithMetadata(fieldSuffix("leaf"), entrySource, factflow.SourceSpan{}, ""),
 				}),
 			},
 		}),
@@ -626,7 +626,7 @@ func TestFactsNodeTransferCallArgumentObjectLiteralWritesHeapObject(t *testing.T
 			},
 			ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
 				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
-					factflow.NewObjectEntry(fieldSuffix("leaf"), entrySource),
+					factflow.NewObjectEntryWithMetadata(fieldSuffix("leaf"), entrySource, factflow.SourceSpan{}, ""),
 				}),
 			},
 		}),
@@ -670,7 +670,7 @@ func TestFactsNodeTransferObjectLiteralEntriesInvalidateSubtreeBeforeWrite(t *te
 			},
 			ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
 				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
-					factflow.NewObjectEntry(fieldSuffix("a"), entrySource),
+					factflow.NewObjectEntryWithMetadata(fieldSuffix("a"), entrySource, factflow.SourceSpan{}, ""),
 				}),
 			},
 		}),

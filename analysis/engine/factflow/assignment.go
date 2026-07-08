@@ -43,9 +43,7 @@ func NewRootAssignment(kind RootAssignmentKind, targetSymbol symbol.ID, targetPa
 	}
 }
 
-// NewRootAssignmentWithDeclaredValue creates a root assignment fact that can
-// write declared type evidence when its source has no value evidence.
-func NewRootAssignmentWithDeclaredValue(kind RootAssignmentKind, targetSymbol symbol.ID, targetPath path.Path, source ValueSource, declaredValue product.Value) RootAssignment {
+func newRootAssignmentWithDeclaredValue(kind RootAssignmentKind, targetSymbol symbol.ID, targetPath path.Path, source ValueSource, declaredValue product.Value) RootAssignment {
 	fact := NewRootAssignment(kind, targetSymbol, targetPath, source)
 	fact.declaredValue = declaredValue
 	fact.hasDeclaredValue = true
@@ -57,7 +55,7 @@ func NewRootAssignmentWithDeclaredValue(kind RootAssignmentKind, targetSymbol sy
 // NewRootAssignmentWithDeclaredContractValue creates a root assignment fact
 // whose declared type is the assignment's authoritative contract.
 func NewRootAssignmentWithDeclaredContractValue(kind RootAssignmentKind, targetSymbol symbol.ID, targetPath path.Path, source ValueSource, declaredValue product.Value) RootAssignment {
-	fact := NewRootAssignmentWithDeclaredValue(kind, targetSymbol, targetPath, source, declaredValue)
+	fact := newRootAssignmentWithDeclaredValue(kind, targetSymbol, targetPath, source, declaredValue)
 	fact.declaredValueContracts = true
 	return fact
 }
@@ -66,7 +64,7 @@ func NewRootAssignmentWithDeclaredContractValue(kind RootAssignmentKind, targetS
 // source value remains precise but is overlaid with the target's declared
 // contract before writing.
 func NewRootAssignmentWithDeclaredOverlayValue(kind RootAssignmentKind, targetSymbol symbol.ID, targetPath path.Path, source ValueSource, declaredValue product.Value) RootAssignment {
-	fact := NewRootAssignmentWithDeclaredValue(kind, targetSymbol, targetPath, source, declaredValue)
+	fact := newRootAssignmentWithDeclaredValue(kind, targetSymbol, targetPath, source, declaredValue)
 	fact.declaredValueOverlays = true
 	return fact
 }

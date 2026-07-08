@@ -26,7 +26,7 @@ type FactsInput struct {
 	PathValuePresenceImplications map[cfg.Point]PathValuePresenceImplicationSet
 	ChannelSelects                map[cfg.Point]ChannelSelectSet
 	PostconditionRefinements      map[cfg.Point]PostconditionRefinementSet
-	PostconditionPathRelations    map[cfg.Point]PostconditionPathRelationSet
+	PostconditionPathRelations    map[cfg.Point][]PostconditionPathRelation
 	CallResultValues              map[cfg.Point]CallResultValueSet
 	ReturnPresenceRelations       map[cfg.Point]ReturnPresenceRelationSet
 	Returns                       map[cfg.Point]Return
@@ -60,7 +60,7 @@ type Facts struct {
 	pathValuePresenceImplications map[cfg.Point]PathValuePresenceImplicationSet
 	channelSelects                map[cfg.Point]ChannelSelectSet
 	postconditionRefinements      map[cfg.Point]PostconditionRefinementSet
-	postconditionPathRelations    map[cfg.Point]PostconditionPathRelationSet
+	postconditionPathRelations    map[cfg.Point][]PostconditionPathRelation
 	callResultValues              map[cfg.Point]CallResultValueSet
 	returnPresenceRelations       map[cfg.Point]ReturnPresenceRelationSet
 	returns                       map[cfg.Point]Return
@@ -95,7 +95,7 @@ func NewFacts(input FactsInput) Facts {
 		pathValuePresenceImplications: copyValueMap(input.PathValuePresenceImplications, PathValuePresenceImplicationSet.copy),
 		channelSelects:                copyValueMap(input.ChannelSelects, ChannelSelectSet.copy),
 		postconditionRefinements:      copyValueMap(input.PostconditionRefinements, PostconditionRefinementSet.copy),
-		postconditionPathRelations:    copyValueMap(input.PostconditionPathRelations, PostconditionPathRelationSet.copy),
+		postconditionPathRelations:    copyValueMap(input.PostconditionPathRelations, copyPostconditionPathRelationSlice),
 		callResultValues:              copyValueMap(input.CallResultValues, CallResultValueSet.copy),
 		returnPresenceRelations:       copyValueMap(input.ReturnPresenceRelations, ReturnPresenceRelationSet.copy),
 		returns:                       copyValueMap(input.Returns, Return.copy),
@@ -321,8 +321,8 @@ func (f Facts) PostconditionRefinements(point cfg.Point) []PostconditionRefineme
 // PostconditionPathRelations returns node-local path relations that hold after
 // point completes normally.
 func (f Facts) PostconditionPathRelations(point cfg.Point) []PostconditionPathRelation {
-	if set, ok := f.postconditionPathRelations[point]; ok {
-		return set.Relations()
+	if relations, ok := f.postconditionPathRelations[point]; ok {
+		return copyPostconditionPathRelationSlice(relations)
 	}
 	return nil
 }

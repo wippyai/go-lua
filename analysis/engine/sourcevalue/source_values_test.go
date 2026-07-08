@@ -1178,7 +1178,7 @@ func TestSourceValuesObjectLiteralPrefersViewOverCachedTopOrigin(t *testing.T) {
 	litSource := ValueSource{Kind: ValueSourceExpression, ExprRef: litExpr, HasExpr: true}
 	fieldSource := ValueSource{Kind: ValueSourceExpression, ExprRef: fieldExpr, HasExpr: true}
 	lit := NewObjectLiteral([]ObjectEntry{
-		NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "id"}}}, fieldSource),
+		NewObjectEntryWithMetadata(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "id"}}}, fieldSource, SourceSpan{}, ""),
 	})
 	cachedTop := product.Set(reg, product.Top(), evidence.Key, evidence.ExplicitTop())
 	fieldValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
@@ -1883,7 +1883,7 @@ func TestSourceValuesObjectLiteralViewResolver(t *testing.T) {
 	want := presentValue(reg)
 	nilSource := NewNilValueSource(0)
 	lit := NewObjectLiteral([]ObjectEntry{
-		NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "value"}}}, nilSource),
+		NewObjectEntryWithMetadata(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "value"}}}, nilSource, SourceSpan{}, ""),
 	})
 	viewCalls := 0
 	resolver := NewSourceValues(SourceValuesConfig{
@@ -1928,7 +1928,7 @@ func TestExpressionRefinementsApplyInsideObjectLiteralViewResolver(t *testing.T)
 	innerSource := ValueSource{Kind: ValueSourceExpression, ExprRef: inner, HasExpr: true}
 	outerSource := ValueSource{Kind: ValueSourceExpression, ExprRef: outer, HasExpr: true}
 	lit := NewObjectLiteral([]ObjectEntry{
-		NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "value"}}}, outerSource),
+		NewObjectEntryWithMetadata(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "value"}}}, outerSource, SourceSpan{}, ""),
 	})
 	baseResolver := NewSourceValues(SourceValuesConfig{
 		Registry: reg,

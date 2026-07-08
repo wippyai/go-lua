@@ -413,7 +413,7 @@ func TestFactsNodeTransferRootAssignmentClearsNumericFloorWhenSourceIsUnresolved
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
 			RootAssignments: map[cfg.Point]factflow.RootAssignment{
-				point: factflow.NewRootAssignmentWithDeclaredValue(factflow.RootAssignmentLocalDeclaration, target, targetPath, source, declared),
+				point: factflow.NewRootAssignmentWithDeclaredOverlayValue(factflow.RootAssignmentLocalDeclaration, target, targetPath, source, declared),
 			},
 		}),
 		Sources:    sources,
@@ -502,7 +502,7 @@ func TestFactsNodeTransferDeclaredContractPreservesObjectLiteralIdentity(t *test
 	}
 }
 
-func TestFactsNodeTransferRootAssignmentUsesSourceBeforeFallbackDeclaredValue(t *testing.T) {
+func TestFactsNodeTransferRootAssignmentOverlayUsesSourceBeforeDeclaredFallback(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
 	assign := graph.AddNode(cfg.NodeAssign)
@@ -511,8 +511,8 @@ func TestFactsNodeTransferRootAssignmentUsesSourceBeforeFallbackDeclaredValue(t 
 
 	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(13), HasExpr: true}
 	target := symbol.ID(104)
-	declared := product.Set(reg, presentValue(reg), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
-	assigned := product.Set(reg, presentValue(reg), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
+	declared := product.Top()
+	assigned := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
 	resolver := &recordingSourceValues{
 		values: map[factflow.ValueSource]product.Value{source: assigned},
 	}
@@ -523,7 +523,7 @@ func TestFactsNodeTransferRootAssignmentUsesSourceBeforeFallbackDeclaredValue(t 
 		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
 				RootAssignments: map[cfg.Point]factflow.RootAssignment{
-					assign: factflow.NewRootAssignmentWithDeclaredValue(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "local"), source, declared),
+					assign: factflow.NewRootAssignmentWithDeclaredOverlayValue(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "local"), source, declared),
 				},
 			}),
 			Sources: resolver,
@@ -535,7 +535,7 @@ func TestFactsNodeTransferRootAssignmentUsesSourceBeforeFallbackDeclaredValue(t 
 	assertResolverCall(t, resolver, assign, source)
 }
 
-func TestFactsNodeTransferRootAssignmentUsesFallbackDeclaredValueWhenSourceIsBottom(t *testing.T) {
+func TestFactsNodeTransferRootAssignmentOverlayUsesDeclaredValueWhenSourceIsBottom(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
 	assign := graph.AddNode(cfg.NodeAssign)
@@ -555,7 +555,7 @@ func TestFactsNodeTransferRootAssignmentUsesFallbackDeclaredValueWhenSourceIsBot
 		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
 				RootAssignments: map[cfg.Point]factflow.RootAssignment{
-					assign: factflow.NewRootAssignmentWithDeclaredValue(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "local"), source, declared),
+					assign: factflow.NewRootAssignmentWithDeclaredOverlayValue(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "local"), source, declared),
 				},
 			}),
 			Sources: resolver,

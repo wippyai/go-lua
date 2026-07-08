@@ -49,8 +49,7 @@ func TestFactsNodeTransferAppliesTypeAssertPostconditionOnNormalContinuation(t *
 	target := symbol.ID(402)
 	numberValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
 	want := product.Meet(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), numberValue)
-	refinement := factflow.NewValueRefinement().
-		WithConstraint(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present())).
+	refinement := factflow.NewValueConstraint(product.NewWithPresence(reg, product.ShapeTop, presence.Present())).
 		WithConstraint(reg, numberValue)
 
 	got := transfer.Run(transfer.Config{
