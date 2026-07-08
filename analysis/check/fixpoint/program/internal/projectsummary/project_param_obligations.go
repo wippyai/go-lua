@@ -151,9 +151,9 @@ func projectParamObligations(reg *axis.Registry, result ResultReader, cache *par
 				ctx.addArithmeticObligationsFromSource(out, source)
 				return true
 			})
+			ctx.addTypedCallObligations(out, site)
 			if fact, factOK := callFactAt(result, point); factOK {
 				ctx.addCallOutcomeObligations(out, fact, site)
-				ctx.addTypedCallObligations(out, fact, site)
 			}
 		}
 		if sourceReader, ok := result.(returnValueSourceReader); ok {
@@ -539,17 +539,17 @@ func (p paramObligationProjector) selfCallSymbol(callee symbol.ID) bool {
 	return ok && current != 0 && current == callee
 }
 
-func (p paramObligationProjector) addTypedCallObligations(out []product.Value, fact semantics.CallFact, site factflow.CallSiteView) {
-	params := p.callParamTypes(fact, site)
+func (p paramObligationProjector) addTypedCallObligations(out []product.Value, site factflow.CallSiteView) {
+	params := p.callParamTypesForSite(site)
 	if len(params) == 0 {
 		return
 	}
-	for i, want := range params {
-		if i >= len(fact.Args) {
-			break
+	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
+		if i < len(params) {
+			p.addTypedValueSourceObligation(out, source, params[i], 0)
 		}
-		p.addTypedExpressionObligation(out, fact.Args[i], want, 0)
-	}
+		return true
+	})
 }
 
 func (p paramObligationProjector) addCapturedTypedCallObligations(out *[]summary.CapturedPathObligation, fact semantics.CallFact, site factflow.CallSiteView, captured map[symbol.ID]struct{}) {
@@ -789,6 +789,10 @@ func concatOperandObligationType() typ.Type {
 
 func (p paramObligationProjector) callParamTypes(fact semantics.CallFact, site factflow.CallSiteView) []typ.Type {
 	return p.callParamTypesForSiteWithReceiver(site, fact.Receiver != nil && fact.Method != "")
+}
+
+func (p paramObligationProjector) callParamTypesForSite(site factflow.CallSiteView) []typ.Type {
+	return p.callParamTypesForSiteWithReceiver(site, site.MethodName() != "")
 }
 
 func (p paramObligationProjector) callParamTypesForSiteWithReceiver(site factflow.CallSiteView, receiverSyntax bool) []typ.Type {

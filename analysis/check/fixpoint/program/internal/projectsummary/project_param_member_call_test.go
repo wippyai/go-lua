@@ -7,11 +7,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -75,5 +78,40 @@ func TestParamMemberCallObligationsUseCallSiteSourcesWithoutSemanticCallFact(t *
 	}
 	if got[0].ReceiverParam != 0 || got[0].ArgParam != 1 || got[0].MemberParamIndex != 0 {
 		t.Fatalf("member call obligation = %#v, want receiver param 0, arg param 1, member param 0", got[0])
+	}
+}
+
+func TestParamObligationsUseTypedCallSiteSourcesWithoutSemanticCallFact(t *testing.T) {
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, true)
+	graph.AddEdge(call, graph.Exit(), true)
+
+	payload := pathdom.NewPath(symbol.ID(2), "payload")
+	source, ok := factflow.NewPathValueSource(payload.Key(), 0, 0, 0, factflow.ValueSourceShape{Final: true, Adjusted: true})
+	if !ok {
+		t.Fatal("NewPathValueSource failed")
+	}
+	result := memberCallSiteOnlyResult{
+		graph: graph,
+		point: call,
+		site: factflow.NewCallSite(factflow.CallSiteConfig{
+			CalleeSymbol:    symbol.ID(1),
+			ArgumentSources: []factflow.ValueSource{source},
+		}).View(),
+		ks: keyspace.New(),
+	}
+
+	reg := standard.Registry()
+	got := projectParamObligations(reg, result, nil)
+	if len(got) != 2 {
+		t.Fatalf("param obligations = %#v, want two parameter slots", got)
+	}
+	if product.Equal(reg, got[1], product.Top()) {
+		t.Fatalf("payload obligation = top, want string requirement from call-site signature")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got[1])
+	if !ok || !subtype.IsSubtype(gotType, typ.String) {
+		t.Fatalf("payload obligation type = %v/%v, want string", gotType, ok)
 	}
 }
