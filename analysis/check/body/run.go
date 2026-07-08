@@ -27,6 +27,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
+	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/lua/transferfacts"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
@@ -195,19 +196,23 @@ func (c *checker) prepare(
 		varargValue = functionVarargValueProvider(config.Registry, fn, bindings)
 	}
 	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
-		Registry:              config.Registry,
-		TypeValues:            config.TypeValues,
-		KeySpace:              resolver.KeySpace(),
-		Visibility:            resolver,
-		ProjectPathValue:      luaProjectValue(config.Registry, config.TypeValues),
-		ExpressionValues:      expressionValues,
-		ExpressionPaths:       expressionPaths,
-		ObjectLiteralView:     facts.ObjectLiteralView,
-		ObjectLiteralFromView: objectLiteralViewEvaluator(config.Registry, config.TypeValues),
-		ExpressionOps:         facts.ExpressionOperations(),
-		ExpressionConditions:  facts.ExpressionConditions(),
-		DynamicIndexExprs:     facts.DynamicIndexExpressions(),
-		ExpressionOp:          expressionOperationEvaluator(config.Registry, config.TypeValues),
+		Registry:          config.Registry,
+		TypeValues:        config.TypeValues,
+		KeySpace:          resolver.KeySpace(),
+		Visibility:        resolver,
+		ProjectPathValue:  luaProjectValue(config.Registry, config.TypeValues),
+		ExpressionValues:  expressionValues,
+		ExpressionPaths:   expressionPaths,
+		ObjectLiteralView: facts.ObjectLiteralView,
+		ObjectLiteralFromView: func(lit factflow.ObjectLiteralView, resolver factflow.ValueSourceResolver) (product.Value, bool) {
+			return luasourcevalue.ObjectLiteralValueFromViewCached(config.Registry, config.TypeValues, lit, resolver)
+		},
+		ExpressionOps:        facts.ExpressionOperations(),
+		ExpressionConditions: facts.ExpressionConditions(),
+		DynamicIndexExprs:    facts.DynamicIndexExpressions(),
+		ExpressionOp: func(op factflow.ExpressionOperation, left product.Value, right product.Value) (product.Value, bool) {
+			return luasourcevalue.ExpressionOperationValue(config.Registry, config.TypeValues, op, left, right)
+		},
 		ExpressionCondition: func(point cfg.Point, in state.State, selected factflow.ExpressionConditionFacts) state.State {
 			return factapply.ApplyExpressionConditionFacts(config.Registry, resolver, luaPathTypeProjector, point, in, selected)
 		},

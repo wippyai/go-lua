@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -22,11 +23,11 @@ func TestObjectLiteralViewEvaluatorMarksConstructedValueFresh(t *testing.T) {
 		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("id"), source),
 	}).WithIdentity(litID)
 
-	got, ok := objectLiteralViewEvaluator(reg, nil)(lit.View(), factflow.ValueSourceResolverFunc(func(factflow.ValueSource) (product.Value, bool) {
+	got, ok := luasourcevalue.ObjectLiteralValueFromViewCached(reg, nil, lit.View(), factflow.ValueSourceResolverFunc(func(factflow.ValueSource) (product.Value, bool) {
 		return typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String), true
 	}))
 	if !ok {
-		t.Fatal("objectLiteralViewEvaluator returned false")
+		t.Fatal("ObjectLiteralValueFromViewCached returned false")
 	}
 	if gotEscape := product.Get(reg, got, escape.Key); !escape.Equal(gotEscape, escape.Fresh()) {
 		t.Fatalf("object literal escape = %s, want fresh", gotEscape)
@@ -41,11 +42,11 @@ func TestObjectLiteralViewEvaluatorMarksEmptyConstructedValueFresh(t *testing.T)
 	litID := identity.LuaTableLiteral(7001, 1002)
 	lit := factflow.NewObjectLiteral(nil).WithIdentity(litID)
 
-	got, ok := objectLiteralViewEvaluator(reg, nil)(lit.View(), factflow.ValueSourceResolverFunc(func(factflow.ValueSource) (product.Value, bool) {
+	got, ok := luasourcevalue.ObjectLiteralValueFromViewCached(reg, nil, lit.View(), factflow.ValueSourceResolverFunc(func(factflow.ValueSource) (product.Value, bool) {
 		return product.Value{}, false
 	}))
 	if !ok {
-		t.Fatal("objectLiteralViewEvaluator returned false")
+		t.Fatal("ObjectLiteralValueFromViewCached returned false")
 	}
 	if gotEscape := product.Get(reg, got, escape.Key); !escape.Equal(gotEscape, escape.Fresh()) {
 		t.Fatalf("object literal escape = %s, want fresh", gotEscape)
@@ -63,11 +64,11 @@ func TestObjectLiteralViewEvaluatorUsesExpectedTypeForEmptyConstructor(t *testin
 		WithIdentity(litID).
 		WithExpected(typevalue.WithWitness(reg, typevalue.FromType(reg, want), want))
 
-	got, ok := objectLiteralViewEvaluator(reg, nil)(lit.View(), factflow.ValueSourceResolverFunc(func(factflow.ValueSource) (product.Value, bool) {
+	got, ok := luasourcevalue.ObjectLiteralValueFromViewCached(reg, nil, lit.View(), factflow.ValueSourceResolverFunc(func(factflow.ValueSource) (product.Value, bool) {
 		return product.Value{}, false
 	}))
 	if !ok {
-		t.Fatal("objectLiteralViewEvaluator returned false")
+		t.Fatal("ObjectLiteralValueFromViewCached returned false")
 	}
 	gotType, ok := typevalue.TypeOf(reg, got)
 	if !ok || !typ.TypeEquals(gotType, want) {
@@ -94,7 +95,7 @@ func TestObjectLiteralViewEvaluatorChildEntriesRefineOverlappingParent(t *testin
 		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("value").Field("headers"), headersSource),
 	})
 
-	got, ok := objectLiteralViewEvaluator(reg, nil)(lit.View(), factflow.ValueSourceResolverFunc(func(source factflow.ValueSource) (product.Value, bool) {
+	got, ok := luasourcevalue.ObjectLiteralValueFromViewCached(reg, nil, lit.View(), factflow.ValueSourceResolverFunc(func(source factflow.ValueSource) (product.Value, bool) {
 		switch source.ExprRef {
 		case parentSource.ExprRef:
 			return typevalue.WithWitness(reg, typevalue.FromType(reg, parentType), parentType), true
@@ -107,7 +108,7 @@ func TestObjectLiteralViewEvaluatorChildEntriesRefineOverlappingParent(t *testin
 		}
 	}))
 	if !ok {
-		t.Fatal("objectLiteralViewEvaluator returned false")
+		t.Fatal("ObjectLiteralValueFromViewCached returned false")
 	}
 	gotType, ok := typevalue.TypeOf(reg, got)
 	want := typetable.NewRecord().
@@ -133,9 +134,9 @@ func TestExpressionOperationEvaluatorUsesLuaOperationSemantics(t *testing.T) {
 	left := product.Join(reg, first, second)
 	right := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.LiteralInt(1)), typ.LiteralInt(1))
 
-	got, ok := expressionOperationEvaluator(reg, nil)(op, left, right)
+	got, ok := luasourcevalue.ExpressionOperationValue(reg, nil, op, left, right)
 	if !ok {
-		t.Fatal("expressionOperationEvaluator returned false")
+		t.Fatal("ExpressionOperationValue returned false")
 	}
 	gotType, ok := typevalue.TypeOf(reg, got)
 	if !ok || !typ.TypeEquals(gotType, typ.Integer) {

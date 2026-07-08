@@ -32,6 +32,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/kind"
@@ -89,7 +90,7 @@ func (r *Result) returnObjectLiteralSourceValueAtBoundary(point cfg.Point, sourc
 	if !ok {
 		return product.Value{}, false
 	}
-	return objectLiteralValueFromView(r.registry, r.typeValues, literal, factflow.ValueSourceResolverFunc(func(entrySource factflow.ValueSource) (product.Value, bool) {
+	return luasourcevalue.ObjectLiteralValueFromViewCached(r.registry, r.typeValues, literal, factflow.ValueSourceResolverFunc(func(entrySource factflow.ValueSource) (product.Value, bool) {
 		if entrySource == source {
 			return product.Value{}, false
 		}
