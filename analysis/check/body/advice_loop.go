@@ -2,7 +2,9 @@ package body
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -10,6 +12,58 @@ import (
 type LoopInfo struct {
 	Head cfg.Point
 	Span SourceSpan
+}
+
+// InvariantLoopReadOccurrence is a loop-contained static member/index read
+// whose read path is stable through the loop and whose receiver is non-nil.
+type InvariantLoopReadOccurrence struct {
+	Point        cfg.Point
+	LoopHead     cfg.Point
+	ReadLabel    string
+	ReceiverPath pathdom.Path
+	ReadPath     pathdom.Path
+	ReceiverType typ.Type
+	ReadSpan     SourceSpan
+	LoopSpan     SourceSpan
+}
+
+// ForEachInvariantLoopReadOccurrence visits loop-contained member/index reads
+// whose read path is stable through the loop and whose receiver is non-nil.
+func (r *Result) ForEachInvariantLoopReadOccurrence(visit func(InvariantLoopReadOccurrence) bool) bool {
+	if r == nil || visit == nil || r.Graph() == nil {
+		return false
+	}
+	visited := false
+	r.ForEachStaticMemberReadOccurrence(func(occ StaticMemberReadOccurrence) bool {
+		if !occ.HasReceiverPath || occ.ReceiverPath.IsEmpty() ||
+			!occ.HasReadPath || occ.ReadPath.IsEmpty() ||
+			!occ.HasReceiverTypeBeforeBoundary ||
+			occ.ReceiverTypeBeforeBoundary == nil ||
+			typ.IsTopLike(occ.ReceiverTypeBeforeBoundary) ||
+			typ.IsNever(occ.ReceiverTypeBeforeBoundary) ||
+			typevalue.TypeIncludesNil(occ.ReceiverTypeBeforeBoundary) {
+			return true
+		}
+		loop, ok := r.InnermostLoopForPoint(occ.Point)
+		if !ok {
+			return true
+		}
+		if r.PathInvalidatedInLoop(loop.Head, occ.ReadPath) {
+			return true
+		}
+		visited = true
+		return visit(InvariantLoopReadOccurrence{
+			Point:        occ.Point,
+			LoopHead:     loop.Head,
+			ReadLabel:    occ.ReadLabel,
+			ReceiverPath: occ.ReceiverPath,
+			ReadPath:     occ.ReadPath,
+			ReceiverType: occ.ReceiverTypeBeforeBoundary,
+			ReadSpan:     occ.Span,
+			LoopSpan:     loop.Span,
+		})
+	})
+	return visited
 }
 
 // InnermostLoopForPoint returns the innermost source loop whose CFG cycle
