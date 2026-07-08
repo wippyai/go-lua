@@ -93,6 +93,10 @@ type sourceValueAtBoundaryReader interface {
 	SourceValueAtBoundary(cfg.Point, factflow.ValueSource) (product.Value, bool)
 }
 
+type sourceValueBeforeBoundaryReader interface {
+	SourceValueBeforeBoundary(cfg.Point, factflow.ValueSource) (product.Value, bool)
+}
+
 type symbolTypeAnnotationReader interface {
 	SymbolTypeAnnotation(symbol.ID) (ast.TypeExpr, bool)
 }
@@ -152,9 +156,7 @@ func projectParamObligations(reg *axis.Registry, result ResultReader, cache *par
 				return true
 			})
 			ctx.addTypedCallObligations(out, site)
-			if fact, factOK := callFactAt(result, point); factOK {
-				ctx.addCallOutcomeObligations(out, fact, site)
-			}
+			ctx.addCallOutcomeObligations(out, site)
 		}
 		if sourceReader, ok := result.(returnValueSourceReader); ok {
 			if sources, sourcesOK := sourceReader.ReturnValueSources(point); sourcesOK {
@@ -449,11 +451,11 @@ type memberReceiverStabilityKey struct {
 	member   segment.Segment
 }
 
-func (p paramObligationProjector) addCallOutcomeObligations(out []product.Value, fact semantics.CallFact, site factflow.CallSiteView) {
-	if p.selfCall(fact) {
+func (p paramObligationProjector) addCallOutcomeObligations(out []product.Value, site factflow.CallSiteView) {
+	if p.selfCallSymbol(site.CalleeSymbol()) {
 		return
 	}
-	if receiver, member, ok := memberCallReceiverForSite(fact, site); ok && !p.memberCallReceiverStable(receiver, member) {
+	if receiver, member, ok := memberCallReceiverFromSite(site); ok && !p.memberCallReceiverStable(receiver, member) {
 		return
 	}
 	reader, ok := p.result.(callOutcomeAtReader)
@@ -465,13 +467,14 @@ func (p paramObligationProjector) addCallOutcomeObligations(out []product.Value,
 		return
 	}
 	for _, obligation := range outcome.ParamObligations {
-		if obligation.ParamIndex < 0 || obligation.ParamIndex >= len(fact.Args) {
+		source, sourceOK := site.ArgumentSourceAt(obligation.ParamIndex)
+		if obligation.ParamIndex < 0 || !sourceOK {
 			continue
 		}
-		if want, ok := typevalue.TypeOf(p.reg, obligation.Value); ok && p.expressionValueSatisfiesType(fact.Args[obligation.ParamIndex], want) {
+		if want, ok := typevalue.TypeOf(p.reg, obligation.Value); ok && p.sourceValueSatisfiesType(source, want) {
 			continue
 		}
-		param, ok := p.unconditionalParamIndex(fact.Args[obligation.ParamIndex])
+		param, ok := p.unconditionalSourceParamIndex(source)
 		if !ok {
 			continue
 		}
@@ -1568,6 +1571,11 @@ func (p paramObligationProjector) addTypedValueSourceObligationSeen(
 func (p paramObligationProjector) sourceValueSatisfiesType(source factflow.ValueSource, want typ.Type) bool {
 	if want == nil || p.reg == nil {
 		return false
+	}
+	if valueReader, ok := p.result.(sourceValueBeforeBoundaryReader); ok {
+		if value, valueOK := valueReader.SourceValueBeforeBoundary(p.point, source); valueOK {
+			return p.valueSatisfiesType(value, want)
+		}
 	}
 	if valueReader, ok := p.result.(sourceValueAtBoundaryReader); ok {
 		if value, valueOK := valueReader.SourceValueAtBoundary(p.point, source); valueOK {
