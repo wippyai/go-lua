@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
+	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -102,11 +102,11 @@ func unresolvedTypeScopeFromResults(result *Result, parents []*Result) unresolve
 				continue
 			}
 			switch fact.Kind {
-			case cfgfacts.TypeDefinitionAlias:
+			case cfgbuild.TypeDefinitionAlias:
 				if fact.Type != nil && fact.Type.Name != "" {
 					known[fact.Type.Name] = struct{}{}
 				}
-			case cfgfacts.TypeDefinitionInterface:
+			case cfgbuild.TypeDefinitionInterface:
 				if fact.Interface != nil && fact.Interface.Name != "" {
 					known[fact.Interface.Name] = struct{}{}
 				}
@@ -120,9 +120,9 @@ func unresolvedTypeScopeFromResults(result *Result, parents []*Result) unresolve
 	return unresolvedTypeScope{known: known}
 }
 
-func emitUnresolvedTypeDefinitionRefs(point cfg.Point, fact cfgfacts.TypeDefinitionFact, emit func(cfg.Point, ast.TypeExpr) bool) bool {
+func emitUnresolvedTypeDefinitionRefs(point cfg.Point, fact cfgbuild.TypeDefinition, emit func(cfg.Point, ast.TypeExpr) bool) bool {
 	switch fact.Kind {
-	case cfgfacts.TypeDefinitionAlias:
+	case cfgbuild.TypeDefinitionAlias:
 		if fact.Type == nil {
 			return true
 		}
@@ -132,7 +132,7 @@ func emitUnresolvedTypeDefinitionRefs(point cfg.Point, fact cfgfacts.TypeDefinit
 			}
 		}
 		return emit(point, fact.Type.Type)
-	case cfgfacts.TypeDefinitionInterface:
+	case cfgbuild.TypeDefinitionInterface:
 		if fact.Interface == nil {
 			return true
 		}

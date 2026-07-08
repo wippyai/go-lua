@@ -414,7 +414,7 @@ func TestExtractChunkFunctionDefinitionFactPreservesIdentity(t *testing.T) {
 	}
 
 	points := requireStmtPoints(t, built, stmt, 1)
-	fact, ok := built.Meta.FunctionDefinition(points[0])
+	fact, ok := built.Declarations.FunctionDefinition(points[0])
 	if !ok {
 		t.Fatalf("missing function definition fact")
 	}
@@ -486,7 +486,7 @@ func TestExtractChunkMemberFunctionDefinitionFactPublishesPathAssignment(t *test
 			if err != nil {
 				t.Fatalf("ExtractChunk: %v", err)
 			}
-			fact, ok := built.Meta.FunctionDefinition(points[0])
+			fact, ok := built.Declarations.FunctionDefinition(points[0])
 			if !ok {
 				t.Fatalf("missing function definition fact")
 			}
@@ -588,16 +588,16 @@ func TestExtractChunkCallReturnBranchAndTypeFacts(t *testing.T) {
 	if node := built.Graph.Node(typePoint); node == nil || node.Kind != cfg.NodeNoop {
 		t.Fatalf("type def cfg node = %#v, want NodeNoop", node)
 	}
-	typeFact, ok := built.Meta.TypeDefinition(typePoint)
-	if !ok || typeFact.Kind != cfgfacts.TypeDefinitionAlias || typeFact.Type != typeDef {
+	typeFact, ok := built.Declarations.TypeDefinition(typePoint)
+	if !ok || typeFact.Kind != cfgbuild.TypeDefinitionAlias || typeFact.Type != typeDef {
 		t.Fatalf("type def fact = %#v, ok=%v", typeFact, ok)
 	}
 	interfacePoint := requireStmtPoints(t, built, interfaceDef, 1)[0]
 	if node := built.Graph.Node(interfacePoint); node == nil || node.Kind != cfg.NodeNoop {
 		t.Fatalf("interface def cfg node = %#v, want NodeNoop", node)
 	}
-	interfaceFact, ok := built.Meta.TypeDefinition(interfacePoint)
-	if !ok || interfaceFact.Kind != cfgfacts.TypeDefinitionInterface || interfaceFact.Interface != interfaceDef {
+	interfaceFact, ok := built.Declarations.TypeDefinition(interfacePoint)
+	if !ok || interfaceFact.Kind != cfgbuild.TypeDefinitionInterface || interfaceFact.Interface != interfaceDef {
 		t.Fatalf("interface def fact = %#v, ok=%v", interfaceFact, ok)
 	}
 
@@ -1630,10 +1630,10 @@ func TestExtractChunkSkipsUnmappedDeclarationFacts(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 	deadPoint := cfg.Point(9999)
-	if _, ok := built.Meta.FunctionDefinition(deadPoint); ok {
+	if _, ok := built.Declarations.FunctionDefinition(deadPoint); ok {
 		t.Fatalf("unmapped function definition produced function fact at dead point")
 	}
-	if _, ok := built.Meta.TypeDefinition(deadPoint); ok {
+	if _, ok := built.Declarations.TypeDefinition(deadPoint); ok {
 		t.Fatalf("unmapped type definition produced type fact at dead point")
 	}
 }

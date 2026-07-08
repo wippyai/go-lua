@@ -12,6 +12,7 @@ type Result struct {
 	Graph         *cfg.CFG
 	Meta          cfgfacts.Metadata
 	StmtPoints    StmtPoints
+	Declarations  Declarations
 	ShortCircuits ShortCircuits
 	NumericFors   NumericFors
 }
@@ -48,7 +49,7 @@ func BuildFunction(fn *ast.FunctionExpr, bindings *bind.Result) *Result {
 		state = b.buildStmts(state, fn.Stmts)
 	}
 	b.connect(state, graph.Exit())
-	return &Result{Graph: graph, Meta: b.meta, StmtPoints: StmtPoints{points: b.stmtPoints}, ShortCircuits: b.shortCircuits, NumericFors: b.numericFors}
+	return &Result{Graph: graph, Meta: b.meta, StmtPoints: StmtPoints{points: b.stmtPoints}, Declarations: b.declarations, ShortCircuits: b.shortCircuits, NumericFors: b.numericFors}
 }
 
 // BuildChunk builds a minimal CFG for a chunk-level statement list using
@@ -63,12 +64,13 @@ func BuildChunk(stmts []ast.Stmt, bindings *bind.Result) *Result {
 
 	state := b.buildStmts(liveAt(graph.Entry()), stmts)
 	b.connect(state, graph.Exit())
-	return &Result{Graph: graph, Meta: b.meta, StmtPoints: StmtPoints{points: b.stmtPoints}, ShortCircuits: b.shortCircuits, NumericFors: b.numericFors}
+	return &Result{Graph: graph, Meta: b.meta, StmtPoints: StmtPoints{points: b.stmtPoints}, Declarations: b.declarations, ShortCircuits: b.shortCircuits, NumericFors: b.numericFors}
 }
 
 type builder struct {
 	graph         *cfg.CFG
 	meta          cfgfacts.Metadata
+	declarations  Declarations
 	shortCircuits ShortCircuits
 	numericFors   NumericFors
 	stmtPoints    map[ast.Stmt][]cfg.Point

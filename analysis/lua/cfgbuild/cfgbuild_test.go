@@ -343,12 +343,12 @@ func TestBuildChunkStatementPointMappingForLinearStatements(t *testing.T) {
 	requirePointKind(t, graph, ifacePoints[0], cfg.NodeNoop)
 	requirePointKind(t, graph, callPoints[0], cfg.NodeCall)
 	requirePointKind(t, graph, returnPoints[0], cfg.NodeReturn)
-	typeFact, ok := result.Meta.TypeDefinition(typePoints[0])
-	if !ok || typeFact.Kind != cfgfacts.TypeDefinitionAlias || typeFact.Stmt != typeDef || typeFact.Type != typeDef {
+	typeFact, ok := result.Declarations.TypeDefinition(typePoints[0])
+	if !ok || typeFact.Kind != TypeDefinitionAlias || typeFact.Stmt != typeDef || typeFact.Type != typeDef {
 		t.Fatalf("type definition metadata = %#v/%v", typeFact, ok)
 	}
-	ifaceFact, ok := result.Meta.TypeDefinition(ifacePoints[0])
-	if !ok || ifaceFact.Kind != cfgfacts.TypeDefinitionInterface || ifaceFact.Stmt != ifaceDef || ifaceFact.Interface != ifaceDef {
+	ifaceFact, ok := result.Declarations.TypeDefinition(ifacePoints[0])
+	if !ok || ifaceFact.Kind != TypeDefinitionInterface || ifaceFact.Stmt != ifaceDef || ifaceFact.Interface != ifaceDef {
 		t.Fatalf("interface definition metadata = %#v/%v", ifaceFact, ok)
 	}
 
@@ -378,7 +378,7 @@ func TestBuildChunkSimpleFunctionDefinitionCreatesAssignment(t *testing.T) {
 	targetID := mustIdentSymbol(t, bindings, target)
 	points := requireStmtPoints(t, result, stmt, 1)
 	requirePointKind(t, graph, points[0], cfg.NodeAssign)
-	defFact, ok := result.Meta.FunctionDefinition(points[0])
+	defFact, ok := result.Declarations.FunctionDefinition(points[0])
 	if !ok {
 		t.Fatalf("missing function definition metadata")
 	}

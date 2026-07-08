@@ -81,8 +81,8 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 func (b *builder) buildTypeDef(state flowState, stmt *ast.TypeDefStmt) flowState {
 	next := b.appendNodeForStmt(state, cfg.NodeNoop, stmt)
 	if next.live {
-		b.meta.SetTypeDefinition(next.current, cfgfacts.TypeDefinitionFact{
-			Kind: cfgfacts.TypeDefinitionAlias,
+		b.declarations.SetTypeDefinition(next.current, TypeDefinition{
+			Kind: TypeDefinitionAlias,
 			Stmt: stmt,
 			Type: stmt,
 		})
@@ -93,8 +93,8 @@ func (b *builder) buildTypeDef(state flowState, stmt *ast.TypeDefStmt) flowState
 func (b *builder) buildInterfaceDef(state flowState, stmt *ast.InterfaceDefStmt) flowState {
 	next := b.appendNodeForStmt(state, cfg.NodeNoop, stmt)
 	if next.live {
-		b.meta.SetTypeDefinition(next.current, cfgfacts.TypeDefinitionFact{
-			Kind:      cfgfacts.TypeDefinitionInterface,
+		b.declarations.SetTypeDefinition(next.current, TypeDefinition{
+			Kind:      TypeDefinitionInterface,
 			Stmt:      stmt,
 			Interface: stmt,
 		})
@@ -140,7 +140,7 @@ func (b *builder) buildFuncDef(state flowState, stmt *ast.FuncDefStmt) flowState
 		id, hasSymbol := b.bindings.FuncDefTargetSymbol(stmt)
 		targetPath := target
 		hasTargetPath := !targetPath.IsEmpty()
-		b.meta.SetFunctionDefinition(next.current, cfgfacts.FunctionDefinitionFact{
+		b.declarations.SetFunctionDefinition(next.current, FunctionDefinition{
 			Stmt:            stmt,
 			Name:            stmt.Name,
 			Func:            stmt.Func,

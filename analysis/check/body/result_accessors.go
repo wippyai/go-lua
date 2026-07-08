@@ -491,18 +491,18 @@ func (r *Result) ExpressionImpliedChecksOnEdge(expr ast.Expr, cond bool) []branc
 	return branchcond.ImpliedChecksOnEdge(expr, r.bindings, cond)
 }
 
-func (r *Result) TypeDefinition(point cfg.Point) (cfgfacts.TypeDefinitionFact, bool) {
+func (r *Result) TypeDefinition(point cfg.Point) (cfgbuild.TypeDefinition, bool) {
 	if r == nil || r.cfg == nil {
-		return cfgfacts.TypeDefinitionFact{}, false
+		return cfgbuild.TypeDefinition{}, false
 	}
-	return r.cfg.Meta.TypeDefinition(point)
+	return r.cfg.Declarations.TypeDefinition(point)
 }
 
-func (r *Result) FunctionDefinition(point cfg.Point) (cfgfacts.FunctionDefinitionFact, bool) {
+func (r *Result) FunctionDefinition(point cfg.Point) (cfgbuild.FunctionDefinition, bool) {
 	if r == nil || r.cfg == nil {
-		return cfgfacts.FunctionDefinitionFact{}, false
+		return cfgbuild.FunctionDefinition{}, false
 	}
-	return r.cfg.Meta.FunctionDefinition(point)
+	return r.cfg.Declarations.FunctionDefinition(point)
 }
 
 func (r *Result) NumericFor(point cfg.Point) (cfgbuild.NumericFor, bool) {

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -310,7 +311,7 @@ func (c symbolReadCollector) functionParams(params []ast.FunctionParamExpr) {
 	}
 }
 
-func (c symbolReadCollector) typeDefinition(fact cfgfacts.TypeDefinitionFact) {
+func (c symbolReadCollector) typeDefinition(fact cfgbuild.TypeDefinition) {
 	if fact.Type != nil {
 		c.typeParams(fact.Type.TypeParams)
 		c.typeExpr(fact.Type.Type)
