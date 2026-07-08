@@ -533,7 +533,7 @@ end
 	}
 	var names []string
 	for _, point := range result.Graph().RPO() {
-		site, ok := result.facts.CallSiteView(point)
+		site, ok := result.CallSiteView(point)
 		if !ok {
 			continue
 		}

@@ -101,10 +101,6 @@ func (r *signatureIdentityResolver) dominatingOrdinaryRootWrite(point cfg.Point,
 	return ok
 }
 
-func (r *signatureIdentityResolver) nameForSite(site factflow.CallSite) (string, bool) {
-	return r.nameForIndexedCallSiteView(site.View())
-}
-
 func (r *signatureIdentityResolver) nameForIndexedCallSiteView(site factflow.CallSiteView) (string, bool) {
 	point, ok := r.pointForSiteView(site)
 	if !ok {
