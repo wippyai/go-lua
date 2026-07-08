@@ -44,5 +44,5 @@ func (l *lowerer) pathStaticValue(target path.Path) (product.Value, bool) {
 	if present == nil {
 		return product.Value{}, false
 	}
-	return l.valueFromType(present), true
+	return l.valueFromTypeWithWitness(present), true
 }

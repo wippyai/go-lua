@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
@@ -13,6 +14,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -159,4 +162,64 @@ func assertLoweredPostconditionRefinement(
 		t.Fatalf("postcondition target path = %#v, want %#v", refinements[0].TargetPath(), wantPath)
 	}
 	assertValueRefinement(t, "postcondition", refinements[0].Value(), want)
+}
+
+func TestLowerAssertPostconditionCarriesStaticWitnessForCapturedOptionsAlias(t *testing.T) {
+	stmts, bindings, built := parseSemanticChunk(t, `
+type RetryOptions = {
+    retry: {
+        max_attempts: number,
+        initial_delay: number,
+    }?,
+}
+
+local captured_options: RetryOptions? = nil
+local setter = function(opts: RetryOptions)
+    captured_options = opts
+end
+local options = captured_options
+assert(options)
+assert(options.retry)
+local attempts: number = options.retry.max_attempts
+`, "assert")
+
+	optionsStmt, ok := stmts[3].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt 3 = %T, want options local assignment", stmts[3])
+	}
+	optionsSym, ok := bindings.LocalSymbolAt(optionsStmt, 0)
+	if !ok || optionsSym == 0 {
+		t.Fatalf("options symbol = %d/%v, want local symbol", optionsSym, ok)
+	}
+	assertRetry, ok := stmts[5].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt 5 = %T, want assert(options.retry)", stmts[5])
+	}
+
+	body := wirlower.Lower("captured-options-assert-postcondition", stmts, bindings, built)
+	lowered := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body})
+	point := requireStmtPoints(t, built, assertRetry, 1)[0]
+	refinements := lowered.Facts.PostconditionRefinements(point)
+	if len(refinements) != 1 {
+		t.Fatalf("postconditions at assert(options.retry) = %d, want 1: %#v", len(refinements), refinements)
+	}
+	wantPath := path.NewPath(optionsSym, "options").Field("retry")
+	if !refinements[0].TargetPath().Equal(wantPath) {
+		t.Fatalf("postcondition target = %s, want %s", refinements[0].TargetPath(), wantPath)
+	}
+	constraint, ok := refinements[0].Value().Constraint()
+	if !ok {
+		t.Fatal("assert(options.retry) postcondition missing value constraint")
+	}
+	gotType, ok := typevalue.TypeOf(standard.Registry(), constraint)
+	if !ok {
+		t.Fatalf("postcondition constraint has no type witness: %v", constraint)
+	}
+	wantType := typetable.NewRecord().
+		Field("max_attempts", typ.Number).
+		Field("initial_delay", typ.Number).
+		Build()
+	if !typ.TypeEquals(gotType, wantType) {
+		t.Fatalf("postcondition constraint type = %v, want %v", gotType, wantType)
+	}
 }
