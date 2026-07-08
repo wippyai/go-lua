@@ -132,31 +132,6 @@ func (c *Calls) Set(point cfg.Point, fact Call) {
 	c.facts[point] = &fact
 }
 
-func (f Call) IsDirectGlobal(bindings *bind.Result, name string) bool {
-	if bindings == nil || f.Call == nil || f.Receiver != nil || f.Method != "" || f.Func == nil {
-		return false
-	}
-	fn, ok := f.Func.(*ast.IdentExpr)
-	return ok && bindings.ResolvesToGlobal(fn, name)
-}
-
-func (f Call) IsAnyDirectGlobal(bindings *bind.Result, names ...string) bool {
-	for _, name := range names {
-		if f.IsDirectGlobal(bindings, name) {
-			return true
-		}
-	}
-	return false
-}
-
-func (f Call) IsDirectGlobalStatement(bindings *bind.Result, name string) bool {
-	return f.Context == CallContextStatement && len(f.TypeArgs) == 0 && f.IsDirectGlobal(bindings, name)
-}
-
-func (f Call) IsProtectedCall(bindings *bind.Result) bool {
-	return f.IsAnyDirectGlobal(bindings, "pcall", "xpcall")
-}
-
 func (f Call) ResultTargetPath(resultIndex int) (path.Path, bool) {
 	for _, target := range f.ResultTargets {
 		if target.ResultIndex == resultIndex && target.HasPath && !target.Path.IsEmpty() {

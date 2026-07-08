@@ -1622,19 +1622,7 @@ func (r *Result) callExprPoint(call *ast.FuncCallExpr) (cfg.Point, bool) {
 	if r == nil {
 		return 0, false
 	}
-	if r.callExprPts == nil {
-		graph := r.Graph()
-		if graph == nil {
-			return 0, false
-		}
-		r.callExprPts = make(map[*ast.FuncCallExpr]cfg.Point)
-		for _, point := range graph.RPO() {
-			if fact, ok := r.Call(point); ok && fact.Call != nil {
-				r.callExprPts[fact.Call] = point
-			}
-		}
-	}
-	point, ok := r.callExprPts[call]
+	point, ok := r.sourceCallExprPoints()[call]
 	return point, ok
 }
 
