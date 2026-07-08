@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestInstantiateGenericCallWithTraceConvertsTypecallVocabulary(t *testing.T) {
@@ -62,6 +63,44 @@ func TestMemberCallableAndReceiverConsumptionHideTypecallStatus(t *testing.T) {
 	}
 	if ReceiverTypeUsable(nil) {
 		t.Fatal("ReceiverTypeUsable(nil) = true, want false")
+	}
+}
+
+func TestTypeCallableOwnsUnionAndNilPolicy(t *testing.T) {
+	left := typ.Func().Returns(typ.String).Build()
+	right := typ.Func().Returns(typ.Integer).Build()
+	if !TypeCallable(typeexpr.Union(left, right)) {
+		t.Fatal("TypeCallable(function union) = false, want all-callable union accepted")
+	}
+	if TypeCallable(typeexpr.Union(left, typ.String)) {
+		t.Fatal("TypeCallable(function|string) = true, want mixed union rejected")
+	}
+	if !TypeCallable(typeexpr.Optional(left)) {
+		t.Fatal("TypeCallable(function?) = false, want existing callable policy preserved")
+	}
+	if !TypeCallableIgnoringNil(typeexpr.Optional(left)) {
+		t.Fatal("TypeCallableIgnoringNil(function?) = false, want callable after nil removal")
+	}
+}
+
+func TestMemberTypeOwnsStaticSegmentLookup(t *testing.T) {
+	receiver := typetable.NewRecord().
+		Field("run", typ.Func().Returns(typ.String).Build()).
+		StaticStringIndex("mode", typ.LiteralString("auto")).
+		StaticIntIndex(2, typ.Integer).
+		Build()
+
+	if got, ok := MemberType(receiver, segment.Segment{Kind: segment.SegmentField, Name: "run"}); !ok || !TypeCallable(got) {
+		t.Fatalf("MemberType(.run) = %v, %v; want callable function", got, ok)
+	}
+	if got, ok := MemberType(receiver, segment.Segment{Kind: segment.SegmentIndexString, Name: "mode"}); !ok || !typ.TypeEquals(got, typ.LiteralString("auto")) {
+		t.Fatalf("MemberType([mode]) = %v, %v; want literal auto", got, ok)
+	}
+	if got, ok := MemberType(receiver, segment.Segment{Kind: segment.SegmentIndexInt, Index: 2}); !ok || !typ.TypeEquals(got, typ.Integer) {
+		t.Fatalf("MemberType([2]) = %v, %v; want integer", got, ok)
+	}
+	if got, ok := MemberType(receiver, segment.Segment{Kind: segment.SegmentIndexString, Name: "missing"}); ok || got != nil {
+		t.Fatalf("MemberType([missing]) = %v, %v; want missing", got, ok)
 	}
 }
 

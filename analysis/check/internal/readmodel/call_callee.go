@@ -13,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -44,8 +43,8 @@ func (r Reader) callCalleeReport(point cfg.Point, site factflow.CallSite) CallCa
 			callable := false
 			nilableReceiver := true
 			if site.MethodName() == "" {
-				if memberType, ok := memberTypeFromReceiver(receiverType, member); ok {
-					if calleeTypeCallableIgnoringNil(memberType) {
+				if memberType, ok := callcontract.MemberType(receiverType, member); ok {
+					if callcontract.TypeCallableIgnoringNil(memberType) {
 						callable = false
 					} else {
 						calleeType = memberType
@@ -99,7 +98,7 @@ func (r Reader) callCalleeReport(point cfg.Point, site factflow.CallSite) CallCa
 		if receiverType, ok := r.memberReceiverNilableAtCall(point, site); ok {
 			t = receiverType
 		} else {
-			if calleeTypeCallableIgnoringNil(t) {
+			if callcontract.TypeCallableIgnoringNil(t) {
 				return readapi.PlanCallCalleeReport(readapi.CallCalleeReportPlan{
 					CallableName: r.callContractSourceName(site),
 					Type:         t,
@@ -112,7 +111,7 @@ func (r Reader) callCalleeReport(point cfg.Point, site factflow.CallSite) CallCa
 			return CallCalleeReport{}
 		}
 	}
-	callable := calleeTypeCallable(t)
+	callable := callcontract.TypeCallable(t)
 	return readapi.PlanCallCalleeReport(readapi.CallCalleeReportPlan{
 		CallableName:                 r.callContractSourceName(site),
 		Type:                         t,
@@ -144,7 +143,7 @@ func (r Reader) impreciseMemberCalleeRequiresProof(point cfg.Point, site factflo
 
 func (r Reader) memberCalleeCallableFromDiscriminantProof(point cfg.Point, site factflow.CallSite) bool {
 	memberType, ok := r.discriminantProvenMemberType(point, site)
-	return ok && calleeTypeCallable(memberType)
+	return ok && callcontract.TypeCallable(memberType)
 }
 
 func (r Reader) memberCalleeCallableFromReceiver(point cfg.Point, site factflow.CallSite) bool {
@@ -282,50 +281,6 @@ func (r Reader) memberReceiverNilableAtCall(point cfg.Point, site factflow.CallS
 		return nil, false
 	}
 	return receiver, true
-}
-
-func memberTypeFromReceiver(receiver typ.Type, member segment.Segment) (typ.Type, bool) {
-	key, ok := memberIndexType(member)
-	if !ok {
-		return nil, false
-	}
-	return access.Index(body.TypeWithoutOptionalNil(receiver), key)
-}
-
-func memberIndexType(member segment.Segment) (typ.Type, bool) {
-	switch member.Kind {
-	case segment.SegmentField, segment.SegmentIndexString:
-		if member.Name == "" {
-			return nil, false
-		}
-		return typ.LiteralString(member.Name), true
-	case segment.SegmentIndexInt:
-		return typ.LiteralInt(int64(member.Index)), true
-	default:
-		return nil, false
-	}
-}
-
-func calleeTypeCallable(t typ.Type) bool {
-	if t == nil || readapi.ObligationTypeIsGradual(t) || typ.IsNever(t) {
-		return false
-	}
-	if _, ok := callcontract.Callable(t); ok {
-		return true
-	}
-	if union, ok := t.(*typ.Union); ok && len(union.Members) != 0 {
-		for _, member := range union.Members {
-			if !calleeTypeCallable(member) {
-				return false
-			}
-		}
-		return true
-	}
-	return false
-}
-
-func calleeTypeCallableIgnoringNil(t typ.Type) bool {
-	return calleeTypeCallable(body.TypeWithoutOptionalNil(t))
 }
 
 func (r Reader) declaredCalleeType(p path.Path) (typ.Type, bool) {

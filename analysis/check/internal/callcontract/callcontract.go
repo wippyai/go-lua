@@ -94,6 +94,32 @@ func Callable(t typ.Type) (*typ.Function, bool) {
 	return typecall.Callable(t)
 }
 
+// TypeCallable reports whether t is wholly callable for diagnostic planning.
+// A union is callable only when every arm is callable.
+func TypeCallable(t typ.Type) bool {
+	if t == nil || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) {
+		return false
+	}
+	if _, ok := Callable(t); ok {
+		return true
+	}
+	if union, ok := t.(*typ.Union); ok && len(union.Members) != 0 {
+		for _, member := range union.Members {
+			if !TypeCallable(member) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// TypeCallableIgnoringNil applies the callable predicate after dropping the
+// optional nil arm used by nilable receiver diagnostics.
+func TypeCallableIgnoringNil(t typ.Type) bool {
+	return TypeCallable(unwrap.Optional(t))
+}
+
 // ParamConsumesReceiver applies the receiver-consumption rule for one formal.
 func ParamConsumesReceiver(name string, param typ.Type, receiver typ.Type) bool {
 	return typecall.ParamConsumesReceiver(name, param, receiver)
@@ -165,6 +191,16 @@ func MemberCall(receiver typ.Type, member segment.Segment) (typ.Type, MemberCall
 	default:
 		return nil, MemberCallMissing, false
 	}
+}
+
+// MemberType returns the type of a receiver member when the member exists,
+// without requiring that the member itself is callable.
+func MemberType(receiver typ.Type, member segment.Segment) (typ.Type, bool) {
+	t, status, ok := MemberCall(unwrap.Optional(receiver), member)
+	if !ok || status == MemberCallMissing {
+		return nil, false
+	}
+	return t, true
 }
 
 // InferenceContributionKey returns the stable deduplication key for a generic
