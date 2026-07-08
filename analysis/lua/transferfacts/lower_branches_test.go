@@ -951,7 +951,7 @@ end
 	seed := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 	assign := mustLocalStmt(t, stmts, 1)
 	callPoint := requireStmtPoints(t, built, assign, 3)[0]
-	site, ok := seed.CallSite(callPoint)
+	siteView, ok := seed.CallSiteView(callPoint)
 	if !ok {
 		t.Fatalf("missing lowered pcall callsite at point %d", callPoint)
 	}
@@ -959,7 +959,7 @@ end
 	ifStmt := mustIfStmt(t, stmts, 2)
 	branchPoint := requireStmtPoints(t, built, ifStmt, 1)[0]
 	input := &factflow.FactsInput{
-		CallSites:         map[cfg.Point]factflow.CallSite{callPoint: site},
+		CallSites:         map[cfg.Point]factflow.CallSite{callPoint: callSiteFromView(siteView)},
 		RootAssignments:   make(map[cfg.Point]factflow.RootAssignment),
 		BranchRefinements: make(map[cfg.Point]factflow.BranchRefinementSet),
 	}

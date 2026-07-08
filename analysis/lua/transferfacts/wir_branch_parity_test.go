@@ -615,7 +615,7 @@ end
 	}).Facts
 
 	callPoint := requireWIRTypeIsCallPoint(t, built.Graph, &lowered)
-	site, ok := seed.CallSite(callPoint)
+	siteView, ok := seed.CallSiteView(callPoint)
 	if !ok {
 		t.Fatalf("missing lowered type-is callsite at point %d", callPoint)
 	}
@@ -626,7 +626,7 @@ end
 	valuePath := path.NewPath(mustLocalAt(t, bindings, valueDecl, 0), "value")
 	branchPoint := requireWIRBranchPoint(t, built.Graph, body)
 	input := &factflow.FactsInput{
-		CallSites:               map[cfg.Point]factflow.CallSite{callPoint: site},
+		CallSites:               map[cfg.Point]factflow.CallSite{callPoint: callSiteFromView(siteView)},
 		RootAssignments:         make(map[cfg.Point]factflow.RootAssignment),
 		BranchRefinements:       make(map[cfg.Point]factflow.BranchRefinementSet),
 		BranchPresenceRelations: make(map[cfg.Point]factflow.BranchPresenceRelationSet),
@@ -675,7 +675,7 @@ func assertWIRTypeIsConditionBranchRefinementWithoutSemanticResult(t *testing.T,
 	}).Facts
 
 	callPoint := requireWIRTypeIsCallPoint(t, built.Graph, &lowered)
-	site, ok := seed.CallSite(callPoint)
+	siteView, ok := seed.CallSiteView(callPoint)
 	if !ok {
 		t.Fatalf("missing lowered callsite at type-is call point %d", callPoint)
 	}
@@ -686,7 +686,7 @@ func assertWIRTypeIsConditionBranchRefinementWithoutSemanticResult(t *testing.T,
 	}
 	valuePath := path.NewPath(mustLocalAt(t, bindings, valueDecl, 0), "value")
 	input := &factflow.FactsInput{
-		CallSites:         map[cfg.Point]factflow.CallSite{callPoint: site},
+		CallSites:         map[cfg.Point]factflow.CallSite{callPoint: callSiteFromView(siteView)},
 		BranchRefinements: make(map[cfg.Point]factflow.BranchRefinementSet),
 	}
 	if typ, arg, ok := lowered.typeIsCallSiteFromWIR(callPoint); !ok {

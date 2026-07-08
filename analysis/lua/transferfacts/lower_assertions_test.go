@@ -138,7 +138,7 @@ end
 	if !ok {
 		t.Fatalf("missing call site at point %d", callPoint)
 	}
-	args := site.ArgumentSources()
+	args := callSiteArgumentSources(site)
 	if len(args) != 2 {
 		t.Fatalf("call argument sources = %#v, want two", args)
 	}
@@ -169,7 +169,7 @@ end
 	if !ok {
 		t.Fatalf("missing call site at point %d without cfgbuild CallView", callPoint)
 	}
-	args := site.ArgumentSources()
+	args := callSiteArgumentSources(site)
 	if len(args) != 2 {
 		t.Fatalf("call argument sources = %#v, want two", args)
 	}
@@ -208,7 +208,7 @@ end
 	if !ok {
 		t.Fatalf("missing call site at point %d", callPoint)
 	}
-	args := site.ArgumentSources()
+	args := callSiteArgumentSources(site)
 	if len(args) != 1 {
 		t.Fatalf("call argument sources = %#v, want one", args)
 	}
@@ -235,7 +235,7 @@ end
 	if !ok {
 		t.Fatalf("missing call site at point %d", callPoint)
 	}
-	args := site.ArgumentSources()
+	args := callSiteArgumentSources(site)
 	if len(args) != 1 {
 		t.Fatalf("call argument sources = %#v, want one", args)
 	}
@@ -286,7 +286,7 @@ end
 	if !ok {
 		t.Fatalf("missing call site at point %d", callPoint)
 	}
-	args := site.ArgumentSources()
+	args := callSiteArgumentSources(site)
 	if len(args) != 1 || args[0].Kind != factflow.ValueSourceExpression || !args[0].HasExpr {
 		t.Fatalf("call argument sources = %#v, want WIR claim expression source", args)
 	}
@@ -339,7 +339,7 @@ end
 	if !ok {
 		t.Fatalf("missing call site at point %d", callPoint)
 	}
-	args := site.ArgumentSources()
+	args := callSiteArgumentSources(site)
 	if len(args) != 1 || args[0].Kind != factflow.ValueSourceExpression || !args[0].HasExpr {
 		t.Fatalf("call argument sources = %#v, want WIR claim expression source", args)
 	}
@@ -402,7 +402,7 @@ end
 	if !ok {
 		t.Fatalf("missing call site at point %d", callPoint)
 	}
-	args := site.ArgumentSources()
+	args := callSiteArgumentSources(site)
 	if len(args) != 1 || args[0].Kind != factflow.ValueSourceExpression || !args[0].HasExpr {
 		t.Fatalf("call argument sources = %#v, want WIR claim expression source", args)
 	}

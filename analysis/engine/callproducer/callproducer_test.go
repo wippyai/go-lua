@@ -30,9 +30,10 @@ func TestFromSiteProjectsOnlyNarrowProducerEvidence(t *testing.T) {
 		Adjusted:        true,
 	})
 
-	producer := FromSite(site.View())
-	if producer.CalleeSymbol() != site.CalleeSymbol() || !producer.CalleePath().Equal(site.CalleePath()) {
-		t.Fatalf("producer callee = %v/%v, want %v/%v", producer.CalleeSymbol(), producer.CalleePath(), site.CalleeSymbol(), site.CalleePath())
+	siteView := site.View()
+	producer := FromSite(siteView)
+	if producer.CalleeSymbol() != siteView.CalleeSymbol() || !producer.CalleePath().Equal(siteView.CalleePath()) {
+		t.Fatalf("producer callee = %v/%v, want %v/%v", producer.CalleeSymbol(), producer.CalleePath(), siteView.CalleeSymbol(), siteView.CalleePath())
 	}
 	gotTargets := producer.ResultTargets()
 	if len(gotTargets) != 1 || gotTargets[0].Kind() != factflow.CallResultTargetLocalAssignment || !gotTargets[0].TargetPath().Equal(targetPath) {

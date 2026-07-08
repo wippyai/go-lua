@@ -180,135 +180,6 @@ func NewCallSite(config CallSiteConfig) CallSite {
 }
 
 // Context returns the call site's semantic context.
-func (c CallSite) Context() CallSiteContext { return c.context }
-
-// Point returns the CFG point that owns this call site, if lowering supplied it.
-func (c CallSite) Point() (cfg.Point, bool) { return c.point, c.hasPoint }
-
-// CalleeSymbol returns the callee's symbol identity.
-func (c CallSite) CalleeSymbol() symbol.ID { return c.calleeSymbol }
-
-// CalleePath returns the callee's path identity.
-func (c CallSite) CalleePath() path.Path { return c.calleePath.Clone() }
-
-// CalleePathRef returns the callee path without a defensive copy for read-only
-// use or for handing to a constructor that clones on store. The returned path
-// shares the fact's segment storage and must never be mutated in place.
-func (c CallSite) CalleePathRef() path.Path { return c.calleePath }
-
-// CalleeMemberAccess reports whether this call's callee was written through
-// member-access syntax or resolved to a member path. The lowering phase owns
-// this syntax-derived evidence so post-solve consumers do not re-read the AST.
-func (c CallSite) CalleeMemberAccess() bool { return c.calleeMemberAccess }
-
-// CalleeMemberAccessPath returns the receiver path and member segment for a
-// member-access callee. This is the canonical structural query for post-solve
-// consumers that need the path shape; they should not re-parse CalleePathRef.
-func (c CallSite) CalleeMemberAccessPath() (path.Path, segment.Segment, bool) {
-	return callSiteMemberAccessPath(c)
-}
-
-// ReceiverPath returns the receiver path identity, if one was resolved.
-func (c CallSite) ReceiverPath() (path.Path, bool) {
-	return c.receiverPath.Clone(), c.hasReceiverPath
-}
-
-// MethodPath returns the receiver-method path identity, if one was resolved.
-func (c CallSite) MethodPath() (path.Path, bool) {
-	return c.methodPath.Clone(), c.hasMethodPath
-}
-
-// MethodName returns the method name carried by receiver-call syntax.
-func (c CallSite) MethodName() string { return c.methodName }
-
-// ReceiverSource returns the value source for a colon-method call's receiver
-// expression, if the receiver was not a resolvable symbol path.
-func (c CallSite) ReceiverSource() (ValueSource, bool) {
-	return c.receiverSource, c.hasReceiverSource
-}
-
-// Expr returns the call expression reference, if present.
-func (c CallSite) Expr() (ExprRef, bool) { return c.exprRef, c.hasExpr }
-
-// ExprIndex returns the expression's index in its containing value list.
-func (c CallSite) ExprIndex() int { return c.exprIndex }
-
-// ConditionNegated reports whether this condition call is wrapped by unary not.
-func (c CallSite) ConditionNegated() bool { return c.conditionNegated }
-
-// ArgumentSources returns the ordered argument value sources.
-func (c CallSite) ArgumentSources() []ValueSource {
-	return copyValueSources(c.argumentSources)
-}
-
-// CallSpan returns the source range for the whole call expression.
-func (c CallSite) CallSpan() SourceSpan { return c.callSpan }
-
-// CalleeSpan returns the source range for the call target expression.
-func (c CallSite) CalleeSpan() SourceSpan { return c.calleeSpan }
-
-// ArgumentSourceCount returns the number of ordered argument value sources.
-func (c CallSite) ArgumentSourceCount() int { return len(c.argumentSources) }
-
-// ArgumentSourceAt returns one argument value source by value.
-func (c CallSite) ArgumentSourceAt(index int) (ValueSource, bool) {
-	if index < 0 || index >= len(c.argumentSources) {
-		return ValueSource{}, false
-	}
-	return c.argumentSources[index], true
-}
-
-func (c CallSite) ArgumentSpanAt(index int) (SourceSpan, bool) {
-	if index < 0 || index >= len(c.argumentSpans) {
-		return SourceSpan{}, false
-	}
-	return c.argumentSpans[index], true
-}
-
-func (c CallSite) ArgumentLabelAt(index int) (string, bool) {
-	if index < 0 || index >= len(c.argumentLabels) {
-		return "", false
-	}
-	return c.argumentLabels[index], c.argumentLabels[index] != ""
-}
-
-// ForEachArgumentSource visits argument value sources without allocating a
-// defensive slice. Returning false stops iteration.
-func (c CallSite) ForEachArgumentSource(fn func(index int, source ValueSource) bool) {
-	if fn == nil {
-		return
-	}
-	for i := range c.argumentSources {
-		if !fn(i, c.argumentSources[i]) {
-			return
-		}
-	}
-}
-
-// TypeArgs returns the ordered explicit type argument identities.
-func (c CallSite) TypeArgs() []TypeRef { return append([]TypeRef(nil), c.typeArgs...) }
-
-// ResultTargets returns the targets that consume this call's results.
-func (c CallSite) ResultTargets() []CallResultTarget {
-	return copyCallResultTargets(c.resultTargets)
-}
-
-// Final reports whether this call is the final value-list expression.
-func (c CallSite) Final() bool { return c.final }
-
-// Expanded reports whether this call contributes multiple result slots.
-func (c CallSite) Expanded() bool { return c.expanded }
-
-// Adjusted reports whether this call is adjusted to one result.
-func (c CallSite) Adjusted() bool { return c.adjusted }
-
-// OpenTail reports whether this call is an open tail return.
-func (c CallSite) OpenTail() bool { return c.openTail }
-
-// CallSite returns a defensive copy of the viewed call-site evidence.
-func (v CallSiteView) CallSite() CallSite { return v.site.copy() }
-
-// Context returns the call site's semantic context.
 func (v CallSiteView) Context() CallSiteContext { return v.site.context }
 
 // Point returns the CFG point that owns this call site, if lowering supplied it.
@@ -371,11 +242,6 @@ func (v CallSiteView) ExprIndex() int { return v.site.exprIndex }
 // ConditionNegated reports whether this condition call is wrapped by unary not.
 func (v CallSiteView) ConditionNegated() bool { return v.site.conditionNegated }
 
-// ArgumentSources returns the ordered argument value sources.
-func (v CallSiteView) ArgumentSources() []ValueSource {
-	return copyValueSources(v.site.argumentSources)
-}
-
 // CallSpan returns the source range for the whole call expression.
 func (v CallSiteView) CallSpan() SourceSpan { return v.site.callSpan }
 
@@ -419,9 +285,6 @@ func (v CallSiteView) ForEachArgumentSource(fn func(index int, source ValueSourc
 		}
 	}
 }
-
-// TypeArgs returns the ordered explicit type argument identities.
-func (v CallSiteView) TypeArgs() []TypeRef { return append([]TypeRef(nil), v.site.typeArgs...) }
 
 // TypeArgCount returns the number of explicit type argument identities.
 func (v CallSiteView) TypeArgCount() int { return len(v.site.typeArgs) }

@@ -360,15 +360,6 @@ func (f Facts) Return(point cfg.Point) (Return, bool) {
 	return fact.copy(), true
 }
 
-// CallSite returns the call-site evidence fact at point.
-func (f Facts) CallSite(point cfg.Point) (CallSite, bool) {
-	fact, ok := f.callSites[point]
-	if !ok {
-		return CallSite{}, false
-	}
-	return fact.copy(), true
-}
-
 // HasCallSites reports whether this immutable facts snapshot contains any
 // call-site evidence.
 func (f Facts) HasCallSites() bool {

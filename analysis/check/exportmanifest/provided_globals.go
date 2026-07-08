@@ -233,7 +233,7 @@ func (f *providedGlobalForwarding) localCalleeAndArgs(result *body.Result, site 
 		return nil, nil, false
 	}
 	if fn, ok := f.localFunctionForPath(site.CalleePathRef()); ok {
-		return fn, site.ArgumentSources(), true
+		return fn, callSiteArgumentSourcesFrom(site, 0), true
 	}
 	if isBareGlobalCallSite(result, site, "pcall") && site.ArgumentSourceCount() != 0 {
 		source, _ := site.ArgumentSourceAt(0)
@@ -255,19 +255,19 @@ func (f *providedGlobalForwarding) localFunctionForPath(p pathdom.Path) (*ast.Fu
 }
 
 func callSiteArgumentSourcesFrom(site factflow.CallSiteView, start int) []factflow.ValueSource {
-	if start <= 0 {
-		return site.ArgumentSources()
+	if start < 0 {
+		start = 0
 	}
 	if start >= site.ArgumentSourceCount() {
 		return nil
 	}
 	out := make([]factflow.ValueSource, 0, site.ArgumentSourceCount()-start)
-	for i := start; i < site.ArgumentSourceCount(); i++ {
-		source, ok := site.ArgumentSourceAt(i)
-		if ok {
+	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
+		if i >= start {
 			out = append(out, source)
 		}
-	}
+		return true
+	})
 	return out
 }
 
@@ -299,7 +299,7 @@ func providerGlobalsForCall(result *body.Result, point cfg.Point, site factflow.
 	name, ok := result.CallSignatureNameAtPoint(point)
 	if ok {
 		if provider, globals := providerGlobalsForSignatureName(result, name); len(globals) != 0 {
-			return provider, globals, site.ArgumentSources()
+			return provider, globals, callSiteArgumentSourcesFrom(site, 0)
 		}
 	}
 	if isBareGlobalCallSite(result, site, "pcall") && site.ArgumentSourceCount() != 0 {

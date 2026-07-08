@@ -617,7 +617,7 @@ return Point:is(data)
 	returnPoint := points[1]
 	body := wirlower.Lower("chunk", stmts, bindings, built)
 	seed := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
-	site, ok := seed.CallSite(callPoint)
+	siteView, ok := seed.CallSiteView(callPoint)
 	if !ok {
 		t.Fatalf("missing lowered Type:is callsite at point %d", callPoint)
 	}
@@ -633,7 +633,7 @@ return Point:is(data)
 
 	relations := lowered.typeIsReturnPresenceRelationsFromSources(
 		sources,
-		map[cfg.Point]factflow.CallSite{callPoint: site},
+		map[cfg.Point]factflow.CallSite{callPoint: callSiteFromView(siteView)},
 	)
 
 	assertReturnPresenceRelation(t, relations, 1, presence.Present(), 0, presence.Absent())

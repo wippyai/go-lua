@@ -459,7 +459,7 @@ end
 	if got := site.CalleePath(); !got.Equal(makePath) {
 		t.Fatalf("WIR call callee path = %v, want %v", got, makePath)
 	}
-	args := site.ArgumentSources()
+	args := callSiteArgumentSources(site)
 	if len(args) != 2 {
 		t.Fatalf("WIR call args = %#v, want two", args)
 	}
@@ -940,7 +940,7 @@ func TestLowerCallSitePreservesPortableCallShapeAndArgumentOverlays(t *testing.T
 		t.Fatalf("receiver source = %#v/%v, want lowered expression source", receiverSource, ok)
 	}
 
-	args := site.ArgumentSources()
+	args := callSiteArgumentSources(site)
 	if len(args) != 2 {
 		t.Fatalf("argument sources = %#v, want two args", args)
 	}
@@ -960,7 +960,7 @@ func TestLowerCallSitePreservesPortableCallShapeAndArgumentOverlays(t *testing.T
 		t.Fatalf("assertion inner source = %#v, want WIR path source", inner)
 	}
 
-	typeArgs := site.TypeArgs()
+	typeArgs := callSiteTypeArgs(site)
 	if len(typeArgs) != 2 || typeArgs[0] == 0 || typeArgs[1] == 0 || typeArgs[0] == typeArgs[1] {
 		t.Fatalf("type args = %#v, want two distinct opaque refs", typeArgs)
 	}
@@ -999,7 +999,7 @@ func TestLowerCallSiteTypeArgsComeFromWIR(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", point)
 	}
-	typeArgs := site.TypeArgs()
+	typeArgs := callSiteTypeArgs(site)
 	if len(typeArgs) != 2 || typeArgs[0] == 0 || typeArgs[1] == 0 || typeArgs[0] == typeArgs[1] {
 		t.Fatalf("call site type args = %#v, want two distinct refs", typeArgs)
 	}
@@ -1023,7 +1023,7 @@ end
 	if !ok {
 		t.Fatalf("missing outer call site at point %d", points[1])
 	}
-	args := site.ArgumentSources()
+	args := callSiteArgumentSources(site)
 	if len(args) != 6 {
 		t.Fatalf("argument sources = %#v, want six", args)
 	}
@@ -1104,7 +1104,7 @@ end
 	}
 	arg, ok := site.ArgumentSourceAt(0)
 	if !ok {
-		t.Fatalf("assignment call argument sources = %#v, want raw argument", site.ArgumentSources())
+		t.Fatalf("assignment call argument sources = %#v, want raw argument", callSiteArgumentSources(site))
 	}
 	if arg.Kind != factflow.ValueSourcePath || arg.PathKey == "" {
 		t.Fatalf("assignment call argument source = %#v, want WIR raw path source", arg)
@@ -1401,10 +1401,11 @@ end
 		exprs:           make(map[any]factflow.ExprRef),
 		expressionPaths: make(map[factflow.ExprRef]path.Path),
 	}
-	site, ok := l.callSiteFromWIR(points[0])
+	siteFact, ok := l.callSiteFromWIR(points[0])
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", points[0])
 	}
+	site := siteFact.View()
 	receiverSource, ok := site.ReceiverSource()
 	if !ok || receiverSource.Kind != factflow.ValueSourcePath || receiverSource.PathKey != otherPath.Key() {
 		t.Fatalf("receiver source = %#v/%v, want WIR path source %v without semantic receiver source", receiverSource, ok, otherPath)
@@ -1464,10 +1465,11 @@ end
 		wir:   body,
 		exprs: make(map[any]factflow.ExprRef),
 	}
-	site, ok := l.callSiteFromWIR(point)
+	siteFact, ok := l.callSiteFromWIR(point)
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", point)
 	}
+	site := siteFact.View()
 	if site.Context() != factflow.CallSiteContextReturnSource || site.ExprIndex() != 9 {
 		t.Fatalf("call site context/index = %v/%d, want WIR return-source/9", site.Context(), site.ExprIndex())
 	}
@@ -1505,10 +1507,11 @@ end
 		wir:   body,
 		exprs: make(map[any]factflow.ExprRef),
 	}
-	site, ok := l.callSiteFromWIR(point)
+	siteFact, ok := l.callSiteFromWIR(point)
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", point)
 	}
+	site := siteFact.View()
 	if got := site.CallSpan(); got.StartLine != 7 || got.StartCol != 5 || got.EndCol != 17 {
 		t.Fatalf("call span = %#v, want WIR span", got)
 	}
@@ -1548,7 +1551,7 @@ end
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", points[0])
 	}
-	args := site.ArgumentSources()
+	args := callSiteArgumentSources(site)
 	if len(args) != 1 || args[0].Kind != factflow.ValueSourceUnknown || args[0].TargetIndex != 0 {
 		t.Fatalf("WIR call argument sources = %#v, want one unknown source for unsupported direct operand", args)
 	}
@@ -1579,7 +1582,7 @@ end
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", points[0])
 	}
-	args := site.ArgumentSources()
+	args := callSiteArgumentSources(site)
 	if len(args) != 1 || args[0].Kind != factflow.ValueSourceUnknown || args[0].TargetIndex != 0 {
 		t.Fatalf("WIR call argument sources = %#v, want one unknown source for missing temp operand", args)
 	}
@@ -1618,7 +1621,7 @@ end
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", points[0])
 	}
-	args := site.ArgumentSources()
+	args := callSiteArgumentSources(site)
 	if len(args) != 1 || args[0].Kind != factflow.ValueSourceUnknown || args[0].TargetIndex != 0 {
 		t.Fatalf("WIR call argument sources = %#v, want unknown without falling back to semantic %s", args, valuePath.Key())
 	}
@@ -1647,7 +1650,7 @@ end
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", callPoint)
 	}
-	args := site.ArgumentSources()
+	args := callSiteArgumentSources(site)
 	if len(args) != 1 || args[0].Kind != factflow.ValueSourceExpression || !args[0].HasExpr {
 		t.Fatalf("WIR logical call argument source = %#v, want expression source", args)
 	}
@@ -1895,10 +1898,11 @@ end
 		wirReachability:         nil,
 		returnLocalTypes:        nil,
 	}
-	site, ok := l.callSiteFromWIR(callPoint)
+	siteFact, ok := l.callSiteFromWIR(callPoint)
 	if !ok {
 		t.Fatalf("missing WIR call site at point %d", callPoint)
 	}
+	site := siteFact.View()
 	receiverSource, ok := site.ReceiverSource()
 	if !ok || receiverSource.Kind != factflow.ValueSourceExpression || !receiverSource.HasExpr || receiverSource.ExprRef == 0 {
 		t.Fatalf("receiver source = %#v/%v, want WIR expression source without semantic receiver source", receiverSource, ok)
@@ -2022,7 +2026,7 @@ func TestLowerNestedExpressionProducerCallIsReadableSlotZero(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing outer call site")
 	}
-	args := outerSite.ArgumentSources()
+	args := callSiteArgumentSources(outerSite)
 	if len(args) != 1 || args[0].Kind != factflow.ValueSourceCall || args[0].CallPoint != points[0] || !args[0].HasCallPoint || args[0].ResultIndex != 0 {
 		t.Fatalf("outer argument sources = %#v, want inner call source", args)
 	}
@@ -2063,7 +2067,7 @@ func TestLowerNestedExpressionProducerCallFromWIRIsReadableSlotZero(t *testing.T
 	if !ok {
 		t.Fatalf("missing outer call site")
 	}
-	args := outerSite.ArgumentSources()
+	args := callSiteArgumentSources(outerSite)
 	if len(args) != 1 || args[0].Kind != factflow.ValueSourceCall || args[0].CallPoint != points[0] || !args[0].HasCallPoint || args[0].ResultIndex != 0 {
 		t.Fatalf("outer WIR argument sources = %#v, want inner call source", args)
 	}

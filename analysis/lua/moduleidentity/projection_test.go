@@ -456,15 +456,15 @@ func (m moduleIdentityTestFacts) CallSite(point cfg.Point) (moduleidentity.CallS
 	if !ok {
 		return moduleidentity.CallSite{}, false
 	}
-	args := site.ArgumentSources()
-	outArgs := make([]moduleidentity.Source, 0, len(args))
-	for _, arg := range args {
+	outArgs := make([]moduleidentity.Source, 0, site.ArgumentSourceCount())
+	site.ForEachArgumentSource(func(_ int, arg factflow.ValueSource) bool {
 		outArgs = append(outArgs, testModuleSource(arg))
-	}
+		return true
+	})
 	return moduleidentity.CallSite{
 		Callee:       site.CalleePath(),
 		Args:         outArgs,
-		TypeArgCount: len(site.TypeArgs()),
+		TypeArgCount: site.TypeArgCount(),
 		MethodName:   site.MethodName(),
 	}, true
 }

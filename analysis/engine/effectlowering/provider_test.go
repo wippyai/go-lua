@@ -167,10 +167,11 @@ func TestTableMutatorTargetTypeRejectsUnsupportedUnionArm(t *testing.T) {
 func TestSignatureOutcomeProviderPrefersCallSiteNameResolver(t *testing.T) {
 	reg := standard.Registry()
 	callee := symbol.ID(701)
+	calleePath := path.NewPath(callee, "f").Field("member")
 	site := factflow.NewCallSite(factflow.CallSiteConfig{
 		Context:      factflow.CallSiteContextAssignmentSource,
 		CalleeSymbol: callee,
-		CalleePath:   path.NewPath(callee, "f").Field("member"),
+		CalleePath:   calleePath,
 		ResultTargets: []factflow.CallResultTarget{
 			factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, symbol.ID(702), path.NewPath(symbol.ID(702), "out")),
 		},
@@ -187,8 +188,8 @@ func TestSignatureOutcomeProviderPrefersCallSiteNameResolver(t *testing.T) {
 			if got.CalleeSymbol() != callee {
 				t.Fatalf("callee symbol = %v, want %v", got.CalleeSymbol(), callee)
 			}
-			if !got.CalleePathEqual(site.CalleePath()) {
-				t.Fatalf("callee path = %s, want %s", got.CalleePath().String(), site.CalleePath().String())
+			if !got.CalleePathEqual(calleePath) {
+				t.Fatalf("callee path = %s, want %s", got.CalleePath().String(), calleePath.String())
 			}
 			return "f.member", true
 		},

@@ -15,6 +15,35 @@ import (
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
+func callSiteArgumentSourcesForTest(site CallSiteView) []ValueSource {
+	out := make([]ValueSource, 0, site.ArgumentSourceCount())
+	site.ForEachArgumentSource(func(_ int, source ValueSource) bool {
+		out = append(out, source)
+		return true
+	})
+	return out
+}
+
+func callSiteTypeArgsForTest(site CallSiteView) []TypeRef {
+	out := make([]TypeRef, 0, site.TypeArgCount())
+	for i := 0; i < site.TypeArgCount(); i++ {
+		arg, ok := site.TypeArgAt(i)
+		if ok {
+			out = append(out, arg)
+		}
+	}
+	return out
+}
+
+func callSiteResultTargetsForTest(site CallSiteView) []CallResultTargetView {
+	out := make([]CallResultTargetView, 0, site.ResultTargetCount())
+	site.ForEachResultTarget(func(target CallResultTargetView) bool {
+		out = append(out, target)
+		return true
+	})
+	return out
+}
+
 func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	source := ValueSource{
 		Kind:        ValueSourceExpression,
@@ -340,7 +369,7 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 		ResultTargets:     siteTargets,
 		Final:             true,
 		Adjusted:          true,
-	})
+	}).View()
 	siteCalleePath.Segments[0].Name = "changed"
 	siteReceiverPath.Root = "changed"
 	siteMethodPath.Segments[0].Name = "changed"
@@ -389,7 +418,7 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	if got := site.CalleeSpan(); got != siteCalleeSpan {
 		t.Fatalf("call site callee span = %#v, want %#v", got, siteCalleeSpan)
 	}
-	gotSiteArgs := site.ArgumentSources()
+	gotSiteArgs := callSiteArgumentSourcesForTest(site)
 	if len(gotSiteArgs) != 2 || gotSiteArgs[0].Kind != ValueSourceExpression || gotSiteArgs[1].Kind != ValueSourceCall {
 		t.Fatalf("call site args = %#v, want copied argument sources", gotSiteArgs)
 	}
@@ -429,25 +458,26 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 		t.Fatalf("call site argument source iterator exposed mutable storage, got %v", got.Kind)
 	}
 	gotSiteArgs[0].Kind = ValueSourceNil
-	if got := site.ArgumentSources(); got[0].Kind != ValueSourceExpression {
-		t.Fatalf("call site exposed mutable argument sources, got %v", got[0].Kind)
+	if got, _ := site.ArgumentSourceAt(0); got.Kind != ValueSourceExpression {
+		t.Fatalf("call site exposed mutable argument sources, got %v", got.Kind)
 	}
-	gotSiteTypeArgs := site.TypeArgs()
+	gotSiteTypeArgs := callSiteTypeArgsForTest(site)
 	if len(gotSiteTypeArgs) != 2 || gotSiteTypeArgs[0] != TypeRef(1) || gotSiteTypeArgs[1] != TypeRef(2) {
 		t.Fatalf("call site type args = %#v, want copied type refs", gotSiteTypeArgs)
 	}
 	gotSiteTypeArgs[0] = TypeRef(99)
-	if got := site.TypeArgs(); got[0] != TypeRef(1) {
+	if got, _ := site.TypeArgAt(0); got != TypeRef(1) {
 		t.Fatalf("call site exposed mutable type args, got %#v", got)
 	}
-	gotSiteTargets := site.ResultTargets()
+	gotSiteTargets := callSiteResultTargetsForTest(site)
 	if len(gotSiteTargets) != 1 || gotSiteTargets[0].Kind() != CallResultTargetOrdinaryAssignment {
 		t.Fatalf("call site targets = %#v, want one ordinary-assignment target", gotSiteTargets)
 	}
 	assertDirectField(t, gotSiteTargets[0].TargetPath(), "x")
-	gotSiteTargets[0] = NewCallResultTarget(CallResultTargetReturn, 0, 0, 0, path.Path{})
-	if got := site.ResultTargets(); got[0].Kind() != CallResultTargetOrdinaryAssignment {
-		t.Fatalf("call site result targets exposed mutable slice, got %v", got[0].Kind())
+	gotSiteTargetPath := gotSiteTargets[0].TargetPath()
+	gotSiteTargetPath.Root = "changed"
+	if got, _ := site.ResultTargetAt(0); got.Kind() != CallResultTargetOrdinaryAssignment || !got.TargetPathEqual(siteTargetPath) {
+		t.Fatalf("call site result targets exposed mutable state, got %v/%v", got.Kind(), got.TargetPath())
 	}
 }
 
@@ -930,22 +960,22 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	if callSite.MethodName() != "site" {
 		t.Fatalf("call site method name = %q, want site", callSite.MethodName())
 	}
-	callSiteArgs := callSite.ArgumentSources()
+	callSiteArgs := callSiteArgumentSourcesForTest(callSite)
 	if len(callSiteArgs) != 2 || callSiteArgs[0].Kind != ValueSourceExpression || callSiteArgs[1].Kind != ValueSourceCall {
 		t.Fatalf("call site argument sources = %#v", callSiteArgs)
 	}
 	callSiteArgs[0].Kind = ValueSourceNil
 	callSiteAgain, _ = facts.CallSiteView(point)
-	if got := callSiteAgain.ArgumentSources(); got[0].Kind != ValueSourceExpression {
-		t.Fatalf("facts call site exposed mutable argument sources, got %v", got[0].Kind)
+	if got, _ := callSiteAgain.ArgumentSourceAt(0); got.Kind != ValueSourceExpression {
+		t.Fatalf("facts call site exposed mutable argument sources, got %v", got.Kind)
 	}
-	callSiteTypeArgs := callSite.TypeArgs()
+	callSiteTypeArgs := callSiteTypeArgsForTest(callSite)
 	if len(callSiteTypeArgs) != 2 || callSiteTypeArgs[0] != TypeRef(7) || callSiteTypeArgs[1] != TypeRef(8) {
 		t.Fatalf("call site type args = %#v", callSiteTypeArgs)
 	}
 	callSiteTypeArgs[0] = TypeRef(99)
 	callSiteAgain, _ = facts.CallSiteView(point)
-	if got := callSiteAgain.TypeArgs(); got[0] != TypeRef(7) {
+	if got, _ := callSiteAgain.TypeArgAt(0); got != TypeRef(7) {
 		t.Fatalf("facts call site exposed mutable type args, got %#v", got)
 	}
 	callSiteTarget, ok := callSite.ResultTargetAt(0)
@@ -990,7 +1020,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	if !callSiteView.Final() || !callSiteView.Expanded() || callSiteView.Adjusted() || callSiteView.OpenTail() {
 		t.Fatalf("call site view flags were not preserved")
 	}
-	if args := callSiteView.ArgumentSources(); len(args) != 2 || args[0].Kind != ValueSourceExpression || args[1].Kind != ValueSourceCall {
+	if args := callSiteArgumentSourcesForTest(callSiteView); len(args) != 2 || args[0].Kind != ValueSourceExpression || args[1].Kind != ValueSourceCall {
 		t.Fatalf("call site view args = %#v", args)
 	}
 	if callSiteView.ArgumentSourceCount() != 2 {
@@ -1016,7 +1046,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	if got, _ := callSiteView.ArgumentSourceAt(0); got.Kind != ValueSourceExpression {
 		t.Fatalf("call site view argument source iterator exposed mutable storage, got %v", got.Kind)
 	}
-	if typeArgs := callSiteView.TypeArgs(); len(typeArgs) != 2 || typeArgs[0] != TypeRef(7) || typeArgs[1] != TypeRef(8) {
+	if typeArgs := callSiteTypeArgsForTest(callSiteView); len(typeArgs) != 2 || typeArgs[0] != TypeRef(7) || typeArgs[1] != TypeRef(8) {
 		t.Fatalf("call site view type args = %#v", typeArgs)
 	}
 	copiedPath := callSiteView.CalleePath()

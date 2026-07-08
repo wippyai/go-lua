@@ -86,6 +86,84 @@ func callSiteResultTargets(site factflow.CallSiteView) []factflow.CallResultTarg
 	return out
 }
 
+func callSiteArgumentSources(site factflow.CallSiteView) []factflow.ValueSource {
+	out := make([]factflow.ValueSource, 0, site.ArgumentSourceCount())
+	site.ForEachArgumentSource(func(_ int, source factflow.ValueSource) bool {
+		out = append(out, source)
+		return true
+	})
+	return out
+}
+
+func callSiteTypeArgs(site factflow.CallSiteView) []factflow.TypeRef {
+	out := make([]factflow.TypeRef, 0, site.TypeArgCount())
+	for i := 0; i < site.TypeArgCount(); i++ {
+		arg, ok := site.TypeArgAt(i)
+		if ok {
+			out = append(out, arg)
+		}
+	}
+	return out
+}
+
+func callSiteFromView(site factflow.CallSiteView) factflow.CallSite {
+	point, hasPoint := site.Point()
+	receiverPath, hasReceiverPath := site.ReceiverPath()
+	methodPath, hasMethodPath := site.MethodPath()
+	receiverSource, hasReceiverSource := site.ReceiverSource()
+	exprRef, hasExpr := site.Expr()
+	argCount := site.ArgumentSourceCount()
+	argSpans := make([]factflow.SourceSpan, 0, argCount)
+	argLabels := make([]string, 0, argCount)
+	for i := 0; i < argCount; i++ {
+		span, _ := site.ArgumentSpanAt(i)
+		label, _ := site.ArgumentLabelAt(i)
+		argSpans = append(argSpans, span)
+		argLabels = append(argLabels, label)
+	}
+	targets := make([]factflow.CallResultTarget, 0, site.ResultTargetCount())
+	site.ForEachResultTarget(func(target factflow.CallResultTargetView) bool {
+		targets = append(targets, factflow.NewCallResultTarget(
+			target.Kind(),
+			target.Index(),
+			target.ResultIndex(),
+			target.TargetSymbol(),
+			target.TargetPath(),
+		))
+		return true
+	})
+	return factflow.NewCallSite(factflow.CallSiteConfig{
+		Context:            site.Context(),
+		Point:              point,
+		HasPoint:           hasPoint,
+		CalleeSymbol:       site.CalleeSymbol(),
+		CalleePath:         site.CalleePath(),
+		CalleeMemberAccess: site.CalleeMemberAccess(),
+		ReceiverPath:       receiverPath,
+		HasReceiverPath:    hasReceiverPath,
+		MethodPath:         methodPath,
+		HasMethodPath:      hasMethodPath,
+		MethodName:         site.MethodName(),
+		ReceiverSource:     receiverSource,
+		HasReceiverSource:  hasReceiverSource,
+		ExprRef:            exprRef,
+		HasExpr:            hasExpr,
+		ExprIndex:          site.ExprIndex(),
+		ConditionNegated:   site.ConditionNegated(),
+		ArgumentSources:    callSiteArgumentSources(site),
+		CallSpan:           site.CallSpan(),
+		CalleeSpan:         site.CalleeSpan(),
+		ArgumentSpans:      argSpans,
+		ArgumentLabels:     argLabels,
+		TypeArgs:           callSiteTypeArgs(site),
+		ResultTargets:      targets,
+		Final:              site.Final(),
+		Expanded:           site.Expanded(),
+		Adjusted:           site.Adjusted(),
+		OpenTail:           site.OpenTail(),
+	})
+}
+
 func TestLowerPanicsWithoutRegistry(t *testing.T) {
 	stmts, bindings, built := parseSemanticChunk(t, "local x = 1")
 	_ = stmts
