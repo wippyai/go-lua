@@ -53,7 +53,7 @@ func TestFormatTypeUsesBoundedDiagnosticFormatter(t *testing.T) {
 		"union":    typ.MaterializeUnion(unionMembers),
 		"function": fn.Build(),
 	} {
-		got := formatType(tp)
+		got := display.Type(tp)
 		if len(got) > typeformat.DefaultOptions.MaxBytes {
 			t.Fatalf("%s formatted diagnostic type length = %d, want <= %d: %q", name, len(got), typeformat.DefaultOptions.MaxBytes, got)
 		}

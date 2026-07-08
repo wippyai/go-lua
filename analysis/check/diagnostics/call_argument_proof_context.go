@@ -35,11 +35,11 @@ func (ProofContext) DirectCallArgument(item judgment.Judgment, primary diagnosti
 	help := directCallArgumentJudgmentHelp(display, proof, wording)
 	if proof.MissingRequiredMethod {
 		detail := proof.MissingRequiredMethodDetail
-		message = argumentMissingRequiredMethodMessage(wording.Role, want, detail.Field)
+		message = display.ArgumentMissingRequiredMethodMessage(wording.Role, want, detail.Field)
 	}
 	if proof.MethodTypeMismatch {
 		detail := proof.MethodTypeMismatchDetail
-		message = argumentMethodTypeMismatchMessage(wording.Role, want, detail.Field, detail.ActualType, detail.FieldType)
+		message = display.ArgumentMethodTypeMismatchMessage(wording.Role, want, detail.Field, detail.ActualType, detail.FieldType)
 	}
 	return callArgumentPresentation{
 		Message:  message,
@@ -188,10 +188,10 @@ func directCallArgumentJudgmentEvidence(display diagnosticDisplay, item judgment
 		missingProof = display.MissingRequiredFieldEvidence(proof.MissingRequiredField)
 	} else if proof.MissingRequiredMethod {
 		detail := proof.MissingRequiredMethodDetail
-		missingProof = missingRequiredMethodTypeEvidence(want, typ.Method{Name: detail.Field, Type: functionTypeOrNil(detail.FieldType)})
+		missingProof = display.MissingRequiredMethodTypeEvidence(want, typ.Method{Name: detail.Field, Type: functionTypeOrNil(detail.FieldType)})
 	} else if proof.MethodTypeMismatch {
 		detail := proof.MethodTypeMismatchDetail
-		missingProof = methodTypeMismatchEvidence(want, detail.Field, detail.ActualType, detail.FieldType)
+		missingProof = display.MethodTypeMismatchEvidence(want, detail.Field, detail.ActualType, detail.FieldType)
 	}
 	missingProofReason := diagnostic.EvidenceReasonUnspecified
 	if proof.PrecisionBoundary && !callArgumentNilabilityShouldLead(proof, wording) {
@@ -262,7 +262,7 @@ func directCallArgumentUserAssertionEvidence(item judgment.Judgment) []diagnosti
 			Trust:   diagnosticTrustFromJudgmentTrust(evidence.Trust, diagnostic.TrustClaimed),
 			Reason:  diagnostic.EvidenceReasonUserAssertedAny,
 			Span:    diagnosticSpanFromJudgment(evidence.Span),
-			Message: userAssertedAnyEvidence(),
+			Message: display.UserAssertedAnyEvidence(),
 		})
 	}
 	return out

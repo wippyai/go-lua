@@ -36,21 +36,21 @@ func (ProofContext) DirectCallArity(item judgment.Judgment, primary diagnostic.S
 	}
 	return callArityPresentation{
 		Code:    code,
-		Message: callArityMismatchMessage(name, detail.ExpectedCount, detail.ActualCount),
-		Help:    callArityHelp(detail.ExpectedCount, detail.ActualCount),
+		Message: display.CallArityMismatchMessage(name, detail.ExpectedCount, detail.ActualCount),
+		Help:    display.CallArityHelp(detail.ExpectedCount, detail.ActualCount),
 		Labels:  labels,
 		Evidence: []diagnostic.Evidence{
 			{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
 				Span:    primary,
-				Message: callArgumentCountEvidence(name, detail.ActualCount),
+				Message: display.CallArgumentCountEvidence(name, detail.ActualCount),
 			},
 			{
 				Kind:    diagnostic.EvidenceUserAssertion,
 				Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceUserAssertion, diagnostic.TrustClaimed),
 				Span:    directCallArityEvidenceSpan(item, judgment.EvidenceUserAssertion),
-				Message: callParameterCountEvidence(name, detail.ExpectedCount),
+				Message: display.CallParameterCountEvidence(name, detail.ExpectedCount),
 			},
 			{
 				Kind:    diagnostic.EvidenceMissingProof,

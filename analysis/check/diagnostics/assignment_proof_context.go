@@ -86,12 +86,12 @@ func (ctx ProofContext) AssignmentDiagnostic(item judgment.Judgment, target stri
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnostic.TrustProven,
 			Span:    sourceSpan,
-			Message: underSuppliedTargetEvidence(target, source, underSuppliedDetail.ResultIndex),
+			Message: display.UnderSuppliedTargetEvidence(target, source, underSuppliedDetail.ResultIndex),
 		}
 		extraEvidence = append([]diagnostic.Evidence{underSuppliedEvidence}, extraEvidence...)
 	}
 
-	sourceEvidence := assignmentSourceTypeEvidence(evidenceSourceName, got)
+	sourceEvidence := display.SourceTypeEvidence(evidenceSourceName, got)
 	sourceEvidence = proofView.SourceEvidence(evidenceSourceName, got, sourceEvidence)
 	if structureView.Has {
 		sourceEvidence = structureView.SourceEvidence
@@ -109,7 +109,7 @@ func (ctx ProofContext) AssignmentDiagnostic(item judgment.Judgment, target stri
 		help = structureView.Help
 	}
 	if underSupplied {
-		help = underSuppliedTargetHelp(target)
+		help = display.UnderSuppliedTargetHelp(target)
 	}
 
 	sourceLabelText := assignmentJudgmentSourceLabel(structureView.MissingField)
@@ -174,16 +174,16 @@ func (ProofContext) AssignmentStructure(item judgment.Judgment, target string, g
 		return assignmentStructurePresentation{
 			Has:            true,
 			MissingField:   true,
-			SourceEvidence: objectLiteralShapeEvidence(got),
-			Message:        missingRequiredFieldMessage(detail.Field),
-			Help:           missingRequiredFieldHelp(detail.Field),
+			SourceEvidence: display.ObjectLiteralShapeEvidence(got),
+			Message:        display.MissingRequiredFieldMessage(detail.Field),
+			Help:           display.MissingRequiredFieldHelp(detail.Field),
 			SourceLabel:    labelObjectLiteral,
 			Evidence: []diagnostic.Evidence{
 				{
 					Kind:    diagnostic.EvidenceAbstractFact,
 					Trust:   diagnostic.TrustProven,
 					Span:    sourceSpan,
-					Message: missingRequiredFieldPathEvidence(path, detail.FieldType),
+					Message: display.MissingRequiredFieldPathEvidence(path, detail.FieldType),
 				},
 			},
 		}
@@ -192,16 +192,16 @@ func (ProofContext) AssignmentStructure(item judgment.Judgment, target string, g
 		return assignmentStructurePresentation{
 			Has:            true,
 			MissingMethod:  true,
-			SourceEvidence: objectLiteralShapeEvidence(got),
-			Message:        missingRequiredMethodMessage(want, detail.Field),
-			Help:           missingRequiredMethodHelp(detail.Field),
+			SourceEvidence: display.ObjectLiteralShapeEvidence(got),
+			Message:        display.MissingRequiredMethodMessage(want, detail.Field),
+			Help:           display.MissingRequiredMethodHelp(detail.Field),
 			SourceLabel:    labelObjectLiteral,
 			Evidence: []diagnostic.Evidence{
 				{
 					Kind:    diagnostic.EvidenceMissingProof,
 					Trust:   diagnostic.TrustUnknown,
 					Span:    sourceSpan,
-					Message: missingRequiredMethodTypeEvidence(want, typ.Method{Name: detail.Field, Type: functionTypeOrNil(detail.FieldType)}),
+					Message: display.MissingRequiredMethodTypeEvidence(want, typ.Method{Name: detail.Field, Type: functionTypeOrNil(detail.FieldType)}),
 				},
 			},
 		}
@@ -210,15 +210,15 @@ func (ProofContext) AssignmentStructure(item judgment.Judgment, target string, g
 		return assignmentStructurePresentation{
 			Has:            true,
 			MethodMismatch: true,
-			SourceEvidence: objectLiteralShapeEvidence(got),
-			Message:        methodTypeMismatchMessage(want, detail.Field, detail.ActualType, detail.FieldType),
+			SourceEvidence: display.ObjectLiteralShapeEvidence(got),
+			Message:        display.MethodTypeMismatchMessage(want, detail.Field, detail.ActualType, detail.FieldType),
 			SourceLabel:    labelObjectLiteral,
 			Evidence: []diagnostic.Evidence{
 				{
 					Kind:    diagnostic.EvidenceMissingProof,
 					Trust:   diagnostic.TrustUnknown,
 					Span:    sourceSpan,
-					Message: methodTypeMismatchEvidence(want, detail.Field, detail.ActualType, detail.FieldType),
+					Message: display.MethodTypeMismatchEvidence(want, detail.Field, detail.ActualType, detail.FieldType),
 				},
 			},
 		}
@@ -249,21 +249,21 @@ func (ctx ProofContext) AssignmentCallResult(item judgment.Judgment, detail judg
 			Kind:    diagnostic.EvidenceUserAssertion,
 			Trust:   diagnostic.TrustClaimed,
 			Span:    retSpan,
-			Message: callResultDeclaredReturnEvidence(name, label, got),
+			Message: display.CallResultDeclaredReturnEvidence(name, label, got),
 		})
 	} else {
 		evidence = append(evidence, diagnostic.Evidence{
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnostic.TrustProven,
 			Span:    callSpan,
-			Message: fmt.Sprintf("%s returns %s", name, formatType(got)),
+			Message: fmt.Sprintf("%s returns %s", name, display.Type(got)),
 		})
 	}
 	evidence = append(evidence, diagnostic.Evidence{
 		Kind:    diagnostic.EvidenceUserAssertion,
 		Trust:   diagnostic.TrustClaimed,
 		Span:    typeSpan,
-		Message: assignmentTargetTypeEvidence(target, want),
+		Message: display.AssignmentTargetTypeEvidence(target, want),
 	})
 	evidence = append(evidence, proofView.Evidence...)
 
@@ -275,8 +275,8 @@ func (ctx ProofContext) AssignmentCallResult(item judgment.Judgment, detail judg
 		labels = append(labels, sourceLabel(retSpan, labelDeclaredReturn))
 	}
 	return assignmentCallResultPresentation{
-		Message:  fmt.Sprintf("%s is %s, not %s", label, formatType(got), formatType(want)),
-		Help:     callResultAssignmentHelp(proofView.NeedsNilGuardHelp(got, want)),
+		Message:  fmt.Sprintf("%s is %s, not %s", label, display.Type(got), display.Type(want)),
+		Help:     display.CallResultAssignmentHelp(proofView.NeedsNilGuardHelp(got, want)),
 		Evidence: evidence,
 		Labels:   labels,
 	}
@@ -303,20 +303,20 @@ func (ProofContext) OptionalAssignmentTarget(item judgment.Judgment, targetSpan 
 	containerType := item.Actual.ProjectedType
 	containerSpan := diagnosticEvidenceSpanOrPrimary(item, judgment.EvidenceAbstractFact)
 	return optionalAssignmentTargetPresentation{
-		Message: optionalAssignmentTargetMessage(containerName),
-		Help:    optionalAssignmentTargetHelp(containerName),
+		Message: display.OptionalAssignmentTargetMessage(containerName),
+		Help:    display.OptionalAssignmentTargetHelp(containerName),
 		Explanation: diagnostic.NewExplanation(
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnostic.TrustProven,
 				Span:    containerSpan,
-				Message: optionalAssignmentTargetContainerEvidence(containerName, containerType),
+				Message: display.OptionalAssignmentTargetContainerEvidence(containerName, containerType),
 			},
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnostic.TrustProven,
 				Span:    targetSpan,
-				Message: optionalAssignmentTargetWriteEvidence(targetName),
+				Message: display.OptionalAssignmentTargetWriteEvidence(targetName),
 			},
 		),
 		Labels: []diagnostic.Label{
@@ -381,7 +381,7 @@ func assignmentJudgmentExpectedTypeLabel(item judgment.Judgment, target string, 
 	if item.Expected.Label != "" && item.Expected.Label != target {
 		return item.Expected.Label
 	}
-	return formatType(fallback)
+	return display.Type(fallback)
 }
 
 func assignmentJudgmentExpectedEvidence(item judgment.Judgment, target string, fallback typ.Type, expectedDisplay string) string {
@@ -390,7 +390,7 @@ func assignmentJudgmentExpectedEvidence(item judgment.Judgment, target string, f
 		if label == "" {
 			label = target
 		}
-		return fmt.Sprintf("assignment target %s requires %s", label, formatType(fallback))
+		return fmt.Sprintf("assignment target %s requires %s", label, display.Type(fallback))
 	}
 	if expectedDisplay == "" {
 		expectedDisplay = assignmentJudgmentExpectedTypeLabel(item, target, fallback)
@@ -430,7 +430,7 @@ func (p assignmentProofPresentation) AssignmentMessage(sourceName string, got, w
 		subject := boundaryEvidenceSubject(sourceName)
 		return "cannot assign " + sourceName + " because " + subject + " comes from any/unknown; no proof shows it satisfies " + assignmentDeclaredTypePhrase(wantDisplay)
 	}
-	return assignmentMessageDisplay(sourceName, got, want, wantDisplay)
+	return display.AssignmentMessageDisplay(sourceName, got, want, wantDisplay)
 }
 
 func (p assignmentProofPresentation) MemberAssignmentMessage(memberName string, sourceName string, got, want typ.Type, wantDisplay string) string {
@@ -444,7 +444,7 @@ func (p assignmentProofPresentation) MemberAssignmentMessage(memberName string, 
 		subject := boundaryEvidenceSubject(sourceName)
 		return "cannot assign " + sourceName + " to " + memberName + " because " + subject + " comes from any/unknown; no proof shows it satisfies " + assignmentDeclaredTypePhrase(wantDisplay)
 	}
-	return memberAssignmentMessageDisplay(memberName, sourceName, got, want, wantDisplay)
+	return display.MemberAssignmentMessageDisplay(memberName, sourceName, got, want, wantDisplay)
 }
 
 func assignmentDeclaredTypePhrase(wantDisplay string) string {
@@ -455,7 +455,7 @@ func assignmentDeclaredTypePhrase(wantDisplay string) string {
 }
 
 func (p assignmentProofPresentation) Help(sourceName string, got, want typ.Type) string {
-	return assignmentHelp(sourceName, p.NeedsNilGuardHelp(got, want))
+	return display.AssignmentHelp(sourceName, p.NeedsNilGuardHelp(got, want))
 }
 
 func (p assignmentProofPresentation) NeedsNilGuardHelp(got, want typ.Type) bool {
@@ -593,10 +593,10 @@ func assignmentJudgmentMissingProofMessage(item judgment.Judgment, proof judgmen
 		return display.IndexedReadExpectedProofMessage(subject, "declared type")
 	}
 	if proof.BoundaryProofMissing() {
-		return missingBoundaryProofMessageForSubject(subject, want)
+		return display.MissingBoundaryProofMessageForSubject(subject, want)
 	}
 	if sourceName == "assigned value" || typ.Nil.Equals(got) || item.Expected.Label == "" {
-		return missingBoundaryProofMessageForSubject(subject, want)
+		return display.MissingBoundaryProofMessageForSubject(subject, want)
 	}
 	return display.MissingExpectedProofMessage(subject, "declared type")
 }
@@ -609,7 +609,7 @@ func assignmentJudgmentUserAssertionEvidence(item judgment.Judgment) []diagnosti
 			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceUserAssertion, diagnostic.TrustClaimed),
 			Reason:  diagnostic.EvidenceReasonUserAssertedAny,
 			Span:    diagnosticSpanFromJudgment(evidence.Span),
-			Message: userAssertedAnyEvidence(),
+			Message: display.UserAssertedAnyEvidence(),
 		})
 	}
 	return out
@@ -659,7 +659,7 @@ func assignmentJudgmentParentContextEvidence(item judgment.Judgment) []diagnosti
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnosticTrustFromJudgmentTrust(evidence.Trust, diagnostic.TrustProven),
 			Span:    diagnosticSpanFromJudgment(evidence.Span),
-			Message: fmt.Sprintf("%s has type %s", label, formatType(evidence.Detail.FieldType)),
+			Message: fmt.Sprintf("%s has type %s", label, display.Type(evidence.Detail.FieldType)),
 		})
 	}
 	for _, evidence := range item.AssignmentParentExpectedEvidence() {
@@ -671,7 +671,7 @@ func assignmentJudgmentParentContextEvidence(item judgment.Judgment) []diagnosti
 			Kind:    diagnostic.EvidenceUserAssertion,
 			Trust:   diagnosticTrustFromJudgmentTrust(evidence.Trust, diagnostic.TrustClaimed),
 			Span:    diagnosticSpanFromJudgment(evidence.Span),
-			Message: fmt.Sprintf("%s is declared as %s", label, formatType(evidence.Detail.FieldType)),
+			Message: fmt.Sprintf("%s is declared as %s", label, display.Type(evidence.Detail.FieldType)),
 		})
 	}
 	return out

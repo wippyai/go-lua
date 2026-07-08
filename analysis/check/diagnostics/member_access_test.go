@@ -261,7 +261,7 @@ func assertStalePathMissingMemberEvidence(t *testing.T, result *body.Result) {
 	if len(reads) != 1 {
 		t.Fatalf("missing member reads = %#v, want stale slots.active.value.path read", reads)
 	}
-	if reads[0].MemberName != "path" || !strings.Contains(formatType(reads[0].ReceiverType), "timer") {
+	if reads[0].MemberName != "path" || !strings.Contains(display.Type(reads[0].ReceiverType), "timer") {
 		t.Fatalf("missing member read = %#v, want missing path on timer receiver", reads[0])
 	}
 

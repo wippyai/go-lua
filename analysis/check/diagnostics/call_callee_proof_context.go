@@ -150,7 +150,7 @@ func callCalleeJudgmentEvidence(item judgment.Judgment, detail judgment.Evidence
 			},
 		}
 	}
-	actualMessage := assignmentSourceTypeEvidence(name, actual)
+	actualMessage := display.SourceTypeEvidence(name, actual)
 	if detail.MemberAccess {
 		actualMessage = fmt.Sprintf("%s has type %s at call", name, diagnosticDisplay{}.Type(actual))
 	}

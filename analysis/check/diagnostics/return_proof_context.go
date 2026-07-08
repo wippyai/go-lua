@@ -26,13 +26,13 @@ func (ProofContext) Return(item judgment.Judgment, label string, sourceName stri
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
 			Span:    diagnosticEvidenceSpanOrPrimary(item, judgment.EvidenceAbstractFact),
-			Message: assignmentSourceTypeEvidence(subject, got),
+			Message: display.SourceTypeEvidence(subject, got),
 		},
 		{
 			Kind:    diagnostic.EvidenceUserAssertion,
 			Trust:   diagnostic.TrustClaimed,
 			Span:    declSpan,
-			Message: returnDeclaredTypeEvidence(label, want),
+			Message: display.ReturnDeclaredTypeEvidence(label, want),
 		},
 	}
 	evidence = append(evidence, returnJudgmentExtraEvidence(item, proof, subject, got, primary)...)
@@ -63,7 +63,7 @@ func returnJudgmentSubject(label, sourceName string) string {
 
 func returnJudgmentMessage(subject, sourceName, label string, got, want typ.Type, proof judgment.ReturnProofSummary) string {
 	if proof.PrecisionBoundary && !proof.MayBeNil {
-		return fmt.Sprintf("%s comes from any/unknown; no proof shows it satisfies declared return type %s", subject, formatType(want))
+		return fmt.Sprintf("%s comes from any/unknown; no proof shows it satisfies declared return type %s", subject, display.Type(want))
 	}
 	if proof.MayBeNil && (!typ.Nil.Equals(got) || proof.IndexedRead) {
 		if sourceName != "" && sourceName != label {
@@ -71,8 +71,8 @@ func returnJudgmentMessage(subject, sourceName, label string, got, want typ.Type
 		}
 		return fmt.Sprintf("cannot return %s because it may be nil", subject)
 	}
-	gotText := formatType(got)
-	wantText := formatType(want)
+	gotText := display.Type(got)
+	wantText := display.Type(want)
 	if gotText == wantText {
 		return fmt.Sprintf("cannot prove %s satisfies declared return type %s", subject, wantText)
 	}
@@ -100,7 +100,7 @@ func returnJudgmentExtraEvidence(item judgment.Judgment, proof judgment.ReturnPr
 					Trust:   diagnosticTrustFromJudgmentTrust(evidence.Trust, diagnostic.TrustClaimed),
 					Reason:  diagnostic.EvidenceReasonUserAssertedAny,
 					Span:    diagnosticSpanFromJudgment(evidence.Span),
-					Message: userAssertedAnyEvidence(),
+					Message: display.UserAssertedAnyEvidence(),
 				})
 			}
 		case judgment.EvidencePrecisionBoundary:
@@ -109,7 +109,7 @@ func returnJudgmentExtraEvidence(item judgment.Judgment, proof judgment.ReturnPr
 				Trust:   diagnosticTrustFromJudgmentTrust(evidence.Trust, diagnostic.TrustUnknown),
 				Reason:  diagnostic.EvidenceReasonExplicitBoundaryValidation,
 				Span:    diagnosticJudgmentEvidenceSpanOr(evidence, primary),
-				Message: returnExplicitBoundaryProofMessage(subject),
+				Message: display.ReturnExplicitBoundaryProofMessage(subject),
 			})
 		}
 	}
@@ -117,10 +117,10 @@ func returnJudgmentExtraEvidence(item judgment.Judgment, proof judgment.ReturnPr
 		return out
 	}
 	missingReason := diagnostic.EvidenceReasonBoundaryValidationMissing
-	missingMessage := returnMissingProofMessage(subject)
+	missingMessage := display.ReturnMissingProofMessage(subject)
 	if proof.IndexedRead {
 		missingReason = diagnostic.EvidenceReasonIndexReadValidationMissing
-		missingMessage = returnIndexedReadProofMessage(subject)
+		missingMessage = display.ReturnIndexedReadProofMessage(subject)
 	}
 	out = append(out, diagnostic.Evidence{
 		Kind:    diagnostic.EvidenceMissingProof,

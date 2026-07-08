@@ -377,7 +377,7 @@ func isIdent(expr goast.Expr, name string) bool {
 
 func TestDeclaredTypeEvidenceUsesTopLevelAnnotationAlias(t *testing.T) {
 	annotation := &ast.TypeRefExpr{Path: []string{"protocol", "PolicyEvaluator"}}
-	got := declaredTypeEvidence("evaluator", annotation, typ.String)
+	got := display.DeclaredTypeEvidence("evaluator", annotation, typ.String)
 	if got != "evaluator is declared as protocol.PolicyEvaluator" {
 		t.Fatalf("declaredTypeEvidence = %q", got)
 	}
@@ -385,7 +385,7 @@ func TestDeclaredTypeEvidenceUsesTopLevelAnnotationAlias(t *testing.T) {
 
 func TestDeclaredTypeEvidenceUsesProjectedTypeForNestedField(t *testing.T) {
 	annotation := &ast.TypeRefExpr{Path: []string{"TreeNode"}}
-	got := declaredTypeEvidence("node.label", annotation, typ.String)
+	got := display.DeclaredTypeEvidence("node.label", annotation, typ.String)
 	if got != "node.label is declared as string" {
 		t.Fatalf("declaredTypeEvidence = %q", got)
 	}
@@ -395,7 +395,7 @@ func TestDeclaredTypeEvidenceFormatsFunctionAnnotationReturns(t *testing.T) {
 	annotation := &ast.FunctionTypeExpr{
 		Returns: []ast.TypeExpr{&ast.TypeRefExpr{Path: []string{"Res"}}},
 	}
-	got := declaredTypeEvidence("f", annotation, typ.String)
+	got := display.DeclaredTypeEvidence("f", annotation, typ.String)
 	if got != "f is declared as fun() -> Res" {
 		t.Fatalf("declaredTypeEvidence = %q", got)
 	}
@@ -452,7 +452,7 @@ func TestDeclaredTypeEvidenceFormatsTypeLevelQueryAnnotations(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := declaredTypeEvidence("value", tc.annotation, typ.String); got != tc.want {
+			if got := display.DeclaredTypeEvidence("value", tc.annotation, typ.String); got != tc.want {
 				t.Fatalf("declaredTypeEvidence = %q, want %q", got, tc.want)
 			}
 		})
@@ -468,25 +468,25 @@ func TestFormatTypeAnnotationTruncatesDeepAnnotations(t *testing.T) {
 	if !ok || !strings.Contains(got, "...") {
 		t.Fatalf("formatTypeAnnotation = %q, %v; want bounded rendering with ellipsis", got, ok)
 	}
-	if fallback := declaredTypeEvidence("value", annotation, typ.String); !strings.Contains(fallback, "...") {
+	if fallback := display.DeclaredTypeEvidence("value", annotation, typ.String); !strings.Contains(fallback, "...") {
 		t.Fatalf("declaredTypeEvidence = %q, want bounded annotation instead of fallback type", fallback)
 	}
 }
 
 func TestBoundaryProofMessagesUseCentralTypeDisplay(t *testing.T) {
-	if got := explicitBoundaryProofMessage(typ.String); got != "assigned value comes from any/unknown" {
+	if got := display.ExplicitBoundaryProofMessage(typ.String); got != "assigned value comes from any/unknown" {
 		t.Fatalf("explicitBoundaryProofMessage = %q", got)
 	}
-	if got := missingBoundaryProofMessage(typ.String); got != "no proof on this path shows assigned value is string" {
+	if got := display.MissingBoundaryProofMessage(typ.String); got != "no proof on this path shows assigned value is string" {
 		t.Fatalf("missingBoundaryProofMessage = %q", got)
 	}
-	if got := explicitBoundaryProofMessageForSubject("raw.id", typ.String); got != "raw.id comes from any/unknown" {
+	if got := display.ExplicitBoundaryProofMessageForSubject("raw.id", typ.String); got != "raw.id comes from any/unknown" {
 		t.Fatalf("explicitBoundaryProofMessageForSubject = %q", got)
 	}
-	if got := missingBoundaryProofMessageForSubject("raw.id", typ.String); got != "no proof on this path shows raw.id is string" {
+	if got := display.MissingBoundaryProofMessageForSubject("raw.id", typ.String); got != "no proof on this path shows raw.id is string" {
 		t.Fatalf("missingBoundaryProofMessageForSubject = %q", got)
 	}
-	if got := missingIndexReadProofMessage(typ.String); !strings.Contains(got, "indexed read can miss or read nil") ||
+	if got := display.MissingIndexReadProofMessage(typ.String); !strings.Contains(got, "indexed read can miss or read nil") ||
 		!strings.Contains(got, "no proof shows the selected slot satisfies string here") {
 		t.Fatalf("missingIndexReadProofMessage = %q", got)
 	}
@@ -532,7 +532,7 @@ func TestDirectCallDisplayMessagesUseCentralTypeDisplay(t *testing.T) {
 	if got := display.DirectNotCallableHelp("target"); got != "Call a function value, or replace `target` with a callable expression before this call." {
 		t.Fatalf("directNotCallableHelp = %q", got)
 	}
-	if got := annotatedTypeEvidence("target", typ.Number); got != "target is annotated number" {
+	if got := display.AnnotatedTypeEvidence("target", typ.Number); got != "target is annotated number" {
 		t.Fatalf("annotatedTypeEvidence = %q", got)
 	}
 	if got := argumentTypeMismatchHelpForEvidence("argument 1", "payload", typ.String, []diagnostic.Evidence{{
@@ -559,100 +559,100 @@ func TestDirectCallDisplayMessagesUseCentralTypeDisplay(t *testing.T) {
 	if got := argumentTypeMismatchHelpForEvidence("argument 2", unknownSourceName, typ.String, nil); got != "Pass a value for argument 2 that satisfies the parameter type, or change the callee signature if that argument is valid." {
 		t.Fatalf("argumentTypeMismatchHelpForEvidence subject fallback = %q", got)
 	}
-	if got := callParamObligationEvidence("forward", "argument 1 (payload)", typ.String); got != "inside forward, argument 1 (payload) must satisfy string" {
+	if got := display.CallParamObligationEvidence("forward", "argument 1 (payload)", typ.String); got != "inside forward, argument 1 (payload) must satisfy string" {
 		t.Fatalf("callParamObligationEvidence = %q", got)
 	}
-	if got := callParamObligationEvidence("forward", "", typ.String); got != "inside forward, the argument must satisfy string" {
+	if got := display.CallParamObligationEvidence("forward", "", typ.String); got != "inside forward, the argument must satisfy string" {
 		t.Fatalf("callParamObligationEvidence fallback = %q", got)
 	}
-	if got := memberCallParamObligationEvidence("invoke", "argument 2 (payload)", "argument 1.client.send", 1, typ.Number); got != "inside invoke, argument 2 (payload) is passed to argument 1.client.send parameter 1, which requires number" {
+	if got := display.MemberCallParamObligationEvidence("invoke", "argument 2 (payload)", "argument 1.client.send", 1, typ.Number); got != "inside invoke, argument 2 (payload) is passed to argument 1.client.send parameter 1, which requires number" {
 		t.Fatalf("memberCallParamObligationEvidence = %q", got)
 	}
 }
 
 func TestOptionalTypeDisplayLeavesNilabilityToProofContext(t *testing.T) {
-	if got := formatType(typ.MaterializeOptional(typ.Unknown)); got != "unknown" {
+	if got := display.Type(typ.MaterializeOptional(typ.Unknown)); got != "unknown" {
 		t.Fatalf("formatType optional unknown = %q", got)
 	}
-	if got := formatType(typ.MaterializeOptional(typ.Any)); got != "any" {
+	if got := display.Type(typ.MaterializeOptional(typ.Any)); got != "any" {
 		t.Fatalf("formatType optional any = %q", got)
 	}
-	if got := formatType(typ.MaterializeOptional(typ.String)); got != "string?" {
+	if got := display.Type(typ.MaterializeOptional(typ.String)); got != "string?" {
 		t.Fatalf("formatType optional string = %q", got)
 	}
-	if got := assignmentMessage("cache.value", typ.MaterializeOptional(typ.String), typ.String); got != "cannot assign cache.value because it is string?, not string" {
+	if got := display.AssignmentMessage("cache.value", typ.MaterializeOptional(typ.String), typ.String); got != "cannot assign cache.value because it is string?, not string" {
 		t.Fatalf("assignmentMessage optional = %q", got)
 	}
-	if got := assignmentMessage("cache.value", typ.Number, typ.String); got != "cannot assign cache.value because it is number, not string" {
+	if got := display.AssignmentMessage("cache.value", typ.Number, typ.String); got != "cannot assign cache.value because it is number, not string" {
 		t.Fatalf("assignmentMessage path mismatch = %q", got)
 	}
-	if got := assignmentMessageDisplay("M.run", typ.Func().Returns(typ.Nil).Build(), typ.Func().Returns(typ.String).Build(), "fun() -> Res"); got != "cannot assign M.run because it is fun() -> nil, not fun() -> Res" {
+	if got := display.AssignmentMessageDisplay("M.run", typ.Func().Returns(typ.Nil).Build(), typ.Func().Returns(typ.String).Build(), "fun() -> Res"); got != "cannot assign M.run because it is fun() -> nil, not fun() -> Res" {
 		t.Fatalf("assignmentMessageDisplay alias = %q", got)
 	}
-	if got := assignmentMessage("", typ.Number, typ.String); got != "cannot assign number to string" {
+	if got := display.AssignmentMessage("", typ.Number, typ.String); got != "cannot assign number to string" {
 		t.Fatalf("assignmentMessage mismatch = %q", got)
 	}
-	if got := memberAssignmentMessage("p.id", "raw", typ.Any, typ.String); got != "cannot assign raw to p.id because raw is any, not string" {
+	if got := display.MemberAssignmentMessage("p.id", "raw", typ.Any, typ.String); got != "cannot assign raw to p.id because raw is any, not string" {
 		t.Fatalf("memberAssignmentMessage mismatch = %q", got)
 	}
-	if got := memberAssignmentMessageDisplay("M.run", "f", typ.Func().Returns(typ.Nil).Build(), typ.Func().Returns(typ.String).Build(), "fun() -> Res"); got != "cannot assign f to M.run because f is fun() -> nil, not fun() -> Res" {
+	if got := display.MemberAssignmentMessageDisplay("M.run", "f", typ.Func().Returns(typ.Nil).Build(), typ.Func().Returns(typ.String).Build(), "fun() -> Res"); got != "cannot assign f to M.run because f is fun() -> nil, not fun() -> Res" {
 		t.Fatalf("memberAssignmentMessageDisplay alias = %q", got)
 	}
-	if got := memberAssignmentMessage("impl.read", unknownSourceName, typ.Number, typ.String); got != "cannot assign impl.read because assigned value is number, not string" {
+	if got := display.MemberAssignmentMessage("impl.read", unknownSourceName, typ.Number, typ.String); got != "cannot assign impl.read because assigned value is number, not string" {
 		t.Fatalf("memberAssignmentMessage fallback = %q", got)
 	}
-	if got := assignmentHelp("cache.value", true); got != "Guard `cache.value` with a nil check, provide a default value, or change the target type to accept nil." {
+	if got := display.AssignmentHelp("cache.value", true); got != "Guard `cache.value` with a nil check, provide a default value, or change the target type to accept nil." {
 		t.Fatalf("assignmentHelp optional = %q", got)
 	}
-	if got := assignmentHelp("cache.value", false); got != "Use a value compatible with the expected type, or change the target type if `cache.value` is valid." {
+	if got := display.AssignmentHelp("cache.value", false); got != "Use a value compatible with the expected type, or change the target type if `cache.value` is valid." {
 		t.Fatalf("assignmentHelp mismatch = %q", got)
 	}
-	if got := assignmentTargetTypeEvidence("row[key]", typ.String); got != "assignment target row[key] requires string" {
+	if got := display.AssignmentTargetTypeEvidence("row[key]", typ.String); got != "assignment target row[key] requires string" {
 		t.Fatalf("assignmentTargetTypeEvidence = %q", got)
 	}
-	if got := assignmentTargetTypeEvidence("", typ.Number); got != "assignment target requires number" {
+	if got := display.AssignmentTargetTypeEvidence("", typ.Number); got != "assignment target requires number" {
 		t.Fatalf("assignmentTargetTypeEvidence fallback = %q", got)
 	}
-	if got := underSuppliedTargetEvidence("b", "one(...)", 1); got != "b receives result 2 from `one(...)`, but no value was produced for that result slot" {
+	if got := display.UnderSuppliedTargetEvidence("b", "one(...)", 1); got != "b receives result 2 from `one(...)`, but no value was produced for that result slot" {
 		t.Fatalf("underSuppliedTargetEvidence call = %q", got)
 	}
-	if got := underSuppliedTargetEvidence("b", "", -1); got != "b has no supplied value in this assignment, so Lua fills it with nil" {
+	if got := display.UnderSuppliedTargetEvidence("b", "", -1); got != "b has no supplied value in this assignment, so Lua fills it with nil" {
 		t.Fatalf("underSuppliedTargetEvidence nil-fill = %q", got)
 	}
-	if got := underSuppliedTargetHelp("b"); got != "Provide a value for `b`, remove the extra target, or change the target type to accept nil." {
+	if got := display.UnderSuppliedTargetHelp("b"); got != "Provide a value for `b`, remove the extra target, or change the target type to accept nil." {
 		t.Fatalf("underSuppliedTargetHelp = %q", got)
 	}
-	if got := assignmentSourceTypeEvidence("argument 1", typ.LiteralInt(42)); got != "argument 1 has literal value 42" {
+	if got := display.SourceTypeEvidence("argument 1", typ.LiteralInt(42)); got != "argument 1 has literal value 42" {
 		t.Fatalf("assignmentSourceTypeEvidence literal = %q", got)
 	}
-	if got := optionalAssignmentTargetMessage("bag"); got != "cannot assign through optional bag without nil check" {
+	if got := display.OptionalAssignmentTargetMessage("bag"); got != "cannot assign through optional bag without nil check" {
 		t.Fatalf("optionalAssignmentTargetMessage = %q", got)
 	}
-	if got := optionalAssignmentTargetMessage(""); got != "cannot assign through an optional value without a nil check" {
+	if got := display.OptionalAssignmentTargetMessage(""); got != "cannot assign through an optional value without a nil check" {
 		t.Fatalf("optionalAssignmentTargetMessage fallback = %q", got)
 	}
-	if got := optionalAssignmentTargetContainerEvidence("bag", typ.MaterializeOptional(typ.String)); got != "bag can be string or nil here" {
+	if got := display.OptionalAssignmentTargetContainerEvidence("bag", typ.MaterializeOptional(typ.String)); got != "bag can be string or nil here" {
 		t.Fatalf("optionalAssignmentTargetContainerEvidence = %q", got)
 	}
-	if got := optionalAssignmentTargetWriteEvidence("bag.name"); got != "writing bag.name requires its container to be non-nil" {
+	if got := display.OptionalAssignmentTargetWriteEvidence("bag.name"); got != "writing bag.name requires its container to be non-nil" {
 		t.Fatalf("optionalAssignmentTargetWriteEvidence = %q", got)
 	}
-	if got := optionalAssignmentTargetHelp("bag"); got != "Guard `bag` with a nil check before assigning through it, or write to a non-optional container." {
+	if got := display.OptionalAssignmentTargetHelp("bag"); got != "Guard `bag` with a nil check before assigning through it, or write to a non-optional container." {
 		t.Fatalf("optionalAssignmentTargetHelp = %q", got)
 	}
-	if got := missingRequiredFieldMessage("id"); got != `object literal is missing required field "id"` {
+	if got := display.MissingRequiredFieldMessage("id"); got != `object literal is missing required field "id"` {
 		t.Fatalf("missingRequiredFieldMessage = %q", got)
 	}
-	if got := missingRequiredFieldEvidence("id"); got != `object literal does not provide field "id"` {
+	if got := display.MissingRequiredFieldEvidence("id"); got != `object literal does not provide field "id"` {
 		t.Fatalf("missingRequiredFieldEvidence = %q", got)
 	}
-	if got := missingRequiredFieldPathEvidence("p.id", typ.String); got != `required field p.id has type string, but the object literal does not provide it` {
+	if got := display.MissingRequiredFieldPathEvidence("p.id", typ.String); got != `required field p.id has type string, but the object literal does not provide it` {
 		t.Fatalf("missingRequiredFieldPathEvidence = %q", got)
 	}
-	if got := objectLiteralShapeEvidence(typetable.NewRecord().Field("x", typ.LiteralInt(10)).Build()); got != `object literal has type {x: 10}` {
+	if got := display.ObjectLiteralShapeEvidence(typetable.NewRecord().Field("x", typ.LiteralInt(10)).Build()); got != `object literal has type {x: 10}` {
 		t.Fatalf("objectLiteralShapeEvidence = %q", got)
 	}
-	if got := missingRequiredFieldHelp("id"); got != "Add field `id`, or make it optional in the declared type if it may be absent." {
+	if got := display.MissingRequiredFieldHelp("id"); got != "Add field `id`, or make it optional in the declared type if it may be absent." {
 		t.Fatalf("missingRequiredFieldHelp = %q", got)
 	}
 	if got := display.MissingNonNilGuardHereMessage("cache.value"); got != "no guard on this path proves cache.value is non-nil" {
@@ -674,33 +674,33 @@ func TestOptionalTypeDisplayLeavesNilabilityToProofContext(t *testing.T) {
 }
 
 func TestAssignmentMessageLeavesNilabilityToProofContext(t *testing.T) {
-	msg := assignmentMessage("cache.value", typ.MaterializeOptional(typ.String), typ.MaterializeOptional(typ.Number))
+	msg := display.AssignmentMessage("cache.value", typ.MaterializeOptional(typ.String), typ.MaterializeOptional(typ.Number))
 	if strings.Contains(msg, "may be nil") || !strings.Contains(msg, "not") {
 		t.Fatalf("optional-to-optional assignment message = %q, want plain type mismatch", msg)
 	}
 }
 
 func TestReturnProofMessagesUseCentralDisplay(t *testing.T) {
-	if got := returnDeclaredTypeEvidence("returned value 1", typ.String); got != "returned value 1 must satisfy declared return type string" {
+	if got := display.ReturnDeclaredTypeEvidence("returned value 1", typ.String); got != "returned value 1 must satisfy declared return type string" {
 		t.Fatalf("returnDeclaredTypeEvidence = %q", got)
 	}
-	if got := returnIndexedReadProofMessage("returned value 1 (xs[i])"); !strings.Contains(got, "returned value 1 (xs[i]) is an indexed read") ||
+	if got := display.ReturnIndexedReadProofMessage("returned value 1 (xs[i])"); !strings.Contains(got, "returned value 1 (xs[i]) is an indexed read") ||
 		!strings.Contains(got, "declared return type here") {
 		t.Fatalf("returnIndexedReadProofMessage = %q", got)
 	}
-	if got := returnExplicitBoundaryProofMessage("returned value 1"); got != "returned value 1 comes from any/unknown" {
+	if got := display.ReturnExplicitBoundaryProofMessage("returned value 1"); got != "returned value 1 comes from any/unknown" {
 		t.Fatalf("returnExplicitBoundaryProofMessage = %q", got)
 	}
-	if got := returnMissingProofMessage("returned value 1 (raw)"); got != "no proof on this path shows returned value 1 (raw) satisfies the declared return type" {
+	if got := display.ReturnMissingProofMessage("returned value 1 (raw)"); got != "no proof on this path shows returned value 1 (raw) satisfies the declared return type" {
 		t.Fatalf("returnMissingProofMessage = %q", got)
 	}
-	if got := callResultAssignmentHelp(false); got != "Assign the call result to a compatible target type, or change the callee return type if this result is valid." {
+	if got := display.CallResultAssignmentHelp(false); got != "Assign the call result to a compatible target type, or change the callee return type if this result is valid." {
 		t.Fatalf("callResultAssignmentHelp mismatch = %q", got)
 	}
-	if got := callResultAssignmentHelp(true); got != "Guard the call result before assigning it, provide a default value, or change the target type to accept nil." {
+	if got := display.CallResultAssignmentHelp(true); got != "Guard the call result before assigning it, provide a default value, or change the target type to accept nil." {
 		t.Fatalf("callResultAssignmentHelp optional = %q", got)
 	}
-	if got := callResultDeclaredReturnEvidence("get", "call result 1", typ.MaterializeOptional(typ.String)); got != "get declares call result 1 as string?" {
+	if got := display.CallResultDeclaredReturnEvidence("get", "call result 1", typ.MaterializeOptional(typ.String)); got != "get declares call result 1 as string?" {
 		t.Fatalf("callResultDeclaredReturnEvidence = %q", got)
 	}
 }
@@ -748,31 +748,31 @@ func TestOptionalMethodMessagesUseCentralDisplay(t *testing.T) {
 }
 
 func TestCallArityMessagesUseCentralDisplay(t *testing.T) {
-	if got := callArityMismatchMessage("encode", 2, 1); got != "encode expects 2 arguments, got 1" {
+	if got := display.CallArityMismatchMessage("encode", 2, 1); got != "encode expects 2 arguments, got 1" {
 		t.Fatalf("callArityMismatchMessage = %q", got)
 	}
-	if got := callArityMismatchMessage("encode", 1, 0); got != "encode expects 1 argument, got 0" {
+	if got := display.CallArityMismatchMessage("encode", 1, 0); got != "encode expects 1 argument, got 0" {
 		t.Fatalf("callArityMismatchMessage singular = %q", got)
 	}
-	if got := callArgumentCountEvidence("encode", 1); got != "call to encode passes 1 argument" {
+	if got := display.CallArgumentCountEvidence("encode", 1); got != "call to encode passes 1 argument" {
 		t.Fatalf("callArgumentCountEvidence = %q", got)
 	}
-	if got := callArgumentCountEvidence("encode", 2); got != "call to encode passes 2 arguments" {
+	if got := display.CallArgumentCountEvidence("encode", 2); got != "call to encode passes 2 arguments" {
 		t.Fatalf("callArgumentCountEvidence plural = %q", got)
 	}
-	if got := callParameterCountEvidence("encode", 2); got != "encode declares 2 parameters" {
+	if got := display.CallParameterCountEvidence("encode", 2); got != "encode declares 2 parameters" {
 		t.Fatalf("callParameterCountEvidence = %q", got)
 	}
-	if got := callParameterCountEvidence("encode", 1); got != "encode declares 1 parameter" {
+	if got := display.CallParameterCountEvidence("encode", 1); got != "encode declares 1 parameter" {
 		t.Fatalf("callParameterCountEvidence singular = %q", got)
 	}
-	if got := callParameterTypeEvidence("encode", 2, ".payload", typ.String); got != "encode parameter 2.payload expects string" {
+	if got := display.CallParameterTypeEvidence("encode", 2, ".payload", typ.String); got != "encode parameter 2.payload expects string" {
 		t.Fatalf("callParameterTypeEvidence = %q", got)
 	}
-	if got := callArityHelp(2, 1); got != "Pass the missing required arguments, or change the callee signature if fewer arguments are valid." {
+	if got := display.CallArityHelp(2, 1); got != "Pass the missing required arguments, or change the callee signature if fewer arguments are valid." {
 		t.Fatalf("callArityHelp too few = %q", got)
 	}
-	if got := callArityHelp(1, 2); got != "Remove the extra argument, or change the callee signature if the extra argument is valid." {
+	if got := display.CallArityHelp(1, 2); got != "Remove the extra argument, or change the callee signature if the extra argument is valid." {
 		t.Fatalf("callArityHelp too many = %q", got)
 	}
 }

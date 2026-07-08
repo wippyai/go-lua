@@ -6,7 +6,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 const (
@@ -137,18 +136,6 @@ type diagnosticDisplay struct{}
 
 var display diagnosticDisplay
 
-func formatType(t typ.Type) string {
-	return display.Type(t)
-}
-
-func assignmentSourceTypeEvidence(sourceName string, t typ.Type) string {
-	return display.SourceTypeEvidence(sourceName, t)
-}
-
-func declaredTypeEvidence(name string, annotation ast.TypeExpr, fallback typ.Type) string {
-	return display.DeclaredTypeEvidence(name, annotation, fallback)
-}
-
 func argumentTypeMismatchHelpForEvidence(subject string, argName string, got typ.Type, evidence []diagnostic.Evidence) string {
 	if evidenceNeedsValidationProof(got, evidence) {
 		return display.ArgumentValidationProofHelp(argName)
@@ -175,182 +162,6 @@ func evidenceNeedsValidationProof(got typ.Type, evidence []diagnostic.Evidence) 
 		}
 	}
 	return false
-}
-
-func explicitBoundaryProofMessage(want typ.Type) string {
-	return display.ExplicitBoundaryProofMessage(want)
-}
-
-func explicitBoundaryProofMessageForSubject(subject string, want typ.Type) string {
-	return display.ExplicitBoundaryProofMessageForSubject(subject, want)
-}
-
-func userAssertedAnyEvidence() string {
-	return display.UserAssertedAnyEvidence()
-}
-
-func missingBoundaryProofMessage(want typ.Type) string {
-	return display.MissingBoundaryProofMessage(want)
-}
-
-func missingBoundaryProofMessageForSubject(subject string, want typ.Type) string {
-	return display.MissingBoundaryProofMessageForSubject(subject, want)
-}
-
-func missingIndexReadProofMessage(want typ.Type) string {
-	return display.MissingIndexReadProofMessage(want)
-}
-
-func annotatedTypeEvidence(name string, t typ.Type) string {
-	return display.AnnotatedTypeEvidence(name, t)
-}
-
-func assignmentMessage(sourceName string, got, want typ.Type) string {
-	return display.AssignmentMessage(sourceName, got, want)
-}
-
-func assignmentMessageDisplay(sourceName string, got, want typ.Type, wantDisplay string) string {
-	return display.AssignmentMessageDisplay(sourceName, got, want, wantDisplay)
-}
-
-func memberAssignmentMessage(memberName string, sourceName string, got, want typ.Type) string {
-	return display.MemberAssignmentMessage(memberName, sourceName, got, want)
-}
-
-func memberAssignmentMessageDisplay(memberName string, sourceName string, got, want typ.Type, wantDisplay string) string {
-	return display.MemberAssignmentMessageDisplay(memberName, sourceName, got, want, wantDisplay)
-}
-
-func assignmentHelp(sourceName string, missingNilProof bool) string {
-	return display.AssignmentHelp(sourceName, missingNilProof)
-}
-
-func underSuppliedTargetEvidence(name, sourceName string, resultIndex int) string {
-	return display.UnderSuppliedTargetEvidence(name, sourceName, resultIndex)
-}
-
-func underSuppliedTargetHelp(name string) string {
-	return display.UnderSuppliedTargetHelp(name)
-}
-
-func assignmentTargetTypeEvidence(targetName string, want typ.Type) string {
-	return display.AssignmentTargetTypeEvidence(targetName, want)
-}
-
-func optionalAssignmentTargetMessage(containerName string) string {
-	return display.OptionalAssignmentTargetMessage(containerName)
-}
-
-func optionalAssignmentTargetContainerEvidence(containerName string, containerType typ.Type) string {
-	return display.OptionalAssignmentTargetContainerEvidence(containerName, containerType)
-}
-
-func optionalAssignmentTargetWriteEvidence(targetName string) string {
-	return display.OptionalAssignmentTargetWriteEvidence(targetName)
-}
-
-func optionalAssignmentTargetHelp(containerName string) string {
-	return display.OptionalAssignmentTargetHelp(containerName)
-}
-
-func missingRequiredFieldMessage(field string) string {
-	return display.MissingRequiredFieldMessage(field)
-}
-
-func missingRequiredFieldEvidence(field string) string {
-	return display.MissingRequiredFieldEvidence(field)
-}
-
-func missingRequiredFieldPathEvidence(path string, t typ.Type) string {
-	return display.MissingRequiredFieldPathEvidence(path, t)
-}
-
-func missingRequiredMethodMessage(contract typ.Type, method string) string {
-	return display.MissingRequiredMethodMessage(contract, method)
-}
-
-func missingRequiredMethodTypeEvidence(contract typ.Type, method typ.Method) string {
-	return display.MissingRequiredMethodTypeEvidence(contract, method)
-}
-
-func methodTypeMismatchMessage(contract typ.Type, method string, got, want typ.Type) string {
-	return display.MethodTypeMismatchMessage(contract, method, got, want)
-}
-
-func argumentMissingRequiredMethodMessage(argument string, contract typ.Type, method string) string {
-	return display.ArgumentMissingRequiredMethodMessage(argument, contract, method)
-}
-
-func argumentMethodTypeMismatchMessage(argument string, contract typ.Type, method string, got, want typ.Type) string {
-	return display.ArgumentMethodTypeMismatchMessage(argument, contract, method, got, want)
-}
-
-func methodTypeMismatchEvidence(contract typ.Type, method string, got, want typ.Type) string {
-	return display.MethodTypeMismatchEvidence(contract, method, got, want)
-}
-
-func objectLiteralShapeEvidence(t typ.Type) string {
-	return display.ObjectLiteralShapeEvidence(t)
-}
-
-func missingRequiredFieldHelp(field string) string {
-	return display.MissingRequiredFieldHelp(field)
-}
-
-func missingRequiredMethodHelp(method string) string {
-	return display.MissingRequiredMethodHelp(method)
-}
-
-func returnDeclaredTypeEvidence(label string, want typ.Type) string {
-	return display.ReturnDeclaredTypeEvidence(label, want)
-}
-
-func returnIndexedReadProofMessage(subject string) string {
-	return display.ReturnIndexedReadProofMessage(subject)
-}
-
-func returnExplicitBoundaryProofMessage(subject string) string {
-	return display.ReturnExplicitBoundaryProofMessage(subject)
-}
-
-func returnMissingProofMessage(subject string) string {
-	return display.ReturnMissingProofMessage(subject)
-}
-
-func callResultAssignmentHelp(missingNilProof bool) string {
-	return display.CallResultAssignmentHelp(missingNilProof)
-}
-
-func callResultDeclaredReturnEvidence(name, label string, got typ.Type) string {
-	return display.CallResultDeclaredReturnEvidence(name, label, got)
-}
-
-func callArityMismatchMessage(name string, want, got int) string {
-	return display.CallArityMismatchMessage(name, want, got)
-}
-
-func callArgumentCountEvidence(name string, got int) string {
-	return display.CallArgumentCountEvidence(name, got)
-}
-
-func callParameterCountEvidence(name string, want int) string {
-	return display.CallParameterCountEvidence(name, want)
-}
-
-func callParameterTypeEvidence(name string, index int, suffix string, want typ.Type) string {
-	return display.CallParameterTypeEvidence(name, index, suffix, want)
-}
-
-func callParamObligationEvidence(name string, subject string, want typ.Type) string {
-	return display.CallParamObligationEvidence(name, subject, want)
-}
-
-func memberCallParamObligationEvidence(name string, subject string, provider string, memberParam int, want typ.Type) string {
-	return display.MemberCallParamObligationEvidence(name, subject, provider, memberParam, want)
-}
-
-func callArityHelp(want, got int) string {
-	return display.CallArityHelp(want, got)
 }
 
 func codeName(name string) string {

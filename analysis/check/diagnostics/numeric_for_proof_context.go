@@ -59,7 +59,7 @@ func numericForExplicitTopEvidence(item judgment.Judgment, proof judgment.Numeri
 			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidencePrecisionBoundary, diagnostic.TrustUnknown),
 			Reason:  diagnostic.EvidenceReasonExplicitBoundaryValidation,
 			Span:    diagnosticEvidenceSpanOr(item, judgment.EvidencePrecisionBoundary, primary),
-			Message: explicitBoundaryProofMessageForSubject(subject, want),
+			Message: display.ExplicitBoundaryProofMessageForSubject(subject, want),
 		})
 	}
 	if proof.MissingProof {
@@ -68,7 +68,7 @@ func numericForExplicitTopEvidence(item judgment.Judgment, proof judgment.Numeri
 			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceMissingProof, diagnostic.TrustUnknown),
 			Reason:  diagnostic.EvidenceReasonBoundaryValidationMissing,
 			Span:    diagnosticEvidenceSpanOr(item, judgment.EvidenceMissingProof, primary),
-			Message: missingBoundaryProofMessageForSubject(subject, want),
+			Message: display.MissingBoundaryProofMessageForSubject(subject, want),
 		})
 	}
 	return out
