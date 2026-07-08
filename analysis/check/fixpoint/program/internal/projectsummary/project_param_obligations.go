@@ -23,7 +23,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
@@ -49,22 +48,6 @@ type callOutcomeAtReader interface {
 	CallOutcomeAt(cfg.Point) (callpayload.CallOutcome, bool)
 }
 
-type localAssignmentReader interface {
-	LocalAssignment(cfg.Point) (semantics.LocalAssignmentFact, bool)
-}
-
-type localAssignmentViewReader interface {
-	LocalAssignmentView(cfg.Point) (semantics.LocalAssignmentFactView, bool)
-}
-
-type ordinaryAssignmentReader interface {
-	OrdinaryAssignment(cfg.Point) (semantics.OrdinaryAssignmentFact, bool)
-}
-
-type ordinaryAssignmentViewReader interface {
-	OrdinaryAssignmentView(cfg.Point) (semantics.OrdinaryAssignmentFactView, bool)
-}
-
 type callSignatureReader interface {
 	CallSignatureType(factflow.CallSite) (*typ.Function, bool)
 }
@@ -79,6 +62,14 @@ type expressionPathReader interface {
 
 type expressionOperationRefReader interface {
 	ExpressionOperationRef(factflow.ExprRef) (factflow.ExpressionOperation, bool)
+}
+
+type pathAssignmentReader interface {
+	PathAssignment(cfg.Point) (factflow.PathAssignment, bool)
+}
+
+type pathDescendantInvalidationReader interface {
+	PathDescendantInvalidation(cfg.Point) (factflow.PathDescendantInvalidation, bool)
 }
 
 type sourceValueAtBoundaryReader interface {
@@ -157,11 +148,15 @@ func projectParamObligations(reg *axis.Registry, result ResultReader, cache *par
 				}
 			}
 		}
-		if fact, ok := localAssignmentFactAt(result, point); ok {
-			ctx.addArithmeticObligations(out, fact.Expr)
+		if assignment, ok := rootAssignmentAt(result, point); ok {
+			ctx.addArithmeticObligationsFromSource(out, assignment.Source())
 		}
-		if fact, ok := ordinaryAssignmentFactAt(result, point); ok {
-			ctx.addArithmeticObligations(out, fact.Value)
+		if assignment, ok := pathAssignmentAt(result, point); ok {
+			ctx.addArithmeticObligationsFromSource(out, assignment.Source())
+		}
+		if write, ok := dynamicIndexWriteAt(result, point); ok {
+			ctx.addArithmeticObligationsFromSource(out, write.KeySource())
+			ctx.addArithmeticObligationsFromSource(out, write.Source())
 		}
 	}
 	return out
@@ -211,12 +206,52 @@ func hasCallSiteView(result ResultReader) bool {
 	return ok
 }
 
-func hasOrdinaryAssignmentFactReader(result ResultReader) bool {
-	if _, ok := result.(ordinaryAssignmentViewReader); ok {
-		return true
+func rootAssignmentAt(result ResultReader, point cfg.Point) (factflow.RootAssignment, bool) {
+	reader, ok := result.(rootAssignmentReader)
+	if !ok {
+		return factflow.RootAssignment{}, false
 	}
-	_, ok := result.(ordinaryAssignmentReader)
-	return ok
+	return reader.RootAssignment(point)
+}
+
+func localRootAssignmentAt(result ResultReader, point cfg.Point) (factflow.RootAssignment, bool) {
+	assignment, ok := rootAssignmentAt(result, point)
+	if !ok || assignment.Kind() != factflow.RootAssignmentLocalDeclaration {
+		return factflow.RootAssignment{}, false
+	}
+	return assignment, true
+}
+
+func ordinaryRootAssignmentAt(result ResultReader, point cfg.Point) (factflow.RootAssignment, bool) {
+	assignment, ok := rootAssignmentAt(result, point)
+	if !ok || assignment.Kind() != factflow.RootAssignmentOrdinaryRootWrite {
+		return factflow.RootAssignment{}, false
+	}
+	return assignment, true
+}
+
+func pathAssignmentAt(result ResultReader, point cfg.Point) (factflow.PathAssignment, bool) {
+	reader, ok := result.(pathAssignmentReader)
+	if !ok {
+		return factflow.PathAssignment{}, false
+	}
+	return reader.PathAssignment(point)
+}
+
+func pathDescendantInvalidationAt(result ResultReader, point cfg.Point) (factflow.PathDescendantInvalidation, bool) {
+	reader, ok := result.(pathDescendantInvalidationReader)
+	if !ok {
+		return factflow.PathDescendantInvalidation{}, false
+	}
+	return reader.PathDescendantInvalidation(point)
+}
+
+func dynamicIndexWriteAt(result ResultReader, point cfg.Point) (factflow.DynamicIndexWrite, bool) {
+	reader, ok := result.(dynamicIndexWriteReader)
+	if !ok {
+		return factflow.DynamicIndexWrite{}, false
+	}
+	return reader.DynamicIndexWrite(point)
 }
 
 func projectParamMemberReturnSlots(reg *axis.Registry, result ResultReader, cache *paramObligationProjectorCache) []summary.ParamMemberReturnSlot {
@@ -293,34 +328,6 @@ func projectCapturedPathObligations(reg *axis.Registry, result ResultReader, cac
 		ctx.addCapturedTypedCallObligations(&out, site, captured)
 	}
 	return out
-}
-
-func localAssignmentFactAt(result ResultReader, point cfg.Point) (semantics.LocalAssignmentFact, bool) {
-	if reader, ok := result.(localAssignmentViewReader); ok {
-		view, ok := reader.LocalAssignmentView(point)
-		if !ok {
-			return semantics.LocalAssignmentFact{}, false
-		}
-		return view.Borrowed()
-	}
-	if reader, ok := result.(localAssignmentReader); ok {
-		return reader.LocalAssignment(point)
-	}
-	return semantics.LocalAssignmentFact{}, false
-}
-
-func ordinaryAssignmentFactAt(result ResultReader, point cfg.Point) (semantics.OrdinaryAssignmentFact, bool) {
-	if reader, ok := result.(ordinaryAssignmentViewReader); ok {
-		view, ok := reader.OrdinaryAssignmentView(point)
-		if !ok {
-			return semantics.OrdinaryAssignmentFact{}, false
-		}
-		return view.Borrowed()
-	}
-	if reader, ok := result.(ordinaryAssignmentReader); ok {
-		return reader.OrdinaryAssignment(point)
-	}
-	return semantics.OrdinaryAssignmentFact{}, false
 }
 
 func delegatedReturnCallSlots(result ResultReader, sources []factflow.ValueSource) (cfg.Point, map[int]int, bool) {
@@ -547,13 +554,6 @@ func (p paramObligationProjector) addTypedExpressionObligation(out []product.Val
 			}
 		}
 	}
-	if source, ok := p.stableLocalSourceExpr(expr); ok {
-		if p.expressionValueSatisfiesType(expr, want) && p.expressionHasPath(source) {
-			return
-		}
-		p.addTypedExpressionObligation(out, source, want, depth+1)
-		return
-	}
 	switch e := expr.(type) {
 	case *ast.StringConcatOpExpr:
 		if !concatResultSatisfies(want) {
@@ -624,7 +624,7 @@ func (p paramObligationProjector) addPathValueObligation(out []product.Value, pa
 		p.add(out, param, value)
 		return
 	}
-	source, ok := p.stableLocalPathSourceExpr(path)
+	source, ok := p.stableLocalPathSource(path)
 	if !ok {
 		return
 	}
@@ -632,7 +632,7 @@ func (p paramObligationProjector) addPathValueObligation(out []product.Value, pa
 	if !ok {
 		return
 	}
-	p.addTypedExpressionObligation(out, source, want, depth+1)
+	p.addTypedValueSourceObligation(out, source, want, depth+1)
 }
 
 func (p paramObligationProjector) addCapturedTypedExpressionObligation(out *[]summary.CapturedPathObligation, expr ast.Expr, want typ.Type, captured map[symbol.ID]struct{}, depth int) {
@@ -641,10 +641,6 @@ func (p paramObligationProjector) addCapturedTypedExpressionObligation(out *[]su
 	}
 	if value, ok := obligationValueFromType(p.reg, want); ok {
 		p.addCapturedExpressionValueObligation(out, expr, value, captured, depth+1)
-	}
-	if source, ok := p.stableLocalSourceExpr(expr); ok {
-		p.addCapturedTypedExpressionObligation(out, source, want, captured, depth+1)
-		return
 	}
 	switch e := expr.(type) {
 	case *ast.StringConcatOpExpr:
@@ -675,8 +671,8 @@ func (p paramObligationProjector) addCapturedTypedValueSourceObligation(
 		p.addCapturedSourceValueObligation(out, source, value, captured, depth+1)
 	}
 	if sourcePath, ok := p.valueSourcePath(source); ok {
-		if sourceExpr, sourceOK := p.stableLocalPathSourceExpr(sourcePath); sourceOK {
-			p.addCapturedTypedExpressionObligation(out, sourceExpr, want, captured, depth+1)
+		if localSource, sourceOK := p.stableLocalPathSource(sourcePath); sourceOK {
+			p.addCapturedTypedValueSourceObligation(out, localSource, want, captured, depth+1, seen)
 			return
 		}
 	}
@@ -742,9 +738,9 @@ func (p paramObligationProjector) addCapturedPathValueObligation(out *[]summary.
 		*out = append(*out, summary.CapturedPathObligation{Path: stable, Value: value})
 		return
 	}
-	if source, ok := p.stableLocalPathSourceExpr(path); ok {
+	if source, ok := p.stableLocalPathSource(path); ok {
 		if want, typeOK := typevalue.TypeOf(p.reg, value); typeOK {
-			p.addCapturedTypedExpressionObligation(out, source, want, captured, depth+1)
+			p.addCapturedTypedValueSourceObligation(out, source, want, captured, depth+1, nil)
 		}
 	}
 }
@@ -806,7 +802,7 @@ func (p paramObligationProjector) capturedPathStableAtUse(path pathdom.Path) boo
 		if !p.canReach(graph, graph.Entry(), point) || !p.canReach(graph, point, p.point) {
 			continue
 		}
-		if p.ordinaryAssignmentWritesLocal(point, path.Symbol) {
+		if p.assignmentInvalidatesSymbolRoot(point, path.Symbol) {
 			return false
 		}
 	}
@@ -1040,8 +1036,7 @@ func (p paramObligationProjector) computeMemberCallReceiverStable(receiver pathd
 				}
 			}
 		}
-		if fact, ok := ordinaryAssignmentFactAt(p.result, point); ok &&
-			p.assignmentInvalidatesMemberCallReceiver(fact, receiver, member) {
+		if p.assignmentInvalidatesMemberCallReceiverAt(point, receiver, member) {
 			return false
 		}
 	}
@@ -1202,24 +1197,37 @@ func projectPathHasPrefix(candidate, prefix pathdom.Path) bool {
 	return true
 }
 
-func (p paramObligationProjector) assignmentInvalidatesMemberCallReceiver(fact semantics.OrdinaryAssignmentFact, receiver pathdom.Path, member segment.Segment) bool {
+func (p paramObligationProjector) assignmentInvalidatesMemberCallReceiverAt(point cfg.Point, receiver pathdom.Path, member segment.Segment) bool {
 	if receiver.IsEmpty() || !memberaccess.Valid(member) {
 		return false
 	}
-	memberPaths := memberaccess.Paths(receiver, member)
-	if fact.HasPath {
-		if fact.Path.Equal(receiver) {
-			return true
-		}
-		for _, memberPath := range memberPaths {
-			if p.invalidationPathReachesMemberPath(fact.Path, memberPath) {
-				return true
-			}
-		}
+	if assignment, ok := ordinaryRootAssignmentAt(p.result, point); ok &&
+		p.assignmentPathInvalidatesMemberCallReceiver(assignment.TargetPathRef(), receiver, member) {
+		return true
+	}
+	if assignment, ok := pathAssignmentAt(p.result, point); ok &&
+		p.assignmentPathInvalidatesMemberCallReceiver(assignment.TargetPathRef(), receiver, member) {
+		return true
+	}
+	if invalidation, ok := pathDescendantInvalidationAt(p.result, point); ok &&
+		p.assignmentPathInvalidatesMemberCallReceiver(invalidation.ContainerPathRef(), receiver, member) {
+		return true
+	}
+	return false
+}
+
+func (p paramObligationProjector) assignmentPathInvalidatesMemberCallReceiver(target pathdom.Path, receiver pathdom.Path, member segment.Segment) bool {
+	if target.IsEmpty() {
 		return false
 	}
-	if fact.HasContainerPath {
-		return fact.ContainerPath.Equal(receiver)
+	memberPaths := memberaccess.Paths(receiver, member)
+	if target.Equal(receiver) {
+		return true
+	}
+	for _, memberPath := range memberPaths {
+		if p.invalidationPathReachesMemberPath(target, memberPath) {
+			return true
+		}
 	}
 	return false
 }
@@ -1385,68 +1393,6 @@ func pathKeyListContains(keys []pathdom.PathKey, want pathdom.PathKey) bool {
 	return false
 }
 
-func (p paramObligationProjector) addArithmeticObligations(out []product.Value, expr ast.Expr) {
-	if expr == nil {
-		return
-	}
-	switch e := expr.(type) {
-	case *ast.ArithmeticOpExpr:
-		p.addArithmeticOperand(out, e.Lhs)
-		p.addArithmeticOperand(out, e.Rhs)
-		p.addArithmeticObligations(out, e.Lhs)
-		p.addArithmeticObligations(out, e.Rhs)
-	case *ast.UnaryMinusOpExpr:
-		p.addArithmeticOperand(out, e.Expr)
-		p.addArithmeticObligations(out, e.Expr)
-	case *ast.UnaryBNotOpExpr:
-		p.addArithmeticOperand(out, e.Expr)
-		p.addArithmeticObligations(out, e.Expr)
-	case *ast.LogicalOpExpr:
-		p.addArithmeticObligations(out, e.Lhs)
-		p.addArithmeticObligations(out, e.Rhs)
-	case *ast.RelationalOpExpr:
-		p.addArithmeticObligations(out, e.Lhs)
-		p.addArithmeticObligations(out, e.Rhs)
-	case *ast.StringConcatOpExpr:
-		p.addArithmeticObligations(out, e.Lhs)
-		p.addArithmeticObligations(out, e.Rhs)
-	case *ast.UnaryLenOpExpr:
-		p.addLengthOperandObligation(out, e.Expr)
-		p.addArithmeticObligations(out, e.Expr)
-	case *ast.UnaryNotOpExpr:
-		p.addArithmeticObligations(out, e.Expr)
-	case *ast.CastExpr:
-		p.addArithmeticObligations(out, e.Expr)
-	case *ast.NonNilAssertExpr:
-		p.addArithmeticObligations(out, e.Expr)
-	case *ast.AttrGetExpr:
-		p.addArithmeticObligations(out, e.Object)
-		if e.KeySyntax == ast.AttrKeyIndex {
-			p.addArithmeticObligations(out, e.Key)
-		}
-	case *ast.FuncCallExpr:
-		p.addArithmeticObligations(out, e.Func)
-		p.addArithmeticObligations(out, e.Receiver)
-		for _, arg := range e.Args {
-			p.addArithmeticObligations(out, arg)
-		}
-	case *ast.TableExpr:
-		for _, field := range e.Fields {
-			if field == nil {
-				continue
-			}
-			if field.KeySyntax == ast.AttrKeyIndex {
-				p.addArithmeticObligations(out, field.Key)
-			}
-			p.addArithmeticObligations(out, field.Value)
-		}
-	}
-}
-
-func (p paramObligationProjector) addArithmeticOperand(out []product.Value, expr ast.Expr) {
-	p.addTypedExpressionObligation(out, expr, typ.Number, 0)
-}
-
 func (p paramObligationProjector) addArithmeticObligationsFromSource(out []product.Value, source factflow.ValueSource) {
 	p.addArithmeticObligationsFromSourceSeen(out, source, nil)
 }
@@ -1471,10 +1417,28 @@ func (p paramObligationProjector) addArithmeticObligationsFromSourceSeen(
 		return
 	}
 	op, ok := reader.ExpressionOperationRef(source.ExprRef)
-	if !ok {
-		return
+	if ok {
+		p.addArithmeticOperationObligationsSeen(out, op, seen)
 	}
-	p.addArithmeticOperationObligationsSeen(out, op, seen)
+	if objectReader, ok := p.result.(objectLiteralExprReader); ok {
+		if literal, literalOK := objectReader.ObjectLiteralExpr(source.ExprRef); literalOK {
+			p.addArithmeticObligationsFromObjectLiteral(out, literal.View(), seen)
+		}
+	}
+}
+
+func (p paramObligationProjector) addArithmeticObligationsFromObjectLiteral(
+	out []product.Value,
+	literal factflow.ObjectLiteralView,
+	seen map[factflow.ExprRef]struct{},
+) {
+	literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
+		p.addArithmeticObligationsFromSourceSeen(out, entry.Source(), seen)
+		return true
+	})
+	if source, ok := literal.ListElementSource(); ok {
+		p.addArithmeticObligationsFromSourceSeen(out, source, seen)
+	}
 }
 
 func (p paramObligationProjector) addArithmeticOperationObligations(out []product.Value, op factflow.ExpressionOperation) {
@@ -1518,30 +1482,6 @@ func (p paramObligationProjector) addArithmeticOperandSourceSeen(
 	seen map[factflow.ExprRef]struct{},
 ) {
 	p.addTypedValueSourceObligationSeen(out, source, typ.Number, 0, seen)
-}
-
-func (p paramObligationProjector) addLengthOperandObligation(out []product.Value, expr ast.Expr) {
-	if expr == nil {
-		return
-	}
-	pathReader, ok := p.result.(expressionPathReader)
-	if !ok {
-		return
-	}
-	exprPath, ok := pathReader.ExpressionPath(expr)
-	if !ok {
-		return
-	}
-	param, suffix, ok := p.unconditionalReceiverParamPath(exprPath)
-	if !ok {
-		return
-	}
-	want := lengthOperandObligationTypeAtSuffix(suffix)
-	value, ok := obligationValueFromType(p.reg, want)
-	if !ok {
-		return
-	}
-	p.add(out, param, value)
 }
 
 func (p paramObligationProjector) addLengthOperandSourceObligation(out []product.Value, source factflow.ValueSource) {
@@ -1595,12 +1535,42 @@ func (p paramObligationProjector) addTypedValueSourceObligationSeen(
 		}
 	}
 	if sourcePath, ok := p.valueSourcePath(source); ok {
-		if sourceExpr, sourceOK := p.stableLocalPathSourceExpr(sourcePath); sourceOK {
-			p.addTypedExpressionObligation(out, sourceExpr, want, depth+1)
+		if localSource, sourceOK := p.stableLocalPathSource(sourcePath); sourceOK {
+			p.addTypedValueSourceObligationSeen(out, localSource, want, depth+1, seen)
 			return
 		}
 	}
+	if source.HasExpr {
+		if reader, ok := p.result.(expressionOperationRefReader); ok {
+			if op, opOK := reader.ExpressionOperationRef(source.ExprRef); opOK &&
+				op.Kind() == factflow.ExpressionOperationBinary &&
+				op.Op() == ".." &&
+				concatResultSatisfies(want) {
+				p.addConcatOperandSourceObligationSeen(out, op.Left(), seen)
+				p.addConcatOperandSourceObligationSeen(out, op.Right(), seen)
+				return
+			}
+		}
+	}
 	p.addArithmeticObligationsFromSourceSeen(out, source, seen)
+}
+
+func (p paramObligationProjector) addConcatOperandSourceObligationSeen(
+	out []product.Value,
+	source factflow.ValueSource,
+	seen map[factflow.ExprRef]struct{},
+) {
+	if source.HasExpr {
+		if reader, ok := p.result.(expressionOperationRefReader); ok {
+			if op, opOK := reader.ExpressionOperationRef(source.ExprRef); opOK &&
+				op.Kind() == factflow.ExpressionOperationBinary &&
+				op.Op() == ".." {
+				p.addTypedValueSourceObligationSeen(out, source, typ.String, 0, seen)
+				return
+			}
+		}
+	}
+	p.addTypedValueSourceObligationSeen(out, source, concatOperandObligationType(), 0, seen)
 }
 
 func (p paramObligationProjector) sourceValueSatisfiesType(source factflow.ValueSource, want typ.Type) bool {
@@ -1730,41 +1700,29 @@ func (p paramObligationProjector) unconditionalPathParamIndex(exprPath pathdom.P
 	return index, true
 }
 
-func (p paramObligationProjector) stableLocalSourceExpr(expr ast.Expr) (ast.Expr, bool) {
-	pathReader, ok := p.result.(expressionPathReader)
-	if !ok || expr == nil {
-		return nil, false
-	}
-	exprPath, ok := pathReader.ExpressionPath(expr)
-	if !ok {
-		return nil, false
-	}
-	return p.stableLocalPathSourceExpr(exprPath)
-}
-
-func (p paramObligationProjector) stableLocalPathSourceExpr(local pathdom.Path) (ast.Expr, bool) {
+func (p paramObligationProjector) stableLocalPathSource(local pathdom.Path) (factflow.ValueSource, bool) {
 	if local.IsEmpty() || local.Symbol == 0 || len(local.Segments) != 0 {
-		return nil, false
+		return factflow.ValueSource{}, false
 	}
 	graph := p.result.Graph()
 	if graph == nil {
-		return nil, false
+		return factflow.ValueSource{}, false
 	}
 	var sourcePoint cfg.Point
-	var sourceExpr ast.Expr
+	var source factflow.ValueSource
 	for _, point := range graph.RPO() {
-		fact, ok := localAssignmentFactAt(p.result, point)
-		if !ok || !fact.HasSymbol || fact.Symbol != local.Symbol || fact.Expr == nil {
+		assignment, ok := localRootAssignmentAt(p.result, point)
+		if !ok || assignment.TargetSymbol() != local.Symbol {
 			continue
 		}
 		if !p.dominates(point, p.point) {
 			continue
 		}
 		sourcePoint = point
-		sourceExpr = fact.Expr
+		source = assignment.Source()
 	}
-	if sourceExpr == nil {
-		return nil, false
+	if source.Kind == factflow.ValueSourceUnknown {
+		return factflow.ValueSource{}, false
 	}
 	for _, point := range graph.RPO() {
 		if point == sourcePoint || point == p.point {
@@ -1773,28 +1731,30 @@ func (p paramObligationProjector) stableLocalPathSourceExpr(local pathdom.Path) 
 		if !p.canReach(graph, sourcePoint, point) || !p.canReach(graph, point, p.point) {
 			continue
 		}
-		if p.ordinaryAssignmentWritesLocal(point, local.Symbol) {
-			return nil, false
+		if p.assignmentInvalidatesSymbolRoot(point, local.Symbol) {
+			return factflow.ValueSource{}, false
 		}
 	}
-	return sourceExpr, true
+	return source, true
 }
 
-func (p paramObligationProjector) ordinaryAssignmentWritesLocal(point cfg.Point, sym symbol.ID) bool {
+func (p paramObligationProjector) assignmentInvalidatesSymbolRoot(point cfg.Point, sym symbol.ID) bool {
 	if sym == 0 {
 		return false
 	}
-	fact, ok := ordinaryAssignmentFactAt(p.result, point)
-	if !ok {
-		return false
+	if assignment, ok := ordinaryRootAssignmentAt(p.result, point); ok {
+		target := assignment.TargetPathRef()
+		if assignment.TargetSymbol() == sym || target.Symbol == sym {
+			return true
+		}
 	}
-	if fact.HasSymbol && fact.Symbol == sym {
+	if assignment, ok := pathAssignmentAt(p.result, point); ok && assignment.TargetPathRef().Symbol == sym {
 		return true
 	}
-	if fact.HasPath && fact.Path.Symbol == sym {
+	if invalidation, ok := pathDescendantInvalidationAt(p.result, point); ok && invalidation.ContainerPathRef().Symbol == sym {
 		return true
 	}
-	return fact.HasContainerPath && fact.ContainerPath.Symbol == sym
+	return false
 }
 
 func (p paramObligationProjector) unconditionalReceiverParamPath(receiver pathdom.Path) (int, []segment.Segment, bool) {
@@ -1820,7 +1780,7 @@ func (p paramObligationProjector) localAliasSourcePath(receiver pathdom.Path) (p
 	if receiver.IsEmpty() || receiver.Symbol == 0 {
 		return pathdom.Path{}, false
 	}
-	pathReader, ok := p.result.(expressionPathReader)
+	pathReader, ok := p.result.(expressionPathRefReader)
 	if !ok {
 		return pathdom.Path{}, false
 	}
@@ -1832,11 +1792,11 @@ func (p paramObligationProjector) localAliasSourcePath(receiver pathdom.Path) (p
 		if point == p.point {
 			return pathdom.Path{}, false
 		}
-		fact, ok := localAssignmentFactAt(p.result, point)
-		if !ok || !fact.HasSymbol || fact.Symbol != receiver.Symbol || fact.Expr == nil {
+		assignment, ok := localRootAssignmentAt(p.result, point)
+		if !ok || assignment.TargetSymbol() != receiver.Symbol {
 			continue
 		}
-		source, ok := pathReader.ExpressionPath(fact.Expr)
+		source, ok := valueSourcePath(p.result, pathReader, assignment.Source())
 		if !ok || source.IsEmpty() {
 			continue
 		}

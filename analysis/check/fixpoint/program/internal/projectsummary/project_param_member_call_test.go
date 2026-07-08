@@ -36,6 +36,10 @@ type memberCallSiteOnlyResult struct {
 	returnSources map[cfg.Point][]factflow.ValueSource
 	fn            *ast.FunctionExpr
 	captures      []bind.Capture
+	rootAssigns   map[cfg.Point]factflow.RootAssignment
+	pathAssigns   map[cfg.Point]factflow.PathAssignment
+	exprOps       map[factflow.ExprRef]factflow.ExpressionOperation
+	objects       map[factflow.ExprRef]factflow.ObjectLiteral
 }
 
 func (r memberCallSiteOnlyResult) Registry() *axis.Registry { return standard.Registry() }
@@ -69,6 +73,22 @@ func (r memberCallSiteOnlyResult) ReturnValueSources(point cfg.Point) ([]factflo
 		return nil, false
 	}
 	return append([]factflow.ValueSource(nil), sources...), true
+}
+func (r memberCallSiteOnlyResult) RootAssignment(point cfg.Point) (factflow.RootAssignment, bool) {
+	fact, ok := r.rootAssigns[point]
+	return fact, ok
+}
+func (r memberCallSiteOnlyResult) PathAssignment(point cfg.Point) (factflow.PathAssignment, bool) {
+	fact, ok := r.pathAssigns[point]
+	return fact, ok
+}
+func (r memberCallSiteOnlyResult) ExpressionOperationRef(ref factflow.ExprRef) (factflow.ExpressionOperation, bool) {
+	op, ok := r.exprOps[ref]
+	return op, ok
+}
+func (r memberCallSiteOnlyResult) ObjectLiteralExpr(ref factflow.ExprRef) (factflow.ObjectLiteral, bool) {
+	lit, ok := r.objects[ref]
+	return lit, ok
 }
 func (r memberCallSiteOnlyResult) ExpressionPathRef(factflow.ExprRef) (pathdom.Path, bool) {
 	return pathdom.Path{}, false
@@ -152,6 +172,50 @@ func TestParamObligationsUseTypedCallSiteSourcesWithoutSemanticCallFact(t *testi
 	}
 }
 
+func TestParamObligationsUseRootAssignmentSourceWithoutSemanticAssignmentFact(t *testing.T) {
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, true)
+	graph.AddEdge(assign, graph.Exit(), true)
+
+	payload := pathdom.NewPath(symbol.ID(2), "payload")
+	payloadSource, ok := factflow.NewPathValueSource(payload.Key(), 0, 0, 0, factflow.ValueSourceShape{Final: true, Adjusted: true})
+	if !ok {
+		t.Fatal("NewPathValueSource(payload) failed")
+	}
+	oneSource, ok := factflow.NewIntegerLiteralValueSource(1, 1, 0, 0, factflow.ValueSourceShape{Final: true, Adjusted: true})
+	if !ok {
+		t.Fatal("NewIntegerLiteralValueSource failed")
+	}
+	op, ok := factflow.NewBinaryExpressionOperation("+", payloadSource, oneSource)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation failed")
+	}
+	exprSource, ok := factflow.NewExpressionValueSource(factflow.ExprRef(10), 0, 0, 0, factflow.ValueSourceShape{Final: true, Adjusted: true})
+	if !ok {
+		t.Fatal("NewExpressionValueSource failed")
+	}
+	local := pathdom.NewPath(symbol.ID(4), "sum")
+	result := memberCallSiteOnlyResult{
+		graph: graph,
+		point: assign,
+		ks:    keyspace.New(),
+		rootAssigns: map[cfg.Point]factflow.RootAssignment{
+			assign: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, local.Symbol, local, exprSource),
+		},
+		exprOps: map[factflow.ExprRef]factflow.ExpressionOperation{factflow.ExprRef(10): op},
+	}
+
+	got := projectParamObligations(standard.Registry(), result, nil)
+	if len(got) != 2 {
+		t.Fatalf("param obligations = %#v, want two parameter slots", got)
+	}
+	gotType, ok := typevalue.TypeOf(standard.Registry(), got[1])
+	if !ok || !subtype.IsSubtype(gotType, typ.Number) {
+		t.Fatalf("payload obligation type = %v/%v, want number from root-assignment arithmetic source", gotType, ok)
+	}
+}
+
 func TestParamMemberReturnSlotsUseCallSiteWithoutSemanticCallFact(t *testing.T) {
 	graph := cfg.New()
 	call := graph.AddNode(cfg.NodeCall)
@@ -187,6 +251,44 @@ func TestParamMemberReturnSlotsUseCallSiteWithoutSemanticCallFact(t *testing.T) 
 	}
 	if got[0].ReceiverParam != 0 || got[0].ReturnIndex != 0 || got[0].MemberResultIndex != 2 {
 		t.Fatalf("member return slot = %#v, want receiver param 0 return 0 from member result 2", got[0])
+	}
+}
+
+func TestParamMemberCallStabilityUsesPathAssignmentWithoutSemanticAssignmentFact(t *testing.T) {
+	graph := cfg.New()
+	prior := graph.AddNode(cfg.NodeAssign)
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), prior, true)
+	graph.AddEdge(prior, call, true)
+	graph.AddEdge(call, graph.Exit(), true)
+
+	client := pathdom.NewPath(symbol.ID(1), "client")
+	payload := pathdom.NewPath(symbol.ID(2), "payload")
+	payloadSource, ok := factflow.NewPathValueSource(payload.Key(), 0, 0, 0, factflow.ValueSourceShape{Final: true, Adjusted: true})
+	if !ok {
+		t.Fatal("NewPathValueSource(payload) failed")
+	}
+	writeSource, ok := factflow.NewStringLiteralValueSource("replacement", 0, 0, 0, factflow.ValueSourceShape{Final: true, Adjusted: true})
+	if !ok {
+		t.Fatal("NewStringLiteralValueSource failed")
+	}
+	result := memberCallSiteOnlyResult{
+		graph: graph,
+		point: call,
+		site: factflow.NewCallSite(factflow.CallSiteConfig{
+			CalleePath:         client.Field("invoke"),
+			CalleeMemberAccess: true,
+			ArgumentSources:    []factflow.ValueSource{payloadSource},
+		}).View(),
+		ks:        keyspace.New(),
+		signature: typ.Func().Param("payload", typ.String).Build(),
+		pathAssigns: map[cfg.Point]factflow.PathAssignment{
+			prior: factflow.NewPathAssignment(client.Field("invoke"), writeSource),
+		},
+	}
+
+	if got := projectParamMemberCallObligations(standard.Registry(), result, nil); len(got) != 0 {
+		t.Fatalf("member call obligations = %#v, want none after WIR path assignment invalidates receiver member", got)
 	}
 }
 
