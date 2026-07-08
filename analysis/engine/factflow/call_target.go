@@ -99,11 +99,6 @@ func (v CallResultTargetView) TargetPathEqual(p path.Path) bool {
 	return v.target.targetPath.Equal(p)
 }
 
-// CallResultTarget returns a defensive copy of the target descriptor.
-func (v CallResultTargetView) CallResultTarget() CallResultTarget {
-	return v.target.copy()
-}
-
 func (t CallResultTarget) copy() CallResultTarget {
 	t.targetPath = t.targetPath.Clone()
 	return t

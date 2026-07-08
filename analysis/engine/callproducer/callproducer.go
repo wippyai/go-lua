@@ -49,7 +49,13 @@ func strictResultTargetsView(site factflow.CallSiteView) []factflow.CallResultTa
 	out := make([]factflow.CallResultTarget, 0, site.ResultTargetCount())
 	site.ForEachResultTarget(func(target factflow.CallResultTargetView) bool {
 		if strictResultTargetView(target) {
-			out = append(out, target.CallResultTarget())
+			out = append(out, factflow.NewCallResultTarget(
+				target.Kind(),
+				target.Index(),
+				target.ResultIndex(),
+				target.TargetSymbol(),
+				target.TargetPathRef(),
+			))
 		}
 		return true
 	})
