@@ -14,9 +14,6 @@ import (
 )
 
 func (l *lowerer) channelSelectsFromWIR(point cfg.Point) []factflow.ChannelSelect {
-	if l == nil || l.wir == nil {
-		return nil
-	}
 	for _, inst := range l.wir.PointInstructions(point) {
 		if inst.Op != wir.OpSelect {
 			continue
@@ -29,9 +26,6 @@ func (l *lowerer) channelSelectsFromWIR(point cfg.Point) []factflow.ChannelSelec
 }
 
 func (l *lowerer) channelSelectResultTargetFromWIR(point cfg.Point) (wir.CallResultTarget, bool) {
-	if l == nil || l.wir == nil {
-		return wir.CallResultTarget{}, false
-	}
 	for _, target := range l.wir.CallResultTargets(point) {
 		if target.Path.IsEmpty() {
 			continue

@@ -7,9 +7,6 @@ import (
 )
 
 func (l *lowerer) branchPathRelationsFromWIR(point cfg.Point) (factflow.BranchPathRelationSet, bool) {
-	if l == nil || l.wir == nil {
-		return factflow.BranchPathRelationSet{}, false
-	}
 	var relations []factflow.BranchPathRelation
 	l.forEachWIRBranchCheck(point, func(check branchcond.Check) {
 		if check.Kind != branchcond.CheckNone {

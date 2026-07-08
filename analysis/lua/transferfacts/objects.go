@@ -41,7 +41,7 @@ func (l *lowerer) objectLiteralEntriesFromWIR(inst wir.Instruction) []factflow.O
 }
 
 func (l *lowerer) objectLiteralListElementSourceFromWIR(inst wir.Instruction) (factflow.ValueSource, bool) {
-	if !inst.ListSpread || l == nil || l.wir == nil {
+	if !inst.ListSpread {
 		return factflow.ValueSource{}, false
 	}
 	ops := l.wir.Operands(inst.List)
@@ -105,7 +105,7 @@ func (l *lowerer) addObjectLiteralFromWIR(input *factflow.FactsInput, inst wir.I
 }
 
 func (l *lowerer) addObjectLiteralsFromWIR(input *factflow.FactsInput) {
-	if l == nil || l.wir == nil || input == nil {
+	if input == nil {
 		return
 	}
 	for i := 0; i < l.wir.Len(); i++ {
@@ -118,7 +118,7 @@ func (l *lowerer) addObjectLiteralsFromWIR(input *factflow.FactsInput) {
 }
 
 func (l *lowerer) addNestedObjectLiteralsFromWIR(input *factflow.FactsInput, inst wir.Instruction) {
-	if l == nil || l.wir == nil || input == nil {
+	if input == nil {
 		return
 	}
 	tempDefs := l.wirTempDefs()
@@ -135,7 +135,7 @@ func (l *lowerer) addNestedObjectLiteralsFromWIR(input *factflow.FactsInput, ins
 }
 
 func (l *lowerer) wirObjectLiteralExpectedType(inst wir.Instruction) (typ.Type, bool) {
-	if l == nil || l.wir == nil || inst.Type == 0 {
+	if inst.Type == 0 {
 		return nil, false
 	}
 	expected := l.wir.Type(inst.Type)
@@ -247,7 +247,7 @@ func (l *lowerer) setObjectLiteralExpectedExpressionValue(ref factflow.ExprRef, 
 }
 
 func (l *lowerer) addReturnObjectLiteralExpectedTypesFromWIR(input *factflow.FactsInput, sources []factflow.ValueSource) {
-	if l == nil || l.wir == nil || input == nil {
+	if input == nil {
 		return
 	}
 	declared := l.wir.DeclaredReturnTypes()

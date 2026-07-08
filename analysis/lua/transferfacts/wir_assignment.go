@@ -15,7 +15,7 @@ import (
 )
 
 func (l *lowerer) addAssignmentWritesFromWIR(input *factflow.FactsInput, point cfg.Point) {
-	if l == nil || l.wir == nil || input == nil {
+	if input == nil {
 		return
 	}
 	for _, inst := range l.wir.PointInstructions(point) {
@@ -33,7 +33,7 @@ func (l *lowerer) addAssignmentWritesFromWIR(input *factflow.FactsInput, point c
 }
 
 func (l *lowerer) addNumericForRootAssignmentFromWIR(input *factflow.FactsInput, point cfg.Point, inst wir.Instruction) {
-	if l == nil || input == nil || l.wir == nil || inst.Iter != wir.IterNumeric {
+	if input == nil || inst.Iter != wir.IterNumeric {
 		return
 	}
 	results := l.wir.Operands(inst.Results)
@@ -62,9 +62,6 @@ func (l *lowerer) addNumericForRootAssignmentFromWIR(input *factflow.FactsInput,
 }
 
 func (l *lowerer) numericForLoopVariableTypeFromWIR(inst wir.Instruction) typ.Type {
-	if l == nil || l.wir == nil {
-		return nil
-	}
 	return numericForLoopVariableTypeFromWIR(l.wir, l.symbolTypes, l.wirTempDefs(), inst)
 }
 
@@ -120,7 +117,7 @@ func (l *lowerer) addRootAssignmentFromWIR(input *factflow.FactsInput, point cfg
 }
 
 func (l *lowerer) addCastExposureFromWIR(input *factflow.FactsInput, point cfg.Point, inst wir.Instruction) {
-	if l == nil || l.wir == nil || input == nil || inst.Op != wir.OpClaim || inst.Claim != wir.ClaimCast || inst.Type == 0 {
+	if input == nil || inst.Op != wir.OpClaim || inst.Claim != wir.ClaimCast || inst.Type == 0 {
 		return
 	}
 	operandPath, ok := l.wirOperandPath(inst.A)
@@ -139,7 +136,7 @@ func (l *lowerer) addCastExposureFromWIR(input *factflow.FactsInput, point cfg.P
 }
 
 func (l *lowerer) wirOperandPath(op wir.Operand) (path.Path, bool) {
-	if l == nil || l.wir == nil || op.Kind != wir.OperandPath {
+	if op.Kind != wir.OperandPath {
 		return path.Path{}, false
 	}
 	p := l.wir.Path(wir.PathRef(op.Ref))
@@ -173,7 +170,7 @@ func (l *lowerer) addRootAssignmentExposureFromWIR(input *factflow.FactsInput, p
 }
 
 func (l *lowerer) wirInstructionDeclaredType(inst wir.Instruction) (typ.Type, bool) {
-	if l == nil || l.wir == nil || inst.Type == 0 {
+	if inst.Type == 0 {
 		return nil, false
 	}
 	if inst.Op == wir.OpClaim {
@@ -241,10 +238,7 @@ func (l *lowerer) declaredTypeClaimValue(t typ.Type) product.Value {
 }
 
 func (l *lowerer) wirExplicitTopDeclaredContract(inst wir.Instruction) (typ.Type, bool) {
-	if l == nil {
-		return nil, false
-	}
-	if l.wir == nil || inst.Type == 0 {
+	if inst.Type == 0 {
 		return nil, false
 	}
 	if inst.Op == wir.OpClaim {
@@ -504,7 +498,7 @@ func (l *lowerer) wirAssignmentSourcePath(op wir.Operand) (path.Path, bool) {
 	if p, ok := l.wirAssignmentPath(op); ok {
 		return p, true
 	}
-	if l == nil || l.wir == nil || op.Kind != wir.OperandTemp {
+	if op.Kind != wir.OperandTemp {
 		return path.Path{}, false
 	}
 	def, ok := l.wirTempDefs()[op.Ref]
@@ -533,7 +527,7 @@ func (l *lowerer) addDynamicIndexObjectLiteralExpectedTypeFromWIR(input *factflo
 }
 
 func (l *lowerer) wirAssignmentPath(op wir.Operand) (path.Path, bool) {
-	if l == nil || l.wir == nil || op.Kind != wir.OperandPath {
+	if op.Kind != wir.OperandPath {
 		return path.Path{}, false
 	}
 	p := l.wir.Path(wir.PathRef(op.Ref))

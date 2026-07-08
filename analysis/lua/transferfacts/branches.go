@@ -157,9 +157,6 @@ func (l *lowerer) forEachWIRBranchCheck(
 	direct func(branchcond.Check),
 	implied func(branchcond.ImpliedCheck),
 ) {
-	if l == nil || l.wir == nil {
-		return
-	}
 	for _, inst := range l.wir.PointInstructions(point) {
 		if inst.Op != wir.OpBranch {
 			continue

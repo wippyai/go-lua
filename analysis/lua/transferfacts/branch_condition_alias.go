@@ -44,7 +44,7 @@ func collectWIRBranchAliases[T any](
 	point cfg.Point,
 	selector func(factflow.ExpressionCondition, bool) []T,
 ) []T {
-	if l == nil || l.wir == nil || len(l.localConditionAliases) == 0 {
+	if len(l.localConditionAliases) == 0 {
 		return nil
 	}
 	var out []T

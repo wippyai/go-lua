@@ -8,9 +8,6 @@ import (
 )
 
 func (l *lowerer) branchDiffConstraintsFromWIR(point cfg.Point) []factflow.BranchDiffConstraint {
-	if l == nil || l.wir == nil {
-		return nil
-	}
 	var out []factflow.BranchDiffConstraint
 	for _, inst := range l.wir.PointInstructions(point) {
 		if inst.Op != wir.OpBranch {

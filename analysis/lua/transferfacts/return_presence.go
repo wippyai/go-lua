@@ -10,7 +10,7 @@ import (
 )
 
 func (l *lowerer) addReturnPresenceRelations(input *factflow.FactsInput, graph cfg.Graph) {
-	if input == nil || graph == nil || l == nil || l.wir == nil {
+	if input == nil || graph == nil {
 		return
 	}
 	points := wirReturnFactPoints(graph, l.wir)
@@ -47,11 +47,8 @@ func (l *lowerer) returnPresenceArity(input *factflow.FactsInput, points []cfg.P
 			}
 		}
 	}
-	if l != nil && l.wir != nil {
-		if n := l.wir.DeclaredReturnArity(); n > arity {
-			arity = n
-		}
-		return arity
+	if n := l.wir.DeclaredReturnArity(); n > arity {
+		arity = n
 	}
 	return arity
 }

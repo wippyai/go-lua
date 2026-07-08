@@ -53,9 +53,6 @@ func (l *lowerer) branchConditionSourceAtWIR(point cfg.Point) (factflow.ValueSou
 }
 
 func (l *lowerer) firstDirectBranchCheckFromWIR(point cfg.Point) (branchcond.Check, bool) {
-	if l == nil || l.wir == nil {
-		return branchcond.Check{}, false
-	}
 	var out branchcond.Check
 	var found bool
 	l.wir.ForEachBranchCheck(point, func(check wir.Check) bool {

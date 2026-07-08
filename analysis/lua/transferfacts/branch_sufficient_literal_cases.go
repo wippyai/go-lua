@@ -10,9 +10,6 @@ import (
 )
 
 func (l *lowerer) branchSufficientLiteralCasesFromWIR(point cfg.Point) []factflow.BranchSufficientLiteralCase {
-	if l == nil || l.wir == nil {
-		return nil
-	}
 	var out []factflow.BranchSufficientLiteralCase
 	for _, inst := range l.wir.PointInstructions(point) {
 		if inst.Op != wir.OpBranch {

@@ -171,7 +171,7 @@ func (l *lowerer) addTypeIsReturnPresenceRelationsFromSources(input *factflow.Fa
 }
 
 func (l *lowerer) addNumericForFactsFromWIR(input *factflow.FactsInput, point cfg.Point) {
-	if l == nil || l.wir == nil || input == nil {
+	if input == nil {
 		return
 	}
 	if lowered, ok := l.numericForBranchNumFloorRefinementFromWIR(point); ok {
@@ -183,7 +183,7 @@ func (l *lowerer) addNumericForFactsFromWIR(input *factflow.FactsInput, point cf
 }
 
 func (l *lowerer) addBranchFactsFromWIR(input *factflow.FactsInput, point cfg.Point) {
-	if l == nil || l.wir == nil || input == nil || !l.wir.HasInstruction(point, wir.OpBranch) {
+	if input == nil || !l.wir.HasInstruction(point, wir.OpBranch) {
 		return
 	}
 	if source, ok := l.branchConditionSourceAtWIR(point); ok {

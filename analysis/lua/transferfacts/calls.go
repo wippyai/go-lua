@@ -66,7 +66,7 @@ type wirTypeRefKey struct {
 }
 
 func (l *lowerer) typeRefsFromWIR(r wir.TypeRefRange) []factflow.TypeRef {
-	if l == nil || l.wir == nil || r.Len == 0 {
+	if r.Len == 0 {
 		return nil
 	}
 	refs := l.wir.TypeRefs(r)
@@ -139,9 +139,6 @@ func (l *lowerer) callSiteMetadataFromWIR(point cfg.Point) (callSiteMetadata, bo
 }
 
 func (l *lowerer) callShapeFromWIR(point cfg.Point) (callSiteShape, bool) {
-	if l == nil || l.wir == nil {
-		return callSiteShape{}, false
-	}
 	inst, hasCall := l.wirCallInstruction(point)
 	if shape, ok := l.methodCallShapeFromWIR(point); ok {
 		return shape, true
@@ -251,9 +248,6 @@ func (l *lowerer) callReceiverSourceFromWIR(point cfg.Point, shape valueSourceSh
 }
 
 func (l *lowerer) callArgumentSourcesFromWIR(point cfg.Point) ([]factflow.ValueSource, bool) {
-	if l == nil || l.wir == nil {
-		return nil, false
-	}
 	inst, ok := l.wirCallInstruction(point)
 	if !ok {
 		return nil, false
@@ -295,9 +289,6 @@ func (l *lowerer) callArgumentSourceFromWIROperand(
 }
 
 func (l *lowerer) wirCallInstruction(point cfg.Point) (wir.Instruction, bool) {
-	if l == nil || l.wir == nil {
-		return wir.Instruction{}, false
-	}
 	for _, inst := range l.wir.PointInstructions(point) {
 		if inst.Op == wir.OpCall {
 			return inst, true

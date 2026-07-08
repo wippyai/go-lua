@@ -24,7 +24,7 @@ func (l *lowerer) assertPostconditionRefinementFromWIR(point cfg.Point) (factflo
 }
 
 func (l *lowerer) isDirectGlobalAssertWIRCall(inst wir.Instruction) bool {
-	if l == nil || l.wir == nil || l.bindings == nil || inst.Call.Method != 0 || inst.Call.Callee.Kind != wir.OperandPath {
+	if l.bindings == nil || inst.Call.Method != 0 || inst.Call.Callee.Kind != wir.OperandPath {
 		return false
 	}
 	calleePath := l.wir.Path(wir.PathRef(inst.Call.Callee.Ref))

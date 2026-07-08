@@ -34,7 +34,7 @@ func typeRefPartsFromWIRPath(p path.Path) ([]string, bool) {
 }
 
 func (l *lowerer) addTypeIsBranchRefinements(input *factflow.FactsInput, graph cfg.Graph) {
-	if l == nil || l.wir == nil || input == nil || graph == nil {
+	if input == nil || graph == nil {
 		return
 	}
 	for _, callPoint := range graph.RPO() {
@@ -88,7 +88,7 @@ func (l *lowerer) addTypeIsBranchRefinements(input *factflow.FactsInput, graph c
 }
 
 func (l *lowerer) typeIsCallSiteFromWIR(point cfg.Point) (typ.Type, path.Path, bool) {
-	if l == nil || l.wir == nil || l.typeResolver == nil {
+	if l.typeResolver == nil {
 		return nil, path.Path{}, false
 	}
 	t, ok := l.typeIsReceiverTypeFromWIRCall(point)
@@ -103,7 +103,7 @@ func (l *lowerer) typeIsCallSiteFromWIR(point cfg.Point) (typ.Type, path.Path, b
 }
 
 func (l *lowerer) typeIsReceiverTypeFromWIRCall(point cfg.Point) (typ.Type, bool) {
-	if l == nil || l.wir == nil || l.typeResolver == nil {
+	if l.typeResolver == nil {
 		return nil, false
 	}
 	inst, ok := l.wirCallInstruction(point)
@@ -154,9 +154,6 @@ func (l *lowerer) addTypeIsConditionBranchRefinementsFromWIR(
 	argPath path.Path,
 	value product.Value,
 ) {
-	if l == nil || l.wir == nil {
-		return
-	}
 	for _, branch := range graph.RPO() {
 		if !l.wir.HasInstruction(branch, wir.OpBranch) {
 			continue
@@ -172,9 +169,6 @@ func (l *lowerer) addTypeIsConditionBranchRefinementsFromWIR(
 }
 
 func (l *lowerer) typeIsConditionSuccessEdgeFromWIR(branch cfg.Point, callPoint cfg.Point) (bool, bool) {
-	if l == nil || l.wir == nil {
-		return false, false
-	}
 	for _, inst := range l.wir.PointInstructions(branch) {
 		if inst.Op != wir.OpBranch {
 			continue

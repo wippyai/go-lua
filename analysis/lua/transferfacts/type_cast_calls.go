@@ -59,9 +59,6 @@ func (l *lowerer) directTypeCastCallFromWIR(point cfg.Point) (directTypeCastInfo
 }
 
 func (l *lowerer) typeCastTargetFromWIR(point cfg.Point) (typ.Type, bool) {
-	if l == nil || l.wir == nil {
-		return nil, false
-	}
 	calleePath, ok := l.callCalleePathFromWIR(point)
 	if ok && l.bindings != nil && len(calleePath.Segments) == 0 {
 		t, ok := primitiveRuntimeCastType(calleePath.Root)

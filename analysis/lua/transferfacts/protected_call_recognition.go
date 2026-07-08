@@ -10,7 +10,7 @@ import (
 )
 
 func (l *lowerer) addProtectedCallBranchRefinements(input *factflow.FactsInput, graph cfg.Graph) {
-	if l == nil || l.wir == nil || input == nil || graph == nil {
+	if input == nil || graph == nil {
 		return
 	}
 	for _, callPoint := range graph.RPO() {
@@ -57,7 +57,7 @@ func (l *lowerer) addProtectedCallBranchRefinements(input *factflow.FactsInput, 
 }
 
 func (l *lowerer) protectedCallPayloadTypeFromWIRCallSite(point cfg.Point, site factflow.CallSite) (typ.Type, bool) {
-	if l == nil || l.wir == nil || !l.isProtectedCallSite(site) {
+	if !l.isProtectedCallSite(site) {
 		return nil, false
 	}
 	callbackPath, ok := l.callArgumentPathFromWIR(point, 0)

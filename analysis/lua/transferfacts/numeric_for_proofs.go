@@ -29,9 +29,6 @@ func (l *lowerer) numericForBranchNumFloorRefinementFromWIR(point cfg.Point) (fa
 }
 
 func (l *lowerer) numericForHeaderFromWIR(point cfg.Point) (wir.Instruction, bool) {
-	if l == nil || l.wir == nil {
-		return wir.Instruction{}, false
-	}
 	for _, inst := range l.wir.PointInstructions(point) {
 		if inst.Op == wir.OpIterate && inst.Iter == wir.IterNumeric {
 			return inst, true
@@ -116,9 +113,6 @@ func (l *lowerer) numericForPositiveFloorFromWIR(op wir.Operand) (int64, bool) {
 }
 
 func (l *lowerer) numericForIntegralLiteralFromWIR(op wir.Operand) (int64, bool) {
-	if l == nil || l.wir == nil {
-		return 0, false
-	}
 	return numericForIntegralLiteralFromWIR(l.wir, l.wirTempDefs(), op)
 }
 
