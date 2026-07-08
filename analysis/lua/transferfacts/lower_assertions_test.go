@@ -725,39 +725,6 @@ local a, b, c, d = x as any, x :: any, x as unknown, x :: unknown
 	}
 }
 
-func TestExtractedCastValueSourcesPreserveParsedSyntax(t *testing.T) {
-	stmts, _, built := parseSemanticChunk(t, `
-local x = 0
-local a, b = x as number, x :: any
-`)
-
-	local := mustLocalStmt(t, stmts, 1)
-	points := requireStmtPoints(t, built, local, 2)
-	cases := []struct {
-		name   string
-		point  cfg.Point
-		syntax ast.CastSyntax
-	}{
-		{name: "as", point: points[0], syntax: ast.CastSyntaxAs},
-		{name: "colon", point: points[1], syntax: ast.CastSyntaxColonColon},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			fact, ok := built.Assignments.Local(tc.point)
-			if !ok {
-				t.Fatalf("missing local assignment at point %d", tc.point)
-			}
-			cast, ok := fact.Source.Expr.(*ast.CastExpr)
-			if !ok {
-				t.Fatalf("semantic source expr = %T, want *ast.CastExpr", fact.Source.Expr)
-			}
-			if cast.Syntax != tc.syntax {
-				t.Fatalf("cast syntax = %v, want %v", cast.Syntax, tc.syntax)
-			}
-		})
-	}
-}
-
 func TestLowerNestedClaimsPreserveOuterIdentityAndInnerFlow(t *testing.T) {
 	decl := localAssign([]string{"x"}, number("0"))
 	read := ident("x")

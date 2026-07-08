@@ -4,8 +4,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
-	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
-	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -136,9 +134,7 @@ func (b *builder) buildAssign(state flowState, stmt *ast.AssignStmt) flowState {
 	callPoints := newCallPoints(b.graph, beforeCalls)
 	resolver := callPointResolver(calls, callPoints)
 	targets := ordinaryResultTargets(stmt, b.bindings)
-	sources := []sourceprovenance.ASTSource(nil)
 	if callsOK && len(callPoints) == len(calls) {
-		sources = sourceprovenance.AssignmentSources(stmt.Rhs, len(stmt.Lhs), resolver)
 		for i, call := range calls {
 			context, exprs, callTargets := CallContextExpressionProducer, []ast.Expr(nil), []CallResultTarget(nil)
 			if topLevelValueListCall(stmt.Rhs, call) {
@@ -147,33 +143,8 @@ func (b *builder) buildAssign(state flowState, stmt *ast.AssignStmt) flowState {
 			b.calls.Set(callPoints[i], b.buildCallFact(stmt, nil, context, exprs, call.ExprIndex, call.Call, callTargets, resolver))
 		}
 	}
-	lhs := copyExprs(stmt.Lhs)
-	rhs := copyExprs(stmt.Rhs)
-	for i, target := range stmt.Lhs {
+	for range stmt.Lhs {
 		state = b.appendAssign(state, stmt)
-		if state.live {
-			id, hasSymbol := symbol.ID(0), false
-			if ident, ok := target.(*ast.IdentExpr); ok {
-				id, hasSymbol = b.bindings.SymbolOf(ident)
-			}
-			targetPath, hasPath := pathexpr.Resolve(target, b.bindings)
-			containerPath, hasContainerPath := pathexpr.ResolveMutationContainer(target, b.bindings)
-			b.assignments.SetOrdinary(state.current, OrdinaryAssignment{
-				Stmt:             stmt,
-				Index:            i,
-				Target:           target,
-				Value:            exprAt(stmt.Rhs, i),
-				Source:           exprSourceAt(sources, i),
-				Symbol:           id,
-				HasSymbol:        hasSymbol && id != 0,
-				Path:             targetPath,
-				HasPath:          hasPath,
-				ContainerPath:    containerPath,
-				HasContainerPath: hasContainerPath,
-				Lhs:              lhs,
-				Rhs:              rhs,
-			})
-		}
 	}
 	return state
 }
@@ -185,9 +156,7 @@ func (b *builder) buildLocalAssign(state flowState, stmt *ast.LocalAssignStmt) f
 	callPoints := newCallPoints(b.graph, beforeCalls)
 	resolver := callPointResolver(calls, callPoints)
 	targets := localResultTargets(stmt, b.bindings)
-	sources := []sourceprovenance.ASTSource(nil)
 	if callsOK && len(callPoints) == len(calls) {
-		sources = sourceprovenance.AssignmentSources(stmt.Exprs, len(stmt.Names), resolver)
 		for i, call := range calls {
 			context, exprs, callTargets := CallContextExpressionProducer, []ast.Expr(nil), []CallResultTarget(nil)
 			if topLevelValueListCall(stmt.Exprs, call) {
@@ -196,25 +165,8 @@ func (b *builder) buildLocalAssign(state flowState, stmt *ast.LocalAssignStmt) f
 			b.calls.Set(callPoints[i], b.buildCallFact(stmt, nil, context, exprs, call.ExprIndex, call.Call, callTargets, resolver))
 		}
 	}
-	exprs := copyExprs(stmt.Exprs)
-	types := copyTypeExprs(stmt.Types)
-	for i, name := range stmt.Names {
+	for range stmt.Names {
 		state = b.appendAssign(state, stmt)
-		if state.live {
-			id, hasSymbol := b.bindings.LocalSymbolAt(stmt, i)
-			b.assignments.SetLocal(state.current, LocalAssignment{
-				Stmt:      stmt,
-				Index:     i,
-				Name:      name,
-				Type:      typeAt(stmt.Types, i),
-				Expr:      exprAt(stmt.Exprs, i),
-				Source:    exprSourceAt(sources, i),
-				Symbol:    id,
-				HasSymbol: hasSymbol && id != 0,
-				Exprs:     exprs,
-				Types:     types,
-			})
-		}
 	}
 	return state
 }
@@ -238,38 +190,8 @@ func (b *builder) buildFuncDef(state flowState, stmt *ast.FuncDefStmt) flowState
 			TargetPath:      targetPath,
 			HasTargetPath:   hasTargetPath,
 		})
-		if hasTargetPath && stmt.Func != nil {
-			container := targetPath.Parent()
-			b.assignments.SetOrdinary(next.current, OrdinaryAssignment{
-				Index:            0,
-				Target:           functionDefinitionTargetExpr(stmt),
-				Value:            stmt.Func,
-				Source:           exprSourceAt(sourceprovenance.AssignmentSources([]ast.Expr{stmt.Func}, 1, nil), 0),
-				Symbol:           id,
-				HasSymbol:        hasSymbol && id != 0,
-				Path:             targetPath,
-				HasPath:          true,
-				ContainerPath:    container,
-				HasContainerPath: !container.IsEmpty(),
-				Rhs:              []ast.Expr{stmt.Func},
-			})
-		}
 	}
 	return next
-}
-
-func exprSourceAt(sources []sourceprovenance.ASTSource, index int) sourceprovenance.ASTSource {
-	if index < 0 || index >= len(sources) {
-		return sourceprovenance.ASTSource{}
-	}
-	return sources[index]
-}
-
-func functionDefinitionTargetExpr(stmt *ast.FuncDefStmt) ast.Expr {
-	if stmt == nil || stmt.Name == nil || stmt.Name.Method != "" {
-		return nil
-	}
-	return stmt.Name.Func
 }
 
 func (b *builder) recordCallStmtCalls(stmt *ast.FuncCallStmt, beforeCalls []cfg.Point) {

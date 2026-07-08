@@ -5748,6 +5748,46 @@ func requireOrdinaryAssignmentPoint(t *testing.T, result *Result, stmt *ast.Assi
 	return 0
 }
 
+func TestLocalAssignmentPresentationPreservesCastSyntax(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local x = 0
+local a, b = x as number, x :: any
+`)
+	result, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	local, ok := stmts[1].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want local assignment", stmts[1])
+	}
+	cases := []struct {
+		name   string
+		index  int
+		syntax ast.CastSyntax
+	}{
+		{name: "as", index: 0, syntax: ast.CastSyntaxAs},
+		{name: "colon", index: 1, syntax: ast.CastSyntaxColonColon},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			point := requireLocalAssignmentPoint(t, result, local, tc.index)
+			fact, ok := result.LocalAssignment(point)
+			if !ok {
+				t.Fatalf("missing local assignment at point %d", point)
+			}
+			cast, ok := fact.Source.Expr.(*ast.CastExpr)
+			if !ok {
+				t.Fatalf("presentation source expr = %T, want *ast.CastExpr", fact.Source.Expr)
+			}
+			if cast.Syntax != tc.syntax {
+				t.Fatalf("cast syntax = %v, want %v", cast.Syntax, tc.syntax)
+			}
+		})
+	}
+}
+
 func TestResultPointCanReachUsesBodyQueryCache(t *testing.T) {
 	reg := standard.Registry()
 	result, err := CheckChunk(parseChunk(t, `

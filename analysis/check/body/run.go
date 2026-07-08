@@ -155,6 +155,7 @@ func (c *checker) prepare(
 		MethodReceiverTypes: config.MethodReceiverTypes,
 	})
 	facts := lowered.Facts
+	assignments := assignmentFactsFromSource(bindings, built, sourceStmts)
 	genericFors := genericForFactsFromSource(bindings, built, sourceStmts)
 	modules := moduleidentity.NewFromFacts(bindings, built.Graph, moduleIdentityFacts{facts: facts}, fn)
 	signatureID := newSignatureIdentityResolver(bindings, built.Graph, facts, modules, config.Signatures)
@@ -238,6 +239,7 @@ func (c *checker) prepare(
 		signatureID:           signatureID,
 		facts:                 facts,
 		symbolTypes:           lowered.SymbolTypes,
+		assignments:           assignments,
 		genericFors:           genericFors,
 		visibility:            resolver,
 		sources:               sources,
@@ -311,6 +313,7 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		signatureID:           s.signatureID,
 		facts:                 s.facts,
 		symbolTypes:           s.symbolTypes,
+		assignments:           s.assignments,
 		genericFors:           s.genericFors,
 		exprRefinements:       sourcevalue.NewExpressionRefinements(s.facts.ExpressionRefinements()),
 		typeNS:                s.typeNS,

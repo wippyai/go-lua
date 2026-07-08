@@ -7,13 +7,15 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/path"
+	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
+	"github.com/wippyai/go-lua/analysis/lua/transferfacts"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -24,7 +26,7 @@ type shadowCoverageExpectation struct {
 }
 
 var expectedShadowCoverage = map[string]shadowCoverageExpectation{
-	"assign": {covered: 3064, total: 3064},
+	"assign": {covered: 3071, total: 3071},
 	"call":   {covered: 1729, total: 1729},
 	"branch": {covered: 424, total: 424},
 	"return": {covered: 212, total: 212},
@@ -85,16 +87,18 @@ func TestShadowCoverage(t *testing.T) {
 			skippedExtract++
 			continue
 		}
+		facts := transferfacts.Lower(built.Graph, transferfacts.Config{
+			Registry: standard.Registry(),
+			Bindings: bindings,
+			WIR:      body,
+		})
 		processed++
 
 		branchKeys := sourceBranchKeys(stmts, bindings, built)
 		for _, pt := range built.Graph.RPO() {
 			keys := wirPointKeys(body, pt)
-			if f, ok := built.Assignments.Local(pt); ok {
-				scorePoint(total, covered, gapSamples, "assign", keys, sourceLocalAssignKey(f))
-			}
-			if f, ok := built.Assignments.Ordinary(pt); ok {
-				scorePoint(total, covered, gapSamples, "assign", keys, sourceOrdinaryAssignKey(f))
+			if key, ok := sourceAssignmentKey(facts, pt); ok {
+				scorePoint(total, covered, gapSamples, "assign", keys, key)
 			}
 			if f, ok := built.Calls.Get(pt); ok {
 				scorePoint(total, covered, gapSamples, "call", keys, cfgbuildCallKey(f))
@@ -226,24 +230,21 @@ func pct(n, d int) string {
 	return strconv.FormatFloat(100*float64(n)/float64(d), 'f', 2, 64) + "%"
 }
 
-func sourceLocalAssignKey(f cfgbuild.LocalAssignment) string {
-	if f.HasSymbol {
-		return string(path.NewPath(f.Symbol, f.Name).Key())
+func sourceAssignmentKey(facts factflow.Facts, point cfg.Point) (string, bool) {
+	if f, ok := facts.PathAssignment(point); ok {
+		return string(f.TargetPathRef().Key()), true
 	}
-	return "name:" + f.Name
-}
-
-func sourceOrdinaryAssignKey(f cfgbuild.OrdinaryAssignment) string {
-	switch {
-	case f.HasPath:
-		return string(f.Path.Key())
-	case f.HasContainerPath:
-		return string(f.ContainerPath.Key())
-	case f.HasSymbol:
-		return string(path.NewPath(f.Symbol, "").Key())
-	default:
-		return "target"
+	if f, ok := facts.DynamicIndexWrite(point); ok {
+		return string(f.TablePathRef().Key()), true
 	}
+	if f, ok := facts.RootAssignment(point); ok {
+		target := f.TargetPathRef()
+		if target.IsEmpty() {
+			return "target", true
+		}
+		return string(target.Key()), true
+	}
+	return "", false
 }
 
 func cfgbuildCallKey(f cfgbuild.Call) string {

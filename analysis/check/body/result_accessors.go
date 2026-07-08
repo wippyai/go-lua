@@ -245,10 +245,10 @@ func (r *Result) ReturnFact(point cfg.Point) (ReturnFact, bool) {
 }
 
 func (r *Result) LocalAssignment(point cfg.Point) (LocalAssignmentFact, bool) {
-	if r == nil || r.cfg == nil {
+	if r == nil {
 		return LocalAssignmentFact{}, false
 	}
-	return r.cfg.Assignments.Local(point)
+	return r.assignments.localAt(point)
 }
 
 func (r *Result) LoweredLocalAssignment(point cfg.Point) (factflow.RootAssignment, bool) {
@@ -291,10 +291,10 @@ func (r *Result) ObjectLiteralViewForSource(source factflow.ValueSource) (factfl
 }
 
 func (r *Result) OrdinaryAssignment(point cfg.Point) (OrdinaryAssignmentFact, bool) {
-	if r == nil || r.cfg == nil {
+	if r == nil {
 		return OrdinaryAssignmentFact{}, false
 	}
-	return r.cfg.Assignments.Ordinary(point)
+	return r.assignments.ordinaryAt(point)
 }
 
 func (r *Result) Call(point cfg.Point) (CallFact, bool) {
