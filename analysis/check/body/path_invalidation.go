@@ -5,7 +5,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
@@ -113,31 +112,28 @@ func (r *Result) PathPresenceInvalidatedBetween(from, to cfg.Point, target pathd
 
 func (r *Result) assignmentInvalidatesMemberPathAt(point cfg.Point, target pathdom.Path) bool {
 	if len(target.Segments) == 0 {
-		return r.rootAssignmentTargetsPathRoot(point, target)
+		return r.assignmentTargetsPathRoot(point, target)
 	}
-	if r.rootAssignmentTargetsPathRoot(point, target) {
+	if r.assignmentTargetsPathRoot(point, target) {
 		return true
 	}
-	if fact, ok := r.PathAssignment(point); ok {
-		assigned := fact.TargetPathRef()
+	if fact, ok := r.OrdinaryAssignment(point); ok && fact.HasPath && len(fact.Path.Segments) != 0 {
+		assigned := fact.Path
 		return pathHasPrefixStaticEquiv(target, assigned) ||
 			r.PathsAliasWithSameSuffixAtBoundary(point, assigned, target)
 	}
 	return false
 }
 
-func (r *Result) rootAssignmentTargetsPathRoot(point cfg.Point, target pathdom.Path) bool {
-	root, ok := r.RootAssignment(point)
-	if !ok {
+func (r *Result) assignmentTargetsPathRoot(point cfg.Point, target pathdom.Path) bool {
+	assignment, ok := r.OrdinaryAssignment(point)
+	if !ok || !assignment.HasPath {
 		return false
 	}
-	if root.Kind() != factflow.RootAssignmentOrdinaryRootWrite {
-		return false
-	}
-	if root.TargetSymbol() != 0 && target.Symbol != 0 && root.TargetSymbol() == target.Symbol {
+	if assignment.HasSymbol && target.Symbol != 0 && assignment.Symbol == target.Symbol && len(assignment.Path.Segments) == 0 {
 		return true
 	}
-	assigned := root.TargetPathRef()
+	assigned := assignment.Path
 	return !assigned.IsEmpty() && len(assigned.Segments) == 0 && pathHasPrefixStaticEquiv(target.RootOnly(), assigned)
 }
 
@@ -145,15 +141,16 @@ func (r *Result) rootAssignmentPreservesPathRefinementAt(point cfg.Point, target
 	if r == nil || r.registry == nil || len(target.Segments) != 0 {
 		return false
 	}
-	root, ok := r.RootAssignment(point)
+	assignment, ok := r.OrdinaryAssignment(point)
 	if !ok ||
-		root.Kind() != factflow.RootAssignmentOrdinaryRootWrite ||
-		root.TargetSymbol() == 0 ||
-		root.TargetSymbol() != target.Symbol ||
-		len(root.TargetPathRef().Segments) != 0 {
+		!assignment.HasSymbol ||
+		assignment.Symbol == 0 ||
+		assignment.Symbol != target.Symbol ||
+		!assignment.HasPath ||
+		len(assignment.Path.Segments) != 0 {
 		return false
 	}
-	value, ok := r.SourceValueBeforeBoundary(point, root.Source())
+	value, ok := r.OrdinaryAssignmentSourceValueBeforeBoundary(point, assignment.Source)
 	if !ok {
 		return false
 	}

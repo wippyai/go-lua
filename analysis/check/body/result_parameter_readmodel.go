@@ -2,7 +2,6 @@ package body
 
 import (
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
-	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 )
 
 func (r *Result) ParameterValueSlots() []statekey.Value {
@@ -48,11 +47,11 @@ func (r *Result) ReassignedParameterValueSlots() map[statekey.Value]struct{} {
 		return nil
 	}
 	for _, point := range graph.RPO() {
-		assignment, ok := r.facts.RootAssignment(point)
-		if !ok || assignment.Kind() != factflow.RootAssignmentOrdinaryRootWrite {
+		assignment, ok := r.OrdinaryAssignment(point)
+		if !ok || !assignment.HasSymbol {
 			continue
 		}
-		slot := statekey.SymbolValue(assignment.TargetSymbol())
+		slot := statekey.SymbolValue(assignment.Symbol)
 		if _, ok := params[slot]; ok {
 			out[slot] = struct{}{}
 		}

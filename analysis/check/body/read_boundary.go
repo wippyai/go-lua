@@ -208,6 +208,23 @@ func (r *Result) OrdinaryAssignmentSourceValueForExplanationAtBoundary(point cfg
 	return r.SourceValueForExplanationAtBoundary(point, lowered.Source())
 }
 
+// OrdinaryAssignmentSourceValueBeforeBoundary resolves the lowered value source
+// for an ordinary assignment source just before the assignment effect runs.
+func (r *Result) OrdinaryAssignmentSourceValueBeforeBoundary(point cfg.Point, source sourceprovenance.ASTSource) (product.Value, bool) {
+	if r == nil {
+		return product.Value{}, false
+	}
+	fact, ok := r.OrdinaryAssignment(point)
+	if !ok || fact.Source != source {
+		return product.Value{}, false
+	}
+	lowered, ok := r.facts.OrdinaryAssignment(point)
+	if !ok {
+		return product.Value{}, false
+	}
+	return r.SourceValueBeforeBoundary(point, lowered.Source())
+}
+
 // ExpressionValueAtBoundary projects a Lua expression's product value at the
 // diagnostic read boundary for point.
 func (r *Result) ExpressionValueAtBoundary(point cfg.Point, expr ast.Expr) (product.Value, bool) {
@@ -900,16 +917,11 @@ func (r *Result) pathShapeInvalidatedAfterAssignment(assignPoint, point cfg.Poin
 		if invalidation, ok := r.PathDescendantInvalidation(candidate); ok && r.descendantInvalidationMayTouchRecoveredPath(candidate, invalidation, p) {
 			return true
 		}
-		if root, ok := r.RootAssignment(candidate); ok && root.Kind() == factflow.RootAssignmentOrdinaryRootWrite {
-			if root.TargetSymbol() != 0 && root.TargetSymbol() == p.Symbol {
+		if assignment, ok := r.OrdinaryAssignment(candidate); ok && assignment.HasPath {
+			if assignment.HasSymbol && len(assignment.Path.Segments) == 0 && assignment.Symbol == p.Symbol {
 				return true
 			}
-			if assigned := root.TargetPathRef(); !assigned.IsEmpty() && r.assignmentPathMayTouchRecoveredPath(candidate, assigned, p) {
-				return true
-			}
-		}
-		if fact, ok := r.PathAssignment(candidate); ok {
-			if r.assignmentPathMayTouchRecoveredPath(candidate, fact.TargetPathRef(), p) {
+			if r.assignmentPathMayTouchRecoveredPath(candidate, assignment.Path, p) {
 				return true
 			}
 		}
