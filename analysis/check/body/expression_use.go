@@ -16,7 +16,6 @@ const (
 	ExpressionUseCall
 	ExpressionUseReturn
 	ExpressionUseBranchCondition
-	ExpressionUseExpressionEvaluation
 )
 
 // ExpressionUse is a syntax expression attached to a reachable CFG point.

@@ -10,7 +10,6 @@ import (
 type Result struct {
 	Graph         *cfg.CFG
 	StmtPoints    StmtPoints
-	Declarations  Declarations
 	ShortCircuits ShortCircuits
 }
 
@@ -46,7 +45,7 @@ func BuildFunction(fn *ast.FunctionExpr, bindings *bind.Result) *Result {
 		state = b.buildStmts(state, fn.Stmts)
 	}
 	b.connect(state, graph.Exit())
-	return &Result{Graph: graph, StmtPoints: StmtPoints{points: b.stmtPoints}, Declarations: b.declarations, ShortCircuits: b.shortCircuits}
+	return &Result{Graph: graph, StmtPoints: StmtPoints{points: b.stmtPoints}, ShortCircuits: b.shortCircuits}
 }
 
 // BuildChunk builds a minimal CFG for a chunk-level statement list using
@@ -61,12 +60,11 @@ func BuildChunk(stmts []ast.Stmt, bindings *bind.Result) *Result {
 
 	state := b.buildStmts(liveAt(graph.Entry()), stmts)
 	b.connect(state, graph.Exit())
-	return &Result{Graph: graph, StmtPoints: StmtPoints{points: b.stmtPoints}, Declarations: b.declarations, ShortCircuits: b.shortCircuits}
+	return &Result{Graph: graph, StmtPoints: StmtPoints{points: b.stmtPoints}, ShortCircuits: b.shortCircuits}
 }
 
 type builder struct {
 	graph         *cfg.CFG
-	declarations  Declarations
 	shortCircuits ShortCircuits
 	stmtPoints    map[ast.Stmt][]cfg.Point
 	labels        map[string]cfg.Point

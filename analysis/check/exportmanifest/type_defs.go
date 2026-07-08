@@ -2,7 +2,6 @@ package exportmanifest
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 )
@@ -18,7 +17,7 @@ func publishTypeDefinitions(m *manifest.Manifest, result *body.Result) {
 			continue
 		}
 		switch fact.Kind {
-		case cfgbuild.TypeDefinitionAlias:
+		case body.TypeDefinitionAlias:
 			if fact.Type == nil || fact.Type.Name == "" {
 				continue
 			}
@@ -31,7 +30,7 @@ func publishTypeDefinitions(m *manifest.Manifest, result *body.Result) {
 				continue
 			}
 			m.DefineType(fact.Type.Name, t)
-		case cfgbuild.TypeDefinitionInterface:
+		case body.TypeDefinitionInterface:
 			if fact.Interface == nil || fact.Interface.Name == "" {
 				continue
 			}

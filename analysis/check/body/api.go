@@ -103,6 +103,7 @@ type Static struct {
 	facts                 factflow.Facts
 	symbolTypes           map[symbol.ID]typ.Type
 	assignments           assignmentFactSet
+	declarations          declarationFactSet
 	genericFors           map[cfg.Point]GenericForFact
 	visibility            *visibility.Resolver
 	sources               sourcevalue.SourceValues
@@ -183,6 +184,7 @@ type Result struct {
 	facts                 factflow.Facts
 	symbolTypes           map[symbol.ID]typ.Type
 	assignments           assignmentFactSet
+	declarations          declarationFactSet
 	genericFors           map[cfg.Point]GenericForFact
 	exprRefinements       sourcevalue.ExpressionRefinements
 	typeNS                *typeresolve.Resolver
