@@ -397,6 +397,13 @@ func (b *Body) ImpliedChecks(r ImpliedCheckRange) []ImpliedCheck {
 	return b.impliedChecks[r.Start : r.Start+r.Len]
 }
 
+// SufficientChecks returns the branch-sufficient check slice for a variadic
+// range. It shares the branch-check pool with ImpliedChecks; the instruction
+// field determines which relation the window represents.
+func (b *Body) SufficientChecks(r ImpliedCheckRange) []ImpliedCheck {
+	return b.ImpliedChecks(r)
+}
+
 // BranchDiffConstraints returns the branch difference-constraint descriptors
 // for a variadic range.
 func (b *Body) BranchDiffConstraints(r BranchDiffConstraintRange) []BranchDiffConstraint {

@@ -242,6 +242,12 @@ type Instruction struct {
 	// carries edge-specific leaves proven by and/or/not structure.
 	ImpliedChecks ImpliedCheckRange
 
+	// SufficientChecks is the normalized leaf-check window for OpBranch compound
+	// conditions where a single leaf check is enough to force the recorded edge.
+	// This differs from ImpliedChecks for shapes like `a or b`: the true edge
+	// does not imply that `a` or `b` held, but either leaf is a sufficient case.
+	SufficientChecks ImpliedCheckRange
+
 	// DiffConstraints is the normalized difference-logic descriptor window for
 	// OpBranch conditions. It carries syntax-derived linear relations; transfer
 	// decides the factflow projection.

@@ -10,7 +10,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -50,16 +49,12 @@ type stateAtReader interface {
 	StateAt(cfg.Point) (state.State, bool)
 }
 
-type branchConditionReader interface {
-	BranchCondition(cfg.Point) (semantics.BranchConditionFact, bool)
-}
-
 type branchConditionCheckReader interface {
 	BranchConditionCheck(cfg.Point) (branchcond.Check, bool)
 }
 
 type branchSufficientCheckReader interface {
-	BranchConditionSufficientChecksOnEdge(semantics.BranchConditionFact, bool) []branchcond.ImpliedCheck
+	BranchConditionSufficientChecksOnEdge(cfg.Point, bool) []branchcond.ImpliedCheck
 }
 
 type pointDominatorReader interface {

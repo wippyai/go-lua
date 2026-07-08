@@ -55,8 +55,7 @@ func returnPointParamLiteralCases(
 	params []pathdom.Path,
 ) []summary.ReturnParamLiteralCase {
 	graph := result.Graph()
-	branches, ok := result.(branchConditionReader)
-	if !ok || graph == nil {
+	if graph == nil {
 		return nil
 	}
 	sufficient, ok := result.(branchSufficientCheckReader)
@@ -73,16 +72,12 @@ func returnPointParamLiteralCases(
 		if branch == point {
 			continue
 		}
-		fact, ok := branches.BranchCondition(branch)
-		if !ok {
-			continue
-		}
 		for _, succ := range cfg.SuccessorsReadOnly(graph, branch) {
 			edge, ok := graph.EdgeCond(branch, succ)
 			if !ok || !dom.PointDominates(succ, point) || !dominance.PostDominates(postdom, point, succ) {
 				continue
 			}
-			for _, check := range sufficient.BranchConditionSufficientChecksOnEdge(fact, edge) {
+			for _, check := range sufficient.BranchConditionSufficientChecksOnEdge(branch, edge) {
 				if candidate, ok := returnParamLiteralCaseFromCheck(check, params); ok {
 					out = append(out, candidate)
 				}

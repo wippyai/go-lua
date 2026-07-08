@@ -447,6 +447,42 @@ func (r *Result) branchConditionCheckFromWIR(point cfg.Point) (branchcond.Check,
 	return out, found
 }
 
+// BranchConditionSufficientChecksOnEdge returns the normalized leaf checks that
+// are sufficient to prove edge for the branch at point. WIR owns both direct
+// branch checks and compound-condition implications, so callers do not need to
+// rescan the AST condition.
+func (r *Result) BranchConditionSufficientChecksOnEdge(point cfg.Point, edge bool) []branchcond.ImpliedCheck {
+	if r == nil || r.wir == nil {
+		return nil
+	}
+	var out []branchcond.ImpliedCheck
+	for _, inst := range r.wir.PointInstructions(point) {
+		if inst.Op != wir.OpBranch {
+			continue
+		}
+		check := branchConditionCheckFromWIR(r.wir.Check(inst.Check))
+		if check.Kind != branchcond.CheckNone {
+			out = append(out, branchcond.ImpliedCheck{
+				Check:    check,
+				Edge:     edge,
+				Polarity: edge,
+			})
+			continue
+		}
+		for _, implied := range r.wir.SufficientChecks(inst.SufficientChecks) {
+			if implied.Edge != edge {
+				continue
+			}
+			out = append(out, branchcond.ImpliedCheck{
+				Check:    branchConditionCheckFromWIR(implied.Check),
+				Edge:     implied.Edge,
+				Polarity: implied.Polarity,
+			})
+		}
+	}
+	return out
+}
+
 func branchConditionCheckFromWIR(check wir.Check) branchcond.Check {
 	return branchcond.Check{
 		Kind:          branchcond.CheckKind(check.Kind),
@@ -466,13 +502,6 @@ func (r *Result) ExpressionImpliedChecksOnEdge(expr ast.Expr, cond bool) []branc
 		return nil
 	}
 	return branchcond.ImpliedChecksOnEdge(expr, r.bindings, cond)
-}
-
-func (r *Result) BranchConditionSufficientChecksOnEdge(fact BranchConditionFact, cond bool) []branchcond.ImpliedCheck {
-	if r == nil || r.bindings == nil || fact.Condition == nil {
-		return nil
-	}
-	return branchcond.SufficientChecksOnEdge(fact.Condition, r.bindings, cond)
 }
 
 func (r *Result) TypeDefinition(point cfg.Point) (cfgfacts.TypeDefinitionFact, bool) {

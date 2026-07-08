@@ -1004,10 +1004,11 @@ func (b *builder) condCallCount(cond ast.Expr) int {
 func (b *builder) emitBranch(cond ast.Expr) {
 	check := branchcond.Normalize(cond, b.bindings)
 	inst := wir.Instruction{
-		Op:              wir.OpBranch,
-		Check:           b.body.InternCheck(lowerCheck(check)),
-		ImpliedChecks:   b.body.AppendImpliedChecks(lowerImpliedChecks(branchcond.ImpliedChecksOnBothEdges(cond, b.bindings))),
-		DiffConstraints: b.body.AppendBranchDiffConstraints(lowerBranchDiffConstraints(branchcond.BranchDiffConstraintsOnBothEdges(cond, b.bindings))),
+		Op:               wir.OpBranch,
+		Check:            b.body.InternCheck(lowerCheck(check)),
+		ImpliedChecks:    b.body.AppendImpliedChecks(lowerImpliedChecks(branchcond.ImpliedChecksOnBothEdges(cond, b.bindings))),
+		SufficientChecks: b.body.AppendImpliedChecks(lowerImpliedChecks(branchSufficientChecksOnBothEdges(cond, b.bindings))),
+		DiffConstraints:  b.body.AppendBranchDiffConstraints(lowerBranchDiffConstraints(branchcond.BranchDiffConstraintsOnBothEdges(cond, b.bindings))),
 	}
 	if check.Kind == branchcond.CheckNone {
 		inst.A = b.lowerExpr(cond)
@@ -1383,10 +1384,11 @@ func (b *builder) emitLogicalGuardAtOperand(e *ast.LogicalOpExpr, guard cfg.Poin
 	b.logicalGuardEmitted[e] = true
 	check := branchcond.Normalize(e.Lhs, b.bindings)
 	guardInst := wir.Instruction{
-		Op:              wir.OpBranch,
-		Check:           b.body.InternCheck(lowerCheck(check)),
-		ImpliedChecks:   b.body.AppendImpliedChecks(lowerImpliedChecks(branchcond.ImpliedChecksOnBothEdges(e.Lhs, b.bindings))),
-		DiffConstraints: b.body.AppendBranchDiffConstraints(lowerBranchDiffConstraints(branchcond.BranchDiffConstraintsOnBothEdges(e.Lhs, b.bindings))),
+		Op:               wir.OpBranch,
+		Check:            b.body.InternCheck(lowerCheck(check)),
+		ImpliedChecks:    b.body.AppendImpliedChecks(lowerImpliedChecks(branchcond.ImpliedChecksOnBothEdges(e.Lhs, b.bindings))),
+		SufficientChecks: b.body.AppendImpliedChecks(lowerImpliedChecks(branchSufficientChecksOnBothEdges(e.Lhs, b.bindings))),
+		DiffConstraints:  b.body.AppendBranchDiffConstraints(lowerBranchDiffConstraints(branchcond.BranchDiffConstraintsOnBothEdges(e.Lhs, b.bindings))),
 	}
 	if check.Kind == branchcond.CheckNone {
 		if operand.Kind != wir.OperandNone {
@@ -2050,6 +2052,18 @@ func lowerImpliedChecks(in []branchcond.ImpliedCheck) []wir.ImpliedCheck {
 			Polarity: check.Polarity,
 		})
 	}
+	return out
+}
+
+func branchSufficientChecksOnBothEdges(expr ast.Expr, bindings *bind.Result) []branchcond.ImpliedCheck {
+	trueEdge := branchcond.SufficientChecksOnEdge(expr, bindings, true)
+	falseEdge := branchcond.SufficientChecksOnEdge(expr, bindings, false)
+	if len(trueEdge) == 0 {
+		return falseEdge
+	}
+	out := make([]branchcond.ImpliedCheck, 0, len(trueEdge)+len(falseEdge))
+	out = append(out, trueEdge...)
+	out = append(out, falseEdge...)
 	return out
 }
 
