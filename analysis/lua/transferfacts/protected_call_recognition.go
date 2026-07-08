@@ -18,15 +18,16 @@ func (l *lowerer) addProtectedCallBranchRefinements(input *factflow.FactsInput, 
 		if !ok {
 			continue
 		}
-		payloadType, ok := l.protectedCallPayloadTypeFromWIRCallSite(callPoint, site)
+		siteView := site.View()
+		payloadType, ok := l.protectedCallPayloadTypeFromWIRCallSite(callPoint, siteView)
 		if !ok {
 			continue
 		}
-		okPath, ok := callSiteResultTargetPath(site, 0)
+		okPath, ok := callSiteResultTargetPath(siteView, 0)
 		if !ok {
 			continue
 		}
-		payloadPath, ok := callSiteResultTargetPath(site, 1)
+		payloadPath, ok := callSiteResultTargetPath(siteView, 1)
 		if !ok {
 			continue
 		}
@@ -56,8 +57,8 @@ func (l *lowerer) addProtectedCallBranchRefinements(input *factflow.FactsInput, 
 	}
 }
 
-func (l *lowerer) protectedCallPayloadTypeFromWIRCallSite(point cfg.Point, site factflow.CallSite) (typ.Type, bool) {
-	if !l.isProtectedCallSite(site) {
+func (l *lowerer) protectedCallPayloadTypeFromWIRCallSite(point cfg.Point, site factflow.CallSiteView) (typ.Type, bool) {
+	if l == nil || l.wir == nil || !l.isProtectedCallSite(site) {
 		return nil, false
 	}
 	callbackPath, ok := l.callArgumentPathFromWIR(point, 0)
@@ -71,11 +72,11 @@ func (l *lowerer) protectedCallPayloadTypeFromWIRCallSite(point cfg.Point, site 
 	return typecall.CallableReturn(callbackType)
 }
 
-func (l *lowerer) isProtectedCallSite(site factflow.CallSite) bool {
+func (l *lowerer) isProtectedCallSite(site factflow.CallSiteView) bool {
 	return l.isNamedGlobalCallSite(site, "pcall") || l.isNamedGlobalCallSite(site, "xpcall")
 }
 
-func (l *lowerer) isNamedGlobalCallSite(site factflow.CallSite, name string) bool {
+func (l *lowerer) isNamedGlobalCallSite(site factflow.CallSiteView, name string) bool {
 	if l == nil || l.wir == nil || name == "" {
 		return false
 	}

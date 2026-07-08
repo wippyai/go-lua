@@ -2995,7 +2995,7 @@ func callOutcomeDebug(root *body.Result) string {
 	}
 	out := ""
 	for _, point := range root.Graph().RPO() {
-		site, ok := root.CallSite(point)
+		site, ok := root.CallSiteView(point)
 		if !ok {
 			continue
 		}

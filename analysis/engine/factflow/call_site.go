@@ -423,6 +423,17 @@ func (v CallSiteView) ForEachArgumentSource(fn func(index int, source ValueSourc
 // TypeArgs returns the ordered explicit type argument identities.
 func (v CallSiteView) TypeArgs() []TypeRef { return append([]TypeRef(nil), v.site.typeArgs...) }
 
+// TypeArgCount returns the number of explicit type argument identities.
+func (v CallSiteView) TypeArgCount() int { return len(v.site.typeArgs) }
+
+// TypeArgAt returns one explicit type argument identity by index.
+func (v CallSiteView) TypeArgAt(index int) (TypeRef, bool) {
+	if index < 0 || index >= len(v.site.typeArgs) {
+		return 0, false
+	}
+	return v.site.typeArgs[index], true
+}
+
 // Final reports whether this call is the final value-list expression.
 func (v CallSiteView) Final() bool { return v.site.final }
 
@@ -437,6 +448,14 @@ func (v CallSiteView) OpenTail() bool { return v.site.openTail }
 
 // ResultTargetCount returns the number of result targets.
 func (v CallSiteView) ResultTargetCount() int { return len(v.site.resultTargets) }
+
+// ResultTargetAt returns one result target view by index.
+func (v CallSiteView) ResultTargetAt(index int) (CallResultTargetView, bool) {
+	if index < 0 || index >= len(v.site.resultTargets) {
+		return CallResultTargetView{}, false
+	}
+	return CallResultTargetView{target: v.site.resultTargets[index]}, true
+}
 
 // ForEachResultTarget visits the call site's result targets without exposing
 // mutable internal slices. Returning false stops iteration.

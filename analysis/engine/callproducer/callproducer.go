@@ -9,12 +9,8 @@ import (
 
 // FromSite projects rich call-site evidence to the narrow producer DTO used by
 // call-result lookup and signature identity reads.
-func FromSite(site factflow.CallSite) factflow.CallProducer {
-	return factflow.NewCallProducer(factflow.CallProducerConfig{
-		CalleeSymbol:  site.CalleeSymbol(),
-		CalleePath:    site.CalleePathRef(),
-		ResultTargets: site.ResultTargets(),
-	})
+func FromSite(site factflow.CallSiteView) factflow.CallProducer {
+	return factflow.NewCallProducerFromView(site)
 }
 
 // FromFacts returns the strict call-result producer projection for point's

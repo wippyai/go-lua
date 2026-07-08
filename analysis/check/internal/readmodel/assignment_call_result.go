@@ -11,7 +11,7 @@ func (r Reader) assignmentCallResultSource(source sourceprovenance.ASTSource) re
 	if r.result == nil || source.Kind != sourceprovenance.SourceCall || !source.HasCallPoint || source.ResultIndex < 0 {
 		return readapi.CallResultAssignmentSource{}
 	}
-	site, ok := r.result.CallSite(source.CallPoint)
+	site, ok := r.result.CallSiteView(source.CallPoint)
 	if !ok {
 		return readapi.CallResultAssignmentSource{}
 	}

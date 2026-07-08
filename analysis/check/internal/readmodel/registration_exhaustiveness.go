@@ -89,7 +89,7 @@ func (r Reader) registrationCalls() ([]registrationReadCall, []openRegistrationM
 	var registrations []registrationReadCall
 	var open []openRegistrationMutation
 	for _, point := range cfg.RPOReadOnly(r.result.Graph()) {
-		site, hasSite := r.result.CallSite(point)
+		site, hasSite := r.result.CallSiteView(point)
 		if !hasSite {
 			if write, ok := r.result.LoweredAssignmentWrite(point); ok {
 				if reg, ok := r.registrationAssignment(write, point); ok {
@@ -223,7 +223,7 @@ func (r Reader) openRegistrationMutation(point cfg.Point, shape body.RegistryKey
 func (r Reader) dispatchCalls() []dispatchReadCall {
 	var out []dispatchReadCall
 	for _, point := range cfg.RPOReadOnly(r.result.Graph()) {
-		site, ok := r.result.CallSite(point)
+		site, ok := r.result.CallSiteView(point)
 		if !ok || r.isRegistrationLikeCall(point, site) {
 			continue
 		}
@@ -252,7 +252,7 @@ func (r Reader) dispatchCalls() []dispatchReadCall {
 	return out
 }
 
-func (r Reader) isRegistrationLikeCall(point cfg.Point, site factflow.CallSite) bool {
+func (r Reader) isRegistrationLikeCall(point cfg.Point, site factflow.CallSiteView) bool {
 	shape, ok := r.result.RegistryKeyCallShape(point, site)
 	if !ok {
 		return false

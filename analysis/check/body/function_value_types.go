@@ -348,7 +348,7 @@ func (r *Result) FunctionReturnTypeSpansForCalleePath(key factflow.CalleePathKey
 // callable value type without re-reading syntax. The point-visible value wins
 // over the callee path summary so a reassigned callee cannot reuse a stale
 // definition-path contract.
-func (r *Result) FunctionValueTypeForCallSiteAtBoundary(point cfg.Point, site factflow.CallSite) (*typ.Function, bool) {
+func (r *Result) FunctionValueTypeForCallSiteAtBoundary(point cfg.Point, site factflow.CallSiteView) (*typ.Function, bool) {
 	if r == nil {
 		return nil, false
 	}
@@ -373,11 +373,11 @@ func (r *Result) FunctionValueTypeForCallSiteAtBoundary(point cfg.Point, site fa
 			return nil, false
 		}
 	}
-	return r.FunctionValueTypeForCalleePath(site.View().CalleePathKey())
+	return r.FunctionValueTypeForCalleePath(site.CalleePathKey())
 }
 
 func (r *Result) FunctionValueTypeForCallPointAtBoundary(point cfg.Point) (*typ.Function, bool) {
-	site, ok := r.CallSite(point)
+	site, ok := r.CallSiteView(point)
 	if !ok {
 		return nil, false
 	}

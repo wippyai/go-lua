@@ -228,7 +228,7 @@ func assertCapturedContractIDCallArgumentIsString(t *testing.T, reg *axis.Regist
 		t.Fatal("missing child graph")
 	}
 	for _, point := range graph.RPO() {
-		site, ok := child.CallSite(point)
+		site, ok := child.CallSiteView(point)
 		if !ok {
 			continue
 		}
@@ -388,7 +388,7 @@ invoke(p, mutate, "ok")
 		if !ok || id.Value != "invoke" {
 			continue
 		}
-		site, ok := root.CallSite(point)
+		site, ok := root.CallSiteView(point)
 		if !ok {
 			t.Fatalf("CallSite(%d) returned false", point)
 		}
@@ -440,7 +440,7 @@ end
 		t.Fatal("missing child graph")
 	}
 	for _, point := range graph.RPO() {
-		site, ok := child.CallSite(point)
+		site, ok := child.CallSiteView(point)
 		if !ok {
 			continue
 		}

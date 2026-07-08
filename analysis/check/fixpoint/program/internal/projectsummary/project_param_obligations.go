@@ -36,10 +36,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-type callSiteReader interface {
-	CallSite(cfg.Point) (factflow.CallSite, bool)
-}
-
 type callSiteViewReader interface {
 	CallSiteView(cfg.Point) (factflow.CallSiteView, bool)
 }
@@ -172,21 +168,11 @@ func callSiteViewAt(result ResultReader, point cfg.Point) (factflow.CallSiteView
 	if reader, ok := result.(callSiteViewReader); ok {
 		return reader.CallSiteView(point)
 	}
-	if reader, ok := result.(callSiteReader); ok {
-		site, ok := reader.CallSite(point)
-		if !ok {
-			return factflow.CallSiteView{}, false
-		}
-		return site.View(), true
-	}
 	return factflow.CallSiteView{}, false
 }
 
 func hasCallSiteView(result ResultReader) bool {
-	if _, ok := result.(callSiteViewReader); ok {
-		return true
-	}
-	_, ok := result.(callSiteReader)
+	_, ok := result.(callSiteViewReader)
 	return ok
 }
 

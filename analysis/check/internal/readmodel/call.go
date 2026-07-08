@@ -24,7 +24,7 @@ func (r Reader) ForEachCall(visit func(CallSite) bool) bool {
 		if !r.result.PointReachable(point) {
 			continue
 		}
-		site, ok := r.result.CallSite(point)
+		site, ok := r.result.CallSiteView(point)
 		if !ok {
 			continue
 		}
@@ -55,7 +55,7 @@ func (r Reader) CallCalleeReportAt(point cfg.Point) (CallCalleeReport, bool) {
 	if r.result == nil {
 		return CallCalleeReport{}, false
 	}
-	site, ok := r.result.CallSite(point)
+	site, ok := r.result.CallSiteView(point)
 	if !ok {
 		return CallCalleeReport{}, false
 	}

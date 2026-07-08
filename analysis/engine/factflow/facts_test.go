@@ -697,7 +697,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	if _, ok := facts.Return(missing); ok {
 		t.Fatal("missing return returned ok")
 	}
-	if _, ok := facts.CallSite(missing); ok {
+	if _, ok := facts.CallSiteView(missing); ok {
 		t.Fatal("missing call site returned ok")
 	}
 	if got := facts.CallSiteCount(); got != 1 {
@@ -898,7 +898,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		t.Fatalf("facts return exposed mutable sources, got %v", got[0].Kind)
 	}
 
-	callSite, ok := facts.CallSite(point)
+	callSite, ok := facts.CallSiteView(point)
 	if !ok {
 		t.Fatal("call site missing")
 	}
@@ -907,14 +907,14 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	}
 	callSiteCalleePath := callSite.CalleePath()
 	callSiteCalleePath.Segments[0].Name = "mutated"
-	callSiteAgain, _ := facts.CallSite(point)
+	callSiteAgain, _ := facts.CallSiteView(point)
 	assertDirectField(t, callSiteAgain.CalleePath(), "site")
 	callSiteReceiverPath, ok := callSite.ReceiverPath()
 	if !ok || !callSiteReceiverPath.Equal(path.NewPath(symbol.ID(35), "callee")) {
 		t.Fatalf("call site receiver path = %#v/%v", callSiteReceiverPath, ok)
 	}
 	callSiteReceiverPath.Root = "mutated"
-	callSiteAgain, _ = facts.CallSite(point)
+	callSiteAgain, _ = facts.CallSiteView(point)
 	if receiverPath, ok := callSiteAgain.ReceiverPath(); !ok || !receiverPath.Equal(path.NewPath(symbol.ID(35), "callee")) {
 		t.Fatalf("facts call site exposed mutable receiver path: %#v/%v", receiverPath, ok)
 	}
@@ -923,7 +923,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		t.Fatalf("call site method path = %#v/%v", callSiteMethodPath, ok)
 	}
 	callSiteMethodPath.Segments[0].Name = "mutated"
-	callSiteAgain, _ = facts.CallSite(point)
+	callSiteAgain, _ = facts.CallSiteView(point)
 	if methodPath, ok := callSiteAgain.MethodPath(); !ok || !methodPath.Equal(path.NewPath(symbol.ID(35), "callee").Field("site")) {
 		t.Fatalf("facts call site exposed mutable method path: %#v/%v", methodPath, ok)
 	}
@@ -935,7 +935,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		t.Fatalf("call site argument sources = %#v", callSiteArgs)
 	}
 	callSiteArgs[0].Kind = ValueSourceNil
-	callSiteAgain, _ = facts.CallSite(point)
+	callSiteAgain, _ = facts.CallSiteView(point)
 	if got := callSiteAgain.ArgumentSources(); got[0].Kind != ValueSourceExpression {
 		t.Fatalf("facts call site exposed mutable argument sources, got %v", got[0].Kind)
 	}
@@ -944,20 +944,20 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		t.Fatalf("call site type args = %#v", callSiteTypeArgs)
 	}
 	callSiteTypeArgs[0] = TypeRef(99)
-	callSiteAgain, _ = facts.CallSite(point)
+	callSiteAgain, _ = facts.CallSiteView(point)
 	if got := callSiteAgain.TypeArgs(); got[0] != TypeRef(7) {
 		t.Fatalf("facts call site exposed mutable type args, got %#v", got)
 	}
-	callSiteTargets := callSite.ResultTargets()
-	if len(callSiteTargets) != 1 || callSiteTargets[0].Kind() != CallResultTargetLocalAssignment {
-		t.Fatalf("call site targets = %#v", callSiteTargets)
+	callSiteTarget, ok := callSite.ResultTargetAt(0)
+	if !ok || callSite.ResultTargetCount() != 1 || callSiteTarget.Kind() != CallResultTargetLocalAssignment {
+		t.Fatalf("call site targets = %#v", callSiteTarget)
 	}
-	callSiteTargetPath := callSiteTargets[0].TargetPath()
+	callSiteTargetPath := callSiteTarget.TargetPath()
 	callSiteTargetPath.Root = "mutated"
-	assertPathEqual(t, callSiteAgain.ResultTargets()[0].TargetPath(), path.NewPath(symbol.ID(33), "table"))
-	callSiteTargets[0] = NewCallResultTarget(CallResultTargetReturn, 0, 0, 0, path.Path{})
-	if got := callSiteAgain.ResultTargets(); got[0].Kind() != CallResultTargetLocalAssignment {
-		t.Fatalf("facts call site exposed mutable targets, got %v", got[0].Kind())
+	targetAgain, _ := callSiteAgain.ResultTargetAt(0)
+	assertPathEqual(t, targetAgain.TargetPath(), path.NewPath(symbol.ID(33), "table"))
+	if targetAgain.Kind() != CallResultTargetLocalAssignment {
+		t.Fatalf("facts call site exposed mutable targets, got %v", targetAgain.Kind())
 	}
 	callSiteView, ok := facts.CallSiteView(point)
 	if !ok {
@@ -1019,9 +1019,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	if typeArgs := callSiteView.TypeArgs(); len(typeArgs) != 2 || typeArgs[0] != TypeRef(7) || typeArgs[1] != TypeRef(8) {
 		t.Fatalf("call site view type args = %#v", typeArgs)
 	}
-	copiedSite := callSiteView.CallSite()
-	copiedSite.calleePath.Segments[0].Name = "mutated-through-view-copy"
-	callSiteAgain, _ = facts.CallSite(point)
+	copiedPath := callSiteView.CalleePath()
+	copiedPath.Segments[0].Name = "mutated-through-view-copy"
+	callSiteAgain, _ = facts.CallSiteView(point)
 	assertDirectField(t, callSiteAgain.CalleePath(), "site")
 	visitedTargets := 0
 	callSiteView.ForEachResultTarget(func(target CallResultTargetView) bool {
@@ -1036,8 +1036,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	if visitedTargets != 1 {
 		t.Fatalf("call site view visited %d targets, want 1", visitedTargets)
 	}
-	callSiteAgain, _ = facts.CallSite(point)
-	assertPathEqual(t, callSiteAgain.ResultTargets()[0].TargetPath(), path.NewPath(symbol.ID(33), "table"))
+	callSiteAgain, _ = facts.CallSiteView(point)
+	targetAgain, _ = callSiteAgain.ResultTargetAt(0)
+	assertPathEqual(t, targetAgain.TargetPath(), path.NewPath(symbol.ID(33), "table"))
 
 	literal, ok := facts.ObjectLiteralView(ExprRef(1))
 	if !ok {

@@ -52,7 +52,7 @@ func refreshExistingCallContextEntryKeysFromResult(keys *programKeys, owner summ
 }
 
 func refreshExistingCallContextEntryKeyAt(keys *programKeys, owner summary.SummaryKey, result *body.Result, config body.Config, point cfg.Point) (summary.SummaryKey, bool) {
-	site, ok := result.CallSite(point)
+	site, ok := result.CallSiteView(point)
 	if !ok {
 		return summary.SummaryKey{}, false
 	}

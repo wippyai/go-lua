@@ -297,7 +297,7 @@ func (l *lowerer) addWIRCallResultExpressionValue(source factflow.ValueSource) {
 	if !ok {
 		return
 	}
-	t, ok := l.callSiteReturnTypeAt(source.CallPoint, site, source.ResultIndex)
+	t, ok := l.callSiteReturnTypeAt(source.CallPoint, site.View(), source.ResultIndex)
 	if !ok || t == nil || typ.IsAny(t) || typ.IsUnknown(t) {
 		return
 	}

@@ -829,11 +829,11 @@ func TestSignatureOutcomeProviderLowersNormalReturnRefinementToParamPathRefineme
 		},
 		Facts: facts,
 	})
-	site, ok := facts.CallSite(call)
+	site, ok := facts.CallSiteView(call)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
 
 	if len(got.ParamPathRefinements) != 1 {
 		t.Fatalf("param path refinements = %d, want 1: %#v", len(got.ParamPathRefinements), got.ParamPathRefinements)
@@ -900,11 +900,11 @@ func TestSignatureOutcomeProviderLowersAbsentNormalReturnRefinementAndApplies(t 
 		},
 		Facts: facts,
 	})
-	site, ok := facts.CallSite(call)
+	site, ok := facts.CallSiteView(call)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
 
 	if len(got.ParamPathRefinements) != 1 {
 		t.Fatalf("param path refinements = %d, want 1: %#v", len(got.ParamPathRefinements), got.ParamPathRefinements)
@@ -968,11 +968,11 @@ func TestSignatureOutcomeProviderNormalReturnRefinementDoesNotApplyWithoutExpres
 		},
 		Facts: facts,
 	})
-	site, ok := facts.CallSite(call)
+	site, ok := facts.CallSiteView(call)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
 
 	if len(got.ParamPathRefinements) != 1 || !got.ParamPathRefinements[0].Path.Equal(path.NewPlaceholder(0)) {
 		t.Fatalf("param path refinements = %#v, want one unresolved $0 refinement", got.ParamPathRefinements)
@@ -1031,11 +1031,11 @@ func TestSignatureOutcomeProviderLowersTableMutatorToParamPathInvalidationAndApp
 		NameFor: staticName("table.insert"),
 		Facts:   facts,
 	})
-	site, ok := facts.CallSite(call)
+	site, ok := facts.CallSiteView(call)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
 
 	if len(got.ParamPathInvalidations) != 1 {
 		t.Fatalf("param path invalidations = %d, want 1: %#v", len(got.ParamPathInvalidations), got.ParamPathInvalidations)
@@ -1118,11 +1118,11 @@ func TestSignatureOutcomeProviderLowersTableMutatorValueToElementRefinement(t *t
 		Facts:   facts,
 		Sources: sources,
 	})
-	site, ok := facts.CallSite(call)
+	site, ok := facts.CallSiteView(call)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
 
 	if len(got.ParamPathWrites) != 1 ||
 		!got.ParamPathWrites[0].Path.Equal(path.NewPlaceholder(0)) {
@@ -1211,11 +1211,11 @@ func TestSignatureOutcomeProviderLowersTableMutatorFromPathSources(t *testing.T)
 		Sources:  sources,
 		KeySpace: ks,
 	})
-	site, ok := facts.CallSite(call)
+	site, ok := facts.CallSiteView(call)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), in, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, in, nil)
 
 	if len(got.ParamPathWrites) != 1 || !got.ParamPathWrites[0].Path.Equal(path.NewPlaceholder(0)) {
 		t.Fatalf("param path writes = %#v, want one $0 write", got.ParamPathWrites)
@@ -1268,11 +1268,11 @@ func TestSignatureOutcomeProviderReadsTableMutatorEvidenceOncePerLabel(t *testin
 		Facts:   facts,
 		Sources: sources,
 	})
-	site, ok := facts.CallSite(call)
+	site, ok := facts.CallSiteView(call)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
 
 	if len(got.ParamPathWrites) != 1 {
 		t.Fatalf("param path writes = %#v, want one", got.ParamPathWrites)
@@ -1331,11 +1331,11 @@ func TestSignatureOutcomeProviderLowersTableMutatorElementTypeToValueObligation(
 		Facts:   facts,
 		Sources: sources,
 	})
-	site, ok := facts.CallSite(call)
+	site, ok := facts.CallSiteView(call)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
 
 	if len(got.ParamObligations) != 1 || got.ParamObligations[0].ParamIndex != 1 {
 		t.Fatalf("param obligations = %#v, want one obligation for inserted value argument", got.ParamObligations)
@@ -1393,11 +1393,11 @@ func TestSignatureOutcomeProviderKeepsAnyArrayMutatorWhenInsertedValueIsAny(t *t
 		Facts:   facts,
 		Sources: sources,
 	})
-	site, ok := facts.CallSite(call)
+	site, ok := facts.CallSiteView(call)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
 
 	if len(got.ParamPathWrites) != 1 ||
 		!got.ParamPathWrites[0].Path.Equal(path.NewPlaceholder(0)) {
@@ -1459,11 +1459,11 @@ func TestSignatureOutcomeProviderKeepsAnyArrayMutatorWhenInsertedValueIsUnknown(
 		Facts:   facts,
 		Sources: sources,
 	})
-	site, ok := facts.CallSite(call)
+	site, ok := facts.CallSiteView(call)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
 
 	if len(got.ParamPathWrites) != 1 ||
 		!got.ParamPathWrites[0].Path.Equal(path.NewPlaceholder(0)) {
@@ -1529,11 +1529,11 @@ func TestSignatureOutcomeProviderKeepsAnyArrayMutatorWhenInsertedValueIsConcrete
 		Facts:   facts,
 		Sources: sources,
 	})
-	site, ok := facts.CallSite(call)
+	site, ok := facts.CallSiteView(call)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
 
 	if len(got.ParamPathWrites) != 1 ||
 		!got.ParamPathWrites[0].Path.Equal(path.NewPlaceholder(0)) {
@@ -1602,11 +1602,11 @@ func TestSignatureOutcomeProviderSkipsAccumulatorObligationForExactInferredTable
 		Facts:   facts,
 		Sources: sources,
 	})
-	site, ok := facts.CallSite(call)
+	site, ok := facts.CallSiteView(call)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
 
 	if len(got.ParamObligations) != 0 {
 		t.Fatalf("param obligations = %#v, want no inserted-value obligation for inferred exact accumulator", got.ParamObligations)
@@ -1672,11 +1672,11 @@ func TestSignatureOutcomeProviderTableMutatorUsesSignatureArgumentTypeForInserte
 			return nil, false
 		},
 	})
-	site, ok := facts.CallSite(call)
+	site, ok := facts.CallSiteView(call)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
 
 	if len(got.ParamPathWrites) != 1 ||
 		!got.ParamPathWrites[0].Path.Equal(path.NewPlaceholder(0)) {
@@ -1749,11 +1749,11 @@ func TestSignatureOutcomeProviderTableMutatorRefinesBuiltinTableTargetFromArgume
 			}
 		},
 	})
-	site, ok := facts.CallSite(call)
+	site, ok := facts.CallSiteView(call)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
 
 	if len(got.ParamPathWrites) != 1 ||
 		!got.ParamPathWrites[0].Path.Equal(path.NewPlaceholder(0)) {
@@ -1883,11 +1883,11 @@ func TestSignatureOutcomeProviderKeepsDeclaredExactAccumulatorObligation(t *test
 		Facts:   facts,
 		Sources: sources,
 	})
-	site, ok := facts.CallSite(call)
+	site, ok := facts.CallSiteView(call)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
 
 	if len(got.ParamObligations) != 1 || got.ParamObligations[0].ParamIndex != 1 {
 		t.Fatalf("param obligations = %#v, want declared accumulator to enforce inserted value", got.ParamObligations)
@@ -1940,11 +1940,11 @@ func TestSignatureOutcomeProviderKeepsAnyArrayMutatorWhenInsertedValueIsUnresolv
 		Facts:   facts,
 		Sources: sources,
 	})
-	site, ok := facts.CallSite(call)
+	site, ok := facts.CallSiteView(call)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
 
 	if len(got.ParamPathWrites) != 1 ||
 		!got.ParamPathWrites[0].Path.Equal(path.NewPlaceholder(0)) {
@@ -2005,11 +2005,11 @@ func TestSignatureOutcomeProviderKeepsConcreteArrayMutatorProvenanceWhenInserted
 		Facts:   facts,
 		Sources: sources,
 	})
-	site, ok := facts.CallSite(call)
+	site, ok := facts.CallSiteView(call)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
 
 	if len(got.ParamPathWrites) != 0 {
 		t.Fatalf("param path writes = %#v, want none without inserted value type proof", got.ParamPathWrites)
@@ -2071,11 +2071,11 @@ func TestSignatureOutcomeProviderLowersMutateToParamPathInvalidationAndApplies(t
 		NameFor: staticName("table.sort"),
 		Facts:   facts,
 	})
-	site, ok := facts.CallSite(call)
+	site, ok := facts.CallSiteView(call)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
 
 	if len(got.ParamPathInvalidations) != 1 ||
 		!got.ParamPathInvalidations[0].Path.Equal(path.NewPlaceholder(0)) {
@@ -2236,11 +2236,11 @@ func TestSignatureOutcomeProviderLowersStoreIntoContainerArgument(t *testing.T) 
 		NameFor: staticName("store"),
 		Facts:   facts,
 	})
-	site, ok := facts.CallSite(call)
+	site, ok := facts.CallSiteView(call)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
 
 	if len(got.ParamPathInvalidations) != 1 || !got.ParamPathInvalidations[0].Path.Equal(path.NewPlaceholder(0)) {
 		t.Fatalf("param path invalidations = %#v, want container argument $0", got.ParamPathInvalidations)
@@ -2298,11 +2298,11 @@ func TestSignatureOutcomeProviderSkipsExactStoreRelationWithoutKnownDestination(
 		NameFor: staticName("store"),
 		Facts:   facts,
 	})
-	site, ok := facts.CallSite(call)
+	site, ok := facts.CallSiteView(call)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
 
 	if len(got.ParamPathInvalidations) != 0 {
 		t.Fatalf("param path invalidations = %#v, want none", got.ParamPathInvalidations)
@@ -2345,11 +2345,11 @@ func TestSignatureOutcomeProviderLowersOwnershipSendAndStoreEscapeEvents(t *test
 		NameFor: staticName("send"),
 		Facts:   facts,
 	})
-	site, ok := facts.CallSite(point)
+	site, ok := facts.CallSiteView(point)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Point: point}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Point: point}, site, state.State{}, nil)
 
 	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(0), callboundary.EscapeEventStore, true)
 	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(1), callboundary.EscapeEventSend, true)
@@ -2383,11 +2383,11 @@ func TestSignatureOutcomeProviderLowersOwnershipSendParamToSingleEscapeEvent(t *
 		NameFor: staticName("sendOne"),
 		Facts:   facts,
 	})
-	site, ok := facts.CallSite(point)
+	site, ok := facts.CallSiteView(point)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Point: point}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Point: point}, site, state.State{}, nil)
 
 	if len(got.NormalReturnFacts.EscapeEvents) != 1 {
 		t.Fatalf("escape events = %#v, want exactly one send event", got.NormalReturnFacts.EscapeEvents)
@@ -2425,11 +2425,11 @@ func TestSignatureOutcomeProviderLowersExactOwnershipEscapeLabels(t *testing.T) 
 		NameFor: staticName("escapeKinds"),
 		Facts:   facts,
 	})
-	site, ok := facts.CallSite(point)
+	site, ok := facts.CallSiteView(point)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Point: point}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Point: point}, site, state.State{}, nil)
 
 	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(0), callboundary.EscapeEventRetain, true)
 	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(1), callboundary.EscapeEventExport, true)
@@ -3036,12 +3036,12 @@ func TestSignatureOutcomeProviderOperationalEffectsSuppressRowOperationalFallbac
 		NameFor: staticName("f"),
 		Facts:   facts,
 	})
-	site, ok := facts.CallSite(point)
+	site, ok := facts.CallSiteView(point)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
 
-	got := provider(transfer.NodeContext{Point: point}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Point: point}, site, state.State{}, nil)
 
 	if len(got.ParamPathInvalidations) != 0 || len(got.ParamPathRefinements) != 0 || len(got.ParamPathWrites) != 0 {
 		t.Fatalf("row-derived param facts leaked: refinements=%#v writes=%#v invalidations=%#v", got.ParamPathRefinements, got.ParamPathWrites, got.ParamPathInvalidations)
@@ -3125,12 +3125,12 @@ func TestSignatureOutcomeProviderOperationalDynamicIndexFactUsesPlaceholderOpera
 			},
 		}),
 	})
-	site, ok := facts.CallSite(point)
+	site, ok := facts.CallSiteView(point)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
 
-	got := provider(transfer.NodeContext{Registry: reg, Point: point}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, site, state.State{}, nil)
 
 	if len(got.NormalReturnFacts.DynamicIndexFacts) != 1 {
 		t.Fatalf("dynamic-index facts = %#v, want one", got.NormalReturnFacts.DynamicIndexFacts)
@@ -3171,12 +3171,12 @@ func TestSignatureOutcomeProviderEmptyOperationalEffectsUsesRowFallback(t *testi
 		NameFor: staticName("f"),
 		Facts:   facts,
 	})
-	site, ok := facts.CallSite(point)
+	site, ok := facts.CallSiteView(point)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
 
-	got := provider(transfer.NodeContext{Point: point}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Point: point}, site, state.State{}, nil)
 
 	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(0), callboundary.EscapeEventSend, true)
 }
@@ -3228,11 +3228,11 @@ func TestSignatureOutcomeProviderOwnershipBorrowEffectsRecordBorrowWithoutPlacem
 		},
 		Facts: facts,
 	})
-	site, ok := facts.CallSite(call)
+	site, ok := facts.CallSiteView(call)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	outcome := provider(transfer.NodeContext{Graph: graph, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+	outcome := provider(transfer.NodeContext{Graph: graph, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
 	assertEscapeEvent(t, outcome.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(0), callboundary.EscapeEventBorrow, true)
 	if len(outcome.NormalReturnFacts.FrozenTables) != 0 {
 		t.Fatalf("FrozenTables = %#v, want none", outcome.NormalReturnFacts.FrozenTables)
@@ -3290,11 +3290,11 @@ func TestSignatureOutcomeProviderBorrowAllBorrowsEveryBindableArgument(t *testin
 		NameFor: staticName("borrowAll"),
 		Facts:   facts,
 	})
-	site, ok := facts.CallSite(point)
+	site, ok := facts.CallSiteView(point)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Point: point}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Point: point}, site, state.State{}, nil)
 
 	if len(got.NormalReturnFacts.EscapeEvents) != 2 {
 		t.Fatalf("escape events = %#v, want two bindable-argument borrows", got.NormalReturnFacts.EscapeEvents)
@@ -3432,11 +3432,11 @@ func TestSignatureOutcomeProviderLowersOwnershipFreezeFrozenTableFact(t *testing
 		NameFor: staticName("freeze"),
 		Facts:   facts,
 	})
-	site, ok := facts.CallSite(point)
+	site, ok := facts.CallSiteView(point)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Point: point}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Point: point}, site, state.State{}, nil)
 
 	if len(got.NormalReturnFacts.FrozenTables) != 1 ||
 		!got.NormalReturnFacts.FrozenTables[0].Target.Equal(path.NewPlaceholder(0)) {
@@ -3481,11 +3481,11 @@ func TestSignatureOutcomeProviderParamPathInvalidationDoesNotApplyWithoutExpress
 		NameFor: staticName("table.insert"),
 		Facts:   facts,
 	})
-	site, ok := facts.CallSite(call)
+	site, ok := facts.CallSiteView(call)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
 
 	if len(got.ParamPathInvalidations) != 1 || !got.ParamPathInvalidations[0].Path.Equal(path.NewPlaceholder(0)) {
 		t.Fatalf("param path invalidations = %#v, want unresolved $0", got.ParamPathInvalidations)

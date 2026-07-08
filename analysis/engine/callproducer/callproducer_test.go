@@ -30,7 +30,7 @@ func TestFromSiteProjectsOnlyNarrowProducerEvidence(t *testing.T) {
 		Adjusted:        true,
 	})
 
-	producer := FromSite(site)
+	producer := FromSite(site.View())
 	if producer.CalleeSymbol() != site.CalleeSymbol() || !producer.CalleePath().Equal(site.CalleePath()) {
 		t.Fatalf("producer callee = %v/%v, want %v/%v", producer.CalleeSymbol(), producer.CalleePath(), site.CalleeSymbol(), site.CalleePath())
 	}
@@ -71,7 +71,7 @@ func TestFromFactsDerivesProducerFromCanonicalCallSite(t *testing.T) {
 	if !ok {
 		t.Fatal("call producer missing")
 	}
-	want := FromSite(site)
+	want := FromSite(site.View())
 	if got.CalleeSymbol() != want.CalleeSymbol() || !got.CalleePath().Equal(want.CalleePath()) {
 		t.Fatalf("producer callee = %v/%v, want %v/%v", got.CalleeSymbol(), got.CalleePath(), want.CalleeSymbol(), want.CalleePath())
 	}

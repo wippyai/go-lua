@@ -260,7 +260,7 @@ func callbackProtocolReplayOrders(results []*body.Result) [][]string {
 		}
 		var order []string
 		for _, point := range graph.RPO() {
-			site, ok := result.CallSite(point)
+			site, ok := result.CallSiteView(point)
 			if !ok {
 				continue
 			}
@@ -275,7 +275,7 @@ func callbackProtocolReplayOrders(results []*body.Result) [][]string {
 	return out
 }
 
-func callbackProtocolCallSlot(result *body.Result, site factflow.CallSite) (string, bool) {
+func callbackProtocolCallSlot(result *body.Result, site factflow.CallSiteView) (string, bool) {
 	if (isBareGlobalCallSite(result, site, "pcall") || isBareGlobalCallSite(result, site, "xpcall")) && site.ArgumentSourceCount() != 0 {
 		source, _ := site.ArgumentSourceAt(0)
 		if p, ok := result.ValueSourcePath(source); ok {

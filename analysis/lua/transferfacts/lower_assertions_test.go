@@ -134,7 +134,7 @@ end
 	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 
 	callPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
-	site, ok := facts.CallSite(callPoint)
+	site, ok := facts.CallSiteView(callPoint)
 	if !ok {
 		t.Fatalf("missing call site at point %d", callPoint)
 	}
@@ -165,7 +165,7 @@ end
 	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 
 	callPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
-	site, ok := facts.CallSite(callPoint)
+	site, ok := facts.CallSiteView(callPoint)
 	if !ok {
 		t.Fatalf("missing call site at point %d without cfgbuild CallView", callPoint)
 	}
@@ -204,7 +204,7 @@ end
 	}).Facts
 
 	callPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
-	site, ok := facts.CallSite(callPoint)
+	site, ok := facts.CallSiteView(callPoint)
 	if !ok {
 		t.Fatalf("missing call site at point %d", callPoint)
 	}
@@ -231,7 +231,7 @@ end
 	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 
 	callPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
-	site, ok := facts.CallSite(callPoint)
+	site, ok := facts.CallSiteView(callPoint)
 	if !ok {
 		t.Fatalf("missing call site at point %d", callPoint)
 	}
@@ -282,7 +282,7 @@ end
 	body.SetPointRange(callPoint, start, body.Len())
 
 	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
-	site, ok := facts.CallSite(callPoint)
+	site, ok := facts.CallSiteView(callPoint)
 	if !ok {
 		t.Fatalf("missing call site at point %d", callPoint)
 	}
@@ -335,7 +335,7 @@ end
 	body.SetPointRange(callPoint, start, body.Len())
 
 	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
-	site, ok := facts.CallSite(callPoint)
+	site, ok := facts.CallSiteView(callPoint)
 	if !ok {
 		t.Fatalf("missing call site at point %d", callPoint)
 	}
@@ -398,7 +398,7 @@ end
 	body.SetPointRange(callPoint, start, body.Len())
 
 	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
-	site, ok := facts.CallSite(callPoint)
+	site, ok := facts.CallSiteView(callPoint)
 	if !ok {
 		t.Fatalf("missing call site at point %d", callPoint)
 	}
@@ -1068,7 +1068,7 @@ func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 	body := wirlower.Lower("wrapped-claim-return", stmts, bindings, built)
 	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	localPoints := requireStmtPoints(t, built, local, 2)
-	site, ok := facts.CallSite(localPoints[0])
+	site, ok := facts.CallSiteView(localPoints[0])
 	if !ok {
 		t.Fatal("missing assertion-wrapped assignment call site")
 	}
@@ -1165,7 +1165,7 @@ func TestLowerExpandedClaimWrappedCallKeepsPerResultSlotRefinements(t *testing.T
 			body := wirlower.Lower("expanded-claim-wrapped-call", stmts, bindings, built)
 			facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 			points := requireStmtPoints(t, built, local, 3)
-			site, ok := facts.CallSite(points[0])
+			site, ok := facts.CallSiteView(points[0])
 			if !ok {
 				t.Fatal("missing wrapped call site")
 			}

@@ -575,7 +575,7 @@ func observeCallArguments(
 	caller state.State,
 	prepass *body.Result,
 	point cfg.Point,
-	site factflow.CallSite,
+	site factflow.CallSiteView,
 	baseKey summary.SummaryKey,
 	symbolByKey map[summary.SummaryKey]symbol.ID,
 ) {
@@ -963,7 +963,7 @@ func collectCallContextKeysFromResult(keys *programKeys, owner summary.SummaryKe
 	var changed map[summary.SummaryKey]struct{}
 	phaseTracker := newCallbackPhaseTracker(keys, owner, prepass, config, prepared)
 	for _, point := range graph.RPO() {
-		site, ok := prepass.CallSite(point)
+		site, ok := prepass.CallSiteView(point)
 		if !ok {
 			continue
 		}
@@ -1044,7 +1044,7 @@ func collectProtectedCallCallbackContextKeys(
 	prepass *body.Result,
 	config body.Config,
 	point cfg.Point,
-	site factflow.CallSite,
+	site factflow.CallSiteView,
 ) map[summary.SummaryKey]struct{} {
 	if keys == nil || prepass == nil || config.Registry == nil {
 		return nil
@@ -1089,7 +1089,7 @@ func collectProtectedCallCallbackContextKeys(
 	return changed
 }
 
-func protectedCallCallbackSpecs(result *body.Result, site factflow.CallSite) []protectedCallCallbackSpec {
+func protectedCallCallbackSpecs(result *body.Result, site factflow.CallSiteView) []protectedCallCallbackSpec {
 	if result == nil || site.MethodName() != "" || site.CalleeSymbol() == 0 {
 		return nil
 	}
@@ -1106,7 +1106,7 @@ func protectedCallCallbackSpecs(result *body.Result, site factflow.CallSite) []p
 	}
 }
 
-func callArgumentSourceAt(site factflow.CallSite, index int) (factflow.ValueSource, bool) {
+func callArgumentSourceAt(site factflow.CallSiteView, index int) (factflow.ValueSource, bool) {
 	if index < 0 {
 		return factflow.ValueSource{}, false
 	}
@@ -1129,7 +1129,7 @@ func applyProtectedCallArgumentParamEntryState(
 	prepass *body.Result,
 	keys *programKeys,
 	point cfg.Point,
-	site factflow.CallSite,
+	site factflow.CallSiteView,
 	fn *ast.FunctionExpr,
 	paramArgStart int,
 	entry state.State,
@@ -1176,7 +1176,7 @@ func collectSignatureCallbackContextKeys(
 	prepass *body.Result,
 	config body.Config,
 	point cfg.Point,
-	site factflow.CallSite,
+	site factflow.CallSiteView,
 ) map[summary.SummaryKey]struct{} {
 	if keys == nil || prepass == nil || config.Registry == nil {
 		return nil
@@ -1237,7 +1237,7 @@ func collectInlineFunctionCaptureContextKeys(
 	prepass *body.Result,
 	config body.Config,
 	point cfg.Point,
-	site factflow.CallSite,
+	site factflow.CallSiteView,
 ) map[summary.SummaryKey]struct{} {
 	if keys == nil || prepass == nil || config.Registry == nil {
 		return nil
@@ -1287,7 +1287,7 @@ type callbackContextCallable struct {
 	receiverType typ.Type
 }
 
-func callbackContextCallableType(reg *axis.Registry, prepass *body.Result, point cfg.Point, site factflow.CallSite, keys *programKeys) callbackContextCallable {
+func callbackContextCallableType(reg *axis.Registry, prepass *body.Result, point cfg.Point, site factflow.CallSiteView, keys *programKeys) callbackContextCallable {
 	if reg == nil || prepass == nil {
 		return callbackContextCallable{}
 	}
@@ -1305,7 +1305,7 @@ func callbackContextCallableType(reg *axis.Registry, prepass *body.Result, point
 	return receiverMemberCallableType(reg, prepass, point, site)
 }
 
-func summaryKeyCallableType(reg *axis.Registry, prepass *body.Result, point cfg.Point, site factflow.CallSite, keys *programKeys) callbackContextCallable {
+func summaryKeyCallableType(reg *axis.Registry, prepass *body.Result, point cfg.Point, site factflow.CallSiteView, keys *programKeys) callbackContextCallable {
 	if keys == nil {
 		return callbackContextCallable{}
 	}
@@ -1320,7 +1320,7 @@ func summaryKeyCallableType(reg *axis.Registry, prepass *body.Result, point cfg.
 	return callbackContextCallable{fn: fn}
 }
 
-func directCalleeCallableType(reg *axis.Registry, prepass *body.Result, point cfg.Point, site factflow.CallSite, keys *programKeys) callbackContextCallable {
+func directCalleeCallableType(reg *axis.Registry, prepass *body.Result, point cfg.Point, site factflow.CallSiteView, keys *programKeys) callbackContextCallable {
 	if reg == nil || prepass == nil {
 		return callbackContextCallable{}
 	}
@@ -1345,7 +1345,7 @@ func directCalleeCallableType(reg *axis.Registry, prepass *body.Result, point cf
 	}
 }
 
-func receiverMemberCallableType(reg *axis.Registry, prepass *body.Result, point cfg.Point, site factflow.CallSite) callbackContextCallable {
+func receiverMemberCallableType(reg *axis.Registry, prepass *body.Result, point cfg.Point, site factflow.CallSiteView) callbackContextCallable {
 	if reg == nil || prepass == nil || site.MethodName() == "" {
 		return callbackContextCallable{}
 	}
@@ -1370,7 +1370,7 @@ func receiverMemberCallableType(reg *axis.Registry, prepass *body.Result, point 
 	return callbackContextCallable{fn: fn, receiverType: receiverType}
 }
 
-func signatureCallbackFormalIndex(site factflow.CallSite, callable callbackContextCallable, argIndex int) int {
+func signatureCallbackFormalIndex(site factflow.CallSiteView, callable callbackContextCallable, argIndex int) int {
 	if argIndex < 0 {
 		return argIndex
 	}
@@ -1398,7 +1398,7 @@ func instantiateSignatureTypeForContext(
 	reg *axis.Registry,
 	prepass *body.Result,
 	point cfg.Point,
-	site factflow.CallSite,
+	site factflow.CallSiteView,
 	fn *typ.Function,
 	keys *programKeys,
 ) *typ.Function {
@@ -1416,7 +1416,7 @@ func instantiateSignatureTypeForContext(
 	return instantiated
 }
 
-func contextualCallArgumentTypes(reg *axis.Registry, prepass *body.Result, point cfg.Point, site factflow.CallSite, keys *programKeys) ([]typ.Type, bool) {
+func contextualCallArgumentTypes(reg *axis.Registry, prepass *body.Result, point cfg.Point, site factflow.CallSiteView, keys *programKeys) ([]typ.Type, bool) {
 	if reg == nil || prepass == nil {
 		return nil, false
 	}
@@ -1572,7 +1572,7 @@ func prepassCallSummaryKey(
 	reg *axis.Registry,
 	result *body.Result,
 	point cfg.Point,
-	site factflow.CallSite,
+	site factflow.CallSiteView,
 	keys *programKeys,
 ) (summary.SummaryKey, bool) {
 	if site.CalleeSymbol() != 0 {
@@ -2013,7 +2013,7 @@ func applyCallArgumentParamEntryState(
 	prepass *body.Result,
 	keys *programKeys,
 	point cfg.Point,
-	site factflow.CallSite,
+	site factflow.CallSiteView,
 	fn *ast.FunctionExpr,
 	contextualFn *typ.Function,
 	entry state.State,
@@ -2099,7 +2099,7 @@ func applyCallArgumentParamEntryState(
 	return entry, seen
 }
 
-func callArgumentCapturedRootSymbols(bindings *bind.Result, prepass *body.Result, site factflow.CallSite) map[symbol.ID]struct{} {
+func callArgumentCapturedRootSymbols(bindings *bind.Result, prepass *body.Result, site factflow.CallSiteView) map[symbol.ID]struct{} {
 	if bindings == nil || prepass == nil {
 		return nil
 	}
@@ -2431,7 +2431,7 @@ func callResultSourceContractValue(reg *axis.Registry, prepass *body.Result, key
 		source.ResultIndex < 0 {
 		return product.Value{}, false
 	}
-	site, ok := prepass.CallSite(source.CallPoint)
+	site, ok := prepass.CallSiteView(source.CallPoint)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -2450,7 +2450,7 @@ func callResultSourceContractValue(reg *axis.Registry, prepass *body.Result, key
 	return typevalue.WithWitness(reg, typevalue.FromType(reg, ret), ret), true
 }
 
-func callReceiverValue(reg *axis.Registry, prepass *body.Result, point cfg.Point, site factflow.CallSite) (product.Value, bool) {
+func callReceiverValue(reg *axis.Registry, prepass *body.Result, point cfg.Point, site factflow.CallSiteView) (product.Value, bool) {
 	if source, ok := site.ReceiverSource(); ok {
 		value, ok := prepass.SourceValueAtBoundary(point, source)
 		if ok && contextEntryValueUseful(reg, value) {

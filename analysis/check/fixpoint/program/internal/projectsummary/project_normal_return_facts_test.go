@@ -1426,9 +1426,9 @@ type normalReturnFactProjectCallStub struct {
 	outcomes map[cfg.Point]callpayload.CallOutcome
 }
 
-func (r normalReturnFactProjectCallStub) CallSite(point cfg.Point) (factflow.CallSite, bool) {
+func (r normalReturnFactProjectCallStub) CallSiteView(point cfg.Point) (factflow.CallSiteView, bool) {
 	site, ok := r.calls[point]
-	return site, ok
+	return site.View(), ok
 }
 
 func (r normalReturnFactProjectCallStub) ExpressionPathRef(ref factflow.ExprRef) (pathdom.Path, bool) {

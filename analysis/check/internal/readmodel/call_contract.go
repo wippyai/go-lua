@@ -42,7 +42,7 @@ func (r Reader) callContractAt(point cfg.Point) (callContract, bool) {
 	if r.result == nil {
 		return callContract{}, false
 	}
-	site, ok := r.result.CallSite(point)
+	site, ok := r.result.CallSiteView(point)
 	if !ok {
 		return callContract{}, false
 	}
@@ -80,11 +80,11 @@ func (r Reader) callContractAt(point cfg.Point) (callContract, bool) {
 	return callContract{}, false
 }
 
-func (r Reader) declaredLocalCallContract(point cfg.Point, site factflow.CallSite) (callContract, bool) {
+func (r Reader) declaredLocalCallContract(point cfg.Point, site factflow.CallSiteView) (callContract, bool) {
 	if r.result == nil {
 		return callContract{}, false
 	}
-	fn, ok := r.result.FunctionValueTypeForCalleePath(site.View().CalleePathKey())
+	fn, ok := r.result.FunctionValueTypeForCalleePath(site.CalleePathKey())
 	if !ok || fn == nil {
 		return callContract{}, false
 	}
@@ -97,11 +97,11 @@ func (r Reader) declaredLocalCallContract(point cfg.Point, site factflow.CallSit
 	}, true
 }
 
-func (r Reader) localFunctionParamTypeSpans(point cfg.Point, site factflow.CallSite) []SourceSpan {
+func (r Reader) localFunctionParamTypeSpans(point cfg.Point, site factflow.CallSiteView) []SourceSpan {
 	if r.result == nil {
 		return nil
 	}
-	spans := r.result.FunctionParamTypeSpansForCalleePath(site.View().CalleePathKey())
+	spans := r.result.FunctionParamTypeSpansForCalleePath(site.CalleePathKey())
 	if len(spans) == 0 {
 		return nil
 	}
@@ -112,11 +112,11 @@ func (r Reader) localFunctionParamTypeSpans(point cfg.Point, site factflow.CallS
 	return out
 }
 
-func (r Reader) localFunctionReturnTypeSpans(site factflow.CallSite) []SourceSpan {
+func (r Reader) localFunctionReturnTypeSpans(site factflow.CallSiteView) []SourceSpan {
 	if r.result == nil {
 		return nil
 	}
-	if spans := r.result.FunctionReturnTypeSpansForCalleePath(site.View().CalleePathKey()); len(spans) != 0 {
+	if spans := r.result.FunctionReturnTypeSpansForCalleePath(site.CalleePathKey()); len(spans) != 0 {
 		out := make([]SourceSpan, len(spans))
 		for i, span := range spans {
 			out[i] = sourceSpanFromFactflow(span)
@@ -126,7 +126,7 @@ func (r Reader) localFunctionReturnTypeSpans(site factflow.CallSite) []SourceSpa
 	return nil
 }
 
-func (r Reader) callContractSourceName(site factflow.CallSite) string {
+func (r Reader) callContractSourceName(site factflow.CallSiteView) string {
 	if r.result == nil {
 		return ""
 	}
@@ -149,7 +149,7 @@ func (r Reader) callContractSourceName(site factflow.CallSite) string {
 	return ""
 }
 
-func (r Reader) instantiateCallFunctionType(point cfg.Point, site factflow.CallSite, fn *typ.Function) (*typ.Function, []callcontract.ArgumentConstraintViolation, []CallGenericInferenceConflict) {
+func (r Reader) instantiateCallFunctionType(point cfg.Point, site factflow.CallSiteView, fn *typ.Function) (*typ.Function, []callcontract.ArgumentConstraintViolation, []CallGenericInferenceConflict) {
 	if r.result == nil || fn == nil {
 		return fn, nil, nil
 	}
@@ -164,7 +164,7 @@ func (r Reader) genericInferenceConflicts(point cfg.Point, trace callcontract.Ge
 		return nil
 	}
 	out := make([]CallGenericInferenceConflict, 0, len(conflicts))
-	site, _ := r.result.CallSite(point)
+	site, _ := r.result.CallSiteView(point)
 	for _, conflict := range conflicts {
 		out = append(out, CallGenericInferenceConflict{
 			Index:         conflict.Index,
@@ -196,7 +196,7 @@ func (r Reader) inferenceContributionLabel(point cfg.Point, index int, contribut
 	if r.result == nil {
 		return genericInferenceContributionLabel(index, contribution)
 	}
-	site, ok := r.result.CallSite(point)
+	site, ok := r.result.CallSiteView(point)
 	if !ok || index < 0 {
 		return genericInferenceContributionLabel(index, contribution)
 	}
@@ -287,7 +287,7 @@ func (r Reader) inferenceContributionSpan(point cfg.Point, index int, contributi
 	if r.result == nil {
 		return SourceSpan{}
 	}
-	site, ok := r.result.CallSite(point)
+	site, ok := r.result.CallSiteView(point)
 	if !ok || index < 0 {
 		return SourceSpan{}
 	}
@@ -362,7 +362,7 @@ func (r Reader) callParamObligationOrigin(point cfg.Point, obligation callpayloa
 	if !obligation.Origin.HasOrigin {
 		return readapi.CallArgumentObligationOrigin{}
 	}
-	site, _ := r.result.CallSite(point)
+	site, _ := r.result.CallSiteView(point)
 	functionName := r.currentFunctionSourceName()
 	if functionName == "" {
 		functionName = r.callContractSourceName(site)
@@ -429,7 +429,7 @@ func callArgumentLabel(index int) string {
 	return "argument " + strconv.Itoa(index+1)
 }
 
-func (r Reader) callReceiverTypeOrNil(point cfg.Point, site factflow.CallSite) typ.Type {
+func (r Reader) callReceiverTypeOrNil(point cfg.Point, site factflow.CallSiteView) typ.Type {
 	receiver, ok := r.callReceiverType(point, site)
 	if !ok {
 		return nil
@@ -437,7 +437,7 @@ func (r Reader) callReceiverTypeOrNil(point cfg.Point, site factflow.CallSite) t
 	return receiver
 }
 
-func callReceiverSupplied(site factflow.CallSite) bool {
+func callReceiverSupplied(site factflow.CallSiteView) bool {
 	if _, ok := site.ReceiverSource(); ok {
 		return true
 	}

@@ -813,7 +813,7 @@ local suite_names = sorted_keys(suites)
 	if !sawContext {
 		root := result.RootResult()
 		callPoint := requireCallByCalleeName(t, root, "sorted_keys")
-		site, siteOK := root.CallSite(callPoint)
+		site, siteOK := root.CallSiteView(callPoint)
 		var argValue product.Value
 		var argType typ.Type
 		argOK, typeOK := false, false
@@ -1232,7 +1232,7 @@ end
 			nameKey, nameKeyOK, suitesKey, suitesKeyOK, suiteNamesKey, suiteNamesKeyOK, suiteNamesContainer, suiteNamesContainerOK,
 			suiteNamesDynamicSites, suiteNamesValueKeyTables, st.KeyMembershipsSnapshot(), st.DynamicIndexFactsSnapshot())
 	}
-	site, ok := root.CallSite(callPoint)
+	site, ok := root.CallSiteView(callPoint)
 	if !ok {
 		t.Fatalf("consume call site missing at %d", callPoint)
 	}
@@ -1422,7 +1422,7 @@ return dispatch
 			continue
 		}
 		for _, point := range child.Graph().RPO() {
-			site, ok := child.CallSite(point)
+			site, ok := child.CallSiteView(point)
 			if ok && site.CalleeSymbol() != 0 && child.SymbolName(site.CalleeSymbol()) == "register_channel" {
 				dispatch = child
 				break
@@ -1668,7 +1668,7 @@ return dispatch
 			continue
 		}
 		for _, point := range child.Graph().RPO() {
-			site, ok := child.CallSite(point)
+			site, ok := child.CallSiteView(point)
 			if ok && site.CalleeSymbol() != 0 && child.SymbolName(site.CalleeSymbol()) == "register_channel" {
 				if outcome, ok := child.CallOutcomeAt(point); ok {
 					for _, proof := range outcome.NormalReturnFacts.DynamicValueKeys {
@@ -2061,7 +2061,7 @@ return mapped
 	}
 	root := result.RootResult()
 	rootCallPoint := requireCallByCalleeName(t, root, "map_result")
-	rootSite, rootSiteOK := root.CallSite(rootCallPoint)
+	rootSite, rootSiteOK := root.CallSiteView(rootCallPoint)
 	if !rootSiteOK {
 		t.Fatalf("map_result call site missing")
 	}
@@ -2164,7 +2164,7 @@ return need_id({ name = "no-id-here" })
 	}
 	root := result.RootResult()
 	callPoint := requireCallByCalleeName(t, root, "need_id")
-	site, ok := root.CallSite(callPoint)
+	site, ok := root.CallSiteView(callPoint)
 	if !ok {
 		t.Fatalf("need_id call site missing")
 	}
@@ -3313,7 +3313,7 @@ func methodCallArgumentType(t *testing.T, root *body.Result, ownerMethod, callee
 			t.Fatalf("method %s graph missing", ownerMethod)
 		}
 		for _, point := range graph.RPO() {
-			site, ok := child.CallSite(point)
+			site, ok := child.CallSiteView(point)
 			if !ok || site.MethodName() != calleeMethod {
 				continue
 			}
@@ -3340,7 +3340,7 @@ func methodCallObjectEntrySourceSummary(t *testing.T, root *body.Result, ownerMe
 			continue
 		}
 		for _, point := range child.Graph().RPO() {
-			site, ok := child.CallSite(point)
+			site, ok := child.CallSiteView(point)
 			if !ok || site.MethodName() != calleeMethod {
 				continue
 			}
@@ -3590,7 +3590,7 @@ end
 			continue
 		}
 		for _, point := range child.Graph().RPO() {
-			site, ok := child.CallSite(point)
+			site, ok := child.CallSiteView(point)
 			if !ok || site.MethodName() != "receive" {
 				continue
 			}
@@ -3671,7 +3671,7 @@ end
 			continue
 		}
 		for _, point := range mapReceive.Graph().RPO() {
-			site, ok := mapReceive.CallSite(point)
+			site, ok := mapReceive.CallSiteView(point)
 			if !ok || mapReceive.SymbolName(site.CalleeSymbol()) != "fn" {
 				continue
 			}
@@ -3996,7 +3996,7 @@ end
 		t.Fatal("_route_errors result missing")
 	}
 	for _, point := range routeResult.Graph().RPO() {
-		site, ok := routeResult.CallSite(point)
+		site, ok := routeResult.CallSiteView(point)
 		methodPath, hasMethodPath := site.MethodPath()
 		if !ok || site.MethodName() != "data" || !hasMethodPath {
 			continue
@@ -4116,7 +4116,7 @@ func TestDeadlockDataflowRouteErrorsBoundaryKeepsSelfDataSurface(t *testing.T) {
 		t.Fatal("_route_errors result missing")
 	}
 	for _, point := range routeResult.Graph().RPO() {
-		site, ok := routeResult.CallSite(point)
+		site, ok := routeResult.CallSiteView(point)
 		methodPath, hasMethodPath := site.MethodPath()
 		if !ok || site.MethodName() != "data" || !hasMethodPath {
 			continue
@@ -4201,7 +4201,7 @@ end
 		t.Fatal("run result missing")
 	}
 	for _, point := range runResult.Graph().RPO() {
-		site, ok := runResult.CallSite(point)
+		site, ok := runResult.CallSiteView(point)
 		methodPath, hasMethodPath := site.MethodPath()
 		if !ok || site.MethodName() != "dispatch" || !hasMethodPath {
 			continue
@@ -4302,7 +4302,7 @@ end
 	targetType := typetable.NewRecord().Field("id", typ.String).Build()
 	targetsType := typ.NewArray(targetType)
 	for _, point := range complete.Graph().RPO() {
-		site, ok := complete.CallSite(point)
+		site, ok := complete.CallSiteView(point)
 		if !ok {
 			continue
 		}
@@ -4311,7 +4311,7 @@ end
 			continue
 		}
 		var argValueText string
-		if site, ok := complete.CallSite(point); ok {
+		if site, ok := complete.CallSiteView(point); ok {
 			if source, ok := site.ArgumentSourceAt(0); ok {
 				argValue, _ := complete.SourceValueBeforeBoundary(point, source)
 				argType, argTypeOK := typevalue.TypeOf(reg, argValue)
@@ -4667,7 +4667,7 @@ func requireCallArgumentByCalleeName(t *testing.T, result *body.Result, name str
 		t.Fatalf("result graph missing")
 	}
 	for _, point := range graph.RPO() {
-		site, ok := result.CallSite(point)
+		site, ok := result.CallSiteView(point)
 		if !ok || site.CalleeSymbol() == 0 || result.SymbolName(site.CalleeSymbol()) != name {
 			continue
 		}
@@ -4821,7 +4821,7 @@ func findNestedReceiverCall(t *testing.T, root *body.Result, method string) (*bo
 			continue
 		}
 		for _, point := range child.Graph().RPO() {
-			site, ok := child.CallSite(point)
+			site, ok := child.CallSiteView(point)
 			receiverPath, hasReceiverPath := site.ReceiverPath()
 			if !ok || site.MethodName() != method || !hasReceiverPath || receiverPath.Symbol == 0 {
 				continue
@@ -4867,7 +4867,7 @@ func requireCallByCalleeName(t *testing.T, result *body.Result, name string) cfg
 		t.Fatalf("result graph missing")
 	}
 	for _, point := range result.Graph().RPO() {
-		site, ok := result.CallSite(point)
+		site, ok := result.CallSiteView(point)
 		if !ok || site.CalleeSymbol() == 0 || result.SymbolName(site.CalleeSymbol()) != name {
 			continue
 		}

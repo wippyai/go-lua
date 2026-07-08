@@ -19,7 +19,7 @@ end`), Config{Registry: standard.Registry()})
 	if !ok {
 		t.Fatal("call point not found")
 	}
-	site, ok := result.CallSite(point)
+	site, ok := result.CallSiteView(point)
 	if !ok {
 		t.Fatal("call site not found")
 	}

@@ -682,7 +682,7 @@ end`)
 	if len(points) == 0 {
 		t.Fatalf("generic-for points = %v, want iterator call point", points)
 	}
-	site, ok := result.facts.CallSite(points[0])
+	site, ok := result.facts.CallSiteView(points[0])
 	if !ok {
 		t.Fatalf("missing iterator call site at point %d", points[0])
 	}
@@ -823,7 +823,7 @@ end`)
 	callStmt := loop.Stmts[1].(*ast.FuncCallStmt)
 	var callPoint cfg.Point
 	for _, point := range result.cfg.StmtPoints.PointsFor(callStmt) {
-		if _, ok := result.facts.CallSite(point); ok {
+		if _, ok := result.facts.CallSiteView(point); ok {
 			callPoint = point
 			break
 		}

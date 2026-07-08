@@ -16,7 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func (r Reader) callCalleeReport(point cfg.Point, site factflow.CallSite) CallCalleeReport {
+func (r Reader) callCalleeReport(point cfg.Point, site factflow.CallSiteView) CallCalleeReport {
 	if r.result == nil {
 		return CallCalleeReport{}
 	}
@@ -133,7 +133,7 @@ func (r Reader) calleeValueProvenFunction(value product.Value) bool {
 		!kinds.Contains(runtimekind.Nil)
 }
 
-func (r Reader) impreciseMemberCalleeRequiresProof(point cfg.Point, site factflow.CallSite) bool {
+func (r Reader) impreciseMemberCalleeRequiresProof(point cfg.Point, site factflow.CallSiteView) bool {
 	if !site.CalleeMemberAccess() {
 		return false
 	}
@@ -141,12 +141,12 @@ func (r Reader) impreciseMemberCalleeRequiresProof(point cfg.Point, site factflo
 	return ok && receiver != nil && !typ.IsAny(receiver) && !typ.IsUnknown(receiver) && !typ.IsNever(receiver)
 }
 
-func (r Reader) memberCalleeCallableFromDiscriminantProof(point cfg.Point, site factflow.CallSite) bool {
+func (r Reader) memberCalleeCallableFromDiscriminantProof(point cfg.Point, site factflow.CallSiteView) bool {
 	memberType, ok := r.discriminantProvenMemberType(point, site)
 	return ok && callcontract.TypeCallable(memberType)
 }
 
-func (r Reader) memberCalleeCallableFromReceiver(point cfg.Point, site factflow.CallSite) bool {
+func (r Reader) memberCalleeCallableFromReceiver(point cfg.Point, site factflow.CallSiteView) bool {
 	name, ok := memberCallableName(site)
 	if !ok {
 		return false
@@ -159,7 +159,7 @@ func (r Reader) memberCalleeCallableFromReceiver(point cfg.Point, site factflow.
 	return ok && status == callcontract.MemberCallOK && fn != nil
 }
 
-func (r Reader) missingMemberCalleeReport(point cfg.Point, site factflow.CallSite, receiverPath path.Path, member segment.Segment) (CallCalleeReport, bool) {
+func (r Reader) missingMemberCalleeReport(point cfg.Point, site factflow.CallSiteView, receiverPath path.Path, member segment.Segment) (CallCalleeReport, bool) {
 	if _, ok := r.discriminantProvenMemberType(point, site); ok {
 		return CallCalleeReport{}, false
 	}
@@ -244,7 +244,7 @@ func callCalleeMemberSegmentDisplay(member segment.Segment) string {
 	}
 }
 
-func (r Reader) expressionReceiverMethodCalleeReport(point cfg.Point, site factflow.CallSite) (CallCalleeReport, bool) {
+func (r Reader) expressionReceiverMethodCalleeReport(point cfg.Point, site factflow.CallSiteView) (CallCalleeReport, bool) {
 	if !site.CalleeMemberAccess() || site.MethodName() == "" {
 		return CallCalleeReport{}, false
 	}
@@ -269,7 +269,7 @@ func (r Reader) expressionReceiverMethodCalleeReport(point cfg.Point, site factf
 	}), true
 }
 
-func (r Reader) memberReceiverNilableAtCall(point cfg.Point, site factflow.CallSite) (typ.Type, bool) {
+func (r Reader) memberReceiverNilableAtCall(point cfg.Point, site factflow.CallSiteView) (typ.Type, bool) {
 	if site.MethodName() == "" && !site.CalleeMemberAccess() {
 		return nil, false
 	}
@@ -290,7 +290,7 @@ func (r Reader) declaredCalleeType(p path.Path) (typ.Type, bool) {
 	return r.result.SymbolDeclaredType(p.Symbol)
 }
 
-func (r Reader) memberCallFunctionType(point cfg.Point, site factflow.CallSite) (*typ.Function, bool) {
+func (r Reader) memberCallFunctionType(point cfg.Point, site factflow.CallSiteView) (*typ.Function, bool) {
 	method, ok := memberCallableName(site)
 	if !ok {
 		return nil, false
@@ -306,7 +306,7 @@ func (r Reader) memberCallFunctionType(point cfg.Point, site factflow.CallSite) 
 	return fn, ok && status == callcontract.MemberCallOK && fn != nil
 }
 
-func (r Reader) discriminantProvenMemberType(point cfg.Point, site factflow.CallSite) (typ.Type, bool) {
+func (r Reader) discriminantProvenMemberType(point cfg.Point, site factflow.CallSiteView) (typ.Type, bool) {
 	if r.result == nil {
 		return nil, false
 	}
@@ -322,7 +322,7 @@ func (r Reader) discriminantProvenMemberType(point cfg.Point, site factflow.Call
 	}
 }
 
-func memberCallableName(site factflow.CallSite) (string, bool) {
+func memberCallableName(site factflow.CallSiteView) (string, bool) {
 	if method := site.MethodName(); method != "" {
 		return method, true
 	}
@@ -338,7 +338,7 @@ func memberCallableName(site factflow.CallSite) (string, bool) {
 	}
 }
 
-func (r Reader) callReceiverType(point cfg.Point, site factflow.CallSite) (typ.Type, bool) {
+func (r Reader) callReceiverType(point cfg.Point, site factflow.CallSiteView) (typ.Type, bool) {
 	if r.result == nil {
 		return nil, false
 	}

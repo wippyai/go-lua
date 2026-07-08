@@ -364,7 +364,7 @@ func requireOnlyCallSitePoint(t *testing.T, result *Result) cfg.Point {
 	t.Helper()
 	var out cfg.Point
 	for _, candidate := range result.Graph().RPO() {
-		if _, ok := result.CallSite(candidate); !ok {
+		if _, ok := result.CallSiteView(candidate); !ok {
 			continue
 		}
 		if out != 0 {

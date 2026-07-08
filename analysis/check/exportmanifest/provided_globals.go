@@ -169,7 +169,7 @@ func (f *providedGlobalForwarding) propagateCallbackParams() {
 				continue
 			}
 			for _, point := range graph.RPO() {
-				site, ok := result.CallSite(point)
+				site, ok := result.CallSiteView(point)
 				if !ok {
 					continue
 				}
@@ -210,7 +210,7 @@ func (f *providedGlobalForwarding) collect(m *manifest.Manifest) {
 			continue
 		}
 		for _, point := range graph.RPO() {
-			site, ok := result.CallSite(point)
+			site, ok := result.CallSiteView(point)
 			if !ok {
 				continue
 			}
@@ -228,7 +228,7 @@ func (f *providedGlobalForwarding) collect(m *manifest.Manifest) {
 	}
 }
 
-func (f *providedGlobalForwarding) localCalleeAndArgs(result *body.Result, site factflow.CallSite) (*ast.FunctionExpr, []factflow.ValueSource, bool) {
+func (f *providedGlobalForwarding) localCalleeAndArgs(result *body.Result, site factflow.CallSiteView) (*ast.FunctionExpr, []factflow.ValueSource, bool) {
 	if f == nil {
 		return nil, nil, false
 	}
@@ -254,7 +254,7 @@ func (f *providedGlobalForwarding) localFunctionForPath(p pathdom.Path) (*ast.Fu
 	return fn, ok && fn != nil
 }
 
-func callSiteArgumentSourcesFrom(site factflow.CallSite, start int) []factflow.ValueSource {
+func callSiteArgumentSourcesFrom(site factflow.CallSiteView, start int) []factflow.ValueSource {
 	if start <= 0 {
 		return site.ArgumentSources()
 	}
@@ -295,7 +295,7 @@ func (f *providedGlobalForwarding) sourceIsWatchedCallback(result *body.Result, 
 	return ok
 }
 
-func providerGlobalsForCall(result *body.Result, point cfg.Point, site factflow.CallSite) (*manifest.Manifest, []string, []factflow.ValueSource) {
+func providerGlobalsForCall(result *body.Result, point cfg.Point, site factflow.CallSiteView) (*manifest.Manifest, []string, []factflow.ValueSource) {
 	name, ok := result.CallSignatureNameAtPoint(point)
 	if ok {
 		if provider, globals := providerGlobalsForSignatureName(result, name); len(globals) != 0 {
@@ -329,7 +329,7 @@ func providerGlobalsForSignatureName(result *body.Result, name string) (*manifes
 	return nil, nil
 }
 
-func isBareGlobalCallSite(result *body.Result, site factflow.CallSite, name string) bool {
+func isBareGlobalCallSite(result *body.Result, site factflow.CallSiteView, name string) bool {
 	if result == nil || name == "" || site.CalleeMemberAccess() {
 		return false
 	}

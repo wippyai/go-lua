@@ -203,7 +203,7 @@ type RegistryKeyCallShape struct {
 
 // RegistryKeyCallShape returns the generic registry/key call layout used by
 // registration-style APIs.
-func (r *Result) RegistryKeyCallShape(point cfg.Point, site factflow.CallSite) (RegistryKeyCallShape, bool) {
+func (r *Result) RegistryKeyCallShape(point cfg.Point, site factflow.CallSiteView) (RegistryKeyCallShape, bool) {
 	args := r.callSiteArgumentInfos(point, site)
 	if registry, ok := CallSiteMemberReceiverPath(site); ok && len(args) >= 2 {
 		return RegistryKeyCallShape{Registry: registry, KeyIndex: 0, Args: args, Span: sourceSpanFromFactflow(site.CallSpan())}, true
@@ -228,7 +228,7 @@ type DispatchCallShape struct {
 // DispatchCallShape returns a registry path and the arguments dispatched
 // through it. Member calls use all args; function calls use args after the
 // registry argument.
-func (r *Result) DispatchCallShape(point cfg.Point, site factflow.CallSite) (DispatchCallShape, bool) {
+func (r *Result) DispatchCallShape(point cfg.Point, site factflow.CallSiteView) (DispatchCallShape, bool) {
 	args := r.callSiteArgumentInfos(point, site)
 	if registry, ok := CallSiteMemberReceiverPath(site); ok && len(args) > 0 {
 		return DispatchCallShape{Registry: registry, Args: args, Span: sourceSpanFromFactflow(site.CallSpan())}, true
@@ -243,11 +243,11 @@ func (r *Result) DispatchCallShape(point cfg.Point, site factflow.CallSite) (Dis
 }
 
 // CallArgumentInfos returns syntax-free facts for every call argument.
-func (r *Result) CallArgumentInfos(point cfg.Point, site factflow.CallSite) []CallArgumentInfo {
+func (r *Result) CallArgumentInfos(point cfg.Point, site factflow.CallSiteView) []CallArgumentInfo {
 	return r.callSiteArgumentInfos(point, site)
 }
 
-func (r *Result) callSiteArgumentInfos(point cfg.Point, site factflow.CallSite) []CallArgumentInfo {
+func (r *Result) callSiteArgumentInfos(point cfg.Point, site factflow.CallSiteView) []CallArgumentInfo {
 	out := make([]CallArgumentInfo, 0, site.ArgumentSourceCount())
 	for i := 0; i < site.ArgumentSourceCount(); i++ {
 		info := CallArgumentInfo{Index: i}
@@ -271,7 +271,7 @@ func (r *Result) callSiteArgumentInfos(point cfg.Point, site factflow.CallSite) 
 }
 
 // CallSiteMemberReceiverPath returns the receiver path for a member-call site.
-func CallSiteMemberReceiverPath(site factflow.CallSite) (pathdom.Path, bool) {
+func CallSiteMemberReceiverPath(site factflow.CallSiteView) (pathdom.Path, bool) {
 	receiver, _, ok := site.CalleeMemberAccessPath()
 	if !ok || receiver.IsEmpty() {
 		return pathdom.Path{}, false

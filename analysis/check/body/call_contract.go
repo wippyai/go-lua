@@ -18,7 +18,7 @@ type InstantiatedCallFunction struct {
 // InstantiateCallFunctionType instantiates fn using the solved argument values
 // at point. Read models consume the returned projection; generic inference and
 // structural argument typing stay with the body proof owner.
-func (r *Result) InstantiateCallFunctionType(point cfg.Point, site factflow.CallSite, fn *typ.Function) InstantiatedCallFunction {
+func (r *Result) InstantiateCallFunctionType(point cfg.Point, site factflow.CallSiteView, fn *typ.Function) InstantiatedCallFunction {
 	out := InstantiatedCallFunction{Type: fn}
 	if r == nil || fn == nil || len(fn.TypeParams) == 0 {
 		return out

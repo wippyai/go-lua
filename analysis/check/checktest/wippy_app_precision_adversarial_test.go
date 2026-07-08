@@ -2492,7 +2492,7 @@ local suite_names = discovery.sorted_keys(suites)
 	foundOutcome := false
 	root := result.checked.RootResult()
 	for _, point := range root.Graph().RPO() {
-		if _, ok := root.CallSite(point); !ok {
+		if _, ok := root.CallSiteView(point); !ok {
 			continue
 		}
 		name, ok := root.CallSignatureNameAtPoint(point)

@@ -5,7 +5,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 )
 
-func (r Reader) callArgumentBindings(site factflow.CallSite) []path.Path {
+func (r Reader) callArgumentBindings(site factflow.CallSiteView) []path.Path {
 	var bindings []path.Path
 	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
 		sourcePath, ok := r.valueSourcePath(source)
@@ -18,7 +18,7 @@ func (r Reader) callArgumentBindings(site factflow.CallSite) []path.Path {
 	return bindings
 }
 
-func (r Reader) callBindings(site factflow.CallSite) []path.Path {
+func (r Reader) callBindings(site factflow.CallSiteView) []path.Path {
 	var bindings []path.Path
 	offset := 0
 	if receiverPath, ok := site.ReceiverPath(); ok {

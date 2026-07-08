@@ -125,19 +125,19 @@ func (r *Result) CallMayInvalidateGuardFact(point cfg.Point, target pathdom.Path
 }
 
 func (r *Result) callSiteExists(point cfg.Point) bool {
-	_, ok := r.CallSite(point)
+	_, ok := r.CallSiteView(point)
 	return ok
 }
 
 func (r *Result) receiverRootGuardFactSurvivesOpenMethodCallAt(point cfg.Point, target pathdom.Path) bool {
-	site, ok := r.CallSite(point)
+	site, ok := r.CallSiteView(point)
 	if !ok {
 		return false
 	}
 	return receiverRootGuardFactSurvivesOpenMethodCall(site, target)
 }
 
-func receiverRootGuardFactSurvivesOpenMethodCall(site factflow.CallSite, target pathdom.Path) bool {
+func receiverRootGuardFactSurvivesOpenMethodCall(site factflow.CallSiteView, target pathdom.Path) bool {
 	receiver, ok := site.ReceiverPath()
 	return site.MethodName() != "" &&
 		ok &&
@@ -157,7 +157,7 @@ func callInvalidationPathClearsGuardFact(invalidated, target pathdom.Path) bool 
 }
 
 func (r *Result) callOutcomeHasCovariantExposureForTargetAt(point cfg.Point, outcome callpayload.CallOutcome, target pathdom.Path) bool {
-	site, ok := r.CallSite(point)
+	site, ok := r.CallSiteView(point)
 	if !ok {
 		return false
 	}
@@ -169,7 +169,7 @@ func (r *Result) callOutcomeHasCovariantExposureForTargetAt(point cfg.Point, out
 // exposure invalidates recovered path evidence: even without a direct write
 // summary, the caller cannot keep using a dominating narrow declaration or
 // guard as proof for the exposed object.
-func (r *Result) callOutcomeHasCovariantExposureForTarget(site factflow.CallSite, outcome callpayload.CallOutcome, target pathdom.Path) bool {
+func (r *Result) callOutcomeHasCovariantExposureForTarget(site factflow.CallSiteView, outcome callpayload.CallOutcome, target pathdom.Path) bool {
 	if r == nil || target.IsEmpty() || len(outcome.ParamExposures) == 0 {
 		return false
 	}
@@ -192,11 +192,11 @@ func (r *Result) callSiteHasExactEmptyGuardInvalidationSummaryAt(point cfg.Point
 }
 
 func (r *Result) callSiteReferencesTrackedPathAt(point cfg.Point, target pathdom.Path) bool {
-	site, ok := r.CallSite(point)
+	site, ok := r.CallSiteView(point)
 	return ok && r.callSiteReferencesTrackedPath(site, target)
 }
 
-func (r *Result) callSiteReferencesTrackedPath(site factflow.CallSite, target pathdom.Path) bool {
+func (r *Result) callSiteReferencesTrackedPath(site factflow.CallSiteView, target pathdom.Path) bool {
 	if receiver, ok := site.ReceiverPath(); ok && target.Overlaps(receiver) {
 		return true
 	}
@@ -213,7 +213,7 @@ func (r *Result) callSiteReferencesTrackedPath(site factflow.CallSite, target pa
 }
 
 func (r *Result) callOutcomeHasExactGuardInvalidationSummaryAt(point cfg.Point, outcome callpayload.CallOutcome, trustResolvedSummaryAuthority bool) bool {
-	site, ok := r.CallSite(point)
+	site, ok := r.CallSiteView(point)
 	var sig signature.Function
 	hasSignature := false
 	if resolved, resolvedOK := r.CallSignatureAtPoint(point); resolvedOK {
@@ -226,7 +226,7 @@ func (r *Result) callOutcomeHasExactGuardInvalidationSummaryAt(point cfg.Point, 
 // callOutcomeHasExactGuardInvalidationSummary reports whether outcome carries
 // enough effect authority to decide path invalidation precisely for a referenced
 // receiver or argument.
-func (r *Result) callOutcomeHasExactGuardInvalidationSummary(site factflow.CallSite, outcome callpayload.CallOutcome, trustResolvedSummaryAuthority bool, sig signature.Function, hasSignature bool) bool {
+func (r *Result) callOutcomeHasExactGuardInvalidationSummary(site factflow.CallSiteView, outcome callpayload.CallOutcome, trustResolvedSummaryAuthority bool, sig signature.Function, hasSignature bool) bool {
 	hasOperationalEffects := hasSignature &&
 		sig.OperationalEffects != nil &&
 		!sig.OperationalEffects.IsEmpty()
@@ -249,7 +249,7 @@ func (r *Result) callOutcomeHasExactGuardInvalidationSummary(site factflow.CallS
 		(hasSignature && sig.Effect.IsClosed())
 }
 
-func (r *Result) callSiteHasLocalFunctionDefinition(site factflow.CallSite) bool {
+func (r *Result) callSiteHasLocalFunctionDefinition(site factflow.CallSiteView) bool {
 	return r != nil && site.CalleeSymbol() != 0 && r.IsFunctionDefinitionTarget(site.CalleeSymbol())
 }
 
@@ -275,7 +275,7 @@ func CallOutcomeHasGlobalGuardInvalidation(outcome callpayload.CallOutcome) bool
 }
 
 func (r *Result) callOutcomeGuardInvalidationPathsAt(point cfg.Point, outcome callpayload.CallOutcome) ([]CallPathInvalidation, bool) {
-	site, ok := r.CallSite(point)
+	site, ok := r.CallSiteView(point)
 	if !ok {
 		return nil, false
 	}
@@ -284,7 +284,7 @@ func (r *Result) callOutcomeGuardInvalidationPathsAt(point cfg.Point, outcome ca
 
 // callOutcomeGuardInvalidationPaths substitutes the invalidation paths carried
 // by outcome onto the caller's argument/receiver paths.
-func (r *Result) callOutcomeGuardInvalidationPaths(site factflow.CallSite, outcome callpayload.CallOutcome) ([]CallPathInvalidation, bool) {
+func (r *Result) callOutcomeGuardInvalidationPaths(site factflow.CallSiteView, outcome callpayload.CallOutcome) ([]CallPathInvalidation, bool) {
 	paramBindings := r.callGuardArgumentBindings(site)
 	callBindings := r.callGuardCallBindings(site)
 	var out []CallPathInvalidation
@@ -317,7 +317,7 @@ func concreteRootInvalidation(target pathdom.Path) bool {
 }
 
 func (r *Result) callGuardCallBindingsAt(point cfg.Point) []pathdom.Path {
-	site, ok := r.CallSite(point)
+	site, ok := r.CallSiteView(point)
 	if !ok {
 		return nil
 	}
@@ -325,14 +325,14 @@ func (r *Result) callGuardCallBindingsAt(point cfg.Point) []pathdom.Path {
 }
 
 func (r *Result) callEvidenceLabelAt(point cfg.Point) string {
-	site, ok := r.CallSite(point)
+	site, ok := r.CallSiteView(point)
 	if !ok {
 		return ""
 	}
 	return callSiteEvidenceLabel(site)
 }
 
-func callSiteEvidenceLabel(site factflow.CallSite) string {
+func callSiteEvidenceLabel(site factflow.CallSiteView) string {
 	if site.MethodName() != "" {
 		if receiver, ok := site.ReceiverPath(); ok && !receiver.IsEmpty() {
 			return receiver.String() + ":" + site.MethodName() + "(...)"
@@ -348,7 +348,7 @@ func callSiteEvidenceLabel(site factflow.CallSite) string {
 }
 
 func (r *Result) callEvidenceSpanAt(point cfg.Point) SourceSpan {
-	site, ok := r.CallSite(point)
+	site, ok := r.CallSiteView(point)
 	if !ok {
 		return SourceSpan{}
 	}
@@ -360,14 +360,14 @@ func (r *Result) callEvidenceSpanAt(point cfg.Point) SourceSpan {
 }
 
 func (r *Result) callSpanAt(point cfg.Point) SourceSpan {
-	site, ok := r.CallSite(point)
+	site, ok := r.CallSiteView(point)
 	if !ok {
 		return SourceSpan{}
 	}
 	return sourceSpanFromFactflow(site.CallSpan())
 }
 
-func (r *Result) callGuardArgumentBindings(site factflow.CallSite) []pathdom.Path {
+func (r *Result) callGuardArgumentBindings(site factflow.CallSiteView) []pathdom.Path {
 	if r == nil {
 		return nil
 	}
@@ -386,7 +386,7 @@ func (r *Result) callGuardArgumentBindings(site factflow.CallSite) []pathdom.Pat
 	return bindings
 }
 
-func (r *Result) callGuardCallBindings(site factflow.CallSite) []pathdom.Path {
+func (r *Result) callGuardCallBindings(site factflow.CallSiteView) []pathdom.Path {
 	if r == nil {
 		return nil
 	}

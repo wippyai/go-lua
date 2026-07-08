@@ -276,7 +276,7 @@ end
 	reg := standard.Registry()
 	wirBody := wirlower.LowerFunction("closure-arg", fn, bindings, built)
 	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: wirBody}).Facts
-	site, ok := facts.CallSite(point)
+	site, ok := facts.CallSiteView(point)
 	if !ok {
 		t.Fatalf("missing call site at point %d", point)
 	}
@@ -1239,7 +1239,7 @@ func assertNoPointFact(t *testing.T, facts factflow.Facts, point cfg.Point) {
 	if _, ok := callproducer.FromFacts(facts, point); ok {
 		t.Fatalf("point %d lowered as call producer", point)
 	}
-	if _, ok := facts.CallSite(point); ok {
+	if _, ok := facts.CallSiteView(point); ok {
 		t.Fatalf("point %d lowered as call site", point)
 	}
 }

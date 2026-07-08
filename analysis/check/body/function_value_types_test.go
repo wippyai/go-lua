@@ -387,7 +387,7 @@ func TestFunctionValueTypeForCallSiteAtBoundaryUsesCurrentPathValue(t *testing.T
 	got, ok := result.FunctionValueTypeForCallSiteAtBoundary(point, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleeSymbol: calleeSym,
 		CalleePath:   calleePath,
-	}))
+	}).View())
 	if !ok || got != currentFn {
 		t.Fatalf("FunctionValueTypeForCallSiteAtBoundary = %v/%v, want current identity function", got, ok)
 	}
@@ -412,7 +412,7 @@ coroutine.spawn(function() end)
 	}
 
 	for _, point := range result.Graph().RPO() {
-		site, ok := result.CallSite(point)
+		site, ok := result.CallSiteView(point)
 		if !ok || site.CalleePathRef().String() != "coroutine.spawn" {
 			continue
 		}
@@ -446,7 +446,7 @@ func TestFunctionValueTypeForCallSiteAtBoundaryRejectsStalePathWhenCurrentValueI
 	if got, ok := result.FunctionValueTypeForCallSiteAtBoundary(point, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleeSymbol: calleeSym,
 		CalleePath:   calleePath,
-	})); ok || got != nil {
+	}).View()); ok || got != nil {
 		t.Fatalf("FunctionValueTypeForCallSiteAtBoundary = %v/%v, want stale path summary rejected", got, ok)
 	}
 }
@@ -475,7 +475,7 @@ func TestFunctionValueTypeForCallSiteAtBoundaryUsesCurrentMemberCallableWitness(
 		CalleeSymbol:       calleeSym,
 		CalleePath:         calleePath,
 		CalleeMemberAccess: true,
-	}))
+	}).View())
 	if !ok || got != currentFn {
 		t.Fatalf("FunctionValueTypeForCallSiteAtBoundary = %v/%v, want current member callable witness", got, ok)
 	}
@@ -493,7 +493,7 @@ func TestFunctionValueTypeForCallSiteAtBoundaryDoesNotUseDirectCallableWitness(t
 	got, ok := result.FunctionValueTypeForCallSiteAtBoundary(point, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleeSymbol: calleeSym,
 		CalleePath:   calleePath,
-	}))
+	}).View())
 	if ok || got != nil {
 		t.Fatalf("FunctionValueTypeForCallSiteAtBoundary = %v/%v, want direct callable witness left unknown", got, ok)
 	}
@@ -520,7 +520,7 @@ func TestFunctionValueTypeForCallSiteAtBoundaryFallsBackToCalleePathSummaryWhenC
 	got, ok := result.FunctionValueTypeForCallSiteAtBoundary(point, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleeSymbol: calleeSym,
 		CalleePath:   calleePath,
-	}))
+	}).View())
 	if !ok || got != fn {
 		t.Fatalf("FunctionValueTypeForCallSiteAtBoundary = %v/%v, want callee path summary", got, ok)
 	}

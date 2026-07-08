@@ -147,7 +147,7 @@ func TestCallSignatureDoesNotUseImplicitStdlibMemberAfterGlobalTableOverride(t *
 
 	found := false
 	for _, point := range result.Graph().RPO() {
-		site, ok := result.CallSite(point)
+		site, ok := result.CallSiteView(point)
 		if !ok || site.CalleePathRef().String() != "coroutine.spawn" {
 			continue
 		}

@@ -107,7 +107,7 @@ func tableDispatchSummaries(result *Result, inherited map[path.PathKey]tableDisp
 		if write, ok := result.LoweredAssignmentWrite(point); ok {
 			updateTableDispatchSummariesForAssignment(result, out, write)
 		}
-		if _, ok := result.CallSite(point); ok {
+		if _, ok := result.CallSiteView(point); ok {
 			updateTableDispatchSummariesForCall(result, out, point)
 		}
 	}

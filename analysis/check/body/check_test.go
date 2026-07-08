@@ -342,7 +342,7 @@ end
 	}
 	want := typetable.NewRecord().Field("name", typ.String).Build()
 	for _, point := range graph.RPO() {
-		site, ok := result.CallSite(point)
+		site, ok := result.CallSiteView(point)
 		if !ok {
 			continue
 		}
@@ -384,7 +384,7 @@ end
 	}
 	want := typetable.NewRecord().Field("name", typ.String).Build()
 	for _, point := range graph.RPO() {
-		site, ok := result.CallSite(point)
+		site, ok := result.CallSiteView(point)
 		if !ok {
 			continue
 		}
@@ -912,7 +912,7 @@ func TestCallOutcomeAtCachesSolvedBoundaryOutcome(t *testing.T) {
 	var callPoint cfg.Point
 	var found bool
 	for _, candidate := range result.Graph().RPO() {
-		if _, ok := result.facts.CallSite(candidate); ok {
+		if _, ok := result.facts.CallSiteView(candidate); ok {
 			callPoint = candidate
 			found = true
 			break
@@ -1078,7 +1078,7 @@ func onlyCallPoint(t *testing.T, result *Result) (cfg.Point, bool) {
 	t.Helper()
 	found := cfg.Point(0)
 	for _, point := range result.Graph().RPO() {
-		if _, ok := result.CallSite(point); !ok {
+		if _, ok := result.CallSiteView(point); !ok {
 			continue
 		}
 		if found != 0 {
@@ -4251,7 +4251,7 @@ end
 		if !ok || len(fact.Args) != 1 {
 			continue
 		}
-		site, ok := result.CallSite(point)
+		site, ok := result.CallSiteView(point)
 		if !ok || site.CalleePathRef().String() != "json.decode" {
 			continue
 		}

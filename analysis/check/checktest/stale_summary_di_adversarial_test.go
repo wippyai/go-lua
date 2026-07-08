@@ -346,7 +346,7 @@ func dynamicIndexSnapshotDebug(result Result) []string {
 	root := result.checked.RootResult()
 	var out []string
 	for _, point := range root.Graph().RPO() {
-		if site, ok := root.CallSite(point); ok && !site.CalleePathRef().IsEmpty() {
+		if site, ok := root.CallSiteView(point); ok && !site.CalleePathRef().IsEmpty() {
 			out = append(out, fmt.Sprintf("%d:call=%s", point, site.CalleePathRef().String()))
 		}
 		st, ok := root.StateAt(point)

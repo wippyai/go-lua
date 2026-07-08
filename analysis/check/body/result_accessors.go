@@ -307,11 +307,11 @@ func (r *Result) SourceCall(point cfg.Point) (SourceCallFact, bool) {
 	return fact.copy(), true
 }
 
-func (r *Result) CallSite(point cfg.Point) (factflow.CallSite, bool) {
+func (r *Result) CallSite(point cfg.Point) (factflow.CallSiteView, bool) {
 	if r == nil {
-		return factflow.CallSite{}, false
+		return factflow.CallSiteView{}, false
 	}
-	return r.facts.CallSite(point)
+	return r.facts.CallSiteView(point)
 }
 
 func (r *Result) HasCallSite(point cfg.Point) bool {
@@ -827,7 +827,7 @@ func (r *Result) CallSignatureNameAtPoint(point cfg.Point) (string, bool) {
 	if r == nil || r.signatureID == nil {
 		return "", false
 	}
-	site, ok := r.CallSite(point)
+	site, ok := r.CallSiteView(point)
 	if !ok {
 		return "", false
 	}
@@ -839,7 +839,7 @@ func (r *Result) CallSignatureNameAtPoint(point cfg.Point) (string, bool) {
 	if graph != nil {
 		ctx.Node = graph.Node(point)
 	}
-	return r.signatureID.nameForCallSiteView(ctx, site.View())
+	return r.signatureID.nameForCallSiteView(ctx, site)
 }
 
 func (r *Result) ExpressionCondition(ref factflow.ExprRef) (factflow.ExpressionCondition, bool) {

@@ -27,9 +27,9 @@ func (r *stabilityCacheResult) ExitState() (state.State, bool)   { return state.
 func (r *stabilityCacheResult) ReturnPoints() []cfg.Point        { return nil }
 func (r *stabilityCacheResult) KeySpace() *keyspace.KeySpace     { return nil }
 func (r *stabilityCacheResult) ParameterValueSlots() []key.Value { return nil }
-func (r *stabilityCacheResult) CallSite(point cfg.Point) (factflow.CallSite, bool) {
+func (r *stabilityCacheResult) CallSiteView(point cfg.Point) (factflow.CallSiteView, bool) {
 	site, ok := r.callSites[point]
-	return site, ok
+	return site.View(), ok
 }
 
 func (r *stabilityCacheResult) CallOutcomeAt(point cfg.Point) (callpayload.CallOutcome, bool) {

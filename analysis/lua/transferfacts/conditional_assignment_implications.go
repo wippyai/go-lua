@@ -607,7 +607,7 @@ func (l *lowerer) callSourceValue(input *factflow.FactsInput, source factflow.Va
 	if !ok {
 		return product.Value{}, false
 	}
-	t, ok := l.callSiteFirstReturnType(site)
+	t, ok := l.callSiteFirstReturnType(site.View())
 	if !ok {
 		return product.Value{}, false
 	}
@@ -629,15 +629,15 @@ func usefulConditionalAssignmentValue(reg *axis.Registry, value product.Value) b
 	return true
 }
 
-func (l *lowerer) callSiteFirstReturnType(site factflow.CallSite) (typ.Type, bool) {
+func (l *lowerer) callSiteFirstReturnType(site factflow.CallSiteView) (typ.Type, bool) {
 	return l.callSiteReturnType(site, 0)
 }
 
-func (l *lowerer) callSiteReturnType(site factflow.CallSite, index int) (typ.Type, bool) {
+func (l *lowerer) callSiteReturnType(site factflow.CallSiteView, index int) (typ.Type, bool) {
 	return l.callSiteReturnTypeAt(0, site, index)
 }
 
-func (l *lowerer) callSiteReturnTypeAt(point cfg.Point, site factflow.CallSite, index int) (typ.Type, bool) {
+func (l *lowerer) callSiteReturnTypeAt(point cfg.Point, site factflow.CallSiteView, index int) (typ.Type, bool) {
 	if l != nil && l.wir != nil && point != 0 {
 		if inst, ok := l.wirCallInstruction(point); ok && inst.Call.Method == 0 && inst.Type != 0 {
 			if callable, ok := typecall.Callable(l.wir.Type(inst.Type)); ok && callable != nil &&
@@ -657,7 +657,7 @@ func (l *lowerer) callSiteReturnTypeAt(point cfg.Point, site factflow.CallSite, 
 	return callable.Returns[index], true
 }
 
-func (l *lowerer) callSiteCalleeType(site factflow.CallSite) (typ.Type, bool) {
+func (l *lowerer) callSiteCalleeType(site factflow.CallSiteView) (typ.Type, bool) {
 	if site.CalleeSymbol() != 0 && !site.CalleeMemberAccess() {
 		if t, ok := l.symbolTypes[site.CalleeSymbol()]; ok {
 			return t, true

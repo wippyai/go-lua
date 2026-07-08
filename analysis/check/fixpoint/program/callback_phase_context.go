@@ -109,7 +109,7 @@ func newCallbackPhaseTracker(keys *programKeys, owner summary.SummaryKey, prepas
 	}
 }
 
-func (t *callbackPhaseTracker) observeRegistration(point cfg.Point, site factflow.CallSite) {
+func (t *callbackPhaseTracker) observeRegistration(point cfg.Point, site factflow.CallSiteView) {
 	if t == nil {
 		return
 	}
@@ -134,7 +134,7 @@ func (t *callbackPhaseTracker) observeRegistration(point cfg.Point, site factflo
 	}
 }
 
-func (t *callbackPhaseTracker) collectInvocationContext(point cfg.Point, site factflow.CallSite) (map[summary.SummaryKey]struct{}, bool) {
+func (t *callbackPhaseTracker) collectInvocationContext(point cfg.Point, site factflow.CallSiteView) (map[summary.SummaryKey]struct{}, bool) {
 	if t == nil {
 		return nil, false
 	}
@@ -181,7 +181,7 @@ func (t *callbackPhaseTracker) collectInvocationContext(point cfg.Point, site fa
 	return changed, controlled
 }
 
-func callbackPhaseFunctionArg(keys *programKeys, result *body.Result, site factflow.CallSite, index int) (*ast.FunctionExpr, factflow.ExprRef, bool) {
+func callbackPhaseFunctionArg(keys *programKeys, result *body.Result, site factflow.CallSiteView, index int) (*ast.FunctionExpr, factflow.ExprRef, bool) {
 	if keys == nil || result == nil || index < 0 {
 		return nil, 0, false
 	}

@@ -46,16 +46,17 @@ func (l *lowerer) addTypeIsBranchRefinements(input *factflow.FactsInput, graph c
 		if !ok {
 			continue
 		}
+		siteView := site.View()
 		argValue := l.untrustedTypeWitnessValue(t)
 		resultValue := l.typeIsProofValue(t)
-		if site.Context() == factflow.CallSiteContextCondition {
+		if siteView.Context() == factflow.CallSiteContextCondition {
 			l.addTypeIsConditionBranchRefinementsFromWIR(input, graph, callPoint, argPath, argValue)
 		}
-		errPath, ok := callSiteResultTargetPath(site, 1)
+		errPath, ok := callSiteResultTargetPath(siteView, 1)
 		if !ok {
 			continue
 		}
-		valuePath, hasValuePath := callSiteResultTargetPath(site, 0)
+		valuePath, hasValuePath := callSiteResultTargetPath(siteView, 0)
 		targets := typeIsTargets{argPath: argPath, errPath: errPath, valuePath: valuePath, hasValuePath: hasValuePath}
 		establish, ok := typeIsEstablishPoint(input, graph, callPoint, targets)
 		if !ok {
@@ -130,18 +131,22 @@ func (l *lowerer) typeIsReceiverTypeFromWIRCall(point cfg.Point) (typ.Type, bool
 	return l.typeResolver.ResolveTypeRef(parts)
 }
 
-func callSiteResultTargetPath(site factflow.CallSite, resultIndex int) (path.Path, bool) {
-	for _, target := range site.ResultTargets() {
+func callSiteResultTargetPath(site factflow.CallSiteView, resultIndex int) (path.Path, bool) {
+	var out path.Path
+	found := false
+	site.ForEachResultTarget(func(target factflow.CallResultTargetView) bool {
 		if target.ResultIndex() != resultIndex {
-			continue
+			return true
 		}
 		targetPath := target.TargetPath()
 		if targetPath.IsEmpty() {
-			continue
+			return true
 		}
-		return targetPath, true
-	}
-	return path.Path{}, false
+		out = targetPath
+		found = true
+		return false
+	})
+	return out, found
 }
 
 func (l *lowerer) addTypeIsConditionBranchRefinementsFromWIR(

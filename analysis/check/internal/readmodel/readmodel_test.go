@@ -2757,7 +2757,7 @@ function f(source: {primary: string}): () end
 	site := factflow.NewCallSite(factflow.CallSiteConfig{
 		ArgumentSources: []factflow.ValueSource{source},
 	})
-	got := New(result).callArgumentLabel(site, 0, source)
+	got := New(result).callArgumentLabel(site.View(), 0, source)
 	if got != "source.primary" {
 		t.Fatalf("callArgumentLabel = %q, want source.primary", got)
 	}
@@ -3557,7 +3557,7 @@ end
 	for _, fnResult := range root.FunctionResults() {
 		reader := New(fnResult)
 		for _, point := range reader.callPoints() {
-			site, ok := fnResult.CallSite(point)
+			site, ok := fnResult.CallSiteView(point)
 			if !ok {
 				continue
 			}
@@ -3612,7 +3612,7 @@ end
 		reader := New(fnResult)
 		reader.ForEachCall(func(call CallSite) bool {
 			for _, point := range reader.callPoints() {
-				site, ok := fnResult.CallSite(point)
+				site, ok := fnResult.CallSiteView(point)
 				if ok && fnResult.SymbolName(site.CalleeSymbol()) == "fn" && call.Point == point {
 					sawCallback = true
 				}
@@ -3721,7 +3721,7 @@ end
 				}
 				checkedArg = true
 				if !typ.TypeEquals(arg.TypeWithPresence, typ.String) {
-					site, _ := result.CallSite(point)
+					site, _ := result.CallSiteView(point)
 					source, _ := site.ArgumentSourceAt(arg.Index)
 					p, pathOK := reader.callArgumentExpressionPath(source)
 					declared, declaredOK := result.DeclaredPathTypeAt(point, p, pathOK)
@@ -3786,7 +3786,7 @@ end
 			}
 			checkedArg = true
 			if !typ.TypeEquals(arg.TypeWithPresence, typ.String) {
-				site, _ := root.CallSite(point)
+				site, _ := root.CallSiteView(point)
 				source, _ := site.ArgumentSourceAt(arg.Index)
 				p, pathOK := reader.callArgumentExpressionPath(source)
 				declared, declaredOK := root.DeclaredPathTypeAt(point, p, pathOK)
@@ -3903,7 +3903,7 @@ end
 				}
 				checkedArg = true
 				if !typ.TypeEquals(arg.TypeWithPresence, want) {
-					site, _ := fn.CallSite(point)
+					site, _ := fn.CallSiteView(point)
 					source, sourceOK := site.ArgumentSourceAt(arg.Index)
 					exprPath, exprPathOK := fn.ExpressionPathRef(source.ExprRef)
 					boundaryValue, boundaryOK := fn.SourceValueAtBoundary(point, source)
@@ -3967,7 +3967,7 @@ end
 				}
 				checkedArg = true
 				if !subtype.IsSubtype(arg.TypeWithPresence, typ.String) {
-					site, _ := fn.CallSite(point)
+					site, _ := fn.CallSiteView(point)
 					source, sourceOK := site.ArgumentSourceAt(arg.Index)
 					boundaryValue, boundaryOK := fn.SourceValueAtBoundary(point, source)
 					boundaryType, boundaryTypeOK := reader.ValueTypeWithPresence(boundaryValue)
@@ -4026,7 +4026,7 @@ end
 				}
 				checkedArg = true
 				if typ.IsAny(arg.TypeWithPresence) || typ.IsUnknown(arg.TypeWithPresence) || !subtype.IsSubtype(arg.TypeWithPresence, typ.BuiltinTableTopMarker()) {
-					site, _ := fn.CallSite(point)
+					site, _ := fn.CallSiteView(point)
 					source, sourceOK := site.ArgumentSourceAt(arg.Index)
 					boundaryValue, boundaryOK := fn.SourceValueAtBoundary(point, source)
 					boundaryType, boundaryTypeOK := reader.ValueTypeWithPresence(boundaryValue)
@@ -4084,7 +4084,7 @@ end
 			}
 			checkedArg = true
 			if !subtype.IsSubtype(arg.TypeWithPresence, typ.Integer) {
-				site, _ := root.CallSite(point)
+				site, _ := root.CallSiteView(point)
 				source, sourceOK := site.ArgumentSourceAt(arg.Index)
 				boundaryValue, boundaryOK := root.SourceValueAtBoundary(point, source)
 				boundaryType, boundaryTypeOK := reader.ValueTypeWithPresence(boundaryValue)

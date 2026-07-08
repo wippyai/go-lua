@@ -77,6 +77,15 @@ func objectLiterals(facts factflow.Facts) []factflow.ObjectLiteralView {
 	return out
 }
 
+func callSiteResultTargets(site factflow.CallSiteView) []factflow.CallResultTargetView {
+	var out []factflow.CallResultTargetView
+	site.ForEachResultTarget(func(target factflow.CallResultTargetView) bool {
+		out = append(out, target)
+		return true
+	})
+	return out
+}
+
 func TestLowerPanicsWithoutRegistry(t *testing.T) {
 	stmts, bindings, built := parseSemanticChunk(t, "local x = 1")
 	_ = stmts

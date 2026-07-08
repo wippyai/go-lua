@@ -90,7 +90,7 @@ end
 func requireCallSiteByCalleePath(t *testing.T, result *Result, want string) cfg.Point {
 	t.Helper()
 	for _, point := range result.Graph().RPO() {
-		site, ok := result.CallSite(point)
+		site, ok := result.CallSiteView(point)
 		if !ok {
 			continue
 		}

@@ -22,7 +22,7 @@ func (r Reader) callArgumentMismatchSubjectPlan(point cfg.Point, arg CallArgumen
 	if r.result == nil || want == nil {
 		return readapi.CallArgumentMismatchSubjectPlan{}, false
 	}
-	site, ok := r.result.CallSite(point)
+	site, ok := r.result.CallSiteView(point)
 	if !ok || arg.Index < 0 {
 		return readapi.CallArgumentMismatchSubjectPlan{}, false
 	}
@@ -177,7 +177,7 @@ func (r Reader) callArgumentReports(point cfg.Point, contract callContract, hasC
 				!callArgumentIndexHasUntrustedTop(args, obligation.Index) {
 				continue
 			}
-			site, _ := r.result.CallSite(point)
+			site, _ := r.result.CallSiteView(point)
 			origin = readapi.CallArgumentObligationOrigin{
 				HasOrigin:    true,
 				FunctionName: r.callContractSourceName(site),
@@ -216,7 +216,7 @@ func callArgumentSpanByIndex(args []CallArgument, index int) SourceSpan {
 	return SourceSpan{}
 }
 
-func (r Reader) callArityReport(site factflow.CallSite, contract callContract, hasContract bool) CallArityReport {
+func (r Reader) callArityReport(site factflow.CallSiteView, contract callContract, hasContract bool) CallArityReport {
 	if !hasContract {
 		return CallArityReport{}
 	}
@@ -244,7 +244,7 @@ func (r Reader) forEachCallArgument(point cfg.Point, visit func(CallArgument) bo
 	if r.result == nil || visit == nil {
 		return false
 	}
-	site, ok := r.result.CallSite(point)
+	site, ok := r.result.CallSiteView(point)
 	if !ok {
 		return false
 	}
@@ -263,7 +263,7 @@ func (r Reader) forEachCallArgument(point cfg.Point, visit func(CallArgument) bo
 	return visited
 }
 
-func (r Reader) callArgument(point cfg.Point, site factflow.CallSite, index int, source factflow.ValueSource, value product.Value) CallArgument {
+func (r Reader) callArgument(point cfg.Point, site factflow.CallSiteView, index int, source factflow.ValueSource, value product.Value) CallArgument {
 	got, _ := r.ValueTypeWithPresence(value)
 	if reduced, ok := r.callArgumentRuntimeKindReducedType(point, source, value); ok {
 		got = reduced
@@ -409,7 +409,7 @@ func (r Reader) callArgumentSpan(point cfg.Point, index int) SourceSpan {
 	if r.result == nil {
 		return SourceSpan{}
 	}
-	site, ok := r.result.CallSite(point)
+	site, ok := r.result.CallSiteView(point)
 	if !ok {
 		return SourceSpan{}
 	}
@@ -874,7 +874,7 @@ func (r Reader) pathHasPositiveRuntimeTypeGuard(point cfg.Point, p path.Path) bo
 	return r.result != nil && r.result.PathHasPositiveRuntimeTypeGuard(point, p)
 }
 
-func callArgumentSpan(site factflow.CallSite, index int) SourceSpan {
+func callArgumentSpan(site factflow.CallSiteView, index int) SourceSpan {
 	span, ok := site.ArgumentSpanAt(index)
 	if !ok {
 		return SourceSpan{}
@@ -882,7 +882,7 @@ func callArgumentSpan(site factflow.CallSite, index int) SourceSpan {
 	return sourceSpanFromFactflow(span)
 }
 
-func callArgumentSpans(site factflow.CallSite) []SourceSpan {
+func callArgumentSpans(site factflow.CallSiteView) []SourceSpan {
 	count := site.ArgumentSourceCount()
 	if count <= 0 {
 		return nil
@@ -894,7 +894,7 @@ func callArgumentSpans(site factflow.CallSite) []SourceSpan {
 	return out
 }
 
-func (r Reader) callArgumentLabel(site factflow.CallSite, index int, source factflow.ValueSource) string {
+func (r Reader) callArgumentLabel(site factflow.CallSiteView, index int, source factflow.ValueSource) string {
 	if index < 0 {
 		return ""
 	}

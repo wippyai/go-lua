@@ -223,7 +223,7 @@ end
 		if !ok || fact.Method != "message" {
 			continue
 		}
-		site, ok := result.CallSite(point)
+		site, ok := result.CallSiteView(point)
 		if !ok {
 			t.Fatalf("message call has no lowered call site at %d", point)
 		}

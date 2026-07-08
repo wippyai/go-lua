@@ -55,7 +55,7 @@ end
 				debug += "\nchild: " + callOutcomeDebug(fn)
 				if fn.Graph() != nil {
 					for _, point := range fn.Graph().RPO() {
-						site, ok := fn.CallSite(point)
+						site, ok := fn.CallSiteView(point)
 						if !ok {
 							continue
 						}

@@ -69,7 +69,7 @@ func (r Reader) frozenCallMutation(point cfg.Point) (FrozenTableMutation, bool) 
 	if !ok {
 		return FrozenTableMutation{}, false
 	}
-	site, ok := r.result.CallSite(point)
+	site, ok := r.result.CallSiteView(point)
 	if !ok {
 		return FrozenTableMutation{}, false
 	}
@@ -96,7 +96,7 @@ func (r Reader) frozenCallMutation(point cfg.Point) (FrozenTableMutation, bool) 
 	return FrozenTableMutation{}, false
 }
 
-func (r Reader) frozenCallInvalidationTargets(site factflow.CallSite, outcome callpayload.CallOutcome) []path.Path {
+func (r Reader) frozenCallInvalidationTargets(site factflow.CallSiteView, outcome callpayload.CallOutcome) []path.Path {
 	var out []path.Path
 	appendSubstituted := func(bindings []path.Path, target path.Path) {
 		substituted, ok := target.Substitute(bindings)
@@ -150,7 +150,7 @@ func (r Reader) frozenProofSpan(stop cfg.Point, container path.Path) (SourceSpan
 		if !ok || len(outcome.NormalReturnFacts.FrozenTables) == 0 {
 			continue
 		}
-		site, ok := r.result.CallSite(point)
+		site, ok := r.result.CallSiteView(point)
 		if !ok {
 			continue
 		}
