@@ -383,6 +383,142 @@ func TestInternalReadmodelAvoidsSyntaxSemanticReachIns(t *testing.T) {
 	}
 }
 
+func TestInternalReadmodelAdviceFamiliesStayProjectionOnly(t *testing.T) {
+	requiredOwners := []struct {
+		path     string
+		contains []string
+	}{
+		{
+			path: filepath.Join("..", "check", "body", "send_safety.go"),
+			contains: []string{
+				"type SendSafetyOccurrence struct",
+				"func (r *Result) SendSafetyOccurrences",
+				"func (r *Result) sendSafetySourceValueBefore",
+			},
+		},
+		{
+			path: filepath.Join("..", "check", "body", "advice_guard.go"),
+			contains: []string{
+				"type AlwaysTrueGuardOccurrence struct",
+				"func (r *Result) ForEachAlwaysTrueGuardOccurrence",
+				"func (r *Result) singletonBoolean",
+			},
+		},
+		{
+			path: filepath.Join("..", "check", "body", "advice_loop.go"),
+			contains: []string{
+				"type InvariantLoopReadOccurrence struct",
+				"func (r *Result) ForEachInvariantLoopReadOccurrence",
+				"func (r *Result) PathInvalidatedInLoop",
+			},
+		},
+		{
+			path: filepath.Join("..", "check", "body", "advice_split_birth_discriminant.go"),
+			contains: []string{
+				"type SplitBirthDiscriminantOccurrence struct",
+				"func (r *Result) ForEachSplitBirthDiscriminantOccurrence",
+				"func (r *Result) splitBirthReceiverReassignedBetween",
+			},
+		},
+	}
+	for _, item := range requiredOwners {
+		content, err := os.ReadFile(item.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range item.contains {
+			if !bytes.Contains(content, []byte(want)) {
+				t.Fatalf("%s does not contain projection owner marker %q", item.path, want)
+			}
+		}
+	}
+
+	readmodelSurfaces := []struct {
+		path     string
+		contains []string
+		banned   []string
+	}{
+		{
+			path: filepath.Join("..", "check", "internal", "readmodel", "send_safety.go"),
+			contains: []string{
+				"SendSafetyOccurrences(point)",
+			},
+			banned: []string{
+				"CallOutcomeAt(",
+				"SourceValueBeforeBoundary",
+				"SourceValueAtBoundary",
+				"StateAtBoundary",
+				"ReadPlacement",
+				"IsTableFrozen",
+				"identityvalue.",
+				"ObjectLiteralView",
+				"ExpressionFunction",
+				"callboundary.",
+				"sendSafetySourceValueBefore",
+				"objectLiteralGraphHasIdentityChild",
+				"valueSourceCarriesIdentity",
+			},
+		},
+		{
+			path: filepath.Join("..", "check", "internal", "readmodel", "advice.go"),
+			contains: []string{
+				"ForEachAlwaysTrueGuardOccurrence",
+				"ForEachInvariantLoopReadOccurrence",
+			},
+			banned: []string{
+				"singletonBoolean",
+				"IsSubtype(",
+				"ExpressionTypeBeforeBoundary",
+				"ForEachUserVisibleBranchConditionOccurrence",
+				"ForEachStaticMemberReadOccurrence",
+				"InnermostLoopForPoint",
+				"PathInvalidatedInLoop",
+				"TypeIncludesNil",
+				"typ.IsTopLike",
+				"typ.IsNever",
+			},
+		},
+		{
+			path: filepath.Join("..", "check", "internal", "readmodel", "advice_split_birth_discriminant.go"),
+			contains: []string{
+				"ForEachSplitBirthDiscriminantOccurrence",
+			},
+			banned: []string{
+				"Graph().RPO",
+				"PointCanReach",
+				"PointNormallyReachable",
+				"LoweredAssignmentWrite",
+				"LoweredLocalAssignment",
+				"ObjectLiteralView",
+				"StaticStringValueSourceAtBoundary",
+				"ForEachUserVisibleBranchConditionOccurrence",
+				"DeclaredOrVariantOriginPathTypeAt",
+				"branchcond.",
+				"variant.",
+				"splitBirthObjectLiteralBirths",
+				"splitBirthDiscriminantUsesForCheck",
+				"splitBirthReceiverReassignedBetween",
+			},
+		},
+	}
+	for _, item := range readmodelSurfaces {
+		content, err := os.ReadFile(item.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range item.contains {
+			if !bytes.Contains(content, []byte(want)) {
+				t.Fatalf("%s does not contain body occurrence projection marker %q", item.path, want)
+			}
+		}
+		for _, banned := range item.banned {
+			if bytes.Contains(content, []byte(banned)) {
+				t.Fatalf("%s contains semantic candidate marker %q; body occurrences own this readmodel boundary", item.path, banned)
+			}
+		}
+	}
+}
+
 func TestCallContractOwnsGenericInferencePathSemantics(t *testing.T) {
 	owner := filepath.Join("..", "check", "internal", "callcontract", "callcontract.go")
 	ownerContent, err := os.ReadFile(owner)
