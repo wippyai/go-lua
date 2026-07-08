@@ -220,6 +220,14 @@ var defaultRegistry = NewRegistry([]CodeSpec{
 		},
 		DefaultVerdict: VerdictRefuted,
 	},
+	{
+		Code:        CodeSendIsolation,
+		SubjectKind: SubjectCallArgument,
+		RequiredEvidence: []EvidenceKind{
+			EvidenceAbstractFact,
+		},
+		DefaultVerdict: VerdictUnknown,
+	},
 })
 
 // DefaultRegistry returns the standard judgment-code registry.

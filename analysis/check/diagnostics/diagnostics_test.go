@@ -143,6 +143,7 @@ func TestDiagnosticProducerRegistryDeclaresPolicyDefaults(t *testing.T) {
 		CodeDiscriminatedUnionExhaustive: {},
 		CodeFrozenTableMutation:          {},
 		CodeResourceUnreleased:           {},
+		CodeSendIsolation:                {},
 	}
 	allCodes := []diagnostic.Code{
 		CodeAssignmentType,
@@ -167,6 +168,7 @@ func TestDiagnosticProducerRegistryDeclaresPolicyDefaults(t *testing.T) {
 		CodeDiscriminatedUnionExhaustive,
 		CodeFrozenTableMutation,
 		CodeResourceUnreleased,
+		CodeSendIsolation,
 	}
 
 	declared := make(map[diagnostic.Code]struct{})

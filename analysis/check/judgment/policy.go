@@ -66,6 +66,7 @@ func defaultPolicyLevels() map[PolicyKey]Level {
 		CodeRedundantCondition,
 		CodeConcatOperand,
 	)
+	addHints(levels, CodeSendIsolation)
 	return levels
 }
 
@@ -84,6 +85,16 @@ func addRefutedErrors(levels map[PolicyKey]Level, codes ...Code) {
 func addRefutedWarnings(levels map[PolicyKey]Level, codes ...Code) {
 	for _, code := range codes {
 		addPolicyRows(levels, code, LevelDisabled, LevelWarning, LevelDisabled, LevelWarning, LevelDisabled, LevelWarning)
+	}
+}
+
+func addHints(levels map[PolicyKey]Level, codes ...Code) {
+	for _, code := range codes {
+		for _, mode := range []StrictnessMode{StrictnessDefault, StrictnessLenient, StrictnessStrict} {
+			levels[PolicyKey{Code: code, Verdict: VerdictProven, Mode: mode}] = LevelHint
+			levels[PolicyKey{Code: code, Verdict: VerdictUnknown, Mode: mode}] = LevelHint
+			levels[PolicyKey{Code: code, Verdict: VerdictRefuted, Mode: mode}] = LevelHint
+		}
 	}
 }
 

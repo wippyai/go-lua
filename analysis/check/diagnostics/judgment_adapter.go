@@ -39,6 +39,7 @@ var judgmentDiagnosticRenderers = map[judgment.Code]judgmentDiagnosticRenderer{
 	judgment.CodeRedundantCondition: renderRedundantConditionJudgmentWithPolicy,
 	judgment.CodeMemberRead:         renderMemberReadJudgmentWithPolicy,
 	judgment.CodeConcatOperand:      renderConcatOperandJudgmentWithPolicy,
+	judgment.CodeSendIsolation:      renderSendIsolationJudgmentWithPolicy,
 }
 
 func renderJudgmentDiagnostics(items []judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) []diagnostic.Diagnostic {

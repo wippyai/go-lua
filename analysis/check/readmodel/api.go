@@ -9,6 +9,8 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/proof"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -996,9 +998,56 @@ type CallSite struct {
 	Point      cfg.Point
 	CallSpan   SourceSpan
 	CalleeSpan SourceSpan
+	Arguments  []CallArgument
+	SendSafety []SendSafety
 	Reports    []CallArgumentReport
 	Arity      CallArityReport
 	Callee     CallCalleeReport
+}
+
+// SendSafetyVerdict classifies whether a call-boundary send payload is
+// eligible for zero-copy transfer from solved facts.
+type SendSafetyVerdict uint8
+
+const (
+	SendSafetyUnknown SendSafetyVerdict = iota
+	SendSafetyProvenIsolated
+	SendSafetyProvenImmutable
+)
+
+func (v SendSafetyVerdict) String() string {
+	switch v {
+	case SendSafetyProvenIsolated:
+		return "isolated"
+	case SendSafetyProvenImmutable:
+		return "immutable"
+	case SendSafetyUnknown:
+		return "copy-fallback"
+	default:
+		return "send-safety(invalid)"
+	}
+}
+
+// SendSafety is the solved read model for a send/spawn payload admission check.
+// Unknown is a successful checker outcome: the runtime copies/promotes instead
+// of taking the zero-copy path.
+type SendSafety struct {
+	Point               cfg.Point
+	Argument            CallArgument
+	Target              path.Path
+	Recursive           bool
+	Verdict             SendSafetyVerdict
+	Reason              string
+	Identity            identity.ID
+	HasIdentity         bool
+	BirthSpan           SourceSpan
+	HasBirthSpan        bool
+	Placement           placement.Value
+	HasPlacement        bool
+	Frozen              bool
+	DirectObjectLiteral bool
+	GraphHasChildID     bool
+	GraphUnknown        bool
 }
 
 // CallArityReportKind classifies a solved call-arity mismatch.

@@ -38,6 +38,7 @@ const (
 	CodeRedundantCondition Code = "condition.redundant"
 	CodeMemberRead         Code = "member.read"
 	CodeConcatOperand      Code = "operator.concat.operand"
+	CodeSendIsolation      Code = "send.isolation"
 )
 
 // Verdict classifies whether the solved state proves or refutes an obligation.
@@ -123,6 +124,9 @@ type OriginRef struct {
 const (
 	OriginFrozenTableMutation = "frozen-table:mutation"
 	OriginFrozenTableProof    = "frozen-table:proof"
+	OriginSendSafety          = "send:safety"
+	OriginSendIsolationProof  = "send:isolation-proof"
+	OriginSendImmutableProof  = "send:immutable-proof"
 )
 
 // EvidenceKind classifies a structured proof step.
@@ -209,6 +213,9 @@ const (
 	EvidenceDetailRedundantConditionProof
 	EvidenceDetailRedundantConditionStability
 	EvidenceDetailConcatOperand
+	EvidenceDetailSendSafetyFact
+	EvidenceDetailSendSafetyProof
+	EvidenceDetailSendSafetyBlocker
 )
 
 // EvidenceDetail carries renderer-independent detail for one evidence node.

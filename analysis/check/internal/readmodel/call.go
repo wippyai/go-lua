@@ -39,6 +39,8 @@ func (r Reader) ForEachCall(visit func(CallSite) bool) bool {
 			Point:      point,
 			CallSpan:   sourceSpanFromFactflow(site.CallSpan()),
 			CalleeSpan: sourceSpanFromFactflow(site.CalleeSpan()),
+			Arguments:  args,
+			SendSafety: r.sendSafetyReports(point, site, args),
 			Reports:    r.callArgumentReports(point, contract, hasContract, args, paramObligations),
 			Arity:      r.callArityReport(site, contract, hasContract),
 			Callee:     r.callCalleeReport(point, site),

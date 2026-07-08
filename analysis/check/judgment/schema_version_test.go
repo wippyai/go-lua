@@ -12,12 +12,14 @@ import (
 
 const expectedJIRSchemaVersion1Hash = "2b89a234f53cf065fed15e277611253e2f2aa0599dd10a0682dc4bd353f4d962"
 const expectedJIRSchemaVersion2Hash = "45bdab7d703e0a2b56bbaf12a9eb606e179846d74a3eb6839a16c166766b5f6c"
+const expectedJIRSchemaVersion3Hash = "b806acbb3c83543039299ae4c44e7e0626e6c98938a529e693acdd089dd35680"
 
 func TestJIRSchemaVersionPinsCurrentSurface(t *testing.T) {
 	got := hashSchemaSurface(jirSchemaSurface())
 	want := map[int]string{
 		1: expectedJIRSchemaVersion1Hash,
 		2: expectedJIRSchemaVersion2Hash,
+		3: expectedJIRSchemaVersion3Hash,
 	}[JIRSchemaVersion]
 	if want == "" {
 		t.Fatalf("no expected JIR schema hash for version %d: bump version constant + journal a D-entry", JIRSchemaVersion)

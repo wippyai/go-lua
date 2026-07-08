@@ -43,6 +43,8 @@ const (
 	labelLifecycleAcquire     = "resource acquired"
 	labelLifecycleTransition  = "lifecycle transition"
 	labelLifecycleEscape      = "ownership escaped"
+	labelSendPayload          = "send payload"
+	labelSendSafetyProof      = "send-safety proof"
 )
 
 func sourceLabel(span diagnostic.Span, message string) diagnostic.Label {
@@ -81,7 +83,8 @@ func sourceLabelPlacement(message string) diagnostic.LabelPlacement {
 		labelFrozenTableCall,
 		labelLifecycleAcquire,
 		labelLifecycleTransition,
-		labelLifecycleEscape:
+		labelLifecycleEscape,
+		labelSendPayload:
 		return diagnostic.LabelPlacementBelow
 	case labelCalleeDeclaration,
 		labelDeclaredType,
@@ -91,7 +94,8 @@ func sourceLabelPlacement(message string) diagnostic.LabelPlacement {
 		labelExitBeforeRead,
 		labelProvingGuard,
 		labelDispatchTable,
-		labelFreezeProof:
+		labelFreezeProof,
+		labelSendSafetyProof:
 		return diagnostic.LabelPlacementAbove
 	default:
 		return diagnostic.LabelPlacementAuto

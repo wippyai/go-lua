@@ -34,6 +34,7 @@ const (
 	CodeDiscriminatedUnionExhaustive diagnostic.Code = "lint.union.exhaustiveness"
 	CodeFrozenTableMutation          diagnostic.Code = "effect.freeze.mutation"
 	CodeResourceUnreleased           diagnostic.Code = "effect.lifecycle.unreleased"
+	CodeSendIsolation                diagnostic.Code = "send.isolation"
 )
 
 type producerContext struct {
@@ -167,6 +168,7 @@ func diagnosticProducers() []diagnosticProducer {
 		),
 		optInJudgmentProducer([]diagnostic.Code{CodeFrozenTableMutation}, pass.FrozenTableMutations{}),
 		optInJudgmentProducer([]diagnostic.Code{CodeResourceUnreleased}, pass.LifecycleObligations{}),
+		optInJudgmentProducer([]diagnostic.Code{CodeSendIsolation}, pass.SendSafety{}),
 	}
 }
 

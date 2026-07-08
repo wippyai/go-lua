@@ -16,6 +16,7 @@ type Reader struct {
 type SourceSpan = readapi.SourceSpan
 type CallSite = readapi.CallSite
 type CallArgument = readapi.CallArgument
+type SendSafety = readapi.SendSafety
 type CallArgumentMismatch = readapi.CallArgumentMismatch
 type CallArgumentCheck = readapi.CallArgumentCheck
 type OptionalAssignmentTarget = readapi.OptionalAssignmentTarget
@@ -25,6 +26,9 @@ type ResultShapeExhaustiveness = readapi.ResultShapeExhaustiveness
 
 const (
 	CallArgumentMismatchMayBeNil = readapi.CallArgumentMismatchMayBeNil
+	SendSafetyUnknown            = readapi.SendSafetyUnknown
+	SendSafetyProvenIsolated     = readapi.SendSafetyProvenIsolated
+	SendSafetyProvenImmutable    = readapi.SendSafetyProvenImmutable
 )
 
 type CallGenericInferenceConflict = readapi.CallGenericInferenceConflict
