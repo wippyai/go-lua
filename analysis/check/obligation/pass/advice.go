@@ -61,6 +61,24 @@ func (AdviceInvariantLoopReads) Produce(ctx Context) []judgment.Judgment {
 	return out
 }
 
+// AdviceSplitBirthDiscriminants emits hint-level judgments for locally born
+// record variants whose discriminant tag and payload fields are assigned apart.
+type AdviceSplitBirthDiscriminants struct{}
+
+func (AdviceSplitBirthDiscriminants) Name() string {
+	return "advice.split_birth_discriminant"
+}
+
+func (AdviceSplitBirthDiscriminants) Produce(ctx Context) []judgment.Judgment {
+	functionKey := adviceFunctionKey(ctx)
+	var out []judgment.Judgment
+	ctx.Reader.ForEachSplitBirthDiscriminant(func(item readmodel.SplitBirthDiscriminant) bool {
+		out = append(out, adviceSplitBirthDiscriminantJudgment(ctx, functionKey, item))
+		return true
+	})
+	return out
+}
+
 func adviceRedundantClaimJudgment(ctx Context, functionKey string, claim readmodel.RedundantClaim) judgment.Judgment {
 	claimSpan := spanFromReadModel(ctx.SourceFile, claim.ClaimSpan)
 	operandSpan := spanFromReadModel(ctx.SourceFile, claim.OperandSpan)
@@ -154,6 +172,61 @@ func adviceInvariantLoopReadJudgment(ctx Context, functionKey string, read readm
 			},
 		},
 		Spans: []judgment.SpanRef{readSpan, loopSpan},
+	}
+}
+
+func adviceSplitBirthDiscriminantJudgment(ctx Context, functionKey string, item readmodel.SplitBirthDiscriminant) judgment.Judgment {
+	tagSpan := spanFromReadModel(ctx.SourceFile, item.TagWriteSpan)
+	birthSpan := spanFromReadModel(ctx.SourceFile, item.BirthSpan)
+	useSpan := spanFromReadModel(ctx.SourceFile, item.DiscriminantUseSpan)
+	evidence := judgment.EvidenceChain{
+		{
+			Kind:   judgment.EvidenceAbstractFact,
+			Trust:  judgment.EvidenceTrustProven,
+			Origin: judgment.OriginRef{Point: item.BirthPoint, Key: "advice:split-birth:birth"},
+			Detail: judgment.AdviceTableBirthEvidenceDetail(fmt.Sprintf("%s is born as a table here", item.ReceiverLabel)),
+			Span:   birthSpan,
+		},
+		{
+			Kind:   judgment.EvidenceAbstractFact,
+			Trust:  judgment.EvidenceTrustProven,
+			Origin: judgment.OriginRef{Point: item.Point, Key: "advice:split-birth:tag"},
+			Detail: judgment.AdviceTagWriteEvidenceDetail(fmt.Sprintf("%s is assigned literal %q here", item.TagLabel, item.TagValue)),
+			Span:   tagSpan,
+		},
+	}
+	spans := []judgment.SpanRef{tagSpan, birthSpan}
+	for _, payload := range item.PayloadWrites {
+		payloadSpan := spanFromReadModel(ctx.SourceFile, payload.Span)
+		evidence = append(evidence, judgment.Evidence{
+			Kind:   judgment.EvidenceAbstractFact,
+			Trust:  judgment.EvidenceTrustProven,
+			Origin: judgment.OriginRef{Point: payload.Point, Key: "advice:split-birth:payload"},
+			Detail: judgment.AdvicePayloadWriteEvidenceDetail(fmt.Sprintf("%s is assigned separately", payload.Label)),
+			Span:   payloadSpan,
+		})
+		spans = append(spans, payloadSpan)
+	}
+	evidence = append(evidence, judgment.Evidence{
+		Kind:   judgment.EvidenceAbstractFact,
+		Trust:  judgment.EvidenceTrustProven,
+		Origin: judgment.OriginRef{Point: item.DiscriminantUsePoint, Key: "advice:split-birth:use"},
+		Detail: judgment.AdviceDiscriminantUseEvidenceDetail(fmt.Sprintf("%s is used as a discriminant here", item.TagLabel)),
+		Span:   useSpan,
+	})
+	spans = append(spans, useSpan)
+	return judgment.Judgment{
+		Code:  judgment.CodeAdviceSplitBirthDiscriminant,
+		Point: item.Point,
+		Subject: judgment.NewSubjectRef(
+			functionKey,
+			judgment.SubjectExpression,
+			fmt.Sprintf("advice-split-birth:%d:%s", item.Point, item.TagLabel),
+		).WithLabel(item.TagLabel),
+		Actual:   judgment.NewValueRef(0, nil).WithLabel(item.ReceiverLabel),
+		Verdict:  judgment.VerdictProven,
+		Evidence: evidence,
+		Spans:    spans,
 	}
 }
 

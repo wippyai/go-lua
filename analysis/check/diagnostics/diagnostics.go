@@ -38,6 +38,7 @@ const (
 	CodeAdviceRedundantClaim         diagnostic.Code = "advice.redundant_claim"
 	CodeAdviceAlwaysTrueGuard        diagnostic.Code = "advice.always_true_guard"
 	CodeAdviceInvariantLoopRead      diagnostic.Code = "advice.invariant_loop_read"
+	CodeAdviceSplitBirthDiscriminant diagnostic.Code = "advice.split_birth_discriminant"
 )
 
 type producerContext struct {
@@ -173,10 +174,11 @@ func diagnosticProducers() []diagnosticProducer {
 		optInJudgmentProducer([]diagnostic.Code{CodeResourceUnreleased}, pass.LifecycleObligations{}),
 		optInJudgmentProducer([]diagnostic.Code{CodeSendIsolation}, pass.SendSafety{}),
 		optInJudgmentProducer(
-			[]diagnostic.Code{CodeAdviceRedundantClaim, CodeAdviceAlwaysTrueGuard, CodeAdviceInvariantLoopRead},
+			[]diagnostic.Code{CodeAdviceRedundantClaim, CodeAdviceAlwaysTrueGuard, CodeAdviceInvariantLoopRead, CodeAdviceSplitBirthDiscriminant},
 			pass.AdviceRedundantClaims{},
 			pass.AdviceAlwaysTrueGuards{},
 			pass.AdviceInvariantLoopReads{},
+			pass.AdviceSplitBirthDiscriminants{},
 		),
 	}
 }

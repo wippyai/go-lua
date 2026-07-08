@@ -147,6 +147,7 @@ func TestDiagnosticProducerRegistryDeclaresPolicyDefaults(t *testing.T) {
 		CodeAdviceRedundantClaim:         {},
 		CodeAdviceAlwaysTrueGuard:        {},
 		CodeAdviceInvariantLoopRead:      {},
+		CodeAdviceSplitBirthDiscriminant: {},
 	}
 	allCodes := []diagnostic.Code{
 		CodeAssignmentType,
@@ -175,6 +176,7 @@ func TestDiagnosticProducerRegistryDeclaresPolicyDefaults(t *testing.T) {
 		CodeAdviceRedundantClaim,
 		CodeAdviceAlwaysTrueGuard,
 		CodeAdviceInvariantLoopRead,
+		CodeAdviceSplitBirthDiscriminant,
 	}
 
 	declared := make(map[diagnostic.Code]struct{})

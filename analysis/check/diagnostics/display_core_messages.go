@@ -238,3 +238,14 @@ func (diagnosticDisplay) AdviceInvariantLoopReadHelp(read string) string {
 	}
 	return fmt.Sprintf("Read `%s` once before the loop when that makes the code clearer or cheaper.", read)
 }
+
+func (diagnosticDisplay) AdviceSplitBirthDiscriminantMessage(tag string) string {
+	if tag == "" {
+		return "discriminant tag is assigned apart from its payload"
+	}
+	return fmt.Sprintf("%s is assigned apart from its payload", tag)
+}
+
+func (diagnosticDisplay) AdviceSplitBirthDiscriminantHelp() string {
+	return "Construct the variant in one table literal so the tag and payload are born atomically."
+}

@@ -54,6 +54,7 @@ type Reader interface {
 	ForEachRedundantClaim(func(RedundantClaim) bool) bool
 	ForEachAlwaysTrueGuard(func(AlwaysTrueGuard) bool) bool
 	ForEachInvariantLoopRead(func(InvariantLoopRead) bool) bool
+	ForEachSplitBirthDiscriminant(func(SplitBirthDiscriminant) bool) bool
 	DominatingTruthyBranchForPath(cfg.Point, BranchCheck) (DominatingBranchProof, bool)
 	DominatingBranchCheckForPath(cfg.Point, BranchCheck, func(BranchCheck, bool) bool) (DominatingBranchProof, bool)
 }
@@ -164,6 +165,29 @@ type InvariantLoopRead struct {
 	ReceiverType  typ.Type
 	ReadSpan      SourceSpan
 	LoopSpan      SourceSpan
+}
+
+// SplitBirthDiscriminant is one locally born table whose string tag field is
+// assigned apart from other payload fields and later used as a discriminant.
+type SplitBirthDiscriminant struct {
+	Point                cfg.Point
+	ReceiverLabel        string
+	TagLabel             string
+	TagValue             string
+	BirthPoint           cfg.Point
+	BirthSpan            SourceSpan
+	TagWriteSpan         SourceSpan
+	PayloadWrites        []SplitBirthPayloadWrite
+	DiscriminantUsePoint cfg.Point
+	DiscriminantUseSpan  SourceSpan
+}
+
+// SplitBirthPayloadWrite is one non-tag field write to the same split-born
+// receiver.
+type SplitBirthPayloadWrite struct {
+	Point cfg.Point
+	Label string
+	Span  SourceSpan
 }
 
 // DominatingBranchProof is the readmodel view of a prior branch edge that

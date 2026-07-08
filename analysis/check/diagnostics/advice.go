@@ -17,6 +17,10 @@ func renderAdviceInvariantLoopReadJudgmentWithPolicy(ctx judgmentRenderContext, 
 	return renderAdviceJudgmentWithPolicy(ctx, item, policy, mode, judgment.CodeAdviceInvariantLoopRead, CodeAdviceInvariantLoopRead)
 }
 
+func renderAdviceSplitBirthDiscriminantJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
+	return renderAdviceJudgmentWithPolicy(ctx, item, policy, mode, judgment.CodeAdviceSplitBirthDiscriminant, CodeAdviceSplitBirthDiscriminant)
+}
+
 func renderAdviceJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode, want judgment.Code, code diagnostic.Code) (diagnostic.Diagnostic, bool) {
 	if item.Code != want || item.Subject.Kind != judgment.SubjectExpression || len(item.Spans) == 0 {
 		return diagnostic.Diagnostic{}, false

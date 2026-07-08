@@ -20,6 +20,8 @@ func (ProofContext) Advice(item judgment.Judgment, primary diagnostic.Span) (adv
 		return adviceAlwaysTrueGuardPresentation(item, primary), true
 	case judgment.CodeAdviceInvariantLoopRead:
 		return adviceInvariantLoopReadPresentation(item, primary), true
+	case judgment.CodeAdviceSplitBirthDiscriminant:
+		return adviceSplitBirthDiscriminantPresentation(item, primary), true
 	default:
 		return advicePresentation{}, false
 	}
@@ -93,6 +95,40 @@ func adviceInvariantLoopReadPresentation(item judgment.Judgment, primary diagnos
 				Message: nonNil,
 			},
 		),
+	}
+}
+
+func adviceSplitBirthDiscriminantPresentation(item judgment.Judgment, primary diagnostic.Span) advicePresentation {
+	labels := []diagnostic.Label{sourceLabel(primary, labelAdviceTagWrite)}
+	var evidence []diagnostic.Evidence
+	for _, itemEvidence := range item.Evidence {
+		span := diagnosticJudgmentEvidenceSpanOr(itemEvidence, primary)
+		switch itemEvidence.Detail.Kind {
+		case judgment.EvidenceDetailAdviceTableBirth:
+			if span.Valid() && !diagnosticSpanEqual(span, primary) {
+				labels = append(labels, sourceLabel(span, labelAdviceTableBirth))
+			}
+		case judgment.EvidenceDetailAdvicePayloadWrite:
+			if span.Valid() && !diagnosticSpanEqual(span, primary) {
+				labels = append(labels, sourceLabel(span, labelAdvicePayloadWrite))
+			}
+		case judgment.EvidenceDetailAdviceDiscriminantUse:
+			if span.Valid() && !diagnosticSpanEqual(span, primary) {
+				labels = append(labels, sourceLabel(span, labelAdviceDiscriminantUse))
+			}
+		}
+		evidence = append(evidence, diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustProven,
+			Span:    span,
+			Message: itemEvidence.Detail.Message,
+		})
+	}
+	return advicePresentation{
+		Message:     display.AdviceSplitBirthDiscriminantMessage(item.Subject.Label),
+		Help:        display.AdviceSplitBirthDiscriminantHelp(),
+		Labels:      labels,
+		Explanation: diagnostic.NewExplanation(evidence...),
 	}
 }
 

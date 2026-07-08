@@ -71,6 +71,7 @@ func defaultPolicyLevels() map[PolicyKey]Level {
 		CodeAdviceRedundantClaim,
 		CodeAdviceAlwaysTrueGuard,
 		CodeAdviceInvariantLoopRead,
+		CodeAdviceSplitBirthDiscriminant,
 	)
 	return levels
 }

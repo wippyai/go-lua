@@ -15,33 +15,34 @@ import (
 type Code string
 
 const (
-	CodeCallArgType             Code = "call.argument.type"
-	CodeCallArity               Code = "call.arity"
-	CodeCallCallee              Code = "call.callee"
-	CodeAssignment              Code = "assignment.type"
-	CodeAssignmentTarget        Code = "assignment.optional_target"
-	CodeReturn                  Code = "return.type"
-	CodeNonNilAssertion         Code = "assertion.nonnil"
-	CodeNumericForOperand       Code = "for.numeric.operand"
-	CodeFrozenTable             Code = "effect.freeze.mutation"
-	CodeLifecycle               Code = "effect.lifecycle.unreleased"
-	CodeUnusedLocal             Code = "lint.unused.local"
-	CodeDeadAssignment          Code = "lint.dead.assignment"
-	CodeChannelSelect           Code = "channel.select.exhaustiveness"
-	CodeDiscriminatedUnion      Code = "union.discriminated.exhaustiveness"
-	CodeOptional                Code = "union.optional.exhaustiveness"
-	CodeResultShape             Code = "union.result_shape.exhaustiveness"
-	CodeRegistration            Code = "union.registration.exhaustiveness"
-	CodeTableDispatch           Code = "union.table_dispatch.exhaustiveness"
-	CodeUnresolvedValue         Code = "value.reference.unresolved"
-	CodeUnresolvedType          Code = "type.reference.unresolved"
-	CodeRedundantCondition      Code = "condition.redundant"
-	CodeMemberRead              Code = "member.read"
-	CodeConcatOperand           Code = "operator.concat.operand"
-	CodeSendIsolation           Code = "send.isolation"
-	CodeAdviceRedundantClaim    Code = "advice.redundant_claim"
-	CodeAdviceAlwaysTrueGuard   Code = "advice.always_true_guard"
-	CodeAdviceInvariantLoopRead Code = "advice.invariant_loop_read"
+	CodeCallArgType                  Code = "call.argument.type"
+	CodeCallArity                    Code = "call.arity"
+	CodeCallCallee                   Code = "call.callee"
+	CodeAssignment                   Code = "assignment.type"
+	CodeAssignmentTarget             Code = "assignment.optional_target"
+	CodeReturn                       Code = "return.type"
+	CodeNonNilAssertion              Code = "assertion.nonnil"
+	CodeNumericForOperand            Code = "for.numeric.operand"
+	CodeFrozenTable                  Code = "effect.freeze.mutation"
+	CodeLifecycle                    Code = "effect.lifecycle.unreleased"
+	CodeUnusedLocal                  Code = "lint.unused.local"
+	CodeDeadAssignment               Code = "lint.dead.assignment"
+	CodeChannelSelect                Code = "channel.select.exhaustiveness"
+	CodeDiscriminatedUnion           Code = "union.discriminated.exhaustiveness"
+	CodeOptional                     Code = "union.optional.exhaustiveness"
+	CodeResultShape                  Code = "union.result_shape.exhaustiveness"
+	CodeRegistration                 Code = "union.registration.exhaustiveness"
+	CodeTableDispatch                Code = "union.table_dispatch.exhaustiveness"
+	CodeUnresolvedValue              Code = "value.reference.unresolved"
+	CodeUnresolvedType               Code = "type.reference.unresolved"
+	CodeRedundantCondition           Code = "condition.redundant"
+	CodeMemberRead                   Code = "member.read"
+	CodeConcatOperand                Code = "operator.concat.operand"
+	CodeSendIsolation                Code = "send.isolation"
+	CodeAdviceRedundantClaim         Code = "advice.redundant_claim"
+	CodeAdviceAlwaysTrueGuard        Code = "advice.always_true_guard"
+	CodeAdviceInvariantLoopRead      Code = "advice.invariant_loop_read"
+	CodeAdviceSplitBirthDiscriminant Code = "advice.split_birth_discriminant"
 )
 
 // Verdict classifies whether the solved state proves or refutes an obligation.
@@ -224,6 +225,10 @@ const (
 	EvidenceDetailAdviceGuardValue
 	EvidenceDetailAdviceLoopInvariant
 	EvidenceDetailAdviceReceiverNonNil
+	EvidenceDetailAdviceTableBirth
+	EvidenceDetailAdviceTagWrite
+	EvidenceDetailAdvicePayloadWrite
+	EvidenceDetailAdviceDiscriminantUse
 )
 
 // EvidenceDetail carries renderer-independent detail for one evidence node.
@@ -285,6 +290,22 @@ func AdviceLoopInvariantEvidenceDetail(message string) EvidenceDetail {
 
 func AdviceReceiverNonNilEvidenceDetail(message string) EvidenceDetail {
 	return EvidenceDetail{Kind: EvidenceDetailAdviceReceiverNonNil, Message: message}
+}
+
+func AdviceTableBirthEvidenceDetail(message string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailAdviceTableBirth, Message: message}
+}
+
+func AdviceTagWriteEvidenceDetail(message string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailAdviceTagWrite, Message: message}
+}
+
+func AdvicePayloadWriteEvidenceDetail(message string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailAdvicePayloadWrite, Message: message}
+}
+
+func AdviceDiscriminantUseEvidenceDetail(message string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailAdviceDiscriminantUse, Message: message}
 }
 
 func ResultShapeUnionEvidenceDetail(receiver, discriminant string) EvidenceDetail {

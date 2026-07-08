@@ -58,6 +58,8 @@ type DominatingBranchProof = readapi.DominatingBranchProof
 type RedundantClaim = readapi.RedundantClaim
 type AlwaysTrueGuard = readapi.AlwaysTrueGuard
 type InvariantLoopRead = readapi.InvariantLoopRead
+type SplitBirthDiscriminant = readapi.SplitBirthDiscriminant
+type SplitBirthPayloadWrite = readapi.SplitBirthPayloadWrite
 
 func New(result *body.Result) Reader {
 	return Reader{result: result, typeValues: result.TypeValues()}
