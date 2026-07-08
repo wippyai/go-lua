@@ -14,42 +14,6 @@ const (
 	maxInlineTypeLen  = 96
 )
 
-func conditionCheckEvidence(check string) string {
-	return display.ConditionCheckEvidence(check)
-}
-
-func truthyConditionCheck(path string) string {
-	return display.TruthyConditionCheck(path)
-}
-
-func falsyConditionCheck(path string) string {
-	return display.FalsyConditionCheck(path)
-}
-
-func nilConditionCheck(path string) string {
-	return display.NilConditionCheck(path)
-}
-
-func nonNilConditionCheck(path string) string {
-	return display.NonNilConditionCheck(path)
-}
-
-func conditionStabilityEvidence(path string) string {
-	return display.ConditionStabilityEvidence(path)
-}
-
-func conditionPathProofEvidence(path, state string) string {
-	return display.ConditionPathProofEvidence(path, state)
-}
-
-func redundantConditionMessage(always bool) string {
-	return display.RedundantConditionMessage(always)
-}
-
-func redundantConditionHelp(always bool) string {
-	return display.RedundantConditionHelp(always)
-}
-
 func selectedChannelPathEvidence(channel string) string {
 	return "branch chain checks channel " + codeName(channel)
 }
@@ -64,54 +28,6 @@ func missingChannelCasesEvidence(cases string) string {
 
 func missingChannelDefaultEvidence() string {
 	return "no default case handles the remaining channel cases"
-}
-
-func channelSelectExhaustivenessMessage(caseWord, cases string) string {
-	return display.ChannelSelectExhaustivenessMessage(caseWord, cases)
-}
-
-func channelSelectExhaustivenessHelp() string {
-	return display.ChannelSelectExhaustivenessHelp()
-}
-
-func discriminatedUnionExhaustivenessMessage(caseWord, cases string) string {
-	return display.DiscriminatedUnionExhaustivenessMessage(caseWord, cases)
-}
-
-func discriminatedUnionExhaustivenessHelp() string {
-	return display.DiscriminatedUnionExhaustivenessHelp()
-}
-
-func dispatchTableExhaustivenessMessage(keyWord, keys string) string {
-	return display.DispatchTableExhaustivenessMessage(keyWord, keys)
-}
-
-func dispatchTableExhaustivenessHelp() string {
-	return display.DispatchTableExhaustivenessHelp()
-}
-
-func registrationExhaustivenessMessage(registrationWord, registrations string) string {
-	return display.RegistrationExhaustivenessMessage(registrationWord, registrations)
-}
-
-func registrationExhaustivenessHelp() string {
-	return display.RegistrationExhaustivenessHelp()
-}
-
-func resultShapeExhaustivenessMessage(readPath, requiredCase string) string {
-	return display.ResultShapeExhaustivenessMessage(readPath, requiredCase)
-}
-
-func resultShapeExhaustivenessHelp() string {
-	return display.ResultShapeExhaustivenessHelp()
-}
-
-func optionalExhaustivenessMessage(caseWord, cases string) string {
-	return display.OptionalExhaustivenessMessage(caseWord, cases)
-}
-
-func optionalExhaustivenessHelp() string {
-	return display.OptionalExhaustivenessHelp()
 }
 
 func selectedDiscriminantPathEvidence(path string) string {
@@ -208,22 +124,6 @@ func frozenAssignmentProofEvidence(containerName string) string {
 
 func frozenCallProofEvidence(containerName string) string {
 	return fmt.Sprintf("table %q was frozen by this call before the mutating call", containerName)
-}
-
-func frozenTableMutationMessage(containerName string) string {
-	return display.FrozenTableMutationMessage(containerName)
-}
-
-func frozenTableCallMutationMessage(containerName string) string {
-	return display.FrozenTableCallMutationMessage(containerName)
-}
-
-func frozenTableAssignmentHelp() string {
-	return display.FrozenTableAssignmentHelp()
-}
-
-func frozenTableCallHelp() string {
-	return display.FrozenTableCallHelp()
 }
 
 func deadAssignmentMessage(name string, hasExit bool) string {

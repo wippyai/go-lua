@@ -21,8 +21,8 @@ func (ProofContext) ChannelSelect(item judgment.Judgment, primary diagnostic.Spa
 	}
 	caseWord := pluralize(len(missing), "case", "cases")
 	return channelSelectPresentation{
-		Message:     channelSelectExhaustivenessMessage(caseWord, channelCaseList(missing)),
-		Help:        channelSelectExhaustivenessHelp(),
+		Message:     display.ChannelSelectExhaustivenessMessage(caseWord, channelCaseList(missing)),
+		Help:        display.ChannelSelectExhaustivenessHelp(),
 		Explanation: channelSelectExplanation(item, primary),
 		Labels:      []diagnostic.Label{sourceLabel(primary, labelChannelCaseTest)},
 	}, true

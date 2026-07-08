@@ -82,38 +82,38 @@ func TestDeadAssignmentMessagesUseCentralDisplay(t *testing.T) {
 }
 
 func TestRedundantConditionMessagesUseCentralDisplay(t *testing.T) {
-	if got := truthyConditionCheck("flag"); got != "flag is checked as truthy" {
-		t.Fatalf("truthyConditionCheck = %q", got)
+	if got := display.TruthyConditionCheck("flag"); got != "flag is checked as truthy" {
+		t.Fatalf("display.TruthyConditionCheck = %q", got)
 	}
-	if got := falsyConditionCheck("flag"); got != "flag is checked as falsy" {
-		t.Fatalf("falsyConditionCheck = %q", got)
+	if got := display.FalsyConditionCheck("flag"); got != "flag is checked as falsy" {
+		t.Fatalf("display.FalsyConditionCheck = %q", got)
 	}
-	if got := nilConditionCheck("cache.value"); got != "cache.value == nil" {
-		t.Fatalf("nilConditionCheck = %q", got)
+	if got := display.NilConditionCheck("cache.value"); got != "cache.value == nil" {
+		t.Fatalf("display.NilConditionCheck = %q", got)
 	}
-	if got := nonNilConditionCheck("cache.value"); got != "cache.value ~= nil" {
-		t.Fatalf("nonNilConditionCheck = %q", got)
+	if got := display.NonNilConditionCheck("cache.value"); got != "cache.value ~= nil" {
+		t.Fatalf("display.NonNilConditionCheck = %q", got)
 	}
-	if got := conditionStabilityEvidence("flag"); got != "flag is unchanged between the prior guard and this check" {
-		t.Fatalf("conditionStabilityEvidence = %q", got)
+	if got := display.ConditionStabilityEvidence("flag"); got != "flag is unchanged between the prior guard and this check" {
+		t.Fatalf("display.ConditionStabilityEvidence = %q", got)
 	}
-	if got := conditionCheckEvidence("flag is checked as truthy"); got != "current check: flag is checked as truthy" {
-		t.Fatalf("conditionCheckEvidence = %q", got)
+	if got := display.ConditionCheckEvidence("flag is checked as truthy"); got != "current check: flag is checked as truthy" {
+		t.Fatalf("display.ConditionCheckEvidence = %q", got)
 	}
-	if got := conditionPathProofEvidence("flag", "truthy"); got != "prior guard established flag is truthy" {
-		t.Fatalf("conditionPathProofEvidence = %q", got)
+	if got := display.ConditionPathProofEvidence("flag", "truthy"); got != "prior guard established flag is truthy" {
+		t.Fatalf("display.ConditionPathProofEvidence = %q", got)
 	}
-	if got := redundantConditionMessage(true); got != "condition is always true here" {
-		t.Fatalf("redundantConditionMessage(true) = %q", got)
+	if got := display.RedundantConditionMessage(true); got != "condition is always true here" {
+		t.Fatalf("display.RedundantConditionMessage(true) = %q", got)
 	}
-	if got := redundantConditionMessage(false); got != "condition is always false here" {
-		t.Fatalf("redundantConditionMessage(false) = %q", got)
+	if got := display.RedundantConditionMessage(false); got != "condition is always false here" {
+		t.Fatalf("display.RedundantConditionMessage(false) = %q", got)
 	}
-	if got := redundantConditionHelp(true); got != "Remove this repeated check, or move any needed work into the branch already guarded above." {
-		t.Fatalf("redundantConditionHelp(true) = %q", got)
+	if got := display.RedundantConditionHelp(true); got != "Remove this repeated check, or move any needed work into the branch already guarded above." {
+		t.Fatalf("display.RedundantConditionHelp(true) = %q", got)
 	}
-	if got := redundantConditionHelp(false); got != "Remove this unreachable branch, or change the prior guard if this path should still run." {
-		t.Fatalf("redundantConditionHelp(false) = %q", got)
+	if got := display.RedundantConditionHelp(false); got != "Remove this unreachable branch, or change the prior guard if this path should still run." {
+		t.Fatalf("display.RedundantConditionHelp(false) = %q", got)
 	}
 }
 
@@ -138,54 +138,54 @@ func TestDiagnosticProducerMessagesUseCentralDisplay(t *testing.T) {
 		t.Fatalf("unresolvedValueHelp = %q", got)
 	}
 
-	if got := channelSelectExhaustivenessMessage("cases", "ready, failed"); got != "channel select is not exhaustive; missing cases: ready, failed" {
-		t.Fatalf("channelSelectExhaustivenessMessage = %q", got)
+	if got := display.ChannelSelectExhaustivenessMessage("cases", "ready, failed"); got != "channel select is not exhaustive; missing cases: ready, failed" {
+		t.Fatalf("display.ChannelSelectExhaustivenessMessage = %q", got)
 	}
-	if got := channelSelectExhaustivenessHelp(); got != "Add an elseif branch for each missing case, or add a default branch when a fallback is valid." {
-		t.Fatalf("channelSelectExhaustivenessHelp = %q", got)
+	if got := display.ChannelSelectExhaustivenessHelp(); got != "Add an elseif branch for each missing case, or add a default branch when a fallback is valid." {
+		t.Fatalf("display.ChannelSelectExhaustivenessHelp = %q", got)
 	}
-	if got := discriminatedUnionExhaustivenessMessage("case", "`action.kind == \"cancel\"`"); got != "discriminated union handling is not exhaustive; missing case: `action.kind == \"cancel\"`" {
-		t.Fatalf("discriminatedUnionExhaustivenessMessage = %q", got)
+	if got := display.DiscriminatedUnionExhaustivenessMessage("case", "`action.kind == \"cancel\"`"); got != "discriminated union handling is not exhaustive; missing case: `action.kind == \"cancel\"`" {
+		t.Fatalf("display.DiscriminatedUnionExhaustivenessMessage = %q", got)
 	}
-	if got := discriminatedUnionExhaustivenessHelp(); got != "Handle each missing case, or add an else branch when a fallback is valid." {
-		t.Fatalf("discriminatedUnionExhaustivenessHelp = %q", got)
+	if got := display.DiscriminatedUnionExhaustivenessHelp(); got != "Handle each missing case, or add an else branch when a fallback is valid." {
+		t.Fatalf("display.DiscriminatedUnionExhaustivenessHelp = %q", got)
 	}
-	if got := dispatchTableExhaustivenessMessage("key", "`handlers.cancel`"); got != "dispatch table is not exhaustive; missing key: `handlers.cancel`" {
-		t.Fatalf("dispatchTableExhaustivenessMessage = %q", got)
+	if got := display.DispatchTableExhaustivenessMessage("key", "`handlers.cancel`"); got != "dispatch table is not exhaustive; missing key: `handlers.cancel`" {
+		t.Fatalf("display.DispatchTableExhaustivenessMessage = %q", got)
 	}
-	if got := dispatchTableExhaustivenessHelp(); got != "Add each missing dispatch key, or route through an explicit fallback when missing keys are intentional." {
-		t.Fatalf("dispatchTableExhaustivenessHelp = %q", got)
+	if got := display.DispatchTableExhaustivenessHelp(); got != "Add each missing dispatch key, or route through an explicit fallback when missing keys are intentional." {
+		t.Fatalf("display.DispatchTableExhaustivenessHelp = %q", got)
 	}
-	if got := registrationExhaustivenessMessage("registration", "`router.cancel`"); got != "registered callbacks are not exhaustive; missing registration: `router.cancel`" {
-		t.Fatalf("registrationExhaustivenessMessage = %q", got)
+	if got := display.RegistrationExhaustivenessMessage("registration", "`router.cancel`"); got != "registered callbacks are not exhaustive; missing registration: `router.cancel`" {
+		t.Fatalf("display.RegistrationExhaustivenessMessage = %q", got)
 	}
-	if got := registrationExhaustivenessHelp(); got != "Register each missing case, or dispatch through an explicit fallback when missing registrations are intentional." {
-		t.Fatalf("registrationExhaustivenessHelp = %q", got)
+	if got := display.RegistrationExhaustivenessHelp(); got != "Register each missing case, or dispatch through an explicit fallback when missing registrations are intentional." {
+		t.Fatalf("display.RegistrationExhaustivenessHelp = %q", got)
 	}
-	if got := resultShapeExhaustivenessMessage("result.value", "result.ok == true"); got != "case-specific field read is not exhaustive; `result.value` requires `result.ok == true`" {
-		t.Fatalf("resultShapeExhaustivenessMessage = %q", got)
+	if got := display.ResultShapeExhaustivenessMessage("result.value", "result.ok == true"); got != "case-specific field read is not exhaustive; `result.value` requires `result.ok == true`" {
+		t.Fatalf("display.ResultShapeExhaustivenessMessage = %q", got)
 	}
-	if got := resultShapeExhaustivenessHelp(); got != "Check the union case before reading this field, or return from the opposite case before continuing." {
-		t.Fatalf("resultShapeExhaustivenessHelp = %q", got)
+	if got := display.ResultShapeExhaustivenessHelp(); got != "Check the union case before reading this field, or return from the opposite case before continuing." {
+		t.Fatalf("display.ResultShapeExhaustivenessHelp = %q", got)
 	}
-	if got := optionalExhaustivenessMessage("case", "`maybe == nil`"); got != "optional handling is not exhaustive; missing case: `maybe == nil`" {
-		t.Fatalf("optionalExhaustivenessMessage = %q", got)
+	if got := display.OptionalExhaustivenessMessage("case", "`maybe == nil`"); got != "optional handling is not exhaustive; missing case: `maybe == nil`" {
+		t.Fatalf("display.OptionalExhaustivenessMessage = %q", got)
 	}
-	if got := optionalExhaustivenessHelp(); got != "Handle the nil case with an else branch, or return before continuing when nil is intentionally ignored." {
-		t.Fatalf("optionalExhaustivenessHelp = %q", got)
+	if got := display.OptionalExhaustivenessHelp(); got != "Handle the nil case with an else branch, or return before continuing when nil is intentionally ignored." {
+		t.Fatalf("display.OptionalExhaustivenessHelp = %q", got)
 	}
 
-	if got := frozenTableMutationMessage("session"); got != `cannot mutate frozen table "session"` {
-		t.Fatalf("frozenTableMutationMessage = %q", got)
+	if got := display.FrozenTableMutationMessage("session"); got != `cannot mutate frozen table "session"` {
+		t.Fatalf("display.FrozenTableMutationMessage = %q", got)
 	}
-	if got := frozenTableCallMutationMessage("session"); got != `cannot call mutator on frozen table "session"` {
-		t.Fatalf("frozenTableCallMutationMessage = %q", got)
+	if got := display.FrozenTableCallMutationMessage("session"); got != `cannot call mutator on frozen table "session"` {
+		t.Fatalf("display.FrozenTableCallMutationMessage = %q", got)
 	}
-	if got := frozenTableAssignmentHelp(); got != "Create a mutable copy before writing, or move this assignment before the table is frozen." {
-		t.Fatalf("frozenTableAssignmentHelp = %q", got)
+	if got := display.FrozenTableAssignmentHelp(); got != "Create a mutable copy before writing, or move this assignment before the table is frozen." {
+		t.Fatalf("display.FrozenTableAssignmentHelp = %q", got)
 	}
-	if got := frozenTableCallHelp(); got != "Create a mutable copy before calling the mutator, or call it before the table is frozen." {
-		t.Fatalf("frozenTableCallHelp = %q", got)
+	if got := display.FrozenTableCallHelp(); got != "Create a mutable copy before calling the mutator, or call it before the table is frozen." {
+		t.Fatalf("display.FrozenTableCallHelp = %q", got)
 	}
 
 	if got := unusedLocalMessage("tmp"); got != `local "tmp" is never read` {

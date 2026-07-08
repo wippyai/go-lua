@@ -23,15 +23,15 @@ func (ProofContext) RedundantCondition(item judgment.Judgment, primary diagnosti
 		labels = append(labels, sourceLabel(proofSpan, labelProvingGuard))
 	}
 	return redundantConditionPresentation{
-		Message: redundantConditionMessage(always),
-		Help:    redundantConditionHelp(always),
+		Message: display.RedundantConditionMessage(always),
+		Help:    display.RedundantConditionHelp(always),
 		Labels:  labels,
 		Explanation: diagnostic.NewExplanation(
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnostic.TrustProven,
 				Span:    primary,
-				Message: conditionCheckEvidence(check),
+				Message: display.ConditionCheckEvidence(check),
 			},
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceAbstractFact,

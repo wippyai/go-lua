@@ -26,11 +26,11 @@ func (ProofContext) FrozenTable(item judgment.Judgment, primary diagnostic.Span)
 	if proofSpan, ok := frozenTableProofSpan(item); ok {
 		labels = append(labels, sourceLabel(proofSpan, labelFreezeProof))
 	}
-	message := frozenTableMutationMessage(containerName)
-	help := frozenTableAssignmentHelp()
+	message := display.FrozenTableMutationMessage(containerName)
+	help := display.FrozenTableAssignmentHelp()
 	if mutatingCall {
-		message = frozenTableCallMutationMessage(containerName)
-		help = frozenTableCallHelp()
+		message = display.FrozenTableCallMutationMessage(containerName)
+		help = display.FrozenTableCallHelp()
 	}
 	return frozenTablePresentation{
 		Message:  message,

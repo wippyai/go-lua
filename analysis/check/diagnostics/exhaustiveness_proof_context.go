@@ -21,8 +21,8 @@ func (ProofContext) DiscriminatedUnion(item judgment.Judgment, primary diagnosti
 	}
 	caseWord := pluralize(len(missing), "case", "cases")
 	return exhaustivenessPresentation{
-		Message:     discriminatedUnionExhaustivenessMessage(caseWord, discriminantCaseList(missing)),
-		Help:        discriminatedUnionExhaustivenessHelp(),
+		Message:     display.DiscriminatedUnionExhaustivenessMessage(caseWord, discriminantCaseList(missing)),
+		Help:        display.DiscriminatedUnionExhaustivenessHelp(),
 		Explanation: discriminatedUnionExplanation(item, primary),
 		Labels:      []diagnostic.Label{sourceLabel(primary, labelUnionCaseTest)},
 	}, true
@@ -35,8 +35,8 @@ func (ProofContext) Optional(item judgment.Judgment, primary diagnostic.Span) (e
 	}
 	caseWord := pluralize(len(missing), "case", "cases")
 	return exhaustivenessPresentation{
-		Message:     optionalExhaustivenessMessage(caseWord, discriminantCaseList(missing)),
-		Help:        optionalExhaustivenessHelp(),
+		Message:     display.OptionalExhaustivenessMessage(caseWord, discriminantCaseList(missing)),
+		Help:        display.OptionalExhaustivenessHelp(),
 		Explanation: optionalExplanation(item, primary),
 		Labels:      []diagnostic.Label{sourceLabel(primary, labelOptionalCaseCheck)},
 	}, true
@@ -49,8 +49,8 @@ func (ProofContext) Registration(item judgment.Judgment, primary diagnostic.Span
 	}
 	registrationWord := pluralize(len(missing), "registration", "registrations")
 	return exhaustivenessPresentation{
-		Message:     registrationExhaustivenessMessage(registrationWord, dispatchKeyList(missing)),
-		Help:        registrationExhaustivenessHelp(),
+		Message:     display.RegistrationExhaustivenessMessage(registrationWord, dispatchKeyList(missing)),
+		Help:        display.RegistrationExhaustivenessHelp(),
 		Explanation: registrationExplanation(item, primary),
 		Labels:      registrationLabels(item, primary),
 	}, true
@@ -67,8 +67,8 @@ func (ProofContext) TableDispatch(item judgment.Judgment, lookupSpan diagnostic.
 	}
 	keyWord := pluralize(len(missing), "key", "keys")
 	return exhaustivenessPresentation{
-		Message:     dispatchTableExhaustivenessMessage(keyWord, dispatchKeyList(missing)),
-		Help:        dispatchTableExhaustivenessHelp(),
+		Message:     display.DispatchTableExhaustivenessMessage(keyWord, dispatchKeyList(missing)),
+		Help:        display.DispatchTableExhaustivenessHelp(),
 		Explanation: tableDispatchExplanation(item, lookupSpan),
 		Labels: []diagnostic.Label{
 			sourceLabel(tableSpan, labelDispatchTable),
@@ -83,8 +83,8 @@ func (ProofContext) ResultShape(item judgment.Judgment, primary diagnostic.Span)
 		return exhaustivenessPresentation{}, false
 	}
 	return exhaustivenessPresentation{
-		Message:     resultShapeExhaustivenessMessage(readPath, requiredCase),
-		Help:        resultShapeExhaustivenessHelp(),
+		Message:     display.ResultShapeExhaustivenessMessage(readPath, requiredCase),
+		Help:        display.ResultShapeExhaustivenessHelp(),
 		Explanation: resultShapeExplanation(item, primary),
 		Labels:      []diagnostic.Label{sourceLabel(primary, labelResultFieldRead)},
 	}, true
