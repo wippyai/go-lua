@@ -49,6 +49,16 @@ func TestLowerPanicsWithoutRegistryOnEmptyInputs(t *testing.T) {
 	_ = Lower(nil, Config{})
 }
 
+func TestLowerPanicsWithoutWIR(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil || !strings.Contains(r.(string), "Config.WIR is required") {
+			t.Fatal("Lower did not panic")
+		}
+	}()
+
+	_ = Lower(nil, Config{Registry: standard.Registry()})
+}
+
 func TestLowerAnnotatedLiteralLocalPreservesLiteralValue(t *testing.T) {
 	reg := standard.Registry()
 	stmts, bindings, built := parseSemanticChunk(t, `local x: string | number = 42`)

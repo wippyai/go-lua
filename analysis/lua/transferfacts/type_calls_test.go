@@ -255,7 +255,8 @@ local number = function(value) return value end
 local data: any = 1
 local v = number(data)
 `)
-	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings})
+	body := wirlower.Lower("primitive-type-cast-value-shadow", stmts, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	castStmt := mustLocalStmt(t, stmts, 2)
 	castCall := castStmt.Exprs[0].(*ast.FuncCallExpr)
 	callPoint := requireSourceCallPoint(t, built, bindings, castStmt, castCall)
@@ -743,7 +744,8 @@ local Point = function(value) return value end
 local data: any = {}
 local v = Point(data)
 `)
-	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings})
+	body := wirlower.Lower("type-cast-value-shadow", stmts, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	castStmt := mustLocalStmt(t, stmts, 3)
 	castCall := castStmt.Exprs[0].(*ast.FuncCallExpr)
 	callPoint := requireSourceCallPoint(t, built, bindings, castStmt, castCall)

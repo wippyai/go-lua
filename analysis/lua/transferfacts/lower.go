@@ -50,7 +50,10 @@ func LowerDetailed(graph cfg.Graph, config Config) Lowered {
 	if config.Registry == nil {
 		panic("transferfacts: Config.Registry is required")
 	}
-	if graph == nil || config.WIR == nil {
+	if config.WIR == nil {
+		panic("transferfacts: Config.WIR is required")
+	}
+	if graph == nil {
 		return Lowered{Facts: factflow.NewFacts(factflow.FactsInput{})}
 	}
 	typeResolver := config.TypeResolver
