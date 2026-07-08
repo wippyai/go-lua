@@ -283,7 +283,7 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		TypeValues:             typeValues,
 		ClosedDynamicAllValues: config.ClosedDynamicAllValues,
 	})
-	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.cfg.Meta, s.facts, s.sources, s.symbolTypes, s.signatures, s.signatureID, s.typeNS, typeValues, callOutcome, s.visibility.KeySpace(), s.visibility, func(expr ast.Expr) (pathdom.Path, bool) {
+	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.cfg.GenericFors, s.facts, s.sources, s.symbolTypes, s.signatures, s.signatureID, s.typeNS, typeValues, callOutcome, s.visibility.KeySpace(), s.visibility, func(expr ast.Expr) (pathdom.Path, bool) {
 		return pathexpr.Resolve(expr, s.bindings)
 	})
 	edgeTransfer := factapply.NewFactsEdgeTransfer(factapply.FactsEdgeTransferConfig{

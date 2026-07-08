@@ -14,7 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
+	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -266,8 +266,8 @@ func (r *Result) genericForVariablePathSource(source factflow.ValueSource) bool 
 		return false
 	}
 	for _, point := range r.cfg.Graph.RPO() {
-		fact, ok := r.cfg.Meta.GenericFor(point)
-		if !ok || fact.Role != cfgfacts.GenericForRoleVariable || !fact.HasSymbols || fact.VariableIndex < 0 || fact.VariableIndex >= len(fact.Symbols) {
+		fact, ok := r.cfg.GenericFors.Get(point)
+		if !ok || fact.Role != cfgbuild.GenericForRoleVariable || !fact.HasSymbols || fact.VariableIndex < 0 || fact.VariableIndex >= len(fact.Symbols) {
 			continue
 		}
 		if p.Symbol == fact.Symbols[fact.VariableIndex] {

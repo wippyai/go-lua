@@ -2,7 +2,6 @@ package cfgbuild
 
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -298,20 +297,20 @@ func (b *builder) buildGenericFor(state flowState, stmt *ast.GenericForStmt) flo
 	branch := b.appendBranch(state, stmt)
 	join := b.graph.AddNode(cfg.NodeJoin)
 
-	genericFact := cfgfacts.GenericForFact{
+	genericFact := GenericFor{
 		Stmt:          stmt,
 		Names:         append([]string(nil), stmt.Names...),
 		Exprs:         append([]ast.Expr(nil), stmt.Exprs...),
 		Symbols:       append([]symbol.ID(nil), ids...),
 		HasSymbols:    completeSymbols(ids, len(stmt.Names)),
-		VariableIndex: cfgfacts.NoGenericForVariableIndex,
+		VariableIndex: NoGenericForVariableIndex,
 	}
 	if callsOK && len(callPoints) == len(calls) {
 		genericFact.Sources = sourceprovenance.ValueListSources(stmt.Exprs, false, resolver)
 	}
 	checkFact := genericFact
-	checkFact.Role = cfgfacts.GenericForRoleCheck
-	b.meta.SetGenericFor(branch.current, checkFact)
+	checkFact.Role = GenericForRoleCheck
+	b.genericFors.Set(branch.current, checkFact)
 	b.graph.AddEdge(branch.current, join, false)
 
 	iterState := branchPath(branch.current, true)
@@ -320,9 +319,9 @@ func (b *builder) buildGenericFor(state flowState, stmt *ast.GenericForStmt) flo
 	for i := range stmt.Names {
 		iterState = b.appendAssign(iterState, stmt)
 		varFact := genericFact
-		varFact.Role = cfgfacts.GenericForRoleVariable
+		varFact.Role = GenericForRoleVariable
 		varFact.VariableIndex = i
-		b.meta.SetGenericFor(iterState.current, varFact)
+		b.genericFors.Set(iterState.current, varFact)
 	}
 
 	b.breakTargets = append(b.breakTargets, join)

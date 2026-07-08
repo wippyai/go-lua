@@ -6,7 +6,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
-	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/source"
@@ -228,7 +227,7 @@ func (r *Result) ReachableSymbolReads() SymbolReadSets {
 			collector.expr(fact.Limit)
 			collector.expr(fact.Step)
 		}
-		if fact, ok := r.GenericFor(point); ok && fact.Role == cfgfacts.GenericForRoleCheck {
+		if fact, ok := r.GenericFor(point); ok && fact.Role == cfgbuild.GenericForRoleCheck {
 			collector.exprs(fact.Exprs)
 		}
 		if fact, ok := r.TypeDefinition(point); ok {

@@ -22,7 +22,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
-	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
+	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
@@ -36,7 +36,7 @@ import (
 
 func genericForNodeTransfer(
 	base transfer.NodeTransfer,
-	meta cfgfacts.Metadata,
+	genericFors cfgbuild.GenericFors,
 	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
 	symbolTypes map[symbol.ID]typ.Type,
@@ -60,8 +60,8 @@ func genericForNodeTransfer(
 		if sources == nil || signatureID == nil {
 			return out
 		}
-		fact, ok := meta.GenericFor(ctx.Point)
-		if !ok || fact.Role != cfgfacts.GenericForRoleVariable || !fact.HasSymbols ||
+		fact, ok := genericFors.Get(ctx.Point)
+		if !ok || fact.Role != cfgbuild.GenericForRoleVariable || !fact.HasSymbols ||
 			fact.VariableIndex < 0 || fact.VariableIndex >= len(fact.Symbols) {
 			return out
 		}
@@ -91,7 +91,7 @@ func genericForNodeTransfer(
 func genericForVariableValue(
 	ctx transfer.NodeContext,
 	typeValues *typevalue.Cache,
-	generic cfgfacts.GenericForFact,
+	generic cfgbuild.GenericFor,
 	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
 	symbolTypes map[symbol.ID]typ.Type,
@@ -198,7 +198,7 @@ func genericForVariableValue(
 func genericForSourceIteratorFunctionVariableValue(
 	ctx transfer.NodeContext,
 	typeValues *typevalue.Cache,
-	generic cfgfacts.GenericForFact,
+	generic cfgbuild.GenericFor,
 	source sourceprovenance.ASTSource,
 	sourcePath func(ast.Expr) (pathdom.Path, bool),
 	in state.State,
@@ -333,7 +333,7 @@ func genericForIteratorSourceTypeProjects(iter iteration.Iterator, variableIndex
 func genericForKeyMembershipTransfer(
 	ctx transfer.NodeContext,
 	typeValues *typevalue.Cache,
-	generic cfgfacts.GenericForFact,
+	generic cfgbuild.GenericFor,
 	facts factflow.Facts,
 	signatures signaturelookup.Source,
 	signatureID *signatureIdentityResolver,
@@ -601,7 +601,7 @@ func indexedContainerCommonKeyMembershipTables(
 func genericForFunctionIteratorVariableValue(
 	ctx transfer.NodeContext,
 	typeValues *typevalue.Cache,
-	generic cfgfacts.GenericForFact,
+	generic cfgbuild.GenericFor,
 	source sourceprovenance.ASTSource,
 	site factflow.CallSiteView,
 	callOutcome callpayload.CallOutcomeProvider,
@@ -923,7 +923,7 @@ func genericForDirectContainerSegment(iter iteration.Iterator, seg segment.Segme
 	}
 }
 
-func genericForAssertedIteratorSourceType(generic cfgfacts.GenericForFact, sourceIndex int, resolver *typeresolve.Resolver) (typ.Type, bool) {
+func genericForAssertedIteratorSourceType(generic cfgbuild.GenericFor, sourceIndex int, resolver *typeresolve.Resolver) (typ.Type, bool) {
 	if sourceIndex < 0 || resolver == nil {
 		return nil, false
 	}
@@ -934,7 +934,7 @@ func genericForAssertedIteratorSourceType(generic cfgfacts.GenericForFact, sourc
 	return assertedIteratorSourceType(arg, resolver)
 }
 
-func genericForCallArgument(generic cfgfacts.GenericForFact, sourceIndex int) ast.Expr {
+func genericForCallArgument(generic cfgbuild.GenericFor, sourceIndex int) ast.Expr {
 	for _, expr := range generic.Exprs {
 		call, ok := expr.(*ast.FuncCallExpr)
 		if !ok || call == nil || sourceIndex >= len(call.Args) {

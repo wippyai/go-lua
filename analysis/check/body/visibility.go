@@ -6,33 +6,32 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
-	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/visibilityfacts"
 )
 
 func defaultVisibilityResolver(bindings *bind.Result, built *cfgbuild.Result, facts factflow.Facts) *visibility.Resolver {
 	var graph cfg.Graph
-	var meta cfgfacts.Metadata
+	var genericFors cfgbuild.GenericFors
 	if built != nil {
 		graph = built.Graph
-		meta = built.Meta
+		genericFors = built.GenericFors
 	}
 	defs := visibilityfacts.Definitions(bindings, graph, facts)
-	defs = append(defs, genericForVariableDefinitions(bindings, graph, meta)...)
+	defs = append(defs, genericForVariableDefinitions(bindings, graph, genericFors)...)
 	return visibility.NewResolver(visibility.BuildForward(visibility.BuildConfig{
 		Graph:       graph,
 		Definitions: defs,
 	}))
 }
 
-func genericForVariableDefinitions(bindings *bind.Result, graph cfg.Graph, meta cfgfacts.Metadata) []visibility.Definition {
+func genericForVariableDefinitions(bindings *bind.Result, graph cfg.Graph, genericFors cfgbuild.GenericFors) []visibility.Definition {
 	if bindings == nil || graph == nil {
 		return nil
 	}
 	var defs []visibility.Definition
 	for _, point := range graph.RPO() {
-		fact, ok := meta.GenericFor(point)
-		if !ok || fact.Role != cfgfacts.GenericForRoleVariable || !fact.HasSymbols ||
+		fact, ok := genericFors.Get(point)
+		if !ok || fact.Role != cfgbuild.GenericForRoleVariable || !fact.HasSymbols ||
 			fact.VariableIndex < 0 || fact.VariableIndex >= len(fact.Symbols) {
 			continue
 		}

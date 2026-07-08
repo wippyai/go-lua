@@ -5,7 +5,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
-	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -1065,8 +1064,8 @@ func TestBuildChunkGenericForIteratorCallsPrecedeLoopCheck(t *testing.T) {
 
 	requirePointKind(t, graph, kAssign, cfg.NodeAssign)
 	_ = mustGenericForAt(t, bindings, loop, 0)
-	checkFact, ok := result.Meta.GenericFor(branch)
-	if !ok || checkFact.Role != cfgfacts.GenericForRoleCheck {
+	checkFact, ok := result.GenericFors.Get(branch)
+	if !ok || checkFact.Role != GenericForRoleCheck {
 		t.Fatalf("generic for check fact = %#v, ok=%v", checkFact, ok)
 	}
 	if len(checkFact.Sources) != 2 {
@@ -1078,8 +1077,8 @@ func TestBuildChunkGenericForIteratorCallsPrecedeLoopCheck(t *testing.T) {
 	if checkFact.Sources[1].Kind != sourceprovenance.SourceCall || checkFact.Sources[1].CallPoint != secondCall {
 		t.Fatalf("state source = %#v, want call point %d", checkFact.Sources[1], secondCall)
 	}
-	varFact, ok := result.Meta.GenericFor(kAssign)
-	if !ok || varFact.Role != cfgfacts.GenericForRoleVariable || varFact.VariableIndex != 0 {
+	varFact, ok := result.GenericFors.Get(kAssign)
+	if !ok || varFact.Role != GenericForRoleVariable || varFact.VariableIndex != 0 {
 		t.Fatalf("generic for variable fact = %#v, ok=%v", varFact, ok)
 	}
 	join := firstJoin(t, graph)
@@ -1420,13 +1419,13 @@ func TestBuildChunkGenericForCreatesLoopTopologyAndMetadata(t *testing.T) {
 	requirePointKind(t, graph, kAssign, cfg.NodeAssign)
 	requirePointKind(t, graph, vAssign, cfg.NodeAssign)
 
-	checkFact, ok := result.Meta.GenericFor(branch)
-	if !ok || checkFact.Role != cfgfacts.GenericForRoleCheck || checkFact.VariableIndex != cfgfacts.NoGenericForVariableIndex {
+	checkFact, ok := result.GenericFors.Get(branch)
+	if !ok || checkFact.Role != GenericForRoleCheck || checkFact.VariableIndex != NoGenericForVariableIndex {
 		t.Fatalf("generic for check fact = %#v, ok=%v", checkFact, ok)
 	}
 	for i, point := range []cfg.Point{kAssign, vAssign} {
-		fact, ok := result.Meta.GenericFor(point)
-		if !ok || fact.Role != cfgfacts.GenericForRoleVariable || fact.VariableIndex != i || len(fact.Symbols) != 2 ||
+		fact, ok := result.GenericFors.Get(point)
+		if !ok || fact.Role != GenericForRoleVariable || fact.VariableIndex != i || len(fact.Symbols) != 2 ||
 			fact.Symbols[0] != kID || fact.Symbols[1] != vID || !fact.HasSymbols {
 			t.Fatalf("generic for variable fact %d = %#v, ok=%v", i, fact, ok)
 		}

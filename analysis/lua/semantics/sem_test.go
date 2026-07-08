@@ -10,7 +10,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/callorder"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
-	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -1020,7 +1019,7 @@ func TestExtractChunkConditionAndIteratorCallFactsUseDeferredContexts(t *testing
 		t.Fatalf("iterator source result targets = %#v, want none", stateFact.ResultTargets)
 	}
 
-	genericFact, ok := built.Meta.GenericFor(loopPoints[2])
+	genericFact, ok := built.GenericFors.Get(loopPoints[2])
 	if !ok {
 		t.Fatalf("missing generic for check fact")
 	}
@@ -1034,7 +1033,7 @@ func TestExtractChunkConditionAndIteratorCallFactsUseDeferredContexts(t *testing
 		t.Fatalf("final generic source = %#v", genericFact.Sources[1])
 	}
 	genericFact.Sources[0].Kind = sourceprovenance.SourceNil
-	genericAgain, _ := built.Meta.GenericFor(loopPoints[2])
+	genericAgain, _ := built.GenericFors.Get(loopPoints[2])
 	if genericAgain.Sources[0].Kind != sourceprovenance.SourceCall {
 		t.Fatalf("GenericFor exposed mutable sources slice")
 	}
@@ -1176,7 +1175,7 @@ func TestExtractChunkAssertionWrappedCallProducersKeepOuterSources(t *testing.T)
 	if !ok || iterCallFact.Call != iterCall || iterCallFact.Context != CallContextIteratorSource {
 		t.Fatalf("iterator call = %#v, ok=%v", iterCallFact, ok)
 	}
-	genericFact, ok := built.Meta.GenericFor(loopPoints[1])
+	genericFact, ok := built.GenericFors.Get(loopPoints[1])
 	if !ok || len(genericFact.Sources) != 1 || genericFact.Sources[0].Kind != sourceprovenance.SourceCall || genericFact.Sources[0].Expr != iterCast || genericFact.Sources[0].CallPoint != loopPoints[0] || !genericFact.Sources[0].HasCallPoint {
 		t.Fatalf("generic sources = %#v, ok=%v", genericFact.Sources, ok)
 	}
@@ -1532,18 +1531,18 @@ func TestExtractChunkGenericForFactsUseStmtPointsAndPreserveIdentity(t *testing.
 	kID := mustGenericForAt(t, bindings, loop, 0)
 	vID := mustGenericForAt(t, bindings, loop, 1)
 	points := requireStmtPoints(t, built, loop, 3)
-	expectedRoles := map[cfg.Point]cfgfacts.GenericForRole{
-		points[0]: cfgfacts.GenericForRoleCheck,
-		points[1]: cfgfacts.GenericForRoleVariable,
-		points[2]: cfgfacts.GenericForRoleVariable,
+	expectedRoles := map[cfg.Point]cfgbuild.GenericForRole{
+		points[0]: cfgbuild.GenericForRoleCheck,
+		points[1]: cfgbuild.GenericForRoleVariable,
+		points[2]: cfgbuild.GenericForRoleVariable,
 	}
 	expectedVariableIndexes := map[cfg.Point]int{
-		points[0]: cfgfacts.NoGenericForVariableIndex,
+		points[0]: cfgbuild.NoGenericForVariableIndex,
 		points[1]: 0,
 		points[2]: 1,
 	}
 	for _, point := range points {
-		fact, ok := built.Meta.GenericFor(point)
+		fact, ok := built.GenericFors.Get(point)
 		if !ok {
 			t.Fatalf("missing generic for fact at point %d", point)
 		}
@@ -1567,11 +1566,11 @@ func TestExtractChunkGenericForFactsUseStmtPointsAndPreserveIdentity(t *testing.
 		}
 	}
 
-	firstFact, _ := built.Meta.GenericFor(points[0])
+	firstFact, _ := built.GenericFors.Get(points[0])
 	firstFact.Names[0] = "mutated"
 	firstFact.Exprs[0] = ident("mutated")
 	firstFact.Symbols[0] = 0
-	again, _ := built.Meta.GenericFor(points[0])
+	again, _ := built.GenericFors.Get(points[0])
 	if again.Names[0] != "k" || again.Exprs[0] != iter || again.Symbols[0] != kID {
 		t.Fatalf("GenericFor exposed mutable slices")
 	}

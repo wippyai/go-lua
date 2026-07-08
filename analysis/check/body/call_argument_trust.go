@@ -10,7 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
-	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
+	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -92,7 +92,7 @@ func (r *Result) RootPathHasTrustedGenericForVariable(point cfg.Point, p pathdom
 			continue
 		}
 		fact, ok := r.GenericFor(candidate)
-		if !ok || fact.Role != cfgfacts.GenericForRoleVariable || !fact.HasSymbols {
+		if !ok || fact.Role != cfgbuild.GenericForRoleVariable || !fact.HasSymbols {
 			continue
 		}
 		for _, sym := range fact.Symbols {

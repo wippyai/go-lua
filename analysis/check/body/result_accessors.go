@@ -15,7 +15,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
-	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
@@ -512,11 +511,11 @@ func (r *Result) NumericFor(point cfg.Point) (cfgbuild.NumericFor, bool) {
 	return r.cfg.NumericFors.Get(point)
 }
 
-func (r *Result) GenericFor(point cfg.Point) (cfgfacts.GenericForFact, bool) {
+func (r *Result) GenericFor(point cfg.Point) (cfgbuild.GenericFor, bool) {
 	if r == nil || r.cfg == nil {
-		return cfgfacts.GenericForFact{}, false
+		return cfgbuild.GenericFor{}, false
 	}
-	return r.cfg.Meta.GenericFor(point)
+	return r.cfg.GenericFors.Get(point)
 }
 
 func (r *Result) ExpressionEvaluation(point cfg.Point) (cfgbuild.ExpressionEvaluation, bool) {
