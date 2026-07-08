@@ -171,6 +171,14 @@ type supplementalFactLaneHandler struct {
 	mergeAuthoritative func(*axis.Registry, *callpayload.CallOutcome, callpayload.CallOutcome)
 }
 
+func supplementalAppendLane[T any](values func(*callpayload.CallOutcome) *[]T) supplementalFactLaneHandler {
+	return supplementalFactLaneHandler{
+		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+			*values(out) = append(*values(out), *values(&second)...)
+		},
+	}
+}
+
 var supplementalFactLanes = callpayload.BindCallOutcomeSupplementalFactRoles("supplemental fact", map[string]supplementalFactLaneHandler{
 	"NormalReturnFacts": {
 		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
@@ -190,66 +198,42 @@ var supplementalFactLanes = callpayload.BindCallOutcomeSupplementalFactRoles("su
 			out.Placements = withSupplementalPlacements(out.Placements, second.Placements)
 		},
 	},
-	"ParamObligations": {
-		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
-			out.ParamObligations = append(out.ParamObligations, second.ParamObligations...)
-		},
-	},
-	"PathObligations": {
-		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
-			out.PathObligations = append(out.PathObligations, second.PathObligations...)
-		},
-	},
-	"ParamPathRefinements": {
-		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
-			out.ParamPathRefinements = append(out.ParamPathRefinements, second.ParamPathRefinements...)
-		},
-	},
-	"ParamPathWrites": {
-		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
-			out.ParamPathWrites = append(out.ParamPathWrites, second.ParamPathWrites...)
-		},
-	},
-	"ParamLengthFloors": {
-		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
-			out.ParamLengthFloors = append(out.ParamLengthFloors, second.ParamLengthFloors...)
-		},
-	},
-	"ParamPathInvalidations": {
-		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
-			out.ParamPathInvalidations = append(out.ParamPathInvalidations, second.ParamPathInvalidations...)
-		},
-	},
-	"ParamConditions": {
-		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
-			out.ParamConditions = append(out.ParamConditions, second.ParamConditions...)
-		},
-	},
-	"ParamPathRelations": {
-		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
-			out.ParamPathRelations = append(out.ParamPathRelations, second.ParamPathRelations...)
-		},
-	},
-	"ReturnConditionRefinements": {
-		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
-			out.ReturnConditionRefinements = append(out.ReturnConditionRefinements, second.ReturnConditionRefinements...)
-		},
-	},
-	"ReturnConditionSlots": {
-		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
-			out.ReturnConditionSlots = append(out.ReturnConditionSlots, second.ReturnConditionSlots...)
-		},
-	},
-	"ReturnPresenceRelations": {
-		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
-			out.ReturnPresenceRelations = append(out.ReturnPresenceRelations, second.ReturnPresenceRelations...)
-		},
-	},
-	"ParamExposures": {
-		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
-			out.ParamExposures = append(out.ParamExposures, second.ParamExposures...)
-		},
-	},
+	"ParamObligations": supplementalAppendLane(func(o *callpayload.CallOutcome) *[]callpayload.CallParamObligation {
+		return &o.ParamObligations
+	}),
+	"PathObligations": supplementalAppendLane(func(o *callpayload.CallOutcome) *[]callpayload.CallPathObligation {
+		return &o.PathObligations
+	}),
+	"ParamPathRefinements": supplementalAppendLane(func(o *callpayload.CallOutcome) *[]callpayload.CallParamPathRefinement {
+		return &o.ParamPathRefinements
+	}),
+	"ParamPathWrites": supplementalAppendLane(func(o *callpayload.CallOutcome) *[]callpayload.CallParamPathWrite {
+		return &o.ParamPathWrites
+	}),
+	"ParamLengthFloors": supplementalAppendLane(func(o *callpayload.CallOutcome) *[]callpayload.CallParamLengthFloor {
+		return &o.ParamLengthFloors
+	}),
+	"ParamPathInvalidations": supplementalAppendLane(func(o *callpayload.CallOutcome) *[]callpayload.CallParamPathInvalidation {
+		return &o.ParamPathInvalidations
+	}),
+	"ParamConditions": supplementalAppendLane(func(o *callpayload.CallOutcome) *[]callpayload.CallParamCondition {
+		return &o.ParamConditions
+	}),
+	"ParamPathRelations": supplementalAppendLane(func(o *callpayload.CallOutcome) *[]callpayload.CallParamPathRelation {
+		return &o.ParamPathRelations
+	}),
+	"ReturnConditionRefinements": supplementalAppendLane(func(o *callpayload.CallOutcome) *[]callpayload.CallReturnConditionRefinement {
+		return &o.ReturnConditionRefinements
+	}),
+	"ReturnConditionSlots": supplementalAppendLane(func(o *callpayload.CallOutcome) *[]callpayload.CallReturnConditionSlotRefinement {
+		return &o.ReturnConditionSlots
+	}),
+	"ReturnPresenceRelations": supplementalAppendLane(func(o *callpayload.CallOutcome) *[]callpayload.CallReturnPresenceRelation {
+		return &o.ReturnPresenceRelations
+	}),
+	"ParamExposures": supplementalAppendLane(func(o *callpayload.CallOutcome) *[]callpayload.CallParamExposure {
+		return &o.ParamExposures
+	}),
 }, func(handler supplementalFactLaneHandler) bool { return handler.merge != nil })
 
 func withAuthoritativeResultHeapTableObjects(
