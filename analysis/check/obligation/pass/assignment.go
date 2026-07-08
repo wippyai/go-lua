@@ -2,11 +2,9 @@ package pass
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/check/readmodel"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 // Assignments emits annotated-assignment type obligations from solved state.
@@ -23,7 +21,7 @@ func (Assignments) Produce(ctx Context) []judgment.Judgment {
 	}
 	var out []judgment.Judgment
 	ctx.Reader.ForEachAssignment(func(assignment readmodel.Assignment) bool {
-		if assignment.Check.Admissible || assignment.Expected == nil {
+		if assignment.Check.Admissible || assignment.Expected == nil || assignment.CascadeFromRefutedAssignment() {
 			return true
 		}
 		out = append(out, assignmentJudgment(ctx, functionKey, assignment))
@@ -33,108 +31,7 @@ func (Assignments) Produce(ctx Context) []judgment.Judgment {
 		out = append(out, optionalAssignmentTargetJudgment(ctx, functionKey, target))
 		return true
 	})
-	return suppressAssignmentCascadeJudgments(out)
-}
-
-func suppressAssignmentCascadeJudgments(in []judgment.Judgment) []judgment.Judgment {
-	if len(in) < 2 {
-		return in
-	}
-	refutedTargets := make(map[string]assignmentCascadeCause)
-	refutedDynamicRoots := make(map[string]assignmentCascadeCause)
-	out := in[:0]
-	for _, item := range in {
-		if item.Code == judgment.CodeAssignment &&
-			item.Verdict == judgment.VerdictRefuted &&
-			item.Subject.Label != "" {
-			cause := assignmentCascadeCauseFor(item)
-			refutedTargets[item.Subject.Label] = cause
-			if root, ok := refutedDynamicAssignmentRootKey(item); ok {
-				refutedDynamicRoots[root] = cause
-			}
-		}
-		if item.Code == judgment.CodeAssignment &&
-			item.Actual.Label != "" &&
-			item.Subject.Label != item.Actual.Label {
-			if cause, ok := refutedTargets[item.Actual.Label]; ok && assignmentCascadeCausePrecedes(cause, item) {
-				continue
-			}
-			if assignmentSourceCoveredByDynamicRoot(item.Actual.Key, refutedDynamicRoots, item) {
-				continue
-			}
-		}
-		out = append(out, item)
-	}
 	return out
-}
-
-type assignmentCascadeCause struct {
-	point cfg.Point
-	span  judgment.SpanRef
-}
-
-func assignmentCascadeCauseFor(item judgment.Judgment) assignmentCascadeCause {
-	cause := assignmentCascadeCause{point: item.Point}
-	if len(item.Spans) != 0 {
-		cause.span = item.Spans[0]
-	}
-	return cause
-}
-
-func assignmentCascadeCausePrecedes(cause assignmentCascadeCause, item judgment.Judgment) bool {
-	if cause.point < item.Point {
-		return true
-	}
-	if len(item.Spans) == 0 || cause.span.StartLine == 0 || item.Spans[0].StartLine == 0 {
-		return false
-	}
-	return spanBefore(cause.span, item.Spans[0])
-}
-
-func spanBefore(a, b judgment.SpanRef) bool {
-	if a.File != "" && b.File != "" && a.File != b.File {
-		return false
-	}
-	if a.StartLine != b.StartLine {
-		return a.StartLine < b.StartLine
-	}
-	return a.StartCol < b.StartCol
-}
-
-func refutedDynamicAssignmentRootKey(item judgment.Judgment) (string, bool) {
-	if !assignmentHasDynamicTargetDetail(item) {
-		return "", false
-	}
-	prefix := fmt.Sprintf("assignment:%d:", item.Point)
-	targetKey, ok := strings.CutPrefix(item.Subject.Key, prefix)
-	if !ok || targetKey == "" || !strings.HasPrefix(targetKey, "path:") {
-		return "", false
-	}
-	return targetKey, true
-}
-
-func assignmentHasDynamicTargetDetail(item judgment.Judgment) bool {
-	for _, evidence := range item.Evidence {
-		if evidence.Detail.Kind == judgment.EvidenceDetailDynamicAssignmentTarget {
-			return true
-		}
-	}
-	return false
-}
-
-func assignmentSourceCoveredByDynamicRoot(sourceKey string, roots map[string]assignmentCascadeCause, item judgment.Judgment) bool {
-	if sourceKey == "" || len(roots) == 0 {
-		return false
-	}
-	for root, cause := range roots {
-		if !assignmentCascadeCausePrecedes(cause, item) {
-			continue
-		}
-		if sourceKey == root || strings.HasPrefix(sourceKey, root+".") || strings.HasPrefix(sourceKey, root+"[") {
-			return true
-		}
-	}
-	return false
 }
 
 func assignmentJudgment(ctx Context, functionKey string, assignment readmodel.Assignment) judgment.Judgment {

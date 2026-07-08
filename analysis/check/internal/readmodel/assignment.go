@@ -2,6 +2,7 @@ package readmodel
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
@@ -27,17 +28,19 @@ func (r Reader) ForEachAssignment(visit func(Assignment) bool) bool {
 		return false
 	}
 	visited := false
+	refutedTargets := make(map[string]assignmentCascadeCause)
+	refutedDynamicRoots := make(map[string]assignmentCascadeCause)
 	for _, point := range r.result.Graph().RPO() {
 		if !r.result.PointNormallyReachable(point) {
 			continue
 		}
 		if fact, ok := r.result.LocalAssignment(point); ok {
-			if !r.forEachLocalAssignment(point, fact, visit, &visited) {
+			if !r.forEachLocalAssignment(point, fact, visit, &visited, refutedTargets, refutedDynamicRoots) {
 				return true
 			}
 		}
 		if fact, ok := r.result.OrdinaryAssignment(point); ok {
-			if !r.forEachOrdinaryAssignment(point, fact, visit, &visited) {
+			if !r.forEachOrdinaryAssignment(point, fact, visit, &visited, refutedTargets, refutedDynamicRoots) {
 				return true
 			}
 		}
@@ -151,7 +154,14 @@ func (r Reader) optionalAssignmentContainerType(point cfg.Point, container pathd
 	return containerType, true
 }
 
-func (r Reader) forEachLocalAssignment(point cfg.Point, fact body.LocalAssignmentFact, visit func(Assignment) bool, visited *bool) bool {
+func (r Reader) forEachLocalAssignment(
+	point cfg.Point,
+	fact body.LocalAssignmentFact,
+	visit func(Assignment) bool,
+	visited *bool,
+	refutedTargets map[string]assignmentCascadeCause,
+	refutedDynamicRoots map[string]assignmentCascadeCause,
+) bool {
 	if fact.Type == nil || (fact.Expr == nil && fact.Source.Kind == sourceprovenance.SourceExpression) {
 		return true
 	}
@@ -167,6 +177,8 @@ func (r Reader) forEachLocalAssignment(point cfg.Point, fact body.LocalAssignmen
 		return true
 	}
 	if entry, ok := r.assignmentObjectLiteralEntry(point, fact, expected); ok {
+		entry.CascadeFromRefuted = r.assignmentIsCascadeFromRefuted(entry, refutedTargets, refutedDynamicRoots)
+		r.recordRefutedAssignmentCascade(entry, refutedTargets, refutedDynamicRoots)
 		*visited = true
 		return visit(entry)
 	}
@@ -231,6 +243,8 @@ func (r Reader) forEachLocalAssignment(point cfg.Point, fact body.LocalAssignmen
 		}
 	}
 	assignment.Check = readapi.PlanAssignmentCheck(assignmentPlan)
+	assignment.CascadeFromRefuted = r.assignmentIsCascadeFromRefuted(assignment, refutedTargets, refutedDynamicRoots)
+	r.recordRefutedAssignmentCascade(assignment, refutedTargets, refutedDynamicRoots)
 	*visited = true
 	return visit(assignment)
 }
@@ -334,7 +348,14 @@ func assignmentCallInvalidationsFromBody(invalidations []body.AssignmentCallInva
 	return out
 }
 
-func (r Reader) forEachOrdinaryAssignment(point cfg.Point, fact body.OrdinaryAssignmentFact, visit func(Assignment) bool, visited *bool) bool {
+func (r Reader) forEachOrdinaryAssignment(
+	point cfg.Point,
+	fact body.OrdinaryAssignmentFact,
+	visit func(Assignment) bool,
+	visited *bool,
+	refutedTargets map[string]assignmentCascadeCause,
+	refutedDynamicRoots map[string]assignmentCascadeCause,
+) bool {
 	if fact.Target == nil || fact.Value == nil {
 		return true
 	}
@@ -366,6 +387,8 @@ func (r Reader) forEachOrdinaryAssignment(point cfg.Point, fact body.OrdinaryAss
 				ExpectedSpan:   sourceSpanFromBody(presentation.TargetSpan),
 				ExpectedSource: readapi.AssignmentExpectedDynamicTarget,
 			}); ok {
+				entry.CascadeFromRefuted = r.assignmentIsCascadeFromRefuted(entry, refutedTargets, refutedDynamicRoots)
+				r.recordRefutedAssignmentCascade(entry, refutedTargets, refutedDynamicRoots)
 				*visited = true
 				return visit(entry)
 			}
@@ -399,11 +422,84 @@ func (r Reader) forEachOrdinaryAssignment(point cfg.Point, fact body.OrdinaryAss
 		MayBeNil:            assignmentTopLikeNilableAccess(assignment.TypeWithPresence, assignment.NilableAccesses),
 		IsSubtype:           r.IsSubtype,
 	})
+	assignment.CascadeFromRefuted = r.assignmentIsCascadeFromRefuted(assignment, refutedTargets, refutedDynamicRoots)
+	r.recordRefutedAssignmentCascade(assignment, refutedTargets, refutedDynamicRoots)
 	if assignment.Check.Admissible {
 		return true
 	}
 	*visited = true
 	return visit(assignment)
+}
+
+type assignmentCascadeCause struct {
+	point cfg.Point
+	span  readapi.SourceSpan
+}
+
+func (r Reader) assignmentIsCascadeFromRefuted(assignment Assignment, refutedTargets map[string]assignmentCascadeCause, refutedDynamicRoots map[string]assignmentCascadeCause) bool {
+	if assignment.Check.Admissible {
+		return false
+	}
+	if assignment.SourceLabel == "" || assignment.TargetLabel == assignment.SourceLabel {
+		return false
+	}
+	if cause, ok := refutedTargets[assignment.SourceLabel]; ok && assignmentCascadeCausePrecedes(cause, assignment) {
+		return true
+	}
+	if assignmentSourceCoveredByDynamicRoot(assignment.SourceKey, refutedDynamicRoots, assignment) {
+		return true
+	}
+	return false
+}
+
+func (r Reader) recordRefutedAssignmentCascade(assignment Assignment, refutedTargets map[string]assignmentCascadeCause, refutedDynamicRoots map[string]assignmentCascadeCause) {
+	if !assignment.Check.ProvenMismatch || assignment.TargetLabel == "" {
+		return
+	}
+	cause := assignmentCascadeCause{point: assignment.Point, span: assignment.SourceSpan}
+	refutedTargets[assignment.TargetLabel] = cause
+	if root, ok := assignmentRefutedDynamicTargetRoot(assignment); ok {
+		refutedDynamicRoots[root] = cause
+	}
+}
+
+func assignmentRefutedDynamicTargetRoot(assignment Assignment) (string, bool) {
+	if assignment.ExpectedSource != readapi.AssignmentExpectedDynamicTarget || assignment.TargetKey == "" {
+		return "", false
+	}
+	return assignment.TargetKey, true
+}
+
+func assignmentCascadeCausePrecedes(cause assignmentCascadeCause, item Assignment) bool {
+	if cause.point < item.Point {
+		return true
+	}
+	if item.SourceSpan.StartLine == 0 || cause.span.StartLine == 0 {
+		return false
+	}
+	return spanBefore(cause.span, item.SourceSpan)
+}
+
+func assignmentSourceCoveredByDynamicRoot(sourceKey string, roots map[string]assignmentCascadeCause, item Assignment) bool {
+	if sourceKey == "" || len(roots) == 0 {
+		return false
+	}
+	for root, cause := range roots {
+		if !assignmentCascadeCausePrecedes(cause, item) {
+			continue
+		}
+		if sourceKey == root || strings.HasPrefix(sourceKey, root+".") || strings.HasPrefix(sourceKey, root+"[") {
+			return true
+		}
+	}
+	return false
+}
+
+func spanBefore(a, b readapi.SourceSpan) bool {
+	if a.StartLine != b.StartLine {
+		return a.StartLine < b.StartLine
+	}
+	return a.StartCol < b.StartCol
 }
 
 func assignmentTopLikeNilableAccess(t typ.Type, accesses []readapi.NilableAccessEvidence) bool {

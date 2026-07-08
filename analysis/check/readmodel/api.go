@@ -209,7 +209,14 @@ type Assignment struct {
 	UntrustedTopOrigin bool
 	ExplicitTopOrigin  bool
 	RuntimeValidated   bool
+	CascadeFromRefuted bool
 	Check              AssignmentCheck
+}
+
+// CascadeFromRefutedAssignment reports whether this write is a dependent cascade
+// of an earlier refuted assignment and should be suppressed before rendering.
+func (a Assignment) CascadeFromRefutedAssignment() bool {
+	return a.CascadeFromRefuted
 }
 
 // AssignmentParentContext records the parent object obligation that produced a
