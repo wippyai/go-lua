@@ -638,6 +638,24 @@ end`), body.Config{Registry: reg})
 	projectAssertParamObligationKind(t, reg, got, 2, want)
 }
 
+func TestFromResultProjectsParamObligationThroughForwardedRecordCall(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function forward(accept: (req: { id: string }) -> (), payload)
+	accept(payload)
+end`), body.Config{Registry: reg})
+
+	got := summaryprojection.FromResult(result)
+
+	if len(got.ParamObligations) != 2 {
+		t.Fatalf("param obligations = %#v, want forwarded record obligation at param 2", got.ParamObligations)
+	}
+	gotType, ok := typevalue.TypeOf(reg, got.ParamObligations[1])
+	if !ok || gotType == nil || !subtype.IsSubtype(gotType, typetable.NewRecord().Field("id", typ.String).Build()) {
+		t.Fatalf("param obligation type = %v/%v, want {id:string}", gotType, ok)
+	}
+}
+
 func TestFromResultProjectsNestedReturnParamPathAliases(t *testing.T) {
 	reg := standard.Registry()
 	result := projectCheckFunction(t, projectParseFunction(t, `

@@ -146,13 +146,14 @@ func projectParamObligations(reg *axis.Registry, result ResultReader, cache *par
 	}
 	for _, point := range graph.RPO() {
 		ctx.point = point
-		if fact, ok := callFactAt(result, point); ok {
-			if site, siteOK := callSiteViewAt(result, point); siteOK {
+		if site, ok := callSiteViewAt(result, point); ok {
+			site.ForEachArgumentSource(func(_ int, source factflow.ValueSource) bool {
+				ctx.addArithmeticObligationsFromSource(out, source)
+				return true
+			})
+			if fact, factOK := callFactAt(result, point); factOK {
 				ctx.addCallOutcomeObligations(out, fact, site)
 				ctx.addTypedCallObligations(out, fact, site)
-			}
-			for _, arg := range fact.Args {
-				ctx.addArithmeticObligations(out, arg)
 			}
 		}
 		if sourceReader, ok := result.(returnValueSourceReader); ok {
@@ -515,6 +516,13 @@ func (p paramObligationProjector) selfCall(fact semantics.CallFact) bool {
 	if !fact.HasCalleeSymbol || fact.CalleeSymbol == 0 {
 		return false
 	}
+	return p.selfCallSymbol(fact.CalleeSymbol)
+}
+
+func (p paramObligationProjector) selfCallSymbol(callee symbol.ID) bool {
+	if callee == 0 {
+		return false
+	}
 	reader, ok := p.result.(functionIdentityReader)
 	if !ok {
 		return false
@@ -523,16 +531,16 @@ func (p paramObligationProjector) selfCall(fact semantics.CallFact) bool {
 	if fn == nil {
 		return false
 	}
-	if origin, ok := reader.FunctionOrigin(fn); ok && origin.HasTargetSymbol && origin.TargetSymbol == fact.CalleeSymbol {
+	if origin, ok := reader.FunctionOrigin(fn); ok && origin.HasTargetSymbol && origin.TargetSymbol == callee {
 		return true
 	}
-	if calleeFn, ok := reader.FunctionBySymbol(fact.CalleeSymbol); ok {
+	if calleeFn, ok := reader.FunctionBySymbol(callee); ok {
 		if calleeFn == fn {
 			return true
 		}
 	}
 	current, ok := reader.FunctionSymbol(fn)
-	return ok && current != 0 && current == fact.CalleeSymbol
+	return ok && current != 0 && current == callee
 }
 
 func (p paramObligationProjector) addTypedCallObligations(out []product.Value, fact semantics.CallFact, site factflow.CallSiteView) {
@@ -784,7 +792,11 @@ func concatOperandObligationType() typ.Type {
 }
 
 func (p paramObligationProjector) callParamTypes(fact semantics.CallFact, site factflow.CallSiteView) []typ.Type {
-	receiver, member, hasMemberCall := memberCallReceiverForSite(fact, site)
+	return p.callParamTypesForSiteWithReceiver(site, fact.Receiver != nil && fact.Method != "")
+}
+
+func (p paramObligationProjector) callParamTypesForSiteWithReceiver(site factflow.CallSiteView, receiverSyntax bool) []typ.Type {
+	receiver, member, hasMemberCall := memberCallReceiverFromSite(site)
 	if sigReader, ok := p.result.(callSignatureViewReader); ok {
 		if fn, ok := sigReader.CallSiteViewSignatureType(site); ok {
 			return functionParamTypes(fn, false)
@@ -803,7 +815,7 @@ func (p paramObligationProjector) callParamTypes(fact semantics.CallFact, site f
 		if ok {
 			fn, status, ok := memberaccess.Callable(receiverType, member)
 			if status == typecall.MemberCallOK && ok {
-				consumeReceiver := fact.Receiver != nil && fact.Method != "" && typecall.CallableConsumesReceiver(fn, receiverType)
+				consumeReceiver := receiverSyntax && typecall.CallableConsumesReceiver(fn, receiverType)
 				return functionParamTypes(fn, consumeReceiver)
 			}
 		}
@@ -1543,6 +1555,12 @@ func (p paramObligationProjector) addTypedValueSourceObligationSeen(
 			}
 		}
 	}
+	if sourcePath, ok := p.valueSourcePath(source); ok {
+		if sourceExpr, sourceOK := p.stableLocalPathSourceExpr(sourcePath); sourceOK {
+			p.addTypedExpressionObligation(out, sourceExpr, want, depth+1)
+			return
+		}
+	}
 	p.addArithmeticObligationsFromSourceSeen(out, source, seen)
 }
 
@@ -1574,12 +1592,16 @@ func (p paramObligationProjector) sourceValueSatisfiesType(source factflow.Value
 	return p.valueSatisfiesType(value, want)
 }
 
-func (p paramObligationProjector) unconditionalSourceParamIndex(source factflow.ValueSource) (int, bool) {
+func (p paramObligationProjector) valueSourcePath(source factflow.ValueSource) (pathdom.Path, bool) {
 	pathReader, ok := p.result.(expressionPathRefReader)
 	if !ok {
-		return 0, false
+		return pathdom.Path{}, false
 	}
-	sourcePath, ok := valueSourcePath(p.result, pathReader, source)
+	return valueSourcePath(p.result, pathReader, source)
+}
+
+func (p paramObligationProjector) unconditionalSourceParamIndex(source factflow.ValueSource) (int, bool) {
+	sourcePath, ok := p.valueSourcePath(source)
 	if !ok {
 		return 0, false
 	}
@@ -1587,11 +1609,7 @@ func (p paramObligationProjector) unconditionalSourceParamIndex(source factflow.
 }
 
 func (p paramObligationProjector) sourceParamSuffix(source factflow.ValueSource) (int, []segment.Segment, bool) {
-	pathReader, ok := p.result.(expressionPathRefReader)
-	if !ok {
-		return 0, nil, false
-	}
-	sourcePath, ok := valueSourcePath(p.result, pathReader, source)
+	sourcePath, ok := p.valueSourcePath(source)
 	if !ok {
 		return 0, nil, false
 	}
@@ -1869,6 +1887,14 @@ func memberCallReceiver(fact semantics.CallFact) (pathdom.Path, segment.Segment,
 func memberCallReceiverForSite(fact semantics.CallFact, site factflow.CallSiteView) (pathdom.Path, segment.Segment, bool) {
 	if receiver, member, ok := memberCallReceiver(fact); ok {
 		return receiver, member, true
+	}
+	return memberCallReceiverFromSite(site)
+}
+
+func memberCallReceiverFromSite(site factflow.CallSiteView) (pathdom.Path, segment.Segment, bool) {
+	if receiver, ok := site.ReceiverPath(); ok && site.MethodName() != "" {
+		member := segment.Segment{Kind: segment.SegmentField, Name: site.MethodName()}
+		return receiver, member, !receiver.IsEmpty() && memberaccess.Valid(member)
 	}
 	callee := site.CalleePathRef()
 	if callee.IsEmpty() || len(callee.Segments) == 0 {
