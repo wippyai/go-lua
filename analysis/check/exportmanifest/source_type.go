@@ -26,11 +26,6 @@ func sourceType(result *body.Result, point cfg.Point, source sourceprovenance.AS
 		if source.Expr == nil {
 			return nil, false
 		}
-		if fact, ok := result.ObjectLiteral(source.Expr); ok {
-			if t, ok := objectLiteralType(result, point, fact.Entries); ok {
-				return t, true
-			}
-		}
 		if t, ok := objectLiteralExprType(result, point, source.Expr); ok {
 			return t, true
 		}

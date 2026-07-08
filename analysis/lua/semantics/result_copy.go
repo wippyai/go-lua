@@ -74,23 +74,6 @@ func copyReturnFact(fact ReturnFact) ReturnFact {
 	return fact
 }
 
-func copyObjectLiteralFact(fact ObjectLiteralFact) ObjectLiteralFact {
-	fact.Entries = copyObjectEntries(fact.Entries)
-	return fact
-}
-
-func copyObjectEntries(in []ObjectEntryFact) []ObjectEntryFact {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]ObjectEntryFact, len(in))
-	for i := range in {
-		out[i] = in[i]
-		out[i].Suffix = in[i].Suffix.Clone()
-	}
-	return out
-}
-
 func copyValueSources(in []sourceprovenance.ASTSource) []sourceprovenance.ASTSource {
 	if len(in) == 0 {
 		return nil

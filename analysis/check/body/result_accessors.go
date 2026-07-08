@@ -278,13 +278,6 @@ func (r *Result) RequireAliasModulePath(name string) (string, bool) {
 	return r.modules.ModulePathForAlias(name)
 }
 
-func (r *Result) ObjectLiteral(expr ast.Expr) (ObjectLiteralFact, bool) {
-	if r == nil || r.semantics == nil {
-		return ObjectLiteralFact{}, false
-	}
-	return r.semantics.ObjectLiteral(expr)
-}
-
 func (r *Result) ObjectLiteralViewForSource(source factflow.ValueSource) (factflow.ObjectLiteralView, bool) {
 	if r == nil || !source.HasExpr || source.ExprRef == 0 {
 		return factflow.ObjectLiteralView{}, false

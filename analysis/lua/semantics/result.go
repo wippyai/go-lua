@@ -12,7 +12,6 @@ type Result struct {
 	assignmentFacts       map[cfg.Point]*OrdinaryAssignmentFact
 	calls                 map[cfg.Point]*CallFact
 	returns               map[cfg.Point]*ReturnFact
-	objectLiterals        map[ast.Expr]ObjectLiteralFact
 	branches              map[cfg.Point]BranchConditionFact
 }
 
@@ -23,7 +22,6 @@ func newResult(fn *ast.FunctionExpr) *Result {
 		assignmentFacts:       make(map[cfg.Point]*OrdinaryAssignmentFact),
 		calls:                 make(map[cfg.Point]*CallFact),
 		returns:               make(map[cfg.Point]*ReturnFact),
-		objectLiterals:        make(map[ast.Expr]ObjectLiteralFact),
 		branches:              make(map[cfg.Point]BranchConditionFact),
 	}
 }
@@ -186,17 +184,6 @@ func (r *Result) ReturnView(point cfg.Point) (ReturnFactView, bool) {
 		return ReturnFactView{}, false
 	}
 	return ReturnFactView{fact: fact}, true
-}
-
-func (r *Result) ObjectLiteral(expr ast.Expr) (ObjectLiteralFact, bool) {
-	if r == nil || expr == nil {
-		return ObjectLiteralFact{}, false
-	}
-	fact, ok := r.objectLiterals[expr]
-	if !ok {
-		return ObjectLiteralFact{}, false
-	}
-	return copyObjectLiteralFact(fact), true
 }
 
 func (r *Result) setCall(point cfg.Point, fact CallFact) {

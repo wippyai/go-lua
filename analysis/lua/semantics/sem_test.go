@@ -113,19 +113,6 @@ func requireStmtPoints(t *testing.T, built *cfgbuild.Result, stmt ast.Stmt, want
 	return points
 }
 
-func assertEntry(t *testing.T, got ObjectEntryFact, wantIndex int, wantSuffix path.Path, wantValue ast.Expr) {
-	t.Helper()
-	if got.Index != wantIndex || got.Value != wantValue || got.Source.Expr != wantValue {
-		t.Fatalf("entry = %#v, want index %d value %p", got, wantIndex, wantValue)
-	}
-	if got.Source.Kind != sourceprovenance.SourceExpression || got.Source.ExprIndex != sourceprovenance.NoSourceIndex || got.Source.TargetIndex != sourceprovenance.NoSourceIndex {
-		t.Fatalf("entry source = %#v, want expression source without value-list indexes", got.Source)
-	}
-	if !got.Suffix.Equal(wantSuffix) {
-		t.Fatalf("entry suffix = %#v, want %#v", got.Suffix, wantSuffix)
-	}
-}
-
 func stringLitSuffix(value string, syntax ast.AttrKeySyntax) path.Path {
 	switch syntax {
 	case ast.AttrKeyDot:
@@ -321,255 +308,7 @@ func TestExtractChunkOrdinaryAssignmentsResolveStaticMemberPaths(t *testing.T) {
 	}
 }
 
-func TestExtractChunkObjectLiteralStaticEntriesAndDynamicSkip(t *testing.T) {
-	namedValue := number("1")
-	stringValue := number("2")
-	intValue := number("3")
-	firstArrayValue := number("4")
-	dynamicValue := number("5")
-	secondArrayValue := number("6")
-	table := &ast.TableExpr{Fields: []*ast.Field{
-		{Key: stringLit("name"), KeySyntax: ast.AttrKeyDot, Value: namedValue},
-		{Key: stringLit("key"), KeySyntax: ast.AttrKeyIndex, Value: stringValue},
-		{Key: number("7"), KeySyntax: ast.AttrKeyIndex, Value: intValue},
-		{Value: firstArrayValue},
-		{Key: ident("dynamic"), KeySyntax: ast.AttrKeyIndex, Value: dynamicValue},
-		{Value: secondArrayValue},
-	}}
-	local := localAssign([]string{"t"}, table)
-	stmts := []ast.Stmt{local}
-	bindings := bind.BindChunk(stmts, bind.Options{})
-	built := cfgbuild.BuildChunk(stmts, bindings)
-
-	result, err := ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	fact, ok := result.ObjectLiteral(table)
-	if !ok {
-		t.Fatalf("missing object literal sidecar")
-	}
-	if fact.Expr != table || fact.Table != table {
-		t.Fatalf("object literal identity = %#v", fact)
-	}
-	entries := fact.Entries
-	if len(entries) != 5 {
-		t.Fatalf("entries = %#v, want 5 static entries", entries)
-	}
-	assertEntry(t, entries[0], 0, stringLitSuffix("name", ast.AttrKeyDot), namedValue)
-	assertEntry(t, entries[1], 1, stringLitSuffix("key", ast.AttrKeyIndex), stringValue)
-	assertEntry(t, entries[2], 2, intSuffix(7), intValue)
-	assertEntry(t, entries[3], 3, intSuffix(1), firstArrayValue)
-	assertEntry(t, entries[4], 5, intSuffix(2), secondArrayValue)
-
-	entries[0].Suffix.Segments[0].Name = "mutated"
-	again, _ := result.ObjectLiteral(table)
-	if !again.Entries[0].Suffix.Equal(stringLitSuffix("name", ast.AttrKeyDot)) {
-		t.Fatalf("ObjectLiteral exposed mutable suffix: %#v", again.Entries[0].Suffix)
-	}
-
-	if _, ok := result.ObjectLiteral(dynamicValue); ok {
-		t.Fatalf("dynamic field value unexpectedly has object sidecar")
-	}
-}
-
-func TestExtractChunkEmptyObjectLiteralPublishesSidecar(t *testing.T) {
-	table := &ast.TableExpr{}
-	local := localAssign([]string{"t"}, table)
-	stmts := []ast.Stmt{local}
-	bindings := bind.BindChunk(stmts, bind.Options{})
-	built := cfgbuild.BuildChunk(stmts, bindings)
-
-	result, err := ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	fact, ok := result.ObjectLiteral(table)
-	if !ok {
-		t.Fatalf("missing empty object literal sidecar")
-	}
-	if fact.Expr != table || fact.Table != table {
-		t.Fatalf("object literal identity = %#v", fact)
-	}
-	if len(fact.Entries) != 0 {
-		t.Fatalf("empty literal entries = %#v, want none", fact.Entries)
-	}
-}
-
-func TestExtractChunkObjectLiteralThroughLogicalOperand(t *testing.T) {
-	table := &ast.TableExpr{}
-	local := localAssign([]string{"t"}, &ast.LogicalOpExpr{
-		Operator: "or",
-		Lhs:      &ast.NilExpr{},
-		Rhs:      table,
-	})
-	stmts := []ast.Stmt{local}
-	bindings := bind.BindChunk(stmts, bind.Options{})
-	built := cfgbuild.BuildChunk(stmts, bindings)
-
-	result, err := ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	fact, ok := result.ObjectLiteral(table)
-	if !ok {
-		t.Fatalf("missing object literal sidecar for logical operand")
-	}
-	if fact.Expr != table || fact.Table != table {
-		t.Fatalf("object literal identity = %#v", fact)
-	}
-}
-
-func TestExtractChunkObjectLiteralThroughAssertionWrappers(t *testing.T) {
-	asTable := &ast.TableExpr{Fields: []*ast.Field{
-		{Key: stringLit("a"), KeySyntax: ast.AttrKeyDot, Value: number("1")},
-	}}
-	asCast := &ast.CastExpr{
-		Expr:   asTable,
-		Type:   &ast.PrimitiveTypeExpr{Name: "number"},
-		Syntax: ast.CastSyntaxAs,
-	}
-	colonTable := &ast.TableExpr{Fields: []*ast.Field{
-		{Key: stringLit("b"), KeySyntax: ast.AttrKeyDot, Value: number("2")},
-	}}
-	colonCast := &ast.CastExpr{
-		Expr:   colonTable,
-		Type:   &ast.PrimitiveTypeExpr{Name: "number"},
-		Syntax: ast.CastSyntaxColonColon,
-	}
-	anyTable := &ast.TableExpr{Fields: []*ast.Field{
-		{Key: stringLit("raw"), KeySyntax: ast.AttrKeyDot, Value: number("5")},
-	}}
-	anyCast := &ast.CastExpr{
-		Expr:   anyTable,
-		Type:   &ast.PrimitiveTypeExpr{Name: "any"},
-		Syntax: ast.CastSyntaxColonColon,
-	}
-	nonNilTable := &ast.TableExpr{Fields: []*ast.Field{
-		{Key: stringLit("c"), KeySyntax: ast.AttrKeyDot, Value: number("3")},
-	}}
-	nonNil := &ast.NonNilAssertExpr{Expr: nonNilTable}
-	nestedTable := &ast.TableExpr{Fields: []*ast.Field{
-		{Key: stringLit("leaf"), KeySyntax: ast.AttrKeyDot, Value: number("4")},
-	}}
-	nestedCast := &ast.CastExpr{
-		Expr:   nestedTable,
-		Type:   &ast.PrimitiveTypeExpr{Name: "number"},
-		Syntax: ast.CastSyntaxAs,
-	}
-	rootTable := &ast.TableExpr{Fields: []*ast.Field{
-		{Key: stringLit("nested"), KeySyntax: ast.AttrKeyDot, Value: nestedCast},
-	}}
-	local := localAssign([]string{"a", "b", "c", "d", "e"}, asCast, colonCast, nonNil, rootTable, anyCast)
-	stmts := []ast.Stmt{local}
-	bindings := bind.BindChunk(stmts, bind.Options{})
-	built := cfgbuild.BuildChunk(stmts, bindings)
-
-	result, err := ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	for _, tc := range []struct {
-		name  string
-		expr  ast.Expr
-		table *ast.TableExpr
-		want  path.Path
-	}{
-		{name: "as", expr: asCast, table: asTable, want: fieldChainSuffix("a")},
-		{name: "colon", expr: colonCast, table: colonTable, want: fieldChainSuffix("b")},
-		{name: "non-nil", expr: nonNil, table: nonNilTable, want: fieldChainSuffix("c")},
-	} {
-		fact, ok := result.ObjectLiteral(tc.expr)
-		if !ok {
-			t.Fatalf("%s wrapper missing object literal sidecar", tc.name)
-		}
-		if fact.Expr != tc.expr || fact.Table != tc.table {
-			t.Fatalf("%s object literal identity = %#v", tc.name, fact)
-		}
-		if len(fact.Entries) != 1 || !fact.Entries[0].Suffix.Equal(tc.want) {
-			t.Fatalf("%s entries = %#v, want suffix %v", tc.name, fact.Entries, tc.want)
-		}
-	}
-	if _, ok := result.ObjectLiteral(asTable); ok {
-		t.Fatalf("wrapped table also keyed by inner table")
-	}
-	if _, ok := result.ObjectLiteral(anyCast); ok {
-		t.Fatalf("any cast produced object literal proof sidecar")
-	}
-	if _, ok := result.ObjectLiteral(anyTable); ok {
-		t.Fatalf("any-cast wrapped table also keyed by inner table")
-	}
-
-	rootFact, ok := result.ObjectLiteral(rootTable)
-	if !ok {
-		t.Fatalf("missing root object literal sidecar")
-	}
-	if len(rootFact.Entries) != 2 {
-		t.Fatalf("root entries = %#v, want wrapped nested entry and leaf", rootFact.Entries)
-	}
-	assertEntry(t, rootFact.Entries[0], 0, fieldChainSuffix("nested"), nestedCast)
-	if !rootFact.Entries[1].Suffix.Equal(fieldChainSuffix("nested", "leaf")) {
-		t.Fatalf("nested wrapped entry suffix = %v", rootFact.Entries[1].Suffix)
-	}
-
-	nestedFact, ok := result.ObjectLiteral(nestedCast)
-	if !ok {
-		t.Fatalf("missing nested wrapped object literal sidecar")
-	}
-	if nestedFact.Expr != nestedCast || nestedFact.Table != nestedTable {
-		t.Fatalf("nested wrapped identity = %#v", nestedFact)
-	}
-}
-
-func TestExtractChunkObjectLiteralNestedStaticEntriesFlatten(t *testing.T) {
-	nestedLeaf := number("1")
-	dynamicValue := number("2")
-	deepLeaf := number("3")
-	deeper := &ast.TableExpr{Fields: []*ast.Field{
-		{Key: stringLit("d"), KeySyntax: ast.AttrKeyDot, Value: deepLeaf},
-	}}
-	nested := &ast.TableExpr{Fields: []*ast.Field{
-		{Key: stringLit("b"), KeySyntax: ast.AttrKeyDot, Value: nestedLeaf},
-		{Key: ident("dynamic"), KeySyntax: ast.AttrKeyIndex, Value: dynamicValue},
-		{Key: stringLit("c"), KeySyntax: ast.AttrKeyDot, Value: deeper},
-	}}
-	table := &ast.TableExpr{Fields: []*ast.Field{
-		{Key: stringLit("a"), KeySyntax: ast.AttrKeyDot, Value: nested},
-	}}
-	local := localAssign([]string{"t"}, table)
-	stmts := []ast.Stmt{local}
-	bindings := bind.BindChunk(stmts, bind.Options{})
-	built := cfgbuild.BuildChunk(stmts, bindings)
-
-	result, err := ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	fact, ok := result.ObjectLiteral(table)
-	if !ok {
-		t.Fatalf("missing object literal sidecar")
-	}
-	entries := fact.Entries
-	if len(entries) != 4 {
-		t.Fatalf("entries = %#v, want root and nested static entries", entries)
-	}
-	assertEntry(t, entries[0], 0, fieldChainSuffix("a"), nested)
-	assertEntry(t, entries[1], 0, fieldChainSuffix("a", "b"), nestedLeaf)
-	assertEntry(t, entries[2], 2, fieldChainSuffix("a", "c"), deeper)
-	assertEntry(t, entries[3], 0, fieldChainSuffix("a", "c", "d"), deepLeaf)
-	for _, entry := range entries {
-		if entry.Value == dynamicValue {
-			t.Fatalf("dynamic nested field was included: %#v", entry)
-		}
-	}
-}
-
-func TestExtractChunkObjectLiteralCallArgumentEntriesAndSources(t *testing.T) {
+func TestExtractChunkCallArgumentSourcesForTableArgument(t *testing.T) {
 	userID := stringLit("u1")
 	profile := &ast.TableExpr{Fields: []*ast.Field{{
 		Key:       stringLit("user_id"),
@@ -605,36 +344,6 @@ func TestExtractChunkObjectLiteralCallArgumentEntriesAndSources(t *testing.T) {
 	if len(okFact.ArgumentSpans) != 1 || len(okFact.ArgumentLabels) != 1 {
 		t.Fatalf("ok call argument metadata spans=%#v labels=%#v, want one per argument", okFact.ArgumentSpans, okFact.ArgumentLabels)
 	}
-
-	fact, ok := result.ObjectLiteral(arg)
-	if !ok {
-		t.Fatalf("missing call argument object literal sidecar")
-	}
-	if fact.Expr != arg || fact.Table != arg {
-		t.Fatalf("call argument object literal identity = %#v", fact)
-	}
-	if len(fact.Entries) != 4 {
-		t.Fatalf("call argument entries = %#v, want root, nested, and call-valued entries", fact.Entries)
-	}
-	assertEntry(t, fact.Entries[0], 0, fieldChainSuffix("profile"), profile)
-	assertEntry(t, fact.Entries[1], 0, fieldChainSuffix("profile", "user_id"), userID)
-	assertEntry(t, fact.Entries[2], 1, fieldChainSuffix("event"), event)
-	generated := fact.Entries[3]
-	if generated.Index != 2 || generated.Value != makeCall || !generated.Suffix.Equal(fieldChainSuffix("generated")) {
-		t.Fatalf("generated entry = %#v", generated)
-	}
-	if generated.Source.Kind != sourceprovenance.SourceCall || generated.Source.Expr != makeCall || generated.Source.CallPoint != points[0] || !generated.Source.HasCallPoint {
-		t.Fatalf("generated source = %#v, want make_event call point %d", generated.Source, points[0])
-	}
-	if generated.ValueLabel != "" {
-		t.Fatalf("generated value label = %q, want empty for call expression", generated.ValueLabel)
-	}
-
-	nestedFact, ok := result.ObjectLiteral(profile)
-	if !ok || len(nestedFact.Entries) != 1 {
-		t.Fatalf("nested object literal = %#v, ok=%v", nestedFact, ok)
-	}
-	assertEntry(t, nestedFact.Entries[0], 0, fieldChainSuffix("user_id"), userID)
 }
 
 func TestCallArgumentMetadataLabelsUnpackExpansion(t *testing.T) {
@@ -661,7 +370,7 @@ func TestCallArgumentMetadataLabelsUnpackExpansion(t *testing.T) {
 	}
 }
 
-func TestExtractFunctionObjectLiteralReturnCallArgument(t *testing.T) {
+func TestExtractFunctionReturnCallArgumentSourceForTableArgument(t *testing.T) {
 	event := stringLit("created")
 	arg := &ast.TableExpr{Fields: []*ast.Field{{
 		Key:       stringLit("event"),
@@ -686,60 +395,6 @@ func TestExtractFunctionObjectLiteralReturnCallArgument(t *testing.T) {
 	}
 	if len(okFact.ArgumentSources) != 1 || okFact.ArgumentSources[0].Kind != sourceprovenance.SourceExpression || okFact.ArgumentSources[0].Expr != arg {
 		t.Fatalf("return call argument sources = %#v, want table argument expression", okFact.ArgumentSources)
-	}
-	fact, ok := result.ObjectLiteral(arg)
-	if !ok {
-		t.Fatalf("missing returned call argument object literal sidecar")
-	}
-	if len(fact.Entries) != 1 {
-		t.Fatalf("returned call argument entries = %#v, want event entry", fact.Entries)
-	}
-	assertEntry(t, fact.Entries[0], 0, fieldChainSuffix("event"), event)
-}
-
-func TestExtractChunkObjectLiteralSkipsFinalExpandingArrayField(t *testing.T) {
-	nonFinalVararg := &ast.Comma3Expr{}
-	keyedVararg := &ast.Comma3Expr{}
-	finalVararg := &ast.Comma3Expr{}
-	table := &ast.TableExpr{Fields: []*ast.Field{
-		{Value: nonFinalVararg},
-		{Key: stringLit("key"), KeySyntax: ast.AttrKeyDot, Value: keyedVararg},
-		{Value: finalVararg},
-	}}
-	local := localAssign([]string{"t"}, table)
-	stmts := []ast.Stmt{local}
-	bindings := bind.BindChunk(stmts, bind.Options{})
-	built := cfgbuild.BuildChunk(stmts, bindings)
-
-	result, err := ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	fact, ok := result.ObjectLiteral(table)
-	if !ok {
-		t.Fatalf("missing object literal sidecar")
-	}
-	entries := fact.Entries
-	if len(entries) != 2 {
-		t.Fatalf("entries = %#v, want non-final array and keyed vararg only", entries)
-	}
-	if entries[0].Value != nonFinalVararg || !entries[0].Suffix.Equal(intSuffix(1)) {
-		t.Fatalf("non-final vararg entry = %#v", entries[0])
-	}
-	if entries[0].Source.Kind != sourceprovenance.SourceVararg || entries[0].Source.Final || !entries[0].Source.Adjusted || entries[0].Source.Expanded {
-		t.Fatalf("non-final vararg source = %#v, want adjusted single value", entries[0].Source)
-	}
-	if entries[1].Value != keyedVararg || !entries[1].Suffix.Equal(fieldChainSuffix("key")) {
-		t.Fatalf("keyed vararg entry = %#v", entries[1])
-	}
-	if entries[1].Source.Kind != sourceprovenance.SourceVararg || entries[1].Source.Final || !entries[1].Source.Adjusted || entries[1].Source.Expanded {
-		t.Fatalf("keyed vararg source = %#v, want adjusted single value", entries[1].Source)
-	}
-	for _, entry := range entries {
-		if entry.Value == finalVararg {
-			t.Fatalf("final expanding array field was included: %#v", entry)
-		}
 	}
 }
 
@@ -1269,7 +924,7 @@ func TestExtractChunkMemberReadCallReceiverIsExpressionProducer(t *testing.T) {
 	}
 }
 
-func TestExtractChunkObjectLiteralEntryCallSourcePointsAtNestedCall(t *testing.T) {
+func TestExtractChunkNestedTableCallUsesExpressionProducerContext(t *testing.T) {
 	makeCall := &ast.FuncCallExpr{Func: ident("make")}
 	table := &ast.TableExpr{Fields: []*ast.Field{{
 		Key:       stringLit("x"),
@@ -1290,14 +945,6 @@ func TestExtractChunkObjectLiteralEntryCallSourcePointsAtNestedCall(t *testing.T
 	callFact, ok := result.Call(points[0])
 	if !ok || callFact.Call != makeCall || callFact.Context != CallContextExpressionProducer {
 		t.Fatalf("make call fact = %#v, ok=%v", callFact, ok)
-	}
-	literal, ok := result.ObjectLiteral(table)
-	if !ok || len(literal.Entries) != 1 {
-		t.Fatalf("object literal = %#v, ok=%v", literal, ok)
-	}
-	entrySource := literal.Entries[0].Source
-	if entrySource.Kind != sourceprovenance.SourceCall || entrySource.Expr != makeCall || entrySource.CallPoint != points[0] || !entrySource.HasCallPoint {
-		t.Fatalf("object entry source = %#v, want make call point %d", entrySource, points[0])
 	}
 }
 

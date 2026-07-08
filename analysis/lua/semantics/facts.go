@@ -128,23 +128,6 @@ type ReturnFact struct {
 	Sources []sourceprovenance.ASTSource
 }
 
-type ObjectLiteralFact struct {
-	Expr    ast.Expr
-	Table   *ast.TableExpr
-	Entries []ObjectEntryFact
-}
-
-type ObjectEntryFact struct {
-	Field      *ast.Field
-	Index      int
-	Key        ast.Expr
-	Value      ast.Expr
-	ValueSpan  SourceSpan
-	ValueLabel string
-	Suffix     path.Path
-	Source     sourceprovenance.ASTSource
-}
-
 // SourceSpan is a syntax-free source range carried by semantic facts for
 // downstream consumers that must not inspect AST nodes.
 type SourceSpan struct {

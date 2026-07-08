@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
+	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -225,11 +226,7 @@ func callbackProtocolObjectStores(result *body.Result, params map[symbol.ID]int)
 		if !ok {
 			return
 		}
-		literal, ok := result.ObjectLiteral(table)
-		if !ok {
-			return
-		}
-		for _, entry := range literal.Entries {
+		for _, entry := range pathexpr.ObjectEntries(table) {
 			slot, ok := callbackProtocolSlotFromSegments(entry.Suffix.Segments)
 			if !ok {
 				continue

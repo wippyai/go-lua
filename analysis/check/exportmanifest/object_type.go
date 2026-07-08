@@ -255,22 +255,6 @@ func rootReassignedBefore(result *body.Result, point cfg.Point, root pathdom.Pat
 	return false
 }
 
-func addObjectLiteralEntries(
-	result *body.Result,
-	point cfg.Point,
-	root pathdom.Path,
-	entries []body.ObjectEntryFact,
-	members *objectMemberMaps,
-) {
-	for _, entry := range entries {
-		member, ok := directMemberSegment(root.Segments, entry.Suffix.Segments)
-		if !ok {
-			continue
-		}
-		members.add(member, objectEntryFactType(result, point, entry), false)
-	}
-}
-
 func addObjectLiteralViewEntries(
 	result *body.Result,
 	point cfg.Point,
@@ -396,27 +380,6 @@ func directMemberSegment(prefix, target []segment.Segment) (segment.Segment, boo
 		}
 	}
 	return target[len(prefix)], true
-}
-
-func objectLiteralType(result *body.Result, point cfg.Point, entries []body.ObjectEntryFact) (typ.Type, bool) {
-	if len(entries) == 0 {
-		return nil, false
-	}
-	projected := make([]objectEntry, 0, len(entries))
-	for _, entry := range entries {
-		projected = append(projected, objectEntry{suffix: entry.Suffix.Segments, t: objectEntryFactType(result, point, entry)})
-	}
-	return objectEntriesType(result, point, nil, projected)
-}
-
-func objectEntryFactType(result *body.Result, point cfg.Point, entry body.ObjectEntryFact) typ.Type {
-	if t, ok := exprType(result, point, entry.Value); ok {
-		return t
-	}
-	if t, ok := sourceType(result, point, entry.Source); ok {
-		return t
-	}
-	return typ.Unknown
 }
 
 type objectEntry struct {

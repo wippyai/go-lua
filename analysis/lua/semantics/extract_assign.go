@@ -32,7 +32,6 @@ func (r *Result) extractLocalAssign(stmt *ast.LocalAssignStmt, bindings *bind.Re
 	sources := assignmentValueSources(stmt.Exprs, len(stmt.Names), resolver)
 	exprs := copyExprs(stmt.Exprs)
 	types := copyTypeExprs(stmt.Types)
-	r.extractObjectLiterals(stmt.Exprs, resolver)
 	for i, name := range stmt.Names {
 		id, hasSymbol := symbol.ID(0), false
 		if bindings != nil {
@@ -78,7 +77,6 @@ func (r *Result) extractAssign(stmt *ast.AssignStmt, bindings *bind.Result, poin
 	sources := assignmentValueSources(stmt.Rhs, len(stmt.Lhs), resolver)
 	lhs := copyExprs(stmt.Lhs)
 	rhs := copyExprs(stmt.Rhs)
-	r.extractObjectLiterals(stmt.Rhs, resolver)
 	for i, target := range stmt.Lhs {
 		id, hasSymbol := symbol.ID(0), false
 		if ident, ok := target.(*ast.IdentExpr); ok && bindings != nil {
