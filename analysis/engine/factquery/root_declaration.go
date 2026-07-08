@@ -121,28 +121,16 @@ func (q RootDeclarationQuery) DominatingOrdinaryRootWrite(
 	point cfg.Point,
 	target symbol.ID,
 ) (cfg.Point, bool) {
-	if point == 0 || target == 0 || q.idom == nil {
-		return 0, false
-	}
-	visited := make(map[cfg.Point]struct{}, q.graphSize)
-	for cursor := point; ; {
-		if _, ok := visited[cursor]; ok {
-			return 0, false
-		}
-		visited[cursor] = struct{}{}
+	return newDominatingOrdinaryRootWriteQueryWithDominators(q.idom, q.graphSize, func(cursor cfg.Point, target symbol.ID) bool {
 		assignment, ok := q.facts.RootAssignment(cursor)
 		if ok && assignment.TargetSymbol() == target {
 			targetPath := assignment.TargetPath()
 			if assignment.Kind() == factflow.RootAssignmentOrdinaryRootWrite && len(targetPath.Segments) == 0 {
-				return cursor, true
+				return true
 			}
 		}
-		parent, ok := q.idom[cursor]
-		if !ok || parent == cursor {
-			return 0, false
-		}
-		cursor = parent
-	}
+		return false
+	}).DominatingOrdinaryRootWrite(point, target)
 }
 
 func (q RootDeclarationQuery) dominatingDeclarationSource(

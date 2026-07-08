@@ -22,7 +22,9 @@ const (
 
 // CallSiteConfig carries constructor input for CallSite.
 type CallSiteConfig struct {
-	Context CallSiteContext
+	Context  CallSiteContext
+	Point    cfg.Point
+	HasPoint bool
 
 	CalleeSymbol       symbol.ID
 	CalleePath         path.Path
@@ -93,7 +95,9 @@ func CalleePathKeyFromPathKey(key path.PathKey) (CalleePathKey, bool) {
 
 // CallSite describes a semantic call occurrence used as canonical evidence.
 type CallSite struct {
-	context CallSiteContext
+	context  CallSiteContext
+	point    cfg.Point
+	hasPoint bool
 
 	calleeSymbol       symbol.ID
 	calleePath         path.Path
@@ -144,6 +148,8 @@ func NewCallSite(config CallSiteConfig) CallSite {
 	calleeKey, _ := CalleePathKeyFromPath(calleePath)
 	return CallSite{
 		context:            config.Context,
+		point:              config.Point,
+		hasPoint:           config.HasPoint,
 		calleeSymbol:       config.CalleeSymbol,
 		calleePath:         calleePath,
 		calleeKey:          calleeKey,
@@ -175,6 +181,9 @@ func NewCallSite(config CallSiteConfig) CallSite {
 
 // Context returns the call site's semantic context.
 func (c CallSite) Context() CallSiteContext { return c.context }
+
+// Point returns the CFG point that owns this call site, if lowering supplied it.
+func (c CallSite) Point() (cfg.Point, bool) { return c.point, c.hasPoint }
 
 // CalleeSymbol returns the callee's symbol identity.
 func (c CallSite) CalleeSymbol() symbol.ID { return c.calleeSymbol }
@@ -301,6 +310,9 @@ func (v CallSiteView) CallSite() CallSite { return v.site.copy() }
 
 // Context returns the call site's semantic context.
 func (v CallSiteView) Context() CallSiteContext { return v.site.context }
+
+// Point returns the CFG point that owns this call site, if lowering supplied it.
+func (v CallSiteView) Point() (cfg.Point, bool) { return v.site.point, v.site.hasPoint }
 
 // CalleeSymbol returns the callee's symbol identity.
 func (v CallSiteView) CalleeSymbol() symbol.ID { return v.site.calleeSymbol }

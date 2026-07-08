@@ -31,6 +31,8 @@ func (l *lowerer) callSiteFromWIR(point cfg.Point) (factflow.CallSite, bool) {
 	exprRef, hasExpr := l.wirCallExprRef(inst)
 	return factflow.NewCallSite(factflow.CallSiteConfig{
 		Context:            wirCallSiteContext(inst.CallContext),
+		Point:              point,
+		HasPoint:           true,
 		CalleeSymbol:       shape.calleeSymbol,
 		CalleePath:         shape.calleePath,
 		CalleeMemberAccess: shape.calleeMemberAccess,

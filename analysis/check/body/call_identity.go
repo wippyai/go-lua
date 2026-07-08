@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factquery"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
@@ -18,21 +19,27 @@ import (
 type signatureIdentityResolver struct {
 	bindings            *bind.Result
 	graph               cfg.Graph
-	facts               factflow.Facts
 	imports             moduleidentity.Projection
 	implicitStdlibNames map[string]struct{}
-	callPoints          map[factflow.ExprRef]cfg.Point
-	rootQuery           factquery.RootDeclarationQuery
-	rootQueryReady      bool
+	rootWriteQuery      factquery.DominatingOrdinaryRootWriteQuery
 }
 
-func newSignatureIdentityResolver(bindings *bind.Result, graph cfg.Graph, facts factflow.Facts, modules moduleidentity.Projection, signatures signaturelookup.Source) *signatureIdentityResolver {
+func newSignatureIdentityResolver(bindings *bind.Result, graph cfg.Graph, body *wir.Body, modules moduleidentity.Projection, signatures signaturelookup.Source) *signatureIdentityResolver {
+	rootWrites := signatureRootWritesFromWIR(bindings, body)
+	rootWriteQuery := factquery.NewDominatingOrdinaryRootWriteQuery(graph, func(point cfg.Point, target symbol.ID) bool {
+		roots := rootWrites[point]
+		if len(roots) == 0 {
+			return false
+		}
+		_, ok := roots[target]
+		return ok
+	})
 	return &signatureIdentityResolver{
 		bindings:            bindings,
 		graph:               graph,
-		facts:               facts,
 		imports:             modules,
 		implicitStdlibNames: implicitStdlibSignatureNames(signatures),
+		rootWriteQuery:      rootWriteQuery,
 	}
 }
 
@@ -46,29 +53,6 @@ func implicitStdlibSignatureNames(signatures signaturelookup.Source) map[string]
 		out[name] = struct{}{}
 	}
 	return out
-}
-
-func (r *signatureIdentityResolver) indexCallSites(facts factflow.Facts) {
-	if r == nil || r.graph == nil {
-		return
-	}
-	for _, point := range r.graph.RPO() {
-		site, ok := facts.CallSiteView(point)
-		if !ok {
-			continue
-		}
-		expr, ok := site.Expr()
-		if !ok {
-			continue
-		}
-		if expr == 0 {
-			continue
-		}
-		if r.callPoints == nil {
-			r.callPoints = make(map[factflow.ExprRef]cfg.Point)
-		}
-		r.callPoints[expr] = point
-	}
 }
 
 func (r *signatureIdentityResolver) nameForCall(ctx transfer.NodeContext, call factflow.CallProducer) (string, bool) {
@@ -106,19 +90,15 @@ func (r *signatureIdentityResolver) rootReplacedAt(point cfg.Point, callee symbo
 	if root == 0 {
 		return false
 	}
-	_, ok := r.rootDeclarationQuery().DominatingOrdinaryRootWrite(point, root)
-	return ok
+	return r.dominatingOrdinaryRootWrite(point, root)
 }
 
-func (r *signatureIdentityResolver) rootDeclarationQuery() factquery.RootDeclarationQuery {
+func (r *signatureIdentityResolver) dominatingOrdinaryRootWrite(point cfg.Point, target symbol.ID) bool {
 	if r == nil {
-		return factquery.RootDeclarationQuery{}
+		return false
 	}
-	if !r.rootQueryReady {
-		r.rootQuery = factquery.NewRootDeclarationQuery(r.facts, r.graph)
-		r.rootQueryReady = true
-	}
-	return r.rootQuery
+	_, ok := r.rootWriteQuery.DominatingOrdinaryRootWrite(point, target)
+	return ok
 }
 
 func (r *signatureIdentityResolver) nameForSite(site factflow.CallSite) (string, bool) {
@@ -159,15 +139,7 @@ func (r *signatureIdentityResolver) nameForIndexedIteratorCallSiteView(site fact
 }
 
 func (r *signatureIdentityResolver) pointForSiteView(site factflow.CallSiteView) (cfg.Point, bool) {
-	if r == nil || len(r.callPoints) == 0 {
-		return 0, false
-	}
-	expr, ok := site.Expr()
-	if !ok {
-		return 0, false
-	}
-	point, ok := r.callPoints[expr]
-	return point, ok
+	return site.Point()
 }
 
 func (r *signatureIdentityResolver) stableCalleeName(callee symbol.ID, calleePath path.Path) (string, bool) {
@@ -214,6 +186,60 @@ func (r *signatureIdentityResolver) stableCalleeName(callee symbol.ID, calleePat
 		fullName = name
 	}
 	return fullName, true
+}
+
+func signatureRootWritesFromWIR(bindings *bind.Result, body *wir.Body) map[cfg.Point]map[symbol.ID]struct{} {
+	if body == nil {
+		return nil
+	}
+	out := make(map[cfg.Point]map[symbol.ID]struct{})
+	add := func(point cfg.Point, id symbol.ID) {
+		if id == 0 {
+			return
+		}
+		if out[point] == nil {
+			out[point] = make(map[symbol.ID]struct{}, 1)
+		}
+		out[point][id] = struct{}{}
+	}
+	for i := 0; i < body.Len(); i++ {
+		inst := body.Instr(i)
+		switch inst.Op {
+		case wir.OpAssign:
+			if inst.Assign != wir.AssignOrdinaryRootWrite {
+				continue
+			}
+			p := body.Path(wir.PathRef(inst.Dst.Ref))
+			if p.Symbol != 0 && len(p.Segments) == 0 {
+				add(inst.Point, p.Symbol)
+			}
+		case wir.OpStaticMemberWrite:
+			p := body.Path(wir.PathRef(inst.Dst.Ref))
+			if global, ok := globalTableFieldRootSymbol(bindings, p); ok {
+				add(inst.Point, global)
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func globalTableFieldRootSymbol(bindings *bind.Result, p path.Path) (symbol.ID, bool) {
+	if bindings == nil || p.Symbol == 0 || bindings.Name(p.Symbol) != "_G" {
+		return 0, false
+	}
+	kind, ok := bindings.Kind(p.Symbol)
+	if !ok || kind != symbol.Global {
+		return 0, false
+	}
+	name, ok := p.DirectFieldName()
+	if !ok {
+		return 0, false
+	}
+	global, ok := bindings.GlobalSymbol(name)
+	return global, ok && global != 0
 }
 
 func (r *signatureIdentityResolver) implicitBuiltinIteratorName(callee symbol.ID, calleePath path.Path) (string, bool) {

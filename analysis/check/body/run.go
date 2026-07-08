@@ -158,7 +158,7 @@ func (c *checker) prepare(
 	declarations := declarationFactsFromSource(bindings, built, sourceStmts)
 	genericFors := genericForFactsFromSource(bindings, built, sourceStmts)
 	modules := moduleidentity.NewFromWIR(bindings, built.Graph, wirBody, fn)
-	signatureID := newSignatureIdentityResolver(bindings, built.Graph, facts, modules, config.Signatures)
+	signatureID := newSignatureIdentityResolver(bindings, built.Graph, wirBody, modules, config.Signatures)
 	signatureNameForCall := signatureID.nameForCall
 	if hasSignatures(config.Signatures) {
 		facts = effectlowering.WithSignatureNoNormalReturns(effectlowering.SignatureNoNormalReturnConfig{
@@ -224,7 +224,6 @@ func (c *checker) prepare(
 	refinedSources := sourcevalue.NewExpressionRefinements(facts.ExpressionRefinements()).Bind(config.Registry, sources)
 	calleeValue := calleeValueProvider(config.Registry, facts, resolver, refinedSources, config.TypeValues, bindings, typeResolver)
 	receiverFn := declaredReceiverCallableProvider(facts, bindings, typeResolver)
-	signatureID.indexCallSites(facts)
 	callOutcomeSupplement := preparedCallOutcomeSupplement(config.Registry, config.ModuleExports, signatureID, facts, resolver, refinedSources, config.TypeValues, calleeValue)
 	entrySeeds := entrySeedPlan(config.Registry, config.TypeValues, bindings, fn, globals, config.GlobalTypes, config.ModuleExports, typeResolver)
 	return &Static{

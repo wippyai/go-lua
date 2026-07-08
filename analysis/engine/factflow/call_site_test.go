@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
@@ -43,6 +44,20 @@ func TestCallSiteOwnsCalleePathKey(t *testing.T) {
 	}
 	if got := site.CalleePath().Key(); got != want.PathKey() {
 		t.Fatalf("owned callee path key = %q, want cached key %q", got, want.PathKey())
+	}
+}
+
+func TestCallSiteCarriesOwningPoint(t *testing.T) {
+	point := cfg.Point(42)
+	site := NewCallSite(CallSiteConfig{Point: point, HasPoint: true}).View()
+	got, ok := site.Point()
+	if !ok || got != point {
+		t.Fatalf("CallSiteView.Point = %d/%v, want %d/true", got, ok, point)
+	}
+
+	without := NewCallSite(CallSiteConfig{}).View()
+	if got, ok := without.Point(); ok || got != 0 {
+		t.Fatalf("empty CallSiteView.Point = %d/%v, want 0/false", got, ok)
 	}
 }
 
