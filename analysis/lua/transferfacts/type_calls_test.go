@@ -15,7 +15,6 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
-	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -47,7 +46,7 @@ local v = Point(data)
 	castStmt := mustLocalStmt(t, stmts, 2)
 	dataPath := path.NewPath(mustLocalAt(t, bindings, dataStmt, 0), "data")
 	castCall := castStmt.Exprs[0].(*ast.FuncCallExpr)
-	callPoint := requireCallPoint(t, built, castCall)
+	callPoint := requireSourceCallPoint(t, built, bindings, castStmt, castCall)
 
 	refinements := facts.PostconditionRefinements(callPoint)
 	if len(refinements) != 1 {
@@ -78,7 +77,7 @@ local v = number(data)
 	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 	castStmt := mustLocalStmt(t, stmts, 1)
 	castCall := castStmt.Exprs[0].(*ast.FuncCallExpr)
-	callPoint := requireCallPoint(t, built, castCall)
+	callPoint := requireSourceCallPoint(t, built, bindings, castStmt, castCall)
 
 	results := facts.CallResultValues(callPoint)
 	if len(results) != 1 {
@@ -97,7 +96,7 @@ local v = number(data)
 	castStmt := mustLocalStmt(t, stmts, 1)
 	dataPath := path.NewPath(mustLocalAt(t, bindings, dataStmt, 0), "data")
 	castCall := castStmt.Exprs[0].(*ast.FuncCallExpr)
-	callPoint := requireCallPoint(t, built, castCall)
+	callPoint := requireSourceCallPoint(t, built, bindings, castStmt, castCall)
 	stringSym, ok := bindings.GlobalSymbol("string")
 	if !ok {
 		t.Fatal("missing string global symbol")
@@ -134,7 +133,7 @@ local v = number(data)
 	dataPath := path.NewPath(mustLocalAt(t, bindings, dataStmt, 0), "data")
 	otherPath := path.NewPath(mustLocalAt(t, bindings, otherStmt, 0), "other")
 	castCall := castStmt.Exprs[0].(*ast.FuncCallExpr)
-	callPoint := requireCallPoint(t, built, castCall)
+	callPoint := requireSourceCallPoint(t, built, bindings, castStmt, castCall)
 
 	body := wir.NewBody("primitive-cast-arg-owner")
 	start := body.Emit(wir.Instruction{
@@ -174,9 +173,6 @@ local v = 0
 	dataStmt := mustLocalStmt(t, stmts, 0)
 	localStmt := mustLocalStmt(t, stmts, 1)
 	point := requireStmtPoints(t, built, localStmt, 1)[0]
-	if _, ok := built.Calls.Get(point); ok {
-		t.Fatalf("test point %d unexpectedly has semantic call view", point)
-	}
 	dataPath := path.NewPath(mustLocalAt(t, bindings, dataStmt, 0), "data")
 	numberSym, ok := bindings.GlobalSymbol("number")
 	if !ok {
@@ -221,9 +217,6 @@ local v = 0
 	dataStmt := mustLocalStmt(t, stmts, 0)
 	localStmt := mustLocalStmt(t, stmts, 1)
 	point := requireStmtPoints(t, built, localStmt, 1)[0]
-	if _, ok := built.Calls.Get(point); ok {
-		t.Fatalf("test point %d unexpectedly has semantic call view", point)
-	}
 	dataPath := path.NewPath(mustLocalAt(t, bindings, dataStmt, 0), "data")
 	pointType := typetable.NewRecord().
 		Field("x", typ.Number).
@@ -265,7 +258,7 @@ local v = number(data)
 	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings})
 	castStmt := mustLocalStmt(t, stmts, 2)
 	castCall := castStmt.Exprs[0].(*ast.FuncCallExpr)
-	callPoint := requireCallPoint(t, built, castCall)
+	callPoint := requireSourceCallPoint(t, built, bindings, castStmt, castCall)
 
 	if results := facts.CallResultValues(callPoint); len(results) != 0 {
 		t.Fatalf("shadowed primitive call results = %#v, want none", results)
@@ -414,7 +407,7 @@ local validated, err = errors.AppError:is(raw)
 	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, TypeResolver: resolver, WIR: body})
 	castStmt := mustLocalStmt(t, stmts, 2)
 	castCall := castStmt.Exprs[0].(*ast.FuncCallExpr)
-	callPoint := requireCallPoint(t, built, castCall)
+	callPoint := requireSourceCallPoint(t, built, bindings, castStmt, castCall)
 
 	values := facts.CallResultValues(callPoint)
 	if len(values) != 2 {
@@ -450,7 +443,7 @@ local validated, err = errors.AppError:is(raw)
 	rawStmt := mustLocalStmt(t, stmts, 1)
 	assign := mustLocalStmt(t, stmts, 2)
 	castCall := assign.Exprs[0].(*ast.FuncCallExpr)
-	callPoint := requireCallPoint(t, built, castCall)
+	callPoint := requireSourceCallPoint(t, built, bindings, assign, castCall)
 	errorsPath := path.NewPath(mustLocalAt(t, bindings, errorsStmt, 0), "errors")
 	rawPath := path.NewPath(mustLocalAt(t, bindings, rawStmt, 0), "raw")
 	otherReceiver := errorsPath.Field("OtherError")
@@ -672,9 +665,6 @@ local value = nil
 `)
 	assign := mustLocalStmt(t, stmts, 2)
 	callPoint := requireStmtPoints(t, built, assign, 1)[0]
-	if _, ok := built.Calls.Get(callPoint); ok {
-		t.Fatalf("fixture unexpectedly has semantic call view at point %d", callPoint)
-	}
 	typeDecl, ok := bindings.TypeDef(stmts[0].(*ast.TypeDefStmt))
 	if !ok {
 		t.Fatal("missing Point type declaration")
@@ -756,7 +746,7 @@ local v = Point(data)
 	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings})
 	castStmt := mustLocalStmt(t, stmts, 3)
 	castCall := castStmt.Exprs[0].(*ast.FuncCallExpr)
-	callPoint := requireCallPoint(t, built, castCall)
+	callPoint := requireSourceCallPoint(t, built, bindings, castStmt, castCall)
 
 	if refinements := facts.PostconditionRefinements(callPoint); len(refinements) != 0 {
 		t.Fatalf("shadowed value call postconditions = %#v, want none", refinements)
@@ -764,18 +754,6 @@ local v = Point(data)
 	if results := facts.CallResultValues(callPoint); len(results) != 0 {
 		t.Fatalf("shadowed value call results = %#v, want none", results)
 	}
-}
-
-func requireCallPoint(t *testing.T, built *cfgbuild.Result, call *ast.FuncCallExpr) cfg.Point {
-	t.Helper()
-	for _, point := range built.Graph.RPO() {
-		fact, ok := built.Calls.Get(point)
-		if ok && fact.Call == call {
-			return point
-		}
-	}
-	t.Fatalf("missing call point for %#v", call)
-	return 0
 }
 
 func refinementConstraint(t *testing.T, refinement factflow.ValueRefinement) product.Value {

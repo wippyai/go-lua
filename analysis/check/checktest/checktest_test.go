@@ -3079,7 +3079,7 @@ func callOutcomeDebug(root *body.Result) string {
 		if sources == "" {
 			sources = "no-arg-sources"
 		}
-		if fact, ok := root.Call(point); ok {
+		if fact, ok := root.SourceCall(point); ok {
 			for _, arg := range fact.Args {
 				argPath, ok := root.ExpressionPath(arg)
 				if !ok || argPath.IsEmpty() {

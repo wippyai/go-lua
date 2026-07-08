@@ -21,6 +21,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/callorder"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -1166,6 +1167,63 @@ func requireBranchPointForStmt(t *testing.T, built *cfgbuild.Result, stmt ast.St
 	}
 	t.Fatalf("points for %T = %v contain no branch point", stmt, points)
 	return 0
+}
+
+func requireSourceCallPoint(t *testing.T, built *cfgbuild.Result, bindings *bind.Result, stmt ast.Stmt, call *ast.FuncCallExpr) cfg.Point {
+	t.Helper()
+	if built == nil || built.Graph == nil {
+		t.Fatalf("missing CFG build result")
+	}
+	occurrences, ok := sourceCallOccurrences(stmt, bindings)
+	if !ok {
+		t.Fatalf("unsupported call order for %T", stmt)
+	}
+	var callIndex int
+	found := false
+	for i, occurrence := range occurrences {
+		if occurrence.Call == call {
+			callIndex = i
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("statement %T does not contain call %#v", stmt, call)
+	}
+	var callPoints []cfg.Point
+	for _, point := range built.StmtPoints.PointsFor(stmt) {
+		if built.Graph.Node(point).Kind == cfg.NodeCall {
+			callPoints = append(callPoints, point)
+		}
+	}
+	if callIndex >= len(callPoints) {
+		t.Fatalf("statement %T has %d source calls but call points %v", stmt, len(occurrences), callPoints)
+	}
+	return callPoints[callIndex]
+}
+
+func sourceCallOccurrences(stmt ast.Stmt, bindings *bind.Result) ([]callorder.Occurrence, bool) {
+	options := callorder.LuaOptions(bindings)
+	options.AllowShortCircuitCalls = true
+	switch stmt := stmt.(type) {
+	case *ast.AssignStmt:
+		return callorder.ValueList(stmt.Rhs, options)
+	case *ast.LocalAssignStmt:
+		return callorder.ValueList(stmt.Exprs, options)
+	case *ast.ReturnStmt:
+		return callorder.ValueList(stmt.Exprs, options)
+	case *ast.GenericForStmt:
+		return callorder.ValueList(stmt.Exprs, options)
+	case *ast.FuncCallStmt:
+		return callorder.Expr(stmt.Expr, options)
+	case *ast.IfStmt:
+		return callorder.Expr(stmt.Condition, options)
+	case *ast.WhileStmt:
+		return callorder.Expr(stmt.Condition, options)
+	case *ast.RepeatStmt:
+		return callorder.Expr(stmt.Condition, options)
+	}
+	return nil, false
 }
 
 func assertNoPointFact(t *testing.T, facts factflow.Facts, point cfg.Point) {

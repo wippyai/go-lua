@@ -3601,7 +3601,7 @@ func assertMethodReceiverCallResultPresent(t *testing.T, result Result, method s
 		t.Fatalf("missing root graph")
 	}
 	for _, point := range graph.RPO() {
-		fact, ok := root.Call(point)
+		fact, ok := root.SourceCall(point)
 		if !ok || fact.Call == nil || fact.Call.Method != method {
 			continue
 		}

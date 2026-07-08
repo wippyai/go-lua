@@ -341,13 +341,6 @@ end
 		t.Fatalf("stmt = %T, want call statement", fn.Stmts[0])
 	}
 	callPoint := requireStmtPoints(t, built, callStmt, 1)[0]
-	semanticCall, ok := built.Calls.Get(callPoint)
-	if !ok {
-		t.Fatalf("missing cfgbuild call at point %d", callPoint)
-	}
-	if got := semanticCall.ResultTargets; len(got) != 0 {
-		t.Fatalf("cfgbuild call result targets = %#v, want none", got)
-	}
 	makeSym, ok := bindings.GlobalSymbol("make")
 	if !ok {
 		t.Fatal("missing make global symbol")
@@ -394,9 +387,6 @@ end
 		t.Fatalf("stmt = %T, want local assignment", fn.Stmts[0])
 	}
 	point := requireStmtPoints(t, built, localStmt, 1)[0]
-	if _, ok := built.Calls.Get(point); ok {
-		t.Fatalf("point %d unexpectedly has cfgbuild call view", point)
-	}
 	makeSym, ok := bindings.GlobalSymbol("make")
 	if !ok {
 		t.Fatal("missing make global symbol")
@@ -1428,13 +1418,6 @@ end
 		t.Fatalf("stmt = %T, want call statement", fn.Stmts[0])
 	}
 	point := requireStmtPoints(t, built, stmt, 1)[0]
-	fact, ok := built.Calls.Get(point)
-	if !ok {
-		t.Fatalf("missing cfgbuild call at point %d", point)
-	}
-	if fact.Context != cfgbuild.CallContextStatement {
-		t.Fatalf("cfgbuild context = %v, want statement", fact.Context)
-	}
 	sendSym, ok := bindings.GlobalSymbol("send")
 	if !ok {
 		t.Fatal("missing send global symbol")
@@ -1482,10 +1465,6 @@ end
 		t.Fatalf("stmt = %T, want call statement", fn.Stmts[0])
 	}
 	point := requireStmtPoints(t, built, stmt, 1)[0]
-	if _, ok := built.Calls.Get(point); !ok {
-		t.Fatalf("missing cfgbuild call at point %d", point)
-	}
-
 	body := wir.NewBody("synthetic-call-metadata")
 	meta := []wir.CallArgumentMeta{{
 		Span:  wir.Span{StartLine: 7, StartCol: 11, EndLine: 7, EndCol: 16},
@@ -1858,17 +1837,18 @@ function f(): string
     return make()[1]:topic()
 end
 `)
-	var callPoint cfg.Point
-	for _, point := range built.Graph.RPO() {
-		candidate, ok := built.Calls.Get(point)
-		if ok && candidate.Method == "topic" {
-			callPoint = point
-			break
-		}
+	ret, ok := fn.Stmts[1].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return statement", fn.Stmts[1])
 	}
-	if callPoint == 0 {
-		t.Fatalf("missing topic call fact")
+	topicCall, ok := ret.Exprs[0].(*ast.FuncCallExpr)
+	if !ok {
+		t.Fatalf("return expr = %T, want topic method call", ret.Exprs[0])
 	}
+	if topicCall.Method != "topic" {
+		t.Fatalf("method = %q, want topic", topicCall.Method)
+	}
+	callPoint := requireSourceCallPoint(t, built, bindings, ret, topicCall)
 
 	body := wirlower.Lower("f", fn.Stmts, bindings, built)
 	l := lowerer{

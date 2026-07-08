@@ -2,7 +2,6 @@ package cfgbuild
 
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -31,9 +30,7 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 	case *ast.LocalAssignStmt:
 		return b.buildLocalAssign(state, stmt)
 	case *ast.FuncCallStmt:
-		beforeCalls := b.graph.RPO()
 		state = b.appendExprCalls(state, stmt, stmt.Expr)
-		b.recordCallStmtCalls(stmt, beforeCalls)
 		if state.live && b.isNoReturnCallStmt(stmt.Expr) {
 			// error(...) raises and never returns normally, so the rest of the block
 			// is unreachable; mark the flow non-live (no edge to Exit -- this is a
@@ -43,21 +40,8 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 		}
 		return state
 	case *ast.ReturnStmt:
-		beforeCalls := b.graph.RPO()
 		state = b.appendValueListCalls(state, stmt, stmt.Exprs)
-		calls, _ := b.valueListCalls(stmt.Exprs)
-		callPoints := newCallPoints(b.graph, beforeCalls)
-		resolver := callPointResolver(calls, callPoints)
 		state = b.appendNodeForStmt(state, cfg.NodeReturn, stmt)
-		if state.live {
-			for i, call := range calls {
-				context, exprs := CallContextExpressionProducer, []ast.Expr(nil)
-				if topLevelValueListCall(stmt.Exprs, call) {
-					context, exprs = CallContextReturnSource, stmt.Exprs
-				}
-				b.calls.Set(callPoints[i], b.buildCallFact(stmt, nil, context, exprs, call.ExprIndex, call.Call, nil, resolver))
-			}
-		}
 		b.graph.AddEdge(state.current, b.graph.Exit(), false)
 		return flowState{current: state.current}
 	case *ast.DoBlockStmt:
@@ -128,21 +112,7 @@ func (b *builder) isNoReturnCallStmt(expr ast.Expr) bool {
 }
 
 func (b *builder) buildAssign(state flowState, stmt *ast.AssignStmt) flowState {
-	beforeCalls := b.graph.RPO()
 	state = b.appendValueListCalls(state, stmt, stmt.Rhs)
-	calls, callsOK := b.valueListCalls(stmt.Rhs)
-	callPoints := newCallPoints(b.graph, beforeCalls)
-	resolver := callPointResolver(calls, callPoints)
-	targets := ordinaryResultTargets(stmt, b.bindings)
-	if callsOK && len(callPoints) == len(calls) {
-		for i, call := range calls {
-			context, exprs, callTargets := CallContextExpressionProducer, []ast.Expr(nil), []CallResultTarget(nil)
-			if topLevelValueListCall(stmt.Rhs, call) {
-				context, exprs, callTargets = CallContextAssignmentSource, stmt.Rhs, targets
-			}
-			b.calls.Set(callPoints[i], b.buildCallFact(stmt, nil, context, exprs, call.ExprIndex, call.Call, callTargets, resolver))
-		}
-	}
 	for range stmt.Lhs {
 		state = b.appendAssign(state, stmt)
 	}
@@ -150,21 +120,7 @@ func (b *builder) buildAssign(state flowState, stmt *ast.AssignStmt) flowState {
 }
 
 func (b *builder) buildLocalAssign(state flowState, stmt *ast.LocalAssignStmt) flowState {
-	beforeCalls := b.graph.RPO()
 	state = b.appendValueListCalls(state, stmt, stmt.Exprs)
-	calls, callsOK := b.valueListCalls(stmt.Exprs)
-	callPoints := newCallPoints(b.graph, beforeCalls)
-	resolver := callPointResolver(calls, callPoints)
-	targets := localResultTargets(stmt, b.bindings)
-	if callsOK && len(callPoints) == len(calls) {
-		for i, call := range calls {
-			context, exprs, callTargets := CallContextExpressionProducer, []ast.Expr(nil), []CallResultTarget(nil)
-			if topLevelValueListCall(stmt.Exprs, call) {
-				context, exprs, callTargets = CallContextAssignmentSource, stmt.Exprs, targets
-			}
-			b.calls.Set(callPoints[i], b.buildCallFact(stmt, nil, context, exprs, call.ExprIndex, call.Call, callTargets, resolver))
-		}
-	}
 	for range stmt.Names {
 		state = b.appendAssign(state, stmt)
 	}
@@ -192,74 +148,6 @@ func (b *builder) buildFuncDef(state flowState, stmt *ast.FuncDefStmt) flowState
 		})
 	}
 	return next
-}
-
-func (b *builder) recordCallStmtCalls(stmt *ast.FuncCallStmt, beforeCalls []cfg.Point) {
-	if stmt == nil {
-		return
-	}
-	call, ok := stmt.Expr.(*ast.FuncCallExpr)
-	if !ok {
-		return
-	}
-	calls, ok := b.exprCalls(stmt.Expr)
-	if !ok {
-		return
-	}
-	callPoints := newCallPoints(b.graph, beforeCalls)
-	if len(callPoints) != len(calls) {
-		return
-	}
-	resolver := callPointResolver(calls, callPoints)
-	for i, occurrence := range calls {
-		context, exprs, exprIndex := CallContextExpressionProducer, []ast.Expr(nil), occurrence.ExprIndex
-		callStmt := (*ast.FuncCallStmt)(nil)
-		if occurrence.Call == call {
-			context, exprs, exprIndex = CallContextStatement, []ast.Expr{call}, 0
-			callStmt = stmt
-		}
-		b.calls.Set(callPoints[i], b.buildCallFact(stmt, callStmt, context, exprs, exprIndex, occurrence.Call, nil, resolver))
-	}
-}
-
-func (b *builder) recordConditionCalls(stmt ast.Stmt, condition ast.Expr) {
-	calls, ok := b.exprCalls(condition)
-	if !ok || len(calls) == 0 {
-		return
-	}
-	points := b.stmtPoints[stmt]
-	if len(points) < len(calls) {
-		return
-	}
-	callPoints := points[:len(calls)]
-	resolver := callPointResolver(calls, callPoints)
-	conditionCall, conditionNegated, hasConditionCall := branchcond.PredicateCall(condition)
-	for i, call := range calls {
-		context, exprs, exprIndex := CallContextExpressionProducer, []ast.Expr(nil), call.ExprIndex
-		callConditionNegated := false
-		if hasConditionCall && call.Call == conditionCall {
-			context, exprs, exprIndex = CallContextCondition, []ast.Expr{condition}, 0
-			callConditionNegated = conditionNegated
-		}
-		fact := b.buildCallFact(stmt, nil, context, exprs, exprIndex, call.Call, nil, resolver)
-		fact.ConditionNegated = callConditionNegated
-		b.calls.Set(callPoints[i], fact)
-	}
-}
-
-func (b *builder) recordNumericForCalls(stmt *ast.NumberForStmt, beforeCalls []cfg.Point) {
-	calls, ok := b.valueListCalls(numericForBounds(stmt))
-	if !ok || len(calls) == 0 {
-		return
-	}
-	callPoints := newCallPoints(b.graph, beforeCalls)
-	if len(callPoints) != len(calls) {
-		return
-	}
-	resolver := callPointResolver(calls, callPoints)
-	for i, call := range calls {
-		b.calls.Set(callPoints[i], b.buildCallFact(stmt, nil, CallContextExpressionProducer, nil, call.ExprIndex, call.Call, nil, resolver))
-	}
 }
 
 func (b *builder) buildLabel(state flowState, stmt *ast.LabelStmt) flowState {
@@ -304,7 +192,6 @@ func (b *builder) buildDoBlock(state flowState, stmt *ast.DoBlockStmt) flowState
 
 func (b *builder) buildIf(state flowState, stmt *ast.IfStmt) flowState {
 	state, _, _ = b.appendConditionCall(state, stmt, stmt.Condition)
-	b.recordConditionCalls(stmt, stmt.Condition)
 	branch := b.appendBranch(state, stmt)
 	join := b.graph.AddNode(cfg.NodeJoin)
 
@@ -321,7 +208,6 @@ func (b *builder) buildIf(state flowState, stmt *ast.IfStmt) flowState {
 
 func (b *builder) buildWhile(state flowState, stmt *ast.WhileStmt) flowState {
 	state, conditionCall, hasConditionCall := b.appendConditionCall(state, stmt, stmt.Condition)
-	b.recordConditionCalls(stmt, stmt.Condition)
 	branch := b.appendBranch(state, stmt)
 	backedgeTarget := branch.current
 	if hasConditionCall {
@@ -355,7 +241,6 @@ func (b *builder) buildRepeat(state flowState, stmt *ast.RepeatStmt) flowState {
 			bodyStart = body.current
 		}
 		body, _, _ = b.appendConditionCall(body, stmt, stmt.Condition)
-		b.recordConditionCalls(stmt, stmt.Condition)
 		branch := b.appendBranch(body, stmt)
 		b.graph.AddEdge(branch.current, join, true)
 		b.graph.AddEdge(branch.current, bodyStart, false)
@@ -365,9 +250,7 @@ func (b *builder) buildRepeat(state flowState, stmt *ast.RepeatStmt) flowState {
 }
 
 func (b *builder) buildNumberFor(state flowState, stmt *ast.NumberForStmt) flowState {
-	beforeCalls := b.graph.RPO()
 	state = b.appendValueListCalls(state, stmt, numericForBounds(stmt))
-	b.recordNumericForCalls(stmt, beforeCalls)
 
 	state = b.appendAssign(state, stmt)
 	branch := b.appendBranch(state, stmt)
@@ -386,23 +269,10 @@ func (b *builder) buildNumberFor(state flowState, stmt *ast.NumberForStmt) flowS
 }
 
 func (b *builder) buildGenericFor(state flowState, stmt *ast.GenericForStmt) flowState {
-	beforeCalls := b.graph.RPO()
 	state = b.appendValueListCalls(state, stmt, stmt.Exprs)
-	calls, callsOK := b.valueListCalls(stmt.Exprs)
-	callPoints := newCallPoints(b.graph, beforeCalls)
-	resolver := callPointResolver(calls, callPoints)
 	branch := b.appendBranch(state, stmt)
 	join := b.graph.AddNode(cfg.NodeJoin)
 
-	if callsOK && len(callPoints) == len(calls) {
-		for i, call := range calls {
-			context, exprs := CallContextExpressionProducer, []ast.Expr(nil)
-			if topLevelValueListCall(stmt.Exprs, call) {
-				context, exprs = CallContextIteratorSource, stmt.Exprs
-			}
-			b.calls.Set(callPoints[i], b.buildCallFact(stmt, nil, context, exprs, call.ExprIndex, call.Call, nil, resolver))
-		}
-	}
 	b.graph.AddEdge(branch.current, join, false)
 
 	iterState := branchPath(branch.current, true)

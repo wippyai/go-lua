@@ -297,13 +297,6 @@ func (r *Result) OrdinaryAssignment(point cfg.Point) (OrdinaryAssignmentFact, bo
 	return r.assignments.ordinaryAt(point)
 }
 
-func (r *Result) Call(point cfg.Point) (CallFact, bool) {
-	if r == nil || r.cfg == nil {
-		return CallFact{}, false
-	}
-	return r.cfg.Calls.Get(point)
-}
-
 func (r *Result) SourceCall(point cfg.Point) (SourceCallFact, bool) {
 	if r == nil {
 		return SourceCallFact{}, false

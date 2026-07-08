@@ -3717,7 +3717,7 @@ end
 	}
 	arg := call.Args[0]
 	for _, point := range result.Graph().RPO() {
-		fact, ok := result.Call(point)
+		fact, ok := result.SourceCall(point)
 		if !ok || fact.Call != call {
 			continue
 		}
@@ -4246,16 +4246,13 @@ end
 	var decodePoint cfg.Point
 	var decodeSource factflow.ValueSource
 	for _, point := range result.Graph().RPO() {
-		fact, ok := result.Call(point)
+		fact, ok := result.SourceCall(point)
 		if !ok || len(fact.Args) != 1 {
 			continue
 		}
-		if fact.CalleePath.String() != "json.decode" {
-			continue
-		}
 		site, ok := result.CallSite(point)
-		if !ok {
-			t.Fatalf("call site missing at point %d", point)
+		if !ok || site.CalleePathRef().String() != "json.decode" {
+			continue
 		}
 		source, ok := site.ArgumentSourceAt(0)
 		if !ok {
@@ -4277,7 +4274,7 @@ end
 		t.Fatalf("decode argument type = %v/%v evidence=%s presence=%s, want string",
 			got, ok, product.Get(reg, value, evidence.Key), product.PresenceOf(value))
 	}
-	fact, ok := result.Call(decodePoint)
+	fact, ok := result.SourceCall(decodePoint)
 	if !ok || len(fact.Args) != 1 {
 		t.Fatalf("decode call fact = %#v/%v, want one argument", fact, ok)
 	}
@@ -4546,7 +4543,7 @@ end
 	}
 	checked := false
 	for _, point := range result.Graph().RPO() {
-		call, ok := result.Call(point)
+		call, ok := result.SourceCall(point)
 		callee, _ := call.Func.(*ast.IdentExpr)
 		if !ok || callee == nil || callee.Value != "flip" || len(call.Args) == 0 {
 			continue
@@ -4598,7 +4595,7 @@ end
 	}
 	checked := false
 	for _, point := range result.Graph().RPO() {
-		call, ok := result.Call(point)
+		call, ok := result.SourceCall(point)
 		callee, _ := call.Func.(*ast.IdentExpr)
 		if !ok || callee == nil || callee.Value != "qualify_id" || len(call.Args) < 2 {
 			continue
@@ -5370,7 +5367,7 @@ end
 	}
 
 	for _, candidate := range result.Graph().RPO() {
-		fact, ok := result.Call(candidate)
+		fact, ok := result.SourceCall(candidate)
 		if !ok || fact.Call != call {
 			continue
 		}

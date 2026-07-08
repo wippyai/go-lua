@@ -219,7 +219,7 @@ end
 	var messagePoint cfg.Point
 	var receiverSource factflow.ValueSource
 	for _, point := range result.Graph().RPO() {
-		fact, ok := result.Call(point)
+		fact, ok := result.SourceCall(point)
 		if !ok || fact.Method != "message" {
 			continue
 		}

@@ -380,7 +380,7 @@ invoke(p, mutate, "ok")
 		t.Fatal("missing root result graph")
 	}
 	for _, point := range root.Graph().RPO() {
-		call, ok := root.Call(point)
+		call, ok := root.SourceCall(point)
 		if !ok {
 			continue
 		}

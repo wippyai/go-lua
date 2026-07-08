@@ -100,8 +100,8 @@ func TestShadowCoverage(t *testing.T) {
 			if key, ok := sourceAssignmentKey(facts, pt); ok {
 				scorePoint(total, covered, gapSamples, "assign", keys, key)
 			}
-			if f, ok := built.Calls.Get(pt); ok {
-				scorePoint(total, covered, gapSamples, "call", keys, cfgbuildCallKey(f))
+			if f, ok := facts.CallSiteView(pt); ok {
+				scorePoint(total, covered, gapSamples, "call", keys, sourceCallKey(f))
 			}
 			if built.Graph.Node(pt).Kind == cfg.NodeReturn {
 				scorePoint(total, covered, gapSamples, "return", keys, "return")
@@ -247,15 +247,15 @@ func sourceAssignmentKey(facts factflow.Facts, point cfg.Point) (string, bool) {
 	return "", false
 }
 
-func cfgbuildCallKey(f cfgbuild.Call) string {
-	if f.HasCalleePath {
-		return string(f.CalleePath.Key())
+func sourceCallKey(f factflow.CallSiteView) string {
+	if callee := f.CalleePathRef(); !callee.IsEmpty() {
+		return string(callee.Key())
 	}
-	if f.Method != "" {
-		if f.HasReceiverPath {
-			return string(f.ReceiverPath.Key()) + ":" + f.Method
+	if method := f.MethodName(); method != "" {
+		if receiver, ok := f.ReceiverPath(); ok {
+			return string(receiver.Key()) + ":" + method
 		}
-		return "recv:" + f.Method
+		return "recv:" + method
 	}
 	return "callexpr"
 }

@@ -30,6 +30,7 @@ type SourceCallFact struct {
 	Call       *ast.FuncCallExpr
 	Func       ast.Expr
 	Receiver   ast.Expr
+	Method     string
 	Args       []ast.Expr
 	TypeArgs   []ast.TypeExpr
 }
@@ -129,6 +130,7 @@ func (r *Result) addSourceCallFacts(out map[cfg.Point]SourceCallFact, stmt ast.S
 			Call:       call,
 			Func:       call.Func,
 			Receiver:   call.Receiver,
+			Method:     call.Method,
 			Args:       copyAssignmentExprs(call.Args),
 			TypeArgs:   copyAssignmentTypes(call.TypeArgs),
 		}

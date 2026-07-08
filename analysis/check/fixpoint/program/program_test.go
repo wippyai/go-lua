@@ -1422,8 +1422,8 @@ return dispatch
 			continue
 		}
 		for _, point := range child.Graph().RPO() {
-			fact, ok := child.Call(point)
-			if ok && fact.HasCalleeSymbol && child.SymbolName(fact.CalleeSymbol) == "register_channel" {
+			site, ok := child.CallSite(point)
+			if ok && site.CalleeSymbol() != 0 && child.SymbolName(site.CalleeSymbol()) == "register_channel" {
 				dispatch = child
 				break
 			}
@@ -1668,8 +1668,8 @@ return dispatch
 			continue
 		}
 		for _, point := range child.Graph().RPO() {
-			fact, ok := child.Call(point)
-			if ok && fact.HasCalleeSymbol && child.SymbolName(fact.CalleeSymbol) == "register_channel" {
+			site, ok := child.CallSite(point)
+			if ok && site.CalleeSymbol() != 0 && child.SymbolName(site.CalleeSymbol()) == "register_channel" {
 				if outcome, ok := child.CallOutcomeAt(point); ok {
 					for _, proof := range outcome.NormalReturnFacts.DynamicValueKeys {
 						if proof.Container.Symbol == channelToIDPath.Symbol && proof.Table.Symbol == registeredPath.Symbol {
@@ -1678,7 +1678,7 @@ return dispatch
 					}
 				}
 			}
-			if ok && fact.HasCalleeSymbol && child.SymbolName(fact.CalleeSymbol) == "register_unpaired" {
+			if ok && site.CalleeSymbol() != 0 && child.SymbolName(site.CalleeSymbol()) == "register_unpaired" {
 				dispatch = child
 				break
 			}
@@ -2080,7 +2080,7 @@ return mapped
 		}
 		sawContext = true
 		for _, point := range child.Graph().RPO() {
-			fact, ok := child.Call(point)
+			fact, ok := child.SourceCall(point)
 			if !ok || fact.Call == nil || len(fact.Call.Args) != 1 {
 				continue
 			}
@@ -2208,7 +2208,7 @@ return mapped
 			continue
 		}
 		for _, point := range child.Graph().RPO() {
-			fact, ok := child.Call(point)
+			fact, ok := child.SourceCall(point)
 			if !ok || fact.Call == nil || len(fact.Call.Args) != 1 {
 				continue
 			}
@@ -3585,8 +3585,8 @@ end
 			continue
 		}
 		for _, point := range child.Graph().RPO() {
-			fact, ok := child.Call(point)
-			if !ok || fact.Method != "receive" {
+			site, ok := child.CallSite(point)
+			if !ok || site.MethodName() != "receive" {
 				continue
 			}
 			outcome, ok := child.CallOutcomeAt(point)
@@ -3991,13 +3991,14 @@ end
 		t.Fatal("_route_errors result missing")
 	}
 	for _, point := range routeResult.Graph().RPO() {
-		fact, ok := routeResult.Call(point)
-		if !ok || fact.Method != "data" || !fact.HasMethodPath {
+		site, ok := routeResult.CallSite(point)
+		methodPath, hasMethodPath := site.MethodPath()
+		if !ok || site.MethodName() != "data" || !hasMethodPath {
 			continue
 		}
-		value, ok := routeResult.PathValueBeforeBoundary(point, fact.MethodPath)
+		value, ok := routeResult.PathValueBeforeBoundary(point, methodPath)
 		if !ok {
-			t.Fatalf("PathValueBeforeBoundary(%s) returned false", fact.MethodPath.Key())
+			t.Fatalf("PathValueBeforeBoundary(%s) returned false", methodPath.Key())
 		}
 		memberType, ok := typevalue.TypeOf(reg, value)
 		if !ok {
@@ -4012,7 +4013,7 @@ end
 					return true
 				})
 			}
-			t.Fatalf("data value has no type before call: methodPath=%s value=%#v routeShapes=%v staticMembers=%v", fact.MethodPath.Key(), value, routeShapes, staticMembers)
+			t.Fatalf("data value has no type before call: methodPath=%s value=%#v routeShapes=%v staticMembers=%v", methodPath.Key(), value, routeShapes, staticMembers)
 		}
 		if _, ok := unwrap.Alias(memberType).(*typ.Function); !ok {
 			t.Fatalf("data member = %v, want function", memberType)
@@ -4110,17 +4111,18 @@ func TestDeadlockDataflowRouteErrorsBoundaryKeepsSelfDataSurface(t *testing.T) {
 		t.Fatal("_route_errors result missing")
 	}
 	for _, point := range routeResult.Graph().RPO() {
-		fact, ok := routeResult.Call(point)
-		if !ok || fact.Method != "data" || !fact.HasMethodPath {
+		site, ok := routeResult.CallSite(point)
+		methodPath, hasMethodPath := site.MethodPath()
+		if !ok || site.MethodName() != "data" || !hasMethodPath {
 			continue
 		}
-		value, ok := routeResult.PathValueAtBoundary(point, fact.MethodPath)
+		value, ok := routeResult.PathValueAtBoundary(point, methodPath)
 		if !ok {
-			t.Fatalf("PathValueAtBoundary(%s) returned false", fact.MethodPath.Key())
+			t.Fatalf("PathValueAtBoundary(%s) returned false", methodPath.Key())
 		}
 		memberType, ok := typevalue.TypeOf(reg, value)
 		if !ok {
-			before, beforeOK := routeResult.PathValueBeforeBoundary(point, fact.MethodPath)
+			before, beforeOK := routeResult.PathValueBeforeBoundary(point, methodPath)
 			beforeType, beforeTypeOK := typevalue.TypeOf(reg, before)
 			var staticMembers []string
 			if st, stOK := routeResult.StateAtBoundary(point); stOK {
@@ -4133,7 +4135,7 @@ func TestDeadlockDataflowRouteErrorsBoundaryKeepsSelfDataSurface(t *testing.T) {
 					return true
 				})
 			}
-			t.Fatalf("data value has no type: methodPath=%s boundary=%#v beforeOK=%v beforeTypeOK=%v beforeType=%v before=%#v dataSummaryInvalidations=%#v staticMembers=%v", fact.MethodPath.Key(), value, beforeOK, beforeTypeOK, beforeType, before, dataSummary.NormalReturnFacts.PathInvalidations, staticMembers)
+			t.Fatalf("data value has no type: methodPath=%s boundary=%#v beforeOK=%v beforeTypeOK=%v beforeType=%v before=%#v dataSummaryInvalidations=%#v staticMembers=%v", methodPath.Key(), value, beforeOK, beforeTypeOK, beforeType, before, dataSummary.NormalReturnFacts.PathInvalidations, staticMembers)
 		}
 		if _, ok := unwrap.Alias(memberType).(*typ.Function); !ok {
 			t.Fatalf("data member = %v, want function", memberType)
@@ -4194,13 +4196,14 @@ end
 		t.Fatal("run result missing")
 	}
 	for _, point := range runResult.Graph().RPO() {
-		fact, ok := runResult.Call(point)
-		if !ok || fact.Method != "dispatch" || !fact.HasMethodPath {
+		site, ok := runResult.CallSite(point)
+		methodPath, hasMethodPath := site.MethodPath()
+		if !ok || site.MethodName() != "dispatch" || !hasMethodPath {
 			continue
 		}
-		value, ok := runResult.PathValueAtBoundary(point, fact.MethodPath)
+		value, ok := runResult.PathValueAtBoundary(point, methodPath)
 		if !ok {
-			t.Fatalf("PathValueAtBoundary(%s) returned false", fact.MethodPath.Key())
+			t.Fatalf("PathValueAtBoundary(%s) returned false", methodPath.Key())
 		}
 		memberType, ok := typevalue.TypeOf(reg, value)
 		if !ok {
@@ -4294,12 +4297,12 @@ end
 	targetType := typetable.NewRecord().Field("id", typ.String).Build()
 	targetsType := typ.NewArray(targetType)
 	for _, point := range complete.Graph().RPO() {
-		fact, ok := complete.Call(point)
+		site, ok := complete.CallSite(point)
 		if !ok {
 			continue
 		}
-		calls = append(calls, fmt.Sprintf("%d:%s:%s", point, fact.Method, fact.CalleePath.String()))
-		if !strings.Contains(fact.CalleePath.String(), "table.create") {
+		calls = append(calls, fmt.Sprintf("%d:%s:%s", point, site.MethodName(), site.CalleePathRef().String()))
+		if !strings.Contains(site.CalleePathRef().String(), "table.create") {
 			continue
 		}
 		var argValueText string
@@ -4659,11 +4662,12 @@ func requireCallArgumentByCalleeName(t *testing.T, result *body.Result, name str
 		t.Fatalf("result graph missing")
 	}
 	for _, point := range graph.RPO() {
-		fact, ok := result.Call(point)
-		if !ok || !fact.HasCalleeSymbol || result.SymbolName(fact.CalleeSymbol) != name {
+		site, ok := result.CallSite(point)
+		if !ok || site.CalleeSymbol() == 0 || result.SymbolName(site.CalleeSymbol()) != name {
 			continue
 		}
-		if fact.Call == nil || index < 0 || index >= len(fact.Call.Args) {
+		fact, ok := result.SourceCall(point)
+		if !ok || fact.Call == nil || index < 0 || index >= len(fact.Call.Args) {
 			t.Fatalf("call %q arg index %d out of range", name, index)
 		}
 		return point, fact.Call.Args[index]
@@ -4812,11 +4816,12 @@ func findNestedReceiverCall(t *testing.T, root *body.Result, method string) (*bo
 			continue
 		}
 		for _, point := range child.Graph().RPO() {
-			fact, ok := child.Call(point)
-			if !ok || fact.Method != method || !fact.HasReceiverPath || fact.ReceiverPath.Symbol == 0 {
+			site, ok := child.CallSite(point)
+			receiverPath, hasReceiverPath := site.ReceiverPath()
+			if !ok || site.MethodName() != method || !hasReceiverPath || receiverPath.Symbol == 0 {
 				continue
 			}
-			return child, point, fact.ReceiverPath
+			return child, point, receiverPath
 		}
 	}
 	t.Fatalf("nested method call %q not found", method)
@@ -4857,8 +4862,8 @@ func requireCallByCalleeName(t *testing.T, result *body.Result, name string) cfg
 		t.Fatalf("result graph missing")
 	}
 	for _, point := range result.Graph().RPO() {
-		fact, ok := result.Call(point)
-		if !ok || !fact.HasCalleeSymbol || result.SymbolName(fact.CalleeSymbol) != name {
+		site, ok := result.CallSite(point)
+		if !ok || site.CalleeSymbol() == 0 || result.SymbolName(site.CalleeSymbol()) != name {
 			continue
 		}
 		return point
