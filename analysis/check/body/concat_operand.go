@@ -34,41 +34,12 @@ func (r *Result) ForEachConcatOperandOccurrence(visit func(ConcatOperandOccurren
 	}
 	visited := false
 	seen := make(map[concatSeenKey]struct{})
-	for _, point := range r.Graph().RPO() {
-		if !r.PointNormallyReachable(point) {
-			continue
+	r.ForEachReachableExpressionUse(func(use ExpressionUse) bool {
+		if use.Role == ExpressionUseOrdinaryAssignmentTarget {
+			return r.walkConcatAssignmentTargetReads(use.Point, use.Expr, concatOperandContext{}, seen, visit, &visited, 0)
 		}
-		emit := func(expr ast.Expr) bool {
-			return r.walkConcatOperands(point, expr, concatOperandContext{}, seen, visit, &visited, 0)
-		}
-		if fact, ok := r.LocalAssignment(point); ok {
-			if !emit(fact.Expr) {
-				return true
-			}
-		}
-		if fact, ok := r.OrdinaryAssignment(point); ok {
-			if !emit(fact.Value) || !r.walkConcatAssignmentTargetReads(point, fact.Target, concatOperandContext{}, seen, visit, &visited, 0) {
-				return true
-			}
-		}
-		if fact, ok := r.Call(point); ok {
-			if !emit(fact.Call) {
-				return true
-			}
-		}
-		if fact, ok := r.ReturnFact(point); ok {
-			for _, expr := range fact.Exprs {
-				if !emit(expr) {
-					return true
-				}
-			}
-		}
-		if fact, ok := r.BranchCondition(point); ok {
-			if !emit(fact.Condition) {
-				return true
-			}
-		}
-	}
+		return r.walkConcatOperands(use.Point, use.Expr, concatOperandContext{}, seen, visit, &visited, 0)
+	})
 	return visited
 }
 

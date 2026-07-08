@@ -28,43 +28,9 @@ func (r *Result) ForEachNonNilAssertionOccurrence(visit func(NonNilAssertionOccu
 	}
 	seen := make(map[nonNilAssertionKey]struct{})
 	visited := false
-	for _, point := range r.Graph().RPO() {
-		if !r.PointNormallyReachable(point) {
-			continue
-		}
-		emit := func(expr ast.Expr) bool {
-			return r.forEachNonNilAssertionInExpr(point, expr, seen, visit, &visited, 0)
-		}
-		if fact, ok := r.LocalAssignment(point); ok {
-			for _, expr := range fact.Exprs {
-				if !emit(expr) {
-					return true
-				}
-			}
-		}
-		if fact, ok := r.OrdinaryAssignment(point); ok {
-			if !emit(fact.Value) || !emit(fact.Target) {
-				return true
-			}
-		}
-		if fact, ok := r.Call(point); ok {
-			if !emit(fact.Call) {
-				return true
-			}
-		}
-		if fact, ok := r.ReturnFact(point); ok {
-			for _, expr := range fact.Exprs {
-				if !emit(expr) {
-					return true
-				}
-			}
-		}
-		if fact, ok := r.BranchCondition(point); ok {
-			if !emit(fact.Condition) {
-				return true
-			}
-		}
-	}
+	r.ForEachReachableExpressionUse(func(use ExpressionUse) bool {
+		return r.forEachNonNilAssertionInExpr(use.Point, use.Expr, seen, visit, &visited, 0)
+	})
 	return visited
 }
 

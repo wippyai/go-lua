@@ -24,11 +24,11 @@ func (r *Result) IndexedPathLookupsAt(point cfg.Point) []IndexedPathLookup {
 		return nil
 	}
 	var out []IndexedPathLookup
-	if fact, ok := r.LocalAssignment(point); ok && fact.Expr != nil {
-		out = append(out, r.indexedPathLookupsInExpr(point, fact.Expr, false)...)
-	}
-	if fact, ok := r.OrdinaryAssignment(point); ok && fact.Value != nil {
-		out = append(out, r.indexedPathLookupsInExpr(point, fact.Value, false)...)
+	for _, use := range r.expressionUsesAt(point) {
+		switch use.Role {
+		case ExpressionUseLocalAssignmentSource, ExpressionUseOrdinaryAssignmentSource:
+			out = append(out, r.indexedPathLookupsInExpr(point, use.Expr, false)...)
+		}
 	}
 	if call, ok := r.Call(point); ok && call.Call != nil {
 		out = append(out, r.indexedPathLookupsInExpr(point, call.Func, true)...)

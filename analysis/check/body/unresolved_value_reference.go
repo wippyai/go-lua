@@ -31,50 +31,15 @@ func (r *Result) ForEachUnresolvedValueReferenceOccurrence(visit func(Unresolved
 			return visit(ref)
 		})
 	}
-	emitExprs := func(point cfg.Point, exprs []ast.Expr) bool {
-		for _, expr := range exprs {
-			if !emit(point, expr) {
-				return false
-			}
-		}
-		return true
-	}
-	for _, point := range r.Graph().RPO() {
-		if !r.PointNormallyReachable(point) {
-			continue
-		}
-		if fact, ok := r.LocalAssignment(point); ok {
-			if !emit(point, fact.Expr) {
-				return true
-			}
-		}
-		if fact, ok := r.OrdinaryAssignment(point); ok {
-			if !r.walkUnresolvedValueAssignmentTarget(point, fact.Target, seen, func(ref UnresolvedValueReferenceOccurrence) bool {
+	r.ForEachReachableExpressionUse(func(use ExpressionUse) bool {
+		if use.Role == ExpressionUseOrdinaryAssignmentTarget {
+			return r.walkUnresolvedValueAssignmentTarget(use.Point, use.Expr, seen, func(ref UnresolvedValueReferenceOccurrence) bool {
 				visited = true
 				return visit(ref)
-			}) {
-				return true
-			}
-			if !emit(point, fact.Value) {
-				return true
-			}
+			})
 		}
-		if fact, ok := r.Call(point); ok {
-			if !emit(point, fact.Call) {
-				return true
-			}
-		}
-		if fact, ok := r.ReturnFact(point); ok {
-			if !emitExprs(point, fact.Exprs) {
-				return true
-			}
-		}
-		if fact, ok := r.BranchCondition(point); ok {
-			if !emit(point, fact.Condition) {
-				return true
-			}
-		}
-	}
+		return emit(use.Point, use.Expr)
+	})
 	return visited
 }
 

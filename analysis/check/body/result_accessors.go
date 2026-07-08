@@ -246,13 +246,6 @@ func (r *Result) LocalAssignment(point cfg.Point) (LocalAssignmentFact, bool) {
 	return r.semantics.LocalAssignment(point)
 }
 
-func (r *Result) LocalAssignmentView(point cfg.Point) (LocalAssignmentFactView, bool) {
-	if r == nil || r.semantics == nil {
-		return LocalAssignmentFactView{}, false
-	}
-	return r.semantics.LocalAssignmentView(point)
-}
-
 func (r *Result) LoweredLocalAssignment(point cfg.Point) (factflow.RootAssignment, bool) {
 	if r == nil {
 		return factflow.RootAssignment{}, false
@@ -304,13 +297,6 @@ func (r *Result) OrdinaryAssignment(point cfg.Point) (OrdinaryAssignmentFact, bo
 		return OrdinaryAssignmentFact{}, false
 	}
 	return r.semantics.OrdinaryAssignment(point)
-}
-
-func (r *Result) OrdinaryAssignmentView(point cfg.Point) (OrdinaryAssignmentFactView, bool) {
-	if r == nil || r.semantics == nil {
-		return OrdinaryAssignmentFactView{}, false
-	}
-	return r.semantics.OrdinaryAssignmentView(point)
 }
 
 func (r *Result) Call(point cfg.Point) (CallFact, bool) {

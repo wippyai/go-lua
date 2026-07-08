@@ -112,43 +112,19 @@ func (r *Result) forEachStaticMemberReadOccurrence(mode staticMemberReadScanMode
 	}
 	visited := false
 	seen := make(map[staticMemberReadSeenKey]struct{})
-	for _, point := range r.Graph().RPO() {
-		if !r.PointNormallyReachable(point) {
-			continue
+	r.ForEachReachableExpressionUse(func(use ExpressionUse) bool {
+		if use.Role == ExpressionUseOrdinaryAssignmentTarget {
+			return r.walkStaticMemberReadAssignmentTarget(use.Point, use.Expr, mode, staticMemberReadContext{}, seen, visit, &visited, 0)
 		}
-		emit := func(expr ast.Expr) bool {
-			return r.walkStaticMemberReads(point, expr, mode, staticMemberReadContext{}, seen, visit, &visited, 0, false)
-		}
-		if fact, ok := r.LocalAssignment(point); ok {
-			if !emit(fact.Expr) {
-				return true
+		return r.walkStaticMemberReads(use.Point, use.Expr, mode, staticMemberReadContext{}, seen, visit, &visited, 0, false)
+	})
+	if mode == staticMemberReadScanMissingMember {
+		for _, point := range r.Graph().RPO() {
+			if !r.PointNormallyReachable(point) {
+				continue
 			}
-		}
-		if fact, ok := r.OrdinaryAssignment(point); ok {
-			if !emit(fact.Value) || !r.walkStaticMemberReadAssignmentTarget(point, fact.Target, mode, staticMemberReadContext{}, seen, visit, &visited, 0) {
-				return true
-			}
-		}
-		if fact, ok := r.Call(point); ok {
-			if !emit(fact.Call) {
-				return true
-			}
-		}
-		if fact, ok := r.ReturnFact(point); ok {
-			for _, expr := range fact.Exprs {
-				if !emit(expr) {
-					return true
-				}
-			}
-		}
-		if fact, ok := r.BranchCondition(point); ok {
-			if !emit(fact.Condition) {
-				return true
-			}
-		}
-		if mode == staticMemberReadScanMissingMember {
 			if fact, ok := r.ExpressionEvaluation(point); ok {
-				if !emit(fact.Expr) {
+				if !r.walkStaticMemberReads(point, fact.Expr, mode, staticMemberReadContext{}, seen, visit, &visited, 0, false) {
 					return true
 				}
 			}
