@@ -179,22 +179,18 @@ func projectParamMemberCallObligations(reg *axis.Registry, result ResultReader, 
 		return nil
 	}
 	graph := result.Graph()
-	if graph == nil || !hasCallFactReader(result) {
+	if graph == nil || !hasCallSiteView(result) {
 		return nil
 	}
 	ctx := newParamObligationProjector(reg, result, params, graph, cache)
 	var out []summary.ParamMemberCallObligation
 	for _, point := range graph.RPO() {
 		ctx.point = point
-		fact, ok := callFactAt(result, point)
-		if !ok {
-			continue
-		}
 		site, ok := callSiteViewAt(result, point)
 		if !ok {
 			continue
 		}
-		out = append(out, ctx.memberCallObligations(fact, site)...)
+		out = append(out, ctx.memberCallObligations(site)...)
 	}
 	return out
 }
@@ -871,8 +867,8 @@ func (p paramObligationProjector) receiverType(receiver pathdom.Path) (typ.Type,
 	return paramObligationTypeFromValue(p.reg, value)
 }
 
-func (p paramObligationProjector) memberCallObligations(fact semantics.CallFact, site factflow.CallSiteView) []summary.ParamMemberCallObligation {
-	receiver, member, ok := memberCallReceiverForSite(fact, site)
+func (p paramObligationProjector) memberCallObligations(site factflow.CallSiteView) []summary.ParamMemberCallObligation {
+	receiver, member, ok := memberCallReceiverFromSite(site)
 	if !ok {
 		return nil
 	}
@@ -891,21 +887,21 @@ func (p paramObligationProjector) memberCallObligations(fact semantics.CallFact,
 		}
 	}
 	memberOffset := 0
-	if fact.Receiver != nil && fact.Method != "" {
+	if site.MethodName() != "" {
 		memberOffset = 1
 	}
-	params := p.callParamTypes(fact, site)
+	params := p.callParamTypesForSiteWithReceiver(site, memberOffset != 0)
 	var out []summary.ParamMemberCallObligation
-	for i, arg := range fact.Args {
-		argParam, ok := p.unconditionalParamIndex(arg)
+	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
+		argParam, ok := p.unconditionalSourceParamIndex(source)
 		if !ok {
-			continue
+			return true
 		}
 		memberParamIndex := i + memberOffset
 		if memberParamIndex < len(params) &&
-			p.expressionValueSatisfiesType(arg, params[memberParamIndex]) &&
+			p.sourceValueSatisfiesType(source, params[memberParamIndex]) &&
 			p.paramHasDeclaredType(argParam) {
-			continue
+			return true
 		}
 		out = append(out, summary.ParamMemberCallObligation{
 			ReceiverParam:    receiverParam,
@@ -916,7 +912,8 @@ func (p paramObligationProjector) memberCallObligations(fact semantics.CallFact,
 			SubjectLabel:     p.memberCallArgumentSubjectLabel(i, p.params[argParam]),
 			ProviderLabel:    p.memberCallProviderLabel(receiver, member),
 		})
-	}
+		return true
+	})
 	return out
 }
 

@@ -1,0 +1,79 @@
+package projectsummary
+
+import (
+	"testing"
+
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+)
+
+type memberCallSiteOnlyResult struct {
+	graph *cfg.CFG
+	point cfg.Point
+	site  factflow.CallSiteView
+	ks    *keyspace.KeySpace
+}
+
+func (r memberCallSiteOnlyResult) Registry() *axis.Registry { return standard.Registry() }
+func (r memberCallSiteOnlyResult) Graph() cfg.Graph         { return r.graph }
+func (r memberCallSiteOnlyResult) ExitState() (state.State, bool) {
+	return state.State{}, true
+}
+func (r memberCallSiteOnlyResult) ReturnPoints() []cfg.Point    { return nil }
+func (r memberCallSiteOnlyResult) KeySpace() *keyspace.KeySpace { return r.ks }
+func (r memberCallSiteOnlyResult) ParameterValueSlots() []key.Value {
+	return []key.Value{key.SymbolValue(symbol.ID(1)), key.SymbolValue(symbol.ID(2))}
+}
+func (r memberCallSiteOnlyResult) EntryState() (state.State, bool) { return state.State{}, true }
+func (r memberCallSiteOnlyResult) StateAt(cfg.Point) (state.State, bool) {
+	return state.State{}, true
+}
+func (r memberCallSiteOnlyResult) CallSiteView(point cfg.Point) (factflow.CallSiteView, bool) {
+	return r.site, point == r.point
+}
+func (r memberCallSiteOnlyResult) CallSiteViewSignatureType(factflow.CallSiteView) (*typ.Function, bool) {
+	return typ.Func().Param("model_id", typ.String).Build(), true
+}
+func (r memberCallSiteOnlyResult) ExpressionPathRef(factflow.ExprRef) (pathdom.Path, bool) {
+	return pathdom.Path{}, false
+}
+
+func TestParamMemberCallObligationsUseCallSiteSourcesWithoutSemanticCallFact(t *testing.T) {
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, true)
+	graph.AddEdge(call, graph.Exit(), true)
+
+	client := pathdom.NewPath(symbol.ID(1), "client")
+	modelID := pathdom.NewPath(symbol.ID(2), "model_id")
+	source, ok := factflow.NewPathValueSource(modelID.Key(), 0, 0, 0, factflow.ValueSourceShape{Final: true, Adjusted: true})
+	if !ok {
+		t.Fatal("NewPathValueSource failed")
+	}
+	result := memberCallSiteOnlyResult{
+		graph: graph,
+		point: call,
+		site: factflow.NewCallSite(factflow.CallSiteConfig{
+			CalleePath:         client.Field("invoke"),
+			CalleeMemberAccess: true,
+			ArgumentSources:    []factflow.ValueSource{source},
+		}).View(),
+		ks: keyspace.New(),
+	}
+
+	got := projectParamMemberCallObligations(standard.Registry(), result, nil)
+	if len(got) != 1 {
+		t.Fatalf("member call obligations = %#v, want one from call-site source", got)
+	}
+	if got[0].ReceiverParam != 0 || got[0].ArgParam != 1 || got[0].MemberParamIndex != 0 {
+		t.Fatalf("member call obligation = %#v, want receiver param 0, arg param 1, member param 0", got[0])
+	}
+}
