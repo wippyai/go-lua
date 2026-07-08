@@ -10,10 +10,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
-	"github.com/wippyai/go-lua/analysis/lua/branchcond"
-	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 func typeRefPartsFromWIRPath(p path.Path) ([]string, bool) {
@@ -34,22 +31,6 @@ func typeRefPartsFromWIRPath(p path.Path) ([]string, bool) {
 		}
 	}
 	return parts, true
-}
-
-func (l *lowerer) typeIsCallExpr(call *ast.FuncCallExpr) (typ.Type, path.Path, bool) {
-	call, receiver, ok := branchcond.TypeIsCallReceiver(call)
-	if !ok {
-		return nil, path.Path{}, false
-	}
-	t, ok := l.typeValueExpr(receiver)
-	if !ok {
-		return nil, path.Path{}, false
-	}
-	argPath, ok := pathexpr.Resolve(call.Args[0], l.bindings)
-	if !ok || argPath.IsEmpty() {
-		return nil, path.Path{}, false
-	}
-	return t, argPath, true
 }
 
 func (l *lowerer) addTypeIsBranchRefinements(input *factflow.FactsInput, graph cfg.Graph) {
@@ -228,21 +209,6 @@ func branchRefinementOnEdge(target path.Path, value factflow.ValueRefinement, co
 		return factflow.NewBranchRefinement(target, value, true, factflow.ValueRefinement{}, false)
 	}
 	return factflow.NewBranchRefinement(target, factflow.ValueRefinement{}, false, value, true)
-}
-
-func (l *lowerer) typeIsExpressionConditionRefinement(expr ast.Expr) (factflow.PostconditionRefinement, bool, bool) {
-	call, negated, ok := branchcond.PredicateCall(expr)
-	if !ok {
-		return factflow.PostconditionRefinement{}, false, false
-	}
-	t, argPath, ok := l.typeIsCallExpr(call)
-	if !ok {
-		return factflow.PostconditionRefinement{}, false, false
-	}
-	return factflow.NewPostconditionRefinement(
-		argPath,
-		factflow.NewValueConstraint(l.untrustedTypeWitnessValue(t)),
-	), !negated, true
 }
 
 func (l *lowerer) typeIsCallResultValuesFromWIR(point cfg.Point) []factflow.CallResultValue {
