@@ -1,0 +1,42 @@
+{
+  "description": "Advice should report loop-invariant member reads only when the read path is stable and the receiver is non-nil.",
+  "check": {
+    "diagnostic_rules": [
+      {
+        "code": "advice.invariant_loop_read",
+        "enabled": true,
+        "severity": "hint"
+      }
+    ],
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 7,
+        "column": 17,
+        "severity": "hint",
+        "code": "advice.invariant_loop_read",
+        "message_contains": [
+          "config.limit is loop-invariant"
+        ],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "config.limit is not written by the loop body",
+          "config is non-nil"
+        ],
+        "render_contains": [
+          "hint[advice.invariant_loop_read]",
+          "config.limit is loop-invariant"
+        ],
+        "help_contains": [
+          "Read `config.limit` once before the loop"
+        ],
+        "label_contains": [
+          "loop read"
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

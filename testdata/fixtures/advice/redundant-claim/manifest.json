@@ -1,0 +1,67 @@
+{
+  "description": "Advice should report redundant runtime claims only when the operand type is already proven.",
+  "check": {
+    "diagnostic_rules": [
+      {
+        "code": "advice.redundant_claim",
+        "enabled": true,
+        "severity": "hint"
+      }
+    ],
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 2,
+        "column": 19,
+        "severity": "hint",
+        "code": "advice.redundant_claim",
+        "message_contains": [
+          "type claim is redundant"
+        ],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "typed is proven to be string",
+          "claim checks string"
+        ],
+        "render_contains": [
+          "hint[advice.redundant_claim]",
+          "type claim is redundant"
+        ],
+        "help_contains": [
+          "Remove the runtime type claim"
+        ],
+        "label_contains": [
+          "claim site"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 3,
+        "column": 19,
+        "severity": "hint",
+        "code": "advice.redundant_claim",
+        "message_contains": [
+          "type cast call is redundant"
+        ],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "typed is proven to be string",
+          "claim checks string"
+        ],
+        "render_contains": [
+          "hint[advice.redundant_claim]",
+          "type cast call is redundant"
+        ],
+        "help_contains": [
+          "Remove the runtime type claim"
+        ],
+        "label_contains": [
+          "claim site"
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

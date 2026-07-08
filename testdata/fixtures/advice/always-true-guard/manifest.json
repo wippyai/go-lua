@@ -1,0 +1,41 @@
+{
+  "description": "Advice should report singleton-boolean branch guards and skip ordinary boolean parameters.",
+  "check": {
+    "diagnostic_rules": [
+      {
+        "code": "advice.always_true_guard",
+        "enabled": true,
+        "severity": "hint"
+      }
+    ],
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 2,
+        "column": 4,
+        "severity": "hint",
+        "code": "advice.always_true_guard",
+        "message_contains": [
+          "condition is proven always true"
+        ],
+        "min_evidence": 1,
+        "evidence_contains": [
+          "condition is proven to be true"
+        ],
+        "render_contains": [
+          "hint[advice.always_true_guard]",
+          "condition is proven always true"
+        ],
+        "help_contains": [
+          "Remove the guard"
+        ],
+        "label_contains": [
+          "constant guard"
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}
