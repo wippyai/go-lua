@@ -4,12 +4,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 )
 
 func projectNormalReturnParamConditions(reg *axis.Registry, result ResultReader) []summary.ParamCondition {
-	branchReader, ok := result.(branchConditionCheckReader)
+	evidenceReader, ok := result.(branchPathEvidenceReader)
 	if !ok {
 		return nil
 	}
@@ -27,25 +27,23 @@ func projectNormalReturnParamConditions(reg *axis.Registry, result ResultReader)
 	}
 	var out []summary.ParamCondition
 	for _, point := range graph.RPO() {
-		check, ok := branchReader.BranchConditionCheck(point)
-		if !ok {
-			continue
-		}
 		normalCond, ok := normalReturnBranchConditionWithReachability(graph, reachability, point)
 		if !ok {
 			continue
 		}
-		paramIndex, condition, ok := normalReturnParamCondition(check, normalCond, params)
-		if !ok {
-			continue
-		}
-		if out == nil {
-			out = make([]summary.ParamCondition, len(params))
-			for i := range out {
-				out[i] = summary.ParamConditionTop
+		for _, proof := range evidenceReader.BranchPathEvidence(point) {
+			paramIndex, condition, ok := normalReturnParamCondition(proof, normalCond, params)
+			if !ok {
+				continue
 			}
+			if out == nil {
+				out = make([]summary.ParamCondition, len(params))
+				for i := range out {
+					out[i] = summary.ParamConditionTop
+				}
+			}
+			out[paramIndex] = meetParamCondition(out[paramIndex], condition)
 		}
-		out[paramIndex] = meetParamCondition(out[paramIndex], condition)
 	}
 	return out
 }
@@ -81,28 +79,24 @@ func normalReturnBranchConditionWithReachability(
 }
 
 func normalReturnParamCondition(
-	check branchcond.Check,
+	proof factflow.BranchPathEvidence,
 	normalCond bool,
 	params []path.Path,
 ) (int, summary.ParamCondition, bool) {
-	paramIndex, ok := normalReturnParamIndex(check.Path, params)
+	if proof.Kind() != factflow.BranchPathEvidenceTruthy {
+		return 0, summary.ParamConditionBottom, false
+	}
+	paramIndex, ok := normalReturnParamIndex(proof.PathRef(), params)
 	if !ok {
 		return 0, summary.ParamConditionBottom, false
 	}
-	switch check.Kind {
-	case branchcond.CheckTruthy:
-		if normalCond {
-			return paramIndex, summary.ParamConditionTruthy, true
-		}
-		return paramIndex, summary.ParamConditionFalsy, true
-	case branchcond.CheckFalsy:
-		if normalCond {
-			return paramIndex, summary.ParamConditionFalsy, true
-		}
+	if proof.ActiveOnEdge(normalCond) {
 		return paramIndex, summary.ParamConditionTruthy, true
-	default:
-		return 0, summary.ParamConditionBottom, false
 	}
+	if proof.OppositeEdgeImpliesFalsy() && proof.ActiveOnEdge(!normalCond) {
+		return paramIndex, summary.ParamConditionFalsy, true
+	}
+	return 0, summary.ParamConditionBottom, false
 }
 
 func normalReturnParamIndex(target path.Path, params []path.Path) (int, bool) {

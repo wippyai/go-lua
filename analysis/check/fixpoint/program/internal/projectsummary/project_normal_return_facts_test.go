@@ -3,6 +3,7 @@ package projectsummary
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
@@ -338,6 +339,84 @@ func TestFromResultDoesNotProjectExitNumFloorForReassignedParameter(t *testing.T
 
 	if len(got.NumFloors) != 0 {
 		t.Fatalf("NumFloors = %#v, want no caller floor evidence for reassigned callee parameter", got.NumFloors)
+	}
+}
+
+func TestProjectNormalReturnParamConditionsUseBranchPathEvidence(t *testing.T) {
+	reg := standard.Registry()
+	param := symbol.ID(924)
+	graph, branch, ret, _ := normalReturnBranchGraph(t, true)
+	paramPath := pathdom.NewPath(param, "")
+	stub := normalReturnFactProjectResultStub{
+		reg:   reg,
+		graph: graph,
+		slots: []key.Value{key.SymbolValue(param)},
+		statesAt: map[cfg.Point]state.State{
+			ret:          presentState(reg, param),
+			graph.Exit(): presentState(reg, param),
+		},
+		branchEvidence: map[cfg.Point][]factflow.BranchPathEvidence{
+			branch: {factflow.NewBranchPathTruthyEvidenceWithOppositeOnEdge(paramPath, true)},
+		},
+	}
+
+	got := projectNormalReturnParamConditions(reg, stub)
+	if len(got) != 1 || got[0] != summary.ParamConditionTruthy {
+		t.Fatalf("projectNormalReturnParamConditions = %#v, want parameter truthy from branch evidence", got)
+	}
+}
+
+func TestProjectNormalReturnParamConditionsRequireDirectFalsyProof(t *testing.T) {
+	reg := standard.Registry()
+	param := symbol.ID(925)
+	graph, branch, ret, _ := normalReturnBranchGraph(t, false)
+	paramPath := pathdom.NewPath(param, "")
+	stub := normalReturnFactProjectResultStub{
+		reg:   reg,
+		graph: graph,
+		slots: []key.Value{key.SymbolValue(param)},
+		statesAt: map[cfg.Point]state.State{
+			ret:          presentState(reg, param),
+			graph.Exit(): presentState(reg, param),
+		},
+		branchEvidence: map[cfg.Point][]factflow.BranchPathEvidence{
+			branch: {factflow.NewBranchPathTruthyEvidenceOnEdge(paramPath, true)},
+		},
+	}
+
+	if got := projectNormalReturnParamConditions(reg, stub); len(got) != 0 {
+		t.Fatalf("projectNormalReturnParamConditions = %#v, want no falsy condition from implied truthy evidence", got)
+	}
+}
+
+func TestProjectNormalReturnParamEqualitiesUseBranchPathRelations(t *testing.T) {
+	reg := standard.Registry()
+	left := symbol.ID(926)
+	right := symbol.ID(927)
+	graph, branch, ret, _ := normalReturnBranchGraph(t, true)
+	stub := normalReturnFactProjectResultStub{
+		reg:   reg,
+		graph: graph,
+		slots: []key.Value{key.SymbolValue(left), key.SymbolValue(right)},
+		statesAt: map[cfg.Point]state.State{
+			ret:          presentState(reg, left),
+			graph.Exit(): presentState(reg, left),
+		},
+		branchRelations: map[cfg.Point][]factflow.BranchPathRelation{
+			branch: {
+				factflow.NewBranchPathEquality(
+					pathdom.NewPath(left, ""),
+					pathdom.NewPath(right, ""),
+					true,
+					false,
+				),
+			},
+		},
+	}
+
+	got := projectNormalReturnParamEqualities(reg, stub)
+	if len(got) != 1 || got[0].Left != 0 || got[0].Right != 1 {
+		t.Fatalf("projectNormalReturnParamEqualities = %#v, want parameter equality from branch relation", got)
 	}
 }
 
@@ -1258,20 +1337,22 @@ func TestFromResultProjectsGuardedCallOutcomePersistentPathWritesWhenBypassEdgeU
 }
 
 type normalReturnFactProjectResultStub struct {
-	reg           *axis.Registry
-	graph         cfg.Graph
-	exit          state.State
-	slots         []key.Value
-	keys          *keyspace.KeySpace
-	reassigned    map[key.Value]struct{}
-	returnPoints  []cfg.Point
-	returnSources map[cfg.Point][]factflow.ValueSource
-	exprPaths     map[factflow.ExprRef]pathdom.Path
-	exprOps       map[factflow.ExprRef]factflow.ExpressionOperation
-	entryState    state.State
-	hasEntryState bool
-	statesAt      map[cfg.Point]state.State
-	edgeReach     map[[2]cfg.Point]bool
+	reg             *axis.Registry
+	graph           cfg.Graph
+	exit            state.State
+	slots           []key.Value
+	keys            *keyspace.KeySpace
+	reassigned      map[key.Value]struct{}
+	returnPoints    []cfg.Point
+	returnSources   map[cfg.Point][]factflow.ValueSource
+	exprPaths       map[factflow.ExprRef]pathdom.Path
+	exprOps         map[factflow.ExprRef]factflow.ExpressionOperation
+	entryState      state.State
+	hasEntryState   bool
+	statesAt        map[cfg.Point]state.State
+	edgeReach       map[[2]cfg.Point]bool
+	branchEvidence  map[cfg.Point][]factflow.BranchPathEvidence
+	branchRelations map[cfg.Point][]factflow.BranchPathRelation
 }
 
 type normalReturnFactProjectAssignmentStub struct {
@@ -1406,6 +1487,32 @@ func (r normalReturnFactProjectResultStub) StateAt(point cfg.Point) (state.State
 	}
 	stateAt, ok := r.statesAt[point]
 	return stateAt, ok
+}
+
+func (r normalReturnFactProjectResultStub) BranchPathEvidence(point cfg.Point) []factflow.BranchPathEvidence {
+	if len(r.branchEvidence) == 0 {
+		return nil
+	}
+	out := r.branchEvidence[point]
+	if len(out) == 0 {
+		return nil
+	}
+	copyOut := make([]factflow.BranchPathEvidence, len(out))
+	copy(copyOut, out)
+	return copyOut
+}
+
+func (r normalReturnFactProjectResultStub) BranchPathRelations(point cfg.Point) []factflow.BranchPathRelation {
+	if len(r.branchRelations) == 0 {
+		return nil
+	}
+	out := r.branchRelations[point]
+	if len(out) == 0 {
+		return nil
+	}
+	copyOut := make([]factflow.BranchPathRelation, len(out))
+	copy(copyOut, out)
+	return copyOut
 }
 
 func (r normalReturnFactProjectResultStub) EdgeCanCompleteNormally(from, to cfg.Point) bool {
@@ -1724,6 +1831,27 @@ func assertRelConstraint(
 
 func presentProduct(reg *axis.Registry) product.Value {
 	return product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+}
+
+func presentState(reg *axis.Registry, sym symbol.ID) state.State {
+	return state.State{}.WriteValue(reg, key.SymbolValue(sym), presentProduct(reg))
+}
+
+func normalReturnBranchGraph(t *testing.T, normalTrue bool) (cfg.Graph, cfg.Point, cfg.Point, cfg.Point) {
+	t.Helper()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	trueReturn := graph.AddNode(cfg.NodeReturn)
+	falseReturn := graph.AddNode(cfg.NodeReturn)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, trueReturn, true)
+	graph.AddEdge(branch, falseReturn, false)
+	graph.AddEdge(trueReturn, graph.Exit(), false)
+	graph.AddEdge(falseReturn, graph.Exit(), false)
+	if normalTrue {
+		return graph, branch, trueReturn, falseReturn
+	}
+	return graph, branch, falseReturn, trueReturn
 }
 
 func absentProduct(reg *axis.Registry) product.Value {

@@ -49,8 +49,12 @@ type stateAtReader interface {
 	StateAt(cfg.Point) (state.State, bool)
 }
 
-type branchConditionCheckReader interface {
-	BranchConditionCheck(cfg.Point) (branchcond.Check, bool)
+type branchPathEvidenceReader interface {
+	BranchPathEvidence(cfg.Point) []factflow.BranchPathEvidence
+}
+
+type branchPathRelationReader interface {
+	BranchPathRelations(cfg.Point) []factflow.BranchPathRelation
 }
 
 type branchSufficientCheckReader interface {

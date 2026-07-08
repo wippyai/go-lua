@@ -4,11 +4,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/lua/branchcond"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 )
 
 func projectNormalReturnParamEqualities(reg *axis.Registry, result ResultReader) []summary.ParamEquality {
-	branchReader, ok := result.(branchConditionCheckReader)
+	relationReader, ok := result.(branchPathRelationReader)
 	if !ok {
 		return nil
 	}
@@ -26,45 +26,34 @@ func projectNormalReturnParamEqualities(reg *axis.Registry, result ResultReader)
 	}
 	var out []summary.ParamEquality
 	for _, point := range graph.RPO() {
-		check, ok := branchReader.BranchConditionCheck(point)
-		if !ok {
-			continue
-		}
 		normalCond, ok := normalReturnBranchConditionWithReachability(graph, reachability, point)
 		if !ok {
 			continue
 		}
-		equality, ok := normalReturnParamEquality(check, normalCond, params)
-		if !ok {
-			continue
+		for _, relation := range relationReader.BranchPathRelations(point) {
+			equality, ok := normalReturnParamEquality(relation, normalCond, params)
+			if !ok {
+				continue
+			}
+			out = append(out, equality)
 		}
-		out = append(out, equality)
 	}
 	return out
 }
 
 func normalReturnParamEquality(
-	check branchcond.Check,
+	relation factflow.BranchPathRelation,
 	normalCond bool,
 	params []path.Path,
 ) (summary.ParamEquality, bool) {
-	switch check.Kind {
-	case branchcond.CheckPathEqual:
-		if !normalCond {
-			return summary.ParamEquality{}, false
-		}
-	case branchcond.CheckPathNot:
-		if normalCond {
-			return summary.ParamEquality{}, false
-		}
-	default:
+	if relation.Kind() != factflow.BranchPathRelationEqual || !relation.ActiveOnEdge(normalCond) {
 		return summary.ParamEquality{}, false
 	}
-	left, ok := normalReturnParamIndex(check.Path, params)
+	left, ok := normalReturnParamIndex(relation.LeftPath(), params)
 	if !ok {
 		return summary.ParamEquality{}, false
 	}
-	right, ok := normalReturnParamIndex(check.OtherPath, params)
+	right, ok := normalReturnParamIndex(relation.RightPath(), params)
 	if !ok {
 		return summary.ParamEquality{}, false
 	}

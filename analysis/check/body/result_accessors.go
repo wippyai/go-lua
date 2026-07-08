@@ -398,6 +398,20 @@ func (r *Result) CovariantExposures(point cfg.Point) []factflow.CovariantExposur
 	return r.facts.CovariantExposures(point)
 }
 
+func (r *Result) BranchPathEvidence(point cfg.Point) []factflow.BranchPathEvidence {
+	if r == nil {
+		return nil
+	}
+	return r.facts.BranchPathEvidence(point)
+}
+
+func (r *Result) BranchPathRelations(point cfg.Point) []factflow.BranchPathRelation {
+	if r == nil {
+		return nil
+	}
+	return r.facts.BranchPathRelations(point)
+}
+
 func (r *Result) NoNormalReturn(point cfg.Point) bool {
 	if r == nil {
 		return false
