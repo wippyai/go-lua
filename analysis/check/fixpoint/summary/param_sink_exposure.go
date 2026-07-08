@@ -37,19 +37,3 @@ func newParamSinkExposureMap(reg *axis.Registry) paramSinkExposureFactMap {
 		Collide: func(a, b product.Value) product.Value { return product.Join(reg, a, b) },
 	}
 }
-
-func normalizeParamSinkExposures(reg *axis.Registry, in []ParamSinkExposure) []ParamSinkExposure {
-	return paramSinkExposureMap(reg).Normalize(in)
-}
-
-func paramSinkExposuresEqual(reg *axis.Registry, a, b []ParamSinkExposure) bool {
-	return paramSinkExposureMap(reg).Equal(a, b)
-}
-
-func paramSinkExposuresLessOrEq(reg *axis.Registry, a, b []ParamSinkExposure) bool {
-	return paramSinkExposureMap(reg).LessOrEq(a, b)
-}
-
-func joinParamSinkExposures(reg *axis.Registry, a, b []ParamSinkExposure) []ParamSinkExposure {
-	return paramSinkExposureMap(reg).Join(a, b)
-}

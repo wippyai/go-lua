@@ -156,19 +156,19 @@ var summaryFactDescriptors = func() callboundary.BoundaryFactTable[SummarySlotOp
 			empty:       func(s Summary) bool { return len(s.ParamSinkExposures) == 0 },
 			assignClone: func(src Summary, dst *Summary) { dst.ParamSinkExposures = cloneSlice(src.ParamSinkExposures) },
 			normalizeOwned: func(reg *axis.Registry, s *Summary) {
-				s.ParamSinkExposures = normalizeParamSinkExposures(reg, s.ParamSinkExposures)
+				s.ParamSinkExposures = paramSinkExposureMap(reg).Normalize(s.ParamSinkExposures)
 			},
 			equal: func(reg *axis.Registry, a, b Summary, _ bool) bool {
-				return paramSinkExposuresEqual(reg, a.ParamSinkExposures, b.ParamSinkExposures)
+				return paramSinkExposureMap(reg).Equal(a.ParamSinkExposures, b.ParamSinkExposures)
 			},
 			lessOrEq: func(reg *axis.Registry, a, b Summary) bool {
-				return paramSinkExposuresLessOrEq(reg, a.ParamSinkExposures, b.ParamSinkExposures)
+				return paramSinkExposureMap(reg).LessOrEq(a.ParamSinkExposures, b.ParamSinkExposures)
 			},
 			assignJoin: func(reg *axis.Registry, a, b Summary, out *Summary) {
-				out.ParamSinkExposures = joinParamSinkExposures(reg, a.ParamSinkExposures, b.ParamSinkExposures)
+				out.ParamSinkExposures = paramSinkExposureMap(reg).Join(a.ParamSinkExposures, b.ParamSinkExposures)
 			},
 			assignWiden: func(reg *axis.Registry, prev, next Summary, out *Summary) {
-				out.ParamSinkExposures = joinParamSinkExposures(reg, prev.ParamSinkExposures, next.ParamSinkExposures)
+				out.ParamSinkExposures = paramSinkExposureMap(reg).Join(prev.ParamSinkExposures, next.ParamSinkExposures)
 			},
 		}),
 		summarySlotDescriptor("CapturedPathObligations", nil, SummarySlotOps{
