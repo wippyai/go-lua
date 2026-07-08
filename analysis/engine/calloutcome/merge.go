@@ -159,13 +159,14 @@ func resultSlotCarriesUntrustedTopEvidence(reg *axis.Registry, value product.Val
 func withSupplementalFacts(reg *axis.Registry, out, second callpayload.CallOutcome) callpayload.CallOutcome {
 	authoritative := out.PostReturnAuthority
 	for _, lane := range supplementalFactLanes {
-		if authoritative && lane.role.PostReturn {
-			if lane.mergeAuthoritative != nil {
-				lane.mergeAuthoritative(reg, &out, second)
+		handler := lane.Value
+		if authoritative && lane.Role.PostReturn {
+			if handler.mergeAuthoritative != nil {
+				handler.mergeAuthoritative(reg, &out, second)
 			}
 			continue
 		}
-		lane.merge(reg, &out, second)
+		handler.merge(reg, &out, second)
 	}
 	if !authoritative {
 		out.PostReturnAuthority = second.PostReturnAuthority
@@ -173,18 +174,12 @@ func withSupplementalFacts(reg *axis.Registry, out, second callpayload.CallOutco
 	return out
 }
 
-type supplementalFactLane struct {
-	role               callpayload.CallOutcomeFieldRole
-	merge              func(*axis.Registry, *callpayload.CallOutcome, callpayload.CallOutcome)
-	mergeAuthoritative func(*axis.Registry, *callpayload.CallOutcome, callpayload.CallOutcome)
-}
-
 type supplementalFactLaneHandler struct {
 	merge              func(*axis.Registry, *callpayload.CallOutcome, callpayload.CallOutcome)
 	mergeAuthoritative func(*axis.Registry, *callpayload.CallOutcome, callpayload.CallOutcome)
 }
 
-var supplementalFactLanes = buildSupplementalFactLanes(map[string]supplementalFactLaneHandler{
+var supplementalFactLanes = callpayload.BindCallOutcomeSupplementalFactRoles("supplemental fact", map[string]supplementalFactLaneHandler{
 	"NormalReturnFacts": {
 		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
 			out.NormalReturnFacts = out.NormalReturnFacts.Append(second.NormalReturnFacts)
@@ -263,23 +258,7 @@ var supplementalFactLanes = buildSupplementalFactLanes(map[string]supplementalFa
 			out.ParamExposures = append(out.ParamExposures, second.ParamExposures...)
 		},
 	},
-})
-
-func buildSupplementalFactLanes(handlers map[string]supplementalFactLaneHandler) []supplementalFactLane {
-	bindings := callpayload.BindCallOutcomeSupplementalFactRoles("supplemental fact", handlers, func(handler supplementalFactLaneHandler) bool {
-		return handler.merge != nil
-	})
-	out := make([]supplementalFactLane, 0, len(bindings))
-	for _, binding := range bindings {
-		handler := binding.Value
-		out = append(out, supplementalFactLane{
-			role:               binding.Role,
-			merge:              handler.merge,
-			mergeAuthoritative: handler.mergeAuthoritative,
-		})
-	}
-	return out
-}
+}, func(handler supplementalFactLaneHandler) bool { return handler.merge != nil })
 
 func withAuthoritativeResultHeapTableObjects(
 	reg *axis.Registry,

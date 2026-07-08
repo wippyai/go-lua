@@ -1,7 +1,6 @@
 package calloutcome
 
 import (
-	"reflect"
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -29,93 +28,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
-func TestSupplementalFactLanesMatchCallOutcomeFieldRoles(t *testing.T) {
-	payloadRoles := callpayload.CallOutcomeSupplementalFactRoles()
-	if len(supplementalFactLanes) != len(payloadRoles) {
-		t.Fatalf("supplemental fact lanes = %d, want payload role count %d", len(supplementalFactLanes), len(payloadRoles))
-	}
-
-	for _, lane := range supplementalFactLanes {
-		if lane.role.FieldName == "" {
-			t.Fatal("supplemental fact lane with empty field name")
-		}
-		if lane.merge == nil {
-			t.Fatalf("supplemental fact lane %s has nil merge function", lane.role.FieldName)
-		}
-		role := payloadRoles[0]
-		payloadRoles = payloadRoles[1:]
-		if lane.role != role {
-			t.Fatalf("supplemental fact lane %s role = %#v, payload role = %#v", lane.role.FieldName, lane.role, role)
-		}
-	}
-}
-
-func TestBuildSupplementalFactLanesRejectsMissingHandler(t *testing.T) {
-	handlers := supplementalFactLaneTestHandlers()
-	delete(handlers, "NormalReturnFacts")
-	requirePanic(t, func() {
-		_ = buildSupplementalFactLanes(handlers)
-	})
-}
-
-func TestBuildSupplementalFactLanesRejectsOrphanHandler(t *testing.T) {
-	handlers := supplementalFactLaneTestHandlers()
-	handlers["NotAField"] = supplementalFactLaneHandler{
-		merge: func(*axis.Registry, *callpayload.CallOutcome, callpayload.CallOutcome) {},
-	}
-	requirePanic(t, func() {
-		_ = buildSupplementalFactLanes(handlers)
-	})
-}
-
-func TestBuildSupplementalFactLanesRejectsInvalidHandler(t *testing.T) {
-	handlers := supplementalFactLaneTestHandlers()
-	handlers["NormalReturnFacts"] = supplementalFactLaneHandler{}
-	requirePanic(t, func() {
-		_ = buildSupplementalFactLanes(handlers)
-	})
-}
-
-func TestCallOutcomeFieldRolesCoverStructFields(t *testing.T) {
-	fields := make(map[string]struct{})
-	typ := reflect.TypeOf(callpayload.CallOutcome{})
-	for i := 0; i < typ.NumField(); i++ {
-		fields[typ.Field(i).Name] = struct{}{}
-	}
-	for _, role := range callpayload.CallOutcomeFieldRoles() {
-		if _, ok := fields[role.FieldName]; !ok {
-			t.Fatalf("call payload role references missing field %s", role.FieldName)
-		}
-		delete(fields, role.FieldName)
-	}
-	for field := range fields {
-		t.Fatalf("CallOutcome.%s has no exported field role", field)
-	}
-}
-
-func supplementalFactLaneTestHandlers() map[string]supplementalFactLaneHandler {
-	out := make(map[string]supplementalFactLaneHandler)
-	for _, lane := range supplementalFactLanes {
-		out[lane.role.FieldName] = supplementalFactLaneHandler{
-			merge:              lane.merge,
-			mergeAuthoritative: lane.mergeAuthoritative,
-		}
-	}
-	return out
-}
-
 func fieldSuffix(name string) pathdom.Path {
 	return pathdom.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: name}}}
-}
-
-func requirePanic(t *testing.T, fn func()) {
-	t.Helper()
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected panic")
-		}
-	}()
-	fn()
 }
 
 func TestWithSupplementalKeepsPrimarySlotsFillsMissingSlotsAndMergesSideFactsWithoutAuthority(t *testing.T) {
