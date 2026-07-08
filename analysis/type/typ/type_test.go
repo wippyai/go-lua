@@ -50,6 +50,7 @@ func TestBuiltinPrimitiveVocabulary(t *testing.T) {
 		{name: "number", want: Number},
 		{name: "integer", want: Integer},
 		{name: "string", want: String},
+		{name: "function", want: Func().Build()},
 		{name: "any", want: Any},
 		{name: "unknown", want: Unknown},
 		{name: "never", want: Never},
@@ -65,7 +66,7 @@ func TestBuiltinPrimitiveVocabulary(t *testing.T) {
 			if !ok {
 				t.Fatalf("BuiltinPrimitiveType(%q) returned ok=false", tc.name)
 			}
-			if got != tc.want {
+			if !TypeEquals(got, tc.want) {
 				t.Fatalf("BuiltinPrimitiveType(%q) = %#v, want %#v", tc.name, got, tc.want)
 			}
 		})

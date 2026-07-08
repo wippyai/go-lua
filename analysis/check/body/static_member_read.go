@@ -368,7 +368,7 @@ func staticMemberReadRuntimeTypeMayMatch(t typ.Type, name string) bool {
 	if name == "table" {
 		return staticMemberReadRuntimeTableMayMatch(t)
 	}
-	runtime, ok := runtimeTypeName(name)
+	runtime, ok := typ.BuiltinPrimitiveType(name)
 	return ok && subtype.IsSubtype(t, runtime)
 }
 

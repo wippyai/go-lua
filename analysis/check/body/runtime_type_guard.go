@@ -11,27 +11,10 @@ import (
 )
 
 func RuntimeTypeGuardProves(name string, want typ.Type) bool {
-	if got, ok := runtimeTypeName(name); ok && subtype.IsSubtype(got, want) {
+	if got, ok := typ.BuiltinPrimitiveType(name); ok && subtype.IsSubtype(got, want) {
 		return true
 	}
 	return name == "table" && runtimeTableGuardProves(want)
-}
-
-func runtimeTypeName(name string) (typ.Type, bool) {
-	switch name {
-	case "nil":
-		return typ.Nil, true
-	case "boolean":
-		return typ.Boolean, true
-	case "number":
-		return typ.Number, true
-	case "string":
-		return typ.String, true
-	case "function":
-		return typ.Func().Build(), true
-	default:
-		return nil, false
-	}
 }
 
 func runtimeTableGuardProves(want typ.Type) bool {

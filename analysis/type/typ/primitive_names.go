@@ -21,6 +21,8 @@ func BuiltinPrimitiveType(name string) (Type, bool) {
 		return Integer, true
 	case "string":
 		return String, true
+	case "function":
+		return Func().Build(), true
 	case "any":
 		return Any, true
 	case "unknown":
