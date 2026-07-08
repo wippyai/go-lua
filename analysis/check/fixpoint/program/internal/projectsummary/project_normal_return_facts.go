@@ -11,10 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -23,9 +20,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
-	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
-	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
@@ -381,7 +375,7 @@ func projectAssignmentPathInvalidations(result ResultReader, params []path.Path)
 	rootReader, hasRootAssignments := result.(rootAssignmentReader)
 	_, hasPathAssignments := result.(pathAssignmentReader)
 	_, hasPathInvalidations := result.(pathDescendantInvalidationReader)
-	if !hasOrdinaryAssignmentFactReader(result) && !hasRootAssignments && !hasPathAssignments && !hasPathInvalidations {
+	if !hasRootAssignments && !hasPathAssignments && !hasPathInvalidations {
 		return nil
 	}
 	graph := result.Graph()
@@ -421,10 +415,9 @@ func projectAssignmentPathInvalidations(result ResultReader, params []path.Path)
 
 func projectAssignmentPersistentPathWrites(reg *axis.Registry, result ResultReader, exit state.State) []callboundary.PathValueFact {
 	rootReader, hasRootAssignments := result.(rootAssignmentReader)
-	if reg == nil || (!hasOrdinaryAssignmentFactReader(result) && !hasRootAssignments) {
+	if reg == nil || !hasRootAssignments {
 		return nil
 	}
-	valueReader, _ := result.(expressionValueBeforeReader)
 	sourceValueReader, _ := result.(returnSourceValueReader)
 	graph := result.Graph()
 	if graph == nil {
@@ -445,7 +438,7 @@ func projectAssignmentPersistentPathWrites(reg *axis.Registry, result ResultRead
 		if noNormal != nil && noNormal.NoNormalReturn(point) {
 			continue
 		}
-		target, value, ok := assignmentPersistentWriteAt(reg, result, rootReader, valueReader, sourceValueReader, exit, point, kindReader, captured)
+		target, value, ok := assignmentPersistentWriteAt(reg, rootReader, sourceValueReader, exit, point, kindReader, captured)
 		if !ok {
 			continue
 		}
@@ -479,9 +472,6 @@ func assignmentInvalidationPathAt(
 			return target, true, false, true
 		}
 	}
-	if fact, ok := ordinaryAssignmentFactAt(result, point); ok {
-		return assignmentInvalidationPath(fact, kindReader, captured)
-	}
 	if rootReader == nil {
 		return path.Path{}, false, false, false
 	}
@@ -498,26 +488,13 @@ func assignmentInvalidationPathAt(
 
 func assignmentPersistentWriteAt(
 	reg *axis.Registry,
-	result ResultReader,
 	rootReader rootAssignmentReader,
-	valueReader expressionValueBeforeReader,
 	sourceValueReader returnSourceValueReader,
 	exit state.State,
 	point cfg.Point,
 	kindReader symbolKindReader,
 	captured map[symbol.ID]struct{},
 ) (path.Path, product.Value, bool) {
-	if fact, ok := ordinaryAssignmentFactAt(result, point); ok {
-		target, ok := assignmentPersistentValuePath(fact, kindReader, captured)
-		if !ok {
-			return path.Path{}, product.Value{}, false
-		}
-		value, ok := persistentAssignmentSourceValue(reg, valueReader, point, fact)
-		if !ok {
-			value = exit.ReadValue(reg, key.SymbolValue(target.Symbol))
-		}
-		return target, value, true
-	}
 	if rootReader == nil {
 		return path.Path{}, product.Value{}, false
 	}
@@ -539,34 +516,6 @@ func assignmentPersistentWriteAt(
 	return path.NewPath(target.Symbol, ""), value, true
 }
 
-func persistentAssignmentSourceValue(reg *axis.Registry, reader expressionValueBeforeReader, point cfg.Point, fact semantics.OrdinaryAssignmentFact) (product.Value, bool) {
-	if reader == nil || fact.Value == nil {
-		return product.Value{}, false
-	}
-	value, ok := reader.ExpressionValueBeforeBoundary(point, fact.Value)
-	if !ok {
-		return product.Value{}, false
-	}
-	if kind, ok := valueexpr.RuntimeKind(fact.Value); ok {
-		if kind.Contains(runtimekind.Nil) {
-			if len(kind.Tags()) == 1 {
-				return assignmentValueWithPresence(reg, value, presence.Absent()), true
-			}
-			return value, true
-		}
-		return assignmentValueWithPresence(reg, value, presence.Present()), true
-	}
-	return value, true
-}
-
-func assignmentValueWithPresence(reg *axis.Registry, value product.Value, p presence.Value) product.Value {
-	out := product.WithPresence(reg, value, p)
-	if witness, ok := typevalue.WitnessOf(reg, value); ok {
-		out = typevalue.WithWitness(reg, out, typevalue.TypeWithPresence(witness, p))
-	}
-	return out
-}
-
 // projectAssignmentStoreRelations lowers each normal-return-reachable
 // param-to-param member store (dst.member = src, where dst is a parameter and src
 // resolves to another parameter) into a StoreRelationFact over placeholder paths.
@@ -577,13 +526,11 @@ func assignmentValueWithPresence(reg *axis.Registry, value product.Value, p pres
 // the destination parameter's member segments so the call-boundary lowering can
 // project the destination slot type.
 func projectAssignmentStoreRelations(result ResultReader, params []path.Path) []callboundary.StoreRelationFact {
-	_, hasPathAssignments := result.(pathAssignmentReader)
-	if !hasOrdinaryAssignmentFactReader(result) && !hasPathAssignments {
+	if _, ok := result.(pathAssignmentReader); !ok {
 		return nil
 	}
-	pathReader, ok := result.(expressionPathReader)
-	refPathReader, hasRefPathReader := result.(expressionPathRefReader)
-	if !ok && !hasRefPathReader {
+	refPathReader, ok := result.(expressionPathRefReader)
+	if !ok {
 		return nil
 	}
 	graph := result.Graph()
@@ -605,19 +552,6 @@ func projectAssignmentStoreRelations(result ResultReader, params []path.Path) []
 				}
 			}
 		}
-		fact, ok := ordinaryAssignmentFactAt(result, point)
-		if !ok || !fact.HasPath || fact.Path.Symbol == 0 || len(fact.Path.Segments) == 0 {
-			continue
-		}
-		into, ok := parameterPlaceholderPath(fact.Path, params)
-		if !ok || len(into.Segments) == 0 {
-			continue
-		}
-		source, ok := assignmentSourceParameterPlaceholder(fact, pathReader, params)
-		if !ok {
-			continue
-		}
-		out = append(out, callboundary.StoreRelationFact{Source: source, Into: into})
 	}
 	return out
 }
@@ -629,28 +563,6 @@ func assignmentValueSourceParameterPlaceholder(
 	params []path.Path,
 ) (path.Path, bool) {
 	sourcePath, ok := valueSourcePath(result, pathReader, source)
-	if !ok || sourcePath.Symbol == 0 || len(sourcePath.Segments) != 0 {
-		return path.Path{}, false
-	}
-	placeholder, ok := parameterPlaceholderPath(sourcePath, params)
-	if !ok || len(placeholder.Segments) != 0 {
-		return path.Path{}, false
-	}
-	return placeholder, true
-}
-
-// assignmentSourceParameterPlaceholder resolves an ordinary assignment's source
-// expression to a bare parameter placeholder ($i with no member segments). A
-// member-path source is not a whole-object alias and is not lowered.
-func assignmentSourceParameterPlaceholder(
-	fact semantics.OrdinaryAssignmentFact,
-	pathReader expressionPathReader,
-	params []path.Path,
-) (path.Path, bool) {
-	if fact.Source.Kind != sourceprovenance.SourceExpression || fact.Source.Expr == nil {
-		return path.Path{}, false
-	}
-	sourcePath, ok := pathReader.ExpressionPath(fact.Source.Expr)
 	if !ok || sourcePath.Symbol == 0 || len(sourcePath.Segments) != 0 {
 		return path.Path{}, false
 	}
@@ -803,34 +715,6 @@ func normalReturnLifecycleFactPath(target path.Path, params []path.Path) (path.P
 		return target, true
 	}
 	return path.Path{}, false
-}
-
-func assignmentInvalidationPath(
-	fact semantics.OrdinaryAssignmentFact,
-	kindReader symbolKindReader,
-	captured map[symbol.ID]struct{},
-) (path.Path, bool, bool, bool) {
-	if fact.HasPath && len(fact.Path.Segments) > 0 {
-		return fact.Path, true, true, true
-	}
-	if fact.HasContainerPath && !fact.ContainerPath.IsEmpty() {
-		return fact.ContainerPath, true, false, true
-	}
-	if fact.HasSymbol && fact.Symbol != 0 && persistentSinkSymbol(kindReader, captured, fact.Symbol) {
-		return path.NewPath(fact.Symbol, ""), false, false, true
-	}
-	return path.Path{}, false, false, false
-}
-
-func assignmentPersistentValuePath(
-	fact semantics.OrdinaryAssignmentFact,
-	kindReader symbolKindReader,
-	captured map[symbol.ID]struct{},
-) (path.Path, bool) {
-	if !fact.HasSymbol || fact.Symbol == 0 || !persistentSinkSymbol(kindReader, captured, fact.Symbol) {
-		return path.Path{}, false
-	}
-	return path.NewPath(fact.Symbol, ""), true
 }
 
 func normalReturnFactInvalidationPath(target path.Path, params []path.Path) (path.Path, bool) {

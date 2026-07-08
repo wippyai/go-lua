@@ -486,11 +486,8 @@ func TestFromResultProjectsAssignmentBasedParameterInvalidationWithoutExitState(
 			exit:  state.State{},
 			slots: []key.Value{key.SymbolValue(param)},
 		},
-		assignments: map[cfg.Point]semantics.OrdinaryAssignmentFact{
-			assign: {
-				ContainerPath:    pathdom.Path{Symbol: param, Version: 1},
-				HasContainerPath: true,
-			},
+		pathInvalidations: map[cfg.Point]factflow.PathDescendantInvalidation{
+			assign: factflow.NewPathDescendantInvalidation(pathdom.NewPath(param, "")),
 		},
 	}
 
@@ -678,11 +675,8 @@ func TestFromResultProjectsDynamicContainerAssignmentAsStructuralPreservingInval
 			exit:  state.State{},
 			slots: []key.Value{key.SymbolValue(param)},
 		},
-		assignments: map[cfg.Point]semantics.OrdinaryAssignmentFact{
-			assign: {
-				ContainerPath:    pathdom.NewPath(param, "").Field("metadata"),
-				HasContainerPath: true,
-			},
+		pathInvalidations: map[cfg.Point]factflow.PathDescendantInvalidation{
+			assign: factflow.NewPathDescendantInvalidation(pathdom.NewPath(param, "").Field("metadata")),
 		},
 	}
 
@@ -707,11 +701,8 @@ func TestFromResultProjectsDirectFieldAssignmentAsStructuralPreservingTargetClea
 			exit:  state.State{},
 			slots: []key.Value{key.SymbolValue(param)},
 		},
-		assignments: map[cfg.Point]semantics.OrdinaryAssignmentFact{
-			assign: {
-				Path:    pathdom.NewPath(param, "").Field("metadata"),
-				HasPath: true,
-			},
+		pathAssignments: map[cfg.Point]factflow.PathAssignment{
+			assign: factflow.NewPathAssignment(pathdom.NewPath(param, "").Field("metadata"), factflow.NewUnknownValueSource(factflow.NoValueSourceIndex)),
 		},
 	}
 
@@ -741,11 +732,8 @@ func TestFromResultProjectsCapturedRootReassignmentInvalidation(t *testing.T) {
 			Captured:     captured,
 			CapturedName: "value",
 		}},
-		assignments: map[cfg.Point]semantics.OrdinaryAssignmentFact{
-			assign: {
-				Symbol:    captured,
-				HasSymbol: true,
-			},
+		rootAssignments: map[cfg.Point]factflow.RootAssignment{
+			assign: factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, captured, pathdom.NewPath(captured, "value"), factflow.NewUnknownValueSource(factflow.NoValueSourceIndex)),
 		},
 	}
 
@@ -773,11 +761,8 @@ func TestFromResultProjectsCapturedRootReassignmentPersistentWrite(t *testing.T)
 			Captured:     captured,
 			CapturedName: "captured",
 		}},
-		assignments: map[cfg.Point]semantics.OrdinaryAssignmentFact{
-			assign: {
-				Symbol:    captured,
-				HasSymbol: true,
-			},
+		rootAssignments: map[cfg.Point]factflow.RootAssignment{
+			assign: factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, captured, pathdom.NewPath(captured, "captured"), factflow.NewUnknownValueSource(factflow.NoValueSourceIndex)),
 		},
 	}
 
@@ -832,7 +817,8 @@ func TestFromResultProjectsCapturedRootReassignmentPersistentWriteFromPresentSou
 		Build()
 	optional := typeexpr.Optional(record)
 	optionalValue := typevalue.WithWitness(reg, typevalue.FromType(reg, optional), optional)
-	assignValue := &ast.TableExpr{}
+	sourceValue := typevalue.WithWitness(reg, typevalue.FromType(reg, record), record)
+	source := factflow.NewUnknownValueSource(factflow.NoValueSourceIndex)
 	stub := normalReturnFactProjectAssignmentStub{
 		normalReturnFactProjectResultStub: normalReturnFactProjectResultStub{
 			reg:   reg,
@@ -844,15 +830,11 @@ func TestFromResultProjectsCapturedRootReassignmentPersistentWriteFromPresentSou
 			Captured:     captured,
 			CapturedName: "captured",
 		}},
-		assignments: map[cfg.Point]semantics.OrdinaryAssignmentFact{
-			assign: {
-				Symbol:    captured,
-				HasSymbol: true,
-				Value:     assignValue,
-			},
+		rootAssignments: map[cfg.Point]factflow.RootAssignment{
+			assign: factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, captured, pathdom.NewPath(captured, "captured"), source),
 		},
-		exprValuesBefore: map[cfg.Point]product.Value{
-			assign: optionalValue,
+		sourceValues: map[cfg.Point]product.Value{
+			assign: sourceValue,
 		},
 	}
 
@@ -881,11 +863,8 @@ func TestFromResultDoesNotProjectParameterRootReassignmentInvalidation(t *testin
 			exit:  state.State{},
 			slots: []key.Value{key.SymbolValue(param)},
 		},
-		assignments: map[cfg.Point]semantics.OrdinaryAssignmentFact{
-			assign: {
-				Symbol:    param,
-				HasSymbol: true,
-			},
+		rootAssignments: map[cfg.Point]factflow.RootAssignment{
+			assign: factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, param, pathdom.NewPath(param, "param"), factflow.NewUnknownValueSource(factflow.NoValueSourceIndex)),
 		},
 	}
 
@@ -1297,11 +1276,9 @@ type normalReturnFactProjectResultStub struct {
 
 type normalReturnFactProjectAssignmentStub struct {
 	normalReturnFactProjectResultStub
-	assignments       map[cfg.Point]semantics.OrdinaryAssignmentFact
 	rootAssignments   map[cfg.Point]factflow.RootAssignment
 	pathAssignments   map[cfg.Point]factflow.PathAssignment
 	pathInvalidations map[cfg.Point]factflow.PathDescendantInvalidation
-	exprValuesBefore  map[cfg.Point]product.Value
 	sourceValues      map[cfg.Point]product.Value
 	fn                *ast.FunctionExpr
 	captures          []bind.Capture
@@ -1343,11 +1320,6 @@ func lifecycleCallSite(ref factflow.ExprRef) factflow.CallSite {
 	})
 }
 
-func (r normalReturnFactProjectAssignmentStub) OrdinaryAssignment(point cfg.Point) (semantics.OrdinaryAssignmentFact, bool) {
-	fact, ok := r.assignments[point]
-	return fact, ok
-}
-
 func (r normalReturnFactProjectAssignmentStub) RootAssignment(point cfg.Point) (factflow.RootAssignment, bool) {
 	fact, ok := r.rootAssignments[point]
 	return fact, ok
@@ -1361,11 +1333,6 @@ func (r normalReturnFactProjectAssignmentStub) PathAssignment(point cfg.Point) (
 func (r normalReturnFactProjectAssignmentStub) PathDescendantInvalidation(point cfg.Point) (factflow.PathDescendantInvalidation, bool) {
 	fact, ok := r.pathInvalidations[point]
 	return fact, ok
-}
-
-func (r normalReturnFactProjectAssignmentStub) ExpressionValueBeforeBoundary(point cfg.Point, _ ast.Expr) (product.Value, bool) {
-	value, ok := r.exprValuesBefore[point]
-	return value, ok
 }
 
 func (r normalReturnFactProjectAssignmentStub) SourceValueAtBoundary(point cfg.Point, _ factflow.ValueSource) (product.Value, bool) {
