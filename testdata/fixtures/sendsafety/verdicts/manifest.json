@@ -1,0 +1,75 @@
+{
+  "description": "Send-safety judgments classify zero-copy admission for fresh, aliased, stored, and frozen payloads.",
+  "packages": ["process", "ownership"],
+  "check": {
+    "diagnostic_rules": [
+      {
+        "code": "send.isolation",
+        "enabled": true,
+        "severity": "hint"
+      }
+    ],
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 3,
+        "severity": "hint",
+        "code": "send.isolation",
+        "message_contains": ["proven isolated"],
+        "min_evidence": 2,
+        "evidence_contains": ["isolation proof", "direct literal birth site"],
+        "render_contains": ["hint[send.isolation]", "proven isolated"],
+        "help_contains": ["runtime copy fallback"],
+        "label_contains": ["send payload"]
+      },
+      {
+        "file": "main.lua",
+        "line": 6,
+        "severity": "hint",
+        "code": "send.isolation",
+        "message_contains": ["not proven", "runtime will copy"],
+        "min_evidence": 2,
+        "evidence_contains": ["copy fallback", "aliases across the send"],
+        "render_contains": ["hint[send.isolation]", "runtime will copy"],
+        "help_contains": ["runtime copy fallback"],
+        "label_contains": ["send payload"]
+      },
+      {
+        "file": "main.lua",
+        "line": 10,
+        "severity": "hint",
+        "code": "send.isolation",
+        "message_contains": ["not proven", "runtime will copy"],
+        "min_evidence": 2,
+        "evidence_contains": ["copy fallback", "object graph contains another identity"],
+        "render_contains": ["hint[send.isolation]", "runtime will copy"],
+        "help_contains": ["runtime copy fallback"],
+        "label_contains": ["send payload"]
+      },
+      {
+        "file": "main.lua",
+        "line": 16,
+        "severity": "hint",
+        "code": "send.isolation",
+        "message_contains": ["not proven", "runtime will copy"],
+        "min_evidence": 2,
+        "evidence_contains": ["copy fallback", "placement is owned-heap"],
+        "render_contains": ["hint[send.isolation]", "runtime will copy"],
+        "help_contains": ["runtime copy fallback"],
+        "label_contains": ["send payload"]
+      },
+      {
+        "file": "main.lua",
+        "line": 20,
+        "severity": "hint",
+        "code": "send.isolation",
+        "message_contains": ["proven immutable"],
+        "min_evidence": 2,
+        "evidence_contains": ["immutable proof", "exact identity is frozen"],
+        "render_contains": ["hint[send.isolation]", "proven immutable"],
+        "help_contains": ["runtime copy fallback"],
+        "label_contains": ["send payload"]
+      }
+    ]
+  }
+}

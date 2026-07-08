@@ -1,0 +1,7 @@
+{
+  "description": "Send-safety judgments are recorded for consumers but do not surface as default diagnostics.",
+  "packages": ["process"],
+  "check": {
+    "errors": 0
+  }
+}
