@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -74,7 +75,7 @@ func (r Reader) assignmentObjectLiteralEntryCandidate(point cfg.Point, literal f
 	}
 	var out Assignment
 	literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
-		entryExpected, ok := body.ExpectedConstructorEntryType(expected, entry.SuffixSegmentsView())
+		entryExpected, ok := luatypeprojection.ExpectedConstructorEntryType(expected, entry.SuffixSegmentsView())
 		if !ok || !readapi.ObligationTypeReportable(entryExpected) {
 			return true
 		}

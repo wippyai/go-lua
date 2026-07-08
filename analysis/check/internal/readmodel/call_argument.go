@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -42,7 +43,7 @@ func (r Reader) callArgumentMismatchSubjectPlan(point cfg.Point, arg CallArgumen
 	if readapi.CallArgumentExpectedTypeHasObjectEntries(want) {
 		for _, entry := range lit.Entries() {
 			suffix := entry.Suffix()
-			expected, ok := body.ExpectedTypeAtSegments(want, suffix.Segments)
+			expected, ok := luatypeprojection.ExpectedTypeAtSegments(want, suffix.Segments)
 			if !ok || expected == nil {
 				continue
 			}
@@ -73,7 +74,7 @@ func (r Reader) callArgumentMismatchSubjectPlan(point cfg.Point, arg CallArgumen
 			})
 		}
 	}
-	if field, ok := body.MissingRequiredRecordField(want, func(name string) bool {
+	if field, ok := luatypeprojection.MissingRequiredRecordField(want, func(name string) bool {
 		for _, entry := range lit.Entries() {
 			suffix := entry.Suffix()
 			if field, ok := segment.DirectFieldName(suffix.Segments); ok && field == name {

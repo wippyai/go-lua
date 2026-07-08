@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -59,7 +60,7 @@ func (r *Result) ObjectLiteralShapeTypeAt(point cfg.Point, literal factflow.Obje
 	builder := typetable.NewConstructorBuilder()
 	seen := false
 	literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
-		constructorPath, ok := ConstructorPathFromSegments(entry.SuffixSegmentsView())
+		constructorPath, ok := luatypeprojection.ConstructorPathFromSegments(entry.SuffixSegmentsView())
 		if !ok {
 			return true
 		}
@@ -84,7 +85,7 @@ func (r *Result) ObjectLiteralShapeTypeAt(point cfg.Point, literal factflow.Obje
 // ObjectLiteralMissingRequired reports a required field absent from a lowered
 // object literal under expected.
 func ObjectLiteralMissingRequired(literal factflow.ObjectLiteralView, expected typ.Type) (string, bool) {
-	return MissingRequiredRecordField(expected, func(name string) bool {
+	return luatypeprojection.MissingRequiredRecordField(expected, func(name string) bool {
 		has := false
 		literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
 			if field, ok := segment.DirectFieldName(entry.SuffixSegmentsView()); ok && field == name {

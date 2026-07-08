@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -219,7 +220,7 @@ func (r Reader) forEachLocalAssignment(
 	}
 	var missingFieldType typ.Type
 	if missingFieldOK {
-		missingFieldType, _ = body.ExpectedTypeAtSegments(expected, []segment.Segment{{Kind: segment.SegmentField, Name: missingField}})
+		missingFieldType, _ = luatypeprojection.ExpectedTypeAtSegments(expected, []segment.Segment{{Kind: segment.SegmentField, Name: missingField}})
 	}
 	interfaceMismatch, hasInterfaceMismatch := subtype.RecordInterfaceMismatch(t, expected)
 	assignmentPlan := readapi.AssignmentCheckPlan{

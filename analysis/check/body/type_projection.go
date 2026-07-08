@@ -4,36 +4,14 @@ import (
 	checkprojection "github.com/wippyai/go-lua/analysis/check/internal/projection"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/literal"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/transform"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
-
-func ExpectedTypeAtSegments(t typ.Type, segments []segment.Segment) (typ.Type, bool) {
-	return luatypeprojection.ExpectedTypeAtSegments(t, segments)
-}
-
-func ExpectedConstructorEntryType(t typ.Type, segments []segment.Segment) (typ.Type, bool) {
-	return luatypeprojection.ExpectedConstructorEntryType(t, segments)
-}
-
-func MissingRequiredRecordField(t typ.Type, hasField func(string) bool) (string, bool) {
-	return luatypeprojection.MissingRequiredRecordField(t, hasField)
-}
-
-func ExpectedObjectLiteralRecordCached(typeValues *typevalue.Cache, expected typ.Type, fieldType func(string) (typ.Type, bool)) (*typ.Record, bool) {
-	return luatypeprojection.ExpectedObjectLiteralRecordCached(typeValues, expected, fieldType)
-}
-
-func ConstructorPathFromSegments(segments []segment.Segment) ([]typetable.ConstructorKey, bool) {
-	return luatypeprojection.ConstructorPathFromSegments(segments)
-}
 
 func TypeHasField(t typ.Type, name string) bool {
 	_, ok := checkprojection.Field(t, name)

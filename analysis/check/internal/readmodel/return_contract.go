@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -132,7 +133,7 @@ func (r Reader) returnLoweredObjectLiteralEntry(point cfg.Point, index int, lite
 	var out Return
 	found := false
 	literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
-		entryExpected, ok := body.ExpectedTypeAtSegments(objectExpected, entry.SuffixSegmentsView())
+		entryExpected, ok := luatypeprojection.ExpectedTypeAtSegments(objectExpected, entry.SuffixSegmentsView())
 		if !ok || !readapi.ObligationTypeReportable(entryExpected) {
 			return true
 		}
@@ -195,7 +196,7 @@ func (r Reader) returnLoweredObjectLiteralEntry(point cfg.Point, index int, lite
 }
 
 func (r Reader) loweredObjectLiteralExpectedType(point cfg.Point, literal factflow.ObjectLiteralView, expected typ.Type) typ.Type {
-	if selected, ok := body.ExpectedObjectLiteralRecordCached(r.result.TypeValues(), expected, func(name string) (typ.Type, bool) {
+	if selected, ok := luatypeprojection.ExpectedObjectLiteralRecordCached(r.result.TypeValues(), expected, func(name string) (typ.Type, bool) {
 		var out typ.Type
 		literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
 			if out != nil {
@@ -285,7 +286,7 @@ func (r Reader) returnObjectLiteralSuccess(point cfg.Point, index int, rootValue
 }
 
 func (r Reader) returnLoweredObjectLiteralMissingRequired(point cfg.Point, index int, literal factflow.ObjectLiteralView, rootValue product.Value, expected typ.Type, sourceSpan SourceSpan, expectedSpans []SourceSpan) (Return, bool) {
-	field, ok := body.MissingRequiredRecordField(expected, func(name string) bool {
+	field, ok := luatypeprojection.MissingRequiredRecordField(expected, func(name string) bool {
 		has := false
 		literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
 			segments := entry.SuffixSegmentsView()
@@ -308,7 +309,7 @@ func (r Reader) returnMissingRequiredField(point cfg.Point, index int, rootValue
 	if actual == nil {
 		return Return{}, false
 	}
-	fieldType, ok := body.ExpectedTypeAtSegments(expected, []segment.Segment{{Kind: segment.SegmentField, Name: field}})
+	fieldType, ok := luatypeprojection.ExpectedTypeAtSegments(expected, []segment.Segment{{Kind: segment.SegmentField, Name: field}})
 	if !ok || !readapi.ObligationTypeReportable(fieldType) {
 		return Return{}, false
 	}
@@ -348,7 +349,7 @@ func (r Reader) returnRootPathHasRequiredStaticMembers(point cfg.Point, rootPath
 	if ks == nil {
 		return false
 	}
-	_, missing := body.MissingRequiredRecordField(expected, func(name string) bool {
+	_, missing := luatypeprojection.MissingRequiredRecordField(expected, func(name string) bool {
 		memberPath := rootPath.Append(segment.Segment{Kind: segment.SegmentField, Name: name})
 		return r.returnRootPathHasRequiredMemberProof(point, st, ks, memberPath, expected, name)
 	})
@@ -362,7 +363,7 @@ func (r Reader) returnRootPathHasRequiredMemberProof(point cfg.Point, st state.S
 	if _, ok := st.ReadPathStaticMember(ks, memberPath.Key()); ok {
 		return true
 	}
-	fieldType, ok := body.ExpectedTypeAtSegments(expected, []segment.Segment{{Kind: segment.SegmentField, Name: name}})
+	fieldType, ok := luatypeprojection.ExpectedTypeAtSegments(expected, []segment.Segment{{Kind: segment.SegmentField, Name: name}})
 	if !ok || fieldType == nil {
 		return false
 	}
