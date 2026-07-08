@@ -217,6 +217,49 @@ func TestValueTypeWithPresenceAddsNilForMaybeWitness(t *testing.T) {
 	assertSameType(t, got, typeexpr.Optional(typ.String))
 }
 
+func TestValueTypeWithPresenceProjectsOptionalParamDefaultLocalAsString(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function log(msg: string, level: string?)
+	local lvl = level or "INFO"
+	print(lvl .. ": " .. msg)
+end
+return log
+`)
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{
+		Registry: reg,
+		Globals:  []string{"print"},
+	}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	result := checked.RootResult()
+	if result == nil {
+		t.Fatal("RootResult nil")
+	}
+	for _, child := range result.FunctionResults() {
+		if child == nil || child.Graph() == nil {
+			continue
+		}
+		for _, point := range child.Graph().RPO() {
+			fact, ok := child.LocalAssignment(point)
+			if !ok || fact.Name != "lvl" || !fact.HasSymbol {
+				continue
+			}
+			value, ok := child.SymbolValueAtBoundary(point, fact.Symbol)
+			if !ok {
+				t.Fatalf("lvl boundary value missing")
+			}
+			got, ok := New(child).ValueTypeWithPresence(value)
+			if !ok || !typ.TypeEquals(got, typ.String) {
+				t.Fatalf("lvl boundary type = %v/%v, want string", got, ok)
+			}
+			return
+		}
+	}
+	t.Fatal("lvl assignment not found")
+}
+
 func TestValueTypeMaybeWitnessStaysConcrete(t *testing.T) {
 	reg := standard.Registry()
 	result, err := body.CheckChunk(nil, body.Config{Registry: reg})

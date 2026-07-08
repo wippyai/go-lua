@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -492,37 +491,6 @@ func TestDirectCallAcceptsNamedOptionalParamOmission(t *testing.T) {
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v, want none for named optional param omission", diags)
 	}
-}
-
-func TestTypedOptionalParamDefaultLocalHasStringFlowType(t *testing.T) {
-	result := runDiagnosticsResult(t, `
-		local function log(msg: string, level: string?)
-			local lvl = level or "INFO"
-			print(lvl .. ": " .. msg)
-		end
-		return log
-	`)
-	for _, child := range result.FunctionResults() {
-		if child == nil || child.Graph() == nil {
-			continue
-		}
-		for _, point := range child.Graph().RPO() {
-			fact, ok := child.LocalAssignment(point)
-			if !ok || fact.Name != "lvl" || !fact.HasSymbol {
-				continue
-			}
-			value, ok := child.SymbolValueAtBoundary(point, fact.Symbol)
-			if !ok {
-				t.Fatalf("lvl boundary value missing")
-			}
-			got, ok := readmodel.New(child).ValueTypeWithPresence(value)
-			if !ok || !typ.TypeEquals(got, typ.String) {
-				t.Fatalf("lvl boundary type = %v/%v, want string", got, ok)
-			}
-			return
-		}
-	}
-	t.Fatal("lvl assignment not found")
 }
 
 func TestTypedOptionalParamConcatArgumentAccepted(t *testing.T) {
