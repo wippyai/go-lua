@@ -4,6 +4,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -53,6 +54,7 @@ func applyDynamicIndexWrite(
 	out = restorePendingDynamicAllValuesFromReverseDelete(ctx, resolver, facts, out, fact, value, tableKey)
 	out = addKnownDynamicIndexWriteEquality(ctx, resolver, facts, out, fact, value)
 	out = addKnownDynamicIndexWriteStaticMember(ctx, resolver, out, fact, value)
+	out = applyStoredDynamicIndexPlacement(ctx, resolver, out, tablePath, value.Value)
 	return writeHeapTableDynamicIndexFact(ctx, resolver, out, tablePath, key, value)
 }
 
@@ -382,6 +384,33 @@ func writeHeapTableDynamicIndexFact(
 		StaticMembers:     object.StaticMembers(),
 		DynamicIndexFacts: dynamic,
 	}))
+}
+
+func applyStoredDynamicIndexPlacement(
+	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
+	out state.State,
+	tablePath pathdom.Path,
+	value product.Value,
+) state.State {
+	if resolver == nil || tablePath.IsEmpty() {
+		return out
+	}
+	table, ok := resolvePathValueAt(ctx.Registry, resolver, ctx.Point, out, tablePath, nil)
+	if !ok {
+		return out
+	}
+	tableID, ok := product.Get(ctx.Registry, table.value, identity.Key).ID()
+	if !ok {
+		return out
+	}
+	ownerPlacement := out.ReadPlacement(tableID)
+	switch ownerPlacement {
+	case placement.OwnedHeap, placement.SharedHeap, placement.Unknown:
+		return markReachableHeapValuePlacement(ctx.Registry, out, value, ownerPlacement, map[identity.ID]struct{}{})
+	default:
+		return out
+	}
 }
 
 func dynamicIndexFact(

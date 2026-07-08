@@ -130,6 +130,7 @@ func applyNormalReturnDynamicIndexFacts(ctx normalReturnApplyContext, out state.
 			out = addDynamicIndexValueKeyMembershipsFromPath(ctx.node, ctx.resolver, out, valuePath, tableKey, key.Site)
 		}
 		out = writeHeapTableDynamicIndexFact(ctx.node, ctx.resolver, out, tablePath, key, fact.Value)
+		out = applyStoredDynamicIndexPlacement(ctx.node, ctx.resolver, out, tablePath, fact.Value.Value)
 		if hasValuePath {
 			out = addNormalReturnDynamicAllValueMembershipsFromPath(ctx, out, tablePath, tableKey, valuePath, fact.Value, priorAllValueTables[tableKey])
 		}
