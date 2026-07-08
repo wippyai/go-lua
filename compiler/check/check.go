@@ -2,8 +2,6 @@
 package check
 
 import (
-	"errors"
-
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
 	"github.com/wippyai/go-lua/analysis/check/exportmanifest"
@@ -304,8 +302,4 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func IsUnsupportedCFG(err error) bool {
-	return errors.Is(err, body.ErrUnsupportedCFG)
 }
