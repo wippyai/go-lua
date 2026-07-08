@@ -36,7 +36,7 @@ func TestNormalReturnFactsSummaryOperationsUseLaneRegistry(t *testing.T) {
 	file := parseNormalReturnFactsSource(t)
 	fields := normalReturnFactsStorageFields(t)
 
-	for _, name := range []string{"normalizeNormalReturnFactsWith", "cloneNormalReturnFacts"} {
+	for _, name := range []string{"normalizeNormalReturnFactsWith", "CloneNormalReturnFacts"} {
 		fn := requireFuncDecl(t, file, name)
 		if !funcUsesIdent(fn, "normalReturnSummaryLanes") {
 			t.Fatalf("%s must iterate normalReturnSummaryLanes", name)

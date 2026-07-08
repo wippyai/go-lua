@@ -242,7 +242,7 @@ var summaryFactDescriptors = func() callboundary.BoundaryFactTable[SummarySlotOp
 		}),
 		summarySlotDescriptor("NormalReturnFacts", nil, SummarySlotOps{
 			empty:       func(s Summary) bool { return s.NormalReturnFacts.Empty() },
-			assignClone: func(src Summary, dst *Summary) { dst.NormalReturnFacts = cloneNormalReturnFacts(src.NormalReturnFacts) },
+			assignClone: func(src Summary, dst *Summary) { dst.NormalReturnFacts = CloneNormalReturnFacts(src.NormalReturnFacts) },
 			normalizeOwned: func(reg *axis.Registry, s *Summary) {
 				s.NormalReturnFacts = normalizeOwnedNormalReturnFacts(reg, s.NormalReturnFacts)
 			},

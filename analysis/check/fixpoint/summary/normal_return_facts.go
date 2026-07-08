@@ -35,7 +35,8 @@ func normalizeNormalReturnFactsWith(reg *axis.Registry, in callboundary.NormalRe
 	return out
 }
 
-func cloneNormalReturnFacts(in callboundary.NormalReturnFacts) callboundary.NormalReturnFacts {
+// CloneNormalReturnFacts returns a defensive copy of normal-return fact lanes.
+func CloneNormalReturnFacts(in callboundary.NormalReturnFacts) callboundary.NormalReturnFacts {
 	if in.Empty() {
 		return callboundary.NormalReturnFacts{}
 	}
@@ -48,11 +49,6 @@ func cloneNormalReturnFacts(in callboundary.NormalReturnFacts) callboundary.Norm
 		handler.clone(&in, &out)
 	}
 	return out
-}
-
-// CloneNormalReturnFacts returns a defensive copy of normal-return fact lanes.
-func CloneNormalReturnFacts(in callboundary.NormalReturnFacts) callboundary.NormalReturnFacts {
-	return cloneNormalReturnFacts(in)
 }
 
 func normalReturnFactsEqual(reg *axis.Registry, a, b callboundary.NormalReturnFacts) bool {
