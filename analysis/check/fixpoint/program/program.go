@@ -1512,11 +1512,11 @@ func contextualObjectLiteralArgumentType(reg *axis.Registry, prepass *body.Resul
 	if reg == nil || prepass == nil || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
 		return nil, false
 	}
-	lit, ok := prepass.ObjectLiteralExpr(source.ExprRef)
+	lit, ok := prepass.ObjectLiteralView(source.ExprRef)
 	if !ok {
 		return nil, false
 	}
-	return luasourcevalue.ObjectLiteralTypeViewCached(reg, nil, lit.View(), factflow.ValueSourceResolverFunc(func(inner factflow.ValueSource) (product.Value, bool) {
+	return luasourcevalue.ObjectLiteralTypeViewCached(reg, nil, lit, factflow.ValueSourceResolverFunc(func(inner factflow.ValueSource) (product.Value, bool) {
 		return prepass.SourceValueAtBoundary(point, inner)
 	}))
 }

@@ -175,14 +175,15 @@ func (l *lowerer) addNestedObjectLiteralExpectedTypes(input *factflow.FactsInput
 		return
 	}
 	rootType := luatypeprojection.PresentConstructorRoot(expected)
-	for _, entry := range lit.Entries() {
+	lit.View().ForEachEntry(func(entry factflow.ObjectEntryView) bool {
 		source := entry.Source()
-		projected, ok := luatypeprojection.ExpectedConstructorEntryType(rootType, entry.Suffix().Segments)
+		projected, ok := luatypeprojection.ExpectedConstructorEntryType(rootType, entry.SuffixSegmentsView())
 		if !ok || projected == nil || !luatypeprojection.ReachesTableContract(projected) {
-			continue
+			return true
 		}
 		l.addObjectLiteralExpectedTypeFromExpressionSource(input, source, projected, nil)
-	}
+		return true
+	})
 }
 
 func (l *lowerer) addObjectLiteralExpectedTypeFromExpressionSource(input *factflow.FactsInput, source factflow.ValueSource, expected typ.Type, seen map[factflow.ExprRef]bool) {
@@ -293,13 +294,14 @@ func (l *lowerer) addObjectLiteralFieldExposuresFromWIR(input *factflow.FactsInp
 	if !ok {
 		return
 	}
-	for _, entry := range lit.Entries() {
-		slotType, ok := luatypeprojection.ApplySegments(declared, entry.Suffix().Segments)
+	lit.View().ForEachEntry(func(entry factflow.ObjectEntryView) bool {
+		slotType, ok := luatypeprojection.ApplySegments(declared, entry.SuffixSegmentsView())
 		if !ok || slotType == nil {
-			continue
+			return true
 		}
 		l.addAliasExposureValueSourceToContractType(input, point, entry.Source(), slotType)
-	}
+		return true
+	})
 }
 
 func (l *lowerer) tableConstructorExprRefFromWIR(inst wir.Instruction) (factflow.ExprRef, bool) {
@@ -321,14 +323,18 @@ func sourceSpanFromWIR(span wir.Span) factflow.SourceSpan {
 func (l *lowerer) objectLiteralWithExpectedType(lit factflow.ObjectLiteral, declared typ.Type) factflow.ObjectLiteral {
 	rootType := luatypeprojection.PresentConstructorRoot(declared)
 	root := l.valueFromTypeWithWitness(rootType)
-	entries := lit.Entries()
-	for i, entry := range entries {
-		projected, ok := luatypeprojection.ExpectedConstructorEntryType(rootType, entry.Suffix().Segments)
-		if !ok || projected == nil {
-			continue
+	entries := make([]factflow.ObjectEntry, 0, lit.View().EntryCount())
+	lit.View().ForEachEntry(func(entry factflow.ObjectEntryView) bool {
+		out := factflow.NewObjectEntryWithMetadata(entry.Suffix(), entry.Source(), entry.ValueSpan(), entry.ValueLabel())
+		if expected, ok := entry.Expected(); ok {
+			out = out.WithExpected(expected)
 		}
-		entries[i] = entry.WithExpected(l.valueFromTypeWithWitness(projected))
-	}
+		if projected, ok := luatypeprojection.ExpectedConstructorEntryType(rootType, entry.SuffixSegmentsView()); ok && projected != nil {
+			out = out.WithExpected(l.valueFromTypeWithWitness(projected))
+		}
+		entries = append(entries, out)
+		return true
+	})
 	out := factflow.NewObjectLiteral(entries).WithExpected(root)
 	if id, ok := lit.Identity(); ok {
 		out = out.WithIdentity(id)

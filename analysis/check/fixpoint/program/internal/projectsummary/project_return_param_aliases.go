@@ -12,7 +12,7 @@ import (
 )
 
 type objectLiteralExprReader interface {
-	ObjectLiteralExpr(factflow.ExprRef) (factflow.ObjectLiteral, bool)
+	ObjectLiteralView(factflow.ExprRef) (factflow.ObjectLiteralView, bool)
 }
 
 type expressionPathRefReader interface {
@@ -73,11 +73,11 @@ func projectReturnSourceParamAliases(
 		return nil
 	}
 	var (
-		lit factflow.ObjectLiteral
+		lit factflow.ObjectLiteralView
 		ok  bool
 	)
 	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
-		lit, ok = objectReader.ObjectLiteralExpr(source.ExprRef)
+		lit, ok = objectReader.ObjectLiteralView(source.ExprRef)
 	}
 	if !ok {
 		if localSource, ok := returnAliasLocalObjectSource(result, source, pathReader, localObjects); ok {
@@ -105,18 +105,18 @@ func projectReturnSourceParamAliases(
 	defer delete(active, source.ExprRef)
 
 	var out []summary.ReturnParamPathAlias
-	for _, entry := range lit.Entries() {
+	lit.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
 		entrySource := entry.Source()
-		memberSegments := appendSegments(prefix, entry.Suffix().Segments)
+		memberSegments := appendSegments(prefix, entry.SuffixSegmentsView())
 		memberKey, ok := pathaddr.RelativeStaticMemberSuffixKey(memberSegments)
 		if !ok {
-			continue
+			return true
 		}
 		if sourcePath, ok := valueSourcePath(result, pathReader, entrySource); ok {
 			if placeholder, ok := returnAliasPlaceholderPath(sourcePath, params, result); ok {
 				sourceKey, ok := pathaddr.PlaceholderKeyFromPath(placeholder)
 				if !ok {
-					continue
+					return true
 				}
 				out = append(out, summary.ReturnParamPathAlias{
 					ReturnIndex: returnIndex,
@@ -138,7 +138,8 @@ func projectReturnSourceParamAliases(
 				active,
 			)...)
 		}
-	}
+		return true
+	})
 	return out
 }
 
@@ -167,7 +168,7 @@ func returnAliasLocalObjectSources(result ResultReader, objectReader objectLiter
 		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
 			continue
 		}
-		if _, ok := objectReader.ObjectLiteralExpr(source.ExprRef); !ok {
+		if _, ok := objectReader.ObjectLiteralView(source.ExprRef); !ok {
 			continue
 		}
 		if out == nil {

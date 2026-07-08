@@ -261,12 +261,12 @@ func (r *Result) memberReadHasLiteralDeclarationProof(point cfg.Point, expr ast.
 	if !ok || declaration.Source.Kind != factflow.ValueSourceExpression || !declaration.Source.HasExpr {
 		return false
 	}
-	literal, ok := r.ObjectLiteralExpr(declaration.Source.ExprRef)
+	literal, ok := r.ObjectLiteralView(declaration.Source.ExprRef)
 	if !ok {
 		return false
 	}
 	found := false
-	literal.View().ForEachEntry(func(entry factflow.ObjectEntryView) bool {
+	literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
 		if pathSegmentsEqual(entry.SuffixSegmentsView(), suffix) {
 			found = true
 			return false

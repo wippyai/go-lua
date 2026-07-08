@@ -125,30 +125,31 @@ func (f wirFlowFacts) CallSite(point cfg.Point) (CallSite, bool) {
 	return site, true
 }
 
-func (f wirFlowFacts) ObjectLiteral(expr SourceRef) ([]ObjectEntry, bool) {
+func (f wirFlowFacts) ForEachObjectLiteralEntry(expr SourceRef, fn func(ObjectEntry) bool) bool {
 	if f.body == nil {
-		return nil, false
+		return false
 	}
 	inst, ok := f.body.TableConstructorByExpressionID(wir.ExpressionID(expr))
 	if !ok {
-		return nil, false
+		return false
 	}
 	entries := f.body.TableEntries(inst.TableEntries)
 	if len(entries) == 0 {
-		return nil, false
+		return false
 	}
-	out := make([]ObjectEntry, 0, len(entries))
 	for _, entry := range entries {
 		source, ok := f.sourceFromOperand(inst.Point, entry.Value)
 		if !ok {
 			source = Source{}
 		}
-		out = append(out, ObjectEntry{
+		if fn != nil && !fn(ObjectEntry{
 			Suffix: entry.Suffix.Clone(),
 			Source: source,
-		})
+		}) {
+			return true
+		}
 	}
-	return out, true
+	return true
 }
 
 func (f wirFlowFacts) ExpressionPath(expr SourceRef) (pathdom.Path, bool) {

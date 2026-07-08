@@ -107,7 +107,7 @@ type FlowFacts interface {
 	PathAssignment(cfg.Point) (Assignment, bool)
 	PathDescendantInvalidation(cfg.Point) (path.Path, bool)
 	CallSite(cfg.Point) (CallSite, bool)
-	ObjectLiteral(SourceRef) ([]ObjectEntry, bool)
+	ForEachObjectLiteralEntry(SourceRef, func(ObjectEntry) bool) bool
 	ExpressionPath(SourceRef) (path.Path, bool)
 }
 
@@ -639,20 +639,19 @@ func (p *Projection) addObjectLiteralAliasesFromSource(facts FlowFacts, target p
 	if p == nil || target.Symbol == 0 || !staticPathSegments(target.Segments) || source.Kind != SourceExpression || !source.HasExpr {
 		return
 	}
-	entries, ok := facts.ObjectLiteral(source.Expr)
-	if !ok {
-		return
-	}
-	for _, entry := range entries {
+	if !facts.ForEachObjectLiteralEntry(source.Expr, func(entry ObjectEntry) bool {
 		if len(entry.Suffix.Segments) == 0 || !staticPathSegments(entry.Suffix.Segments) {
-			continue
+			return true
 		}
 		modulePath, ok := p.moduleIdentityForSource(facts, entry.Source)
 		if !ok {
-			continue
+			return true
 		}
 		aliased := target.AppendPathSuffix(entry.Suffix)
 		p.addAlias(aliased, modulePath, point, inherited)
+		return true
+	}) {
+		return
 	}
 }
 

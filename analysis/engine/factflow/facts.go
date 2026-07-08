@@ -415,6 +415,19 @@ func (f Facts) ObjectLiteralView(expr ExprRef) (ObjectLiteralView, bool) {
 	return ObjectLiteralView{literal: fact}, true
 }
 
+// ForEachObjectLiteral visits object literal sidecars without allocating a
+// snapshot map. Returning false stops iteration.
+func (f Facts) ForEachObjectLiteral(fn func(ExprRef, ObjectLiteralView) bool) {
+	if fn == nil {
+		return
+	}
+	for ref, fact := range f.objectLiterals {
+		if !fn(ref, ObjectLiteralView{literal: fact}) {
+			return
+		}
+	}
+}
+
 // ObjectLiterals returns static-entry sidecars keyed by expression.
 func (f Facts) ObjectLiterals() map[ExprRef]ObjectLiteral {
 	return copyObjectLiteralMap(f.objectLiterals)

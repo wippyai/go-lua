@@ -1275,8 +1275,8 @@ func (p paramObligationProjector) addArithmeticObligationsFromSourceSeen(
 		p.addArithmeticOperationObligationsSeen(out, op, seen)
 	}
 	if objectReader, ok := p.result.(objectLiteralExprReader); ok {
-		if literal, literalOK := objectReader.ObjectLiteralExpr(source.ExprRef); literalOK {
-			p.addArithmeticObligationsFromObjectLiteral(out, literal.View(), seen)
+		if literal, literalOK := objectReader.ObjectLiteralView(source.ExprRef); literalOK {
+			p.addArithmeticObligationsFromObjectLiteral(out, literal, seen)
 		}
 	}
 }

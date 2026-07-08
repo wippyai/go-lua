@@ -204,24 +204,25 @@ func (r Reader) inferenceContributionLabel(point cfg.Point, index int, contribut
 	if !ok || !source.HasExpr {
 		return genericInferenceContributionLabel(index, contribution)
 	}
-	fact, ok := r.result.ObjectLiteralExpr(source.ExprRef)
+	fact, ok := r.result.ObjectLiteralView(source.ExprRef)
 	if !ok {
 		return genericInferenceContributionLabel(index, contribution)
 	}
 	bestDepth := -1
 	bestLabel := ""
-	for _, entry := range fact.Entries() {
+	fact.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
 		suffix := entry.Suffix()
 		depth := len(suffix.Segments)
 		if depth <= bestDepth || !callcontract.InferenceContributionHasSegmentPrefix(contribution, suffix.Segments) {
-			continue
+			return true
 		}
 		if label := readapi.CallArgumentMemberLabel(index, suffix.Segments, entry.ValueLabel()); label != "" {
 			label += genericInferenceCallableContributionSuffix(contribution, depth)
 			bestDepth = depth
 			bestLabel = label
 		}
-	}
+		return true
+	})
 	if bestLabel != "" {
 		return bestLabel
 	}
@@ -295,16 +296,17 @@ func (r Reader) inferenceContributionSpan(point cfg.Point, index int, contributi
 	}
 	source, ok := site.ArgumentSourceAt(index)
 	if ok && source.HasExpr {
-		fact, ok := r.result.ObjectLiteralExpr(source.ExprRef)
+		fact, ok := r.result.ObjectLiteralView(source.ExprRef)
 		if ok {
-			for _, entry := range fact.Entries() {
+			fact.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
 				suffix := entry.Suffix()
 				plan.Candidates = append(plan.Candidates, readapi.GenericInferenceContributionSpanCandidate{
 					Span:         sourceSpanFromFactflow(entry.ValueSpan()),
 					SegmentDepth: len(suffix.Segments),
 					Matches:      callcontract.InferenceContributionHasSegmentPrefix(contribution, suffix.Segments),
 				})
-			}
+				return true
+			})
 		}
 	}
 	return readapi.PlanGenericInferenceContributionSpan(plan)

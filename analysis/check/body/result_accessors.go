@@ -347,6 +347,13 @@ func (r *Result) PathDescendantInvalidation(point cfg.Point) (factflow.PathDesce
 	return r.facts.PathDescendantInvalidation(point)
 }
 
+func (r *Result) ObjectLiteralView(expr factflow.ExprRef) (factflow.ObjectLiteralView, bool) {
+	if r == nil {
+		return factflow.ObjectLiteralView{}, false
+	}
+	return r.facts.ObjectLiteralView(expr)
+}
+
 func (r *Result) ObjectLiteralExpr(expr factflow.ExprRef) (factflow.ObjectLiteral, bool) {
 	if r == nil {
 		return factflow.ObjectLiteral{}, false

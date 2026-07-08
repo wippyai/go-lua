@@ -151,6 +151,14 @@ func (l ObjectLiteral) Entries() []ObjectEntry { return copyObjectEntries(l.entr
 // EntryCount returns the number of static entries.
 func (v ObjectLiteralView) EntryCount() int { return len(v.literal.entries) }
 
+// EntryAt returns one static entry view by index.
+func (v ObjectLiteralView) EntryAt(index int) (ObjectEntryView, bool) {
+	if index < 0 || index >= len(v.literal.entries) {
+		return ObjectEntryView{}, false
+	}
+	return ObjectEntryView{entry: v.literal.entries[index]}, true
+}
+
 // ForEachEntry visits static entries without allocating a defensive slice.
 // Returning false stops iteration.
 func (v ObjectLiteralView) ForEachEntry(fn func(ObjectEntryView) bool) {

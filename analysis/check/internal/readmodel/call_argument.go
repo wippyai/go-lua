@@ -30,7 +30,7 @@ func (r Reader) callArgumentMismatchSubjectPlan(point cfg.Point, arg CallArgumen
 	if !ok || !source.HasExpr {
 		return readapi.CallArgumentMismatchSubjectPlan{}, false
 	}
-	lit, ok := r.result.ObjectLiteralExpr(source.ExprRef)
+	lit, ok := r.result.ObjectLiteralView(source.ExprRef)
 	if !ok {
 		return readapi.CallArgumentMismatchSubjectPlan{}, false
 	}
@@ -39,15 +39,15 @@ func (r Reader) callArgumentMismatchSubjectPlan(point cfg.Point, arg CallArgumen
 		Expected: want,
 	}
 	if readapi.CallArgumentExpectedTypeHasObjectEntries(want) {
-		for _, entry := range lit.Entries() {
+		lit.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
 			suffix := entry.Suffix()
 			expected, ok := luatypeprojection.ExpectedTypeAtSegments(want, suffix.Segments)
 			if !ok || expected == nil {
-				continue
+				return true
 			}
 			value, ok := r.objectEntryValue(point, entry)
 			if !ok {
-				continue
+				return true
 			}
 			got, _ := r.ValueTypeWithPresence(value)
 			if arg.FunctionType != nil {
@@ -70,9 +70,10 @@ func (r Reader) callArgumentMismatchSubjectPlan(point cfg.Point, arg CallArgumen
 				LabelSuffix: readapi.CallArgumentExpectedLabelSuffix(suffix.Segments),
 				Admissible:  r.ValueProofAdmissible(value, expected),
 			})
-		}
+			return true
+		})
 	}
-	if field, ok := body.ObjectLiteralMissingRequired(lit.View(), want); ok {
+	if field, ok := body.ObjectLiteralMissingRequired(lit, want); ok {
 		plan.MissingRequiredField = field
 	}
 	if mismatch, ok := r.result.RecordInterfaceMismatch(arg.TypeWithPresence, want); ok {
@@ -766,7 +767,7 @@ func (r Reader) callArgumentBoundaryCandidate(point cfg.Point, source factflow.V
 	return product.Value{}, false
 }
 
-func (r Reader) objectEntryValue(point cfg.Point, entry factflow.ObjectEntry) (product.Value, bool) {
+func (r Reader) objectEntryValue(point cfg.Point, entry factflow.ObjectEntryView) (product.Value, bool) {
 	if value, ok := r.callArgumentValue(point, entry.Source()); ok {
 		return value, true
 	}

@@ -152,12 +152,12 @@ func returnSourceContainsFunction(result *body.Result, source factflow.ValueSour
 	active[source.ExprRef] = struct{}{}
 	defer delete(active, source.ExprRef)
 
-	lit, ok := result.ObjectLiteralExpr(source.ExprRef)
+	lit, ok := result.ObjectLiteralView(source.ExprRef)
 	if !ok {
 		return false
 	}
 	found := false
-	lit.View().ForEachEntry(func(entry factflow.ObjectEntryView) bool {
+	lit.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
 		if returnSourceContainsFunction(result, entry.Source(), fn, active) {
 			found = true
 			return false

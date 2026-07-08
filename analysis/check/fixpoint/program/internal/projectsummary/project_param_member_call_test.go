@@ -86,9 +86,12 @@ func (r memberCallSiteOnlyResult) ExpressionOperationRef(ref factflow.ExprRef) (
 	op, ok := r.exprOps[ref]
 	return op, ok
 }
-func (r memberCallSiteOnlyResult) ObjectLiteralExpr(ref factflow.ExprRef) (factflow.ObjectLiteral, bool) {
+func (r memberCallSiteOnlyResult) ObjectLiteralView(ref factflow.ExprRef) (factflow.ObjectLiteralView, bool) {
 	lit, ok := r.objects[ref]
-	return lit, ok
+	if !ok {
+		return factflow.ObjectLiteralView{}, false
+	}
+	return lit.View(), true
 }
 func (r memberCallSiteOnlyResult) ExpressionPathRef(factflow.ExprRef) (pathdom.Path, bool) {
 	return pathdom.Path{}, false

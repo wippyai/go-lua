@@ -698,27 +698,28 @@ func genericForLiteralContainerVariableValue(
 	if value, ok := genericForHeapContainerVariableValue(ctx, typeValues, iter, variableIndex, ks, sourceValue, in); ok {
 		return value, true
 	}
-	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	literal, ok := facts.ObjectLiteralView(source.ExprRef)
 	if !ok {
 		return product.Value{}, false
 	}
 	var out product.Value
 	seen := false
-	for _, entry := range literal.Entries() {
+	literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
 		if !genericForDirectContainerElement(iter, entry) {
-			continue
+			return true
 		}
 		value, ok := sources.ValueOfSource(ctx.Point, entry.Source(), in, ctx.Read)
 		if !ok {
-			continue
+			return true
 		}
 		if !seen {
 			out = value
 			seen = true
-			continue
+			return true
 		}
 		out = product.Join(ctx.Registry, out, value)
-	}
+		return true
+	})
 	if source, ok := literal.ListElementSource(); ok {
 		value, ok := sources.ValueOfSource(ctx.Point, source, in, ctx.Read)
 		if ok {
@@ -905,12 +906,12 @@ func genericForIndexedDynamicIndexFact(reg *axis.Registry, typeValues *typevalue
 	return ok && typ.IsIntegerIndexType(keyType)
 }
 
-func genericForDirectContainerElement(iter iteration.Iterator, entry factflow.ObjectEntry) bool {
-	segs := entry.Suffix().Segments
-	if len(segs) != 1 {
+func genericForDirectContainerElement(iter iteration.Iterator, entry factflow.ObjectEntryView) bool {
+	if entry.SuffixSegmentCount() != 1 {
 		return false
 	}
-	return genericForDirectContainerSegment(iter, segs[0])
+	seg, ok := entry.SuffixSegmentAt(0)
+	return ok && genericForDirectContainerSegment(iter, seg)
 }
 
 func genericForDirectContainerSegment(iter iteration.Iterator, seg segment.Segment) bool {

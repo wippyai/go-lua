@@ -469,20 +469,21 @@ func (m moduleIdentityTestFacts) CallSite(point cfg.Point) (moduleidentity.CallS
 	}, true
 }
 
-func (m moduleIdentityTestFacts) ObjectLiteral(expr moduleidentity.SourceRef) ([]moduleidentity.ObjectEntry, bool) {
+func (m moduleIdentityTestFacts) ForEachObjectLiteralEntry(expr moduleidentity.SourceRef, fn func(moduleidentity.ObjectEntry) bool) bool {
 	lit, ok := m.facts.ObjectLiteralView(factflow.ExprRef(expr))
 	if !ok {
-		return nil, false
+		return false
 	}
-	var out []moduleidentity.ObjectEntry
 	lit.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
-		out = append(out, moduleidentity.ObjectEntry{
+		if fn != nil && !fn(moduleidentity.ObjectEntry{
 			Suffix: entry.Suffix(),
 			Source: testModuleSource(entry.Source()),
-		})
+		}) {
+			return false
+		}
 		return true
 	})
-	return out, len(out) != 0
+	return true
 }
 
 func (m moduleIdentityTestFacts) ExpressionPath(expr moduleidentity.SourceRef) (pathdom.Path, bool) {
