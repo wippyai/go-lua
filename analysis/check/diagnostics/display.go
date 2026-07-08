@@ -126,22 +126,6 @@ func frozenCallProofEvidence(containerName string) string {
 	return fmt.Sprintf("table %q was frozen by this call before the mutating call", containerName)
 }
 
-func deadAssignmentMessage(name string, hasExit bool) string {
-	return display.DeadAssignmentMessage(name, hasExit)
-}
-
-func deadAssignmentOverwriteEvidence(name string) string {
-	return display.DeadAssignmentOverwriteEvidence(name)
-}
-
-func deadAssignmentExitEvidence(name string) string {
-	return display.DeadAssignmentExitEvidence(name)
-}
-
-func deadAssignmentHelp(name string, hasExit bool) string {
-	return display.DeadAssignmentHelp(name, hasExit)
-}
-
 func operandLabel(side string) string {
 	if side == "" {
 		return "operand"
@@ -215,42 +199,6 @@ func missingBoundaryProofMessageForSubject(subject string, want typ.Type) string
 
 func missingIndexReadProofMessage(want typ.Type) string {
 	return display.MissingIndexReadProofMessage(want)
-}
-
-func missingMemberMessage(receiver typ.Type, member string) string {
-	return display.MissingMemberMessage(receiver, member)
-}
-
-func memberReadReceiverEvidence(readPath, member string, receiver typ.Type) string {
-	return display.MemberReadReceiverEvidence(readPath, member, receiver)
-}
-
-func receiverForMemberEvidence(memberPath string, receiver typ.Type) string {
-	return display.ReceiverForMemberEvidence(memberPath, receiver)
-}
-
-func missingMemberHelp(member string) string {
-	return display.MissingMemberHelp(member)
-}
-
-func memberNotCallableMessage(memberPath string, receiver, memberType typ.Type, member string) string {
-	return display.MemberNotCallableMessage(memberPath, receiver, memberType, member)
-}
-
-func memberTypeAtCallEvidence(memberPath string, memberType typ.Type) string {
-	return display.MemberTypeAtCallEvidence(memberPath, memberType)
-}
-
-func memberNotCallableHelp(memberPath string) string {
-	return display.MemberNotCallableHelp(memberPath)
-}
-
-func directNotCallableMessage(name string, calleeType typ.Type) string {
-	return display.DirectNotCallableMessage(name, calleeType)
-}
-
-func directNotCallableHelp(name string) string {
-	return display.DirectNotCallableHelp(name)
 }
 
 func annotatedTypeEvidence(name string, t typ.Type) string {
@@ -353,22 +301,6 @@ func missingRequiredMethodHelp(method string) string {
 	return display.MissingRequiredMethodHelp(method)
 }
 
-func missingNonNilGuardHereMessage(sourceName string) string {
-	return display.MissingNonNilGuardHereMessage(sourceName)
-}
-
-func optionalReceiverReadEvidence(receiverName, memberName string) string {
-	return display.OptionalReceiverReadEvidence(receiverName, memberName)
-}
-
-func indexedReadExpectedProofMessage(sourceName, expectedKind string) string {
-	return display.IndexedReadExpectedProofMessage(sourceName, expectedKind)
-}
-
-func missingExpectedProofMessage(sourceName, expectedKind string) string {
-	return display.MissingExpectedProofMessage(sourceName, expectedKind)
-}
-
 func returnDeclaredTypeEvidence(label string, want typ.Type) string {
 	return display.ReturnDeclaredTypeEvidence(label, want)
 }
@@ -391,38 +323,6 @@ func callResultAssignmentHelp(missingNilProof bool) string {
 
 func callResultDeclaredReturnEvidence(name, label string, got typ.Type) string {
 	return display.CallResultDeclaredReturnEvidence(name, label, got)
-}
-
-func possiblyNilCallTargetMessage(name string) string {
-	return display.PossiblyNilCallTargetMessage(name)
-}
-
-func possiblyNilCalleeTypeEvidence(name string, calleeType typ.Type, callable bool) string {
-	return display.PossiblyNilCalleeTypeEvidence(name, calleeType, callable)
-}
-
-func missingNonNilBeforeCallMessage(name string) string {
-	return display.MissingNonNilBeforeCallMessage(name)
-}
-
-func possiblyNilCallTargetHelp(name string) string {
-	return display.PossiblyNilCallTargetHelp(name)
-}
-
-func optionalMethodCallMessage() string {
-	return display.OptionalMethodCallMessage()
-}
-
-func optionalMethodReceiverEvidence(subject, target string) string {
-	return display.OptionalMethodReceiverEvidence(subject, target)
-}
-
-func optionalMethodMissingNilCheckEvidence(guardSubject, callTarget string) string {
-	return display.OptionalMethodMissingNilCheckEvidence(guardSubject, callTarget)
-}
-
-func optionalMethodCallHelp(receiverName, callName string) string {
-	return display.OptionalMethodCallHelp(receiverName, callName)
 }
 
 func callArityMismatchMessage(name string, want, got int) string {

@@ -18,8 +18,8 @@ func (ProofContext) DeadAssignment(item judgment.Judgment, primary diagnostic.Sp
 	hasExit := deadAssignmentHasExit(item)
 	evidence, labels := deadAssignmentEvidence(item, primary, name)
 	return deadAssignmentPresentation{
-		Message:  deadAssignmentMessage(name, hasExit),
-		Help:     deadAssignmentHelp(name, hasExit),
+		Message:  display.DeadAssignmentMessage(name, hasExit),
+		Help:     display.DeadAssignmentHelp(name, hasExit),
 		Evidence: evidence,
 		Labels:   labels,
 	}
@@ -45,7 +45,7 @@ func deadAssignmentEvidence(item judgment.Judgment, primary diagnostic.Span, nam
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnosticTrustFromJudgmentTrust(itemEvidence.Trust, diagnostic.TrustProven),
 				Span:    span,
-				Message: deadAssignmentOverwriteEvidence(name),
+				Message: display.DeadAssignmentOverwriteEvidence(name),
 			})
 			labels = append(labels, sourceLabel(span, labelOverwrite))
 		case judgment.EvidenceDetailDeadAssignmentExit:
@@ -53,7 +53,7 @@ func deadAssignmentEvidence(item judgment.Judgment, primary diagnostic.Span, nam
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnosticTrustFromJudgmentTrust(itemEvidence.Trust, diagnostic.TrustProven),
 				Span:    span,
-				Message: deadAssignmentExitEvidence(name),
+				Message: display.DeadAssignmentExitEvidence(name),
 			})
 			labels = append(labels, sourceLabel(span, labelExitBeforeRead))
 		}

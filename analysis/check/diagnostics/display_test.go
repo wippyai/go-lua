@@ -61,23 +61,23 @@ func TestDiagnosticMessagesUseCentralVocabulary(t *testing.T) {
 }
 
 func TestDeadAssignmentMessagesUseCentralDisplay(t *testing.T) {
-	if got := deadAssignmentMessage("value", false); got != `assignment to "value" is overwritten before it is read` {
-		t.Fatalf("deadAssignmentMessage overwrite = %q", got)
+	if got := display.DeadAssignmentMessage("value", false); got != `assignment to "value" is overwritten before it is read` {
+		t.Fatalf("display.DeadAssignmentMessage overwrite = %q", got)
 	}
-	if got := deadAssignmentMessage("exit_value", true); got != `assignment to "exit_value" is discarded before it is read` {
-		t.Fatalf("deadAssignmentMessage exit = %q", got)
+	if got := display.DeadAssignmentMessage("exit_value", true); got != `assignment to "exit_value" is discarded before it is read` {
+		t.Fatalf("display.DeadAssignmentMessage exit = %q", got)
 	}
-	if got := deadAssignmentOverwriteEvidence("value"); got != `later assignment replaces "value" before the earlier value is read` {
-		t.Fatalf("deadAssignmentOverwriteEvidence = %q", got)
+	if got := display.DeadAssignmentOverwriteEvidence("value"); got != `later assignment replaces "value" before the earlier value is read` {
+		t.Fatalf("display.DeadAssignmentOverwriteEvidence = %q", got)
 	}
-	if got := deadAssignmentExitEvidence("exit_value"); got != `control can leave before "exit_value" is read` {
-		t.Fatalf("deadAssignmentExitEvidence = %q", got)
+	if got := display.DeadAssignmentExitEvidence("exit_value"); got != `control can leave before "exit_value" is read` {
+		t.Fatalf("display.DeadAssignmentExitEvidence = %q", got)
 	}
-	if got := deadAssignmentHelp("value", false); got != "Remove this assignment, or read `value` before the later overwrite." {
-		t.Fatalf("deadAssignmentHelp overwrite = %q", got)
+	if got := display.DeadAssignmentHelp("value", false); got != "Remove this assignment, or read `value` before the later overwrite." {
+		t.Fatalf("display.DeadAssignmentHelp overwrite = %q", got)
 	}
-	if got := deadAssignmentHelp("exit_value", true); got != "Remove this assignment, or read `exit_value` before every later overwrite or exit." {
-		t.Fatalf("deadAssignmentHelp exit = %q", got)
+	if got := display.DeadAssignmentHelp("exit_value", true); got != "Remove this assignment, or read `exit_value` before every later overwrite or exit." {
+		t.Fatalf("display.DeadAssignmentHelp exit = %q", got)
 	}
 }
 
@@ -493,43 +493,43 @@ func TestBoundaryProofMessagesUseCentralTypeDisplay(t *testing.T) {
 }
 
 func TestMemberDisplayMessagesUsePathWhenAvailable(t *testing.T) {
-	if got := missingMemberMessage(typ.String, "send"); got != `string has no member "send"` {
+	if got := display.MissingMemberMessage(typ.String, "send"); got != `string has no member "send"` {
 		t.Fatalf("missingMemberMessage = %q", got)
 	}
-	if got := memberNotCallableMessage("client.send", typ.String, typ.Number, "send"); got != "client.send is number, not callable" {
+	if got := display.MemberNotCallableMessage("client.send", typ.String, typ.Number, "send"); got != "client.send is number, not callable" {
 		t.Fatalf("memberNotCallableMessage = %q", got)
 	}
-	if got := memberNotCallableMessage("client.send", typ.String, typ.Any, "send"); got != "client.send comes from any/unknown; no proof shows it is callable" {
+	if got := display.MemberNotCallableMessage("client.send", typ.String, typ.Any, "send"); got != "client.send comes from any/unknown; no proof shows it is callable" {
 		t.Fatalf("memberNotCallableMessage any = %q", got)
 	}
-	if got := memberReadReceiverEvidence(`client["send"]`, "send", typ.String); got != `client["send"] reads member "send" from receiver type string` {
+	if got := display.MemberReadReceiverEvidence(`client["send"]`, "send", typ.String); got != `client["send"] reads member "send" from receiver type string` {
 		t.Fatalf("memberReadReceiverEvidence = %q", got)
 	}
-	if got := receiverForMemberEvidence("client.send", typ.String); got != "client.send has receiver type string" {
+	if got := display.ReceiverForMemberEvidence("client.send", typ.String); got != "client.send has receiver type string" {
 		t.Fatalf("receiverForMemberEvidence = %q", got)
 	}
-	if got := missingMemberHelp("send"); got != "Narrow the receiver before reading `send`, or add `send` to every reachable receiver shape." {
+	if got := display.MissingMemberHelp("send"); got != "Narrow the receiver before reading `send`, or add `send` to every reachable receiver shape." {
 		t.Fatalf("missingMemberHelp = %q", got)
 	}
-	if got := memberTypeAtCallEvidence("client.send", typ.Number); got != "client.send has type number at call" {
+	if got := display.MemberTypeAtCallEvidence("client.send", typ.Number); got != "client.send has type number at call" {
 		t.Fatalf("memberTypeAtCallEvidence = %q", got)
 	}
-	if got := memberTypeAtCallEvidence("M.f", typ.LiteralInt(42)); got != "M.f has literal value 42 at call" {
+	if got := display.MemberTypeAtCallEvidence("M.f", typ.LiteralInt(42)); got != "M.f has literal value 42 at call" {
 		t.Fatalf("memberTypeAtCallEvidence literal = %q", got)
 	}
-	if got := memberNotCallableHelp("client.send"); got != "Narrow `client.send` to a function-valued member before calling it, or call a different member." {
+	if got := display.MemberNotCallableHelp("client.send"); got != "Narrow `client.send` to a function-valued member before calling it, or call a different member." {
 		t.Fatalf("memberNotCallableHelp = %q", got)
 	}
 }
 
 func TestDirectCallDisplayMessagesUseCentralTypeDisplay(t *testing.T) {
-	if got := directNotCallableMessage("target", typ.Number); got != "target is number, not callable" {
+	if got := display.DirectNotCallableMessage("target", typ.Number); got != "target is number, not callable" {
 		t.Fatalf("directNotCallableMessage = %q", got)
 	}
-	if got := directNotCallableMessage("target", typ.Any); got != "target comes from any/unknown; no proof shows it is callable" {
+	if got := display.DirectNotCallableMessage("target", typ.Any); got != "target comes from any/unknown; no proof shows it is callable" {
 		t.Fatalf("directNotCallableMessage any = %q", got)
 	}
-	if got := directNotCallableHelp("target"); got != "Call a function value, or replace `target` with a callable expression before this call." {
+	if got := display.DirectNotCallableHelp("target"); got != "Call a function value, or replace `target` with a callable expression before this call." {
 		t.Fatalf("directNotCallableHelp = %q", got)
 	}
 	if got := annotatedTypeEvidence("target", typ.Number); got != "target is annotated number" {
@@ -655,20 +655,20 @@ func TestOptionalTypeDisplayLeavesNilabilityToProofContext(t *testing.T) {
 	if got := missingRequiredFieldHelp("id"); got != "Add field `id`, or make it optional in the declared type if it may be absent." {
 		t.Fatalf("missingRequiredFieldHelp = %q", got)
 	}
-	if got := missingNonNilGuardHereMessage("cache.value"); got != "no guard on this path proves cache.value is non-nil" {
+	if got := display.MissingNonNilGuardHereMessage("cache.value"); got != "no guard on this path proves cache.value is non-nil" {
 		t.Fatalf("missingNonNilGuardHereMessage = %q", got)
 	}
-	if got := optionalReceiverReadEvidence("store:lookup_policy(...)", ".tags"); got != "store:lookup_policy(...) may be nil before reading .tags" {
+	if got := display.OptionalReceiverReadEvidence("store:lookup_policy(...)", ".tags"); got != "store:lookup_policy(...) may be nil before reading .tags" {
 		t.Fatalf("optionalReceiverReadEvidence = %q", got)
 	}
-	if got := optionalReceiverReadEvidence("store:lookup_policy(...).tags", `["source"]`); got != `store:lookup_policy(...).tags may be nil before indexing ["source"]` {
+	if got := display.OptionalReceiverReadEvidence("store:lookup_policy(...).tags", `["source"]`); got != `store:lookup_policy(...).tags may be nil before indexing ["source"]` {
 		t.Fatalf("optionalReceiverReadEvidence index = %q", got)
 	}
-	if got := indexedReadExpectedProofMessage("items[i]", "declared type"); !strings.Contains(got, "items[i] is an indexed read") ||
+	if got := display.IndexedReadExpectedProofMessage("items[i]", "declared type"); !strings.Contains(got, "items[i] is an indexed read") ||
 		!strings.Contains(got, "satisfies the declared type here") {
 		t.Fatalf("indexedReadExpectedProofMessage = %q", got)
 	}
-	if got := missingExpectedProofMessage("raw", "parameter type"); got != "no proof on this path shows raw satisfies the parameter type" {
+	if got := display.MissingExpectedProofMessage("raw", "parameter type"); got != "no proof on this path shows raw satisfies the parameter type" {
 		t.Fatalf("missingExpectedProofMessage = %q", got)
 	}
 }
@@ -706,43 +706,43 @@ func TestReturnProofMessagesUseCentralDisplay(t *testing.T) {
 }
 
 func TestCallNilabilityMessagesUseCentralDisplay(t *testing.T) {
-	if got := possiblyNilCallTargetMessage("maybe_send"); got != "cannot call maybe_send because it may be nil" {
+	if got := display.PossiblyNilCallTargetMessage("maybe_send"); got != "cannot call maybe_send because it may be nil" {
 		t.Fatalf("possiblyNilCallTargetMessage = %q", got)
 	}
-	if got := possiblyNilCalleeTypeEvidence("maybe_send", typ.MaterializeOptional(typ.String), false); got != "maybe_send can be string or nil at the call" {
+	if got := display.PossiblyNilCalleeTypeEvidence("maybe_send", typ.MaterializeOptional(typ.String), false); got != "maybe_send can be string or nil at the call" {
 		t.Fatalf("possiblyNilCalleeTypeEvidence noncallable = %q", got)
 	}
-	if got := possiblyNilCalleeTypeEvidence("maybe_send", nil, false); got != "maybe_send may be nil at the call" {
+	if got := display.PossiblyNilCalleeTypeEvidence("maybe_send", nil, false); got != "maybe_send may be nil at the call" {
 		t.Fatalf("possiblyNilCalleeTypeEvidence nil = %q", got)
 	}
-	if got := possiblyNilCalleeTypeEvidence("maybe_send", typ.MaterializeOptional(typ.String), true); got != "maybe_send has a callable type, but may also be nil" {
+	if got := display.PossiblyNilCalleeTypeEvidence("maybe_send", typ.MaterializeOptional(typ.String), true); got != "maybe_send has a callable type, but may also be nil" {
 		t.Fatalf("possiblyNilCalleeTypeEvidence callable = %q", got)
 	}
-	if got := missingNonNilBeforeCallMessage("maybe_send"); got != "no guard on this path proves maybe_send is non-nil before this call" {
+	if got := display.MissingNonNilBeforeCallMessage("maybe_send"); got != "no guard on this path proves maybe_send is non-nil before this call" {
 		t.Fatalf("missingNonNilBeforeCallMessage = %q", got)
 	}
-	if got := possiblyNilCallTargetHelp("maybe_send"); got != "Guard `maybe_send` with a nil check before calling it." {
+	if got := display.PossiblyNilCallTargetHelp("maybe_send"); got != "Guard `maybe_send` with a nil check before calling it." {
 		t.Fatalf("possiblyNilCallTargetHelp = %q", got)
 	}
 }
 
 func TestOptionalMethodMessagesUseCentralDisplay(t *testing.T) {
-	if got := optionalMethodCallMessage(); got != "cannot call method on an optional value without a nil check" {
+	if got := display.OptionalMethodCallMessage(); got != "cannot call method on an optional value without a nil check" {
 		t.Fatalf("optionalMethodCallMessage = %q", got)
 	}
-	if got := optionalMethodReceiverEvidence("receiver client", " at call to client.send"); got != "receiver client is optional at call to client.send" {
+	if got := display.OptionalMethodReceiverEvidence("receiver client", " at call to client.send"); got != "receiver client is optional at call to client.send" {
 		t.Fatalf("optionalMethodReceiverEvidence = %q", got)
 	}
-	if got := optionalMethodReceiverEvidence("receiver", ""); got != "receiver is optional" {
+	if got := display.OptionalMethodReceiverEvidence("receiver", ""); got != "receiver is optional" {
 		t.Fatalf("optionalMethodReceiverEvidence bare receiver = %q", got)
 	}
-	if got := optionalMethodMissingNilCheckEvidence("receiver client", "calling client.send"); got != "no nil check proves receiver client is present before calling client.send" {
+	if got := display.OptionalMethodMissingNilCheckEvidence("receiver client", "calling client.send"); got != "no nil check proves receiver client is present before calling client.send" {
 		t.Fatalf("optionalMethodMissingNilCheckEvidence = %q", got)
 	}
-	if got := optionalMethodCallHelp("client", "client.send"); got != "check client ~= nil before calling client.send." {
+	if got := display.OptionalMethodCallHelp("client", "client.send"); got != "check client ~= nil before calling client.send." {
 		t.Fatalf("optionalMethodCallHelp named = %q", got)
 	}
-	if got := optionalMethodCallHelp("", ""); got != "check the receiver for nil before calling a method on it." {
+	if got := display.OptionalMethodCallHelp("", ""); got != "check the receiver for nil before calling a method on it." {
 		t.Fatalf("optionalMethodCallHelp receiver = %q", got)
 	}
 }

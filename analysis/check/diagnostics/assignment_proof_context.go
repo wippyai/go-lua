@@ -573,10 +573,10 @@ func appendMissingNilGuardEvidence(items []diagnostic.Evidence, sourceName strin
 		return items
 	}
 	reason := diagnostic.EvidenceReasonBoundaryValidationMissing
-	message := missingNonNilGuardHereMessage(sourceName)
+	message := display.MissingNonNilGuardHereMessage(sourceName)
 	if indexed {
 		reason = diagnostic.EvidenceReasonIndexReadValidationMissing
-		message = indexedReadExpectedProofMessage(sourceName, "declared type")
+		message = display.IndexedReadExpectedProofMessage(sourceName, "declared type")
 	}
 	return append(items, diagnostic.Evidence{
 		Kind:    diagnostic.EvidenceMissingProof,
@@ -590,7 +590,7 @@ func appendMissingNilGuardEvidence(items []diagnostic.Evidence, sourceName strin
 func assignmentJudgmentMissingProofMessage(item judgment.Judgment, proof judgment.AssignmentProofSummary, sourceName string, got typ.Type, want typ.Type) string {
 	subject := boundaryEvidenceSubject(sourceName)
 	if proof.IndexedRead {
-		return indexedReadExpectedProofMessage(subject, "declared type")
+		return display.IndexedReadExpectedProofMessage(subject, "declared type")
 	}
 	if proof.BoundaryProofMissing() {
 		return missingBoundaryProofMessageForSubject(subject, want)
@@ -598,7 +598,7 @@ func assignmentJudgmentMissingProofMessage(item judgment.Judgment, proof judgmen
 	if sourceName == "assigned value" || typ.Nil.Equals(got) || item.Expected.Label == "" {
 		return missingBoundaryProofMessageForSubject(subject, want)
 	}
-	return missingExpectedProofMessage(subject, "declared type")
+	return display.MissingExpectedProofMessage(subject, "declared type")
 }
 
 func assignmentJudgmentUserAssertionEvidence(item judgment.Judgment) []diagnostic.Evidence {

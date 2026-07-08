@@ -33,15 +33,15 @@ func (ProofContext) MemberRead(item judgment.Judgment, primary diagnostic.Span) 
 	}
 	receiver := item.Actual.ProjectedType
 	return memberReadPresentation{
-		Message: missingMemberMessage(receiver, detail.Field),
-		Help:    missingMemberHelp(detail.Field),
+		Message: display.MissingMemberMessage(receiver, detail.Field),
+		Help:    display.MissingMemberHelp(detail.Field),
 		Labels:  []diagnostic.Label{sourceLabel(primary, labelMemberRead)},
 		Evidence: []diagnostic.Evidence{
 			{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
 				Span:    primary,
-				Message: memberReadReceiverEvidence(readPath, detail.Field, receiver),
+				Message: display.MemberReadReceiverEvidence(readPath, detail.Field, receiver),
 			},
 		},
 	}, true

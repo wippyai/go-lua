@@ -179,7 +179,7 @@ func directCallArgumentJudgmentEvidence(display diagnosticDisplay, item judgment
 	if proof.CallParamObligation {
 		missingProof = fmt.Sprintf("no proof on this path shows %s is %s", directCallArgumentSourceEvidenceLabel(proof, wording.MissingName), display.Type(want))
 	} else if callArgumentNilabilityShouldLead(proof, wording) {
-		missingProof = missingNonNilGuardHereMessage(wording.SourceName)
+		missingProof = display.MissingNonNilGuardHereMessage(wording.SourceName)
 	} else if proof.PrecisionBoundary {
 		// Precision-boundary evidence is the primary reason when an explicit
 		// any/unknown value reaches a contract. Nilability may also be visible,

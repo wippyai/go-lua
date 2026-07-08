@@ -26,19 +26,19 @@ func (ProofContext) DirectCallCallee(item judgment.Judgment, primary diagnostic.
 	if name == "" {
 		name = "call target"
 	}
-	message := directNotCallableMessage(name, item.Actual.ProjectedType)
-	help := directNotCallableHelp(name)
+	message := display.DirectNotCallableMessage(name, item.Actual.ProjectedType)
+	help := display.DirectNotCallableHelp(name)
 	if detail.Kind == judgment.EvidenceDetailMemberMissing {
-		message = missingMemberMessage(item.Actual.ProjectedType, detail.Field)
-		help = missingMemberHelp(detail.Field)
+		message = display.MissingMemberMessage(item.Actual.ProjectedType, detail.Field)
+		help = display.MissingMemberHelp(detail.Field)
 	}
 	if detail.Kind == judgment.EvidenceDetailCalleeMayBeNil {
-		message = possiblyNilCallTargetMessage(name)
-		help = possiblyNilCallTargetHelp(name)
+		message = display.PossiblyNilCallTargetMessage(name)
+		help = display.PossiblyNilCallTargetHelp(name)
 		if detail.MemberAccess && !detail.Callable {
 			receiverName, callName := memberCalleeOptionalNames(name)
-			message = optionalMethodCallMessage()
-			help = optionalMethodCallHelp(receiverName, callName)
+			message = display.OptionalMethodCallMessage()
+			help = display.OptionalMethodCallHelp(receiverName, callName)
 		}
 	}
 	code := CodeDirectCallNotCallable
@@ -72,7 +72,7 @@ func callCalleeJudgmentEvidence(item judgment.Judgment, detail judgment.Evidence
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
 				Span:    primary,
-				Message: receiverForMemberEvidence(name, actual),
+				Message: display.ReceiverForMemberEvidence(name, actual),
 			},
 		}
 	}
@@ -96,13 +96,13 @@ func callCalleeJudgmentEvidence(item judgment.Judgment, detail judgment.Evidence
 					Kind:    diagnostic.EvidenceAbstractFact,
 					Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
 					Span:    primary,
-					Message: optionalMethodReceiverEvidence(subject, target),
+					Message: display.OptionalMethodReceiverEvidence(subject, target),
 				},
 				{
 					Kind:    diagnostic.EvidenceMissingProof,
 					Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceMissingProof, diagnostic.TrustUnknown),
 					Span:    primary,
-					Message: optionalMethodMissingNilCheckEvidence(subject, callTarget),
+					Message: display.OptionalMethodMissingNilCheckEvidence(subject, callTarget),
 				},
 			}
 		}
@@ -112,7 +112,7 @@ func callCalleeJudgmentEvidence(item judgment.Judgment, detail judgment.Evidence
 					Kind:    diagnostic.EvidenceAbstractFact,
 					Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
 					Span:    primary,
-					Message: memberTypeAtCallEvidence(name, actual),
+					Message: display.MemberTypeAtCallEvidence(name, actual),
 				},
 				{
 					Kind:    diagnostic.EvidenceUserAssertion,
@@ -124,11 +124,11 @@ func callCalleeJudgmentEvidence(item judgment.Judgment, detail judgment.Evidence
 					Kind:    diagnostic.EvidenceMissingProof,
 					Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceMissingProof, diagnostic.TrustUnknown),
 					Span:    primary,
-					Message: missingNonNilBeforeCallMessage(name),
+					Message: display.MissingNonNilBeforeCallMessage(name),
 				},
 			}
 		}
-		actualMessage := possiblyNilCalleeTypeEvidence(name, actual, detail.Callable)
+		actualMessage := display.PossiblyNilCalleeTypeEvidence(name, actual, detail.Callable)
 		return []diagnostic.Evidence{
 			{
 				Kind:    diagnostic.EvidenceAbstractFact,
@@ -146,7 +146,7 @@ func callCalleeJudgmentEvidence(item judgment.Judgment, detail judgment.Evidence
 				Kind:    diagnostic.EvidenceMissingProof,
 				Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceMissingProof, diagnostic.TrustUnknown),
 				Span:    primary,
-				Message: missingNonNilBeforeCallMessage(name),
+				Message: display.MissingNonNilBeforeCallMessage(name),
 			},
 		}
 	}
