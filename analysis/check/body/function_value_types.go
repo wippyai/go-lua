@@ -182,24 +182,31 @@ func (r *Result) pathProvenFunctionAtBoundary(point cfg.Point, target pathdom.Pa
 			return false
 		}
 		visited[cursor] = struct{}{}
-		if fact, ok := r.LocalAssignment(cursor); ok &&
-			len(target.Segments) == 0 &&
-			fact.HasSymbol &&
-			fact.Symbol == target.Symbol {
-			return r.assignmentSourceProvenFunctionAtBoundary(cursor, fact.Expr, seen)
-		}
-		if fact, ok := r.OrdinaryAssignment(cursor); ok {
+		if fact, ok := r.RootAssignment(cursor); ok {
+			assigned := fact.TargetPathRef()
 			if len(target.Segments) == 0 &&
-				fact.HasSymbol &&
-				fact.Symbol == target.Symbol {
-				return r.assignmentSourceProvenFunctionAtBoundary(cursor, fact.Value, seen)
+				fact.TargetSymbol() != 0 &&
+				fact.TargetSymbol() == target.Symbol {
+				return r.assignmentValueSourceProvenFunctionAtBoundary(cursor, fact.Source(), seen)
 			}
-			if fact.HasPath && fact.Path.Equal(target) {
-				return r.assignmentSourceProvenFunctionAtBoundary(cursor, fact.Value, seen)
+			if !assigned.IsEmpty() && assigned.Equal(target) {
+				return r.assignmentValueSourceProvenFunctionAtBoundary(cursor, fact.Source(), seen)
 			}
-			if fact.HasPath && target.HasPrefix(fact.Path) {
+			if !assigned.IsEmpty() && target.HasPrefix(assigned) {
 				return false
 			}
+		}
+		if fact, ok := r.PathAssignment(cursor); ok {
+			assigned := fact.TargetPathRef()
+			if assigned.Equal(target) {
+				return r.assignmentValueSourceProvenFunctionAtBoundary(cursor, fact.Source(), seen)
+			}
+			if target.HasPrefix(assigned) {
+				return false
+			}
+		}
+		if invalidation, ok := r.PathDescendantInvalidation(cursor); ok && target.HasStrictPrefix(invalidation.ContainerPathRef()) {
+			return false
 		}
 		parent, ok := r.ImmediateDominator(cursor)
 		if !ok || parent == cursor {
@@ -209,14 +216,33 @@ func (r *Result) pathProvenFunctionAtBoundary(point cfg.Point, target pathdom.Pa
 	}
 }
 
-func (r *Result) assignmentSourceProvenFunctionAtBoundary(point cfg.Point, expr ast.Expr, seen map[pathdom.PathKey]struct{}) bool {
-	if _, ok := functionLiteralExpr(expr); ok {
-		return true
+func (r *Result) assignmentValueSourceProvenFunctionAtBoundary(point cfg.Point, source factflow.ValueSource, seen map[pathdom.PathKey]struct{}) bool {
+	if r == nil {
+		return false
 	}
-	if _, ok := r.FunctionValueTypeAtBoundary(point, expr); ok {
-		return true
+	if value, ok := r.SourceValueBeforeBoundary(point, source); ok {
+		if _, ok := r.FunctionValueTypeForValueAtBoundary(point, value); ok {
+			return true
+		}
+		if valueHasCallableType(r.registry, r.typeValues, value) {
+			return true
+		}
+		if valueProvesNonCallable(r.registry, r.typeValues, value) {
+			return false
+		}
 	}
-	p, ok := r.ExpressionPath(expr)
+	if value, ok := r.SourceValueAtBoundary(point, source); ok {
+		if _, ok := r.FunctionValueTypeForValueAtBoundary(point, value); ok {
+			return true
+		}
+		if valueHasCallableType(r.registry, r.typeValues, value) {
+			return true
+		}
+		if valueProvesNonCallable(r.registry, r.typeValues, value) {
+			return false
+		}
+	}
+	p, ok := r.ValueSourcePath(source)
 	if !ok || p.IsEmpty() {
 		return false
 	}

@@ -417,6 +417,41 @@ func TestExpressionProvenFunctionAtBoundaryFollowsDominatingAlias(t *testing.T) 
 	}
 }
 
+func TestExpressionProvenFunctionAtBoundaryFollowsDominatingPathAssignment(t *testing.T) {
+	reg := standard.Registry()
+	result, err := CheckChunk(parseChunk(t, `
+		local callback = function() end
+		local box = {}
+		box.fn = callback
+		local sink = box.fn
+	`), Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	point, expr := requireLocalAssignmentExprByName(t, result, "sink")
+	if !result.ExpressionProvenFunctionAtBoundary(point, expr) {
+		t.Fatal("ExpressionProvenFunctionAtBoundary(box.fn) = false, want true")
+	}
+}
+
+func TestExpressionProvenFunctionAtBoundaryRejectsPathOverwrite(t *testing.T) {
+	reg := standard.Registry()
+	result, err := CheckChunk(parseChunk(t, `
+		local callback = function() end
+		local box = {}
+		box.fn = callback
+		box.fn = nil
+		local sink = box.fn
+	`), Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	point, expr := requireLocalAssignmentExprByName(t, result, "sink")
+	if result.ExpressionProvenFunctionAtBoundary(point, expr) {
+		t.Fatal("ExpressionProvenFunctionAtBoundary(box.fn) = true after overwrite, want false")
+	}
+}
+
 func TestExpressionMayBeFunctionBeforeBoundaryRejectsProvenString(t *testing.T) {
 	reg := standard.Registry()
 	result, err := CheckChunk(parseChunk(t, `
