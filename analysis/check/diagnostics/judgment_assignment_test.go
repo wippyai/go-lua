@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/judgment"
+	"github.com/wippyai/go-lua/analysis/check/obligation/pass"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -63,7 +64,7 @@ local ok: number = 1`)
 		t.Fatal("RootResult nil")
 	}
 
-	diags := produceAssignmentJudgmentDiagnostics(result, "main.lua")
+	diags := produceJudgmentsWithPolicy(result, "main.lua", judgment.DefaultPolicy(), judgment.StrictnessDefault, pass.Assignments{})
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want one assignment judgment diagnostic: %#v", len(diags), diags)
 	}
@@ -86,7 +87,7 @@ local s: string = raw`)
 		t.Fatal("RootResult nil")
 	}
 
-	diags := produceAssignmentJudgmentDiagnostics(result, "main.lua")
+	diags := produceJudgmentsWithPolicy(result, "main.lua", judgment.DefaultPolicy(), judgment.StrictnessDefault, pass.Assignments{})
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want one assignment judgment diagnostic: %#v", len(diags), diags)
 	}
@@ -177,7 +178,7 @@ end`, nil, signaturelookup.Source{})
 		t.Fatal("RootResult nil")
 	}
 
-	direct := produceAssignmentJudgmentDiagnostics(result, "main.lua")
+	direct := produceJudgmentsWithPolicy(result, "main.lua", judgment.DefaultPolicy(), judgment.StrictnessDefault, pass.Assignments{})
 	if len(direct) != 1 {
 		t.Fatalf("direct assignment diagnostics = %d, want one stale alias diagnostic: %#v", len(direct), direct)
 	}

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/judgment"
+	"github.com/wippyai/go-lua/analysis/check/obligation/pass"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -17,7 +18,7 @@ need_string(42)`)
 		t.Fatal("RootResult nil")
 	}
 
-	diags := produceDirectCallArgumentJudgmentDiagnostics(result, "main.lua")
+	diags := produceReachableCallJudgmentsWithPolicy(result, "main.lua", judgment.DefaultPolicy(), judgment.StrictnessDefault, pass.CallArguments{})
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
 	}
@@ -99,7 +100,7 @@ add(1, 2, 3)`)
 		t.Fatal("RootResult nil")
 	}
 
-	diags := produceCallArityJudgmentDiagnostics(result, "main.lua")
+	diags := produceJudgmentsWithPolicy(result, "main.lua", judgment.DefaultPolicy(), judgment.StrictnessDefault, pass.CallArity{})
 	if len(diags) != 2 {
 		t.Fatalf("diagnostics = %d, want two arity diagnostics: %#v", len(diags), diags)
 	}
@@ -120,7 +121,7 @@ maybe()`)
 		t.Fatal("RootResult nil")
 	}
 
-	diags := produceCallCalleeJudgmentDiagnostics(result, "main.lua")
+	diags := produceJudgmentsWithPolicy(result, "main.lua", judgment.DefaultPolicy(), judgment.StrictnessDefault, pass.CallCallee{})
 	if len(diags) != 2 {
 		t.Fatalf("diagnostics = %d, want two callee diagnostics: %#v", len(diags), diags)
 	}
@@ -152,7 +153,7 @@ end`)
 		t.Fatalf("function results = %#v, want one", result)
 	}
 
-	diags := produceCallCalleeJudgmentDiagnostics(result.FunctionResults()[0], "main.lua")
+	diags := produceJudgmentsWithPolicy(result.FunctionResults()[0], "main.lua", judgment.DefaultPolicy(), judgment.StrictnessDefault, pass.CallCallee{})
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want one missing-member diagnostic: %#v", len(diags), diags)
 	}
@@ -255,7 +256,7 @@ need_string(raw)`)
 		t.Fatal("RootResult nil")
 	}
 
-	diags := produceDirectCallArgumentJudgmentDiagnostics(result, "main.lua")
+	diags := produceReachableCallJudgmentsWithPolicy(result, "main.lua", judgment.DefaultPolicy(), judgment.StrictnessDefault, pass.CallArguments{})
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
 	}
@@ -359,7 +360,7 @@ need_string(raw)`)
 		t.Fatal("RootResult nil")
 	}
 
-	diags := produceDirectCallArgumentJudgmentDiagnosticsWithPolicy(result, "main.lua", judgment.DefaultPolicy(), judgment.StrictnessLenient)
+	diags := produceReachableCallJudgmentsWithPolicy(result, "main.lua", judgment.DefaultPolicy(), judgment.StrictnessLenient, pass.CallArguments{})
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
 	}
@@ -380,7 +381,7 @@ need_string(raw)`)
 		{Code: judgment.CodeCallArgType, Verdict: judgment.VerdictUnknown, Mode: judgment.StrictnessDefault}: judgment.LevelDisabled,
 	})
 
-	diags := produceDirectCallArgumentJudgmentDiagnosticsWithPolicy(result, "main.lua", policy, judgment.StrictnessDefault)
+	diags := produceReachableCallJudgmentsWithPolicy(result, "main.lua", policy, judgment.StrictnessDefault, pass.CallArguments{})
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %d, want 0: %#v", len(diags), diags)
 	}
@@ -395,7 +396,7 @@ need_string(response.body)`)
 		t.Fatal("RootResult nil")
 	}
 
-	diags := produceDirectCallArgumentJudgmentDiagnostics(result, "main.lua")
+	diags := produceReachableCallJudgmentsWithPolicy(result, "main.lua", judgment.DefaultPolicy(), judgment.StrictnessDefault, pass.CallArguments{})
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
 	}
@@ -464,7 +465,7 @@ need_id({ name = "no-id-here" })`)
 		t.Fatal("RootResult nil")
 	}
 
-	diags := produceDirectCallArgumentJudgmentDiagnostics(result, "main.lua")
+	diags := produceReachableCallJudgmentsWithPolicy(result, "main.lua", judgment.DefaultPolicy(), judgment.StrictnessDefault, pass.CallArguments{})
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
 	}
@@ -494,7 +495,7 @@ listen("events", {
 		t.Fatal("RootResult nil")
 	}
 
-	diags := produceDirectCallArgumentJudgmentDiagnostics(result, "main.lua")
+	diags := produceReachableCallJudgmentsWithPolicy(result, "main.lua", judgment.DefaultPolicy(), judgment.StrictnessDefault, pass.CallArguments{})
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
 	}
@@ -575,7 +576,7 @@ else
 end
 `)
 
-	argOnly := produceDirectCallArgumentJudgmentDiagnostics(result, "main.lua")
+	argOnly := produceReachableCallJudgmentsWithPolicy(result, "main.lua", judgment.DefaultPolicy(), judgment.StrictnessDefault, pass.CallArguments{})
 	if len(argOnly) != 1 || argOnly[0].Code != CodeDirectCallArgType {
 		t.Fatalf("argument-only diagnostics = %#v, want one direct-call argument diagnostic", argOnly)
 	}

@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/check/judgment"
+	"github.com/wippyai/go-lua/analysis/check/obligation/pass"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -109,7 +110,7 @@ func TestProduceReturnJudgmentDiagnosticsFromResult(t *testing.T) {
 		t.Fatalf("check: %v", err)
 	}
 
-	diags := produceReturnJudgmentDiagnostics(result.RootResult(), "main.lua")
+	diags := produceJudgmentsWithPolicy(result.RootResult(), "main.lua", judgment.DefaultPolicy(), judgment.StrictnessDefault, pass.Returns{})
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want one return judgment diagnostic: %#v", len(diags), diags)
 	}

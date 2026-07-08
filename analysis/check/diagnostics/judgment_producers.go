@@ -8,38 +8,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 )
 
-func produceAssignmentJudgmentDiagnostics(result *body.Result, sourceFile string) []diagnostic.Diagnostic {
-	return produceAssignmentJudgmentDiagnosticsWithPolicy(result, sourceFile, judgment.DefaultPolicy(), judgment.StrictnessDefault)
-}
-
-func produceAssignmentJudgmentDiagnosticsWithPolicy(result *body.Result, sourceFile string, policy judgment.Policy, mode judgment.StrictnessMode) []diagnostic.Diagnostic {
-	return produceJudgmentsWithPolicy(result, sourceFile, policy, mode, pass.Assignments{})
-}
-
-func produceReturnJudgmentDiagnostics(result *body.Result, sourceFile string) []diagnostic.Diagnostic {
-	return produceReturnJudgmentDiagnosticsWithPolicy(result, sourceFile, judgment.DefaultPolicy(), judgment.StrictnessDefault)
-}
-
-func produceReturnJudgmentDiagnosticsWithPolicy(result *body.Result, sourceFile string, policy judgment.Policy, mode judgment.StrictnessMode) []diagnostic.Diagnostic {
-	return produceJudgmentsWithPolicy(result, sourceFile, policy, mode, pass.Returns{})
-}
-
-func produceDirectCallArgumentJudgmentDiagnostics(result *body.Result, sourceFile string) []diagnostic.Diagnostic {
-	return produceDirectCallArgumentJudgmentDiagnosticsWithPolicy(result, sourceFile, judgment.DefaultPolicy(), judgment.StrictnessDefault)
-}
-
-func produceDirectCallArgumentJudgmentDiagnosticsWithPolicy(result *body.Result, sourceFile string, policy judgment.Policy, mode judgment.StrictnessMode) []diagnostic.Diagnostic {
-	return produceReachableCallJudgmentsWithPolicy(result, sourceFile, policy, mode, pass.CallArguments{})
-}
-
-func produceCallArityJudgmentDiagnostics(result *body.Result, sourceFile string) []diagnostic.Diagnostic {
-	return produceJudgmentsWithPolicy(result, sourceFile, judgment.DefaultPolicy(), judgment.StrictnessDefault, pass.CallArity{})
-}
-
-func produceCallCalleeJudgmentDiagnostics(result *body.Result, sourceFile string) []diagnostic.Diagnostic {
-	return produceJudgmentsWithPolicy(result, sourceFile, judgment.DefaultPolicy(), judgment.StrictnessDefault, pass.CallCallee{})
-}
-
 func produceJudgmentsWithPolicy(result *body.Result, sourceFile string, policy judgment.Policy, mode judgment.StrictnessMode, producers ...pass.Producer) []diagnostic.Diagnostic {
 	return renderJudgmentDiagnostics(pass.New(producers...).Run(judgmentContext(result, sourceFile)), policy, mode)
 }
