@@ -6,6 +6,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -165,6 +166,71 @@ func TestFactsNodeTransferStaticMemberWriteUpdatesHeapTableIdentity(t *testing.T
 	member, ok := got.ReadHeapTableObject(reg, tableID).StaticMember(memberKey)
 	if !ok || !product.Equal(reg, member, value) {
 		t.Fatalf("heap static member = %s/%v, want %s/true", formatValue(reg, member), ok, formatValue(reg, value))
+	}
+}
+
+func TestFactsNodeTransferStaticMemberWritePropagatesOwnerPlacementToStoredGraph(t *testing.T) {
+	tests := []struct {
+		name           string
+		ownerPlacement placement.Value
+		wantPayload    placement.Value
+		wantChild      placement.Value
+	}{
+		{name: "stack owner keeps stored graph local", ownerPlacement: placement.Stack, wantPayload: placement.Stack, wantChild: placement.Stack},
+		{name: "owned owner retains stored graph", ownerPlacement: placement.OwnedHeap, wantPayload: placement.OwnedHeap, wantChild: placement.OwnedHeap},
+		{name: "shared owner shares stored graph", ownerPlacement: placement.SharedHeap, wantPayload: placement.SharedHeap, wantChild: placement.SharedHeap},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := standard.Registry()
+			point := cfg.Point(40121)
+			target := symbol.ID(40121)
+			targetPath := pathdom.NewPath(target, "owner").Field("payload")
+			ownerID := identity.ID{Kind: "test.table", Site: "static-member-placement", Index: 1}
+			payloadID := identity.ID{Kind: "test.table", Site: "static-member-placement", Index: 2}
+			childID := identity.ID{Kind: "test.table", Site: "static-member-placement", Index: 3}
+			ownerValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(ownerID))
+			payloadValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(payloadID))
+			childValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(childID))
+			valueSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(40121), HasExpr: true}
+			sources := &recordingSourceValues{
+				values: map[factflow.ValueSource]product.Value{valueSource: payloadValue},
+			}
+			visibilityBuilder := visibility.NewBuilder()
+			visibilityBuilder.Define(point, target, "owner")
+			resolver := visibility.NewResolver(visibilityBuilder.Build())
+			ks := resolver.KeySpace()
+
+			got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+				Facts: factflow.NewFacts(factflow.FactsInput{
+					PathStaticMemberWrites: map[cfg.Point]factflow.PathStaticMemberWrite{
+						point: factflow.NewPathStaticMemberWrite(targetPath, valueSource),
+					},
+				}),
+				Sources:    sources,
+				Visibility: resolver,
+			})(transfer.NodeContext{
+				Registry: reg,
+				Point:    point,
+			}, state.State{}.
+				WriteValue(reg, key.SymbolValue(target), ownerValue).
+				WriteHeapTableObject(reg, ownerID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: ownerValue})).
+				WritePlacement(ownerID, tc.ownerPlacement).
+				WriteHeapTableObject(reg, payloadID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+					Root:          payloadValue,
+					StaticMembers: map[keyspace.Key]product.Value{fieldStaticKey(t, ks, "child"): childValue},
+				})).
+				WritePlacement(payloadID, placement.Stack).
+				WriteHeapTableObject(reg, childID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: childValue})).
+				WritePlacement(childID, placement.Stack))
+
+			if gotPlacement := got.ReadPlacement(payloadID); gotPlacement != tc.wantPayload {
+				t.Fatalf("payload placement = %s, want %s", gotPlacement, tc.wantPayload)
+			}
+			if gotPlacement := got.ReadPlacement(childID); gotPlacement != tc.wantChild {
+				t.Fatalf("child placement = %s, want %s", gotPlacement, tc.wantChild)
+			}
+		})
 	}
 }
 
