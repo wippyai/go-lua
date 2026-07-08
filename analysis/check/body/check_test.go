@@ -174,6 +174,37 @@ local missing_counter: number = actor.state.counters["missing"]
 	}
 }
 
+func TestForEachMissingMemberReadReportsDiscriminantNarrowedRead(t *testing.T) {
+	reg := standard.Registry()
+	result, err := CheckChunk(parseChunk(t, `
+type Dog = {kind: "dog", bark: string}
+type Cat = {kind: "cat", meow: string}
+type Animal = Dog | Cat
+
+local a: Animal = { kind = "dog", bark = "woof" }
+if a.kind == "dog" then
+	local bad = a["meow"]
+end
+`), Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	var got []MissingMemberRead
+	result.ForEachMissingMemberRead(func(read MissingMemberRead) bool {
+		got = append(got, read)
+		return true
+	})
+	if len(got) != 1 {
+		t.Fatalf("missing member reads = %#v, want one", got)
+	}
+	if got[0].ReadLabel != `a["meow"]` || got[0].MemberName != "meow" {
+		t.Fatalf("read = %#v, want a[\"meow\"] / meow", got[0])
+	}
+	if !strings.Contains(got[0].ReceiverType.String(), "dog") {
+		t.Fatalf("receiver type = %s, want narrowed dog receiver", got[0].ReceiverType)
+	}
+}
+
 func TestStaticStringExprValueAtBoundaryUsesBoundaryLiteralType(t *testing.T) {
 	reg := standard.Registry()
 	result, err := CheckChunk(parseChunk(t, `

@@ -18,8 +18,8 @@ import (
 )
 
 // StaticMemberReadOccurrence is the body-owned syntax projection of one static
-// member read. Readmodel consumers decide whether solved state makes the read
-// diagnostic-worthy; body only owns the AST traversal and boundary projections.
+// member read. Body-owned proof streams use these occurrences to decide whether
+// solved state makes the read diagnostic-worthy.
 type StaticMemberReadOccurrence struct {
 	Point                          cfg.Point
 	ReadLabel                      string
@@ -38,6 +38,16 @@ type StaticMemberReadOccurrence struct {
 	Span                           SourceSpan
 }
 
+// MissingMemberRead records a static member read whose receiver is proven to
+// reject the member on the solved path.
+type MissingMemberRead struct {
+	Point        cfg.Point
+	ReadLabel    string
+	MemberName   string
+	ReceiverType typ.Type
+	Span         SourceSpan
+}
+
 // ForEachMissingMemberReadOccurrence visits static member reads using the scan
 // policy expected by missing-member diagnostics. In particular, `obj.method()`
 // does not emit a member-read occurrence for the callee itself because call
@@ -46,10 +56,153 @@ func (r *Result) ForEachMissingMemberReadOccurrence(visit func(StaticMemberReadO
 	return r.forEachStaticMemberReadOccurrence(staticMemberReadScanMissingMember, visit)
 }
 
+// ForEachMissingMemberRead visits static member reads whose receiver is known
+// to reject the member on the current solved path.
+func (r *Result) ForEachMissingMemberRead(visit func(MissingMemberRead) bool) bool {
+	if r == nil || visit == nil || r.Graph() == nil {
+		return false
+	}
+	var occurrences []StaticMemberReadOccurrence
+	nilDefault := map[missingMemberReadKey]bool{}
+	r.ForEachMissingMemberReadOccurrence(func(occ StaticMemberReadOccurrence) bool {
+		occurrences = append(occurrences, occ)
+		if occ.AllowExactNilRead {
+			nilDefault[missingMemberOccurrenceKey(occ)] = true
+		}
+		return true
+	})
+	visited := false
+	for _, occ := range occurrences {
+		if !occ.AllowExactNilRead && nilDefault[missingMemberOccurrenceKey(occ)] {
+			continue
+		}
+		item, ok := r.missingMemberRead(occ)
+		if !ok {
+			continue
+		}
+		visited = true
+		if !visit(item) {
+			return true
+		}
+	}
+	return visited
+}
+
 // ForEachResultShapeReadOccurrence visits static member reads using the normal
 // expression scan policy expected by result-shape exhaustiveness diagnostics.
 func (r *Result) ForEachResultShapeReadOccurrence(visit func(StaticMemberReadOccurrence) bool) bool {
 	return r.forEachStaticMemberReadOccurrence(staticMemberReadScanResultShape, visit)
+}
+
+type missingMemberReadKey struct {
+	readLabel  string
+	memberName string
+	span       SourceSpan
+}
+
+func missingMemberOccurrenceKey(occ StaticMemberReadOccurrence) missingMemberReadKey {
+	return missingMemberReadKey{
+		readLabel:  occ.ReadLabel,
+		memberName: occ.MemberName,
+		span:       occ.Span,
+	}
+}
+
+func (r *Result) missingMemberRead(occ StaticMemberReadOccurrence) (MissingMemberRead, bool) {
+	memberName := occ.MemberName
+	if memberName == "" {
+		return MissingMemberRead{}, false
+	}
+	if occ.AllowExactNilRead && r.exactLocalMissingFieldReadsNil(occ, memberName) {
+		return MissingMemberRead{}, false
+	}
+	receiverType := occ.ReceiverTypeBeforeBoundary
+	if !occ.HasReceiverTypeBeforeBoundary || receiverType == nil || typ.IsAny(receiverType) || typ.IsUnknown(receiverType) || typ.IsNever(receiverType) {
+		return MissingMemberRead{}, false
+	}
+	if occ.AllowExactNilRead && TypeFieldProvablyAbsent(receiverType, memberName) {
+		return MissingMemberRead{}, false
+	}
+	report := UnionArmRejectsFieldRead(receiverType, memberName)
+	if !report {
+		broad, broadOK := r.missingMemberBroadReceiverType(occ, receiverType)
+		if !broadOK || broad == nil || !TypeIsMultiArmUnion(broad) {
+			return MissingMemberRead{}, false
+		}
+		fieldBroad := broad
+		if withoutNil := ProjectionWithoutNil(broad); withoutNil != nil && !typ.IsNever(withoutNil) {
+			fieldBroad = withoutNil
+		}
+		if _, ok := TypeField(fieldBroad, memberName); !ok || !TypeFieldProvablyAbsent(receiverType, memberName) {
+			return MissingMemberRead{}, false
+		}
+		report = true
+	}
+	if !report {
+		return MissingMemberRead{}, false
+	}
+	return MissingMemberRead{
+		Point:        occ.Point,
+		ReadLabel:    occ.ReadLabel,
+		MemberName:   memberName,
+		ReceiverType: receiverType,
+		Span:         occ.Span,
+	}, true
+}
+
+func (r *Result) missingMemberBroadReceiverType(occ StaticMemberReadOccurrence, current typ.Type) (typ.Type, bool) {
+	if r == nil {
+		return nil, false
+	}
+	if broad, ok := r.DeclaredPathTypeAt(occ.Point, occ.ReceiverPath, occ.HasReceiverPath); ok {
+		return broad, true
+	}
+	if occ.HasReceiverValueAtBoundary {
+		if broad, ok := r.FullVariantOriginType(occ.ReceiverValueAtBoundary); ok && r.missingMemberCurrentBelongsToBroadFamily(current, broad) {
+			return broad, true
+		}
+	}
+	if occ.HasReceiverValueBeforeBoundary {
+		if broad, ok := r.FullVariantOriginType(occ.ReceiverValueBeforeBoundary); ok && r.missingMemberCurrentBelongsToBroadFamily(current, broad) {
+			return broad, true
+		}
+	}
+	return nil, false
+}
+
+func (r *Result) missingMemberCurrentBelongsToBroadFamily(current, broad typ.Type) bool {
+	return current != nil && broad != nil && r.IsSubtype(current, broad)
+}
+
+func (r *Result) exactLocalMissingFieldReadsNil(occ StaticMemberReadOccurrence, name string) bool {
+	if name == "" || !occ.HasReceiverValueBeforeBoundary {
+		return false
+	}
+	if r.declaredUnionHasMemberOnAnotherArm(occ, name) {
+		return false
+	}
+	value := occ.ReceiverValueBeforeBoundary
+	if !r.ValueHasLocalExclusiveExactIdentity(occ.Point, value) {
+		return false
+	}
+	receiver, ok := r.ValueType(value)
+	return ok && ClosedRecordLacksField(receiver, name)
+}
+
+func (r *Result) declaredUnionHasMemberOnAnotherArm(occ StaticMemberReadOccurrence, name string) bool {
+	if r == nil || name == "" {
+		return false
+	}
+	broad, broadOK := r.DeclaredPathTypeAt(occ.Point, occ.ReceiverPath, occ.HasReceiverPath)
+	if !broadOK || broad == nil || !TypeIsMultiArmUnion(broad) {
+		return false
+	}
+	fieldBroad := broad
+	if withoutNil := ProjectionWithoutNil(broad); withoutNil != nil && !typ.IsNever(withoutNil) {
+		fieldBroad = withoutNil
+	}
+	_, ok := TypeField(fieldBroad, name)
+	return ok
 }
 
 type staticMemberReadScanMode uint8
