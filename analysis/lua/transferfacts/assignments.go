@@ -4,13 +4,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typecall"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 // addCovariantExposureType appends a covariant-exposure fact for sourcePath
@@ -167,15 +165,6 @@ func reachesArrayDepth(t typ.Type, depth int) bool {
 	default:
 		return false
 	}
-}
-
-func tableConstructorExpr(expr ast.Expr) bool {
-	inner, ok := sourceprovenance.ProofInner(expr)
-	if !ok {
-		return false
-	}
-	_, ok = inner.(*ast.TableExpr)
-	return ok
 }
 
 func (l *lowerer) declaredReturnLocalContractForSymbol(id symbol.ID) (typ.Type, bool) {

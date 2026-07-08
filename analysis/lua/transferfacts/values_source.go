@@ -21,7 +21,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
-	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse/numparse"
 )
 
@@ -1045,35 +1044,6 @@ func (l *lowerer) wirTableExpressionValueSourceWithShape(
 		return factflow.ValueSource{}, false
 	}
 	return l.tableExpressionValueSourceWithShape(exprRef, exprIndex, targetIndex, final, expanded, adjusted, openTail)
-}
-
-func (l *lowerer) tableConstructorExpressionValueSource(
-	expr ast.Expr,
-	exprIndex int,
-	targetIndex int,
-	final bool,
-	expanded bool,
-	openTail bool,
-) (factflow.ValueSource, bool) {
-	if _, ok := l.tableConstructorExpressionID(expr); !ok {
-		return factflow.ValueSource{}, false
-	}
-	exprRef, ok := l.tableConstructorExprRef(expr)
-	if !ok {
-		return factflow.ValueSource{}, false
-	}
-	return l.tableExpressionValueSource(exprRef, exprIndex, targetIndex, final, expanded, openTail)
-}
-
-func (l *lowerer) tableExpressionValueSource(
-	exprRef factflow.ExprRef,
-	exprIndex int,
-	targetIndex int,
-	final bool,
-	expanded bool,
-	openTail bool,
-) (factflow.ValueSource, bool) {
-	return l.tableExpressionValueSourceWithShape(exprRef, exprIndex, targetIndex, final, expanded, !expanded, openTail)
 }
 
 func (l *lowerer) tableExpressionValueSourceWithShape(

@@ -6,14 +6,11 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
-	"github.com/wippyai/go-lua/analysis/lua/expressionid"
-	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 type wirTableExprRefKey struct {
@@ -74,7 +71,7 @@ func (l *lowerer) objectEntryValueSourceFromWIR(point cfg.Point, op wir.Operand)
 	return l.valueSourceFromWIROperand(op, -1, -1, false, false, false)
 }
 
-func (l *lowerer) addObjectLiteralFromWIR(input *factflow.FactsInput, inst wir.Instruction, expr ast.Expr) {
+func (l *lowerer) addObjectLiteralFromWIR(input *factflow.FactsInput, inst wir.Instruction) {
 	if input == nil || inst.Op != wir.OpMakeTable {
 		return
 	}
@@ -93,7 +90,7 @@ func (l *lowerer) addObjectLiteralFromWIR(input *factflow.FactsInput, inst wir.I
 	if source, ok := l.objectLiteralListElementSourceFromWIR(inst); ok {
 		lowered = lowered.WithListElementSource(source)
 	}
-	if expected, ok := l.wirObjectLiteralExpectedType(inst, expr); ok {
+	if expected, ok := l.wirObjectLiteralExpectedType(inst); ok {
 		lowered = l.objectLiteralWithExpectedType(lowered, expected)
 	}
 	if input.ObjectLiterals == nil {
@@ -101,7 +98,7 @@ func (l *lowerer) addObjectLiteralFromWIR(input *factflow.FactsInput, inst wir.I
 	}
 	input.ObjectLiterals[exprRef] = lowered
 	l.addNestedObjectLiteralsFromWIR(input, inst)
-	if expected, ok := l.wirObjectLiteralExpectedType(inst, expr); ok {
+	if expected, ok := l.wirObjectLiteralExpectedType(inst); ok {
 		l.setObjectLiteralExpectedExpressionValue(exprRef, lowered, expected)
 		l.addNestedObjectLiteralExpectedTypes(input, lowered, expected)
 	}
@@ -116,7 +113,7 @@ func (l *lowerer) addObjectLiteralsFromWIR(input *factflow.FactsInput) {
 		if inst.Op != wir.OpMakeTable {
 			continue
 		}
-		l.addObjectLiteralFromWIR(input, inst, nil)
+		l.addObjectLiteralFromWIR(input, inst)
 	}
 }
 
@@ -133,26 +130,11 @@ func (l *lowerer) addNestedObjectLiteralsFromWIR(input *factflow.FactsInput, ins
 		if !ok || nested.Op != wir.OpMakeTable {
 			continue
 		}
-		l.addObjectLiteralFromWIR(input, nested, nil)
+		l.addObjectLiteralFromWIR(input, nested)
 	}
 }
 
-func (l *lowerer) objectLiteralCastExpectedType(expr ast.Expr) (typ.Type, bool) {
-	cast, ok := expr.(*ast.CastExpr)
-	if !ok || !tableConstructorExpr(cast.Expr) {
-		return nil, false
-	}
-	expected, ok := l.resolveType(cast.Type)
-	if !ok || expected == nil || !luatypeprojection.ReachesTableContract(expected) {
-		return nil, false
-	}
-	return expected, true
-}
-
-func (l *lowerer) wirObjectLiteralExpectedType(inst wir.Instruction, expr ast.Expr) (typ.Type, bool) {
-	if expected, ok := l.objectLiteralCastExpectedType(expr); ok {
-		return expected, true
-	}
+func (l *lowerer) wirObjectLiteralExpectedType(inst wir.Instruction) (typ.Type, bool) {
 	if l == nil || l.wir == nil || inst.Type == 0 {
 		return nil, false
 	}
@@ -264,14 +246,6 @@ func (l *lowerer) setObjectLiteralExpectedExpressionValue(ref factflow.ExprRef, 
 	l.expressionValues[ref] = value
 }
 
-func (l *lowerer) existingExprRef(expr any) (factflow.ExprRef, bool) {
-	if l == nil || expr == nil || l.exprs == nil {
-		return 0, false
-	}
-	ref, ok := l.exprs[expr]
-	return ref, ok
-}
-
 func (l *lowerer) addReturnObjectLiteralExpectedTypesFromWIR(input *factflow.FactsInput, sources []factflow.ValueSource) {
 	if l == nil || l.wir == nil || input == nil {
 		return
@@ -334,52 +308,11 @@ func (l *lowerer) addObjectLiteralFieldExposuresFromWIR(input *factflow.FactsInp
 	}
 }
 
-func (l *lowerer) tableConstructorExprRef(expr ast.Expr) (factflow.ExprRef, bool) {
-	return l.exprRef(l.tableConstructorExprRefKey(expr))
-}
-
-func (l *lowerer) existingTableConstructorExprRef(expr ast.Expr) (factflow.ExprRef, bool) {
-	return l.existingExprRef(l.tableConstructorExprRefKey(expr))
-}
-
-func (l *lowerer) tableConstructorExprRefKey(expr ast.Expr) any {
-	if id, ok := l.tableConstructorExpressionID(expr); ok {
-		return wirTableExprRefKey{id: id}
-	}
-	return expr
-}
-
 func (l *lowerer) tableConstructorExprRefFromWIR(inst wir.Instruction) (factflow.ExprRef, bool) {
 	if inst.ExprID == 0 {
 		return 0, false
 	}
 	return l.exprRef(wirTableExprRefKey{id: inst.ExprID})
-}
-
-func (l *lowerer) tableConstructorExpressionID(expr ast.Expr) (wir.ExpressionID, bool) {
-	if l == nil || l.wir == nil || expr == nil {
-		return 0, false
-	}
-	inner, ok := sourceprovenance.ProofInner(expr)
-	if !ok {
-		return 0, false
-	}
-	id := expressionid.Of(inner)
-	if id == 0 {
-		return 0, false
-	}
-	if _, ok := l.wir.TableConstructorByExpressionID(id); !ok {
-		return 0, false
-	}
-	return id, true
-}
-
-func (l *lowerer) tableConstructorInstructionForExpr(expr ast.Expr) (wir.Instruction, bool) {
-	id, ok := l.tableConstructorExpressionID(expr)
-	if !ok {
-		return wir.Instruction{}, false
-	}
-	return l.wir.TableConstructorByExpressionID(id)
 }
 
 func sourceSpanFromWIR(span wir.Span) factflow.SourceSpan {
