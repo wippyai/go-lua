@@ -103,20 +103,6 @@ func (r Reader) localFunctionParamTypeSpans(point cfg.Point, site factflow.CallS
 	}
 	spans := r.result.FunctionParamTypeSpansForCalleePath(site.View().CalleePathKey())
 	if len(spans) == 0 {
-		spans = r.result.FunctionParamTypeSpansForTargetPath(site.CalleePathRef())
-	}
-	if len(spans) == 0 {
-		if fn := r.result.DominatingFunctionDefinitionForPath(point, site.CalleePathRef()); fn != nil {
-			slots := r.result.FunctionParamSlots(fn)
-			spans = make([]factflow.SourceSpan, len(slots))
-			for i := range slots {
-				if span, ok := r.result.FunctionParamTypeSpan(fn, i); ok {
-					spans[i] = span
-				}
-			}
-		}
-	}
-	if len(spans) == 0 {
 		return nil
 	}
 	out := make([]SourceSpan, len(spans))
@@ -137,15 +123,7 @@ func (r Reader) localFunctionReturnTypeSpans(site factflow.CallSite) []SourceSpa
 		}
 		return out
 	}
-	spans := r.result.FunctionReturnTypeSpansForTargetPath(site.CalleePathRef())
-	if len(spans) == 0 {
-		return nil
-	}
-	out := make([]SourceSpan, len(spans))
-	for i, span := range spans {
-		out[i] = sourceSpanFromFactflow(span)
-	}
-	return out
+	return nil
 }
 
 func (r Reader) callContractSourceName(site factflow.CallSite) string {
