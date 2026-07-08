@@ -849,8 +849,8 @@ func branchConditionExprsByPoint(t *testing.T, built *cfgbuild.Result, stmts []a
 		}
 	}
 	walk(stmts)
-	for _, point := range built.Meta.ShortCircuitGuardPoints() {
-		guard, ok := built.Meta.ShortCircuitGuard(point)
+	for _, point := range built.ShortCircuits.GuardPoints() {
+		guard, ok := built.ShortCircuits.Guard(point)
 		if !ok || guard.Condition == nil {
 			continue
 		}

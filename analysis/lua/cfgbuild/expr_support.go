@@ -3,7 +3,6 @@ package cfgbuild
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/callorder"
-	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -196,12 +195,12 @@ func (b *builder) appendShortCircuitValueCalls(state flowState, stmt ast.Stmt, e
 	rhsCond := shortCircuitRHSCond(expr.Operator)
 	branch := b.graph.AddBranch()
 	b.connect(state, branch)
-	b.meta.SetShortCircuitGuard(branch, cfgfacts.ShortCircuitGuardFact{Stmt: stmt, Condition: expr.Lhs})
+	b.shortCircuits.SetGuard(branch, ShortCircuitGuard{Stmt: stmt, Condition: expr.Lhs})
 	join := b.graph.AddNode(cfg.NodeJoin)
 	if len(rhsCalls) == 0 {
 		eval := b.graph.AddNode(cfg.NodeNoop)
 		b.graph.AddEdge(branch, eval, rhsCond)
-		b.meta.SetExpressionEvaluation(eval, cfgfacts.ExpressionEvaluationFact{Stmt: stmt, Expr: expr.Rhs})
+		b.shortCircuits.SetEvaluation(eval, ExpressionEvaluation{Stmt: stmt, Expr: expr.Rhs})
 		b.graph.AddEdge(eval, join, false)
 		b.graph.AddEdge(branch, join, !rhsCond)
 		return flowState{current: join, live: len(b.graph.Predecessors(join)) > 0}

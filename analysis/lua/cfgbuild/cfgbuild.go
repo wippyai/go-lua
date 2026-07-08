@@ -9,9 +9,10 @@ import (
 
 // Result contains the CFG topology and facts extracted during build.
 type Result struct {
-	Graph      *cfg.CFG
-	Meta       cfgfacts.Metadata
-	StmtPoints StmtPoints
+	Graph         *cfg.CFG
+	Meta          cfgfacts.Metadata
+	StmtPoints    StmtPoints
+	ShortCircuits ShortCircuits
 }
 
 // StmtPoints maps AST statements to the CFG points emitted for them.
@@ -46,7 +47,7 @@ func BuildFunction(fn *ast.FunctionExpr, bindings *bind.Result) *Result {
 		state = b.buildStmts(state, fn.Stmts)
 	}
 	b.connect(state, graph.Exit())
-	return &Result{Graph: graph, Meta: b.meta, StmtPoints: StmtPoints{points: b.stmtPoints}}
+	return &Result{Graph: graph, Meta: b.meta, StmtPoints: StmtPoints{points: b.stmtPoints}, ShortCircuits: b.shortCircuits}
 }
 
 // BuildChunk builds a minimal CFG for a chunk-level statement list using
@@ -61,17 +62,18 @@ func BuildChunk(stmts []ast.Stmt, bindings *bind.Result) *Result {
 
 	state := b.buildStmts(liveAt(graph.Entry()), stmts)
 	b.connect(state, graph.Exit())
-	return &Result{Graph: graph, Meta: b.meta, StmtPoints: StmtPoints{points: b.stmtPoints}}
+	return &Result{Graph: graph, Meta: b.meta, StmtPoints: StmtPoints{points: b.stmtPoints}, ShortCircuits: b.shortCircuits}
 }
 
 type builder struct {
-	graph        *cfg.CFG
-	meta         cfgfacts.Metadata
-	stmtPoints   map[ast.Stmt][]cfg.Point
-	labels       map[string]cfg.Point
-	pendingGotos map[string][]cfg.Point
-	bindings     *bind.Result
-	breakTargets []cfg.Point
+	graph         *cfg.CFG
+	meta          cfgfacts.Metadata
+	shortCircuits ShortCircuits
+	stmtPoints    map[ast.Stmt][]cfg.Point
+	labels        map[string]cfg.Point
+	pendingGotos  map[string][]cfg.Point
+	bindings      *bind.Result
+	breakTargets  []cfg.Point
 }
 
 type flowState struct {

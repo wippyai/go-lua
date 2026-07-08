@@ -2,8 +2,8 @@
 // that cfgbuild already produced (decision D1a). It creates no CFG topology of
 // its own: cfgbuild is the point authority, and wirlower maps each Lua construct
 // onto the pre-existing points it discovers through cfgbuild.Result.StmtPoints
-// (statement -> points, in creation order) and cfgfacts.Metadata (short-circuit
-// guard / expression-evaluation sidecars).
+// (statement -> points, in creation order) and cfgbuild's structural
+// short-circuit topology.
 //
 // It translates syntax and resolves bindings/types only. It computes no
 // refinements, no narrowing, and no type conclusions: every value derivation is
@@ -31,7 +31,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/callorder"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
-	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/channelruntime"
 	"github.com/wippyai/go-lua/analysis/lua/expressionid"
 	"github.com/wippyai/go-lua/analysis/lua/functiontype"
@@ -113,7 +112,7 @@ func lowerInto(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgb
 	b := &builder{
 		body:                wir.NewBody(name),
 		graph:               built.Graph,
-		meta:                built.Meta,
+		shortCircuits:       built.ShortCircuits,
 		points:              built.StmtPoints,
 		bindings:            bindings,
 		resolver:            resolver,
@@ -160,12 +159,12 @@ func resolveDeclaredReturns(fn *ast.FunctionExpr, resolver *typeresolve.Resolver
 }
 
 type builder struct {
-	body     *wir.Body
-	graph    cfg.Graph
-	meta     cfgfacts.Metadata
-	points   cfgbuild.StmtPoints
-	bindings *bind.Result
-	resolver *typeresolve.Resolver
+	body          *wir.Body
+	graph         cfg.Graph
+	shortCircuits cfgbuild.ShortCircuits
+	points        cfgbuild.StmtPoints
+	bindings      *bind.Result
+	resolver      *typeresolve.Resolver
 
 	curPoint    cfg.Point
 	pointInstrs map[cfg.Point][]wir.Instruction
@@ -178,7 +177,7 @@ type builder struct {
 	// producing OpCall's ResultSpread through the recorded (point, index).
 	callTemps map[*ast.FuncCallExpr]*callResult
 
-	// guardByCond and evalByExpr index the short-circuit sidecar points cfgbuild
+	// guardByCond and evalByExpr index the short-circuit topology points cfgbuild
 	// records outside StmtPoints, keyed by the AST identity wirlower matches on
 	// (the guard condition = LogicalOpExpr.Lhs, the eval expr = the RHS).
 	guardByCond         map[ast.Expr]cfg.Point
@@ -197,13 +196,13 @@ type callResult struct {
 }
 
 func (b *builder) indexShortCircuits() {
-	for _, p := range b.meta.ShortCircuitGuardPoints() {
-		if g, ok := b.meta.ShortCircuitGuard(p); ok && g.Condition != nil {
+	for _, p := range b.shortCircuits.GuardPoints() {
+		if g, ok := b.shortCircuits.Guard(p); ok && g.Condition != nil {
 			b.guardByCond[g.Condition] = p
 		}
 	}
 	for _, p := range b.graph.RPO() {
-		if e, ok := b.meta.ExpressionEvaluation(p); ok && e.Expr != nil {
+		if e, ok := b.shortCircuits.Evaluation(p); ok && e.Expr != nil {
 			b.evalByExpr[e.Expr] = p
 		}
 	}

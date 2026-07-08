@@ -948,7 +948,7 @@ func TestBuildChunkValueShortCircuitPureRHSGetsEvaluationPoint(t *testing.T) {
 
 	var eval cfg.Point
 	for _, point := range graph.RPO() {
-		fact, ok := result.Meta.ExpressionEvaluation(point)
+		fact, ok := result.ShortCircuits.Evaluation(point)
 		if !ok {
 			continue
 		}

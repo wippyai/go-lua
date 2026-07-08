@@ -294,8 +294,8 @@ func sourceBranchKeys(stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.R
 		}
 	}
 	walk(stmts)
-	for _, point := range built.Meta.ShortCircuitGuardPoints() {
-		guard, ok := built.Meta.ShortCircuitGuard(point)
+	for _, point := range built.ShortCircuits.GuardPoints() {
+		guard, ok := built.ShortCircuits.Guard(point)
 		if !ok || guard.Condition == nil || !built.Graph.IsBranch(point) {
 			continue
 		}

@@ -1,8 +1,6 @@
 package cfgfacts
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
@@ -13,8 +11,6 @@ type Metadata struct {
 	functionDefs    map[cfg.Point]FunctionDefinitionFact
 	numericFors     map[cfg.Point]NumericForFact
 	genericFors     map[cfg.Point]GenericForFact
-	shortCircuits   map[cfg.Point]ShortCircuitGuardFact
-	exprEvaluations map[cfg.Point]ExpressionEvaluationFact
 }
 
 func (m Metadata) Loop(point cfg.Point) (LoopFact, bool) {
@@ -89,42 +85,4 @@ func (m *Metadata) SetGenericFor(point cfg.Point, fact GenericForFact) {
 		m.genericFors = make(map[cfg.Point]GenericForFact)
 	}
 	m.genericFors[point] = copyGenericForFact(fact)
-}
-
-func (m Metadata) ShortCircuitGuard(point cfg.Point) (ShortCircuitGuardFact, bool) {
-	fact, ok := m.shortCircuits[point]
-	return fact, ok
-}
-
-func (m *Metadata) SetShortCircuitGuard(point cfg.Point, fact ShortCircuitGuardFact) {
-	if m.shortCircuits == nil {
-		m.shortCircuits = make(map[cfg.Point]ShortCircuitGuardFact)
-	}
-	m.shortCircuits[point] = fact
-}
-
-func (m Metadata) ExpressionEvaluation(point cfg.Point) (ExpressionEvaluationFact, bool) {
-	fact, ok := m.exprEvaluations[point]
-	return fact, ok
-}
-
-func (m *Metadata) SetExpressionEvaluation(point cfg.Point, fact ExpressionEvaluationFact) {
-	if m.exprEvaluations == nil {
-		m.exprEvaluations = make(map[cfg.Point]ExpressionEvaluationFact)
-	}
-	m.exprEvaluations[point] = fact
-}
-
-// ShortCircuitGuardPoints returns the points carrying short-circuit guard facts
-// in ascending order for deterministic extraction.
-func (m Metadata) ShortCircuitGuardPoints() []cfg.Point {
-	if len(m.shortCircuits) == 0 {
-		return nil
-	}
-	points := make([]cfg.Point, 0, len(m.shortCircuits))
-	for point := range m.shortCircuits {
-		points = append(points, point)
-	}
-	sort.Slice(points, func(i, j int) bool { return points[i] < points[j] })
-	return points
 }

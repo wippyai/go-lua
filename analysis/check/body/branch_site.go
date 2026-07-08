@@ -1,8 +1,6 @@
 package body
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -134,10 +132,9 @@ func (r *Result) addShortCircuitBranchSites(out map[cfg.Point]branchSite) {
 	if r == nil || r.cfg == nil || r.cfg.Graph == nil {
 		return
 	}
-	points := r.cfg.Meta.ShortCircuitGuardPoints()
-	sort.Slice(points, func(i, j int) bool { return points[i] < points[j] })
+	points := r.cfg.ShortCircuits.GuardPoints()
 	for _, point := range points {
-		guard, ok := r.cfg.Meta.ShortCircuitGuard(point)
+		guard, ok := r.cfg.ShortCircuits.Guard(point)
 		if !ok || guard.Condition == nil || !r.cfg.Graph.IsBranch(point) {
 			continue
 		}
