@@ -23,10 +23,12 @@ type StaticStringAssignmentTarget struct {
 // write. It carries only canonical target/source evidence and optional display
 // metadata, so readmodels do not need semantic assignment sidecars.
 type LoweredAssignmentWrite struct {
-	Target  pathdom.Path
-	Source  factflow.ValueSource
-	Span    SourceSpan
-	HasSpan bool
+	Target       pathdom.Path
+	Container    pathdom.Path
+	Source       factflow.ValueSource
+	Span         SourceSpan
+	HasContainer bool
+	HasSpan      bool
 }
 
 // LoweredAssignmentWrite returns the factflow assignment write at point.
@@ -41,11 +43,17 @@ func (r *Result) LoweredAssignmentWrite(point cfg.Point) (LoweredAssignmentWrite
 		return loweredAssignmentWriteFromPath(fact), true
 	}
 	if write, ok := r.DynamicIndexWrite(point); ok {
-		target := write.TablePathRef()
+		container := write.TablePathRef()
+		target := container
 		if key, keyOK := r.StaticStringValueSourceAtBoundary(point, write.KeySource()); keyOK {
 			target = target.Append(segment.Segment{Kind: segment.SegmentField, Name: key})
 		}
-		return LoweredAssignmentWrite{Target: target, Source: write.Source()}, true
+		out := LoweredAssignmentWrite{Target: target, Container: container, Source: write.Source(), HasContainer: !container.IsEmpty()}
+		if span, ok := write.TargetSpan(); ok {
+			out.Span = sourceSpanFromFactflow(span)
+			out.HasSpan = true
+		}
+		return out, true
 	}
 	return LoweredAssignmentWrite{}, false
 }
@@ -64,9 +72,11 @@ func loweredAssignmentWriteFromRoot(fact factflow.RootAssignment) LoweredAssignm
 
 func loweredAssignmentWriteFromPath(fact factflow.PathAssignment) LoweredAssignmentWrite {
 	out := LoweredAssignmentWrite{
-		Target: fact.TargetPathRef(),
-		Source: fact.Source(),
+		Target:    fact.TargetPathRef(),
+		Container: fact.TargetPathRef().Parent(),
+		Source:    fact.Source(),
 	}
+	out.HasContainer = !out.Container.IsEmpty()
 	if span, ok := fact.TargetSpan(); ok {
 		out.Span = sourceSpanFromFactflow(span)
 		out.HasSpan = true

@@ -22,8 +22,8 @@ func (r Reader) ForEachFrozenTableMutation(visit func(FrozenTableMutation) bool)
 		if !r.result.PointNormallyReachable(point) {
 			continue
 		}
-		if fact, ok := r.result.OrdinaryAssignment(point); ok {
-			if mutation, ok := r.frozenAssignmentMutation(point, fact); ok {
+		if write, ok := r.result.LoweredAssignmentWrite(point); ok {
+			if mutation, ok := r.frozenAssignmentMutation(point, write); ok {
 				visited = true
 				if !visit(mutation) {
 					return true
@@ -40,11 +40,11 @@ func (r Reader) ForEachFrozenTableMutation(visit func(FrozenTableMutation) bool)
 	return visited
 }
 
-func (r Reader) frozenAssignmentMutation(point cfg.Point, fact body.OrdinaryAssignmentFact) (FrozenTableMutation, bool) {
-	if fact.Target == nil || !fact.HasContainerPath || fact.ContainerPath.IsEmpty() {
+func (r Reader) frozenAssignmentMutation(point cfg.Point, write body.LoweredAssignmentWrite) (FrozenTableMutation, bool) {
+	if !write.HasContainer || write.Container.IsEmpty() {
 		return FrozenTableMutation{}, false
 	}
-	tableID, ok := r.frozenMutationContainerIdentity(point, fact.ContainerPath)
+	tableID, ok := r.frozenMutationContainerIdentity(point, write.Container)
 	if !ok {
 		return FrozenTableMutation{}, false
 	}
@@ -52,14 +52,13 @@ func (r Reader) frozenAssignmentMutation(point cfg.Point, fact body.OrdinaryAssi
 	if !ok || !in.IsTableFrozen(tableID) {
 		return FrozenTableMutation{}, false
 	}
-	frozenSpan, hasFrozenSpan := r.frozenProofSpan(point, fact.ContainerPath)
-	mutationSpan, _ := body.OrdinaryAssignmentTargetSpan(fact)
+	frozenSpan, hasFrozenSpan := r.frozenProofSpan(point, write.Container)
 	return FrozenTableMutation{
 		Point:              point,
 		Kind:               readapi.FrozenTableMutationAssignment,
-		ContainerLabel:     r.displayPath(fact.ContainerPath),
-		ContainerKey:       string(fact.ContainerPath.Key()),
-		MutationSpan:       sourceSpanFromBody(mutationSpan),
+		ContainerLabel:     r.displayPath(write.Container),
+		ContainerKey:       string(write.Container.Key()),
+		MutationSpan:       sourceSpanFromBody(write.Span),
 		FreezeProofSpan:    frozenSpan,
 		HasFreezeProofSpan: hasFrozenSpan,
 	}, true

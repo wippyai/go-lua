@@ -487,6 +487,9 @@ func (l *lowerer) addDynamicIndexWriteFromWIR(input *factflow.FactsInput, point 
 		dynamicindex.AdmissionUnknown,
 		dynamicIndexReadbackIntent(readKey, true),
 	)
+	if inst.TargetSpan.Valid() {
+		write = write.WithTargetSpan(sourceSpanFromWIR(inst.TargetSpan))
+	}
 	if keyPath, ok := l.wirAssignmentSourcePath(inst.A); ok {
 		write = write.WithKeyPath(keyPath)
 	}

@@ -779,6 +779,8 @@ end`)
 		t.Fatalf("missing WIR no-sidecar dynamic index write at point %d", dynamicPoint)
 	}
 	assertWIRPathSource(t, dynamicWrite.Source(), valuePath)
+	dynamicSpan, dynamicSpanOK := dynamicWrite.TargetSpan()
+	assertTargetSpan(t, dynamicSpan, dynamicSpanOK, "dynamic index write")
 	invalidation, ok := facts.PathDescendantInvalidation(dynamicPoint)
 	if !ok {
 		t.Fatalf("missing WIR no-sidecar dynamic index invalidation at point %d", dynamicPoint)

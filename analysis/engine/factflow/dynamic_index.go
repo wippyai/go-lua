@@ -29,6 +29,8 @@ type DynamicIndexWrite struct {
 
 	admission      dynamicindex.Admission
 	readbackIntent DynamicIndexReadbackIntent
+	targetSpan     SourceSpan
+	hasTargetSpan  bool
 	hasKeyPath     bool
 	hasValuePath   bool
 }
@@ -122,6 +124,19 @@ func (w DynamicIndexWrite) KeySource() ValueSource { return w.keySource }
 
 // Source returns the source evidence for the value written at the dynamic key.
 func (w DynamicIndexWrite) Source() ValueSource { return w.source }
+
+// TargetSpan returns the lowered source range for the dynamic-index assignment
+// target.
+func (w DynamicIndexWrite) TargetSpan() (SourceSpan, bool) {
+	return w.targetSpan, w.hasTargetSpan
+}
+
+// WithTargetSpan returns a copy carrying target-location display metadata.
+func (w DynamicIndexWrite) WithTargetSpan(span SourceSpan) DynamicIndexWrite {
+	w.targetSpan = span
+	w.hasTargetSpan = sourceSpanValid(span)
+	return w
+}
 
 // Admission returns the typed admission intent for this write.
 func (w DynamicIndexWrite) Admission() dynamicindex.Admission { return w.admission }
