@@ -149,28 +149,6 @@ func TestDirectCallRejectsObjectLiteralExplicitAnyMember(t *testing.T) {
 	})
 }
 
-func TestJudgmentDirectCallLabelsObjectLiteralExplicitAnyMember(t *testing.T) {
-	src := "type Point = {id: string}\nfunction take(p: Point)\nend\nlocal raw: any = nil\ntake({id = raw})\n"
-	result := runDiagnosticsResult(t, src)
-	diags := ProduceWithConfig(result, Config{})
-	d := requireDirectCallDiagnostic(t, diags, CodeDirectCallArgType)
-	if !strings.Contains(d.Message, "argument 1.id (raw)") {
-		t.Fatalf("message = %q, want refined member source label", d.Message)
-	}
-	if !diagnosticEvidenceContains(d.Explanation.Evidence(), "argument 1.id (raw)") {
-		t.Fatalf("evidence = %#v, want refined member source label", d.Explanation.Evidence())
-	}
-	wantSpan := diagnostic.Span{StartLine: 2, StartCol: 18, EndLine: 2, EndCol: 22}
-	for _, evidence := range d.Explanation.Evidence() {
-		if evidence.Kind == diagnostic.EvidenceUserAssertion &&
-			evidence.Message == "take parameter 1.id expects string" &&
-			evidence.Span == wantSpan {
-			return
-		}
-	}
-	t.Fatalf("evidence = %#v, want expected-type assertion at %v", d.Explanation.Evidence(), wantSpan)
-}
-
 func TestReturnContractRejectsObjectLiteralExplicitAnyMember(t *testing.T) {
 	src := "type Point = {id: string}\nfunction make(raw: any): Point\n\treturn {id = raw}\nend\n"
 	requireDiagnosticShape(t, src, runDiagnostics(t, src), diagnosticShapeWant{

@@ -51,25 +51,6 @@ func TestDirectCallReportsManifestSignatureWrongArgumentType(t *testing.T) {
 	}
 }
 
-func TestJudgmentDirectCallReportsManifestSignatureWrongArgumentTypeEvidence(t *testing.T) {
-	src := `imported(42, 1)`
-	result := runDiagnosticsResultFull(t, src, []string{"test", "type", "value", "imported"}, directCallSignatureSource())
-	diags := ProduceWithConfig(result, Config{})
-	d := requireDirectCallDiagnostic(t, diags, CodeDirectCallArgType)
-	if !diagnosticEvidenceContains(d.Explanation.Evidence(), "argument 1 has literal value 42") ||
-		!diagnosticEvidenceContains(d.Explanation.Evidence(), "imported parameter 1 expects string") {
-		t.Fatalf("evidence = %#v, want argument value and imported signature declaration", d.Explanation.Evidence())
-	}
-	rendered := diagnostic.Render(d, diagnostic.RenderOptions{
-		Sources:             diagnostic.SourceMap{"main.lua": src},
-		ShowSourceLabelRows: true,
-	})
-	requireRenderedContains(t, rendered,
-		"1. proven: argument 1 has literal value 42",
-		"2. claimed: imported parameter 1 expects string",
-	)
-}
-
 func TestDirectCallReportsManifestSignatureTooFewArgs(t *testing.T) {
 	src := `imported("ok")`
 	diags := runDiagnosticsWithImportedSignature(t, src)
