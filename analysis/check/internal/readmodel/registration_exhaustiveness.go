@@ -89,8 +89,8 @@ func (r Reader) registrationCalls() ([]registrationReadCall, []openRegistrationM
 	var registrations []registrationReadCall
 	var open []openRegistrationMutation
 	for _, point := range cfg.RPOReadOnly(r.result.Graph()) {
-		call, ok := r.result.Call(point)
-		if !ok || call.Call == nil {
+		site, hasSite := r.result.CallSite(point)
+		if !hasSite {
 			if write, ok := r.result.LoweredAssignmentWrite(point); ok {
 				if reg, ok := r.registrationAssignment(write, point); ok {
 					registrations = append(registrations, reg)
@@ -103,18 +103,14 @@ func (r Reader) registrationCalls() ([]registrationReadCall, []openRegistrationM
 			}
 			continue
 		}
-		site, ok := r.result.CallSite(point)
-		if !ok {
-			continue
-		}
-		shape, hasShape := r.result.RegistryKeyCallShape(point, site, call)
+		shape, hasShape := r.result.RegistryKeyCallShape(point, site)
 		if hasShape {
 			if reg, ok := r.registrationCall(shape, point); ok {
 				registrations = append(registrations, reg)
 				continue
 			}
 		}
-		args := r.result.CallArgumentInfos(point, call)
+		args := r.result.CallArgumentInfos(point, site)
 		receiver, hasReceiver := body.CallSiteMemberReceiverPath(site)
 		if mutation, ok := r.openRegistrationMutation(point, shape, hasShape, receiver, hasReceiver, args); ok {
 			mutation.point = point
@@ -227,15 +223,11 @@ func (r Reader) openRegistrationMutation(point cfg.Point, shape body.RegistryKey
 func (r Reader) dispatchCalls() []dispatchReadCall {
 	var out []dispatchReadCall
 	for _, point := range cfg.RPOReadOnly(r.result.Graph()) {
-		fact, ok := r.result.Call(point)
-		if !ok || fact.Call == nil {
-			continue
-		}
 		site, ok := r.result.CallSite(point)
-		if !ok || r.isRegistrationLikeCall(point, site, fact) {
+		if !ok || r.isRegistrationLikeCall(point, site) {
 			continue
 		}
-		shape, ok := r.result.DispatchCallShape(point, site, fact)
+		shape, ok := r.result.DispatchCallShape(point, site)
 		if !ok {
 			continue
 		}
@@ -260,8 +252,8 @@ func (r Reader) dispatchCalls() []dispatchReadCall {
 	return out
 }
 
-func (r Reader) isRegistrationLikeCall(point cfg.Point, site factflow.CallSite, fact body.CallFact) bool {
-	shape, ok := r.result.RegistryKeyCallShape(point, site, fact)
+func (r Reader) isRegistrationLikeCall(point cfg.Point, site factflow.CallSite) bool {
+	shape, ok := r.result.RegistryKeyCallShape(point, site)
 	if !ok {
 		return false
 	}

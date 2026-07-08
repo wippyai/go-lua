@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
@@ -259,11 +260,11 @@ func callbackProtocolReplayOrders(results []*body.Result) [][]string {
 		}
 		var order []string
 		for _, point := range graph.RPO() {
-			call, ok := result.Call(point)
+			site, ok := result.CallSite(point)
 			if !ok {
 				continue
 			}
-			if slot, ok := callbackProtocolCallSlot(result, call); ok {
+			if slot, ok := callbackProtocolCallSlot(result, site); ok {
 				order = append(order, slot)
 			}
 		}
@@ -274,18 +275,14 @@ func callbackProtocolReplayOrders(results []*body.Result) [][]string {
 	return out
 }
 
-func callbackProtocolCallSlot(result *body.Result, call body.CallFact) (string, bool) {
-	if (isBareGlobalCall(result, call, "pcall") || isBareGlobalCall(result, call, "xpcall")) && len(call.Args) != 0 {
-		if p, ok := result.ExpressionPath(call.Args[0]); ok {
+func callbackProtocolCallSlot(result *body.Result, site factflow.CallSite) (string, bool) {
+	if (isBareGlobalCallSite(result, site, "pcall") || isBareGlobalCallSite(result, site, "xpcall")) && site.ArgumentSourceCount() != 0 {
+		source, _ := site.ArgumentSourceAt(0)
+		if p, ok := result.ValueSourcePath(source); ok {
 			return callbackProtocolSlotFromSegments(p.Segments)
 		}
 	}
-	if call.HasCalleePath {
-		if slot, ok := callbackProtocolSlotFromSegments(call.CalleePath.Segments); ok {
-			return slot, true
-		}
-	}
-	if p, ok := result.ExpressionPath(call.Func); ok {
+	if p := site.CalleePathRef(); !p.IsEmpty() {
 		return callbackProtocolSlotFromSegments(p.Segments)
 	}
 	return "", false

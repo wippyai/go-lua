@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -168,11 +169,11 @@ func (f *providedGlobalForwarding) propagateCallbackParams() {
 				continue
 			}
 			for _, point := range graph.RPO() {
-				call, ok := result.Call(point)
+				site, ok := result.CallSite(point)
 				if !ok {
 					continue
 				}
-				callee, args, ok := f.localCalleeAndArgs(result, call)
+				callee, args, ok := f.localCalleeAndArgs(result, site)
 				if !ok {
 					continue
 				}
@@ -181,7 +182,7 @@ func (f *providedGlobalForwarding) propagateCallbackParams() {
 					if i >= len(slots) || slots[i].Symbol == 0 || !parameterSlotCanBeCallback(slots[i].Type) {
 						continue
 					}
-					if !f.exprIsWatchedCallback(result, arg) {
+					if !f.sourceIsWatchedCallback(result, arg) {
 						continue
 					}
 					if _, ok := f.watchedCallbacks[slots[i].Symbol]; ok {
@@ -213,11 +214,7 @@ func (f *providedGlobalForwarding) collect(m *manifest.Manifest) {
 			if !ok {
 				continue
 			}
-			call, ok := result.Call(point)
-			if !ok {
-				continue
-			}
-			provider, globals, providerArgs := providerGlobalsForCall(result, point, site, call)
+			provider, globals, providerArgs := providerGlobalsForCall(result, point, site)
 			if len(globals) == 0 || !f.callPassesWatchedCallback(result, providerArgs) {
 				continue
 			}
@@ -231,50 +228,66 @@ func (f *providedGlobalForwarding) collect(m *manifest.Manifest) {
 	}
 }
 
-func (f *providedGlobalForwarding) localCalleeAndArgs(result *body.Result, call body.CallFact) (*ast.FunctionExpr, []ast.Expr, bool) {
+func (f *providedGlobalForwarding) localCalleeAndArgs(result *body.Result, site factflow.CallSite) (*ast.FunctionExpr, []factflow.ValueSource, bool) {
 	if f == nil {
 		return nil, nil, false
 	}
-	if fn, ok := f.localFunctionForExpr(result, call.Func); ok {
-		return fn, call.Args, true
+	if fn, ok := f.localFunctionForPath(site.CalleePathRef()); ok {
+		return fn, site.ArgumentSources(), true
 	}
-	if isBareGlobalCall(result, call, "pcall") && len(call.Args) != 0 {
-		if fn, ok := f.localFunctionForExpr(result, call.Args[0]); ok {
-			return fn, call.Args[1:], true
+	if isBareGlobalCallSite(result, site, "pcall") && site.ArgumentSourceCount() != 0 {
+		source, _ := site.ArgumentSourceAt(0)
+		if p, ok := result.ValueSourcePath(source); ok {
+			if fn, ok := f.localFunctionForPath(p); ok {
+				return fn, callSiteArgumentSourcesFrom(site, 1), true
+			}
 		}
 	}
 	return nil, nil, false
 }
 
-func (f *providedGlobalForwarding) localFunctionForExpr(result *body.Result, expr ast.Expr) (*ast.FunctionExpr, bool) {
-	if f == nil || result == nil || expr == nil {
-		return nil, false
-	}
-	p, ok := result.ExpressionPath(expr)
-	if !ok || p.Symbol == 0 || len(p.Segments) != 0 {
+func (f *providedGlobalForwarding) localFunctionForPath(p pathdom.Path) (*ast.FunctionExpr, bool) {
+	if f == nil || p.Symbol == 0 || len(p.Segments) != 0 {
 		return nil, false
 	}
 	fn, ok := f.functionForSymbol[p.Symbol]
 	return fn, ok && fn != nil
 }
 
-func (f *providedGlobalForwarding) callPassesWatchedCallback(result *body.Result, args []ast.Expr) bool {
+func callSiteArgumentSourcesFrom(site factflow.CallSite, start int) []factflow.ValueSource {
+	if start <= 0 {
+		return site.ArgumentSources()
+	}
+	if start >= site.ArgumentSourceCount() {
+		return nil
+	}
+	out := make([]factflow.ValueSource, 0, site.ArgumentSourceCount()-start)
+	for i := start; i < site.ArgumentSourceCount(); i++ {
+		source, ok := site.ArgumentSourceAt(i)
+		if ok {
+			out = append(out, source)
+		}
+	}
+	return out
+}
+
+func (f *providedGlobalForwarding) callPassesWatchedCallback(result *body.Result, args []factflow.ValueSource) bool {
 	if f == nil || len(args) == 0 || len(f.watchedCallbacks) == 0 {
 		return false
 	}
 	for _, arg := range args {
-		if f.exprIsWatchedCallback(result, arg) {
+		if f.sourceIsWatchedCallback(result, arg) {
 			return true
 		}
 	}
 	return false
 }
 
-func (f *providedGlobalForwarding) exprIsWatchedCallback(result *body.Result, expr ast.Expr) bool {
-	if f == nil || result == nil || expr == nil {
+func (f *providedGlobalForwarding) sourceIsWatchedCallback(result *body.Result, source factflow.ValueSource) bool {
+	if f == nil || result == nil {
 		return false
 	}
-	p, ok := result.ExpressionPath(expr)
+	p, ok := result.ValueSourcePath(source)
 	if !ok || p.Symbol == 0 || len(p.Segments) != 0 {
 		return false
 	}
@@ -282,20 +295,23 @@ func (f *providedGlobalForwarding) exprIsWatchedCallback(result *body.Result, ex
 	return ok
 }
 
-func providerGlobalsForCall(result *body.Result, point cfg.Point, site factflow.CallSite, call body.CallFact) (*manifest.Manifest, []string, []ast.Expr) {
+func providerGlobalsForCall(result *body.Result, point cfg.Point, site factflow.CallSite) (*manifest.Manifest, []string, []factflow.ValueSource) {
 	name, ok := result.CallSignatureName(site)
 	if ok {
 		if provider, globals := providerGlobalsForSignatureName(result, name); len(globals) != 0 {
-			return provider, globals, call.Args
+			return provider, globals, site.ArgumentSources()
 		}
 	}
-	if isBareGlobalCall(result, call, "pcall") && len(call.Args) != 0 {
-		name, ok := result.ExpressionSignatureNameAt(point, call.Args[0])
-		if !ok {
-			return nil, nil, nil
-		}
-		if provider, globals := providerGlobalsForSignatureName(result, name); len(globals) != 0 {
-			return provider, globals, call.Args[1:]
+	if isBareGlobalCallSite(result, site, "pcall") && site.ArgumentSourceCount() != 0 {
+		source, _ := site.ArgumentSourceAt(0)
+		if p, ok := result.ValueSourcePath(source); ok {
+			name, ok := result.PathSignatureNameAt(point, p)
+			if !ok {
+				return nil, nil, nil
+			}
+			if provider, globals := providerGlobalsForSignatureName(result, name); len(globals) != 0 {
+				return provider, globals, callSiteArgumentSourcesFrom(site, 1)
+			}
 		}
 	}
 	return nil, nil, nil
@@ -313,9 +329,16 @@ func providerGlobalsForSignatureName(result *body.Result, name string) (*manifes
 	return nil, nil
 }
 
-func isBareGlobalCall(result *body.Result, call body.CallFact, name string) bool {
-	ident, ok := call.Func.(*ast.IdentExpr)
-	return ok && result.IdentResolvesToGlobal(ident, name)
+func isBareGlobalCallSite(result *body.Result, site factflow.CallSite, name string) bool {
+	if result == nil || name == "" || site.CalleeMemberAccess() {
+		return false
+	}
+	id := site.CalleeSymbol()
+	if id == 0 {
+		return false
+	}
+	kind, ok := result.SymbolKind(id)
+	return ok && kind == symbol.Global && result.SymbolName(id) == name
 }
 
 func signatureNameBelongsToManifest(name, manifestPath string) bool {

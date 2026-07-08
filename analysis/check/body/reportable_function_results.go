@@ -78,13 +78,6 @@ func (r *Result) hasExplicitValidationSurface() bool {
 	return fn.ParList.VarargType != nil
 }
 
-// HasExplicitValidationSurface reports whether this function result has a
-// declared surface that should own diagnostics even when a call-context
-// specialization exists for the same function expression.
-func (r *Result) HasExplicitValidationSurface() bool {
-	return r.hasExplicitValidationSurface()
-}
-
 func (r *Result) hasImplicitSelfParameter() bool {
 	if r == nil {
 		return false

@@ -28,12 +28,7 @@ func (r *Result) CallMayInvalidateTrackedPath(point cfg.Point, target pathdom.Pa
 	if !hasSite {
 		return false
 	}
-	view, ok := r.CallView(point)
-	if !ok {
-		return false
-	}
-	fact, _ := view.Borrowed()
-	if !r.callFactReferencesTrackedPath(site, fact, target) {
+	if !r.callSiteReferencesTrackedPath(site, target) {
 		return false
 	}
 	outcome, hasOutcome := r.CallOutcomeAt(point)
@@ -187,7 +182,7 @@ func (r *Result) CallSiteHasExactEmptyGuardInvalidationSummary(site factflow.Cal
 	return ok && sig.OperationalEffects == nil && sig.Effect.Pure()
 }
 
-func (r *Result) callFactReferencesTrackedPath(site factflow.CallSite, fact CallFact, target pathdom.Path) bool {
+func (r *Result) callSiteReferencesTrackedPath(site factflow.CallSite, target pathdom.Path) bool {
 	if receiver, ok := site.ReceiverPath(); ok && target.Overlaps(receiver) {
 		return true
 	}
@@ -202,12 +197,6 @@ func (r *Result) callFactReferencesTrackedPath(site factflow.CallSite, fact Call
 	})
 	if found {
 		return true
-	}
-	for _, arg := range fact.Args {
-		argPath, ok := r.ExpressionPath(arg)
-		if ok && target.Overlaps(argPath) {
-			return true
-		}
 	}
 	return false
 }
