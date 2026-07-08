@@ -656,17 +656,6 @@ func (p *Projection) addObjectLiteralAliasesFromSource(facts FlowFacts, target p
 	}
 }
 
-func (p *Projection) addAssignmentAlias(target path.Path, expr ast.Expr, point cfg.Point, inherited bool) {
-	if p == nil || target.Symbol == 0 || len(target.Segments) == 0 || !staticPathSegments(target.Segments) {
-		return
-	}
-	modulePath, ok := p.moduleIdentityForExpr(expr)
-	if !ok {
-		return
-	}
-	p.addAlias(target, modulePath, point, inherited)
-}
-
 func (p *Projection) addAssignmentAliasFromSource(facts FlowFacts, target path.Path, source Source, point cfg.Point, inherited bool) {
 	if p == nil || target.Symbol == 0 || len(target.Segments) == 0 || !staticPathSegments(target.Segments) {
 		return

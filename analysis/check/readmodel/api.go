@@ -1353,13 +1353,6 @@ func ObligationTypeContainsFreeTypeParam(t typ.Type) bool {
 	return nonNil != nil && !typ.TypeEquals(nonNil, t) && refinement.ContainsFreeTypeParam(nonNil)
 }
 
-// ObligationTypeIsGradual reports whether an obligation type is gradual/top-like
-// enough that internal readmodels should avoid treating it as a precise
-// user-facing contract.
-func ObligationTypeIsGradual(t typ.Type) bool {
-	return typ.IsAny(t) || typ.IsUnknown(t)
-}
-
 // TypeIncludesNil reports whether a type admits nil according to the canonical
 // readmodel type projection rules.
 func TypeIncludesNil(t typ.Type) bool {

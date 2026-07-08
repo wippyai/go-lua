@@ -58,15 +58,6 @@ func mustLocalAt(t *testing.T, bindings *bind.Result, stmt *ast.LocalAssignStmt,
 	return id
 }
 
-func mustGenericForAt(t *testing.T, bindings *bind.Result, stmt *ast.GenericForStmt, index int) symbol.ID {
-	t.Helper()
-	ids := bindings.GenericForSymbols(stmt)
-	if index < 0 || index >= len(ids) {
-		t.Fatalf("missing generic for symbol at %d", index)
-	}
-	return ids[index]
-}
-
 func mustIdentSymbol(t *testing.T, bindings *bind.Result, ident *ast.IdentExpr) symbol.ID {
 	t.Helper()
 	id, ok := bindings.SymbolOf(ident)

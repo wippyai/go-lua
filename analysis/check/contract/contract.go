@@ -109,11 +109,6 @@ func (c Contract) ParamCount() int {
 	return len(c.params)
 }
 
-// Results returns an ownership-isolated return-slot list.
-func (c Contract) Results() []Result {
-	return append([]Result(nil), c.results...)
-}
-
 // ParamAt returns the parameter for index, falling back to variadic when the
 // contract has one.
 func (c Contract) ParamAt(index int) (Param, bool) {
@@ -140,11 +135,6 @@ func (c Contract) ResultAt(index int) (Result, bool) {
 // HasVararg reports whether this callable accepts variadic arguments.
 func (c Contract) HasVararg() bool {
 	return c.hasVararg
-}
-
-// Vararg returns the variadic parameter contract.
-func (c Contract) Vararg() (Param, bool) {
-	return c.variadic, c.hasVararg
 }
 
 // BindFirstParameter returns c with the first parameter consumed by a call-site
