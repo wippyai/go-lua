@@ -98,6 +98,9 @@ type fixturePlacement struct {
 	MinStack           int  `json:"min_stack,omitempty"`
 	MinOwnedHeap       int  `json:"min_owned_heap,omitempty"`
 	MinSharedHeap      int  `json:"min_shared_heap,omitempty"`
+	MaxStack           *int `json:"max_stack,omitempty"`
+	MaxOwnedHeap       *int `json:"max_owned_heap,omitempty"`
+	MaxSharedHeap      *int `json:"max_shared_heap,omitempty"`
 	MinStackDepth      int  `json:"min_stack_depth,omitempty"`
 	MinOwnedHeapDepth  int  `json:"min_owned_heap_depth,omitempty"`
 	MinSharedDepth     int  `json:"min_shared_depth,omitempty"`
@@ -109,6 +112,9 @@ type fixturePlacement struct {
 	MinStackKind      map[string]int `json:"min_stack_kind,omitempty"`
 	MinOwnedHeapKind  map[string]int `json:"min_owned_heap_kind,omitempty"`
 	MinSharedHeapKind map[string]int `json:"min_shared_heap_kind,omitempty"`
+	MaxStackKind      map[string]int `json:"max_stack_kind,omitempty"`
+	MaxOwnedHeapKind  map[string]int `json:"max_owned_heap_kind,omitempty"`
+	MaxSharedHeapKind map[string]int `json:"max_shared_heap_kind,omitempty"`
 }
 
 type fixtureRun struct {
@@ -390,6 +396,9 @@ func verifyPlacementExpectations(t testing.TB, expect fixturePlacement, plan pla
 	assertMinPlacementCount(t, "stack", counts.stack, expect.MinStack, plan)
 	assertMinPlacementCount(t, "owned-heap", counts.ownedHeap, expect.MinOwnedHeap, plan)
 	assertMinPlacementCount(t, "shared-heap", counts.sharedHeap, expect.MinSharedHeap, plan)
+	assertMaxPlacementCount(t, "stack", counts.stack, expect.MaxStack, plan)
+	assertMaxPlacementCount(t, "owned-heap", counts.ownedHeap, expect.MaxOwnedHeap, plan)
+	assertMaxPlacementCount(t, "shared-heap", counts.sharedHeap, expect.MaxSharedHeap, plan)
 	assertMinPlacementCount(t, "stack depth", plan.MaxTargetDepth(placementplan.TargetStack), expect.MinStackDepth, plan)
 	assertMinPlacementCount(t, "owned-heap depth", plan.MaxTargetDepth(placementplan.TargetOwnedHeap), expect.MinOwnedHeapDepth, plan)
 	assertMinPlacementCount(t, "shared-heap depth", plan.MaxTargetDepth(placementplan.TargetSharedHeap), expect.MinSharedDepth, plan)
@@ -398,6 +407,9 @@ func verifyPlacementExpectations(t testing.TB, expect fixturePlacement, plan pla
 	assertMinPlacementKindCounts(t, "stack", placementKindCounts(plan, placementplan.TargetStack), expect.MinStackKind, plan)
 	assertMinPlacementKindCounts(t, "owned-heap", placementKindCounts(plan, placementplan.TargetOwnedHeap), expect.MinOwnedHeapKind, plan)
 	assertMinPlacementKindCounts(t, "shared-heap", placementKindCounts(plan, placementplan.TargetSharedHeap), expect.MinSharedHeapKind, plan)
+	assertMaxPlacementKindCounts(t, "stack", placementKindCounts(plan, placementplan.TargetStack), expect.MaxStackKind, plan)
+	assertMaxPlacementKindCounts(t, "owned-heap", placementKindCounts(plan, placementplan.TargetOwnedHeap), expect.MaxOwnedHeapKind, plan)
+	assertMaxPlacementKindCounts(t, "shared-heap", placementKindCounts(plan, placementplan.TargetSharedHeap), expect.MaxSharedHeapKind, plan)
 	if expect.MaxNoFact != nil && counts.noFact > *expect.MaxNoFact {
 		t.Fatalf("placement no-fact count = %d, want <= %d; entries=%s", counts.noFact, *expect.MaxNoFact, formatPlacementEntries(plan))
 	}
@@ -460,11 +472,27 @@ func assertMinPlacementCount(t testing.TB, label string, got, want int, plan pla
 	}
 }
 
+func assertMaxPlacementCount(t testing.TB, label string, got int, want *int, plan placementplan.Plan) {
+	t.Helper()
+	if want != nil && got > *want {
+		t.Fatalf("placement %s count = %d, want <= %d; entries=%s", label, got, *want, formatPlacementEntries(plan))
+	}
+}
+
 func assertMinPlacementKindCounts(t testing.TB, label string, got map[string]int, want map[string]int, plan placementplan.Plan) {
 	t.Helper()
 	for kind, min := range want {
 		if got[kind] < min {
 			t.Fatalf("placement %s %q count = %d, want >= %d; all %s kinds=%v; entries=%s", label, kind, got[kind], min, label, got, formatPlacementEntries(plan))
+		}
+	}
+}
+
+func assertMaxPlacementKindCounts(t testing.TB, label string, got map[string]int, want map[string]int, plan placementplan.Plan) {
+	t.Helper()
+	for kind, max := range want {
+		if got[kind] > max {
+			t.Fatalf("placement %s %q count = %d, want <= %d; all %s kinds=%v; entries=%s", label, kind, got[kind], max, label, got, formatPlacementEntries(plan))
 		}
 	}
 }
