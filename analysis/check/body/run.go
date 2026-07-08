@@ -156,7 +156,7 @@ func (c *checker) prepare(
 		MethodReceiverTypes: config.MethodReceiverTypes,
 	})
 	facts := lowered.Facts
-	modules := moduleidentity.New(bindings, built.Graph, sem)
+	modules := moduleidentity.NewFromFacts(bindings, built.Graph, moduleIdentityFacts{facts: facts}, sem.Function())
 	signatureID := newSignatureIdentityResolver(bindings, built.Graph, facts, modules, config.Signatures)
 	signatureNameForCall := signatureID.nameForCall
 	if hasSignatures(config.Signatures) {

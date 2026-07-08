@@ -1,12 +1,17 @@
-package moduleidentity
+package moduleidentity_test
 
 import (
 	"testing"
 
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
+	"github.com/wippyai/go-lua/analysis/lua/transferfacts"
+	"github.com/wippyai/go-lua/analysis/lua/wirlower"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -20,19 +25,19 @@ func TestExactRequireCallRecognizesOnlyGlobalRequireStringCalls(t *testing.T) {
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"require"}})
 
 	first := stmts[0].(*ast.LocalAssignStmt)
-	modulePath, ok := ExactRequireCall(bindings, first.Exprs[0])
+	modulePath, ok := moduleidentity.ExactRequireCall(bindings, first.Exprs[0])
 	if !ok || modulePath != "json" {
 		t.Fatalf("ExactRequireCall(global require) = %q/%v, want json/true", modulePath, ok)
 	}
 
 	shadowed := stmts[2].(*ast.LocalAssignStmt)
-	if modulePath, ok := ExactRequireCall(bindings, shadowed.Exprs[0]); ok {
+	if modulePath, ok := moduleidentity.ExactRequireCall(bindings, shadowed.Exprs[0]); ok {
 		t.Fatalf("ExactRequireCall(shadowed require) = %q/true, want false", modulePath)
 	}
 }
 
 func TestProjectionSharesAliasAndSignatureIdentity(t *testing.T) {
-	projection, graph, sem := buildProjection(t, `
+	projection, graph, facts := buildProjection(t, `
 		local json = require("json")
 		local value = json.decode("{}")
 	`)
@@ -44,11 +49,11 @@ func TestProjectionSharesAliasAndSignatureIdentity(t *testing.T) {
 
 	var got string
 	for _, point := range graph.RPO() {
-		call, ok := sem.Call(point)
-		if !ok || !call.HasCalleePath {
+		call, ok := facts.CallSiteView(point)
+		if !ok || call.CalleePathRef().IsEmpty() {
 			continue
 		}
-		name, ok := projection.SignatureName(point, call.CalleePath)
+		name, ok := projection.SignatureName(point, call.CalleePathRef())
 		if !ok {
 			continue
 		}
@@ -60,89 +65,89 @@ func TestProjectionSharesAliasAndSignatureIdentity(t *testing.T) {
 }
 
 func TestProjectionUsesStaticIntMemberSignatureIdentity(t *testing.T) {
-	projection, graph, sem := buildProjection(t, `
+	projection, graph, facts := buildProjection(t, `
 		local runtime = require("runtime")
 		local value = runtime[1]("payload")
 	`)
 
-	got := onlySignatureName(t, projection, graph, sem)
+	got := onlySignatureName(t, projection, graph, facts)
 	if got != "runtime[1]" {
 		t.Fatalf("SignatureName(static int member) = %q, want runtime[1]", got)
 	}
 }
 
 func TestProjectionResolvesLocalModuleRootAliasStaticIntMember(t *testing.T) {
-	projection, graph, sem := buildProjection(t, `
+	projection, graph, facts := buildProjection(t, `
 		local runtime = require("runtime")
 		local alias = runtime
 		local value = alias[1]("payload")
 	`)
 
-	got := onlySignatureName(t, projection, graph, sem)
+	got := onlySignatureName(t, projection, graph, facts)
 	if got != "runtime[1]" {
 		t.Fatalf("SignatureName(alias static int member) = %q, want runtime[1]", got)
 	}
 }
 
 func TestProjectionResolvesLocalSignatureAlias(t *testing.T) {
-	projection, graph, sem := buildProjection(t, `
+	projection, graph, facts := buildProjection(t, `
 		local runtime = require("runtime")
 		local store = runtime.store
 		store({})
 	`)
 
-	got := onlySignatureName(t, projection, graph, sem)
+	got := onlySignatureName(t, projection, graph, facts)
 	if got != "runtime.store" {
 		t.Fatalf("SignatureName(local alias) = %q, want runtime.store", got)
 	}
 }
 
 func TestProjectionResolvesAssignedMemberSignatureAlias(t *testing.T) {
-	projection, graph, sem := buildProjection(t, `
+	projection, graph, facts := buildProjection(t, `
 		local runtime = require("runtime")
 		local provider = {}
 		provider.store = runtime.store
 		provider.store({})
 	`)
 
-	got := onlySignatureName(t, projection, graph, sem)
+	got := onlySignatureName(t, projection, graph, facts)
 	if got != "runtime.store" {
 		t.Fatalf("SignatureName(member alias) = %q, want runtime.store", got)
 	}
 }
 
 func TestProjectionInvalidatesReassignedSignatureAlias(t *testing.T) {
-	projection, graph, sem := buildProjection(t, `
+	projection, graph, facts := buildProjection(t, `
 		local runtime = require("runtime")
 		local store = runtime.store
 		store = function() end
 		store({})
 	`)
 
-	if got := onlySignatureName(t, projection, graph, sem); got != "" {
+	if got := onlySignatureName(t, projection, graph, facts); got != "" {
 		t.Fatalf("SignatureName(reassigned local alias) = %q, want none", got)
 	}
 }
 
 func TestProjectionResolvesExplicitGlobalSignatureAlias(t *testing.T) {
-	projection, graph, sem := buildProjectionWithGlobals(t, `
+	projection, graph, facts := buildProjectionWithGlobals(t, `
 		local store = ownership.store
 		store({}, {})
 	`, []string{"require", "ownership"})
 
-	got := onlySignatureName(t, projection, graph, sem)
+	got := onlySignatureName(t, projection, graph, facts)
 	if got != "ownership.store" {
 		t.Fatalf("SignatureName(explicit global alias) = %q, want ownership.store", got)
 	}
 }
 
 func TestProjectionResolvesLocalAliasOfExplicitGlobalModuleRoot(t *testing.T) {
-	projection, graph, sem := buildProjectionWithGlobals(t, `
+	projection, graph, facts := buildProjectionWithGlobals(t, `
 		local assert = assert2
 		assert.has_error(nil, {})
 	`, []string{"require", "assert2"})
 
-	got := onlySignatureName(t, projection, graph, sem)
+	got := onlySignatureName(t, projection, graph, facts)
 	if got != "assert2.has_error" {
 		t.Fatalf("SignatureName(local alias of explicit global module root) = %q, want assert2.has_error", got)
 	}
@@ -165,13 +170,11 @@ func TestProjectionResolvesCapturedAliasOfExplicitGlobalModuleRoot(t *testing.T)
 	if built == nil || built.Graph == nil {
 		t.Fatal("BuildFunction returned nil")
 	}
-	sem, err := semantics.ExtractFunction(def.Func, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractFunction: %v", err)
-	}
-	projection := New(bindings, built.Graph, sem)
+	body := wirlower.LowerFunction("make", def.Func, bindings, built)
+	facts := transferfacts.Lower(built.Graph, transferfacts.Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	projection := moduleidentity.NewFromFacts(bindings, built.Graph, moduleIdentityTestFacts{facts: facts}, def.Func)
 
-	got := onlySignatureName(t, projection, built.Graph, sem)
+	got := onlySignatureName(t, projection, built.Graph, facts)
 	if got != "table.create" {
 		t.Fatalf("SignatureName(captured explicit global module root alias) = %q, want table.create", got)
 	}
@@ -194,13 +197,11 @@ func TestProjectionKeepsCapturedRequireModuleRootAlias(t *testing.T) {
 	if built == nil || built.Graph == nil {
 		t.Fatal("BuildFunction returned nil")
 	}
-	sem, err := semantics.ExtractFunction(def.Func, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractFunction: %v", err)
-	}
-	projection := New(bindings, built.Graph, sem)
+	body := wirlower.LowerFunction("decode", def.Func, bindings, built)
+	facts := transferfacts.Lower(built.Graph, transferfacts.Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	projection := moduleidentity.NewFromFacts(bindings, built.Graph, moduleIdentityTestFacts{facts: facts}, def.Func)
 
-	got := onlySignatureName(t, projection, built.Graph, sem)
+	got := onlySignatureName(t, projection, built.Graph, facts)
 	if got != "json.decode" {
 		t.Fatalf("SignatureName(captured require module root alias) = %q, want json.decode", got)
 	}
@@ -215,7 +216,7 @@ func TestRequireAliasesProjectionTracksLocalRequireNamesBeforeSemantics(t *testi
 		end
 	`)
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"require"}})
-	projection := NewRequireAliases(bindings, stmts, nil)
+	projection := moduleidentity.NewRequireAliases(bindings, stmts, nil)
 
 	aliases := projection.ModuleAliases()
 	if aliases["json"] != "json" {
@@ -242,7 +243,7 @@ func TestRequireAliasesProjectionTracksCapturedRequireNamesBeforeSemantics(t *te
 	if !ok || def.Func == nil {
 		t.Fatalf("stmt 1 = %T, want function definition", stmts[1])
 	}
-	projection := NewRequireAliases(bindings, def.Func.Stmts, def.Func)
+	projection := moduleidentity.NewRequireAliases(bindings, def.Func.Stmts, def.Func)
 
 	aliases := projection.ModuleAliases()
 	if aliases["json"] != "json" {
@@ -254,43 +255,43 @@ func TestRequireAliasesProjectionTracksCapturedRequireNamesBeforeSemantics(t *te
 }
 
 func TestProjectionDoesNotResolveImplicitGlobalSignatureAlias(t *testing.T) {
-	projection, graph, sem := buildProjection(t, `
+	projection, graph, facts := buildProjection(t, `
 		local store = ownership.store
 		store({}, {})
 	`)
 
-	if got := onlySignatureName(t, projection, graph, sem); got != "" {
+	if got := onlySignatureName(t, projection, graph, facts); got != "" {
 		t.Fatalf("SignatureName(implicit global alias) = %q, want none", got)
 	}
 }
 
 func TestProjectionInvalidatesReassignedRequireRoot(t *testing.T) {
-	projection, graph, sem := buildProjection(t, `
+	projection, graph, facts := buildProjection(t, `
 		local json = require("json")
 		json = {}
 		local value = json.decode("{}")
 	`)
 
 	for _, point := range graph.RPO() {
-		call, ok := sem.Call(point)
-		if !ok || !call.HasCalleePath {
+		call, ok := facts.CallSiteView(point)
+		if !ok || call.CalleePathRef().IsEmpty() {
 			continue
 		}
-		if name, ok := projection.SignatureName(point, call.CalleePath); ok {
+		if name, ok := projection.SignatureName(point, call.CalleePathRef()); ok {
 			t.Fatalf("SignatureName after reassignment = %q/true, want false", name)
 		}
 	}
 }
 
-func onlySignatureName(t *testing.T, projection Projection, graph cfg.Graph, sem *semantics.Result) string {
+func onlySignatureName(t *testing.T, projection moduleidentity.Projection, graph cfg.Graph, facts factflow.Facts) string {
 	t.Helper()
 	var got string
 	for _, point := range graph.RPO() {
-		call, ok := sem.Call(point)
-		if !ok || !call.HasCalleePath {
+		call, ok := facts.CallSiteView(point)
+		if !ok || call.CalleePathRef().IsEmpty() {
 			continue
 		}
-		name, ok := projection.SignatureName(point, call.CalleePath)
+		name, ok := projection.SignatureName(point, call.CalleePathRef())
 		if ok {
 			got = name
 		}
@@ -298,12 +299,12 @@ func onlySignatureName(t *testing.T, projection Projection, graph cfg.Graph, sem
 	return got
 }
 
-func buildProjection(t *testing.T, src string) (Projection, cfg.Graph, *semantics.Result) {
+func buildProjection(t *testing.T, src string) (moduleidentity.Projection, cfg.Graph, factflow.Facts) {
 	t.Helper()
 	return buildProjectionWithGlobals(t, src, []string{"require"})
 }
 
-func buildProjectionWithGlobals(t *testing.T, src string, globals []string) (Projection, cfg.Graph, *semantics.Result) {
+func buildProjectionWithGlobals(t *testing.T, src string, globals []string) (moduleidentity.Projection, cfg.Graph, factflow.Facts) {
 	t.Helper()
 	stmts := parseChunk(t, src)
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: globals})
@@ -311,11 +312,122 @@ func buildProjectionWithGlobals(t *testing.T, src string, globals []string) (Pro
 	if built == nil || built.Graph == nil {
 		t.Fatalf("BuildChunk returned nil")
 	}
-	sem, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
+	body := wirlower.Lower("chunk", stmts, bindings, built)
+	facts := transferfacts.Lower(built.Graph, transferfacts.Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	return moduleidentity.NewFromFacts(bindings, built.Graph, moduleIdentityTestFacts{facts: facts}, nil), built.Graph, facts
+}
+
+type moduleIdentityTestFacts struct {
+	facts factflow.Facts
+}
+
+func (m moduleIdentityTestFacts) LocalAssignment(point cfg.Point) (moduleidentity.Assignment, bool) {
+	fact, ok := m.facts.LocalAssignment(point)
+	if !ok {
+		return moduleidentity.Assignment{}, false
 	}
-	return New(bindings, built.Graph, sem), built.Graph, sem
+	return testModuleAssignment(fact), true
+}
+
+func (m moduleIdentityTestFacts) OrdinaryAssignment(point cfg.Point) (moduleidentity.Assignment, bool) {
+	fact, ok := m.facts.OrdinaryAssignment(point)
+	if !ok {
+		return moduleidentity.Assignment{}, false
+	}
+	return testModuleAssignment(fact), true
+}
+
+func (m moduleIdentityTestFacts) PathAssignment(point cfg.Point) (moduleidentity.Assignment, bool) {
+	fact, ok := m.facts.PathAssignment(point)
+	if !ok {
+		return moduleidentity.Assignment{}, false
+	}
+	target := fact.TargetPathRef()
+	return moduleidentity.Assignment{
+		Target:       target.Clone(),
+		TargetSymbol: target.Symbol,
+		Source:       testModuleSource(fact.Source()),
+	}, true
+}
+
+func (m moduleIdentityTestFacts) PathDescendantInvalidation(point cfg.Point) (pathdom.Path, bool) {
+	fact, ok := m.facts.PathDescendantInvalidation(point)
+	if !ok {
+		return pathdom.Path{}, false
+	}
+	return fact.ContainerPath(), true
+}
+
+func (m moduleIdentityTestFacts) CallSite(point cfg.Point) (moduleidentity.CallSite, bool) {
+	site, ok := m.facts.CallSiteView(point)
+	if !ok {
+		return moduleidentity.CallSite{}, false
+	}
+	args := site.ArgumentSources()
+	outArgs := make([]moduleidentity.Source, 0, len(args))
+	for _, arg := range args {
+		outArgs = append(outArgs, testModuleSource(arg))
+	}
+	return moduleidentity.CallSite{
+		Callee:       site.CalleePath(),
+		Args:         outArgs,
+		TypeArgCount: len(site.TypeArgs()),
+		MethodName:   site.MethodName(),
+	}, true
+}
+
+func (m moduleIdentityTestFacts) ObjectLiteral(expr moduleidentity.SourceRef) ([]moduleidentity.ObjectEntry, bool) {
+	lit, ok := m.facts.ObjectLiteralView(factflow.ExprRef(expr))
+	if !ok {
+		return nil, false
+	}
+	var out []moduleidentity.ObjectEntry
+	lit.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
+		out = append(out, moduleidentity.ObjectEntry{
+			Suffix: entry.Suffix(),
+			Source: testModuleSource(entry.Source()),
+		})
+		return true
+	})
+	return out, len(out) != 0
+}
+
+func (m moduleIdentityTestFacts) ExpressionPath(expr moduleidentity.SourceRef) (pathdom.Path, bool) {
+	return m.facts.ExpressionPath(factflow.ExprRef(expr))
+}
+
+func testModuleAssignment(fact factflow.RootAssignment) moduleidentity.Assignment {
+	return moduleidentity.Assignment{
+		Target:       fact.TargetPath(),
+		TargetSymbol: fact.TargetSymbol(),
+		Source:       testModuleSource(fact.Source()),
+	}
+}
+
+func testModuleSource(source factflow.ValueSource) moduleidentity.Source {
+	out := moduleidentity.Source{
+		Expr:        moduleidentity.SourceRef(source.ExprRef),
+		HasExpr:     source.HasExpr,
+		CallPoint:   source.CallPoint,
+		ResultIndex: source.ResultIndex,
+		PathKey:     source.PathKey,
+		String:      source.String,
+	}
+	switch source.Kind {
+	case factflow.ValueSourceExpression:
+		out.Kind = moduleidentity.SourceExpression
+	case factflow.ValueSourceCall:
+		out.Kind = moduleidentity.SourceCall
+	case factflow.ValueSourcePath:
+		out.Kind = moduleidentity.SourcePath
+	case factflow.ValueSourceLiteral:
+		if source.LiteralKind == factflow.ValueSourceLiteralString {
+			out.Kind = moduleidentity.SourceStringLiteral
+		}
+	default:
+		out.Kind = moduleidentity.SourceUnknown
+	}
+	return out
 }
 
 func parseChunk(t *testing.T, src string) []ast.Stmt {

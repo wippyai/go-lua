@@ -4,11 +4,11 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -51,10 +51,71 @@ type Projection struct {
 	pointOrders map[cfg.Point]int
 }
 
-// New builds a require/module identity projection for a function or chunk body.
-func New(bindings *bind.Result, graph cfg.Graph, sem *semantics.Result) Projection {
+// SourceRef identifies a lowered expression source without tying this package
+// to the engine's fact carrier.
+type SourceRef uint64
+
+// SourceKind classifies the source value shapes module identity needs.
+type SourceKind uint8
+
+const (
+	SourceUnknown SourceKind = iota
+	SourceExpression
+	SourceCall
+	SourcePath
+	SourceStringLiteral
+)
+
+// Source is the fact-neutral source identity consumed by Projection.
+type Source struct {
+	Kind        SourceKind
+	Expr        SourceRef
+	HasExpr     bool
+	CallPoint   cfg.Point
+	ResultIndex int
+	PathKey     path.PathKey
+	String      string
+}
+
+// Assignment describes a root or path assignment in fact-neutral form.
+type Assignment struct {
+	Target       path.Path
+	TargetSymbol symbol.ID
+	Source       Source
+}
+
+// CallSite describes the call-site facts needed to recognize require("x").
+type CallSite struct {
+	Callee       path.Path
+	Args         []Source
+	TypeArgCount int
+	MethodName   string
+}
+
+// ObjectEntry describes one static object-literal entry source.
+type ObjectEntry struct {
+	Suffix path.Path
+	Source Source
+}
+
+// FlowFacts is the canonical boundary moduleidentity reads after lowering. The
+// producer may be factflow, tests, or a future WIR-native fact schema; this
+// package stays below engine/check layers.
+type FlowFacts interface {
+	LocalAssignment(cfg.Point) (Assignment, bool)
+	OrdinaryAssignment(cfg.Point) (Assignment, bool)
+	PathAssignment(cfg.Point) (Assignment, bool)
+	PathDescendantInvalidation(cfg.Point) (path.Path, bool)
+	CallSite(cfg.Point) (CallSite, bool)
+	ObjectLiteral(SourceRef) ([]ObjectEntry, bool)
+	ExpressionPath(SourceRef) (path.Path, bool)
+}
+
+// NewFromFacts builds a require/module identity projection from canonical WIR
+// transfer facts for a function or chunk body.
+func NewFromFacts(bindings *bind.Result, graph cfg.Graph, facts FlowFacts, fn *ast.FunctionExpr) Projection {
 	out := Projection{bindings: bindings}
-	if bindings == nil || sem == nil {
+	if bindings == nil {
 		return out
 	}
 	if graph != nil {
@@ -62,53 +123,57 @@ func New(bindings *bind.Result, graph cfg.Graph, sem *semantics.Result) Projecti
 		out.pointOrders = make(map[cfg.Point]int, len(points))
 		for i, point := range points {
 			out.pointOrders[point] = i
-			if view, ok := sem.LocalAssignmentView(point); ok {
-				fact, _ := view.Borrowed()
-				if modulePath, ok := ExactRequireCall(bindings, fact.Expr); ok {
-					out.addAliasName(fact.Name, modulePath)
-					if fact.HasSymbol && fact.Symbol != 0 {
-						out.addRoot(fact.Symbol, moduleRoot{modulePath: modulePath, point: point})
-					}
+			if fact, ok := facts.LocalAssignment(point); ok {
+				if modulePath, ok := out.exactRequireSource(facts, fact.Source); ok {
+					name := out.targetName(fact.Target, fact.TargetSymbol)
+					out.addAliasName(name, modulePath)
+					out.addRoot(fact.TargetSymbol, moduleRoot{modulePath: modulePath, point: point})
 				}
 			}
-			if view, ok := sem.OrdinaryAssignmentView(point); ok {
-				fact, _ := view.Borrowed()
-				if fact.HasSymbol && fact.Symbol != 0 && (!fact.HasPath || len(fact.Path.Segments) == 0) {
+			if fact, ok := facts.OrdinaryAssignment(point); ok {
+				target := fact.Target
+				if fact.TargetSymbol != 0 && len(target.Segments) == 0 {
 					if out.reassigned == nil {
 						out.reassigned = make(map[symbol.ID][]cfg.Point)
 					}
-					out.reassigned[fact.Symbol] = append(out.reassigned[fact.Symbol], point)
+					out.reassigned[fact.TargetSymbol] = append(out.reassigned[fact.TargetSymbol], point)
 				}
-				if fact.HasPath && len(fact.Path.Segments) != 0 {
-					out.pathWrites = append(out.pathWrites, pathWrite{target: fact.Path.Clone(), point: point})
-				} else if fact.HasContainerPath && len(fact.ContainerPath.Segments) != 0 {
-					out.pathWrites = append(out.pathWrites, pathWrite{target: fact.ContainerPath.Clone(), point: point, dynamic: true})
+			}
+			if fact, ok := facts.PathAssignment(point); ok {
+				target := fact.Target
+				if len(target.Segments) != 0 {
+					out.pathWrites = append(out.pathWrites, pathWrite{target: target.Clone(), point: point})
+				}
+			}
+			if target, ok := facts.PathDescendantInvalidation(point); ok {
+				if len(target.Segments) != 0 {
+					out.pathWrites = append(out.pathWrites, pathWrite{target: target.Clone(), point: point, dynamic: true})
 				}
 			}
 		}
-		out.addCapturedImportRoots(sem.Function())
+		out.addCapturedImportRoots(fn)
 		for _, point := range points {
-			if view, ok := sem.LocalAssignmentView(point); ok {
-				fact, _ := view.Borrowed()
-				if fact.HasSymbol && fact.Symbol != 0 {
-					out.addRootAlias(fact.Symbol, fact.Name, fact.Expr, point, false)
-					out.addSignatureAlias(path.NewPath(fact.Symbol, fact.Name), fact.Expr, point, false)
-					out.addObjectLiteralAliases(path.NewPath(fact.Symbol, fact.Name), fact.Expr, point, false)
-				}
+			if fact, ok := facts.LocalAssignment(point); ok {
+				target := fact.Target
+				source := fact.Source
+				out.addRootAliasFromSource(facts, target, source, point, false)
+				out.addSignatureAliasFromSource(facts, target, source, point, false)
+				out.addObjectLiteralAliasesFromSource(facts, target, source, point, false)
 			}
-			if view, ok := sem.OrdinaryAssignmentView(point); ok {
-				fact, _ := view.Borrowed()
-				if !fact.HasPath || len(fact.Path.Segments) == 0 {
+			if fact, ok := facts.PathAssignment(point); ok {
+				target := fact.Target
+				if len(target.Segments) == 0 {
 					continue
 				}
-				out.addSignatureAlias(fact.Path, fact.Value, point, false)
-				out.addAssignmentAlias(fact.Path, fact.Value, point, false)
+				source := fact.Source
+				out.addSignatureAliasFromSource(facts, target, source, point, false)
+				out.addAssignmentAliasFromSource(facts, target, source, point, false)
 			}
 		}
 	}
-	out.addCapturedAliasNames(sem.Function())
-	out.addCapturedSignatureAliases(sem.Function())
-	out.addCapturedObjectAliases(sem.Function())
+	out.addCapturedAliasNames(fn)
+	out.addCapturedSignatureAliases(fn)
+	out.addCapturedObjectAliases(fn)
 	return out
 }
 
@@ -311,6 +376,18 @@ func (p *Projection) addRootAlias(id symbol.ID, name string, expr ast.Expr, poin
 	}
 	p.addAliasName(name, modulePath)
 	p.addRoot(id, moduleRoot{modulePath: modulePath, point: point, inherited: inherited})
+}
+
+func (p *Projection) addRootAliasFromSource(facts FlowFacts, target path.Path, source Source, point cfg.Point, inherited bool) {
+	if p == nil || target.Symbol == 0 {
+		return
+	}
+	modulePath, ok := p.moduleIdentityForSource(facts, source)
+	if !ok {
+		return
+	}
+	p.addAliasName(p.targetName(target, target.Symbol), modulePath)
+	p.addRoot(target.Symbol, moduleRoot{modulePath: modulePath, point: point, inherited: inherited})
 }
 
 func (p Projection) rootIdentity(id symbol.ID) (moduleRoot, bool) {
@@ -558,6 +635,27 @@ func (p *Projection) addObjectLiteralAliases(target path.Path, expr ast.Expr, po
 	}
 }
 
+func (p *Projection) addObjectLiteralAliasesFromSource(facts FlowFacts, target path.Path, source Source, point cfg.Point, inherited bool) {
+	if p == nil || target.Symbol == 0 || !staticPathSegments(target.Segments) || source.Kind != SourceExpression || !source.HasExpr {
+		return
+	}
+	entries, ok := facts.ObjectLiteral(source.Expr)
+	if !ok {
+		return
+	}
+	for _, entry := range entries {
+		if len(entry.Suffix.Segments) == 0 || !staticPathSegments(entry.Suffix.Segments) {
+			continue
+		}
+		modulePath, ok := p.moduleIdentityForSource(facts, entry.Source)
+		if !ok {
+			continue
+		}
+		aliased := target.AppendPathSuffix(entry.Suffix)
+		p.addAlias(aliased, modulePath, point, inherited)
+	}
+}
+
 func (p *Projection) addAssignmentAlias(target path.Path, expr ast.Expr, point cfg.Point, inherited bool) {
 	if p == nil || target.Symbol == 0 || len(target.Segments) == 0 || !staticPathSegments(target.Segments) {
 		return
@@ -569,11 +667,42 @@ func (p *Projection) addAssignmentAlias(target path.Path, expr ast.Expr, point c
 	p.addAlias(target, modulePath, point, inherited)
 }
 
+func (p *Projection) addAssignmentAliasFromSource(facts FlowFacts, target path.Path, source Source, point cfg.Point, inherited bool) {
+	if p == nil || target.Symbol == 0 || len(target.Segments) == 0 || !staticPathSegments(target.Segments) {
+		return
+	}
+	modulePath, ok := p.moduleIdentityForSource(facts, source)
+	if !ok {
+		return
+	}
+	p.addAlias(target, modulePath, point, inherited)
+}
+
 func (p *Projection) addSignatureAlias(target path.Path, expr ast.Expr, point cfg.Point, inherited bool) {
 	if p == nil || target.Symbol == 0 || !staticPathSegments(target.Segments) {
 		return
 	}
 	resolved, ok := pathexpr.Resolve(expr, p.bindings)
+	if !ok {
+		return
+	}
+	name, ok := p.signatureNameForPath(point, resolved, true)
+	if !ok {
+		return
+	}
+	p.signatures = append(p.signatures, signatureAlias{
+		target:    target.Clone(),
+		name:      name,
+		point:     point,
+		inherited: inherited,
+	})
+}
+
+func (p *Projection) addSignatureAliasFromSource(facts FlowFacts, target path.Path, source Source, point cfg.Point, inherited bool) {
+	if p == nil || target.Symbol == 0 || !staticPathSegments(target.Segments) {
+		return
+	}
+	resolved, ok := p.sourcePath(facts, source)
 	if !ok {
 		return
 	}
@@ -609,6 +738,53 @@ func (p Projection) moduleIdentityForExpr(expr ast.Expr) (string, bool) {
 	return p.moduleIdentityForPath(resolved)
 }
 
+func (p Projection) moduleIdentityForSource(facts FlowFacts, source Source) (string, bool) {
+	if modulePath, ok := p.exactRequireSource(facts, source); ok {
+		return modulePath, true
+	}
+	resolved, ok := p.sourcePath(facts, source)
+	if !ok {
+		return "", false
+	}
+	return p.moduleIdentityForPath(resolved)
+}
+
+func (p Projection) exactRequireSource(facts FlowFacts, source Source) (string, bool) {
+	if source.Kind != SourceCall || source.CallPoint == 0 || source.ResultIndex != 0 {
+		return "", false
+	}
+	site, ok := facts.CallSite(source.CallPoint)
+	if !ok || len(site.Args) != 1 || site.MethodName != "" || site.TypeArgCount != 0 {
+		return "", false
+	}
+	callee := site.Callee
+	if callee.Symbol == 0 || len(callee.Segments) != 0 {
+		return "", false
+	}
+	if p.bindings == nil || !p.bindings.SymbolResolvesToGlobal(callee.Symbol, "require") {
+		return "", false
+	}
+	arg := site.Args[0]
+	if arg.Kind != SourceStringLiteral || arg.String == "" {
+		return "", false
+	}
+	return arg.String, true
+}
+
+func (p Projection) sourcePath(facts FlowFacts, source Source) (path.Path, bool) {
+	switch source.Kind {
+	case SourcePath:
+		return pathFromSourceKey(source.PathKey)
+	case SourceExpression:
+		if !source.HasExpr {
+			return path.Path{}, false
+		}
+		return facts.ExpressionPath(source.Expr)
+	default:
+		return path.Path{}, false
+	}
+}
+
 func (p Projection) moduleIdentityForPath(resolved path.Path) (string, bool) {
 	if resolved.Symbol == 0 {
 		return "", false
@@ -629,6 +805,16 @@ func (p Projection) moduleIdentityForPath(resolved path.Path) (string, bool) {
 	return "", false
 }
 
+func (p Projection) targetName(target path.Path, id symbol.ID) string {
+	if target.Root != "" {
+		return target.Root
+	}
+	if p.bindings != nil && id != 0 {
+		return p.bindings.Name(id)
+	}
+	return ""
+}
+
 func (p Projection) explicitGlobalModuleRoot(id symbol.ID) (string, bool) {
 	if p.bindings == nil || id == 0 {
 		return "", false
@@ -639,6 +825,20 @@ func (p Projection) explicitGlobalModuleRoot(id symbol.ID) (string, bool) {
 	}
 	name := p.bindings.Name(id)
 	return name, name != ""
+}
+
+func pathFromSourceKey(key path.PathKey) (path.Path, bool) {
+	if sym, _, suffix, ok := pathaddr.ParseResolverPath(key); ok {
+		segments, segOK := segment.ParseFormattedSegments(suffix)
+		if !segOK {
+			return path.Path{}, false
+		}
+		return path.Path{Symbol: sym, Segments: append([]segment.Segment(nil), segments...)}, true
+	}
+	if sym, segments, ok := pathaddr.ParseSymbolPathKey(key); ok {
+		return path.Path{Symbol: sym, Segments: segments}, true
+	}
+	return path.Path{}, false
 }
 
 func exprAt(exprs []ast.Expr, index int) ast.Expr {
