@@ -550,6 +550,19 @@ func TestFixtureDiagnosticRenderOptionsAliasEntryAndModules(t *testing.T) {
 	}
 }
 
+func TestFixtureDiagnosticRenderOptionsCanEnableWitnessTrace(t *testing.T) {
+	opts := fixtureDiagnosticRenderOptions(map[string]string{
+		"main.lua": "local x: number = h",
+	}, "main.lua", fixtureDiagnosticRenderConfig{WitnessTrace: true})
+
+	if !opts.WitnessTrace {
+		t.Fatal("fixture render options did not enable witness trace")
+	}
+	if !opts.ShowSourceLabelRows {
+		t.Fatal("fixture render options should keep source label rows enabled")
+	}
+}
+
 func TestDiagnosticRenderPolicyRejectsNoisySourceFrames(t *testing.T) {
 	tests := []struct {
 		name     string

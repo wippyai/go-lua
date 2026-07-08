@@ -41,8 +41,13 @@ type fixtureCheck struct {
 	Errors          *int                           `json:"errors,omitempty"`
 	Diagnostics     []fixtureDiagnosticExpectation `json:"diagnostics,omitempty"`
 	DiagnosticRules []fixtureDiagnosticRule        `json:"diagnostic_rules,omitempty"`
+	RenderOptions   fixtureDiagnosticRenderConfig  `json:"render_options,omitempty"`
 	Placement       *fixturePlacement              `json:"placement,omitempty"`
 	Skip            string                         `json:"skip,omitempty"`
+}
+
+type fixtureDiagnosticRenderConfig struct {
+	WitnessTrace bool `json:"witness_trace,omitempty"`
 }
 
 type fixtureDiagnosticRule struct {
@@ -323,7 +328,7 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 	logFixtureStats(t, s.Name, entryFile, stats)
 	allDiagnostics = append(allDiagnostics, result.Diagnostics...)
 	placementPlans = append(placementPlans, result.PlacementPlan())
-	renderOptions := fixtureDiagnosticRenderOptions(sources, entryFile)
+	renderOptions := fixtureDiagnosticRenderOptions(sources, entryFile, fixtureDiagnosticRenderConfigForCheck(s.Suite.Check))
 	verifyDiagnosticRenderPolicy(t, allDiagnostics, renderOptions)
 
 	// Verify expectations
@@ -473,9 +478,20 @@ func formatPlacementEntries(plan placementplan.Plan) string {
 	return strings.Join(parts, "; ")
 }
 
-func fixtureDiagnosticRenderOptions(sources map[string]string, entryFile string) diag.RenderOptions {
+func fixtureDiagnosticRenderConfigForCheck(check *fixtureCheck) fixtureDiagnosticRenderConfig {
+	if check == nil {
+		return fixtureDiagnosticRenderConfig{}
+	}
+	return check.RenderOptions
+}
+
+func fixtureDiagnosticRenderOptions(sources map[string]string, entryFile string, configs ...fixtureDiagnosticRenderConfig) diag.RenderOptions {
+	opts := diag.RenderOptions{}
+	if len(configs) > 0 {
+		opts.WitnessTrace = configs[0].WitnessTrace
+	}
 	if len(sources) == 0 {
-		return diag.RenderOptions{}
+		return opts
 	}
 	renderSources := make(diag.SourceMap, len(sources)*2+1)
 	displayFiles := make(map[string]string, len(sources)+1)
@@ -490,7 +506,10 @@ func fixtureDiagnosticRenderOptions(sources map[string]string, entryFile string)
 		renderSources["test.lua"] = source
 		displayFiles["test.lua"] = entryFile
 	}
-	return diag.RenderOptions{Sources: renderSources, DisplayFiles: displayFiles, ShowSourceLabelRows: true}
+	opts.Sources = renderSources
+	opts.DisplayFiles = displayFiles
+	opts.ShowSourceLabelRows = true
+	return opts
 }
 
 func verifyInlineExpectations(t testing.TB, expectations []inlineExpectation, diagnostics []diag.Diagnostic, entryFile string, renderOptions diag.RenderOptions) {

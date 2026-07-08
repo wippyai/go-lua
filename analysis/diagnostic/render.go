@@ -18,6 +18,9 @@ type RenderOptions struct {
 	DisplayFiles map[string]string
 	// Color enables ANSI color in the rendered diagnostic.
 	Color bool
+	// WitnessTrace renders refuted evidence in causal order: source facts first,
+	// claimed obligations next, and missing proofs last.
+	WitnessTrace bool
 	// ShowSourceLabelRows renders semantic labels next to directional source-line
 	// arrows instead of a separate caret row when labels are available. By default
 	// source frames use exact carets only; labels still count as rendered, so they
@@ -123,7 +126,7 @@ func Render(d Diagnostic, opts RenderOptions) string {
 		}
 	}
 
-	if evidence := uniqueEvidence(d.Explanation.Evidence(), primaryFile); len(evidence) > 0 {
+	if evidence := renderEvidence(d.Explanation.Evidence(), primaryFile, opts); len(evidence) > 0 {
 		b.WriteString("\n")
 		b.WriteString(p.blue)
 		b.WriteString(style.text.evidenceSection)
@@ -419,6 +422,102 @@ func uniqueEvidence(items []Evidence, defaultFile string) []Evidence {
 		out = append(out, item)
 	}
 	return out
+}
+
+func renderEvidence(items []Evidence, primaryFile string, opts RenderOptions) []Evidence {
+	items = uniqueEvidence(items, primaryFile)
+	if !opts.WitnessTrace {
+		return items
+	}
+	return orderWitnessTraceEvidence(items, primaryFile)
+}
+
+func orderWitnessTraceEvidence(items []Evidence, primaryFile string) []Evidence {
+	if len(items) < 2 {
+		return append([]Evidence(nil), items...)
+	}
+	var facts, claims, missing []Evidence
+	for _, item := range items {
+		switch {
+		case item.Kind == EvidenceMissingProof:
+			missing = append(missing, item)
+		case item.Kind == EvidenceUserAssertion || item.Trust == TrustClaimed:
+			claims = append(claims, item)
+		default:
+			facts = append(facts, item)
+		}
+	}
+	out := make([]Evidence, 0, len(items))
+	out = append(out, orderWitnessTraceEvidenceGroup(facts, primaryFile)...)
+	out = append(out, orderWitnessTraceEvidenceGroup(claims, primaryFile)...)
+	out = append(out, orderWitnessTraceEvidenceGroup(missing, primaryFile)...)
+	return out
+}
+
+type witnessTraceEvidenceItem struct {
+	item    Evidence
+	ordinal int
+}
+
+type witnessTraceUnspannedItem struct {
+	item          Evidence
+	anchorOrdinal int
+}
+
+func orderWitnessTraceEvidenceGroup(items []Evidence, primaryFile string) []Evidence {
+	if len(items) < 2 {
+		return append([]Evidence(nil), items...)
+	}
+	spanned := make([]witnessTraceEvidenceItem, 0, len(items))
+	unspanned := make([]witnessTraceUnspannedItem, 0, len(items))
+	lastSpannedOrdinal := -1
+	for i, item := range items {
+		if item.Span.Valid() {
+			spanned = append(spanned, witnessTraceEvidenceItem{item: item, ordinal: i})
+			lastSpannedOrdinal = i
+			continue
+		}
+		unspanned = append(unspanned, witnessTraceUnspannedItem{item: item, anchorOrdinal: lastSpannedOrdinal})
+	}
+	if len(spanned) == 0 {
+		return append([]Evidence(nil), items...)
+	}
+	sort.SliceStable(spanned, func(i, j int) bool {
+		return witnessTraceSpanBefore(spanned[i].item, spanned[j].item, primaryFile)
+	})
+	anchored := make(map[int][]Evidence, len(unspanned))
+	for _, item := range unspanned {
+		anchored[item.anchorOrdinal] = append(anchored[item.anchorOrdinal], item.item)
+	}
+	out := make([]Evidence, 0, len(items))
+	out = append(out, anchored[-1]...)
+	for _, item := range spanned {
+		out = append(out, item.item)
+		out = append(out, anchored[item.ordinal]...)
+	}
+	return out
+}
+
+func witnessTraceSpanBefore(left, right Evidence, primaryFile string) bool {
+	leftFile := evidenceOrderFile(left, primaryFile)
+	rightFile := evidenceOrderFile(right, primaryFile)
+	if leftFile != rightFile {
+		return leftFile < rightFile
+	}
+	if left.Span.StartLine != right.Span.StartLine {
+		return left.Span.StartLine < right.Span.StartLine
+	}
+	if left.Span.StartCol != right.Span.StartCol {
+		return left.Span.StartCol < right.Span.StartCol
+	}
+	return false
+}
+
+func evidenceOrderFile(item Evidence, primaryFile string) string {
+	if item.File != "" {
+		return item.File
+	}
+	return primaryFile
 }
 
 type frameRenderResult struct {

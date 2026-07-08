@@ -361,6 +361,146 @@ func TestRenderDiagnosticDeduplicatesExactEvidenceOnly(t *testing.T) {
 	}
 }
 
+func TestOrderWitnessTraceEvidenceMovesFactsBeforeClaimsAndMissingProofs(t *testing.T) {
+	items := []Evidence{
+		{
+			Kind:    EvidenceUserAssertion,
+			Trust:   TrustClaimed,
+			Span:    Span{StartLine: 4, StartCol: 10},
+			Message: "target is declared string",
+		},
+		{
+			Kind:    EvidenceMissingProof,
+			Trust:   TrustRefuted,
+			Span:    Span{StartLine: 8, StartCol: 12},
+			Message: "no proof shows source is string",
+		},
+		{
+			Kind:    EvidenceAbstractFact,
+			Trust:   TrustProven,
+			Span:    Span{StartLine: 8, StartCol: 12},
+			Message: "source reaches the return",
+		},
+		{
+			Kind:    EvidenceAbstractFact,
+			Trust:   TrustProven,
+			Span:    Span{StartLine: 2, StartCol: 9},
+			Message: "source is born nil",
+		},
+	}
+
+	got := orderWitnessTraceEvidence(items, "main.lua")
+	assertEvidenceMessages(t, got,
+		"source is born nil",
+		"source reaches the return",
+		"target is declared string",
+		"no proof shows source is string",
+	)
+}
+
+func TestOrderWitnessTraceEvidenceKeepsUnspannedItemsAfterPreviousSpannedItem(t *testing.T) {
+	items := []Evidence{
+		{
+			Kind:    EvidenceAbstractFact,
+			Trust:   TrustProven,
+			Span:    Span{StartLine: 10, StartCol: 4},
+			Message: "value reaches call site",
+		},
+		{
+			Kind:    EvidenceAbstractFact,
+			Trust:   TrustProven,
+			Message: "callee summary requires the parameter",
+		},
+		{
+			Kind:    EvidenceAbstractFact,
+			Trust:   TrustProven,
+			Span:    Span{StartLine: 2, StartCol: 8},
+			Message: "value is born in caller",
+		},
+		{
+			Kind:    EvidenceMissingProof,
+			Trust:   TrustRefuted,
+			Message: "missing callee proof",
+		},
+	}
+
+	got := orderWitnessTraceEvidence(items, "main.lua")
+	assertEvidenceMessages(t, got,
+		"value is born in caller",
+		"value reaches call site",
+		"callee summary requires the parameter",
+		"missing callee proof",
+	)
+}
+
+func TestOrderWitnessTraceEvidenceKeepsSamePointTiesStable(t *testing.T) {
+	items := []Evidence{
+		{
+			Kind:    EvidenceAbstractFact,
+			Trust:   TrustProven,
+			Span:    Span{StartLine: 7, StartCol: 5},
+			Message: "first same-point fact",
+		},
+		{
+			Kind:    EvidenceAbstractFact,
+			Trust:   TrustProven,
+			Span:    Span{StartLine: 7, StartCol: 5},
+			Message: "second same-point fact",
+		},
+		{
+			Kind:    EvidenceAbstractFact,
+			Trust:   TrustProven,
+			Span:    Span{StartLine: 3, StartCol: 1},
+			Message: "earlier fact",
+		},
+	}
+
+	got := orderWitnessTraceEvidence(items, "main.lua")
+	assertEvidenceMessages(t, got,
+		"earlier fact",
+		"first same-point fact",
+		"second same-point fact",
+	)
+}
+
+func TestRenderDiagnosticWitnessTraceOrdersEvidenceWhenEnabled(t *testing.T) {
+	d := Diagnostic{
+		Position: Position{File: "main.lua", Line: 8, Column: 12},
+		Span:     Span{StartLine: 8, StartCol: 12},
+		Code:     Code("type.assignment"),
+		Message:  "cannot return nil as string",
+		Severity: SeverityError,
+		Explanation: NewExplanation(
+			Evidence{
+				Kind:    EvidenceUserAssertion,
+				Trust:   TrustClaimed,
+				Span:    Span{StartLine: 4, StartCol: 10},
+				Message: "return type is declared string",
+			},
+			Evidence{
+				Kind:    EvidenceAbstractFact,
+				Trust:   TrustProven,
+				Span:    Span{StartLine: 2, StartCol: 9},
+				Message: "value is born nil",
+			},
+			Evidence{
+				Kind:    EvidenceMissingProof,
+				Trust:   TrustRefuted,
+				Span:    Span{StartLine: 8, StartCol: 12},
+				Message: "no proof shows value is string",
+			},
+		),
+	}
+
+	rendered := Render(d, RenderOptions{WitnessTrace: true})
+	containsInOrder(t, rendered,
+		"because:",
+		"1. proven: value is born nil",
+		"2. claimed: return type is declared string",
+		"3. missing proof: no proof shows value is string",
+	)
+}
+
 func TestRenderDiagnosticPrintsRepeatedEvidenceFrameOnce(t *testing.T) {
 	rendered := Render(Diagnostic{
 		Position: Position{File: "main.lua", Line: 1, Column: 17},
@@ -1061,6 +1201,30 @@ func containsAll(t *testing.T, haystack string, needles ...string) {
 	for _, needle := range needles {
 		if !strings.Contains(haystack, needle) {
 			t.Fatalf("rendered diagnostic missing %q:\n%s", needle, haystack)
+		}
+	}
+}
+
+func containsInOrder(t *testing.T, haystack string, needles ...string) {
+	t.Helper()
+	offset := 0
+	for _, needle := range needles {
+		index := strings.Index(haystack[offset:], needle)
+		if index < 0 {
+			t.Fatalf("rendered diagnostic missing %q after byte offset %d:\n%s", needle, offset, haystack)
+		}
+		offset += index + len(needle)
+	}
+}
+
+func assertEvidenceMessages(t *testing.T, got []Evidence, want ...string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("evidence len = %d, want %d: %#v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i].Message != want[i] {
+			t.Fatalf("evidence[%d] message = %q, want %q; all evidence = %#v", i, got[i].Message, want[i], got)
 		}
 	}
 }

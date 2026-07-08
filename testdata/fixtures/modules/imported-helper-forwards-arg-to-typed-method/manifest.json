@@ -5,6 +5,9 @@
     "main.lua"
   ],
   "check": {
+    "render_options": {
+      "witness_trace": true
+    },
     "diagnostics": [
       {
         "file": "main.lua",
@@ -85,8 +88,8 @@
           "because:",
           "1. proven: argument 1 (model_id) has type any",
           "2. proven: inside helper, argument 1 (model_id) is passed to client.invoke parameter 1, which requires string",
-          "3. claimed: user asserted any; not abstract-interpreter proof",
-          "4. unvalidated value: model_id comes from any/unknown",
+          "3. unvalidated value: model_id comes from any/unknown",
+          "4. claimed: user asserted any; not abstract-interpreter proof",
           "5. missing proof: no proof on this path shows argument 1 (model_id) is string",
           "help: Validate or narrow `model_id` before passing it; any/unknown values do not prove parameter contracts."
         ],
