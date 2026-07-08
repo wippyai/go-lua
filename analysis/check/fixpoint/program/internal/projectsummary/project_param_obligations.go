@@ -48,10 +48,6 @@ type callOutcomeAtReader interface {
 	CallOutcomeAt(cfg.Point) (callpayload.CallOutcome, bool)
 }
 
-type callSignatureReader interface {
-	CallSignatureType(factflow.CallSite) (*typ.Function, bool)
-}
-
 type callSignatureViewReader interface {
 	CallSiteViewSignatureType(factflow.CallSiteView) (*typ.Function, bool)
 }
@@ -696,11 +692,6 @@ func (p paramObligationProjector) callParamTypesForSiteWithReceiver(site factflo
 	receiver, member, hasMemberCall := memberCallReceiverFromSite(site)
 	if sigReader, ok := p.result.(callSignatureViewReader); ok {
 		if fn, ok := sigReader.CallSiteViewSignatureType(site); ok {
-			return functionParamTypes(fn, false)
-		}
-	}
-	if sigReader, ok := p.result.(callSignatureReader); ok {
-		if fn, ok := sigReader.CallSignatureType(site.CallSite()); ok {
 			return functionParamTypes(fn, false)
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
@@ -59,15 +60,15 @@ func TestCallSignatureTypeCachesReadOnlyFunctionType(t *testing.T) {
 		t.Fatalf("CheckChunk: %v", err)
 	}
 
-	site, ok := onlyCallSite(t, result)
+	point, ok := onlySignatureCallPointNamed(t, result, "json.decode")
 	if !ok {
 		t.Fatalf("missing imported json.decode call site")
 	}
-	first, ok := result.CallSignatureType(site)
+	first, ok := result.CallSignatureTypeAtPoint(point)
 	if !ok {
 		t.Fatalf("missing imported json.decode signature type")
 	}
-	second, ok := result.CallSignatureType(site)
+	second, ok := result.CallSignatureTypeAtPoint(point)
 	if !ok {
 		t.Fatalf("missing cached imported json.decode signature type")
 	}
@@ -90,11 +91,11 @@ func TestCallSignatureTypeUsesImplicitStdlibGlobalIdentity(t *testing.T) {
 		t.Fatalf("CheckChunk: %v", err)
 	}
 
-	site, ok := onlyCallSite(t, result)
+	point, ok := onlySignatureCallPointNamed(t, result, "tostring")
 	if !ok {
 		t.Fatal("missing tostring call site")
 	}
-	fn, ok := result.CallSignatureType(site)
+	fn, ok := result.CallSignatureTypeAtPoint(point)
 	if !ok {
 		t.Fatal("missing implicit stdlib tostring signature type")
 	}
@@ -115,15 +116,15 @@ func TestCallSignatureTypeUsesImplicitStdlibMemberIdentity(t *testing.T) {
 		t.Fatalf("CheckChunk: %v", err)
 	}
 
-	site, ok := onlyCallSite(t, result)
+	point, ok := onlySignatureCallPointNamed(t, result, "table.insert")
 	if !ok {
 		t.Fatal("missing table.insert call site")
 	}
-	name, ok := result.CallSignatureName(site)
+	name, ok := result.CallSignatureNameAtPoint(point)
 	if !ok || name != "table.insert" {
 		t.Fatalf("signature name = %q/%v, want table.insert", name, ok)
 	}
-	fn, ok := result.CallSignatureType(site)
+	fn, ok := result.CallSignatureTypeAtPoint(point)
 	if !ok || fn == nil {
 		t.Fatalf("missing implicit stdlib table.insert signature type")
 	}
@@ -548,20 +549,34 @@ end
 
 func onlyCallSignature(t *testing.T, result *Result) (signature.Function, bool) {
 	t.Helper()
-	site, ok := onlyCallSite(t, result)
+	point, ok := onlySignatureCallPoint(t, result)
 	if !ok {
 		return signature.Function{}, false
 	}
-	return result.CallSignature(site)
+	return result.CallSignatureAtPoint(point)
 }
 
 func onlyCallSite(t *testing.T, result *Result) (factflow.CallSite, bool) {
+	t.Helper()
+	point, ok := onlySignatureCallPoint(t, result)
+	if !ok {
+		return factflow.CallSite{}, false
+	}
+	return result.CallSite(point)
+}
+
+func onlySignatureCallPoint(t *testing.T, result *Result) (cfg.Point, bool) {
+	t.Helper()
+	return onlySignatureCallPointNamed(t, result, "")
+}
+
+func onlySignatureCallPointNamed(t *testing.T, result *Result, wantName string) (cfg.Point, bool) {
 	t.Helper()
 	graph := result.Graph()
 	if graph == nil {
 		t.Fatalf("missing graph")
 	}
-	var out factflow.CallSite
+	var out cfg.Point
 	count := 0
 	for _, point := range graph.RPO() {
 		site, ok := result.CallSite(point)
@@ -571,7 +586,13 @@ func onlyCallSite(t *testing.T, result *Result) (factflow.CallSite, bool) {
 		if _, ok := result.CallSignature(site); !ok {
 			continue
 		}
-		out = site
+		if wantName != "" {
+			name, ok := result.CallSignatureName(site)
+			if !ok || name != wantName {
+				continue
+			}
+		}
+		out = point
 		count++
 	}
 	if count > 1 {
