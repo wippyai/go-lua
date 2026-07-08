@@ -143,13 +143,23 @@ func (c *checker) prepare(
 ) *Static {
 	config := c.config
 	globals := configGlobals(config)
+	modules := moduleidentity.NewFromWIR(bindings, built.Graph, wirBody, fn)
+	signatureID := newSignatureIdentityResolver(bindings, built.Graph, wirBody, modules, config.Signatures)
+	signatureNameForCall := signatureID.nameForCall
+	noNormalReturnCall := effectlowering.SignatureNoNormalReturnPredicate(effectlowering.SignatureNoNormalReturnConfig{
+		Graph:      built.Graph,
+		Registry:   config.Registry,
+		Signatures: config.Signatures,
+		NameFor:    signatureNameForCall,
+	})
 	lowered := transferfacts.LowerDetailed(built.Graph, transferfacts.Config{
-		Registry:      config.Registry,
-		Bindings:      bindings,
-		TypeResolver:  typeResolver,
-		TypeValues:    config.TypeValues,
-		ModuleExports: config.ModuleExports,
-		WIR:           wirBody,
+		Registry:           config.Registry,
+		Bindings:           bindings,
+		TypeResolver:       typeResolver,
+		TypeValues:         config.TypeValues,
+		ModuleExports:      config.ModuleExports,
+		WIR:                wirBody,
+		NoNormalReturnCall: noNormalReturnCall,
 
 		MethodReceiverTypes: config.MethodReceiverTypes,
 	})
@@ -157,18 +167,6 @@ func (c *checker) prepare(
 	assignments := assignmentFactsFromSource(bindings, built, sourceStmts)
 	declarations := declarationFactsFromSource(bindings, built, sourceStmts)
 	genericFors := genericForFactsFromSource(bindings, built, sourceStmts)
-	modules := moduleidentity.NewFromWIR(bindings, built.Graph, wirBody, fn)
-	signatureID := newSignatureIdentityResolver(bindings, built.Graph, wirBody, modules, config.Signatures)
-	signatureNameForCall := signatureID.nameForCall
-	if hasSignatures(config.Signatures) {
-		facts = effectlowering.WithSignatureNoNormalReturns(effectlowering.SignatureNoNormalReturnConfig{
-			Graph:      built.Graph,
-			Registry:   config.Registry,
-			Signatures: config.Signatures,
-			NameFor:    signatureNameForCall,
-			Facts:      facts,
-		})
-	}
 	resolver := config.Visibility
 	if resolver == nil {
 		resolver = defaultVisibilityResolver(bindings, built, wirBody, genericFors)

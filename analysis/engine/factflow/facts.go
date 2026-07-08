@@ -111,16 +111,6 @@ func NewFacts(input FactsInput) Facts {
 	}
 }
 
-// WithNoNormalReturns returns f plus the supplied points that cannot complete
-// normally.
-func (f Facts) WithNoNormalReturns(points map[cfg.Point]struct{}) Facts {
-	if len(points) == 0 {
-		return f
-	}
-	f.noNormalReturns = mergeNoNormalReturnMap(f.noNormalReturns, points)
-	return f
-}
-
 // RootAssignment returns the root assignment fact at point.
 func (f Facts) RootAssignment(point cfg.Point) (RootAssignment, bool) {
 	fact, ok := f.rootAssignments[point]
@@ -564,17 +554,6 @@ func copyExpressionFunctionMap(in map[ExprRef]symbol.ID) map[ExprRef]symbol.ID {
 			continue
 		}
 		out[ref] = id
-	}
-	return out
-}
-
-func mergeNoNormalReturnMap(base, added map[cfg.Point]struct{}) map[cfg.Point]struct{} {
-	if len(base) == 0 {
-		return copyNoNormalReturnMap(added)
-	}
-	out := copyNoNormalReturnMap(base)
-	for point := range added {
-		out[point] = struct{}{}
 	}
 	return out
 }

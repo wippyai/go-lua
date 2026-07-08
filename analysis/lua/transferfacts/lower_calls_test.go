@@ -122,6 +122,28 @@ func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *test
 	}
 }
 
+func TestLowerCallSiteNoNormalReturnPredicatePublishesFact(t *testing.T) {
+	printCall := &ast.FuncCallExpr{Func: ident("print")}
+	printStmt := &ast.FuncCallStmt{Expr: printCall}
+	stmts := []ast.Stmt{printStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"print"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	body := wirlower.Lower("no-normal-return-call", stmts, bindings, built)
+	callPoint := requireStmtPoints(t, built, printStmt, 1)[0]
+
+	facts := Lower(built.Graph, Config{
+		Registry: standard.Registry(),
+		Bindings: bindings,
+		WIR:      body,
+		NoNormalReturnCall: func(point cfg.Point, site factflow.CallSiteView) bool {
+			return point == callPoint && site.Context() == factflow.CallSiteContextStatement
+		},
+	})
+	if !facts.NoNormalReturn(callPoint) {
+		t.Fatalf("NoNormalReturn(%d) = false, want true", callPoint)
+	}
+}
+
 func TestLowerCallSiteContextFlagsFromWIRLowerer(t *testing.T) {
 	makeCall := &ast.FuncCallExpr{Func: ident("make")}
 	local := localAssign([]string{"a"}, makeCall)

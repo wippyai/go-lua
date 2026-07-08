@@ -30,6 +30,11 @@ type Config struct {
 	// MethodReceiverTypes maps method-table receiver symbols to the proven
 	// runtime self type inferred from metatable construction patterns.
 	MethodReceiverTypes map[symbol.ID]typ.Type
+	// NoNormalReturnCall reports whether a lowered call site cannot complete
+	// normally. The predicate is supplied by higher layers that own declared
+	// signature/effect lookup; transferfacts only attaches the proven fact during
+	// canonical FactsInput construction.
+	NoNormalReturnCall func(point cfg.Point, site factflow.CallSiteView) bool
 }
 
 type Lowered struct {
@@ -84,6 +89,7 @@ func LowerDetailed(graph cfg.Graph, config Config) Lowered {
 		DynamicIndexWrites:            make(map[cfg.Point]factflow.DynamicIndexWrite),
 		PathDescendantInvalidations:   make(map[cfg.Point]factflow.PathDescendantInvalidation),
 		BranchEdgeReachability:        make(map[cfg.Point]factflow.BranchEdgeReachability),
+		NoNormalReturns:               make(map[cfg.Point]struct{}),
 		BranchConditionSources:        make(map[cfg.Point]factflow.ValueSource),
 		BranchRefinements:             make(map[cfg.Point]factflow.BranchRefinementSet),
 		BranchPresenceRelations:       make(map[cfg.Point]factflow.BranchPresenceRelationSet),
@@ -117,6 +123,9 @@ func LowerDetailed(graph cfg.Graph, config Config) Lowered {
 		}
 		if site, ok := l.callSiteFromWIR(point); ok {
 			input.CallSites[point] = site
+			if config.NoNormalReturnCall != nil && config.NoNormalReturnCall(point, site.View()) {
+				input.NoNormalReturns[point] = struct{}{}
+			}
 		}
 		if lowered := l.typeIsCallResultValuesFromWIR(point); len(lowered) != 0 {
 			appendCallResultValues(input.CallResultValues, point, lowered...)

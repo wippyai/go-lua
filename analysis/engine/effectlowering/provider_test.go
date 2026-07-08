@@ -3507,7 +3507,7 @@ func TestSignatureOutcomeProviderParamPathInvalidationDoesNotApplyWithoutExpress
 	assertPathValue(t, reg, ks, flow[graph.Exit()], childKey, present)
 }
 
-func TestWithSignatureNoNormalReturnsMarksNeverReturnCallAndApplies(t *testing.T) {
+func TestSignatureNoNormalReturnPredicateMarksNeverReturnCallAndApplies(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
 	call := graph.AddNode(cfg.NodeCall)
@@ -3515,25 +3515,29 @@ func TestWithSignatureNoNormalReturnsMarksNeverReturnCallAndApplies(t *testing.T
 	graph.AddEdge(call, graph.Exit(), false)
 
 	target := symbol.ID(820)
-	facts := factflow.NewFacts(factflow.FactsInput{
-		CallSites: map[cfg.Point]factflow.CallSite{
-			call: factflow.NewCallSite(factflow.CallSiteConfig{
-				Context: factflow.CallSiteContextStatement,
-			}),
-		},
+	site := factflow.NewCallSite(factflow.CallSiteConfig{
+		Context: factflow.CallSiteContextStatement,
 	})
-
-	got := WithSignatureNoNormalReturns(SignatureNoNormalReturnConfig{
+	predicate := SignatureNoNormalReturnPredicate(SignatureNoNormalReturnConfig{
 		Graph:    graph,
 		Registry: reg,
 		Signatures: signatureMap{
 			"error": {Type: typ.Func().Param("message", typ.Any).Returns(typ.Never).Build()},
 		},
 		NameFor: staticName("error"),
-		Facts:   facts,
 	})
-
-	if !got.NoNormalReturn(call) {
+	if predicate == nil || !predicate(call, site.View()) {
+		t.Fatalf("signature no-normal-return predicate did not mark call")
+	}
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: site,
+		},
+		NoNormalReturns: map[cfg.Point]struct{}{
+			call: {},
+		},
+	})
+	if !facts.NoNormalReturn(call) {
 		t.Fatalf("NoNormalReturn(%d) = false, want true", call)
 	}
 	flow := transfer.Run(transfer.Config{
@@ -3541,7 +3545,7 @@ func TestWithSignatureNoNormalReturnsMarksNeverReturnCallAndApplies(t *testing.T
 		Registry:   reg,
 		EntryState: state.State{}.WriteValue(reg, key.SymbolValue(target), product.Top()),
 		NodeTransfer: factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
-			Facts:   got,
+			Facts:   facts,
 			Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg}),
 		}),
 	})

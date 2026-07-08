@@ -16,26 +16,16 @@ type SignatureNoNormalReturnConfig struct {
 	Registry   *axis.Registry
 	Signatures SignatureLookup
 	NameFor    SignatureNameFunc
-	Facts      factflow.Facts
 }
 
-// WithSignatureNoNormalReturns returns Facts extended with call points whose
-// declared signature has no normal return value.
-func WithSignatureNoNormalReturns(config SignatureNoNormalReturnConfig) factflow.Facts {
+// SignatureNoNormalReturnPredicate returns a call-site predicate for declared
+// signatures that cannot complete normally. The consuming lowerer decides where
+// to store the resulting fact.
+func SignatureNoNormalReturnPredicate(config SignatureNoNormalReturnConfig) func(cfg.Point, factflow.CallSiteView) bool {
 	if config.Graph == nil || config.Registry == nil || config.Signatures == nil || config.NameFor == nil {
-		return config.Facts
+		return nil
 	}
-	points := signatureNoNormalReturnFacts(config)
-	return config.Facts.WithNoNormalReturns(points)
-}
-
-func signatureNoNormalReturnFacts(config SignatureNoNormalReturnConfig) map[cfg.Point]struct{} {
-	out := make(map[cfg.Point]struct{})
-	for _, point := range config.Graph.RPO() {
-		site, ok := config.Facts.CallSiteView(point)
-		if !ok {
-			continue
-		}
+	return func(point cfg.Point, site factflow.CallSiteView) bool {
 		name, ok := config.NameFor(transfer.NodeContext{
 			Graph:    config.Graph,
 			Registry: config.Registry,
@@ -43,18 +33,11 @@ func signatureNoNormalReturnFacts(config SignatureNoNormalReturnConfig) map[cfg.
 			Node:     config.Graph.Node(point),
 		}, factflow.NewCallProducerFromView(site))
 		if !ok {
-			continue
+			return false
 		}
 		sig, ok := config.Signatures.Lookup(name)
-		if !ok || !signatureHasNoNormalReturn(sig) {
-			continue
-		}
-		out[point] = struct{}{}
+		return ok && signatureHasNoNormalReturn(sig)
 	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
 }
 
 func signatureHasNoNormalReturn(sig signature.Function) bool {
