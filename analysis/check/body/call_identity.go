@@ -204,15 +204,15 @@ func signatureRootWritesFromWIR(bindings *bind.Result, body *wir.Body) map[cfg.P
 	}
 	for i := 0; i < body.Len(); i++ {
 		inst := body.Instr(i)
+		if inst.Assign == wir.AssignOrdinaryRootWrite {
+			if inst.Dst.Kind == wir.OperandPath {
+				p := body.Path(wir.PathRef(inst.Dst.Ref))
+				if p.Symbol != 0 && len(p.Segments) == 0 {
+					add(inst.Point, p.Symbol)
+				}
+			}
+		}
 		switch inst.Op {
-		case wir.OpAssign:
-			if inst.Assign != wir.AssignOrdinaryRootWrite {
-				continue
-			}
-			p := body.Path(wir.PathRef(inst.Dst.Ref))
-			if p.Symbol != 0 && len(p.Segments) == 0 {
-				add(inst.Point, p.Symbol)
-			}
 		case wir.OpStaticMemberWrite:
 			p := body.Path(wir.PathRef(inst.Dst.Ref))
 			if global, ok := globalTableFieldRootSymbol(bindings, p); ok {

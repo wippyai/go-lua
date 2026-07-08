@@ -1,31 +1,21 @@
-// Package visibilityfacts adapts Lua factflow facts into generic visibility tables.
+// Package visibilityfacts adapts Lua WIR structure into generic visibility tables.
 package visibilityfacts
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
-// Resolver builds the default Lua path visibility resolver from lowered facts.
-func Resolver(bindings *bind.Result, graph cfg.Graph, facts factflow.Facts) *visibility.Resolver {
-	if graph == nil {
-		return visibility.NewResolver(visibility.NewTable(nil))
-	}
-	defs := Definitions(bindings, graph, facts)
-	table := visibility.BuildForward(visibility.BuildConfig{
-		Graph:       graph,
-		Definitions: defs,
-	})
-	return visibility.NewResolver(table)
-}
-
-// Definitions extracts symbol definitions needed by point-local path resolution.
-func Definitions(bindings *bind.Result, graph cfg.Graph, facts factflow.Facts) []visibility.Definition {
-	if graph == nil {
+// DefinitionsFromWIR extracts the path definitions needed by point-local
+// visibility directly from WIR structure. It is intentionally structural:
+// lowering records paths, assignment origins, and select result targets; this
+// adapter only turns those identities into visibility definitions.
+func DefinitionsFromWIR(bindings *bind.Result, graph cfg.Graph, body *wir.Body) []visibility.Definition {
+	if graph == nil || body == nil {
 		return nil
 	}
 	assigned := make(map[symbol.ID]struct{})
@@ -49,26 +39,45 @@ func Definitions(bindings *bind.Result, graph cfg.Graph, facts factflow.Facts) [
 	}
 
 	for _, point := range graph.RPO() {
-		if fact, ok := facts.RootAssignment(point); ok {
-			sym := fact.TargetSymbol()
-			assigned[sym] = struct{}{}
-			add(point, sym)
-		}
-	}
-	for _, point := range graph.RPO() {
-		for _, event := range facts.ChannelSelects(point) {
-			resultPath, ok := event.ResultPath()
-			if ok && resultPath.Symbol != 0 {
-				add(point, resultPath.Symbol)
+		for _, inst := range body.PointInstructions(point) {
+			if inst.Assign != wir.AssignNone {
+				p := wirOperandPath(body, inst.Dst)
+				if p.Symbol != 0 && len(p.Segments) == 0 {
+					assigned[p.Symbol] = struct{}{}
+					add(point, p.Symbol)
+				}
 			}
-			casePath, ok := event.CasePath()
-			if ok && casePath.Symbol != 0 {
-				add(point, casePath.Symbol)
+			switch inst.Op {
+			case wir.OpStaticMemberWrite:
+				if global, ok := wirGlobalTableFieldRootSymbol(bindings, body, inst.Dst); ok {
+					assigned[global] = struct{}{}
+					add(point, global)
+				}
+			case wir.OpIterate:
+				for _, result := range body.Operands(inst.Results) {
+					p := wirOperandPath(body, result)
+					if p.Symbol != 0 && len(p.Segments) == 0 {
+						assigned[p.Symbol] = struct{}{}
+						add(point, p.Symbol)
+					}
+				}
+			case wir.OpSelect:
+				for _, target := range body.CallResultTargets(point) {
+					if target.Path.Symbol != 0 {
+						add(point, target.Path.Symbol)
+					}
+				}
+				for _, op := range body.Operands(inst.List) {
+					p := wirOperandPath(body, op)
+					if p.Symbol != 0 {
+						add(point, p.Symbol)
+					}
+				}
 			}
 		}
 	}
 
-	needed := pathSymbols(graph, facts)
+	needed := pathSymbolsFromWIR(graph, body)
 	for sym := range needed {
 		if _, ok := assigned[sym]; !ok || shouldSeedAtEntry(bindings, sym) {
 			add(graph.Entry(), sym)
@@ -90,78 +99,97 @@ func shouldSeedAtEntry(bindings *bind.Result, sym symbol.ID) bool {
 	return kind == symbol.Param || kind == symbol.Global || kind == symbol.Upvalue
 }
 
-func pathSymbols(graph cfg.Graph, facts factflow.Facts) map[symbol.ID]struct{} {
+func pathSymbolsFromWIR(graph cfg.Graph, body *wir.Body) map[symbol.ID]struct{} {
 	needed := make(map[symbol.ID]struct{})
-	addPath := func(p pathdom.Path) {
-		if p.Symbol != 0 && len(p.Segments) != 0 {
-			needed[p.Symbol] = struct{}{}
-		}
-	}
 	addProofPath := func(p pathdom.Path) {
 		if p.Symbol != 0 {
 			needed[p.Symbol] = struct{}{}
 		}
 	}
-
-	for _, p := range facts.ExpressionPaths() {
-		addPath(p)
+	addPath := func(p pathdom.Path) {
+		if p.Symbol != 0 && len(p.Segments) != 0 {
+			needed[p.Symbol] = struct{}{}
+		}
 	}
+	addOperandPath := func(op wir.Operand) {
+		addPath(wirOperandPath(body, op))
+	}
+	addProofOperand := func(op wir.Operand) {
+		addProofPath(wirOperandPath(body, op))
+	}
+	addCheck := func(check wir.Check) {
+		addProofPath(check.Path)
+		addProofPath(check.OtherPath)
+	}
+
 	for _, point := range graph.RPO() {
-		if fact, ok := facts.PathAssignment(point); ok {
-			addPath(fact.TargetPathRef())
-		}
-		if fact, ok := facts.PathDescendantInvalidation(point); ok {
-			addPath(fact.ContainerPathRef())
-		}
-		if site, ok := facts.CallSite(point); ok {
-			addPath(site.CalleePathRef())
-			if receiver, ok := site.ReceiverPath(); ok {
-				addProofPath(receiver)
+		for _, inst := range body.PointInstructions(point) {
+			addOperandPath(inst.Dst)
+			addOperandPath(inst.A)
+			addOperandPath(inst.B)
+			addOperandPath(inst.Call.Callee)
+			addProofOperand(inst.Call.Receiver)
+			for _, target := range body.CallResultTargets(point) {
+				addPath(target.Path)
 			}
-			if method, ok := site.MethodPath(); ok {
-				addPath(method)
+			for _, op := range body.Operands(inst.Results) {
+				addOperandPath(op)
 			}
-			site.ForEachArgumentSource(func(_ int, source factflow.ValueSource) bool {
-				if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-					return true
+			for _, op := range body.Operands(inst.List) {
+				if inst.Op == wir.OpCall || inst.Op == wir.OpSelect {
+					addProofOperand(op)
+				} else {
+					addOperandPath(op)
 				}
-				if p, ok := facts.ExpressionPathRef(source.ExprRef); ok {
-					addProofPath(p)
-				}
-				return true
-			})
-		}
-		for _, fact := range facts.BranchRefinements(point) {
-			addPath(fact.TargetPathRef())
-		}
-		for _, fact := range facts.BranchLenRefinements(point) {
-			addProofPath(fact.ArrayPathRef())
-		}
-		for _, fact := range facts.BranchNumFloorRefinements(point) {
-			addProofPath(fact.TargetPathRef())
-		}
-		for _, fact := range facts.BranchPresenceRelations(point) {
-			addPath(fact.TriggerPathRef())
-			addPath(fact.TargetPathRef())
-		}
-		for _, fact := range facts.BranchPathRelations(point) {
-			addPath(fact.LeftPath())
-			addPath(fact.RightPath())
-		}
-		facts.ForEachBranchPathEvidence(point, func(fact factflow.BranchPathEvidence) bool {
-			addProofPath(fact.PathRef())
-			if other, ok := fact.OtherPathRef(); ok {
-				addProofPath(other)
 			}
-			return true
-		})
-		for _, fact := range facts.PostconditionRefinements(point) {
-			addPath(fact.TargetPathRef())
-		}
-		for _, fact := range facts.PostconditionPathRelations(point) {
-			addPath(fact.LeftPath())
-			addPath(fact.RightPath())
+			if inst.Op == wir.OpDynamicIndexRead {
+				addProofOperand(inst.A)
+				addProofOperand(inst.B)
+			}
+			if inst.Op == wir.OpUnOp && inst.Operator == wir.UnLen {
+				addProofOperand(inst.A)
+			}
+			if inst.Check != 0 {
+				addCheck(body.Check(inst.Check))
+			}
+			for _, implied := range body.ImpliedChecks(inst.ImpliedChecks) {
+				addCheck(implied.Check)
+			}
+			for _, sufficient := range body.SufficientChecks(inst.SufficientChecks) {
+				addCheck(sufficient.Check)
+			}
 		}
 	}
 	return needed
+}
+
+func wirOperandPath(body *wir.Body, op wir.Operand) pathdom.Path {
+	if body == nil || op.Kind != wir.OperandPath {
+		return pathdom.Path{}
+	}
+	p := body.Path(wir.PathRef(op.Ref))
+	if p.IsEmpty() || p.Symbol == 0 {
+		return pathdom.Path{}
+	}
+	return p
+}
+
+func wirGlobalTableFieldRootSymbol(bindings *bind.Result, body *wir.Body, op wir.Operand) (symbol.ID, bool) {
+	if bindings == nil {
+		return 0, false
+	}
+	p := wirOperandPath(body, op)
+	if p.Symbol == 0 || bindings.Name(p.Symbol) != "_G" {
+		return 0, false
+	}
+	kind, ok := bindings.Kind(p.Symbol)
+	if !ok || kind != symbol.Global {
+		return 0, false
+	}
+	name, ok := p.DirectFieldName()
+	if !ok {
+		return 0, false
+	}
+	global, ok := bindings.GlobalSymbol(name)
+	return global, ok && global != 0
 }

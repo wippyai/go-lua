@@ -171,7 +171,7 @@ func (c *checker) prepare(
 	}
 	resolver := config.Visibility
 	if resolver == nil {
-		resolver = defaultVisibilityResolver(bindings, built, facts, genericFors)
+		resolver = defaultVisibilityResolver(bindings, built, wirBody, genericFors)
 	}
 	userExpressionValue := config.ExpressionValue
 	expressionValue := userExpressionValue

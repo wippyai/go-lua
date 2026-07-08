@@ -1,20 +1,20 @@
 package body
 
 import (
-	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/visibilityfacts"
 )
 
-func defaultVisibilityResolver(bindings *bind.Result, built *cfgbuild.Result, facts factflow.Facts, genericFors map[cfg.Point]GenericForFact) *visibility.Resolver {
+func defaultVisibilityResolver(bindings *bind.Result, built *cfgbuild.Result, body *wir.Body, genericFors map[cfg.Point]GenericForFact) *visibility.Resolver {
 	var graph cfg.Graph
 	if built != nil {
 		graph = built.Graph
 	}
-	defs := visibilityfacts.Definitions(bindings, graph, facts)
+	defs := visibilityfacts.DefinitionsFromWIR(bindings, graph, body)
 	defs = append(defs, genericForVariableDefinitions(bindings, graph, genericFors)...)
 	return visibility.NewResolver(visibility.BuildForward(visibility.BuildConfig{
 		Graph:       graph,
