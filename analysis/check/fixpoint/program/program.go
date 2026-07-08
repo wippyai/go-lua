@@ -2192,7 +2192,38 @@ func actualParamEntryValueIsMorePrecise(reg *axis.Registry, actual, contextual p
 	if !actualOK || !contextOK || actualType == nil || contextType == nil {
 		return false
 	}
-	return typetable.IsBuiltinTopMarker(contextType) && subtype.IsSubtype(actualType, contextType)
+	if typetable.IsBuiltinTopMarker(contextType) && subtype.IsSubtype(actualType, contextType) {
+		return true
+	}
+	if actualLiteral, ok := typ.UnwrapTransparentWrappers(actualType).(*typ.Literal); ok &&
+		subtype.IsSubtype(actualType, contextType) &&
+		finiteLiteralParamDomainContains(contextType, actualLiteral) {
+		return true
+	}
+	return false
+}
+
+func finiteLiteralParamDomainContains(domain typ.Type, actual *typ.Literal) bool {
+	if domain == nil || actual == nil {
+		return false
+	}
+	switch tt := typ.UnwrapTransparentWrappers(domain).(type) {
+	case *typ.Literal:
+		return typ.TypeEquals(tt, actual)
+	case *typ.Union:
+		for _, member := range tt.Members {
+			lit, ok := typ.UnwrapTransparentWrappers(member).(*typ.Literal)
+			if !ok {
+				return false
+			}
+			if typ.TypeEquals(lit, actual) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
 }
 
 func declaredParamEntryValue(reg *axis.Registry, resolver *typeresolve.Resolver, slot bind.ParamSlot) (product.Value, bool) {
