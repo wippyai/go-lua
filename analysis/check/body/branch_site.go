@@ -13,7 +13,6 @@ const (
 	BranchIf
 	BranchWhile
 	BranchRepeat
-	BranchShortCircuit
 )
 
 // BranchConditionFact is the body-owned source projection for a branch point.
@@ -90,7 +89,6 @@ func (r *Result) computeBranchSites() map[cfg.Point]branchSite {
 		}
 	}
 	walk(r.sourceStmts)
-	r.addShortCircuitBranchSites(out)
 	return out
 }
 
@@ -126,27 +124,6 @@ func (r *Result) branchPointForStmt(stmt ast.Stmt) (cfg.Point, bool) {
 		}
 	}
 	return 0, false
-}
-
-func (r *Result) addShortCircuitBranchSites(out map[cfg.Point]branchSite) {
-	if r == nil || r.cfg == nil || r.cfg.Graph == nil {
-		return
-	}
-	points := r.cfg.ShortCircuits.GuardPoints()
-	for _, point := range points {
-		guard, ok := r.cfg.ShortCircuits.Guard(point)
-		if !ok || guard.Condition == nil || !r.cfg.Graph.IsBranch(point) {
-			continue
-		}
-		if _, exists := out[point]; exists {
-			continue
-		}
-		out[point] = branchSite{
-			kind:      BranchShortCircuit,
-			stmt:      guard.Stmt,
-			condition: guard.Condition,
-		}
-	}
 }
 
 func branchConditionFactFromSite(site branchSite, check branchcond.Check) BranchConditionFact {
