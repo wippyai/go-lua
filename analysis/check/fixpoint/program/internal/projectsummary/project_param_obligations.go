@@ -242,7 +242,7 @@ func projectParamMemberReturnSlots(reg *axis.Registry, result ResultReader, cach
 	}
 	graph := result.Graph()
 	sourceReader, hasSources := result.(returnValueSourceReader)
-	if graph == nil || !hasSources || !hasCallFactReader(result) {
+	if graph == nil || !hasSources || !hasCallSiteView(result) {
 		return nil
 	}
 	ctx := newParamObligationProjector(reg, result, params, graph, cache)
@@ -256,11 +256,11 @@ func projectParamMemberReturnSlots(reg *axis.Registry, result ResultReader, cach
 		if !ok || len(slots) == 0 {
 			continue
 		}
-		fact, ok := callFactAt(result, callPoint)
+		site, ok := callSiteViewAt(result, callPoint)
 		if !ok {
 			continue
 		}
-		receiver, member, ok := memberCallReceiver(fact)
+		receiver, member, ok := memberCallReceiverFromSite(site)
 		if !ok {
 			continue
 		}

@@ -28,6 +28,9 @@ type memberCallSiteOnlyResult struct {
 	signature  *typ.Function
 	outcome    callpayload.CallOutcome
 	hasOutcome bool
+
+	returnPoints  []cfg.Point
+	returnSources map[cfg.Point][]factflow.ValueSource
 }
 
 func (r memberCallSiteOnlyResult) Registry() *axis.Registry { return standard.Registry() }
@@ -35,7 +38,9 @@ func (r memberCallSiteOnlyResult) Graph() cfg.Graph         { return r.graph }
 func (r memberCallSiteOnlyResult) ExitState() (state.State, bool) {
 	return state.State{}, true
 }
-func (r memberCallSiteOnlyResult) ReturnPoints() []cfg.Point    { return nil }
+func (r memberCallSiteOnlyResult) ReturnPoints() []cfg.Point {
+	return append([]cfg.Point(nil), r.returnPoints...)
+}
 func (r memberCallSiteOnlyResult) KeySpace() *keyspace.KeySpace { return r.ks }
 func (r memberCallSiteOnlyResult) ParameterValueSlots() []key.Value {
 	return []key.Value{key.SymbolValue(symbol.ID(1)), key.SymbolValue(symbol.ID(2))}
@@ -52,6 +57,13 @@ func (r memberCallSiteOnlyResult) CallSiteViewSignatureType(factflow.CallSiteVie
 }
 func (r memberCallSiteOnlyResult) CallOutcomeAt(point cfg.Point) (callpayload.CallOutcome, bool) {
 	return r.outcome, r.hasOutcome && point == r.point
+}
+func (r memberCallSiteOnlyResult) ReturnValueSources(point cfg.Point) ([]factflow.ValueSource, bool) {
+	sources, ok := r.returnSources[point]
+	if !ok {
+		return nil, false
+	}
+	return append([]factflow.ValueSource(nil), sources...), true
 }
 func (r memberCallSiteOnlyResult) ExpressionPathRef(factflow.ExprRef) (pathdom.Path, bool) {
 	return pathdom.Path{}, false
@@ -123,6 +135,44 @@ func TestParamObligationsUseTypedCallSiteSourcesWithoutSemanticCallFact(t *testi
 	gotType, ok := typevalue.TypeOf(reg, got[1])
 	if !ok || !subtype.IsSubtype(gotType, typ.String) {
 		t.Fatalf("payload obligation type = %v/%v, want string", gotType, ok)
+	}
+}
+
+func TestParamMemberReturnSlotsUseCallSiteWithoutSemanticCallFact(t *testing.T) {
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	ret := graph.AddNode(cfg.NodeReturn)
+	graph.AddEdge(graph.Entry(), call, true)
+	graph.AddEdge(call, ret, true)
+	graph.AddEdge(ret, graph.Exit(), true)
+
+	client := pathdom.NewPath(symbol.ID(1), "client")
+	callSource, ok := factflow.NewCallValueSource(0, 0, 0, 2, call, factflow.ValueSourceShape{
+		Final:    true,
+		Expanded: false,
+		Adjusted: true,
+	})
+	if !ok {
+		t.Fatal("NewCallValueSource failed")
+	}
+	result := memberCallSiteOnlyResult{
+		graph: graph,
+		point: call,
+		site: factflow.NewCallSite(factflow.CallSiteConfig{
+			CalleePath:         client.Field("invoke"),
+			CalleeMemberAccess: true,
+		}).View(),
+		ks:            keyspace.New(),
+		returnPoints:  []cfg.Point{ret},
+		returnSources: map[cfg.Point][]factflow.ValueSource{ret: {callSource}},
+	}
+
+	got := projectParamMemberReturnSlots(standard.Registry(), result, nil)
+	if len(got) != 1 {
+		t.Fatalf("member return slots = %#v, want one slot from call-site receiver", got)
+	}
+	if got[0].ReceiverParam != 0 || got[0].ReturnIndex != 0 || got[0].MemberResultIndex != 2 {
+		t.Fatalf("member return slot = %#v, want receiver param 0 return 0 from member result 2", got[0])
 	}
 }
 
