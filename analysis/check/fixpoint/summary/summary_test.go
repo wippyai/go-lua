@@ -357,6 +357,61 @@ func TestSummaryCloneIsolatesNormalReturnParams(t *testing.T) {
 	}
 }
 
+func TestJoinReturnValueGroupsSameLiteralDiscriminant(t *testing.T) {
+	reg := standard.Registry()
+	okNumber := typetable.NewRecord().
+		Field("kind", typ.LiteralString("ok")).
+		Field("value", typ.Number).
+		Build()
+	okString := typetable.NewRecord().
+		Field("kind", typ.LiteralString("ok")).
+		Field("value", typ.String).
+		Build()
+	errCase := typetable.NewRecord().
+		Field("kind", typ.LiteralString("err")).
+		Field("message", typ.String).
+		Build()
+	okJoined := typetable.NewRecord().
+		Field("kind", typ.LiteralString("ok")).
+		Field("value", typenormalize.UnionForEvidence(typ.Number, typ.String)).
+		Build()
+
+	joined := joinReturnValue(reg, summaryTypeValue(reg, okNumber), summaryTypeValue(reg, okString))
+	joined = joinReturnValue(reg, joined, summaryTypeValue(reg, errCase))
+	got, ok := typevalue.TypeOf(reg, joined)
+	want := typenormalize.UnionForEvidence(okJoined, errCase)
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("joined return type = %v/%v, want %v", got, ok, want)
+	}
+	if union, ok := got.(*typ.Union); !ok || len(union.Members) != 2 {
+		t.Fatalf("joined return type = %v, want two variant members", got)
+	}
+}
+
+func TestJoinReturnValueCapsTaggedVariantWidth(t *testing.T) {
+	reg := standard.Registry()
+	var joined product.Value
+	for i := 0; i < 9; i++ {
+		member := typetable.NewRecord().
+			Field("kind", typ.LiteralString(string(rune('a'+i)))).
+			Field("value", typ.Number).
+			Build()
+		value := summaryTypeValue(reg, member)
+		if i == 0 {
+			joined = value
+			continue
+		}
+		joined = joinReturnValue(reg, joined, value)
+	}
+	got, ok := typevalue.TypeOf(reg, joined)
+	if !ok {
+		t.Fatalf("joined capped return has no type: %#v", joined)
+	}
+	if union, ok := got.(*typ.Union); ok && len(union.Members) > 8 {
+		t.Fatalf("joined return union width = %d, want capped to <= 8: %v", len(union.Members), got)
+	}
+}
+
 func TestSummaryCloneIsolatesHeapTableObjects(t *testing.T) {
 	reg := mustRegistry(t)
 	id := identity.ID{Kind: "table", Site: "summary-clone", Index: 1}
@@ -391,6 +446,10 @@ func TestSummaryCloneIsolatesHeapTableObjects(t *testing.T) {
 	if memberValue, ok := got.StaticMember(member); !ok || !product.Equal(reg, memberValue, product.Absent(reg)) {
 		t.Fatalf("original heap object static member changed: %v/%v", memberValue, ok)
 	}
+}
+
+func summaryTypeValue(reg *axis.Registry, t typ.Type) product.Value {
+	return typevalue.WithWitness(reg, typevalue.FromType(reg, t), t)
 }
 
 func TestSnapshotClonesOnWriteAndRead(t *testing.T) {
