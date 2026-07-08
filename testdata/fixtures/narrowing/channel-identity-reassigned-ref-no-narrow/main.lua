@@ -14,7 +14,7 @@ local function consume(events_ch: Channel<Event>, ticks_ch: Channel<Tick>): stri
         return id
     end
 
-    return tostring(result.value.elapsed)
+    return result.value.kind
 end
 
 return consume

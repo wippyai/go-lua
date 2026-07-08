@@ -3,6 +3,7 @@ package factapply
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -66,7 +67,7 @@ func applyChannelSelectCasePathEquality(
 	if !resultKeyOK || !caseKeyOK {
 		return out, false
 	}
-	selectFacts := channelSelectReceiveFacts(out, resultKey, caseKey)
+	selectFacts := channelSelectReceiveFacts(out, resolver.KeySpace(), resultKey, caseKey)
 	if len(selectFacts) == 0 {
 		return out, false
 	}
@@ -189,7 +190,7 @@ func applyChannelSelectCasePathInequality(
 	if !resultKeyOK || !caseKeyOK {
 		return out, false
 	}
-	selectFacts := channelSelectReceiveFacts(out, resultKey, caseKey)
+	selectFacts := channelSelectReceiveFacts(out, resolver.KeySpace(), resultKey, caseKey)
 	if len(selectFacts) == 0 {
 		return out, false
 	}
@@ -274,6 +275,7 @@ func channelSelectTightenRemainingTypeFromFacts(reg *axis.Registry, out state.St
 
 func channelSelectReceiveFacts(
 	out state.State,
+	ks *keyspace.KeySpace,
 	resultKey pathaddr.StateKey,
 	caseKey pathaddr.StateKey,
 ) []channelselectfact.Fact {
@@ -282,25 +284,44 @@ func channelSelectReceiveFacts(
 		return nil
 	}
 	var outFacts []channelselectfact.Fact
+	var equivalentCaseKeys []pathaddr.StateKey
+	equivalentCaseKeysLoaded := false
 	for _, fact := range snapshot.Facts {
-		if fact.Kind == channelselectfact.FactReceive && fact.Result == resultKey && fact.Case == caseKey {
-			outFacts = append(outFacts, fact)
-			continue
-		}
 		if fact.Kind != channelselectfact.FactReceive || fact.Result == "" || fact.Case == "" {
 			continue
 		}
-		rebasedResult, ok := pathaddr.RebaseLocalPathKeyToContext(fact.Result.PathKey(), resultKey.PathKey())
-		if !ok || rebasedResult != resultKey.PathKey() {
+		if !channelSelectStateKeyMatches(fact.Result, resultKey) {
 			continue
 		}
-		rebasedCase, ok := pathaddr.RebaseLocalPathKeyToContext(fact.Case.PathKey(), caseKey.PathKey())
-		if !ok || rebasedCase != caseKey.PathKey() {
+		if channelSelectStateKeyMatches(fact.Case, caseKey) {
+			outFacts = append(outFacts, fact)
 			continue
 		}
-		outFacts = append(outFacts, fact)
+		if !equivalentCaseKeysLoaded {
+			equivalentCaseKeysLoaded = true
+			if ks != nil {
+				equivalentCaseKeys = out.EquivalentStateKeys(ks, caseKey)
+			}
+		}
+		for _, equivalentCaseKey := range equivalentCaseKeys {
+			if channelSelectStateKeyMatches(fact.Case, equivalentCaseKey) {
+				outFacts = append(outFacts, fact)
+				break
+			}
+		}
 	}
 	return outFacts
+}
+
+func channelSelectStateKeyMatches(factKey pathaddr.StateKey, currentKey pathaddr.StateKey) bool {
+	if factKey == "" || currentKey == "" {
+		return false
+	}
+	if factKey == currentKey {
+		return true
+	}
+	rebased, ok := pathaddr.RebaseLocalPathKeyToContext(factKey.PathKey(), currentKey.PathKey())
+	return ok && rebased == currentKey.PathKey()
 }
 
 func channelSelectFactIndexes(facts []channelselectfact.Fact) map[int]bool {

@@ -10,6 +10,7 @@ local function consume(events_ch: Channel<Event>, ticks_ch: Channel<Tick>): stri
 
     if result.channel == e then
         local event = result.value
+        local wrong_tick: Tick = result.value
         local id: string = event.id
         return event.kind .. ":" .. id
     end

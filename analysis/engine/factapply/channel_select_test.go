@@ -14,6 +14,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -909,6 +910,180 @@ func TestFactsEdgeTransferChannelSelectEqualityMatchesNestedCasePath(t *testing.
 
 	thenValue := got[thenPoint].ReadValue(reg, key.SymbolValue(result))
 	assertChannelSelectCasePayload(t, reg, thenValue, channelselectfact.ID(selectID), 0, eventPayload)
+}
+
+func TestFactsEdgeTransferChannelSelectEqualityMatchesEquivalentCaseKey(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	result := symbol.ID(944)
+	events := symbol.ID(945)
+	ticks := symbol.ID(946)
+	alias := symbol.ID(947)
+	resultPath := pathdom.NewPath(result, "result")
+	eventsPath := pathdom.NewPath(events, "events_ch")
+	ticksPath := pathdom.NewPath(ticks, "ticks_ch")
+	aliasPath := pathdom.NewPath(alias, "e")
+	selectID := factflow.ChannelSelectID("select-alias-case")
+	eventPayload := typetable.NewRecord().Field("kind", typ.LiteralString("event")).Build()
+	tickPayload := typetable.NewRecord().Field("kind", typ.LiteralString("tick")).Build()
+	resultValue, ok := testChannelSelectResultValue(reg, selectID, channelSelectEvents(reg, selectID, resultPath, eventsPath, ticksPath, eventPayload, tickPayload).Events())
+	if !ok {
+		t.Fatal("failed to build channel select result value")
+	}
+
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(branch, result, "result")
+	visibilityBuilder.Define(branch, events, "events_ch")
+	visibilityBuilder.Define(branch, ticks, "ticks_ch")
+	visibilityBuilder.Define(branch, alias, "e")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	initial := state.State{}.
+		WriteValue(reg, key.SymbolValue(result), resultValue).
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathEqual,
+			Path:  mustStateKey(t, ks, pathdom.PathKey("sym945@1")),
+			Other: mustStateKey(t, ks, pathdom.PathKey("sym947@1")),
+		}).
+		AddChannelSelectFact(channelselectfact.Fact{
+			Select:     channelselectfact.ID(selectID),
+			Kind:       channelselectfact.FactReceive,
+			Result:     testStateKey(t, pathdom.PathKey("sym944@1")),
+			Case:       testStateKey(t, pathdom.PathKey("sym945@1")),
+			Index:      0,
+			Payload:    typeValue(reg, eventPayload),
+			HasPayload: true,
+		}).
+		AddChannelSelectFact(channelselectfact.Fact{
+			Select:     channelselectfact.ID(selectID),
+			Kind:       channelselectfact.FactReceive,
+			Result:     testStateKey(t, pathdom.PathKey("sym944@1")),
+			Case:       testStateKey(t, pathdom.PathKey("sym946@1")),
+			Index:      1,
+			Payload:    typeValue(reg, tickPayload),
+			HasPayload: true,
+		})
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchPathRelations: map[cfg.Point]factflow.BranchPathRelationSet{
+					branch: factflow.NewBranchPathRelationSet(
+						factflow.NewBranchPathEquality(resultPath.Field("channel"), aliasPath, true, false),
+					),
+				},
+			}),
+			Visibility: resolver,
+		}),
+	})
+
+	thenValue := got[thenPoint].ReadValue(reg, key.SymbolValue(result))
+	assertChannelSelectCasePayload(t, reg, thenValue, channelselectfact.ID(selectID), 0, eventPayload)
+	assertNoChannelSelectCasePayload(t, reg, thenValue, channelselectfact.ID(selectID), 1)
+}
+
+func TestFactsEdgeTransferChannelSelectEqualityUsesCurrentEquivalentCaseKey(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	result := symbol.ID(954)
+	events := symbol.ID(955)
+	ticks := symbol.ID(956)
+	alias := symbol.ID(957)
+	resultPath := pathdom.NewPath(result, "result")
+	eventsPath := pathdom.NewPath(events, "events_ch")
+	ticksPath := pathdom.NewPath(ticks, "ticks_ch")
+	aliasPath := pathdom.NewPath(alias, "e")
+	selectID := factflow.ChannelSelectID("select-current-alias-case")
+	eventPayload := typetable.NewRecord().Field("kind", typ.LiteralString("event")).Build()
+	tickPayload := typetable.NewRecord().Field("kind", typ.LiteralString("tick")).Build()
+	resultValue, ok := testChannelSelectResultValue(reg, selectID, channelSelectEvents(reg, selectID, resultPath, eventsPath, ticksPath, eventPayload, tickPayload).Events())
+	if !ok {
+		t.Fatal("failed to build channel select result value")
+	}
+
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(branch, result, "result")
+	visibilityBuilder.Define(branch, events, "events_ch")
+	visibilityBuilder.Define(branch, ticks, "ticks_ch")
+	visibilityBuilder.Define(branch, alias, "e")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	withStaleAlias := state.State{}.
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathEqual,
+			Path:  mustStateKey(t, ks, pathdom.PathKey("sym955@1")),
+			Other: mustStateKey(t, ks, pathdom.PathKey("sym957@1")),
+		})
+	withoutStaleAlias, ok := withStaleAlias.InvalidatePathKeySubtree(ks, pathdom.PathKey("sym957@1"))
+	if !ok {
+		t.Fatal("failed to invalidate alias key")
+	}
+	initial := withoutStaleAlias.
+		WriteValue(reg, key.SymbolValue(result), resultValue).
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathEqual,
+			Path:  mustStateKey(t, ks, pathdom.PathKey("sym956@1")),
+			Other: mustStateKey(t, ks, pathdom.PathKey("sym957@1")),
+		}).
+		AddChannelSelectFact(channelselectfact.Fact{
+			Select:     channelselectfact.ID(selectID),
+			Kind:       channelselectfact.FactReceive,
+			Result:     testStateKey(t, pathdom.PathKey("sym954@1")),
+			Case:       testStateKey(t, pathdom.PathKey("sym955@1")),
+			Index:      0,
+			Payload:    typeValue(reg, eventPayload),
+			HasPayload: true,
+		}).
+		AddChannelSelectFact(channelselectfact.Fact{
+			Select:     channelselectfact.ID(selectID),
+			Kind:       channelselectfact.FactReceive,
+			Result:     testStateKey(t, pathdom.PathKey("sym954@1")),
+			Case:       testStateKey(t, pathdom.PathKey("sym956@1")),
+			Index:      1,
+			Payload:    typeValue(reg, tickPayload),
+			HasPayload: true,
+		})
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchPathRelations: map[cfg.Point]factflow.BranchPathRelationSet{
+					branch: factflow.NewBranchPathRelationSet(
+						factflow.NewBranchPathEquality(resultPath.Field("channel"), aliasPath, true, false),
+					),
+				},
+			}),
+			Visibility: resolver,
+		}),
+	})
+
+	thenValue := got[thenPoint].ReadValue(reg, key.SymbolValue(result))
+	assertNoChannelSelectCasePayload(t, reg, thenValue, channelselectfact.ID(selectID), 0)
+	assertChannelSelectCasePayload(t, reg, thenValue, channelselectfact.ID(selectID), 1, tickPayload)
 }
 
 func channelSelectEvents(

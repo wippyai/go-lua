@@ -2,12 +2,11 @@
   "description": "Channel identity narrowing must not reuse an alias after that local is reassigned to another channel.",
   "packages": ["channel"],
   "check": {
-    "skip": "pending: channel identity alias invalidation after local reassignment",
     "diagnostics": [
       {
         "file": "main.lua",
         "line": 13,
-        "column": 34,
+        "column": 28,
         "severity": "error",
         "code": "type.member.missing",
         "message_contains": [
@@ -22,11 +21,11 @@
           {
             "file": "main.lua",
             "line": 13,
-            "column": 34,
+            "column": 28,
             "kind": "abstract fact",
             "trust": "proven",
             "contains": [
-              "result.value.id reads member \"id\" from receiver type {kind: \"tick\", elapsed: number}"
+              "result.value.id reads member \"id\" from receiver type {elapsed: number, kind: \"tick\"}"
             ]
           }
         ],
@@ -34,16 +33,16 @@
           "Narrow the receiver before reading `id`"
         ],
         "render_contains": [
-          "error[type.member.missing]: {kind: \"tick\", elapsed: number} has no member \"id\"",
+          "error[type.member.missing]: {elapsed: number, kind: \"tick\"} has no member \"id\"",
           "result.value.id",
           "because:"
         ],
         "render_ordered_contains": [
-          "error[type.member.missing]: {kind: \"tick\", elapsed: number} has no member \"id\"",
-          "--> main.lua:13:34",
+          "error[type.member.missing]: {elapsed: number, kind: \"tick\"} has no member \"id\"",
+          "--> main.lua:13:28",
           "local id: string = result.value.id",
           "because:",
-          "proven: result.value.id reads member \"id\" from receiver type {kind: \"tick\", elapsed: number}",
+          "proven: result.value.id reads member \"id\" from receiver type {elapsed: number, kind: \"tick\"}",
           "help: Narrow the receiver before reading `id`, or add `id` to every reachable receiver shape."
         ],
         "render_not_contains": [
@@ -57,7 +56,7 @@
           {
             "file": "main.lua",
             "line": 13,
-            "column": 34,
+            "column": 28,
             "contains": [
               "member read"
             ]
@@ -67,6 +66,6 @@
     ]
   },
   "run": {
-    "skip": "checker-only pending channel identity alias invalidation fixture"
+    "skip": "checker-only channel identity alias invalidation fixture"
   }
 }
