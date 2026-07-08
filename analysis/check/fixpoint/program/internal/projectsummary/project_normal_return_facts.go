@@ -599,7 +599,7 @@ func projectAssignmentStoreRelations(result ResultReader, params []path.Path) []
 		if assignment, ok := pathAssignmentAt(result, point); ok {
 			into, ok := parameterPlaceholderPath(assignment.TargetPath(), params)
 			if ok && len(into.Segments) != 0 {
-				if source, ok := assignmentValueSourceParameterPlaceholder(assignment.Source(), refPathReader, params); ok {
+				if source, ok := assignmentValueSourceParameterPlaceholder(result, assignment.Source(), refPathReader, params); ok {
 					out = append(out, callboundary.StoreRelationFact{Source: source, Into: into})
 					continue
 				}
@@ -623,14 +623,12 @@ func projectAssignmentStoreRelations(result ResultReader, params []path.Path) []
 }
 
 func assignmentValueSourceParameterPlaceholder(
+	result ResultReader,
 	source factflow.ValueSource,
 	pathReader expressionPathRefReader,
 	params []path.Path,
 ) (path.Path, bool) {
-	if pathReader == nil || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-		return path.Path{}, false
-	}
-	sourcePath, ok := pathReader.ExpressionPathRef(source.ExprRef)
+	sourcePath, ok := valueSourcePath(result, pathReader, source)
 	if !ok || sourcePath.Symbol == 0 || len(sourcePath.Segments) != 0 {
 		return path.Path{}, false
 	}

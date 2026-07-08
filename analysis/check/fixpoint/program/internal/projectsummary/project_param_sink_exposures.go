@@ -47,10 +47,10 @@ func projectParamSinkExposures(reg *axis.Registry, result ResultReader, exit sta
 	if len(params) == 0 {
 		return nil
 	}
-	if !hasOrdinaryAssignmentFactReader(result) {
+	if _, ok := result.(pathAssignmentReader); !ok {
 		return nil
 	}
-	pathReader, ok := result.(expressionPathReader)
+	refPathReader, ok := result.(expressionPathRefReader)
 	if !ok {
 		return nil
 	}
@@ -79,14 +79,15 @@ func projectParamSinkExposures(reg *axis.Registry, result ResultReader, exit sta
 		if noNormal != nil && noNormal.NoNormalReturn(point) {
 			continue
 		}
-		fact, ok := ordinaryAssignmentFactAt(result, point)
-		if !ok || !fact.HasPath || fact.Path.Symbol == 0 || len(fact.Path.Segments) == 0 {
+		assignment, ok := pathAssignmentAt(result, point)
+		if !ok {
 			continue
 		}
-		if !persistentSinkSymbol(kindReader, captured, fact.Path.Symbol) {
+		target := assignment.TargetPath()
+		if target.Symbol == 0 || len(target.Segments) == 0 || !persistentSinkSymbol(kindReader, captured, target.Symbol) {
 			continue
 		}
-		source, ok := assignmentSourceParameterPlaceholder(fact, pathReader, params)
+		source, ok := assignmentValueSourceParameterPlaceholder(result, assignment.Source(), refPathReader, params)
 		if !ok {
 			continue
 		}
