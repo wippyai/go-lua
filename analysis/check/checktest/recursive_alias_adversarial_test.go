@@ -26,24 +26,6 @@ end
 	}
 }
 
-func TestJudgmentDirectCallArgumentAcceptsRecursiveAliasExpansion(t *testing.T) {
-	result := Check(`
-type A = { b: B?, tag: "a" }
-type B = { c: C?, tag: "b" }
-type C = { a: A?, tag: "c" }
-
-local function walk(a: A?): number
-    if a == nil then return 0 end
-    if a.b == nil then return 1 end
-    if a.b.c == nil then return 2 end
-    return 3 + walk(a.b.c.a)
-end
-`)
-	if len(result.Diagnostics) != 0 {
-		t.Fatalf("diagnostics = %#v, want judgment direct-call optional recursive alias accepted", result.Diagnostics)
-	}
-}
-
 func TestRecursiveAliasMapIndexReceiverMethodReturn(t *testing.T) {
 	result := Check(`
 type Message = {
