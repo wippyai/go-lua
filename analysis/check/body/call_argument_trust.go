@@ -2,7 +2,6 @@ package body
 
 import (
 	checkprojection "github.com/wippyai/go-lua/analysis/check/internal/projection"
-	"github.com/wippyai/go-lua/analysis/check/internal/sourcebridge"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -45,19 +44,24 @@ func (r *Result) RootPathHasTrustedDominatingAssignmentSource(point cfg.Point, p
 	if !found {
 		return false
 	}
-	value, ok := r.SourceValueAtBoundary(sourcePoint, source)
-	return ok && r.callArgumentValueHasReadableType(value) && !r.ValueHasUntrustedTopOrigin(value)
+	value, ok := r.SourceValueBeforeBoundary(sourcePoint, source)
+	if !ok {
+		value, ok = r.SourceValueAtBoundary(sourcePoint, source)
+	}
+	return ok && r.callArgumentValueHasReadableNonNilType(value) && !r.ValueHasUntrustedTopOrigin(value)
 }
 
 func (r *Result) rootPathAssignmentSourceAt(point cfg.Point, p pathdom.Path) (factflow.ValueSource, bool) {
-	if local, ok := r.LocalAssignment(point); ok && local.HasSymbol && local.Symbol == p.Symbol {
-		return sourcebridge.ValueSourceFromASTSource(local.Source)
+	if local, ok := r.LoweredLocalAssignment(point); ok && local.TargetSymbol() == p.Symbol && len(local.TargetPathRef().Segments) == 0 {
+		return local.Source(), true
 	}
-	ordinary, ok := r.OrdinaryAssignment(point)
-	if !ok || !ordinary.HasSymbol || ordinary.Symbol != p.Symbol || (ordinary.HasPath && len(ordinary.Path.Segments) != 0) {
-		return factflow.ValueSource{}, false
+	if root, ok := r.RootAssignment(point); ok &&
+		root.Kind() == factflow.RootAssignmentOrdinaryRootWrite &&
+		root.TargetSymbol() == p.Symbol &&
+		len(root.TargetPathRef().Segments) == 0 {
+		return root.Source(), true
 	}
-	return sourcebridge.ValueSourceFromASTSource(ordinary.Source)
+	return factflow.ValueSource{}, false
 }
 
 // RootPathHasTrustedNumericForVariable reports whether p's root is a numeric
@@ -375,6 +379,11 @@ func (r *Result) rootPathHasTrustedCurrentValue(point cfg.Point, p pathdom.Path)
 func (r *Result) callArgumentValueHasReadableType(value product.Value) bool {
 	t, ok := r.ValueType(value)
 	return ok && t != nil && !typ.IsAny(t) && !typ.IsUnknown(t) && !typ.IsNever(t)
+}
+
+func (r *Result) callArgumentValueHasReadableNonNilType(value product.Value) bool {
+	t, ok := r.ValueTypeWithPresence(value)
+	return ok && t != nil && !typ.IsAny(t) && !typ.IsUnknown(t) && !typ.IsNever(t) && !typevalue.TypeIncludesNil(t)
 }
 
 // CallArgumentFunctionTypeAdmissible reports whether a contextual function

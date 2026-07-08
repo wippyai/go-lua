@@ -902,11 +902,16 @@ func (r *Result) pathShapeInvalidatedAfterAssignment(assignPoint, point cfg.Poin
 		if invalidation, ok := r.PathDescendantInvalidation(candidate); ok && r.descendantInvalidationMayTouchRecoveredPath(candidate, invalidation, p) {
 			return true
 		}
-		if fact, ok := r.OrdinaryAssignment(candidate); ok {
-			if fact.HasSymbol && fact.Symbol == p.Symbol {
+		if root, ok := r.RootAssignment(candidate); ok && root.Kind() == factflow.RootAssignmentOrdinaryRootWrite {
+			if root.TargetSymbol() != 0 && root.TargetSymbol() == p.Symbol {
 				return true
 			}
-			if fact.HasPath && r.assignmentPathMayTouchRecoveredPath(candidate, fact.Path, p) {
+			if assigned := root.TargetPathRef(); !assigned.IsEmpty() && r.assignmentPathMayTouchRecoveredPath(candidate, assigned, p) {
+				return true
+			}
+		}
+		if fact, ok := r.PathAssignment(candidate); ok {
+			if r.assignmentPathMayTouchRecoveredPath(candidate, fact.TargetPathRef(), p) {
 				return true
 			}
 		}

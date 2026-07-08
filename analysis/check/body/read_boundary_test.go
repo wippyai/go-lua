@@ -16,12 +16,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 type sourceValueFunc func(cfg.Point, factflow.ValueSource, state.State, func(cfg.Point) state.State) (product.Value, bool)
@@ -83,6 +85,62 @@ func TestValueSourcePathParsesUnversionedStructuralSymbolKey(t *testing.T) {
 	if !ok || got.Symbol != p.Symbol || got.Version != 0 || !got.EqualIgnoringVersion(p) {
 		t.Fatalf("valueSourcePath(%q) = %s/%v, want symbol-rooted %s", source.PathKey, got.String(), ok, p.String())
 	}
+}
+
+func TestRecoveredPathShapeInvalidatedByFactflowPathAssignment(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local box = { field = "ready" }
+box.field = "changed"
+local after = box.field
+`)
+	result, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	rootPoint := requireLocalAssignmentPoint(t, result, stmts[0].(*ast.LocalAssignStmt), 0)
+	after := stmts[2].(*ast.LocalAssignStmt)
+	afterPoint := requireLocalAssignmentPoint(t, result, after, 0)
+	target, ok := result.ExpressionPath(after.Exprs[0])
+	if !ok {
+		t.Fatal("missing expression path for box.field")
+	}
+	if !result.pathShapeInvalidatedAfterAssignment(rootPoint, afterPoint, target) {
+		t.Fatal("member write should invalidate recovered descendant path shape")
+	}
+}
+
+func TestPathPresenceInvalidationIgnoresDescendantFactflowPathAssignment(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function f(box: any): ()
+	box.field = "changed"
+	local after = box
+end`)
+	bindings := bind.BindFunction(fn, bind.Options{})
+	result, err := CheckBoundFunction(fn, bindings, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckBoundFunction: %v", err)
+	}
+
+	memberPoint := requirePathAssignmentPoint(t, result, fn.Stmts[0].(*ast.AssignStmt))
+	afterPoint := requireLocalAssignmentPoint(t, result, fn.Stmts[1].(*ast.LocalAssignStmt), 0)
+	root := mustParamSlot(t, bindings, fn, 0).Symbol
+	if result.PathPresenceInvalidatedBetween(memberPoint, afterPoint, pathdom.NewPath(root, "box")) {
+		t.Fatal("descendant member write must not invalidate root presence proof")
+	}
+}
+
+func requirePathAssignmentPoint(t *testing.T, result *Result, stmt *ast.AssignStmt) cfg.Point {
+	t.Helper()
+	for _, point := range result.cfg.StmtPoints.PointsFor(stmt) {
+		if _, ok := result.PathAssignment(point); ok {
+			return point
+		}
+	}
+	t.Fatalf("missing factflow path assignment point for %T", stmt)
+	return 0
 }
 
 func TestSourceValueBeforeBoundarySkipsUnreachablePoint(t *testing.T) {
