@@ -56,10 +56,6 @@ type callSignatureViewReader interface {
 	CallSiteViewSignatureType(factflow.CallSiteView) (*typ.Function, bool)
 }
 
-type expressionPathReader interface {
-	ExpressionPath(ast.Expr) (pathdom.Path, bool)
-}
-
 type expressionOperationRefReader interface {
 	ExpressionOperationRef(factflow.ExprRef) (factflow.ExpressionOperation, bool)
 }
@@ -527,85 +523,12 @@ func (p paramObligationProjector) addCapturedTypedCallObligations(out *[]summary
 	})
 }
 
-func (p paramObligationProjector) addTypedExpressionObligation(out []product.Value, expr ast.Expr, want typ.Type, depth int) {
-	if expr == nil || depth > typ.DefaultRecursionDepth {
-		return
-	}
-	if p.expressionValueSatisfiesType(expr, want) {
-		return
-	}
-	if value, ok := obligationValueFromType(p.reg, want); ok {
-		if param, ok := p.unconditionalParamIndex(expr); ok {
-			p.add(out, param, value)
-			return
-		}
-		if param, suffix, ok := p.expressionParamSuffix(expr); ok {
-			if suffixedValue, valueOK := obligationValueFromType(p.reg, obligationTypeAtSuffix(want, suffix)); valueOK {
-				p.add(out, param, suffixedValue)
-				return
-			}
-		}
-	}
-	switch e := expr.(type) {
-	case *ast.StringConcatOpExpr:
-		if !concatResultSatisfies(want) {
-			return
-		}
-		p.addConcatOperandObligation(out, e.Lhs, depth+1)
-		p.addConcatOperandObligation(out, e.Rhs, depth+1)
-	case *ast.CastExpr:
-		p.addTypedExpressionObligation(out, e.Expr, want, depth+1)
-	case *ast.NonNilAssertExpr:
-		p.addTypedExpressionObligation(out, e.Expr, want, depth+1)
-	}
-}
-
-func (p paramObligationProjector) expressionValueSatisfiesType(expr ast.Expr, want typ.Type) bool {
-	if expr == nil || want == nil || p.reg == nil {
-		return false
-	}
-	if valueReader, ok := p.result.(expressionValueBeforeReader); ok {
-		if value, valueOK := valueReader.ExpressionValueBeforeBoundary(p.point, expr); valueOK {
-			return p.valueSatisfiesType(value, want)
-		}
-	}
-	pathReader, ok := p.result.(expressionPathReader)
-	if !ok {
-		return false
-	}
-	valueReader, ok := p.result.(pathValueAtBoundaryReader)
-	if !ok {
-		return false
-	}
-	exprPath, ok := pathReader.ExpressionPath(expr)
-	if !ok || exprPath.IsEmpty() {
-		return false
-	}
-	value, ok := valueReader.PathValueAtBoundary(p.point, exprPath)
-	if !ok {
-		return false
-	}
-	return p.valueSatisfiesType(value, want)
-}
-
 func (p paramObligationProjector) valueSatisfiesType(value product.Value, want typ.Type) bool {
 	got, ok := typevalue.TypeOf(p.reg, value)
 	if !ok || got == nil || typ.IsAny(got) || typ.IsUnknown(got) || typ.IsNever(got) {
 		return false
 	}
 	return subtype.IsSubtype(got, want)
-}
-
-func (p paramObligationProjector) expressionHasPath(expr ast.Expr) bool {
-	if expr == nil {
-		return false
-	}
-	pathReader, ok := p.result.(expressionPathReader)
-	if !ok {
-		return false
-	}
-	exprPath, ok := pathReader.ExpressionPath(expr)
-	return ok && !exprPath.IsEmpty()
 }
 
 func (p paramObligationProjector) addPathValueObligation(out []product.Value, path pathdom.Path, value product.Value, depth int) {
@@ -625,27 +548,6 @@ func (p paramObligationProjector) addPathValueObligation(out []product.Value, pa
 		return
 	}
 	p.addTypedValueSourceObligation(out, source, want, depth+1)
-}
-
-func (p paramObligationProjector) addCapturedTypedExpressionObligation(out *[]summary.CapturedPathObligation, expr ast.Expr, want typ.Type, captured map[symbol.ID]struct{}, depth int) {
-	if expr == nil || depth > typ.DefaultRecursionDepth {
-		return
-	}
-	if value, ok := obligationValueFromType(p.reg, want); ok {
-		p.addCapturedExpressionValueObligation(out, expr, value, captured, depth+1)
-	}
-	switch e := expr.(type) {
-	case *ast.StringConcatOpExpr:
-		if !concatResultSatisfies(want) {
-			return
-		}
-		p.addCapturedConcatOperandObligation(out, e.Lhs, captured, depth+1)
-		p.addCapturedConcatOperandObligation(out, e.Rhs, captured, depth+1)
-	case *ast.CastExpr:
-		p.addCapturedTypedExpressionObligation(out, e.Expr, want, captured, depth+1)
-	case *ast.NonNilAssertExpr:
-		p.addCapturedTypedExpressionObligation(out, e.Expr, want, captured, depth+1)
-	}
 }
 
 func (p paramObligationProjector) addCapturedTypedValueSourceObligation(
@@ -707,21 +609,6 @@ func (p paramObligationProjector) addCapturedSourceValueObligation(
 	p.addCapturedPathValueObligation(out, sourcePath, value, captured, depth+1)
 }
 
-func (p paramObligationProjector) addCapturedExpressionValueObligation(out *[]summary.CapturedPathObligation, expr ast.Expr, value product.Value, captured map[symbol.ID]struct{}, depth int) {
-	if expr == nil || depth > typ.DefaultRecursionDepth {
-		return
-	}
-	pathReader, ok := p.result.(expressionPathReader)
-	if !ok {
-		return
-	}
-	exprPath, ok := pathReader.ExpressionPath(expr)
-	if !ok {
-		return
-	}
-	p.addCapturedPathValueObligation(out, exprPath, value, captured, depth+1)
-}
-
 func (p paramObligationProjector) addCapturedPathValueObligation(out *[]summary.CapturedPathObligation, path pathdom.Path, value product.Value, captured map[symbol.ID]struct{}, depth int) {
 	if out == nil || depth > typ.DefaultRecursionDepth || !summary.UsefulParamObligation(p.reg, value) {
 		return
@@ -735,14 +622,6 @@ func (p paramObligationProjector) addCapturedPathValueObligation(out *[]summary.
 			p.addCapturedTypedValueSourceObligation(out, source, want, captured, depth+1, nil)
 		}
 	}
-}
-
-func (p paramObligationProjector) addCapturedConcatOperandObligation(out *[]summary.CapturedPathObligation, expr ast.Expr, captured map[symbol.ID]struct{}, depth int) {
-	if _, ok := expr.(*ast.StringConcatOpExpr); ok {
-		p.addCapturedTypedExpressionObligation(out, expr, typ.String, captured, depth+1)
-		return
-	}
-	p.addCapturedTypedExpressionObligation(out, expr, concatOperandObligationType(), captured, depth+1)
 }
 
 func (p paramObligationProjector) addCapturedConcatOperandSourceObligation(
@@ -799,14 +678,6 @@ func (p paramObligationProjector) capturedPathStableAtUse(path pathdom.Path) boo
 		}
 	}
 	return true
-}
-
-func (p paramObligationProjector) addConcatOperandObligation(out []product.Value, expr ast.Expr, depth int) {
-	if _, ok := expr.(*ast.StringConcatOpExpr); ok {
-		p.addTypedExpressionObligation(out, expr, typ.String, depth+1)
-		return
-	}
-	p.addTypedExpressionObligation(out, expr, concatOperandObligationType(), depth+1)
 }
 
 func concatResultSatisfies(want typ.Type) bool {
@@ -1433,10 +1304,6 @@ func (p paramObligationProjector) addArithmeticObligationsFromObjectLiteral(
 	}
 }
 
-func (p paramObligationProjector) addArithmeticOperationObligations(out []product.Value, op factflow.ExpressionOperation) {
-	p.addArithmeticOperationObligationsSeen(out, op, nil)
-}
-
 func (p paramObligationProjector) addArithmeticOperationObligationsSeen(
 	out []product.Value,
 	op factflow.ExpressionOperation,
@@ -1462,10 +1329,6 @@ func (p paramObligationProjector) addArithmeticOperationObligationsSeen(
 		}
 		p.addArithmeticObligationsFromSourceSeen(out, operand, seen)
 	}
-}
-
-func (p paramObligationProjector) addArithmeticOperandSource(out []product.Value, source factflow.ValueSource) {
-	p.addArithmeticOperandSourceSeen(out, source, nil)
 }
 
 func (p paramObligationProjector) addArithmeticOperandSourceSeen(
@@ -1655,30 +1518,6 @@ func (p paramObligationProjector) add(out []product.Value, param int, value prod
 		return
 	}
 	out[param] = product.Meet(p.reg, out[param], value)
-}
-
-func (p paramObligationProjector) unconditionalParamIndex(expr ast.Expr) (int, bool) {
-	pathReader, ok := p.result.(expressionPathReader)
-	if !ok || expr == nil {
-		return 0, false
-	}
-	exprPath, ok := pathReader.ExpressionPath(expr)
-	if !ok {
-		return 0, false
-	}
-	return p.unconditionalPathParamIndex(exprPath)
-}
-
-func (p paramObligationProjector) expressionParamSuffix(expr ast.Expr) (int, []segment.Segment, bool) {
-	pathReader, ok := p.result.(expressionPathReader)
-	if !ok || expr == nil {
-		return 0, nil, false
-	}
-	exprPath, ok := pathReader.ExpressionPath(expr)
-	if !ok {
-		return 0, nil, false
-	}
-	return p.unconditionalReceiverParamPath(exprPath)
 }
 
 func (p paramObligationProjector) unconditionalPathParamIndex(exprPath pathdom.Path) (int, bool) {
