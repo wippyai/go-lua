@@ -39,6 +39,7 @@ type Body struct {
 	impliedChecks []ImpliedCheck
 	branchDiffs   []BranchDiffConstraint
 	callTargets   map[callResultTargetKey]CallResultTarget
+	evaluations   map[cfg.Point]ExpressionEvaluation
 
 	pathIndex     map[path.PathKey]PathRef
 	constIndex    map[Const]ConstRef
@@ -111,6 +112,15 @@ type CallArgumentMeta struct {
 type ReturnValueMeta struct {
 	Span  Span
 	Label string
+}
+
+// ExpressionEvaluation records a structural expression-evaluation anchor at a
+// CFG point. It carries only neutral source identity and span metadata; body
+// readmodels join ExprID back to their source AST when they still need syntax
+// during the migration away from cfgbuild sidecars.
+type ExpressionEvaluation struct {
+	ExprID ExpressionID
+	Span   Span
 }
 
 // TableEntryRange is a [Start, Start+Len) window into Body.tableEntries.
@@ -606,6 +616,28 @@ func (b *Body) CallResultTargets(point cfg.Point) []CallResultTarget {
 		out = append(out, target)
 	}
 	return out
+}
+
+// SetExpressionEvaluation records that point is a structural evaluation anchor
+// for source expression eval.ExprID.
+func (b *Body) SetExpressionEvaluation(point cfg.Point, eval ExpressionEvaluation) {
+	if b == nil || eval.ExprID == 0 {
+		return
+	}
+	if b.evaluations == nil {
+		b.evaluations = make(map[cfg.Point]ExpressionEvaluation)
+	}
+	b.evaluations[point] = eval
+}
+
+// ExpressionEvaluation returns the structural expression-evaluation anchor at
+// point, if WIR lowering recorded one.
+func (b *Body) ExpressionEvaluation(point cfg.Point) (ExpressionEvaluation, bool) {
+	if b == nil || b.evaluations == nil {
+		return ExpressionEvaluation{}, false
+	}
+	eval, ok := b.evaluations[point]
+	return eval, ok
 }
 
 // AppendOperands copies ops into the shared pool and returns their range.

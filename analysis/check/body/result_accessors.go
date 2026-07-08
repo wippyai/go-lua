@@ -14,7 +14,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
-	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
@@ -525,11 +524,23 @@ func (r *Result) GenericFor(point cfg.Point) (GenericForFact, bool) {
 	return fact.copy(), true
 }
 
-func (r *Result) ExpressionEvaluation(point cfg.Point) (cfgbuild.ExpressionEvaluation, bool) {
-	if r == nil || r.cfg == nil {
-		return cfgbuild.ExpressionEvaluation{}, false
+func (r *Result) ExpressionEvaluation(point cfg.Point) (ExpressionEvaluationFact, bool) {
+	if r == nil || r.wir == nil {
+		return ExpressionEvaluationFact{}, false
 	}
-	return r.cfg.ShortCircuits.Evaluation(point)
+	eval, ok := r.wir.ExpressionEvaluation(point)
+	if !ok {
+		return ExpressionEvaluationFact{}, false
+	}
+	expr, ok := r.sourceExpressionByID(eval.ExprID)
+	if !ok {
+		return ExpressionEvaluationFact{}, false
+	}
+	return ExpressionEvaluationFact{
+		Point: point,
+		Expr:  expr,
+		Span:  sourceSpanFromAST(ast.SpanOf(expr)),
+	}, true
 }
 
 func (r *Result) Function() *ast.FunctionExpr {

@@ -10,7 +10,9 @@ import (
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 // resultQueryCache owns memoized derived queries for one solved Result. The
@@ -40,6 +42,8 @@ type resultQueryCache struct {
 	sourceCallsOK       bool
 	numericForFacts     map[cfg.Point]NumericForFact
 	numericForFactsOK   bool
+	expressionsByID     map[wir.ExpressionID]ast.Expr
+	expressionsByIDOK   bool
 }
 
 const resultQueryInline = 4
@@ -74,6 +78,8 @@ func (c *resultQueryCache) reset() {
 	c.sourceCallsOK = false
 	c.numericForFacts = nil
 	c.numericForFactsOK = false
+	c.expressionsByID = nil
+	c.expressionsByIDOK = false
 }
 
 type sourceValueReadMode uint8

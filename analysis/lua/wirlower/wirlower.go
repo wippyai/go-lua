@@ -204,6 +204,10 @@ func (b *builder) indexShortCircuits() {
 	for _, p := range b.graph.RPO() {
 		if e, ok := b.shortCircuits.Evaluation(p); ok && e.Expr != nil {
 			b.evalByExpr[e.Expr] = p
+			b.body.SetExpressionEvaluation(p, wir.ExpressionEvaluation{
+				ExprID: expressionid.Of(e.Expr),
+				Span:   tableEntryValueSpan(e.Expr),
+			})
 		}
 	}
 }
