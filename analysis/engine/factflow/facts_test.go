@@ -575,9 +575,10 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		},
 		BranchPathEvidence: map[cfg.Point]BranchPathEvidenceSet{
 			point: NewBranchPathEvidenceSet(
-				NewBranchPathEqualityEvidence(
+				NewBranchPathEqualityEvidenceOnEdge(
 					path.NewPath(symbol.ID(66), "proof").Field("left"),
 					path.NewPath(symbol.ID(67), "proof").Field("right"),
+					true,
 				),
 			),
 		},
@@ -676,7 +677,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		),
 	)
 	input.BranchPathEvidence[point] = NewBranchPathEvidenceSet(
-		NewBranchPathEqualityEvidence(path.NewPath(symbol.ID(68), "changed"), path.NewPath(symbol.ID(69), "changed")),
+		NewBranchPathEqualityEvidenceOnEdge(path.NewPath(symbol.ID(68), "changed"), path.NewPath(symbol.ID(69), "changed"), true),
 	)
 	input.BranchSufficientLiteralCases[point] = NewBranchSufficientLiteralCaseSet(
 		NewBranchSufficientLiteralCase(path.NewPath(symbol.ID(72), "changed"), presenceConstraint(presence.Absent()), false),
@@ -862,7 +863,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		t.Fatal("branch path evidence other path missing")
 	}
 	assertPathEqual(t, otherPath, path.NewPath(symbol.ID(67), "proof").Field("right"))
-	evidence[0] = NewBranchPathEqualityEvidence(path.NewPath(symbol.ID(70), "mutated"), path.NewPath(symbol.ID(71), "mutated"))
+	evidence[0] = NewBranchPathEqualityEvidenceOnEdge(path.NewPath(symbol.ID(70), "mutated"), path.NewPath(symbol.ID(71), "mutated"), true)
 	evidenceAgain := facts.BranchPathEvidence(point)
 	assertPathEqual(t, evidenceAgain[0].Path(), path.NewPath(symbol.ID(66), "proof").Field("left"))
 	visitedEvidence := 0

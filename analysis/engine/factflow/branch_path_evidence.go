@@ -45,33 +45,17 @@ type BranchPathEvidenceSet struct {
 	evidence []BranchPathEvidence
 }
 
-// NewBranchPathPresenceEvidence creates path-presence evidence.
-func NewBranchPathPresenceEvidence(targetPath path.Path, value presence.Value) BranchPathEvidence {
-	return NewBranchPathPresenceEvidenceForEdges(targetPath, value, true, true)
-}
-
-// NewBranchPathPresenceEvidenceForEdges creates path-presence evidence for
-// the selected branch edges.
-func NewBranchPathPresenceEvidenceForEdges(
-	targetPath path.Path,
-	value presence.Value,
-	activeOnTrue bool,
-	activeOnFalse bool,
-) BranchPathEvidence {
+// NewBranchPathPresenceEvidenceOnEdge creates path-presence evidence for one
+// branch edge.
+func NewBranchPathPresenceEvidenceOnEdge(targetPath path.Path, value presence.Value, cond bool) BranchPathEvidence {
 	return BranchPathEvidence{
 		kind:          BranchPathEvidencePresence,
 		path:          targetPath.Clone(),
 		presence:      value,
 		hasPresence:   true,
-		activeOnTrue:  activeOnTrue,
-		activeOnFalse: activeOnFalse,
+		activeOnTrue:  cond,
+		activeOnFalse: !cond,
 	}
-}
-
-// NewBranchPathPresenceEvidenceOnEdge creates path-presence evidence for one
-// branch edge.
-func NewBranchPathPresenceEvidenceOnEdge(targetPath path.Path, value presence.Value, cond bool) BranchPathEvidence {
-	return NewBranchPathPresenceEvidenceForEdges(targetPath, value, cond, !cond)
 }
 
 // NewBranchPathTruthyEvidenceOnEdge records that targetPath is truthy on one
@@ -95,62 +79,30 @@ func NewBranchPathTruthyEvidenceWithOppositeOnEdge(targetPath path.Path, cond bo
 	return out
 }
 
-// NewBranchPathEqualityEvidence creates path-equality evidence.
-func NewBranchPathEqualityEvidence(leftPath path.Path, rightPath path.Path) BranchPathEvidence {
-	return NewBranchPathEqualityEvidenceForEdges(leftPath, rightPath, true, true)
-}
-
-// NewBranchPathEqualityEvidenceForEdges creates path-equality evidence for
-// the selected branch edges.
-func NewBranchPathEqualityEvidenceForEdges(
-	leftPath path.Path,
-	rightPath path.Path,
-	activeOnTrue bool,
-	activeOnFalse bool,
-) BranchPathEvidence {
+// NewBranchPathEqualityEvidenceOnEdge creates path-equality evidence for one
+// branch edge.
+func NewBranchPathEqualityEvidenceOnEdge(leftPath path.Path, rightPath path.Path, cond bool) BranchPathEvidence {
 	return BranchPathEvidence{
 		kind:          BranchPathEvidenceEqual,
 		path:          leftPath.Clone(),
 		otherPath:     rightPath.Clone(),
 		hasOtherPath:  true,
-		activeOnTrue:  activeOnTrue,
-		activeOnFalse: activeOnFalse,
-	}
-}
-
-// NewBranchPathEqualityEvidenceOnEdge creates path-equality evidence for one
-// branch edge.
-func NewBranchPathEqualityEvidenceOnEdge(leftPath path.Path, rightPath path.Path, cond bool) BranchPathEvidence {
-	return NewBranchPathEqualityEvidenceForEdges(leftPath, rightPath, cond, !cond)
-}
-
-// NewBranchPathInequalityEvidence creates path-inequality evidence.
-func NewBranchPathInequalityEvidence(leftPath path.Path, rightPath path.Path) BranchPathEvidence {
-	return NewBranchPathInequalityEvidenceForEdges(leftPath, rightPath, true, true)
-}
-
-// NewBranchPathInequalityEvidenceForEdges creates path-inequality evidence for
-// the selected branch edges.
-func NewBranchPathInequalityEvidenceForEdges(
-	leftPath path.Path,
-	rightPath path.Path,
-	activeOnTrue bool,
-	activeOnFalse bool,
-) BranchPathEvidence {
-	return BranchPathEvidence{
-		kind:          BranchPathEvidenceNotEqual,
-		path:          leftPath.Clone(),
-		otherPath:     rightPath.Clone(),
-		hasOtherPath:  true,
-		activeOnTrue:  activeOnTrue,
-		activeOnFalse: activeOnFalse,
+		activeOnTrue:  cond,
+		activeOnFalse: !cond,
 	}
 }
 
 // NewBranchPathInequalityEvidenceOnEdge creates path-inequality evidence for
 // one branch edge.
 func NewBranchPathInequalityEvidenceOnEdge(leftPath path.Path, rightPath path.Path, cond bool) BranchPathEvidence {
-	return NewBranchPathInequalityEvidenceForEdges(leftPath, rightPath, cond, !cond)
+	return BranchPathEvidence{
+		kind:          BranchPathEvidenceNotEqual,
+		path:          leftPath.Clone(),
+		otherPath:     rightPath.Clone(),
+		hasOtherPath:  true,
+		activeOnTrue:  cond,
+		activeOnFalse: !cond,
+	}
 }
 
 // NewBranchIndexInRangeEvidenceOnEdge records that indexPath is a proven in-range

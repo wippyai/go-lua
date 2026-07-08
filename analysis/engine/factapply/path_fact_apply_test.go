@@ -1585,8 +1585,10 @@ func TestFactsEdgeTransferAddsPointLevelBranchPathEvidenceOnBothBranchOutputs(t 
 			Facts: factflow.NewFacts(factflow.FactsInput{
 				BranchPathEvidence: map[cfg.Point]factflow.BranchPathEvidenceSet{
 					branch: factflow.NewBranchPathEvidenceSet(
-						factflow.NewBranchPathPresenceEvidence(errPath, presence.Present()),
-						factflow.NewBranchPathEqualityEvidence(leftPath, rightPath),
+						factflow.NewBranchPathPresenceEvidenceOnEdge(errPath, presence.Present(), true),
+						factflow.NewBranchPathPresenceEvidenceOnEdge(errPath, presence.Present(), false),
+						factflow.NewBranchPathEqualityEvidenceOnEdge(leftPath, rightPath, true),
+						factflow.NewBranchPathEqualityEvidenceOnEdge(leftPath, rightPath, false),
 					),
 				},
 			}),
@@ -1647,7 +1649,8 @@ func TestFactsEdgeTransferBranchPathEvidenceRespectEdgesAndJoinByIntersection(t 
 				BranchPathEvidence: map[cfg.Point]factflow.BranchPathEvidenceSet{
 					branch: factflow.NewBranchPathEvidenceSet(
 						factflow.NewBranchPathPresenceEvidenceOnEdge(errPath, presence.Present(), true),
-						factflow.NewBranchPathEqualityEvidence(leftPath, rightPath),
+						factflow.NewBranchPathEqualityEvidenceOnEdge(leftPath, rightPath, true),
+						factflow.NewBranchPathEqualityEvidenceOnEdge(leftPath, rightPath, false),
 					),
 				},
 			}),
