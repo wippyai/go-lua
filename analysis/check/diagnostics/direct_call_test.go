@@ -275,31 +275,6 @@ func TestDirectCallUsesGenericResultFalseEdgeBoundaryProof(t *testing.T) {
 	}
 }
 
-func TestJudgmentDirectCallUsesGenericResultFalseEdgeBoundaryProof(t *testing.T) {
-	result := runDiagnosticsResult(t, `
-		type Result<T> = { ok: true, value: T } | { ok: false, error: string }
-
-		local function err<T>(message: string): Result<T>
-			return { ok = false, error = message }
-		end
-
-		local function map_result<T, U>(result: Result<T>, fn: (T) -> U): Result<U>
-			if result.ok then
-				return { ok = true, value = fn(result.value) }
-			end
-			return err(result.error)
-		end
-
-		local r = map_result({ ok = true, value = "x" }, function(value: string): number
-			return #value
-		end)
-	`)
-	diags := ProduceWithConfig(result, Config{})
-	if len(diags) != 0 {
-		t.Fatalf("diagnostics = %#v, want judgment direct-call to accept false-edge result.error proof", diags)
-	}
-}
-
 func TestJudgmentDirectCallAcceptsContextualFunctionExpressionArgument(t *testing.T) {
 	result := runDiagnosticsResult(t, `
 		local function map_value<T, U>(value: T, fn: (T) -> U): U
@@ -679,20 +654,6 @@ local x: string = api.make(42)
 	}
 }
 
-func TestJudgmentDirectCallMemberArgumentProofFailureTakesPrecedenceOverResultAssignment(t *testing.T) {
-	result := runDiagnosticsResult(t, `
-type API = { make: (name: string) -> number }
-local api: API = {
-	make = function(name: string): number
-		return 1
-	end,
-}
-local x: string = api.make(42)
-`)
-	diags := ProduceWithConfig(result, Config{})
-	requireOnlyDirectCallArgumentDiagnostic(t, diags)
-}
-
 func TestDirectCallArgumentProofFailureTakesPrecedenceOverResultAssignment(t *testing.T) {
 	diags := runDiagnostics(t, `
 local function f(x: { id: string }): number
@@ -718,29 +679,6 @@ local y: string = f(raw)
 		if diag.Code == CodeDirectCallResultAssignment {
 			t.Fatalf("diagnostics include result-assignment diagnostic despite argument proof failure: %#v", diags)
 		}
-	}
-}
-
-func TestJudgmentDirectCallArgumentProofFailureTakesPrecedenceOverResultAssignment(t *testing.T) {
-	result := runDiagnosticsResult(t, `
-local function f(x: { id: string }): number
-	return 1
-end
-
-local raw = ({ id = "ok" } :: any)
-local y: string = f(raw)
-`)
-	diags := ProduceWithConfig(result, Config{})
-	requireOnlyDirectCallArgumentDiagnostic(t, diags)
-}
-
-func requireOnlyDirectCallArgumentDiagnostic(t *testing.T, diags []diagnostic.Diagnostic) {
-	t.Helper()
-	if len(diags) != 1 {
-		t.Fatalf("diagnostics = %d, want one direct-call argument diagnostic: %#v", len(diags), diags)
-	}
-	if diags[0].Code != CodeDirectCallArgType {
-		t.Fatalf("diagnostic = %#v, want direct-call argument diagnostic", diags[0])
 	}
 }
 
