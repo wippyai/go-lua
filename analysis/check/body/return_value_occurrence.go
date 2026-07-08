@@ -48,7 +48,13 @@ func (r *Result) ForEachReturnValueOccurrence(visit func(ReturnValueOccurrence) 
 				if meta[index].Label != "" {
 					label = meta[index].Label
 				}
-				if metaSpan := sourceSpanFromWIR(meta[index].Span); sourceSpanValid(metaSpan) {
+				metaSpan := SourceSpan{
+					StartLine: meta[index].Span.StartLine,
+					StartCol:  meta[index].Span.StartCol,
+					EndLine:   meta[index].Span.EndLine,
+					EndCol:    meta[index].Span.EndCol,
+				}
+				if sourceSpanValid(metaSpan) {
 					span = metaSpan
 				}
 			}
@@ -105,15 +111,6 @@ func (r *Result) returnSourceExprPath(expr ast.Expr) (pathdom.Path, bool) {
 		return pathdom.Path{}, false
 	}
 	return r.ExpressionPath(inner)
-}
-
-func sourceSpanFromWIR(span wir.Span) SourceSpan {
-	return SourceSpan{
-		StartLine: span.StartLine,
-		StartCol:  span.StartCol,
-		EndLine:   span.EndLine,
-		EndCol:    span.EndCol,
-	}
 }
 
 func returnSourceAt(fact ReturnFact, index int) sourceprovenance.ASTSource {
