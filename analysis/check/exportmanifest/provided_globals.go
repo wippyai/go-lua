@@ -296,7 +296,7 @@ func (f *providedGlobalForwarding) sourceIsWatchedCallback(result *body.Result, 
 }
 
 func providerGlobalsForCall(result *body.Result, point cfg.Point, site factflow.CallSite) (*manifest.Manifest, []string, []factflow.ValueSource) {
-	name, ok := result.CallSignatureName(site)
+	name, ok := result.CallSignatureNameAtPoint(point)
 	if ok {
 		if provider, globals := providerGlobalsForSignatureName(result, name); len(globals) != 0 {
 			return provider, globals, site.ArgumentSources()

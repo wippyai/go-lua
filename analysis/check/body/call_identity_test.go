@@ -579,15 +579,11 @@ func onlySignatureCallPointNamed(t *testing.T, result *Result, wantName string) 
 	var out cfg.Point
 	count := 0
 	for _, point := range graph.RPO() {
-		site, ok := result.CallSite(point)
-		if !ok {
-			continue
-		}
-		if _, ok := result.CallSignature(site); !ok {
+		if _, ok := result.CallSignatureAtPoint(point); !ok {
 			continue
 		}
 		if wantName != "" {
-			name, ok := result.CallSignatureName(site)
+			name, ok := result.CallSignatureNameAtPoint(point)
 			if !ok || name != wantName {
 				continue
 			}

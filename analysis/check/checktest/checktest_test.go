@@ -3000,7 +3000,7 @@ func callOutcomeDebug(root *body.Result) string {
 			continue
 		}
 		signatureText := "no-signature"
-		if sig, ok := root.CallSignature(site); ok {
+		if sig, ok := root.CallSignatureAtPoint(point); ok {
 			signatureText = fmt.Sprintf("effect=%v returns=%d", sig.Effect, len(sig.Type.Returns))
 		}
 		outcomeText := "no-outcome"

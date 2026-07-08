@@ -777,14 +777,6 @@ func (r *Result) PathSignatureTypeAt(point cfg.Point, p path.Path) (*typ.Functio
 	return r.SignatureType(name)
 }
 
-func (r *Result) CallSignature(site factflow.CallSite) (signature.Function, bool) {
-	name, ok := r.CallSignatureName(site)
-	if !ok {
-		return signature.Function{}, false
-	}
-	return r.signatures.Lookup(name)
-}
-
 func (r *Result) CallSignatureAtPoint(point cfg.Point) (signature.Function, bool) {
 	name, ok := r.CallSignatureNameAtPoint(point)
 	if !ok {
@@ -829,13 +821,6 @@ func (r *Result) SignatureType(name string) (*typ.Function, bool) {
 	}
 	r.queries.rememberSignatureType(name, cached)
 	return cached.value, cached.ok
-}
-
-func (r *Result) CallSignatureName(site factflow.CallSite) (string, bool) {
-	if r == nil || r.signatureID == nil {
-		return "", false
-	}
-	return r.signatureID.nameForSite(site)
 }
 
 func (r *Result) CallSignatureNameAtPoint(point cfg.Point) (string, bool) {
