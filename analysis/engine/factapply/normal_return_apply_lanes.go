@@ -63,11 +63,6 @@ func (ctx normalReturnApplyContext) relationGraphKey(operand callboundary.RelOpe
 	return relationGraphKeyAt(ctx.resolver, ctx.point, targetPath, operand.IsLength)
 }
 
-type normalReturnApplyLane struct {
-	phase normalReturnApplyPhase
-	apply func(normalReturnApplyContext, state.State) state.State
-}
-
 type normalReturnApplyLaneHandler struct {
 	phase normalReturnApplyPhase
 	apply func(normalReturnApplyContext, state.State) state.State
@@ -75,14 +70,15 @@ type normalReturnApplyLaneHandler struct {
 
 func applyNormalReturnFactPhase(ctx normalReturnApplyContext, phase normalReturnApplyPhase, out state.State) state.State {
 	for _, lane := range normalReturnApplyLanes {
-		if lane.phase == phase {
-			out = lane.apply(ctx, out)
+		handler := lane.Value
+		if handler.phase == phase {
+			out = handler.apply(ctx, out)
 		}
 	}
 	return out
 }
 
-var normalReturnApplyLanes = buildNormalReturnApplyLanes(map[callboundary.NormalReturnFactLaneID]normalReturnApplyLaneHandler{
+var normalReturnApplyLanes = callboundary.BindNormalReturnFactLanes("normal-return apply", map[callboundary.NormalReturnFactLaneID]normalReturnApplyLaneHandler{
 	callboundary.LanePathRefinements: {
 		phase: normalReturnApplyBeforeParamFacts,
 		apply: applyNormalReturnPathRefinements,
@@ -155,22 +151,7 @@ var normalReturnApplyLanes = buildNormalReturnApplyLanes(map[callboundary.Normal
 		phase: normalReturnApplyAfterParamRelations,
 		apply: applyNormalReturnEscapeEvents,
 	},
-})
-
-func buildNormalReturnApplyLanes(handlers map[callboundary.NormalReturnFactLaneID]normalReturnApplyLaneHandler) []normalReturnApplyLane {
-	bindings := callboundary.BindNormalReturnFactLanes("normal-return apply", handlers, func(handler normalReturnApplyLaneHandler) bool {
-		return handler.apply != nil
-	})
-	out := make([]normalReturnApplyLane, 0, len(bindings))
-	for _, binding := range bindings {
-		handler := binding.Value
-		out = append(out, normalReturnApplyLane{
-			phase: handler.phase,
-			apply: handler.apply,
-		})
-	}
-	return out
-}
+}, func(handler normalReturnApplyLaneHandler) bool { return handler.apply != nil })
 
 func applyNormalReturnPathRefinements(ctx normalReturnApplyContext, out state.State) state.State {
 	for _, fact := range ctx.normalFacts.PathRefinements {

@@ -1225,8 +1225,7 @@ func TestNormalReturnFactPipelineHasPositiveLaneOwners(t *testing.T) {
 		{
 			path: filepath.Join("..", "check", "fixpoint", "program", "internal", "projectsummary", "normal_return_project_lanes.go"),
 			contains: []string{
-				"type normalReturnProjectLane struct",
-				"var normalReturnProjectLanes",
+				"var normalReturnProjectLanes = callboundary.BindNormalReturnFactLanes",
 			},
 		},
 		{
@@ -1246,7 +1245,7 @@ func TestNormalReturnFactPipelineHasPositiveLaneOwners(t *testing.T) {
 		{
 			path: filepath.Join("..", "engine", "factapply", "normal_return_apply_lanes.go"),
 			contains: []string{
-				"type normalReturnApplyLane struct",
+				"var normalReturnApplyLanes = callboundary.BindNormalReturnFactLanes",
 				"var normalReturnApplyLanes",
 				"type normalReturnApplyContext struct",
 			},

@@ -19,13 +19,14 @@ func normalizeNormalReturnFactsWith(reg *axis.Registry, in callboundary.NormalRe
 	}
 	var out callboundary.NormalReturnFacts
 	for _, lane := range normalReturnSummaryLanes {
-		if lane.empty(&in) {
+		handler := lane.Value
+		if handler.empty(&in) {
 			continue
 		}
 		if owned {
-			lane.normalizeOwned(reg, &in, &out)
+			handler.normalizeOwned(reg, &in, &out)
 		} else {
-			lane.normalize(reg, &in, &out)
+			handler.normalize(reg, &in, &out)
 		}
 	}
 	if out.Empty() {
@@ -40,10 +41,11 @@ func cloneNormalReturnFacts(in callboundary.NormalReturnFacts) callboundary.Norm
 	}
 	var out callboundary.NormalReturnFacts
 	for _, lane := range normalReturnSummaryLanes {
-		if lane.empty(&in) {
+		handler := lane.Value
+		if handler.empty(&in) {
 			continue
 		}
-		lane.clone(&in, &out)
+		handler.clone(&in, &out)
 	}
 	return out
 }
@@ -61,10 +63,11 @@ func normalReturnFactsEqual(reg *axis.Registry, a, b callboundary.NormalReturnFa
 
 func normalReturnFactsEqualNormalized(reg *axis.Registry, a, b callboundary.NormalReturnFacts) bool {
 	for _, lane := range normalReturnSummaryLanes {
-		if lane.empty(&a) && lane.empty(&b) {
+		handler := lane.Value
+		if handler.empty(&a) && handler.empty(&b) {
 			continue
 		}
-		if !lane.equal(reg, &a, &b) {
+		if !handler.equal(reg, &a, &b) {
 			return false
 		}
 	}
@@ -75,10 +78,11 @@ func normalReturnFactsLessOrEq(reg *axis.Registry, a, b callboundary.NormalRetur
 	a = normalizeNormalReturnFacts(reg, a)
 	b = normalizeNormalReturnFacts(reg, b)
 	for _, lane := range normalReturnSummaryLanes {
-		if lane.empty(&a) && lane.empty(&b) {
+		handler := lane.Value
+		if handler.empty(&a) && handler.empty(&b) {
 			continue
 		}
-		if !lane.lessOrEq(reg, &a, &b) {
+		if !handler.lessOrEq(reg, &a, &b) {
 			return false
 		}
 	}
@@ -88,10 +92,11 @@ func normalReturnFactsLessOrEq(reg *axis.Registry, a, b callboundary.NormalRetur
 func joinNormalReturnFacts(reg *axis.Registry, a, b callboundary.NormalReturnFacts) callboundary.NormalReturnFacts {
 	var out callboundary.NormalReturnFacts
 	for _, lane := range normalReturnSummaryLanes {
-		if lane.empty(&a) && lane.empty(&b) {
+		handler := lane.Value
+		if handler.empty(&a) && handler.empty(&b) {
 			continue
 		}
-		lane.join(reg, &a, &b, &out)
+		handler.join(reg, &a, &b, &out)
 	}
 	return normalizeNormalReturnFacts(reg, out)
 }
@@ -99,10 +104,11 @@ func joinNormalReturnFacts(reg *axis.Registry, a, b callboundary.NormalReturnFac
 func widenNormalReturnFacts(reg *axis.Registry, prev, next callboundary.NormalReturnFacts) callboundary.NormalReturnFacts {
 	var out callboundary.NormalReturnFacts
 	for _, lane := range normalReturnSummaryLanes {
-		if lane.empty(&prev) && lane.empty(&next) {
+		handler := lane.Value
+		if handler.empty(&prev) && handler.empty(&next) {
 			continue
 		}
-		lane.widen(reg, &prev, &next, &out)
+		handler.widen(reg, &prev, &next, &out)
 	}
 	return normalizeNormalReturnFacts(reg, out)
 }

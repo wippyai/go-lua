@@ -23,11 +23,7 @@ type normalReturnProjectContext struct {
 	boundary boundaryPathProjector
 }
 
-type normalReturnProjectLane struct {
-	project func(normalReturnProjectContext, *callboundary.NormalReturnFacts)
-}
-
-var normalReturnProjectLanes = buildNormalReturnProjectLanes(map[callboundary.NormalReturnFactLaneID]func(normalReturnProjectContext, *callboundary.NormalReturnFacts){
+var normalReturnProjectLanes = callboundary.BindNormalReturnFactLanes("normal-return project", map[callboundary.NormalReturnFactLaneID]func(normalReturnProjectContext, *callboundary.NormalReturnFacts){
 	callboundary.LanePathRefinements:          projectNormalReturnPathRefinements,
 	callboundary.LanePathInvalidations:        projectNormalReturnPathInvalidations,
 	callboundary.LanePersistentPathWrites:     projectNormalReturnPersistentPathWrites,
@@ -46,20 +42,9 @@ var normalReturnProjectLanes = buildNormalReturnProjectLanes(map[callboundary.No
 	callboundary.LaneEscapeEvents:             projectNormalReturnEscapeEvents,
 	callboundary.LaneStoreRelations:           projectNormalReturnStoreRelations,
 	callboundary.LaneLifecycleFacts:           projectNormalReturnLifecycleFacts,
+}, func(handler func(normalReturnProjectContext, *callboundary.NormalReturnFacts)) bool {
+	return handler != nil
 })
-
-func buildNormalReturnProjectLanes(handlers map[callboundary.NormalReturnFactLaneID]func(normalReturnProjectContext, *callboundary.NormalReturnFacts)) []normalReturnProjectLane {
-	bindings := callboundary.BindNormalReturnFactLanes("normal-return project", handlers, func(handler func(normalReturnProjectContext, *callboundary.NormalReturnFacts)) bool {
-		return handler != nil
-	})
-	out := make([]normalReturnProjectLane, 0, len(bindings))
-	for _, binding := range bindings {
-		out = append(out, normalReturnProjectLane{
-			project: binding.Value,
-		})
-	}
-	return out
-}
 
 func projectNormalReturnPathRefinements(ctx normalReturnProjectContext, out *callboundary.NormalReturnFacts) {
 	bottom := product.Bottom(ctx.reg)

@@ -43,7 +43,7 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 	}
 	var out callboundary.NormalReturnFacts
 	for _, lane := range normalReturnProjectLanes {
-		lane.project(projectCtx, &out)
+		lane.Value(projectCtx, &out)
 	}
 	return out
 }

@@ -75,17 +75,6 @@ func normalReturnSummaryLaneNoRegOwned[T any](
 	)
 }
 
-func buildNormalReturnSummaryLanes(handlers map[callboundary.NormalReturnFactLaneID]normalReturnSummaryLane) []normalReturnSummaryLane {
-	bindings := callboundary.BindNormalReturnFactLanes("normal-return summary", handlers, func(lane normalReturnSummaryLane) bool {
-		return normalReturnSummaryLaneValid(lane)
-	})
-	out := make([]normalReturnSummaryLane, 0, len(bindings))
-	for _, binding := range bindings {
-		out = append(out, binding.Value)
-	}
-	return out
-}
-
 func normalReturnSummaryLaneValid(lane normalReturnSummaryLane) bool {
 	return lane.empty != nil &&
 		lane.normalize != nil &&
@@ -97,7 +86,7 @@ func normalReturnSummaryLaneValid(lane normalReturnSummaryLane) bool {
 		lane.widen != nil
 }
 
-var normalReturnSummaryLanes = buildNormalReturnSummaryLanes(map[callboundary.NormalReturnFactLaneID]normalReturnSummaryLane{
+var normalReturnSummaryLanes = callboundary.BindNormalReturnFactLanes("normal-return summary", map[callboundary.NormalReturnFactLaneID]normalReturnSummaryLane{
 	callboundary.LanePathRefinements: normalReturnSummarySliceLaneOwned(
 		func(f *callboundary.NormalReturnFacts) *[]callboundary.PathValueFact { return &f.PathRefinements },
 		normalizePathValueFacts, normalizePathValueFactsOwned, clonePathValueFacts, pathValueFactsEqual, pathValueFactsLessOrEq, joinPathValueFacts, widenPathValueFacts),
@@ -168,4 +157,4 @@ var normalReturnSummaryLanes = buildNormalReturnSummaryLanes(map[callboundary.No
 	callboundary.LaneRelConstraints: normalReturnSummaryLaneNoRegOwned(
 		func(f *callboundary.NormalReturnFacts) *[]callboundary.RelConstraintFact { return &f.RelConstraints },
 		relConstraintLane.Normalize, relConstraintLane.NormalizeOwned, relConstraintLane.Clone, relConstraintLane.Equal, relConstraintLane.LessOrEq, relConstraintLane.Join, relConstraintLane.Widen),
-})
+}, normalReturnSummaryLaneValid)

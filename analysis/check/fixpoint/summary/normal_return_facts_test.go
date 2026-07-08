@@ -26,7 +26,7 @@ func TestNormalReturnSummaryLaneRegistryCoversStorageLanes(t *testing.T) {
 		t.Fatalf("summary normal-return lanes = %d, want storage lane count %d", len(normalReturnSummaryLanes), len(storage))
 	}
 	for _, lane := range normalReturnSummaryLanes {
-		if !normalReturnSummaryLaneValid(lane) {
+		if !normalReturnSummaryLaneValid(lane.Value) {
 			t.Fatal("summary normal-return lane has incomplete behavior")
 		}
 	}

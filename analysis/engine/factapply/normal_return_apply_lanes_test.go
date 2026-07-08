@@ -14,7 +14,7 @@ func TestNormalReturnApplyLaneRegistryCoversStorageLanes(t *testing.T) {
 		t.Fatalf("normal-return apply lane count = %d, want storage lane count %d", len(normalReturnApplyLanes), len(storage))
 	}
 	for _, lane := range normalReturnApplyLanes {
-		if lane.apply == nil {
+		if lane.Value.apply == nil {
 			t.Fatal("normal-return apply lane has no apply function")
 		}
 	}
