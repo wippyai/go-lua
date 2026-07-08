@@ -230,11 +230,11 @@ func (r *Result) DominatingAliasDeclaredOrVariantOriginPathTypeAt(point cfg.Poin
 	if r == nil || target.IsEmpty() || target.Symbol == 0 {
 		return nil, false
 	}
-	fact, _, ok := r.DominatingRootLocalAssignment(point, target.Symbol)
-	if !ok || fact.Expr == nil || fact.Type != nil {
+	declaration, ok := r.DominatingPathRootDeclarationSource(point, target.RootOnly())
+	if !ok || declaration.HasDeclaredValue {
 		return nil, false
 	}
-	source, ok := r.ExpressionPath(fact.Expr)
+	source, ok := r.ValueSourcePath(declaration.Source)
 	if !ok || source.IsEmpty() {
 		return nil, false
 	}

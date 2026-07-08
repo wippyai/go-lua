@@ -30,6 +30,8 @@ type RootAssignment struct {
 	hasDeclaredValue       bool
 	declaredValueContracts bool
 	declaredValueOverlays  bool
+	annotationValue        product.Value
+	hasAnnotationValue     bool
 }
 
 // NewRootAssignment creates a root-symbol assignment fact.
@@ -48,6 +50,8 @@ func NewRootAssignmentWithDeclaredValue(kind RootAssignmentKind, targetSymbol sy
 	fact := NewRootAssignment(kind, targetSymbol, targetPath, source)
 	fact.declaredValue = declaredValue
 	fact.hasDeclaredValue = true
+	fact.annotationValue = declaredValue
+	fact.hasAnnotationValue = true
 	return fact
 }
 
@@ -96,10 +100,26 @@ func (a RootAssignment) WithTargetSpan(span SourceSpan) RootAssignment {
 	return a
 }
 
+// WithDeclaredAnnotationValue returns a copy carrying target annotation
+// evidence for diagnostics and declaration queries. Unlike DeclaredValue, this
+// metadata does not instruct transfer to write or overlay the target value.
+func (a RootAssignment) WithDeclaredAnnotationValue(declaredValue product.Value) RootAssignment {
+	a.annotationValue = declaredValue
+	a.hasAnnotationValue = true
+	return a
+}
+
 // DeclaredValue returns conservative declared type evidence to write when
 // Source has no value evidence.
 func (a RootAssignment) DeclaredValue() (product.Value, bool) {
 	return a.declaredValue, a.hasDeclaredValue
+}
+
+// DeclaredAnnotationValue returns inert annotation evidence for the target. It
+// is present for annotated declarations even when source precision should win
+// and no DeclaredValue transfer fallback is required.
+func (a RootAssignment) DeclaredAnnotationValue() (product.Value, bool) {
+	return a.annotationValue, a.hasAnnotationValue
 }
 
 // DeclaredValueContracts reports whether declared value evidence is an

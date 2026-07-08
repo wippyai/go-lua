@@ -391,11 +391,11 @@ func (r *Result) concatDominatingLocalDeclaredOperandType(point cfg.Point, opera
 	if !ok || p.IsEmpty() || p.Symbol == 0 {
 		return nil, false
 	}
-	fact, _, ok := r.DominatingRootLocalAssignment(point, p.Symbol)
-	if !ok || fact.Type == nil || r.TypeResolver() == nil {
+	declaration, ok := r.DominatingPathRootDeclarationSource(point, p.RootOnly())
+	if !ok || !declaration.HasDeclaredValue {
 		return nil, false
 	}
-	declared, ok := r.TypeResolver().Type(fact.Type)
+	declared, ok := r.ValueTypeWithPresence(declaration.DeclaredValue)
 	if !ok || declared == nil {
 		return nil, false
 	}

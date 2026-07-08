@@ -1955,7 +1955,7 @@ func requireLocalAssignmentExprByName(t *testing.T, result *body.Result, name st
 	return 0, nil
 }
 
-func TestDominatingRootLocalAssignmentFindsDominatingDeclaration(t *testing.T) {
+func TestDominatingPathRootDeclarationSourceFindsDominatingDeclaration(t *testing.T) {
 	result := runDiagnosticsResult(t, `
 		local source: string = "ok"
 		if test then
@@ -1967,16 +1967,16 @@ func TestDominatingRootLocalAssignmentFindsDominatingDeclaration(t *testing.T) {
 	if !ok || p.Symbol == 0 {
 		t.Fatalf("sink expression path = %v, %v; want source symbol", p, ok)
 	}
-	fact, declarationPoint, ok := result.DominatingRootLocalAssignment(point, p.Symbol)
+	declaration, ok := result.DominatingPathRootDeclarationSource(point, p.RootOnly())
 	if !ok {
-		t.Fatalf("dominatingRootLocalAssignment = false, want source declaration")
+		t.Fatalf("DominatingPathRootDeclarationSource = false, want source declaration")
 	}
-	if declarationPoint == 0 || fact.Name != "source" || fact.Type == nil {
-		t.Fatalf("dominating declaration = (%#v, %d), want typed source declaration", fact, declarationPoint)
+	if declaration.Point == 0 || declaration.Symbol != p.Symbol || !declaration.HasDeclaredValue {
+		t.Fatalf("dominating declaration = %#v, want typed source declaration", declaration)
 	}
 }
 
-func TestDominatingRootLocalAssignmentStopsAtDominatingRootWrite(t *testing.T) {
+func TestDominatingPathRootDeclarationSourceStopsAtDominatingRootWrite(t *testing.T) {
 	result := runDiagnosticsResult(t, `
 		local source: string = "ok"
 		source = "mutated"
@@ -1987,8 +1987,8 @@ func TestDominatingRootLocalAssignmentStopsAtDominatingRootWrite(t *testing.T) {
 	if !ok || p.Symbol == 0 {
 		t.Fatalf("sink expression path = %v, %v; want source symbol", p, ok)
 	}
-	if fact, declarationPoint, ok := result.DominatingRootLocalAssignment(point, p.Symbol); ok {
-		t.Fatalf("dominating declaration = (%#v, %d), want blocked by root write", fact, declarationPoint)
+	if declaration, ok := result.DominatingPathRootDeclarationSource(point, p.RootOnly()); ok {
+		t.Fatalf("dominating declaration = %#v, want blocked by root write", declaration)
 	}
 }
 

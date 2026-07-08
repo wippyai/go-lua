@@ -113,6 +113,9 @@ func (l *lowerer) addRootAssignmentFromWIR(input *factflow.FactsInput, point cfg
 		} else if declared, ok := l.wirAssignmentDeclaredObjectType(inst, target.Symbol); ok {
 			assignment = factflow.NewRootAssignmentWithDeclaredOverlayValue(kind, target.Symbol, target, source, l.declaredTypeClaimValue(declared))
 		}
+		if declared, ok := l.symbolTypes[target.Symbol]; ok && declared != nil {
+			assignment = assignment.WithDeclaredAnnotationValue(l.declaredTypeClaimValue(declared))
+		}
 	}
 	if inst.TargetSpan.Valid() {
 		assignment = assignment.WithTargetSpan(sourceSpanFromWIR(inst.TargetSpan))

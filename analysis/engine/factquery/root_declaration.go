@@ -2,6 +2,7 @@ package factquery
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
@@ -11,9 +12,11 @@ import (
 // RootDeclarationSource is the source that initialized a root symbol and still
 // dominates the query point without an intervening ordinary root write.
 type RootDeclarationSource struct {
-	Point  cfg.Point
-	Source factflow.ValueSource
-	Symbol symbol.ID
+	Point            cfg.Point
+	Source           factflow.ValueSource
+	Symbol           symbol.ID
+	DeclaredValue    product.Value
+	HasDeclaredValue bool
 }
 
 // RootDeclarationQuery answers root-declaration dominance questions for one
@@ -172,7 +175,14 @@ func (q RootDeclarationQuery) dominatingDeclarationSource(
 			}
 			switch {
 			case assignment.Kind() == factflow.RootAssignmentLocalDeclaration && len(targetPath.Segments) == 0:
-				return RootDeclarationSource{Point: cursor, Source: assignment.Source(), Symbol: target.Symbol}, true
+				declared, hasDeclared := assignment.DeclaredAnnotationValue()
+				return RootDeclarationSource{
+					Point:            cursor,
+					Source:           assignment.Source(),
+					Symbol:           target.Symbol,
+					DeclaredValue:    declared,
+					HasDeclaredValue: hasDeclared,
+				}, true
 			case assignment.Kind() == factflow.RootAssignmentOrdinaryRootWrite:
 				if !pathAware || target.HasPrefix(targetPath) {
 					return RootDeclarationSource{}, false

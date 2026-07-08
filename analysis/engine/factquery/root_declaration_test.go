@@ -4,9 +4,13 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestDominatingRootDeclarationSourceFindsDeclarationOnIDomChain(t *testing.T) {
@@ -30,6 +34,37 @@ func TestDominatingRootDeclarationSourceFindsDeclarationOnIDomChain(t *testing.T
 	}
 	if got.Point != decl || got.Symbol != target || got.Source.ExprRef != source.ExprRef {
 		t.Fatalf("source = %#v, want point %d symbol %d expr %d", got, decl, target, source.ExprRef)
+	}
+}
+
+func TestDominatingRootDeclarationSourceCarriesDeclaredValue(t *testing.T) {
+	graph := cfg.New()
+	decl := graph.AddNode(cfg.NodeAssign)
+	use := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), decl, false)
+	graph.AddEdge(decl, use, false)
+	graph.AddEdge(use, graph.Exit(), false)
+	reg := standard.Registry()
+	target := symbol.ID(18)
+	declared := typevalue.FromType(reg, typ.String)
+
+	got, ok := DominatingRootDeclarationSource(use, target, factflow.NewFacts(factflow.FactsInput{
+		RootAssignments: map[cfg.Point]factflow.RootAssignment{
+			decl: factflow.NewRootAssignmentWithDeclaredValue(
+				factflow.RootAssignmentLocalDeclaration,
+				target,
+				pathdom.NewPath(target, "value"),
+				factflow.ValueSource{},
+				declared,
+			),
+		},
+	}), graph)
+
+	if !ok {
+		t.Fatal("DominatingRootDeclarationSource returned !ok")
+	}
+	if !got.HasDeclaredValue || !product.Equal(reg, got.DeclaredValue, declared) {
+		t.Fatalf("declared value = %#v/%v, want string declared value", got.DeclaredValue, got.HasDeclaredValue)
 	}
 }
 

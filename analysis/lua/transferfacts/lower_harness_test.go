@@ -23,6 +23,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -66,6 +67,14 @@ func TestLowerAnnotatedLiteralLocalPreservesLiteralValue(t *testing.T) {
 	}
 	if fact.DeclaredValueContracts() || fact.DeclaredValueOverlays() {
 		t.Fatalf("declared contract/overlay = %v/%v, want scalar literal source precision", fact.DeclaredValueContracts(), fact.DeclaredValueOverlays())
+	}
+	annotation, ok := fact.DeclaredAnnotationValue()
+	if !ok {
+		t.Fatalf("missing inert declared annotation value")
+	}
+	annotationType, ok := typevalue.TypeOf(reg, annotation)
+	if !ok || !typ.TypeEquals(annotationType, typeexpr.Union(typ.String, typ.Number)) {
+		t.Fatalf("annotation type = %v/%v, want string | number", annotationType, ok)
 	}
 	source := fact.Source()
 	if source.Kind != factflow.ValueSourceLiteral || source.LiteralKind != factflow.ValueSourceLiteralInteger || source.Int != 42 {
@@ -111,6 +120,11 @@ func TestLowerAnnotatedIdentifierLocalDoesNotCarryDeclaredValue(t *testing.T) {
 	}
 	if declared, ok := fact.DeclaredValue(); ok {
 		t.Fatalf("unexpected declared value for identifier source: %v", declared)
+	}
+	if annotation, ok := fact.DeclaredAnnotationValue(); !ok {
+		t.Fatalf("missing declared annotation value")
+	} else if annotationType, typeOK := typevalue.TypeOf(reg, annotation); !typeOK || !typ.TypeEquals(annotationType, typeexpr.Optional(typ.String)) {
+		t.Fatalf("annotation type = %v/%v, want string?", annotationType, typeOK)
 	}
 }
 
