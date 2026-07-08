@@ -35,32 +35,6 @@ func ConstructorPathFromSegments(segments []segment.Segment) ([]typetable.Constr
 	return luatypeprojection.ConstructorPathFromSegments(segments)
 }
 
-func ObjectLiteralShapeType(literal ObjectLiteralFact, entryType func(ObjectEntryFact) (typ.Type, bool)) (typ.Type, bool) {
-	if entryType == nil {
-		return nil, false
-	}
-	builder := typetable.NewConstructorBuilder()
-	seen := false
-	for _, entry := range literal.Entries {
-		path, ok := ConstructorPathFromSegments(entry.Suffix.Segments)
-		if !ok {
-			continue
-		}
-		t, ok := entryType(entry)
-		if !ok || t == nil {
-			continue
-		}
-		if !builder.Add(path, t) {
-			return nil, false
-		}
-		seen = true
-	}
-	if !seen {
-		return nil, false
-	}
-	return builder.Build()
-}
-
 func TypeHasField(t typ.Type, name string) bool {
 	_, ok := checkprojection.Field(t, name)
 	return ok

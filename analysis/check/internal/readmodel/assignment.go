@@ -351,23 +351,25 @@ func (r Reader) forEachOrdinaryAssignment(point cfg.Point, fact body.OrdinaryAss
 		return true
 	}
 	presentation := body.OrdinaryAssignmentPresentationFor(fact)
-	if literal, ok := r.result.ObjectLiteral(fact.Value); ok {
-		if entry, ok := r.assignmentObjectLiteralEntryCandidate(point, literal, expected, assignmentObjectEntryTarget{
-			Label:          presentation.TargetLabel,
-			Key:            r.assignmentTargetKeyForOrdinary(point, fact),
-			ExpectedSpan:   sourceSpanFromBody(presentation.TargetSpan),
-			ExpectedSource: readapi.AssignmentExpectedDynamicTarget,
-		}); ok {
-			*visited = true
-			return visit(entry)
-		}
-	}
 	t, _ := r.assignmentSourceTypeForPresenceProof(point, r.result.AssignmentSourceReadProvenPresent(point, fact.Value), fact.Source, value)
 	if ordinaryDynamicNilDeletionAccepted(presentation.DynamicTarget, target.NilDeletionAllowed, t, r.ValueHasUntrustedTopOrigin(value)) {
 		return true
 	}
 	if r.inferredReplacementAccepted(point, target, expected, t) {
 		return true
+	}
+	if write, ok := r.result.LoweredAssignmentWrite(point); ok {
+		if literal, ok := r.result.ObjectLiteralViewForSource(write.Source); ok {
+			if entry, ok := r.assignmentObjectLiteralEntryCandidate(point, literal, expected, assignmentObjectEntryTarget{
+				Label:          presentation.TargetLabel,
+				Key:            r.assignmentTargetKeyForOrdinary(point, fact),
+				ExpectedSpan:   sourceSpanFromBody(presentation.TargetSpan),
+				ExpectedSource: readapi.AssignmentExpectedDynamicTarget,
+			}); ok {
+				*visited = true
+				return visit(entry)
+			}
+		}
 	}
 	assignment := Assignment{
 		Point:              point,
