@@ -85,3 +85,20 @@ func (r *Result) expressionUsesAt(point cfg.Point) []ExpressionUse {
 	}
 	return out
 }
+
+func (r *Result) assignmentLValueUsesAt(point cfg.Point) []ast.Expr {
+	if r == nil {
+		return nil
+	}
+	fact, ok := r.OrdinaryAssignment(point)
+	if !ok {
+		return nil
+	}
+	if len(fact.Lhs) != 0 {
+		return fact.Lhs
+	}
+	if fact.Target != nil {
+		return []ast.Expr{fact.Target}
+	}
+	return nil
+}

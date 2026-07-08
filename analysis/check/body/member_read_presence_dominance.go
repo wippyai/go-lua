@@ -106,25 +106,14 @@ func (r *Result) memberReadPresenceSourceMatchesTarget(source dominatingMemberRe
 }
 
 func (r *Result) collectRequiredMemberReadPresenceSourcesAtPoint(point cfg.Point, out *[]dominatingMemberReadPresenceSource) {
-	if fact, ok := r.LocalAssignment(point); ok {
-		r.collectRequiredExprMemberReadPresenceSources(point, fact.Expr, out)
-	}
-	if fact, ok := r.OrdinaryAssignment(point); ok {
-		r.collectRequiredExprMemberReadPresenceSources(point, fact.Value, out)
-		for _, lhs := range fact.Lhs {
-			r.collectRequiredLValueMemberReadPresenceSources(point, lhs, out)
+	for _, use := range r.expressionUsesAt(point) {
+		if use.Role == ExpressionUseOrdinaryAssignmentTarget {
+			continue
 		}
+		r.collectRequiredExprMemberReadPresenceSources(point, use.Expr, out)
 	}
-	if fact, ok := r.Call(point); ok {
-		r.collectRequiredExprMemberReadPresenceSources(point, fact.Call, out)
-	}
-	if fact, ok := r.ReturnFact(point); ok {
-		for _, expr := range fact.Exprs {
-			r.collectRequiredExprMemberReadPresenceSources(point, expr, out)
-		}
-	}
-	if fact, ok := r.BranchCondition(point); ok {
-		r.collectRequiredExprMemberReadPresenceSources(point, fact.Condition, out)
+	for _, lhs := range r.assignmentLValueUsesAt(point) {
+		r.collectRequiredLValueMemberReadPresenceSources(point, lhs, out)
 	}
 	if fact, ok := r.ExpressionEvaluation(point); ok {
 		r.collectRequiredExprMemberReadPresenceSources(point, fact.Expr, out)
