@@ -314,6 +314,11 @@ func (r *Result) CallSite(point cfg.Point) (factflow.CallSite, bool) {
 	return r.facts.CallSite(point)
 }
 
+func (r *Result) HasCallSite(point cfg.Point) bool {
+	_, ok := r.CallSiteView(point)
+	return ok
+}
+
 func (r *Result) CallSiteView(point cfg.Point) (factflow.CallSiteView, bool) {
 	if r == nil {
 		return factflow.CallSiteView{}, false

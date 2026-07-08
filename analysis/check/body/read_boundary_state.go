@@ -154,7 +154,7 @@ func (r *Result) needsBoundaryNodeOutput(point cfg.Point) bool {
 		return true
 	}
 	if r.callOutcome != nil {
-		if _, ok := r.facts.CallSiteView(point); ok {
+		if r.HasCallSite(point) {
 			return true
 		}
 	}

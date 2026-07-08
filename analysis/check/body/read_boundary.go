@@ -1535,7 +1535,7 @@ func (r *Result) CallOutcomeAt(point cfg.Point) (callpayload.CallOutcome, bool) 
 	if outcome, ok := r.queries.callOutcome(point); ok {
 		return outcome, true
 	}
-	site, ok := r.facts.CallSiteView(point)
+	site, ok := r.CallSiteView(point)
 	if !ok {
 		return callpayload.CallOutcome{}, false
 	}
