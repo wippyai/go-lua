@@ -206,6 +206,53 @@ func TestProjectionKeepsCapturedRequireModuleRootAlias(t *testing.T) {
 	}
 }
 
+func TestRequireAliasesProjectionTracksLocalRequireNamesBeforeSemantics(t *testing.T) {
+	stmts := parseChunk(t, `
+		local json = require("json")
+		local codec = json
+		do
+			local store = require("store")
+		end
+	`)
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"require"}})
+	projection := NewRequireAliases(bindings, stmts, nil)
+
+	aliases := projection.ModuleAliases()
+	if aliases["json"] != "json" {
+		t.Fatalf("json alias = %q, want json", aliases["json"])
+	}
+	if aliases["codec"] != "json" {
+		t.Fatalf("codec alias = %q, want json", aliases["codec"])
+	}
+	if aliases["store"] != "store" {
+		t.Fatalf("store alias = %q, want store", aliases["store"])
+	}
+}
+
+func TestRequireAliasesProjectionTracksCapturedRequireNamesBeforeSemantics(t *testing.T) {
+	stmts := parseChunk(t, `
+		local json = require("json")
+		function decode(payload)
+			local codec = json
+			return codec.decode(payload)
+		end
+	`)
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"require"}})
+	def, ok := stmts[1].(*ast.FuncDefStmt)
+	if !ok || def.Func == nil {
+		t.Fatalf("stmt 1 = %T, want function definition", stmts[1])
+	}
+	projection := NewRequireAliases(bindings, def.Func.Stmts, def.Func)
+
+	aliases := projection.ModuleAliases()
+	if aliases["json"] != "json" {
+		t.Fatalf("captured json alias = %q, want json", aliases["json"])
+	}
+	if aliases["codec"] != "json" {
+		t.Fatalf("local codec alias = %q, want json", aliases["codec"])
+	}
+}
+
 func TestProjectionDoesNotResolveImplicitGlobalSignatureAlias(t *testing.T) {
 	projection, graph, sem := buildProjection(t, `
 		local store = ownership.store

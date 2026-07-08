@@ -112,6 +112,57 @@ func New(bindings *bind.Result, graph cfg.Graph, sem *semantics.Result) Projecti
 	return out
 }
 
+// NewRequireAliases builds the lexical require-alias subset needed by type
+// resolution before WIR/factflow exists. It intentionally records only the
+// alias-name projection consumed by ModuleAliases; full flow-sensitive signature
+// identity is built by New after lowering has produced body facts.
+func NewRequireAliases(bindings *bind.Result, stmts []ast.Stmt, fn *ast.FunctionExpr) Projection {
+	out := Projection{bindings: bindings}
+	if bindings == nil {
+		return out
+	}
+	out.addRequireAliasesFromStmts(stmts)
+	out.addCapturedAliasNames(fn)
+	return out
+}
+
+func (p *Projection) addRequireAliasesFromStmts(stmts []ast.Stmt) {
+	if p == nil || p.bindings == nil {
+		return
+	}
+	for _, stmt := range stmts {
+		switch n := stmt.(type) {
+		case *ast.LocalAssignStmt:
+			for i, name := range n.Names {
+				id, ok := p.bindings.LocalSymbolAt(n, i)
+				if !ok || id == 0 {
+					continue
+				}
+				expr := exprAt(n.Exprs, i)
+				if modulePath, ok := ExactRequireCall(p.bindings, expr); ok {
+					p.addAliasName(name, modulePath)
+					p.addRoot(id, moduleRoot{modulePath: modulePath, inherited: true})
+					continue
+				}
+				p.addRootAlias(id, name, expr, 0, true)
+			}
+		case *ast.DoBlockStmt:
+			p.addRequireAliasesFromStmts(n.Stmts)
+		case *ast.IfStmt:
+			p.addRequireAliasesFromStmts(n.Then)
+			p.addRequireAliasesFromStmts(n.Else)
+		case *ast.WhileStmt:
+			p.addRequireAliasesFromStmts(n.Stmts)
+		case *ast.RepeatStmt:
+			p.addRequireAliasesFromStmts(n.Stmts)
+		case *ast.NumberForStmt:
+			p.addRequireAliasesFromStmts(n.Stmts)
+		case *ast.GenericForStmt:
+			p.addRequireAliasesFromStmts(n.Stmts)
+		}
+	}
+}
+
 // ExactRequireCall recognizes exactly require("module") calls.
 func ExactRequireCall(bindings *bind.Result, expr ast.Expr) (string, bool) {
 	if bindings == nil {
