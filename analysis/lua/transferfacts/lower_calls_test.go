@@ -596,12 +596,12 @@ end
 	sources := enginevalue.NewSourceValues(enginevalue.SourceValuesConfig{
 		Registry:          reg,
 		TypeValues:        typeValues,
-		ExpressionValues:  facts.ExpressionValues(),
+		ExpressionValues:  collectExpressionValues(facts),
 		ObjectLiteralView: facts.ObjectLiteralView,
 		ObjectLiteralFromView: func(lit factflow.ObjectLiteralView, resolver factflow.ValueSourceResolver) (product.Value, bool) {
 			return luasourcevalue.ObjectLiteralValueFromViewCached(reg, typeValues, lit, resolver)
 		},
-		ExpressionOps: facts.ExpressionOperations(),
+		ExpressionOps: collectExpressionOperations(facts),
 		ExpressionOp: func(op factflow.ExpressionOperation, left product.Value, right product.Value) (product.Value, bool) {
 			return luasourcevalue.ExpressionOperationValue(reg, typeValues, op, left, right)
 		},
@@ -689,12 +689,12 @@ end
 	sources := enginevalue.NewSourceValues(enginevalue.SourceValuesConfig{
 		Registry:          reg,
 		TypeValues:        typeValues,
-		ExpressionValues:  facts.ExpressionValues(),
+		ExpressionValues:  collectExpressionValues(facts),
 		ObjectLiteralView: facts.ObjectLiteralView,
 		ObjectLiteralFromView: func(lit factflow.ObjectLiteralView, resolver factflow.ValueSourceResolver) (product.Value, bool) {
 			return luasourcevalue.ObjectLiteralValueFromViewCached(reg, typeValues, lit, resolver)
 		},
-		ExpressionOps: facts.ExpressionOperations(),
+		ExpressionOps: collectExpressionOperations(facts),
 		ExpressionOp: func(op factflow.ExpressionOperation, left product.Value, right product.Value) (product.Value, bool) {
 			return luasourcevalue.ExpressionOperationValue(reg, typeValues, op, left, right)
 		},

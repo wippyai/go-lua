@@ -49,7 +49,7 @@ func genericForNodeTransfer(
 	resolver *visibility.Resolver,
 	sourcePath func(ast.Expr) (pathdom.Path, bool),
 ) transfer.NodeTransfer {
-	expressionRefinements := sourcevalue.NewExpressionRefinements(facts.ExpressionRefinements())
+	expressionRefinements := sourcevalue.NewExpressionRefinementsFromReader(facts)
 	var refinedSourceRegistry *axis.Registry
 	var refinedSources sourcevalue.SourceValues
 	return func(ctx transfer.NodeContext, in state.State) state.State {

@@ -25,7 +25,7 @@ type ModuleLoadOutcomeProviderConfig struct {
 	NameFor               SignatureNameFunc
 	NameForSite           SignatureSiteNameFunc
 	Sources               sourcevalue.SourceValues
-	ExpressionRefinements map[factflow.ExprRef]factflow.ExpressionRefinement
+	ExpressionRefinements sourcevalue.ExpressionRefinements
 	TypeValues            *typevalue.Cache
 }
 
@@ -37,7 +37,7 @@ func ModuleLoadOutcomeProvider(config ModuleLoadOutcomeProviderConfig) callpaylo
 	nameFor := config.NameFor
 	nameForSite := config.NameForSite
 	sources := config.Sources
-	expressionRefinements := sourcevalue.NewExpressionRefinements(config.ExpressionRefinements)
+	expressionRefinements := config.ExpressionRefinements
 	typeValues := config.TypeValues
 	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
 		if exports == nil || (nameFor == nil && nameForSite == nil) || sources == nil {

@@ -26,6 +26,39 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
+func collectExpressionValues(facts factflow.Facts) map[factflow.ExprRef]product.Value {
+	var out map[factflow.ExprRef]product.Value
+	facts.ForEachExpressionValue(func(ref factflow.ExprRef, value product.Value) bool {
+		if out == nil {
+			out = map[factflow.ExprRef]product.Value{}
+		}
+		out[ref] = value
+		return true
+	})
+	return out
+}
+
+func collectExpressionOperations(facts factflow.Facts) map[factflow.ExprRef]factflow.ExpressionOperation {
+	var out map[factflow.ExprRef]factflow.ExpressionOperation
+	facts.ForEachExpressionOperation(func(ref factflow.ExprRef, op factflow.ExpressionOperation) bool {
+		if out == nil {
+			out = map[factflow.ExprRef]factflow.ExpressionOperation{}
+		}
+		out[ref] = op
+		return true
+	})
+	return out
+}
+
+func expressionRefinementCount(facts factflow.Facts) int {
+	count := 0
+	facts.ForEachExpressionRefinement(func(factflow.ExprRef, factflow.ExpressionRefinement) bool {
+		count++
+		return true
+	})
+	return count
+}
+
 func TestLowerPanicsWithoutRegistry(t *testing.T) {
 	stmts, bindings, built := parseSemanticChunk(t, "local x = 1")
 	_ = stmts

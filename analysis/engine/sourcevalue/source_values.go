@@ -1000,9 +1000,35 @@ type ExpressionRefinements struct {
 	values map[factflow.ExprRef]factflow.ExpressionRefinement
 }
 
+// ExpressionRefinementReader is the iterator surface for lowered expression
+// refinement facts.
+type ExpressionRefinementReader interface {
+	ForEachExpressionRefinement(func(factflow.ExprRef, factflow.ExpressionRefinement) bool)
+}
+
 // NewExpressionRefinements copies refinements into an owned immutable view.
 func NewExpressionRefinements(refinements map[factflow.ExprRef]factflow.ExpressionRefinement) ExpressionRefinements {
 	return ExpressionRefinements{values: copyExpressionRefinements(refinements)}
+}
+
+// NewExpressionRefinementsFromReader copies refinements from an iterator into
+// an owned immutable view.
+func NewExpressionRefinementsFromReader(reader ExpressionRefinementReader) ExpressionRefinements {
+	if reader == nil {
+		return ExpressionRefinements{}
+	}
+	var values map[factflow.ExprRef]factflow.ExpressionRefinement
+	reader.ForEachExpressionRefinement(func(ref factflow.ExprRef, refinement factflow.ExpressionRefinement) bool {
+		if values == nil {
+			values = map[factflow.ExprRef]factflow.ExpressionRefinement{}
+		}
+		values[ref] = refinement
+		return true
+	})
+	if len(values) == 0 {
+		return ExpressionRefinements{}
+	}
+	return ExpressionRefinements{values: values}
 }
 
 // Empty reports whether the set carries no refinements.

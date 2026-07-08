@@ -122,7 +122,7 @@ func branchRefinementSegmentsHavePrefix(target []segment.Segment, prefix []segme
 // assignment, descendant path invalidation, call return-slot production, and
 // return-slot facts; branch-edge refinements are handled by NewFactsEdgeTransfer.
 func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer {
-	expressionRefinements := sourcevalue.NewExpressionRefinements(config.Facts.ExpressionRefinements())
+	expressionRefinements := sourcevalue.NewExpressionRefinementsFromReader(config.Facts)
 	callOutcomeCache := &callOutcomeTraversalCache{}
 	var refinedSourceRegistry *axis.Registry
 	var refinedSources sourcevalue.SourceValues

@@ -186,9 +186,8 @@ func (c *checker) prepare(
 	expressionValues := config.ExpressionValues
 	var expressionPaths map[factflow.ExprRef]struct{}
 	if userExpressionValue == nil {
-		expressionValues = mergeExpressionValues(facts.ExpressionValues(), config.ExpressionValues)
-		expressionPaths = exprRefSet(facts.ExpressionPaths())
-		expressionPaths = addDynamicIndexExprRefs(expressionPaths, facts.DynamicIndexExpressions())
+		expressionValues = expressionValuesFromFacts(facts, config.ExpressionValues)
+		expressionPaths = expressionPathRefsFromFacts(facts)
 	}
 	varargValue := config.VarargValue
 	if varargValue == nil {
@@ -206,9 +205,9 @@ func (c *checker) prepare(
 		ObjectLiteralFromView: func(lit factflow.ObjectLiteralView, resolver factflow.ValueSourceResolver) (product.Value, bool) {
 			return luasourcevalue.ObjectLiteralValueFromViewCached(config.Registry, config.TypeValues, lit, resolver)
 		},
-		ExpressionOps:        facts.ExpressionOperations(),
-		ExpressionConditions: facts.ExpressionConditions(),
-		DynamicIndexExprs:    facts.DynamicIndexExpressions(),
+		ExpressionOps:        expressionOperationsFromFacts(facts),
+		ExpressionConditions: expressionConditionsFromFacts(facts),
+		DynamicIndexExprs:    dynamicIndexExpressionsFromFacts(facts),
 		ExpressionOp: func(op factflow.ExpressionOperation, left product.Value, right product.Value) (product.Value, bool) {
 			return luasourcevalue.ExpressionOperationValue(config.Registry, config.TypeValues, op, left, right)
 		},
@@ -220,7 +219,8 @@ func (c *checker) prepare(
 		PreferExpressionValue: userExpressionValue != nil,
 		VarargValue:           varargValue,
 	})
-	refinedSources := sourcevalue.NewExpressionRefinements(facts.ExpressionRefinements()).Bind(config.Registry, sources)
+	expressionRefinements := sourcevalue.NewExpressionRefinementsFromReader(facts)
+	refinedSources := expressionRefinements.Bind(config.Registry, sources)
 	calleeValue := calleeValueProvider(config.Registry, facts, resolver, refinedSources, config.TypeValues, bindings, typeResolver)
 	receiverFn := declaredReceiverCallableProvider(facts, bindings, typeResolver)
 	callOutcomeSupplement := preparedCallOutcomeSupplement(config.Registry, config.ModuleExports, signatureID, facts, resolver, refinedSources, config.TypeValues, calleeValue)
@@ -318,7 +318,7 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		assignments:           s.assignments,
 		declarations:          s.declarations,
 		genericFors:           s.genericFors,
-		exprRefinements:       sourcevalue.NewExpressionRefinements(s.facts.ExpressionRefinements()),
+		exprRefinements:       sourcevalue.NewExpressionRefinementsFromReader(s.facts),
 		typeNS:                s.typeNS,
 		flow:                  flow,
 		boundaryXfer:          nodeTransfer,
@@ -492,7 +492,7 @@ func (s *Static) callOutcomeProvider(config SolveConfig, typeValues *typevalue.C
 			Facts:         s.facts,
 			Sources:       s.sources,
 			ArgumentType:  effectlowering.SignatureArgumentTypeFunc(signatureArgumentType),
-			ReturnValue:   stdlibSignatureReturnValue(s.registry, typeValues, s.facts, s.sources, sourcevalue.NewExpressionRefinements(s.facts.ExpressionRefinements()), s.visibility),
+			ReturnValue:   stdlibSignatureReturnValue(s.registry, typeValues, s.facts, s.sources, sourcevalue.NewExpressionRefinementsFromReader(s.facts), s.visibility),
 			KeySpace:      s.visibility.KeySpace(),
 		})
 		providers = append([]callpayload.CallOutcomeProvider{signatureProvider}, providers...)
@@ -560,7 +560,7 @@ func preparedCallOutcomeSupplement(
 	calleeValue CalleeValueFunc,
 ) callpayload.CallOutcomeProvider {
 	var providers []callpayload.CallOutcomeProvider
-	expressionRefinements := facts.ExpressionRefinements()
+	expressionRefinements := sourcevalue.NewExpressionRefinementsFromReader(facts)
 	if hasModuleExports(moduleLoads) {
 		providers = append(providers, effectlowering.ModuleLoadOutcomeProvider(effectlowering.ModuleLoadOutcomeProviderConfig{
 			Exports:               moduleLoads,

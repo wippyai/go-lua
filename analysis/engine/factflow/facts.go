@@ -426,9 +426,17 @@ func (f Facts) ExpressionValue(expr ExprRef) (product.Value, bool) {
 	return value, ok
 }
 
-// ExpressionValues returns syntactically known expression values keyed by expression.
-func (f Facts) ExpressionValues() map[ExprRef]product.Value {
-	return copyExpressionValueMap(f.expressionValues)
+// ForEachExpressionValue visits syntactically known expression values without
+// allocating a snapshot map. Returning false stops iteration.
+func (f Facts) ForEachExpressionValue(fn func(ExprRef, product.Value) bool) {
+	if fn == nil {
+		return
+	}
+	for ref, value := range f.expressionValues {
+		if !fn(ref, value) {
+			return
+		}
+	}
 }
 
 // ExpressionOperation returns the lowered operation fact for expr, if present.
@@ -440,9 +448,17 @@ func (f Facts) ExpressionOperation(expr ExprRef) (ExpressionOperation, bool) {
 	return op.copy(), true
 }
 
-// ExpressionOperations returns lowered expression operations keyed by expression.
-func (f Facts) ExpressionOperations() map[ExprRef]ExpressionOperation {
-	return copyExpressionOperationMap(f.expressionOperations)
+// ForEachExpressionOperation visits lowered expression operations without
+// allocating a snapshot map. Returning false stops iteration.
+func (f Facts) ForEachExpressionOperation(fn func(ExprRef, ExpressionOperation) bool) {
+	if fn == nil {
+		return
+	}
+	for ref, op := range f.expressionOperations {
+		if !fn(ref, op) {
+			return
+		}
+	}
 }
 
 // ExpressionFunction returns the function identity symbol for expr, if expr is
@@ -461,9 +477,17 @@ func (f Facts) ExpressionRefinement(expr ExprRef) (ExpressionRefinement, bool) {
 	return fact.copy(), true
 }
 
-// ExpressionRefinements returns source-value refinement facts keyed by expression.
-func (f Facts) ExpressionRefinements() map[ExprRef]ExpressionRefinement {
-	return copyExpressionRefinementMap(f.expressionRefinements)
+// ForEachExpressionRefinement visits source-value refinement facts without
+// allocating a snapshot map. Returning false stops iteration.
+func (f Facts) ForEachExpressionRefinement(fn func(ExprRef, ExpressionRefinement) bool) {
+	if fn == nil {
+		return
+	}
+	for ref, refinement := range f.expressionRefinements {
+		if !fn(ref, refinement) {
+			return
+		}
+	}
 }
 
 // ExpressionPath returns the static expression access path for expr, if present.
@@ -485,9 +509,17 @@ func (f Facts) ExpressionPathRef(expr ExprRef) (pathdom.Path, bool) {
 	return p, true
 }
 
-// ExpressionPaths returns the static expression access paths keyed by expression.
-func (f Facts) ExpressionPaths() map[ExprRef]pathdom.Path {
-	return copyExpressionPathMap(f.expressionPaths)
+// ForEachExpressionPath visits static expression access paths without
+// allocating a snapshot map. Returning false stops iteration.
+func (f Facts) ForEachExpressionPath(fn func(ExprRef, pathdom.Path) bool) {
+	if fn == nil {
+		return
+	}
+	for ref, p := range f.expressionPaths {
+		if !fn(ref, p) {
+			return
+		}
+	}
 }
 
 // DynamicIndexExpression returns the point-sensitive dynamic-index access path
@@ -500,10 +532,18 @@ func (f Facts) DynamicIndexExpression(expr ExprRef) (DynamicIndexExpression, boo
 	return dyn.copy(), true
 }
 
-// DynamicIndexExpressions returns point-sensitive dynamic-index access path
-// descriptors keyed by expression.
-func (f Facts) DynamicIndexExpressions() map[ExprRef]DynamicIndexExpression {
-	return copyDynamicIndexExpressionMap(f.dynamicIndexExpressions)
+// ForEachDynamicIndexExpression visits point-sensitive dynamic-index access
+// path descriptors without allocating a snapshot map. Returning false stops
+// iteration.
+func (f Facts) ForEachDynamicIndexExpression(fn func(ExprRef, DynamicIndexExpression) bool) {
+	if fn == nil {
+		return
+	}
+	for ref, expr := range f.dynamicIndexExpressions {
+		if !fn(ref, expr) {
+			return
+		}
+	}
 }
 
 // ExpressionCondition returns the normalized path facts selected by expression
@@ -516,10 +556,17 @@ func (f Facts) ExpressionCondition(expr ExprRef) (ExpressionCondition, bool) {
 	return condition.copy(), true
 }
 
-// ExpressionConditions returns expression-conditional path facts keyed by
-// expression.
-func (f Facts) ExpressionConditions() map[ExprRef]ExpressionCondition {
-	return copyExpressionConditionMap(f.expressionConditions)
+// ForEachExpressionCondition visits expression-conditional path facts without
+// allocating a snapshot map. Returning false stops iteration.
+func (f Facts) ForEachExpressionCondition(fn func(ExprRef, ExpressionCondition) bool) {
+	if fn == nil {
+		return
+	}
+	for ref, condition := range f.expressionConditions {
+		if !fn(ref, condition) {
+			return
+		}
+	}
 }
 
 func copyNoNormalReturnMap(in map[cfg.Point]struct{}) map[cfg.Point]struct{} {

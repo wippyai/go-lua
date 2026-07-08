@@ -49,13 +49,17 @@ func (config Config) SolveConfig() SolveConfig {
 	return solveConfigFromConfig(config)
 }
 
-func mergeExpressionValues(base, override map[factflow.ExprRef]product.Value) map[factflow.ExprRef]product.Value {
-	if len(base) == 0 && len(override) == 0 {
-		return nil
-	}
-	out := make(map[factflow.ExprRef]product.Value, len(base)+len(override))
-	for ref, value := range base {
+func expressionValuesFromFacts(facts factflow.Facts, override map[factflow.ExprRef]product.Value) map[factflow.ExprRef]product.Value {
+	var out map[factflow.ExprRef]product.Value
+	facts.ForEachExpressionValue(func(ref factflow.ExprRef, value product.Value) bool {
+		if out == nil {
+			out = map[factflow.ExprRef]product.Value{}
+		}
 		out[ref] = value
+		return true
+	})
+	if len(override) != 0 && out == nil {
+		out = make(map[factflow.ExprRef]product.Value, len(override))
 	}
 	for ref, value := range override {
 		out[ref] = value
@@ -63,28 +67,59 @@ func mergeExpressionValues(base, override map[factflow.ExprRef]product.Value) ma
 	return out
 }
 
-func exprRefSet(paths map[factflow.ExprRef]pathdom.Path) map[factflow.ExprRef]struct{} {
-	if len(paths) == 0 {
-		return nil
-	}
-	out := make(map[factflow.ExprRef]struct{}, len(paths))
-	for ref := range paths {
+func expressionPathRefsFromFacts(facts factflow.Facts) map[factflow.ExprRef]struct{} {
+	var out map[factflow.ExprRef]struct{}
+	add := func(ref factflow.ExprRef) {
+		if out == nil {
+			out = map[factflow.ExprRef]struct{}{}
+		}
 		out[ref] = struct{}{}
 	}
+	facts.ForEachExpressionPath(func(ref factflow.ExprRef, _ pathdom.Path) bool {
+		add(ref)
+		return true
+	})
+	facts.ForEachDynamicIndexExpression(func(ref factflow.ExprRef, _ factflow.DynamicIndexExpression) bool {
+		add(ref)
+		return true
+	})
 	return out
 }
 
-func addDynamicIndexExprRefs(set map[factflow.ExprRef]struct{}, dynamic map[factflow.ExprRef]factflow.DynamicIndexExpression) map[factflow.ExprRef]struct{} {
-	if len(dynamic) == 0 {
-		return set
-	}
-	if set == nil {
-		set = make(map[factflow.ExprRef]struct{}, len(dynamic))
-	}
-	for ref := range dynamic {
-		set[ref] = struct{}{}
-	}
-	return set
+func expressionOperationsFromFacts(facts factflow.Facts) map[factflow.ExprRef]factflow.ExpressionOperation {
+	var out map[factflow.ExprRef]factflow.ExpressionOperation
+	facts.ForEachExpressionOperation(func(ref factflow.ExprRef, op factflow.ExpressionOperation) bool {
+		if out == nil {
+			out = map[factflow.ExprRef]factflow.ExpressionOperation{}
+		}
+		out[ref] = op
+		return true
+	})
+	return out
+}
+
+func expressionConditionsFromFacts(facts factflow.Facts) map[factflow.ExprRef]factflow.ExpressionCondition {
+	var out map[factflow.ExprRef]factflow.ExpressionCondition
+	facts.ForEachExpressionCondition(func(ref factflow.ExprRef, condition factflow.ExpressionCondition) bool {
+		if out == nil {
+			out = map[factflow.ExprRef]factflow.ExpressionCondition{}
+		}
+		out[ref] = condition
+		return true
+	})
+	return out
+}
+
+func dynamicIndexExpressionsFromFacts(facts factflow.Facts) map[factflow.ExprRef]factflow.DynamicIndexExpression {
+	var out map[factflow.ExprRef]factflow.DynamicIndexExpression
+	facts.ForEachDynamicIndexExpression(func(ref factflow.ExprRef, expr factflow.DynamicIndexExpression) bool {
+		if out == nil {
+			out = map[factflow.ExprRef]factflow.DynamicIndexExpression{}
+		}
+		out[ref] = expr
+		return true
+	})
+	return out
 }
 
 func configGlobals(config Config) []string {

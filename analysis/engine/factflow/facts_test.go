@@ -1116,9 +1116,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	if got := product.Get(standard.Registry(), exprValue, runtimekind.Key); !runtimekind.Equal(got, runtimekind.Singleton(runtimekind.String)) {
 		t.Fatalf("expression value runtime kind = %s, want string", got)
 	}
-	allExpressionValues := facts.ExpressionValues()
+	allExpressionValues := collectExpressionValues(facts)
 	allExpressionValues[ExprRef(3)] = product.Set(standard.Registry(), product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Boolean))
-	allExpressionValuesAgain := facts.ExpressionValues()
+	allExpressionValuesAgain := collectExpressionValues(facts)
 	if got := product.Get(standard.Registry(), allExpressionValuesAgain[ExprRef(3)], runtimekind.Key); !runtimekind.Equal(got, runtimekind.Singleton(runtimekind.String)) {
 		t.Fatalf("facts expression values exposed mutable map, got runtime kind %s", got)
 	}
@@ -1154,9 +1154,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	if allocs != 0 {
 		t.Fatalf("ExpressionPathRef allocations/run = %.1f, want zero", allocs)
 	}
-	allExpressionPaths := facts.ExpressionPaths()
+	allExpressionPaths := collectExpressionPaths(facts)
 	allExpressionPaths[ExprRef(6)] = path.NewPath(symbol.ID(56), "mutated").Field("other")
-	allExpressionPathsAgain := facts.ExpressionPaths()
+	allExpressionPathsAgain := collectExpressionPaths(facts)
 	assertDirectField(t, allExpressionPathsAgain[ExprRef(6)], "leaf")
 
 	dynExpr, ok := facts.DynamicIndexExpression(ExprRef(7))
@@ -1173,10 +1173,37 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	if dynExprAgain.TablePath().Root != "dynamic" {
 		t.Fatalf("dynamic index expression exposed mutable table path: %v", dynExprAgain.TablePath())
 	}
-	allDynamicExprs := facts.DynamicIndexExpressions()
+	allDynamicExprs := collectDynamicIndexExpressions(facts)
 	allDynamicExprs[ExprRef(7)] = mustDynamicIndexExpression(t, path.NewPath(symbol.ID(56), "mutated"), source)
-	allDynamicExprsAgain := facts.DynamicIndexExpressions()
+	allDynamicExprsAgain := collectDynamicIndexExpressions(facts)
 	assertPathEqual(t, allDynamicExprsAgain[ExprRef(7)].TablePath(), path.NewPath(symbol.ID(55), "dynamic"))
+}
+
+func collectExpressionValues(facts Facts) map[ExprRef]product.Value {
+	out := map[ExprRef]product.Value{}
+	facts.ForEachExpressionValue(func(ref ExprRef, value product.Value) bool {
+		out[ref] = value
+		return true
+	})
+	return out
+}
+
+func collectExpressionPaths(facts Facts) map[ExprRef]path.Path {
+	out := map[ExprRef]path.Path{}
+	facts.ForEachExpressionPath(func(ref ExprRef, p path.Path) bool {
+		out[ref] = p.Clone()
+		return true
+	})
+	return out
+}
+
+func collectDynamicIndexExpressions(facts Facts) map[ExprRef]DynamicIndexExpression {
+	out := map[ExprRef]DynamicIndexExpression{}
+	facts.ForEachDynamicIndexExpression(func(ref ExprRef, expr DynamicIndexExpression) bool {
+		out[ref] = expr
+		return true
+	})
+	return out
 }
 
 func assertDirectField(t *testing.T, p path.Path, want string) {

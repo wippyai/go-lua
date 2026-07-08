@@ -84,7 +84,7 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) callpayload
 	argumentType := config.ArgumentType
 	returnValue := config.ReturnValue
 	providerKeySpace := config.KeySpace
-	expressionRefinements := sourcevalue.NewExpressionRefinements(facts.ExpressionRefinements())
+	expressionRefinements := sourcevalue.NewExpressionRefinementsFromReader(facts)
 	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
 		if signatures == nil {
 			return callpayload.CallOutcome{}

@@ -292,7 +292,7 @@ end
 	}
 	assertWIRClaimSourcePath(t, facts, args[0], xPath)
 	assertWIRConcreteCastAssertion(t, facts, args[0], typ.Number, factflow.ValueSourcePath)
-	if got := len(facts.ExpressionRefinements()); got != 1 {
+	if got := expressionRefinementCount(facts); got != 1 {
 		t.Fatalf("expression refinements = %d, want only the WIR claim source refinement", got)
 	}
 }
