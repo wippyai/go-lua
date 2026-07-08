@@ -2580,14 +2580,14 @@ func TestSignatureOutcomeProviderLowersOperationalAllocationTemplates(t *testing
 	if gotType, ok := typevalue.TypeOf(reg, got.Results[0].Value); !ok || !typ.TypeEquals(gotType, rootType) {
 		t.Fatalf("return type = %v/%v, want %v", gotType, ok, rootType)
 	}
-	if gotPlacement := got.Placements[rootID]; gotPlacement != placement.Stack {
-		t.Fatalf("root placement = %s, want %s", gotPlacement, placement.Stack)
+	if gotPlacement := got.Placements[rootID]; gotPlacement != placement.OwnedHeap {
+		t.Fatalf("root placement = %s, want %s", gotPlacement, placement.OwnedHeap)
 	}
-	if gotPlacement := got.Placements[childID]; gotPlacement != placement.Stack {
-		t.Fatalf("child placement = %s, want %s", gotPlacement, placement.Stack)
+	if gotPlacement := got.Placements[childID]; gotPlacement != placement.OwnedHeap {
+		t.Fatalf("child placement = %s, want %s", gotPlacement, placement.OwnedHeap)
 	}
-	if gotPlacement := got.Placements[entryID]; gotPlacement != placement.Stack {
-		t.Fatalf("dynamic value placement = %s, want %s", gotPlacement, placement.Stack)
+	if gotPlacement := got.Placements[entryID]; gotPlacement != placement.OwnedHeap {
+		t.Fatalf("dynamic value placement = %s, want %s", gotPlacement, placement.OwnedHeap)
 	}
 	rootObject, ok := got.HeapTableObjects[rootID]
 	if !ok {

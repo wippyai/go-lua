@@ -1,20 +1,24 @@
 {
-  "description": "A table allocated in module A, returned through module B, and only read by the entry module remains non-shared through the transitive chain.",
+  "description": "A table allocated in module A, returned through module B, and only read by the entry module remains non-shared but is not frame-local after crossing return boundaries.",
   "files": ["alloc.lua", "pass.lua", "main.lua"],
   "check": {
     "placement": {
       "require_complete": true,
-      "min_stack": 8,
-      "max_stack": 8,
-      "max_owned_heap": 0,
+      "min_owned_heap": 8,
+      "max_stack": 0,
+      "max_owned_heap": 8,
       "max_shared_heap": 0,
-      "min_stack_kind": {
+      "min_owned_heap_kind": {
+        "lua.table": 4,
+        "manifest.allocation": 4
+      },
+      "max_owned_heap_kind": {
         "lua.table": 4,
         "manifest.allocation": 4
       },
       "max_stack_kind": {
-        "lua.table": 4,
-        "manifest.allocation": 4
+        "lua.table": 0,
+        "manifest.allocation": 0
       },
       "max_no_fact": 0,
       "max_unknown": 0

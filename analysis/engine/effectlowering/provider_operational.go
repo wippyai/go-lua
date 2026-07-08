@@ -611,7 +611,7 @@ func operationalAllocationPlacements(point cfg.Point, e signature.OperationalEff
 				continue
 			}
 			id := allocationTemplateIdentityAt(point, object.ID)
-			out[id] = placement.Join(out[id], placement.Stack)
+			out[id] = placement.Join(out[id], placement.OwnedHeap)
 		}
 	}
 	return out
