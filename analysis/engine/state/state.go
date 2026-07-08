@@ -37,6 +37,7 @@ type State struct {
 	placement         placementLane
 	lenFloors         lenFloorLane
 	numFloors         numFloorLane
+	numCeils          numCeilLane
 	diffRelations     diffRelationLane
 }
 

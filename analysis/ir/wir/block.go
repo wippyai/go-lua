@@ -397,6 +397,19 @@ func (b *Body) Const(ref ConstRef) Const {
 	return b.consts[ref]
 }
 
+// ForEachConst visits every interned constant in body order, excluding the
+// sentinel none entry.
+func (b *Body) ForEachConst(fn func(Const) bool) {
+	if b == nil || fn == nil {
+		return
+	}
+	for i := 1; i < len(b.consts); i++ {
+		if !fn(b.consts[i]) {
+			return
+		}
+	}
+}
+
 // Type returns the resolved type identity for ref, or nil for a none ref.
 func (b *Body) Type(ref TypeRef) typ.Type {
 	if ref == 0 || int(ref) >= len(b.types) {

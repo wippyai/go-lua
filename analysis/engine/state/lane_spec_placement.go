@@ -12,7 +12,7 @@ const LanePlacement LaneID = "placement"
 
 var placementLaneSpec = laneSpec{
 	id: LanePlacement,
-	build: func(reg *axis.Registry) laneOps {
+	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		domain := placementMapDomain()
 		return stateLane(domain,
 			func(s State) map[identity.ID]placement.Value {

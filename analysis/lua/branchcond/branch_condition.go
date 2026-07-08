@@ -29,22 +29,26 @@ const (
 	CheckLenGe
 	CheckIndexInRange
 	CheckNumGe
+	CheckNumLe
 	CheckFrozenTable
 )
 
 type Check struct {
-	Kind          CheckKind
-	Path          path.Path
-	OtherPath     path.Path
-	TypeName      string
-	Literal       typ.Type
-	LiteralString string
-	LenFloor      int64
-	NumFloor      int64
+	Kind           CheckKind
+	Path           path.Path
+	OtherPath      path.Path
+	TypeName       string
+	Literal        typ.Type
+	LiteralString  string
+	LenFloor       int64
+	NumFloor       int64
+	NumCeil        int64
+	HasNumCeil     bool
+	NumCeilNegated bool
 	// Negated is true when the bound holds on the FALSE edge of the comparison
 	// rather than the true edge: e.g. `i > #xs` proves the in-range bound i <= #xs
 	// on its false edge, the standard `if oob then error end` guard form. Only the
-	// bound checks (CheckIndexInRange, CheckNumGe, CheckLenGe) use it.
+	// bound checks (CheckIndexInRange, CheckNumGe, CheckNumLe, CheckLenGe) use it.
 	Negated bool
 }
 
@@ -153,6 +157,9 @@ func Normalize(expr ast.Expr, bindings *bind.Result) Check {
 			return check
 		}
 		if check, ok := normalizeNumericFloorComparison(expr, bindings); ok {
+			return check
+		}
+		if check, ok := normalizeNumericCeilingComparison(expr, bindings); ok {
 			return check
 		}
 		if !isEqualityRelop(expr.Operator) {
@@ -614,7 +621,26 @@ func normalizeIndexInRangeComparison(expr *ast.RelationalOpExpr, bindings *bind.
 func normalizeNumericFloorComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
 	return normalizeFlippedComparison(expr, bindings, numericFloorOperands,
 		func(numPath path.Path, floor int64, negated bool) Check {
-			return Check{Kind: CheckNumGe, Path: numPath, NumFloor: floor, Negated: negated}
+			check := Check{Kind: CheckNumGe, Path: numPath, NumFloor: floor, Negated: negated}
+			if ceil, ceilNegated, ok := numericCeilingForComparisonPath(expr, bindings, numPath); ok {
+				check.NumCeil = ceil
+				check.HasNumCeil = true
+				check.NumCeilNegated = ceilNegated
+			}
+			return check
+		})
+}
+
+// normalizeNumericCeilingComparison recognizes a numeric upper-bound guard such
+// as `i <= 64`, `i < 65`, or the flipped `64 >= i`, producing
+// CheckNumLe{Path: i, NumCeil: k}. Most non-equality comparisons also carry a
+// lower-bound implication on the opposite edge and are represented as
+// CheckNumGe with HasNumCeil set by normalizeNumericFloorComparison; this
+// fallback handles ceilings whose lower edge is not useful to the floor lane.
+func normalizeNumericCeilingComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
+	return normalizeFlippedComparison(expr, bindings, numericCeilingOperands,
+		func(numPath path.Path, ceil int64, negated bool) Check {
+			return Check{Kind: CheckNumLe, Path: numPath, NumCeil: ceil, HasNumCeil: true, NumCeilNegated: negated}
 		})
 }
 
@@ -655,6 +681,54 @@ func numericFloorForRelop(op string, c int64) (int64, bool, bool) {
 		return c, true, true
 	case "<=":
 		return c + 1, true, true
+	default:
+		return 0, false, false
+	}
+}
+
+func numericCeilingForComparisonPath(expr *ast.RelationalOpExpr, bindings *bind.Result, want path.Path) (int64, bool, bool) {
+	if p, ceil, negated, ok := numericCeilingOperands(expr.Lhs, expr.Operator, expr.Rhs, bindings); ok && p.Equal(want) {
+		return ceil, negated, true
+	}
+	if p, ceil, negated, ok := numericCeilingOperands(expr.Rhs, flipRelop(expr.Operator), expr.Lhs, bindings); ok && p.Equal(want) {
+		return ceil, negated, true
+	}
+	return 0, false, false
+}
+
+func numericCeilingOperands(numExpr ast.Expr, op string, constExpr ast.Expr, bindings *bind.Result) (path.Path, int64, bool, bool) {
+	numPath, ok := pathexpr.Resolve(numExpr, bindings)
+	if !ok || numPath.IsEmpty() {
+		return path.Path{}, 0, false, false
+	}
+	c, ok := constExpr.(*ast.NumberExpr)
+	if !ok {
+		return path.Path{}, 0, false, false
+	}
+	value, ok := numparse.ParseIntegerLiteral(c.Value)
+	if !ok {
+		return path.Path{}, 0, false, false
+	}
+	ceil, negated, ok := numericCeilingForRelop(op, value)
+	if !ok {
+		return path.Path{}, 0, false, false
+	}
+	return numPath, ceil, negated, true
+}
+
+// numericCeilingForRelop computes the proven upper bound from `path <op> c`
+// and the edge it holds on. `<`/`<=` prove the ceiling on the true edge; `>`/>=`
+// prove it on the false edge.
+func numericCeilingForRelop(op string, c int64) (int64, bool, bool) {
+	switch op {
+	case "<":
+		return c - 1, false, true
+	case "<=":
+		return c, false, true
+	case ">":
+		return c, true, true
+	case ">=":
+		return c - 1, true, true
 	default:
 		return 0, false, false
 	}

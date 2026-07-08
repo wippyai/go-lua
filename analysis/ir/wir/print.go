@@ -322,6 +322,8 @@ func (b *Body) spellCheck(inst Instruction) string {
 		return "in_range " + subject + " " + c.OtherPath.String() + neg
 	case CheckNumGe:
 		return "num_ge " + subject + " " + strconv.FormatInt(c.NumFloor, 10) + neg
+	case CheckNumLe:
+		return "num_le " + subject + " " + strconv.FormatInt(c.NumCeil, 10) + neg
 	default:
 		return "cond?"
 	}

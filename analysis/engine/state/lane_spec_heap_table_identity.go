@@ -10,7 +10,7 @@ const LaneHeapTableIdentity LaneID = "heap-table-identity"
 
 var heapTableIdentityLaneSpec = laneSpec{
 	id: LaneHeapTableIdentity,
-	build: func(reg *axis.Registry) laneOps {
+	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		domain := heapidentity.MapDomain(reg)
 		return stateLane(domain,
 			func(s State) map[identity.ID]heapidentity.TableObject {

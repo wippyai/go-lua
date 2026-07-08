@@ -269,6 +269,7 @@ func (s *Static) Solve(config SolveConfig) *Result {
 	signatureArgumentType := s.signatureArgumentTypeProvider(config, typeValues)
 	callOutcome := s.callOutcomeProvider(config, typeValues, signatureArgumentType)
 	entryState, initial := s.solveEntryState(typeValues, config.EntryState, config.Initial)
+	widenThresholds := wideningThresholdsFromWIR(s.wir)
 	nodeTransfer := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 		Facts:                  s.facts,
 		Sources:                s.sources,
@@ -294,6 +295,7 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		Graph:        s.cfg.Graph,
 		Registry:     s.registry,
 		StateLanes:   config.StateLanes,
+		StateOptions: state.DomainOptions{WidenThresholds: widenThresholds},
 		EntryState:   entryState,
 		Initial:      initial,
 		NodeTransfer: nodeTransfer,

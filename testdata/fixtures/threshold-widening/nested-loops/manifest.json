@@ -1,8 +1,6 @@
 {
   "description": "Threshold widening should preserve nested loop bounds from #grid and #first so 2D indexed reads are in-bounds.",
-  "check": {
-    "skip": "pending: solver threshold widening (task 7c17de64) not yet implemented"
-  },
+  "check": {},
   "run": {
     "skip": "checker-only threshold-widening fixture"
   }

@@ -11,6 +11,13 @@ type LaneID string
 
 var domainCache registrycache.Cache[lattice.Lattice[State]]
 
+// DomainOptions are per-solve lattice knobs that must not be cached globally.
+type DomainOptions struct {
+	// WidenThresholds is the finite syntactic threshold set used by threshold
+	// widening for numeric interval-like lanes.
+	WidenThresholds []int64
+}
+
 // Domain builds the default State lattice with every state axis enabled.
 func Domain(reg *axis.Registry) lattice.Lattice[State] {
 	return domainCache.GetFor(reg, defaultStateDomain)
@@ -70,6 +77,15 @@ func TryDomainWithOptionalLanes(reg *axis.Registry, lanes []LaneID) (lattice.Lat
 		return Domain(reg), nil
 	}
 	return TryDomainWithLanes(reg, lanes)
+}
+
+// TryDomainWithOptionalLanesAndOptions is the non-cached form used when a solve
+// needs per-body domain options such as threshold widening.
+func TryDomainWithOptionalLanesAndOptions(reg *axis.Registry, lanes []LaneID, options DomainOptions) (lattice.Lattice[State], error) {
+	if lanes == nil {
+		return defaultLaneCatalog.TryDomainWithLaneSetAndOptions(reg, defaultLaneCatalog.LaneSet(), options)
+	}
+	return defaultLaneCatalog.TryDomainWithLaneSetAndOptions(reg, NewLaneSet(lanes...), options)
 }
 
 // DomainWithLanes builds a State lattice from a slice of enabled lanes.

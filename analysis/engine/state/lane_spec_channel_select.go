@@ -13,7 +13,7 @@ var channelSelectLaneSpec = laneSpec{
 		s.channelSelect = s.channelSelect.Reachable()
 		return s
 	},
-	build: func(reg *axis.Registry) laneOps {
+	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		return stateLane(channelselectfact.Domain(),
 			func(s State) channelselectfact.Lane { return s.channelSelect },
 			func(out *State, lane channelselectfact.Lane) { out.channelSelect = lane },

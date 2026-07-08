@@ -82,6 +82,10 @@ func (r *Result) computeSourceValueAtBoundary(point cfg.Point, source factflow.V
 	if !ok || product.Equal(r.registry, value, product.Bottom(r.registry)) {
 		return product.Value{}, false
 	}
+	if r.SourceReadProvenPresentBeforeBoundary(point, source) ||
+		r.assignmentSourceIndexProofCanDropMissNil(point, source) {
+		value = enginesourcevalue.WithoutNilRuntimeKind(r.registry, product.WithPresence(r.registry, value, presence.Present()))
+	}
 	return value, true
 }
 
@@ -277,16 +281,34 @@ func (r *Result) ExpressionValueBeforeBoundary(point cfg.Point, expr ast.Expr) (
 	p, ok := r.ExpressionPath(expr)
 	if ok {
 		if value, ok := r.PathValueBeforeBoundary(point, p); ok {
-			return value, true
+			return r.withExpressionIndexProofCanDropMissNil(point, expr, value), true
 		}
 	}
 	if value, ok := r.attributeExpressionValueBeforeBoundary(point, expr); ok {
-		return value, true
+		return r.withExpressionIndexProofCanDropMissNil(point, expr, value), true
 	}
 	if value, ok := r.operatorExpressionValueBeforeBoundary(point, expr); ok {
-		return value, true
+		return r.withExpressionIndexProofCanDropMissNil(point, expr, value), true
 	}
-	return r.expressionAssignmentSourceValueAtBoundary(point, expr, r.SourceValueBeforeBoundary)
+	value, ok := r.expressionAssignmentSourceValueAtBoundary(point, expr, r.SourceValueBeforeBoundary)
+	if !ok {
+		return product.Value{}, false
+	}
+	return r.withExpressionIndexProofCanDropMissNil(point, expr, value), true
+}
+
+func (r *Result) withExpressionIndexProofCanDropMissNil(point cfg.Point, expr ast.Expr, value product.Value) product.Value {
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok || attr == nil || attr.KeySyntax != ast.AttrKeyIndex || attr.Object == nil || attr.Key == nil {
+		return value
+	}
+	containerPath, ok := r.ExpressionPath(attr.Object)
+	if !ok ||
+		!r.IndexReadSafeForExpressionAtBoundary(point, attr.Key, containerPath) ||
+		!r.indexContainerInRangeElementsNonNil(point, containerPath) {
+		return value
+	}
+	return enginesourcevalue.WithoutNilRuntimeKind(r.registry, product.WithPresence(r.registry, value, presence.Present()))
 }
 
 // SourceReadProvenPresentBeforeBoundary reports whether source is a dynamic
@@ -763,7 +785,39 @@ func (r *Result) computeSourceValueBeforeBoundary(point cfg.Point, source factfl
 	if !ok || product.Equal(r.registry, value, product.Bottom(r.registry)) {
 		return product.Value{}, false
 	}
+	if r.SourceReadProvenPresentBeforeBoundary(point, source) ||
+		r.assignmentSourceIndexProofCanDropMissNil(point, source) {
+		value = enginesourcevalue.WithoutNilRuntimeKind(r.registry, product.WithPresence(r.registry, value, presence.Present()))
+	}
 	return value, true
+}
+
+func (r *Result) assignmentSourceIndexProofCanDropMissNil(point cfg.Point, source factflow.ValueSource) bool {
+	if fact, ok := r.LocalAssignment(point); ok {
+		if lowered, ok := r.facts.LocalAssignment(point); ok && lowered.Source() == source {
+			return r.expressionIndexProofCanDropMissNil(point, fact.Expr)
+		}
+	}
+	if fact, ok := r.OrdinaryAssignment(point); ok {
+		if lowered, ok := r.facts.OrdinaryAssignment(point); ok && lowered.Source() == source {
+			return r.expressionIndexProofCanDropMissNil(point, fact.Value)
+		}
+		if lowered, ok := r.facts.PathAssignment(point); ok && lowered.Source() == source {
+			return r.expressionIndexProofCanDropMissNil(point, fact.Value)
+		}
+	}
+	return false
+}
+
+func (r *Result) expressionIndexProofCanDropMissNil(point cfg.Point, expr ast.Expr) bool {
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok || attr == nil || attr.KeySyntax != ast.AttrKeyIndex || attr.Object == nil || attr.Key == nil {
+		return false
+	}
+	containerPath, ok := r.ExpressionPath(attr.Object)
+	return ok &&
+		r.IndexReadSafeForExpressionAtBoundary(point, attr.Key, containerPath) &&
+		r.indexContainerInRangeElementsNonNil(point, containerPath)
 }
 
 func (r *Result) beforeBoundarySourceRead(point cfg.Point) func(cfg.Point) state.State {
@@ -1478,6 +1532,13 @@ func (r *Result) IndexReadSafeAtBoundary(point cfg.Point, indexPath pathdom.Path
 		inRange = r.IndexInRangeAtBoundary(point, indexPath, arrayPath)
 	}
 	if !inRange {
+		if ceil, ok := r.NumericCeilAtBoundary(point, indexPath); ok {
+			if upper, ok := checkedAffineInt64(indexCoeff, ceil, indexOffset); ok {
+				inRange = upper >= 1 && r.indexContainerStaticLengthAtLeast(point, arrayPath, upper)
+			}
+		}
+	}
+	if !inRange {
 		return false
 	}
 	floor, ok := r.NumericFloorAtBoundary(point, indexPath)
@@ -1499,6 +1560,23 @@ func (r *Result) NumericFloorAtBoundary(point cfg.Point, p pathdom.Path) (int64,
 		return 0, false
 	}
 	return in.ReadNumFloor(r.visibility.KeySpace(), stateKey)
+}
+
+// NumericCeilAtBoundary returns the proven numeric upper bound for p at point:
+// a returned (hi, true) asserts value(p) <= hi at that boundary.
+func (r *Result) NumericCeilAtBoundary(point cfg.Point, p pathdom.Path) (int64, bool) {
+	if r == nil || r.visibility == nil || p.IsEmpty() {
+		return 0, false
+	}
+	in, ok := r.boundaryStateAt(point)
+	if !ok {
+		return 0, false
+	}
+	stateKey, keyOK := r.rootOrVisibleStateKeyAtBoundary(point, p)
+	if !keyOK {
+		return 0, false
+	}
+	return in.ReadNumCeil(r.visibility.KeySpace(), stateKey)
 }
 
 // SymbolValueAtBoundary reads a root symbol value at the diagnostic read

@@ -53,6 +53,8 @@ type Config struct {
 	// StateLanes selects the State product-lattice lanes used by this solve.
 	// Nil uses the default lane set; a non-nil slice is the exact enabled set.
 	StateLanes []state.LaneID
+	// StateOptions are per-solve lattice options such as widening thresholds.
+	StateOptions state.DomainOptions
 
 	// Entry is the point seeded with EntryState. Nil uses Graph.Entry().
 	Entry      *cfg.Point
@@ -94,7 +96,7 @@ func TryRun(config Config) (Result, error) {
 	}
 	graph := config.Graph
 	registry := config.Registry
-	domain, err := state.TryDomainWithOptionalLanes(registry, config.StateLanes)
+	domain, err := state.TryDomainWithOptionalLanesAndOptions(registry, config.StateLanes, config.StateOptions)
 	if err != nil {
 		return nil, err
 	}

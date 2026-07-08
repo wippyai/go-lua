@@ -1,6 +1,8 @@
 package body
 
 import (
+	"math"
+
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -104,6 +106,157 @@ func indexContainerStaticLengthAtLeastOne(t typ.Type, depth int) bool {
 	default:
 		return false
 	}
+}
+
+func (r *Result) indexContainerStaticLengthAtLeast(point cfg.Point, containerPath pathdom.Path, floor int64) bool {
+	if floor <= 0 {
+		return true
+	}
+	value, ok := r.PathValueBeforeBoundary(point, containerPath)
+	if !ok {
+		return false
+	}
+	t, ok := typevalue.TypeOf(r.registry, value)
+	return ok && indexContainerStaticLengthAtLeast(t, floor, 0)
+}
+
+func (r *Result) indexContainerInRangeElementsNonNil(point cfg.Point, containerPath pathdom.Path) bool {
+	value, ok := r.PathValueBeforeBoundary(point, containerPath)
+	if !ok {
+		return false
+	}
+	t, ok := typevalue.TypeOf(r.registry, value)
+	return ok && indexContainerInRangeElementsNonNil(t, 0)
+}
+
+func indexContainerInRangeElementsNonNil(t typ.Type, depth int) bool {
+	if t == nil || depth > typ.DefaultRecursionDepth {
+		return false
+	}
+	switch tt := unwrap.Alias(t).(type) {
+	case *typ.Array:
+		elem := tt.Element
+		if elem == nil {
+			elem = typ.Unknown
+		}
+		return !typevalue.TypeIncludesNil(elem)
+	case *typ.Tuple:
+		if len(tt.Elements) == 0 {
+			return false
+		}
+		for _, elem := range tt.Elements {
+			if elem == nil {
+				elem = typ.Unknown
+			}
+			if typevalue.TypeIncludesNil(elem) {
+				return false
+			}
+		}
+		return true
+	case *typ.Record:
+		var found bool
+		for i := int64(1); ; i++ {
+			member := tt.GetStaticIntIndex(i)
+			if member == nil || member.Optional {
+				return found
+			}
+			found = true
+			if typevalue.TypeIncludesNil(member.Type) {
+				return false
+			}
+		}
+	case *typ.Optional:
+		return indexContainerInRangeElementsNonNil(tt.Inner, depth+1)
+	case *typ.Union:
+		if len(tt.Members) == 0 {
+			return false
+		}
+		reachable := false
+		for _, member := range tt.Members {
+			if !indexContainerCanHaveElement(member, depth+1) {
+				continue
+			}
+			reachable = true
+			if !indexContainerInRangeElementsNonNil(member, depth+1) {
+				return false
+			}
+		}
+		return reachable
+	default:
+		return false
+	}
+}
+
+func indexContainerCanHaveElement(t typ.Type, depth int) bool {
+	if t == nil || depth > typ.DefaultRecursionDepth {
+		return true
+	}
+	switch tt := unwrap.Alias(t).(type) {
+	case *typ.Array:
+		return true
+	case *typ.Tuple:
+		return len(tt.Elements) > 0
+	case *typ.Record:
+		member := tt.GetStaticIntIndex(1)
+		return member != nil && !member.Optional
+	case *typ.Optional:
+		return indexContainerCanHaveElement(tt.Inner, depth+1)
+	case *typ.Union:
+		for _, member := range tt.Members {
+			if indexContainerCanHaveElement(member, depth+1) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+func indexContainerStaticLengthAtLeast(t typ.Type, floor int64, depth int) bool {
+	if floor <= 0 {
+		return true
+	}
+	if t == nil || depth > typ.DefaultRecursionDepth {
+		return false
+	}
+	switch tt := unwrap.Alias(t).(type) {
+	case *typ.Tuple:
+		return int64(len(tt.Elements)) >= floor
+	case *typ.Record:
+		for i := int64(1); i <= floor; i++ {
+			member := tt.GetStaticIntIndex(i)
+			if member == nil || member.Optional {
+				return false
+			}
+		}
+		return true
+	case *typ.Optional:
+		return indexContainerStaticLengthAtLeast(tt.Inner, floor, depth+1)
+	case *typ.Union:
+		if len(tt.Members) == 0 {
+			return false
+		}
+		for _, member := range tt.Members {
+			if !indexContainerStaticLengthAtLeast(member, floor, depth+1) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func checkedAffineInt64(coeff, value, offset int64) (int64, bool) {
+	if coeff != 0 && (value > math.MaxInt64/coeff || value < math.MinInt64/coeff) {
+		return 0, false
+	}
+	product := coeff * value
+	if (offset > 0 && product > math.MaxInt64-offset) || (offset < 0 && product < math.MinInt64-offset) {
+		return 0, false
+	}
+	return product + offset, true
 }
 
 func (r *Result) indexExpressionHasIntegerType(point cfg.Point, expr ast.Expr) bool {

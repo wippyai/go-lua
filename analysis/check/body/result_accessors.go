@@ -477,15 +477,18 @@ func (r *Result) branchConditionCheckFromWIR(point cfg.Point) (branchcond.Check,
 
 func branchConditionCheckFromWIR(check wir.Check) branchcond.Check {
 	return branchcond.Check{
-		Kind:          branchcond.CheckKind(check.Kind),
-		Path:          check.Path,
-		OtherPath:     check.OtherPath,
-		TypeName:      check.TypeName,
-		Literal:       check.Literal,
-		LiteralString: check.LiteralString,
-		LenFloor:      check.LenFloor,
-		NumFloor:      check.NumFloor,
-		Negated:       check.Negated,
+		Kind:           branchcond.CheckKind(check.Kind),
+		Path:           check.Path,
+		OtherPath:      check.OtherPath,
+		TypeName:       check.TypeName,
+		Literal:        check.Literal,
+		LiteralString:  check.LiteralString,
+		LenFloor:       check.LenFloor,
+		NumFloor:       check.NumFloor,
+		NumCeil:        check.NumCeil,
+		HasNumCeil:     check.HasNumCeil,
+		NumCeilNegated: check.NumCeilNegated,
+		Negated:        check.Negated,
 	}
 }
 

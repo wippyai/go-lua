@@ -10,7 +10,7 @@ var keyMembershipsLaneSpec = laneSpec{
 		s.keyMemberships = s.keyMemberships.reachable()
 		return s
 	},
-	build: func(reg *axis.Registry) laneOps {
+	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		return stateLane(keyMembershipDomain(),
 			func(s State) keyMembershipLane { return s.keyMemberships },
 			func(out *State, lane keyMembershipLane) { out.keyMemberships = lane },

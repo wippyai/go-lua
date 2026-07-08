@@ -86,19 +86,23 @@ const (
 	BranchCheckLenGe
 	BranchCheckIndexInRange
 	BranchCheckNumGe
+	BranchCheckNumLe
 )
 
 // BranchCheck is a lowered branch predicate with no AST/source dependency.
 type BranchCheck struct {
-	Kind          BranchCheckKind
-	Path          path.Path
-	OtherPath     path.Path
-	TypeName      string
-	Literal       typ.Type
-	LiteralString string
-	LenFloor      int64
-	NumFloor      int64
-	Negated       bool
+	Kind           BranchCheckKind
+	Path           path.Path
+	OtherPath      path.Path
+	TypeName       string
+	Literal        typ.Type
+	LiteralString  string
+	LenFloor       int64
+	NumFloor       int64
+	NumCeil        int64
+	HasNumCeil     bool
+	NumCeilNegated bool
+	Negated        bool
 }
 
 func (c BranchCheck) LiteralValue() (typ.Type, bool) {

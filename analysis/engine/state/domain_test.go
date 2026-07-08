@@ -243,6 +243,7 @@ func TestDefaultLanesExposeEveryStateAxis(t *testing.T) {
 		LanePlacement,
 		LaneLenFloors,
 		LaneNumFloors,
+		LaneNumCeils,
 		LaneDiffRelations,
 	}
 

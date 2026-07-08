@@ -122,6 +122,14 @@ type BranchNumFloorRefinement struct {
 	cond       bool
 }
 
+// BranchNumCeilRefinement records a proven numeric ceiling for a path that
+// holds on the branch edge given by cond.
+type BranchNumCeilRefinement struct {
+	targetPath path.Path
+	hi         int64
+	cond       bool
+}
+
 // NewBranchLenRefinementOnEdge creates a length-floor fact for arrayPath that
 // holds on the given branch edge.
 func NewBranchLenRefinementOnEdge(arrayPath path.Path, lo int64, cond bool) BranchLenRefinement {
@@ -138,6 +146,12 @@ func NewBranchNumFloorRefinement(targetPath path.Path, lo int64) BranchNumFloorR
 // that holds on the given branch edge.
 func NewBranchNumFloorRefinementOnEdge(targetPath path.Path, lo int64, cond bool) BranchNumFloorRefinement {
 	return BranchNumFloorRefinement{targetPath: targetPath.Clone(), lo: lo, cond: cond}
+}
+
+// NewBranchNumCeilRefinementOnEdge creates a numeric ceiling fact for targetPath
+// that holds on the given branch edge.
+func NewBranchNumCeilRefinementOnEdge(targetPath path.Path, hi int64, cond bool) BranchNumCeilRefinement {
+	return BranchNumCeilRefinement{targetPath: targetPath.Clone(), hi: hi, cond: cond}
 }
 
 // ArrayPath returns the array path whose length floor this fact raises.
@@ -172,6 +186,24 @@ func (r BranchNumFloorRefinement) Floor() int64 { return r.lo }
 func (r BranchNumFloorRefinement) Cond() bool { return r.cond }
 
 func (r BranchNumFloorRefinement) copy() BranchNumFloorRefinement {
+	r.targetPath = r.targetPath.Clone()
+	return r
+}
+
+// TargetPath returns the numeric path whose ceiling this fact lowers.
+func (r BranchNumCeilRefinement) TargetPath() path.Path { return r.targetPath.Clone() }
+
+// TargetPathRef returns the numeric path for immediate read-only use.
+// Callers must not mutate or retain the returned path.
+func (r BranchNumCeilRefinement) TargetPathRef() path.Path { return r.targetPath }
+
+// Ceiling returns the proven upper bound on the numeric path.
+func (r BranchNumCeilRefinement) Ceiling() int64 { return r.hi }
+
+// Cond returns the branch edge this numeric ceiling holds on.
+func (r BranchNumCeilRefinement) Cond() bool { return r.cond }
+
+func (r BranchNumCeilRefinement) copy() BranchNumCeilRefinement {
 	r.targetPath = r.targetPath.Clone()
 	return r
 }
@@ -251,6 +283,7 @@ type BranchRefinementSet struct {
 	refinements     []BranchRefinement
 	lenFloors       []BranchLenRefinement
 	numFloors       []BranchNumFloorRefinement
+	numCeils        []BranchNumCeilRefinement
 	diffConstraints []BranchDiffConstraint
 }
 
@@ -302,6 +335,13 @@ func (s BranchRefinementSet) WithNumFloorRefinements(numFloors ...BranchNumFloor
 	return out
 }
 
+// WithNumCeilRefinements returns s extended with edge-specific numeric-ceiling facts.
+func (s BranchRefinementSet) WithNumCeilRefinements(numCeils ...BranchNumCeilRefinement) BranchRefinementSet {
+	out := s.copy()
+	out.numCeils = append(out.numCeils, copyBranchNumCeilRefinementSlice(numCeils)...)
+	return out
+}
+
 // LenRefinements returns the length-floor branch facts in deterministic
 // order.
 func (s BranchRefinementSet) LenRefinements() []BranchLenRefinement {
@@ -312,6 +352,12 @@ func (s BranchRefinementSet) LenRefinements() []BranchLenRefinement {
 // order.
 func (s BranchRefinementSet) NumFloorRefinements() []BranchNumFloorRefinement {
 	return copyBranchNumFloorRefinementSlice(s.numFloors)
+}
+
+// NumCeilRefinements returns the numeric-ceiling branch facts in deterministic
+// order.
+func (s BranchRefinementSet) NumCeilRefinements() []BranchNumCeilRefinement {
+	return copyBranchNumCeilRefinementSlice(s.numCeils)
 }
 
 // TargetPath returns the refined path.
@@ -354,6 +400,7 @@ func (s BranchRefinementSet) copy() BranchRefinementSet {
 		refinements:     copyBranchRefinementSlice(s.refinements),
 		lenFloors:       copyBranchLenRefinementSlice(s.lenFloors),
 		numFloors:       copyBranchNumFloorRefinementSlice(s.numFloors),
+		numCeils:        copyBranchNumCeilRefinementSlice(s.numCeils),
 		diffConstraints: copyBranchDiffConstraintSlice(s.diffConstraints),
 	}
 }
@@ -376,6 +423,17 @@ func copyBranchNumFloorRefinementSlice(in []BranchNumFloorRefinement) []BranchNu
 	out := make([]BranchNumFloorRefinement, len(in))
 	for i, fact := range in {
 		out[i] = fact.copy()
+	}
+	return out
+}
+
+func copyBranchNumCeilRefinementSlice(in []BranchNumCeilRefinement) []BranchNumCeilRefinement {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]BranchNumCeilRefinement, len(in))
+	for i, item := range in {
+		out[i] = item.copy()
 	}
 	return out
 }

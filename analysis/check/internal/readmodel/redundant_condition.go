@@ -80,15 +80,18 @@ func (r Reader) DominatingBranchCheckForPath(
 
 func branchCheckFromLua(check branchcond.Check) readapi.BranchCheck {
 	return readapi.BranchCheck{
-		Kind:          branchCheckKindFromLua(check.Kind),
-		Path:          check.Path,
-		OtherPath:     check.OtherPath,
-		TypeName:      check.TypeName,
-		Literal:       check.Literal,
-		LiteralString: check.LiteralString,
-		LenFloor:      check.LenFloor,
-		NumFloor:      check.NumFloor,
-		Negated:       check.Negated,
+		Kind:           branchCheckKindFromLua(check.Kind),
+		Path:           check.Path,
+		OtherPath:      check.OtherPath,
+		TypeName:       check.TypeName,
+		Literal:        check.Literal,
+		LiteralString:  check.LiteralString,
+		LenFloor:       check.LenFloor,
+		NumFloor:       check.NumFloor,
+		NumCeil:        check.NumCeil,
+		HasNumCeil:     check.HasNumCeil,
+		NumCeilNegated: check.NumCeilNegated,
+		Negated:        check.Negated,
 	}
 }
 
@@ -120,6 +123,8 @@ func branchCheckKindFromLua(kind branchcond.CheckKind) readapi.BranchCheckKind {
 		return readapi.BranchCheckIndexInRange
 	case branchcond.CheckNumGe:
 		return readapi.BranchCheckNumGe
+	case branchcond.CheckNumLe:
+		return readapi.BranchCheckNumLe
 	default:
 		return readapi.BranchCheckNone
 	}

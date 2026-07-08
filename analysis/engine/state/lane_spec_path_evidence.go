@@ -13,7 +13,7 @@ var pathEvidenceLaneSpec = laneSpec{
 		s.pathEvidence = s.pathEvidence.Reachable()
 		return s
 	},
-	build: func(reg *axis.Registry) laneOps {
+	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		return stateLane(pathevidence.Domain(reg),
 			func(s State) pathevidence.Lane { return s.pathEvidence },
 			func(out *State, lane pathevidence.Lane) { out.pathEvidence = lane },

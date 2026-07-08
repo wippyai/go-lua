@@ -56,6 +56,9 @@ func (l *lowerer) branchValueRefinementForCheck(check branchcond.Check) (factflo
 	case branchcond.CheckNumGe:
 		value := factflow.NewValueConstraint(l.typeWitnessValue(typ.Number))
 		return factflow.NewBranchRefinement(target, value, true, value, true), true
+	case branchcond.CheckNumLe:
+		value := factflow.NewValueConstraint(l.typeWitnessValue(typ.Number))
+		return factflow.NewBranchRefinement(target, value, true, value, true), true
 	default:
 		return factflow.BranchRefinement{}, false
 	}
@@ -96,6 +99,10 @@ func (l *lowerer) branchNumFloorRefinementsFromWIR(point cfg.Point) []factflow.B
 	return branchFloorRefinementsFromWIR(l, point, branchNumFloorRefinementForCheck, branchNumFloorRefinementForImplication)
 }
 
+func (l *lowerer) branchNumCeilRefinementsFromWIR(point cfg.Point) []factflow.BranchNumCeilRefinement {
+	return branchFloorRefinementsFromWIR(l, point, branchNumCeilRefinementForCheck, branchNumCeilRefinementForImplication)
+}
+
 func branchNumFloorRefinementForCheck(check branchcond.Check) (factflow.BranchNumFloorRefinement, bool) {
 	return branchNumFloorRefinementOnEdge(check, !check.Negated)
 }
@@ -121,6 +128,37 @@ func branchNumFloorRefinementForImplication(implied branchcond.ImpliedCheck) (fa
 		return factflow.BranchNumFloorRefinement{}, false
 	}
 	return factflow.NewBranchNumFloorRefinementOnEdge(check.Path, check.NumFloor, implied.Edge), true
+}
+
+func branchNumCeilRefinementForCheck(check branchcond.Check) (factflow.BranchNumCeilRefinement, bool) {
+	if check.Kind == branchcond.CheckNumLe && !check.HasNumCeil {
+		check.HasNumCeil = true
+	}
+	return branchNumCeilRefinementOnEdge(check, !check.NumCeilNegated)
+}
+
+func branchNumCeilRefinementOnEdge(check branchcond.Check, edge bool) (factflow.BranchNumCeilRefinement, bool) {
+	if !check.HasNumCeil || check.Path.IsEmpty() {
+		return factflow.BranchNumCeilRefinement{}, false
+	}
+	if edge != !check.NumCeilNegated {
+		return factflow.BranchNumCeilRefinement{}, false
+	}
+	return factflow.NewBranchNumCeilRefinementOnEdge(check.Path, check.NumCeil, edge), true
+}
+
+func branchNumCeilRefinementForImplication(implied branchcond.ImpliedCheck) (factflow.BranchNumCeilRefinement, bool) {
+	check := implied.Check
+	if check.Kind == branchcond.CheckNumLe && !check.HasNumCeil {
+		check.HasNumCeil = true
+	}
+	if !check.HasNumCeil || check.Path.IsEmpty() {
+		return factflow.BranchNumCeilRefinement{}, false
+	}
+	if implied.Polarity != !check.NumCeilNegated {
+		return factflow.BranchNumCeilRefinement{}, false
+	}
+	return factflow.NewBranchNumCeilRefinementOnEdge(check.Path, check.NumCeil, implied.Edge), true
 }
 
 func branchFloorRefinementsFromWIR[T any](

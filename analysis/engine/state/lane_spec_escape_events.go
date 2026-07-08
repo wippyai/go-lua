@@ -13,7 +13,7 @@ var escapeEventsLaneSpec = laneSpec{
 		s.escapeEvents = s.escapeEvents.Reachable()
 		return s
 	},
-	build: func(reg *axis.Registry) laneOps {
+	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		return stateLane(escapeevent.Domain(),
 			func(s State) escapeevent.Lane { return s.escapeEvents },
 			func(out *State, lane escapeevent.Lane) { out.escapeEvents = lane },

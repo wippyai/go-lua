@@ -30,12 +30,13 @@
 // visit cells in the same order and return identical maps. There is no use of
 // maps for ordering, no randomness, and no wall-clock dependence.
 //
-// Termination: the solver imposes no numeric iteration cap. It relies entirely
-// on the lattice contract — Join is monotone and a cell's value only ever moves
-// up the order, and Widen at WidenAt cells guarantees every ascending chain is
-// eventually stationary. A domain whose Widen is not a true widening (does not
-// satisfy ACC) can make Solve run forever; that is a domain-law bug, not a
-// concern the solver papers over with a cap.
+// Termination: the widening phase imposes no numeric iteration cap. It relies
+// entirely on the lattice contract — Join is monotone and a cell's value only
+// ever moves up the order, and Widen at WidenAt cells guarantees every ascending
+// chain is eventually stationary. A domain whose Widen is not a true widening
+// (does not satisfy ACC) can make Solve run forever; that is a domain-law bug,
+// not a concern the solver papers over with a cap. The optional narrowing phase
+// is deliberately bounded by defaultNarrowIterations.
 package solve
 
 import (
@@ -49,6 +50,12 @@ import (
 type Stats struct {
 	TransferCalls int
 }
+
+// defaultNarrowIterations bounds the decreasing pass after a widened fixpoint
+// stabilizes. Two passes is the standard practical compromise: it recovers
+// bounds lost to widening at loop heads while preserving unconditional
+// termination independent of the domain's descending-chain height.
+const defaultNarrowIterations = 2
 
 // EquationSystem describes a monotone equation system to be solved.
 //
@@ -138,6 +145,7 @@ func Solve[Cell comparable, State any](sys EquationSystem[Cell, State]) map[Cell
 	validateEquationSystem(sys)
 	s := newState(sys)
 	s.run()
+	s.runNarrowing()
 	return s.materialize()
 }
 
@@ -170,14 +178,20 @@ type solveState[Cell comparable, State any] struct {
 	widenDelay func(Cell) int
 	abstract   func(Cell, State) State
 	stats      *Stats
+	hasWiden   bool
 
 	// order is the canonical index of each cell, fixing deterministic
 	// re-queue ordering. Only cells in sys.Cells receive an order; emitted-only
 	// cells are not enqueued, so they need none.
 	order map[Cell]int
+	cells []Cell
 
 	// cur is the working value of every cell touched so far.
 	cur map[Cell]State
+	// initial stores non-bottom declared initials so narrowing can re-apply the
+	// transfer equations from the same boundary conditions without mutating cur
+	// during candidate construction.
+	initial map[Cell]State
 
 	// declaredCur counts declared system cells currently present in cur. It lets
 	// materialize transfer ownership of cur only when cur is exactly the declared
@@ -243,7 +257,9 @@ func newState[Cell comparable, State any](sys EquationSystem[Cell, State]) *solv
 		abstract:   abstract,
 		stats:      sys.Stats,
 		order:      make(map[Cell]int, n),
+		cells:      make([]Cell, 0, n),
 		cur:        make(map[Cell]State, n),
+		initial:    make(map[Cell]State, n),
 		dependents: make(map[Cell][]Cell),
 		dependEdge: make(map[edge[Cell]]struct{}),
 		queue:      make([]Cell, 0, n),
@@ -258,13 +274,20 @@ func newState[Cell comparable, State any](sys EquationSystem[Cell, State]) *solv
 			continue
 		}
 		s.order[c] = len(s.order)
+		s.cells = append(s.cells, c)
+		if widenAt(c) {
+			s.hasWiden = true
+		}
 		if initialSparse != nil {
 			if value, ok := initialSparse(c); ok {
 				s.cur[c] = value
+				s.initial[c] = value
 				s.declaredCur++
 			}
 		} else {
-			s.cur[c] = initial(c)
+			value := initial(c)
+			s.cur[c] = value
+			s.initial[c] = value
 			s.declaredCur++
 		}
 		s.enqueue(c)
@@ -443,6 +466,93 @@ func (s *solveState[Cell, State]) run() {
 		s.transfer(c, read, emit)
 		s.recordVisit(c)
 	}
+}
+
+func (s *solveState[Cell, State]) runNarrowing() {
+	if s.domain.Narrow == nil || !s.hasWiden || len(s.cells) == 0 {
+		return
+	}
+	for i := 0; i < defaultNarrowIterations; i++ {
+		candidate := s.narrowingCandidate()
+		changed := false
+		seen := make(map[Cell]struct{}, len(s.cur)+len(candidate))
+		for _, c := range s.cells {
+			seen[c] = struct{}{}
+			if s.applyNarrowedCandidate(c, candidate) {
+				changed = true
+			}
+		}
+		for c := range s.cur {
+			if _, ok := seen[c]; ok {
+				continue
+			}
+			seen[c] = struct{}{}
+			if s.applyNarrowedCandidate(c, candidate) {
+				changed = true
+			}
+		}
+		for c := range candidate {
+			if _, ok := seen[c]; ok {
+				continue
+			}
+			if s.applyNarrowedCandidate(c, candidate) {
+				changed = true
+			}
+		}
+		if !changed {
+			return
+		}
+	}
+}
+
+func (s *solveState[Cell, State]) narrowingCandidate() map[Cell]State {
+	candidate := make(map[Cell]State, len(s.cur))
+	for c, value := range s.initial {
+		candidate[c] = value
+	}
+	candidateOf := func(c Cell) State {
+		if value, ok := candidate[c]; ok {
+			return value
+		}
+		value := s.domain.Bottom()
+		candidate[c] = value
+		return value
+	}
+	read := func(d Cell) State {
+		return s.curOf(d)
+	}
+	emit := func(d Cell, v State) {
+		prev := candidateOf(d)
+		next := s.domain.Join(prev, v)
+		next = s.abstract(d, next)
+		candidate[d] = next
+	}
+	var zero Cell
+	for _, c := range s.cells {
+		s.active = c
+		s.activeReadSelf = false
+		s.activeSelfChanged = false
+		s.transfer(c, read, emit)
+	}
+	s.active = zero
+	s.activeReadSelf = false
+	s.activeSelfChanged = false
+	return candidate
+}
+
+func (s *solveState[Cell, State]) applyNarrowedCandidate(c Cell, candidate map[Cell]State) bool {
+	prev := s.curOf(c)
+	nextInput, ok := candidate[c]
+	if !ok {
+		nextInput = s.domain.Bottom()
+	}
+	next := s.domain.Narrow(prev, nextInput)
+	next = s.abstract(c, next)
+	if !s.domain.LessOrEq(next, prev) || s.domain.Equal(next, prev) {
+		return false
+	}
+	s.cur[c] = next
+	return true
 }
 
 func (s *solveState[Cell, State]) materialize() map[Cell]State {

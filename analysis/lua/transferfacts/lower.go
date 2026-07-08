@@ -187,6 +187,9 @@ func (l *lowerer) addBranchFactsFromWIR(input *factflow.FactsInput, point cfg.Po
 	if lowered := l.branchNumFloorRefinementsFromWIR(point); len(lowered) != 0 {
 		appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered...)
 	}
+	if lowered := l.branchNumCeilRefinementsFromWIR(point); len(lowered) != 0 {
+		appendBranchNumCeilRefinement(input.BranchRefinements, point, lowered...)
+	}
 	if lowered := l.branchDiffConstraintsFromWIR(point); len(lowered) != 0 {
 		appendBranchDiffConstraint(input.BranchRefinements, point, lowered...)
 	}

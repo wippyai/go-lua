@@ -9,7 +9,7 @@ const LaneDynamicIndex LaneID = "dynamic-index"
 
 var dynamicIndexLaneSpec = laneSpec{
 	id: LaneDynamicIndex,
-	build: func(reg *axis.Registry) laneOps {
+	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		domain := dynamicindex.MapDomain(reg)
 		return stateLane(domain,
 			func(s State) map[dynamicindex.Key]dynamicindex.Fact {

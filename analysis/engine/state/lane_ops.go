@@ -11,7 +11,7 @@ import (
 type laneSpec struct {
 	id            LaneID
 	bit           laneMask
-	build         func(*axis.Registry) laneOps
+	build         func(*axis.Registry, DomainOptions) laneOps
 	markReachable func(State) State
 }
 
@@ -37,6 +37,7 @@ type laneOps struct {
 	lessOrEq func(State, State) bool
 	join     func(*State, State, State, bool)
 	widen    func(*State, State, State, bool)
+	narrow   func(*State, State, State)
 }
 
 func stateLane[T any](
@@ -86,14 +87,25 @@ func stateLane[T any](
 			}
 			set(out, domain.Widen(pv, nv))
 		},
+		narrow: func(out *State, prev, next State) {
+			if domain.Narrow == nil {
+				set(out, get(prev))
+				return
+			}
+			set(out, domain.Narrow(get(prev), get(next)))
+		},
 	}
 }
 
 func domainFromLaneSpecs(reg *axis.Registry, specs []laneSpec, universe []laneSpec) lattice.Lattice[State] {
+	return domainFromLaneSpecsWithOptions(reg, specs, universe, DomainOptions{})
+}
+
+func domainFromLaneSpecsWithOptions(reg *axis.Registry, specs []laneSpec, universe []laneSpec, options DomainOptions) lattice.Lattice[State] {
 	lanes := make([]laneOps, 0, len(specs))
 	var bits laneMask
 	for _, spec := range specs {
-		lanes = append(lanes, spec.build(reg))
+		lanes = append(lanes, spec.build(reg, options))
 		bits |= spec.bit
 	}
 	bottomLanes := make([]laneOps, 0, len(universe))
@@ -101,7 +113,7 @@ func domainFromLaneSpecs(reg *axis.Registry, specs []laneSpec, universe []laneSp
 		bottomLanes = lanes
 	} else {
 		for _, spec := range universe {
-			bottomLanes = append(bottomLanes, spec.build(reg))
+			bottomLanes = append(bottomLanes, spec.build(reg, options))
 		}
 	}
 	scope := scopedLaneMask(bits)
@@ -163,6 +175,14 @@ func domainFromLaneSpecs(reg *axis.Registry, specs []laneSpec, universe []laneSp
 			reuseInputs := prev.canonical && next.canonical
 			for _, lane := range lanes {
 				lane.widen(&out, prev, next, reuseInputs)
+			}
+			out.canonical = true
+			return out
+		},
+		Narrow: func(prev, next State) State {
+			out := bottom
+			for _, lane := range lanes {
+				lane.narrow(&out, prev, next)
 			}
 			out.canonical = true
 			return out

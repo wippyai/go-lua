@@ -233,6 +233,14 @@ func (f Facts) BranchNumFloorRefinements(point cfg.Point) []BranchNumFloorRefine
 	return nil
 }
 
+// BranchNumCeilRefinements returns the numeric-ceiling branch facts at point.
+func (f Facts) BranchNumCeilRefinements(point cfg.Point) []BranchNumCeilRefinement {
+	if set, ok := f.branchRefinements[point]; ok {
+		return set.NumCeilRefinements()
+	}
+	return nil
+}
+
 // BranchDiffConstraints returns the difference-logic branch facts at point.
 func (f Facts) BranchDiffConstraints(point cfg.Point) []BranchDiffConstraint {
 	if set, ok := f.branchRefinements[point]; ok {

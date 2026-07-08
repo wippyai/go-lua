@@ -45,6 +45,10 @@ package lattice
 //     prev ⊑ Widen(prev, next), next ⊑ Widen(prev, next), and for any
 //     monotone f: L → L, the sequence s₀ = ⊥, sᵢ₊₁ = Widen(sᵢ, f(sᵢ)) is
 //     eventually stationary.
+//   - Narrow: optional Cousot narrowing operator for bounded decreasing passes
+//     after widening has stabilized. Narrow(prev, next) must stay an
+//     over-approximation of next and be no more precise than facts justified by
+//     next; domains may leave it nil to keep the widened value unchanged.
 type Lattice[T any] struct {
 	Bottom   func() T
 	Top      func() T
@@ -53,4 +57,5 @@ type Lattice[T any] struct {
 	Join     func(a, b T) T
 	Meet     func(a, b T) T
 	Widen    func(prev, next T) T
+	Narrow   func(prev, next T) T
 }

@@ -6,7 +6,7 @@ const LaneValues LaneID = "values"
 
 var valuesLaneSpec = laneSpec{
 	id: LaneValues,
-	build: func(reg *axis.Registry) laneOps {
+	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		domain := valueLaneDomain(reg)
 		return stateLane(domain,
 			func(s State) valueLane {

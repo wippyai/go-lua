@@ -322,6 +322,53 @@ func TestNumFloorStateSemantics(t *testing.T) {
 	}
 }
 
+func TestNumCeilStateSemantics(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	stateDomain := Domain(reg)
+	stateKey := testStateKey(t, pathdom.PathKey("sym14@1.index"))
+
+	if ceil, ok := (State{}).ReadNumCeil(ks, stateKey); ok || ceil != 0 {
+		t.Fatalf("missing num ceil = %d/%v, want absent", ceil, ok)
+	}
+	if got := (State{}).WriteNumCeil(ks, pathaddr.StateKey(""), 2); !stateDomain.Equal(got, State{}) {
+		t.Fatalf("empty num-ceil path changed state: %s", formatState(reg, ks, got))
+	}
+	if snapshot := stateDomain.Bottom().NumCeilsSnapshot(ks); !snapshot.Bottom || len(snapshot.Ceils) != 0 {
+		t.Fatalf("bottom num-ceil snapshot = %#v, want bottom without ceilings", snapshot)
+	}
+
+	withCeil := State{}.WriteNumCeil(ks, stateKey, 10)
+	if ceil, ok := withCeil.ReadNumCeil(ks, stateKey); !ok || ceil != 10 {
+		t.Fatalf("num ceil = %d/%v, want 10/present", ceil, ok)
+	}
+	weaker := withCeil.WriteNumCeil(ks, stateKey, 20)
+	if !stateDomain.Equal(weaker, withCeil) {
+		t.Fatalf("weaker num ceil changed state: %s", formatState(reg, ks, weaker))
+	}
+	stronger := withCeil.WriteNumCeil(ks, stateKey, 8)
+	if ceil, ok := stronger.ReadNumCeil(ks, stateKey); !ok || ceil != 8 {
+		t.Fatalf("stronger num ceil = %d/%v, want 8/present", ceil, ok)
+	}
+
+	snapshot := stronger.NumCeilsSnapshot(ks)
+	if snapshot.Bottom || snapshot.Ceils[stateKey] != 8 {
+		t.Fatalf("num-ceil snapshot = %#v, want state-key ceiling 8", snapshot)
+	}
+	snapshot.Ceils[stateKey] = 99
+	if ceil, _ := stronger.ReadNumCeil(ks, stateKey); ceil != 8 {
+		t.Fatalf("mutating num-ceil snapshot changed state ceiling to %d", ceil)
+	}
+
+	cleared := stronger.ClearNumCeil(ks, stateKey)
+	if ceil, ok := cleared.ReadNumCeil(ks, stateKey); ok || ceil != 0 {
+		t.Fatalf("cleared num ceil = %d/%v, want absent", ceil, ok)
+	}
+	if again := cleared.ClearNumCeil(ks, stateKey); !stateDomain.Equal(again, cleared) {
+		t.Fatalf("clearing absent num ceil changed state: %s", formatState(reg, ks, again))
+	}
+}
+
 func TestStoreRelationStateMustSemantics(t *testing.T) {
 	reg := standard.Registry()
 	stateDomain := Domain(reg)

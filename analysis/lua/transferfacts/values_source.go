@@ -643,6 +643,9 @@ func wirChecksEquivalent(a, b wir.Check) bool {
 		a.LiteralString != b.LiteralString ||
 		a.LenFloor != b.LenFloor ||
 		a.NumFloor != b.NumFloor ||
+		a.NumCeil != b.NumCeil ||
+		a.HasNumCeil != b.HasNumCeil ||
+		a.NumCeilNegated != b.NumCeilNegated ||
 		a.Negated != b.Negated ||
 		!a.Path.Equal(b.Path) ||
 		!a.OtherPath.Equal(b.OtherPath) {

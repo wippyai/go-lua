@@ -27,6 +27,7 @@ const (
 	CheckLenGe
 	CheckIndexInRange
 	CheckNumGe
+	CheckNumLe
 	CheckFrozenTable
 )
 
@@ -43,10 +44,13 @@ type Check struct {
 	LiteralString string
 	LenFloor      int64
 	// NumFloor carries the numeric lower bound for CheckNumGe.
-	NumFloor int64
+	NumFloor       int64
+	NumCeil        int64
+	HasNumCeil     bool
+	NumCeilNegated bool
 	// Negated is true when the bound holds on the FALSE edge of the comparison
 	// rather than the true edge. Only the bound checks (CheckIndexInRange,
-	// CheckNumGe, CheckLenGe) use it.
+	// CheckNumGe, CheckNumLe, CheckLenGe) use it.
 	Negated bool
 }
 

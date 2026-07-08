@@ -2,6 +2,7 @@
 package readexpr
 
 import (
+	"math"
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/check/internal/staticmemberwitness"
@@ -583,6 +584,13 @@ func dynamicIndexInBoundsProvesRead(config Config, point cfg.Point, dyn factflow
 	if dynamicIndexDiffProvesLELength(config, proofVisibility, point, proofState, term, dyn.TablePathRef()) {
 		return true
 	}
+	if ceil, ok := dynamicIndexTermCeil(proofVisibility, point, proofState, term); ok {
+		if upper, ok := checkedAffineInt64(term.Coeff, ceil, term.Offset); ok && upper >= 1 {
+			if dynamicIndexStaticSequenceLengthAtLeast(config, point, dyn.TablePathRef(), in, upper) {
+				return true
+			}
+		}
+	}
 	if term.Coeff != 1 || term.Offset != 0 {
 		return false
 	}
@@ -624,6 +632,21 @@ func dynamicIndexTermFloor(resolver *visibility.Resolver, point cfg.Point, in st
 	return floor, true
 }
 
+func dynamicIndexTermCeil(resolver *visibility.Resolver, point cfg.Point, in state.State, term dynamicIndexTerm) (int64, bool) {
+	if resolver == nil || term.Path.IsEmpty() {
+		return 0, false
+	}
+	stateKey, ok := visibility.AddressAt(resolver, point, term.Path).RootOrVisibleStateKey()
+	if !ok {
+		return 0, false
+	}
+	ceil, ok := in.ReadNumCeil(resolver.KeySpace(), stateKey)
+	if !ok {
+		return 0, false
+	}
+	return ceil, true
+}
+
 func dynamicIndexModuloLengthProvesRead(
 	config Config,
 	point cfg.Point,
@@ -662,6 +685,18 @@ func dynamicIndexArrayLengthKnownAtLeastOne(config Config, point cfg.Point, arra
 	}
 	tableType, ok := config.TypeValues.TypeOf(config.Registry, tableValue)
 	return ok && staticallyNonEmptySequenceType(tableType, 0)
+}
+
+func dynamicIndexStaticSequenceLengthAtLeast(config Config, point cfg.Point, arrayPath pathdom.Path, in state.State, floor int64) bool {
+	if floor <= 0 || config.TypeValues == nil {
+		return floor <= 0
+	}
+	tableValue, ok := Project(config, point, arrayPath, in)
+	if !ok {
+		return false
+	}
+	tableType, ok := config.TypeValues.TypeOf(config.Registry, tableValue)
+	return ok && staticallyKnownSequenceLengthAtLeast(tableType, floor, 0)
 }
 
 func dynamicIndexModuloDividendHasIntegerSource(config Config, point cfg.Point, source factflow.ValueSource, in state.State) bool {
@@ -710,6 +745,52 @@ func staticallyNonEmptySequenceType(t typ.Type, depth int) bool {
 	default:
 		return false
 	}
+}
+
+func staticallyKnownSequenceLengthAtLeast(t typ.Type, floor int64, depth int) bool {
+	if floor <= 0 {
+		return true
+	}
+	if t == nil || depth > typ.DefaultRecursionDepth {
+		return false
+	}
+	switch tt := unwrap.Alias(t).(type) {
+	case *typ.Tuple:
+		return int64(len(tt.Elements)) >= floor
+	case *typ.Record:
+		for i := int64(1); i <= floor; i++ {
+			member := tt.GetStaticIntIndex(i)
+			if member == nil || member.Optional {
+				return false
+			}
+		}
+		return true
+	case *typ.Optional:
+		return staticallyKnownSequenceLengthAtLeast(tt.Inner, floor, depth+1)
+	case *typ.Union:
+		if len(tt.Members) == 0 {
+			return false
+		}
+		for _, member := range tt.Members {
+			if !staticallyKnownSequenceLengthAtLeast(member, floor, depth+1) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func checkedAffineInt64(coeff, value, offset int64) (int64, bool) {
+	if coeff != 0 && (value > math.MaxInt64/coeff || value < math.MinInt64/coeff) {
+		return 0, false
+	}
+	product := coeff * value
+	if (offset > 0 && product > math.MaxInt64-offset) || (offset < 0 && product < math.MinInt64-offset) {
+		return 0, false
+	}
+	return product + offset, true
 }
 
 func dynamicIndexPlusOneModuloSource(config Config, source factflow.ValueSource) (factflow.ValueSource, bool) {
@@ -2005,6 +2086,18 @@ func inRangeDynamicIndexContainerNonNil(t typ.Type, depth int) bool {
 			}
 		}
 		return true
+	case *typ.Record:
+		var found bool
+		for i := int64(1); ; i++ {
+			member := tt.GetStaticIntIndex(i)
+			if member == nil || member.Optional {
+				return found
+			}
+			found = true
+			if typevalue.TypeIncludesNil(member.Type) {
+				return false
+			}
+		}
 	case *typ.Optional:
 		return inRangeDynamicIndexContainerNonNil(tt.Inner, depth+1)
 	case *typ.Union:

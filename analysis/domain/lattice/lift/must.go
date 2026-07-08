@@ -106,6 +106,38 @@ func MustMap[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[MustM
 			}
 			return MustMapLane[K, V]{values: finiteMustMapJoin(prev.values, next.values, elem.Widen)}
 		},
+		Narrow: func(prev, next MustMapLane[K, V]) MustMapLane[K, V] {
+			if elem.Narrow == nil {
+				return prev
+			}
+			if prev.bottom || next.bottom {
+				return prev
+			}
+			if sameMapValue(prev.values, next.values) {
+				return prev
+			}
+			out := make(map[K]V, len(prev.values)+len(next.values))
+			for key, prevValue := range prev.values {
+				nextValue, ok := next.values[key]
+				if !ok {
+					nextValue = elem.Top()
+				}
+				narrowed := elem.Narrow(prevValue, nextValue)
+				if !elem.Equal(narrowed, elem.Top()) {
+					out[key] = narrowed
+				}
+			}
+			for key, nextValue := range next.values {
+				if _, ok := prev.values[key]; ok {
+					continue
+				}
+				narrowed := elem.Narrow(elem.Top(), nextValue)
+				if !elem.Equal(narrowed, elem.Top()) {
+					out[key] = narrowed
+				}
+			}
+			return MustMapLane[K, V]{values: out}
+		},
 	}
 }
 
@@ -206,6 +238,9 @@ func MustSet[T comparable]() lattice.Lattice[MustSetLane[T]] {
 				return prev
 			}
 			return MustSetLane[T]{values: finiteSetIntersection(prev.values, next.values)}
+		},
+		Narrow: func(prev, next MustSetLane[T]) MustSetLane[T] {
+			return prev
 		},
 	}
 }

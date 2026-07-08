@@ -10,7 +10,7 @@ var diffRelationsLaneSpec = laneSpec{
 		s.diffRelations = s.diffRelations.reachable()
 		return s
 	},
-	build: func(reg *axis.Registry) laneOps {
+	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		return stateLane(diffRelationDomain(),
 			func(s State) diffRelationLane { return s.diffRelations },
 			func(out *State, lane diffRelationLane) { out.diffRelations = lane },

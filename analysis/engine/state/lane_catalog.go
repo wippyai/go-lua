@@ -45,6 +45,12 @@ func (c LaneCatalog) Domain(reg *axis.Registry) lattice.Lattice[State] {
 	return domainFromLaneSpecs(reg, c.specs, c.specs)
 }
 
+// DomainWithOptions builds a State lattice with every lane in this catalog
+// enabled and per-solve options applied.
+func (c LaneCatalog) DomainWithOptions(reg *axis.Registry, options DomainOptions) lattice.Lattice[State] {
+	return domainFromLaneSpecsWithOptions(reg, c.specs, c.specs, options)
+}
+
 // DomainWithLaneSet builds a State lattice from an exact ordered lane
 // selection against this catalog.
 func (c LaneCatalog) DomainWithLaneSet(reg *axis.Registry, lanes LaneSet) lattice.Lattice[State] {
@@ -64,6 +70,16 @@ func (c LaneCatalog) TryDomainWithLaneSet(reg *axis.Registry, lanes LaneSet) (la
 		return lattice.Lattice[State]{}, err
 	}
 	return domainFromLaneSpecs(reg, specs, c.specs), nil
+}
+
+// TryDomainWithLaneSetAndOptions builds a selected-lane domain with per-solve
+// options applied, returning configuration errors instead of panicking.
+func (c LaneCatalog) TryDomainWithLaneSetAndOptions(reg *axis.Registry, lanes LaneSet, options DomainOptions) (lattice.Lattice[State], error) {
+	specs, err := c.selectSpecs(lanes)
+	if err != nil {
+		return lattice.Lattice[State]{}, err
+	}
+	return domainFromLaneSpecsWithOptions(reg, specs, c.specs, options), nil
 }
 
 // ValidateLaneSet checks that every selected lane exists in this catalog and

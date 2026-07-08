@@ -1834,6 +1834,7 @@ func TestEngineStateCompositionImportBoundaries(t *testing.T) {
 		modulePath+"/analysis/engine/state/heapidentity",
 		modulePath+"/analysis/engine/state/lenbound",
 		modulePath+"/analysis/engine/state/numbound",
+		modulePath+"/analysis/engine/state/numceil",
 		modulePath+"/analysis/engine/state/pathevidence",
 	)
 	for _, imp := range productionImports(t, modulePath+"/analysis/engine/state") {
@@ -1860,6 +1861,7 @@ func TestEngineStateLeafDirectImportBoundaries(t *testing.T) {
 		modulePath + "/analysis/engine/state/numbound": copyAllowSet(nil,
 			modulePath+"/analysis/engine/state/internal/floor",
 		),
+		modulePath + "/analysis/engine/state/numceil":      {},
 		modulePath + "/analysis/engine/state/pathevidence": {},
 	}
 

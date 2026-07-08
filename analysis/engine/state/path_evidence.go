@@ -479,6 +479,9 @@ func (s State) RekeyPathEvidence(from, to *keyspace.KeySpace) State {
 	if s.laneEnabled(laneNumFloorsBit) {
 		out.numFloors = s.numFloors.rekey(from, to)
 	}
+	if s.laneEnabled(laneNumCeilsBit) {
+		out.numCeils = s.numCeils.rekey(from, to)
+	}
 	if s.laneEnabled(laneLenFloorsBit) {
 		out.lenFloors = s.lenFloors.rekey(from, to)
 	}

@@ -2233,15 +2233,18 @@ func relOperator(op string) wir.Operator {
 // defined in lockstep, so the kind maps by position.
 func lowerCheck(c branchcond.Check) wir.Check {
 	return wir.Check{
-		Kind:          wir.CheckKind(c.Kind),
-		Path:          c.Path,
-		OtherPath:     c.OtherPath,
-		TypeName:      c.TypeName,
-		Literal:       c.Literal,
-		LiteralString: c.LiteralString,
-		LenFloor:      c.LenFloor,
-		NumFloor:      c.NumFloor,
-		Negated:       c.Negated,
+		Kind:           wir.CheckKind(c.Kind),
+		Path:           c.Path,
+		OtherPath:      c.OtherPath,
+		TypeName:       c.TypeName,
+		Literal:        c.Literal,
+		LiteralString:  c.LiteralString,
+		LenFloor:       c.LenFloor,
+		NumFloor:       c.NumFloor,
+		NumCeil:        c.NumCeil,
+		HasNumCeil:     c.HasNumCeil,
+		NumCeilNegated: c.NumCeilNegated,
+		Negated:        c.Negated,
 	}
 }
 

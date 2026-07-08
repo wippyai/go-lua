@@ -23,7 +23,9 @@ func appendBranchRefinement(out map[cfg.Point]factflow.BranchRefinementSet, poin
 	existing = append(existing, refinements...)
 	out[point] = factflow.NewBranchRefinementSet(existing...).
 		WithLenRefinements(prior.LenRefinements()...).
-		WithNumFloorRefinements(prior.NumFloorRefinements()...)
+		WithNumFloorRefinements(prior.NumFloorRefinements()...).
+		WithNumCeilRefinements(prior.NumCeilRefinements()...).
+		WithDiffConstraints(prior.DiffConstraints()...)
 }
 
 func appendBranchLenRefinement(out map[cfg.Point]factflow.BranchRefinementSet, point cfg.Point, lenFloors ...factflow.BranchLenRefinement) {
@@ -38,6 +40,13 @@ func appendBranchNumFloorRefinement(out map[cfg.Point]factflow.BranchRefinementS
 		return
 	}
 	out[point] = out[point].WithNumFloorRefinements(numFloors...)
+}
+
+func appendBranchNumCeilRefinement(out map[cfg.Point]factflow.BranchRefinementSet, point cfg.Point, numCeils ...factflow.BranchNumCeilRefinement) {
+	if len(numCeils) == 0 {
+		return
+	}
+	out[point] = out[point].WithNumCeilRefinements(numCeils...)
 }
 
 func appendBranchDiffConstraint(out map[cfg.Point]factflow.BranchRefinementSet, point cfg.Point, diffs ...factflow.BranchDiffConstraint) {

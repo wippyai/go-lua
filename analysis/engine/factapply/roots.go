@@ -22,6 +22,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func applyRootAssignmentFact(
@@ -55,6 +56,8 @@ func applyRootAssignmentFact(
 	out = addPathEqualityProofFromDynamicIndexSource(ctx, resolver, facts, sources, read, in, out, targetPath, fact.Source())
 	out = addPathKeyMembershipsFromDynamicIndexSource(ctx, resolver, facts, out, targetPath, fact.Source())
 	out = applyRootAssignmentNumFloor(ctx, resolver, facts, in, out, targetPath, fact.Source())
+	out = applyRootAssignmentNumCeil(ctx, resolver, facts, in, out, targetPath, fact.Source())
+	out = applyRootAssignmentLenFloorFromValue(ctx, resolver, typeValues, out, targetPath, sourceValue, hasSourceValue)
 	out = applyObjectLiteralEntriesWithKnownSourceValue(ctx, resolver, facts, sources, read, in, out, targetPath, fact.Source(), sourceValue, hasSourceValue, typeValues)
 	out = applyClosedDynamicAllValueRootAssignment(ctx, resolver, facts, sources, read, in, out, targetPath, fact.Source(), closedDynamicAllValues)
 	return out, applied
@@ -686,8 +689,127 @@ func applyRootAssignmentNumFloor(
 	// Reassigning the root invalidates every difference relation over its old
 	// value (and, if it is an array, its old length).
 	out = out.ClearDiffConstraintsFor(targetKey)
+	out = out.ClearNumFloor(resolver.KeySpace(), targetKey)
 	if floor, ok := sourcevalue.NumFloorForSource(ctx.Registry, resolver, ctx.Point, facts, in, source); ok {
 		return out.WriteNumFloor(resolver.KeySpace(), targetKey, floor)
 	}
-	return out.ClearNumFloor(resolver.KeySpace(), targetKey)
+	return out
+}
+
+func applyRootAssignmentNumCeil(
+	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
+	facts factflow.Facts,
+	in state.State,
+	out state.State,
+	targetPath pathdom.Path,
+	source factflow.ValueSource,
+) state.State {
+	if resolver == nil || targetPath.Symbol == 0 || len(targetPath.Segments) != 0 {
+		return out
+	}
+	targetKey, ok := visibility.AddressAt(resolver, ctx.Point, targetPath).RootOrVisibleStateKey()
+	if !ok {
+		return out
+	}
+	out = out.ClearNumCeil(resolver.KeySpace(), targetKey)
+	if ceil, ok := sourcevalue.NumCeilForSource(ctx.Registry, resolver, ctx.Point, facts, in, source); ok {
+		return out.WriteNumCeil(resolver.KeySpace(), targetKey, ceil)
+	}
+	return out
+}
+
+func applyRootAssignmentLenFloorFromValue(
+	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
+	typeValues *typevalue.Cache,
+	out state.State,
+	targetPath pathdom.Path,
+	sourceValue product.Value,
+	hasSourceValue bool,
+) state.State {
+	if resolver == nil || typeValues == nil || !hasSourceValue || targetPath.Symbol == 0 || len(targetPath.Segments) != 0 {
+		return out
+	}
+	targetKey, ok := visibility.AddressAt(resolver, ctx.Point, targetPath).VisibleStateKey()
+	if !ok {
+		return out
+	}
+	t, ok := typeValues.TypeOf(ctx.Registry, sourceValue)
+	if !ok {
+		return out
+	}
+	if floor := staticSequenceLengthFloor(t, 0); floor > 0 {
+		return out.WriteLenFloor(resolver.KeySpace(), targetKey, floor)
+	}
+	return out
+}
+
+func staticSequenceLengthFloor(t typ.Type, depth int) int64 {
+	if t == nil || depth > typ.DefaultRecursionDepth {
+		return 0
+	}
+	switch tt := t.(type) {
+	case *typ.Annotated:
+		return staticSequenceLengthFloor(tt.Inner, depth+1)
+	case *typ.Alias:
+		return staticSequenceLengthFloor(tt.UnaliasedTarget(), depth+1)
+	case *typ.Tuple:
+		return int64(len(tt.Elements))
+	case *typ.Record:
+		var floor int64
+		for i := int64(1); ; i++ {
+			member := tt.GetStaticIntIndex(i)
+			if member == nil || member.Optional {
+				return floor
+			}
+			floor = i
+		}
+	case *typ.Union:
+		if len(tt.Members) == 0 {
+			return 0
+		}
+		var min int64
+		for _, member := range tt.Members {
+			floor := staticSequenceLengthFloor(member, depth+1)
+			if floor == 0 {
+				return 0
+			}
+			if min == 0 || floor < min {
+				min = floor
+			}
+		}
+		return min
+	default:
+		return 0
+	}
+}
+
+func staticSequenceExactLength(t typ.Type, depth int) (int64, bool) {
+	if t == nil || depth > typ.DefaultRecursionDepth {
+		return 0, false
+	}
+	switch tt := t.(type) {
+	case *typ.Annotated:
+		return staticSequenceExactLength(tt.Inner, depth+1)
+	case *typ.Alias:
+		return staticSequenceExactLength(tt.UnaliasedTarget(), depth+1)
+	case *typ.Tuple:
+		return int64(len(tt.Elements)), true
+	case *typ.Union:
+		if len(tt.Members) == 0 {
+			return 0, false
+		}
+		var length int64
+		for i, member := range tt.Members {
+			memberLength, ok := staticSequenceExactLength(member, depth+1)
+			if !ok || (i > 0 && memberLength != length) {
+				return 0, false
+			}
+			length = memberLength
+		}
+		return length, true
+	default:
+		return 0, false
+	}
 }

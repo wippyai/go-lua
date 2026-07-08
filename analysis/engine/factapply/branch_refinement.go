@@ -124,6 +124,63 @@ func applyBranchNumFloorRefinement(
 	return out.WriteNumFloor(resolver.KeySpace(), pathKey, fact.Floor())
 }
 
+// applyBranchNumCeilRefinement records an edge upper bound for a numeric path.
+// Root paths use their structural key, matching NumericCeilAtBoundary.
+func applyBranchNumCeilRefinement(
+	ctx transfer.EdgeContext,
+	resolver *visibility.Resolver,
+	out state.State,
+	fact factflow.BranchNumCeilRefinement,
+) state.State {
+	if resolver == nil {
+		return out
+	}
+	targetPath := fact.TargetPathRef()
+	if targetPath.Symbol == 0 {
+		return out
+	}
+	pathKey, ok := visibility.AddressAt(resolver, ctx.Edge.From, targetPath).RootOrVisibleStateKey()
+	if !ok {
+		return out
+	}
+	return out.WriteNumCeil(resolver.KeySpace(), pathKey, fact.Ceiling())
+}
+
+func applyBranchIndexStaticLengthCeil(
+	typeValues *typevalue.Cache,
+	ctx transfer.EdgeContext,
+	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
+	out state.State,
+	proof factflow.BranchPathEvidence,
+) state.State {
+	if typeValues == nil || resolver == nil || proof.Kind() != factflow.BranchPathEvidenceIndexInRange {
+		return out
+	}
+	indexPath := proof.PathRef()
+	arrayPath, ok := proof.OtherPathRef()
+	if !ok || indexPath.Symbol == 0 || arrayPath.Symbol == 0 {
+		return out
+	}
+	arrayValue, ok := resolvePathValueAtCached(typeValues, ctx.Registry, resolver, ctx.Edge.From, out, arrayPath, projectPath)
+	if !ok {
+		return out
+	}
+	arrayType, ok := typeValues.TypeOf(ctx.Registry, arrayValue.value)
+	if !ok {
+		return out
+	}
+	length, ok := staticSequenceExactLength(arrayType, 0)
+	if !ok {
+		return out
+	}
+	indexKey, ok := visibility.AddressAt(resolver, ctx.Edge.From, indexPath).RootOrVisibleStateKey()
+	if !ok {
+		return out
+	}
+	return out.WriteNumCeil(resolver.KeySpace(), indexKey, length)
+}
+
 // applyBranchDiffConstraint records an edge-specific difference-logic fact
 // between two linear path terms. Length operands stay typed in the relation
 // graph so len(path) cannot be confused with value(path).

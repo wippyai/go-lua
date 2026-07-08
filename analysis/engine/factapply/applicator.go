@@ -274,6 +274,12 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 			}
 			out = applyBranchNumFloorRefinement(ctx, config.Visibility, out, fact)
 		}
+		for _, fact := range config.Facts.BranchNumCeilRefinements(ctx.Edge.From) {
+			if fact.Cond() != ctx.Edge.Cond {
+				continue
+			}
+			out = applyBranchNumCeilRefinement(ctx, config.Visibility, out, fact)
+		}
 		for _, fact := range config.Facts.BranchDiffConstraints(ctx.Edge.From) {
 			if fact.Cond() != ctx.Edge.Cond {
 				continue
@@ -313,6 +319,7 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 			if !proof.ActiveOnEdge(ctx.Edge.Cond) {
 				return true
 			}
+			out = applyBranchIndexStaticLengthCeil(config.TypeValues, ctx, config.Visibility, config.ProjectPath, out, proof)
 			out = applyBranchPathEvidence(config.TypeValues, ctx, config.Visibility, config.ProjectPath, out, proof)
 			return !stateIsBottom(ctx.Registry, out)
 		})

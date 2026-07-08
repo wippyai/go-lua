@@ -10,7 +10,7 @@ var numFloorsLaneSpec = laneSpec{
 		s.numFloors = s.numFloors.reachable()
 		return s
 	},
-	build: func(reg *axis.Registry) laneOps {
+	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		return stateLane(numFloorMapDomain(),
 			func(s State) numFloorLane { return s.numFloors },
 			func(out *State, lane numFloorLane) { out.numFloors = lane },

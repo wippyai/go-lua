@@ -10,7 +10,7 @@ var frozenTablesLaneSpec = laneSpec{
 		s.frozenTables = s.frozenTables.reachable()
 		return s
 	},
-	build: func(reg *axis.Registry) laneOps {
+	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		return stateLane(frozenTableDomain(),
 			func(s State) frozenTableLane { return s.frozenTables },
 			func(out *State, lane frozenTableLane) { out.frozenTables = lane },

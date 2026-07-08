@@ -15,6 +15,7 @@ var defaultLaneCatalog = newLaneCatalog([]laneSpec{
 	placementLaneSpec,
 	lenFloorsLaneSpec,
 	numFloorsLaneSpec,
+	numCeilsLaneSpec,
 	diffRelationsLaneSpec,
 })
 
@@ -33,5 +34,6 @@ var (
 	lanePlacementBit         = defaultLaneCatalog.mustLaneBit(LanePlacement)
 	laneLenFloorsBit         = defaultLaneCatalog.mustLaneBit(LaneLenFloors)
 	laneNumFloorsBit         = defaultLaneCatalog.mustLaneBit(LaneNumFloors)
+	laneNumCeilsBit          = defaultLaneCatalog.mustLaneBit(LaneNumCeils)
 	laneDiffRelationsBit     = defaultLaneCatalog.mustLaneBit(LaneDiffRelations)
 )

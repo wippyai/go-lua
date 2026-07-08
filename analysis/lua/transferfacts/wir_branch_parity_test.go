@@ -893,7 +893,9 @@ func wirCheckMatchesBranchcond(got wir.Check, want branchcond.Check) bool {
 	if got.TypeName != want.TypeName || got.LiteralString != want.LiteralString {
 		return false
 	}
-	if got.LenFloor != want.LenFloor || got.NumFloor != want.NumFloor || got.Negated != want.Negated {
+	if got.LenFloor != want.LenFloor || got.NumFloor != want.NumFloor ||
+		got.NumCeil != want.NumCeil || got.HasNumCeil != want.HasNumCeil ||
+		got.NumCeilNegated != want.NumCeilNegated || got.Negated != want.Negated {
 		return false
 	}
 	if got.Literal == nil || want.Literal == nil {
