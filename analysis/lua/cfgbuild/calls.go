@@ -121,25 +121,6 @@ func (c Calls) Get(point cfg.Point) (Call, bool) {
 	return copyCall(*fact), true
 }
 
-type CallView struct {
-	fact *Call
-}
-
-func (v CallView) Borrowed() (Call, bool) {
-	if v.fact == nil {
-		return Call{}, false
-	}
-	return *v.fact, true
-}
-
-func (c Calls) View(point cfg.Point) (CallView, bool) {
-	fact, ok := c.facts[point]
-	if !ok || fact == nil {
-		return CallView{}, false
-	}
-	return CallView{fact: fact}, true
-}
-
 func (c *Calls) Set(point cfg.Point, fact Call) {
 	if point == 0 {
 		return

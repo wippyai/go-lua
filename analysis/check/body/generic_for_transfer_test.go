@@ -155,19 +155,8 @@ end`)
 	loop := stmts[3].(*ast.GenericForStmt)
 	callStmt := loop.Stmts[0].(*ast.FuncCallStmt)
 	call := callStmt.Expr.(*ast.FuncCallExpr)
-	callPoint := cfg.Point(0)
-	for _, candidate := range result.Graph().RPO() {
-		view, ok := result.CallView(candidate)
-		if !ok {
-			continue
-		}
-		fact, _ := view.Borrowed()
-		if fact.Call == call {
-			callPoint = candidate
-			break
-		}
-	}
-	if callPoint == 0 {
+	callPoint, ok := result.callExprPoint(call)
+	if !ok {
 		t.Fatal("need_number call point not found")
 	}
 	value, ok := result.ExpressionValueAtBoundary(callPoint, call.Args[0])
@@ -209,19 +198,8 @@ end`)
 	ifStmt := loop.Stmts[0].(*ast.IfStmt)
 	callStmt := ifStmt.Then[0].(*ast.FuncCallStmt)
 	call := callStmt.Expr.(*ast.FuncCallExpr)
-	var point cfg.Point
-	for _, candidate := range result.Graph().RPO() {
-		view, ok := result.CallView(candidate)
-		if !ok {
-			continue
-		}
-		fact, _ := view.Borrowed()
-		if fact.Call == call {
-			point = candidate
-			break
-		}
-	}
-	if point == 0 {
+	point, ok := result.callExprPoint(call)
+	if !ok {
 		t.Fatal("table.insert call point not found")
 	}
 	itemArg := call.Args[1]

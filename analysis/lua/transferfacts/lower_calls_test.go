@@ -394,7 +394,7 @@ end
 		t.Fatalf("stmt = %T, want local assignment", fn.Stmts[0])
 	}
 	point := requireStmtPoints(t, built, localStmt, 1)[0]
-	if _, ok := built.Calls.View(point); ok {
+	if _, ok := built.Calls.Get(point); ok {
 		t.Fatalf("point %d unexpectedly has cfgbuild call view", point)
 	}
 	makeSym, ok := bindings.GlobalSymbol("make")

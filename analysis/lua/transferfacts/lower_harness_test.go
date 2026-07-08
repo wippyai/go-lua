@@ -877,7 +877,7 @@ end
 		Path:        selectedPath,
 	})
 
-	if _, ok := built.Calls.View(point); ok {
+	if _, ok := built.Calls.Get(point); ok {
 		t.Fatalf("fixture unexpectedly has cfgbuild call view at point %d", point)
 	}
 	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})

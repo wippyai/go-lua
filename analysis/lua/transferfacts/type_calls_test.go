@@ -174,7 +174,7 @@ local v = 0
 	dataStmt := mustLocalStmt(t, stmts, 0)
 	localStmt := mustLocalStmt(t, stmts, 1)
 	point := requireStmtPoints(t, built, localStmt, 1)[0]
-	if _, ok := built.Calls.View(point); ok {
+	if _, ok := built.Calls.Get(point); ok {
 		t.Fatalf("test point %d unexpectedly has semantic call view", point)
 	}
 	dataPath := path.NewPath(mustLocalAt(t, bindings, dataStmt, 0), "data")
@@ -221,7 +221,7 @@ local v = 0
 	dataStmt := mustLocalStmt(t, stmts, 0)
 	localStmt := mustLocalStmt(t, stmts, 1)
 	point := requireStmtPoints(t, built, localStmt, 1)[0]
-	if _, ok := built.Calls.View(point); ok {
+	if _, ok := built.Calls.Get(point); ok {
 		t.Fatalf("test point %d unexpectedly has semantic call view", point)
 	}
 	dataPath := path.NewPath(mustLocalAt(t, bindings, dataStmt, 0), "data")
@@ -672,7 +672,7 @@ local value = nil
 `)
 	assign := mustLocalStmt(t, stmts, 2)
 	callPoint := requireStmtPoints(t, built, assign, 1)[0]
-	if _, ok := built.Calls.View(callPoint); ok {
+	if _, ok := built.Calls.Get(callPoint); ok {
 		t.Fatalf("fixture unexpectedly has semantic call view at point %d", callPoint)
 	}
 	typeDecl, ok := bindings.TypeDef(stmts[0].(*ast.TypeDefStmt))

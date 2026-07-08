@@ -11,5 +11,4 @@ type LocalAssignmentFact = cfgbuild.LocalAssignment
 type OrdinaryAssignmentFact = cfgbuild.OrdinaryAssignment
 type ReturnFact = cfgbuild.Return
 type CallFact = cfgbuild.Call
-type CallFactView = cfgbuild.CallView
 type SourceSpan = cfgbuild.SourceSpan
