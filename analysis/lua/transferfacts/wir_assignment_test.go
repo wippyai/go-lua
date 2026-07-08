@@ -23,7 +23,7 @@ import (
 )
 
 func TestLowerLocalAssignmentUsesWIRLiteralSources(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(value: string, make_value: () -> string)
     local from_param = value
     local from_literal = "ok"
@@ -82,7 +82,7 @@ end`)
 }
 
 func TestLowerAnnotatedScalarLiteralAssignmentKeepsLiteralSource(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f()
     local x: string | number = 42
 end`)
@@ -105,7 +105,7 @@ end`)
 }
 
 func TestLowerWIRRootFunctionDefinitionPublishesFunctionIdentityWithoutSemanticSidecars(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 function run()
     return 1
 end
@@ -146,7 +146,7 @@ end
 }
 
 func TestLowerLocalAssignmentNaryConcatPublishesStringExpressionSource(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
 	local label = "suite" .. "/" .. "name"
 end`)
@@ -185,7 +185,7 @@ end`)
 }
 
 func TestLowerWIRAnyClaimLocalAssignmentDoesNotCreateDeclaredContract(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local raw = ({ kind = "task", route_id = "start" } :: any)
 `)
 	body := wirlower.Lower("any-claim-local", stmts, bindings, built)
@@ -209,7 +209,7 @@ local raw = ({ kind = "task", route_id = "start" } :: any)
 }
 
 func TestLowerWIRAnnotatedLocalFromUnresolvedCallCarriesDeclaredContract(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local x: string | number = produce()
 `, "produce")
 	body := wirlower.Lower("annotated-local-unresolved-call", stmts, bindings, built)
@@ -243,7 +243,7 @@ local x: string | number = produce()
 }
 
 func TestLowerAssignmentLocalSourcePathComesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
     local value = "x"
     local other = "y"
@@ -278,7 +278,7 @@ end
 }
 
 func TestLowerAssignmentLocalTargetComesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
     local value = "x"
     local other = "y"
@@ -311,7 +311,7 @@ end
 }
 
 func TestLowerAssignmentSegmentedSourcePathComesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
     local value = { name = "x" }
     local other = { name = "y" }
@@ -349,7 +349,7 @@ end
 }
 
 func TestLowerOrdinaryRootWriteSourcePathComesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
     local out = ""
     local value = "x"
@@ -385,7 +385,7 @@ end
 }
 
 func TestLowerDynamicIndexKeySourcePathComesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(box: any): ()
     local value = "x"
     local other = "y"
@@ -426,7 +426,7 @@ end
 }
 
 func TestLowerDynamicIndexMissingWIRKeyDoesNotFallbackToASTKey(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(box: any, key: string, payload: string): ()
     box[key] = payload
 end
@@ -460,7 +460,7 @@ end
 }
 
 func TestLowerDynamicAppendKeySourceComesFromWIRExpression(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(binding: any): ()
     local normalized: {any} = {}
     normalized[#normalized + 1] = binding
@@ -494,7 +494,7 @@ end
 }
 
 func TestLowerDynamicAppendInsideDefaultedIteratorComesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(bindings: any): ()
     local normalized: {any} = {}
     for _, binding in ipairs(bindings or {}) do
@@ -531,7 +531,7 @@ end
 }
 
 func TestLowerDynamicIndexTablePathComesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(box: any, key: string, payload: string): ()
     local other_box = {}
     box[key] = payload
@@ -565,7 +565,7 @@ end
 }
 
 func TestLowerDynamicIndexWriteDoesNotFallbackToASTTargetInWIRMode(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(box: any, key: string, payload: string): ()
     box[key] = payload
 end
@@ -590,7 +590,7 @@ end
 }
 
 func TestLowerStaticMemberWriteSourcePathComesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(box: any): ()
     local value = "x"
     local other = "y"
@@ -624,7 +624,7 @@ end
 }
 
 func TestLowerDynamicIndexValueSourcePathComesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(box: any, key: string): ()
     local value = "x"
     local other = "y"
@@ -664,7 +664,7 @@ end
 }
 
 func TestLowerDynamicIndexNonPathWIRValueDoesNotFallbackToASTValuePath(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(box: any, key: string): ()
     local payload = "x"
     box[key] = payload
@@ -699,7 +699,7 @@ end
 }
 
 func TestLowerPathAndDynamicAssignmentUseWIRPathSources(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(box: any, key: string, value: string)
     local local_value = value
     box.name = value
@@ -745,7 +745,7 @@ end`)
 }
 
 func TestLowerWIRPathAndDynamicWritesPublishWithoutSemanticSidecars(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(box: any, key: string, value: string)
     box.name = value
     box[key] = value
@@ -795,7 +795,7 @@ end`)
 }
 
 func TestLowerWIRLocalAliasExposureWithoutSemanticSidecars(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(narrow: {number})
     local wide: {number | string} = narrow
 end`)
@@ -815,7 +815,7 @@ end`)
 }
 
 func TestLowerWIRRootReassignExposureWithoutSemanticSidecars(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(narrow: {number})
     local wide: {number | string} = {}
     wide = narrow
@@ -836,7 +836,7 @@ end`)
 }
 
 func TestLowerWIRPathStoreExposureWithoutSemanticSidecars(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(narrow: {number}, holder: { slot: {number | string} })
     holder.slot = narrow
 end`)
@@ -856,7 +856,7 @@ end`)
 }
 
 func TestLowerWIRCastExposureWithoutSourceAssignmentView(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(narrow: {number})
     local widened = narrow as {number | string}
 end`)
@@ -884,7 +884,7 @@ func assertExposureType(t *testing.T, exposure factflow.CovariantExposure, want 
 }
 
 func TestLowerWIRNestedDynamicWriteCarriesDynamicKeyAndSuffix(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(slots: {[string]: { value: string }}, key: string, value: string)
     slots[key].value = value
 end`)
@@ -925,7 +925,7 @@ end`)
 }
 
 func TestLowerWIRRootAssignmentsPublishKindWithoutSemanticSidecars(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(value: string): ()
     local out = value
     out = "updated"
@@ -964,7 +964,7 @@ end`)
 }
 
 func TestLowerWIRTableRootAssignmentPublishesExpressionSourceWithoutSemanticSidecars(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(value: string): ()
     local out = { name = value }
 end`)
@@ -991,7 +991,7 @@ end`)
 }
 
 func TestLowerWIRDynamicIndexRootAssignmentPublishesExpressionSourceWithoutSemanticSidecars(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(box: {[string]: string}, key: string): ()
     local out = box[key]
 end`)
@@ -1034,7 +1034,7 @@ end`)
 }
 
 func TestLowerWIRGlobalTableFieldAssignmentAlsoWritesCanonicalGlobalRoot(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local captured_fn
 
 _G.coroutine = {
@@ -1093,7 +1093,7 @@ func assertTargetSpan(t *testing.T, span factflow.SourceSpan, ok bool, label str
 }
 
 func TestLowerWIRClosureRootAssignmentPublishesExpressionSourceWithoutSemanticSidecars(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
     local out = function(): string
         return "ok"
@@ -1135,7 +1135,7 @@ func assertWIRPathSource(t *testing.T, source factflow.ValueSource, want path.Pa
 }
 
 func TestLowerAssignmentDoesNotFallbackWhenWIRWriteInstructionMissing(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(box: any, key: string, value: string): ()
     local local_value = value
     box.name = value
@@ -1164,7 +1164,7 @@ end
 }
 
 func TestLowerAssignmentMalformedWIRSourceDoesNotFallbackToSemanticSource(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(value: string): ()
     local out = value
 end
@@ -1193,7 +1193,7 @@ end
 }
 
 func TestLowerLocalAssignmentLogicalFallbackSourceComesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function collect(entries: {{ id: string, meta: { name: string? } }}): ()
 	for i, entry in ipairs(entries) do
 		local meta = entry.meta

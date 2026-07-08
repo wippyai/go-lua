@@ -1,4 +1,4 @@
-// Package callorder owns Lua expression call evaluation order shared by cfgbuild and semantics.
+// Package callorder owns Lua expression call evaluation order shared by CFG and WIR lowering.
 // It returns ok=false for unsupported or unsafe call-order shapes.
 package callorder
 

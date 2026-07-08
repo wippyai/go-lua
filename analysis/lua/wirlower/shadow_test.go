@@ -13,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
@@ -81,11 +80,6 @@ func TestShadowCoverage(t *testing.T) {
 			skippedBind++
 			continue
 		}
-		sem, err := semantics.ExtractChunk(stmts, bindings, built)
-		if err != nil {
-			skippedExtract++
-			continue
-		}
 		body := wirlower.Lower("main", stmts, bindings, built)
 		if body == nil {
 			skippedExtract++
@@ -102,8 +96,8 @@ func TestShadowCoverage(t *testing.T) {
 			if f, ok := built.Assignments.Ordinary(pt); ok {
 				scorePoint(total, covered, gapSamples, "assign", keys, sourceOrdinaryAssignKey(f))
 			}
-			if f, ok := sem.Call(pt); ok {
-				scorePoint(total, covered, gapSamples, "call", keys, semCallKey(f))
+			if f, ok := built.Calls.Get(pt); ok {
+				scorePoint(total, covered, gapSamples, "call", keys, cfgbuildCallKey(f))
 			}
 			if _, ok := built.Returns.Get(pt); ok {
 				scorePoint(total, covered, gapSamples, "return", keys, "return")
@@ -252,7 +246,7 @@ func sourceOrdinaryAssignKey(f cfgbuild.OrdinaryAssignment) string {
 	}
 }
 
-func semCallKey(f semantics.CallFact) string {
+func cfgbuildCallKey(f cfgbuild.Call) string {
 	if f.HasCalleePath {
 		return string(f.CalleePath.Key())
 	}

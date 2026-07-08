@@ -1,8 +1,6 @@
 package body
 
 import (
-	"fmt"
-
 	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
@@ -30,7 +28,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/transferfacts"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
@@ -74,9 +71,7 @@ func (c *checker) prepareBoundChunk(stmts []ast.Stmt, bindings *bind.Result) (*S
 		stmts,
 		func() { c.config.Stats.StaticChunkPrepares++ },
 		func() *cfgbuild.Result { return cfgbuild.BuildChunk(stmts, bindings) },
-		func(built *cfgbuild.Result) (*semantics.Result, error) {
-			return semantics.ExtractChunk(stmts, bindings, built)
-		},
+		nil,
 		func() moduleidentity.Projection {
 			return moduleidentity.NewRequireAliases(bindings, stmts, nil)
 		},
@@ -86,16 +81,16 @@ func (c *checker) prepareBoundChunk(stmts []ast.Stmt, bindings *bind.Result) (*S
 	)
 }
 
-// prepareBound builds the CFG, extracts semantics, and prepares static state for
-// a chunk or function. incStat bumps the matching prepare counter, build builds
-// the CFG, and extract derives semantics; what labels the kind in errors.
+// prepareBound builds the CFG and prepares static state for a chunk or function.
+// incStat bumps the matching prepare counter, build builds the CFG, and fn is
+// the function identity for function bodies.
 func (c *checker) prepareBound(
 	bindings *bind.Result,
-	what string,
+	_ string,
 	sourceStmts []ast.Stmt,
 	incStat func(),
 	build func() *cfgbuild.Result,
-	extract func(*cfgbuild.Result) (*semantics.Result, error),
+	fn *ast.FunctionExpr,
 	requireAliases func() moduleidentity.Projection,
 	lowerWIR func(*cfgbuild.Result, *typeresolve.Resolver) *wir.Body,
 ) (*Static, error) {
@@ -106,14 +101,10 @@ func (c *checker) prepareBound(
 	if built == nil || built.Graph == nil {
 		return nil, ErrUnsupportedCFG
 	}
-	sem, err := extract(built)
-	if err != nil {
-		return nil, fmt.Errorf("check: extract %s semantics: %w", what, err)
-	}
 	moduleTypes := newRequireAliasTypeResolver(requireAliases(), c.config.ModuleTypes)
 	typeResolver := typeresolve.NewWithExternal(bindings, moduleTypes)
 	wirBody := lowerWIR(built, typeResolver)
-	return c.prepare(bindings, built, sem, wirBody, typeResolver, sourceStmts), nil
+	return c.prepare(bindings, built, fn, wirBody, typeResolver, sourceStmts), nil
 }
 
 func (c *checker) prepareFunction(fn *ast.FunctionExpr) (*Static, error) {
@@ -133,9 +124,7 @@ func (c *checker) prepareBoundFunction(fn *ast.FunctionExpr, bindings *bind.Resu
 		functionSourceStmts(fn),
 		func() { c.config.Stats.StaticFunctionPrepares++ },
 		func() *cfgbuild.Result { return cfgbuild.BuildFunction(fn, bindings) },
-		func(built *cfgbuild.Result) (*semantics.Result, error) {
-			return semantics.ExtractFunction(fn, bindings, built)
-		},
+		fn,
 		func() moduleidentity.Projection {
 			return moduleidentity.NewRequireAliases(bindings, fn.Stmts, fn)
 		},
@@ -148,7 +137,7 @@ func (c *checker) prepareBoundFunction(fn *ast.FunctionExpr, bindings *bind.Resu
 func (c *checker) prepare(
 	bindings *bind.Result,
 	built *cfgbuild.Result,
-	sem *semantics.Result,
+	fn *ast.FunctionExpr,
 	wirBody *wir.Body,
 	typeResolver *typeresolve.Resolver,
 	sourceStmts []ast.Stmt,
@@ -166,7 +155,7 @@ func (c *checker) prepare(
 		MethodReceiverTypes: config.MethodReceiverTypes,
 	})
 	facts := lowered.Facts
-	modules := moduleidentity.NewFromFacts(bindings, built.Graph, moduleIdentityFacts{facts: facts}, sem.Function())
+	modules := moduleidentity.NewFromFacts(bindings, built.Graph, moduleIdentityFacts{facts: facts}, fn)
 	signatureID := newSignatureIdentityResolver(bindings, built.Graph, facts, modules, config.Signatures)
 	signatureNameForCall := signatureID.nameForCall
 	if hasSignatures(config.Signatures) {
@@ -202,7 +191,7 @@ func (c *checker) prepare(
 	}
 	varargValue := config.VarargValue
 	if varargValue == nil {
-		varargValue = functionVarargValueProvider(config.Registry, sem.Function(), bindings)
+		varargValue = functionVarargValueProvider(config.Registry, fn, bindings)
 	}
 	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
 		Registry:              config.Registry,
@@ -231,12 +220,12 @@ func (c *checker) prepare(
 	receiverFn := declaredReceiverCallableProvider(facts, bindings, typeResolver)
 	signatureID.indexCallSites(facts)
 	callOutcomeSupplement := preparedCallOutcomeSupplement(config.Registry, config.ModuleExports, signatureID, facts, resolver, refinedSources, config.TypeValues, calleeValue)
-	entrySeeds := entrySeedPlan(config.Registry, config.TypeValues, bindings, sem.Function(), globals, config.GlobalTypes, config.ModuleExports, typeResolver)
+	entrySeeds := entrySeedPlan(config.Registry, config.TypeValues, bindings, fn, globals, config.GlobalTypes, config.ModuleExports, typeResolver)
 	return &Static{
 		registry:              config.Registry,
 		bindings:              bindings,
 		cfg:                   built,
-		semantics:             sem,
+		function:              fn,
 		wir:                   wirBody,
 		sourceStmts:           append([]ast.Stmt(nil), sourceStmts...),
 		signatures:            config.Signatures,
@@ -311,7 +300,7 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		registry:              s.registry,
 		bindings:              s.bindings,
 		cfg:                   s.cfg,
-		semantics:             s.semantics,
+		function:              s.function,
 		wir:                   s.wir,
 		sourceStmts:           append([]ast.Stmt(nil), s.sourceStmts...),
 		signatures:            s.signatures,
@@ -469,7 +458,7 @@ func (s *Static) solveEntryState(typeValues *typevalue.Cache, entry state.State,
 		typeValues,
 		s.cfg.Graph,
 		s.bindings,
-		s.semantics.Function(),
+		s.function,
 		s.globals,
 		s.globalTypes,
 		s.moduleLoads,

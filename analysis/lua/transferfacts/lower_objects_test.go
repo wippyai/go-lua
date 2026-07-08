@@ -16,7 +16,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/expressionid"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
@@ -34,11 +33,6 @@ func TestLowerObjectLiteralEntryLabelsAttributeValue(t *testing.T) {
 	stmts := []ast.Stmt{local}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	_, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
 	body := wirlower.Lower("object-entry-label", stmts, bindings, built)
 	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, local, 1)[0]
@@ -80,11 +74,6 @@ func TestLowerObjectLiteralSidecarUsesAssignmentExprRef(t *testing.T) {
 	stmts := []ast.Stmt{local}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	_, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
 	body := wirlower.Lower("object-sidecar-expr-ref", stmts, bindings, built)
 	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
@@ -151,11 +140,6 @@ func TestLowerEmptyObjectLiteralStillPublishesIdentitySidecar(t *testing.T) {
 	stmts := []ast.Stmt{local}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	_, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
 	body := wirlower.Lower("empty-object-identity", stmts, bindings, built)
 	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, local, 1)[0]
@@ -178,7 +162,7 @@ func TestLowerEmptyObjectLiteralStillPublishesIdentitySidecar(t *testing.T) {
 }
 
 func TestLowerWIRTableConstructorSourceCarriesLiteralIdentity(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local t = { child = { leaf = 1 } }
 `)
 	reg := standard.Registry()
@@ -208,7 +192,7 @@ local t = { child = { leaf = 1 } }
 }
 
 func TestLowerWithWIRObjectLiteralPublishesWithoutSemanticSidecars(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local t = { child = { leaf = payload.id } }
 `, "payload")
 	local, ok := stmts[0].(*ast.LocalAssignStmt)
@@ -242,7 +226,7 @@ local t = { child = { leaf = payload.id } }
 
 func TestLowerWIRObjectLiteralCarriesDeclaredEntryContract(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 type Box = { items: {[string]: string}, label: string }
 local box: Box = { items = {}, label = "" }
 `)
@@ -284,7 +268,7 @@ local box: Box = { items = {}, label = "" }
 
 func TestLowerWIRAnnotatedObjectLiteralUsesDeclaredOverlay(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 type Box = { items: {[string]: {id: string}}, count: number }
 local box: Box = { items = {}, count = 0 }
 `)
@@ -323,7 +307,7 @@ local box: Box = { items = {}, count = 0 }
 
 func TestLowerWIRAnnotatedArrayTableLiteralCarriesDeclaredContractClaim(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 type SystemMessage = { role: "system" }
 local final_messages: {SystemMessage} = {}
 `)
@@ -348,11 +332,11 @@ local final_messages: {SystemMessage} = {}
 
 func TestLowerAnnotatedObjectLiteralUsesDeclaredOverlay(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 type Box = { items: {[string]: {id: string}}, count: number }
 local box: Box = { items = {}, count = 0 }
 `)
-	facts := lowerChunkFactsWithWIR(t, "annotated-object-literal-overlay", stmts, result, built, bindings, reg)
+	facts := lowerChunkFactsWithWIR(t, "annotated-object-literal-overlay", stmts, built, bindings, reg)
 	point := requireStmtPoints(t, built, stmts[1], 1)[0]
 	fact, ok := facts.RootAssignment(point)
 	if !ok {
@@ -375,7 +359,7 @@ local box: Box = { items = {}, count = 0 }
 
 func TestLowerReturnedAnnotatedObjectLiteralUsesDeclaredOverlay(t *testing.T) {
 	reg := standard.Registry()
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function build(): {items: {[string]: {id: string}}, count: number}
 	local batch: {items: {[string]: {id: string}}, count: number} = {items = {}, count = 0}
 	return batch
@@ -383,7 +367,7 @@ end
 `)
 	body := fn.Stmts
 	point := requireStmtPoints(t, built, body[0], 1)[0]
-	facts := lowerFunctionFactsWithWIR(t, "returned-annotated-object-literal-overlay", result, built, bindings, reg)
+	facts := lowerFunctionFactsWithWIR(t, "returned-annotated-object-literal-overlay", fn, built, bindings, reg)
 	fact, ok := facts.RootAssignment(point)
 	if !ok {
 		t.Fatalf("missing root assignment at point %d", point)
@@ -398,7 +382,7 @@ end
 
 func TestLowerWIRObjectLiteralCarriesDeclaredEntryContractWithoutSemanticResult(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 type Box = { items: {[string]: string}, label: string }
 local box: Box = { items = {}, label = "" }
 `)
@@ -440,7 +424,7 @@ local box: Box = { items = {}, label = "" }
 
 func TestLowerWIRContextualObjectLiteralExpressionValueUsesExpectedType(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 type Context = {[string]: any}
 local input: { context: Context? } = { context = nil }
 local user_ctx: Context = input.context or {}
@@ -477,7 +461,7 @@ local user_ctx: Context = input.context or {}
 
 func TestLowerWIRContextualObjectLiteralExpressionValueUsesExpectedTypeWithoutSemanticResult(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 type Context = {[string]: any}
 local input: { context: Context? } = { context = nil }
 local user_ctx: Context = input.context or {}
@@ -514,7 +498,7 @@ local user_ctx: Context = input.context or {}
 
 func TestLowerWIRObjectLiteralFieldExposureWithoutSemanticResult(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 type Wide = { x: number | string }
 local narrow: { x: number } = { x = 1 }
 local holder: { ref: Wide } = { ref = narrow }
@@ -542,7 +526,7 @@ local holder: { ref: Wide } = { ref = narrow }
 }
 
 func TestLowerWIRObjectLiteralEntrySourceComesFromWIR(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local t = { leaf = 1 }
 `)
 	localStmt := stmts[0].(*ast.LocalAssignStmt)
@@ -599,7 +583,7 @@ local t = { leaf = 1 }
 }
 
 func TestLowerWIRObjectLiteralUnsupportedEntryDoesNotFallbackToSemanticSource(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local t = { leaf = value }
 `, "value")
 	localStmt := stmts[0].(*ast.LocalAssignStmt)
@@ -644,7 +628,7 @@ local t = { leaf = value }
 }
 
 func TestLowerWIRObjectLiteralDoesNotKeepSemanticOnlyEntries(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local t = { leaf = 1, semantic_only = value }
 `, "value")
 	localStmt := stmts[0].(*ast.LocalAssignStmt)
@@ -686,7 +670,7 @@ local t = { leaf = 1, semantic_only = value }
 
 func TestLowerDeclaredReturnAccumulatorCarriesExpectedContract(t *testing.T) {
 	reg := standard.Registry()
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function make(raw: any): {any}
     local out = {}
     if raw == nil then
@@ -734,7 +718,7 @@ end
 
 func TestLowerDeclaredReturnAccumulatorRejectsMixedReturnSymbols(t *testing.T) {
 	reg := standard.Registry()
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function make(flag: boolean): {any}
     local out = {}
     local other = {}
@@ -763,7 +747,7 @@ end
 
 func TestLowerWithWIRDeclaredReturnAccumulatorWithoutSemanticResult(t *testing.T) {
 	reg := standard.Registry()
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function make(): {items: {[string]: string}}
     local out = {}
     return out
@@ -799,7 +783,7 @@ end
 
 func TestLowerWithWIRDeclaredReturnAccumulatorRejectsMixedSymbolsWithoutSemanticResult(t *testing.T) {
 	reg := standard.Registry()
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function make(flag: boolean): {any}
     local out = {}
     local other = {}
@@ -828,7 +812,7 @@ end
 
 func TestLowerSetmetatableReturnLocalCarriesNonNilDeclaredContract(t *testing.T) {
 	reg := standard.Registry()
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function make(): {run: (self: any) -> ()}?
     local mt = {}
     local instance = {}
@@ -866,7 +850,7 @@ end
 
 func TestLowerWithWIRSetmetatableReturnLocalWithoutSemanticResult(t *testing.T) {
 	reg := standard.Registry()
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function make(): {run: (self: any) -> ()}?
     local mt = {}
     local instance = {}
@@ -903,7 +887,7 @@ end
 }
 
 func TestLowerAnnotatedEmptyMapObjectLiteralCarriesExpectedContract(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `local t: {[string]: string} = {}`)
+	stmts, bindings, built := parseSemanticChunk(t, `local t: {[string]: string} = {}`)
 	reg := standard.Registry()
 	body := wirlower.Lower("annotated-empty-map", stmts, bindings, built)
 	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
@@ -929,7 +913,7 @@ func TestLowerAnnotatedEmptyMapObjectLiteralCarriesExpectedContract(t *testing.T
 
 func TestLowerOrdinaryOptionalObjectLiteralExpectedRootIsPresent(t *testing.T) {
 	reg := standard.Registry()
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function setup(): ()
     local runtime: { apply: (string) -> string }?
     runtime = {
@@ -972,7 +956,7 @@ end
 }
 
 func TestLowerLogicalOperandObjectLiteralPublishesSidecar(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `local value = true and {}`)
+	stmts, bindings, built := parseSemanticChunk(t, `local value = true and {}`)
 	reg := standard.Registry()
 	body := wirlower.Lower("logical-object-operand", stmts, bindings, built)
 	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
@@ -986,7 +970,7 @@ func TestLowerLogicalOperandObjectLiteralPublishesSidecar(t *testing.T) {
 }
 
 func TestLowerWithWIRDynamicIndexLogicalDefaultObjectLiteralCarriesSlotContract(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local suites: {[string]: any[]} = {}
 local suite = "alpha"
 suites[suite] = suites[suite] or {}
@@ -1044,7 +1028,7 @@ suites[suite] = suites[suite] or {}
 }
 
 func TestLowerAnnotatedLogicalFallbackObjectLiteralCarriesDeclaredContract(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 type Payload = {
     tool_calls: {string},
 }
@@ -1078,7 +1062,7 @@ local current: Payload = payload or {
 }
 
 func TestLowerReturnedObjectLiteralCarriesExpectedEntryContracts(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function new_actor(): { state: { processed: {[string]: string} } }
 	return { state = { processed = {} } }
 end`)
@@ -1139,7 +1123,7 @@ end`)
 }
 
 func TestLowerReturnedObjectLiteralLogicalFieldFallbackCarriesExpectedEntryContract(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function normalize(raw: any): { arguments: {[string]: any} }
 	return {
 		arguments = type(raw.arguments) == "table" and (raw.arguments :: {[string]: any}) or {},
@@ -1225,7 +1209,7 @@ end`)
 }
 
 func TestLowerObjectLiteralCarriesOpenListElementSourceFromVararg(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function collect(...: number)
 	local values = {...}
 end`)
@@ -1248,7 +1232,7 @@ end`)
 }
 
 func TestLowerWithWIRReturnedObjectLiteralExpectedContractComesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function new_actor(): { state: { processed: {[string]: string} } }
 	return { state = { processed = {} } }
 end`)
@@ -1292,7 +1276,7 @@ end`)
 }
 
 func TestLowerWithWIRReturnedObjectLiteralExpectedContractWithoutSemanticResult(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function new_actor(): { state: { processed: {[string]: string} } }
 	return { state = { processed = {} } }
 end`)
@@ -1335,7 +1319,7 @@ end`)
 }
 
 func TestLowerReturnedNestedObjectLiteralCarriesExpectedEntryContracts(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function output_error(err_type: string, message: string, code: any?): { type: string, error: { type: string, message: string, code: any? }? }
 	return {
 		type = "error",
@@ -1441,7 +1425,7 @@ end`)
 }
 
 func TestLowerExplicitAnyObjectLiteralDeclarationUsesDeclaredContract(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `local raw: any = { id = "cfg" }`)
+	stmts, bindings, built := parseSemanticChunk(t, `local raw: any = { id = "cfg" }`)
 	body := wirlower.Lower("explicit-any-object-literal", stmts, bindings, built)
 	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	point := requireStmtPoints(t, built, stmts[0], 1)[0]
@@ -1468,11 +1452,6 @@ func TestLowerObjectLiteralEntryCallSourcePointsAtNestedProducer(t *testing.T) {
 	stmts := []ast.Stmt{local}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	_, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
 	body := wirlower.Lower("object-entry-call-source", stmts, bindings, built)
 	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	points := requireStmtPoints(t, built, local, 2)
@@ -1508,12 +1487,7 @@ func TestLowerAnyCastObjectLiteralPublishesClaimNotEntries(t *testing.T) {
 	stmts := []ast.Stmt{local}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	facts := lowerChunkFactsWithWIR(t, "any-cast-object-literal-claim", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "any-cast-object-literal-claim", stmts, built, bindings, standard.Registry())
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	point := requireStmtPoints(t, built, local, 1)[0]
@@ -1529,7 +1503,7 @@ func TestLowerAnyCastObjectLiteralPublishesClaimNotEntries(t *testing.T) {
 }
 
 func TestLowerTypedCastObjectLiteralCarriesExpectedType(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local state = {
     active_sessions = {} :: {[string]: string},
 }
@@ -1574,7 +1548,7 @@ local state = {
 }
 
 func TestLowerWIRDynamicIndexObjectLiteralExpectedContractWithoutSemanticResult(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 type ActiveSession = {
     pid: any,
     created_at: number,
@@ -1622,7 +1596,7 @@ state.active_sessions[session_id] = {
 }
 
 func TestLowerWIROrdinaryAssignmentObjectLiteralExpectedContractWithoutSemanticResult(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 type Payload = { name: string, count: number }
 local payload: Payload = { name = "", count = 0 }
 payload = { name = "next", count = 1 }
@@ -1671,11 +1645,6 @@ func TestLowerNestedObjectLiteralEntriesUnderAssignmentExprRef(t *testing.T) {
 	stmts := []ast.Stmt{local}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	_, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
 	body := wirlower.Lower("nested-object-literal-entries", stmts, bindings, built)
 	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))

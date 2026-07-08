@@ -20,7 +20,7 @@ import (
 )
 
 func TestWIRBranchChecksMatchSemanticDirectBranchChecks(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(x: any, y: string?, i: integer, xs: {string})
     if x then local a = 1 end
     if y == nil then local b = 1 end
@@ -56,7 +56,7 @@ end
 }
 
 func TestLowerWithWIRDirectBranchChecksPublishFactLanes(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(x: any, y: string?, i: integer, xs: {string})
     if x then local a = 1 end
     if y == nil then local b = 1 end
@@ -113,7 +113,7 @@ func TestDirectBranchCheckFromWIRDoesNotRequireSemanticSidecarMatch(t *testing.T
 }
 
 func TestLowerWithWIRDirectBranchPublishesWithoutSemanticSidecars(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(x: string?): ()
     if x then
         local y = x
@@ -141,7 +141,7 @@ end
 }
 
 func TestLowerWithWIRLiteralDiscriminantPublishesWithoutSemanticSidecars(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(r: {tag: "a", value: string} | {tag: "b", value: number}): ()
     if r.tag == "a" then
         local hit = r.value
@@ -160,7 +160,7 @@ end
 }
 
 func TestLowerWithWIRCompoundBranchPathRelationsMatchSidecar(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local a, b, c, d = {}, {}, {}, {}
 if a == b and c ~= d then
     local hit = true
@@ -176,7 +176,7 @@ end
 }
 
 func TestLowerWithWIRCompoundBranchPathEvidencePublishesFacts(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local a, b, c = {}, {}, nil
 if a == b and c ~= nil then
     local hit = true
@@ -199,7 +199,7 @@ end
 }
 
 func TestLowerWithWIRCompoundBranchPublishesSufficientLiteralCases(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local status = "ready"
 if status == "ready" or status == "done" then
     local hit = true
@@ -239,7 +239,7 @@ end
 }
 
 func TestLowerWithWIRBranchDiffConstraintsPublishFacts(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local i, j, xs, limit = 1, 1, {}, 10
 if i + 1 <= #xs and i + j < limit then
     local hit = true
@@ -262,7 +262,7 @@ end
 }
 
 func TestLowerWithWIRBooleanAliasBranchRefinementsMatchSidecar(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(target: { transform: string? })
     local has_transform = target.transform ~= nil
     if has_transform then
@@ -285,7 +285,7 @@ end
 }
 
 func TestLowerWithWIRBooleanAliasBranchPathRelationsMatchSidecar(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(a: string?, b: string?)
     local same = a == b
     if same then
@@ -308,7 +308,7 @@ end
 }
 
 func TestLowerWithWIRBooleanAliasBranchPathEvidenceMatchSidecar(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(a: string?, b: string?)
     local same = a == b
     if same then
@@ -331,7 +331,7 @@ end
 }
 
 func TestLowerWithWIRFrozenTableBranchEvidencePublishesFacts(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local t = {}
 local ok = true
 if table.isfrozen(t) and ok then
@@ -355,7 +355,7 @@ end
 }
 
 func TestLowerWithWIRCompoundBranchRefinementLanesMatchSidecar(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local x: any = 1
 local i: integer = 1
 local xs: {string} = {}
@@ -384,7 +384,7 @@ end
 }
 
 func TestLowerWithWIRBooleanAliasBranchesWithoutSourceAssignmentView(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(target: { transform: string? })
     local has_transform = target.transform ~= nil
     if has_transform then
@@ -410,7 +410,7 @@ end
 }
 
 func TestLowerWithWIRBooleanAliasBranchDoesNotFallbackToSemanticCondition(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(target: { transform: string? })
     local has_transform = target.transform ~= nil
     if has_transform then
@@ -434,7 +434,7 @@ end
 }
 
 func TestLowerWithWIRBranchPathRelationsDoesNotFallbackToSemanticCondition(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local a, b = {}, {}
 if a == b then
     local hit = true
@@ -462,7 +462,7 @@ end
 }
 
 func TestLowerWithWIRBranchDiffConstraintsDoesNotFallbackToSemanticCondition(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local i, xs = 1, {}
 if i + 1 <= #xs then
     local hit = true
@@ -484,7 +484,7 @@ end
 }
 
 func TestLowerBranchDoesNotFallbackWhenWIRBranchInstructionMissing(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(x: string?): ()
     if x then local y = x end
 end
@@ -501,7 +501,7 @@ end
 }
 
 func TestLowerBranchDoesNotFallbackWhenWIRBranchCheckIsNone(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(x: string?): ()
     if x then local y = x end
 end
@@ -538,7 +538,7 @@ end
 }
 
 func TestLowerWIRRelationalBranchCheckDoesNotUseOperandPathAsConditionSource(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(a: {tag: "a"}, b: {tag: "b"}): ()
     if a == b then local hit = true end
 end
@@ -564,7 +564,7 @@ end
 }
 
 func TestLowerTypeIsConditionDoesNotFallbackWhenWIRCallInstructionMissing(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 type Payload = { name: string }
 local value: any = {}
 if Payload:is(value) then local y = value end
@@ -594,7 +594,7 @@ if not Payload:is(value) then local y = value end
 }
 
 func TestWIRTypeIsResultCorrelationUsesLoweredCallSiteWithoutSemanticResult(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 type Payload = { name: string }
 local value: any = {}
 local validated, err = Payload:is(value)
@@ -663,7 +663,7 @@ end
 
 func assertWIRTypeIsConditionBranchRefinementWithoutSemanticResult(t *testing.T, src string, wantEdge bool) {
 	t.Helper()
-	stmts, bindings, built, _ := parseSemanticChunk(t, src)
+	stmts, bindings, built := parseSemanticChunk(t, src)
 	body := wirlower.Lower("chunk", stmts, bindings, built)
 	lowered := lowerer{
 		registry:     standard.Registry(),
@@ -743,7 +743,7 @@ func hasBranchPresenceRelation(relations []factflow.BranchPresenceRelation, trig
 
 func TestLowerWithWIRCorrelationBranchChecksPublishFacts(t *testing.T) {
 	t.Run("protected_call", func(t *testing.T) {
-		stmts, bindings, built, _ := parseSemanticChunk(t, `
+		stmts, bindings, built := parseSemanticChunk(t, `
 local function run_tests(): number
     return 1
 end
@@ -758,7 +758,7 @@ end
 	})
 
 	t.Run("type_is", func(t *testing.T) {
-		stmts, bindings, built, _ := parseSemanticChunk(t, `
+		stmts, bindings, built := parseSemanticChunk(t, `
 type Point = {x: number, y: number}
 
 local data: any = {}
@@ -773,7 +773,7 @@ end
 }
 
 func TestLowerWithWIRBranchReachabilityPublishesStaticEdges(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 if nil then local a = 1 end
 if false then local b = 1 end
 if true then local c = 1 end

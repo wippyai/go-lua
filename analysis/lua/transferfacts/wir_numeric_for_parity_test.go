@@ -11,7 +11,7 @@ import (
 )
 
 func TestLowerWithWIRNumericForProofsPublishForBothLoopDirections(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function scan(xs: {string})
 	for i = 1, #xs do
 		local current = xs[i]
@@ -43,7 +43,7 @@ end
 }
 
 func TestLowerWithWIRNumericForProofsDoesNotFallbackToSidecar(t *testing.T) {
-	_, bindings, built, _ := parseSemanticFunction(t, `
+	_, bindings, built := parseSemanticFunction(t, `
 function scan(xs: {string})
 	for i = 1, #xs do
 		local current = xs[i]
@@ -75,7 +75,7 @@ end
 }
 
 func TestLowerWithWIRNumericForProofsPublishWithoutSemanticSidecars(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function scan(xs: {string})
 	for i = 1, #xs do
 		local current = xs[i]
@@ -107,7 +107,7 @@ end
 }
 
 func TestLowerWithWIRNumericForPublishesLoopVariableRootAssignmentWithoutSemanticSidecars(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function scan()
 	for i = 1, 10 do
 		local index = i
@@ -143,7 +143,7 @@ end
 }
 
 func TestLowerWithWIRNumericForUsesTypedBoundPathsForLoopVariableType(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function scan()
 	local first: integer = 1
 	local last: integer = 10

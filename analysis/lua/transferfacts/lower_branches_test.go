@@ -18,7 +18,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
@@ -44,12 +43,7 @@ func TestLowerIdentifierNilTruthyFalsyBranches(t *testing.T) {
 	stmts := []ast.Stmt{decl, nilStmt, notNilStmt, truthyStmt, falsyStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, nilRead), "x")
 	nilPoint := requireStmtPoints(t, built, nilStmt, 1)[0]
 	notNilPoint := requireStmtPoints(t, built, notNilStmt, 1)[0]
@@ -76,30 +70,29 @@ func parseChunk(t *testing.T, src string) []ast.Stmt {
 	return stmts
 }
 
-func lowerFunctionFactsWithWIR(t *testing.T, name string, result *semantics.Result, built *cfgbuild.Result, bindings *bind.Result, reg *axis.Registry) factflow.Facts {
+func lowerFunctionFactsWithWIR(t *testing.T, name string, fn *ast.FunctionExpr, built *cfgbuild.Result, bindings *bind.Result, reg *axis.Registry) factflow.Facts {
 	t.Helper()
-	fn := result.Function()
 	if fn == nil {
-		t.Fatal("semantic result is not a function")
+		t.Fatal("function is nil")
 	}
 	body := wirlower.LowerFunction(name, fn, bindings, built)
 	return Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 }
 
-func lowerChunkFactsWithWIR(t *testing.T, name string, stmts []ast.Stmt, result *semantics.Result, built *cfgbuild.Result, bindings *bind.Result, reg *axis.Registry) factflow.Facts {
+func lowerChunkFactsWithWIR(t *testing.T, name string, stmts []ast.Stmt, built *cfgbuild.Result, bindings *bind.Result, reg *axis.Registry) factflow.Facts {
 	t.Helper()
 	body := wirlower.Lower(name, stmts, bindings, built)
 	return Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
 }
 
 func TestLowerBooleanRootTruthyFalsyBranchesPublishLiteralRefinements(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(b: boolean)
 	if b then local x = 1 end
 	if not b then local y = 1 end
 end
 `)
-	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
+	facts := lowerFunctionFactsWithWIR(t, "branch", fn, built, bindings, standard.Registry())
 	truthyStmt := fn.Stmts[0].(*ast.IfStmt)
 	falsyStmt := fn.Stmts[1].(*ast.IfStmt)
 	bPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "b")
@@ -178,7 +171,7 @@ func TestLiteralBranchRefinementImpossibleStaticFieldBottomsImpossibleEdge(t *te
 }
 
 func TestLowerConditionalAssignmentPublishesValuePresenceImplicationAtMerge(t *testing.T) {
-	_, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(
     use_template: boolean,
     make_executor: () -> { with_context: (self: any, context: table) -> any }
@@ -195,7 +188,7 @@ function f(
     end
 end
 `)
-	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
+	facts := lowerFunctionFactsWithWIR(t, "branch", fn, built, bindings, standard.Registry())
 	var found bool
 	for _, point := range built.Graph.RPO() {
 		for _, implication := range facts.PathValuePresenceImplications(point) {
@@ -224,7 +217,7 @@ end
 }
 
 func TestLowerConditionalAssignmentPublishesValueRefinementImplicationAtMerge(t *testing.T) {
-	_, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(
     provided: any?,
     get_db: () -> { release: (self: any) -> () }?
@@ -239,7 +232,7 @@ function f(
     end
 end
 `)
-	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
+	facts := lowerFunctionFactsWithWIR(t, "branch", fn, built, bindings, standard.Registry())
 	var found bool
 	for _, point := range built.Graph.RPO() {
 		for _, implication := range facts.PathValuePresenceImplications(point) {
@@ -271,7 +264,7 @@ end
 }
 
 func TestLowerConditionalAssignmentPublishesValueRefinementThroughErrorGuard(t *testing.T) {
-	_, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(
     provided: any?,
     get_db: () -> ({ release: (self: any) -> () }?, string?)
@@ -293,7 +286,7 @@ function f(
     end
 end
 `)
-	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
+	facts := lowerFunctionFactsWithWIR(t, "branch", fn, built, bindings, standard.Registry())
 	var found bool
 	for _, point := range built.Graph.RPO() {
 		for _, implication := range facts.PathValuePresenceImplications(point) {
@@ -485,7 +478,7 @@ func assertNeedReleaseImpliesDBValue(t *testing.T, bindings *bind.Result, graph 
 }
 
 func TestLowerConditionalAssignmentPublishesValuePresenceImplicationBeforeLoop(t *testing.T) {
-	_, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(
     use_template: boolean,
     make_executor: () -> { with_context: (self: any, context: table) -> any }
@@ -503,7 +496,7 @@ function f(
     end
 end
 `)
-	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
+	facts := lowerFunctionFactsWithWIR(t, "branch", fn, built, bindings, standard.Registry())
 	assertUseTemplateFalseImpliesExecutorPresent(t, bindings, built, facts)
 }
 
@@ -548,11 +541,6 @@ func TestLowerStaticTruthinessMarksImpossibleBranchEdges(t *testing.T) {
 			stmts := []ast.Stmt{tc.stmt}
 			bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"dynamic"}})
 			built := cfgbuild.BuildChunk(stmts, bindings)
-			_, err := semantics.ExtractChunk(stmts, bindings, built)
-			if err != nil {
-				t.Fatalf("ExtractChunk: %v", err)
-			}
-
 			body := wirlower.Lower("static-truthiness", stmts, bindings, built)
 			facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 			point := requireStmtPoints(t, built, tc.stmt, 1)[0]
@@ -596,7 +584,7 @@ func assertUseTemplateFalseImpliesExecutorPresent(t *testing.T, bindings *bind.R
 }
 
 func TestLowerCompoundOrLiteralImplicationsStayOnProvenOuterEdges(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(kind: string?)
 	if not kind or kind == "auto" or kind == "any" or kind == "" then
 		return { mode = "AUTO" }
@@ -694,12 +682,7 @@ func TestLowerMemberPathBranchRefinement(t *testing.T) {
 	stmts := []ast.Stmt{decl, memberStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	wantPath := path.NewPath(mustIdentSymbol(t, bindings, rootRead), "t").Field("child")
 	assertLoweredBranchValuePresence(t, facts, requireStmtPoints(t, built, memberStmt, 1)[0], wantPath, presence.Present(), true, presence.Absent(), true)
 }
@@ -711,12 +694,7 @@ func TestLowerMemberPathTruthyBranchEvidence(t *testing.T) {
 	stmts := []ast.Stmt{decl, memberStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	wantPath := path.NewPath(mustIdentSymbol(t, bindings, rootRead), "t").Field("child")
 	point := requireStmtPoints(t, built, memberStmt, 1)[0]
 	assertLoweredBranchValuePresence(t, facts, point, wantPath, presence.Present(), true, presence.Absent(), true)
@@ -735,25 +713,20 @@ func TestLowerTypeGuardBranchPathEvidence(t *testing.T) {
 	stmts := []ast.Stmt{decl, typeStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, typeRead), "x")
 	assertLoweredBranchPresenceProof(t, facts, point, xPath, presence.Present(), true, false)
 }
 
 func TestLowerLogicalAndBranchPublishesTrueEdgeConjunctRefinements(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local data_func = raw
 if data_func and data_func ~= "" then
 end
 `, "raw")
 
-	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	dataFunc := mustLocalAt(t, bindings, mustLocalStmt(t, stmts, 0), 0)
 	ifStmt := mustIfStmt(t, stmts, 1)
 	assertLoweredBranchValuePresence(
@@ -767,13 +740,13 @@ end
 }
 
 func TestLowerLogicalOrBranchPublishesFalseEdgeDisjunctRefinements(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local page = input
 if not page or not page.data_func or page.data_func == "" then
 end
 `, "input")
 
-	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	page := mustLocalAt(t, bindings, mustLocalStmt(t, stmts, 0), 0)
 	ifStmt := mustIfStmt(t, stmts, 1)
 	point := requireStmtPoints(t, built, ifStmt, 1)[0]
@@ -798,7 +771,7 @@ end
 
 func TestLowerProtectedCallSuccessGuardRefinesPayloadToCallbackReturn(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local function run_tests(): number
 	return 1
 end
@@ -809,7 +782,7 @@ if not ok then
 end
 `, "pcall")
 
-	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, reg)
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, reg)
 	assign := mustLocalStmt(t, stmts, 1)
 	payloadPath := path.NewPath(mustLocalAt(t, bindings, assign, 1), "result")
 	ifStmt := mustIfStmt(t, stmts, 2)
@@ -834,7 +807,7 @@ end
 
 func TestLowerProtectedCallPayloadTypeComesFromWIRCallbackPath(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local function run_tests(): string
 	return "wrong"
 end
@@ -939,7 +912,7 @@ end
 
 func TestLowerProtectedCallSuccessGuardInWIRModeDoesNotFallbackToSidecar(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local function run_tests(): number
 	return 1
 end
@@ -962,7 +935,7 @@ end
 
 func TestLowerProtectedCallSuccessGuardUsesWIRCallSiteWithoutSemanticResult(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local function run_tests(): number
 	return 1
 end
@@ -1023,7 +996,7 @@ end
 
 func TestLowerProtectedCallDoesNotFallbackWhenWIRCallInstructionMissing(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local function run_tests(): number
 	return 1
 end
@@ -1055,13 +1028,13 @@ end
 }
 
 func TestLowerNegatedConjunctionIndexGuardPublishesFalseEdgeProofs(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(xs: {number}, i: number)
 	if not (i >= 1 and i <= #xs) then
 	end
 end
 `)
-	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
+	facts := lowerFunctionFactsWithWIR(t, "branch", fn, built, bindings, standard.Registry())
 	xs := bindings.ParamSlots(fn)[0].Symbol
 	i := bindings.ParamSlots(fn)[1].Symbol
 	xsPath := path.NewPath(xs, "xs")
@@ -1098,13 +1071,13 @@ end
 }
 
 func TestLowerLengthNotEqualGuardPublishesFalseEdgeFloor(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(parts: {string})
 	if #parts ~= 2 then
 	end
 end
 `)
-	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
+	facts := lowerFunctionFactsWithWIR(t, "branch", fn, built, bindings, standard.Registry())
 	parts := bindings.ParamSlots(fn)[0].Symbol
 	partsPath := path.NewPath(parts, "parts")
 	ifStmt := fn.Stmts[0].(*ast.IfStmt)
@@ -1119,13 +1092,13 @@ end
 }
 
 func TestLowerNegatedConjunctionNilChecksPublishFalseEdgeRefinements(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(x: string?, y: string?)
 	if not (x == nil and y == nil) then
 	end
 end
 `)
-	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
+	facts := lowerFunctionFactsWithWIR(t, "branch", fn, built, bindings, standard.Registry())
 	xPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "x")
 	yPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "y")
 	ifStmt := fn.Stmts[0].(*ast.IfStmt)
@@ -1144,12 +1117,12 @@ end
 }
 
 func TestLowerNegatedConjunctionExpressionConditionKeepsLeafPolarity(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(x: string?, y: string?)
 	local ok = not (x == nil and y == nil)
 end
 `)
-	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
+	facts := lowerFunctionFactsWithWIR(t, "branch", fn, built, bindings, standard.Registry())
 	xPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "x")
 	yPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "y")
 	local := mustLocalStmt(t, fn.Stmts, 0)
@@ -1180,14 +1153,14 @@ end
 }
 
 func TestLowerBooleanLocalAliasPublishesConditionRefinements(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(target: { transform: string? })
 	local has_transform = target.transform ~= nil
 	if has_transform then
 	end
 end
 `)
-	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
+	facts := lowerFunctionFactsWithWIR(t, "branch", fn, built, bindings, standard.Registry())
 	targetPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "target").Field("transform")
 	ifStmt := fn.Stmts[1].(*ast.IfStmt)
 	point := requireStmtPoints(t, built, ifStmt, 1)[0]
@@ -1203,14 +1176,14 @@ end
 }
 
 func TestLowerBooleanLocalAliasPublishesConditionPathRelations(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(a: string?, b: string?)
 	local same = a == b
 	if same then
 	end
 end
 `)
-	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
+	facts := lowerFunctionFactsWithWIR(t, "branch", fn, built, bindings, standard.Registry())
 	aPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "a")
 	bPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "b")
 	ifStmt := fn.Stmts[1].(*ast.IfStmt)
@@ -1220,14 +1193,14 @@ end
 }
 
 func TestLowerBooleanLocalAliasPublishesConditionPathEvidence(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(a: string?, b: string?)
 	local same = a == b
 	if same then
 	end
 end
 `)
-	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
+	facts := lowerFunctionFactsWithWIR(t, "branch", fn, built, bindings, standard.Registry())
 	aPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "a")
 	bPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "b")
 	ifStmt := fn.Stmts[1].(*ast.IfStmt)
@@ -1237,14 +1210,14 @@ end
 }
 
 func TestLowerNegatedBooleanLocalAliasInvertsConditionPathRelations(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(a: string?, b: string?)
 	local same = a == b
 	if not same then
 	end
 end
 `)
-	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
+	facts := lowerFunctionFactsWithWIR(t, "branch", fn, built, bindings, standard.Registry())
 	aPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "a")
 	bPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "b")
 	ifStmt := fn.Stmts[1].(*ast.IfStmt)
@@ -1254,14 +1227,14 @@ end
 }
 
 func TestLowerNegatedBooleanLocalAliasInvertsConditionPathEvidence(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(a: string?, b: string?)
 	local same = a == b
 	if not same then
 	end
 end
 `)
-	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
+	facts := lowerFunctionFactsWithWIR(t, "branch", fn, built, bindings, standard.Registry())
 	aPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "a")
 	bPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "b")
 	ifStmt := fn.Stmts[1].(*ast.IfStmt)
@@ -1271,14 +1244,14 @@ end
 }
 
 func TestLowerNegatedBooleanLocalAliasInvertsConditionRefinements(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(target: { transform: string? })
 	local has_transform = target.transform ~= nil
 	if not has_transform then
 	end
 end
 `)
-	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
+	facts := lowerFunctionFactsWithWIR(t, "branch", fn, built, bindings, standard.Registry())
 	targetPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "target").Field("transform")
 	ifStmt := fn.Stmts[1].(*ast.IfStmt)
 	point := requireStmtPoints(t, built, ifStmt, 1)[0]
@@ -1393,14 +1366,14 @@ func branchPathEvidenceMatchesPaths(proof factflow.BranchPathEvidence, wantLeft 
 }
 
 func TestLowerTypedOptionalMemberBranchPublishesStaticRuntimeKind(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(page: { data_func: string? }?)
 	if not page or not page.data_func or page.data_func == "" then
 	end
 end
 `)
 
-	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
+	facts := lowerFunctionFactsWithWIR(t, "branch", fn, built, bindings, standard.Registry())
 	page := bindings.ParamSlots(fn)[0].Symbol
 	ifStmt := fn.Stmts[0].(*ast.IfStmt)
 	point := requireStmtPoints(t, built, ifStmt, 1)[0]
@@ -1461,12 +1434,12 @@ func TestLowerMemberPathBranchRefinementOrdersRootBeforeChild(t *testing.T) {
 
 func TestLowerTableIsFrozenDirectConditionPublishesFrozenTableProof(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local t = {}
 if table.isfrozen(t) then
 end
 `, "table")
-	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, reg)
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, reg)
 	ifStmt := mustIfStmt(t, stmts, 1)
 	branchPoint := requireStmtPoints(t, built, ifStmt, 2)[1]
 	target := path.NewPath(mustLocalAt(t, bindings, mustLocalStmt(t, stmts, 0), 0), "t")
@@ -1489,12 +1462,12 @@ end
 
 func TestLowerTableIsFrozenNegatedConditionPublishesFrozenTableProofOnFalseEdge(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local t = {}
 if not table.isfrozen(t) then
 end
 `, "table")
-	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, reg)
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, reg)
 	ifStmt := mustIfStmt(t, stmts, 1)
 	branchPoint := requireStmtPoints(t, built, ifStmt, 2)[1]
 	target := path.NewPath(mustLocalAt(t, bindings, mustLocalStmt(t, stmts, 0), 0), "t")
@@ -1517,13 +1490,13 @@ end
 
 func TestLowerTableIsFrozenConjunctionPublishesFrozenTableProofWithOtherGuards(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local t = {}
 local ok: boolean = true
 if table.isfrozen(t) and ok then
 end
 `, "table")
-	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, reg)
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, reg)
 	ifStmt := mustIfStmt(t, stmts, 2)
 	branchPoint := requireStmtPoints(t, built, ifStmt, 2)[1]
 	target := path.NewPath(mustLocalAt(t, bindings, mustLocalStmt(t, stmts, 0), 0), "t")
@@ -1552,13 +1525,13 @@ end
 
 func TestLowerTableIsFrozenIgnoresShadowedLocalTable(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local table = { isfrozen = function(value) return true end }
 local t = {}
 if table.isfrozen(t) then
 end
 `, "table")
-	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, reg)
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, reg)
 	ifStmt := mustIfStmt(t, stmts, 2)
 	branchPoint := requireStmtPoints(t, built, ifStmt, 2)[1]
 	if got := facts.BranchPathEvidence(branchPoint); len(got) != 0 {
@@ -1567,13 +1540,13 @@ end
 }
 
 func TestLowerCompoundBranchOrdersAllRootsBeforeDescendants(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(page: { data_func: string?, url: string? } | { other: string })
 	if page.data_func and page.url then
 	end
 end
 `)
-	facts := lowerFunctionFactsWithWIR(t, "branch", result, built, bindings, standard.Registry())
+	facts := lowerFunctionFactsWithWIR(t, "branch", fn, built, bindings, standard.Registry())
 	page := bindings.ParamSlots(fn)[0].Symbol
 	rootPath := path.NewPath(page, "page")
 	dataPath := rootPath.Field("data_func")
@@ -1709,7 +1682,7 @@ func TestLowerImportedCallResultTruthyDiscriminantPublishesRootRefinement(t *tes
 	validatorManifest.SetExport(typetable.NewRecord().
 		Field("validate_name", typ.Func().Param("input", typ.String).Returns(resultType).Build()).
 		Build())
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local validator = require("validator")
 local result = validator.validate_name("Alice")
 if result.ok then
@@ -1898,12 +1871,7 @@ func TestLowerPathEqualityBranchRelation(t *testing.T) {
 	stmts := []ast.Stmt{decl, eqStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, eqStmt, 1)[0]
 	assertLoweredBranchPathEquality(
 		t,
@@ -1928,11 +1896,7 @@ end
 `)
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	secondIf := stmts[2].(*ast.IfStmt)
 	point := requireStmtPoints(t, built, secondIf, 1)[0]
 	relations := facts.BranchPathRelations(point)
@@ -2019,12 +1983,7 @@ func TestLowerPathInequalityBranchRelation(t *testing.T) {
 	stmts := []ast.Stmt{decl, neqStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, neqStmt, 1)[0]
 	assertLoweredBranchPathEquality(
 		t,
@@ -2048,12 +2007,7 @@ func TestLowerTypeGuardTableEqualityBranchRefinement(t *testing.T) {
 	stmts := []ast.Stmt{decl, typeStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
 	assertLoweredBranchValueRefinement(t, facts, point, xPath,
@@ -2081,12 +2035,7 @@ func TestLowerTypeGuardFunctionInequalityBranchRefinement(t *testing.T) {
 	stmts := []ast.Stmt{decl, typeStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
 	assertLoweredBranchValueRefinement(t, facts, point, xPath,
@@ -2120,12 +2069,7 @@ func TestLowerTypeGuardNilBranchRefinements(t *testing.T) {
 	stmts := []ast.Stmt{decl, eqStmt, notStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, eqRead), "x")
 	nilValue := valueRefinementExpectation{
 		presence:       presence.Absent(),
@@ -2222,12 +2166,7 @@ func TestLowerTypeGuardReversedOperandsBranchRefinement(t *testing.T) {
 	stmts := []ast.Stmt{decl, typeStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
 	assertLoweredBranchValueRefinement(t, facts, point, xPath,
@@ -2254,12 +2193,7 @@ func TestLowerSkipsUnknownTypeGuardBranchRefinements(t *testing.T) {
 	stmts := []ast.Stmt{decl, typeStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	facts := lowerChunkFactsWithWIR(t, "branch", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	if len(facts.BranchRefinements(point)) != 0 {
 		t.Fatalf("unknown type guard branch point %d lowered as branch refinement", point)

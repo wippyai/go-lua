@@ -22,7 +22,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
@@ -91,7 +90,7 @@ type Static struct {
 	registry              *axis.Registry
 	bindings              *bind.Result
 	cfg                   *cfgbuild.Result
-	semantics             *semantics.Result
+	function              *ast.FunctionExpr
 	wir                   *wir.Body
 	sourceStmts           []ast.Stmt
 	signatures            signaturelookup.Source
@@ -172,7 +171,7 @@ type Result struct {
 	registry              *axis.Registry
 	bindings              *bind.Result
 	cfg                   *cfgbuild.Result
-	semantics             *semantics.Result
+	function              *ast.FunctionExpr
 	wir                   *wir.Body
 	sourceStmts           []ast.Stmt
 	signatures            signaturelookup.Source

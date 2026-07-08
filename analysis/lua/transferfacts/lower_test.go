@@ -22,7 +22,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -34,14 +33,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
-func lowerFacts(t *testing.T, result *semantics.Result, graph cfg.Graph, reg *axis.Registry) factflow.Facts {
-	t.Helper()
-	if reg == nil {
-		t.Fatal("lowerFacts requires a registry")
-	}
-	return Lower(graph, Config{Registry: reg})
-}
-
 func TestLowerLiteralExpressionValues(t *testing.T) {
 	nilLocal := localAssign([]string{"missing"}, &ast.NilExpr{})
 	numberLocal := localAssign([]string{"count"}, number("7"))
@@ -49,10 +40,6 @@ func TestLowerLiteralExpressionValues(t *testing.T) {
 	stmts := []ast.Stmt{nilLocal, numberLocal, tableLocal}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	_, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
 
 	body := wirlower.Lower("literal-expression-values", stmts, bindings, built)
 	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
@@ -78,7 +65,7 @@ func TestLowerLiteralExpressionValues(t *testing.T) {
 }
 
 func TestLowerLogicalDefaultExpressionValueKeepsComputedWitness(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 type Level = "debug" | "info"
 local level: Level? = nil
 local selected = level or "info"
@@ -117,7 +104,7 @@ local selected = level or "info"
 
 func TestLowerReturnExpressionOperationUsesNestedCallSource(t *testing.T) {
 	reg := standard.Registry()
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(user)
 	return user.id .. ":" .. tostring(user.retries)
 end`, "tostring")
@@ -152,7 +139,7 @@ end`, "tostring")
 
 func TestLowerReturnLengthComparisonUsesNestedUnarySource(t *testing.T) {
 	reg := standard.Registry()
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(bindings)
 	return #bindings > 0
 end`)
@@ -196,7 +183,7 @@ end`)
 }
 
 func TestLowerAnnotatedFunctionExpressionValueWitness(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local cb = function(item: string): number
     return 1
 end
@@ -234,7 +221,7 @@ end
 }
 
 func TestLowerReturnedFunctionExpressionUsesUniqueCallableReturnArm(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function make(): ((value: string) -> string) | false
     return function(value)
         return value
@@ -273,7 +260,7 @@ end
 }
 
 func TestLowerWIRClosureArgumentCarriesFunctionTypeWitness(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
     send(function(item: string): number
         return 1
@@ -312,7 +299,7 @@ end
 }
 
 func TestLowerDynamicIndexReadExpressionValueUsesRuntimeIndexType(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local users: {[string]: {id: string}} = {}
 local id: string = "u1"
 local user = users[id]
@@ -320,7 +307,7 @@ local maybe_users: {[string]: {id: string}}? = users
 local maybe_user = maybe_users[id]
 `)
 	reg := standard.Registry()
-	facts := lowerChunkFactsWithWIR(t, "dynamic-index-read-expression-value", stmts, result, built, bindings, reg)
+	facts := lowerChunkFactsWithWIR(t, "dynamic-index-read-expression-value", stmts, built, bindings, reg)
 	local := mustLocalStmt(t, stmts, 2)
 	point := requireStmtPoints(t, built, local, 1)[0]
 	source := mustLocalSource(t, facts, point)
@@ -351,14 +338,14 @@ local maybe_user = maybe_users[id]
 }
 
 func TestLowerChainedDynamicIndexReadExpressionValueProjectsMemberThenIndex(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local function meta(): {tags: {[string]: string}?}
     return { tags = { source = "fixture" } }
 end
 	local source = meta().tags["source"]
 `)
 	reg := standard.Registry()
-	facts := lowerChunkFactsWithWIR(t, "chained-dynamic-index-read-expression-value", stmts, result, built, bindings, reg)
+	facts := lowerChunkFactsWithWIR(t, "chained-dynamic-index-read-expression-value", stmts, built, bindings, reg)
 	local := mustLocalStmt(t, stmts, 1)
 	var point cfg.Point
 	for _, candidate := range requireStmtPoints(t, built, local, 2) {
@@ -383,7 +370,7 @@ end
 }
 
 func TestLowerLogicalExpressionValueUsesDeclaredMemberPathTypes(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 type Chunk = { type: string }
 
 local chunk: Chunk = { type = "error" }
@@ -392,7 +379,7 @@ local target_topic: string = "topic"
 local ok = chunk.type == "error" and target_pid ~= "" and target_topic ~= ""
 `)
 	reg := standard.Registry()
-	facts := lowerChunkFactsWithWIR(t, "logical-expression-declared-member-path", stmts, result, built, bindings, reg)
+	facts := lowerChunkFactsWithWIR(t, "logical-expression-declared-member-path", stmts, built, bindings, reg)
 	local := mustLocalStmt(t, stmts, 4)
 	point := requireStmtPoints(t, built, local, 1)[0]
 	source := mustLocalSource(t, facts, point)
@@ -407,13 +394,13 @@ local ok = chunk.type == "error" and target_pid ~= "" and target_topic ~= ""
 }
 
 func TestLowerUnannotatedFunctionExpressionValueCarriesIdentity(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local cb = function(item)
     return item
 end
 `)
 	reg := standard.Registry()
-	facts := lowerChunkFactsWithWIR(t, "unannotated-function-expression", stmts, result, built, bindings, reg)
+	facts := lowerChunkFactsWithWIR(t, "unannotated-function-expression", stmts, built, bindings, reg)
 	point := requireStmtPoints(t, built, stmts[0], 1)[0]
 	source := mustLocalSource(t, facts, point)
 	value, ok := facts.ExpressionValue(source.ExprRef)
@@ -470,14 +457,14 @@ end
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			stmts, bindings, built, result := parseSemanticChunk(t, tt.source)
+			stmts, bindings, built := parseSemanticChunk(t, tt.source)
 			decl := mustLocalStmt(t, stmts, 0)
 			def, ok := stmts[1].(*ast.FuncDefStmt)
 			if !ok || def.Func == nil {
 				t.Fatalf("statement = %T, want function definition", stmts[1])
 			}
 			reg := standard.Registry()
-			facts := lowerChunkFactsWithWIR(t, "member-function-definition", stmts, result, built, bindings, reg)
+			facts := lowerChunkFactsWithWIR(t, "member-function-definition", stmts, built, bindings, reg)
 
 			point := requireStmtPoints(t, built, def, 1)[0]
 			wantPath := path.NewPath(mustLocalAt(t, bindings, decl, 0), tt.rootName).Field(tt.field)
@@ -526,7 +513,7 @@ end
 }
 
 func TestLowerRootFunctionDefinitionPublishesFunctionValue(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 function run()
     return 1
 end
@@ -536,7 +523,7 @@ end
 		t.Fatalf("statement = %T, want function definition", stmts[0])
 	}
 	reg := standard.Registry()
-	facts := lowerChunkFactsWithWIR(t, "root-function-definition", stmts, result, built, bindings, reg)
+	facts := lowerChunkFactsWithWIR(t, "root-function-definition", stmts, built, bindings, reg)
 
 	point := requireStmtPoints(t, built, def, 1)[0]
 	rootFact, ok := facts.RootAssignment(point)
@@ -1080,7 +1067,7 @@ func assign(lhs []ast.Expr, rhs ...ast.Expr) *ast.AssignStmt {
 	return &ast.AssignStmt{Lhs: lhs, Rhs: rhs}
 }
 
-func parseSemanticChunk(t *testing.T, source string, globals ...string) ([]ast.Stmt, *bind.Result, *cfgbuild.Result, *semantics.Result) {
+func parseSemanticChunk(t *testing.T, source string, globals ...string) ([]ast.Stmt, *bind.Result, *cfgbuild.Result) {
 	t.Helper()
 	stmts, err := parse.ParseString(source, "transferfacts_test.lua")
 	if err != nil {
@@ -1091,14 +1078,10 @@ func parseSemanticChunk(t *testing.T, source string, globals ...string) ([]ast.S
 	if built == nil {
 		t.Fatalf("BuildChunk returned nil")
 	}
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-	return stmts, bindings, built, result
+	return stmts, bindings, built
 }
 
-func parseSemanticFunction(t *testing.T, source string, globals ...string) (*ast.FunctionExpr, *bind.Result, *cfgbuild.Result, *semantics.Result) {
+func parseSemanticFunction(t *testing.T, source string, globals ...string) (*ast.FunctionExpr, *bind.Result, *cfgbuild.Result) {
 	t.Helper()
 	stmts, err := parse.ParseString(source, "transferfacts_test.lua")
 	if err != nil {
@@ -1116,11 +1099,7 @@ func parseSemanticFunction(t *testing.T, source string, globals ...string) (*ast
 	if built == nil {
 		t.Fatalf("BuildFunction returned nil")
 	}
-	result, err := semantics.ExtractFunction(def.Func, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractFunction: %v", err)
-	}
-	return def.Func, bindings, built, result
+	return def.Func, bindings, built
 }
 
 func mustLocalStmt(t *testing.T, stmts []ast.Stmt, index int) *ast.LocalAssignStmt {

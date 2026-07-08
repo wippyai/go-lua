@@ -16,7 +16,7 @@ import (
 )
 
 func TestWIRPathOperandValidatesRootOnlyAndSymbolKind(t *testing.T) {
-	stmts, bindings, _, _ := parseSemanticChunk(t, `
+	stmts, bindings, _ := parseSemanticChunk(t, `
 local root = { child = 1 }
 local value = root.child
 `)
@@ -46,7 +46,7 @@ local value = root.child
 }
 
 func TestWIRPathExpressionSourcesPublishRootAndProjectedWitnesses(t *testing.T) {
-	stmts, bindings, _, _ := parseSemanticChunk(t, `
+	stmts, bindings, _ := parseSemanticChunk(t, `
 local root = { child = 1 }
 local value = root.child
 `)

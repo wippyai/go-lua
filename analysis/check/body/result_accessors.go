@@ -526,10 +526,10 @@ func (r *Result) ExpressionEvaluation(point cfg.Point) (cfgbuild.ExpressionEvalu
 }
 
 func (r *Result) Function() *ast.FunctionExpr {
-	if r == nil || r.semantics == nil {
+	if r == nil {
 		return nil
 	}
-	return r.semantics.Function()
+	return r.function
 }
 
 func (r *Result) FunctionSymbol(fn *ast.FunctionExpr) (symbol.ID, bool) {

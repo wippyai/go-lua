@@ -15,7 +15,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
@@ -194,7 +193,7 @@ func TestLowerMemberCallLocalAssignmentUsesCallResultSource(t *testing.T) {
 }
 
 func TestLowerCallSiteResultTargetPathComesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
     local value = nil
     local other = nil
@@ -246,7 +245,7 @@ end
 }
 
 func TestLowerCallSiteResultTargetDoesNotFallbackToSemanticPath(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
     local value = nil
     value = make()
@@ -286,7 +285,7 @@ end
 }
 
 func TestLowerCallSiteResultTargetShapeComesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
     local value = make()
 end
@@ -332,7 +331,7 @@ end
 }
 
 func TestLowerCallSiteResultTargetsCanComeOnlyFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
     make()
 end
@@ -342,12 +341,12 @@ end
 		t.Fatalf("stmt = %T, want call statement", fn.Stmts[0])
 	}
 	callPoint := requireStmtPoints(t, built, callStmt, 1)[0]
-	semanticCall, ok := result.Call(callPoint)
+	semanticCall, ok := built.Calls.Get(callPoint)
 	if !ok {
-		t.Fatalf("missing semantic call at point %d", callPoint)
+		t.Fatalf("missing cfgbuild call at point %d", callPoint)
 	}
 	if got := semanticCall.ResultTargets; len(got) != 0 {
-		t.Fatalf("semantic call result targets = %#v, want none", got)
+		t.Fatalf("cfgbuild call result targets = %#v, want none", got)
 	}
 	makeSym, ok := bindings.GlobalSymbol("make")
 	if !ok {
@@ -385,7 +384,7 @@ end
 }
 
 func TestLowerWIRCallSitePublishesWithoutSemanticCallView(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(payload: {id: string}): ()
     local marker = true
 end
@@ -395,8 +394,8 @@ end
 		t.Fatalf("stmt = %T, want local assignment", fn.Stmts[0])
 	}
 	point := requireStmtPoints(t, built, localStmt, 1)[0]
-	if _, ok := result.CallView(point); ok {
-		t.Fatalf("point %d unexpectedly has semantic call view", point)
+	if _, ok := built.Calls.View(point); ok {
+		t.Fatalf("point %d unexpectedly has cfgbuild call view", point)
 	}
 	makeSym, ok := bindings.GlobalSymbol("make")
 	if !ok {
@@ -482,7 +481,7 @@ end
 }
 
 func TestLowerWIRCallArgumentObjectLiteralPublishesWithoutSemanticResult(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
     sink({ id = "alpha", nested = { count = 1 } })
 end
@@ -529,7 +528,7 @@ end
 }
 
 func TestLowerWIRCallArgumentObjectLiteralPathEntriesProjectWithoutSemanticHook(t *testing.T) {
-	stmts, bindings, _, _ := parseSemanticChunk(t, `
+	stmts, bindings, _ := parseSemanticChunk(t, `
 type Methods = { node_id: string }
 function Methods:f(source: { primary: Channel<{ id: string }>, alias: string? }): ()
     local function decode_event(raw: any): { id: string }
@@ -613,7 +612,7 @@ end
 }
 
 func TestLowerWIRCallArgumentObjectLiteralUsesMetatableMethodReceiverType(t *testing.T) {
-	stmts, bindings, _, _ := parseSemanticChunk(t, `
+	stmts, bindings, _ := parseSemanticChunk(t, `
 local methods = {}
 local mt = { __index = methods }
 
@@ -704,7 +703,7 @@ end
 }
 
 func TestLowerWIRCallArgumentObjectLiteralInsideGenericForPublishesEntries(t *testing.T) {
-	stmts, bindings, _, _ := parseSemanticChunk(t, `
+	stmts, bindings, _ := parseSemanticChunk(t, `
 local methods = {}
 local mt = { __index = methods }
 
@@ -794,7 +793,7 @@ end
 }
 
 func TestLowerReturnCallResultTargetComesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): string
     return make()
 end
@@ -818,7 +817,7 @@ end
 }
 
 func TestLowerWithWIRPublishesCallAndReturnWithoutSemanticSidecars(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(payload: { id: string }): string
     return make(payload.id)
 end
@@ -999,7 +998,7 @@ func TestLowerCallSiteTypeArgsComeFromWIR(t *testing.T) {
 }
 
 func TestLowerCallSiteUsesWIRArgumentSourcesForLiteralAndCallOperands(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(value: string): ()
     send(value, "ok", 3, nil, true, produce())
 end
@@ -1043,7 +1042,7 @@ end
 }
 
 func TestLowerCallSiteUsesWIRArgumentSourceForLocalRootPath(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
     local value = "x"
     send(value)
@@ -1076,7 +1075,7 @@ end
 }
 
 func TestLowerAssignmentCallSiteKeepsArgumentSourcesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(raw: any): ()
     local function consume(payload: {id: string}): ()
     end
@@ -1105,7 +1104,7 @@ end
 }
 
 func TestLowerCallSiteLocalArgumentPathComesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
     local value = "x"
     local other = "y"
@@ -1145,7 +1144,7 @@ end
 }
 
 func TestLowerCallSiteSegmentedArgumentPathComesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
     local value = { name = "x" }
     local other = { name = "y" }
@@ -1183,7 +1182,7 @@ end
 }
 
 func TestLowerDirectRootCallShapeComesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
     local callee = function() end
     local other = function() end
@@ -1224,7 +1223,7 @@ end
 }
 
 func TestLowerDirectMemberCallShapeComesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
     local obj = { run = function() end }
     local other = { run = function() end }
@@ -1266,7 +1265,7 @@ end
 }
 
 func TestLowerMethodCallReceiverSourcePathComesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
     local obj = { run = function(self) end }
     local other = { run = function(self) end }
@@ -1314,7 +1313,7 @@ end
 }
 
 func TestLowerMethodCallSegmentedReceiverSourcePathComesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
     local obj = { child = { run = function(self) end } }
     local other = { child = { run = function(self) end } }
@@ -1359,7 +1358,7 @@ end
 }
 
 func TestLowerMethodCallReceiverSourceDoesNotRequireSemanticReceiverSource(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
     local obj = { run = function(self) end }
     local other = { run = function(self) end }
@@ -1401,7 +1400,7 @@ end
 }
 
 func TestLowerCallSiteDoesNotFallbackWhenWIRCallInstructionMissing(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(value: string): ()
     send(value)
 end
@@ -1419,7 +1418,7 @@ end
 }
 
 func TestLowerCallSiteContextAndFlagsComeFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
     send()
 end
@@ -1429,12 +1428,12 @@ end
 		t.Fatalf("stmt = %T, want call statement", fn.Stmts[0])
 	}
 	point := requireStmtPoints(t, built, stmt, 1)[0]
-	fact, ok := result.Call(point)
+	fact, ok := built.Calls.Get(point)
 	if !ok {
-		t.Fatalf("missing semantic call at point %d", point)
+		t.Fatalf("missing cfgbuild call at point %d", point)
 	}
-	if fact.Context != semantics.CallContextStatement {
-		t.Fatalf("semantic context = %v, want statement", fact.Context)
+	if fact.Context != cfgbuild.CallContextStatement {
+		t.Fatalf("cfgbuild context = %v, want statement", fact.Context)
 	}
 	sendSym, ok := bindings.GlobalSymbol("send")
 	if !ok {
@@ -1473,7 +1472,7 @@ end
 }
 
 func TestLowerCallSiteMetadataComesFromWIR(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(value: string): ()
     send(value)
 end
@@ -1483,8 +1482,8 @@ end
 		t.Fatalf("stmt = %T, want call statement", fn.Stmts[0])
 	}
 	point := requireStmtPoints(t, built, stmt, 1)[0]
-	if _, ok := result.Call(point); !ok {
-		t.Fatalf("missing semantic call at point %d", point)
+	if _, ok := built.Calls.Get(point); !ok {
+		t.Fatalf("missing cfgbuild call at point %d", point)
 	}
 
 	body := wir.NewBody("synthetic-call-metadata")
@@ -1525,7 +1524,7 @@ end
 }
 
 func TestLowerCallSiteUsesUnknownForUnsupportedDirectWIRArgument(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(value: string): ()
     send(value)
 end
@@ -1556,7 +1555,7 @@ end
 }
 
 func TestLowerCallSiteUsesUnknownForMissingTempWIRArgument(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(value: string): ()
     send(value)
 end
@@ -1587,7 +1586,7 @@ end
 }
 
 func TestLowerCallSiteUsesUnknownForUnsupportedDefinedTempWIRArgument(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(value: string): ()
     send(value)
 end
@@ -1629,7 +1628,7 @@ end
 }
 
 func TestLowerCallSiteLogicalFallbackArgumentComesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(env: {get: fun(string): string?}, config: {DEFAULT_CACHE_ID: string}, store: {get: fun(string): any}): ()
     store.get(env.get("APP_CACHE") or config.DEFAULT_CACHE_ID)
 end
@@ -1674,7 +1673,7 @@ end
 }
 
 func TestLowerAssignmentSelectResultSourceComesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
     local selected = "fallback"
 end
@@ -1714,7 +1713,7 @@ end
 }
 
 func TestLowerCallSiteClosureArgumentFunctionComesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
     local other = function() end
     send(function() end)
@@ -1781,7 +1780,7 @@ end
 }
 
 func TestLowerCallSiteDoesNotFallbackToSemanticCalleeWhenWIRDirectCalleeUnsupported(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(value: string): ()
     send(value)
 end
@@ -1807,12 +1806,12 @@ end
 		t.Fatalf("missing WIR call site at point %d", points[0])
 	}
 	if site.CalleeSymbol() != 0 || !site.CalleePath().IsEmpty() || site.CalleeMemberAccess() {
-		t.Fatalf("WIR unsupported callee kept semantic callee identity: symbol=%d path=%s member=%v", site.CalleeSymbol(), site.CalleePath(), site.CalleeMemberAccess())
+		t.Fatalf("WIR unsupported callee kept cfgbuild callee identity: symbol=%d path=%s member=%v", site.CalleeSymbol(), site.CalleePath(), site.CalleeMemberAccess())
 	}
 }
 
 func TestLowerMethodCallNameComesFromWIRForExpressionReceiver(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(obj: any): ()
     obj:run()
 end
@@ -1851,7 +1850,7 @@ end
 }
 
 func TestLowerMethodCallExpressionReceiverSourceDoesNotRequireSemanticReceiverSource(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): string
     local function make(): {{topic: (self: any) -> string}}
         return {}
@@ -1861,7 +1860,7 @@ end
 `)
 	var callPoint cfg.Point
 	for _, point := range built.Graph.RPO() {
-		candidate, ok := result.Call(point)
+		candidate, ok := built.Calls.Get(point)
 		if ok && candidate.Method == "topic" {
 			callPoint = point
 			break
@@ -1911,7 +1910,7 @@ end
 }
 
 func TestLowerMethodCallUsesUnknownForUnsupportedWIRReceiver(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(obj: {run: fun(self: any): ()}): ()
     obj:run()
 end
@@ -1951,7 +1950,7 @@ end
 }
 
 func TestLowerIteratorCallSitePreservesArgumentPath(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local state = {
     active_sessions = {},
 }
@@ -1999,11 +1998,6 @@ func TestLowerNestedExpressionProducerCallIsReadableSlotZero(t *testing.T) {
 	stmts := []ast.Stmt{stmt}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"f", "g"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	_, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
 	body := wirlower.Lower("nested-expression-producer", stmts, bindings, built)
 	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	points := requireStmtPoints(t, built, stmt, 2)
@@ -2045,11 +2039,6 @@ func TestLowerNestedExpressionProducerCallFromWIRIsReadableSlotZero(t *testing.T
 	stmts := []ast.Stmt{stmt}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"f", "g"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	_, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
 	body := wirlower.Lower("nested-call-producer", stmts, bindings, built)
 	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	points := requireStmtPoints(t, built, stmt, 2)
@@ -2092,11 +2081,6 @@ func TestLowerMemberOrdinaryCallTargetStaysCallSiteOnly(t *testing.T) {
 	stmts := []ast.Stmt{decl, write}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"f"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	_, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
 	body := wirlower.Lower("member-ordinary-call-target", stmts, bindings, built)
 	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	points := requireStmtPoints(t, built, write, 2)

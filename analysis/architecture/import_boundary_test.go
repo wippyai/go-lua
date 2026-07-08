@@ -40,17 +40,8 @@ func TestLowerLayerImportBoundaries(t *testing.T) {
 			},
 		},
 		{
-			name:     "cfgbuild stays before semantics transferfacts and check",
+			name:     "cfgbuild stays before transferfacts and check",
 			patterns: []string{modulePath + "/analysis/lua/cfgbuild"},
-			banned: []string{
-				modulePath + "/analysis/lua/semantics",
-				modulePath + "/analysis/lua/transferfacts",
-				modulePath + "/analysis/check",
-			},
-		},
-		{
-			name:     "semantics stays before transferfacts and check",
-			patterns: []string{modulePath + "/analysis/lua/semantics"},
 			banned: []string{
 				modulePath + "/analysis/lua/transferfacts",
 				modulePath + "/analysis/check",
@@ -381,7 +372,6 @@ func TestInternalReadmodelAvoidsSyntaxSemanticReachIns(t *testing.T) {
 		for _, banned := range []string{
 			modulePath + "/analysis/check/diagnostics",
 			modulePath + "/analysis/lua/bind",
-			modulePath + "/analysis/lua/semantics",
 			modulePath + "/analysis/type/typecall",
 			modulePath + "/compiler/ast",
 			"go/ast",

@@ -25,7 +25,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -36,7 +35,7 @@ import (
 )
 
 func TestLowerAssignmentClaimsUseWIRClaimSourcesForRootWrites(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(x: any)
     local local_cast = x as number
     local local_assert = x!
@@ -64,7 +63,7 @@ end
 }
 
 func TestLowerReturnClaimsUseWIRClaimSources(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(x: any): (number, any)
     return x as number, x!
 end
@@ -95,7 +94,7 @@ end
 }
 
 func TestLowerReturnClaimsUseWIRClaimSourcesWithoutSemanticResult(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(x: any): (number, any)
     return x as number, x!
 end
@@ -126,7 +125,7 @@ end
 }
 
 func TestLowerCallArgumentClaimsUseWIRClaimSources(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(x: any): ()
     sink(x as number, x!)
 end
@@ -157,7 +156,7 @@ end
 }
 
 func TestLowerCallArgumentClaimsUseWIRClaimSourcesWithoutSemanticResult(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(x: any): ()
     sink(x as number, x!)
 end
@@ -168,7 +167,7 @@ end
 	callPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	site, ok := facts.CallSite(callPoint)
 	if !ok {
-		t.Fatalf("missing call site at point %d without semantic CallView", callPoint)
+		t.Fatalf("missing call site at point %d without cfgbuild CallView", callPoint)
 	}
 	args := site.ArgumentSources()
 	if len(args) != 2 {
@@ -191,7 +190,7 @@ func TestLowerCallArgumentWIRClaimUsesConfiguredTypeResolver(t *testing.T) {
 	messageType := typetable.NewRecord().
 		Field("topic", typ.String).
 		Build()
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(raw: any): ()
     payload_data(raw as process.Message)
 end
@@ -224,7 +223,7 @@ func TestLowerCallArgumentWIRClaimKeepsDisjointRuntimeValidationExpressionSource
 	recordType := typetable.NewRecord().
 		Field("name", typ.String).
 		Build()
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(y: number): ()
     sink(y as {name: string})
 end
@@ -250,7 +249,7 @@ end
 }
 
 func TestLowerCallArgumentWIRClaimTypeBeatsSemanticCastType(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(x: any): ()
     local sink = function(value: any) end
     sink(x as string)
@@ -299,7 +298,7 @@ end
 }
 
 func TestLowerCallArgumentWIRClaimSegmentedInnerPathComesFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
     local sink = function(value: any) end
     local value = { name = "x" }
@@ -363,7 +362,7 @@ end
 }
 
 func TestLowerCallArgumentWIRClaimRootLocalInnerStaysPathSource(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): ()
     local sink = function(value: any) end
     local suites = {}
@@ -417,7 +416,7 @@ end
 }
 
 func TestLowerClaimWrappedCallBindingsUseWIRClaims(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 type Message = {topic: string}
 local inbox = make() as Message
 local ready = check()!
@@ -512,12 +511,7 @@ func TestLowerClaimsToSidecarsWithoutProofRefinements(t *testing.T) {
 	stmts := []ast.Stmt{decl, local}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	facts := lowerChunkFactsWithWIR(t, "claim-sidecars", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "claim-sidecars", stmts, built, bindings, standard.Registry())
 	points := requireStmtPoints(t, built, local, 3)
 	typeSource := mustLocalSource(t, facts, points[0])
 	anySource := mustLocalSource(t, facts, points[1])
@@ -545,12 +539,7 @@ func TestLowerClaimsPreserveCastSyntaxVariantsWithoutProofRefinements(t *testing
 	stmts := []ast.Stmt{decl, local}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	facts := lowerChunkFactsWithWIR(t, "claim-syntax-variants", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "claim-syntax-variants", stmts, built, bindings, standard.Registry())
 	points := requireStmtPoints(t, built, local, 4)
 	cases := []struct {
 		name  string
@@ -584,12 +573,12 @@ func TestLowerClaimsPreserveCastSyntaxVariantsWithoutProofRefinements(t *testing
 }
 
 func TestLowerParsedCastClaimsOnlyProduceClaimRefinements(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local x = 0
 local a, b, c, d = x as number, x :: number, x as any, x :: any
 `)
 
-	facts := lowerChunkFactsWithWIR(t, "parsed-cast-claims", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "parsed-cast-claims", stmts, built, bindings, standard.Registry())
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	local := mustLocalStmt(t, stmts, 1)
@@ -624,14 +613,14 @@ local a, b, c, d = x as number, x :: number, x as any, x :: any
 }
 
 func TestLowerStructuralCastClaimIsRuntimeValidation(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 type Payload = { id: string }
 local raw = {}
 local payload = raw :: Payload
 `)
 
 	reg := standard.Registry()
-	facts := lowerChunkFactsWithWIR(t, "structural-cast-claim", stmts, result, built, bindings, reg)
+	facts := lowerChunkFactsWithWIR(t, "structural-cast-claim", stmts, built, bindings, reg)
 	local := mustLocalStmt(t, stmts, 2)
 	source := mustLocalSource(t, facts, requireStmtPoints(t, built, local, 1)[0])
 	claim, ok := facts.ExpressionRefinement(source.ExprRef)
@@ -651,7 +640,7 @@ local payload = raw :: Payload
 }
 
 func TestLowerWIRClaimConditionPublishesRefinementWithoutSemanticSidecar(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local x: any = 0
 if x as number then end
 `)
@@ -676,13 +665,13 @@ if x as number then end
 }
 
 func TestLowerParsedAnyClaimCastsMarkUntrustedTop(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local x = 0
 local a, b, c, d = x as any, x :: any, x as unknown, x :: unknown
 `)
 
 	reg := standard.Registry()
-	facts := lowerChunkFactsWithWIR(t, "parsed-any-claims", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "parsed-any-claims", stmts, built, bindings, standard.Registry())
 	local := mustLocalStmt(t, stmts, 1)
 	points := requireStmtPoints(t, built, local, 4)
 	base := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
@@ -737,7 +726,7 @@ local a, b, c, d = x as any, x :: any, x as unknown, x :: unknown
 }
 
 func TestExtractedCastValueSourcesPreserveParsedSyntax(t *testing.T) {
-	stmts, _, built, _ := parseSemanticChunk(t, `
+	stmts, _, built := parseSemanticChunk(t, `
 local x = 0
 local a, b = x as number, x :: any
 `)
@@ -778,12 +767,7 @@ func TestLowerNestedClaimsPreserveOuterIdentityAndInnerFlow(t *testing.T) {
 	stmts := []ast.Stmt{decl, local}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	facts := lowerChunkFactsWithWIR(t, "nested-claims", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "nested-claims", stmts, built, bindings, standard.Registry())
 	source := mustLocalSource(t, facts, requireStmtPoints(t, built, local, 1)[0])
 	outer, ok := facts.ExpressionRefinement(source.ExprRef)
 	if !ok {
@@ -817,16 +801,11 @@ func TestLowerClaimRefinementsApplyIndicatorsWithoutMutatingBaseValues(t *testin
 	stmts := []ast.Stmt{decl, local}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
 	reg, err := standard.RegistryWithAxes(testLowerSparseAxisSpec().Erase())
 	if err != nil {
 		t.Fatalf("RegistryWithAxes error = %v", err)
 	}
-	facts := lowerChunkFactsWithWIR(t, "claim-refinement-indicators", stmts, result, built, bindings, reg)
+	facts := lowerChunkFactsWithWIR(t, "claim-refinement-indicators", stmts, built, bindings, reg)
 	points := requireStmtPoints(t, built, local, 3)
 	xSym := mustLocalAt(t, bindings, decl, 0)
 	type sourceCase struct {
@@ -948,13 +927,8 @@ func TestLowerNestedClaimRefinementsApplyCombinedIndicators(t *testing.T) {
 	stmts := []ast.Stmt{decl, local}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
 	reg := standard.Registry()
-	facts := lowerChunkFactsWithWIR(t, "nested-claim-indicators", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "nested-claim-indicators", stmts, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, local, 1)[0]
 	source := mustLocalSource(t, facts, point)
 	outer, ok := facts.ExpressionRefinement(source.ExprRef)
@@ -991,13 +965,13 @@ func TestLowerNestedClaimRefinementsApplyCombinedIndicators(t *testing.T) {
 }
 
 func TestLowerNestedAnyClaimRefinementsKeepUntrustedTop(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local x = 0
 local a, b = (x as any) as number, (x :: any) :: number
 `)
 
 	reg := standard.Registry()
-	facts := lowerChunkFactsWithWIR(t, "nested-any-claim-indicators", stmts, result, built, bindings, reg)
+	facts := lowerChunkFactsWithWIR(t, "nested-any-claim-indicators", stmts, built, bindings, reg)
 	local := mustLocalStmt(t, stmts, 1)
 	points := requireStmtPoints(t, built, local, 2)
 	for _, point := range points {
@@ -1054,13 +1028,13 @@ local a, b = (x as any) as number, (x :: any) :: number
 }
 
 func TestLowerColonCastRuntimeValidationClearsStaleAnyEvidence(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local x: any = 1
 local a = x :: string
 `)
 
 	reg := standard.Registry()
-	facts := lowerChunkFactsWithWIR(t, "colon-cast-clears-any", stmts, result, built, bindings, reg)
+	facts := lowerChunkFactsWithWIR(t, "colon-cast-clears-any", stmts, built, bindings, reg)
 	local := mustLocalStmt(t, stmts, 1)
 	point := requireStmtPoints(t, built, local, 1)[0]
 	source := mustLocalSource(t, facts, point)
@@ -1314,13 +1288,8 @@ func TestLowerConcreteCastWrappedAnyCallPublishesRuntimeWitness(t *testing.T) {
 	stmts := []ast.Stmt{local}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
 	reg := standard.Registry()
-	facts := lowerChunkFactsWithWIR(t, "concrete-cast-wrapped-any-call", stmts, result, built, bindings, reg)
+	facts := lowerChunkFactsWithWIR(t, "concrete-cast-wrapped-any-call", stmts, built, bindings, reg)
 	points := requireStmtPoints(t, built, local, 2)
 	source := mustLocalSource(t, facts, points[1])
 	refinement, ok := facts.ExpressionRefinement(source.ExprRef)

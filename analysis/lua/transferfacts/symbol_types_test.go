@@ -20,7 +20,7 @@ import (
 )
 
 func TestLowerSymbolTypesKeepsParamAnnotationsWithoutSemanticResult(t *testing.T) {
-	fn, bindings, _, _ := parseSemanticFunction(t, `
+	fn, bindings, _ := parseSemanticFunction(t, `
 function handle(ch: Channel<{kind: "event", id: string}>)
 	local selected = channel.select { ch:case_receive() }
 end
@@ -40,7 +40,7 @@ end
 }
 
 func TestLowerSymbolTypesReadsFunctionAndNumericForFromWIRWithoutSemanticResult(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 function build(value: string): number
 	return 1
 end
@@ -89,7 +89,7 @@ end
 }
 
 func TestLowerSymbolTypesFromWIRSeedsCapturedFunctionRootTypes(t *testing.T) {
-	stmts, bindings, _, _ := parseSemanticChunk(t, `
+	stmts, bindings, _ := parseSemanticChunk(t, `
 local function make_status(): number
 	return 1
 end
@@ -151,7 +151,7 @@ func TestLowerSymbolTypesFromWIRSeedsLocalCallResultTypes(t *testing.T) {
 }
 
 func TestLowerSymbolTypesFromWIRUsesRequireExportForMemberCallResultWithoutSemanticResult(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local discovery = require("discovery")
 local suite_names = discovery.sorted_keys({})
 `)
@@ -210,7 +210,7 @@ end
 }
 
 func TestLowerSymbolTypesFromWIRCopiesStaticSourcePathTypeWithoutSemanticResult(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local source: { retry: { max_attempts: number }? } = { retry = { max_attempts = 3 } }
 local options = source
 `)

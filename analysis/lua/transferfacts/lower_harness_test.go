@@ -16,7 +16,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -26,7 +25,7 @@ import (
 )
 
 func TestLowerPanicsWithoutRegistry(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, "local x = 1")
+	stmts, bindings, built := parseSemanticChunk(t, "local x = 1")
 	_ = stmts
 	_ = bindings
 	_ = built
@@ -52,9 +51,9 @@ func TestLowerPanicsWithoutRegistryOnEmptyInputs(t *testing.T) {
 
 func TestLowerAnnotatedLiteralLocalPreservesLiteralValue(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, result := parseSemanticChunk(t, `local x: string | number = 42`)
+	stmts, bindings, built := parseSemanticChunk(t, `local x: string | number = 42`)
 
-	facts := lowerChunkFactsWithWIR(t, "annotated-literal-local", stmts, result, built, bindings, reg)
+	facts := lowerChunkFactsWithWIR(t, "annotated-literal-local", stmts, built, bindings, reg)
 	points := requireStmtPoints(t, built, mustLocalStmt(t, stmts, 0), 1)
 	fact, ok := facts.RootAssignment(points[0])
 	if !ok {
@@ -82,9 +81,9 @@ func TestLowerAnnotatedLiteralLocalPreservesLiteralValue(t *testing.T) {
 
 func TestLowerAnnotatedEmptyArrayLocalCarriesDeclaredValue(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, result := parseSemanticChunk(t, `local xs: any[] = {}`)
+	stmts, bindings, built := parseSemanticChunk(t, `local xs: any[] = {}`)
 
-	facts := lowerChunkFactsWithWIR(t, "annotated-empty-array-local", stmts, result, built, bindings, reg)
+	facts := lowerChunkFactsWithWIR(t, "annotated-empty-array-local", stmts, built, bindings, reg)
 	points := requireStmtPoints(t, built, mustLocalStmt(t, stmts, 0), 1)
 	fact, ok := facts.RootAssignment(points[0])
 	if !ok {
@@ -108,9 +107,9 @@ func TestLowerAnnotatedEmptyArrayLocalCarriesDeclaredValue(t *testing.T) {
 
 func TestLowerAnnotatedIdentifierLocalDoesNotCarryDeclaredValue(t *testing.T) {
 	reg := standard.Registry()
-	stmts, bindings, built, result := parseSemanticChunk(t, `local x: string? = value`, "value")
+	stmts, bindings, built := parseSemanticChunk(t, `local x: string? = value`, "value")
 
-	facts := lowerChunkFactsWithWIR(t, "annotated-identifier-local", stmts, result, built, bindings, reg)
+	facts := lowerChunkFactsWithWIR(t, "annotated-identifier-local", stmts, built, bindings, reg)
 	points := requireStmtPoints(t, built, mustLocalStmt(t, stmts, 0), 1)
 	fact, ok := facts.LocalAssignment(points[0])
 	if !ok {
@@ -148,12 +147,7 @@ func TestLowerDoesNotLowerDeclarationOrControlSidecars(t *testing.T) {
 	stmts := []ast.Stmt{typeDef, interfaceDef, funcDef, numericFor, genericFor, label, gotoStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"build", "items"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	facts := lowerChunkFactsWithWIR(t, "declaration-control-sidecars", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "declaration-control-sidecars", stmts, built, bindings, standard.Registry())
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	for _, point := range requireStmtPoints(t, built, typeDef, 1) {
@@ -218,11 +212,6 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 	stmts := []ast.Stmt{local, write, ret}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make", "pack", "put", "tail"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	_, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
 	body := wirlower.Lower("value-list-metadata", stmts, bindings, built)
 	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
@@ -326,7 +315,7 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 }
 
 func TestLowerStaticExpressionPathSidecar(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local t = {}
 local a = t.name
 local b = t["raw"]
@@ -336,7 +325,7 @@ local d = t[k]
 `)
 	_ = stmts
 
-	facts := lowerChunkFactsWithWIR(t, "static-expression-path-sidecar", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "static-expression-path-sidecar", stmts, built, bindings, standard.Registry())
 
 	assertExprPath := func(source factflow.ValueSource, want path.Path) {
 		t.Helper()
@@ -376,14 +365,14 @@ local d = t[k]
 }
 
 func TestLowerDynamicIndexExpressionPreservesStaticMemberTablePath(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local term = {}
 term.spinner_frames = {"a", "b", "c"}
 local i = 1
 local frame = term.spinner_frames[i]
 `)
 
-	facts := lowerChunkFactsWithWIR(t, "dynamic-index-static-member-table-path", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "dynamic-index-static-member-table-path", stmts, built, bindings, standard.Registry())
 	termSym := mustLocalAt(t, bindings, stmts[0].(*ast.LocalAssignStmt), 0)
 	iSym := mustLocalAt(t, bindings, stmts[2].(*ast.LocalAssignStmt), 0)
 	frameSource := mustLocalSource(t, facts, requireStmtPoints(t, built, stmts[3], 1)[0])
@@ -412,7 +401,7 @@ local frame = term.spinner_frames[i]
 }
 
 func TestLowerDynamicIndexExpressionCarriesUnnameableTableSource(t *testing.T) {
-	stmts, bindings, built, _ := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local function make()
     return {["root"] = {id = "root"}}
 end
@@ -460,14 +449,14 @@ local root = make()["root"]
 }
 
 func TestLowerDotAfterDynamicIndexExpressionCarriesTableSource(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local items = {}
 local k = 1
 items[k] = {id = "root"}
 local id = items[k].id
 `)
 
-	facts := lowerChunkFactsWithWIR(t, "dot-after-dynamic-index-table-source", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "dot-after-dynamic-index-table-source", stmts, built, bindings, standard.Registry())
 	idSource := mustLocalSource(t, facts, requireStmtPoints(t, built, stmts[3], 1)[0])
 	if _, ok := facts.ExpressionPath(idSource.ExprRef); ok {
 		t.Fatalf("dot after dynamic index source ref %d unexpectedly has a static expression path", idSource.ExprRef)
@@ -499,12 +488,7 @@ func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
 	stmts := []ast.Stmt{local, dotWrite, indexWrite, dynamicWrite, nestedDynamicWrite, rootWrite}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	facts := lowerChunkFactsWithWIR(t, "ordinary-assignment-splits-root-path", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "ordinary-assignment-splits-root-path", stmts, built, bindings, standard.Registry())
 	tSym := mustLocalAt(t, bindings, local, 0)
 	kSym := mustLocalAt(t, bindings, local, 1)
 
@@ -665,12 +649,7 @@ func TestLowerDynamicIndexReadbackUsesAliasPathOwner(t *testing.T) {
 	stmts := []ast.Stmt{local, concreteCastWrite, anyCastWrite}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	result, err := semantics.ExtractChunk(stmts, bindings, built)
-	if err != nil {
-		t.Fatalf("ExtractChunk: %v", err)
-	}
-
-	facts := lowerChunkFactsWithWIR(t, "dynamic-index-readback-alias-owner", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "dynamic-index-readback-alias-owner", stmts, built, bindings, standard.Registry())
 	kSym := mustLocalAt(t, bindings, local, 1)
 	vSym := mustLocalAt(t, bindings, local, 2)
 
@@ -720,8 +699,8 @@ coroutine.spawn(function() end)
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			stmts, bindings, built, result := parseSemanticChunk(t, tc.source, "_G", "coroutine")
-			facts := lowerChunkFactsWithWIR(t, "global-table-field-assignment", stmts, result, built, bindings, standard.Registry())
+			stmts, bindings, built := parseSemanticChunk(t, tc.source, "_G", "coroutine")
+			facts := lowerChunkFactsWithWIR(t, "global-table-field-assignment", stmts, built, bindings, standard.Registry())
 
 			point := requireStmtPoints(t, built, stmts[0], 1)[0]
 			rootFact, ok := facts.OrdinaryAssignment(point)
@@ -756,11 +735,11 @@ coroutine.spawn(function() end)
 }
 
 func TestLowerLocalGlobalTableShadowDoesNotWriteCanonicalGlobalRoot(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local _G = {}
 _G.coroutine = {}
 `, "coroutine")
-	facts := lowerChunkFactsWithWIR(t, "local-global-table-shadow", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "local-global-table-shadow", stmts, built, bindings, standard.Registry())
 
 	point := requireStmtPoints(t, built, stmts[1], 1)[0]
 	if _, ok := facts.OrdinaryAssignment(point); ok {
@@ -769,12 +748,12 @@ _G.coroutine = {}
 }
 
 func TestLowerChannelSelectsUseWIRFacts(t *testing.T) {
-	_, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function handle(events_ch: Channel<{kind: "event", id: string}>, stop_ch: Channel<{kind: "stop", reason: string}>)
 	local selected = channel.select { events_ch:case_receive(), stop_ch:case_receive() }
 end
 `, "channel")
-	body := wirlower.Lower("handle", result.Function().Stmts, bindings, built)
+	body := wirlower.Lower("handle", fn.Stmts, bindings, built)
 	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	var wirSelects []factflow.ChannelSelect
@@ -808,7 +787,7 @@ end
 }
 
 func TestLowerChannelSelectsPublishWithoutSemanticSidecars(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function handle(events_ch: Channel<{kind: "event", id: string}>, stop_ch: Channel<{kind: "stop", reason: string}>)
     local selected = channel.select { events_ch:case_receive(), stop_ch:case_receive() }
 end
@@ -848,12 +827,12 @@ end
 }
 
 func TestLowerChannelSelectsInWIRModeDoesNotFallbackToSidecar(t *testing.T) {
-	_, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function handle(events_ch: Channel<{kind: "event", id: string}>, stop_ch: Channel<{kind: "stop", reason: string}>)
     local selected = channel.select { events_ch:case_receive(), stop_ch:case_receive() }
 end
 `, "channel")
-	body := wirlower.Lower("handle", result.Function().Stmts, bindings, built)
+	body := wirlower.Lower("handle", fn.Stmts, bindings, built)
 	lowered := lowerer{
 		registry:    standard.Registry(),
 		bindings:    bindings,
@@ -875,7 +854,7 @@ end
 }
 
 func TestLowerChannelSelectsFromWIRWithoutSemanticCallView(t *testing.T) {
-	fn, bindings, built, result := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function handle(events_ch: Channel<{kind: "event", id: string}>)
     local selected = nil
 end
@@ -898,14 +877,14 @@ end
 		Path:        selectedPath,
 	})
 
-	if _, ok := result.CallView(point); ok {
-		t.Fatalf("fixture unexpectedly has semantic call view at point %d", point)
+	if _, ok := built.Calls.View(point); ok {
+		t.Fatalf("fixture unexpectedly has cfgbuild call view at point %d", point)
 	}
 	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	events := facts.ChannelSelects(point)
 	if len(events) != 3 {
-		t.Fatalf("WIR channel select events at point %d = %#v, want select/case/receive without semantic call view", point, events)
+		t.Fatalf("WIR channel select events at point %d = %#v, want select/case/receive without cfgbuild call view", point, events)
 	}
 	if events[0].Kind() != factflow.ChannelSelectSelect {
 		t.Fatalf("select event = %#v", events[0])
@@ -932,7 +911,7 @@ end
 }
 
 func TestLowerChannelSelectsUseWIRCandidateCasePaths(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function consume(events: Channel<{
 	kind: "stream",
 	router: {
@@ -1015,11 +994,11 @@ end
 }
 
 func TestLowerOrdinaryRootTableConstructorReassignmentKeepsRuntimeValue(t *testing.T) {
-	stmts, bindings, built, result := parseSemanticChunk(t, `
+	stmts, bindings, built := parseSemanticChunk(t, `
 local res: {answer: string} = {answer = "ok"}
 res = {}
 `)
-	facts := lowerChunkFactsWithWIR(t, "ordinary-root-table-reassignment", stmts, result, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithWIR(t, "ordinary-root-table-reassignment", stmts, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, stmts[1], 1)[0]
 	fact, ok := facts.RootAssignment(point)
 	if !ok {

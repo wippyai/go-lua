@@ -12,7 +12,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 )
 
 type stabilityCacheResult struct {
@@ -28,10 +27,6 @@ func (r *stabilityCacheResult) ExitState() (state.State, bool)   { return state.
 func (r *stabilityCacheResult) ReturnPoints() []cfg.Point        { return nil }
 func (r *stabilityCacheResult) KeySpace() *keyspace.KeySpace     { return nil }
 func (r *stabilityCacheResult) ParameterValueSlots() []key.Value { return nil }
-func (r *stabilityCacheResult) Call(cfg.Point) (semantics.CallFact, bool) {
-	return semantics.CallFact{}, true
-}
-
 func (r *stabilityCacheResult) CallSite(point cfg.Point) (factflow.CallSite, bool) {
 	site, ok := r.callSites[point]
 	return site, ok

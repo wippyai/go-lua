@@ -28,7 +28,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -1425,11 +1424,6 @@ type normalReturnFactProjectCallStub struct {
 	calls    map[cfg.Point]factflow.CallSite
 	paths    map[factflow.ExprRef]pathdom.Path
 	outcomes map[cfg.Point]callpayload.CallOutcome
-}
-
-func (r normalReturnFactProjectCallStub) Call(point cfg.Point) (semantics.CallFact, bool) {
-	_, ok := r.calls[point]
-	return semantics.CallFact{}, ok
 }
 
 func (r normalReturnFactProjectCallStub) CallSite(point cfg.Point) (factflow.CallSite, bool) {

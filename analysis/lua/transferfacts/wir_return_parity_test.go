@@ -18,7 +18,7 @@ import (
 )
 
 func TestLowerWithWIRReturnPointsPublishReturnPresence(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(ok: boolean): (string?, string?)
     if ok then
         return "value", nil
@@ -43,7 +43,7 @@ end
 }
 
 func TestLowerWithWIRReturnPresenceArityComesFromWIRDeclaredReturns(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): (string?, string?)
     return nil
 end
@@ -64,7 +64,7 @@ end
 }
 
 func TestLowerWithWIRReturnSourcesForNonExpressionOperands(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(...): (nil, any, any)
     return nil, produce(), ...
 end
@@ -99,7 +99,7 @@ end
 }
 
 func TestLowerWithWIRReturnSourcesForScalarLiterals(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): (boolean, number, string)
     return false, 42, "ready"
 end
@@ -132,7 +132,7 @@ end
 }
 
 func TestLowerWithWIRReturnLogicalDefaultCarriesComputedWitness(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(level: string?): string
     return level or "info"
 end
@@ -169,7 +169,7 @@ end
 }
 
 func TestLowerWithWIRNestedLogicalReturnCarriesComputedStringWitness(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function label(success: boolean, value: any): string
     return success and "ok" or (type(value) == "string" and ("value:" .. value) or "failed")
 end
@@ -202,7 +202,7 @@ end
 }
 
 func TestLowerWithWIRNegatedNilLogicalReturnCarriesComputedStringWitness(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function label(value: string?): string
     return not (value == nil) and ("value:" .. value) or ""
 end
@@ -235,7 +235,7 @@ end
 }
 
 func TestLowerWithWIRReturnSourcesForRootPath(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(value: string): string
     return value
 end
@@ -259,7 +259,7 @@ end
 }
 
 func TestLowerWithWIRReturnSourcesForSegmentedPath(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): string
     local value = { name = "x" }
     local other = { name = "y" }
@@ -297,7 +297,7 @@ end
 }
 
 func TestLowerWithWIRReturnSourcesUseLocalRootPath(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): any
     local builder = {}
     return builder
@@ -322,7 +322,7 @@ end
 }
 
 func TestLowerWithWIRReturnSourcesUsesTempExpressionOperands(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(value: string): string
     return value .. "!"
 end
@@ -353,7 +353,7 @@ end
 }
 
 func TestLowerWithWIRReturnSourcesDerivesTempExpressionFromWIR(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(value: string): string
     return value .. "!"
 end
@@ -393,7 +393,7 @@ end
 }
 
 func TestLowerWithWIRNaryConcatReturnCarriesProjectedStringValue(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(req: {method: string, path: string}): string
     return "Not found: " .. req.method .. " " .. req.path
 end
@@ -426,7 +426,7 @@ end
 }
 
 func TestLowerWithWIRUnaryLengthReturnCarriesProjectedIntegerValue(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(req: {items: {string}}, other: {items: {number}}): integer
     return #req.items
 end
@@ -477,7 +477,7 @@ end
 }
 
 func TestLowerWithWIRReturnTempExpressionUsesSegmentedPathOperand(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): string
     local value = { name = "x" }
     local other = { name = "y" }
@@ -523,7 +523,7 @@ end
 }
 
 func TestLowerWithWIRReturnSourcesDoesNotFallbackWhenReturnInstructionMissing(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(value: string): string
     return value
 end
@@ -541,7 +541,7 @@ end
 }
 
 func TestLowerWithWIRReturnMalformedOperandDoesNotFallbackToSemanticSource(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(value: string): string
     return value
 end
@@ -571,7 +571,7 @@ end
 }
 
 func TestLowerWithWIRReturnMissingTempDoesNotFallbackToSemanticSource(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(value: string): string
     return value
 end
@@ -601,7 +601,7 @@ end
 }
 
 func TestLowerWithWIRReturnedTypePredicateCarriesExpressionCondition(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(value)
     return type(value) == "number"
 end
@@ -644,7 +644,7 @@ end
 }
 
 func TestLowerWithWIRReturnedConjunctionCarriesLeftExpressionCondition(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(value)
     return type(value) == "number" and value > 0
 end
@@ -687,7 +687,7 @@ end
 }
 
 func TestLowerWithWIRReturnedNestedPathConjunctionCarriesRootPresence(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(entry: {id: string, meta: {type: string?}?}?): boolean?
     return entry and entry.meta and entry.meta.type == "agent.gen1"
 end
@@ -730,7 +730,7 @@ end
 }
 
 func TestLowerWithWIRReturnPublishesWithoutSourceReturnMetadata(t *testing.T) {
-	fn, bindings, built, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function f(): string
     local value = "semantic assignment point"
     return value
