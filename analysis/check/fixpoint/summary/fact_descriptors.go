@@ -184,14 +184,14 @@ var summaryFactDescriptors = func() callboundary.BoundaryFactTable[SummarySlotOp
 				return capturedPathObligationsLessOrEq(reg, a.CapturedPathObligations, b.CapturedPathObligations)
 			},
 			assignJoin: func(reg *axis.Registry, a, b Summary, out *Summary) {
-				out.CapturedPathObligations = joinCapturedPathObligations(
+				out.CapturedPathObligations = combineCapturedPathObligations(
 					reg,
 					a.CapturedPathObligations,
 					b.CapturedPathObligations,
 				)
 			},
 			assignWiden: func(reg *axis.Registry, prev, next Summary, out *Summary) {
-				out.CapturedPathObligations = widenCapturedPathObligations(
+				out.CapturedPathObligations = combineCapturedPathObligations(
 					reg,
 					prev.CapturedPathObligations,
 					next.CapturedPathObligations,

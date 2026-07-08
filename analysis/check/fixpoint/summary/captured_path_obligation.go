@@ -81,14 +81,6 @@ func capturedPathObligationsLessOrEq(reg *axis.Registry, a, b []CapturedPathObli
 	return true
 }
 
-func joinCapturedPathObligations(reg *axis.Registry, a, b []CapturedPathObligation) []CapturedPathObligation {
-	return combineCapturedPathObligations(reg, a, b)
-}
-
-func widenCapturedPathObligations(reg *axis.Registry, prev, next []CapturedPathObligation) []CapturedPathObligation {
-	return combineCapturedPathObligations(reg, prev, next)
-}
-
 func combineCapturedPathObligations(reg *axis.Registry, a, b []CapturedPathObligation) []CapturedPathObligation {
 	if len(a) == 0 {
 		return normalizeCapturedPathObligations(reg, b)
