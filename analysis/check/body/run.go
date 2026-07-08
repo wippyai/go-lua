@@ -17,7 +17,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/engine/sourceprojection"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -33,7 +32,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
-	typerefinement "github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typecall"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -299,7 +297,6 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		WidenDelay:   config.WidenDelay,
 		Stats:        transferStats(config.Stats),
 	})
-	flow = s.finalizeReturnSlotHeapWitnesses(flow, typeValues)
 	result := &Result{
 		registry:              s.registry,
 		bindings:              s.bindings,
@@ -415,44 +412,6 @@ func returnSlotStructuredType(t typ.Type) bool {
 	default:
 		return false
 	}
-}
-
-func (s *Static) finalizeReturnSlotHeapWitnesses(flow transfer.Result, typeValues *typevalue.Cache) transfer.Result {
-	if s == nil || s.cfg.Graph == nil || s.registry == nil || len(flow) == 0 {
-		return flow
-	}
-	exit := s.cfg.Graph.Exit()
-	exitState, ok := flow[exit]
-	if !ok {
-		return flow
-	}
-	slots := make(map[int]struct{})
-	for _, point := range s.cfg.Graph.RPO() {
-		fact, ok := s.facts.Return(point)
-		if !ok {
-			continue
-		}
-		for i, source := range fact.Sources() {
-			index := source.TargetIndex
-			if index < 0 {
-				index = i
-			}
-			slots[index] = struct{}{}
-		}
-	}
-	for index := range slots {
-		value := exitState.ReadReturnSlot(s.registry, index)
-		if t, ok := typevalue.TypeOf(s.registry, value); ok && t != nil && typerefinement.ContainsBoundaryTop(t) {
-			continue
-		}
-		projected, ok := sourceprojection.HeapObjectContainerType(s.registry, typeValues, exitState, value)
-		if !ok {
-			continue
-		}
-		exitState = exitState.WriteReturnSlot(s.registry, index, typevalue.WithWitness(s.registry, value, projected))
-	}
-	flow[exit] = exitState
-	return flow
 }
 
 func (s *Static) solveEntryState(typeValues *typevalue.Cache, entry state.State, initial transfer.InitialState) (state.State, transfer.InitialState) {
