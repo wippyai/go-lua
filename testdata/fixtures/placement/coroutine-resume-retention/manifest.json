@@ -1,0 +1,23 @@
+{
+  "description": "A table passed through coroutine.resume may be retained by the coroutine body and must not remain stack-local.",
+  "check": {
+    "placement": {
+      "require_complete": true,
+      "min_shared_heap": 2,
+      "max_stack": 1,
+      "max_owned_heap": 0,
+      "min_shared_depth": 2,
+      "min_shared_heap_kind": {
+        "lua.table": 2
+      },
+      "max_stack_kind": {
+        "lua.table": 1
+      },
+      "max_no_fact": 0,
+      "max_unknown": 0
+    }
+  },
+  "run": {
+    "skip": "checker-only placement fixture"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "description": "A fresh allocation returned through a transitive module chain and then sent must promote the allocation birth site, not only the caller's return slot.",
+  "files": ["alloc.lua", "pass.lua", "main.lua"],
+  "packages": ["process"],
+  "check": {
+    "placement": {
+      "require_complete": true,
+      "min_shared_heap": 2,
+      "max_stack": 0,
+      "min_shared_depth": 2,
+      "min_shared_heap_kind": {
+        "manifest.allocation": 2
+      },
+      "max_stack_kind": {
+        "lua.table": 0,
+        "manifest.allocation": 0
+      },
+      "max_no_fact": 0,
+      "max_unknown": 0
+    }
+  },
+  "run": {
+    "skip": "checker-only placement fixture"
+  }
+}
