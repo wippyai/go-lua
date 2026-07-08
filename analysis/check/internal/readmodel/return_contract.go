@@ -30,7 +30,7 @@ func (r Reader) ForEachReturn(visit func(Return) bool) bool {
 	if len(expectedValues) == 0 {
 		return false
 	}
-	expectedSpans := sourceSpansFromBody(r.result.FunctionReturnTypeSpansForFunction())
+	expectedSpans := sourceSpansFromBody(body.FunctionReturnTypeSpans(r.result.Function()))
 	visited := false
 	return r.result.ForEachReturnValueOccurrence(func(occ body.ReturnValueOccurrence) bool {
 		if occ.Index >= len(expectedValues) {

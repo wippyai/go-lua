@@ -34,12 +34,3 @@ func (r *Result) FallbackFunctionReturnTypeSpans(site factflow.CallSite) []Sourc
 	}
 	return nil
 }
-
-// FunctionReturnTypeSpansForFunction returns source spans for this result's
-// function return annotation.
-func (r *Result) FunctionReturnTypeSpansForFunction() []SourceSpan {
-	if r == nil {
-		return nil
-	}
-	return FunctionReturnTypeSpans(r.Function())
-}
