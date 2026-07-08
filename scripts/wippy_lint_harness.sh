@@ -27,6 +27,10 @@ RUN_WIPPY_BUILD="${RUN_WIPPY_BUILD:-1}"
 RUN_WIPPY_INSTALL="${RUN_WIPPY_INSTALL:-1}"
 RUN_LINT="${RUN_LINT:-1}"
 REQUIRE_LOCAL_REPLACE="${REQUIRE_LOCAL_REPLACE:-1}"
+LINT_DELTA="${LINT_DELTA:-0}"
+LINT_DELTA_BASELINE="${LINT_DELTA_BASELINE:-$GO_LUA_DIR/testdata/baselines/external_harness_diagnostics.jsonl}"
+LINT_DELTA_FORMAT="${LINT_DELTA_FORMAT:-human}"
+LINT_DELTA_FAIL_ON_NEW="${LINT_DELTA_FAIL_ON_NEW:-0}"
 
 export GOCACHE GOMODCACHE
 export GOMEMLIMIT="${GOMEMLIMIT:-4GiB}"
@@ -58,9 +62,11 @@ mkdir -p "$OUT_DIR" "$GOCACHE" "$GOMODCACHE"
 SUMMARY_TSV="$OUT_DIR/summary.tsv"
 CODE_TSV="$OUT_DIR/codes.tsv"
 FAMILY_TSV="$OUT_DIR/families.tsv"
+DIAGNOSTICS_JSONL="$OUT_DIR/diagnostics.jsonl"
 : >"$SUMMARY_TSV"
 : >"$CODE_TSV"
 : >"$FAMILY_TSV"
+: >"$DIAGNOSTICS_JSONL"
 
 section() {
 	printf '\n== %s ==\n' "$1"
@@ -73,6 +79,16 @@ die() {
 
 safe_name() {
 	printf '%s' "$1" | sed 's#^/##; s#[^A-Za-z0-9_.-]#_#g'
+}
+
+baseline_target_name() {
+	local target="$1"
+	local home_wippy="$HOME/wippy/"
+	if [[ "$target" == "$home_wippy"* ]]; then
+		printf '%s\n' "${target#$home_wippy}"
+		return 0
+	fi
+	printf '%s\n' "$target"
 }
 
 infer_target_namespace() {
@@ -197,6 +213,19 @@ append_family_rows() {
 		| [$target, .[0].family, length] | @tsv' "$json_file" >>"$FAMILY_TSV" 2>/dev/null || true
 }
 
+append_diagnostic_rows() {
+	local target="$1"
+	local json_file="$2"
+	local target_name
+	if ! has_jq || [[ ! -s "$json_file" ]]; then
+		return 0
+	fi
+	target_name="$(baseline_target_name "$target")"
+	jq -c --arg target "$target_name" '(.diagnostics // [])[]
+		| {target:$target, entry_id, code, severity, line, column, message}' \
+		"$json_file" >>"$DIAGNOSTICS_JSONL" 2>/dev/null || true
+}
+
 print_samples() {
 	local json_file="$1"
 	if ! has_jq || [[ ! -s "$json_file" || "$LINT_SAMPLE_LIMIT" -le 0 ]]; then
@@ -298,7 +327,11 @@ section "harness"
 printf 'go-lua: %s\n' "$GO_LUA_DIR"
 printf 'wippy:  %s\n' "$WIPPY_DIR"
 printf 'out:    %s\n' "$OUT_DIR"
-printf 'limits: timeout=%s rss=%sMB GOMEMLIMIT=%s GOGC=%s strict=%s install=%s ns=%s\n' "$LINT_TIMEOUT" "$LINT_RSS_LIMIT_MB" "$GOMEMLIMIT" "$GOGC" "$STRICT" "$RUN_WIPPY_INSTALL" "$LINT_NAMESPACE_MODE"
+printf 'limits: timeout=%s rss=%sMB GOMEMLIMIT=%s GOGC=%s strict=%s install=%s ns=%s delta=%s\n' "$LINT_TIMEOUT" "$LINT_RSS_LIMIT_MB" "$GOMEMLIMIT" "$GOGC" "$STRICT" "$RUN_WIPPY_INSTALL" "$LINT_NAMESPACE_MODE" "$LINT_DELTA"
+
+if [[ "$LINT_DELTA" == "1" ]] && ! has_jq; then
+	die "LINT_DELTA requires jq to normalize current diagnostics"
+fi
 
 if [[ "$REQUIRE_LOCAL_REPLACE" == "1" ]]; then
 	replace_line="replace github.com/wippyai/go-lua => $GO_LUA_DIR"
@@ -308,6 +341,7 @@ if [[ "$REQUIRE_LOCAL_REPLACE" == "1" ]]; then
 fi
 
 status=0
+delta_status=0
 
 if [[ "$RUN_GOLUA_TESTS" == "1" ]]; then
 	section "go-lua compiler/check tests"
@@ -411,6 +445,7 @@ for spec in "${TARGET_SPECS[@]}"; do
 	print_code_summary "$json_log"
 	print_family_summary "$json_log"
 	print_samples "$json_log"
+	append_diagnostic_rows "$target" "$json_log"
 	append_code_rows "$target" "$json_log"
 	append_family_rows "$target" "$json_log"
 	printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$target" "$errors" "$warnings" "$hints" "$target_status" "$json_log" >>"$SUMMARY_TSV"
@@ -420,8 +455,35 @@ section "summary files"
 printf '%s\n' "$SUMMARY_TSV"
 printf '%s\n' "$CODE_TSV"
 printf '%s\n' "$FAMILY_TSV"
+printf '%s\n' "$DIAGNOSTICS_JSONL"
+
+if [[ "$LINT_DELTA" == "1" ]]; then
+	section "diagnostic delta"
+	case "$LINT_DELTA_FORMAT" in
+		json | jsonl)
+			DELTA_REPORT="$OUT_DIR/diagnostic_delta.jsonl"
+			;;
+		*)
+			DELTA_REPORT="$OUT_DIR/diagnostic_delta.txt"
+			;;
+	esac
+	if ! DIFFREPORT_FORMAT="$LINT_DELTA_FORMAT" DIFFREPORT_FAIL_ON_NEW="$LINT_DELTA_FAIL_ON_NEW" \
+		"$GO_LUA_DIR/scripts/wippy_diag_delta.sh" "$LINT_DELTA_BASELINE" "$DIAGNOSTICS_JSONL" "$DELTA_REPORT"; then
+		delta_status=1
+		status=1
+	fi
+	if [[ -s "$DELTA_REPORT" ]]; then
+		cat "$DELTA_REPORT"
+	else
+		printf 'no delta report written: %s\n' "$DELTA_REPORT"
+	fi
+	printf '%s\n' "$DELTA_REPORT"
+fi
 
 if [[ "$STRICT" == "1" ]]; then
 	exit "$status"
+fi
+if [[ "$LINT_DELTA_FAIL_ON_NEW" == "1" && "$delta_status" -ne 0 ]]; then
+	exit "$delta_status"
 fi
 exit 0
