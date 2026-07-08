@@ -1,4 +1,4 @@
-# wir — checker instruction IR (scaffold + prototype)
+# wir — checker instruction IR
 
 wir replaces the point-keyed half of the fact pipeline with a small, closed
 instruction set attached per `cfg.Point`. Lowering translates syntax and
@@ -45,8 +45,8 @@ Operands are scalar handles, never pointers: `Operand{Kind, Ref uint32}`.
   (`InternPath`/`InternConst`/`InternType`); index 0 is a reserved "none"
   sentinel, so a zero ref is unambiguously absent.
 - Path identity keys on `path.PathKey` (structural, version-sensitive). The
-  canonical structural `keyspace.Key` is the intended production key; the
-  prototype keys on `path.Key()` strings for simplicity (see open questions).
+  point-local state-cell identity is resolved later through `AddressResolver`;
+  operand identity is deliberately source-path identity, not a `keyspace.Key`.
 - Variadic operands (call args, return values, table entries, iterator sources,
   n-ary concat, results) live in one shared `operandPool` referenced by
   `OperandRange{Start,Len}` — no per-instruction slices.
@@ -117,9 +117,10 @@ nilability) and judgments (JIR), is the input to a future arena-VM bytecode
 backend that emits specialized bytecode with judgment-proven guard elimination.
 Encoding impact, per decision:
 
-- **Scalar interned operands** map directly to VM registers/slots; dense 1-based
-  refs are a natural slot-allocation domain. No symbolic path strings at use
-  sites — only in the printer.
+- **Scalar interned operands** are the slot-allocation input; dense 1-based refs
+  and root symbols give the backend stable allocation keys. Final numeric VM
+  slots are codegen-owned. No symbolic path strings at use sites — only in the
+  printer.
 - **Multret markers** give codegen exact `CALL`/`RETURN` operand counts where
   static, and the `C=0` (multret) form where `ResultSpread`/`ListSpread` is set,
   without re-deriving arity. (Contrast go-lua-arena `compiler/bytecode` +
@@ -133,6 +134,75 @@ Encoding impact, per decision:
   guard): `StaticMemberWrite`/`MakeTable` field access, `DynamicIndexRead`/`DynamicIndexWrite` bounds,
   `Call` callee/arg-type guards, and `Claim` (cast/assert narrowings). These
   instructions are where a proven judgment lets codegen emit the unchecked op.
+
+### Source local debug identity (`DbgLocal` projection)
+
+The runtime/JIT debug contract for named locals is frozen as a projection over
+existing WIR metadata. WIR does not carry, and should not grow, a parallel debug
+locals table. A backend that needs Lua-style debug locals projects:
+
+```
+DbgLocal{
+    name,
+    startPoint, // or startPC after codegen maps cfg.Point -> bytecode PC
+    endPoint,   // or endPC after the live range is closed
+    slot,
+}
+```
+
+Candidate rows are source-level root symbols, not display strings. A root is an
+`OperandPath` whose `body.Path(wir.PathRef(op.Ref))` has `Symbol != 0` and no
+suffix segments. Shadowed locals are distinct because `path.Path.Symbol` is the
+primary identity. `SymbolInfo` supplies the source-facing identity:
+`Body.SymbolInfo(id)`, `Body.SymbolName(id)`, and `Body.SymbolKind(id)` expose
+the recorded `SymbolInfo{Kind, Name, RequireModule, HasWrite, ImplicitGlobal}`.
+Consumers should use `SymbolParam` and `SymbolLocal` for ordinary debug locals;
+`SymbolUpvalue` may be projected only by a backend that exposes captured values
+as local slots. `SymbolGlobal` and `SymbolFunction` are not named-local rows.
+
+| `DbgLocal` field | Existing WIR surface | Derivation |
+| --- | --- | --- |
+| `name` | `SymbolInfo.Name`, via `Body.SymbolName(symbol)` | Use the interned const string recorded by `wirlower.recordSymbolInfo`; do not recover names from `path.Path.Root` except as a diagnostic fallback for malformed/incomplete WIR. |
+| `kind` / row filter | `SymbolInfo.Kind`, via `Body.SymbolKind(symbol)` | Include `SymbolParam` and `SymbolLocal` for source locals. The closed vocabulary is `SymbolParam`, `SymbolLocal`, `SymbolGlobal`, `SymbolUpvalue`, `SymbolFunction`. |
+| `startPoint` | `Instruction.Point`; point windows from `Body.PointInstructions(point)` and `Body.SetPointRange(point,start,end)` | For local declarations, use the point of the root-writing assignment instruction stamped by `lowerLocalAssign` (`AssignLocalDeclaration`). Loop bindings are instruction-backed too: numeric-for exposes the loop variable in `OpIterate.Results`; generic-for emits per-variable `OpAssign var = _` binding points. Parameters, and any entry-seeded captured local slot a backend chooses to expose, start at the body's `cfg.Graph.Entry()` point, where WIR emits `OpEntry`. |
+| `startPC` | backend point-to-PC map | Translate `startPoint` after instruction selection. The flat `Body` instruction index is not the contract; `cfg.Point` is. |
+| `slot` | root `path.Path.Symbol` from a root `OperandPath`; backend allocator result | WIR freezes the source slot identity key, not the final VM register number. The backend allocates a numeric slot from that root symbol / path-ref identity and writes that number into `DbgLocal.slot`. If it needs state-cell identity, it may use `AddressResolver.Resolve(point, op, AccessWriteLocal)` or `AccessReadBefore`, but those point-sensitive keys are not VM slots. |
+| `endPoint` / `endPC` | not currently stored | Open item. WIR has enough points and operand occurrences to run a liveness pass, but it does not store lexical-scope end markers or live-range end points. The intended derivation is a backend liveness/slot-allocation pass over `cfg.Graph`, `Body.PointInstructions`, and root operand uses, then translation through the same point-to-PC map used for `startPC`. |
+
+Definition discovery is structural. Walk reachable points (usually
+`graph.RPO()`), inspect each point's `Body.PointInstructions(point)`, and decode
+root path operands from `Dst`, `Results`, call/select target metadata, and other
+opcode-specific fields. This is the same kind of structural projection used by
+`visibilityfacts.DefinitionsFromWIR`; it is not a semantic conclusion from the
+type checker.
+
+Current gaps are deliberately documented rather than patched here:
+
+- **Live-range ends.** No existing `analysis/ir/wir` field gives a precise
+  `endPoint`; compute it in the backend from liveness, or add a future
+  structural live-range source only with runtime-lane sign-off.
+- **Unreferenced, untyped parameters.** `wirlower` records their internal
+  `SymbolInfo` through `recordFunctionBodyMetadata`, but `Body` currently has no
+  exported symbol-table iterator or parameter-root list. A consumer can discover
+  parameter rows that appear in root operands or other exported metadata, but a
+  completely unused untyped parameter is not enumerable from the public WIR
+  surface alone. If this must be exposed, add a structural parameter/root view,
+  not a debug-only side table.
+
+Stability rules:
+
+- Frozen without joint runtime-lane sign-off: `cfg.Point` as the debug range
+  anchor, root `path.Path.Symbol` as the source slot identity key,
+  `SymbolInfo.Kind`, `SymbolInfo.Name`, `Body.SymbolName`,
+  `Body.SymbolKind`, `Body.PointInstructions`, `Instruction.Point`,
+  `Operand{Kind,Ref}` for `OperandPath`, and the `AssignKind` distinction
+  between local declaration and ordinary root write.
+- May evolve without changing this contract: opcode additions, helper methods
+  that make the projection cheaper, the backend's numeric slot allocator, the
+  liveness algorithm used to choose `endPoint`, and codegen's point-to-PC map.
+- Any change that would make `name`, `startPoint`, or the root-symbol slot key
+  derive differently from existing WIR requires explicit sign-off from both this
+  checker lane and the runtime/JIT lane.
 
 ## Extended dialect decisions (Stage 4)
 
@@ -302,7 +372,7 @@ cells decode the interned path through `Body.Path` and then use
 `visibility.AddressAt` in the consumer's own context. This keeps WIR below engine
 state identity and avoids a WIR-owned resolver contract.
 
-## Skeleton step 2 status
+## Current status
 
 Landed in wir/wirlower lanes: **D1a** (same-CFG `Lower(name, stmts, bindings,
 *cfgbuild.Result) *wir.Body` keyed on the shared graph's points; the self-CFG
@@ -341,10 +411,11 @@ RHS, branch topology for effectful RHS), closures and function definitions
 (`OpClosure` + nested protos, methods), channel-select (`OpSelect`), cast /
 non-nil assert / annotation claims, varargs, multret (call-in-middle vs tail).
 Golden tests in `wirlower/wirlower_test.go` (incl. adversarial multret and the
-effectful-logical branch topology); completeness measured by the per-point
-`WIR_SHADOW` harness (100% over 574 fixtures).
+effectful-logical branch topology); completeness is measured by the per-point
+`WIR_SHADOW` harness rather than by a hard-coded fixture count in this document.
 
 Residual gap: none in the per-point shadow categories. The only non-structural
 match is the explicit `"target"` sentinel for computed assignment targets with no
 static path/container identity; the point must still carry a wir write. WIR is
-consumed by transferfacts.
+consumed by transferfacts; runtime/JIT codegen is the separate consumer this
+document keeps compatible.
