@@ -48,7 +48,9 @@ func (r *Result) tableDispatchBaseKeysAt(point cfg.Point, table path.Path) (map[
 			if keys, span, ok := r.tableDispatchReplacementKeys(fact, table); ok {
 				return keys, span, cursor, true
 			}
-			_, staticKey, touches := r.tableDispatchAssignmentKeyForPath(cursor, fact, table)
+		}
+		if write, ok := r.LoweredAssignmentWrite(cursor); ok {
+			_, staticKey, touches := tableDispatchAssignmentKeyForWrite(write, table)
 			if touches && !staticKey {
 				return nil, SourceSpan{}, 0, false
 			}
@@ -109,8 +111,8 @@ func tableDispatchSummaries(result *Result, inherited map[path.PathKey]tableDisp
 				collectObjectLiteralTableDispatchSummaries(result, &out, base, literal)
 			}
 		}
-		if fact, ok := result.OrdinaryAssignment(point); ok {
-			updateTableDispatchSummariesForAssignment(result, out, point, fact)
+		if write, ok := result.LoweredAssignmentWrite(point); ok {
+			updateTableDispatchSummariesForAssignment(out, write)
 		}
 		if _, ok := result.Call(point); ok {
 			updateTableDispatchSummariesForCall(result, out, point)
@@ -169,12 +171,12 @@ func cloneTableDispatchKeySet(in map[string]bool) map[string]bool {
 	return out
 }
 
-func updateTableDispatchSummariesForAssignment(result *Result, summaries map[path.PathKey]tableDispatchSummary, point cfg.Point, fact OrdinaryAssignmentFact) {
+func updateTableDispatchSummariesForAssignment(summaries map[path.PathKey]tableDispatchSummary, write LoweredAssignmentWrite) {
 	if len(summaries) == 0 {
 		return
 	}
 	for summaryKey, summary := range summaries {
-		key, staticKey, touches := tableDispatchAssignmentKeyForPath(result, point, fact, summary.path)
+		key, staticKey, touches := tableDispatchAssignmentKeyForWrite(write, summary.path)
 		if !touches {
 			continue
 		}
@@ -215,21 +217,23 @@ func (r *Result) applyReachableTableDispatchAssignments(
 		if candidate == from || candidate == point {
 			continue
 		}
-		fact, ok := r.OrdinaryAssignment(candidate)
+		write, ok := r.LoweredAssignmentWrite(candidate)
 		if !ok {
 			continue
 		}
-		key, staticKey, touches := r.tableDispatchAssignmentKeyForPath(candidate, fact, table)
+		key, staticKey, touches := tableDispatchAssignmentKeyForWrite(write, table)
 		if !touches ||
 			!r.PointCanReach(from, candidate) ||
 			!r.PointCanReach(candidate, point) {
 			continue
 		}
 		if r.PointDominates(candidate, point) {
-			if replacement, replacementSpan, ok := r.tableDispatchReplacementKeys(fact, table); ok {
-				replaceTableDispatchKeySet(keys, replacement)
-				tableSpan = replacementSpan
-				continue
+			if fact, ok := r.OrdinaryAssignment(candidate); ok {
+				if replacement, replacementSpan, ok := r.tableDispatchReplacementKeys(fact, table); ok {
+					replaceTableDispatchKeySet(keys, replacement)
+					tableSpan = replacementSpan
+					continue
+				}
 			}
 			if !staticKey {
 				return SourceSpan{}, false
@@ -237,11 +241,13 @@ func (r *Result) applyReachableTableDispatchAssignments(
 			keys[key] = true
 			continue
 		}
-		if replacement, replacementSpan, ok := r.tableDispatchReplacementKeys(fact, table); ok {
-			if intersectTableDispatchKeySet(keys, replacement) {
-				tableSpan = replacementSpan
+		if fact, ok := r.OrdinaryAssignment(candidate); ok {
+			if replacement, replacementSpan, ok := r.tableDispatchReplacementKeys(fact, table); ok {
+				if intersectTableDispatchKeySet(keys, replacement) {
+					tableSpan = replacementSpan
+				}
+				continue
 			}
-			continue
 		}
 		if !staticKey {
 			return SourceSpan{}, false
@@ -303,39 +309,25 @@ func intersectTableDispatchKeySet(target map[string]bool, other map[string]bool)
 	return changed
 }
 
-func (r *Result) tableDispatchAssignmentKeyForPath(point cfg.Point, fact OrdinaryAssignmentFact, table path.Path) (key string, staticKey bool, touches bool) {
-	return tableDispatchAssignmentKeyForPath(r, point, fact, table)
-}
-
-func tableDispatchAssignmentKeyForPath(result *Result, point cfg.Point, fact OrdinaryAssignmentFact, table path.Path) (key string, staticKey bool, touches bool) {
+func tableDispatchAssignmentKeyForWrite(write LoweredAssignmentWrite, table path.Path) (key string, staticKey bool, touches bool) {
 	if table.Symbol == 0 {
 		return "", false, false
 	}
-	if fact.HasPath {
-		if fact.Path.HasPrefix(table) {
-			suffix := fact.Path.Segments[len(table.Segments):]
-			if len(suffix) != 1 {
-				return "", false, true
-			}
-			if key, ok := tableDispatchSegmentStringKey(suffix[0]); ok {
-				return key, true, true
-			}
-			if key, ok := result.StaticStringAssignmentKeyForContainer(point, fact, table); ok {
-				return key, true, true
+	if !write.Target.IsEmpty() {
+		if write.Target.HasPrefix(table) {
+			suffix := write.Target.Segments[len(table.Segments):]
+			if len(suffix) == 1 {
+				if key, ok := tableDispatchSegmentStringKey(suffix[0]); ok {
+					return key, true, true
+				}
 			}
 			return "", false, true
 		}
-		if table.HasPrefix(fact.Path) {
+		if table.HasPrefix(write.Target) {
 			return "", false, true
 		}
 	}
-	if fact.HasSymbol && fact.Symbol == table.Symbol {
-		return "", false, true
-	}
-	if fact.HasContainerPath && table.Overlaps(fact.ContainerPath) {
-		if key, ok := result.StaticStringAssignmentKeyForContainer(point, fact, table); ok {
-			return key, true, true
-		}
+	if write.HasContainer && table.Overlaps(write.Container) {
 		return "", false, true
 	}
 	return "", false, false
