@@ -505,11 +505,11 @@ func (r *Result) FunctionDefinition(point cfg.Point) (cfgfacts.FunctionDefinitio
 	return r.cfg.Meta.FunctionDefinition(point)
 }
 
-func (r *Result) NumericFor(point cfg.Point) (cfgfacts.NumericForFact, bool) {
+func (r *Result) NumericFor(point cfg.Point) (cfgbuild.NumericFor, bool) {
 	if r == nil || r.cfg == nil {
-		return cfgfacts.NumericForFact{}, false
+		return cfgbuild.NumericFor{}, false
 	}
-	return r.cfg.Meta.NumericFor(point)
+	return r.cfg.NumericFors.Get(point)
 }
 
 func (r *Result) GenericFor(point cfg.Point) (cfgfacts.GenericForFact, bool) {

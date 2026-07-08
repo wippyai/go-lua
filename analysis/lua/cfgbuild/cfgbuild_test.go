@@ -1342,12 +1342,12 @@ func TestBuildChunkNumberForCreatesLoopTopologyAndMetadata(t *testing.T) {
 	requirePointKind(t, graph, initAssign, cfg.NodeAssign)
 	requirePointKind(t, graph, branch, cfg.NodeBranch)
 
-	initFact, ok := result.Meta.NumericFor(initAssign)
-	if !ok || initFact.Role != cfgfacts.NumericForRoleInit || initFact.Stmt != loop || initFact.Symbol != loopID || !initFact.HasSymbol {
+	initFact, ok := result.NumericFors.Get(initAssign)
+	if !ok || initFact.Role != NumericForRoleInit || initFact.Stmt != loop || initFact.Symbol != loopID || !initFact.HasSymbol {
 		t.Fatalf("numeric for init metadata = %#v/%v, want init role and symbol %d", initFact, ok, loopID)
 	}
-	checkFact, ok := result.Meta.NumericFor(branch)
-	if !ok || checkFact.Role != cfgfacts.NumericForRoleCheck || checkFact.Stmt != loop || checkFact.Symbol != loopID || !checkFact.HasSymbol {
+	checkFact, ok := result.NumericFors.Get(branch)
+	if !ok || checkFact.Role != NumericForRoleCheck || checkFact.Stmt != loop || checkFact.Symbol != loopID || !checkFact.HasSymbol {
 		t.Fatalf("numeric for check metadata = %#v/%v, want check role and symbol %d", checkFact, ok, loopID)
 	}
 	join := firstJoin(t, graph)

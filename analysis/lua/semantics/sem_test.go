@@ -1485,12 +1485,12 @@ func TestExtractChunkNumericForFactsUseStmtPointsAndPreserveIdentity(t *testing.
 		t.Fatalf("missing numeric for symbol")
 	}
 	points := requireStmtPoints(t, built, loop, 2)
-	expectedRoles := map[cfg.Point]cfgfacts.NumericForRole{
-		points[0]: cfgfacts.NumericForRoleInit,
-		points[1]: cfgfacts.NumericForRoleCheck,
+	expectedRoles := map[cfg.Point]cfgbuild.NumericForRole{
+		points[0]: cfgbuild.NumericForRoleInit,
+		points[1]: cfgbuild.NumericForRoleCheck,
 	}
 	for _, point := range points {
-		fact, ok := built.Meta.NumericFor(point)
+		fact, ok := built.NumericFors.Get(point)
 		if !ok {
 			t.Fatalf("missing numeric for fact at point %d", point)
 		}

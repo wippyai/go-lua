@@ -260,7 +260,7 @@ func (b *builder) buildNumberFor(state flowState, stmt *ast.NumberForStmt) flowS
 	preheader := state.current
 	branch := b.appendBranch(state, stmt)
 	join := b.graph.AddNode(cfg.NodeJoin)
-	numericFact := cfgfacts.NumericForFact{
+	numericFact := NumericFor{
 		Stmt:      stmt,
 		Name:      stmt.Name,
 		Init:      stmt.Init,
@@ -270,11 +270,11 @@ func (b *builder) buildNumberFor(state flowState, stmt *ast.NumberForStmt) flowS
 		HasSymbol: hasSymbol && id != 0,
 	}
 	initFact := numericFact
-	initFact.Role = cfgfacts.NumericForRoleInit
-	b.meta.SetNumericFor(preheader, initFact)
+	initFact.Role = NumericForRoleInit
+	b.numericFors.Set(preheader, initFact)
 	checkFact := numericFact
-	checkFact.Role = cfgfacts.NumericForRoleCheck
-	b.meta.SetNumericFor(branch.current, checkFact)
+	checkFact.Role = NumericForRoleCheck
+	b.numericFors.Set(branch.current, checkFact)
 
 	b.graph.AddEdge(branch.current, join, false)
 	b.breakTargets = append(b.breakTargets, join)

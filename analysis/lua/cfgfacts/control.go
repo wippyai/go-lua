@@ -6,29 +6,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-// NumericForRole identifies the structural numeric-for position at a CFG point.
-type NumericForRole uint8
-
-// Numeric for roles identify the init/check positions in a numeric-for loop.
-const (
-	NumericForRoleInit NumericForRole = iota + 1
-	NumericForRoleCheck
-)
-
-// NumericForFact describes a numeric-for loop point.
-type NumericForFact struct {
-	Stmt *ast.NumberForStmt
-	Role NumericForRole
-
-	Name  string
-	Init  ast.Expr
-	Limit ast.Expr
-	Step  ast.Expr
-
-	Symbol    symbol.ID
-	HasSymbol bool
-}
-
 // GenericForRole identifies the structural generic-for position at a CFG point.
 type GenericForRole uint8
 

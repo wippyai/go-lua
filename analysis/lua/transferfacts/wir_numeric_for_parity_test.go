@@ -58,7 +58,7 @@ end
 
 	var checked int
 	for _, point := range built.Graph.RPO() {
-		if _, ok := built.Meta.NumericFor(point); !ok {
+		if _, ok := built.NumericFors.Get(point); !ok {
 			continue
 		}
 		checked++
@@ -87,7 +87,7 @@ end
 
 	var checked int
 	for _, point := range built.Graph.RPO() {
-		if _, ok := built.Meta.NumericFor(point); !ok {
+		if _, ok := built.NumericFors.Get(point); !ok {
 			continue
 		}
 		if !body.HasInstruction(point, wir.OpIterate) {
@@ -118,7 +118,7 @@ end
 	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	for _, point := range built.Graph.RPO() {
-		fact, ok := built.Meta.NumericFor(point)
+		fact, ok := built.NumericFors.Get(point)
 		if !ok || !body.HasInstruction(point, wir.OpIterate) {
 			continue
 		}
@@ -157,7 +157,7 @@ end
 	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
 
 	for _, point := range built.Graph.RPO() {
-		if _, ok := built.Meta.NumericFor(point); !ok || !body.HasInstruction(point, wir.OpIterate) {
+		if _, ok := built.NumericFors.Get(point); !ok || !body.HasInstruction(point, wir.OpIterate) {
 			continue
 		}
 		root, rootOK := facts.RootAssignment(point)

@@ -8,7 +8,6 @@ import (
 type Metadata struct {
 	typeDefinitions map[cfg.Point]TypeDefinitionFact
 	functionDefs    map[cfg.Point]FunctionDefinitionFact
-	numericFors     map[cfg.Point]NumericForFact
 	genericFors     map[cfg.Point]GenericForFact
 }
 
@@ -42,18 +41,6 @@ func (m *Metadata) SetFunctionDefinition(point cfg.Point, fact FunctionDefinitio
 func copyFunctionDefinitionFact(fact FunctionDefinitionFact) FunctionDefinitionFact {
 	fact.TargetPath = fact.TargetPath.Clone()
 	return fact
-}
-
-func (m Metadata) NumericFor(point cfg.Point) (NumericForFact, bool) {
-	fact, ok := m.numericFors[point]
-	return fact, ok
-}
-
-func (m *Metadata) SetNumericFor(point cfg.Point, fact NumericForFact) {
-	if m.numericFors == nil {
-		m.numericFors = make(map[cfg.Point]NumericForFact)
-	}
-	m.numericFors[point] = fact
 }
 
 func (m Metadata) GenericFor(point cfg.Point) (GenericForFact, bool) {
