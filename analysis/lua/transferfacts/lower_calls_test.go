@@ -522,17 +522,17 @@ end
 	if !ok || arg.Kind != factflow.ValueSourceExpression || !arg.HasExpr {
 		t.Fatalf("call argument source = %#v/%v, want expression source", arg, ok)
 	}
-	literal, ok := facts.ObjectLiteral(arg.ExprRef)
+	literal, ok := facts.ObjectLiteralView(arg.ExprRef)
 	if !ok {
 		t.Fatalf("missing object literal for WIR call argument expr %d without semantic ObjectLiteral sidecar", arg.ExprRef)
 	}
 	if _, ok := literal.Identity(); !ok {
 		t.Fatalf("WIR call argument object literal missing identity: %#v", literal)
 	}
-	if len(literal.Entries()) != 3 {
-		t.Fatalf("WIR call argument object literal entries = %#v, want id, nested, and nested.count", literal.Entries())
+	if len(objectLiteralEntries(literal)) != 3 {
+		t.Fatalf("WIR call argument object literal entries = %#v, want id, nested, and nested.count", objectLiteralEntries(literal))
 	}
-	for _, entry := range literal.Entries() {
+	for _, entry := range objectLiteralEntries(literal) {
 		source := entry.Source()
 		if source.HasExpr && (source.Final || source.Adjusted || source.Expanded || source.OpenTail) {
 			t.Fatalf("WIR object-entry source shape = final:%v adjusted:%v expanded:%v openTail:%v, want ordinary expression source for %v",
@@ -589,7 +589,7 @@ end
 	if !ok || arg.Kind != factflow.ValueSourceExpression || !arg.HasExpr {
 		t.Fatalf("call argument source = %#v/%v, want object-literal expression source", arg, ok)
 	}
-	if _, ok := facts.ObjectLiteral(arg.ExprRef); !ok {
+	if _, ok := facts.ObjectLiteralView(arg.ExprRef); !ok {
 		t.Fatalf("missing object literal for WIR call argument expr %d with semantic result present", arg.ExprRef)
 	}
 	typeValues := typevalue.NewCache()
@@ -786,14 +786,14 @@ end
 	if !ok || arg.Kind != factflow.ValueSourceExpression || !arg.HasExpr {
 		t.Fatalf("call argument source = %#v/%v, want object-literal expression source", arg, ok)
 	}
-	lit, ok := facts.ObjectLiteral(arg.ExprRef)
+	lit, ok := facts.ObjectLiteralView(arg.ExprRef)
 	if !ok {
 		t.Fatalf("missing object literal for WIR call argument expr %d", arg.ExprRef)
 	}
-	if got := len(lit.Entries()); got != 1 {
-		t.Fatalf("call argument object literal entries = %#v, want node_id entry", lit.Entries())
+	if got := len(objectLiteralEntries(lit)); got != 1 {
+		t.Fatalf("call argument object literal entries = %#v, want node_id entry", objectLiteralEntries(lit))
 	}
-	entry := lit.Entries()[0]
+	entry := objectLiteralEntries(lit)[0]
 	source := entry.Source()
 	if source.Kind == factflow.ValueSourceUnknown {
 		t.Fatalf("call argument object literal entry source is none for entry %#v", entry)

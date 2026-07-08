@@ -3348,20 +3348,25 @@ func methodCallObjectEntrySourceSummary(t *testing.T, root *body.Result, ownerMe
 			if !ok || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
 				return fmt.Sprintf("argument source %#v", source)
 			}
-			lit, ok := child.ObjectLiteralExpr(source.ExprRef)
+			lit, ok := child.ObjectLiteralView(source.ExprRef)
 			if !ok {
 				return fmt.Sprintf("argument expr %d has no object literal", source.ExprRef)
 			}
 			var seen []string
-			for _, entry := range lit.Entries() {
+			var found string
+			lit.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
 				seen = append(seen, entry.Suffix().String())
 				if !entrySuffixField(entry.Suffix(), field) {
-					continue
+					return true
 				}
 				entrySource := entry.Source()
 				op, opOK := child.ExpressionOperationRef(entrySource.ExprRef)
 				path, pathOK := child.ValueSourcePath(entrySource)
-				return fmt.Sprintf("%#v op=%#v/%v path=%v/%v", entrySource, op, opOK, path, pathOK)
+				found = fmt.Sprintf("%#v op=%#v/%v path=%v/%v", entrySource, op, opOK, path, pathOK)
+				return false
+			})
+			if found != "" {
+				return found
 			}
 			return fmt.Sprintf("node_id entry not found; entries=%v", seen)
 		}

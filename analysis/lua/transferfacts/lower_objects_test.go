@@ -40,11 +40,11 @@ func TestLowerObjectLiteralEntryLabelsAttributeValue(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing local assignment fact")
 	}
-	literal, ok := facts.ObjectLiteral(localFact.Source().ExprRef)
+	literal, ok := facts.ObjectLiteralView(localFact.Source().ExprRef)
 	if !ok {
 		t.Fatalf("missing object literal sidecar")
 	}
-	entries := literal.Entries()
+	entries := objectLiteralEntries(literal)
 	if len(entries) != 1 {
 		t.Fatalf("entries = %d, want 1", len(entries))
 	}
@@ -87,11 +87,11 @@ func TestLowerObjectLiteralSidecarUsesAssignmentExprRef(t *testing.T) {
 	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr || source.ExprRef == 0 {
 		t.Fatalf("local source = %#v, want expression source with expr ref", source)
 	}
-	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	literal, ok := facts.ObjectLiteralView(source.ExprRef)
 	if !ok {
 		t.Fatalf("missing object literal sidecar for assignment expr ref %d", source.ExprRef)
 	}
-	entries := literal.Entries()
+	entries := objectLiteralEntries(literal)
 	if len(entries) != 2 {
 		t.Fatalf("literal entries = %#v, want two static entries", entries)
 	}
@@ -125,7 +125,7 @@ func TestLowerObjectLiteralPublishesCompleteStaticStringKeySet(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing local assignment fact")
 	}
-	literal, ok := facts.ObjectLiteral(localFact.Source().ExprRef)
+	literal, ok := facts.ObjectLiteralView(localFact.Source().ExprRef)
 	if !ok {
 		t.Fatalf("missing object literal sidecar")
 	}
@@ -148,11 +148,11 @@ func TestLowerEmptyObjectLiteralStillPublishesIdentitySidecar(t *testing.T) {
 		t.Fatalf("missing local assignment fact")
 	}
 	source := localFact.Source()
-	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	literal, ok := facts.ObjectLiteralView(source.ExprRef)
 	if !ok {
 		t.Fatalf("missing empty object literal sidecar for ref %d", source.ExprRef)
 	}
-	if got := len(literal.Entries()); got != 0 {
+	if got := len(objectLiteralEntries(literal)); got != 0 {
 		t.Fatalf("empty literal entries = %d, want 0", got)
 	}
 	wantID := identity.LuaTableLiteral(built.Graph.ID(), uint64(source.ExprRef))
@@ -170,11 +170,11 @@ local t = { child = { leaf = 1 } }
 	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 	point := requireStmtPoints(t, built, stmts[0], 1)[0]
 	source := mustLocalSource(t, facts, point)
-	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	literal, ok := facts.ObjectLiteralView(source.ExprRef)
 	if !ok {
 		t.Fatalf("missing object literal sidecar for WIR source ref %d", source.ExprRef)
 	}
-	if entries := literal.Entries(); len(entries) != 2 {
+	if entries := objectLiteralEntries(literal); len(entries) != 2 {
 		t.Fatalf("WIR root literal entries = %#v, want root child and nested leaf", entries)
 	}
 	wantID, ok := literal.Identity()
@@ -207,13 +207,13 @@ local t = { child = { leaf = payload.id } }
 	_ = tableExpr
 
 	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
-	literals := facts.ObjectLiterals()
+	literals := objectLiterals(facts)
 	if len(literals) < 2 {
 		t.Fatalf("public WIR no-sidecar object literals = %#v, want root and nested constructors", literals)
 	}
 	var sawNestedLeaf bool
 	for _, literal := range literals {
-		for _, entry := range literal.Entries() {
+		for _, entry := range objectLiteralEntries(literal) {
 			if reflect.DeepEqual(entry.Suffix(), fieldChainSuffix("leaf")) && entry.ValueLabel() == "payload.id" {
 				sawNestedLeaf = true
 			}
@@ -234,11 +234,11 @@ local box: Box = { items = {}, label = "" }
 	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 	point := requireStmtPoints(t, built, stmts[1], 1)[0]
 	source := mustLocalSource(t, facts, point)
-	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	literal, ok := facts.ObjectLiteralView(source.ExprRef)
 	if !ok {
 		t.Fatalf("missing WIR object literal for source ref %d", source.ExprRef)
 	}
-	entries := literal.Entries()
+	entries := objectLiteralEntries(literal)
 	if len(entries) != 2 {
 		t.Fatalf("WIR literal entries = %#v, want items and label", entries)
 	}
@@ -252,7 +252,7 @@ local box: Box = { items = {}, label = "" }
 		t.Fatalf("WIR entry expected type = %v/%v, want %v", got, ok, want)
 	}
 	nestedSource := entries[0].Source()
-	nested, ok := facts.ObjectLiteral(nestedSource.ExprRef)
+	nested, ok := facts.ObjectLiteralView(nestedSource.ExprRef)
 	if !ok {
 		t.Fatalf("missing nested WIR object literal for entry source ref %d", nestedSource.ExprRef)
 	}
@@ -296,7 +296,7 @@ local box: Box = { items = {}, count = 0 }
 	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
 		t.Fatalf("annotated object literal source = %#v, want expression source", source)
 	}
-	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	literal, ok := facts.ObjectLiteralView(source.ExprRef)
 	if !ok {
 		t.Fatalf("missing object literal for source ref %d", source.ExprRef)
 	}
@@ -390,11 +390,11 @@ local box: Box = { items = {}, label = "" }
 	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 	point := requireStmtPoints(t, built, stmts[1], 1)[0]
 	source := mustLocalSource(t, facts, point)
-	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	literal, ok := facts.ObjectLiteralView(source.ExprRef)
 	if !ok {
 		t.Fatalf("missing WIR object literal for source ref %d", source.ExprRef)
 	}
-	entries := literal.Entries()
+	entries := objectLiteralEntries(literal)
 	if len(entries) != 2 {
 		t.Fatalf("WIR literal entries = %#v, want items and label", entries)
 	}
@@ -408,7 +408,7 @@ local box: Box = { items = {}, label = "" }
 		t.Fatalf("WIR entry expected type = %v/%v, want %v", got, ok, want)
 	}
 	nestedSource := entries[0].Source()
-	nested, ok := facts.ObjectLiteral(nestedSource.ExprRef)
+	nested, ok := facts.ObjectLiteralView(nestedSource.ExprRef)
 	if !ok {
 		t.Fatalf("missing nested WIR object literal for entry source ref %d", nestedSource.ExprRef)
 	}
@@ -441,7 +441,7 @@ local user_ctx: Context = input.context or {}
 	if right.Kind != factflow.ValueSourceExpression || !right.HasExpr {
 		t.Fatalf("logical fallback source = %#v, want expression source", right)
 	}
-	literal, ok := facts.ObjectLiteral(right.ExprRef)
+	literal, ok := facts.ObjectLiteralView(right.ExprRef)
 	if !ok {
 		t.Fatalf("missing WIR fallback object literal for ref %d", right.ExprRef)
 	}
@@ -478,7 +478,7 @@ local user_ctx: Context = input.context or {}
 	if right.Kind != factflow.ValueSourceExpression || !right.HasExpr {
 		t.Fatalf("logical fallback source = %#v, want expression source", right)
 	}
-	literal, ok := facts.ObjectLiteral(right.ExprRef)
+	literal, ok := facts.ObjectLiteralView(right.ExprRef)
 	if !ok {
 		t.Fatalf("missing WIR fallback object literal for ref %d", right.ExprRef)
 	}
@@ -559,11 +559,11 @@ local t = { leaf = 1 }
 
 	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	source := mustLocalSource(t, facts, point)
-	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	literal, ok := facts.ObjectLiteralView(source.ExprRef)
 	if !ok {
 		t.Fatalf("missing WIR object literal for source ref %d", source.ExprRef)
 	}
-	entries := literal.Entries()
+	entries := objectLiteralEntries(literal)
 	if len(entries) != 2 {
 		t.Fatalf("entries = %#v, want WIR entries, including the WIR-only entry", entries)
 	}
@@ -610,11 +610,11 @@ local t = { leaf = value }
 
 	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	source := mustLocalSource(t, facts, point)
-	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	literal, ok := facts.ObjectLiteralView(source.ExprRef)
 	if !ok {
 		t.Fatalf("missing WIR object literal for source ref %d", source.ExprRef)
 	}
-	entries := literal.Entries()
+	entries := objectLiteralEntries(literal)
 	if len(entries) != 1 {
 		t.Fatalf("entries = %#v, want WIR entry", entries)
 	}
@@ -655,11 +655,11 @@ local t = { leaf = 1, semantic_only = value }
 
 	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	source := mustLocalSource(t, facts, point)
-	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	literal, ok := facts.ObjectLiteralView(source.ExprRef)
 	if !ok {
 		t.Fatalf("missing WIR object literal for source ref %d", source.ExprRef)
 	}
-	entries := literal.Entries()
+	entries := objectLiteralEntries(literal)
 	if len(entries) != 1 {
 		t.Fatalf("entries = %#v, want only WIR-owned entries", entries)
 	}
@@ -702,7 +702,7 @@ end
 	if !ok || !typ.TypeEquals(gotType, typ.NewArray(typ.Any)) {
 		t.Fatalf("accumulator declared type = %v/%v, want {any}", gotType, ok)
 	}
-	literal, ok := facts.ObjectLiteral(localFact.Source().ExprRef)
+	literal, ok := facts.ObjectLiteralView(localFact.Source().ExprRef)
 	if !ok {
 		t.Fatalf("missing object literal sidecar for accumulator")
 	}
@@ -896,7 +896,7 @@ func TestLowerAnnotatedEmptyMapObjectLiteralCarriesExpectedContract(t *testing.T
 	if !ok {
 		t.Fatalf("missing local assignment fact")
 	}
-	literal, ok := facts.ObjectLiteral(localFact.Source().ExprRef)
+	literal, ok := facts.ObjectLiteralView(localFact.Source().ExprRef)
 	if !ok {
 		t.Fatalf("missing empty map object literal sidecar")
 	}
@@ -935,7 +935,7 @@ end
 	if !ok {
 		t.Fatalf("missing ordinary assignment fact")
 	}
-	literal, ok := facts.ObjectLiteral(assignFact.Source().ExprRef)
+	literal, ok := facts.ObjectLiteralView(assignFact.Source().ExprRef)
 	if !ok {
 		t.Fatalf("missing object literal sidecar for assignment source %#v", assignFact.Source())
 	}
@@ -961,12 +961,12 @@ func TestLowerLogicalOperandObjectLiteralPublishesSidecar(t *testing.T) {
 	body := wirlower.Lower("logical-object-operand", stmts, bindings, built)
 	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 
-	for _, literal := range facts.ObjectLiterals() {
+	for _, literal := range objectLiterals(facts) {
 		if _, ok := literal.Identity(); ok {
 			return
 		}
 	}
-	t.Fatalf("object literals = %#v, want sidecar for table constructor nested under logical expression", facts.ObjectLiterals())
+	t.Fatalf("object literals = %#v, want sidecar for table constructor nested under logical expression", objectLiterals(facts))
 }
 
 func TestLowerWithWIRDynamicIndexLogicalDefaultObjectLiteralCarriesSlotContract(t *testing.T) {
@@ -981,7 +981,7 @@ suites[suite] = suites[suite] or {}
 	want := typ.NewArray(typ.Any)
 
 	foundExpected := false
-	for _, literal := range facts.ObjectLiterals() {
+	for _, literal := range objectLiterals(facts) {
 		expected, ok := literal.Expected()
 		if !ok {
 			continue
@@ -993,7 +993,7 @@ suites[suite] = suites[suite] or {}
 		}
 	}
 	if !foundExpected {
-		t.Fatalf("object literals = %#v, want WIR logical default constructor to carry dynamic slot contract %v", facts.ObjectLiterals(), want)
+		t.Fatalf("object literals = %#v, want WIR logical default constructor to carry dynamic slot contract %v", objectLiterals(facts), want)
 	}
 	assignPoint := cfg.Point(0)
 	for _, point := range cfg.RPOReadOnly(built.Graph) {
@@ -1042,8 +1042,8 @@ local current: Payload = payload or {
 	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 	want := typ.NewArray(typ.String)
 
-	for _, literal := range facts.ObjectLiterals() {
-		for _, entry := range literal.Entries() {
+	for _, literal := range objectLiterals(facts) {
+		for _, entry := range objectLiteralEntries(literal) {
 			if !reflect.DeepEqual(entry.Suffix(), fieldSuffix("tool_calls")) {
 				continue
 			}
@@ -1058,7 +1058,7 @@ local current: Payload = payload or {
 			return
 		}
 	}
-	t.Fatalf("object literals = %#v, want logical fallback tool_calls entry contract %v", facts.ObjectLiterals(), want)
+	t.Fatalf("object literals = %#v, want logical fallback tool_calls entry contract %v", objectLiterals(facts), want)
 }
 
 func TestLowerReturnedObjectLiteralCarriesExpectedEntryContracts(t *testing.T) {
@@ -1084,7 +1084,7 @@ end`)
 	if len(sources) != 1 || !sources[0].HasExpr {
 		t.Fatalf("return sources = %#v, want one expression source", sources)
 	}
-	literal, ok := facts.ObjectLiteral(sources[0].ExprRef)
+	literal, ok := facts.ObjectLiteralView(sources[0].ExprRef)
 	if !ok {
 		t.Fatalf("missing returned object literal sidecar for ref %d", sources[0].ExprRef)
 	}
@@ -1102,7 +1102,7 @@ end`)
 		t.Fatalf("returned literal expected = %v/%v, want %v", got, ok, wantRoot)
 	}
 	var found bool
-	for _, entry := range literal.Entries() {
+	for _, entry := range objectLiteralEntries(literal) {
 		if !reflect.DeepEqual(entry.Suffix(), fieldChainSuffix("state", "processed")) {
 			continue
 		}
@@ -1118,7 +1118,7 @@ end`)
 		}
 	}
 	if !found {
-		t.Fatalf("returned literal entries = %#v, want state.processed entry", literal.Entries())
+		t.Fatalf("returned literal entries = %#v, want state.processed entry", objectLiteralEntries(literal))
 	}
 }
 
@@ -1147,14 +1147,14 @@ end`)
 	if len(sources) != 1 || !sources[0].HasExpr {
 		t.Fatalf("return sources = %#v, want one expression source", sources)
 	}
-	literal, ok := facts.ObjectLiteral(sources[0].ExprRef)
+	literal, ok := facts.ObjectLiteralView(sources[0].ExprRef)
 	if !ok {
 		t.Fatalf("missing returned object literal sidecar for ref %d", sources[0].ExprRef)
 	}
 	var op factflow.ExpressionOperation
 	var argumentsSource factflow.ValueSource
 	var found bool
-	for _, entry := range literal.Entries() {
+	for _, entry := range objectLiteralEntries(literal) {
 		if !reflect.DeepEqual(entry.Suffix(), fieldSuffix("arguments")) {
 			continue
 		}
@@ -1171,13 +1171,13 @@ end`)
 		break
 	}
 	if !found {
-		t.Fatalf("returned literal entries = %#v, want arguments entry", literal.Entries())
+		t.Fatalf("returned literal entries = %#v, want arguments entry", objectLiteralEntries(literal))
 	}
 	right := op.Right()
 	if right.Kind != factflow.ValueSourceExpression || !right.HasExpr {
 		t.Fatalf("fallback source = %#v, want object-literal expression source", right)
 	}
-	fallback, ok := facts.ObjectLiteral(right.ExprRef)
+	fallback, ok := facts.ObjectLiteralView(right.ExprRef)
 	if !ok {
 		t.Fatalf("missing fallback object literal for ref %d", right.ExprRef)
 	}
@@ -1218,7 +1218,7 @@ end`)
 	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	point := requireStmtPoints(t, built, localStmt, 1)[0]
 	source := mustLocalSource(t, facts, point)
-	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	literal, ok := facts.ObjectLiteralView(source.ExprRef)
 	if !ok {
 		t.Fatalf("missing object literal for vararg table source %#v", source)
 	}
@@ -1256,13 +1256,13 @@ end`)
 	if len(sources) != 1 || !sources[0].HasExpr {
 		t.Fatalf("return sources = %#v, want one expression source", sources)
 	}
-	literal, ok := facts.ObjectLiteral(sources[0].ExprRef)
+	literal, ok := facts.ObjectLiteralView(sources[0].ExprRef)
 	if !ok {
 		t.Fatalf("missing returned object literal for ref %d", sources[0].ExprRef)
 	}
 	expected, ok := literal.Expected()
 	if !ok {
-		t.Fatalf("missing WIR-owned expected contract on returned object literal; return sources=%#v literals=%#v declared=%#v\nWIR:\n%s", sources, facts.ObjectLiterals(), body.DeclaredReturnTypes(), wir.Print(body, built.Graph))
+		t.Fatalf("missing WIR-owned expected contract on returned object literal; return sources=%#v literals=%#v declared=%#v\nWIR:\n%s", sources, objectLiterals(facts), body.DeclaredReturnTypes(), wir.Print(body, built.Graph))
 	}
 	got, ok := typevalue.TypeOf(reg, expected)
 	want := typetable.NewRecord().
@@ -1299,13 +1299,13 @@ end`)
 	if len(sources) != 1 || !sources[0].HasExpr {
 		t.Fatalf("return sources = %#v, want one expression source", sources)
 	}
-	literal, ok := facts.ObjectLiteral(sources[0].ExprRef)
+	literal, ok := facts.ObjectLiteralView(sources[0].ExprRef)
 	if !ok {
 		t.Fatalf("missing returned object literal for ref %d", sources[0].ExprRef)
 	}
 	expected, ok := literal.Expected()
 	if !ok {
-		t.Fatalf("missing WIR-owned expected contract on returned object literal without semantic result; return sources=%#v literals=%#v declared=%#v\nWIR:\n%s", sources, facts.ObjectLiterals(), body.DeclaredReturnTypes(), wir.Print(body, built.Graph))
+		t.Fatalf("missing WIR-owned expected contract on returned object literal without semantic result; return sources=%#v literals=%#v declared=%#v\nWIR:\n%s", sources, objectLiterals(facts), body.DeclaredReturnTypes(), wir.Print(body, built.Graph))
 	}
 	got, ok := typevalue.TypeOf(reg, expected)
 	want := typetable.NewRecord().
@@ -1348,7 +1348,7 @@ end`)
 	if len(sources) != 1 || !sources[0].HasExpr {
 		t.Fatalf("return sources = %#v, want one expression source", sources)
 	}
-	literal, ok := facts.ObjectLiteral(sources[0].ExprRef)
+	literal, ok := facts.ObjectLiteralView(sources[0].ExprRef)
 	if !ok {
 		t.Fatalf("missing returned object literal sidecar for ref %d", sources[0].ExprRef)
 	}
@@ -1369,7 +1369,7 @@ end`)
 		t.Fatalf("returned object literal expression type = %v/%v, want %v", rootType, ok, wantRoot)
 	}
 	var nestedErrorRef factflow.ExprRef
-	for _, entry := range literal.Entries() {
+	for _, entry := range objectLiteralEntries(literal) {
 		if !reflect.DeepEqual(entry.Suffix(), fieldChainSuffix("error")) {
 			continue
 		}
@@ -1379,7 +1379,7 @@ end`)
 		}
 	}
 	if nestedErrorRef == 0 {
-		t.Fatalf("returned literal entries = %#v, want nested error source", literal.Entries())
+		t.Fatalf("returned literal entries = %#v, want nested error source", objectLiteralEntries(literal))
 	}
 	nestedValue, ok := facts.ExpressionValue(nestedErrorRef)
 	if !ok {
@@ -1402,7 +1402,7 @@ end`)
 		"error.message": {path: fieldChainSuffix("error", "message"), typ: typ.String},
 		"error.code":    {path: fieldChainSuffix("error", "code"), typ: typ.MaterializeOptional(typ.Any)},
 	}
-	for _, entry := range literal.Entries() {
+	for _, entry := range objectLiteralEntries(literal) {
 		suffix := entry.Suffix()
 		for name, expected := range want {
 			if !reflect.DeepEqual(suffix, expected.path) {
@@ -1459,11 +1459,11 @@ func TestLowerObjectLiteralEntryCallSourcePointsAtNestedProducer(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing local assignment fact")
 	}
-	literal, ok := facts.ObjectLiteral(localFact.Source().ExprRef)
+	literal, ok := facts.ObjectLiteralView(localFact.Source().ExprRef)
 	if !ok {
 		t.Fatalf("missing object literal sidecar")
 	}
-	entries := literal.Entries()
+	entries := objectLiteralEntries(literal)
 	if len(entries) != 1 {
 		t.Fatalf("literal entries = %#v, want one", entries)
 	}
@@ -1497,7 +1497,7 @@ func TestLowerAnyCastObjectLiteralPublishesClaimNotEntries(t *testing.T) {
 	}
 	source := localFact.Source()
 	assertLoweredAssertion(t, facts, source, assertion.Any(), factflow.ValueSourceExpression)
-	if literal, ok := facts.ObjectLiteral(source.ExprRef); ok {
+	if literal, ok := facts.ObjectLiteralView(source.ExprRef); ok {
 		t.Fatalf("any-cast object literal sidecar = %#v, want none", literal)
 	}
 }
@@ -1517,23 +1517,23 @@ local state = {
 	if !ok {
 		t.Fatalf("missing local assignment fact")
 	}
-	root, ok := facts.ObjectLiteral(localFact.Source().ExprRef)
+	root, ok := facts.ObjectLiteralView(localFact.Source().ExprRef)
 	if !ok {
 		t.Fatalf("missing root object literal sidecar")
 	}
-	entries := root.Entries()
+	entries := objectLiteralEntries(root)
 	if len(entries) != 1 {
 		t.Fatalf("root literal entries = %#v, want one", entries)
 	}
 	want := typetable.NewMap(typ.String, typ.String)
-	for _, literal := range facts.ObjectLiterals() {
+	for _, literal := range objectLiterals(facts) {
 		if expected, ok := literal.Expected(); ok {
 			got, ok := typevalue.TypeOf(reg, expected)
 			if ok && typ.TypeEquals(got, want) {
 				return
 			}
 		}
-		for _, entry := range literal.Entries() {
+		for _, entry := range objectLiteralEntries(literal) {
 			expected, ok := entry.Expected()
 			if !ok {
 				continue
@@ -1544,7 +1544,7 @@ local state = {
 			}
 		}
 	}
-	t.Fatalf("object literals = %#v, want casted field expected type %v", facts.ObjectLiterals(), want)
+	t.Fatalf("object literals = %#v, want casted field expected type %v", objectLiterals(facts), want)
 }
 
 func TestLowerWIRDynamicIndexObjectLiteralExpectedContractWithoutSemanticResult(t *testing.T) {
@@ -1576,7 +1576,7 @@ state.active_sessions[session_id] = {
 		t.Fatalf("missing WIR dynamic-index write without semantic result")
 	}
 	source := write.Source()
-	lit, ok := facts.ObjectLiteral(source.ExprRef)
+	lit, ok := facts.ObjectLiteralView(source.ExprRef)
 	if !ok {
 		t.Fatalf("missing WIR dynamic-index value object literal for ref %d", source.ExprRef)
 	}
@@ -1611,7 +1611,7 @@ payload = { name = "next", count = 1 }
 		t.Fatalf("missing WIR ordinary assignment at point %d without semantic sidecars", point)
 	}
 	source := assign.Source()
-	lit, ok := facts.ObjectLiteral(source.ExprRef)
+	lit, ok := facts.ObjectLiteralView(source.ExprRef)
 	if !ok {
 		t.Fatalf("missing WIR ordinary assignment object literal for ref %d", source.ExprRef)
 	}
@@ -1655,11 +1655,11 @@ func TestLowerNestedObjectLiteralEntriesUnderAssignmentExprRef(t *testing.T) {
 		t.Fatalf("missing local assignment fact")
 	}
 	source := localFact.Source()
-	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	literal, ok := facts.ObjectLiteralView(source.ExprRef)
 	if !ok {
 		t.Fatalf("missing object literal sidecar for assignment expr ref %d", source.ExprRef)
 	}
-	entries := literal.Entries()
+	entries := objectLiteralEntries(literal)
 	if len(entries) != 3 {
 		t.Fatalf("literal entries = %#v, want root, nested root, and nested leaf", entries)
 	}
@@ -1667,14 +1667,14 @@ func TestLowerNestedObjectLiteralEntriesUnderAssignmentExprRef(t *testing.T) {
 	assertLoweredObjectEntry(t, entries[1], fieldSuffix("a"), factflow.ValueSourceExpression)
 	assertLoweredObjectEntry(t, entries[2], fieldChainSuffix("a", "b"), factflow.ValueSourceLiteral)
 	nestedSource := entries[1].Source()
-	nestedLiteral, ok := facts.ObjectLiteral(nestedSource.ExprRef)
+	nestedLiteral, ok := facts.ObjectLiteralView(nestedSource.ExprRef)
 	if !ok {
 		t.Fatalf("missing nested object literal sidecar for ref %d", nestedSource.ExprRef)
 	}
-	if got := len(nestedLiteral.Entries()); got != 1 {
+	if got := len(objectLiteralEntries(nestedLiteral)); got != 1 {
 		t.Fatalf("nested literal entries = %d, want one static entry", got)
 	}
-	assertLoweredObjectEntry(t, nestedLiteral.Entries()[0], fieldSuffix("b"), factflow.ValueSourceLiteral)
+	assertLoweredObjectEntry(t, objectLiteralEntries(nestedLiteral)[0], fieldSuffix("b"), factflow.ValueSourceLiteral)
 	wantID := identity.LuaTableLiteral(built.Graph.ID(), uint64(nestedSource.ExprRef))
 	if gotID, ok := nestedLiteral.Identity(); !ok || gotID != wantID {
 		t.Fatalf("nested literal identity = %v/%v, want %v", gotID, ok, wantID)

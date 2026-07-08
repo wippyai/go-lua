@@ -59,6 +59,24 @@ func expressionRefinementCount(facts factflow.Facts) int {
 	return count
 }
 
+func objectLiteralEntries(literal factflow.ObjectLiteralView) []factflow.ObjectEntryView {
+	var out []factflow.ObjectEntryView
+	literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
+		out = append(out, entry)
+		return true
+	})
+	return out
+}
+
+func objectLiterals(facts factflow.Facts) []factflow.ObjectLiteralView {
+	var out []factflow.ObjectLiteralView
+	facts.ForEachObjectLiteral(func(_ factflow.ExprRef, literal factflow.ObjectLiteralView) bool {
+		out = append(out, literal)
+		return true
+	})
+	return out
+}
+
 func TestLowerPanicsWithoutRegistry(t *testing.T) {
 	stmts, bindings, built := parseSemanticChunk(t, "local x = 1")
 	_ = stmts

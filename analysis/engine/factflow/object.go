@@ -145,9 +145,6 @@ func NewObjectLiteral(entries []ObjectEntry) ObjectLiteral {
 // View returns a read-only view of the owned object literal.
 func (l ObjectLiteral) View() ObjectLiteralView { return ObjectLiteralView{literal: l} }
 
-// Entries returns the static entries for this object literal.
-func (l ObjectLiteral) Entries() []ObjectEntry { return copyObjectEntries(l.entries) }
-
 // EntryCount returns the number of static entries.
 func (v ObjectLiteralView) EntryCount() int { return len(v.literal.entries) }
 

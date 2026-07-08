@@ -2679,22 +2679,23 @@ end`)
 		t.Fatalf("lowered return fact = %v/%v, want one source", returnFact, ok)
 	}
 	returnSource := returnFact.Sources()[0]
-	literal, ok := result.ObjectLiteralExpr(returnSource.ExprRef)
+	literal, ok := result.ObjectLiteralView(returnSource.ExprRef)
 	if !ok {
 		t.Fatalf("missing lowered object literal sidecar for return expr ref %d", returnSource.ExprRef)
 	}
 	var idSource factflow.ValueSource
-	for _, entry := range literal.Entries() {
+	literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
 		if suffixNames(entry.Suffix()) == "value.id" {
 			idSource = entry.Source()
-			break
+			return false
 		}
-	}
+		return true
+	})
 	if !idSource.Valid() {
-		t.Fatalf("lowered literal entries = %#v, want .value.id source", literal.Entries())
+		t.Fatalf("lowered literal entries = %#v, want .value.id source", literal)
 	}
 	if _, ok := result.facts.ExpressionPath(idSource.ExprRef); !ok {
-		t.Fatalf(".value.id source = %#v is not path-backed; literal entries = %#v", idSource, literal.Entries())
+		t.Fatalf(".value.id source = %#v is not path-backed; literal entries = %#v", idSource, literal)
 	}
 	idPath, _ := result.facts.ExpressionPath(idSource.ExprRef)
 	var sawIDBranchRefinement bool

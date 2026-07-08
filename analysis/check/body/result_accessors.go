@@ -354,13 +354,6 @@ func (r *Result) ObjectLiteralView(expr factflow.ExprRef) (factflow.ObjectLitera
 	return r.facts.ObjectLiteralView(expr)
 }
 
-func (r *Result) ObjectLiteralExpr(expr factflow.ExprRef) (factflow.ObjectLiteral, bool) {
-	if r == nil {
-		return factflow.ObjectLiteral{}, false
-	}
-	return r.facts.ObjectLiteral(expr)
-}
-
 func (r *Result) ExpressionValueRef(expr factflow.ExprRef) (product.Value, bool) {
 	if r == nil {
 		return product.Value{}, false

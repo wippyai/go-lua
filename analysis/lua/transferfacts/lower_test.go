@@ -922,7 +922,7 @@ func assertValueRefinement(t *testing.T, label string, got factflow.ValueRefinem
 	}
 }
 
-func assertLoweredObjectEntry(t *testing.T, entry factflow.ObjectEntry, wantSuffix path.Path, wantKind factflow.ValueSourceKind) {
+func assertLoweredObjectEntry(t *testing.T, entry factflow.ObjectEntryView, wantSuffix path.Path, wantKind factflow.ValueSourceKind) {
 	t.Helper()
 	if !entry.Suffix().Equal(wantSuffix) {
 		t.Fatalf("entry suffix = %#v, want %#v", entry.Suffix(), wantSuffix)

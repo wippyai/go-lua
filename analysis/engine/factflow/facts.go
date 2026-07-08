@@ -396,15 +396,6 @@ func (f Facts) CallSiteView(point cfg.Point) (CallSiteView, bool) {
 	return CallSiteView{site: fact}, true
 }
 
-// ObjectLiteral returns the static-entry sidecar for expr, if present.
-func (f Facts) ObjectLiteral(expr ExprRef) (ObjectLiteral, bool) {
-	fact, ok := f.objectLiterals[expr]
-	if !ok {
-		return ObjectLiteral{}, false
-	}
-	return fact.copy(), true
-}
-
 // ObjectLiteralView returns a read-only object literal view for expr. The view
 // never exposes mutable internal entry slices or path segment storage.
 func (f Facts) ObjectLiteralView(expr ExprRef) (ObjectLiteralView, bool) {
@@ -426,11 +417,6 @@ func (f Facts) ForEachObjectLiteral(fn func(ExprRef, ObjectLiteralView) bool) {
 			return
 		}
 	}
-}
-
-// ObjectLiterals returns static-entry sidecars keyed by expression.
-func (f Facts) ObjectLiterals() map[ExprRef]ObjectLiteral {
-	return copyObjectLiteralMap(f.objectLiterals)
 }
 
 // ExpressionValue returns the syntactically known value fact for expr, if present.

@@ -233,13 +233,15 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	entries := []ObjectEntry{entry}
 	literal := NewObjectLiteral(entries)
 	entries[0] = NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "other"}}}, callSource)
-	if got := literal.Entries(); len(got) != 1 || got[0].Source() != source {
-		t.Fatalf("object literal entries = %#v, want copied entry", got)
+	gotEntry, ok := literal.View().EntryAt(0)
+	if !ok || literal.View().EntryCount() != 1 || gotEntry.Source() != source {
+		t.Fatalf("object literal entries = %#v, want copied entry", gotEntry)
 	}
-	gotEntries := literal.Entries()
-	gotEntries[0] = NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "mutated"}}}, callSource)
-	if got := literal.Entries(); got[0].Source() != source {
-		t.Fatalf("object literal exposed mutable entries: %#v", got)
+	gotSuffix := gotEntry.Suffix()
+	gotSuffix.Segments[0].Name = "mutated"
+	gotEntryAgain, _ := literal.View().EntryAt(0)
+	if gotEntryAgain.Source() != source || gotEntryAgain.Suffix().Segments[0].Name != "field" {
+		t.Fatalf("object literal exposed mutable entries: %#v", gotEntryAgain)
 	}
 
 	refinementValue := runtimeKindConstraint(runtimekind.Singleton(runtimekind.Table))
@@ -701,7 +703,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	if got := facts.CallSiteCount(); got != 1 {
 		t.Fatalf("call site count = %d, want 1", got)
 	}
-	if _, ok := facts.ObjectLiteral(ExprRef(99)); ok {
+	if _, ok := facts.ObjectLiteralView(ExprRef(99)); ok {
 		t.Fatal("missing object literal returned ok")
 	}
 	if _, ok := facts.ExpressionValue(ExprRef(99)); ok {
@@ -1037,18 +1039,19 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	callSiteAgain, _ = facts.CallSite(point)
 	assertPathEqual(t, callSiteAgain.ResultTargets()[0].TargetPath(), path.NewPath(symbol.ID(33), "table"))
 
-	literal, ok := facts.ObjectLiteral(ExprRef(1))
+	literal, ok := facts.ObjectLiteralView(ExprRef(1))
 	if !ok {
 		t.Fatal("object literal missing")
 	}
-	entries := literal.Entries()
-	if len(entries) != 1 || entries[0].Source() != source {
-		t.Fatalf("object literal entries = %#v", entries)
+	entry, ok := literal.EntryAt(0)
+	if !ok || literal.EntryCount() != 1 || entry.Source() != source {
+		t.Fatalf("object literal entries = %#v", literal)
 	}
-	entrySuffix := entries[0].Suffix()
+	entrySuffix := entry.Suffix()
 	entrySuffix.Segments[0].Name = "mutated"
-	literalAgain, _ := facts.ObjectLiteral(ExprRef(1))
-	if got := literalAgain.Entries()[0].Suffix(); got.Segments[0].Name != "field" {
+	literalAgain, _ := facts.ObjectLiteralView(ExprRef(1))
+	entryAgain, _ := literalAgain.EntryAt(0)
+	if got := entryAgain.Suffix(); got.Segments[0].Name != "field" {
 		t.Fatalf("facts object literal exposed mutable suffix: %#v", got)
 	}
 	literalView, ok := facts.ObjectLiteralView(ExprRef(1))
