@@ -33,6 +33,15 @@ func sourceSpanFromBody(span body.SourceSpan) SourceSpan {
 	}
 }
 
+func sourceSpanFromBodyRaw(span body.SourceSpan) SourceSpan {
+	return SourceSpan{
+		StartLine: span.StartLine,
+		StartCol:  span.StartCol,
+		EndLine:   span.EndLine,
+		EndCol:    span.EndCol,
+	}
+}
+
 func sourceSpansFromBody(spans []body.SourceSpan) []SourceSpan {
 	if len(spans) == 0 {
 		return nil

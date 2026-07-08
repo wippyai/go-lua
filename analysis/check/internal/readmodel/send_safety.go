@@ -33,7 +33,7 @@ func (r Reader) sendSafetyReports(point cfg.Point, args []CallArgument) []SendSa
 			Reason:              occ.Reason,
 			Identity:            occ.Identity,
 			HasIdentity:         occ.HasIdentity,
-			BirthSpan:           sourceSpanFromBody(occ.BirthSpan),
+			BirthSpan:           sourceSpanFromBodyRaw(occ.BirthSpan),
 			HasBirthSpan:        occ.HasBirthSpan,
 			Placement:           occ.Placement,
 			HasPlacement:        occ.HasPlacement,
