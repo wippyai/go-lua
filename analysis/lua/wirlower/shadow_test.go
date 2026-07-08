@@ -99,7 +99,7 @@ func TestShadowCoverage(t *testing.T) {
 			if f, ok := built.Calls.Get(pt); ok {
 				scorePoint(total, covered, gapSamples, "call", keys, cfgbuildCallKey(f))
 			}
-			if _, ok := built.Returns.Get(pt); ok {
+			if built.Graph.Node(pt).Kind == cfg.NodeReturn {
 				scorePoint(total, covered, gapSamples, "return", keys, "return")
 			}
 			if branchKey := branchKeys[pt]; branchKey != "" {

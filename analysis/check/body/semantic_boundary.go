@@ -9,6 +9,5 @@ import (
 // importing the lower CFG construction package directly.
 type LocalAssignmentFact = cfgbuild.LocalAssignment
 type OrdinaryAssignmentFact = cfgbuild.OrdinaryAssignment
-type ReturnFact = cfgbuild.Return
 type CallFact = cfgbuild.Call
 type SourceSpan = cfgbuild.SourceSpan

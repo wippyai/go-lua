@@ -739,9 +739,6 @@ end
 	local := fn.Stmts[0].(*ast.LocalAssignStmt)
 	points := requireStmtPoints(t, built, local, 1)
 	point := points[0]
-	if _, ok := built.Returns.Get(point); ok {
-		t.Fatalf("point %d unexpectedly has source return metadata", point)
-	}
 
 	body := wir.NewBody("synthetic-return-on-non-return-point")
 	start := body.Emit(wir.Instruction{
