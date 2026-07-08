@@ -16,7 +16,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
-	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -222,7 +221,7 @@ func (r Reader) forEachLocalAssignment(
 	if missingFieldOK {
 		missingFieldType, _ = luatypeprojection.ExpectedTypeAtSegments(expected, []segment.Segment{{Kind: segment.SegmentField, Name: missingField}})
 	}
-	interfaceMismatch, hasInterfaceMismatch := subtype.RecordInterfaceMismatch(t, expected)
+	interfaceMismatch, hasInterfaceMismatch := r.result.RecordInterfaceMismatch(t, expected)
 	assignmentPlan := readapi.AssignmentCheckPlan{
 		Assignment:               assignment,
 		ValueAdmissible:          r.ValueProofAdmissible(value, expected),
@@ -234,11 +233,11 @@ func (r Reader) forEachLocalAssignment(
 	}
 	if hasInterfaceMismatch {
 		switch interfaceMismatch.Kind {
-		case subtype.InterfaceMismatchMissingMethod:
-			assignmentPlan.MissingRequiredMethod = interfaceMismatch.Method.Name
+		case body.InterfaceMismatchMissingMethod:
+			assignmentPlan.MissingRequiredMethod = interfaceMismatch.MethodName
 			assignmentPlan.MissingRequiredMethodType = interfaceMismatch.Expected
-		case subtype.InterfaceMismatchMethodType:
-			assignmentPlan.MethodMismatchName = interfaceMismatch.Method.Name
+		case body.InterfaceMismatchMethodType:
+			assignmentPlan.MethodMismatchName = interfaceMismatch.MethodName
 			assignmentPlan.MethodMismatchExpected = interfaceMismatch.Expected
 			assignmentPlan.MethodMismatchActual = interfaceMismatch.Actual
 		}

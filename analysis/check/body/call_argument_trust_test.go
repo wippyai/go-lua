@@ -6,6 +6,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -48,6 +49,55 @@ func TestCallArgumentSolvedTypeProvenMismatchKeepsGradualBoundariesUnknown(t *te
 	}
 	if result.CallArgumentSolvedTypeProvenMismatch(typ.String, typ.Unknown, false) {
 		t.Fatal("unknown expected type should not prove mismatch")
+	}
+}
+
+func TestRecordInterfaceMismatchExplainsMissingMethod(t *testing.T) {
+	result := &Result{}
+	actual := typetable.NewRecord().Field("id", typ.String).Build()
+	expected := typ.NewInterface("Closable", []typ.Method{
+		{Name: "close", Type: typ.Func().Build()},
+	})
+
+	mismatch, ok := result.RecordInterfaceMismatch(actual, expected)
+	if !ok {
+		t.Fatal("record missing an interface method should produce mismatch evidence")
+	}
+	if mismatch.Kind != InterfaceMismatchMissingMethod {
+		t.Fatalf("kind: got %v, want missing method", mismatch.Kind)
+	}
+	if mismatch.MethodName != "close" {
+		t.Fatalf("method: got %q, want close", mismatch.MethodName)
+	}
+	if mismatch.Expected != expected.Methods[0].Type {
+		t.Fatal("missing-method evidence should preserve the expected method type")
+	}
+}
+
+func TestRecordInterfaceMismatchExplainsMethodType(t *testing.T) {
+	result := &Result{}
+	actualMethod := typ.Func().Returns(typ.String).Build()
+	expectedMethod := typ.Func().Returns(typ.Number).Build()
+	actual := typetable.NewRecord().Field("read", actualMethod).Build()
+	expected := typ.NewInterface("Reader", []typ.Method{
+		{Name: "read", Type: expectedMethod},
+	})
+
+	mismatch, ok := result.RecordInterfaceMismatch(actual, expected)
+	if !ok {
+		t.Fatal("record method with incompatible type should produce mismatch evidence")
+	}
+	if mismatch.Kind != InterfaceMismatchMethodType {
+		t.Fatalf("kind: got %v, want method type", mismatch.Kind)
+	}
+	if mismatch.MethodName != "read" {
+		t.Fatalf("method: got %q, want read", mismatch.MethodName)
+	}
+	if mismatch.Actual != actualMethod {
+		t.Fatal("method-type evidence should preserve the actual method type")
+	}
+	if mismatch.Expected != expectedMethod {
+		t.Fatal("method-type evidence should preserve the expected method type")
 	}
 }
 

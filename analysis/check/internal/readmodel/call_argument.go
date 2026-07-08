@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
 	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -13,7 +12,6 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
-	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -74,24 +72,16 @@ func (r Reader) callArgumentMismatchSubjectPlan(point cfg.Point, arg CallArgumen
 			})
 		}
 	}
-	if field, ok := luatypeprojection.MissingRequiredRecordField(want, func(name string) bool {
-		for _, entry := range lit.Entries() {
-			suffix := entry.Suffix()
-			if field, ok := segment.DirectFieldName(suffix.Segments); ok && field == name {
-				return true
-			}
-		}
-		return false
-	}); ok {
+	if field, ok := body.ObjectLiteralMissingRequired(lit.View(), want); ok {
 		plan.MissingRequiredField = field
 	}
-	if mismatch, ok := subtype.RecordInterfaceMismatch(arg.TypeWithPresence, want); ok {
+	if mismatch, ok := r.result.RecordInterfaceMismatch(arg.TypeWithPresence, want); ok {
 		switch mismatch.Kind {
-		case subtype.InterfaceMismatchMissingMethod:
-			plan.MissingRequiredMethod = mismatch.Method.Name
+		case body.InterfaceMismatchMissingMethod:
+			plan.MissingRequiredMethod = mismatch.MethodName
 			plan.MissingRequiredMethodType = mismatch.Expected
-		case subtype.InterfaceMismatchMethodType:
-			plan.MethodMismatchName = mismatch.Method.Name
+		case body.InterfaceMismatchMethodType:
+			plan.MethodMismatchName = mismatch.MethodName
 			plan.MethodMismatchExpected = mismatch.Expected
 			plan.MethodMismatchActual = mismatch.Actual
 		}

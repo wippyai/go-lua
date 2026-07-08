@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -415,6 +416,52 @@ func (r *Result) CallArgumentFunctionTypeProvenMismatch(fn *typ.Function, expect
 		return false
 	}
 	return !r.IsSubtype(fn, expected)
+}
+
+// InterfaceMismatchKind classifies why a record value fails an interface
+// contract.
+type InterfaceMismatchKind uint8
+
+const (
+	InterfaceMismatchNone InterfaceMismatchKind = iota
+	InterfaceMismatchMissingMethod
+	InterfaceMismatchMethodType
+)
+
+// InterfaceMismatch explains the first direct record-to-interface structural
+// mismatch for readmodels. Body owns this proof decision so presentation layers
+// do not call subtype internals directly.
+type InterfaceMismatch struct {
+	Kind       InterfaceMismatchKind
+	MethodName string
+	Actual     typ.Type
+	Expected   typ.Type
+}
+
+// RecordInterfaceMismatch explains the first direct record-to-interface
+// mismatch, if the given types have that shape.
+func (r *Result) RecordInterfaceMismatch(actual, expected typ.Type) (InterfaceMismatch, bool) {
+	if r == nil {
+		return InterfaceMismatch{}, false
+	}
+	mismatch, ok := subtype.RecordInterfaceMismatch(actual, expected)
+	if !ok {
+		return InterfaceMismatch{}, false
+	}
+	out := InterfaceMismatch{
+		MethodName: mismatch.Method.Name,
+		Actual:     mismatch.Actual,
+		Expected:   mismatch.Expected,
+	}
+	switch mismatch.Kind {
+	case subtype.InterfaceMismatchMissingMethod:
+		out.Kind = InterfaceMismatchMissingMethod
+	case subtype.InterfaceMismatchMethodType:
+		out.Kind = InterfaceMismatchMethodType
+	default:
+		return InterfaceMismatch{}, false
+	}
+	return out, true
 }
 
 // CallArgumentNilabilityOnlyRefinement reports whether two projected types
