@@ -9,6 +9,7 @@ import (
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
@@ -228,15 +229,15 @@ func addLocalObjectLiteralMembers(
 		return
 	}
 	for _, candidate := range result.Graph().RPO() {
-		fact, ok := result.LocalAssignment(candidate)
-		if !ok || !fact.HasSymbol || fact.Symbol != root.Symbol {
+		fact, ok := result.LoweredLocalAssignment(candidate)
+		if !ok || fact.TargetSymbol() != root.Symbol {
 			continue
 		}
-		literal, ok := result.ObjectLiteral(fact.Expr)
+		literal, ok := result.ObjectLiteralViewForSource(fact.Source())
 		if !ok {
 			return
 		}
-		addObjectLiteralEntries(result, point, root, literal.Entries, members)
+		addObjectLiteralViewEntries(result, point, root, literal, members)
 		return
 	}
 }
@@ -268,6 +269,27 @@ func addObjectLiteralEntries(
 		}
 		members.add(member, objectEntryFactType(result, point, entry), false)
 	}
+}
+
+func addObjectLiteralViewEntries(
+	result *body.Result,
+	point cfg.Point,
+	root pathdom.Path,
+	literal factflow.ObjectLiteralView,
+	members *objectMemberMaps,
+) {
+	literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
+		member, ok := directMemberSegment(root.Segments, entry.SuffixSegmentsView())
+		if !ok {
+			return true
+		}
+		t, ok := sourceTypeFromValueSourceDepth(result, point, entry.Source(), 0)
+		if !ok {
+			t = typ.Unknown
+		}
+		members.add(member, t, false)
+		return true
+	})
 }
 
 func addStateStaticMembers(

@@ -366,6 +366,38 @@ return M
 	}
 }
 
+func TestFromProgramResultExportsReturnedTableLiteralShapeFromFactflow(t *testing.T) {
+	result := checkProgram(t, `
+		local M = {
+			config = {
+				level = "debug",
+			},
+		}
+		return M
+	`)
+
+	m := FromProgramResult("configmod", result)
+	record, ok := m.Export.(*typ.Record)
+	if !ok {
+		t.Fatalf("export = %T %[1]v, want record", m.Export)
+	}
+	config, ok := fieldByName(record, "config")
+	if !ok {
+		t.Fatalf("export fields = %#v, want config", record.Fields)
+	}
+	configRecord, ok := unwrap.Alias(config.Type).(*typ.Record)
+	if !ok {
+		t.Fatalf("config type = %T %[1]v, want record", config.Type)
+	}
+	level, ok := fieldByName(configRecord, "level")
+	if !ok {
+		t.Fatalf("config fields = %#v, want level", configRecord.Fields)
+	}
+	if !typ.TypeEquals(level.Type, typ.LiteralString("debug")) {
+		t.Fatalf("config.level type = %v, want literal \"debug\"", level.Type)
+	}
+}
+
 func TestFromProgramResultExportsIsNilNormalReturnRefinementEffect(t *testing.T) {
 	result := checkProgram(t, `
 		local test = {}
