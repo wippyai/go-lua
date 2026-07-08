@@ -19,7 +19,7 @@ func (r Reader) assignmentCallResultSource(source sourceprovenance.ASTSource) re
 	if !ok {
 		return readapi.CallResultAssignmentSource{}
 	}
-	ret, ok := contract.Contract.ResultAt(source.ResultIndex)
+	_, ok = contract.Contract.ResultAt(source.ResultIndex)
 	name := contract.Source.Name
 	if name == "" {
 		name = r.callContractSourceName(site)
@@ -30,14 +30,6 @@ func (r Reader) assignmentCallResultSource(source sourceprovenance.ASTSource) re
 			CallableName:  name,
 			ResultIndex:   source.ResultIndex,
 			UnderSupplied: true,
-		}
-	}
-	if !ret.Explicit || !readapi.ObligationTypeReportable(ret.Type) {
-		return readapi.CallResultAssignmentSource{
-			Present:      true,
-			CallableName: name,
-			ResultIndex:  source.ResultIndex,
-			ReturnSpan:   contract.Source.ResultSpan(source.ResultIndex),
 		}
 	}
 	return readapi.CallResultAssignmentSource{

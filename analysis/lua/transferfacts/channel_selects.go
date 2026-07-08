@@ -125,7 +125,7 @@ func (l *lowerer) channelSelectPayloadValue(channelPath pathdom.Path) (product.V
 	if !ok {
 		return product.Value{}, false
 	}
-	payloadType, ok := channelPayloadType(channelType)
+	payloadType, ok := ambient.ChannelPayloadType(channelType)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -141,8 +141,4 @@ func (l *lowerer) channelSelectPathType(p pathdom.Path) (typ.Type, bool) {
 		return nil, false
 	}
 	return luatypeprojection.ApplySegments(current, p.Segments)
-}
-
-func channelPayloadType(channelType typ.Type) (typ.Type, bool) {
-	return ambient.ChannelPayloadType(channelType)
 }
