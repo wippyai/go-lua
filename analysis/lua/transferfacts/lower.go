@@ -10,7 +10,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
-	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -26,7 +25,6 @@ type Config struct {
 	TypeResolver  *typeresolve.Resolver
 	TypeValues    *typevalue.Cache
 	ModuleExports importlookup.Source
-	Metadata      cfgfacts.Metadata
 	WIR           *wir.Body
 
 	// MethodReceiverTypes maps method-table receiver symbols to the proven
@@ -73,7 +71,6 @@ func LowerWithSidecars(graph cfg.Graph, config Config) Lowered {
 		graphID:                       graph.ID(),
 		typeResolver:                  typeResolver,
 		typeValues:                    config.TypeValues,
-		metadata:                      config.Metadata,
 		wir:                           config.WIR,
 		symbolTypes:                   symbolTypes,
 		declaredReturnLocalTypes:      declaredReturnLocalTypes,
@@ -253,7 +250,6 @@ type lowerer struct {
 	graphID                       uint64
 	typeResolver                  *typeresolve.Resolver
 	typeValues                    *typevalue.Cache
-	metadata                      cfgfacts.Metadata
 	wir                           *wir.Body
 	wirTempDefinitions            map[uint32]wir.Instruction
 	wirTempDefinitionSets         map[uint32][]wir.Instruction
