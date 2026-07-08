@@ -51,6 +51,9 @@ type Reader interface {
 	ForEachMissingMemberRead(func(MissingMemberRead) bool) bool
 	ForEachResultShapeExhaustiveness(func(ResultShapeExhaustiveness) bool) bool
 	ForEachRedundantConditionBranch(func(RedundantConditionBranch) bool) bool
+	ForEachRedundantClaim(func(RedundantClaim) bool) bool
+	ForEachAlwaysTrueGuard(func(AlwaysTrueGuard) bool) bool
+	ForEachInvariantLoopRead(func(InvariantLoopRead) bool) bool
 	DominatingTruthyBranchForPath(cfg.Point, BranchCheck) (DominatingBranchProof, bool)
 	DominatingBranchCheckForPath(cfg.Point, BranchCheck, func(BranchCheck, bool) bool) (DominatingBranchProof, bool)
 }
@@ -125,6 +128,42 @@ type RedundantConditionBranch struct {
 	Check         BranchCheck
 	ConditionSpan SourceSpan
 	StatementSpan SourceSpan
+}
+
+// RedundantClaim is one runtime claim/cast whose operand is independently
+// proven to already satisfy the target type.
+type RedundantClaim struct {
+	Point        cfg.Point
+	OperandLabel string
+	ClaimLabel   string
+	OperandType  typ.Type
+	ClaimedType  typ.Type
+	OperandSpan  SourceSpan
+	ClaimSpan    SourceSpan
+}
+
+// AlwaysTrueGuard is one normally reachable branch condition whose abstract
+// value is a singleton boolean.
+type AlwaysTrueGuard struct {
+	Point          cfg.Point
+	Always         bool
+	ConditionLabel string
+	ConditionType  typ.Type
+	ConditionSpan  SourceSpan
+}
+
+// InvariantLoopRead is one static member/index read inside a loop whose read
+// path is stable through the loop body and whose receiver is non-nil.
+type InvariantLoopRead struct {
+	Point         cfg.Point
+	LoopHead      cfg.Point
+	ReadLabel     string
+	ReceiverLabel string
+	ReceiverPath  path.Path
+	ReadPath      path.Path
+	ReceiverType  typ.Type
+	ReadSpan      SourceSpan
+	LoopSpan      SourceSpan
 }
 
 // DominatingBranchProof is the readmodel view of a prior branch edge that

@@ -55,6 +55,9 @@ type ChannelSelectExhaustiveness = readapi.ChannelSelectExhaustiveness
 type UnresolvedValueReference = readapi.UnresolvedValueReference
 type RedundantConditionBranch = readapi.RedundantConditionBranch
 type DominatingBranchProof = readapi.DominatingBranchProof
+type RedundantClaim = readapi.RedundantClaim
+type AlwaysTrueGuard = readapi.AlwaysTrueGuard
+type InvariantLoopRead = readapi.InvariantLoopRead
 
 func New(result *body.Result) Reader {
 	return Reader{result: result, typeValues: result.TypeValues()}

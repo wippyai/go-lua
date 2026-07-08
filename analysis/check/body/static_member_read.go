@@ -94,6 +94,12 @@ func (r *Result) ForEachResultShapeReadOccurrence(visit func(StaticMemberReadOcc
 	return r.forEachStaticMemberReadOccurrence(staticMemberReadScanResultShape, visit)
 }
 
+// ForEachStaticMemberReadOccurrence visits static member reads using the normal
+// expression scan policy for advice projections that reason about all reads.
+func (r *Result) ForEachStaticMemberReadOccurrence(visit func(StaticMemberReadOccurrence) bool) bool {
+	return r.forEachStaticMemberReadOccurrence(staticMemberReadScanResultShape, visit)
+}
+
 type missingMemberReadKey struct {
 	readLabel  string
 	memberName string

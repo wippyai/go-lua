@@ -199,3 +199,42 @@ func (diagnosticDisplay) RedundantConditionHelp(always bool) string {
 	}
 	return "Remove this unreachable branch, or change the prior guard if this path should still run."
 }
+
+func (d diagnosticDisplay) AdviceRedundantClaimMessage(claim string, t typ.Type) string {
+	if claim == "" {
+		claim = "type claim"
+	}
+	return fmt.Sprintf("%s is redundant; value is already %s", claim, d.Type(t))
+}
+
+func (diagnosticDisplay) AdviceRedundantClaimHelp() string {
+	return "Remove the runtime type claim when the proven source type is sufficient."
+}
+
+func (diagnosticDisplay) AdviceAlwaysTrueGuardMessage(always bool) string {
+	if always {
+		return "condition is proven always true"
+	}
+	return "condition is proven always false"
+}
+
+func (diagnosticDisplay) AdviceAlwaysTrueGuardHelp(always bool) string {
+	if always {
+		return "Remove the guard or move the guarded code out of the branch."
+	}
+	return "Remove the unreachable branch or change the condition if it should still run."
+}
+
+func (diagnosticDisplay) AdviceInvariantLoopReadMessage(read string) string {
+	if read == "" {
+		return "loop read is invariant and can be hoisted"
+	}
+	return fmt.Sprintf("%s is loop-invariant and can be hoisted", read)
+}
+
+func (diagnosticDisplay) AdviceInvariantLoopReadHelp(read string) string {
+	if read == "" {
+		return "Read the value once before the loop when that makes the code clearer or cheaper."
+	}
+	return fmt.Sprintf("Read `%s` once before the loop when that makes the code clearer or cheaper.", read)
+}

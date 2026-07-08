@@ -228,6 +228,30 @@ var defaultRegistry = NewRegistry([]CodeSpec{
 		},
 		DefaultVerdict: VerdictUnknown,
 	},
+	{
+		Code:        CodeAdviceRedundantClaim,
+		SubjectKind: SubjectExpression,
+		RequiredEvidence: []EvidenceKind{
+			EvidenceAbstractFact,
+		},
+		DefaultVerdict: VerdictProven,
+	},
+	{
+		Code:        CodeAdviceAlwaysTrueGuard,
+		SubjectKind: SubjectExpression,
+		RequiredEvidence: []EvidenceKind{
+			EvidenceAbstractFact,
+		},
+		DefaultVerdict: VerdictProven,
+	},
+	{
+		Code:        CodeAdviceInvariantLoopRead,
+		SubjectKind: SubjectExpression,
+		RequiredEvidence: []EvidenceKind{
+			EvidenceAbstractFact,
+		},
+		DefaultVerdict: VerdictProven,
+	},
 })
 
 // DefaultRegistry returns the standard judgment-code registry.

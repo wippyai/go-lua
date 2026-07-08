@@ -1,0 +1,165 @@
+package pass
+
+import (
+	"fmt"
+
+	"github.com/wippyai/go-lua/analysis/check/judgment"
+	"github.com/wippyai/go-lua/analysis/check/readmodel"
+)
+
+// AdviceRedundantClaims emits hint-level judgments for removable runtime type
+// claims whose operands are already proven to satisfy the claimed type.
+type AdviceRedundantClaims struct{}
+
+func (AdviceRedundantClaims) Name() string {
+	return "advice.redundant_claim"
+}
+
+func (AdviceRedundantClaims) Produce(ctx Context) []judgment.Judgment {
+	functionKey := adviceFunctionKey(ctx)
+	var out []judgment.Judgment
+	ctx.Reader.ForEachRedundantClaim(func(claim readmodel.RedundantClaim) bool {
+		out = append(out, adviceRedundantClaimJudgment(ctx, functionKey, claim))
+		return true
+	})
+	return out
+}
+
+// AdviceAlwaysTrueGuards emits hint-level judgments for reachable branch
+// conditions whose value is a singleton boolean.
+type AdviceAlwaysTrueGuards struct{}
+
+func (AdviceAlwaysTrueGuards) Name() string {
+	return "advice.always_true_guard"
+}
+
+func (AdviceAlwaysTrueGuards) Produce(ctx Context) []judgment.Judgment {
+	functionKey := adviceFunctionKey(ctx)
+	var out []judgment.Judgment
+	ctx.Reader.ForEachAlwaysTrueGuard(func(guard readmodel.AlwaysTrueGuard) bool {
+		out = append(out, adviceAlwaysTrueGuardJudgment(ctx, functionKey, guard))
+		return true
+	})
+	return out
+}
+
+// AdviceInvariantLoopReads emits hint-level judgments for hoistable static
+// member/index reads inside loops.
+type AdviceInvariantLoopReads struct{}
+
+func (AdviceInvariantLoopReads) Name() string {
+	return "advice.invariant_loop_read"
+}
+
+func (AdviceInvariantLoopReads) Produce(ctx Context) []judgment.Judgment {
+	functionKey := adviceFunctionKey(ctx)
+	var out []judgment.Judgment
+	ctx.Reader.ForEachInvariantLoopRead(func(read readmodel.InvariantLoopRead) bool {
+		out = append(out, adviceInvariantLoopReadJudgment(ctx, functionKey, read))
+		return true
+	})
+	return out
+}
+
+func adviceRedundantClaimJudgment(ctx Context, functionKey string, claim readmodel.RedundantClaim) judgment.Judgment {
+	claimSpan := spanFromReadModel(ctx.SourceFile, claim.ClaimSpan)
+	operandSpan := spanFromReadModel(ctx.SourceFile, claim.OperandSpan)
+	return judgment.Judgment{
+		Code:  judgment.CodeAdviceRedundantClaim,
+		Point: claim.Point,
+		Subject: judgment.NewSubjectRef(
+			functionKey,
+			judgment.SubjectExpression,
+			fmt.Sprintf("advice-claim:%d:%d:%d", claim.Point, claim.ClaimSpan.StartLine, claim.ClaimSpan.StartCol),
+		).WithLabel(claim.ClaimLabel),
+		Expected: judgment.NewTypeRef(claim.ClaimedType),
+		Actual:   judgment.NewValueRef(0, claim.OperandType).WithLabel(claim.OperandLabel),
+		Verdict:  judgment.VerdictProven,
+		Evidence: judgment.EvidenceChain{
+			{
+				Kind:   judgment.EvidenceAbstractFact,
+				Trust:  judgment.EvidenceTrustProven,
+				Origin: judgment.OriginRef{Point: claim.Point, Key: "advice:claim:operand-type"},
+				Detail: judgment.AdviceProvenTypeEvidenceDetail(fmt.Sprintf("%s is proven to be %s before the claim", claim.OperandLabel, claim.ClaimedType)),
+				Span:   operandSpan,
+			},
+			{
+				Kind:   judgment.EvidenceAbstractFact,
+				Trust:  judgment.EvidenceTrustProven,
+				Origin: judgment.OriginRef{Point: claim.Point, Key: "advice:claim:site"},
+				Detail: judgment.AdviceClaimSiteEvidenceDetail(fmt.Sprintf("claim checks %s at this site", claim.ClaimedType)),
+				Span:   claimSpan,
+			},
+		},
+		Spans: []judgment.SpanRef{claimSpan, operandSpan},
+	}
+}
+
+func adviceAlwaysTrueGuardJudgment(ctx Context, functionKey string, guard readmodel.AlwaysTrueGuard) judgment.Judgment {
+	span := spanFromReadModel(ctx.SourceFile, guard.ConditionSpan)
+	value := "false"
+	if guard.Always {
+		value = "true"
+	}
+	return judgment.Judgment{
+		Code:  judgment.CodeAdviceAlwaysTrueGuard,
+		Point: guard.Point,
+		Subject: judgment.NewSubjectRef(
+			functionKey,
+			judgment.SubjectExpression,
+			fmt.Sprintf("advice-guard:%d:%d:%d", guard.Point, guard.ConditionSpan.StartLine, guard.ConditionSpan.StartCol),
+		).WithLabel(guard.ConditionLabel),
+		Actual:  judgment.NewValueRef(0, guard.ConditionType).WithLabel(guard.ConditionLabel),
+		Verdict: judgment.VerdictProven,
+		Evidence: judgment.EvidenceChain{
+			{
+				Kind:   judgment.EvidenceAbstractFact,
+				Trust:  judgment.EvidenceTrustProven,
+				Origin: judgment.OriginRef{Point: guard.Point, Key: "advice:guard:value"},
+				Detail: judgment.AdviceGuardValueEvidenceDetail(fmt.Sprintf("condition is proven to be %s on every reachable path", value), guard.Always),
+				Span:   span,
+			},
+		},
+		Spans: []judgment.SpanRef{span},
+	}
+}
+
+func adviceInvariantLoopReadJudgment(ctx Context, functionKey string, read readmodel.InvariantLoopRead) judgment.Judgment {
+	readSpan := spanFromReadModel(ctx.SourceFile, read.ReadSpan)
+	loopSpan := spanFromReadModel(ctx.SourceFile, read.LoopSpan)
+	return judgment.Judgment{
+		Code:  judgment.CodeAdviceInvariantLoopRead,
+		Point: read.Point,
+		Subject: judgment.NewSubjectRef(
+			functionKey,
+			judgment.SubjectExpression,
+			fmt.Sprintf("advice-loop-read:%d:%s", read.Point, read.ReadPath.String()),
+		).WithLabel(read.ReadLabel),
+		Actual:  judgment.NewValueRef(0, read.ReceiverType).WithLabel(read.ReceiverLabel),
+		Verdict: judgment.VerdictProven,
+		Evidence: judgment.EvidenceChain{
+			{
+				Kind:   judgment.EvidenceAbstractFact,
+				Trust:  judgment.EvidenceTrustProven,
+				Origin: judgment.OriginRef{Point: read.Point, Key: "advice:loop-read:stable"},
+				Detail: judgment.AdviceLoopInvariantEvidenceDetail(fmt.Sprintf("%s is not written by the loop body", read.ReadPath.String())),
+				Span:   readSpan,
+			},
+			{
+				Kind:   judgment.EvidenceAbstractFact,
+				Trust:  judgment.EvidenceTrustProven,
+				Origin: judgment.OriginRef{Point: read.Point, Key: "advice:loop-read:receiver-non-nil"},
+				Detail: judgment.AdviceReceiverNonNilEvidenceDetail(fmt.Sprintf("%s is non-nil on all loop paths", read.ReceiverLabel)),
+				Span:   readSpan,
+			},
+		},
+		Spans: []judgment.SpanRef{readSpan, loopSpan},
+	}
+}
+
+func adviceFunctionKey(ctx Context) string {
+	if ctx.FunctionKey != "" {
+		return ctx.FunctionKey
+	}
+	return "body"
+}

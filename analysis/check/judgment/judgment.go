@@ -15,30 +15,33 @@ import (
 type Code string
 
 const (
-	CodeCallArgType        Code = "call.argument.type"
-	CodeCallArity          Code = "call.arity"
-	CodeCallCallee         Code = "call.callee"
-	CodeAssignment         Code = "assignment.type"
-	CodeAssignmentTarget   Code = "assignment.optional_target"
-	CodeReturn             Code = "return.type"
-	CodeNonNilAssertion    Code = "assertion.nonnil"
-	CodeNumericForOperand  Code = "for.numeric.operand"
-	CodeFrozenTable        Code = "effect.freeze.mutation"
-	CodeLifecycle          Code = "effect.lifecycle.unreleased"
-	CodeUnusedLocal        Code = "lint.unused.local"
-	CodeDeadAssignment     Code = "lint.dead.assignment"
-	CodeChannelSelect      Code = "channel.select.exhaustiveness"
-	CodeDiscriminatedUnion Code = "union.discriminated.exhaustiveness"
-	CodeOptional           Code = "union.optional.exhaustiveness"
-	CodeResultShape        Code = "union.result_shape.exhaustiveness"
-	CodeRegistration       Code = "union.registration.exhaustiveness"
-	CodeTableDispatch      Code = "union.table_dispatch.exhaustiveness"
-	CodeUnresolvedValue    Code = "value.reference.unresolved"
-	CodeUnresolvedType     Code = "type.reference.unresolved"
-	CodeRedundantCondition Code = "condition.redundant"
-	CodeMemberRead         Code = "member.read"
-	CodeConcatOperand      Code = "operator.concat.operand"
-	CodeSendIsolation      Code = "send.isolation"
+	CodeCallArgType             Code = "call.argument.type"
+	CodeCallArity               Code = "call.arity"
+	CodeCallCallee              Code = "call.callee"
+	CodeAssignment              Code = "assignment.type"
+	CodeAssignmentTarget        Code = "assignment.optional_target"
+	CodeReturn                  Code = "return.type"
+	CodeNonNilAssertion         Code = "assertion.nonnil"
+	CodeNumericForOperand       Code = "for.numeric.operand"
+	CodeFrozenTable             Code = "effect.freeze.mutation"
+	CodeLifecycle               Code = "effect.lifecycle.unreleased"
+	CodeUnusedLocal             Code = "lint.unused.local"
+	CodeDeadAssignment          Code = "lint.dead.assignment"
+	CodeChannelSelect           Code = "channel.select.exhaustiveness"
+	CodeDiscriminatedUnion      Code = "union.discriminated.exhaustiveness"
+	CodeOptional                Code = "union.optional.exhaustiveness"
+	CodeResultShape             Code = "union.result_shape.exhaustiveness"
+	CodeRegistration            Code = "union.registration.exhaustiveness"
+	CodeTableDispatch           Code = "union.table_dispatch.exhaustiveness"
+	CodeUnresolvedValue         Code = "value.reference.unresolved"
+	CodeUnresolvedType          Code = "type.reference.unresolved"
+	CodeRedundantCondition      Code = "condition.redundant"
+	CodeMemberRead              Code = "member.read"
+	CodeConcatOperand           Code = "operator.concat.operand"
+	CodeSendIsolation           Code = "send.isolation"
+	CodeAdviceRedundantClaim    Code = "advice.redundant_claim"
+	CodeAdviceAlwaysTrueGuard   Code = "advice.always_true_guard"
+	CodeAdviceInvariantLoopRead Code = "advice.invariant_loop_read"
 )
 
 // Verdict classifies whether the solved state proves or refutes an obligation.
@@ -216,6 +219,11 @@ const (
 	EvidenceDetailSendSafetyFact
 	EvidenceDetailSendSafetyProof
 	EvidenceDetailSendSafetyBlocker
+	EvidenceDetailAdviceClaimSite
+	EvidenceDetailAdviceProvenType
+	EvidenceDetailAdviceGuardValue
+	EvidenceDetailAdviceLoopInvariant
+	EvidenceDetailAdviceReceiverNonNil
 )
 
 // EvidenceDetail carries renderer-independent detail for one evidence node.
@@ -257,6 +265,26 @@ func RedundantConditionProofEvidenceDetail(message string) EvidenceDetail {
 
 func RedundantConditionStabilityEvidenceDetail(message string) EvidenceDetail {
 	return EvidenceDetail{Kind: EvidenceDetailRedundantConditionStability, Message: message}
+}
+
+func AdviceClaimSiteEvidenceDetail(message string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailAdviceClaimSite, Message: message}
+}
+
+func AdviceProvenTypeEvidenceDetail(message string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailAdviceProvenType, Message: message}
+}
+
+func AdviceGuardValueEvidenceDetail(message string, always bool) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailAdviceGuardValue, Message: message, Always: always}
+}
+
+func AdviceLoopInvariantEvidenceDetail(message string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailAdviceLoopInvariant, Message: message}
+}
+
+func AdviceReceiverNonNilEvidenceDetail(message string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailAdviceReceiverNonNil, Message: message}
 }
 
 func ResultShapeUnionEvidenceDetail(receiver, discriminant string) EvidenceDetail {
