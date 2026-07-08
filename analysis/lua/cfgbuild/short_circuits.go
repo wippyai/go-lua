@@ -17,14 +17,12 @@ type ShortCircuits struct {
 
 // ShortCircuitGuard records the guard branch point for a short-circuit logical.
 type ShortCircuitGuard struct {
-	Stmt      ast.Stmt
 	Condition ast.Expr
 }
 
 // ExpressionEvaluation records a structural evaluation point for a right-hand
 // expression with no call point of its own.
 type ExpressionEvaluation struct {
-	Stmt ast.Stmt
 	Expr ast.Expr
 }
 
