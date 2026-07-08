@@ -180,13 +180,12 @@ func (r *Result) CallMayInvalidatePathPresence(point cfg.Point, target pathdom.P
 	if len(target.Segments) != 0 {
 		return r.CallMayInvalidateGuardFact(point, target)
 	}
-	site, hasSite := r.CallSite(point)
-	if !hasSite {
+	if !r.callSiteExists(point) {
 		return false
 	}
 	outcome, hasOutcome := r.CallOutcomeAt(point)
 	if !hasOutcome {
-		if r.CallSiteHasExactEmptyGuardInvalidationSummary(site) {
+		if r.callSiteHasExactEmptyGuardInvalidationSummaryAt(point) {
 			return false
 		}
 		if kind, ok := r.SymbolKind(target.Symbol); ok && (kind == symbol.Local || kind == symbol.Param) {
@@ -194,7 +193,7 @@ func (r *Result) CallMayInvalidatePathPresence(point cfg.Point, target pathdom.P
 		}
 		return r.CallMayInvalidateGuardFact(point, target)
 	}
-	if !r.CallOutcomeHasExactGuardInvalidationSummary(site, outcome, false) {
+	if !r.callOutcomeHasExactGuardInvalidationSummaryAt(point, outcome, false) {
 		if kind, ok := r.SymbolKind(target.Symbol); ok && (kind == symbol.Local || kind == symbol.Param) {
 			return false
 		}
@@ -203,7 +202,7 @@ func (r *Result) CallMayInvalidatePathPresence(point cfg.Point, target pathdom.P
 	if CallOutcomeHasGlobalGuardInvalidation(outcome) {
 		return true
 	}
-	invalidated, ok := r.CallOutcomeGuardInvalidationPaths(site, outcome)
+	invalidated, ok := r.callOutcomeGuardInvalidationPathsAt(point, outcome)
 	if !ok {
 		return true
 	}

@@ -3,7 +3,6 @@ package body
 import (
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
-	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
 )
@@ -28,15 +27,6 @@ type LifecycleSite struct {
 	To          string
 	TargetLabel string
 	Span        SourceSpan
-}
-
-func sourceSpanFromFactflow(span factflow.SourceSpan) SourceSpan {
-	return SourceSpan{
-		StartLine: span.StartLine,
-		StartCol:  span.StartCol,
-		EndLine:   span.EndLine,
-		EndCol:    span.EndCol,
-	}
 }
 
 // LifecycleObligationProof is a body-owned proof for a resource whose
@@ -189,12 +179,11 @@ func (r *Result) collectLifecycleTraceSites(graph cfg.Graph) []lifecycleTraceSit
 		if !ok || len(outcome.NormalReturnFacts.LifecycleFacts) == 0 {
 			continue
 		}
-		site, ok := r.CallSite(point)
-		if !ok {
+		if !r.callSiteExists(point) {
 			continue
 		}
-		bindings := r.callGuardCallBindings(site)
-		span := sourceSpanFromFactflow(site.CallSpan())
+		bindings := r.callGuardCallBindingsAt(point)
+		span := r.callSpanAt(point)
 		for _, fact := range outcome.NormalReturnFacts.LifecycleFacts {
 			if fact.Kind == callboundary.LifecycleNone || fact.Protocol == "" {
 				continue

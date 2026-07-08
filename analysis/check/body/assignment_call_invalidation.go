@@ -3,7 +3,6 @@ package body
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
-	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -42,8 +41,7 @@ func (r *Result) AssignmentCallInvalidations(point cfg.Point, expr ast.Expr) []A
 		if !r.PointCanReach(candidate, point) {
 			continue
 		}
-		site, ok := r.CallSite(candidate)
-		if !ok {
+		if !r.callSiteExists(candidate) {
 			continue
 		}
 		outcome, ok := r.CallOutcomeAt(candidate)
@@ -53,7 +51,7 @@ func (r *Result) AssignmentCallInvalidations(point cfg.Point, expr ast.Expr) []A
 		if _, done := seen[candidate]; done {
 			continue
 		}
-		invalidation, ok := r.callInvalidationEvidence(site, outcome, readPath)
+		invalidation, ok := r.callInvalidationEvidence(candidate, outcome, readPath)
 		if !ok {
 			continue
 		}
@@ -64,15 +62,12 @@ func (r *Result) AssignmentCallInvalidations(point cfg.Point, expr ast.Expr) []A
 	return out
 }
 
-func (r *Result) callInvalidationEvidence(site factflow.CallSite, outcome callpayload.CallOutcome, readPath pathdom.Path) (AssignmentCallInvalidation, bool) {
-	callLabel := callSiteEvidenceLabel(site)
+func (r *Result) callInvalidationEvidence(point cfg.Point, outcome callpayload.CallOutcome, readPath pathdom.Path) (AssignmentCallInvalidation, bool) {
+	callLabel := r.callEvidenceLabelAt(point)
 	if callLabel == "" {
 		callLabel = "call"
 	}
-	span := callInvalidationSourceSpan(site.CalleeSpan())
-	if span.StartLine == 0 {
-		span = callInvalidationSourceSpan(site.CallSpan())
-	}
+	span := r.callEvidenceSpanAt(point)
 	if CallOutcomeHasGlobalGuardInvalidation(outcome) {
 		return AssignmentCallInvalidation{
 			CallLabel:        callLabel,
@@ -80,7 +75,7 @@ func (r *Result) callInvalidationEvidence(site factflow.CallSite, outcome callpa
 			Span:             span,
 		}, true
 	}
-	invalidated, ok := r.CallOutcomeGuardInvalidationPaths(site, outcome)
+	invalidated, ok := r.callOutcomeGuardInvalidationPathsAt(point, outcome)
 	if !ok {
 		return AssignmentCallInvalidation{}, false
 	}
@@ -99,28 +94,4 @@ func (r *Result) callInvalidationEvidence(site factflow.CallSite, outcome callpa
 		}, true
 	}
 	return AssignmentCallInvalidation{}, false
-}
-
-func callInvalidationSourceSpan(span factflow.SourceSpan) SourceSpan {
-	return SourceSpan{
-		StartLine: span.StartLine,
-		StartCol:  span.StartCol,
-		EndLine:   span.EndLine,
-		EndCol:    span.EndCol,
-	}
-}
-
-func callSiteEvidenceLabel(site factflow.CallSite) string {
-	if site.MethodName() != "" {
-		if receiver, ok := site.ReceiverPath(); ok && !receiver.IsEmpty() {
-			return receiver.String() + ":" + site.MethodName() + "(...)"
-		}
-	}
-	if callee := site.CalleePath(); !callee.IsEmpty() {
-		return callee.String() + "(...)"
-	}
-	if method, ok := site.MethodPath(); ok && !method.IsEmpty() {
-		return method.String() + "(...)"
-	}
-	return ""
 }
