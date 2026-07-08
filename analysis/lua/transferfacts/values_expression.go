@@ -53,6 +53,9 @@ func (l *lowerer) addDynamicIndexExpression(ref factflow.ExprRef, expr ast.Expr)
 }
 
 func (l *lowerer) dynamicIndexExpression(expr ast.Expr) (factflow.DynamicIndexExpression, bool) {
+	if l.wir != nil {
+		return factflow.DynamicIndexExpression{}, false
+	}
 	inner, ok := sourceprovenance.ProofInner(expr)
 	if !ok {
 		return factflow.DynamicIndexExpression{}, false
@@ -176,6 +179,9 @@ func (l *lowerer) addExpressionValue(ref factflow.ExprRef, expr ast.Expr) {
 
 func (l *lowerer) addExpressionOperation(ref factflow.ExprRef, expr ast.Expr) {
 	if ref == 0 || expr == nil {
+		return
+	}
+	if l.wir != nil {
 		return
 	}
 	var op factflow.ExpressionOperation
