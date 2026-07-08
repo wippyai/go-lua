@@ -363,7 +363,7 @@ func returnSlotAllowsHeapContainerProjection(reg *axis.Registry, typeValues *typ
 	if !ok || t == nil {
 		return true
 	}
-	return !inspect.ContainsAny(t) && !inspect.ContainsUnknown(t)
+	return !typ.ContainsAny(t) && !inspect.ContainsUnknown(t)
 }
 
 func returnSourceValue(

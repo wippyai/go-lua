@@ -2,7 +2,6 @@ package subst
 
 import (
 	"github.com/wippyai/go-lua/analysis/internal/recursion"
-	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/transform"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -18,7 +17,7 @@ func expandInstantiatedGeneric(v *typ.Instantiated, orig typ.Type, guard recursi
 
 func isRecursiveInstantiated(t typ.Type) bool {
 	if inst, ok := t.(*typ.Instantiated); ok {
-		return inspect.ContainsRecursive(inst) || genericBodySelfInstantiates(inst.Generic)
+		return typ.ContainsRecursive(inst) || genericBodySelfInstantiates(inst.Generic)
 	}
 	return false
 }

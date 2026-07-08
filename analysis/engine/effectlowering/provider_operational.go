@@ -23,7 +23,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/module/signature"
-	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -594,7 +593,7 @@ func allocationObjectTypes(objects []signature.AllocationObjectTemplate, signatu
 	out := make(map[signature.AllocationTemplateID]typ.Type, len(objects))
 	for _, object := range objects {
 		t := closeUninferredSignatureTypeParams(signatureType, object.Type)
-		if object.ID != "" && t != nil && !inspect.ContainsTypeParam(t) {
+		if object.ID != "" && t != nil && !typ.ContainsTypeParam(t) {
 			out[object.ID] = t
 		}
 	}

@@ -1,17 +1,15 @@
 package subst
 
 import (
-	"testing"
-
-	"github.com/wippyai/go-lua/analysis/type/inspect"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
+	"testing"
 )
 
 func requireNoInstantiated(t *testing.T, tt typ.Type) {
 	t.Helper()
-	if inspect.ContainsInstantiated(tt) {
+	if typ.ContainsInstantiated(tt) {
 		t.Fatalf("type still contains instantiated node: %v", tt)
 	}
 }

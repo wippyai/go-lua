@@ -1,7 +1,6 @@
 package subst
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -14,7 +13,7 @@ import (
 //
 // Does not enforce generic constraints; use subtype checking for that.
 func ExpandInstantiated(t typ.Type) typ.Type {
-	if t == nil || !inspect.ContainsInstantiated(t) {
+	if t == nil || !typ.ContainsInstantiated(t) {
 		return t
 	}
 	memo := getExpandMemo()

@@ -13,29 +13,9 @@ func containsMatching(t typ.Type, pred func(typ.Type) bool) bool {
 	return contains(t, pred, scan)
 }
 
-// ContainsAny reports whether t contains the gradual any type.
-func ContainsAny(t typ.Type) bool {
-	return typ.ContainsAny(t)
-}
-
 // ContainsUnknown reports whether t contains the unresolved unknown type.
 func ContainsUnknown(t typ.Type) bool {
 	return containsMatching(t, typ.IsUnknown)
-}
-
-// ContainsTypeParam reports whether t contains a type parameter.
-func ContainsTypeParam(t typ.Type) bool {
-	return typ.ContainsTypeParam(t)
-}
-
-// ContainsInstantiated reports whether t contains a generic instantiation.
-func ContainsInstantiated(t typ.Type) bool {
-	return typ.ContainsInstantiated(t)
-}
-
-// ContainsRecursive reports whether t contains a recursive product.
-func ContainsRecursive(t typ.Type) bool {
-	return typ.ContainsRecursive(t)
 }
 
 // IsMultiArmUnion reports whether t resolves through transparent wrappers to a

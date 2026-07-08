@@ -9,5 +9,5 @@ import (
 // precise boundary projection: direct any/unknown or either nested in a
 // structured type.
 func ContainsBoundaryTop(t typ.Type) bool {
-	return typ.IsAny(t) || typ.IsUnknown(t) || inspect.ContainsAny(t) || inspect.ContainsUnknown(t)
+	return typ.IsAny(t) || typ.IsUnknown(t) || typ.ContainsAny(t) || inspect.ContainsUnknown(t)
 }

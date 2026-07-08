@@ -2,7 +2,6 @@ package subst
 
 import (
 	"github.com/wippyai/go-lua/analysis/internal/recursion"
-	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -11,7 +10,7 @@ func expandInstantiatedGuardMode(t typ.Type, guard recursion.Guard, memo map[exp
 	if t == nil {
 		return t
 	}
-	if mode == expandModeStructural && !inspect.ContainsInstantiated(t) {
+	if mode == expandModeStructural && !typ.ContainsInstantiated(t) {
 		return t
 	}
 
