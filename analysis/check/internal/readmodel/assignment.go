@@ -326,7 +326,8 @@ func assignmentTopLikeNilableAccess(t typ.Type, accesses []readapi.NilableAccess
 }
 
 func (r Reader) dynamicTargetReadProofAdmissible(point cfg.Point, fact body.OrdinaryAssignmentFact, value product.Value) bool {
-	return !r.ValueHasUntrustedTopOrigin(value) && r.result.AssignmentSourceMatchesDynamicTargetRead(point, fact)
+	sourcePath, ok := r.result.ExpressionPath(fact.Value)
+	return ok && !r.ValueHasUntrustedTopOrigin(value) && r.result.AssignmentSourcePathMatchesDynamicTargetRead(point, sourcePath)
 }
 
 func ordinaryAssignmentExpectedSource(dynamic bool) readapi.AssignmentExpectedSource {

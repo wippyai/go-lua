@@ -886,7 +886,11 @@ end`)
 	if !ok {
 		t.Fatal("missing ordinary assignment fact")
 	}
-	if !result.AssignmentSourceMatchesDynamicTargetRead(point, fact) {
+	sourcePath, ok := result.ExpressionPath(fact.Value)
+	if !ok {
+		t.Fatal("missing assignment source path")
+	}
+	if !result.AssignmentSourcePathMatchesDynamicTargetRead(point, sourcePath) {
 		t.Fatal("loop value is not recorded as read from the same dynamic target slot")
 	}
 }

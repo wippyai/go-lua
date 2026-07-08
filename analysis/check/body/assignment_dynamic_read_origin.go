@@ -6,23 +6,19 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
-// AssignmentSourceMatchesDynamicTargetRead reports whether an ordinary dynamic
-// write stores back a value proven to have been read from the same container/key
-// pair. This is the canonical proof for self-writes such as:
+// AssignmentSourcePathMatchesDynamicTargetRead reports whether an ordinary
+// dynamic write stores back a path value proven to have been read from the same
+// container/key pair. This is the canonical proof for self-writes such as:
 //
 //	for key, value in pairs(item) do
 //	    item[key] = value
 //	end
-func (r *Result) AssignmentSourceMatchesDynamicTargetRead(point cfg.Point, fact OrdinaryAssignmentFact) bool {
-	if r == nil || r.visibility == nil || fact.Value == nil {
+func (r *Result) AssignmentSourcePathMatchesDynamicTargetRead(point cfg.Point, sourcePath pathdom.Path) bool {
+	if r == nil || r.visibility == nil || sourcePath.IsEmpty() || sourcePath.Symbol == 0 {
 		return false
 	}
 	write, ok := r.DynamicIndexWrite(point)
 	if !ok {
-		return false
-	}
-	sourcePath, ok := r.ExpressionPath(fact.Value)
-	if !ok || sourcePath.IsEmpty() || sourcePath.Symbol == 0 {
 		return false
 	}
 	sourceKey, ok := r.visibility.StateKeyAt(point, sourcePath)
