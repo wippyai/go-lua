@@ -36,6 +36,8 @@ type resultQueryCache struct {
 	branchSitesOK       bool
 	returnFacts         map[cfg.Point]ReturnFact
 	returnFactsOK       bool
+	sourceCalls         map[cfg.Point]SourceCallFact
+	sourceCallsOK       bool
 	numericForFacts     map[cfg.Point]NumericForFact
 	numericForFactsOK   bool
 }
@@ -68,6 +70,8 @@ func (c *resultQueryCache) reset() {
 	c.branchSitesOK = false
 	c.returnFacts = nil
 	c.returnFactsOK = false
+	c.sourceCalls = nil
+	c.sourceCallsOK = false
 	c.numericForFacts = nil
 	c.numericForFactsOK = false
 }

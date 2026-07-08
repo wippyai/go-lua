@@ -304,6 +304,17 @@ func (r *Result) Call(point cfg.Point) (CallFact, bool) {
 	return r.cfg.Calls.Get(point)
 }
 
+func (r *Result) SourceCall(point cfg.Point) (SourceCallFact, bool) {
+	if r == nil {
+		return SourceCallFact{}, false
+	}
+	fact, ok := r.sourceCalls()[point]
+	if !ok {
+		return SourceCallFact{}, false
+	}
+	return fact.copy(), true
+}
+
 func (r *Result) CallSite(point cfg.Point) (factflow.CallSite, bool) {
 	if r == nil {
 		return factflow.CallSite{}, false

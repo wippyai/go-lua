@@ -72,7 +72,7 @@ func (r *Result) expressionUsesAt(point cfg.Point) []ExpressionUse {
 		add(ExpressionUseOrdinaryAssignmentSource, fact.Value)
 		add(ExpressionUseOrdinaryAssignmentTarget, fact.Target)
 	}
-	if fact, ok := r.Call(point); ok {
+	if fact, ok := r.SourceCall(point); ok {
 		add(ExpressionUseCall, fact.Call)
 	}
 	if fact, ok := r.ReturnFact(point); ok {

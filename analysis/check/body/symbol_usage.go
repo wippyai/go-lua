@@ -211,7 +211,7 @@ func (r *Result) ReachableSymbolReads() SymbolReadSets {
 			collector.exprs(fact.Rhs)
 			collector.lvalues(fact.Lhs)
 		}
-		if fact, ok := r.Call(point); ok {
+		if fact, ok := r.SourceCall(point); ok {
 			collector.expr(fact.Func)
 			collector.expr(fact.Receiver)
 			collector.exprs(fact.Args)

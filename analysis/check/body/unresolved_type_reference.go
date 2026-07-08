@@ -77,8 +77,8 @@ func (r *Result) ForEachUnresolvedTypeReferenceOccurrence(parents []*Result, vis
 				return true
 			}
 		}
-		if fact, ok := r.Call(point); ok && fact.Call != nil {
-			if !emitMany(point, fact.Call.TypeArgs) {
+		if fact, ok := r.SourceCall(point); ok && fact.Call != nil {
+			if !emitMany(point, fact.TypeArgs) {
 				return true
 			}
 		}

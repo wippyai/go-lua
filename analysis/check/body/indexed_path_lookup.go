@@ -30,7 +30,7 @@ func (r *Result) IndexedPathLookupsAt(point cfg.Point) []IndexedPathLookup {
 			out = append(out, r.indexedPathLookupsInExpr(point, use.Expr, false)...)
 		}
 	}
-	if call, ok := r.Call(point); ok && call.Call != nil {
+	if call, ok := r.SourceCall(point); ok && call.Call != nil {
 		out = append(out, r.indexedPathLookupsInExpr(point, call.Func, true)...)
 		if call.Receiver != nil {
 			out = append(out, r.indexedPathLookupsInExpr(point, call.Receiver, true)...)
