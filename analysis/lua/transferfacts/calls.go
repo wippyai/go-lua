@@ -210,8 +210,8 @@ func (l *lowerer) callReceiverSourceFromWIR(point cfg.Point, shape valueSourceSh
 		shape.exprIndex,
 		shape.targetIndex,
 		shape.final,
-		symbol.Local,
-		symbol.Param,
+		wir.SymbolLocal,
+		wir.SymbolParam,
 	); ok {
 		return source, true
 	}
@@ -224,10 +224,10 @@ func (l *lowerer) callReceiverSourceFromWIR(point cfg.Point, shape valueSourceSh
 		shape.final,
 		shape.expanded,
 		shape.openTail,
-		symbol.Local,
-		symbol.Param,
-		symbol.Global,
-		symbol.Upvalue,
+		wir.SymbolLocal,
+		wir.SymbolParam,
+		wir.SymbolGlobal,
+		wir.SymbolUpvalue,
 	); ok {
 		return source, true
 	}
@@ -279,10 +279,10 @@ func (l *lowerer) callArgumentSourceFromWIROperand(
 	if source, ok := l.localRootPathExpressionSourceFromWIR("call-arg", point, op, exprIndex, targetIndex, final, false, false); ok {
 		return source, true
 	}
-	if source, ok := l.valueSourceFromWIRRootPathOperand(op, exprIndex, targetIndex, final, symbol.Param); ok {
+	if source, ok := l.valueSourceFromWIRRootPathOperand(op, exprIndex, targetIndex, final, wir.SymbolParam); ok {
 		return source, true
 	}
-	if source, ok := l.pathExpressionSourceFromWIR("call-arg", point, op, exprIndex, targetIndex, final, false, false, symbol.Local, symbol.Param, symbol.Global, symbol.Upvalue); ok {
+	if source, ok := l.pathExpressionSourceFromWIR("call-arg", point, op, exprIndex, targetIndex, final, false, false, wir.SymbolLocal, wir.SymbolParam, wir.SymbolGlobal, wir.SymbolUpvalue); ok {
 		return source, true
 	}
 	return l.valueSourceFromWIROperand(op, exprIndex, targetIndex, final, expanded, false)

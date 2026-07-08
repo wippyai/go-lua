@@ -63,10 +63,10 @@ func (l *lowerer) returnValueSourceFromWIROperand(
 	expanded bool,
 	openTail bool,
 ) (factflow.ValueSource, bool) {
-	if source, ok := l.valueSourceFromWIRRootPathOperand(op, exprIndex, targetIndex, final, symbol.Local, symbol.Param); ok {
+	if source, ok := l.valueSourceFromWIRRootPathOperand(op, exprIndex, targetIndex, final, wir.SymbolLocal, wir.SymbolParam); ok {
 		return source, true
 	}
-	if source, ok := l.pathExpressionSourceFromWIR("return", point, op, exprIndex, targetIndex, final, expanded, openTail, symbol.Local, symbol.Param, symbol.Global, symbol.Upvalue); ok {
+	if source, ok := l.pathExpressionSourceFromWIR("return", point, op, exprIndex, targetIndex, final, expanded, openTail, wir.SymbolLocal, wir.SymbolParam, wir.SymbolGlobal, wir.SymbolUpvalue); ok {
 		return source, true
 	}
 	return l.valueSourceFromWIROperand(op, exprIndex, targetIndex, final, expanded, openTail)
@@ -104,7 +104,7 @@ func (l *lowerer) localRootPathExpressionSourceFromWIR(
 	expanded bool,
 	openTail bool,
 ) (factflow.ValueSource, bool) {
-	return l.rootPathExpressionSourceFromWIR(kind, point, op, exprIndex, targetIndex, final, expanded, openTail, symbol.Local)
+	return l.rootPathExpressionSourceFromWIR(kind, point, op, exprIndex, targetIndex, final, expanded, openTail, wir.SymbolLocal)
 }
 
 func (l *lowerer) rootPathExpressionSourceFromWIR(
@@ -116,7 +116,7 @@ func (l *lowerer) rootPathExpressionSourceFromWIR(
 	final bool,
 	expanded bool,
 	openTail bool,
-	allowedKinds ...symbol.Kind,
+	allowedKinds ...wir.SymbolKind,
 ) (factflow.ValueSource, bool) {
 	p, ok := l.wirPathOperand(op, true, allowedKinds...)
 	if !ok {
@@ -138,7 +138,7 @@ func (l *lowerer) pathExpressionSourceFromWIR(
 	final bool,
 	expanded bool,
 	openTail bool,
-	allowedKinds ...symbol.Kind,
+	allowedKinds ...wir.SymbolKind,
 ) (factflow.ValueSource, bool) {
 	p, ok := l.wirPathOperand(op, false, allowedKinds...)
 	if !ok {
@@ -208,8 +208,8 @@ func (l *lowerer) wirPathExpressionSourceWithShape(
 	return source.WithSourcePoint(point), true
 }
 
-func (l *lowerer) wirPathOperand(op wir.Operand, rootOnly bool, allowedKinds ...symbol.Kind) (path.Path, bool) {
-	if op.Kind != wir.OperandPath || l == nil || l.wir == nil || l.bindings == nil {
+func (l *lowerer) wirPathOperand(op wir.Operand, rootOnly bool, allowedKinds ...wir.SymbolKind) (path.Path, bool) {
+	if op.Kind != wir.OperandPath || l == nil || l.wir == nil {
 		return path.Path{}, false
 	}
 	p := l.wir.Path(wir.PathRef(op.Ref))
@@ -219,8 +219,8 @@ func (l *lowerer) wirPathOperand(op wir.Operand, rootOnly bool, allowedKinds ...
 	if rootOnly && len(p.Segments) != 0 {
 		return path.Path{}, false
 	}
-	bindKind, ok := l.bindings.Kind(p.Symbol)
-	if !ok || !symbolKindAllowed(bindKind, allowedKinds) {
+	kind, ok := l.wir.SymbolKind(p.Symbol)
+	if !ok || !symbolKindAllowed(kind, allowedKinds) {
 		return path.Path{}, false
 	}
 	return p, true
@@ -248,7 +248,7 @@ func (l *lowerer) valueSourceFromWIROperandSeen(
 ) (factflow.ValueSource, bool) {
 	switch op.Kind {
 	case wir.OperandPath:
-		return l.valueSourceFromWIRRootPathOperand(op, exprIndex, targetIndex, final, symbol.Param)
+		return l.valueSourceFromWIRRootPathOperand(op, exprIndex, targetIndex, final, wir.SymbolParam)
 	case wir.OperandConst:
 		c := l.wir.Const(wir.ConstRef(op.Ref))
 		if c.Kind == wir.ConstNil {
@@ -982,10 +982,10 @@ func (l *lowerer) wirDynamicIndexReadOperandSource(
 		true,
 		false,
 		false,
-		symbol.Local,
-		symbol.Param,
-		symbol.Global,
-		symbol.Upvalue,
+		wir.SymbolLocal,
+		wir.SymbolParam,
+		wir.SymbolGlobal,
+		wir.SymbolUpvalue,
 	); ok {
 		return source, true
 	}
@@ -1202,13 +1202,13 @@ func (l *lowerer) wirClaimInnerValueSource(
 	openTail bool,
 	seen map[uint32]bool,
 ) (factflow.ValueSource, bool) {
-	if source, ok := l.valueSourceFromWIRRootPathOperand(inst.A, exprIndex, targetIndex, final, symbol.Local, symbol.Param, symbol.Global, symbol.Upvalue); ok {
+	if source, ok := l.valueSourceFromWIRRootPathOperand(inst.A, exprIndex, targetIndex, final, wir.SymbolLocal, wir.SymbolParam, wir.SymbolGlobal, wir.SymbolUpvalue); ok {
 		return source, true
 	}
 	if source, ok := l.valueSourceFromWIROperandSeen(inst.A, exprIndex, targetIndex, final, expanded, openTail, seen); ok {
 		return source, true
 	}
-	return l.pathExpressionSourceFromWIR("claim-inner", inst.Point, inst.A, exprIndex, targetIndex, final, expanded, openTail, symbol.Local, symbol.Param, symbol.Global, symbol.Upvalue)
+	return l.pathExpressionSourceFromWIR("claim-inner", inst.Point, inst.A, exprIndex, targetIndex, final, expanded, openTail, wir.SymbolLocal, wir.SymbolParam, wir.SymbolGlobal, wir.SymbolUpvalue)
 }
 
 func (l *lowerer) addWIRClaimExpressionPath(exprRef factflow.ExprRef, inst wir.Instruction) {
@@ -1800,15 +1800,15 @@ func (l *lowerer) wirInstructionExpressionOperandValueSource(
 	seen map[uint32]bool,
 ) (factflow.ValueSource, bool) {
 	if op.Kind == wir.OperandPath {
-		if source, ok := l.valueSourceFromWIRRootPathOperand(op, exprIndex, targetIndex, true, symbol.Local, symbol.Param, symbol.Global, symbol.Upvalue); ok {
+		if source, ok := l.valueSourceFromWIRRootPathOperand(op, exprIndex, targetIndex, true, wir.SymbolLocal, wir.SymbolParam, wir.SymbolGlobal, wir.SymbolUpvalue); ok {
 			return source, true
 		}
-		if source, ok := l.pathExpressionSourceFromWIR("expr-op", inst.Point, op, sourceprovenance.NoSourceIndex, sourceprovenance.NoSourceIndex, true, false, false, symbol.Local, symbol.Param, symbol.Global, symbol.Upvalue); ok {
+		if source, ok := l.pathExpressionSourceFromWIR("expr-op", inst.Point, op, sourceprovenance.NoSourceIndex, sourceprovenance.NoSourceIndex, true, false, false, wir.SymbolLocal, wir.SymbolParam, wir.SymbolGlobal, wir.SymbolUpvalue); ok {
 			return source, true
 		}
 	}
 	if inst.Op == wir.OpConcat || (exprIndex == sourceprovenance.NoSourceIndex && targetIndex == sourceprovenance.NoSourceIndex) {
-		if source, ok := l.pathExpressionSourceFromWIR("expr-op", inst.Point, op, sourceprovenance.NoSourceIndex, sourceprovenance.NoSourceIndex, true, false, false, symbol.Local, symbol.Param, symbol.Global, symbol.Upvalue); ok {
+		if source, ok := l.pathExpressionSourceFromWIR("expr-op", inst.Point, op, sourceprovenance.NoSourceIndex, sourceprovenance.NoSourceIndex, true, false, false, wir.SymbolLocal, wir.SymbolParam, wir.SymbolGlobal, wir.SymbolUpvalue); ok {
 			return source, true
 		}
 	}
@@ -1915,19 +1915,19 @@ func (l *lowerer) valueSourceFromWIRRootPathOperand(
 	exprIndex int,
 	targetIndex int,
 	final bool,
-	allowedKinds ...symbol.Kind,
+	allowedKinds ...wir.SymbolKind,
 ) (factflow.ValueSource, bool) {
-	if op.Kind != wir.OperandPath || l == nil || l.wir == nil || l.bindings == nil {
+	if op.Kind != wir.OperandPath || l == nil || l.wir == nil {
 		return factflow.ValueSource{}, false
 	}
 	p := l.wir.Path(wir.PathRef(op.Ref))
 	if len(p.Segments) != 0 {
 		return factflow.ValueSource{}, false
 	}
-	if l.bindings.IsImplicitGlobalSymbol(p.Symbol) {
+	if l.wir.IsImplicitGlobalSymbol(p.Symbol) {
 		return factflow.ValueSource{}, false
 	}
-	kind, ok := l.bindings.Kind(p.Symbol)
+	kind, ok := l.wir.SymbolKind(p.Symbol)
 	if !ok || !symbolKindAllowed(kind, allowedKinds) {
 		return factflow.ValueSource{}, false
 	}
@@ -1938,7 +1938,7 @@ func (l *lowerer) valueSourceFromWIRRootPathOperand(
 	return mustValueSource(factflow.NewPathValueSource(p.Key(), exprIndex, targetIndex, 0, shape)), true
 }
 
-func symbolKindAllowed(kind symbol.Kind, allowed []symbol.Kind) bool {
+func symbolKindAllowed(kind wir.SymbolKind, allowed []wir.SymbolKind) bool {
 	for _, candidate := range allowed {
 		if kind == candidate {
 			return true

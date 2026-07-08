@@ -5,6 +5,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
+// SymbolID is the lexical root symbol identity used by paths.
+type SymbolID = symbol.ID
+
 // Path identifies a runtime value through its syntax-facing access path.
 //
 // Paths are the syntax-facing access identity used by Lua extraction,

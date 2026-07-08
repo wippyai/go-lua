@@ -99,8 +99,10 @@ func (l *lowerer) addRootAssignmentFromWIR(input *factflow.FactsInput, point cfg
 		} else if declared, ok := l.wirAssignmentDeclaredObjectType(inst, target.Symbol); ok {
 			assignment = factflow.NewRootAssignmentWithDeclaredOverlayValue(kind, target.Symbol, target, source, l.declaredTypeClaimValue(declared))
 		}
-		if declared, ok := l.symbolTypes[target.Symbol]; ok && declared != nil {
+		if declared, ok := l.wirAssignmentAnnotationType(inst); ok {
 			assignment = assignment.WithDeclaredAnnotationValue(l.declaredTypeClaimValue(declared))
+		} else if declaredValue, ok := assignment.DeclaredValue(); ok {
+			assignment = assignment.WithDeclaredAnnotationValue(declaredValue)
 		}
 	}
 	if inst.TargetSpan.Valid() {
@@ -114,6 +116,14 @@ func (l *lowerer) addRootAssignmentFromWIR(input *factflow.FactsInput, point cfg
 	if declared, ok := l.wirAssignmentObjectLiteralExpectedType(inst, target.Symbol); ok {
 		l.addObjectLiteralFieldExposuresFromWIR(input, point, inst, declared)
 	}
+}
+
+func (l *lowerer) wirAssignmentAnnotationType(inst wir.Instruction) (typ.Type, bool) {
+	if l == nil || inst.Type == 0 {
+		return nil, false
+	}
+	declared := l.wir.Type(inst.Type)
+	return declared, declared != nil
 }
 
 func (l *lowerer) addCastExposureFromWIR(input *factflow.FactsInput, point cfg.Point, inst wir.Instruction) {
@@ -215,6 +225,9 @@ func (l *lowerer) wirAssignmentDeclaredObjectType(inst wir.Instruction, target s
 		if declared := l.wir.Type(inst.Type); declared != nil {
 			return declared, luatypeprojection.ReachesTableContract(declared) && !reachesArray(declared) && !recordWithCallableField(declared)
 		}
+	}
+	if inst.Op == wir.OpAssign && inst.A.Kind == wir.OperandPath {
+		return nil, false
 	}
 	declared, ok := l.symbolTypes[target]
 	return declared, ok && declared != nil && luatypeprojection.ReachesTableContract(declared) && !reachesArray(declared) && !recordWithCallableField(declared)
@@ -538,21 +551,17 @@ func (l *lowerer) wirAssignmentPath(op wir.Operand) (path.Path, bool) {
 }
 
 func (l *lowerer) globalTableFieldRootTargetPath(target path.Path) (symbol.ID, path.Path, bool) {
-	if l == nil || l.bindings == nil || target.Symbol == 0 {
+	if l == nil || l.wir == nil || target.Symbol == 0 {
 		return 0, path.Path{}, false
 	}
-	if l.bindings.Name(target.Symbol) != "_G" {
-		return 0, path.Path{}, false
-	}
-	kind, ok := l.bindings.Kind(target.Symbol)
-	if !ok || kind != symbol.Global {
+	if !l.wir.SymbolResolvesToGlobal(target.Symbol, "_G") {
 		return 0, path.Path{}, false
 	}
 	name, ok := target.DirectFieldName()
 	if !ok {
 		return 0, path.Path{}, false
 	}
-	global, ok := l.bindings.GlobalSymbol(name)
+	global, ok := l.wir.GlobalSymbol(name)
 	if !ok || global == 0 {
 		return 0, path.Path{}, false
 	}
@@ -565,10 +574,10 @@ func (l *lowerer) assignmentValueSourceFromWIROperand(point cfg.Point, op wir.Op
 		sourceprovenance.NoSourceIndex,
 		0,
 		true,
-		symbol.Local,
-		symbol.Param,
-		symbol.Global,
-		symbol.Upvalue,
+		wir.SymbolLocal,
+		wir.SymbolParam,
+		wir.SymbolGlobal,
+		wir.SymbolUpvalue,
 	); ok {
 		return source, true
 	}
@@ -581,10 +590,10 @@ func (l *lowerer) assignmentValueSourceFromWIROperand(point cfg.Point, op wir.Op
 		true,
 		false,
 		false,
-		symbol.Local,
-		symbol.Param,
-		symbol.Global,
-		symbol.Upvalue,
+		wir.SymbolLocal,
+		wir.SymbolParam,
+		wir.SymbolGlobal,
+		wir.SymbolUpvalue,
 	); ok {
 		return source, true
 	}

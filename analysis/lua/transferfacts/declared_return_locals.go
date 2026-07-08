@@ -3,7 +3,6 @@ package transferfacts
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
-	"github.com/wippyai/go-lua/analysis/lua/bind"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
@@ -11,7 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
-func lowerReturnLocalTypesFromWIR(bindings *bind.Result, graph cfg.Graph, body *wir.Body) map[symbol.ID]typ.Type {
+func lowerReturnLocalTypesFromWIR(graph cfg.Graph, body *wir.Body) map[symbol.ID]typ.Type {
 	if graph == nil || body == nil {
 		return nil
 	}
@@ -49,7 +48,7 @@ func lowerReturnLocalTypesFromWIR(bindings *bind.Result, graph cfg.Graph, body *
 					states[slot].invalid = true
 					continue
 				}
-				id, ok := wirReturnLocalSymbolFromOperand(bindings, body, tempDefs, op)
+				id, ok := wirReturnLocalSymbolFromOperand(body, tempDefs, op)
 				if !ok {
 					if wirReturnOperandMayOmitDeclaredLocal(body, op, declared[slot]) {
 						continue
@@ -185,7 +184,7 @@ func wirRootPathSymbol(body *wir.Body, op wir.Operand) (symbol.ID, bool) {
 	return p.Symbol, true
 }
 
-func wirReturnLocalSymbolFromOperand(bindings *bind.Result, body *wir.Body, tempDefs map[uint32]wir.Instruction, op wir.Operand) (symbol.ID, bool) {
+func wirReturnLocalSymbolFromOperand(body *wir.Body, tempDefs map[uint32]wir.Instruction, op wir.Operand) (symbol.ID, bool) {
 	if id, ok := wirRootPathSymbol(body, op); ok {
 		return id, true
 	}
@@ -193,7 +192,7 @@ func wirReturnLocalSymbolFromOperand(bindings *bind.Result, body *wir.Body, temp
 		return 0, false
 	}
 	def, ok := tempDefs[op.Ref]
-	if !ok || def.Op != wir.OpCall || !wirCallCalleeIsGlobal(bindings, body, def, "setmetatable") {
+	if !ok || def.Op != wir.OpCall || !wirCallCalleeIsGlobal(body, def, "setmetatable") {
 		return 0, false
 	}
 	args := body.Operands(def.List)
@@ -203,15 +202,15 @@ func wirReturnLocalSymbolFromOperand(bindings *bind.Result, body *wir.Body, temp
 	return wirRootPathSymbol(body, args[0])
 }
 
-func wirCallCalleeIsGlobal(bindings *bind.Result, body *wir.Body, inst wir.Instruction, name string) bool {
-	if bindings == nil || body == nil || inst.Call.Method != 0 || inst.Call.Callee.Kind != wir.OperandPath || name == "" {
+func wirCallCalleeIsGlobal(body *wir.Body, inst wir.Instruction, name string) bool {
+	if body == nil || inst.Call.Method != 0 || inst.Call.Callee.Kind != wir.OperandPath || name == "" {
 		return false
 	}
 	p := body.Path(wir.PathRef(inst.Call.Callee.Ref))
 	if p.Symbol == 0 {
 		return false
 	}
-	return bindings.SymbolResolvesToGlobal(p.Symbol, name)
+	return body.SymbolResolvesToGlobal(p.Symbol, name)
 }
 
 func wirReturnOperandMayOmitDeclaredLocal(body *wir.Body, op wir.Operand, declared typ.Type) bool {

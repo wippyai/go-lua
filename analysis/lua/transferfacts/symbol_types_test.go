@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
-	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
@@ -19,7 +18,7 @@ import (
 )
 
 func TestLowerSymbolTypesKeepsParamAnnotationsWithoutSemanticResult(t *testing.T) {
-	fn, bindings, _ := parseSemanticFunction(t, `
+	fn, bindings, built := parseSemanticFunction(t, `
 function handle(ch: Channel<{kind: "event", id: string}>)
 	local selected = channel.select { ch:case_receive() }
 end
@@ -29,9 +28,10 @@ end
 		t.Fatalf("ParamSlots = %#v, want one typed parameter", slots)
 	}
 
-	got := lowerSymbolTypes(bindings, typeresolve.New(bindings), nil)
+	body := wirlower.LowerFunction("handle", fn, bindings, built)
+	got := lowerSymbolTypesFromWIR(body, importlookup.Source{})
 	if got == nil {
-		t.Fatal("lowerSymbolTypes returned nil without semantic result")
+		t.Fatal("lowerSymbolTypesFromWIR returned nil without semantic result")
 	}
 	if gotType, ok := got[slots[0].Symbol]; !ok || gotType == nil {
 		t.Fatalf("symbol type for parameter %d = %v/%v, want annotation", slots[0].Symbol, gotType, ok)
@@ -68,7 +68,7 @@ end
 	}
 
 	wirBody := wirlower.Lower("function-and-numeric-for-symbol-types", stmts, bindings, built)
-	wirTypes := lowerSymbolTypesFromWIR(wirBody, bindings, importlookup.Source{})
+	wirTypes := lowerSymbolTypesFromWIR(wirBody, importlookup.Source{})
 	if wirTypes == nil {
 		t.Fatal("lowerSymbolTypesFromWIR returned nil")
 	}
@@ -109,7 +109,7 @@ end
 	}
 	runBuilt := cfgbuild.BuildFunction(runFn, bindings)
 	body := wirlower.LowerFunction("run", runFn, bindings, runBuilt)
-	got := lowerSymbolTypesFromWIR(body, bindings, importlookup.Source{})
+	got := lowerSymbolTypesFromWIR(body, importlookup.Source{})
 	fnType, ok := got[makePath.Symbol].(*typ.Function)
 	if !ok || fnType == nil || len(fnType.Returns) != 1 || !typ.TypeEquals(fnType.Returns[0], typ.Number) {
 		t.Fatalf("captured function root type = %T %[1]v/%v, want () -> number", got[makePath.Symbol], ok)
@@ -140,7 +140,7 @@ func TestLowerSymbolTypesFromWIRSeedsLocalCallResultTypes(t *testing.T) {
 		Path:        localPath,
 	})
 
-	got := lowerSymbolTypesFromWIR(body, nil, importlookup.Source{})
+	got := lowerSymbolTypesFromWIR(body, importlookup.Source{})
 	if got == nil {
 		t.Fatal("lowerSymbolTypesFromWIR returned nil")
 	}
@@ -168,7 +168,7 @@ local suite_names = discovery.sorted_keys({})
 			Build()).
 		Build())
 
-	got := lowerSymbolTypesFromWIR(body, bindings, importlookup.Source{Manifests: []*manifest.Manifest{discoveryManifest}})
+	got := lowerSymbolTypesFromWIR(body, importlookup.Source{Manifests: []*manifest.Manifest{discoveryManifest}})
 	if got == nil {
 		t.Fatal("lowerSymbolTypesFromWIR returned nil")
 	}
@@ -189,7 +189,7 @@ end
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	def := stmts[1].(*ast.FuncDefStmt)
 	built := cfgbuild.BuildFunction(def.Func, bindings)
-	body := wirlower.Lower("captured-require-root-write", def.Func.Stmts, bindings, built)
+	body := wirlower.LowerFunction("captured-require-root-write", def.Func, bindings, built)
 	suiteNames, ok := bindings.LocalSymbolAt(def.Func.Stmts[1].(*ast.LocalAssignStmt), 0)
 	if !ok || suiteNames == 0 {
 		t.Fatalf("suite_names symbol = %d/%v, want local symbol", suiteNames, ok)
@@ -202,7 +202,7 @@ end
 			Build()).
 		Build())
 
-	got := lowerSymbolTypesFromWIR(body, bindings, importlookup.Source{Manifests: []*manifest.Manifest{discoveryManifest}})
+	got := lowerSymbolTypesFromWIR(body, importlookup.Source{Manifests: []*manifest.Manifest{discoveryManifest}})
 	if gotType, ok := got[suiteNames]; ok {
 		t.Fatalf("suite_names type = %v, want no manifest-derived call result after discovery root write", gotType)
 	}
@@ -223,7 +223,7 @@ local options = source
 		t.Fatalf("options symbol = %d/%v, want local symbol", optionsSym, ok)
 	}
 
-	got := lowerSymbolTypesFromWIR(body, bindings, importlookup.Source{})
+	got := lowerSymbolTypesFromWIR(body, importlookup.Source{})
 	sourceType, hasSource := got[sourceSym]
 	optionsType, hasOptions := got[optionsSym]
 	if !hasSource || sourceType == nil {

@@ -76,10 +76,10 @@ func (l *lowerer) isProtectedCallSite(site factflow.CallSite) bool {
 }
 
 func (l *lowerer) isNamedGlobalCallSite(site factflow.CallSite, name string) bool {
-	if l == nil || l.bindings == nil || name == "" {
+	if l == nil || l.wir == nil || name == "" {
 		return false
 	}
-	global, ok := l.bindings.GlobalSymbol(name)
+	global, ok := l.wir.GlobalSymbol(name)
 	return ok && site.CalleeSymbol() == global
 }
 

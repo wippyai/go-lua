@@ -22,8 +22,8 @@ function scan(xs: {string})
 	end
 end
 `)
-	body := wirlower.Lower("scan", fn.Stmts, bindings, built)
-	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("scan", fn, bindings, built)
+	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	compared := 0
 	for _, point := range built.Graph.RPO() {
@@ -44,7 +44,7 @@ end
 }
 
 func TestLowerWithWIRNumericForProofsDoesNotFallbackToSidecar(t *testing.T) {
-	fn, bindings, built := parseSemanticFunction(t, `
+	fn, _, built := parseSemanticFunction(t, `
 function scan(xs: {string})
 	for i = 1, #xs do
 		local current = xs[i]
@@ -55,7 +55,6 @@ end
 	checkPoint := requireBranchPointForStmt(t, built, loop)
 	facts := Lower(built.Graph, Config{
 		Registry: standard.Registry(),
-		Bindings: bindings,
 		WIR:      wir.NewBody("scan"),
 	})
 
@@ -75,8 +74,8 @@ function scan(xs: {string})
 	end
 end
 `)
-	body := wirlower.Lower("numeric-for-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("numeric-for-no-sidecars", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	var checked int
 	for _, point := range built.Graph.RPO() {
@@ -104,8 +103,8 @@ function scan()
 	end
 end
 `)
-	body := wirlower.Lower("numeric-for-variable", fn.Stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("numeric-for-variable", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 	loop := requireNumericForStmt(t, fn, 0)
 	wantSymbol, ok := bindings.NumForSymbol(loop)
 	if !ok || wantSymbol == 0 {
@@ -147,8 +146,8 @@ function scan()
 	end
 end
 `)
-	body := wirlower.Lower("numeric-for-typed-bound-paths", fn.Stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("numeric-for-typed-bound-paths", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	for _, point := range built.Graph.RPO() {
 		if !body.HasInstruction(point, wir.OpIterate) {

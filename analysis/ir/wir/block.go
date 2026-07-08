@@ -40,6 +40,8 @@ type Body struct {
 	branchDiffs   []BranchDiffConstraint
 	callTargets   map[callResultTargetKey]CallResultTarget
 	evaluations   map[cfg.Point]ExpressionEvaluation
+	symbols       map[SymbolID]SymbolInfo
+	globalSymbols map[string]SymbolID
 
 	pathIndex     map[path.PathKey]PathRef
 	constIndex    map[Const]ConstRef
@@ -230,6 +232,119 @@ func NewBody(name string) *Body {
 		rootTypeIndex: make(map[path.PathKey]int),
 	}
 	return b
+}
+
+// SetSymbolInfo records stable identity metadata for a value symbol referenced
+// by this body. Later calls merge new non-zero metadata into the existing entry.
+func (b *Body) SetSymbolInfo(id SymbolID, config SymbolInfoConfig) {
+	if b == nil || id == 0 {
+		return
+	}
+	if b.symbols == nil {
+		b.symbols = make(map[SymbolID]SymbolInfo)
+	}
+	info := b.symbols[id]
+	if config.Kind != SymbolUnknown {
+		info.Kind = config.Kind
+	}
+	if config.Name != "" {
+		info.Name = b.InternConst(Const{Kind: ConstString, Str: config.Name})
+	}
+	if config.RequireModule != "" {
+		info.RequireModule = b.InternConst(Const{Kind: ConstString, Str: config.RequireModule})
+	}
+	info.HasWrite = info.HasWrite || config.HasWrite
+	info.ImplicitGlobal = info.ImplicitGlobal || config.ImplicitGlobal
+	b.symbols[id] = info
+	if info.Kind == SymbolGlobal {
+		name := b.symbolInfoString(info.Name)
+		if name != "" {
+			if b.globalSymbols == nil {
+				b.globalSymbols = make(map[string]SymbolID)
+			}
+			b.globalSymbols[name] = id
+		}
+	}
+}
+
+// SymbolInfo returns the recorded symbol metadata for id.
+func (b *Body) SymbolInfo(id SymbolID) (SymbolInfo, bool) {
+	if b == nil || b.symbols == nil || id == 0 {
+		return SymbolInfo{}, false
+	}
+	info, ok := b.symbols[id]
+	return info, ok
+}
+
+// SymbolKind returns the WIR symbol kind for id.
+func (b *Body) SymbolKind(id SymbolID) (SymbolKind, bool) {
+	info, ok := b.SymbolInfo(id)
+	if !ok || info.Kind == SymbolUnknown {
+		return SymbolUnknown, false
+	}
+	return info.Kind, true
+}
+
+// SymbolName returns the declaration name recorded for id.
+func (b *Body) SymbolName(id SymbolID) string {
+	info, ok := b.SymbolInfo(id)
+	if !ok {
+		return ""
+	}
+	return b.symbolInfoString(info.Name)
+}
+
+// SymbolHasWrite reports whether ordinary assignment syntax writes id.
+func (b *Body) SymbolHasWrite(id SymbolID) bool {
+	info, ok := b.SymbolInfo(id)
+	return ok && info.HasWrite
+}
+
+// IsImplicitGlobalSymbol reports whether id was created by an unresolved global
+// read rather than a configured global or explicit write target.
+func (b *Body) IsImplicitGlobalSymbol(id SymbolID) bool {
+	info, ok := b.SymbolInfo(id)
+	return ok && info.ImplicitGlobal
+}
+
+// SymbolResolvesToGlobal reports whether id is the global symbol named name.
+func (b *Body) SymbolResolvesToGlobal(id SymbolID, name string) bool {
+	if id == 0 || name == "" {
+		return false
+	}
+	info, ok := b.SymbolInfo(id)
+	return ok && info.Kind == SymbolGlobal && b.symbolInfoString(info.Name) == name
+}
+
+// GlobalSymbol returns the symbol recorded for a global name.
+func (b *Body) GlobalSymbol(name string) (SymbolID, bool) {
+	if b == nil || b.globalSymbols == nil || name == "" {
+		return 0, false
+	}
+	id, ok := b.globalSymbols[name]
+	return id, ok && id != 0
+}
+
+// SymbolRequireModulePath returns the exact require module identity recorded for
+// a local require root.
+func (b *Body) SymbolRequireModulePath(id SymbolID) (string, bool) {
+	info, ok := b.SymbolInfo(id)
+	if !ok || info.RequireModule == 0 {
+		return "", false
+	}
+	modulePath := b.symbolInfoString(info.RequireModule)
+	return modulePath, modulePath != ""
+}
+
+func (b *Body) symbolInfoString(ref ConstRef) string {
+	if b == nil || ref == 0 {
+		return ""
+	}
+	c := b.Const(ref)
+	if c.Kind != ConstString {
+		return ""
+	}
+	return c.Str
 }
 
 // Instr returns the instruction at flat index i.

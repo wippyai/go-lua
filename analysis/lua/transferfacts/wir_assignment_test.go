@@ -30,8 +30,8 @@ function f(value: string, make_value: () -> string)
     local from_call = make_value()
     local from_local = from_literal
 end`)
-	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("f", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	paramPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	paramAssign, ok := facts.RootAssignment(paramPoint)
@@ -86,8 +86,8 @@ func TestLowerAnnotatedScalarLiteralAssignmentKeepsLiteralSource(t *testing.T) {
 function f()
     local x: string | number = 42
 end`)
-	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("f", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	assign, ok := facts.RootAssignment(point)
@@ -113,7 +113,7 @@ end
 	def := stmts[0].(*ast.FuncDefStmt)
 	body := wirlower.Lower("root-function-definition-no-sidecars", stmts, bindings, built)
 	reg := standard.Registry()
-	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, WIR: body})
 
 	point := requireStmtPoints(t, built, def, 1)[0]
 	assign, ok := facts.RootAssignment(point)
@@ -150,9 +150,9 @@ func TestLowerLocalAssignmentNaryConcatPublishesStringExpressionSource(t *testin
 function f(): ()
 	local label = "suite" .. "/" .. "name"
 end`)
-	body := wirlower.Lower("nary-concat-assignment", fn.Stmts, bindings, built)
+	body := wirlower.LowerFunction("nary-concat-assignment", fn, bindings, built)
 	reg := standard.Registry()
-	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, WIR: body})
 
 	var assignment factflow.RootAssignment
 	assignPoint := cfg.Point(0)
@@ -189,7 +189,7 @@ func TestLowerWIRAnyClaimLocalAssignmentDoesNotCreateDeclaredContract(t *testing
 local raw = ({ kind = "task", route_id = "start" } :: any)
 `)
 	body := wirlower.Lower("any-claim-local", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	point := requireStmtPoints(t, built, stmts[0], 1)[0]
 	assignment, ok := facts.RootAssignment(point)
@@ -214,7 +214,7 @@ local x: string | number = produce()
 `, "produce")
 	body := wirlower.Lower("annotated-local-unresolved-call", stmts, bindings, built)
 	reg := standard.Registry()
-	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: reg, WIR: body})
 
 	var assignment factflow.RootAssignment
 	found := false
@@ -256,6 +256,7 @@ end
 	otherPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "other")
 	outPath := path.NewPath(mustLocalAt(t, bindings, assignStmt, 0), "out")
 	body := wir.NewBody("synthetic-assign")
+	stampSyntheticWIRPathSymbols(t, body, bindings, outPath, otherPath)
 	start := body.Emit(wir.Instruction{
 		Op:     wir.OpAssign,
 		Point:  points[0],
@@ -265,7 +266,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 	assign, ok := facts.RootAssignment(points[0])
 	if !ok {
 		t.Fatalf("missing assignment at point %d", points[0])
@@ -291,6 +292,7 @@ end
 	semanticOutPath := path.NewPath(mustLocalAt(t, bindings, assignStmt, 0), "out")
 	wirTargetPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "other")
 	body := wir.NewBody("synthetic-local-target")
+	stampSyntheticWIRPathSymbols(t, body, bindings, wirTargetPath, valuePath)
 	start := body.Emit(wir.Instruction{
 		Op:     wir.OpAssign,
 		Point:  points[0],
@@ -300,7 +302,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 	assign, ok := facts.RootAssignment(points[0])
 	if !ok {
 		t.Fatalf("missing assignment at point %d", points[0])
@@ -324,6 +326,7 @@ end
 	otherPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "other").Field("name")
 	outPath := path.NewPath(mustLocalAt(t, bindings, assignStmt, 0), "out")
 	body := wir.NewBody("synthetic-segmented-assign")
+	stampSyntheticWIRPathSymbols(t, body, bindings, outPath, otherPath)
 	start := body.Emit(wir.Instruction{
 		Op:     wir.OpAssign,
 		Point:  points[0],
@@ -333,7 +336,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 	assign, ok := facts.RootAssignment(points[0])
 	if !ok {
 		t.Fatalf("missing assignment at point %d", points[0])
@@ -363,6 +366,7 @@ end
 	valuePath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "value")
 	otherPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[2].(*ast.LocalAssignStmt), 0), "other")
 	body := wir.NewBody("synthetic-root-write-source")
+	stampSyntheticWIRPathSymbols(t, body, bindings, outPath, otherPath)
 	start := body.Emit(wir.Instruction{
 		Op:     wir.OpAssign,
 		Point:  points[0],
@@ -372,7 +376,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 	assign, ok := facts.RootAssignment(points[0])
 	if !ok {
 		t.Fatalf("missing root assignment at point %d", points[0])
@@ -400,6 +404,7 @@ end
 	otherPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "other")
 	payloadPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[2].(*ast.LocalAssignStmt), 0), "payload")
 	body := wir.NewBody("synthetic-dynamic-key")
+	stampSyntheticWIRPathSymbols(t, body, bindings, boxPath, otherPath, payloadPath)
 	start := body.Emit(wir.Instruction{
 		Op:    wir.OpDynamicIndexWrite,
 		Point: points[0],
@@ -409,7 +414,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 	write, ok := facts.DynamicIndexWrite(points[0])
 	if !ok {
 		t.Fatalf("missing dynamic index write at point %d", points[0])
@@ -437,6 +442,7 @@ end
 	keyPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "key")
 	payloadPath := path.NewPath(bindings.ParamSlots(fn)[2].Symbol, "payload")
 	body := wir.NewBody("synthetic-missing-dynamic-key")
+	stampSyntheticWIRPathSymbols(t, body, bindings, boxPath, payloadPath)
 	start := body.Emit(wir.Instruction{
 		Op:    wir.OpDynamicIndexWrite,
 		Point: points[0],
@@ -445,7 +451,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 	write, ok := facts.DynamicIndexWrite(points[0])
 	if !ok {
 		t.Fatalf("missing dynamic index write at point %d", points[0])
@@ -466,11 +472,11 @@ function f(binding: any): ()
     normalized[#normalized + 1] = binding
 end
 `)
-	body := wirlower.Lower("f", fn.Stmts, bindings, built)
+	body := wirlower.LowerFunction("f", fn, bindings, built)
 	assignStmt := fn.Stmts[1].(*ast.AssignStmt)
 	points := requireStmtPoints(t, built, assignStmt, 1)
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 	write, ok := facts.DynamicIndexWrite(points[0])
 	if !ok {
 		t.Fatalf("missing dynamic index write at point %d", points[0])
@@ -504,7 +510,7 @@ function f(bindings: any): ()
     end
 end
 `)
-	body := wirlower.Lower("f", fn.Stmts, bindings, built)
+	body := wirlower.LowerFunction("f", fn, bindings, built)
 	genericFor, ok := fn.Stmts[1].(*ast.GenericForStmt)
 	if !ok {
 		t.Fatalf("statement 1 = %T, want generic for", fn.Stmts[1])
@@ -519,7 +525,7 @@ end
 	}
 	points := requireStmtPoints(t, built, assignStmt, 1)
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 	write, ok := facts.DynamicIndexWrite(points[0])
 	if !ok {
 		t.Fatalf("missing dynamic index write at point %d", points[0])
@@ -544,6 +550,7 @@ end
 	payloadPath := path.NewPath(bindings.ParamSlots(fn)[2].Symbol, "payload")
 	otherBoxPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "other_box")
 	body := wir.NewBody("synthetic-dynamic-table")
+	stampSyntheticWIRPathSymbols(t, body, bindings, otherBoxPath, keyPath, payloadPath)
 	start := body.Emit(wir.Instruction{
 		Op:    wir.OpDynamicIndexWrite,
 		Point: points[0],
@@ -553,7 +560,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 	write, ok := facts.DynamicIndexWrite(points[0])
 	if !ok {
 		t.Fatalf("missing dynamic index write at point %d", points[0])
@@ -575,6 +582,7 @@ end
 	staticPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "box").Field("name")
 	payloadPath := path.NewPath(bindings.ParamSlots(fn)[2].Symbol, "payload")
 	body := wir.NewBody("synthetic-non-dynamic-write")
+	stampSyntheticWIRPathSymbols(t, body, bindings, staticPath, payloadPath)
 	start := body.Emit(wir.Instruction{
 		Op:    wir.OpStaticMemberWrite,
 		Point: points[0],
@@ -583,7 +591,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 	if _, ok := facts.DynamicIndexWrite(points[0]); ok {
 		t.Fatalf("WIR mode dynamic index write at point %d fell back to AST target", points[0])
 	}
@@ -603,6 +611,7 @@ end
 	valuePath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "value")
 	otherPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "other")
 	body := wir.NewBody("synthetic-static-write-source")
+	stampSyntheticWIRPathSymbols(t, body, bindings, boxPath, otherPath)
 	start := body.Emit(wir.Instruction{
 		Op:    wir.OpStaticMemberWrite,
 		Point: points[0],
@@ -611,7 +620,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 	write, ok := facts.PathStaticMemberWrite(points[0])
 	if !ok {
 		t.Fatalf("missing static member write at point %d", points[0])
@@ -638,6 +647,7 @@ end
 	valuePath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "value")
 	otherPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "other")
 	body := wir.NewBody("synthetic-dynamic-write-source")
+	stampSyntheticWIRPathSymbols(t, body, bindings, boxPath, keyPath, otherPath)
 	start := body.Emit(wir.Instruction{
 		Op:    wir.OpDynamicIndexWrite,
 		Point: points[0],
@@ -647,7 +657,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 	write, ok := facts.DynamicIndexWrite(points[0])
 	if !ok {
 		t.Fatalf("missing dynamic index write at point %d", points[0])
@@ -685,7 +695,7 @@ end
 	})
 	body.SetPointRange(points[0], start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 	write, ok := facts.DynamicIndexWrite(points[0])
 	if !ok {
 		t.Fatalf("missing dynamic index write at point %d", points[0])
@@ -705,8 +715,8 @@ function f(box: any, key: string, value: string)
     box.name = value
     box[key] = value
 end`)
-	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("f", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	localPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	localAssign, ok := facts.RootAssignment(localPoint)
@@ -750,8 +760,8 @@ function f(box: any, key: string, value: string)
     box.name = value
     box[key] = value
 end`)
-	body := wirlower.Lower("assignment-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("assignment-no-sidecars", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	boxPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "box")
 	valuePath := path.NewPath(bindings.ParamSlots(fn)[2].Symbol, "value")
@@ -799,8 +809,8 @@ func TestLowerWIRLocalAliasExposureWithoutSemanticSidecars(t *testing.T) {
 function f(narrow: {number})
     local wide: {number | string} = narrow
 end`)
-	body := wirlower.Lower("local-alias-exposure-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("local-alias-exposure-no-sidecars", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	exposures := facts.CovariantExposures(point)
@@ -820,8 +830,8 @@ function f(narrow: {number})
     local wide: {number | string} = {}
     wide = narrow
 end`)
-	body := wirlower.Lower("root-reassign-exposure-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("root-reassign-exposure-no-sidecars", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	point := requireStmtPoints(t, built, fn.Stmts[1], 1)[0]
 	exposures := facts.CovariantExposures(point)
@@ -840,8 +850,8 @@ func TestLowerWIRPathStoreExposureWithoutSemanticSidecars(t *testing.T) {
 function f(narrow: {number}, holder: { slot: {number | string} })
     holder.slot = narrow
 end`)
-	body := wirlower.Lower("path-store-exposure-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("path-store-exposure-no-sidecars", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	exposures := facts.CovariantExposures(point)
@@ -860,8 +870,8 @@ func TestLowerWIRCastExposureWithoutSourceAssignmentView(t *testing.T) {
 function f(narrow: {number})
     local widened = narrow as {number | string}
 end`)
-	body := wirlower.Lower("cast-exposure-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("cast-exposure-no-sidecars", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	exposures := facts.CovariantExposures(point)
@@ -888,8 +898,8 @@ func TestLowerWIRNestedDynamicWriteCarriesDynamicKeyAndSuffix(t *testing.T) {
 function f(slots: {[string]: { value: string }}, key: string, value: string)
     slots[key].value = value
 end`)
-	body := wirlower.Lower("nested-dynamic-write", fn.Stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("nested-dynamic-write", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	slotsPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "slots")
@@ -930,8 +940,8 @@ function f(value: string): ()
     local out = value
     out = "updated"
 end`)
-	body := wirlower.Lower("root-assignment-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("root-assignment-no-sidecars", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	outPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "out")
 	localPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
@@ -968,8 +978,8 @@ func TestLowerWIRTableRootAssignmentPublishesExpressionSourceWithoutSemanticSide
 function f(value: string): ()
     local out = { name = value }
 end`)
-	body := wirlower.Lower("table-root-assignment-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("table-root-assignment-no-sidecars", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	outPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "out")
 	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
@@ -995,8 +1005,8 @@ func TestLowerWIRDynamicIndexRootAssignmentPublishesExpressionSourceWithoutSeman
 function f(box: {[string]: string}, key: string): ()
     local out = box[key]
 end`)
-	body := wirlower.Lower("dynamic-index-root-assignment-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("dynamic-index-root-assignment-no-sidecars", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	outPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "out")
 	boxPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "box")
@@ -1046,7 +1056,7 @@ _G.coroutine = {
 coroutine.spawn(function() end)
 `, "_G", "coroutine")
 	body := wirlower.Lower("global-table-canonical-root", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	point := requireStmtPoints(t, built, stmts[1], 1)[0]
 	rootFact, ok := facts.RootAssignment(point)
@@ -1099,8 +1109,8 @@ function f(): ()
         return "ok"
     end
 end`)
-	body := wirlower.Lower("closure-root-assignment-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("closure-root-assignment-no-sidecars", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	stmt := fn.Stmts[0].(*ast.LocalAssignStmt)
 	outPath := path.NewPath(mustLocalAt(t, bindings, stmt, 0), "out")
@@ -1135,14 +1145,14 @@ func assertWIRPathSource(t *testing.T, source factflow.ValueSource, want path.Pa
 }
 
 func TestLowerAssignmentDoesNotFallbackWhenWIRWriteInstructionMissing(t *testing.T) {
-	fn, bindings, built := parseSemanticFunction(t, `
+	fn, _, built := parseSemanticFunction(t, `
 function f(box: any, key: string, value: string): ()
     local local_value = value
     box.name = value
     box[key] = value
 end
 `)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: wir.NewBody("empty")})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: wir.NewBody("empty")})
 
 	localPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	if _, ok := facts.RootAssignment(localPoint); ok {
@@ -1181,7 +1191,7 @@ end
 	})
 	body.SetPointRange(point, start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 	assign, ok := facts.RootAssignment(point)
 	if !ok {
 		t.Fatalf("missing WIR-owned assignment at point %d", point)
@@ -1200,8 +1210,8 @@ function collect(entries: {{ id: string, meta: { name: string? } }}): ()
 		local display_name = meta.name or ("Unnamed test " .. i)
 	end
 end`, "ipairs")
-	body := wirlower.Lower("logical-fallback-assignment", fn.Stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("logical-fallback-assignment", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	loop := fn.Stmts[0].(*ast.GenericForStmt)
 	displayName := loop.Stmts[1].(*ast.LocalAssignStmt)

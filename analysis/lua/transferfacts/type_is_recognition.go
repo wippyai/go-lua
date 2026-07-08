@@ -88,9 +88,6 @@ func (l *lowerer) addTypeIsBranchRefinements(input *factflow.FactsInput, graph c
 }
 
 func (l *lowerer) typeIsCallSiteFromWIR(point cfg.Point) (typ.Type, path.Path, bool) {
-	if l.typeResolver == nil {
-		return nil, path.Path{}, false
-	}
 	t, ok := l.typeIsReceiverTypeFromWIRCall(point)
 	if !ok {
 		return nil, path.Path{}, false
@@ -103,9 +100,6 @@ func (l *lowerer) typeIsCallSiteFromWIR(point cfg.Point) (typ.Type, path.Path, b
 }
 
 func (l *lowerer) typeIsReceiverTypeFromWIRCall(point cfg.Point) (typ.Type, bool) {
-	if l.typeResolver == nil {
-		return nil, false
-	}
 	inst, ok := l.wirCallInstruction(point)
 	if !ok {
 		return nil, false
@@ -123,6 +117,9 @@ func (l *lowerer) typeIsReceiverTypeFromWIRCall(point cfg.Point) (typ.Type, bool
 		return t, t != nil
 	}
 	if inst.Call.Receiver.Kind != wir.OperandPath {
+		return nil, false
+	}
+	if l.typeResolver == nil {
 		return nil, false
 	}
 	receiverPath := l.wir.Path(wir.PathRef(inst.Call.Receiver.Ref))

@@ -9,7 +9,6 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
-	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -21,15 +20,11 @@ import (
 // separately.
 type Config struct {
 	Registry      *axis.Registry
-	Bindings      *bind.Result
 	TypeResolver  *typeresolve.Resolver
 	TypeValues    *typevalue.Cache
 	ModuleExports importlookup.Source
 	WIR           *wir.Body
 
-	// MethodReceiverTypes maps method-table receiver symbols to the proven
-	// runtime self type inferred from metatable construction patterns.
-	MethodReceiverTypes map[symbol.ID]typ.Type
 	// NoNormalReturnCall reports whether a lowered call site cannot complete
 	// normally. The predicate is supplied by higher layers that own declared
 	// signature/effect lookup; transferfacts only attaches the proven fact during
@@ -57,17 +52,12 @@ func LowerDetailed(graph cfg.Graph, config Config) Lowered {
 		return Lowered{Facts: factflow.NewFacts(factflow.FactsInput{})}
 	}
 	typeResolver := config.TypeResolver
-	if typeResolver == nil {
-		typeResolver = typeresolve.New(config.Bindings)
-	}
-	symbolTypes := lowerSymbolTypes(config.Bindings, typeResolver, config.MethodReceiverTypes)
-	symbolTypes = mergeSymbolTypes(symbolTypes, lowerSymbolTypesFromWIR(config.WIR, config.Bindings, config.ModuleExports))
-	returnLocalTypes := lowerReturnLocalTypesFromWIR(config.Bindings, graph, config.WIR)
+	symbolTypes := lowerSymbolTypesFromWIR(config.WIR, config.ModuleExports)
+	returnLocalTypes := lowerReturnLocalTypesFromWIR(graph, config.WIR)
 	symbolTypes = mergeSymbolTypes(symbolTypes, returnLocalTypes)
 	expressionRefinements := make(map[factflow.ExprRef]factflow.ExpressionRefinement)
 	l := lowerer{
 		registry:                config.Registry,
-		bindings:                config.Bindings,
 		graph:                   graph,
 		graphID:                 graph.ID(),
 		typeResolver:            typeResolver,
@@ -237,7 +227,6 @@ func copySymbolTypes(in map[symbol.ID]typ.Type) map[symbol.ID]typ.Type {
 
 type lowerer struct {
 	registry                *axis.Registry
-	bindings                *bind.Result
 	graph                   cfg.Graph
 	graphID                 uint64
 	typeResolver            *typeresolve.Resolver

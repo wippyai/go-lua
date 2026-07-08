@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
-	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -59,7 +58,7 @@ func (l *lowerer) objectLiteralListElementSourceFromWIR(inst wir.Instruction) (f
 }
 
 func (l *lowerer) objectEntryValueSourceFromWIR(point cfg.Point, op wir.Operand) (factflow.ValueSource, bool) {
-	if p, ok := l.wirPathOperand(op, false, symbol.Local, symbol.Param, symbol.Global, symbol.Upvalue); ok {
+	if p, ok := l.wirPathOperand(op, false, wir.SymbolLocal, wir.SymbolParam, wir.SymbolGlobal, wir.SymbolUpvalue); ok {
 		witness, _ := l.aliasPathType(p)
 		return l.wirPathExpressionSourceWithShape("object-entry", point, p, witness, -1, -1, false, false, false, false)
 	}

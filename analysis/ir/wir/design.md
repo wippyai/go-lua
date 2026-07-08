@@ -57,6 +57,22 @@ Instructions are flat value structs in `Body.instrs`; iteration allocates
 nothing. Const literals keep the raw numeric source spelling (no lossy float
 round-trip).
 
+## Symbol identity metadata
+
+`Body` carries a symbol metadata table keyed by binder symbol id. The vocabulary
+is closed (`param`, `local`, `global`, `upvalue`, `function`); names, require
+module identities, and global-name lookups are interned through the same scalar
+const pool used by operands. This keeps identity facts out of instruction flags
+while still making every transfer consumer independent of `bind.Result`.
+
+`wirlower` records metadata when it constructs path operands and function-body
+metadata. Transfer can therefore answer questions such as "is this callee the
+global `assert`?", "is this root an implicit global?", "does this local have a
+write?", and "which module does this require-local identify?" from WIR alone.
+Function lowering also records declared parameter root types, implicit `self`
+root types, declared returns, and closure/function root types as WIR root type
+metadata.
+
 ## Multi-value / multret encoding (the hard design point)
 
 Lua calls and varargs produce a dynamic number of values. Losing that arity is

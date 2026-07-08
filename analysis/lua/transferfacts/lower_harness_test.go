@@ -17,7 +17,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
+	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/ambient"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -208,7 +210,7 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make", "pack", "put", "tail"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
 	body := wirlower.Lower("value-list-metadata", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	localPoints := requireStmtPoints(t, built, local, 5)
@@ -404,7 +406,7 @@ local root = make()["root"]
 `)
 
 	body := wirlower.Lower("dynamic-index-unnameable-table-source", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 	var rootSource factflow.ValueSource
 	for _, point := range built.StmtPoints.PointsFor(stmts[1]) {
 		fact, ok := facts.LocalAssignment(point)
@@ -748,8 +750,8 @@ function handle(events_ch: Channel<{kind: "event", id: string}>, stop_ch: Channe
 	local selected = channel.select { events_ch:case_receive(), stop_ch:case_receive() }
 end
 `, "channel")
-	body := wirlower.Lower("handle", fn.Stmts, bindings, built)
-	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("handle", fn, bindings, built)
+	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	var wirSelects []factflow.ChannelSelect
 	for _, point := range built.Graph.RPO() {
@@ -787,8 +789,8 @@ function handle(events_ch: Channel<{kind: "event", id: string}>, stop_ch: Channe
     local selected = channel.select { events_ch:case_receive(), stop_ch:case_receive() }
 end
 `, "channel")
-	body := wirlower.Lower("channel-select-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("channel-select-no-sidecars", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	var selects []factflow.ChannelSelect
 	for _, point := range built.Graph.RPO() {
@@ -827,11 +829,10 @@ function handle(events_ch: Channel<{kind: "event", id: string}>, stop_ch: Channe
     local selected = channel.select { events_ch:case_receive(), stop_ch:case_receive() }
 end
 `, "channel")
-	body := wirlower.Lower("handle", fn.Stmts, bindings, built)
+	body := wirlower.LowerFunction("handle", fn, bindings, built)
 	lowered := lowerer{
 		registry:    standard.Registry(),
-		bindings:    bindings,
-		symbolTypes: lowerSymbolTypes(bindings, nil, nil),
+		symbolTypes: lowerSymbolTypesFromWIR(body, importlookup.Source{}),
 		wir:         body,
 	}
 
@@ -859,6 +860,9 @@ end
 	eventsPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "events_ch")
 	selectedPath := path.NewPath(mustLocalAt(t, bindings, stmt, 0), "selected")
 	body := wir.NewBody("synthetic-channel-select")
+	stampSyntheticWIRPathSymbols(t, body, bindings, eventsPath, selectedPath)
+	eventPayload := typetable.NewRecord().Field("kind", typ.LiteralString("event")).Field("id", typ.String).Build()
+	body.SetRootType(eventsPath, typ.Instantiate(ambient.ChannelGeneric(), eventPayload))
 	start := body.Emit(wir.Instruction{
 		Op:    wir.OpSelect,
 		Point: point,
@@ -872,7 +876,7 @@ end
 		Path:        selectedPath,
 	})
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	events := facts.ChannelSelects(point)
 	if len(events) != 3 {
@@ -934,8 +938,8 @@ function consume(events: Channel<{
 	end
 end
 `, "channel")
-	body := wirlower.Lower("consume", fn.Stmts, bindings, built)
-	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("consume", fn, bindings, built)
+	wirFacts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	var selectGroups [][]factflow.ChannelSelect
 	for _, point := range built.Graph.RPO() {

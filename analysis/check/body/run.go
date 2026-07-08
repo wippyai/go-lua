@@ -75,7 +75,9 @@ func (c *checker) prepareBoundChunk(stmts []ast.Stmt, bindings *bind.Result) (*S
 			return moduleidentity.NewRequireAliases(bindings, stmts, nil)
 		},
 		func(built *cfgbuild.Result, resolver *typeresolve.Resolver) *wir.Body {
-			return wirlower.LowerWithResolver("chunk", stmts, bindings, built, resolver)
+			return wirlower.LowerWithResolverAndOptions("chunk", stmts, bindings, built, resolver, wirlower.Options{
+				MethodReceiverTypes: c.config.MethodReceiverTypes,
+			})
 		},
 	)
 }
@@ -128,7 +130,9 @@ func (c *checker) prepareBoundFunction(fn *ast.FunctionExpr, bindings *bind.Resu
 			return moduleidentity.NewRequireAliases(bindings, fn.Stmts, fn)
 		},
 		func(built *cfgbuild.Result, resolver *typeresolve.Resolver) *wir.Body {
-			return wirlower.LowerFunctionWithResolver("function", fn, bindings, built, resolver)
+			return wirlower.LowerFunctionWithResolverAndOptions("function", fn, bindings, built, resolver, wirlower.Options{
+				MethodReceiverTypes: c.config.MethodReceiverTypes,
+			})
 		},
 	)
 }
@@ -154,14 +158,11 @@ func (c *checker) prepare(
 	})
 	lowered := transferfacts.LowerDetailed(built.Graph, transferfacts.Config{
 		Registry:           config.Registry,
-		Bindings:           bindings,
 		TypeResolver:       typeResolver,
 		TypeValues:         config.TypeValues,
 		ModuleExports:      config.ModuleExports,
 		WIR:                wirBody,
 		NoNormalReturnCall: noNormalReturnCall,
-
-		MethodReceiverTypes: config.MethodReceiverTypes,
 	})
 	facts := lowered.Facts
 	assignments := assignmentFactsFromSource(bindings, built, sourceStmts)

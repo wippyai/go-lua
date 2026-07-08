@@ -8,7 +8,7 @@ import (
 )
 
 func (l *lowerer) addLocalConditionAlias(sym symbol.ID, source factflow.ValueSource) {
-	if l == nil || sym == 0 || l.bindings == nil || l.bindings.HasWrite(sym) || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+	if l == nil || l.wir == nil || sym == 0 || l.wir.SymbolHasWrite(sym) || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
 		return
 	}
 	condition, ok := l.expressionConditions[source.ExprRef]

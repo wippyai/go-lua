@@ -89,7 +89,6 @@ func TestShadowCoverage(t *testing.T) {
 		}
 		facts := transferfacts.Lower(built.Graph, transferfacts.Config{
 			Registry: standard.Registry(),
-			Bindings: bindings,
 			WIR:      body,
 		})
 		processed++

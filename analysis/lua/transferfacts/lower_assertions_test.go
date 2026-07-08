@@ -43,8 +43,8 @@ function f(x: any)
     reassigned = x as string
 end
 `)
-	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("f", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	localCastPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	localCastSource := mustLocalSource(t, facts, localCastPoint)
@@ -68,8 +68,8 @@ function f(x: any): (number, any)
     return x as number, x!
 end
 `)
-	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("f", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	returnPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	ret, ok := facts.Return(returnPoint)
@@ -99,8 +99,8 @@ function f(x: any): (number, any)
     return x as number, x!
 end
 `)
-	body := wirlower.Lower("f-no-return-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("f-no-return-sidecars", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	returnPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	ret, ok := facts.Return(returnPoint)
@@ -130,8 +130,8 @@ function f(x: any): ()
     sink(x as number, x!)
 end
 `, "sink")
-	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("f", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	callPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	site, ok := facts.CallSite(callPoint)
@@ -161,8 +161,8 @@ function f(x: any): ()
     sink(x as number, x!)
 end
 `, "sink")
-	body := wirlower.Lower("f-no-sidecars", fn.Stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("f-no-sidecars", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	callPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	site, ok := facts.CallSite(callPoint)
@@ -196,10 +196,9 @@ function f(raw: any): ()
 end
 `, "payload_data")
 	resolver := typeresolve.NewWithExternal(bindings, testExternalTypes{"process.Message": messageType})
-	body := wirlower.LowerWithResolver("f", fn.Stmts, bindings, built, resolver)
+	body := wirlower.LowerFunctionWithResolver("f", fn, bindings, built, resolver)
 	facts := Lower(built.Graph, Config{
 		Registry:     standard.Registry(),
-		Bindings:     bindings,
 		TypeResolver: resolver,
 		WIR:          body,
 	})
@@ -228,8 +227,8 @@ function f(y: number): ()
     sink(y as {name: string})
 end
 `, "sink")
-	body := wirlower.Lower("f", fn.Stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	body := wirlower.LowerFunction("f", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	callPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	site, ok := facts.CallSite(callPoint)
@@ -264,6 +263,7 @@ end
 	sinkPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "sink")
 
 	body := wir.NewBody("synthetic-claim-type-owner")
+	stampSyntheticWIRPathSymbols(t, body, bindings, xPath, sinkPath)
 	claimTemp := wir.Operand{Kind: wir.OperandTemp, Ref: 1}
 	start := body.Emit(wir.Instruction{
 		Op:    wir.OpClaim,
@@ -281,7 +281,7 @@ end
 	})
 	body.SetPointRange(callPoint, start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 	site, ok := facts.CallSite(callPoint)
 	if !ok {
 		t.Fatalf("missing call site at point %d", callPoint)
@@ -316,6 +316,7 @@ end
 	otherPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[2].(*ast.LocalAssignStmt), 0), "other").Field("name")
 
 	body := wir.NewBody("synthetic-segmented-claim-inner")
+	stampSyntheticWIRPathSymbols(t, body, bindings, otherPath, sinkPath)
 	claimTemp := wir.Operand{Kind: wir.OperandTemp, Ref: 1}
 	start := body.Emit(wir.Instruction{
 		Op:    wir.OpClaim,
@@ -333,7 +334,7 @@ end
 	})
 	body.SetPointRange(callPoint, start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 	site, ok := facts.CallSite(callPoint)
 	if !ok {
 		t.Fatalf("missing call site at point %d", callPoint)
@@ -378,6 +379,7 @@ end
 	suitesPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "suites")
 
 	body := wir.NewBody("synthetic-root-local-claim-inner")
+	stampSyntheticWIRPathSymbols(t, body, bindings, suitesPath, sinkPath)
 	claimTemp := wir.Operand{Kind: wir.OperandTemp, Ref: 1}
 	start := body.Emit(wir.Instruction{
 		Op:    wir.OpClaim,
@@ -395,7 +397,7 @@ end
 	})
 	body.SetPointRange(callPoint, start, body.Len())
 
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 	site, ok := facts.CallSite(callPoint)
 	if !ok {
 		t.Fatalf("missing call site at point %d", callPoint)
@@ -422,7 +424,7 @@ local inbox = make() as Message
 local ready = check()!
 `, "make", "check")
 	body := wirlower.Lower("chunk", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	castLocal := stmts[1].(*ast.LocalAssignStmt)
 	castPoints := requireStmtPoints(t, built, castLocal, 2)
@@ -645,7 +647,7 @@ local x: any = 0
 if x as number then end
 `)
 	body := wirlower.Lower("claim-condition-no-sidecar", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 
 	point := requireStmtPoints(t, built, stmts[1], 1)[0]
 	if got := facts.BranchRefinements(point); len(got) != 0 {
@@ -1064,7 +1066,7 @@ func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 		t.Fatal("BuildChunk returned nil")
 	}
 	body := wirlower.Lower("wrapped-claim-return", stmts, bindings, built)
-	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), WIR: body})
 	localPoints := requireStmtPoints(t, built, local, 2)
 	site, ok := facts.CallSite(localPoints[0])
 	if !ok {
@@ -1161,7 +1163,7 @@ func TestLowerExpandedClaimWrappedCallKeepsPerResultSlotRefinements(t *testing.T
 
 			reg := standard.Registry()
 			body := wirlower.Lower("expanded-claim-wrapped-call", stmts, bindings, built)
-			facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+			facts := Lower(built.Graph, Config{Registry: reg, WIR: body})
 			points := requireStmtPoints(t, built, local, 3)
 			site, ok := facts.CallSite(points[0])
 			if !ok {

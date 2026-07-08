@@ -4,85 +4,20 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
-	"github.com/wippyai/go-lua/analysis/lua/bind"
-	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
 	"github.com/wippyai/go-lua/analysis/lua/typeprojection"
-	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typecall"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func lowerSymbolTypes(
-	bindings *bind.Result,
-	resolver *typeresolve.Resolver,
-	methodReceiverTypes map[symbol.ID]typ.Type,
-) map[symbol.ID]typ.Type {
-	if bindings == nil {
-		return nil
-	}
-	if resolver == nil {
-		resolver = typeresolve.New(bindings)
-	}
-	out := make(map[symbol.ID]typ.Type)
-	add := func(id symbol.ID, expr ast.TypeExpr) {
-		if id == 0 || expr == nil {
-			return
-		}
-		t, ok := resolver.Type(expr)
-		if !ok {
-			return
-		}
-		out[id] = t
-	}
-	for _, fn := range bindings.Functions() {
-		for _, slot := range bindings.ParamSlots(fn) {
-			add(slot.Symbol, slot.Type)
-			if slot.ImplicitSelf && slot.Type == nil {
-				if decl, ok := bindings.MethodReceiverType(fn); ok {
-					if t, ok := resolver.Decl(decl); ok {
-						out[slot.Symbol] = t
-						continue
-					}
-				}
-				if t, ok := metatableMethodSelfType(bindings, fn, methodReceiverTypes); ok {
-					out[slot.Symbol] = t
-					continue
-				}
-			}
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func metatableMethodSelfType(bindings *bind.Result, fn *ast.FunctionExpr, methodReceiverTypes map[symbol.ID]typ.Type) (typ.Type, bool) {
-	if len(methodReceiverTypes) == 0 || bindings == nil || fn == nil {
-		return nil, false
-	}
-	origin, ok := bindings.FunctionOrigin(fn)
-	if !ok || origin.Kind != bind.FunctionOriginMethod {
-		return nil, false
-	}
-	table, ok := bindings.MethodOriginReceiverSymbol(origin)
-	if !ok || table == 0 {
-		return nil, false
-	}
-	t := methodReceiverTypes[table]
-	return t, t != nil
-}
-
-func lowerSymbolTypesFromWIR(body *wir.Body, bindings *bind.Result, moduleExports importlookup.Source) map[symbol.ID]typ.Type {
+func lowerSymbolTypesFromWIR(body *wir.Body, moduleExports importlookup.Source) map[symbol.ID]typ.Type {
 	if body == nil {
 		return nil
 	}
 	out := make(map[symbol.ID]typ.Type)
-	addWIRRequireExportSymbolTypes(out, body, bindings, moduleExports)
+	addWIRRequireExportSymbolTypes(out, body, moduleExports)
 	addWIRRootTypes(out, body)
 	tempDefs := wirTempDefinitions(body)
 	for i := 0; i < body.Len(); i++ {
@@ -199,8 +134,8 @@ func addWIRNumericForSymbolType(out map[symbol.ID]typ.Type, body *wir.Body, temp
 	}
 }
 
-func addWIRRequireExportSymbolTypes(out map[symbol.ID]typ.Type, body *wir.Body, bindings *bind.Result, moduleExports importlookup.Source) {
-	if out == nil || body == nil || bindings == nil {
+func addWIRRequireExportSymbolTypes(out map[symbol.ID]typ.Type, body *wir.Body, moduleExports importlookup.Source) {
+	if out == nil || body == nil {
 		return
 	}
 	written := wirRootAssignmentSymbols(body)
@@ -208,7 +143,7 @@ func addWIRRequireExportSymbolTypes(out map[symbol.ID]typ.Type, body *wir.Body, 
 		if _, exists := out[id]; exists || written[id] {
 			continue
 		}
-		modulePath, ok := moduleidentity.LocalRequireModulePath(bindings, id)
+		modulePath, ok := body.SymbolRequireModulePath(id)
 		if !ok {
 			continue
 		}
@@ -231,7 +166,7 @@ func addWIRRequireExportSymbolTypes(out map[symbol.ID]typ.Type, body *wir.Body, 
 			if _, exists := out[target.Path.Symbol]; exists {
 				continue
 			}
-			modulePath, ok := moduleidentity.LocalRequireModulePath(bindings, target.Path.Symbol)
+			modulePath, ok := body.SymbolRequireModulePath(target.Path.Symbol)
 			if !ok {
 				continue
 			}

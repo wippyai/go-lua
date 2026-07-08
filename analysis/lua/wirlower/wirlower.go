@@ -34,15 +34,24 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/channelruntime"
 	"github.com/wippyai/go-lua/analysis/lua/expressionid"
 	"github.com/wippyai/go-lua/analysis/lua/functiontype"
+	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/source"
 )
+
+// Options carries semantic identity already computed by higher layers into WIR
+// construction. WIR stores the resulting metadata; transfer consumers do not
+// read these sidecars.
+type Options struct {
+	MethodReceiverTypes map[symbol.ID]typ.Type
+}
 
 // Lower lowers a bound statement chunk onto the CFG cfgbuild already built for
 // the same AST. bindings must be the result of binding stmts (e.g.
@@ -52,26 +61,49 @@ func Lower(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild
 	return LowerWithResolver(name, stmts, bindings, built, typeresolve.New(bindings))
 }
 
+// LowerWithOptions lowers a chunk with additional WIR metadata inputs.
+func LowerWithOptions(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result, options Options) *wir.Body {
+	return LowerWithResolverAndOptions(name, stmts, bindings, built, typeresolve.New(bindings), options)
+}
+
 // LowerFunction lowers a bound function body and records function-level syntax
 // metadata such as declared return slots on the returned WIR body.
 func LowerFunction(name string, fn *ast.FunctionExpr, bindings *bind.Result, built *cfgbuild.Result) *wir.Body {
 	return LowerFunctionWithResolver(name, fn, bindings, built, typeresolve.New(bindings))
 }
 
+// LowerFunctionWithOptions lowers a function body with additional WIR metadata
+// inputs.
+func LowerFunctionWithOptions(name string, fn *ast.FunctionExpr, bindings *bind.Result, built *cfgbuild.Result, options Options) *wir.Body {
+	return LowerFunctionWithResolverAndOptions(name, fn, bindings, built, typeresolve.New(bindings), options)
+}
+
 // LowerWithResolver lowers with the caller's canonical type resolver. This is
 // the production entry point when module/export type refs are in scope; WIR
 // TypeRefs must match the resolver used by transfer facts.
 func LowerWithResolver(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result, resolver *typeresolve.Resolver) *wir.Body {
+	return LowerWithResolverAndOptions(name, stmts, bindings, built, resolver, Options{})
+}
+
+// LowerWithResolverAndOptions lowers with the caller's canonical type resolver
+// and additional WIR metadata inputs.
+func LowerWithResolverAndOptions(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result, resolver *typeresolve.Resolver, options Options) *wir.Body {
 	if resolver == nil {
 		resolver = typeresolve.New(bindings)
 	}
-	return lowerInto(name, stmts, bindings, built, resolver)
+	return lowerInto(name, stmts, bindings, built, resolver, options)
 }
 
 // LowerFunctionWithResolver is the function-body form of LowerWithResolver. It
 // keeps function-level metadata in WIR instead of requiring later stages to
 // reach back into semantic AST sidecars.
 func LowerFunctionWithResolver(name string, fn *ast.FunctionExpr, bindings *bind.Result, built *cfgbuild.Result, resolver *typeresolve.Resolver) *wir.Body {
+	return LowerFunctionWithResolverAndOptions(name, fn, bindings, built, resolver, Options{})
+}
+
+// LowerFunctionWithResolverAndOptions is the function-body form of
+// LowerWithResolverAndOptions.
+func LowerFunctionWithResolverAndOptions(name string, fn *ast.FunctionExpr, bindings *bind.Result, built *cfgbuild.Result, resolver *typeresolve.Resolver, options Options) *wir.Body {
 	if resolver == nil {
 		resolver = typeresolve.New(bindings)
 	}
@@ -79,10 +111,66 @@ func LowerFunctionWithResolver(name string, fn *ast.FunctionExpr, bindings *bind
 	if fn != nil {
 		stmts = fn.Stmts
 	}
-	body := lowerInto(name, stmts, bindings, built, resolver)
-	body.SetDeclaredReturnTypes(resolveDeclaredReturns(fn, resolver))
-	recordExternalFunctionRootTypes(body, fn, bindings, resolver)
+	body := lowerInto(name, stmts, bindings, built, resolver, options)
+	recordFunctionBodyMetadata(body, fn, bindings, resolver, options)
 	return body
+}
+
+func recordFunctionBodyMetadata(body *wir.Body, fn *ast.FunctionExpr, bindings *bind.Result, resolver *typeresolve.Resolver, options Options) {
+	if body == nil {
+		return
+	}
+	body.SetDeclaredReturnTypes(resolveDeclaredReturns(fn, resolver))
+	recordFunctionParamRootTypes(body, fn, bindings, resolver, options)
+	recordExternalFunctionRootTypes(body, fn, bindings, resolver)
+}
+
+func recordFunctionParamRootTypes(body *wir.Body, fn *ast.FunctionExpr, bindings *bind.Result, resolver *typeresolve.Resolver, options Options) {
+	if body == nil || fn == nil || bindings == nil {
+		return
+	}
+	for _, slot := range bindings.ParamSlots(fn) {
+		if slot.Symbol == 0 {
+			continue
+		}
+		recordSymbolInfo(body, bindings, slot.Symbol)
+		var t typ.Type
+		if slot.Type != nil && resolver != nil {
+			if resolved, ok := resolver.Type(slot.Type); ok {
+				t = resolved
+			}
+		}
+		if t == nil && slot.ImplicitSelf && slot.Type == nil {
+			t, _ = implicitSelfRootType(fn, bindings, resolver, options.MethodReceiverTypes)
+		}
+		if t != nil {
+			body.SetRootType(path.NewPath(slot.Symbol, slot.Name), t)
+		}
+	}
+}
+
+func implicitSelfRootType(fn *ast.FunctionExpr, bindings *bind.Result, resolver *typeresolve.Resolver, methodReceiverTypes map[symbol.ID]typ.Type) (typ.Type, bool) {
+	if bindings == nil || fn == nil {
+		return nil, false
+	}
+	if decl, ok := bindings.MethodReceiverType(fn); ok && resolver != nil {
+		if t, ok := resolver.Decl(decl); ok {
+			return t, true
+		}
+	}
+	if len(methodReceiverTypes) == 0 {
+		return nil, false
+	}
+	origin, ok := bindings.FunctionOrigin(fn)
+	if !ok || origin.Kind != bind.FunctionOriginMethod {
+		return nil, false
+	}
+	table, ok := bindings.MethodOriginReceiverSymbol(origin)
+	if !ok || table == 0 {
+		return nil, false
+	}
+	t := methodReceiverTypes[table]
+	return t, t != nil
 }
 
 func recordExternalFunctionRootTypes(body *wir.Body, fn *ast.FunctionExpr, bindings *bind.Result, resolver *typeresolve.Resolver) {
@@ -100,6 +188,7 @@ func recordExternalFunctionRootTypes(body *wir.Body, fn *ast.FunctionExpr, bindi
 		if !ok || t == nil {
 			continue
 		}
+		recordSymbolInfo(body, bindings, origin.TargetSymbol)
 		body.SetRootType(path.NewPath(origin.TargetSymbol, bindings.Name(origin.TargetSymbol)), t)
 	}
 }
@@ -108,7 +197,7 @@ func recordExternalFunctionRootTypes(body *wir.Body, fn *ast.FunctionExpr, bindi
 // function body) onto its shared graph. resolver is the shared lexical type
 // resolver, threaded through nested protos so type identities and their caches
 // stay consistent across the whole chunk.
-func lowerInto(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result, resolver *typeresolve.Resolver) *wir.Body {
+func lowerInto(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result, resolver *typeresolve.Resolver, options Options) *wir.Body {
 	b := &builder{
 		body:                wir.NewBody(name),
 		graph:               built.Graph,
@@ -116,6 +205,7 @@ func lowerInto(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgb
 		points:              built.StmtPoints,
 		bindings:            bindings,
 		resolver:            resolver,
+		options:             options,
 		pointInstrs:         make(map[cfg.Point][]wir.Instruction),
 		callTemps:           make(map[*ast.FuncCallExpr]*callResult),
 		guardByCond:         make(map[ast.Expr]cfg.Point),
@@ -165,6 +255,7 @@ type builder struct {
 	points        cfgbuild.StmtPoints
 	bindings      *bind.Result
 	resolver      *typeresolve.Resolver
+	options       Options
 
 	curPoint    cfg.Point
 	pointInstrs map[cfg.Point][]wir.Instruction
@@ -308,6 +399,7 @@ func (b *builder) lowerLocalAssign(s *ast.LocalAssignStmt) {
 	for i := range s.Names {
 		b.curPoint = assignPoints[i]
 		dst := b.localPath(s, i)
+		b.recordLocalRequireModule(s, i, dst)
 		var declared wir.TypeRef
 		if i < len(s.Types) && s.Types[i] != nil {
 			declared = b.internType(s.Types[i])
@@ -325,6 +417,21 @@ func (b *builder) lowerLocalAssign(s *ast.LocalAssignStmt) {
 			})
 		}
 	}
+}
+
+func (b *builder) recordLocalRequireModule(s *ast.LocalAssignStmt, index int, dst wir.Operand) {
+	if b == nil || b.body == nil || s == nil || dst.Kind != wir.OperandPath || index < 0 || index >= len(s.Exprs) {
+		return
+	}
+	modulePath, ok := moduleidentity.ExactRequireCall(b.bindings, s.Exprs[index])
+	if !ok || modulePath == "" {
+		return
+	}
+	p := b.body.Path(wir.PathRef(dst.Ref))
+	if p.Symbol == 0 || len(p.Segments) != 0 {
+		return
+	}
+	b.body.SetSymbolInfo(p.Symbol, wir.SymbolInfoConfig{RequireModule: modulePath})
 }
 
 func (b *builder) lowerAssign(s *ast.AssignStmt) {
@@ -1127,7 +1234,8 @@ func (b *builder) emitClosure(dst wir.Operand, fn *ast.FunctionExpr) {
 	childBuilt := cfgbuild.BuildFunction(fn, b.bindings)
 	var ref wir.FuncRef
 	if childBuilt != nil && childBuilt.Graph != nil {
-		childBody := lowerInto(name, fn.Stmts, b.bindings, childBuilt, b.resolver)
+		childBody := lowerInto(name, fn.Stmts, b.bindings, childBuilt, b.resolver, b.options)
+		recordFunctionBodyMetadata(childBody, fn, b.bindings, b.resolver, b.options)
 		sym, _ := b.bindings.FunctionSymbol(fn)
 		fnType, _ := functiontype.ValueExpression(fn, b.bindings, b.resolver)
 		ref = b.body.AddProto(wir.FuncProto{Name: name, Body: childBody, Graph: childBuilt.Graph, Symbol: wir.FunctionSymbolID(sym), Type: fnType})
@@ -1881,11 +1989,73 @@ func (b *builder) pooledConst(c wir.Const) wir.Operand {
 }
 
 func (b *builder) pathOperand(p path.Path) wir.Operand {
+	b.recordPathSymbolInfo(p)
 	ref := b.body.InternPath(p)
 	if ref == 0 {
 		return wir.Operand{}
 	}
 	return wir.Operand{Kind: wir.OperandPath, Ref: uint32(ref)}
+}
+
+func (b *builder) recordPathSymbolInfo(p path.Path) {
+	if b == nil || b.body == nil || p.Symbol == 0 {
+		return
+	}
+	recordSymbolInfo(b.body, b.bindings, p.Symbol)
+	b.recordGlobalTableFieldSymbol(p)
+}
+
+func (b *builder) recordGlobalTableFieldSymbol(p path.Path) {
+	if b == nil || b.body == nil || b.bindings == nil || p.Symbol == 0 {
+		return
+	}
+	if !b.body.SymbolResolvesToGlobal(p.Symbol, "_G") {
+		return
+	}
+	name, ok := p.DirectFieldName()
+	if !ok {
+		return
+	}
+	global, ok := b.bindings.GlobalSymbol(name)
+	if !ok || global == 0 {
+		return
+	}
+	recordSymbolInfo(b.body, b.bindings, global)
+}
+
+func recordSymbolInfo(body *wir.Body, bindings *bind.Result, id symbol.ID) {
+	if body == nil || bindings == nil || id == 0 {
+		return
+	}
+	kind, ok := bindings.Kind(id)
+	if !ok {
+		return
+	}
+	modulePath, _ := moduleidentity.LocalRequireModulePath(bindings, id)
+	body.SetSymbolInfo(id, wir.SymbolInfoConfig{
+		Kind:           wirSymbolKind(kind),
+		Name:           bindings.Name(id),
+		RequireModule:  modulePath,
+		HasWrite:       bindings.HasWrite(id),
+		ImplicitGlobal: bindings.IsImplicitGlobalSymbol(id),
+	})
+}
+
+func wirSymbolKind(kind symbol.Kind) wir.SymbolKind {
+	switch kind {
+	case symbol.Param:
+		return wir.SymbolParam
+	case symbol.Local:
+		return wir.SymbolLocal
+	case symbol.Global:
+		return wir.SymbolGlobal
+	case symbol.Upvalue:
+		return wir.SymbolUpvalue
+	case symbol.Function:
+		return wir.SymbolFunction
+	default:
+		return wir.SymbolUnknown
+	}
 }
 
 func (b *builder) internString(s string) wir.ConstRef {

@@ -25,22 +25,23 @@ local value = root.child
 	childPath := rootPath.Field("child")
 
 	body := wir.NewBody("path-operand-validation")
+	body.SetSymbolInfo(rootPath.Symbol, wir.SymbolInfoConfig{Kind: wir.SymbolLocal, Name: rootPath.Root})
 	rootOp := wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(rootPath))}
 	childOp := wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(childPath))}
-	l := lowerer{wir: body, bindings: bindings}
+	l := lowerer{wir: body}
 
-	gotRoot, ok := l.wirPathOperand(rootOp, true, symbol.Local)
+	gotRoot, ok := l.wirPathOperand(rootOp, true, wir.SymbolLocal)
 	if !ok || !gotRoot.Equal(rootPath) {
 		t.Fatalf("root operand = %s/%v, want %s", gotRoot, ok, rootPath)
 	}
-	gotChild, ok := l.wirPathOperand(childOp, false, symbol.Local)
+	gotChild, ok := l.wirPathOperand(childOp, false, wir.SymbolLocal)
 	if !ok || !gotChild.Equal(childPath) {
 		t.Fatalf("child operand = %s/%v, want %s", gotChild, ok, childPath)
 	}
-	if got, ok := l.wirPathOperand(childOp, true, symbol.Local); ok {
+	if got, ok := l.wirPathOperand(childOp, true, wir.SymbolLocal); ok {
 		t.Fatalf("root-only child operand = %s/%v, want rejected", got, ok)
 	}
-	if got, ok := l.wirPathOperand(rootOp, true, symbol.Global); ok {
+	if got, ok := l.wirPathOperand(rootOp, true, wir.SymbolGlobal); ok {
 		t.Fatalf("disallowed local operand = %s/%v, want rejected", got, ok)
 	}
 }
@@ -58,23 +59,23 @@ local value = root.child
 		Build()
 
 	body := wir.NewBody("path-source-witness")
+	body.SetSymbolInfo(rootPath.Symbol, wir.SymbolInfoConfig{Kind: wir.SymbolLocal, Name: rootPath.Root})
 	rootOp := wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(rootPath))}
 	childOp := wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(childPath))}
 	reg := standard.Registry()
 	l := lowerer{
 		registry:         reg,
 		wir:              body,
-		bindings:         bindings,
 		symbolTypes:      map[symbol.ID]typ.Type{rootPath.Symbol: rootType},
 		exprs:            make(map[any]factflow.ExprRef),
 		expressionPaths:  make(map[factflow.ExprRef]path.Path),
 		expressionValues: make(map[factflow.ExprRef]product.Value),
 	}
-	rootSource, ok := l.rootPathExpressionSourceFromWIR("test", 1, rootOp, 0, 0, true, false, false, symbol.Local)
+	rootSource, ok := l.rootPathExpressionSourceFromWIR("test", 1, rootOp, 0, 0, true, false, false, wir.SymbolLocal)
 	if !ok {
 		t.Fatal("rootPathExpressionSourceFromWIR failed")
 	}
-	childSource, ok := l.pathExpressionSourceFromWIR("test", 2, childOp, 0, 0, true, false, false, symbol.Local)
+	childSource, ok := l.pathExpressionSourceFromWIR("test", 2, childOp, 0, 0, true, false, false, wir.SymbolLocal)
 	if !ok {
 		t.Fatal("pathExpressionSourceFromWIR failed")
 	}
