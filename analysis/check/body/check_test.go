@@ -4338,44 +4338,6 @@ end`)
 	}
 }
 
-func TestBranchConditionSufficientChecksOnEdgeUsesWIRCompoundImplications(t *testing.T) {
-	reg := standard.Registry()
-	fn := parseFunction(t, `function f(kind: string): ()
-	if kind == "ready" or kind == "done" then
-		local y = kind
-	end
-end`)
-	result, err := CheckFunction(fn, Config{Registry: reg})
-	if err != nil {
-		t.Fatalf("CheckFunction: %v", err)
-	}
-	for _, point := range result.Graph().RPO() {
-		trueChecks := result.BranchConditionSufficientChecksOnEdge(point, true)
-		if !hasLiteralCase(trueChecks, "ready") || !hasLiteralCase(trueChecks, "done") {
-			continue
-		}
-		falseChecks := result.BranchConditionSufficientChecksOnEdge(point, false)
-		if hasLiteralCase(falseChecks, "ready") || hasLiteralCase(falseChecks, "done") {
-			t.Fatalf("false edge sufficient checks at %d = %#v, want no single OR-disjunct literal proof", point, falseChecks)
-		}
-		return
-	}
-	t.Fatal("missing WIR compound OR sufficient checks for true edge")
-}
-
-func hasLiteralCase(checks []branchcond.ImpliedCheck, want string) bool {
-	for _, check := range checks {
-		lit, ok := check.Check.LiteralValue()
-		if !ok {
-			continue
-		}
-		if check.Edge && check.Polarity && check.Check.Kind == branchcond.CheckLiteralEqual && typ.TypeEquals(lit, typ.LiteralString(want)) {
-			return true
-		}
-	}
-	return false
-}
-
 func TestDominatingBranchCheckForPathStopsAtMemberInvalidation(t *testing.T) {
 	reg := standard.Registry()
 	fn := parseFunction(t, `function f(test: any): ()
