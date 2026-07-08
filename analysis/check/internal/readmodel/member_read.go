@@ -75,7 +75,7 @@ func (r Reader) missingMemberRead(occ body.StaticMemberReadOccurrence) (MissingM
 			return MissingMemberRead{}, false
 		}
 		fieldBroad := broad
-		if withoutNil := readmodelProjectionWithoutNil(broad); withoutNil != nil && !typ.IsNever(withoutNil) {
+		if withoutNil := body.ProjectionWithoutNil(broad); withoutNil != nil && !typ.IsNever(withoutNil) {
 			fieldBroad = withoutNil
 		}
 		if _, ok := body.TypeField(fieldBroad, memberName); !ok || !body.TypeFieldProvablyAbsent(receiverType, memberName) {
@@ -143,13 +143,9 @@ func (r Reader) declaredUnionHasMemberOnAnotherArm(occ body.StaticMemberReadOccu
 		return false
 	}
 	fieldBroad := broad
-	if withoutNil := readmodelProjectionWithoutNil(broad); withoutNil != nil && !typ.IsNever(withoutNil) {
+	if withoutNil := body.ProjectionWithoutNil(broad); withoutNil != nil && !typ.IsNever(withoutNil) {
 		fieldBroad = withoutNil
 	}
 	_, ok := body.TypeField(fieldBroad, name)
 	return ok
-}
-
-func readmodelProjectionWithoutNil(t typ.Type) typ.Type {
-	return body.ProjectionWithoutNil(t)
 }
