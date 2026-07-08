@@ -3719,7 +3719,7 @@ end
 	}
 }
 
-func TestCheckAnyDiscriminantDoesNotEmitNilWarningForPresentSibling(t *testing.T) {
+func TestCheckAnyDiscriminantConcatDoesNotProveReturnedStringField(t *testing.T) {
 	result := Check(`
 local function execute_migration(): any
     local external: any = {}
@@ -3757,8 +3757,33 @@ local function boot(): BootloaderResult
     return { status = "complete", message = "ok" }
 end
 `, WithStdlib())
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeReturnContractType,
+		DiagnosticCount: 1,
+		MessageContains: []string{
+			"returned value 1.message",
+			"comes from any/unknown",
+			"string",
+		},
+	})
+}
+
+func TestCheckReturnObjectLogicalFallbackUsesFieldContract(t *testing.T) {
+	result := Check(`
+type Event = {
+    kind: string,
+    arguments: {[string]: any},
+}
+
+local function normalize(raw: any): Event
+    return {
+        kind = tostring(raw.kind or "unknown"),
+        arguments = type(raw.arguments) == "table" and (raw.arguments :: {[string]: any}) or {},
+    }
+end
+`, WithStdlib())
 	if len(result.Diagnostics) != 0 {
-		t.Fatalf("diagnostics = %#v, want none: present any is not a nil-risk proof failure", result.Diagnostics)
+		t.Fatalf("diagnostics = %#v, want logical fallback object literal to inherit returned field contract", result.Diagnostics)
 	}
 }
 

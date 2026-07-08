@@ -329,6 +329,87 @@ end
 	}
 }
 
+func TestDiscriminatedUnionExhaustivenessAcceptsNegatedGuardObjectReturn(t *testing.T) {
+	result := Check(`
+type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+
+local function map<T, U>(r: Result<T>, f: (T) -> U): Result<U>
+    if not r.ok then
+        return { ok = false, error = r.error }
+    end
+    return { ok = true, value = f(r.value) }
+end
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want negated ok guard to prove error field in object return", result.Diagnostics)
+	}
+}
+
+func TestDiscriminatedUnionExhaustivenessAcceptsNegatedGuardCallResultObjectReturn(t *testing.T) {
+	result := Check(`
+type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+
+local function make(): Result<number>
+    return { ok = false, error = "bad" }
+end
+
+local function map<U>(f: (number) -> U): Result<U>
+    local r: Result<number> = make()
+    if not r.ok then
+        return { ok = false, error = r.error }
+    end
+    return { ok = true, value = f(r.value) }
+end
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want negated ok guard to prove call-result error field in object return", result.Diagnostics)
+	}
+}
+
+func TestDiscriminatedUnionExhaustivenessAcceptsNegatedGuardCallbackResultObjectReturn(t *testing.T) {
+	result := Check(`
+type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+type Validator = (number) -> Result<number>
+
+local function map<U>(validators: {Validator}, f: (number) -> U): Result<U>
+    local current = 1
+    for _, validator in ipairs(validators) do
+        local r: Result<number> = validator(current)
+        if not r.ok then
+            return { ok = false, error = r.error }
+        end
+        current = r.value
+    end
+    return { ok = true, value = f(current) }
+end
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want negated ok guard to prove callback-result error field in object return", result.Diagnostics)
+	}
+}
+
+func TestDiscriminatedUnionExhaustivenessAcceptsNegatedGuardOptionalSuccessPayloadObjectReturn(t *testing.T) {
+	result := Check(`
+type AppError = { code: string, message: string, retryable: boolean }
+type StepResult = { ok: true, value: string? } | { ok: false, error: AppError }
+type RunResult = { ok: true, value: string? } | { ok: false, error: AppError }
+type Step = () -> StepResult
+
+local function run(steps: {Step}): RunResult
+    for _, step in ipairs(steps) do
+        local r: StepResult = step()
+        if not r.ok then
+            return { ok = false, error = r.error }
+        end
+    end
+    return { ok = true, value = nil }
+end
+`, WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want negated ok guard to prove record error field with optional success payload", result.Diagnostics)
+	}
+}
+
 func TestDiscriminatedUnionExhaustivenessAcceptsResultReadThroughEquivalentAliasGuard(t *testing.T) {
 	result := Check(`
 type Result<T> = { ok: true, value: T } | { ok: false, error: string }

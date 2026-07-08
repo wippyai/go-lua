@@ -201,20 +201,51 @@ func (l *lowerer) addNestedObjectLiteralExpectedTypes(input *factflow.FactsInput
 	rootType := luatypeprojection.PresentConstructorRoot(expected)
 	for _, entry := range lit.Entries() {
 		source := entry.Source()
-		if !source.HasExpr || source.ExprRef == 0 {
-			continue
-		}
-		nested, ok := input.ObjectLiterals[source.ExprRef]
-		if !ok {
-			continue
-		}
 		projected, ok := luatypeprojection.ExpectedConstructorEntryType(rootType, entry.Suffix().Segments)
 		if !ok || projected == nil || !luatypeprojection.ReachesTableContract(projected) {
 			continue
 		}
-		updated := l.objectLiteralWithExpectedType(nested, projected)
+		l.addObjectLiteralExpectedTypeFromExpressionSource(input, source, projected, nil)
+	}
+}
+
+func (l *lowerer) addObjectLiteralExpectedTypeFromExpressionSource(input *factflow.FactsInput, source factflow.ValueSource, expected typ.Type, seen map[factflow.ExprRef]bool) {
+	if input == nil ||
+		input.ObjectLiterals == nil ||
+		expected == nil ||
+		!source.HasExpr ||
+		source.ExprRef == 0 ||
+		!luatypeprojection.ReachesTableContract(expected) {
+		return
+	}
+	if seen[source.ExprRef] {
+		return
+	}
+	if seen == nil {
+		seen = make(map[factflow.ExprRef]bool)
+	}
+	seen[source.ExprRef] = true
+	if nested, ok := input.ObjectLiterals[source.ExprRef]; ok {
+		updated := l.objectLiteralWithExpectedType(nested, expected)
 		input.ObjectLiterals[source.ExprRef] = updated
-		l.setObjectLiteralExpectedExpressionValue(source.ExprRef, updated, projected)
+		l.setObjectLiteralExpectedExpressionValue(source.ExprRef, updated, expected)
+		l.addNestedObjectLiteralExpectedTypes(input, updated, expected)
+		return
+	}
+	op, ok := l.expressionOperations[source.ExprRef]
+	if !ok {
+		return
+	}
+	switch op.Kind() {
+	case factflow.ExpressionOperationBinary:
+		if op.Op() != "and" && op.Op() != "or" {
+			return
+		}
+		l.addObjectLiteralExpectedTypeFromExpressionSource(input, op.Left(), expected, seen)
+		l.addObjectLiteralExpectedTypeFromExpressionSource(input, op.Right(), expected, seen)
+		if !l.addWIRLogicalExpressionOperationValue(source.ExprRef, op, op.Left(), op.Right()) {
+			l.addWIRExpressionOperationValue(source.ExprRef, op, op.Left(), op.Right())
+		}
 	}
 }
 
@@ -276,14 +307,7 @@ func (l *lowerer) addObjectLiteralExpectedTypeFromValueSource(input *factflow.Fa
 		!luatypeprojection.ReachesTableContract(expected) {
 		return
 	}
-	lit, ok := input.ObjectLiterals[source.ExprRef]
-	if !ok {
-		return
-	}
-	updated := l.objectLiteralWithExpectedType(lit, expected)
-	input.ObjectLiterals[source.ExprRef] = updated
-	l.setObjectLiteralExpectedExpressionValue(source.ExprRef, updated, expected)
-	l.addNestedObjectLiteralExpectedTypes(input, updated, expected)
+	l.addObjectLiteralExpectedTypeFromExpressionSource(input, source, expected, nil)
 }
 
 func (l *lowerer) addObjectLiteralFieldExposuresFromWIR(input *factflow.FactsInput, point cfg.Point, inst wir.Instruction, declared typ.Type) {

@@ -1138,6 +1138,92 @@ end`)
 	}
 }
 
+func TestLowerReturnedObjectLiteralLogicalFieldFallbackCarriesExpectedEntryContract(t *testing.T) {
+	fn, bindings, built, _ := parseSemanticFunction(t, `
+function normalize(raw: any): { arguments: {[string]: any} }
+	return {
+		arguments = type(raw.arguments) == "table" and (raw.arguments :: {[string]: any}) or {},
+	}
+end`)
+	reg := standard.Registry()
+	body := wirlower.LowerFunction("normalize", fn, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: reg, Bindings: bindings, WIR: body})
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
+	}
+	var returnFact factflow.Return
+	for _, point := range requireStmtPoints(t, built, ret, 1) {
+		if fact, ok := facts.Return(point); ok {
+			returnFact = fact
+			break
+		}
+	}
+	sources := returnFact.Sources()
+	if len(sources) != 1 || !sources[0].HasExpr {
+		t.Fatalf("return sources = %#v, want one expression source", sources)
+	}
+	literal, ok := facts.ObjectLiteral(sources[0].ExprRef)
+	if !ok {
+		t.Fatalf("missing returned object literal sidecar for ref %d", sources[0].ExprRef)
+	}
+	var op factflow.ExpressionOperation
+	var argumentsSource factflow.ValueSource
+	var found bool
+	for _, entry := range literal.Entries() {
+		if !reflect.DeepEqual(entry.Suffix(), fieldSuffix("arguments")) {
+			continue
+		}
+		source := entry.Source()
+		if !source.HasExpr {
+			t.Fatalf("arguments source = %#v, want expression source", source)
+		}
+		op, ok = facts.ExpressionOperation(source.ExprRef)
+		if !ok || op.Kind() != factflow.ExpressionOperationBinary || op.Op() != "or" {
+			t.Fatalf("arguments source operation = %#v/%v, want binary or", op, ok)
+		}
+		argumentsSource = source
+		found = true
+		break
+	}
+	if !found {
+		t.Fatalf("returned literal entries = %#v, want arguments entry", literal.Entries())
+	}
+	right := op.Right()
+	if right.Kind != factflow.ValueSourceExpression || !right.HasExpr {
+		t.Fatalf("fallback source = %#v, want object-literal expression source", right)
+	}
+	fallback, ok := facts.ObjectLiteral(right.ExprRef)
+	if !ok {
+		t.Fatalf("missing fallback object literal for ref %d", right.ExprRef)
+	}
+	expected, ok := fallback.Expected()
+	if !ok {
+		t.Fatalf("fallback object literal missing expected contract")
+	}
+	got, ok := typevalue.TypeOf(reg, expected)
+	want := typ.NewMap(typ.String, typ.Any)
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("fallback expected type = %v/%v, want %v", got, ok, want)
+	}
+	value, ok := facts.ExpressionValue(right.ExprRef)
+	if !ok {
+		t.Fatalf("missing fallback expression value for ref %d", right.ExprRef)
+	}
+	got, ok = typevalue.TypeOf(reg, value)
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("fallback expression type = %v/%v, want %v", got, ok, want)
+	}
+	value, ok = facts.ExpressionValue(argumentsSource.ExprRef)
+	if !ok {
+		t.Fatalf("missing arguments logical expression value for ref %d", argumentsSource.ExprRef)
+	}
+	got, ok = typevalue.TypeOf(reg, value)
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("arguments logical expression type = %v/%v, want %v", got, ok, want)
+	}
+}
+
 func TestLowerObjectLiteralCarriesOpenListElementSourceFromVararg(t *testing.T) {
 	fn, bindings, built, _ := parseSemanticFunction(t, `
 function collect(...: number)
