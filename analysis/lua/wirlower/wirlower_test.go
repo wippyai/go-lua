@@ -265,6 +265,34 @@ local t = {
 	if !entries[0].ValueSpan.Valid() || entries[0].ValueSpan.StartLine != 3 {
 		t.Fatalf("entry 0 value span = %#v, want valid line 3 span", entries[0].ValueSpan)
 	}
+	if inst.StaticStringKeysComplete {
+		t.Fatal("table with dynamic key reported complete static string key set")
+	}
+}
+
+func TestTableConstructorMarksCompleteStaticStringKeySet(t *testing.T) {
+	body := lowerBody(t, `
+local t = {
+    name = payload.id,
+    ["key"] = 2,
+    [7] = 3,
+    4,
+}
+`, "payload")
+	var inst wir.Instruction
+	for i := 0; i < body.Len(); i++ {
+		candidate := body.Instr(i)
+		if candidate.Op == wir.OpMakeTable {
+			inst = candidate
+			break
+		}
+	}
+	if inst.Op != wir.OpMakeTable {
+		t.Fatal("missing OpMakeTable")
+	}
+	if !inst.StaticStringKeysComplete {
+		t.Fatal("static table reported incomplete string key set")
+	}
 }
 
 func TestTableConstructorCarriesDeclaredType(t *testing.T) {

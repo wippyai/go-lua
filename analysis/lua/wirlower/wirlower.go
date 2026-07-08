@@ -1486,14 +1486,31 @@ func (b *builder) lowerTable(dst wir.Operand, t *ast.TableExpr) {
 		}
 	}
 	b.emit(wir.Instruction{
-		Op:           wir.OpMakeTable,
-		Dst:          dst,
-		List:         b.body.AppendOperands(ops),
-		TableEntries: b.body.AppendTableEntries(entries),
-		ListSpread:   spread,
-		ExprID:       expressionid.Of(t),
-		ExprSpan:     tableEntryValueSpan(t),
+		Op:                       wir.OpMakeTable,
+		Dst:                      dst,
+		List:                     b.body.AppendOperands(ops),
+		TableEntries:             b.body.AppendTableEntries(entries),
+		StaticStringKeysComplete: tableStaticStringKeysComplete(t),
+		ListSpread:               spread,
+		ExprID:                   expressionid.Of(t),
+		ExprSpan:                 tableEntryValueSpan(t),
 	})
+}
+
+func tableStaticStringKeysComplete(t *ast.TableExpr) bool {
+	if t == nil {
+		return false
+	}
+	arrayIndex := 0
+	for _, field := range t.Fields {
+		if field == nil {
+			continue
+		}
+		if _, ok := pathexpr.ResolveTableFieldSuffix(field, &arrayIndex); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (b *builder) tableEntriesForProducedOperand(op wir.Operand) []wir.TableEntry {

@@ -2,67 +2,81 @@ package body
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
-	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 )
 
-// ObjectLiteralStaticStringKeysAtPath returns the known string keys of an object
-// literal or of a nested object literal at suffix. Array/int entries are ignored
-// because they do not contribute to string-key dispatch domains; dynamic or
-// invalid field keys make the key set unknown.
-func (r *Result) ObjectLiteralStaticStringKeysAtPath(fact ObjectLiteralFact, suffix []segment.Segment) (map[string]bool, ast.Span, bool) {
-	if len(suffix) != 0 {
-		nested, ok := r.nestedObjectLiteralFact(fact, suffix)
-		if !ok {
-			return nil, ast.Span{}, false
-		}
-		fact = nested
-	}
-	keys, ok := staticStringKeysOfObjectLiteral(fact)
+// ObjectLiteralStaticStringKeysAtSource returns the closed string-key set of an
+// object literal source or of a nested object literal at suffix. Array/int
+// entries are ignored because they do not contribute to string-key dispatch
+// domains; dynamic or invalid field keys clear the completeness proof.
+func (r *Result) ObjectLiteralStaticStringKeysAtSource(source factflow.ValueSource, suffix []segment.Segment) (map[string]bool, SourceSpan, bool) {
+	literal, ok := r.ObjectLiteralViewForSource(source)
 	if !ok {
-		return nil, ast.Span{}, false
+		return nil, SourceSpan{}, false
 	}
-	return keys, ast.SpanOf(fact.Table), true
+	return r.objectLiteralStaticStringKeysAtView(literal, suffix)
 }
 
-func (r *Result) nestedObjectLiteralFact(fact ObjectLiteralFact, suffix []segment.Segment) (ObjectLiteralFact, bool) {
-	if r == nil || len(suffix) == 0 {
-		return ObjectLiteralFact{}, false
-	}
-	for _, entry := range fact.Entries {
-		if !sameSegments(entry.Suffix.Segments, suffix) {
-			continue
-		}
-		nested, ok := r.ObjectLiteral(entry.Value)
-		return nested, ok
-	}
-	return ObjectLiteralFact{}, false
-}
-
-func staticStringKeysOfObjectLiteral(fact ObjectLiteralFact) (map[string]bool, bool) {
-	if fact.Table == nil {
-		return nil, false
-	}
-	keys := make(map[string]bool, len(fact.Table.Fields))
-	arrayIndex := 0
-	for _, field := range fact.Table.Fields {
-		suffix, ok := pathexpr.ResolveTableFieldSuffix(field, &arrayIndex)
+func (r *Result) objectLiteralStaticStringKeysAtView(literal factflow.ObjectLiteralView, suffix []segment.Segment) (map[string]bool, SourceSpan, bool) {
+	if len(suffix) != 0 {
+		nested, ok := r.nestedObjectLiteralView(literal, suffix)
 		if !ok {
-			return nil, false
+			return nil, SourceSpan{}, false
 		}
-		switch suffix.Kind {
-		case pathexpr.TableFieldSuffixField, pathexpr.TableFieldSuffixStringIndex:
-			if suffix.Segment.Name == "" {
-				return nil, false
-			}
-			keys[suffix.Segment.Name] = true
-		case pathexpr.TableFieldSuffixImplicitIndex, pathexpr.TableFieldSuffixIntIndex:
-			continue
-		default:
-			return nil, false
-		}
+		literal = nested
 	}
-	return keys, true
+	if !literal.StaticStringKeysComplete() {
+		return nil, SourceSpan{}, false
+	}
+	keys := make(map[string]bool, literal.EntryCount())
+	literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
+		if entry.SuffixSegmentCount() != 1 {
+			return true
+		}
+		seg, ok := entry.SuffixSegmentAt(0)
+		if !ok {
+			return true
+		}
+		if key, ok := objectLiteralStaticStringKey(seg); ok {
+			keys[key] = true
+		}
+		return true
+	})
+	span, ok := literal.Span()
+	if !ok {
+		return nil, SourceSpan{}, false
+	}
+	return keys, sourceSpanFromFactflow(span), true
+}
+
+func (r *Result) nestedObjectLiteralView(literal factflow.ObjectLiteralView, suffix []segment.Segment) (factflow.ObjectLiteralView, bool) {
+	if r == nil || len(suffix) == 0 {
+		return factflow.ObjectLiteralView{}, false
+	}
+	var out factflow.ObjectLiteralView
+	var found bool
+	literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
+		if !sameSegments(entry.SuffixSegmentsView(), suffix) {
+			return true
+		}
+		nested, ok := r.ObjectLiteralViewForSource(entry.Source())
+		if !ok {
+			return true
+		}
+		out = nested
+		found = true
+		return false
+	})
+	return out, found
+}
+
+func objectLiteralStaticStringKey(seg segment.Segment) (string, bool) {
+	switch seg.Kind {
+	case segment.SegmentField, segment.SegmentIndexString:
+		return seg.Name, seg.Name != ""
+	default:
+		return "", false
+	}
 }
 
 func sameSegments(a, b []segment.Segment) bool {

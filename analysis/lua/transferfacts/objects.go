@@ -87,6 +87,9 @@ func (l *lowerer) addObjectLiteralFromWIR(input *factflow.FactsInput, inst wir.I
 	if inst.ExprSpan.Valid() {
 		lowered = lowered.WithSpan(sourceSpanFromWIR(inst.ExprSpan))
 	}
+	if inst.StaticStringKeysComplete {
+		lowered = lowered.WithStaticStringKeysComplete()
+	}
 	if source, ok := l.objectLiteralListElementSourceFromWIR(inst); ok {
 		lowered = lowered.WithListElementSource(source)
 	}
@@ -378,6 +381,15 @@ func (l *lowerer) objectLiteralWithExpectedType(lit factflow.ObjectLiteral, decl
 	out := factflow.NewObjectLiteral(entries).WithExpected(root)
 	if id, ok := lit.Identity(); ok {
 		out = out.WithIdentity(id)
+	}
+	if span, ok := lit.Span(); ok {
+		out = out.WithSpan(span)
+	}
+	if source, ok := lit.ListElementSource(); ok {
+		out = out.WithListElementSource(source)
+	}
+	if lit.StaticStringKeysComplete() {
+		out = out.WithStaticStringKeysComplete()
 	}
 	return out
 }

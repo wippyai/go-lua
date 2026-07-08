@@ -120,14 +120,15 @@ func (e ObjectEntry) copy() ObjectEntry {
 
 // ObjectLiteral describes static entries associated with an expression.
 type ObjectLiteral struct {
-	entries              []ObjectEntry
-	span                 SourceSpan
-	hasSpan              bool
-	listElementSource    ValueSource
-	hasListElementSource bool
-	expected             product.Value
-	hasExpected          bool
-	identity             identity.ID
+	entries                  []ObjectEntry
+	span                     SourceSpan
+	hasSpan                  bool
+	listElementSource        ValueSource
+	hasListElementSource     bool
+	staticStringKeysComplete bool
+	expected                 product.Value
+	hasExpected              bool
+	identity                 identity.ID
 }
 
 // ObjectLiteralView provides read-only access to object literal entries without
@@ -188,9 +189,22 @@ func (v ObjectLiteralView) Span() (SourceSpan, bool) {
 	return v.literal.Span()
 }
 
+// StaticStringKeysComplete reports whether the literal's static string-key
+// entries form a closed key set. Dynamic constructor keys clear this proof.
+func (v ObjectLiteralView) StaticStringKeysComplete() bool {
+	return v.literal.StaticStringKeysComplete()
+}
+
 // Span returns the source range of the whole object literal when lowering
 // provided it.
 func (l ObjectLiteral) Span() (SourceSpan, bool) { return l.span, l.hasSpan }
+
+// StaticStringKeysComplete reports whether the literal's static string-key
+// entries form a closed key set. Array/int entries may still exist and do not
+// affect string-key completeness.
+func (l ObjectLiteral) StaticStringKeysComplete() bool {
+	return l.staticStringKeysComplete
+}
 
 // Expected returns the declared contextual type value the literal is assigned to,
 // carried as a type-witness value so the factflow layer stays type-agnostic. The
@@ -214,6 +228,14 @@ func (l ObjectLiteral) WithListElementSource(source ValueSource) ObjectLiteral {
 	out := l.copy()
 	out.listElementSource = source
 	out.hasListElementSource = true
+	return out
+}
+
+// WithStaticStringKeysComplete returns a copy carrying a closed string-key-set
+// proof for dispatch/exhaustiveness consumers.
+func (l ObjectLiteral) WithStaticStringKeysComplete() ObjectLiteral {
+	out := l.copy()
+	out.staticStringKeysComplete = true
 	return out
 }
 

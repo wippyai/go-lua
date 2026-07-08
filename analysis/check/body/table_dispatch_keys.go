@@ -3,6 +3,7 @@ package body
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
@@ -44,27 +45,21 @@ func (r *Result) tableDispatchBaseKeysAt(point cfg.Point, table path.Path) (map[
 			return nil, SourceSpan{}, 0, false
 		}
 		visited[cursor] = struct{}{}
-		if fact, ok := r.OrdinaryAssignment(cursor); ok {
-			if keys, span, ok := r.tableDispatchReplacementKeys(fact, table); ok {
+		if write, ok := r.LoweredAssignmentWrite(cursor); ok {
+			if keys, span, ok := r.tableDispatchReplacementKeys(write, table); ok {
 				return keys, span, cursor, true
 			}
-		}
-		if write, ok := r.LoweredAssignmentWrite(cursor); ok {
 			_, staticKey, touches := tableDispatchAssignmentKeyForWrite(write, table)
 			if touches && !staticKey {
 				return nil, SourceSpan{}, 0, false
 			}
 		}
-		if fact, ok := r.LocalAssignment(cursor); ok && fact.HasSymbol && fact.Symbol == table.Symbol && fact.Expr != nil {
-			literal, ok := r.ObjectLiteral(fact.Expr)
+		if fact, ok := r.LoweredLocalAssignment(cursor); ok && fact.TargetSymbol() == table.Symbol && len(fact.TargetPathRef().Segments) == 0 {
+			keys, span, ok := r.ObjectLiteralStaticStringKeysAtSource(fact.Source(), table.Segments)
 			if !ok {
 				return nil, SourceSpan{}, 0, false
 			}
-			keys, span, ok := r.ObjectLiteralStaticStringKeysAtPath(literal, table.Segments)
-			if !ok {
-				return nil, SourceSpan{}, 0, false
-			}
-			return keys, sourceSpanFromAST(span), cursor, true
+			return keys, span, cursor, true
 		}
 		parent, ok := r.ImmediateDominator(cursor)
 		if !ok || parent == cursor {
@@ -105,46 +100,49 @@ func tableDispatchSummaries(result *Result, inherited map[path.PathKey]tableDisp
 		return out
 	}
 	for _, point := range cfg.RPOReadOnly(result.Graph()) {
-		if fact, ok := result.LocalAssignment(point); ok && fact.HasSymbol && fact.Expr != nil {
-			if literal, literalOK := result.ObjectLiteral(fact.Expr); literalOK {
-				base := path.NewPath(fact.Symbol, result.SymbolName(fact.Symbol))
-				collectObjectLiteralTableDispatchSummaries(result, &out, base, literal)
-			}
+		if fact, ok := result.LoweredLocalAssignment(point); ok && fact.TargetSymbol() != 0 && len(fact.TargetPathRef().Segments) == 0 {
+			base := path.NewPath(fact.TargetSymbol(), result.SymbolName(fact.TargetSymbol()))
+			collectObjectLiteralTableDispatchSummaries(result, &out, base, fact.Source())
 		}
 		if write, ok := result.LoweredAssignmentWrite(point); ok {
-			updateTableDispatchSummariesForAssignment(out, write)
+			updateTableDispatchSummariesForAssignment(result, out, write)
 		}
-		if _, ok := result.Call(point); ok {
+		if _, ok := result.CallSite(point); ok {
 			updateTableDispatchSummariesForCall(result, out, point)
 		}
 	}
 	return out
 }
 
-func collectObjectLiteralTableDispatchSummaries(result *Result, out *map[path.PathKey]tableDispatchSummary, table path.Path, fact ObjectLiteralFact) {
+func collectObjectLiteralTableDispatchSummaries(result *Result, out *map[path.PathKey]tableDispatchSummary, table path.Path, source factflow.ValueSource) {
 	if result == nil || out == nil || table.IsEmpty() {
 		return
 	}
-	if keys, span, ok := result.ObjectLiteralStaticStringKeysAtPath(fact, nil); ok {
+	literal, ok := result.ObjectLiteralViewForSource(source)
+	if !ok {
+		return
+	}
+	if keys, span, ok := result.ObjectLiteralStaticStringKeysAtSource(source, nil); ok {
 		if *out == nil {
 			*out = make(map[path.PathKey]tableDispatchSummary, 1)
 		}
 		(*out)[table.Key()] = tableDispatchSummary{
 			path: table.Clone(),
 			keys: keys,
-			span: sourceSpanFromAST(span),
+			span: span,
 		}
 	}
-	for _, entry := range fact.Entries {
-		if len(entry.Suffix.Segments) == 0 {
-			continue
+	literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
+		if entry.SuffixSegmentCount() == 0 {
+			return true
 		}
-		nested, ok := result.ObjectLiteral(entry.Value)
-		if !ok {
-			continue
+		if _, ok := result.ObjectLiteralViewForSource(entry.Source()); !ok {
+			return true
 		}
-		collectObjectLiteralTableDispatchSummaries(result, out, table.AppendSegments(entry.Suffix.Segments), nested)
-	}
+		suffix := entry.SuffixSegments()
+		collectObjectLiteralTableDispatchSummaries(result, out, table.AppendSegments(suffix), entry.Source())
+		return true
+	})
 }
 
 func cloneTableDispatchSummaries(in map[path.PathKey]tableDispatchSummary) map[path.PathKey]tableDispatchSummary {
@@ -171,11 +169,17 @@ func cloneTableDispatchKeySet(in map[string]bool) map[string]bool {
 	return out
 }
 
-func updateTableDispatchSummariesForAssignment(summaries map[path.PathKey]tableDispatchSummary, write LoweredAssignmentWrite) {
+func updateTableDispatchSummariesForAssignment(result *Result, summaries map[path.PathKey]tableDispatchSummary, write LoweredAssignmentWrite) {
 	if len(summaries) == 0 {
 		return
 	}
 	for summaryKey, summary := range summaries {
+		if replacement, replacementSpan, ok := result.tableDispatchReplacementKeys(write, summary.path); ok {
+			summary.keys = replacement
+			summary.span = replacementSpan
+			summaries[summaryKey] = summary
+			continue
+		}
 		key, staticKey, touches := tableDispatchAssignmentKeyForWrite(write, summary.path)
 		if !touches {
 			continue
@@ -228,12 +232,10 @@ func (r *Result) applyReachableTableDispatchAssignments(
 			continue
 		}
 		if r.PointDominates(candidate, point) {
-			if fact, ok := r.OrdinaryAssignment(candidate); ok {
-				if replacement, replacementSpan, ok := r.tableDispatchReplacementKeys(fact, table); ok {
-					replaceTableDispatchKeySet(keys, replacement)
-					tableSpan = replacementSpan
-					continue
-				}
+			if replacement, replacementSpan, ok := r.tableDispatchReplacementKeys(write, table); ok {
+				replaceTableDispatchKeySet(keys, replacement)
+				tableSpan = replacementSpan
+				continue
 			}
 			if !staticKey {
 				return SourceSpan{}, false
@@ -241,13 +243,11 @@ func (r *Result) applyReachableTableDispatchAssignments(
 			keys[key] = true
 			continue
 		}
-		if fact, ok := r.OrdinaryAssignment(candidate); ok {
-			if replacement, replacementSpan, ok := r.tableDispatchReplacementKeys(fact, table); ok {
-				if intersectTableDispatchKeySet(keys, replacement) {
-					tableSpan = replacementSpan
-				}
-				continue
+		if replacement, replacementSpan, ok := r.tableDispatchReplacementKeys(write, table); ok {
+			if intersectTableDispatchKeySet(keys, replacement) {
+				tableSpan = replacementSpan
 			}
+			continue
 		}
 		if !staticKey {
 			return SourceSpan{}, false
@@ -256,34 +256,23 @@ func (r *Result) applyReachableTableDispatchAssignments(
 	return tableSpan, true
 }
 
-func (r *Result) tableDispatchReplacementKeys(fact OrdinaryAssignmentFact, table path.Path) (map[string]bool, SourceSpan, bool) {
-	suffix, ok := tableDispatchReplacementSuffix(fact, table)
-	if !ok || fact.Value == nil {
-		return nil, SourceSpan{}, false
-	}
-	literal, ok := r.ObjectLiteral(fact.Value)
+func (r *Result) tableDispatchReplacementKeys(write LoweredAssignmentWrite, table path.Path) (map[string]bool, SourceSpan, bool) {
+	suffix, ok := tableDispatchReplacementSuffix(write.Target, table)
 	if !ok {
 		return nil, SourceSpan{}, false
 	}
-	keys, span, ok := r.ObjectLiteralStaticStringKeysAtPath(literal, suffix)
-	return keys, sourceSpanFromAST(span), ok
+	return r.ObjectLiteralStaticStringKeysAtSource(write.Source, suffix)
 }
 
-func tableDispatchReplacementSuffix(fact OrdinaryAssignmentFact, table path.Path) ([]segment.Segment, bool) {
-	if table.Symbol == 0 {
+func tableDispatchReplacementSuffix(target path.Path, table path.Path) ([]segment.Segment, bool) {
+	if target.IsEmpty() || target.Symbol == 0 || table.Symbol == 0 || target.Symbol != table.Symbol {
 		return nil, false
 	}
-	if fact.HasSymbol && fact.Symbol == table.Symbol {
-		return append([]segment.Segment(nil), table.Segments...), true
-	}
-	if !fact.HasPath {
-		return nil, false
-	}
-	if fact.Path.Equal(table) {
+	if target.Equal(table) {
 		return nil, true
 	}
-	if table.HasPrefix(fact.Path) {
-		suffix := table.Segments[len(fact.Path.Segments):]
+	if table.HasPrefix(target) {
+		suffix := table.Segments[len(target.Segments):]
 		return append([]segment.Segment(nil), suffix...), true
 	}
 	return nil, false

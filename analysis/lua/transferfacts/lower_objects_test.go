@@ -106,11 +106,42 @@ func TestLowerObjectLiteralSidecarUsesAssignmentExprRef(t *testing.T) {
 	if len(entries) != 2 {
 		t.Fatalf("literal entries = %#v, want two static entries", entries)
 	}
+	if literal.StaticStringKeysComplete() {
+		t.Fatal("literal with dynamic key reported complete static string key set")
+	}
 	assertLoweredObjectEntry(t, entries[0], fieldSuffix("leaf"), factflow.ValueSourceLiteral)
 	assertLoweredObjectEntry(t, entries[1], stringSuffix("key"), factflow.ValueSourceLiteral)
 	wantID := identity.LuaTableLiteral(built.Graph.ID(), uint64(source.ExprRef))
 	if gotID, ok := literal.Identity(); !ok || gotID != wantID {
 		t.Fatalf("literal identity = %v/%v, want %v", gotID, ok, wantID)
+	}
+}
+
+func TestLowerObjectLiteralPublishesCompleteStaticStringKeySet(t *testing.T) {
+	table := &ast.TableExpr{Fields: []*ast.Field{
+		{Key: stringLit("leaf"), KeySyntax: ast.AttrKeyDot, Value: number("1")},
+		{Key: stringLit("key"), KeySyntax: ast.AttrKeyIndex, Value: number("2")},
+		{Key: number("7"), KeySyntax: ast.AttrKeyIndex, Value: number("3")},
+		{Value: number("4")},
+	}}
+	local := localAssign([]string{"t"}, table)
+	stmts := []ast.Stmt{local}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+
+	body := wirlower.Lower("object-complete-keys", stmts, bindings, built)
+	facts := Lower(built.Graph, Config{Registry: standard.Registry(), Bindings: bindings, WIR: body})
+	point := requireStmtPoints(t, built, local, 1)[0]
+	localFact, ok := facts.LocalAssignment(point)
+	if !ok {
+		t.Fatalf("missing local assignment fact")
+	}
+	literal, ok := facts.ObjectLiteral(localFact.Source().ExprRef)
+	if !ok {
+		t.Fatalf("missing object literal sidecar")
+	}
+	if !literal.StaticStringKeysComplete() {
+		t.Fatal("static literal reported incomplete string key set")
 	}
 }
 

@@ -233,6 +233,12 @@ type Instruction struct {
 	// OpMakeTable. It is analysis metadata; List remains the runtime value list.
 	TableEntries TableEntryRange
 
+	// StaticStringKeysComplete reports that every constructor field was
+	// statically classifiable, so the string-key subset of TableEntries is a
+	// closed key set. Array/int entries may still exist and are ignored by
+	// string-key dispatch consumers.
+	StaticStringKeysComplete bool
+
 	// DynamicSuffix carries static member/index segments after the dynamic key
 	// for OpDynamicIndexWrite targets such as t[k].field.
 	DynamicSuffix SegmentRange

@@ -528,7 +528,7 @@ func TestPathsAliasWithSameSuffixAtBoundaryFollowsAliasedPrefix(t *testing.T) {
 	}
 }
 
-func TestObjectLiteralStaticStringKeysAtPathReadsNestedTable(t *testing.T) {
+func TestObjectLiteralStaticStringKeysAtSourceReadsNestedTable(t *testing.T) {
 	reg := standard.Registry()
 	result, err := CheckChunk(parseChunk(t, `
 		local routes = {
@@ -543,18 +543,18 @@ func TestObjectLiteralStaticStringKeysAtPathReadsNestedTable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
-	_, expr := requireLocalAssignmentExprByName(t, result, "routes")
-	literal, ok := result.ObjectLiteral(expr)
+	point, _ := requireLocalAssignmentExprByName(t, result, "routes")
+	local, ok := result.LoweredLocalAssignment(point)
 	if !ok {
-		t.Fatal("root object literal not found")
+		t.Fatal("lowered local assignment not found")
 	}
 	suffix := path.NewPath(0, "routes").Field("handlers").Segments
-	keys, span, ok := result.ObjectLiteralStaticStringKeysAtPath(literal, suffix)
+	keys, span, ok := result.ObjectLiteralStaticStringKeysAtSource(local.Source(), suffix)
 	if !ok {
-		t.Fatal("ObjectLiteralStaticStringKeysAtPath returned false")
+		t.Fatal("ObjectLiteralStaticStringKeysAtSource returned false")
 	}
-	if !span.Valid() {
-		t.Fatalf("ObjectLiteralStaticStringKeysAtPath span = %#v, want valid nested table span", span)
+	if span.StartLine == 0 || span.StartCol == 0 || span.EndLine == 0 || span.EndCol == 0 {
+		t.Fatalf("ObjectLiteralStaticStringKeysAtSource span = %#v, want valid nested table span", span)
 	}
 	if !keys["create"] || !keys["cancel"] || keys["other"] || keys["1"] {
 		t.Fatalf("nested static string keys = %#v, want create/cancel only", keys)
