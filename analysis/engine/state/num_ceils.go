@@ -3,6 +3,7 @@ package state
 import (
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/engine/state/numbound"
 )
 
 type NumCeilsSnapshot struct {
@@ -14,7 +15,8 @@ func (s State) NumCeilsSnapshot(ks *keyspace.KeySpace) NumCeilsSnapshot {
 	if !s.laneEnabled(laneNumCeilsBit) {
 		return NumCeilsSnapshot{Bottom: true}
 	}
-	return s.numCeils.snapshot(ks)
+	bottom, ceils := numBoundSnapshot(s.numCeils, ks)
+	return NumCeilsSnapshot{Bottom: bottom, Ceils: ceils}
 }
 
 // ReadNumCeil reads the proven upper bound for a numeric state key: a returned
@@ -27,7 +29,7 @@ func (s State) ReadNumCeil(ks *keyspace.KeySpace, stateKey pathaddr.StateKey) (i
 	if !ok {
 		return 0, false
 	}
-	return s.numCeils.read(key)
+	return s.numCeils.Read(key)
 }
 
 // WriteNumCeil records that value(stateKey) <= hi holds at this point.
@@ -40,7 +42,7 @@ func (s State) WriteNumCeil(ks *keyspace.KeySpace, stateKey pathaddr.StateKey, h
 		return s
 	}
 	out := s.reachable()
-	ceils, changed := out.numCeils.write(key, hi)
+	ceils, changed := out.numCeils.Write(key, hi, numbound.Upper)
 	if !changed {
 		return s
 	}
@@ -58,7 +60,7 @@ func (s State) ClearNumCeil(ks *keyspace.KeySpace, stateKey pathaddr.StateKey) S
 	if !ok {
 		return s
 	}
-	ceils, changed := s.numCeils.clear(key)
+	ceils, changed := s.numCeils.Clear(key)
 	if !changed {
 		return s
 	}

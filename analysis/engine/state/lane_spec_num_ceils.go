@@ -1,19 +1,22 @@
 package state
 
-import "github.com/wippyai/go-lua/analysis/domain/value/axis"
+import (
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/engine/state/numbound"
+)
 
 const LaneNumCeils LaneID = "num-ceils"
 
 var numCeilsLaneSpec = laneSpec{
 	id: LaneNumCeils,
 	markReachable: func(s State) State {
-		s.numCeils = s.numCeils.reachable()
+		s.numCeils = s.numCeils.Reachable()
 		return s
 	},
 	build: func(_ *axis.Registry, options DomainOptions) laneOps {
-		return stateLane(numCeilMapDomain(options.WidenThresholds),
-			func(s State) numCeilLane { return s.numCeils },
-			func(out *State, lane numCeilLane) { out.numCeils = lane },
+		return stateLane(numBoundLaneDomain(numbound.Upper, options.WidenThresholds),
+			func(s State) numBoundLane { return s.numCeils },
+			func(out *State, lane numBoundLane) { out.numCeils = lane },
 		)
 	},
 }

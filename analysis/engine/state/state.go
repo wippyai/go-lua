@@ -36,8 +36,8 @@ type State struct {
 	typestates        typestate.Store
 	placement         placementLane
 	lenFloors         lenFloorLane
-	numFloors         numFloorLane
-	numCeils          numCeilLane
+	numFloors         numBoundLane
+	numCeils          numBoundLane
 	diffRelations     diffRelationLane
 	userLattices      userLatticeLane
 }

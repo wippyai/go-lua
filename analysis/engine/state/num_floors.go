@@ -3,6 +3,7 @@ package state
 import (
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/engine/state/numbound"
 )
 
 type NumFloorsSnapshot struct {
@@ -14,7 +15,8 @@ func (s State) NumFloorsSnapshot(ks *keyspace.KeySpace) NumFloorsSnapshot {
 	if !s.laneEnabled(laneNumFloorsBit) {
 		return NumFloorsSnapshot{Bottom: true}
 	}
-	return s.numFloors.snapshot(ks)
+	bottom, floors := numBoundSnapshot(s.numFloors, ks)
+	return NumFloorsSnapshot{Bottom: bottom, Floors: floors}
 }
 
 // ReadNumFloor reads the proven lower bound for a numeric state key: a returned
@@ -27,7 +29,7 @@ func (s State) ReadNumFloor(ks *keyspace.KeySpace, stateKey pathaddr.StateKey) (
 	if !ok {
 		return 0, false
 	}
-	return s.numFloors.read(key)
+	return s.numFloors.Read(key)
 }
 
 // WriteNumFloor records that value(stateKey) >= lo holds at this point.
@@ -40,7 +42,7 @@ func (s State) WriteNumFloor(ks *keyspace.KeySpace, stateKey pathaddr.StateKey, 
 		return s
 	}
 	out := s.reachable()
-	floors, changed := out.numFloors.write(key, lo)
+	floors, changed := out.numFloors.Write(key, lo, numbound.Lower)
 	if !changed {
 		return s
 	}
@@ -58,7 +60,7 @@ func (s State) ClearNumFloor(ks *keyspace.KeySpace, stateKey pathaddr.StateKey) 
 	if !ok {
 		return s
 	}
-	floors, changed := s.numFloors.clear(key)
+	floors, changed := s.numFloors.Clear(key)
 	if !changed {
 		return s
 	}
