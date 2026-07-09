@@ -18,6 +18,9 @@ func renderCallArityJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
+	if !diagnosticCodeDeclaredForJudgment(item, presentation.Code) {
+		return diagnostic.Diagnostic{}, false
+	}
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		File:        item.Spans[0].File,
 		Span:        span,

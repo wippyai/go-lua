@@ -13,6 +13,7 @@ func renderOptionalJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.J
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
+	code := diagnosticCodeForJudgment(item)
 	span := diagnosticSpanFromJudgment(item.Spans[0])
 	presentation, ok := ctx.proof.Optional(item, span)
 	if !ok {
@@ -21,7 +22,7 @@ func renderOptionalJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.J
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		File:        item.Spans[0].File,
 		Span:        span,
-		Code:        CodeDiscriminatedUnionExhaustive,
+		Code:        code,
 		Severity:    severity,
 		Message:     presentation.Message,
 		Explanation: presentation.Explanation,

@@ -13,6 +13,7 @@ func renderReturnJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Jud
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
+	code := diagnosticCodeForJudgment(item)
 	got := item.Actual.ProjectedType
 	want := item.Expected.Type
 	if got == nil || want == nil {
@@ -28,7 +29,7 @@ func renderReturnJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Jud
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		File:        item.Spans[0].File,
 		Span:        span,
-		Code:        CodeReturnContractType,
+		Code:        code,
 		Severity:    severity,
 		Message:     presentation.Message,
 		Help:        presentation.Help,

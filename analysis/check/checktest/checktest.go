@@ -30,14 +30,13 @@ import (
 type Option func(*config)
 
 type config struct {
-	stdlib            bool
-	globals           []string
-	manifests         map[string]*manifest.Manifest
-	modules           map[string]*ModuleResult
-	diagnosticPolicy  diagnostic.Policy
-	diagnosticsConfig diagnostics.Config
-	stateLanes        []state.LaneID
-	stats             *program.Stats
+	stdlib           bool
+	globals          []string
+	manifests        map[string]*manifest.Manifest
+	modules          map[string]*ModuleResult
+	diagnosticPolicy diagnostic.Policy
+	stateLanes       []state.LaneID
+	stats            *program.Stats
 }
 
 type Result struct {
@@ -273,9 +272,7 @@ func checkSource(src, filename string, opts ...Option) Result {
 		return Result{Diagnostics: diags}
 	}
 	structural = cfg.diagnosticPolicy.Apply(structural)
-	diagnosticConfig := cfg.diagnosticsConfig
-	diagnosticConfig.Policy = cfg.diagnosticPolicy
-	diags := append(structural, diagnostics.ProduceWithConfig(checked.RootResult(), diagnosticConfig)...)
+	diags := append(structural, diagnostics.ProduceWithConfig(checked.RootResult(), diagnostics.Config{Policy: cfg.diagnosticPolicy})...)
 	setDefaultFile(diags, filename)
 	diagnostic.Sort(diags)
 	return Result{Diagnostics: diags, checked: &checked, placement: placementplan.FromProgramResult(checked)}

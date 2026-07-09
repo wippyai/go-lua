@@ -5,30 +5,16 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 )
 
-func renderAdviceRedundantClaimJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
-	return renderAdviceJudgmentWithPolicy(ctx, item, policy, mode, judgment.CodeAdviceRedundantClaim, CodeAdviceRedundantClaim)
-}
-
-func renderAdviceAlwaysTrueGuardJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
-	return renderAdviceJudgmentWithPolicy(ctx, item, policy, mode, judgment.CodeAdviceAlwaysTrueGuard, CodeAdviceAlwaysTrueGuard)
-}
-
-func renderAdviceInvariantLoopReadJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
-	return renderAdviceJudgmentWithPolicy(ctx, item, policy, mode, judgment.CodeAdviceInvariantLoopRead, CodeAdviceInvariantLoopRead)
-}
-
-func renderAdviceSplitBirthDiscriminantJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
-	return renderAdviceJudgmentWithPolicy(ctx, item, policy, mode, judgment.CodeAdviceSplitBirthDiscriminant, CodeAdviceSplitBirthDiscriminant)
-}
-
-func renderAdviceJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode, want judgment.Code, code diagnostic.Code) (diagnostic.Diagnostic, bool) {
-	if item.Code != want || item.Subject.Kind != judgment.SubjectExpression || len(item.Spans) == 0 {
+func renderAdviceJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
+	spec, ok := judgment.DefaultRegistry().Lookup(item.Code)
+	if !ok || spec.Render != judgment.RenderAdvice || item.Subject.Kind != judgment.SubjectExpression || len(item.Spans) == 0 {
 		return diagnostic.Diagnostic{}, false
 	}
 	severity, ok := diagnosticSeverityForJudgment(item, policy, mode)
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
+	code := primaryDiagnosticCode(spec)
 	span := diagnosticSpanFromJudgment(item.Spans[0])
 	presentation, ok := ctx.proof.Advice(item, span)
 	if !ok {

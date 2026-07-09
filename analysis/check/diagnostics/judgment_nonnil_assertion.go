@@ -13,12 +13,13 @@ func renderNonNilAssertionJudgmentWithPolicy(ctx judgmentRenderContext, item jud
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
+	code := diagnosticCodeForJudgment(item)
 	span := diagnosticSpanFromJudgment(item.Spans[0])
 	presentation := ctx.proof.NonNilAssertion(item, span)
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		File:        item.Spans[0].File,
 		Span:        span,
-		Code:        CodeNonNilAssertAlwaysNil,
+		Code:        code,
 		Severity:    severity,
 		Message:     presentation.Message,
 		Labels:      presentation.Labels,

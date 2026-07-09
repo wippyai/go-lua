@@ -13,6 +13,7 @@ func renderDiscriminatedUnionJudgmentWithPolicy(ctx judgmentRenderContext, item 
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
+	code := diagnosticCodeForJudgment(item)
 	span := diagnosticSpanFromJudgment(item.Spans[0])
 	presentation, ok := ctx.proof.DiscriminatedUnion(item, span)
 	if !ok {
@@ -21,7 +22,7 @@ func renderDiscriminatedUnionJudgmentWithPolicy(ctx judgmentRenderContext, item 
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		File:        item.Spans[0].File,
 		Span:        span,
-		Code:        CodeDiscriminatedUnionExhaustive,
+		Code:        code,
 		Severity:    severity,
 		Message:     presentation.Message,
 		Explanation: presentation.Explanation,

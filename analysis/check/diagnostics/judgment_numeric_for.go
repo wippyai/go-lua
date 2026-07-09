@@ -13,6 +13,7 @@ func renderNumericForJudgmentWithPolicy(ctx judgmentRenderContext, item judgment
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
+	code := diagnosticCodeForJudgment(item)
 	span := diagnosticSpanFromJudgment(item.Spans[0])
 	presentation, ok := ctx.proof.NumericFor(item, span)
 	if !ok {
@@ -21,7 +22,7 @@ func renderNumericForJudgmentWithPolicy(ctx judgmentRenderContext, item judgment
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		File:        item.Spans[0].File,
 		Span:        span,
-		Code:        CodeNumericForOperand,
+		Code:        code,
 		Severity:    severity,
 		Message:     presentation.Message,
 		Explanation: diagnostic.NewExplanation(presentation.Evidence...),

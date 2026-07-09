@@ -11,42 +11,41 @@ import (
 )
 
 const (
-	CodeAssignmentType               diagnostic.Code = "type.assignment"
-	CodeMissingMember                diagnostic.Code = "type.member.missing"
-	CodeOptionalMethodCall           diagnostic.Code = "type.call.optional_receiver"
-	CodeNotCallable                  diagnostic.Code = "type.call.not_callable"
-	CodeDirectCallNotCallable        diagnostic.Code = "type.call.direct.not_callable"
-	CodeDirectCallTooFewArgs         diagnostic.Code = "type.call.direct.too_few_args"
-	CodeDirectCallTooManyArgs        diagnostic.Code = "type.call.direct.too_many_args"
-	CodeDirectCallArgType            diagnostic.Code = "type.call.direct.argument_type"
-	CodeReturnContractType           diagnostic.Code = "type.return.contract"
-	CodeDirectCallResultAssignment   diagnostic.Code = "type.call.direct.result_assignment"
-	CodeOptionalAssignmentTarget     diagnostic.Code = "type.assignment.optional_target"
-	CodeConcatOperand                diagnostic.Code = "type.operator.concat_operand"
-	CodeNonNilAssertAlwaysNil        diagnostic.Code = "type.assert.nonnil_always_nil"
-	CodeNumericForOperand            diagnostic.Code = "type.for.numeric_operand"
-	CodeChannelSelectExhaustive      diagnostic.Code = "channel.select.exhaustiveness"
-	CodeUnresolvedTypeReference      diagnostic.Code = "type.reference.unresolved"
-	CodeUnresolvedValueReference     diagnostic.Code = "value.reference.unresolved"
-	CodeUnusedLocal                  diagnostic.Code = "lint.unused.local"
-	CodeDeadAssignment               diagnostic.Code = "lint.dead.assignment"
-	CodeRedundantCondition           diagnostic.Code = "lint.condition.redundant"
-	CodeDiscriminatedUnionExhaustive diagnostic.Code = "lint.union.exhaustiveness"
-	CodeFrozenTableMutation          diagnostic.Code = "effect.freeze.mutation"
-	CodeResourceUnreleased           diagnostic.Code = "effect.lifecycle.unreleased"
-	CodeSendIsolation                diagnostic.Code = "send.isolation"
-	CodeAdviceRedundantClaim         diagnostic.Code = "advice.redundant_claim"
-	CodeAdviceAlwaysTrueGuard        diagnostic.Code = "advice.always_true_guard"
-	CodeAdviceInvariantLoopRead      diagnostic.Code = "advice.invariant_loop_read"
-	CodeAdviceSplitBirthDiscriminant diagnostic.Code = "advice.split_birth_discriminant"
+	CodeAssignmentType               diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeAssignmentType)
+	CodeMissingMember                diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeMissingMember)
+	CodeOptionalMethodCall           diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeOptionalMethodCall)
+	CodeNotCallable                  diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeNotCallable)
+	CodeDirectCallNotCallable        diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeDirectCallNotCallable)
+	CodeDirectCallTooFewArgs         diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeDirectCallTooFewArgs)
+	CodeDirectCallTooManyArgs        diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeDirectCallTooManyArgs)
+	CodeDirectCallArgType            diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeDirectCallArgType)
+	CodeReturnContractType           diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeReturnContractType)
+	CodeDirectCallResultAssignment   diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeDirectCallResultAssignment)
+	CodeOptionalAssignmentTarget     diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeOptionalAssignmentTarget)
+	CodeConcatOperand                diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeConcatOperand)
+	CodeNonNilAssertAlwaysNil        diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeNonNilAssertAlwaysNil)
+	CodeNumericForOperand            diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeNumericForOperand)
+	CodeChannelSelectExhaustive      diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeChannelSelectExhaustive)
+	CodeUnresolvedTypeReference      diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeUnresolvedTypeReference)
+	CodeUnresolvedValueReference     diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeUnresolvedValueReference)
+	CodeUnusedLocal                  diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeUnusedLocal)
+	CodeDeadAssignment               diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeDeadAssignment)
+	CodeRedundantCondition           diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeRedundantCondition)
+	CodeDiscriminatedUnionExhaustive diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeDiscriminatedUnionExhaustive)
+	CodeFrozenTableMutation          diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeFrozenTableMutation)
+	CodeResourceUnreleased           diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeResourceUnreleased)
+	CodeSendIsolation                diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeSendIsolation)
+	CodeAdviceRedundantClaim         diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeAdviceRedundantClaim)
+	CodeAdviceAlwaysTrueGuard        diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeAdviceAlwaysTrueGuard)
+	CodeAdviceInvariantLoopRead      diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeAdviceInvariantLoopRead)
+	CodeAdviceSplitBirthDiscriminant diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeAdviceSplitBirthDiscriminant)
 )
 
 type producerContext struct {
 	parent  *body.Result
 	parents []*body.Result
 
-	judgmentPolicy     judgment.Policy
-	judgmentStrictness judgment.StrictnessMode
+	judgmentPolicy judgment.PolicyConfig
 
 	suppressDirectCallContracts bool
 }
@@ -57,79 +56,103 @@ type diagnosticProducer struct {
 	produce        func(result *body.Result, context producerContext) []diagnostic.Diagnostic
 }
 
-func requiredJudgmentProducer(codes []diagnostic.Code, producers ...pass.Producer) diagnosticProducer {
-	return judgmentProducer(codes, true, producers...)
+func judgmentProducer(judgmentCodes []judgment.Code, producers ...pass.Producer) diagnosticProducer {
+	return diagnosticProducerForJudgments(judgmentCodes, func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
+		return context.produceJudgments(result, producers...)
+	})
 }
 
-func optInJudgmentProducer(codes []diagnostic.Code, producers ...pass.Producer) diagnosticProducer {
-	return judgmentProducer(codes, false, producers...)
-}
-
-func judgmentProducer(codes []diagnostic.Code, defaultEnabled bool, producers ...pass.Producer) diagnosticProducer {
+func diagnosticProducerForJudgments(
+	judgmentCodes []judgment.Code,
+	produce func(result *body.Result, context producerContext) []diagnostic.Diagnostic,
+) diagnosticProducer {
 	return diagnosticProducer{
-		codes:          codes,
-		defaultEnabled: defaultEnabled,
-		produce: func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
-			return context.produceJudgments(result, producers...)
-		},
+		codes:          diagnosticCodesForJudgments(judgmentCodes...),
+		defaultEnabled: defaultDiagnosticEnabledForJudgments(judgmentCodes...),
+		produce:        produce,
 	}
 }
 
-func parentJudgmentProducer(codes []diagnostic.Code, producers ...pass.Producer) diagnosticProducer {
-	return diagnosticProducer{
-		codes:          codes,
-		defaultEnabled: true,
-		produce: func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
-			return context.produceJudgmentsWithParent(result, context.parent, producers...)
-		},
-	}
-}
-
-func reachableJudgmentProducer(codes []diagnostic.Code, producers ...pass.Producer) diagnosticProducer {
-	return diagnosticProducer{
-		codes:          codes,
-		defaultEnabled: true,
-		produce: func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
-			return context.produceReachableJudgments(result, producers...)
-		},
-	}
-}
-
-func optInParentStackJudgmentProducer(codes []diagnostic.Code, producers ...pass.Producer) diagnosticProducer {
-	return diagnosticProducer{
-		codes:          codes,
-		defaultEnabled: false,
-		produce: func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
-			if result == nil {
-				return nil
+func diagnosticCodesForJudgments(judgmentCodes ...judgment.Code) []diagnostic.Code {
+	var out []diagnostic.Code
+	seen := make(map[diagnostic.Code]struct{})
+	for _, judgmentCode := range judgmentCodes {
+		spec, ok := judgment.DefaultRegistry().Lookup(judgmentCode)
+		if !ok {
+			panic("diagnostics: unknown judgment code " + string(judgmentCode))
+		}
+		for _, code := range spec.DiagnosticCodes {
+			diagnosticCode := diagnostic.Code(code)
+			if _, ok := seen[diagnosticCode]; ok {
+				continue
 			}
-			return context.produceJudgmentsWithParents(result, context.parents, producers...)
-		},
+			seen[diagnosticCode] = struct{}{}
+			out = append(out, diagnosticCode)
+		}
 	}
+	return out
+}
+
+func defaultDiagnosticEnabledForJudgments(judgmentCodes ...judgment.Code) bool {
+	var (
+		out bool
+		set bool
+	)
+	for _, judgmentCode := range judgmentCodes {
+		spec, ok := judgment.DefaultRegistry().Lookup(judgmentCode)
+		if !ok {
+			panic("diagnostics: unknown judgment code " + string(judgmentCode))
+		}
+		if !set {
+			out = spec.DiagnosticDefault == judgment.DiagnosticDefaultEnabled
+			set = true
+			continue
+		}
+		if out != (spec.DiagnosticDefault == judgment.DiagnosticDefaultEnabled) {
+			panic("diagnostics: mixed default diagnostic policy for judgment producer")
+		}
+	}
+	if !set {
+		return true
+	}
+	return out
+}
+
+func parentJudgmentProducer(judgmentCode judgment.Code, producers ...pass.Producer) diagnosticProducer {
+	return diagnosticProducerForJudgments([]judgment.Code{judgmentCode}, func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
+		return context.produceJudgmentsWithParent(result, context.parent, producers...)
+	})
+}
+
+func reachableJudgmentProducer(judgmentCode judgment.Code, producers ...pass.Producer) diagnosticProducer {
+	return diagnosticProducerForJudgments([]judgment.Code{judgmentCode}, func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
+		return context.produceReachableJudgments(result, producers...)
+	})
+}
+
+func parentStackJudgmentProducer(judgmentCodes []judgment.Code, producers ...pass.Producer) diagnosticProducer {
+	return diagnosticProducerForJudgments(judgmentCodes, func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
+		if result == nil {
+			return nil
+		}
+		return context.produceJudgmentsWithParents(result, context.parents, producers...)
+	})
 }
 
 func directCallContractJudgmentProducer() diagnosticProducer {
-	return diagnosticProducer{
-		codes: []diagnostic.Code{
-			CodeDirectCallNotCallable,
-			CodeDirectCallTooFewArgs,
-			CodeDirectCallTooManyArgs,
-			CodeDirectCallArgType,
-			CodeOptionalMethodCall,
-			CodeMissingMember,
-			CodeNotCallable,
-		},
-		defaultEnabled: true,
-		produce: func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
-			if result == nil {
-				return nil
-			}
-			if context.suppressDirectCallContracts {
-				return nil
-			}
-			return context.produceDirectCallContractJudgments(result)
-		},
-	}
+	return diagnosticProducerForJudgments([]judgment.Code{
+		judgment.CodeCallCallee,
+		judgment.CodeCallArity,
+		judgment.CodeCallArgType,
+	}, func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
+		if result == nil {
+			return nil
+		}
+		if context.suppressDirectCallContracts {
+			return nil
+		}
+		return context.produceDirectCallContractJudgments(result)
+	})
 }
 
 func (p diagnosticProducer) shouldRun(policy diagnostic.Policy) bool {
@@ -146,35 +169,51 @@ func (p diagnosticProducer) shouldRun(policy diagnostic.Policy) bool {
 
 func diagnosticProducers() []diagnosticProducer {
 	return []diagnosticProducer{
-		parentJudgmentProducer([]diagnostic.Code{CodeUnresolvedTypeReference}, pass.UnresolvedTypes{}),
-		requiredJudgmentProducer([]diagnostic.Code{CodeUnresolvedValueReference}, pass.UnresolvedValues{}),
-		requiredJudgmentProducer(
-			[]diagnostic.Code{CodeAssignmentType, CodeOptionalAssignmentTarget, CodeDirectCallResultAssignment, CodeReturnContractType, CodeConcatOperand},
+		parentJudgmentProducer(judgment.CodeUnresolvedType, pass.UnresolvedTypes{}),
+		judgmentProducer([]judgment.Code{judgment.CodeUnresolvedValue}, pass.UnresolvedValues{}),
+		judgmentProducer(
+			[]judgment.Code{
+				judgment.CodeAssignment,
+				judgment.CodeAssignmentTarget,
+				judgment.CodeReturn,
+				judgment.CodeConcatOperand,
+			},
 			pass.Assignments{},
 			pass.Returns{},
 			pass.ConcatOperands{},
 		),
 		directCallContractJudgmentProducer(),
-		requiredJudgmentProducer([]diagnostic.Code{CodeNumericForOperand}, pass.NumericForOperands{}),
-		requiredJudgmentProducer([]diagnostic.Code{CodeNonNilAssertAlwaysNil}, pass.NonNilAssertions{}),
-		reachableJudgmentProducer([]diagnostic.Code{CodeMissingMember}, pass.MemberReads{}),
-		requiredJudgmentProducer([]diagnostic.Code{CodeChannelSelectExhaustive}, pass.ChannelSelects{}),
-		optInJudgmentProducer([]diagnostic.Code{CodeUnusedLocal}, pass.UnusedLocals{}),
-		optInJudgmentProducer([]diagnostic.Code{CodeDeadAssignment}, pass.DeadAssignments{}),
-		optInParentStackJudgmentProducer([]diagnostic.Code{CodeRedundantCondition}, pass.RedundantConditions{}),
-		optInParentStackJudgmentProducer(
-			[]diagnostic.Code{CodeDiscriminatedUnionExhaustive},
+		judgmentProducer([]judgment.Code{judgment.CodeNumericForOperand}, pass.NumericForOperands{}),
+		judgmentProducer([]judgment.Code{judgment.CodeNonNilAssertion}, pass.NonNilAssertions{}),
+		reachableJudgmentProducer(judgment.CodeMemberRead, pass.MemberReads{}),
+		judgmentProducer([]judgment.Code{judgment.CodeChannelSelect}, pass.ChannelSelects{}),
+		judgmentProducer([]judgment.Code{judgment.CodeUnusedLocal}, pass.UnusedLocals{}),
+		judgmentProducer([]judgment.Code{judgment.CodeDeadAssignment}, pass.DeadAssignments{}),
+		parentStackJudgmentProducer([]judgment.Code{judgment.CodeRedundantCondition}, pass.RedundantConditions{}),
+		parentStackJudgmentProducer(
+			[]judgment.Code{
+				judgment.CodeDiscriminatedUnion,
+				judgment.CodeOptional,
+				judgment.CodeResultShape,
+				judgment.CodeRegistration,
+				judgment.CodeTableDispatch,
+			},
 			pass.DiscriminatedUnions{},
 			pass.Optionals{},
 			pass.ResultShapes{},
 			pass.Registrations{},
 			pass.TableDispatches{},
 		),
-		optInJudgmentProducer([]diagnostic.Code{CodeFrozenTableMutation}, pass.FrozenTableMutations{}),
-		optInJudgmentProducer([]diagnostic.Code{CodeResourceUnreleased}, pass.LifecycleObligations{}),
-		optInJudgmentProducer([]diagnostic.Code{CodeSendIsolation}, pass.SendSafety{}),
-		optInJudgmentProducer(
-			[]diagnostic.Code{CodeAdviceRedundantClaim, CodeAdviceAlwaysTrueGuard, CodeAdviceInvariantLoopRead, CodeAdviceSplitBirthDiscriminant},
+		judgmentProducer([]judgment.Code{judgment.CodeFrozenTable}, pass.FrozenTableMutations{}),
+		judgmentProducer([]judgment.Code{judgment.CodeLifecycle}, pass.LifecycleObligations{}),
+		judgmentProducer([]judgment.Code{judgment.CodeSendIsolation}, pass.SendSafety{}),
+		judgmentProducer(
+			[]judgment.Code{
+				judgment.CodeAdviceRedundantClaim,
+				judgment.CodeAdviceAlwaysTrueGuard,
+				judgment.CodeAdviceInvariantLoopRead,
+				judgment.CodeAdviceSplitBirthDiscriminant,
+			},
 			pass.AdviceRedundantClaims{},
 			pass.AdviceAlwaysTrueGuards{},
 			pass.AdviceInvariantLoopReads{},
@@ -187,13 +226,9 @@ func diagnosticProducers() []diagnosticProducer {
 type Config struct {
 	Policy diagnostic.Policy
 
-	// JudgmentPolicy maps post-solve semantic judgment verdicts to diagnostic
-	// levels. The zero value uses judgment.DefaultPolicy.
-	JudgmentPolicy judgment.Policy
-
-	// JudgmentStrictness selects the judgment-policy mode for unknown
-	// obligations. The zero value is judgment.StrictnessDefault.
-	JudgmentStrictness judgment.StrictnessMode
+	// Judgment maps post-solve semantic judgment verdicts to diagnostic levels.
+	// The zero value uses judgment.DefaultPolicy in StrictnessDefault mode.
+	Judgment judgment.PolicyConfig
 }
 
 func Produce(result *body.Result) []diagnostic.Diagnostic {
@@ -219,8 +254,7 @@ func produceWithParents(
 		parent:  parentResult,
 		parents: append([]*body.Result(nil), parentResults...),
 
-		judgmentPolicy:     normalizedJudgmentPolicy(config.JudgmentPolicy),
-		judgmentStrictness: config.JudgmentStrictness,
+		judgmentPolicy: config.Judgment.Normalized(),
 
 		suppressDirectCallContracts: directCallContractsOwnedByContext(parentResult, result),
 	}

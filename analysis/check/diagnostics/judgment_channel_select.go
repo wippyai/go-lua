@@ -13,6 +13,7 @@ func renderChannelSelectJudgmentWithPolicy(ctx judgmentRenderContext, item judgm
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
+	code := diagnosticCodeForJudgment(item)
 	span := diagnosticSpanFromJudgment(item.Spans[0])
 	presentation, ok := ctx.proof.ChannelSelect(item, span)
 	if !ok {
@@ -21,7 +22,7 @@ func renderChannelSelectJudgmentWithPolicy(ctx judgmentRenderContext, item judgm
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		File:        item.Spans[0].File,
 		Span:        span,
-		Code:        CodeChannelSelectExhaustive,
+		Code:        code,
 		Severity:    severity,
 		Message:     presentation.Message,
 		Explanation: presentation.Explanation,

@@ -35,6 +35,7 @@ func renderDirectCallArgumentJudgmentWithPolicy(ctx judgmentRenderContext, item 
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
+	code := diagnosticCodeForJudgment(item)
 	span := diagnosticSpanFromJudgment(item.Spans[0])
 	presentation, ok := ctx.proof.DirectCallArgument(item, span)
 	if !ok {
@@ -43,7 +44,7 @@ func renderDirectCallArgumentJudgmentWithPolicy(ctx judgmentRenderContext, item 
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		File:        item.Spans[0].File,
 		Span:        span,
-		Code:        CodeDirectCallArgType,
+		Code:        code,
 		Severity:    severity,
 		Message:     presentation.Message,
 		Explanation: diagnostic.NewExplanation(presentation.Evidence...),

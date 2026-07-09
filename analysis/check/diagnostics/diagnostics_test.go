@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	internalreadmodel "github.com/wippyai/go-lua/analysis/check/internal/readmodel"
+	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -136,47 +137,19 @@ func TestProduceKeepsUntrustedAnyAssignmentWithoutUnresolvedRoot(t *testing.T) {
 }
 
 func TestDiagnosticProducerRegistryDeclaresPolicyDefaults(t *testing.T) {
-	optInCodes := map[diagnostic.Code]struct{}{
-		CodeUnusedLocal:                  {},
-		CodeDeadAssignment:               {},
-		CodeRedundantCondition:           {},
-		CodeDiscriminatedUnionExhaustive: {},
-		CodeFrozenTableMutation:          {},
-		CodeResourceUnreleased:           {},
-		CodeSendIsolation:                {},
-		CodeAdviceRedundantClaim:         {},
-		CodeAdviceAlwaysTrueGuard:        {},
-		CodeAdviceInvariantLoopRead:      {},
-		CodeAdviceSplitBirthDiscriminant: {},
-	}
-	allCodes := []diagnostic.Code{
-		CodeAssignmentType,
-		CodeMissingMember,
-		CodeOptionalMethodCall,
-		CodeNotCallable,
-		CodeDirectCallNotCallable,
-		CodeDirectCallTooFewArgs,
-		CodeDirectCallTooManyArgs,
-		CodeDirectCallArgType,
-		CodeReturnContractType,
-		CodeDirectCallResultAssignment,
-		CodeOptionalAssignmentTarget,
-		CodeConcatOperand,
-		CodeNumericForOperand,
-		CodeChannelSelectExhaustive,
-		CodeUnresolvedTypeReference,
-		CodeUnresolvedValueReference,
-		CodeUnusedLocal,
-		CodeDeadAssignment,
-		CodeRedundantCondition,
-		CodeDiscriminatedUnionExhaustive,
-		CodeFrozenTableMutation,
-		CodeResourceUnreleased,
-		CodeSendIsolation,
-		CodeAdviceRedundantClaim,
-		CodeAdviceAlwaysTrueGuard,
-		CodeAdviceInvariantLoopRead,
-		CodeAdviceSplitBirthDiscriminant,
+	diagnosticDefaults := map[diagnostic.Code]judgment.DiagnosticDefault{}
+	for _, judgmentCode := range judgment.DefaultRegistry().Codes() {
+		spec, ok := judgment.DefaultRegistry().Lookup(judgmentCode)
+		if !ok {
+			t.Fatalf("default registry code disappeared: %s", judgmentCode)
+		}
+		for _, code := range spec.DiagnosticCodes {
+			diagnosticCode := diagnostic.Code(code)
+			if existing, ok := diagnosticDefaults[diagnosticCode]; ok && existing != spec.DiagnosticDefault {
+				t.Fatalf("diagnostic code %s has mixed defaults %s and %s", code, existing, spec.DiagnosticDefault)
+			}
+			diagnosticDefaults[diagnosticCode] = spec.DiagnosticDefault
+		}
 	}
 
 	declared := make(map[diagnostic.Code]struct{})
@@ -189,13 +162,17 @@ func TestDiagnosticProducerRegistryDeclaresPolicyDefaults(t *testing.T) {
 		}
 		for _, code := range producer.codes {
 			declared[code] = struct{}{}
-			_, isOptIn := optInCodes[code]
-			if !producer.defaultEnabled && !isOptIn {
-				t.Fatalf("producer %d marks default-enabled code %s as opt-in", i, code)
+			defaultPolicy, ok := diagnosticDefaults[code]
+			if !ok {
+				t.Fatalf("producer %d declares unknown diagnostic code %s", i, code)
+			}
+			wantDefaultEnabled := defaultPolicy == judgment.DiagnosticDefaultEnabled
+			if producer.defaultEnabled != wantDefaultEnabled {
+				t.Fatalf("producer %d default for code %s = %v, want %v", i, code, producer.defaultEnabled, wantDefaultEnabled)
 			}
 		}
 	}
-	for _, code := range allCodes {
+	for code := range diagnosticDefaults {
 		if _, ok := declared[code]; !ok {
 			t.Fatalf("diagnostic code %s is not declared by any producer", code)
 		}

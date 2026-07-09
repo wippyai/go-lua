@@ -13,6 +13,7 @@ func renderUnresolvedValueJudgmentWithPolicy(ctx judgmentRenderContext, item jud
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
+	code := diagnosticCodeForJudgment(item)
 	name := item.Subject.Label
 	if name == "" {
 		name = "<missing>"
@@ -22,7 +23,7 @@ func renderUnresolvedValueJudgmentWithPolicy(ctx judgmentRenderContext, item jud
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		File:        item.Spans[0].File,
 		Span:        span,
-		Code:        CodeUnresolvedValueReference,
+		Code:        code,
 		Severity:    severity,
 		Message:     presentation.Message,
 		Explanation: presentation.Explanation,

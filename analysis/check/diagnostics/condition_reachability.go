@@ -13,11 +13,12 @@ func renderRedundantConditionJudgmentWithPolicy(ctx judgmentRenderContext, item 
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
+	code := diagnosticCodeForJudgment(item)
 	span := diagnosticSpanFromJudgment(item.Spans[0])
 	presentation := ctx.proof.RedundantCondition(item, span)
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		Span:        span,
-		Code:        CodeRedundantCondition,
+		Code:        code,
 		Severity:    severity,
 		Message:     presentation.Message,
 		Labels:      presentation.Labels,

@@ -13,6 +13,7 @@ func renderTableDispatchJudgmentWithPolicy(ctx judgmentRenderContext, item judgm
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
+	code := diagnosticCodeForJudgment(item)
 	lookupSpan := diagnosticSpanFromJudgment(item.Spans[0])
 	presentation, ok := ctx.proof.TableDispatch(item, lookupSpan)
 	if !ok {
@@ -21,7 +22,7 @@ func renderTableDispatchJudgmentWithPolicy(ctx judgmentRenderContext, item judgm
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		File:        item.Spans[0].File,
 		Span:        lookupSpan,
-		Code:        CodeDiscriminatedUnionExhaustive,
+		Code:        code,
 		Severity:    severity,
 		Message:     presentation.Message,
 		Explanation: presentation.Explanation,

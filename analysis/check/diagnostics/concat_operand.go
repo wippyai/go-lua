@@ -13,6 +13,7 @@ func renderConcatOperandJudgmentWithPolicy(ctx judgmentRenderContext, item judgm
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
+	code := diagnosticCodeForJudgment(item)
 	operandSpan := diagnosticSpanFromJudgment(item.Spans[0])
 	presentation, ok := ctx.proof.ConcatOperand(item, operandSpan)
 	if !ok {
@@ -20,7 +21,7 @@ func renderConcatOperandJudgmentWithPolicy(ctx judgmentRenderContext, item judgm
 	}
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		Span:        operandSpan,
-		Code:        CodeConcatOperand,
+		Code:        code,
 		Severity:    severity,
 		Message:     presentation.Message,
 		Labels:      presentation.Labels,

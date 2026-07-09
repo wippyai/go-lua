@@ -13,12 +13,13 @@ func renderFrozenTableJudgmentWithPolicy(ctx judgmentRenderContext, item judgmen
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
+	code := diagnosticCodeForJudgment(item)
 	span := diagnosticSpanFromJudgment(item.Spans[0])
 	presentation := ctx.proof.FrozenTable(item, span)
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		File:        item.Spans[0].File,
 		Span:        span,
-		Code:        CodeFrozenTableMutation,
+		Code:        code,
 		Message:     presentation.Message,
 		Severity:    severity,
 		Explanation: diagnostic.NewExplanation(presentation.Evidence...),

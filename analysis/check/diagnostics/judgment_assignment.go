@@ -26,9 +26,10 @@ func renderAssignmentJudgmentWithPolicy(ctx judgmentRenderContext, item judgment
 	sourceName := item.Actual.Label
 	proofContext := ctx.proof
 	if presentation, ok := proofContext.AssignmentCallResultForItem(item, got, want, span); ok {
+		code := diagnosticCodeForJudgmentAt(item, 1)
 		return diagnostic.New(diagnostic.DiagnosticSpec{
 			Span:        span,
-			Code:        CodeDirectCallResultAssignment,
+			Code:        code,
 			Severity:    severity,
 			Message:     presentation.Message,
 			Help:        presentation.Help,
@@ -36,11 +37,12 @@ func renderAssignmentJudgmentWithPolicy(ctx judgmentRenderContext, item judgment
 			Labels:      presentation.Labels,
 		}), true
 	}
+	code := diagnosticCodeForJudgmentAt(item, 0)
 	expectedDisplay := assignmentJudgmentExpectedTypeLabel(item, target, want)
 	presentation := proofContext.AssignmentDiagnostic(item, target, sourceName, got, want, span, expectedDisplay)
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		Span:        span,
-		Code:        CodeAssignmentType,
+		Code:        code,
 		Severity:    severity,
 		Message:     presentation.Message,
 		Explanation: diagnostic.NewExplanation(presentation.Evidence...),
@@ -57,11 +59,12 @@ func renderOptionalAssignmentTargetJudgmentWithPolicy(ctx judgmentRenderContext,
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
+	code := diagnosticCodeForJudgment(item)
 	targetSpan := diagnosticSpanFromJudgment(item.Spans[0])
 	presentation := ctx.proof.OptionalAssignmentTarget(item, targetSpan)
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		Span:        targetSpan,
-		Code:        CodeOptionalAssignmentTarget,
+		Code:        code,
 		Severity:    severity,
 		Message:     presentation.Message,
 		Help:        presentation.Help,

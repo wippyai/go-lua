@@ -13,6 +13,7 @@ func renderRegistrationJudgmentWithPolicy(ctx judgmentRenderContext, item judgme
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
+	code := diagnosticCodeForJudgment(item)
 	primary := diagnosticSpanFromJudgment(item.Spans[0])
 	presentation, ok := ctx.proof.Registration(item, primary)
 	if !ok {
@@ -21,7 +22,7 @@ func renderRegistrationJudgmentWithPolicy(ctx judgmentRenderContext, item judgme
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		File:        item.Spans[0].File,
 		Span:        primary,
-		Code:        CodeDiscriminatedUnionExhaustive,
+		Code:        code,
 		Severity:    severity,
 		Message:     presentation.Message,
 		Explanation: presentation.Explanation,

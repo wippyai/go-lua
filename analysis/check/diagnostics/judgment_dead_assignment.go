@@ -13,6 +13,7 @@ func renderDeadAssignmentJudgmentWithPolicy(ctx judgmentRenderContext, item judg
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
+	code := diagnosticCodeForJudgment(item)
 	name := item.Subject.Label
 	if name == "" {
 		return diagnostic.Diagnostic{}, false
@@ -22,7 +23,7 @@ func renderDeadAssignmentJudgmentWithPolicy(ctx judgmentRenderContext, item judg
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		File:        item.Spans[0].File,
 		Span:        span,
-		Code:        CodeDeadAssignment,
+		Code:        code,
 		Severity:    severity,
 		Message:     presentation.Message,
 		Explanation: diagnostic.NewExplanation(presentation.Evidence...),

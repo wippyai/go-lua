@@ -15,35 +15,32 @@ func newJudgmentRenderContext() judgmentRenderContext {
 
 type judgmentDiagnosticRenderer func(judgmentRenderContext, judgment.Judgment, judgment.Policy, judgment.StrictnessMode) (diagnostic.Diagnostic, bool)
 
-var judgmentDiagnosticRenderers = map[judgment.Code]judgmentDiagnosticRenderer{
-	judgment.CodeCallArgType:                  renderDirectCallArgumentJudgmentWithPolicy,
-	judgment.CodeCallArity:                    renderCallArityJudgmentWithPolicy,
-	judgment.CodeCallCallee:                   renderCallCalleeJudgmentWithPolicy,
-	judgment.CodeAssignment:                   renderAssignmentJudgmentWithPolicy,
-	judgment.CodeAssignmentTarget:             renderOptionalAssignmentTargetJudgmentWithPolicy,
-	judgment.CodeReturn:                       renderReturnJudgmentWithPolicy,
-	judgment.CodeNonNilAssertion:              renderNonNilAssertionJudgmentWithPolicy,
-	judgment.CodeNumericForOperand:            renderNumericForJudgmentWithPolicy,
-	judgment.CodeFrozenTable:                  renderFrozenTableJudgmentWithPolicy,
-	judgment.CodeLifecycle:                    renderLifecycleJudgmentWithPolicy,
-	judgment.CodeUnusedLocal:                  renderUnusedLocalJudgmentWithPolicy,
-	judgment.CodeDeadAssignment:               renderDeadAssignmentJudgmentWithPolicy,
-	judgment.CodeChannelSelect:                renderChannelSelectJudgmentWithPolicy,
-	judgment.CodeDiscriminatedUnion:           renderDiscriminatedUnionJudgmentWithPolicy,
-	judgment.CodeOptional:                     renderOptionalJudgmentWithPolicy,
-	judgment.CodeResultShape:                  renderResultShapeJudgmentWithPolicy,
-	judgment.CodeRegistration:                 renderRegistrationJudgmentWithPolicy,
-	judgment.CodeTableDispatch:                renderTableDispatchJudgmentWithPolicy,
-	judgment.CodeUnresolvedValue:              renderUnresolvedValueJudgmentWithPolicy,
-	judgment.CodeUnresolvedType:               renderUnresolvedTypeJudgmentWithPolicy,
-	judgment.CodeRedundantCondition:           renderRedundantConditionJudgmentWithPolicy,
-	judgment.CodeMemberRead:                   renderMemberReadJudgmentWithPolicy,
-	judgment.CodeConcatOperand:                renderConcatOperandJudgmentWithPolicy,
-	judgment.CodeSendIsolation:                renderSendIsolationJudgmentWithPolicy,
-	judgment.CodeAdviceRedundantClaim:         renderAdviceRedundantClaimJudgmentWithPolicy,
-	judgment.CodeAdviceAlwaysTrueGuard:        renderAdviceAlwaysTrueGuardJudgmentWithPolicy,
-	judgment.CodeAdviceInvariantLoopRead:      renderAdviceInvariantLoopReadJudgmentWithPolicy,
-	judgment.CodeAdviceSplitBirthDiscriminant: renderAdviceSplitBirthDiscriminantJudgmentWithPolicy,
+var judgmentDiagnosticRenderers = map[judgment.RenderKey]judgmentDiagnosticRenderer{
+	judgment.RenderAdvice:                   renderAdviceJudgmentWithPolicy,
+	judgment.RenderAssignment:               renderAssignmentJudgmentWithPolicy,
+	judgment.RenderCallArity:                renderCallArityJudgmentWithPolicy,
+	judgment.RenderCallCallee:               renderCallCalleeJudgmentWithPolicy,
+	judgment.RenderChannelSelect:            renderChannelSelectJudgmentWithPolicy,
+	judgment.RenderConcatOperand:            renderConcatOperandJudgmentWithPolicy,
+	judgment.RenderDeadAssignment:           renderDeadAssignmentJudgmentWithPolicy,
+	judgment.RenderDirectCallArgument:       renderDirectCallArgumentJudgmentWithPolicy,
+	judgment.RenderDiscriminatedUnion:       renderDiscriminatedUnionJudgmentWithPolicy,
+	judgment.RenderFrozenTable:              renderFrozenTableJudgmentWithPolicy,
+	judgment.RenderLifecycle:                renderLifecycleJudgmentWithPolicy,
+	judgment.RenderMemberRead:               renderMemberReadJudgmentWithPolicy,
+	judgment.RenderNonNilAssertion:          renderNonNilAssertionJudgmentWithPolicy,
+	judgment.RenderNumericFor:               renderNumericForJudgmentWithPolicy,
+	judgment.RenderOptional:                 renderOptionalJudgmentWithPolicy,
+	judgment.RenderOptionalAssignmentTarget: renderOptionalAssignmentTargetJudgmentWithPolicy,
+	judgment.RenderRedundantCondition:       renderRedundantConditionJudgmentWithPolicy,
+	judgment.RenderRegistration:             renderRegistrationJudgmentWithPolicy,
+	judgment.RenderResultShape:              renderResultShapeJudgmentWithPolicy,
+	judgment.RenderReturn:                   renderReturnJudgmentWithPolicy,
+	judgment.RenderSendIsolation:            renderSendIsolationJudgmentWithPolicy,
+	judgment.RenderTableDispatch:            renderTableDispatchJudgmentWithPolicy,
+	judgment.RenderUnresolvedType:           renderUnresolvedTypeJudgmentWithPolicy,
+	judgment.RenderUnresolvedValue:          renderUnresolvedValueJudgmentWithPolicy,
+	judgment.RenderUnusedLocal:              renderUnusedLocalJudgmentWithPolicy,
 }
 
 func renderJudgmentDiagnostics(items []judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) []diagnostic.Diagnostic {
@@ -57,7 +54,11 @@ func (ctx judgmentRenderContext) render(items []judgment.Judgment, policy judgme
 	policy = normalizedJudgmentPolicy(policy)
 	out := make([]diagnostic.Diagnostic, 0, len(items))
 	for _, item := range items {
-		render, ok := judgmentDiagnosticRenderers[item.Code]
+		spec, ok := judgment.DefaultRegistry().Lookup(item.Code)
+		if !ok {
+			continue
+		}
+		render, ok := judgmentDiagnosticRenderers[spec.Render]
 		if !ok {
 			continue
 		}
@@ -85,6 +86,42 @@ func diagnosticSeverityForJudgment(item judgment.Judgment, policy judgment.Polic
 	default:
 		return diagnostic.SeverityHint, false
 	}
+}
+
+func diagnosticCodeForJudgment(item judgment.Judgment) diagnostic.Code {
+	spec, ok := judgment.DefaultRegistry().Lookup(item.Code)
+	if !ok {
+		return ""
+	}
+	return primaryDiagnosticCode(spec)
+}
+
+func diagnosticCodeForJudgmentAt(item judgment.Judgment, index int) diagnostic.Code {
+	spec, ok := judgment.DefaultRegistry().Lookup(item.Code)
+	if !ok || index < 0 || index >= len(spec.DiagnosticCodes) || spec.DiagnosticCodes[index] == "" {
+		return ""
+	}
+	return diagnostic.Code(spec.DiagnosticCodes[index])
+}
+
+func diagnosticCodeDeclaredForJudgment(item judgment.Judgment, code diagnostic.Code) bool {
+	spec, ok := judgment.DefaultRegistry().Lookup(item.Code)
+	if !ok {
+		return false
+	}
+	for _, declared := range spec.DiagnosticCodes {
+		if diagnostic.Code(declared) == code {
+			return true
+		}
+	}
+	return false
+}
+
+func primaryDiagnosticCode(spec judgment.CodeSpec) diagnostic.Code {
+	if len(spec.DiagnosticCodes) != 1 || spec.DiagnosticCodes[0] == "" {
+		return ""
+	}
+	return diagnostic.Code(spec.DiagnosticCodes[0])
 }
 
 func normalizedJudgmentPolicy(policy judgment.Policy) judgment.Policy {

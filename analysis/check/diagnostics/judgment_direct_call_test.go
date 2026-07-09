@@ -606,7 +606,7 @@ local raw: any = nil
 need_string(raw)`)
 
 	diags := ProduceWithConfig(result, Config{
-		JudgmentStrictness: judgment.StrictnessLenient,
+		Judgment: judgment.PolicyConfig{Strictness: judgment.StrictnessLenient},
 	})
 	var argDiags []diagnostic.Diagnostic
 	for _, diag := range diags {
@@ -704,7 +704,7 @@ func TestProduceDirectCallContractUsesJudgmentPolicyForUnknownCallee(t *testing.
 maybe()`)
 
 	diags := ProduceWithConfig(result, Config{
-		JudgmentStrictness: judgment.StrictnessLenient,
+		Judgment: judgment.PolicyConfig{Strictness: judgment.StrictnessLenient},
 	})
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want one: %#v", len(diags), diags)

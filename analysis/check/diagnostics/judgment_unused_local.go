@@ -13,6 +13,7 @@ func renderUnusedLocalJudgmentWithPolicy(ctx judgmentRenderContext, item judgmen
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
+	code := diagnosticCodeForJudgment(item)
 	name := item.Subject.Label
 	if name == "" {
 		return diagnostic.Diagnostic{}, false
@@ -22,7 +23,7 @@ func renderUnusedLocalJudgmentWithPolicy(ctx judgmentRenderContext, item judgmen
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		File:        item.Spans[0].File,
 		Span:        span,
-		Code:        CodeUnusedLocal,
+		Code:        code,
 		Severity:    severity,
 		Message:     presentation.Message,
 		Explanation: presentation.Explanation,

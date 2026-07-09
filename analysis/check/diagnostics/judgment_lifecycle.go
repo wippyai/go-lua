@@ -13,6 +13,7 @@ func renderLifecycleJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
+	code := diagnosticCodeForJudgment(item)
 	presentation, ok := ctx.proof.Lifecycle(item)
 	if !ok {
 		return diagnostic.Diagnostic{}, false
@@ -20,7 +21,7 @@ func renderLifecycleJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		File:        presentation.File,
 		Span:        presentation.Span,
-		Code:        CodeResourceUnreleased,
+		Code:        code,
 		Message:     presentation.Message,
 		Severity:    severity,
 		Explanation: diagnostic.NewExplanation(presentation.Evidence...),

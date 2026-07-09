@@ -45,22 +45,22 @@ func reachableCallJudgmentContext(result *body.Result, sourceFile string) pass.C
 }
 
 func (c producerContext) produceJudgments(result *body.Result, producers ...pass.Producer) []diagnostic.Diagnostic {
-	return renderJudgmentDiagnostics(pass.New(producers...).Run(judgmentContext(result, "")), c.judgmentPolicy, c.judgmentStrictness)
+	return renderJudgmentDiagnostics(pass.New(producers...).Run(judgmentContext(result, "")), c.judgmentPolicy.Policy, c.judgmentPolicy.Strictness)
 }
 
 func (c producerContext) produceJudgmentsWithParent(result, parent *body.Result, producers ...pass.Producer) []diagnostic.Diagnostic {
 	items := pass.New(producers...).Run(pass.Context{
 		Reader: internalreadmodel.NewWithParents(result, parent),
 	})
-	return renderJudgmentDiagnostics(items, c.judgmentPolicy, c.judgmentStrictness)
+	return renderJudgmentDiagnostics(items, c.judgmentPolicy.Policy, c.judgmentPolicy.Strictness)
 }
 
 func (c producerContext) produceJudgmentsWithParents(result *body.Result, parents []*body.Result, producers ...pass.Producer) []diagnostic.Diagnostic {
-	return renderJudgmentDiagnostics(pass.New(producers...).Run(judgmentContextWithParents(result, parents, "")), c.judgmentPolicy, c.judgmentStrictness)
+	return renderJudgmentDiagnostics(pass.New(producers...).Run(judgmentContextWithParents(result, parents, "")), c.judgmentPolicy.Policy, c.judgmentPolicy.Strictness)
 }
 
 func (c producerContext) produceReachableJudgments(result *body.Result, producers ...pass.Producer) []diagnostic.Diagnostic {
-	return renderJudgmentDiagnostics(pass.New(producers...).Run(reachableJudgmentContext(result, "")), c.judgmentPolicy, c.judgmentStrictness)
+	return renderJudgmentDiagnostics(pass.New(producers...).Run(reachableJudgmentContext(result, "")), c.judgmentPolicy.Policy, c.judgmentPolicy.Strictness)
 }
 
 func (c producerContext) produceDirectCallContractJudgments(result *body.Result) []diagnostic.Diagnostic {
@@ -70,5 +70,5 @@ func (c producerContext) produceDirectCallContractJudgments(result *body.Result)
 		pass.New(pass.CallArity{}).Run(ctx),
 		pass.New(pass.CallArguments{}).Run(ctx),
 	)
-	return renderJudgmentDiagnostics(items, c.judgmentPolicy, c.judgmentStrictness)
+	return renderJudgmentDiagnostics(items, c.judgmentPolicy.Policy, c.judgmentPolicy.Strictness)
 }

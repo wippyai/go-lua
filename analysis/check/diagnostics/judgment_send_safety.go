@@ -13,6 +13,7 @@ func renderSendIsolationJudgmentWithPolicy(_ judgmentRenderContext, item judgmen
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
+	code := diagnosticCodeForJudgment(item)
 	span := diagnosticSpanFromJudgment(item.Spans[0])
 	labels := []diagnostic.Label{sourceLabel(span, labelSendPayload)}
 	if proofSpan, ok := sendSafetyProofSpan(item, span); ok {
@@ -21,7 +22,7 @@ func renderSendIsolationJudgmentWithPolicy(_ judgmentRenderContext, item judgmen
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		File:        item.Spans[0].File,
 		Span:        span,
-		Code:        CodeSendIsolation,
+		Code:        code,
 		Message:     sendSafetyMessage(item),
 		Severity:    severity,
 		Explanation: diagnostic.NewExplanation(sendSafetyEvidence(item, span)...),
