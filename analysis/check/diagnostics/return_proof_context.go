@@ -25,12 +25,14 @@ func (ProofContext) Return(item judgment.Judgment, label string, sourceName stri
 		{
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
+			Cause:   diagnosticCauseForJudgmentEvidenceKind(item, judgment.EvidenceAbstractFact),
 			Span:    diagnosticEvidenceSpanOrPrimary(item, judgment.EvidenceAbstractFact),
 			Message: display.SourceTypeEvidence(subject, got),
 		},
 		{
 			Kind:    diagnostic.EvidenceUserAssertion,
 			Trust:   diagnostic.TrustClaimed,
+			Cause:   diagnosticCauseForJudgmentEvidenceKind(item, judgment.EvidenceUserAssertion),
 			Span:    declSpan,
 			Message: display.ReturnDeclaredTypeEvidence(label, want),
 		},
@@ -99,6 +101,7 @@ func returnJudgmentExtraEvidence(item judgment.Judgment, proof judgment.ReturnPr
 					Kind:    diagnostic.EvidenceUserAssertion,
 					Trust:   diagnosticTrustFromJudgmentTrust(evidence.Trust, diagnostic.TrustClaimed),
 					Reason:  diagnostic.EvidenceReasonUserAssertedAny,
+					Cause:   diagnosticCauseFromJudgmentEvidence(evidence),
 					Span:    diagnosticSpanFromJudgment(evidence.Span),
 					Message: display.UserAssertedAnyEvidence(),
 				})
@@ -108,6 +111,7 @@ func returnJudgmentExtraEvidence(item judgment.Judgment, proof judgment.ReturnPr
 				Kind:    diagnostic.EvidencePrecisionBoundary,
 				Trust:   diagnosticTrustFromJudgmentTrust(evidence.Trust, diagnostic.TrustUnknown),
 				Reason:  diagnostic.EvidenceReasonExplicitBoundaryValidation,
+				Cause:   diagnosticCauseFromJudgmentEvidence(evidence),
 				Span:    diagnosticJudgmentEvidenceSpanOr(evidence, primary),
 				Message: display.ReturnExplicitBoundaryProofMessage(subject),
 			})
@@ -126,6 +130,7 @@ func returnJudgmentExtraEvidence(item judgment.Judgment, proof judgment.ReturnPr
 		Kind:    diagnostic.EvidenceMissingProof,
 		Trust:   missingProofTrustFromJudgment(item.Verdict),
 		Reason:  missingReason,
+		Cause:   diagnostic.EvidenceCause{Kind: diagnostic.EvidenceCauseMissingProof},
 		Span:    primary,
 		Message: missingMessage,
 	})

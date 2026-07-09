@@ -167,6 +167,7 @@ func assignmentJudgment(ctx Context, functionKey string, assignment readmodel.As
 			Kind:  judgment.EvidenceAbstractFact,
 			Trust: judgment.EvidenceTrustProven,
 			Detail: judgment.EvidenceDetail{
+				Cause:        judgment.EvidenceCause{Kind: judgment.EvidenceCauseFlowAssign},
 				Kind:         judgment.EvidenceDetailMayBeNil,
 				SubjectLabel: access.Label,
 				Field:        access.Access,
@@ -264,6 +265,7 @@ func optionalAssignmentTargetJudgment(ctx Context, functionKey string, target re
 			Kind:  judgment.EvidenceMissingProof,
 			Trust: judgment.EvidenceTrustRefuted,
 			Detail: judgment.EvidenceDetail{
+				Cause:        judgment.EvidenceCause{Kind: judgment.EvidenceCauseMissingProof},
 				Kind:         judgment.EvidenceDetailMayBeNil,
 				SubjectLabel: target.ContainerLabel,
 			},

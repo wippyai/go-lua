@@ -1,6 +1,7 @@
 package pass_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
@@ -34,8 +35,11 @@ func TestCallArgumentsRefutesConcreteMismatch(t *testing.T) {
 	if got[0].Verdict != judgment.VerdictRefuted {
 		t.Fatalf("verdict = %v, want refuted", got[0].Verdict)
 	}
-	if got[0].Subject.StableKey() != "fixture:f|call_arg|call:2:arg:0" {
-		t.Fatalf("stable key = %q", got[0].Subject.StableKey())
+	if stable := got[0].Subject.StableKey(); !strings.Contains(stable, "fn:fixture\\cf") ||
+		!strings.Contains(stable, "kind:call_arg") ||
+		!strings.Contains(stable, "role:call.arg\\c0") ||
+		!strings.Contains(stable, "ord:0") {
+		t.Fatalf("stable key = %q", stable)
 	}
 }
 
@@ -154,8 +158,12 @@ need_string(raw)`, "test.lua").RootResult()
 	if got[0].Subject.Label != "argument 1 (raw)" {
 		t.Fatalf("subject label = %q, want argument name", got[0].Subject.Label)
 	}
-	if got[0].Subject.StableKey() != "fixture:label|call_arg|call:4:arg:0" {
-		t.Fatalf("stable key = %q", got[0].Subject.StableKey())
+	if stable := got[0].Subject.StableKey(); !strings.Contains(stable, "fn:fixture\\clabel") ||
+		!strings.Contains(stable, "kind:call_arg") ||
+		!strings.Contains(stable, "name:argument 1 (raw)") ||
+		!strings.Contains(stable, "role:call.arg\\c0") ||
+		!strings.Contains(stable, "ord:0") {
+		t.Fatalf("stable key = %q", stable)
 	}
 }
 

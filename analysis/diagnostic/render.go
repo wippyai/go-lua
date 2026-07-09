@@ -395,6 +395,7 @@ type evidenceRenderKey struct {
 	kind    EvidenceKind
 	trust   TrustKind
 	reason  EvidenceReason
+	cause   EvidenceCauseKind
 	file    string
 	span    Span
 	message string
@@ -411,6 +412,7 @@ func uniqueEvidence(items []Evidence, defaultFile string) []Evidence {
 			kind:    item.Kind,
 			trust:   item.Trust,
 			reason:  item.Reason,
+			cause:   item.Cause.Kind,
 			file:    evidenceFile(defaultFile, item),
 			span:    item.Span,
 			message: evidenceMessage(item),
@@ -436,6 +438,9 @@ func orderWitnessTraceEvidence(items []Evidence, primaryFile string) []Evidence 
 	if len(items) < 2 {
 		return append([]Evidence(nil), items...)
 	}
+	if allEvidenceHaveCause(items) {
+		return orderWitnessTraceEvidenceByCause(items, primaryFile)
+	}
 	var facts, claims, missing []Evidence
 	for _, item := range items {
 		switch {
@@ -452,6 +457,47 @@ func orderWitnessTraceEvidence(items []Evidence, primaryFile string) []Evidence 
 	out = append(out, orderWitnessTraceEvidenceGroup(claims, primaryFile)...)
 	out = append(out, orderWitnessTraceEvidenceGroup(missing, primaryFile)...)
 	return out
+}
+
+func allEvidenceHaveCause(items []Evidence) bool {
+	for _, item := range items {
+		if item.Cause.IsZero() {
+			return false
+		}
+	}
+	return len(items) != 0
+}
+
+func orderWitnessTraceEvidenceByCause(items []Evidence, primaryFile string) []Evidence {
+	out := append([]Evidence(nil), items...)
+	sort.SliceStable(out, func(i, j int) bool {
+		leftRank := evidenceCauseRank(out[i].Cause.Kind)
+		rightRank := evidenceCauseRank(out[j].Cause.Kind)
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
+		return witnessTraceSpanBefore(out[i], out[j], primaryFile)
+	})
+	return out
+}
+
+func evidenceCauseRank(kind EvidenceCauseKind) int {
+	switch kind {
+	case EvidenceCauseBirth:
+		return 10
+	case EvidenceCauseFlowAssign, EvidenceCauseFlowCall:
+		return 20
+	case EvidenceCauseGuard:
+		return 25
+	case EvidenceCauseClaim:
+		return 30
+	case EvidenceCauseWiden:
+		return 40
+	case EvidenceCauseMissingProof:
+		return 50
+	default:
+		return 100
+	}
 }
 
 type witnessTraceEvidenceItem struct {

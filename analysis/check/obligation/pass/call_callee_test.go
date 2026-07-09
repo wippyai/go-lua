@@ -26,8 +26,12 @@ maybe()`)
 	}
 	assertCalleeJudgment(t, got[0], judgment.EvidenceDetailCalleeNotCallable, "x", typ.LiteralInt(42), judgment.VerdictRefuted)
 	assertCalleeJudgment(t, got[1], judgment.EvidenceDetailCalleeMayBeNil, "maybe", nil, judgment.VerdictUnknown)
-	if !strings.HasPrefix(got[0].Subject.StableKey(), "fixture:callee|call|call:") || !strings.HasSuffix(got[0].Subject.StableKey(), ":callee") {
-		t.Fatalf("first stable key = %q, want callee call subject", got[0].Subject.StableKey())
+	if stable := got[0].Subject.StableKey(); !strings.Contains(stable, "fn:fixture\\ccallee") ||
+		!strings.Contains(stable, "kind:call") ||
+		!strings.Contains(stable, "name:x") ||
+		!strings.Contains(stable, "role:call.callee") ||
+		!strings.Contains(stable, "ord:0") {
+		t.Fatalf("first stable key = %q, want callee call subject", stable)
 	}
 	if got[0].Subject.StableKey() == got[1].Subject.StableKey() {
 		t.Fatalf("stable keys are not distinct: %q", got[0].Subject.StableKey())

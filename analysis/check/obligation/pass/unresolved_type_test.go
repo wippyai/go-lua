@@ -36,7 +36,13 @@ local p: LocalPoint = {x = 1}
 	if item.Subject.Kind != judgment.SubjectPath || item.Subject.Label != "LocalPoint" {
 		t.Fatalf("subject = %#v, want path subject labelled LocalPoint", item.Subject)
 	}
-	if stable := item.Subject.StableKey(); !strings.Contains(stable, "fixture:types|path|unresolved-type:") {
+	if stable := item.Subject.StableKey(); !strings.Contains(stable, "fn:fixture\\ctypes") ||
+		!strings.Contains(stable, "kind:path") ||
+		!strings.Contains(stable, "bind_kind:type") ||
+		!strings.Contains(stable, "bind:type\\cLocalPoint") ||
+		!strings.Contains(stable, "name:LocalPoint") ||
+		!strings.Contains(stable, "role:type.unresolved") ||
+		!strings.Contains(stable, "ord:0") {
 		t.Fatalf("stable key = %q", stable)
 	}
 	if len(item.Spans) != 1 || item.Spans[0].File != "test.lua" || item.Spans[0].StartLine != 5 || item.Spans[0].StartCol != 10 {

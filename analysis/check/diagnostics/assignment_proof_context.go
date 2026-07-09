@@ -85,6 +85,7 @@ func (ctx ProofContext) AssignmentDiagnostic(item judgment.Judgment, target stri
 		underSuppliedEvidence := diagnostic.Evidence{
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnostic.TrustProven,
+			Cause:   diagnosticCauseFromJudgmentDetail(underSuppliedDetail),
 			Span:    sourceSpan,
 			Message: display.UnderSuppliedTargetEvidence(target, source, underSuppliedDetail.ResultIndex),
 		}
@@ -123,12 +124,14 @@ func (ctx ProofContext) AssignmentDiagnostic(item judgment.Judgment, target stri
 		{
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
+			Cause:   diagnosticCauseForJudgmentEvidenceKind(item, judgment.EvidenceAbstractFact),
 			Span:    diagnosticEvidenceSpanOrPrimary(item, judgment.EvidenceAbstractFact),
 			Message: sourceEvidence,
 		},
 		{
 			Kind:    assignmentJudgmentExpectedEvidenceKind(item),
 			Trust:   assignmentJudgmentExpectedEvidenceTrust(item),
+			Cause:   diagnosticCauseForJudgmentEvidenceKind(item, judgment.EvidenceUserAssertion),
 			Span:    declSpan,
 			Message: assignmentJudgmentExpectedEvidence(item, target, want, expectedDisplay),
 		},
@@ -182,6 +185,7 @@ func (ProofContext) AssignmentStructure(item judgment.Judgment, target string, g
 				{
 					Kind:    diagnostic.EvidenceAbstractFact,
 					Trust:   diagnostic.TrustProven,
+					Cause:   diagnosticCauseFromJudgmentDetail(detail),
 					Span:    sourceSpan,
 					Message: display.MissingRequiredFieldPathEvidence(path, detail.FieldType),
 				},
@@ -200,6 +204,7 @@ func (ProofContext) AssignmentStructure(item judgment.Judgment, target string, g
 				{
 					Kind:    diagnostic.EvidenceMissingProof,
 					Trust:   diagnostic.TrustUnknown,
+					Cause:   diagnosticCauseFromJudgmentDetail(detail),
 					Span:    sourceSpan,
 					Message: display.MissingRequiredMethodTypeEvidence(want, typ.Method{Name: detail.Field, Type: functionTypeOrNil(detail.FieldType)}),
 				},
@@ -217,6 +222,7 @@ func (ProofContext) AssignmentStructure(item judgment.Judgment, target string, g
 				{
 					Kind:    diagnostic.EvidenceMissingProof,
 					Trust:   diagnostic.TrustUnknown,
+					Cause:   diagnosticCauseFromJudgmentDetail(detail),
 					Span:    sourceSpan,
 					Message: display.MethodTypeMismatchEvidence(want, detail.Field, detail.ActualType, detail.FieldType),
 				},
@@ -248,6 +254,7 @@ func (ctx ProofContext) AssignmentCallResult(item judgment.Judgment, detail judg
 		evidence = append(evidence, diagnostic.Evidence{
 			Kind:    diagnostic.EvidenceUserAssertion,
 			Trust:   diagnostic.TrustClaimed,
+			Cause:   diagnosticCauseFromJudgmentDetail(detail),
 			Span:    retSpan,
 			Message: display.CallResultDeclaredReturnEvidence(name, label, got),
 		})
@@ -255,6 +262,7 @@ func (ctx ProofContext) AssignmentCallResult(item judgment.Judgment, detail judg
 		evidence = append(evidence, diagnostic.Evidence{
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnostic.TrustProven,
+			Cause:   diagnosticCauseFromJudgmentDetail(detail),
 			Span:    callSpan,
 			Message: fmt.Sprintf("%s returns %s", name, display.Type(got)),
 		})
@@ -262,6 +270,7 @@ func (ctx ProofContext) AssignmentCallResult(item judgment.Judgment, detail judg
 	evidence = append(evidence, diagnostic.Evidence{
 		Kind:    diagnostic.EvidenceUserAssertion,
 		Trust:   diagnostic.TrustClaimed,
+		Cause:   diagnosticCauseForJudgmentEvidenceKind(item, judgment.EvidenceUserAssertion),
 		Span:    typeSpan,
 		Message: display.AssignmentTargetTypeEvidence(target, want),
 	})
@@ -309,12 +318,14 @@ func (ProofContext) OptionalAssignmentTarget(item judgment.Judgment, targetSpan 
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnostic.TrustProven,
+				Cause:   diagnostic.EvidenceCause{Kind: diagnostic.EvidenceCauseFlowAssign},
 				Span:    containerSpan,
 				Message: display.OptionalAssignmentTargetContainerEvidence(containerName, containerType),
 			},
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnostic.TrustProven,
+				Cause:   diagnostic.EvidenceCause{Kind: diagnostic.EvidenceCauseMissingProof},
 				Span:    targetSpan,
 				Message: display.OptionalAssignmentTargetWriteEvidence(targetName),
 			},
@@ -498,6 +509,7 @@ func assignmentProofEvidence(item judgment.Judgment, proof judgment.AssignmentPr
 			Kind:    diagnostic.EvidencePrecisionBoundary,
 			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidencePrecisionBoundary, diagnostic.TrustUnknown),
 			Reason:  diagnostic.EvidenceReasonExplicitBoundaryValidation,
+			Cause:   diagnosticCauseForJudgmentEvidenceKind(item, judgment.EvidencePrecisionBoundary),
 			Span:    sourceSpan,
 			Message: fmt.Sprintf("%s comes from any/unknown", boundaryEvidenceSubject(sourceName)),
 		})
@@ -515,6 +527,7 @@ func assignmentProofEvidence(item judgment.Judgment, proof judgment.AssignmentPr
 				Kind:    diagnostic.EvidenceMissingProof,
 				Trust:   assignmentMissingProofTrust(item, proof),
 				Reason:  assignmentJudgmentMissingProofReason(proof),
+				Cause:   diagnostic.EvidenceCause{Kind: diagnostic.EvidenceCauseMissingProof},
 				Span:    sourceSpan,
 				Message: assignmentJudgmentMissingProofMessage(item, proof, sourceName, got, want),
 			})
@@ -539,6 +552,7 @@ func assignmentProofEvidence(item judgment.Judgment, proof judgment.AssignmentPr
 				Kind:    diagnostic.EvidenceMissingProof,
 				Trust:   assignmentMissingProofTrust(item, proof),
 				Reason:  assignmentJudgmentMissingProofReason(proof),
+				Cause:   diagnostic.EvidenceCause{Kind: diagnostic.EvidenceCauseMissingProof},
 				Span:    sourceSpan,
 				Message: assignmentJudgmentMissingProofMessage(item, proof, sourceName, got, want),
 			})
@@ -549,6 +563,7 @@ func assignmentProofEvidence(item judgment.Judgment, proof judgment.AssignmentPr
 			Kind:    diagnostic.EvidenceMissingProof,
 			Trust:   diagnostic.TrustUnknown,
 			Reason:  diagnostic.EvidenceReasonBoundaryValidationMissing,
+			Cause:   diagnostic.EvidenceCause{Kind: diagnostic.EvidenceCauseMissingProof},
 			Span:    sourceSpan,
 			Message: assignmentJudgmentMissingProofMessage(item, proof, sourceName, got, want),
 		})
@@ -582,6 +597,7 @@ func appendMissingNilGuardEvidence(items []diagnostic.Evidence, sourceName strin
 		Kind:    diagnostic.EvidenceMissingProof,
 		Trust:   diagnostic.TrustUnknown,
 		Reason:  reason,
+		Cause:   diagnostic.EvidenceCause{Kind: diagnostic.EvidenceCauseMissingProof},
 		Span:    sourceSpan,
 		Message: message,
 	})
@@ -608,6 +624,7 @@ func assignmentJudgmentUserAssertionEvidence(item judgment.Judgment) []diagnosti
 			Kind:    diagnostic.EvidenceUserAssertion,
 			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceUserAssertion, diagnostic.TrustClaimed),
 			Reason:  diagnostic.EvidenceReasonUserAssertedAny,
+			Cause:   diagnosticCauseFromJudgmentEvidence(evidence),
 			Span:    diagnosticSpanFromJudgment(evidence.Span),
 			Message: display.UserAssertedAnyEvidence(),
 		})
@@ -624,6 +641,7 @@ func assignmentJudgmentNilableAccessEvidence(item judgment.Judgment) []diagnosti
 		out = append(out, diagnostic.Evidence{
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnosticTrustFromJudgmentTrust(evidence.Trust, diagnostic.TrustProven),
+			Cause:   diagnosticCauseFromJudgmentEvidence(evidence),
 			Span:    diagnosticSpanFromJudgment(evidence.Span),
 			Message: assignmentNilableAccessMessage(evidence.Detail.SubjectLabel, evidence.Detail.Field),
 		})
@@ -637,6 +655,7 @@ func assignmentJudgmentSourceContributionEvidence(item judgment.Judgment) []diag
 		out = append(out, diagnostic.Evidence{
 			Kind:  diagnostic.EvidenceAbstractFact,
 			Trust: diagnosticTrustFromJudgmentTrust(evidence.Trust, diagnostic.TrustProven),
+			Cause: diagnosticCauseFromJudgmentEvidence(evidence),
 			Span:  diagnosticSpanFromJudgment(evidence.Span),
 			Message: diagnosticDisplay{}.ReassignedCallResultFieldEvidence(
 				evidence.Detail.ProviderLabel,
@@ -658,6 +677,7 @@ func assignmentJudgmentParentContextEvidence(item judgment.Judgment) []diagnosti
 		out = append(out, diagnostic.Evidence{
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnosticTrustFromJudgmentTrust(evidence.Trust, diagnostic.TrustProven),
+			Cause:   diagnosticCauseFromJudgmentEvidence(evidence),
 			Span:    diagnosticSpanFromJudgment(evidence.Span),
 			Message: fmt.Sprintf("%s has type %s", label, display.Type(evidence.Detail.FieldType)),
 		})
@@ -670,6 +690,7 @@ func assignmentJudgmentParentContextEvidence(item judgment.Judgment) []diagnosti
 		out = append(out, diagnostic.Evidence{
 			Kind:    diagnostic.EvidenceUserAssertion,
 			Trust:   diagnosticTrustFromJudgmentTrust(evidence.Trust, diagnostic.TrustClaimed),
+			Cause:   diagnosticCauseFromJudgmentEvidence(evidence),
 			Span:    diagnosticSpanFromJudgment(evidence.Span),
 			Message: fmt.Sprintf("%s is declared as %s", label, display.Type(evidence.Detail.FieldType)),
 		})
@@ -683,6 +704,7 @@ func assignmentJudgmentCallInvalidationEvidence(item judgment.Judgment) []diagno
 		out = append(out, diagnostic.Evidence{
 			Kind:  diagnostic.EvidenceAbstractFact,
 			Trust: diagnosticTrustFromJudgmentTrust(evidence.Trust, diagnostic.TrustProven),
+			Cause: diagnosticCauseFromJudgmentEvidence(evidence),
 			Span:  diagnosticSpanFromJudgment(evidence.Span),
 			Message: assignmentCallInvalidationMessage(
 				evidence.Detail.ProviderLabel,

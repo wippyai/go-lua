@@ -31,7 +31,11 @@ func TestUnresolvedValuesRefutesImplicitGlobalRead(t *testing.T) {
 	if item.Subject.Kind != judgment.SubjectPath || item.Subject.Label != "missing" {
 		t.Fatalf("subject = %#v, want path subject labelled missing", item.Subject)
 	}
-	if stable := item.Subject.StableKey(); !strings.Contains(stable, "fixture:unresolved|path|unresolved-value:") {
+	if stable := item.Subject.StableKey(); !strings.Contains(stable, "fn:fixture\\cunresolved") ||
+		!strings.Contains(stable, "kind:path") ||
+		!strings.Contains(stable, "bind_kind:value") ||
+		!strings.Contains(stable, "role:value.unresolved") ||
+		!strings.Contains(stable, "ord:0") {
 		t.Fatalf("stable key = %q", stable)
 	}
 	if len(item.Spans) != 1 || item.Spans[0].File != "test.lua" || item.Spans[0].StartLine != 1 || item.Spans[0].StartCol != 11 {

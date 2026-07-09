@@ -5,6 +5,8 @@
 package judgment
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -75,6 +77,7 @@ type SubjectRef struct {
 	FunctionKey string
 	Kind        SubjectKind
 	Key         string
+	Anchor      SubjectAnchor
 	Label       string
 }
 
@@ -92,8 +95,18 @@ func (s SubjectRef) WithLabel(label string) SubjectRef {
 	return s
 }
 
+// WithAnchor returns s with an edit-stable subject anchor. The legacy Key stays
+// available to renderers as debug/display metadata.
+func (s SubjectRef) WithAnchor(anchor SubjectAnchor) SubjectRef {
+	s.Anchor = anchor
+	return s
+}
+
 // StableKey returns a deterministic identity for dedup and precedence.
 func (s SubjectRef) StableKey() string {
+	if !s.Anchor.IsZero() {
+		return s.Anchor.StableKey()
+	}
 	var b strings.Builder
 	b.WriteString(s.FunctionKey)
 	b.WriteByte('|')
@@ -101,6 +114,63 @@ func (s SubjectRef) StableKey() string {
 	b.WriteByte('|')
 	b.WriteString(s.Key)
 	return b.String()
+}
+
+// SubjectAnchor is the edit-stable identity for a judgment subject. It is built
+// from semantic scope, binding/path identity where available, a role
+// discriminator, and a source-order ordinal for repeated identical anchors.
+type SubjectAnchor struct {
+	ModulePath  string
+	FunctionKey string
+	Kind        SubjectKind
+	BindingKind string
+	BindingKey  string
+	BindingName string
+	Role        string
+	Ordinal     int
+}
+
+// IsZero reports whether no stable anchor was attached.
+func (a SubjectAnchor) IsZero() bool {
+	return a.ModulePath == "" &&
+		a.FunctionKey == "" &&
+		a.Kind == SubjectUnknown &&
+		a.BindingKind == "" &&
+		a.BindingKey == "" &&
+		a.BindingName == "" &&
+		a.Role == "" &&
+		a.Ordinal == 0
+}
+
+// StableKey formats the anchor as a deterministic comparable key.
+func (a SubjectAnchor) StableKey() string {
+	var b strings.Builder
+	writeAnchorPart(&b, "module", a.ModulePath)
+	writeAnchorPart(&b, "fn", a.FunctionKey)
+	writeAnchorPart(&b, "kind", subjectKindString(a.Kind))
+	writeAnchorPart(&b, "bind_kind", a.BindingKind)
+	writeAnchorPart(&b, "bind", a.BindingKey)
+	writeAnchorPart(&b, "name", a.BindingName)
+	writeAnchorPart(&b, "role", a.Role)
+	writeAnchorPart(&b, "ord", strconv.Itoa(a.Ordinal))
+	return b.String()
+}
+
+func writeAnchorPart(b *strings.Builder, name string, value string) {
+	if b.Len() > 0 {
+		b.WriteByte('|')
+	}
+	b.WriteString(name)
+	b.WriteByte(':')
+	b.WriteString(escapeAnchorPart(value))
+}
+
+func escapeAnchorPart(value string) string {
+	if value == "" {
+		return ""
+	}
+	replacer := strings.NewReplacer(`\`, `\\`, `|`, `\p`, ":", `\c`)
+	return replacer.Replace(value)
 }
 
 // TypeRef names a resolved type. The concrete type value remains owned by the
@@ -155,6 +225,56 @@ const (
 	EvidenceTrustClaimed
 	EvidenceTrustRefuted
 )
+
+// EvidenceCauseKind is the structural cause vocabulary carried by evidence.
+// Renderers own the user-facing wording for each cause/detail combination.
+type EvidenceCauseKind uint8
+
+const (
+	EvidenceCauseUnknown EvidenceCauseKind = iota
+	EvidenceCauseBirth
+	EvidenceCauseFlowAssign
+	EvidenceCauseFlowCall
+	EvidenceCauseClaim
+	EvidenceCauseGuard
+	EvidenceCauseWiden
+	EvidenceCauseMissingProof
+)
+
+// EvidenceCauseParams carries small typed fields used by cause templates.
+type EvidenceCauseParams struct {
+	Path         string
+	Type         typ.Type
+	Code         Code
+	Subject      string
+	Field        string
+	FunctionName string
+	Provider     string
+	Index        int
+	ResultIndex  int
+}
+
+// EvidenceCause describes why an evidence node exists without embedding prose.
+type EvidenceCause struct {
+	Kind   EvidenceCauseKind
+	Params EvidenceCauseParams
+	Origin OriginRef
+}
+
+// IsZero reports whether no structured cause was attached.
+func (c EvidenceCause) IsZero() bool {
+	return c.Kind == EvidenceCauseUnknown &&
+		c.Params.Path == "" &&
+		c.Params.Type == nil &&
+		c.Params.Code == "" &&
+		c.Params.Subject == "" &&
+		c.Params.Field == "" &&
+		c.Params.FunctionName == "" &&
+		c.Params.Provider == "" &&
+		c.Params.Index == 0 &&
+		c.Params.ResultIndex == 0 &&
+		c.Origin == (OriginRef{})
+}
 
 // EvidenceDetailKind classifies structured evidence details that renderers may
 // phrase for a diagnostic family. It is intentionally semantic data, not text.
@@ -235,6 +355,7 @@ const (
 // EvidenceDetail carries renderer-independent detail for one evidence node.
 type EvidenceDetail struct {
 	Kind           EvidenceDetailKind
+	Cause          EvidenceCause
 	Field          string
 	FieldType      typ.Type
 	ActualType     typ.Type
@@ -261,6 +382,19 @@ type EvidenceDetail struct {
 	Always         bool
 }
 
+// WithCause returns d with a structured cause kind.
+func (d EvidenceDetail) WithCause(kind EvidenceCauseKind) EvidenceDetail {
+	d.Cause.Kind = kind
+	return d
+}
+
+// WithCauseOrigin returns d with a structured cause and origin reference.
+func (d EvidenceDetail) WithCauseOrigin(kind EvidenceCauseKind, origin OriginRef) EvidenceDetail {
+	d.Cause.Kind = kind
+	d.Cause.Origin = origin
+	return d
+}
+
 func RedundantConditionCheckEvidenceDetail(message string, always bool) EvidenceDetail {
 	return EvidenceDetail{Kind: EvidenceDetailRedundantConditionCheck, Message: message, Always: always}
 }
@@ -273,40 +407,64 @@ func RedundantConditionStabilityEvidenceDetail(message string) EvidenceDetail {
 	return EvidenceDetail{Kind: EvidenceDetailRedundantConditionStability, Message: message}
 }
 
-func AdviceClaimSiteEvidenceDetail(message string) EvidenceDetail {
-	return EvidenceDetail{Kind: EvidenceDetailAdviceClaimSite, Message: message}
+func AdviceClaimSiteEvidenceDetail(claimed typ.Type) EvidenceDetail {
+	return EvidenceDetail{
+		Kind:  EvidenceDetailAdviceClaimSite,
+		Cause: EvidenceCause{Kind: EvidenceCauseClaim, Params: EvidenceCauseParams{Type: claimed}},
+	}
 }
 
-func AdviceProvenTypeEvidenceDetail(message string) EvidenceDetail {
-	return EvidenceDetail{Kind: EvidenceDetailAdviceProvenType, Message: message}
+func AdviceProvenTypeEvidenceDetail(subject string, proven typ.Type) EvidenceDetail {
+	return EvidenceDetail{
+		Kind:  EvidenceDetailAdviceProvenType,
+		Cause: EvidenceCause{Kind: EvidenceCauseFlowAssign, Params: EvidenceCauseParams{Subject: subject, Type: proven}},
+	}
 }
 
-func AdviceGuardValueEvidenceDetail(message string, always bool) EvidenceDetail {
-	return EvidenceDetail{Kind: EvidenceDetailAdviceGuardValue, Message: message, Always: always}
+func AdviceGuardValueEvidenceDetail(always bool) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailAdviceGuardValue, Cause: EvidenceCause{Kind: EvidenceCauseGuard}, Always: always}
 }
 
-func AdviceLoopInvariantEvidenceDetail(message string) EvidenceDetail {
-	return EvidenceDetail{Kind: EvidenceDetailAdviceLoopInvariant, Message: message}
+func AdviceLoopInvariantEvidenceDetail(path string) EvidenceDetail {
+	return EvidenceDetail{
+		Kind:  EvidenceDetailAdviceLoopInvariant,
+		Cause: EvidenceCause{Kind: EvidenceCauseFlowAssign, Params: EvidenceCauseParams{Path: path}},
+	}
 }
 
-func AdviceReceiverNonNilEvidenceDetail(message string) EvidenceDetail {
-	return EvidenceDetail{Kind: EvidenceDetailAdviceReceiverNonNil, Message: message}
+func AdviceReceiverNonNilEvidenceDetail(subject string) EvidenceDetail {
+	return EvidenceDetail{
+		Kind:  EvidenceDetailAdviceReceiverNonNil,
+		Cause: EvidenceCause{Kind: EvidenceCauseGuard, Params: EvidenceCauseParams{Subject: subject}},
+	}
 }
 
-func AdviceTableBirthEvidenceDetail(message string) EvidenceDetail {
-	return EvidenceDetail{Kind: EvidenceDetailAdviceTableBirth, Message: message}
+func AdviceTableBirthEvidenceDetail(subject string) EvidenceDetail {
+	return EvidenceDetail{
+		Kind:  EvidenceDetailAdviceTableBirth,
+		Cause: EvidenceCause{Kind: EvidenceCauseBirth, Params: EvidenceCauseParams{Subject: subject}},
+	}
 }
 
-func AdviceTagWriteEvidenceDetail(message string) EvidenceDetail {
-	return EvidenceDetail{Kind: EvidenceDetailAdviceTagWrite, Message: message}
+func AdviceTagWriteEvidenceDetail(subject, value string) EvidenceDetail {
+	return EvidenceDetail{
+		Kind:  EvidenceDetailAdviceTagWrite,
+		Cause: EvidenceCause{Kind: EvidenceCauseFlowAssign, Params: EvidenceCauseParams{Subject: subject, Field: value}},
+	}
 }
 
-func AdvicePayloadWriteEvidenceDetail(message string) EvidenceDetail {
-	return EvidenceDetail{Kind: EvidenceDetailAdvicePayloadWrite, Message: message}
+func AdvicePayloadWriteEvidenceDetail(subject string) EvidenceDetail {
+	return EvidenceDetail{
+		Kind:  EvidenceDetailAdvicePayloadWrite,
+		Cause: EvidenceCause{Kind: EvidenceCauseFlowAssign, Params: EvidenceCauseParams{Subject: subject}},
+	}
 }
 
-func AdviceDiscriminantUseEvidenceDetail(message string) EvidenceDetail {
-	return EvidenceDetail{Kind: EvidenceDetailAdviceDiscriminantUse, Message: message}
+func AdviceDiscriminantUseEvidenceDetail(subject string) EvidenceDetail {
+	return EvidenceDetail{
+		Kind:  EvidenceDetailAdviceDiscriminantUse,
+		Cause: EvidenceCause{Kind: EvidenceCauseFlowAssign, Params: EvidenceCauseParams{Subject: subject}},
+	}
 }
 
 func ResultShapeUnionEvidenceDetail(receiver, discriminant string) EvidenceDetail {
@@ -396,37 +554,37 @@ func OptionalNoDefaultEvidenceDetail() EvidenceDetail {
 // MissingRequiredFieldEvidenceDetail records that a structural proof failed
 // because a required record field is absent.
 func MissingRequiredFieldEvidenceDetail(field string) EvidenceDetail {
-	return EvidenceDetail{Kind: EvidenceDetailMissingRequiredField, Field: field}
+	return EvidenceDetail{Kind: EvidenceDetailMissingRequiredField, Cause: EvidenceCause{Kind: EvidenceCauseMissingProof}, Field: field}
 }
 
 // MissingRequiredFieldTypeEvidenceDetail records an absent required record
 // field and its expected field type.
 func MissingRequiredFieldTypeEvidenceDetail(field string, fieldType typ.Type) EvidenceDetail {
-	return EvidenceDetail{Kind: EvidenceDetailMissingRequiredField, Field: field, FieldType: fieldType}
+	return EvidenceDetail{Kind: EvidenceDetailMissingRequiredField, Cause: EvidenceCause{Kind: EvidenceCauseMissingProof}, Field: field, FieldType: fieldType}
 }
 
 // MissingRequiredMethodTypeEvidenceDetail records an absent required interface
 // method and its expected method type.
 func MissingRequiredMethodTypeEvidenceDetail(method string, methodType typ.Type) EvidenceDetail {
-	return EvidenceDetail{Kind: EvidenceDetailMissingRequiredMethod, Field: method, FieldType: methodType}
+	return EvidenceDetail{Kind: EvidenceDetailMissingRequiredMethod, Cause: EvidenceCause{Kind: EvidenceCauseMissingProof}, Field: method, FieldType: methodType}
 }
 
 // MethodTypeMismatchEvidenceDetail records an interface method whose provided
 // type does not satisfy the required method signature.
 func MethodTypeMismatchEvidenceDetail(method string, actual, expected typ.Type) EvidenceDetail {
-	return EvidenceDetail{Kind: EvidenceDetailMethodTypeMismatch, Field: method, ActualType: actual, FieldType: expected}
+	return EvidenceDetail{Kind: EvidenceDetailMethodTypeMismatch, Cause: EvidenceCause{Kind: EvidenceCauseMissingProof}, Field: method, ActualType: actual, FieldType: expected}
 }
 
 // MayBeNilEvidenceDetail records that the argument value may be nil while the
 // parameter contract does not accept nil.
 func MayBeNilEvidenceDetail() EvidenceDetail {
-	return EvidenceDetail{Kind: EvidenceDetailMayBeNil}
+	return EvidenceDetail{Kind: EvidenceDetailMayBeNil, Cause: EvidenceCause{Kind: EvidenceCauseMissingProof}}
 }
 
 // GenericConflictEvidenceDetail records that one generic type parameter was
 // inferred from incompatible argument evidence.
 func GenericConflictEvidenceDetail(param string) EvidenceDetail {
-	return EvidenceDetail{Kind: EvidenceDetailGenericConflict, Param: param}
+	return EvidenceDetail{Kind: EvidenceDetailGenericConflict, Cause: EvidenceCause{Kind: EvidenceCauseMissingProof}, Param: param}
 }
 
 // ArityTooFewEvidenceDetail records a call with fewer arguments than the
@@ -444,31 +602,31 @@ func ArityTooManyEvidenceDetail(expected, actual int) EvidenceDetail {
 // CalleeNotCallableEvidenceDetail records a call whose target has a concrete
 // non-callable type.
 func CalleeNotCallableEvidenceDetail() EvidenceDetail {
-	return EvidenceDetail{Kind: EvidenceDetailCalleeNotCallable}
+	return EvidenceDetail{Kind: EvidenceDetailCalleeNotCallable, Cause: EvidenceCause{Kind: EvidenceCauseMissingProof}}
 }
 
 // MemberCalleeNotCallableEvidenceDetail records a member call whose target has
 // a concrete non-callable type.
 func MemberCalleeNotCallableEvidenceDetail() EvidenceDetail {
-	return EvidenceDetail{Kind: EvidenceDetailCalleeNotCallable, MemberAccess: true}
+	return EvidenceDetail{Kind: EvidenceDetailCalleeNotCallable, Cause: EvidenceCause{Kind: EvidenceCauseMissingProof}, MemberAccess: true}
 }
 
 // CalleeMayBeNilEvidenceDetail records a call whose target may be nil before
 // it is invoked.
 func CalleeMayBeNilEvidenceDetail(callable bool) EvidenceDetail {
-	return EvidenceDetail{Kind: EvidenceDetailCalleeMayBeNil, Callable: callable}
+	return EvidenceDetail{Kind: EvidenceDetailCalleeMayBeNil, Cause: EvidenceCause{Kind: EvidenceCauseMissingProof}, Callable: callable}
 }
 
 // MemberCalleeMayBeNilEvidenceDetail records a member call whose target may be
 // nil before it is invoked.
 func MemberCalleeMayBeNilEvidenceDetail(callable bool) EvidenceDetail {
-	return EvidenceDetail{Kind: EvidenceDetailCalleeMayBeNil, Callable: callable, MemberAccess: true}
+	return EvidenceDetail{Kind: EvidenceDetailCalleeMayBeNil, Cause: EvidenceCause{Kind: EvidenceCauseMissingProof}, Callable: callable, MemberAccess: true}
 }
 
 // MemberMissingEvidenceDetail records a member call whose receiver lacks the
 // requested member.
 func MemberMissingEvidenceDetail(member string) EvidenceDetail {
-	return EvidenceDetail{Kind: EvidenceDetailMemberMissing, Field: member, MemberAccess: true}
+	return EvidenceDetail{Kind: EvidenceDetailMemberMissing, Cause: EvidenceCause{Kind: EvidenceCauseMissingProof}, Field: member, MemberAccess: true}
 }
 
 // CallParamObligationEvidenceDetail records that a caller argument is being
@@ -476,6 +634,7 @@ func MemberMissingEvidenceDetail(member string) EvidenceDetail {
 func CallParamObligationEvidenceDetail(functionName, subjectLabel, providerLabel string, memberParam int) EvidenceDetail {
 	return EvidenceDetail{
 		Kind:          EvidenceDetailCallParamObligation,
+		Cause:         EvidenceCause{Kind: EvidenceCauseClaim},
 		FunctionName:  functionName,
 		SubjectLabel:  subjectLabel,
 		ProviderLabel: providerLabel,
@@ -488,6 +647,7 @@ func CallParamObligationEvidenceDetail(functionName, subjectLabel, providerLabel
 func AssignmentSourceContributionEvidenceDetail(rootLabel, readLabel string, t typ.Type) EvidenceDetail {
 	return EvidenceDetail{
 		Kind:          EvidenceDetailAssignmentSourceContribution,
+		Cause:         EvidenceCause{Kind: EvidenceCauseFlowAssign},
 		ProviderLabel: rootLabel,
 		SubjectLabel:  readLabel,
 		FieldType:     t,
@@ -499,6 +659,7 @@ func AssignmentSourceContributionEvidenceDetail(rootLabel, readLabel string, t t
 func AssignmentCallInvalidationEvidenceDetail(callLabel, invalidatedLabel, readLabel string) EvidenceDetail {
 	return EvidenceDetail{
 		Kind:          EvidenceDetailAssignmentCallInvalidation,
+		Cause:         EvidenceCause{Kind: EvidenceCauseFlowCall},
 		ProviderLabel: callLabel,
 		Field:         invalidatedLabel,
 		SubjectLabel:  readLabel,
@@ -510,6 +671,7 @@ func AssignmentCallInvalidationEvidenceDetail(callLabel, invalidatedLabel, readL
 func AssignmentParentActualEvidenceDetail(label string, t typ.Type) EvidenceDetail {
 	return EvidenceDetail{
 		Kind:         EvidenceDetailAssignmentParentActual,
+		Cause:        EvidenceCause{Kind: EvidenceCauseFlowAssign},
 		SubjectLabel: label,
 		FieldType:    t,
 	}
@@ -520,6 +682,7 @@ func AssignmentParentActualEvidenceDetail(label string, t typ.Type) EvidenceDeta
 func AssignmentParentExpectedEvidenceDetail(label string, t typ.Type) EvidenceDetail {
 	return EvidenceDetail{
 		Kind:         EvidenceDetailAssignmentParentExpected,
+		Cause:        EvidenceCause{Kind: EvidenceCauseClaim},
 		SubjectLabel: label,
 		FieldType:    t,
 	}
@@ -531,6 +694,7 @@ func AssignmentParentExpectedEvidenceDetail(label string, t typ.Type) EvidenceDe
 func DynamicAssignmentTargetEvidenceDetail(subjectLabel string) EvidenceDetail {
 	return EvidenceDetail{
 		Kind:         EvidenceDetailDynamicAssignmentTarget,
+		Cause:        EvidenceCause{Kind: EvidenceCauseClaim},
 		SubjectLabel: subjectLabel,
 	}
 }
@@ -540,6 +704,7 @@ func DynamicAssignmentTargetEvidenceDetail(subjectLabel string) EvidenceDetail {
 func UserAssertedAnyEvidenceDetail(subjectLabel string) EvidenceDetail {
 	return EvidenceDetail{
 		Kind:         EvidenceDetailUserAssertedAny,
+		Cause:        EvidenceCause{Kind: EvidenceCauseClaim},
 		SubjectLabel: subjectLabel,
 	}
 }
@@ -547,7 +712,7 @@ func UserAssertedAnyEvidenceDetail(subjectLabel string) EvidenceDetail {
 // IndexedReadMissingProofEvidenceDetail records that an indexed read may miss
 // or read nil unless the current path proves the selected slot is valid.
 func IndexedReadMissingProofEvidenceDetail() EvidenceDetail {
-	return EvidenceDetail{Kind: EvidenceDetailIndexedReadMissingProof}
+	return EvidenceDetail{Kind: EvidenceDetailIndexedReadMissingProof, Cause: EvidenceCause{Kind: EvidenceCauseMissingProof}}
 }
 
 // CallResultAssignmentEvidenceDetail records that an assignment source is a
@@ -555,6 +720,7 @@ func IndexedReadMissingProofEvidenceDetail() EvidenceDetail {
 func CallResultAssignmentEvidenceDetail(functionName string, resultIndex int) EvidenceDetail {
 	return EvidenceDetail{
 		Kind:         EvidenceDetailCallResultAssignment,
+		Cause:        EvidenceCause{Kind: EvidenceCauseFlowCall},
 		FunctionName: functionName,
 		ResultIndex:  resultIndex,
 	}
@@ -848,6 +1014,9 @@ func evidenceIdentityLess(a, b evidenceIdentity) bool {
 	if a.detail.Kind != b.detail.Kind {
 		return a.detail.Kind < b.detail.Kind
 	}
+	if a.detail.Cause.Kind != b.detail.Cause.Kind {
+		return a.detail.Cause.Kind < b.detail.Cause.Kind
+	}
 	if a.detail.Field != b.detail.Field {
 		return a.detail.Field < b.detail.Field
 	}
@@ -879,6 +1048,29 @@ func evidenceIdentityLess(a, b evidenceIdentity) bool {
 		return !a.detail.Always && b.detail.Always
 	}
 	return a.kind < b.kind
+}
+
+func (k EvidenceCauseKind) String() string {
+	switch k {
+	case EvidenceCauseBirth:
+		return "birth"
+	case EvidenceCauseFlowAssign:
+		return "flow-assign"
+	case EvidenceCauseFlowCall:
+		return "flow-call"
+	case EvidenceCauseClaim:
+		return "claim"
+	case EvidenceCauseGuard:
+		return "guard"
+	case EvidenceCauseWiden:
+		return "widen"
+	case EvidenceCauseMissingProof:
+		return "missing-proof"
+	case EvidenceCauseUnknown:
+		return "unknown"
+	default:
+		return fmt.Sprintf("cause(%d)", k)
+	}
 }
 
 func subjectKindString(kind SubjectKind) string {

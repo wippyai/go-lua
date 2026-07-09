@@ -52,6 +52,7 @@ func sendSafetyEvidence(item judgment.Judgment, primary diagnostic.Span) []diagn
 		out = append(out, diagnostic.Evidence{
 			Kind:    sendSafetyDiagnosticEvidenceKind(evidence.Kind),
 			Trust:   diagnosticTrustFromJudgmentTrust(evidence.Trust, diagnostic.TrustUnknown),
+			Cause:   diagnosticCauseFromJudgmentEvidence(evidence),
 			Span:    diagnosticJudgmentEvidenceSpanOr(evidence, primary),
 			Message: message,
 		})

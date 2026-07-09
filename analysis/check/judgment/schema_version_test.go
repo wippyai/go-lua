@@ -15,6 +15,7 @@ const expectedJIRSchemaVersion2Hash = "45bdab7d703e0a2b56bbaf12a9eb606e179846d74
 const expectedJIRSchemaVersion3Hash = "43c55c71372da0f616d81685086ce8951f0c2cc00fa3e141917cba3e6d7384ff"
 const expectedJIRSchemaVersion4Hash = "f50e5b8a2c383943ff3e876507791a078119ddbd55b8aa1149b60eb6e31c8f5a"
 const expectedJIRSchemaVersion5Hash = "e4bf901a0cf23196860c191514aff2aad8b0aafb1387b696af0e9d009ecb3722"
+const expectedJIRSchemaVersion6Hash = "ef8025767752746b3aacfdac58d2b772cdeb6968cff2d14a0e3695cc48d11ae8"
 
 func TestJIRSchemaVersionPinsCurrentSurface(t *testing.T) {
 	got := hashSchemaSurface(jirSchemaSurface())
@@ -24,6 +25,7 @@ func TestJIRSchemaVersionPinsCurrentSurface(t *testing.T) {
 		3: expectedJIRSchemaVersion3Hash,
 		4: expectedJIRSchemaVersion4Hash,
 		5: expectedJIRSchemaVersion5Hash,
+		6: expectedJIRSchemaVersion6Hash,
 	}[JIRSchemaVersion]
 	if want == "" {
 		t.Fatalf("no expected JIR schema hash for version %d: bump version constant + journal a D-entry", JIRSchemaVersion)
@@ -63,11 +65,14 @@ func jirSchemaSurface() []string {
 	for _, typ := range []reflect.Type{
 		reflect.TypeOf(Judgment{}),
 		reflect.TypeOf(SubjectRef{}),
+		reflect.TypeOf(SubjectAnchor{}),
 		reflect.TypeOf(TypeRef{}),
 		reflect.TypeOf(ValueRef{}),
 		reflect.TypeOf(OriginRef{}),
 		reflect.TypeOf(Evidence{}),
 		reflect.TypeOf(EvidenceDetail{}),
+		reflect.TypeOf(EvidenceCause{}),
+		reflect.TypeOf(EvidenceCauseParams{}),
 		reflect.TypeOf(SpanRef{}),
 	} {
 		out = append(out, exportedRecordShape(typ)...)

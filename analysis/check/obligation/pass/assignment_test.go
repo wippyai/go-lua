@@ -41,7 +41,13 @@ func TestAssignmentsRefutesConcreteMismatch(t *testing.T) {
 	if item.Subject.Kind != judgment.SubjectPath || item.Subject.Label != "n" {
 		t.Fatalf("subject = %#v, want path subject labelled n", item.Subject)
 	}
-	if stable := item.Subject.StableKey(); !strings.HasPrefix(stable, "fixture:assignment|path|assignment:") || !strings.Contains(stable, ":sym:") {
+	if stable := item.Subject.StableKey(); !strings.Contains(stable, "fn:fixture\\cassignment") ||
+		!strings.Contains(stable, "kind:path") ||
+		!strings.Contains(stable, "bind_kind:symbol") ||
+		!strings.Contains(stable, "bind:symbol\\cn") ||
+		!strings.Contains(stable, "name:n") ||
+		!strings.Contains(stable, "role:assignment.value") ||
+		!strings.Contains(stable, "ord:0") {
 		t.Fatalf("stable key = %q", item.Subject.StableKey())
 	}
 	if len(item.Spans) != 1 || item.Spans[0].File != "test.lua" || item.Spans[0].StartLine != 1 {

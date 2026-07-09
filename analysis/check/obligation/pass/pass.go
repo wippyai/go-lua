@@ -57,7 +57,9 @@ func (p Pass) Run(ctx Context) []judgment.Judgment {
 			out = append(out, item)
 		}
 	}
-	return suppressJudgmentCascades(out)
+	out = suppressJudgmentCascades(out)
+	normalizeJudgmentSubjects(ctx, out)
+	return out
 }
 
 func suppressJudgmentCascades(in []judgment.Judgment) []judgment.Judgment {

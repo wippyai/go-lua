@@ -398,6 +398,47 @@ func TestOrderWitnessTraceEvidenceMovesFactsBeforeClaimsAndMissingProofs(t *test
 	)
 }
 
+func TestOrderWitnessTraceEvidenceUsesCauseKindWhenPresent(t *testing.T) {
+	items := []Evidence{
+		{
+			Kind:    EvidenceMissingProof,
+			Trust:   TrustUnknown,
+			Cause:   EvidenceCause{Kind: EvidenceCauseMissingProof},
+			Span:    Span{StartLine: 8, StartCol: 12},
+			Message: "no proof shows source is string",
+		},
+		{
+			Kind:    EvidenceAbstractFact,
+			Trust:   TrustProven,
+			Cause:   EvidenceCause{Kind: EvidenceCauseFlowCall},
+			Span:    Span{StartLine: 6, StartCol: 4},
+			Message: "source crosses call",
+		},
+		{
+			Kind:    EvidenceUserAssertion,
+			Trust:   TrustClaimed,
+			Cause:   EvidenceCause{Kind: EvidenceCauseClaim},
+			Span:    Span{StartLine: 2, StartCol: 9},
+			Message: "target is declared string",
+		},
+		{
+			Kind:    EvidenceAbstractFact,
+			Trust:   TrustProven,
+			Cause:   EvidenceCause{Kind: EvidenceCauseBirth},
+			Span:    Span{StartLine: 12, StartCol: 3},
+			Message: "source is born nil",
+		},
+	}
+
+	got := orderWitnessTraceEvidence(items, "main.lua")
+	assertEvidenceMessages(t, got,
+		"source is born nil",
+		"source crosses call",
+		"target is declared string",
+		"no proof shows source is string",
+	)
+}
+
 func TestOrderWitnessTraceEvidenceKeepsUnspannedItemsAfterPreviousSpannedItem(t *testing.T) {
 	items := []Evidence{
 		{

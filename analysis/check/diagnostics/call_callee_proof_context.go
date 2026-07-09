@@ -71,6 +71,7 @@ func callCalleeJudgmentEvidence(item judgment.Judgment, detail judgment.Evidence
 			{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
+				Cause:   diagnosticCauseFromJudgmentDetail(detail),
 				Span:    primary,
 				Message: display.ReceiverForMemberEvidence(name, actual),
 			},
@@ -95,12 +96,14 @@ func callCalleeJudgmentEvidence(item judgment.Judgment, detail judgment.Evidence
 				{
 					Kind:    diagnostic.EvidenceAbstractFact,
 					Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
+					Cause:   diagnosticCauseForJudgmentEvidenceKind(item, judgment.EvidenceAbstractFact),
 					Span:    primary,
 					Message: display.OptionalMethodReceiverEvidence(subject, target),
 				},
 				{
 					Kind:    diagnostic.EvidenceMissingProof,
 					Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceMissingProof, diagnostic.TrustUnknown),
+					Cause:   diagnosticCauseFromJudgmentDetail(detail),
 					Span:    primary,
 					Message: display.OptionalMethodMissingNilCheckEvidence(subject, callTarget),
 				},
@@ -111,18 +114,21 @@ func callCalleeJudgmentEvidence(item judgment.Judgment, detail judgment.Evidence
 				{
 					Kind:    diagnostic.EvidenceAbstractFact,
 					Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
+					Cause:   diagnosticCauseForJudgmentEvidenceKind(item, judgment.EvidenceAbstractFact),
 					Span:    primary,
 					Message: display.MemberTypeAtCallEvidence(name, actual),
 				},
 				{
 					Kind:    diagnostic.EvidenceUserAssertion,
 					Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceUserAssertion, diagnostic.TrustClaimed),
+					Cause:   diagnosticCauseForJudgmentEvidenceKind(item, judgment.EvidenceUserAssertion),
 					Span:    primary,
 					Message: fmt.Sprintf("%s must be non-nil before it is called", name),
 				},
 				{
 					Kind:    diagnostic.EvidenceMissingProof,
 					Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceMissingProof, diagnostic.TrustUnknown),
+					Cause:   diagnosticCauseFromJudgmentDetail(detail),
 					Span:    primary,
 					Message: display.MissingNonNilBeforeCallMessage(name),
 				},
@@ -133,18 +139,21 @@ func callCalleeJudgmentEvidence(item judgment.Judgment, detail judgment.Evidence
 			{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
+				Cause:   diagnosticCauseForJudgmentEvidenceKind(item, judgment.EvidenceAbstractFact),
 				Span:    primary,
 				Message: actualMessage,
 			},
 			{
 				Kind:    diagnostic.EvidenceUserAssertion,
 				Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceUserAssertion, diagnostic.TrustClaimed),
+				Cause:   diagnosticCauseForJudgmentEvidenceKind(item, judgment.EvidenceUserAssertion),
 				Span:    primary,
 				Message: fmt.Sprintf("%s must be non-nil before it is called", name),
 			},
 			{
 				Kind:    diagnostic.EvidenceMissingProof,
 				Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceMissingProof, diagnostic.TrustUnknown),
+				Cause:   diagnosticCauseFromJudgmentDetail(detail),
 				Span:    primary,
 				Message: display.MissingNonNilBeforeCallMessage(name),
 			},
@@ -158,18 +167,21 @@ func callCalleeJudgmentEvidence(item judgment.Judgment, detail judgment.Evidence
 		{
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
+			Cause:   diagnosticCauseForJudgmentEvidenceKind(item, judgment.EvidenceAbstractFact),
 			Span:    primary,
 			Message: actualMessage,
 		},
 		{
 			Kind:    diagnostic.EvidenceUserAssertion,
 			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceUserAssertion, diagnostic.TrustClaimed),
+			Cause:   diagnosticCauseForJudgmentEvidenceKind(item, judgment.EvidenceUserAssertion),
 			Span:    primary,
 			Message: fmt.Sprintf("%s must be callable before it is called", name),
 		},
 		{
 			Kind:    diagnostic.EvidenceMissingProof,
 			Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceMissingProof, diagnostic.TrustRefuted),
+			Cause:   diagnosticCauseFromJudgmentDetail(detail),
 			Span:    primary,
 			Message: fmt.Sprintf("no proof on this path shows %s is callable", name),
 		},

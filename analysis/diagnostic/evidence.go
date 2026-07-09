@@ -97,11 +97,58 @@ func (r EvidenceReason) String() string {
 	}
 }
 
+// EvidenceCauseKind is a structural ordering hint for rendered evidence.
+type EvidenceCauseKind int
+
+const (
+	EvidenceCauseUnknown EvidenceCauseKind = iota
+	EvidenceCauseBirth
+	EvidenceCauseFlowAssign
+	EvidenceCauseFlowCall
+	EvidenceCauseClaim
+	EvidenceCauseGuard
+	EvidenceCauseWiden
+	EvidenceCauseMissingProof
+)
+
+func (k EvidenceCauseKind) String() string {
+	switch k {
+	case EvidenceCauseBirth:
+		return "birth"
+	case EvidenceCauseFlowAssign:
+		return "flow-assign"
+	case EvidenceCauseFlowCall:
+		return "flow-call"
+	case EvidenceCauseClaim:
+		return "claim"
+	case EvidenceCauseGuard:
+		return "guard"
+	case EvidenceCauseWiden:
+		return "widen"
+	case EvidenceCauseMissingProof:
+		return "missing-proof"
+	case EvidenceCauseUnknown:
+		return "unknown"
+	default:
+		return "cause(unknown)"
+	}
+}
+
+// EvidenceCause carries structural cause metadata through rendering.
+type EvidenceCause struct {
+	Kind EvidenceCauseKind
+}
+
+func (c EvidenceCause) IsZero() bool {
+	return c.Kind == EvidenceCauseUnknown
+}
+
 // Evidence is one fact used to explain why a diagnostic was produced.
 type Evidence struct {
 	Kind   EvidenceKind
 	Trust  TrustKind
 	Reason EvidenceReason
+	Cause  EvidenceCause
 	// File overrides the diagnostic's primary file for this evidence item.
 	// Leave empty only for evidence whose span is in the primary diagnostic file.
 	File    string

@@ -49,6 +49,7 @@ func sendSafetyJudgment(ctx Context, functionKey string, report readmodel.SendSa
 		},
 		Detail: judgment.EvidenceDetail{
 			Kind:         judgment.EvidenceDetailSendSafetyFact,
+			Cause:        judgment.EvidenceCause{Kind: judgment.EvidenceCauseFlowAssign},
 			Message:      report.Reason,
 			SubjectLabel: sendSafetyEvidenceLabel(report),
 		},
@@ -64,6 +65,7 @@ func sendSafetyJudgment(ctx Context, functionKey string, report readmodel.SendSa
 				Key:   fmt.Sprintf("%s:arg:%d", judgment.OriginSendIsolationProof, arg.Index),
 			},
 			Detail: judgment.EvidenceDetail{
+				Cause:   judgment.EvidenceCause{Kind: judgment.EvidenceCauseBirth},
 				Kind:    judgment.EvidenceDetailSendSafetyProof,
 				Message: "direct literal birth site has no retained graph identity",
 			},
@@ -78,6 +80,7 @@ func sendSafetyJudgment(ctx Context, functionKey string, report readmodel.SendSa
 				Key:   fmt.Sprintf("%s:arg:%d", judgment.OriginSendImmutableProof, arg.Index),
 			},
 			Detail: judgment.EvidenceDetail{
+				Cause:   judgment.EvidenceCause{Kind: judgment.EvidenceCauseGuard},
 				Kind:    judgment.EvidenceDetailSendSafetyProof,
 				Message: "exact identity is frozen before send",
 			},
@@ -92,6 +95,7 @@ func sendSafetyJudgment(ctx Context, functionKey string, report readmodel.SendSa
 				Key:   fmt.Sprintf("send:arg:%d:missing-zero-copy-proof", arg.Index),
 			},
 			Detail: judgment.EvidenceDetail{
+				Cause:   judgment.EvidenceCause{Kind: judgment.EvidenceCauseMissingProof},
 				Kind:    judgment.EvidenceDetailSendSafetyBlocker,
 				Message: report.Reason,
 			},

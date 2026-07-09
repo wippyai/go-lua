@@ -40,6 +40,7 @@ func (ProofContext) MemberRead(item judgment.Judgment, primary diagnostic.Span) 
 			{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven),
+				Cause:   diagnosticCauseFromJudgmentDetail(detail),
 				Span:    primary,
 				Message: display.MemberReadReceiverEvidence(readPath, detail.Field, receiver),
 			},

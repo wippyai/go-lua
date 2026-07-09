@@ -202,6 +202,42 @@ func diagnosticTrustFromJudgmentTrust(trust judgment.EvidenceTrust, fallback dia
 	}
 }
 
+func diagnosticCauseFromJudgmentCause(cause judgment.EvidenceCause) diagnostic.EvidenceCause {
+	switch cause.Kind {
+	case judgment.EvidenceCauseBirth:
+		return diagnostic.EvidenceCause{Kind: diagnostic.EvidenceCauseBirth}
+	case judgment.EvidenceCauseFlowAssign:
+		return diagnostic.EvidenceCause{Kind: diagnostic.EvidenceCauseFlowAssign}
+	case judgment.EvidenceCauseFlowCall:
+		return diagnostic.EvidenceCause{Kind: diagnostic.EvidenceCauseFlowCall}
+	case judgment.EvidenceCauseClaim:
+		return diagnostic.EvidenceCause{Kind: diagnostic.EvidenceCauseClaim}
+	case judgment.EvidenceCauseGuard:
+		return diagnostic.EvidenceCause{Kind: diagnostic.EvidenceCauseGuard}
+	case judgment.EvidenceCauseWiden:
+		return diagnostic.EvidenceCause{Kind: diagnostic.EvidenceCauseWiden}
+	case judgment.EvidenceCauseMissingProof:
+		return diagnostic.EvidenceCause{Kind: diagnostic.EvidenceCauseMissingProof}
+	default:
+		return diagnostic.EvidenceCause{}
+	}
+}
+
+func diagnosticCauseFromJudgmentEvidence(evidence judgment.Evidence) diagnostic.EvidenceCause {
+	return diagnosticCauseFromJudgmentCause(evidence.Detail.Cause)
+}
+
+func diagnosticCauseFromJudgmentDetail(detail judgment.EvidenceDetail) diagnostic.EvidenceCause {
+	return diagnosticCauseFromJudgmentCause(detail.Cause)
+}
+
+func diagnosticCauseForJudgmentEvidenceKind(item judgment.Judgment, kind judgment.EvidenceKind) diagnostic.EvidenceCause {
+	if evidence, ok := item.FirstEvidence(kind); ok {
+		return diagnosticCauseFromJudgmentEvidence(evidence)
+	}
+	return diagnostic.EvidenceCause{}
+}
+
 func missingProofTrustFromJudgment(verdict judgment.Verdict) diagnostic.TrustKind {
 	if verdict == judgment.VerdictRefuted {
 		return diagnostic.TrustRefuted

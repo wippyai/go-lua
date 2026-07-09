@@ -1,6 +1,8 @@
 package diagnostics
 
 import (
+	"fmt"
+
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 )
@@ -28,7 +30,10 @@ func (ProofContext) Advice(item judgment.Judgment, primary diagnostic.Span) (adv
 }
 
 func adviceRedundantClaimPresentation(item judgment.Judgment, primary diagnostic.Span) advicePresentation {
-	claim, proven := adviceEvidenceMessages(item)
+	claimEvidence, _ := adviceEvidenceByDetail(item, judgment.EvidenceDetailAdviceClaimSite)
+	provenEvidence, _ := adviceEvidenceByDetail(item, judgment.EvidenceDetailAdviceProvenType)
+	claim := adviceEvidenceMessage(claimEvidence)
+	proven := adviceEvidenceMessage(provenEvidence)
 	provenSpan := adviceEvidenceSpan(item, judgment.EvidenceDetailAdviceProvenType, primary)
 	labels := []diagnostic.Label{sourceLabel(primary, labelAdviceClaim)}
 	if provenSpan.Valid() && !diagnosticSpanEqual(provenSpan, primary) {
@@ -42,12 +47,14 @@ func adviceRedundantClaimPresentation(item judgment.Judgment, primary diagnostic
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnostic.TrustProven,
+				Cause:   diagnosticCauseFromJudgmentEvidence(provenEvidence),
 				Span:    provenSpan,
 				Message: proven,
 			},
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnostic.TrustProven,
+				Cause:   diagnosticCauseFromJudgmentEvidence(claimEvidence),
 				Span:    primary,
 				Message: claim,
 			},
@@ -56,7 +63,7 @@ func adviceRedundantClaimPresentation(item judgment.Judgment, primary diagnostic
 }
 
 func adviceAlwaysTrueGuardPresentation(item judgment.Judgment, primary diagnostic.Span) advicePresentation {
-	message, always := adviceGuardMessage(item)
+	evidence, message, always := adviceGuardMessage(item)
 	return advicePresentation{
 		Message: display.AdviceAlwaysTrueGuardMessage(always),
 		Help:    display.AdviceAlwaysTrueGuardHelp(always),
@@ -64,6 +71,7 @@ func adviceAlwaysTrueGuardPresentation(item judgment.Judgment, primary diagnosti
 		Explanation: diagnostic.NewExplanation(diagnostic.Evidence{
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnostic.TrustProven,
+			Cause:   diagnosticCauseFromJudgmentEvidence(evidence),
 			Span:    primary,
 			Message: message,
 		}),
@@ -71,7 +79,10 @@ func adviceAlwaysTrueGuardPresentation(item judgment.Judgment, primary diagnosti
 }
 
 func adviceInvariantLoopReadPresentation(item judgment.Judgment, primary diagnostic.Span) advicePresentation {
-	invariant, nonNil := adviceEvidenceMessages(item)
+	invariantEvidence, _ := adviceEvidenceByDetail(item, judgment.EvidenceDetailAdviceLoopInvariant)
+	nonNilEvidence, _ := adviceEvidenceByDetail(item, judgment.EvidenceDetailAdviceReceiverNonNil)
+	invariant := adviceEvidenceMessage(invariantEvidence)
+	nonNil := adviceEvidenceMessage(nonNilEvidence)
 	loopSpan := adviceLoopSpan(item, primary)
 	labels := []diagnostic.Label{sourceLabel(primary, labelAdviceLoopRead)}
 	if loopSpan.Valid() && !diagnosticSpanEqual(loopSpan, primary) {
@@ -85,12 +96,14 @@ func adviceInvariantLoopReadPresentation(item judgment.Judgment, primary diagnos
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnostic.TrustProven,
+				Cause:   diagnosticCauseFromJudgmentEvidence(invariantEvidence),
 				Span:    primary,
 				Message: invariant,
 			},
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnostic.TrustProven,
+				Cause:   diagnosticCauseFromJudgmentEvidence(nonNilEvidence),
 				Span:    primary,
 				Message: nonNil,
 			},
@@ -120,8 +133,9 @@ func adviceSplitBirthDiscriminantPresentation(item judgment.Judgment, primary di
 		evidence = append(evidence, diagnostic.Evidence{
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnostic.TrustProven,
+			Cause:   diagnosticCauseFromJudgmentEvidence(itemEvidence),
 			Span:    span,
-			Message: itemEvidence.Detail.Message,
+			Message: adviceEvidenceMessage(itemEvidence),
 		})
 	}
 	return advicePresentation{
@@ -132,25 +146,61 @@ func adviceSplitBirthDiscriminantPresentation(item judgment.Judgment, primary di
 	}
 }
 
-func adviceEvidenceMessages(item judgment.Judgment) (first, second string) {
-	for _, evidence := range item.Evidence {
-		switch evidence.Detail.Kind {
-		case judgment.EvidenceDetailAdviceClaimSite, judgment.EvidenceDetailAdviceLoopInvariant:
-			first = evidence.Detail.Message
-		case judgment.EvidenceDetailAdviceProvenType, judgment.EvidenceDetailAdviceReceiverNonNil:
-			second = evidence.Detail.Message
-		}
-	}
-	return first, second
-}
-
-func adviceGuardMessage(item judgment.Judgment) (string, bool) {
+func adviceGuardMessage(item judgment.Judgment) (judgment.Evidence, string, bool) {
 	for _, evidence := range item.Evidence {
 		if evidence.Detail.Kind == judgment.EvidenceDetailAdviceGuardValue {
-			return evidence.Detail.Message, evidence.Detail.Always
+			return evidence, adviceEvidenceMessage(evidence), evidence.Detail.Always
 		}
 	}
-	return "", false
+	return judgment.Evidence{}, "", false
+}
+
+func adviceEvidenceByDetail(item judgment.Judgment, detail judgment.EvidenceDetailKind) (judgment.Evidence, bool) {
+	for _, evidence := range item.Evidence {
+		if evidence.Detail.Kind == detail {
+			return evidence, true
+		}
+	}
+	return judgment.Evidence{}, false
+}
+
+func adviceEvidenceMessage(evidence judgment.Evidence) string {
+	if !evidence.Detail.Cause.IsZero() {
+		if message, ok := adviceCauseMessage(evidence.Detail); ok {
+			return message
+		}
+	}
+	return evidence.Detail.Message
+}
+
+func adviceCauseMessage(detail judgment.EvidenceDetail) (string, bool) {
+	params := detail.Cause.Params
+	switch detail.Kind {
+	case judgment.EvidenceDetailAdviceClaimSite:
+		return fmt.Sprintf("claim checks %s at this site", params.Type), true
+	case judgment.EvidenceDetailAdviceProvenType:
+		return fmt.Sprintf("%s is proven to be %s before the claim", params.Subject, params.Type), true
+	case judgment.EvidenceDetailAdviceGuardValue:
+		value := "false"
+		if detail.Always {
+			value = "true"
+		}
+		return fmt.Sprintf("condition is proven to be %s on every reachable path", value), true
+	case judgment.EvidenceDetailAdviceLoopInvariant:
+		return fmt.Sprintf("%s is not written by the loop body", params.Path), true
+	case judgment.EvidenceDetailAdviceReceiverNonNil:
+		return fmt.Sprintf("%s is non-nil on all loop paths", params.Subject), true
+	case judgment.EvidenceDetailAdviceTableBirth:
+		return fmt.Sprintf("%s is born as a table here", params.Subject), true
+	case judgment.EvidenceDetailAdviceTagWrite:
+		return fmt.Sprintf("%s is assigned literal %q here", params.Subject, params.Field), true
+	case judgment.EvidenceDetailAdvicePayloadWrite:
+		return fmt.Sprintf("%s is assigned separately", params.Subject), true
+	case judgment.EvidenceDetailAdviceDiscriminantUse:
+		return fmt.Sprintf("%s is used as a discriminant here", params.Subject), true
+	default:
+		return "", false
+	}
 }
 
 func adviceEvidenceSpan(item judgment.Judgment, detail judgment.EvidenceDetailKind, fallback diagnostic.Span) diagnostic.Span {
