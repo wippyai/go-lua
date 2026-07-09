@@ -1,0 +1,15 @@
+{
+  "description": "A local options table with fixed static fields and static reads is decomposable.",
+  "check": {
+    "placement": {
+      "require_complete": true,
+      "min_allocation_sites": 1,
+      "min_stack": 1,
+      "min_decomposable": 1,
+      "max_decomposable": 1,
+      "max_no_fact": 0,
+      "max_unknown": 0
+    }
+  },
+  "run": { "skip": "checker-only decomposable fixture" }
+}

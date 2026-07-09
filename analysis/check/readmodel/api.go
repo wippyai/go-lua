@@ -56,6 +56,7 @@ type Reader interface {
 	ForEachInvariantLoopRead(func(InvariantLoopRead) bool) bool
 	ForEachSplitBirthDiscriminant(func(SplitBirthDiscriminant) bool) bool
 	ForEachClosureCapture(func(ClosureCapture) bool) bool
+	ForEachAllocationSite(func(AllocationSite) bool) bool
 	DominatingTruthyBranchForPath(cfg.Point, BranchCheck) (DominatingBranchProof, bool)
 	DominatingBranchCheckForPath(cfg.Point, BranchCheck, func(BranchCheck, bool) bool) (DominatingBranchProof, bool)
 }
@@ -222,6 +223,33 @@ type ClosureCapture struct {
 	HasPlacement bool
 	Identity     identity.ID
 	HasIdentity  bool
+}
+
+const AllocationSiteSchemaVersion = 1
+
+// AllocationSite is the codegen-facing solved export for one table allocation
+// site. Decomposable is a scalar-replacement license; false is the sound default
+// and may mean either a proven blocker or a conservative phase-1 unknown.
+type AllocationSite struct {
+	SchemaVersion int
+	Point         cfg.Point
+	ExpressionID  uint64
+	ExprRef       uint64
+	Identity      identity.ID
+
+	Placement    placement.Value
+	HasPlacement bool
+
+	Shape       typ.Type
+	Fields      []AllocationField
+	StableShape bool
+
+	Decomposable bool
+}
+
+type AllocationField struct {
+	Name string
+	Type typ.Type
 }
 
 // DominatingBranchProof is the readmodel view of a prior branch edge that

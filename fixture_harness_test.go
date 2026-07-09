@@ -106,8 +106,11 @@ type fixturePlacement struct {
 	MinSharedDepth     int  `json:"min_shared_depth,omitempty"`
 	MinOwnerIdentity   int  `json:"min_owner_identity,omitempty"`
 	MinSealBeforeShare int  `json:"min_seal_before_share,omitempty"`
+	MinAllocationSites int  `json:"min_allocation_sites,omitempty"`
+	MinDecomposable    int  `json:"min_decomposable,omitempty"`
 	MaxNoFact          *int `json:"max_no_fact,omitempty"`
 	MaxUnknown         *int `json:"max_unknown,omitempty"`
+	MaxDecomposable    *int `json:"max_decomposable,omitempty"`
 
 	MinStackKind      map[string]int `json:"min_stack_kind,omitempty"`
 	MinOwnedHeapKind  map[string]int `json:"min_owned_heap_kind,omitempty"`
@@ -404,6 +407,8 @@ func verifyPlacementExpectations(t testing.TB, expect fixturePlacement, plan pla
 	assertMinPlacementCount(t, "shared-heap depth", plan.MaxTargetDepth(placementplan.TargetSharedHeap), expect.MinSharedDepth, plan)
 	assertMinPlacementCount(t, "owner-identity obligations", counts.ownerIdentity, expect.MinOwnerIdentity, plan)
 	assertMinPlacementCount(t, "seal-before-share obligations", counts.sealBeforeShare, expect.MinSealBeforeShare, plan)
+	assertMinPlacementCount(t, "allocation sites", counts.allocationSites, expect.MinAllocationSites, plan)
+	assertMinPlacementCount(t, "decomposable", counts.decomposable, expect.MinDecomposable, plan)
 	assertMinPlacementKindCounts(t, "stack", placementKindCounts(plan, placementplan.TargetStack), expect.MinStackKind, plan)
 	assertMinPlacementKindCounts(t, "owned-heap", placementKindCounts(plan, placementplan.TargetOwnedHeap), expect.MinOwnedHeapKind, plan)
 	assertMinPlacementKindCounts(t, "shared-heap", placementKindCounts(plan, placementplan.TargetSharedHeap), expect.MinSharedHeapKind, plan)
@@ -416,6 +421,9 @@ func verifyPlacementExpectations(t testing.TB, expect fixturePlacement, plan pla
 	if expect.MaxUnknown != nil && counts.unknown > *expect.MaxUnknown {
 		t.Fatalf("placement unknown count = %d, want <= %d; entries=%s", counts.unknown, *expect.MaxUnknown, formatPlacementEntries(plan))
 	}
+	if expect.MaxDecomposable != nil && counts.decomposable > *expect.MaxDecomposable {
+		t.Fatalf("placement decomposable count = %d, want <= %d; entries=%s", counts.decomposable, *expect.MaxDecomposable, formatPlacementEntries(plan))
+	}
 }
 
 type fixturePlacementCounts struct {
@@ -426,6 +434,8 @@ type fixturePlacementCounts struct {
 	unknown         int
 	ownerIdentity   int
 	sealBeforeShare int
+	allocationSites int
+	decomposable    int
 }
 
 func placementCounts(plan placementplan.Plan) fixturePlacementCounts {
@@ -442,6 +452,12 @@ func placementCounts(plan placementplan.Plan) fixturePlacementCounts {
 			counts.noFact++
 		case placementplan.TargetUnknown:
 			counts.unknown++
+		}
+		if entry.AllocationSite {
+			counts.allocationSites++
+		}
+		if entry.Decomposable {
+			counts.decomposable++
 		}
 		for _, obligation := range entry.Obligations {
 			switch obligation {
@@ -500,7 +516,7 @@ func assertMaxPlacementKindCounts(t testing.TB, label string, got map[string]int
 func formatPlacementEntries(plan placementplan.Plan) string {
 	var parts []string
 	for _, entry := range plan.Entries {
-		parts = append(parts, fmt.Sprintf("%s:%s reasons=%v obligations=%v blockers=%v", entry.ID, entry.Target, entry.Reasons, entry.Obligations, entry.Blockers))
+		parts = append(parts, fmt.Sprintf("%s:%s alloc=%t decomposable=%t reasons=%v obligations=%v blockers=%v", entry.ID, entry.Target, entry.AllocationSite, entry.Decomposable, entry.Reasons, entry.Obligations, entry.Blockers))
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, "; ")

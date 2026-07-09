@@ -376,3 +376,20 @@ func TestSoundnessProbes(t *testing.T) {
 		}
 	}
 }
+
+func TestSoundnessDecomposableIdentityCompareProbe(t *testing.T) {
+	result := testutil.Check(`
+local function f(): boolean
+	local left = { a = 1 }
+	local right = { a = 1 }
+	return left == right
+end
+return f
+`, testutil.WithStdlib())
+	plan := result.PlacementPlan()
+	for _, entry := range plan.Entries {
+		if entry.Decomposable {
+			t.Fatalf("identity-compared allocation was marked decomposable: %#v", entry)
+		}
+	}
+}

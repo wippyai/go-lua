@@ -74,6 +74,7 @@ func (l *lowerer) addObjectLiteralFromWIR(input *factflow.FactsInput, inst wir.I
 		return
 	}
 	lowered := factflow.NewObjectLiteral(l.objectLiteralEntriesFromWIR(inst)).
+		WithExpressionID(uint64(inst.ExprID)).
 		WithIdentity(identity.LuaTableLiteral(l.graphID, uint64(exprRef)))
 	if inst.ExprSpan.Valid() {
 		lowered = lowered.WithSpan(sourceSpanFromWIR(inst.ExprSpan))
@@ -338,6 +339,9 @@ func (l *lowerer) objectLiteralWithExpectedType(lit factflow.ObjectLiteral, decl
 	out := factflow.NewObjectLiteral(entries).WithExpected(root)
 	if id, ok := lit.Identity(); ok {
 		out = out.WithIdentity(id)
+	}
+	if id, ok := lit.ExpressionID(); ok {
+		out = out.WithExpressionID(id)
 	}
 	if span, ok := lit.Span(); ok {
 		out = out.WithSpan(span)

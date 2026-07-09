@@ -136,6 +136,45 @@ func TestMergePreservesPlacementChildEdges(t *testing.T) {
 	}
 }
 
+func TestMergePreservesAllocationSiteLicense(t *testing.T) {
+	id := testID(45)
+	left := Plan{Entries: []Entry{{
+		ID:             id,
+		Target:         TargetStack,
+		Placement:      placement.Stack,
+		HasObject:      true,
+		AllocationSite: true,
+		Decomposable:   true,
+	}}}
+	right := Plan{Entries: []Entry{{
+		ID:             id,
+		Target:         TargetStack,
+		Placement:      placement.Stack,
+		HasObject:      true,
+		AllocationSite: true,
+		Decomposable:   true,
+	}}}
+
+	plan := Merge(left, right)
+	total, decomposable := plan.AllocationStats()
+	if total != 1 || decomposable != 1 {
+		t.Fatalf("allocation stats = %d/%d, want 1/1; entries=%#v", decomposable, total, plan.Entries)
+	}
+	if !plan.Decomposable(id) {
+		t.Fatalf("Decomposable(%s) = false, want true", id)
+	}
+
+	right.Entries[0].Decomposable = false
+	plan = Merge(left, right)
+	total, decomposable = plan.AllocationStats()
+	if total != 1 || decomposable != 0 {
+		t.Fatalf("allocation stats after conflict = %d/%d, want 0/1; entries=%#v", decomposable, total, plan.Entries)
+	}
+	if plan.Decomposable(id) {
+		t.Fatalf("Decomposable(%s) = true after conflicting merge, want false", id)
+	}
+}
+
 func TestFromStateReportsIncompleteTopLanes(t *testing.T) {
 	reg := standard.Registry()
 	plan := FromState(state.Domain(reg).Top())
@@ -201,6 +240,40 @@ func TestFromResultProjectsStackObjectLiteralAllocations(t *testing.T) {
 	}
 	if stackCount == 0 {
 		t.Fatalf("plan entries = %#v, want at least one stack allocation", plan.Entries)
+	}
+}
+
+func TestFromResultProjectsDecomposableAllocations(t *testing.T) {
+	reg := standard.Registry()
+	stmts, err := parse.ParseString(`
+local opts = { a = 1, b = 2 }
+local total = opts.a + opts.b
+return total
+`, "placement-plan-decomposable.lua")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	result, err := body.CheckChunk(stmts, body.Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	plan := FromResult(result)
+	total, decomposable := plan.AllocationStats()
+	if total != 1 || decomposable != 1 {
+		t.Fatalf("allocation stats = %d/%d, want 1/1; entries=%#v", decomposable, total, plan.Entries)
+	}
+	found := false
+	for _, entry := range plan.Entries {
+		if entry.Decomposable {
+			found = true
+			if entry.Target != TargetStack {
+				t.Fatalf("decomposable entry target = %s, want stack: %#v", entry.Target, entry)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("plan has no decomposable entry: %#v", plan.Entries)
 	}
 }
 

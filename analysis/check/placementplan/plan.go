@@ -67,15 +67,17 @@ const (
 )
 
 type Entry struct {
-	ID          identity.ID
-	Target      Target
-	Placement   placement.Value
-	HasObject   bool
-	Frozen      bool
-	Reasons     []Reason
-	Obligations []Obligation
-	Blockers    []Blocker
-	Children    []identity.ID
+	ID             identity.ID
+	Target         Target
+	Placement      placement.Value
+	HasObject      bool
+	AllocationSite bool
+	Decomposable   bool
+	Frozen         bool
+	Reasons        []Reason
+	Obligations    []Obligation
+	Blockers       []Blocker
+	Children       []identity.ID
 }
 
 type Plan struct {
@@ -121,6 +123,9 @@ func Merge(plans ...Plan) Plan {
 			if entry.HasObject {
 				aggregate.objects[entry.ID] = struct{}{}
 			}
+			if entry.AllocationSite {
+				aggregate.addAllocationSite(entry.ID, entry.Decomposable)
+			}
 			aggregate.addChildren(entry.ID, entry.Children)
 			if entry.Frozen {
 				aggregate.frozen[entry.ID] = struct{}{}
@@ -145,6 +150,28 @@ func (p Plan) Placement(id identity.ID) (placement.Value, bool) {
 		}
 	}
 	return placement.Bottom, false
+}
+
+func (p Plan) Decomposable(id identity.ID) bool {
+	for _, entry := range p.Entries {
+		if entry.ID == id {
+			return entry.Decomposable
+		}
+	}
+	return false
+}
+
+func (p Plan) AllocationStats() (total, decomposable int) {
+	for _, entry := range p.Entries {
+		if !entry.AllocationSite {
+			continue
+		}
+		total++
+		if entry.Decomposable {
+			decomposable++
+		}
+	}
+	return total, decomposable
 }
 
 func (p Plan) MaxTargetDepth(target Target) int {
@@ -197,6 +224,8 @@ type aggregate struct {
 	incomplete bool
 	blockers   map[Blocker]struct{}
 	objects    map[identity.ID]struct{}
+	allocSites map[identity.ID]struct{}
+	decomps    map[identity.ID]bool
 	children   map[identity.ID]map[identity.ID]struct{}
 	placements map[identity.ID]placement.Value
 	frozen     map[identity.ID]struct{}
@@ -206,6 +235,8 @@ func newAggregate() aggregate {
 	return aggregate{
 		blockers:   make(map[Blocker]struct{}),
 		objects:    make(map[identity.ID]struct{}),
+		allocSites: make(map[identity.ID]struct{}),
+		decomps:    make(map[identity.ID]bool),
 		children:   make(map[identity.ID]map[identity.ID]struct{}),
 		placements: make(map[identity.ID]placement.Value),
 		frozen:     make(map[identity.ID]struct{}),
@@ -223,6 +254,10 @@ func (a *aggregate) addResult(result *body.Result) {
 	} else {
 		a.addState(result.Registry(), exit)
 	}
+	result.ForEachAllocationSiteFact(func(fact body.AllocationSiteFact) bool {
+		a.addAllocationSite(fact.Identity, fact.Decomposable)
+		return true
+	})
 	for _, child := range result.FunctionResults() {
 		a.addResult(child)
 	}
@@ -260,8 +295,11 @@ func (a *aggregate) addState(reg *axis.Registry, st state.State) {
 }
 
 func (a *aggregate) plan() Plan {
-	ids := make(map[identity.ID]struct{}, len(a.objects)+len(a.placements))
+	ids := make(map[identity.ID]struct{}, len(a.objects)+len(a.placements)+len(a.allocSites))
 	for id := range a.objects {
+		ids[id] = struct{}{}
+	}
+	for id := range a.allocSites {
 		ids[id] = struct{}{}
 	}
 	for id, children := range a.children {
@@ -292,17 +330,31 @@ func (a *aggregate) plan() Plan {
 			value = placement.Bottom
 		}
 		entry := Entry{
-			ID:        id,
-			Placement: value,
-			Target:    targetForPlacement(value, hasPlacement),
-			HasObject: mapContains(a.objects, id),
-			Frozen:    mapContains(a.frozen, id),
-			Children:  orderedIDs(a.children[id]),
+			ID:             id,
+			Placement:      value,
+			Target:         targetForPlacement(value, hasPlacement),
+			HasObject:      mapContains(a.objects, id),
+			AllocationSite: mapContains(a.allocSites, id),
+			Decomposable:   a.decomps[id],
+			Frozen:         mapContains(a.frozen, id),
+			Children:       orderedIDs(a.children[id]),
 		}
 		entry = annotate(entry, hasPlacement)
 		out.Entries = append(out.Entries, entry)
 	}
 	return out
+}
+
+func (a *aggregate) addAllocationSite(id identity.ID, decomposable bool) {
+	if id == (identity.ID{}) {
+		return
+	}
+	if _, ok := a.allocSites[id]; !ok {
+		a.allocSites[id] = struct{}{}
+		a.decomps[id] = decomposable
+		return
+	}
+	a.decomps[id] = a.decomps[id] && decomposable
 }
 
 func (a *aggregate) addChildren(parent identity.ID, children []identity.ID) {

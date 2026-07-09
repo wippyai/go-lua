@@ -117,6 +117,7 @@ type ObjectLiteral struct {
 	entries                  []ObjectEntry
 	span                     SourceSpan
 	hasSpan                  bool
+	expressionID             uint64
 	listElementSource        ValueSource
 	hasListElementSource     bool
 	staticStringKeysComplete bool
@@ -188,6 +189,12 @@ func (v ObjectLiteralView) Span() (SourceSpan, bool) {
 	return v.literal.Span()
 }
 
+// ExpressionID returns the WIR expression identity attached during lowering, if
+// the literal came from WIR.
+func (v ObjectLiteralView) ExpressionID() (uint64, bool) {
+	return v.literal.ExpressionID()
+}
+
 // StaticStringKeysComplete reports whether the literal's static string-key
 // entries form a closed key set. Dynamic constructor keys clear this proof.
 func (v ObjectLiteralView) StaticStringKeysComplete() bool {
@@ -197,6 +204,10 @@ func (v ObjectLiteralView) StaticStringKeysComplete() bool {
 // Span returns the source range of the whole object literal when lowering
 // provided it.
 func (l ObjectLiteral) Span() (SourceSpan, bool) { return l.span, l.hasSpan }
+
+func (l ObjectLiteral) ExpressionID() (uint64, bool) {
+	return l.expressionID, l.expressionID != 0
+}
 
 // StaticStringKeysComplete reports whether the literal's static string-key
 // entries form a closed key set. Array/int entries may still exist and do not
@@ -258,6 +269,17 @@ func (l ObjectLiteral) WithSpan(span SourceSpan) ObjectLiteral {
 	out := l.copy()
 	out.span = span
 	out.hasSpan = true
+	return out
+}
+
+// WithExpressionID returns a copy carrying the WIR expression identity for this
+// literal. A zero id is ignored.
+func (l ObjectLiteral) WithExpressionID(id uint64) ObjectLiteral {
+	if id == 0 {
+		return l
+	}
+	out := l.copy()
+	out.expressionID = id
 	return out
 }
 

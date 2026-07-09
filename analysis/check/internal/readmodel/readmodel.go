@@ -60,6 +60,7 @@ type InvariantLoopRead = readapi.InvariantLoopRead
 type SplitBirthDiscriminant = readapi.SplitBirthDiscriminant
 type SplitBirthPayloadWrite = readapi.SplitBirthPayloadWrite
 type ClosureCapture = readapi.ClosureCapture
+type AllocationSite = readapi.AllocationSite
 
 func New(result *body.Result) Reader {
 	return Reader{result: result, typeValues: result.TypeValues()}
