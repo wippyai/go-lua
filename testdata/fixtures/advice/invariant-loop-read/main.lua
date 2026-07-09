@@ -10,9 +10,12 @@ while i < 3 do
 end
 
 local changed: Config = { limit = 2, step = 1 }
+local changed_alias = changed
 while total < 10 do
   local limit = changed.limit
-  changed.limit = limit + 1
+  if total > 5 then
+    changed_alias.limit = limit + 1
+  end
   total = total + 1
 end
 

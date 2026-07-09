@@ -59,6 +59,7 @@ type Reader interface {
 	ForEachClosureCapture(func(ClosureCapture) bool) bool
 	ForEachAllocationSite(func(AllocationSite) bool) bool
 	ForEachAllocationLifetime(func(AllocationLifetime) bool) bool
+	ForEachHoistableLoad(func(HoistableLoad) bool) bool
 	DominatingTruthyBranchForPath(cfg.Point, BranchCheck) (DominatingBranchProof, bool)
 	DominatingBranchCheckForPath(cfg.Point, BranchCheck, func(BranchCheck, bool) bool) (DominatingBranchProof, bool)
 }
@@ -198,6 +199,8 @@ const ClosureCaptureSchemaVersion = 2
 
 const AllocationLifetimeSchemaVersion = 1
 
+const HoistableLoadSchemaVersion = 1
+
 // AllocationLifetime is the codegen-facing solved export for one body-local
 // allocation site.
 type AllocationLifetime struct {
@@ -208,6 +211,19 @@ type AllocationLifetime struct {
 	HasBirthSpan  bool
 
 	DiesBeforeSuspension bool
+}
+
+// HoistableLoad is the codegen-facing license for one member/index read whose
+// loaded value is invariant across iterations of the identified loop. LoopSpan
+// is the source-scope witness for the loop headed by LoopHead; absence of this
+// record is the sound default.
+type HoistableLoad struct {
+	SchemaVersion int
+	BodyID        uint64
+	Point         cfg.Point
+	ReadPath      path.Path
+	LoopHead      cfg.Point
+	LoopSpan      SourceSpan
 }
 
 // ClosureCapture is the codegen-facing solved export for one captured symbol at

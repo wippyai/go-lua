@@ -115,6 +115,8 @@ type fixturePlacement struct {
 	MaxFrameLocal           *int `json:"max_frame_local,omitempty"`
 	MinDiesBeforeSuspension int  `json:"min_dies_before_suspension,omitempty"`
 	MaxDiesBeforeSuspension *int `json:"max_dies_before_suspension,omitempty"`
+	MinHoistableLoads       int  `json:"min_hoistable_loads,omitempty"`
+	MaxHoistableLoads       *int `json:"max_hoistable_loads,omitempty"`
 
 	MinStackKind      map[string]int `json:"min_stack_kind,omitempty"`
 	MinOwnedHeapKind  map[string]int `json:"min_owned_heap_kind,omitempty"`
@@ -416,6 +418,8 @@ func verifyPlacementExpectations(t testing.TB, expect fixturePlacement, plan pla
 	assertMinPlacementCount(t, "frame-local", counts.frameLocal, expect.MinFrameLocal, plan)
 	assertMinPlacementCount(t, "dies-before-suspension", counts.diesBeforeSuspension, expect.MinDiesBeforeSuspension, plan)
 	assertMaxPlacementCount(t, "dies-before-suspension", counts.diesBeforeSuspension, expect.MaxDiesBeforeSuspension, plan)
+	assertMinPlacementCount(t, "hoistable loads", counts.hoistableLoads, expect.MinHoistableLoads, plan)
+	assertMaxPlacementCount(t, "hoistable loads", counts.hoistableLoads, expect.MaxHoistableLoads, plan)
 	assertMinPlacementKindCounts(t, "stack", placementKindCounts(plan, placementplan.TargetStack), expect.MinStackKind, plan)
 	assertMinPlacementKindCounts(t, "owned-heap", placementKindCounts(plan, placementplan.TargetOwnedHeap), expect.MinOwnedHeapKind, plan)
 	assertMinPlacementKindCounts(t, "shared-heap", placementKindCounts(plan, placementplan.TargetSharedHeap), expect.MinSharedHeapKind, plan)
@@ -448,10 +452,11 @@ type fixturePlacementCounts struct {
 	decomposable         int
 	frameLocal           int
 	diesBeforeSuspension int
+	hoistableLoads       int
 }
 
 func placementCounts(plan placementplan.Plan) fixturePlacementCounts {
-	var counts fixturePlacementCounts
+	counts := fixturePlacementCounts{hoistableLoads: len(plan.HoistableLoads)}
 	for _, entry := range plan.Entries {
 		switch entry.Target {
 		case placementplan.TargetFrameLocal:
@@ -541,6 +546,9 @@ func formatPlacementEntries(plan placementplan.Plan) string {
 			lifetime = fmt.Sprintf("%t", entry.DiesBeforeSuspension)
 		}
 		parts = append(parts, fmt.Sprintf("%s:%s alloc=%t decomposable=%t frame_local=%t frame_local_use_proof=%t dies_before_suspension=%s reasons=%v obligations=%v blockers=%v", entry.ID, entry.Target, entry.AllocationSite, entry.Decomposable, entry.FrameLocal, entry.FrameLocalUseProof, lifetime, entry.Reasons, entry.Obligations, entry.Blockers))
+	}
+	for _, load := range plan.HoistableLoads {
+		parts = append(parts, fmt.Sprintf("hoistable-load:body=%d point=%d path=%s loop_head=%d loop_span=%d:%d-%d:%d", load.BodyID, load.Point, load.ReadPath, load.LoopHead, load.LoopSpan.StartLine, load.LoopSpan.StartCol, load.LoopSpan.EndLine, load.LoopSpan.EndCol))
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, "; ")

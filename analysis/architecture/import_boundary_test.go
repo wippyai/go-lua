@@ -479,6 +479,18 @@ func TestInternalReadmodelAdviceFamiliesStayProjectionOnly(t *testing.T) {
 			},
 		},
 		{
+			path: filepath.Join("..", "check", "internal", "readmodel", "hoistable_load.go"),
+			contains: []string{
+				"ForEachInvariantLoopReadOccurrence",
+			},
+			banned: []string{
+				"ForEachStaticMemberReadOccurrence",
+				"InnermostLoopForPoint",
+				"PathInvalidatedInLoop",
+				"TypeIncludesNil",
+			},
+		},
+		{
 			path: filepath.Join("..", "check", "internal", "readmodel", "advice_split_birth_discriminant.go"),
 			contains: []string{
 				"ForEachSplitBirthDiscriminantOccurrence",

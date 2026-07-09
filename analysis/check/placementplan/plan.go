@@ -5,6 +5,9 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	checkprogram "github.com/wippyai/go-lua/analysis/check/fixpoint/program"
+	internalreadmodel "github.com/wippyai/go-lua/analysis/check/internal/readmodel"
+	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -89,10 +92,11 @@ type Entry struct {
 }
 
 type Plan struct {
-	Top        bool
-	Incomplete bool
-	Blockers   []Blocker
-	Entries    []Entry
+	Top            bool
+	Incomplete     bool
+	Blockers       []Blocker
+	Entries        []Entry
+	HoistableLoads []readapi.HoistableLoad
 }
 
 func FromProgramResult(result checkprogram.Result) Plan {
@@ -150,6 +154,9 @@ func Merge(plans ...Plan) Plan {
 				continue
 			}
 			aggregate.placements[entry.ID] = entry.Placement
+		}
+		for _, load := range plan.HoistableLoads {
+			aggregate.addHoistableLoad(load)
 		}
 	}
 	return aggregate.plan()
@@ -267,6 +274,14 @@ type aggregate struct {
 	placements map[identity.ID]placement.Value
 	frozen     map[identity.ID]struct{}
 	lifetimes  map[identity.ID]bool
+	hoistable  map[hoistableLoadKey]readapi.HoistableLoad
+}
+
+type hoistableLoadKey struct {
+	bodyID   uint64
+	point    uint32
+	loopHead uint32
+	readPath pathdom.PathKey
 }
 
 func newAggregate() aggregate {
@@ -282,6 +297,7 @@ func newAggregate() aggregate {
 		placements: make(map[identity.ID]placement.Value),
 		frozen:     make(map[identity.ID]struct{}),
 		lifetimes:  make(map[identity.ID]bool),
+		hoistable:  make(map[hoistableLoadKey]readapi.HoistableLoad),
 	}
 }
 
@@ -303,6 +319,10 @@ func (a *aggregate) addResult(result *body.Result) {
 	for _, fact := range result.AllocationLifetimeFacts() {
 		a.addDiesBeforeSuspension(fact.ID, fact.DiesBeforeSuspension)
 	}
+	internalreadmodel.New(result).ForEachHoistableLoad(func(load internalreadmodel.HoistableLoad) bool {
+		a.addHoistableLoad(load)
+		return true
+	})
 	for _, child := range result.FunctionResults() {
 		a.addResult(child)
 	}
@@ -367,10 +387,11 @@ func (a *aggregate) plan() Plan {
 	}
 	ordered := orderedIDs(ids)
 	out := Plan{
-		Top:        a.top,
-		Incomplete: a.incomplete,
-		Blockers:   orderedBlockers(a.blockers),
-		Entries:    make([]Entry, 0, len(ordered)),
+		Top:            a.top,
+		Incomplete:     a.incomplete,
+		Blockers:       orderedBlockers(a.blockers),
+		Entries:        make([]Entry, 0, len(ordered)),
+		HoistableLoads: orderedHoistableLoads(a.hoistable),
 	}
 	for _, id := range ordered {
 		value, hasPlacement := a.placements[id]
@@ -452,6 +473,41 @@ func (a *aggregate) addDiesBeforeSuspension(id identity.ID, dies bool) {
 		return
 	}
 	a.lifetimes[id] = dies
+}
+
+func (a *aggregate) addHoistableLoad(load readapi.HoistableLoad) {
+	if load.SchemaVersion != readapi.HoistableLoadSchemaVersion ||
+		load.BodyID == 0 || load.Point == 0 || load.LoopHead == 0 || load.ReadPath.IsEmpty() {
+		return
+	}
+	key := hoistableLoadKey{
+		bodyID:   load.BodyID,
+		point:    uint32(load.Point),
+		loopHead: uint32(load.LoopHead),
+		readPath: load.ReadPath.Key(),
+	}
+	a.hoistable[key] = load
+}
+
+func orderedHoistableLoads(loads map[hoistableLoadKey]readapi.HoistableLoad) []readapi.HoistableLoad {
+	out := make([]readapi.HoistableLoad, 0, len(loads))
+	for _, load := range loads {
+		out = append(out, load)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		left, right := out[i], out[j]
+		if left.BodyID != right.BodyID {
+			return left.BodyID < right.BodyID
+		}
+		if left.LoopHead != right.LoopHead {
+			return left.LoopHead < right.LoopHead
+		}
+		if left.Point != right.Point {
+			return left.Point < right.Point
+		}
+		return left.ReadPath.String() < right.ReadPath.String()
+	})
+	return out
 }
 
 func (a *aggregate) addChildren(parent identity.ID, children []identity.ID) {

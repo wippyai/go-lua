@@ -424,3 +424,27 @@ local out: integer = route(nil :: Channel<Message>)
 		}
 	}
 }
+
+func TestSoundnessHoistableLoadConditionalAliasWriteProbe(t *testing.T) {
+	result := testutil.Check(`
+type Config = { limit: number }
+local config: Config = { limit = 3 }
+local alias = config
+local total = 0
+local i = 0
+while i < 3 do
+	total = total + config.limit
+	if i == 1 then
+		alias.limit = 9
+	end
+	i = i + 1
+end
+return total
+`, testutil.WithStdlib())
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want clean alias-write probe", result.Diagnostics)
+	}
+	if loads := result.PlacementPlan().HoistableLoads; len(loads) != 0 {
+		t.Fatalf("conditional alias write exported hoistable-load licenses: %#v", loads)
+	}
+}

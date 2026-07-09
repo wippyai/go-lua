@@ -63,6 +63,7 @@ type SplitBirthPayloadWrite = readapi.SplitBirthPayloadWrite
 type ClosureCapture = readapi.ClosureCapture
 type AllocationSite = readapi.AllocationSite
 type AllocationLifetime = readapi.AllocationLifetime
+type HoistableLoad = readapi.HoistableLoad
 
 func New(result *body.Result) Reader {
 	return Reader{result: result, typeValues: result.TypeValues()}

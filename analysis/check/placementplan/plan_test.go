@@ -353,6 +353,50 @@ return total
 	}
 }
 
+func TestFromResultProjectsOnlyAliasSafeHoistableLoads(t *testing.T) {
+	reg := standard.Registry()
+	stmts, err := parse.ParseString(`
+type Config = { limit: number }
+local clean: Config = { limit = 3 }
+local changed: Config = { limit = 3 }
+local alias = changed
+local total = 0
+local i = 0
+while i < 3 do
+	total = total + clean.limit
+	i = i + 1
+end
+local j = 0
+while j < 3 do
+	total = total + changed.limit
+	if j == 1 then
+		alias.limit = 9
+	end
+	j = j + 1
+end
+return total
+`, "placement-plan-hoistable-load.lua")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	result, err := body.CheckChunk(stmts, body.Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	plan := FromResult(result)
+	if len(plan.HoistableLoads) != 1 {
+		t.Fatalf("hoistable loads = %d, want only clean.limit: %#v", len(plan.HoistableLoads), plan.HoistableLoads)
+	}
+	load := plan.HoistableLoads[0]
+	if got := load.ReadPath.String(); got != "clean.limit" {
+		t.Fatalf("read path = %q, want clean.limit", got)
+	}
+	if load.BodyID != result.Graph().ID() || load.Point == 0 || load.LoopHead == 0 || !load.LoopSpan.Valid() {
+		t.Fatalf("hoistable load lacks machine site or loop witness: %#v", load)
+	}
+}
+
 func TestFromResultProjectsFrameLocalAllocations(t *testing.T) {
 	reg := standard.Registry()
 	stmts, err := parse.ParseString(`
