@@ -173,7 +173,7 @@ func (r sourceValueResolver) valueOfSource(
 	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
 		if value, ok := r.valueOfObjectLiteral(point, source.ExprRef, in, read, active); ok {
 			if refinement, refineOK := r.expressionRefinements.Lookup(source.ExprRef); refineOK {
-				return applyExpressionRefinement(r.registry, value, refinement), true
+				return ApplyExpressionRefinement(r.registry, value, refinement), true
 			}
 			return value, true
 		}
@@ -191,11 +191,11 @@ func (r sourceValueResolver) valueOfSource(
 			delete(active, source.ExprRef)
 			if !ok {
 				if refinement.Mode() == factflow.ExpressionRefinementRuntimeValidation {
-					return applyExpressionRefinement(r.registry, product.Bottom(r.registry), refinement), true
+					return ApplyExpressionRefinement(r.registry, product.Bottom(r.registry), refinement), true
 				}
 				return product.Value{}, false
 			}
-			return applyExpressionRefinement(r.registry, value, refinement), true
+			return ApplyExpressionRefinement(r.registry, value, refinement), true
 		}
 	}
 	switch source.Kind {
@@ -1093,7 +1093,7 @@ func (r expressionRefinementSourceValues) valueOfSource(
 	}
 	if value, ok := r.valueOfObjectLiteral(point, source.ExprRef, in, read, active); ok {
 		if refinement, refineOK := r.refinements.Lookup(source.ExprRef); refineOK {
-			return applyExpressionRefinement(r.registry, value, refinement), true
+			return ApplyExpressionRefinement(r.registry, value, refinement), true
 		}
 		return value, true
 	}
@@ -1109,11 +1109,11 @@ func (r expressionRefinementSourceValues) valueOfSource(
 		delete(active, source.ExprRef)
 		if !ok {
 			if refinement.Mode() == factflow.ExpressionRefinementRuntimeValidation {
-				return applyExpressionRefinement(r.registry, product.Bottom(r.registry), refinement), true
+				return ApplyExpressionRefinement(r.registry, product.Bottom(r.registry), refinement), true
 			}
 			return product.Value{}, false
 		}
-		return applyExpressionRefinement(r.registry, value, refinement), true
+		return ApplyExpressionRefinement(r.registry, value, refinement), true
 	}
 	if value, ok := r.valueOfExpressionOperation(point, source.ExprRef, in, read, active); ok {
 		return value, true
@@ -1188,7 +1188,10 @@ func (r expressionRefinementSourceValues) valueOfOperationSource(
 	return r.valueOfSource(point, source, in, read, active)
 }
 
-func applyExpressionRefinement(reg *axis.Registry, value product.Value, refinement factflow.ExpressionRefinement) product.Value {
+// ApplyExpressionRefinement applies a factflow expression refinement with the
+// same semantics used by SourceValues. Expression providers that resolve an
+// inner source directly must use this before projecting from the result.
+func ApplyExpressionRefinement(reg *axis.Registry, value product.Value, refinement factflow.ExpressionRefinement) product.Value {
 	var out product.Value
 	switch refinement.Mode() {
 	case factflow.ExpressionRefinementRuntimeValidation:

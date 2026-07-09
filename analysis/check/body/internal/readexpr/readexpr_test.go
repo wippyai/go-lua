@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -850,6 +851,66 @@ func TestDynamicIndexConstantLengthFloorDropsNil(t *testing.T) {
 	}
 	assertPresence(t, reg, outOfFloor, presence.Maybe())
 	assertRuntimeKind(t, reg, outOfFloor, runtimekind.Singleton(runtimekind.String))
+}
+
+func TestDynamicIndexTableSourceAppliesRuntimeValidationBeforePathProjection(t *testing.T) {
+	reg := standard.Registry()
+	typeValues := typevalue.NewCache()
+	point := cfg.Point(115)
+	rawSym := symbol.ID(126)
+	rawPath := path.NewPath(rawSym, "raw")
+	resolver := testResolver(point, rawSym, "raw")
+	shape, ok := factflow.NewValueSourceShape(true, false, false, false)
+	if !ok {
+		t.Fatal("invalid source shape")
+	}
+	rawSource, ok := factflow.NewPathValueSource(rawPath.Key(), 0, 0, 0, shape)
+	if !ok {
+		t.Fatal("invalid raw path source")
+	}
+	castExpr := factflow.ExprRef(11501)
+	castSource, ok := factflow.NewExpressionValueSource(castExpr, 0, 0, 0, shape)
+	if !ok {
+		t.Fatal("invalid cast expression source")
+	}
+	keySource, ok := factflow.NewStringLiteralValueSource("id", 0, 0, 0, shape)
+	if !ok {
+		t.Fatal("invalid string key source")
+	}
+	dyn, ok := factflow.NewDynamicIndexExpressionFromSource(castSource, keySource)
+	if !ok {
+		t.Fatal("invalid dynamic index expression")
+	}
+
+	claimedType := typetable.NewRecord().Field("id", typ.String).Build()
+	validated := typeValues.FromTypeWithWitness(reg, claimedType)
+	validated = product.Set(reg, validated, assertion.Key, assertion.Of(assertion.TypeClaim, assertion.RuntimeClaim))
+	facts := factflow.NewFacts(factflow.FactsInput{
+		ExpressionPaths: map[factflow.ExprRef]path.Path{castExpr: rawPath},
+		ExpressionValues: map[factflow.ExprRef]product.Value{
+			castExpr: typeValues.FromTypeWithWitness(reg, claimedType),
+		},
+		ExpressionRefinements: map[factflow.ExprRef]factflow.ExpressionRefinement{
+			castExpr: factflow.NewExpressionRuntimeValidation(rawSource, validated),
+		},
+	})
+	rawValue := typeValues.FromTypeWithWitness(reg, typ.Any)
+	rawValue = product.Set(reg, rawValue, assertion.Key, assertion.Any())
+	in := state.State{}.WriteValue(reg, key.SymbolValue(rawSym), rawValue)
+
+	got, ok := dynamicIndexExpressionValue(Config{
+		Registry:   reg,
+		Facts:      facts,
+		Visibility: resolver,
+		TypeValues: typeValues,
+	}, point, dyn, in)
+	if !ok {
+		t.Fatal("dynamicIndexExpressionValue returned false")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("projected type = %v/%v, want string from the validated cast", gotType, ok)
+	}
 }
 
 func TestProjectLenFloorPrunesImpossibleEmptyUnionArmForArrayIndex(t *testing.T) {

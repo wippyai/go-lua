@@ -76,6 +76,24 @@ func dynamicIndexExpressionKeyValueActive(
 		if !source.HasExpr {
 			return product.Value{}, false
 		}
+		if refinement, ok := config.Facts.ExpressionRefinement(source.ExprRef); ok {
+			if active[source.ExprRef] {
+				return product.Value{}, false
+			}
+			if active == nil {
+				active = make(map[factflow.ExprRef]bool, 1)
+			}
+			active[source.ExprRef] = true
+			value, valueOK := dynamicIndexExpressionKeyValueActive(config, point, refinement.Source(), in, active)
+			delete(active, source.ExprRef)
+			if !valueOK {
+				if refinement.Mode() != factflow.ExpressionRefinementRuntimeValidation {
+					return product.Value{}, false
+				}
+				value = product.Bottom(config.Registry)
+			}
+			return sourcevalue.ApplyExpressionRefinement(config.Registry, value, refinement), true
+		}
 		if p, ok := config.Facts.ExpressionPathRef(source.ExprRef); ok {
 			if value, ok := Project(config, point, p, in); ok {
 				return value, true
