@@ -23,15 +23,66 @@
           "typed is proven to be string",
           "claim checks string"
         ],
+        "evidence": [
+          {
+            "line": 2,
+            "column": 19,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "reason": "unspecified",
+            "contains": [
+              "typed is proven to be string before the claim"
+            ]
+          },
+          {
+            "line": 2,
+            "column": 19,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "reason": "unspecified",
+            "contains": [
+              "claim checks string at this site"
+            ]
+          }
+        ],
         "render_contains": [
           "hint[advice.redundant_claim]",
           "type claim is redundant"
+        ],
+        "render_ordered_contains": [
+          "hint[advice.redundant_claim]: type claim is redundant; value is already string",
+          "--> main.lua:2:19",
+          "2 | local redundant = typed :: string",
+          "because:",
+          "1. proven: typed is proven to be string before the claim",
+          "2. proven: claim checks string at this site",
+          "help: Remove the runtime type claim when the proven source type is sufficient."
+        ],
+        "render_not_contains": [
+          "missing proof:"
         ],
         "help_contains": [
           "Remove the runtime type claim"
         ],
         "label_contains": [
           "claim site"
+        ],
+        "min_labels": 2,
+        "labels": [
+          {
+            "line": 2,
+            "column": 19,
+            "contains": [
+              "claim site"
+            ]
+          },
+          {
+            "line": 2,
+            "column": 19,
+            "contains": [
+              "proven value"
+            ]
+          }
         ]
       },
       {
@@ -48,15 +99,66 @@
           "typed is proven to be string",
           "claim checks string"
         ],
+        "evidence": [
+          {
+            "line": 3,
+            "column": 26,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "reason": "unspecified",
+            "contains": [
+              "typed is proven to be string before the claim"
+            ]
+          },
+          {
+            "line": 3,
+            "column": 19,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "reason": "unspecified",
+            "contains": [
+              "claim checks string at this site"
+            ]
+          }
+        ],
         "render_contains": [
           "hint[advice.redundant_claim]",
           "type cast call is redundant"
+        ],
+        "render_ordered_contains": [
+          "hint[advice.redundant_claim]: type cast call is redundant; value is already string",
+          "--> main.lua:3:19",
+          "3 | local cast_call = string(typed)",
+          "because:",
+          "1. proven: typed is proven to be string before the claim",
+          "2. proven: claim checks string at this site",
+          "help: Remove the runtime type claim when the proven source type is sufficient."
+        ],
+        "render_not_contains": [
+          "missing proof:"
         ],
         "help_contains": [
           "Remove the runtime type claim"
         ],
         "label_contains": [
           "claim site"
+        ],
+        "min_labels": 2,
+        "labels": [
+          {
+            "line": 3,
+            "column": 19,
+            "contains": [
+              "claim site"
+            ]
+          },
+          {
+            "line": 3,
+            "column": 26,
+            "contains": [
+              "proven value"
+            ]
+          }
         ]
       }
     ]

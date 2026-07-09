@@ -18,9 +18,50 @@
         "message_contains": ["proven isolated"],
         "min_evidence": 2,
         "evidence_contains": ["isolation proof", "direct literal birth site"],
+        "evidence": [
+          {
+            "line": 3,
+            "column": 28,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "reason": "unspecified",
+            "contains": ["isolation proof: direct fresh object literal has no retained graph identity"]
+          },
+          {
+            "line": 3,
+            "column": 28,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "reason": "unspecified",
+            "contains": ["direct literal birth site has no retained graph identity"]
+          }
+        ],
         "render_contains": ["hint[send.isolation]", "proven isolated"],
+        "render_ordered_contains": [
+          "hint[send.isolation]: send payload is proven isolated for zero-copy transfer",
+          "--> main.lua:3:28",
+          "3 | process.send(pid, \"fresh\", { id = \"fresh\" })",
+          "because:",
+          "1. proven: isolation proof: direct fresh object literal has no retained graph identity",
+          "2. proven: direct literal birth site has no retained graph identity",
+          "help: No checker error is emitted by default; unknown send-safety uses the runtime copy fallback."
+        ],
+        "render_not_contains": ["not proven isolated or immutable"],
         "help_contains": ["runtime copy fallback"],
-        "label_contains": ["send payload"]
+        "label_contains": ["send payload"],
+        "min_labels": 2,
+        "labels": [
+          {
+            "line": 3,
+            "column": 28,
+            "contains": ["send payload"]
+          },
+          {
+            "line": 3,
+            "column": 28,
+            "contains": ["send-safety proof"]
+          }
+        ]
       },
       {
         "file": "main.lua",
@@ -30,9 +71,45 @@
         "message_contains": ["not proven", "runtime will copy"],
         "min_evidence": 2,
         "evidence_contains": ["copy fallback", "aliases across the send"],
+        "evidence": [
+          {
+            "line": 6,
+            "column": 28,
+            "kind": "abstract fact",
+            "trust": "unknown",
+            "reason": "unspecified",
+            "contains": ["copy fallback: stack-local path may have aliases across the send"]
+          },
+          {
+            "line": 6,
+            "column": 28,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "unspecified",
+            "contains": ["copy fallback: stack-local path may have aliases across the send"]
+          }
+        ],
         "render_contains": ["hint[send.isolation]", "runtime will copy"],
+        "render_ordered_contains": [
+          "hint[send.isolation]: send payload is not proven isolated or immutable; runtime will copy",
+          "--> main.lua:6:28",
+          "6 | process.send(pid, \"alias\", alias)",
+          "because:",
+          "1. fact: copy fallback: stack-local path may have aliases across the send",
+          "2. missing proof: copy fallback: stack-local path may have aliases across the send",
+          "help: No checker error is emitted by default; unknown send-safety uses the runtime copy fallback."
+        ],
+        "render_not_contains": ["proven isolated for zero-copy transfer"],
         "help_contains": ["runtime copy fallback"],
-        "label_contains": ["send payload"]
+        "label_contains": ["send payload"],
+        "min_labels": 1,
+        "labels": [
+          {
+            "line": 6,
+            "column": 28,
+            "contains": ["send payload"]
+          }
+        ]
       },
       {
         "file": "main.lua",
@@ -42,9 +119,45 @@
         "message_contains": ["not proven", "runtime will copy"],
         "min_evidence": 2,
         "evidence_contains": ["copy fallback", "object graph contains another identity"],
+        "evidence": [
+          {
+            "line": 10,
+            "column": 30,
+            "kind": "abstract fact",
+            "trust": "unknown",
+            "reason": "unspecified",
+            "contains": ["copy fallback: object graph contains another identity that may still be aliased"]
+          },
+          {
+            "line": 10,
+            "column": 30,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "unspecified",
+            "contains": ["copy fallback: object graph contains another identity that may still be aliased"]
+          }
+        ],
         "render_contains": ["hint[send.isolation]", "runtime will copy"],
+        "render_ordered_contains": [
+          "hint[send.isolation]: send payload is not proven isolated or immutable; runtime will copy",
+          "--> main.lua:10:30",
+          "10 | process.send(pid, \"closure\", { fn = function() return captured.id end })",
+          "because:",
+          "1. fact: copy fallback: object graph contains another identity that may still be aliased",
+          "2. missing proof: copy fallback: object graph contains another identity that may still be aliased",
+          "help: No checker error is emitted by default; unknown send-safety uses the runtime copy fallback."
+        ],
+        "render_not_contains": ["proven isolated for zero-copy transfer"],
         "help_contains": ["runtime copy fallback"],
-        "label_contains": ["send payload"]
+        "label_contains": ["send payload"],
+        "min_labels": 1,
+        "labels": [
+          {
+            "line": 10,
+            "column": 30,
+            "contains": ["send payload"]
+          }
+        ]
       },
       {
         "file": "main.lua",
@@ -54,9 +167,45 @@
         "message_contains": ["not proven", "runtime will copy"],
         "min_evidence": 2,
         "evidence_contains": ["copy fallback", "placement is owned-heap"],
+        "evidence": [
+          {
+            "line": 16,
+            "column": 29,
+            "kind": "abstract fact",
+            "trust": "unknown",
+            "reason": "unspecified",
+            "contains": ["copy fallback: placement is owned-heap"]
+          },
+          {
+            "line": 16,
+            "column": 29,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "unspecified",
+            "contains": ["copy fallback: placement is owned-heap"]
+          }
+        ],
         "render_contains": ["hint[send.isolation]", "runtime will copy"],
+        "render_ordered_contains": [
+          "hint[send.isolation]: send payload is not proven isolated or immutable; runtime will copy",
+          "--> main.lua:16:29",
+          "16 | process.send(pid, \"stored\", stored)",
+          "because:",
+          "1. fact: copy fallback: placement is owned-heap",
+          "2. missing proof: copy fallback: placement is owned-heap",
+          "help: No checker error is emitted by default; unknown send-safety uses the runtime copy fallback."
+        ],
+        "render_not_contains": ["proven isolated for zero-copy transfer"],
         "help_contains": ["runtime copy fallback"],
-        "label_contains": ["send payload"]
+        "label_contains": ["send payload"],
+        "min_labels": 1,
+        "labels": [
+          {
+            "line": 16,
+            "column": 29,
+            "contains": ["send payload"]
+          }
+        ]
       },
       {
         "file": "main.lua",
@@ -66,9 +215,50 @@
         "message_contains": ["proven immutable"],
         "min_evidence": 2,
         "evidence_contains": ["immutable proof", "exact identity is frozen"],
+        "evidence": [
+          {
+            "line": 20,
+            "column": 29,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "reason": "unspecified",
+            "contains": ["immutable proof: sent exact identity is frozen"]
+          },
+          {
+            "line": 20,
+            "column": 29,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "reason": "unspecified",
+            "contains": ["exact identity is frozen before send"]
+          }
+        ],
         "render_contains": ["hint[send.isolation]", "proven immutable"],
+        "render_ordered_contains": [
+          "hint[send.isolation]: send payload is proven immutable for zero-copy sharing",
+          "--> main.lua:20:29",
+          "20 | process.send(pid, \"sealed\", sealed)",
+          "because:",
+          "1. proven: immutable proof: sent exact identity is frozen",
+          "2. proven: exact identity is frozen before send",
+          "help: No checker error is emitted by default; unknown send-safety uses the runtime copy fallback."
+        ],
+        "render_not_contains": ["not proven isolated or immutable"],
         "help_contains": ["runtime copy fallback"],
-        "label_contains": ["send payload"]
+        "label_contains": ["send payload"],
+        "min_labels": 2,
+        "labels": [
+          {
+            "line": 20,
+            "column": 29,
+            "contains": ["send payload"]
+          },
+          {
+            "line": 20,
+            "column": 29,
+            "contains": ["send-safety proof"]
+          }
+        ]
       }
     ]
   }

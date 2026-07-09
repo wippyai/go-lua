@@ -22,15 +22,48 @@
         "evidence_contains": [
           "condition is proven to be true"
         ],
+        "evidence": [
+          {
+            "line": 2,
+            "column": 4,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "reason": "unspecified",
+            "contains": [
+              "condition is proven to be true on every reachable path"
+            ]
+          }
+        ],
         "render_contains": [
           "hint[advice.always_true_guard]",
           "condition is proven always true"
+        ],
+        "render_ordered_contains": [
+          "hint[advice.always_true_guard]: condition is proven always true",
+          "--> main.lua:2:4",
+          "2 | if flag then",
+          "because:",
+          "1. proven: condition is proven to be true on every reachable path",
+          "help: Remove the guard or move the guarded code out of the branch."
+        ],
+        "render_not_contains": [
+          "condition is proven always false"
         ],
         "help_contains": [
           "Remove the guard"
         ],
         "label_contains": [
           "constant guard"
+        ],
+        "min_labels": 1,
+        "labels": [
+          {
+            "line": 2,
+            "column": 4,
+            "contains": [
+              "constant guard"
+            ]
+          }
         ]
       }
     ]
