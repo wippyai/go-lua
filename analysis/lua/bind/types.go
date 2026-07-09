@@ -13,8 +13,7 @@ type TypeDeclID uint64
 type TypeDeclKind uint8
 
 const (
-	TypeDeclUnknown TypeDeclKind = iota
-	TypeDeclAlias
+	TypeDeclAlias TypeDeclKind = iota + 1
 	TypeDeclInterface
 	TypeDeclParam
 )

@@ -72,8 +72,7 @@ type FuncProto struct {
 type CallResultTargetKind uint8
 
 const (
-	CallResultTargetUnknown CallResultTargetKind = iota
-	CallResultTargetLocalAssignment
+	CallResultTargetLocalAssignment CallResultTargetKind = iota + 1
 	CallResultTargetOrdinaryAssignment
 	CallResultTargetReturn
 	CallResultTargetExpression

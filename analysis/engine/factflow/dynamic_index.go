@@ -10,8 +10,7 @@ import (
 type DynamicIndexReadbackIntent uint8
 
 const (
-	DynamicIndexReadbackUnknown DynamicIndexReadbackIntent = iota
-	DynamicIndexReadbackNone
+	DynamicIndexReadbackNone DynamicIndexReadbackIntent = iota + 1
 	DynamicIndexReadbackKey
 	DynamicIndexReadbackValue
 	DynamicIndexReadbackKeyAndValue

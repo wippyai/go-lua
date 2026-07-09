@@ -1,11 +1,9 @@
 package ref
 
 import (
-	"fmt"
 	"sort"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
@@ -13,12 +11,6 @@ func TestFuncRefZero(t *testing.T) {
 	var zero FuncRef
 	if !zero.IsZero() {
 		t.Fatalf("zero FuncRef should report zero")
-	}
-	if got := Zero(); got != zero {
-		t.Fatalf("Zero() = %#v, want %#v", got, zero)
-	}
-	if got := FromCFG(nil); got != zero {
-		t.Fatalf("FromCFG(nil) = %#v, want zero", got)
 	}
 	if got := FromSymbol(0); got != zero {
 		t.Fatalf("FromSymbol(0) = %#v, want zero", got)
@@ -29,12 +21,8 @@ func TestFuncRefZero(t *testing.T) {
 }
 
 func TestFuncRefConstructorsAndString(t *testing.T) {
-	g := cfg.New()
-	cfgRef := FromCFG(g)
-	if cfgRef.Kind != KindCFG || cfgRef.ID != g.ID() {
-		t.Fatalf("FromCFG() = %#v, want cfg id %d", cfgRef, g.ID())
-	}
-	if got, want := cfgRef.String(), fmt.Sprintf("func:cfg:%d", g.ID()); got != want {
+	cfgRef := FuncRef{Kind: KindCFG, ID: 7}
+	if got, want := cfgRef.String(), "func:cfg:7"; got != want {
 		t.Fatalf("cfg String() = %q", got)
 	}
 

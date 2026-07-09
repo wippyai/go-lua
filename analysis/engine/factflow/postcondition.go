@@ -22,8 +22,7 @@ type PostconditionRefinementSet struct {
 type PostconditionPathRelationKind uint8
 
 const (
-	PostconditionPathRelationUnknown PostconditionPathRelationKind = iota
-	PostconditionPathRelationEqual
+	PostconditionPathRelationEqual PostconditionPathRelationKind = iota + 1
 )
 
 // PostconditionPathRelation describes a path-to-path relation that holds after

@@ -15,13 +15,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-// PayloadDigest returns a deterministic content digest for a summary payload.
-// Callers that own normalized summaries can use NormalizedPayloadDigest to avoid
-// a defensive clone/normalization pass.
-func PayloadDigest(reg *axis.Registry, s Summary) Digest {
-	return NormalizedPayloadDigest(reg, Normalize(reg, s))
-}
-
 // NormalizedPayloadDigest returns a deterministic content digest for a summary
 // payload already normalized under reg.
 func NormalizedPayloadDigest(reg *axis.Registry, s Summary) Digest {

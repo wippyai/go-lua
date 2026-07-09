@@ -12,8 +12,7 @@ type ChannelSelectID string
 type ChannelSelectKind uint8
 
 const (
-	ChannelSelectUnknown ChannelSelectKind = iota
-	ChannelSelectSelect
+	ChannelSelectSelect ChannelSelectKind = iota + 1
 	ChannelSelectReceive
 	ChannelSelectCase
 )

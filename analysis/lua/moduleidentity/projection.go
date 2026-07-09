@@ -59,8 +59,7 @@ type SourceRef uint64
 type SourceKind uint8
 
 const (
-	SourceUnknown SourceKind = iota
-	SourceExpression
+	SourceExpression SourceKind = iota + 1
 	SourceCall
 	SourcePath
 	SourceStringLiteral

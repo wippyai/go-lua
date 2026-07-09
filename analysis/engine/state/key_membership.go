@@ -14,8 +14,7 @@ import (
 type KeyMembershipKind uint8
 
 const (
-	KeyMembershipInvalid KeyMembershipKind = iota
-	KeyMembershipPath
+	KeyMembershipPath KeyMembershipKind = iota + 1
 	KeyMembershipDynamicIndexValue
 	KeyMembershipDynamicIndexAllValues
 )

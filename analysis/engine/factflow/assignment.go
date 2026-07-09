@@ -11,8 +11,7 @@ import (
 type RootAssignmentKind int
 
 const (
-	RootAssignmentUnknown RootAssignmentKind = iota
-	RootAssignmentLocalDeclaration
+	RootAssignmentLocalDeclaration RootAssignmentKind = iota + 1
 	RootAssignmentOrdinaryRootWrite
 )
 

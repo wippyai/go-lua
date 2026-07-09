@@ -10,8 +10,7 @@ import (
 type BranchPathEvidenceKind uint8
 
 const (
-	BranchPathEvidenceUnknown BranchPathEvidenceKind = iota
-	BranchPathEvidencePresence
+	BranchPathEvidencePresence BranchPathEvidenceKind = iota + 1
 	BranchPathEvidenceEqual
 	BranchPathEvidenceNotEqual
 	BranchPathEvidenceTruthy

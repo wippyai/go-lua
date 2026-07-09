@@ -29,8 +29,7 @@ type RelConstraint struct {
 type RelOperandKind uint8
 
 const (
-	RelOperandInvalid RelOperandKind = iota
-	RelOperandValue
+	RelOperandValue RelOperandKind = iota + 1
 	RelOperandLength
 )
 

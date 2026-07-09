@@ -9,8 +9,7 @@ import (
 type BranchPathRelationKind uint8
 
 const (
-	BranchPathRelationUnknown BranchPathRelationKind = iota
-	BranchPathRelationEqual
+	BranchPathRelationEqual BranchPathRelationKind = iota + 1
 	BranchPathRelationNotEqual
 	// BranchPathRelationTypeMatch narrows the left path (the subject of a
 	// type() call) to the runtime kind named by the right path's value when

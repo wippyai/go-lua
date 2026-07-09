@@ -518,8 +518,6 @@ func testModuleSource(source factflow.ValueSource) moduleidentity.Source {
 		if source.LiteralKind == factflow.ValueSourceLiteralString {
 			out.Kind = moduleidentity.SourceStringLiteral
 		}
-	default:
-		out.Kind = moduleidentity.SourceUnknown
 	}
 	return out
 }

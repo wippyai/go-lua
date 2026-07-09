@@ -26,8 +26,7 @@ type Capture struct {
 type FunctionOriginKind uint8
 
 const (
-	FunctionOriginUnknown FunctionOriginKind = iota
-	FunctionOriginDeclaration
+	FunctionOriginDeclaration FunctionOriginKind = iota + 1
 	FunctionOriginLocalAssignment
 	FunctionOriginLiteral
 	FunctionOriginMethod

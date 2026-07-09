@@ -4,7 +4,6 @@ package ref
 import (
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
@@ -26,19 +25,6 @@ const (
 type FuncRef struct {
 	Kind Kind
 	ID   uint64
-}
-
-// Zero returns the zero function reference.
-func Zero() FuncRef {
-	return FuncRef{}
-}
-
-// FromCFG returns a reference for g. Nil graphs produce the zero reference.
-func FromCFG(g cfg.Graph) FuncRef {
-	if g == nil || g.ID() == 0 {
-		return FuncRef{}
-	}
-	return FuncRef{Kind: KindCFG, ID: g.ID()}
 }
 
 // FromSymbol returns a reference for a function symbol. ID 0 produces zero.

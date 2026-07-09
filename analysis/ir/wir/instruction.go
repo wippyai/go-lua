@@ -200,8 +200,7 @@ type CallInfo struct {
 type CallContextKind uint8
 
 const (
-	CallContextUnknown CallContextKind = iota
-	CallContextStatement
+	CallContextStatement CallContextKind = iota + 1
 	CallContextAssignmentSource
 	CallContextReturnSource
 	CallContextIteratorSource

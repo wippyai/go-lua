@@ -580,7 +580,7 @@ func TestFunctionOrigins(t *testing.T) {
 		t.Fatalf("literal origin = %#v, want side-effect-free literal metadata", literalOrigin)
 	}
 
-	origins[0].Kind = FunctionOriginUnknown
+	origins[0].Kind = 0
 	if got := mustOrigin(t, r, globalFn).Kind; got != FunctionOriginDeclaration {
 		t.Fatalf("FunctionOrigins returned mutable origin storage; kind = %v", got)
 	}

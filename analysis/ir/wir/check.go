@@ -28,7 +28,6 @@ const (
 	CheckIndexInRange
 	CheckNumGe
 	CheckNumLe
-	CheckFrozenTable
 )
 
 // Check is the neutral condition descriptor interned by a Body. Lowering
