@@ -58,8 +58,7 @@ func newSelfContainsScan(t typ.Type) selfContainsScan {
 	}
 	return selfContainsScan{
 		scanner: inspect.NewScanner(inspect.ScanOptions{
-			Seen:      inspect.NewIdentitySeen(nil),
-			MaxEnters: selfSubstitutionNodeBudget,
+			Seen: inspect.NewIdentitySeen(nil),
 		}),
 	}
 }
@@ -159,8 +158,6 @@ func (s *selfContainsScan) contains(t typ.Type, mode selfScanMode) bool {
 	}
 	return false
 }
-
-const selfSubstitutionNodeBudget = 2048
 
 // SelfValue replaces free Self references in a runtime value type. Nested
 // function and interface types bind their own Self, so substitution stops at

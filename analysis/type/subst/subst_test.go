@@ -1,10 +1,12 @@
 package subst
 
 import (
+	"strconv"
+	"testing"
+
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
-	"testing"
 )
 
 func requireNoInstantiated(t *testing.T, tt typ.Type) {
@@ -445,6 +447,38 @@ func TestSelf(t *testing.T) {
 		wrapper := typetable.NewRecord().Field("payload", rec).Build()
 		if got := Self(wrapper, typ.String); got != wrapper {
 			t.Fatalf("recursive payload body Self should not be surfaced, got %v", got)
+		}
+	})
+
+	t.Run("retains surface self beyond the old node budget", func(t *testing.T) {
+		const recordCount = 2050
+		elements := make([]typ.Type, 0, recordCount+1)
+		for i := 0; i < recordCount; i++ {
+			elements = append(elements, typetable.NewRecord().Field("field_"+strconv.Itoa(i), typ.String).Build())
+		}
+		elements = append(elements, typ.Self)
+		tuple := typ.NewTuple(elements...)
+		rec := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+			return typetable.NewRecord().Field("next", self).Build()
+		})
+
+		result := Self(typeexpr.Union(rec, tuple), typ.String)
+		union, ok := result.(*typ.Union)
+		if !ok {
+			t.Fatalf("result = %T, want union", result)
+		}
+		var rewritten *typ.Tuple
+		for _, member := range union.Members {
+			if candidate, ok := member.(*typ.Tuple); ok {
+				rewritten = candidate
+				break
+			}
+		}
+		if rewritten == nil || len(rewritten.Elements) != recordCount+1 {
+			t.Fatalf("rewritten tuple = %#v, want %d elements", rewritten, recordCount+1)
+		}
+		if rewritten.Elements[recordCount] != typ.String {
+			t.Fatalf("surface Self after %d records = %v, want string", recordCount, rewritten.Elements[recordCount])
 		}
 	})
 }
