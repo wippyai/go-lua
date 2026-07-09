@@ -391,6 +391,21 @@ func (s State) AddBranchProof(proof pathevidence.BranchProof) State {
 	return out
 }
 
+// AddBranchProofs records must branch proofs with one path-evidence copy-on-
+// write update.
+func (s State) AddBranchProofs(proofs []pathevidence.BranchProof) State {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return s
+	}
+	pathEvidence, reachable := s.pathEvidence.AddBranchProofs(proofs)
+	if !reachable {
+		return s
+	}
+	out := s.reachable()
+	out.pathEvidence = pathEvidence
+	return out
+}
+
 func (s State) HasBranchProof(proof pathevidence.BranchProof) bool {
 	if !s.laneEnabled(lanePathEvidenceBit) {
 		return false
@@ -483,6 +498,15 @@ func (s State) EquivalentPathKeys(ks *keyspace.KeySpace, pathKey pathdom.PathKey
 		return nil
 	}
 	return s.pathEvidence.EquivalentPathKeys(ks, pathKey)
+}
+
+// EquivalentKeyspaceKeys returns structural aliases, including safe descendant
+// rebases, without formatting them as PathKey strings.
+func (s State) EquivalentKeyspaceKeys(ks *keyspace.KeySpace, pathKey keyspace.Key) []keyspace.Key {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return nil
+	}
+	return s.pathEvidence.EquivalentKeyspaceKeys(ks, pathKey)
 }
 
 // EquivalentRootKeys returns root-symbol aliases proven equal to stateKey

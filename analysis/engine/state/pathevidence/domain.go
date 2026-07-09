@@ -115,6 +115,9 @@ func (o domainOps) fromLanes(
 	out.staticMembersBottom = staticMembers.Bottom()
 	out.proofs = proofs.Values()
 	out.proofsBottom = proofs.Bottom()
+	for proof := range out.proofs {
+		out.equalityRootMask.merge(equalityProofRootMask(proof))
+	}
 	out.pathPresenceImplications = pathPresenceImplications.Values()
 	out.pathPresenceImplicationsBottom = pathPresenceImplications.Bottom()
 	return out

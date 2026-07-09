@@ -15,11 +15,14 @@ type Lane struct {
 	staticMembers                  map[keyspace.Key]product.Value
 	proofs                         map[BranchProof]struct{}
 	pathPresenceImplications       map[PathPresenceImplication]struct{}
+	equalityRootMask               equalityRootMask
 	refinementsBottom              bool
 	staticMembersBottom            bool
 	proofsBottom                   bool
 	pathPresenceImplicationsBottom bool
 }
+
+type equalityRootMask [4]uint64
 
 // Clone returns an independent copy of the lane's finite evidence.
 func (l Lane) Clone() Lane {
@@ -28,6 +31,7 @@ func (l Lane) Clone() Lane {
 		staticMembers:                  cloneLocalValueMap(l.staticMembers),
 		proofs:                         cloneBranchProofSet(l.proofs),
 		pathPresenceImplications:       clonePathPresenceImplicationSet(l.pathPresenceImplications),
+		equalityRootMask:               l.equalityRootMask,
 		refinementsBottom:              l.refinementsBottom,
 		staticMembersBottom:            l.staticMembersBottom,
 		proofsBottom:                   l.proofsBottom,

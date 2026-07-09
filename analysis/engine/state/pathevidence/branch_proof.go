@@ -27,21 +27,46 @@ type BranchProof struct {
 
 // AddBranchProof records a must fact that survived onto this control-flow edge.
 func (l Lane) AddBranchProof(proof BranchProof) (Lane, bool) {
-	if proof.Kind == 0 {
+	return l.AddBranchProofs([]BranchProof{proof})
+}
+
+// AddBranchProofs records each valid must proof with a single copy-on-write
+// update. It is equivalent to repeated AddBranchProof calls.
+func (l Lane) AddBranchProofs(additions []BranchProof) (Lane, bool) {
+	if len(additions) == 0 {
 		return l, false
 	}
-	if !l.proofsBottom {
-		if _, ok := l.proofs[proof]; ok {
-			return l, false
+	var proofs map[BranchProof]struct{}
+	changed := false
+	for _, proof := range additions {
+		if proof.Kind == 0 {
+			continue
 		}
+		if !l.proofsBottom {
+			if _, ok := l.proofs[proof]; ok {
+				continue
+			}
+		}
+		if proofs == nil {
+			proofs = cloneBranchProofSet(l.proofs)
+			if proofs == nil {
+				proofs = make(map[BranchProof]struct{}, len(additions))
+			}
+		}
+		if _, ok := proofs[proof]; ok {
+			continue
+		}
+		proofs[proof] = struct{}{}
+		changed = true
 	}
-	proofs := cloneBranchProofSet(l.proofs)
-	if proofs == nil {
-		proofs = make(map[BranchProof]struct{}, 1)
+	if !changed {
+		return l, false
 	}
-	proofs[proof] = struct{}{}
 	out := l.Reachable()
 	out.proofs = proofs
+	for _, proof := range additions {
+		out.equalityRootMask.merge(equalityProofRootMask(proof))
+	}
 	return out, true
 }
 
@@ -95,10 +120,31 @@ func (l Lane) EquivalentPathKeys(ks *keyspace.KeySpace, pathKey pathdom.PathKey)
 	if !ok {
 		return nil
 	}
-	seen := map[pathdom.PathKey]struct{}{pathKey: {}}
+	keys := l.EquivalentKeyspaceKeys(ks, start)
+	if len(keys) == 0 {
+		return nil
+	}
+	out := make([]pathdom.PathKey, len(keys))
+	for i, key := range keys {
+		out[i] = ks.Format(key)
+	}
+	return out
+}
+
+// EquivalentKeyspaceKeys returns every key reachable from start through
+// equality proofs, including safe descendant rebases. The result is in stable
+// keyspace order and excludes start itself.
+func (l Lane) EquivalentKeyspaceKeys(ks *keyspace.KeySpace, start keyspace.Key) []keyspace.Key {
+	if ks == nil || start.Kind == keyspace.KindInvalid || l.proofsBottom || len(l.proofs) == 0 {
+		return nil
+	}
+	if !l.equalityRootMask.empty() && !l.equalityRootMask.matches(start) {
+		return nil
+	}
+	seen := map[keyspace.Key]struct{}{start: {}}
 	queue := []keyspace.Key{start}
 	segmentLimit := equivalentPathExpansionSegmentLimit(ks, start, l.proofs)
-	var out []pathdom.PathKey
+	var out []keyspace.Key
 	for len(queue) != 0 {
 		current := queue[0]
 		queue = queue[1:]
@@ -106,21 +152,25 @@ func (l Lane) EquivalentPathKeys(ks *keyspace.KeySpace, pathKey pathdom.PathKey)
 			if proof.Kind != BranchProofPathEqual {
 				continue
 			}
-			for _, next := range equivalentPathKeysForProof(ks, current, proof) {
-				if exceedsEquivalentPathSegmentLimit(ks, next, segmentLimit) {
-					continue
+			if next, ok := rebaseEquivalentPathKey(ks, current, proof.Path, proof.Other); ok &&
+				!exceedsEquivalentPathSegmentLimit(ks, next, segmentLimit) {
+				if _, seenAlready := seen[next]; !seenAlready {
+					seen[next] = struct{}{}
+					out = append(out, next)
+					queue = append(queue, next)
 				}
-				spelling := ks.Format(next)
-				if _, ok := seen[spelling]; ok {
-					continue
+			}
+			if next, ok := rebaseEquivalentPathKey(ks, current, proof.Other, proof.Path); ok &&
+				!exceedsEquivalentPathSegmentLimit(ks, next, segmentLimit) {
+				if _, seenAlready := seen[next]; !seenAlready {
+					seen[next] = struct{}{}
+					out = append(out, next)
+					queue = append(queue, next)
 				}
-				seen[spelling] = struct{}{}
-				out = append(out, spelling)
-				queue = append(queue, next)
 			}
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	sort.Slice(out, func(i, j int) bool { return ks.Less(out[i], out[j]) })
 	return out
 }
 
@@ -141,6 +191,47 @@ func equivalentPathExpansionSegmentLimit(
 		limit += positiveSegmentDelta(ks, proof.Other, proof.Path)
 	}
 	return limit
+}
+
+func equalityProofRootMask(proof BranchProof) equalityRootMask {
+	if proof.Kind != BranchProofPathEqual {
+		return equalityRootMask{}
+	}
+	mask := equalityRootMaskForKey(proof.Path)
+	mask.merge(equalityRootMaskForKey(proof.Other))
+	return mask
+}
+
+func equalityRootMaskForKey(key keyspace.Key) equalityRootMask {
+	root := uint64(key.Kind)<<56 | uint64(key.Sym)<<24 | uint64(key.Ver)
+	root ^= uint64(key.Root) * 0x9e3779b97f4a7c15
+	root ^= root >> 30
+	root *= 0xbf58476d1ce4e5b9
+	root ^= root >> 27
+	var mask equalityRootMask
+	bit := root & 255
+	mask[bit>>6] = uint64(1) << (bit & 63)
+	return mask
+}
+
+func (m *equalityRootMask) merge(other equalityRootMask) {
+	for i := range m {
+		m[i] |= other[i]
+	}
+}
+
+func (m equalityRootMask) empty() bool {
+	return m == equalityRootMask{}
+}
+
+func (m equalityRootMask) matches(key keyspace.Key) bool {
+	needle := equalityRootMaskForKey(key)
+	for i := range m {
+		if m[i]&needle[i] != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func positiveSegmentDelta(ks *keyspace.KeySpace, from, to keyspace.Key) int {
@@ -197,17 +288,6 @@ func (l Lane) EquivalentRootKeys(ks *keyspace.KeySpace, pathKey pathdom.PathKey)
 	sort.Slice(out, func(i, j int) bool {
 		return ks.Format(out[i]) < ks.Format(out[j])
 	})
-	return out
-}
-
-func equivalentPathKeysForProof(ks *keyspace.KeySpace, pathKey keyspace.Key, proof BranchProof) []keyspace.Key {
-	var out []keyspace.Key
-	if rebased, ok := rebaseEquivalentPathKey(ks, pathKey, proof.Path, proof.Other); ok {
-		out = append(out, rebased)
-	}
-	if rebased, ok := rebaseEquivalentPathKey(ks, pathKey, proof.Other, proof.Path); ok {
-		out = append(out, rebased)
-	}
 	return out
 }
 

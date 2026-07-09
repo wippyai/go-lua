@@ -1,6 +1,8 @@
 package factapply
 
 import (
+	"sort"
+
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
@@ -145,50 +147,64 @@ func closeBranchProofsAcrossEquality(ks *keyspace.KeySpace, out state.State, aKe
 	}
 	// State branch-proof writes are copy-on-write, so the traversal keeps the
 	// input proof set while out accumulates its equality closure.
+	var additions []pathevidence.BranchProof
 	out.ForEachBranchProof(func(proof pathevidence.BranchProof) bool {
-		out = mirrorBranchProofAcrossEquality(ks, out, proof, aKey, bKey)
-		out = mirrorBranchProofAcrossEquality(ks, out, proof, bKey, aKey)
+		if mirrored, ok := mirroredBranchProofAcrossEquality(ks, proof, aKey, bKey); ok {
+			additions = append(additions, mirrored)
+		}
+		if mirrored, ok := mirroredBranchProofAcrossEquality(ks, proof, bKey, aKey); ok {
+			additions = append(additions, mirrored)
+		}
 		return true
 	})
-	return out
+	return out.AddBranchProofs(additions)
 }
 
 func closeBranchProofsAcrossKnownEqualities(ks *keyspace.KeySpace, out state.State) state.State {
 	if ks == nil {
 		return out
 	}
-	snap := out.BranchProofsSnapshot(ks)
-	if snap.Bottom || snap.Top || len(snap.Proofs) == 0 {
-		return out
-	}
-	for _, proof := range snap.Proofs {
-		if proof.Kind != pathevidence.BranchProofPathEqual {
-			continue
+	var equalities []pathevidence.BranchProof
+	out.ForEachBranchProof(func(proof pathevidence.BranchProof) bool {
+		if proof.Kind == pathevidence.BranchProofPathEqual {
+			equalities = append(equalities, proof)
 		}
+		return true
+	})
+	sort.Slice(equalities, func(i, j int) bool {
+		if equalities[i].Path != equalities[j].Path {
+			return ks.Less(equalities[i].Path, equalities[j].Path)
+		}
+		if equalities[i].Other != equalities[j].Other {
+			return ks.Less(equalities[i].Other, equalities[j].Other)
+		}
+		return equalities[i].Presence.String() < equalities[j].Presence.String()
+	})
+	for _, proof := range equalities {
 		out = closeBranchProofsAcrossEquality(ks, out, proof.Path, proof.Other)
 	}
 	return out
 }
 
-func mirrorBranchProofAcrossEquality(ks *keyspace.KeySpace, out state.State, proof pathevidence.BranchProof, fromKey, toKey keyspace.Key) state.State {
+func mirroredBranchProofAcrossEquality(ks *keyspace.KeySpace, proof pathevidence.BranchProof, fromKey, toKey keyspace.Key) (pathevidence.BranchProof, bool) {
 	rebasedPath, ok := rebaseBranchProofKey(ks, proof.Path, fromKey, toKey)
 	if !ok {
-		return out
+		return pathevidence.BranchProof{}, false
 	}
 	mirrored := proof
 	mirrored.Path = rebasedPath
 	switch proof.Kind {
 	case pathevidence.BranchProofPathPresence:
-		return out.AddBranchProof(mirrored)
+		return mirrored, true
 	case pathevidence.BranchProofIndexInRange:
 		if proof.Other != (keyspace.Key{}) {
 			if rebasedOther, otherOK := rebaseBranchProofKey(ks, proof.Other, fromKey, toKey); otherOK {
 				mirrored.Other = rebasedOther
 			}
 		}
-		return out.AddBranchProof(mirrored)
+		return mirrored, true
 	default:
-		return out
+		return pathevidence.BranchProof{}, false
 	}
 }
 
