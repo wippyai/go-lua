@@ -40,6 +40,7 @@ func (l *lowerer) addConditionalAssignmentImplications(input *factflow.FactsInpu
 	}
 	rpo := graph.RPO()
 	continuationJoins := newBranchContinuationJoinCache(graph, rpo)
+	incomingByPoint := l.assignmentStatesBeforePoints(input, graph)
 	for _, branch := range rpo {
 		if partitionImplicationCount >= MaxPartitionImplicationsPerBody {
 			return
@@ -54,7 +55,10 @@ func (l *lowerer) addConditionalAssignmentImplications(input *factflow.FactsInpu
 		if !ok || join == branch || join == graph.Exit() {
 			continue
 		}
-		incoming := l.assignmentStateBeforePoint(input, graph, branch)
+		incoming, ok := incomingByPoint[branch]
+		if !ok {
+			incoming = l.assignmentStateBeforePoint(input, graph, branch)
+		}
 		edgeAssignments := make(map[cfg.Point]presentAssignmentState)
 		for _, succ := range cfg.SuccessorsReadOnly(graph, branch) {
 			edgeAssignments[succ] = l.presentAssignmentsOnBranchEdge(input, graph, succ, join, incoming)
@@ -96,6 +100,49 @@ func (l *lowerer) addConditionalAssignmentImplications(input *factflow.FactsInpu
 			}
 		}
 	}
+}
+
+// assignmentStatesBeforePoints computes the incoming assignment state for an
+// entire acyclic CFG in one RPO pass. Looping graphs keep the per-stop solve:
+// excluding the stop transfer is what prevents a loop iteration from becoming
+// an incoming fact for that same branch.
+func (l *lowerer) assignmentStatesBeforePoints(
+	input *factflow.FactsInput,
+	graph cfg.Graph,
+) map[cfg.Point]presentAssignmentState {
+	if input == nil || graph == nil {
+		return nil
+	}
+	rpo := cfg.RPOReadOnly(graph)
+	if len(rpo) == 0 {
+		return nil
+	}
+	order := make(map[cfg.Point]int, len(rpo))
+	for i, point := range rpo {
+		order[point] = i
+	}
+	for i, point := range rpo {
+		for _, successor := range cfg.SuccessorsReadOnly(graph, point) {
+			if successorIndex, ok := order[successor]; !ok || successorIndex <= i {
+				return nil
+			}
+		}
+	}
+
+	in := make(map[cfg.Point]presentAssignmentState, len(rpo))
+	out := make(map[cfg.Point]presentAssignmentState, len(rpo))
+	for _, point := range rpo {
+		nextIn, ok := incomingPresentAssignmentState(graph, nil, out, point, graph.Entry())
+		if point == graph.Entry() {
+			nextIn, ok = presentAssignmentState{}, true
+		}
+		if !ok {
+			continue
+		}
+		in[point] = nextIn
+		out[point] = l.transferPresentAssignmentState(input, point, nextIn, false)
+	}
+	return in
 }
 
 func (l *lowerer) addChannelSelectPayloadImplications(
