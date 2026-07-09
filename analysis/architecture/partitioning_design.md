@@ -72,10 +72,11 @@ Discriminants are syntactically selected and bounded:
 - no arbitrary expressions, computed keys, cross-function partition carry, or
   unbounded path families.
 
-The phase-1 cap is 64 published partition implications per body. Once the cap is
-hit, lowering stops publishing new partition implications for that body. Existing
-ordinary flow still runs, so overflow joins soundly and cannot prove a value
-that the unpartitioned engine could not prove.
+Phase 1 publishes every canonical partition implication. The candidate set is
+naturally finite: each implication is derived from a syntactic branch and a
+syntactic assignment or channel-select site in the body. A fixed per-body
+quantity cap would silently discard valid correlations and is therefore not an
+analysis bound.
 
 Target facts are also deliberately small:
 

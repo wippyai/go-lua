@@ -16,11 +16,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typecall"
 )
 
-// MaxPartitionImplicationsPerBody bounds discriminant-keyed conditional facts
-// produced by this lowering pass. Overflow simply stops publishing additional
-// facts; ordinary unpartitioned flow remains sound.
-const MaxPartitionImplicationsPerBody = 64
-
 // addConditionalAssignmentImplications derives merge-point facts of the form:
 // if a later path value proves the same branch condition, then a target assigned
 // on that branch edge keeps the value assigned on that edge. This preserves correlations such as
@@ -31,8 +26,7 @@ func (l *lowerer) addConditionalAssignmentImplications(input *factflow.FactsInpu
 	if input == nil {
 		return
 	}
-	partitionImplicationCount := 0
-	l.addChannelSelectPayloadImplications(input, graph, &partitionImplicationCount)
+	l.addChannelSelectPayloadImplications(input, graph)
 	if graph == nil || len(input.RootAssignments) == 0 {
 		return
 	}
@@ -96,11 +90,7 @@ func (l *lowerer) addConditionalAssignmentImplications(input *factflow.FactsInpu
 		}
 	}
 	for _, candidate := range canonicalConditionalAssignmentImplicationCandidates(l.registry, candidates) {
-		if partitionImplicationCount >= MaxPartitionImplicationsPerBody {
-			return
-		}
 		appendPathValuePresenceImplications(input.PathValuePresenceImplications, candidate.point, candidate.implication)
-		partitionImplicationCount++
 	}
 }
 
@@ -150,15 +140,11 @@ func (l *lowerer) assignmentStatesBeforePoints(
 func (l *lowerer) addChannelSelectPayloadImplications(
 	input *factflow.FactsInput,
 	graph cfg.Graph,
-	partitionImplicationCount *int,
 ) {
 	if l == nil || l.registry == nil || input == nil || graph == nil {
 		return
 	}
 	for _, point := range graph.RPO() {
-		if partitionImplicationCount != nil && *partitionImplicationCount >= MaxPartitionImplicationsPerBody {
-			return
-		}
 		for _, event := range input.ChannelSelects[point].Events() {
 			if event.Kind() != factflow.ChannelSelectReceive {
 				continue
@@ -177,19 +163,16 @@ func (l *lowerer) addChannelSelectPayloadImplications(
 				product.Equal(l.registry, payload, product.Bottom(l.registry)) {
 				continue
 			}
-			if !appendPartitionPathValuePresenceImplication(
+			appendPathValuePresenceImplications(
 				input.PathValuePresenceImplications,
 				point,
-				partitionImplicationCount,
 				factflow.NewPathEqualityValueRefinementImplication(
 					resultPath.Field("channel"),
 					casePath,
 					resultPath.Field("value"),
 					payload,
 				),
-			) {
-				return
-			}
+			)
 		}
 	}
 }
@@ -257,10 +240,10 @@ func conditionalAssignmentTargetImplication(
 	return implication, true
 }
 
-// conditionalAssignmentImplicationCandidate is sorted before the body-wide
-// partition cap is applied. Its key uses only CFG point, canonical path identity,
-// implication shape, and stable product hashes; it deliberately excludes pointer
-// identity and diagnostic formatting.
+// conditionalAssignmentImplicationCandidate is sorted and deduplicated before
+// publication. Its key uses only CFG point, canonical path identity, implication
+// shape, and stable product hashes; it deliberately excludes pointer identity and
+// diagnostic formatting.
 type conditionalAssignmentImplicationCandidate struct {
 	point       cfg.Point
 	implication factflow.PathValuePresenceImplication
@@ -364,22 +347,6 @@ func conditionalAssignmentImplicationCandidateEqual(reg *axis.Registry, left, ri
 		leftImplication.TargetPresence() == rightImplication.TargetPresence() &&
 		product.Equal(reg, leftImplication.TargetValue(), rightImplication.TargetValue()) &&
 		leftImplication.HasTargetValue() == rightImplication.HasTargetValue()
-}
-
-func appendPartitionPathValuePresenceImplication(
-	out map[cfg.Point]factflow.PathValuePresenceImplicationSet,
-	point cfg.Point,
-	count *int,
-	implication factflow.PathValuePresenceImplication,
-) bool {
-	if count != nil && *count >= MaxPartitionImplicationsPerBody {
-		return false
-	}
-	appendPathValuePresenceImplications(out, point, implication)
-	if count != nil {
-		(*count)++
-	}
-	return true
 }
 
 type branchContinuationJoinCache struct {

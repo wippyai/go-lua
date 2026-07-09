@@ -31,7 +31,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
-func TestLowerConditionalAssignmentCapRetainsCanonicalFactSetAcrossFreshSolves(t *testing.T) {
+func TestLowerConditionalAssignmentRetainsFullCanonicalFactSetAcrossFreshSolves(t *testing.T) {
 	const source = `
 function f(flag: boolean)
     local a1: boolean = false
@@ -73,10 +73,10 @@ end
 	var want []conditionalImplicationTestKey
 	fn, bindings, built := parseSemanticFunction(t, source)
 	for run := 0; run < 12; run++ {
-		facts := lowerFunctionFactsWithWIR(t, "conditional-cap", fn, built, bindings, standard.Registry())
+		facts := lowerFunctionFactsWithWIR(t, "conditional-full-set", fn, built, bindings, standard.Registry())
 		got := conditionalImplicationTestKeys(standard.Registry(), built.Graph, facts)
-		if len(got) != MaxPartitionImplicationsPerBody {
-			t.Fatalf("run %d retained implications = %d, want cap %d", run, len(got), MaxPartitionImplicationsPerBody)
+		if len(got) != 200 {
+			t.Fatalf("run %d retained implications = %d, want full set of 200", run, len(got))
 		}
 		if run == 0 {
 			want = got

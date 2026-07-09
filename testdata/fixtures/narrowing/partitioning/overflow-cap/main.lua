@@ -85,7 +85,7 @@ local function run(
     local x62: string?; if ok62 then x62 = "v62" end; if ok62 then use(x62) end
     local x63: string?; if ok63 then x63 = "v63" end; if ok63 then use(x63) end
     local x64: string?; if ok64 then x64 = "v64" end; if ok64 then use(x64) end
-    local x65: string?; if ok65 then x65 = "v65" end; if ok65 then use(x65) end -- expect-error
+    local x65: string?; if ok65 then x65 = "v65" end; if ok65 then use(x65) end
     return nil
 end
 
