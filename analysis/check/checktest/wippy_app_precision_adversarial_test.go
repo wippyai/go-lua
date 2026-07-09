@@ -10268,17 +10268,17 @@ end
 	}
 }
 
-func TestCheckStringGsubReplacementCallbackCaptureIsString(t *testing.T) {
+func TestCheckStringGsubReplacementCallbackCaptureIsStringOrInteger(t *testing.T) {
 	result := Check(`
-local function split_string(str: string, sep: string): {string}
-    local fields: {string} = {}
+local function split_string(str: string, sep: string): {string | integer}
+    local fields: {string | integer} = {}
     local pattern = string.format("([^%s]+)", sep)
     str:gsub(pattern, function(c) fields[#fields + 1] = c end)
     return fields
 end
 `, WithStdlib())
 	if len(result.Diagnostics) != 0 {
-		t.Fatalf("diagnostics = %#v, want gsub capture callback parameter typed as string", result.Diagnostics)
+		t.Fatalf("diagnostics = %#v, want gsub capture callback parameter typed as string | integer", result.Diagnostics)
 	}
 }
 

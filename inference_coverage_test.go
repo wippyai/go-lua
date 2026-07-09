@@ -45,6 +45,9 @@ var inferableCorpus = []inferenceCase{
 	{"string-method-chain", `local s = ("hi"):upper():lower() return s`},
 	{"string-method-len", `local n = ("hello"):len() return n`},
 	{"string-method-on-var", `local function up(x: string) return x:upper() end return up`},
+	{"string-gsub-pair", `local text, count = ("a b"):gsub("%s+", "-") return { text = text, count = count }`},
+	{"string-match-guard", `local m = ("id=42"):match("(%d+)") if m == nil then return "" end return m:upper()`},
+	{"string-byte-guard", `local b = ("abc"):byte(1) if b == nil then return 0 end return b + 1`},
 }
 
 // frontierCorpus holds programs at the current inference frontier: a bare

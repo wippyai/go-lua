@@ -168,6 +168,38 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) callpayload
 				Value: value,
 			})
 		}
+		if returnValue != nil {
+			present := make(map[int]struct{}, len(results))
+			for _, result := range results {
+				present[result.Index] = struct{}{}
+			}
+			site.ForEachResultTarget(func(target factflow.CallResultTargetView) bool {
+				index := target.ResultIndex()
+				if index < len(sig.Type.Returns) {
+					return true
+				}
+				if _, ok := present[index]; ok {
+					return true
+				}
+				value, ok := returnValue(SignatureReturnContext{
+					Node:  ctx,
+					Site:  site,
+					Name:  name,
+					Index: index,
+					In:    in,
+					Read:  read,
+				})
+				if !ok {
+					return true
+				}
+				present[index] = struct{}{}
+				results = append(results, callpayload.CallResult{
+					Index: index,
+					Value: value,
+				})
+				return true
+			})
+		}
 		out.Results = results
 		out.PostReturnAuthority = calloutcome.HasAuthoritativePostReturnEvidence(ctx.Registry, out)
 		return out
@@ -302,6 +334,9 @@ func receiverMethodSignatureName(ctx transfer.NodeContext, site factflow.CallSit
 	receiverType, ok := receiverTypeForMethodSite(ctx, site, in, sources, read)
 	if !ok {
 		return "", nil, false
+	}
+	if subtype.IsSubtype(receiverType, typ.String) {
+		return "string." + method, receiverType, true
 	}
 	iface, ok := receiverSignatureInterface(receiverType)
 	if !ok {

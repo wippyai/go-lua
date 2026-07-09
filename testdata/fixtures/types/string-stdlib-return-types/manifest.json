@@ -1,0 +1,6 @@
+{
+  "description": "String stdlib return types carry nilability, multireturn destructuring, captures, gsub counts, byte nilability, and gmatch loop variables without annotations.",
+  "run": {
+    "skip": "diagnostic-only"
+  }
+}

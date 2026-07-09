@@ -127,6 +127,30 @@ func TestLookupSeededFunctionTypes(t *testing.T) {
 				Returns(typetable.NewRecord().Build()).
 				Build(),
 		},
+		{
+			name: "string.byte",
+			want: typ.Func().
+				Param("s", typ.String).
+				OptParam("i", typ.Integer).
+				OptParam("j", typ.Integer).
+				Returns(normalize.Optional(typ.Integer)).
+				Build(),
+		},
+		{
+			name: "string.gfind",
+			want: typ.Func().
+				Param("s", typ.String).
+				Param("pattern", typ.String).
+				Returns(typ.Func().
+					Returns(
+						normalize.Optional(typ.MaterializeUnion([]typ.Type{typ.String, typ.Integer})),
+						normalize.Optional(typ.MaterializeUnion([]typ.Type{typ.String, typ.Integer})),
+						normalize.Optional(typ.MaterializeUnion([]typ.Type{typ.String, typ.Integer})),
+						normalize.Optional(typ.MaterializeUnion([]typ.Type{typ.String, typ.Integer})),
+					).
+					Build(), typ.Any).
+				Build(),
+		},
 	}
 
 	for _, tt := range tests {
@@ -463,9 +487,9 @@ func TestSignaturesSeededNames(t *testing.T) {
 		"json.encode", "json.decode",
 		"env.get",
 		"string.byte", "string.char", "string.dump", "string.find", "string.format",
-		"string.gmatch", "string.gsub", "string.len", "string.lower", "string.match",
-		"string.pack", "string.packsize", "string.rep", "string.reverse", "string.sub",
-		"string.unpack", "string.upper",
+		"string.gfind", "string.gmatch", "string.gsub", "string.len", "string.lower",
+		"string.match", "string.pack", "string.packsize", "string.rep", "string.reverse",
+		"string.sub", "string.unpack", "string.upper",
 		"math.abs", "math.acos", "math.asin", "math.atan", "math.atan2", "math.ceil",
 		"math.cos", "math.cosh", "math.deg", "math.exp", "math.floor", "math.fmod",
 		"math.frexp", "math.ldexp", "math.log", "math.log10", "math.max", "math.min",

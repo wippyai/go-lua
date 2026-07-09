@@ -20,17 +20,22 @@ var gsubReplacement = typeexpr.Union(
 	typ.String,
 	typetable.NewMap(typ.Any, typ.Any),
 	typ.Func().
-		Param("capture", typ.String).
+		Param("capture", captureValueType).
 		Returns(typeexpr.Union(typ.String, typ.Number, typ.False, typ.Nil)).
 		Build(),
 )
+
+var captureValueType = typeexpr.Union(typ.String, typ.Integer)
+var optionalCaptureValueType = normalize.Optional(captureValueType)
+
+const generalCaptureReturnSlots = 4
 
 var methods = map[string]*typ.Function{
 	"byte": typ.Func().
 		Param("s", typ.String).
 		OptParam("i", typ.Integer).
 		OptParam("j", typ.Integer).
-		Returns(typ.Integer).
+		Returns(normalize.Optional(typ.Integer)).
 		Build(),
 	"char": typ.Func().
 		Variadic(typ.Integer).
@@ -39,7 +44,7 @@ var methods = map[string]*typ.Function{
 	"dump": typ.Func().
 		Param("function", typ.Any).
 		OptParam("strip", typ.Boolean).
-		Returns(typ.String).
+		Returns(typ.Never).
 		Build(),
 	"find": typ.Func().
 		Param("s", typ.String).
@@ -53,10 +58,15 @@ var methods = map[string]*typ.Function{
 		Variadic(typ.Any).
 		Returns(typ.String).
 		Build(),
+	"gfind": typ.Func().
+		Param("s", typ.String).
+		Param("pattern", typ.String).
+		Returns(gmatchIterator(nil, true), typ.Any).
+		Build(),
 	"gmatch": typ.Func().
 		Param("s", typ.String).
 		Param("pattern", typ.String).
-		Returns(typ.Func().Returns(normalize.Optional(typ.String)).Build()).
+		Returns(gmatchIterator(nil, true), typ.Any).
 		Build(),
 	"gsub": typ.Func().
 		Param("s", typ.String).
@@ -77,7 +87,7 @@ var methods = map[string]*typ.Function{
 		Param("s", typ.String).
 		Param("pattern", typ.String).
 		OptParam("init", typ.Integer).
-		Returns(normalize.Optional(typ.String)).
+		Returns(optionalCaptureValueType).
 		Build(),
 	"pack": typ.Func().
 		Param("fmt", typ.String).
@@ -114,6 +124,96 @@ var methods = map[string]*typ.Function{
 		Param("s", typ.String).
 		Returns(typ.String).
 		Build(),
+}
+
+func gmatchIterator(captures []typ.Type, general bool) *typ.Function {
+	returns := captureReturnTypes(captures, general)
+	return typ.Func().Returns(returns...).Build()
+}
+
+func captureReturnTypes(captures []typ.Type, general bool) []typ.Type {
+	if len(captures) == 0 {
+		if !general {
+			return []typ.Type{normalize.Optional(typ.String)}
+		}
+		captures = make([]typ.Type, generalCaptureReturnSlots)
+		for i := range captures {
+			captures[i] = captureValueType
+		}
+	}
+	out := make([]typ.Type, len(captures))
+	for i, capture := range captures {
+		if capture == nil {
+			capture = captureValueType
+		}
+		out[i] = normalize.Optional(capture)
+	}
+	return out
+}
+
+// CaptureTypes returns the capture result types implied by a Lua pattern
+// literal. Empty captures "()" are position captures and produce integers; all
+// other captures produce strings. It deliberately does not validate the pattern.
+func CaptureTypes(pattern string) []typ.Type {
+	var captures []typ.Type
+	for i := 0; i < len(pattern); i++ {
+		switch pattern[i] {
+		case '%':
+			if i+1 < len(pattern) {
+				i++
+			}
+		case '[':
+			i = skipPatternClass(pattern, i+1)
+		case '(':
+			if i+1 < len(pattern) && pattern[i+1] == ')' {
+				captures = append(captures, typ.Integer)
+				i++
+			} else {
+				captures = append(captures, typ.String)
+			}
+		}
+	}
+	return captures
+}
+
+func skipPatternClass(pattern string, i int) int {
+	for i < len(pattern) {
+		if pattern[i] == '%' && i+1 < len(pattern) {
+			i += 2
+			continue
+		}
+		if pattern[i] == ']' {
+			return i
+		}
+		i++
+	}
+	return len(pattern) - 1
+}
+
+// GMatchIterator returns the iterator function type for a gmatch/gfind call.
+// With no literal capture information it returns a conservative capture tuple.
+func GMatchIterator(captures []typ.Type) *typ.Function {
+	return gmatchIterator(captures, false)
+}
+
+// GeneralGMatchIterator returns a conservative iterator function type when the
+// pattern is not statically known.
+func GeneralGMatchIterator() *typ.Function {
+	return gmatchIterator(nil, true)
+}
+
+// OptionalCaptureValue returns the nilable type for a single string-library
+// capture result.
+func OptionalCaptureValue(t typ.Type) typ.Type {
+	if t == nil {
+		t = captureValueType
+	}
+	return normalize.Optional(t)
+}
+
+// OptionalGeneralCaptureValue returns a nilable string-or-integer capture.
+func OptionalGeneralCaptureValue() typ.Type {
+	return optionalCaptureValueType
 }
 
 // Method returns the signature of the named string-library function, with its
