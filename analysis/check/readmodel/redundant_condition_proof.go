@@ -5,8 +5,7 @@ import "github.com/wippyai/go-lua/analysis/type/typ"
 type RedundantConditionProofState uint8
 
 const (
-	RedundantConditionProofUnknown RedundantConditionProofState = iota
-	RedundantConditionProofTruthy
+	RedundantConditionProofTruthy RedundantConditionProofState = iota + 1
 	RedundantConditionProofFalsy
 	RedundantConditionProofNil
 	RedundantConditionProofNotNil

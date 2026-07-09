@@ -423,8 +423,7 @@ func (r *Result) CallArgumentFunctionTypeProvenMismatch(fn *typ.Function, expect
 type InterfaceMismatchKind uint8
 
 const (
-	InterfaceMismatchNone InterfaceMismatchKind = iota
-	InterfaceMismatchMissingMethod
+	InterfaceMismatchMissingMethod InterfaceMismatchKind = iota + 1
 	InterfaceMismatchMethodType
 )
 

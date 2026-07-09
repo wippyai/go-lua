@@ -9,8 +9,7 @@ import (
 type BranchKind uint8
 
 const (
-	BranchUnknown BranchKind = iota
-	BranchIf
+	BranchIf BranchKind = iota + 1
 	BranchWhile
 	BranchRepeat
 )

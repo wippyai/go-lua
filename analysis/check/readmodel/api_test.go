@@ -1119,7 +1119,7 @@ func TestCallContractSourceFormatsParameterLabels(t *testing.T) {
 	}{
 		{
 			name: "unknown named source falls back to parameter",
-			src:  CallContractSource{Kind: CallContractSourceUnknown, Name: "ignored"},
+			src:  CallContractSource{Name: "ignored"},
 			want: "parameter 2",
 		},
 		{

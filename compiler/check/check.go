@@ -13,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/module/typelookup"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/typ"
@@ -22,10 +21,7 @@ import (
 type Option func(*Checker)
 
 type Deps struct {
-	Types       any
-	Stdlib      *scope.State
 	GlobalTypes map[string]typ.Type
-	Resolver    any
 }
 
 type Checker struct {

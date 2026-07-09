@@ -439,8 +439,7 @@ type AssignmentCheckPlan struct {
 type AssignmentMismatchKind uint8
 
 const (
-	AssignmentMismatchNone AssignmentMismatchKind = iota
-	AssignmentMismatchMissingRequiredField
+	AssignmentMismatchMissingRequiredField AssignmentMismatchKind = iota + 1
 	AssignmentMismatchMissingRequiredMethod
 	AssignmentMismatchMethodType
 	AssignmentMismatchMayBeNil
@@ -566,8 +565,7 @@ type ReturnCheckPlan struct {
 type ReturnMismatchKind uint8
 
 const (
-	ReturnMismatchNone ReturnMismatchKind = iota
-	ReturnMismatchMissingRequiredField
+	ReturnMismatchMissingRequiredField ReturnMismatchKind = iota + 1
 	ReturnMismatchMayBeNil
 )
 
@@ -1809,8 +1807,7 @@ func callArgumentsByIndex(args []CallArgument) map[int]CallArgument {
 type CallContractSourceKind uint8
 
 const (
-	CallContractSourceUnknown CallContractSourceKind = iota
-	CallContractSourceLocalFunction
+	CallContractSourceLocalFunction CallContractSourceKind = iota + 1
 	CallContractSourceImportedSignature
 	CallContractSourceFunctionValue
 	CallContractSourceMemberFunction

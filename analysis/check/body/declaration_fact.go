@@ -15,8 +15,7 @@ import (
 type TypeDefinitionKind uint8
 
 const (
-	TypeDefinitionUnknown TypeDefinitionKind = iota
-	TypeDefinitionAlias
+	TypeDefinitionAlias TypeDefinitionKind = iota + 1
 	TypeDefinitionInterface
 )
 
