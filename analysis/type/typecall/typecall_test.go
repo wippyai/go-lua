@@ -694,6 +694,77 @@ func TestInstantiateGenericCallReportsConstraintViolation(t *testing.T) {
 	assertType(t, violations[0].Constraint, constraint)
 }
 
+func TestInstantiateGenericCallRejectsNestedRecordMismatchBeyondRecursionDepth(t *testing.T) {
+	param := typ.NewTypeParam("T", nil)
+	formal := nestedRecordType(typ.DefaultRecursionDepth+2, typ.String)
+	actual := nestedRecordType(typ.DefaultRecursionDepth+2, typ.Number)
+	fn := typ.Func().
+		TypeParamRef(param).
+		Param("seed", param).
+		Param("value", formal).
+		Build()
+
+	_, violations := InstantiateGenericCall(fn, []typ.Type{typ.String, actual})
+	if len(violations) != 1 {
+		t.Fatalf("violations = %#v, want one deeply nested record violation", violations)
+	}
+	if violations[0].Index != 1 {
+		t.Fatalf("violation index = %d, want 1", violations[0].Index)
+	}
+}
+
+func TestInstantiatedArgumentAssignableRejectsNestedRecordMismatchBeyondRecursionDepth(t *testing.T) {
+	formal := nestedRecordType(typ.DefaultRecursionDepth+2, typ.String)
+	actual := nestedRecordType(typ.DefaultRecursionDepth+2, typ.Number)
+
+	if InstantiatedArgumentAssignable(actual, formal) {
+		t.Fatal("deeply nested mismatched record was assignable")
+	}
+}
+
+func TestGenericCallValidationDepthExhaustionFailsClosed(t *testing.T) {
+	record := typetable.NewRecord().Field("value", typ.String).Build()
+	exhausted := typ.DefaultRecursionDepth + 1
+
+	if instantiatedArgumentAssignable(typ.String, typ.String, exhausted) {
+		t.Fatal("argument validation succeeded after recursion-depth exhaustion")
+	}
+	if providedRecordFieldsAssignable(record, record, exhausted) {
+		t.Fatal("record validation succeeded after recursion-depth exhaustion")
+	}
+
+	if !InstantiatedArgumentAssignable(nil, typ.String) {
+		t.Fatal("nil actual type should remain unspecified")
+	}
+	if !InstantiatedArgumentAssignable(typ.String, nil) {
+		t.Fatal("nil formal type should remain unspecified")
+	}
+}
+
+func TestGenericCallSubstitutionDepthExhaustionFailsClosed(t *testing.T) {
+	param := typ.NewTypeParam("T", nil)
+	formal := nestedRecordType(typ.DefaultRecursionDepth+2, param)
+	actual := nestedRecordType(typ.DefaultRecursionDepth+2, typ.Number)
+	fn := typ.Func().
+		TypeParamRef(param).
+		Param("seed", param).
+		Param("value", formal).
+		Build()
+
+	_, violations := InstantiateGenericCall(fn, []typ.Type{typ.String, actual})
+	if len(violations) != 1 || violations[0].Index != 1 {
+		t.Fatalf("violations = %#v, want one unresolved deep-substitution violation at argument 1", violations)
+	}
+}
+
+func nestedRecordType(depth int, leaf typ.Type) typ.Type {
+	result := leaf
+	for range depth {
+		result = typetable.NewRecord().Field("next", result).Build()
+	}
+	return result
+}
+
 func TestInstantiateGenericCallSubstitutesGenericAliasReturn(t *testing.T) {
 	boxParam := typ.NewTypeParam("T", nil)
 	box := typ.NewGeneric("Box", []*typ.TypeParam{boxParam},

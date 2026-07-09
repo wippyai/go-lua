@@ -137,7 +137,7 @@ func instantiateGenericCall(fn *typ.Function, args []typ.Type, trace bool) (*typ
 	if !ok {
 		return fn, violations, genericCallTraceFromBindings(fn.TypeParams, bindings), bindings
 	}
-	violations = append(violations, validateInstantiatedArguments(instantiated, args)...)
+	violations = append(violations, validateInstantiatedArguments(instantiated, args, params)...)
 	return instantiated, violations, genericCallTraceFromBindings(fn.TypeParams, bindings), bindings
 }
 
@@ -160,7 +160,7 @@ func callParamType(fn *typ.Function, index int) (typ.Type, bool) {
 	return nil, false
 }
 
-func validateInstantiatedArguments(fn *typ.Function, args []typ.Type) []ArgumentConstraintViolation {
+func validateInstantiatedArguments(fn *typ.Function, args []typ.Type, substitutedParams []*typ.TypeParam) []ArgumentConstraintViolation {
 	if fn == nil || len(args) == 0 {
 		return nil
 	}
@@ -173,7 +173,18 @@ func validateInstantiatedArguments(fn *typ.Function, args []typ.Type) []Argument
 			continue
 		}
 		formal, ok := callParamType(fn, i)
-		if !ok || formal == nil || refinement.ContainsFreeTypeParam(formal) {
+		if !ok || formal == nil {
+			continue
+		}
+		if containsUnsubstitutedTypeParam(formal, substitutedParams) {
+			violations = append(violations, ArgumentConstraintViolation{
+				Index:      i,
+				Got:        actual,
+				Constraint: formal,
+			})
+			continue
+		}
+		if refinement.ContainsFreeTypeParam(formal) {
 			continue
 		}
 		if instantiatedArgumentAssignable(actual, formal, 0) {
@@ -188,6 +199,59 @@ func validateInstantiatedArguments(fn *typ.Function, args []typ.Type) []Argument
 	return violations
 }
 
+func containsUnsubstitutedTypeParam(t typ.Type, params []*typ.TypeParam) bool {
+	for _, param := range params {
+		if param != nil && containsTypeParamOutsideShadow(t, param, false, nil) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsTypeParamOutsideShadow(t typ.Type, target *typ.TypeParam, shadowed bool, active map[typ.Type]bool) bool {
+	if t == nil || target == nil {
+		return false
+	}
+	if param, ok := t.(*typ.TypeParam); ok {
+		return !shadowed && param == target
+	}
+	if active == nil {
+		active = make(map[typ.Type]bool)
+	}
+	if active[t] {
+		return false
+	}
+	active[t] = true
+	defer delete(active, t)
+
+	switch node := t.(type) {
+	case *typ.Instantiated:
+		for _, arg := range node.TypeArgs {
+			if containsTypeParamOutsideShadow(arg, target, shadowed, active) {
+				return true
+			}
+		}
+		return false
+	case *typ.Function:
+		for _, binder := range node.TypeParams {
+			if binder != nil && (binder == target || binder.Name == target.Name) {
+				shadowed = true
+				break
+			}
+		}
+	case *typ.Generic:
+		for _, binder := range node.TypeParams {
+			if binder != nil && (binder == target || binder.Name == target.Name) {
+				shadowed = true
+				break
+			}
+		}
+	}
+	return typ.WalkChildren(t, func(child typ.Type) bool {
+		return containsTypeParamOutsideShadow(child, target, shadowed, active)
+	})
+}
+
 // InstantiatedArgumentAssignable reports whether an actual argument type
 // satisfies an already-instantiated formal parameter type using the same
 // precision rules as generic-call validation.
@@ -196,8 +260,11 @@ func InstantiatedArgumentAssignable(actual typ.Type, formal typ.Type) bool {
 }
 
 func instantiatedArgumentAssignable(actual typ.Type, formal typ.Type, depth int) bool {
-	if actual == nil || formal == nil || depth > typ.DefaultRecursionDepth {
+	if actual == nil || formal == nil {
 		return true
+	}
+	if depth > typ.DefaultRecursionDepth {
+		return false
 	}
 	actual = unwrap.Annotated(actual)
 	formal = unwrap.Annotated(formal)
@@ -391,8 +458,11 @@ func actualRecordForValidation(actual typ.Type, depth int) (*typ.Record, bool) {
 }
 
 func providedRecordFieldsAssignable(actual *typ.Record, formal *typ.Record, depth int) bool {
-	if actual == nil || formal == nil || depth > typ.DefaultRecursionDepth {
+	if actual == nil || formal == nil {
 		return true
+	}
+	if depth > typ.DefaultRecursionDepth {
+		return false
 	}
 	for _, field := range actual.Fields {
 		formalField := formal.GetField(field.Name)
