@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
+	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
 // PathRefinementsSnapshot returns finite must path refinements. Bottom is
@@ -233,6 +234,19 @@ func (s State) UpdateLocalPathKey(reg *axis.Registry, pathKey keyspace.Key, fn f
 // path-key spelling.
 func (s State) InvalidatePathKeySubtree(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (State, bool) {
 	return s.invalidatePathKeySubtree(ks, pathKey, true)
+}
+
+// InvalidateStableSymbolPathEvidence removes versionless or stable path
+// evidence rooted at sym. Root writes use this to clear root-level conditional
+// implications that are not covered by point-local subtree invalidation.
+func (s State) InvalidateStableSymbolPathEvidence(sym symbol.ID) State {
+	if !s.laneEnabled(lanePathEvidenceBit) || sym == 0 {
+		return s
+	}
+	pathEvidence := s.pathEvidence.InvalidateStableSymbol(sym)
+	out := s.reachable()
+	out.pathEvidence = pathEvidence
+	return out
 }
 
 func (s State) InvalidatePathKeySubtreePreservingDynamicValueKeyMemberships(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (State, bool) {

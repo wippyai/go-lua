@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/internal/mapedit"
+	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
 type PathKeyDescendantInvalidationPrefixes struct {
@@ -23,6 +24,36 @@ func (l Lane) InvalidatePathKeySubtree(ks *keyspace.KeySpace, pathKey pathdom.Pa
 		return l, false
 	}
 	return l.InvalidatePathKeySubtreePrefixes(ks, prefixes), true
+}
+
+// InvalidateStableSymbol removes path evidence whose root is a versionless or
+// stable spelling of sym. Point-visible resolver-version evidence is invalidated
+// by the caller's normal path-subtree invalidation; this cleanup covers
+// root-level implications stored outside that versioned address space.
+func (l Lane) InvalidateStableSymbol(sym symbol.ID) Lane {
+	if sym == 0 {
+		return l
+	}
+	match := func(candidate keyspace.Key) bool {
+		return stableKeyBelongsToSymbol(candidate, sym)
+	}
+	out, _ := l.invalidatePathKeyEvidence(
+		func(m map[keyspace.Key]product.Value) (map[keyspace.Key]product.Value, bool) {
+			return deleteMatchingPathKeys(m, match)
+		},
+		match,
+		func(proof BranchProof) bool { return branchProofMatchesPath(proof, match) },
+	)
+	return out
+}
+
+func stableKeyBelongsToSymbol(candidate keyspace.Key, sym symbol.ID) bool {
+	switch candidate.Kind {
+	case keyspace.KindUnversionedSym, keyspace.KindStableSym:
+		return candidate.Sym == sym
+	default:
+		return false
+	}
 }
 
 // InvalidatePathKeySubtreePrefixes removes finite path evidence for a

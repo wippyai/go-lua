@@ -792,7 +792,7 @@ func TestFactsNodeTransferRootAssignmentInvalidatesVisiblePathSubtree(t *testing
 	}
 }
 
-func TestFactsNodeTransferPresentRootAssignmentPreservesPresentTargetImplication(t *testing.T) {
+func TestFactsNodeTransferRootAssignmentInvalidatesTargetImplication(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(61)
 	trigger := symbol.ID(161)
@@ -837,8 +837,8 @@ func TestFactsNodeTransferPresentRootAssignmentPreservesPresentTargetImplication
 		}, state.State{}.AddPathPresenceImplication(implication))
 	}
 
-	if got := run(present); !got.HasPathPresenceImplication(implication) {
-		t.Fatalf("present root assignment dropped still-valid path-presence implication")
+	if got := run(present); got.HasPathPresenceImplication(implication) {
+		t.Fatalf("present root assignment preserved stale target path-presence implication")
 	}
 	if got := run(absent); got.HasPathPresenceImplication(implication) {
 		t.Fatalf("absent root assignment preserved invalid path-presence implication")

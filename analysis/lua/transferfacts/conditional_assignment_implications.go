@@ -15,6 +15,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typecall"
 )
 
+// MaxPartitionImplicationsPerBody bounds discriminant-keyed conditional facts
+// produced by this lowering pass. Overflow simply stops publishing additional
+// facts; ordinary unpartitioned flow remains sound.
+const MaxPartitionImplicationsPerBody = 64
+
 // addConditionalAssignmentImplications derives merge-point facts of the form:
 // if a later path value proves the same branch condition, then a target assigned
 // on that branch edge keeps the value assigned on that edge. This preserves correlations such as
@@ -31,7 +36,11 @@ func (l *lowerer) addConditionalAssignmentImplications(input *factflow.FactsInpu
 	}
 	rpo := graph.RPO()
 	continuationJoins := newBranchContinuationJoinCache(graph, rpo)
+	partitionImplicationCount := 0
 	for _, branch := range rpo {
+		if partitionImplicationCount >= MaxPartitionImplicationsPerBody {
+			return
+		}
 		if !graph.IsBranch(branch) {
 			continue
 		}
@@ -48,7 +57,10 @@ func (l *lowerer) addConditionalAssignmentImplications(input *factflow.FactsInpu
 			edgeAssignments[succ] = l.presentAssignmentsOnBranchEdge(input, graph, succ, join, incoming)
 		}
 		for succ, selected := range edgeAssignments {
-			l.addBranchAssignmentValueImplications(input, join, incoming, selected, oppositeBranchAssignmentStates(graph, branch, succ, edgeAssignments))
+			l.addBranchAssignmentValueImplications(input, join, incoming, selected, oppositeBranchAssignmentStates(graph, branch, succ, edgeAssignments), &partitionImplicationCount)
+			if partitionImplicationCount >= MaxPartitionImplicationsPerBody {
+				return
+			}
 		}
 		refinements := input.BranchRefinements[branch].Refinements()
 		if len(refinements) == 0 {
@@ -72,23 +84,27 @@ func (l *lowerer) addConditionalAssignmentImplications(input *factflow.FactsInpu
 						continue
 					}
 					if target.hasValue {
-						appendPathValuePresenceImplications(input.PathValuePresenceImplications, join,
+						if !appendPartitionPathValuePresenceImplications(input.PathValuePresenceImplications, join, &partitionImplicationCount,
 							factflow.NewPathValueRefinementImplication(
 								trigger.path,
 								trigger.value,
 								target.path,
 								target.value,
 							),
-						)
+						) {
+							return
+						}
 					} else {
-						appendPathValuePresenceImplications(input.PathValuePresenceImplications, join,
+						if !appendPartitionPathValuePresenceImplications(input.PathValuePresenceImplications, join, &partitionImplicationCount,
 							factflow.NewPathValuePresenceImplication(
 								trigger.path,
 								trigger.value,
 								target.path,
 								presence.Present(),
 							),
-						)
+						) {
+							return
+						}
 					}
 				}
 			}
@@ -102,6 +118,7 @@ func (l *lowerer) addBranchAssignmentValueImplications(
 	incoming presentAssignmentState,
 	selected presentAssignmentState,
 	opposites []presentAssignmentState,
+	partitionImplicationCount *int,
 ) {
 	if input == nil || len(selected) == 0 || len(opposites) == 0 {
 		return
@@ -110,7 +127,7 @@ func (l *lowerer) addBranchAssignmentValueImplications(
 		if !trigger.fromBranch || !trigger.hasValue {
 			continue
 		}
-		if _, ok := literalBoolValue(l.registry, trigger.value); !ok {
+		if !literalPartitionDiscriminantValue(l.registry, trigger.value) {
 			continue
 		}
 		if !oppositeAssignmentsContradictTrigger(l.registry, triggerSym, trigger, incoming, opposites) {
@@ -121,26 +138,48 @@ func (l *lowerer) addBranchAssignmentValueImplications(
 				continue
 			}
 			if target.hasValue {
-				appendPathValuePresenceImplications(input.PathValuePresenceImplications, join,
+				if !appendPartitionPathValuePresenceImplications(input.PathValuePresenceImplications, join, partitionImplicationCount,
 					factflow.NewPathTruthyValueRefinementImplication(
 						trigger.path,
 						trigger.value,
 						target.path,
 						target.value,
 					),
-				)
+				) {
+					return
+				}
 			} else {
-				appendPathValuePresenceImplications(input.PathValuePresenceImplications, join,
+				if !appendPartitionPathValuePresenceImplications(input.PathValuePresenceImplications, join, partitionImplicationCount,
 					factflow.NewPathValuePresenceImplication(
 						trigger.path,
 						trigger.value,
 						target.path,
 						presence.Present(),
 					),
-				)
+				) {
+					return
+				}
 			}
 		}
 	}
+}
+
+func appendPartitionPathValuePresenceImplications(
+	out map[cfg.Point]factflow.PathValuePresenceImplicationSet,
+	point cfg.Point,
+	count *int,
+	implications ...factflow.PathValuePresenceImplication,
+) bool {
+	for _, implication := range implications {
+		if count != nil && *count >= MaxPartitionImplicationsPerBody {
+			return false
+		}
+		appendPathValuePresenceImplications(out, point, implication)
+		if count != nil {
+			(*count)++
+		}
+	}
+	return true
 }
 
 type branchContinuationJoinCache struct {
@@ -302,6 +341,14 @@ func literalBoolValue(reg *axis.Registry, value product.Value) (bool, bool) {
 	default:
 		return false, false
 	}
+}
+
+func literalPartitionDiscriminantValue(reg *axis.Registry, value product.Value) bool {
+	if _, ok := literalBoolValue(reg, value); ok {
+		return true
+	}
+	_, ok := typevalue.StringLiteralOf(reg, value)
+	return ok
 }
 
 type branchValueTrigger struct {
