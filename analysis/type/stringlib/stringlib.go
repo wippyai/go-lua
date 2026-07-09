@@ -28,6 +28,10 @@ var gsubReplacement = typeexpr.Union(
 var captureValueType = typeexpr.Union(typ.String, typ.Integer)
 var optionalCaptureValueType = normalize.Optional(captureValueType)
 
+// generalCaptureReturnSlots models a non-literal Lua pattern. Such a pattern
+// can produce arbitrarily many captures at runtime, while typ.Function has a
+// finite return-slot representation. Literal patterns do not use this guard:
+// CaptureTypes preserves every syntactically present capture.
 const generalCaptureReturnSlots = 4
 
 var methods = map[string]*typ.Function{
