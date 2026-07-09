@@ -61,9 +61,7 @@ func (r *Result) ChannelLifecycleMisuseProofs() []ChannelLifecycleMisuseProof {
 			Registry: r.registry,
 			Point:    point,
 			Read:     r.boundaryRead,
-		}
-		if ctx.Graph != nil {
-			ctx.Node = ctx.Graph.Node(point)
+			Node:     r.Graph().Node(point),
 		}
 		receiverStaticType, ok := receiverType(ctx, site, in, r.boundaryRead)
 		if !ok {
@@ -77,7 +75,10 @@ func (r *Result) ChannelLifecycleMisuseProofs() []ChannelLifecycleMisuseProof {
 			continue
 		}
 		slot, ok := in.TypestateSlot(resource)
-		if !channelSlotProvablyClosed(slot, ok) {
+		if !ok || slot.Current != effectlowering.ChannelStateClosed ||
+			slot.Locality == typestate.LocalityUnknown ||
+			slot.Locality == typestate.LocalityEscaped ||
+			slot.Locality == typestate.LocalityBottom {
 			continue
 		}
 		out = append(out, ChannelLifecycleMisuseProof{
@@ -100,13 +101,4 @@ func channelLifecycleOperation(method string) (ChannelLifecycleOperation, bool) 
 	default:
 		return "", false
 	}
-}
-
-func channelSlotProvablyClosed(slot typestate.Slot, ok bool) bool {
-	if !ok || slot.Current != effectlowering.ChannelStateClosed {
-		return false
-	}
-	return slot.Locality != typestate.LocalityUnknown &&
-		slot.Locality != typestate.LocalityEscaped &&
-		slot.Locality != typestate.LocalityBottom
 }

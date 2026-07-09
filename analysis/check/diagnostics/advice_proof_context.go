@@ -30,11 +30,11 @@ func (ProofContext) Advice(item judgment.Judgment, primary diagnostic.Span) (adv
 }
 
 func adviceRedundantClaimPresentation(item judgment.Judgment, primary diagnostic.Span) advicePresentation {
-	claimEvidence, _ := adviceEvidenceByDetail(item, judgment.EvidenceDetailAdviceClaimSite)
-	provenEvidence, _ := adviceEvidenceByDetail(item, judgment.EvidenceDetailAdviceProvenType)
+	claimEvidence, _ := item.FirstEvidenceKindDetail(judgment.EvidenceAbstractFact, judgment.EvidenceDetailAdviceClaimSite)
+	provenEvidence, _ := item.FirstEvidenceKindDetail(judgment.EvidenceAbstractFact, judgment.EvidenceDetailAdviceProvenType)
 	claim := adviceEvidenceMessage(claimEvidence)
 	proven := adviceEvidenceMessage(provenEvidence)
-	provenSpan := adviceEvidenceSpan(item, judgment.EvidenceDetailAdviceProvenType, primary)
+	provenSpan := diagnosticJudgmentEvidenceSpanOr(provenEvidence, primary)
 	labels := []diagnostic.Label{sourceLabel(primary, labelAdviceClaim)}
 	labels = appendDistinctSourceLabel(labels, provenSpan, primary, labelAdviceProvenValue)
 	return advicePresentation{
@@ -77,8 +77,8 @@ func adviceAlwaysTrueGuardPresentation(item judgment.Judgment, primary diagnosti
 }
 
 func adviceInvariantLoopReadPresentation(item judgment.Judgment, primary diagnostic.Span) advicePresentation {
-	invariantEvidence, _ := adviceEvidenceByDetail(item, judgment.EvidenceDetailAdviceLoopInvariant)
-	nonNilEvidence, _ := adviceEvidenceByDetail(item, judgment.EvidenceDetailAdviceReceiverNonNil)
+	invariantEvidence, _ := item.FirstEvidenceKindDetail(judgment.EvidenceAbstractFact, judgment.EvidenceDetailAdviceLoopInvariant)
+	nonNilEvidence, _ := item.FirstEvidenceKindDetail(judgment.EvidenceAbstractFact, judgment.EvidenceDetailAdviceReceiverNonNil)
 	invariant := adviceEvidenceMessage(invariantEvidence)
 	nonNil := adviceEvidenceMessage(nonNilEvidence)
 	loopSpan := adviceLoopSpan(item, primary)
@@ -137,21 +137,11 @@ func adviceSplitBirthDiscriminantPresentation(item judgment.Judgment, primary di
 }
 
 func adviceGuardMessage(item judgment.Judgment) (judgment.Evidence, string, bool) {
-	for _, evidence := range item.Evidence {
-		if evidence.Detail.Kind == judgment.EvidenceDetailAdviceGuardValue {
-			return evidence, adviceEvidenceMessage(evidence), evidence.Detail.Always
-		}
+	evidence, ok := item.FirstEvidenceKindDetail(judgment.EvidenceAbstractFact, judgment.EvidenceDetailAdviceGuardValue)
+	if !ok {
+		return judgment.Evidence{}, "", false
 	}
-	return judgment.Evidence{}, "", false
-}
-
-func adviceEvidenceByDetail(item judgment.Judgment, detail judgment.EvidenceDetailKind) (judgment.Evidence, bool) {
-	for _, evidence := range item.Evidence {
-		if evidence.Detail.Kind == detail {
-			return evidence, true
-		}
-	}
-	return judgment.Evidence{}, false
+	return evidence, adviceEvidenceMessage(evidence), evidence.Detail.Always
 }
 
 func adviceEvidenceMessage(evidence judgment.Evidence) string {
@@ -191,16 +181,6 @@ func adviceCauseMessage(detail judgment.EvidenceDetail) (string, bool) {
 	default:
 		return "", false
 	}
-}
-
-func adviceEvidenceSpan(item judgment.Judgment, detail judgment.EvidenceDetailKind, fallback diagnostic.Span) diagnostic.Span {
-	for _, evidence := range item.Evidence {
-		if evidence.Detail.Kind != detail {
-			continue
-		}
-		return diagnosticJudgmentEvidenceSpanOr(evidence, fallback)
-	}
-	return fallback
 }
 
 func adviceLoopSpan(item judgment.Judgment, fallback diagnostic.Span) diagnostic.Span {

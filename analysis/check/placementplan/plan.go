@@ -261,20 +261,21 @@ func FromState(st state.State) Plan {
 }
 
 type aggregate struct {
-	top        bool
-	incomplete bool
-	blockers   map[Blocker]struct{}
-	objects    map[identity.ID]struct{}
-	allocSites map[identity.ID]struct{}
-	decomps    map[identity.ID]bool
-	frameUses  map[identity.ID]bool
-	frameLocal map[identity.ID]bool
-	hasFrame   map[identity.ID]struct{}
-	children   map[identity.ID]map[identity.ID]struct{}
-	placements map[identity.ID]placement.Value
-	frozen     map[identity.ID]struct{}
-	lifetimes  map[identity.ID]bool
-	hoistable  map[hoistableLoadKey]readapi.HoistableLoad
+	top         bool
+	incomplete  bool
+	blockers    map[Blocker]struct{}
+	objects     map[identity.ID]struct{}
+	allocations map[identity.ID]allocationProperties
+	children    map[identity.ID]map[identity.ID]struct{}
+	placements  map[identity.ID]placement.Value
+	frozen      map[identity.ID]struct{}
+	hoistable   map[hoistableLoadKey]readapi.HoistableLoad
+}
+
+type allocationProperties struct {
+	site, decomposable, frameLocalUseProof        bool
+	frameLocal, hasFrameLocal                     bool
+	diesBeforeSuspension, hasDiesBeforeSuspension bool
 }
 
 type hoistableLoadKey struct {
@@ -286,18 +287,13 @@ type hoistableLoadKey struct {
 
 func newAggregate() aggregate {
 	return aggregate{
-		blockers:   make(map[Blocker]struct{}),
-		objects:    make(map[identity.ID]struct{}),
-		allocSites: make(map[identity.ID]struct{}),
-		decomps:    make(map[identity.ID]bool),
-		frameUses:  make(map[identity.ID]bool),
-		frameLocal: make(map[identity.ID]bool),
-		hasFrame:   make(map[identity.ID]struct{}),
-		children:   make(map[identity.ID]map[identity.ID]struct{}),
-		placements: make(map[identity.ID]placement.Value),
-		frozen:     make(map[identity.ID]struct{}),
-		lifetimes:  make(map[identity.ID]bool),
-		hoistable:  make(map[hoistableLoadKey]readapi.HoistableLoad),
+		blockers:    make(map[Blocker]struct{}),
+		objects:     make(map[identity.ID]struct{}),
+		allocations: make(map[identity.ID]allocationProperties),
+		children:    make(map[identity.ID]map[identity.ID]struct{}),
+		placements:  make(map[identity.ID]placement.Value),
+		frozen:      make(map[identity.ID]struct{}),
+		hoistable:   make(map[hoistableLoadKey]readapi.HoistableLoad),
 	}
 }
 
@@ -314,11 +310,11 @@ func (a *aggregate) addResult(result *body.Result) {
 	}
 	result.ForEachAllocationSiteFact(func(fact body.AllocationSiteFact) bool {
 		a.addAllocationSite(fact.Identity, fact.Decomposable, fact.FrameLocalUseProof)
+		if fact.HasDiesBeforeSuspension {
+			a.addDiesBeforeSuspension(fact.Identity, fact.DiesBeforeSuspension)
+		}
 		return true
 	})
-	for _, fact := range result.AllocationLifetimeFacts() {
-		a.addDiesBeforeSuspension(fact.ID, fact.DiesBeforeSuspension)
-	}
 	internalreadmodel.New(result).ForEachHoistableLoad(func(load internalreadmodel.HoistableLoad) bool {
 		a.addHoistableLoad(load)
 		return true
@@ -360,12 +356,14 @@ func (a *aggregate) addState(reg *axis.Registry, st state.State) {
 }
 
 func (a *aggregate) plan() Plan {
-	ids := make(map[identity.ID]struct{}, len(a.objects)+len(a.placements)+len(a.allocSites))
+	ids := make(map[identity.ID]struct{}, len(a.objects)+len(a.placements)+len(a.allocations))
 	for id := range a.objects {
 		ids[id] = struct{}{}
 	}
-	for id := range a.allocSites {
-		ids[id] = struct{}{}
+	for id, facts := range a.allocations {
+		if facts.site || facts.hasDiesBeforeSuspension {
+			ids[id] = struct{}{}
+		}
 	}
 	for id, children := range a.children {
 		ids[id] = struct{}{}
@@ -382,9 +380,6 @@ func (a *aggregate) plan() Plan {
 	for id := range a.placements {
 		ids[id] = struct{}{}
 	}
-	for id := range a.lifetimes {
-		ids[id] = struct{}{}
-	}
 	ordered := orderedIDs(ids)
 	out := Plan{
 		Top:            a.top,
@@ -398,8 +393,8 @@ func (a *aggregate) plan() Plan {
 		if !hasPlacement {
 			value = placement.Bottom
 		}
-		dies, hasLifetime := a.lifetimes[id]
-		frameLocal := a.frameLocalProof(id, value, hasPlacement, dies, hasLifetime)
+		facts := a.allocations[id]
+		frameLocal := facts.frameLocalProof(value, hasPlacement)
 		target := targetForPlacement(value, hasPlacement)
 		if frameLocal {
 			target = TargetFrameLocal
@@ -409,15 +404,15 @@ func (a *aggregate) plan() Plan {
 			Placement:          value,
 			Target:             target,
 			HasObject:          mapContains(a.objects, id),
-			AllocationSite:     mapContains(a.allocSites, id),
-			Decomposable:       a.decomps[id],
-			FrameLocalUseProof: a.frameUses[id],
+			AllocationSite:     facts.site,
+			Decomposable:       facts.decomposable,
+			FrameLocalUseProof: facts.frameLocalUseProof,
 			FrameLocal:         frameLocal,
 			Frozen:             mapContains(a.frozen, id),
 			Children:           orderedIDs(a.children[id]),
 		}
-		if hasLifetime {
-			entry.DiesBeforeSuspension = dies
+		if facts.hasDiesBeforeSuspension {
+			entry.DiesBeforeSuspension = facts.diesBeforeSuspension
 			entry.HasDiesBeforeSuspension = true
 		}
 		entry = annotate(entry, hasPlacement)
@@ -430,49 +425,50 @@ func (a *aggregate) addAllocationSite(id identity.ID, decomposable bool, frameLo
 	if id == (identity.ID{}) {
 		return
 	}
-	if _, ok := a.allocSites[id]; !ok {
-		a.allocSites[id] = struct{}{}
-		a.decomps[id] = decomposable
-		a.frameUses[id] = frameLocalUseProof
-		return
-	}
-	a.decomps[id] = a.decomps[id] && decomposable
-	a.frameUses[id] = a.frameUses[id] && frameLocalUseProof
+	facts := a.allocations[id]
+	facts.decomposable = mergeProof(facts.decomposable, decomposable, facts.site)
+	facts.frameLocalUseProof = mergeProof(facts.frameLocalUseProof, frameLocalUseProof, facts.site)
+	facts.site = true
+	a.allocations[id] = facts
 }
 
 func (a *aggregate) addFrameLocal(id identity.ID, frameLocal bool) {
 	if id == (identity.ID{}) {
 		return
 	}
-	if _, ok := a.hasFrame[id]; !ok {
-		a.hasFrame[id] = struct{}{}
-		a.frameLocal[id] = frameLocal
-		return
-	}
-	a.frameLocal[id] = a.frameLocal[id] && frameLocal
+	facts := a.allocations[id]
+	facts.frameLocal = mergeProof(facts.frameLocal, frameLocal, facts.hasFrameLocal)
+	facts.hasFrameLocal = true
+	a.allocations[id] = facts
 }
 
-func (a *aggregate) frameLocalProof(id identity.ID, value placement.Value, hasPlacement, dies, hasLifetime bool) bool {
-	if _, ok := a.hasFrame[id]; ok {
-		return a.frameLocal[id]
+func (p allocationProperties) frameLocalProof(value placement.Value, hasPlacement bool) bool {
+	if p.hasFrameLocal {
+		return p.frameLocal
 	}
-	return mapContains(a.allocSites, id) &&
-		a.frameUses[id] &&
+	return p.site &&
+		p.frameLocalUseProof &&
 		hasPlacement &&
 		value == placement.Stack &&
-		hasLifetime &&
-		dies
+		p.hasDiesBeforeSuspension &&
+		p.diesBeforeSuspension
 }
 
 func (a *aggregate) addDiesBeforeSuspension(id identity.ID, dies bool) {
 	if id == (identity.ID{}) {
 		return
 	}
-	if prev, ok := a.lifetimes[id]; ok {
-		a.lifetimes[id] = prev && dies
-		return
+	facts := a.allocations[id]
+	facts.diesBeforeSuspension = mergeProof(facts.diesBeforeSuspension, dies, facts.hasDiesBeforeSuspension)
+	facts.hasDiesBeforeSuspension = true
+	a.allocations[id] = facts
+}
+
+func mergeProof(current, incoming, known bool) bool {
+	if !known {
+		return incoming
 	}
-	a.lifetimes[id] = dies
+	return current && incoming
 }
 
 func (a *aggregate) addHoistableLoad(load readapi.HoistableLoad) {

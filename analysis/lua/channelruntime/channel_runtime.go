@@ -17,40 +17,9 @@ import (
 
 const (
 	moduleName        = "channel"
-	newName           = "new"
 	selectName        = "select"
-	sendMethod        = "send"
-	receiveMethod     = "receive"
-	closeMethod       = "close"
 	caseReceiveMethod = "case_receive"
-	caseSendMethod    = "case_send"
 )
-
-// Method names exported by the runtime channel userdata.
-const (
-	MethodSend        = sendMethod
-	MethodReceive     = receiveMethod
-	MethodClose       = closeMethod
-	MethodCaseReceive = caseReceiveMethod
-	MethodCaseSend    = caseSendMethod
-)
-
-// IsNewCall reports whether call is the ambient Lua channel.new runtime call.
-// The runtime accepts zero or one buffer-size argument.
-func IsNewCall(call *ast.FuncCallExpr, bindings *bind.Result) bool {
-	if call == nil || bindings == nil || call.Receiver != nil || call.Method != "" || len(call.Args) > 1 || len(call.TypeArgs) != 0 {
-		return false
-	}
-	callee, ok := pathexpr.Resolve(call.Func, bindings)
-	if !ok {
-		return false
-	}
-	field, ok := callee.DirectFieldName()
-	if !ok || field != newName || callee.Symbol == 0 {
-		return false
-	}
-	return isChannelModuleSymbol(bindings, callee.Symbol)
-}
 
 // IsSelectCall reports whether call is the ambient Lua channel.select runtime
 // call. Arbitrary values with a trailing .select field are deliberately not
@@ -106,34 +75,8 @@ func IsReceiveCaseSyntax(call *ast.FuncCallExpr, bindings *bind.Result) bool {
 	return ok
 }
 
-// IsCloseCall reports whether call is a Channel<T>:close() runtime call.
-func IsCloseCall(call *ast.FuncCallExpr, bindings *bind.Result) bool {
-	channelPath, ok := channelMethodPath(call, bindings, closeMethod, 0)
-	if !ok {
-		return false
-	}
-	channelType, ok := pathType(bindings, channelPath)
-	return ok && isChannelType(channelType)
-}
-
-// IsSendCall reports whether call is a Channel<T>:send(value) runtime call.
-func IsSendCall(call *ast.FuncCallExpr, bindings *bind.Result) bool {
-	channelPath, ok := channelMethodPath(call, bindings, sendMethod, 1)
-	if !ok {
-		return false
-	}
-	channelType, ok := pathType(bindings, channelPath)
-	return ok && isChannelType(channelType)
-}
-
-// IsSendCaseSyntax reports whether call has the runtime send-case shape.
-func IsSendCaseSyntax(call *ast.FuncCallExpr, bindings *bind.Result) bool {
-	_, ok := channelMethodPath(call, bindings, caseSendMethod, 1)
-	return ok
-}
-
-func channelMethodPath(call *ast.FuncCallExpr, bindings *bind.Result, method string, args int) (pathdom.Path, bool) {
-	if call == nil || bindings == nil || call.Receiver == nil || call.Method != method || len(call.Args) != args || len(call.TypeArgs) != 0 {
+func receiveCasePath(call *ast.FuncCallExpr, bindings *bind.Result) (pathdom.Path, bool) {
+	if call == nil || bindings == nil || call.Receiver == nil || call.Method != caseReceiveMethod || len(call.Args) != 0 || len(call.TypeArgs) != 0 {
 		return pathdom.Path{}, false
 	}
 	channelPath, ok := pathexpr.Resolve(call.Receiver, bindings)
@@ -141,10 +84,6 @@ func channelMethodPath(call *ast.FuncCallExpr, bindings *bind.Result, method str
 		return pathdom.Path{}, false
 	}
 	return channelPath, true
-}
-
-func receiveCasePath(call *ast.FuncCallExpr, bindings *bind.Result) (pathdom.Path, bool) {
-	return channelMethodPath(call, bindings, caseReceiveMethod, 0)
 }
 
 // pathType resolves the annotated type for a path, following field and index

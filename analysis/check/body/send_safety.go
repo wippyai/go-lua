@@ -111,8 +111,6 @@ func (r *Result) sendSafetyOccurrence(point cfg.Point, site factflow.CallSiteVie
 		HasArgumentValue: valueOK,
 		Target:           event.Target.Clone(),
 		Recursive:        event.Recursive,
-		Verdict:          SendSafetyUnknown,
-		Reason:           "copy fallback: no isolation or immutable proof",
 	}
 	if sourceOK {
 		literal, direct := r.directObjectLiteralSource(source)

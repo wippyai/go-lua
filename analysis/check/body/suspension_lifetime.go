@@ -1,8 +1,6 @@
 package body
 
 import (
-	"sort"
-
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -12,57 +10,39 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
-const AllocationLifetimeFactSchemaVersion = 1
-
-// AllocationLifetimeFact is the solved lifetime fact for one body-local object
-// allocation site.
-type AllocationLifetimeFact struct {
-	SchemaVersion int
-	ID            identity.ID
-	BirthPoint    cfg.Point
-	BirthSpan     SourceSpan
-	HasBirthSpan  bool
-
+type allocationLifetime struct {
+	BirthPoint           cfg.Point
+	BirthSpan            SourceSpan
+	HasBirthSpan         bool
 	DiesBeforeSuspension bool
 }
 
-// AllocationLifetimeFacts returns per-allocation suspension lifetime facts in
-// deterministic identity order.
-func (r *Result) AllocationLifetimeFacts() []AllocationLifetimeFact {
+func (r *Result) allocationLifetimes() map[identity.ID]allocationLifetime {
 	sites := r.collectAllocationLifetimeSites()
 	if len(sites) == 0 {
 		return nil
 	}
 	suspensions := r.suspensionPoints()
-	reach := normalReachabilityQuery{result: r, graph: r.Graph(), memo: make(map[normalReachabilityKey]bool)}
-	out := make([]AllocationLifetimeFact, 0, len(sites))
-	for _, site := range sites {
-		dies := r.allocationDiesBeforeSuspension(site, suspensions, &reach)
-		out = append(out, AllocationLifetimeFact{
-			SchemaVersion:        AllocationLifetimeFactSchemaVersion,
-			ID:                   site.id,
+	reach := normalReachabilityQuery{result: r, memo: make(map[normalReachabilityKey]bool)}
+	out := make(map[identity.ID]allocationLifetime, len(sites))
+	for id, site := range sites {
+		out[id] = allocationLifetime{
 			BirthPoint:           site.birthPoint,
 			BirthSpan:            site.birthSpan,
 			HasBirthSpan:         site.hasBirthSpan,
-			DiesBeforeSuspension: dies,
-		})
+			DiesBeforeSuspension: r.allocationDiesBeforeSuspension(site, suspensions, &reach),
+		}
 	}
 	return out
 }
 
 // AllocationDiesBeforeSuspension reads the solved lifetime fact for id.
 func (r *Result) AllocationDiesBeforeSuspension(id identity.ID) (bool, bool) {
-	for _, fact := range r.AllocationLifetimeFacts() {
-		if fact.ID == id {
-			return fact.DiesBeforeSuspension, true
-		}
-	}
-	return false, false
+	lifetime, ok := r.allocationLifetimes()[id]
+	return lifetime.DiesBeforeSuspension, ok
 }
 
 type allocationLifetimeSite struct {
-	id           identity.ID
-	exprs        map[factflow.ExprRef]struct{}
 	birthPoint   cfg.Point
 	birthSpan    SourceSpan
 	hasBirthSpan bool
@@ -71,7 +51,7 @@ type allocationLifetimeSite struct {
 	captured     bool
 }
 
-func (r *Result) collectAllocationLifetimeSites() []*allocationLifetimeSite {
+func (r *Result) collectAllocationLifetimeSites() map[identity.ID]*allocationLifetimeSite {
 	if r == nil || r.registry == nil || r.Graph() == nil {
 		return nil
 	}
@@ -84,14 +64,9 @@ func (r *Result) collectAllocationLifetimeSites() []*allocationLifetimeSite {
 		}
 		site := byID[id]
 		if site == nil {
-			site = &allocationLifetimeSite{
-				id:    id,
-				exprs: make(map[factflow.ExprRef]struct{}),
-				uses:  make(map[cfg.Point]struct{}),
-			}
+			site = &allocationLifetimeSite{uses: make(map[cfg.Point]struct{})}
 			byID[id] = site
 		}
-		site.exprs[ref] = struct{}{}
 		byExpr[ref] = site
 		if span, ok := lit.Span(); ok && !site.hasBirthSpan {
 			site.birthSpan = sourceSpanFromFactflow(span)
@@ -111,7 +86,7 @@ func (r *Result) collectAllocationLifetimeSites() []*allocationLifetimeSite {
 	}
 	collector.markCaptured()
 	collector.markEscaped()
-	return orderedAllocationLifetimeSites(byID)
+	return byID
 }
 
 type allocationLifetimeCollector struct {
@@ -189,7 +164,10 @@ func (c allocationLifetimeCollector) markSourceUseSeen(point cfg.Point, source f
 	if source.HasExpr {
 		if site := c.byExpr[source.ExprRef]; site != nil {
 			if site.birthPoint == 0 {
-				site.birthPoint = sourcePointOr(point, source)
+				site.birthPoint = point
+				if source.HasSourcePoint && source.SourcePoint != 0 {
+					site.birthPoint = source.SourcePoint
+				}
 			}
 			site.uses[point] = struct{}{}
 		}
@@ -265,16 +243,9 @@ func (c allocationLifetimeCollector) markEscaped() {
 		}
 		return
 	}
-	for _, site := range c.byID {
-		site.escaped = exit.ReadPlacement(site.id) != placement.Stack
+	for id, site := range c.byID {
+		site.escaped = exit.ReadPlacement(id) != placement.Stack
 	}
-}
-
-func sourcePointOr(point cfg.Point, source factflow.ValueSource) cfg.Point {
-	if source.HasSourcePoint && source.SourcePoint != 0 {
-		return source.SourcePoint
-	}
-	return point
 }
 
 func (r *Result) suspensionPoints() []cfg.Point {
@@ -318,12 +289,11 @@ type normalReachabilityKey struct {
 
 type normalReachabilityQuery struct {
 	result *Result
-	graph  cfg.Graph
 	memo   map[normalReachabilityKey]bool
 }
 
 func (q *normalReachabilityQuery) canReach(from, to cfg.Point) bool {
-	if from == 0 || to == 0 || q == nil || q.result == nil || q.graph == nil {
+	if from == 0 || to == 0 || q == nil || q.result == nil || q.result.Graph() == nil {
 		return false
 	}
 	if from == to {
@@ -338,7 +308,7 @@ func (q *normalReachabilityQuery) canReach(from, to cfg.Point) bool {
 	for len(stack) != 0 {
 		cur := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		for _, succ := range cfg.SuccessorsReadOnly(q.graph, cur) {
+		for _, succ := range cfg.SuccessorsReadOnly(q.result.Graph(), cur) {
 			if _, ok := seen[succ]; ok {
 				continue
 			}
@@ -355,29 +325,4 @@ func (q *normalReachabilityQuery) canReach(from, to cfg.Point) bool {
 	}
 	q.memo[key] = false
 	return false
-}
-
-func orderedAllocationLifetimeSites(byID map[identity.ID]*allocationLifetimeSite) []*allocationLifetimeSite {
-	if len(byID) == 0 {
-		return nil
-	}
-	ids := make([]identity.ID, 0, len(byID))
-	for id := range byID {
-		ids = append(ids, id)
-	}
-	sort.Slice(ids, func(i, j int) bool {
-		left, right := ids[i], ids[j]
-		if left.Kind != right.Kind {
-			return left.Kind < right.Kind
-		}
-		if left.Site != right.Site {
-			return left.Site < right.Site
-		}
-		return left.Index < right.Index
-	})
-	out := make([]*allocationLifetimeSite, 0, len(ids))
-	for _, id := range ids {
-		out = append(out, byID[id])
-	}
-	return out
 }

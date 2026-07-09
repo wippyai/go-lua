@@ -11,7 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-const AllocationSiteFactSchemaVersion = 2
+const AllocationSiteFactSchemaVersion = 3
 
 // AllocationSiteFact is the solved allocation-site export for one table
 // constructor. Decomposable is an optimization license: when true, the table
@@ -31,6 +31,9 @@ type AllocationSiteFact struct {
 	ExpressionID  wir.ExpressionID
 	ExprRef       factflow.ExprRef
 	Identity      identity.ID
+	BirthPoint    cfg.Point
+	BirthSpan     SourceSpan
+	HasBirthSpan  bool
 
 	Placement    placement.Value
 	HasPlacement bool
@@ -41,7 +44,9 @@ type AllocationSiteFact struct {
 
 	Decomposable bool
 
-	FrameLocalUseProof bool
+	FrameLocalUseProof      bool
+	DiesBeforeSuspension    bool
+	HasDiesBeforeSuspension bool
 }
 
 // AllocationSiteFacts returns table-allocation facts attached to OpMakeTable
@@ -50,13 +55,16 @@ func (r *Result) AllocationSiteFacts(point cfg.Point) []AllocationSiteFact {
 	if r == nil || r.wir == nil || r.registry == nil {
 		return nil
 	}
-	useAnalysis := r.decomposableUseAnalysis()
+	return r.allocationSiteFacts(point, r.decomposableUseAnalysis(), r.allocationLifetimes())
+}
+
+func (r *Result) allocationSiteFacts(point cfg.Point, uses decomposableUseAnalysis, lifetimes map[identity.ID]allocationLifetime) []AllocationSiteFact {
 	var out []AllocationSiteFact
 	for _, inst := range r.wir.PointInstructions(point) {
 		if inst.Op != wir.OpMakeTable {
 			continue
 		}
-		fact, ok := r.allocationSiteFact(inst, useAnalysis)
+		fact, ok := r.allocationSiteFact(inst, uses, lifetimes)
 		if ok {
 			out = append(out, fact)
 		}
@@ -71,8 +79,10 @@ func (r *Result) ForEachAllocationSiteFact(visit func(AllocationSiteFact) bool) 
 		return false
 	}
 	visited := false
+	uses := r.decomposableUseAnalysis()
+	lifetimes := r.allocationLifetimes()
 	for _, point := range r.Graph().RPO() {
-		for _, fact := range r.AllocationSiteFacts(point) {
+		for _, fact := range r.allocationSiteFacts(point, uses, lifetimes) {
 			visited = true
 			if !visit(fact) {
 				return true
@@ -99,7 +109,7 @@ func (r *Result) ForEachDecomposableAllocationFact(visit func(AllocationSiteFact
 	return visited
 }
 
-func (r *Result) allocationSiteFact(inst wir.Instruction, uses decomposableUseAnalysis) (AllocationSiteFact, bool) {
+func (r *Result) allocationSiteFact(inst wir.Instruction, uses decomposableUseAnalysis, lifetimes map[identity.ID]allocationLifetime) (AllocationSiteFact, bool) {
 	exprRef, ok := r.tableConstructorExprRef(inst)
 	if !ok {
 		return AllocationSiteFact{}, false
@@ -125,6 +135,13 @@ func (r *Result) allocationSiteFact(inst wir.Instruction, uses decomposableUseAn
 		ExpressionID:  inst.ExprID,
 		ExprRef:       exprRef,
 		Identity:      id,
+	}
+	if lifetime, ok := lifetimes[id]; ok {
+		fact.BirthPoint = lifetime.BirthPoint
+		fact.BirthSpan = lifetime.BirthSpan
+		fact.HasBirthSpan = lifetime.HasBirthSpan
+		fact.DiesBeforeSuspension = lifetime.DiesBeforeSuspension
+		fact.HasDiesBeforeSuspension = true
 	}
 	if exit, ok := r.ExitState(); ok {
 		fact.Placement = exit.ReadPlacement(id)
@@ -183,13 +200,13 @@ func (r *Result) decomposableUseAnalysis() decomposableUseAnalysis {
 	}
 	for i := 0; i < r.wir.Len(); i++ {
 		inst := r.wir.Instr(i)
-		if inst.Op == wir.OpMakeTable && !inst.StaticStringKeysComplete {
+		if inst.Op != wir.OpMakeTable {
+			continue
+		}
+		if !inst.StaticStringKeysComplete {
 			analysis.bodyHasDynamicConstructorKey = true
 		}
-	}
-	for i := 0; i < r.wir.Len(); i++ {
-		inst := r.wir.Instr(i)
-		if inst.Op != wir.OpMakeTable || inst.ExprID == 0 {
+		if inst.ExprID == 0 {
 			continue
 		}
 		tracker := newDecomposableUseTracker(r.wir, inst)
@@ -245,78 +262,49 @@ func (t *decomposableUseTracker) classifyInstruction(inst wir.Instruction) bool 
 	case wir.OpAssign, wir.OpClaim:
 		return t.classifyTransparentAssign(inst.Dst, inst.A)
 	case wir.OpStaticMemberWrite:
-		if t.operandIsRootAlias(inst.A) {
-			t.bad = true
-			return false
-		}
-		if t.pathOperandIsExactRootAlias(inst.Dst) {
-			t.bad = true
-			return false
-		}
-		return false
+		return t.disqualifyIf(t.operandIsRootAlias(inst.A) || t.pathOperandIsExactRootAlias(inst.Dst))
 	case wir.OpDynamicIndexWrite:
-		if t.pathOperandIsExactRootAlias(inst.Dst) ||
+		return t.disqualifyIf(t.pathOperandIsExactRootAlias(inst.Dst) ||
 			t.operandIsRootAlias(inst.A) ||
-			t.operandIsRootAlias(inst.B) {
-			t.bad = true
-		}
-		return false
+			t.operandIsRootAlias(inst.B))
 	case wir.OpDynamicIndexRead:
-		if t.operandIsRootAlias(inst.A) || t.operandIsRootAlias(inst.B) {
-			t.bad = true
-			return false
-		}
-		return t.clearDestinationAlias(inst.Dst)
+		return t.classifyResult(inst.Dst, t.operandIsRootAlias(inst.A) || t.operandIsRootAlias(inst.B))
 	case wir.OpMakeTable:
-		if t.operandRangeHasRootAlias(inst.List) || t.tableEntriesHaveRootAlias(inst.TableEntries) {
-			t.bad = true
-			return false
-		}
-		return t.clearDestinationAlias(inst.Dst)
+		return t.classifyResult(inst.Dst, t.operandRangeHasRootAlias(inst.List) || t.tableEntriesHaveRootAlias(inst.TableEntries))
 	case wir.OpBinOp:
-		if t.operandIsRootAlias(inst.A) || t.operandIsRootAlias(inst.B) {
-			t.bad = true
-			return false
-		}
-		return t.clearDestinationAlias(inst.Dst)
+		return t.classifyResult(inst.Dst, t.operandIsRootAlias(inst.A) || t.operandIsRootAlias(inst.B))
 	case wir.OpUnOp, wir.OpLogical:
-		if t.operandIsRootAlias(inst.A) || t.operandIsRootAlias(inst.B) {
-			t.bad = true
-			return false
-		}
-		return t.clearDestinationAlias(inst.Dst)
+		return t.classifyResult(inst.Dst, t.operandIsRootAlias(inst.A) || t.operandIsRootAlias(inst.B))
 	case wir.OpConcat, wir.OpSelect:
-		if t.operandRangeHasRootAlias(inst.List) {
-			t.bad = true
-			return false
-		}
-		return t.clearDestinationAlias(inst.Dst)
+		return t.classifyResult(inst.Dst, t.operandRangeHasRootAlias(inst.List))
 	case wir.OpCall:
-		if t.operandIsRootAlias(inst.Call.Callee) ||
+		return t.disqualifyIf(t.operandIsRootAlias(inst.Call.Callee) ||
 			t.operandIsRootAlias(inst.Call.Receiver) ||
-			t.operandRangeHasRootAlias(inst.List) {
-			t.bad = true
-		}
-		return false
+			t.operandRangeHasRootAlias(inst.List))
 	case wir.OpReturn, wir.OpIterate:
-		if t.operandRangeHasRootAlias(inst.List) {
-			t.bad = true
-		}
-		return false
+		return t.disqualifyIf(t.operandRangeHasRootAlias(inst.List))
 	case wir.OpBranch:
-		if t.operandIsRootAlias(inst.A) || t.checkDemandsRootIdentity(t.body.Check(inst.Check)) {
-			t.bad = true
-		}
-		return false
+		return t.disqualifyIf(t.operandIsRootAlias(inst.A) || t.checkDemandsRootIdentity(t.body.Check(inst.Check)))
 	case wir.OpClosure:
-		if t.operandRangeHasRootAlias(inst.List) {
-			t.bad = true
-			return false
-		}
-		return t.clearDestinationAlias(inst.Dst)
+		return t.classifyResult(inst.Dst, t.operandRangeHasRootAlias(inst.List))
 	default:
 		return false
 	}
+}
+
+func (t *decomposableUseTracker) disqualifyIf(disqualified bool) bool {
+	if disqualified {
+		t.bad = true
+	}
+	return false
+}
+
+func (t *decomposableUseTracker) classifyResult(dst wir.Operand, disqualified bool) bool {
+	if disqualified {
+		t.bad = true
+		return false
+	}
+	return t.clearDestinationAlias(dst)
 }
 
 func (t *decomposableUseTracker) classifyTransparentAssign(dst, src wir.Operand) bool {
@@ -364,7 +352,7 @@ func (t *decomposableUseTracker) clearDestinationAlias(dst wir.Operand) bool {
 		return false
 	}
 	for i, alias := range t.aliases {
-		if pathEqualIgnoringVersion(alias, p) {
+		if alias.EqualIgnoringVersion(p) {
 			t.aliases = append(t.aliases[:i], t.aliases[i+1:]...)
 			return true
 		}
@@ -433,7 +421,7 @@ func (t *decomposableUseTracker) pathIsExactRootAlias(p path.Path) bool {
 
 func (t *decomposableUseTracker) hasAliasPath(p path.Path) bool {
 	for _, alias := range t.aliases {
-		if pathEqualIgnoringVersion(alias, p) {
+		if alias.EqualIgnoringVersion(p) {
 			return true
 		}
 	}
@@ -446,16 +434,4 @@ func (t *decomposableUseTracker) localAliasRoot(p path.Path) bool {
 	}
 	kind, ok := t.body.SymbolKind(p.Symbol)
 	return ok && (kind == wir.SymbolLocal || kind == wir.SymbolParam)
-}
-
-func pathEqualIgnoringVersion(a, b path.Path) bool {
-	if !a.SameRootIgnoringVersion(b) || len(a.Segments) != len(b.Segments) {
-		return false
-	}
-	for i := range a.Segments {
-		if a.Segments[i] != b.Segments[i] {
-			return false
-		}
-	}
-	return true
 }

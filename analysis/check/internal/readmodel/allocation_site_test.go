@@ -45,4 +45,7 @@ return total
 	if !site.Decomposable {
 		t.Fatalf("site is not decomposable: %#v", site)
 	}
+	if !site.FrameLocalUseProof || !site.HasDiesBeforeSuspension || !site.DiesBeforeSuspension || site.BirthPoint == 0 || !site.HasBirthSpan {
+		t.Fatalf("site is missing unified use/lifetime facts: %#v", site)
+	}
 }

@@ -15,16 +15,7 @@ func (ChannelLifecycles) Name() string {
 }
 
 func (ChannelLifecycles) Produce(ctx Context) []judgment.Judgment {
-	functionKey := ctx.FunctionKey
-	if functionKey == "" {
-		functionKey = "body"
-	}
-	var out []judgment.Judgment
-	ctx.Reader.ForEachChannelLifecycleMisuse(func(item readmodel.ChannelLifecycleMisuse) bool {
-		out = append(out, channelLifecycleJudgment(ctx, functionKey, item))
-		return true
-	})
-	return out
+	return produceReaderJudgments(ctx, readmodel.Reader.ForEachChannelLifecycleMisuse, channelLifecycleJudgment)
 }
 
 func channelLifecycleJudgment(ctx Context, functionKey string, item readmodel.ChannelLifecycleMisuse) judgment.Judgment {

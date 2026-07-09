@@ -132,15 +132,15 @@ func AmbientChannelLifecycleOutcomeProvider(config AmbientChannelLifecycleOutcom
 						To:       ChannelStateClosed,
 					})
 				case "receive":
-					if slot, ok := channelReceiverLifecycleSlot(ctx, site, in, config.Resolver, config.KeySpace); channelSlotIsProvablyClosed(slot, ok) {
+					if slot, ok := channelReceiverLifecycleSlot(ctx, site, in, config.Resolver, config.KeySpace); ok &&
+						slot.Current == ChannelStateClosed &&
+						slot.Locality != typestate.LocalityUnknown &&
+						slot.Locality != typestate.LocalityEscaped &&
+						slot.Locality != typestate.LocalityBottom {
 						return channelClosedReceiveOutcome(ctx, receiverPayload)
 					}
-					return callpayload.CallOutcome{}
-				case "send", "case_receive", "case_send":
-					return callpayload.CallOutcome{}
-				default:
-					return callpayload.CallOutcome{}
 				}
+				return callpayload.CallOutcome{}
 			}
 		}
 		if channelCallHasKnownSignature(ctx, site, nameForSite, signatures) {
@@ -197,15 +197,6 @@ func channelReceiverTypestateStateKey(point cfg.Point, resolver *visibility.Reso
 	return address.VisibleStateKey()
 }
 
-func channelSlotIsProvablyClosed(slot typestate.Slot, ok bool) bool {
-	if !ok || slot.Current != ChannelStateClosed {
-		return false
-	}
-	return slot.Locality != typestate.LocalityUnknown &&
-		slot.Locality != typestate.LocalityEscaped &&
-		slot.Locality != typestate.LocalityBottom
-}
-
 func channelLifecycleOutcome(fact callboundary.LifecycleFact) callpayload.CallOutcome {
 	return callpayload.CallOutcome{
 		SuspensionKnown: true,
@@ -227,12 +218,7 @@ func isChannelNewSignatureName(name string) bool {
 }
 
 func isChannelKnownModuleSignatureName(name string) bool {
-	switch name {
-	case "channel.select":
-		return true
-	default:
-		return isChannelNewSignatureName(name)
-	}
+	return name == "channel.select" || isChannelNewSignatureName(name)
 }
 
 func channelCallHasKnownSignature(ctx transfer.NodeContext, site factflow.CallSiteView, nameForSite SignatureSiteNameFunc, signatures SignatureLookup) bool {

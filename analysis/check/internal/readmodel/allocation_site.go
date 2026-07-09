@@ -24,16 +24,22 @@ func readmodelAllocationSiteFromBody(fact body.AllocationSiteFact) AllocationSit
 		fields[i] = readapi.AllocationField{Name: field.Name, Type: field.Type}
 	}
 	return AllocationSite{
-		SchemaVersion: readapi.AllocationSiteSchemaVersion,
-		Point:         fact.Point,
-		ExpressionID:  uint64(fact.ExpressionID),
-		ExprRef:       uint64(fact.ExprRef),
-		Identity:      fact.Identity,
-		Placement:     fact.Placement,
-		HasPlacement:  fact.HasPlacement,
-		Shape:         fact.Shape,
-		Fields:        fields,
-		StableShape:   fact.StableShape,
-		Decomposable:  fact.Decomposable,
+		SchemaVersion:           readapi.AllocationSiteSchemaVersion,
+		Point:                   fact.Point,
+		ExpressionID:            uint64(fact.ExpressionID),
+		ExprRef:                 uint64(fact.ExprRef),
+		Identity:                fact.Identity,
+		BirthPoint:              fact.BirthPoint,
+		BirthSpan:               sourceSpanFromBody(fact.BirthSpan),
+		HasBirthSpan:            fact.HasBirthSpan,
+		Placement:               fact.Placement,
+		HasPlacement:            fact.HasPlacement,
+		Shape:                   fact.Shape,
+		Fields:                  fields,
+		StableShape:             fact.StableShape,
+		Decomposable:            fact.Decomposable,
+		FrameLocalUseProof:      fact.FrameLocalUseProof,
+		DiesBeforeSuspension:    fact.DiesBeforeSuspension,
+		HasDiesBeforeSuspension: fact.HasDiesBeforeSuspension,
 	}
 }

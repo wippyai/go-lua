@@ -426,18 +426,10 @@ func verifyPlacementExpectations(t testing.TB, expect fixturePlacement, plan pla
 	assertMaxPlacementKindCounts(t, "stack", placementKindCounts(plan, placementplan.TargetStack), expect.MaxStackKind, plan)
 	assertMaxPlacementKindCounts(t, "owned-heap", placementKindCounts(plan, placementplan.TargetOwnedHeap), expect.MaxOwnedHeapKind, plan)
 	assertMaxPlacementKindCounts(t, "shared-heap", placementKindCounts(plan, placementplan.TargetSharedHeap), expect.MaxSharedHeapKind, plan)
-	if expect.MaxNoFact != nil && counts.noFact > *expect.MaxNoFact {
-		t.Fatalf("placement no-fact count = %d, want <= %d; entries=%s", counts.noFact, *expect.MaxNoFact, formatPlacementEntries(plan))
-	}
-	if expect.MaxUnknown != nil && counts.unknown > *expect.MaxUnknown {
-		t.Fatalf("placement unknown count = %d, want <= %d; entries=%s", counts.unknown, *expect.MaxUnknown, formatPlacementEntries(plan))
-	}
-	if expect.MaxDecomposable != nil && counts.decomposable > *expect.MaxDecomposable {
-		t.Fatalf("placement decomposable count = %d, want <= %d; entries=%s", counts.decomposable, *expect.MaxDecomposable, formatPlacementEntries(plan))
-	}
-	if expect.MaxFrameLocal != nil && counts.frameLocal > *expect.MaxFrameLocal {
-		t.Fatalf("placement frame-local count = %d, want <= %d; entries=%s", counts.frameLocal, *expect.MaxFrameLocal, formatPlacementEntries(plan))
-	}
+	assertMaxPlacementCount(t, "no-fact", counts.noFact, expect.MaxNoFact, plan)
+	assertMaxPlacementCount(t, "unknown", counts.unknown, expect.MaxUnknown, plan)
+	assertMaxPlacementCount(t, "decomposable", counts.decomposable, expect.MaxDecomposable, plan)
+	assertMaxPlacementCount(t, "frame-local", counts.frameLocal, expect.MaxFrameLocal, plan)
 }
 
 type fixturePlacementCounts struct {
@@ -459,9 +451,7 @@ func placementCounts(plan placementplan.Plan) fixturePlacementCounts {
 	counts := fixturePlacementCounts{hoistableLoads: len(plan.HoistableLoads)}
 	for _, entry := range plan.Entries {
 		switch entry.Target {
-		case placementplan.TargetFrameLocal:
-			counts.stack++
-		case placementplan.TargetStack:
+		case placementplan.TargetFrameLocal, placementplan.TargetStack:
 			counts.stack++
 		case placementplan.TargetOwnedHeap:
 			counts.ownedHeap++

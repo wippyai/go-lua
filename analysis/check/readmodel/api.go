@@ -58,7 +58,6 @@ type Reader interface {
 	ForEachSplitBirthDiscriminant(func(SplitBirthDiscriminant) bool) bool
 	ForEachClosureCapture(func(ClosureCapture) bool) bool
 	ForEachAllocationSite(func(AllocationSite) bool) bool
-	ForEachAllocationLifetime(func(AllocationLifetime) bool) bool
 	ForEachHoistableLoad(func(HoistableLoad) bool) bool
 	DominatingTruthyBranchForPath(cfg.Point, BranchCheck) (DominatingBranchProof, bool)
 	DominatingBranchCheckForPath(cfg.Point, BranchCheck, func(BranchCheck, bool) bool) (DominatingBranchProof, bool)
@@ -197,21 +196,7 @@ type SplitBirthPayloadWrite struct {
 
 const ClosureCaptureSchemaVersion = 2
 
-const AllocationLifetimeSchemaVersion = 1
-
 const HoistableLoadSchemaVersion = 1
-
-// AllocationLifetime is the codegen-facing solved export for one body-local
-// allocation site.
-type AllocationLifetime struct {
-	SchemaVersion int
-	ID            identity.ID
-	BirthPoint    cfg.Point
-	BirthSpan     SourceSpan
-	HasBirthSpan  bool
-
-	DiesBeforeSuspension bool
-}
 
 // HoistableLoad is the codegen-facing license for one member/index read whose
 // loaded value is invariant across iterations of the identified loop. LoopSpan
@@ -257,7 +242,7 @@ type ClosureCapture struct {
 	HasIdentity  bool
 }
 
-const AllocationSiteSchemaVersion = 1
+const AllocationSiteSchemaVersion = 2
 
 // AllocationSite is the codegen-facing solved export for one table allocation
 // site. Decomposable is a scalar-replacement license; false is the sound default
@@ -268,6 +253,9 @@ type AllocationSite struct {
 	ExpressionID  uint64
 	ExprRef       uint64
 	Identity      identity.ID
+	BirthPoint    cfg.Point
+	BirthSpan     SourceSpan
+	HasBirthSpan  bool
 
 	Placement    placement.Value
 	HasPlacement bool
@@ -276,7 +264,10 @@ type AllocationSite struct {
 	Fields      []AllocationField
 	StableShape bool
 
-	Decomposable bool
+	Decomposable            bool
+	FrameLocalUseProof      bool
+	DiesBeforeSuspension    bool
+	HasDiesBeforeSuspension bool
 }
 
 type AllocationField struct {

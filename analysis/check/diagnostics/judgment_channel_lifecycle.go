@@ -6,7 +6,8 @@ import (
 )
 
 func renderChannelLifecycleJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
-	if !channelLifecycleJudgmentCode(item.Code) || item.Subject.Kind != judgment.SubjectExpression || len(item.Spans) == 0 {
+	if (item.Code != judgment.CodeChannelSendClosed && item.Code != judgment.CodeChannelDoubleClose) ||
+		item.Subject.Kind != judgment.SubjectExpression || len(item.Spans) == 0 {
 		return diagnostic.Diagnostic{}, false
 	}
 	severity, ok := diagnosticSeverityForJudgment(item, policy, mode)
@@ -29,8 +30,4 @@ func renderChannelLifecycleJudgmentWithPolicy(ctx judgmentRenderContext, item ju
 		Help:        presentation.Help,
 		Labels:      presentation.Labels,
 	}), true
-}
-
-func channelLifecycleJudgmentCode(code judgment.Code) bool {
-	return code == judgment.CodeChannelSendClosed || code == judgment.CodeChannelDoubleClose
 }

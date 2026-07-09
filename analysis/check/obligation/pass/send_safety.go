@@ -52,25 +52,22 @@ func sendSafetyJudgment(ctx Context, functionKey string, report readmodel.SendSa
 		),
 	}
 	switch report.Verdict {
-	case readmodel.SendSafetyProvenIsolated:
+	case readmodel.SendSafetyProvenIsolated, readmodel.SendSafetyProvenImmutable:
+		origin := judgment.OriginSendIsolationProof
+		cause := judgment.EvidenceCauseBirth
+		message := "direct literal birth site has no retained graph identity"
+		if report.Verdict == readmodel.SendSafetyProvenImmutable {
+			origin = judgment.OriginSendImmutableProof
+			cause = judgment.EvidenceCauseGuard
+			message = "exact identity is frozen before send"
+		}
 		evidence = append(evidence, provenAbstractEvidence(
 			report.Point,
-			fmt.Sprintf("%s:arg:%d", judgment.OriginSendIsolationProof, arg.Index),
+			fmt.Sprintf("%s:arg:%d", origin, arg.Index),
 			judgment.EvidenceDetail{
-				Cause:   judgment.EvidenceCause{Kind: judgment.EvidenceCauseBirth},
+				Cause:   judgment.EvidenceCause{Kind: cause},
 				Kind:    judgment.EvidenceDetailSendSafetyProof,
-				Message: "direct literal birth site has no retained graph identity",
-			},
-			spanFromReadModel(ctx.SourceFile, sendSafetyBirthSpanOrArg(report)),
-		))
-	case readmodel.SendSafetyProvenImmutable:
-		evidence = append(evidence, provenAbstractEvidence(
-			report.Point,
-			fmt.Sprintf("%s:arg:%d", judgment.OriginSendImmutableProof, arg.Index),
-			judgment.EvidenceDetail{
-				Cause:   judgment.EvidenceCause{Kind: judgment.EvidenceCauseGuard},
-				Kind:    judgment.EvidenceDetailSendSafetyProof,
-				Message: "exact identity is frozen before send",
+				Message: message,
 			},
 			spanFromReadModel(ctx.SourceFile, sendSafetyBirthSpanOrArg(report)),
 		))
