@@ -230,13 +230,6 @@ func configWithStats(config Config) Config {
 	return config
 }
 
-func queryStats(stats *Stats) *query.Stats {
-	if stats == nil {
-		return nil
-	}
-	return &stats.Query
-}
-
 // Snapshot returns the exact-key summary snapshot.
 func (r Result) Snapshot() summary.Snapshot { return r.snapshot }
 
@@ -458,42 +451,6 @@ func collectCallContextKeys(keys *programKeys, stmts []ast.Stmt, bindings *bind.
 	}
 	applyClosedDynamicAllValueEntryStates(keys, prepared, config.Registry, rootPrepass, prepassResults)
 	return inferred, nil
-}
-
-func prepassCounter(stats *Stats) *int {
-	if stats == nil {
-		return nil
-	}
-	return &stats.PrepassBodySolves
-}
-
-func summaryCounter(stats *Stats) *int {
-	if stats == nil {
-		return nil
-	}
-	return &stats.SummaryBodySolves
-}
-
-func materializeCounter(stats *Stats) *int {
-	if stats == nil {
-		return nil
-	}
-	return &stats.MaterializeBodySolves
-}
-
-func recordProgramShape(stats *Stats, keys programKeys) {
-	if stats == nil {
-		return
-	}
-	recordMaxInt(&stats.MaxFunctionCount, len(keys.functions))
-	recordMaxInt(&stats.MaxContextCount, keys.contexts.Len())
-	recordMaxInt(&stats.MaxCallContextRefCount, keys.contexts.CallRefCount())
-}
-
-func recordMaxInt(dst *int, value int) {
-	if dst != nil && value > *dst {
-		*dst = value
-	}
 }
 
 func collectCallContextKeysFromResult(keys *programKeys, owner summary.SummaryKey, prepass *body.Result, config body.Config, inferred *paramInference, symbolByKey map[summary.SummaryKey]symbol.ID, prepared preparedBodies) (map[summary.SummaryKey]struct{}, error) {
