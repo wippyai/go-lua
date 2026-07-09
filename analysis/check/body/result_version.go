@@ -583,7 +583,7 @@ type typestateProtocolEntry struct {
 }
 
 func (w *bodyDigestWriter) writeCanonicalOperationalEffects(label string, effects *signature.OperationalEffects) {
-	encoded, err := manifest.CanonicalOperationalEffectsBytes(effects)
+	encoded, err := manifest.CanonicalOperationalEffectsDigestBytes(effects)
 	if err != nil {
 		w.writeString(label, "<invalid-operational-effects>")
 		return

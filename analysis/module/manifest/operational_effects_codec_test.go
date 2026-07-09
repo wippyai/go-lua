@@ -8,9 +8,13 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/module/signature"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestOperationalEffectsWireFieldsMirrorSignatureFields(t *testing.T) {
@@ -124,6 +128,24 @@ func TestCanonicalizeOperationalEffectsWireUsesLaneRegistry(t *testing.T) {
 	}
 	if field := firstSelectedManifestField(fn, operationalEffectFieldNames(reflect.TypeOf(operationalEffectsWire{}))); field != "" {
 		t.Fatalf("canonicalizeOperationalEffectsWire selects field %s directly; use operationalEffectsWireLanes", field)
+	}
+}
+
+func TestCanonicalOperationalEffectsDigestBytesSupportsRecursiveTypes(t *testing.T) {
+	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typetable.NewRecord().Field("next", typeexpr.Optional(self)).Build()
+	})
+	encoded, err := CanonicalOperationalEffectsDigestBytes(&signature.OperationalEffects{
+		NormalReturnTypeRefinements: []signature.PathTypeRefinement{{
+			Path: pathdom.NewPlaceholder(0),
+			Type: node,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CanonicalOperationalEffectsDigestBytes: %v", err)
+	}
+	if len(encoded) == 0 {
+		t.Fatal("CanonicalOperationalEffectsDigestBytes returned empty bytes")
 	}
 }
 

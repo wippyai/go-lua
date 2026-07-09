@@ -221,6 +221,58 @@ func CanonicalOperationalEffectsBytes(e *signature.OperationalEffects) ([]byte, 
 	return json.Marshal(w)
 }
 
+// CanonicalOperationalEffectsDigestBytes encodes operational effects through
+// the descriptor-driven manifest wire codec after replacing every embedded type
+// with its equality identity. Digest clients need stable semantic type identity,
+// not a re-decodable type graph; this also keeps recursive in-memory type
+// graphs out of the acyclic manifest type codec.
+func CanonicalOperationalEffectsDigestBytes(e *signature.OperationalEffects) ([]byte, error) {
+	if e == nil {
+		return CanonicalOperationalEffectsBytes(nil)
+	}
+	canonical := e.Clone()
+	canonicalizeOperationalEffectDigestTypes(&canonical)
+	return CanonicalOperationalEffectsBytes(&canonical)
+}
+
+func canonicalizeOperationalEffectDigestTypes(e *signature.OperationalEffects) {
+	if e == nil {
+		return
+	}
+	for i := range e.NormalReturnTypeRefinements {
+		e.NormalReturnTypeRefinements[i].Type = canonicalOperationalEffectDigestType(e.NormalReturnTypeRefinements[i].Type)
+	}
+	for i := range e.PathPresenceImplications {
+		e.PathPresenceImplications[i].TriggerType = canonicalOperationalEffectDigestType(e.PathPresenceImplications[i].TriggerType)
+	}
+	for i := range e.PathStaticMembers {
+		e.PathStaticMembers[i].Type = canonicalOperationalEffectDigestType(e.PathStaticMembers[i].Type)
+	}
+	for i := range e.PathStaticMemberDeltas {
+		e.PathStaticMemberDeltas[i].Type = canonicalOperationalEffectDigestType(e.PathStaticMemberDeltas[i].Type)
+	}
+	for i := range e.DynamicIndexFacts {
+		e.DynamicIndexFacts[i].Key.Type = canonicalOperationalEffectDigestType(e.DynamicIndexFacts[i].Key.Type)
+		e.DynamicIndexFacts[i].Value.Type = canonicalOperationalEffectDigestType(e.DynamicIndexFacts[i].Value.Type)
+	}
+	for i := range e.ReturnAllocationTemplates {
+		for j := range e.ReturnAllocationTemplates[i].Objects {
+			object := &e.ReturnAllocationTemplates[i].Objects[j]
+			object.Type = canonicalOperationalEffectDigestType(object.Type)
+			for k := range object.DynamicEntries {
+				object.DynamicEntries[k].KeyType = canonicalOperationalEffectDigestType(object.DynamicEntries[k].KeyType)
+			}
+		}
+	}
+}
+
+func canonicalOperationalEffectDigestType(t typ.Type) typ.Type {
+	if t == nil {
+		return nil
+	}
+	return typ.NewRef("manifest-digest-type", strconv.FormatUint(typ.EqualityHash(t), 10)+":"+t.String())
+}
+
 func decodeOperationalEffects(w *operationalEffectsWire) (signature.OperationalEffects, error) {
 	if w == nil {
 		return signature.OperationalEffects{}, nil
