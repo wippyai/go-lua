@@ -10,7 +10,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
-	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typecall"
 )
@@ -281,7 +280,7 @@ func oppositeBranchAssignmentStates(
 
 func oppositeAssignmentsContradictTrigger(
 	reg *axis.Registry,
-	triggerSym symbol.ID,
+	triggerKey presentAssignmentKey,
 	trigger conditionalAssignment,
 	incoming presentAssignmentState,
 	opposites []presentAssignmentState,
@@ -289,13 +288,13 @@ func oppositeAssignmentsContradictTrigger(
 	if reg == nil || len(opposites) == 0 {
 		return false
 	}
-	if incomingTriggerContradictsWithoutOppositeBranchWrite(reg, triggerSym, trigger, incoming, opposites) {
+	if incomingTriggerContradictsWithoutOppositeBranchWrite(reg, triggerKey, trigger, incoming, opposites) {
 		return true
 	}
 	for _, opposite := range opposites {
-		other, ok := opposite[triggerSym]
+		other, ok := opposite[triggerKey]
 		if !ok || !other.hasValue {
-			other, ok = incoming[triggerSym]
+			other, ok = incoming[triggerKey]
 		}
 		if !ok || !other.hasValue {
 			return false
@@ -310,17 +309,17 @@ func oppositeAssignmentsContradictTrigger(
 
 func incomingTriggerContradictsWithoutOppositeBranchWrite(
 	reg *axis.Registry,
-	triggerSym symbol.ID,
+	triggerKey presentAssignmentKey,
 	trigger conditionalAssignment,
 	incoming presentAssignmentState,
 	opposites []presentAssignmentState,
 ) bool {
-	baseline, ok := incoming[triggerSym]
+	baseline, ok := incoming[triggerKey]
 	if !ok || !baseline.hasValue {
 		return false
 	}
 	for _, opposite := range opposites {
-		if other, ok := opposite[triggerSym]; ok && other.fromBranch {
+		if other, ok := opposite[triggerKey]; ok && other.fromBranch {
 			return false
 		}
 	}
@@ -407,7 +406,9 @@ type conditionalAssignment struct {
 	fromBranch bool
 }
 
-type presentAssignmentState map[symbol.ID]conditionalAssignment
+type presentAssignmentKey path.PathKey
+
+type presentAssignmentState map[presentAssignmentKey]conditionalAssignment
 
 func (l *lowerer) presentAssignmentsOnBranchEdge(
 	input *factflow.FactsInput,
@@ -585,17 +586,59 @@ func (l *lowerer) transferPresentAssignmentState(
 	out := clonePresentAssignmentState(in)
 	if fact, ok := input.RootAssignments[point]; ok {
 		target := fact.TargetPath()
-		if target.Symbol != 0 && len(target.Segments) == 0 {
-			if value, ok := l.rootAssignmentSourceValue(input, fact.Source()); ok {
-				out[target.Symbol] = conditionalAssignment{path: target, value: value, hasValue: true, fromBranch: fromBranch}
-			} else if l.rootAssignmentSourceDefinitelyPresent(input, fact.Source()) {
-				out[target.Symbol] = conditionalAssignment{path: target, fromBranch: fromBranch}
-			} else {
-				delete(out, target.Symbol)
+		if target.Symbol != 0 {
+			out = invalidatePresentAssignmentPath(out, target)
+			if len(target.Segments) == 0 {
+				out = l.writePresentAssignmentState(input, out, target, fact.Source(), fromBranch)
 			}
 		}
 	}
+	if fact, ok := input.PathAssignments[point]; ok {
+		target := fact.TargetPath()
+		if target.Symbol != 0 {
+			out = invalidatePresentAssignmentPath(out, target)
+			out = l.writePresentAssignmentState(input, out, target, fact.Source(), fromBranch)
+		}
+	}
 	return out
+}
+
+func (l *lowerer) writePresentAssignmentState(
+	input *factflow.FactsInput,
+	out presentAssignmentState,
+	target path.Path,
+	source factflow.ValueSource,
+	fromBranch bool,
+) presentAssignmentState {
+	key, ok := presentAssignmentKeyForPath(target)
+	if !ok {
+		return out
+	}
+	if value, ok := l.rootAssignmentSourceValue(input, source); ok {
+		out[key] = conditionalAssignment{path: target, value: value, hasValue: true, fromBranch: fromBranch}
+	} else if l.rootAssignmentSourceDefinitelyPresent(input, source) {
+		out[key] = conditionalAssignment{path: target, fromBranch: fromBranch}
+	}
+	return out
+}
+
+func invalidatePresentAssignmentPath(in presentAssignmentState, written path.Path) presentAssignmentState {
+	if len(in) == 0 || written.Symbol == 0 {
+		return in
+	}
+	for key, assignment := range in {
+		if assignment.path.Overlaps(written) {
+			delete(in, key)
+		}
+	}
+	return in
+}
+
+func presentAssignmentKeyForPath(p path.Path) (presentAssignmentKey, bool) {
+	if p.Symbol == 0 {
+		return "", false
+	}
+	return presentAssignmentKey(p.Key()), true
 }
 
 func (l *lowerer) rootAssignmentSourceDefinitelyPresent(input *factflow.FactsInput, source factflow.ValueSource) bool {
@@ -729,9 +772,9 @@ func clonePresentAssignmentState(in presentAssignmentState) presentAssignmentSta
 		return presentAssignmentState{}
 	}
 	out := make(presentAssignmentState, len(in))
-	for sym, target := range in {
+	for key, target := range in {
 		target.path = target.path.Clone()
-		out[sym] = target
+		out[key] = target
 	}
 	return out
 }
@@ -741,11 +784,11 @@ func intersectPresentAssignmentState(a, b presentAssignmentState) presentAssignm
 		return presentAssignmentState{}
 	}
 	out := make(presentAssignmentState)
-	for sym, left := range a {
-		right, ok := b[sym]
+	for key, left := range a {
+		right, ok := b[key]
 		if ok && conditionalAssignmentsEqual(left, right) {
 			left.path = left.path.Clone()
-			out[sym] = left
+			out[key] = left
 		}
 	}
 	return out
@@ -755,8 +798,8 @@ func presentAssignmentStateEqual(a, b presentAssignmentState) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	for sym, left := range a {
-		right, ok := b[sym]
+	for key, left := range a {
+		right, ok := b[key]
 		if !ok || !conditionalAssignmentsEqual(left, right) {
 			return false
 		}
