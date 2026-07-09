@@ -20,7 +20,7 @@ type UnitID string
 // chunk root is "root" and nested bodies use slash-separated child ordinals.
 type BodyID string
 
-// UnitInput is the complete batch-check input for one source unit. The current
+// UnitInput is the complete batch-check input for one source unit. The
 // reference implementation checks EntryFile as the program chunk; every source
 // snapshot participates in UnitDigest so changes cannot reuse a stale result.
 type UnitInput struct {

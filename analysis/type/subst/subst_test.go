@@ -450,7 +450,7 @@ func TestSelf(t *testing.T) {
 		}
 	})
 
-	t.Run("retains surface self beyond the old node budget", func(t *testing.T) {
+	t.Run("retains surface self across large recursive types", func(t *testing.T) {
 		const recordCount = 2050
 		elements := make([]typ.Type, 0, recordCount+1)
 		for i := 0; i < recordCount; i++ {

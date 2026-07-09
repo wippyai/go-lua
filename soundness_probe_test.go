@@ -7,11 +7,9 @@ import (
 	testutil "github.com/wippyai/go-lua/analysis/check/checktest"
 )
 
-// soundnessProbe is a program whose soundness depends on the checker REJECTING
-// it: each program must produce at least one error diagnostic. fixed records the
-// current behavior: a fixed probe must error (the hole is closed and guarded); an
-// unfixed probe is a known, still-open soundness hole pinned here so that closing
-// it flips this test, prompting the flag to be set to true.
+// soundnessProbe records a program with its expected diagnostic state. Each
+// fixed probe produces an error diagnostic; an unfixed probe produces none.
+// An unexpected result fails this test so the expectation stays explicit.
 type soundnessProbe struct {
 	name  string
 	fixed bool
@@ -297,13 +295,9 @@ var soundnessProbes = []soundnessProbe{
 		end return f`,
 	},
 	{
-		// A covariant MAP-value alias: {[K]:number} aliased to {[K]:number|string}. The
-		// hole was that a key write degraded the source map's root witness to a per-key
-		// record overlay ({[any]:unknown} on read), which then admitted covariantly to
-		// the wider map. The root witness now stays the declared map across a conforming
-		// key write (per-key reads stay precise via static-member facts), so the alias
-		// is rejected at the assignment by invariant map subtyping, matching the
-		// concrete-map case.
+		// A covariant map-value alias keeps the declared root witness across a
+		// key write. Per-key reads use static-member facts, and invariant map
+		// subtyping rejects the assignment.
 		name:  "covariant-map-value-alias",
 		fixed: true,
 		src: `local function f(): number
@@ -320,12 +314,9 @@ var soundnessProbes = []soundnessProbe{
 		end return f`,
 	},
 	{
-		// A concrete-valued map (here a parameter, whose value type is the declared
-		// number, not the empty-literal Never) is value-invariant under aliasing: it
-		// cannot widen its value type covariantly, since a write through the wider
-		// alias would store a value the narrow map forbids. canWidenMapTo now requires
-		// invariance for a concrete value type, allowing covariant widening only for a
-		// fresh empty map (value Never).
+		// A concrete-valued map is invariant under aliasing because a wider alias
+		// can write a value the narrow map forbids. Covariant widening applies
+		// only to a fresh empty map with value Never.
 		name:  "covariant-map-value-concrete",
 		fixed: true,
 		src: `local function f(narrow: { [string]: number }): number
@@ -365,14 +356,14 @@ func TestSoundnessProbes(t *testing.T) {
 		switch {
 		case errored == p.fixed:
 			if p.fixed {
-				t.Logf("GUARDED %-40s errors: %s", p.name, strings.Join(msgs, " | "))
+				t.Logf("guarded %-40s errors: %s", p.name, strings.Join(msgs, " | "))
 			} else {
-				t.Logf("OPEN    %-40s (known soundness hole, still pinned)", p.name)
+				t.Logf("open    %-40s", p.name)
 			}
 		case p.fixed && !errored:
-			t.Errorf("REGRESSION %-40s no longer errors (was a guarded fix)", p.name)
+			t.Errorf("expected diagnostic for %s", p.name)
 		default:
-			t.Errorf("NOW SOUND  %-40s now errors; set fixed:true to guard it", p.name)
+			t.Errorf("unexpected diagnostic for %s", p.name)
 		}
 	}
 }

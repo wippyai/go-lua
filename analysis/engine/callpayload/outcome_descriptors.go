@@ -7,7 +7,7 @@ import (
 // CallOutcomeLaneOps is the CallOutcome family's per-kind behavior payload. A
 // call-outcome lane has a much simpler shape than the NormalReturnFacts family:
 // it exposes a field-presence predicate and a post-return classification flag,
-// with no append/merge or lattice ops of its own (CallOutcome merge laws live in
+// with no append/merge or lattice ops of its own (CallOutcome merge laws reside in
 // the supplemental-fact binding). The descriptor spine still applies: a kind is
 // the field name, WireRef links the field to its manifest wire lane, and Ops
 // carries the presence predicate and post-return flag.
