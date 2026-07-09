@@ -6,9 +6,22 @@ import (
 )
 
 // ForEachHoistableLoad visits codegen licenses projected from the same
-// body-owned occurrence stream consumed by invariant-loop-read advice.
+// body-owned occurrence stream consumed by invariant-loop-read advice. Keep
+// the raw-load witness check at this codegen boundary even though the body
+// stream also filters it: absence of that witness must never become a license.
 func (r Reader) ForEachHoistableLoad(visit func(HoistableLoad) bool) bool {
-	return projectBodyOccurrences(r, visit, (*body.Result).ForEachInvariantLoopReadOccurrence, hoistableLoadFromBody)
+	if r.result == nil || visit == nil || r.result.Graph() == nil {
+		return false
+	}
+	visited := false
+	r.result.ForEachInvariantLoopReadOccurrence(func(occ body.InvariantLoopReadOccurrence) bool {
+		if !occ.RawLoadWitness {
+			return true
+		}
+		visited = true
+		return visit(hoistableLoadFromBody(r, occ))
+	})
+	return visited
 }
 
 func hoistableLoadFromBody(r Reader, occ body.InvariantLoopReadOccurrence) HoistableLoad {

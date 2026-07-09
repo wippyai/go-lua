@@ -67,3 +67,86 @@ return clean_total + changed_total
 		t.Fatalf("invariance witness scope has no source span: %#v", load)
 	}
 }
+
+// A typed cast does not make a metatable-backed member read a raw table load:
+// __index can return a different value and have side effects on every access.
+// Keep the advice stream and its codegen projection in lockstep on this
+// soundness boundary.
+func TestInvariantLoopReadAndHoistableLoadRejectStatefulMetatableRead(t *testing.T) {
+	stmts, err := parse.ParseString(`
+type Config = { limit: number }
+
+local ticks = 0
+local clean = setmetatable({}, {
+	__index = function(_self, _key): number
+		ticks = ticks + 1
+		return ticks
+	end,
+}) :: Config
+local total = 0
+local i = 0
+while i < 3 do
+	total = total + clean.limit
+	i = i + 1
+end
+return total
+`, "metamethod-hoist-soundness.lua")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	result, err := body.CheckChunk(stmts, body.Config{Registry: standard.Registry()})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	var advice []InvariantLoopRead
+	New(result).ForEachInvariantLoopRead(func(read InvariantLoopRead) bool {
+		advice = append(advice, read)
+		return true
+	})
+	if len(advice) != 0 {
+		t.Fatalf("invariant loop reads = %#v, want none for metatable-backed clean.limit", advice)
+	}
+
+	var loads []HoistableLoad
+	New(result).ForEachHoistableLoad(func(load HoistableLoad) bool {
+		loads = append(loads, load)
+		return true
+	})
+	if len(loads) != 0 {
+		t.Fatalf("hoistable loads = %#v, want none for metatable-backed clean.limit", loads)
+	}
+}
+
+func TestInvariantLoopReadAndHoistableLoadRequireNoIndexMetatableWitness(t *testing.T) {
+	stmts, err := parse.ParseString(`
+type Config = { limit: number }
+
+local clean = setmetatable({ limit = 3 }, {
+	__index = function(_self, _key): number
+		return 0
+	end,
+}) :: Config
+local total = 0
+local i = 0
+while i < 3 do
+	total = total + clean.limit
+	i = i + 1
+end
+return total
+`, "metatable-member-hoist-soundness.lua")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	result, err := body.CheckChunk(stmts, body.Config{Registry: standard.Registry()})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	var loads []HoistableLoad
+	New(result).ForEachHoistableLoad(func(load HoistableLoad) bool {
+		loads = append(loads, load)
+		return true
+	})
+	if len(loads) != 0 {
+		t.Fatalf("hoistable loads = %#v, want none without a no-__index witness", loads)
+	}
+}

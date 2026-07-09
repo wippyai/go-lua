@@ -2,9 +2,14 @@ package body
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -25,6 +30,9 @@ type InvariantLoopReadOccurrence struct {
 	ReceiverType typ.Type
 	ReadSpan     SourceSpan
 	LoopSpan     SourceSpan
+	// RawLoadWitness proves this is a direct physical-table member read, not
+	// a metatable lookup. Codegen must require it before issuing a hoist license.
+	RawLoadWitness bool
 }
 
 // ForEachInvariantLoopReadOccurrence visits loop-contained member/index reads
@@ -51,19 +59,92 @@ func (r *Result) ForEachInvariantLoopReadOccurrence(visit func(InvariantLoopRead
 		if r.PathInvalidatedInLoop(loop.Head, occ.ReadPath) {
 			return true
 		}
+		if !r.staticMemberReadHasRawLoadWitness(occ) {
+			return true
+		}
 		visited = true
 		return visit(InvariantLoopReadOccurrence{
-			Point:        occ.Point,
-			LoopHead:     loop.Head,
-			ReadLabel:    occ.ReadLabel,
-			ReceiverPath: occ.ReceiverPath,
-			ReadPath:     occ.ReadPath,
-			ReceiverType: occ.ReceiverTypeBeforeBoundary,
-			ReadSpan:     occ.Span,
-			LoopSpan:     loop.Span,
+			Point:          occ.Point,
+			LoopHead:       loop.Head,
+			ReadLabel:      occ.ReadLabel,
+			ReceiverPath:   occ.ReceiverPath,
+			ReadPath:       occ.ReadPath,
+			ReceiverType:   occ.ReceiverTypeBeforeBoundary,
+			ReadSpan:       occ.Span,
+			LoopSpan:       loop.Span,
+			RawLoadWitness: true,
 		})
 	})
 	return visited
+}
+
+// staticMemberReadHasRawLoadWitness proves that the read cannot enter Lua's
+// metatable lookup path. A declared record alone is insufficient because a
+// runtime cast can hide a stateful __index metamethod. The receiver must retain
+// an exact heap identity whose root has a no-__index metatable proof, and the
+// addressed member must be physically present at that identity.
+func (r *Result) staticMemberReadHasRawLoadWitness(occ StaticMemberReadOccurrence) bool {
+	if r == nil || r.registry == nil || !occ.HasReceiverValueBeforeBoundary ||
+		!occ.HasReceiverTypeBeforeBoundary || occ.ReceiverTypeBeforeBoundary == nil ||
+		!occ.HasReceiverPath || !occ.HasReadPath {
+		return false
+	}
+	if len(occ.ReadPath.Segments) != len(occ.ReceiverPath.Segments)+1 {
+		return false
+	}
+	id, ok := identityvalue.ExactID(r.registry, occ.ReceiverValueBeforeBoundary)
+	if !ok {
+		return false
+	}
+	st, ok := r.StateAt(occ.Point)
+	if !ok {
+		return false
+	}
+	object := st.ReadHeapTableObject(r.registry, id)
+	root := object.Root()
+	rootID, ok := identityvalue.ExactID(r.registry, root)
+	if !ok || rootID != id || product.Equal(r.registry, product.Meet(r.registry, root, occ.ReceiverValueBeforeBoundary), product.Bottom(r.registry)) {
+		return false
+	}
+	rootType, ok := typevalue.TypeOf(r.registry, root)
+	if !ok || !rawTableTypeHasNoIndexMetamethod(rootType) ||
+		!rawTableTypeHasNoIndexMetamethod(occ.ReceiverTypeBeforeBoundary) {
+		return false
+	}
+	memberKey, ok := heapidentity.StaticMemberSuffixKey(r.KeySpace(), occ.ReadPath.Segments[len(occ.ReceiverPath.Segments):])
+	if !ok {
+		return false
+	}
+	member, ok := object.StaticMember(memberKey)
+	return ok && presence.Equal(product.PresenceOf(member), presence.Present()) && !typevalue.HasOnlyNilType(r.registry, member)
+}
+
+func rawTableTypeHasNoIndexMetamethod(t typ.Type) bool {
+	if t == nil || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) {
+		return false
+	}
+	switch value := unwrap.Annotated(t).(type) {
+	case *typ.Record:
+		return value.Metatable == nil || TypeFieldProvablyAbsent(value.Metatable, "__index")
+	case *typ.Union:
+		if len(value.Members) == 0 {
+			return false
+		}
+		for _, member := range value.Members {
+			if !rawTableTypeHasNoIndexMetamethod(member) {
+				return false
+			}
+		}
+		return true
+	case *typ.Optional:
+		return rawTableTypeHasNoIndexMetamethod(value.Inner)
+	case *typ.Alias:
+		return rawTableTypeHasNoIndexMetamethod(value.UnaliasedTarget())
+	case *typ.Recursive:
+		return value.Body != nil && value.Body != t && rawTableTypeHasNoIndexMetamethod(value.Body)
+	default:
+		return false
+	}
 }
 
 // InnermostLoopForPoint returns the innermost source loop whose CFG cycle
