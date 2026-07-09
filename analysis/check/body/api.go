@@ -1,6 +1,7 @@
 package body
 
 import (
+	"context"
 	"errors"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -65,6 +66,9 @@ type Config struct {
 	EntryState             state.State
 	Initial                transfer.InitialState
 	ClosedDynamicAllValues []factapply.ClosedDynamicAllValueInvariant
+	// Context cooperatively stops the underlying transfer worklist. Nil keeps
+	// the legacy uncancelable behavior for callers that do not need a deadline.
+	Context context.Context
 
 	WidenAt    func(cfg.Point) bool
 	WidenDelay func(cfg.Point) int
@@ -155,6 +159,7 @@ type SolveConfig struct {
 	// type-derived value database.
 	TypeValues             *typevalue.Cache
 	ClosedDynamicAllValues []factapply.ClosedDynamicAllValueInvariant
+	Context                context.Context
 
 	// StateLanes selects the State product-lattice lanes for this solve.
 	// Nil uses the default lane set; a non-nil slice is the exact enabled set.
@@ -332,5 +337,5 @@ func SolvePrepared(prepared *Static, config SolveConfig) (*Result, error) {
 	if prepared == nil {
 		return nil, ErrStaticRequired
 	}
-	return prepared.Solve(config), nil
+	return prepared.solve(config)
 }

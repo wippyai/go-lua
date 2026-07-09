@@ -2,6 +2,7 @@
 package query
 
 import (
+	"context"
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
@@ -33,6 +34,9 @@ type Stats struct {
 
 // Config configures a summary fixed-point run.
 type Config struct {
+	// Context cooperatively stops summary worklist iteration. Nil preserves the
+	// legacy uncancelable driver behavior.
+	Context    context.Context
 	Registry   *axis.Registry
 	Functions  []Function
 	Seed       summary.Reader
@@ -43,6 +47,7 @@ type Config struct {
 
 // Driver is a reusable validated summary fixed-point driver.
 type Driver struct {
+	ctx        context.Context
 	reg        *axis.Registry
 	functions  []Function
 	known      map[summary.SummaryKey]struct{}
@@ -76,6 +81,7 @@ func New(config Config) (*Driver, error) {
 	}
 
 	return &Driver{
+		ctx:        config.Context,
 		reg:        config.Registry,
 		functions:  functions,
 		known:      known,
@@ -106,7 +112,7 @@ func (d *Driver) Run() (summary.Snapshot, error) {
 		byKey[fn.Key] = fn.Body
 	}
 
-	result := solve.Solve[summary.SummaryKey, summary.Summary](solve.EquationSystem[summary.SummaryKey, summary.Summary]{
+	system := solve.EquationSystem[summary.SummaryKey, summary.Summary]{
 		Lattice: summary.NormalizedDomain(d.reg),
 		Cells:   cells,
 		Initial: func(key summary.SummaryKey) summary.Summary {
@@ -140,7 +146,17 @@ func (d *Driver) Run() (summary.Snapshot, error) {
 		WidenAt:    d.widenAt,
 		WidenDelay: d.widenDelay,
 		Stats:      solverStats(d.Stats),
-	})
+	}
+	var result map[summary.SummaryKey]summary.Summary
+	if d.ctx == nil {
+		result = solve.Solve(system)
+	} else {
+		var err error
+		result, err = solve.SolveContext(d.ctx, system)
+		if err != nil {
+			return summary.Snapshot{}, err
+		}
+	}
 	if firstErr != nil {
 		return summary.Snapshot{}, firstErr
 	}

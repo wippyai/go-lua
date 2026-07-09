@@ -40,10 +40,24 @@
 package solve
 
 import (
+	"context"
+	"errors"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 )
+
+// ErrCanceled reports that a context stopped a fixed-point run before it
+// converged. It wraps the context cause, when one is available, so callers can
+// also use errors.Is(err, context.Canceled) or errors.Is(err,
+// context.DeadlineExceeded).
+var ErrCanceled = errors.New("solve: canceled")
+
+// cancellationCheckInterval bounds the amount of work performed after a
+// cancellation request. The hot loop reads context.Err at this cadence; Go's
+// cancelable contexts implement that state read with an atomic load, rather
+// than paying a cancellation check for every transfer operation.
+const cancellationCheckInterval = 256
 
 // Stats holds caller-owned observational counters for one or more Solve runs.
 // Solve never retains ownership beyond the call and does not synchronize access.
@@ -145,8 +159,54 @@ func Solve[Cell comparable, State any](sys EquationSystem[Cell, State]) map[Cell
 	validateEquationSystem(sys)
 	s := newState(sys)
 	s.run()
-	s.runNarrowing()
+	s.runNarrowingWithoutCancellation()
 	return s.materialize()
+}
+
+// SolveContext computes the converged solution of sys, stopping cleanly when
+// ctx is canceled. A canceled solve returns no result map, so callers cannot
+// accidentally treat a partially converged worklist as a solution.
+func SolveContext[Cell comparable, State any](ctx context.Context, sys EquationSystem[Cell, State]) (map[Cell]State, error) {
+	validateEquationSystem(sys)
+	cancel := newCancellationGuard(ctx)
+	if err := cancel.err(0); err != nil {
+		return nil, err
+	}
+	s := newState(sys)
+	if err := s.runWithCancellation(cancel); err != nil {
+		return nil, err
+	}
+	if err := s.runNarrowing(cancel); err != nil {
+		return nil, err
+	}
+	if err := cancel.err(0); err != nil {
+		return nil, err
+	}
+	return s.materialize(), nil
+}
+
+type cancellationGuard struct {
+	ctx context.Context
+}
+
+func newCancellationGuard(ctx context.Context) *cancellationGuard {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return &cancellationGuard{ctx: ctx}
+}
+
+func (g *cancellationGuard) err(iteration uint64) error {
+	if g == nil || iteration%cancellationCheckInterval != 0 {
+		return nil
+	}
+	if g.ctx.Err() == nil {
+		return nil
+	}
+	if err := g.ctx.Err(); err != nil {
+		return errors.Join(ErrCanceled, err)
+	}
+	return ErrCanceled
 }
 
 func validateEquationSystem[Cell comparable, State any](sys EquationSystem[Cell, State]) {
@@ -438,6 +498,10 @@ func (s *solveState[Cell, State]) indexOf(c Cell) int {
 }
 
 func (s *solveState[Cell, State]) run() {
+	_ = s.runWithCancellation(nil)
+}
+
+func (s *solveState[Cell, State]) runWithCancellation(cancel *cancellationGuard) error {
 	read := func(d Cell) State {
 		if d == s.active {
 			s.activeReadSelf = true
@@ -452,7 +516,12 @@ func (s *solveState[Cell, State]) run() {
 		s.emit(d, v)
 	}
 
+	var iteration uint64
 	for len(s.queue) > 0 {
+		if err := cancel.err(iteration); err != nil {
+			return err
+		}
+		iteration++
 		c := s.queue[0]
 		s.queue = s.queue[1:]
 		delete(s.inQueue, c)
@@ -466,14 +535,25 @@ func (s *solveState[Cell, State]) run() {
 		s.transfer(c, read, emit)
 		s.recordVisit(c)
 	}
+	return cancel.err(iteration)
 }
 
-func (s *solveState[Cell, State]) runNarrowing() {
+func (s *solveState[Cell, State]) runNarrowingWithoutCancellation() {
+	s.runNarrowing(nil)
+}
+
+func (s *solveState[Cell, State]) runNarrowing(cancel *cancellationGuard) error {
 	if s.domain.Narrow == nil || !s.hasWiden || len(s.cells) == 0 {
-		return
+		return nil
 	}
 	for i := 0; i < defaultNarrowIterations; i++ {
-		candidate := s.narrowingCandidate()
+		if err := cancel.err(uint64(i * cancellationCheckInterval)); err != nil {
+			return err
+		}
+		candidate, err := s.narrowingCandidate(cancel)
+		if err != nil {
+			return err
+		}
 		changed := false
 		seen := make(map[Cell]struct{}, len(s.cur)+len(candidate))
 		for _, c := range s.cells {
@@ -500,12 +580,13 @@ func (s *solveState[Cell, State]) runNarrowing() {
 			}
 		}
 		if !changed {
-			return
+			return nil
 		}
 	}
+	return cancel.err(0)
 }
 
-func (s *solveState[Cell, State]) narrowingCandidate() map[Cell]State {
+func (s *solveState[Cell, State]) narrowingCandidate(cancel *cancellationGuard) (map[Cell]State, error) {
 	candidate := make(map[Cell]State, len(s.cur))
 	for c, value := range s.initial {
 		candidate[c] = value
@@ -528,7 +609,10 @@ func (s *solveState[Cell, State]) narrowingCandidate() map[Cell]State {
 		candidate[d] = next
 	}
 	var zero Cell
-	for _, c := range s.cells {
+	for i, c := range s.cells {
+		if err := cancel.err(uint64(i)); err != nil {
+			return nil, err
+		}
 		s.active = c
 		s.activeReadSelf = false
 		s.activeSelfChanged = false
@@ -537,7 +621,7 @@ func (s *solveState[Cell, State]) narrowingCandidate() map[Cell]State {
 	s.active = zero
 	s.activeReadSelf = false
 	s.activeSelfChanged = false
-	return candidate
+	return candidate, nil
 }
 
 func (s *solveState[Cell, State]) applyNarrowedCandidate(c Cell, candidate map[Cell]State) bool {

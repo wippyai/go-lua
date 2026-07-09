@@ -1,6 +1,7 @@
 package lua
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"runtime"
@@ -13,6 +14,7 @@ import (
 
 const defaultFixtureDeadline = 30 * time.Second
 const defaultFixtureMemoryLimitBytes int64 = 8 << 30
+const fixtureCancellationGrace = time.Second
 
 var fixtureSlotAcquireMu sync.Mutex
 
@@ -126,20 +128,21 @@ func failFixtureDeadline(t *testing.T, message string) {
 	t.Helper()
 	if fixtureTimeoutExitsProcess() {
 		fmt.Fprintln(os.Stderr, message)
-		fmt.Fprintln(os.Stderr, "fatal: fixture deadline timed out; exiting the test process so the uncancellable worker goroutine cannot keep allocating memory")
+		fmt.Fprintln(os.Stderr, "fatal: fixture did not stop after cooperative cancellation; exiting as a last-resort backstop")
 		os.Exit(2)
 	}
 	t.Fatal(message)
 }
 
-// runWithDeadline runs fn under the per-fixture deadline. On timeout, the
-// default behavior is process-level fail-fast: Go cannot kill the worker
-// goroutine, so continuing the same test binary can stack runaway analyses and
-// exhaust memory. Set FIXTURE_TIMEOUT_EXIT=0 only for local debugging when a
-// lingering worker is acceptable.
-func runWithDeadline(t *testing.T, suite namedSuite, step string, fn func(t *testing.T)) {
+// runWithDeadline runs fn under the per-fixture deadline. Check phases receive
+// a context that reaches the fixed-point engine; a timed-out fixture is marked
+// failed after it cooperatively stops. Process exit remains only for a worker
+// that ignores cancellation through the grace period.
+func runWithDeadline(t *testing.T, suite namedSuite, step string, fn func(context.Context, *testing.T)) {
 	t.Helper()
 	deadline := fixtureDeadlineForSuite(suite)
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	defer cancel()
 	done := make(chan any, 1)
 	go func() {
 		defer func() {
@@ -149,7 +152,7 @@ func runWithDeadline(t *testing.T, suite namedSuite, step string, fn func(t *tes
 			}
 			done <- nil
 		}()
-		fn(t)
+		fn(ctx, t)
 	}()
 	select {
 	case r := <-done:
@@ -158,8 +161,17 @@ func runWithDeadline(t *testing.T, suite namedSuite, step string, fn func(t *tes
 			// stack and goroutine state are attributed correctly.
 			panic(r)
 		}
-	case <-time.After(deadline):
-		failFixtureDeadline(t, fmt.Sprintf("fixture deadline exceeded: %s/%s did not complete within %s (slow finite analysis or possible abstract-interpreter non-convergence; rerun that fixture directly with FIXTURE_DEADLINE_SECONDS=%d and FIXTURE_TIMEOUT_EXIT=0 if investigating)", suite.Name, step, deadline, int(deadline.Seconds())*4))
+	case <-ctx.Done():
+		message := fmt.Sprintf("fixture deadline exceeded: %s/%s did not complete within %s; cancellation requested", suite.Name, step, deadline)
+		select {
+		case r := <-done:
+			if r != nil {
+				panic(r)
+			}
+			t.Error(message)
+		case <-time.After(fixtureCancellationGrace):
+			failFixtureDeadline(t, message)
+		}
 	}
 }
 
@@ -190,8 +202,8 @@ func TestFixtures(t *testing.T) {
 			defer func() {
 				report.recordStep(s.Name, "check", fixtureTestStatus(t), time.Since(stepStart), fixtureCheckSkipReason(s))
 			}()
-			runWithDeadline(t, s, "check", func(t *testing.T) {
-				runCheckPhase(t, s)
+			runWithDeadline(t, s, "check", func(ctx context.Context, t *testing.T) {
+				runCheckPhaseContext(t, s, ctx)
 			})
 		})
 		t.Run("run", func(t *testing.T) {
@@ -199,7 +211,7 @@ func TestFixtures(t *testing.T) {
 			defer func() {
 				report.recordStep(s.Name, "run", fixtureTestStatus(t), time.Since(stepStart), fixtureRunSkipReason(s))
 			}()
-			runWithDeadline(t, s, "run", func(t *testing.T) {
+			runWithDeadline(t, s, "run", func(_ context.Context, t *testing.T) {
 				runExecPhase(t, s)
 			})
 		})

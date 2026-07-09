@@ -1,6 +1,7 @@
 package lua
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -31,6 +32,8 @@ type oracleVerdict struct {
 func oracleFixtureVerdictWithDeadline(t *testing.T, s namedSuite) oracleVerdict {
 	t.Helper()
 	deadline := fixtureDeadlineForSuite(s)
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	defer cancel()
 	done := make(chan oracleVerdict, 1)
 	go func() {
 		var v oracleVerdict
@@ -40,16 +43,23 @@ func oracleFixtureVerdictWithDeadline(t *testing.T, s namedSuite) oracleVerdict 
 			}
 			done <- v
 		}()
-		diags, entry := fixtureDiagnostics(s)
+		diags, entry := fixtureDiagnosticsWithContext(s, ctx)
 		v = judgeAgainstCuratedExpectations(s, diags, entry)
 	}()
 
 	select {
 	case v := <-done:
 		return v
-	case <-time.After(deadline):
-		failFixtureDeadline(t, fmt.Sprintf("oracle fixture deadline exceeded: %s did not complete within %s (rerun that fixture directly with FIXTURE_DEADLINE_SECONDS=%d and FIXTURE_TIMEOUT_EXIT=0 if investigating precision/performance)", s.Name, deadline, int(deadline.Seconds())*4))
-		return oracleVerdict{name: s.Name, passed: false}
+	case <-ctx.Done():
+		message := fmt.Sprintf("oracle fixture deadline exceeded: %s did not complete within %s; cancellation requested", s.Name, deadline)
+		select {
+		case v := <-done:
+			t.Error(message)
+			return v
+		case <-time.After(fixtureCancellationGrace):
+			failFixtureDeadline(t, message)
+			return oracleVerdict{name: s.Name, passed: false}
+		}
 	}
 }
 
@@ -61,10 +71,17 @@ func fixtureDiagnostics(s namedSuite) (diags []diag.Diagnostic, entryFile string
 }
 
 func fixtureDiagnosticsWithOptions(s namedSuite, extraOpts ...testutil.Option) (diags []diag.Diagnostic, entryFile string) {
+	return fixtureDiagnosticsWithContext(s, nil, extraOpts...)
+}
+
+func fixtureDiagnosticsWithContext(s namedSuite, ctx context.Context, extraOpts ...testutil.Option) (diags []diag.Diagnostic, entryFile string) {
 	files := resolveFiles(s)
 	stdlib := resolveStdlib(s)
 
 	var baseOpts []testutil.Option
+	if ctx != nil {
+		baseOpts = append(baseOpts, testutil.WithContext(ctx))
+	}
 	if stdlib {
 		baseOpts = append(baseOpts, testutil.WithStdlib())
 	}

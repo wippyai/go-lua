@@ -18,16 +18,87 @@ import (
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
+// EnsureSolved publishes a complete immutable result for the requested unit.
+// Concurrent requests for the same unchanged unit use the both-valid policy:
+// each may independently solve and publish a distinct sequence-tagged result.
 func (s *BatchSession) EnsureSolved(ctx context.Context, req SolveRequest) (ResultTag, error) {
 	if err := ctx.Err(); err != nil {
 		return ResultTag{}, err
 	}
+
+	for {
+		unit, profile, documentVersion, tag, cached, err := s.solveInputSnapshot(req)
+		if err != nil {
+			return ResultTag{}, err
+		}
+		if cached {
+			return tag, nil
+		}
+
+		snapshot, err := solveUnit(ctx, unit, profile, documentVersion)
+		if err != nil {
+			return ResultTag{}, err
+		}
+		if err := ctx.Err(); err != nil {
+			return ResultTag{}, err
+		}
+
+		tag, discard, err := s.publishSolved(req.UnitID, unit, profile, snapshot)
+		if err != nil {
+			return ResultTag{}, err
+		}
+		if discard {
+			// The unit changed while this solve ran. Discard the unpublishable
+			// snapshot and retry from a fresh immutable input snapshot. Concurrent
+			// EnsureSolved calls are intentionally both-valid: each may publish a
+			// complete result for this unchanged generation in sequence order.
+			if err := ctx.Err(); err != nil {
+				return ResultTag{}, err
+			}
+			continue
+		}
+		return tag, nil
+	}
+}
+
+// publishSolved publishes snapshot only if unit is still the exact retained
+// input generation used to produce it. A discard is not an error: EnsureSolved
+// retries from the newer immutable unit snapshot.
+func (s *BatchSession) publishSolved(unitID UnitID, unit retainedUnit, profile string, snapshot *completedSnapshot) (ResultTag, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	current, exists := s.units[unitID]
+	if !exists {
+		return ResultTag{}, false, fmt.Errorf("%w: %s", ErrUnitNotFound, unitID)
+	}
+	if current.generation != unit.generation || current.digest != unit.digest {
+		return ResultTag{}, true, nil
+	}
+	s.nextSeq++
+	snapshot.tag.SolveSeq = s.nextSeq
+	key := resultKey{
+		unitID:     unitID,
+		unitDigest: unit.digest,
+		profile:    profile,
+		solveSeq:   s.nextSeq,
+	}
+	s.results[key] = snapshot
+	s.latest[unitProfileKey{unitID: unitID, profile: profile}] = key
+	s.bySeq[key.solveSeq] = key
+	return cloneResultTag(snapshot.tag), false, nil
+}
+
+// solveInputSnapshot takes the smallest immutable unit snapshot needed for an
+// outside-lock solve. Readers and unrelated writers only hold the lock for the
+// map lookup/cache check, never for parsing or fixed-point iteration.
+func (s *BatchSession) solveInputSnapshot(req SolveRequest) (retainedUnit, string, int64, ResultTag, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	unit, ok := s.units[req.UnitID]
 	if !ok {
-		return ResultTag{}, fmt.Errorf("%w: %s", ErrUnitNotFound, req.UnitID)
+		return retainedUnit{}, "", 0, ResultTag{}, false, fmt.Errorf("%w: %s", ErrUnitNotFound, req.UnitID)
 	}
 	profile := req.Profile
 	if profile == "" {
@@ -38,34 +109,15 @@ func (s *BatchSession) EnsureSolved(ctx context.Context, req SolveRequest) (Resu
 	if documentVersion == 0 {
 		documentVersion = unit.input.DocumentVersion
 	}
-	latestKey := unitProfileKey{unitID: req.UnitID, profile: profile}
 	if req.Freshness != FreshnessRequireNew {
+		latestKey := unitProfileKey{unitID: req.UnitID, profile: profile}
 		if key, exists := s.latest[latestKey]; exists && key.unitDigest == unit.digest {
 			if snapshot := s.results[key]; snapshot != nil && snapshot.tag.DocumentVersion == documentVersion {
-				return cloneResultTag(snapshot.tag), nil
+				return retainedUnit{}, "", 0, cloneResultTag(snapshot.tag), true, nil
 			}
 		}
 	}
-
-	snapshot, err := solveUnit(ctx, unit, profile, documentVersion)
-	if err != nil {
-		return ResultTag{}, err
-	}
-	if err := ctx.Err(); err != nil {
-		return ResultTag{}, err
-	}
-	s.nextSeq++
-	snapshot.tag.SolveSeq = s.nextSeq
-	key := resultKey{
-		unitID:     req.UnitID,
-		unitDigest: unit.digest,
-		profile:    profile,
-		solveSeq:   s.nextSeq,
-	}
-	s.results[key] = snapshot
-	s.latest[latestKey] = key
-	s.bySeq[key.solveSeq] = key
-	return cloneResultTag(snapshot.tag), nil
+	return unit, profile, documentVersion, ResultTag{}, false, nil
 }
 
 func solveUnit(ctx context.Context, unit retainedUnit, profile string, documentVersion int64) (*completedSnapshot, error) {
@@ -91,7 +143,7 @@ func solveUnit(ctx context.Context, unit retainedUnit, profile string, documentV
 		globals = append(globals, item.Globals...)
 	}
 	globals = normalizedStrings(globals)
-	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{
+	checked, err := program.RunChunk(stmts, program.Config{Context: ctx, Check: body.Config{
 		Registry:      checkerRegistry,
 		Globals:       globals,
 		GlobalTypes:   globalTypes,

@@ -1,11 +1,65 @@
 package solve
 
 import (
+	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	latticelaws "github.com/wippyai/go-lua/analysis/test/laws/lattice"
 )
+
+func TestSolveContextCancellationReturnsNoPartialResultPromptly(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	type outcome struct {
+		result map[string]int
+		err    error
+	}
+	done := make(chan outcome, 1)
+
+	go func() {
+		result, err := SolveContext(ctx, EquationSystem[string, int]{
+			Lattice: capLattice{top: int(^uint(0) >> 1)}.joinOnly(),
+			Cells:   []string{"cycle"},
+			Transfer: func(cell string, read func(string) int, emit func(string, int)) {
+				current := read(cell)
+				if current == 0 {
+					started <- struct{}{}
+					<-release
+				}
+				emit(cell, current+1)
+			},
+		})
+		done <- outcome{result: result, err: err}
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("solve did not enter its worklist")
+	}
+	start := time.Now()
+	cancel()
+	close(release)
+	select {
+	case got := <-done:
+		if !errors.Is(got.err, ErrCanceled) || !errors.Is(got.err, context.Canceled) {
+			t.Fatalf("SolveContext error = %v, want canceled", got.err)
+		}
+		if got.result != nil {
+			t.Fatalf("SolveContext result = %#v, want nil after cancellation", got.result)
+		}
+		if elapsed := time.Since(start); elapsed >= time.Second {
+			t.Fatalf("SolveContext cancellation took %s, want <1s", elapsed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("SolveContext did not stop within 1s of cancellation")
+	}
+}
 
 // capLattice is a tiny finite chain lattice 0 ⊑ 1 ⊑ … ⊑ cap used to drive the
 // solver. Join is max, Meet is min, and Widen jumps straight to the top (cap)

@@ -4,6 +4,7 @@
 package checktest
 
 import (
+	"context"
 	"errors"
 	"sort"
 
@@ -32,6 +33,7 @@ import (
 type Option func(*config)
 
 type config struct {
+	context          context.Context
 	stdlib           bool
 	globals          []string
 	manifests        map[string]*manifest.Manifest
@@ -39,6 +41,14 @@ type config struct {
 	diagnosticPolicy diagnostic.Policy
 	stateLanes       []state.LaneID
 	stats            *program.Stats
+}
+
+// WithContext makes the check's fixed-point worklists cooperatively
+// cancelable. Nil keeps the helper's legacy uncancelable behavior.
+func WithContext(ctx context.Context) Option {
+	return func(c *config) {
+		c.context = ctx
+	}
 }
 
 type Result struct {
@@ -265,6 +275,7 @@ func checkSource(src, filename string, opts ...Option) Result {
 		}
 	}
 	checked, err := program.RunChunk(stmts, program.Config{
+		Context: cfg.context,
 		Check: body.Config{
 			Registry:      reg,
 			Globals:       globals,

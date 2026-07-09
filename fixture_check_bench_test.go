@@ -1,6 +1,12 @@
 package lua
 
-import "testing"
+import (
+	"context"
+	"testing"
+	"time"
+
+	testutil "github.com/wippyai/go-lua/analysis/check/checktest"
+)
 
 var fixtureCheckBenchmarkSuites = []string{
 	"semantic/nested-channel-select-union-stress",
@@ -39,4 +45,55 @@ func BenchmarkFixtureChecks(b *testing.B) {
 			}
 		})
 	}
+}
+
+// BenchmarkFixtureCancellationOverhead compares the normal fixture path with
+// the deadline path's cooperative worklist checks on a stress fixture. Calls
+// alternate their order every iteration to avoid rewarding the second
+// sub-benchmark with warmed CPU/cache state.
+func BenchmarkFixtureCancellationOverhead(b *testing.B) {
+	suites, err := discoverFixtures("testdata/fixtures")
+	if err != nil {
+		b.Fatalf("discovering fixtures: %v", err)
+	}
+	var suite namedSuite
+	for _, candidate := range suites {
+		if candidate.Name == "realworld/advanced-type-system-stress" {
+			suite = candidate
+			break
+		}
+	}
+	if suite.Name == "" {
+		b.Fatal("missing stress fixture realworld/advanced-type-system-stress")
+	}
+
+	ctx := context.Background()
+	var baseline, cancellable time.Duration
+	runBaseline := func() {
+		started := time.Now()
+		fixtureDiagnostics(suite)
+		baseline += time.Since(started)
+	}
+	runCancellable := func() {
+		started := time.Now()
+		fixtureDiagnosticsWithOptions(suite, testutil.WithContext(ctx))
+		cancellable += time.Since(started)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if i%2 == 0 {
+			runBaseline()
+			runCancellable()
+		} else {
+			runCancellable()
+			runBaseline()
+		}
+	}
+	b.StopTimer()
+	baselinePerOp := float64(baseline.Nanoseconds()) / float64(b.N)
+	cancellablePerOp := float64(cancellable.Nanoseconds()) / float64(b.N)
+	b.ReportMetric(baselinePerOp, "baseline-ns/op")
+	b.ReportMetric(cancellablePerOp, "cancellable-ns/op")
+	b.ReportMetric(100*(cancellablePerOp-baselinePerOp)/baselinePerOp, "cancellation-delta-percent")
 }

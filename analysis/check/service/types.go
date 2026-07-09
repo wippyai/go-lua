@@ -276,8 +276,9 @@ type BodyResultVersionsResponse struct {
 	Versions map[BodyID]uint64
 }
 
-// WorkspaceSession is the core checker service surface. Implementations are
-// single-writer/multi-reader and publish immutable CompletedResult snapshots.
+// WorkspaceSession is the core checker service surface. Implementations safely
+// serve concurrent readers and writers while publishing immutable
+// CompletedResult snapshots.
 type WorkspaceSession interface {
 	UpsertUnit(context.Context, UnitInput) (UnitState, error)
 	RemoveUnit(context.Context, UnitID) error

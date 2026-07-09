@@ -2,6 +2,7 @@
 package transfer
 
 import (
+	"context"
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -47,6 +48,10 @@ type EdgeContext struct {
 
 // Config describes one forward dataflow run.
 type Config struct {
+	// Context cooperatively stops the worklist between transfer iterations. A
+	// nil context preserves the legacy uncancelable Run/TryRun behavior.
+	Context context.Context
+
 	Graph    cfg.Graph
 	Registry *axis.Registry
 
@@ -186,7 +191,14 @@ func TryRun(config Config) (Result, error) {
 		Stats:      solverStats(config.Stats),
 	}
 
-	return Result(solve.Solve(sys)), nil
+	if config.Context == nil {
+		return Result(solve.Solve(sys)), nil
+	}
+	result, err := solve.SolveContext(config.Context, sys)
+	if err != nil {
+		return nil, err
+	}
+	return Result(result), nil
 }
 
 func solverStats(stats *Stats) *solve.Stats {

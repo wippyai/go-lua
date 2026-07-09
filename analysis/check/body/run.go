@@ -259,8 +259,19 @@ func (c *checker) prepare(
 }
 
 func (s *Static) Solve(config SolveConfig) *Result {
+	result, err := s.solve(config)
+	if err != nil {
+		panic(err.Error())
+	}
+	return result
+}
+
+// solve is the error-returning counterpart of Solve used by the public
+// prepared-body APIs. Keeping Solve preserves the existing convenience method
+// while SolvePrepared can propagate cooperative cancellation to its caller.
+func (s *Static) solve(config SolveConfig) (*Result, error) {
 	if s == nil {
-		return nil
+		return nil, nil
 	}
 	if config.Stats != nil {
 		config.Stats.BodySolves++
@@ -291,7 +302,8 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		ProjectPath: luaPathTypeProjector,
 		TypeValues:  typeValues,
 	})
-	flow := transfer.Run(transfer.Config{
+	flow, err := transfer.TryRun(transfer.Config{
+		Context:      config.Context,
 		Graph:        s.cfg.Graph,
 		Registry:     s.registry,
 		StateLanes:   config.StateLanes,
@@ -304,6 +316,9 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		WidenDelay:   config.WidenDelay,
 		Stats:        transferStats(config.Stats),
 	})
+	if err != nil {
+		return nil, err
+	}
 	result := &Result{
 		registry:              s.registry,
 		bindings:              s.bindings,
@@ -336,7 +351,7 @@ func (s *Static) Solve(config SolveConfig) *Result {
 	}
 	result.finalizeReturnSlotsFromBoundaryValues()
 	result.resultVersion = computeResultVersion(s, config, entryState, initial)
-	return result
+	return result, nil
 }
 
 func (r *Result) finalizeReturnSlotsFromBoundaryValues() {

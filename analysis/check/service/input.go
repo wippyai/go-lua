@@ -24,6 +24,9 @@ type retainedUnit struct {
 	input         UnitInput
 	digest        Digest
 	sourceDigests map[string]Digest
+	// generation changes on every accepted upsert. It prevents an outside-lock
+	// solve from publishing against a unit snapshot replaced underneath it.
+	generation uint64
 }
 
 func normalizeUnitInput(input UnitInput) (retainedUnit, error) {

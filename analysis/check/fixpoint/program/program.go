@@ -2,6 +2,7 @@
 package program
 
 import (
+	"context"
 	"maps"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
@@ -18,7 +19,10 @@ import (
 
 // Config configures fixed-point analysis for one Lua program.
 type Config struct {
-	Check body.Config
+	// Context cooperatively stops body and summary worklists. Nil preserves the
+	// legacy uncancelable program driver behavior.
+	Context context.Context
+	Check   body.Config
 
 	RootKey summary.SummaryKey
 	Seed    summary.Reader
@@ -66,6 +70,9 @@ func RunChunk(stmts []ast.Stmt, config Config) (Result, error) {
 // binding identity, so function calls cannot drift through an accidental rebind.
 func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Result, error) {
 	config = configWithStats(config)
+	if err := contextErr(config.Context); err != nil {
+		return Result{}, err
+	}
 	keys := collectKeys(bindings, rootKey(config.RootKey), config.Check.Registry, config.Check.ModuleTypes, config.Check.ModuleExports, stmts)
 	recordProgramShape(config.Stats, keys)
 	config.Check = configWithMetatableMethodSignatureArguments(config.Check, keys.metatableProof)
@@ -73,8 +80,14 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	if err != nil {
 		return Result{}, err
 	}
+	if err := contextErr(config.Context); err != nil {
+		return Result{}, err
+	}
 	inferred, err := collectCallContextKeys(&keys, stmts, bindings, config.Check, config.Stats, prepared)
 	if err != nil {
+		return Result{}, err
+	}
+	if err := contextErr(config.Context); err != nil {
 		return Result{}, err
 	}
 	recordProgramShape(config.Stats, keys)
@@ -92,6 +105,7 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	})
 
 	snapshot, err := query.Run(query.Config{
+		Context:    config.Context,
 		Registry:   config.Check.Registry,
 		Functions:  functions,
 		Seed:       config.Seed,
@@ -100,6 +114,9 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 		Stats:      queryStats(config.Stats),
 	})
 	if err != nil {
+		return Result{}, err
+	}
+	if err := contextErr(config.Context); err != nil {
 		return Result{}, err
 	}
 	root, snapshot, err := materializeChunkWithReturnPresenceProofs(
@@ -136,6 +153,9 @@ func RunFunction(fn *ast.FunctionExpr, config Config) (Result, error) {
 // caller-owned lexical bindings.
 func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config) (Result, error) {
 	config = configWithStats(config)
+	if err := contextErr(config.Context); err != nil {
+		return Result{}, err
+	}
 	stmts := functionStmts(fn)
 	keys := collectKeys(bindings, rootKey(config.RootKey), config.Check.Registry, config.Check.ModuleTypes, config.Check.ModuleExports, stmts)
 	recordProgramShape(config.Stats, keys)
@@ -145,6 +165,9 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 	}
 	prepared, err := prepareBoundFunctionBodies(fn, bindings, config.Check, keys)
 	if err != nil {
+		return Result{}, err
+	}
+	if err := contextErr(config.Context); err != nil {
 		return Result{}, err
 	}
 	functions := make([]query.Function, 0, 1+len(keys.functions))
@@ -160,6 +183,7 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 	}
 
 	snapshot, err := query.Run(query.Config{
+		Context:    config.Context,
 		Registry:   config.Check.Registry,
 		Functions:  functions,
 		Seed:       config.Seed,
@@ -168,6 +192,9 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 		Stats:      queryStats(config.Stats),
 	})
 	if err != nil {
+		return Result{}, err
+	}
+	if err := contextErr(config.Context); err != nil {
 		return Result{}, err
 	}
 	root, snapshot, err := materializeFunctionWithReturnPresenceProofs(
@@ -195,6 +222,10 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 }
 
 func configWithStats(config Config) Config {
+	if config.Context == nil {
+		config.Context = config.Check.Context
+	}
+	config.Check.Context = config.Context
 	if config.Stats != nil {
 		config.Check.Stats = &config.Stats.Body
 	}
@@ -202,6 +233,13 @@ func configWithStats(config Config) Config {
 		config.Check.TypeValues = typevalue.NewCache()
 	}
 	return config
+}
+
+func contextErr(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	return ctx.Err()
 }
 
 // Snapshot returns the exact-key summary snapshot.

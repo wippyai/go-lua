@@ -5,8 +5,11 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	checkdiagnostics "github.com/wippyai/go-lua/analysis/check/diagnostics"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
@@ -382,6 +385,238 @@ return value
 	if _, err := session.EnsureSolved(ctx, SolveRequest{UnitID: input.ID, Trigger: TriggerBatch}); !errors.Is(err, ErrUnitNotFound) {
 		t.Fatalf("EnsureSolved after rejected upsert: err = %v, want %v", err, ErrUnitNotFound)
 	}
+}
+
+func TestBatchSessionCancellationDropsHeavySolveWithoutPublishing(t *testing.T) {
+	session := NewBatchSession()
+	input := heavySolveInput("cancel-heavy")
+	if _, err := session.UpsertUnit(context.Background(), input); err != nil {
+		t.Fatalf("UpsertUnit: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	type outcome struct {
+		tag ResultTag
+		err error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		tag, err := session.EnsureSolved(ctx, SolveRequest{UnitID: input.ID, Freshness: FreshnessRequireNew})
+		done <- outcome{tag: tag, err: err}
+	}()
+
+	// The generated program keeps the transfer/summary worklists active well
+	// beyond this handoff; cancellation therefore exercises an in-flight solve,
+	// not only the preflight context check.
+	time.Sleep(10 * time.Millisecond)
+	start := time.Now()
+	cancel()
+	select {
+	case got := <-done:
+		if !errors.Is(got.err, context.Canceled) {
+			t.Fatalf("EnsureSolved error = %v, want context cancellation", got.err)
+		}
+		if got.tag.SolveSeq != 0 || !got.tag.UnitDigest.IsZero() || len(got.tag.SourceDigests) != 0 {
+			t.Fatalf("EnsureSolved tag = %#v, want no canceled result", got.tag)
+		}
+		if elapsed := time.Since(start); elapsed >= time.Second {
+			t.Fatalf("EnsureSolved cancellation took %s, want <1s", elapsed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("EnsureSolved did not return within 1s of cancellation")
+	}
+	if _, ok := session.LastComplete(context.Background(), ResultRequest{Selector: ResultSelector{UnitID: input.ID}}); ok {
+		t.Fatal("canceled solve published a completed result")
+	}
+}
+
+func TestBatchSessionDiscardsSnapshotAfterInterleavedUnitEdit(t *testing.T) {
+	ctx := context.Background()
+	session := NewBatchSession()
+	input := heavySolveInput("discard-heavy")
+	if _, err := session.UpsertUnit(ctx, input); err != nil {
+		t.Fatalf("UpsertUnit: %v", err)
+	}
+
+	unit, profile, documentVersion, _, cached, err := session.solveInputSnapshot(SolveRequest{UnitID: input.ID, Freshness: FreshnessRequireNew})
+	if err != nil || cached {
+		t.Fatalf("solveInputSnapshot = cached=%v err=%v", cached, err)
+	}
+	done := make(chan *completedSnapshot, 1)
+	errs := make(chan error, 1)
+	go func() {
+		snapshot, err := solveUnit(ctx, unit, profile, documentVersion)
+		if err != nil {
+			errs <- err
+			return
+		}
+		done <- snapshot
+	}()
+
+	// This edit races an outside-lock solve. Whether it lands immediately before
+	// or during transfer, publication must reject the old retained generation.
+	edited := input
+	edited.SourceFiles = cloneSourceFiles(input.SourceFiles)
+	edited.SourceFiles[input.EntryFile] = append(edited.SourceFiles[input.EntryFile], []byte("\n-- edited while solve was in flight\n")...)
+	if _, err := session.UpsertUnit(ctx, edited); err != nil {
+		t.Fatalf("edited UpsertUnit: %v", err)
+	}
+
+	var snapshot *completedSnapshot
+	select {
+	case err := <-errs:
+		t.Fatalf("solveUnit: %v", err)
+	case snapshot = <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("old solve did not complete")
+	}
+	if tag, discard, err := session.publishSolved(input.ID, unit, profile, snapshot); err != nil || !discard || tag.SolveSeq != 0 || !tag.UnitDigest.IsZero() || len(tag.SourceDigests) != 0 {
+		t.Fatalf("publish old snapshot = tag=%#v discard=%v err=%v, want discard", tag, discard, err)
+	}
+	if _, ok := session.LastComplete(ctx, ResultRequest{Selector: ResultSelector{UnitID: input.ID}}); ok {
+		t.Fatal("discarded snapshot became queryable")
+	}
+	updated := mustSolve(t, session, SolveRequest{UnitID: input.ID, Freshness: FreshnessRequireNew})
+	if updated.UnitDigest == unit.digest {
+		t.Fatalf("re-solve published old digest %s", updated.UnitDigest)
+	}
+}
+
+func TestBatchSessionConcurrentEnsureSolvedCallsAreBothValid(t *testing.T) {
+	ctx := context.Background()
+	session := NewBatchSession()
+	input := serviceStressInput("same-unit")
+	if _, err := session.UpsertUnit(ctx, input); err != nil {
+		t.Fatalf("UpsertUnit: %v", err)
+	}
+
+	type outcome struct {
+		tag ResultTag
+		err error
+	}
+	outcomes := make(chan outcome, 2)
+	for range 2 {
+		go func() {
+			tag, err := session.EnsureSolved(ctx, SolveRequest{UnitID: input.ID, Freshness: FreshnessRequireNew})
+			outcomes <- outcome{tag: tag, err: err}
+		}()
+	}
+	first := <-outcomes
+	second := <-outcomes
+	if first.err != nil || second.err != nil {
+		t.Fatalf("EnsureSolved errors = %v / %v", first.err, second.err)
+	}
+	if first.tag.SolveSeq == second.tag.SolveSeq || first.tag.UnitDigest != second.tag.UnitDigest || first.tag.UnitDigest.IsZero() {
+		t.Fatalf("concurrent tags = %#v / %#v, want distinct complete same-input results", first.tag, second.tag)
+	}
+}
+
+func TestBatchSessionConcurrentSolveQueryUpsertRemove(t *testing.T) {
+	ctx := context.Background()
+	session := NewBatchSession()
+	primary := serviceStressInput("primary")
+	secondary := serviceStressInput("secondary")
+	if _, err := session.UpsertUnit(ctx, primary); err != nil {
+		t.Fatalf("upsert primary: %v", err)
+	}
+	if _, err := session.UpsertUnit(ctx, secondary); err != nil {
+		t.Fatalf("upsert secondary: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 64)
+	report := func(err error) {
+		if err != nil {
+			errs <- err
+		}
+	}
+	for range 3 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 8; i++ {
+				_, err := session.EnsureSolved(ctx, SolveRequest{UnitID: primary.ID, Freshness: FreshnessRequireNew})
+				report(err)
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 16; i++ {
+			updated := secondary
+			updated.SourceFiles = cloneSourceFiles(secondary.SourceFiles)
+			updated.SourceFiles[updated.EntryFile] = append(updated.SourceFiles[updated.EntryFile], []byte("\n-- update "+strconv.Itoa(i))...)
+			report(func() error { _, err := session.UpsertUnit(ctx, updated); return err }())
+			if i%3 == 0 {
+				report(session.RemoveUnit(ctx, secondary.ID))
+				report(func() error { _, err := session.UpsertUnit(ctx, secondary); return err }())
+			}
+		}
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 64; i++ {
+			completed, ok := session.LastComplete(ctx, ResultRequest{Selector: ResultSelector{UnitID: primary.ID}})
+			if !ok {
+				continue
+			}
+			if !completed.Valid() {
+				report(errors.New("LastComplete returned invalid completed result"))
+				continue
+			}
+			_, err := session.ListJudgments(ctx, ListJudgmentsRequest{Selector: ResultSelector{UnitID: primary.ID}})
+			report(err)
+		}
+	}()
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent service operation: %v", err)
+		}
+	}
+}
+
+func serviceStressInput(id UnitID) UnitInput {
+	return UnitInput{
+		ID:         id,
+		ModulePath: "example/" + string(id),
+		EntryFile:  "main.lua",
+		SourceFiles: map[string][]byte{"main.lua": []byte(`
+local function increment(value: number): number
+	return value + 1
+end
+return increment(41)
+`)},
+		Profile: "typed",
+	}
+}
+
+func heavySolveInput(id UnitID) UnitInput {
+	var source strings.Builder
+	for i := 0; i < 128; i++ {
+		name := strconv.Itoa(i)
+		source.WriteString("local function heavy")
+		source.WriteString(name)
+		source.WriteString("(value: number): number\n")
+		source.WriteString("\tlocal total = value\n\tfor n = 1, 128 do\n\t\ttotal = total + n\n\tend\n\treturn total\nend\n")
+	}
+	source.WriteString("return ")
+	for i := 0; i < 128; i++ {
+		if i != 0 {
+			source.WriteString(" + ")
+		}
+		source.WriteString("heavy")
+		source.WriteString(strconv.Itoa(i))
+		source.WriteString("(1)")
+	}
+	source.WriteString("\n")
+	input := serviceStressInput(id)
+	input.SourceFiles[input.EntryFile] = []byte(source.String())
+	return input
 }
 
 func assertCompletedResultIsDefensivelyImmutable(t *testing.T, completed CompletedResult) {

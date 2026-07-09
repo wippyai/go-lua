@@ -18,16 +18,18 @@ type unitProfileKey struct {
 }
 
 // BatchSession is the reference whole-unit implementation of
-// WorkspaceSession. Its mutex enforces the session's single-writer/multi-reader
-// contract; a solve holds the writer lock through immutable publication.
+// WorkspaceSession. Its mutex protects unit/result maps and immutable result
+// publication. Parsing and solving happen against a retained input snapshot
+// outside the lock, then publish only if that unit generation still matches.
 type BatchSession struct {
 	mu sync.RWMutex
 
-	units   map[UnitID]retainedUnit
-	results map[resultKey]*completedSnapshot
-	latest  map[unitProfileKey]resultKey
-	bySeq   map[uint64]resultKey
-	nextSeq uint64
+	units              map[UnitID]retainedUnit
+	results            map[resultKey]*completedSnapshot
+	latest             map[unitProfileKey]resultKey
+	bySeq              map[uint64]resultKey
+	nextSeq            uint64
+	nextUnitGeneration uint64
 }
 
 var _ WorkspaceSession = (*BatchSession)(nil)
@@ -56,6 +58,8 @@ func (s *BatchSession) UpsertUnit(ctx context.Context, input UnitInput) (UnitSta
 	}
 	previous, exists := s.units[input.ID]
 	changed := !exists || previous.digest != unit.digest || previous.input.Profile != unit.input.Profile
+	s.nextUnitGeneration++
+	unit.generation = s.nextUnitGeneration
 	s.units[input.ID] = unit
 	return UnitState{
 		UnitID:        input.ID,

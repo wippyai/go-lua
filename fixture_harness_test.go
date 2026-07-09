@@ -2,6 +2,7 @@ package lua
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -269,6 +270,12 @@ func parseExpectations(filename, source string) []inlineExpectation {
 
 // runCheckPhase type-checks the fixture and verifies diagnostics.
 func runCheckPhase(t *testing.T, s namedSuite) {
+	runCheckPhaseContext(t, s, nil)
+}
+
+// runCheckPhaseContext is runCheckPhase with an optional cooperative solve
+// context supplied by the deadline harness.
+func runCheckPhaseContext(t *testing.T, s namedSuite, ctx context.Context) {
 	t.Helper()
 	if s.Suite.Check != nil && s.Suite.Check.Skip != "" {
 		t.Skip(s.Suite.Check.Skip)
@@ -278,6 +285,9 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 	stdlib := resolveStdlib(s)
 
 	var baseOpts []testutil.Option
+	if ctx != nil {
+		baseOpts = append(baseOpts, testutil.WithContext(ctx))
+	}
 	if stdlib {
 		baseOpts = append(baseOpts, testutil.WithStdlib())
 	}
