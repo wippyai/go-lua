@@ -107,7 +107,7 @@ func applyEscapedClosureEntryStatesFromResult(keys *programKeys, owner *ast.Func
 			if keys.functions[i].hasEntryState && keys.functions[i].entryKeys != nil {
 				entry = entry.RekeyPathEvidence(keys.functions[i].entryKeys, entryKeys)
 			}
-			updated, seen := applyEscapedCapturedClosureEntryState(
+			updated, _ := applyEscapedCapturedClosureEntryState(
 				reg,
 				entryKeys,
 				keys.bindings,
@@ -117,9 +117,6 @@ func applyEscapedClosureEntryStatesFromResult(keys *programKeys, owner *ast.Func
 				captureValueReaderAt(result, point),
 				captureInvariantValueReaderAt(result, point),
 			)
-			if !seen {
-				continue
-			}
 			if _, ok := seenEscape[i]; ok {
 				mergeContextEntry(reg, &keys.functions[i], entryKeys, updated)
 			} else {

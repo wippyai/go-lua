@@ -253,6 +253,23 @@ func (s State) InvalidatePathKeySubtreePreservingDynamicValueKeyMemberships(ks *
 	return s.invalidatePathKeySubtree(ks, pathKey, false)
 }
 
+// InvalidateOnlyPathEvidenceSubtree removes finite path refinements/static
+// members rooted at pathKey without touching coupled membership lanes.
+func (s State) InvalidateOnlyPathEvidenceSubtree(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (State, bool) {
+	prefixes, ok := s.pathEvidence.PathKeySubtreeInvalidationPrefixes(ks, pathKey)
+	if !ok {
+		return s, false
+	}
+	pathEvidence := s.pathEvidence.InvalidatePathKeySubtreePrefixes(ks, prefixes)
+	lenFloors, lenFloorChanged := s.lenFloors.clearPathKeySubtrees(ks, prefixes)
+	out := s
+	out.pathEvidence = pathEvidence
+	if lenFloorChanged {
+		out.lenFloors = lenFloors
+	}
+	return out, true
+}
+
 func (s State) invalidatePathKeySubtree(ks *keyspace.KeySpace, pathKey pathdom.PathKey, clearDynamicValueMemberships bool) (State, bool) {
 	prefixes, ok := s.pathEvidence.PathKeySubtreeInvalidationPrefixes(ks, pathKey)
 	if !ok {

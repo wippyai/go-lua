@@ -271,7 +271,7 @@ func collectCallContextKeysFromResult(keys *programKeys, owner summary.SummaryKe
 			in,
 			entry,
 			captureValueReaderAt(prepass, point),
-			captureInvariantValueReaderAt(prepass, point),
+			contextualCaptureInvariantValueReaderAt(prepass, point),
 		)
 		contextualFn := instantiateSignatureTypeForContext(config.Registry, prepass, point, site, keys.functionTypes[baseKey], keys)
 		entry, hasParamEntry := applyCallArgumentParamEntryState(config.Registry, keys.bindings, prepass, keys, point, site, fn, contextualFn, entry)
@@ -356,7 +356,7 @@ func collectProtectedCallCallbackContextKeys(
 			callerEntry,
 			entry,
 			captureValueReaderAt(prepass, point),
-			captureInvariantValueReaderAt(prepass, point),
+			contextualCaptureInvariantValueReaderAt(prepass, point),
 		)
 		entry, hasParamEntry := applyProtectedCallArgumentParamEntryState(config.Registry, keys.bindings, prepass, keys, point, site, callbackFn, spec.paramArgStart, entry)
 		if !hasPathEntry && !hasCaptureEntry && !hasParamEntry {
@@ -505,7 +505,7 @@ func collectSignatureCallbackContextKeys(
 				callerEntry,
 				entry,
 				captureValueReaderAt(prepass, point),
-				captureInvariantValueReaderAt(prepass, point),
+				contextualCaptureInvariantValueReaderAt(prepass, point),
 			)
 		}
 		hasParamSeeds := len(seeds) != 0
@@ -567,7 +567,7 @@ func collectInlineFunctionCaptureContextKeys(
 			callerEntry,
 			entry,
 			captureValueReaderAt(prepass, point),
-			captureInvariantValueReaderAt(prepass, point),
+			contextualCaptureInvariantValueReaderAt(prepass, point),
 		)
 		if !hasPathEntry && !hasCaptureEntry {
 			return true

@@ -173,7 +173,7 @@ func (t *callbackPhaseTracker) collectInvocationContext(point cfg.Point, site fa
 			caller,
 			entry,
 			captureValueReaderAt(t.prepass, point),
-			captureInvariantValueReaderAt(t.prepass, point),
+			contextualCaptureInvariantValueReaderAt(t.prepass, point),
 		)
 		entry, hasPhaseEntry := t.applyBeforePhases(point, invocation.Before, caller, entry, entryKeys)
 		if len(invocation.Before) != 0 && !hasPhaseEntry {
@@ -269,7 +269,7 @@ func (t *callbackPhaseTracker) phaseCallbackSummary(point cfg.Point, registratio
 		caller,
 		entry,
 		captureValueReaderAt(t.prepass, point),
-		captureInvariantValueReaderAt(t.prepass, point),
+		contextualCaptureInvariantValueReaderAt(t.prepass, point),
 	)
 	callbackConfig := cloneCheckConfig(t.config)
 	callbackConfig.EntryState = entry.RekeyPathEvidence(entryKeys, prepared.KeySpace())

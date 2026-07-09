@@ -2,9 +2,11 @@ package program
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -12,6 +14,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -121,6 +126,14 @@ func captureValueReaderAt(result *body.Result, point cfg.Point) captureValueRead
 }
 
 func captureInvariantValueReaderAt(result *body.Result, point cfg.Point) captureValueReader {
+	return captureInvariantValueReaderAtWithOptions(result, point, false)
+}
+
+func contextualCaptureInvariantValueReaderAt(result *body.Result, point cfg.Point) captureValueReader {
+	return captureInvariantValueReaderAtWithOptions(result, point, true)
+}
+
+func captureInvariantValueReaderAtWithOptions(result *body.Result, point cfg.Point, allowPointAbsentFunctionTarget bool) captureValueReader {
 	if result == nil || result.Registry() == nil {
 		return nil
 	}
@@ -133,24 +146,66 @@ func captureInvariantValueReaderAt(result *body.Result, point cfg.Point) capture
 		if id == 0 {
 			return product.Value{}, false
 		}
-		if t, ok := result.SymbolStaticType(id); ok && t != nil {
-			return typeValues.FromTypeWithWitness(reg, t), true
-		}
 		value, ok := result.SymbolValueAtBoundary(point, id)
 		if !ok {
 			value, ok = result.UninitializedLocalDeclarationValueAtBoundary(point, id)
 		}
 		if !ok {
+			if st, stateOK := result.StateAtBoundary(point); stateOK {
+				slot := statekey.SymbolValue(id)
+				if slot != 0 {
+					stateValue := st.ReadValue(reg, slot)
+					if contextEntryValueUseful(reg, stateValue) {
+						value = stateValue
+						ok = true
+					}
+				}
+			}
+		}
+		hasWrite := result.SymbolHasWrite(id)
+		if hasWrite {
+			if t, ok := result.SymbolDeclaredType(id); ok && t != nil {
+				return typeValues.FromTypeWithWitness(reg, t), true
+			}
+			if allowPointAbsentFunctionTarget && ok && captureValueIsAbsent(value) && captureHasFunctionStaticType(result, id) {
+				return value, true
+			}
 			return product.Value{}, false
 		}
-		if shape, ok := result.StableShapeForValueAtBoundary(point, value); ok && shape.Shape != nil {
-			return typeValues.FromTypeWithWitness(reg, shape.Shape), true
-		}
-		if t, ok := result.ValueStructuralType(value); ok && t != nil {
+		if t, ok := result.SymbolStaticType(id); ok && t != nil {
 			return typeValues.FromTypeWithWitness(reg, t), true
+		}
+		if ok {
+			if shape, ok := result.StableShapeForValueAtBoundary(point, value); ok && shape.Shape != nil {
+				return typeValues.FromTypeWithWitness(reg, shape.Shape), true
+			}
+		}
+		if ok {
+			if t, ok := result.ValueStructuralType(value); ok && t != nil {
+				return typeValues.FromTypeWithWitness(reg, t), true
+			}
 		}
 		return product.Value{}, false
 	}
+}
+
+func captureValueIsAbsent(value product.Value) bool {
+	return presence.Equal(product.PresenceOf(value), presence.Absent())
+}
+
+func captureHasFunctionStaticType(result *body.Result, id symbol.ID) bool {
+	if result == nil || id == 0 {
+		return false
+	}
+	if result.IsFunctionDefinitionTarget(id) {
+		return true
+	}
+	t, ok := result.SymbolStaticType(id)
+	if !ok || t == nil {
+		return false
+	}
+	_, ok = unwrap.Annotated(t).(*typ.Function)
+	return ok
 }
 
 type closureCaptureSeeder struct {
@@ -191,9 +246,14 @@ func (s *closureCaptureSeeder) apply(
 			continue
 		}
 		fullValue := s.fullCapturedValue(capture.Captured, slot)
-		degrade := s.captureRequiresInvariant(capture.Captured, fullValue)
+		written := s.captureHasWrite(capture.Captured)
+		escapedMutable := !written && s.captureEscapesMutable(fullValue)
+		degrade := written || escapedMutable
+		if degrade {
+			entry = s.stripCapturedPathEvidence(capture, entry)
+		}
 		var pathSeen bool
-		entry, pathSeen = s.seedCapturedPathEvidence(capture, entry, degrade)
+		entry, pathSeen = s.seedCapturedPathEvidence(capture, entry, degrade, escapedMutable)
 		seen = seen || pathSeen
 		value := s.capturedEntryValue(capture.Captured, fullValue, degrade)
 		if contextEntryValueUseful(s.reg, value) {
@@ -254,14 +314,12 @@ func (s *closureCaptureSeeder) capturedEntryValue(sym symbol.ID, full product.Va
 	return product.Top()
 }
 
-func (s *closureCaptureSeeder) captureRequiresInvariant(sym symbol.ID, full product.Value) bool {
-	if s == nil || sym == 0 {
-		return false
-	}
-	if s.bindings != nil && s.bindings.HasWrite(sym) {
-		return true
-	}
-	return s.escapeUnknown && capturedValueIsMutable(s.reg, full)
+func (s *closureCaptureSeeder) captureHasWrite(sym symbol.ID) bool {
+	return s != nil && s.bindings != nil && sym != 0 && s.bindings.HasWrite(sym)
+}
+
+func (s *closureCaptureSeeder) captureEscapesMutable(full product.Value) bool {
+	return s != nil && s.escapeUnknown && capturedValueIsMutable(s.reg, full)
 }
 
 func capturedValueIsMutable(reg *axis.Registry, value product.Value) bool {
@@ -286,8 +344,8 @@ func preciseCapturedValue(reg *axis.Registry, slot, solved product.Value) produc
 	return slot
 }
 
-func (s *closureCaptureSeeder) seedCapturedPathEvidence(capture bind.Capture, entry state.State, degrade bool) (state.State, bool) {
-	if s == nil || s.reg == nil || s.ks == nil || capture.Captured == 0 || degrade {
+func (s *closureCaptureSeeder) seedCapturedPathEvidence(capture bind.Capture, entry state.State, degrade bool, allowInvariantStaticMembers bool) (state.State, bool) {
+	if s == nil || s.reg == nil || s.ks == nil || capture.Captured == 0 || (degrade && !allowInvariantStaticMembers) {
 		return entry, false
 	}
 	bottom := product.Bottom(s.reg)
@@ -295,22 +353,27 @@ func (s *closureCaptureSeeder) seedCapturedPathEvidence(capture bind.Capture, en
 	edit := out.EditPathEvidence(s.reg)
 	seen := false
 	captures := []bind.Capture{capture}
-	if snapshot := s.caller.PathRefinementsSnapshot(s.ks); !snapshot.Top {
-		for pathKey, value := range snapshot.Refinements {
-			if pathKey == "" || product.Equal(s.reg, value, bottom) {
-				continue
+	if !degrade {
+		if snapshot := s.caller.PathRefinementsSnapshot(s.ks); !snapshot.Top {
+			for pathKey, value := range snapshot.Refinements {
+				if pathKey == "" || product.Equal(s.reg, value, bottom) {
+					continue
+				}
+				rebased, ok := rebaseCapturedPathKey(pathKey, captures)
+				if !ok {
+					continue
+				}
+				edit.WritePathKey(s.ks, rebased, value)
+				seen = true
 			}
-			rebased, ok := rebaseCapturedPathKey(pathKey, captures)
-			if !ok {
-				continue
-			}
-			edit.WritePathKey(s.ks, rebased, value)
-			seen = true
 		}
 	}
 	if snapshot := s.caller.PathStaticMembersSnapshot(s.ks); !snapshot.Bottom && !snapshot.Top {
 		for pathKey, value := range snapshot.Members {
 			if pathKey == "" || product.Equal(s.reg, value, bottom) {
+				continue
+			}
+			if degrade && !captureInvariantStaticMemberValue(s.reg, value) {
 				continue
 			}
 			rebased, ok := rebaseCapturedPathKey(pathKey, captures)
@@ -322,6 +385,48 @@ func (s *closureCaptureSeeder) seedCapturedPathEvidence(capture bind.Capture, en
 		}
 	}
 	return edit.DoneOn(out), seen
+}
+
+func captureInvariantStaticMemberValue(reg *axis.Registry, value product.Value) bool {
+	t, ok := typevalue.TypeOf(reg, value)
+	if !ok || t == nil {
+		return false
+	}
+	switch tt := unwrap.Annotated(t).(type) {
+	case *typ.Function:
+		return true
+	case *typ.Literal:
+		return tt.Base == kind.String
+	case *typ.Record:
+		return !tt.Open && !tt.HasMapComponent() && tt.Metatable == nil
+	default:
+		return typ.TypeEquals(tt, typ.String)
+	}
+}
+
+func (s *closureCaptureSeeder) stripCapturedPathEvidence(capture bind.Capture, entry state.State) state.State {
+	if s == nil || s.ks == nil || capture.Captured == 0 {
+		return entry
+	}
+	root := pathdom.Path{
+		Root:    capture.CapturedName,
+		Symbol:  capture.Captured,
+		Version: 1,
+	}
+	if root.Root == "" {
+		root.Root = s.bindings.Name(capture.Captured)
+	}
+	if stripped, ok := entry.InvalidateOnlyPathEvidenceSubtree(s.ks, root.Key()); ok {
+		entry = stripped
+	}
+	stableRoot := pathdom.Path{
+		Root:   root.Root,
+		Symbol: root.Symbol,
+	}
+	if stripped, ok := entry.InvalidateOnlyPathEvidenceSubtree(s.ks, stableRoot.Key()); ok {
+		entry = stripped
+	}
+	return entry
 }
 
 func (s *closureCaptureSeeder) entryCaptures(fn *ast.FunctionExpr) []bind.Capture {

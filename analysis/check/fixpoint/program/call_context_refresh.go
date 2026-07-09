@@ -86,7 +86,7 @@ func refreshExistingCallContextEntryKeyAt(keys *programKeys, owner summary.Summa
 		in,
 		entry,
 		captureValueReaderAt(result, point),
-		captureInvariantValueReaderAt(result, point),
+		contextualCaptureInvariantValueReaderAt(result, point),
 	)
 	contextualFn := instantiateSignatureTypeForContext(config.Registry, result, point, site, keys.functionTypes[baseKey], keys)
 	entry, hasParamEntry := applyCallArgumentParamEntryState(config.Registry, keys.bindings, result, keys, point, site, fn, contextualFn, entry)

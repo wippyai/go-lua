@@ -204,7 +204,18 @@ func (r *Result) closureCaptureValue(point cfg.Point, id symbol.ID, policy Closu
 }
 
 func (r *Result) writeInvariantCaptureValue(point cfg.Point, id symbol.ID) (product.Value, bool) {
+	if r.SymbolHasWrite(id) {
+		if t, ok := r.SymbolDeclaredType(id); ok && t != nil {
+			return r.typeValues.FromTypeWithWitness(r.registry, t), true
+		}
+		return product.Value{}, false
+	}
 	if t, ok := r.SymbolStaticType(id); ok && t != nil {
+		if value, ok := r.SymbolValueAtBoundary(point, id); ok {
+			if shape, ok := r.StableShapeForValueAtBoundary(point, value); ok && shape.Shape != nil {
+				return r.typeValues.FromTypeWithWitness(r.registry, shape.Shape), true
+			}
+		}
 		return r.typeValues.FromTypeWithWitness(r.registry, t), true
 	}
 	if value, ok := r.SymbolValueAtBoundary(point, id); ok {
