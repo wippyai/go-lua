@@ -5,6 +5,9 @@ import (
 	"sort"
 	"strings"
 
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 )
 
@@ -178,6 +181,10 @@ var operationalEffectsWireLanes = []operationalEffectsWireLane{
 		func(e *signature.OperationalEffects) *[]signature.ParamRelation { return &e.ParamRelations },
 		func(w *operationalEffectsWire) *[]paramRelationWire { return &w.ParamRelations },
 		encodeParamRelation, decodeParamRelation, compareParamRelationWire, nil),
+	wireLane("ReturnFlows",
+		func(e *signature.OperationalEffects) *[]signature.ReturnFlow { return &e.ReturnFlows },
+		func(w *operationalEffectsWire) *[]returnFlowWire { return &w.ReturnFlows },
+		encodeReturnFlow, decodeReturnFlow, compareReturnFlowWire, nil),
 	wireLane("LifecycleEffects",
 		func(e *signature.OperationalEffects) *[]signature.LifecycleEffect { return &e.LifecycleEffects },
 		func(w *operationalEffectsWire) *[]lifecycleEffectWire { return &w.LifecycleEffects },
@@ -468,6 +475,102 @@ func decodeParamRelation(w paramRelationWire) (signature.ParamRelation, error) {
 	return out, nil
 }
 
+func encodeReturnFlow(flow signature.ReturnFlow) (returnFlowWire, error) {
+	if flow.ReturnIndex < 0 {
+		return returnFlowWire{}, fmt.Errorf("return flow index %d out of range", flow.ReturnIndex)
+	}
+	if flow.Param < 0 {
+		return returnFlowWire{}, fmt.Errorf("return flow param %d out of range", flow.Param)
+	}
+	kind, err := encodeReturnFlowKind(flow.Kind)
+	if err != nil {
+		return returnFlowWire{}, fmt.Errorf("return flow kind: %w", err)
+	}
+	out := returnFlowWire{
+		ReturnIndex: encodeInt(flow.ReturnIndex),
+		Kind:        kind,
+		Param:       encodeInt(flow.Param),
+	}
+	switch flow.Kind {
+	case signature.ReturnFlowParam:
+		if len(flow.Path) != 0 {
+			return returnFlowWire{}, fmt.Errorf("return flow ReturnsParam must not carry path")
+		}
+	case signature.ReturnFlowParamMember:
+		key, ok := pathaddr.RelativeStaticMemberSuffixKey(flow.Path)
+		if !ok {
+			return returnFlowWire{}, fmt.Errorf("return flow member path %q is not a static member suffix", segment.FormatSegments(flow.Path))
+		}
+		out.Path = string(key.PathKey())
+	}
+	return out, nil
+}
+
+func decodeReturnFlow(w returnFlowWire) (signature.ReturnFlow, error) {
+	returnIndex, err := decodeRequiredInt(w.ReturnIndex, "return flow index missing")
+	if err != nil {
+		return signature.ReturnFlow{}, err
+	}
+	if returnIndex < 0 {
+		return signature.ReturnFlow{}, fmt.Errorf("return flow index %d out of range", returnIndex)
+	}
+	param, err := decodeRequiredInt(w.Param, "return flow param missing")
+	if err != nil {
+		return signature.ReturnFlow{}, err
+	}
+	if param < 0 {
+		return signature.ReturnFlow{}, fmt.Errorf("return flow param %d out of range", param)
+	}
+	kind, err := decodeReturnFlowKind(w.Kind)
+	if err != nil {
+		return signature.ReturnFlow{}, fmt.Errorf("return flow kind: %w", err)
+	}
+	out := signature.ReturnFlow{
+		ReturnIndex: returnIndex,
+		Kind:        kind,
+		Param:       param,
+	}
+	switch kind {
+	case signature.ReturnFlowParam:
+		if w.Path != "" {
+			return signature.ReturnFlow{}, fmt.Errorf("return flow ReturnsParam must not carry path")
+		}
+	case signature.ReturnFlowParamMember:
+		key, ok := pathaddr.SuffixKeyFromPathKey(pathdom.PathKey(w.Path))
+		if !ok {
+			return signature.ReturnFlow{}, fmt.Errorf("return flow member path %q is not a static member suffix", w.Path)
+		}
+		segs, ok := pathaddr.RelativeStaticMemberSuffixSegments(key)
+		if !ok {
+			return signature.ReturnFlow{}, fmt.Errorf("return flow member path %q is not parseable", w.Path)
+		}
+		out.Path = segs
+	}
+	return out, nil
+}
+
+func encodeReturnFlowKind(kind signature.ReturnFlowKind) (string, error) {
+	switch kind {
+	case signature.ReturnFlowParam:
+		return "ReturnsParam", nil
+	case signature.ReturnFlowParamMember:
+		return "ReturnsParamMember", nil
+	default:
+		return "", fmt.Errorf("unknown return flow kind %d", kind)
+	}
+}
+
+func decodeReturnFlowKind(kind string) (signature.ReturnFlowKind, error) {
+	switch kind {
+	case "ReturnsParam":
+		return signature.ReturnFlowParam, nil
+	case "ReturnsParamMember":
+		return signature.ReturnFlowParamMember, nil
+	default:
+		return signature.ReturnFlowInvalid, fmt.Errorf("unknown return flow kind %q", kind)
+	}
+}
+
 func compareReturnPresenceRelationWire(a, b returnPresenceRelationWire) int {
 	if c := compareOptionalInt(a.TriggerIndex, b.TriggerIndex); c != 0 {
 		return c
@@ -580,6 +683,19 @@ func compareParamRelationWire(a, b paramRelationWire) int {
 		return c
 	}
 	return compareOptionalInt(a.StoredInto, b.StoredInto)
+}
+
+func compareReturnFlowWire(a, b returnFlowWire) int {
+	if c := compareOptionalInt(a.ReturnIndex, b.ReturnIndex); c != 0 {
+		return c
+	}
+	if c := strings.Compare(a.Kind, b.Kind); c != 0 {
+		return c
+	}
+	if c := compareOptionalInt(a.Param, b.Param); c != 0 {
+		return c
+	}
+	return strings.Compare(a.Path, b.Path)
 }
 
 func compareReturnAllocationTemplateWire(a, b returnAllocationTemplateWire) int {

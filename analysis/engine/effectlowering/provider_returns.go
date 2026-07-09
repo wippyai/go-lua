@@ -5,6 +5,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/capability"
 	caplabel "github.com/wippyai/go-lua/analysis/domain/effect/capability/label"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -59,6 +64,179 @@ func signatureReturnValue(
 		}
 	}
 	return product.Value{}, false
+}
+
+func operationalReturnFlowValue(
+	ctx transfer.NodeContext,
+	facts factflow.Facts,
+	sources sourcevalue.SourceValues,
+	expressionRefinements sourcevalue.ExpressionRefinements,
+	providerKeySpace *keyspace.KeySpace,
+	sig signature.Function,
+	index int,
+	argSources signatureArgumentReader,
+	in state.State,
+	read func(cfg.Point) state.State,
+	typeValues *typevalue.Cache,
+) (product.Value, bool) {
+	effects := sig.OperationalEffects
+	if effects == nil || len(effects.ReturnFlows) == 0 {
+		return product.Value{}, false
+	}
+	flow, ok := operationalReturnFlowForIndex(effects, index)
+	if !ok {
+		return product.Value{}, false
+	}
+	if !operationalReturnFlowCanPreserve(effects, flow.Param) {
+		return operationalDeclaredReturnValue(ctx, typeValues, sig, index)
+	}
+	source, ok := argSources.ArgumentSourceAt(flow.Param)
+	if !ok || sources == nil {
+		return product.Value{}, false
+	}
+	resolver := expressionRefinements.Bind(ctx.Registry, sources)
+	switch flow.Kind {
+	case signature.ReturnFlowParam:
+		return resolver.ValueOfSource(ctx.Point, source, in, read)
+	case signature.ReturnFlowParamMember:
+		return operationalReturnParamMemberValue(ctx, facts, resolver, providerKeySpace, flow, source, in, read)
+	default:
+		return product.Value{}, false
+	}
+}
+
+func operationalReturnFlowForIndex(effects *signature.OperationalEffects, index int) (signature.ReturnFlow, bool) {
+	if effects == nil || index < 0 {
+		return signature.ReturnFlow{}, false
+	}
+	for _, flow := range effects.ReturnFlows {
+		if flow.ReturnIndex == index {
+			return flow, true
+		}
+	}
+	return signature.ReturnFlow{}, false
+}
+
+func operationalReturnFlowCanPreserve(effects *signature.OperationalEffects, param int) bool {
+	if effects == nil || param < 0 {
+		return false
+	}
+	found := false
+	strongest := signature.EscapeNone
+	for _, relation := range effects.ParamRelations {
+		if relation.Param != param {
+			continue
+		}
+		found = true
+		if relation.EscapeClass > strongest {
+			strongest = relation.EscapeClass
+		}
+	}
+	if !found {
+		return false
+	}
+	return strongest == signature.EscapeNone || strongest == signature.EscapeBorrow
+}
+
+func operationalReturnParamMemberValue(
+	ctx transfer.NodeContext,
+	facts factflow.Facts,
+	resolver sourcevalue.SourceValues,
+	providerKeySpace *keyspace.KeySpace,
+	flow signature.ReturnFlow,
+	source factflow.ValueSource,
+	in state.State,
+	read func(cfg.Point) state.State,
+) (product.Value, bool) {
+	if len(flow.Path) == 0 {
+		return product.Value{}, false
+	}
+	argValue, argOK := resolver.ValueOfSource(ctx.Point, source, in, read)
+	if argOK {
+		if value, ok := sourcevalue.HeapMemberFromValue(ctx.Registry, providerKeySpace, in, argValue, flow.Path); ok {
+			return value, true
+		}
+	}
+	argPath, ok := operationalReturnFlowSourcePath(facts, providerKeySpace, source)
+	if !ok {
+		return product.Value{}, false
+	}
+	if argPath.Symbol != 0 {
+		rootValue := in.ReadValue(ctx.Registry, statekey.SymbolValue(argPath.Symbol))
+		if value, ok := sourcevalue.HeapMemberFromValue(ctx.Registry, providerKeySpace, in, rootValue, appendReturnFlowPath(argPath.Segments, flow.Path)); ok {
+			return value, true
+		}
+	}
+	memberPath := argPath.AppendSegments(flow.Path)
+	memberSource, ok := factflow.NewPathValueSource(
+		pathaddr.SymbolPathKey(memberPath.Symbol, memberPath.Segments),
+		factflow.NoValueSourceIndex,
+		factflow.NoValueSourceIndex,
+		factflow.NoValueSourceIndex,
+		factflow.ValueSourceShape{},
+	)
+	if !ok {
+		return product.Value{}, false
+	}
+	value, ok := resolver.ValueOfSource(ctx.Point, memberSource, in, read)
+	if !ok && argOK {
+		return product.Value{}, false
+	}
+	return value, ok
+}
+
+func appendReturnFlowPath(prefix, suffix []segment.Segment) []segment.Segment {
+	if len(prefix) == 0 {
+		return suffix
+	}
+	out := make([]segment.Segment, 0, len(prefix)+len(suffix))
+	out = append(out, prefix...)
+	out = append(out, suffix...)
+	return out
+}
+
+func operationalReturnFlowSourcePath(facts factflow.Facts, providerKeySpace *keyspace.KeySpace, source factflow.ValueSource) (pathdom.Path, bool) {
+	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
+		p, ok := facts.ExpressionPathRef(source.ExprRef)
+		if ok && p.Symbol != 0 {
+			return p, true
+		}
+	}
+	if source.Kind != factflow.ValueSourcePath || source.PathKey == "" {
+		return pathdom.Path{}, false
+	}
+	if sym, segments, ok := pathaddr.ParseSymbolPathKey(source.PathKey); ok {
+		return pathdom.Path{Symbol: sym, Segments: segments}, true
+	}
+	if providerKeySpace == nil {
+		return pathdom.Path{}, false
+	}
+	stateKey, ok := pathaddr.StateKeyFromPathKey(source.PathKey)
+	if !ok {
+		return pathdom.Path{}, false
+	}
+	key, ok := providerKeySpace.InternStateKey(stateKey)
+	if !ok || key.Sym == 0 {
+		return pathdom.Path{}, false
+	}
+	switch key.Kind {
+	case keyspace.KindResolverSym, keyspace.KindUnversionedSym:
+		return pathdom.Path{Symbol: key.Sym, Segments: providerKeySpace.Segments(key)}, true
+	default:
+		return pathdom.Path{}, false
+	}
+}
+
+func operationalDeclaredReturnValue(
+	ctx transfer.NodeContext,
+	typeValues *typevalue.Cache,
+	sig signature.Function,
+	index int,
+) (product.Value, bool) {
+	if sig.Type == nil || index < 0 || index >= len(sig.Type.Returns) || sig.Type.Returns[index] == nil {
+		return product.Value{}, false
+	}
+	return returnValueFromSignatureTypeCached(ctx.Registry, typeValues, sig.Type, sig.Type.Returns[index]), true
 }
 
 func signatureReturnTransformValue(

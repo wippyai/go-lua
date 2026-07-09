@@ -645,6 +645,7 @@ func functionSummaryOperationalEffectsForArity(reg *axis.Registry, s summary.Sum
 	if signatureName != "" || len(returnTypes) != 0 {
 		paramRelations = operationalParamRelations(s, paramArity)
 	}
+	returnFlows := operationalReturnFlows(s.ReturnFlows, paramArity, returnArity)
 	var allocationTemplates []signature.ReturnAllocationTemplate
 	if len(declaredReturns) != 0 {
 		allocationTemplates = operationalReturnAllocationTemplates(reg, s, signatureName, returnArity, declaredReturns)
@@ -665,6 +666,7 @@ func functionSummaryOperationalEffectsForArity(reg *axis.Registry, s summary.Sum
 		EscapeEvents:                    operationalEscapeEvents(s.NormalReturnFacts, paramArity),
 		StoreRelations:                  operationalStoreRelations(s.NormalReturnFacts, paramArity),
 		ParamRelations:                  paramRelations,
+		ReturnFlows:                     returnFlows,
 		ReturnAllocationTemplates:       allocationTemplates,
 	}
 	if out.IsEmpty() {
@@ -1429,12 +1431,33 @@ func operationalParamRelations(s summary.Summary, arity int) []signature.ParamRe
 		}
 		noteParamRelationStoredInto(storedInto, storedIntoConflict, source, relation.Into.PlaceholderIndex())
 	}
+	returnFlowParams := make(map[int]struct{})
+	for _, flow := range s.ReturnFlows {
+		if flow.Param >= 0 && flow.Param < arity {
+			returnFlowParams[flow.Param] = struct{}{}
+		}
+	}
+	for _, invalidation := range s.NormalReturnFacts.PathInvalidations {
+		if !placeholderPathInArity(invalidation.Path, arity) {
+			continue
+		}
+		param := invalidation.Path.PlaceholderIndex()
+		if _, returned := returnFlowParams[param]; returned {
+			upgradeParamRelationEscape(&out[param], signature.EscapeRetain)
+		}
+	}
 	for _, alias := range s.ReturnParamPathAliases {
 		source, ok := alias.Source.Path()
 		if !ok || !placeholderPathInArity(source, arity) {
 			continue
 		}
 		out[source.PlaceholderIndex()].ThroughReturn = true
+	}
+	for _, flow := range s.ReturnFlows {
+		if flow.Param < 0 || flow.Param >= arity {
+			continue
+		}
+		out[flow.Param].ThroughReturn = true
 	}
 	for _, sink := range s.ParamSinkExposures {
 		source, ok := sink.Source.PlaceholderIndex()
@@ -1449,6 +1472,40 @@ func operationalParamRelations(s summary.Summary, arity int) []signature.ParamRe
 		}
 		out[source].StoredInto = target
 		out[source].HasStoredInto = true
+	}
+	return out
+}
+
+func operationalReturnFlows(flows []summary.ReturnFlow, paramArity, returnArity int) []signature.ReturnFlow {
+	if paramArity <= 0 || returnArity <= 0 || len(flows) == 0 {
+		return nil
+	}
+	out := make([]signature.ReturnFlow, 0, len(flows))
+	for _, flow := range flows {
+		if flow.ReturnIndex < 0 || flow.ReturnIndex >= returnArity || flow.Param < 0 || flow.Param >= paramArity {
+			continue
+		}
+		switch flow.Kind {
+		case summary.ReturnFlowParam:
+			if len(flow.Path) != 0 {
+				continue
+			}
+			out = append(out, signature.ReturnFlow{
+				ReturnIndex: flow.ReturnIndex,
+				Kind:        signature.ReturnFlowParam,
+				Param:       flow.Param,
+			})
+		case summary.ReturnFlowParamMember:
+			if len(flow.Path) == 0 {
+				continue
+			}
+			out = append(out, signature.ReturnFlow{
+				ReturnIndex: flow.ReturnIndex,
+				Kind:        signature.ReturnFlowParamMember,
+				Param:       flow.Param,
+				Path:        append([]segment.Segment(nil), flow.Path...),
+			})
+		}
 	}
 	return out
 }

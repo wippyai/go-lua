@@ -28,6 +28,7 @@ type OperationalEffects struct {
 	EscapeEvents                    []EscapeEvent
 	StoreRelations                  []StoreRelation
 	ParamRelations                  []ParamRelation
+	ReturnFlows                     []ReturnFlow
 	LifecycleEffects                []LifecycleEffect
 	ReturnAllocationTemplates       []ReturnAllocationTemplate
 }
@@ -159,6 +160,24 @@ type ParamRelation struct {
 	ThroughReturn        bool
 	StoredInto           int
 	HasStoredInto        bool
+}
+
+type ReturnFlowKind uint8
+
+const (
+	ReturnFlowInvalid ReturnFlowKind = iota
+	ReturnFlowParam
+	ReturnFlowParamMember
+)
+
+// ReturnFlow is the closed phase-1 return-flow relation serialized through
+// manifests. ReturnFlowParam preserves an exact parameter identity; phase 2 can
+// add explicit new-container/member-element relations without widening this one.
+type ReturnFlow struct {
+	ReturnIndex int
+	Kind        ReturnFlowKind
+	Param       int
+	Path        []segment.Segment
 }
 
 type LifecycleKind uint8
@@ -343,6 +362,10 @@ var operationalEffectLanes = []operationalEffectLane{
 		func(e OperationalEffects) []ParamRelation { return e.ParamRelations },
 		func(e *OperationalEffects, facts []ParamRelation) { e.ParamRelations = facts },
 		cloneParamRelations, equalParamRelations, nil),
+	operationalEffectSliceLane("ReturnFlows",
+		func(e OperationalEffects) []ReturnFlow { return e.ReturnFlows },
+		func(e *OperationalEffects, facts []ReturnFlow) { e.ReturnFlows = facts },
+		cloneReturnFlows, equalReturnFlows, nil),
 	operationalEffectSliceLane("LifecycleEffects",
 		func(e OperationalEffects) []LifecycleEffect { return e.LifecycleEffects },
 		func(e *OperationalEffects, facts []LifecycleEffect) { e.LifecycleEffects = facts },
@@ -526,6 +549,18 @@ func cloneParamRelations(in []ParamRelation) []ParamRelation {
 	return append([]ParamRelation(nil), in...)
 }
 
+func cloneReturnFlows(in []ReturnFlow) []ReturnFlow {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]ReturnFlow, len(in))
+	for i, flow := range in {
+		out[i] = flow
+		out[i].Path = append([]segment.Segment(nil), flow.Path...)
+	}
+	return out
+}
+
 func cloneLifecycleEffects(in []LifecycleEffect) []LifecycleEffect {
 	if len(in) == 0 {
 		return nil
@@ -699,6 +734,20 @@ func equalStoreRelations(a, b []StoreRelation) bool {
 func equalParamRelations(a, b []ParamRelation) bool {
 	return equalFactSlices(a, b, func(x, y ParamRelation) bool {
 		return x == y
+	})
+}
+
+func equalReturnFlows(a, b []ReturnFlow) bool {
+	return equalFactSlices(a, b, func(x, y ReturnFlow) bool {
+		if x.ReturnIndex != y.ReturnIndex || x.Kind != y.Kind || x.Param != y.Param || len(x.Path) != len(y.Path) {
+			return false
+		}
+		for i := range x.Path {
+			if x.Path[i] != y.Path[i] {
+				return false
+			}
+		}
+		return true
 	})
 }
 

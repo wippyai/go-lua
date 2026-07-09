@@ -157,6 +157,9 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) callpayload
 				})
 			}
 			if !ok {
+				value, ok = operationalReturnFlowValue(ctx, facts, sources, expressionRefinements, providerKeySpace, sig, i, argSources, in, read, typeValues)
+			}
+			if !ok {
 				value, ok = signatureReturnValue(ctx, sources, expressionRefinements, sig, i, argSources, in, read, returnTypeOps, typeValues)
 			}
 			if !ok && ret != nil {

@@ -458,7 +458,7 @@ func TestFactsNodeTransferRootAssignmentUsesDeclaredContractBeforeSource(t *test
 	assertRuntimeKind(t, reg, got[graph.Exit()].ReadValue(reg, key.SymbolValue(target)), runtimekind.Singleton(runtimekind.String))
 }
 
-func TestFactsNodeTransferDeclaredContractPreservesObjectLiteralIdentity(t *testing.T) {
+func TestFactsNodeTransferDeclaredContractPreservesExactSourceIdentity(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
 	assign := graph.AddNode(cfg.NodeAssign)
@@ -483,9 +483,6 @@ func TestFactsNodeTransferDeclaredContractPreservesObjectLiteralIdentity(t *test
 			Facts: factflow.NewFacts(factflow.FactsInput{
 				RootAssignments: map[cfg.Point]factflow.RootAssignment{
 					assign: factflow.NewRootAssignmentWithDeclaredContractValue(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "local"), source, declared),
-				},
-				ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
-					source.ExprRef: factflow.NewObjectLiteral(nil),
 				},
 			}),
 			Sources: resolver,

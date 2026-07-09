@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
@@ -244,11 +245,22 @@ func refineProjectionWithRootType(config Config, p pathdom.Path, rootValue, proj
 	if !ok {
 		return projected
 	}
+	if concreteProjectionShouldIgnoreUntrustedRootProjection(config.Registry, projected, rootProjected) {
+		return projected
+	}
 	refined := valuerefine.MeetConstraint(config.Registry, projected, rootProjected)
 	if !product.Equal(config.Registry, refined, product.Bottom(config.Registry)) {
 		return refined
 	}
 	return projected
+}
+
+func concreteProjectionShouldIgnoreUntrustedRootProjection(reg *axis.Registry, projected, rootProjected product.Value) bool {
+	if !exactHasConcreteNonTopProof(reg, projected) || exactHasConcreteNonTopProof(reg, rootProjected) {
+		return false
+	}
+	ev := product.Get(reg, rootProjected, evidence.Key)
+	return ev.IsExplicitTop() || ev.IsGradualTop()
 }
 
 func projectFromStructuralEvidence(config Config, point cfg.Point, p pathdom.Path, in state.State) (product.Value, bool, bool) {

@@ -126,7 +126,7 @@ func applyRootAssignment(
 
 func declaredContractWithSourceRuntimeIdentity(
 	ctx transfer.NodeContext,
-	facts factflow.Facts,
+	_ factflow.Facts,
 	sources sourcevalue.SourceValues,
 	read func(cfg.Point) state.State,
 	in state.State,
@@ -137,7 +137,10 @@ func declaredContractWithSourceRuntimeIdentity(
 	if ctx.Registry == nil || sources == nil || !source.HasExpr {
 		return declared
 	}
-	if _, ok := facts.ObjectLiteralView(source.ExprRef); !ok {
+	if id, ok := product.Get(ctx.Registry, declared, identity.Key).ID(); ok && id != (identity.ID{}) {
+		return declared
+	}
+	if !declaredContractCanCarrySourceRuntimeIdentity(ctx.Registry, declared) {
 		return declared
 	}
 	sourceValue, ok := sources.ValueOfSource(ctx.Point, source, in, readWithCurrentPointState(ctx.Point, read, out))
@@ -149,6 +152,19 @@ func declaredContractWithSourceRuntimeIdentity(
 		return declared
 	}
 	return product.Set(ctx.Registry, declared, identity.Key, identity.Singleton(id))
+}
+
+func declaredContractCanCarrySourceRuntimeIdentity(reg *axis.Registry, declared product.Value) bool {
+	t, ok := typevalue.TypeOf(reg, declared)
+	if !ok || t == nil {
+		return false
+	}
+	switch t.(type) {
+	case *typ.Record:
+		return true
+	default:
+		return typ.IsBuiltinTableTopMarker(t)
+	}
 }
 
 func refineRootAssignmentDynamicIndexValue(

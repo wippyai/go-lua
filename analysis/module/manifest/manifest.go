@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -554,9 +555,15 @@ func validateFunctionOperationalEffects(fn *typ.Function, effects signature.Oper
 	if err := validateParamRelations(fn, effects.ParamRelations); err != nil {
 		return err
 	}
+	if err := validateReturnFlows(fn, effects.ReturnFlows); err != nil {
+		return err
+	}
 	if fn == nil {
 		if len(effects.ReturnPresenceRelations) != 0 {
 			return errors.New("return presence relations require function type")
+		}
+		if len(effects.ReturnFlows) != 0 {
+			return errors.New("return flows require function type")
 		}
 		if len(effects.ReturnAllocationTemplates) != 0 {
 			return errors.New("return allocation templates require function type")
@@ -574,6 +581,44 @@ func validateFunctionOperationalEffects(fn *typ.Function, effects signature.Oper
 		seenReturnAllocations[template.ReturnIndex] = struct{}{}
 		if err := validateReturnAllocationTemplate(template); err != nil {
 			return fmt.Errorf("return allocation template: %w", err)
+		}
+	}
+	return nil
+}
+
+func validateReturnFlows(fn *typ.Function, flows []signature.ReturnFlow) error {
+	if len(flows) == 0 {
+		return nil
+	}
+	seen := make(map[int]struct{}, len(flows))
+	for _, flow := range flows {
+		if flow.ReturnIndex < 0 {
+			return fmt.Errorf("return flow index %d out of bounds", flow.ReturnIndex)
+		}
+		if fn != nil && flow.ReturnIndex >= len(fn.Returns) {
+			return fmt.Errorf("return flow index %d out of bounds for %d returns", flow.ReturnIndex, len(fn.Returns))
+		}
+		if _, ok := seen[flow.ReturnIndex]; ok {
+			return fmt.Errorf("duplicate return flow for return index %d", flow.ReturnIndex)
+		}
+		seen[flow.ReturnIndex] = struct{}{}
+		if flow.Param < 0 {
+			return fmt.Errorf("return flow param %d out of bounds", flow.Param)
+		}
+		if fn != nil && flow.Param >= len(fn.Params) {
+			return fmt.Errorf("return flow param %d out of bounds for %d params", flow.Param, len(fn.Params))
+		}
+		switch flow.Kind {
+		case signature.ReturnFlowParam:
+			if len(flow.Path) != 0 {
+				return fmt.Errorf("return flow %d ReturnsParam carries member path", flow.ReturnIndex)
+			}
+		case signature.ReturnFlowParamMember:
+			if _, ok := pathaddr.RelativeStaticMemberSuffixKey(flow.Path); !ok {
+				return fmt.Errorf("return flow %d has invalid member path", flow.ReturnIndex)
+			}
+		default:
+			return fmt.Errorf("return flow %d has invalid kind %d", flow.ReturnIndex, flow.Kind)
 		}
 	}
 	return nil

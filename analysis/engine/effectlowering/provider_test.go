@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
@@ -3710,6 +3711,149 @@ func TestSignatureOutcomeProviderSameAsUsesDeclaredReturnTypeWhenArgumentProject
 		t.Fatalf("got %d results, want 1: %#v", len(got), got)
 	}
 	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.Number))
+}
+
+func TestSignatureOutcomeProviderReturnFlowParamPreservesArgumentValue(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(560)
+	argRef := factflow.ExprRef(5601)
+	argValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"f": {
+				Type: typ.Func().Param("value", typ.Any).Returns(typ.Number).Build(),
+				OperationalEffects: &signature.OperationalEffects{
+					ReturnFlows: []signature.ReturnFlow{{
+						ReturnIndex: 0,
+						Kind:        signature.ReturnFlowParam,
+						Param:       0,
+					}},
+					ParamRelations: []signature.ParamRelation{{
+						Param:                0,
+						EscapeClass:          signature.EscapeNone,
+						PlacementConsequence: signature.PlacementConsequenceKeep,
+					}},
+				},
+			},
+		},
+		NameFor: staticName("f"),
+		Facts: signatureOutcomeProviderFacts(point, []factflow.ValueSource{{
+			Kind:    factflow.ValueSourceExpression,
+			ExprRef: argRef,
+			HasExpr: true,
+		}}),
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+			Registry: reg,
+			ExpressionValues: map[factflow.ExprRef]product.Value{
+				argRef: argValue,
+			},
+		}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
+
+	assertCallOutcomeResults(t, reg, got, []product.Value{argValue})
+}
+
+func TestSignatureOutcomeProviderReturnFlowParamStrongEscapeUsesDeclaredType(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(561)
+	argRef := factflow.ExprRef(5611)
+	argValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"f": {
+				Type:   typ.Func().Param("value", typ.Any).Returns(typ.Number).Build(),
+				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: effect.ParamRef{Index: 0}}}),
+				OperationalEffects: &signature.OperationalEffects{
+					ReturnFlows: []signature.ReturnFlow{{
+						ReturnIndex: 0,
+						Kind:        signature.ReturnFlowParam,
+						Param:       0,
+					}},
+					ParamRelations: []signature.ParamRelation{{
+						Param:                0,
+						EscapeClass:          signature.EscapeStore,
+						PlacementConsequence: signature.PlacementConsequenceOwnedHeap,
+					}},
+				},
+			},
+		},
+		NameFor: staticName("f"),
+		Facts: signatureOutcomeProviderFacts(point, []factflow.ValueSource{{
+			Kind:    factflow.ValueSourceExpression,
+			ExprRef: argRef,
+			HasExpr: true,
+		}}),
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+			Registry: reg,
+			ExpressionValues: map[factflow.ExprRef]product.Value{
+				argRef: argValue,
+			},
+		}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
+
+	if len(got) != 1 {
+		t.Fatalf("results = %#v, want one declared return", got)
+	}
+	if product.Equal(reg, got[0].Value, argValue) {
+		t.Fatalf("result preserved argument value despite store escape")
+	}
+	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.Number))
+}
+
+func TestSignatureOutcomeProviderReturnFlowParamMemberProjectsCallerPathValue(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	point := cfg.Point(562)
+	row := symbol.ID(5621)
+	memberPath := []segment.Segment{{Kind: segment.SegmentField, Name: "meta"}}
+	rowSource, ok := factflow.NewPathValueSource(
+		pathaddr.SymbolPathKey(row, nil),
+		factflow.NoValueSourceIndex,
+		factflow.NoValueSourceIndex,
+		factflow.NoValueSourceIndex,
+		factflow.ValueSourceShape{},
+	)
+	if !ok {
+		t.Fatal("NewPathValueSource(row) failed")
+	}
+	memberKey, ok := ks.FromStableSymbol(row, memberPath)
+	if !ok {
+		t.Fatal("FromStableSymbol(row.meta) failed")
+	}
+	memberValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	in := state.State{}.WriteLocalPathKey(reg, memberKey, memberValue)
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"f": {
+				Type: typ.Func().Param("row", typ.Any).Returns(typ.Any).Build(),
+				OperationalEffects: &signature.OperationalEffects{
+					ReturnFlows: []signature.ReturnFlow{{
+						ReturnIndex: 0,
+						Kind:        signature.ReturnFlowParamMember,
+						Param:       0,
+						Path:        memberPath,
+					}},
+					ParamRelations: []signature.ParamRelation{{
+						Param:                0,
+						EscapeClass:          signature.EscapeBorrow,
+						PlacementConsequence: signature.PlacementConsequenceKeep,
+					}},
+				},
+			},
+		},
+		NameFor:  staticName("f"),
+		Facts:    signatureOutcomeProviderFacts(point, []factflow.ValueSource{rowSource}),
+		Sources:  sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg, KeySpace: ks}),
+		KeySpace: ks,
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), in, nil).Results
+
+	assertCallOutcomeResults(t, reg, got, []product.Value{memberValue})
 }
 
 func TestSignatureOutcomeProviderElementOfArrayReturnsElementRuntimeKind(t *testing.T) {

@@ -772,6 +772,76 @@ func TestFunctionSummaryOperationalEffectsExportsSinkAndReturnParamRelations(t *
 	}
 }
 
+func TestFunctionSummaryOperationalEffectsExportsReturnFlows(t *testing.T) {
+	reg := standard.Registry()
+	got := functionSummaryOperationalEffects(reg, summary.Summary{
+		ReturnFlows: []summary.ReturnFlow{
+			{ReturnIndex: 0, Kind: summary.ReturnFlowParam, Param: 0},
+			{
+				ReturnIndex: 1,
+				Kind:        summary.ReturnFlowParamMember,
+				Param:       1,
+				Path:        []segment.Segment{{Kind: segment.SegmentField, Name: "meta"}},
+			},
+		},
+	}, typ.Func().
+		Param("value", typ.Any).
+		Param("row", typ.Any).
+		Returns(typ.Any, typ.Any).
+		Build(), "return_flows")
+	if got == nil {
+		t.Fatal("operational effects = nil")
+	}
+	if len(got.ReturnFlows) != 2 {
+		t.Fatalf("return flows = %#v, want two rows", got.ReturnFlows)
+	}
+	if got.ReturnFlows[0].ReturnIndex != 0 ||
+		got.ReturnFlows[0].Kind != signature.ReturnFlowParam ||
+		got.ReturnFlows[0].Param != 0 {
+		t.Fatalf("return flow 0 = %#v, want ReturnsParam(0)", got.ReturnFlows[0])
+	}
+	if got.ReturnFlows[1].ReturnIndex != 1 ||
+		got.ReturnFlows[1].Kind != signature.ReturnFlowParamMember ||
+		got.ReturnFlows[1].Param != 1 ||
+		segment.FormatSegments(got.ReturnFlows[1].Path) != ".meta" {
+		t.Fatalf("return flow 1 = %#v, want ReturnsParamMember(1, .meta)", got.ReturnFlows[1])
+	}
+	if len(got.ParamRelations) != 2 ||
+		!got.ParamRelations[0].ThroughReturn ||
+		!got.ParamRelations[1].ThroughReturn {
+		t.Fatalf("param relations = %#v, want legacy throughReturn mirror for both params", got.ParamRelations)
+	}
+}
+
+func TestFunctionSummaryOperationalEffectsDegradesMutatedReturnFlowParam(t *testing.T) {
+	reg := standard.Registry()
+	got := functionSummaryOperationalEffects(reg, summary.Summary{
+		ReturnFlows: []summary.ReturnFlow{
+			{ReturnIndex: 0, Kind: summary.ReturnFlowParam, Param: 0},
+		},
+		NormalReturnFacts: callboundary.NormalReturnFacts{
+			PathInvalidations: []callboundary.PathInvalidationFact{{
+				Path: pathdom.NewPlaceholder(0).Field("late"),
+			}},
+		},
+	}, typ.Func().
+		Param("value", typ.Any).
+		Returns(typ.Any).
+		Build(), "mutating_return")
+	if got == nil {
+		t.Fatal("operational effects = nil")
+	}
+	if len(got.ReturnFlows) != 1 {
+		t.Fatalf("return flows = %#v, want ReturnsParam", got.ReturnFlows)
+	}
+	if len(got.ParamRelations) != 1 ||
+		got.ParamRelations[0].EscapeClass == signature.EscapeNone ||
+		got.ParamRelations[0].EscapeClass == signature.EscapeBorrow ||
+		got.ParamRelations[0].PlacementConsequence == signature.PlacementConsequenceKeep {
+		t.Fatalf("param relations = %#v, want mutation to force non-preserving escape class", got.ParamRelations)
+	}
+}
+
 func TestFromProgramResultExportsConditionalSinkStoreAsStoreRelation(t *testing.T) {
 	result := checkProgram(t, `
 		local client = {}
@@ -981,7 +1051,11 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 			{Path: pathdom.NewPlaceholder(2), Presence: presence.Present()},
 		},
 		NormalReturnTypeRefinements: []signature.PathTypeRefinement{
-			{Path: pathdom.NewPlaceholder(0).Field("rawProduct"), Type: typ.String},
+			{
+				Path:      pathdom.NewPlaceholder(0).Field("rawProduct"),
+				Type:      typ.String,
+				Assertion: product.Get(reg, pathRefinementValue, assertion.Key),
+			},
 		},
 		PathStaticMembers: []signature.PathStaticMemberFact{{
 			Path: pathdom.NewPlaceholder(0).Field("kind"),
