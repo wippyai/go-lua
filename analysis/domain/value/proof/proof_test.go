@@ -113,6 +113,20 @@ func TestValueProofAdmissibleAcceptsRuntimeProof(t *testing.T) {
 	}
 }
 
+func TestValueProofAdmissibleRuntimeCastDepthExhaustionFailsClosed(t *testing.T) {
+	reg := registry()
+	cache := typevalue.NewCache()
+	actual := nestedRecordType(typ.DefaultRecursionDepth+2, typ.Number)
+	want := nestedRecordType(typ.DefaultRecursionDepth+2, typ.String)
+	value := cache.FromTypeWithWitness(reg, actual)
+	value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
+	value = product.Set(reg, value, assertion.Key, assertion.Of(assertion.RuntimeClaim))
+
+	if New(reg, cache).ValueProofAdmissible(value, want) {
+		t.Fatal("runtime cast proof accepted a nested mismatch beyond the subtype depth limit")
+	}
+}
+
 func TestValueProofAdmissibleRejectsAbsentRuntimeProofForNonNilContract(t *testing.T) {
 	reg := registry()
 	value := typevalue.NewCache().FromTypeWithWitness(reg, typ.String)
@@ -463,3 +477,11 @@ func TestTypeEvidenceUsableForInferenceHonorsRuntimeClaims(t *testing.T) {
 }
 
 func registry() *axis.Registry { return standard.Registry() }
+
+func nestedRecordType(depth int, leaf typ.Type) typ.Type {
+	result := leaf
+	for range depth {
+		result = typetable.NewRecord().Field("next", result).Build()
+	}
+	return result
+}
