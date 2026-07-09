@@ -7,8 +7,11 @@ import (
 	"testing"
 
 	checkdiagnostics "github.com/wippyai/go-lua/analysis/check/diagnostics"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	enginestate "github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 )
 
@@ -21,15 +24,25 @@ func TestBatchSessionPublishesCompleteQueryableResult(t *testing.T) {
 		EntryFile:  "main.lua",
 		SourceFiles: map[string][]byte{
 			"main.lua": []byte(`
+function build(ids: {string}): {items: {[string]: {id: string}}, count: number}
+	local batch: {items: {[string]: {id: string}}, count: number} = {items = {}, count = 0}
+	for _, id in ipairs(ids) do
+		batch.count = batch.count + 1
+		local item: {id: string} = {id = id}
+		batch.items[id] = item
+	end
+	return batch
+end
 local function identity(value: number): number
 	return value
 end
 local wrong = missing_value
-local exported = { value = identity(1) }
+local exported = { value = identity(1), built = build({"a"}) }
 return exported
 `),
 		},
-		Profile: "typed",
+		Profile:    "typed",
+		StateLanes: enginestate.DefaultLanes(),
 	}
 	state, err := session.UpsertUnit(ctx, input)
 	if err != nil {
@@ -325,6 +338,120 @@ func assertCompletedResultIsDefensivelyImmutable(t *testing.T, completed Complet
 	if again[0] != originalByte {
 		t.Fatal("mutating returned manifest bytes changed completed snapshot")
 	}
+
+	assertSummaryAccessorsAreDefensivelyImmutable(t, completed)
+}
+
+// assertSummaryAccessorsAreDefensivelyImmutable mutates every owned field a
+// client can reach through SummaryView (Returns, HeapTableObjects,
+// NormalReturnFacts-family slices) via both Read and Entries, then confirms
+// the published snapshot is unaffected. This guards against SummaryView ever
+// exposing summary.Snapshot's zero-copy ReadOwnedNormalized/
+// EntriesOwnedNormalized reads.
+func assertSummaryAccessorsAreDefensivelyImmutable(t *testing.T, completed CompletedResult) {
+	t.Helper()
+	entries := completed.SummarySnapshot().Entries()
+	if len(entries) == 0 {
+		t.Fatal("completed result has no summary entries")
+	}
+
+	// A sentinel drawn from a real Returns fact. Assigning it into an
+	// unrelated slot and checking the slot reverts on refetch works
+	// regardless of whether that slot's own natural value happens to be the
+	// product.Value zero value.
+	var sentinel product.Value
+	for _, entry := range entries {
+		if len(entry.Summary.Returns) != 0 && entry.Summary.Returns[0] != (product.Value{}) {
+			sentinel = entry.Summary.Returns[0]
+			break
+		}
+	}
+	if sentinel == (product.Value{}) {
+		t.Fatal("no summary entry carries a non-zero Returns value to use as a mutation sentinel")
+	}
+
+	var sawReturns, sawHeapTableObjects, sawNormalReturnParams bool
+	for _, entry := range entries {
+		key := entry.Key
+
+		if len(entry.Summary.Returns) != 0 {
+			sawReturns = true
+			assertMutatingSlotIsIsolated(t, completed, key, sentinel,
+				func(s summary.Summary) []product.Value { return s.Returns })
+		}
+		if len(entry.Summary.HeapTableObjects) != 0 {
+			sawHeapTableObjects = true
+			assertMutatingHeapTableObjectsIsIsolated(t, completed, key)
+		}
+		if len(entry.Summary.NormalReturnParams) != 0 {
+			sawNormalReturnParams = true
+			assertMutatingSlotIsIsolated(t, completed, key, sentinel,
+				func(s summary.Summary) []product.Value { return s.NormalReturnParams })
+		}
+	}
+	if !sawReturns {
+		t.Fatal("no summary entry carries Returns; fixture must produce a returning function")
+	}
+	if !sawHeapTableObjects {
+		t.Fatal("no summary entry carries HeapTableObjects; fixture must construct and return a table")
+	}
+	if !sawNormalReturnParams {
+		t.Fatal("no summary entry carries NormalReturnParams; fixture must produce a normal-return parameter fact")
+	}
+}
+
+// assertMutatingSlotIsIsolated corrupts slot(summary)[0] to sentinel through
+// both Read and Entries, then confirms the published snapshot's slot still
+// reads back its original value.
+func assertMutatingSlotIsIsolated(t *testing.T, completed CompletedResult, key summary.SummaryKey, sentinel product.Value, slot func(summary.Summary) []product.Value) {
+	t.Helper()
+	viaRead, ok := completed.SummarySnapshot().Read(key)
+	if !ok || len(slot(viaRead)) == 0 {
+		t.Fatalf("Read(%v) missing target slot for mutation probe", key)
+	}
+	original := slot(viaRead)[0]
+	slot(viaRead)[0] = sentinel
+
+	viaEntries := entryFor(t, completed.SummarySnapshot().Entries(), key)
+	slot(viaEntries)[0] = sentinel
+
+	again, ok := completed.SummarySnapshot().Read(key)
+	if !ok || slot(again)[0] != original {
+		t.Fatal("mutating a summary slot through Read or Entries changed the completed snapshot")
+	}
+}
+
+func assertMutatingHeapTableObjectsIsIsolated(t *testing.T, completed CompletedResult, key summary.SummaryKey) {
+	t.Helper()
+	viaRead, ok := completed.SummarySnapshot().Read(key)
+	if !ok || len(viaRead.HeapTableObjects) == 0 {
+		t.Fatalf("Read(%v) missing HeapTableObjects for mutation probe", key)
+	}
+	originalLen := len(viaRead.HeapTableObjects)
+	for id := range viaRead.HeapTableObjects {
+		delete(viaRead.HeapTableObjects, id)
+	}
+
+	viaEntries := entryFor(t, completed.SummarySnapshot().Entries(), key)
+	for id := range viaEntries.HeapTableObjects {
+		delete(viaEntries.HeapTableObjects, id)
+	}
+
+	again, ok := completed.SummarySnapshot().Read(key)
+	if !ok || len(again.HeapTableObjects) != originalLen {
+		t.Fatal("mutating HeapTableObjects through Read or Entries changed the completed snapshot")
+	}
+}
+
+func entryFor(t *testing.T, entries []summary.EntrySummary, key summary.SummaryKey) summary.Summary {
+	t.Helper()
+	for _, entry := range entries {
+		if entry.Key == key {
+			return entry.Summary
+		}
+	}
+	t.Fatalf("no summary entry for key %v", key)
+	return summary.Summary{}
 }
 
 func selectorFor(tag ResultTag) ResultSelector {

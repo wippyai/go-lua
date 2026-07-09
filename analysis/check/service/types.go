@@ -150,12 +150,33 @@ func (r CompletedResult) PlacementPlan() placementplan.Plan {
 	return clonePlacementPlan(r.snapshot.placement)
 }
 
-// SummarySnapshot returns the immutable exact-key fixed-point snapshot.
-func (r CompletedResult) SummarySnapshot() summary.Snapshot {
+// SummarySnapshot returns a read-only view of the exact-key fixed-point
+// snapshot. The view only exposes the cloning accessors of summary.Snapshot;
+// it cannot reach ReadOwnedNormalized or EntriesOwnedNormalized, so a client
+// can never observe or mutate the storage backing the published result.
+func (r CompletedResult) SummarySnapshot() SummaryView {
 	if r.snapshot == nil {
-		return summary.Snapshot{}
+		return SummaryView{}
 	}
-	return r.snapshot.summaries
+	return SummaryView{snapshot: r.snapshot.summaries}
+}
+
+// SummaryView is a read-only projection of summary.Snapshot for published
+// results. It forwards only Read and Entries, both of which clone every
+// summary they return.
+type SummaryView struct {
+	snapshot summary.Snapshot
+}
+
+// Read returns a clone of the summary for k.
+func (v SummaryView) Read(k summary.SummaryKey) (summary.Summary, bool) {
+	return v.snapshot.Read(k)
+}
+
+// Entries returns clones of every exact-key summary in deterministic key
+// order.
+func (v SummaryView) Entries() []summary.EntrySummary {
+	return v.snapshot.Entries()
 }
 
 type ResultSelector struct {
