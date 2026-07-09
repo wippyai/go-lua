@@ -209,7 +209,7 @@ func mirroredBranchProofAcrossEquality(ks *keyspace.KeySpace, proof pathevidence
 }
 
 func rebaseBranchProofKey(ks *keyspace.KeySpace, proofKey, fromKey, toKey keyspace.Key) (keyspace.Key, bool) {
-	if !ks.HasPrefix(proofKey, fromKey) {
+	if !branchProofKeysMayShareRoot(proofKey, fromKey) || !ks.HasPrefix(proofKey, fromKey) {
 		return keyspace.Key{}, false
 	}
 	if ks.HasStrictPrefix(toKey, fromKey) && ks.HasPrefix(proofKey, toKey) {
@@ -220,6 +220,25 @@ func rebaseBranchProofKey(ks *keyspace.KeySpace, proofKey, fromKey, toKey keyspa
 		return keyspace.Key{}, false
 	}
 	return rebased, true
+}
+
+// branchProofKeysMayShareRoot is a necessary precondition for KeySpace prefix
+// checks. It keeps equality-closure mirroring from repeatedly inspecting
+// unrelated proof roots while leaving non-structural validation to KeySpace.
+func branchProofKeysMayShareRoot(key, prefix keyspace.Key) bool {
+	if key.Kind != prefix.Kind {
+		return false
+	}
+	switch key.Kind {
+	case keyspace.KindResolverSym:
+		return key.Sym == prefix.Sym && key.Ver == prefix.Ver
+	case keyspace.KindStableSym:
+		return key.Sym == prefix.Sym
+	case keyspace.KindNamed, keyspace.KindPlaceholder, keyspace.KindRetSlot:
+		return key.Root == prefix.Root
+	default:
+		return true
+	}
 }
 
 func propagateRefinementAcrossEquality(reg *axis.Registry, ks *keyspace.KeySpace, out state.State, key pathdom.PathKey, value product.Value, fromKey, toKey pathdom.PathKey, memberSafe bool) state.State {

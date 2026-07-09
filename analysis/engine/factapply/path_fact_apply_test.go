@@ -29,6 +29,20 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
+func TestBranchProofKeysMayShareRootRequiresMatchingResolverIdentity(t *testing.T) {
+	ks := keyspace.New()
+	proofKey := mustStateKey(t, ks, pathdom.PathKey("sym410@1.child"))
+	if !branchProofKeysMayShareRoot(proofKey, mustStateKey(t, ks, pathdom.PathKey("sym410@1.parent"))) {
+		t.Fatal("same resolver root should pass the proof rebase prefilter")
+	}
+	if branchProofKeysMayShareRoot(proofKey, mustStateKey(t, ks, pathdom.PathKey("sym410@2.parent"))) {
+		t.Fatal("different resolver version should fail the proof rebase prefilter")
+	}
+	if branchProofKeysMayShareRoot(proofKey, mustStateKey(t, ks, pathdom.PathKey("sym411@1.parent"))) {
+		t.Fatal("different resolver symbol should fail the proof rebase prefilter")
+	}
+}
+
 func TestFactsNodeTransferKeepsStaticMemberWritesDistinctFromPathAssignments(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(401)
