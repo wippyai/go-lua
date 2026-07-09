@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	internal "github.com/wippyai/go-lua/analysis/internal/hash"
 )
 
 var globalInterner = &interner{nodes: make(map[*axis.Registry]map[uint64][]*node)}
@@ -78,9 +79,23 @@ func normalizePresence(p presence.Value) presence.Value {
 
 func Hash(reg *axis.Registry, v Value) uint64 {
 	rt := mustRuntime(reg)
-	if v.n == nil {
-		return rt.stableHash(ShapeTop, presence.Top(), nil)
-	}
 	rt.validateValue(v)
-	return v.n.hash
+	return CanonicalHash(v)
+}
+
+// CanonicalHash returns the stable semantic hash carried by v. It is safe for
+// consumers which need to order an already-validated value but do not own the
+// registry required by Hash. Product operations should continue to use Hash so
+// they validate that values belong to their registry.
+func CanonicalHash(v Value) uint64 {
+	if v.n != nil {
+		return v.n.hash
+	}
+	return topHash()
+}
+
+func topHash() uint64 {
+	h := internal.FnvString("value.product")
+	h = internal.MixHash(h, uint64(ShapeTop)+1)
+	return internal.MixHash(h, presence.Value.Hash(presence.Top()))
 }

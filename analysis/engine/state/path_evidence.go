@@ -67,8 +67,8 @@ func (s State) ForEachBranchProof(fn func(pathevidence.BranchProof) bool) {
 }
 
 // PathPresenceImplicationsSnapshot returns finite must path-presence
-// implications in stable order. Bottom is explicit; Top means the reachable
-// must lane contains no implications.
+// implications in total, stable semantic order. Bottom is explicit; Top means
+// the reachable must lane contains no implications.
 func (s State) PathPresenceImplicationsSnapshot(ks *keyspace.KeySpace) pathevidence.PathPresenceImplicationsSnapshot {
 	if !s.laneEnabled(lanePathEvidenceBit) {
 		return pathevidence.PathPresenceImplicationsSnapshot{Bottom: true}

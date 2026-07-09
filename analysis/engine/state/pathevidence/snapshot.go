@@ -119,7 +119,7 @@ type PathPresenceImplicationsSnapshot struct {
 }
 
 // PathPresenceImplicationsSnapshot returns finite must path-presence
-// implications in stable order.
+// implications in total, stable semantic order.
 func (l Lane) PathPresenceImplicationsSnapshot(ks *keyspace.KeySpace) PathPresenceImplicationsSnapshot {
 	if l.pathPresenceImplicationsBottom {
 		return PathPresenceImplicationsSnapshot{Bottom: true}

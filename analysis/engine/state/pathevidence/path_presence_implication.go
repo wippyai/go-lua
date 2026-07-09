@@ -228,17 +228,53 @@ func pathPresenceImplicationLess(ks *keyspace.KeySpace, a, b PathPresenceImplica
 	if a.HasTriggerPathEqual != b.HasTriggerPathEqual {
 		return !a.HasTriggerPathEqual
 	}
-	if a.TriggerOther != b.TriggerOther {
+	if a.HasTriggerPathEqual && a.TriggerOther != b.TriggerOther {
 		return ks.Less(a.TriggerOther, b.TriggerOther)
-	}
-	if a.Target != b.Target {
-		return ks.Less(a.Target, b.Target)
 	}
 	if a.HasTriggerValue != b.HasTriggerValue {
 		return !a.HasTriggerValue
 	}
-	if a.TriggerPresence.String() != b.TriggerPresence.String() {
-		return a.TriggerPresence.String() < b.TriggerPresence.String()
+	if a.HasTriggerValue {
+		if order := comparePathPresenceImplicationProducts(a.TriggerValue, b.TriggerValue); order != 0 {
+			return order < 0
+		}
+		if a.HasTriggerPresence != b.HasTriggerPresence {
+			return !a.HasTriggerPresence
+		}
+		if a.HasTriggerPresence && a.TriggerPresence != b.TriggerPresence {
+			return a.TriggerPresence < b.TriggerPresence
+		}
+	} else if a.TriggerPresence != b.TriggerPresence {
+		return a.TriggerPresence < b.TriggerPresence
 	}
-	return a.TargetPresence.String() < b.TargetPresence.String()
+	if a.Target != b.Target {
+		return ks.Less(a.Target, b.Target)
+	}
+	if a.HasTargetValue != b.HasTargetValue {
+		return !a.HasTargetValue
+	}
+	if a.HasTargetValue {
+		if order := comparePathPresenceImplicationProducts(a.TargetValue, b.TargetValue); order != 0 {
+			return order < 0
+		}
+	} else if a.TargetPresence != b.TargetPresence {
+		return a.TargetPresence < b.TargetPresence
+	}
+	return false
+}
+
+// comparePathPresenceImplicationProducts uses the canonical product ordering
+// shared by summary normalization. The product hash covers shape, presence,
+// and every registered semantic axis, and therefore does not project away
+// refinements while ordering implications.
+func comparePathPresenceImplicationProducts(a, b product.Value) int {
+	left, right := product.CanonicalHash(a), product.CanonicalHash(b)
+	switch {
+	case left < right:
+		return -1
+	case left > right:
+		return 1
+	default:
+		return 0
+	}
 }

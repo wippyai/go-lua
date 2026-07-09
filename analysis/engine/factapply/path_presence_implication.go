@@ -390,19 +390,13 @@ func applyPathPresenceImplicationTargetKey(
 }
 
 func assignmentImplicationTargetValue(reg *axis.Registry, current product.Value, assigned product.Value) product.Value {
-	if reg == nil || product.Equal(reg, current, product.Bottom(reg)) {
+	if product.Equal(reg, current, product.Bottom(reg)) {
 		return assigned
 	}
-	currentPresence := product.PresenceOf(current)
-	if !presenceIsConcrete(currentPresence) {
-		return assigned
-	}
-	presenceConstraint := product.NewWithPresence(reg, product.ShapeTop, currentPresence)
-	refined := product.Meet(reg, assigned, presenceConstraint)
-	if product.Equal(reg, refined, product.Bottom(reg)) || presence.Equal(product.PresenceOf(refined), presence.Bottom()) {
-		return assigned
-	}
-	return refined
+	// Multiple simultaneously activated implications may constrain the same
+	// target. Their consequences are conjunctive refinements, never ordered
+	// assignments: meet them so conflicts conservatively drop to bottom.
+	return product.Meet(reg, current, assigned)
 }
 
 func presenceImplicationTargetInvalidatesDescendants(implication pathevidence.PathPresenceImplication) bool {
