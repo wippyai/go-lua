@@ -1,6 +1,10 @@
 package diag
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+	"sync"
+)
 
 // Severity indicates the importance level of a diagnostic.
 //
@@ -99,8 +103,56 @@ const (
 	ErrNoMethod
 )
 
+const semanticCodeBase Code = 10000
+
+var semanticCodes = struct {
+	sync.RWMutex
+	next   Code
+	byName map[string]Code
+	byCode map[Code]string
+}{
+	next: semanticCodeBase,
+}
+
+// NamedCode returns a legacy-compatible code whose Name is the supplied stable
+// analyzer code. It lets the legacy facade carry judgment codes such as
+// "type.assignment" without forcing them through the old E0000 enum.
+func NamedCode(name string) Code {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ErrTypeMismatch
+	}
+	semanticCodes.RLock()
+	if code, ok := semanticCodes.byName[name]; ok {
+		semanticCodes.RUnlock()
+		return code
+	}
+	semanticCodes.RUnlock()
+
+	semanticCodes.Lock()
+	defer semanticCodes.Unlock()
+	if code, ok := semanticCodes.byName[name]; ok {
+		return code
+	}
+	code := semanticCodes.next
+	semanticCodes.next++
+	if semanticCodes.byName == nil {
+		semanticCodes.byName = make(map[string]Code)
+		semanticCodes.byCode = make(map[Code]string)
+	}
+	semanticCodes.byName[name] = code
+	semanticCodes.byCode[code] = name
+	return code
+}
+
 // Name returns the formatted code identifier (e.g., E0001).
 func (c Code) Name() string {
+	semanticCodes.RLock()
+	if name, ok := semanticCodes.byCode[c]; ok {
+		semanticCodes.RUnlock()
+		return name
+	}
+	semanticCodes.RUnlock()
 	return fmt.Sprintf("E%04d", c)
 }
 

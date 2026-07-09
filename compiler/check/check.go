@@ -260,7 +260,7 @@ func fromAnalysisDiagnostic(file string, d diagnostic.Diagnostic) diag.Diagnosti
 	case diagnostic.SeverityHint:
 		severity = diag.SeverityHint
 	}
-	code := diag.ErrTypeMismatch
+	code := diag.NamedCode(string(d.Code))
 	if d.Code == diagnostic.Code("undefined") {
 		code = diag.ErrUndefined
 	}
@@ -285,11 +285,10 @@ func fromAnalysisDiagnostic(file string, d diagnostic.Diagnostic) diag.Diagnosti
 }
 
 func legacyDiagnostic(file, code, message string, severity diag.Severity) diag.Diagnostic {
-	_ = code
 	return diag.Diagnostic{
 		Position: diag.Position{File: file, Line: 1, Column: 1},
 		Span:     diag.Span{StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1},
-		Code:     diag.ErrTypeMismatch,
+		Code:     diag.NamedCode(code),
 		Message:  message,
 		Severity: severity,
 	}

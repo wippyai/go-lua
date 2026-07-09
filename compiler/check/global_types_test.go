@@ -41,6 +41,21 @@ local elapsed: number = time.now():sub(start):milliseconds()
 	}
 }
 
+func TestCheckerLegacyDiagnosticsPreserveAnalysisCodeName(t *testing.T) {
+	chunk, err := parse.ParseString(`local value: string = 42`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	checker := NewChecker(db.New(), Deps{})
+	session := checker.CheckChunk(chunk, "test.lua")
+	if len(session.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one assignment diagnostic", session.Diagnostics)
+	}
+	if got := session.Diagnostics[0].Code.Name(); got != "type.assignment" {
+		t.Fatalf("legacy diagnostic code = %q, want type.assignment", got)
+	}
+}
+
 func TestCheckerUsesGlobalTypeStaticStringConstantInMethodArgument(t *testing.T) {
 	chunk, err := parse.ParseString(`
 local formatted: string = time.now():format(time.RFC3339)
