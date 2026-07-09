@@ -116,6 +116,7 @@ func applyEscapedClosureEntryStatesFromResult(keys *programKeys, owner *ast.Func
 				entry,
 				captureValueReaderAt(result, point),
 				captureInvariantValueReaderAt(result, point),
+				captureFullGraphInvariantValueReaderAt(result, point),
 			)
 			if _, ok := seenEscape[i]; ok {
 				mergeContextEntry(reg, &keys.functions[i], entryKeys, updated)

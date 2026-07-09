@@ -132,9 +132,11 @@ func TestClosureCaptureEscapingMutableCaptureDropsPointNarrowing(t *testing.T) {
 	result := Check(`local function make(): () -> number
     local box: { n: number? } = { n = 1 }
     if box.n ~= nil then
-        return function(): number
+        local read = function(): number
             return box.n
         end
+        box.n = nil
+        return read
     end
     return function(): number
         return 0

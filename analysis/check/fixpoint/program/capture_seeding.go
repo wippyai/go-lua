@@ -105,15 +105,17 @@ func applyEscapedCapturedClosureEntryState(
 	entry state.State,
 	readCaptured captureValueReader,
 	readInvariant captureValueReader,
+	readFullInvariant captureValueReader,
 ) (state.State, bool) {
 	env := closureCaptureSeeder{
-		reg:           reg,
-		ks:            ks,
-		bindings:      bindings,
-		caller:        caller,
-		readCaptured:  readCaptured,
-		readInvariant: readInvariant,
-		escapeUnknown: true,
+		reg:               reg,
+		ks:                ks,
+		bindings:          bindings,
+		caller:            caller,
+		readCaptured:      readCaptured,
+		readInvariant:     readInvariant,
+		readFullInvariant: readFullInvariant,
+		escapeUnknown:     true,
 	}
 	return env.apply(fn, entry)
 }
@@ -139,6 +141,36 @@ func captureInvariantValueReaderAt(result *body.Result, point cfg.Point) capture
 
 func contextualCaptureInvariantValueReaderAt(result *body.Result, point cfg.Point) captureValueReader {
 	return captureInvariantValueReaderAtWithOptions(result, point, true)
+}
+
+func captureFullGraphInvariantValueReaderAt(result *body.Result, point cfg.Point) captureValueReader {
+	if result == nil || result.Registry() == nil {
+		return nil
+	}
+	reg := result.Registry()
+	return func(id symbol.ID) (product.Value, bool) {
+		if id == 0 || result.SymbolHasWrite(id) {
+			return product.Value{}, false
+		}
+		value, ok := result.SymbolValueAtBoundary(point, id)
+		if !ok {
+			value, ok = result.UninitializedLocalDeclarationValueAtBoundary(point, id)
+		}
+		if !ok {
+			return product.Value{}, false
+		}
+		if !contextEntryValueUseful(reg, value) {
+			return product.Value{}, false
+		}
+		receiver := pathdom.Path{
+			Root:   result.SymbolName(id),
+			Symbol: id,
+		}
+		if result.ValueHasStructuralMutationAtBoundary(point, value, receiver) {
+			return product.Value{}, false
+		}
+		return value, true
+	}
 }
 
 func captureInvariantValueReaderAtWithOptions(result *body.Result, point cfg.Point, allowPointAbsentFunctionTarget bool) captureValueReader {
@@ -235,13 +267,14 @@ func captureNonStackStableShape(result *body.Result, point cfg.Point, value prod
 }
 
 type closureCaptureSeeder struct {
-	reg           *axis.Registry
-	ks            *keyspace.KeySpace
-	bindings      *bind.Result
-	caller        state.State
-	readCaptured  captureValueReader
-	readInvariant captureValueReader
-	escapeUnknown bool
+	reg               *axis.Registry
+	ks                *keyspace.KeySpace
+	bindings          *bind.Result
+	caller            state.State
+	readCaptured      captureValueReader
+	readInvariant     captureValueReader
+	readFullInvariant captureValueReader
+	escapeUnknown     bool
 
 	seenFns              map[*ast.FunctionExpr]struct{}
 	targetFuncs          map[symbol.ID]*ast.FunctionExpr
@@ -277,6 +310,12 @@ func (s *closureCaptureSeeder) apply(
 			!s.captureIsRequireModule(capture.Captured) &&
 			!s.captureHasDirectNonFunctionInvariantMember(capture) &&
 			s.captureEscapesMutable(fullValue)
+		if escapedMutable {
+			if invariantFull, ok := s.fullGraphInvariantCapturedValue(capture.Captured, fullValue); ok {
+				fullValue = invariantFull
+				escapedMutable = false
+			}
+		}
 		degrade := written || escapedMutable
 		if degrade {
 			entry = s.stripCapturedPathEvidence(capture, entry)
@@ -333,6 +372,34 @@ func (s *closureCaptureSeeder) fullCapturedValue(sym symbol.ID, slot statekey.Va
 		}
 	}
 	return value
+}
+
+func (s *closureCaptureSeeder) fullGraphInvariantCapturedValue(sym symbol.ID, full product.Value) (product.Value, bool) {
+	if s == nil || s.readFullInvariant == nil {
+		return product.Value{}, false
+	}
+	invariant, ok := s.readFullInvariant(sym)
+	if !ok || !contextEntryValueUseful(s.reg, invariant) {
+		return product.Value{}, false
+	}
+	invariant = preciseCapturedValue(s.reg, full, invariant)
+	if captureFullGraphCanOverlayStaticMemberWitness(s.reg, invariant) {
+		invariant = s.withInvariantHeapStaticMemberWitness(full, invariant)
+	}
+	return invariant, true
+}
+
+func captureFullGraphCanOverlayStaticMemberWitness(reg *axis.Registry, value product.Value) bool {
+	t, ok := typevalue.TypeOf(reg, value)
+	if !ok || t == nil {
+		return true
+	}
+	switch unwrap.Annotated(t).(type) {
+	case *typ.Array, *typ.Tuple, *typ.Map, *typ.ReadonlyMap:
+		return false
+	default:
+		return true
+	}
 }
 
 func (s *closureCaptureSeeder) capturedEntryValue(sym symbol.ID, full product.Value, degrade bool) product.Value {

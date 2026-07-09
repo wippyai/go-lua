@@ -92,6 +92,31 @@ func (r *Result) ValueHasStableShapeBeforeBoundary(point cfg.Point, value produc
 	return stable
 }
 
+// ValueHasStructuralMutationAtBoundary reports whether value's table identity is
+// structurally written anywhere in this body. It is broader than stable-shape
+// eligibility: array/map element facts can be invariant even when they are not a
+// closed record shape.
+func (r *Result) ValueHasStructuralMutationAtBoundary(point cfg.Point, value product.Value, receiver pathdom.Path) bool {
+	if r == nil || r.registry == nil || r.Graph() == nil {
+		return false
+	}
+	id, ok := identityvalue.ExactID(r.registry, value)
+	if !ok {
+		return false
+	}
+	graph := r.Graph()
+	entry := graph.Entry()
+	for _, candidate := range graph.RPO() {
+		if !r.PointCanReach(entry, candidate) {
+			continue
+		}
+		if r.structuralMutationMayTarget(candidate, id, receiver) {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *Result) stableShapeForValue(point cfg.Point, value product.Value, receiver pathdom.Path, boundary bool) (StableShapeFact, bool) {
 	if r == nil || r.registry == nil || r.Graph() == nil {
 		return StableShapeFact{}, false
