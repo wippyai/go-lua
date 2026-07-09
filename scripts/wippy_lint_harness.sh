@@ -217,12 +217,21 @@ append_diagnostic_rows() {
 	local target="$1"
 	local json_file="$2"
 	local target_name
+	local target_path
 	if ! has_jq || [[ ! -s "$json_file" ]]; then
 		return 0
 	fi
 	target_name="$(baseline_target_name "$target")"
-	jq -c --arg target "$target_name" '(.diagnostics // [])[]
-		| {target:$target, entry_id, code, severity, line, column, message}' \
+	target_path="$(cd "$target" && pwd -P)"
+	jq -c --arg target "$target_name" --arg target_path "$target_path" '(.diagnostics // [])[]
+		| def raw_source_path: (.source_path // .file // .filename // .path // "");
+		  def resolved_source_path:
+			(raw_source_path | tostring) as $file
+			| if $file == "" then $target_path
+			  elif ($file | startswith("/")) then $file
+			  else $target_path + "/" + $file
+			  end;
+		  {target:$target, source_path:resolved_source_path, entry_id, code, severity, line, column, message}' \
 		"$json_file" >>"$DIAGNOSTICS_JSONL" 2>/dev/null || true
 }
 

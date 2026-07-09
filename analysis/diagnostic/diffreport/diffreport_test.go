@@ -97,7 +97,7 @@ func TestCompareMatchesExactBeforeLineDrift(t *testing.T) {
 }
 
 func TestReadJSONLAcceptsExternalHarnessRows(t *testing.T) {
-	input := bytes.NewBufferString(`{"target":"framework/src/views","entry_id":"wippy.views:renderer","code":"E0000","severity":"error","line":53,"column":37,"message":"argument 1 (page) comes from any/unknown; no proof shows it is {id: number | string}"}` + "\n")
+	input := bytes.NewBufferString(`{"target":"framework/src/views","source_path":"/home/me/wippy/framework/src/views/renderer.lua","entry_id":"wippy.views:renderer","code":"type.call.direct.argument_type","severity":"error","line":53,"column":37,"message":"argument 1 (page) comes from any/unknown; no proof shows it is {id: number | string}"}` + "\n")
 
 	records, err := ReadJSONL(input)
 	if err != nil {
@@ -112,6 +112,9 @@ func TestReadJSONLAcceptsExternalHarnessRows(t *testing.T) {
 	}
 	if key.Subject != "argument 1" {
 		t.Fatalf("subject = %q, want argument 1", key.Subject)
+	}
+	if records[0].SourcePath != "/home/me/wippy/framework/src/views/renderer.lua" {
+		t.Fatalf("source_path = %q", records[0].SourcePath)
 	}
 }
 

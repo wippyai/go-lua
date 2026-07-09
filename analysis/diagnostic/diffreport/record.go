@@ -24,10 +24,11 @@ type Record struct {
 	Evidence []Fact  `json:"evidence,omitempty"`
 	Labels   []Label `json:"labels,omitempty"`
 
-	Target  string `json:"target,omitempty"`
-	EntryID string `json:"entry_id,omitempty"`
-	Line    int    `json:"line,omitempty"`
-	Column  int    `json:"column,omitempty"`
+	Target     string `json:"target,omitempty"`
+	SourcePath string `json:"source_path,omitempty"`
+	EntryID    string `json:"entry_id,omitempty"`
+	Line       int    `json:"line,omitempty"`
+	Column     int    `json:"column,omitempty"`
 }
 
 // Span identifies the primary range for a diagnostic record.
