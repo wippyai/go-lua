@@ -145,29 +145,22 @@ func validPathPresenceImplication(implication PathPresenceImplication) bool {
 	if implication.Trigger == (keyspace.Key{}) || implication.Target == (keyspace.Key{}) {
 		return false
 	}
-	if implication.HasTriggerPathEqual {
+	switch {
+	case implication.HasTriggerPathEqual:
 		if implication.TriggerOther == (keyspace.Key{}) || implication.TriggerOther == implication.Trigger {
 			return false
 		}
-		if implication.HasTargetValue {
-			return implication.TargetValue != product.Top()
-		}
-		return pathPresenceImplicationPresenceValid(implication.TargetPresence)
-	}
-	if implication.HasTriggerValue {
+	case implication.HasTriggerValue:
 		if implication.TriggerValue == product.Top() {
 			return false
 		}
 		if implication.HasTriggerPresence && !pathPresenceImplicationPresenceValid(implication.TriggerPresence) {
 			return false
 		}
-		if implication.HasTargetValue {
-			return implication.TargetValue != product.Top()
+	default:
+		if !pathPresenceImplicationPresenceValid(implication.TriggerPresence) {
+			return false
 		}
-		return pathPresenceImplicationPresenceValid(implication.TargetPresence)
-	}
-	if !pathPresenceImplicationPresenceValid(implication.TriggerPresence) {
-		return false
 	}
 	if implication.HasTargetValue {
 		return implication.TargetValue != product.Top()

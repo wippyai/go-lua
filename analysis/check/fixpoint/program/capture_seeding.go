@@ -305,23 +305,24 @@ func (s *closureCaptureSeeder) apply(
 			continue
 		}
 		fullValue := s.fullCapturedValue(capture.Captured, slot)
-		written := s.captureHasWrite(capture.Captured)
-		escapedMutable := !written &&
+		degrade := s.captureHasWrite(capture.Captured)
+		allowInvariantStaticMembers := false
+		if !degrade &&
 			!s.captureIsRequireModule(capture.Captured) &&
 			!s.captureHasDirectNonFunctionInvariantMember(capture) &&
-			s.captureEscapesMutable(fullValue)
-		if escapedMutable {
+			s.captureEscapesMutable(fullValue) {
 			if invariantFull, ok := s.fullGraphInvariantCapturedValue(capture.Captured, fullValue); ok {
 				fullValue = invariantFull
-				escapedMutable = false
+			} else {
+				degrade = true
+				allowInvariantStaticMembers = true
 			}
 		}
-		degrade := written || escapedMutable
 		if degrade {
 			entry = s.stripCapturedPathEvidence(capture, entry)
 		}
 		var pathSeen bool
-		entry, pathSeen = s.seedCapturedPathEvidence(capture, entry, degrade, escapedMutable)
+		entry, pathSeen = s.seedCapturedPathEvidence(capture, entry, degrade, allowInvariantStaticMembers)
 		seen = seen || pathSeen
 		value := s.capturedEntryValue(capture.Captured, fullValue, degrade)
 		if contextEntryValueUseful(s.reg, value) {
@@ -503,38 +504,31 @@ func (s *closureCaptureSeeder) seedCapturedPathEvidence(capture bind.Capture, en
 }
 
 func captureInvariantStaticMemberValue(reg *axis.Registry, value product.Value) bool {
-	t, ok := typevalue.TypeOf(reg, value)
-	if !ok || t == nil {
-		return false
-	}
-	switch tt := unwrap.Annotated(t).(type) {
-	case *typ.Function:
-		return true
-	case *typ.Literal:
-		return tt.Base == kind.String
-	case *typ.Record:
-		return !tt.Open && !tt.HasMapComponent() && tt.Metatable == nil
-	case *typ.Map, *typ.ReadonlyMap, *typ.Array, *typ.Tuple:
-		return true
-	default:
-		return typ.TypeEquals(tt, typ.String)
-	}
+	ok, _ := captureInvariantStaticMemberValueKind(reg, value)
+	return ok
 }
 
 func captureNonFunctionInvariantStaticMemberValue(reg *axis.Registry, value product.Value) bool {
+	ok, function := captureInvariantStaticMemberValueKind(reg, value)
+	return ok && !function
+}
+
+func captureInvariantStaticMemberValueKind(reg *axis.Registry, value product.Value) (bool, bool) {
 	t, ok := typevalue.TypeOf(reg, value)
 	if !ok || t == nil {
-		return false
+		return false, false
 	}
 	switch tt := unwrap.Annotated(t).(type) {
+	case *typ.Function:
+		return true, true
 	case *typ.Literal:
-		return tt.Base == kind.String
+		return tt.Base == kind.String, false
 	case *typ.Record:
-		return !tt.Open && !tt.HasMapComponent() && tt.Metatable == nil
+		return !tt.Open && !tt.HasMapComponent() && tt.Metatable == nil, false
 	case *typ.Map, *typ.ReadonlyMap, *typ.Array, *typ.Tuple:
-		return true
+		return true, false
 	default:
-		return typ.TypeEquals(tt, typ.String)
+		return typ.TypeEquals(tt, typ.String), false
 	}
 }
 
@@ -714,9 +708,12 @@ func seedInvariantHeapObject(
 	}
 
 	out := entry
-	staticMembers := make(map[keyspace.Key]product.Value)
+	var staticMembers map[keyspace.Key]product.Value
 	for key, value := range object.StaticMembers() {
 		if captureNestedScalarInvariantStaticMemberValue(reg, value) {
+			if staticMembers == nil {
+				staticMembers = make(map[keyspace.Key]product.Value)
+			}
 			staticMembers[key] = value
 			continue
 		}
@@ -727,6 +724,9 @@ func seedInvariantHeapObject(
 		var copied bool
 		out, copied = seedInvariantHeapObject(reg, caller, out, childID, memo, active)
 		if copied {
+			if staticMembers == nil {
+				staticMembers = make(map[keyspace.Key]product.Value)
+			}
 			staticMembers[key] = value
 		}
 	}

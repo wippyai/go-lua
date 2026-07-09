@@ -83,31 +83,14 @@ func (l *lowerer) addConditionalAssignmentImplications(input *factflow.FactsInpu
 					continue
 				}
 				for _, target := range present {
-					if target.path.Symbol == 0 || !target.fromBranch {
-						continue
-					}
-					if target.hasValue {
-						if !appendPartitionPathValuePresenceImplications(input.PathValuePresenceImplications, join, &partitionImplicationCount,
-							factflow.NewPathValueRefinementImplication(
-								trigger.path,
-								trigger.value,
-								target.path,
-								target.value,
-							),
-						) {
-							return
-						}
-					} else {
-						if !appendPartitionPathValuePresenceImplications(input.PathValuePresenceImplications, join, &partitionImplicationCount,
-							factflow.NewPathValuePresenceImplication(
-								trigger.path,
-								trigger.value,
-								target.path,
-								presence.Present(),
-							),
-						) {
-							return
-						}
+					if !appendConditionalAssignmentTargetImplication(
+						input.PathValuePresenceImplications,
+						join,
+						&partitionImplicationCount,
+						conditionalImplicationTrigger{path: trigger.path, value: trigger.value},
+						target,
+					) {
+						return
 					}
 				}
 			}
@@ -145,7 +128,7 @@ func (l *lowerer) addChannelSelectPayloadImplications(
 				product.Equal(l.registry, payload, product.Bottom(l.registry)) {
 				continue
 			}
-			if !appendPartitionPathValuePresenceImplications(
+			if !appendPartitionPathValuePresenceImplication(
 				input.PathValuePresenceImplications,
 				point,
 				partitionImplicationCount,
@@ -173,61 +156,72 @@ func (l *lowerer) addBranchAssignmentValueImplications(
 	if input == nil || len(selected) == 0 || len(opposites) == 0 {
 		return
 	}
-	for triggerSym, trigger := range selected {
-		if !trigger.fromBranch || !trigger.hasValue {
+	for triggerSym, triggerAssignment := range selected {
+		if !triggerAssignment.fromBranch || !triggerAssignment.hasValue {
 			continue
 		}
-		if !literalPartitionDiscriminantValue(l.registry, trigger.value) {
+		if !literalPartitionDiscriminantValue(l.registry, triggerAssignment.value) {
 			continue
 		}
-		if !oppositeAssignmentsContradictTrigger(l.registry, triggerSym, trigger, incoming, opposites) {
+		if !oppositeAssignmentsContradictTrigger(l.registry, triggerSym, triggerAssignment, incoming, opposites) {
 			continue
+		}
+		trigger := conditionalImplicationTrigger{
+			path:          triggerAssignment.path,
+			value:         triggerAssignment.value,
+			requireTruthy: true,
 		}
 		for targetSym, target := range selected {
-			if targetSym == triggerSym || !target.fromBranch || target.path.Symbol == 0 {
+			if targetSym == triggerSym {
 				continue
 			}
-			if target.hasValue {
-				if !appendPartitionPathValuePresenceImplications(input.PathValuePresenceImplications, join, partitionImplicationCount,
-					factflow.NewPathTruthyValueRefinementImplication(
-						trigger.path,
-						trigger.value,
-						target.path,
-						target.value,
-					),
-				) {
-					return
-				}
-			} else {
-				if !appendPartitionPathValuePresenceImplications(input.PathValuePresenceImplications, join, partitionImplicationCount,
-					factflow.NewPathValuePresenceImplication(
-						trigger.path,
-						trigger.value,
-						target.path,
-						presence.Present(),
-					),
-				) {
-					return
-				}
+			if !appendConditionalAssignmentTargetImplication(input.PathValuePresenceImplications, join, partitionImplicationCount, trigger, target) {
+				return
 			}
 		}
 	}
 }
 
-func appendPartitionPathValuePresenceImplications(
+type conditionalImplicationTrigger struct {
+	path          path.Path
+	value         product.Value
+	requireTruthy bool
+}
+
+func appendConditionalAssignmentTargetImplication(
 	out map[cfg.Point]factflow.PathValuePresenceImplicationSet,
 	point cfg.Point,
 	count *int,
-	implications ...factflow.PathValuePresenceImplication,
+	trigger conditionalImplicationTrigger,
+	target conditionalAssignment,
 ) bool {
-	for _, implication := range implications {
-		if count != nil && *count >= MaxPartitionImplicationsPerBody {
-			return false
-		}
-		appendPathValuePresenceImplications(out, point, implication)
-		if count != nil {
-			(*count)++
-		}
+	if target.path.Symbol == 0 || !target.fromBranch {
+		return true
+	}
+	var implication factflow.PathValuePresenceImplication
+	switch {
+	case target.hasValue && trigger.requireTruthy:
+		implication = factflow.NewPathTruthyValueRefinementImplication(trigger.path, trigger.value, target.path, target.value)
+	case target.hasValue:
+		implication = factflow.NewPathValueRefinementImplication(trigger.path, trigger.value, target.path, target.value)
+	default:
+		implication = factflow.NewPathValuePresenceImplication(trigger.path, trigger.value, target.path, presence.Present())
+	}
+	return appendPartitionPathValuePresenceImplication(out, point, count, implication)
+}
+
+func appendPartitionPathValuePresenceImplication(
+	out map[cfg.Point]factflow.PathValuePresenceImplicationSet,
+	point cfg.Point,
+	count *int,
+	implication factflow.PathValuePresenceImplication,
+) bool {
+	if count != nil && *count >= MaxPartitionImplicationsPerBody {
+		return false
+	}
+	appendPathValuePresenceImplications(out, point, implication)
+	if count != nil {
+		(*count)++
 	}
 	return true
 }

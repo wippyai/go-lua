@@ -37,14 +37,13 @@ func (l Lane) InvalidateStableSymbol(sym symbol.ID) Lane {
 	match := func(candidate keyspace.Key) bool {
 		return stableKeyBelongsToSymbol(candidate, sym)
 	}
-	out, _ := l.invalidatePathKeyEvidence(
+	return l.invalidatePathKeyEvidence(
 		func(m map[keyspace.Key]product.Value) (map[keyspace.Key]product.Value, bool) {
 			return deleteMatchingPathKeys(m, match)
 		},
 		match,
 		func(proof BranchProof) bool { return branchProofMatchesPath(proof, match) },
 	)
-	return out
 }
 
 func stableKeyBelongsToSymbol(candidate keyspace.Key, sym symbol.ID) bool {
@@ -65,39 +64,38 @@ func (l Lane) InvalidatePathKeySubtreePrefixes(ks *keyspace.KeySpace, prefixes [
 	match := func(candidate keyspace.Key) bool {
 		return pathKeyInAnyPrefix(ks, candidate, prefixKeys)
 	}
-	out, _ := l.invalidatePathKeyEvidence(
+	return l.invalidatePathKeyEvidence(
 		func(m map[keyspace.Key]product.Value) (map[keyspace.Key]product.Value, bool) {
 			return deletePathKeySubtrees(ks, m, prefixKeys)
 		},
 		match,
 		func(proof BranchProof) bool { return branchProofMatchesPath(proof, match) },
 	)
-	return out
 }
 
 // invalidatePathKeyEvidence drops refinement and static-member entries via
 // deleteFromMap and branch proofs and presence implications whose path-key
-// matches, returning the updated lane (or the receiver unchanged). proofMatch
-// decides branch-proof removal separately so a length fact such as an
-// index-in-range proof can clear with different scope than value-identity proofs.
+// matches. proofMatch decides branch-proof removal separately so a length fact
+// such as an index-in-range proof can clear with different scope than
+// value-identity proofs.
 func (l Lane) invalidatePathKeyEvidence(
 	deleteFromMap func(map[keyspace.Key]product.Value) (map[keyspace.Key]product.Value, bool),
 	match func(candidate keyspace.Key) bool,
 	proofMatch func(proof BranchProof) bool,
-) (Lane, bool) {
+) Lane {
 	refinements, changed := deleteFromMap(l.refinements)
 	staticMembers, staticChanged := deleteFromMap(l.staticMembers)
 	proofs, proofChanged := deleteBranchProofsWhere(l.proofs, proofMatch)
 	implications, implicationChanged := deletePathPresenceImplicationsMatching(l.pathPresenceImplications, match)
 	if !changed && !staticChanged && !proofChanged && !implicationChanged {
-		return l, true
+		return l
 	}
 	out := l
 	out.refinements = refinements
 	out.staticMembers = staticMembers
 	out.proofs = proofs
 	out.pathPresenceImplications = implications
-	return out, true
+	return out
 }
 
 // InvalidatePathKeyDescendants removes finite path evidence below pathKey while
@@ -121,7 +119,7 @@ func (l Lane) InvalidatePathKeyDescendantPrefixes(ks *keyspace.KeySpace, prefixe
 		return pathKeyInAnyStrictPrefix(ks, candidate, descendantKeys) ||
 			pathKeyInAnyPrefix(ks, candidate, subtreeKeys)
 	}
-	out, _ := l.invalidatePathKeyEvidence(
+	return l.invalidatePathKeyEvidence(
 		func(m map[keyspace.Key]product.Value) (map[keyspace.Key]product.Value, bool) {
 			return deletePathKeyDescendantPrefixes(ks, m, descendantKeys, subtreeKeys)
 		},
@@ -142,7 +140,6 @@ func (l Lane) InvalidatePathKeyDescendantPrefixes(ks *keyspace.KeySpace, prefixe
 			return false
 		},
 	)
-	return out
 }
 
 // pathKeyInDescendantInvalidationOrRoot reports whether candidate is the
@@ -375,12 +372,7 @@ func deletePathKeySubtrees(
 	prefixKeys []keyspace.Key,
 ) (map[keyspace.Key]product.Value, bool) {
 	return deleteMatchingPathKeys(in, func(candidate keyspace.Key) bool {
-		for _, prefix := range prefixKeys {
-			if ks.HasPrefix(candidate, prefix) {
-				return true
-			}
-		}
-		return false
+		return pathKeyInAnyPrefix(ks, candidate, prefixKeys)
 	})
 }
 
@@ -391,17 +383,8 @@ func deletePathKeyDescendantPrefixes(
 	subtreeKeys []keyspace.Key,
 ) (map[keyspace.Key]product.Value, bool) {
 	return deleteMatchingPathKeys(in, func(candidate keyspace.Key) bool {
-		for _, prefix := range descendantKeys {
-			if ks.HasStrictPrefix(candidate, prefix) {
-				return true
-			}
-		}
-		for _, prefix := range subtreeKeys {
-			if ks.HasPrefix(candidate, prefix) {
-				return true
-			}
-		}
-		return false
+		return pathKeyInAnyStrictPrefix(ks, candidate, descendantKeys) ||
+			pathKeyInAnyPrefix(ks, candidate, subtreeKeys)
 	})
 }
 

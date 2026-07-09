@@ -42,11 +42,8 @@ func IsSelectCall(call *ast.FuncCallExpr, bindings *bind.Result) bool {
 // IsReceiveCaseCall reports whether call is a Channel<T>:case_receive() runtime
 // case. The receiver must resolve to a path whose static annotation is Channel.
 func IsReceiveCaseCall(call *ast.FuncCallExpr, bindings *bind.Result) bool {
-	if !IsReceiveCaseSyntax(call, bindings) {
-		return false
-	}
-	channelPath, ok := pathexpr.Resolve(call.Receiver, bindings)
-	if !ok || channelPath.IsEmpty() {
+	channelPath, ok := receiveCasePath(call, bindings)
+	if !ok {
 		return false
 	}
 	channelType, ok := pathType(bindings, channelPath)
@@ -58,11 +55,8 @@ func IsReceiveCaseCall(call *ast.FuncCallExpr, bindings *bind.Result) bool {
 // annotation. Module-aware transfer layers may prove the payload type later
 // even when local annotations are unavailable here.
 func IsReceiveCaseCandidate(call *ast.FuncCallExpr, bindings *bind.Result) bool {
-	if !IsReceiveCaseSyntax(call, bindings) {
-		return false
-	}
-	channelPath, ok := pathexpr.Resolve(call.Receiver, bindings)
-	if !ok || channelPath.IsEmpty() {
+	channelPath, ok := receiveCasePath(call, bindings)
+	if !ok {
 		return false
 	}
 	channelType, ok := pathType(bindings, channelPath)
@@ -77,11 +71,19 @@ func IsReceiveCaseCandidate(call *ast.FuncCallExpr, bindings *bind.Result) bool 
 // module-aware type resolver must perform that proof before publishing payload
 // evidence.
 func IsReceiveCaseSyntax(call *ast.FuncCallExpr, bindings *bind.Result) bool {
+	_, ok := receiveCasePath(call, bindings)
+	return ok
+}
+
+func receiveCasePath(call *ast.FuncCallExpr, bindings *bind.Result) (pathdom.Path, bool) {
 	if call == nil || bindings == nil || call.Receiver == nil || call.Method != caseReceiveMethod || len(call.Args) != 0 || len(call.TypeArgs) != 0 {
-		return false
+		return pathdom.Path{}, false
 	}
 	channelPath, ok := pathexpr.Resolve(call.Receiver, bindings)
-	return ok && !channelPath.IsEmpty()
+	if !ok || channelPath.IsEmpty() {
+		return pathdom.Path{}, false
+	}
+	return channelPath, true
 }
 
 // pathType resolves the annotated type for a path, following field and index
