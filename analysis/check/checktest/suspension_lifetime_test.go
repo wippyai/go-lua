@@ -154,6 +154,18 @@ return M
 	if sig.OperationalEffects == nil || !sig.OperationalEffects.SuspensionKnown || !sig.OperationalEffects.MaySuspend {
 		t.Fatalf("suspension export = %#v, want certified may-suspend", sig.OperationalEffects)
 	}
+	data, err := manifest.Encode(mod.Manifest)
+	if err != nil {
+		t.Fatalf("encode manifest: %v", err)
+	}
+	decoded, err := manifest.Decode(data)
+	if err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	decodedSig, ok := decoded.FunctionSignatures["suspension.run"]
+	if !ok || decodedSig.OperationalEffects == nil || !decodedSig.OperationalEffects.SuspensionKnown || !decodedSig.OperationalEffects.MaySuspend {
+		t.Fatalf("decoded suspension export = %#v, want certified may-suspend", decodedSig.OperationalEffects)
+	}
 }
 
 func requireCleanSuspensionLifetimeCheck(t *testing.T, result Result) {
