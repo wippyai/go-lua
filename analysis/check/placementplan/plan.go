@@ -67,17 +67,19 @@ const (
 )
 
 type Entry struct {
-	ID             identity.ID
-	Target         Target
-	Placement      placement.Value
-	HasObject      bool
-	AllocationSite bool
-	Decomposable   bool
-	Frozen         bool
-	Reasons        []Reason
-	Obligations    []Obligation
-	Blockers       []Blocker
-	Children       []identity.ID
+	ID                      identity.ID
+	Target                  Target
+	Placement               placement.Value
+	HasObject               bool
+	AllocationSite          bool
+	Decomposable            bool
+	Frozen                  bool
+	Reasons                 []Reason
+	Obligations             []Obligation
+	Blockers                []Blocker
+	Children                []identity.ID
+	DiesBeforeSuspension    bool
+	HasDiesBeforeSuspension bool
 }
 
 type Plan struct {
@@ -129,6 +131,9 @@ func Merge(plans ...Plan) Plan {
 			aggregate.addChildren(entry.ID, entry.Children)
 			if entry.Frozen {
 				aggregate.frozen[entry.ID] = struct{}{}
+			}
+			if entry.HasDiesBeforeSuspension {
+				aggregate.addDiesBeforeSuspension(entry.ID, entry.DiesBeforeSuspension)
 			}
 			if entry.Target == TargetNoFact {
 				continue
@@ -229,6 +234,7 @@ type aggregate struct {
 	children   map[identity.ID]map[identity.ID]struct{}
 	placements map[identity.ID]placement.Value
 	frozen     map[identity.ID]struct{}
+	lifetimes  map[identity.ID]bool
 }
 
 func newAggregate() aggregate {
@@ -240,6 +246,7 @@ func newAggregate() aggregate {
 		children:   make(map[identity.ID]map[identity.ID]struct{}),
 		placements: make(map[identity.ID]placement.Value),
 		frozen:     make(map[identity.ID]struct{}),
+		lifetimes:  make(map[identity.ID]bool),
 	}
 }
 
@@ -258,6 +265,9 @@ func (a *aggregate) addResult(result *body.Result) {
 		a.addAllocationSite(fact.Identity, fact.Decomposable)
 		return true
 	})
+	for _, fact := range result.AllocationLifetimeFacts() {
+		a.addDiesBeforeSuspension(fact.ID, fact.DiesBeforeSuspension)
+	}
 	for _, child := range result.FunctionResults() {
 		a.addResult(child)
 	}
@@ -317,6 +327,9 @@ func (a *aggregate) plan() Plan {
 	for id := range a.placements {
 		ids[id] = struct{}{}
 	}
+	for id := range a.lifetimes {
+		ids[id] = struct{}{}
+	}
 	ordered := orderedIDs(ids)
 	out := Plan{
 		Top:        a.top,
@@ -339,6 +352,10 @@ func (a *aggregate) plan() Plan {
 			Frozen:         mapContains(a.frozen, id),
 			Children:       orderedIDs(a.children[id]),
 		}
+		if dies, ok := a.lifetimes[id]; ok {
+			entry.DiesBeforeSuspension = dies
+			entry.HasDiesBeforeSuspension = true
+		}
 		entry = annotate(entry, hasPlacement)
 		out.Entries = append(out.Entries, entry)
 	}
@@ -355,6 +372,17 @@ func (a *aggregate) addAllocationSite(id identity.ID, decomposable bool) {
 		return
 	}
 	a.decomps[id] = a.decomps[id] && decomposable
+}
+
+func (a *aggregate) addDiesBeforeSuspension(id identity.ID, dies bool) {
+	if id == (identity.ID{}) {
+		return
+	}
+	if prev, ok := a.lifetimes[id]; ok {
+		a.lifetimes[id] = prev && dies
+		return
+	}
+	a.lifetimes[id] = dies
 }
 
 func (a *aggregate) addChildren(parent identity.ID, children []identity.ID) {

@@ -94,23 +94,25 @@ type fixtureDiagnosticLabelExpectation struct {
 }
 
 type fixturePlacement struct {
-	RequireComplete    bool `json:"require_complete,omitempty"`
-	MinStack           int  `json:"min_stack,omitempty"`
-	MinOwnedHeap       int  `json:"min_owned_heap,omitempty"`
-	MinSharedHeap      int  `json:"min_shared_heap,omitempty"`
-	MaxStack           *int `json:"max_stack,omitempty"`
-	MaxOwnedHeap       *int `json:"max_owned_heap,omitempty"`
-	MaxSharedHeap      *int `json:"max_shared_heap,omitempty"`
-	MinStackDepth      int  `json:"min_stack_depth,omitempty"`
-	MinOwnedHeapDepth  int  `json:"min_owned_heap_depth,omitempty"`
-	MinSharedDepth     int  `json:"min_shared_depth,omitempty"`
-	MinOwnerIdentity   int  `json:"min_owner_identity,omitempty"`
-	MinSealBeforeShare int  `json:"min_seal_before_share,omitempty"`
-	MinAllocationSites int  `json:"min_allocation_sites,omitempty"`
-	MinDecomposable    int  `json:"min_decomposable,omitempty"`
-	MaxNoFact          *int `json:"max_no_fact,omitempty"`
-	MaxUnknown         *int `json:"max_unknown,omitempty"`
-	MaxDecomposable    *int `json:"max_decomposable,omitempty"`
+	RequireComplete         bool `json:"require_complete,omitempty"`
+	MinStack                int  `json:"min_stack,omitempty"`
+	MinOwnedHeap            int  `json:"min_owned_heap,omitempty"`
+	MinSharedHeap           int  `json:"min_shared_heap,omitempty"`
+	MaxStack                *int `json:"max_stack,omitempty"`
+	MaxOwnedHeap            *int `json:"max_owned_heap,omitempty"`
+	MaxSharedHeap           *int `json:"max_shared_heap,omitempty"`
+	MinStackDepth           int  `json:"min_stack_depth,omitempty"`
+	MinOwnedHeapDepth       int  `json:"min_owned_heap_depth,omitempty"`
+	MinSharedDepth          int  `json:"min_shared_depth,omitempty"`
+	MinOwnerIdentity        int  `json:"min_owner_identity,omitempty"`
+	MinSealBeforeShare      int  `json:"min_seal_before_share,omitempty"`
+	MinAllocationSites      int  `json:"min_allocation_sites,omitempty"`
+	MinDecomposable         int  `json:"min_decomposable,omitempty"`
+	MaxNoFact               *int `json:"max_no_fact,omitempty"`
+	MaxUnknown              *int `json:"max_unknown,omitempty"`
+	MaxDecomposable         *int `json:"max_decomposable,omitempty"`
+	MinDiesBeforeSuspension int  `json:"min_dies_before_suspension,omitempty"`
+	MaxDiesBeforeSuspension *int `json:"max_dies_before_suspension,omitempty"`
 
 	MinStackKind      map[string]int `json:"min_stack_kind,omitempty"`
 	MinOwnedHeapKind  map[string]int `json:"min_owned_heap_kind,omitempty"`
@@ -409,6 +411,8 @@ func verifyPlacementExpectations(t testing.TB, expect fixturePlacement, plan pla
 	assertMinPlacementCount(t, "seal-before-share obligations", counts.sealBeforeShare, expect.MinSealBeforeShare, plan)
 	assertMinPlacementCount(t, "allocation sites", counts.allocationSites, expect.MinAllocationSites, plan)
 	assertMinPlacementCount(t, "decomposable", counts.decomposable, expect.MinDecomposable, plan)
+	assertMinPlacementCount(t, "dies-before-suspension", counts.diesBeforeSuspension, expect.MinDiesBeforeSuspension, plan)
+	assertMaxPlacementCount(t, "dies-before-suspension", counts.diesBeforeSuspension, expect.MaxDiesBeforeSuspension, plan)
 	assertMinPlacementKindCounts(t, "stack", placementKindCounts(plan, placementplan.TargetStack), expect.MinStackKind, plan)
 	assertMinPlacementKindCounts(t, "owned-heap", placementKindCounts(plan, placementplan.TargetOwnedHeap), expect.MinOwnedHeapKind, plan)
 	assertMinPlacementKindCounts(t, "shared-heap", placementKindCounts(plan, placementplan.TargetSharedHeap), expect.MinSharedHeapKind, plan)
@@ -427,15 +431,16 @@ func verifyPlacementExpectations(t testing.TB, expect fixturePlacement, plan pla
 }
 
 type fixturePlacementCounts struct {
-	stack           int
-	ownedHeap       int
-	sharedHeap      int
-	noFact          int
-	unknown         int
-	ownerIdentity   int
-	sealBeforeShare int
-	allocationSites int
-	decomposable    int
+	stack                int
+	ownedHeap            int
+	sharedHeap           int
+	noFact               int
+	unknown              int
+	ownerIdentity        int
+	sealBeforeShare      int
+	allocationSites      int
+	decomposable         int
+	diesBeforeSuspension int
 }
 
 func placementCounts(plan placementplan.Plan) fixturePlacementCounts {
@@ -466,6 +471,9 @@ func placementCounts(plan placementplan.Plan) fixturePlacementCounts {
 			case placementplan.ObligationSealBeforeShare:
 				counts.sealBeforeShare++
 			}
+		}
+		if entry.HasDiesBeforeSuspension && entry.DiesBeforeSuspension {
+			counts.diesBeforeSuspension++
 		}
 	}
 	return counts
@@ -516,7 +524,11 @@ func assertMaxPlacementKindCounts(t testing.TB, label string, got map[string]int
 func formatPlacementEntries(plan placementplan.Plan) string {
 	var parts []string
 	for _, entry := range plan.Entries {
-		parts = append(parts, fmt.Sprintf("%s:%s alloc=%t decomposable=%t reasons=%v obligations=%v blockers=%v", entry.ID, entry.Target, entry.AllocationSite, entry.Decomposable, entry.Reasons, entry.Obligations, entry.Blockers))
+		lifetime := "unset"
+		if entry.HasDiesBeforeSuspension {
+			lifetime = fmt.Sprintf("%t", entry.DiesBeforeSuspension)
+		}
+		parts = append(parts, fmt.Sprintf("%s:%s alloc=%t decomposable=%t dies_before_suspension=%s reasons=%v obligations=%v blockers=%v", entry.ID, entry.Target, entry.AllocationSite, entry.Decomposable, lifetime, entry.Reasons, entry.Obligations, entry.Blockers))
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, "; ")

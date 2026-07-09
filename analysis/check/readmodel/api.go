@@ -57,6 +57,7 @@ type Reader interface {
 	ForEachSplitBirthDiscriminant(func(SplitBirthDiscriminant) bool) bool
 	ForEachClosureCapture(func(ClosureCapture) bool) bool
 	ForEachAllocationSite(func(AllocationSite) bool) bool
+	ForEachAllocationLifetime(func(AllocationLifetime) bool) bool
 	DominatingTruthyBranchForPath(cfg.Point, BranchCheck) (DominatingBranchProof, bool)
 	DominatingBranchCheckForPath(cfg.Point, BranchCheck, func(BranchCheck, bool) bool) (DominatingBranchProof, bool)
 }
@@ -193,6 +194,20 @@ type SplitBirthPayloadWrite struct {
 }
 
 const ClosureCaptureSchemaVersion = 2
+
+const AllocationLifetimeSchemaVersion = 1
+
+// AllocationLifetime is the codegen-facing solved export for one body-local
+// allocation site.
+type AllocationLifetime struct {
+	SchemaVersion int
+	ID            identity.ID
+	BirthPoint    cfg.Point
+	BirthSpan     SourceSpan
+	HasBirthSpan  bool
+
+	DiesBeforeSuspension bool
+}
 
 // ClosureCapture is the codegen-facing solved export for one captured symbol at
 // a closure creation site.
