@@ -370,12 +370,73 @@ func writeRootSymbol(ctx transfer.NodeContext, resolver *visibility.Resolver, ou
 		return out
 	}
 	if resolver != nil {
+		preserved := rootAssignmentPreservedStableTargetImplications(ctx.Registry, resolver, out, target, value)
 		if invalidated, ok := invalidatePathSubtreeAt(out, resolver, ctx.Point, targetPath); ok {
 			out = invalidated
 		}
 		out = out.InvalidateStableSymbolPathEvidence(target)
+		for _, implication := range preserved {
+			out = out.AddPathPresenceImplication(implication)
+		}
 	}
 	return out.WriteValue(ctx.Registry, key.SymbolValue(target), value)
+}
+
+func rootAssignmentPreservedStableTargetImplications(
+	reg *axis.Registry,
+	resolver *visibility.Resolver,
+	out state.State,
+	target symbol.ID,
+	value product.Value,
+) []pathevidence.PathPresenceImplication {
+	if reg == nil || resolver == nil || target == 0 {
+		return nil
+	}
+	snapshot := out.PathPresenceImplicationsSnapshot(resolver.KeySpace())
+	if snapshot.Bottom || len(snapshot.Implications) == 0 {
+		return nil
+	}
+	var preserved []pathevidence.PathPresenceImplication
+	for _, implication := range snapshot.Implications {
+		if stableRootImplicationEndpointMatchesSymbol(implication.Trigger, target) {
+			continue
+		}
+		if !stableRootImplicationEndpointMatchesSymbol(implication.Target, target) {
+			continue
+		}
+		if !rootAssignmentValueSatisfiesImplicationTarget(reg, value, implication) {
+			continue
+		}
+		preserved = append(preserved, implication)
+	}
+	return preserved
+}
+
+func stableRootImplicationEndpointMatchesSymbol(candidate keyspace.Key, target symbol.ID) bool {
+	if candidate.Sym != target || candidate.Segs != 0 {
+		return false
+	}
+	switch candidate.Kind {
+	case keyspace.KindUnversionedSym, keyspace.KindStableSym:
+		return true
+	default:
+		return false
+	}
+}
+
+func rootAssignmentValueSatisfiesImplicationTarget(
+	reg *axis.Registry,
+	value product.Value,
+	implication pathevidence.PathPresenceImplication,
+) bool {
+	if implication.HasTargetValue {
+		return product.Domain(reg).LessOrEq(value, implication.TargetValue)
+	}
+	if !presence.Equal(implication.TargetPresence, presence.Present()) && !presence.Equal(implication.TargetPresence, presence.Absent()) {
+		return false
+	}
+	constraint := product.NewWithPresence(reg, product.ShapeTop, implication.TargetPresence)
+	return product.Domain(reg).LessOrEq(value, constraint)
 }
 
 func applyClosedDynamicAllValueRootAssignment(
