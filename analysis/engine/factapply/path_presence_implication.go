@@ -321,17 +321,7 @@ func pathPresenceImplicationPathEqualTriggered(
 		return true
 	}
 	ks := resolver.KeySpace()
-	triggerKey := ks.Format(implication.Trigger)
-	otherKey := ks.Format(implication.TriggerOther)
-	if triggerKey == "" || otherKey == "" {
-		return false
-	}
-	for _, equivalent := range out.EquivalentPathKeys(ks, triggerKey) {
-		if equivalent == otherKey {
-			return true
-		}
-	}
-	return false
+	return out.HasEquivalentKeyspaceKey(ks, implication.Trigger, implication.TriggerOther)
 }
 
 func applyPathPresenceImplicationTarget(

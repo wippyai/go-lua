@@ -509,6 +509,16 @@ func (s State) EquivalentKeyspaceKeys(ks *keyspace.KeySpace, pathKey keyspace.Ke
 	return s.pathEvidence.EquivalentKeyspaceKeys(ks, pathKey)
 }
 
+// HasEquivalentKeyspaceKey reports whether target is a bounded structural
+// alias of pathKey. It avoids allocating the complete alias expansion for
+// callers that only need a membership test.
+func (s State) HasEquivalentKeyspaceKey(ks *keyspace.KeySpace, pathKey, target keyspace.Key) bool {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return false
+	}
+	return s.pathEvidence.HasEquivalentKeyspaceKey(ks, pathKey, target)
+}
+
 // EquivalentRootKeys returns root-symbol aliases proven equal to stateKey
 // without expanding descendant rebases. Use this for root-value refinement;
 // callers that need descendant path aliases should use EquivalentPathKeys.

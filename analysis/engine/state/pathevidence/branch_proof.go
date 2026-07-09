@@ -174,6 +174,61 @@ func (l Lane) EquivalentKeyspaceKeys(ks *keyspace.KeySpace, start keyspace.Key) 
 	return out
 }
 
+// HasEquivalentKeyspaceKey reports whether target is reachable from start
+// through equality proofs using the same bounded descendant rebasing as
+// EquivalentKeyspaceKeys. It avoids materializing and sorting every alias when
+// a caller only needs the membership answer.
+func (l Lane) HasEquivalentKeyspaceKey(ks *keyspace.KeySpace, start, target keyspace.Key) bool {
+	if ks == nil || start.Kind == keyspace.KindInvalid || target.Kind == keyspace.KindInvalid ||
+		start == target || l.proofsBottom || len(l.proofs) == 0 {
+		return false
+	}
+	if !l.equalityRootMask.empty() && !l.equalityRootMask.matches(start) {
+		return false
+	}
+	seen := map[keyspace.Key]struct{}{start: {}}
+	queue := []keyspace.Key{start}
+	segmentLimit := equivalentPathExpansionSegmentLimit(ks, start, l.proofs)
+	for len(queue) != 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for proof := range l.proofs {
+			if proof.Kind != BranchProofPathEqual {
+				continue
+			}
+			if equivalentKeyspaceTargetFound(ks, current, proof.Path, proof.Other, target, segmentLimit, seen, &queue) {
+				return true
+			}
+			if equivalentKeyspaceTargetFound(ks, current, proof.Other, proof.Path, target, segmentLimit, seen, &queue) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func equivalentKeyspaceTargetFound(
+	ks *keyspace.KeySpace,
+	current, from, to, target keyspace.Key,
+	segmentLimit int,
+	seen map[keyspace.Key]struct{},
+	queue *[]keyspace.Key,
+) bool {
+	next, ok := rebaseEquivalentPathKey(ks, current, from, to)
+	if !ok || exceedsEquivalentPathSegmentLimit(ks, next, segmentLimit) {
+		return false
+	}
+	if next == target {
+		return true
+	}
+	if _, seenAlready := seen[next]; seenAlready {
+		return false
+	}
+	seen[next] = struct{}{}
+	*queue = append(*queue, next)
+	return false
+}
+
 func equivalentPathExpansionSegmentLimit(
 	ks *keyspace.KeySpace,
 	start keyspace.Key,

@@ -304,6 +304,17 @@ func TestEquivalentPathKeysRebaseThroughBranchProofs(t *testing.T) {
 			t.Fatalf("EquivalentPathKeys[%d] = %s, want %s", i, got[i], want[i])
 		}
 	}
+	start := mustStateKey(t, ks, "sym10@1.child.name")
+	target := mustStateKey(t, ks, "sym30@1.leaf.name")
+	if !l.HasEquivalentKeyspaceKey(ks, start, target) {
+		t.Fatalf("HasEquivalentKeyspaceKey(%s, %s) = false, want true", ks.Format(start), ks.Format(target))
+	}
+	if l.HasEquivalentKeyspaceKey(ks, start, start) {
+		t.Fatalf("HasEquivalentKeyspaceKey(%s, itself) = true, want false", ks.Format(start))
+	}
+	if l.HasEquivalentKeyspaceKey(ks, start, mustStateKey(t, ks, "sym99@1.child.name")) {
+		t.Fatal("HasEquivalentKeyspaceKey reported an unrelated key")
+	}
 }
 
 func TestEquivalentPathKeysStopsCyclicDescendantAliasExpansion(t *testing.T) {
