@@ -108,9 +108,11 @@ type fixturePlacement struct {
 	MinSealBeforeShare      int  `json:"min_seal_before_share,omitempty"`
 	MinAllocationSites      int  `json:"min_allocation_sites,omitempty"`
 	MinDecomposable         int  `json:"min_decomposable,omitempty"`
+	MinFrameLocal           int  `json:"min_frame_local,omitempty"`
 	MaxNoFact               *int `json:"max_no_fact,omitempty"`
 	MaxUnknown              *int `json:"max_unknown,omitempty"`
 	MaxDecomposable         *int `json:"max_decomposable,omitempty"`
+	MaxFrameLocal           *int `json:"max_frame_local,omitempty"`
 	MinDiesBeforeSuspension int  `json:"min_dies_before_suspension,omitempty"`
 	MaxDiesBeforeSuspension *int `json:"max_dies_before_suspension,omitempty"`
 
@@ -411,6 +413,7 @@ func verifyPlacementExpectations(t testing.TB, expect fixturePlacement, plan pla
 	assertMinPlacementCount(t, "seal-before-share obligations", counts.sealBeforeShare, expect.MinSealBeforeShare, plan)
 	assertMinPlacementCount(t, "allocation sites", counts.allocationSites, expect.MinAllocationSites, plan)
 	assertMinPlacementCount(t, "decomposable", counts.decomposable, expect.MinDecomposable, plan)
+	assertMinPlacementCount(t, "frame-local", counts.frameLocal, expect.MinFrameLocal, plan)
 	assertMinPlacementCount(t, "dies-before-suspension", counts.diesBeforeSuspension, expect.MinDiesBeforeSuspension, plan)
 	assertMaxPlacementCount(t, "dies-before-suspension", counts.diesBeforeSuspension, expect.MaxDiesBeforeSuspension, plan)
 	assertMinPlacementKindCounts(t, "stack", placementKindCounts(plan, placementplan.TargetStack), expect.MinStackKind, plan)
@@ -428,6 +431,9 @@ func verifyPlacementExpectations(t testing.TB, expect fixturePlacement, plan pla
 	if expect.MaxDecomposable != nil && counts.decomposable > *expect.MaxDecomposable {
 		t.Fatalf("placement decomposable count = %d, want <= %d; entries=%s", counts.decomposable, *expect.MaxDecomposable, formatPlacementEntries(plan))
 	}
+	if expect.MaxFrameLocal != nil && counts.frameLocal > *expect.MaxFrameLocal {
+		t.Fatalf("placement frame-local count = %d, want <= %d; entries=%s", counts.frameLocal, *expect.MaxFrameLocal, formatPlacementEntries(plan))
+	}
 }
 
 type fixturePlacementCounts struct {
@@ -440,6 +446,7 @@ type fixturePlacementCounts struct {
 	sealBeforeShare      int
 	allocationSites      int
 	decomposable         int
+	frameLocal           int
 	diesBeforeSuspension int
 }
 
@@ -447,6 +454,8 @@ func placementCounts(plan placementplan.Plan) fixturePlacementCounts {
 	var counts fixturePlacementCounts
 	for _, entry := range plan.Entries {
 		switch entry.Target {
+		case placementplan.TargetFrameLocal:
+			counts.stack++
 		case placementplan.TargetStack:
 			counts.stack++
 		case placementplan.TargetOwnedHeap:
@@ -463,6 +472,9 @@ func placementCounts(plan placementplan.Plan) fixturePlacementCounts {
 		}
 		if entry.Decomposable {
 			counts.decomposable++
+		}
+		if entry.FrameLocal {
+			counts.frameLocal++
 		}
 		for _, obligation := range entry.Obligations {
 			switch obligation {
@@ -482,7 +494,7 @@ func placementCounts(plan placementplan.Plan) fixturePlacementCounts {
 func placementKindCounts(plan placementplan.Plan, target placementplan.Target) map[string]int {
 	counts := make(map[string]int)
 	for _, entry := range plan.Entries {
-		if entry.Target == target {
+		if entry.Target == target || (target == placementplan.TargetStack && entry.Target == placementplan.TargetFrameLocal) {
 			counts[entry.ID.Kind]++
 		}
 	}
@@ -528,7 +540,7 @@ func formatPlacementEntries(plan placementplan.Plan) string {
 		if entry.HasDiesBeforeSuspension {
 			lifetime = fmt.Sprintf("%t", entry.DiesBeforeSuspension)
 		}
-		parts = append(parts, fmt.Sprintf("%s:%s alloc=%t decomposable=%t dies_before_suspension=%s reasons=%v obligations=%v blockers=%v", entry.ID, entry.Target, entry.AllocationSite, entry.Decomposable, lifetime, entry.Reasons, entry.Obligations, entry.Blockers))
+		parts = append(parts, fmt.Sprintf("%s:%s alloc=%t decomposable=%t frame_local=%t frame_local_use_proof=%t dies_before_suspension=%s reasons=%v obligations=%v blockers=%v", entry.ID, entry.Target, entry.AllocationSite, entry.Decomposable, entry.FrameLocal, entry.FrameLocalUseProof, lifetime, entry.Reasons, entry.Obligations, entry.Blockers))
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, "; ")

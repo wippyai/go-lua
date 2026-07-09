@@ -20,6 +20,29 @@ import (
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
+func TestTargetVocabularyValuesAreStable(t *testing.T) {
+	tests := []struct {
+		target Target
+		value  uint8
+		name   string
+	}{
+		{TargetNoFact, 0, "no-placement-fact"},
+		{TargetStack, 1, "stack"},
+		{TargetOwnedHeap, 2, "owned-heap"},
+		{TargetSharedHeap, 3, "shared-heap"},
+		{TargetUnknown, 4, "unknown"},
+		{TargetFrameLocal, 5, "frame-local"},
+	}
+	for _, tc := range tests {
+		if got := uint8(tc.target); got != tc.value {
+			t.Fatalf("%s target value = %d, want %d", tc.name, got, tc.value)
+		}
+		if got := tc.target.String(); got != tc.name {
+			t.Fatalf("target string = %q, want %q", got, tc.name)
+		}
+	}
+}
+
 func TestFromStateDistinguishesPlacementTargetsAndObligations(t *testing.T) {
 	reg := standard.Registry()
 	stackID := testID(1)
@@ -139,20 +162,22 @@ func TestMergePreservesPlacementChildEdges(t *testing.T) {
 func TestMergePreservesAllocationSiteLicense(t *testing.T) {
 	id := testID(45)
 	left := Plan{Entries: []Entry{{
-		ID:             id,
-		Target:         TargetStack,
-		Placement:      placement.Stack,
-		HasObject:      true,
-		AllocationSite: true,
-		Decomposable:   true,
+		ID:                 id,
+		Target:             TargetStack,
+		Placement:          placement.Stack,
+		HasObject:          true,
+		AllocationSite:     true,
+		Decomposable:       true,
+		FrameLocalUseProof: true,
 	}}}
 	right := Plan{Entries: []Entry{{
-		ID:             id,
-		Target:         TargetStack,
-		Placement:      placement.Stack,
-		HasObject:      true,
-		AllocationSite: true,
-		Decomposable:   true,
+		ID:                 id,
+		Target:             TargetStack,
+		Placement:          placement.Stack,
+		HasObject:          true,
+		AllocationSite:     true,
+		Decomposable:       true,
+		FrameLocalUseProof: true,
 	}}}
 
 	plan := Merge(left, right)
@@ -172,6 +197,57 @@ func TestMergePreservesAllocationSiteLicense(t *testing.T) {
 	}
 	if plan.Decomposable(id) {
 		t.Fatalf("Decomposable(%s) = true after conflicting merge, want false", id)
+	}
+}
+
+func TestMergePreservesFrameLocalLicense(t *testing.T) {
+	id := testID(46)
+	left := Plan{Entries: []Entry{{
+		ID:                      id,
+		Target:                  TargetFrameLocal,
+		Placement:               placement.Stack,
+		HasObject:               true,
+		AllocationSite:          true,
+		FrameLocalUseProof:      true,
+		FrameLocal:              true,
+		DiesBeforeSuspension:    true,
+		HasDiesBeforeSuspension: true,
+	}}}
+	right := Plan{Entries: []Entry{{
+		ID:                      id,
+		Target:                  TargetFrameLocal,
+		Placement:               placement.Stack,
+		HasObject:               true,
+		AllocationSite:          true,
+		FrameLocalUseProof:      true,
+		FrameLocal:              true,
+		DiesBeforeSuspension:    true,
+		HasDiesBeforeSuspension: true,
+	}}}
+
+	plan := Merge(left, right)
+	total, frameLocal := plan.FrameLocalStats()
+	if total != 1 || frameLocal != 1 {
+		t.Fatalf("frame-local stats = %d/%d, want 1/1; entries=%#v", frameLocal, total, plan.Entries)
+	}
+	if !plan.FrameLocal(id) {
+		t.Fatalf("FrameLocal(%s) = false, want true", id)
+	}
+	if got := plan.MaxTargetDepth(TargetFrameLocal); got != 1 {
+		t.Fatalf("frame-local depth = %d, want 1; entries=%#v", got, plan.Entries)
+	}
+	if got := plan.MaxTargetDepth(TargetStack); got != 1 {
+		t.Fatalf("stack bucket depth = %d, want frame-local included; entries=%#v", got, plan.Entries)
+	}
+
+	right.Entries[0].FrameLocal = false
+	plan = Merge(left, right)
+	total, frameLocal = plan.FrameLocalStats()
+	if total != 1 || frameLocal != 0 {
+		t.Fatalf("frame-local stats after conflict = %d/%d, want 0/1; entries=%#v", frameLocal, total, plan.Entries)
+	}
+	if plan.FrameLocal(id) {
+		t.Fatalf("FrameLocal(%s) = true after conflicting merge, want false", id)
 	}
 }
 
@@ -267,13 +343,59 @@ return total
 	for _, entry := range plan.Entries {
 		if entry.Decomposable {
 			found = true
-			if entry.Target != TargetStack {
-				t.Fatalf("decomposable entry target = %s, want stack: %#v", entry.Target, entry)
+			if entry.Target != TargetStack && entry.Target != TargetFrameLocal {
+				t.Fatalf("decomposable entry target = %s, want stack-like: %#v", entry.Target, entry)
 			}
 		}
 	}
 	if !found {
 		t.Fatalf("plan has no decomposable entry: %#v", plan.Entries)
+	}
+}
+
+func TestFromResultProjectsFrameLocalAllocations(t *testing.T) {
+	reg := standard.Registry()
+	stmts, err := parse.ParseString(`
+local scratch = { a = 1, b = 2 }
+local total = scratch.a + scratch.b
+`, "placement-plan-frame-local.lua")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	result, err := body.CheckChunk(stmts, body.Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	plan := FromResult(result)
+	total, frameLocal := plan.FrameLocalStats()
+	if total != 1 || frameLocal != 1 {
+		t.Fatalf("frame-local stats = %d/%d, want 1/1; entries=%#v", frameLocal, total, plan.Entries)
+	}
+	found := false
+	for _, entry := range plan.Entries {
+		if !entry.FrameLocal {
+			continue
+		}
+		found = true
+		if entry.Target != TargetFrameLocal {
+			t.Fatalf("frame-local entry target = %s, want %s: %#v", entry.Target, TargetFrameLocal, entry)
+		}
+		if entry.Placement != placement.Stack {
+			t.Fatalf("frame-local placement = %s, want stack: %#v", entry.Placement, entry)
+		}
+		if !entry.HasDiesBeforeSuspension || !entry.DiesBeforeSuspension {
+			t.Fatalf("frame-local entry lacks lifetime proof: %#v", entry)
+		}
+		if !entry.FrameLocalUseProof {
+			t.Fatalf("frame-local entry lacks use proof: %#v", entry)
+		}
+		if !hasReason(entry.Reasons, ReasonFrameLocalProof) {
+			t.Fatalf("frame-local entry reasons = %v, want %s", entry.Reasons, ReasonFrameLocalProof)
+		}
+	}
+	if !found {
+		t.Fatalf("plan has no frame-local entry: %#v", plan.Entries)
 	}
 }
 

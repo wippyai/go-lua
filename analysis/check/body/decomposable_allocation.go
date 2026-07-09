@@ -11,13 +11,20 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-const AllocationSiteFactSchemaVersion = 1
+const AllocationSiteFactSchemaVersion = 2
 
 // AllocationSiteFact is the solved allocation-site export for one table
 // constructor. Decomposable is an optimization license: when true, the table
 // allocation may be scalar-replaced because the checker proved fixed shape,
 // stack placement, static-only access, no identity demand, no capture, and no
 // metatable involvement for this phase.
+//
+// FrameLocalUseProof is a stricter body-local use proof shared with the
+// decomposable scan. It is not a placement license by itself: placement-plan
+// projection also requires stack placement and dies-before-suspension. Keeping
+// the suspension conjunct makes phase 1 proof-only; relaxing suspension-crossing
+// frame locals later should require only dropping that conjunct after the
+// runtime confirms stable thread-block safety.
 type AllocationSiteFact struct {
 	SchemaVersion int
 	Point         cfg.Point
@@ -33,6 +40,8 @@ type AllocationSiteFact struct {
 	StableShape bool
 
 	Decomposable bool
+
+	FrameLocalUseProof bool
 }
 
 // AllocationSiteFacts returns table-allocation facts attached to OpMakeTable
@@ -126,13 +135,15 @@ func (r *Result) allocationSiteFact(inst wir.Instruction, uses decomposableUseAn
 		fact.Fields = append([]StableShapeField(nil), shape.Fields...)
 		fact.StableShape = true
 	}
+	useProof := !uses.allocationDisqualified(inst)
+	fact.FrameLocalUseProof = useProof
 	fact.Decomposable = fact.StableShape &&
 		fact.HasPlacement &&
 		fact.Placement == placement.Stack &&
 		inst.StaticStringKeysComplete &&
 		!inst.ListSpread &&
 		!uses.bodyHasDynamicConstructorKey &&
-		!uses.allocationDisqualified(inst)
+		useProof
 	return fact, true
 }
 

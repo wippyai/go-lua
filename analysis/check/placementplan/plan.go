@@ -21,6 +21,7 @@ const (
 	TargetOwnedHeap
 	TargetSharedHeap
 	TargetUnknown
+	TargetFrameLocal
 )
 
 func (t Target) String() string {
@@ -35,6 +36,8 @@ func (t Target) String() string {
 		return "shared-heap"
 	case TargetUnknown:
 		return "unknown"
+	case TargetFrameLocal:
+		return "frame-local"
 	default:
 		return "placement-target(invalid)"
 	}
@@ -44,6 +47,7 @@ type Reason string
 
 const (
 	ReasonLocalMaterialized Reason = "local-materialized"
+	ReasonFrameLocalProof   Reason = "frame-local-proof"
 	ReasonStoredOrRetained  Reason = "stored-or-retained"
 	ReasonSharedEscape      Reason = "shared-escape"
 	ReasonFrozen            Reason = "frozen"
@@ -73,6 +77,8 @@ type Entry struct {
 	HasObject               bool
 	AllocationSite          bool
 	Decomposable            bool
+	FrameLocalUseProof      bool
+	FrameLocal              bool
 	Frozen                  bool
 	Reasons                 []Reason
 	Obligations             []Obligation
@@ -126,8 +132,9 @@ func Merge(plans ...Plan) Plan {
 				aggregate.objects[entry.ID] = struct{}{}
 			}
 			if entry.AllocationSite {
-				aggregate.addAllocationSite(entry.ID, entry.Decomposable)
+				aggregate.addAllocationSite(entry.ID, entry.Decomposable, entry.FrameLocalUseProof)
 			}
+			aggregate.addFrameLocal(entry.ID, entry.FrameLocal)
 			aggregate.addChildren(entry.ID, entry.Children)
 			if entry.Frozen {
 				aggregate.frozen[entry.ID] = struct{}{}
@@ -166,6 +173,15 @@ func (p Plan) Decomposable(id identity.ID) bool {
 	return false
 }
 
+func (p Plan) FrameLocal(id identity.ID) bool {
+	for _, entry := range p.Entries {
+		if entry.ID == id {
+			return entry.FrameLocal
+		}
+	}
+	return false
+}
+
 func (p Plan) AllocationStats() (total, decomposable int) {
 	for _, entry := range p.Entries {
 		if !entry.AllocationSite {
@@ -179,6 +195,19 @@ func (p Plan) AllocationStats() (total, decomposable int) {
 	return total, decomposable
 }
 
+func (p Plan) FrameLocalStats() (total, frameLocal int) {
+	for _, entry := range p.Entries {
+		if !entry.AllocationSite {
+			continue
+		}
+		total++
+		if entry.FrameLocal {
+			frameLocal++
+		}
+	}
+	return total, frameLocal
+}
+
 func (p Plan) MaxTargetDepth(target Target) int {
 	byID := make(map[identity.ID]Entry, len(p.Entries))
 	for _, entry := range p.Entries {
@@ -190,7 +219,7 @@ func (p Plan) MaxTargetDepth(target Target) int {
 			return 0
 		}
 		entry, ok := byID[id]
-		if !ok || entry.Target != target {
+		if !ok || !targetMatches(entry.Target, target) {
 			return 0
 		}
 		if _, ok := seen[id]; ok {
@@ -231,6 +260,9 @@ type aggregate struct {
 	objects    map[identity.ID]struct{}
 	allocSites map[identity.ID]struct{}
 	decomps    map[identity.ID]bool
+	frameUses  map[identity.ID]bool
+	frameLocal map[identity.ID]bool
+	hasFrame   map[identity.ID]struct{}
 	children   map[identity.ID]map[identity.ID]struct{}
 	placements map[identity.ID]placement.Value
 	frozen     map[identity.ID]struct{}
@@ -243,6 +275,9 @@ func newAggregate() aggregate {
 		objects:    make(map[identity.ID]struct{}),
 		allocSites: make(map[identity.ID]struct{}),
 		decomps:    make(map[identity.ID]bool),
+		frameUses:  make(map[identity.ID]bool),
+		frameLocal: make(map[identity.ID]bool),
+		hasFrame:   make(map[identity.ID]struct{}),
 		children:   make(map[identity.ID]map[identity.ID]struct{}),
 		placements: make(map[identity.ID]placement.Value),
 		frozen:     make(map[identity.ID]struct{}),
@@ -262,7 +297,7 @@ func (a *aggregate) addResult(result *body.Result) {
 		a.addState(result.Registry(), exit)
 	}
 	result.ForEachAllocationSiteFact(func(fact body.AllocationSiteFact) bool {
-		a.addAllocationSite(fact.Identity, fact.Decomposable)
+		a.addAllocationSite(fact.Identity, fact.Decomposable, fact.FrameLocalUseProof)
 		return true
 	})
 	for _, fact := range result.AllocationLifetimeFacts() {
@@ -342,17 +377,25 @@ func (a *aggregate) plan() Plan {
 		if !hasPlacement {
 			value = placement.Bottom
 		}
-		entry := Entry{
-			ID:             id,
-			Placement:      value,
-			Target:         targetForPlacement(value, hasPlacement),
-			HasObject:      mapContains(a.objects, id),
-			AllocationSite: mapContains(a.allocSites, id),
-			Decomposable:   a.decomps[id],
-			Frozen:         mapContains(a.frozen, id),
-			Children:       orderedIDs(a.children[id]),
+		dies, hasLifetime := a.lifetimes[id]
+		frameLocal := a.frameLocalProof(id, value, hasPlacement, dies, hasLifetime)
+		target := targetForPlacement(value, hasPlacement)
+		if frameLocal {
+			target = TargetFrameLocal
 		}
-		if dies, ok := a.lifetimes[id]; ok {
+		entry := Entry{
+			ID:                 id,
+			Placement:          value,
+			Target:             target,
+			HasObject:          mapContains(a.objects, id),
+			AllocationSite:     mapContains(a.allocSites, id),
+			Decomposable:       a.decomps[id],
+			FrameLocalUseProof: a.frameUses[id],
+			FrameLocal:         frameLocal,
+			Frozen:             mapContains(a.frozen, id),
+			Children:           orderedIDs(a.children[id]),
+		}
+		if hasLifetime {
 			entry.DiesBeforeSuspension = dies
 			entry.HasDiesBeforeSuspension = true
 		}
@@ -362,16 +405,42 @@ func (a *aggregate) plan() Plan {
 	return out
 }
 
-func (a *aggregate) addAllocationSite(id identity.ID, decomposable bool) {
+func (a *aggregate) addAllocationSite(id identity.ID, decomposable bool, frameLocalUseProof bool) {
 	if id == (identity.ID{}) {
 		return
 	}
 	if _, ok := a.allocSites[id]; !ok {
 		a.allocSites[id] = struct{}{}
 		a.decomps[id] = decomposable
+		a.frameUses[id] = frameLocalUseProof
 		return
 	}
 	a.decomps[id] = a.decomps[id] && decomposable
+	a.frameUses[id] = a.frameUses[id] && frameLocalUseProof
+}
+
+func (a *aggregate) addFrameLocal(id identity.ID, frameLocal bool) {
+	if id == (identity.ID{}) {
+		return
+	}
+	if _, ok := a.hasFrame[id]; !ok {
+		a.hasFrame[id] = struct{}{}
+		a.frameLocal[id] = frameLocal
+		return
+	}
+	a.frameLocal[id] = a.frameLocal[id] && frameLocal
+}
+
+func (a *aggregate) frameLocalProof(id identity.ID, value placement.Value, hasPlacement, dies, hasLifetime bool) bool {
+	if _, ok := a.hasFrame[id]; ok {
+		return a.frameLocal[id]
+	}
+	return mapContains(a.allocSites, id) &&
+		a.frameUses[id] &&
+		hasPlacement &&
+		value == placement.Stack &&
+		hasLifetime &&
+		dies
 }
 
 func (a *aggregate) addDiesBeforeSuspension(id identity.ID, dies bool) {
@@ -427,6 +496,13 @@ func targetForPlacement(value placement.Value, hasPlacement bool) Target {
 	}
 }
 
+func targetMatches(got, want Target) bool {
+	if got == want {
+		return true
+	}
+	return want == TargetStack && got == TargetFrameLocal
+}
+
 func annotate(entry Entry, hasPlacement bool) Entry {
 	if !hasPlacement || entry.Placement == placement.Bottom {
 		entry.Blockers = append(entry.Blockers, BlockerMissingPlacementFact)
@@ -435,6 +511,8 @@ func annotate(entry Entry, hasPlacement bool) Entry {
 	switch entry.Target {
 	case TargetStack:
 		entry.Reasons = append(entry.Reasons, ReasonLocalMaterialized)
+	case TargetFrameLocal:
+		entry.Reasons = append(entry.Reasons, ReasonLocalMaterialized, ReasonFrameLocalProof)
 	case TargetOwnedHeap:
 		entry.Reasons = append(entry.Reasons, ReasonStoredOrRetained)
 		entry.Obligations = append(entry.Obligations, ObligationOwnerIdentity)

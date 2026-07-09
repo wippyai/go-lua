@@ -133,6 +133,75 @@ return 0
 	}
 }
 
+func TestAllocationSiteFactFrameLocalUseProofCases(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			name: "body-local static reads",
+			src: `
+local opts = { a = 1, b = 2 }
+local total = opts.a + opts.b
+return total
+`,
+			want: 1,
+		},
+		{
+			name: "returned allocation",
+			src: `
+local opts = { a = 1, b = 2 }
+return opts
+`,
+			want: 0,
+		},
+		{
+			name: "captured allocation",
+			src: `
+local opts = { a = 1, b = 2 }
+local function read()
+	return opts.a
+end
+return read()
+`,
+			want: 0,
+		},
+		{
+			name: "stored into another table",
+			src: `
+local opts = { a = 1, b = 2 }
+local holder = { ref = opts }
+return holder
+`,
+			want: 0,
+		},
+		{
+			name: "passed to function",
+			src: `
+local opts = { a = 1, b = 2 }
+sink(opts)
+`,
+			want: 0,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			facts := allocationSiteFactsForSource(t, tc.src)
+			got := 0
+			for _, fact := range facts {
+				if fact.FrameLocalUseProof {
+					got++
+				}
+			}
+			if got != tc.want {
+				t.Fatalf("frame-local use proof count = %d, want %d; facts=%#v", got, tc.want, facts)
+			}
+		})
+	}
+}
+
 func TestAllocationSiteFactShapeAndPlacementAreExported(t *testing.T) {
 	facts := allocationSiteFactsForSource(t, `
 local opts = { a = 1, b = 2 }
@@ -154,6 +223,9 @@ return total
 	}
 	if !fact.Decomposable {
 		t.Fatalf("allocation fact not decomposable: %#v", fact)
+	}
+	if !fact.FrameLocalUseProof {
+		t.Fatalf("allocation fact lacks frame-local use proof: %#v", fact)
 	}
 }
 
