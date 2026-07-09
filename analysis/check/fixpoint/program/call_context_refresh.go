@@ -78,7 +78,16 @@ func refreshExistingCallContextEntryKeyAt(keys *programKeys, owner summary.Summa
 	}
 	entryKeys := result.KeySpace()
 	entry, hasPathEntry := callerPathEntryState(config.Registry, entryKeys, in)
-	entry, hasCaptureEntry := applyCapturedClosureEntryState(config.Registry, entryKeys, keys.bindings, fn, in, entry, captureValueReaderAt(result, point))
+	entry, hasCaptureEntry := applyCapturedClosureEntryState(
+		config.Registry,
+		entryKeys,
+		keys.bindings,
+		fn,
+		in,
+		entry,
+		captureValueReaderAt(result, point),
+		captureInvariantValueReaderAt(result, point),
+	)
 	contextualFn := instantiateSignatureTypeForContext(config.Registry, result, point, site, keys.functionTypes[baseKey], keys)
 	entry, hasParamEntry := applyCallArgumentParamEntryState(config.Registry, keys.bindings, result, keys, point, site, fn, contextualFn, entry)
 	if !hasPathEntry && !hasCaptureEntry && !hasParamEntry {

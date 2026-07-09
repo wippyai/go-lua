@@ -55,7 +55,16 @@ func applyDefinitionCaptureEntryStatesFromResult(keys *programKeys, owner *ast.F
 		if keys.functions[i].hasEntryState && keys.functions[i].entryKeys != nil {
 			entry = entry.RekeyPathEvidence(keys.functions[i].entryKeys, entryKeys)
 		}
-		updated, seen := applyCapturedClosureEntryState(reg, entryKeys, keys.bindings, fn, caller, entry, captureValueReaderAt(result, point))
+		updated, seen := applyCapturedClosureEntryState(
+			reg,
+			entryKeys,
+			keys.bindings,
+			fn,
+			caller,
+			entry,
+			captureValueReaderAt(result, point),
+			captureInvariantValueReaderAt(result, point),
+		)
 		if !seen {
 			continue
 		}
@@ -98,7 +107,16 @@ func applyEscapedClosureEntryStatesFromResult(keys *programKeys, owner *ast.Func
 			if keys.functions[i].hasEntryState && keys.functions[i].entryKeys != nil {
 				entry = entry.RekeyPathEvidence(keys.functions[i].entryKeys, entryKeys)
 			}
-			updated, seen := applyCapturedClosureEntryState(reg, entryKeys, keys.bindings, fn, caller, entry, captureValueReaderAt(result, point))
+			updated, seen := applyEscapedCapturedClosureEntryState(
+				reg,
+				entryKeys,
+				keys.bindings,
+				fn,
+				caller,
+				entry,
+				captureValueReaderAt(result, point),
+				captureInvariantValueReaderAt(result, point),
+			)
 			if !seen {
 				continue
 			}

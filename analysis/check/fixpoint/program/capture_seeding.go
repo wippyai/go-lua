@@ -5,7 +5,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -66,18 +68,42 @@ func applyCapturedClosureEntryState(
 	caller state.State,
 	entry state.State,
 	readCaptured captureValueReader,
+	readInvariant captureValueReader,
 ) (state.State, bool) {
 	env := closureCaptureSeeder{
-		reg:          reg,
-		ks:           ks,
-		bindings:     bindings,
-		caller:       caller,
-		readCaptured: readCaptured,
+		reg:           reg,
+		ks:            ks,
+		bindings:      bindings,
+		caller:        caller,
+		readCaptured:  readCaptured,
+		readInvariant: readInvariant,
 	}
 	return env.apply(fn, entry)
 }
 
 type captureValueReader func(symbol.ID) (product.Value, bool)
+
+func applyEscapedCapturedClosureEntryState(
+	reg *axis.Registry,
+	ks *keyspace.KeySpace,
+	bindings *bind.Result,
+	fn *ast.FunctionExpr,
+	caller state.State,
+	entry state.State,
+	readCaptured captureValueReader,
+	readInvariant captureValueReader,
+) (state.State, bool) {
+	env := closureCaptureSeeder{
+		reg:           reg,
+		ks:            ks,
+		bindings:      bindings,
+		caller:        caller,
+		readCaptured:  readCaptured,
+		readInvariant: readInvariant,
+		escapeUnknown: true,
+	}
+	return env.apply(fn, entry)
+}
 
 func captureValueReaderAt(result *body.Result, point cfg.Point) captureValueReader {
 	if result == nil {
@@ -94,12 +120,47 @@ func captureValueReaderAt(result *body.Result, point cfg.Point) captureValueRead
 	}
 }
 
+func captureInvariantValueReaderAt(result *body.Result, point cfg.Point) captureValueReader {
+	if result == nil || result.Registry() == nil {
+		return nil
+	}
+	reg := result.Registry()
+	typeValues := result.TypeValues()
+	if typeValues == nil {
+		typeValues = typevalue.NewCache()
+	}
+	return func(id symbol.ID) (product.Value, bool) {
+		if id == 0 {
+			return product.Value{}, false
+		}
+		if t, ok := result.SymbolStaticType(id); ok && t != nil {
+			return typeValues.FromTypeWithWitness(reg, t), true
+		}
+		value, ok := result.SymbolValueAtBoundary(point, id)
+		if !ok {
+			value, ok = result.UninitializedLocalDeclarationValueAtBoundary(point, id)
+		}
+		if !ok {
+			return product.Value{}, false
+		}
+		if shape, ok := result.StableShapeForValueAtBoundary(point, value); ok && shape.Shape != nil {
+			return typeValues.FromTypeWithWitness(reg, shape.Shape), true
+		}
+		if t, ok := result.ValueStructuralType(value); ok && t != nil {
+			return typeValues.FromTypeWithWitness(reg, t), true
+		}
+		return product.Value{}, false
+	}
+}
+
 type closureCaptureSeeder struct {
-	reg          *axis.Registry
-	ks           *keyspace.KeySpace
-	bindings     *bind.Result
-	caller       state.State
-	readCaptured captureValueReader
+	reg           *axis.Registry
+	ks            *keyspace.KeySpace
+	bindings      *bind.Result
+	caller        state.State
+	readCaptured  captureValueReader
+	readInvariant captureValueReader
+	escapeUnknown bool
 
 	seenFns              map[*ast.FunctionExpr]struct{}
 	targetFuncs          map[symbol.ID]*ast.FunctionExpr
@@ -125,18 +186,22 @@ func (s *closureCaptureSeeder) apply(
 		if capture.Captured == 0 {
 			continue
 		}
-		var pathSeen bool
-		entry, pathSeen = s.seedCapturedPathEvidence(capture, entry)
-		seen = seen || pathSeen
 		slot := statekey.SymbolValue(capture.Captured)
 		if slot == 0 {
 			continue
 		}
-		value := s.capturedValue(capture.Captured, slot)
+		fullValue := s.fullCapturedValue(capture.Captured, slot)
+		degrade := s.captureRequiresInvariant(capture.Captured, fullValue)
+		var pathSeen bool
+		entry, pathSeen = s.seedCapturedPathEvidence(capture, entry, degrade)
+		seen = seen || pathSeen
+		value := s.capturedEntryValue(capture.Captured, fullValue, degrade)
 		if contextEntryValueUseful(s.reg, value) {
 			entry = entry.WriteValue(s.reg, slot, value)
-			if updated, ok := seedEntryHeapObjectsForValue(s.reg, s.caller, entry, value); ok {
-				entry = updated
+			if !degrade {
+				if updated, ok := seedEntryHeapObjectsForValue(s.reg, s.caller, entry, value); ok {
+					entry = updated
+				}
 			}
 			seen = true
 		}
@@ -154,7 +219,7 @@ func (s *closureCaptureSeeder) apply(
 		if slot == 0 {
 			continue
 		}
-		value := s.capturedValue(global, slot)
+		value := s.fullCapturedValue(global, slot)
 		if !contextEntryValueUseful(s.reg, value) {
 			continue
 		}
@@ -165,6 +230,98 @@ func (s *closureCaptureSeeder) apply(
 		seen = true
 	}
 	return entry, seen
+}
+
+func (s *closureCaptureSeeder) fullCapturedValue(sym symbol.ID, slot statekey.Value) product.Value {
+	value := s.caller.ReadValue(s.reg, slot)
+	if s.readCaptured != nil {
+		if solved, ok := s.readCaptured(sym); ok && contextEntryValueUseful(s.reg, solved) {
+			return preciseCapturedValue(s.reg, value, solved)
+		}
+	}
+	return value
+}
+
+func (s *closureCaptureSeeder) capturedEntryValue(sym symbol.ID, full product.Value, degrade bool) product.Value {
+	if !degrade {
+		return full
+	}
+	if s.readInvariant != nil {
+		if invariant, ok := s.readInvariant(sym); ok && contextEntryValueUseful(s.reg, invariant) {
+			return invariant
+		}
+	}
+	return product.Top()
+}
+
+func (s *closureCaptureSeeder) captureRequiresInvariant(sym symbol.ID, full product.Value) bool {
+	if s == nil || sym == 0 {
+		return false
+	}
+	if s.bindings != nil && s.bindings.HasWrite(sym) {
+		return true
+	}
+	return s.escapeUnknown && capturedValueIsMutable(s.reg, full)
+}
+
+func capturedValueIsMutable(reg *axis.Registry, value product.Value) bool {
+	id, ok := identityvalue.ExactID(reg, value)
+	return ok && id.Kind == "lua.table"
+}
+
+func preciseCapturedValue(reg *axis.Registry, slot, solved product.Value) product.Value {
+	if !contextEntryValueUseful(reg, slot) {
+		return solved
+	}
+	if product.LessOrEq(reg, solved, slot) {
+		return solved
+	}
+	if product.LessOrEq(reg, slot, solved) {
+		return slot
+	}
+	meet := product.Meet(reg, slot, solved)
+	if contextEntryValueUseful(reg, meet) {
+		return meet
+	}
+	return slot
+}
+
+func (s *closureCaptureSeeder) seedCapturedPathEvidence(capture bind.Capture, entry state.State, degrade bool) (state.State, bool) {
+	if s == nil || s.reg == nil || s.ks == nil || capture.Captured == 0 || degrade {
+		return entry, false
+	}
+	bottom := product.Bottom(s.reg)
+	out := entry
+	edit := out.EditPathEvidence(s.reg)
+	seen := false
+	captures := []bind.Capture{capture}
+	if snapshot := s.caller.PathRefinementsSnapshot(s.ks); !snapshot.Top {
+		for pathKey, value := range snapshot.Refinements {
+			if pathKey == "" || product.Equal(s.reg, value, bottom) {
+				continue
+			}
+			rebased, ok := rebaseCapturedPathKey(pathKey, captures)
+			if !ok {
+				continue
+			}
+			edit.WritePathKey(s.ks, rebased, value)
+			seen = true
+		}
+	}
+	if snapshot := s.caller.PathStaticMembersSnapshot(s.ks); !snapshot.Bottom && !snapshot.Top {
+		for pathKey, value := range snapshot.Members {
+			if pathKey == "" || product.Equal(s.reg, value, bottom) {
+				continue
+			}
+			rebased, ok := rebaseCapturedPathKey(pathKey, captures)
+			if !ok {
+				continue
+			}
+			edit.WritePathStaticMember(s.ks, rebased, value)
+			seen = true
+		}
+	}
+	return edit.DoneOn(out), seen
 }
 
 func (s *closureCaptureSeeder) entryCaptures(fn *ast.FunctionExpr) []bind.Capture {
@@ -219,71 +376,6 @@ func functionOriginDescendsFrom(bindings *bind.Result, fn, ancestor *ast.Functio
 		}
 		fn = parent
 	}
-}
-
-func (s *closureCaptureSeeder) capturedValue(sym symbol.ID, slot statekey.Value) product.Value {
-	value := s.caller.ReadValue(s.reg, slot)
-	if s.readCaptured != nil {
-		if solved, ok := s.readCaptured(sym); ok && contextEntryValueUseful(s.reg, solved) {
-			return preciseCapturedValue(s.reg, value, solved)
-		}
-	}
-	return value
-}
-
-func preciseCapturedValue(reg *axis.Registry, slot, solved product.Value) product.Value {
-	if !contextEntryValueUseful(reg, slot) {
-		return solved
-	}
-	if product.LessOrEq(reg, solved, slot) {
-		return solved
-	}
-	if product.LessOrEq(reg, slot, solved) {
-		return slot
-	}
-	meet := product.Meet(reg, slot, solved)
-	if contextEntryValueUseful(reg, meet) {
-		return meet
-	}
-	return slot
-}
-
-func (s *closureCaptureSeeder) seedCapturedPathEvidence(capture bind.Capture, entry state.State) (state.State, bool) {
-	if s == nil || s.reg == nil || s.ks == nil || capture.Captured == 0 {
-		return entry, false
-	}
-	bottom := product.Bottom(s.reg)
-	out := entry
-	edit := out.EditPathEvidence(s.reg)
-	seen := false
-	captures := []bind.Capture{capture}
-	if snapshot := s.caller.PathRefinementsSnapshot(s.ks); !snapshot.Top {
-		for pathKey, value := range snapshot.Refinements {
-			if pathKey == "" || product.Equal(s.reg, value, bottom) {
-				continue
-			}
-			rebased, ok := rebaseCapturedPathKey(pathKey, captures)
-			if !ok {
-				continue
-			}
-			edit.WritePathKey(s.ks, rebased, value)
-			seen = true
-		}
-	}
-	if snapshot := s.caller.PathStaticMembersSnapshot(s.ks); !snapshot.Bottom && !snapshot.Top {
-		for pathKey, value := range snapshot.Members {
-			if pathKey == "" || product.Equal(s.reg, value, bottom) {
-				continue
-			}
-			rebased, ok := rebaseCapturedPathKey(pathKey, captures)
-			if !ok {
-				continue
-			}
-			edit.WritePathStaticMember(s.ks, rebased, value)
-			seen = true
-		}
-	}
-	return edit.DoneOn(out), seen
 }
 
 func (s *closureCaptureSeeder) functionForCapturedSymbol(sym symbol.ID) (*ast.FunctionExpr, bool) {

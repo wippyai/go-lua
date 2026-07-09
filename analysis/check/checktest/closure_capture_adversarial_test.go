@@ -1,6 +1,7 @@
 package checktest
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
@@ -20,14 +21,14 @@ end
 `
 	result := Check(src)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeAssignmentType)
-	requireEvidenceMessage(t, diag, "get(...) has type nil")
+	requireEvidenceMessage(t, diag, "get(...) can be string or nil here")
 	requireEvidenceMessage(t, diag, "out is declared as string")
-	requireEvidenceMessage(t, diag, "no proof on this path shows get(...) is string")
+	requireEvidenceMessage(t, diag, "no guard on this path proves get(...) is non-nil")
 	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
 		Sources:             diagnostic.SourceMap{"test.lua": src},
 		ShowSourceLabelRows: true,
 	})
-	want := `error[type.assignment]: cannot assign get(...) because it is nil, not string
+	want := `error[type.assignment]: cannot assign get(...) because it may be nil
  --> test.lua:7:25
   |
   |                ↓ declared type
@@ -35,11 +36,11 @@ end
   |                         ↑ assigned value
 
 because:
-  1. proven: get(...) has type nil
+  1. proven: get(...) can be string or nil here
   2. claimed: out is declared as string
-  3. missing proof: no proof on this path shows get(...) is string
+  3. missing proof: no guard on this path proves get(...) is non-nil
 
-help: Use a value compatible with the expected type, or change the target type if ` + "`get(...)`" + ` is valid.`
+help: Guard ` + "`get(...)`" + ` with a nil check, provide a default value, or change the target type to accept nil.`
 	assertRenderedEqual(t, rendered, want)
 }
 
@@ -89,4 +90,75 @@ end
 			"get returns string?",
 		},
 	})
+}
+
+func TestClosureCaptureSingleAssignmentKeepsRecordShapeInBody(t *testing.T) {
+	result := Check(`type Buf = { n: number }
+local buf: Buf = { n = 0 }
+local function push(v: number): number
+    buf.n = buf.n + v
+    return buf.n
+end
+return push(1)
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none for single-assignment captured record shape", result.Diagnostics)
+	}
+}
+
+func TestClosureCaptureSiblingWriteDropsDefinitionNarrowing(t *testing.T) {
+	result := Check(`local function f(): string
+    local x: string? = "ready"
+    local function clear()
+        x = nil
+    end
+    if x ~= nil then
+        local function get(): string
+            return x
+        end
+        return get()
+    end
+    return ""
+end
+return f()
+`)
+	diag := requireDiagnosticCode(t, result, diagnostics.CodeReturnContractType)
+	if !strings.Contains(diag.Message, "x") || !strings.Contains(diag.Message, "may be nil") {
+		t.Fatalf("diagnostic = %#v, want return diagnostic for nilable captured x", diag)
+	}
+}
+
+func TestClosureCaptureEscapingMutableCaptureDropsPointNarrowing(t *testing.T) {
+	result := Check(`local function make(): () -> number
+    local box: { n: number? } = { n = 1 }
+    if box.n ~= nil then
+        return function(): number
+            return box.n
+        end
+    end
+    return function(): number
+        return 0
+    end
+end
+return make()
+`)
+	diag := requireDiagnosticCode(t, result, diagnostics.CodeReturnContractType)
+	if !strings.Contains(diag.Message, "box.n") || !strings.Contains(diag.Message, "may be nil") {
+		t.Fatalf("diagnostic = %#v, want return diagnostic for escaped nilable box.n", diag)
+	}
+}
+
+func TestClosureCaptureCounterAccumulatorStaysClean(t *testing.T) {
+	result := Check(`type Buf = { n: number }
+local buf: Buf = { n = 0 }
+local function push(v: number): number
+    buf.n = buf.n + v
+    return buf.n
+end
+push(1)
+return buf.n
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none for captured counter accumulator", result.Diagnostics)
+	}
 }

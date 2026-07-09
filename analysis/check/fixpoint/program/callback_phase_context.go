@@ -165,7 +165,16 @@ func (t *callbackPhaseTracker) collectInvocationContext(point cfg.Point, site fa
 			entry = pathEntry
 			hasPathEntry = true
 		}
-		entry, hasCaptureEntry := applyCapturedClosureEntryState(t.config.Registry, entryKeys, t.keys.bindings, callbackFn, caller, entry, captureValueReaderAt(t.prepass, point))
+		entry, hasCaptureEntry := applyCapturedClosureEntryState(
+			t.config.Registry,
+			entryKeys,
+			t.keys.bindings,
+			callbackFn,
+			caller,
+			entry,
+			captureValueReaderAt(t.prepass, point),
+			captureInvariantValueReaderAt(t.prepass, point),
+		)
 		entry, hasPhaseEntry := t.applyBeforePhases(point, invocation.Before, caller, entry, entryKeys)
 		if len(invocation.Before) != 0 && !hasPhaseEntry {
 			continue
@@ -252,7 +261,16 @@ func (t *callbackPhaseTracker) phaseCallbackSummary(point cfg.Point, registratio
 	if pathEntry, ok := callerPathEntryState(t.config.Registry, entryKeys, caller); ok {
 		entry = pathEntry
 	}
-	entry, _ = applyCapturedClosureEntryState(t.config.Registry, entryKeys, t.keys.bindings, registration.fn, caller, entry, captureValueReaderAt(t.prepass, point))
+	entry, _ = applyCapturedClosureEntryState(
+		t.config.Registry,
+		entryKeys,
+		t.keys.bindings,
+		registration.fn,
+		caller,
+		entry,
+		captureValueReaderAt(t.prepass, point),
+		captureInvariantValueReaderAt(t.prepass, point),
+	)
 	callbackConfig := cloneCheckConfig(t.config)
 	callbackConfig.EntryState = entry.RekeyPathEvidence(entryKeys, prepared.KeySpace())
 	result, err := solvePrepared(prepared, callbackConfig)

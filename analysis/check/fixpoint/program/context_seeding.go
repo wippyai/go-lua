@@ -263,7 +263,16 @@ func collectCallContextKeysFromResult(keys *programKeys, owner summary.SummaryKe
 		callRef := callContextRef{owner: canonicalContextOwner(owner), expr: expr}
 		entryKeys := prepass.KeySpace()
 		entry, hasPathEntry := callerPathEntryState(config.Registry, entryKeys, in)
-		entry, hasCaptureEntry := applyCapturedClosureEntryState(config.Registry, entryKeys, keys.bindings, fn, in, entry, captureValueReaderAt(prepass, point))
+		entry, hasCaptureEntry := applyCapturedClosureEntryState(
+			config.Registry,
+			entryKeys,
+			keys.bindings,
+			fn,
+			in,
+			entry,
+			captureValueReaderAt(prepass, point),
+			captureInvariantValueReaderAt(prepass, point),
+		)
 		contextualFn := instantiateSignatureTypeForContext(config.Registry, prepass, point, site, keys.functionTypes[baseKey], keys)
 		entry, hasParamEntry := applyCallArgumentParamEntryState(config.Registry, keys.bindings, prepass, keys, point, site, fn, contextualFn, entry)
 		if !hasPathEntry && !hasCaptureEntry && !hasParamEntry {
@@ -339,7 +348,16 @@ func collectProtectedCallCallbackContextKeys(
 			continue
 		}
 		entry, hasPathEntry := callerPathEntryState(config.Registry, entryKeys, callerEntry)
-		entry, hasCaptureEntry := applyCapturedClosureEntryState(config.Registry, entryKeys, keys.bindings, callbackFn, callerEntry, entry, captureValueReaderAt(prepass, point))
+		entry, hasCaptureEntry := applyCapturedClosureEntryState(
+			config.Registry,
+			entryKeys,
+			keys.bindings,
+			callbackFn,
+			callerEntry,
+			entry,
+			captureValueReaderAt(prepass, point),
+			captureInvariantValueReaderAt(prepass, point),
+		)
 		entry, hasParamEntry := applyProtectedCallArgumentParamEntryState(config.Registry, keys.bindings, prepass, keys, point, site, callbackFn, spec.paramArgStart, entry)
 		if !hasPathEntry && !hasCaptureEntry && !hasParamEntry {
 			continue
@@ -479,7 +497,16 @@ func collectSignatureCallbackContextKeys(
 			if pathEntry, ok := callerPathEntryState(config.Registry, entryKeys, callerEntry); ok {
 				entry = pathEntry
 			}
-			entry, hasCaptureEntry = applyCapturedClosureEntryState(config.Registry, entryKeys, keys.bindings, callbackFn, callerEntry, entry, captureValueReaderAt(prepass, point))
+			entry, hasCaptureEntry = applyCapturedClosureEntryState(
+				config.Registry,
+				entryKeys,
+				keys.bindings,
+				callbackFn,
+				callerEntry,
+				entry,
+				captureValueReaderAt(prepass, point),
+				captureInvariantValueReaderAt(prepass, point),
+			)
 		}
 		hasParamSeeds := len(seeds) != 0
 		if !hasCaptureEntry && !hasParamSeeds {
@@ -532,7 +559,16 @@ func collectInlineFunctionCaptureContextKeys(
 			entry = pathEntry
 			hasPathEntry = true
 		}
-		entry, hasCaptureEntry := applyCapturedClosureEntryState(config.Registry, entryKeys, keys.bindings, callbackFn, callerEntry, entry, captureValueReaderAt(prepass, point))
+		entry, hasCaptureEntry := applyCapturedClosureEntryState(
+			config.Registry,
+			entryKeys,
+			keys.bindings,
+			callbackFn,
+			callerEntry,
+			entry,
+			captureValueReaderAt(prepass, point),
+			captureInvariantValueReaderAt(prepass, point),
+		)
 		if !hasPathEntry && !hasCaptureEntry {
 			return true
 		}
