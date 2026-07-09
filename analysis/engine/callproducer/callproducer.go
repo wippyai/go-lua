@@ -7,12 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
-// FromSite projects rich call-site evidence to the narrow producer DTO used by
-// call-result lookup and signature identity reads.
-func FromSite(site factflow.CallSiteView) factflow.CallProducer {
-	return factflow.NewCallProducerFromView(site)
-}
-
 // FromFacts returns the strict call-result producer projection for point's
 // canonical call-site evidence.
 func FromFacts(facts factflow.Facts, point cfg.Point) (factflow.CallProducer, bool) {

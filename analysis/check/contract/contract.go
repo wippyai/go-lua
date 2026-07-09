@@ -5,7 +5,6 @@ package contract
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -13,7 +12,6 @@ import (
 // It owns type/effect facts only; names, spans, messages, and severities belong
 // to lowering metadata and renderers.
 type Contract struct {
-	source    signature.Function
 	params    []Param
 	results   []Result
 	variadic  Param
@@ -44,14 +42,6 @@ type Result struct {
 	Explicit bool
 }
 
-// FromSignature builds a canonical contract from an already-resolved signature.
-func FromSignature(sig signature.Function) (Contract, bool) {
-	if sig.Type == nil {
-		return Contract{}, false
-	}
-	return FromFunctionType(sig.Type).withSignature(sig), true
-}
-
 // FromFunctionType builds a canonical contract from an already-resolved pure
 // function type.
 func FromFunctionType(fn *typ.Function) Contract {
@@ -59,7 +49,6 @@ func FromFunctionType(fn *typ.Function) Contract {
 		return Contract{}
 	}
 	out := Contract{
-		source:  signature.Function{Type: fn},
 		params:  make([]Param, 0, len(fn.Params)),
 		results: make([]Result, 0, len(fn.Returns)),
 	}
@@ -87,16 +76,6 @@ func FromFunctionType(fn *typ.Function) Contract {
 		}
 	}
 	return out
-}
-
-func (c Contract) withSignature(sig signature.Function) Contract {
-	c.source = sig.Clone()
-	return c
-}
-
-// Signature returns an ownership-isolated copy of the source signature.
-func (c Contract) Signature() signature.Function {
-	return c.source.Clone()
 }
 
 // Params returns an ownership-isolated parameter list.

@@ -3,7 +3,6 @@ package contract
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/module/signature"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -96,26 +95,5 @@ func TestFromFunctionTypeVariadicExtendsParamLookup(t *testing.T) {
 	}
 	if param.Type != typ.Number || !param.Explicit || param.Optional {
 		t.Fatalf("variadic param = %+v, want explicit required number", param)
-	}
-}
-
-func TestFromSignatureClonesOperationalEffects(t *testing.T) {
-	sig := signature.Function{
-		Type: typ.Func().Param("value", typ.String).Build(),
-		OperationalEffects: &signature.OperationalEffects{
-			PathInvalidations: []signature.PathInvalidation{{}},
-		},
-	}
-	c, ok := FromSignature(sig)
-	if !ok {
-		t.Fatal("FromSignature returned false")
-	}
-	got := c.Signature()
-	if got.OperationalEffects == sig.OperationalEffects {
-		t.Fatal("Signature returned aliased operational effects")
-	}
-	got.OperationalEffects.PathInvalidations = append(got.OperationalEffects.PathInvalidations, signature.PathInvalidation{})
-	if len(sig.OperationalEffects.PathInvalidations) != 1 {
-		t.Fatalf("source signature operational effects mutated: %#v", sig.OperationalEffects.PathInvalidations)
 	}
 }

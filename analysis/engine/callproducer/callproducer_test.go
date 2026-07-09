@@ -9,42 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
-func TestFromSiteProjectsOnlyNarrowProducerEvidence(t *testing.T) {
-	calleePath := path.NewPath(symbol.ID(21), "svc").Field("call")
-	receiverPath := path.NewPath(symbol.ID(21), "svc")
-	targetPath := path.NewPath(symbol.ID(22), "out")
-	targets := []factflow.CallResultTarget{
-		factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, symbol.ID(22), targetPath),
-	}
-	site := factflow.NewCallSite(factflow.CallSiteConfig{
-		Context:         factflow.CallSiteContextAssignmentSource,
-		CalleeSymbol:    symbol.ID(21),
-		CalleePath:      calleePath,
-		ReceiverPath:    receiverPath,
-		HasReceiverPath: true,
-		MethodName:      "call",
-		ExprIndex:       3,
-		TypeArgs:        []factflow.TypeRef{factflow.TypeRef(1)},
-		ResultTargets:   targets,
-		Final:           true,
-		Adjusted:        true,
-	})
-
-	siteView := site.View()
-	producer := FromSite(siteView)
-	if producer.CalleeSymbol() != siteView.CalleeSymbol() || !producer.CalleePath().Equal(siteView.CalleePath()) {
-		t.Fatalf("producer callee = %v/%v, want %v/%v", producer.CalleeSymbol(), producer.CalleePath(), siteView.CalleeSymbol(), siteView.CalleePath())
-	}
-	gotTargets := producer.ResultTargets()
-	if len(gotTargets) != 1 || gotTargets[0].Kind() != factflow.CallResultTargetLocalAssignment || !gotTargets[0].TargetPath().Equal(targetPath) {
-		t.Fatalf("producer targets = %#v, want copied local assignment target", gotTargets)
-	}
-	gotTargets[0] = factflow.NewCallResultTarget(factflow.CallResultTargetReturn, 0, 0, 0, path.Path{})
-	if got := producer.ResultTargets(); got[0].Kind() != factflow.CallResultTargetLocalAssignment {
-		t.Fatalf("projected producer exposed mutable result targets, got %v", got[0].Kind())
-	}
-}
-
 func TestFromFactsDerivesProducerFromCanonicalCallSite(t *testing.T) {
 	point := cfg.Point(30)
 	site := factflow.NewCallSite(factflow.CallSiteConfig{
@@ -72,7 +36,7 @@ func TestFromFactsDerivesProducerFromCanonicalCallSite(t *testing.T) {
 	if !ok {
 		t.Fatal("call producer missing")
 	}
-	want := FromSite(site.View())
+	want := factflow.NewCallProducerFromView(site.View())
 	if got.CalleeSymbol() != want.CalleeSymbol() || !got.CalleePath().Equal(want.CalleePath()) {
 		t.Fatalf("producer callee = %v/%v, want %v/%v", got.CalleeSymbol(), got.CalleePath(), want.CalleeSymbol(), want.CalleePath())
 	}
