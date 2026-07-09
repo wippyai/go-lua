@@ -154,7 +154,6 @@ func (r *Result) allocationSiteFact(inst wir.Instruction, uses decomposableUseAn
 		fact.Placement == placement.Stack &&
 		inst.StaticStringKeysComplete &&
 		!inst.ListSpread &&
-		!uses.bodyHasDynamicConstructorKey &&
 		useProof
 	return fact, true
 }
@@ -176,8 +175,7 @@ func (r *Result) tableConstructorExprRef(inst wir.Instruction) (factflow.ExprRef
 }
 
 type decomposableUseAnalysis struct {
-	bodyHasDynamicConstructorKey bool
-	disqualified                 map[wir.ExpressionID]struct{}
+	disqualified map[wir.ExpressionID]struct{}
 }
 
 func (a decomposableUseAnalysis) allocationDisqualified(inst wir.Instruction) bool {
@@ -198,13 +196,10 @@ func (r *Result) decomposableUseAnalysis() decomposableUseAnalysis {
 		if inst.Op != wir.OpMakeTable {
 			continue
 		}
-		if !inst.StaticStringKeysComplete {
-			analysis.bodyHasDynamicConstructorKey = true
-		}
 		if inst.ExprID == 0 {
 			continue
 		}
-		tracker := newDecomposableUseTracker(r.wir, inst)
+		tracker := newDecomposableUseTracker(r.wir, r.Graph(), inst)
 		if !inst.StaticStringKeysComplete || inst.ListSpread || tracker.disqualifiedByUses() {
 			analysis.disqualified[inst.ExprID] = struct{}{}
 		}
@@ -214,35 +209,111 @@ func (r *Result) decomposableUseAnalysis() decomposableUseAnalysis {
 
 type decomposableUseTracker struct {
 	body       *wir.Body
+	graph      cfg.Graph
 	allocation wir.Instruction
 	bad        bool
-	temps      map[uint32]struct{}
-	aliases    []path.Path
+	active     decomposableAliasSet
 }
 
-func newDecomposableUseTracker(body *wir.Body, allocation wir.Instruction) *decomposableUseTracker {
-	t := &decomposableUseTracker{
-		body:       body,
-		allocation: allocation,
-		temps:      make(map[uint32]struct{}),
+// decomposableAliasSet is a per-program-point may-alias state for one
+// allocation site. Joins only add aliases; transfer may kill an alias when its
+// destination is overwritten on the current control-flow path.
+type decomposableAliasSet struct {
+	temps   map[uint32]struct{}
+	aliases map[wir.SymbolID]struct{}
+}
+
+func newDecomposableAliasSet() decomposableAliasSet {
+	return decomposableAliasSet{
+		temps:   make(map[uint32]struct{}),
+		aliases: make(map[wir.SymbolID]struct{}),
 	}
-	t.addAliasDestination(allocation.Dst)
-	return t
+}
+
+func (s decomposableAliasSet) clone() decomposableAliasSet {
+	out := newDecomposableAliasSet()
+	for temp := range s.temps {
+		out.temps[temp] = struct{}{}
+	}
+	for alias := range s.aliases {
+		out.aliases[alias] = struct{}{}
+	}
+	return out
+}
+
+// join adds every alias that may arrive from another predecessor and reports
+// whether the input fact grew. It never removes an input fact.
+func (s *decomposableAliasSet) join(other decomposableAliasSet) bool {
+	changed := false
+	if s.temps == nil {
+		s.temps = make(map[uint32]struct{})
+	}
+	for temp := range other.temps {
+		if _, ok := s.temps[temp]; !ok {
+			s.temps[temp] = struct{}{}
+			changed = true
+		}
+	}
+	if s.aliases == nil {
+		s.aliases = make(map[wir.SymbolID]struct{})
+	}
+	for alias := range other.aliases {
+		if _, ok := s.aliases[alias]; !ok {
+			s.aliases[alias] = struct{}{}
+			changed = true
+		}
+	}
+	return changed
+}
+
+func newDecomposableUseTracker(body *wir.Body, graph cfg.Graph, allocation wir.Instruction) *decomposableUseTracker {
+	return &decomposableUseTracker{
+		body:       body,
+		graph:      graph,
+		allocation: allocation,
+	}
 }
 
 func (t *decomposableUseTracker) disqualifiedByUses() bool {
-	if t == nil || t.body == nil || t.bad {
+	if t == nil || t.body == nil || t.graph == nil || t.bad {
 		return true
 	}
-	changed := true
-	for changed && !t.bad {
-		changed = false
-		for i := 0; i < t.body.Len(); i++ {
-			if t.classifyInstruction(t.body.Instr(i)) {
-				changed = true
-			}
+
+	// RPO seeds every reachable point once, including points with an empty
+	// input fact. A point is re-queued only when a predecessor's monotone
+	// may-alias join grows its input.
+	queue := append([]cfg.Point(nil), cfg.RPOReadOnly(t.graph)...)
+	if len(queue) == 0 {
+		return true
+	}
+	queued := make(map[cfg.Point]bool, len(queue))
+	for _, point := range queue {
+		queued[point] = true
+	}
+	inputs := make(map[cfg.Point]decomposableAliasSet, len(queue))
+
+	for len(queue) != 0 && !t.bad {
+		point := queue[0]
+		queue = queue[1:]
+		queued[point] = false
+
+		t.active = inputs[point].clone()
+		for _, inst := range t.body.PointInstructions(point) {
+			t.classifyInstruction(inst)
 			if t.bad {
 				return true
+			}
+		}
+
+		for _, successor := range cfg.SuccessorsReadOnly(t.graph, point) {
+			input := inputs[successor]
+			if !input.join(t.active) {
+				continue
+			}
+			inputs[successor] = input
+			if !queued[successor] {
+				queue = append(queue, successor)
+				queued[successor] = true
 			}
 		}
 	}
@@ -251,7 +322,7 @@ func (t *decomposableUseTracker) disqualifiedByUses() bool {
 
 func (t *decomposableUseTracker) classifyInstruction(inst wir.Instruction) bool {
 	if inst.Point == t.allocation.Point && inst.ExprID == t.allocation.ExprID && inst.Op == wir.OpMakeTable {
-		return false
+		return t.replaceAliasDestination(inst.Dst)
 	}
 	switch inst.Op {
 	case wir.OpNoop, wir.OpEntry, wir.OpExit:
@@ -333,18 +404,23 @@ func (t *decomposableUseTracker) classifyResult(dst wir.Operand, disqualified bo
 
 func (t *decomposableUseTracker) classifyTransparentAssign(dst, src wir.Operand) bool {
 	if t.operandIsRootAlias(src) {
-		return t.addAliasDestination(dst)
+		return t.replaceAliasDestination(dst)
 	}
 	return t.clearDestinationAlias(dst)
+}
+
+func (t *decomposableUseTracker) replaceAliasDestination(dst wir.Operand) bool {
+	changed := t.clearDestinationAlias(dst)
+	return t.addAliasDestination(dst) || changed
 }
 
 func (t *decomposableUseTracker) addAliasDestination(dst wir.Operand) bool {
 	switch dst.Kind {
 	case wir.OperandTemp:
-		if _, ok := t.temps[dst.Ref]; ok {
+		if _, ok := t.active.temps[dst.Ref]; ok {
 			return false
 		}
-		t.temps[dst.Ref] = struct{}{}
+		t.active.temps[dst.Ref] = struct{}{}
 		return true
 	case wir.OperandPath:
 		p := t.body.Path(wir.PathRef(dst.Ref))
@@ -356,10 +432,10 @@ func (t *decomposableUseTracker) addAliasDestination(dst wir.Operand) bool {
 			t.bad = true
 			return false
 		}
-		if t.hasAliasPath(p) {
+		if _, ok := t.active.aliases[p.Symbol]; ok {
 			return false
 		}
-		t.aliases = append(t.aliases, p.Clone())
+		t.active.aliases[p.Symbol] = struct{}{}
 		return true
 	default:
 		t.bad = true
@@ -368,16 +444,19 @@ func (t *decomposableUseTracker) addAliasDestination(dst wir.Operand) bool {
 }
 
 func (t *decomposableUseTracker) clearDestinationAlias(dst wir.Operand) bool {
-	if dst.Kind != wir.OperandPath {
-		return false
-	}
-	p := t.body.Path(wir.PathRef(dst.Ref))
-	if p.IsEmpty() || len(p.Segments) != 0 {
-		return false
-	}
-	for i, alias := range t.aliases {
-		if alias.EqualIgnoringVersion(p) {
-			t.aliases = append(t.aliases[:i], t.aliases[i+1:]...)
+	switch dst.Kind {
+	case wir.OperandTemp:
+		if _, ok := t.active.temps[dst.Ref]; ok {
+			delete(t.active.temps, dst.Ref)
+			return true
+		}
+	case wir.OperandPath:
+		p := t.body.Path(wir.PathRef(dst.Ref))
+		if p.IsEmpty() || len(p.Segments) != 0 {
+			return false
+		}
+		if _, ok := t.active.aliases[p.Symbol]; ok {
+			delete(t.active.aliases, p.Symbol)
 			return true
 		}
 	}
@@ -405,7 +484,7 @@ func (t *decomposableUseTracker) tableEntriesHaveRootAlias(r wir.TableEntryRange
 func (t *decomposableUseTracker) operandIsRootAlias(op wir.Operand) bool {
 	switch op.Kind {
 	case wir.OperandTemp:
-		_, ok := t.temps[op.Ref]
+		_, ok := t.active.temps[op.Ref]
 		return ok
 	case wir.OperandPath:
 		return t.pathOperandIsExactRootAlias(op)
@@ -444,12 +523,8 @@ func (t *decomposableUseTracker) pathIsExactRootAlias(p path.Path) bool {
 }
 
 func (t *decomposableUseTracker) hasAliasPath(p path.Path) bool {
-	for _, alias := range t.aliases {
-		if alias.EqualIgnoringVersion(p) {
-			return true
-		}
-	}
-	return false
+	_, ok := t.active.aliases[p.Symbol]
+	return ok
 }
 
 func (t *decomposableUseTracker) localAliasRoot(p path.Path) bool {

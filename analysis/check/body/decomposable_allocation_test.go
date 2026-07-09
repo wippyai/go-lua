@@ -133,6 +133,25 @@ return 0
 	}
 }
 
+func TestAllocationSiteFactDecomposableIgnoresUnrelatedDynamicConstructor(t *testing.T) {
+	facts := allocationSiteFactsForSource(t, `
+local clean = { x = 1 }
+local key = "x"
+local dynamic = { [key] = 2 }
+return clean.x
+`)
+
+	decomposable := 0
+	for _, fact := range facts {
+		if fact.Decomposable {
+			decomposable++
+		}
+	}
+	if decomposable != 1 {
+		t.Fatalf("decomposable allocation count = %d, want clean allocation to remain eligible; facts=%#v", decomposable, facts)
+	}
+}
+
 func TestAllocationSiteFactFrameLocalUseProofCases(t *testing.T) {
 	tests := []struct {
 		name string
