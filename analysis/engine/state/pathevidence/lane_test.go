@@ -230,6 +230,27 @@ func TestBranchProofsSnapshotOrdersByFormattedKeys(t *testing.T) {
 	}
 }
 
+func TestBranchProofsSnapshotKeepsLexicalPresenceTieBreak(t *testing.T) {
+	ks := keyspace.New()
+	pathKey := mustStateKey(t, ks, pathdom.PathKey("sym12@1"))
+	present := BranchProof{Kind: BranchProofPathPresence, Path: pathKey, Presence: presence.Present()}
+	absent := BranchProof{Kind: BranchProofPathPresence, Path: pathKey, Presence: presence.Absent()}
+	l := Lane{}
+	var changed bool
+	l, changed = l.AddBranchProof(present)
+	if !changed {
+		t.Fatal("adding present proof reported unchanged")
+	}
+	l, changed = l.AddBranchProof(absent)
+	if !changed {
+		t.Fatal("adding absent proof reported unchanged")
+	}
+	got := l.BranchProofsSnapshot(ks).Proofs
+	if len(got) != 2 || got[0] != absent || got[1] != present {
+		t.Fatalf("presence tie-break order = %#v, want [%#v %#v]", got, absent, present)
+	}
+}
+
 func TestBranchProofPresenceReturnsOnlyUnambiguousProof(t *testing.T) {
 	ks := keyspace.New()
 	pathKey := mustStateKey(t, ks, pathdom.PathKey("sym10@1.value"))

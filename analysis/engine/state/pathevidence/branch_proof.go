@@ -442,41 +442,25 @@ func branchProofsFromSet(ks *keyspace.KeySpace, in map[BranchProof]struct{}) []B
 	if len(in) == 0 {
 		return nil
 	}
-	ordered := make([]orderedBranchProof, 0, len(in))
+	out := make([]BranchProof, 0, len(in))
 	for proof := range in {
-		ordered = append(ordered, orderedBranchProof{
-			proof:    proof,
-			path:     ks.Format(proof.Path),
-			other:    ks.Format(proof.Other),
-			presence: proof.Presence.String(),
-		})
+		out = append(out, proof)
 	}
-	sort.Slice(ordered, func(i, j int) bool {
-		return ordered[i].less(ordered[j])
+	sort.Slice(out, func(i, j int) bool {
+		return branchProofLess(ks, out[i], out[j])
 	})
-	out := make([]BranchProof, len(ordered))
-	for i, proof := range ordered {
-		out[i] = proof.proof
-	}
 	return out
 }
 
-type orderedBranchProof struct {
-	proof    BranchProof
-	path     pathdom.PathKey
-	other    pathdom.PathKey
-	presence string
-}
-
-func (a orderedBranchProof) less(b orderedBranchProof) bool {
-	if a.proof.Kind != b.proof.Kind {
-		return a.proof.Kind < b.proof.Kind
+func branchProofLess(ks *keyspace.KeySpace, a, b BranchProof) bool {
+	if a.Kind != b.Kind {
+		return a.Kind < b.Kind
 	}
-	if a.path != b.path {
-		return a.path < b.path
+	if a.Path != b.Path {
+		return ks.Less(a.Path, b.Path)
 	}
-	if a.other != b.other {
-		return a.other < b.other
+	if a.Other != b.Other {
+		return ks.Less(a.Other, b.Other)
 	}
-	return a.presence < b.presence
+	return a.Presence.String() < b.Presence.String()
 }
