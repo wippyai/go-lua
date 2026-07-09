@@ -525,10 +525,6 @@ func (r *Result) PathProvenPresentBeforeBoundary(point cfg.Point, p pathdom.Path
 	if !ok || state.IsBottom(r.registry, in) {
 		return false
 	}
-	snapshot := in.BranchProofsSnapshot(ks)
-	if snapshot.Bottom || snapshot.Top || len(snapshot.Proofs) == 0 {
-		return false
-	}
 	addresses, ok := r.beforeBoundaryAddressContext(point)
 	if !ok {
 		return false
@@ -546,16 +542,18 @@ func (r *Result) PathProvenPresentBeforeBoundary(point cfg.Point, p pathdom.Path
 				keys = append(keys, equivalentKey)
 			}
 		}
-		for _, proof := range snapshot.Proofs {
-			if proof.Kind != pathevidence.BranchProofPathPresence ||
-				!presence.Equal(proof.Presence, presence.Present()) {
-				continue
-			}
-			for _, candidate := range keys {
-				if branchPresenceProofMatchesKey(ks, proof.Path, candidate) {
-					found = true
-					return false
+		for _, candidate := range keys {
+			in.ForEachBranchProof(func(proof pathevidence.BranchProof) bool {
+				if proof.Kind != pathevidence.BranchProofPathPresence ||
+					!presence.Equal(proof.Presence, presence.Present()) ||
+					!branchPresenceProofMatchesKey(ks, proof.Path, candidate) {
+					return true
 				}
+				found = true
+				return false
+			})
+			if found {
+				return false
 			}
 		}
 		return true
