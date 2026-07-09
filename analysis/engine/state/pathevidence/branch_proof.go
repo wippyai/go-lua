@@ -65,6 +65,28 @@ func (l Lane) HasBranchProofKind(kind BranchProofKind) bool {
 	return false
 }
 
+// BranchProofPresence returns the unique path-presence proof for key. It
+// reports false when no proof exists or when conflicting presence proofs make
+// the result unusable.
+func (l Lane) BranchProofPresence(key keyspace.Key) (presence.Value, bool) {
+	if l.proofsBottom || key.Kind == keyspace.KindInvalid {
+		return presence.Bottom(), false
+	}
+	var value presence.Value
+	found := false
+	for proof := range l.proofs {
+		if proof.Kind != BranchProofPathPresence || proof.Path != key {
+			continue
+		}
+		if found && !presence.Equal(value, proof.Presence) {
+			return presence.Bottom(), false
+		}
+		value = proof.Presence
+		found = true
+	}
+	return value, found
+}
+
 func (l Lane) EquivalentPathKeys(ks *keyspace.KeySpace, pathKey pathdom.PathKey) []pathdom.PathKey {
 	if pathKey == "" || l.proofsBottom || len(l.proofs) == 0 {
 		return nil

@@ -5,6 +5,7 @@ import (
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -402,6 +403,14 @@ func (s State) HasBranchProofKind(kind pathevidence.BranchProofKind) bool {
 		return false
 	}
 	return s.pathEvidence.HasBranchProofKind(kind)
+}
+
+// BranchProofPresence returns the unique path-presence proof for key.
+func (s State) BranchProofPresence(key keyspace.Key) (presence.Value, bool) {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return presence.Bottom(), false
+	}
+	return s.pathEvidence.BranchProofPresence(key)
 }
 
 // HasIndexInRangeProof is the path-key compatibility adapter for in-range

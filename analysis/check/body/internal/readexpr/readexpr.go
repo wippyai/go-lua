@@ -13,7 +13,6 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"sync"
@@ -385,10 +384,6 @@ func pathPresenceProof(config Config, point cfg.Point, p pathdom.Path, in state.
 	if ks == nil {
 		return presence.Bottom(), false
 	}
-	snapshot := in.BranchProofsSnapshot(ks)
-	if snapshot.Bottom || snapshot.Top || len(snapshot.Proofs) == 0 {
-		return presence.Bottom(), false
-	}
 	var out presence.Value
 	found := false
 	visibility.AddressAt(config.Visibility, point, p).ForEachStateKey(func(stateKey pathaddr.StateKey) bool {
@@ -396,17 +391,16 @@ func pathPresenceProof(config Config, point cfg.Point, p pathdom.Path, in state.
 		if !ok {
 			return true
 		}
-		for _, proof := range snapshot.Proofs {
-			if proof.Kind != pathevidence.BranchProofPathPresence || proof.Path != key {
-				continue
-			}
-			if found && !presence.Equal(out, proof.Presence) {
-				found = false
-				return false
-			}
-			out = proof.Presence
-			found = true
+		proven, ok := in.BranchProofPresence(key)
+		if !ok {
+			return true
 		}
+		if found && !presence.Equal(out, proven) {
+			found = false
+			return false
+		}
+		out = proven
+		found = true
 		return true
 	}, visibility.StateKeyVisible, visibility.StateKeyRootOrVisible, visibility.StateKeyStructural)
 	if !found {

@@ -230,6 +230,31 @@ func TestBranchProofsSnapshotOrdersByFormattedKeys(t *testing.T) {
 	}
 }
 
+func TestBranchProofPresenceReturnsOnlyUnambiguousProof(t *testing.T) {
+	ks := keyspace.New()
+	pathKey := mustStateKey(t, ks, pathdom.PathKey("sym10@1.value"))
+	otherKey := mustStateKey(t, ks, pathdom.PathKey("sym11@1.value"))
+	l, _ := (Lane{}).AddBranchProof(BranchProof{
+		Kind:     BranchProofPathPresence,
+		Path:     pathKey,
+		Presence: presence.Present(),
+	})
+	if got, ok := l.BranchProofPresence(pathKey); !ok || !presence.Equal(got, presence.Present()) {
+		t.Fatalf("BranchProofPresence = %v/%v, want present", got, ok)
+	}
+	if got, ok := l.BranchProofPresence(otherKey); ok || !presence.Equal(got, presence.Bottom()) {
+		t.Fatalf("unproven BranchProofPresence = %v/%v, want bottom/false", got, ok)
+	}
+	l, _ = l.AddBranchProof(BranchProof{
+		Kind:     BranchProofPathPresence,
+		Path:     pathKey,
+		Presence: presence.Absent(),
+	})
+	if got, ok := l.BranchProofPresence(pathKey); ok || !presence.Equal(got, presence.Bottom()) {
+		t.Fatalf("conflicting BranchProofPresence = %v/%v, want bottom/false", got, ok)
+	}
+}
+
 func mustStructKey(t *testing.T, ks *keyspace.KeySpace, key pathdom.PathKey) keyspace.Key {
 	t.Helper()
 	structKey, ok := ks.FromPathKey(key)
