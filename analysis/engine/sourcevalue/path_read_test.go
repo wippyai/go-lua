@@ -98,6 +98,59 @@ func TestReadPathValueNarrowsEquivalentRootAlias(t *testing.T) {
 	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
 }
 
+func TestReadPathValueDoesNotImportExplicitAnyEvidenceFromEquivalentRootAlias(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(3)
+	alias := symbol.ID(30)
+	original := symbol.ID(31)
+	aliasPath := pathdom.NewPath(alias, "alias")
+	originalPath := pathdom.NewPath(original, "details")
+	builder := visibility.NewBuilder()
+	builder.Define(point, alias, "alias")
+	builder.Define(point, original, "details")
+	resolver := visibility.NewResolver(builder.Build())
+	ks := resolver.KeySpace()
+
+	tableKind := runtimekind.Singleton(runtimekind.Table)
+	originalValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, tableKind)
+	aliasValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), evidence.Key, evidence.ExplicitTop())
+	aliasKey, aliasOK := resolver.StateKeyAt(point, aliasPath)
+	originalKey, originalOK := resolver.StateKeyAt(point, originalPath)
+	if !aliasOK || !originalOK {
+		t.Fatal("resolver failed to build root state keys")
+	}
+	aliasLocalKey, aliasLocalOK := ks.InternStateKey(aliasKey)
+	originalLocalKey, originalLocalOK := ks.InternStateKey(originalKey)
+	if !aliasLocalOK || !originalLocalOK {
+		t.Fatal("keyspace failed to intern root state keys")
+	}
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(alias), aliasValue).
+		WriteValue(reg, key.SymbolValue(original), originalValue).
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathEqual,
+			Path:  aliasLocalKey,
+			Other: originalLocalKey,
+		})
+
+	got, ok := ReadPathValue(reg, resolver, point, originalPath, in)
+	if !ok {
+		t.Fatal("ReadPathValue returned false")
+	}
+	if gotEvidence := product.Get(reg, got, evidence.Key); !evidence.Equal(gotEvidence, evidence.Top()) {
+		t.Fatalf("evidence = %s, want top: explicit-any alias must not taint original root", gotEvidence)
+	}
+	assertRuntimeKind(t, reg, got, tableKind)
+
+	gotAlias, ok := ReadPathValue(reg, resolver, point, aliasPath, in)
+	if !ok {
+		t.Fatal("ReadPathValue(alias) returned false")
+	}
+	if gotEvidence := product.Get(reg, gotAlias, evidence.Key); !evidence.Equal(gotEvidence, evidence.ExplicitTop()) {
+		t.Fatalf("alias evidence = %s, want explicit-top preserved on alias", gotEvidence)
+	}
+}
+
 func TestReadPathValueIgnoresStaleEquivalentRootVersion(t *testing.T) {
 	reg := standard.Registry()
 	oldPoint := cfg.Point(1)

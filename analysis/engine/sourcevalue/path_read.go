@@ -61,12 +61,25 @@ func refineRootValueThroughEquivalentPaths(
 	domain := product.Domain(reg)
 	for _, equivalentKey := range in.EquivalentRootKeys(ks, stateKey) {
 		if equivalentValue, ok := equivalentRootSymbolValue(reg, resolver, point, equivalentKey, in); ok {
+			equivalentValue = rootAliasRefinementValue(reg, value, equivalentValue)
 			if meet := domain.Meet(value, equivalentValue); !domain.Equal(meet, domain.Bottom()) {
 				value = meet
 			}
 		}
 	}
 	return value
+}
+
+func rootAliasRefinementValue(reg *axis.Registry, base, equivalent product.Value) product.Value {
+	baseEvidence := product.Get(reg, base, evidence.Key)
+	if baseEvidence.IsGradualTop() || baseEvidence.IsExplicitTop() {
+		return equivalent
+	}
+	equivalentEvidence := product.Get(reg, equivalent, evidence.Key)
+	if !equivalentEvidence.IsGradualTop() && !equivalentEvidence.IsExplicitTop() {
+		return equivalent
+	}
+	return product.Set(reg, equivalent, evidence.Key, evidence.Top())
 }
 
 func equivalentRootSymbolValue(
