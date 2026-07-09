@@ -31,6 +31,11 @@ max_tokens = os.environ.get("MAX_TOKENS", "1200")
 max_bytes = os.environ.get("MAX_BYTES", "120000")
 steps = os.environ.get("STEPS", "8")
 dry_run = os.environ.get("DRY_RUN", "") != ""
+# EMPTY_OK_IDS is a comma-separated allowlist of row ids permitted to match
+# zero candidate files. No row in the current matrix needs it; a row that
+# genuinely audits an empty/placeholder directory should be added here rather
+# than letting a selector typo pass silently.
+empty_ok_ids = {part.strip() for part in os.environ.get("EMPTY_OK_IDS", "").split(",") if part.strip()}
 
 def selected(row):
     if selector == "all":
@@ -57,6 +62,27 @@ def run(cmd, err_path):
     with open(err_path, "w", encoding="utf-8") as err:
         subprocess.run(cmd, cwd=root, stderr=err, check=True)
 
+def count_candidates(scope, ext, match, exclude):
+    # Mirrors promptmap's own file collector (main.go collect()): a file
+    # counts if its extension matches, its basename contains match (when set),
+    # and its basename does not contain exclude (when set). Dotfiles and
+    # dot-directories are skipped, same as promptmap.
+    wanted_ext = "." + ext.lstrip(".") if ext else None
+    count = 0
+    for dirpath, dirnames, filenames in os.walk(scope):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for name in filenames:
+            if name.startswith("."):
+                continue
+            if wanted_ext and not name.endswith(wanted_ext):
+                continue
+            if match and match not in name:
+                continue
+            if exclude and exclude in name:
+                continue
+            count += 1
+    return count
+
 with open(matrix, newline="", encoding="utf-8") as f:
     rows = [r for r in csv.DictReader(f) if selected(r)]
 
@@ -69,6 +95,16 @@ for row in rows:
     out_csv = str(outdir_path / f"{row_id}.csv")
     err_log = str(outdir_path / f"{row_id}.err")
     mode = row["mode"]
+
+    candidates = count_candidates(scope, row["ext"] or "go", row["match"], row["exclude"])
+    print(f"[{row_id}] candidate files: {candidates} (scope={scope})", flush=True)
+    if candidates == 0 and row_id not in empty_ok_ids:
+        raise SystemExit(
+            f"row {row_id!r} matched 0 candidate files under {scope} "
+            f"(ext={row['ext'] or 'go'!r} match={row['match']!r} exclude={row['exclude']!r}); "
+            "this audits nothing while exiting green. Fix the row's scope/match/exclude, "
+            "or add the id to EMPTY_OK_IDS if an empty scope is intentional."
+        )
 
     cmd = [
         promptmap,
