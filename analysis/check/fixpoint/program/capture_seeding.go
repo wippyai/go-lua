@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -11,8 +12,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -172,13 +175,13 @@ func captureInvariantValueReaderAtWithOptions(result *body.Result, point cfg.Poi
 			}
 			return product.Value{}, false
 		}
+		if ok {
+			if shape, ok := captureNonStackStableShape(result, point, value); ok {
+				return typeValues.FromTypeWithWitness(reg, shape), true
+			}
+		}
 		if t, ok := result.SymbolStaticType(id); ok && t != nil {
 			return typeValues.FromTypeWithWitness(reg, t), true
-		}
-		if ok {
-			if shape, ok := result.StableShapeForValueAtBoundary(point, value); ok && shape.Shape != nil {
-				return typeValues.FromTypeWithWitness(reg, shape.Shape), true
-			}
 		}
 		if ok {
 			if t, ok := result.ValueStructuralType(value); ok && t != nil {
@@ -206,6 +209,24 @@ func captureHasFunctionStaticType(result *body.Result, id symbol.ID) bool {
 	}
 	_, ok = unwrap.Annotated(t).(*typ.Function)
 	return ok
+}
+
+func captureNonStackStableShape(result *body.Result, point cfg.Point, value product.Value) (typ.Type, bool) {
+	if result == nil {
+		return nil, false
+	}
+	shape, ok := result.StableShapeForValueAtBoundary(point, value)
+	if !ok || shape.Shape == nil {
+		return nil, false
+	}
+	st, ok := result.StateAtBoundary(point)
+	if !ok {
+		return nil, false
+	}
+	if st.ReadPlacement(shape.Identity) == placement.Stack {
+		return nil, false
+	}
+	return shape.Shape, true
 }
 
 type closureCaptureSeeder struct {
@@ -247,7 +268,10 @@ func (s *closureCaptureSeeder) apply(
 		}
 		fullValue := s.fullCapturedValue(capture.Captured, slot)
 		written := s.captureHasWrite(capture.Captured)
-		escapedMutable := !written && s.captureEscapesMutable(fullValue)
+		escapedMutable := !written &&
+			!s.captureIsRequireModule(capture.Captured) &&
+			!s.captureHasDirectNonFunctionInvariantMember(capture) &&
+			s.captureEscapesMutable(fullValue)
 		degrade := written || escapedMutable
 		if degrade {
 			entry = s.stripCapturedPathEvidence(capture, entry)
@@ -322,6 +346,14 @@ func (s *closureCaptureSeeder) captureEscapesMutable(full product.Value) bool {
 	return s != nil && s.escapeUnknown && capturedValueIsMutable(s.reg, full)
 }
 
+func (s *closureCaptureSeeder) captureIsRequireModule(sym symbol.ID) bool {
+	if s == nil || s.bindings == nil || sym == 0 {
+		return false
+	}
+	_, ok := moduleidentity.LocalRequireModulePath(s.bindings, sym)
+	return ok
+}
+
 func capturedValueIsMutable(reg *axis.Registry, value product.Value) bool {
 	id, ok := identityvalue.ExactID(reg, value)
 	return ok && id.Kind == "lua.table"
@@ -376,6 +408,9 @@ func (s *closureCaptureSeeder) seedCapturedPathEvidence(capture bind.Capture, en
 			if degrade && !captureInvariantStaticMemberValue(s.reg, value) {
 				continue
 			}
+			if degrade && !captureDirectStaticMemberPath(s.ks, pathKey) {
+				continue
+			}
 			rebased, ok := rebaseCapturedPathKey(pathKey, captures)
 			if !ok {
 				continue
@@ -399,14 +434,75 @@ func captureInvariantStaticMemberValue(reg *axis.Registry, value product.Value) 
 		return tt.Base == kind.String
 	case *typ.Record:
 		return !tt.Open && !tt.HasMapComponent() && tt.Metatable == nil
+	case *typ.Map, *typ.ReadonlyMap, *typ.Array, *typ.Tuple:
+		return true
 	default:
 		return typ.TypeEquals(tt, typ.String)
 	}
 }
 
+func captureNonFunctionInvariantStaticMemberValue(reg *axis.Registry, value product.Value) bool {
+	t, ok := typevalue.TypeOf(reg, value)
+	if !ok || t == nil {
+		return false
+	}
+	switch tt := unwrap.Annotated(t).(type) {
+	case *typ.Literal:
+		return tt.Base == kind.String
+	case *typ.Record:
+		return !tt.Open && !tt.HasMapComponent() && tt.Metatable == nil
+	case *typ.Map, *typ.ReadonlyMap, *typ.Array, *typ.Tuple:
+		return true
+	default:
+		return typ.TypeEquals(tt, typ.String)
+	}
+}
+
+func captureDirectStaticMemberPath(ks *keyspace.KeySpace, pathKey pathdom.PathKey) bool {
+	if ks == nil || pathKey == "" {
+		return false
+	}
+	key, ok := ks.FromStateKey(pathKey)
+	if !ok {
+		return false
+	}
+	segments, ok := ks.SegmentsView(key)
+	return ok && len(segments) == 1
+}
+
+func (s *closureCaptureSeeder) captureHasDirectNonFunctionInvariantMember(capture bind.Capture) bool {
+	if s == nil || s.reg == nil || s.ks == nil || capture.Captured == 0 {
+		return false
+	}
+	snapshot := s.caller.PathStaticMembersSnapshot(s.ks)
+	if snapshot.Bottom || snapshot.Top {
+		return false
+	}
+	captures := []bind.Capture{capture}
+	for pathKey, value := range snapshot.Members {
+		if pathKey == "" || !captureDirectStaticMemberPath(s.ks, pathKey) {
+			continue
+		}
+		if !captureNonFunctionInvariantStaticMemberValue(s.reg, value) {
+			continue
+		}
+		if _, ok := rebaseCapturedPathKey(pathKey, captures); ok {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *closureCaptureSeeder) stripCapturedPathEvidence(capture bind.Capture, entry state.State) state.State {
-	if s == nil || s.ks == nil || capture.Captured == 0 {
+	if s == nil || s.reg == nil || s.ks == nil || capture.Captured == 0 {
 		return entry
+	}
+	slot := statekey.SymbolValue(capture.Captured)
+	if slot != 0 {
+		value := entry.ReadValue(s.reg, slot)
+		if id, ok := identityvalue.ExactID(s.reg, value); ok {
+			entry = entry.WriteHeapTableObject(s.reg, id, heapidentity.BottomObject(s.reg))
+		}
 	}
 	root := pathdom.Path{
 		Root:    capture.CapturedName,
