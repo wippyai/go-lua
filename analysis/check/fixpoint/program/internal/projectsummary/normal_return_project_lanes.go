@@ -130,6 +130,9 @@ func projectNormalReturnPathStaticMembers(ctx normalReturnProjectContext, out *c
 func projectNormalReturnPathPresenceImplications(ctx normalReturnProjectContext, out *callboundary.NormalReturnFacts) {
 	if snapshot := ctx.exit.PathPresenceImplicationsSnapshot(ctx.ks); !snapshot.Bottom {
 		for _, implication := range snapshot.Implications {
+			if implication.HasTriggerPathEqual {
+				continue
+			}
 			trigger, ok := ctx.boundary.KeyspaceStatePath(implication.Trigger)
 			if !ok {
 				continue

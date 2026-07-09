@@ -26,7 +26,12 @@ const MaxPartitionImplicationsPerBody = 64
 // requiring every path on the selected edge to end with a compatible write and
 // the opposite edge to contradict the trigger value.
 func (l *lowerer) addConditionalAssignmentImplications(input *factflow.FactsInput, graph cfg.Graph) {
-	if input == nil || graph == nil || len(input.RootAssignments) == 0 {
+	if input == nil {
+		return
+	}
+	partitionImplicationCount := 0
+	l.addChannelSelectPayloadImplications(input, graph, &partitionImplicationCount)
+	if graph == nil || len(input.RootAssignments) == 0 {
 		return
 	}
 	postdom := dominance.ComputeImmediatePostDominators(graph)
@@ -35,7 +40,6 @@ func (l *lowerer) addConditionalAssignmentImplications(input *factflow.FactsInpu
 	}
 	rpo := graph.RPO()
 	continuationJoins := newBranchContinuationJoinCache(graph, rpo)
-	partitionImplicationCount := 0
 	for _, branch := range rpo {
 		if partitionImplicationCount >= MaxPartitionImplicationsPerBody {
 			return
@@ -106,6 +110,53 @@ func (l *lowerer) addConditionalAssignmentImplications(input *factflow.FactsInpu
 						}
 					}
 				}
+			}
+		}
+	}
+}
+
+func (l *lowerer) addChannelSelectPayloadImplications(
+	input *factflow.FactsInput,
+	graph cfg.Graph,
+	partitionImplicationCount *int,
+) {
+	if l == nil || l.registry == nil || input == nil || graph == nil {
+		return
+	}
+	for _, point := range graph.RPO() {
+		if partitionImplicationCount != nil && *partitionImplicationCount >= MaxPartitionImplicationsPerBody {
+			return
+		}
+		for _, event := range input.ChannelSelects[point].Events() {
+			if event.Kind() != factflow.ChannelSelectReceive {
+				continue
+			}
+			resultPath, ok := event.ResultPath()
+			if !ok || resultPath.IsEmpty() || resultPath.Symbol == 0 {
+				continue
+			}
+			casePath, ok := event.CasePath()
+			if !ok || casePath.IsEmpty() || casePath.Symbol == 0 {
+				continue
+			}
+			payload, ok := event.PayloadValue()
+			if !ok ||
+				product.Equal(l.registry, payload, product.Top()) ||
+				product.Equal(l.registry, payload, product.Bottom(l.registry)) {
+				continue
+			}
+			if !appendPartitionPathValuePresenceImplications(
+				input.PathValuePresenceImplications,
+				point,
+				partitionImplicationCount,
+				factflow.NewPathEqualityValueRefinementImplication(
+					resultPath.Field("channel"),
+					casePath,
+					resultPath.Field("value"),
+					payload,
+				),
+			) {
+				return
 			}
 		}
 	}

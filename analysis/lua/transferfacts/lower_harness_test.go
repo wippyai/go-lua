@@ -961,6 +961,50 @@ end
 	}
 }
 
+func TestLowerChannelSelectsPublishPathEqualityPayloadImplications(t *testing.T) {
+	fn, bindings, built := parseSemanticFunction(t, `
+function handle(events_ch: Channel<{kind: "event", id: string}>, stop_ch: Channel<{kind: "stop", reason: string}>)
+    local selected = channel.select { events_ch:case_receive(), stop_ch:case_receive() }
+end
+`, "channel")
+	body := wirlower.LowerFunction("channel-select-implications", fn, bindings, built)
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
+	stmt := fn.Stmts[0].(*ast.LocalAssignStmt)
+	selectedPath := path.NewPath(mustLocalAt(t, bindings, stmt, 0), "selected")
+	eventsPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "events_ch")
+	stopPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "stop_ch")
+	wantPayloads := map[path.PathKey]typ.Type{
+		eventsPath.Key(): typetable.NewRecord().Field("kind", typ.LiteralString("event")).Field("id", typ.String).Build(),
+		stopPath.Key():   typetable.NewRecord().Field("kind", typ.LiteralString("stop")).Field("reason", typ.String).Build(),
+	}
+	seen := map[path.PathKey]bool{}
+	for _, point := range built.Graph.RPO() {
+		for _, implication := range facts.PathValuePresenceImplications(point) {
+			if !implication.HasTriggerPathEqual() ||
+				!implication.TriggerPath().Equal(selectedPath.Field("channel")) ||
+				!implication.TargetPath().Equal(selectedPath.Field("value")) ||
+				!implication.HasTargetValue() {
+				continue
+			}
+			other := implication.TriggerOtherPath()
+			want, ok := wantPayloads[other.Key()]
+			if !ok {
+				t.Fatalf("unexpected channel-select implication trigger other path %s", other.String())
+			}
+			got, ok := typevalue.TypeOf(standard.Registry(), implication.TargetValue())
+			if !ok || !typ.TypeEquals(got, want) {
+				t.Fatalf("payload implication for %s = %v/%v, want %v", other.String(), got, ok, want)
+			}
+			seen[other.Key()] = true
+		}
+	}
+	for key := range wantPayloads {
+		if !seen[key] {
+			t.Fatalf("missing channel-select payload implication for %s; saw %#v", key, seen)
+		}
+	}
+}
+
 func TestLowerChannelSelectsInWIRModeDoesNotFallbackToSidecar(t *testing.T) {
 	fn, bindings, built := parseSemanticFunction(t, `
 function handle(events_ch: Channel<{kind: "event", id: string}>, stop_ch: Channel<{kind: "stop", reason: string}>)

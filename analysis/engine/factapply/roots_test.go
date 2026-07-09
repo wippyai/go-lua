@@ -874,3 +874,44 @@ func TestPathPresenceImplicationActivationAcceptsRootTarget(t *testing.T) {
 
 	assertValue(t, reg, got, key.SymbolValue(target), presentValue(reg))
 }
+
+func TestPathPresenceImplicationActivationAcceptsPathEqualityTrigger(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(63)
+	result := symbol.ID(361)
+	events := symbol.ID(362)
+	resultPath := path.NewPath(result, "selected")
+	channelPath := resultPath.Field("channel")
+	valuePath := resultPath.Field("value")
+	eventsPath := path.NewPath(events, "events")
+
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, result, "selected")
+	visibilityBuilder.Define(point, events, "events")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	triggerKey, triggerOK := visibility.AddressAt(resolver, point, channelPath).RootOrVisibleKeyspaceKey()
+	otherKey, otherOK := visibility.AddressAt(resolver, point, eventsPath).RootOrVisibleKeyspaceKey()
+	targetKey, targetOK := visibility.AddressAt(resolver, point, valuePath).RootOrVisibleKeyspaceKey()
+	if !triggerOK || !otherOK || !targetOK {
+		t.Fatalf("missing implication keys: trigger=%v other=%v target=%v", triggerOK, otherOK, targetOK)
+	}
+	payloadType := typetable.NewRecord().Field("id", typ.String).Build()
+	payloadValue := typevalue.WithWitness(reg, typevalue.FromType(reg, payloadType), payloadType)
+	implication := pathevidence.NewPathEqualValueRefinementImplication(
+		triggerKey,
+		otherKey,
+		targetKey,
+		payloadValue,
+	)
+	in := state.State{}.
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathEqual,
+			Path:  triggerKey,
+			Other: otherKey,
+		}).
+		AddPathPresenceImplication(implication)
+
+	got := activatePathPresenceImplications(reg, resolver, point, in)
+
+	assertPathValue(t, reg, resolver.KeySpace(), got, resolver.KeySpace().Format(targetKey), payloadValue)
+}

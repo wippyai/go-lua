@@ -13,15 +13,17 @@ import (
 // facts: when Trigger has either TriggerPresence or TriggerValue, Target has
 // TargetPresence or TargetValue.
 type PathPresenceImplication struct {
-	Trigger            keyspace.Key
-	TriggerPresence    presence.Value
-	TriggerValue       product.Value
-	HasTriggerValue    bool
-	HasTriggerPresence bool
-	Target             keyspace.Key
-	TargetPresence     presence.Value
-	TargetValue        product.Value
-	HasTargetValue     bool
+	Trigger             keyspace.Key
+	TriggerOther        keyspace.Key
+	TriggerPresence     presence.Value
+	TriggerValue        product.Value
+	HasTriggerValue     bool
+	HasTriggerPresence  bool
+	HasTriggerPathEqual bool
+	Target              keyspace.Key
+	TargetPresence      presence.Value
+	TargetValue         product.Value
+	HasTargetValue      bool
 }
 
 // NewPathPresenceImplication creates a presence-triggered implication.
@@ -93,6 +95,24 @@ func NewPathTruthyValueRefinementImplication(
 	}
 }
 
+// NewPathEqualValueRefinementImplication creates a path-equality-triggered
+// implication that refines the target to a stored value when activated.
+func NewPathEqualValueRefinementImplication(
+	trigger keyspace.Key,
+	other keyspace.Key,
+	target keyspace.Key,
+	targetValue product.Value,
+) PathPresenceImplication {
+	return PathPresenceImplication{
+		Trigger:             trigger,
+		TriggerOther:        other,
+		HasTriggerPathEqual: true,
+		Target:              target,
+		TargetValue:         targetValue,
+		HasTargetValue:      true,
+	}
+}
+
 // AddPathPresenceImplication records a persistent must implication.
 func (l Lane) AddPathPresenceImplication(implication PathPresenceImplication) (Lane, bool) {
 	if !validPathPresenceImplication(implication) {
@@ -124,6 +144,15 @@ func (l Lane) HasPathPresenceImplication(implication PathPresenceImplication) bo
 func validPathPresenceImplication(implication PathPresenceImplication) bool {
 	if implication.Trigger == (keyspace.Key{}) || implication.Target == (keyspace.Key{}) {
 		return false
+	}
+	if implication.HasTriggerPathEqual {
+		if implication.TriggerOther == (keyspace.Key{}) || implication.TriggerOther == implication.Trigger {
+			return false
+		}
+		if implication.HasTargetValue {
+			return implication.TargetValue != product.Top()
+		}
+		return pathPresenceImplicationPresenceValid(implication.TargetPresence)
 	}
 	if implication.HasTriggerValue {
 		if implication.TriggerValue == product.Top() {
@@ -179,7 +208,7 @@ func pathPresenceImplicationMatchesPath(
 	if matches == nil {
 		return false
 	}
-	return matches(implication.Trigger) || matches(implication.Target)
+	return matches(implication.Trigger) || matches(implication.TriggerOther) || matches(implication.Target)
 }
 
 func pathPresenceImplicationsFromSet(
@@ -202,6 +231,12 @@ func pathPresenceImplicationsFromSet(
 func pathPresenceImplicationLess(ks *keyspace.KeySpace, a, b PathPresenceImplication) bool {
 	if a.Trigger != b.Trigger {
 		return ks.Less(a.Trigger, b.Trigger)
+	}
+	if a.HasTriggerPathEqual != b.HasTriggerPathEqual {
+		return !a.HasTriggerPathEqual
+	}
+	if a.TriggerOther != b.TriggerOther {
+		return ks.Less(a.TriggerOther, b.TriggerOther)
 	}
 	if a.Target != b.Target {
 		return ks.Less(a.Target, b.Target)

@@ -161,12 +161,31 @@ func applyPathValuePresenceImplication(
 	if !ok {
 		return out
 	}
+	var other keyspace.Key
+	if fact.HasTriggerPathEqual() {
+		var otherOK bool
+		other, otherOK = visibility.AddressAt(resolver, ctx.Point, fact.TriggerOtherPathRef()).RootOrVisibleKeyspaceKey()
+		if !otherOK {
+			return out
+		}
+	}
 	target, ok := visibility.AddressAt(resolver, ctx.Point, fact.TargetPathRef()).RootOrVisibleKeyspaceKey()
 	if !ok {
 		return out
 	}
 	var implication pathevidence.PathPresenceImplication
-	if fact.HasTargetValue() {
+	if fact.HasTriggerPathEqual() {
+		if fact.HasTargetValue() {
+			implication = pathevidence.NewPathEqualValueRefinementImplication(
+				trigger,
+				other,
+				target,
+				fact.TargetValue(),
+			)
+		} else {
+			return out
+		}
+	} else if fact.HasTargetValue() {
 		if fact.HasTriggerPresence() {
 			implication = pathevidence.NewPathTruthyValueRefinementImplication(
 				trigger,
@@ -241,6 +260,9 @@ func pathPresenceImplicationTriggered(
 	out state.State,
 	implication pathevidence.PathPresenceImplication,
 ) bool {
+	if implication.HasTriggerPathEqual {
+		return pathPresenceImplicationPathEqualTriggered(resolver, out, implication)
+	}
 	if implication.HasTriggerValue {
 		current, ok := readPathKeyValue(reg, resolver, point, out, resolver.KeySpace().Format(implication.Trigger))
 		if !ok || product.Equal(reg, current, product.Bottom(reg)) {
@@ -265,6 +287,39 @@ func pathPresenceImplicationTriggered(
 	}
 	current, ok := readPathKeyPresence(reg, resolver, point, out, resolver.KeySpace().Format(implication.Trigger))
 	return ok && presence.Equal(current, implication.TriggerPresence)
+}
+
+func pathPresenceImplicationPathEqualTriggered(
+	resolver *visibility.Resolver,
+	out state.State,
+	implication pathevidence.PathPresenceImplication,
+) bool {
+	if resolver == nil {
+		return false
+	}
+	if out.HasBranchProof(pathevidence.BranchProof{
+		Kind:  pathevidence.BranchProofPathEqual,
+		Path:  implication.Trigger,
+		Other: implication.TriggerOther,
+	}) || out.HasBranchProof(pathevidence.BranchProof{
+		Kind:  pathevidence.BranchProofPathEqual,
+		Path:  implication.TriggerOther,
+		Other: implication.Trigger,
+	}) {
+		return true
+	}
+	ks := resolver.KeySpace()
+	triggerKey := ks.Format(implication.Trigger)
+	otherKey := ks.Format(implication.TriggerOther)
+	if triggerKey == "" || otherKey == "" {
+		return false
+	}
+	for _, equivalent := range out.EquivalentPathKeys(ks, triggerKey) {
+		if equivalent == otherKey {
+			return true
+		}
+	}
+	return false
 }
 
 func applyPathPresenceImplicationTarget(
