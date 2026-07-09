@@ -9,7 +9,7 @@
         "severity": "warning",
         "code": "type.operator.concat_operand",
         "message_contains": [
-          "right operand of `..` may be nil"
+          "right operand `maybe` of `..` may be nil"
         ],
         "min_evidence": 1,
         "evidence_contains": [
@@ -28,12 +28,12 @@
           }
         ],
         "render_contains": [
-          "warning[type.operator.concat_operand]: right operand of `..` may be nil",
+          "warning[type.operator.concat_operand]: right operand `maybe` of `..` may be nil",
           "return \"prefix:\" .. maybe",
           "because:"
         ],
         "render_ordered_contains": [
-          "warning[type.operator.concat_operand]: right operand of `..` may be nil",
+          "warning[type.operator.concat_operand]: right operand `maybe` of `..` may be nil",
           "--> main.lua:2:25",
           "return \"prefix:\" .. maybe",
           "because:",
