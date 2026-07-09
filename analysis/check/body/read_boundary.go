@@ -349,7 +349,9 @@ func (r *Result) ExpressionReadProvenPresentBeforeBoundary(point cfg.Point, expr
 		return false
 	}
 	if attr, ok := expr.(*ast.AttrGetExpr); ok && attr.KeySyntax == ast.AttrKeyIndex && attr.Object != nil && attr.Key != nil {
-		if containerPath, ok := r.ExpressionPath(attr.Object); ok && r.IndexReadSafeForExpressionAtBoundary(point, attr.Key, containerPath) {
+		if containerPath, ok := r.ExpressionPath(attr.Object); ok &&
+			r.IndexReadSafeForExpressionAtBoundary(point, attr.Key, containerPath) &&
+			r.indexContainerInRangeElementsNonNil(point, containerPath) {
 			return true
 		}
 	}

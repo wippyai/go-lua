@@ -740,6 +740,118 @@ func TestProjectInRangeStructuralArrayIndexDropsNil(t *testing.T) {
 	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
 }
 
+func TestDynamicIndexLengthFloorAndIndexCeilDropsNil(t *testing.T) {
+	reg := standard.Registry()
+	typeValues := typevalue.NewCache()
+	point := cfg.Point(113)
+	arraySym := symbol.ID(123)
+	indexSym := symbol.ID(124)
+	builder := visibility.NewBuilder()
+	builder.Define(point, arraySym, "arr")
+	builder.Define(point, indexSym, "i")
+	resolver := visibility.NewResolver(builder.Build())
+	arrayPath := path.NewPath(arraySym, "arr")
+	indexPath := path.NewPath(indexSym, "i")
+	arrayValue := typeValues.FromTypeWithWitness(reg, typ.NewArray(typ.String))
+	indexValue := typeValues.FromTypeWithWitness(reg, typ.Integer)
+	arrayKey, arrayKeyOK := resolver.StateKeyAt(point, arrayPath)
+	indexKey, indexKeyOK := visibility.AddressAt(resolver, point, indexPath).RootOrVisibleStateKey()
+	if !arrayKeyOK || !indexKeyOK {
+		t.Fatalf("state keys = %v/%v, want both", arrayKeyOK, indexKeyOK)
+	}
+	keyExpr := factflow.ExprRef(11301)
+	keySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: keyExpr, HasExpr: true}
+	dyn, ok := factflow.NewDynamicIndexExpression(arrayPath, keySource)
+	if !ok {
+		t.Fatal("NewDynamicIndexExpression returned false")
+	}
+	facts := factflow.NewFacts(factflow.FactsInput{
+		ExpressionPaths: map[factflow.ExprRef]path.Path{keyExpr: indexPath},
+	})
+	config := Config{
+		Registry:   reg,
+		Facts:      facts,
+		Visibility: resolver,
+		TypeValues: typeValues,
+	}
+	base := state.State{}.
+		WriteValue(reg, key.SymbolValue(arraySym), arrayValue).
+		WriteValue(reg, key.SymbolValue(indexSym), indexValue).
+		WriteLenFloor(resolver.KeySpace(), arrayKey, 3).
+		WriteNumFloor(resolver.KeySpace(), indexKey, 1)
+
+	got, ok := dynamicIndexExpressionValue(config, point, dyn, base.WriteNumCeil(resolver.KeySpace(), indexKey, 3))
+	if !ok {
+		t.Fatal("dynamicIndexExpressionValue returned false for in-floor index")
+	}
+	assertPresence(t, reg, got, presence.Present())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+
+	outOfFloor, ok := dynamicIndexExpressionValue(config, point, dyn, base.WriteNumCeil(resolver.KeySpace(), indexKey, 4))
+	if !ok {
+		t.Fatal("dynamicIndexExpressionValue returned false for out-of-floor index")
+	}
+	assertPresence(t, reg, outOfFloor, presence.Maybe())
+	assertRuntimeKind(t, reg, outOfFloor, runtimekind.Singleton(runtimekind.String))
+}
+
+func TestDynamicIndexConstantLengthFloorDropsNil(t *testing.T) {
+	reg := standard.Registry()
+	typeValues := typevalue.NewCache()
+	point := cfg.Point(114)
+	arraySym := symbol.ID(125)
+	builder := visibility.NewBuilder()
+	builder.Define(point, arraySym, "arr")
+	resolver := visibility.NewResolver(builder.Build())
+	arrayPath := path.NewPath(arraySym, "arr")
+	arrayValue := typeValues.FromTypeWithWitness(reg, typ.NewArray(typ.String))
+	arrayKey, arrayKeyOK := resolver.StateKeyAt(point, arrayPath)
+	if !arrayKeyOK {
+		t.Fatal("missing array state key")
+	}
+	shape, shapeOK := factflow.NewValueSourceShape(true, false, false, false)
+	if !shapeOK {
+		t.Fatal("invalid source shape")
+	}
+	keyAt := func(index int64) factflow.ValueSource {
+		source, ok := factflow.NewIntegerLiteralValueSource(index, -1, -1, 0, shape)
+		if !ok {
+			t.Fatalf("invalid integer source %d", index)
+		}
+		return source
+	}
+	dynAt := func(index int64) factflow.DynamicIndexExpression {
+		dyn, ok := factflow.NewDynamicIndexExpression(arrayPath, keyAt(index))
+		if !ok {
+			t.Fatalf("NewDynamicIndexExpression(%d) returned false", index)
+		}
+		return dyn
+	}
+	config := Config{
+		Registry:   reg,
+		Facts:      factflow.NewFacts(factflow.FactsInput{}),
+		Visibility: resolver,
+		TypeValues: typeValues,
+	}
+	base := state.State{}.
+		WriteValue(reg, key.SymbolValue(arraySym), arrayValue).
+		WriteLenFloor(resolver.KeySpace(), arrayKey, 3)
+
+	got, ok := dynamicIndexExpressionValue(config, point, dynAt(3), base)
+	if !ok {
+		t.Fatal("dynamicIndexExpressionValue returned false for in-floor constant")
+	}
+	assertPresence(t, reg, got, presence.Present())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+
+	outOfFloor, ok := dynamicIndexExpressionValue(config, point, dynAt(4), base)
+	if !ok {
+		t.Fatal("dynamicIndexExpressionValue returned false for out-of-floor constant")
+	}
+	assertPresence(t, reg, outOfFloor, presence.Maybe())
+	assertRuntimeKind(t, reg, outOfFloor, runtimekind.Singleton(runtimekind.String))
+}
+
 func TestProjectLenFloorPrunesImpossibleEmptyUnionArmForArrayIndex(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(17)

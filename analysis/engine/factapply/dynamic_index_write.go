@@ -1,6 +1,8 @@
 package factapply
 
 import (
+	"math"
+
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
@@ -55,7 +57,63 @@ func applyDynamicIndexWrite(
 	out = addKnownDynamicIndexWriteEquality(ctx, resolver, facts, out, fact, value)
 	out = addKnownDynamicIndexWriteStaticMember(ctx, resolver, out, fact, value)
 	out = applyStoredDynamicIndexPlacement(ctx, resolver, out, tablePath, value.Value)
+	out = applyDynamicIndexAppendLengthFloor(ctx, resolver, facts, in, out, fact, value)
 	return writeHeapTableDynamicIndexFact(ctx, resolver, out, tablePath, key, value)
+}
+
+func applyDynamicIndexAppendLengthFloor(
+	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
+	facts factflow.Facts,
+	in state.State,
+	out state.State,
+	fact factflow.DynamicIndexWrite,
+	value dynamicindex.Fact,
+) state.State {
+	if resolver == nil || !dynamicIndexFactDefinitelyPresent(ctx.Registry, value) {
+		return out
+	}
+	tablePath := fact.TablePathRef()
+	if !dynamicIndexWriteKeyIsLengthAppend(ctx.Registry, resolver, facts, fact.KeySource(), tablePath) {
+		return out
+	}
+	tableKey, ok := visibility.AddressAt(resolver, ctx.Point, tablePath).VisibleStateKey()
+	if !ok {
+		return out
+	}
+	base, ok := in.ReadLenFloor(resolver.KeySpace(), tableKey)
+	if !ok || base == math.MaxInt64 {
+		return out
+	}
+	return out.WriteLenFloor(resolver.KeySpace(), tableKey, base+1)
+}
+
+func dynamicIndexWriteKeyIsLengthAppend(reg *axis.Registry, resolver *visibility.Resolver, facts factflow.Facts, source factflow.ValueSource, tablePath pathdom.Path) bool {
+	plus, ok := binaryExpressionOperation(facts, source, "+")
+	if !ok {
+		return false
+	}
+	return dynamicIndexWriteSourceIsLengthOfPath(resolver, facts, plus.Left(), tablePath) &&
+		expressionSourceIsIntegerLiteral(reg, facts, plus.Right(), 1) ||
+		expressionSourceIsIntegerLiteral(reg, facts, plus.Left(), 1) &&
+			dynamicIndexWriteSourceIsLengthOfPath(resolver, facts, plus.Right(), tablePath)
+}
+
+func dynamicIndexWriteSourceIsLengthOfPath(resolver *visibility.Resolver, facts factflow.Facts, source factflow.ValueSource, tablePath pathdom.Path) bool {
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		return false
+	}
+	op, ok := facts.ExpressionOperation(source.ExprRef)
+	if !ok || op.Kind() != factflow.ExpressionOperationUnary || op.Op() != "#" {
+		return false
+	}
+	operand := op.Left()
+	if operand.Kind == factflow.ValueSourceExpression && operand.HasExpr {
+		got, ok := facts.ExpressionPathRef(operand.ExprRef)
+		return ok && got.Equal(tablePath)
+	}
+	got, ok := callSourcePath(facts, resolver, operand)
+	return ok && got.Equal(tablePath)
 }
 
 func pendingDynamicAllValueRestoresFromPrimaryDelete(

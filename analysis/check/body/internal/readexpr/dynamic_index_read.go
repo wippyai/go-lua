@@ -99,6 +99,19 @@ func dynamicIndexExpressionKeyValueActive(
 		return Project(config, point, p, in)
 	case factflow.ValueSourceNil:
 		return typevalue.Nil(config.Registry), true
+	case factflow.ValueSourceLiteral:
+		switch source.LiteralKind {
+		case factflow.ValueSourceLiteralBool:
+			return typevalue.LiteralBool(config.Registry, source.Bool), true
+		case factflow.ValueSourceLiteralInteger:
+			return typevalue.LiteralInt(config.Registry, source.Int), true
+		case factflow.ValueSourceLiteralNumber:
+			return typevalue.LiteralNumber(config.Registry, source.Float), true
+		case factflow.ValueSourceLiteralString:
+			return typevalue.LiteralString(config.Registry, source.String), true
+		default:
+			return product.Value{}, false
+		}
 	default:
 		return product.Value{}, false
 	}
@@ -194,6 +207,17 @@ func dynamicIndexExpressionValueActive(
 					value = sourcevalue.WithoutNilRuntimeKind(reg, product.WithPresence(reg, value, presence.Present()))
 				}
 				return value, true
+			}
+			if typevalue.HasIntegerType(reg, keyValue) {
+				keyValue := config.TypeValues.FromTypeWithWitness(reg, typ.Integer)
+				if value, ok := config.TypeValues.RuntimeIndex(reg, tableValue, keyValue); ok {
+					value = sourcevalue.InheritTopOriginEvidence(reg, value, tableValue)
+					if dynamicIndexKeyMembershipProvesRead(config, point, dyn, in) ||
+						dynamicIndexInBoundsProvesRead(config, point, dyn, in) {
+						value = sourcevalue.WithoutNilRuntimeKind(reg, product.WithPresence(reg, value, presence.Present()))
+					}
+					return value, true
+				}
 			}
 		}
 		if dynamicIndexInBoundsProvesRead(config, point, dyn, in) {

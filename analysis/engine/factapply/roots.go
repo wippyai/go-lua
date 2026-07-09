@@ -307,6 +307,9 @@ func binaryExpressionOperation(facts factflow.Facts, source factflow.ValueSource
 }
 
 func expressionSourceIsIntegerLiteral(reg *axis.Registry, facts factflow.Facts, source factflow.ValueSource, want int64) bool {
+	if source.Kind == factflow.ValueSourceLiteral && source.LiteralKind == factflow.ValueSourceLiteralInteger {
+		return source.Int == want
+	}
 	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
 		return false
 	}

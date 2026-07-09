@@ -109,6 +109,58 @@ func TestFactsNodeTransferObjectLiteralRootAssignmentsWriteStaticEntries(t *test
 	}
 }
 
+func TestFactsNodeTransferObjectLiteralRootAssignmentWritesContiguousLenFloor(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(62)
+	target := symbol.ID(122)
+	objectSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(62), HasExpr: true}
+	entrySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(63), HasExpr: true}
+	rootValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(testTableLiteralID(objectSource.ExprRef)))
+	entryValue := presentValue(reg)
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{
+			objectSource: rootValue,
+			entrySource:  entryValue,
+		},
+	}
+	intSuffix := func(index int) path.Path {
+		return path.Path{Segments: []segment.Segment{{Kind: segment.SegmentIndexInt, Index: index}}}
+	}
+	input := factflow.FactsInput{
+		RootAssignments: map[cfg.Point]factflow.RootAssignment{
+			point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "arr"), objectSource),
+		},
+		ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
+			objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
+				factflow.NewObjectEntryWithMetadata(intSuffix(1), entrySource, factflow.SourceSpan{}, ""),
+				factflow.NewObjectEntryWithMetadata(intSuffix(2), entrySource, factflow.SourceSpan{}, ""),
+				factflow.NewObjectEntryWithMetadata(intSuffix(4), entrySource, factflow.SourceSpan{}, ""),
+			}).WithIdentity(testTableLiteralID(objectSource.ExprRef)),
+		},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "arr")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts:      factflow.NewFacts(input),
+		Sources:    sources,
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	targetKey, ok := resolver.StateKeyAt(point, path.NewPath(target, "arr"))
+	if !ok {
+		t.Fatal("missing target state key")
+	}
+	if floor, ok := got.ReadLenFloor(ks, targetKey); !ok || floor != 2 {
+		t.Fatalf("len floor = %d/%v, want 2/present", floor, ok)
+	}
+}
+
 func TestFactsNodeTransferObjectLiteralEntryPreservesExplicitTopNilEvidence(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(64)

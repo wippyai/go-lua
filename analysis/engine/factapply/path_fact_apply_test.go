@@ -320,6 +320,86 @@ func TestFactsNodeTransferAppliesDynamicIndexWriteKeyValueAdmission(t *testing.T
 	}
 }
 
+func TestFactsNodeTransferDynamicIndexAppendRaisesLenFloor(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(40200)
+	table := symbol.ID(40200)
+	tablePath := pathdom.NewPath(table, "arr")
+	lenExpr := factflow.ExprRef(40201)
+	keyExpr := factflow.ExprRef(40202)
+	valueSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(40203), HasExpr: true}
+	shape, ok := factflow.NewValueSourceShape(true, false, false, false)
+	if !ok {
+		t.Fatal("invalid value-source shape")
+	}
+	tableSource, ok := factflow.NewPathValueSource(tablePath.Key(), -1, -1, 0, shape)
+	if !ok {
+		t.Fatal("invalid table path source")
+	}
+	lenSource, ok := factflow.NewExpressionValueSource(lenExpr, -1, -1, 0, shape)
+	if !ok {
+		t.Fatal("invalid length expression source")
+	}
+	oneSource, ok := factflow.NewIntegerLiteralValueSource(1, -1, -1, 0, shape)
+	if !ok {
+		t.Fatal("invalid integer literal source")
+	}
+	keySource, ok := factflow.NewExpressionValueSource(keyExpr, -1, -1, 0, shape)
+	if !ok {
+		t.Fatal("invalid key expression source")
+	}
+	lenOp, ok := factflow.NewUnaryExpressionOperation("#", tableSource)
+	if !ok {
+		t.Fatal("invalid length expression op")
+	}
+	keyOp, ok := factflow.NewBinaryExpressionOperation("+", lenSource, oneSource)
+	if !ok {
+		t.Fatal("invalid append key expression op")
+	}
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{
+			valueSource: presentValue(reg),
+		},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, table, "arr")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	tableKey, ok := resolver.StateKeyAt(point, tablePath)
+	if !ok {
+		t.Fatal("missing table state key")
+	}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			DynamicIndexWrites: map[cfg.Point]factflow.DynamicIndexWrite{
+				point: factflow.NewDynamicIndexWrite(
+					tablePath,
+					keySource,
+					valueSource,
+					dynamicindex.AdmissionAdmitted,
+					factflow.DynamicIndexReadbackValue,
+				),
+			},
+			PathDescendantInvalidations: map[cfg.Point]factflow.PathDescendantInvalidation{
+				point: factflow.NewPathDescendantInvalidation(tablePath).WithDynamicTarget(tablePath, keySource, nil),
+			},
+			ExpressionOperations: map[factflow.ExprRef]factflow.ExpressionOperation{
+				lenExpr: lenOp,
+				keyExpr: keyOp,
+			},
+		}),
+		Sources:    sources,
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.WriteLenFloor(resolver.KeySpace(), tableKey, 2))
+
+	if floor, ok := got.ReadLenFloor(resolver.KeySpace(), tableKey); !ok || floor != 3 {
+		t.Fatalf("len floor = %d/%v, want 3/present", floor, ok)
+	}
+}
+
 func TestFactsNodeTransferDynamicIndexWriteProvesKeyMembership(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(40201)

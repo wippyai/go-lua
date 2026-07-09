@@ -64,6 +64,14 @@ func dynamicIndexInBoundsProvesRead(config Config, point cfg.Point, dyn factflow
 	if dynamicIndexModuloLengthProvesRead(config, point, dyn.KeySource(), dyn.TablePathRef(), proofState, proofVisibility) {
 		return true
 	}
+	if index, ok := dynamicIndexIntegerConstant(config, dyn.KeySource()); ok && index >= 1 {
+		if dynamicIndexLengthFloorAtLeast(proofVisibility, point, proofState, dyn.TablePathRef(), index) {
+			return true
+		}
+		if dynamicIndexStaticSequenceLengthAtLeast(config, point, dyn.TablePathRef(), in, index) {
+			return true
+		}
+	}
 	term, ok := dynamicIndexIntegerTerm(config, dyn.KeySource())
 	if !ok || term.Coeff <= 0 || term.Path.IsEmpty() {
 		return false
@@ -76,6 +84,9 @@ func dynamicIndexInBoundsProvesRead(config Config, point cfg.Point, dyn factflow
 	}
 	if ceil, ok := dynamicIndexTermCeil(proofVisibility, point, proofState, term); ok {
 		if upper, ok := checkedAffineInt64(term.Coeff, ceil, term.Offset); ok && upper >= 1 {
+			if dynamicIndexLengthFloorAtLeast(proofVisibility, point, proofState, dyn.TablePathRef(), upper) {
+				return true
+			}
 			if dynamicIndexStaticSequenceLengthAtLeast(config, point, dyn.TablePathRef(), in, upper) {
 				return true
 			}
@@ -87,6 +98,21 @@ func dynamicIndexInBoundsProvesRead(config Config, point cfg.Point, dyn factflow
 	indexKey, indexOK := visibility.AddressAt(proofVisibility, point, term.Path).VisibleStateKey()
 	arrayKey, arrayOK := visibility.AddressAt(proofVisibility, point, dyn.TablePathRef()).VisibleStateKey()
 	return indexOK && arrayOK && proofState.HasIndexInRangeProofForStateKeys(proofVisibility.KeySpace(), indexKey, arrayKey)
+}
+
+func dynamicIndexLengthFloorAtLeast(resolver *visibility.Resolver, point cfg.Point, in state.State, arrayPath pathdom.Path, floor int64) bool {
+	if floor <= 0 {
+		return true
+	}
+	if resolver == nil || arrayPath.IsEmpty() || arrayPath.Symbol == 0 {
+		return false
+	}
+	arrayKey, ok := visibility.AddressAt(resolver, point, arrayPath).VisibleStateKey()
+	if !ok {
+		return false
+	}
+	got, ok := in.ReadLenFloor(resolver.KeySpace(), arrayKey)
+	return ok && got >= floor
 }
 
 func dynamicIndexProofState(config Config, point cfg.Point, fallback state.State) state.State {

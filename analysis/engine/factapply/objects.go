@@ -64,6 +64,7 @@ func applyObjectLiteralEntriesWithKnownSourceValue(
 	if resolver == nil {
 		return out
 	}
+	out = applyObjectLiteralListLengthFloor(ctx, resolver, out, targetPath, literal)
 	writes := make([]objectLiteralEntryWrite, 0, literal.EntryCount())
 	literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
 		entryPath, ok := entry.AppendSuffixTo(targetPath)
@@ -100,6 +101,49 @@ func applyObjectLiteralEntriesWithKnownSourceValue(
 		out = addPathEqualityProofFromSource(resolver, facts, ctx.Point, written, write.path, write.source)
 	}
 	return out
+}
+
+func applyObjectLiteralListLengthFloor(
+	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
+	out state.State,
+	targetPath pathdom.Path,
+	literal factflow.ObjectLiteralView,
+) state.State {
+	floor := objectLiteralContiguousListLengthFloor(literal)
+	if floor <= 0 || targetPath.IsEmpty() || targetPath.Symbol == 0 {
+		return out
+	}
+	targetKey, ok := visibility.AddressAt(resolver, ctx.Point, targetPath).VisibleStateKey()
+	if !ok {
+		return out
+	}
+	return out.WriteLenFloor(resolver.KeySpace(), targetKey, floor)
+}
+
+func objectLiteralContiguousListLengthFloor(literal factflow.ObjectLiteralView) int64 {
+	if literal.EntryCount() == 0 {
+		return 0
+	}
+	present := make(map[int]struct{}, literal.EntryCount())
+	literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
+		if entry.SuffixSegmentCount() != 1 {
+			return true
+		}
+		seg, ok := entry.SuffixSegmentAt(0)
+		if !ok || seg.Kind != segment.SegmentIndexInt || seg.Index <= 0 {
+			return true
+		}
+		present[seg.Index] = struct{}{}
+		return true
+	})
+	var floor int64
+	for i := 1; ; i++ {
+		if _, ok := present[i]; !ok {
+			return floor
+		}
+		floor = int64(i)
+	}
 }
 
 type objectLiteralEntryWrite struct {

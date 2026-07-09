@@ -43,11 +43,24 @@ func (r *Result) IndexReadSafeForExpressionAtBoundary(point cfg.Point, index ast
 	if r.indexModuloLengthSafe(point, index, containerPath) {
 		return true
 	}
+	if constant, ok := indexConstOperand(index); ok {
+		return r.constantIndexReadSafeAtBoundary(point, constant, containerPath)
+	}
 	basePath, coeff, offset, ok := r.indexLinearTerm(index)
 	if !ok || basePath.IsEmpty() {
 		return false
 	}
 	return r.IndexReadSafeAtBoundary(point, basePath, coeff, offset, containerPath)
+}
+
+func (r *Result) constantIndexReadSafeAtBoundary(point cfg.Point, index int64, containerPath pathdom.Path) bool {
+	if index < 1 {
+		return false
+	}
+	if floor, ok := r.LengthFloorAtBoundary(point, containerPath); ok && floor >= index {
+		return true
+	}
+	return r.indexContainerStaticLengthAtLeast(point, containerPath, index)
 }
 
 func (r *Result) indexModuloLengthSafe(point cfg.Point, index ast.Expr, containerPath pathdom.Path) bool {
