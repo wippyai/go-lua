@@ -36,9 +36,7 @@ func adviceRedundantClaimPresentation(item judgment.Judgment, primary diagnostic
 	proven := adviceEvidenceMessage(provenEvidence)
 	provenSpan := adviceEvidenceSpan(item, judgment.EvidenceDetailAdviceProvenType, primary)
 	labels := []diagnostic.Label{sourceLabel(primary, labelAdviceClaim)}
-	if provenSpan.Valid() && !diagnosticSpanEqual(provenSpan, primary) {
-		labels = append(labels, sourceLabel(provenSpan, labelAdviceProvenValue))
-	}
+	labels = appendDistinctSourceLabel(labels, provenSpan, primary, labelAdviceProvenValue)
 	return advicePresentation{
 		Message: display.AdviceRedundantClaimMessage(item.Subject.Label, item.Expected.Type),
 		Help:    display.AdviceRedundantClaimHelp(),
@@ -85,9 +83,7 @@ func adviceInvariantLoopReadPresentation(item judgment.Judgment, primary diagnos
 	nonNil := adviceEvidenceMessage(nonNilEvidence)
 	loopSpan := adviceLoopSpan(item, primary)
 	labels := []diagnostic.Label{sourceLabel(primary, labelAdviceLoopRead)}
-	if loopSpan.Valid() && !diagnosticSpanEqual(loopSpan, primary) {
-		labels = append(labels, sourceLabel(loopSpan, labelAdviceLoopHead))
-	}
+	labels = appendDistinctSourceLabel(labels, loopSpan, primary, labelAdviceLoopHead)
 	return advicePresentation{
 		Message: display.AdviceInvariantLoopReadMessage(item.Subject.Label),
 		Help:    display.AdviceInvariantLoopReadHelp(item.Subject.Label),
@@ -118,17 +114,11 @@ func adviceSplitBirthDiscriminantPresentation(item judgment.Judgment, primary di
 		span := diagnosticJudgmentEvidenceSpanOr(itemEvidence, primary)
 		switch itemEvidence.Detail.Kind {
 		case judgment.EvidenceDetailAdviceTableBirth:
-			if span.Valid() && !diagnosticSpanEqual(span, primary) {
-				labels = append(labels, sourceLabel(span, labelAdviceTableBirth))
-			}
+			labels = appendDistinctSourceLabel(labels, span, primary, labelAdviceTableBirth)
 		case judgment.EvidenceDetailAdvicePayloadWrite:
-			if span.Valid() && !diagnosticSpanEqual(span, primary) {
-				labels = append(labels, sourceLabel(span, labelAdvicePayloadWrite))
-			}
+			labels = appendDistinctSourceLabel(labels, span, primary, labelAdvicePayloadWrite)
 		case judgment.EvidenceDetailAdviceDiscriminantUse:
-			if span.Valid() && !diagnosticSpanEqual(span, primary) {
-				labels = append(labels, sourceLabel(span, labelAdviceDiscriminantUse))
-			}
+			labels = appendDistinctSourceLabel(labels, span, primary, labelAdviceDiscriminantUse)
 		}
 		evidence = append(evidence, diagnostic.Evidence{
 			Kind:    diagnostic.EvidenceAbstractFact,

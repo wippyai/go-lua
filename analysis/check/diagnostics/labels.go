@@ -60,6 +60,13 @@ func sourceLabel(span diagnostic.Span, message string) diagnostic.Label {
 	return diagnostic.Label{Span: span, Message: message, Placement: sourceLabelPlacement(message)}
 }
 
+func appendDistinctSourceLabel(labels []diagnostic.Label, span, primary diagnostic.Span, message string) []diagnostic.Label {
+	if span.Valid() && !diagnosticSpanEqual(span, primary) {
+		return append(labels, sourceLabel(span, message))
+	}
+	return labels
+}
+
 var sourceLabelPlacements = map[string]diagnostic.LabelPlacement{
 	labelCallTarget:            diagnostic.LabelPlacementBelow,
 	labelCallExpression:        diagnostic.LabelPlacementBelow,

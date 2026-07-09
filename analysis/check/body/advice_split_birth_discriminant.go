@@ -222,11 +222,9 @@ func (r *Result) splitBirthDiscriminantUses() map[splitBirthFieldKey][]splitBirt
 			if !ok {
 				continue
 			}
-			seenKey := fmt.Sprintf("%d:%s:%s", use.point, key.receiver, key.field)
-			if _, exists := seen[seenKey]; exists {
+			if markSeen(seen, fmt.Sprintf("%d:%s:%s", use.point, key.receiver, key.field)) {
 				continue
 			}
-			seen[seenKey] = struct{}{}
 			out[key] = append(out[key], use)
 		}
 		return true

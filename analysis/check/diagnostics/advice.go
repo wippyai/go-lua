@@ -6,15 +6,14 @@ import (
 )
 
 func renderAdviceJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
-	spec, ok := judgment.DefaultRegistry().Lookup(item.Code)
-	if !ok || spec.Render != judgment.RenderAdvice || item.Subject.Kind != judgment.SubjectExpression || len(item.Spans) == 0 {
+	if item.Subject.Kind != judgment.SubjectExpression || len(item.Spans) == 0 {
 		return diagnostic.Diagnostic{}, false
 	}
 	severity, ok := diagnosticSeverityForJudgment(item, policy, mode)
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
-	code := primaryDiagnosticCode(spec)
+	code := diagnosticCodeForJudgment(item)
 	span := diagnosticSpanFromJudgment(item.Spans[0])
 	presentation, ok := ctx.proof.Advice(item, span)
 	if !ok {

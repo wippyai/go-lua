@@ -17,10 +17,7 @@ func (SendSafety) Name() string {
 }
 
 func (SendSafety) Produce(ctx Context) []judgment.Judgment {
-	functionKey := ctx.FunctionKey
-	if functionKey == "" {
-		functionKey = "body"
-	}
+	functionKey := contextFunctionKey(ctx)
 	var out []judgment.Judgment
 	ctx.Reader.ForEachCall(func(call readmodel.CallSite) bool {
 		for _, report := range call.SendSafety {
@@ -40,52 +37,43 @@ func sendSafetyJudgment(ctx Context, functionKey string, report readmodel.SendSa
 		trust = judgment.EvidenceTrustProven
 	}
 
-	evidence := judgment.EvidenceChain{{
-		Kind:  judgment.EvidenceAbstractFact,
-		Trust: trust,
-		Origin: judgment.OriginRef{
-			Point: report.Point,
-			Key:   fmt.Sprintf("%s:arg:%d:target:%s", judgment.OriginSendSafety, arg.Index, report.Target.Key()),
-		},
-		Detail: judgment.EvidenceDetail{
-			Kind:         judgment.EvidenceDetailSendSafetyFact,
-			Cause:        judgment.EvidenceCause{Kind: judgment.EvidenceCauseFlowAssign},
-			Message:      report.Reason,
-			SubjectLabel: sendSafetyEvidenceLabel(report),
-		},
-		Span: spanFromReadModel(ctx.SourceFile, arg.Span),
-	}}
+	evidence := judgment.EvidenceChain{
+		abstractEvidence(
+			report.Point,
+			fmt.Sprintf("%s:arg:%d:target:%s", judgment.OriginSendSafety, arg.Index, report.Target.Key()),
+			trust,
+			judgment.EvidenceDetail{
+				Kind:         judgment.EvidenceDetailSendSafetyFact,
+				Cause:        judgment.EvidenceCause{Kind: judgment.EvidenceCauseFlowAssign},
+				Message:      report.Reason,
+				SubjectLabel: sendSafetyEvidenceLabel(report),
+			},
+			spanFromReadModel(ctx.SourceFile, arg.Span),
+		),
+	}
 	switch report.Verdict {
 	case readmodel.SendSafetyProvenIsolated:
-		evidence = append(evidence, judgment.Evidence{
-			Kind:  judgment.EvidenceAbstractFact,
-			Trust: judgment.EvidenceTrustProven,
-			Origin: judgment.OriginRef{
-				Point: report.Point,
-				Key:   fmt.Sprintf("%s:arg:%d", judgment.OriginSendIsolationProof, arg.Index),
-			},
-			Detail: judgment.EvidenceDetail{
+		evidence = append(evidence, provenAbstractEvidence(
+			report.Point,
+			fmt.Sprintf("%s:arg:%d", judgment.OriginSendIsolationProof, arg.Index),
+			judgment.EvidenceDetail{
 				Cause:   judgment.EvidenceCause{Kind: judgment.EvidenceCauseBirth},
 				Kind:    judgment.EvidenceDetailSendSafetyProof,
 				Message: "direct literal birth site has no retained graph identity",
 			},
-			Span: spanFromReadModel(ctx.SourceFile, sendSafetyBirthSpanOrArg(report)),
-		})
+			spanFromReadModel(ctx.SourceFile, sendSafetyBirthSpanOrArg(report)),
+		))
 	case readmodel.SendSafetyProvenImmutable:
-		evidence = append(evidence, judgment.Evidence{
-			Kind:  judgment.EvidenceAbstractFact,
-			Trust: judgment.EvidenceTrustProven,
-			Origin: judgment.OriginRef{
-				Point: report.Point,
-				Key:   fmt.Sprintf("%s:arg:%d", judgment.OriginSendImmutableProof, arg.Index),
-			},
-			Detail: judgment.EvidenceDetail{
+		evidence = append(evidence, provenAbstractEvidence(
+			report.Point,
+			fmt.Sprintf("%s:arg:%d", judgment.OriginSendImmutableProof, arg.Index),
+			judgment.EvidenceDetail{
 				Cause:   judgment.EvidenceCause{Kind: judgment.EvidenceCauseGuard},
 				Kind:    judgment.EvidenceDetailSendSafetyProof,
 				Message: "exact identity is frozen before send",
 			},
-			Span: spanFromReadModel(ctx.SourceFile, sendSafetyBirthSpanOrArg(report)),
-		})
+			spanFromReadModel(ctx.SourceFile, sendSafetyBirthSpanOrArg(report)),
+		))
 	case readmodel.SendSafetyUnknown:
 		evidence = append(evidence, judgment.Evidence{
 			Kind:  judgment.EvidenceMissingProof,
@@ -105,11 +93,9 @@ func sendSafetyJudgment(ctx Context, functionKey string, report readmodel.SendSa
 	return judgment.Judgment{
 		Code:  judgment.CodeSendIsolation,
 		Point: report.Point,
-		Subject: judgment.NewSubjectRef(
-			functionKey,
-			judgment.SubjectCallArgument,
+		Subject: subjectRef(functionKey, judgment.SubjectCallArgument,
 			fmt.Sprintf("call:%d:arg:%d:send:%s", report.Point, arg.Index, report.Target.Key()),
-		).WithLabel(callArgumentSubjectLabel(arg)),
+			callArgumentSubjectLabel(arg)),
 		Actual:   judgment.NewValueRef(arg.ValueHash, arg.TypeWithPresence).WithLabel(report.Verdict.String()),
 		Verdict:  verdict,
 		Evidence: evidence,

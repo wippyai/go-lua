@@ -72,11 +72,9 @@ func (r *Result) SendSafetyOccurrences(point cfg.Point) []SendSafetyOccurrence {
 		if !ok {
 			continue
 		}
-		key := fmt.Sprintf("%d:%d:%s", point, argIndex, event.Target.Key())
-		if _, exists := seen[key]; exists {
+		if markSeen(seen, fmt.Sprintf("%d:%d:%s", point, argIndex, event.Target.Key())) {
 			continue
 		}
-		seen[key] = struct{}{}
 		out = append(out, r.sendSafetyOccurrence(point, site, argIndex, event))
 	}
 	return out

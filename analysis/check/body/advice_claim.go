@@ -64,11 +64,9 @@ func (r *Result) walkAdviceClaims(
 		if !next(e.Expr) {
 			return false
 		}
-		key := adviceCastSeenKey{point: point, expr: e}
-		if _, ok := seenCasts[key]; ok {
+		if markSeen(seenCasts, adviceCastSeenKey{point: point, expr: e}) {
 			return true
 		}
-		seenCasts[key] = struct{}{}
 		occ, ok := r.redundantCastOccurrence(point, e)
 		if !ok {
 			return true
@@ -84,11 +82,9 @@ func (r *Result) walkAdviceClaims(
 				return false
 			}
 		}
-		key := adviceCallSeenKey{point: point, expr: e}
-		if _, ok := seenCalls[key]; ok {
+		if markSeen(seenCalls, adviceCallSeenKey{point: point, expr: e}) {
 			return true
 		}
-		seenCalls[key] = struct{}{}
 		occ, ok := r.redundantTypeCastCallOccurrence(point, e)
 		if !ok {
 			return true
@@ -222,4 +218,10 @@ func primitiveRuntimeCastType(name string) (typ.Type, bool) {
 	default:
 		return nil, false
 	}
+}
+
+func markSeen[K comparable](seen map[K]struct{}, key K) (seenBefore bool) {
+	_, seenBefore = seen[key]
+	seen[key] = struct{}{}
+	return seenBefore
 }

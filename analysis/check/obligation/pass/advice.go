@@ -16,13 +16,7 @@ func (AdviceRedundantClaims) Name() string {
 }
 
 func (AdviceRedundantClaims) Produce(ctx Context) []judgment.Judgment {
-	functionKey := adviceFunctionKey(ctx)
-	var out []judgment.Judgment
-	ctx.Reader.ForEachRedundantClaim(func(claim readmodel.RedundantClaim) bool {
-		out = append(out, adviceRedundantClaimJudgment(ctx, functionKey, claim))
-		return true
-	})
-	return out
+	return produceReaderJudgments(ctx, readmodel.Reader.ForEachRedundantClaim, adviceRedundantClaimJudgment)
 }
 
 // AdviceAlwaysTrueGuards emits hint-level judgments for reachable branch
@@ -34,13 +28,7 @@ func (AdviceAlwaysTrueGuards) Name() string {
 }
 
 func (AdviceAlwaysTrueGuards) Produce(ctx Context) []judgment.Judgment {
-	functionKey := adviceFunctionKey(ctx)
-	var out []judgment.Judgment
-	ctx.Reader.ForEachAlwaysTrueGuard(func(guard readmodel.AlwaysTrueGuard) bool {
-		out = append(out, adviceAlwaysTrueGuardJudgment(ctx, functionKey, guard))
-		return true
-	})
-	return out
+	return produceReaderJudgments(ctx, readmodel.Reader.ForEachAlwaysTrueGuard, adviceAlwaysTrueGuardJudgment)
 }
 
 // AdviceInvariantLoopReads emits hint-level judgments for hoistable static
@@ -52,13 +40,7 @@ func (AdviceInvariantLoopReads) Name() string {
 }
 
 func (AdviceInvariantLoopReads) Produce(ctx Context) []judgment.Judgment {
-	functionKey := adviceFunctionKey(ctx)
-	var out []judgment.Judgment
-	ctx.Reader.ForEachInvariantLoopRead(func(read readmodel.InvariantLoopRead) bool {
-		out = append(out, adviceInvariantLoopReadJudgment(ctx, functionKey, read))
-		return true
-	})
-	return out
+	return produceReaderJudgments(ctx, readmodel.Reader.ForEachInvariantLoopRead, adviceInvariantLoopReadJudgment)
 }
 
 // AdviceSplitBirthDiscriminants emits hint-level judgments for locally born
@@ -70,13 +52,7 @@ func (AdviceSplitBirthDiscriminants) Name() string {
 }
 
 func (AdviceSplitBirthDiscriminants) Produce(ctx Context) []judgment.Judgment {
-	functionKey := adviceFunctionKey(ctx)
-	var out []judgment.Judgment
-	ctx.Reader.ForEachSplitBirthDiscriminant(func(item readmodel.SplitBirthDiscriminant) bool {
-		out = append(out, adviceSplitBirthDiscriminantJudgment(ctx, functionKey, item))
-		return true
-	})
-	return out
+	return produceReaderJudgments(ctx, readmodel.Reader.ForEachSplitBirthDiscriminant, adviceSplitBirthDiscriminantJudgment)
 }
 
 func adviceRedundantClaimJudgment(ctx Context, functionKey string, claim readmodel.RedundantClaim) judgment.Judgment {
@@ -85,29 +61,15 @@ func adviceRedundantClaimJudgment(ctx Context, functionKey string, claim readmod
 	return judgment.Judgment{
 		Code:  judgment.CodeAdviceRedundantClaim,
 		Point: claim.Point,
-		Subject: judgment.NewSubjectRef(
-			functionKey,
-			judgment.SubjectExpression,
+		Subject: subjectRef(functionKey, judgment.SubjectExpression,
 			fmt.Sprintf("advice-claim:%d:%d:%d", claim.Point, claim.ClaimSpan.StartLine, claim.ClaimSpan.StartCol),
-		).WithLabel(claim.ClaimLabel),
+			claim.ClaimLabel),
 		Expected: judgment.NewTypeRef(claim.ClaimedType),
 		Actual:   judgment.NewValueRef(0, claim.OperandType).WithLabel(claim.OperandLabel),
 		Verdict:  judgment.VerdictProven,
 		Evidence: judgment.EvidenceChain{
-			{
-				Kind:   judgment.EvidenceAbstractFact,
-				Trust:  judgment.EvidenceTrustProven,
-				Origin: judgment.OriginRef{Point: claim.Point, Key: "advice:claim:operand-type"},
-				Detail: judgment.AdviceProvenTypeEvidenceDetail(claim.OperandLabel, claim.ClaimedType),
-				Span:   operandSpan,
-			},
-			{
-				Kind:   judgment.EvidenceAbstractFact,
-				Trust:  judgment.EvidenceTrustProven,
-				Origin: judgment.OriginRef{Point: claim.Point, Key: "advice:claim:site"},
-				Detail: judgment.AdviceClaimSiteEvidenceDetail(claim.ClaimedType),
-				Span:   claimSpan,
-			},
+			provenAbstractEvidence(claim.Point, "advice:claim:operand-type", judgment.AdviceProvenTypeEvidenceDetail(claim.OperandLabel, claim.ClaimedType), operandSpan),
+			provenAbstractEvidence(claim.Point, "advice:claim:site", judgment.AdviceClaimSiteEvidenceDetail(claim.ClaimedType), claimSpan),
 		},
 		Spans: []judgment.SpanRef{claimSpan, operandSpan},
 	}
@@ -118,21 +80,13 @@ func adviceAlwaysTrueGuardJudgment(ctx Context, functionKey string, guard readmo
 	return judgment.Judgment{
 		Code:  judgment.CodeAdviceAlwaysTrueGuard,
 		Point: guard.Point,
-		Subject: judgment.NewSubjectRef(
-			functionKey,
-			judgment.SubjectExpression,
+		Subject: subjectRef(functionKey, judgment.SubjectExpression,
 			fmt.Sprintf("advice-guard:%d:%d:%d", guard.Point, guard.ConditionSpan.StartLine, guard.ConditionSpan.StartCol),
-		).WithLabel(guard.ConditionLabel),
+			guard.ConditionLabel),
 		Actual:  judgment.NewValueRef(0, guard.ConditionType).WithLabel(guard.ConditionLabel),
 		Verdict: judgment.VerdictProven,
 		Evidence: judgment.EvidenceChain{
-			{
-				Kind:   judgment.EvidenceAbstractFact,
-				Trust:  judgment.EvidenceTrustProven,
-				Origin: judgment.OriginRef{Point: guard.Point, Key: "advice:guard:value"},
-				Detail: judgment.AdviceGuardValueEvidenceDetail(guard.Always),
-				Span:   span,
-			},
+			provenAbstractEvidence(guard.Point, "advice:guard:value", judgment.AdviceGuardValueEvidenceDetail(guard.Always), span),
 		},
 		Spans: []judgment.SpanRef{span},
 	}
@@ -144,28 +98,14 @@ func adviceInvariantLoopReadJudgment(ctx Context, functionKey string, read readm
 	return judgment.Judgment{
 		Code:  judgment.CodeAdviceInvariantLoopRead,
 		Point: read.Point,
-		Subject: judgment.NewSubjectRef(
-			functionKey,
-			judgment.SubjectExpression,
+		Subject: subjectRef(functionKey, judgment.SubjectExpression,
 			fmt.Sprintf("advice-loop-read:%d:%s", read.Point, read.ReadPath.String()),
-		).WithLabel(read.ReadLabel),
+			read.ReadLabel),
 		Actual:  judgment.NewValueRef(0, read.ReceiverType).WithLabel(read.ReceiverLabel),
 		Verdict: judgment.VerdictProven,
 		Evidence: judgment.EvidenceChain{
-			{
-				Kind:   judgment.EvidenceAbstractFact,
-				Trust:  judgment.EvidenceTrustProven,
-				Origin: judgment.OriginRef{Point: read.Point, Key: "advice:loop-read:stable"},
-				Detail: judgment.AdviceLoopInvariantEvidenceDetail(read.ReadPath.String()),
-				Span:   readSpan,
-			},
-			{
-				Kind:   judgment.EvidenceAbstractFact,
-				Trust:  judgment.EvidenceTrustProven,
-				Origin: judgment.OriginRef{Point: read.Point, Key: "advice:loop-read:receiver-non-nil"},
-				Detail: judgment.AdviceReceiverNonNilEvidenceDetail(read.ReceiverLabel),
-				Span:   readSpan,
-			},
+			provenAbstractEvidence(read.Point, "advice:loop-read:stable", judgment.AdviceLoopInvariantEvidenceDetail(read.ReadPath.String()), readSpan),
+			provenAbstractEvidence(read.Point, "advice:loop-read:receiver-non-nil", judgment.AdviceReceiverNonNilEvidenceDetail(read.ReceiverLabel), readSpan),
 		},
 		Spans: []judgment.SpanRef{readSpan, loopSpan},
 	}
@@ -176,59 +116,26 @@ func adviceSplitBirthDiscriminantJudgment(ctx Context, functionKey string, item 
 	birthSpan := spanFromReadModel(ctx.SourceFile, item.BirthSpan)
 	useSpan := spanFromReadModel(ctx.SourceFile, item.DiscriminantUseSpan)
 	evidence := judgment.EvidenceChain{
-		{
-			Kind:   judgment.EvidenceAbstractFact,
-			Trust:  judgment.EvidenceTrustProven,
-			Origin: judgment.OriginRef{Point: item.BirthPoint, Key: "advice:split-birth:birth"},
-			Detail: judgment.AdviceTableBirthEvidenceDetail(item.ReceiverLabel),
-			Span:   birthSpan,
-		},
-		{
-			Kind:   judgment.EvidenceAbstractFact,
-			Trust:  judgment.EvidenceTrustProven,
-			Origin: judgment.OriginRef{Point: item.Point, Key: "advice:split-birth:tag"},
-			Detail: judgment.AdviceTagWriteEvidenceDetail(item.TagLabel, item.TagValue),
-			Span:   tagSpan,
-		},
+		provenAbstractEvidence(item.BirthPoint, "advice:split-birth:birth", judgment.AdviceTableBirthEvidenceDetail(item.ReceiverLabel), birthSpan),
+		provenAbstractEvidence(item.Point, "advice:split-birth:tag", judgment.AdviceTagWriteEvidenceDetail(item.TagLabel, item.TagValue), tagSpan),
 	}
 	spans := []judgment.SpanRef{tagSpan, birthSpan}
 	for _, payload := range item.PayloadWrites {
 		payloadSpan := spanFromReadModel(ctx.SourceFile, payload.Span)
-		evidence = append(evidence, judgment.Evidence{
-			Kind:   judgment.EvidenceAbstractFact,
-			Trust:  judgment.EvidenceTrustProven,
-			Origin: judgment.OriginRef{Point: payload.Point, Key: "advice:split-birth:payload"},
-			Detail: judgment.AdvicePayloadWriteEvidenceDetail(payload.Label),
-			Span:   payloadSpan,
-		})
+		evidence = append(evidence, provenAbstractEvidence(payload.Point, "advice:split-birth:payload", judgment.AdvicePayloadWriteEvidenceDetail(payload.Label), payloadSpan))
 		spans = append(spans, payloadSpan)
 	}
-	evidence = append(evidence, judgment.Evidence{
-		Kind:   judgment.EvidenceAbstractFact,
-		Trust:  judgment.EvidenceTrustProven,
-		Origin: judgment.OriginRef{Point: item.DiscriminantUsePoint, Key: "advice:split-birth:use"},
-		Detail: judgment.AdviceDiscriminantUseEvidenceDetail(item.TagLabel),
-		Span:   useSpan,
-	})
+	evidence = append(evidence, provenAbstractEvidence(item.DiscriminantUsePoint, "advice:split-birth:use", judgment.AdviceDiscriminantUseEvidenceDetail(item.TagLabel), useSpan))
 	spans = append(spans, useSpan)
 	return judgment.Judgment{
 		Code:  judgment.CodeAdviceSplitBirthDiscriminant,
 		Point: item.Point,
-		Subject: judgment.NewSubjectRef(
-			functionKey,
-			judgment.SubjectExpression,
+		Subject: subjectRef(functionKey, judgment.SubjectExpression,
 			fmt.Sprintf("advice-split-birth:%d:%s", item.Point, item.TagLabel),
-		).WithLabel(item.TagLabel),
+			item.TagLabel),
 		Actual:   judgment.NewValueRef(0, nil).WithLabel(item.ReceiverLabel),
 		Verdict:  judgment.VerdictProven,
 		Evidence: evidence,
 		Spans:    spans,
 	}
-}
-
-func adviceFunctionKey(ctx Context) string {
-	if ctx.FunctionKey != "" {
-		return ctx.FunctionKey
-	}
-	return "body"
 }
