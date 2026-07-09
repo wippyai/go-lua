@@ -317,6 +317,27 @@ func TestEquivalentPathKeysRebaseThroughBranchProofs(t *testing.T) {
 	}
 }
 
+func TestEqualityProofMayRebaseFromRequiresSharedStructuralRoot(t *testing.T) {
+	ks := keyspace.New()
+	local := mustStateKey(t, ks, "sym10@1.child")
+	if !equalityProofMayRebaseFrom(local, mustStateKey(t, ks, "sym10@1.parent")) {
+		t.Fatal("same resolver root should pass the rebase prefilter")
+	}
+	if equalityProofMayRebaseFrom(local, mustStateKey(t, ks, "sym10@2.parent")) {
+		t.Fatal("different resolver version should fail the rebase prefilter")
+	}
+	if equalityProofMayRebaseFrom(local, mustStateKey(t, ks, "sym20@1.parent")) {
+		t.Fatal("different resolver symbol should fail the rebase prefilter")
+	}
+	stable, ok := ks.FromStableSymbol(10, nil)
+	if !ok {
+		t.Fatal("FromStableSymbol failed")
+	}
+	if equalityProofMayRebaseFrom(local, stable) {
+		t.Fatal("different structural address spaces should fail the rebase prefilter")
+	}
+}
+
 func TestEquivalentPathKeysStopsCyclicDescendantAliasExpansion(t *testing.T) {
 	ks := keyspace.New()
 	l, _ := (Lane{}).AddBranchProof(BranchProof{

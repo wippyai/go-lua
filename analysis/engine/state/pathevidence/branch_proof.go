@@ -152,20 +152,24 @@ func (l Lane) EquivalentKeyspaceKeys(ks *keyspace.KeySpace, start keyspace.Key) 
 			if proof.Kind != BranchProofPathEqual {
 				continue
 			}
-			if next, ok := rebaseEquivalentPathKey(ks, current, proof.Path, proof.Other); ok &&
-				!exceedsEquivalentPathSegmentLimit(ks, next, segmentLimit) {
-				if _, seenAlready := seen[next]; !seenAlready {
-					seen[next] = struct{}{}
-					out = append(out, next)
-					queue = append(queue, next)
+			if equalityProofMayRebaseFrom(current, proof.Path) {
+				if next, ok := rebaseEquivalentPathKey(ks, current, proof.Path, proof.Other); ok &&
+					!exceedsEquivalentPathSegmentLimit(ks, next, segmentLimit) {
+					if _, seenAlready := seen[next]; !seenAlready {
+						seen[next] = struct{}{}
+						out = append(out, next)
+						queue = append(queue, next)
+					}
 				}
 			}
-			if next, ok := rebaseEquivalentPathKey(ks, current, proof.Other, proof.Path); ok &&
-				!exceedsEquivalentPathSegmentLimit(ks, next, segmentLimit) {
-				if _, seenAlready := seen[next]; !seenAlready {
-					seen[next] = struct{}{}
-					out = append(out, next)
-					queue = append(queue, next)
+			if equalityProofMayRebaseFrom(current, proof.Other) {
+				if next, ok := rebaseEquivalentPathKey(ks, current, proof.Other, proof.Path); ok &&
+					!exceedsEquivalentPathSegmentLimit(ks, next, segmentLimit) {
+					if _, seenAlready := seen[next]; !seenAlready {
+						seen[next] = struct{}{}
+						out = append(out, next)
+						queue = append(queue, next)
+					}
 				}
 			}
 		}
@@ -196,10 +200,12 @@ func (l Lane) HasEquivalentKeyspaceKey(ks *keyspace.KeySpace, start, target keys
 			if proof.Kind != BranchProofPathEqual {
 				continue
 			}
-			if equivalentKeyspaceTargetFound(ks, current, proof.Path, proof.Other, target, segmentLimit, seen, &queue) {
+			if equalityProofMayRebaseFrom(current, proof.Path) &&
+				equivalentKeyspaceTargetFound(ks, current, proof.Path, proof.Other, target, segmentLimit, seen, &queue) {
 				return true
 			}
-			if equivalentKeyspaceTargetFound(ks, current, proof.Other, proof.Path, target, segmentLimit, seen, &queue) {
+			if equalityProofMayRebaseFrom(current, proof.Other) &&
+				equivalentKeyspaceTargetFound(ks, current, proof.Other, proof.Path, target, segmentLimit, seen, &queue) {
 				return true
 			}
 		}
@@ -227,6 +233,28 @@ func equivalentKeyspaceTargetFound(
 	seen[next] = struct{}{}
 	*queue = append(*queue, next)
 	return false
+}
+
+// equalityProofMayRebaseFrom is a necessary, allocation-free prefilter for
+// KeySpace.Rebase. A structural prefix can only share its root address space
+// with the key being rebased; keys outside that root cannot contribute to the
+// equality closure.
+func equalityProofMayRebaseFrom(current, from keyspace.Key) bool {
+	if current.Kind != from.Kind {
+		return false
+	}
+	switch current.Kind {
+	case keyspace.KindResolverSym:
+		return current.Sym == from.Sym && current.Ver == from.Ver
+	case keyspace.KindStableSym:
+		return current.Sym == from.Sym
+	case keyspace.KindNamed, keyspace.KindPlaceholder, keyspace.KindRetSlot:
+		return current.Root == from.Root
+	default:
+		// Non-structural keys are rejected by Rebase. Leave those to the
+		// authoritative KeySpace check instead of duplicating its validation.
+		return true
+	}
 }
 
 func equivalentPathExpansionSegmentLimit(
