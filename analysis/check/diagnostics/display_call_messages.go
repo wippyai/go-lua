@@ -169,9 +169,16 @@ func (diagnosticDisplay) DeadAssignmentHelp(name string, hasExit bool) string {
 	return fmt.Sprintf("Remove this assignment, or read `%s` before the later overwrite.", name)
 }
 
-func (diagnosticDisplay) ConcatOperandMessage(side string) string {
+func (diagnosticDisplay) ConcatOperandMessage(side, name string) string {
+	name = strings.TrimSpace(name)
 	if side == "" {
+		if name != "" && name != unknownSourceName {
+			return fmt.Sprintf("operand %s of `..` may be nil", codeName(name))
+		}
 		return "operand of `..` may be nil"
+	}
+	if name != "" && name != unknownSourceName {
+		return fmt.Sprintf("%s operand %s of `..` may be nil", side, codeName(name))
 	}
 	return fmt.Sprintf("%s operand of `..` may be nil", side)
 }

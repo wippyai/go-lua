@@ -87,7 +87,7 @@ func (ProofContext) ConcatOperand(item judgment.Judgment, primary diagnostic.Spa
 	operandName := item.Subject.Label
 	got := item.Actual.ProjectedType
 	return concatOperandPresentation{
-		Message: display.ConcatOperandMessage(detail.Field),
+		Message: display.ConcatOperandMessage(detail.Field, operandName),
 		Help:    display.ConcatOperandHelp(operandName),
 		Labels:  []diagnostic.Label{sourceLabel(primary, labelValueMayBeNil)},
 		Evidence: []diagnostic.Evidence{

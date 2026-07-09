@@ -793,8 +793,11 @@ func TestNumericForMessagesUseCentralDisplay(t *testing.T) {
 }
 
 func TestConcatOperandMessagesUseCentralDisplay(t *testing.T) {
-	if got := display.ConcatOperandMessage("right"); got != "right operand of `..` may be nil" {
+	if got := display.ConcatOperandMessage("right", "maybe"); got != "right operand `maybe` of `..` may be nil" {
 		t.Fatalf("display.ConcatOperandMessage = %q", got)
+	}
+	if got := display.ConcatOperandMessage("right", ""); got != "right operand of `..` may be nil" {
+		t.Fatalf("display.ConcatOperandMessage anonymous = %q", got)
 	}
 	if got := display.ConcatOperandTypeEvidence("right", "maybe", typ.MaterializeOptional(typ.String)); got != "right operand `maybe` can be string or nil here" {
 		t.Fatalf("display.ConcatOperandTypeEvidence named = %q", got)

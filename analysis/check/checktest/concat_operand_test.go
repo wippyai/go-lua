@@ -51,6 +51,19 @@ return label
 	}
 }
 
+func TestCheckConcatOperandMessageNamesPathOperand(t *testing.T) {
+	result := Check(`
+type Part = { text: string? }
+local function render(part: Part): string
+	return "text:" .. part.text
+end
+`)
+	diag := requireDiagnosticCode(t, result, diagnostics.CodeConcatOperand)
+	if !strings.Contains(diag.Message, "right operand `part.text`") {
+		t.Fatalf("message = %q, want path operand named", diag.Message)
+	}
+}
+
 func TestCheckOptionalConcatOperandRendersPathEvidence(t *testing.T) {
 	src := strings.TrimLeft(`
 local maybe: string? = nil
@@ -62,7 +75,7 @@ return "prefix:" .. maybe
 		Sources:             diagnostic.SourceMap{"test.lua": src},
 		ShowSourceLabelRows: true,
 	})
-	want := "warning[type.operator.concat_operand]: right operand of `..` may be nil\n" +
+	want := "warning[type.operator.concat_operand]: right operand `maybe` of `..` may be nil\n" +
 		" --> test.lua:2:21\n" +
 		"  |\n" +
 		"2 | return \"prefix:\" .. maybe\n" +
