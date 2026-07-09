@@ -30,6 +30,7 @@ const (
 	labelUnknownType           = "unknown type"
 	labelUnknownValue          = "unknown value"
 	labelChannelCaseTest       = "channel case check"
+	labelChannelLifecycleCall  = "channel lifecycle call"
 	labelUnionCaseTest         = "union case check"
 	labelOptionalCaseCheck     = "optional case check"
 	labelResultFieldRead       = "case-specific field read"
@@ -88,6 +89,7 @@ var sourceLabelPlacements = map[string]diagnostic.LabelPlacement{
 	labelUnknownType:           diagnostic.LabelPlacementBelow,
 	labelUnknownValue:          diagnostic.LabelPlacementBelow,
 	labelChannelCaseTest:       diagnostic.LabelPlacementBelow,
+	labelChannelLifecycleCall:  diagnostic.LabelPlacementBelow,
 	labelUnionCaseTest:         diagnostic.LabelPlacementBelow,
 	labelOptionalCaseCheck:     diagnostic.LabelPlacementBelow,
 	labelResultFieldRead:       diagnostic.LabelPlacementBelow,

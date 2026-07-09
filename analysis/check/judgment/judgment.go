@@ -31,6 +31,8 @@ const (
 	CodeUnusedLocal                  Code = "lint.unused.local"
 	CodeDeadAssignment               Code = "lint.dead.assignment"
 	CodeChannelSelect                Code = "channel.select.exhaustiveness"
+	CodeChannelSendClosed            Code = "channel.send.closed"
+	CodeChannelDoubleClose           Code = "channel.close.closed"
 	CodeDiscriminatedUnion           Code = "union.discriminated.exhaustiveness"
 	CodeOptional                     Code = "union.optional.exhaustiveness"
 	CodeResultShape                  Code = "union.result_shape.exhaustiveness"
@@ -313,6 +315,7 @@ const (
 	EvidenceDetailChannelSelectHandled
 	EvidenceDetailChannelSelectMissing
 	EvidenceDetailChannelSelectNoDefault
+	EvidenceDetailChannelClosed
 	EvidenceDetailDiscriminatedUnionTarget
 	EvidenceDetailDiscriminatedUnionPossible
 	EvidenceDetailDiscriminatedUnionHandled

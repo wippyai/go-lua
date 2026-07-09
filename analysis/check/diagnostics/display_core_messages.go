@@ -94,6 +94,33 @@ func (diagnosticDisplay) ChannelSelectExhaustivenessHelp() string {
 	return "Add an elseif branch for each missing case, or add a default branch when a fallback is valid."
 }
 
+func (diagnosticDisplay) ChannelLifecycleMessage(operation, channel string) string {
+	switch operation {
+	case "close":
+		return "cannot close already closed channel " + codeName(channel)
+	default:
+		return "cannot send on closed channel " + codeName(channel)
+	}
+}
+
+func (diagnosticDisplay) ChannelLifecycleClosedEvidence(operation, channel string) string {
+	switch operation {
+	case "close":
+		return "this close call runs after " + codeName(channel) + " is proven closed"
+	default:
+		return "this send call runs after " + codeName(channel) + " is proven closed"
+	}
+}
+
+func (diagnosticDisplay) ChannelLifecycleHelp(operation string) string {
+	switch operation {
+	case "close":
+		return "Avoid closing the same channel twice, or guard ownership before closing it."
+	default:
+		return "Send before closing the channel, or use a fresh channel for later sends."
+	}
+}
+
 func (diagnosticDisplay) DiscriminatedUnionExhaustivenessMessage(caseWord, cases string) string {
 	return fmt.Sprintf("discriminated union handling is not exhaustive; missing %s: %s", caseWord, cases)
 }

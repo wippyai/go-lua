@@ -41,6 +41,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/ssa"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -241,6 +242,50 @@ func TestAmbientChannelSendOutcomeProviderIgnoresNonChannelReceiver(t *testing.T
 	if len(got.NormalReturnFacts.EscapeEvents) != 0 {
 		t.Fatalf("escape events = %#v, want none for non-channel receiver", got.NormalReturnFacts.EscapeEvents)
 	}
+}
+
+func TestAmbientChannelLifecycleOutcomeProviderClosedReceiveReturnsOptionalPayload(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(923)
+	receiverSym := symbol.ID(923)
+	receiver := path.NewPath(receiverSym, "ch")
+	resolver := visibility.NewResolver(visibility.NewTable(map[cfg.Point]map[symbol.ID]ssa.Version{
+		point: {
+			receiverSym: {Root: "ch", Symbol: receiverSym, ID: 1},
+		},
+	}))
+	receiverKey, ok := visibility.AddressAt(resolver, point, receiver).VisibleStateKey()
+	if !ok {
+		t.Fatal("receiver state key not resolved")
+	}
+	resource := state.TypestateResourceFromCanonicalKey(receiverKey, ChannelLifecycleProtocol)
+	in := state.State{}.
+		AcquireTypestate(resource, ChannelStateOpen, typestate.Obligation{}).
+		TransitionTypestate(resource, ChannelStateOpen, ChannelStateClosed)
+	channelType := typ.Instantiate(ambient.ChannelGeneric(), typ.String)
+	provider := AmbientChannelLifecycleOutcomeProvider(AmbientChannelLifecycleOutcomeProviderConfig{
+		ReceiverType: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) (typ.Type, bool) {
+			return channelType, true
+		},
+		KeySpace: resolver.KeySpace(),
+		Resolver: resolver,
+	})
+	site := factflow.NewCallSite(factflow.CallSiteConfig{
+		MethodName:      "receive",
+		ReceiverPath:    receiver,
+		HasReceiverPath: true,
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, site.View(), in, nil)
+
+	if !got.PostReturnAuthority {
+		t.Fatal("PostReturnAuthority = false, want closed receive result authority")
+	}
+	if len(got.Results) != 2 {
+		t.Fatalf("results = %#v, want two receive result slots", got.Results)
+	}
+	assertTypeWitness(t, reg, got.Results[0].Value, typeexpr.Optional(typ.String))
+	assertTypeWitness(t, reg, got.Results[1].Value, typ.Boolean)
 }
 
 func TestSignatureOutcomeProviderLowersLifecycleLabels(t *testing.T) {

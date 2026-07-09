@@ -232,6 +232,16 @@ func (s Store) OpenObligations() []OpenObligation {
 	return out
 }
 
+// Lookup returns the exact slot for resource when the store is not top.
+// Missing slots and top stores are both unknown to callers.
+func (s Store) Lookup(resource Resource) (Slot, bool) {
+	if s.top || resource.ID == "" || resource.Protocol == "" {
+		return Slot{}, false
+	}
+	slot, ok := s.slots[resource]
+	return slot, ok
+}
+
 type OpenObligation struct {
 	Resource   Resource
 	Current    State

@@ -485,6 +485,17 @@ func (s *Static) callOutcomeProvider(config SolveConfig, typeValues *typevalue.C
 		providers = append(providers, config.CallOutcomeFactory(s.callOutcomeContext(typeValues)))
 	}
 	providers = append(providers, config.CallOutcome, s.callOutcomeSupplement)
+	frontProviders := []callpayload.CallOutcomeProvider{
+		effectlowering.AmbientChannelLifecycleOutcomeProvider(effectlowering.AmbientChannelLifecycleOutcomeProviderConfig{
+			ReceiverType: channelMethodReceiverTypeProvider(s.registry, s.facts, s.visibility, s.sources, typeValues),
+			NameForSite:  s.signatureID.nameForCallSiteView,
+			Signatures:   s.signatures,
+			ArgumentType: effectlowering.SignatureArgumentTypeFunc(signatureArgumentType),
+			Sources:      s.sources,
+			KeySpace:     s.visibility.KeySpace(),
+			Resolver:     s.visibility,
+		}),
+	}
 	if hasSignatures(s.signatures) {
 		signatureProvider := effectlowering.SignatureOutcomeProvider(effectlowering.SignatureOutcomeProviderConfig{
 			Signatures:    s.signatures,
@@ -498,8 +509,9 @@ func (s *Static) callOutcomeProvider(config SolveConfig, typeValues *typevalue.C
 			ReturnValue:   stdlibSignatureReturnValue(s.registry, typeValues, s.facts, s.sources, sourcevalue.NewExpressionRefinementsFromReader(s.facts), s.visibility),
 			KeySpace:      s.visibility.KeySpace(),
 		})
-		providers = append([]callpayload.CallOutcomeProvider{signatureProvider}, providers...)
+		frontProviders = append(frontProviders, signatureProvider)
 	}
+	providers = append(frontProviders, providers...)
 	return calloutcome.ComposeSupplemental(providers...)
 }
 

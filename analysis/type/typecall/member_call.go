@@ -294,6 +294,16 @@ func ambientChannelMethod(receiver typ.Type, name string, depth int) (typ.Type, 
 			Param("payload", payload).
 			Returns(typ.Boolean).
 			Build(), true
+	case "case_send":
+		return typ.Func().
+			Param("self", channel).
+			Param("payload", payload).
+			Returns(typ.Unknown).
+			Build(), true
+	case "close":
+		return typ.Func().
+			Param("self", channel).
+			Build(), true
 	default:
 		return nil, false
 	}

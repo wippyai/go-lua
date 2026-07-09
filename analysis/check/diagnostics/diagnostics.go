@@ -26,6 +26,8 @@ const (
 	CodeNonNilAssertAlwaysNil        diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeNonNilAssertAlwaysNil)
 	CodeNumericForOperand            diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeNumericForOperand)
 	CodeChannelSelectExhaustive      diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeChannelSelectExhaustive)
+	CodeChannelSendClosed            diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeChannelSendClosed)
+	CodeChannelDoubleClose           diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeChannelDoubleClose)
 	CodeUnresolvedTypeReference      diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeUnresolvedTypeReference)
 	CodeUnresolvedValueReference     diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeUnresolvedValueReference)
 	CodeUnusedLocal                  diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeUnusedLocal)
@@ -187,6 +189,10 @@ func diagnosticProducers() []diagnosticProducer {
 		judgmentProducer([]judgment.Code{judgment.CodeNonNilAssertion}, pass.NonNilAssertions{}),
 		reachableJudgmentProducer(judgment.CodeMemberRead, pass.MemberReads{}),
 		judgmentProducer([]judgment.Code{judgment.CodeChannelSelect}, pass.ChannelSelects{}),
+		judgmentProducer(
+			[]judgment.Code{judgment.CodeChannelSendClosed, judgment.CodeChannelDoubleClose},
+			pass.ChannelLifecycles{},
+		),
 		judgmentProducer([]judgment.Code{judgment.CodeUnusedLocal}, pass.UnusedLocals{}),
 		judgmentProducer([]judgment.Code{judgment.CodeDeadAssignment}, pass.DeadAssignments{}),
 		parentStackJudgmentProducer([]judgment.Code{judgment.CodeRedundantCondition}, pass.RedundantConditions{}),

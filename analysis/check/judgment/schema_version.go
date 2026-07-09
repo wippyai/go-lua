@@ -5,4 +5,4 @@ package judgment
 // judgment record shape. Bump it when a code is added, removed, renamed, or
 // reclassified, or when the exported judgment/evidence/subject record fields
 // change meaning or shape.
-const JIRSchemaVersion = 7
+const JIRSchemaVersion = 8

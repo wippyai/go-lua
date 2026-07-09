@@ -23,6 +23,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/module/typelookup"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/ambient"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -190,7 +192,28 @@ func collectBodyResults(root *body.Result) []*body.Result {
 
 func ChannelManifest() *manifest.Manifest {
 	m := manifest.New("channel")
-	m.SetExport(typ.Unknown)
+	channelType := typ.Instantiate(ambient.ChannelGeneric(), typ.Any)
+	newType := typ.Func().
+		OptParam("buffer", typ.Number).
+		Returns(channelType).
+		Build()
+	selectResultType := typetable.NewRecord().
+		Field("channel", typ.Any).
+		Field("value", typ.Unknown).
+		Field("ok", typ.Boolean).
+		Build()
+	selectType := typ.Func().
+		Param("cases", typ.Any).
+		OptParam("default", typ.Boolean).
+		Returns(selectResultType).
+		Build()
+	m.DefineType("Channel", ambient.ChannelGeneric())
+	m.DefineFunctionSignature("channel.new", signature.Function{Type: newType})
+	m.DefineFunctionSignature("channel.select", signature.Function{Type: selectType})
+	m.SetExport(typetable.NewRecord().
+		Field("new", newType).
+		Field("select", selectType).
+		Build())
 	return m
 }
 

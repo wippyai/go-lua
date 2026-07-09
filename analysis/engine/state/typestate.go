@@ -93,6 +93,14 @@ func (s State) TypestateSnapshot() typestate.Store {
 	return s.typestates.Clone()
 }
 
+// TypestateSlot returns the exact tracked slot for resource, if one is known.
+func (s State) TypestateSlot(resource typestate.Resource) (typestate.Slot, bool) {
+	if !s.laneEnabled(laneTypestatesBit) {
+		return typestate.Slot{}, false
+	}
+	return s.typestates.Lookup(resource)
+}
+
 // OpenTypestateObligations returns locally owned lifecycle obligations that
 // are not proven closed or escaped.
 func (s State) OpenTypestateObligations() []typestate.OpenObligation {

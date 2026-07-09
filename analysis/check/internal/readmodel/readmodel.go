@@ -51,6 +51,7 @@ type DeadAssignment = readapi.DeadAssignment
 type DeadAssignmentOverwrite = readapi.DeadAssignmentOverwrite
 type DeadAssignmentExit = readapi.DeadAssignmentExit
 type ChannelSelectExhaustiveness = readapi.ChannelSelectExhaustiveness
+type ChannelLifecycleMisuse = readapi.ChannelLifecycleMisuse
 type UnresolvedValueReference = readapi.UnresolvedValueReference
 type RedundantConditionBranch = readapi.RedundantConditionBranch
 type DominatingBranchProof = readapi.DominatingBranchProof

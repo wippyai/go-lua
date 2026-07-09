@@ -20,6 +20,7 @@ var judgmentDiagnosticRenderers = map[judgment.RenderKey]judgmentDiagnosticRende
 	judgment.RenderAssignment:               renderAssignmentJudgmentWithPolicy,
 	judgment.RenderCallArity:                renderCallArityJudgmentWithPolicy,
 	judgment.RenderCallCallee:               renderCallCalleeJudgmentWithPolicy,
+	judgment.RenderChannelLifecycle:         renderChannelLifecycleJudgmentWithPolicy,
 	judgment.RenderChannelSelect:            renderChannelSelectJudgmentWithPolicy,
 	judgment.RenderConcatOperand:            renderConcatOperandJudgmentWithPolicy,
 	judgment.RenderDeadAssignment:           renderDeadAssignmentJudgmentWithPolicy,

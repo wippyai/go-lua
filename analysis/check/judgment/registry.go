@@ -43,6 +43,7 @@ const (
 	RenderAssignment               RenderKey = "assignment"
 	RenderCallArity                RenderKey = "call_arity"
 	RenderCallCallee               RenderKey = "call_callee"
+	RenderChannelLifecycle         RenderKey = "channel_lifecycle"
 	RenderChannelSelect            RenderKey = "channel_select"
 	RenderConcatOperand            RenderKey = "concat_operand"
 	RenderDeadAssignment           RenderKey = "dead_assignment"
@@ -91,6 +92,8 @@ const (
 	DiagnosticCodeNonNilAssertAlwaysNil        DiagnosticCode = "type.assert.nonnil_always_nil"
 	DiagnosticCodeNumericForOperand            DiagnosticCode = "type.for.numeric_operand"
 	DiagnosticCodeChannelSelectExhaustive      DiagnosticCode = "channel.select.exhaustiveness"
+	DiagnosticCodeChannelSendClosed            DiagnosticCode = "channel.send.closed"
+	DiagnosticCodeChannelDoubleClose           DiagnosticCode = "channel.close.closed"
 	DiagnosticCodeUnresolvedTypeReference      DiagnosticCode = "type.reference.unresolved"
 	DiagnosticCodeUnresolvedValueReference     DiagnosticCode = "value.reference.unresolved"
 	DiagnosticCodeUnusedLocal                  DiagnosticCode = "lint.unused.local"
@@ -140,6 +143,8 @@ var defaultRegistry = NewRegistry([]CodeSpec{
 	codeSpec(CodeUnusedLocal, FamilyLint, SubjectPath, VerdictRefuted, PolicyRefutedWarning, DiagnosticDefaultOptIn, RenderUnusedLocal, diag(DiagnosticCodeUnusedLocal), EvidenceAbstractFact),
 	codeSpec(CodeDeadAssignment, FamilyLint, SubjectPath, VerdictRefuted, PolicyRefutedWarning, DiagnosticDefaultOptIn, RenderDeadAssignment, diag(DiagnosticCodeDeadAssignment), EvidenceAbstractFact),
 	codeSpec(CodeChannelSelect, FamilyChannel, SubjectExpression, VerdictRefuted, PolicyRefutedWarning, DiagnosticDefaultEnabled, RenderChannelSelect, diag(DiagnosticCodeChannelSelectExhaustive), EvidenceAbstractFact, EvidenceMissingProof),
+	codeSpec(CodeChannelSendClosed, FamilyChannel, SubjectExpression, VerdictRefuted, PolicyRefutedError, DiagnosticDefaultEnabled, RenderChannelLifecycle, diag(DiagnosticCodeChannelSendClosed), EvidenceAbstractFact),
+	codeSpec(CodeChannelDoubleClose, FamilyChannel, SubjectExpression, VerdictRefuted, PolicyRefutedError, DiagnosticDefaultEnabled, RenderChannelLifecycle, diag(DiagnosticCodeChannelDoubleClose), EvidenceAbstractFact),
 	codeSpec(CodeDiscriminatedUnion, FamilyUnion, SubjectExpression, VerdictRefuted, PolicyRefutedWarning, DiagnosticDefaultOptIn, RenderDiscriminatedUnion, diag(DiagnosticCodeDiscriminatedUnionExhaustive), EvidenceAbstractFact, EvidenceMissingProof),
 	codeSpec(CodeOptional, FamilyUnion, SubjectExpression, VerdictRefuted, PolicyRefutedWarning, DiagnosticDefaultOptIn, RenderOptional, diag(DiagnosticCodeDiscriminatedUnionExhaustive), EvidenceAbstractFact, EvidenceMissingProof),
 	codeSpec(CodeResultShape, FamilyUnion, SubjectExpression, VerdictRefuted, PolicyRefutedWarning, DiagnosticDefaultOptIn, RenderResultShape, diag(DiagnosticCodeDiscriminatedUnionExhaustive), EvidenceAbstractFact, EvidenceMissingProof),

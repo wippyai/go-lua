@@ -6,7 +6,7 @@ closed or negotiate before emitting a surface newer than the consumer supports.
 
 | Surface | Constant | Current | Covers | Bump when |
 | --- | --- | --- | --- | --- |
-| Judgment IR | `judgment.JIRSchemaVersion` | v5 | Judgment code registry and exported judgment record shape. | A judgment code, code metadata, or exported judgment/evidence/subject field shape changes. |
+| Judgment IR | `judgment.JIRSchemaVersion` | v8 | Judgment code registry and exported judgment record shape. | A judgment code, code metadata, or exported judgment/evidence/subject field shape changes. |
 | Signature escape vocabulary | `signature.EscapeVocabVersion` | v1 | Signature `EscapeKind` labels and audited ownership capability labels synced with arena CallArgEscape/Ownership. | An escape/ownership label is added, removed, renamed, or changes boundary meaning. Requires joint cross-repo signoff per fence #1425. |
 | Boundary lane schema | `summary.BoundaryLaneSchemaVersion` | v1 | Summary descriptors, `NormalReturnFacts` descriptors, `CallOutcome` descriptors, and manifest wire-lane links. | A lane kind, slot/post-return classification, storage owner, or wire reference changes. |
 
@@ -23,3 +23,10 @@ Every bump requires:
 The guard tests intentionally hash live registries and descriptor tables. A
 surface change without a version bump fails with: `surface changed: bump version
 constant + journal a D-entry`.
+
+## Journal
+
+- D8: Added default-enabled channel lifecycle error judgments
+  `channel.send.closed` and `channel.close.closed`, both rendered by the new
+  `channel_lifecycle` renderer with `channel.*.closed` diagnostic codes. This
+  extends the code registry only; exported judgment record shapes are unchanged.

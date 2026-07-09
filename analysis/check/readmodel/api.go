@@ -42,6 +42,7 @@ type Reader interface {
 	ForEachUnusedLocal(func(UnusedLocal) bool) bool
 	ForEachDeadAssignment(func(DeadAssignment) bool) bool
 	ForEachChannelSelectExhaustiveness(func(ChannelSelectExhaustiveness) bool) bool
+	ForEachChannelLifecycleMisuse(func(ChannelLifecycleMisuse) bool) bool
 	ForEachDiscriminatedUnionExhaustiveness(func(DiscriminatedUnionExhaustiveness) bool) bool
 	ForEachOptionalExhaustiveness(func(OptionalExhaustiveness) bool) bool
 	ForEachRegistrationExhaustiveness(func(RegistrationExhaustiveness) bool) bool
@@ -878,6 +879,25 @@ type ChannelSelectExhaustiveness struct {
 	Handled       []string
 	Missing       []string
 	HasDefault    bool
+}
+
+// ChannelLifecycleOperation classifies a channel operation whose receiver is
+// invalid in the proven lifecycle state.
+type ChannelLifecycleOperation string
+
+const (
+	ChannelLifecycleSend  ChannelLifecycleOperation = "send"
+	ChannelLifecycleClose ChannelLifecycleOperation = "close"
+)
+
+// ChannelLifecycleMisuse is the solved read model for a runtime channel
+// operation whose receiver is provably closed.
+type ChannelLifecycleMisuse struct {
+	Point     cfg.Point
+	Span      SourceSpan
+	Operation ChannelLifecycleOperation
+	Channel   string
+	State     string
 }
 
 // DiscriminatedUnionExhaustiveness is the solved read model for an if/elseif
