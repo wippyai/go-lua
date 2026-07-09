@@ -30,6 +30,14 @@ func TestBatchSessionPublishesCompleteQueryableResult(t *testing.T) {
 		EntryFile:  "main.lua",
 		SourceFiles: map[string][]byte{
 			"main.lua": []byte(`
+type Config = { limit: number }
+local clean: Config = { limit = 3 }
+local hoisted = 0
+local i = 0
+while i < 3 do
+	hoisted = hoisted + clean.limit
+	i = i + 1
+end
 function build(ids: {string}): {items: {[string]: {id: string}}, count: number}
 	local batch: {items: {[string]: {id: string}}, count: number} = {items = {}, count = 0}
 	for _, id in ipairs(ids) do
@@ -397,6 +405,18 @@ func assertCompletedResultIsDefensivelyImmutable(t *testing.T, completed Complet
 	_, _, again := completed.ManifestBytes()
 	if again[0] != originalByte {
 		t.Fatal("mutating returned manifest bytes changed completed snapshot")
+	}
+	plan := completed.PlacementPlan()
+	if len(plan.HoistableLoads) == 0 || len(plan.HoistableLoads[0].ReadPath.Segments) == 0 {
+		t.Fatalf("fixture has no hoistable load with a read-path segment: %#v", plan.HoistableLoads)
+	}
+	originalLoad := plan.HoistableLoads[0]
+	originalLoad.ReadPath = originalLoad.ReadPath.Clone()
+	plan.HoistableLoads[0].BodyID++
+	plan.HoistableLoads[0].ReadPath.Segments[0].Name = "mutated"
+	againPlan := completed.PlacementPlan()
+	if !reflect.DeepEqual(againPlan.HoistableLoads[0], originalLoad) {
+		t.Fatal("mutating a hoistable load or its read-path segments changed the completed snapshot")
 	}
 
 	assertSummaryAccessorsAreDefensivelyImmutable(t, completed)

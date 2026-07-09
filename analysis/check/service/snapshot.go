@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/check/placementplan"
+	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 )
 
@@ -13,7 +14,6 @@ type completedSnapshot struct {
 	bodies           []BodyResultRef
 	judgments        []judgment.Judgment
 	diagnostics      []diagnostic.Diagnostic
-	parseErrors      []diagnostic.Diagnostic
 	manifestPath     string
 	manifestData     []byte
 	placement        placementplan.Plan
@@ -67,11 +67,15 @@ func clonePlacementPlan(in placementplan.Plan) placementplan.Plan {
 	out := in
 	out.Blockers = append([]placementplan.Blocker(nil), in.Blockers...)
 	out.Entries = append([]placementplan.Entry(nil), in.Entries...)
+	out.HoistableLoads = append([]readapi.HoistableLoad(nil), in.HoistableLoads...)
 	for i := range out.Entries {
 		out.Entries[i].Reasons = append([]placementplan.Reason(nil), in.Entries[i].Reasons...)
 		out.Entries[i].Obligations = append([]placementplan.Obligation(nil), in.Entries[i].Obligations...)
 		out.Entries[i].Blockers = append([]placementplan.Blocker(nil), in.Entries[i].Blockers...)
 		out.Entries[i].Children = append(out.Entries[i].Children[:0:0], in.Entries[i].Children...)
+	}
+	for i := range out.HoistableLoads {
+		out.HoistableLoads[i].ReadPath = in.HoistableLoads[i].ReadPath.Clone()
 	}
 	return out
 }
