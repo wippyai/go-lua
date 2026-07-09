@@ -953,14 +953,15 @@ type SpanRef struct {
 // Judgment is the semantic obligation record emitted after solve and consumed
 // by rendering/dedup/policy layers.
 type Judgment struct {
-	Code     Code
-	Point    cfg.Point
-	Subject  SubjectRef
-	Expected TypeRef
-	Actual   ValueRef
-	Verdict  Verdict
-	Evidence EvidenceChain
-	Spans    []SpanRef
+	Code          Code
+	Point         cfg.Point
+	ResultVersion uint64
+	Subject       SubjectRef
+	Expected      TypeRef
+	Actual        ValueRef
+	Verdict       Verdict
+	Evidence      EvidenceChain
+	Spans         []SpanRef
 }
 
 type evidenceJoinState struct {

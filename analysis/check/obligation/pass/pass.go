@@ -13,6 +13,7 @@ import (
 type Context struct {
 	FunctionKey                   string
 	SourceFile                    string
+	ResultVersion                 uint64
 	Reader                        readmodel.Reader
 	SuppressCallerOwnedParameters bool
 	PointReachable                func(cfg.Point) bool
@@ -54,6 +55,7 @@ func (p Pass) Run(ctx Context) []judgment.Judgment {
 			if ctx.PointReachable != nil && !ctx.PointReachable(item.Point) {
 				continue
 			}
+			item.ResultVersion = ctx.ResultVersion
 			out = append(out, item)
 		}
 	}

@@ -22,9 +22,10 @@ func judgmentContext(result *body.Result, sourceFile string) pass.Context {
 
 func judgmentContextWithParents(result *body.Result, parents []*body.Result, sourceFile string) pass.Context {
 	return pass.Context{
-		FunctionKey: sourceFile,
-		SourceFile:  sourceFile,
-		Reader:      internalreadmodel.NewWithParents(result, parents...),
+		FunctionKey:   sourceFile,
+		SourceFile:    sourceFile,
+		ResultVersion: resultVersion(result),
+		Reader:        internalreadmodel.NewWithParents(result, parents...),
 	}
 }
 
@@ -50,7 +51,8 @@ func (c producerContext) produceJudgments(result *body.Result, producers ...pass
 
 func (c producerContext) produceJudgmentsWithParent(result, parent *body.Result, producers ...pass.Producer) []diagnostic.Diagnostic {
 	items := pass.New(producers...).Run(pass.Context{
-		Reader: internalreadmodel.NewWithParents(result, parent),
+		ResultVersion: resultVersion(result),
+		Reader:        internalreadmodel.NewWithParents(result, parent),
 	})
 	return renderJudgmentDiagnostics(items, c.judgmentPolicy.Policy, c.judgmentPolicy.Strictness)
 }
@@ -71,4 +73,11 @@ func (c producerContext) produceDirectCallContractJudgments(result *body.Result)
 		pass.New(pass.CallArguments{}).Run(ctx),
 	)
 	return renderJudgmentDiagnostics(items, c.judgmentPolicy.Policy, c.judgmentPolicy.Strictness)
+}
+
+func resultVersion(result *body.Result) uint64 {
+	if result == nil {
+		return 0
+	}
+	return result.ResultVersion()
 }
