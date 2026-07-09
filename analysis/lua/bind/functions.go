@@ -101,6 +101,23 @@ func (r *Result) FunctionOrigins() []FunctionOrigin {
 	return origins
 }
 
+// ForEachFunctionOrigin visits bound function origins in parent-before-child
+// order without allocating a caller-owned slice.
+func (r *Result) ForEachFunctionOrigin(visit func(FunctionOrigin) bool) {
+	if r == nil || visit == nil {
+		return
+	}
+	for _, fn := range r.functions {
+		origin, ok := r.functionOrigins[fn]
+		if !ok {
+			continue
+		}
+		if !visit(origin) {
+			return
+		}
+	}
+}
+
 // FunctionOrigin returns the origin metadata for fn.
 func (r *Result) FunctionOrigin(fn *ast.FunctionExpr) (FunctionOrigin, bool) {
 	if r == nil || fn == nil {

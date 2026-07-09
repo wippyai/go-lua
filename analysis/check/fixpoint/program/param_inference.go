@@ -277,26 +277,27 @@ func collectEnclosedFunctions(bindings *bind.Result, roots ...[]ast.Stmt) map[sy
 	// symbol, so an escaping reference to the binding (which is what call sites
 	// and value reads resolve to) excludes the function it names.
 	targetToFunction := make(map[symbol.ID]symbol.ID)
-	for _, origin := range bindings.FunctionOrigins() {
+	bindings.ForEachFunctionOrigin(func(origin bind.FunctionOrigin) bool {
 		if origin.Symbol == 0 || origin.Func == nil {
-			continue
+			return true
 		}
 		// A method definition stores the function value into a receiver table,
 		// reaching callers outside the analyzed call-site set.
 		if origin.Kind == bind.FunctionOriginMethod {
-			continue
+			return true
 		}
 		// A function bound to a non-local target (a global or a dotted module
 		// field) is reachable through that target by external callers.
 		if origin.HasTargetSymbol {
 			kind, ok := bindings.Kind(origin.TargetSymbol)
 			if !ok || (kind != symbol.Local && kind != symbol.Param) {
-				continue
+				return true
 			}
 			targetToFunction[origin.TargetSymbol] = origin.Symbol
 		}
 		functionSymbols[origin.Symbol] = struct{}{}
-	}
+		return true
+	})
 	if len(functionSymbols) == 0 {
 		return nil
 	}
@@ -309,12 +310,13 @@ func collectEnclosedFunctions(bindings *bind.Result, roots ...[]ast.Stmt) map[sy
 	for _, stmts := range roots {
 		walker.walkStmts(stmts)
 	}
-	for _, origin := range bindings.FunctionOrigins() {
+	bindings.ForEachFunctionOrigin(func(origin bind.FunctionOrigin) bool {
 		if origin.Func == nil {
-			continue
+			return true
 		}
 		walker.walkStmts(origin.Func.Stmts)
-	}
+		return true
+	})
 	out := make(map[symbol.ID]struct{}, len(functionSymbols))
 	for sym := range functionSymbols {
 		if _, ok := walker.escaped[sym]; ok {

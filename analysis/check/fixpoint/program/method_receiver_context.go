@@ -130,19 +130,21 @@ func collectMetatableMethodContext(bindings *bind.Result, external typeannotatio
 	for _, stmts := range roots {
 		collector.collectTypesAndMetatables(stmts)
 	}
-	for _, origin := range bindings.FunctionOrigins() {
+	bindings.ForEachFunctionOrigin(func(origin bind.FunctionOrigin) bool {
 		if origin.Func != nil {
 			collector.collectTypesAndMetatables(origin.Func.Stmts)
 		}
-	}
+		return true
+	})
 	for _, stmts := range roots {
 		collector.collectSetmetatableReceivers(stmts, nil)
 	}
-	for _, origin := range bindings.FunctionOrigins() {
+	bindings.ForEachFunctionOrigin(func(origin bind.FunctionOrigin) bool {
 		if origin.Func != nil {
 			collector.collectSetmetatableReceivers(origin.Func.Stmts, collector.functionReturnTypes(origin.Func))
 		}
-	}
+		return true
+	})
 	collector.ensureSelfIndexPrototypeReceiverBases()
 	collector.ensurePlainMethodReceiverBases()
 	proof := collector.proof()
@@ -943,49 +945,55 @@ func (c methodReceiverCollector) ensurePlainMethodReceiverBases() {
 	if c.bindings == nil {
 		return
 	}
-	for _, origin := range c.bindings.FunctionOrigins() {
+	c.bindings.ForEachFunctionOrigin(func(origin bind.FunctionOrigin) bool {
 		if origin.Func == nil || origin.Kind != bind.FunctionOriginMethod {
-			continue
+			return true
 		}
 		table, ok := methodFunctionTableSymbol(c.bindings, origin)
 		if !ok || table == 0 {
-			continue
+			return true
 		}
 		if _, present := c.receivers[table]; present {
-			continue
+			return true
 		}
 		if receiver, ok := c.declaredMethodReceiver(table); ok {
 			c.receivers[table] = receiver
-			continue
+			return true
 		}
 		if receiver := c.localTypes[table]; usableMetatableReceiverType(receiver) {
 			c.receivers[table] = receiver
 		}
-	}
+		return true
+	})
 }
 
 func (c methodReceiverCollector) declaredMethodReceiver(methods symbol.ID) (typ.Type, bool) {
 	if methods == 0 || c.bindings == nil || c.resolver == nil {
 		return nil, false
 	}
-	for _, origin := range c.bindings.FunctionOrigins() {
+	var receiver typ.Type
+	found := false
+	c.bindings.ForEachFunctionOrigin(func(origin bind.FunctionOrigin) bool {
 		if origin.Func == nil || origin.Kind != bind.FunctionOriginMethod {
-			continue
+			return true
 		}
 		table, ok := methodFunctionTableSymbol(c.bindings, origin)
 		if !ok || table != methods {
-			continue
+			return true
 		}
 		decl, ok := c.bindings.MethodReceiverType(origin.Func)
 		if !ok {
-			continue
+			return true
 		}
 		t, ok := c.resolver.Decl(decl)
 		if ok && usableMetatableReceiverType(t) {
-			return t, true
+			receiver = t
+			found = true
+			return false
 		}
-	}
-	return nil, false
+		return true
+	})
+	return receiver, found
 }
 
 func (c methodReceiverCollector) seedReceiverMap() map[symbol.ID]typ.Type {
@@ -1105,21 +1113,22 @@ func (p metatableMethodProof) methodSurfaceEntries(methods symbol.ID, selfReceiv
 		return nil
 	}
 	var out []methodSurfaceEntry
-	for _, origin := range p.bindings.FunctionOrigins() {
+	p.bindings.ForEachFunctionOrigin(func(origin bind.FunctionOrigin) bool {
 		if origin.Func == nil || origin.Kind != bind.FunctionOriginMethod || origin.Method == "" {
-			continue
+			return true
 		}
 		table, ok := methodFunctionTableSymbol(p.bindings, origin)
 		if !ok || table != methods {
-			continue
+			return true
 		}
 		fnType, ok := p.methodFunctionType(origin, selfReceiver)
 		if !ok {
-			continue
+			return true
 		}
 		fnSymbol, _ := p.bindings.FunctionSymbol(origin.Func)
 		out = append(out, methodSurfaceEntry{name: origin.Method, fnType: fnType, functionSymbol: fnSymbol})
-	}
+		return true
+	})
 	return out
 }
 

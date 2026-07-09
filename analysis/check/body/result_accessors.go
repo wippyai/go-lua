@@ -877,12 +877,15 @@ func (r *Result) IsFunctionDefinitionTarget(id symbol.ID) bool {
 	if r == nil || r.bindings == nil || id == 0 {
 		return false
 	}
-	for _, origin := range r.bindings.FunctionOrigins() {
+	found := false
+	r.bindings.ForEachFunctionOrigin(func(origin bind.FunctionOrigin) bool {
 		if origin.HasTargetSymbol && origin.TargetSymbol == id {
-			return true
+			found = true
+			return false
 		}
-	}
-	return false
+		return true
+	})
+	return found
 }
 
 func (r *Result) TypeRef(ref *ast.TypeRefExpr) (bind.TypeDecl, bool) {

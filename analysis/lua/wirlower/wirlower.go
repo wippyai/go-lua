@@ -172,20 +172,21 @@ func recordExternalFunctionRootTypes(body *wir.Body, fn *ast.FunctionExpr, bindi
 	if body == nil || fn == nil || bindings == nil {
 		return
 	}
-	for _, origin := range bindings.FunctionOrigins() {
+	bindings.ForEachFunctionOrigin(func(origin bind.FunctionOrigin) bool {
 		if !origin.HasTargetSymbol || origin.TargetSymbol == 0 || origin.Func == nil {
-			continue
+			return true
 		}
 		if declaring, ok := bindings.DeclaringFunction(origin.TargetSymbol); ok && declaring == fn {
-			continue
+			return true
 		}
 		t, ok := functiontype.ValueExpression(origin.Func, bindings, resolver)
 		if !ok || t == nil {
-			continue
+			return true
 		}
 		recordSymbolInfo(body, bindings, origin.TargetSymbol)
 		body.SetRootType(path.NewPath(origin.TargetSymbol, bindings.Name(origin.TargetSymbol)), t)
-	}
+		return true
+	})
 }
 
 // lowerInto lowers one function-scope statement list (a chunk or a nested

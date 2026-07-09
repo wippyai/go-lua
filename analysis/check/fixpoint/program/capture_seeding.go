@@ -178,9 +178,9 @@ func (s *closureCaptureSeeder) entryCaptures(fn *ast.FunctionExpr) []bind.Captur
 			seen[capture.Captured] = struct{}{}
 		}
 	}
-	for _, origin := range s.bindings.FunctionOrigins() {
+	s.bindings.ForEachFunctionOrigin(func(origin bind.FunctionOrigin) bool {
 		if origin.Func == nil || origin.Func == fn || !functionOriginDescendsFrom(s.bindings, origin.Func, fn) {
-			continue
+			return true
 		}
 		for _, capture := range s.bindings.DirectCaptures(origin.Func) {
 			if capture.Captured == 0 {
@@ -195,7 +195,8 @@ func (s *closureCaptureSeeder) entryCaptures(fn *ast.FunctionExpr) []bind.Captur
 			seen[capture.Captured] = struct{}{}
 			out = append(out, capture)
 		}
-	}
+		return true
+	})
 	return out
 }
 
@@ -294,9 +295,9 @@ func (s *closureCaptureSeeder) functionForCapturedSymbol(sym symbol.ID) (*ast.Fu
 	}
 	if s.targetFuncs == nil {
 		s.targetFuncs = make(map[symbol.ID]*ast.FunctionExpr)
-		for _, origin := range s.bindings.FunctionOrigins() {
+		s.bindings.ForEachFunctionOrigin(func(origin bind.FunctionOrigin) bool {
 			if origin.Func == nil {
-				continue
+				return true
 			}
 			if origin.Symbol != 0 {
 				s.targetFuncs[origin.Symbol] = origin.Func
@@ -304,7 +305,8 @@ func (s *closureCaptureSeeder) functionForCapturedSymbol(sym symbol.ID) (*ast.Fu
 			if origin.HasTargetSymbol && origin.TargetSymbol != 0 {
 				s.targetFuncs[origin.TargetSymbol] = origin.Func
 			}
-		}
+			return true
+		})
 	}
 	fn, ok := s.targetFuncs[sym]
 	return fn, ok && fn != nil

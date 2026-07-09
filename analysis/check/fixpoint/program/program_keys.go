@@ -243,9 +243,9 @@ func collectKeys(bindings *bind.Result, root summary.SummaryKey, reg *axis.Regis
 	}
 	pathTargets := collectFunctionPathTargets(bindings, stmts...)
 	ambiguousPathKeys := make(map[factflow.CalleePathKey]struct{})
-	for _, origin := range bindings.FunctionOrigins() {
+	bindings.ForEachFunctionOrigin(func(origin bind.FunctionOrigin) bool {
 		if origin.Symbol == 0 || origin.Func == nil {
-			continue
+			return true
 		}
 		key := summary.DefaultSummaryKey(ref.FromSymbol(origin.Symbol))
 		out.functions = append(out.functions, keyedFunction{funcExpr: origin.Func, key: key})
@@ -266,7 +266,7 @@ func collectKeys(bindings *bind.Result, root summary.SummaryKey, reg *axis.Regis
 		if hasTargetPath && (!origin.HasTargetSymbol || functionTargetCanUseStaticPathKey(bindings, origin.TargetSymbol)) {
 			pathKey, ok := factflow.CalleePathKeyFromPath(targetPath)
 			if !ok {
-				continue
+				return true
 			}
 			if existing, seen := out.pathKeys[pathKey]; seen && existing != key {
 				ambiguousPathKeys[pathKey] = struct{}{}
@@ -277,7 +277,8 @@ func collectKeys(bindings *bind.Result, root summary.SummaryKey, reg *axis.Regis
 			}
 			out.pathKeys[pathKey] = key
 		}
-	}
+		return true
+	})
 	// A path bound to more than one function definition is not a sound static
 	// callee target: the call resolves through the current value identity instead.
 	for pathKey := range ambiguousPathKeys {
@@ -323,12 +324,13 @@ func collectFunctionPathTargets(bindings *bind.Result, roots ...[]ast.Stmt) map[
 	for _, stmts := range roots {
 		collectFunctionPathTargetsInStmts(out, bindings, stmts)
 	}
-	for _, origin := range bindings.FunctionOrigins() {
+	bindings.ForEachFunctionOrigin(func(origin bind.FunctionOrigin) bool {
 		if origin.Func == nil {
-			continue
+			return true
 		}
 		collectFunctionPathTargetsInStmts(out, bindings, origin.Func.Stmts)
-	}
+		return true
+	})
 	if len(out) == 0 {
 		return nil
 	}
