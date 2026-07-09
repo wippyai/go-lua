@@ -118,6 +118,23 @@ var soundnessProbes = []soundnessProbe{
 		end return f`,
 	},
 	{
+		// A guard-keyed assignment fact must not survive a closure call that mutates
+		// the dependent local between guards.
+		name:  "partitioned-assignment-closure-mutation",
+		fixed: true,
+		src: `local function f(ok: boolean): string
+			local x: string?
+			if ok then x = "ready" end
+			local function clear() x = nil end
+			clear()
+			if ok then
+				local s: string = x
+				return s
+			end
+			return ""
+		end return f`,
+	},
+	{
 		// A return-position operator expression must be type-checked against the
 		// return annotation: returning a number-typed `a // b` for an integer return
 		// is rejected.
