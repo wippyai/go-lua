@@ -1,0 +1,10 @@
+{
+  "description": "Cross-module return-flow summaries preserve caller shapes for read-only identity/getter helpers and degrade mixed or escaping helpers.",
+  "files": ["helpers.lua", "main.lua"],
+  "check": {
+    "errors": 3
+  },
+  "run": {
+    "skip": "checker-only return-flow fixture"
+  }
+}

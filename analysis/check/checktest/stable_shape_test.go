@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -65,6 +66,158 @@ local host = cfg.host
 	requireShapeTier(t, fact, body.StableShapeTierStable)
 	requireShapeFieldSubtype(t, root, fact.Shape, "host", typ.String)
 	requireShapeFieldSubtype(t, root, fact.Shape, "port", typ.Number)
+}
+
+func TestPrefixStableShapeCrossesManifestIdentityReturnFlowBoundary(t *testing.T) {
+	helpers := CheckAndExport(`
+local M = {}
+
+function M.id(value: table): table
+  return value
+end
+
+return M
+`, "helpers")
+	requireNoDiagnostics(t, helpers.Errors)
+	requireManifestReturnFlow(t, helpers, "helpers.id", signature.ReturnFlowParam)
+
+	result := Check(`
+local helpers = require("helpers")
+local cfg = {}
+cfg.host = "x"
+local same = helpers.id(cfg)
+local host = same.host
+cfg.port = 80
+`, WithModule("helpers", helpers))
+	requireNoDiagnostics(t, result.Diagnostics)
+	root := requireRootResult(t, result)
+	fact := requireStableReadShape(t, root, "same.host")
+	requireShapeTier(t, fact, body.StableShapeTierPrefixStable)
+	requireShapeFieldSubtype(t, root, fact.Shape, "host", typ.String)
+	requireNoShapeField(t, fact.Shape, "port")
+}
+
+func TestManifestReturnFlowDefaultOrDoesNotPreserveShape(t *testing.T) {
+	helpers := CheckAndExport(`
+local M = {}
+
+function M.default_or(value: table?, fallback: table): table
+  return value or fallback
+end
+
+return M
+`, "helpers")
+	requireNoDiagnostics(t, helpers.Errors)
+	requireManifestNoReturnFlow(t, helpers, "helpers.default_or")
+
+	result := Check(`
+local helpers = require("helpers")
+local cfg = {}
+cfg.host = "x"
+local fallback = {}
+fallback.other = 1
+local mixed = helpers.default_or(cfg, fallback)
+local host = mixed.host
+`, WithModule("helpers", helpers))
+	requireNoDiagnostics(t, result.Diagnostics)
+	root := requireRootResult(t, result)
+	occ := requireStaticRead(t, root, "mixed.host")
+	if fact, ok := root.StableShapeForStaticMemberRead(occ); ok {
+		t.Fatalf("stable shape = %#v, want no fact for mixed default-or return", fact)
+	}
+}
+
+func TestManifestReturnFlowGetterPreservesMemberShape(t *testing.T) {
+	helpers := CheckAndExport(`
+type Row = {
+  meta: table,
+}
+
+local M = {}
+
+function M.get_meta(row: Row): table
+  return row.meta
+end
+
+return M
+`, "helpers")
+	requireNoDiagnostics(t, helpers.Errors)
+	requireManifestReturnFlow(t, helpers, "helpers.get_meta", signature.ReturnFlowParamMember)
+
+	result := Check(`
+local helpers = require("helpers")
+local row = {}
+local source_meta = {}
+source_meta.route = "a"
+row.meta = source_meta
+local meta = helpers.get_meta(row)
+local route: string = meta.route
+`, WithModule("helpers", helpers))
+	requireNoDiagnostics(t, result.Diagnostics)
+	root := requireRootResult(t, result)
+	fact := requireStableReadShape(t, root, "meta.route")
+	requireShapeFieldSubtype(t, root, fact.Shape, "route", typ.String)
+}
+
+func TestManifestReturnFlowMutatingHelperDegradesShape(t *testing.T) {
+	helpers := CheckAndExport(`
+local M = {}
+
+function M.touch(value: table): table
+  value.late = 1
+  return value
+end
+
+return M
+`, "helpers")
+	requireNoDiagnostics(t, helpers.Errors)
+	requireManifestReturnFlow(t, helpers, "helpers.touch", signature.ReturnFlowParam)
+
+	result := Check(`
+local helpers = require("helpers")
+local cfg = {}
+cfg.host = "x"
+local touched = helpers.touch(cfg)
+local host = touched.host
+`, WithModule("helpers", helpers))
+	requireNoDiagnostics(t, result.Diagnostics)
+	root := requireRootResult(t, result)
+	occ := requireStaticRead(t, root, "touched.host")
+	if fact, ok := root.StableShapeForStaticMemberRead(occ); ok {
+		t.Fatalf("stable shape = %#v, want no fact after mutating return helper", fact)
+	}
+}
+
+func TestManifestReturnFlowConditionalStoreDegradesShape(t *testing.T) {
+	helpers := CheckAndExport(`
+local M = {}
+local sink = {}
+
+function M.maybe_store(value: table, flag: boolean): table
+  if flag then
+    sink.saved = value
+  end
+  return value
+end
+
+return M
+`, "helpers")
+	requireNoDiagnostics(t, helpers.Errors)
+	requireManifestReturnFlow(t, helpers, "helpers.maybe_store", signature.ReturnFlowParam)
+
+	result := Check(`
+local helpers = require("helpers")
+local cfg = {}
+cfg.host = "x"
+local maybe = helpers.maybe_store(cfg, false)
+local host = maybe.host
+`, WithModule("helpers", helpers))
+	requireNoDiagnostics(t, result.Diagnostics)
+	root := requireRootResult(t, result)
+	occ := requireStaticRead(t, root, "maybe.host")
+	if fact, ok := root.StableShapeForStaticMemberRead(occ); ok {
+		t.Fatalf("stable shape = %#v, want no fact after conditional param store", fact)
+	}
 }
 
 func TestPrefixStableSurvivesKnownAliasExtensionAfterRead(t *testing.T) {
@@ -323,4 +476,38 @@ func requireStableAllocationTemplate(t *testing.T, mod *ModuleResult) {
 		}
 	}
 	t.Fatal("manifest has no stable return allocation template")
+}
+
+func requireManifestReturnFlow(t *testing.T, mod *ModuleResult, name string, kind signature.ReturnFlowKind) {
+	t.Helper()
+	if mod == nil || mod.Manifest == nil {
+		t.Fatal("missing module manifest")
+	}
+	sig, ok := mod.Manifest.FunctionSignatures[name]
+	if !ok {
+		t.Fatalf("missing %s function signature: %#v", name, mod.Manifest.FunctionSignatures)
+	}
+	if sig.OperationalEffects == nil {
+		t.Fatalf("%s operational effects = nil", name)
+	}
+	for _, flow := range sig.OperationalEffects.ReturnFlows {
+		if flow.Kind == kind {
+			return
+		}
+	}
+	t.Fatalf("%s return flows = %#v, want kind %d", name, sig.OperationalEffects.ReturnFlows, kind)
+}
+
+func requireManifestNoReturnFlow(t *testing.T, mod *ModuleResult, name string) {
+	t.Helper()
+	if mod == nil || mod.Manifest == nil {
+		t.Fatal("missing module manifest")
+	}
+	sig, ok := mod.Manifest.FunctionSignatures[name]
+	if !ok {
+		t.Fatalf("missing %s function signature: %#v", name, mod.Manifest.FunctionSignatures)
+	}
+	if sig.OperationalEffects != nil && len(sig.OperationalEffects.ReturnFlows) != 0 {
+		t.Fatalf("%s return flows = %#v, want none", name, sig.OperationalEffects.ReturnFlows)
+	}
 }
