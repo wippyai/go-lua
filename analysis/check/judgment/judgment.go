@@ -1,6 +1,7 @@
 // Package judgment defines the post-solve obligation records that diagnostics
-// render. It intentionally carries semantic identities and references, not
-// user-facing messages or severity.
+// render. It carries semantic identities plus the stable descriptor metadata
+// shared by policy and rendering layers; user-facing message construction stays
+// in diagnostics.
 package judgment
 
 import (

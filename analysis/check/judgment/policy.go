@@ -33,115 +33,99 @@ type Policy struct {
 	levels map[PolicyKey]Level
 }
 
+// PolicyConfig is the user-tunable judgment severity surface. The zero value
+// uses DefaultPolicy in StrictnessDefault mode.
+type PolicyConfig struct {
+	Policy     Policy
+	Strictness StrictnessMode
+}
+
 var defaultPolicy = NewPolicy(defaultPolicyLevels())
+
+type policyModeLevels struct {
+	Proven  Level
+	Unknown Level
+	Refuted Level
+}
+
+type policyProfileLevels struct {
+	Default policyModeLevels
+	Lenient policyModeLevels
+	Strict  policyModeLevels
+}
+
+var defaultPolicyProfiles = map[PolicyProfile]policyProfileLevels{
+	PolicyStrictnessTunableTypeError: {
+		Default: policyModeLevels{Proven: LevelDisabled, Unknown: LevelError, Refuted: LevelError},
+		Lenient: policyModeLevels{Proven: LevelDisabled, Unknown: LevelWarning, Refuted: LevelError},
+		Strict:  policyModeLevels{Proven: LevelDisabled, Unknown: LevelError, Refuted: LevelError},
+	},
+	PolicyRefutedError: {
+		Default: policyModeLevels{Proven: LevelDisabled, Unknown: LevelDisabled, Refuted: LevelError},
+		Lenient: policyModeLevels{Proven: LevelDisabled, Unknown: LevelDisabled, Refuted: LevelError},
+		Strict:  policyModeLevels{Proven: LevelDisabled, Unknown: LevelDisabled, Refuted: LevelError},
+	},
+	PolicyRefutedWarning: {
+		Default: policyModeLevels{Proven: LevelDisabled, Unknown: LevelDisabled, Refuted: LevelWarning},
+		Lenient: policyModeLevels{Proven: LevelDisabled, Unknown: LevelDisabled, Refuted: LevelWarning},
+		Strict:  policyModeLevels{Proven: LevelDisabled, Unknown: LevelDisabled, Refuted: LevelWarning},
+	},
+	PolicyHint: {
+		Default: policyModeLevels{Proven: LevelHint, Unknown: LevelHint, Refuted: LevelHint},
+		Lenient: policyModeLevels{Proven: LevelHint, Unknown: LevelHint, Refuted: LevelHint},
+		Strict:  policyModeLevels{Proven: LevelHint, Unknown: LevelHint, Refuted: LevelHint},
+	},
+	PolicyProvenHint: {
+		Default: policyModeLevels{Proven: LevelHint, Unknown: LevelDisabled, Refuted: LevelDisabled},
+		Lenient: policyModeLevels{Proven: LevelHint, Unknown: LevelDisabled, Refuted: LevelDisabled},
+		Strict:  policyModeLevels{Proven: LevelHint, Unknown: LevelDisabled, Refuted: LevelDisabled},
+	},
+}
 
 func defaultPolicyLevels() map[PolicyKey]Level {
 	levels := make(map[PolicyKey]Level, len(defaultRegistry.Codes())*9)
-	addStrictnessTunableTypeErrors(levels,
-		CodeCallArgType,
-		CodeCallArity,
-		CodeCallCallee,
-		CodeAssignment,
-		CodeAssignmentTarget,
-		CodeReturn,
-	)
-	addRefutedErrors(levels,
-		CodeNonNilAssertion,
-		CodeNumericForOperand,
-		CodeUnresolvedValue,
-		CodeUnresolvedType,
-		CodeMemberRead,
-	)
-	addRefutedWarnings(levels,
-		CodeFrozenTable,
-		CodeLifecycle,
-		CodeUnusedLocal,
-		CodeDeadAssignment,
-		CodeChannelSelect,
-		CodeDiscriminatedUnion,
-		CodeOptional,
-		CodeResultShape,
-		CodeRegistration,
-		CodeTableDispatch,
-		CodeRedundantCondition,
-		CodeConcatOperand,
-	)
-	addHints(levels, CodeSendIsolation)
-	addProvenHints(levels,
-		CodeAdviceRedundantClaim,
-		CodeAdviceAlwaysTrueGuard,
-		CodeAdviceInvariantLoopRead,
-		CodeAdviceSplitBirthDiscriminant,
-	)
+	for _, code := range defaultRegistry.Codes() {
+		spec, ok := defaultRegistry.Lookup(code)
+		if !ok {
+			panic("judgment: default registry code disappeared")
+		}
+		rows, ok := defaultPolicyProfiles[spec.Policy]
+		if !ok {
+			panic("judgment: missing default policy profile for " + string(code))
+		}
+		addPolicyModeRows(levels, code, StrictnessDefault, rows.Default)
+		addPolicyModeRows(levels, code, StrictnessLenient, rows.Lenient)
+		addPolicyModeRows(levels, code, StrictnessStrict, rows.Strict)
+	}
 	return levels
 }
 
-func addStrictnessTunableTypeErrors(levels map[PolicyKey]Level, codes ...Code) {
-	for _, code := range codes {
-		addPolicyRows(levels, code, LevelError, LevelError, LevelWarning, LevelError, LevelError, LevelError)
-	}
-}
-
-func addRefutedErrors(levels map[PolicyKey]Level, codes ...Code) {
-	for _, code := range codes {
-		addPolicyRows(levels, code, LevelDisabled, LevelError, LevelDisabled, LevelError, LevelDisabled, LevelError)
-	}
-}
-
-func addRefutedWarnings(levels map[PolicyKey]Level, codes ...Code) {
-	for _, code := range codes {
-		addPolicyRows(levels, code, LevelDisabled, LevelWarning, LevelDisabled, LevelWarning, LevelDisabled, LevelWarning)
-	}
-}
-
-func addHints(levels map[PolicyKey]Level, codes ...Code) {
-	for _, code := range codes {
-		for _, mode := range []StrictnessMode{StrictnessDefault, StrictnessLenient, StrictnessStrict} {
-			levels[PolicyKey{Code: code, Verdict: VerdictProven, Mode: mode}] = LevelHint
-			levels[PolicyKey{Code: code, Verdict: VerdictUnknown, Mode: mode}] = LevelHint
-			levels[PolicyKey{Code: code, Verdict: VerdictRefuted, Mode: mode}] = LevelHint
-		}
-	}
-}
-
-func addProvenHints(levels map[PolicyKey]Level, codes ...Code) {
-	for _, code := range codes {
-		addProvenHintRows(levels, code, StrictnessDefault)
-		addProvenHintRows(levels, code, StrictnessLenient)
-		addProvenHintRows(levels, code, StrictnessStrict)
-	}
-}
-
-func addProvenHintRows(levels map[PolicyKey]Level, code Code, mode StrictnessMode) {
-	levels[PolicyKey{Code: code, Verdict: VerdictProven, Mode: mode}] = LevelHint
-	levels[PolicyKey{Code: code, Verdict: VerdictUnknown, Mode: mode}] = LevelDisabled
-	levels[PolicyKey{Code: code, Verdict: VerdictRefuted, Mode: mode}] = LevelDisabled
-}
-
-func addPolicyRows(
-	levels map[PolicyKey]Level,
-	code Code,
-	defaultUnknown Level,
-	defaultRefuted Level,
-	lenientUnknown Level,
-	lenientRefuted Level,
-	strictUnknown Level,
-	strictRefuted Level,
-) {
-	addPolicyModeRows(levels, code, StrictnessDefault, defaultUnknown, defaultRefuted)
-	addPolicyModeRows(levels, code, StrictnessLenient, lenientUnknown, lenientRefuted)
-	addPolicyModeRows(levels, code, StrictnessStrict, strictUnknown, strictRefuted)
-}
-
-func addPolicyModeRows(levels map[PolicyKey]Level, code Code, mode StrictnessMode, unknown Level, refuted Level) {
-	levels[PolicyKey{Code: code, Verdict: VerdictProven, Mode: mode}] = LevelDisabled
-	levels[PolicyKey{Code: code, Verdict: VerdictUnknown, Mode: mode}] = unknown
-	levels[PolicyKey{Code: code, Verdict: VerdictRefuted, Mode: mode}] = refuted
+func addPolicyModeRows(levels map[PolicyKey]Level, code Code, mode StrictnessMode, rows policyModeLevels) {
+	levels[PolicyKey{Code: code, Verdict: VerdictProven, Mode: mode}] = rows.Proven
+	levels[PolicyKey{Code: code, Verdict: VerdictUnknown, Mode: mode}] = rows.Unknown
+	levels[PolicyKey{Code: code, Verdict: VerdictRefuted, Mode: mode}] = rows.Refuted
 }
 
 // DefaultPolicy returns the standard judgment disposition table.
 func DefaultPolicy() Policy {
 	return defaultPolicy
+}
+
+// Normalized returns c with zero-value fields replaced by judgment defaults.
+func (c PolicyConfig) Normalized() PolicyConfig {
+	if c.Policy.IsZero() {
+		c.Policy = DefaultPolicy()
+	}
+	if c.Strictness == "" {
+		c.Strictness = StrictnessDefault
+	}
+	return c
+}
+
+// LevelFor returns the configured disposition for a judgment.
+func (c PolicyConfig) LevelFor(j Judgment) (Level, bool) {
+	c = c.Normalized()
+	return c.Policy.LevelFor(j, c.Strictness)
 }
 
 // IsZero reports whether p has no configured dispositions. It lets callers

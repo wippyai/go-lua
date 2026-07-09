@@ -14,6 +14,7 @@ const expectedJIRSchemaVersion1Hash = "2b89a234f53cf065fed15e277611253e2f2aa0599
 const expectedJIRSchemaVersion2Hash = "45bdab7d703e0a2b56bbaf12a9eb606e179846d74a3eb6839a16c166766b5f6c"
 const expectedJIRSchemaVersion3Hash = "43c55c71372da0f616d81685086ce8951f0c2cc00fa3e141917cba3e6d7384ff"
 const expectedJIRSchemaVersion4Hash = "f50e5b8a2c383943ff3e876507791a078119ddbd55b8aa1149b60eb6e31c8f5a"
+const expectedJIRSchemaVersion5Hash = "e4bf901a0cf23196860c191514aff2aad8b0aafb1387b696af0e9d009ecb3722"
 
 func TestJIRSchemaVersionPinsCurrentSurface(t *testing.T) {
 	got := hashSchemaSurface(jirSchemaSurface())
@@ -22,6 +23,7 @@ func TestJIRSchemaVersionPinsCurrentSurface(t *testing.T) {
 		2: expectedJIRSchemaVersion2Hash,
 		3: expectedJIRSchemaVersion3Hash,
 		4: expectedJIRSchemaVersion4Hash,
+		5: expectedJIRSchemaVersion5Hash,
 	}[JIRSchemaVersion]
 	if want == "" {
 		t.Fatalf("no expected JIR schema hash for version %d: bump version constant + journal a D-entry", JIRSchemaVersion)
@@ -43,8 +45,20 @@ func jirSchemaSurface() []string {
 		for i, kind := range spec.RequiredEvidence {
 			evidence[i] = evidenceKindName(kind)
 		}
-		out = append(out, fmt.Sprintf("code:%s|subject:%s|evidence:%s|verdict:%s",
-			spec.Code, subjectKindString(spec.SubjectKind), strings.Join(evidence, ","), verdictName(spec.DefaultVerdict)))
+		diagnosticCodes := make([]string, len(spec.DiagnosticCodes))
+		for i, code := range spec.DiagnosticCodes {
+			diagnosticCodes[i] = string(code)
+		}
+		out = append(out, fmt.Sprintf("code:%s|family:%s|subject:%s|evidence:%s|verdict:%s|policy:%s|diagnostics:%s|diagnostic_default:%s|render:%s",
+			spec.Code,
+			spec.Family,
+			subjectKindString(spec.SubjectKind),
+			strings.Join(evidence, ","),
+			verdictName(spec.DefaultVerdict),
+			spec.Policy,
+			strings.Join(diagnosticCodes, ","),
+			spec.DiagnosticDefault,
+			spec.Render))
 	}
 	for _, typ := range []reflect.Type{
 		reflect.TypeOf(Judgment{}),
