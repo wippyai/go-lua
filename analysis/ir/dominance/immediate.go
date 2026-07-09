@@ -7,6 +7,8 @@ type immediateDominatorData struct {
 	rpoNum      []int
 	idomByPoint []cfg.Point
 	hasIDom     []bool
+	preorder    []int
+	postorder   []int
 }
 
 // ImmediateDominators is a point-indexed dominance view for one immutable CFG.
@@ -93,12 +95,69 @@ func computeImmediateDominatorData(g cfg.Graph) immediateDominatorData {
 		}
 	}
 
+	preorder, postorder := dominanceTreeIntervals(rpo, idomByPoint, hasIDom)
 	return immediateDominatorData{
 		rpo:         rpo,
 		rpoNum:      rpoNum,
 		idomByPoint: idomByPoint,
 		hasIDom:     hasIDom,
+		preorder:    preorder,
+		postorder:   postorder,
 	}
+}
+
+// dominanceTreeIntervals assigns each reachable point an interval in the
+// immediate-dominator tree. A dominates B exactly when B's interval is
+// contained by A's. Keeping the intervals beside the dense idom data makes
+// repeated dominance queries constant time without changing the computed tree.
+func dominanceTreeIntervals(rpo []cfg.Point, idomByPoint []cfg.Point, hasIDom []bool) ([]int, []int) {
+	preorder := make([]int, len(hasIDom))
+	postorder := make([]int, len(hasIDom))
+	children := make([][]cfg.Point, len(hasIDom))
+	var root cfg.Point
+	haveRoot := false
+	for _, point := range rpo {
+		if !validPoint(point, len(hasIDom)) || !hasIDom[int(point)] {
+			continue
+		}
+		parent := idomByPoint[int(point)]
+		if parent == point {
+			if !haveRoot {
+				root = point
+				haveRoot = true
+			}
+			continue
+		}
+		if validPoint(parent, len(hasIDom)) && hasIDom[int(parent)] {
+			children[int(parent)] = append(children[int(parent)], point)
+		}
+	}
+	if !haveRoot {
+		return preorder, postorder
+	}
+	type frame struct {
+		point cfg.Point
+		next  int
+	}
+	clock := 1
+	preorder[int(root)] = clock
+	clock++
+	stack := []frame{{point: root}}
+	for len(stack) != 0 {
+		top := &stack[len(stack)-1]
+		if top.next < len(children[int(top.point)]) {
+			child := children[int(top.point)][top.next]
+			top.next++
+			preorder[int(child)] = clock
+			clock++
+			stack = append(stack, frame{point: child})
+			continue
+		}
+		postorder[int(top.point)] = clock
+		clock++
+		stack = stack[:len(stack)-1]
+	}
+	return preorder, postorder
 }
 
 func (d immediateDominatorData) asMap() map[cfg.Point]cfg.Point {
@@ -132,22 +191,12 @@ func (d *ImmediateDominators) Dominates(pointA, pointB cfg.Point) bool {
 	if d == nil {
 		return false
 	}
-
-	runner := pointB
-	for {
-		if !validPoint(runner, len(d.data.hasIDom)) || !d.data.hasIDom[int(runner)] {
-			return false
-		}
-
-		dom := d.data.idomByPoint[int(runner)]
-		if dom == runner {
-			return false
-		}
-		if dom == pointA {
-			return true
-		}
-		runner = dom
+	if !validPoint(pointA, len(d.data.hasIDom)) || !validPoint(pointB, len(d.data.hasIDom)) ||
+		!d.data.hasIDom[int(pointA)] || !d.data.hasIDom[int(pointB)] {
+		return false
 	}
+	return d.data.preorder[int(pointA)] <= d.data.preorder[int(pointB)] &&
+		d.data.postorder[int(pointB)] <= d.data.postorder[int(pointA)]
 }
 
 // StrictlyDominates reports whether pointA dominates pointB and the points differ.

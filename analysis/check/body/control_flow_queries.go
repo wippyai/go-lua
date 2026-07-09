@@ -41,14 +41,6 @@ func (r *Result) PointDominates(dominator, point cfg.Point) bool {
 	if len(idom) == 0 {
 		return false
 	}
-	for cursor := point; ; {
-		if cursor == dominator {
-			return true
-		}
-		parent, ok := idom[cursor]
-		if !ok || parent == cursor {
-			return false
-		}
-		cursor = parent
-	}
+	info := r.queries.immediateDominatorInfoFor(graph)
+	return info != nil && info.Dominates(dominator, point)
 }

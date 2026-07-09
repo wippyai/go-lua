@@ -19,31 +19,32 @@ import (
 // keys include the read mode and CFG point where needed, so cached values do not
 // cross semantic boundaries such as before-node vs boundary-state reads.
 type resultQueryCache struct {
-	sourceValues        cachedProductValueCache[sourceValueCacheKey]
-	pathValues          cachedProductValueCache[pathValueCacheKey]
-	callOutcomes        map[cfg.Point]callpayload.CallOutcome
-	edgeNormal          map[edgeNormalCacheKey]bool
-	normalReachable     map[cfg.Point]bool
-	normalReachableSet  bool
-	memberReadSources   []dominatingMemberReadPresenceSource
-	memberReadSourcesOK bool
-	memberReadPresence  map[dominatingMemberReadPresenceKey]bool
-	signatureTypes      map[string]cachedSignatureType
-	reachability        *cfg.Reachability
-	immediateDominators map[cfg.Point]cfg.Point
-	readContexts        [sourceValueReadModeCount]readexpr.Context
-	sourceResolvers     [sourceValueReadModeCount]sourcevalue.SourceValues
-	callOutcomeCapacity int
-	branchSites         map[cfg.Point]branchSite
-	branchSitesOK       bool
-	returnFacts         map[cfg.Point]ReturnFact
-	returnFactsOK       bool
-	sourceCalls         map[cfg.Point]SourceCallFact
-	sourceCallsOK       bool
-	numericForFacts     map[cfg.Point]NumericForFact
-	numericForFactsOK   bool
-	expressionsByID     map[wir.ExpressionID]ast.Expr
-	expressionsByIDOK   bool
+	sourceValues           cachedProductValueCache[sourceValueCacheKey]
+	pathValues             cachedProductValueCache[pathValueCacheKey]
+	callOutcomes           map[cfg.Point]callpayload.CallOutcome
+	edgeNormal             map[edgeNormalCacheKey]bool
+	normalReachable        map[cfg.Point]bool
+	normalReachableSet     bool
+	memberReadSources      []dominatingMemberReadPresenceSource
+	memberReadSourcesOK    bool
+	memberReadPresence     map[dominatingMemberReadPresenceKey]bool
+	signatureTypes         map[string]cachedSignatureType
+	reachability           *cfg.Reachability
+	immediateDominatorInfo *dominance.ImmediateDominators
+	immediateDominators    map[cfg.Point]cfg.Point
+	readContexts           [sourceValueReadModeCount]readexpr.Context
+	sourceResolvers        [sourceValueReadModeCount]sourcevalue.SourceValues
+	callOutcomeCapacity    int
+	branchSites            map[cfg.Point]branchSite
+	branchSitesOK          bool
+	returnFacts            map[cfg.Point]ReturnFact
+	returnFactsOK          bool
+	sourceCalls            map[cfg.Point]SourceCallFact
+	sourceCallsOK          bool
+	numericForFacts        map[cfg.Point]NumericForFact
+	numericForFactsOK      bool
+	expressionsByID        map[wir.ExpressionID]ast.Expr
+	expressionsByIDOK      bool
 }
 
 const resultQueryInline = 4
@@ -67,6 +68,7 @@ func (c *resultQueryCache) reset() {
 	c.memberReadPresence = nil
 	c.signatureTypes = nil
 	c.reachability = nil
+	c.immediateDominatorInfo = nil
 	c.immediateDominators = nil
 	c.readContexts = [sourceValueReadModeCount]readexpr.Context{}
 	c.sourceResolvers = [sourceValueReadModeCount]sourcevalue.SourceValues{}
@@ -325,9 +327,19 @@ func (c *resultQueryCache) immediateDominatorMap(graph cfg.Graph) map[cfg.Point]
 		return nil
 	}
 	if c.immediateDominators == nil {
-		c.immediateDominators = dominance.ComputeImmediateDominatorInfo(graph).Map()
+		c.immediateDominators = c.immediateDominatorInfoFor(graph).Map()
 	}
 	return c.immediateDominators
+}
+
+func (c *resultQueryCache) immediateDominatorInfoFor(graph cfg.Graph) *dominance.ImmediateDominators {
+	if c == nil || graph == nil {
+		return nil
+	}
+	if c.immediateDominatorInfo == nil {
+		c.immediateDominatorInfo = dominance.ComputeImmediateDominatorInfo(graph)
+	}
+	return c.immediateDominatorInfo
 }
 
 func (c *resultQueryCache) readContext(mode sourceValueReadMode) *readexpr.Context {
