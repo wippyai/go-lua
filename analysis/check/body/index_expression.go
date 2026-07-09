@@ -1,13 +1,11 @@
 package body
 
 import (
-	"math"
-
+	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse/numparse"
 )
@@ -40,30 +38,26 @@ func (r *Result) NumericIndexExpressionTypeAtBoundary(point cfg.Point, expr ast.
 // expressions like i, i+1, 2*i, and 2*i+1, plus Lua modulo-by-length terms of
 // the form (integer_expr % #container) + 1.
 func (r *Result) IndexReadSafeForExpressionAtBoundary(point cfg.Point, index ast.Expr, containerPath pathdom.Path) bool {
-	if r.indexModuloLengthSafe(point, index, containerPath) {
-		return true
+	proof := r.arrayIndexProofAtBoundary(point, containerPath)
+	if r.indexModuloLengthMatches(point, index, containerPath) {
+		proof.IsModuloArrayLength = true
+		return readexpr.ProveArrayIndexInBounds(proof)
 	}
 	if constant, ok := indexConstOperand(index); ok {
-		return r.constantIndexReadSafeAtBoundary(point, constant, containerPath)
+		proof.HasConstant = true
+		proof.Constant = constant
+		return readexpr.ProveArrayIndexInBounds(proof)
 	}
 	basePath, coeff, offset, ok := r.indexLinearTerm(index)
 	if !ok || basePath.IsEmpty() {
 		return false
 	}
-	return r.IndexReadSafeAtBoundary(point, basePath, coeff, offset, containerPath)
+	proof.HasTerm = true
+	proof.Term = readexpr.ArrayIndexTerm{Path: basePath, Coeff: coeff, Offset: offset}
+	return readexpr.ProveArrayIndexInBounds(proof)
 }
 
-func (r *Result) constantIndexReadSafeAtBoundary(point cfg.Point, index int64, containerPath pathdom.Path) bool {
-	if index < 1 {
-		return false
-	}
-	if floor, ok := r.LengthFloorAtBoundary(point, containerPath); ok && floor >= index {
-		return true
-	}
-	return r.indexContainerStaticLengthAtLeast(point, containerPath, index)
-}
-
-func (r *Result) indexModuloLengthSafe(point cfg.Point, index ast.Expr, containerPath pathdom.Path) bool {
+func (r *Result) indexModuloLengthMatches(point cfg.Point, index ast.Expr, containerPath pathdom.Path) bool {
 	mod, ok := moduloExprPlusOne(index)
 	if !ok || mod.Operator != "%" {
 		return false
@@ -76,10 +70,36 @@ func (r *Result) indexModuloLengthSafe(point cfg.Point, index ast.Expr, containe
 	if !ok || !lenPath.Equal(containerPath) {
 		return false
 	}
-	if !r.indexContainerLengthKnownAtLeastOne(point, containerPath) {
-		return false
-	}
 	return r.indexExpressionHasIntegerType(point, mod.Lhs)
+}
+
+func (r *Result) arrayIndexProofAtBoundary(point cfg.Point, containerPath pathdom.Path) readexpr.ArrayIndexProof {
+	return readexpr.ArrayIndexProof{
+		LengthKnownAtLeastOne: func() bool {
+			return r.indexContainerLengthKnownAtLeastOne(point, containerPath)
+		},
+		LengthAtLeast: func(floor int64) bool {
+			if known, ok := r.LengthFloorAtBoundary(point, containerPath); ok && known >= floor {
+				return true
+			}
+			return r.indexContainerStaticLengthAtLeast(point, containerPath, floor)
+		},
+		UpperBoundLengthAtLeast: func(floor int64) bool {
+			return r.indexContainerStaticLengthAtLeast(point, containerPath, floor)
+		},
+		NumericFloor: func(path pathdom.Path) (int64, bool) {
+			return r.NumericFloorAtBoundary(point, path)
+		},
+		NumericCeil: func(path pathdom.Path) (int64, bool) {
+			return r.NumericCeilAtBoundary(point, path)
+		},
+		DiffProvesLELength: func(term readexpr.ArrayIndexTerm) bool {
+			return r.DiffProvesIndexLELength(point, term.Path, term.Coeff, term.Offset, containerPath)
+		},
+		IndexInRange: func(path pathdom.Path) bool {
+			return r.IndexInRangeAtBoundary(point, path, containerPath)
+		},
+	}
 }
 
 func (r *Result) indexContainerLengthKnownAtLeastOne(point cfg.Point, containerPath pathdom.Path) bool {
@@ -91,34 +111,7 @@ func (r *Result) indexContainerLengthKnownAtLeastOne(point cfg.Point, containerP
 		return false
 	}
 	t, ok := typevalue.TypeOf(r.registry, value)
-	return ok && indexContainerStaticLengthAtLeastOne(t, 0)
-}
-
-func indexContainerStaticLengthAtLeastOne(t typ.Type, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth {
-		return false
-	}
-	switch tt := unwrap.Alias(t).(type) {
-	case *typ.Tuple:
-		return len(tt.Elements) > 0
-	case *typ.Record:
-		member := tt.GetStaticIntIndex(1)
-		return member != nil && !member.Optional
-	case *typ.Optional:
-		return indexContainerStaticLengthAtLeastOne(tt.Inner, depth+1)
-	case *typ.Union:
-		if len(tt.Members) == 0 {
-			return false
-		}
-		for _, member := range tt.Members {
-			if !indexContainerStaticLengthAtLeastOne(member, depth+1) {
-				return false
-			}
-		}
-		return true
-	default:
-		return false
-	}
+	return ok && readexpr.SequenceKnownNonEmpty(t)
 }
 
 func (r *Result) indexContainerStaticLengthAtLeast(point cfg.Point, containerPath pathdom.Path, floor int64) bool {
@@ -130,7 +123,7 @@ func (r *Result) indexContainerStaticLengthAtLeast(point cfg.Point, containerPat
 		return false
 	}
 	t, ok := typevalue.TypeOf(r.registry, value)
-	return ok && indexContainerStaticLengthAtLeast(t, floor, 0)
+	return ok && readexpr.SequenceLengthKnownAtLeast(t, floor)
 }
 
 func (r *Result) indexContainerInRangeElementsNonNil(point cfg.Point, containerPath pathdom.Path) bool {
@@ -139,137 +132,7 @@ func (r *Result) indexContainerInRangeElementsNonNil(point cfg.Point, containerP
 		return false
 	}
 	t, ok := typevalue.TypeOf(r.registry, value)
-	return ok && indexContainerInRangeElementsNonNil(t, 0)
-}
-
-func indexContainerInRangeElementsNonNil(t typ.Type, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth {
-		return false
-	}
-	switch tt := unwrap.Alias(t).(type) {
-	case *typ.Array:
-		elem := tt.Element
-		if elem == nil {
-			elem = typ.Unknown
-		}
-		return !typevalue.TypeIncludesNil(elem)
-	case *typ.Tuple:
-		if len(tt.Elements) == 0 {
-			return false
-		}
-		for _, elem := range tt.Elements {
-			if elem == nil {
-				elem = typ.Unknown
-			}
-			if typevalue.TypeIncludesNil(elem) {
-				return false
-			}
-		}
-		return true
-	case *typ.Record:
-		var found bool
-		for i := int64(1); ; i++ {
-			member := tt.GetStaticIntIndex(i)
-			if member == nil || member.Optional {
-				return found
-			}
-			found = true
-			if typevalue.TypeIncludesNil(member.Type) {
-				return false
-			}
-		}
-	case *typ.Optional:
-		return indexContainerInRangeElementsNonNil(tt.Inner, depth+1)
-	case *typ.Union:
-		if len(tt.Members) == 0 {
-			return false
-		}
-		reachable := false
-		for _, member := range tt.Members {
-			if !indexContainerCanHaveElement(member, depth+1) {
-				continue
-			}
-			reachable = true
-			if !indexContainerInRangeElementsNonNil(member, depth+1) {
-				return false
-			}
-		}
-		return reachable
-	default:
-		return false
-	}
-}
-
-func indexContainerCanHaveElement(t typ.Type, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth {
-		return true
-	}
-	switch tt := unwrap.Alias(t).(type) {
-	case *typ.Array:
-		return true
-	case *typ.Tuple:
-		return len(tt.Elements) > 0
-	case *typ.Record:
-		member := tt.GetStaticIntIndex(1)
-		return member != nil && !member.Optional
-	case *typ.Optional:
-		return indexContainerCanHaveElement(tt.Inner, depth+1)
-	case *typ.Union:
-		for _, member := range tt.Members {
-			if indexContainerCanHaveElement(member, depth+1) {
-				return true
-			}
-		}
-		return false
-	default:
-		return false
-	}
-}
-
-func indexContainerStaticLengthAtLeast(t typ.Type, floor int64, depth int) bool {
-	if floor <= 0 {
-		return true
-	}
-	if t == nil || depth > typ.DefaultRecursionDepth {
-		return false
-	}
-	switch tt := unwrap.Alias(t).(type) {
-	case *typ.Tuple:
-		return int64(len(tt.Elements)) >= floor
-	case *typ.Record:
-		for i := int64(1); i <= floor; i++ {
-			member := tt.GetStaticIntIndex(i)
-			if member == nil || member.Optional {
-				return false
-			}
-		}
-		return true
-	case *typ.Optional:
-		return indexContainerStaticLengthAtLeast(tt.Inner, floor, depth+1)
-	case *typ.Union:
-		if len(tt.Members) == 0 {
-			return false
-		}
-		for _, member := range tt.Members {
-			if !indexContainerStaticLengthAtLeast(member, floor, depth+1) {
-				return false
-			}
-		}
-		return true
-	default:
-		return false
-	}
-}
-
-func checkedAffineInt64(coeff, value, offset int64) (int64, bool) {
-	if coeff != 0 && (value > math.MaxInt64/coeff || value < math.MinInt64/coeff) {
-		return 0, false
-	}
-	product := coeff * value
-	if (offset > 0 && product > math.MaxInt64-offset) || (offset < 0 && product < math.MinInt64-offset) {
-		return 0, false
-	}
-	return product + offset, true
+	return ok && readexpr.ArrayIndexElementsNonNil(t)
 }
 
 func (r *Result) indexExpressionHasIntegerType(point cfg.Point, expr ast.Expr) bool {

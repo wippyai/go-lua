@@ -1,8 +1,6 @@
 package readexpr
 
 import (
-	"math"
-
 	"github.com/wippyai/go-lua/analysis/domain/constraint/decision"
 	"github.com/wippyai/go-lua/analysis/domain/constraint/numeric"
 	"github.com/wippyai/go-lua/analysis/domain/constraint/solver"
@@ -54,51 +52,56 @@ func dynamicIndexInBoundsProvesRead(config Config, point cfg.Point, dyn factflow
 	}
 	proofState := dynamicIndexProofState(config, point, in)
 	proofVisibility := dynamicIndexProofVisibility(config)
-	if dynamicIndexKeyIsArrayLength(config, dyn.KeySource(), dyn.TablePathRef()) {
-		arrayKey, ok := visibility.AddressAt(proofVisibility, point, dyn.TablePathRef()).VisibleStateKey()
-		if !ok {
-			return false
-		}
-		floor, ok := proofState.ReadLenFloor(proofVisibility.KeySpace(), arrayKey)
-		return ok && floor >= 1
+	proof := ArrayIndexProof{
+		ArrayLengthAtLeastOne: func() bool {
+			return dynamicIndexLengthFloorAtLeast(proofVisibility, point, proofState, dyn.TablePathRef(), 1)
+		},
+		LengthKnownAtLeastOne: func() bool {
+			return dynamicIndexArrayLengthKnownAtLeastOne(config, point, dyn.TablePathRef(), proofState, proofVisibility)
+		},
+		LengthAtLeast: func(floor int64) bool {
+			return dynamicIndexLengthFloorAtLeast(proofVisibility, point, proofState, dyn.TablePathRef(), floor) ||
+				dynamicIndexStaticSequenceLengthAtLeast(config, point, dyn.TablePathRef(), in, floor)
+		},
+		UpperBoundLengthAtLeast: func(floor int64) bool {
+			return dynamicIndexLengthFloorAtLeast(proofVisibility, point, proofState, dyn.TablePathRef(), floor) ||
+				dynamicIndexStaticSequenceLengthAtLeast(config, point, dyn.TablePathRef(), in, floor)
+		},
+		NumericFloor: func(path pathdom.Path) (int64, bool) {
+			return dynamicIndexTermFloor(proofVisibility, point, proofState, ArrayIndexTerm{Path: path})
+		},
+		NumericCeil: func(path pathdom.Path) (int64, bool) {
+			return dynamicIndexTermCeil(proofVisibility, point, proofState, ArrayIndexTerm{Path: path})
+		},
+		DiffProvesLELength: func(term ArrayIndexTerm) bool {
+			return dynamicIndexDiffProvesLELength(config, proofVisibility, point, proofState, term, dyn.TablePathRef())
+		},
+		IndexInRange: func(path pathdom.Path) bool {
+			indexKey, indexOK := visibility.AddressAt(proofVisibility, point, path).VisibleStateKey()
+			arrayKey, arrayOK := visibility.AddressAt(proofVisibility, point, dyn.TablePathRef()).VisibleStateKey()
+			return indexOK && arrayOK && proofState.HasIndexInRangeProofForStateKeys(proofVisibility.KeySpace(), indexKey, arrayKey)
+		},
 	}
-	if dynamicIndexModuloLengthProvesRead(config, point, dyn.KeySource(), dyn.TablePathRef(), proofState, proofVisibility) {
-		return true
+	if dynamicIndexKeyIsArrayLength(config, dyn.KeySource(), dyn.TablePathRef()) {
+		proof.IsArrayLength = true
+		return ProveArrayIndexInBounds(proof)
+	}
+	if dynamicIndexModuloLengthMatches(config, point, dyn.KeySource(), dyn.TablePathRef(), proofState) {
+		proof.IsModuloArrayLength = true
+		return ProveArrayIndexInBounds(proof)
 	}
 	if index, ok := dynamicIndexIntegerConstant(config, dyn.KeySource()); ok && index >= 1 {
-		if dynamicIndexLengthFloorAtLeast(proofVisibility, point, proofState, dyn.TablePathRef(), index) {
-			return true
-		}
-		if dynamicIndexStaticSequenceLengthAtLeast(config, point, dyn.TablePathRef(), in, index) {
-			return true
-		}
+		proof.HasConstant = true
+		proof.Constant = index
+		return ProveArrayIndexInBounds(proof)
 	}
 	term, ok := dynamicIndexIntegerTerm(config, dyn.KeySource())
-	if !ok || term.Coeff <= 0 || term.Path.IsEmpty() {
+	if !ok {
 		return false
 	}
-	if floor, ok := dynamicIndexTermFloor(proofVisibility, point, proofState, term); !ok || term.Coeff*floor+term.Offset < 1 {
-		return false
-	}
-	if dynamicIndexDiffProvesLELength(config, proofVisibility, point, proofState, term, dyn.TablePathRef()) {
-		return true
-	}
-	if ceil, ok := dynamicIndexTermCeil(proofVisibility, point, proofState, term); ok {
-		if upper, ok := checkedAffineInt64(term.Coeff, ceil, term.Offset); ok && upper >= 1 {
-			if dynamicIndexLengthFloorAtLeast(proofVisibility, point, proofState, dyn.TablePathRef(), upper) {
-				return true
-			}
-			if dynamicIndexStaticSequenceLengthAtLeast(config, point, dyn.TablePathRef(), in, upper) {
-				return true
-			}
-		}
-	}
-	if term.Coeff != 1 || term.Offset != 0 {
-		return false
-	}
-	indexKey, indexOK := visibility.AddressAt(proofVisibility, point, term.Path).VisibleStateKey()
-	arrayKey, arrayOK := visibility.AddressAt(proofVisibility, point, dyn.TablePathRef()).VisibleStateKey()
-	return indexOK && arrayOK && proofState.HasIndexInRangeProofForStateKeys(proofVisibility.KeySpace(), indexKey, arrayKey)
+	proof.HasTerm = true
+	proof.Term = term
+	return ProveArrayIndexInBounds(proof)
 }
 
 func dynamicIndexLengthFloorAtLeast(resolver *visibility.Resolver, point cfg.Point, in state.State, arrayPath pathdom.Path, floor int64) bool {
@@ -164,13 +167,12 @@ func dynamicIndexTermCeil(resolver *visibility.Resolver, point cfg.Point, in sta
 	return ceil, true
 }
 
-func dynamicIndexModuloLengthProvesRead(
+func dynamicIndexModuloLengthMatches(
 	config Config,
 	point cfg.Point,
 	source factflow.ValueSource,
 	arrayPath pathdom.Path,
 	in state.State,
-	resolver *visibility.Resolver,
 ) bool {
 	modSource, ok := dynamicIndexPlusOneModuloSource(config, source)
 	if !ok {
@@ -181,9 +183,6 @@ func dynamicIndexModuloLengthProvesRead(
 		return false
 	}
 	if !dynamicIndexKeyIsArrayLength(config, op.Right(), arrayPath) {
-		return false
-	}
-	if !dynamicIndexArrayLengthKnownAtLeastOne(config, point, arrayPath, in, resolver) {
 		return false
 	}
 	return dynamicIndexModuloDividendHasIntegerSource(config, point, op.Left(), in)
@@ -201,7 +200,7 @@ func dynamicIndexArrayLengthKnownAtLeastOne(config Config, point cfg.Point, arra
 		return false
 	}
 	tableType, ok := config.TypeValues.TypeOf(config.Registry, tableValue)
-	return ok && staticallyNonEmptySequenceType(tableType, 0)
+	return ok && SequenceKnownNonEmpty(tableType)
 }
 
 func dynamicIndexStaticSequenceLengthAtLeast(config Config, point cfg.Point, arrayPath pathdom.Path, in state.State, floor int64) bool {
@@ -213,7 +212,7 @@ func dynamicIndexStaticSequenceLengthAtLeast(config Config, point cfg.Point, arr
 		return false
 	}
 	tableType, ok := config.TypeValues.TypeOf(config.Registry, tableValue)
-	return ok && staticallyKnownSequenceLengthAtLeast(tableType, floor, 0)
+	return ok && SequenceLengthKnownAtLeast(tableType, floor)
 }
 
 func dynamicIndexModuloDividendHasIntegerSource(config Config, point cfg.Point, source factflow.ValueSource, in state.State) bool {
@@ -235,79 +234,6 @@ func dynamicIndexSourceHasIntegerType(config Config, point cfg.Point, source fac
 	}
 	value, ok := Project(config, point, term.Path, in)
 	return ok && typevalue.HasIntegerType(config.Registry, value)
-}
-
-func staticallyNonEmptySequenceType(t typ.Type, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth {
-		return false
-	}
-	switch tt := unwrap.Alias(t).(type) {
-	case *typ.Tuple:
-		return len(tt.Elements) > 0
-	case *typ.Record:
-		member := tt.GetStaticIntIndex(1)
-		return member != nil && !member.Optional
-	case *typ.Optional:
-		return staticallyNonEmptySequenceType(tt.Inner, depth+1)
-	case *typ.Union:
-		if len(tt.Members) == 0 {
-			return false
-		}
-		for _, member := range tt.Members {
-			if !staticallyNonEmptySequenceType(member, depth+1) {
-				return false
-			}
-		}
-		return true
-	default:
-		return false
-	}
-}
-
-func staticallyKnownSequenceLengthAtLeast(t typ.Type, floor int64, depth int) bool {
-	if floor <= 0 {
-		return true
-	}
-	if t == nil || depth > typ.DefaultRecursionDepth {
-		return false
-	}
-	switch tt := unwrap.Alias(t).(type) {
-	case *typ.Tuple:
-		return int64(len(tt.Elements)) >= floor
-	case *typ.Record:
-		for i := int64(1); i <= floor; i++ {
-			member := tt.GetStaticIntIndex(i)
-			if member == nil || member.Optional {
-				return false
-			}
-		}
-		return true
-	case *typ.Optional:
-		return staticallyKnownSequenceLengthAtLeast(tt.Inner, floor, depth+1)
-	case *typ.Union:
-		if len(tt.Members) == 0 {
-			return false
-		}
-		for _, member := range tt.Members {
-			if !staticallyKnownSequenceLengthAtLeast(member, floor, depth+1) {
-				return false
-			}
-		}
-		return true
-	default:
-		return false
-	}
-}
-
-func checkedAffineInt64(coeff, value, offset int64) (int64, bool) {
-	if coeff != 0 && (value > math.MaxInt64/coeff || value < math.MinInt64/coeff) {
-		return 0, false
-	}
-	product := coeff * value
-	if (offset > 0 && product > math.MaxInt64-offset) || (offset < 0 && product < math.MinInt64-offset) {
-		return 0, false
-	}
-	return product + offset, true
 }
 
 func dynamicIndexPlusOneModuloSource(config Config, source factflow.ValueSource) (factflow.ValueSource, bool) {
@@ -347,11 +273,7 @@ func dynamicIndexContainerCanDropMissNil(config Config, point cfg.Point, dyn fac
 	return ok && inRangeDynamicIndexContainerNonNil(tableType, 0)
 }
 
-type dynamicIndexTerm struct {
-	Path   pathdom.Path
-	Coeff  int64
-	Offset int64
-}
+type dynamicIndexTerm = ArrayIndexTerm
 
 func dynamicIndexIntegerTerm(config Config, source factflow.ValueSource) (dynamicIndexTerm, bool) {
 	if p, ok := dynamicIndexSourcePath(config, source); ok {

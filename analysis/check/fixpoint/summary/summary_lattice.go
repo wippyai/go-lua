@@ -204,14 +204,14 @@ func joinReturnValue(reg *axis.Registry, left, right product.Value) product.Valu
 }
 
 func widenReturnValue(reg *axis.Registry, prev, next product.Value) product.Value {
-	if joined, ok := boundedJoinedReturnValue(reg, prev, next); ok {
+	if joined, ok := joinedReturnValueWithoutTop(reg, prev, next); ok {
 		return joined
 	}
 	widened := product.Widen(reg, prev, next)
 	return preserveJoinedReturnTypeWitness(reg, widened, prev, next)
 }
 
-func boundedJoinedReturnValue(reg *axis.Registry, prev, next product.Value) (product.Value, bool) {
+func joinedReturnValueWithoutTop(reg *axis.Registry, prev, next product.Value) (product.Value, bool) {
 	joined := product.Join(reg, prev, next)
 	taggedJoin := false
 	if tagged, ok := joinedTaggedReturnValue(reg, joined, prev, next); ok {

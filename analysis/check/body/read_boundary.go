@@ -1540,25 +1540,10 @@ func (r *Result) DiffProvesIndexLELength(point cfg.Point, indexPath pathdom.Path
 // array index expression is both positive and within array bounds:
 // indexCoeff*value(indexPath)+indexOffset >= 1 and <= len(arrayPath).
 func (r *Result) IndexReadSafeAtBoundary(point cfg.Point, indexPath pathdom.Path, indexCoeff int64, indexOffset int64, arrayPath pathdom.Path) bool {
-	if indexCoeff <= 0 {
-		return false
-	}
-	inRange := r.DiffProvesIndexLELength(point, indexPath, indexCoeff, indexOffset, arrayPath)
-	if !inRange && indexCoeff == 1 && indexOffset == 0 {
-		inRange = r.IndexInRangeAtBoundary(point, indexPath, arrayPath)
-	}
-	if !inRange {
-		if ceil, ok := r.NumericCeilAtBoundary(point, indexPath); ok {
-			if upper, ok := checkedAffineInt64(indexCoeff, ceil, indexOffset); ok {
-				inRange = upper >= 1 && r.indexContainerStaticLengthAtLeast(point, arrayPath, upper)
-			}
-		}
-	}
-	if !inRange {
-		return false
-	}
-	floor, ok := r.NumericFloorAtBoundary(point, indexPath)
-	return ok && indexCoeff*floor+indexOffset >= 1
+	proof := r.arrayIndexProofAtBoundary(point, arrayPath)
+	proof.HasTerm = true
+	proof.Term = readexpr.ArrayIndexTerm{Path: indexPath, Coeff: indexCoeff, Offset: indexOffset}
+	return readexpr.ProveArrayIndexInBounds(proof)
 }
 
 // NumericFloorAtBoundary returns the proven numeric lower bound for p at point:
