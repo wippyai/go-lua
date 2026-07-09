@@ -1,6 +1,8 @@
 package transferfacts
 
 import (
+	"sort"
+
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -41,10 +43,8 @@ func (l *lowerer) addConditionalAssignmentImplications(input *factflow.FactsInpu
 	rpo := graph.RPO()
 	continuationJoins := newBranchContinuationJoinCache(graph, rpo)
 	incomingByPoint := l.assignmentStatesBeforePoints(input, graph)
+	candidates := make([]conditionalAssignmentImplicationCandidate, 0)
 	for _, branch := range rpo {
-		if partitionImplicationCount >= MaxPartitionImplicationsPerBody {
-			return
-		}
 		if !graph.IsBranch(branch) {
 			continue
 		}
@@ -64,10 +64,7 @@ func (l *lowerer) addConditionalAssignmentImplications(input *factflow.FactsInpu
 			edgeAssignments[succ] = l.presentAssignmentsOnBranchEdge(input, graph, succ, join, incoming)
 		}
 		for succ, selected := range edgeAssignments {
-			l.addBranchAssignmentValueImplications(input, join, incoming, selected, oppositeBranchAssignmentStates(graph, branch, succ, edgeAssignments), &partitionImplicationCount)
-			if partitionImplicationCount >= MaxPartitionImplicationsPerBody {
-				return
-			}
+			candidates = append(candidates, l.branchAssignmentValueImplicationCandidates(join, incoming, selected, oppositeBranchAssignmentStates(graph, branch, succ, edgeAssignments))...)
 		}
 		refinements := input.BranchRefinements[branch].Refinements()
 		if len(refinements) == 0 {
@@ -87,18 +84,23 @@ func (l *lowerer) addConditionalAssignmentImplications(input *factflow.FactsInpu
 					continue
 				}
 				for _, target := range present {
-					if !appendConditionalAssignmentTargetImplication(
-						input.PathValuePresenceImplications,
-						join,
-						&partitionImplicationCount,
+					implication, ok := conditionalAssignmentTargetImplication(
 						conditionalImplicationTrigger{path: trigger.path, value: trigger.value},
 						target,
-					) {
-						return
+					)
+					if ok {
+						candidates = append(candidates, conditionalAssignmentImplicationCandidate{point: join, implication: implication})
 					}
 				}
 			}
 		}
+	}
+	for _, candidate := range canonicalConditionalAssignmentImplicationCandidates(l.registry, candidates) {
+		if partitionImplicationCount >= MaxPartitionImplicationsPerBody {
+			return
+		}
+		appendPathValuePresenceImplications(input.PathValuePresenceImplications, candidate.point, candidate.implication)
+		partitionImplicationCount++
 	}
 }
 
@@ -192,17 +194,16 @@ func (l *lowerer) addChannelSelectPayloadImplications(
 	}
 }
 
-func (l *lowerer) addBranchAssignmentValueImplications(
-	input *factflow.FactsInput,
+func (l *lowerer) branchAssignmentValueImplicationCandidates(
 	join cfg.Point,
 	incoming presentAssignmentState,
 	selected presentAssignmentState,
 	opposites []presentAssignmentState,
-	partitionImplicationCount *int,
-) {
-	if input == nil || len(selected) == 0 || len(opposites) == 0 {
-		return
+) []conditionalAssignmentImplicationCandidate {
+	if len(selected) == 0 || len(opposites) == 0 {
+		return nil
 	}
+	var out []conditionalAssignmentImplicationCandidate
 	for triggerSym, triggerAssignment := range selected {
 		if !triggerAssignment.fromBranch || !triggerAssignment.hasValue {
 			continue
@@ -222,11 +223,13 @@ func (l *lowerer) addBranchAssignmentValueImplications(
 			if targetSym == triggerSym {
 				continue
 			}
-			if !appendConditionalAssignmentTargetImplication(input.PathValuePresenceImplications, join, partitionImplicationCount, trigger, target) {
-				return
+			implication, ok := conditionalAssignmentTargetImplication(trigger, target)
+			if ok {
+				out = append(out, conditionalAssignmentImplicationCandidate{point: join, implication: implication})
 			}
 		}
 	}
+	return out
 }
 
 type conditionalImplicationTrigger struct {
@@ -235,15 +238,12 @@ type conditionalImplicationTrigger struct {
 	requireTruthy bool
 }
 
-func appendConditionalAssignmentTargetImplication(
-	out map[cfg.Point]factflow.PathValuePresenceImplicationSet,
-	point cfg.Point,
-	count *int,
+func conditionalAssignmentTargetImplication(
 	trigger conditionalImplicationTrigger,
 	target conditionalAssignment,
-) bool {
+) (factflow.PathValuePresenceImplication, bool) {
 	if target.path.Symbol == 0 || !target.fromBranch {
-		return true
+		return factflow.PathValuePresenceImplication{}, false
 	}
 	var implication factflow.PathValuePresenceImplication
 	switch {
@@ -254,7 +254,116 @@ func appendConditionalAssignmentTargetImplication(
 	default:
 		implication = factflow.NewPathValuePresenceImplication(trigger.path, trigger.value, target.path, presence.Present())
 	}
-	return appendPartitionPathValuePresenceImplication(out, point, count, implication)
+	return implication, true
+}
+
+// conditionalAssignmentImplicationCandidate is sorted before the body-wide
+// partition cap is applied. Its key uses only CFG point, canonical path identity,
+// implication shape, and stable product hashes; it deliberately excludes pointer
+// identity and diagnostic formatting.
+type conditionalAssignmentImplicationCandidate struct {
+	point       cfg.Point
+	implication factflow.PathValuePresenceImplication
+}
+
+type conditionalAssignmentImplicationKey struct {
+	point               cfg.Point
+	triggerPath         path.PathKey
+	triggerOtherPath    path.PathKey
+	triggerValue        uint64
+	triggerPresence     uint8
+	hasTriggerPresence  bool
+	hasTriggerPathEqual bool
+	targetPath          path.PathKey
+	targetPresence      uint8
+	targetValue         uint64
+	hasTargetValue      bool
+}
+
+func canonicalConditionalAssignmentImplicationCandidates(reg *axis.Registry, candidates []conditionalAssignmentImplicationCandidate) []conditionalAssignmentImplicationCandidate {
+	if len(candidates) == 0 {
+		return nil
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		left, right := conditionalAssignmentImplicationKeyFor(reg, candidates[i]), conditionalAssignmentImplicationKeyFor(reg, candidates[j])
+		return left.less(right)
+	})
+	out := candidates[:0]
+	for _, candidate := range candidates {
+		if len(out) != 0 && conditionalAssignmentImplicationCandidateEqual(reg, out[len(out)-1], candidate) {
+			continue
+		}
+		out = append(out, candidate)
+	}
+	return out
+}
+
+func conditionalAssignmentImplicationKeyFor(reg *axis.Registry, candidate conditionalAssignmentImplicationCandidate) conditionalAssignmentImplicationKey {
+	implication := candidate.implication
+	return conditionalAssignmentImplicationKey{
+		point:               candidate.point,
+		triggerPath:         implication.TriggerPathRef().Key(),
+		triggerOtherPath:    implication.TriggerOtherPathRef().Key(),
+		triggerValue:        product.Hash(reg, implication.TriggerValue()),
+		triggerPresence:     uint8(implication.TriggerPresence()),
+		hasTriggerPresence:  implication.HasTriggerPresence(),
+		hasTriggerPathEqual: implication.HasTriggerPathEqual(),
+		targetPath:          implication.TargetPathRef().Key(),
+		targetPresence:      uint8(implication.TargetPresence()),
+		targetValue:         product.Hash(reg, implication.TargetValue()),
+		hasTargetValue:      implication.HasTargetValue(),
+	}
+}
+
+func (key conditionalAssignmentImplicationKey) less(other conditionalAssignmentImplicationKey) bool {
+	if key.point != other.point {
+		return key.point < other.point
+	}
+	if key.triggerPath != other.triggerPath {
+		return key.triggerPath < other.triggerPath
+	}
+	if key.triggerOtherPath != other.triggerOtherPath {
+		return key.triggerOtherPath < other.triggerOtherPath
+	}
+	if key.triggerValue != other.triggerValue {
+		return key.triggerValue < other.triggerValue
+	}
+	if key.triggerPresence != other.triggerPresence {
+		return key.triggerPresence < other.triggerPresence
+	}
+	if key.hasTriggerPresence != other.hasTriggerPresence {
+		return !key.hasTriggerPresence
+	}
+	if key.hasTriggerPathEqual != other.hasTriggerPathEqual {
+		return !key.hasTriggerPathEqual
+	}
+	if key.targetPath != other.targetPath {
+		return key.targetPath < other.targetPath
+	}
+	if key.targetPresence != other.targetPresence {
+		return key.targetPresence < other.targetPresence
+	}
+	if key.targetValue != other.targetValue {
+		return key.targetValue < other.targetValue
+	}
+	return !key.hasTargetValue && other.hasTargetValue
+}
+
+func conditionalAssignmentImplicationCandidateEqual(reg *axis.Registry, left, right conditionalAssignmentImplicationCandidate) bool {
+	if left.point != right.point {
+		return false
+	}
+	leftImplication, rightImplication := left.implication, right.implication
+	return leftImplication.TriggerPathRef().Equal(rightImplication.TriggerPathRef()) &&
+		leftImplication.TriggerOtherPathRef().Equal(rightImplication.TriggerOtherPathRef()) &&
+		product.Equal(reg, leftImplication.TriggerValue(), rightImplication.TriggerValue()) &&
+		leftImplication.TriggerPresence() == rightImplication.TriggerPresence() &&
+		leftImplication.HasTriggerPresence() == rightImplication.HasTriggerPresence() &&
+		leftImplication.HasTriggerPathEqual() == rightImplication.HasTriggerPathEqual() &&
+		leftImplication.TargetPathRef().Equal(rightImplication.TargetPathRef()) &&
+		leftImplication.TargetPresence() == rightImplication.TargetPresence() &&
+		product.Equal(reg, leftImplication.TargetValue(), rightImplication.TargetValue()) &&
+		leftImplication.HasTargetValue() == rightImplication.HasTargetValue()
 }
 
 func appendPartitionPathValuePresenceImplication(

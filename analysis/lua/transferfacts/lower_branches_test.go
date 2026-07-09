@@ -1,6 +1,7 @@
 package transferfacts
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
@@ -29,6 +30,102 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
+
+func TestLowerConditionalAssignmentCapRetainsCanonicalFactSetAcrossFreshSolves(t *testing.T) {
+	const source = `
+function f(flag: boolean)
+    local a1: boolean = false
+    local a2: boolean = false
+    local a3: boolean = false
+    local a4: boolean = false
+    local a5: boolean = false
+    local a6: boolean = false
+    local a7: boolean = false
+    local a8: boolean = false
+    local a9: boolean = false
+    local a10: boolean = false
+    if flag then
+        a1 = true
+        a2 = true
+        a3 = true
+        a4 = true
+        a5 = true
+        a6 = true
+        a7 = true
+        a8 = true
+        a9 = true
+        a10 = true
+    else
+        a1 = false
+        a2 = false
+        a3 = false
+        a4 = false
+        a5 = false
+        a6 = false
+        a7 = false
+        a8 = false
+        a9 = false
+        a10 = false
+    end
+end
+`
+
+	var want []conditionalImplicationTestKey
+	fn, bindings, built := parseSemanticFunction(t, source)
+	for run := 0; run < 12; run++ {
+		facts := lowerFunctionFactsWithWIR(t, "conditional-cap", fn, built, bindings, standard.Registry())
+		got := conditionalImplicationTestKeys(standard.Registry(), built.Graph, facts)
+		if len(got) != MaxPartitionImplicationsPerBody {
+			t.Fatalf("run %d retained implications = %d, want cap %d", run, len(got), MaxPartitionImplicationsPerBody)
+		}
+		if run == 0 {
+			want = got
+			continue
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("run %d retained conditional implication set changed\nwant: %#v\n got: %#v", run, want, got)
+		}
+	}
+}
+
+// conditionalImplicationTestKey is a complete semantic projection of a retained
+// implication. Product hashes and path keys are canonical identities; no pointer
+// or diagnostic formatting participates in the repeated-solve assertion.
+type conditionalImplicationTestKey struct {
+	point               cfg.Point
+	triggerPath         path.PathKey
+	triggerOtherPath    path.PathKey
+	triggerValue        uint64
+	triggerPresence     uint8
+	hasTriggerPresence  bool
+	hasTriggerPathEqual bool
+	targetPath          path.PathKey
+	targetPresence      uint8
+	targetValue         uint64
+	hasTargetValue      bool
+}
+
+func conditionalImplicationTestKeys(reg *axis.Registry, graph cfg.Graph, facts factflow.Facts) []conditionalImplicationTestKey {
+	var out []conditionalImplicationTestKey
+	for _, point := range graph.RPO() {
+		for _, implication := range facts.PathValuePresenceImplications(point) {
+			out = append(out, conditionalImplicationTestKey{
+				point:               point,
+				triggerPath:         implication.TriggerPathRef().Key(),
+				triggerOtherPath:    implication.TriggerOtherPathRef().Key(),
+				triggerValue:        product.Hash(reg, implication.TriggerValue()),
+				triggerPresence:     uint8(implication.TriggerPresence()),
+				hasTriggerPresence:  implication.HasTriggerPresence(),
+				hasTriggerPathEqual: implication.HasTriggerPathEqual(),
+				targetPath:          implication.TargetPathRef().Key(),
+				targetPresence:      uint8(implication.TargetPresence()),
+				targetValue:         product.Hash(reg, implication.TargetValue()),
+				hasTargetValue:      implication.HasTargetValue(),
+			})
+		}
+	}
+	return out
+}
 
 func TestLowerIdentifierNilTruthyFalsyBranches(t *testing.T) {
 	decl := localAssign([]string{"x"}, number("0"))
