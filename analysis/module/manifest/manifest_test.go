@@ -370,8 +370,9 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 			ReturnIndex: 0,
 			Root:        "example.transform:return:0:root",
 			Objects: []signature.AllocationObjectTemplate{{
-				ID:   "example.transform:return:0:root",
-				Type: typetable.NewRecord().Build(),
+				ID:          "example.transform:return:0:root",
+				Type:        typetable.NewRecord().Build(),
+				StableShape: true,
 				StaticMembers: []signature.AllocationStaticMemberTemplate{{
 					Suffix: []segment.Segment{{Kind: segment.SegmentField, Name: "child"}},
 					Value:  "example.transform:return:0:root.child",
@@ -410,6 +411,7 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 		!strings.Contains(string(data), `"dynamicValueKeys"`) ||
 		!strings.Contains(string(data), `"lifecycleEffects"`) ||
 		!strings.Contains(string(data), `"returnAllocationTemplates"`) ||
+		!strings.Contains(string(data), `"stableShape": true`) ||
 		!strings.Contains(string(data), `"suffix": ".payload"`) {
 		t.Fatalf("encoded manifest missing function signature effect data:\n%s", data)
 	}
