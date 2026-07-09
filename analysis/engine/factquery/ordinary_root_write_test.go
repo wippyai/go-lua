@@ -34,3 +34,16 @@ func TestDominatingOrdinaryRootWriteQueryUsesProvidedCarrier(t *testing.T) {
 		t.Fatalf("DominatingOrdinaryRootWrite(non-dominating) = %d/%v, want 0/false", got, ok)
 	}
 }
+
+func TestDominatingOrdinaryRootWriteQueryStopsMalformedIDomCycle(t *testing.T) {
+	target := symbol.ID(42)
+	query := newDominatingOrdinaryRootWriteQueryWithDominators(
+		map[cfg.Point]cfg.Point{1: 2, 2: 1},
+		2,
+		func(point cfg.Point, id symbol.ID) bool { return false },
+	)
+
+	if got, ok := query.DominatingOrdinaryRootWrite(1, target); ok || got != 0 {
+		t.Fatalf("DominatingOrdinaryRootWrite(cycle) = %d/%v, want 0/false", got, ok)
+	}
+}

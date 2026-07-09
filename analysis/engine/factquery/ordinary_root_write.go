@@ -47,12 +47,8 @@ func (q DominatingOrdinaryRootWriteQuery) DominatingOrdinaryRootWrite(point cfg.
 	if point == 0 || target == 0 || q.idom == nil || q.hasWrite == nil {
 		return 0, false
 	}
-	visited := make(map[cfg.Point]struct{}, q.graphSize)
-	for cursor := point; ; {
-		if _, ok := visited[cursor]; ok {
-			return 0, false
-		}
-		visited[cursor] = struct{}{}
+	limit := len(q.idom) + 1
+	for cursor, steps := point, 0; steps < limit; steps++ {
 		if q.hasWrite(cursor, target) {
 			return cursor, true
 		}
@@ -62,4 +58,5 @@ func (q DominatingOrdinaryRootWriteQuery) DominatingOrdinaryRootWrite(point cfg.
 		}
 		cursor = parent
 	}
+	return 0, false
 }

@@ -144,12 +144,8 @@ func (q RootDeclarationQuery) dominatingDeclarationSource(
 	if target.Symbol == 0 {
 		return RootDeclarationSource{}, false
 	}
-	visited := make(map[cfg.Point]struct{}, q.graphSize)
-	for cursor := point; ; {
-		if _, ok := visited[cursor]; ok {
-			return RootDeclarationSource{}, false
-		}
-		visited[cursor] = struct{}{}
+	limit := len(q.idom) + 1
+	for cursor, steps := point, 0; steps < limit; steps++ {
 		assignment, ok := q.facts.RootAssignment(cursor)
 		if ok && assignment.TargetSymbol() == target.Symbol {
 			targetPath := assignment.TargetPath()
@@ -185,4 +181,5 @@ func (q RootDeclarationQuery) dominatingDeclarationSource(
 		}
 		cursor = parent
 	}
+	return RootDeclarationSource{}, false
 }

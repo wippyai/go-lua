@@ -98,6 +98,19 @@ func TestRootDeclarationQueryAnswersMultipleQuestions(t *testing.T) {
 	}
 }
 
+func TestRootDeclarationQueryStopsMalformedIDomCycle(t *testing.T) {
+	query := NewRootDeclarationQueryWithDominators(
+		factflow.NewFacts(factflow.FactsInput{}),
+		map[cfg.Point]cfg.Point{1: 2, 2: 1},
+		2,
+	)
+
+	got, ok := query.DominatingRootDeclarationSource(1, symbol.ID(31))
+	if ok || got.Point != 0 {
+		t.Fatalf("DominatingRootDeclarationSource(cycle) = %#v/%v, want zero/false", got, ok)
+	}
+}
+
 func TestDominatingRootDeclarationSourceStopsAtOrdinaryRootWrite(t *testing.T) {
 	graph := cfg.New()
 	decl := graph.AddNode(cfg.NodeAssign)
