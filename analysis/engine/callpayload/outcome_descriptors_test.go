@@ -74,11 +74,12 @@ func TestCallOutcomeDescriptorsEmptyAndEvidenceParity(t *testing.T) {
 }
 
 // TestCallOutcomeDescriptorsWireRefs pins the manifest wire lane cross-reference:
-// only ReturnPresenceRelations lowers 1:1 from a wire lane; NormalReturnFacts is
-// a nested family and every other field is caller-relative evidence with no
-// OperationalEffects wire lane.
+// MaySuspend and ReturnPresenceRelations lower 1:1 from wire lanes;
+// NormalReturnFacts is a nested family and every other field is caller-relative
+// evidence or local certification metadata with no OperationalEffects wire lane.
 func TestCallOutcomeDescriptorsWireRefs(t *testing.T) {
 	want := map[string][]string{
+		"MaySuspend":              {"MaySuspend"},
 		"ReturnPresenceRelations": {"ReturnPresenceRelations"},
 	}
 	for _, d := range CallOutcomeDescriptors() {

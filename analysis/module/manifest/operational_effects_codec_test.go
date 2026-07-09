@@ -14,8 +14,8 @@ import (
 )
 
 func TestOperationalEffectsWireFieldsMirrorSignatureFields(t *testing.T) {
-	signatureFields := sliceFieldNames(reflect.TypeOf(signature.OperationalEffects{}))
-	wireFields := sliceFieldNames(reflect.TypeOf(operationalEffectsWire{}))
+	signatureFields := operationalEffectFieldNames(reflect.TypeOf(signature.OperationalEffects{}))
+	wireFields := operationalEffectFieldNames(reflect.TypeOf(operationalEffectsWire{}))
 
 	for field := range signatureFields {
 		if _, ok := wireFields[field]; !ok {
@@ -30,7 +30,7 @@ func TestOperationalEffectsWireFieldsMirrorSignatureFields(t *testing.T) {
 }
 
 func TestOperationalEffectsWireLaneRegistryCoversEveryWireField(t *testing.T) {
-	wireFields := sliceFieldNames(reflect.TypeOf(operationalEffectsWire{}))
+	wireFields := operationalEffectFieldNames(reflect.TypeOf(operationalEffectsWire{}))
 	registered := make(map[string]struct{})
 	for _, lane := range operationalEffectsWireLanes {
 		if lane.fieldName == "" {
@@ -104,7 +104,7 @@ func TestOperationalEffectsWireRefsHaveBoundaryOwners(t *testing.T) {
 
 func TestEncodeDecodeOperationalEffectsUseLaneRegistry(t *testing.T) {
 	file := parseOperationalEffectsCodecSource(t)
-	fields := sliceFieldNames(reflect.TypeOf(operationalEffectsWire{}))
+	fields := operationalEffectFieldNames(reflect.TypeOf(operationalEffectsWire{}))
 	for _, name := range []string{"encodeOperationalEffects", "decodeOperationalEffects"} {
 		fn := requireManifestFuncDecl(t, file, name)
 		if !manifestFuncUsesIdent(fn, "operationalEffectsWireLanes") {
@@ -122,16 +122,16 @@ func TestCanonicalizeOperationalEffectsWireUsesLaneRegistry(t *testing.T) {
 	if !manifestFuncUsesIdent(fn, "operationalEffectsWireLanes") {
 		t.Fatal("canonicalizeOperationalEffectsWire must iterate operationalEffectsWireLanes")
 	}
-	if field := firstSelectedManifestField(fn, sliceFieldNames(reflect.TypeOf(operationalEffectsWire{}))); field != "" {
+	if field := firstSelectedManifestField(fn, operationalEffectFieldNames(reflect.TypeOf(operationalEffectsWire{}))); field != "" {
 		t.Fatalf("canonicalizeOperationalEffectsWire selects field %s directly; use operationalEffectsWireLanes", field)
 	}
 }
 
-func sliceFieldNames(typ reflect.Type) map[string]struct{} {
+func operationalEffectFieldNames(typ reflect.Type) map[string]struct{} {
 	out := make(map[string]struct{})
 	for i := 0; i < typ.NumField(); i++ {
 		field := typ.Field(i)
-		if field.Type.Kind() == reflect.Slice {
+		if field.Type.Kind() == reflect.Bool || field.Type.Kind() == reflect.Slice {
 			out[field.Name] = struct{}{}
 		}
 	}

@@ -44,6 +44,8 @@ func applyOperationalEffects(ctx transfer.NodeContext, out callpayload.CallOutco
 	if effects == nil {
 		return out
 	}
+	out.SuspensionKnown = true
+	out.MaySuspend = out.MaySuspend || effects.MaySuspend
 	out.ReturnPresenceRelations = operationalReturnPresenceRelations(*effects)
 	applyOperationalNormalReturnFacts(ctx, op, *effects, &out.NormalReturnFacts)
 	out.HeapTableObjects = operationalHeapTableObjects(ctx, op.typeValues, op.keySpace, op.signatureType, *effects)

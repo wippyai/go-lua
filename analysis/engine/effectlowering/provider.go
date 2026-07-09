@@ -111,8 +111,11 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) callpayload
 			argSources = signatureMethodArgumentSources(ctx, facts, site, providerKeySpace)
 		}
 		sig = instantiateSignatureForCall(ctx, sources, expressionRefinements, argumentType, sig, argSources, in, read, returnTypeOps)
-		var out callpayload.CallOutcome
-		if sig.OperationalEffects != nil && !sig.OperationalEffects.IsEmpty() {
+		out := callpayload.CallOutcome{SuspensionKnown: true}
+		if sig.OperationalEffects != nil && sig.OperationalEffects.MaySuspend {
+			out.MaySuspend = true
+		}
+		if sig.OperationalEffects != nil && !sig.OperationalEffects.IsEmpty() && !operationalEffectsOnlyMaySuspend(sig.OperationalEffects) {
 			out = applyOperationalEffects(ctx, out, operationalEffectContext{
 				effects:               sig.OperationalEffects,
 				signatureType:         sig.Type,
@@ -204,6 +207,15 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) callpayload
 		out.PostReturnAuthority = calloutcome.HasAuthoritativePostReturnEvidence(ctx.Registry, out)
 		return out
 	}
+}
+
+func operationalEffectsOnlyMaySuspend(effects *signature.OperationalEffects) bool {
+	if effects == nil || !effects.MaySuspend {
+		return false
+	}
+	withoutSuspension := effects.Clone()
+	withoutSuspension.MaySuspend = false
+	return withoutSuspension.IsEmpty()
 }
 
 type signatureNormalReturnLaneContext struct {

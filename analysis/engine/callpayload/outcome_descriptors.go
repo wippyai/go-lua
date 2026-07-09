@@ -43,10 +43,11 @@ func deriveCallOutcomeLane(d callboundary.BoundaryFactDescriptor[CallOutcomeLane
 // callOutcomeDescriptors is the descriptor-driven CallOutcome lane table. It
 // registers one entry per CallOutcome field in canonical struct order, adding
 // the WireRef link to the manifest OperationalEffects wire lanes each field
-// lowers from. Only ReturnPresenceRelations maps 1:1 to a wire lane;
+// lowers from. MaySuspend and ReturnPresenceRelations map 1:1 to wire lanes;
 // NormalReturnFacts is a nested boundary-fact family that delegates its wire
 // refs to callboundary.NormalReturnFactDescriptors, and the remaining lanes are
-// caller-relative param/return evidence with no OperationalEffects wire lane.
+// caller-relative param/return evidence or local certification metadata with no
+// OperationalEffects wire lane.
 //
 // outcome_descriptors_test.go proves DeriveBoundaryLanes over this table
 // reproduces the live callOutcomeLanes behavior for
@@ -57,6 +58,10 @@ var callOutcomeDescriptors = func() callboundary.BoundaryFactTable[CallOutcomeLa
 			func(o CallOutcome) bool { return len(o.Results) != 0 }),
 		callOutcomeLaneDescriptor("PostReturnAuthority", nil, false,
 			func(o CallOutcome) bool { return o.PostReturnAuthority }),
+		callOutcomeLaneDescriptor("SuspensionKnown", nil, false,
+			func(o CallOutcome) bool { return o.SuspensionKnown }),
+		callOutcomeLaneDescriptor("MaySuspend", []string{"MaySuspend"}, false,
+			func(o CallOutcome) bool { return o.MaySuspend }),
 		callOutcomeLaneDescriptor("NormalReturnFacts", nil, true,
 			func(o CallOutcome) bool { return !o.NormalReturnFacts.Empty() }),
 		callOutcomeLaneDescriptor("HeapTableObjects", nil, true,

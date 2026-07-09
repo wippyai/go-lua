@@ -180,6 +180,19 @@ func supplementalAppendLane[T any](values func(*callpayload.CallOutcome) *[]T) s
 }
 
 var supplementalFactLanes = callpayload.BindCallOutcomeSupplementalFactRoles("supplemental fact", map[string]supplementalFactLaneHandler{
+	"SuspensionKnown": {
+		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+			out.SuspensionKnown = out.SuspensionKnown || second.SuspensionKnown
+		},
+	},
+	"MaySuspend": {
+		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+			if second.MaySuspend {
+				out.MaySuspend = true
+				out.SuspensionKnown = true
+			}
+		},
+	},
 	"NormalReturnFacts": {
 		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
 			out.NormalReturnFacts = out.NormalReturnFacts.Append(second.NormalReturnFacts)

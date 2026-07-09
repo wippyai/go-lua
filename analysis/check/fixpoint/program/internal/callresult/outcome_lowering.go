@@ -31,7 +31,10 @@ func outcomeFromSummary(
 	usefulParamObligation func(int) bool,
 	usefulNormalReturnParam func(int) bool,
 ) callpayload.CallOutcome {
-	out := callpayload.CallOutcome{}
+	out := callpayload.CallOutcome{
+		SuspensionKnown: true,
+		MaySuspend:      got.MaySuspend,
+	}
 	if len(got.Returns) != 0 {
 		out.Results = make([]callpayload.CallResult, len(got.Returns))
 		for i, value := range got.Returns {

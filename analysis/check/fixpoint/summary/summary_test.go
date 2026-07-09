@@ -157,6 +157,8 @@ func summaryWithOneLane(t *testing.T, fieldName string) Summary {
 		t.Fatalf("Summary.%s does not exist", fieldName)
 	}
 	switch value.Kind() {
+	case reflect.Bool:
+		value.SetBool(true)
 	case reflect.Map:
 		m := reflect.MakeMapWithSize(value.Type(), 1)
 		m.SetMapIndex(reflect.Zero(value.Type().Key()), reflect.Zero(value.Type().Elem()))

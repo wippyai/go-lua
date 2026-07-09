@@ -40,6 +40,12 @@ type CallOutcome struct {
 	// weaker return or post-return facts through this call.
 	PostReturnAuthority bool
 
+	// SuspensionKnown means this outcome came from a callee surface that
+	// certified whether the call can suspend. Missing certification is
+	// conservative and must be treated by consumers as may-suspend.
+	SuspensionKnown bool
+	MaySuspend      bool
+
 	NormalReturnFacts          callboundary.NormalReturnFacts
 	HeapTableObjects           map[identity.ID]heapidentity.TableObject
 	Placements                 map[identity.ID]placement.Value

@@ -141,6 +141,7 @@ func FromResult(result ResultReader) summary.Summary {
 		ReturnConditionSlotRefinements:  projectReturnConditionSlotRefinements(reg, result),
 		ReturnParamLiteralCases:         projectReturnParamLiteralCases(reg, result),
 		ReturnPresenceRelations:         projectReturnPresenceRelations(reg, result),
+		MaySuspend:                      projectMaySuspend(result),
 	}
 
 	var declared []product.Value
@@ -177,6 +178,7 @@ func noNormalExitSummary(reg *axis.Registry, result ResultReader) summary.Summar
 		NormalReturnParamConditions:     projectNormalReturnParamConditions(reg, result),
 		NormalReturnParamEqualities:     projectNormalReturnParamEqualities(reg, result),
 		ReturnConditionParamRefinements: projectReturnConditionParamRefinements(result),
+		MaySuspend:                      projectMaySuspend(result),
 	}
 	if reader, ok := result.(returnTypeValueReader); ok {
 		if declared := reader.ReturnTypeValues(); len(declared) != 0 {

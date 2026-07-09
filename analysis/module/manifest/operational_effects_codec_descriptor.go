@@ -80,12 +80,36 @@ func wireLane[Fact any, Wire any](
 	}
 }
 
+func boolWireLane(
+	fieldName string,
+	get func(*signature.OperationalEffects) *bool,
+	wire func(*operationalEffectsWire) *bool,
+) operationalEffectsWireLane {
+	return operationalEffectsWireLane{
+		fieldName: fieldName,
+		encode: func(e *signature.OperationalEffects, out *operationalEffectsWire) error {
+			if *get(e) {
+				*wire(out) = true
+			}
+			return nil
+		},
+		decode: func(w *operationalEffectsWire, out *signature.OperationalEffects) error {
+			*get(out) = *wire(w)
+			return nil
+		},
+		canonicalize: func(*operationalEffectsWire) {},
+	}
+}
+
 // operationalEffectsWireLanes is the descriptor-driven wire lane table. It
 // registers one entry per OperationalEffects fact kind in canonical field order;
 // encodeOperationalEffects, decodeOperationalEffects, and
 // canonicalizeOperationalEffectsWire drive it. Adding a fact kind is a single
 // wireLane entry.
 var operationalEffectsWireLanes = []operationalEffectsWireLane{
+	boolWireLane("MaySuspend",
+		func(e *signature.OperationalEffects) *bool { return &e.MaySuspend },
+		func(w *operationalEffectsWire) *bool { return &w.MaySuspend }),
 	wireLane("ReturnPresenceRelations",
 		func(e *signature.OperationalEffects) *[]signature.ReturnPresenceRelation {
 			return &e.ReturnPresenceRelations

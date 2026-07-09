@@ -19,6 +19,7 @@ import (
 // oracle exercises each lane's encode, decode, and canonical ordering.
 func oracleRichOperationalEffects() signature.OperationalEffects {
 	return signature.OperationalEffects{
+		MaySuspend: true,
 		ReturnPresenceRelations: []signature.ReturnPresenceRelation{
 			{TriggerIndex: 1, TriggerPresence: presence.Present(), TargetIndex: 0, TargetPresence: presence.Absent()},
 			{TriggerIndex: 0, TriggerPresence: presence.Maybe(), TargetIndex: 2, TargetPresence: presence.Present()},
@@ -147,6 +148,7 @@ func oracleSingleLaneCases(rich signature.OperationalEffects) []struct {
 		name string
 		e    signature.OperationalEffects
 	}{
+		{"MaySuspend", signature.OperationalEffects{MaySuspend: true}},
 		{"ReturnPresenceRelations", signature.OperationalEffects{ReturnPresenceRelations: rich.ReturnPresenceRelations}},
 		{"NormalReturnPresenceRefinements", signature.OperationalEffects{NormalReturnPresenceRefinements: rich.NormalReturnPresenceRefinements}},
 		{"NormalReturnTypeRefinements", signature.OperationalEffects{NormalReturnTypeRefinements: rich.NormalReturnTypeRefinements}},

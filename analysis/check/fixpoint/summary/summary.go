@@ -27,6 +27,7 @@ type Summary struct {
 	ReturnConditionSlotRefinements  []ReturnConditionSlotRefinement
 	ReturnParamLiteralCases         []ReturnParamLiteralCase
 	ReturnPresenceRelations         []ReturnPresenceRelation
+	MaySuspend                      bool
 
 	// HeapKeySpace is the keyspace under which HeapTableObjects' rootless
 	// static-member keys were interned. It is metadata only: it never affects

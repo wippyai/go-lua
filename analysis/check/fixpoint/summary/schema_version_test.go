@@ -13,11 +13,13 @@ import (
 )
 
 const expectedBoundaryLaneSchemaVersion1Hash = "295b4898ffcf5b94fd86ff73110bd7d46851c4e0e504341fd67cd99aa161d2d6"
+const expectedBoundaryLaneSchemaVersion2Hash = "b79023173a0d826ee18ea187dd0313a32e44feef9084d624176c9dcf0c9a5d68"
 
 func TestBoundaryLaneSchemaVersionPinsCurrentSurface(t *testing.T) {
 	got := hashSchemaSurface(boundaryLaneSchemaSurface())
 	want := map[int]string{
 		1: expectedBoundaryLaneSchemaVersion1Hash,
+		2: expectedBoundaryLaneSchemaVersion2Hash,
 	}[BoundaryLaneSchemaVersion]
 	if want == "" {
 		t.Fatalf("no expected boundary lane schema hash for version %d: bump version constant + journal a D-entry", BoundaryLaneSchemaVersion)

@@ -443,7 +443,7 @@ var registry = map[string]signature.Function{
 		OptParam("co", typ.Any).
 		Returns(typ.Boolean).
 		Build()),
-	"coroutine.resume": sig(typ.Func().
+	"coroutine.resume": suspendingSig(typ.Func().
 		Param("co", typ.Any).
 		Variadic(typ.Any).
 		Returns(typ.Boolean, typ.Any).
@@ -456,11 +456,11 @@ var registry = map[string]signature.Function{
 		Param("co", typ.Any).
 		Returns(typ.String).
 		Build()),
-	"coroutine.wrap": sig(typ.Func().
+	"coroutine.wrap": suspendingSig(typ.Func().
 		Param("f", typ.Any).
 		Returns(typ.Any).
 		Build()),
-	"coroutine.yield": sig(typ.Func().
+	"coroutine.yield": suspendingSig(typ.Func().
 		Variadic(typ.Any).
 		Returns(typ.Any).
 		Build(),
@@ -618,6 +618,12 @@ func sig(fn *typ.Function, labels ...effect.Label) signature.Function {
 		Type:   fn,
 		Effect: effect.Row{Labels: labels},
 	}
+}
+
+func suspendingSig(fn *typ.Function, labels ...effect.Label) signature.Function {
+	out := sig(fn, labels...)
+	out.OperationalEffects = &signature.OperationalEffects{MaySuspend: true}
+	return out
 }
 
 func mustAllowStdlibEffectLabel(label effect.Label) {

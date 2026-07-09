@@ -36,6 +36,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -1716,6 +1717,28 @@ func TestOutcomeProviderKeepsFreeReceiverTypeParamReturnFromCurrentCallable(t *t
 	slotType, ok := typevalue.WitnessOf(reg, got.ReturnConditionSlots[0].Value)
 	if !ok || !typ.TypeEquals(slotType, payload) || !presence.Equal(product.PresenceOf(got.ReturnConditionSlots[0].Value), presence.Present()) {
 		t.Fatalf("return condition slot value type/presence = %v/%v %s, want present T", slotType, ok, product.PresenceOf(got.ReturnConditionSlots[0].Value))
+	}
+}
+
+func TestOutcomeProviderMarksAmbientChannelReceiveMaySuspend(t *testing.T) {
+	reg := standard.Registry()
+	channel := typ.Instantiate(ambient.ChannelGeneric(), typ.String)
+	receive := typ.Func().
+		Param("self", channel).
+		Returns(typ.String, typ.Boolean).
+		Build()
+	provider := OutcomeProvider(ProviderConfig{
+		ReceiverCallable: func(transfer.NodeContext, factflow.CallSiteView) (*typ.Function, bool) {
+			return receive, true
+		},
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		MethodName: "receive",
+	}).View(), state.State{}, nil)
+
+	if !got.SuspensionKnown || !got.MaySuspend {
+		t.Fatalf("suspension = known:%v may:%v, want known may-suspend", got.SuspensionKnown, got.MaySuspend)
 	}
 }
 

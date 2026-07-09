@@ -62,7 +62,8 @@ func summarySlotDescriptor(fieldName string, wireRef []string, ops SummarySlotOp
 // (return tuples, param obligations, member-call facts, sink exposures,
 // captured obligations, condition refinements, literal cases) are serialized
 // through the signature return/param/postcondition encoders, not the
-// OperationalEffects wire codec, so they carry a nil WireRef.
+// OperationalEffects wire codec, so they carry a nil WireRef. MaySuspend is the
+// scalar function effect lane and lowers into the MaySuspend wire lane.
 //
 // fact_descriptors_test.go proves DeriveBoundaryLanes over
 // this table reproduces the live summaryLanes behavior lane-for-lane
@@ -405,6 +406,23 @@ var summaryFactDescriptors = func() callboundary.BoundaryFactTable[SummarySlotOp
 					prev.ReturnPresenceRelations,
 					next.ReturnPresenceRelations,
 				)
+			},
+		}),
+		summarySlotDescriptor("MaySuspend", []string{"MaySuspend"}, SummarySlotOps{
+			empty:          func(s Summary) bool { return !s.MaySuspend },
+			assignClone:    func(src Summary, dst *Summary) { dst.MaySuspend = src.MaySuspend },
+			normalizeOwned: func(_ *axis.Registry, _ *Summary) {},
+			equal: func(_ *axis.Registry, a, b Summary, _ bool) bool {
+				return a.MaySuspend == b.MaySuspend
+			},
+			lessOrEq: func(_ *axis.Registry, a, b Summary) bool {
+				return !a.MaySuspend || b.MaySuspend
+			},
+			assignJoin: func(_ *axis.Registry, a, b Summary, out *Summary) {
+				out.MaySuspend = a.MaySuspend || b.MaySuspend
+			},
+			assignWiden: func(_ *axis.Registry, prev, next Summary, out *Summary) {
+				out.MaySuspend = prev.MaySuspend || next.MaySuspend
 			},
 		}),
 	}

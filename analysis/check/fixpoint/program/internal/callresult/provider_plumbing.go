@@ -276,6 +276,10 @@ func refineOutcomeResultsFromCurrentCallable(
 	if !ok || fn == nil || len(fn.TypeParams) != 0 || len(fn.Returns) == 0 {
 		return out
 	}
+	if currentCallableChannelMethodMaySuspend(site, fn) {
+		out.SuspensionKnown = true
+		out.MaySuspend = true
+	}
 	results := make([]callpayload.CallResult, 0, len(fn.Returns))
 	for i, ret := range fn.Returns {
 		if ret == nil || typ.IsAny(ret) || typ.IsUnknown(ret) {
@@ -292,6 +296,19 @@ func refineOutcomeResultsFromCurrentCallable(
 	supplemental := callpayload.CallOutcome{Results: results}
 	supplemental.ReturnConditionSlots = channelReceiveReturnConditionSlots(ctx.Registry, typeValues, site, fn)
 	return calloutcome.MergeSupplemental(ctx.Registry, out, supplemental)
+}
+
+func currentCallableChannelMethodMaySuspend(site factflow.CallSiteView, fn *typ.Function) bool {
+	switch site.MethodName() {
+	case "receive", "send":
+	default:
+		return false
+	}
+	if fn == nil || len(fn.Params) == 0 || fn.Params[0].Type == nil {
+		return false
+	}
+	_, ok := typecall.AmbientChannelPayloadType(fn.Params[0].Type)
+	return ok
 }
 
 func channelReceiveReturnConditionSlots(

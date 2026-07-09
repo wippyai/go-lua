@@ -299,6 +299,13 @@ func ambientChannelMethod(receiver typ.Type, name string, depth int) (typ.Type, 
 	}
 }
 
+// AmbientChannelPayloadType reports the payload type for receiver values that
+// use the runtime channel ABI accepted by ambient channel member calls.
+func AmbientChannelPayloadType(receiver typ.Type) (typ.Type, bool) {
+	_, payload, ok := channelPayloadType(receiver, 0)
+	return payload, ok
+}
+
 func channelPayloadType(t typ.Type, depth int) (typ.Type, typ.Type, bool) {
 	if stopDepth(t, depth) {
 		return nil, nil, false

@@ -46,6 +46,8 @@ func AmbientChannelSendOutcomeProvider(config AmbientChannelSendOutcomeProviderC
 			target = 1
 		}
 		return callpayload.CallOutcome{
+			SuspensionKnown: true,
+			MaySuspend:      true,
 			NormalReturnFacts: callboundary.NormalReturnFacts{
 				EscapeEvents: []callboundary.EscapeEventFact{{
 					Target:    pathdom.NewPlaceholder(target),

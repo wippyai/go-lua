@@ -414,6 +414,17 @@ func TestMemberCallAmbientChannelReceive(t *testing.T) {
 	}
 }
 
+func TestAmbientChannelPayloadType(t *testing.T) {
+	channel := typ.Instantiate(ambient.ChannelGeneric(), typ.String)
+	got, ok := AmbientChannelPayloadType(channel)
+	if !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("AmbientChannelPayloadType(Channel<string>) = %v/%v, want string/true", got, ok)
+	}
+	if got, ok := AmbientChannelPayloadType(typ.String); ok || got != nil {
+		t.Fatalf("AmbientChannelPayloadType(string) = %v/%v, want nil/false", got, ok)
+	}
+}
+
 func TestMemberCallRuntimeModuleChannelReceive(t *testing.T) {
 	channel := typ.Instantiate(runtimeModuleChannelGeneric(), typ.String)
 	member, status := MemberCall(channel, "receive")

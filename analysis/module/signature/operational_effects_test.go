@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestOperationalEffectLaneRegistryCoversEverySliceField(t *testing.T) {
+func TestOperationalEffectLaneRegistryCoversEveryField(t *testing.T) {
 	typ := reflect.TypeOf(OperationalEffects{})
 	registered := make(map[string]struct{})
 	for _, lane := range operationalEffectLanes {
@@ -22,14 +22,14 @@ func TestOperationalEffectLaneRegistryCoversEverySliceField(t *testing.T) {
 		if !ok {
 			t.Fatalf("operational effect lane references missing field %s", lane.fieldName)
 		}
-		if field.Type.Kind() != reflect.Slice {
-			t.Fatalf("operational effect lane %s references non-slice field", lane.fieldName)
+		if !operationalEffectsLaneFieldKind(field.Type.Kind()) {
+			t.Fatalf("operational effect lane %s references unsupported field kind %s", lane.fieldName, field.Type.Kind())
 		}
 		registered[lane.fieldName] = struct{}{}
 	}
 	for i := 0; i < typ.NumField(); i++ {
 		field := typ.Field(i)
-		if field.Type.Kind() != reflect.Slice {
+		if !operationalEffectsLaneFieldKind(field.Type.Kind()) {
 			continue
 		}
 		if _, ok := registered[field.Name]; !ok {
@@ -40,7 +40,7 @@ func TestOperationalEffectLaneRegistryCoversEverySliceField(t *testing.T) {
 
 func TestOperationalEffectsHotOperationsUseLaneRegistry(t *testing.T) {
 	file := parseOperationalEffectsSource(t)
-	fields := operationalEffectsSliceFields(t)
+	fields := operationalEffectsLaneFields(t)
 
 	for _, name := range []string{"IsEmpty", "Clone", "Equals"} {
 		fn := requireOperationalEffectsFuncDecl(t, file, name)
@@ -59,9 +59,13 @@ func TestSubstituteOperationalTypesUsesLaneRegistry(t *testing.T) {
 	if !funcUsesIdent(fn, "operationalEffectLanes") {
 		t.Fatal("SubstituteOperationalTypes must iterate operationalEffectLanes")
 	}
-	if field := firstSelectedOperationalEffectsField(fn, operationalEffectsSliceFields(t)); field != "" {
+	if field := firstSelectedOperationalEffectsField(fn, operationalEffectsLaneFields(t)); field != "" {
 		t.Fatalf("SubstituteOperationalTypes selects field %s directly; use operationalEffectLanes", field)
 	}
+}
+
+func operationalEffectsLaneFieldKind(kind reflect.Kind) bool {
+	return kind == reflect.Bool || kind == reflect.Slice
 }
 
 func TestOperationalEffectLaneRegistryOwnsTypeSubstitution(t *testing.T) {
@@ -123,13 +127,13 @@ func funcUsesIdent(fn *ast.FuncDecl, name string) bool {
 	return found
 }
 
-func operationalEffectsSliceFields(t *testing.T) map[string]struct{} {
+func operationalEffectsLaneFields(t *testing.T) map[string]struct{} {
 	t.Helper()
 	out := make(map[string]struct{})
 	typ := reflect.TypeOf(OperationalEffects{})
 	for i := 0; i < typ.NumField(); i++ {
 		field := typ.Field(i)
-		if field.Type.Kind() == reflect.Slice {
+		if operationalEffectsLaneFieldKind(field.Type.Kind()) {
 			out[field.Name] = struct{}{}
 		}
 	}

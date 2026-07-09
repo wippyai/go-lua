@@ -13,6 +13,7 @@ import (
 // manifests. Unlike Effect rows, this is not handwritten contract vocabulary:
 // it is a stable, param-relative serialization of facts the analyzer proved.
 type OperationalEffects struct {
+	MaySuspend                      bool
 	ReturnPresenceRelations         []ReturnPresenceRelation
 	NormalReturnPresenceRefinements []PathPresenceRefinement
 	NormalReturnTypeRefinements     []PathTypeRefinement
@@ -245,7 +246,29 @@ func operationalEffectSliceLane[T any](
 	}
 }
 
+func operationalEffectBoolLane(
+	fieldName string,
+	get func(OperationalEffects) bool,
+	set func(*OperationalEffects, bool),
+) operationalEffectLane {
+	return operationalEffectLane{
+		fieldName: fieldName,
+		empty: func(e OperationalEffects) bool {
+			return !get(e)
+		},
+		clone: func(e OperationalEffects, out *OperationalEffects) {
+			set(out, get(e))
+		},
+		equal: func(a, b OperationalEffects) bool {
+			return get(a) == get(b)
+		},
+	}
+}
+
 var operationalEffectLanes = []operationalEffectLane{
+	operationalEffectBoolLane("MaySuspend",
+		func(e OperationalEffects) bool { return e.MaySuspend },
+		func(e *OperationalEffects, value bool) { e.MaySuspend = value }),
 	operationalEffectSliceLane("ReturnPresenceRelations",
 		func(e OperationalEffects) []ReturnPresenceRelation { return e.ReturnPresenceRelations },
 		func(e *OperationalEffects, facts []ReturnPresenceRelation) { e.ReturnPresenceRelations = facts },

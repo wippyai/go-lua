@@ -183,11 +183,13 @@ func compareSummary(t *testing.T, name string, got, want func() Summary) {
 }
 
 // TestSummaryFactDescriptorsWireRefs pins the manifest wire lane cross-reference:
-// only ReturnPresenceRelations lowers 1:1 into the OperationalEffects wire codec;
-// NormalReturnFacts is a nested family and every other lane serializes through
-// the signature return/param/postcondition encoders, not the wire codec.
+// MaySuspend and ReturnPresenceRelations lower 1:1 into the OperationalEffects
+// wire codec; NormalReturnFacts is a nested family and every other lane
+// serializes through the signature return/param/postcondition encoders, not the
+// wire codec.
 func TestSummaryFactDescriptorsWireRefs(t *testing.T) {
 	want := map[string][]string{
+		"MaySuspend":              {"MaySuspend"},
 		"ReturnPresenceRelations": {"ReturnPresenceRelations"},
 	}
 	for _, d := range SummaryFactDescriptors() {
