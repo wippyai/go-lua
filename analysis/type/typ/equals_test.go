@@ -193,6 +193,19 @@ func TestTypeEqualsDepthLimit(t *testing.T) {
 	}
 }
 
+func TestTypeEqualsDepthExhaustionFailsClosed(t *testing.T) {
+	var left Type = Number
+	var right Type = String
+	for i := 0; i < DefaultRecursionDepth+2; i++ {
+		left = &Alias{Name: "Left", Target: left}
+		right = &Alias{Name: "Right", Target: right}
+	}
+
+	if TypeEquals(left, right) {
+		t.Fatal("distinct alias chains compared equal after recursion-depth exhaustion")
+	}
+}
+
 func TestTypeEqualsNilNil(t *testing.T) {
 	// Both nil should return true
 	if !typeEquals(nil, nil) {

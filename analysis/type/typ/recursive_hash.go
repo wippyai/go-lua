@@ -5,8 +5,9 @@ package typ
 // wrappers around mutable recursive/generic nodes so SetBody cannot leave
 // stale construction-time hashes in the type algebra.
 func EqualityHash(t Type) uint64 {
-	t = unwrapAliasForEquals(t, NewGuard())
-	if t == nil {
+	var ok bool
+	t, ok = unwrapAliasForEquals(t, NewGuard())
+	if !ok || t == nil {
 		return 0
 	}
 	if equalityHashNeedsRefresh(t) {

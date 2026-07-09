@@ -31,6 +31,33 @@ func TestPrimitiveStrictOrder(t *testing.T) {
 	}
 }
 
+func TestSubtypeDepthExhaustionFailsClosed(t *testing.T) {
+	exhausted := typ.DefaultRecursionDepth + 1
+	if (&checker{}).check(typ.String, typ.String, exhausted) {
+		t.Fatal("subtype comparison succeeded after recursion-depth exhaustion")
+	}
+
+	var sub typ.Type = typ.Number
+	var super typ.Type = typ.String
+	for i := 0; i < typ.DefaultRecursionDepth+2; i++ {
+		sub = typetable.NewRecord().Field("next", sub).Build()
+		super = typetable.NewRecord().Field("next", super).Build()
+	}
+	if IsSubtype(sub, super) {
+		t.Fatal("deeply nested mismatched record was a subtype")
+	}
+
+	sub = typ.Number
+	super = typ.String
+	for i := 0; i < typ.DefaultRecursionDepth+2; i++ {
+		sub = &typ.Alias{Name: "Sub", Target: sub}
+		super = &typ.Alias{Name: "Super", Target: super}
+	}
+	if IsSubtype(sub, super) {
+		t.Fatal("distinct alias chains became subtypes after equality depth exhaustion")
+	}
+}
+
 func TestAnySourceStrictSubtypeBehavior(t *testing.T) {
 	tableTop := typ.NewInterface("table", nil)
 	record := typetable.NewRecord().Field("id", typ.String).Build()

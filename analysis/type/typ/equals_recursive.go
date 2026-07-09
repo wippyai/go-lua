@@ -5,8 +5,21 @@ import "github.com/wippyai/go-lua/analysis/internal/recursion"
 func typeEqualsGuard(a, b Type, guard recursion.Guard, seen map[typePair]bool) bool {
 	a = NormalizeNil(a)
 	b = NormalizeNil(b)
-	a = unwrapAliasForEquals(a, guard)
-	b = unwrapAliasForEquals(b, guard)
+
+	if a == b {
+		return true
+	}
+
+	if a == nil || b == nil {
+		return false
+	}
+
+	var aOK, bOK bool
+	a, aOK = unwrapAliasForEquals(a, guard)
+	b, bOK = unwrapAliasForEquals(b, guard)
+	if !aOK || !bOK {
+		return false
+	}
 
 	if a == b {
 		return true

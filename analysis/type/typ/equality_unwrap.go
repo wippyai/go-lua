@@ -6,22 +6,22 @@ import (
 	"github.com/wippyai/go-lua/analysis/internal/recursion"
 )
 
-func unwrapAliasForEquals(t Type, guard recursion.Guard) Type {
+func unwrapAliasForEquals(t Type, guard recursion.Guard) (Type, bool) {
 	for {
 		t = NormalizeNil(t)
 		if t == nil {
-			return nil
+			return nil, true
 		}
 		t = UnwrapTransparentWrappers(t)
 		next, ok := guard.Enter()
 		if !ok {
-			return nil
+			return nil, false
 		}
 		guard = next
 
 		alias, ok := t.(*Alias)
 		if !ok {
-			return t
+			return t, true
 		}
 		t = alias.UnaliasedTarget()
 	}
