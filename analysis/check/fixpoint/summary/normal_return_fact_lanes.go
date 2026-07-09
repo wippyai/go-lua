@@ -150,17 +150,29 @@ var normalReturnSummaryLanes = callboundary.BindNormalReturnFactLanes("normal-re
 	callboundary.LaneBranchProofs: normalReturnSummaryLaneNoRegOwned(
 		func(f *callboundary.NormalReturnFacts) *[]callboundary.BranchProof { return &f.BranchProofs },
 		branchProofLane.Normalize, branchProofLane.NormalizeOwned, branchProofLane.Clone, branchProofLane.Equal, branchProofLane.LessOrEq, branchProofLane.Join, branchProofLane.Join),
-	callboundary.LanePathPresenceImplications: normalReturnSummaryLaneNoRegOwned(
+	callboundary.LanePathPresenceImplications: normalReturnSummarySliceLaneOwned(
 		func(f *callboundary.NormalReturnFacts) *[]callboundary.PathPresenceImplicationFact {
 			return &f.PathPresenceImplications
 		},
-		pathPresenceImplicationLane.Normalize,
-		pathPresenceImplicationLane.NormalizeOwned,
-		pathPresenceImplicationLane.Clone,
-		pathPresenceImplicationLane.Equal,
-		pathPresenceImplicationLane.LessOrEq,
-		pathPresenceImplicationLane.Join,
-		pathPresenceImplicationLane.Widen),
+		func(reg *axis.Registry, in []callboundary.PathPresenceImplicationFact) []callboundary.PathPresenceImplicationFact {
+			return pathPresenceImplicationLane(reg).Normalize(in)
+		},
+		func(reg *axis.Registry, in []callboundary.PathPresenceImplicationFact) []callboundary.PathPresenceImplicationFact {
+			return pathPresenceImplicationLane(reg).NormalizeOwned(in)
+		},
+		clonePathPresenceImplications,
+		func(reg *axis.Registry, a, b []callboundary.PathPresenceImplicationFact) bool {
+			return pathPresenceImplicationLane(reg).Equal(a, b)
+		},
+		func(reg *axis.Registry, a, b []callboundary.PathPresenceImplicationFact) bool {
+			return pathPresenceImplicationLane(reg).LessOrEq(a, b)
+		},
+		func(reg *axis.Registry, a, b []callboundary.PathPresenceImplicationFact) []callboundary.PathPresenceImplicationFact {
+			return pathPresenceImplicationLane(reg).Join(a, b)
+		},
+		func(reg *axis.Registry, prev, next []callboundary.PathPresenceImplicationFact) []callboundary.PathPresenceImplicationFact {
+			return pathPresenceImplicationLane(reg).Widen(prev, next)
+		}),
 	callboundary.LaneChannelSelects: normalReturnSummaryLaneNoRegOwned(
 		func(f *callboundary.NormalReturnFacts) *[]callboundary.ChannelSelectFact { return &f.ChannelSelects },
 		channelSelectLane.Normalize, channelSelectLane.NormalizeOwned, channelSelectLane.Clone, channelSelectLane.Equal, channelSelectLane.LessOrEq, channelSelectLane.Join, channelSelectLane.Join),

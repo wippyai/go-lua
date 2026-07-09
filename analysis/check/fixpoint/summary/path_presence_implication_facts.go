@@ -1,10 +1,9 @@
 package summary
 
 import (
-	"fmt"
-
 	"github.com/wippyai/go-lua/analysis/domain/lattice/factset"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
@@ -21,18 +20,37 @@ type pathPresenceImplicationKey struct {
 	hasTargetValue  bool
 }
 
-var pathPresenceImplicationLane = factset.Set[pathPresenceImplicationKey, callboundary.PathPresenceImplicationFact]{
-	Key:       pathPresenceImplicationKeyOf,
-	EqualFact: pathPresenceImplicationEqual,
-	Less:      pathPresenceImplicationLess,
-	Admit:     admitPathPresenceImplication,
-	CloneFact: func(f callboundary.PathPresenceImplicationFact) callboundary.PathPresenceImplicationFact {
-		f.Trigger = f.Trigger.Clone()
-		f.Target = f.Target.Clone()
-		return f
-	},
-	Prefer:    func(kept, incoming callboundary.PathPresenceImplicationFact) bool { return true },
-	Intersect: true,
+func pathPresenceImplicationLane(reg *axis.Registry) factset.Set[pathPresenceImplicationKey, callboundary.PathPresenceImplicationFact] {
+	return factset.Set[pathPresenceImplicationKey, callboundary.PathPresenceImplicationFact]{
+		Key: pathPresenceImplicationKeyOf,
+		EqualFact: func(a, b callboundary.PathPresenceImplicationFact) bool {
+			return pathPresenceImplicationEqual(reg, a, b)
+		},
+		Less: func(a, b callboundary.PathPresenceImplicationFact) bool {
+			return pathPresenceImplicationLess(reg, a, b)
+		},
+		Admit:     admitPathPresenceImplication,
+		CloneFact: clonePathPresenceImplication,
+		Prefer:    func(kept, incoming callboundary.PathPresenceImplicationFact) bool { return true },
+		Intersect: true,
+	}
+}
+
+func clonePathPresenceImplication(f callboundary.PathPresenceImplicationFact) callboundary.PathPresenceImplicationFact {
+	f.Trigger = f.Trigger.Clone()
+	f.Target = f.Target.Clone()
+	return f
+}
+
+func clonePathPresenceImplications(in []callboundary.PathPresenceImplicationFact) []callboundary.PathPresenceImplicationFact {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]callboundary.PathPresenceImplicationFact, len(in))
+	for i, fact := range in {
+		out[i] = clonePathPresenceImplication(fact)
+	}
+	return out
 }
 
 func admitPathPresenceImplication(f callboundary.PathPresenceImplicationFact) (callboundary.PathPresenceImplicationFact, bool) {
@@ -64,18 +82,18 @@ func pathPresenceImplicationKeyOf(f callboundary.PathPresenceImplicationFact) pa
 	}
 }
 
-func pathPresenceImplicationEqual(a, b callboundary.PathPresenceImplicationFact) bool {
+func pathPresenceImplicationEqual(reg *axis.Registry, a, b callboundary.PathPresenceImplicationFact) bool {
 	return a.Trigger.Equal(b.Trigger) &&
 		a.TriggerPresence == b.TriggerPresence &&
 		a.HasTriggerValue == b.HasTriggerValue &&
-		(!a.HasTriggerValue || product.Equal(nil, a.TriggerValue, b.TriggerValue)) &&
+		(!a.HasTriggerValue || product.Equal(reg, a.TriggerValue, b.TriggerValue)) &&
 		a.Target.Equal(b.Target) &&
 		a.TargetPresence == b.TargetPresence &&
 		a.HasTargetValue == b.HasTargetValue &&
-		(!a.HasTargetValue || product.Equal(nil, a.TargetValue, b.TargetValue))
+		(!a.HasTargetValue || product.Equal(reg, a.TargetValue, b.TargetValue))
 }
 
-func pathPresenceImplicationLess(a, b callboundary.PathPresenceImplicationFact) bool {
+func pathPresenceImplicationLess(reg *axis.Registry, a, b callboundary.PathPresenceImplicationFact) bool {
 	ka := pathPresenceImplicationKeyOf(a)
 	kb := pathPresenceImplicationKeyOf(b)
 	if ka.trigger != kb.trigger {
@@ -88,9 +106,7 @@ func pathPresenceImplicationLess(a, b callboundary.PathPresenceImplicationFact) 
 		return !ka.hasTriggerValue
 	}
 	if ka.hasTriggerValue {
-		av := fmt.Sprintf("%#v", ka.triggerValue)
-		bv := fmt.Sprintf("%#v", kb.triggerValue)
-		if av != bv {
+		if av, bv := product.Hash(reg, ka.triggerValue), product.Hash(reg, kb.triggerValue); av != bv {
 			return av < bv
 		}
 	}
@@ -104,9 +120,7 @@ func pathPresenceImplicationLess(a, b callboundary.PathPresenceImplicationFact) 
 		return !ka.hasTargetValue
 	}
 	if ka.hasTargetValue {
-		av := fmt.Sprintf("%#v", ka.targetValue)
-		bv := fmt.Sprintf("%#v", kb.targetValue)
-		if av != bv {
+		if av, bv := product.Hash(reg, ka.targetValue), product.Hash(reg, kb.targetValue); av != bv {
 			return av < bv
 		}
 	}

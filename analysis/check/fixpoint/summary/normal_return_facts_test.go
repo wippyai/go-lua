@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
@@ -18,6 +19,7 @@ import (
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestNormalReturnSummaryLaneRegistryCoversStorageLanes(t *testing.T) {
@@ -188,6 +190,85 @@ func TestNormalReturnFactsNormalizeKeepsConcreteCapturedPathBoundaryFacts(t *tes
 		!facts.RelConstraints[0].C.Path.Equal(placeholder) || !facts.RelConstraints[0].C.IsLength {
 		t.Fatalf("RelConstraints = %#v, want only placeholder relation fact", facts.RelConstraints)
 	}
+}
+
+func TestPathPresenceImplicationOrderingUsesSemanticProductHash(t *testing.T) {
+	leftReg, err := standard.RegistryWithAxes()
+	if err != nil {
+		t.Fatalf("RegistryWithAxes(left): %v", err)
+	}
+	rightReg, err := standard.RegistryWithAxes()
+	if err != nil {
+		t.Fatalf("RegistryWithAxes(right): %v", err)
+	}
+
+	left := normalizeNormalReturnFacts(leftReg, callboundary.NormalReturnFacts{
+		PathPresenceImplications: pathPresenceImplicationsForOrder(leftReg, runtimekind.Table, runtimekind.Function),
+	}).PathPresenceImplications
+	right := normalizeNormalReturnFacts(rightReg, callboundary.NormalReturnFacts{
+		PathPresenceImplications: pathPresenceImplicationsForOrder(rightReg, runtimekind.Function, runtimekind.Table),
+	}).PathPresenceImplications
+
+	if len(left) != 2 || len(right) != 2 {
+		t.Fatalf("normalized implication counts = %d and %d, want 2", len(left), len(right))
+	}
+	for i := range left {
+		leftKind := implicationRuntimeKind(t, leftReg, left[i])
+		rightKind := implicationRuntimeKind(t, rightReg, right[i])
+		if leftKind != rightKind {
+			t.Fatalf("semantic implication order differs at %d: %s vs %s", i, leftKind, rightKind)
+		}
+	}
+}
+
+func TestNormalizedPayloadDigestIgnoresEquivalentProductConstructionOrder(t *testing.T) {
+	reg, err := standard.RegistryWithAxes()
+	if err != nil {
+		t.Fatalf("RegistryWithAxes: %v", err)
+	}
+	left := product.Set(reg,
+		product.NewWithPresence(reg, product.ShapeTop, presence.Present()),
+		runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
+	right := product.WithPresence(reg,
+		product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Table)),
+		presence.Present())
+	if !product.Equal(reg, left, right) {
+		t.Fatal("product construction paths did not produce equivalent values")
+	}
+
+	leftDigest := NormalizedPayloadDigest(reg, Normalize(reg, Summary{Returns: []product.Value{left}}))
+	rightDigest := NormalizedPayloadDigest(reg, Normalize(reg, Summary{Returns: []product.Value{right}}))
+	if leftDigest != rightDigest {
+		t.Fatalf("equivalent product values produced digests %d and %d", leftDigest, rightDigest)
+	}
+}
+
+func pathPresenceImplicationsForOrder(reg *axis.Registry, first, second runtimekind.Tag) []callboundary.PathPresenceImplicationFact {
+	makeFact := func(kind runtimekind.Tag) callboundary.PathPresenceImplicationFact {
+		return callboundary.PathPresenceImplicationFact{
+			Trigger:         pathdom.NewPlaceholder(0).Field("status"),
+			TriggerPresence: presence.Top(),
+			TriggerValue: product.Set(reg,
+				product.NewWithPresence(reg, product.ShapeTop, presence.Present()),
+				runtimekind.Key, runtimekind.Singleton(kind)),
+			HasTriggerValue: true,
+			Target:          pathdom.NewPlaceholder(1).Field("payload"),
+			TargetPresence:  presence.Present(),
+		}
+	}
+	return []callboundary.PathPresenceImplicationFact{makeFact(first), makeFact(second)}
+}
+
+func implicationRuntimeKind(t *testing.T, reg *axis.Registry, fact callboundary.PathPresenceImplicationFact) runtimekind.Tag {
+	t.Helper()
+	if !fact.HasTriggerValue {
+		t.Fatal("path-presence implication is missing its trigger value")
+	}
+	tags := product.Get(reg, fact.TriggerValue, runtimekind.Key).Tags()
+	if len(tags) != 1 {
+		t.Fatalf("trigger runtime kind = %s, want singleton", product.Get(reg, fact.TriggerValue, runtimekind.Key))
+	}
+	return tags[0]
 }
 
 func parseNormalReturnFactsSource(t *testing.T) *ast.File {

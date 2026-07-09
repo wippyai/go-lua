@@ -1,7 +1,6 @@
 package summary
 
 import (
-	"fmt"
 	"math"
 	"reflect"
 	"sort"
@@ -157,11 +156,7 @@ func (w *summaryDigestWriter) writeReflect(v reflect.Value) {
 	case reflect.Invalid:
 		w.writeString("<invalid>")
 	default:
-		if v.CanInterface() {
-			w.writeString(fmt.Sprintf("%s:%v", v.Type(), v.Interface()))
-		} else {
-			w.writeString(v.Type().String() + ":<unexported>")
-		}
+		panic("summary digest: unsupported reflect kind " + v.Kind().String() + " for " + v.Type().String())
 	}
 }
 
@@ -187,7 +182,7 @@ func (w *summaryDigestWriter) writeMap(v reflect.Value) {
 		if entries[i].digest != entries[j].digest {
 			return entries[i].digest < entries[j].digest
 		}
-		return fmt.Sprint(entries[i].key.Interface()) < fmt.Sprint(entries[j].key.Interface())
+		return compareDigestMapKeys(entries[i].key, entries[j].key) < 0
 	})
 	w.writeRaw("len:")
 	w.writeRawInt(int64(len(entries)))
@@ -196,6 +191,85 @@ func (w *summaryDigestWriter) writeMap(v reflect.Value) {
 		w.writeReflect(entry.key)
 		w.writeReflect(entry.value)
 	}
+}
+
+func compareDigestMapKeys(a, b reflect.Value) int {
+	if a.Type() != b.Type() {
+		return compareDigestStrings(a.Type().String(), b.Type().String())
+	}
+	switch a.Kind() {
+	case reflect.Bool:
+		if a.Bool() == b.Bool() {
+			return 0
+		}
+		if !a.Bool() {
+			return -1
+		}
+		return 1
+	case reflect.String:
+		return compareDigestStrings(a.String(), b.String())
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return compareDigestInts(a.Int(), b.Int())
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return compareDigestUints(a.Uint(), b.Uint())
+	case reflect.Array:
+		for i := 0; i < a.Len(); i++ {
+			if c := compareDigestMapKeys(a.Index(i), b.Index(i)); c != 0 {
+				return c
+			}
+		}
+		return 0
+	case reflect.Struct:
+		for i := 0; i < a.NumField(); i++ {
+			if c := compareDigestMapKeys(a.Field(i), b.Field(i)); c != 0 {
+				return c
+			}
+		}
+		return 0
+	case reflect.Interface:
+		if a.IsNil() || b.IsNil() {
+			if a.IsNil() == b.IsNil() {
+				return 0
+			}
+			if a.IsNil() {
+				return -1
+			}
+			return 1
+		}
+		return compareDigestMapKeys(a.Elem(), b.Elem())
+	default:
+		panic("summary digest: unsupported map key kind " + a.Kind().String() + " for " + a.Type().String())
+	}
+}
+
+func compareDigestStrings(a, b string) int {
+	if a < b {
+		return -1
+	}
+	if a > b {
+		return 1
+	}
+	return 0
+}
+
+func compareDigestInts(a, b int64) int {
+	if a < b {
+		return -1
+	}
+	if a > b {
+		return 1
+	}
+	return 0
+}
+
+func compareDigestUints(a, b uint64) int {
+	if a < b {
+		return -1
+	}
+	if a > b {
+		return 1
+	}
+	return 0
 }
 
 func (w *summaryDigestWriter) writeTableObject(object heapidentity.TableObject) {
