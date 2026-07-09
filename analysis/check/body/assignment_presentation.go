@@ -183,9 +183,40 @@ func assignmentSourceLabelDepth(expr ast.Expr, depth int) string {
 		return assignmentSourceLabelDepth(e.Expr, depth+1)
 	case *ast.NonNilAssertExpr:
 		return assignmentSourceLabelDepth(e.Expr, depth+1)
+	case *ast.LogicalOpExpr:
+		return assignmentBinaryLabel(e.Operator, e.Lhs, e.Rhs, depth+1)
+	case *ast.TableExpr:
+		if len(e.Fields) == 0 {
+			return "{}"
+		}
+		return "{...}"
+	case *ast.StringExpr:
+		return strconv.Quote(e.Value)
+	case *ast.NumberExpr:
+		return e.Value
+	case *ast.TrueExpr:
+		return "true"
+	case *ast.FalseExpr:
+		return "false"
+	case *ast.NilExpr:
+		return "nil"
+	case *ast.Comma3Expr:
+		return "..."
 	default:
 		return ""
 	}
+}
+
+func assignmentBinaryLabel(operator string, lhs, rhs ast.Expr, depth int) string {
+	left := assignmentSourceLabelDepth(lhs, depth+1)
+	right := assignmentSourceLabelDepth(rhs, depth+1)
+	if left == "" {
+		return right
+	}
+	if right == "" || operator == "" {
+		return left
+	}
+	return left + " " + operator + " " + right
 }
 
 func assignmentCallLabelDepth(expr *ast.FuncCallExpr, depth int) string {

@@ -438,6 +438,7 @@ func (p assignmentProofPresentation) AssignmentMessage(sourceName string, got, w
 		return "cannot assign " + sourceName + " because it may be nil"
 	}
 	if p.sameRenderedTypeNeedsValidationProof(got, want) {
+		sourceName = assignmentProofSourceName(sourceName)
 		subject := boundaryEvidenceSubject(sourceName)
 		return "cannot assign " + sourceName + " because " + subject + " comes from any/unknown; no proof shows it satisfies " + assignmentDeclaredTypePhrase(wantDisplay)
 	}
@@ -452,10 +453,18 @@ func (p assignmentProofPresentation) MemberAssignmentMessage(memberName string, 
 		return "cannot assign " + sourceName + " to " + memberName + " because " + sourceName + " may be nil"
 	}
 	if p.sameRenderedTypeNeedsValidationProof(got, want) {
+		sourceName = assignmentProofSourceName(sourceName)
 		subject := boundaryEvidenceSubject(sourceName)
 		return "cannot assign " + sourceName + " to " + memberName + " because " + subject + " comes from any/unknown; no proof shows it satisfies " + assignmentDeclaredTypePhrase(wantDisplay)
 	}
 	return display.MemberAssignmentMessageDisplay(memberName, sourceName, got, want, wantDisplay)
+}
+
+func assignmentProofSourceName(sourceName string) string {
+	if sourceName == "" {
+		return unknownSourceName
+	}
+	return sourceName
 }
 
 func assignmentDeclaredTypePhrase(wantDisplay string) string {

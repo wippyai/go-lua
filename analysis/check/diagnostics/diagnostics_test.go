@@ -81,6 +81,27 @@ func TestAnnotationAssignabilityReportsLiteralMismatch(t *testing.T) {
 	}
 }
 
+func TestAnnotationAssignabilityNamesLogicalDefaultSource(t *testing.T) {
+	diags := runDiagnostics(t, `
+local function build(msg: any): ()
+	local metadata: table = msg.metadata or {}
+end
+`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want one metadata assignment diagnostic: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic = %#v, want assignment error", d)
+	}
+	if strings.Contains(d.Message, "cannot assign  ") {
+		t.Fatalf("message = %q, should not render an empty assignment source", d.Message)
+	}
+	if !strings.Contains(d.Message, "msg.metadata or {}") {
+		t.Fatalf("message = %q, want logical default source spelling", d.Message)
+	}
+}
+
 func TestProduceWithConfigAppliesDiagnosticPolicy(t *testing.T) {
 	result := runDiagnosticsResult(t, `local x: number = "no"`)
 	disabled := ProduceWithConfig(result, Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
