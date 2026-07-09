@@ -191,7 +191,7 @@ type SplitBirthPayloadWrite struct {
 	Span  SourceSpan
 }
 
-const ClosureCaptureSchemaVersion = 1
+const ClosureCaptureSchemaVersion = 2
 
 // ClosureCapture is the codegen-facing solved export for one captured symbol at
 // a closure creation site.
@@ -213,6 +213,7 @@ type ClosureCapture struct {
 	Shape       typ.Type
 	HasShape    bool
 	StableShape bool
+	ShapeTier   string
 
 	Nilable         bool
 	NilabilityKnown bool

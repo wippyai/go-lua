@@ -172,6 +172,7 @@ type AllocationObjectTemplate struct {
 	ID             AllocationTemplateID
 	Type           typ.Type
 	StableShape    bool
+	PrefixStable   bool
 	StaticMembers  []AllocationStaticMemberTemplate
 	DynamicEntries []AllocationDynamicEntryTemplate
 }
@@ -510,6 +511,7 @@ func cloneAllocationObjectTemplates(in []AllocationObjectTemplate) []AllocationO
 			ID:             object.ID,
 			Type:           object.Type,
 			StableShape:    object.StableShape,
+			PrefixStable:   object.PrefixStable,
 			StaticMembers:  cloneAllocationStaticMemberTemplates(object.StaticMembers),
 			DynamicEntries: cloneAllocationDynamicEntryTemplates(object.DynamicEntries),
 		}
@@ -661,7 +663,7 @@ func equalReturnAllocationTemplates(a, b []ReturnAllocationTemplate) bool {
 
 func equalAllocationObjectTemplates(a, b []AllocationObjectTemplate) bool {
 	return equalFactSlices(a, b, func(x, y AllocationObjectTemplate) bool {
-		return x.ID == y.ID && x.StableShape == y.StableShape && typ.TypeEquals(x.Type, y.Type) && equalAllocationStaticMemberTemplates(x.StaticMembers, y.StaticMembers) && equalAllocationDynamicEntryTemplates(x.DynamicEntries, y.DynamicEntries)
+		return x.ID == y.ID && x.StableShape == y.StableShape && x.PrefixStable == y.PrefixStable && typ.TypeEquals(x.Type, y.Type) && equalAllocationStaticMemberTemplates(x.StaticMembers, y.StaticMembers) && equalAllocationDynamicEntryTemplates(x.DynamicEntries, y.DynamicEntries)
 	})
 }
 

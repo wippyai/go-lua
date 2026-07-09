@@ -372,6 +372,8 @@ func mergeSupplementalHeapTableObject(reg *axis.Registry, left, right heapidenti
 		Root:              product.Join(reg, left.Root(), right.Root()),
 		StaticMembers:     staticMembers,
 		DynamicIndexFacts: dynamicFacts,
+		StableShape:       left.StableShape() && right.StableShape(),
+		PrefixStableShape: left.PrefixStableShape() && right.PrefixStableShape(),
 	})
 }
 

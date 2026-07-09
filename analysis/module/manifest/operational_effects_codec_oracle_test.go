@@ -118,8 +118,9 @@ func oracleRichOperationalEffects() signature.OperationalEffects {
 			Root:        "example.transform:return:0:root",
 			Objects: []signature.AllocationObjectTemplate{
 				{
-					ID:   "example.transform:return:0:root",
-					Type: typetable.NewRecord().Build(),
+					ID:           "example.transform:return:0:root",
+					Type:         typetable.NewRecord().Build(),
+					PrefixStable: true,
 					StaticMembers: []signature.AllocationStaticMemberTemplate{{
 						Suffix: []segment.Segment{{Kind: segment.SegmentField, Name: "child"}},
 						Value:  "example.transform:return:0:root.child",

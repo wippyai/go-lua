@@ -163,6 +163,59 @@ func TestObjectJoinWidenRootStaticAndDynamic(t *testing.T) {
 	}
 }
 
+func TestObjectDomainPrefixStableMustIntersectAndKillsOnInvalidation(t *testing.T) {
+	reg := standard.Registry()
+	objectDomain := ObjectDomain(reg)
+	ks := keyspace.New()
+	common := fieldSuffixKey(t, ks, "host")
+	leftOnly := fieldSuffixKey(t, ks, "left")
+	rightOnly := fieldSuffixKey(t, ks, "right")
+	present := presentValue(reg)
+
+	left := NewTableObject(TableObjectConfig{
+		Root:              present,
+		PrefixStableShape: true,
+		StaticMembers: map[keyspace.Key]product.Value{
+			common:   present,
+			leftOnly: present,
+		},
+	})
+	right := NewTableObject(TableObjectConfig{
+		Root:              present,
+		PrefixStableShape: true,
+		StaticMembers: map[keyspace.Key]product.Value{
+			common:    present,
+			rightOnly: present,
+		},
+	})
+
+	joined := objectDomain.Join(left, right)
+	if !joined.PrefixStableShape() {
+		t.Fatalf("prefix-stable marker did not survive agreeing join")
+	}
+	if _, ok := joined.StaticMember(common); !ok {
+		t.Fatalf("common prefix member missing after join")
+	}
+	if _, ok := joined.StaticMember(leftOnly); ok {
+		t.Fatalf("left-only member survived prefix must-intersection")
+	}
+	if _, ok := joined.StaticMember(rightOnly); ok {
+		t.Fatalf("right-only member survived prefix must-intersection")
+	}
+	if widened := objectDomain.Widen(left, right); !objectDomain.Equal(widened, joined) {
+		t.Fatalf("prefix widen differs from join: %#v vs %#v", widened, joined)
+	}
+	if generic := right.WithoutPrefixStableShape(); objectDomain.Join(left, generic).PrefixStableShape() {
+		t.Fatalf("prefix marker survived join with generic object")
+	}
+	if extended, ok := left.WithStaticMember(ks, []segment.Segment{{Kind: segment.SegmentField, Name: "port"}}, present); !ok || !extended.PrefixStableShape() {
+		t.Fatalf("monotone static addition did not preserve prefix marker")
+	}
+	if removed, ok := left.WithoutStaticMemberSubtree(ks, []segment.Segment{{Kind: segment.SegmentField, Name: "host"}}); !ok || removed.PrefixStableShape() {
+		t.Fatalf("static member invalidation did not kill prefix marker")
+	}
+}
+
 func TestTableObjectInvalidatesDynamicIndexFactsBySuffix(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()

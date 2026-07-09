@@ -578,6 +578,7 @@ func operationalHeapTableObjects(ctx transfer.NodeContext, typeValues *typevalue
 				StaticMembers:     staticMembers,
 				DynamicIndexFacts: dynamicEntries,
 				StableShape:       object.StableShape,
+				PrefixStableShape: object.PrefixStable,
 			})
 		}
 	}

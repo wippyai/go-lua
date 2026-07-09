@@ -26,8 +26,31 @@ import (
 type StableShapeFact struct {
 	Point    cfg.Point
 	Identity identity.ID
+	Tier     StableShapeTier
 	Shape    typ.Type
 	Fields   []StableShapeField
+}
+
+type StableShapeTier uint8
+
+const (
+	StableShapeTierUnknown StableShapeTier = iota
+	StableShapeTierStable
+	StableShapeTierPrefixStable
+	StableShapeTierStableAfterPoint
+)
+
+func (t StableShapeTier) String() string {
+	switch t {
+	case StableShapeTierStable:
+		return "stable"
+	case StableShapeTierPrefixStable:
+		return "prefix-stable"
+	case StableShapeTierStableAfterPoint:
+		return "stable-after-p"
+	default:
+		return "unknown"
+	}
 }
 
 type StableShapeField struct {
@@ -38,21 +61,28 @@ type StableShapeField struct {
 // StableShapeForStaticMemberRead returns the final-shape proof for a static
 // field read's receiver, when the proof is strong enough for fixed-offset reads.
 func (r *Result) StableShapeForStaticMemberRead(occ StaticMemberReadOccurrence) (StableShapeFact, bool) {
+	var fact StableShapeFact
+	var ok bool
 	if occ.HasReceiverValueBeforeBoundary {
 		receiver := pathdom.Path{}
 		if occ.HasReceiverPath {
 			receiver = occ.ReceiverPath
 		}
-		return r.stableShapeForValue(occ.Point, occ.ReceiverValueBeforeBoundary, receiver, false)
-	}
-	if occ.HasReceiverValueAtBoundary {
+		fact, ok = r.stableShapeForValue(occ.Point, occ.ReceiverValueBeforeBoundary, receiver, false)
+	} else if occ.HasReceiverValueAtBoundary {
 		receiver := pathdom.Path{}
 		if occ.HasReceiverPath {
 			receiver = occ.ReceiverPath
 		}
-		return r.stableShapeForValue(occ.Point, occ.ReceiverValueAtBoundary, receiver, true)
+		fact, ok = r.stableShapeForValue(occ.Point, occ.ReceiverValueAtBoundary, receiver, true)
 	}
-	return StableShapeFact{}, false
+	if !ok {
+		fact, ok = r.stableShapeForImportedModuleRead(occ)
+	}
+	if !ok || !stableShapeFactContainsMember(fact, occ.MemberName) {
+		return StableShapeFact{}, false
+	}
+	return fact, true
 }
 
 // StableShapeForPathAtBoundary resolves p and returns a final-shape proof at
@@ -81,15 +111,15 @@ func (r *Result) SourceHasStableShapeBeforeBoundary(point cfg.Point, source fact
 		return false
 	}
 	p, _ := r.valueSourcePath(source)
-	_, stable := r.stableShapeForValue(point, value, p, false)
-	return stable
+	fact, stable := r.stableShapeForValue(point, value, p, false)
+	return stable && fact.Tier != StableShapeTierPrefixStable
 }
 
 // ValueHasStableShapeBeforeBoundary is the value-only companion to
 // SourceHasStableShapeBeforeBoundary.
 func (r *Result) ValueHasStableShapeBeforeBoundary(point cfg.Point, value product.Value) bool {
-	_, stable := r.stableShapeForValue(point, value, pathdom.Path{}, false)
-	return stable
+	fact, stable := r.stableShapeForValue(point, value, pathdom.Path{}, false)
+	return stable && fact.Tier != StableShapeTierPrefixStable
 }
 
 // ValueHasStructuralMutationAtBoundary reports whether value's table identity is
@@ -133,22 +163,38 @@ func (r *Result) stableShapeForValue(point cfg.Point, value product.Value, recei
 	if heapidentity.ObjectDomain(r.registry).Equal(object, heapidentity.BottomObject(r.registry)) {
 		return StableShapeFact{}, false
 	}
-	if !r.stableShapeOriginProven(st, id, object) {
+	if r.stableShapeOriginProven(st, id, object) {
+		shape, fields, ok := r.closedStableShapeFromObject(object)
+		if ok &&
+			!r.priorStructuralMutationDisqualifies(point, id, receiver) &&
+			!r.futureStructuralMutationReachable(point, id, receiver) {
+			return StableShapeFact{
+				Point:    point,
+				Identity: id,
+				Tier:     r.closedStableShapeTier(st, id, object),
+				Shape:    shape,
+				Fields:   fields,
+			}, true
+		}
+	}
+	if !r.prefixStableShapeOriginProven(object) {
 		return StableShapeFact{}, false
 	}
-	shape, fields, ok := r.closedStableShapeFromObject(object)
+	shape, fields, ok := r.prefixStableShapeFromObject(object)
 	if !ok {
 		return StableShapeFact{}, false
 	}
-	if r.priorStructuralWriteNotDominating(point, id, receiver) {
+	fieldSet := stableShapeFieldSet(fields)
+	if r.priorPrefixKillingWrite(point, id, receiver, fieldSet) {
 		return StableShapeFact{}, false
 	}
-	if r.futureStructuralMutationReachable(point, id, receiver) {
+	if r.futurePrefixKillingMutationReachable(point, id, receiver, fieldSet) {
 		return StableShapeFact{}, false
 	}
 	return StableShapeFact{
 		Point:    point,
 		Identity: id,
+		Tier:     StableShapeTierPrefixStable,
 		Shape:    shape,
 		Fields:   fields,
 	}, true
@@ -164,12 +210,45 @@ func (r *Result) stableShapeState(point cfg.Point, boundary bool) (state.State, 
 func (r *Result) stableShapeOriginProven(st state.State, id identity.ID, object heapidentity.TableObject) bool {
 	switch st.ReadPlacement(id) {
 	case placement.Stack:
-		return true
+		return object.PrefixStableShape() || object.StableShape()
 	case placement.OwnedHeap:
 		return object.StableShape() || st.IsTableFrozen(id)
 	default:
 		return object.StableShape() && st.IsTableFrozen(id)
 	}
+}
+
+func (r *Result) closedStableShapeTier(st state.State, id identity.ID, object heapidentity.TableObject) StableShapeTier {
+	if object.StableShape() || st.IsTableFrozen(id) {
+		return StableShapeTierStable
+	}
+	return StableShapeTierStableAfterPoint
+}
+
+func (r *Result) prefixStableShapeOriginProven(object heapidentity.TableObject) bool {
+	return object.PrefixStableShape() || object.StableShape()
+}
+
+func (r *Result) stableShapeForImportedModuleRead(occ StaticMemberReadOccurrence) (StableShapeFact, bool) {
+	if r == nil || !occ.HasReceiverPath || !occ.HasReceiverTypeBeforeBoundary {
+		return StableShapeFact{}, false
+	}
+	if len(occ.ReceiverPath.Segments) != 0 || occ.ReceiverPath.Root == "" {
+		return StableShapeFact{}, false
+	}
+	if _, ok := r.RequireAliasModulePath(occ.ReceiverPath.Root); !ok {
+		return StableShapeFact{}, false
+	}
+	shape, fields, ok := r.closedStableShapeFromType(occ.ReceiverTypeBeforeBoundary)
+	if !ok {
+		return StableShapeFact{}, false
+	}
+	return StableShapeFact{
+		Point:  occ.Point,
+		Tier:   StableShapeTierStable,
+		Shape:  shape,
+		Fields: fields,
+	}, true
 }
 
 func (r *Result) closedStableShapeFromObject(object heapidentity.TableObject) (typ.Type, []StableShapeField, bool) {
@@ -181,6 +260,22 @@ func (r *Result) closedStableShapeFromObject(object heapidentity.TableObject) (t
 			return shape, fields, true
 		}
 	}
+	return r.stableShapeFromStaticMembers(object)
+}
+
+func (r *Result) prefixStableShapeFromObject(object heapidentity.TableObject) (typ.Type, []StableShapeField, bool) {
+	if len(object.DynamicIndexFacts()) != 0 {
+		return nil, nil, false
+	}
+	if object.StableShape() {
+		if shape, fields, ok := r.closedStableShapeFromRootType(object.Root()); ok {
+			return shape, fields, true
+		}
+	}
+	return r.stableShapeFromStaticMembers(object)
+}
+
+func (r *Result) stableShapeFromStaticMembers(object heapidentity.TableObject) (typ.Type, []StableShapeField, bool) {
 	ks := r.KeySpace()
 	if ks == nil {
 		return nil, nil, false
@@ -188,7 +283,7 @@ func (r *Result) closedStableShapeFromObject(object heapidentity.TableObject) (t
 	fieldTypes := make(map[string]typ.Type)
 	intTypes := make(map[int]typ.Type)
 	for key, value := range object.StaticMembers() {
-		if product.Equal(r.registry, value, product.Bottom(r.registry)) {
+		if product.Equal(r.registry, value, product.Bottom(r.registry)) || typevalue.HasOnlyNilType(r.registry, value) {
 			continue
 		}
 		segs, ok := ks.SuffixSegmentsView(key)
@@ -240,6 +335,10 @@ func (r *Result) closedStableShapeFromRootType(value product.Value) (typ.Type, [
 	if !ok || t == nil {
 		return nil, nil, false
 	}
+	return r.closedStableShapeFromType(t)
+}
+
+func (r *Result) closedStableShapeFromType(t typ.Type) (typ.Type, []StableShapeField, bool) {
 	rec, ok := unwrap.Annotated(t).(*typ.Record)
 	if !ok || rec.Open || rec.HasMapComponent() || rec.Metatable != nil {
 		return nil, nil, false
@@ -291,7 +390,32 @@ func mergeStableShapeFieldType(existing, next typ.Type) typ.Type {
 	return next
 }
 
-func (r *Result) priorStructuralWriteNotDominating(point cfg.Point, id identity.ID, receiver pathdom.Path) bool {
+func stableShapeFactContainsMember(fact StableShapeFact, name string) bool {
+	if name == "" {
+		return true
+	}
+	for _, field := range fact.Fields {
+		if field.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func stableShapeFieldSet(fields []StableShapeField) map[string]struct{} {
+	if len(fields) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		if field.Name != "" {
+			out[field.Name] = struct{}{}
+		}
+	}
+	return out
+}
+
+func (r *Result) priorStructuralMutationDisqualifies(point cfg.Point, id identity.ID, receiver pathdom.Path) bool {
 	graph := r.Graph()
 	if graph == nil {
 		return false
@@ -307,11 +431,33 @@ func (r *Result) priorStructuralWriteNotDominating(point cfg.Point, id identity.
 		if !r.structuralMutationMayTarget(candidate, id, receiver) {
 			continue
 		}
+		if !r.structuralMutationIsStaticMemberWrite(candidate, id) {
+			if r.structuralMutationIsHeapObjectBirth(candidate, id) && r.PointDominates(candidate, point) {
+				continue
+			}
+			return true
+		}
 		if !r.PointDominates(candidate, point) {
 			return true
 		}
 	}
 	return false
+}
+
+func (r *Result) structuralMutationIsStaticMemberWrite(point cfg.Point, id identity.ID) bool {
+	write, ok := r.facts.PathStaticMemberWrite(point)
+	return ok && r.pathBeforeBoundaryHasIdentity(point, write.TargetPathRef().Parent(), id)
+}
+
+func (r *Result) structuralMutationIsHeapObjectBirth(point cfg.Point, id identity.ID) bool {
+	before, beforeOK := r.StateAt(point)
+	after, afterOK := r.StateAtBoundary(point)
+	if !beforeOK || !afterOK {
+		return false
+	}
+	domain := heapidentity.ObjectDomain(r.registry)
+	return domain.Equal(before.ReadHeapTableObject(r.registry, id), domain.Bottom()) &&
+		!domain.Equal(after.ReadHeapTableObject(r.registry, id), domain.Bottom())
 }
 
 func (r *Result) futureStructuralMutationReachable(point cfg.Point, id identity.ID, receiver pathdom.Path) bool {
@@ -331,6 +477,109 @@ func (r *Result) futureStructuralMutationReachable(point cfg.Point, id identity.
 		}
 	}
 	return false
+}
+
+func (r *Result) priorPrefixKillingWrite(point cfg.Point, id identity.ID, receiver pathdom.Path, fields map[string]struct{}) bool {
+	graph := r.Graph()
+	if graph == nil {
+		return false
+	}
+	entry := graph.Entry()
+	for _, candidate := range graph.RPO() {
+		if candidate == point {
+			continue
+		}
+		if !r.PointCanReach(entry, candidate) || !r.PointCanReach(candidate, point) {
+			continue
+		}
+		kind := r.prefixKillingMutationKind(candidate, id, receiver, fields)
+		switch kind {
+		case prefixMutationNone:
+			continue
+		case prefixMutationStaticPrefixWrite:
+			if !r.PointDominates(candidate, point) {
+				return true
+			}
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Result) futurePrefixKillingMutationReachable(point cfg.Point, id identity.ID, receiver pathdom.Path, fields map[string]struct{}) bool {
+	graph := r.Graph()
+	if graph == nil {
+		return false
+	}
+	for _, candidate := range graph.RPO() {
+		if candidate == point {
+			continue
+		}
+		if !r.PointCanReach(point, candidate) {
+			continue
+		}
+		if r.prefixKillingMutationKind(candidate, id, receiver, fields) != prefixMutationNone {
+			return true
+		}
+	}
+	return false
+}
+
+type prefixMutationKind uint8
+
+const (
+	prefixMutationNone prefixMutationKind = iota
+	prefixMutationStaticPrefixWrite
+	prefixMutationUnknown
+)
+
+func (r *Result) prefixKillingMutationKind(point cfg.Point, id identity.ID, receiver pathdom.Path, fields map[string]struct{}) prefixMutationKind {
+	if write, ok := r.facts.PathStaticMemberWrite(point); ok {
+		target := write.TargetPathRef()
+		if r.pathBeforeBoundaryHasIdentity(point, target.Parent(), id) {
+			name, ok := staticMemberWriteName(target)
+			if !ok {
+				return prefixMutationUnknown
+			}
+			if _, inPrefix := fields[name]; inPrefix {
+				return prefixMutationStaticPrefixWrite
+			}
+			return prefixMutationNone
+		}
+	}
+	if write, ok := r.facts.DynamicIndexWrite(point); ok {
+		if r.pathBeforeBoundaryHasIdentity(point, write.TablePathRef(), id) {
+			return prefixMutationUnknown
+		}
+	}
+	if invalidation, ok := r.facts.PathDescendantInvalidation(point); ok {
+		if r.pathBeforeBoundaryHasIdentity(point, invalidation.ContainerPathRef(), id) {
+			return prefixMutationUnknown
+		}
+		if tablePath, _, _, ok := invalidation.DynamicTargetRef(); ok && r.pathBeforeBoundaryHasIdentity(point, tablePath, id) {
+			return prefixMutationUnknown
+		}
+	}
+	if r.callMayStructurallyMutateIdentity(point, id, receiver) {
+		return prefixMutationUnknown
+	}
+	return prefixMutationNone
+}
+
+func staticMemberWriteName(target pathdom.Path) (string, bool) {
+	if len(target.Segments) == 0 {
+		return "", false
+	}
+	last := target.Segments[len(target.Segments)-1]
+	switch last.Kind {
+	case segment.SegmentField, segment.SegmentIndexString:
+		return last.Name, last.Name != ""
+	case segment.SegmentIndexInt:
+		return segment.FormatSegments([]segment.Segment{last}), true
+	default:
+		return "", false
+	}
 }
 
 func (r *Result) structuralMutationMayTarget(point cfg.Point, id identity.ID, receiver pathdom.Path) bool {

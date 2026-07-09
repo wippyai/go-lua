@@ -34,6 +34,7 @@ func readmodelClosureCaptureFromBody(fact body.ClosureCaptureFact) ClosureCaptur
 		Shape:           fact.Shape,
 		HasShape:        fact.HasShape,
 		StableShape:     fact.StableShape,
+		ShapeTier:       fact.ShapeTier.String(),
 		Nilable:         fact.Nilable,
 		NilabilityKnown: fact.NilabilityKnown,
 		Placement:       fact.Placement,

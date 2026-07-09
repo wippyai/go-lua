@@ -22,6 +22,7 @@ type TableObject struct {
 	dynamicIndexFacts    map[dynamicindex.Key]dynamicindex.Fact
 	dynamicIndexFactsTop bool
 	stableShape          bool
+	prefixStableShape    bool
 }
 
 // TableObjectConfig carries finite heap table object facts.
@@ -30,6 +31,7 @@ type TableObjectConfig struct {
 	StaticMembers     map[keyspace.Key]product.Value
 	DynamicIndexFacts map[dynamicindex.Key]dynamicindex.Fact
 	StableShape       bool
+	PrefixStableShape bool
 }
 
 var objectDomainCache registrycache.Cache[lattice.Lattice[TableObject]]
@@ -38,11 +40,13 @@ var mapDomainCache registrycache.Cache[lattice.Lattice[map[identity.ID]TableObje
 // NewTableObject creates a finite heap table object and takes defensive copies
 // of map-backed lanes.
 func NewTableObject(config TableObjectConfig) TableObject {
+	prefixStableShape := config.PrefixStableShape || config.StableShape
 	return TableObject{
 		root:              config.Root,
 		staticMembers:     clonePathMap(config.StaticMembers),
 		dynamicIndexFacts: dynamicindex.CloneMap(config.DynamicIndexFacts),
 		stableShape:       config.StableShape,
+		prefixStableShape: prefixStableShape,
 	}
 }
 
@@ -54,8 +58,9 @@ func NewOwnedStaticTableObject(root product.Value, staticMembers map[keyspace.Ke
 		staticMembers = nil
 	}
 	return TableObject{
-		root:          root,
-		staticMembers: staticMembers,
+		root:              root,
+		staticMembers:     staticMembers,
+		prefixStableShape: true,
 	}
 }
 
@@ -74,6 +79,10 @@ func (o TableObject) WithRoot(root product.Value) TableObject {
 // no structural mutation can add or remove root fields in its producing world.
 func (o TableObject) StableShape() bool { return !o.bottom && o.stableShape }
 
+// PrefixStableShape reports whether this heap object has a monotone static
+// field prefix whose field set is represented by its static-member lane.
+func (o TableObject) PrefixStableShape() bool { return !o.bottom && o.prefixStableShape }
+
 // WithStableShape returns object with its final-shape marker recorded.
 func (o TableObject) WithStableShape() TableObject {
 	if o.bottom {
@@ -81,6 +90,17 @@ func (o TableObject) WithStableShape() TableObject {
 	}
 	out := o
 	out.stableShape = true
+	out.prefixStableShape = true
+	return out
+}
+
+// WithPrefixStableShape returns object with its prefix-stable marker recorded.
+func (o TableObject) WithPrefixStableShape() TableObject {
+	if o.bottom {
+		return o
+	}
+	out := o
+	out.prefixStableShape = true
 	return out
 }
 
@@ -91,6 +111,16 @@ func (o TableObject) WithoutStableShape() TableObject {
 	}
 	out := o
 	out.stableShape = false
+	return out
+}
+
+// WithoutPrefixStableShape returns object with any prefix-stable marker removed.
+func (o TableObject) WithoutPrefixStableShape() TableObject {
+	if o.bottom || !o.prefixStableShape {
+		return o
+	}
+	out := o
+	out.prefixStableShape = false
 	return out
 }
 
@@ -205,6 +235,7 @@ func (o TableObject) withoutStaticMembersMatching(ks *keyspace.KeySpace, prefix 
 		return o, false
 	}
 	out.stableShape = false
+	out.prefixStableShape = false
 	if len(out.staticMembers) == 0 {
 		out.staticMembers = nil
 	}
@@ -235,6 +266,7 @@ func (o TableObject) withoutDynamicIndexFactsMatching(ks *keyspace.KeySpace, pre
 		return o, false
 	}
 	out.stableShape = false
+	out.prefixStableShape = false
 	if len(out.dynamicIndexFacts) == 0 {
 		out.dynamicIndexFacts = nil
 	}
@@ -315,7 +347,8 @@ func objectDomainForRegistry(reg *axis.Registry) lattice.Lattice[TableObject] {
 			return valueDomain.Equal(a.root, b.root) &&
 				staticDomain.Equal(staticLane(a), staticLane(b)) &&
 				dynamicDomain.Equal(dynamicLane(a, dynamicDomain), dynamicLane(b, dynamicDomain)) &&
-				a.stableShape == b.stableShape
+				a.stableShape == b.stableShape &&
+				a.prefixStableShape == b.prefixStableShape
 		},
 		LessOrEq: func(a, b TableObject) bool {
 			switch {
@@ -327,7 +360,8 @@ func objectDomainForRegistry(reg *axis.Registry) lattice.Lattice[TableObject] {
 				return valueDomain.LessOrEq(a.root, b.root) &&
 					staticDomain.LessOrEq(staticLane(a), staticLane(b)) &&
 					dynamicDomain.LessOrEq(dynamicLane(a, dynamicDomain), dynamicLane(b, dynamicDomain)) &&
-					stableShapeLessOrEq(a.stableShape, b.stableShape)
+					stableShapeLessOrEq(a.stableShape, b.stableShape) &&
+					stableShapeLessOrEq(a.prefixStableShape, b.prefixStableShape)
 			}
 		},
 		Join: func(a, b TableObject) TableObject {
@@ -345,6 +379,7 @@ func objectDomainForRegistry(reg *axis.Registry) lattice.Lattice[TableObject] {
 				dynamic,
 				dynamicDomain,
 				a.stableShape && b.stableShape,
+				a.prefixStableShape && b.prefixStableShape,
 			)
 		},
 		Widen: func(prev, next TableObject) TableObject {
@@ -362,6 +397,7 @@ func objectDomainForRegistry(reg *axis.Registry) lattice.Lattice[TableObject] {
 				dynamic,
 				dynamicDomain,
 				prev.stableShape && next.stableShape,
+				prev.prefixStableShape && next.prefixStableShape,
 			)
 		},
 	}
@@ -446,11 +482,13 @@ func objectFromLanes(
 	dynamic map[dynamicindex.Key]dynamicindex.Fact,
 	dynamicDomain lattice.Lattice[map[dynamicindex.Key]dynamicindex.Fact],
 	stableShape bool,
+	prefixStableShape bool,
 ) TableObject {
 	object := TableObject{
-		root:          root,
-		staticMembers: clonePathMap(static.Values()),
-		stableShape:   stableShape,
+		root:              root,
+		staticMembers:     clonePathMap(static.Values()),
+		stableShape:       stableShape,
+		prefixStableShape: prefixStableShape,
 	}
 	if dynamicDomain.Equal(dynamic, dynamicDomain.Top()) {
 		object.dynamicIndexFactsTop = true

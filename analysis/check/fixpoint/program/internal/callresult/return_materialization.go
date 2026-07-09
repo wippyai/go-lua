@@ -371,6 +371,8 @@ func writeHeapObjectStaticMember(
 		Root:              objectRoot,
 		StaticMembers:     staticMembers,
 		DynamicIndexFacts: object.DynamicIndexFacts(),
+		StableShape:       object.StableShape(),
+		PrefixStableShape: object.PrefixStableShape(),
 	})
 	return true
 }
@@ -555,6 +557,8 @@ func clampDeclaredReturnHeapMembers(
 		Root:              object.Root(),
 		StaticMembers:     staticMembers,
 		DynamicIndexFacts: object.DynamicIndexFacts(),
+		StableShape:       object.StableShape(),
+		PrefixStableShape: object.PrefixStableShape(),
 	})
 	return next, true
 }

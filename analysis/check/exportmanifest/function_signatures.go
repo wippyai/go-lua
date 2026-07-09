@@ -768,7 +768,11 @@ func (p *allocationTemplateProjector) visit(raw identity.ID, templateID signatur
 		return
 	}
 	p.visiting[templateID] = struct{}{}
-	projected := signature.AllocationObjectTemplate{ID: templateID, StableShape: object.StableShape()}
+	projected := signature.AllocationObjectTemplate{
+		ID:           templateID,
+		StableShape:  object.StableShape(),
+		PrefixStable: object.PrefixStableShape(),
+	}
 	if t, ok := typevalue.TypeOf(p.reg, object.Root()); ok {
 		projected.Type = allocationTemplateExportType(t, declared)
 	} else if declared != nil {

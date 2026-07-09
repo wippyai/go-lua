@@ -16,7 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
-const ClosureCaptureFactSchemaVersion = 1
+const ClosureCaptureFactSchemaVersion = 2
 
 type ClosureCapturePolicy uint8
 
@@ -58,6 +58,7 @@ type ClosureCaptureFact struct {
 	Shape       typ.Type
 	HasShape    bool
 	StableShape bool
+	ShapeTier   StableShapeTier
 	Fields      []StableShapeField
 
 	Nilable         bool
@@ -151,7 +152,7 @@ func (r *Result) closureCaptureFact(point cfg.Point, inst wir.Instruction, proto
 	}
 	fact.Type, fact.HasType = typevalue.TypeOf(r.registry, value)
 	fact.Nilable, fact.NilabilityKnown = closureCaptureNilability(value, fact.Type, fact.HasType)
-	fact.Shape, fact.HasShape, fact.StableShape, fact.Fields = r.closureCaptureShape(point, value)
+	fact.Shape, fact.HasShape, fact.StableShape, fact.ShapeTier, fact.Fields = r.closureCaptureShape(point, value)
 	fact.Identity, fact.HasIdentity = identityvalue.ExactID(r.registry, value)
 	if fact.HasIdentity {
 		if st, ok := r.StateAtBoundary(point); ok {
@@ -243,15 +244,16 @@ func closureCaptureNilability(value product.Value, t typ.Type, hasType bool) (bo
 	}
 }
 
-func (r *Result) closureCaptureShape(point cfg.Point, value product.Value) (typ.Type, bool, bool, []StableShapeField) {
+func (r *Result) closureCaptureShape(point cfg.Point, value product.Value) (typ.Type, bool, bool, StableShapeTier, []StableShapeField) {
 	if shape, ok := r.StableShapeForValueAtBoundary(point, value); ok {
-		return shape.Shape, true, true, append([]StableShapeField(nil), shape.Fields...)
+		stable := shape.Tier != StableShapeTierPrefixStable
+		return shape.Shape, true, stable, shape.Tier, append([]StableShapeField(nil), shape.Fields...)
 	}
 	t, ok := typevalue.StructuralTypeOf(r.registry, r.typeValues, value, typevalue.StructuralTypeOptions{ApplyPresence: true, OptionalWhenMaybe: true})
 	if !ok || !closureCaptureShapeType(t) {
-		return nil, false, false, nil
+		return nil, false, false, StableShapeTierUnknown, nil
 	}
-	return t, true, false, nil
+	return t, true, false, StableShapeTierUnknown, nil
 }
 
 func closureCaptureShapeType(t typ.Type) bool {

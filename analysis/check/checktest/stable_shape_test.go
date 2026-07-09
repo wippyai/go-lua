@@ -18,8 +18,24 @@ local host = cfg.host
 	requireNoDiagnostics(t, result.Diagnostics)
 	root := requireRootResult(t, result)
 	fact := requireStableReadShape(t, root, "cfg.host")
+	requireShapeTier(t, fact, body.StableShapeTierStableAfterPoint)
 	requireShapeFieldSubtype(t, root, fact.Shape, "host", typ.String)
 	requireShapeFieldSubtype(t, root, fact.Shape, "port", typ.Number)
+}
+
+func TestPrefixStableLicensesReadBeforeLaterExtension(t *testing.T) {
+	result := Check(`
+local cfg = {}
+cfg.host = "x"
+local host = cfg.host
+cfg.port = 80
+`)
+	requireNoDiagnostics(t, result.Diagnostics)
+	root := requireRootResult(t, result)
+	fact := requireStableReadShape(t, root, "cfg.host")
+	requireShapeTier(t, fact, body.StableShapeTierPrefixStable)
+	requireShapeFieldSubtype(t, root, fact.Shape, "host", typ.String)
+	requireNoShapeField(t, fact.Shape, "port")
 }
 
 func TestStableShapeCrossesManifestFunctionReturnBoundary(t *testing.T) {
@@ -46,11 +62,12 @@ local host = cfg.host
 	requireNoDiagnostics(t, result.Diagnostics)
 	root := requireRootResult(t, result)
 	fact := requireStableReadShape(t, root, "cfg.host")
+	requireShapeTier(t, fact, body.StableShapeTierStable)
 	requireShapeFieldSubtype(t, root, fact.Shape, "host", typ.String)
 	requireShapeFieldSubtype(t, root, fact.Shape, "port", typ.Number)
 }
 
-func TestStableShapeRejectsAliasMutationAfterRead(t *testing.T) {
+func TestPrefixStableSurvivesKnownAliasExtensionAfterRead(t *testing.T) {
 	result := Check(`
 local cfg = {}
 cfg.host = "x"
@@ -60,13 +77,13 @@ alias.port = 80
 `)
 	requireNoDiagnostics(t, result.Diagnostics)
 	root := requireRootResult(t, result)
-	occ := requireStaticRead(t, root, "cfg.host")
-	if fact, ok := root.StableShapeForStaticMemberRead(occ); ok {
-		t.Fatalf("stable shape = %#v, want no fact after reachable alias mutation", fact)
-	}
+	fact := requireStableReadShape(t, root, "cfg.host")
+	requireShapeTier(t, fact, body.StableShapeTierPrefixStable)
+	requireShapeFieldSubtype(t, root, fact.Shape, "host", typ.String)
+	requireNoShapeField(t, fact.Shape, "port")
 }
 
-func TestStableShapeRejectsConditionalFieldAdd(t *testing.T) {
+func TestPrefixStableKeepsRequiredPrefixAcrossConditionalAdd(t *testing.T) {
 	result := Check(`
 local cfg = {}
 cfg.host = "x"
@@ -77,10 +94,10 @@ local host = cfg.host
 `, WithGlobals("unknown"))
 	requireNoDiagnostics(t, result.Diagnostics)
 	root := requireRootResult(t, result)
-	occ := requireStaticRead(t, root, "cfg.host")
-	if fact, ok := root.StableShapeForStaticMemberRead(occ); ok {
-		t.Fatalf("stable shape = %#v, want no fact after conditional field add", fact)
-	}
+	fact := requireStableReadShape(t, root, "cfg.host")
+	requireShapeTier(t, fact, body.StableShapeTierPrefixStable)
+	requireShapeFieldSubtype(t, root, fact.Shape, "host", typ.String)
+	requireNoShapeField(t, fact.Shape, "port")
 }
 
 func TestStableShapeRejectsMethodCallThatWritesSelf(t *testing.T) {
@@ -99,6 +116,103 @@ cfg:add_port()
 	if fact, ok := root.StableShapeForStaticMemberRead(occ); ok {
 		t.Fatalf("stable shape = %#v, want no fact before reachable self mutation", fact)
 	}
+}
+
+func TestPrefixStableRejectsUnknownWriter(t *testing.T) {
+	result := Check(`
+local cfg = {}
+cfg.host = "x"
+external(cfg)
+local host = cfg.host
+`, WithGlobals("external"))
+	requireNoDiagnostics(t, result.Diagnostics)
+	root := requireRootResult(t, result)
+	occ := requireStaticRead(t, root, "cfg.host")
+	if fact, ok := root.StableShapeForStaticMemberRead(occ); ok {
+		t.Fatalf("stable shape = %#v, want no fact after unknown writer", fact)
+	}
+}
+
+func TestPrefixStableRejectsDelete(t *testing.T) {
+	result := Check(`
+local cfg = {}
+cfg.host = "x"
+cfg.host = nil
+local host = cfg.host
+`)
+	requireNoDiagnostics(t, result.Diagnostics)
+	root := requireRootResult(t, result)
+	occ := requireStaticRead(t, root, "cfg.host")
+	if fact, ok := root.StableShapeForStaticMemberRead(occ); ok {
+		t.Fatalf("stable shape = %#v, want no fact after field delete", fact)
+	}
+}
+
+func TestPrefixStableRejectsRetypeThroughAlias(t *testing.T) {
+	result := Check(`
+local cfg = {}
+cfg.host = "x"
+local alias = cfg
+alias.host = unknown_value
+local host = cfg.host
+`, WithGlobals("unknown_value"))
+	root := requireRootResult(t, result)
+	occ := requireStaticRead(t, root, "cfg.host")
+	if fact, ok := root.StableShapeForStaticMemberRead(occ); ok {
+		t.Fatalf("stable shape = %#v, want no fact after alias retype", fact)
+	}
+}
+
+func TestPrefixStableRejectsDynamicKeyWrite(t *testing.T) {
+	result := Check(`
+local cfg = {}
+cfg.host = "x"
+local key = "port"
+cfg[key] = 80
+local host = cfg.host
+`)
+	requireNoDiagnostics(t, result.Diagnostics)
+	root := requireRootResult(t, result)
+	occ := requireStaticRead(t, root, "cfg.host")
+	if fact, ok := root.StableShapeForStaticMemberRead(occ); ok {
+		t.Fatalf("stable shape = %#v, want no fact after dynamic-key write", fact)
+	}
+}
+
+func TestPrefixStableLoopAddDoesNotLicenseLoopField(t *testing.T) {
+	result := Check(`
+local cfg = {}
+cfg.host = "x"
+while unknown do
+  cfg.port = 80
+end
+local port = cfg.port
+`, WithGlobals("unknown"))
+	requireNoDiagnostics(t, result.Diagnostics)
+	root := requireRootResult(t, result)
+	occ := requireStaticRead(t, root, "cfg.port")
+	if fact, ok := root.StableShapeForStaticMemberRead(occ); ok {
+		t.Fatalf("stable shape = %#v, want no fact for loop-added field", fact)
+	}
+}
+
+func TestModuleReturnSnapshotDoesNotInventLaterFields(t *testing.T) {
+	builder := CheckAndExport(`
+local M = {}
+M.ready = true
+return M
+`, "service")
+	requireNoDiagnostics(t, builder.Errors)
+
+	result := Check(`
+local service = require("service")
+local ready = service.ready
+`, WithModule("service", builder))
+	requireNoDiagnostics(t, result.Diagnostics)
+	root := requireRootResult(t, result)
+	fact := requireStableReadShape(t, root, "service.ready")
+	requireShapeFieldSubtype(t, root, fact.Shape, "ready", typ.Boolean)
+	requireNoShapeField(t, fact.Shape, "late")
 }
 
 func TestStableShapePromotesMethodTablePattern(t *testing.T) {
@@ -166,6 +280,13 @@ func requireStableReadShape(t *testing.T, result *body.Result, label string) bod
 	return fact
 }
 
+func requireShapeTier(t *testing.T, fact body.StableShapeFact, want body.StableShapeTier) {
+	t.Helper()
+	if fact.Tier != want {
+		t.Fatalf("shape tier = %s, want %s", fact.Tier, want)
+	}
+}
+
 func requireShapeFieldSubtype(t *testing.T, result *body.Result, shape typ.Type, name string, want typ.Type) {
 	t.Helper()
 	got, ok := body.TypeField(shape, name)
@@ -174,6 +295,13 @@ func requireShapeFieldSubtype(t *testing.T, result *body.Result, shape typ.Type,
 	}
 	if !result.IsSubtype(got, want) {
 		t.Fatalf("shape field %s = %v, want subtype of %v", name, got, want)
+	}
+}
+
+func requireNoShapeField(t *testing.T, shape typ.Type, name string) {
+	t.Helper()
+	if got, ok := body.TypeField(shape, name); ok {
+		t.Fatalf("shape field %s = %v, want absent", name, got)
 	}
 }
 
