@@ -48,6 +48,7 @@ var inferableCorpus = []inferenceCase{
 	{"string-gsub-pair", `local text, count = ("a b"):gsub("%s+", "-") return { text = text, count = count }`},
 	{"string-match-guard", `local m = ("id=42"):match("(%d+)") if m == nil then return "" end return m:upper()`},
 	{"string-byte-guard", `local b = ("abc"):byte(1) if b == nil then return 0 end return b + 1`},
+	{"string-unpack-literal", `local n, s, pos = string.unpack(">I2c3", "abctail") return { n = n, s = s, pos = pos }`},
 }
 
 // frontierCorpus holds programs at the current inference frontier: a bare

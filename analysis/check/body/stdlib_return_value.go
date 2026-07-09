@@ -48,8 +48,8 @@ func stdlibSignatureReturnValue(
 			return stringFindReturnValue(reg, sourceResolver, ctx)
 		case ctx.Name == "string.gmatch" || ctx.Name == "string.gfind":
 			return stringGMatchReturnValue(reg, sourceResolver, ctx)
-		case ctx.Name == "string.unpack" && ctx.Index == 0:
-			return stringUnpackFirstReturnValue(reg, sourceResolver, ctx)
+		case ctx.Name == "string.unpack":
+			return stringUnpackReturnValue(reg, sourceResolver, ctx)
 		case (ctx.Name == "unpack" || ctx.Name == "table.unpack") && ctx.Index == 0:
 			return tableUnpackFirstReturnValue(reg, typeValues, facts, sourceResolver, visibilityResolver, ctx)
 		default:
@@ -114,20 +114,26 @@ func isHashLiteral(reg *axis.Registry, value product.Value) bool {
 	return ok && s == "#"
 }
 
-func stringUnpackFirstReturnValue(
+func stringUnpackReturnValue(
 	reg *axis.Registry,
 	resolver sourcevalue.SourceValues,
 	ctx effectlowering.SignatureReturnContext,
 ) (product.Value, bool) {
 	format, ok := stringUnpackFormatLiteral(reg, resolver, ctx)
 	if !ok {
-		return product.Value{}, false
+		if ctx.Index == 0 {
+			return product.Value{}, false
+		}
+		return returnValueWithType(reg, typ.Any), true
 	}
-	t, ok := firstStringUnpackValueType(format)
+	returns, ok := stringUnpackValueTypes(format)
 	if !ok {
 		return product.Value{}, false
 	}
-	return returnValueWithType(reg, t), true
+	if ctx.Index >= len(returns) {
+		return typevalue.Nil(reg), true
+	}
+	return returnValueWithType(reg, returns[ctx.Index]), true
 }
 
 func tableUnpackFirstReturnValue(
@@ -256,11 +262,7 @@ func stringPatternLiteral(
 	ctx effectlowering.SignatureReturnContext,
 	signatureIndex int,
 ) (string, bool) {
-	argIndex := stringSignatureArgSourceIndex(ctx, signatureIndex)
-	if argIndex < 0 {
-		return "", false
-	}
-	arg, ok := ctx.Site.ArgumentSourceAt(argIndex)
+	arg, ok := stringSignatureSourceAt(ctx, signatureIndex)
 	if !ok {
 		return "", false
 	}
@@ -277,11 +279,7 @@ func stringBoolLiteralArg(
 	ctx effectlowering.SignatureReturnContext,
 	signatureIndex int,
 ) (bool, bool) {
-	argIndex := stringSignatureArgSourceIndex(ctx, signatureIndex)
-	if argIndex < 0 {
-		return false, false
-	}
-	arg, ok := ctx.Site.ArgumentSourceAt(argIndex)
+	arg, ok := stringSignatureSourceAt(ctx, signatureIndex)
 	if !ok {
 		return false, false
 	}
@@ -308,12 +306,23 @@ func stringSignatureArgSourceIndex(ctx effectlowering.SignatureReturnContext, si
 	return signatureIndex
 }
 
+func stringSignatureSourceAt(ctx effectlowering.SignatureReturnContext, signatureIndex int) (factflow.ValueSource, bool) {
+	if ctx.Site.MethodName() != "" && signatureIndex == 0 {
+		return ctx.Site.ReceiverSource()
+	}
+	argIndex := stringSignatureArgSourceIndex(ctx, signatureIndex)
+	if argIndex < 0 {
+		return factflow.ValueSource{}, false
+	}
+	return ctx.Site.ArgumentSourceAt(argIndex)
+}
+
 func stringUnpackFormatLiteral(
 	reg *axis.Registry,
 	resolver sourcevalue.SourceValues,
 	ctx effectlowering.SignatureReturnContext,
 ) (string, bool) {
-	arg, ok := ctx.Site.ArgumentSourceAt(0)
+	arg, ok := stringSignatureSourceAt(ctx, 0)
 	if !ok {
 		return "", false
 	}
@@ -324,7 +333,8 @@ func stringUnpackFormatLiteral(
 	return typevalue.StringLiteralOf(reg, value)
 }
 
-func firstStringUnpackValueType(format string) (typ.Type, bool) {
+func stringUnpackValueTypes(format string) ([]typ.Type, bool) {
+	var out []typ.Type
 	for i := 0; i < len(format); {
 		switch format[i] {
 		case ' ', '\n', '\r', '\t', '\v', '\f', '<', '>', '=':
@@ -332,27 +342,31 @@ func firstStringUnpackValueType(format string) (typ.Type, bool) {
 		case '!':
 			i++
 			i = skipDecimalDigits(format, i)
-		case 'x':
+		case 'x', 'X':
 			i++
 		case 'b', 'B', 'h', 'H', 'l', 'L', 'j', 'J', 'T':
-			return typ.Integer, true
+			i++
+			out = append(out, typ.Integer)
 		case 'i', 'I':
 			i++
-			_ = skipDecimalDigits(format, i)
-			return typ.Integer, true
+			i = skipDecimalDigits(format, i)
+			out = append(out, typ.Integer)
 		case 'f', 'd', 'n':
-			return typ.Number, true
+			i++
+			out = append(out, typ.Number)
 		case 'c', 's':
 			i++
-			_ = skipDecimalDigits(format, i)
-			return typ.String, true
+			i = skipDecimalDigits(format, i)
+			out = append(out, typ.String)
 		case 'z':
-			return typ.String, true
+			i++
+			out = append(out, typ.String)
 		default:
 			return nil, false
 		}
 	}
-	return nil, false
+	out = append(out, typ.Integer)
+	return out, true
 }
 
 func skipDecimalDigits(s string, i int) int {

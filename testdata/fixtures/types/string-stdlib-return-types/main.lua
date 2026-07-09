@@ -56,6 +56,20 @@ local function gsub_wrong_count(s: string): string
     return bad
 end
 
+local function unpack_multireturn(data: string): string
+    local size, tag, next_pos = string.unpack(">I2c3", data)
+    local exact_size: integer = size
+    local exact_tag: string = tag
+    local exact_pos: integer = next_pos
+    return exact_tag .. tostring(exact_size + exact_pos)
+end
+
+local function unpack_wrong_position(data: string): string
+    local _, _, next_pos = string.unpack(">I2c3", data)
+    local bad: string = next_pos -- expect-error: next_pos
+    return bad
+end
+
 local function byte_guard(s: string): integer
     local b = s:byte(1)
     if b == nil then
@@ -121,6 +135,8 @@ return {
     find_captures = find_captures,
     gsub_destructure = gsub_destructure,
     gsub_wrong_count = gsub_wrong_count,
+    unpack_multireturn = unpack_multireturn,
+    unpack_wrong_position = unpack_wrong_position,
     byte_guard = byte_guard,
     byte_unguarded = byte_unguarded,
     gmatch_words = gmatch_words,
