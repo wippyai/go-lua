@@ -257,6 +257,14 @@ func TestManifestRejectsMalformedTypeWireMissingRequiredParts(t *testing.T) {
 			},
 			want: `annotation "tag" missing arg kind`,
 		},
+		{
+			name: "function parameter missing type",
+			wire: &typeWire{
+				Kind:   "function",
+				Params: []paramWire{{Name: "value"}},
+			},
+			want: "function parameter 0 missing type",
+		},
 	}
 
 	for _, tt := range tests {

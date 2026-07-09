@@ -48,7 +48,10 @@ func decodeFunctionInEnv(w *typeWire, env *typeDecodeEnv) (typ.Type, error) {
 		b.TypeParamRef(decoded)
 	}
 	bodyEnv := env.withParams(typeParams)
-	for _, p := range w.Params {
+	for index, p := range w.Params {
+		if p.Type == nil {
+			return nil, fmt.Errorf("function parameter %d missing type", index)
+		}
 		t, err := decodeTypeInEnv(p.Type, bodyEnv)
 		if err != nil {
 			return nil, err

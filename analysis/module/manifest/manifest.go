@@ -323,8 +323,16 @@ func Encode(m *Manifest) ([]byte, error) {
 	return append(data, '\n'), nil
 }
 
-// Decode deserializes a module manifest produced by Encode.
-func Decode(data []byte) (*Manifest, error) {
+// Decode deserializes a module manifest produced by Encode. The wire format is
+// an external boundary, so malformed payloads are always reported as errors:
+// codec builders are not allowed to leak a panic to a manifest consumer.
+func Decode(data []byte) (decoded *Manifest, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			decoded = nil
+			err = fmt.Errorf("manifest: invalid wire: %v", recovered)
+		}
+	}()
 	if len(bytes.TrimSpace(data)) == 0 {
 		return nil, errors.New("manifest: decode empty data")
 	}
