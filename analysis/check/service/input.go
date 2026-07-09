@@ -59,14 +59,18 @@ func normalizeUnitInput(input UnitInput) (retainedUnit, error) {
 	for path, data := range input.SourceFiles {
 		sourceDigests[path] = digestBytes(data)
 	}
+	digest, err := unitInputDigest(input, sourceDigests)
+	if err != nil {
+		return retainedUnit{}, err
+	}
 	return retainedUnit{
 		input:         input,
-		digest:        unitInputDigest(input, sourceDigests),
+		digest:        digest,
 		sourceDigests: sourceDigests,
 	}, nil
 }
 
-func unitInputDigest(input UnitInput, sourceDigests map[string]Digest) Digest {
+func unitInputDigest(input UnitInput, sourceDigests map[string]Digest) (Digest, error) {
 	w := newDigestWriter()
 	w.string("checker-service-unit-v1")
 	w.string(input.ModulePath)
@@ -78,7 +82,10 @@ func unitInputDigest(input UnitInput, sourceDigests map[string]Digest) Digest {
 	}
 	for _, path := range sortedKeys(input.ExternalManifests) {
 		w.string(path)
-		data, _ := manifest.Encode(input.ExternalManifests[path])
+		data, err := manifest.Encode(input.ExternalManifests[path])
+		if err != nil {
+			return Digest{}, fmt.Errorf("checker service: digest external manifest %q: %w", path, err)
+		}
 		w.bytes(data)
 	}
 	w.bool(input.IncludeStdlib)
@@ -101,7 +108,7 @@ func unitInputDigest(input UnitInput, sourceDigests map[string]Digest) Digest {
 	}
 	writeDiagnosticPolicy(w, input.DiagnosticPolicy)
 	writeJudgmentPolicy(w, input.JudgmentPolicy)
-	return w.sum()
+	return w.sum(), nil
 }
 
 func writeDiagnosticPolicy(w *digestWriter, policy diagnostic.Policy) {

@@ -3,16 +3,22 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	checkdiagnostics "github.com/wippyai/go-lua/analysis/check/diagnostics"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	enginestate "github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/module/signature"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestBatchSessionPublishesCompleteQueryableResult(t *testing.T) {
@@ -313,6 +319,60 @@ return first() + second() + third()
 		if got := completed.Bodies(); !reflect.DeepEqual(got, wantBodies) {
 			t.Fatalf("run %d body ordering or ResultVersions changed\nwant: %#v\n got: %#v", run, wantBodies, got)
 		}
+	}
+}
+
+func unencodableManifest() *manifest.Manifest {
+	m := manifest.New("example/bad-iterator")
+	m.DefineFunctionSignature("iter", signature.Function{
+		Type: typ.Func().
+			Param("input", typ.NewArray(typ.String)).
+			Build(),
+		Effect: effect.Empty.With(iteration.Iterator{
+			Source: effect.ParamRef{Index: 0},
+			Kind:   iteration.IteratorKind(99),
+		}),
+	})
+	return m
+}
+
+func TestUnitInputDigestPropagatesManifestEncodeError(t *testing.T) {
+	input := UnitInput{
+		ID:                "unit-a",
+		ModulePath:        "example/a",
+		EntryFile:         "main.lua",
+		ExternalManifests: map[string]*manifest.Manifest{"bad.lua": unencodableManifest()},
+	}
+	digest, err := unitInputDigest(input, map[string]Digest{"main.lua": digestBytes([]byte("x"))})
+	if err == nil {
+		t.Fatal("unitInputDigest: want error for unencodable external manifest, got nil")
+	}
+	if !strings.Contains(err.Error(), "unknown iterator kind 99") {
+		t.Fatalf("unitInputDigest error = %v, want unknown iterator kind", err)
+	}
+	if digest != (Digest{}) {
+		t.Fatalf("unitInputDigest digest = %v, want zero digest alongside error", digest)
+	}
+}
+
+func TestUpsertUnitRejectsUnencodableExternalManifest(t *testing.T) {
+	ctx := context.Background()
+	session := NewBatchSession()
+	input := UnitInput{
+		ID:         "unit-a",
+		ModulePath: "example/a",
+		EntryFile:  "main.lua",
+		SourceFiles: map[string][]byte{"main.lua": []byte(`local value: number = 1
+return value
+`)},
+		ExternalManifests: map[string]*manifest.Manifest{"bad.lua": unencodableManifest()},
+		Profile:           "typed",
+	}
+	if _, err := session.UpsertUnit(ctx, input); err == nil {
+		t.Fatal("UpsertUnit: want error for unencodable external manifest, got nil")
+	}
+	if _, err := session.EnsureSolved(ctx, SolveRequest{UnitID: input.ID, Trigger: TriggerBatch}); !errors.Is(err, ErrUnitNotFound) {
+		t.Fatalf("EnsureSolved after rejected upsert: err = %v, want %v", err, ErrUnitNotFound)
 	}
 }
 
