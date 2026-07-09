@@ -16,7 +16,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
-	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -894,13 +893,15 @@ func (r *Result) closureCapturesIdentity(point cfg.Point, closure identity.ID, t
 			if !ok || id != closure {
 				continue
 			}
-			proto := r.wir.Proto(inst.Func)
-			fn, ok := r.FunctionBySymbol(symbol.ID(proto.Symbol))
-			if !ok || fn == nil {
-				continue
-			}
-			for _, capture := range r.DirectCaptures(fn) {
-				captured, ok := r.PathValueBeforeBoundary(point, pathdom.NewPath(capture.Captured, r.SymbolName(capture.Captured)))
+			for _, capture := range r.wir.Operands(inst.List) {
+				if capture.Kind != wir.OperandPath {
+					continue
+				}
+				capturePath := r.wir.Path(wir.PathRef(capture.Ref))
+				if capturePath.Symbol == 0 {
+					continue
+				}
+				captured, ok := r.PathValueBeforeBoundary(point, pathdom.NewPath(capturePath.Symbol, r.SymbolName(capturePath.Symbol)))
 				if ok && r.valueGraphReachesIdentity(point, captured, target, visited) {
 					return true
 				}
