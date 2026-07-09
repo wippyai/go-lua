@@ -1,6 +1,7 @@
 package hash
 
 import (
+	"fmt"
 	"hash/fnv"
 	"testing"
 )
@@ -107,5 +108,27 @@ func TestMixHashMatchesOneFNV1aUint64Step(t *testing.T) {
 				t.Fatalf("MixHash(%d, %d) = %d, want %d", tc.seed, tc.value, got, want)
 			}
 		})
+	}
+}
+
+func TestWriterMatchesStandardLibraryFNV1a64(t *testing.T) {
+	t.Parallel()
+
+	var writer Writer = NewWriter()
+	_, _ = writer.WriteString("prefix:")
+	writer.WriteIntDecimal(-42)
+	_ = writer.WriteByte(':')
+	writer.WriteUintDecimal(123456789)
+	_ = writer.WriteByte(':')
+	writer.WriteUintHex(0xabcdef)
+	_ = writer.WriteByte(':')
+	writer.WriteBool(true)
+	_ = writer.WriteByte(':')
+	writer.WriteBool(false)
+
+	std := fnv.New64a()
+	fmt.Fprintf(std, "prefix:%d:%d:%x:%t:%t", -42, uint64(123456789), uint64(0xabcdef), true, false)
+	if got, want := writer.Sum64(), std.Sum64(); got != want {
+		t.Fatalf("Writer digest = %d, want standard FNV-1a %d", got, want)
 	}
 }

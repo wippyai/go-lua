@@ -2,8 +2,6 @@ package summary
 
 import (
 	"fmt"
-	"hash"
-	"hash/fnv"
 	"math"
 	"reflect"
 	"sort"
@@ -13,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
+	internalhash "github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -26,31 +25,55 @@ func PayloadDigest(reg *axis.Registry, s Summary) Digest {
 // NormalizedPayloadDigest returns a deterministic content digest for a summary
 // payload already normalized under reg.
 func NormalizedPayloadDigest(reg *axis.Registry, s Summary) Digest {
-	w := summaryDigestWriter{h: fnv.New64a(), reg: reg}
+	w := summaryDigestWriter{h: internalhash.NewWriter(), reg: reg}
 	w.writeString("summary-payload-v1")
 	w.writeReflect(reflect.ValueOf(s))
 	return Digest(w.h.Sum64())
 }
 
 type summaryDigestWriter struct {
-	h   hash.Hash64
+	h   internalhash.Writer
 	reg *axis.Registry
 }
 
+func (w *summaryDigestWriter) writeRaw(value string) {
+	_, _ = w.h.WriteString(value)
+}
+
+func (w *summaryDigestWriter) writeByte(value byte) {
+	_ = w.h.WriteByte(value)
+}
+
+func (w *summaryDigestWriter) writeRawInt(value int64) {
+	w.h.WriteIntDecimal(value)
+}
+
+func (w *summaryDigestWriter) writeRawUint(value uint64) {
+	w.h.WriteUintDecimal(value)
+}
+
 func (w *summaryDigestWriter) writeString(value string) {
-	fmt.Fprintf(w.h, "s:%d:", len(value))
-	_, _ = w.h.Write([]byte(value))
-	_, _ = w.h.Write([]byte(";"))
+	w.writeRaw("s:")
+	w.writeRawInt(int64(len(value)))
+	w.writeByte(':')
+	w.writeRaw(value)
+	w.writeByte(';')
 }
 
 func (w *summaryDigestWriter) writeProduct(value product.Value) {
-	fmt.Fprintf(w.h, "product-presence:%d;", product.PresenceOf(value))
+	w.writeRaw("product-presence:")
+	w.writeRawInt(int64(product.PresenceOf(value)))
+	w.writeByte(';')
 	if t, ok := typevalue.TypeOf(w.reg, value); ok {
-		fmt.Fprintf(w.h, "product-type:%d:", typ.EqualityHash(t))
+		w.writeRaw("product-type:")
+		w.writeRawUint(typ.EqualityHash(t))
+		w.writeByte(':')
 		w.writeString(t.String())
 		return
 	}
-	fmt.Fprintf(w.h, "product-fallback:%d;", product.Hash(w.reg, value))
+	w.writeRaw("product-fallback:")
+	w.writeRawUint(product.Hash(w.reg, value))
+	w.writeByte(';')
 }
 
 func (w *summaryDigestWriter) writeReflect(v reflect.Value) {
@@ -76,7 +99,9 @@ func (w *summaryDigestWriter) writeReflect(v reflect.Value) {
 			if value == nil {
 				w.writeString("type:<nil>")
 			} else {
-				fmt.Fprintf(w.h, "type:%d:", typ.EqualityHash(value))
+				w.writeRaw("type:")
+				w.writeRawUint(typ.EqualityHash(value))
+				w.writeByte(':')
 				w.writeString(value.String())
 			}
 			return
@@ -110,7 +135,9 @@ func (w *summaryDigestWriter) writeReflect(v reflect.Value) {
 		}
 	case reflect.Slice, reflect.Array:
 		w.writeString("seq:" + v.Type().String())
-		fmt.Fprintf(w.h, "len:%d;", v.Len())
+		w.writeRaw("len:")
+		w.writeRawInt(int64(v.Len()))
+		w.writeByte(';')
 		for i := 0; i < v.Len(); i++ {
 			w.writeReflect(v.Index(i))
 		}
@@ -119,13 +146,21 @@ func (w *summaryDigestWriter) writeReflect(v reflect.Value) {
 	case reflect.String:
 		w.writeString(v.String())
 	case reflect.Bool:
-		fmt.Fprintf(w.h, "bool:%t;", v.Bool())
+		w.writeRaw("bool:")
+		w.h.WriteBool(v.Bool())
+		w.writeByte(';')
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		fmt.Fprintf(w.h, "int:%d;", v.Int())
+		w.writeRaw("int:")
+		w.writeRawInt(v.Int())
+		w.writeByte(';')
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		fmt.Fprintf(w.h, "uint:%d;", v.Uint())
+		w.writeRaw("uint:")
+		w.writeRawUint(v.Uint())
+		w.writeByte(';')
 	case reflect.Float32, reflect.Float64:
-		fmt.Fprintf(w.h, "float:%x;", math.Float64bits(v.Float()))
+		w.writeRaw("float:")
+		w.h.WriteUintHex(math.Float64bits(v.Float()))
+		w.writeByte(';')
 	case reflect.Invalid:
 		w.writeString("<invalid>")
 	default:
@@ -140,7 +175,7 @@ func (w *summaryDigestWriter) writeReflect(v reflect.Value) {
 func (w *summaryDigestWriter) writeMap(v reflect.Value) {
 	w.writeString("map:" + v.Type().String())
 	if v.IsNil() {
-		fmt.Fprintf(w.h, "len:-1;")
+		w.writeRaw("len:-1;")
 		return
 	}
 	type entry struct {
@@ -151,10 +186,9 @@ func (w *summaryDigestWriter) writeMap(v reflect.Value) {
 	keys := v.MapKeys()
 	entries := make([]entry, 0, len(keys))
 	for _, key := range keys {
-		keyDigest := fnv.New64a()
-		keyWriter := summaryDigestWriter{h: keyDigest, reg: w.reg}
+		keyWriter := summaryDigestWriter{h: internalhash.NewWriter(), reg: w.reg}
 		keyWriter.writeReflect(key)
-		entries = append(entries, entry{digest: keyDigest.Sum64(), key: key, value: v.MapIndex(key)})
+		entries = append(entries, entry{digest: keyWriter.h.Sum64(), key: key, value: v.MapIndex(key)})
 	}
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].digest != entries[j].digest {
@@ -162,7 +196,9 @@ func (w *summaryDigestWriter) writeMap(v reflect.Value) {
 		}
 		return fmt.Sprint(entries[i].key.Interface()) < fmt.Sprint(entries[j].key.Interface())
 	})
-	fmt.Fprintf(w.h, "len:%d;", len(entries))
+	w.writeRaw("len:")
+	w.writeRawInt(int64(len(entries)))
+	w.writeByte(';')
 	for _, entry := range entries {
 		w.writeReflect(entry.key)
 		w.writeReflect(entry.value)

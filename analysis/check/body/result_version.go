@@ -2,8 +2,6 @@ package body
 
 import (
 	"fmt"
-	"hash"
-	"hash/fnv"
 	"sort"
 	"strings"
 
@@ -17,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
+	internalhash "github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
@@ -57,21 +56,21 @@ func computeResultVersion(s *Static, config SolveConfig, entry state.State, init
 }
 
 type bodyDigestWriter struct {
-	h       hash.Hash64
+	h       internalhash.Writer
 	static  *Static
 	symbols map[symbol.ID]string
 }
 
 func newBodyDigestWriter(s *Static) *bodyDigestWriter {
 	return &bodyDigestWriter{
-		h:       fnv.New64a(),
+		h:       internalhash.NewWriter(),
 		static:  s,
 		symbols: make(map[symbol.ID]string),
 	}
 }
 
 func (w *bodyDigestWriter) sum64() uint64 {
-	if w == nil || w.h == nil {
+	if w == nil {
 		return 0
 	}
 	return w.h.Sum64()
@@ -81,22 +80,50 @@ func (w *bodyDigestWriter) label(label string) {
 	w.writeString("#", label)
 }
 
+func (w *bodyDigestWriter) writeRaw(value string) {
+	_, _ = w.h.WriteString(value)
+}
+
+func (w *bodyDigestWriter) writeByte(value byte) {
+	_ = w.h.WriteByte(value)
+}
+
+func (w *bodyDigestWriter) writeRawInt(value int) {
+	w.h.WriteIntDecimal(int64(value))
+}
+
+func (w *bodyDigestWriter) writeRawUint64(value uint64) {
+	w.h.WriteUintDecimal(value)
+}
+
 func (w *bodyDigestWriter) writeString(label, value string) {
-	fmt.Fprintf(w.h, "%s:s:%d:", label, len(value))
-	_, _ = w.h.Write([]byte(value))
-	_, _ = w.h.Write([]byte(";"))
+	w.writeRaw(label)
+	w.writeRaw(":s:")
+	w.writeRawInt(len(value))
+	w.writeByte(':')
+	w.writeRaw(value)
+	w.writeByte(';')
 }
 
 func (w *bodyDigestWriter) writeBool(label string, value bool) {
-	fmt.Fprintf(w.h, "%s:b:%t;", label, value)
+	w.writeRaw(label)
+	w.writeRaw(":b:")
+	w.h.WriteBool(value)
+	w.writeByte(';')
 }
 
 func (w *bodyDigestWriter) writeInt(label string, value int) {
-	fmt.Fprintf(w.h, "%s:i:%d;", label, value)
+	w.writeRaw(label)
+	w.writeRaw(":i:")
+	w.writeRawInt(value)
+	w.writeByte(';')
 }
 
 func (w *bodyDigestWriter) writeUint64(label string, value uint64) {
-	fmt.Fprintf(w.h, "%s:u:%d;", label, value)
+	w.writeRaw(label)
+	w.writeRaw(":u:")
+	w.writeRawUint64(value)
+	w.writeByte(';')
 }
 
 func (w *bodyDigestWriter) writeType(label string, t typ.Type) {
@@ -113,18 +140,30 @@ func (w *bodyDigestWriter) writeProduct(label string, value product.Value) {
 }
 
 func (w *bodyDigestWriter) stableProductHash(value product.Value) uint64 {
-	h := fnv.New64a()
-	fmt.Fprintf(h, "shape:%d;presence:%d;", product.ShapeOf(value), product.PresenceOf(value))
+	h := internalhash.NewWriter()
+	_, _ = h.WriteString("shape:")
+	h.WriteIntDecimal(int64(product.ShapeOf(value)))
+	_, _ = h.WriteString(";presence:")
+	h.WriteIntDecimal(int64(product.PresenceOf(value)))
+	_ = h.WriteByte(';')
 	reg := w.static.registry
 	if reg == nil {
 		return h.Sum64()
 	}
 	if t, ok := typevalue.TypeOf(reg, value); ok {
-		fmt.Fprintf(h, "type:%d:%s;", typ.EqualityHash(t), t.String())
+		_, _ = h.WriteString("type:")
+		h.WriteUintDecimal(typ.EqualityHash(t))
+		_ = h.WriteByte(':')
+		_, _ = h.WriteString(t.String())
+		_ = h.WriteByte(';')
 		return h.Sum64()
 	}
 	kind := product.Get(reg, value, runtimekind.Key)
-	fmt.Fprintf(h, "runtimekind:%d:%s;", kind.Hash(), kind.String())
+	_, _ = h.WriteString("runtimekind:")
+	h.WriteUintDecimal(kind.Hash())
+	_ = h.WriteByte(':')
+	_, _ = h.WriteString(kind.String())
+	_ = h.WriteByte(';')
 	return h.Sum64()
 }
 
@@ -209,7 +248,7 @@ func (w *bodyDigestWriter) writeInstruction(body *wir.Body, inst wir.Instruction
 	inst.ExprSpan = wir.Span{}
 	inst.TargetSpan = wir.Span{}
 	inst.ContainerSpan = wir.Span{}
-	fmt.Fprintf(w.h, "inst:%#v;", inst)
+	fmt.Fprintf(&w.h, "inst:%#v;", inst)
 	w.writeOperand(body, "dst", inst.Dst)
 	w.writeOperand(body, "a", inst.A)
 	w.writeOperand(body, "b", inst.B)
