@@ -99,6 +99,13 @@ func (diagnosticDisplay) MissingMemberHelp(member string) string {
 	return "Narrow the receiver before the read, or add the member to every reachable receiver shape."
 }
 
+func (diagnosticDisplay) MissingMemberMethodHint(member string) string {
+	if member != "" {
+		return fmt.Sprintf("Did you mean `:%s()`?", member)
+	}
+	return "Did you mean to call the matching method with `:` syntax?"
+}
+
 func (d diagnosticDisplay) MemberNotCallableMessage(memberPath string, receiver, memberType typ.Type, member string) string {
 	if typ.AbsentOrTopLike(memberType) {
 		if memberPath != "" && memberPath != "receiver" {

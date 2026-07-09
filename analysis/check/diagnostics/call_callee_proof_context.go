@@ -30,7 +30,7 @@ func (ProofContext) DirectCallCallee(item judgment.Judgment, primary diagnostic.
 	help := display.DirectNotCallableHelp(name)
 	if detail.Kind == judgment.EvidenceDetailMemberMissing {
 		message = display.MissingMemberMessage(item.Actual.ProjectedType, detail.Field)
-		help = display.MissingMemberHelp(detail.Field)
+		help = missingMemberHelp(item.Actual.ProjectedType, detail.Field)
 	}
 	if detail.Kind == judgment.EvidenceDetailCalleeMayBeNil {
 		message = display.PossiblyNilCallTargetMessage(name)

@@ -511,6 +511,9 @@ func TestMemberDisplayMessagesUsePathWhenAvailable(t *testing.T) {
 	if got := display.MissingMemberHelp("send"); got != "Narrow the receiver before reading `send`, or add `send` to every reachable receiver shape." {
 		t.Fatalf("missingMemberHelp = %q", got)
 	}
+	if got := display.MissingMemberMethodHint("send"); got != "Did you mean `:send()`?" {
+		t.Fatalf("missingMemberMethodHint = %q", got)
+	}
 	if got := display.MemberTypeAtCallEvidence("client.send", typ.Number); got != "client.send has type number at call" {
 		t.Fatalf("memberTypeAtCallEvidence = %q", got)
 	}

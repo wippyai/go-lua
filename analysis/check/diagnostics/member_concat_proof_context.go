@@ -1,9 +1,13 @@
 package diagnostics
 
 import (
+	"strings"
+
+	"github.com/wippyai/go-lua/analysis/check/internal/callcontract"
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/check/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -34,7 +38,7 @@ func (ProofContext) MemberRead(item judgment.Judgment, primary diagnostic.Span) 
 	receiver := item.Actual.ProjectedType
 	return memberReadPresentation{
 		Message: display.MissingMemberMessage(receiver, detail.Field),
-		Help:    display.MissingMemberHelp(detail.Field),
+		Help:    missingMemberHelp(receiver, detail.Field),
 		Labels:  []diagnostic.Label{sourceLabel(primary, labelMemberRead)},
 		Evidence: []diagnostic.Evidence{
 			{
@@ -46,6 +50,32 @@ func (ProofContext) MemberRead(item judgment.Judgment, primary diagnostic.Span) 
 			},
 		},
 	}, true
+}
+
+func missingMemberHelp(receiver typ.Type, member string) string {
+	help := display.MissingMemberHelp(member)
+	if !missingMemberMatchesCallableMethod(receiver, member) {
+		return help
+	}
+	hint := display.MissingMemberMethodHint(member)
+	if hint == "" {
+		return help
+	}
+	if strings.TrimSpace(help) == "" {
+		return hint
+	}
+	return help + " " + hint
+}
+
+func missingMemberMatchesCallableMethod(receiver typ.Type, member string) bool {
+	if receiver == nil || member == "" {
+		return false
+	}
+	_, status, ok := callcontract.MemberCall(receiver, segment.Segment{
+		Kind: segment.SegmentField,
+		Name: member,
+	})
+	return ok && status == callcontract.MemberCallOK
 }
 
 func (ProofContext) ConcatOperand(item judgment.Judgment, primary diagnostic.Span) (concatOperandPresentation, bool) {

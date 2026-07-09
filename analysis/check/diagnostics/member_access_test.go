@@ -6,7 +6,9 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	internalreadmodel "github.com/wippyai/go-lua/analysis/check/internal/readmodel"
+	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestMemberCallPreservesRootPresenceGuardAcrossUnrelatedDynamicIndexWrite(t *testing.T) {
@@ -82,6 +84,51 @@ func TestMemberReadUsesShortCircuitRHSGuardEnvironment(t *testing.T) {
 	`)
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v, want RHS member reads narrowed by LHS type guard", diags)
+	}
+}
+
+func TestMemberReadMissingFieldHintsMatchingMethod(t *testing.T) {
+	receiver := typ.NewInterface("Error", []typ.Method{{
+		Name: "message",
+		Type: typ.Func().
+			Param("self", typ.Self).
+			Returns(typ.String).
+			Build(),
+	}})
+	detail := judgment.MemberMissingEvidenceDetail("message")
+	item := judgment.Judgment{
+		Code: judgment.CodeMemberRead,
+		Subject: judgment.NewSubjectRef(
+			"body",
+			judgment.SubjectExpression,
+			"member-read:err.message",
+		).WithLabel("err.message"),
+		Actual:  judgment.NewValueRef(0, receiver),
+		Verdict: judgment.VerdictRefuted,
+		Evidence: judgment.EvidenceChain{
+			{
+				Kind:   judgment.EvidenceAbstractFact,
+				Trust:  judgment.EvidenceTrustProven,
+				Detail: detail,
+			},
+			{
+				Kind:   judgment.EvidenceMissingProof,
+				Trust:  judgment.EvidenceTrustRefuted,
+				Detail: detail,
+			},
+		},
+	}
+	presentation, ok := NewProofContext().MemberRead(item, diagnostic.Span{
+		StartLine: 1,
+		StartCol:  10,
+		EndLine:   1,
+		EndCol:    21,
+	})
+	if !ok {
+		t.Fatal("MemberRead returned false")
+	}
+	if !strings.Contains(presentation.Help, "Did you mean `:message()`?") {
+		t.Fatalf("help = %q, want method-call hint", presentation.Help)
 	}
 }
 
