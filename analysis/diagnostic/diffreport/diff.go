@@ -3,6 +3,7 @@ package diffreport
 import (
 	"reflect"
 	"sort"
+	"strings"
 )
 
 // Report is the classified delta between a baseline diagnostic snapshot and a
@@ -38,8 +39,9 @@ func Compare(baseline, current []Record) Report {
 	curMatched := make([]bool, len(cur))
 	var report Report
 
-	matchExact(base, cur, baseMatched, curMatched, &report)
-	matchLineDrift(base, cur, baseMatched, curMatched, &report)
+	matchAnchored(base, cur, baseMatched, curMatched, &report)
+	matchLegacyExact(base, cur, baseMatched, curMatched, &report)
+	matchLegacyLineDrift(base, cur, baseMatched, curMatched, &report)
 
 	for i, record := range base {
 		if !baseMatched[i] {
@@ -65,48 +67,20 @@ func diagnosticRecords(records []Record) []Record {
 	return out
 }
 
-func matchExact(base, cur []Record, baseMatched, curMatched []bool, report *Report) {
-	baseBuckets := make(map[Identity][]int)
-	curBuckets := make(map[Identity][]int)
+func matchAnchored(base, cur []Record, baseMatched, curMatched []bool, report *Report) {
+	baseBuckets := make(map[anchoredIdentity][]int)
+	curBuckets := make(map[anchoredIdentity][]int)
 	for i, record := range base {
-		baseBuckets[Key(record)] = append(baseBuckets[Key(record)], i)
-	}
-	for i, record := range cur {
-		curBuckets[Key(record)] = append(curBuckets[Key(record)], i)
-	}
-	for _, key := range sortedIdentityKeys(baseBuckets, curBuckets) {
-		baseIndexes := baseBuckets[key]
-		curIndexes := curBuckets[key]
-		n := min(len(baseIndexes), len(curIndexes))
-		for i := 0; i < n; i++ {
-			baseIndex := baseIndexes[i]
-			curIndex := curIndexes[i]
-			baseMatched[baseIndex] = true
-			curMatched[curIndex] = true
-			if !recordsEquivalent(base[baseIndex], cur[curIndex]) {
-				report.Changed = append(report.Changed, Change{
-					Baseline: base[baseIndex],
-					Current:  cur[curIndex],
-				})
-			}
-		}
-	}
-}
-
-func matchLineDrift(base, cur []Record, baseMatched, curMatched []bool, report *Report) {
-	baseBuckets := make(map[driftIdentity][]int)
-	curBuckets := make(map[driftIdentity][]int)
-	for i, record := range base {
-		if !baseMatched[i] {
-			baseBuckets[driftKey(record)] = append(baseBuckets[driftKey(record)], i)
+		if key, ok := anchoredKey(record); ok {
+			baseBuckets[key] = append(baseBuckets[key], i)
 		}
 	}
 	for i, record := range cur {
-		if !curMatched[i] {
-			curBuckets[driftKey(record)] = append(curBuckets[driftKey(record)], i)
+		if key, ok := anchoredKey(record); ok {
+			curBuckets[key] = append(curBuckets[key], i)
 		}
 	}
-	for _, key := range sortedDriftKeys(baseBuckets, curBuckets) {
+	for _, key := range sortedAnchoredKeys(baseBuckets, curBuckets) {
 		baseIndexes := baseBuckets[key]
 		curIndexes := curBuckets[key]
 		n := min(len(baseIndexes), len(curIndexes))
@@ -123,6 +97,98 @@ func matchLineDrift(base, cur []Record, baseMatched, curMatched []bool, report *
 			}
 		}
 	}
+}
+
+func matchLegacyExact(base, cur []Record, baseMatched, curMatched []bool, report *Report) {
+	baseBuckets := make(map[Identity][]int)
+	curBuckets := make(map[Identity][]int)
+	for i, record := range base {
+		if baseMatched[i] {
+			continue
+		}
+		baseBuckets[Key(record)] = append(baseBuckets[Key(record)], i)
+	}
+	for i, record := range cur {
+		if curMatched[i] {
+			continue
+		}
+		curBuckets[Key(record)] = append(curBuckets[Key(record)], i)
+	}
+	for _, key := range sortedIdentityKeys(baseBuckets, curBuckets) {
+		baseIndexes := baseBuckets[key]
+		curIndexes := curBuckets[key]
+		for _, baseIndex := range baseIndexes {
+			if baseMatched[baseIndex] {
+				continue
+			}
+			curIndex, ok := nextLegacyCandidate(base[baseIndex], cur, curIndexes, curMatched)
+			if !ok {
+				continue
+			}
+			baseMatched[baseIndex] = true
+			curMatched[curIndex] = true
+			equivalent := recordsEquivalent(base[baseIndex], cur[curIndex])
+			if base[baseIndex].SubjectAnchor != "" || cur[curIndex].SubjectAnchor != "" {
+				equivalent = recordsEquivalentIgnoringAnchors(base[baseIndex], cur[curIndex])
+			}
+			if !equivalent {
+				report.Changed = append(report.Changed, Change{
+					Baseline: base[baseIndex],
+					Current:  cur[curIndex],
+				})
+			}
+		}
+	}
+}
+
+func matchLegacyLineDrift(base, cur []Record, baseMatched, curMatched []bool, report *Report) {
+	baseBuckets := make(map[driftIdentity][]int)
+	curBuckets := make(map[driftIdentity][]int)
+	for i, record := range base {
+		if !baseMatched[i] {
+			baseBuckets[driftKey(record)] = append(baseBuckets[driftKey(record)], i)
+		}
+	}
+	for i, record := range cur {
+		if !curMatched[i] {
+			curBuckets[driftKey(record)] = append(curBuckets[driftKey(record)], i)
+		}
+	}
+	for _, key := range sortedDriftKeys(baseBuckets, curBuckets) {
+		baseIndexes := baseBuckets[key]
+		curIndexes := curBuckets[key]
+		for _, baseIndex := range baseIndexes {
+			if baseMatched[baseIndex] {
+				continue
+			}
+			curIndex, ok := nextLegacyCandidate(base[baseIndex], cur, curIndexes, curMatched)
+			if !ok {
+				continue
+			}
+			baseMatched[baseIndex] = true
+			curMatched[curIndex] = true
+			if !recordsEquivalentIgnoringSpans(base[baseIndex], cur[curIndex]) {
+				report.Changed = append(report.Changed, Change{
+					Baseline: base[baseIndex],
+					Current:  cur[curIndex],
+				})
+			}
+		}
+	}
+}
+
+func nextLegacyCandidate(base Record, cur []Record, curIndexes []int, curMatched []bool) (int, bool) {
+	for _, curIndex := range curIndexes {
+		if curMatched[curIndex] || bothAnchored(base, cur[curIndex]) {
+			continue
+		}
+		return curIndex, true
+	}
+	return 0, false
+}
+
+func bothAnchored(a, b Record) bool {
+	return strings.TrimSpace(a.SubjectAnchor) != "" && strings.TrimSpace(b.SubjectAnchor) != ""
 }
 
 func sortedIdentityKeys(base, cur map[Identity][]int) []Identity {
@@ -151,6 +217,19 @@ func sortedDriftKeys(base, cur map[driftIdentity][]int) []driftIdentity {
 	return keys
 }
 
+func sortedAnchoredKeys(base, cur map[anchoredIdentity][]int) []anchoredIdentity {
+	keys := make([]anchoredIdentity, 0, len(base))
+	for key := range base {
+		if _, ok := cur[key]; ok {
+			keys = append(keys, key)
+		}
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return anchoredLess(keys[i], keys[j])
+	})
+	return keys
+}
+
 func recordsEquivalent(a, b Record) bool {
 	return reflect.DeepEqual(canonicalRecord(a, false), canonicalRecord(b, false))
 }
@@ -159,18 +238,27 @@ func recordsEquivalentIgnoringSpans(a, b Record) bool {
 	return reflect.DeepEqual(canonicalRecord(a, true), canonicalRecord(b, true))
 }
 
+func recordsEquivalentIgnoringAnchors(a, b Record) bool {
+	left := canonicalRecord(a, false)
+	right := canonicalRecord(b, false)
+	left.SubjectAnchor = ""
+	right.SubjectAnchor = ""
+	return reflect.DeepEqual(left, right)
+}
+
 type comparableRecord struct {
-	Kind     string
-	Scope    string
-	Entry    string
-	Code     string
-	Severity string
-	File     string
-	Span     Span
-	Message  string
-	Help     string
-	Evidence []Fact
-	Labels   []Label
+	Kind          string
+	Scope         string
+	Entry         string
+	Code          string
+	Severity      string
+	SubjectAnchor string
+	File          string
+	Span          Span
+	Message       string
+	Help          string
+	Evidence      []Fact
+	Labels        []Label
 }
 
 func canonicalRecord(r Record, ignoreSpans bool) comparableRecord {
@@ -187,18 +275,26 @@ func canonicalRecord(r Record, ignoreSpans bool) comparableRecord {
 		}
 	}
 	return comparableRecord{
-		Kind:     normalizedKind(r),
-		Scope:    scopeKey(r),
-		Entry:    entryKey(r),
-		Code:     r.Code,
-		Severity: r.Severity,
-		File:     fileKey(r),
-		Span:     span,
-		Message:  r.Message,
-		Help:     r.Help,
-		Evidence: evidence,
-		Labels:   labels,
+		Kind:          normalizedKind(r),
+		Scope:         scopeKey(r),
+		Entry:         entryKey(r),
+		Code:          r.Code,
+		Severity:      r.Severity,
+		SubjectAnchor: canonicalSubjectAnchor(r, ignoreSpans),
+		File:          fileKey(r),
+		Span:          span,
+		Message:       r.Message,
+		Help:          r.Help,
+		Evidence:      evidence,
+		Labels:        labels,
 	}
+}
+
+func canonicalSubjectAnchor(r Record, ignoreSpans bool) string {
+	if ignoreSpans {
+		return ""
+	}
+	return strings.TrimSpace(r.SubjectAnchor)
 }
 
 func sortReport(report *Report) {
@@ -291,4 +387,20 @@ func driftLess(a, b driftIdentity) bool {
 		return a.Code < b.Code
 	}
 	return a.Message < b.Message
+}
+
+func anchoredLess(a, b anchoredIdentity) bool {
+	if a.Scope != b.Scope {
+		return a.Scope < b.Scope
+	}
+	if a.Entry != b.Entry {
+		return a.Entry < b.Entry
+	}
+	if a.File != b.File {
+		return a.File < b.File
+	}
+	if a.Code != b.Code {
+		return a.Code < b.Code
+	}
+	return a.SubjectAnchor < b.SubjectAnchor
 }

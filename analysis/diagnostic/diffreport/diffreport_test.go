@@ -22,6 +22,37 @@ func TestCompareSuppressesPureLineShift(t *testing.T) {
 	assertReportCounts(t, report, 0, 0, 0)
 }
 
+func TestCompareMatchesSubjectAnchorBeforeSpan(t *testing.T) {
+	baseline := testRecord("suite-a", "main.lua", 10, 13, "type.call", "argument 1 is 42, not string")
+	baseline.SubjectAnchor = "module:main.lua|fn:main.lua|kind:call_arg|role:call.arg:0|ord:0"
+	current := testRecord("suite-a", "main.lua", 12, 13, "type.call", "argument 1 is 42, not string")
+	current.SubjectAnchor = baseline.SubjectAnchor
+
+	report := Compare([]Record{baseline}, []Record{current})
+	assertReportCounts(t, report, 0, 0, 0)
+}
+
+func TestCompareUsesLegacyFallbackWhenBaselineHasNoAnchor(t *testing.T) {
+	baseline := testRecord("suite-a", "main.lua", 10, 13, "type.call", "argument 1 is 42, not string")
+	current := testRecord("suite-a", "main.lua", 12, 13, "type.call", "argument 1 is 42, not string")
+	current.SubjectAnchor = "module:main.lua|fn:main.lua|kind:call_arg|role:call.arg:0|ord:0"
+
+	report := Compare([]Record{baseline}, []Record{current})
+	assertReportCounts(t, report, 0, 0, 0)
+}
+
+func TestCompareUsesLegacyFallbackInMixedAnchorSnapshot(t *testing.T) {
+	unanchoredBaseline := testRecord("suite-a", "main.lua", 10, 13, "type.call", "argument 1 is 42, not string")
+	anchoredCurrent := testRecord("suite-a", "main.lua", 12, 13, "type.call", "argument 1 is 42, not string")
+	anchoredCurrent.SubjectAnchor = "module:main.lua|fn:main.lua|kind:call_arg|role:call.arg:0|ord:0"
+	anchoredBaseline := testRecord("suite-a", "worker.lua", 4, 5, "type.return", "returned value is number, not string")
+	anchoredBaseline.SubjectAnchor = "module:worker.lua|fn:worker.lua|kind:return|role:return.value:0|ord:0"
+	alsoAnchoredCurrent := anchoredBaseline
+
+	report := Compare([]Record{unanchoredBaseline, anchoredBaseline}, []Record{anchoredCurrent, alsoAnchoredCurrent})
+	assertReportCounts(t, report, 0, 0, 0)
+}
+
 func TestCompareClassifiesSameSiteMessageChange(t *testing.T) {
 	baseline := []Record{testRecord("suite-a", "main.lua", 10, 13, "type.call", "argument 1 is 42, not string")}
 	current := []Record{testRecord("suite-a", "main.lua", 10, 13, "type.call", "argument 1 is integer, not string")}

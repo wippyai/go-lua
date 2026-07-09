@@ -8,17 +8,18 @@ import "strings"
 // external lint-harness baseline rows and are normalized into the same identity
 // model before comparison.
 type Record struct {
-	Kind     string `json:"kind"`
-	Suite    string `json:"suite,omitempty"`
-	Entry    string `json:"entry,omitempty"`
-	Status   string `json:"status,omitempty"`
-	Detail   string `json:"detail,omitempty"`
-	Code     string `json:"code,omitempty"`
-	Severity string `json:"severity,omitempty"`
-	File     string `json:"file,omitempty"`
-	Span     Span   `json:"span,omitempty"`
-	Message  string `json:"message,omitempty"`
-	Help     string `json:"help,omitempty"`
+	Kind          string `json:"kind"`
+	Suite         string `json:"suite,omitempty"`
+	Entry         string `json:"entry,omitempty"`
+	Status        string `json:"status,omitempty"`
+	Detail        string `json:"detail,omitempty"`
+	Code          string `json:"code,omitempty"`
+	Severity      string `json:"severity,omitempty"`
+	SubjectAnchor string `json:"subject_anchor,omitempty"`
+	File          string `json:"file,omitempty"`
+	Span          Span   `json:"span,omitempty"`
+	Message       string `json:"message,omitempty"`
+	Help          string `json:"help,omitempty"`
 
 	Evidence []Fact  `json:"evidence,omitempty"`
 	Labels   []Label `json:"labels,omitempty"`
@@ -76,6 +77,14 @@ type driftIdentity struct {
 	Message string
 }
 
+type anchoredIdentity struct {
+	Scope         string
+	Entry         string
+	File          string
+	Code          string
+	SubjectAnchor string
+}
+
 // Key returns the exact identity used for first-pass matching.
 func Key(r Record) Identity {
 	line, col := primaryStart(r)
@@ -98,6 +107,19 @@ func driftKey(r Record) driftIdentity {
 		Code:    r.Code,
 		Message: strings.TrimSpace(r.Message),
 	}
+}
+
+func anchoredKey(r Record) (anchoredIdentity, bool) {
+	if strings.TrimSpace(r.SubjectAnchor) == "" {
+		return anchoredIdentity{}, false
+	}
+	return anchoredIdentity{
+		Scope:         scopeKey(r),
+		Entry:         entryKey(r),
+		File:          fileKey(r),
+		Code:          r.Code,
+		SubjectAnchor: strings.TrimSpace(r.SubjectAnchor),
+	}, true
 }
 
 func diagnosticRecord(r Record) bool {
