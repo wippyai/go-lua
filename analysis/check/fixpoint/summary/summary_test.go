@@ -832,6 +832,86 @@ func TestReturnParamPathAliasesAreMustFacts(t *testing.T) {
 	}
 }
 
+func TestReturnFlowsAreMustFacts(t *testing.T) {
+	reg := standard.Registry()
+	memberPath := []segment.Segment{{Kind: segment.SegmentField, Name: "meta"}}
+	direct := ReturnFlow{ReturnIndex: 0, Kind: ReturnFlowParam, Param: 0}
+	member := ReturnFlow{ReturnIndex: 1, Kind: ReturnFlowParamMember, Param: 0, Path: memberPath}
+	left := Summary{
+		Returns:     []product.Value{product.Top(), product.Top()},
+		ReturnFlows: []ReturnFlow{member, direct},
+	}
+	right := Summary{
+		Returns:     []product.Value{product.Top(), product.Top()},
+		ReturnFlows: []ReturnFlow{direct},
+	}
+	withoutFlows := Summary{Returns: []product.Value{product.Top(), product.Top()}}
+
+	normalized := Normalize(reg, Summary{
+		Returns: []product.Value{product.Top(), product.Top()},
+		ReturnFlows: []ReturnFlow{
+			{ReturnIndex: -1, Kind: ReturnFlowParam, Param: 0},
+			{ReturnIndex: 2, Kind: ReturnFlowParamMember, Param: 0},
+			direct,
+			direct,
+			member,
+		},
+	})
+	if len(normalized.ReturnFlows) != 2 ||
+		normalized.ReturnFlows[0].ReturnIndex != 0 ||
+		normalized.ReturnFlows[1].ReturnIndex != 1 {
+		t.Fatalf("Normalize ReturnFlows = %#v, want sorted unique flows", normalized.ReturnFlows)
+	}
+	if len(normalized.ReturnFlows[1].Path) != 1 || normalized.ReturnFlows[1].Path[0].Name != "meta" {
+		t.Fatalf("Normalize ReturnFlows member path = %#v", normalized.ReturnFlows[1].Path)
+	}
+
+	conflict := Normalize(reg, Summary{
+		Returns: []product.Value{product.Top()},
+		ReturnFlows: []ReturnFlow{
+			direct,
+			{ReturnIndex: 0, Kind: ReturnFlowParam, Param: 1},
+		},
+	})
+	if len(conflict.ReturnFlows) != 0 {
+		t.Fatalf("Normalize kept conflicting ReturnFlows = %#v", conflict.ReturnFlows)
+	}
+
+	joined := Join(reg, left, right)
+	if len(joined.ReturnFlows) != 1 || !sameReturnFlowForTest(joined.ReturnFlows[0], direct) {
+		t.Fatalf("Join ReturnFlows = %#v, want only common must flow %#v", joined.ReturnFlows, direct)
+	}
+	widened := Widen(reg, left, right)
+	if len(widened.ReturnFlows) != 1 || !sameReturnFlowForTest(widened.ReturnFlows[0], direct) {
+		t.Fatalf("Widen ReturnFlows = %#v, want only common must flow %#v", widened.ReturnFlows, direct)
+	}
+	dropped := Join(reg, left, withoutFlows)
+	if len(dropped.ReturnFlows) != 0 {
+		t.Fatalf("Join kept branch-local ReturnFlows = %#v", dropped.ReturnFlows)
+	}
+	if !LessOrEq(reg, left, right) {
+		t.Fatalf("summary with more must ReturnFlows should be <= summary with fewer")
+	}
+	if LessOrEq(reg, right, left) {
+		t.Fatalf("summary with fewer must ReturnFlows should not be <= summary with more")
+	}
+	if !LessOrEq(reg, left, withoutFlows) || LessOrEq(reg, withoutFlows, left) {
+		t.Fatalf("ReturnFlows must use reverse-inclusion order")
+	}
+}
+
+func sameReturnFlowForTest(a, b ReturnFlow) bool {
+	if a.ReturnIndex != b.ReturnIndex || a.Kind != b.Kind || a.Param != b.Param || len(a.Path) != len(b.Path) {
+		return false
+	}
+	for i := range a.Path {
+		if a.Path[i] != b.Path[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func mustPlaceholderKey(t *testing.T, p path.Path) pathaddr.PlaceholderKey {
 	t.Helper()
 	got, ok := pathaddr.PlaceholderKeyFromPath(p)

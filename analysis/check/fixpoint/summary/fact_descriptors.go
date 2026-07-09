@@ -153,6 +153,27 @@ var summaryFactDescriptors = func() callboundary.BoundaryFactTable[SummarySlotOp
 				out.ReturnParamPathAliases = returnParamPathAliasLane.Join(prev.ReturnParamPathAliases, next.ReturnParamPathAliases)
 			},
 		}),
+		summarySlotDescriptor("ReturnFlows", []string{"ReturnFlows"}, SummarySlotOps{
+			empty: func(s Summary) bool { return len(s.ReturnFlows) == 0 },
+			assignClone: func(src Summary, dst *Summary) {
+				dst.ReturnFlows = returnFlowLane.Normalize(src.ReturnFlows)
+			},
+			normalizeOwned: func(_ *axis.Registry, s *Summary) {
+				s.ReturnFlows = returnFlowLane.NormalizeOwned(s.ReturnFlows)
+			},
+			equal: func(_ *axis.Registry, a, b Summary, _ bool) bool {
+				return returnFlowLane.Equal(a.ReturnFlows, b.ReturnFlows)
+			},
+			lessOrEq: func(_ *axis.Registry, a, b Summary) bool {
+				return returnFlowLane.LessOrEq(a.ReturnFlows, b.ReturnFlows)
+			},
+			assignJoin: func(_ *axis.Registry, a, b Summary, out *Summary) {
+				out.ReturnFlows = returnFlowLane.Join(a.ReturnFlows, b.ReturnFlows)
+			},
+			assignWiden: func(_ *axis.Registry, prev, next Summary, out *Summary) {
+				out.ReturnFlows = returnFlowLane.Widen(prev.ReturnFlows, next.ReturnFlows)
+			},
+		}),
 		summarySlotDescriptor("ParamSinkExposures", nil, SummarySlotOps{
 			empty:       func(s Summary) bool { return len(s.ParamSinkExposures) == 0 },
 			assignClone: func(src Summary, dst *Summary) { dst.ParamSinkExposures = cloneSlice(src.ParamSinkExposures) },

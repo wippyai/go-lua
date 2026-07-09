@@ -8,7 +8,7 @@ closed or negotiate before emitting a surface newer than the consumer supports.
 | --- | --- | --- | --- | --- |
 | Judgment IR | `judgment.JIRSchemaVersion` | v8 | Judgment code registry and exported judgment record shape. | A judgment code, code metadata, or exported judgment/evidence/subject field shape changes. |
 | Signature escape vocabulary | `signature.EscapeVocabVersion` | v1 | Signature `EscapeKind` labels and audited ownership capability labels synced with arena CallArgEscape/Ownership. | An escape/ownership label is added, removed, renamed, or changes boundary meaning. Requires joint cross-repo signoff per fence #1425. |
-| Boundary lane schema | `summary.BoundaryLaneSchemaVersion` | v3 | Summary descriptors, `NormalReturnFacts` descriptors, `CallOutcome` descriptors, and manifest wire-lane links. | A lane kind, slot/post-return classification, storage owner, or wire reference changes. |
+| Boundary lane schema | `summary.BoundaryLaneSchemaVersion` | v4 | Summary descriptors, `NormalReturnFacts` descriptors, `CallOutcome` descriptors, and manifest wire-lane links. | A lane kind, slot/post-return classification, storage owner, or wire reference changes. |
 
 ## Bump Discipline
 
@@ -34,3 +34,9 @@ constant + journal a D-entry`.
   wire lane lowers into the existing normal-return `EscapeEvents` and
   `StoreRelations` owner lanes, so descriptor wire references changed without
   adding new solver or call-boundary storage lanes.
+- D10: Bumped boundary lane schema to v4. Added the manifest
+  `OperationalEffects.returnFlows` wire lane for the closed phase-1 return-flow
+  relations `ReturnsParam` and `ReturnsParamMember`. This is additive:
+  legacy `paramRelations[].throughReturn` remains emitted for old readers.
+  Phase 2 container/element return-flow relations are intentionally not part of
+  this schema.

@@ -16,6 +16,7 @@ type Summary struct {
 	ParamMemberCallObligations      []ParamMemberCallObligation
 	ParamMemberReturnSlots          []ParamMemberReturnSlot
 	ReturnParamPathAliases          []ReturnParamPathAlias
+	ReturnFlows                     []ReturnFlow
 	ParamSinkExposures              []ParamSinkExposure
 	CapturedPathObligations         []CapturedPathObligation
 	NormalReturnParams              []product.Value

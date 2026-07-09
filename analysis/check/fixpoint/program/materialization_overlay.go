@@ -48,6 +48,10 @@ func materializedCoreProofChangesAffectMaterialization(reg *axis.Registry, befor
 				summary.Summary{ReturnParamPathAliases: next.ReturnParamPathAliases},
 			) ||
 			!summaryLaneEqualNormalized(reg,
+				summary.Summary{ReturnFlows: prev.ReturnFlows},
+				summary.Summary{ReturnFlows: next.ReturnFlows},
+			) ||
+			!summaryLaneEqualNormalized(reg,
 				summary.Summary{ParamSinkExposures: prev.ParamSinkExposures},
 				summary.Summary{ParamSinkExposures: next.ParamSinkExposures},
 			) ||
@@ -184,6 +188,14 @@ func overlayMaterializedSummaryProofsForResult(
 		summary.Summary{ReturnParamPathAliases: projected.ReturnParamPathAliases},
 	); ok {
 		next.ReturnParamPathAliases = aliases.ReturnParamPathAliases
+		changed = true
+	}
+	if flows, ok := overlayMaterializedMustSummaryLane(
+		reg,
+		summary.Summary{ReturnFlows: current.ReturnFlows},
+		summary.Summary{ReturnFlows: projected.ReturnFlows},
+	); ok {
+		next.ReturnFlows = flows.ReturnFlows
 		changed = true
 	}
 	if sinkExposures, ok := overlayMaterializedMaySummaryLane(

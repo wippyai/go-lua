@@ -9,6 +9,7 @@ import (
 	summaryprojection "github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/projectsummary"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -691,6 +692,53 @@ end`), body.Config{Registry: reg})
 
 	projectAssertReturnParamPathAlias(t, got, 0, pathdom.PathKey(".left.primary"), pathdom.PathKey("$0"))
 	projectAssertReturnParamPathAlias(t, got, 0, pathdom.PathKey(".right.primary"), pathdom.PathKey("$0"))
+}
+
+func TestFromResultProjectsReturnFlowParam(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function id(value)
+	return value
+end`), body.Config{Registry: reg})
+
+	got := summaryprojection.FromResult(result)
+
+	projectAssertReturnFlow(t, got, summary.ReturnFlow{
+		ReturnIndex: 0,
+		Kind:        summary.ReturnFlowParam,
+		Param:       0,
+	})
+}
+
+func TestFromResultProjectsReturnFlowParamMember(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function get_meta(row)
+	return row.meta
+end`), body.Config{Registry: reg})
+
+	got := summaryprojection.FromResult(result)
+
+	projectAssertReturnFlow(t, got, summary.ReturnFlow{
+		ReturnIndex: 0,
+		Kind:        summary.ReturnFlowParamMember,
+		Param:       0,
+		Path:        []segment.Segment{{Kind: segment.SegmentField, Name: "meta"}},
+	})
+}
+
+func TestFromResultDropsMixedDefaultOrReturnFlow(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function default_or(value, fallback)
+	return value or fallback
+end`), body.Config{Registry: reg})
+
+	got := summaryprojection.FromResult(result)
+
+	if len(got.ReturnFlows) != 0 {
+		t.Fatalf("ReturnFlows = %#v, want none for mixed default-or return", got.ReturnFlows)
+	}
 }
 
 func TestFromResultDoesNotProjectSharedLocalReturnAliasAfterFieldMutation(t *testing.T) {
@@ -1542,6 +1590,19 @@ func projectAssertReturnParamPathAlias(
 		member,
 		source,
 	)
+}
+
+func projectAssertReturnFlow(t *testing.T, got summary.Summary, want summary.ReturnFlow) {
+	t.Helper()
+	for _, flow := range got.ReturnFlows {
+		if flow.ReturnIndex != want.ReturnIndex || flow.Kind != want.Kind || flow.Param != want.Param {
+			continue
+		}
+		if segment.FormatSegments(flow.Path) == segment.FormatSegments(want.Path) {
+			return
+		}
+	}
+	t.Fatalf("return flows = %#v, want %#v", got.ReturnFlows, want)
 }
 
 func projectAssertNoReturnParamPathAlias(
