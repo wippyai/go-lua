@@ -259,6 +259,8 @@ func (t *decomposableUseTracker) classifyInstruction(inst wir.Instruction) bool 
 		return false
 	}
 	switch inst.Op {
+	case wir.OpNoop, wir.OpEntry, wir.OpExit:
+		return false
 	case wir.OpAssign, wir.OpClaim:
 		return t.classifyTransparentAssign(inst.Dst, inst.A)
 	case wir.OpStaticMemberWrite:
@@ -288,8 +290,38 @@ func (t *decomposableUseTracker) classifyInstruction(inst wir.Instruction) bool 
 	case wir.OpClosure:
 		return t.classifyResult(inst.Dst, t.operandRangeHasRootAlias(inst.List))
 	default:
-		return false
+		// An instruction kind with no explicit policy above is unclassified.
+		// Disqualify rather than assume safety whenever it touches a tracked
+		// alias; the exhaustiveness test keeps every wir opcode covered by an
+		// explicit case, so this branch only fires for a future opcode added
+		// without an accompanying decision here.
+		return t.disqualifyIf(t.instructionTouchesTrackedValue(inst))
 	}
+}
+
+// instructionTouchesTrackedValue reports whether any operand-bearing field of
+// inst references a tracked temp or root alias. It is the conservative
+// fallback used for instruction kinds without an explicit classification.
+func (t *decomposableUseTracker) instructionTouchesTrackedValue(inst wir.Instruction) bool {
+	if t.operandIsRootAlias(inst.Dst) || t.operandIsRootAlias(inst.A) || t.operandIsRootAlias(inst.B) {
+		return true
+	}
+	if t.operandRangeHasRootAlias(inst.List) || t.operandRangeHasRootAlias(inst.Results) {
+		return true
+	}
+	if t.tableEntriesHaveRootAlias(inst.TableEntries) {
+		return true
+	}
+	if t.operandIsRootAlias(inst.Call.Callee) || t.operandIsRootAlias(inst.Call.Receiver) {
+		return true
+	}
+	if inst.Check != 0 {
+		check := t.body.Check(inst.Check)
+		if t.pathIsExactRootAlias(check.Path) || t.pathIsExactRootAlias(check.OtherPath) {
+			return true
+		}
+	}
+	return false
 }
 
 func (t *decomposableUseTracker) disqualifyIf(disqualified bool) bool {
