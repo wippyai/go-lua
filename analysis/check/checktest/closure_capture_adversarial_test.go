@@ -148,6 +148,213 @@ return make()
 	}
 }
 
+func TestClosureCapturePreservesNestedLiteralFieldsForUnwrittenTable(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "plain closure body call argument",
+			src: `local function expect_string(v: string): string
+    return v
+end
+
+local AGENT_CONFIG = {
+    memory = { contract_id = "wippy.agent:memory" },
+}
+
+local function load_memory(): string
+    return expect_string(AGENT_CONFIG.memory.contract_id)
+end
+
+return load_memory()
+`,
+		},
+		{
+			name: "captured by sibling closure before call argument read",
+			src: `local function expect_string(v: string): string
+    return v
+end
+
+local AGENT_CONFIG = {
+    memory = { contract_id = "wippy.agent:memory" },
+}
+
+local function observe_config(): any
+    return AGENT_CONFIG.memory
+end
+
+local function load_memory(): string
+    observe_config()
+    return expect_string(AGENT_CONFIG.memory.contract_id)
+end
+
+return load_memory()
+`,
+		},
+		{
+			name: "returned closure call argument",
+			src: `local function expect_string(v: string): string
+    return v
+end
+
+local function make_loader(): () -> string
+    local AGENT_CONFIG = {
+        memory = { contract_id = "wippy.agent:memory" },
+    }
+
+    return function(): string
+        return expect_string(AGENT_CONFIG.memory.contract_id)
+    end
+end
+
+local load_memory = make_loader()
+return load_memory()
+`,
+		},
+		{
+			name: "returned closure after sibling capture",
+			src: `local function expect_string(v: string): string
+    return v
+end
+
+local function make_loader(): () -> string
+    local AGENT_CONFIG = {
+        memory = { contract_id = "wippy.agent:memory" },
+    }
+
+    local function observe_config(): any
+        return AGENT_CONFIG.memory
+    end
+
+    return function(): string
+        observe_config()
+        return expect_string(AGENT_CONFIG.memory.contract_id)
+    end
+end
+
+local load_memory = make_loader()
+return load_memory()
+`,
+		},
+		{
+			name: "read after escaping sibling callback capture",
+			src: `local function expect_string(v: string): string
+    return v
+end
+
+local scheduler = {}
+function scheduler.spawn(fn: () -> any): ()
+end
+
+local AGENT_CONFIG = {
+    memory = { contract_id = "wippy.agent:memory" },
+}
+
+scheduler.spawn(function(): any
+    return AGENT_CONFIG.memory
+end)
+
+local function load_memory(): string
+    return expect_string(AGENT_CONFIG.memory.contract_id)
+end
+
+return load_memory()
+`,
+		},
+		{
+			name: "returned closure after escaping sibling callback capture",
+			src: `local function expect_string(v: string): string
+    return v
+end
+
+local scheduler = {}
+function scheduler.spawn(fn: () -> any): ()
+end
+
+local function make_loader(): () -> string
+    local AGENT_CONFIG = {
+        memory = { contract_id = "wippy.agent:memory" },
+    }
+
+    scheduler.spawn(function(): any
+        return AGENT_CONFIG.memory
+    end)
+
+    return function(): string
+        return expect_string(AGENT_CONFIG.memory.contract_id)
+    end
+end
+
+local load_memory = make_loader()
+return load_memory()
+`,
+		},
+		{
+			name: "returned closure with widened intermediate table member",
+			src: `local function expect_string(v: string): string
+    return v
+end
+
+local function make_loader(): () -> string
+    local memory: table = { contract_id = "wippy.agent:memory" }
+    local AGENT_CONFIG = {
+        memory = memory,
+    }
+
+    return function(): string
+        return expect_string(AGENT_CONFIG.memory.contract_id)
+    end
+end
+
+local load_memory = make_loader()
+return load_memory()
+`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := Check(tc.src)
+			if len(result.Diagnostics) != 0 {
+				t.Fatalf("diagnostics = %#v, want none for nested literal field call argument", result.Diagnostics)
+			}
+		})
+	}
+
+	t.Run("module exported closure call argument", func(t *testing.T) {
+		contracts := CheckAndExport(`local M = {}
+
+function M.get(contract_id: string): any
+    return contract_id
+end
+
+return M
+`, "contracts")
+		if len(contracts.Errors) != 0 {
+			t.Fatalf("contracts diagnostics = %#v, want none", contracts.Errors)
+		}
+
+		agent := CheckAndExport(`local contract_module = require("contracts")
+
+local AGENT_CONFIG = {
+    memory = { contract_id = "wippy.agent:memory" },
+}
+
+local M = {}
+
+function M.load_memory(): any
+    return contract_module.get(AGENT_CONFIG.memory.contract_id)
+end
+
+return M
+`, "agent", WithModule("contracts", contracts))
+		if len(agent.Errors) != 0 {
+			t.Fatalf("agent diagnostics = %#v, want none for exported nested literal field call argument", agent.Errors)
+		}
+	})
+}
+
 func TestClosureCaptureCounterAccumulatorStaysClean(t *testing.T) {
 	result := Check(`type Buf = { n: number }
 local buf: Buf = { n = 0 }
