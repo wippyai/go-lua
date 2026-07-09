@@ -393,3 +393,34 @@ return f
 		}
 	}
 }
+
+func TestSoundnessFrameLocalAfterSelectProbe(t *testing.T) {
+	result := testutil.Check(`
+local channel = require("channel")
+
+type Message = { value: integer }
+
+local function route(ch: Channel<Message>): integer
+	local scratch = { value = 1 }
+	local selected = channel.select {
+		ch:case_receive(),
+	}
+	local out: integer = scratch.value
+	if selected.ok then
+		return out
+	end
+	return out
+end
+
+local out: integer = route(nil :: Channel<Message>)
+`, testutil.WithStdlib(), testutil.WithManifest("channel", testutil.ChannelManifest()), testutil.WithGlobals("channel"))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want clean select probe", result.Diagnostics)
+	}
+	plan := result.PlacementPlan()
+	for _, entry := range plan.Entries {
+		if entry.FrameLocal {
+			t.Fatalf("allocation reachable after select was marked frame-local: %#v", entry)
+		}
+	}
+}
