@@ -8,15 +8,19 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	internalhash "github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // NormalizedPayloadDigest returns a deterministic content digest for a summary
-// payload already normalized under reg.
+// payload. Its payload is normalized under reg and excludes metadata that
+// summary equality deliberately ignores.
 func NormalizedPayloadDigest(reg *axis.Registry, s Summary) Digest {
+	s = Normalize(reg, s)
+	// HeapKeySpace only re-interns heap facts for consumers. It is metadata and
+	// is intentionally excluded by summary equality.
+	s.HeapKeySpace = nil
 	w := summaryDigestWriter{h: internalhash.NewWriter(), reg: reg}
 	w.writeString("summary-payload-v1")
 	w.writeReflect(reflect.ValueOf(s))
@@ -53,17 +57,11 @@ func (w *summaryDigestWriter) writeString(value string) {
 }
 
 func (w *summaryDigestWriter) writeProduct(value product.Value) {
-	w.writeRaw("product-presence:")
-	w.writeRawInt(int64(product.PresenceOf(value)))
-	w.writeByte(';')
-	if t, ok := typevalue.TypeOf(w.reg, value); ok {
-		w.writeRaw("product-type:")
-		w.writeRawUint(typ.EqualityHash(t))
-		w.writeByte(':')
-		w.writeString(t.String())
-		return
-	}
-	w.writeRaw("product-fallback:")
+	// product.Hash is the canonical product encoding: it covers the normalized
+	// shape, presence, and every registered semantic axis used by product.Equal.
+	// Do not project a type from this value here; that would discard the other
+	// axes and let the digest drift from summary equality.
+	w.writeRaw("product:")
 	w.writeRawUint(product.Hash(w.reg, value))
 	w.writeByte(';')
 }
@@ -274,10 +272,18 @@ func compareDigestUints(a, b uint64) int {
 
 func (w *summaryDigestWriter) writeTableObject(object heapidentity.TableObject) {
 	w.writeString("heapidentity.TableObject")
+	w.writeString("bottom")
+	w.writeReflect(reflect.ValueOf(object.IsBottom()))
 	w.writeString("root")
 	w.writeReflect(reflect.ValueOf(object.Root()))
 	w.writeString("static-members")
 	w.writeReflect(reflect.ValueOf(object.StaticMembers()))
 	w.writeString("dynamic-index-facts")
 	w.writeReflect(reflect.ValueOf(object.DynamicIndexFacts()))
+	w.writeString("dynamic-index-facts-top")
+	w.writeReflect(reflect.ValueOf(object.DynamicIndexFactsTop()))
+	w.writeString("stable-shape")
+	w.writeReflect(reflect.ValueOf(object.StableShape()))
+	w.writeString("prefix-stable-shape")
+	w.writeReflect(reflect.ValueOf(object.PrefixStableShape()))
 }

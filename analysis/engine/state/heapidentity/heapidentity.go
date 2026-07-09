@@ -67,6 +67,9 @@ func NewOwnedStaticTableObject(root product.Value, staticMembers map[keyspace.Ke
 // Root returns the object's root product value.
 func (o TableObject) Root() product.Value { return o.root }
 
+// IsBottom reports whether this object is the unreachable heap-object value.
+func (o TableObject) IsBottom() bool { return o.bottom }
+
 // WithRoot returns object with its root value replaced, preserving finite
 // member lanes.
 func (o TableObject) WithRoot(root product.Value) TableObject {
@@ -213,6 +216,10 @@ func (o TableObject) DynamicIndexFact(key dynamicindex.Key) (dynamicindex.Fact, 
 func (o TableObject) DynamicIndexFacts() map[dynamicindex.Key]dynamicindex.Fact {
 	return dynamicindex.CloneMap(o.dynamicIndexFacts)
 }
+
+// DynamicIndexFactsTop reports whether dynamic-index facts are unknown rather
+// than represented by the finite map returned by DynamicIndexFacts.
+func (o TableObject) DynamicIndexFactsTop() bool { return o.dynamicIndexFactsTop }
 
 // StaticMemberSuffixKey returns the canonical heap static-member key for a
 // relative suffix. It intentionally encodes only the suffix segments so

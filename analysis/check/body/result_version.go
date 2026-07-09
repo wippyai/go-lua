@@ -10,9 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -152,28 +150,13 @@ func (w *bodyDigestWriter) writeProduct(label string, value product.Value) {
 
 func (w *bodyDigestWriter) stableProductHash(value product.Value) uint64 {
 	h := internalhash.NewWriter()
-	_, _ = h.WriteString("shape:")
-	h.WriteIntDecimal(int64(product.ShapeOf(value)))
-	_, _ = h.WriteString(";presence:")
-	h.WriteIntDecimal(int64(product.PresenceOf(value)))
-	_ = h.WriteByte(';')
-	reg := w.static.registry
-	if reg == nil {
-		return h.Sum64()
-	}
-	if t, ok := typevalue.TypeOf(reg, value); ok {
-		_, _ = h.WriteString("type:")
-		h.WriteUintDecimal(typ.EqualityHash(t))
-		_ = h.WriteByte(':')
-		_, _ = h.WriteString(t.String())
-		_ = h.WriteByte(';')
-		return h.Sum64()
-	}
-	kind := product.Get(reg, value, runtimekind.Key)
-	_, _ = h.WriteString("runtimekind:")
-	h.WriteUintDecimal(kind.Hash())
+	_, _ = h.WriteString("product:")
+	// product.Hash is the canonical product encoding used by product.Equal. It
+	// covers every semantic axis, including identity, escape, evidence, and
+	// refinements, so ResultVersion cannot project away consumed facts.
+	h.WriteUintDecimal(product.Hash(w.static.registry, value))
 	_ = h.WriteByte(':')
-	_, _ = h.WriteString(kind.String())
+	h.WriteIntDecimal(int64(product.ShapeOf(value)))
 	_ = h.WriteByte(';')
 	return h.Sum64()
 }

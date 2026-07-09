@@ -5,7 +5,11 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
@@ -18,6 +22,21 @@ func TestResultVersionCanonicalizesManifestOperationalEffectsAndTypestate(t *tes
 	right := resultVersionForManifest(t, resultVersionManifest(true))
 	if left != right {
 		t.Fatalf("semantically equivalent manifests produced result versions %d and %d", left, right)
+	}
+}
+
+func TestStableProductHashIncludesSemanticAxes(t *testing.T) {
+	reg := standard.Registry()
+	base := typevalue.NewCache().FromTypeWithWitness(reg, typ.NewArray(typ.String))
+	left := identityvalue.WithExact(reg, base, identity.LuaFunction(1))
+	right := identityvalue.WithExact(reg, base, identity.LuaFunction(2))
+	if product.Equal(reg, left, right) {
+		t.Fatal("identity variants unexpectedly compare equal")
+	}
+
+	w := newBodyDigestWriter(&Static{registry: reg})
+	if leftHash, rightHash := w.stableProductHash(left), w.stableProductHash(right); leftHash == rightHash {
+		t.Fatalf("identity variants share stable product hash %d", leftHash)
 	}
 }
 
