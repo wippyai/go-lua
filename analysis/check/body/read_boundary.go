@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
@@ -65,6 +66,21 @@ func (r *Result) SourceHasRuntimeValidation(source factflow.ValueSource) bool {
 	}
 	refinement, ok := r.facts.ExpressionRefinement(source.ExprRef)
 	return ok && refinement.Mode() == factflow.ExpressionRefinementRuntimeValidation
+}
+
+// SourceHasNonNilAssertion reports whether source is an expression refined by
+// an explicit non-nil assertion. Unlike runtime validations, this only proves
+// nilability; callers must not treat it as structural type evidence.
+func (r *Result) SourceHasNonNilAssertion(source factflow.ValueSource) bool {
+	if r == nil || r.registry == nil || !source.HasExpr || source.ExprRef == 0 {
+		return false
+	}
+	refinement, ok := r.facts.ExpressionRefinement(source.ExprRef)
+	if !ok {
+		return false
+	}
+	claim := product.Get(r.registry, refinement.Refinement(), assertion.Key)
+	return claim.Has(assertion.NonNilClaim)
 }
 
 func (r *Result) computeSourceValueAtBoundary(point cfg.Point, source factflow.ValueSource) (product.Value, bool) {

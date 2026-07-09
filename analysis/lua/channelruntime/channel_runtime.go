@@ -5,6 +5,7 @@ package channelruntime
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
@@ -35,7 +36,7 @@ func IsSelectCall(call *ast.FuncCallExpr, bindings *bind.Result) bool {
 	if !ok || field != selectName || callee.Symbol == 0 {
 		return false
 	}
-	return bindings.Name(callee.Symbol) == moduleName && symbolKind(bindings, callee.Symbol) == symbol.Global
+	return isChannelModuleSymbol(bindings, callee.Symbol)
 }
 
 // IsReceiveCaseCall reports whether call is a Channel<T>:case_receive() runtime
@@ -112,4 +113,15 @@ func symbolKind(bindings *bind.Result, id symbol.ID) symbol.Kind {
 		return symbol.Unknown
 	}
 	return kind
+}
+
+func isChannelModuleSymbol(bindings *bind.Result, id symbol.ID) bool {
+	if bindings == nil || id == 0 {
+		return false
+	}
+	if bindings.Name(id) == moduleName && symbolKind(bindings, id) == symbol.Global {
+		return true
+	}
+	modulePath, ok := moduleidentity.LocalRequireModulePath(bindings, id)
+	return ok && modulePath == moduleName
 }

@@ -25,6 +25,18 @@ local result = channel.select { ch:case_receive() }
 		}
 	})
 
+	t.Run("exact require alias", func(t *testing.T) {
+		call, bindings := mustSelectCall(t, `
+local channel = require("channel")
+type Message = {kind: string}
+local ch: Channel<Message>
+local result = channel.select { ch:case_receive() }
+`, "require")
+		if !IsSelectCall(call, bindings) {
+			t.Fatalf("IsSelectCall rejected require(\"channel\") alias")
+		}
+	})
+
 	t.Run("rejects wrong shapes", func(t *testing.T) {
 		call, bindings := mustSelectCall(t, `
 type Message = {kind: string}

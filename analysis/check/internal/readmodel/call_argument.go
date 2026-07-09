@@ -460,6 +460,9 @@ func (r Reader) callArgumentSelectedValue(point cfg.Point, source factflow.Value
 	if value, ok := r.callArgumentSharperSourceBoundaryValue(point, source); ok {
 		return value, true
 	}
+	if value, ok := r.callArgumentNonNilAssertionSourceValue(point, source); ok {
+		return value, true
+	}
 	if p, ok := r.callArgumentExpressionPath(source); ok {
 		return r.callArgumentPathValue(point, source, p)
 	}
@@ -594,6 +597,13 @@ func (r Reader) callArgumentSharperSourceBoundaryValue(point cfg.Point, source f
 		}
 	}
 	return product.Value{}, false
+}
+
+func (r Reader) callArgumentNonNilAssertionSourceValue(point cfg.Point, source factflow.ValueSource) (product.Value, bool) {
+	if r.result == nil || !r.result.SourceHasNonNilAssertion(source) {
+		return product.Value{}, false
+	}
+	return r.result.SourceValueAtBoundary(point, source)
 }
 
 func (r Reader) callArgumentSourceBoundaryHasRuntimeOrTypeProof(point cfg.Point, source factflow.ValueSource) bool {

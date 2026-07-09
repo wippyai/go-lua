@@ -137,6 +137,77 @@ end
 	}
 }
 
+func TestCheckWippyRuntimeChannelRequireAliasSelectPreservesMessageData(t *testing.T) {
+	channelGeneric := runtimeModuleChannelGeneric()
+	selectResultType := typetable.NewRecord().
+		Field("channel", typ.Any).
+		Field("value", typ.Unknown).
+		Field("ok", typ.Boolean).
+		Build()
+	selectType := typ.Func().
+		Param("cases", typ.Any).
+		Returns(selectResultType).
+		Build()
+	channel := manifest.New("channel")
+	channel.DefineType("Channel", channelGeneric)
+	channel.SetExport(typ.NewInterface("channel", []typ.Method{
+		{Name: "select", Type: selectType},
+	}))
+
+	messageType := typetable.NewRecord().
+		Field("type", typ.String).
+		Field("data", typeexpr.Optional(typ.String)).
+		Build()
+	clientType := typ.NewInterface("websocket.Client", []typ.Method{
+		{Name: "send", Type: typ.Func().Param("self", typ.Self).Param("message", typ.String).Build()},
+		{Name: "channel", Type: typ.Func().Param("self", typ.Self).Returns(typ.Instantiate(channelGeneric, messageType)).Build()},
+	})
+	websocket := manifest.New("websocket")
+	websocket.SetExport(typetable.NewRecord().
+		Field("connect", typ.Func().Param("url", typ.String).Returns(clientType, typeexpr.Optional(typ.Any)).Build()).
+		Field("CLOSE_CODES", typetable.NewRecord().Field("NORMAL", typ.Number).Build()).
+		Build())
+	timeMod := timeAfterManifest(channelGeneric)
+	jsonMod := manifest.New("json")
+	jsonMod.SetExport(typetable.NewRecord().
+		Field("decode", typ.Func().Param("src", typ.String).Returns(typ.Any).Build()).
+		Build())
+
+	result := Check(`
+local websocket = require("websocket")
+local time = require("time")
+local channel = require("channel")
+local json = require("json")
+
+local function consume()
+    local client, err = websocket.connect("ws://localhost")
+    if err then
+        return false
+    end
+    local ch = client:channel()
+    local timeout = time.after("5s")
+    local result = channel.select {
+        ch:case_receive(),
+        timeout:case_receive(),
+    }
+    if result.channel == timeout then
+        return false
+    end
+    local msg = result.value
+    json.decode(msg.data!)
+    result = channel.select {
+        ch:case_receive(),
+        timeout:case_receive(),
+    }
+    json.decode(result.value.data!)
+    return true
+end
+`, WithStdlib(), WithManifest("channel", channel), WithManifest("websocket", websocket), WithManifest("time", timeMod), WithManifest("json", jsonMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want require(\"channel\") alias select to preserve websocket Message.data payload", result.Diagnostics)
+	}
+}
+
 func TestCheckTypedStringMapReadWithAnyKeyKeepsValueTypeAfterNilGuard(t *testing.T) {
 	result := Check(`
 type CaseStats = {
