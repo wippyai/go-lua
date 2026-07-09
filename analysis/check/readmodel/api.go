@@ -55,6 +55,7 @@ type Reader interface {
 	ForEachAlwaysTrueGuard(func(AlwaysTrueGuard) bool) bool
 	ForEachInvariantLoopRead(func(InvariantLoopRead) bool) bool
 	ForEachSplitBirthDiscriminant(func(SplitBirthDiscriminant) bool) bool
+	ForEachClosureCapture(func(ClosureCapture) bool) bool
 	DominatingTruthyBranchForPath(cfg.Point, BranchCheck) (DominatingBranchProof, bool)
 	DominatingBranchCheckForPath(cfg.Point, BranchCheck, func(BranchCheck, bool) bool) (DominatingBranchProof, bool)
 }
@@ -188,6 +189,38 @@ type SplitBirthPayloadWrite struct {
 	Point cfg.Point
 	Label string
 	Span  SourceSpan
+}
+
+const ClosureCaptureSchemaVersion = 1
+
+// ClosureCapture is the codegen-facing solved export for one captured symbol at
+// a closure creation site.
+type ClosureCapture struct {
+	SchemaVersion int
+	Point         cfg.Point
+	Function      uint64
+	CaptureIndex  int
+	Symbol        uint64
+	Name          string
+	Path          path.Path
+	Policy        string
+
+	Value product.Value
+
+	Type    typ.Type
+	HasType bool
+
+	Shape       typ.Type
+	HasShape    bool
+	StableShape bool
+
+	Nilable         bool
+	NilabilityKnown bool
+
+	Placement    placement.Value
+	HasPlacement bool
+	Identity     identity.ID
+	HasIdentity  bool
 }
 
 // DominatingBranchProof is the readmodel view of a prior branch edge that

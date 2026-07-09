@@ -61,6 +61,7 @@ type AlwaysTrueGuard = readapi.AlwaysTrueGuard
 type InvariantLoopRead = readapi.InvariantLoopRead
 type SplitBirthDiscriminant = readapi.SplitBirthDiscriminant
 type SplitBirthPayloadWrite = readapi.SplitBirthPayloadWrite
+type ClosureCapture = readapi.ClosureCapture
 
 func New(result *body.Result) Reader {
 	return Reader{result: result, typeValues: result.TypeValues()}

@@ -647,6 +647,31 @@ func (r *Result) DirectCaptures(fn *ast.FunctionExpr) []bind.Capture {
 	return r.bindings.DirectCaptures(fn)
 }
 
+// SymbolHasWrite reports whether ordinary assignment syntax writes id anywhere
+// in the bound program. Local declaration initializers are not writes.
+func (r *Result) SymbolHasWrite(id symbol.ID) bool {
+	if r == nil || id == 0 {
+		return false
+	}
+	if r.wir != nil {
+		info, ok := r.wir.SymbolInfo(path.SymbolID(id))
+		if ok {
+			return info.HasWrite
+		}
+	}
+	return r.bindings != nil && r.bindings.HasWrite(id)
+}
+
+// SymbolStaticType returns the stable root type inferred or declared for id
+// during WIR lowering.
+func (r *Result) SymbolStaticType(id symbol.ID) (typ.Type, bool) {
+	if r == nil || id == 0 || r.symbolTypes == nil {
+		return nil, false
+	}
+	t, ok := r.symbolTypes[id]
+	return t, ok && t != nil
+}
+
 // WithFunctionResults returns result after replacing its materialized nested
 // function results. Program-level fixed-point materialization owns population;
 // body analysis itself runs exactly one body.
