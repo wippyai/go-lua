@@ -2,11 +2,14 @@ package program
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/check/internal/staticmemberwitness"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -18,7 +21,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -282,7 +287,11 @@ func (s *closureCaptureSeeder) apply(
 		value := s.capturedEntryValue(capture.Captured, fullValue, degrade)
 		if contextEntryValueUseful(s.reg, value) {
 			entry = entry.WriteValue(s.reg, slot, value)
-			if !degrade {
+			if degrade {
+				if updated, ok := seedInvariantHeapObjectsForValue(s.reg, s.caller, entry, fullValue); ok {
+					entry = updated
+				}
+			} else {
 				if updated, ok := seedEntryHeapObjectsForValue(s.reg, s.caller, entry, value); ok {
 					entry = updated
 				}
@@ -332,6 +341,10 @@ func (s *closureCaptureSeeder) capturedEntryValue(sym symbol.ID, full product.Va
 	}
 	if s.readInvariant != nil {
 		if invariant, ok := s.readInvariant(sym); ok && contextEntryValueUseful(s.reg, invariant) {
+			if id, ok := identityvalue.ExactID(s.reg, full); ok && !identityvalue.HasExact(s.reg, invariant) {
+				invariant = identityvalue.WithExact(s.reg, invariant, id)
+			}
+			invariant = s.withInvariantHeapStaticMemberWitness(full, invariant)
 			return invariant
 		}
 	}
@@ -408,7 +421,7 @@ func (s *closureCaptureSeeder) seedCapturedPathEvidence(capture bind.Capture, en
 			if degrade && !captureInvariantStaticMemberValue(s.reg, value) {
 				continue
 			}
-			if degrade && !captureDirectStaticMemberPath(s.ks, pathKey) {
+			if degrade && !captureEscapedInvariantStaticMemberPath(s.reg, s.ks, pathKey, value) {
 				continue
 			}
 			rebased, ok := rebaseCapturedPathKey(pathKey, captures)
@@ -468,6 +481,194 @@ func captureDirectStaticMemberPath(ks *keyspace.KeySpace, pathKey pathdom.PathKe
 	}
 	segments, ok := ks.SegmentsView(key)
 	return ok && len(segments) == 1
+}
+
+func captureEscapedInvariantStaticMemberPath(reg *axis.Registry, ks *keyspace.KeySpace, pathKey pathdom.PathKey, value product.Value) bool {
+	if captureDirectStaticMemberPath(ks, pathKey) {
+		return true
+	}
+	return captureNestedScalarInvariantStaticMemberValue(reg, value)
+}
+
+func captureNestedScalarInvariantStaticMemberValue(reg *axis.Registry, value product.Value) bool {
+	t, ok := typevalue.TypeOf(reg, value)
+	if !ok || t == nil {
+		return false
+	}
+	switch tt := unwrap.Annotated(t).(type) {
+	case *typ.Literal:
+		return tt.Base == kind.String
+	default:
+		return typ.TypeEquals(tt, typ.String)
+	}
+}
+
+type captureInvariantHeapMember struct {
+	suffix []segment.Segment
+	value  product.Value
+}
+
+func (s *closureCaptureSeeder) withInvariantHeapStaticMemberWitness(full, invariant product.Value) product.Value {
+	if s == nil || s.reg == nil || s.ks == nil {
+		return invariant
+	}
+	id, ok := identityvalue.ExactID(s.reg, full)
+	if !ok {
+		return invariant
+	}
+	members := s.invariantHeapStaticMembers(id)
+	if len(members) == 0 {
+		return invariant
+	}
+
+	builder := staticmemberwitness.NewBuilder()
+	for _, member := range members {
+		t, ok := typevalue.TypeOf(s.reg, member.value)
+		if !ok || t == nil {
+			continue
+		}
+		builder.Add(member.suffix, t)
+	}
+	witness, ok := builder.Build()
+	if !ok || witness == nil {
+		return invariant
+	}
+	if existing, ok := typevalue.TypeOf(s.reg, invariant); ok && existing != nil {
+		if merged, mergedOK := typetable.OverlayRecordMembers(existing, witness); mergedOK {
+			witness = merged
+		} else if typetable.IsLike(existing) {
+			witness = typeexpr.Intersection(existing, witness)
+		} else {
+			return invariant
+		}
+		if typ.SameNodeOrRecursiveIdentityEqual(existing, witness) {
+			return invariant
+		}
+	}
+	return typevalue.WithWitness(s.reg, invariant, witness)
+}
+
+func (s *closureCaptureSeeder) invariantHeapStaticMembers(root identity.ID) []captureInvariantHeapMember {
+	var out []captureInvariantHeapMember
+	s.collectInvariantHeapStaticMembers(root, nil, make(map[identity.ID]struct{}), &out)
+	return out
+}
+
+func (s *closureCaptureSeeder) collectInvariantHeapStaticMembers(
+	id identity.ID,
+	prefix []segment.Segment,
+	active map[identity.ID]struct{},
+	out *[]captureInvariantHeapMember,
+) bool {
+	if s == nil || s.reg == nil || s.ks == nil || id == (identity.ID{}) || out == nil {
+		return false
+	}
+	if _, ok := active[id]; ok {
+		return false
+	}
+	active[id] = struct{}{}
+	defer delete(active, id)
+
+	object := s.caller.ReadHeapTableObject(s.reg, id)
+	if heapidentity.ObjectDomain(s.reg).Equal(object, heapidentity.BottomObject(s.reg)) {
+		return false
+	}
+	seen := false
+	for key, value := range object.StaticMembers() {
+		if product.Equal(s.reg, value, product.Bottom(s.reg)) {
+			continue
+		}
+		segments, ok := s.ks.SuffixSegmentsView(key)
+		if !ok || len(segments) == 0 {
+			continue
+		}
+		suffix := appendCaptureInvariantSegments(prefix, segments)
+		if captureNestedScalarInvariantStaticMemberValue(s.reg, value) {
+			*out = append(*out, captureInvariantHeapMember{
+				suffix: suffix,
+				value:  value,
+			})
+			seen = true
+			continue
+		}
+		childID, ok := identityvalue.ExactID(s.reg, value)
+		if !ok {
+			continue
+		}
+		if s.collectInvariantHeapStaticMembers(childID, suffix, active, out) {
+			seen = true
+		}
+	}
+	return seen
+}
+
+func appendCaptureInvariantSegments(prefix, suffix []segment.Segment) []segment.Segment {
+	if len(prefix) == 0 {
+		return append([]segment.Segment(nil), suffix...)
+	}
+	out := make([]segment.Segment, 0, len(prefix)+len(suffix))
+	out = append(out, prefix...)
+	out = append(out, suffix...)
+	return out
+}
+
+func seedInvariantHeapObjectsForValue(reg *axis.Registry, caller state.State, entry state.State, value product.Value) (state.State, bool) {
+	id, ok := identityvalue.ExactID(reg, value)
+	if !ok {
+		return entry, false
+	}
+	return seedInvariantHeapObject(reg, caller, entry, id, make(map[identity.ID]bool), make(map[identity.ID]struct{}))
+}
+
+func seedInvariantHeapObject(
+	reg *axis.Registry,
+	caller state.State,
+	entry state.State,
+	id identity.ID,
+	memo map[identity.ID]bool,
+	active map[identity.ID]struct{},
+) (state.State, bool) {
+	if id == (identity.ID{}) {
+		return entry, false
+	}
+	if hasInvariant, ok := memo[id]; ok {
+		return entry, hasInvariant
+	}
+	if _, ok := active[id]; ok {
+		return entry, false
+	}
+	active[id] = struct{}{}
+	defer delete(active, id)
+
+	object := caller.ReadHeapTableObject(reg, id)
+	if heapidentity.ObjectDomain(reg).Equal(object, heapidentity.BottomObject(reg)) {
+		memo[id] = false
+		return entry, false
+	}
+
+	out := entry
+	staticMembers := make(map[keyspace.Key]product.Value)
+	for key, value := range object.StaticMembers() {
+		if captureNestedScalarInvariantStaticMemberValue(reg, value) {
+			staticMembers[key] = value
+			continue
+		}
+		childID, ok := identityvalue.ExactID(reg, value)
+		if !ok {
+			continue
+		}
+		var copied bool
+		out, copied = seedInvariantHeapObject(reg, caller, out, childID, memo, active)
+		if copied {
+			staticMembers[key] = value
+		}
+	}
+	if len(staticMembers) == 0 {
+		memo[id] = false
+		return entry, false
+	}
+	memo[id] = true
+	return out.WriteHeapTableObject(reg, id, heapidentity.NewOwnedStaticTableObject(object.Root(), staticMembers)), true
 }
 
 func (s *closureCaptureSeeder) captureHasDirectNonFunctionInvariantMember(capture bind.Capture) bool {

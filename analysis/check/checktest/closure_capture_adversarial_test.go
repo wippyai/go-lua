@@ -355,6 +355,34 @@ return M
 	})
 }
 
+func TestClosureCaptureNestedLiteralFieldInvalidatesAfterWrite(t *testing.T) {
+	result := Check(`local function expect_string(v: string): string
+    return v
+end
+
+local function make_loader(): () -> string
+    local memory: table = { contract_id = "wippy.agent:memory" }
+    local AGENT_CONFIG = {
+        memory = memory,
+    }
+
+    return function(): string
+        AGENT_CONFIG.memory.contract_id = 42
+        return expect_string(AGENT_CONFIG.memory.contract_id)
+    end
+end
+
+local load_memory = make_loader()
+return load_memory()
+`)
+	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallArgType)
+	if !strings.Contains(diag.Message, "AGENT_CONFIG.memory.contract_id") ||
+		(!strings.Contains(diag.Message, "not string") &&
+			!strings.Contains(diag.Message, "comes from any/unknown")) {
+		t.Fatalf("diagnostic = %#v, want nested member write to invalidate string proof", diag)
+	}
+}
+
 func TestClosureCaptureCounterAccumulatorStaysClean(t *testing.T) {
 	result := Check(`type Buf = { n: number }
 local buf: Buf = { n = 0 }
