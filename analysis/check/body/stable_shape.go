@@ -10,12 +10,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
@@ -387,7 +389,7 @@ func mergeStableShapeFieldType(existing, next typ.Type) typ.Type {
 	if next == nil || typ.TypeEquals(existing, next) {
 		return existing
 	}
-	return next
+	return typeexpr.Union(existing, next)
 }
 
 func stableShapeFactContainsMember(fact StableShapeFact, name string) bool {
@@ -519,6 +521,10 @@ func (r *Result) futurePrefixKillingMutationReachable(point cfg.Point, id identi
 		if !r.PointCanReach(point, candidate) {
 			continue
 		}
+		if r.callSiteReferencesIdentityAt(candidate, id, receiver) &&
+			r.callMayStructurallyMutateIdentity(candidate, id, receiver) {
+			return true
+		}
 		if r.prefixKillingMutationKind(candidate, id, receiver, fields) != prefixMutationNone {
 			return true
 		}
@@ -542,7 +548,7 @@ func (r *Result) prefixKillingMutationKind(point cfg.Point, id identity.ID, rece
 			if !ok {
 				return prefixMutationUnknown
 			}
-			if _, inPrefix := fields[name]; inPrefix {
+			if _, inPrefix := fields[name]; inPrefix && !r.pathBeforeBoundaryHasStackLocalIdentity(point, target.Parent(), id) {
 				return prefixMutationStaticPrefixWrite
 			}
 			return prefixMutationNone
@@ -561,10 +567,126 @@ func (r *Result) prefixKillingMutationKind(point cfg.Point, id identity.ID, rece
 			return prefixMutationUnknown
 		}
 	}
-	if r.callMayStructurallyMutateIdentity(point, id, receiver) {
-		return prefixMutationUnknown
+	if kind, ok := r.callPrefixMutationKind(point, id, receiver, fields); ok {
+		return kind
 	}
 	return prefixMutationNone
+}
+
+func (r *Result) callPrefixMutationKind(point cfg.Point, id identity.ID, receiver pathdom.Path, fields map[string]struct{}) (prefixMutationKind, bool) {
+	if r == nil || !r.callSiteExists(point) {
+		return prefixMutationNone, false
+	}
+	outcome, hasOutcome := r.CallOutcomeAt(point)
+	if !hasOutcome {
+		if r.callMayStructurallyMutateIdentity(point, id, receiver) {
+			return prefixMutationUnknown, true
+		}
+		return prefixMutationNone, true
+	}
+	if !receiver.IsEmpty() && r.callOutcomeHasCovariantExposureForTargetAt(point, outcome, receiver) {
+		return prefixMutationUnknown, true
+	}
+	if !r.callOutcomeHasExactGuardInvalidationSummaryAt(point, outcome, true) || CallOutcomeHasGlobalGuardInvalidation(outcome) {
+		if r.callMayStructurallyMutateIdentity(point, id, receiver) {
+			return prefixMutationUnknown, true
+		}
+		return prefixMutationNone, true
+	}
+	invalidations, ok := r.callOutcomeGuardInvalidationPathsAt(point, outcome)
+	if !ok {
+		return prefixMutationUnknown, true
+	}
+	for _, invalidation := range invalidations {
+		if invalidation.RootRebinding {
+			if r.pathBeforeBoundaryHasIdentity(point, invalidation.Path, id) {
+				return prefixMutationUnknown, true
+			}
+			continue
+		}
+		name, targets := r.callInvalidationStaticMemberName(point, id, invalidation.Path)
+		if !targets {
+			continue
+		}
+		if name == "" || !invalidation.PreserveStructuralWitness {
+			return prefixMutationUnknown, true
+		}
+		if r.callStaticMemberExistedBefore(point, id, invalidation.Path) {
+			return prefixMutationUnknown, true
+		}
+		if !r.callOutcomeHasStaticMemberDeltaAt(point, outcome, invalidation.Path) &&
+			!r.callOutcomeHasConcreteStaticMemberFactAt(point, outcome, invalidation.Path) {
+			return prefixMutationUnknown, true
+		}
+	}
+	return prefixMutationNone, true
+}
+
+func (r *Result) callInvalidationStaticMemberName(point cfg.Point, id identity.ID, target pathdom.Path) (string, bool) {
+	if target.IsEmpty() {
+		return "", false
+	}
+	if len(target.Segments) == 0 {
+		return "", r.pathBeforeBoundaryHasIdentity(point, target, id)
+	}
+	if !r.pathBeforeBoundaryHasIdentity(point, target.Parent(), id) {
+		return "", false
+	}
+	name, ok := staticMemberWriteName(target)
+	if !ok {
+		return "", true
+	}
+	return name, true
+}
+
+func (r *Result) callStaticMemberExistedBefore(point cfg.Point, id identity.ID, target pathdom.Path) bool {
+	if r == nil || len(target.Segments) == 0 {
+		return false
+	}
+	before, ok := r.StateAt(point)
+	if !ok {
+		return false
+	}
+	object := before.ReadHeapTableObject(r.registry, id)
+	key, ok := heapidentity.StaticMemberSuffixKey(r.KeySpace(), target.Segments[len(target.Segments)-1:])
+	if !ok {
+		return false
+	}
+	_, ok = object.StaticMember(key)
+	return ok
+}
+
+func (r *Result) callOutcomeHasStaticMemberDeltaAt(point cfg.Point, outcome callpayload.CallOutcome, target pathdom.Path) bool {
+	site, ok := r.CallSiteView(point)
+	if !ok {
+		return false
+	}
+	bindings := r.callGuardCallBindings(site)
+	for _, fact := range outcome.NormalReturnFacts.PathStaticMemberDeltas {
+		substituted, ok := fact.Path.Substitute(bindings)
+		if ok && substituted.Equal(target) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Result) callOutcomeHasConcreteStaticMemberFactAt(point cfg.Point, outcome callpayload.CallOutcome, target pathdom.Path) bool {
+	site, ok := r.CallSiteView(point)
+	if !ok {
+		return false
+	}
+	bindings := r.callGuardCallBindings(site)
+	for _, fact := range outcome.NormalReturnFacts.PathStaticMembers {
+		if fact.Path.IsPlaceholder() {
+			continue
+		}
+		substituted, ok := fact.Path.Substitute(bindings)
+		if ok && substituted.Equal(target) {
+			return true
+		}
+	}
+	return false
 }
 
 func staticMemberWriteName(target pathdom.Path) (string, bool) {
@@ -625,6 +747,38 @@ func (r *Result) callMayStructurallyMutateIdentity(point cfg.Point, id identity.
 	return r.CallMayInvalidateTrackedPath(point, receiver)
 }
 
+func (r *Result) callSiteReferencesIdentityAt(point cfg.Point, id identity.ID, receiver pathdom.Path) bool {
+	if r == nil || id == (identity.ID{}) {
+		return false
+	}
+	site, ok := r.CallSiteView(point)
+	if !ok {
+		return false
+	}
+	references := func(p pathdom.Path) bool {
+		if p.IsEmpty() {
+			return false
+		}
+		if !receiver.IsEmpty() && receiver.Overlaps(p) {
+			return true
+		}
+		return r.pathBeforeBoundaryHasIdentity(point, p, id)
+	}
+	if receiverPath, ok := site.ReceiverPath(); ok && references(receiverPath) {
+		return true
+	}
+	found := false
+	site.ForEachArgumentSource(func(_ int, source factflow.ValueSource) bool {
+		argPath, ok := r.valueSourcePath(source)
+		if ok && references(argPath) {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
 func (r *Result) pathBeforeBoundaryHasIdentity(point cfg.Point, p pathdom.Path, id identity.ID) bool {
 	if p.IsEmpty() || id == (identity.ID{}) {
 		return false
@@ -635,4 +789,12 @@ func (r *Result) pathBeforeBoundaryHasIdentity(point cfg.Point, p pathdom.Path, 
 	}
 	got, ok := identityvalue.ExactID(r.registry, value)
 	return ok && got == id
+}
+
+func (r *Result) pathBeforeBoundaryHasStackLocalIdentity(point cfg.Point, p pathdom.Path, id identity.ID) bool {
+	if !r.pathBeforeBoundaryHasIdentity(point, p, id) {
+		return false
+	}
+	value, ok := r.PathValueBeforeBoundary(point, p)
+	return ok && r.ValueHasStackLocalExactIdentity(point, value)
 }

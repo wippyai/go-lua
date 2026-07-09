@@ -3,6 +3,7 @@ package body
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/type/kind"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -41,6 +42,9 @@ func (r *Result) InferredReplacementAccepted(point cfg.Point, target OrdinaryAss
 	if typ.TypeEquals(actual, typ.Nil) {
 		return true
 	}
+	if target.RetypeAllowed && scalarRetypeReplacementAccepted(expected, actual) {
+		return true
+	}
 	if inferredNumericReplacementAccepted(expected, actual) {
 		return true
 	}
@@ -53,6 +57,37 @@ func (r *Result) InferredReplacementAccepted(point cfg.Point, target OrdinaryAss
 		return inferredRecordReplacementAccepted(actual, localExclusive)
 	}
 	return false
+}
+
+func scalarRetypeReplacementAccepted(expected, actual typ.Type) bool {
+	return scalarRetypeType(expected) && scalarRetypeType(actual)
+}
+
+func scalarRetypeType(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	switch tt := unwrap.Annotated(t).(type) {
+	case *typ.Optional:
+		return scalarRetypeType(tt.Inner)
+	case *typ.Union:
+		if len(tt.Members) == 0 {
+			return false
+		}
+		for _, member := range tt.Members {
+			if !scalarRetypeType(member) {
+				return false
+			}
+		}
+		return true
+	default:
+		switch tt.Kind() {
+		case kind.Nil, kind.Boolean, kind.Number, kind.Integer, kind.String, kind.Literal:
+			return true
+		default:
+			return false
+		}
+	}
 }
 
 func inferredNumericReplacementAccepted(expected, actual typ.Type) bool {

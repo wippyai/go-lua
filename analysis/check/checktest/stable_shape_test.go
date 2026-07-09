@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestStableShapePromotesIncrementallyBuiltPlainTable(t *testing.T) {
@@ -95,6 +96,132 @@ cfg.port = 80
 	requireShapeTier(t, fact, body.StableShapeTierPrefixStable)
 	requireShapeFieldSubtype(t, root, fact.Shape, "host", typ.String)
 	requireNoShapeField(t, fact.Shape, "port")
+}
+
+func TestPrefixStableExtendsAcrossManifestParamStaticAdds(t *testing.T) {
+	helpers := CheckAndExport(`
+local M = {}
+
+function M.fill(value: table)
+  value.port = 80
+  value.secure = true
+end
+
+return M
+`, "helpers")
+	requireNoDiagnostics(t, helpers.Errors)
+
+	result := Check(`
+local helpers = require("helpers")
+local cfg = {}
+cfg.host = "x"
+helpers.fill(cfg)
+local host = cfg.host
+local port = cfg.port
+local secure = cfg.secure
+`, WithModule("helpers", helpers))
+	requireNoDiagnostics(t, result.Diagnostics)
+	root := requireRootResult(t, result)
+
+	host := requireStableReadShape(t, root, "cfg.host")
+	requireShapeTier(t, host, body.StableShapeTierPrefixStable)
+	requireShapeFieldSubtype(t, root, host.Shape, "host", typ.String)
+	requireShapeFieldSubtype(t, root, host.Shape, "port", typ.Number)
+	requireShapeFieldSubtype(t, root, host.Shape, "secure", typ.Boolean)
+
+	port := requireStableReadShape(t, root, "cfg.port")
+	requireShapeTier(t, port, body.StableShapeTierPrefixStable)
+	secure := requireStableReadShape(t, root, "cfg.secure")
+	requireShapeTier(t, secure, body.StableShapeTierPrefixStable)
+}
+
+func TestPrefixStableOptionalAcrossManifestConditionalParamStaticAdd(t *testing.T) {
+	helpers := CheckAndExport(`
+local M = {}
+
+function M.maybe_fill(value: table, flag: boolean)
+  if flag then
+    value.port = 80
+  end
+end
+
+return M
+`, "helpers")
+	requireNoDiagnostics(t, helpers.Errors)
+
+	result := Check(`
+local helpers = require("helpers")
+local cfg = {}
+cfg.host = "x"
+helpers.maybe_fill(cfg, unknown == true)
+local host = cfg.host
+local port = cfg.port
+`, WithModule("helpers", helpers), WithGlobals("unknown"))
+	requireNoDiagnostics(t, result.Diagnostics)
+	root := requireRootResult(t, result)
+
+	host := requireStableReadShape(t, root, "cfg.host")
+	requireShapeTier(t, host, body.StableShapeTierPrefixStable)
+	requireShapeFieldSubtype(t, root, host.Shape, "host", typ.String)
+	requireShapeFieldSubtype(t, root, host.Shape, "port", typeexpr.Optional(typ.Number))
+
+	port := requireStableReadShape(t, root, "cfg.port")
+	requireShapeTier(t, port, body.StableShapeTierPrefixStable)
+	requireShapeFieldSubtype(t, root, port.Shape, "port", typeexpr.Optional(typ.Number))
+}
+
+func TestPrefixStableKilledAcrossManifestParamDelete(t *testing.T) {
+	helpers := CheckAndExport(`
+local M = {}
+
+function M.clear(value: table)
+  value.host = nil
+end
+
+return M
+`, "helpers")
+	requireNoDiagnostics(t, helpers.Errors)
+
+	result := Check(`
+local helpers = require("helpers")
+local cfg = {}
+cfg.host = "x"
+helpers.clear(cfg)
+local host = cfg.host
+`, WithModule("helpers", helpers))
+	requireNoDiagnostics(t, result.Diagnostics)
+	root := requireRootResult(t, result)
+	occ := requireStaticRead(t, root, "cfg.host")
+	if fact, ok := root.StableShapeForStaticMemberRead(occ); ok {
+		t.Fatalf("stable shape = %#v, want no fact after manifest helper deletes param field", fact)
+	}
+}
+
+func TestPrefixStableKilledAcrossManifestParamDynamicWrite(t *testing.T) {
+	helpers := CheckAndExport(`
+local M = {}
+
+function M.dynamic(value: table, key: string)
+  value[key] = 80
+end
+
+return M
+`, "helpers")
+	requireNoDiagnostics(t, helpers.Errors)
+
+	result := Check(`
+local helpers = require("helpers")
+local cfg = {}
+cfg.host = "x"
+helpers.dynamic(cfg, "port")
+local host = cfg.host
+`, WithModule("helpers", helpers))
+	requireNoDiagnostics(t, result.Diagnostics)
+	root := requireRootResult(t, result)
+	occ := requireStaticRead(t, root, "cfg.host")
+	if fact, ok := root.StableShapeForStaticMemberRead(occ); ok {
+		t.Fatalf("stable shape = %#v, want no fact after manifest helper writes dynamic param key", fact)
+	}
 }
 
 func TestManifestReturnFlowDefaultOrDoesNotPreserveShape(t *testing.T) {
@@ -301,19 +428,53 @@ local host = cfg.host
 	}
 }
 
-func TestPrefixStableRejectsRetypeThroughAlias(t *testing.T) {
+func TestPrefixStableKeepsRetypedFieldWithUnion(t *testing.T) {
 	result := Check(`
 local cfg = {}
-cfg.host = "x"
-local alias = cfg
-alias.host = unknown_value
-local host = cfg.host
-`, WithGlobals("unknown_value"))
+cfg.id = 1
+cfg.id = "x"
+local id = cfg.id
+`)
+	requireNoDiagnostics(t, result.Diagnostics)
 	root := requireRootResult(t, result)
-	occ := requireStaticRead(t, root, "cfg.host")
-	if fact, ok := root.StableShapeForStaticMemberRead(occ); ok {
-		t.Fatalf("stable shape = %#v, want no fact after alias retype", fact)
-	}
+	fact := requireStableReadShape(t, root, "cfg.id")
+	requireShapeTier(t, fact, body.StableShapeTierStableAfterPoint)
+	requireShapeFieldSubtype(t, root, fact.Shape, "id", typeexpr.Union(typ.Number, typ.String))
+}
+
+func TestPrefixStableKeepsRetypedFieldThroughAliasWithUnion(t *testing.T) {
+	// This is the former alias-retype soundness probe. The stable-shape license
+	// guarded here is the fixed field offset, not the old scalar type claim:
+	// alias.id writes the same static slot, so the offset survives while the
+	// field type widens to the union of observed writes.
+	result := Check(`
+local cfg = {}
+cfg.id = 1
+local alias = cfg
+alias.id = "x"
+local id = cfg.id
+`)
+	requireNoDiagnostics(t, result.Diagnostics)
+	root := requireRootResult(t, result)
+	fact := requireStableReadShape(t, root, "cfg.id")
+	requireShapeTier(t, fact, body.StableShapeTierStableAfterPoint)
+	requireShapeFieldSubtype(t, root, fact.Shape, "id", typeexpr.Union(typ.Number, typ.String))
+}
+
+func TestPrefixStableKeepsRetypedFieldUnionAcrossJoin(t *testing.T) {
+	result := Check(`
+local cfg = {}
+cfg.id = 1
+if unknown then
+  cfg.id = "x"
+end
+local id = cfg.id
+`, WithGlobals("unknown"))
+	requireNoDiagnostics(t, result.Diagnostics)
+	root := requireRootResult(t, result)
+	fact := requireStableReadShape(t, root, "cfg.id")
+	requireShapeTier(t, fact, body.StableShapeTierPrefixStable)
+	requireShapeFieldSubtype(t, root, fact.Shape, "id", typeexpr.Union(typ.Number, typ.String))
 }
 
 func TestPrefixStableRejectsDynamicKeyWrite(t *testing.T) {

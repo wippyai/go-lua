@@ -143,6 +143,14 @@ var operationalEffectsWireLanes = []operationalEffectsWireLane{
 		func(e *signature.OperationalEffects) *[]signature.PathStaticMemberFact { return &e.PathStaticMembers },
 		func(w *operationalEffectsWire) *[]pathStaticMemberWire { return &w.PathStaticMembers },
 		encodePathStaticMember, decodePathStaticMember, comparePathStaticMemberWire, nil),
+	wireLane("PathStaticMemberDeltas",
+		func(e *signature.OperationalEffects) *[]signature.PathStaticMemberDelta {
+			return &e.PathStaticMemberDeltas
+		},
+		func(w *operationalEffectsWire) *[]pathStaticMemberDeltaWire {
+			return &w.PathStaticMemberDeltas
+		},
+		encodePathStaticMemberDelta, decodePathStaticMemberDelta, comparePathStaticMemberDeltaWire, nil),
 	wireLane("PathInvalidations",
 		func(e *signature.OperationalEffects) *[]signature.PathInvalidation { return &e.PathInvalidations },
 		func(w *operationalEffectsWire) *[]pathInvalidationWire { return &w.PathInvalidations },
@@ -332,12 +340,45 @@ func decodePathStaticMember(w pathStaticMemberWire) (signature.PathStaticMemberF
 	return signature.PathStaticMemberFact{Path: p, Type: t}, nil
 }
 
+func encodePathStaticMemberDelta(delta signature.PathStaticMemberDelta) (pathStaticMemberDeltaWire, error) {
+	p, err := encodePlaceholderPath(delta.Path)
+	if err != nil {
+		return pathStaticMemberDeltaWire{}, fmt.Errorf("path static member delta: %w", err)
+	}
+	if delta.Type == nil {
+		return pathStaticMemberDeltaWire{}, fmt.Errorf("path static member delta type: missing")
+	}
+	t, err := encodeType(delta.Type)
+	if err != nil {
+		return pathStaticMemberDeltaWire{}, fmt.Errorf("path static member delta type: %w", err)
+	}
+	return pathStaticMemberDeltaWire{Path: p, Type: t, Required: delta.Required}, nil
+}
+
+func decodePathStaticMemberDelta(w pathStaticMemberDeltaWire) (signature.PathStaticMemberDelta, error) {
+	p, err := decodePlaceholderPath(w.Path)
+	if err != nil {
+		return signature.PathStaticMemberDelta{}, fmt.Errorf("path static member delta: %w", err)
+	}
+	t, err := decodeType(w.Type)
+	if err != nil {
+		return signature.PathStaticMemberDelta{}, fmt.Errorf("path static member delta type: %w", err)
+	}
+	if t == nil {
+		return signature.PathStaticMemberDelta{}, fmt.Errorf("path static member delta type: missing")
+	}
+	return signature.PathStaticMemberDelta{Path: p, Type: t, Required: w.Required}, nil
+}
+
 func encodePathInvalidation(invalidation signature.PathInvalidation) (pathInvalidationWire, error) {
 	p, err := encodePlaceholderPath(invalidation.Path)
 	if err != nil {
 		return pathInvalidationWire{}, fmt.Errorf("path invalidation: %w", err)
 	}
-	return pathInvalidationWire{Path: p}, nil
+	return pathInvalidationWire{
+		Path:                      p,
+		PreserveStructuralWitness: invalidation.PreserveStructuralWitness,
+	}, nil
 }
 
 func decodePathInvalidation(w pathInvalidationWire) (signature.PathInvalidation, error) {
@@ -345,7 +386,10 @@ func decodePathInvalidation(w pathInvalidationWire) (signature.PathInvalidation,
 	if err != nil {
 		return signature.PathInvalidation{}, fmt.Errorf("path invalidation: %w", err)
 	}
-	return signature.PathInvalidation{Path: p}, nil
+	return signature.PathInvalidation{
+		Path:                      p,
+		PreserveStructuralWitness: w.PreserveStructuralWitness,
+	}, nil
 }
 
 func encodeFrozenTable(frozen signature.FrozenTable) (frozenTableWire, error) {
@@ -608,8 +652,21 @@ func comparePathStaticMemberWire(a, b pathStaticMemberWire) int {
 	return strings.Compare(typeWireKey(a.Type), typeWireKey(b.Type))
 }
 
+func comparePathStaticMemberDeltaWire(a, b pathStaticMemberDeltaWire) int {
+	if c := comparePlaceholderPathWire(a.Path, b.Path); c != 0 {
+		return c
+	}
+	if c := compareBoolWire(a.Required, b.Required); c != 0 {
+		return c
+	}
+	return strings.Compare(typeWireKey(a.Type), typeWireKey(b.Type))
+}
+
 func comparePathInvalidationWire(a, b pathInvalidationWire) int {
-	return comparePlaceholderPathWire(a.Path, b.Path)
+	if c := comparePlaceholderPathWire(a.Path, b.Path); c != 0 {
+		return c
+	}
+	return compareBoolWire(a.PreserveStructuralWitness, b.PreserveStructuralWitness)
 }
 
 func compareDynamicIndexFactWire(a, b dynamicIndexFactWire) int {

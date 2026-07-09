@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -40,8 +41,14 @@ func applyPathAssignment(
 	if withOrigins, ok := invalidateRootOriginsForPathMutationAt(ctx.Registry, invalidated, resolver, ctx.Point, targetPath, false); ok {
 		invalidated = withOrigins
 	}
-	if withHeap, ok := invalidateHeapStaticMemberSubtreeAt(ctx.Registry, invalidated, resolver, ctx.Point, targetPath); ok {
-		invalidated = withHeap
+	if staticMemberAssignmentPreservesHeapSlot(ctx.Registry, facts, ctx.Point, targetPath, value) {
+		if withHeap, ok := invalidateHeapStaticMemberDescendantsAt(ctx.Registry, invalidated, resolver, ctx.Point, targetPath); ok {
+			invalidated = withHeap
+		}
+	} else {
+		if withHeap, ok := invalidateHeapStaticMemberSubtreeAt(ctx.Registry, invalidated, resolver, ctx.Point, targetPath); ok {
+			invalidated = withHeap
+		}
 	}
 	invalidated, ok = invalidatePathSubtreeAt(invalidated, resolver, ctx.Point, targetPath)
 	if !ok {
@@ -55,6 +62,19 @@ func applyPathAssignment(
 	written = addPathEqualityProofFromSource(resolver, facts, ctx.Point, written, targetPath, source)
 	written = applyUserLatticeAssignment(ctx, resolver, facts, in, written, targetPath, source)
 	return written, true
+}
+
+func staticMemberAssignmentPreservesHeapSlot(
+	reg *axis.Registry,
+	facts factflow.Facts,
+	point cfg.Point,
+	targetPath pathdom.Path,
+	value product.Value,
+) bool {
+	write, ok := facts.PathStaticMemberWrite(point)
+	return ok &&
+		write.TargetPathRef().Equal(targetPath) &&
+		!typevalue.HasOnlyNilType(reg, value)
 }
 
 type pathStaticMemberCopy struct {

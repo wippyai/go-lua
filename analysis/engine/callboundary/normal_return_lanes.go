@@ -13,6 +13,7 @@ const (
 	LanePathRefinements          NormalReturnFactLaneID = "path-refinements"
 	LanePersistentPathWrites     NormalReturnFactLaneID = "persistent-path-writes"
 	LanePathStaticMembers        NormalReturnFactLaneID = "path-static-members"
+	LanePathStaticMemberDeltas   NormalReturnFactLaneID = "path-static-member-deltas"
 	LanePathPresenceImplications NormalReturnFactLaneID = "path-presence-implications"
 	LanePathInvalidations        NormalReturnFactLaneID = "path-invalidations"
 	LaneDynamicIndexFacts        NormalReturnFactLaneID = "dynamic-index-facts"

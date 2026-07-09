@@ -657,6 +657,7 @@ func functionSummaryOperationalEffectsForArity(reg *axis.Registry, s summary.Sum
 		NormalReturnTypeRefinements:     typeRefinements,
 		PathPresenceImplications:        operationalPathPresenceImplications(reg, s.NormalReturnFacts, paramArity, returnArity),
 		PathStaticMembers:               operationalPathStaticMembers(s.NormalReturnFacts, paramArity, reg),
+		PathStaticMemberDeltas:          operationalPathStaticMemberDeltas(s.NormalReturnFacts, paramArity, reg),
 		PathInvalidations:               operationalPathInvalidations(s.NormalReturnFacts, paramArity),
 		BranchProofs:                    branchProofs,
 		DynamicIndexFacts:               operationalDynamicIndexFacts(s.NormalReturnFacts, paramArity, returnArity, reg),
@@ -1149,6 +1150,28 @@ func operationalPathStaticMembers(facts callboundary.NormalReturnFacts, arity in
 	return out
 }
 
+func operationalPathStaticMemberDeltas(facts callboundary.NormalReturnFacts, arity int, reg *axis.Registry) []signature.PathStaticMemberDelta {
+	if arity <= 0 || len(facts.PathStaticMemberDeltas) == 0 || reg == nil {
+		return nil
+	}
+	out := make([]signature.PathStaticMemberDelta, 0, len(facts.PathStaticMemberDeltas))
+	for _, delta := range facts.PathStaticMemberDeltas {
+		if !placeholderPathInArity(delta.Path, arity) {
+			continue
+		}
+		t, ok := typevalue.TypeOf(reg, delta.Value)
+		if !ok {
+			continue
+		}
+		out = append(out, signature.PathStaticMemberDelta{
+			Path:     delta.Path,
+			Type:     t,
+			Required: delta.Required,
+		})
+	}
+	return out
+}
+
 func operationalPathPresenceImplications(reg *axis.Registry, facts callboundary.NormalReturnFacts, paramArity, returnArity int) []signature.PathPresenceImplication {
 	if reg == nil || len(facts.PathPresenceImplications) == 0 {
 		return nil
@@ -1178,9 +1201,20 @@ func operationalPathPresenceImplications(reg *axis.Registry, facts callboundary.
 }
 
 func operationalPathInvalidations(facts callboundary.NormalReturnFacts, arity int) []signature.PathInvalidation {
-	return operationalArityFacts(facts.PathInvalidations, arity,
-		func(f callboundary.PathInvalidationFact) pathdom.Path { return f.Path },
-		func(p pathdom.Path) signature.PathInvalidation { return signature.PathInvalidation{Path: p} })
+	if len(facts.PathInvalidations) == 0 {
+		return nil
+	}
+	out := make([]signature.PathInvalidation, 0, len(facts.PathInvalidations))
+	for _, fact := range facts.PathInvalidations {
+		if !placeholderPathInArity(fact.Path, arity) {
+			continue
+		}
+		out = append(out, signature.PathInvalidation{
+			Path:                      fact.Path,
+			PreserveStructuralWitness: fact.PreserveStructuralWitness,
+		})
+	}
+	return out
 }
 
 func operationalBranchProofs(facts callboundary.NormalReturnFacts, paramArity, returnArity int) []signature.BranchProof {

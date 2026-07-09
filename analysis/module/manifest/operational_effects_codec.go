@@ -23,6 +23,7 @@ type operationalEffectsWire struct {
 	NormalReturnTypeRefinements     []pathTypeRefinementWire        `json:"normalReturnTypeRefinements,omitempty"`
 	PathPresenceImplications        []pathPresenceImplicationWire   `json:"pathPresenceImplications,omitempty"`
 	PathStaticMembers               []pathStaticMemberWire          `json:"pathStaticMembers,omitempty"`
+	PathStaticMemberDeltas          []pathStaticMemberDeltaWire     `json:"pathStaticMemberDeltas,omitempty"`
 	PathInvalidations               []pathInvalidationWire          `json:"pathInvalidations,omitempty"`
 	BranchProofs                    []branchProofWire               `json:"branchProofs,omitempty"`
 	DynamicIndexFacts               []dynamicIndexFactWire          `json:"dynamicIndexFacts,omitempty"`
@@ -75,8 +76,15 @@ type pathStaticMemberWire struct {
 	Type *typeWire            `json:"type,omitempty"`
 }
 
+type pathStaticMemberDeltaWire struct {
+	Path     *placeholderPathWire `json:"path,omitempty"`
+	Type     *typeWire            `json:"type,omitempty"`
+	Required bool                 `json:"required,omitempty"`
+}
+
 type pathInvalidationWire struct {
-	Path *placeholderPathWire `json:"path,omitempty"`
+	Path                      *placeholderPathWire `json:"path,omitempty"`
+	PreserveStructuralWitness bool                 `json:"preserveStructuralWitness,omitempty"`
 }
 
 type branchProofWire struct {

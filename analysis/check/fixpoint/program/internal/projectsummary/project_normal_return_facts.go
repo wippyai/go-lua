@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -21,6 +22,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit state.State) callboundary.NormalReturnFacts {
@@ -410,6 +412,121 @@ func projectAssignmentPathInvalidations(result ResultReader, params []path.Path)
 			ClearTarget:               clearTarget,
 		})
 	}
+	return out
+}
+
+func projectAssignmentPathStaticMemberDeltas(
+	reg *axis.Registry,
+	result ResultReader,
+	exit state.State,
+	params []path.Path,
+	boundary boundaryPathProjector,
+) []callboundary.PathStaticMemberDeltaFact {
+	if reg == nil || len(params) == 0 {
+		return nil
+	}
+	pathReader, hasPathAssignments := result.(pathAssignmentReader)
+	valueReader, hasValues := result.(returnSourceValueReader)
+	dynamicReader, hasDynamicWrites := result.(dynamicIndexWriteReader)
+	if !hasPathAssignments && !hasDynamicWrites {
+		return nil
+	}
+	graph := result.Graph()
+	if graph == nil {
+		return nil
+	}
+	noNormal, _ := result.(noNormalReturnReader)
+	unsafeParam := make(map[int]struct{})
+	deltas := make(map[path.PathKey]callboundary.PathStaticMemberDeltaFact)
+	for _, point := range graph.RPO() {
+		if noNormal != nil && noNormal.NoNormalReturn(point) {
+			continue
+		}
+		if hasDynamicWrites {
+			if write, ok := dynamicReader.DynamicIndexWrite(point); ok {
+				if placeholder, ok := parameterPlaceholderPath(write.TablePathRef(), params); ok {
+					unsafeParam[placeholder.PlaceholderIndex()] = struct{}{}
+				}
+			}
+		}
+		if !hasPathAssignments {
+			continue
+		}
+		assignment, ok := pathReader.PathAssignment(point)
+		if !ok {
+			continue
+		}
+		placeholder, ok := parameterPlaceholderPath(assignment.TargetPathRef(), params)
+		if !ok {
+			continue
+		}
+		param := placeholder.PlaceholderIndex()
+		if param < 0 || len(placeholder.Segments) != 1 {
+			unsafeParam[param] = struct{}{}
+			continue
+		}
+		value := product.Top()
+		if hasValues {
+			if sourceValue, ok := valueReader.SourceValueAtBoundary(point, assignment.Source()); ok {
+				value = sourceValue
+			}
+		}
+		if typevalue.HasOnlyNilType(reg, value) {
+			unsafeParam[param] = struct{}{}
+			continue
+		}
+		key := placeholder.Key()
+		if existing, ok := deltas[key]; ok {
+			if !pathStaticMemberDeltaSameType(reg, existing.Value, value) {
+				unsafeParam[param] = struct{}{}
+				continue
+			}
+			existing.Value = product.Join(reg, existing.Value, value)
+			deltas[key] = existing
+			continue
+		}
+		deltas[key] = callboundary.PathStaticMemberDeltaFact{
+			Path:  placeholder,
+			Value: portableBoundaryValue(reg, value),
+		}
+	}
+	if len(deltas) == 0 {
+		return nil
+	}
+	required := requiredPathStaticMemberPaths(reg, exit, boundary)
+	out := make([]callboundary.PathStaticMemberDeltaFact, 0, len(deltas))
+	for _, delta := range deltas {
+		if _, unsafe := unsafeParam[delta.Path.PlaceholderIndex()]; unsafe {
+			continue
+		}
+		delta.Required = required[delta.Path.Key()]
+		out = append(out, delta)
+	}
+	return out
+}
+
+func pathStaticMemberDeltaSameType(reg *axis.Registry, a, b product.Value) bool {
+	at, aok := typevalue.TypeOf(reg, a)
+	bt, bok := typevalue.TypeOf(reg, b)
+	if aok && bok {
+		return typ.TypeEquals(at, bt)
+	}
+	return product.Equal(reg, a, b)
+}
+
+func requiredPathStaticMemberPaths(reg *axis.Registry, exit state.State, boundary boundaryPathProjector) map[path.PathKey]bool {
+	out := make(map[path.PathKey]bool)
+	bottom := product.Bottom(reg)
+	exit.ForEachPathStaticMember(func(pathKey keyspace.Key, value product.Value) bool {
+		if product.Equal(reg, value, bottom) {
+			return true
+		}
+		target, ok := boundary.KeyspaceStatePath(pathKey)
+		if ok {
+			out[target.Key()] = true
+		}
+		return true
+	})
 	return out
 }
 

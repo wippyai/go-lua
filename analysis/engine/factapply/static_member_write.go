@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -17,6 +18,7 @@ func writeHeapTableStaticMember(
 	out state.State,
 	targetPath pathdom.Path,
 	value product.Value,
+	joinExisting bool,
 ) state.State {
 	if resolver == nil || len(targetPath.Segments) == 0 {
 		return out
@@ -36,11 +38,37 @@ func writeHeapTableStaticMember(
 	if heapidentity.ObjectDomain(ctx.Registry).Equal(object, heapidentity.BottomObject(ctx.Registry)) {
 		return out
 	}
-	object, ok = object.WithStaticMember(resolver.KeySpace(), suffix, value)
+	if joinExisting {
+		object, ok = object.WithJoinedStaticMember(ctx.Registry, resolver.KeySpace(), suffix, value)
+	} else {
+		object, ok = object.WithStaticMember(ctx.Registry, resolver.KeySpace(), suffix, value)
+	}
 	if !ok {
 		return out
 	}
 	return out.WriteHeapTableObject(ctx.Registry, id, object)
+}
+
+func heapStaticMemberWriteShouldJoinSlot(
+	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
+	facts factflow.Facts,
+	out state.State,
+	targetPath pathdom.Path,
+) bool {
+	if resolver == nil || len(targetPath.Segments) == 0 {
+		return false
+	}
+	if assignment, ok := facts.OrdinaryAssignment(ctx.Point); ok {
+		_, hasAnnotation := assignment.DeclaredAnnotationValue()
+		if assignment.DeclaredValueContracts() || assignment.DeclaredValueOverlays() || hasAnnotation {
+			return false
+		}
+	}
+	ownerPath := targetPath.Clone()
+	ownerPath.Segments = ownerPath.Segments[:len(ownerPath.Segments)-1]
+	owner, ok := resolvePathValueAt(ctx.Registry, resolver, ctx.Point, out, ownerPath, nil)
+	return ok && out.ValueHasStackLocalExactIdentity(ctx.Registry, owner.value)
 }
 
 func applyStoredStaticMemberPlacement(

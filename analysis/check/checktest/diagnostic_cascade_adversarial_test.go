@@ -84,7 +84,7 @@ end
 		DiagnosticCount: 1,
 		MessageContains: []string{
 			"narrow.x",
-			"number | string",
+			"\"boom\"",
 			"number",
 		},
 	})

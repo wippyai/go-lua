@@ -28,6 +28,7 @@ var normalReturnProjectLanes = callboundary.BindNormalReturnFactLanes("normal-re
 	callboundary.LanePathInvalidations:        projectNormalReturnPathInvalidations,
 	callboundary.LanePersistentPathWrites:     projectNormalReturnPersistentPathWrites,
 	callboundary.LanePathStaticMembers:        projectNormalReturnPathStaticMembers,
+	callboundary.LanePathStaticMemberDeltas:   projectNormalReturnPathStaticMemberDeltas,
 	callboundary.LanePathPresenceImplications: projectNormalReturnPathPresenceImplications,
 	callboundary.LaneDynamicIndexFacts:        projectNormalReturnDynamicIndexFacts,
 	callboundary.LaneKeyMemberships:           projectNormalReturnKeyMemberships,
@@ -125,6 +126,10 @@ func projectNormalReturnPathStaticMembers(ctx normalReturnProjectContext, out *c
 		})
 		return true
 	})
+}
+
+func projectNormalReturnPathStaticMemberDeltas(ctx normalReturnProjectContext, out *callboundary.NormalReturnFacts) {
+	out.PathStaticMemberDeltas = append(out.PathStaticMemberDeltas, projectAssignmentPathStaticMemberDeltas(ctx.reg, ctx.result, ctx.exit, ctx.params, ctx.boundary)...)
 }
 
 func projectNormalReturnPathPresenceImplications(ctx normalReturnProjectContext, out *callboundary.NormalReturnFacts) {

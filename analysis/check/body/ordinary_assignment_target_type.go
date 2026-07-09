@@ -23,6 +23,7 @@ type OrdinaryAssignmentTargetType struct {
 	HasValue           bool
 	Declared           bool
 	NilDeletionAllowed bool
+	RetypeAllowed      bool
 }
 
 func (r *Result) OrdinaryAssignmentTargetTypeAt(point cfg.Point, fact OrdinaryAssignmentFact) (OrdinaryAssignmentTargetType, bool) {
@@ -50,7 +51,9 @@ func (r *Result) OrdinaryAssignmentTargetTypeAt(point cfg.Point, fact OrdinaryAs
 	}
 	var projected typ.Type
 	nilDeletionAllowed := false
+	staticWrite := false
 	if seg, ok := staticAssignmentWriteSegment(attr); ok {
+		staticWrite = true
 		writeContainer := staticAssignmentWriteContainer(container, declaredContainer, hasDeclaredContainer)
 		t, ok := luatypeprojection.ApplyWriteSegments(writeContainer, []segment.Segment{seg})
 		if !ok {
@@ -103,7 +106,16 @@ func (r *Result) OrdinaryAssignmentTargetTypeAt(point cfg.Point, fact OrdinaryAs
 	out := r.ordinaryAssignmentTargetTypeResult(point, fact.Target, projected)
 	out.Declared = hasHardDeclared || hasSyntaxDeclared || hasDeclaredContainer
 	out.NilDeletionAllowed = nilDeletionAllowed
+	out.RetypeAllowed = staticWrite && !out.Declared && r.staticMemberRetypeAllowed(point, attr.Object)
 	return out, true
+}
+
+func (r *Result) staticMemberRetypeAllowed(point cfg.Point, container ast.Expr) bool {
+	if r == nil || container == nil {
+		return false
+	}
+	value, ok := r.ExpressionValueBeforeBoundary(point, container)
+	return ok && r.ValueHasStackLocalExactIdentity(point, value)
 }
 
 func inferredNilOnlyWriteTarget(t typ.Type) bool {

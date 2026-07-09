@@ -14,8 +14,9 @@ import (
 // substituting the callee's placeholder paths onto the caller's receiver and
 // arguments.
 type CallPathInvalidation struct {
-	Path          pathdom.Path
-	RootRebinding bool
+	Path                      pathdom.Path
+	RootRebinding             bool
+	PreserveStructuralWitness bool
 }
 
 // CallMayInvalidateTrackedPath reports whether the call at point may invalidate
@@ -288,18 +289,22 @@ func (r *Result) callOutcomeGuardInvalidationPaths(site factflow.CallSiteView, o
 	paramBindings := r.callGuardArgumentBindings(site)
 	callBindings := r.callGuardCallBindings(site)
 	var out []CallPathInvalidation
-	appendSubstituted := func(bindings []pathdom.Path, target pathdom.Path, rootRebinding bool) {
+	appendSubstituted := func(bindings []pathdom.Path, target pathdom.Path, rootRebinding, preserveStructuralWitness bool) {
 		substituted, ok := target.Substitute(bindings)
 		if !ok || substituted.IsEmpty() {
 			return
 		}
-		out = append(out, CallPathInvalidation{Path: substituted, RootRebinding: rootRebinding})
+		out = append(out, CallPathInvalidation{
+			Path:                      substituted,
+			RootRebinding:             rootRebinding,
+			PreserveStructuralWitness: preserveStructuralWitness,
+		})
 	}
 	for _, invalidation := range outcome.ParamPathInvalidations {
-		appendSubstituted(paramBindings, invalidation.Path, false)
+		appendSubstituted(paramBindings, invalidation.Path, false, invalidation.PreserveStructuralWitness)
 	}
 	for _, invalidation := range outcome.NormalReturnFacts.PathInvalidations {
-		appendSubstituted(callBindings, invalidation.Path, concreteRootInvalidation(invalidation.Path))
+		appendSubstituted(callBindings, invalidation.Path, concreteRootInvalidation(invalidation.Path), invalidation.PreserveStructuralWitness)
 	}
 	for _, delta := range outcome.NormalReturnFacts.EffectDeltas {
 		if delta.Kind != effectdelta.Mutation ||
@@ -307,7 +312,7 @@ func (r *Result) callOutcomeGuardInvalidationPaths(site factflow.CallSiteView, o
 			callboundary.IsPathStructuralPreservingInvalidationEffectSite(delta.Site) {
 			continue
 		}
-		appendSubstituted(callBindings, delta.Target, false)
+		appendSubstituted(callBindings, delta.Target, false, false)
 	}
 	return out, true
 }

@@ -191,23 +191,24 @@ func TestNormalReturnFactsFilterPathsIsLaneOwned(t *testing.T) {
 	match := pathdom.Path{Root: "ret[0]"}
 	other := pathdom.Path{Root: "ret[1]"}
 	in := NormalReturnFacts{
-		PathRefinements:      []PathValueFact{{Path: match}, {Path: other}},
-		PersistentPathWrites: []PathValueFact{{Path: match}},
-		PathStaticMembers:    []PathStaticMemberFact{{Path: match}, {Path: other}},
-		PathInvalidations:    []PathInvalidationFact{{Path: match}, {Path: other}},
-		DynamicIndexFacts:    []DynamicIndexFact{{Table: match}, {Table: other}},
-		KeyMemberships:       []KeyMembershipFact{{Key: other, Table: match}, {Key: other, Table: other}},
-		DynamicValueKeys:     []DynamicValueKeyMembershipFact{{Container: match, Table: other}, {Container: other, Table: other}},
-		DynamicAllValues:     []DynamicAllValueKeyMembershipFact{{Container: other, Table: match}, {Container: other, Table: other}},
-		BranchProofs:         []BranchProof{{Path: other, Other: match}, {Path: other, Other: other}},
-		ChannelSelects:       []ChannelSelectFact{{Result: match}, {Result: other}},
-		FrozenTables:         []FrozenTableFact{{Target: match}, {Target: other}},
-		EffectDeltas:         []EffectDelta{{Target: match}, {Target: other}},
-		EscapeEvents:         []EscapeEventFact{{Target: match}, {Target: other}},
-		StoreRelations:       []StoreRelationFact{{Source: other, Into: match}, {Source: other, Into: other}},
-		LifecycleFacts:       []LifecycleFact{{Target: match}, {Target: other}},
-		NumFloors:            []NumFloorFact{{Path: match}, {Path: other}},
-		RelConstraints:       []RelConstraintFact{{A: RelOperand{Path: other}, B: RelOperand{Path: match}, C: RelOperand{Path: other}}, {A: RelOperand{Path: other}, C: RelOperand{Path: other}}},
+		PathRefinements:        []PathValueFact{{Path: match}, {Path: other}},
+		PersistentPathWrites:   []PathValueFact{{Path: match}},
+		PathStaticMembers:      []PathStaticMemberFact{{Path: match}, {Path: other}},
+		PathStaticMemberDeltas: []PathStaticMemberDeltaFact{{Path: match}, {Path: other}},
+		PathInvalidations:      []PathInvalidationFact{{Path: match}, {Path: other}},
+		DynamicIndexFacts:      []DynamicIndexFact{{Table: match}, {Table: other}},
+		KeyMemberships:         []KeyMembershipFact{{Key: other, Table: match}, {Key: other, Table: other}},
+		DynamicValueKeys:       []DynamicValueKeyMembershipFact{{Container: match, Table: other}, {Container: other, Table: other}},
+		DynamicAllValues:       []DynamicAllValueKeyMembershipFact{{Container: other, Table: match}, {Container: other, Table: other}},
+		BranchProofs:           []BranchProof{{Path: other, Other: match}, {Path: other, Other: other}},
+		ChannelSelects:         []ChannelSelectFact{{Result: match}, {Result: other}},
+		FrozenTables:           []FrozenTableFact{{Target: match}, {Target: other}},
+		EffectDeltas:           []EffectDelta{{Target: match}, {Target: other}},
+		EscapeEvents:           []EscapeEventFact{{Target: match}, {Target: other}},
+		StoreRelations:         []StoreRelationFact{{Source: other, Into: match}, {Source: other, Into: other}},
+		LifecycleFacts:         []LifecycleFact{{Target: match}, {Target: other}},
+		NumFloors:              []NumFloorFact{{Path: match}, {Path: other}},
+		RelConstraints:         []RelConstraintFact{{A: RelOperand{Path: other}, B: RelOperand{Path: match}, C: RelOperand{Path: other}}, {A: RelOperand{Path: other}, C: RelOperand{Path: other}}},
 	}
 
 	got := in.FilterPaths(func(p pathdom.Path) bool {
@@ -223,6 +224,7 @@ func TestNormalReturnFactsFilterPathsIsLaneOwned(t *testing.T) {
 	assertLen("PathRefinements", len(got.PathRefinements), 1)
 	assertLen("PersistentPathWrites", len(got.PersistentPathWrites), 0)
 	assertLen("PathStaticMembers", len(got.PathStaticMembers), 1)
+	assertLen("PathStaticMemberDeltas", len(got.PathStaticMemberDeltas), 1)
 	assertLen("PathInvalidations", len(got.PathInvalidations), 1)
 	assertLen("DynamicIndexFacts", len(got.DynamicIndexFacts), 1)
 	assertLen("KeyMemberships", len(got.KeyMemberships), 1)
@@ -243,23 +245,24 @@ func TestNormalReturnFactsDropFactsTouchingPathsIsLaneOwned(t *testing.T) {
 	drop := pathdom.Path{Root: "ret[0]"}.Field("value")
 	keep := pathdom.Path{Root: "ret[1]"}.Field("value")
 	in := NormalReturnFacts{
-		PathRefinements:      []PathValueFact{{Path: drop}, {Path: keep}},
-		PersistentPathWrites: []PathValueFact{{Path: drop}},
-		PathStaticMembers:    []PathStaticMemberFact{{Path: drop}, {Path: keep}},
-		PathInvalidations:    []PathInvalidationFact{{Path: drop}, {Path: keep}},
-		DynamicIndexFacts:    []DynamicIndexFact{{Table: drop}, {Table: keep}},
-		KeyMemberships:       []KeyMembershipFact{{Key: keep, Table: drop}, {Key: keep, Table: keep}},
-		DynamicValueKeys:     []DynamicValueKeyMembershipFact{{Container: drop, Table: keep}, {Container: keep, Table: keep}},
-		DynamicAllValues:     []DynamicAllValueKeyMembershipFact{{Container: keep, Table: drop}, {Container: keep, Table: keep}},
-		BranchProofs:         []BranchProof{{Path: keep, Other: drop}, {Path: keep, Other: keep}},
-		ChannelSelects:       []ChannelSelectFact{{Result: drop}, {Result: keep}},
-		FrozenTables:         []FrozenTableFact{{Target: drop}, {Target: keep}},
-		EffectDeltas:         []EffectDelta{{Target: drop}, {Target: keep}},
-		EscapeEvents:         []EscapeEventFact{{Target: drop}, {Target: keep}},
-		StoreRelations:       []StoreRelationFact{{Source: keep, Into: drop}, {Source: keep, Into: keep}},
-		LifecycleFacts:       []LifecycleFact{{Target: drop}, {Target: keep}},
-		NumFloors:            []NumFloorFact{{Path: drop}, {Path: keep}},
-		RelConstraints:       []RelConstraintFact{{A: RelOperand{Path: keep}, B: RelOperand{Path: drop}, C: RelOperand{Path: keep}}, {A: RelOperand{Path: keep}, C: RelOperand{Path: keep}}},
+		PathRefinements:        []PathValueFact{{Path: drop}, {Path: keep}},
+		PersistentPathWrites:   []PathValueFact{{Path: drop}},
+		PathStaticMembers:      []PathStaticMemberFact{{Path: drop}, {Path: keep}},
+		PathStaticMemberDeltas: []PathStaticMemberDeltaFact{{Path: drop}, {Path: keep}},
+		PathInvalidations:      []PathInvalidationFact{{Path: drop}, {Path: keep}},
+		DynamicIndexFacts:      []DynamicIndexFact{{Table: drop}, {Table: keep}},
+		KeyMemberships:         []KeyMembershipFact{{Key: keep, Table: drop}, {Key: keep, Table: keep}},
+		DynamicValueKeys:       []DynamicValueKeyMembershipFact{{Container: drop, Table: keep}, {Container: keep, Table: keep}},
+		DynamicAllValues:       []DynamicAllValueKeyMembershipFact{{Container: keep, Table: drop}, {Container: keep, Table: keep}},
+		BranchProofs:           []BranchProof{{Path: keep, Other: drop}, {Path: keep, Other: keep}},
+		ChannelSelects:         []ChannelSelectFact{{Result: drop}, {Result: keep}},
+		FrozenTables:           []FrozenTableFact{{Target: drop}, {Target: keep}},
+		EffectDeltas:           []EffectDelta{{Target: drop}, {Target: keep}},
+		EscapeEvents:           []EscapeEventFact{{Target: drop}, {Target: keep}},
+		StoreRelations:         []StoreRelationFact{{Source: keep, Into: drop}, {Source: keep, Into: keep}},
+		LifecycleFacts:         []LifecycleFact{{Target: drop}, {Target: keep}},
+		NumFloors:              []NumFloorFact{{Path: drop}, {Path: keep}},
+		RelConstraints:         []RelConstraintFact{{A: RelOperand{Path: keep}, B: RelOperand{Path: drop}, C: RelOperand{Path: keep}}, {A: RelOperand{Path: keep}, C: RelOperand{Path: keep}}},
 	}
 
 	got := in.DropFactsTouchingPaths(func(p pathdom.Path) bool {
@@ -275,6 +278,7 @@ func TestNormalReturnFactsDropFactsTouchingPathsIsLaneOwned(t *testing.T) {
 	assertLen("PathRefinements", len(got.PathRefinements), 1)
 	assertLen("PersistentPathWrites", len(got.PersistentPathWrites), 1)
 	assertLen("PathStaticMembers", len(got.PathStaticMembers), 1)
+	assertLen("PathStaticMemberDeltas", len(got.PathStaticMemberDeltas), 1)
 	assertLen("PathInvalidations", len(got.PathInvalidations), 1)
 	assertLen("DynamicIndexFacts", len(got.DynamicIndexFacts), 1)
 	assertLen("KeyMemberships", len(got.KeyMemberships), 1)

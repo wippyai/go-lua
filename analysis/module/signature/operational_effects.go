@@ -19,6 +19,7 @@ type OperationalEffects struct {
 	NormalReturnTypeRefinements     []PathTypeRefinement
 	PathPresenceImplications        []PathPresenceImplication
 	PathStaticMembers               []PathStaticMemberFact
+	PathStaticMemberDeltas          []PathStaticMemberDelta
 	PathInvalidations               []PathInvalidation
 	BranchProofs                    []BranchProof
 	DynamicIndexFacts               []DynamicIndexFact
@@ -65,8 +66,15 @@ type PathStaticMemberFact struct {
 	Type typ.Type
 }
 
+type PathStaticMemberDelta struct {
+	Path     pathdom.Path
+	Type     typ.Type
+	Required bool
+}
+
 type PathInvalidation struct {
-	Path pathdom.Path
+	Path                      pathdom.Path
+	PreserveStructuralWitness bool
 }
 
 type BranchProofKind uint8
@@ -326,6 +334,10 @@ var operationalEffectLanes = []operationalEffectLane{
 		func(e OperationalEffects) []PathStaticMemberFact { return e.PathStaticMembers },
 		func(e *OperationalEffects, facts []PathStaticMemberFact) { e.PathStaticMembers = facts },
 		clonePathStaticMemberFacts, equalPathStaticMemberFacts, substitutePathStaticMemberTypes),
+	operationalEffectSliceLane("PathStaticMemberDeltas",
+		func(e OperationalEffects) []PathStaticMemberDelta { return e.PathStaticMemberDeltas },
+		func(e *OperationalEffects, facts []PathStaticMemberDelta) { e.PathStaticMemberDeltas = facts },
+		clonePathStaticMemberDeltas, equalPathStaticMemberDeltas, substitutePathStaticMemberDeltaTypes),
 	operationalEffectSliceLane("PathInvalidations",
 		func(e OperationalEffects) []PathInvalidation { return e.PathInvalidations },
 		func(e *OperationalEffects, facts []PathInvalidation) { e.PathInvalidations = facts },
@@ -434,13 +446,31 @@ func clonePathStaticMemberFacts(in []PathStaticMemberFact) []PathStaticMemberFac
 	return out
 }
 
+func clonePathStaticMemberDeltas(in []PathStaticMemberDelta) []PathStaticMemberDelta {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]PathStaticMemberDelta, len(in))
+	for i, fact := range in {
+		out[i] = PathStaticMemberDelta{
+			Path:     fact.Path.Clone(),
+			Type:     fact.Type,
+			Required: fact.Required,
+		}
+	}
+	return out
+}
+
 func clonePathInvalidations(in []PathInvalidation) []PathInvalidation {
 	if len(in) == 0 {
 		return nil
 	}
 	out := make([]PathInvalidation, len(in))
 	for i, fact := range in {
-		out[i] = PathInvalidation{Path: fact.Path.Clone()}
+		out[i] = PathInvalidation{
+			Path:                      fact.Path.Clone(),
+			PreserveStructuralWitness: fact.PreserveStructuralWitness,
+		}
 	}
 	return out
 }
@@ -671,9 +701,17 @@ func equalPathStaticMemberFacts(a, b []PathStaticMemberFact) bool {
 	})
 }
 
+func equalPathStaticMemberDeltas(a, b []PathStaticMemberDelta) bool {
+	return equalFactSlices(a, b, func(x, y PathStaticMemberDelta) bool {
+		return x.Path.Equal(y.Path) &&
+			x.Required == y.Required &&
+			typ.TypeEquals(x.Type, y.Type)
+	})
+}
+
 func equalPathInvalidations(a, b []PathInvalidation) bool {
 	return equalFactSlices(a, b, func(x, y PathInvalidation) bool {
-		return x.Path.Equal(y.Path)
+		return x.Path.Equal(y.Path) && x.PreserveStructuralWitness == y.PreserveStructuralWitness
 	})
 }
 

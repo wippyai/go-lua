@@ -236,6 +236,7 @@ var signatureNormalReturnLanes = callboundary.BindNormalReturnFactLanes(
 		callboundary.LanePathRefinements:          signatureNormalReturnNoop,
 		callboundary.LanePersistentPathWrites:     signatureNormalReturnNoop,
 		callboundary.LanePathStaticMembers:        signatureNormalReturnNoop,
+		callboundary.LanePathStaticMemberDeltas:   signatureNormalReturnNoop,
 		callboundary.LanePathPresenceImplications: signatureNormalReturnNoop,
 		callboundary.LanePathInvalidations:        signatureNormalReturnPathInvalidationLane,
 		callboundary.LaneDynamicIndexFacts:        signatureNormalReturnDynamicIndexLane,

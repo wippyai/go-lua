@@ -73,6 +73,7 @@ func TestOperationalEffectLaneRegistryOwnsTypeSubstitution(t *testing.T) {
 		"NormalReturnTypeRefinements": {},
 		"PathPresenceImplications":    {},
 		"PathStaticMembers":           {},
+		"PathStaticMemberDeltas":      {},
 		"DynamicIndexFacts":           {},
 		"ReturnAllocationTemplates":   {},
 	}

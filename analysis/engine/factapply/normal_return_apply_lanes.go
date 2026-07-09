@@ -4,6 +4,8 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
@@ -94,6 +96,10 @@ var normalReturnApplyLanes = callboundary.BindNormalReturnFactLanes("normal-retu
 	callboundary.LanePathStaticMembers: {
 		phase: normalReturnApplyAfterParamRelations,
 		apply: applyNormalReturnPathStaticMembers,
+	},
+	callboundary.LanePathStaticMemberDeltas: {
+		phase: normalReturnApplyAfterParamRelations,
+		apply: applyNormalReturnPathStaticMemberDeltas,
 	},
 	callboundary.LanePathPresenceImplications: {
 		phase: normalReturnApplyAfterParamRelations,
@@ -217,6 +223,7 @@ func applyNormalReturnPersistentPathWrites(ctx normalReturnApplyContext, out sta
 func applyNormalReturnPathStaticMembers(ctx normalReturnApplyContext, out state.State) state.State {
 	edit := out.Edit(ctx.node.Registry)
 	changed := false
+	var heapWrites []callboundary.PathStaticMemberFact
 	for _, fact := range ctx.normalFacts.PathStaticMembers {
 		targetPathKey, ok := ctx.pathKey(fact.Path)
 		if !ok {
@@ -225,11 +232,57 @@ func applyNormalReturnPathStaticMembers(ctx normalReturnApplyContext, out state.
 		if edit.WritePathStaticMember(ctx.resolver.KeySpace(), targetPathKey, fact.Value) {
 			changed = true
 		}
+		heapWrites = append(heapWrites, fact)
 	}
 	if changed {
-		return edit.DoneOn(out)
+		out = edit.DoneOn(out)
+	}
+	for _, fact := range heapWrites {
+		targetPath, ok := ctx.substitute(fact.Path)
+		if !ok {
+			continue
+		}
+		out = writeHeapTableStaticMember(ctx.node, ctx.resolver, out, targetPath, fact.Value, false)
 	}
 	return out
+}
+
+func applyNormalReturnPathStaticMemberDeltas(ctx normalReturnApplyContext, out state.State) state.State {
+	edit := out.Edit(ctx.node.Registry)
+	changed := false
+	type heapWrite struct {
+		path  pathdom.Path
+		value product.Value
+	}
+	var heapWrites []heapWrite
+	for _, fact := range ctx.normalFacts.PathStaticMemberDeltas {
+		targetPathKey, ok := ctx.pathKey(fact.Path)
+		if !ok {
+			continue
+		}
+		value := normalReturnStaticMemberDeltaValue(ctx.node.Registry, fact.Value, fact.Required)
+		if edit.WritePathStaticMember(ctx.resolver.KeySpace(), targetPathKey, value) {
+			changed = true
+		}
+		targetPath, ok := ctx.substitute(fact.Path)
+		if ok {
+			heapWrites = append(heapWrites, heapWrite{path: targetPath, value: value})
+		}
+	}
+	if changed {
+		out = edit.DoneOn(out)
+	}
+	for _, write := range heapWrites {
+		out = writeHeapTableStaticMember(ctx.node, ctx.resolver, out, write.path, write.value, false)
+	}
+	return out
+}
+
+func normalReturnStaticMemberDeltaValue(reg *axis.Registry, value product.Value, required bool) product.Value {
+	if required {
+		return value
+	}
+	return product.WithPresence(reg, value, presence.Maybe())
 }
 
 func applyNormalReturnPathPresenceImplications(ctx normalReturnApplyContext, out state.State) state.State {

@@ -51,7 +51,7 @@ func applyPathStaticMemberWrite(
 	}
 	out = edit.Done()
 	out = applyPathStaticMemberWriteContainerPresence(ctx, resolver, out, targetPath)
-	out = writeHeapTableStaticMember(ctx, resolver, out, targetPath, value)
+	out = writeHeapTableStaticMember(ctx, resolver, out, targetPath, value, heapStaticMemberWriteShouldJoinSlot(ctx, resolver, facts, out, targetPath))
 	out = applyStoredStaticMemberPlacement(ctx, resolver, out, targetPath, value)
 	out = addPathEqualityProofFromSource(resolver, facts, ctx.Point, out, targetPath, source)
 	return addPathEqualityProofFromDynamicIndexSource(ctx, resolver, facts, sources, read, in, out, targetPath, source)

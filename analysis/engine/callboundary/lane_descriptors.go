@@ -158,6 +158,14 @@ var normalReturnFactDescriptors = func() BoundaryFactTable[NormalReturnLaneOps] 
 				return f
 			},
 			func(f PathStaticMemberFact, keep NormalReturnPathPredicate) bool { return keepPath(f.Path, keep) }),
+		normalReturnLaneDescriptor(LanePathStaticMemberDeltas,
+			[]string{"PathStaticMemberDeltas"}, "PathStaticMemberDeltas",
+			func(f NormalReturnFacts) []PathStaticMemberDeltaFact { return f.PathStaticMemberDeltas },
+			func(f NormalReturnFacts, facts []PathStaticMemberDeltaFact) NormalReturnFacts {
+				f.PathStaticMemberDeltas = facts
+				return f
+			},
+			func(f PathStaticMemberDeltaFact, keep NormalReturnPathPredicate) bool { return keepPath(f.Path, keep) }),
 		normalReturnLaneDescriptor(LanePathPresenceImplications,
 			[]string{"PathPresenceImplications"}, "PathPresenceImplications",
 			func(f NormalReturnFacts) []PathPresenceImplicationFact { return f.PathPresenceImplications },

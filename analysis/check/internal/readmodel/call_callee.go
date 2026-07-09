@@ -62,6 +62,9 @@ func (r Reader) callCalleeReport(point cfg.Point, site factflow.CallSiteView) Ca
 				CallSpan:        sourceSpanFromFactflow(site.CallSpan()),
 			})
 		}
+		if r.memberCalleePathProvenCallable(point, site, receiverPath, member) {
+			return CallCalleeReport{}
+		}
 		if report, ok := r.missingMemberCalleeReport(point, site, receiverPath, member); ok {
 			return report
 		}
@@ -144,6 +147,31 @@ func (r Reader) impreciseMemberCalleeRequiresProof(point cfg.Point, site factflo
 func (r Reader) memberCalleeCallableFromDiscriminantProof(point cfg.Point, site factflow.CallSiteView) bool {
 	memberType, ok := r.discriminantProvenMemberType(point, site)
 	return ok && callcontract.TypeCallable(memberType)
+}
+
+func (r Reader) memberCalleePathProvenCallable(point cfg.Point, site factflow.CallSiteView, receiverPath path.Path, member segment.Segment) bool {
+	if r.result == nil {
+		return false
+	}
+	calleePath := site.CalleePathRef()
+	if calleePath.IsEmpty() {
+		calleePath = receiverPath.Append(member)
+	}
+	if calleePath.IsEmpty() {
+		return false
+	}
+	value, ok := r.result.PathValueAtBoundary(point, calleePath)
+	if !ok {
+		return false
+	}
+	t, ok := r.ValueTypeWithPresence(value)
+	if !ok || readapi.TypeIncludesNil(t) {
+		return false
+	}
+	if r.calleeValueProvenFunction(value) {
+		return true
+	}
+	return callcontract.TypeCallable(t)
 }
 
 func (r Reader) memberCalleeCallableFromReceiver(point cfg.Point, site factflow.CallSiteView) bool {

@@ -64,7 +64,7 @@ end
 
 local built = make()
 local n: number = built:get_x()
-`)
+`, WithStdlib())
 	if len(result.Diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want returned local table member fact to keep get_x callable", result.Diagnostics)
 	}

@@ -138,7 +138,18 @@ func (o TableObject) StaticMembers() map[keyspace.Key]product.Value {
 // WithStaticMember returns an object with a proven static member written at the
 // rootless suffix. Static string indexes are mirrored to field spelling so
 // `t["id"]` and `t.id` stay equivalent inside the heap identity lane.
-func (o TableObject) WithStaticMember(ks *keyspace.KeySpace, suffix []segment.Segment, value product.Value) (TableObject, bool) {
+func (o TableObject) WithStaticMember(reg *axis.Registry, ks *keyspace.KeySpace, suffix []segment.Segment, value product.Value) (TableObject, bool) {
+	return o.withStaticMember(reg, ks, suffix, value, false)
+}
+
+// WithJoinedStaticMember returns an object with a static member value joined
+// into any existing slot witness. It is for stack-local retype-tolerant writes
+// where the fixed slot survives and the field type widens.
+func (o TableObject) WithJoinedStaticMember(reg *axis.Registry, ks *keyspace.KeySpace, suffix []segment.Segment, value product.Value) (TableObject, bool) {
+	return o.withStaticMember(reg, ks, suffix, value, true)
+}
+
+func (o TableObject) withStaticMember(reg *axis.Registry, ks *keyspace.KeySpace, suffix []segment.Segment, value product.Value, joinExisting bool) (TableObject, bool) {
 	if o.bottom {
 		return o, false
 	}
@@ -151,8 +162,18 @@ func (o TableObject) WithStaticMember(ks *keyspace.KeySpace, suffix []segment.Se
 		out.staticMembers = make(map[keyspace.Key]product.Value, 1)
 	}
 	out.stableShape = false
+	if joinExisting {
+		if existing, ok := out.staticMembers[key]; ok {
+			value = product.Domain(reg).Join(existing, value)
+		}
+	}
 	out.staticMembers[key] = value
 	if canonical, ok := FieldCanonicalStaticMemberSuffixKey(ks, suffix); ok {
+		if joinExisting {
+			if existing, ok := out.staticMembers[canonical]; ok {
+				value = product.Domain(reg).Join(existing, value)
+			}
+		}
 		out.staticMembers[canonical] = value
 	}
 	return out, true

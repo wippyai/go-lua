@@ -115,6 +115,17 @@ var normalReturnSummaryLanes = callboundary.BindNormalReturnFactLanes("normal-re
 			return &f.PathStaticMembers
 		},
 		pathStaticMemberMap, clonePathStaticMemberFacts),
+	callboundary.LanePathStaticMemberDeltas: normalReturnSummarySliceLaneOwned(
+		func(f *callboundary.NormalReturnFacts) *[]callboundary.PathStaticMemberDeltaFact {
+			return &f.PathStaticMemberDeltas
+		},
+		normalizePathStaticMemberDeltas,
+		normalizePathStaticMemberDeltasOwned,
+		clonePathStaticMemberDeltaFacts,
+		equalPathStaticMemberDeltas,
+		lessOrEqPathStaticMemberDeltas,
+		joinPathStaticMemberDeltas,
+		widenPathStaticMemberDeltas),
 	callboundary.LanePathInvalidations: normalReturnSummaryLaneNoRegOwned(
 		func(f *callboundary.NormalReturnFacts) *[]callboundary.PathInvalidationFact {
 			return &f.PathInvalidations

@@ -33,6 +33,12 @@ func substitutePathStaticMemberTypes(e *OperationalEffects, params []*typ.TypePa
 	}
 }
 
+func substitutePathStaticMemberDeltaTypes(e *OperationalEffects, params []*typ.TypeParam, args []typ.Type) {
+	for i := range e.PathStaticMemberDeltas {
+		e.PathStaticMemberDeltas[i].Type = subst.Params(e.PathStaticMemberDeltas[i].Type, params, args)
+	}
+}
+
 func substitutePathPresenceImplicationTypes(e *OperationalEffects, params []*typ.TypeParam, args []typ.Type) {
 	for i := range e.PathPresenceImplications {
 		e.PathPresenceImplications[i].TriggerType = subst.Params(e.PathPresenceImplications[i].TriggerType, params, args)

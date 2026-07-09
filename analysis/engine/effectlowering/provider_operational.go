@@ -66,6 +66,9 @@ var operationalNormalReturnLanes = callboundary.BindNormalReturnFactLanes(
 		callboundary.LanePathStaticMembers: func(ctx transfer.NodeContext, op operationalEffectContext, effects signature.OperationalEffects, out *callboundary.NormalReturnFacts) {
 			out.PathStaticMembers = operationalPathStaticMembers(ctx, op.typeValues, effects)
 		},
+		callboundary.LanePathStaticMemberDeltas: func(ctx transfer.NodeContext, op operationalEffectContext, effects signature.OperationalEffects, out *callboundary.NormalReturnFacts) {
+			out.PathStaticMemberDeltas = operationalPathStaticMemberDeltas(ctx, op.typeValues, effects)
+		},
 		callboundary.LanePathPresenceImplications: func(ctx transfer.NodeContext, op operationalEffectContext, effects signature.OperationalEffects, out *callboundary.NormalReturnFacts) {
 			out.PathPresenceImplications = operationalPathPresenceImplications(ctx, op.typeValues, effects)
 		},
@@ -196,6 +199,25 @@ func operationalPathStaticMembers(ctx transfer.NodeContext, typeValues *typevalu
 	return out
 }
 
+func operationalPathStaticMemberDeltas(ctx transfer.NodeContext, typeValues *typevalue.Cache, e signature.OperationalEffects) []callboundary.PathStaticMemberDeltaFact {
+	if ctx.Registry == nil || len(e.PathStaticMemberDeltas) == 0 {
+		return nil
+	}
+	out := make([]callboundary.PathStaticMemberDeltaFact, 0, len(e.PathStaticMemberDeltas))
+	for _, delta := range e.PathStaticMemberDeltas {
+		if delta.Type == nil {
+			continue
+		}
+		value := returnValueFromTypeCached(ctx.Registry, typeValues, delta.Type)
+		out = append(out, callboundary.PathStaticMemberDeltaFact{
+			Path:     delta.Path,
+			Value:    value,
+			Required: delta.Required,
+		})
+	}
+	return out
+}
+
 func operationalPathPresenceImplications(ctx transfer.NodeContext, typeValues *typevalue.Cache, e signature.OperationalEffects) []callboundary.PathPresenceImplicationFact {
 	if ctx.Registry == nil || len(e.PathPresenceImplications) == 0 {
 		return nil
@@ -271,7 +293,10 @@ func operationalPresenceValue(ctx transfer.NodeContext, p presence.Value) (produ
 
 func operationalPathInvalidations(e signature.OperationalEffects) []callboundary.PathInvalidationFact {
 	return projectOperationalFacts(e.PathInvalidations, func(f signature.PathInvalidation) callboundary.PathInvalidationFact {
-		return callboundary.PathInvalidationFact{Path: f.Path}
+		return callboundary.PathInvalidationFact{
+			Path:                      f.Path,
+			PreserveStructuralWitness: f.PreserveStructuralWitness,
+		}
 	})
 }
 

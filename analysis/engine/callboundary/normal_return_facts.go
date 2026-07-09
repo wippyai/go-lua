@@ -21,6 +21,7 @@ type NormalReturnFacts struct {
 	PathRefinements          []PathValueFact
 	PersistentPathWrites     []PathValueFact
 	PathStaticMembers        []PathStaticMemberFact
+	PathStaticMemberDeltas   []PathStaticMemberDeltaFact
 	PathInvalidations        []PathInvalidationFact
 	DynamicIndexFacts        []DynamicIndexFact
 	KeyMemberships           []KeyMembershipFact
@@ -88,6 +89,15 @@ type PathValueFact struct {
 type PathStaticMemberFact struct {
 	Path  pathdom.Path
 	Value product.Value
+}
+
+// PathStaticMemberDeltaFact records a structural static member addition to a
+// placeholder path. Required deltas hold on every normal return; non-required
+// deltas are may-adds and consumers materialize them as optional members.
+type PathStaticMemberDeltaFact struct {
+	Path     pathdom.Path
+	Value    product.Value
+	Required bool
 }
 
 // PathPresenceImplicationFact records a must implication between two boundary

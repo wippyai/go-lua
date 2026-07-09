@@ -208,7 +208,7 @@ func TestObjectDomainPrefixStableMustIntersectAndKillsOnInvalidation(t *testing.
 	if generic := right.WithoutPrefixStableShape(); objectDomain.Join(left, generic).PrefixStableShape() {
 		t.Fatalf("prefix marker survived join with generic object")
 	}
-	if extended, ok := left.WithStaticMember(ks, []segment.Segment{{Kind: segment.SegmentField, Name: "port"}}, present); !ok || !extended.PrefixStableShape() {
+	if extended, ok := left.WithStaticMember(reg, ks, []segment.Segment{{Kind: segment.SegmentField, Name: "port"}}, present); !ok || !extended.PrefixStableShape() {
 		t.Fatalf("monotone static addition did not preserve prefix marker")
 	}
 	if removed, ok := left.WithoutStaticMemberSubtree(ks, []segment.Segment{{Kind: segment.SegmentField, Name: "host"}}); !ok || removed.PrefixStableShape() {

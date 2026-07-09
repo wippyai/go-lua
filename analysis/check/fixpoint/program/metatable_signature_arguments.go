@@ -116,7 +116,7 @@ func metatableMethodCallOutcomeProvider(ctx body.CallOutcomeContext, proof metat
 				{{Kind: segment.SegmentField, Name: member.name}},
 				{{Kind: segment.SegmentIndexString, Name: member.name}},
 			} {
-				next, ok := object.WithStaticMember(ctx.KeySpace, suffix, member.value)
+				next, ok := object.WithStaticMember(node.Registry, ctx.KeySpace, suffix, member.value)
 				if ok {
 					object = next
 				}
