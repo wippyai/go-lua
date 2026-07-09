@@ -154,24 +154,37 @@ func applyPathValuePresenceImplication(
 	out state.State,
 	fact factflow.PathValuePresenceImplication,
 ) state.State {
-	if resolver == nil {
+	implication, ok := pathValuePresenceImplicationAt(ctx, resolver, fact)
+	if !ok {
 		return out
+	}
+	out = out.AddPathPresenceImplication(implication)
+	return activatePathPresenceImplications(ctx.Registry, resolver, ctx.Point, out)
+}
+
+func pathValuePresenceImplicationAt(
+	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
+	fact factflow.PathValuePresenceImplication,
+) (pathevidence.PathPresenceImplication, bool) {
+	if resolver == nil {
+		return pathevidence.PathPresenceImplication{}, false
 	}
 	trigger, ok := visibility.AddressAt(resolver, ctx.Point, fact.TriggerPathRef()).RootOrVisibleKeyspaceKey()
 	if !ok {
-		return out
+		return pathevidence.PathPresenceImplication{}, false
 	}
 	var other keyspace.Key
 	if fact.HasTriggerPathEqual() {
 		var otherOK bool
 		other, otherOK = visibility.AddressAt(resolver, ctx.Point, fact.TriggerOtherPathRef()).RootOrVisibleKeyspaceKey()
 		if !otherOK {
-			return out
+			return pathevidence.PathPresenceImplication{}, false
 		}
 	}
 	target, ok := visibility.AddressAt(resolver, ctx.Point, fact.TargetPathRef()).RootOrVisibleKeyspaceKey()
 	if !ok {
-		return out
+		return pathevidence.PathPresenceImplication{}, false
 	}
 	var implication pathevidence.PathPresenceImplication
 	if fact.HasTriggerPathEqual() {
@@ -183,7 +196,7 @@ func applyPathValuePresenceImplication(
 				fact.TargetValue(),
 			)
 		} else {
-			return out
+			return pathevidence.PathPresenceImplication{}, false
 		}
 	} else if fact.HasTargetValue() {
 		if fact.HasTriggerPresence() {
@@ -209,8 +222,7 @@ func applyPathValuePresenceImplication(
 			fact.TargetPresence(),
 		)
 	}
-	out = out.AddPathPresenceImplication(implication)
-	return activatePathPresenceImplications(ctx.Registry, resolver, ctx.Point, out)
+	return implication, true
 }
 
 func activatePathPresenceImplicationsForPath(
@@ -330,23 +342,16 @@ func applyPathPresenceImplicationTarget(
 	implication pathevidence.PathPresenceImplication,
 ) state.State {
 	ks := resolver.KeySpace()
-	targetKey := ks.Format(implication.Target)
 	if !implication.HasTargetValue && !presenceIsConcrete(implication.TargetPresence) {
 		return out
 	}
-	if !pathKeyCurrentlyVisible(resolver, point, targetKey) {
+	if !pathKeyCurrentlyVisibleKey(resolver, point, implication.Target) {
 		return out
 	}
-	targetKeys := []pathdom.PathKey{targetKey}
-	seen := map[pathdom.PathKey]struct{}{targetKey: {}}
-	for _, equivalent := range out.EquivalentPathKeys(ks, targetKey) {
-		if equivalent == "" {
-			continue
-		}
-		if _, ok := seen[equivalent]; ok {
-			continue
-		}
-		if !pathKeyCurrentlyVisible(resolver, point, equivalent) {
+	targetKeys := []keyspace.Key{implication.Target}
+	seen := map[keyspace.Key]struct{}{implication.Target: {}}
+	for _, equivalent := range out.EquivalentKeyspaceKeys(ks, implication.Target) {
+		if _, ok := seen[equivalent]; ok || !pathKeyCurrentlyVisibleKey(resolver, point, equivalent) {
 			continue
 		}
 		seen[equivalent] = struct{}{}
@@ -363,16 +368,16 @@ func applyPathPresenceImplicationTargetKey(
 	resolver *visibility.Resolver,
 	out state.State,
 	implication pathevidence.PathPresenceImplication,
-	targetKey pathdom.PathKey,
+	targetKey keyspace.Key,
 ) state.State {
 	ks := resolver.KeySpace()
 	constraint := implication.TargetValue
 	if !implication.HasTargetValue {
 		constraint = product.NewWithPresence(reg, product.ShapeTop, implication.TargetPresence)
 	}
-	if sym, ok := rootSymbolForResolverPathKey(ks, targetKey); ok {
+	if sym, ok := rootSymbolForResolverKey(targetKey); ok {
 		if presenceImplicationTargetInvalidatesDescendants(implication) {
-			if invalidated, valid := out.InvalidatePathKeyDescendants(ks, targetKey); valid {
+			if invalidated, valid := out.InvalidatePathKeyDescendants(ks, ks.Format(targetKey)); valid {
 				out = invalidated
 			}
 		}
@@ -384,14 +389,14 @@ func applyPathPresenceImplicationTargetKey(
 			return product.Meet(reg, value, constraint)
 		})
 	}
-	current := out.ReadPathKey(reg, ks, targetKey)
+	current := out.ReadLocalPathKey(reg, targetKey)
 	if implication.HasTargetValue {
-		return out.WritePathKey(reg, ks, targetKey, assignmentImplicationTargetValue(reg, current, constraint))
+		return out.WriteLocalPathKey(reg, targetKey, assignmentImplicationTargetValue(reg, current, constraint))
 	}
 	if product.Equal(reg, current, product.Bottom(reg)) {
-		return out.WritePathKey(reg, ks, targetKey, constraint)
+		return out.WriteLocalPathKey(reg, targetKey, constraint)
 	}
-	return out.WritePathKey(reg, ks, targetKey, product.Meet(reg, current, constraint))
+	return out.WriteLocalPathKey(reg, targetKey, product.Meet(reg, current, constraint))
 }
 
 func assignmentImplicationTargetValue(reg *axis.Registry, current product.Value, assigned product.Value) product.Value {
@@ -467,12 +472,34 @@ func pathKeyCurrentlyVisible(resolver *visibility.Resolver, point cfg.Point, pat
 	return current == pathKey
 }
 
+func pathKeyCurrentlyVisibleKey(resolver *visibility.Resolver, point cfg.Point, pathKey keyspace.Key) bool {
+	if resolver == nil || pathKey.Kind == keyspace.KindInvalid {
+		return false
+	}
+	if pathKey.Kind == keyspace.KindUnversionedSym && pathKey.Segs == 0 && pathKey.Sym != 0 {
+		return true
+	}
+	segments, ok := resolver.KeySpace().SegmentsView(pathKey)
+	if !ok {
+		return false
+	}
+	current, ok := factKeyspaceKeyAt(resolver, point, pathdom.Path{Symbol: pathKey.Sym, Segments: segments})
+	return ok && current == pathKey
+}
+
 func rootSymbolForResolverPathKey(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (symbol.ID, bool) {
 	k, ok := ks.FromStateKey(pathKey)
 	if !ok || k.Segs != 0 {
 		return 0, false
 	}
 	return k.Sym, k.Sym != 0
+}
+
+func rootSymbolForResolverKey(pathKey keyspace.Key) (symbol.ID, bool) {
+	if pathKey.Segs != 0 {
+		return 0, false
+	}
+	return pathKey.Sym, pathKey.Sym != 0
 }
 
 func presenceIsConcrete(value presence.Value) bool {

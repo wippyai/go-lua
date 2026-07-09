@@ -161,9 +161,29 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 		if facts.NoNormalReturn(ctx.Point) {
 			return state.State{}
 		}
-		for _, fact := range facts.PathValuePresenceImplications(ctx.Point) {
-			out = applyPathValuePresenceImplication(ctx, config.Visibility, out, fact)
+		pathImplicationsPending := false
+		flushPathImplications := func() {
+			if !pathImplicationsPending {
+				return
+			}
+			out = activatePathPresenceImplications(ctx.Registry, config.Visibility, ctx.Point, out)
+			pathImplicationsPending = false
 		}
+		for _, fact := range facts.PathValuePresenceImplications(ctx.Point) {
+			implication, ok := pathValuePresenceImplicationAt(ctx, config.Visibility, fact)
+			if !ok {
+				continue
+			}
+			if presenceImplicationTargetInvalidatesDescendants(implication) {
+				flushPathImplications()
+				out = out.AddPathPresenceImplication(implication)
+				out = activatePathPresenceImplications(ctx.Registry, config.Visibility, ctx.Point, out)
+				continue
+			}
+			out = out.AddPathPresenceImplication(implication)
+			pathImplicationsPending = true
+		}
+		flushPathImplications()
 		if fact, ok := facts.PathDescendantInvalidation(ctx.Point); ok {
 			_, directDynamicWrite := facts.DynamicIndexWrite(ctx.Point)
 			out = applyPathDescendantInvalidation(ctx, config.Visibility, facts, sources, ensureCallResults().ReadLazy(), in, out, fact, !directDynamicWrite)
