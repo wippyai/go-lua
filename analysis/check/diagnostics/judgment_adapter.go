@@ -48,8 +48,8 @@ func renderJudgmentDiagnostics(items []judgment.Judgment, policy judgment.Policy
 	return newJudgmentRenderContext().render(items, policy, mode)
 }
 
-// RenderJudgments renders previously produced semantic judgments without
-// rerunning obligation producers. Judgment policy controls disposition, while
+// RenderJudgments renders semantic judgments without running obligation
+// producers. Judgment policy controls disposition, while
 // diagnostic policy controls opt-in families, suppression, and severity
 // overrides.
 func RenderJudgments(items []judgment.Judgment, config Config) []diagnostic.Diagnostic {

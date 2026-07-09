@@ -8,8 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 )
 
-// ReturnFlowKind classifies the closed phase-1 return-flow relation. Phase 2
-// can add new-container/member-element relations as additional explicit kinds.
+// ReturnFlowKind classifies return-flow relations.
 type ReturnFlowKind uint8
 
 const (
@@ -18,9 +17,8 @@ const (
 	ReturnFlowParamMember
 )
 
-// ReturnFlow records a must relation for one return slot. ReturnFlowParam means
-// the returned value is exactly parameter Param. ReturnFlowParamMember means the
-// returned value is the static member path Param.Path.
+// ReturnFlow records a must relation from one return slot to a parameter or its
+// static member path.
 type ReturnFlow struct {
 	ReturnIndex int
 	Kind        ReturnFlowKind

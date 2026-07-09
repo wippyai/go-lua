@@ -37,10 +37,7 @@ func joinedReturnVariantType(reg *axis.Registry, left, right product.Value) (typ
 		if !ok {
 			return nil, false
 		}
-		// Literal discriminant tags originate at syntactic return sites. The
-		// analyzed program has finitely many such sites, so retaining each tag is
-		// the natural finite bound; a fixed width would silently lose a valid
-		// return correlation.
+		// Each tag originates at a syntactic return site, so the set stays finite.
 		return returnVariantCandidate(records, typenormalize.UnionForEvidence(members...))
 	}
 	return nil, false

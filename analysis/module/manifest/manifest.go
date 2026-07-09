@@ -221,10 +221,8 @@ func (m *Manifest) SetExport(t typ.Type) {
 	m.Export = t
 }
 
-// Encode serializes a manifest deterministically enough for content-addressed
-// tests and module-boundary cache keys. Future signatures, effects,
-// constraints, and escape facts belong in explicit top-level sections rather
-// than hidden checker state.
+// Encode serializes a manifest deterministically for content-addressed tests
+// and module-boundary cache keys.
 func Encode(m *Manifest) ([]byte, error) {
 	if m == nil {
 		return nil, errors.New("manifest: encode nil manifest")

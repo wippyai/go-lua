@@ -19,15 +19,6 @@ import (
 // ordering, so adding a fact kind is a single descriptor entry rather than a
 // new plural encoder/decoder plus an inline sort closure.
 //
-// Growth sketch. The same descriptor shape extends to the producer side: a
-// summary-slot generator can attach, keyed by lane, a projector from
-// callboundary.NormalReturnFacts into the source fact slice this lane already
-// serializes. Because storage lanes (callboundary.NormalReturnFactLanes) and
-// wire lanes share field names and per-element vocabulary, a future
-// CallOutcome/NormalReturnFacts generation pass registers one handler per lane
-// against these descriptors instead of hand-threading each field, mirroring the
-// callboundary lane binding. That generation is intentionally not implemented
-// here; this file owns only the wire layer.
 func wireLane[Fact any, Wire any](
 	fieldName string,
 	facts func(*signature.OperationalEffects) *[]Fact,

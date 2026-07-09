@@ -97,9 +97,8 @@ type ObjectEntry struct {
 	Source Source
 }
 
-// FlowFacts is the canonical boundary moduleidentity reads after lowering. The
-// producer may be factflow, tests, or a future WIR-native fact schema; this
-// package stays below engine/check layers.
+// FlowFacts defines the lowered fact projection consumed by moduleidentity and
+// keeps this package below engine and checker layers.
 type FlowFacts interface {
 	LocalAssignment(cfg.Point) (Assignment, bool)
 	OrdinaryAssignment(cfg.Point) (Assignment, bool)

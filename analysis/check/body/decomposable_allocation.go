@@ -14,17 +14,12 @@ import (
 const AllocationSiteFactSchemaVersion = 3
 
 // AllocationSiteFact is the solved allocation-site export for one table
-// constructor. Decomposable is an optimization license: when true, the table
-// allocation may be scalar-replaced because the checker proved fixed shape,
-// stack placement, static-only access, no identity demand, no capture, and no
-// metatable involvement for this phase.
+// constructor. Decomposable permits scalar replacement when the checker proves
+// fixed shape, stack placement, static-only access, no identity demand, no
+// capture, and no metatable involvement.
 //
-// FrameLocalUseProof is a stricter body-local use proof shared with the
-// decomposable scan. It is not a placement license by itself: placement-plan
-// projection also requires stack placement and dies-before-suspension. Keeping
-// the suspension conjunct makes phase 1 proof-only; relaxing suspension-crossing
-// frame locals later should require only dropping that conjunct after the
-// runtime confirms stable thread-block safety.
+// FrameLocalUseProof captures the body-local-use condition. Frame-local
+// placement also requires stack placement and DiesBeforeSuspension.
 type AllocationSiteFact struct {
 	SchemaVersion int
 	Point         cfg.Point
@@ -290,11 +285,8 @@ func (t *decomposableUseTracker) classifyInstruction(inst wir.Instruction) bool 
 	case wir.OpClosure:
 		return t.classifyResult(inst.Dst, t.operandRangeHasRootAlias(inst.List))
 	default:
-		// An instruction kind with no explicit policy above is unclassified.
-		// Disqualify rather than assume safety whenever it touches a tracked
-		// alias; the exhaustiveness test keeps every wir opcode covered by an
-		// explicit case, so this branch only fires for a future opcode added
-		// without an accompanying decision here.
+		// The default disqualifies tracked aliases. The exhaustiveness test
+		// requires an explicit policy for every WIR opcode.
 		return t.disqualifyIf(t.instructionTouchesTrackedValue(inst))
 	}
 }

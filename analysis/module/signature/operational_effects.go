@@ -178,9 +178,8 @@ const (
 	ReturnFlowParamMember
 )
 
-// ReturnFlow is the closed phase-1 return-flow relation serialized through
-// manifests. ReturnFlowParam preserves an exact parameter identity; phase 2 can
-// add explicit new-container/member-element relations without widening this one.
+// ReturnFlow is a manifest return-flow relation. ReturnFlowParam preserves an
+// exact parameter identity.
 type ReturnFlow struct {
 	ReturnIndex int
 	Kind        ReturnFlowKind

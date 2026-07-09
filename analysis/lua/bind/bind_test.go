@@ -547,8 +547,8 @@ func TestFunctionOrigins(t *testing.T) {
 		t.Fatalf("nested target symbol = %d/%v, want %d/true", nestedOrigin.TargetSymbol, nestedOrigin.HasTargetSymbol, nestedTargetID)
 	}
 
-	// Current AST lowers local-function syntax to a local assignment shape, so
-	// bind records the local statement/index rather than inventing syntax.
+	// Local-function syntax lowers to a local assignment shape, so bind records
+	// the local statement and index.
 	localFunctionOrigin := mustOrigin(t, r, localFunctionFn)
 	localFunctionTargetID := mustLocalAt(t, r, localFunctionStmt, 0)
 	if localFunctionOrigin.Kind != FunctionOriginLocalAssignment || localFunctionOrigin.Stmt != localFunctionStmt || localFunctionOrigin.LocalIndex != 0 {

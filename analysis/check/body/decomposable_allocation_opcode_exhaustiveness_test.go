@@ -10,13 +10,6 @@ import (
 	"testing"
 )
 
-// TestDecomposableUseTrackerClassifiesEveryWIROpcode guards the SROA
-// Decomposable license against a future wir opcode falling through to the
-// conservative default undetected. It parses the wir.Op const block for the
-// full opcode set and the classifyInstruction switch for the opcodes it gives
-// an explicit case, then asserts the two sets match: adding an opcode to wir
-// without adding a case here fails this test instead of silently keeping
-// Decomposable=true for an unclassified instruction.
 func TestDecomposableUseTrackerClassifiesEveryWIROpcode(t *testing.T) {
 	wirOps := wirOpConstNames(t)
 	classified := classifyInstructionCaseOpNames(t)
@@ -48,8 +41,6 @@ func TestDecomposableUseTrackerClassifiesEveryWIROpcode(t *testing.T) {
 	}
 }
 
-// wirOpConstNames returns every identifier declared with type wir.Op in
-// analysis/ir/wir/instruction.go.
 func wirOpConstNames(t *testing.T) []string {
 	t.Helper()
 	path := repoFilePath(t, "analysis", "ir", "wir", "instruction.go")
@@ -86,9 +77,6 @@ func wirOpConstNames(t *testing.T) []string {
 	return names
 }
 
-// classifyInstructionCaseOpNames returns the set of wir.OpXxx identifiers
-// named in a non-default case of the classifyInstruction switch statement in
-// decomposable_allocation.go.
 func classifyInstructionCaseOpNames(t *testing.T) map[string]bool {
 	t.Helper()
 	path := repoFilePath(t, "analysis", "check", "body", "decomposable_allocation.go")
@@ -141,7 +129,6 @@ func repoFilePath(t *testing.T, parts ...string) string {
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	// thisFile is analysis/check/body/<this test file>.go; walk up to repo root.
 	root := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(thisFile))))
 	return filepath.Join(append([]string{root}, parts...)...)
 }

@@ -314,13 +314,6 @@ func TestOperationalEffectsDescriptorCodecRoundTrips(t *testing.T) {
 	}
 }
 
-// TestOperationalEffectsCodecOracleCoversEveryRegisteredLane guards the oracle
-// itself against the class of gap that let PathStaticMemberDeltas go
-// unpopulated: a lane registered in operationalEffectsWireLanes but never
-// filled in by oracleRichOperationalEffects, or never isolated by
-// oracleSingleLaneCases. Adding a wireLane/boolWireLane entry to the
-// descriptor without updating this file's oracle fixtures fails here instead
-// of silently shipping an untested codec lane.
 func TestOperationalEffectsCodecOracleCoversEveryRegisteredLane(t *testing.T) {
 	rich := oracleRichOperationalEffects()
 	richValue := reflect.ValueOf(rich)

@@ -245,8 +245,8 @@ type ClosureCapture struct {
 const AllocationSiteSchemaVersion = 2
 
 // AllocationSite is the codegen-facing solved export for one table allocation
-// site. Decomposable is a scalar-replacement license; false is the sound default
-// and may mean either a proven blocker or a conservative phase-1 unknown.
+// site. Decomposable is a scalar-replacement license; false is the sound
+// default and may indicate either a proven blocker or unavailable proof.
 type AllocationSite struct {
 	SchemaVersion int
 	Point         cfg.Point

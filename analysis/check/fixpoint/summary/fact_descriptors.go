@@ -51,25 +51,10 @@ func summarySlotDescriptor(fieldName string, wireRef []string, ops SummarySlotOp
 	}
 }
 
-// summaryFactDescriptors is the descriptor-driven summary lane table. It
-// registers one entry per Summary payload field in the same canonical order as
-// summaryLanes, adding the WireRef link to the manifest OperationalEffects wire
-// codec where the field lowers 1:1. Ground truth comes from the summary ->
-// signature exporter (analysis/check/exportmanifest/function_signatures.go):
-// ReturnPresenceRelations lowers into the ReturnPresenceRelations wire lane;
-// NormalReturnFacts is a nested boundary-fact family whose wire refs are owned
-// by callboundary.NormalReturnFactDescriptors; the remaining summary lanes
-// (return tuples, param obligations, member-call facts, sink exposures,
-// captured obligations, condition refinements, literal cases) are serialized
-// through the signature return/param/postcondition encoders, not the
-// OperationalEffects wire codec, so they carry a nil WireRef. MaySuspend is the
-// scalar function effect lane and lowers into the MaySuspend wire lane.
-//
-// fact_descriptors_test.go proves DeriveBoundaryLanes over
-// this table reproduces the live summaryLanes behavior lane-for-lane
-// (order, field name, slot flag, and every non-nil op) across a populated
-// corpus, so the whole-summary Join/Widen/Equal/LessOrEq/Normalize drivers stay
-// invariant after the flip.
+// summaryFactDescriptors registers Summary payload fields in canonical order.
+// WireRef identifies directly serialized OperationalEffects lanes.
+// NormalReturnFacts owns nested refs; the remaining non-wire fields use
+// signature encoders.
 var summaryFactDescriptors = func() callboundary.BoundaryFactTable[SummarySlotOps] {
 	t := callboundary.BoundaryFactTable[SummarySlotOps]{
 		summarySlotDescriptor("Returns", nil, SummarySlotOps{

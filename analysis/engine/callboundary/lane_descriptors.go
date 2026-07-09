@@ -22,9 +22,8 @@ type BoundaryFactKind string
 //     summary slots, presence predicate for CallOutcome) rather than forcing one
 //     operation shape across structurally different families.
 //
-// The spine lets each boundary-schema family derive its live lane registry from
-// one descriptor table while tests prove the derived behavior stays equal to the
-// public operations.
+// The spine lets each boundary-schema family derive its lane registry from one
+// descriptor table.
 type BoundaryFactDescriptor[Ops any] struct {
 	Kind    BoundaryFactKind
 	WireRef []string
@@ -65,7 +64,7 @@ func DeriveBoundaryLanes[Ops, Lane any](t BoundaryFactTable[Ops], build func(Bou
 // payload. It mirrors the storage-level fields of NormalReturnFactLane: the
 // field name, length, append, and optional path filter/drop hooks. Building an
 // Ops through normalReturnLaneDescriptor reuses normalReturnSliceLane so the
-// descriptor table and live lane registry share one construction path.
+// descriptor table and lane registry share one construction path.
 type NormalReturnLaneOps struct {
 	fieldName     string
 	len           func(NormalReturnFacts) int
@@ -118,20 +117,9 @@ func normalReturnLaneDescriptor[T any](
 	}
 }
 
-// normalReturnFactDescriptors is the descriptor-driven NormalReturnFacts lane
-// table. It registers one entry per storage lane in the same canonical order as
-// normalReturnFactLanes, adding the WireRef link to the manifest
-// OperationalEffects wire lanes each kind lowers from. The parity oracle in
-// lane_descriptors_test.go proves DeriveBoundaryLanes over this table reproduces
-// the live normalReturnFactLanes behavior for Append, FilterPaths, and
-// DropFactsTouchingPaths across a rich corpus.
-//
-// WireRef ground truth comes from the effectlowering provider that lowers
-// signature.OperationalEffects into NormalReturnFacts
-// (analysis/engine/effectlowering/provider_operational.go and provider.go).
-// Lanes without a manifest wire lane (local-only facts such as persistent path
-// writes, effect deltas, channel selects, numeric floors, relational
-// constraints, and dynamic all-value memberships) carry a nil WireRef.
+// normalReturnFactDescriptors registers NormalReturnFacts storage lanes in
+// canonical order. WireRef identifies manifest OperationalEffects lanes;
+// local-only lanes carry nil.
 var normalReturnFactDescriptors = func() BoundaryFactTable[NormalReturnLaneOps] {
 	t := BoundaryFactTable[NormalReturnLaneOps]{
 		normalReturnLaneDescriptor(LanePathRefinements,

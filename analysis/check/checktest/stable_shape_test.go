@@ -443,10 +443,8 @@ local id = cfg.id
 }
 
 func TestPrefixStableKeepsRetypedFieldThroughAliasWithUnion(t *testing.T) {
-	// This is the former alias-retype soundness probe. The stable-shape license
-	// guarded here is the fixed field offset, not the old scalar type claim:
-	// alias.id writes the same static slot, so the offset survives while the
-	// field type widens to the union of observed writes.
+	// Stable shape preserves the field offset while its type joins all observed
+	// writes to the static member.
 	result := Check(`
 local cfg = {}
 cfg.id = 1

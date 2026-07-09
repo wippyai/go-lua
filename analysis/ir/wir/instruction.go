@@ -1,14 +1,12 @@
 // Package wir defines the checker instruction IR: a small, closed instruction
 // set lowered from typed-Lua syntax and attached per CFG point.
 //
-// wir replaces the point-keyed half of the fact pipeline. Each function body
-// lowers to a flat instruction stream; instructions carry canonical operands
-// (interned paths, constants, type refs) and a Check descriptor for
-// conditions. The instruction set is the stable plug-in interface between
-// lowering (syntax translation + binding/type resolution only) and the transfer
-// interpreter (all value derivation). Lowering never concludes anything about
-// values; that boundary rule is the reason derived-semantics fact lanes are
-// deleted as a category and recomputed from Branch(Check)/Call at transfer time.
+// Each function body lowers to a flat instruction stream; instructions carry
+// canonical operands (interned paths, constants, type refs) and a Check
+// descriptor for conditions. The instruction set is the stable interface
+// between lowering (syntax translation and binding/type resolution) and the
+// transfer interpreter (value derivation). Lowering records syntax facts while
+// transfer derives value facts from Branch(Check) and Call.
 //
 // Design targets zero-alloc iteration: instructions are value structs in a flat
 // slice, operands are scalar (kind, uint32 index) handles into per-Body intern
