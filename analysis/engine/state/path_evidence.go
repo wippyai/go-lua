@@ -56,6 +56,15 @@ func (s State) BranchProofsSnapshot(ks *keyspace.KeySpace) pathevidence.BranchPr
 	return s.pathEvidence.BranchProofsSnapshot(ks)
 }
 
+// ForEachBranchProof visits finite branch proofs without materializing a stable
+// snapshot. Bottom and disabled lanes visit nothing.
+func (s State) ForEachBranchProof(fn func(pathevidence.BranchProof) bool) {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return
+	}
+	s.pathEvidence.ForEachBranchProof(fn)
+}
+
 // PathPresenceImplicationsSnapshot returns finite must path-presence
 // implications in stable order. Bottom is explicit; Top means the reachable
 // must lane contains no implications.

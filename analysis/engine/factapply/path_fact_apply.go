@@ -143,14 +143,13 @@ func closeBranchProofsAcrossEquality(ks *keyspace.KeySpace, out state.State, aKe
 	if ks == nil || aKey == bKey {
 		return out
 	}
-	snap := out.BranchProofsSnapshot(ks)
-	if snap.Bottom || snap.Top || len(snap.Proofs) == 0 {
-		return out
-	}
-	for _, proof := range snap.Proofs {
+	// State branch-proof writes are copy-on-write, so the traversal keeps the
+	// input proof set while out accumulates its equality closure.
+	out.ForEachBranchProof(func(proof pathevidence.BranchProof) bool {
 		out = mirrorBranchProofAcrossEquality(ks, out, proof, aKey, bKey)
 		out = mirrorBranchProofAcrossEquality(ks, out, proof, bKey, aKey)
-	}
+		return true
+	})
 	return out
 }
 

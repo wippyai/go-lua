@@ -98,6 +98,20 @@ func (l Lane) BranchProofsSnapshot(ks *keyspace.KeySpace) BranchProofsSnapshot {
 	}
 }
 
+// ForEachBranchProof visits finite must branch proofs in their native form,
+// avoiding stable snapshot materialization. Bottom and empty lanes visit
+// nothing.
+func (l Lane) ForEachBranchProof(fn func(BranchProof) bool) {
+	if l.proofsBottom || len(l.proofs) == 0 || fn == nil {
+		return
+	}
+	for proof := range l.proofs {
+		if !fn(proof) {
+			return
+		}
+	}
+}
+
 type PathPresenceImplicationsSnapshot struct {
 	Bottom       bool
 	Top          bool
