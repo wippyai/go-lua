@@ -641,6 +641,10 @@ func functionSummaryOperationalEffectsForArity(reg *axis.Registry, s summary.Sum
 	if len(declaredReturns) != 0 {
 		returnPresenceRelations = operationalReturnPresenceRelations(s.ReturnPresenceRelations, returnArity)
 	}
+	var paramRelations []signature.ParamRelation
+	if signatureName != "" || len(returnTypes) != 0 {
+		paramRelations = operationalParamRelations(s, paramArity)
+	}
 	var allocationTemplates []signature.ReturnAllocationTemplate
 	if len(declaredReturns) != 0 {
 		allocationTemplates = operationalReturnAllocationTemplates(reg, s, signatureName, returnArity, declaredReturns)
@@ -660,6 +664,7 @@ func functionSummaryOperationalEffectsForArity(reg *axis.Registry, s summary.Sum
 		FrozenTables:                    operationalFrozenTables(s.NormalReturnFacts, paramArity),
 		EscapeEvents:                    operationalEscapeEvents(s.NormalReturnFacts, paramArity),
 		StoreRelations:                  operationalStoreRelations(s.NormalReturnFacts, paramArity),
+		ParamRelations:                  paramRelations,
 		ReturnAllocationTemplates:       allocationTemplates,
 	}
 	if out.IsEmpty() {
@@ -1386,6 +1391,108 @@ func operationalStoreRelations(facts callboundary.NormalReturnFacts, arity int) 
 		out = append(out, signature.StoreRelation{Source: relation.Source, Into: relation.Into})
 	}
 	return out
+}
+
+func operationalParamRelations(s summary.Summary, arity int) []signature.ParamRelation {
+	if arity <= 0 {
+		return nil
+	}
+	out := make([]signature.ParamRelation, arity)
+	for i := range out {
+		out[i] = signature.ParamRelation{
+			Param:                i,
+			EscapeClass:          signature.EscapeNone,
+			PlacementConsequence: signature.PlacementConsequenceKeep,
+		}
+	}
+	storedInto := make(map[int]int)
+	storedIntoConflict := make(map[int]struct{})
+	for _, event := range s.NormalReturnFacts.EscapeEvents {
+		if !placeholderPathInArity(event.Target, arity) {
+			continue
+		}
+		param := event.Target.PlaceholderIndex()
+		kind, ok := operationalEscapeKind(event.Kind)
+		if !ok {
+			kind = signature.EscapeOpaque
+		}
+		upgradeParamRelationEscape(&out[param], kind)
+	}
+	for _, relation := range s.NormalReturnFacts.StoreRelations {
+		if !placeholderPathInArity(relation.Source, arity) {
+			continue
+		}
+		source := relation.Source.PlaceholderIndex()
+		upgradeParamRelationEscape(&out[source], signature.EscapeStore)
+		if !placeholderPathInArity(relation.Into, arity) {
+			continue
+		}
+		noteParamRelationStoredInto(storedInto, storedIntoConflict, source, relation.Into.PlaceholderIndex())
+	}
+	for _, alias := range s.ReturnParamPathAliases {
+		source, ok := alias.Source.Path()
+		if !ok || !placeholderPathInArity(source, arity) {
+			continue
+		}
+		out[source.PlaceholderIndex()].ThroughReturn = true
+	}
+	for _, sink := range s.ParamSinkExposures {
+		source, ok := sink.Source.PlaceholderIndex()
+		if !ok || source < 0 || source >= arity {
+			continue
+		}
+		upgradeParamRelationEscape(&out[source], signature.EscapeStore)
+	}
+	for source, target := range storedInto {
+		if _, conflict := storedIntoConflict[source]; conflict {
+			continue
+		}
+		out[source].StoredInto = target
+		out[source].HasStoredInto = true
+	}
+	return out
+}
+
+func upgradeParamRelationEscape(relation *signature.ParamRelation, kind signature.EscapeKind) {
+	if relation == nil {
+		return
+	}
+	if strongerEscapeKind(relation.EscapeClass, kind) == kind {
+		relation.EscapeClass = kind
+		relation.PlacementConsequence = placementConsequenceForEscapeKind(kind)
+	}
+}
+
+func strongerEscapeKind(a, b signature.EscapeKind) signature.EscapeKind {
+	if b > a {
+		return b
+	}
+	return a
+}
+
+func placementConsequenceForEscapeKind(kind signature.EscapeKind) signature.PlacementConsequence {
+	switch kind {
+	case signature.EscapeRetain, signature.EscapeStore:
+		return signature.PlacementConsequenceOwnedHeap
+	case signature.EscapeSend, signature.EscapeExport, signature.EscapeOpaque:
+		return signature.PlacementConsequenceSharedHeap
+	default:
+		return signature.PlacementConsequenceKeep
+	}
+}
+
+func noteParamRelationStoredInto(storedInto map[int]int, conflicts map[int]struct{}, source, target int) {
+	if _, conflict := conflicts[source]; conflict {
+		return
+	}
+	if existing, ok := storedInto[source]; ok {
+		if existing != target {
+			delete(storedInto, source)
+			conflicts[source] = struct{}{}
+		}
+		return
+	}
+	storedInto[source] = target
 }
 
 func placeholderPathInArity(p pathdom.Path, arity int) bool {

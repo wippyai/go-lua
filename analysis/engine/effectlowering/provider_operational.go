@@ -91,10 +91,10 @@ var operationalNormalReturnLanes = callboundary.BindNormalReturnFactLanes(
 		},
 		callboundary.LaneEffectDeltas: operationalNormalReturnNoop,
 		callboundary.LaneEscapeEvents: func(_ transfer.NodeContext, _ operationalEffectContext, effects signature.OperationalEffects, out *callboundary.NormalReturnFacts) {
-			out.EscapeEvents = operationalEscapeEvents(effects)
+			out.EscapeEvents = append(operationalEscapeEvents(effects), operationalParamRelationEscapeEvents(effects)...)
 		},
 		callboundary.LaneStoreRelations: func(_ transfer.NodeContext, _ operationalEffectContext, effects signature.OperationalEffects, out *callboundary.NormalReturnFacts) {
-			out.StoreRelations = operationalStoreRelations(effects)
+			out.StoreRelations = append(operationalStoreRelations(effects), operationalParamRelationStoreRelations(effects)...)
 		},
 		callboundary.LaneLifecycleFacts: func(_ transfer.NodeContext, _ operationalEffectContext, effects signature.OperationalEffects, out *callboundary.NormalReturnFacts) {
 			out.LifecycleFacts = operationalLifecycleFacts(effects)
@@ -440,6 +440,49 @@ func operationalStoreRelations(e signature.OperationalEffects) []callboundary.St
 		out = append(out, callboundary.StoreRelationFact{
 			Source: relation.Source,
 			Into:   relation.Into,
+		})
+	}
+	return out
+}
+
+func operationalParamRelationEscapeEvents(e signature.OperationalEffects) []callboundary.EscapeEventFact {
+	if len(e.ParamRelations) == 0 {
+		return nil
+	}
+	out := make([]callboundary.EscapeEventFact, 0, len(e.ParamRelations))
+	for _, relation := range e.ParamRelations {
+		if relation.Param < 0 {
+			continue
+		}
+		switch relation.EscapeClass {
+		case signature.EscapeNone, signature.EscapeBorrow:
+			continue
+		}
+		kind, ok := operationalEscapeKind(relation.EscapeClass)
+		if !ok {
+			continue
+		}
+		out = append(out, callboundary.EscapeEventFact{
+			Target:    pathdom.NewPlaceholder(relation.Param),
+			Kind:      kind,
+			Recursive: true,
+		})
+	}
+	return out
+}
+
+func operationalParamRelationStoreRelations(e signature.OperationalEffects) []callboundary.StoreRelationFact {
+	if len(e.ParamRelations) == 0 {
+		return nil
+	}
+	out := make([]callboundary.StoreRelationFact, 0, len(e.ParamRelations))
+	for _, relation := range e.ParamRelations {
+		if relation.Param < 0 || !relation.HasStoredInto || relation.StoredInto < 0 {
+			continue
+		}
+		out = append(out, callboundary.StoreRelationFact{
+			Source: pathdom.NewPlaceholder(relation.Param),
+			Into:   pathdom.NewPlaceholder(relation.StoredInto),
 		})
 	}
 	return out

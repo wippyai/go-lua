@@ -8,7 +8,7 @@ closed or negotiate before emitting a surface newer than the consumer supports.
 | --- | --- | --- | --- | --- |
 | Judgment IR | `judgment.JIRSchemaVersion` | v8 | Judgment code registry and exported judgment record shape. | A judgment code, code metadata, or exported judgment/evidence/subject field shape changes. |
 | Signature escape vocabulary | `signature.EscapeVocabVersion` | v1 | Signature `EscapeKind` labels and audited ownership capability labels synced with arena CallArgEscape/Ownership. | An escape/ownership label is added, removed, renamed, or changes boundary meaning. Requires joint cross-repo signoff per fence #1425. |
-| Boundary lane schema | `summary.BoundaryLaneSchemaVersion` | v1 | Summary descriptors, `NormalReturnFacts` descriptors, `CallOutcome` descriptors, and manifest wire-lane links. | A lane kind, slot/post-return classification, storage owner, or wire reference changes. |
+| Boundary lane schema | `summary.BoundaryLaneSchemaVersion` | v3 | Summary descriptors, `NormalReturnFacts` descriptors, `CallOutcome` descriptors, and manifest wire-lane links. | A lane kind, slot/post-return classification, storage owner, or wire reference changes. |
 
 ## Bump Discipline
 
@@ -30,3 +30,7 @@ constant + journal a D-entry`.
   `channel.send.closed` and `channel.close.closed`, both rendered by the new
   `channel_lifecycle` renderer with `channel.*.closed` diagnostic codes. This
   extends the code registry only; exported judgment record shapes are unchanged.
+- D9: Bumped boundary lane schema to v3. The new manifest `ParamRelations`
+  wire lane lowers into the existing normal-return `EscapeEvents` and
+  `StoreRelations` owner lanes, so descriptor wire references changed without
+  adding new solver or call-boundary storage lanes.

@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	typemanifest "github.com/wippyai/go-lua/analysis/module/manifest"
+	typesignature "github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -37,10 +38,11 @@ type lookupValueResult struct {
 // FunctionSummary is retained for source compatibility. The current canonical
 // manifest stores effectful function metadata in FunctionSignatures instead.
 type FunctionSummary struct {
-	Params       []typ.Type
-	Returns      []typ.Type
-	ParamEscapes []bool
-	ReturnsParam int
+	Params         []typ.Type
+	Returns        []typ.Type
+	ParamEscapes   []bool
+	ParamRelations []typesignature.ParamRelation
+	ReturnsParam   int
 }
 
 // ManifestQuerier provides read-only access to loaded manifests.
@@ -72,12 +74,42 @@ func (s *FunctionSummary) Clone() *FunctionSummary {
 		return nil
 	}
 	clone := &FunctionSummary{
-		Params:       append([]typ.Type(nil), s.Params...),
-		Returns:      append([]typ.Type(nil), s.Returns...),
-		ParamEscapes: append([]bool(nil), s.ParamEscapes...),
-		ReturnsParam: s.ReturnsParam,
+		Params:         append([]typ.Type(nil), s.Params...),
+		Returns:        append([]typ.Type(nil), s.Returns...),
+		ParamEscapes:   paramEscapesFromRelationsOrExisting(len(s.Params), s.ParamEscapes, s.ParamRelations),
+		ParamRelations: append([]typesignature.ParamRelation(nil), s.ParamRelations...),
+		ReturnsParam:   s.ReturnsParam,
 	}
 	return clone
+}
+
+func (s *FunctionSummary) SetParamRelations(relations []typesignature.ParamRelation) {
+	if s == nil {
+		return
+	}
+	s.ParamRelations = append([]typesignature.ParamRelation(nil), relations...)
+	s.ParamEscapes = paramEscapesFromRelationsOrExisting(len(s.Params), s.ParamEscapes, s.ParamRelations)
+}
+
+func paramEscapesFromRelationsOrExisting(paramCount int, existing []bool, relations []typesignature.ParamRelation) []bool {
+	if len(relations) == 0 {
+		return append([]bool(nil), existing...)
+	}
+	out := make([]bool, paramCount)
+	for _, relation := range relations {
+		if relation.Param < 0 || relation.Param >= len(out) {
+			continue
+		}
+		switch relation.EscapeClass {
+		case typesignature.EscapeRetain,
+			typesignature.EscapeStore,
+			typesignature.EscapeSend,
+			typesignature.EscapeExport,
+			typesignature.EscapeOpaque:
+			out[relation.Param] = true
+		}
+	}
+	return out
 }
 
 func (m *Manifest) DefineType(name string, t typ.Type) {
@@ -97,6 +129,9 @@ func (m *Manifest) DefineSummary(name string, summary *FunctionSummary) {
 	}
 	if m.Summaries == nil {
 		m.Summaries = make(map[string]*FunctionSummary)
+	}
+	if summary != nil && len(summary.ParamRelations) != 0 {
+		summary.ParamEscapes = paramEscapesFromRelationsOrExisting(len(summary.Params), summary.ParamEscapes, summary.ParamRelations)
 	}
 	m.Summaries[name] = summary
 	m.invalidateCaches()

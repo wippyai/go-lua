@@ -31,6 +31,7 @@ type operationalEffectsWire struct {
 	FrozenTables                    []frozenTableWire               `json:"frozenTables,omitempty"`
 	EscapeEvents                    []escapeEventWire               `json:"escapeEvents,omitempty"`
 	StoreRelations                  []storeRelationWire             `json:"storeRelations,omitempty"`
+	ParamRelations                  []paramRelationWire             `json:"paramRelations,omitempty"`
 	LifecycleEffects                []lifecycleEffectWire           `json:"lifecycleEffects,omitempty"`
 	ReturnAllocationTemplates       []returnAllocationTemplateWire  `json:"returnAllocationTemplates,omitempty"`
 }
@@ -122,6 +123,14 @@ type escapeEventWire struct {
 type storeRelationWire struct {
 	Source *placeholderPathWire `json:"source,omitempty"`
 	Into   *placeholderPathWire `json:"into,omitempty"`
+}
+
+type paramRelationWire struct {
+	Param                *int   `json:"param"`
+	EscapeClass          string `json:"escapeClass"`
+	PlacementConsequence string `json:"placementConsequence"`
+	ThroughReturn        bool   `json:"throughReturn,omitempty"`
+	StoredInto           *int   `json:"storedInto,omitempty"`
 }
 
 type lifecycleEffectWire struct {
@@ -1226,6 +1235,8 @@ func decodeLifecycleKind(s string) (signature.LifecycleKind, error) {
 
 func encodeEscapeKind(kind signature.EscapeKind) (string, error) {
 	switch kind {
+	case signature.EscapeNone:
+		return "none", nil
 	case signature.EscapeBorrow:
 		return "borrow", nil
 	case signature.EscapeRetain:
@@ -1245,6 +1256,8 @@ func encodeEscapeKind(kind signature.EscapeKind) (string, error) {
 
 func decodeEscapeKind(s string) (signature.EscapeKind, error) {
 	switch s {
+	case "none":
+		return signature.EscapeNone, nil
 	case "borrow":
 		return signature.EscapeBorrow, nil
 	case "retain":
@@ -1259,5 +1272,29 @@ func decodeEscapeKind(s string) (signature.EscapeKind, error) {
 		return signature.EscapeOpaque, nil
 	default:
 		return signature.EscapeNone, fmt.Errorf("unknown escape kind %q", s)
+	}
+}
+
+func encodePlacementConsequence(consequence signature.PlacementConsequence) (string, error) {
+	switch consequence {
+	case signature.PlacementConsequenceKeep,
+		signature.PlacementConsequenceOwnedHeap,
+		signature.PlacementConsequenceSharedHeap:
+		return string(consequence), nil
+	default:
+		return "", fmt.Errorf("unsupported placement consequence %q", consequence)
+	}
+}
+
+func decodePlacementConsequence(s string) (signature.PlacementConsequence, error) {
+	switch signature.PlacementConsequence(s) {
+	case signature.PlacementConsequenceKeep:
+		return signature.PlacementConsequenceKeep, nil
+	case signature.PlacementConsequenceOwnedHeap:
+		return signature.PlacementConsequenceOwnedHeap, nil
+	case signature.PlacementConsequenceSharedHeap:
+		return signature.PlacementConsequenceSharedHeap, nil
+	default:
+		return "", fmt.Errorf("unknown placement consequence %q", s)
 	}
 }

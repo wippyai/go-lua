@@ -27,6 +27,7 @@ type OperationalEffects struct {
 	FrozenTables                    []FrozenTable
 	EscapeEvents                    []EscapeEvent
 	StoreRelations                  []StoreRelation
+	ParamRelations                  []ParamRelation
 	LifecycleEffects                []LifecycleEffect
 	ReturnAllocationTemplates       []ReturnAllocationTemplate
 }
@@ -141,6 +142,23 @@ type EscapeEvent struct {
 type StoreRelation struct {
 	Source pathdom.Path
 	Into   pathdom.Path
+}
+
+type PlacementConsequence string
+
+const (
+	PlacementConsequenceKeep       PlacementConsequence = "keep"
+	PlacementConsequenceOwnedHeap  PlacementConsequence = "owned-heap"
+	PlacementConsequenceSharedHeap PlacementConsequence = "shared-heap"
+)
+
+type ParamRelation struct {
+	Param                int
+	EscapeClass          EscapeKind
+	PlacementConsequence PlacementConsequence
+	ThroughReturn        bool
+	StoredInto           int
+	HasStoredInto        bool
 }
 
 type LifecycleKind uint8
@@ -321,6 +339,10 @@ var operationalEffectLanes = []operationalEffectLane{
 		func(e OperationalEffects) []StoreRelation { return e.StoreRelations },
 		func(e *OperationalEffects, facts []StoreRelation) { e.StoreRelations = facts },
 		cloneStoreRelations, equalStoreRelations, nil),
+	operationalEffectSliceLane("ParamRelations",
+		func(e OperationalEffects) []ParamRelation { return e.ParamRelations },
+		func(e *OperationalEffects, facts []ParamRelation) { e.ParamRelations = facts },
+		cloneParamRelations, equalParamRelations, nil),
 	operationalEffectSliceLane("LifecycleEffects",
 		func(e OperationalEffects) []LifecycleEffect { return e.LifecycleEffects },
 		func(e *OperationalEffects, facts []LifecycleEffect) { e.LifecycleEffects = facts },
@@ -497,6 +519,13 @@ func cloneStoreRelations(in []StoreRelation) []StoreRelation {
 	return out
 }
 
+func cloneParamRelations(in []ParamRelation) []ParamRelation {
+	if len(in) == 0 {
+		return nil
+	}
+	return append([]ParamRelation(nil), in...)
+}
+
 func cloneLifecycleEffects(in []LifecycleEffect) []LifecycleEffect {
 	if len(in) == 0 {
 		return nil
@@ -664,6 +693,12 @@ func equalEscapeEvents(a, b []EscapeEvent) bool {
 func equalStoreRelations(a, b []StoreRelation) bool {
 	return equalFactSlices(a, b, func(x, y StoreRelation) bool {
 		return x.Source.Equal(y.Source) && x.Into.Equal(y.Into)
+	})
+}
+
+func equalParamRelations(a, b []ParamRelation) bool {
+	return equalFactSlices(a, b, func(x, y ParamRelation) bool {
+		return x == y
 	})
 }
 

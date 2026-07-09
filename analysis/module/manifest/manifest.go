@@ -551,6 +551,9 @@ func decodeFunctionSignature(w functionSignatureWire) (signature.Function, error
 }
 
 func validateFunctionOperationalEffects(fn *typ.Function, effects signature.OperationalEffects) error {
+	if err := validateParamRelations(fn, effects.ParamRelations); err != nil {
+		return err
+	}
 	if fn == nil {
 		if len(effects.ReturnPresenceRelations) != 0 {
 			return errors.New("return presence relations require function type")
@@ -574,6 +577,66 @@ func validateFunctionOperationalEffects(fn *typ.Function, effects signature.Oper
 		}
 	}
 	return nil
+}
+
+func validateParamRelations(fn *typ.Function, relations []signature.ParamRelation) error {
+	if len(relations) == 0 {
+		return nil
+	}
+	seen := make(map[int]struct{}, len(relations))
+	for _, relation := range relations {
+		if relation.Param < 0 {
+			return fmt.Errorf("param relation index %d out of bounds", relation.Param)
+		}
+		if fn != nil && relation.Param >= len(fn.Params) {
+			return fmt.Errorf("param relation index %d out of bounds for %d params", relation.Param, len(fn.Params))
+		}
+		if _, ok := seen[relation.Param]; ok {
+			return fmt.Errorf("duplicate param relation for param index %d", relation.Param)
+		}
+		seen[relation.Param] = struct{}{}
+		if !validEscapeKind(relation.EscapeClass) {
+			return fmt.Errorf("param relation %d has invalid escape class %d", relation.Param, relation.EscapeClass)
+		}
+		if !validPlacementConsequence(relation.PlacementConsequence) {
+			return fmt.Errorf("param relation %d has invalid placement consequence %q", relation.Param, relation.PlacementConsequence)
+		}
+		if relation.HasStoredInto {
+			if relation.StoredInto < 0 {
+				return fmt.Errorf("param relation %d storedInto %d out of bounds", relation.Param, relation.StoredInto)
+			}
+			if fn != nil && relation.StoredInto >= len(fn.Params) {
+				return fmt.Errorf("param relation %d storedInto %d out of bounds for %d params", relation.Param, relation.StoredInto, len(fn.Params))
+			}
+		}
+	}
+	return nil
+}
+
+func validEscapeKind(kind signature.EscapeKind) bool {
+	switch kind {
+	case signature.EscapeNone,
+		signature.EscapeBorrow,
+		signature.EscapeRetain,
+		signature.EscapeStore,
+		signature.EscapeSend,
+		signature.EscapeExport,
+		signature.EscapeOpaque:
+		return true
+	default:
+		return false
+	}
+}
+
+func validPlacementConsequence(consequence signature.PlacementConsequence) bool {
+	switch consequence {
+	case signature.PlacementConsequenceKeep,
+		signature.PlacementConsequenceOwnedHeap,
+		signature.PlacementConsequenceSharedHeap:
+		return true
+	default:
+		return false
+	}
 }
 
 func validateManifestFunctionSignatures(m *Manifest) error {

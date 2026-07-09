@@ -793,6 +793,41 @@ func TestManifestEmptyOperationalEffectsAreAbsent(t *testing.T) {
 	}
 }
 
+func TestManifestBackwardDecodesOperationalEffectsWithoutParamRelations(t *testing.T) {
+	fn := typ.Func().
+		Param("payload", typ.Any).
+		Build()
+	encodedType, err := encodeType(fn)
+	if err != nil {
+		t.Fatalf("encodeType: %v", err)
+	}
+	decoded, err := decodeFunctionSignature(functionSignatureWire{
+		Name: "legacy",
+		Type: encodedType,
+		OperationalEffects: &operationalEffectsWire{
+			EscapeEvents: []escapeEventWire{{
+				Target:    &placeholderPathWire{Param: encodeInt(0)},
+				Kind:      "store",
+				Recursive: true,
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("decodeFunctionSignature: %v", err)
+	}
+	if decoded.OperationalEffects == nil {
+		t.Fatal("operational effects = nil")
+	}
+	if len(decoded.OperationalEffects.ParamRelations) != 0 {
+		t.Fatalf("param relations = %#v, want absent for legacy wire", decoded.OperationalEffects.ParamRelations)
+	}
+	if len(decoded.OperationalEffects.EscapeEvents) != 1 ||
+		decoded.OperationalEffects.EscapeEvents[0].Kind != signature.EscapeStore ||
+		!decoded.OperationalEffects.EscapeEvents[0].Target.Equal(pathdom.NewPlaceholder(0)) {
+		t.Fatalf("escape events = %#v, want legacy escape event preserved", decoded.OperationalEffects.EscapeEvents)
+	}
+}
+
 func TestManifestOperationalPathStaticMemberRequiresType(t *testing.T) {
 	fn := typ.Func().
 		Param("payload", typ.Any).
@@ -1251,6 +1286,21 @@ func operationalEffectsOrderA() *signature.OperationalEffects {
 			{Source: pathdom.NewPlaceholder(1).Field("payload"), Into: pathdom.NewPlaceholder(0).Field("bucket")},
 			{Source: pathdom.NewPlaceholder(0).Field("payload"), Into: pathdom.NewPlaceholder(1).Field("bucket")},
 		},
+		ParamRelations: []signature.ParamRelation{
+			{
+				Param:                1,
+				EscapeClass:          signature.EscapeStore,
+				PlacementConsequence: signature.PlacementConsequenceOwnedHeap,
+				StoredInto:           0,
+				HasStoredInto:        true,
+			},
+			{
+				Param:                0,
+				EscapeClass:          signature.EscapeNone,
+				PlacementConsequence: signature.PlacementConsequenceKeep,
+				ThroughReturn:        true,
+			},
+		},
 		LifecycleEffects: []signature.LifecycleEffect{
 			{
 				Target:   pathdom.NewPlaceholder(1).Field("resource"),
@@ -1347,6 +1397,21 @@ func operationalEffectsOrderB() *signature.OperationalEffects {
 		StoreRelations: []signature.StoreRelation{
 			{Source: pathdom.NewPlaceholder(0).Field("payload"), Into: pathdom.NewPlaceholder(1).Field("bucket")},
 			{Source: pathdom.NewPlaceholder(1).Field("payload"), Into: pathdom.NewPlaceholder(0).Field("bucket")},
+		},
+		ParamRelations: []signature.ParamRelation{
+			{
+				Param:                0,
+				EscapeClass:          signature.EscapeNone,
+				PlacementConsequence: signature.PlacementConsequenceKeep,
+				ThroughReturn:        true,
+			},
+			{
+				Param:                1,
+				EscapeClass:          signature.EscapeStore,
+				PlacementConsequence: signature.PlacementConsequenceOwnedHeap,
+				StoredInto:           0,
+				HasStoredInto:        true,
+			},
 		},
 		LifecycleEffects: []signature.LifecycleEffect{
 			{

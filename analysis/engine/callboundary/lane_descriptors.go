@@ -251,7 +251,7 @@ var normalReturnFactDescriptors = func() BoundaryFactTable[NormalReturnLaneOps] 
 			},
 			func(f EffectDelta, keep NormalReturnPathPredicate) bool { return keepPath(f.Target, keep) }),
 		normalReturnLaneDescriptor(LaneEscapeEvents,
-			[]string{"EscapeEvents"}, "EscapeEvents",
+			[]string{"EscapeEvents", "ParamRelations"}, "EscapeEvents",
 			func(f NormalReturnFacts) []EscapeEventFact { return f.EscapeEvents },
 			func(f NormalReturnFacts, facts []EscapeEventFact) NormalReturnFacts {
 				f.EscapeEvents = facts
@@ -259,7 +259,7 @@ var normalReturnFactDescriptors = func() BoundaryFactTable[NormalReturnLaneOps] 
 			},
 			func(f EscapeEventFact, keep NormalReturnPathPredicate) bool { return keepPath(f.Target, keep) }),
 		normalReturnLaneDescriptor(LaneStoreRelations,
-			[]string{"StoreRelations"}, "StoreRelations",
+			[]string{"StoreRelations", "ParamRelations"}, "StoreRelations",
 			func(f NormalReturnFacts) []StoreRelationFact { return f.StoreRelations },
 			func(f NormalReturnFacts, facts []StoreRelationFact) NormalReturnFacts {
 				f.StoreRelations = facts

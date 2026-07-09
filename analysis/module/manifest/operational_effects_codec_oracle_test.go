@@ -98,6 +98,21 @@ func oracleRichOperationalEffects() signature.OperationalEffects {
 			{Source: pathdom.NewPlaceholder(0).Field("payload"), Into: pathdom.NewPlaceholder(1).Field("items")},
 			{Source: pathdom.NewPlaceholder(0).Field("head"), Into: pathdom.NewPlaceholder(1).Field("tail")},
 		},
+		ParamRelations: []signature.ParamRelation{
+			{
+				Param:                1,
+				EscapeClass:          signature.EscapeStore,
+				PlacementConsequence: signature.PlacementConsequenceOwnedHeap,
+				ThroughReturn:        true,
+				StoredInto:           0,
+				HasStoredInto:        true,
+			},
+			{
+				Param:                0,
+				EscapeClass:          signature.EscapeNone,
+				PlacementConsequence: signature.PlacementConsequenceKeep,
+			},
+		},
 		LifecycleEffects: []signature.LifecycleEffect{
 			{
 				Target:     pathdom.NewPlaceholder(0).Field("tx"),
@@ -162,6 +177,7 @@ func oracleSingleLaneCases(rich signature.OperationalEffects) []struct {
 		{"FrozenTables", signature.OperationalEffects{FrozenTables: rich.FrozenTables}},
 		{"EscapeEvents", signature.OperationalEffects{EscapeEvents: rich.EscapeEvents}},
 		{"StoreRelations", signature.OperationalEffects{StoreRelations: rich.StoreRelations}},
+		{"ParamRelations", signature.OperationalEffects{ParamRelations: rich.ParamRelations}},
 		{"LifecycleEffects", signature.OperationalEffects{LifecycleEffects: rich.LifecycleEffects}},
 		{"ReturnAllocationTemplates", signature.OperationalEffects{ReturnAllocationTemplates: rich.ReturnAllocationTemplates}},
 	}
@@ -183,6 +199,7 @@ func reverseOperationalEffectSlices(e *signature.OperationalEffects) {
 	reverseSlice(e.FrozenTables)
 	reverseSlice(e.EscapeEvents)
 	reverseSlice(e.StoreRelations)
+	reverseSlice(e.ParamRelations)
 	reverseSlice(e.LifecycleEffects)
 	reverseSlice(e.ReturnAllocationTemplates)
 }

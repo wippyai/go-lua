@@ -3,6 +3,7 @@ package io
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -54,5 +55,34 @@ func TestManifestEncodeDecodePreservesCanonicalFields(t *testing.T) {
 	}
 	if globals := got.AllGlobals(); len(globals) != 0 {
 		t.Fatalf("globals should remain legacy in-memory only, got %v", globals)
+	}
+}
+
+func TestFunctionSummaryParamEscapesDeriveFromParamRelations(t *testing.T) {
+	s := NewSummary([]typ.Type{typ.Any, typ.Any, typ.Any}, nil)
+	s.ParamEscapes = []bool{true, true, true}
+	s.SetParamRelations([]signature.ParamRelation{
+		{
+			Param:                0,
+			EscapeClass:          signature.EscapeNone,
+			PlacementConsequence: signature.PlacementConsequenceKeep,
+		},
+		{
+			Param:                1,
+			EscapeClass:          signature.EscapeBorrow,
+			PlacementConsequence: signature.PlacementConsequenceKeep,
+		},
+		{
+			Param:                2,
+			EscapeClass:          signature.EscapeStore,
+			PlacementConsequence: signature.PlacementConsequenceOwnedHeap,
+		},
+	})
+	if got := s.ParamEscapes; len(got) != 3 || got[0] || got[1] || !got[2] {
+		t.Fatalf("ParamEscapes = %#v, want derived [false false true]", got)
+	}
+	clone := s.Clone()
+	if got := clone.ParamEscapes; len(got) != 3 || got[0] || got[1] || !got[2] {
+		t.Fatalf("clone ParamEscapes = %#v, want derived [false false true]", got)
 	}
 }

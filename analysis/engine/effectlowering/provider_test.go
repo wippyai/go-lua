@@ -2523,6 +2523,25 @@ func TestSignatureOutcomeProviderLowersOperationalEffectsNormalReturnFacts(t *te
 			Source: path.NewPlaceholder(0).Field("payload"),
 			Into:   path.NewPlaceholder(1).Field("items"),
 		}},
+		ParamRelations: []signature.ParamRelation{
+			{
+				Param:                2,
+				EscapeClass:          signature.EscapeNone,
+				PlacementConsequence: signature.PlacementConsequenceKeep,
+			},
+			{
+				Param:                3,
+				EscapeClass:          signature.EscapeBorrow,
+				PlacementConsequence: signature.PlacementConsequenceKeep,
+			},
+			{
+				Param:                4,
+				EscapeClass:          signature.EscapeStore,
+				PlacementConsequence: signature.PlacementConsequenceOwnedHeap,
+				StoredInto:           5,
+				HasStoredInto:        true,
+			},
+		},
 	}
 	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
 		Signatures: signatureMap{
@@ -2565,10 +2584,16 @@ func TestSignatureOutcomeProviderLowersOperationalEffectsNormalReturnFacts(t *te
 		!got.NormalReturnFacts.FrozenTables[0].Target.Equal(path.NewPlaceholder(0).Field("sealed")) {
 		t.Fatalf("frozen tables = %#v", got.NormalReturnFacts.FrozenTables)
 	}
+	if len(got.NormalReturnFacts.EscapeEvents) != 2 {
+		t.Fatalf("escape events = %#v, want explicit escape plus relational store escape", got.NormalReturnFacts.EscapeEvents)
+	}
 	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(0).Field("payload"), callboundary.EscapeEventSend, true)
-	if len(got.NormalReturnFacts.StoreRelations) != 1 ||
+	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(4), callboundary.EscapeEventStore, true)
+	if len(got.NormalReturnFacts.StoreRelations) != 2 ||
 		!got.NormalReturnFacts.StoreRelations[0].Source.Equal(path.NewPlaceholder(0).Field("payload")) ||
-		!got.NormalReturnFacts.StoreRelations[0].Into.Equal(path.NewPlaceholder(1).Field("items")) {
+		!got.NormalReturnFacts.StoreRelations[0].Into.Equal(path.NewPlaceholder(1).Field("items")) ||
+		!got.NormalReturnFacts.StoreRelations[1].Source.Equal(path.NewPlaceholder(4)) ||
+		!got.NormalReturnFacts.StoreRelations[1].Into.Equal(path.NewPlaceholder(5)) {
 		t.Fatalf("store relations = %#v", got.NormalReturnFacts.StoreRelations)
 	}
 }

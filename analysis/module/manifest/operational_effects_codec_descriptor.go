@@ -174,6 +174,10 @@ var operationalEffectsWireLanes = []operationalEffectsWireLane{
 		func(e *signature.OperationalEffects) *[]signature.StoreRelation { return &e.StoreRelations },
 		func(w *operationalEffectsWire) *[]storeRelationWire { return &w.StoreRelations },
 		encodeStoreRelation, decodeStoreRelation, compareStoreRelationWire, nil),
+	wireLane("ParamRelations",
+		func(e *signature.OperationalEffects) *[]signature.ParamRelation { return &e.ParamRelations },
+		func(w *operationalEffectsWire) *[]paramRelationWire { return &w.ParamRelations },
+		encodeParamRelation, decodeParamRelation, compareParamRelationWire, nil),
 	wireLane("LifecycleEffects",
 		func(e *signature.OperationalEffects) *[]signature.LifecycleEffect { return &e.LifecycleEffects },
 		func(w *operationalEffectsWire) *[]lifecycleEffectWire { return &w.LifecycleEffects },
@@ -401,6 +405,69 @@ func decodeStoreRelation(w storeRelationWire) (signature.StoreRelation, error) {
 	return signature.StoreRelation{Source: source, Into: into}, nil
 }
 
+func encodeParamRelation(relation signature.ParamRelation) (paramRelationWire, error) {
+	if relation.Param < 0 {
+		return paramRelationWire{}, fmt.Errorf("param relation index %d out of range", relation.Param)
+	}
+	escapeClass, err := encodeEscapeKind(relation.EscapeClass)
+	if err != nil {
+		return paramRelationWire{}, fmt.Errorf("param relation escape class: %w", err)
+	}
+	placementConsequence, err := encodePlacementConsequence(relation.PlacementConsequence)
+	if err != nil {
+		return paramRelationWire{}, fmt.Errorf("param relation placement consequence: %w", err)
+	}
+	out := paramRelationWire{
+		Param:                encodeInt(relation.Param),
+		EscapeClass:          escapeClass,
+		PlacementConsequence: placementConsequence,
+		ThroughReturn:        relation.ThroughReturn,
+	}
+	if relation.HasStoredInto {
+		if relation.StoredInto < 0 {
+			return paramRelationWire{}, fmt.Errorf("param relation storedInto %d out of range", relation.StoredInto)
+		}
+		out.StoredInto = encodeInt(relation.StoredInto)
+	}
+	return out, nil
+}
+
+func decodeParamRelation(w paramRelationWire) (signature.ParamRelation, error) {
+	param, err := decodeRequiredInt(w.Param, "param relation index missing")
+	if err != nil {
+		return signature.ParamRelation{}, err
+	}
+	if param < 0 {
+		return signature.ParamRelation{}, fmt.Errorf("param relation index %d out of range", param)
+	}
+	escapeClass, err := decodeEscapeKind(w.EscapeClass)
+	if err != nil {
+		return signature.ParamRelation{}, fmt.Errorf("param relation escape class: %w", err)
+	}
+	placementConsequence, err := decodePlacementConsequence(w.PlacementConsequence)
+	if err != nil {
+		return signature.ParamRelation{}, fmt.Errorf("param relation placement consequence: %w", err)
+	}
+	out := signature.ParamRelation{
+		Param:                param,
+		EscapeClass:          escapeClass,
+		PlacementConsequence: placementConsequence,
+		ThroughReturn:        w.ThroughReturn,
+	}
+	if w.StoredInto != nil {
+		storedInto, err := decodeRequiredInt(w.StoredInto, "param relation storedInto missing")
+		if err != nil {
+			return signature.ParamRelation{}, err
+		}
+		if storedInto < 0 {
+			return signature.ParamRelation{}, fmt.Errorf("param relation storedInto %d out of range", storedInto)
+		}
+		out.StoredInto = storedInto
+		out.HasStoredInto = true
+	}
+	return out, nil
+}
+
 func compareReturnPresenceRelationWire(a, b returnPresenceRelationWire) int {
 	if c := compareOptionalInt(a.TriggerIndex, b.TriggerIndex); c != 0 {
 		return c
@@ -497,6 +564,22 @@ func compareStoreRelationWire(a, b storeRelationWire) int {
 		return c
 	}
 	return comparePlaceholderPathWire(a.Into, b.Into)
+}
+
+func compareParamRelationWire(a, b paramRelationWire) int {
+	if c := compareOptionalInt(a.Param, b.Param); c != 0 {
+		return c
+	}
+	if c := strings.Compare(a.EscapeClass, b.EscapeClass); c != 0 {
+		return c
+	}
+	if c := strings.Compare(a.PlacementConsequence, b.PlacementConsequence); c != 0 {
+		return c
+	}
+	if c := compareBoolWire(a.ThroughReturn, b.ThroughReturn); c != 0 {
+		return c
+	}
+	return compareOptionalInt(a.StoredInto, b.StoredInto)
 }
 
 func compareReturnAllocationTemplateWire(a, b returnAllocationTemplateWire) int {

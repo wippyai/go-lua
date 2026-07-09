@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
@@ -700,6 +701,107 @@ func TestFunctionSummaryOperationalEffectsPreservesDescendantBoundaryFacts(t *te
 		!got.StoreRelations[0].Into.Equal(pathdom.NewPlaceholder(1).Field("bucket")) {
 		t.Fatalf("store relations = %#v", got.StoreRelations)
 	}
+	if len(got.ParamRelations) != 2 ||
+		got.ParamRelations[0].Param != 0 ||
+		got.ParamRelations[0].EscapeClass != signature.EscapeSend ||
+		got.ParamRelations[0].PlacementConsequence != signature.PlacementConsequenceSharedHeap ||
+		got.ParamRelations[0].StoredInto != 1 ||
+		!got.ParamRelations[0].HasStoredInto ||
+		got.ParamRelations[1].Param != 1 ||
+		got.ParamRelations[1].EscapeClass != signature.EscapeBorrow ||
+		got.ParamRelations[1].PlacementConsequence != signature.PlacementConsequenceKeep {
+		t.Fatalf("param relations = %#v", got.ParamRelations)
+	}
+}
+
+func TestFunctionSummaryOperationalEffectsExportsReadOnlyParamRelation(t *testing.T) {
+	got := functionSummaryOperationalEffects(standard.Registry(), summary.Summary{}, typ.Func().
+		Param("value", typ.Any).
+		Build(), "read")
+	if got == nil {
+		t.Fatal("operational effects = nil, want read-only param relation")
+	}
+	if len(got.ParamRelations) != 1 ||
+		got.ParamRelations[0].Param != 0 ||
+		got.ParamRelations[0].EscapeClass != signature.EscapeNone ||
+		got.ParamRelations[0].PlacementConsequence != signature.PlacementConsequenceKeep ||
+		got.ParamRelations[0].ThroughReturn ||
+		got.ParamRelations[0].HasStoredInto {
+		t.Fatalf("param relations = %#v, want $0 none/keep", got.ParamRelations)
+	}
+}
+
+func TestFunctionSummaryOperationalEffectsExportsSinkAndReturnParamRelations(t *testing.T) {
+	reg := standard.Registry()
+	sinkSource, ok := pathaddr.RootPlaceholderKeyFromPath(pathdom.NewPlaceholder(0))
+	if !ok {
+		t.Fatal("RootPlaceholderKeyFromPath($0) failed")
+	}
+	aliasSource, ok := pathaddr.PlaceholderKeyFromPath(pathdom.NewPlaceholder(1).Field("child"))
+	if !ok {
+		t.Fatal("PlaceholderKeyFromPath($1.child) failed")
+	}
+	got := functionSummaryOperationalEffects(reg, summary.Summary{
+		ParamSinkExposures: []summary.ParamSinkExposure{{
+			Source:   sinkSource,
+			Contract: product.Top(),
+		}},
+		ReturnParamPathAliases: []summary.ReturnParamPathAlias{{
+			ReturnIndex: 0,
+			Source:      aliasSource,
+		}},
+	}, typ.Func().
+		Param("stored", typ.Any).
+		Param("returned", typ.Any).
+		Returns(typ.Any).
+		Build(), "relations")
+	if got == nil {
+		t.Fatal("operational effects = nil")
+	}
+	if len(got.ParamRelations) != 2 {
+		t.Fatalf("param relations = %#v, want two rows", got.ParamRelations)
+	}
+	if got.ParamRelations[0].EscapeClass != signature.EscapeStore ||
+		got.ParamRelations[0].PlacementConsequence != signature.PlacementConsequenceOwnedHeap {
+		t.Fatalf("param 0 relation = %#v, want store/owned-heap", got.ParamRelations[0])
+	}
+	if !got.ParamRelations[1].ThroughReturn ||
+		got.ParamRelations[1].EscapeClass != signature.EscapeNone ||
+		got.ParamRelations[1].PlacementConsequence != signature.PlacementConsequenceKeep {
+		t.Fatalf("param 1 relation = %#v, want throughReturn with none/keep", got.ParamRelations[1])
+	}
+}
+
+func TestFromProgramResultExportsConditionalSinkStoreAsStoreRelation(t *testing.T) {
+	result := checkProgram(t, `
+		local client = {}
+		local sink = {}
+		function client.maybe_store(value: any, flag: boolean): ()
+			if flag then
+				sink.saved = value
+			end
+		end
+		return client
+	`)
+	m := FromProgramResult("client", result)
+	sig, ok := m.FunctionSignatures["client.maybe_store"]
+	if !ok {
+		t.Fatalf("missing client.maybe_store function signature: %#v", m.FunctionSignatures)
+	}
+	if sig.OperationalEffects == nil {
+		t.Fatal("client.maybe_store operational effects = nil")
+	}
+	if len(sig.OperationalEffects.ParamRelations) < 1 {
+		t.Fatalf("param relations = %#v, want relation for value", sig.OperationalEffects.ParamRelations)
+	}
+	relation := sig.OperationalEffects.ParamRelations[0]
+	if relation.EscapeClass == signature.EscapeNone || relation.EscapeClass == signature.EscapeBorrow {
+		t.Fatalf("param relation = %#v, conditional sink store must not export none/borrow", relation)
+	}
+	if relation.EscapeClass != signature.EscapeStore ||
+		relation.PlacementConsequence != signature.PlacementConsequenceOwnedHeap {
+		t.Fatalf("param relation = %#v, want store/owned-heap", relation)
+	}
 }
 
 func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing.T) {
@@ -938,6 +1040,25 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 			Source: pathdom.NewPlaceholder(0).Field("payload"),
 			Into:   pathdom.NewPlaceholder(1).Field("items"),
 		}},
+		ParamRelations: []signature.ParamRelation{
+			{
+				Param:                0,
+				EscapeClass:          signature.EscapeSend,
+				PlacementConsequence: signature.PlacementConsequenceSharedHeap,
+				StoredInto:           1,
+				HasStoredInto:        true,
+			},
+			{
+				Param:                1,
+				EscapeClass:          signature.EscapeNone,
+				PlacementConsequence: signature.PlacementConsequenceKeep,
+			},
+			{
+				Param:                2,
+				EscapeClass:          signature.EscapeNone,
+				PlacementConsequence: signature.PlacementConsequenceKeep,
+			},
+		},
 	}
 
 	got := functionSummaryOperationalEffects(reg, sum, fn, "laneMatrix")
@@ -968,6 +1089,7 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 		`"frozenTables"`,
 		`"escapeEvents"`,
 		`"storeRelations"`,
+		`"paramRelations"`,
 	} {
 		if !strings.Contains(encoded, wantFragment) {
 			t.Fatalf("encoded manifest missing %s:\n%s", wantFragment, encoded)
@@ -1371,9 +1493,7 @@ func assertAllocationTemplateRefsPresent(t *testing.T, template signature.Return
 }
 
 func TestFunctionSummaryOperationalEffectsEmptyIsAbsent(t *testing.T) {
-	got := functionSummaryOperationalEffects(standard.Registry(), summary.Summary{}, typ.Func().
-		Param("value", typ.Any).
-		Build(), "empty")
+	got := functionSummaryOperationalEffects(standard.Registry(), summary.Summary{}, typ.Func().Build(), "empty")
 	if got != nil {
 		t.Fatalf("operational effects = %#v, want nil for empty summary facts", got)
 	}
