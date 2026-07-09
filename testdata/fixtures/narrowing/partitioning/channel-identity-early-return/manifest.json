@@ -1,0 +1,7 @@
+{
+  "description": "A channel.select early-return guard on result.channel keeps the surviving payload field precise.",
+  "packages": ["channel"],
+  "run": {
+    "skip": "checker-only channel identity partitioning fixture"
+  }
+}

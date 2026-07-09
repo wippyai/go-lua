@@ -1,0 +1,87 @@
+{
+  "description": "A conditioned channel-select payload fact is invalidated when the result record is reassigned before the guard.",
+  "packages": ["channel"],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 17,
+        "column": 30,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign result.value.data",
+          "may be nil"
+        ],
+        "render_contains": [
+          "result.value.data"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign result.value.data because it may be nil",
+          "--> main.lua:17:30",
+          "local data: string = result.value.data",
+          "because:",
+          "1. proven: result.value.data can be string or nil here",
+          "2. claimed: data is declared as string",
+          "3. missing proof: no guard on this path proves result.value.data is non-nil",
+          "help: Guard `result.value.data` with a nil check"
+        ],
+        "render_not_contains": [
+          "^~",
+          "result.channel == messages proves result.value.data"
+        ],
+        "min_evidence": 1,
+        "evidence": [
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "line": 17,
+            "column": 30,
+            "contains": [
+              "result.value.data can be string or nil here"
+            ]
+          },
+          {
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "data is declared as string"
+            ]
+          },
+          {
+            "kind": "missing proof",
+            "contains": [
+              "no guard on this path proves result.value.data is non-nil"
+            ]
+          }
+        ],
+        "evidence_contains": [
+          "result.value.data can be string or nil"
+        ],
+        "help_contains": [
+          "Guard `result.value.data` with a nil check"
+        ],
+        "label_contains": [
+          "assigned value"
+        ],
+        "labels": [
+          {
+            "contains": [
+              "declared type"
+            ]
+          },
+          {
+            "line": 17,
+            "column": 30,
+            "contains": [
+              "assigned value"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "checker-only stale channel identity fact probe"
+  }
+}
