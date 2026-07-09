@@ -41,7 +41,7 @@ func (s *BatchSession) EnsureSolved(ctx context.Context, req SolveRequest) (Resu
 	latestKey := unitProfileKey{unitID: req.UnitID, profile: profile}
 	if req.Freshness != FreshnessRequireNew {
 		if key, exists := s.latest[latestKey]; exists && key.unitDigest == unit.digest {
-			if snapshot := s.results[key]; snapshot != nil && (req.DocumentVersion == 0 || snapshot.tag.DocumentVersion == documentVersion) {
+			if snapshot := s.results[key]; snapshot != nil && snapshot.tag.DocumentVersion == documentVersion {
 				return cloneResultTag(snapshot.tag), nil
 			}
 		}

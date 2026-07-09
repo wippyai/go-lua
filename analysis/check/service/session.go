@@ -125,7 +125,7 @@ func (s *BatchSession) resultForSelectorLocked(selector ResultSelector) (*comple
 	}
 	stale := true
 	if unit, exists := s.units[key.unitID]; exists {
-		stale = unit.digest != key.unitDigest
+		stale = unit.digest != key.unitDigest || snapshot.tag.DocumentVersion != unit.input.DocumentVersion
 	}
 	meta := QueryMeta{
 		Tag:   cloneResultTag(snapshot.tag),
