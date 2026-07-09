@@ -20,7 +20,7 @@ func TestProgramKeysUpsertCallContextOwnsMergeAndStaleRefRecovery(t *testing.T) 
 	owner := summary.SummaryKey{}
 	base := summary.SummaryKey{Entry: summary.EntryKey{Facts: 1}}
 	ref := callContextRef{owner: canonicalContextOwner(owner), expr: factflow.ExprRef(42)}
-	keys := programKeys{contexts: newContextIndex(10)}
+	keys := programKeys{contexts: newContextIndex()}
 
 	first, ok := keys.upsertCallContext(nil, ref, base, fn, state.State{}, nil, nil)
 	if !ok {
@@ -29,8 +29,8 @@ func TestProgramKeysUpsertCallContextOwnsMergeAndStaleRefRecovery(t *testing.T) 
 	if keys.contexts.Len() != 1 {
 		t.Fatalf("contexts = %d, want 1", keys.contexts.Len())
 	}
-	if got := first.Entry.Facts; got != 10 {
-		t.Fatalf("context facts digest = %d, want 10", got)
+	if got := first.Entry.Facts; got == 0 {
+		t.Fatal("context facts digest is zero; want stable context identity")
 	}
 
 	second, ok := keys.upsertCallContext(nil, ref, base, fn, state.State{}, nil, nil)
@@ -54,6 +54,37 @@ func TestProgramKeysUpsertCallContextOwnsMergeAndStaleRefRecovery(t *testing.T) 
 	}
 }
 
+func TestContextKeysAreStableAcrossDiscoveryOrder(t *testing.T) {
+	fn := &ast.FunctionExpr{}
+	base := summary.SummaryKey{Entry: summary.EntryKey{Facts: 1}}
+	firstRef := callContextRef{owner: summary.SummaryKey{Entry: summary.EntryKey{Values: 7}}, expr: factflow.ExprRef(3)}
+	secondRef := callContextRef{owner: summary.SummaryKey{Entry: summary.EntryKey{Values: 9}}, expr: factflow.ExprRef(1)}
+
+	forward := programKeys{contexts: newContextIndex()}
+	forwardFirst, changed := forward.upsertCallContext(nil, firstRef, base, fn, state.State{}, nil, nil)
+	if !changed {
+		t.Fatal("forward first context unchanged")
+	}
+	forwardSecond, changed := forward.upsertCallContext(nil, secondRef, base, fn, state.State{}, nil, nil)
+	if !changed {
+		t.Fatal("forward second context unchanged")
+	}
+
+	reverse := programKeys{contexts: newContextIndex()}
+	reverseSecond, changed := reverse.upsertCallContext(nil, secondRef, base, fn, state.State{}, nil, nil)
+	if !changed {
+		t.Fatal("reverse second context unchanged")
+	}
+	reverseFirst, changed := reverse.upsertCallContext(nil, firstRef, base, fn, state.State{}, nil, nil)
+	if !changed {
+		t.Fatal("reverse first context unchanged")
+	}
+
+	if forwardFirst != reverseFirst || forwardSecond != reverseSecond {
+		t.Fatalf("context keys depend on discovery order\nforward: %v, %v\nreverse: %v, %v", forwardFirst, forwardSecond, reverseFirst, reverseSecond)
+	}
+}
+
 func TestProgramKeysUpsertFunctionExpressionContextOwnsIndexMaps(t *testing.T) {
 	fn := &ast.FunctionExpr{}
 	owner := summary.SummaryKey{Entry: summary.EntryKey{Facts: 7}}
@@ -64,7 +95,6 @@ func TestProgramKeysUpsertFunctionExpressionContextOwnsIndexMaps(t *testing.T) {
 		functionByKey: make(map[summary.SummaryKey]*ast.FunctionExpr),
 		contexts: contextIndex{
 			functionExpressionKeys: map[functionExpressionRef]summary.SummaryKey{ref: {Entry: summary.EntryKey{Facts: 99}}},
-			nextID:                 20,
 		},
 	}
 
@@ -99,7 +129,7 @@ func TestProgramKeysUpsertFunctionExpressionContextUpgradesFunctionType(t *testi
 		functionKeys:  map[symbol.ID]summary.SummaryKey{symbol.ID(3): base},
 		functionByKey: make(map[summary.SummaryKey]*ast.FunctionExpr),
 		functionTypes: make(map[summary.SummaryKey]*typ.Function),
-		contexts:      newContextIndex(20),
+		contexts:      newContextIndex(),
 	}
 
 	firstType := typ.Func().Param("value", typ.Any).Build()
@@ -124,7 +154,7 @@ func TestProgramKeysUpsertFunctionExpressionContextUpgradesFunctionType(t *testi
 func TestContextIndexEntriesReturnsSnapshot(t *testing.T) {
 	fn := &ast.FunctionExpr{}
 	base := summary.SummaryKey{Entry: summary.EntryKey{Facts: 1}}
-	keys := programKeys{contexts: newContextIndex(30)}
+	keys := programKeys{contexts: newContextIndex()}
 	ref := callContextRef{owner: canonicalContextOwner(summary.SummaryKey{}), expr: factflow.ExprRef(4)}
 
 	key, ok := keys.upsertCallContext(nil, ref, base, fn, state.State{}, nil, nil)
@@ -172,7 +202,7 @@ func TestProgramKeysRefreshContextForKeyJoinsExistingEntryState(t *testing.T) {
 	refreshed := state.State{}.
 		WriteValue(reg, refreshedSlot, typevalue.FromType(reg, typ.Number)).
 		WriteValue(reg, staleSlot, typevalue.FromType(reg, typ.String))
-	keys := programKeys{contexts: newContextIndex(60)}
+	keys := programKeys{contexts: newContextIndex()}
 	keys.contexts.appendContext(fn, contextKey, existing, nil)
 
 	if !keys.refreshContextForKey(reg, contextKey, fn, nil, refreshed) {
@@ -201,7 +231,7 @@ func TestProgramKeysRefreshContextForKeyJoinsExistingEntryState(t *testing.T) {
 func TestContextIndexTransformEntriesPreservesKeys(t *testing.T) {
 	fn := &ast.FunctionExpr{}
 	base := summary.SummaryKey{Entry: summary.EntryKey{Facts: 1}}
-	keys := programKeys{contexts: newContextIndex(40)}
+	keys := programKeys{contexts: newContextIndex()}
 	ref := callContextRef{owner: canonicalContextOwner(summary.SummaryKey{}), expr: factflow.ExprRef(5)}
 
 	key, ok := keys.upsertCallContext(nil, ref, base, fn, state.State{}, nil, nil)

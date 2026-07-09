@@ -1,6 +1,8 @@
 package program
 
 import (
+	"sort"
+
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/callresult"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
@@ -540,16 +542,37 @@ func collectMaterializedCallContextKeys(keys *programKeys, root *body.Result, ba
 	if _, err := collectCallContextKeysFromResult(keys, keys.rootKey, root, config, nil, nil, preparedBodies{}); err != nil {
 		return false, err
 	}
-	for fn, result := range baseResults {
-		owner, ok := keys.summaryKeyForFunction(fn)
-		if !ok {
-			continue
-		}
-		if _, err := collectCallContextKeysFromResult(keys, owner, result, config, nil, nil, preparedBodies{}); err != nil {
+	for _, owner := range sortedMaterializedContextOwners(keys, baseResults) {
+		if _, err := collectCallContextKeysFromResult(keys, owner.key, owner.result, config, nil, nil, preparedBodies{}); err != nil {
 			return false, err
 		}
 	}
 	return keys.contexts.Len() != before, nil
+}
+
+type materializedContextOwner struct {
+	key    summary.SummaryKey
+	result *body.Result
+}
+
+// sortedMaterializedContextOwners establishes one source-stable allocation
+// order before collecting contexts. baseResults is keyed by function pointers,
+// whose map iteration order must never choose context-key facts or downstream
+// materialization/body ordering.
+func sortedMaterializedContextOwners(keys *programKeys, baseResults map[*ast.FunctionExpr]*body.Result) []materializedContextOwner {
+	if keys == nil || len(baseResults) == 0 {
+		return nil
+	}
+	owners := make([]materializedContextOwner, 0, len(baseResults))
+	for fn, result := range baseResults {
+		owner, ok := keys.summaryKeyForFunction(fn)
+		if !ok || result == nil {
+			continue
+		}
+		owners = append(owners, materializedContextOwner{key: owner, result: result})
+	}
+	sort.Slice(owners, func(i, j int) bool { return owners[i].key.Less(owners[j].key) })
+	return owners
 }
 
 func functionHasExplicitValidationSurface(fn *ast.FunctionExpr, bindings *bind.Result) bool {

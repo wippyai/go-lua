@@ -1,6 +1,9 @@
 package program
 
 import (
+	"fmt"
+	"hash/fnv"
+
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -16,13 +19,11 @@ type contextIndex struct {
 	byKey                  map[summary.SummaryKey]int
 	callKeys               map[callContextRef]summary.SummaryKey
 	functionExpressionKeys map[functionExpressionRef]summary.SummaryKey
-	nextID                 summary.Digest
 }
 
-func newContextIndex(nextID summary.Digest) contextIndex {
+func newContextIndex() contextIndex {
 	return contextIndex{
-		byKey:  make(map[summary.SummaryKey]int),
-		nextID: nextID,
+		byKey: make(map[summary.SummaryKey]int),
 	}
 }
 
@@ -138,11 +139,37 @@ func mergeContextEntry(reg *axis.Registry, context *keyedFunction, entryKeys *ke
 	return true
 }
 
-func (idx *contextIndex) nextContextKey(baseKey summary.SummaryKey) summary.SummaryKey {
-	contextKey := baseKey
-	contextKey.Entry.Facts = idx.nextID
-	idx.nextID++
-	return contextKey
+type contextKeyIdentity struct {
+	kind  string
+	owner summary.SummaryKey
+	expr  factflow.ExprRef
+}
+
+// nextContextKey derives the context entry dimension from source-stable
+// identity rather than discovery order. The callee's base key supplies the
+// function reference; owner and expression reference identify the call or
+// function-expression site that caused specialization.
+func (idx *contextIndex) nextContextKey(baseKey summary.SummaryKey, identity contextKeyIdentity) summary.SummaryKey {
+	for collision := uint64(0); ; collision++ {
+		contextKey := baseKey
+		contextKey.Entry.Facts = stableContextKeyDigest(baseKey, identity, collision)
+		if contextKey.Entry.Facts == 0 {
+			continue
+		}
+		if !idx.hasContextKey(contextKey) {
+			return contextKey
+		}
+	}
+}
+
+func stableContextKeyDigest(baseKey summary.SummaryKey, identity contextKeyIdentity, collision uint64) summary.Digest {
+	h := fnv.New64a()
+	fmt.Fprint(h, "call-context-key-v1:")
+	writeSummaryKeyDigest(h, baseKey)
+	fmt.Fprint(h, "kind:", identity.kind, ";owner:")
+	writeSummaryKeyDigest(h, identity.owner)
+	fmt.Fprint(h, "expr:", uint32(identity.expr), ";collision:", collision, ";")
+	return summary.Digest(h.Sum64())
 }
 
 func (idx *contextIndex) appendContext(fn *ast.FunctionExpr, contextKey summary.SummaryKey, entry state.State, entryKeys *keyspace.KeySpace) {
@@ -176,7 +203,7 @@ func (idx *contextIndex) upsertCallContext(
 			return summary.SummaryKey{}, false, false
 		}
 	}
-	contextKey := idx.nextContextKey(baseKey)
+	contextKey := idx.nextContextKey(baseKey, contextKeyIdentity{kind: "call", owner: ref.owner, expr: ref.expr})
 	idx.appendContext(fn, contextKey, entry, entryKeys)
 	if idx.callKeys == nil {
 		idx.callKeys = make(map[callContextRef]summary.SummaryKey)
@@ -204,7 +231,7 @@ func (idx *contextIndex) upsertFunctionExpressionContext(
 			return summary.SummaryKey{}, false, false
 		}
 	}
-	contextKey := idx.nextContextKey(baseKey)
+	contextKey := idx.nextContextKey(baseKey, contextKeyIdentity{kind: "function-expression", owner: ref.owner, expr: ref.expr})
 	idx.appendContext(callbackFn, contextKey, entry, entryKeys)
 	if idx.functionExpressionKeys == nil {
 		idx.functionExpressionKeys = make(map[functionExpressionRef]summary.SummaryKey)

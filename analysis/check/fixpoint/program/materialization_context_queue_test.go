@@ -15,7 +15,7 @@ func TestMaterializationContextQueueConsumesNewContextsOnce(t *testing.T) {
 	first.Entry.Facts = 1
 	second := summary.DefaultSummaryKey(ref.FromSymbol(1))
 	second.Entry.Facts = 2
-	keys := &programKeys{contexts: newContextIndex(1)}
+	keys := &programKeys{contexts: newContextIndex()}
 	keys.contexts.appendContext(fn, first, state.State{}, nil)
 
 	queue := newMaterializationContextQueue(keys)

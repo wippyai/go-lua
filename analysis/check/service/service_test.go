@@ -240,6 +240,69 @@ return value
 	}
 }
 
+func TestBatchSessionHighFanoutMaterializedContextsAreDeterministic(t *testing.T) {
+	ctx := context.Background()
+	session := NewBatchSession()
+	input := UnitInput{
+		ID:         "high-fanout-contexts",
+		ModulePath: "example/high-fanout-contexts",
+		EntryFile:  "main.lua",
+		SourceFiles: map[string][]byte{"main.lua": []byte(`
+local function alpha(value: number): number
+	return value + 1
+end
+
+local function beta(value: number): number
+	return value * 2
+end
+
+local function gamma(value: number): number
+	return value - 1
+end
+
+local function first(): number
+	return alpha(1) + alpha(2) + beta(3) + beta(4) + gamma(5) + gamma(6)
+end
+
+local function second(): number
+	return alpha(7) + alpha(8) + beta(9) + beta(10) + gamma(11) + gamma(12)
+end
+
+local function third(): number
+	return alpha(13) + alpha(14) + beta(15) + beta(16) + gamma(17) + gamma(18)
+end
+
+return first() + second() + third()
+`)},
+		Profile: "typed",
+	}
+	if _, err := session.UpsertUnit(ctx, input); err != nil {
+		t.Fatalf("UpsertUnit: %v", err)
+	}
+
+	firstTag := mustSolve(t, session, SolveRequest{UnitID: input.ID, Freshness: FreshnessRequireNew})
+	first, ok := session.LastComplete(ctx, ResultRequest{Selector: selectorFor(firstTag)})
+	if !ok {
+		t.Fatal("first completed result missing")
+	}
+	wantBodies := first.Bodies()
+	if len(wantBodies) < 24 {
+		t.Fatalf("bodies = %d, want high-fanout materialized contexts", len(wantBodies))
+	}
+
+	for run := 1; run < 12; run++ {
+		tag := mustSolve(t, session, SolveRequest{UnitID: input.ID, Freshness: FreshnessRequireNew})
+		assertStableResultContent(t, firstTag, tag)
+		completed, ok := session.LastComplete(ctx, ResultRequest{Selector: selectorFor(tag)})
+		if !ok {
+			t.Fatalf("run %d completed result missing", run)
+		}
+		if got := completed.Bodies(); !reflect.DeepEqual(got, wantBodies) {
+			t.Fatalf("run %d body ordering or ResultVersions changed\nwant: %#v\n got: %#v", run, wantBodies, got)
+		}
+	}
+}
+
 func assertCompletedResultIsDefensivelyImmutable(t *testing.T, completed CompletedResult) {
 	t.Helper()
 	tag := completed.Tag()

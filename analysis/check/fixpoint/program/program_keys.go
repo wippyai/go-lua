@@ -232,7 +232,7 @@ func collectKeys(bindings *bind.Result, root summary.SummaryKey, reg *axis.Regis
 		pathKeys:                 make(map[factflow.CalleePathKey]summary.SummaryKey),
 		pathMultiKeys:            make(map[factflow.CalleePathKey][]summary.SummaryKey),
 		functionTypes:            make(map[summary.SummaryKey]*typ.Function),
-		contexts:                 newContextIndex(1),
+		contexts:                 newContextIndex(),
 		metatableProof:           metatableContext.proof,
 		metatableMethodReceivers: metatableContext.methodReceivers,
 		metatableSeedReceivers:   metatableContext.seedReceivers,
