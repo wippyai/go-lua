@@ -18,7 +18,6 @@ import (
 // registered lanes for whole-OperationalEffects encode, decode, and canonical
 // ordering, so adding a fact kind is a single descriptor entry rather than a
 // new plural encoder/decoder plus an inline sort closure.
-//
 func wireLane[Fact any, Wire any](
 	fieldName string,
 	facts func(*signature.OperationalEffects) *[]Fact,

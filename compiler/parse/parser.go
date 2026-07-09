@@ -3,14 +3,14 @@
 //line parser.go.y:2
 package parse
 
-import __yyfmt__ "fmt"
-
-//line parser.go.y:2
-
 import (
+	__yyfmt__ "fmt"
+
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse/numparse"
 )
+
+//line parser.go.y:2
 
 func setLastPosFromExprs(node ast.PositionHolder, exprs []ast.Expr, fallback ast.PositionHolder) {
 	if node == nil {

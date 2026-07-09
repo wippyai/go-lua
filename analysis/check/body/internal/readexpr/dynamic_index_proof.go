@@ -1,6 +1,8 @@
 package readexpr
 
 import (
+	"math"
+
 	"github.com/wippyai/go-lua/analysis/domain/constraint/decision"
 	"github.com/wippyai/go-lua/analysis/domain/constraint/numeric"
 	"github.com/wippyai/go-lua/analysis/domain/constraint/solver"
@@ -18,7 +20,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
-	"math"
 )
 
 func dynamicIndexKeyMembershipProvesRead(config Config, point cfg.Point, dyn factflow.DynamicIndexExpression, in state.State) bool {
