@@ -2,6 +2,8 @@ package manifest
 
 import (
 	"encoding/json"
+	"reflect"
+	"sort"
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -51,6 +53,10 @@ func oracleRichOperationalEffects() signature.OperationalEffects {
 		PathStaticMembers: []signature.PathStaticMemberFact{
 			{Path: pathdom.NewPlaceholder(1).Field("kind"), Type: typ.String},
 			{Path: pathdom.NewPlaceholder(1).Field("size"), Type: typ.Integer},
+		},
+		PathStaticMemberDeltas: []signature.PathStaticMemberDelta{
+			{Path: pathdom.NewPlaceholder(1).Field("kind"), Type: typ.String, Required: true},
+			{Path: pathdom.NewPlaceholder(1).Field("size"), Type: typ.Integer, Required: false},
 		},
 		PathInvalidations: []signature.PathInvalidation{
 			{Path: pathdom.NewPlaceholder(1).Field("items")},
@@ -178,6 +184,7 @@ func oracleSingleLaneCases(rich signature.OperationalEffects) []struct {
 		{"NormalReturnTypeRefinements", signature.OperationalEffects{NormalReturnTypeRefinements: rich.NormalReturnTypeRefinements}},
 		{"PathPresenceImplications", signature.OperationalEffects{PathPresenceImplications: rich.PathPresenceImplications}},
 		{"PathStaticMembers", signature.OperationalEffects{PathStaticMembers: rich.PathStaticMembers}},
+		{"PathStaticMemberDeltas", signature.OperationalEffects{PathStaticMemberDeltas: rich.PathStaticMemberDeltas}},
 		{"PathInvalidations", signature.OperationalEffects{PathInvalidations: rich.PathInvalidations}},
 		{"BranchProofs", signature.OperationalEffects{BranchProofs: rich.BranchProofs}},
 		{"DynamicIndexFacts", signature.OperationalEffects{DynamicIndexFacts: rich.DynamicIndexFacts}},
@@ -201,6 +208,7 @@ func reverseOperationalEffectSlices(e *signature.OperationalEffects) {
 	reverseSlice(e.NormalReturnTypeRefinements)
 	reverseSlice(e.PathPresenceImplications)
 	reverseSlice(e.PathStaticMembers)
+	reverseSlice(e.PathStaticMemberDeltas)
 	reverseSlice(e.PathInvalidations)
 	reverseSlice(e.BranchProofs)
 	reverseSlice(e.DynamicIndexFacts)
@@ -303,5 +311,49 @@ func TestOperationalEffectsDescriptorCodecRoundTrips(t *testing.T) {
 	}
 	if a, b := mustMarshalWire(t, richWire), mustMarshalWire(t, reversedWire); string(a) != string(b) {
 		t.Fatalf("permutation not canonicalized:\nrich:     %s\nreversed: %s", a, b)
+	}
+}
+
+// TestOperationalEffectsCodecOracleCoversEveryRegisteredLane guards the oracle
+// itself against the class of gap that let PathStaticMemberDeltas go
+// unpopulated: a lane registered in operationalEffectsWireLanes but never
+// filled in by oracleRichOperationalEffects, or never isolated by
+// oracleSingleLaneCases. Adding a wireLane/boolWireLane entry to the
+// descriptor without updating this file's oracle fixtures fails here instead
+// of silently shipping an untested codec lane.
+func TestOperationalEffectsCodecOracleCoversEveryRegisteredLane(t *testing.T) {
+	rich := oracleRichOperationalEffects()
+	richValue := reflect.ValueOf(rich)
+
+	singleLane := make(map[string]bool)
+	for _, sc := range oracleSingleLaneCases(rich) {
+		singleLane[sc.name] = true
+	}
+
+	var unpopulated, unisolated []string
+	for _, lane := range operationalEffectsWireLanes {
+		field := richValue.FieldByName(lane.fieldName)
+		if !field.IsValid() {
+			t.Fatalf("registered lane %q has no matching OperationalEffects field", lane.fieldName)
+		}
+		empty := field.IsZero()
+		if field.Kind() == reflect.Slice {
+			empty = field.Len() == 0
+		}
+		if empty {
+			unpopulated = append(unpopulated, lane.fieldName)
+		}
+		if !singleLane[lane.fieldName] {
+			unisolated = append(unisolated, lane.fieldName)
+		}
+	}
+	sort.Strings(unpopulated)
+	sort.Strings(unisolated)
+
+	if len(unpopulated) != 0 {
+		t.Fatalf("oracleRichOperationalEffects leaves registered lane(s) unpopulated: %v", unpopulated)
+	}
+	if len(unisolated) != 0 {
+		t.Fatalf("oracleSingleLaneCases has no isolation case for registered lane(s): %v", unisolated)
 	}
 }
