@@ -2,6 +2,25 @@ package typ
 
 import "testing"
 
+func TestTypeEqualsAcyclicSmallProductDoesNotAllocate(t *testing.T) {
+	left := Func().
+		Param("input", newRecord().Field("value", Number).Build()).
+		Returns(MaterializeUnion([]Type{Number, String})).
+		Build()
+	right := Func().
+		Param("input", newRecord().Field("value", Number).Build()).
+		Returns(MaterializeUnion([]Type{Number, String})).
+		Build()
+
+	if allocs := testing.AllocsPerRun(100, func() {
+		if !typeEquals(left, right) {
+			t.Fatal("equivalent acyclic products should compare equal")
+		}
+	}); allocs != 0 {
+		t.Fatalf("acyclic equality allocated %g times per comparison, want 0", allocs)
+	}
+}
+
 func TestTypeEqualsIdentity(t *testing.T) {
 	if !typeEquals(Number, Number) {
 		t.Error("number should equal number")

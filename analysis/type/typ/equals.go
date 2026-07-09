@@ -19,7 +19,8 @@ func typeEquals(a, b Type) bool {
 		return true
 	}
 	guard := NewGuard()
-	return typeEqualsGuard(a, b, guard, nil)
+	seen := typePairSet{}
+	return typeEqualsGuard(a, b, guard, &seen)
 }
 
 // SameNode reports whether two Type interface values point at the same

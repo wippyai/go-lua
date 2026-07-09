@@ -2,7 +2,7 @@ package typ
 
 import "github.com/wippyai/go-lua/analysis/internal/recursion"
 
-func typeEqualsGuard(a, b Type, guard recursion.Guard, seen map[typePair]bool) bool {
+func typeEqualsGuard(a, b Type, guard recursion.Guard, seen *typePairSet) bool {
 	a = NormalizeNil(a)
 	b = NormalizeNil(b)
 
@@ -57,15 +57,9 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen map[typePair]bool) b
 		if ap != 0 && bp != 0 {
 			pair := typePair{a: ap, b: bp}
 
-			if seen == nil {
-				seen = make(map[typePair]bool)
-			}
-
-			if seen[pair] {
+			if seen.seenOrAdd(pair) {
 				return true // cycle, coinductively equal
 			}
-
-			seen[pair] = true
 		}
 	}
 
