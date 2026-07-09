@@ -5,7 +5,17 @@ import (
 	"strings"
 	"testing"
 
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/transfer"
+	"github.com/wippyai/go-lua/analysis/engine/visibility"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestNormalReturnApplyLaneRegistryCoversStorageLanes(t *testing.T) {
@@ -58,4 +68,48 @@ func TestNormalReturnBranchProofsUseBranchPathRelationApply(t *testing.T) {
 	if !strings.Contains(src, "applyBranchPathRelation(") {
 		t.Fatal("normal_return_branch.go does not call applyBranchPathRelation")
 	}
+}
+
+func TestNormalReturnPathPresenceImplicationAppliesTargetValue(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(64)
+	result := symbol.ID(366)
+	resultPath := pathdom.NewPath(result, "result")
+	channelPath := resultPath.Field("channel")
+	valuePath := resultPath.Field("value")
+
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, result, "result")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	triggerKey, triggerOK := visibility.AddressAt(resolver, point, channelPath).RootOrVisibleKeyspaceKey()
+	targetKey, targetOK := visibility.AddressAt(resolver, point, valuePath).RootOrVisibleKeyspaceKey()
+	if !triggerOK || !targetOK {
+		t.Fatalf("missing implication keys: trigger=%v target=%v", triggerOK, targetOK)
+	}
+	triggerType := typ.LiteralString("recv")
+	triggerValue := typevalue.WithWitness(reg, typevalue.FromType(reg, triggerType), triggerType)
+	payloadType := typetable.NewRecord().Field("data", typ.String).Build()
+	payloadValue := typevalue.WithWitness(reg, typevalue.FromType(reg, payloadType), payloadType)
+	ctx := normalReturnApplyContext{
+		node:          transfer.NodeContext{Registry: reg, Point: point},
+		resolver:      resolver,
+		point:         point,
+		boundaryPaths: callboundary.NewPathBindings(nil, nil),
+		normalFacts: callboundary.NormalReturnFacts{
+			PathPresenceImplications: []callboundary.PathPresenceImplicationFact{{
+				Trigger:         channelPath,
+				TriggerValue:    triggerValue,
+				HasTriggerValue: true,
+				Target:          valuePath,
+				TargetValue:     payloadValue,
+				HasTargetValue:  true,
+			}},
+		},
+	}
+	ks := resolver.KeySpace()
+	in := state.State{}.WritePathKey(reg, ks, ks.Format(triggerKey), triggerValue)
+
+	got := applyNormalReturnPathPresenceImplications(ctx, in)
+
+	assertPathValue(t, reg, ks, got, ks.Format(targetKey), payloadValue)
 }

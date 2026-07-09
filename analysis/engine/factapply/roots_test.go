@@ -915,3 +915,54 @@ func TestPathPresenceImplicationActivationAcceptsPathEqualityTrigger(t *testing.
 
 	assertPathValue(t, reg, resolver.KeySpace(), got, resolver.KeySpace().Format(targetKey), payloadValue)
 }
+
+func TestPathPresenceImplicationActivationRefinesEquivalentTargetPath(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(64)
+	result := symbol.ID(363)
+	events := symbol.ID(364)
+	msg := symbol.ID(365)
+	resultPath := path.NewPath(result, "selected")
+	channelPath := resultPath.Field("channel")
+	valuePath := resultPath.Field("value")
+	eventsPath := path.NewPath(events, "events")
+	msgPath := path.NewPath(msg, "msg")
+
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, result, "selected")
+	visibilityBuilder.Define(point, events, "events")
+	visibilityBuilder.Define(point, msg, "msg")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	triggerKey, triggerOK := visibility.AddressAt(resolver, point, channelPath).RootOrVisibleKeyspaceKey()
+	otherKey, otherOK := visibility.AddressAt(resolver, point, eventsPath).RootOrVisibleKeyspaceKey()
+	targetKey, targetOK := visibility.AddressAt(resolver, point, valuePath).RootOrVisibleKeyspaceKey()
+	msgKey, msgOK := visibility.AddressAt(resolver, point, msgPath).VisibleLocalKeyspaceKey()
+	if !triggerOK || !otherOK || !targetOK || !msgOK {
+		t.Fatalf("missing implication keys: trigger=%v other=%v target=%v msg=%v", triggerOK, otherOK, targetOK, msgOK)
+	}
+	payloadType := typetable.NewRecord().Field("data", typ.String).Build()
+	payloadValue := typevalue.WithWitness(reg, typevalue.FromType(reg, payloadType), payloadType)
+	implication := pathevidence.NewPathEqualValueRefinementImplication(
+		triggerKey,
+		otherKey,
+		targetKey,
+		payloadValue,
+	)
+	in := state.State{}.
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathEqual,
+			Path:  triggerKey,
+			Other: otherKey,
+		}).
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathEqual,
+			Path:  targetKey,
+			Other: msgKey,
+		}).
+		AddPathPresenceImplication(implication)
+
+	got := activatePathPresenceImplications(reg, resolver, point, in)
+
+	assertPathValue(t, reg, resolver.KeySpace(), got, resolver.KeySpace().Format(targetKey), payloadValue)
+	assertValue(t, reg, got, key.SymbolValue(msg), payloadValue)
+}

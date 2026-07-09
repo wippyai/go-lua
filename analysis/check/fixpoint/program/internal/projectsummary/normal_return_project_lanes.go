@@ -147,9 +147,13 @@ func projectNormalReturnPathPresenceImplications(ctx normalReturnProjectContext,
 				HasTriggerValue: implication.HasTriggerValue,
 				Target:          target,
 				TargetPresence:  implication.TargetPresence,
+				HasTargetValue:  implication.HasTargetValue,
 			}
 			if implication.HasTriggerValue {
 				fact.TriggerValue = portableBoundaryValue(ctx.reg, implication.TriggerValue)
+			}
+			if implication.HasTargetValue {
+				fact.TargetValue = portableBoundaryValue(ctx.reg, implication.TargetValue)
 			}
 			out.PathPresenceImplications = append(out.PathPresenceImplications, fact)
 		}

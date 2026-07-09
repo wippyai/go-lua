@@ -17,6 +17,8 @@ type pathPresenceImplicationKey struct {
 	hasTriggerValue bool
 	target          pathdom.PathKey
 	targetPresence  presence.Value
+	targetValue     product.Value
+	hasTargetValue  bool
 }
 
 var pathPresenceImplicationLane = factset.Set[pathPresenceImplicationKey, callboundary.PathPresenceImplicationFact]{
@@ -37,7 +39,10 @@ func admitPathPresenceImplication(f callboundary.PathPresenceImplicationFact) (c
 	if !f.Trigger.IsPlaceholder() || !f.Target.IsPlaceholder() {
 		return f, false
 	}
-	if f.TargetPresence.IsBottom() || f.TargetPresence.IsTop() {
+	if !f.HasTargetValue && (f.TargetPresence.IsBottom() || f.TargetPresence.IsTop()) {
+		return f, false
+	}
+	if f.HasTargetValue && f.TargetValue == product.Top() {
 		return f, false
 	}
 	if !f.HasTriggerValue && (f.TriggerPresence.IsBottom() || f.TriggerPresence.IsTop()) {
@@ -54,6 +59,8 @@ func pathPresenceImplicationKeyOf(f callboundary.PathPresenceImplicationFact) pa
 		hasTriggerValue: f.HasTriggerValue,
 		target:          f.Target.Key(),
 		targetPresence:  f.TargetPresence,
+		targetValue:     f.TargetValue,
+		hasTargetValue:  f.HasTargetValue,
 	}
 }
 
@@ -63,7 +70,9 @@ func pathPresenceImplicationEqual(a, b callboundary.PathPresenceImplicationFact)
 		a.HasTriggerValue == b.HasTriggerValue &&
 		(!a.HasTriggerValue || product.Equal(nil, a.TriggerValue, b.TriggerValue)) &&
 		a.Target.Equal(b.Target) &&
-		a.TargetPresence == b.TargetPresence
+		a.TargetPresence == b.TargetPresence &&
+		a.HasTargetValue == b.HasTargetValue &&
+		(!a.HasTargetValue || product.Equal(nil, a.TargetValue, b.TargetValue))
 }
 
 func pathPresenceImplicationLess(a, b callboundary.PathPresenceImplicationFact) bool {
@@ -88,5 +97,18 @@ func pathPresenceImplicationLess(a, b callboundary.PathPresenceImplicationFact) 
 	if ka.target != kb.target {
 		return ka.target < kb.target
 	}
-	return ka.targetPresence < kb.targetPresence
+	if ka.targetPresence != kb.targetPresence {
+		return ka.targetPresence < kb.targetPresence
+	}
+	if ka.hasTargetValue != kb.hasTargetValue {
+		return !ka.hasTargetValue
+	}
+	if ka.hasTargetValue {
+		av := fmt.Sprintf("%#v", ka.targetValue)
+		bv := fmt.Sprintf("%#v", kb.targetValue)
+		if av != bv {
+			return av < bv
+		}
+	}
+	return false
 }

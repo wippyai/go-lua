@@ -92,8 +92,10 @@ type PathStaticMemberFact struct {
 
 // PathPresenceImplicationFact records a must implication between two boundary
 // paths on normal return: when Trigger satisfies TriggerPresence or TriggerValue,
-// Target has TargetPresence. This carries local value/presence correlations such
-// as result.status == "error" => result.error present across call boundaries.
+// Target has TargetPresence or TargetValue. This carries local value/presence
+// correlations such as result.status == "error" => result.error present across
+// call boundaries, and preserves shaped target values when the callee proved
+// them.
 type PathPresenceImplicationFact struct {
 	Trigger         pathdom.Path
 	TriggerPresence presence.Value
@@ -101,6 +103,8 @@ type PathPresenceImplicationFact struct {
 	HasTriggerValue bool
 	Target          pathdom.Path
 	TargetPresence  presence.Value
+	TargetValue     product.Value
+	HasTargetValue  bool
 }
 
 // PathInvalidationFact records that descendants below a placeholder argument

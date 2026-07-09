@@ -337,6 +337,35 @@ func applyPathPresenceImplicationTarget(
 	if !pathKeyCurrentlyVisible(resolver, point, targetKey) {
 		return out
 	}
+	targetKeys := []pathdom.PathKey{targetKey}
+	seen := map[pathdom.PathKey]struct{}{targetKey: {}}
+	for _, equivalent := range out.EquivalentPathKeys(ks, targetKey) {
+		if equivalent == "" {
+			continue
+		}
+		if _, ok := seen[equivalent]; ok {
+			continue
+		}
+		if !pathKeyCurrentlyVisible(resolver, point, equivalent) {
+			continue
+		}
+		seen[equivalent] = struct{}{}
+		targetKeys = append(targetKeys, equivalent)
+	}
+	for _, key := range targetKeys {
+		out = applyPathPresenceImplicationTargetKey(reg, resolver, out, implication, key)
+	}
+	return out
+}
+
+func applyPathPresenceImplicationTargetKey(
+	reg *axis.Registry,
+	resolver *visibility.Resolver,
+	out state.State,
+	implication pathevidence.PathPresenceImplication,
+	targetKey pathdom.PathKey,
+) state.State {
+	ks := resolver.KeySpace()
 	constraint := implication.TargetValue
 	if !implication.HasTargetValue {
 		constraint = product.NewWithPresence(reg, product.ShapeTop, implication.TargetPresence)

@@ -1,0 +1,10 @@
+{
+  "description": "The real websocket echo select pattern preserves the payload shape through an intermediate local and a nested result.value.data read.",
+  "packages": ["channel"],
+  "check": {
+    "errors": 0
+  },
+  "run": {
+    "skip": "checker-only corpus-derived websocket channel-select fixture"
+  }
+}

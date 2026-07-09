@@ -243,8 +243,18 @@ func applyNormalReturnPathPresenceImplications(ctx normalReturnApplyContext, out
 			continue
 		}
 		var implication pathevidence.PathPresenceImplication
-		if fact.HasTriggerValue {
+		if fact.HasTriggerValue && fact.HasTargetValue {
+			implication = pathevidence.NewPathValueRefinementImplication(trigger, fact.TriggerValue, target, fact.TargetValue)
+		} else if fact.HasTriggerValue {
 			implication = pathevidence.NewPathValuePresenceImplication(trigger, fact.TriggerValue, target, fact.TargetPresence)
+		} else if fact.HasTargetValue {
+			implication = pathevidence.PathPresenceImplication{
+				Trigger:         trigger,
+				TriggerPresence: fact.TriggerPresence,
+				Target:          target,
+				TargetValue:     fact.TargetValue,
+				HasTargetValue:  true,
+			}
 		} else {
 			implication = pathevidence.NewPathPresenceImplication(trigger, fact.TriggerPresence, target, fact.TargetPresence)
 		}
