@@ -30,13 +30,12 @@ func summaryFactCorpus(t *testing.T) []Summary {
 	return out
 }
 
-// TestSummaryFactDescriptorsDeriveLiveLanes proves the descriptor table
-// derives lanes structurally identical to the live summaryLanes: same
-// order, field name, slot flag, and the same set of non-nil ops per lane.
-func TestSummaryFactDescriptorsDeriveLiveLanes(t *testing.T) {
+// TestSummaryFactDescriptorsDeriveCanonicalLanes verifies descriptor and
+// canonical lane order, field names, slot flags, and operation sets.
+func TestSummaryFactDescriptorsDeriveCanonicalLanes(t *testing.T) {
 	derived := derivedSummaryLanes()
 	if len(derived) != len(summaryLanes) {
-		t.Fatalf("derived lanes = %d, want live = %d", len(derived), len(summaryLanes))
+		t.Fatalf("derived lanes = %d, want canonical = %d", len(derived), len(summaryLanes))
 	}
 	for i, hand := range summaryLanes {
 		d := derived[i]
@@ -70,11 +69,8 @@ func TestSummaryFactDescriptorsDeriveLiveLanes(t *testing.T) {
 	}
 }
 
-// TestSummaryFactDescriptorsBehaviorParity proves every derived lane op produces
-// the same result as the live lane op across the summary corpus. The
-// corpus includes zero-value facts that some lattice helpers reject by panicking;
-// the comparison captures both value and panic so it proves the derived and
-// live paths agree on error behavior too.
+// TestSummaryFactDescriptorsBehaviorParity compares descriptor and canonical
+// lane operations across populated and zero-value summary facts.
 func TestSummaryFactDescriptorsBehaviorParity(t *testing.T) {
 	reg := mustRegistry(t)
 	derived := derivedSummaryLanes()

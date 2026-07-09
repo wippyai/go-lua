@@ -87,9 +87,9 @@ func (r *Result) ForEachAllocationSiteFact(visit func(AllocationSiteFact) bool) 
 	return visited
 }
 
-// ForEachDecomposableAllocationFact visits only allocation sites whose
+// ForEachDecomposableAllocationSiteFact visits only allocation sites whose
 // Decomposable license holds.
-func (r *Result) ForEachDecomposableAllocationFact(visit func(AllocationSiteFact) bool) bool {
+func (r *Result) ForEachDecomposableAllocationSiteFact(visit func(AllocationSiteFact) bool) bool {
 	if r == nil || visit == nil {
 		return false
 	}
@@ -213,20 +213,20 @@ func (r *Result) decomposableUseAnalysis() decomposableUseAnalysis {
 }
 
 type decomposableUseTracker struct {
-	body    *wir.Body
-	alloc   wir.Instruction
-	bad     bool
-	temps   map[uint32]struct{}
-	aliases []path.Path
+	body       *wir.Body
+	allocation wir.Instruction
+	bad        bool
+	temps      map[uint32]struct{}
+	aliases    []path.Path
 }
 
-func newDecomposableUseTracker(body *wir.Body, alloc wir.Instruction) *decomposableUseTracker {
+func newDecomposableUseTracker(body *wir.Body, allocation wir.Instruction) *decomposableUseTracker {
 	t := &decomposableUseTracker{
-		body:  body,
-		alloc: alloc,
-		temps: make(map[uint32]struct{}),
+		body:       body,
+		allocation: allocation,
+		temps:      make(map[uint32]struct{}),
 	}
-	t.addAliasDestination(alloc.Dst)
+	t.addAliasDestination(allocation.Dst)
 	return t
 }
 
@@ -250,7 +250,7 @@ func (t *decomposableUseTracker) disqualifiedByUses() bool {
 }
 
 func (t *decomposableUseTracker) classifyInstruction(inst wir.Instruction) bool {
-	if inst.Point == t.alloc.Point && inst.ExprID == t.alloc.ExprID && inst.Op == wir.OpMakeTable {
+	if inst.Point == t.allocation.Point && inst.ExprID == t.allocation.ExprID && inst.Op == wir.OpMakeTable {
 		return false
 	}
 	switch inst.Op {

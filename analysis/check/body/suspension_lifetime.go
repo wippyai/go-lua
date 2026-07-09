@@ -36,8 +36,8 @@ func (r *Result) allocationLifetimes() map[identity.ID]allocationLifetime {
 	return out
 }
 
-// AllocationDiesBeforeSuspension reads the solved lifetime fact for id.
-func (r *Result) AllocationDiesBeforeSuspension(id identity.ID) (bool, bool) {
+// AllocationSiteDiesBeforeSuspension reads the solved lifetime fact for id.
+func (r *Result) AllocationSiteDiesBeforeSuspension(id identity.ID) (bool, bool) {
 	lifetime, ok := r.allocationLifetimes()[id]
 	return lifetime.DiesBeforeSuspension, ok
 }

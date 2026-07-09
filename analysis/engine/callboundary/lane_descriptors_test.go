@@ -40,15 +40,13 @@ func richNormalReturnFactsCorpus() (facts NormalReturnFacts, match, other pathdo
 	return facts, match, other
 }
 
-// TestNormalReturnFactDescriptorsDeriveLiveLanes proves the descriptor
-// table derives lanes that are structurally identical (id, field name, and
-// path-filter participation) to the live storage lane registry, in the
-// same order.
-func TestNormalReturnFactDescriptorsDeriveLiveLanes(t *testing.T) {
+// TestNormalReturnFactDescriptorsDeriveCanonicalLanes verifies descriptor and
+// canonical storage lane order, identities, and path-filter participation.
+func TestNormalReturnFactDescriptorsDeriveCanonicalLanes(t *testing.T) {
 	derived := derivedNormalReturnFactLanes()
 	hand := NormalReturnFactLanes()
 	if len(derived) != len(hand) {
-		t.Fatalf("derived lanes = %d, want live = %d", len(derived), len(hand))
+		t.Fatalf("derived lanes = %d, want canonical = %d", len(derived), len(hand))
 	}
 	for i := range hand {
 		if derived[i].ID() != hand[i].ID() {

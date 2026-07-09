@@ -261,21 +261,21 @@ func FromState(st state.State) Plan {
 }
 
 type aggregate struct {
-	top         bool
-	incomplete  bool
-	blockers    map[Blocker]struct{}
-	objects     map[identity.ID]struct{}
-	allocations map[identity.ID]allocationProperties
-	children    map[identity.ID]map[identity.ID]struct{}
-	placements  map[identity.ID]placement.Value
-	frozen      map[identity.ID]struct{}
-	hoistable   map[hoistableLoadKey]readapi.HoistableLoad
+	top            bool
+	incomplete     bool
+	blockers       map[Blocker]struct{}
+	objects        map[identity.ID]struct{}
+	allocations    map[identity.ID]allocationProperties
+	children       map[identity.ID]map[identity.ID]struct{}
+	placements     map[identity.ID]placement.Value
+	frozen         map[identity.ID]struct{}
+	hoistableLoads map[hoistableLoadKey]readapi.HoistableLoad
 }
 
 type allocationProperties struct {
-	site, decomposable, frameLocalUseProof        bool
-	frameLocal, hasFrameLocal                     bool
-	diesBeforeSuspension, hasDiesBeforeSuspension bool
+	allocationSite, decomposable, frameLocalUseProof bool
+	frameLocal, hasFrameLocal                        bool
+	diesBeforeSuspension, hasDiesBeforeSuspension    bool
 }
 
 type hoistableLoadKey struct {
@@ -287,13 +287,13 @@ type hoistableLoadKey struct {
 
 func newAggregate() aggregate {
 	return aggregate{
-		blockers:    make(map[Blocker]struct{}),
-		objects:     make(map[identity.ID]struct{}),
-		allocations: make(map[identity.ID]allocationProperties),
-		children:    make(map[identity.ID]map[identity.ID]struct{}),
-		placements:  make(map[identity.ID]placement.Value),
-		frozen:      make(map[identity.ID]struct{}),
-		hoistable:   make(map[hoistableLoadKey]readapi.HoistableLoad),
+		blockers:       make(map[Blocker]struct{}),
+		objects:        make(map[identity.ID]struct{}),
+		allocations:    make(map[identity.ID]allocationProperties),
+		children:       make(map[identity.ID]map[identity.ID]struct{}),
+		placements:     make(map[identity.ID]placement.Value),
+		frozen:         make(map[identity.ID]struct{}),
+		hoistableLoads: make(map[hoistableLoadKey]readapi.HoistableLoad),
 	}
 }
 
@@ -361,7 +361,7 @@ func (a *aggregate) plan() Plan {
 		ids[id] = struct{}{}
 	}
 	for id, facts := range a.allocations {
-		if facts.site || facts.hasDiesBeforeSuspension {
+		if facts.allocationSite || facts.hasDiesBeforeSuspension {
 			ids[id] = struct{}{}
 		}
 	}
@@ -386,7 +386,7 @@ func (a *aggregate) plan() Plan {
 		Incomplete:     a.incomplete,
 		Blockers:       orderedBlockers(a.blockers),
 		Entries:        make([]Entry, 0, len(ordered)),
-		HoistableLoads: orderedHoistableLoads(a.hoistable),
+		HoistableLoads: orderedHoistableLoads(a.hoistableLoads),
 	}
 	for _, id := range ordered {
 		value, hasPlacement := a.placements[id]
@@ -404,7 +404,7 @@ func (a *aggregate) plan() Plan {
 			Placement:          value,
 			Target:             target,
 			HasObject:          mapContains(a.objects, id),
-			AllocationSite:     facts.site,
+			AllocationSite:     facts.allocationSite,
 			Decomposable:       facts.decomposable,
 			FrameLocalUseProof: facts.frameLocalUseProof,
 			FrameLocal:         frameLocal,
@@ -426,9 +426,9 @@ func (a *aggregate) addAllocationSite(id identity.ID, decomposable bool, frameLo
 		return
 	}
 	facts := a.allocations[id]
-	facts.decomposable = mergeProof(facts.decomposable, decomposable, facts.site)
-	facts.frameLocalUseProof = mergeProof(facts.frameLocalUseProof, frameLocalUseProof, facts.site)
-	facts.site = true
+	facts.decomposable = mergeProof(facts.decomposable, decomposable, facts.allocationSite)
+	facts.frameLocalUseProof = mergeProof(facts.frameLocalUseProof, frameLocalUseProof, facts.allocationSite)
+	facts.allocationSite = true
 	a.allocations[id] = facts
 }
 
@@ -446,7 +446,7 @@ func (p allocationProperties) frameLocalProof(value placement.Value, hasPlacemen
 	if p.hasFrameLocal {
 		return p.frameLocal
 	}
-	return p.site &&
+	return p.allocationSite &&
 		p.frameLocalUseProof &&
 		hasPlacement &&
 		value == placement.Stack &&
@@ -482,7 +482,7 @@ func (a *aggregate) addHoistableLoad(load readapi.HoistableLoad) {
 		loopHead: uint32(load.LoopHead),
 		readPath: load.ReadPath.Key(),
 	}
-	a.hoistable[key] = load
+	a.hoistableLoads[key] = load
 }
 
 func orderedHoistableLoads(loads map[hoistableLoadKey]readapi.HoistableLoad) []readapi.HoistableLoad {

@@ -5,14 +5,12 @@ import (
 	"testing"
 )
 
-// TestCallOutcomeDescriptorsDeriveLiveLanes proves the descriptor table
-// derives lanes structurally identical to the live callOutcomeLanes
-// registry, in the same order, including the post-return flag and per-field
-// presence predicate behavior.
-func TestCallOutcomeDescriptorsDeriveLiveLanes(t *testing.T) {
+// TestCallOutcomeDescriptorsDeriveCanonicalLanes verifies descriptor and
+// canonical lane order, post-return flags, and presence predicates.
+func TestCallOutcomeDescriptorsDeriveCanonicalLanes(t *testing.T) {
 	derived := derivedCallOutcomeLanes()
 	if len(derived) != len(callOutcomeLanes) {
-		t.Fatalf("derived lanes = %d, want live = %d", len(derived), len(callOutcomeLanes))
+		t.Fatalf("derived lanes = %d, want canonical = %d", len(derived), len(callOutcomeLanes))
 	}
 	for i, hand := range callOutcomeLanes {
 		if derived[i].fieldName != hand.fieldName {
