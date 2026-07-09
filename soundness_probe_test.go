@@ -439,3 +439,41 @@ return total
 		t.Fatalf("conditional alias write exported hoistable-load licenses: %#v", loads)
 	}
 }
+
+func TestSoundnessMetatableHoistProbe(t *testing.T) {
+	result := testutil.Check(`
+type Config = { limit: number }
+local ticks = 0
+local config = setmetatable({}, {
+	__index = function(_self, _key): number
+		ticks = ticks + 1
+		return ticks
+	end,
+}) :: Config
+local total = 0
+local i = 0
+while i < 3 do
+	total = total + config.limit
+	i = i + 1
+end
+return total
+`, testutil.WithStdlib())
+	if loads := result.PlacementPlan().HoistableLoads; len(loads) != 0 {
+		t.Fatalf("metatable-backed read exported hoistable-load licenses: %#v", loads)
+	}
+}
+
+func TestSoundnessOpaqueCallbackCaptureProbe(t *testing.T) {
+	result := testutil.Check(`
+local cfg = {}
+cfg.host = "x"
+local function clear()
+	cfg.host = nil
+end
+external(clear)
+local host: string = cfg.host
+`, testutil.WithStdlib(), testutil.WithGlobals("external"))
+	if len(result.Diagnostics) == 0 {
+		t.Fatal("diagnostics = none, want opaque callback capture to invalidate typed cfg.host read")
+	}
+}
