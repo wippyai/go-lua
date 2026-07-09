@@ -190,18 +190,6 @@ func assignmentSourceLabelDepth(expr ast.Expr, depth int) string {
 			return "{}"
 		}
 		return "{...}"
-	case *ast.StringExpr:
-		return strconv.Quote(e.Value)
-	case *ast.NumberExpr:
-		return e.Value
-	case *ast.TrueExpr:
-		return "true"
-	case *ast.FalseExpr:
-		return "false"
-	case *ast.NilExpr:
-		return "nil"
-	case *ast.Comma3Expr:
-		return "..."
 	default:
 		return ""
 	}
