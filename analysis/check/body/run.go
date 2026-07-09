@@ -335,6 +335,7 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		queries:               newResultQueryCache(s.facts),
 	}
 	result.finalizeReturnSlotsFromBoundaryValues()
+	result.resultVersion = computeResultVersion(s, config, entryState, initial)
 	return result
 }
 

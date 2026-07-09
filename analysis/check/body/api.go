@@ -50,6 +50,7 @@ type Config struct {
 	CallOutcomeFactory           CallOutcomeFactory
 	SignatureArgumentType        SignatureArgumentTypeFunc
 	SignatureArgumentTypeFactory SignatureArgumentTypeFactory
+	SummaryInputDigests          func() []uint64
 	Signatures                   signaturelookup.Source
 	ModuleExports                importlookup.Source
 	ModuleTypes                  typelookup.Source
@@ -163,6 +164,9 @@ type SolveConfig struct {
 	CallOutcomeFactory           CallOutcomeFactory
 	SignatureArgumentType        SignatureArgumentTypeFunc
 	SignatureArgumentTypeFactory SignatureArgumentTypeFactory
+	// SummaryInputDigests returns content digests for summaries read during this
+	// solve. It is consulted once at result-publication time.
+	SummaryInputDigests func() []uint64
 
 	WidenAt    func(cfg.Point) bool
 	WidenDelay func(cfg.Point) int
@@ -215,6 +219,8 @@ type Result struct {
 	reassignedOK     bool
 	returnTypeValues []product.Value
 	returnTypesOK    bool
+
+	resultVersion uint64
 }
 
 type CallOutcomeContext struct {

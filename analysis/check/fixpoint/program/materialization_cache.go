@@ -1,6 +1,8 @@
 package program
 
 import (
+	"fmt"
+	"hash/fnv"
 	"slices"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
@@ -191,12 +193,35 @@ func solveMaterializedPrepared(
 	}
 	tracked := &trackingSummaryReader{reg: cache.reg, base: summaries}
 	config := buildConfig(tracked)
+	config.SummaryInputDigests = func() []uint64 {
+		return trackedSummaryReadDigests(cache.reg, tracked.deps)
+	}
 	result, err := solvePreparedCounted(prepared, config, counter)
 	if err != nil {
 		return nil, true, err
 	}
 	cache.write(prepared, owner, shape, entry, summaries, tracked.deps, result)
 	return result, true, nil
+}
+
+func trackedSummaryReadDigests(reg *axis.Registry, deps map[summary.SummaryKey]trackedSummaryRead) []uint64 {
+	if len(deps) == 0 {
+		return nil
+	}
+	out := make([]uint64, 0, len(deps))
+	for _, dep := range deps {
+		h := fnv.New64a()
+		if dep.present {
+			_, _ = h.Write([]byte("present:"))
+			payload := uint64(summary.NormalizedPayloadDigest(reg, dep.sum))
+			fmt.Fprintf(h, "%d;", payload)
+		} else {
+			_, _ = h.Write([]byte("missing"))
+		}
+		out = append(out, h.Sum64())
+	}
+	slices.Sort(out)
+	return out
 }
 
 func (c *materializedSolveCache) read(
