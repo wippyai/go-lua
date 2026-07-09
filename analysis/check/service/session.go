@@ -128,9 +128,8 @@ func (s *BatchSession) resultForSelectorLocked(selector ResultSelector) (*comple
 		stale = unit.digest != key.unitDigest
 	}
 	meta := QueryMeta{
-		Tag:     cloneResultTag(snapshot.tag),
-		Stale:   stale,
-		Partial: len(snapshot.parseErrors) != 0,
+		Tag:   cloneResultTag(snapshot.tag),
+		Stale: stale,
 	}
 	return snapshot, meta, true
 }

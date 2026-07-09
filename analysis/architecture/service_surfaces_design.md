@@ -136,7 +136,6 @@ type CompletedResult struct {
     Diagnostics  []diagnostic.Diagnostic
     Manifest     *manifest.Manifest
     Placement    placementplan.Plan
-    ParseErrors  []diagnostic.Diagnostic
 }
 ```
 
@@ -283,9 +282,8 @@ All responses include:
 
 ```go
 type QueryMeta struct {
-    Tag     ResultTag
-    Stale   bool
-    Partial bool
+    Tag   ResultTag
+    Stale bool
 }
 ```
 
@@ -298,9 +296,8 @@ type GetResultRequest struct {
 }
 
 type GetResultResponse struct {
-    Meta        QueryMeta
-    Status      ResultStatus // unsolved, parsing, solving, complete, failed
-    ParseErrors []diagnostic.Diagnostic
+    Meta   QueryMeta
+    Status ResultStatus // unsolved, parsing, solving, complete, failed
 }
 ```
 

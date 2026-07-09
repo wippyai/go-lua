@@ -129,13 +129,6 @@ func (r CompletedResult) RenderedDiagnostics() []diagnostic.Diagnostic {
 	return cloneDiagnostics(r.snapshot.diagnostics)
 }
 
-func (r CompletedResult) ParseErrors() []diagnostic.Diagnostic {
-	if r.snapshot == nil {
-		return nil
-	}
-	return cloneDiagnostics(r.snapshot.parseErrors)
-}
-
 func (r CompletedResult) ManifestBytes() (path string, digest Digest, data []byte) {
 	if r.snapshot == nil {
 		return "", Digest{}, nil
@@ -190,9 +183,8 @@ type ResultRequest struct {
 }
 
 type QueryMeta struct {
-	Tag     ResultTag
-	Stale   bool
-	Partial bool
+	Tag   ResultTag
+	Stale bool
 }
 
 type SourceRange struct {
