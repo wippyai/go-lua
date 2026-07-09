@@ -3,6 +3,7 @@ package readexpr
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -12,6 +13,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"sync"
@@ -361,6 +363,56 @@ func ProjectWithoutRootStaticMemberOverlay(config Config, point cfg.Point, p pat
 		return product.Value{}, false
 	}
 	return applyPathPresenceProof(config, point, p, in, value), true
+}
+
+func applyPathPresenceProof(config Config, point cfg.Point, p pathdom.Path, in state.State, value product.Value) product.Value {
+	proven, ok := pathPresenceProof(config, point, p, in)
+	if !ok {
+		return value
+	}
+	value = product.WithPresence(config.Registry, value, proven)
+	if presence.Equal(proven, presence.Present()) {
+		value = sourcevalue.WithoutNilRuntimeKind(config.Registry, value)
+	}
+	return value
+}
+
+func pathPresenceProof(config Config, point cfg.Point, p pathdom.Path, in state.State) (presence.Value, bool) {
+	if config.Visibility == nil || p.IsEmpty() {
+		return presence.Bottom(), false
+	}
+	ks := config.Visibility.KeySpace()
+	if ks == nil {
+		return presence.Bottom(), false
+	}
+	snapshot := in.BranchProofsSnapshot(ks)
+	if snapshot.Bottom || snapshot.Top || len(snapshot.Proofs) == 0 {
+		return presence.Bottom(), false
+	}
+	var out presence.Value
+	found := false
+	visibility.AddressAt(config.Visibility, point, p).ForEachStateKey(func(stateKey pathaddr.StateKey) bool {
+		key, ok := ks.InternStateKey(stateKey)
+		if !ok {
+			return true
+		}
+		for _, proof := range snapshot.Proofs {
+			if proof.Kind != pathevidence.BranchProofPathPresence || proof.Path != key {
+				continue
+			}
+			if found && !presence.Equal(out, proof.Presence) {
+				found = false
+				return false
+			}
+			out = proof.Presence
+			found = true
+		}
+		return true
+	}, visibility.StateKeyVisible, visibility.StateKeyRootOrVisible, visibility.StateKeyStructural)
+	if !found {
+		return presence.Bottom(), false
+	}
+	return out, true
 }
 
 // ProjectStaticMember reads one proven static member for owner without

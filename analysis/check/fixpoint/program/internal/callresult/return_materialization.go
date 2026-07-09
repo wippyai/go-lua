@@ -397,37 +397,6 @@ func summaryReturnValueAt(reg *axis.Registry, sum summary.Summary, index int) (p
 	return value, true
 }
 
-func dropDescendantFactsBelowMaybeAbsentReturns(sum summary.Summary) summary.Summary {
-	if len(sum.Returns) == 0 {
-		return sum
-	}
-	maybeAbsent := make(map[int]struct{})
-	for i, value := range sum.Returns {
-		if !product.DefinitelyPresent(value) {
-			maybeAbsent[i] = struct{}{}
-		}
-	}
-	if len(maybeAbsent) == 0 {
-		return sum
-	}
-	sum.NormalReturnFacts = sum.NormalReturnFacts.DropFactsTouchingPaths(func(p pathdom.Path) bool {
-		return strictPlaceholderDescendant(p, maybeAbsent)
-	})
-	return sum
-}
-
-func strictPlaceholderDescendant(p pathdom.Path, roots map[int]struct{}) bool {
-	if len(p.Segments) == 0 {
-		return false
-	}
-	index := p.PlaceholderIndex()
-	if index < 0 {
-		return false
-	}
-	_, ok := roots[index]
-	return ok
-}
-
 func applyDeclaredSummaryReturns(reg *axis.Registry, typeValues *typevalue.Cache, got summary.Summary, fn *typ.Function) summary.Summary {
 	if reg == nil || fn == nil || len(fn.TypeParams) != 0 || len(fn.Returns) == 0 {
 		return got
