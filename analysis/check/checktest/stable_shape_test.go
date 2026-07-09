@@ -25,6 +25,88 @@ local host = cfg.host
 	requireShapeFieldSubtype(t, root, fact.Shape, "port", typ.Number)
 }
 
+// Passing a closure to an opaque call lets that call invoke the closure before
+// it returns. Its captured tables therefore cannot retain staged-shape proofs.
+func TestStableShapeRejectsCapturedTableAfterOpaqueCallbackInvocation(t *testing.T) {
+	result := Check(`
+local cfg = {}
+cfg.host = "x"
+local function clear()
+	cfg.host = nil
+end
+external(clear)
+local host: string = cfg.host
+`, WithGlobals("external"))
+	root := requireRootResult(t, result)
+	occ := requireStaticRead(t, root, "cfg.host")
+	if fact, ok := root.StableShapeForStaticMemberRead(occ); ok {
+		t.Fatalf("stable shape = %#v, want no fact after opaque callback can clear captured cfg", fact)
+	}
+	if len(result.Diagnostics) == 0 {
+		t.Fatal("diagnostics = none, want typed cfg.host read rejected after opaque callback can clear capture")
+	}
+}
+
+func TestStableShapeKeepsKnownCallbackIgnoringCapturedClosurePrecise(t *testing.T) {
+	result := Check(`
+local cfg = {}
+cfg.host = "x"
+local function clear()
+	cfg.host = nil
+end
+local function ignore(_callback)
+end
+ignore(clear)
+local host: string = cfg.host
+`)
+	requireNoDiagnostics(t, result.Diagnostics)
+	root := requireRootResult(t, result)
+	requireStableReadShape(t, root, "cfg.host")
+}
+
+func TestStableShapeRejectsTableReachableFromOpaqueCallbackCapture(t *testing.T) {
+	result := Check(`
+local cfg = {}
+cfg.service = {}
+cfg.service.host = "x"
+local function clear()
+	cfg.service.host = nil
+end
+external(clear)
+local host: string = cfg.service.host
+`, WithGlobals("external"))
+	root := requireRootResult(t, result)
+	occ := requireStaticRead(t, root, "cfg.service.host")
+	if fact, ok := root.StableShapeForStaticMemberRead(occ); ok {
+		t.Fatalf("stable shape = %#v, want no fact after opaque callback can mutate nested captured table", fact)
+	}
+	if len(result.Diagnostics) == 0 {
+		t.Fatal("diagnostics = none, want nested typed read rejected after opaque callback can clear capture")
+	}
+}
+
+func TestStableShapeRejectsOpaqueArgumentWhoseGraphReachesCapturedClosure(t *testing.T) {
+	result := Check(`
+local cfg = {}
+cfg.host = "x"
+local function clear()
+	cfg.host = nil
+end
+local callbacks = {}
+callbacks.clear = clear
+external(callbacks)
+local host: string = cfg.host
+`, WithGlobals("external"))
+	root := requireRootResult(t, result)
+	occ := requireStaticRead(t, root, "cfg.host")
+	if fact, ok := root.StableShapeForStaticMemberRead(occ); ok {
+		t.Fatalf("stable shape = %#v, want no fact after opaque argument reaches captured closure", fact)
+	}
+	if len(result.Diagnostics) == 0 {
+		t.Fatal("diagnostics = none, want typed cfg.host read rejected after opaque argument reaches clear closure")
+	}
+}
+
 func TestPrefixStableLicensesReadBeforeLaterExtension(t *testing.T) {
 	result := Check(`
 local cfg = {}

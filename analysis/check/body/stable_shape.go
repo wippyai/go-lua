@@ -15,6 +15,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -741,10 +743,171 @@ func (r *Result) callMayStructurallyMutateIdentity(point cfg.Point, id identity.
 			return true
 		}
 	}
+	if r.opaqueCallMaySynchronouslyInvokeCapturedClosure(point) &&
+		r.callArgumentGraphCapturesIdentity(point, id) {
+		return true
+	}
 	if receiver.IsEmpty() {
 		return false
 	}
 	return r.CallMayInvalidateTrackedPath(point, receiver)
+}
+
+// opaqueCallMaySynchronouslyInvokeCapturedClosure reports whether the call
+// lacks an authoritative direct-call effect summary. Such a callee may invoke
+// a closure argument before returning; a known local function or an explicit
+// signature/effect summary keeps its existing precise behavior.
+func (r *Result) opaqueCallMaySynchronouslyInvokeCapturedClosure(point cfg.Point) bool {
+	if r == nil || !r.callSiteExists(point) {
+		return false
+	}
+	outcome, hasOutcome := r.CallOutcomeAt(point)
+	if !hasOutcome {
+		return !r.callSiteHasExactEmptyGuardInvalidationSummaryAt(point)
+	}
+	if r.callOutcomeHasExactGuardInvalidationSummaryAt(point, outcome, true) &&
+		!CallOutcomeHasGlobalGuardInvalidation(outcome) {
+		return false
+	}
+	return true
+}
+
+// callArgumentGraphCapturesIdentity follows solved closure captures and finite
+// heap members from every call argument. It is deliberately identity-based:
+// when an opaque callee receives a closure (possibly nested in a table) that
+// captures target, it may invoke that closure synchronously and structurally
+// mutate target or any table reachable from that capture.
+func (r *Result) callArgumentGraphCapturesIdentity(point cfg.Point, target identity.ID) bool {
+	if r == nil || target == (identity.ID{}) {
+		return false
+	}
+	site, ok := r.CallSiteView(point)
+	if !ok {
+		return false
+	}
+	visited := make(map[identity.ID]struct{})
+	found := false
+	site.ForEachArgumentSource(func(_ int, source factflow.ValueSource) bool {
+		value, ok := r.SourceValueBeforeBoundary(point, source)
+		if !ok {
+			return true
+		}
+		if r.valueGraphHasClosureCapturingIdentity(point, value, target, visited) {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func (r *Result) valueGraphHasClosureCapturingIdentity(point cfg.Point, value product.Value, target identity.ID, visited map[identity.ID]struct{}) bool {
+	if r == nil || r.registry == nil {
+		return false
+	}
+	id, ok := identityvalue.ExactID(r.registry, value)
+	if !ok {
+		return false
+	}
+	if _, seen := visited[id]; seen {
+		return false
+	}
+	visited[id] = struct{}{}
+	if r.closureCapturesIdentity(point, id, target, visited) {
+		return true
+	}
+	st, ok := r.StateAt(point)
+	if !ok {
+		return false
+	}
+	object := st.ReadHeapTableObject(r.registry, id)
+	for _, member := range object.StaticMembers() {
+		if r.valueGraphHasClosureCapturingIdentity(point, member, target, visited) {
+			return true
+		}
+	}
+	for _, fact := range object.DynamicIndexFacts() {
+		if r.valueGraphHasClosureCapturingIdentity(point, fact.Value, target, visited) {
+			return true
+		}
+	}
+	return false
+}
+
+// valueGraphReachesIdentity follows a closure's captured environment. Once a
+// closure is known to be invoked, every table reachable from its captures can
+// be mutated by its body, so target itself is a successful terminal here.
+func (r *Result) valueGraphReachesIdentity(point cfg.Point, value product.Value, target identity.ID, visited map[identity.ID]struct{}) bool {
+	if r == nil || r.registry == nil {
+		return false
+	}
+	id, ok := identityvalue.ExactID(r.registry, value)
+	if !ok {
+		return false
+	}
+	if id == target {
+		return true
+	}
+	if _, seen := visited[id]; seen {
+		return false
+	}
+	visited[id] = struct{}{}
+	if r.closureCapturesIdentity(point, id, target, visited) {
+		return true
+	}
+	st, ok := r.StateAt(point)
+	if !ok {
+		return false
+	}
+	object := st.ReadHeapTableObject(r.registry, id)
+	for _, member := range object.StaticMembers() {
+		if r.valueGraphReachesIdentity(point, member, target, visited) {
+			return true
+		}
+	}
+	for _, fact := range object.DynamicIndexFacts() {
+		if r.valueGraphReachesIdentity(point, fact.Value, target, visited) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Result) closureCapturesIdentity(point cfg.Point, closure identity.ID, target identity.ID, visited map[identity.ID]struct{}) bool {
+	if r == nil || r.wir == nil || r.Graph() == nil {
+		return false
+	}
+	for _, candidate := range r.Graph().RPO() {
+		if candidate != point && !r.PointDominates(candidate, point) {
+			continue
+		}
+		for _, inst := range r.wir.PointInstructions(candidate) {
+			if inst.Op != wir.OpClosure || inst.Func == 0 || inst.Dst.Kind != wir.OperandPath {
+				continue
+			}
+			closurePath := r.wir.Path(wir.PathRef(inst.Dst.Ref))
+			value, ok := r.PathValueAtBoundary(candidate, closurePath)
+			if !ok {
+				continue
+			}
+			id, ok := identityvalue.ExactID(r.registry, value)
+			if !ok || id != closure {
+				continue
+			}
+			proto := r.wir.Proto(inst.Func)
+			fn, ok := r.FunctionBySymbol(symbol.ID(proto.Symbol))
+			if !ok || fn == nil {
+				continue
+			}
+			for _, capture := range r.DirectCaptures(fn) {
+				captured, ok := r.PathValueBeforeBoundary(point, pathdom.NewPath(capture.Captured, r.SymbolName(capture.Captured)))
+				if ok && r.valueGraphReachesIdentity(point, captured, target, visited) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func (r *Result) callSiteReferencesIdentityAt(point cfg.Point, id identity.ID, receiver pathdom.Path) bool {

@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -25,14 +26,16 @@ import (
 // because it combines expression paths, declared types, heap/path proofs, and
 // branch evidence from the solved body.
 func (r *Result) WithMemberReadNilWitness(point cfg.Point, expr ast.Expr, value product.Value) product.Value {
+	priorStructuralMutation := r.memberReadHasPriorStructuralMutation(point, expr)
 	if r == nil || r.Registry() == nil || expr == nil ||
-		!r.MemberReadCanMissOrDeclaredNilable(point, expr) ||
-		r.memberReadValueAlreadyProvenPresent(point, expr, value) ||
-		r.ExpressionReadProvenPresentBeforeBoundary(point, expr) ||
-		r.memberReadHasExactPathProof(point, expr) ||
-		r.memberReadHasExactHeapProof(point, expr) ||
-		r.memberReadHasLengthFloorProof(point, expr) ||
-		r.memberReadHasLiteralDeclarationProof(point, expr) {
+		(!priorStructuralMutation && !r.MemberReadCanMissOrDeclaredNilable(point, expr)) ||
+		(!priorStructuralMutation &&
+			(r.memberReadValueAlreadyProvenPresent(point, expr, value) ||
+				r.ExpressionReadProvenPresentBeforeBoundary(point, expr) ||
+				r.memberReadHasExactPathProof(point, expr) ||
+				r.memberReadHasExactHeapProof(point, expr) ||
+				r.memberReadHasLengthFloorProof(point, expr) ||
+				r.memberReadHasLiteralDeclarationProof(point, expr))) {
 		return value
 	}
 	got, ok := r.ValueTypeWithPresence(value)
@@ -93,6 +96,42 @@ func (r *Result) MemberReadCanMissOrDeclaredNilable(point cfg.Point, expr ast.Ex
 	}
 	declared, ok := r.DeclaredExpressionTypeAt(point, expr)
 	return ok && typevalue.TypeIncludesNil(declared)
+}
+
+// memberReadHasPriorStructuralMutation prevents a stale heap/path member fact
+// from proving a later read present after an opaque call can synchronously
+// invoke a supplied closure and mutate the table through its capture. Ordinary
+// prior writes remain governed by their existing point-sensitive facts.
+func (r *Result) memberReadHasPriorStructuralMutation(point cfg.Point, expr ast.Expr) bool {
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok || attr.Object == nil || r == nil || r.registry == nil {
+		return false
+	}
+	receiver, ok := r.ExpressionValueBeforeBoundary(point, attr.Object)
+	if !ok {
+		return false
+	}
+	id, ok := identityvalue.ExactID(r.registry, receiver)
+	if !ok {
+		return false
+	}
+	graph := r.Graph()
+	if graph == nil {
+		return false
+	}
+	entry := graph.Entry()
+	for _, candidate := range graph.RPO() {
+		if candidate == point ||
+			!r.PointCanReach(entry, candidate) ||
+			!r.PointCanReach(candidate, point) {
+			continue
+		}
+		if r.opaqueCallMaySynchronouslyInvokeCapturedClosure(candidate) &&
+			r.callArgumentGraphCapturesIdentity(candidate, id) {
+			return true
+		}
+	}
+	return false
 }
 
 // MemberReadCanMiss reports whether expr's member access has a nilable result
