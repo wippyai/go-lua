@@ -13,6 +13,10 @@ import (
 // manifests. Unlike Effect rows, this is not handwritten contract vocabulary:
 // it is a stable, param-relative serialization of facts the analyzer proved.
 type OperationalEffects struct {
+	// SuspensionKnown certifies that MaySuspend is an exhaustive suspension
+	// classification. A missing certification remains conservative for legacy
+	// manifests, whose operational effects predate this field.
+	SuspensionKnown                 bool
 	MaySuspend                      bool
 	ReturnPresenceRelations         []ReturnPresenceRelation
 	NormalReturnPresenceRefinements []PathPresenceRefinement
@@ -310,6 +314,9 @@ func operationalEffectBoolLane(
 }
 
 var operationalEffectLanes = []operationalEffectLane{
+	operationalEffectBoolLane("SuspensionKnown",
+		func(e OperationalEffects) bool { return e.SuspensionKnown },
+		func(e *OperationalEffects, value bool) { e.SuspensionKnown = value }),
 	operationalEffectBoolLane("MaySuspend",
 		func(e OperationalEffects) bool { return e.MaySuspend },
 		func(e *OperationalEffects, value bool) { e.MaySuspend = value }),

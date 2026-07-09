@@ -41,16 +41,17 @@ func deriveCallOutcomeLane(d callboundary.BoundaryFactDescriptor[CallOutcomeLane
 }
 
 // callOutcomeDescriptors registers CallOutcome fields in canonical struct
-// order. WireRef identifies manifest OperationalEffects lanes. MaySuspend and
-// ReturnPresenceRelations map directly to wire lanes; NormalReturnFacts owns
-// nested refs, and the remaining lanes stay caller-relative or local.
+// order. WireRef identifies manifest OperationalEffects lanes. SuspensionKnown,
+// MaySuspend, and ReturnPresenceRelations map directly to wire lanes;
+// NormalReturnFacts owns nested refs, and the remaining lanes stay
+// caller-relative or local.
 var callOutcomeDescriptors = func() callboundary.BoundaryFactTable[CallOutcomeLaneOps] {
 	t := callboundary.BoundaryFactTable[CallOutcomeLaneOps]{
 		callOutcomeLaneDescriptor("Results", nil, false,
 			func(o CallOutcome) bool { return len(o.Results) != 0 }),
 		callOutcomeLaneDescriptor("PostReturnAuthority", nil, false,
 			func(o CallOutcome) bool { return o.PostReturnAuthority }),
-		callOutcomeLaneDescriptor("SuspensionKnown", nil, false,
+		callOutcomeLaneDescriptor("SuspensionKnown", []string{"SuspensionKnown"}, false,
 			func(o CallOutcome) bool { return o.SuspensionKnown }),
 		callOutcomeLaneDescriptor("MaySuspend", []string{"MaySuspend"}, false,
 			func(o CallOutcome) bool { return o.MaySuspend }),

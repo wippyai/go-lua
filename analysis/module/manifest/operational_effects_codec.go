@@ -17,6 +17,7 @@ import (
 )
 
 type operationalEffectsWire struct {
+	SuspensionKnown                 bool                            `json:"suspensionKnown,omitempty"`
 	MaySuspend                      bool                            `json:"maySuspend,omitempty"`
 	ReturnPresenceRelations         []returnPresenceRelationWire    `json:"returnPresenceRelations,omitempty"`
 	NormalReturnPresenceRefinements []pathPresenceRefinementWire    `json:"normalReturnPresenceRefinements,omitempty"`

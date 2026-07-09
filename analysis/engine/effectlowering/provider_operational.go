@@ -44,7 +44,7 @@ func applyOperationalEffects(ctx transfer.NodeContext, out callpayload.CallOutco
 	if effects == nil {
 		return out
 	}
-	out.SuspensionKnown = true
+	out.SuspensionKnown = out.SuspensionKnown || effects.SuspensionKnown
 	out.MaySuspend = out.MaySuspend || effects.MaySuspend
 	out.ReturnPresenceRelations = operationalReturnPresenceRelations(*effects)
 	applyOperationalNormalReturnFacts(ctx, op, *effects, &out.NormalReturnFacts)

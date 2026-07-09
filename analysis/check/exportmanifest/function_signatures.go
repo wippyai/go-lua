@@ -651,6 +651,7 @@ func functionSummaryOperationalEffectsForArity(reg *axis.Registry, s summary.Sum
 		allocationTemplates = operationalReturnAllocationTemplates(reg, s, signatureName, returnArity, declaredReturns)
 	}
 	out := signature.OperationalEffects{
+		SuspensionKnown:                 true,
 		MaySuspend:                      s.MaySuspend,
 		ReturnPresenceRelations:         returnPresenceRelations,
 		NormalReturnPresenceRefinements: presenceRefinements,

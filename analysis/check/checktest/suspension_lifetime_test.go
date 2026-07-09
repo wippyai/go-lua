@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/placementplan"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -95,6 +96,9 @@ local out: integer = run()
 func TestDiesBeforeSuspensionUncertifiedHostCallBetweenBirthAndUse(t *testing.T) {
 	host := manifest.New("host")
 	host.DefineGlobalType("host", typ.Func().Build())
+	// This is the legacy manifest shape: it has a resolved signature but no
+	// operational suspension certification.
+	host.DefineFunctionSignature("host", signature.Function{Type: typ.Func().Build()})
 	result := Check(`
 local function run(): integer
 	local data = { value = 1 }
@@ -103,9 +107,10 @@ local function run(): integer
 end
 
 local out: integer = run()
-`, WithManifest("host", host))
+	`, WithManifest("host", host))
 	requireCleanSuspensionLifetimeCheck(t, result)
 	assertDiesBeforeSuspensionCount(t, result.PlacementPlan(), 0)
+	assertNoFrameLocalAllocation(t, result.PlacementPlan())
 }
 
 func TestDiesBeforeSuspensionValueUsedAfterSelectProbe(t *testing.T) {
@@ -146,8 +151,8 @@ return M
 	if !ok {
 		t.Fatalf("missing suspension.run function signature: %#v", mod.Manifest.FunctionSignatures)
 	}
-	if sig.OperationalEffects == nil || !sig.OperationalEffects.MaySuspend {
-		t.Fatalf("MaySuspend export = %#v, want true", sig.OperationalEffects)
+	if sig.OperationalEffects == nil || !sig.OperationalEffects.SuspensionKnown || !sig.OperationalEffects.MaySuspend {
+		t.Fatalf("suspension export = %#v, want certified may-suspend", sig.OperationalEffects)
 	}
 }
 
@@ -168,5 +173,14 @@ func assertDiesBeforeSuspensionCount(t *testing.T, plan placementplan.Plan, want
 	}
 	if got != want {
 		t.Fatalf("dies-before-suspension count = %d, want %d; entries=%#v", got, want, plan.Entries)
+	}
+}
+
+func assertNoFrameLocalAllocation(t *testing.T, plan placementplan.Plan) {
+	t.Helper()
+	for _, entry := range plan.Entries {
+		if entry.AllocationSite && entry.FrameLocal {
+			t.Fatalf("uncertified call licensed frame-local allocation: %#v", entry)
+		}
 	}
 }

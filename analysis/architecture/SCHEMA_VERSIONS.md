@@ -8,7 +8,7 @@ closed or negotiate before emitting a surface newer than the consumer supports.
 | --- | --- | --- | --- | --- |
 | Judgment IR | `judgment.JIRSchemaVersion` | v8 | Judgment code registry and exported judgment record shape. | A judgment code, code metadata, or exported judgment/evidence/subject field shape changes. |
 | Signature escape vocabulary | `signature.EscapeVocabVersion` | v1 | Signature `EscapeKind` labels and audited ownership capability labels synced with arena CallArgEscape/Ownership. | An escape/ownership label is added, removed, renamed, or changes boundary meaning. Requires joint cross-repo signoff per fence #1425. |
-| Boundary lane schema | `summary.BoundaryLaneSchemaVersion` | v5 | Summary descriptors, `NormalReturnFacts` descriptors, `CallOutcome` descriptors, and manifest wire-lane links. | A lane kind, slot/post-return classification, storage owner, or wire reference changes. |
+| Boundary lane schema | `summary.BoundaryLaneSchemaVersion` | v6 | Summary descriptors, `NormalReturnFacts` descriptors, `CallOutcome` descriptors, and manifest wire-lane links. | A lane kind, slot/post-return classification, storage owner, or wire reference changes. |
 | Closure capture DTO | `readmodel.ClosureCaptureSchemaVersion` | v2 | Codegen-facing exported `readmodel.ClosureCapture` record shape. | A `ClosureCapture` field is added, removed, renamed, or changes type. |
 | Hoistable load DTO | `readmodel.HoistableLoadSchemaVersion` | v1 | Codegen-facing exported `readmodel.HoistableLoad` record shape. | A `HoistableLoad` field is added, removed, renamed, or changes type. |
 | Allocation site DTO | `readmodel.AllocationSiteSchemaVersion` | v2 | Codegen-facing exported `readmodel.AllocationSite` and `readmodel.AllocationField` record shapes. | An `AllocationSite`/`AllocationField` field is added, removed, renamed, or changes type. |
@@ -57,3 +57,7 @@ constant + journal a D-entry`.
   field change could land without a version bump. No version changed; this
   entry only adds the reflection-hash guard mechanism already used by the JIR
   and boundary lane schemas.
+- D13: Bumped boundary lane schema to v6. Added the additive
+  `OperationalEffects.suspensionKnown` wire lane, which explicitly certifies
+  that `maySuspend` is exhaustive. Older manifests without this bit decode as
+  suspension-unknown and therefore remain conservatively may-suspend.

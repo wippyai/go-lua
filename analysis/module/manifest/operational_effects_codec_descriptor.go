@@ -100,6 +100,9 @@ func boolWireLane(
 // canonicalizeOperationalEffectsWire drive it. Adding a fact kind is a single
 // wireLane entry.
 var operationalEffectsWireLanes = []operationalEffectsWireLane{
+	boolWireLane("SuspensionKnown",
+		func(e *signature.OperationalEffects) *bool { return &e.SuspensionKnown },
+		func(w *operationalEffectsWire) *bool { return &w.SuspensionKnown }),
 	boolWireLane("MaySuspend",
 		func(e *signature.OperationalEffects) *bool { return &e.MaySuspend },
 		func(w *operationalEffectsWire) *bool { return &w.MaySuspend }),

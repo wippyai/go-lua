@@ -21,7 +21,8 @@ import (
 // oracle exercises each lane's encode, decode, and canonical ordering.
 func oracleRichOperationalEffects() signature.OperationalEffects {
 	return signature.OperationalEffects{
-		MaySuspend: true,
+		SuspensionKnown: true,
+		MaySuspend:      true,
 		ReturnPresenceRelations: []signature.ReturnPresenceRelation{
 			{TriggerIndex: 1, TriggerPresence: presence.Present(), TargetIndex: 0, TargetPresence: presence.Absent()},
 			{TriggerIndex: 0, TriggerPresence: presence.Maybe(), TargetIndex: 2, TargetPresence: presence.Present()},
@@ -178,6 +179,7 @@ func oracleSingleLaneCases(rich signature.OperationalEffects) []struct {
 		name string
 		e    signature.OperationalEffects
 	}{
+		{"SuspensionKnown", signature.OperationalEffects{SuspensionKnown: true}},
 		{"MaySuspend", signature.OperationalEffects{MaySuspend: true}},
 		{"ReturnPresenceRelations", signature.OperationalEffects{ReturnPresenceRelations: rich.ReturnPresenceRelations}},
 		{"NormalReturnPresenceRefinements", signature.OperationalEffects{NormalReturnPresenceRefinements: rich.NormalReturnPresenceRefinements}},
@@ -311,6 +313,22 @@ func TestOperationalEffectsDescriptorCodecRoundTrips(t *testing.T) {
 	}
 	if a, b := mustMarshalWire(t, richWire), mustMarshalWire(t, reversedWire); string(a) != string(b) {
 		t.Fatalf("permutation not canonicalized:\nrich:     %s\nreversed: %s", a, b)
+	}
+}
+
+func TestOperationalEffectsDescriptorCodecLegacySuspensionBytesRemainUnknown(t *testing.T) {
+	// This is a pre-certification payload: the operational-effects object is
+	// present, but it carries neither suspensionKnown nor maySuspend.
+	var legacy operationalEffectsWire
+	if err := json.Unmarshal([]byte(`{"maySuspend":false}`), &legacy); err != nil {
+		t.Fatalf("unmarshal legacy operational effects: %v", err)
+	}
+	effects, err := decodeOperationalEffects(&legacy)
+	if err != nil {
+		t.Fatalf("decode legacy operational effects: %v", err)
+	}
+	if effects.SuspensionKnown || effects.MaySuspend {
+		t.Fatalf("legacy suspension = known:%v may:%v, want unknown", effects.SuspensionKnown, effects.MaySuspend)
 	}
 }
 

@@ -111,9 +111,10 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) callpayload
 			argSources = signatureMethodArgumentSources(ctx, facts, site, providerKeySpace)
 		}
 		sig = instantiateSignatureForCall(ctx, sources, expressionRefinements, argumentType, sig, argSources, in, read, returnTypeOps)
-		out := callpayload.CallOutcome{SuspensionKnown: true}
-		if sig.OperationalEffects != nil && sig.OperationalEffects.MaySuspend {
-			out.MaySuspend = true
+		out := callpayload.CallOutcome{}
+		if sig.OperationalEffects != nil {
+			out.SuspensionKnown = sig.OperationalEffects.SuspensionKnown
+			out.MaySuspend = sig.OperationalEffects.MaySuspend
 		}
 		if sig.OperationalEffects != nil && !sig.OperationalEffects.IsEmpty() && !operationalEffectsOnlyMaySuspend(sig.OperationalEffects) {
 			out = applyOperationalEffects(ctx, out, operationalEffectContext{

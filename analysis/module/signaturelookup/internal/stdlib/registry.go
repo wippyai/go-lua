@@ -622,7 +622,7 @@ func sig(fn *typ.Function, labels ...effect.Label) signature.Function {
 
 func suspendingSig(fn *typ.Function, labels ...effect.Label) signature.Function {
 	out := sig(fn, labels...)
-	out.OperationalEffects = &signature.OperationalEffects{MaySuspend: true}
+	out.OperationalEffects = &signature.OperationalEffects{SuspensionKnown: true, MaySuspend: true}
 	return out
 }
 
